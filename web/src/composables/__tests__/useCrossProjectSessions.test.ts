@@ -110,6 +110,31 @@ describe('useCrossProjectSessions', () => {
     expect(s.model).toBe('gpt-5')
   })
 
+  it('maps sessionType and the group member preview for group rows', async () => {
+    const members = [
+      { id: 'm1', agentId: 'cb', name: 'Host', backend: 'codebuddy' },
+      { id: 'm2', agentId: 'claude', name: 'Claude', backend: 'claude' },
+    ]
+    mockFetch.mockResolvedValue(overviewPayload([
+      { name: '/proj/b', sessions: [session('g1', '2026-01-01', { sessionType: 'group', groupMembers: members })] },
+    ]))
+    await refresh()
+    const s = useCrossProjectSessions().groups.value[0].sessions[0]
+    expect(s.sessionType).toBe('group')
+    expect(s.groupMembers).toHaveLength(2)
+    expect(s.groupMembers?.[0].name).toBe('Host')
+  })
+
+  it('leaves sessionType/groupMembers undefined for a plain session', async () => {
+    mockFetch.mockResolvedValue(overviewPayload([
+      { name: '/proj/b', sessions: [session('b1', '2026-01-01')] },
+    ]))
+    await refresh()
+    const s = useCrossProjectSessions().groups.value[0].sessions[0]
+    expect(s.sessionType).toBeUndefined()
+    expect(s.groupMembers).toBeUndefined()
+  })
+
   it('derives displayName from basename', async () => {
     mockFetch.mockResolvedValue(overviewPayload([
       { name: '/home/u/projects/clawbench', sessions: [session('c1', '2026-01-01')] },

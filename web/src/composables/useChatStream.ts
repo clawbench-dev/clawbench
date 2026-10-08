@@ -584,7 +584,21 @@ export function useChatStream(options: UseChatStreamOptions) {
       case 'stream_start': {
         if (sessionChanged()) return
         const messageId = payload.message_id as number | undefined
+        // Group chats: the backend tags the placeholder with the speaker's
+        // member row id so the speaker header renders DURING streaming, not
+        // only after the DB row loads.
+        const speakerId = (payload.agent_id as string | undefined) || ''
         if (messageId) {
+          // A NEW producer turn: if a DIFFERENT message is still marked
+          // streaming (a previous group member whose per-member finalize event
+          // was dropped, or a turn that ended without one), close it first.
+          // Otherwise this stream_start would find the stale bubble and never
+          // open one for the new member — the "other agents don't stream at all
+          // until you switch sessions" defect.
+          const existing = findStreamingMsg(messages.value)
+          if (existing && typeof existing.id === 'number' && existing.id !== messageId) {
+            dispatch({ type: 'stream_finalize' })
+          }
           // Event-driven placeholder: if no streaming assistant message exists
           // (e.g. client opened the session mid-stream, or the optimistic
           // placeholder was dropped by a loadHistory), create one. The DB row id
@@ -600,6 +614,7 @@ export function useChatStream(options: UseChatStreamOptions) {
               streaming: true,
               createdAt: new Date().toISOString(),
               backend: currentBackend.value,
+              agentId: speakerId || undefined,
               seq: nextClientSeq(),
             } as ChatMessage })
             onRenderNeeded()
@@ -608,12 +623,29 @@ export function useChatStream(options: UseChatStreamOptions) {
           // ws_stream_start is idempotent: it re-sets the id on the existing
           // streaming message (a no-op when the placeholder above already
           // carries the DB id).
-          dispatch({ type: 'ws_stream_start', messageId })
+          dispatch({ type: 'ws_stream_start', messageId, speakerId: speakerId || undefined })
         }
         // A placeholder now exists, so anything that arrived before it can be
         // applied. Done after the dispatch above so the replayed events land on
         // the real placeholder rather than being dropped again.
         replayBufferedEvents()
+        break
+      }
+
+      case 'stream_finalize': {
+        if (sessionChanged()) return
+        // One producer turn ended (group chats: one member). Finalize its
+        // streaming bubble WITHOUT ending the run (loading stays true, so the
+        // stop button remains and the next member's stream_start opens a new
+        // bubble). This is distinct from the terminal 'done'.
+        const finishId = payload.message_id as number | undefined
+        const sm = findStreamingMsg(messages.value)
+        // Only finalize the bubble this event refers to; a stale finalize for a
+        // previous member must not close the current one.
+        if (sm && (finishId === undefined || finishId === 0 || sm.id === finishId)) {
+          dispatch({ type: 'stream_finalize' })
+          onRenderNeeded()
+        }
         break
       }
 
@@ -1022,6 +1054,18 @@ export function useChatStream(options: UseChatStreamOptions) {
 
         // debouncedRender schedules the scroll pin in the same rAF — no
         // separate onScrollBottom here (duplicate pin in the same frame).
+        debouncedRender()
+        break
+      }
+
+      case 'system_message': {
+        // A role='system' timeline row (group membership change). It belongs to
+        // nobody and is not a user message — appending it here (not via the
+        // user_message path) keeps it out of the user-bubble rendering and the
+        // queue/echo logic. Dedup is by DB id inside the reducer.
+        if (sessionChanged()) return
+        const sysData = payload as { messageId?: number; content?: string }
+        dispatch({ type: 'ws_system_message', data: sysData })
         debouncedRender()
         break
       }

@@ -29,11 +29,12 @@ const schema = `
 CREATE TABLE IF NOT EXISTS chat_history (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	project_id INTEGER NOT NULL,
-	role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+	role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
 	content TEXT NOT NULL,
 	files TEXT,
 	session_id TEXT,
 	backend TEXT NOT NULL DEFAULT 'claude',
+	agent_id TEXT DEFAULT '',
 	streaming INTEGER NOT NULL DEFAULT 0,
 	indexed INTEGER NOT NULL DEFAULT 0,
 	external_message_id TEXT DEFAULT '',
@@ -69,6 +70,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 	agent_source TEXT DEFAULT 'default',
 	model TEXT DEFAULT '',
 	session_type TEXT NOT NULL DEFAULT 'chat',
+	group_id TEXT DEFAULT '',
 	external_session_id TEXT DEFAULT '',
 	source_session_id TEXT DEFAULT NULL,
 	transport TEXT DEFAULT '',
@@ -1781,10 +1783,11 @@ func TestGetLiveRunState_ResolvesQuestionByIdOrder(t *testing.T) {
 		store.ProjectIDForTest(t, "/project"), sid)
 	require.NoError(t, err)
 
-	msgID, qID, qContent := service.GetLiveRunState(sid)
+	msgID, qID, qContent, speaker := service.GetLiveRunState(sid)
 	require.NotZero(t, msgID, "the streaming row must be reported")
 	require.NotZero(t, qID, "the question must be found by id order")
 	assert.Equal(t, "what is 2+2?", qContent)
+	assert.Equal(t, "", speaker, "an ordinary turn carries no group speaker")
 	assert.Less(t, qID, msgID, "the question must precede the reply it anchors")
 
 	// An idle session reports nothing: emitting a stream_start for it would open
@@ -1792,9 +1795,30 @@ func TestGetLiveRunState_ResolvesQuestionByIdOrder(t *testing.T) {
 	_, err = store.UnsafeDBForTest().Exec(
 		"UPDATE chat_history SET streaming = 0 WHERE session_id = ?", sid)
 	require.NoError(t, err)
-	idleMsgID, idleQID, _ := service.GetLiveRunState(sid)
+	idleMsgID, idleQID, _, _ := service.GetLiveRunState(sid)
 	assert.Zero(t, idleMsgID, "nothing streaming → no live run state")
 	assert.Zero(t, idleQID)
+}
+
+// TestGetLiveRunState_CarriesGroupSpeaker guards the group-chat switch-back
+// path: the streaming row's agent_id (member row id) must be returned so the
+// subscribe-time re-emitted stream_start carries it. Without it a returning
+// client creates a speakerless placeholder and the speaker header stays missing.
+func TestGetLiveRunState_CarriesGroupSpeaker(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "codebuddy", "Group Live Run State")
+
+	_, err := store.UnsafeDBForTest().Exec(
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming) VALUES (?, 'codebuddy', ?, 'user', 'q', 0)",
+		store.ProjectIDForTest(t, "/project"), sid)
+	require.NoError(t, err)
+	_, err = store.UnsafeDBForTest().Exec(
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming, agent_id) VALUES (?, 'codebuddy', ?, 'assistant', '', 1, 'member-row-7')",
+		store.ProjectIDForTest(t, "/project"), sid)
+	require.NoError(t, err)
+
+	_, _, _, speaker := service.GetLiveRunState(sid)
+	assert.Equal(t, "member-row-7", speaker, "the streaming row's speaker must be reported")
 }
 
 // TestUnread_MarkReadAfterCompletionClearsBadge is the counterpart: once the
@@ -3859,6 +3883,7 @@ func TestGetOverviewSessions_sameIDAcrossProjects(t *testing.T) {
 		agent_source TEXT DEFAULT 'default',
 		model TEXT DEFAULT '',
 		session_type TEXT NOT NULL DEFAULT 'chat',
+		group_id TEXT DEFAULT '',
 		external_session_id TEXT DEFAULT '',
 		source_session_id TEXT DEFAULT NULL,
 		transport TEXT DEFAULT '',
@@ -4697,6 +4722,33 @@ func TestGetLatestUserModel_NotFound(t *testing.T) {
 
 	modelID := service.GetLatestUserModel("claude", "/project")
 	assert.Equal(t, "", modelID)
+}
+
+// TestGetLatestUserModel_ExcludesGroupRows is the regression for the bug where a
+// GROUP row could win the lookup. A group row's agent_id is its HOST, and the
+// HTTP handler persists an explicit modelId onto the group row before the group
+// branch — so if the group's row is newer, an unfiltered (or
+// IN ('chat','group')) query would return the group's model as the host
+// agent's "latest user preference" and silently change a task's default model.
+func TestGetLatestUserModel_ExcludesGroupRows(t *testing.T) {
+	db := setupDB(t)
+
+	// A normal chat session with the host agent, older.
+	chatID, err := service.CreateSession("/project", "claude", "Chat", "agent-host", "chat-model", "user", "chat")
+	assert.NoError(t, err)
+
+	// A group whose row carries a model and is NEWER than the chat session.
+	// CreateGroup sets agent_id = host, mirroring the real group row.
+	groupID, _, err := service.CreateGroup("/project", "G", "claude", "agent-host", "Host")
+	assert.NoError(t, err)
+	assert.NoError(t, service.UpdateSessionModel(groupID, "group-model"))
+	// Make the group row strictly newer so it would win an ORDER BY updated_at.
+	_, err = db.Exec("UPDATE chat_sessions SET updated_at = '2999-01-01 00:00:00' WHERE id = ?", groupID)
+	assert.NoError(t, err)
+
+	got := service.GetLatestUserModel("agent-host", "/project")
+	assert.Equal(t, "chat-model", got,
+		"a group row must never supply the user's model preference (chat %s must win over group %s)", chatID, groupID)
 }
 
 // ---------- GetChatHistoryPaged: all branches ----------
@@ -5960,10 +6012,11 @@ func TestReplaceSessionHistory_RollbackRestoresHistory(t *testing.T) {
 	require.NoError(t, err)
 
 	// Force the transaction to fail AFTER the DELETE has removed the old rows: an
-	// invalid role violates the CHECK(role IN ('user','assistant')) constraint.
-	// The transaction must roll back, restoring the original history intact.
+	// invalid role violates the CHECK(role IN ('user','assistant','system'))
+	// constraint. The transaction must roll back, restoring the original history
+	// intact.
 	msgs := []service.ReplayMessage{{
-		Role:    "system", // violates CHECK constraint
+		Role:    "bogus", // violates CHECK constraint
 		Content: `{"blocks":[{"type":"text","text":"new"}]}`,
 	}}
 	n, err := service.ReplaceSessionHistory(sid, projectPath, "claude", msgs)

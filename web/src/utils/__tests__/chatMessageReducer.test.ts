@@ -307,6 +307,42 @@ describe('chatMessageReducer — ws_stream_split', () => {
   })
 })
 
+describe('chatMessageReducer — ws_system_message', () => {
+  it('appends a role=system row and sorts it by DB id among existing messages', () => {
+    const state = run(
+      [u({ id: 1, content: 'q' }), a({ id: 2, content: 'a' })],
+      [{ type: 'ws_system_message', data: { messageId: 3, content: 'A 加入了讨论' } }],
+    )
+    expect(state.map((m) => m.id)).toEqual([1, 2, 3])
+    const sys = state.find((m) => m.role === 'system')!
+    expect(sys.content).toBe('A 加入了讨论')
+    expect(sys.blocks).toEqual([{ type: 'text', text: 'A 加入了讨论' }])
+  })
+
+  it('is idempotent on the same DB id (dedup key is the id, not text)', () => {
+    const state = run(
+      [],
+      [
+        { type: 'ws_system_message', data: { messageId: 5, content: 'X' } },
+        { type: 'ws_system_message', data: { messageId: 5, content: 'X' } },
+      ],
+    )
+    expect(state).toHaveLength(1)
+  })
+
+  it('keeps two distinct events with identical text (dedup is not by text)', () => {
+    const state = run(
+      [],
+      [
+        { type: 'ws_system_message', data: { messageId: 5, content: 'A 加入了讨论' } },
+        { type: 'ws_system_message', data: { messageId: 6, content: 'A 加入了讨论' } },
+      ],
+    )
+    expect(state).toHaveLength(2)
+    expect(state.map((m) => m.id)).toEqual([5, 6])
+  })
+})
+
 describe('rebuildFromDb (db_load)', () => {
   it('rebuild drops a finalized drain-* reply that has no DB row; DB row is the truth', () => {
     const state = [a({ id: 'drain-99', content: 'reply', createdAt: '2026-01-01T00:00:00Z', seq: 1 })]
@@ -475,6 +511,31 @@ describe('rebuildFromDb (live placeholder)', () => {
       a({ id: 7, streaming: true, createdAt: '2026-01-01T00:00:00Z' }),
     ])
     expect(merged[0].createdAt).toBe('2026-01-01T00:00:00Z')
+  })
+
+  // ── Bug regression: switching away and back drops the group speaker header.
+  //    On a session switch the frontend clears the array, then re-subscribes;
+  //    the backend's subscribe-time recovery re-emits stream_start — but that
+  //    path carries no speaker, so the placeholder it creates has no agentId.
+  //    The DB streaming row DOES carry agentId, and the subsequent db_load must
+  //    merge it onto the preserved placeholder object, or the avatar/name is
+  //    lost for the rest of the turn (it reappears only after a full reload).
+  it('adopts the DB row agentId when the live placeholder has none (session-switch speaker loss)', () => {
+    const live = a({ id: 7, streaming: true, seq: 1 })
+    const merged = rebuildFromDb([live], [
+      a({ id: 7, streaming: true, agentId: 'member-1' }),
+    ])
+    expect(merged).toHaveLength(1)
+    expect(merged[0]).toBe(live)
+    expect(merged[0].agentId).toBe('member-1')
+  })
+
+  it('keeps the live placeholder agentId when it already carries one', () => {
+    const live = a({ id: 7, streaming: true, agentId: 'member-2', seq: 1 })
+    const merged = rebuildFromDb([live], [
+      a({ id: 7, streaming: true, agentId: 'member-1' }),
+    ])
+    expect(merged[0].agentId).toBe('member-2')
   })
 
   it('drops the streaming placeholder when the DB snapshot has no streaming row for it (done was missed)', () => {

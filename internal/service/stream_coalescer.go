@@ -52,8 +52,8 @@ const maxCoalescedBytes = 32 * 1024
 // existing block, and which therefore may be merged. Every other type is an
 // ordering barrier: it must not overtake buffered text.
 var coalescableDeltaTypes = map[string]struct{}{
-	"content":  {},
-	"thinking": {},
+	contentKeyContent: {},
+	"thinking":        {},
 }
 
 // isCoalescableDelta reports whether an event may be buffered and merged.

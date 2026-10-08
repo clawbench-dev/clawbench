@@ -135,6 +135,8 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		"InvalidForkPoint",
 		"InvalidRewindPoint",
 		"NothingToRewind",
+		"GroupNotForkable",
+		"GroupNotRewindable",
 		"NoAgentsAvailable",
 		"MessageOrFilesRequired",
 		"TextRequired",

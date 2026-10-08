@@ -21,12 +21,12 @@
   <div class="chat-messages" id="aiChatMessages" ref="messagesRef" @click="handleChatClick" @mousedown="onContainerMouseDown" @touchstart.passive="onScrollAndTableTouchStart" @touchend="onScrollTouchEnd" @touchcancel="onScrollTouchEnd" @wheel.passive="onWheelScroll" @scroll="handleScroll">
     <div class="chat-messages-list" :key="listKey">
       <!-- Session switching in progress: the old messages were cleared but the
-           new session's history is still loading — show a centered spinner in
-           place of the empty state instead of a full-area overlay mask. -->
-      <LoadingIndicator
+           new session's history is still loading — show simulated message
+           bubbles in place of the empty state instead of a full-area overlay
+           mask or a lone spinner. -->
+      <ChatSkeleton
         v-if="props.switching && messages.length === 0"
         class="chat-switching-indicator"
-        size="md"
       />
       <div v-else-if="messages.length === 0" class="chat-empty">
       <template v-if="agents && agents.length === 0">
@@ -38,9 +38,22 @@
           <span>{{ t('chat.messageList.noAgentsAction') }}</span>
         </button>
       </template>
-      <template v-else-if="currentAgent">
+      <template v-else-if="isGroupSession">
+        <!-- Group empty state. Same card language as the single-agent welcome
+             (surface + border + radius + 280px cap), with the roster stack
+             standing in for the agent icon and the hint as its text.
+             Deliberately minimal — the group name and the member list are
+             already in the header. -->
+        <div class="group-welcome">
+          <AvatarStack :members="groupStackMembers" size="lg" :max="4" />
+          <div class="group-welcome-info">
+            <span class="group-welcome-hint">{{ t('chat.messageList.groupStartHint') }}</span>
+          </div>
+        </div>
+      </template>
+      <template v-else-if="currentAgent && !isGroupSession">
         <div class="agent-welcome">
-          <span class="agent-welcome-icon"><AgentIcon :backend="currentAgent.backend" :name="currentAgent.name" :avatar="currentAgent.avatar" :size="28" /></span>
+          <span class="agent-welcome-icon"><AgentIcon :backend="currentAgent.backend" :name="currentAgent.name" :avatar="currentAgent.avatar" size="lg" /></span>
           <div class="agent-welcome-info">
             <span class="agent-welcome-name">{{ currentAgent.name }}</span>
             <span class="agent-welcome-specialty">{{ currentAgent.specialty }}</span>
@@ -96,6 +109,10 @@
         :isLastAssistant="isLastAssistant(msg, i)"
         :isLastMessage="i === messages.length - 1"
         :forkingMessageId="forkingMessageId"
+        :resolveSpeaker="resolveSpeaker"
+        :resolveSpeakerByName="resolveSpeakerByName"
+        :hostMemberId="hostMemberId"
+        :isGroupSession="isGroupSession"
         @toggle-tool="$emit('toggle-tool', $event)"
         @show-tool-detail="$emit('show-tool-detail', $event)"
         @show-metadata="$emit('show-metadata', $event)"
@@ -168,6 +185,7 @@
     :loading="loadingIndex"
     :jumping="loadingTarget"
     :has-btw="hasBtwAnchor"
+    :resolve-speaker="resolveIndexSpeaker"
     @close="closeUserMsgIndex"
     @select="jumpToUserMessage"
   />
@@ -195,7 +213,9 @@ import { useI18n } from 'vue-i18n'
 import { ChevronUp, ChevronsUp, ArrowUp, ChevronsDown, ArrowDown, Bot, Settings, MessageCircleQuestion } from 'lucide-vue-next'
 import ChatMessageItem from './ChatMessageItem.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
+import AvatarStack from '@/components/common/AvatarStack.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import ChatSkeleton from './ChatSkeleton.vue'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import UserMsgIndexDrawer from './UserMsgIndexDrawer.vue'
 import TableRowModal from '@/components/common/TableRowModal.vue'
@@ -246,6 +266,19 @@ const props = defineProps({
   /** Message id whose fork button is mid-flight (spinner instead of the icon).
    *  Null when no fork is running. */
   forkingMessageId: { type: [Number, String], default: null },
+  /** Group-chat: resolves a speaker member row id to { name, backend }. */
+  resolveSpeaker: { type: Function, default: null },
+  /** Group-chat: resolves a member display name (routing target) to
+   *  { name, backend, avatar } for @-mention chips. */
+  resolveSpeakerByName: { type: Function, default: null },
+  /** Group-chat: the host member row id (for the host bubble style). */
+  hostMemberId: { type: String, default: '' },
+  /** Group-chat session: the single-agent welcome card and the per-message
+   *  fork/rewind actions are suppressed (see ChatMessageItem). */
+  isGroupSession: { type: Boolean, default: false },
+  /** Group-chat roster (active members, host flagged). Drives the empty-state
+   *  avatar stack; empty for non-group sessions. */
+  groupMembers: { type: Array, default: () => [] },
 })
 
 const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'quote-message', 'file-open', 'load-more', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'fork-from-message', 'rewind-from-message', 'reset-session', 'open-btw'])
@@ -263,6 +296,14 @@ const codeLinkPreview = useCodeLinkPreview({ containerRef: messagesRef, source: 
 function isLastAssistant(msg, _i) {
   return isLastAssistantMessage(props.messages, msg)
 }
+
+// Active group members shaped for AvatarStack (the host gets the accent ring).
+// Left members are excluded — they are not part of the group any more.
+const groupStackMembers = computed(() =>
+  (props.groupMembers || [])
+    .filter((m) => !m.left)
+    .map((m) => ({ id: m.id, agentId: m.agentId, name: m.name, backend: m.backend, isHost: m.isHost })),
+)
 
 /** Number of /btw questions asked after this message (0 = no anchor). */
 function anchorCountFor(msg) {
@@ -1104,6 +1145,25 @@ const {
   },
 })
 
+/**
+ * Resolve the conversation-index row's speaker identity so the drawer shows the
+ * real agent icon instead of a generic Bot.
+ *
+ * Precedence mirrors service.ResolveSessionSpeakers: a non-empty agentId is a
+ * GROUP member row id → `resolveSpeaker` (the roster the parent already owns for
+ * speaker attribution). An empty agentId is an ordinary message → the current
+ * session's agent. An unknown member id yields null so the row falls back to
+ * Bot rather than misattributing the speech to the host.
+ */
+function resolveIndexSpeaker(agentId) {
+  if (agentId) {
+    return typeof props.resolveSpeaker === 'function' ? props.resolveSpeaker(agentId) : null
+  }
+  const a = props.currentAgent
+  if (!a || !a.backend) return null
+  return { name: a.name, backend: a.backend, avatar: a.avatar }
+}
+
 // Nearest user message to viewport center — used for activeId highlight in index
 const scrollTick = ref(0)
 
@@ -1437,6 +1497,36 @@ defineExpose({
   max-width: 280px;
   width: 100%;
   text-align: left;
+}
+
+/* Group empty state. Mirrors .agent-welcome's card (surface, border, radius,
+   280px cap) so both empty states read as one family; the roster stack takes
+   the icon slot and the hint takes the text slot. */
+.group-welcome {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  padding: 14px var(--space-7);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  max-width: 280px;
+  width: 100%;
+  text-align: left;
+}
+
+.group-welcome-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.group-welcome-hint {
+  font-size: var(--font-size-md);
+  color: var(--text-secondary);
+  line-height: var(--line-height-snug);
 }
 
 .agent-welcome-icon {

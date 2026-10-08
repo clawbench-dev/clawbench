@@ -21,6 +21,7 @@
         @navigate="pushNav"
         @back="handleCategoryBack"
         @deleted="handleCategoryDeleted"
+        @navigate-replace="replaceTopNav"
         @restart-needed="handleRestartNeeded"
         @restart-requested="handleRestart"
       />
@@ -61,7 +62,7 @@ const props = defineProps<{
 
 const {
   t, loadConfig,
-  navStack, currentCategory, pushNav, popNav, truncateNav, returnToCategory,
+  navStack, currentCategory, pushNav, popNav, truncateNav, returnToCategory, replaceTopNav,
   restartDialogVisible, changedColdFields, needsRestart,
   restarting,
   handleRestartNeeded, handleRestart,

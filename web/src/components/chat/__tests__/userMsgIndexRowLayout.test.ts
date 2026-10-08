@@ -61,12 +61,22 @@ describe('UserMsgIndexDrawer: one-line rows', () => {
     expect(tag).toMatch(/height:\s*20px/)
     expect(tag, 'a text pill would set horizontal padding').not.toMatch(/padding:\s*1px\s+6px/)
   })
+
+  it('clips the chip so a full-bleed icon respects the rounded border', () => {
+    // The icon fills the 18px content box edge-to-edge (no gap). Square-cornered
+    // brand SVGs would poke past the 6px radius without clipping.
+    expect(decls('.msg-role-tag')).toMatch(/overflow:\s*hidden/)
+  })
 })
 
 describe('UserMsgIndexDrawer: icon-only role chips', () => {
   it('renders an icon per role and no role text', () => {
     // The chip must not fall back to a text label — that is what this replaced.
-    expect(source).toMatch(/<Bot v-if="msg\.role === 'assistant'"/)
+    // Assistant rows prefer the REAL agent icon (AgentIcon) and only fall back
+    // to the generic Bot when the host cannot resolve a speaker; user rows keep
+    // the generic User glyph.
+    expect(source).toMatch(/<AgentIcon\s+v-if="msg\.role === 'assistant' && speaker"/)
+    expect(source).toMatch(/<Bot v-else-if="msg\.role === 'assistant'"/)
     expect(source).toMatch(/<User v-else/)
     expect(source, 'the old text label must be gone').not.toMatch(
       /msg-role-tag[\s\S]{0,200}conversationIndexRoleUser'\s*\}\}\s*<\/span>/,

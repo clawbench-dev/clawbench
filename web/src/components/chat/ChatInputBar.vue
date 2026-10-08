@@ -30,7 +30,7 @@
         <span class="chat-action-label">{{ t('chat.actions.wideLabels.jump') }}</span>
       </button>
       <button
-        v-if="isACPTransport"
+        v-if="isACPTransport && !isGroupSession"
         class="chat-action-btn acp-sync-btn"
         :class="{ disabled: acpSyncDisabled }"
         :disabled="acpSyncDisabled"
@@ -310,8 +310,10 @@
       </PopupMenu>
     </div>
     <!-- Session info bar (model + mode) — always rendered to reserve vertical space,
-         preventing layout shift when async model/mode data loads after messages -->
-    <div class="chat-session-info">
+         preventing layout shift when async model/mode data loads after messages.
+         Hidden for group sessions: model / mode+auto-approve / context-usage are
+         all per-agent settings with no owner on a multi-agent timeline. -->
+    <div v-if="!isGroupSession" class="chat-session-info">
       <span class="session-info-model" @click.stop="openSettingsDrawer('model')"><ProviderIcon :model-name="currentModelName || ''" :size="11" />{{ currentModelName }}</span>
       <template v-if="showModeInfo">
         <span class="session-info-divider"></span>
@@ -339,6 +341,7 @@ import { List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Z
 import { computeRecentReferencedFiles, isImeCompositionEvent } from '@/utils/chatInputUtils.ts'
 import { measureCaretVisualRows } from '@/utils/textareaVisualRows.ts'
 import { fuzzyMatch, parseAtQuery, parseSlashQuery, buildFileCandidates } from '@/utils/completionMatch.ts'
+import { buildMemberCandidates, buildMentionTag } from '@/utils/groupRouting.ts'
 import { normalizeFileEntry } from '@/utils/fileAttachmentUtils.ts'
 import { joinPath } from '@/utils/path.ts'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
@@ -380,7 +383,7 @@ import { apiGet } from '@/utils/api'
 
 const { t } = useI18n()
 const { availableCommands, availableModes, currentTransport: sessionTransport, autoApprove, toggleAutoApprove, contextUsed, contextSize, contextInputTokens, contextOutputTokens, contextTotalTokens, contextCachedReadTokens, contextCachedWriteTokens, contextThoughtTokens, contextCost, contextCurrency, contextCacheCreationTokens, contextCacheHitTokens, contextCacheMissTokens, contextCredit, contextUsageByCategory } = useSessionIdentity()
-const { supportsACP, hasPreferredMode } = useAgents()
+const { supportsACP, hasPreferredMode, getAgentAvatar } = useAgents()
 const toast = useToast()
 const { uploadAndAttach, pendingFiles, removeFile } = useFileUpload()
 
@@ -604,6 +607,15 @@ const props = defineProps({
   currentAgentId: String,
   currentSessionRunning: Boolean,
   active: Boolean,
+  /** Group-chat session: the session-info chrome (model / mode+auto-approve /
+   *  context-usage) and the ACP sync button are per-AGENT settings, which have
+   *  no owner on a multi-agent timeline — hidden here. The model chip and the
+   *  ACP sync button are also the entry points to SessionDrawer (all per-agent),
+   *  so hiding them closes that drawer's only doors. */
+  isGroupSession: { type: Boolean, default: false },
+  /** Group member roster ({ id, name, left }). Feeds the @ completion menu so a
+   *  user can name a speaker in a group chat (design §13.4). */
+  groupMembers: { type: Array, default: () => [] },
 })
 
 const emit = defineEmits([
@@ -1094,6 +1106,25 @@ const caretVersion = ref(0)
 const fileMenuItems = computed(() => {
   // Establish the reactive dependency on the caret position.
   void caretVersion.value
+  const query = parseAtQuery(inputText.value, currentCaret())?.query ?? ''
+
+  // Group members come FIRST: in a group chat an @ is usually about naming a
+  // speaker, and the roster is short. Only active members are listed.
+  const memberItems = props.isGroupSession
+    ? buildMemberCandidates(props.groupMembers || [], query).map(item => ({
+        key: item.key,
+        label: item.label,
+        description: item.description,
+        source: 'agent',
+        isMember: true,
+        mentionMemberId: item.mentionMemberId,
+        // The avatar belongs to the underlying AGENT, not the member row, so
+        // resolve it from agentId (mirrors useGroupMembers.resolveSpeaker).
+        memberBackend: item.backend || '',
+        memberAvatar: item.agentId ? getAgentAvatar(item.agentId) : '',
+      }))
+    : []
+
   const sources = {
     recentOpen: recentFiles.entries.value.map(e => ({ path: e.path })),
     // Every entry type the listing can return — files, images AND directories.
@@ -1108,12 +1139,12 @@ const fileMenuItems = computed(() => {
     recentUpload: recentUploads.value.map(u => ({ path: u.path })),
     recentShare: recentShares.value.map(s => ({ path: s.path })),
   }
-  const query = parseAtQuery(inputText.value, currentCaret())?.query ?? ''
   const attached = props.attachedFiles.map(f => f.path)
   // Every file row shows its type icon (the shared menu renders it when present).
   // The project root lets absolute attachment paths match relative candidates.
-  return buildFileCandidates(sources, query, attached, store.state.projectRoot)
+  const fileItems = buildFileCandidates(sources, query, attached, store.state.projectRoot)
     .map(item => ({ ...item, icon: FileIcon }))
+  return [...memberItems, ...fileItems]
 })
 
 const fileMenu = useCompletionMenu({
@@ -1122,9 +1153,17 @@ const fileMenu = useCompletionMenu({
   getText: () => inputText.value,
   closeOnSelect: false,
   stickyAfterSelect: true,
+  // A member pick is a one-shot insertion (close); a file pick browses the list
+  // (keep open). Without this, the member pick would re-arm sticky and the next
+  // refresh would re-open the roster.
+  closeOnSelectFor: (item) => item.isMember === true,
   onSelect: (item) => {
+    if (item.isMember) return // the mention tag is written by buildReplacement
     emit('add-attached', item.key, item.isDir === true)
   },
+  // A member selection inserts the mention tag in place of the typed "@query";
+  // a file selection just removes the trigger (the attach handler owns it).
+  buildReplacement: (item) => (item.isMember ? buildMentionTag(item.mentionMemberId) : ''),
   applyText: (value, caret) => {
     inputText.value = value
     nextTick(() => {

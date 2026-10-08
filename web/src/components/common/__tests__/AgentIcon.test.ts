@@ -55,7 +55,7 @@ function mountIcon(props = {}) {
     props: {
       backend: 'codebuddy',
       name: 'CodeBuddy',
-      size: 16,
+      size: 'md',
       ...props,
     },
   })
@@ -104,11 +104,10 @@ describe('AgentIcon', () => {
       expect(wrapper.find('svg').exists()).toBe(true)
     })
 
-    it('applies the size prop to the avatar image', () => {
-      const wrapper = mountIcon({ avatar: '<svg/>', size: 24 })
+    it('applies the size class to the avatar image', () => {
+      const wrapper = mountIcon({ avatar: '<svg/>', size: 'lg' })
       const img = wrapper.find('img.agent-icon-img')
-      expect(img.attributes('style')).toContain('width: 24px')
-      expect(img.attributes('style')).toContain('height: 24px')
+      expect(img.classes()).toContain('agent-icon--lg')
     })
   })
 
@@ -166,17 +165,14 @@ describe('AgentIcon', () => {
   })
 
   describe('size prop', () => {
-    it('applies width and height from size prop', () => {
-      const wrapper = mountIcon({ size: 32 })
-      const svg = wrapper.find('svg')
-      expect(svg.attributes('style')).toContain('width: 32px')
-      expect(svg.attributes('style')).toContain('height: 32px')
+    it('applies the size class matching the size prop', () => {
+      const wrapper = mountIcon({ size: 'sm' })
+      expect(wrapper.find('svg').classes()).toContain('agent-icon--sm')
     })
 
-    it('uses default size of 16', () => {
+    it('defaults to md', () => {
       const wrapper = mountIcon()
-      const svg = wrapper.find('svg')
-      expect(svg.attributes('style')).toContain('width: 16px')
+      expect(wrapper.find('svg').classes()).toContain('agent-icon--md')
     })
   })
 
@@ -196,15 +192,15 @@ describe('AgentIcon', () => {
     it('background is CSS-driven (no inline bgColor), uses --bg-tertiary', () => {
       const wrapper = mountIcon({ backend: 'opencode' })
       const svg = wrapper.find('svg')
-      // bgColor is no longer inline — background comes from .agent-icon-bg CSS class
-      expect(svg.attributes('style')).not.toContain('background')
+      // Background comes from the .agent-icon-bg class, never inline.
+      expect(svg.attributes('style') ?? '').not.toContain('background')
     })
 
     it('falls back to CSS --bg-tertiary when needsBg but no bgColor', () => {
       const wrapper = mountIcon({ backend: 'noBgColor' })
       const svg = wrapper.find('svg')
       expect(svg.classes()).toContain('agent-icon-bg')
-      expect(svg.attributes('style')).not.toContain('background')
+      expect(svg.attributes('style') ?? '').not.toContain('background')
     })
 
     it('adds monoCssClass when provided', () => {

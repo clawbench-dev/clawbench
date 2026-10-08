@@ -354,3 +354,28 @@ func TestServeSessionRewind_MethodNotAllowedForGet(t *testing.T) {
 	w := callHandler(ServeSessionRewind, req)
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
+
+// TestServeSessionRewind_RefusesGroup pins the handler mapping: a group rewind
+// is rejected with a dedicated 400 (GroupNotRewindable), not the generic
+// InvalidRewindPoint — so the client can explain WHY. Symmetric with
+// ServeForkSession_RefusesGroup.
+//
+// The assertion is on the localized TEXT, not the msgKey: writeLocalizedErrorf
+// echoes msgKey into the JSON body unconditionally, so asserting on
+// "GroupNotRewindable" would pass even if both YAML entries were deleted.
+func TestServeSessionRewind_RefusesGroup(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	groupID, _, err := service.CreateGroup(env.ProjectDir, "讨论组", "codebuddy", "codebuddy", "Host")
+	require.NoError(t, err)
+
+	body := map[string]any{"sessionId": groupID, "beforeMessageId": 1}
+	req := newRequest(t, http.MethodPost, "/api/ai/session/rewind", body)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeSessionRewind, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	// Default test locale is English; assert the resolved translation.
+	assert.Contains(t, w.Body.String(), "A group chat cannot be rewound",
+		"the localized GroupNotRewindable text must resolve (msgKey alone is always echoed)")
+}

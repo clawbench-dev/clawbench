@@ -1,6 +1,5 @@
 import { ref, computed } from 'vue'
 import { useAgents, registerIdentityUpdaters } from '@/composables/useAgents'
-import { gt } from '@/composables/useLocale'
 import { appLog } from '@/utils/appLog'
 import { createSelectState } from '@/composables/useSelectState'
 import { useChatContext } from '@/composables/useChatContext'
@@ -23,6 +22,11 @@ const TAG = 'SessionIdentity'
 const currentSessionId = ref('')
 const currentSessionTitle = ref('')
 const currentBackend = ref('')
+// session_type of the current session ('chat' | 'group' | ...). Authoritative
+// group signal: it must NOT be derived from the member roster, which
+// useGroupMembers clears on any fetch failure (a network blip would otherwise
+// make a group render as a single chat — fork/rewind/model chrome reappearing).
+const currentSessionType = ref('')
 export const currentAgentId = ref('')
 const currentModelId = ref('')
 const currentModelName = ref('')
@@ -30,6 +34,7 @@ const currentTransport = ref('') // 'acp-stdio' or 'cli'
 const autoApprove = ref(false)
 const availableCommands = ref<Array<{ name: string; description: string; inputHint?: string }>>([])
 
+// ── Group-chat active speaker (decision #59) ──
 // ── Unified SelectState instances for mode and thinking effort ──
 // These replace the individual refs (currentModeId, currentModeName,
 // availableModes, currentThinkingEffort, currentThinkingEffortName,
@@ -191,6 +196,7 @@ registerSessionIdRef(currentSessionId)
 export function clearSessionIdentity(upcomingSessionId?: string): void {
   currentSessionTitle.value = ''
   currentBackend.value = ''
+  currentSessionType.value = ''
   currentAgentId.value = ''
   currentModelId.value = ''
   currentModelName.value = ''
@@ -206,6 +212,7 @@ export function resetIdentity(): void {
   currentSessionId.value = ''
   currentSessionTitle.value = ''
   currentBackend.value = ''
+  currentSessionType.value = ''
   currentAgentId.value = ''
   currentModelId.value = ''
   currentModelName.value = ''
@@ -611,6 +618,7 @@ export async function initSessionFromAPI() {
         currentSessionId.value = data.sessionId
         currentSessionTitle.value = data.sessionTitle || ''
         currentBackend.value = data.backend || ''
+        currentSessionType.value = data.sessionType || ''
         currentAgentId.value = data.agentId || ''
         // Slash commands are now populated from /api/agents acpStates (via loadAgents)
         // and from the chat response below — no separate prefetch request needed.
@@ -691,10 +699,13 @@ export async function initSessionFromAPI() {
 // Computed helpers
 // ───────────────────────────────────────────────────────────
 
+// Empty when there is no current agent — the chat title bar shows a skeleton
+// during a switch and otherwise renders nothing, so a placeholder ("AI 对话")
+// would only ever flash. Consumers gate on currentAgentId being set.
 const agentHeaderTitle = computed(() => {
   const { agentHeaderTitle: makeTitle } = useAgents()
   if (currentAgentId.value) return makeTitle(currentAgentId.value)
-  return gt('chat.session.aiDialog')
+  return ''
 })
 
 // ───────────────────────────────────────────────────────────
@@ -744,6 +755,7 @@ export function useSessionIdentity() {
         currentSessionId.value = data.sessionId
         currentSessionTitle.value = data.title || ''
         currentBackend.value = data.backend || ''
+        currentSessionType.value = data.sessionType || ''
         currentAgentId.value = data.agentId || agentId || ''
         // Initialize model: prefer localStorage pref, then agent default
         const agentsApi = useAgents()
@@ -965,6 +977,7 @@ export function useSessionIdentity() {
     currentSessionId,
     currentSessionTitle,
     currentBackend,
+    currentSessionType,
     currentAgentId,
     currentModelId,
     currentModelName,

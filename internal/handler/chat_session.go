@@ -39,15 +39,17 @@ func ServeSessionsOverview(w http.ResponseWriter, r *http.Request) {
 	pendingSet := ai.GetACPConnManager().GetPendingApprovalSessionIDs()
 
 	type overviewSession struct {
-		ID              string    `json:"id"`
-		Title           string    `json:"title"`
-		Backend         string    `json:"backend"`
-		AgentID         string    `json:"agentId"`
-		Model           string    `json:"model"`
-		Running         bool      `json:"running"`
-		PendingApproval bool      `json:"pendingApproval"`
-		UnreadCount     int       `json:"unreadCount"`
-		UpdatedAt       time.Time `json:"updatedAt"`
+		ID              string                     `json:"id"`
+		Title           string                     `json:"title"`
+		Backend         string                     `json:"backend"`
+		AgentID         string                     `json:"agentId"`
+		Model           string                     `json:"model"`
+		SessionType     string                     `json:"sessionType,omitempty"`
+		Running         bool                       `json:"running"`
+		PendingApproval bool                       `json:"pendingApproval"`
+		UnreadCount     int                        `json:"unreadCount"`
+		UpdatedAt       time.Time                  `json:"updatedAt"`
+		GroupMembers    []model.GroupMemberPreview `json:"groupMembers,omitempty"`
 	}
 	type projectGroup struct {
 		Name     string            `json:"name"`
@@ -55,6 +57,7 @@ func ServeSessionsOverview(w http.ResponseWriter, r *http.Request) {
 	}
 	groups := []*projectGroup{}
 	groupByName := map[string]*projectGroup{}
+	groupIDs := []string{}
 	total := 0
 	for _, s := range sessions {
 		running := runningSet[s.ID]
@@ -68,18 +71,36 @@ func ServeSessionsOverview(w http.ResponseWriter, r *http.Request) {
 			groupByName[s.ProjectPath] = g
 			groups = append(groups, g)
 		}
+		if service.IsGroupSessionType(s.SessionType) {
+			groupIDs = append(groupIDs, s.ID)
+		}
 		g.Sessions = append(g.Sessions, overviewSession{
 			ID:              s.ID,
 			Title:           s.Title,
 			Backend:         s.Backend,
 			AgentID:         s.AgentID,
 			Model:           s.Model,
+			SessionType:     s.SessionType,
 			Running:         running,
 			PendingApproval: pending,
 			UnreadCount:     s.UnreadCount,
 			UpdatedAt:       s.UpdatedAt,
 		})
 		total++
+	}
+	// Group rows carry the same active-member preview as the main list. One
+	// batch query for all groups on this page (attachGroupMembers works on
+	// model.ChatSession, so this path inlines the lookup).
+	if membersByGroup, err := service.GroupMembersForGroups(groupIDs); err != nil {
+		slog.Warn("failed to load overview group members", "error", err)
+	} else {
+		for gi := range groups {
+			for si := range groups[gi].Sessions {
+				if members := membersByGroup[groups[gi].Sessions[si].ID]; len(members) > 0 {
+					groups[gi].Sessions[si].GroupMembers = members
+				}
+			}
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"projects": groups, "total": total})
 }
@@ -161,6 +182,7 @@ func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 			sessions[i].PendingApproval = pendingApprovalSet[sessions[i].ID]
 		}
 		attachSessionTags(sessions)
+		attachGroupMembers(sessions)
 		totalCount, _ := service.GetSessionCount(projectPath)
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"sessions":   sessions,
@@ -172,7 +194,7 @@ func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 		// Check session count limit before creating (0 = unlimited)
 		if model.SessionMaxCount > 0 {
 			if count, cerr := service.GetSessionCount(projectPath); cerr == nil && count >= model.SessionMaxCount {
-				writeLocalizedErrorf(w, r, http.StatusConflict, "SessionLimitReached", map[string]any{"MaxCount": model.SessionMaxCount})
+				writeLocalizedErrorf(w, r, http.StatusConflict, "SessionLimitReached", map[string]any{jsonMaxCount: model.SessionMaxCount})
 				return
 			}
 		}
@@ -234,7 +256,7 @@ func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 		// auto-approve flag (initialized from the agent's configured default) so
 		// the frontend reflects server state instead of re-deriving it.
 		sessionCount, _ := service.GetSessionCount(projectPath)
-		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "sessionId": sessionID, "backend": backend, "agentId": resolvedAgentID, "sessionCount": sessionCount, "title": title, "autoApprove": service.GetSessionAutoApprove(sessionID)})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "sessionId": sessionID, jsonBackend: backend, jsonAgentID: resolvedAgentID, "sessionCount": sessionCount, "title": title, "autoApprove": service.GetSessionAutoApprove(sessionID)})
 
 	default:
 		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
@@ -350,6 +372,7 @@ func ArchiveSession(w http.ResponseWriter, r *http.Request) {
 		slog.Info("acp: closing connection for archived session", "session_id", sessionID, "agent_id", agentID)
 		go ai.GetACPConnManager().CloseConn(sessionID)
 	}
+	closeGroupMemberConns(sessionID)
 
 	sessionCount, _ := service.GetSessionCount(projectPath)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "destroyed": false, "sessionCount": sessionCount})
@@ -374,6 +397,10 @@ func archiveEmptySessionHardDelete(w http.ResponseWriter, projectPath, sessionID
 		slog.Info("acp: closing connection for empty archived session", "session_id", sessionID, "agent_id", agentID)
 		go ai.GetACPConnManager().CloseConn(sessionID)
 	}
+	// A group's members are separate connections keyed by MEMBER row id; close
+	// them too so the hard-delete does not leak member agent processes
+	// (decision #57). No-op for non-group sessions.
+	closeGroupMemberConns(sessionID)
 
 	// Delete RAG chunks (best-effort, no-op if RAG not initialized)
 	if chunksDeleted, err := service.PurgeRAGChunksBySessionIDs([]string{sessionID}); err != nil {
@@ -428,6 +455,7 @@ func DestroySession(w http.ResponseWriter, r *http.Request) {
 			go ai.GetACPConnManager().CloseConn(sessionID)
 		}
 	}
+	closeGroupMemberConns(sessionID)
 
 	// Delete RAG chunks for this session before hard-deleting session data.
 	// Best-effort — if RAG is not initialized, this is a no-op.
@@ -444,6 +472,31 @@ func DestroySession(w http.ResponseWriter, r *http.Request) {
 
 	sessionCount, _ := service.GetSessionCount(projectPath)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "destroyed": true, "sessionCount": sessionCount})
+}
+
+// closeGroupMemberConns closes the ACP connection of every member of a group.
+//
+// Each member owns a separate connection keyed by the MEMBER row id, so closing
+// the group row's connection (what the archive/destroy paths already do) leaves
+// every member agent process running. A group's members must be closed by their
+// own ids (decision #57). No-op for non-group sessions.
+//
+// Each close runs in its own goroutine, matching the existing convention:
+// CloseConn may block on cmd.Wait() if the agent does not exit cleanly, and the
+// HTTP response must not wait on it.
+func closeGroupMemberConns(sessionID string) {
+	if !service.IsGroupSession(sessionID) {
+		return
+	}
+	members, err := service.ListGroupMembers(sessionID)
+	if err != nil {
+		slog.Warn("acp: listing group members to close connections failed", "session_id", sessionID, "err", err)
+		return
+	}
+	for _, m := range members {
+		slog.Info("acp: closing connection for group member", "group_id", sessionID, "member_id", m.ID)
+		go ai.GetACPConnManager().CloseConn(m.ID)
+	}
 }
 
 // getSessionID retrieves session ID from query param or cookie.
@@ -559,12 +612,7 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if req.AutoApprove != nil {
-		//nolint:errcheck,gosec // best-effort persistence; failure is non-fatal for an idempotent update
-		service.UpdateSessionAutoApprove(sessionID, *req.AutoApprove)
-		// Sync to ACPConn runtime state
-		if conn := ai.GetACPConnManager().GetConn(sessionID); conn != nil {
-			conn.SetAutoApprove(*req.AutoApprove)
-		}
+		applyAutoApprove(sessionID, *req.AutoApprove)
 	}
 	if title := strings.TrimSpace(req.Title); title != "" {
 		// Manual rename: lock the title so the first-message auto-title does
@@ -613,6 +661,36 @@ func applySessionTags(sessionID string, tags []service.SessionTagRef) error {
 	return service.SetSessionTags(sessionID, projectPath, tags)
 }
 
+// applyAutoApprove persists the auto-approve toggle and syncs it to any live
+// ACP connection(s).
+//
+// Group chats need a fan-out: each member owns its own ACP connection keyed by
+// the MEMBER row id, and the permission handler reads the member row's flag —
+// so writing the group row alone (whose connection is always nil) made the
+// switch dead (decision #61). SetGroupAutoApprove writes every member row plus
+// the group row; the live member connections are synced here.
+func applyAutoApprove(sessionID string, enabled bool) {
+	if service.IsGroupSession(sessionID) {
+		//nolint:errcheck,gosec // best-effort persistence; failure is non-fatal for an idempotent update
+		service.SetGroupAutoApprove(sessionID, enabled)
+		members, err := service.ListGroupMembers(sessionID)
+		if err != nil {
+			return
+		}
+		for _, m := range members {
+			if conn := ai.GetACPConnManager().GetConn(m.ID); conn != nil {
+				conn.SetAutoApprove(enabled)
+			}
+		}
+		return
+	}
+	//nolint:errcheck,gosec // best-effort persistence; failure is non-fatal for an idempotent update
+	service.UpdateSessionAutoApprove(sessionID, enabled)
+	if conn := ai.GetACPConnManager().GetConn(sessionID); conn != nil {
+		conn.SetAutoApprove(enabled)
+	}
+}
+
 // forwardSessionConfigOption pushes a config-option change to the session's ACP
 // agent, if one is connected.
 //
@@ -651,6 +729,36 @@ func attachSessionTags(sessions []model.ChatSession) {
 	for i := range sessions {
 		for _, t := range tagsBySession[sessions[i].ID] {
 			sessions[i].Tags = append(sessions[i].Tags, model.SessionTag{Name: t.Name, Scope: t.Scope})
+		}
+	}
+}
+
+// attachGroupMembers batch-loads the active-member preview for group sessions
+// in a page and sets it in place. Only group rows get the field, so a page of
+// plain chat sessions pays no extra work. Like attachSessionTags, failures are
+// logged and swallowed: the preview is decoration and must not take down the
+// list.
+func attachGroupMembers(sessions []model.ChatSession) {
+	if len(sessions) == 0 {
+		return
+	}
+	groupIDs := make([]string, 0, len(sessions))
+	for i := range sessions {
+		if service.IsGroupSessionType(sessions[i].SessionType) {
+			groupIDs = append(groupIDs, sessions[i].ID)
+		}
+	}
+	if len(groupIDs) == 0 {
+		return
+	}
+	membersByGroup, err := service.GroupMembersForGroups(groupIDs)
+	if err != nil {
+		slog.Warn("failed to load group members", "error", err)
+		return
+	}
+	for i := range sessions {
+		if members := membersByGroup[sessions[i].ID]; len(members) > 0 {
+			sessions[i].GroupMembers = members
 		}
 	}
 }
@@ -814,8 +922,10 @@ func buildForkTitle(r *http.Request, sourceID string) string {
 func writeForkError(w http.ResponseWriter, r *http.Request, err error) {
 	slog.Error("handler: failed to fork session", "error", err)
 	errMsg := err.Error()
-	if strings.Contains(errMsg, "session limit") {
-		writeLocalizedErrorf(w, r, http.StatusConflict, "SessionLimitReached", map[string]any{"MaxCount": model.SessionMaxCount})
+	if strings.Contains(errMsg, "group sessions are not forkable") {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "GroupNotForkable")
+	} else if strings.Contains(errMsg, "session limit") {
+		writeLocalizedErrorf(w, r, http.StatusConflict, "SessionLimitReached", map[string]any{jsonMaxCount: model.SessionMaxCount})
 	} else if strings.Contains(errMsg, "not found in session") || strings.Contains(errMsg, "must be a user or assistant message") || strings.Contains(errMsg, "streaming message") {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidForkPoint")
 	} else if strings.Contains(errMsg, "not found") {

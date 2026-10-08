@@ -91,6 +91,9 @@ vi.mock('@/composables/useGlobalEvents', () => ({
 }))
 vi.mock('@/composables/useAgents', () => ({
   useAgents: () => ({ getAgentBackend: mockGetAgentBackend, getAgentName: mockGetAgentName, getAgentAvatar: () => '' }),
+  // GroupMemberStack (rendered for group rows) imports this directly; a
+  // whitelist mock that omits it makes the import undefined and crashes render.
+  getAgentAvatar: () => '',
 }))
 // VueDraggable needs a real DOM root it can measure; in jsdom its mounted hook
 // throws "Root element not found" and takes the whole component down. The stub
@@ -339,6 +342,178 @@ describe('SessionList', () => {
     expect(wrapper.vm.visibleRows[0].running).toBe(true)
   })
 
+  describe('group rows', () => {
+    const groupSession = {
+      id: 'g1',
+      title: 'Group 1',
+      createdAt: '2025-01-01',
+      updatedAt: '2025-01-05',
+      agentId: 'agent-host',
+      backend: 'cli',
+      sessionType: 'group',
+      groupMembers: [
+        { id: 'm1', agentId: 'agent-host', name: 'Host', backend: 'cli' },
+        { id: 'm2', agentId: 'agent-2', name: 'Claude', backend: 'acp' },
+      ],
+    }
+
+    it('replaces the single-agent chip with a group glyph + member stack', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [groupSession, sessionsFixture().s1], hasMore: false }),
+      })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      // Group row: group slot + stack, no agent chip.
+      const groupRow = wrapper.find('[data-session-id="g1"]')
+      expect(groupRow.find('.session-item-group').exists()).toBe(true)
+      expect(groupRow.find('.group-member-stack').exists()).toBe(true)
+      expect(groupRow.find('.session-item-agent').exists()).toBe(false)
+      // Two members -> two discs.
+      expect(groupRow.findAll('.group-member-stack .avatar-disc').length).toBe(2)
+
+      // Plain row is untouched: agent chip, no group slot.
+      const plainRow = wrapper.find('[data-session-id="s1"]')
+      expect(plainRow.find('.session-item-agent').exists()).toBe(true)
+      expect(plainRow.find('.session-item-group').exists()).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('caps the stack at four discs and summarises the rest as "+N" (same as the header)', async () => {
+      const manyMembers = Array.from({ length: 6 }, (_, i) => ({
+        id: `m${i}`, agentId: `a${i}`, name: `M${i}`, backend: 'cli',
+      }))
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [{ ...groupSession, groupMembers: manyMembers }], hasMore: false }),
+      })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      const discs = wrapper.findAll('[data-session-id="g1"] .group-member-stack .avatar-disc')
+      // Capped at 4 discs; the remaining members are summarised as "+2".
+      expect(discs.length).toBe(4)
+      expect(wrapper.find('[data-session-id="g1"] .avatar-more').text()).toBe('+2')
+      wrapper.unmount()
+    })
+
+    it('renders all four discs with no overflow label when exactly at the cap', async () => {
+      const exactly = Array.from({ length: 4 }, (_, i) => ({
+        id: `m${i}`, agentId: `a${i}`, name: `M${i}`, backend: 'cli',
+      }))
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [{ ...groupSession, groupMembers: exactly }], hasMore: false }),
+      })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      expect(wrapper.findAll('[data-session-id="g1"] .group-member-stack .avatar-disc').length).toBe(4)
+      expect(wrapper.find('[data-session-id="g1"] .avatar-more').exists()).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('omits the model chip on a group row but keeps it on a plain row', async () => {
+      // A group's `model` is the host's model, not a property of the group as a
+      // whole — showing it next to the member stack reads as if the group ran on
+      // one model. The chip is suppressed for groups and kept for single-agent
+      // rows (whose model IS meaningful).
+      const groupWithModel = { ...groupSession, model: 'gpt-4' }
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [groupWithModel, sessionsFixture().s1], hasMore: false }),
+      })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      expect(wrapper.find('[data-session-id="g1"] .session-item-model').exists()).toBe(false)
+      expect(wrapper.find('[data-session-id="s1"] .session-item-model').exists()).toBe(true)
+      wrapper.unmount()
+    })
+
+    it('shows the host-mode label when the preview carries a host', async () => {
+      // The i18n mock returns the key verbatim.
+      const hostGroup = {
+        ...groupSession,
+        groupMembers: [
+          { id: 'm1', agentId: 'agent-host', name: 'Host', backend: 'cli', isHost: true },
+          { id: 'm2', agentId: 'agent-2', name: 'Claude', backend: 'acp' },
+        ],
+      }
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [hostGroup], hasMore: false }),
+      })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      const mode = wrapper.find('[data-session-id="g1"] .session-item-group-mode')
+      expect(mode.exists()).toBe(true)
+      expect(mode.text()).toBe('group.hostMode')
+      wrapper.unmount()
+    })
+
+    it('shows the free-mode label when no preview member is the host', async () => {
+      const freeGroup = {
+        ...groupSession,
+        groupMembers: [
+          { id: 'm1', agentId: 'agent-1', name: 'A', backend: 'cli' },
+          { id: 'm2', agentId: 'agent-2', name: 'B', backend: 'acp' },
+        ],
+      }
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [freeGroup], hasMore: false }),
+      })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      const mode = wrapper.find('[data-session-id="g1"] .session-item-group-mode')
+      expect(mode.exists()).toBe(true)
+      expect(mode.text()).toBe('group.freeMode')
+      wrapper.unmount()
+    })
+
+    it('omits the mode label when the roster is empty (mode unknowable)', async () => {
+      // A failed preview fetch (or a free group whose members all left) leaves
+      // the roster empty; guessing the mode from that is worse than omitting it.
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [{ ...groupSession, groupMembers: [] }], hasMore: false }),
+      })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      expect(wrapper.find('[data-session-id="g1"] .session-item-group-mode').exists()).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('shows only the group glyph when no active members remain', async () => {
+      // A group with zero active members (e.g. all removed) must still read as a
+      // group — the Users glyph stays, the stack is simply empty.
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [{ ...groupSession, groupMembers: [] }], hasMore: false }),
+      })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      const groupRow = wrapper.find('[data-session-id="g1"]')
+      expect(groupRow.find('.session-item-group').exists()).toBe(true)
+      expect(groupRow.find('.group-member-stack').exists()).toBe(false)
+      wrapper.unmount()
+    })
+  })
+
   it('renders the sweep band as a real element only on running rows', async () => {
     // The band must be a real node, not a `::after`: its travel is driven by
     // v-running-sweep through the Web Animations API, which cannot target a
@@ -555,6 +730,29 @@ describe('SessionList', () => {
     const runningRow = wrapper.find('.cross-session-row.running')
     expect(runningRow.find('.session-status').exists(), 'a running cross row has no slot').toBe(false)
     expect(runningRow.find('.session-running-band').exists(), 'but it keeps the comet').toBe(true)
+  })
+
+  it('omits the model chip on cross-project group rows too', async () => {
+    // The cross pane renders its own row markup (a separate template block), so
+    // the group rule has to be wired there as well.
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
+    mockCrossState.groups.value = [{
+      name: '/proj/other',
+      displayName: 'Other',
+      displayPath: '/proj/other',
+      sessions: [
+        { id: 'xg', title: 'Group', agentId: 'a', backend: 'acp', model: 'gpt-4', sessionType: 'group', groupMembers: [], updatedAt: '2025-01-01', running: false, pendingApproval: false, unreadCount: 0 },
+        { id: 'xp', title: 'Plain', agentId: 'a', backend: 'acp', model: 'gpt-4', updatedAt: '2025-01-01', running: false, pendingApproval: false, unreadCount: 0 },
+      ],
+    }]
+    const wrapper = await mountList({ activeTab: 'cross' })
+    await flushPromises()
+
+    // Cross rows carry no data-session-id; address them by their title text.
+    const groupRow = wrapper.findAll('.cross-session-row').find(r => r.text().includes('Group'))
+    const plainRow = wrapper.findAll('.cross-session-row').find(r => r.text().includes('Plain'))
+    expect(groupRow!.find('.session-item-model').exists()).toBe(false)
+    expect(plainRow!.find('.session-item-model').exists()).toBe(true)
   })
 
   it('emits archive after confirmation', async () => {
@@ -1152,6 +1350,34 @@ describe('SessionList', () => {
       // crossGroup() has two active sessions — the count must reflect the group,
       // matching the count badge the Pinned/Recent headers already show.
       expect(wrapper.find('.session-group-count').text()).toBe('2')
+    })
+
+    it('renders the group glyph + member stack for a group row in the cross pane', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
+      mockCrossState.groups.value = [{
+        name: '/proj/other',
+        displayName: 'other',
+        displayPath: '~/proj/other',
+        sessions: [
+          {
+            id: 'og1', title: 'Other group', backend: 'cli', agentId: 'agent-host',
+            sessionType: 'group',
+            groupMembers: [
+              { id: 'm1', agentId: 'agent-host', name: 'Host', backend: 'cli' },
+              { id: 'm2', agentId: 'agent-2', name: 'Claude', backend: 'acp' },
+            ],
+            running: false, pendingApproval: false, unreadCount: 1, updatedAt: '2025-01-05',
+          },
+        ],
+      }]
+      const wrapper = await mountList({ activeTab: 'cross' })
+      await flushPromises()
+
+      const row = wrapper.find('.cross-session-item')
+      expect(row.find('.session-item-group').exists()).toBe(true)
+      expect(row.find('.group-member-stack').exists()).toBe(true)
+      expect(row.find('.session-item-agent').exists()).toBe(false)
+      expect(row.findAll('.group-member-stack .avatar-disc').length).toBe(2)
     })
 
     it('collapses and expands a cross-project group from its header', async () => {

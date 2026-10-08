@@ -3809,3 +3809,55 @@ describe('rebuildFromDb: live placeholder matching without an adopted id', () =>
     expect(merged[0].id).toBe(53240)
   })
 })
+
+// Group chat: each member turn is a SEPARATE assistant message. The backend
+// emits stream_start (with the member's row id) then stream_finalize at the end
+// of THAT member's turn. Regression for the reported "other agents don't stream
+// at all until you switch sessions": without the per-member finalize, the first
+// member's bubble stayed streaming, so the next member's stream_start found an
+// existing streaming message and never opened a new bubble — every member's
+// content piled into the first bubble.
+describe('group chat: per-member stream lifecycle', () => {
+  const aMsg = (id: unknown, content: string, extra: Record<string, unknown> = {}): any =>
+    ({ role: 'assistant', id, content: '', blocks: content ? [{ type: 'text', text: content }] : [], createdAt: '2026-01-01T00:00:01Z', ...extra })
+
+  it('opens a new bubble per member when stream_finalize precedes each stream_start', () => {
+    let s: any[] = []
+
+    // Member A: stream_start (id 10) → content → stream_finalize(10).
+    s = chatMessageReducer(s, { type: 'stream_placeholder', msg: aMsg(10, '', { streaming: true, agentId: 'member-A', seq: 1 }) })
+    s = chatMessageReducer(s, { type: 'ws_content', text: 'A says' })
+    s = chatMessageReducer(s, { type: 'stream_finalize' })
+
+    // Member B: stream_start (id 11) → content → stream_finalize(11).
+    s = chatMessageReducer(s, { type: 'stream_placeholder', msg: aMsg(11, '', { streaming: true, agentId: 'member-B', seq: 2 }) })
+    s = chatMessageReducer(s, { type: 'ws_content', text: 'B says' })
+    s = chatMessageReducer(s, { type: 'stream_finalize' })
+
+    const assistants = s.filter((m) => m.role === 'assistant')
+    expect(assistants).toHaveLength(2)
+    expect(assistants[0].agentId).toBe('member-A')
+    expect(assistants[1].agentId).toBe('member-B')
+    expect(assistants.every((m) => !m.streaming)).toBe(true)
+    // Each bubble holds ONLY its own member's content (no cross-contamination).
+    expect(assistants[0].blocks?.[0]?.text).toBe('A says')
+    expect(assistants[1].blocks?.[0]?.text).toBe('B says')
+  })
+
+  it('content after stream_start lands on the newest member bubble, not the previous one', () => {
+    let s: any[] = []
+    s = chatMessageReducer(s, { type: 'stream_placeholder', msg: aMsg(20, '', { streaming: true, agentId: 'member-A', seq: 1 }) })
+    s = chatMessageReducer(s, { type: 'ws_content', text: 'A1' })
+    s = chatMessageReducer(s, { type: 'stream_finalize' })
+    s = chatMessageReducer(s, { type: 'stream_placeholder', msg: aMsg(21, '', { streaming: true, agentId: 'member-B', seq: 2 }) })
+    s = chatMessageReducer(s, { type: 'ws_content', text: 'B1' })
+
+    const a = s.find((m) => m.id === 20)
+    const b = s.find((m) => m.id === 21)
+    expect(a.blocks?.[0]?.text).toBe('A1')
+    expect(b.blocks?.[0]?.text).toBe('B1')
+    // Only the newest bubble is still streaming.
+    expect(a.streaming).toBeFalsy()
+    expect(b.streaming).toBe(true)
+  })
+})

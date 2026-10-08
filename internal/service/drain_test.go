@@ -48,11 +48,12 @@ const drainTestSchema = store.ProjectsDDL + `
 CREATE TABLE IF NOT EXISTS chat_history (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	project_id INTEGER NOT NULL,
-	role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+	role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
 	content TEXT NOT NULL,
 	files TEXT,
 	session_id TEXT,
 	backend TEXT NOT NULL DEFAULT 'claude',
+	agent_id TEXT DEFAULT '',
 	streaming INTEGER NOT NULL DEFAULT 0,
 	indexed INTEGER NOT NULL DEFAULT 0,
 	external_message_id TEXT DEFAULT '',

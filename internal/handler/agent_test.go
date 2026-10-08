@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -2112,9 +2113,12 @@ func TestAgentDuplicate_NoRaceWithConcurrentReaders(t *testing.T) {
 		}
 	}()
 
-	// Writer: duplicate repeatedly so the population window is hit.
-	for range 20 {
-		body := map[string]any{"source_id": "claude", "name": "Clone"}
+	// Writer: duplicate repeatedly so the population window is hit. Names must
+	// be unique per iteration: agent names are globally unique (decision #50),
+	// so a fixed name would make every copy after the first return 409 and the
+	// race window would never be exercised.
+	for i := range 20 {
+		body := map[string]any{"source_id": "claude", "name": fmt.Sprintf("Clone %d", i)}
 		req := newRequest(t, http.MethodPost, "/api/agents", body)
 		withAuthCookie(req, model.SessionToken)
 		w := callHandler(ServeAgents, req)
@@ -2123,4 +2127,53 @@ func TestAgentDuplicate_NoRaceWithConcurrentReaders(t *testing.T) {
 
 	close(stop)
 	wg.Wait()
+}
+
+// Duplicating onto a name another agent already owns must be a 409 with the
+// AgentNameTaken msgKey, so the client can keep the copy dialog open and show
+// the reason inline instead of a generic failure toast.
+func TestAgentDuplicate_NameTakenReturnsConflict(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	// "Test" is the name of the codebuddy agent seeded by setupAgentTestEnv.
+	body := map[string]any{"source_id": "claude", "name": "Test"}
+	req := newRequest(t, http.MethodPost, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	require.Equal(t, http.StatusConflict, w.Code)
+
+	var resp model.ErrorResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "AgentNameTaken", resp.MsgKey)
+
+	// The colliding copy must not have been inserted.
+	agents, err := service.LoadAgentsFromDB()
+	require.NoError(t, err)
+	assert.Len(t, agents, 2, "the rejected copy must not be persisted")
+}
+
+// PATCHing an agent's name onto another agent's name must be a 409 too.
+func TestAgentPatch_RenameCollisionReturnsConflict(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	body := map[string]any{"id": "claude", "name": "Test"} // owned by codebuddy
+	req := newRequest(t, http.MethodPatch, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	require.Equal(t, http.StatusConflict, w.Code)
+
+	var resp model.ErrorResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "AgentNameTaken", resp.MsgKey)
+
+	// The original name is untouched.
+	agents, err := service.LoadAgentsFromDB()
+	require.NoError(t, err)
+	for _, a := range agents {
+		if a.ID == "claude" {
+			assert.Equal(t, "Claude", a.Name, "a rejected rename must not persist")
+		}
+	}
 }

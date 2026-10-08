@@ -214,6 +214,53 @@ describe('useSettingsNavigation', () => {
         })
     })
 
+    // ── replaceTopNav (sibling detail hand-off, e.g. agent copy) ──
+
+    describe('replaceTopNav', () => {
+        it('swaps the top entry without growing the stack (copy → new agent)', () => {
+            const { pushNav, replaceTopNav, navStack, currentCategory } = useSettingsNavigation()
+
+            pushNav('agents')
+            pushNav('agents:source')
+            replaceTopNav('agents:copy')
+
+            // Depth stays 2 — the breadcrumb must not read
+            // 设置 › 源智能体 › 副本.
+            expect(navStack.value).toEqual(['agents', 'agents:copy'])
+            expect(currentCategory.value).toBe('agents:copy')
+        })
+
+        it('replaces a deep-linked detail with no list beneath it', () => {
+            const { pushNav, replaceTopNav, navStack, currentCategory } = useSettingsNavigation()
+
+            pushNav('agents:source')
+            replaceTopNav('agents:copy')
+
+            expect(navStack.value).toEqual(['agents:copy'])
+            expect(currentCategory.value).toBe('agents:copy')
+        })
+
+        it('pushes when the stack is empty', () => {
+            const { replaceTopNav, navStack, currentCategory } = useSettingsNavigation()
+
+            replaceTopNav('agents:copy')
+
+            expect(navStack.value).toEqual(['agents:copy'])
+            expect(currentCategory.value).toBe('agents:copy')
+        })
+
+        it('preserves the array identity (mutates in place)', () => {
+            const { pushNav, replaceTopNav, navStack } = useSettingsNavigation()
+
+            pushNav('agents')
+            pushNav('agents:source')
+            const before = navStack.value
+            replaceTopNav('agents:copy')
+
+            expect(navStack.value).toBe(before)
+        })
+    })
+
     // ── resetState ──
 
     describe('resetState', () => {
@@ -371,6 +418,7 @@ describe('useSettingsNavigation', () => {
             expect(nav.restartingOverlay).toBeDefined()
             expect(typeof nav.pushNav).toBe('function')
             expect(typeof nav.popNav).toBe('function')
+            expect(typeof nav.replaceTopNav).toBe('function')
             expect(typeof nav.resetState).toBe('function')
             expect(typeof nav.handleRestartNeeded).toBe('function')
             expect(typeof nav.handleRestart).toBe('function')

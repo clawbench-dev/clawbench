@@ -42,6 +42,8 @@ func validateRewindRequest(w http.ResponseWriter, r *http.Request, sessionID str
 	if err := service.ValidateRewindAnchor(sessionID, beforeMessageID); err != nil {
 		slog.Info("session rewind: invalid anchor", "session_id", sessionID, "anchor_message", beforeMessageID, "error", err)
 		switch {
+		case errors.Is(err, service.ErrGroupNotRewindable):
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "GroupNotRewindable")
 		case errors.Is(err, service.ErrRewindAnchorNotFound),
 			errors.Is(err, service.ErrRewindAnchorNotAssistant),
 			errors.Is(err, service.ErrRewindAnchorStreaming):
@@ -121,6 +123,8 @@ func ServeSessionRewind(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Error("handler: failed to rewind session", "session_id", req.SessionID, "error", err)
 		switch {
+		case errors.Is(err, service.ErrGroupNotRewindable):
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "GroupNotRewindable")
 		case errors.Is(err, service.ErrRewindAnchorNotFound),
 			errors.Is(err, service.ErrRewindAnchorNotAssistant),
 			errors.Is(err, service.ErrRewindAnchorStreaming):

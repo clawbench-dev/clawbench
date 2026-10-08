@@ -40,7 +40,8 @@ func setupTestDBForChatSummary(t *testing.T) (*sql.DB, func()) {
 			backend TEXT NOT NULL,
 			title TEXT NOT NULL,
 			title_source TEXT NOT NULL DEFAULT '',
-			archived INTEGER NOT NULL DEFAULT 0
+			archived INTEGER NOT NULL DEFAULT 0,
+			session_type TEXT NOT NULL DEFAULT 'chat'
 		);
 	`)
 	_, _ = db.Exec(`
@@ -52,6 +53,7 @@ func setupTestDBForChatSummary(t *testing.T) (*sql.DB, func()) {
 			files TEXT,
 			session_id TEXT,
 			backend TEXT NOT NULL DEFAULT 'claude',
+			agent_id TEXT DEFAULT '',
 			streaming INTEGER NOT NULL DEFAULT 0,
 			indexed INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -397,4 +399,47 @@ func TestTriggerChatSummarization_DoesNotBlockOnRecommendation(t *testing.T) {
 		assert.Equal(t, "Continue the work.", data.Recommendation)
 	}
 	assert.True(t, eventSeen, "expected a chat_recommendation WS event from the async goroutine")
+}
+
+// A group message's blocks must NOT be stripped when it has a summary: the
+// group render pipeline parses routing tags and private notes (bcc) out of the
+// blocks, and `summarizeContentForView` replaces blocks with [] — which made a
+// host's bcc card vanish after switching sessions and back (the summary itself
+// carries no tags). Group messages are short; the bandwidth saving is not worth
+// losing the structured view.
+func TestEnrichMessagesWithSummaries_GroupKeepsBlocks(t *testing.T) {
+	db, teardown := setupTestDBForChatSummary(t)
+	defer teardown()
+
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, session_type) VALUES ('g1', 1, 'codebuddy', 'Group', 'group')")
+	assert.NoError(t, err)
+	_, err = db.Exec("INSERT INTO summaries (target_type, target_id, summary) VALUES ('chat_message', 50, '摘要')")
+	assert.NoError(t, err)
+
+	content := `{"blocks":[{"type":"text","text":"<clawbench-speaker>A</clawbench-speaker> 表态 <clawbench-bcc targets=\"A\">秘密</clawbench-bcc>"}]}`
+	messages := []model.ChatMessage{
+		{ID: 50, Role: "assistant", Content: content, SessionID: "g1"},
+	}
+	enrichMessagesWithSummaries(messages)
+	assert.NotNil(t, messages[0].Summary)
+	// blocks survive so the bcc card can still be parsed on reload.
+	assert.Contains(t, messages[0].Content, "clawbench-bcc")
+	assert.Contains(t, messages[0].Content, "blocks")
+}
+
+// The ordinary chat path still strips (unchanged behavior).
+func TestEnrichMessagesWithSummaries_ChatStillStrips(t *testing.T) {
+	db, teardown := setupTestDBForChatSummary(t)
+	defer teardown()
+
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, session_type) VALUES ('c1', 1, 'claude', 'Chat', 'chat')")
+	assert.NoError(t, err)
+	_, err = db.Exec("INSERT INTO summaries (target_type, target_id, summary) VALUES ('chat_message', 60, '摘要')")
+	assert.NoError(t, err)
+
+	messages := []model.ChatMessage{
+		{ID: 60, Role: "assistant", Content: `{"blocks":[{"type":"text","text":"long answer"}]}`, SessionID: "c1"},
+	}
+	enrichMessagesWithSummaries(messages)
+	assert.NotContains(t, messages[0].Content, "long answer")
 }

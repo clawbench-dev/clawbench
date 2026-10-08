@@ -158,7 +158,7 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	if model.SessionMaxCount > 0 {
 		var count int
 		err = store.ReadDB().QueryRow(
-			"SELECT COUNT(*) FROM chat_sessions WHERE project_id = ? AND archived = 0 AND session_type = 'chat'",
+			"SELECT COUNT(*) FROM chat_sessions WHERE project_id = ? AND archived = 0 AND session_type IN ("+store.VisibleSessionTypeInClause+")",
 			sessProjectID,
 		).Scan(&count)
 		if err != nil {
@@ -212,7 +212,7 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	// h.created_at > s2.last_read_at). Instead, we let the database assign CURRENT_TIMESTAMP,
 	// which guarantees format consistency. Message ordering relies on auto-increment id, not created_at.
 	rows, err := store.ReadDB().Query(
-		"SELECT id, project_id, role, content, files, backend FROM chat_history WHERE session_id = ? AND streaming = 0 ORDER BY id",
+		"SELECT id, project_id, role, content, files, backend, agent_id FROM chat_history WHERE session_id = ? AND streaming = 0 ORDER BY id",
 		sourceSessionID,
 	)
 	if err != nil {
@@ -227,11 +227,12 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 		content   string
 		files     sql.NullString
 		backend   string
+		agentID   string
 	}
 	var messages []sourceMsg
 	for rows.Next() {
 		var m sourceMsg
-		if err := rows.Scan(&m.id, &m.projectID, &m.role, &m.content, &m.files, &m.backend); err != nil {
+		if err := rows.Scan(&m.id, &m.projectID, &m.role, &m.content, &m.files, &m.backend, &m.agentID); err != nil {
 			return "", false, fmt.Errorf("failed to scan source message: %w", err)
 		}
 		messages = append(messages, m)
@@ -241,8 +242,8 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	idMap := make(map[int64]int64)
 	for _, m := range messages {
 		result, err := store.WriteExec(
-			"INSERT INTO chat_history (project_id, role, content, files, session_id, backend, streaming) VALUES (?, ?, ?, ?, ?, ?, 0)",
-			m.projectID, m.role, m.content, m.files, newSessionID, m.backend,
+			"INSERT INTO chat_history (project_id, role, content, files, session_id, backend, streaming, agent_id) VALUES (?, ?, ?, ?, ?, ?, 0, ?)",
+			m.projectID, m.role, m.content, m.files, newSessionID, m.backend, m.agentID,
 		)
 		if err != nil {
 			return "", false, fmt.Errorf("failed to copy message %d: %w", m.id, err)
@@ -287,6 +288,15 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 // If beforeMessageID > 0, only messages up to and including the assistant reply
 // following the specified user message are copied. The title is provided by the caller.
 func ForkSession(sourceSessionID, projectPath, title string, beforeMessageID int64, overrideAgentID string) (string, error) { //nolint:gocyclo // multi-step session fork with fork-point resolution
+	// 0. A group cannot be forked (decision #74, symmetric with rewind #52).
+	// The fork hard-codes session_type='chat' and copies the source's
+	// backend/agent, so a forked group would be a single-agent chat whose
+	// messages carry MEMBER row ids — ids that resolve to no member, rendering
+	// as unattributed AI speech.
+	if GetSessionType(sourceSessionID) == groupSessionType {
+		return "", fmt.Errorf("cannot fork session %s: group sessions are not forkable", sourceSessionID)
+	}
+
 	// 1. Get source session metadata
 	var backend, agentID, agentSource, modelName, sessProjectPath string
 	var sessProjectID int64
@@ -427,7 +437,7 @@ func checkSessionLimit(projectPath string) error {
 	}
 	var count int
 	err := store.ReadDB().QueryRow(
-		"SELECT COUNT(*) FROM chat_sessions WHERE project_id = ? AND archived = 0 AND session_type = 'chat'",
+		"SELECT COUNT(*) FROM chat_sessions WHERE project_id = ? AND archived = 0 AND session_type IN ("+store.VisibleSessionTypeInClause+")",
 		projectID,
 	).Scan(&count)
 	if err != nil {
@@ -443,7 +453,7 @@ func checkSessionLimit(projectPath string) error {
 // If beforeMessageID > 0, only messages with id <= beforeMessageID are copied.
 // Returns a map from old message IDs to new message IDs.
 func copySessionMessages(sourceSessionID, newSessionID string, beforeMessageID int64) (map[int64]int64, error) {
-	query := "SELECT id, project_id, role, content, files, backend FROM chat_history WHERE session_id = ? AND streaming = 0"
+	query := "SELECT id, project_id, role, content, files, backend, agent_id FROM chat_history WHERE session_id = ? AND streaming = 0"
 	args := []any{sourceSessionID}
 	if beforeMessageID > 0 {
 		query += " AND id <= ?"
@@ -463,11 +473,12 @@ func copySessionMessages(sourceSessionID, newSessionID string, beforeMessageID i
 		content   string
 		files     sql.NullString
 		backend   string
+		agentID   string
 	}
 	var messages []sourceMsg
 	for rows.Next() {
 		var m sourceMsg
-		if err := rows.Scan(&m.id, &m.projectID, &m.role, &m.content, &m.files, &m.backend); err != nil {
+		if err := rows.Scan(&m.id, &m.projectID, &m.role, &m.content, &m.files, &m.backend, &m.agentID); err != nil {
 			return nil, fmt.Errorf("failed to scan source message: %w", err)
 		}
 		messages = append(messages, m)
@@ -476,8 +487,8 @@ func copySessionMessages(sourceSessionID, newSessionID string, beforeMessageID i
 	idMap := make(map[int64]int64)
 	for _, m := range messages {
 		result, err := store.WriteExec(
-			"INSERT INTO chat_history (project_id, role, content, files, session_id, backend, streaming) VALUES (?, ?, ?, ?, ?, ?, 0)",
-			m.projectID, m.role, m.content, m.files, newSessionID, m.backend,
+			"INSERT INTO chat_history (project_id, role, content, files, session_id, backend, streaming, agent_id) VALUES (?, ?, ?, ?, ?, ?, 0, ?)",
+			m.projectID, m.role, m.content, m.files, newSessionID, m.backend, m.agentID,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to copy message %d: %w", m.id, err)
@@ -698,6 +709,13 @@ var (
 	// ErrRewindAnchorNotAssistant reports that the anchor message is not an
 	// assistant message.
 	ErrRewindAnchorNotAssistant = errors.New("rewind anchor must be an assistant message")
+	// ErrGroupNotRewindable reports that the target session is a group chat.
+	// Rewinding a group would delete timeline rows while each member's
+	// seen_cursor still points past the deleted ids, so members would re-inject
+	// an off-by-gap context next round. Symmetric with ForkSession's group
+	// guard (decision #52/#74); the frontend hides the button but the API must
+	// enforce it too.
+	ErrGroupNotRewindable = errors.New("group sessions are not rewindable")
 )
 
 // ValidateRewindAnchor is a read-only check that the anchor message is a valid
@@ -709,6 +727,15 @@ var (
 // rewind request (stale UI, double-click race, client bug) fails fast with a
 // 400 instead of first cancelling the user's in-flight AI turn.
 func ValidateRewindAnchor(sessionID string, anchorID int64) error {
+	// A group chat cannot be rewound (decision #52/#74, symmetric with
+	// ForkSession). The group timeline is shared by every member, whose
+	// seen_cursor points past the rows this would delete — truncating it would
+	// leave each member re-injecting an off-by-gap context next round. Checked
+	// FIRST (before the anchor lookup) so a group rewind fails fast with a clear
+	// error instead of a confusing "anchor not found".
+	if GetSessionType(sessionID) == groupSessionType {
+		return fmt.Errorf("%w: session %s", ErrGroupNotRewindable, sessionID)
+	}
 	var role string
 	var streaming int
 	err := store.ReadDB().QueryRow(

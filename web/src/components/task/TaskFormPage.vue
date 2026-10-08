@@ -26,7 +26,7 @@
           <label class="form-label">{{ t('task.form.executeAgent') }} <span class="required">*</span></label>
           <button class="agent-display" @click="openAgentSelector">
             <template v-if="form.agentId && selectedAgent">
-              <AgentIcon :backend="selectedAgent.backend" :name="selectedAgent.name" :avatar="selectedAgent.avatar" :size="16" />
+              <AgentIcon :backend="selectedAgent.backend" :name="selectedAgent.name" :avatar="selectedAgent.avatar" size="md" />
               <div class="agent-display-detail">
                 <span class="agent-display-name">{{ selectedAgent.name }}</span>
                 <div class="agent-display-tags">

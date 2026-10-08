@@ -163,6 +163,31 @@ system_prompt: |
     You are a mock ACP agent for E2E testing.
 `)
 
+  // A SECOND acp-mock agent under a distinct id. A group cannot contain the same
+  // agent twice: AddGroupMember dedups by agent id, so adding "acp-mock" to a
+  // group whose host is also "acp-mock" just returns the HOST row and the group
+  // stays single-member. Specs that need a real host + member pair (e.g. the
+  // group permission approval path, where only the member must block) use this
+  // second id for the member. Same binary, different id ⇒ independent ACP
+  // connection and independent per-session mode.
+  writeFileSync(join(agentsDir, 'acp-mock-b.yaml'), `backend: acp-mock
+icon: "\\U0001F916"
+id: acp-mock-b
+name: ACP Mock Agent B
+specialty: E2E Testing (ACP, member)
+transport: acp-stdio
+acp_command: ${tempAcpMockBinPath}
+preferred_model: mock-pro
+models:
+  - id: mock-pro
+    name: Mock Pro
+    default: true
+  - id: mock-fast
+    name: Mock Fast
+system_prompt: |
+    You are a mock ACP agent for E2E testing.
+`)
+
   // 5. Copy the pre-built Go binary to temp dir
   // The binary is built before E2E tests run (by CI or developer).
   // E2E_SERVER_BIN overrides the binary path (e.g. a `-tags integration` build

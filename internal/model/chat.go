@@ -122,12 +122,16 @@ func PathsFromFileEntries(entries []FileEntry) []string {
 
 // ChatMessage represents a single message in the chat history
 type ChatMessage struct {
-	ID           int64         `json:"id,omitempty"`
-	Role         string        `json:"role"`
-	Content      string        `json:"content"`
-	Files        []FileEntry   `json:"files,omitempty"`
-	SessionID    string        `json:"sessionId,omitempty"`
-	Backend      string        `json:"backend,omitempty"`
+	ID        int64       `json:"id,omitempty"`
+	Role      string      `json:"role"`
+	Content   string      `json:"content"`
+	Files     []FileEntry `json:"files,omitempty"`
+	SessionID string      `json:"sessionId,omitempty"`
+	Backend   string      `json:"backend,omitempty"`
+	// AgentID is the speaker's group-member session row id for group-chat
+	// messages (see docs/plans/2026-10-04-ai-group-chat-design.md §4.3). It is
+	// NOT a real agent id and is empty for ordinary single-agent messages.
+	AgentID      string        `json:"agentId,omitempty"`
 	ProjectPath  string        `json:"projectPath,omitempty"`
 	Streaming    bool          `json:"streaming,omitempty"`
 	Indexed      bool          `json:"indexed,omitempty"`
@@ -278,7 +282,7 @@ type ChatSession struct {
 	AgentID     string `json:"agentId,omitempty"`
 	AgentSource string `json:"agentSource,omitempty"`
 	Model       string `json:"model,omitempty"`
-	SessionType string `json:"sessionType,omitempty"` // "chat" | "scheduled"
+	SessionType string `json:"sessionType,omitempty"` // "chat" | "scheduled" | "group" | "group_member"
 	// SourceSessionID records where this session was derived from. Three
 	// writers share the column, so it is NOT always a session id:
 	//   - ForkSession            → the source session's id
@@ -299,6 +303,26 @@ type ChatSession struct {
 	// not stored on the session row itself). Always omitted when empty so the
 	// payload for untagged sessions is unchanged.
 	Tags []SessionTag `json:"tags,omitempty"`
+	// GroupMembers is a compact preview of a group session's ACTIVE members,
+	// populated only for session_type='group' rows by the session list /
+	// overview endpoints (batch-loaded, never stored on the session row).
+	// Omitted when empty, so a non-group session's payload is unchanged.
+	GroupMembers []GroupMemberPreview `json:"groupMembers,omitempty"`
+}
+
+// GroupMemberPreview is the wire shape of one active group member in a session
+// list row: just enough to render a stacked avatar (the member's agentId drives
+// the avatar, name the tooltip). It is NOT the full roster — the member
+// management sheet loads that via GET /api/group/members.
+type GroupMemberPreview struct {
+	ID      string `json:"id"`
+	AgentID string `json:"agentId"`
+	Name    string `json:"name"`
+	Backend string `json:"backend"`
+	// IsHost lets the list-row stack put the host first (the leading disc is
+	// the only fully visible one). Without it the preview cannot order the
+	// stack the way the header does.
+	IsHost bool `json:"isHost,omitempty"`
 }
 
 // SessionTag is a user-defined label attached to a session. Scope is "project"
@@ -321,17 +345,6 @@ type QueuedMessage struct {
 	FilePaths []string    `json:"filePaths,omitempty"` // legacy channel; Files is authoritative
 	Files     []FileEntry `json:"files,omitempty"`
 	CreatedAt string      `json:"createdAt"`
-}
-
-// ImageAttachment carries an inline image for a multimodal ACP prompt.
-// Either Path (local file path, read at prompt-build time) or Data
-// (base64-encoded image bytes) may be set. MimeType is required and
-// describes the image type (e.g. "image/png").
-type ImageAttachment struct {
-	Path     string `json:"path,omitempty"` // local file path; backend reads it into Data
-	Data     string `json:"data,omitempty"` // base64-encoded image bytes
-	MimeType string `json:"mimeType"`
-	URI      string `json:"uri,omitempty"` // optional source reference
 }
 
 // ContentBlock represents a typed block within an assistant message's content.

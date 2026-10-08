@@ -16,6 +16,11 @@
       :staticBlockCache="render.staticBlockCache"
       :agents="agentsList"
       :currentAgent="currentAgent"
+      :isGroupSession="isGroupSession"
+      :groupMembers="props.groupMembers"
+      :resolveSpeaker="props.resolveGroupSpeaker"
+      :resolveSpeakerByName="props.resolveGroupSpeakerByName"
+      :hostMemberId="props.groupHostMemberId"
       :currentSessionId="identity.currentSessionId.value"
       :hasMore="session.hasMore.value"
       :loadingMore="session.loadingMore.value"
@@ -113,6 +118,8 @@
       :acpSyncing="acpSyncing"
       :busyKind="busy"
       :active="props.active"
+      :isGroupSession="isGroupSession"
+      :groupMembers="props.groupMembers"
       @send="sendMessage"
       @btw="handleBtw"
       @cancel="stream.cancelStream"
@@ -262,7 +269,8 @@ import { useFileUpload } from '@/composables/useFileUpload.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import { relativizeProjectPath } from '@/utils/quoteQuestionUtils.ts'
 import { resetQuotePin } from '@/composables/useQuoteQuestion.ts'
-import { fromStagedQuote, fromFileEntry, materializeQuotes, buildMessageQuote } from '@/utils/quoteItem.ts'
+import { fromStagedQuote, fromFileEntry, materializeQuotes, buildMessageQuote, quotableMessageText } from '@/utils/quoteItem.ts'
+import { stripGroupProtocolTags } from '@/utils/groupRouting.ts'
 import { useQuoteDetail } from '@/composables/useQuoteDetail.ts'
 import { pendingMessageNavigation, consumePendingMessageNavigation, setPendingMessageNavigation } from '@/composables/useMessageNavigation.ts'
 import { openExternalUrl } from '@/utils/externalLink.ts'
@@ -295,6 +303,12 @@ const props = defineProps({
     keyboardActive: { type: Boolean, default: true },
     currentFile: Object,
     currentDir: String,
+    // Group roster, owned by App.vue (the header avatar stack lives there).
+    // Passed down so the roster is fetched once, not once per consumer.
+    groupMembers: { type: Array, default: () => [] },
+    groupHostMemberId: { type: String, default: '' },
+    resolveGroupSpeaker: { type: Function, default: null },
+    resolveGroupSpeakerByName: { type: Function, default: null },
 })
 const emit = defineEmits(['open', 'message', 'task-card-click', 'open-session-search'])
 
@@ -331,6 +345,13 @@ const renderedMessages = computed(() => messages.value)
 const inputDisabled = ref(false)
 const loading = ref(false)
 const currentAgent = computed(() => getAgent(identity.currentAgentId.value) || null)
+/** A group-chat session (multiple agents). Derived from the session's stored
+ *  TYPE, not the member roster: useGroupMembers clears the roster on any fetch
+ *  failure, so a network blip used to make a group render as a single chat
+ *  (fork/rewind/model chrome reappearing, avatar strip vanishing). The roster
+ *  is only used to render members. Drives the suppression of single-agent-only
+ *  controls in the message list and input bar. */
+const isGroupSession = computed(() => identity.currentSessionType.value === 'group')
 const inputBarRef = ref(null)
 const messageListRef = ref(null)
 const metadataModal = ref({
@@ -492,10 +513,10 @@ async function handleFileTagClick(fileEntry) {
  */
 function handleQuoteMessage(msg) {
     if (!msg) return
-    const isUser = msg.role === 'user'
-    const text = (isUser
-        ? (extractSpeakableText(msg.blocks || []) || msg.content || '')
-        : (extractSpeakableText(msg.blocks || []) || msg.summary || '')).trim()
+    // Shared with ChatMessageItem: strips the host's private notes (bcc) — a
+    // quote becomes an attachment that is rendered into every member's injected
+    // context, so a note must never ride along.
+    const text = quotableMessageText(msg.role, msg.blocks, msg.content, msg.summary)
     if (!text) return
 
     const id = msg.id !== undefined && msg.id !== null ? Number(msg.id) : NaN
@@ -656,7 +677,34 @@ async function jumpToQuoteSource(q) {
 
 const { planEntries, planCollapsed, planHasUpdate, togglePlanCollapse } = usePlanProgress()
 
-const render = useChatRender({ messages, theme, currentSessionId: identity.currentSessionId })
+// resolveMentionTarget maps a mention target to a display name for the inline
+// chip. A target is either a member ROW id (a user's @ carries the id) or a
+// display name (an agent writes the name): try the speaker resolver first, then
+// the by-name resolver, and fall back to the raw target.
+//
+// mentionScope changes when the roster changes: the chip HTML is baked into the
+// rendered-block cache, whose key does NOT include the roster, so a chip
+// rendered before the roster loaded would otherwise keep showing "@<uuid>".
+const mentionScope = computed(() =>
+  (props.groupMembers || []).map(m => `${m.id}:${m.name}`).join(','),
+)
+const render = useChatRender({
+  messages,
+  theme,
+  currentSessionId: identity.currentSessionId,
+  mentionScope,
+  resolveMentionTarget: (target) => {
+    if (typeof props.resolveGroupSpeaker === 'function') {
+      const hit = props.resolveGroupSpeaker(target)
+      if (hit?.name) return hit.name
+    }
+    if (typeof props.resolveGroupSpeakerByName === 'function') {
+      const hit = props.resolveGroupSpeakerByName(target)
+      if (hit?.name) return hit.name
+    }
+    return target
+  },
+})
 
 /** Look up the tool_use block from the live messages array by msgId + blockIdx */
 function findToolBlock({ msgId, blockIdx }) {
@@ -748,7 +796,8 @@ async function onStreamEnd(reason) {
     if (autoSpeech.enabled.value) {
       const lastMsg = messages.value[messages.value.length - 1]
       if (lastMsg?.role === 'assistant') {
-        const fullText = extractSpeakableText(lastMsg.blocks || [])
+        // Strip the host's private notes: they are not for the user to hear.
+        const fullText = stripGroupProtocolTags(extractSpeakableText(lastMsg.blocks || []))
         if (fullText && lastMsg.id) {
           autoSpeech.speakMessage(lastMsg.id, fullText)
         } else {

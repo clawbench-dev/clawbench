@@ -79,6 +79,13 @@ type SessionSharePayload struct {
 	CreatedAt time.Time             `json:"createdAt"`
 	Session   SessionShareSession   `json:"session"`
 	Messages  []SessionShareMessage `json:"messages"`
+	// SessionAgent + Speakers let the public viewer render the real speaker icon
+	// per message. Avatars are deliberately NOT frozen here (the resolver is
+	// called with includeAvatar=false): a shared link must not expose the
+	// creator's custom avatars. Speakers is keyed by member row id and present
+	// only for group sessions.
+	SessionAgent *SpeakerIdentity           `json:"sessionAgent,omitempty"`
+	Speakers     map[string]SpeakerIdentity `json:"speakers,omitempty"`
 }
 
 // SessionShareSession is the session-level metadata shown in the share header.
@@ -90,6 +97,11 @@ type SessionShareSession struct {
 	AgentID   string     `json:"agentId,omitempty"`
 	Model     string     `json:"model,omitempty"`
 	CreatedAt *time.Time `json:"createdAt,omitempty"`
+	// HostMemberID is the group host's member row id (group sessions only;
+	// empty otherwise). The viewer needs it to mark the host's messages and to
+	// render their private notes (bcc) card — a group's timeline otherwise
+	// cannot tell which speaker is the chair.
+	HostMemberID string `json:"hostMemberId,omitempty"`
 }
 
 // SessionShareMessage mirrors model.ChatMessage's JSON shape so the viewer can
@@ -97,10 +109,13 @@ type SessionShareSession struct {
 // stays a JSON string (the same encoding chat_history uses) because
 // parseAssistantContent on the frontend expects it.
 type SessionShareMessage struct {
-	ID           int64               `json:"id"`
-	Role         string              `json:"role"`
-	Content      string              `json:"content"`
-	Files        []model.FileEntry   `json:"files,omitempty"`
+	ID      int64             `json:"id"`
+	Role    string            `json:"role"`
+	Content string            `json:"content"`
+	Files   []model.FileEntry `json:"files,omitempty"`
+	// AgentID is the speaker's group-member row id (group chats only; empty
+	// for ordinary sessions). Preserves speaker attribution in a shared group.
+	AgentID      string              `json:"agentId,omitempty"`
 	CreatedAt    time.Time           `json:"createdAt"`
 	Summary      *string             `json:"summary,omitempty"`
 	SummaryCards *model.SummaryCards `json:"summaryCards,omitempty"`
@@ -117,6 +132,10 @@ type SessionMessagePreview struct {
 	Preview   string `json:"preview"`
 	Streaming bool   `json:"streaming"`
 	CreatedAt string `json:"createdAt"`
+	// AgentID is the speaker's group-member row id for group chats, empty for
+	// ordinary single-agent messages. The dialog resolves it against the
+	// response's `speakers`/`sessionAgent` to render the real agent icon.
+	AgentID string `json:"agentId,omitempty"`
 }
 
 // GetSessionMessagesForSelection lists every message of a session (finalized or
@@ -126,7 +145,7 @@ func GetSessionMessagesForSelection(sessionID string) ([]SessionMessagePreview, 
 		return nil, fmt.Errorf("session id is required")
 	}
 	rows, err := store.ReadDB().Query(
-		`SELECT id, role, content, streaming, created_at FROM chat_history
+		`SELECT id, role, content, streaming, created_at, COALESCE(agent_id, '') FROM chat_history
 		 WHERE session_id = ? ORDER BY id ASC`,
 		sessionID,
 	)
@@ -143,8 +162,9 @@ func GetSessionMessagesForSelection(sessionID string) ([]SessionMessagePreview, 
 			content   string
 			streaming int
 			createdAt string
+			agentID   string
 		)
-		if err := rows.Scan(&id, &role, &content, &streaming, &createdAt); err != nil {
+		if err := rows.Scan(&id, &role, &content, &streaming, &createdAt, &agentID); err != nil {
 			return nil, fmt.Errorf("scan session message for selection: %w", err)
 		}
 		items = append(items, SessionMessagePreview{
@@ -153,6 +173,7 @@ func GetSessionMessagesForSelection(sessionID string) ([]SessionMessagePreview, 
 			Preview:   clipRunes(ExtractPlainText(content), sessionSharePreviewRunes),
 			Streaming: streaming != 0,
 			CreatedAt: createdAt,
+			AgentID:   agentID,
 		})
 	}
 	return items, rows.Err()
@@ -202,16 +223,22 @@ func BuildSessionSharePayload(sessionID string, messageIDs []int64, projectRoot,
 		return "", 0, err
 	}
 
+	// includeAvatar=false: a shared link must not leak user-configured avatars.
+	sessionAgent, speakers := ResolveSessionSpeakers(sessionID, false)
+
 	out := SessionSharePayload{
 		Version:   sessionSharePayloadVersion,
 		CreatedAt: time.Now().UTC(),
 		Session: SessionShareSession{
-			Title:   info.Title,
-			Backend: info.Backend,
-			AgentID: info.AgentID,
-			Model:   info.Model,
+			Title:        info.Title,
+			Backend:      info.Backend,
+			AgentID:      info.AgentID,
+			Model:        info.Model,
+			HostMemberID: GetGroupHostMember(sessionID),
 		},
-		Messages: make([]SessionShareMessage, 0, len(messages)),
+		Messages:     make([]SessionShareMessage, 0, len(messages)),
+		SessionAgent: sessionAgent,
+		Speakers:     speakers,
 	}
 	for i := range messages {
 		out.Messages = append(out.Messages,
@@ -270,6 +297,7 @@ func buildShareMessage(
 		ID:        msg.ID,
 		Role:      msg.Role,
 		Content:   inlineMessageContent(msg, toolCalls, thinking, projectRoot, homeDir),
+		AgentID:   msg.AgentID,
 		CreatedAt: msg.CreatedAt,
 	}
 	if len(msg.Files) > 0 {

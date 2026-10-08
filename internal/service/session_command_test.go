@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 			agent_source TEXT DEFAULT 'default',
 			model TEXT DEFAULT '',
 			session_type TEXT NOT NULL DEFAULT 'chat',
+			group_id TEXT DEFAULT '',
 			external_session_id TEXT DEFAULT '',
 			transport TEXT DEFAULT '',
 			auto_approve INTEGER NOT NULL DEFAULT 0,
@@ -62,11 +63,12 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 		CREATE TABLE IF NOT EXISTS chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			project_id INTEGER NOT NULL,
-			role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+			role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
 			content TEXT NOT NULL,
 			files TEXT,
 			session_id TEXT,
 			backend TEXT NOT NULL DEFAULT 'claude',
+			agent_id TEXT DEFAULT '',
 			streaming INTEGER NOT NULL DEFAULT 0,
 			indexed INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -1978,10 +1980,27 @@ func TestBuildForkContext_SkipsSystemMessages(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	sessionID := "fork-sys-skip"
-	// The chat_history table has a CHECK(role IN ('user', 'assistant')),
-	// so we can't insert system messages directly. But we can verify
-	// that messages with only thinking blocks produce empty fork context
-	// (thinking blocks are now excluded, tool_use blocks are included).
+	// chat_history now accepts role='system' (group-chat system events), and
+	// fork context must skip it: a system event is not conversation history and
+	// must not be replayed into a forked session.
+	_, err := store.WriteExec(
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'system', ?, ?, 'claude', 0)",
+		"/proj", `{"blocks":[{"type":"text","text":"成员 A 加入了讨论"}]}`, sessionID,
+	)
+	require.NoError(t, err)
+
+	result := BuildForkContext(sessionID)
+	assert.Equal(t, "", result, "system events should be skipped in fork context")
+}
+
+// TestBuildForkContext_SkipsThinkingOnlyMessages verifies that messages with
+// only thinking blocks produce empty fork context (thinking blocks are
+// excluded; tool_use blocks are included).
+func TestBuildForkContext_SkipsThinkingOnlyMessages(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	sessionID := "fork-think-only"
 	_, err := store.WriteExec(
 		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
 		"/proj", `{"blocks":[{"type":"thinking","text":"thinking content"}]}`, sessionID,
@@ -1989,7 +2008,6 @@ func TestBuildForkContext_SkipsSystemMessages(t *testing.T) {
 	require.NoError(t, err)
 
 	result := BuildForkContext(sessionID)
-	// thinking blocks are excluded, so only-thinking messages produce empty fork context
 	assert.Equal(t, "", result, "thinking-only messages should be skipped in fork context")
 }
 
@@ -3090,4 +3108,127 @@ func TestSetLaunchSessionExecutionForTest_RestoresDefault(t *testing.T) {
 	// Passing nil must restore the real implementation (not leave the stub).
 	assert.NotNil(t, SetLaunchSessionExecutionForTest(nil), "restoring must return the previous seam")
 	assert.NotNil(t, launchSessionExecution, "the seam must never be left nil")
+}
+
+// ============================================================================
+// O18: IM bots support group sessions (decisions #75/#76)
+// ============================================================================
+
+// insertGroupSessionRow inserts a group timeline row (session_type='group').
+func insertGroupSessionRow(t *testing.T, db *sql.DB, id string) {
+	t.Helper()
+	_, err := db.Exec(
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type) VALUES (?, 1, 'codebuddy', 'Group', 'agent-host', 'default', '', 'group')",
+		id,
+	)
+	require.NoError(t, err)
+}
+
+// A group session must be visible to the IM bots' list/prefix lookups, while
+// hidden member rows stay invisible (decisions #75/#76). A member row is
+// inserted alongside to prove the whitelist excludes it.
+func TestListRecentSessions_IncludesGroupExcludesMembers(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	insertGroupSessionRow(t, db, "group-1111")
+	// A hidden member row must NOT surface to IM bots.
+	_, err := store.WriteExec(
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, group_id) VALUES (?, 1, 'claude', 'Member', 'agent-a', 'default', '', 'group_member', 'group-1111')",
+		"group-1111-m1",
+	)
+	require.NoError(t, err)
+
+	results, err := ListRecentSessions(10)
+	require.NoError(t, err)
+	require.Len(t, results, 1, "only the group timeline is listed; member rows are hidden")
+	assert.Equal(t, "group-1111", results[0].ID)
+}
+
+func TestFindSessionsByPrefix_IncludesGroupExcludesMembers(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	insertGroupSessionRow(t, db, "group-abcd")
+	_, err := store.WriteExec(
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, group_id) VALUES (?, 1, 'claude', 'Member', 'agent-a', 'default', '', 'group_member', 'group-abcd')",
+		"group-abcd-m1",
+	)
+	require.NoError(t, err)
+
+	results, err := FindSessionsByPrefix("group-abcd")
+	require.NoError(t, err)
+	require.Len(t, results, 1, "only the group timeline matches; member rows are hidden")
+	assert.Equal(t, "group-abcd", results[0].ID)
+}
+
+// An IM message to a group must be routed to the GROUP drain loop, not run as
+// a single-agent turn (which would let the host answer alone and pollute the
+// group timeline). It goes through the queue entry point so a message arriving
+// while a group turn runs is queued rather than starting a second orchestrator
+// (decisions #45/#75/#76).
+func TestSendMessageToSessionFromPush_GroupRoutesToOrchestrator(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	insertGroupSessionRow(t, db, "group-orch")
+
+	type call struct {
+		sessionID string
+		message   string
+	}
+	done := make(chan call, 1)
+	restore := SetRunGroupDrainLoopForTest(func(_ context.Context, groupID, _ string, _ int64, text string, _ []model.FileEntry) {
+		done <- call{groupID, text}
+	})
+	defer SetRunGroupDrainLoopForTest(restore)
+
+	// The single-agent launcher must NOT be used for a group send.
+	restoreLaunch := SetLaunchSessionExecutionForTest(func(LaunchConfig) {
+		t.Error("a group message must not start a single-agent execution")
+	})
+	defer SetLaunchSessionExecutionForTest(restoreLaunch)
+
+	err := SendMessageToSessionFromDingTalk("group-orch", "hello group", nil)
+	require.NoError(t, err)
+
+	select {
+	case c := <-done:
+		assert.Equal(t, "group-orch", c.sessionID)
+		assert.Equal(t, "hello group", c.message)
+	case <-time.After(2 * time.Second):
+		t.Fatal("the group drain loop was never invoked")
+	}
+
+	// The drain entry point materializes the user row itself, so exactly one
+	// chat_history user row must exist (the orchestrator must not add another).
+	var count int
+	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND role='user'", "group-orch").Scan(&count))
+	assert.Equal(t, 1, count, "the group drain path materializes the user row exactly once")
+}
+
+// Attachments are supported for IM group sends too (decision #65): they are
+// carried through the queue to the orchestrator rather than rejected.
+func TestSendMessageToSessionFromPush_GroupAcceptsAttachments(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	insertGroupSessionRow(t, db, "group-attach")
+
+	got := make(chan []model.FileEntry, 1)
+	restore := SetRunGroupDrainLoopForTest(func(_ context.Context, _ string, _ string, _ int64, _ string, files []model.FileEntry) {
+		got <- files
+	})
+	defer SetRunGroupDrainLoopForTest(restore)
+
+	err := SendMessageToSessionFromDingTalk("group-attach", "with file", []model.FileEntry{{Path: "a.txt"}})
+	require.NoError(t, err)
+
+	select {
+	case files := <-got:
+		require.Len(t, files, 1)
+		assert.Equal(t, "a.txt", files[0].Path)
+	case <-time.After(2 * time.Second):
+		t.Fatal("the group drain loop was never invoked with the attachment")
+	}
 }

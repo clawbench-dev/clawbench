@@ -17,8 +17,15 @@ vi.mock('@dicebear/core', () => {
 
 vi.mock('@dicebear/styles/bottts.json', () => ({ default: { $id: 'bottts' } }))
 vi.mock('@dicebear/styles/identicon.json', () => ({ default: { $id: 'identicon' } }))
+vi.mock('@dicebear/styles/initials.json', () => ({ default: { $id: 'initials' } }))
+vi.mock('@dicebear/styles/shapes.json', () => ({ default: { $id: 'shapes' } }))
+vi.mock('@dicebear/styles/glass.json', () => ({ default: { $id: 'glass' } }))
+vi.mock('@dicebear/styles/pixel-art.json', () => ({ default: { $id: 'pixel-art' } }))
+vi.mock('@dicebear/styles/fun-emoji.json', () => ({ default: { $id: 'fun-emoji' } }))
+vi.mock('@dicebear/styles/lorelei.json', () => ({ default: { $id: 'lorelei' } }))
 
-import { AVATAR_STYLES, getAvatarLib, renderAvatar } from '@/utils/lazyAvatar'
+import { AVATAR_STYLES, getAvatarLib, loadAvatarKit } from '@/utils/lazyAvatar'
+import { svgToDataUri } from '@/utils/svgDataUri'
 
 describe('lazyAvatar', () => {
   beforeEach(() => {
@@ -42,14 +49,17 @@ describe('lazyAvatar', () => {
     expect(typeof a.Avatar).toBe('function')
   })
 
-  it('renderAvatar returns a raw SVG string for the requested seed', async () => {
-    const svg = await renderAvatar('bottts', 'CodeBuddy')
-    expect(svg.startsWith('<svg')).toBe(true)
-    expect(svg).toContain('CodeBuddy')
+  it('loadAvatarKit returns a Style instance for every curated style', async () => {
+    const kit = await loadAvatarKit()
+    expect(typeof kit.Avatar).toBe('function')
+    expect(Object.keys(kit.styles).sort()).toEqual([...AVATAR_STYLES].sort())
   })
 
-  it('renderAvatar accepts a size option', async () => {
-    const svg = await renderAvatar('identicon', 'x', 128)
-    expect(svg).toContain('<svg')
+  it('svgToDataUri encodes the SVG so "#" in url(#id) survives', () => {
+    const svg = '<svg><rect fill="url(#grad)"/></svg>'
+    const uri = svgToDataUri(svg)
+    expect(uri.startsWith('data:image/svg+xml;charset=utf-8,')).toBe(true)
+    expect(uri).toContain('%23') // '#' encoded, not left raw
+    expect(decodeURIComponent(uri.split(',')[1])).toBe(svg)
   })
 })

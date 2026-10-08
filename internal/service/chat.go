@@ -31,7 +31,7 @@ func GetChatHistory(projectPath, backend, sessionID string) ([]model.ChatMessage
 		return nil, err
 	}
 	rows, err := store.ReadDB().Query(
-		"SELECT id, role, content, files, backend, streaming, created_at, indexed FROM chat_history WHERE project_id = ? AND session_id = ? ORDER BY id ASC",
+		"SELECT id, role, content, files, backend, streaming, created_at, indexed, agent_id FROM chat_history WHERE project_id = ? AND session_id = ? ORDER BY id ASC",
 		projectID, sessionID,
 	)
 	if err != nil {
@@ -44,7 +44,7 @@ func GetChatHistory(projectPath, backend, sessionID string) ([]model.ChatMessage
 		var filesJSON sql.NullString
 		var streaming int
 		var indexed int
-		if err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &streaming, &msg.CreatedAt, &indexed); err != nil {
+		if err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &streaming, &msg.CreatedAt, &indexed, &msg.AgentID); err != nil {
 			return nil, err
 		}
 		msg.Streaming = streaming != 0
@@ -85,8 +85,8 @@ func GetChatHistoryPaged(projectPath, backend, sessionID string, limit int, befo
 
 	if limit > 0 && beforeID > 0 {
 		// Cursor-based: load messages older than beforeID
-		query := `SELECT id, role, content, files, backend, streaming, created_at, indexed FROM (
-			SELECT id, role, content, files, backend, streaming, created_at, indexed FROM chat_history
+		query := `SELECT id, role, content, files, backend, streaming, created_at, indexed, agent_id FROM (
+			SELECT id, role, content, files, backend, streaming, created_at, indexed, agent_id FROM chat_history
 			WHERE project_id = ? AND session_id = ? AND id < ?
 			ORDER BY id DESC LIMIT ?
 		) sub ORDER BY id ASC`
@@ -101,8 +101,8 @@ func GetChatHistoryPaged(projectPath, backend, sessionID string, limit int, befo
 
 	if limit > 0 {
 		// Initial load: get the most recent (limit) messages
-		query := `SELECT id, role, content, files, backend, streaming, created_at, indexed FROM (
-			SELECT id, role, content, files, backend, streaming, created_at, indexed FROM chat_history
+		query := `SELECT id, role, content, files, backend, streaming, created_at, indexed, agent_id FROM (
+			SELECT id, role, content, files, backend, streaming, created_at, indexed, agent_id FROM chat_history
 			WHERE project_id = ? AND session_id = ?
 			ORDER BY id DESC LIMIT ?
 		) sub ORDER BY id ASC`
@@ -116,7 +116,7 @@ func GetChatHistoryPaged(projectPath, backend, sessionID string, limit int, befo
 	}
 
 	// No limit: return all messages in chronological order
-	query := `SELECT id, role, content, files, backend, streaming, created_at, indexed FROM chat_history WHERE project_id = ? AND session_id = ? ORDER BY id ASC`
+	query := `SELECT id, role, content, files, backend, streaming, created_at, indexed, agent_id FROM chat_history WHERE project_id = ? AND session_id = ? ORDER BY id ASC`
 	rows, err := store.ReadDB().Query(query, projectID, sessionID)
 	if err != nil {
 		return messages, totalCount, err
@@ -135,7 +135,7 @@ func scanMessages(rows *sql.Rows, sessionID string) ([]model.ChatMessage, error)
 		var filesJSON sql.NullString
 		var streaming int
 		var indexed int
-		if err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &streaming, &msg.CreatedAt, &indexed); err != nil {
+		if err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &streaming, &msg.CreatedAt, &indexed, &msg.AgentID); err != nil {
 			return nil, err
 		}
 		msg.Streaming = streaming != 0
@@ -194,7 +194,7 @@ const indexSummaryMaxRunes = 200
 // until they are dequeued into chat_history.
 func GetConversationIndex(sessionID string) ([]model.ChatMessage, error) {
 	rows, err := store.ReadDB().Query(
-		`SELECT h.id, h.role, h.content, h.files, h.created_at, COALESCE(s.summary, '')
+		`SELECT h.id, h.role, h.content, h.files, h.created_at, COALESCE(s.summary, ''), COALESCE(h.agent_id, '')
 		 FROM chat_history h
 		 LEFT JOIN summaries s ON s.target_type = 'chat_message' AND s.target_id = h.id
 		 WHERE h.session_id = ? AND h.streaming = 0
@@ -210,7 +210,7 @@ func GetConversationIndex(sessionID string) ([]model.ChatMessage, error) {
 		var msg model.ChatMessage
 		var filesJSON sql.NullString
 		var summary string
-		if err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.CreatedAt, &summary); err != nil {
+		if err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.CreatedAt, &summary, &msg.AgentID); err != nil {
 			return nil, err
 		}
 		if msg.Role == roleAssistant {
@@ -311,12 +311,12 @@ func GetMessageByID(id int64) (*model.ChatMessage, error) {
 	// path even though the column is now an id.
 	err := store.ReadDB().QueryRow(
 		`SELECT h.id, h.role, h.content, h.files, h.backend, h.streaming, h.created_at, h.indexed, h.session_id,
-		        COALESCE(p.path, '')
+		        COALESCE(p.path, ''), h.agent_id
 		   FROM chat_history h
 		   LEFT JOIN projects p ON p.id = h.project_id
 		  WHERE h.id = ?`,
 		id,
-	).Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &streaming, &msg.CreatedAt, &indexed, &msg.SessionID, &msg.ProjectPath)
+	).Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &streaming, &msg.CreatedAt, &indexed, &msg.SessionID, &msg.ProjectPath, &msg.AgentID)
 	if err != nil {
 		return nil, err
 	}
@@ -340,7 +340,7 @@ func GetMessageByID(id int64) (*model.ChatMessage, error) {
 // until dequeued), so no queued filter is needed.
 func GetMessagesBySessionID(sessionID string) ([]model.ChatMessage, error) {
 	rows, err := store.ReadDB().Query(
-		"SELECT id, role, content, files, backend, streaming, created_at, indexed FROM chat_history WHERE session_id = ? AND streaming = 0 ORDER BY id ASC",
+		"SELECT id, role, content, files, backend, streaming, created_at, indexed, agent_id FROM chat_history WHERE session_id = ? AND streaming = 0 ORDER BY id ASC",
 		sessionID,
 	)
 	if err != nil {
@@ -358,7 +358,7 @@ func GetMessagesBySessionID(sessionID string) ([]model.ChatMessage, error) {
 // must use this function.
 func GetMessagesBySessionIDRaw(sessionID string) ([]model.ChatMessage, error) {
 	rows, err := store.ReadDB().Query(
-		"SELECT id, role, content, files, backend, streaming, created_at, indexed FROM chat_history WHERE session_id = ? AND streaming = 0 ORDER BY id ASC",
+		"SELECT id, role, content, files, backend, streaming, created_at, indexed, agent_id FROM chat_history WHERE session_id = ? AND streaming = 0 ORDER BY id ASC",
 		sessionID,
 	)
 	if err != nil {
@@ -371,7 +371,7 @@ func GetMessagesBySessionIDRaw(sessionID string) ([]model.ChatMessage, error) {
 		var filesJSON sql.NullString
 		var streaming int
 		var indexed int
-		if err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &streaming, &msg.CreatedAt, &indexed); err != nil {
+		if err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &streaming, &msg.CreatedAt, &indexed, &msg.AgentID); err != nil {
 			return nil, err
 		}
 		msg.Streaming = streaming != 0
@@ -554,7 +554,7 @@ func extractTextFromValue(v any, depth int) string {
 		// 2. ACP notification wrapper: {"content":{"text":"hi","type":"text"},...}.
 		//    Historical bug stored the whole ACP notification JSON as text.
 		if _, isAcp := val["sessionUpdate"]; isAcp {
-			if contentVal, ok := val["content"]; ok {
+			if contentVal, ok := val[contentKeyContent]; ok {
 				if s := extractTextFromValue(contentVal, depth+1); s != "" {
 					return s
 				}
@@ -622,6 +622,15 @@ func joinExtractedTexts(texts []string) string {
 // its assistant reply is created. DB id order therefore equals conversational
 // order, and replies need no anchor.
 func AddChatMessage(projectPath, backend, sessionID, role, content string, files []model.FileEntry, streaming bool, fallbackTitle string) (int64, error) {
+	return AddChatMessageWithAgent(projectPath, backend, sessionID, role, content, files, streaming, fallbackTitle, "")
+}
+
+// AddChatMessageWithAgent is AddChatMessage plus speaker attribution.
+//
+// agentID is written to chat_history.agent_id. For a group-chat member turn it
+// is the member session ROW id (see design §4.3), NOT a real agent id; for
+// ordinary single-agent turns it is empty.
+func AddChatMessageWithAgent(projectPath, backend, sessionID, role, content string, files []model.FileEntry, streaming bool, fallbackTitle, agentID string) (int64, error) {
 	// Guard: reject messages to archived sessions
 	var isArchived int
 	if err := store.ReadDB().QueryRow("SELECT archived FROM chat_sessions WHERE id = ?", sessionID).Scan(&isArchived); err == nil && isArchived == 1 {
@@ -650,7 +659,7 @@ func AddChatMessage(projectPath, backend, sessionID, role, content string, files
 	defer store.WriteUnlock()
 	defer tx.Rollback()
 
-	msgID, titled, txErr = insertChatMessageTx(tx, projectID, backend, sessionID, role, content, files, streamingInt, fallbackTitle)
+	msgID, titled, txErr = insertChatMessageTx(tx, projectID, backend, sessionID, role, content, files, streamingInt, fallbackTitle, agentID)
 	if txErr != nil {
 		return 0, txErr
 	}
@@ -673,6 +682,19 @@ func AddChatMessage(projectPath, backend, sessionID, role, content string, files
 		slog.Int64("msgID", msgID),
 		slog.Bool("streaming", streaming))
 	return msgID, nil
+}
+
+// AddSystemMessage appends a role='system' timeline row to a session.
+//
+// System events record membership changes ("X joined the discussion") so the
+// host and every member learn about them (decisions #40/#44). They belong to
+// nobody: agent_id is empty, which is what keeps them out of the author filter
+// in buildInjectionText and lets the frontend render them as a centered row.
+//
+// Unread counts are unaffected by construction — they count role='assistant'
+// only. Requires N1's widened CHECK (role IN ('user','assistant','system')).
+func AddSystemMessage(projectPath, sessionID, text string) (int64, error) {
+	return AddChatMessageWithAgent(projectPath, groupBackend(sessionID), sessionID, "system", text, nil, false, "", "")
 }
 
 // ErrChatQuoteNotFound is returned when the addressed quote entry does not
@@ -761,7 +783,7 @@ func UpdateChatQuoteNote(sessionID string, messageID int64, quoteID, note string
 // It returns the LastInsertId (msgID) and whether this call wrote the session's
 // local title (titled), so the caller can schedule the AI rename for exactly the
 // message that earned the title. The caller owns Commit/Rollback.
-func insertChatMessageTx(tx *sql.Tx, projectID int64, backend, sessionID, role, content string, files []model.FileEntry, streamingInt int, fallbackTitle string) (int64, bool, error) {
+func insertChatMessageTx(tx *sql.Tx, projectID int64, backend, sessionID, role, content string, files []model.FileEntry, streamingInt int, fallbackTitle, agentID string) (int64, bool, error) {
 	var filesJSON string
 	if len(files) > 0 {
 		data, _ := json.Marshal(files)
@@ -769,8 +791,8 @@ func insertChatMessageTx(tx *sql.Tx, projectID int64, backend, sessionID, role, 
 	}
 
 	result, txErr := tx.Exec(
-		"INSERT INTO chat_history (project_id, backend, session_id, role, content, files, streaming, indexed) VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
-		projectID, backend, sessionID, role, content, filesJSON, streamingInt,
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, files, streaming, indexed, agent_id) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)",
+		projectID, backend, sessionID, role, content, filesJSON, streamingInt, agentID,
 	)
 	if txErr != nil {
 		return 0, false, txErr
@@ -1002,7 +1024,8 @@ type ConversationProject struct {
 func GetConversationProjects() ([]ConversationProject, error) {
 	rows, err := store.ReadDB().QueryContext(context.Background(), `
 		SELECT p.path, COUNT(*), MAX(agg.last_at) FROM (
-			SELECT project_id, created_at AS last_at FROM chat_sessions WHERE project_id != 0
+			SELECT project_id, created_at AS last_at FROM chat_sessions
+			 WHERE project_id != 0 AND session_type IN (`+store.VisibleSessionTypeInClause+`)
 			UNION ALL
 			SELECT project_id, created_at AS last_at FROM chat_metadata WHERE project_id != 0
 		) agg
@@ -1198,7 +1221,7 @@ const unreadCountSubquery = `(SELECT COUNT(*) FROM chat_history h
 const sessionsQueryBase = `SELECT s.id, s.title, s.backend, s.agent_id, s.agent_source, s.model, s.session_type, s.source_session_id, s.pinned, s.sort_order, s.created_at, s.updated_at, s.last_read_at,
 		` + unreadCountSubquery + `
 		FROM chat_sessions s
-		WHERE s.project_id = ? AND s.archived = 0 AND s.session_type = 'chat'`
+		WHERE s.project_id = ? AND s.archived = 0 AND s.session_type IN (` + store.VisibleSessionTypeInClause + `)`
 
 // overviewSessionsQuery is GetOverviewSessions' full query. Package-level for
 // the same reason as sessionsQueryBase.
@@ -1206,7 +1229,7 @@ const overviewSessionsQuery = `SELECT s.id, s.title, s.backend, s.agent_id, s.ag
 		` + unreadCountSubquery + `
 		FROM chat_sessions s
 		LEFT JOIN projects p ON p.id = s.project_id
-		WHERE s.archived = 0 AND s.session_type = 'chat'
+		WHERE s.archived = 0 AND s.session_type IN (` + store.VisibleSessionTypeInClause + `)
 		ORDER BY s.updated_at DESC, s.id DESC`
 
 // pagedSessionsQueryBase is the prefix of GetSessionsPaged' query, up to (not
@@ -1215,14 +1238,15 @@ const overviewSessionsQuery = `SELECT s.id, s.title, s.backend, s.agent_id, s.ag
 const pagedSessionsQueryBase = `SELECT s.id, s.title, s.backend, s.agent_id, s.agent_source, s.model, s.session_type, s.source_session_id, s.pinned, s.sort_order, s.created_at, s.updated_at, s.last_read_at,
 		` + unreadCountSubquery + `
 		FROM chat_sessions s
-		WHERE s.project_id = ? AND s.archived = 0 AND s.session_type = 'chat'`
+		WHERE s.project_id = ? AND s.archived = 0 AND s.session_type IN (` + store.VisibleSessionTypeInClause + `)`
 
 // GetSessions retrieves chat sessions for a given project path, ordered by
 // pinned DESC, sort_order ASC, created_at DESC — pinned sessions are a fixed
 // block at the top, and the rest follow the user's manual drag order (ties
 // newest-first). If backend is non-empty, filters by backend; otherwise
 // returns all backends.
-// Only returns sessions with session_type='chat' (excludes scheduled sessions).
+// Only returns interactive sessions (session_type in chat/group; excludes
+// scheduled and hidden group_member rows).
 //
 // The unread count is unreadCountSubquery — see its doc comment for why it is a
 // correlated subquery rather than a grouped join.
@@ -1475,7 +1499,7 @@ func ListProjectTagsInUse(projectPath string) ([]SessionTag, error) {
 		JOIN session_tag_links l ON l.tag_id = t.id
 		JOIN chat_sessions s ON s.id = l.session_id
 		WHERE (t.scope = 'global' OR t.project_id = ?)
-		  AND s.project_id = ? AND s.archived = 0 AND s.session_type = 'chat'
+		  AND s.project_id = ? AND s.archived = 0 AND s.session_type IN (`+store.VisibleSessionTypeInClause+`)
 		GROUP BY t.name COLLATE NOCASE
 		ORDER BY cnt DESC, name COLLATE NOCASE`, projectID, projectID)
 	if err != nil {
@@ -1638,7 +1662,7 @@ func GetLatestSessionID(projectPath string) (sessionID, backend string, err erro
 	}
 	err = store.ReadDB().QueryRow(
 		`SELECT id, backend FROM chat_sessions
-		 WHERE project_id = ? AND archived = 0 AND session_type = 'chat'
+		 WHERE project_id = ? AND archived = 0 AND session_type IN (`+store.VisibleSessionTypeInClause+`)
 		 ORDER BY updated_at DESC, id DESC LIMIT 1`,
 		projectID,
 	).Scan(&sessionID, &backend)
@@ -1789,6 +1813,15 @@ func SaveMetadata(messageID int64, meta *ai.Metadata) error {
 // for the given agent+project. Returns "" if no user preference exists
 // (caller should fall back to agent defaults).
 // Used by tasks to respect the user's global model preference.
+//
+// Only interactive chat rows count (session_type='chat'). A GROUP row must NOT
+// win this lookup: its agent_id is its HOST, and the HTTP handler persists the
+// request's modelId onto the group row BEFORE the group branch
+// (handler/chat.go UpdateSessionModel), so a group send with an explicit model
+// would otherwise masquerade as the host agent's latest user preference and
+// silently change the default model a task uses. group_member rows are hidden
+// and carry no model; scheduled rows never get a user-chosen model either, so
+// restricting to 'chat' loses no real preference.
 func GetLatestUserModel(agentID, projectPath string) string {
 	projectID, idErr := store.ProjectIDForPath(projectPath)
 	if idErr != nil {
@@ -1796,8 +1829,8 @@ func GetLatestUserModel(agentID, projectPath string) string {
 	}
 	var modelID string
 	err := store.ReadDB().QueryRow(
-		"SELECT model FROM chat_sessions WHERE agent_id = ? AND project_id = ? AND archived = 0 AND model != '' ORDER BY updated_at DESC LIMIT 1",
-		agentID, projectID,
+		"SELECT model FROM chat_sessions WHERE agent_id = ? AND project_id = ? AND archived = 0 AND model != '' AND session_type = ? ORDER BY updated_at DESC LIMIT 1",
+		agentID, projectID, store.SessionTypeChat,
 	).Scan(&modelID)
 	if err != nil {
 		return ""
@@ -2004,14 +2037,14 @@ func ReorderSessions(projectPath string, ids []string) error {
 		rest AS (
 			SELECT s.id AS rid, ROW_NUMBER() OVER (ORDER BY s.sort_order ASC, s.created_at DESC, s.id DESC) - 1 AS rn
 			FROM chat_sessions s
-			WHERE s.project_id = ? AND s.session_type = 'chat' AND s.pinned = 0 AND s.archived = 0
+			WHERE s.project_id = ? AND s.session_type IN (` + store.VisibleSessionTypeInClause + `) AND s.pinned = 0 AND s.archived = 0
 			  AND s.id NOT IN (SELECT id FROM posted)
 		)
 		UPDATE chat_sessions SET sort_order = COALESCE(
 			(SELECT ord FROM posted WHERE posted.id = chat_sessions.id),
 			(SELECT ? + rn FROM rest WHERE rest.rid = chat_sessions.id)
 		)
-		WHERE project_id = ? AND session_type = 'chat' AND pinned = 0 AND archived = 0`
+		WHERE project_id = ? AND session_type IN (` + store.VisibleSessionTypeInClause + `) AND pinned = 0 AND archived = 0`
 
 	_, err := store.WriteExec(query, args...)
 	return err
@@ -2043,7 +2076,7 @@ func GetSessionCount(projectPath string) (int, error) {
 		return 0, idErr
 	}
 	var count int
-	err := store.ReadDB().QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE project_id = ? AND archived = 0 AND session_type = 'chat'", projectID).Scan(&count)
+	err := store.ReadDB().QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE project_id = ? AND archived = 0 AND session_type IN ("+store.VisibleSessionTypeInClause+")", projectID).Scan(&count)
 	return count, err
 }
 
@@ -2569,11 +2602,18 @@ func SessionHasRealAssistantContent(sessionID string) bool {
 // at injection time (before this row is created), so the new row's higher id
 // already places it directly below that question.
 func CreateStreamingMessage(projectPath, backend, sessionID string) (int64, error) {
+	return CreateStreamingMessageWithAgent(projectPath, backend, sessionID, "")
+}
+
+// CreateStreamingMessageWithAgent is CreateStreamingMessage plus speaker
+// attribution (agentID = member row id for group turns, "" otherwise). Needed
+// so a mid-turn split's "after" row keeps its speaker.
+func CreateStreamingMessageWithAgent(projectPath, backend, sessionID, agentID string) (int64, error) {
 	emptyContent, err := json.Marshal(map[string]any{"blocks": []any{}})
 	if err != nil {
 		return 0, err
 	}
-	return AddChatMessage(projectPath, backend, sessionID, "assistant", string(emptyContent), nil, true, "")
+	return AddChatMessageWithAgent(projectPath, backend, sessionID, "assistant", string(emptyContent), nil, true, "", agentID)
 }
 
 // FinalizeStreamingMessage marks the latest streaming assistant message as complete and updates its content.
@@ -2683,8 +2723,9 @@ func GetStreamingMessageID(sessionID string) int64 {
 }
 
 // GetLiveRunState returns the state a client that just subscribed needs in order
-// to render a run already in flight: the streaming assistant row's id, plus the
-// question it answers (the nearest preceding user row). Backs
+// to render a run already in flight: the streaming assistant row's id, the
+// question it answers (the nearest preceding user row), and the streaming row's
+// speaker (group-member row id; empty for ordinary single-agent turns). Backs
 // ws.StreamHub.EmitLiveRunStateToClient.
 //
 // Unlike GetStreamingMessageID this does NOT fall back to a finalized message:
@@ -2698,13 +2739,20 @@ func GetStreamingMessageID(sessionID string) int64 {
 // id order IS the conversation order. The old queue-id lookup also broke for
 // rows whose queue_id was empty. questionID is 0 for a run with no preceding
 // user row (e.g. some scheduled runs).
-func GetLiveRunState(sessionID string) (messageID int64, questionID int64, questionContent string) {
+//
+// speakerID MUST travel with the re-emitted stream_start: the subscribe-time
+// recovery is how a client that switched away and back learns about a live
+// turn, and without the speaker the placeholder it creates is speakerless —
+// the group speaker header then stays missing for the rest of the turn (the
+// frontend's db_load merge can heal it only because it also adopts agentId;
+// see rebuildFromDb).
+func GetLiveRunState(sessionID string) (messageID int64, questionID int64, questionContent, speakerID string) {
 	err := store.ReadDB().QueryRow(
-		"SELECT id FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 1 ORDER BY id DESC LIMIT 1",
+		"SELECT id, COALESCE(agent_id, '') FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 1 ORDER BY id DESC LIMIT 1",
 		sessionID,
-	).Scan(&messageID)
+	).Scan(&messageID, &speakerID)
 	if err != nil || messageID <= 0 {
-		return 0, 0, ""
+		return 0, 0, "", ""
 	}
 
 	err = store.ReadDB().QueryRow(
@@ -2712,9 +2760,9 @@ func GetLiveRunState(sessionID string) (messageID int64, questionID int64, quest
 		sessionID, messageID,
 	).Scan(&questionID, &questionContent)
 	if err != nil {
-		return messageID, 0, ""
+		return messageID, 0, "", speakerID
 	}
-	return messageID, questionID, questionContent
+	return messageID, questionID, questionContent, speakerID
 }
 
 // UpdateMessageContent updates the content of a specific message by its ID.
@@ -2837,6 +2885,15 @@ func HardDeleteSession(sessionID string) error {
 	// /btw side questions belong to the conversation they were asked about;
 	// without this they would linger as orphan markers.
 	_, _ = tx.Exec("DELETE FROM btw_questions WHERE session_id = ?", sessionID)
+	// A group's member rows are independent chat_sessions rows (session_type
+	// 'group_member', group_id = the group). Deleting only the group row would
+	// leave every member row behind forever, orphaned and invisible (decision
+	// #48). Cascade them in the SAME transaction as the group row, before it is
+	// deleted (the group_id link points at the row being removed).
+	_, _ = tx.Exec("DELETE FROM chat_sessions WHERE group_id = ? AND session_type = ?", sessionID, groupMemberSessionType)
+	// A group's undelivered private notes belong to the group; without this
+	// they would linger forever (the table has no FK to chat_sessions).
+	_, _ = tx.Exec("DELETE FROM group_pending_bcc WHERE group_id = ?", sessionID)
 	_, err = tx.Exec("DELETE FROM chat_sessions WHERE id = ?", sessionID)
 	if err != nil {
 		return err
@@ -3005,6 +3062,16 @@ func enrichMessagesWithSummaries(messages []model.ChatMessage) {
 	}
 
 	// Enrich messages
+	//
+	// Group sessions skip the content stripping: the group render pipeline
+	// parses mention tags (`<clawbench-mention>`) and private notes (the same
+	// tag with the `private` attribute) out of the BLOCKS, and stripping
+	// replaces blocks with [] — so a speaker's private-note card (and the
+	// routing chips) vanished as soon as a message gained a summary and the
+	// view was reloaded (switch session and back). Group messages are short;
+	// the bandwidth saving is not worth losing the structured view. A
+	// non-group session keeps the original behavior.
+	isGroup := len(messages) > 0 && GetSessionType(messages[0].SessionID) == groupSessionType
 	for i := range messages {
 		if messages[i].Role == "assistant" {
 			if summary, ok := summaryMap[messages[i].ID]; ok {
@@ -3013,7 +3080,7 @@ func enrichMessagesWithSummaries(messages []model.ChatMessage) {
 			if cards, ok := cardMap[messages[i].ID]; ok {
 				messages[i].SummaryCards = cards
 			}
-			if messages[i].Summary != nil && *messages[i].Summary != "" && !messages[i].Streaming {
+			if !isGroup && messages[i].Summary != nil && *messages[i].Summary != "" && !messages[i].Streaming {
 				messages[i].Content = summarizeContentForView(messages[i].Content)
 			}
 		}

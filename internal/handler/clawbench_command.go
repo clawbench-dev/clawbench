@@ -258,6 +258,17 @@ func processClawbenchCommand(rawMsg, projectPath, sessionID string) (string, err
 	return rawMsg, nil
 }
 
+// RenderClawbenchCommand exposes processClawbenchCommand to the service layer,
+// which needs it to inject a /cb-* template into a GROUP's host prompt. The
+// orchestrator lives in internal/service and cannot import handler (cycle), so
+// main.go wires this function into service.SetRenderGroupCommandFn.
+//
+// Same contract as processClawbenchCommand: non-commands are returned unchanged
+// (the caller treats "unchanged" as "no injection").
+func RenderClawbenchCommand(rawMsg, projectPath, sessionID string) (string, error) {
+	return processClawbenchCommand(rawMsg, projectPath, sessionID)
+}
+
 // clawbenchProjectCookie is the cookie name the AI must send for project
 // scoping. It goes through ScopedCookieName because a non-default port prefixes
 // the cookie (e.g. "cb21999_clawbench_project") to keep multiple instances on

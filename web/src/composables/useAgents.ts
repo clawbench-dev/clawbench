@@ -235,7 +235,7 @@ function getAgentBackend(agentId: string): string {
 }
 
 /** Get an agent's custom avatar SVG string. Returns '' when unset (use built-in icon). */
-function getAgentAvatar(agentId: string): string {
+export function getAgentAvatar(agentId: string): string {
     const agent = agents.value.find(a => a.id === agentId)
     return agent?.avatar || ''
 }
@@ -286,11 +286,19 @@ function getAgentDefaultModelName(agentId: string): string {
     return model?.name || modelId
 }
 
-/** Build the header title string for an agent. */
+/**
+ * Build the header title string for an agent.
+ *
+ * Returns '' for an unknown/absent agent rather than a placeholder ("AI 对话"):
+ * the chat title bar now shows a skeleton while a session switch is in flight
+ * and otherwise renders nothing, so a fallback string would only flash during
+ * the switch. Callers gate on the empty result (App.vue renders the agent line
+ * only when `currentAgentId` is set).
+ */
 function agentHeaderTitle(agentId: string): string {
     const agent = getAgent(agentId)
     if (agent) return agent.name
-    return agentId ? getAgentName(agentId) : gt('chat.session.aiDialog')
+    return agentId ? getAgentName(agentId) : ''
 }
 
 /**
@@ -577,10 +585,17 @@ export async function populateACPStateFromCache(agentId: string): Promise<void> 
     // or the explicit reset in createSession().
 }
 
-/** Duplicate an agent by cloning its configuration with a new name. */
-async function duplicateAgent(sourceId: string, newName: string): Promise<void> {
-    await apiPost('/api/agents', { source_id: sourceId, name: newName })
+/**
+ * Duplicate an agent by cloning its configuration with a new name.
+ *
+ * Returns the new agent's id (from the created agent the backend answers with)
+ * so the caller can navigate to it — the settings panel switches to the copy's
+ * config page right after duplicating.
+ */
+async function duplicateAgent(sourceId: string, newName: string): Promise<string> {
+    const created = await apiPost<{ id?: string }>('/api/agents', { source_id: sourceId, name: newName })
     await loadAgents(true)
+    return created?.id ?? ''
 }
 
 /** Delete an agent by ID. */

@@ -19,16 +19,25 @@ type ContextStateUsage = ai.UsageState
 // row id, shared by the user_message / queue_drain / queue_inject payloads.
 const payloadKeyMessageID = "messageId"
 
+// JSON payload keys reused across the stream payload builders (goconst):
+// "message_id" is the assistant row id on stream_start/split/finalize, and
+// "content" is the text field shared by content/user_message/system_message.
+const (
+	payloadKeyMessageIDSnake = "message_id"
+	payloadKeyContent        = "content"
+)
+
 // GetContextStateUsageFunc is a function that retrieves persisted usage state
 // for a session. Injected by the service layer to avoid circular imports.
 type GetContextStateUsageFunc func(sessionID string) *ContextStateUsage
 
 // StreamStateLookupFunc returns the live run's state for a session: the
-// streaming assistant row id, plus the question that run answers (id 0 and
-// empty content when the run has no question, e.g. a scheduled task).
+// streaming assistant row id, the question that run answers (id 0 and empty
+// content when the run has no question, e.g. a scheduled task), and the
+// streaming row's speaker (group-member row id; empty for ordinary turns).
 //
 // Injected by the service layer to avoid a circular import.
-type StreamStateLookupFunc func(sessionID string) (messageID int64, questionID int64, questionContent string)
+type StreamStateLookupFunc func(sessionID string) (messageID int64, questionID int64, questionContent, speakerID string)
 
 // StreamHub manages session-scoped streaming event fan-out via WebSocket.
 // It replaces the single-consumer SSE channel with multi-client WS delivery.
@@ -304,7 +313,7 @@ func StreamEventToPayload(event ai.StreamEvent) any { //nolint:gocyclo // one br
 	}
 
 	switch event.Type {
-	case "content", "thinking":
+	case payloadKeyContent, "thinking":
 		return simpleTextPayload(event)
 	case "tool_use":
 		return toolUsePayload(event)
@@ -320,10 +329,14 @@ func StreamEventToPayload(event ai.StreamEvent) any { //nolint:gocyclo // one br
 		return warningPayload(event)
 	case "user_message":
 		return userMessagePayload(event)
+	case "system_message":
+		return systemMessagePayload(event)
 	case "stream_start":
 		return streamStartPayload(event)
 	case "stream_split":
 		return streamSplitPayload(event)
+	case "stream_finalize":
+		return streamFinishPayload(event)
 	case "queue_drain":
 		return queueDrainPayload(event)
 	case "queue_inject":
@@ -354,7 +367,7 @@ func simpleTextPayload(event ai.StreamEvent) any {
 			payload["think_id"] = event.ThinkID
 		}
 	} else {
-		payload["content"] = event.Content
+		payload[payloadKeyContent] = event.Content
 	}
 	if event.ParentToolCallID != "" {
 		payload["parent_tool_call_id"] = event.ParentToolCallID
@@ -370,11 +383,18 @@ func simpleTextPayload(event ai.StreamEvent) any {
 
 // streamStartPayload builds the stream_start message payload. Returns nil when
 // no StreamStart data is attached (the event is then skipped downstream).
+//
+// The speaker key is omitted when empty (ordinary single-agent turns) so the
+// payload shape is unchanged for existing clients.
 func streamStartPayload(event ai.StreamEvent) any {
 	if event.StreamStart == nil {
 		return nil
 	}
-	return map[string]any{"message_id": event.StreamStart.MessageID}
+	payload := map[string]any{payloadKeyMessageIDSnake: event.StreamStart.MessageID}
+	if event.StreamStart.SpeakerID != "" {
+		payload["agent_id"] = event.StreamStart.SpeakerID
+	}
+	return payload
 }
 
 // streamSplitPayload carries the new "after" assistant row opened when a
@@ -383,7 +403,17 @@ func streamSplitPayload(event ai.StreamEvent) any {
 	if event.StreamSplit == nil {
 		return nil
 	}
-	return map[string]any{"message_id": event.StreamSplit.MessageID}
+	return map[string]any{payloadKeyMessageIDSnake: event.StreamSplit.MessageID}
+}
+
+// streamFinishPayload carries the streaming row id of a producer turn that just
+// ended (group chats: one member turn). Returns nil when no StreamFinish data is
+// attached (the event is then skipped downstream).
+func streamFinishPayload(event ai.StreamEvent) any {
+	if event.StreamFinish == nil {
+		return nil
+	}
+	return map[string]any{payloadKeyMessageIDSnake: event.StreamFinish.MessageID}
 }
 
 // acpStatePayload handles ACP state update event types (mode, config, commands, etc.)
@@ -498,7 +528,7 @@ func userMessagePayload(event ai.StreamEvent) any {
 	}
 	payload := map[string]any{
 		payloadKeyMessageID: event.UserMessage.MessageID,
-		"content":           event.UserMessage.Content,
+		payloadKeyContent:   event.UserMessage.Content,
 	}
 	if len(event.UserMessage.Files) > 0 {
 		payload["files"] = event.UserMessage.Files
@@ -510,6 +540,20 @@ func userMessagePayload(event ai.StreamEvent) any {
 		payload["queueId"] = event.UserMessage.QueueID
 	}
 	return payload
+}
+
+// systemMessagePayload carries a role='system' timeline row (a group membership
+// change) so it can be appended live. Returns nil when no SystemMessage data is
+// attached (the event is then skipped downstream). messageId is the frontend's
+// dedup key.
+func systemMessagePayload(event ai.StreamEvent) any {
+	if event.SystemMessage == nil {
+		return nil
+	}
+	return map[string]any{
+		payloadKeyMessageID: event.SystemMessage.MessageID,
+		payloadKeyContent:   event.SystemMessage.Content,
+	}
 }
 
 // queueAddedPayload announces a message that was just enqueued (it has no
@@ -655,9 +699,18 @@ func (h *StreamHub) emitACPState(clientID, sessionID string, s ai.ACPCachedState
 }
 
 // EmitStreamStartEvent sends a stream_start chat_stream event to a single
-// client, carrying the streaming assistant row's id.
-func (h *StreamHub) EmitStreamStartEvent(clientID, sessionID string, messageID int64) {
-	h.emitStateEvent(clientID, sessionID, "stream_start", map[string]any{"message_id": messageID})
+// client, carrying the streaming assistant row's id and, for a group turn, the
+// speaker (member row id). The speaker must ride along: this is the
+// subscribe-time recovery emit, and a client that switched away and back
+// creates its placeholder from it — without the speaker the group speaker
+// header would be missing for the rest of the turn. Mirrors the broadcast
+// path's streamStartPayload, which carries the same key.
+func (h *StreamHub) EmitStreamStartEvent(clientID, sessionID string, messageID int64, speakerID string) {
+	payload := map[string]any{payloadKeyMessageIDSnake: messageID}
+	if speakerID != "" {
+		payload["agent_id"] = speakerID
+	}
+	h.emitStateEvent(clientID, sessionID, "stream_start", payload)
 }
 
 // EmitUserMessageEvent sends a user_message chat_stream event to a single
@@ -666,7 +719,7 @@ func (h *StreamHub) EmitStreamStartEvent(clientID, sessionID string, messageID i
 func (h *StreamHub) EmitUserMessageEvent(clientID, sessionID string, messageID int64, content string) {
 	h.emitStateEvent(clientID, sessionID, "user_message", map[string]any{
 		payloadKeyMessageID: messageID,
-		"content":           content,
+		payloadKeyContent:   content,
 	})
 }
 
@@ -700,14 +753,14 @@ func (h *StreamHub) EmitLiveRunStateToClient(clientID, sessionID string) {
 	if stateFn == nil {
 		return
 	}
-	msgID, questionID, questionContent := stateFn(sessionID)
+	msgID, questionID, questionContent, speakerID := stateFn(sessionID)
 	if msgID <= 0 {
 		return
 	}
 	if questionID > 0 {
 		h.EmitUserMessageEvent(clientID, sessionID, questionID, questionContent)
 	}
-	h.EmitStreamStartEvent(clientID, sessionID, msgID)
+	h.EmitStreamStartEvent(clientID, sessionID, msgID, speakerID)
 }
 
 // emitStateEvent sends a single chat_stream state event to a specific client.

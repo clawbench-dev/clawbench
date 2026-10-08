@@ -255,10 +255,11 @@ func setupTestDBForMigration(t *testing.T) func() {
 		CREATE TABLE IF NOT EXISTS chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			project_id INTEGER NOT NULL,
-			role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+			role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
 			content TEXT NOT NULL,
 			session_id TEXT,
 			backend TEXT NOT NULL DEFAULT 'claude',
+			agent_id TEXT DEFAULT '',
 			streaming INTEGER NOT NULL DEFAULT 0,
 			queue_id TEXT DEFAULT '',
 			queued INTEGER NOT NULL DEFAULT 0,

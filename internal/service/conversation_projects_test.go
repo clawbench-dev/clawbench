@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS projects (
 CREATE TABLE IF NOT EXISTS chat_sessions (
 	id TEXT PRIMARY KEY,
 	project_id INTEGER NOT NULL,
+	session_type TEXT NOT NULL DEFAULT 'chat',
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS chat_metadata (
@@ -63,6 +64,17 @@ func insertSessionRow(t *testing.T, db *sql.DB, projectPath, id, createdAt strin
 	_, err := db.Exec(
 		"INSERT INTO chat_sessions (id, project_id, created_at) VALUES (?, ?, ?)",
 		id, store.ProjectIDForTest(t, projectPath), createdAt,
+	)
+	require.NoError(t, err)
+}
+
+// insertTypedSessionRow inserts a session with an explicit session_type so the
+// group/member exclusion can be exercised.
+func insertTypedSessionRow(t *testing.T, db *sql.DB, projectPath, id, sessionType string) {
+	t.Helper()
+	_, err := db.Exec(
+		"INSERT INTO chat_sessions (id, project_id, session_type, created_at) VALUES (?, ?, ?, ?)",
+		id, store.ProjectIDForTest(t, projectPath), sessionType, "2024-01-01 10:00:00",
 	)
 	require.NoError(t, err)
 }
@@ -162,4 +174,23 @@ func TestGetConversationProjects_SkipsEmptyPaths(t *testing.T) {
 	projects, err := service.GetConversationProjects()
 	require.NoError(t, err)
 	assert.Empty(t, projects, "an empty project_path is not a project")
+}
+
+// TestGetConversationProjects_ExcludesGroupMemberRows covers decision #64: a
+// group contributes one session to its project, its hidden member rows do not.
+// Without the session_type whitelist the count would be 4 (1 group + 3 members).
+func TestGetConversationProjects_ExcludesGroupMemberRows(t *testing.T) {
+	db := setupConversationProjectsDB(t)
+
+	dir := canon(t, t.TempDir())
+	insertTypedSessionRow(t, db, dir, "g1", "group")
+	insertTypedSessionRow(t, db, dir, "g1-m1", "group_member")
+	insertTypedSessionRow(t, db, dir, "g1-m2", "group_member")
+	insertTypedSessionRow(t, db, dir, "g1-m3", "group_member")
+
+	projects, err := service.GetConversationProjects()
+	require.NoError(t, err)
+	require.Len(t, projects, 1)
+	assert.Equal(t, 1, projects[0].SessionCount,
+		"only the group timeline counts; member rows must be excluded")
 }

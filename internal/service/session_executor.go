@@ -77,6 +77,11 @@ const (
 	// subscriber (cross-device sync). Used by the direct send, the queue/push
 	// path and auto-continue.
 	eventTypeUserMessage = "user_message"
+	// eventTypeSystemMessage announces a role='system' timeline row (a group
+	// membership change) to the group's subscribers so it appears live instead
+	// of only after a reload (decisions #40/#43). Distinct from user_message:
+	// the frontend renders it as a centered row, not a user bubble.
+	eventTypeSystemMessage = "system_message"
 	// eventTypeToolUse is the stream event type for tool calls.
 	eventTypeToolUse = "tool_use"
 	// eventTypeToolResult is the stream event type for tool results.
@@ -87,6 +92,9 @@ const (
 	roleUser = "user"
 	// contentKeyText is the JSON key for text in content blocks.
 	contentKeyText = "text"
+	// contentKeyContent is the JSON key for the "content" field, shared by the
+	// stream event type, the coalescable-delta set, and several payload maps.
+	contentKeyContent = "content"
 	// contentKeyType is the JSON key for type in content blocks.
 	contentKeyType = "type"
 	// contentKeyReason is the JSON key for reason in content blocks.
@@ -205,6 +213,21 @@ type RunConfig struct {
 	ChatRequest        ai.ChatRequest
 	FileDir            string
 	StreamingMessageID int64 // ID of the streaming assistant message placeholder (for tool call DB upsert)
+
+	// TimelineSessionID mirrors TurnSpec.TimelineSessionID: the session whose
+	// timeline (chat_history rows, WS broadcast) this run writes to. Empty
+	// means SessionID.
+	TimelineSessionID string
+
+	// SpeakerID mirrors TurnSpec.SpeakerID (member row id) for attribution.
+	SpeakerID string
+
+	// SuppressSummarization mirrors TurnSpec.SuppressSummarization: skip the
+	// post-finalize summarization/recommendation for this run. Set for group
+	// member turns, which write to the group timeline and are summarized once
+	// by the orchestrator instead (decision #55). Keeps the executor free of
+	// group knowledge.
+	SuppressSummarization bool
 
 	// --- ModeInteractive only ---
 	// LocalizeError formats error messages for display.
@@ -326,6 +349,16 @@ type thinkingFlushState struct {
 	flushedBytes int
 }
 
+// effectiveTimelineSessionID returns TimelineSessionID when set, else
+// SessionID. Persistence and WS broadcast use this; connection state
+// (external_session_id, transport, model, cancel reason) uses SessionID.
+func (c RunConfig) effectiveTimelineSessionID() string {
+	if c.TimelineSessionID != "" {
+		return c.TimelineSessionID
+	}
+	return c.SessionID
+}
+
 // NewSessionExecutor creates a new executor for the given configuration.
 // The caller retains ownership of the context — the executor does NOT derive
 // a new context with its own cancel function. This prevents double-cancel
@@ -350,11 +383,21 @@ func NewSessionExecutor(ctx context.Context, cfg RunConfig) *SessionExecutor {
 	return e
 }
 
+// timelineSID is the session this run writes its timeline to (chat_history
+// rows, thinking, tool calls, summaries) and broadcasts WS events on. It equals
+// cfg.SessionID unless a group turn redirected it to the group session.
+//
+// Connection semantics (external_session_id, transport, model, cancel reason,
+// context_state, activeStreams registry) MUST keep using cfg.SessionID.
+func (e *SessionExecutor) timelineSID() string {
+	return e.cfg.effectiveTimelineSessionID()
+}
+
 // emitStreamEvent is the coalescer's sink: the actual per-event WS fan-out.
 // Split out from forwardEvent so the coalescer's buffer boundary and the
 // transport are separable (and so emit never re-enters the coalescer).
 func (e *SessionExecutor) emitStreamEvent(event ai.StreamEvent) {
-	ws.EmitToSession(e.cfg.SessionID, event)
+	ws.EmitToSession(e.timelineSID(), event)
 }
 
 // flushCoalesced pushes any buffered delta to WS clients immediately.
@@ -511,7 +554,7 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 		// Reset the streaming message in DB to empty so stale partial content
 		// doesn't persist if the retry Prompt fails or the server crashes.
 		emptyContent, _ := json.Marshal(map[string]any{contentKeyBlocks: []any{}}) // safe: known structure
-		if err := UpdateStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.cfg.SessionID, string(emptyContent)); err != nil {
+		if err := UpdateStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.timelineSID(), string(emptyContent)); err != nil {
 			slog.Error("failed to reset streaming message after content_reset",
 				slog.String("session", e.cfg.SessionID),
 				slog.String("err", err.Error()))
@@ -786,7 +829,7 @@ func (e *SessionExecutor) postProcessBlocks(blocks []model.ContentBlock) []model
 // path during the event loop. Must be called after every postProcessBlocks
 // call that writes blocks to the DB (currently Finalize).
 func (e *SessionExecutor) persistAskToolCalls(blocks []model.ContentBlock) {
-	if e.cfg.StreamingMessageID <= 0 || e.cfg.SessionID == "" {
+	if e.cfg.StreamingMessageID <= 0 || e.timelineSID() == "" {
 		return
 	}
 	for i := range blocks {
@@ -794,7 +837,7 @@ func (e *SessionExecutor) persistAskToolCalls(blocks []model.ContentBlock) {
 		if b.Type == "tool_use" && strings.HasPrefix(b.ID, "ask-") && b.Name == "AskUserQuestion" {
 			inputJSON, _ := json.Marshal(b.Input)
 			if err := UpsertToolCall(
-				e.cfg.StreamingMessageID, e.cfg.SessionID,
+				e.cfg.StreamingMessageID, e.timelineSID(),
 				b.ID, b.Name, inputJSON,
 				b.Output, b.Status, b.Summary, b.Done, b.DurationMs,
 			); err != nil {
@@ -900,7 +943,7 @@ func (e *SessionExecutor) trackToolDuration(event *ai.StreamEvent) {
 // persistence (drainRemainingEvents). The event-loop path defers upserts to
 // the batched flush (flushPendingToolCalls) instead.
 func (e *SessionExecutor) upsertToolCallToDB(event ai.StreamEvent) {
-	if event.Tool == nil || e.cfg.StreamingMessageID == 0 || e.cfg.SessionID == "" {
+	if event.Tool == nil || e.cfg.StreamingMessageID == 0 || e.timelineSID() == "" {
 		return
 	}
 	// Find the matching block in accumulated blocks
@@ -911,7 +954,7 @@ func (e *SessionExecutor) upsertToolCallToDB(event ai.StreamEvent) {
 			block := &e.blocks[i]
 			inputJSON, _ := json.Marshal(block.Input)
 			if err := UpsertToolCall(
-				e.cfg.StreamingMessageID, e.cfg.SessionID,
+				e.cfg.StreamingMessageID, e.timelineSID(),
 				block.ID, block.Name, inputJSON,
 				block.Output, block.Status, block.Summary, block.Done, block.DurationMs,
 			); err != nil {
@@ -955,7 +998,7 @@ func (e *SessionExecutor) persistContextStateToPending(event ai.StreamEvent) {
 // flushPendingToolCalls upserts every queued tool-call row in one pass and
 // clears the queue. Runs inside the flush window (under e.mu).
 func (e *SessionExecutor) flushPendingToolCalls() {
-	if e.cfg.StreamingMessageID == 0 || e.cfg.SessionID == "" || len(e.pendingToolCalls) == 0 {
+	if e.cfg.StreamingMessageID == 0 || e.timelineSID() == "" || len(e.pendingToolCalls) == 0 {
 		return
 	}
 	for toolID := range e.pendingToolCalls {
@@ -965,7 +1008,7 @@ func (e *SessionExecutor) flushPendingToolCalls() {
 		}
 		inputJSON, _ := json.Marshal(block.Input)
 		if err := UpsertToolCall(
-			e.cfg.StreamingMessageID, e.cfg.SessionID,
+			e.cfg.StreamingMessageID, e.timelineSID(),
 			block.ID, block.Name, inputJSON,
 			block.Output, block.Status, block.Summary, block.Done, block.DurationMs,
 		); err != nil {
@@ -1016,7 +1059,7 @@ func (e *SessionExecutor) flushPendingThinking() {
 	if !store.DBReady() {
 		return
 	}
-	if e.cfg.StreamingMessageID == 0 || e.cfg.SessionID == "" {
+	if e.cfg.StreamingMessageID == 0 || e.timelineSID() == "" {
 		return
 	}
 	// Once the graceful-shutdown forced flush has run, persistThinkingToDB (in
@@ -1051,7 +1094,7 @@ func (e *SessionExecutor) flushPendingThinking() {
 			continue
 		}
 		delta := b.Text[st.flushedBytes:]
-		if err := AppendThinkingSegment(e.cfg.StreamingMessageID, e.cfg.SessionID, b.ThinkID, st.nextSeq, delta); err != nil {
+		if err := AppendThinkingSegment(e.cfg.StreamingMessageID, e.timelineSID(), b.ThinkID, st.nextSeq, delta); err != nil {
 			slog.Warn("flush thinking delta failed",
 				slog.String("thinkID", b.ThinkID),
 				slog.Int("seq", st.nextSeq),
@@ -1165,7 +1208,7 @@ func (e *SessionExecutor) splitAtSteerBoundaryLocked(queueID string) bool {
 	// ordering we want.
 	beforeContent := e.buildSplitContentLocked()
 	beforeID := e.cfg.StreamingMessageID
-	if _, err := FinalizeStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.cfg.SessionID, beforeContent); err != nil {
+	if _, err := FinalizeStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.timelineSID(), beforeContent); err != nil {
 		slog.Error("session executor: failed to finalize assistant half at steer boundary; "+
 			"continuing in the original row (no split)",
 			slog.String("session", e.cfg.SessionID),
@@ -1180,7 +1223,7 @@ func (e *SessionExecutor) splitAtSteerBoundaryLocked(queueID string) bool {
 	// than the injected question's (the question was materialized into
 	// chat_history at injection time), so it lands directly below that question
 	// with no anchor.
-	afterID, err := CreateStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.cfg.SessionID)
+	afterID, err := CreateStreamingMessageWithAgent(e.cfg.ProjectPath, e.cfg.BackendName, e.timelineSID(), e.cfg.SpeakerID)
 	if err != nil {
 		// The "before" half is already durable; the rest of the turn simply keeps
 		// appending to it via UpdateStreamingMessage's "latest streaming row"
@@ -1190,7 +1233,7 @@ func (e *SessionExecutor) splitAtSteerBoundaryLocked(queueID string) bool {
 			"reopening a row so remaining content is not lost",
 			slog.String("session", e.cfg.SessionID),
 			slog.String("err", err.Error()))
-		if fallbackID, ferr := CreateStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.cfg.SessionID); ferr == nil {
+		if fallbackID, ferr := CreateStreamingMessageWithAgent(e.cfg.ProjectPath, e.cfg.BackendName, e.timelineSID(), e.cfg.SpeakerID); ferr == nil {
 			e.resetForSplitLocked(fallbackID)
 		}
 		// The "before" half IS finalized (its completed_at was stamped) even
@@ -1246,7 +1289,7 @@ func (e *SessionExecutor) buildSplitContentLocked() string {
 	// text after a reload.
 	e.persistAskToolCalls(blocks)
 	content, _ := e.buildContentJSON(blocks, RunResult{Blocks: blocks}, e.responseMetadata)
-	return persistThinkingToDB(content, e.cfg.StreamingMessageID, e.cfg.SessionID)
+	return persistThinkingToDB(content, e.cfg.StreamingMessageID, e.timelineSID())
 }
 
 // flushStreamingMessage writes the accumulated blocks to the database.
@@ -1376,7 +1419,7 @@ func (e *SessionExecutor) flushStreamingLocked(includeThinking bool) {
 	if !includeThinking && content == e.lastWrittenContent {
 		return
 	}
-	if err := UpdateStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.cfg.SessionID, content); err != nil {
+	if err := UpdateStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.timelineSID(), content); err != nil {
 		slog.Error("failed to update streaming message",
 			slog.String("session", e.cfg.SessionID),
 			slog.String("err", err.Error()))
@@ -1388,8 +1431,8 @@ func (e *SessionExecutor) flushStreamingLocked(includeThinking bool) {
 		// content (remove thinking text, keep think_id) — identical to what
 		// Finalize does, so the streaming row and chat_thinking stay consistent
 		// across a restart. Finalize is idempotent over this.
-		if slimContent := persistThinkingToDB(content, e.cfg.StreamingMessageID, e.cfg.SessionID); slimContent != content {
-			_ = UpdateStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.cfg.SessionID, slimContent)
+		if slimContent := persistThinkingToDB(content, e.cfg.StreamingMessageID, e.timelineSID()); slimContent != content {
+			_ = UpdateStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.timelineSID(), slimContent)
 		}
 		// flushPendingThinking is guarded off while forceIncludeThinking is set
 		// (persistThinkingToDB above fully owns thinking persistence in force
@@ -1547,7 +1590,7 @@ func (e *SessionExecutor) drainRemainingEvents(eventCh <-chan ai.StreamEvent) {
 // This replaces the old finalizeStreamRun function from handler/chat.go.
 // The caller is still responsible for WS terminal events and drain loop logic.
 func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEvent) RunResult {
-	ft := newFinalizeTimer(e.cfg.SessionID)
+	ft := newFinalizeTimer(e.timelineSID())
 
 	// Drain remaining events first (tool calls flushed by debouncer after the
 	// main event loop exited on cancel). This updates e.blocks so that
@@ -1606,7 +1649,7 @@ func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEve
 	// The WS terminal event keeps full blocks (result.Blocks); only the
 	// persisted content is slimmed. StreamingMessageID is the streaming row.
 	doneThinking := ft.phase("persist_thinking")
-	dbContent := persistThinkingToDB(content, e.cfg.StreamingMessageID, e.cfg.SessionID)
+	dbContent := persistThinkingToDB(content, e.cfg.StreamingMessageID, e.timelineSID())
 	// Finalize is terminal: no rate-limited flush runs after this point. Clear
 	// the incremental cursor so a concurrent graceful-shutdown forced flush
 	// racing this Finalize cannot append stale chunks for think_ids whose rows
@@ -1623,9 +1666,9 @@ func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEve
 	var err error
 	doneFinalize := ft.phase("finalize_row")
 	if result.CancelReason == cancelReasonUser {
-		msgID, err = FinalizeCancelledStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.cfg.SessionID, dbContent)
+		msgID, err = FinalizeCancelledStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.timelineSID(), dbContent)
 	} else {
-		msgID, err = FinalizeStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.cfg.SessionID, dbContent)
+		msgID, err = FinalizeStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.timelineSID(), dbContent)
 	}
 	doneFinalize()
 	if err != nil {
@@ -1640,8 +1683,14 @@ func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEve
 	// would never be reached via that path. Call it here instead, right after
 	// the message is finalized and streaming=0 is persisted.
 	doneSummarize := ft.phase("summarize")
-	if msgID > 0 {
-		triggerChatSummarization(e.ctx, e.cfg.SessionID)
+	if msgID > 0 && !e.cfg.SuppressSummarization {
+		// Group member turns write to the GROUP timeline, so summarizing here
+		// would run once per member per round (N LLM calls) and emit a
+		// recommendation for every member's reply. The group orchestrator sets
+		// SuppressSummarization for member turns and summarizes once at the end
+		// instead (decision #55). The flag keeps this executor free of group
+		// knowledge — it must not query session_type.
+		triggerChatSummarization(e.ctx, e.timelineSID())
 	}
 	doneSummarize()
 

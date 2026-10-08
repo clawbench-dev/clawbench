@@ -28,7 +28,7 @@
             class="backend-item"
             :class="{ 'backend-not-detected': !loading && !detectedBackends.has(b.id) }"
           >
-            <div class="backend-icon"><AgentIcon :backend="b.id" :name="b.name" :size="20" /></div>
+            <div class="backend-icon"><AgentIcon :backend="b.id" :name="b.name" size="md" /></div>
             <div class="backend-info">
               <div class="backend-name">{{ b.name }}</div>
               <div class="backend-specialty">{{ b.specialty }}</div>

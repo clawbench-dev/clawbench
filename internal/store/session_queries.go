@@ -22,6 +22,50 @@ const (
 	SessionSortOldest    = "oldest"
 )
 
+// Session-type values stored in chat_sessions.session_type. This package is
+// the CANONICAL home: service derives its groupSessionType /
+// groupMemberSessionType aliases from here, because store cannot import
+// service (the reverse dependency would be a cycle).
+const (
+	// SessionTypeChat is an ordinary interactive 1:1 conversation.
+	SessionTypeChat = "chat"
+	// SessionTypeGroup is a group chat's timeline row (owns the messages; it
+	// never runs a turn itself — its host member does).
+	SessionTypeGroup = "group"
+	// SessionTypeGroupMember is a HIDDEN chat_sessions row binding one group
+	// member to its ACP connection (group_id set). It must never surface in a
+	// user-facing session list/count/search, and — because a member that LEFT
+	// a group is archived=1 by design — it must never be treated as
+	// retention-expired either (decision #48).
+	SessionTypeGroupMember = "group_member"
+	// SessionTypeScheduled is one task execution's session; listed only via
+	// the explicit "task" type filter, never alongside conversations.
+	SessionTypeScheduled = "scheduled"
+)
+
+// VisibleSessionTypeInClause is the SQL IN-list of user-visible session types
+// ('chat', 'group') for embedding in const queries. Every query that lists,
+// counts, or searches conversations must use this instead of inlining the
+// literals: a whitelist here is fail-closed (a new session_type is invisible
+// until added), whereas a `!= 'group_member'` blacklist silently starts
+// leaking it. Keep in sync with visibleSessionTypes.
+const VisibleSessionTypeInClause = "'" + SessionTypeChat + "', '" + SessionTypeGroup + "'"
+
+// visibleSessionTypes is VisibleSessionTypeInClause as a slice, for the Go-side
+// query builders that bind the two types as parameters. Unexported: callers
+// outside this package embed the SQL clause, so the slice offers no API. Keep
+// in sync with the clause.
+var visibleSessionTypes = []string{SessionTypeChat, SessionTypeGroup}
+
+// IsVisibleSessionType reports whether a stored session_type is user-visible
+// (chat or group). An empty value is treated as 'chat' — the schema default.
+func IsVisibleSessionType(storedType string) bool {
+	if storedType == "" {
+		return true
+	}
+	return storedType == SessionTypeChat || storedType == SessionTypeGroup
+}
+
 // NormalizeSessionArchiveFilter maps a raw filter string to a known value,
 // defaulting to "all" for empty/unknown input.
 func NormalizeSessionArchiveFilter(v string) string {
@@ -76,9 +120,9 @@ func NormalizeSessionTypeFilter(v string) string {
 func SessionTypeDBValue(filter string) string {
 	switch NormalizeSessionTypeFilter(filter) {
 	case SessionTypeFilterChat:
-		return "chat"
+		return SessionTypeChat
 	case SessionTypeFilterTask:
-		return "scheduled"
+		return SessionTypeScheduled
 	default:
 		return ""
 	}
@@ -123,15 +167,16 @@ type RecentSession struct {
 func GetRecentSessions(projectPath string, limit int, archiveFilter, typeFilter, sortOrder, fromTime, toTime, cursor, cursorID string) ([]RecentSession, bool, error) {
 	// Browse mode never mixes session types: each selection lists exactly one
 	// type, and "all" means "all conversations" (not "conversations + tasks").
-	sessionType := "chat"
+	// "Conversations" now includes group chats, which are user-visible sessions.
+	sessionTypes := visibleSessionTypes
 	if NormalizeSessionTypeFilter(typeFilter) == SessionTypeFilterTask {
-		sessionType = "scheduled"
+		sessionTypes = []string{SessionTypeScheduled, SessionTypeScheduled}
 	}
 	query := `SELECT s.id, s.title, s.backend, COALESCE(p.path, ''), s.archived, s.created_at, s.session_type
 		FROM chat_sessions s
 		LEFT JOIN projects p ON p.id = s.project_id
-		WHERE s.session_type = ?`
-	args := []interface{}{sessionType}
+		WHERE s.session_type IN (?, ?)`
+	args := []interface{}{sessionTypes[0], sessionTypes[1]}
 	if projectPath != "" {
 		projectID, idErr := ProjectIDForPath(projectPath)
 		if idErr != nil {
@@ -240,15 +285,15 @@ func SearchSessionsByTitle(projectPath string, terms []string, limit int, archiv
 		return []RecentSession{}, nil
 	}
 
-	sessionType := "chat"
+	sessionTypes := visibleSessionTypes
 	if NormalizeSessionTypeFilter(typeFilter) == SessionTypeFilterTask {
-		sessionType = "scheduled"
+		sessionTypes = []string{SessionTypeScheduled, SessionTypeScheduled}
 	}
 	query := `SELECT s.id, s.title, s.backend, COALESCE(p.path, ''), s.archived, s.created_at, s.session_type
 		FROM chat_sessions s
 		LEFT JOIN projects p ON p.id = s.project_id
-		WHERE s.session_type = ?`
-	args := []interface{}{sessionType}
+		WHERE s.session_type IN (?, ?)`
+	args := []interface{}{sessionTypes[0], sessionTypes[1]}
 	if projectPath != "" {
 		projectID, idErr := ProjectIDForPath(projectPath)
 		if idErr != nil {
@@ -476,7 +521,12 @@ func MessageIndexCounts() (total int, indexed int, err error) {
 //
 //nolint:errcheck,noctx // legacy query moved from service; rationale documented at the call site
 func GetExpiredArchivedSessions(cutoff time.Time) ([]string, error) {
-	rows, err := dbRead.Query("SELECT id FROM chat_sessions WHERE archived = 1 AND updated_at < ?", cutoff)
+	// Exclude hidden group member rows (session_type='group_member'). A member
+	// that LEFT a group is archived=1 by design and must be retained: its past
+	// speech in the group timeline is attributed by its row id (decision #48).
+	// Without this filter, enabling ArchiveRetention would treat "left the
+	// group" as "expired" and hard-delete the row, orphaning that attribution.
+	rows, err := dbRead.Query("SELECT id FROM chat_sessions WHERE archived = 1 AND session_type != ? AND updated_at < ?", SessionTypeGroupMember, cutoff)
 	if err != nil {
 		return nil, err
 	}
@@ -558,6 +608,13 @@ func PurgeArchivedData(sessionIDs []string) (sessionsPurged int64, messagesPurge
 
 	// Delete /btw side questions for purged sessions (no FK to chat_sessions).
 	_, _ = tx.Exec("DELETE FROM btw_questions WHERE session_id IN ("+placeholders+")", args...)
+
+	// Cascade a group's member rows (session_type 'group_member', group_id =
+	// the group) BEFORE the group row itself, mirroring HardDeleteSession
+	// (decision #48). Without this the member rows become permanent orphans:
+	// the parent row is gone, and GetExpiredArchivedSessions deliberately
+	// excludes member rows, so they can never be reaped by a later pass.
+	_, _ = tx.Exec("DELETE FROM chat_sessions WHERE session_type = ? AND group_id IN ("+placeholders+")", append([]any{SessionTypeGroupMember}, args...)...)
 
 	// Delete the session records
 	result, err = tx.Exec("DELETE FROM chat_sessions WHERE id IN ("+placeholders+") AND archived = 1", args...)

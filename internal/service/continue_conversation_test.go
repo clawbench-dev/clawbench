@@ -980,3 +980,40 @@ func TestRestoreDeletedSession_DBError(t *testing.T) {
 	)
 	assert.Error(t, err, "should fail with closed DB")
 }
+
+// ---------- ForkSession: group guard (decision #74) ----------
+
+// A group timeline must not be forkable: ForkSession copies the source's
+// backend/agent and hard-codes session_type='chat', so the result would be a
+// single-agent chat whose messages carry member row ids that resolve to no
+// member — a wall of unattributed AI speech. Refuse it (symmetric with rewind).
+func TestForkSession_RefusesGroup(t *testing.T) {
+	setupDB(t)
+	project := "/tmp/fork-group-test"
+	_, err := store.ProjectIDForPath(project)
+	require.NoError(t, err)
+
+	groupID, _, err := service.CreateGroup(project, "讨论组", "claude", "claude", "Host")
+	require.NoError(t, err)
+
+	_, err = service.ForkSession(groupID, project, "forked", 0, "")
+	require.Error(t, err, "forking a group session must be refused")
+	assert.Contains(t, err.Error(), "group")
+}
+
+// The guard must not over-reach: an ordinary chat still forks.
+func TestForkSession_AllowsChat(t *testing.T) {
+	setupDB(t)
+	project := "/tmp/fork-chat-test"
+	_, err := store.ProjectIDForPath(project)
+	require.NoError(t, err)
+
+	sid, err := service.CreateSession(project, "claude", "T", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	_, err = service.AddChatMessage(project, "claude", sid, "user", "hello", nil, false, "T")
+	require.NoError(t, err)
+
+	forked, err := service.ForkSession(sid, project, "forked", 0, "")
+	require.NoError(t, err)
+	assert.NotEmpty(t, forked)
+}

@@ -161,3 +161,41 @@ describe('renderTextBlock — ask-question', () => {
     expect(html).toContain('普通文本，没有标签')
   })
 })
+
+describe('renderTextBlock — mentions (public chip / private drop)', () => {
+  const PRIVATE = '<clawbench-mention targets="A" private>只有A能看到</clawbench-mention>'
+
+  it('drops a private mention from the rendered body (post-streaming)', () => {
+    const r = setup()
+    const html = r.renderTextBlock(`前言 ${PRIVATE} 后记`, 'm1', 0)
+    expect(html).not.toContain('clawbench-mention')
+    expect(html).not.toContain('只有A能看到')
+    expect(html).toContain('前言')
+    expect(html).toContain('后记')
+  })
+
+  it('drops a private mention on the STREAMING path too', () => {
+    // The user explicitly does not accept the raw tag flashing during streaming.
+    const r = setup()
+    const html = r.renderTextBlock(`前言 ${PRIVATE} 后记`, 'm1', 0, true)
+    expect(html).not.toContain('clawbench-mention')
+    expect(html).not.toContain('只有A能看到')
+    expect(html).toContain('前言')
+  })
+
+  it('renders a public mention as an inline @name chip', () => {
+    const r = setup()
+    const html = r.renderTextBlock('<clawbench-mention targets="B">请回应</clawbench-mention>', 'm1', 0)
+    expect(html).not.toContain('clawbench-mention')
+    expect(html).toContain('msg-mention-chip')
+    expect(html).toContain('@B')
+    expect(html).toContain('请回应')
+  })
+
+  it('leaves a malformed mention verbatim (never lose content)', () => {
+    const r = setup()
+    const malformed = '<clawbench-mention targets="">没有 targets</clawbench-mention>'
+    const html = r.renderTextBlock(`前言 ${malformed} 后记`, 'm1', 0)
+    expect(html).toContain('没有 targets')
+  })
+})

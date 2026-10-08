@@ -29,6 +29,16 @@ const jsonKeyStatus = "status"
 // jsonKeyPort is the template field name for the InvalidPortNumber message.
 const jsonKeyPort = "Port"
 
+// Shared JSON response/request keys. Spelled once because several endpoints
+// emit the same key (goconst): the group member view, the agent patch, and the
+// session-limit error all repeat these names.
+const (
+	jsonName     = "name"
+	jsonAgentID  = "agentId"
+	jsonBackend  = "backend"
+	jsonMaxCount = "MaxCount"
+)
+
 // loc returns the Localizer for the current request.
 func loc(r *http.Request) *i18n.Localizer {
 	return middleware.GetLocalizer(r)
@@ -413,6 +423,10 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// returns assistant rows too — the name is historical, the contract is the
 	// OpenAPI description.
 	register("/api/ai/chat/user-messages", ServeConversationIndex)
+	// AI group chat (design docs/plans/2026-10-04-ai-group-chat-design.md).
+	register("/api/group/create", ServeGroupCreate)
+	register("/api/group/members", ServeGroupMembers)
+	register("/api/group/settings", ServeGroupSettings)
 	register("/api/ai/chat/tool-call", ServeToolCallDetail)
 	register("/api/ai/chat/thinking", ServeThinkingDetail)
 	register("/api/usage/stats", ServeUsageStats)

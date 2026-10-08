@@ -42,6 +42,32 @@ type TurnSpec struct {
 	SessionID   string
 	AgentID     string
 
+	// TimelineSessionID, when non-empty, redirects message persistence and WS
+	// broadcast to a different session than the one owning the connection.
+	// Group chat sets it to the group session while SessionID is the member row
+	// (whose backend connection and external_session_id are used).
+	//
+	// Empty means "same as SessionID" — every pre-existing caller keeps its
+	// exact behavior.
+	TimelineSessionID string
+
+	// SpeakerID is the member session row id of whoever produced this turn's
+	// output. It is written to chat_history.agent_id (speaker attribution) and
+	// broadcast on stream_start. Empty for ordinary single-agent turns.
+	//
+	// It is DISTINCT from AgentID (the real agent id used for backend
+	// resolution): never pass SpeakerID where AgentID is expected.
+	SpeakerID string
+
+	// SuppressSummarization skips the post-finalize summarization/recommendation
+	// for this turn. The group orchestrator sets it for member turns: they write
+	// to the GROUP timeline, so summarizing per member would run N LLM calls per
+	// round and emit a recommendation for every member's reply — the group turn
+	// summarizes once at the end instead (decision #55). Carrying it on the spec
+	// keeps the executor free of any group knowledge (it must not query
+	// session_type).
+	SuppressSummarization bool
+
 	// ChatReq is the already-built request. Callers build it via
 	// BuildChatRequest / BuildChatRequestForQueue so resume and fork handling
 	// stays in one place.
@@ -191,12 +217,10 @@ func serviceLocalizeError(_ error, key string, args map[string]any) string {
 	}
 }
 
-// failTurn emits the error event, persists a warning row, and returns the
-// result. Shared by both early-failure branches (backend creation and stream
-// start) so they cannot drift in what they report or persist.
-func (s TurnSpec) failTurn(err error, key string) TurnResult {
-	errMsg := s.localize(err, key, map[string]any{"Error": err.Error()})
-	emitDrainEvent(s.SessionID, ai.StreamEvent{Type: eventTypeError, Error: errMsg})
+// buildWarningContent renders the canonical warning-block payload for a failed
+// turn. Single chat's failTurn and the group member path share it so the two
+// cannot drift in what they persist (decision #51).
+func buildWarningContent(errMsg string) string {
 	errContent, _ := json.Marshal(map[string]any{
 		contentKeyBlocks: []any{map[string]string{
 			contentKeyType:   blockTypeWarning,
@@ -204,9 +228,26 @@ func (s TurnSpec) failTurn(err error, key string) TurnResult {
 			contentKeyReason: ai.ReasonBackendExit,
 		}},
 	})
-	if _, saveErr := AddChatMessage(s.ProjectPath, s.BackendName, s.SessionID, roleAssistant, string(errContent), nil, false, ""); saveErr != nil {
+	return string(errContent)
+}
+
+// persistTurnWarning writes a warning row for a failed turn to the given
+// timeline, attributed to speakerID (empty for single chat). Best-effort: a
+// write failure is logged, never propagated — the failure being reported is
+// already more important than this record of it.
+func persistTurnWarning(projectPath, backend, timelineSessionID, speakerID, errMsg string) {
+	if _, saveErr := AddChatMessageWithAgent(projectPath, backend, timelineSessionID, roleAssistant, buildWarningContent(errMsg), nil, false, "", speakerID); saveErr != nil {
 		slog.Error("failed to save error message", slog.String("err", saveErr.Error()))
 	}
+}
+
+// failTurn emits the error event, persists a warning row, and returns the
+// result. Shared by both early-failure branches (backend creation and stream
+// start) so they cannot drift in what they report or persist.
+func (s TurnSpec) failTurn(err error, key string) TurnResult {
+	errMsg := s.localize(err, key, map[string]any{"Error": err.Error()})
+	emitDrainEvent(s.effectiveTimelineSessionID(), ai.StreamEvent{Type: eventTypeError, Error: errMsg})
+	persistTurnWarning(s.ProjectPath, s.BackendName, s.effectiveTimelineSessionID(), s.SpeakerID, errMsg)
 	return TurnResult{Err: errMsg}
 }
 
@@ -272,10 +313,12 @@ func runTurnStart(spec TurnSpec) *activeTurn {
 	at.eventCh = eventCh
 
 	// Create the streaming placeholder. Its id is what FinalizeStreamingMessage
-	// updates, so a failure here means the reply has nowhere to land.
+	// updates, so a failure here means the reply has nowhere to land. The
+	// placeholder lands on the TIMELINE session (group for group turns) and is
+	// attributed to the speaker (member row id; empty for single-agent turns).
 	emptyContent, _ := json.Marshal(map[string]any{contentKeyBlocks: []any{}})
-	streamingMsgID, err := AddChatMessage(spec.ProjectPath, spec.BackendName, spec.SessionID,
-		roleAssistant, string(emptyContent), nil, true, "")
+	streamingMsgID, err := AddChatMessageWithAgent(spec.ProjectPath, spec.BackendName, spec.effectiveTimelineSessionID(),
+		roleAssistant, string(emptyContent), nil, true, "", spec.SpeakerID)
 	if err != nil {
 		slog.Error("failed to create streaming assistant placeholder",
 			slog.String("session", spec.SessionID),
@@ -296,25 +339,29 @@ func runTurnStart(spec TurnSpec) *activeTurn {
 	// the session mid-stream) learn the streaming message id and can create a
 	// placeholder if none exists yet. This makes the assistant bubble purely
 	// data-driven: any client, at any time, sees a placeholder whenever the DB
-	// has a streaming=1 row or a stream_start event arrives.
-	ws.EmitToSession(spec.SessionID, ai.StreamEvent{
+	// has a streaming=1 row or a stream_start event arrives. It is broadcast on
+	// the TIMELINE session and carries the speaker for group attribution.
+	ws.EmitToSession(spec.effectiveTimelineSessionID(), ai.StreamEvent{
 		Type:        "stream_start",
-		StreamStart: &ai.StreamStartData{MessageID: streamingMsgID},
+		StreamStart: &ai.StreamStartData{MessageID: streamingMsgID, SpeakerID: spec.SpeakerID},
 	})
 
 	execCfg := RunConfig{
-		Mode:               spec.Mode,
-		ProjectPath:        spec.ProjectPath,
-		BackendName:        spec.BackendName,
-		SessionID:          spec.SessionID,
-		AgentID:            agentID,
-		ChatRequest:        spec.ChatReq,
-		FileDir:            spec.FileDir,
-		StreamingMessageID: streamingMsgID,
-		LocalizeError:      spec.LocalizeError,
-		TaskID:             spec.TaskID,
-		ExecutionID:        spec.ExecutionID,
-		TriggerType:        spec.TriggerType,
+		Mode:                  spec.Mode,
+		ProjectPath:           spec.ProjectPath,
+		BackendName:           spec.BackendName,
+		SessionID:             spec.SessionID,
+		TimelineSessionID:     spec.effectiveTimelineSessionID(),
+		SpeakerID:             spec.SpeakerID,
+		SuppressSummarization: spec.SuppressSummarization,
+		AgentID:               agentID,
+		ChatRequest:           spec.ChatReq,
+		FileDir:               spec.FileDir,
+		StreamingMessageID:    streamingMsgID,
+		LocalizeError:         spec.LocalizeError,
+		TaskID:                spec.TaskID,
+		ExecutionID:           spec.ExecutionID,
+		TriggerType:           spec.TriggerType,
 	}
 	at.executor = NewSessionExecutor(turnCtx, execCfg)
 	// The turn is under way but not yet run. Fired before the blocking event
@@ -337,7 +384,7 @@ func (at *activeTurn) runTurnFinalize() TurnResult {
 		finalizeCh = nil
 	}
 	at.runResult = at.executor.Finalize(at.runResult, finalizeCh)
-	emitDrainEvent(at.spec.SessionID, ai.StreamEvent{Type: contentKeyMetadata, Meta: at.runResult.Metadata})
+	emitDrainEvent(at.spec.effectiveTimelineSessionID(), ai.StreamEvent{Type: contentKeyMetadata, Meta: at.runResult.Metadata})
 
 	runResult := at.runResult
 	result := TurnResult{
@@ -376,6 +423,15 @@ func (at *activeTurn) runTurnFinalize() TurnResult {
 		slog.Int("mode", int(at.spec.Mode)))
 
 	return result
+}
+
+// effectiveTimelineSessionID returns TimelineSessionID when set, else
+// SessionID. See TurnSpec.TimelineSessionID.
+func (s TurnSpec) effectiveTimelineSessionID() string {
+	if s.TimelineSessionID != "" {
+		return s.TimelineSessionID
+	}
+	return s.SessionID
 }
 
 // runTurn runs one complete AI turn. It does NOT send a terminal WS event — the

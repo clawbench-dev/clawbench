@@ -43,7 +43,7 @@ func FindSessionsByPrefix(prefix string) ([]DingTalkSessionInfo, error) {
 		`SELECT s.id, s.title, COALESCE(p.path, ''), s.backend, s.agent_id, s.model
 		   FROM chat_sessions s
 		   LEFT JOIN projects p ON p.id = s.project_id
-		  WHERE LOWER(s.id) LIKE LOWER(?) AND s.archived = 0 AND s.session_type = 'chat'
+		  WHERE LOWER(s.id) LIKE LOWER(?) AND s.archived = 0 AND s.session_type IN (`+store.VisibleSessionTypeInClause+`)
 		  ORDER BY s.updated_at DESC
 		  LIMIT 10`,
 		prefix+"%",
@@ -68,7 +68,7 @@ func ListRecentSessions(limit int) ([]DingTalkSessionInfo, error) {
 		`SELECT s.id, s.title, COALESCE(p.path, ''), s.backend, s.agent_id, s.model
 		   FROM chat_sessions s
 		   LEFT JOIN projects p ON p.id = s.project_id
-		  WHERE s.archived = 0 AND s.session_type = 'chat'
+		  WHERE s.archived = 0 AND s.session_type IN (`+store.VisibleSessionTypeInClause+`)
 		  ORDER BY s.updated_at DESC
 		  LIMIT ?`,
 		limit,
@@ -190,6 +190,23 @@ func sendMessageToSessionFromPush(sessionID, message string, files []model.FileE
 	// as well as the token the sender-side dedup uses on queue_added.
 	queueID := newPushQueueID()
 
+	// Group-chat delegation: a message to a group session is driven by the group
+	// orchestrator (host routes, members speak) rather than a single-agent turn,
+	// which would otherwise run the host agent alone and pollute the group
+	// timeline.
+	//
+	// It goes through the SAME enqueue entry point as single chat (decision
+	// #45): while a group turn is running the message must be QUEUED, not run as
+	// a second concurrent orchestrator. EnqueueAndMaybeStart claims or queues,
+	// materializes the row, and launches the group drain loop when it starts one.
+	// It runs the launch in a goroutine because the IM callback is synchronous
+	// and a group turn is potentially multi-minute; blocking it would stall the
+	// bot stream. Attachments are supported (decision #65).
+	if GetSessionType(sessionID) == groupSessionType {
+		_, err := EnqueueGroupMessage(sessionID, message, files, queueID)
+		return err
+	}
+
 	// Persist the message + start execution or signal the running drain loop.
 	// EnqueueAndMaybeStart handles the B2 drain-loop exit race internally and
 	// emits the appropriate announcement (user_message when idle, queue_added
@@ -206,10 +223,12 @@ func sendMessageToSessionFromPush(sessionID, message string, files []model.FileE
 	return err
 }
 
-// newPushQueueID mints a queue id for a message that arrives from an IM
-// backend, which (unlike the web client) has no queue id of its own.
+// newPushQueueID mints a queue id for a caller that has no client-supplied one:
+// an IM backend, or EnqueueGroupMessage (the shared group entry used by both the
+// IM path and POST /api/ai/queue). The web client always sends its own queueId,
+// so this is only the fallback.
 //
-// The format mirrors newQueueID so ids from both paths look alike; uniqueness
+// The format mirrors NewQueueID so ids from both paths look alike; uniqueness
 // comes from the timestamp plus a monotonic counter, not from randomness, so a
 // burst of messages cannot collide on a coarse clock.
 func newPushQueueID() string {
@@ -506,6 +525,84 @@ func EnqueueAndMaybeStart(cfg EnqueueStartConfig) (started bool, msgID int64, er
 		},
 	})
 	return false, 0, nil
+}
+
+// EnqueueGroupMessage is the group counterpart of EnqueueAndMaybeStart, shared
+// by the IM path (decisions #45/#75/#76) and the queue endpoint (POST
+// /api/ai/queue, decision #45). It inserts the message into the queue and:
+//
+//   - idle: claims the group, materializes the row, and launches the group
+//     drain loop in a goroutine (a group turn is potentially multi-minute);
+//   - busy: marks the running group's loop as having pending work and returns —
+//     that loop claims and materializes this message, exactly like single chat.
+//
+// Doing this through the queue (rather than calling the orchestrator directly)
+// is what makes a message sent while a group turn runs QUEUE instead of
+// starting a second concurrent orchestrator. started reports which branch was
+// taken, matching EnqueueAndMaybeStart's contract.
+//
+// The name no longer says "FromPush": the queue endpoint is not a push path, and
+// naming it after one caller invited exactly the gap where /api/ai/queue ran a
+// host-only single-agent turn for a group (review B3).
+func EnqueueGroupMessage(sessionID, message string, files []model.FileEntry, queueID string) (started bool, err error) {
+	info := GetSessionFullInfo(sessionID)
+	if info == nil {
+		return false, fmt.Errorf("session %s not found", sessionID)
+	}
+	effectiveQueueID := queueID
+	if effectiveQueueID == "" {
+		effectiveQueueID = newPushQueueID()
+	}
+	queueRowID, err := AddQueuedMessage(info.ProjectPath, info.Backend, sessionID, message, files, effectiveQueueID, "")
+	if err != nil {
+		return false, err
+	}
+	runCtx, created := TryClaimSessionRun(sessionID)
+	if !created {
+		// A group loop is live and has been woken; it will claim this message.
+		WakeSessionRunner(sessionID)
+		ws.EmitToSession(sessionID, ai.StreamEvent{
+			Type: "queue_added",
+			QueueAdded: &ai.QueueAddedData{
+				QueueID: effectiveQueueID,
+				Text:    message,
+				Files:   files,
+			},
+		})
+		return false, nil
+	}
+	row, matMsgID, ok, cerr := ClaimByIDAndMaterialize(sessionID, queueRowID)
+	if cerr != nil || !ok {
+		// The row vanished (concurrent cancel/clear). Release the claim so the
+		// session is not stranded as running with nothing consuming it.
+		slog.Warn("group: queued row vanished before materialize",
+			slog.String("session", sessionID), slog.Int64("queue_row_id", queueRowID), slog.Any("error", cerr))
+		FinishSessionRun(sessionID)
+		return false, fmt.Errorf("group queued message could not be materialized")
+	}
+	emitUserMessage(sessionID, matMsgID, row)
+	go func() {
+		defer FinishSessionRun(sessionID)
+		runGroupDrainLoopFn(runCtx, sessionID, info.ProjectPath, matMsgID, row.Content, row.Files)
+	}()
+	return true, nil
+}
+
+// runGroupDrainLoopFn is the injectable indirection over RunGroupDrainLoop, so
+// tests can assert the IM group path launches the group drain without running a
+// real orchestrator.
+var runGroupDrainLoopFn = RunGroupDrainLoop
+
+// SetRunGroupDrainLoopForTest swaps the group-drain seam and returns the
+// previous one. Pass nil to restore the default.
+func SetRunGroupDrainLoopForTest(fn func(context.Context, string, string, int64, string, []model.FileEntry)) func(context.Context, string, string, int64, string, []model.FileEntry) {
+	prev := runGroupDrainLoopFn
+	if fn == nil {
+		runGroupDrainLoopFn = RunGroupDrainLoop
+	} else {
+		runGroupDrainLoopFn = fn
+	}
+	return prev
 }
 
 // handleSessionPanic recovers from panics in the session goroutine.

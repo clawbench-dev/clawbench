@@ -275,6 +275,20 @@ func EnsureConsumer(sessionID string) bool {
 	// Announce the materialized user message so every device renders it inline.
 	emitUserMessage(sessionID, msgID, row)
 
+	// Group-chat recovery (decision #45/#76): a stranded group message must be
+	// run by the group orchestrator, never as a host-only single-agent turn.
+	// Without this branch the reaper would answer with the host alone — no
+	// SpeakerID, no host routing, the other members never participate, and the
+	// reply lands on the group timeline unattributed. The group drain loop owns
+	// the terminal event and the push contract, exactly as on the normal path.
+	if GetSessionType(sessionID) == groupSessionType {
+		go func() {
+			defer FinishSessionRun(sessionID)
+			runGroupDrainLoopFn(runCtx, sessionID, info.ProjectPath, msgID, row.Content, row.Files)
+		}()
+		return true
+	}
+
 	// We hold the claimed row, so hand it to the execution directly.
 	//
 	// Files MUST be carried: executeStreamRunShared builds the prompt itself and

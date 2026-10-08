@@ -3,11 +3,16 @@ SessionStreamNotFound: 未找到会话流
 SessionStreamBusy: 会话流正在其他设备上查看
 SessionLimitReached: 已达会话数量上限（{{.MaxCount}}），请先归档旧会话
 SessionIdRequired: session_id 为必填项
+CannotRemoveHost: 主持人是群的唯一调度者，不能移除
+GroupMemberLimitReached: 一个群最多 {{.MaxCount}} 个成员
+GroupNotForkable: 群聊不支持分叉
+GroupNotRewindable: 群聊不支持回溯
 ShareSessionNoContent: 该会话暂无可分享的消息
 ShareSessionInvalidSelection: 部分选中的消息无法分享（可能仍在生成中）
 QueueIdRequired: queueId 为必填项
 QueueInjectStranded: 插入失败且消息无法回到队列，请重新发送该消息
 QueueMergeFailed: 合并排队消息失败
+EnqueueFailed: 发送失败，请重试
 NewSession: 新会话
 NewSessionN: 新会话 {{.N}}
 FileMessage: 文件消息
@@ -31,6 +36,7 @@ Unauthorized: 未授权
 InvalidPath: 无效路径
 PathTraversal: 检测到路径穿越攻击
 InternalError: 内部服务器错误
+CreateSessionFailed: 创建会话失败
 SessionNotFound: 会话未找到
 ProjectNotFound: 项目未找到
 ProjectDeleteForbidden: 该项目无法删除
@@ -104,6 +110,7 @@ AgentNotFound: 智能体未找到
 InvalidModelForAgent: 无效的模型
 InvalidThinkingEffort: 无效的思考深度级别
 InvalidModeForAgent: 无效的模式
+AgentNameTaken: 已存在同名智能体
 InvalidAgentName: 无效的智能体名称
 InvalidAgentSpecialty: 无效的描述
 InvalidAgentAvatar: 无效的头像图片
@@ -148,6 +155,7 @@ RAGResetFailed: 索引重建失败
 RAGSegmenterUnavailable: "已拒绝重建：分词器不可用。此时重建会把已正确分词的文本替换为未切分文本，导致中文搜索失效 — 请重启服务后重试。"
 RAGRebuildAccepted: 重建已在后台启动
 AutoContinue: 继续
+GroupYourTurn: 轮到用户发言
 PortForwardUnavailable: 端口转发不可用
 TunnelTargetUnreachable: 隧道目标不可达
 TunnelReverseRequiresHTTP2: 反向转发需要 HTTP/2；HTTP/1.1 下请使用 SSH 传输

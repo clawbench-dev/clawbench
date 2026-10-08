@@ -76,6 +76,12 @@ export interface ChatMessage {
   cancelled?: boolean
   streaming?: boolean
   backend?: string
+  /**
+   * Speaker's group-member session row id (group chats only; empty otherwise).
+   * NOT a real agent id — resolve it against the group member list to render
+   * the speaker's avatar/name. Mirrors backend chat_history.agent_id.
+   */
+  agentId?: string
   createdAt?: string
   files?: FileEntry[]
   /**
@@ -628,12 +634,15 @@ export type ChatMessageAction =
   | { type: 'clear' }
   | { type: 'prepend_older'; olderMsgs: ChatMessage[] }
   // ── WS structural events ──
-  | { type: 'ws_stream_start'; messageId: number }
+  | { type: 'ws_stream_start'; messageId: number; speakerId?: string }
   | { type: 'ws_stream_split'; messageId: number }
   // A queued message started its own turn: the reply that was streaming is now
   // complete (the backend only emits `done` when the whole drain loop exits).
   | { type: 'ws_queue_drain' }
   | { type: 'ws_user_message'; data: { messageId?: number; content?: string; files?: FileEntry[]; senderClientId?: string; queueId?: string; backend?: string } }
+  // A role='system' timeline row (group membership change) written by the
+  // backend. Deduped by DB id so a duplicate delivery renders once.
+  | { type: 'ws_system_message'; data: { messageId?: number; content?: string } }
   | { type: 'ws_error'; text: string; reason?: string; errorCode?: number; httpStatus?: number; errorSource?: string; errorDetail?: string }
   | { type: 'stream_finalize' }
   // ── WS block-level (in-place blocks mutation, same array reference) ──
@@ -1414,6 +1423,16 @@ export function rebuildFromDb(state: ChatMessage[], dbMessages: ChatMessage[], s
       if (db.summaryCards) live.summaryCards = db.summaryCards
       if (db.metadata && !live.metadata) live.metadata = db.metadata
       if (db.files) live.files = db.files
+      // Speaker attribution (group chats): the DB row's agent_id is authoritative.
+      // The placeholder frequently has none — the subscribe-time recovery
+      // re-emits stream_start WITHOUT a speaker (EmitStreamStartEvent carries
+      // only message_id, unlike the live broadcast), and a session switch clears
+      // the array before that re-emit, so the placeholder is created speakerless.
+      // Adopt the DB value when the placeholder lacks one; never overwrite a
+      // speaker the placeholder already carries (a mid-turn split's "after"
+      // bubble keeps its own). Without this the avatar/name vanish on every
+      // switch-away-and-back and only a full reload restores them.
+      if (db.agentId && !live.agentId) live.agentId = db.agentId
       // A FINALIZED, summary-stripped row is the whole record of a turn that is
       // already over, and it carries NO blocks on purpose: the backend replaces
       // the content of a summarized non-streaming assistant row with
@@ -1693,6 +1712,12 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
         if (typeof sm.id !== 'number') {
           sm.id = action.messageId
         }
+        // Group chats: stamp the speaker (member row id) so the speaker header
+        // renders during streaming. Only when absent — a split's "after" bubble
+        // must keep its own speaker.
+        if (action.speakerId && !sm.agentId) {
+          sm.agentId = action.speakerId
+        }
       }
       return state
     }
@@ -1786,6 +1811,29 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
         _remote: true,
         ...(data.backend ? { backend: data.backend } : {}),
         ...(remoteQueueId ? { _remoteQueueId: remoteQueueId } : {}),
+        seq: nextClientSeq(),
+      } as ChatMessage)
+      sortMessages(state)
+      return state
+    }
+    case 'ws_system_message': {
+      // A role='system' timeline row (group membership change) — render it as a
+      // centered row. Identity is the DB id: a replayed/duplicate delivery must
+      // not append a second row. Text is never the key (two membership events
+      // can legitimately share text, e.g. the same member rejoining twice).
+      const sysData = action.data
+      const sysMsgId = sysData.messageId || 0
+      const sysContent = sysData.content || ''
+      const sysExists = state.some(
+        (m) => m.role === 'system' && sysMsgId > 0 && m.id === sysMsgId,
+      )
+      if (sysExists) return state
+      state.push({
+        role: 'system',
+        id: sysMsgId > 0 ? sysMsgId : `system-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        content: sysContent,
+        blocks: sysContent ? [{ type: 'text', text: sysContent }] : [],
+        createdAt: new Date().toISOString(),
         seq: nextClientSeq(),
       } as ChatMessage)
       sortMessages(state)

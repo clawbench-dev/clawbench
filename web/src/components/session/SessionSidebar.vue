@@ -11,6 +11,7 @@
           @refresh="handleRefresh"
           @open-search="$emit('open-session-search')"
           @create="handleCreateClick"
+          @create-group="$emit('create-group')"
         >
           <template #actions>
             <!-- Only when this project actually has a shared conversation:
@@ -75,7 +76,7 @@ defineProps({
   isActive: { type: Boolean, default: true },
 })
 
-const emit = defineEmits(['select', 'archive', 'destroy', 'close', 'resize', 'open-session-search', 'create', 'create-agent-select'])
+const emit = defineEmits(['select', 'archive', 'destroy', 'close', 'resize', 'open-session-search', 'create', 'create-agent-select', 'create-group'])
 const { t } = useI18n()
 const { agents, loadAgents } = useAgents()
 

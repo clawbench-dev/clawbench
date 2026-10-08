@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 	title TEXT NOT NULL,
 	agent_id TEXT DEFAULT '',
 	session_type TEXT NOT NULL DEFAULT 'chat',
+	group_id TEXT DEFAULT '',
 	archived INTEGER NOT NULL DEFAULT 0,
 	sort_order INTEGER NOT NULL DEFAULT 0,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -29,11 +30,12 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 CREATE TABLE IF NOT EXISTS chat_history (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	project_id INTEGER NOT NULL,
-	role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+	role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
 	content TEXT NOT NULL,
 	files TEXT,
 	session_id TEXT,
 	backend TEXT NOT NULL DEFAULT 'claude',
+	agent_id TEXT DEFAULT '',
 	streaming INTEGER NOT NULL DEFAULT 0,
 	indexed INTEGER NOT NULL DEFAULT 0,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP

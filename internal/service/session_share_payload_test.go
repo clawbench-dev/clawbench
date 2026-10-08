@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"clawbench/internal/model"
 	"clawbench/internal/store"
 
 	"clawbench/internal/service"
@@ -43,7 +44,9 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 			model TEXT NOT NULL DEFAULT '',
 			transport TEXT NOT NULL DEFAULT '',
 			auto_approve INTEGER NOT NULL DEFAULT 0,
-			archived INTEGER NOT NULL DEFAULT 0
+			archived INTEGER NOT NULL DEFAULT 0,
+			session_type TEXT NOT NULL DEFAULT 'chat',
+			context_state TEXT NOT NULL DEFAULT ''
 		)`,
 		`CREATE TABLE IF NOT EXISTS chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -53,6 +56,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 			files TEXT,
 			session_id TEXT NOT NULL DEFAULT '',
 			backend TEXT NOT NULL DEFAULT '',
+			agent_id TEXT DEFAULT '',
 			streaming INTEGER NOT NULL DEFAULT 0,
 			indexed INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -466,6 +470,28 @@ func TestSessionSharePayload_ExcludesStreamingAndQueued(t *testing.T) {
 	}
 }
 
+func TestSessionSharePayload_KeepsSpeakerAttribution(t *testing.T) {
+	db := setupTestDBForSessionSharePayload(t)
+	defer func() { _ = db.Close() }()
+
+	seedSession(t, db, "s1")
+	res, err := db.Exec(
+		`INSERT INTO chat_history (project_id, session_id, role, content, backend, streaming, agent_id)
+		 VALUES (?, 's1', 'assistant', 'A1', 'codebuddy', 0, 'member-row-a')`,
+		testProjectRoot,
+	)
+	require.NoError(t, err)
+	_, err = res.LastInsertId()
+	require.NoError(t, err)
+
+	raw, _, err := service.BuildSessionSharePayload("s1", nil, testProjectRoot, "/home/u")
+	require.NoError(t, err)
+
+	msgs := payloadMessages(t, raw)
+	require.Len(t, msgs, 1)
+	assert.Equal(t, "member-row-a", msgs[0]["agentId"], "group speaker attribution must survive the share snapshot")
+}
+
 func TestSessionSharePayload_MessageIDSelection(t *testing.T) {
 	db := setupTestDBForSessionSharePayload(t)
 	defer func() { _ = db.Close() }()
@@ -756,4 +782,94 @@ func TestGetSessionMessagesForSelection_UnknownSessionIsEmpty(t *testing.T) {
 	items, err := service.GetSessionMessagesForSelection("nope")
 	require.NoError(t, err)
 	assert.Empty(t, items)
+}
+
+// TestSessionSharePayload_FreezesSpeakerIdentitiesWithoutAvatars pins the
+// public-share privacy boundary: the snapshot carries each speaker's name and
+// backend (so the viewer renders the right brand icon) but NEVER a custom
+// avatar — a shared link must not expose the creator's avatars.
+func TestSessionSharePayload_FreezesSpeakerIdentitiesWithoutAvatars(t *testing.T) {
+	db := setupTestDBForSessionSharePayload(t)
+	defer func() { _ = db.Close() }()
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"codebuddy": {ID: "codebuddy", Name: "Host Agent", Backend: "codebuddy", Avatar: "<host/>"},
+	}
+	t.Cleanup(func() { model.Agents = origAgents })
+
+	seedSession(t, db, "s1")
+	seedMessage(t, db, "s1", "assistant", `{"blocks":[{"type":"text","text":"hi"}],"metadata":{}}`, 0, 0)
+
+	raw, _, err := service.BuildSessionSharePayload("s1", nil, testProjectRoot, "/home/u")
+	require.NoError(t, err)
+
+	var payload struct {
+		SessionAgent *struct {
+			Name    string `json:"name"`
+			Backend string `json:"backend"`
+			Avatar  string `json:"avatar"`
+		} `json:"sessionAgent"`
+		Speakers map[string]struct {
+			Backend string `json:"backend"`
+			Avatar  string `json:"avatar"`
+		} `json:"speakers"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(raw), &payload))
+	require.NotNil(t, payload.SessionAgent, "the viewer needs the session agent to icon single-agent rows")
+	assert.Equal(t, "codebuddy", payload.SessionAgent.Backend)
+	assert.Equal(t, "Host Agent", payload.SessionAgent.Name)
+	assert.Empty(t, payload.SessionAgent.Avatar, "the share snapshot must not freeze custom avatars")
+}
+
+// A shared GROUP must carry the host's member row id so the public viewer can
+// mark the host's messages and render their private notes (bcc) card.
+func TestSessionSharePayload_GroupCarriesHostMemberID(t *testing.T) {
+	db := setupTestDBForSessionSharePayload(t)
+	defer db.Close()
+
+	_, err := db.Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, model, session_type, context_state)
+		 VALUES ('g1', 1, 'codebuddy', 'Group', 'codebuddy', 'm', 'group', '{"host_member_id":"row-host-1"}')`)
+	require.NoError(t, err)
+	_, err = db.Exec(
+		`INSERT INTO chat_history (project_id, role, content, session_id, backend, agent_id, streaming, indexed)
+		 VALUES (1, 'assistant', '{"blocks":[{"type":"text","text":"hi"}]}', 'g1', 'codebuddy', 'row-host-1', 0, 0)`)
+	require.NoError(t, err)
+
+	raw, _, err := service.BuildSessionSharePayload("g1", nil, testProjectRoot, "/home/u")
+	require.NoError(t, err)
+
+	var payload struct {
+		Session struct {
+			HostMemberID string `json:"hostMemberId"`
+		} `json:"session"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(raw), &payload))
+	assert.Equal(t, "row-host-1", payload.Session.HostMemberID)
+}
+
+// A plain (non-group) session must not carry a hostMemberId.
+func TestSessionSharePayload_PlainSessionHasNoHostMemberID(t *testing.T) {
+	db := setupTestDBForSessionSharePayload(t)
+	defer db.Close()
+
+	_, err := db.Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, model) VALUES ('s1', 1, 'claude', 'Plain', 'claude', 'm')`)
+	require.NoError(t, err)
+	_, err = db.Exec(
+		`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming, indexed)
+		 VALUES (1, 'assistant', '{"blocks":[{"type":"text","text":"hi"}]}', 's1', 'claude', 0, 0)`)
+	require.NoError(t, err)
+
+	raw, _, err := service.BuildSessionSharePayload("s1", nil, testProjectRoot, "/home/u")
+	require.NoError(t, err)
+
+	var payload struct {
+		Session struct {
+			HostMemberID string `json:"hostMemberId"`
+		} `json:"session"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(raw), &payload))
+	assert.Empty(t, payload.Session.HostMemberID)
 }

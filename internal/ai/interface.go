@@ -13,18 +13,17 @@ type ChatRequest struct {
 	SessionID              string
 	WorkDir                string
 	SystemPrompt           string
-	Model                  string                  // per-request model override (empty = use global default)
-	Command                string                  // optional: custom command path for the AI backend CLI
-	AgentID                string                  // agent ID for logging and persistence
-	ThinkingEffort         string                  // thinking effort level, e.g., "high"; empty = auto (don't pass flag)
-	Mode                   string                  // ACP session mode, e.g., "code", "ask", "architect"; empty = use current
-	Resume                 bool                    // If true, resume an existing session instead of creating new
-	ScheduledExecution     bool                    // If true, this is a task execution — skill-level anti-recursion block
-	HasAttachments         bool                    // If true, the user message carries file attachments (triggers media rules injection)
-	AssistantMessageCount  int                     // Number of finalized assistant messages in the session (0 for new sessions). Used for logging and periodic summary logic.
-	HasConversationHistory bool                    // True if the session has any messages in DB (user + assistant, finalized + streaming). Drives shouldNewSessionFallback: true blocks silent fallback to NewSession on recovery failure (amnesia prevention). Differs from AssistantMessageCount: a session with only an in-flight user prompt has AssistantMessageCount=0 but HasConversationHistory=true.
-	ForkContext            string                  // Formatted history from parent session, injected on fork's first message so the AI has context
-	Images                 []model.ImageAttachment // Inline images for multimodal ACP prompts. Only ACP backends that advertise the image prompt capability consume these.
+	Model                  string // per-request model override (empty = use global default)
+	Command                string // optional: custom command path for the AI backend CLI
+	AgentID                string // agent ID for logging and persistence
+	ThinkingEffort         string // thinking effort level, e.g., "high"; empty = auto (don't pass flag)
+	Mode                   string // ACP session mode, e.g., "code", "ask", "architect"; empty = use current
+	Resume                 bool   // If true, resume an existing session instead of creating new
+	ScheduledExecution     bool   // If true, this is a task execution — skill-level anti-recursion block
+	HasAttachments         bool   // If true, the user message carries file attachments (triggers media rules injection)
+	AssistantMessageCount  int    // Number of finalized assistant messages in the session (0 for new sessions). Used for logging and periodic summary logic.
+	HasConversationHistory bool   // True if the session has any messages in DB (user + assistant, finalized + streaming). Drives shouldNewSessionFallback: true blocks silent fallback to NewSession on recovery failure (amnesia prevention). Differs from AssistantMessageCount: a session with only an in-flight user prompt has AssistantMessageCount=0 but HasConversationHistory=true.
+	ForkContext            string // Formatted history from parent session, injected on fork's first message so the AI has context
 	// Compacted marks the turn that follows a context compaction (auto or a
 	// user-issued /compact). Compaction rewrites the conversation into a summary,
 	// so the injected system prompt may no longer be in context; this forces a
@@ -33,11 +32,6 @@ type ChatRequest struct {
 	// triggers exactly one extra injection.
 	Compacted bool
 }
-
-// ImageAttachment carries an inline image for a multimodal ACP prompt.
-// Alias of model.ImageAttachment to avoid a circular dependency between
-// the ai and model packages (ai imports model).
-type ImageAttachment = model.ImageAttachment
 
 // ShouldInjectSystemPrompt determines whether the system prompt should be injected
 // into the user prompt for CLI backends that lack a --system-prompt flag.
@@ -412,7 +406,7 @@ type UsageState struct {
 
 // StreamEvent represents a single event in the streaming output
 type StreamEvent struct {
-	Type    string // "content", "thinking", "metadata", "done", "error", "tool_use", "tool_result", "queue_drain", "queue_inject", "queue_cancel", "queue_added", "session_capture", "mode_update", "config_update", "commands_update", "thinking_effort_update", "plan_update", "model_list_update", "usage_update", "user_message", "stream_start", "replay_done", "content_reset"
+	Type    string // "content", "thinking", "metadata", "done", "error", "tool_use", "tool_result", "queue_drain", "queue_inject", "queue_cancel", "queue_added", "session_capture", "mode_update", "config_update", "commands_update", "thinking_effort_update", "plan_update", "model_list_update", "usage_update", "user_message", "system_message", "stream_start", "replay_done", "content_reset"
 	Content string // Incremental text (Type=content, Type=thinking) or captured session ID (Type=session_capture)
 	// ThinkID is the stable identity of a thinking block, set on Type=thinking
 	// from the moment the block opens (see AccumulateBlock, which mints it and
@@ -439,8 +433,16 @@ type StreamEvent struct {
 	Usage          *UsageState            // Usage state (Type=usage_update)
 	ToolMeta       *ToolCallMeta          // Extracted tool metadata for WS forwarding (Type=tool_use, Type=tool_result)
 	UserMessage    *UserMessageData       // User message for cross-device sync (Type=user_message)
+	SystemMessage  *SystemMessageData     // System timeline event (Type=system_message)
 	QueueAdded     *QueueAddedData        // A message was enqueued (Type=queue_added)
 	StreamStart    *StreamStartData       // Stream start (Type=stream_start) — carries streaming message DB id
+	// StreamFinish is set on a "stream_finalize" event: ONE producer turn has
+	// ended and its streaming bubble should be finalized, WITHOUT ending the
+	// whole run. Used by group chats, where each member turn must close its own
+	// bubble before the next member's stream_start so the next bubble opens.
+	// Distinct from the terminal "done" (which also clears loading / ends the
+	// run). See StreamFinishData.
+	StreamFinish *StreamFinishData
 	// SteerBoundary is set on a "steer_boundary" event: the exact point where a
 	// mid-turn injected user message entered the running turn. It lets the
 	// service layer split the assistant reply into two messages at that point
@@ -477,6 +479,17 @@ type StreamEvent struct {
 // that opened the session mid-stream) can create a streaming placeholder
 // anchored to the authoritative DB row id.
 type StreamStartData struct {
+	MessageID int64 `json:"message_id"`
+	// SpeakerID is the group-member session row id that produced this stream
+	// (empty for ordinary single-agent turns). It is NOT a real agent id: it
+	// identifies the speaker for attribution/rendering in a group chat.
+	SpeakerID string `json:"speaker_id,omitempty"`
+}
+
+// StreamFinishData carries the streaming row id of the producer turn that just
+// ended (0 when the turn never opened a row). Lets the frontend finalize that
+// bubble without touching the run's loading state.
+type StreamFinishData struct {
 	MessageID int64 `json:"message_id"`
 }
 
@@ -565,6 +578,19 @@ type UserMessageData struct {
 	Files          []model.FileEntry `json:"files,omitempty"`          // File attachments
 	SenderClientID string            `json:"senderClientId,omitempty"` // WS client ID of the sender (to skip self-echo)
 	QueueID        string            `json:"queueId,omitempty"`        // Client queue ID the sender used, so it can adopt this row's id
+}
+
+// SystemMessageData carries a role='system' timeline event (a membership change)
+// for real-time broadcast, so it appears in the group timeline the moment it is
+// written instead of only after a full history reload.
+//
+// Distinct from UserMessageData on purpose: a user message renders as a user
+// bubble, but a system event renders as a centered thin row (ChatMessageItem
+// role==='system'). MessageID is the authoritative chat_history row id and is
+// the frontend's dedup key — the same event delivered twice must render once.
+type SystemMessageData struct {
+	MessageID int64  `json:"messageId"`
+	Content   string `json:"content"`
 }
 
 // QueueAddedData announces a message that was just ENQUEUED (waiting for the

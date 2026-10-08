@@ -104,8 +104,19 @@
                   </div>
                   <div class="session-item-meta">
                     <span class="session-item-time">{{ formatRelativeTime(row.session.updatedAt) }}</span>
-                    <span class="session-item-agent"><AgentIcon :backend="getAgentBackend(row.session.agentId)" :name="getAgentName(row.session.agentId)" :avatar="getAgentAvatar(row.session.agentId)" :size="12" /> {{ getAgentName(row.session.agentId) }}</span>
-                    <span v-if="row.session.model" class="session-item-model">{{ row.session.model }}</span>
+                    <!-- Group rows swap the single-agent chip for a group glyph
+                         plus a stacked member preview: a group's agentId is its
+                         HOST, so the agent chip would read as a 1:1 chat. -->
+                    <span v-if="row.session.sessionType === 'group'" class="session-item-group">
+                      <Users :size="12" />
+                      <GroupMemberStack :members="row.session.groupMembers || []" />
+                      <span v-if="groupModeLabel(row.session)" class="session-item-group-mode">{{ groupModeLabel(row.session) }}</span>
+                    </span>
+                    <span v-else class="session-item-agent"><AgentIcon :backend="getAgentBackend(row.session.agentId)" :name="getAgentName(row.session.agentId)" :avatar="getAgentAvatar(row.session.agentId)" size="sm" /> {{ getAgentName(row.session.agentId) }}</span>
+                    <!-- A group's `model` is the HOST's model, not a property of
+                         the group; showing it beside the member stack reads as
+                         "the group runs on one model". Suppressed for groups. -->
+                    <span v-if="row.session.model && row.session.sessionType !== 'group'" class="session-item-model">{{ row.session.model }}</span>
                   </div>
                   <!-- Fork-group toggle, inlined on the anchor row itself.
                        A separate header row made the group read as "a session,
@@ -200,8 +211,15 @@
                   </div>
                   <div class="session-item-meta">
                     <span class="session-item-time">{{ formatRelativeTime(session.updatedAt) }}</span>
-                    <span class="session-item-agent"><AgentIcon :backend="getAgentBackend(session.agentId)" :name="getAgentName(session.agentId)" :avatar="getAgentAvatar(session.agentId)" :size="12" /> {{ getAgentName(session.agentId) }}</span>
-                    <span v-if="session.model" class="session-item-model">{{ session.model }}</span>
+                    <span v-if="session.sessionType === 'group'" class="session-item-group">
+                      <Users :size="12" />
+                      <GroupMemberStack :members="session.groupMembers || []" />
+                      <span v-if="groupModeLabel(session)" class="session-item-group-mode">{{ groupModeLabel(session) }}</span>
+                    </span>
+                    <span v-else class="session-item-agent"><AgentIcon :backend="getAgentBackend(session.agentId)" :name="getAgentName(session.agentId)" :avatar="getAgentAvatar(session.agentId)" size="sm" /> {{ getAgentName(session.agentId) }}</span>
+                    <!-- Same rule as the project pane: a group's model is the
+                         host's, not the group's, so it is not shown. -->
+                    <span v-if="session.model && session.sessionType !== 'group'" class="session-item-model">{{ session.model }}</span>
                   </div>
                 </div>
                 <span
@@ -283,13 +301,14 @@
 import { ref, reactive, watch, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { VueDraggable } from 'vue-draggable-plus'
-import { Archive, ChevronDown, Pin, PinOff, PencilLine, MessageSquareShare, Tags, Trash2, MoreVertical, Split } from 'lucide-vue-next'
+import { Archive, ChevronDown, Pin, PinOff, PencilLine, MessageSquareShare, Tags, Trash2, MoreVertical, Split, Users } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import SessionGroupHeader from '@/components/session/SessionGroupHeader.vue'
 import SessionTagDialog from '@/components/session/SessionTagDialog.vue'
 import SessionShareDialog from '@/components/session/SessionShareDialog.vue'
 import SessionTagFilterBar from '@/components/session/SessionTagFilterBar.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
+import GroupMemberStack from '@/components/session/GroupMemberStack.vue'
 import { tagAccentStyle } from '@/utils/tagColor.ts'
 import { useAgents } from '@/composables/useAgents'
 import { useSessionShare } from '@/composables/useSessionShare'
@@ -402,6 +421,31 @@ function rowStatus(session) {
   if (session.pendingApproval) return 'pending'
   if (session.unreadCount > 0) return 'unread'
   return null
+}
+
+/**
+ * The group's chat mode, derived from the member preview: the preview's
+ * `isHost` is read straight from the group row's authoritative host pointer
+ * (see service.GroupMembersForGroups), so a member carrying it means host mode
+ * and a non-empty roster without one means free mode.
+ *
+ * Returns '' when the mode cannot be told apart — an empty roster (a preview
+ * fetch that failed, or a free group whose members all left). The chip is then
+ * simply omitted rather than guessed: showing the wrong mode is worse than
+ * showing none.
+ */
+function groupModeOf(session) {
+  const members = session.groupMembers || []
+  if (members.length === 0) return ''
+  return members.some(m => m.isHost) ? 'host' : 'free'
+}
+
+/** Display label for a group row's mode chip ('' when unknown). */
+function groupModeLabel(session) {
+  const mode = groupModeOf(session)
+  if (mode === 'host') return t('group.hostMode')
+  if (mode === 'free') return t('group.freeMode')
+  return ''
 }
 
 /** Tooltip / aria label for a status slot. */
@@ -1594,6 +1638,27 @@ onUnmounted(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Group rows: a group glyph + stacked member previews. Deliberately NOT the
+   agent chip's pill background — the stack's own 2px rings already read as a
+   cluster, and a pill behind them would double the visual weight. */
+.session-item-group {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+  color: var(--text-muted, #999);
+}
+
+/* The group's chat mode ("host mode" / "free mode"), trailing the member stack.
+   A plain muted label — the meta line is already busy with the time, the
+   stack and (on plain rows) a model chip, so a tinted pill here would compete
+   with them. It inherits the group slot's muted colour. */
+.session-item-group-mode {
+  flex-shrink: 0;
+  font-size: var(--font-size-2xs);
+  white-space: nowrap;
 }
 
 .session-item-model {

@@ -277,15 +277,40 @@
                        cursor's location. -->
                   <div class="chat-col" :class="{ 'chat-drop-active': chatDropActive }">
                   <div class="chat-title-bar">
-                    <span class="bs-header-title"><AgentIcon v-if="sessionIdentity.currentAgentId.value" :backend="getAgentBackend(sessionIdentity.currentAgentId.value)" :name="getAgentName(sessionIdentity.currentAgentId.value)" :avatar="getAgentAvatar(sessionIdentity.currentAgentId.value)" :size="18" />{{ sessionIdentity.agentHeaderTitle.value }}</span>
+                    <!-- Session switch in flight: identity was cleared and the
+                         new session's metadata has not arrived yet. Stand in
+                         with a skeleton instead of flashing a placeholder (the
+                         old "AI 对话" fallback) or the previous session's title. -->
+                    <template v-if="switching">
+                      <div class="skeleton-block skeleton-circle chat-title-skeleton-avatar"></div>
+                      <div class="skeleton-block chat-title-skeleton-title"></div>
+                    </template>
+                    <template v-else>
+                    <!-- Group sessions: the header shows an overlapping avatar
+                         stack (host first, then members) with a trailing "+"
+                         that opens member management. Single-agent sessions
+                         keep the original icon + name. -->
+                    <GroupAvatarStack
+                      v-if="isGroupSession"
+                      :sessionId="sessionIdentity.currentSessionId.value"
+                      :members="groupMembers"
+                      :hostMemberId="groupHostMemberId"
+                      :maxRounds="groupMaxRounds"
+                      :autoApprove="groupAutoApprove"
+                      :mode="groupMode"
+                      :isGroup="isGroupSession"
+                      @changed="refreshGroupMembers(sessionIdentity.currentSessionId.value)"
+                    />
+                    <span v-else-if="sessionIdentity.currentAgentId.value" class="bs-header-title"><AgentIcon :backend="getAgentBackend(sessionIdentity.currentAgentId.value)" :name="getAgentName(sessionIdentity.currentAgentId.value)" :avatar="getAgentAvatar(sessionIdentity.currentAgentId.value)" size="md" />{{ sessionIdentity.agentHeaderTitle.value }}</span>
                     <div v-if="sessionIdentity.currentSessionTitle.value" class="bs-header-description bs-header-title-editable" :title="t('chat.sessionRename.tooltip')" @click="handleRenameSession">
                       <HeaderMarquee :text="sessionIdentity.currentSessionTitle.value">{{ sessionIdentity.currentSessionTitle.value }}</HeaderMarquee>
                     </div>
+                    </template>
                     <!-- Explicit rename affordance. The title text above is also
                          clickable, but that is undiscoverable on touch; this icon
                          surfaces the same action on the right of the header. -->
                     <button
-                      v-if="sessionIdentity.currentSessionId.value"
+                      v-if="sessionIdentity.currentSessionId.value && !switching"
                       class="chat-title-edit-btn"
                       data-action="rename-session"
                       :title="t('chat.sessionRename.tooltip')"
@@ -301,6 +326,10 @@
                       :keyboard-active="chatShortcutActive"
                       :current-file="currentFile"
                       :current-dir="currentDir"
+                      :group-members="groupMembers"
+                      :group-host-member-id="groupHostMemberId"
+                      :resolve-group-speaker="resolveGroupSpeaker"
+                      :resolve-group-speaker-by-name="resolveGroupSpeakerByName"
                       @open="switchTab('chat')"
                       @task-card-click="onTaskCardClick"
                       @open-session-search="sessionSearchDrawer.open()"
@@ -325,6 +354,7 @@
                     @close="sessionSidebar.closeSidebar"
                     @select="handleSessionSelect"
                     @create="handleSessionCreate"
+                    @create-group="handleSidebarGroupCreate"
                     @archive="handleSessionArchive"
                     @destroy="handleSessionDestroy"
                     @open-session-search="sessionSearchDrawer.open()"
@@ -391,6 +421,7 @@
         @close="sessionIdentity.sessionDrawer.close()"
         @select="handleSessionSelect"
         @create="handleSessionCreate"
+        @create-group="handleGroupCreate"
         @archive="handleSessionArchive"
         @destroy="handleSessionDestroy"
         @open-session-search="sessionSearchDrawer.open()"
@@ -565,6 +596,7 @@ import AcpSessionDrawer from './components/chat/AcpSessionDrawer.vue'
 import QuoteQuestionBar from './components/common/QuoteQuestionBar.vue'
 import HeaderMarquee from './components/common/HeaderMarquee.vue'
 import AgentIcon from './components/common/AgentIcon.vue'
+import GroupAvatarStack from './components/chat/GroupAvatarStack.vue'
 import SettingsPage from './components/settings/SettingsPage.vue'
 import TaskTab from '@/components/task/TaskTab.vue'
 import StatsTabHost from '@/components/stats/StatsTabHost.vue'
@@ -574,12 +606,13 @@ import SessionPickerDialog from './components/common/SessionPickerDialog.vue'
 import { useTaskTab, registerSwitchTab, onTaskEvent } from '@/composables/useTaskTab.ts'
 import { useTabDrawer, onTabSwitch, resetTabDrawerState } from '@/composables/useTabDrawer.ts'
 import { resetAgents, useAgents } from '@/composables/useAgents'
+import { useGroupMembers } from '@/composables/useGroupMembers'
 import { resetUsageStats } from '@/composables/useUsageStats'
 import { resetGitStats } from '@/composables/useGitCodeStats'
 import { useSessionIdentity, registerSessionDrawerRef, registerOpenSessionTabOverride, resetIdentity } from './composables/useSessionIdentity.ts'
 import { useSessionSidebar } from './composables/useSessionSidebar.ts'
 import type { SessionSearchResult } from './composables/useSessionSearch'
-import { loadSessionsOnce, resetChatSessionState } from './composables/useChatSession.ts'
+import { loadSessionsOnce, resetChatSessionState, switching } from './composables/useChatSession.ts'
 import { resetAllCrudLists } from '@/composables/useCrudList'
 import { resetTaskTabState } from './composables/useTaskTab.ts'
 import { clearPlanState } from './composables/usePlanProgress.ts'
@@ -1240,6 +1273,24 @@ const { downloadVisible, downloadFileName, downloadReceived, downloadTotal, canc
 const sessionIdentity = useSessionIdentity()
 const { getAgentBackend, getAgentName, getAgentAvatar } = useAgents()
 
+// Group roster for the chat header's avatar stack. Single owner here (the header
+// lives in App.vue); ChatPanelContent receives it via props so the roster is
+// fetched once, not twice.
+const {
+  members: groupMembers,
+  maxRounds: groupMaxRounds,
+  mode: groupMode,
+  hostMemberId: groupHostMemberId,
+  resolveSpeaker: resolveGroupSpeaker,
+  resolveByName: resolveGroupSpeakerByName,
+  refresh: refreshGroupMembers,
+} = useGroupMembers(sessionIdentity.currentSessionId)
+const isGroupSession = computed(() => sessionIdentity.currentSessionType.value === 'group')
+// Auto-approve for the group's member sheet. The ref is the shared session
+// identity state (loaded from the group session's GET /api/ai/chat response,
+// which the backend keeps in sync with the member rows — decision #61).
+const groupAutoApprove = sessionIdentity.autoApprove
+
 const sessionSidebar = useSessionSidebar()
 sessionSidebar.registerOpenDrawer(() => sessionIdentity.sessionDrawer.open())
 // Route the session-list entry (Ctrl+K / session button) through the sidebar
@@ -1881,6 +1932,48 @@ async function handleSessionCreate(agentId: string) {
   }
   sessionSidebar.addSessionLocally(session)
   sessionIdentity.sessionDrawer.close()
+}
+
+// The desktop sidebar's create-group button has no local agent picker; it opens
+// the SessionDrawer's shared picker in group mode (members + inline host dot),
+// which then emits create-group with {hostId, memberIds}.
+function handleSidebarGroupCreate() {
+  sessionDrawerRef.value?.openGroupHostSelector()
+}
+
+// handleGroupCreate creates a group with the chosen host and members in one
+// call (design #25) and switches into it. The group then appears in the
+// session list like any other session.
+//
+// The host is OPTIONAL (design §13.1): when none is picked the group is created
+// in FREE mode (no host; participants relay via @-mentions). A free group needs
+// at least two members.
+async function handleGroupCreate(payload: { hostId: string; memberIds: string[] }) {
+  const { createGroup } = await import('@/composables/useGroupChat')
+  const hostAgentId = payload?.hostId ?? ''
+  const memberAgentIds = payload?.memberIds ?? []
+  if (memberAgentIds.length === 0) return
+  if (hostAgentId && !memberAgentIds.includes(hostAgentId)) return
+  if (!hostAgentId && memberAgentIds.length < 2) return
+  try {
+    const { groupId } = await createGroup(hostAgentId, memberAgentIds)
+    if (!groupId) return
+    await sessionIdentity.switchSession(groupId)
+    const session = {
+      id: groupId,
+      title: '',
+      backend: '',
+      agentId: hostAgentId || memberAgentIds[0],
+      model: '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      unreadCount: 0,
+    }
+    sessionSidebar.addSessionLocally(session)
+    sessionIdentity.sessionDrawer.close()
+  } catch (e) {
+    appLog.w('App', `create group failed: ${String(e)}`)
+  }
 }
 
 function handleDrawerPin() {
@@ -3929,6 +4022,19 @@ onUnmounted(() => {
     overflow: hidden;
     white-space: nowrap;
 }
+/* Session-switch skeleton in the chat title bar. Geometry only — the fill and
+   shimmer come from the global .skeleton-block primitive (web/css/components.css),
+   shared with the message-area ChatSkeleton. */
+.chat-title-skeleton-avatar {
+    width: 22px;
+    height: 22px;
+}
+
+.chat-title-skeleton-title {
+    width: 140px;
+    height: 14px;
+}
+
 /* Rename-session icon at the right end of the chat title bar. Pushed to the
    edge with margin-left:auto so it stays put when the title is short.
    Deliberately muted at rest (the title text next to it is the primary

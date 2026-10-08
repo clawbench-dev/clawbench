@@ -50,8 +50,9 @@ const {
   },
   AgentSelectorDrawerStub: {
     name: 'AgentSelectorDrawer',
-    template: '<div class="agent-selector-drawer-stub" />',
-    methods: { preload: vi.fn() },
+    props: ['title', 'multiple', 'groupMode', 'hostId', 'confirmLabel'],
+    template: '<div class="agent-selector-drawer-stub" :data-title="title" :data-multiple="String(multiple)" :data-group-mode="String(groupMode)" :data-host-id="hostId" />',
+    methods: { preload: vi.fn(), open: vi.fn(), close: vi.fn() },
   },
   SessionListStub: {
     name: 'SessionList',
@@ -243,6 +244,64 @@ describe('SessionDrawer', () => {
       // 避免一键误触直接建空会话。
       expect(wrapper.emitted('create')).toBeUndefined()
       expect(wrapper.vm.agentSelectorDrawer.isOpen.value).toBe(true)
+    })
+
+    it('opens the selector in multi-select group mode when creating a group', async () => {
+      const wrapper = mountDrawer()
+      await nextTick()
+      const selector = wrapper.find('.agent-selector-drawer-stub')
+      // The i18n mock returns the key verbatim.
+      // Ordinary new-session flow: single-select, no host dot.
+      expect(selector.attributes('data-title')).toBe('session.selectAgent')
+      expect(selector.attributes('data-multiple')).toBe('false')
+      expect(selector.attributes('data-group-mode')).toBe('false')
+      // Group-creation flow reuses the same drawer but must ask for members AND
+      // the host (multi-select + inline host dot, design #25/#33).
+      wrapper.findComponent(SessionListHeaderStub).vm.$emit('create-group')
+      await nextTick()
+      expect(selector.attributes('data-title')).toBe('group.selectMembers')
+      expect(selector.attributes('data-multiple')).toBe('true')
+      expect(selector.attributes('data-group-mode')).toBe('true')
+    })
+
+    it('emits create-group with {hostId, memberIds} (host mode)', async () => {
+      const wrapper = mountDrawer()
+      await nextTick()
+      wrapper.findComponent(SessionListHeaderStub).vm.$emit('create-group')
+      await nextTick()
+      const selector = wrapper.findComponent(AgentSelectorDrawerStub)
+
+      // Choose the host inline, then confirm.
+      selector.vm.$emit('update:hostId', 'agent-1')
+      await nextTick()
+      selector.vm.$emit('select', ['agent-1', 'agent-2'])
+      await nextTick()
+      expect(wrapper.emitted('create-group')![0]).toEqual([{ hostId: 'agent-1', memberIds: ['agent-1', 'agent-2'] }])
+    })
+
+    it('emits create-group with no host for a free group (>= 2 members)', async () => {
+      const wrapper = mountDrawer()
+      await nextTick()
+      wrapper.findComponent(SessionListHeaderStub).vm.$emit('create-group')
+      await nextTick()
+      const selector = wrapper.findComponent(AgentSelectorDrawerStub)
+
+      // No host chosen: a free group. Two members make it valid.
+      selector.vm.$emit('select', ['agent-1', 'agent-2'])
+      await nextTick()
+      expect(wrapper.emitted('create-group')![0]).toEqual([{ hostId: '', memberIds: ['agent-1', 'agent-2'] }])
+    })
+
+    it('does not create a free group with a single member', async () => {
+      const wrapper = mountDrawer()
+      await nextTick()
+      wrapper.findComponent(SessionListHeaderStub).vm.$emit('create-group')
+      await nextTick()
+      const selector = wrapper.findComponent(AgentSelectorDrawerStub)
+
+      selector.vm.$emit('select', ['agent-1'])
+      await nextTick()
+      expect(wrapper.emitted('create-group')).toBeUndefined()
     })
   })
 

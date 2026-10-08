@@ -321,6 +321,18 @@
 - 共享类里的图标尺寸写在 CSS 里：`.chat-action-btn svg { width:14px; height:14px }`、`.fbtn svg { flex-shrink: 0 }`。
 - **溢出的按钮条要支持拖拽横向滚动**：聊天 Action Bar 的按钮在窄窗格下会溢出，而滚动条是隐藏的——普通鼠标滚轮只能滚页面，够不到被挡住的按钮（触控板横滑与触摸拖拽本来就能用，只有鼠标不行）。`utils/dragScroll.ts` 在**真正溢出时**才挂载（放得下就不拦截按压、也不显示抓手光标），按下并左右拖动即滚动；形态沿用 `dragClickGuard`（独立 util + 返回 disposer + 组件挂载）
 - 自定义品牌图标走 `AgentIcon.vue` / `ProviderIcon.vue`；单色图标配色在 `mono-icon-colors.css`，深浅主题各一套。
+- **`AgentIcon` 的 `size` 是字符串枚举 `sm|md|lg|xl`，不是像素数字**（改自旧版 `:size="16"`）。四档映射到 `--icon-size-*` token（见下），与所伴文字匹配：`sm`=14（密集 meta，10–12px 文字旁）、`md`=18（默认行，13–15px）、`lg`=24（较大列表/头像上下文）、`xl`=40（设置详情预览位）。**传数字会生成 `agent-icon--18` 这类匹配不到任何规则的类名并静默按继承尺寸渲染**——与 `LoadingIndicator` 的枚举同源约束。
+- ⚠️ **批量替换 `:size="N"` 会误伤同文件里的 lucide 图标**（`<Bot :size="16">` 等）——lucide 的 `size` 是数字，不能改成枚举。改 AgentIcon 调用点时必须逐处确认标签名。
+
+**图标尺寸 token（`--icon-size-*`，4 档，px）**
+
+| Token | 值 | 用途 |
+|---|---|---|
+| `--icon-size-sm` | 14px | 密集行：任务卡片、分享页（伴 10–12px 文字） |
+| `--icon-size-md` | 18px | 默认行：选择器、通知、任务、头栏、设置列表、群聊、**会话索引/分享目录的 role chip**（伴 13–15px 文字） |
+| `--icon-size-lg` | 24px | 较大上下文：群聊成员/发言者头、聊天欢迎页 |
+| `--icon-size-xl` | 40px | 设置详情头像行（唯一大图预览位） |
+
 
 ---
 
@@ -350,6 +362,7 @@
   - ⚠️ **但「逐处处理」不是绝对的：如果动效承载了信息、不能靠别的东西替代，就不要 opt-out。** 会话行状态槽（`.session-status`）是**刻意的例外**，它**不**响应这个偏好。理由：冻结会**合并状态**——「待审批」（脉动点）与「未读」（静止点）形状尺寸完全相同，只靠脉动与色相区分，冻结后只剩色相，而 36 套主题里有 3 套 `--accent-color` 与 `--color-orange` 相同（色觉障碍读者在**任何**主题上都拿不到色相）。加回那条 media query 之前先读 `SessionList.vue` 里那段注释与 `sessionStatusSlot.css.test.ts` 的守卫。
   - **第二处刻意的例外：推荐回复采纳时的「飞入输入框」动效**（`ChatInputBar.vue` 的 `.recommendation-chip.accepted` / `recommendation-chip-fly`）。飞行**本身**就是信息（「文字被填进了这个框」），没有别的通道承载它——只剩绿色按钮的话，读作「按钮被点了」，正是这个动效要消除的歧义。曾给它加过 opt-out，后果是**所有在系统里关闭动画的用户完全看不到这个功能**（线上 Windows `reduce=true` 实测：与改动前无差异）。`ChatInputBar.test.ts` 的守卫**已反转**为断言该 opt-out 不存在（同 `sessionStatusSlot.css.test.ts` 的先例）；**不要**在未确认飞行不再承载信息的情况下「修复」回去。
   - 一致性也是原因之一：**其余加载指示器都不受该偏好影响**——`RefreshButton` 与底边彗星都走 **WAAPI**（`Element.animate`），而 WAAPI **从不查这个偏好**。所以只在这里 opt-out 会让它成为全站唯一会停的指示器，用户看到的现象就是「为什么只有这个不动」。
+- **切换会话的骨架屏**：`.skeleton-block` 是**全局**原语（`web/css/components.css`，含 `skeleton-shimmer` keyframes 与圆形变体 `.skeleton-circle`），两个不同作用域的组件共用它——`App.vue` 的聊天标题栏与 `components/chat/ChatSkeleton.vue`（消息区仿真气泡）。**几何由调用方给**（`width`/`height`/`--skeleton-radius`），原语只管填充与微光。触发条件是**共享的 `switching` ref**（`useChatSession.ts` 导出、`resetChatSessionState()` 里复位）：会话切换期间身份被 `clearSessionIdentity` 清空，标题栏以前会闪出「AI 对话」占位（该兜底文案已从 `useAgents.agentHeaderTitle` 与两个 locale 中**彻底删除**，无 agent 时返回 `''`，由 `v-else-if="currentAgentId"` 门控）。骨架屏**响应** `prefers-reduced-motion`（微光不承载信息，冻结成静态灰块即预期），与 `BusyBar` 的「不 opt-out」相反。守卫：`ChatSkeleton.test.ts`、`chatTitleSkeleton.test.ts`。
 - 非 CSS 动效：running 彗星走 WAAPI 指令 `directives/runningSweep.ts`（1500ms，`cubic-bezier(.45,.05,.55,.95)`，与文档时间轴相位锁定）。
 - **会话行底边只有一层效果**：3px 平轨道 + 38% 彗星（`--running-track` / `--running-comet` / `--running-head`）。**不要再叠第二层**——曾经是「14px 带 mask 的光晕 + 80% 扫过光带」两层，看起来像两个效果打架、且光晕把光带糊成环境光。待审批时彗星停止并变成整条琥珀呼吸（`--pending-track` / `--pending-comet`）。**被阻塞的行必须换一个不带指令的元素**：指令用 WAAPI 写 `transform`，优先级高于普通 CSS `transform`，同一元素无法靠样式停下。守卫：`runningSweepTheme.css.test.ts`。
 - **会话行状态槽（`.session-status`）用「动效」而非「颜色」区分状态**：待审批＝单点原地脉动、未读＝单点完全静止。理由是可测量的——36 套主题里有 3 套（ayu-light / gruvbox-light / gruvbox-dark）的 `--accent-color` 与 `--color-orange` **完全相同**，色相本就无法承载区分；且色觉障碍读者拿不到色相信息。两个状态都是 14px 槽内的 8px `radial-gradient` 填充（`--status-dot` / `--status-dot-pending`），**不得用 `border`**——那正是已移除的环的画法。**运行中在槽里什么都不显示**：底边彗星已经在表达「正在推进」，右侧再放一个环是同一事实说两遍（这也是槽原先唯一需要 `border` 的原因）；且槽是 `v-if` 的，无状态即不渲染元素，不占宽度（「没有东西展示时该空间不要占地方」）。因此**没有 `--running-ring` / `--running-ring-track` 这两个 token，也不得有 `.session-status.is-running` 规则或 `session-status-spin` keyframes**（守卫显式断言它们不存在）。优先级 pending > unread（`rowStatus()`）；运行中 + 有未读的行会显示未读点，因为彗星与点走两条通道。被阻塞时底部彗星停止并变为整条琥珀呼吸，且**必须换一个不带指令的元素**（`v-if`/`v-else` 两个 `<i>`）——指令用 WAAPI 写 `transform`，`transform:none` 压不过它。**槽必须与标题保持间距**：`.session-status` 自带 `margin-left: var(--space-4)`，同时 `.session-item` / `.cross-session-item` 的右内边距收到 `var(--space-4)`（其余三边仍是 `var(--space-6)`）——原先 12px 右内边距 + 无 margin 会让槽的左边缘**正好落在标题省略号边界上**（线上实测 0px），而槽与 ⋮ 之间却空着 ~10px；现在两侧各约 11px。守卫：`sessionStatusSlot.css.test.ts`。

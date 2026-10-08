@@ -574,7 +574,7 @@ func galleryItemsToMaps(items []model.LocalWallpaperItem) []map[string]any {
 	for _, it := range items {
 		out = append(out, map[string]any{
 			"file":        it.File,
-			"name":        it.Name,
+			jsonName:      it.Name,
 			"uploaded_at": it.UploadedAt,
 			"size":        it.Size,
 		})

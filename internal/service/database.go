@@ -2,12 +2,14 @@
 package service
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"clawbench/internal/store"
 
@@ -274,16 +276,46 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Pre-migration: group-chat columns. On an existing database the CREATE
+	// TABLE below is a no-op, so the new idx_sessions_group index would
+	// reference a column that does not exist yet and abort the whole
+	// multi-statement Exec, breaking startup. Add the columns first.
+	// (chatHistoryExists is declared in the earlier pre-migration block above.)
+	if chatHistoryExists > 0 {
+		var hasAgentID int
+		_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_history') WHERE name='agent_id'").Scan(&hasAgentID)
+		if hasAgentID == 0 {
+			if _, err := store.WriteExec("ALTER TABLE chat_history ADD COLUMN agent_id TEXT DEFAULT ''"); err != nil {
+				return fmt.Errorf("failed to add chat_history.agent_id: %w", err)
+			}
+		}
+	}
+	var chatSessionsExists int
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='chat_sessions'").Scan(&chatSessionsExists)
+	if chatSessionsExists > 0 {
+		var hasGroupID int
+		_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='group_id'").Scan(&hasGroupID)
+		if hasGroupID == 0 {
+			if _, err := store.WriteExec("ALTER TABLE chat_sessions ADD COLUMN group_id TEXT DEFAULT ''"); err != nil {
+				return fmt.Errorf("failed to add chat_sessions.group_id: %w", err)
+			}
+		}
+	}
+
 	// Create tables with latest schema
 	_, err = store.WriteExec(`
 		CREATE TABLE IF NOT EXISTS chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			project_id INTEGER NOT NULL,
-			role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+			-- role='system' carries group-chat system events (member joins and
+			-- leaves). It is NOT an AI reply: the unread subquery counts only
+			-- role='assistant', so system events never register as unread.
+			role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
 			content TEXT NOT NULL,
 			files TEXT,
 			session_id TEXT,
 			backend TEXT NOT NULL DEFAULT 'claude',
+			agent_id TEXT DEFAULT '',
 			streaming INTEGER NOT NULL DEFAULT 0,
 			indexed INTEGER NOT NULL DEFAULT 0,
 			external_message_id TEXT DEFAULT '',
@@ -300,12 +332,29 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			model TEXT DEFAULT '',
 			external_session_id TEXT DEFAULT '',
 			session_type TEXT NOT NULL DEFAULT 'chat',
+			group_id TEXT DEFAULT '',
 			archived INTEGER NOT NULL DEFAULT 0,
 			last_read_at DATETIME,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(backend, id)
 		);
+		CREATE INDEX IF NOT EXISTS idx_sessions_group ON chat_sessions(group_id, session_type);
+		-- Private notes (密送) whose target was NOT named in the round that
+		-- carried them. A note is delivered with its target's next turn, so a
+		-- host can "hand everyone a word, then call on one player first"
+		-- (the Who-Is-The-Spy setup). Rows are DELETED on successful delivery;
+		-- a failed/cancelled turn leaves them for the next attempt (decision
+		-- #69 semantics). target_name is the trimmed display name; the human
+		-- user is addressed by the reserved name 'User'.
+		CREATE TABLE IF NOT EXISTS group_pending_bcc (
+			id            INTEGER PRIMARY KEY AUTOINCREMENT,
+			group_id      TEXT NOT NULL,
+			target_name   TEXT NOT NULL,
+			content       TEXT NOT NULL,
+			created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE INDEX IF NOT EXISTS idx_group_pending_bcc ON group_pending_bcc(group_id, target_name, id);
 		CREATE TABLE IF NOT EXISTS recent_projects (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			project_id INTEGER NOT NULL,
@@ -1299,6 +1348,16 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		return fmt.Errorf("failed to migrate queued messages to own table: %w", err)
 	}
 
+	// Migrate: widen chat_history's role CHECK to allow 'system' (group-chat
+	// system events). SQLite cannot ALTER a CHECK, so the table is rebuilt.
+	//
+	// MUST run AFTER migrateQueuedMessagesToOwnTable: that migration reads the
+	// legacy queue_id/queued columns, which the rebuild's explicit column list
+	// does not carry — running first would lose every queued message.
+	if err := rebuildChatHistoryRoleCheckIfNeeded(); err != nil {
+		return fmt.Errorf("failed to rebuild chat_history role CHECK: %w", err)
+	}
+
 	// Clean up orphaned streaming messages from previous crashes/restarts.
 	// Any message with streaming=1 at startup can never be finalized since
 	// its stream no longer exists. Mark them as cancelled so the UI shows
@@ -1850,6 +1909,252 @@ func migrateChatThinkingSeq() error {
 
 	slog.Info("migrated chat_thinking to chunked storage (seq column added)")
 	return tx.Commit()
+}
+
+// chatHistoryRoleCheckMigrationCols is the canonical chat_history column set,
+// in production order. The rebuilt table always declares exactly these columns;
+// the copy step populates only the subset the source actually carries (see
+// rebuildChatHistoryRoleCheckIfNeeded), so a legacy database that predates an
+// optional column is migrated rather than rejected.
+var chatHistoryRoleCheckMigrationCols = []string{
+	"id", "project_id", "role", contentKeyContent, "files", "session_id",
+	"backend", "agent_id", "streaming", "indexed", "external_message_id",
+	"created_at", "completed_at",
+}
+
+// chatHistoryRoleCheckMigrationDDL is the rebuilt table: identical to the
+// production CREATE TABLE except the relaxed CHECK. Only the CHECK changes —
+// every column, default and NOT NULL must match the production DDL exactly, or
+// the migrated database diverges from a fresh one.
+const chatHistoryRoleCheckMigrationDDL = `
+	CREATE TABLE chat_history_new (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		project_id INTEGER NOT NULL,
+		role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
+		content TEXT NOT NULL,
+		files TEXT,
+		session_id TEXT,
+		backend TEXT NOT NULL DEFAULT 'claude',
+		agent_id TEXT DEFAULT '',
+		streaming INTEGER NOT NULL DEFAULT 0,
+		indexed INTEGER NOT NULL DEFAULT 0,
+		external_message_id TEXT DEFAULT '',
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		completed_at DATETIME
+	)`
+
+// chatHistoryRoleCheckMigrationIndexes recreates every index on chat_history.
+// DROP TABLE drops the table's indexes with it, so they must be rebuilt by hand.
+var chatHistoryRoleCheckMigrationIndexes = []string{
+	"CREATE INDEX IF NOT EXISTS idx_history_session ON chat_history(project_id, backend, session_id, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_history_session_id ON chat_history(session_id, role, streaming, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_history_unread ON chat_history(project_id, role, streaming, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_history_sess_unread ON chat_history(session_id, role, streaming, project_id)",
+	"CREATE INDEX IF NOT EXISTS idx_history_indexing ON chat_history(streaming, indexed)",
+}
+
+// chatHistoryExistingColumns returns the set of columns currently on
+// chat_history. Used by the rebuild to copy only columns that exist, so a
+// database predating an optional column migrates instead of failing.
+func chatHistoryExistingColumns() (map[string]bool, error) {
+	rows, err := store.ReadDB().Query("SELECT name FROM pragma_table_info('chat_history')")
+	if err != nil {
+		return nil, fmt.Errorf("read chat_history columns: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	cols := make(map[string]bool)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("scan chat_history column: %w", err)
+		}
+		cols[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate chat_history columns: %w", err)
+	}
+	return cols, nil
+}
+
+// rebuildChatHistoryRoleCheckIfNeeded widens chat_history's role CHECK from
+// ('user','assistant') to include 'system', so group-chat system events (member
+// joins/leaves) can be persisted without masquerading as assistant replies
+// (which would pollute unread counts, auto-titles and resume detection).
+//
+// SQLite cannot ALTER a CHECK constraint, so the table is rebuilt atomically:
+// CREATE new → INSERT SELECT → DROP → RENAME, all in one transaction.
+//
+// Two hazards make the naive rebuild wrong, and both are handled here:
+//
+//  1. DROP TABLE chat_history with PRAGMA foreign_keys=ON performs an implicit
+//     DELETE FROM, which fires the ON DELETE CASCADE of chat_thinking and
+//     chat_tool_calls — silently destroying every thought and tool call in the
+//     database. The rebuild therefore runs on a single pinned connection with
+//     foreign_keys=OFF (the procedure the SQLite docs prescribe for ALTER
+//     TABLE), restoring it before the connection returns to the pool.
+//
+//  2. This must run AFTER migrateQueuedMessagesToOwnTable. That migration reads
+//     the legacy queue_id/queued columns; the rebuild's explicit column list
+//     does not carry them, so running first would make its SELECT fail and
+//     permanently lose every in-flight queued message on the upgrade.
+//
+// Idempotent: skips when the stored DDL already contains 'system' (fresh
+// installs get the new CHECK directly from CREATE TABLE). A crash mid-rebuild
+// rolls back to the original table because the whole thing is one transaction.
+func rebuildChatHistoryRoleCheckIfNeeded() error {
+	if !store.DBReady() {
+		return nil
+	}
+	needed, err := chatHistoryRoleCheckRebuildNeeded()
+	if err != nil {
+		return err
+	}
+	if !needed {
+		return nil
+	}
+	colList, err := chatHistoryCopyColumnList()
+	if err != nil {
+		return err
+	}
+	if colList == "" {
+		return nil
+	}
+
+	// Row count before the copy, for the lossless-copy check after COMMIT.
+	var rowsBefore int
+	if err := store.ReadDB().QueryRow("SELECT COUNT(*) FROM chat_history").Scan(&rowsBefore); err != nil {
+		return fmt.Errorf("count chat_history rows: %w", err)
+	}
+
+	ctx := context.Background()
+	// Take the global write mutex, then pin a single connection for the whole
+	// rebuild: PRAGMA foreign_keys is per-connection, so it must be toggled on
+	// the exact connection that runs DROP TABLE, and that connection must not
+	// return to the pool with FK off.
+	store.WriteLock()
+	conn, err := store.WriteDBRaw().Conn(ctx)
+	if err != nil {
+		store.WriteUnlock()
+		return fmt.Errorf("acquire write connection for chat_history rebuild: %w", err)
+	}
+	defer func() {
+		// Restore FK enforcement before the connection goes back to the pool.
+		_, _ = conn.ExecContext(ctx, "PRAGMA foreign_keys=ON")
+		_ = conn.Close()
+		store.WriteUnlock()
+	}()
+
+	if err := execChatHistoryRoleCheckRebuild(ctx, conn, colList); err != nil {
+		return err
+	}
+
+	// Sanity: the copy must be lossless. A row-count mismatch here means the
+	// INSERT SELECT silently dropped rows (e.g. a NULL in a NOT NULL column) —
+	// fail loudly rather than serve a half-populated history.
+	var rowsAfter int
+	if err := store.ReadDB().QueryRow("SELECT COUNT(*) FROM chat_history").Scan(&rowsAfter); err != nil {
+		return fmt.Errorf("verify chat_history row count: %w", err)
+	}
+	if rowsAfter != rowsBefore {
+		return fmt.Errorf("chat_history rebuild lost rows: before=%d after=%d", rowsBefore, rowsAfter)
+	}
+	slog.Info("rebuilt chat_history to allow role='system'", slog.Int("rows", rowsAfter))
+	return nil
+}
+
+// chatHistoryRoleCheckRebuildNeeded reports whether chat_history still carries a
+// role CHECK that lacks 'system'. A missing table, an already-widened CHECK, or
+// a table with no role CHECK at all all return false (nothing to do).
+func chatHistoryRoleCheckRebuildNeeded() (bool, error) {
+	var ddl string
+	if err := store.ReadDB().QueryRow(
+		"SELECT sql FROM sqlite_master WHERE type='table' AND name='chat_history'",
+	).Scan(&ddl); err != nil {
+		if err == sql.ErrNoRows {
+			return false, nil // no chat_history yet (fresh DB, created by createTables)
+		}
+		return false, fmt.Errorf("read chat_history DDL: %w", err)
+	}
+	// A table that already accepts 'system' is left untouched.
+	if strings.Contains(ddl, "'system'") {
+		return false, nil
+	}
+	// Only rebuild when there is actually a role CHECK to widen: a table with no
+	// role CHECK already accepts 'system', so rebuilding it would be pure churn
+	// (and would needlessly rewrite test fixtures that omit the constraint).
+	if !strings.Contains(ddl, "CHECK(role") && !strings.Contains(ddl, "CHECK (role") {
+		return false, nil
+	}
+	return true, nil
+}
+
+// chatHistoryCopyColumnList returns the comma-separated intersection of the
+// canonical column set and the columns the live table actually carries.
+//
+// Production always has every column by now (the ALTERs in InitDB add the late
+// ones), but a very old database can still predate an optional column such as
+// files; naming a column that does not exist would make the INSERT ... SELECT
+// fail and the server refuse to start after an upgrade.
+func chatHistoryCopyColumnList() (string, error) {
+	srcCols, err := chatHistoryExistingColumns()
+	if err != nil {
+		return "", err
+	}
+	if len(srcCols) == 0 {
+		return "", nil
+	}
+	// id/project_id/role/content are NOT NULL and must be present; a table
+	// missing any of them is not a chat_history we can safely rebuild.
+	for _, required := range []string{"id", "project_id", "role", contentKeyContent} {
+		if !srcCols[required] {
+			return "", fmt.Errorf("chat_history missing required column %q; refusing to rebuild", required)
+		}
+	}
+	copyCols := make([]string, 0, len(srcCols))
+	for _, c := range chatHistoryRoleCheckMigrationCols {
+		if srcCols[c] {
+			copyCols = append(copyCols, c)
+		}
+	}
+	return strings.Join(copyCols, ", "), nil
+}
+
+// execChatHistoryRoleCheckRebuild runs the CREATE → INSERT SELECT → DROP →
+// RENAME sequence plus index recreation in one transaction on conn. The caller
+// has pinned conn and disabled foreign keys on it.
+func execChatHistoryRoleCheckRebuild(ctx context.Context, conn *sql.Conn, colList string) error {
+	if _, err := conn.ExecContext(ctx, "PRAGMA foreign_keys=OFF"); err != nil {
+		return fmt.Errorf("disable foreign keys for chat_history rebuild: %w", err)
+	}
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin chat_history rebuild: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx, chatHistoryRoleCheckMigrationDDL); err != nil {
+		return fmt.Errorf("create chat_history_new: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		"INSERT INTO chat_history_new ("+colList+") SELECT "+colList+" FROM chat_history"); err != nil {
+		return fmt.Errorf("copy chat_history rows: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "DROP TABLE chat_history"); err != nil {
+		return fmt.Errorf("drop chat_history: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "ALTER TABLE chat_history_new RENAME TO chat_history"); err != nil {
+		return fmt.Errorf("rename chat_history_new: %w", err)
+	}
+	// Indexes are dropped with the old table — recreate them on the renamed one.
+	for _, stmt := range chatHistoryRoleCheckMigrationIndexes {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("recreate chat_history index: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit chat_history rebuild: %w", err)
+	}
+	return nil
 }
 
 // migrateQuickProjectScope ensures the quick-send and quick-command tables carry

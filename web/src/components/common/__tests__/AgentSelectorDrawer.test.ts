@@ -33,7 +33,7 @@ vi.mock('@/composables/useAgents', () => ({
 vi.mock('@/components/common/BottomSheet.vue', () => ({
   default: {
     name: 'BottomSheet',
-    template: '<div class="bottom-sheet-stub" :data-open="open"><slot name="header" /><slot /></div>',
+    template: '<div class="bottom-sheet-stub" :data-open="open"><slot name="header" /><slot /><slot name="footer" /></div>',
     methods: { close: vi.fn() },
   },
 }))
@@ -160,6 +160,209 @@ describe('AgentSelectorDrawer', () => {
     })
   })
 
+  describe('multi-select', () => {
+    it('renders checkboxes and does not close on click', async () => {
+      const wrapper = mountDrawer({ multiple: true, modelValue: [] })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+
+      expect(wrapper.findAll('.agent-option-check').length).toBe(2)
+
+      await wrapper.findAll('.agent-option')[0].trigger('click')
+      await flushPromises()
+
+      // No immediate emit/close; selection is buffered until confirm.
+      expect(wrapper.emitted('update:open')).toBeFalsy()
+      expect(wrapper.emitted('select')).toBeFalsy()
+    })
+
+    it('emits an array of ids on confirm', async () => {
+      const wrapper = mountDrawer({ multiple: true, modelValue: [] })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+
+      await wrapper.findAll('.agent-option')[0].trigger('click')
+      await wrapper.findAll('.agent-option')[1].trigger('click')
+      await flushPromises()
+
+      await wrapper.find('.agent-multi-confirm').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.emitted('select')).toBeTruthy()
+      expect(wrapper.emitted('select')![0]).toEqual([['agent-1', 'agent-2']])
+      expect(wrapper.emitted('update:open')![0]).toEqual([false])
+    })
+
+    it('toggles a selected agent off', async () => {
+      const wrapper = mountDrawer({ multiple: true, modelValue: ['agent-1'] })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+
+      await wrapper.findAll('.agent-option')[0].trigger('click')
+      await wrapper.find('.agent-multi-confirm').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.emitted('select')![0]).toEqual([[]])
+    })
+  })
+
+  describe('group mode (host button)', () => {
+    it('shows a host button only on selected rows', async () => {
+      const wrapper = mountDrawer({ multiple: true, groupMode: true, modelValue: ['agent-1'] })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+
+      const rows = wrapper.findAll('.agent-option')
+      // agent-1 is selected -> host button present; agent-2 is not -> absent.
+      expect(rows[0].find('.agent-host-btn').exists()).toBe(true)
+      expect(rows[1].find('.agent-host-btn').exists()).toBe(false)
+    })
+
+    it('does not show host buttons in the plain add-members mode', async () => {
+      const wrapper = mountDrawer({ multiple: true, modelValue: ['agent-1'] })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+
+      expect(wrapper.findAll('.agent-host-btn').length).toBe(0)
+    })
+
+    it('does NOT auto-assign a host when the first member is selected (host is optional)', async () => {
+      const wrapper = mountDrawer({ multiple: true, groupMode: true, modelValue: [] })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+
+      await wrapper.findAll('.agent-option')[0].trigger('click')
+      await flushPromises()
+
+      // Selecting a member must not silently make it the host: leaving the host
+      // empty is a valid choice (it means a free group).
+      expect(wrapper.emitted('update:hostId')).toBeFalsy()
+    })
+
+    it('does not touch the host when more members are selected', async () => {
+      const wrapper = mountDrawer({ multiple: true, groupMode: true, modelValue: [], hostId: 'agent-1' })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+
+      await wrapper.findAll('.agent-option')[1].trigger('click')
+      await flushPromises()
+
+      expect(wrapper.emitted('update:hostId')).toBeFalsy()
+    })
+
+    it('emits update:hostId without toggling selection when the button is clicked', async () => {
+      const wrapper = mountDrawer({ multiple: true, groupMode: true, modelValue: ['agent-1'] })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+
+      await wrapper.findAll('.agent-option')[0].find('.agent-host-btn').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.emitted('update:hostId')).toBeTruthy()
+      expect(wrapper.emitted('update:hostId')![0]).toEqual(['agent-1'])
+      // The row must stay selected (the host button click is not a toggle).
+      expect(wrapper.findAll('.agent-option')[0].classes()).toContain('selected')
+      expect(wrapper.emitted('select')).toBeFalsy()
+    })
+
+    it('keeps a single host: selecting another button replaces it', async () => {
+      const wrapper = mountDrawer({ multiple: true, groupMode: true, modelValue: ['agent-1', 'agent-2'], hostId: 'agent-1' })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+
+      await wrapper.findAll('.agent-option')[1].find('.agent-host-btn').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.emitted('update:hostId')![0]).toEqual(['agent-2'])
+    })
+
+    it('marks the current host button as active', async () => {
+      const wrapper = mountDrawer({ multiple: true, groupMode: true, modelValue: ['agent-1', 'agent-2'], hostId: 'agent-2' })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+
+      const rows = wrapper.findAll('.agent-option')
+      expect(rows[1].find('.agent-host-btn').classes()).toContain('active')
+      expect(rows[0].find('.agent-host-btn').classes()).not.toContain('active')
+    })
+
+    it('enables confirm once a valid group is formed (host mode: host chosen)', async () => {
+      const wrapper = mountDrawer({ multiple: true, groupMode: true, modelValue: ['agent-1'], hostId: '' })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+
+      // One member, no host -> free mode needs 2 members, so still disabled.
+      expect(wrapper.find('.agent-multi-confirm').attributes('disabled')).toBeDefined()
+
+      await wrapper.setProps({ hostId: 'agent-1' })
+      await flushPromises()
+      expect(wrapper.find('.agent-multi-confirm').attributes('disabled')).toBeUndefined()
+    })
+
+    it('enables confirm for a free group with two members and no host', async () => {
+      const wrapper = mountDrawer({ multiple: true, groupMode: true, modelValue: ['agent-1'], hostId: '' })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+
+      // One member and no host: not yet a valid free group.
+      expect(wrapper.find('.agent-multi-confirm').attributes('disabled')).toBeDefined()
+
+      // Select a second member by clicking its row (the live selection buffer is
+      // what confirm reads).
+      await wrapper.findAll('.agent-option')[1].trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.agent-multi-confirm').attributes('disabled')).toBeUndefined()
+    })
+
+    it('clears the host when its row is deselected', async () => {
+      const wrapper = mountDrawer({ multiple: true, groupMode: true, modelValue: ['agent-1'], hostId: 'agent-1' })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+
+      // Deselect agent-1 (the host) by clicking its row body.
+      await wrapper.findAll('.agent-option')[0].trigger('click')
+      await flushPromises()
+
+      expect(wrapper.emitted('update:hostId')).toBeTruthy()
+      expect(wrapper.emitted('update:hostId')!.at(-1)).toEqual([''])
+    })
+
+    it('clears the host when the active host button is clicked again (toggle off)', async () => {
+      const wrapper = mountDrawer({ multiple: true, groupMode: true, modelValue: ['agent-1'], hostId: 'agent-1' })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+
+      // The row stays selected; clicking the ACTIVE host button clears the host.
+      await wrapper.findAll('.agent-option')[0].find('.agent-host-btn').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.emitted('update:hostId')!.at(-1)).toEqual([''])
+      expect(wrapper.findAll('.agent-option')[0].classes()).toContain('selected')
+      expect(wrapper.emitted('select')).toBeFalsy()
+    })
+
+    it('shows a host/free mode subtitle that flips with the host', async () => {
+      const wrapper = mountDrawer({ multiple: true, groupMode: true, modelValue: ['agent-1'] })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+
+      // No host yet -> free mode. The i18n mock returns the key verbatim.
+      expect(wrapper.find('.agent-header-mode').text()).toBe('group.freeMode')
+
+      await wrapper.setProps({ hostId: 'agent-1' })
+      await flushPromises()
+      expect(wrapper.find('.agent-header-mode').text()).toBe('group.hostMode')
+    })
+
+    it('does not render the mode subtitle outside group mode', async () => {
+      const wrapper = mountDrawer({ multiple: true, modelValue: ['agent-1'] })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+
+      expect(wrapper.find('.agent-header-mode').exists()).toBe(false)
+    })
+  })
+
   describe('close', () => {
     it('emits update:open=false when handleClose is called', async () => {
       const wrapper = mountDrawer()
@@ -198,6 +401,34 @@ describe('AgentSelectorDrawer', () => {
     it('renders a config gear button for every agent row', () => {
       const wrapper = mountDrawer()
       expect(wrapper.findAll('.agent-config-btn').length).toBe(2)
+    })
+
+    it('hides the default badge/star and the gear when showAgentActions is false', () => {
+      // The group "add members" picker passes showAgentActions=false: those
+      // per-row actions are noise there.
+      mockIsDefaultAgent.mockImplementation((id: string) => id === 'agent-1')
+      const wrapper = mountDrawer({ showAgentActions: false })
+      expect(wrapper.find('.agent-config-btn').exists()).toBe(false)
+      expect(wrapper.find('.agent-set-default-btn').exists()).toBe(false)
+      expect(wrapper.find('.agent-default-badge-pill').exists()).toBe(false)
+    })
+
+    it('dims and blocks agents listed in excludedAgentIds (already members)', async () => {
+      const wrapper = mountDrawer({ multiple: true, excludedAgentIds: ['agent-1'], addedLabel: 'Added' })
+      await flushPromises()
+      // Clear the 400ms open-guard so clicks register.
+      vi.advanceTimersByTime(500)
+      const rows = wrapper.findAll('.agent-option')
+      // agent-1 is excluded: dimmed + tagged, agent-2 is normal.
+      expect(rows[0].classes()).toContain('agent-option-disabled')
+      expect(rows[0].find('.agent-added-tag').text()).toBe('Added')
+      expect(rows[1].classes()).not.toContain('agent-option-disabled')
+      // Clicking an excluded row must not select it.
+      await rows[0].trigger('click')
+      expect(rows[0].classes()).not.toContain('selected')
+      // Clicking a normal row still toggles selection.
+      await rows[1].trigger('click')
+      expect(rows[1].classes()).toContain('selected')
     })
 
     it('deep-links to the agent settings page and closes the drawer on gear click without selecting', async () => {

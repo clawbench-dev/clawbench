@@ -3,6 +3,7 @@ package service_test
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -609,6 +610,98 @@ func TestPatchAgentFields_NilFieldsSkipped(t *testing.T) {
 	assert.Equal(t, "Pi", agents[0].Name)
 }
 
+// ── Agent name uniqueness (decision #50) ──
+
+// Saving a new agent whose name collides with an existing *different* id must
+// be rejected — otherwise the roster shows two indistinguishable entries.
+func TestSaveAgent_RejectsNameTakenByOtherID(t *testing.T) {
+	db := setupTestDBForAgents(t)
+	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"}))
+
+	err := service.SaveAgent(db, &model.Agent{ID: "claude", Name: "Pi", Backend: "claude"})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, service.ErrAgentNameTaken)
+
+	// The colliding row must not have been inserted.
+	agents, err := service.LoadAgentsFromDB()
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+	assert.Equal(t, "pi", agents[0].ID)
+}
+
+// Re-saving the same agent (same id) with the same name is the built-in backend
+// re-registration path (SaveAgent is an ON CONFLICT(id) upsert called
+// repeatedly). It must never self-reject.
+func TestSaveAgent_AllowsSameNameSameID(t *testing.T) {
+	db := setupTestDBForAgents(t)
+	agent := &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"}
+	require.NoError(t, service.SaveAgent(db, agent))
+
+	// Idempotent re-save with an unchanged name.
+	require.NoError(t, service.SaveAgent(db, agent))
+
+	// Renaming to another unused name is also fine.
+	agent.Name = "Pi Renamed"
+	require.NoError(t, service.SaveAgent(db, agent))
+}
+
+// Renaming an agent onto another agent's name must be rejected.
+func TestPatchAgentFields_RejectsRenameCollision(t *testing.T) {
+	db := setupTestDBForAgents(t)
+	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"}))
+	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "claude", Name: "Claude", Backend: "claude"}))
+
+	name := "Claude"
+	err := service.PatchAgentFields("pi", service.AgentPatch{Name: &name})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, service.ErrAgentNameTaken)
+
+	// The original name is untouched.
+	agents, err := service.LoadAgentsFromDB()
+	require.NoError(t, err)
+	require.Len(t, agents, 2)
+	for _, a := range agents {
+		if a.ID == "pi" {
+			assert.Equal(t, "Pi", a.Name, "a rejected rename must not persist")
+		}
+	}
+
+	// Renaming to the agent's own current name is a no-op, not a collision.
+	own := "Pi"
+	require.NoError(t, service.PatchAgentFields("pi", service.AgentPatch{Name: &own}))
+}
+
+// DuplicateAgent pre-fills "<source name> (copy)"; copying the same source
+// twice collides on that name and must be rejected (it flows through SaveAgent).
+func TestDuplicateAgent_RejectsExistingName(t *testing.T) {
+	db := setupTestDBForAgents(t)
+	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"}))
+	require.NoError(t, service.LoadAgentsIntoMemory())
+
+	_, err := service.DuplicateAgent("pi", "Pi (copy)")
+	require.NoError(t, err)
+
+	// A second copy with the identical name collides with the first.
+	_, err = service.DuplicateAgent("pi", "Pi (copy)")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, service.ErrAgentNameTaken)
+
+	agents, err := service.LoadAgentsFromDB()
+	require.NoError(t, err)
+	assert.Len(t, agents, 2, "the rejected copy must not be inserted")
+}
+
+// AgentNameTaken ignores the excluded id and reports only *other* agents.
+func TestAgentNameTaken(t *testing.T) {
+	db := setupTestDBForAgents(t)
+	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"}))
+
+	assert.True(t, service.AgentNameTaken("Pi", "claude"), "another id owns the name")
+	assert.False(t, service.AgentNameTaken("Pi", "pi"), "the excluded id does not count")
+	assert.False(t, service.AgentNameTaken("Nonexistent", "pi"))
+	assert.False(t, service.AgentNameTaken("", "pi"), "an empty name is never taken")
+}
+
 // ── Prompt storage tests ──
 
 // The composed prompt is never persisted; only the user's own text is durable.
@@ -728,7 +821,9 @@ func TestDuplicateAgent_DoesNotCompoundSuffix(t *testing.T) {
 	// generations to make each copy a valid source for the next.
 	current := "codebuddy"
 	for i := range 3 {
-		clone, err := service.DuplicateAgent(current, "Copy")
+		// Names must be unique: agent names are globally unique (decision #50),
+		// and this test is about ID compounding, not name reuse.
+		clone, err := service.DuplicateAgent(current, fmt.Sprintf("Copy %d", i))
 		require.NoError(t, err)
 		assert.Regexp(t, `^codebuddy-[0-9a-f]{8}$`, clone.ID,
 			"generation %d must stay flat, got %q", i+1, clone.ID)
@@ -751,8 +846,10 @@ func TestDuplicateAgent_DistinctIDsWhenRapid(t *testing.T) {
 	require.NoError(t, service.LoadAgentsIntoMemory())
 
 	seen := map[string]bool{}
-	for range 5 {
-		clone, err := service.DuplicateAgent("pi", "Copy")
+	for i := range 5 {
+		// Unique names per copy: names are globally unique (decision #50), and
+		// this test targets ID collisions, not the name check.
+		clone, err := service.DuplicateAgent("pi", fmt.Sprintf("Copy %d", i))
 		require.NoError(t, err)
 		require.False(t, seen[clone.ID], "duplicate copy id %q", clone.ID)
 		seen[clone.ID] = true

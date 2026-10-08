@@ -1454,3 +1454,153 @@ func TestMarkChatRead_OrphanedSessionIsRejected(t *testing.T) {
 	w := callHandler(MarkChatRead, req)
 	assertStatus(t, w, http.StatusForbidden)
 }
+
+// POST /api/ai/queue must recognize a GROUP session and route it to the group
+// orchestrator, never to the single-agent launcher. Without this branch the
+// host answers alone and its reply lands on the group timeline unattributed,
+// while the other members never participate — the exact degradation decision
+// #76 fixed for the IM path but left open here (review B3).
+//
+// Reachable: the session picker loads /api/ai/sessions (which includes groups)
+// and "send to session" goes through this endpoint.
+func TestQueueHandler_GroupSessionRoutesToGroupDrain(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	groupID, _, err := service.CreateGroup(env.ProjectDir, "g", "codebuddy", "codebuddy", "Host")
+	require.NoError(t, err)
+
+	// The group drain loop must be launched; the single-agent launcher must NOT.
+	launched := make(chan struct{}, 1)
+	restore := service.SetRunGroupDrainLoopForTest(func(_ context.Context, gid, _ string, _ int64, _ string, _ []model.FileEntry) {
+		if gid == groupID {
+			select {
+			case launched <- struct{}{}:
+			default:
+			}
+		}
+	})
+	t.Cleanup(func() { service.SetRunGroupDrainLoopForTest(restore) })
+
+	restoreLaunch := service.SetLaunchSessionExecutionForTest(func(service.LaunchConfig) {
+		t.Error("a group message must not start a single-agent execution")
+	})
+	t.Cleanup(func() { service.SetLaunchSessionExecutionForTest(restoreLaunch) })
+
+	body := map[string]any{"message": "群里的第一条"}
+	req := newRequest(t, http.MethodPost, "/api/ai/queue?session_id="+groupID, body)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(QueueHandler, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, true, resp["ok"])
+	assert.Equal(t, true, resp["started"], "an idle group must start a group drain run")
+
+	select {
+	case <-launched:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the group drain loop was never launched for a group session")
+	}
+}
+
+// The group branch of the queue endpoint must carry the VALIDATED file entries,
+// not the raw request ones. validateQueueFiles resolves paths and enforces
+// containment (R3); using req.Files directly would silently accept a traversal
+// path for groups only (review B-4).
+//
+// A path outside the project must be rejected (403) before the group branch
+// runs — proving the group path goes through validation, not around it.
+func TestQueueHandler_GroupSessionRejectsOutOfProjectAttachment(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	groupID, _, err := service.CreateGroup(env.ProjectDir, "g", "codebuddy", "codebuddy", "Host")
+	require.NoError(t, err)
+
+	// A traversal path that escapes the project root must be refused. Use "../"
+	// so validateAndResolvePath rejects it (a nonexistent absolute path would
+	// instead 404 at the os.Stat step, which also proves validation ran, but the
+	// traversal case is the security-relevant one).
+	body := map[string]any{
+		"message": "看看这个",
+		"files":   []map[string]any{{"path": "../../etc/passwd"}},
+	}
+	req := newRequest(t, http.MethodPost, "/api/ai/queue?session_id="+groupID, body)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(QueueHandler, req)
+
+	require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+}
+
+// The group branch must pass the validated (resolved, absolute) entries through.
+// A project-relative attachment is accepted and reaches the group enqueue as an
+// absolute path — the marker of validateQueueFiles having run.
+func TestQueueHandler_GroupSessionPassesValidatedFiles(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	groupID, _, err := service.CreateGroup(env.ProjectDir, "g", "codebuddy", "codebuddy", "Host")
+	require.NoError(t, err)
+
+	// A real project-relative file, as the frontend sends it.
+	require.NoError(t, os.WriteFile(filepath.Join(env.ProjectDir, "report.pdf"), []byte("x"), 0o644))
+
+	var gotFiles []model.FileEntry
+	restore := service.SetRunGroupDrainLoopForTest(func(_ context.Context, _ string, _ string, _ int64, _ string, files []model.FileEntry) {
+		gotFiles = files
+	})
+	t.Cleanup(func() { service.SetRunGroupDrainLoopForTest(restore) })
+
+	body := map[string]any{
+		"message": "看看这个",
+		"files":   []map[string]any{{"path": "report.pdf"}},
+	}
+	req := newRequest(t, http.MethodPost, "/api/ai/queue?session_id="+groupID, body)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(QueueHandler, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	require.Eventually(t, func() bool { return len(gotFiles) == 1 }, 2*time.Second, 20*time.Millisecond,
+		"the group enqueue must receive the attachment")
+	require.True(t, filepath.IsAbs(gotFiles[0].Path),
+		"the group branch must carry the VALIDATED (absolute) path, not the raw relative one: %q", gotFiles[0].Path)
+}
+
+// A /cb-* command sent to a GROUP must be accepted (not rejected) and the
+// persisted user message must stay the LITERAL command — the rendered template
+// is injected into the host prompt by the drain loop, never written to the
+// timeline (decision #79 revision / review B6).
+//
+// The injection itself is pinned in the service package
+// (TestGroupTurn_ClawbenchCommandInjectsFirstHostPromptOnly); here we pin the
+// handler contract: accepted, and the timeline stays clean.
+func TestAIChat_GroupClawbenchCommandKeepsTimelineClean(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	groupID, _, err := service.CreateGroup(env.ProjectDir, "g", "codebuddy", "codebuddy", "Host")
+	require.NoError(t, err)
+
+	// The renderer is not wired in this test binary, so the drain loop runs with
+	// no injection — the point is only that the send is accepted and the
+	// persisted content is the literal command.
+	req := newRequest(t, http.MethodPost, "/api/ai/chat", map[string]any{"message": "/cb-task 每天下午6点"})
+	req = withProjectCookie(req, env.ProjectDir)
+	req.AddCookie(&http.Cookie{Name: model.ScopedCookieName("chat_session_id"), Value: groupID})
+	w := callHandlerWithAuth(AIChat, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	// The persisted user message is the literal command, not a rendered template.
+	msgs, err := service.GetMessagesBySessionIDRaw(groupID)
+	require.NoError(t, err)
+	found := false
+	for _, m := range msgs {
+		if m.Role == "user" {
+			found = true
+			require.Equal(t, "/cb-task 每天下午6点", m.Content)
+		}
+	}
+	require.True(t, found, "the user message must be persisted")
+}

@@ -54,6 +54,38 @@ func TestServeConversationIndex_Basic(t *testing.T) {
 	assert.Equal(t, "", second["content"])
 }
 
+// TestServeConversationIndex_AgentID verifies the index carries each message's
+// speaker id so the drawer can render the real agent icon (empty for ordinary
+// single-agent messages, a member row id for group speech).
+func TestServeConversationIndex_AgentID(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "Test", "claude", "", "default", "chat")
+	require.NoError(t, err)
+
+	pid := store.ProjectIDForTest(t, env.ProjectDir)
+	_, err = store.UnsafeDBForTest().Exec(`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'user', 'Hello', ?, 'claude', 0)`, pid, sessionID)
+	require.NoError(t, err)
+	_, err = store.UnsafeDBForTest().Exec(`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming, agent_id) VALUES (?, 'assistant', 'hi', ?, 'claude', 0, 'member-7')`, pid, sessionID)
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodGet, "/api/ai/chat/user-messages?session_id="+sessionID, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeConversationIndex, req)
+	assertOK(t, w)
+
+	var result struct {
+		Messages []map[string]any `json:"messages"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	require.Len(t, result.Messages, 2)
+	// The user row has no agent id (omitempty ⇒ key absent).
+	_, present := result.Messages[0]["agentId"]
+	assert.False(t, present, "a user message must not carry an agentId")
+	assert.Equal(t, "member-7", result.Messages[1]["agentId"])
+}
+
 func TestServeConversationIndex_NoSessionID(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()

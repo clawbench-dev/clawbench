@@ -915,12 +915,28 @@ paths:
             消息列表与状态。`messages` 只含 `chat_history` 行（对话内容）；
             尚未出队的排队消息不在其中，而是由 `queue` 数组单独返回（与
             `GET /api/ai/queue` 同源，按入队顺序）。
+
+            `sessionType` 是该会话存储的 `session_type`（`chat` / `group` /
+            `scheduled` / …），客户端据此判定群会话。**不要**用成员名单是否为空
+            来推断群会话——名单在拉取失败时会被清空，会把群会话误判成单聊。
     post:
       tags: [Chat]
       summary: 发送聊天消息
       description: |
         发送一条用户消息并启动 AI 流式响应。流式事件经 `/api/ai/events/ws` 推送。
         会话由 `session_id` 查询参数（或会话 Cookie）决定，**不在请求体里**。
+
+        **群会话**：消息交由群编排器（主持人路由、成员依次发言），响应带
+        `group:true`。群消息**支持附件**（决策 #65）：`files` 落库到用户消息行，
+        并渲染进各成员的注入上下文；但**不写进 `content`**——气泡与单聊逐字一致。
+
+        **群回合运行中再发消息会入队**（决策 #45），与单聊一致：响应带
+        `queued:true, running:true`，由运行中的 drain loop 依次取用；
+        **不会**并发起第二个编排器（两个群回合交错会打乱成员发言顺序）。
+
+        **群里的内置命令（`/cb-*`）**（决策 #79）：渲染出的提示词模板只注入
+        本回合**第一个主持人**的 prompt，由主持人执行并把结果作为其发言写入时间线
+        （成员据此讨论）；**不写进 `content`**、**不注入给成员**。
       operationId: chatSend
       parameters:
         - name: session_id
@@ -1054,6 +1070,7 @@ paths:
         轻量返回该会话的对话索引（`{messages:[...]}`），供消息导航。
         按 id 升序返回全部已定稿消息（用户消息 + 助手消息），排除 streaming 行。排队消息不在 `messages` 中（它们尚无 chat_history 行），由响应里的 `queue` 数组单独返回。
         用户消息带 `content` / `files`；助手消息带 `summary`（已存阅读摘要，缺失时回退为该轮回复正文抽取的预览，`content` 为空串）。
+        群聊中助手消息还带 `agentId`（发言成员的会话行 id），供前端解析出该发言人的真实智能体图标；单聊助手消息无此字段。
       operationId: chatUserMessages
       parameters:
         - name: session_id
@@ -1073,7 +1090,7 @@ paths:
                     type: array
                     items:
                       type: object
-                      description: 索引条目（含 id / role / createdAt；用户条目含 content / files，助手条目含 summary）。
+                      description: 索引条目（含 id / role / createdAt；用户条目含 content / files，助手条目含 summary；群聊助手条目含 agentId）。
 
   /api/ai/chat/tool-call:
     get:
@@ -1319,7 +1336,13 @@ paths:
             type: string
       responses:
         "200":
-          description: 会话列表
+          description: |
+            会话列表。
+            群会话（`sessionType: "group"`）额外携带 `groupMembers`（紧凑的**在群**成员预览
+            `{id, agentId, name, backend, isHost?}`，用于会话列表渲染成员头像堆叠）；
+            `isHost` 来自群行的主持人指针，客户端据此在行内展示模式标签（有主持人 = 主持人模式，
+            非空名单无主持人 = 自由模式；名单为空时不显示，不猜测）。非群会话省略该键。
+            完整成员名单（含已离场）见 `GET /api/group/members`。
     post:
       tags: [Sessions]
       summary: 新建会话
@@ -1409,6 +1432,9 @@ paths:
                   type: string
                 autoApprove:
                   type: boolean
+                  description: |
+                    开关自动批准（hands-off）。对群会话，会同时写入群行与**每个成员行**
+                    （成员的 ACP 连接按成员行 id 读取该标志，只写群行等于没生效）。
                 title:
                   type: string
                 pinned:
@@ -1609,7 +1635,11 @@ paths:
     post:
       tags: [Sessions]
       summary: 分叉会话
-      description: 请求体字段均可选；缺省时回退到查询参数 / 会话 Cookie。
+      description: |
+        请求体字段均可选；缺省时回退到查询参数 / 会话 Cookie。
+        **群会话不可分叉**（`400`）：分叉会硬编码 `session_type='chat'` 并复制源会话的
+        backend/agent，而群时间线的消息带**成员行 id**——新单聊里解析不到成员，
+        表现为一整屏无归属的 AI 发言。与回溯（rewind）的处理对称（决策 #74）。
       operationId: sessionFork
       requestBody:
         required: false
@@ -1627,6 +1657,8 @@ paths:
       responses:
         "200":
           description: 新会话
+        "400":
+          description: 分叉点非法，或源会话是群（`msgKey=GroupNotForkable`）
 
   /api/ai/session/btw:
     post:
@@ -1693,7 +1725,11 @@ paths:
     post:
       tags: [Sessions]
       summary: 回溯会话历史
-      description: 原址截断到锚点 assistant 消息，事务删除其后历史并清理 RAG 分块。
+      description: |
+        原址截断到锚点 assistant 消息，事务删除其后历史并清理 RAG 分块。
+        400 错误体（`msgKey`）可能是：`InvalidRewindPoint`（锚点消息不存在/非 assistant/仍在流式）、
+        `NothingToRewind`（锚点之后没有可截断内容）、`GroupNotRewindable`（群聊不支持回溯——
+        与 fork 对称，截断共享时间线会令成员 seen_cursor 越界）。
       operationId: sessionRewind
       requestBody:
         required: true
@@ -1709,6 +1745,10 @@ paths:
       responses:
         "200":
           description: 回溯结果
+        "400":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
 
   # ── Queue ─────────────────────────────────────────────────────────────────
   /api/ai/queue:
@@ -2847,6 +2887,7 @@ paths:
         需要 `session_id` 查询参数。返回该会话当前的分享状态，并附带**全部**消息
         （含仍在生成/排队的）供分享对话框渲染：生成中的消息不可勾选。
         未分享时 `token` 为空但 `messages` 照常返回，使打开对话框只需一次请求。
+        另附 `sessionAgent`（会话级智能体）与 `speakers`（群聊成员行 id → 身份），供对话框为每条助手消息渲染真实智能体图标；此端点需登录（仅属主），故身份**含**自定义头像。
       operationId: sessionShareStatus
       parameters:
         - name: session_id
@@ -2856,7 +2897,9 @@ paths:
             type: string
       responses:
         "200":
-          description: 分享状态与消息列表
+          description: |
+            分享状态与消息列表。
+            每条消息含 `agentId`（群聊发言成员行 id，单聊为空）；`sessionAgent`/`speakers` 提供解析所需身份。
     post:
       tags: [Share]
       summary: 创建会话分享链接
@@ -3739,10 +3782,16 @@ paths:
     post:
       tags: [Agents]
       summary: 复制 / 新建 agent
+      description: |
+        复制（body 含 `source_id` + `name`）或新建 agent。**智能体名称全局唯一**
+        （决策 #50）：`name` 与其它 agent 重名时返回 `409` + `msgKey=AgentNameTaken`
+        （复制自身同一名称两次会撞预填名，同样被拒）。
       operationId: agentsCreate
       responses:
         "200":
           description: 新 agent
+        "409":
+          description: 名称已被其它 agent 占用（`AgentNameTaken`）
     patch:
       tags: [Agents]
       summary: 更新 agent
@@ -3753,10 +3802,15 @@ paths:
         `sort_order`、`auto_approve`。
         `avatar` 为原始 SVG 字符串（客户端生成）；传空串表示恢复内置图标，
         非空时校验大小上限与 SVG 安全性。
+
+        `name` 全局唯一（决策 #50）：改名撞上其它 agent 时返回 `409` +
+        `msgKey=AgentNameTaken`；改回自身当前名称不是冲突。
       operationId: agentsUpdate
       responses:
         "200":
           description: 更新结果
+        "409":
+          description: 名称已被其它 agent 占用（`AgentNameTaken`）
     delete:
       tags: [Agents]
       summary: 删除 agent
@@ -5118,6 +5172,148 @@ paths:
                         type: string
         "502":
           description: 生成下载信息失败
+
+  /api/group/create:
+    post:
+      tags: [Group]
+      summary: 创建群聊（一步创建群与全部成员）
+      description: |
+        创建一个群聊及其全部成员。群是一条 `chat_sessions` 行
+        （`session_type='group'`），每个成员是一条隐藏的
+        `session_type='group_member'` 行。群行与成员行在**同一事务**内创建，
+        任一成员非法则整批回滚，不留半成品群。
+
+        **模式由是否指定主持人决定，创建后不可切换**：
+        - 传了 `hostAgentId` → 主持人模式（`mode="host"`），主持人须在
+          `memberAgentIds` 中；标题占位为「{主持人名} 的群聊」。
+        - 未传 `hostAgentId` → 自由聊天模式（`mode="free"`），无主持人，
+          参与者靠 @ 接力；至少需要 2 名成员；标题占位为「群聊」。
+        标题均不接受入参（首条消息后由 auto-title 接管）。
+        群计入会话上限（成员不计）。
+      operationId: groupCreate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                hostAgentId: {type: string}
+                memberAgentIds:
+                  type: array
+                  items: {type: string}
+      responses:
+        "200":
+          description: 创建成功，返回 groupId、hostMemberId（自由模式为空）与 mode
+        "400":
+          description: 请求非法（hostAgentId 不在 memberAgentIds 中、含未知 agent、或自由模式成员不足 2）
+        "409":
+          description: 已达会话数量上限，或成员数超过上限（`msgKey=GroupMemberLimitReached`）
+
+  /api/group/members:
+    get:
+      tags: [Group]
+      summary: 列出群成员
+      description: |
+        返回群的全部成员，含已离场（`left=true`）的成员。`isHost` 标识主持人。
+        同时返回群的当前 `maxRounds`（供成员管理抽屉回显服务端值）与 `mode`
+        （`"host"` 主持人模式 / `"free"` 自由聊天模式）。
+      operationId: groupMembersList
+      parameters:
+        - name: groupId
+          in: query
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          description: 成员列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean}
+                  members:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: {type: string}
+                        agentId: {type: string}
+                        name: {type: string}
+                        backend: {type: string}
+                        left: {type: boolean}
+                        isHost: {type: boolean}
+                  maxRounds: {type: integer}
+                  mode: {type: string, enum: [host, free]}
+    post:
+      tags: [Group]
+      summary: 批量添加群成员
+      description: |
+        活跃成员数上限为 10（每个成员是一个独立的 ACP 子进程，连接池无上限）。
+        重新添加**已存在的 agent**（含已离场者）复用原行：活跃成员不加，
+        故不受上限约束；离场者重新加入会占一个名额。
+        上限在**整批**上判定：超限则整批拒绝、不落任何行。
+      operationId: groupMembersAdd
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [groupId, agentIds]
+              properties:
+                groupId: {type: string}
+                agentIds:
+                  type: array
+                  items: {type: string}
+      responses:
+        "200":
+          description: 添加成功，返回 memberIds
+        "409":
+          description: 成员数超过上限（`msgKey=GroupMemberLimitReached`）
+    delete:
+      tags: [Group]
+      summary: 移除群成员（软删除，保留其历史发言）
+      description: |
+        主持人模式（`mode="host"`）下主持人**不可移除**（`409`）——它是群唯一的
+        调度者，移除后群无法再起回合。（v1 不提供更换主持人的入口；如需换人请另建群。）
+        自由模式（`mode="free"`）无主持人，任何成员都可移除。
+      operationId: groupMembersRemove
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [groupId, memberId]
+              properties:
+                groupId: {type: string}
+                memberId: {type: string}
+      responses:
+        "200":
+          description: 移除成功
+        "409":
+          description: 目标是主持人（`msgKey=CannotRemoveHost`）
+
+  /api/group/settings:
+    patch:
+      tags: [Group]
+      summary: 更新群设置（最大轮数）
+      operationId: groupSettingsUpdate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [groupId, maxRounds]
+              properties:
+                groupId: {type: string}
+                maxRounds: {type: integer, minimum: 1}
+      responses:
+        "200":
+          description: 更新成功
 
 components:
   securitySchemes:

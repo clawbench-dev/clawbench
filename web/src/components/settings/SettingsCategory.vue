@@ -6,9 +6,11 @@
   />
   <SettingsAgentDetail
     v-else-if="categoryId.startsWith('agents:')"
+    :key="categoryId"
     :agent-id="categoryId.slice(7)"
     @deleted="$emit('deleted', 'agents')"
     @back="$emit('back', 'agents')"
+    @navigate-replace="(id: string) => $emit('navigateReplace', id)"
   />
   <!-- Project detail route (project:<id>): a read-only stats page, not a
        batch-save panel, so it gets its own component rather than going through
@@ -176,6 +178,10 @@ const emit = defineEmits<{
   // The entity was DELETED: the detail page no longer exists, so return to the
   // list without the unsaved-changes guard (there is nothing to keep editing).
   deleted: [categoryId: string]
+  // Swap the current detail entry for a sibling detail of the same kind (agent
+  // copy → the new agent). A replace, not a push, so the breadcrumb does not
+  // grow (设置 › 源智能体 › 副本).
+  navigateReplace: [categoryId: string]
   restartNeeded: [changedFields: string[]]
   restartRequested: []
 }>()

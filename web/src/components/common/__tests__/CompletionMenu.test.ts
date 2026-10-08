@@ -164,6 +164,39 @@ describe('CompletionMenu', () => {
     const wrapper = mountMenu([])
     expect(wrapper.findAll('.completion-item')).toHaveLength(0)
   })
+
+  it('renders the real member avatar instead of the source icon for group members', () => {
+    const items: CompletionItem[] = [
+      { key: 'member:m-1', label: 'Alice', description: '', source: 'agent', isMember: true, memberBackend: 'claude', memberAvatar: '<svg/>' },
+    ]
+    const wrapper = mount(CompletionMenu, {
+      props: { items, activeIndex: 0, show: true, targetElement: null },
+      global: {
+        plugins: [makeI18n()],
+        stubs: {
+          Teleport: { template: '<div><slot/></div>' },
+          AgentIcon: {
+            props: ['backend', 'name', 'avatar', 'size'],
+            template: '<span class="agent-icon-stub" :data-backend="backend" :data-avatar="avatar" />',
+          },
+        },
+      },
+    })
+    const row = wrapper.findAll('.completion-item')[0]
+    // The member row shows the avatar, NOT the generic source icon.
+    expect(row.find('.completion-member-avatar').exists()).toBe(true)
+    expect(row.find('.completion-source-icon').exists()).toBe(false)
+    const avatar = row.find('.agent-icon-stub')
+    expect(avatar.attributes('data-backend')).toBe('claude')
+    expect(avatar.attributes('data-avatar')).toBe('<svg/>')
+  })
+
+  it('keeps the source icon for non-member rows', () => {
+    const wrapper = mountMenu(sample)
+    const row = wrapper.findAll('.completion-item')[0]
+    expect(row.find('.completion-member-avatar').exists()).toBe(false)
+    expect(row.find('.completion-source-icon').exists()).toBe(true)
+  })
 })
 
 describe('SOURCE_META', () => {

@@ -95,7 +95,15 @@ export class ChatPage {
     await this.page.locator('.chat-action-btn').nth(1).click()
   }
 
-  /** Click the sessions list button (the first .chat-action-btn) */
+  /**
+   * Click the sessions list button.
+   *
+   * Targets the stable `data-action="session"` hook, NOT `.chat-action-btn`
+   * `.first()`: `SummaryToggle` renders a bare `.chat-action-btn` too, and once
+   * the open session has messages it precedes the session button in DOM order.
+   * A positional click then hit the summary toggle and the drawer never opened
+   * (reproduced on the 2nd spec run in a shared context).
+   */
   async openSessionList() {
     // A prior step (e.g. createSessionWithAgent via the test bridge) can leave a
     // drawer's `.bs-overlay` mounted; it then intercepts clicks on the session
@@ -105,7 +113,21 @@ export class ChatPage {
       await this.page.keyboard.press('Escape')
       await expect(staleOverlay).toHaveCount(0, { timeout: 5000 }).catch(() => {})
     }
-    await this.page.locator('.chat-action-btn').first().click()
+    const drawer = this.page.locator('.bs-panel.session-drawer-sheet')
+    // Idempotent: never toggle an already-open drawer closed.
+    if (!(await drawer.isVisible().catch(() => false))) {
+      await this.page.locator('.chat-action-btn[data-action="session"]').click()
+      try {
+        await expect(drawer).toBeVisible({ timeout: 10000 })
+      } catch {
+        // A concurrent drawer's overlay may have swallowed the first click.
+        if (await staleOverlay.count() > 0) {
+          await this.page.keyboard.press('Escape')
+          await expect(staleOverlay).toHaveCount(0, { timeout: 5000 }).catch(() => {})
+        }
+        await this.page.locator('.chat-action-btn[data-action="session"]').click()
+      }
+    }
   }
 
   /**

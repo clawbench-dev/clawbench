@@ -17,6 +17,7 @@
           :session-max-count="sessionMaxCount"
           @open-search="$emit('open-session-search')"
           @create="handleCreateClick"
+          @create-group="handleGroupCreateClick"
         >
           <template #actions>
             <!-- Only when this project actually has a shared conversation:
@@ -57,16 +58,26 @@
       </template>
     </BottomSheet>
 
-    <!-- Agent selector drawer -->
+    <!-- Agent selector drawer. In group mode it is multi-select with an inline
+         "host" dot so members and host are chosen in one pass (design #25/#33). -->
     <AgentSelectorDrawer
       ref="agentSelectorRef"
       :open="agentSelectorDrawer.effectiveOpen.value"
-      :title="t('session.selectAgent')"
+      :multiple="creatingGroup"
+      :group-mode="creatingGroup"
+      :host-id="groupHostId"
+      :host-label="t('group.hostLabel')"
+      :host-active-label="t('group.hostActiveLabel')"
+      :host-badge="t('group.host')"
+      :confirm-label="t('group.createGroup')"
+      :title="creatingGroup ? t('group.selectMembers') : t('session.selectAgent')"
+      :show-agent-actions="!creatingGroup"
       :default-badge="t('chat.sessionSetting.defaultBadge')"
       :set-default-title="t('session.setAsDefaultAgent')"
       :config-title="t('session.configAgent')"
-      @update:open="v => v ? agentSelectorDrawer.open() : agentSelectorDrawer.close()"
-      @select="createSession"
+      @update:open="handleAgentSelectorOpen"
+      @update:host-id="v => groupHostId = v"
+      @select="handleAgentPicked"
     />
     <SharedSessionsDrawer ref="sharedSessionsRef" @select-session="$emit('select', $event)" />
   </div>
@@ -96,7 +107,7 @@ const props = defineProps({
   currentAgentId: String,
 })
 
-const emit = defineEmits(['close', 'select', 'create', 'archive', 'destroy', 'open-session-search', 'pin'])
+const emit = defineEmits(['close', 'select', 'create', 'create-group', 'archive', 'destroy', 'open-session-search', 'pin'])
 
 const { isWideScreen } = useWideScreenLayout()
 
@@ -114,7 +125,7 @@ const agentSelectorDrawer = useTabDrawer('chat', { autoRestore: false })
 const sessionCount = computed(() => store.state.sessionCount)
 const sessionMaxCount = computed(() => store.state.sessionMaxCount)
 
-defineExpose({ openAgentSelector, addSessionLocally })
+defineExpose({ openAgentSelector, addSessionLocally, openGroupHostSelector })
 
 async function openAgentSelector() {
   await loadAgents()
@@ -123,6 +134,16 @@ async function openAgentSelector() {
   // session. Requiring an explicit selection prevents accidental creation.
   // 始终打开选择器（哪怕只有一个智能体）——直接创建是一键动作，
   // 移动端容易误触生成空会话；强制选择可避免误建。
+  agentSelectorDrawer.open()
+}
+
+// openGroupHostSelector opens the shared agent picker in group-creation mode
+// (multi-select members + inline host dot). Exposed so the desktop sidebar's
+// create-group button (which has no local picker) can reuse it via the ref.
+async function openGroupHostSelector() {
+  await loadAgents()
+  creatingGroup.value = true
+  groupHostId.value = ''
   agentSelectorDrawer.open()
 }
 
@@ -135,6 +156,51 @@ function createSession(agentId) {
   agentSelectorDrawer.close()
   emit('create', agentId)
   bottomSheetRef.value?.close()
+}
+
+// creatingGroup distinguishes the "create a group" flow (multi-select members +
+// inline host dot) from the ordinary "pick an agent for a new session" flow,
+// since both reuse the same AgentSelectorDrawer.
+const creatingGroup = ref(false)
+// The host agent id chosen inline via the row dot (group mode only).
+const groupHostId = ref('')
+
+function handleGroupCreateClick() {
+  creatingGroup.value = true
+  groupHostId.value = ''
+  agentSelectorDrawer.open()
+}
+
+// Closing the picker (cancel or confirm) must also leave group mode, otherwise
+// the next single-select open would be treated as a group creation.
+function handleAgentSelectorOpen(v) {
+  if (v) {
+    agentSelectorDrawer.open()
+    return
+  }
+  creatingGroup.value = false
+  groupHostId.value = ''
+  agentSelectorDrawer.close()
+}
+
+function handleAgentPicked(agentId) {
+  if (creatingGroup.value) {
+    const memberIds = Array.isArray(agentId) ? agentId : [agentId]
+    const hostId = groupHostId.value
+    creatingGroup.value = false
+    groupHostId.value = ''
+    agentSelectorDrawer.close()
+    // The host is OPTIONAL (design §13.1): with no host the group is created in
+    // FREE mode, which needs at least two members. With a host, it must be one
+    // of the members.
+    if (memberIds.length === 0) return
+    if (hostId && !memberIds.includes(hostId)) return
+    if (!hostId && memberIds.length < 2) return
+    emit('create-group', { hostId, memberIds })
+    bottomSheetRef.value?.close()
+    return
+  }
+  createSession(agentId)
 }
 
 function handleSelect(sessionId, backend, projectPath) {

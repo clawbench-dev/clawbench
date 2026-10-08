@@ -22,37 +22,21 @@ import { buildLocalFileUrl } from '@/utils/download.ts'
 import { useWakeLock } from '@/composables/useWakeLock'
 import { MseAudioPlayer } from '@/composables/useMseAudio'
 import { appLog } from '@/utils/appLog'
+import { extractSpeakableText } from '@/utils/speakableText'
+
+// Re-exported so existing `@/composables/useAutoSpeech` importers keep working;
+// the implementation lives in the leaf module to avoid dragging this file's
+// module-level side effects (useToast/i18n) into text-only consumers.
+export { extractSpeakableText }
 
 /**
  * Extract speakable text from chat message blocks.
  * Includes both text blocks and AskUserQuestion tool_use blocks
  * (structured questions) so TTS can read the question and options.
+ *
+ * Implemented in `@/utils/speakableText` (a leaf module) and re-exported above
+ * so text-only consumers do not pull in this file's module-level side effects.
  */
-export function extractSpeakableText(blocks: Array<Record<string, unknown>>): string {
-  const parts: string[] = []
-  for (const b of blocks) {
-    if (b.type === 'text') {
-      const t = ((b.text as string) || '').trim()
-      if (t) parts.push(t)
-    } else if (b.type === 'tool_use' && b.name === 'AskUserQuestion' && (b.input as Record<string, unknown>)?.questions) {
-      const questions = (b.input as Record<string, unknown>).questions as Array<Record<string, unknown>>
-      for (const q of questions) {
-        let s = (q.question as string) || ''
-        if (q.header) s += ` (${q.header})`
-        const opts = Array.isArray(q.options) ? q.options : []
-        if (opts.length > 0) {
-          s += ': ' + opts.map((o: unknown) => {
-            const label = typeof o === 'string' ? o : ((o as Record<string, unknown>)?.label || '')
-            const desc = typeof o === 'object' ? ((o as Record<string, unknown>)?.description || '') : ''
-            return desc && desc !== label ? `${label} — ${desc}` : label
-          }).join(', ')
-        }
-        if (s) parts.push(s)
-      }
-    }
-  }
-  return parts.join('\n').trim()
-}
 
 /** TTS lifecycle states — the single source of truth for UI rendering */
 type SpeechState = 'idle' | 'summarizing' | 'synthesizing' | 'playing'

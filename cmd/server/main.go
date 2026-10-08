@@ -859,8 +859,15 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// Inject auto-approve getter for ACP permission auto-approval
 	ai.SetAutoApproveGetter(service.GetSessionAutoApprove)
 
-	// Inject session running checker for ACP idle sweep (avoids import cycle)
-	ai.GetACPConnManager().SetSessionRunningChecker(service.IsSessionRunning)
+	// Inject session running checker for ACP idle sweep (avoids import cycle).
+	//
+	// IsSessionRunningForSweep, NOT IsSessionRunning: a group member's connection
+	// is keyed by its MEMBER row id, which is never registered as "running" —
+	// only the group row is. Without the member-aware variant the sweep kills a
+	// member's connection mid-discussion. The member rows stay invisible to
+	// GetRunningSessionIDs (session list / project-delete guard), which is the
+	// whole point of the separate predicate (decision #73).
+	ai.GetACPConnManager().SetSessionRunningChecker(service.IsSessionRunningForSweep)
 
 	// Inject permission state change callback (emits WS event on approval state change)
 	ai.SetPermissionStateChangeCallback(func(clawbenchSID string, pending bool, toolName string, toolInput string) {
@@ -1289,6 +1296,12 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	service.SetPersistBingStateFn(handler.PersistBingWallpaperState)
 	handler.SetTriggerBingSyncFunc(service.TriggerBingSync)
 	service.StartBingWallpaperWorker()
+
+	// Wire up the /cb-* command renderer for GROUP host prompts. The templates
+	// live in the handler package (OpenAPI-rendered), and the group orchestrator
+	// is in service, which cannot import handler — so the renderer is injected
+	// here (same pattern as SetPersistBingStateFn).
+	service.SetRenderGroupCommandFn(handler.RenderClawbenchCommand)
 
 	// Cross-agent skill discovery: scan every agent's native skill directory
 	// (plus the user's own directory and cloned git repos) so a skill installed

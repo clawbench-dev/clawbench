@@ -5,7 +5,7 @@
       <!-- Header section -->
       <div class="task-header">
         <div class="task-title-row">
-          <AgentIcon class="agent-icon" :backend="taskBackend" :name="getAgentName(taskAgentId)" :avatar="taskAvatar" :size="18" />
+          <AgentIcon class="agent-icon" :backend="taskBackend" :name="getAgentName(taskAgentId)" :avatar="taskAvatar" size="md" />
           <h2 class="task-name">{{ taskName }}</h2>
           <span class="status-badge" :class="taskStatus">
             <span v-if="taskRunningCount > 0" class="status-dot running"></span>

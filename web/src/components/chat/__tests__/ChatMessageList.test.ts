@@ -17,12 +17,16 @@ describe('ChatMessageList — handleTableBlockClick integration', () => {
 })
 
 describe('ChatMessageList — session switching indicator (replaces full-area overlay)', () => {
-  it('renders an in-list LoadingIndicator while switching and messages are empty', async () => {
+  it('renders the ChatSkeleton while switching and messages are empty', async () => {
     const mod = await import('@/components/chat/ChatMessageList.vue?raw')
     const source = typeof mod.default === 'string' ? mod.default : ''
-    // The spinner is gated on switching + empty message list — no full-area mask.
+    // The skeleton is gated on switching + empty message list — no full-area mask.
     expect(source).toContain('v-if="props.switching && messages.length === 0"')
     expect(source).toContain('class="chat-switching-indicator"')
+    // The lone spinner was replaced by simulated bubbles; the empty-state
+    // branch must stay `v-else-if` so the two never render together.
+    expect(source).toContain('<ChatSkeleton')
+    expect(source).toContain('v-else-if="messages.length === 0" class="chat-empty"')
   })
 
   it('defines the switching prop and forwards it from the panel', async () => {
@@ -855,5 +859,33 @@ describe('ChatMessageList — /btw anchors', () => {
       const imported = new RegExp(`import\\s*\\{[^}]*\\b${name}\\b[^}]*\\}\\s*from`).test(script)
       expect(defined || imported, `${name} is called in the template but not defined/imported`).toBe(true)
     }
+  })
+})
+
+describe('ChatMessageList — group gating (single-agent chrome suppressed)', () => {
+  async function source(): Promise<string> {
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    return typeof mod.default === 'string' ? mod.default : ''
+  }
+
+  it('declares isGroupSession and forwards it to ChatMessageItem', async () => {
+    const src = await source()
+    expect(src).toContain('isGroupSession: { type: Boolean, default: false }')
+    expect(src).toContain(':isGroupSession="isGroupSession"')
+  })
+
+  it('suppresses the single-agent welcome card for a group session', async () => {
+    const src = await source()
+    // The welcome card names ONE agent; in a group the header stack already
+    // shows the roster, so the card must not render.
+    expect(src).toMatch(/v-else-if="currentAgent && !isGroupSession"/)
+  })
+
+  it('shows a group empty state (avatar stack + hint) when a group has no messages', async () => {
+    const src = await source()
+    // Group empty state: its own branch, before the generic fallback text.
+    expect(src).toContain('class="group-welcome"')
+    expect(src).toContain('groupMembers')
+    expect(src).toContain("t('chat.messageList.groupStartHint')")
   })
 })

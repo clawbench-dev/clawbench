@@ -131,18 +131,6 @@ const STYLE_LOADERS: Record<AvatarStyle, () => Promise<{ default: unknown }>> = 
 }
 
 /**
- * Render a deterministic SVG avatar string for a style + seed.
- * The returned string is the RAW SVG (not a data URI) — the backend validates
- * the raw markup and the UI encodes it at render time.
- */
-export async function renderAvatar(style: AvatarStyle, seed: string, size?: number): Promise<string> {
-    const { Avatar, Style } = await getAvatarLib()
-    const definition = (await retryableImport(STYLE_LOADERS[style])).default as StyleDefinition
-    const options = size ? { seed, size } : { seed }
-    return new Avatar(new Style(definition), options).toString()
-}
-
-/**
  * A ready-to-render kit: core + every style definition loaded, with `Style`
  * instances pre-built (constructing a `Style` validates the schema, so we do it
  * once per style rather than on every render). Holding this lets the picker
@@ -158,19 +146,11 @@ export interface AvatarKit {
  *  flood the connection; a small pool keeps the picker responsive. */
 const LOAD_CONCURRENCY = 6
 
-/**
- * Load the DiceBear core plus all curated style definitions, then return a kit.
- * `onProgress(done, total)` fires as each style lands so the picker can stream
- * tiles in instead of blocking on the slowest one.
- */
-export async function loadAvatarKit(
-    onProgress?: (done: number, total: number) => void,
-): Promise<AvatarKit> {
+/** Load the DiceBear core plus all curated style definitions, then return a kit. */
+export async function loadAvatarKit(): Promise<AvatarKit> {
     const core = await getAvatarLib()
     const { Style } = core
-    const total = AVATAR_STYLES.length
     const styles = {} as AvatarKit['styles']
-    let done = 0
 
     const queue = [...AVATAR_STYLES]
     async function worker() {
@@ -179,11 +159,9 @@ export async function loadAvatarKit(
             if (!name) return
             const mod = await retryableImport(STYLE_LOADERS[name])
             styles[name] = new Style(mod.default as StyleDefinition)
-            done++
-            onProgress?.(done, total)
         }
     }
-    await Promise.all(Array.from({ length: Math.min(LOAD_CONCURRENCY, total) }, worker))
+    await Promise.all(Array.from({ length: Math.min(LOAD_CONCURRENCY, AVATAR_STYLES.length) }, worker))
 
     return { Avatar: core.Avatar, styles }
 }

@@ -124,6 +124,12 @@ export interface CompletionItem {
   isDir?: boolean
   /** Optional row icon component (files pass FileIcon; commands omit it). */
   icon?: unknown
+  /** Group member candidate: render the member's real avatar instead of the
+   *  generic source icon. `memberAvatar` is the agent's custom-avatar SVG ("" =
+   *  fall back to `memberBackend`'s built-in icon). */
+  isMember?: boolean
+  memberBackend?: string
+  memberAvatar?: string
   /** Matched basename indices for per-character highlighting. */
   positions?: number[]
   score?: number

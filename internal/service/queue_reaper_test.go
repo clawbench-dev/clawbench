@@ -1,11 +1,13 @@
 package service
 
 import (
+	"context"
 	"database/sql"
 	"sync"
 	"testing"
 	"time"
 
+	"clawbench/internal/model"
 	"clawbench/internal/store"
 
 	"clawbench/internal/ai"
@@ -40,6 +42,7 @@ func setupReaperTestDB(t *testing.T) *sql.DB {
 		files TEXT,
 		session_id TEXT,
 		backend TEXT NOT NULL DEFAULT 'claude',
+		agent_id TEXT DEFAULT '',
 		streaming INTEGER NOT NULL DEFAULT 0,
 		indexed INTEGER NOT NULL DEFAULT 0,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -75,6 +78,9 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 		agent_id TEXT NOT NULL DEFAULT '',
 		model TEXT NOT NULL DEFAULT '',
 		transport TEXT NOT NULL DEFAULT '',
+		session_type TEXT NOT NULL DEFAULT '',
+		group_id TEXT NOT NULL DEFAULT '',
+		context_state TEXT NOT NULL DEFAULT '',
 		auto_approve INTEGER NOT NULL DEFAULT 0,
 		archived INTEGER NOT NULL DEFAULT 0,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -488,3 +494,50 @@ func queuedCountInDB(t *testing.T, db *sql.DB, sessionID string) int {
 }
 
 var _ = ai.StreamEvent{} // keep the ai import stable if assertions change
+
+// A stranded queued message on a GROUP session must be recovered through the
+// GROUP drain loop, never through the single-agent consumer. Without the group
+// branch the reaper runs a host-only single-agent turn: no SpeakerID, no host
+// routing, the other members never participate, and the reply lands on the
+// group timeline unattributed — the exact degradation decision #76 fixed for
+// the IM path (and B3 for /api/ai/queue).
+//
+// This is a REGULAR path, not a rare race: a group run whose remaining queued
+// rows outlive it (e.g. the drain goroutine panicked and was caught, or the
+// process restarted) leaves rows older than the grace window on a non-running
+// session, and the 15s reap tick claims them.
+func TestQueueReaper_GroupSessionUsesGroupDrain(t *testing.T) {
+	db := setupReaperTestDB(t)
+	cleanup := store.SetDBForTest(db, db)
+	defer cleanup()
+	cleanupAllSessionState()
+
+	insertReaperSession(t, db, "group-stranded", 0)
+	_, err := db.Exec("UPDATE chat_sessions SET session_type = 'group' WHERE id = 'group-stranded'")
+	require.NoError(t, err)
+	insertQueuedRow(t, db, "group-stranded", "q-g1", time.Minute)
+
+	// The single-agent consumer must NOT run for a group.
+	singleCalls := stubConsumer(t)
+
+	// The group drain loop must be launched instead.
+	launched := make(chan string, 1)
+	restore := SetRunGroupDrainLoopForTest(func(_ context.Context, gid, _ string, _ int64, _ string, _ []model.FileEntry) {
+		select {
+		case launched <- gid:
+		default:
+		}
+	})
+	t.Cleanup(func() { SetRunGroupDrainLoopForTest(restore) })
+
+	w := &QueueReaper{grace: 30 * time.Second, interval: time.Hour, reapFn: EnsureConsumer}
+	w.reap()
+
+	select {
+	case gid := <-launched:
+		assert.Equal(t, "group-stranded", gid)
+	case <-time.After(2 * time.Second):
+		t.Fatal("the reaper must recover a stranded group message through the group drain loop")
+	}
+	assert.Empty(t, *singleCalls, "the reaper must not start a single-agent turn for a group session")
+}

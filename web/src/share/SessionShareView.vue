@@ -44,7 +44,7 @@
         <span v-else-if="error" class="share-status share-error">{{ error }}</span>
         <template v-else>
           <span v-if="backendLabel" class="session-share-agent">
-            <AgentIcon :backend="backendLabel" :name="agentName" :size="14" />
+            <AgentIcon :backend="backendLabel" :name="agentName" size="sm" />
             <span class="session-share-agent-name">{{ agentName }}</span>
           </span>
           <span v-if="backendLabel && messageCount > 0" class="session-share-dot" aria-hidden="true">·</span>
@@ -93,6 +93,9 @@
               :active="false"
               :is-last-assistant="isLastAssistantMessage(messages, msg)"
               :is-last-message="i === messages.length - 1"
+              :resolve-speaker="resolveSpeaker"
+              :resolve-speaker-by-name="resolveSpeakerByName"
+              :host-member-id="hostMemberId"
               :hide-session-actions="true"
               :read-only="true"
               @toggle-tool="onToggleTool"
@@ -121,6 +124,7 @@
             :index="i + 1"
             :active="activeTocId === item.id"
             :show-time="true"
+            :resolve-speaker="resolveSpeaker"
             @select="scrollToMessage(item.id)"
           />
         </div>
@@ -146,6 +150,7 @@
               :index="i + 1"
               :active="activeTocId === item.id"
               :show-time="true"
+              :resolve-speaker="resolveSpeaker"
               @select="scrollToMessage(item.id); tocOpen = false"
             />
           </div>
@@ -196,6 +201,7 @@ import AgentIcon from '@/components/common/AgentIcon.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import ChatMessageItem from '@/components/chat/ChatMessageItem.vue'
 import MessageIndexRow from '@/components/chat/MessageIndexRow.vue'
+import { makeSpeakerResolver, type SpeakerIdentity } from '@/utils/speakerIdentity'
 import ToolDetailDrawer from '@/components/chat/ToolDetailDrawer.vue'
 import ChatMetadataModal from '@/components/chat/ChatMetadataModal.vue'
 import { useChatRender } from '@/composables/useChatRender'
@@ -266,8 +272,33 @@ interface TocMessage {
   createdAt?: string
   blocks?: Array<{ type?: string; text?: string }>
   files?: Array<string | { path?: string }>
+  /** Speaker's group-member row id (group chats); empty for single-agent. */
+  agentId?: string
 }
 const tocItems = computed<TocMessage[]>(() => messages.value as unknown as TocMessage[])
+
+// Speaker identities frozen into the snapshot. The public viewer is anonymous
+// and cannot call /api/agents or /api/group/members, so the roster must travel
+// with the payload. Avatars are absent by design (the server omits them on the
+// share path), so rows render the built-in per-backend brand icon.
+const sessionAgent = ref<SpeakerIdentity | null>(null)
+const speakers = ref<Record<string, SpeakerIdentity> | null>(null)
+const resolveSpeaker = computed(() => makeSpeakerResolver(sessionAgent.value, speakers.value))
+// The group host's member row id, frozen into the snapshot so the viewer can
+// mark the host's messages AND render their private notes (bcc) card — without
+// it every group message reads as a plain member and the card never appears.
+const hostMemberId = ref('')
+// The routing @-chips name their targets by DISPLAY NAME, not row id; resolve
+// against the same frozen roster.
+const resolveSpeakerByName = computed(() => (name: string) => {
+  const target = (name || '').trim()
+  if (!target || !speakers.value) return null
+  for (const id of Object.keys(speakers.value)) {
+    const s = speakers.value[id]
+    if (s && (s.name || '').trim() === target) return s
+  }
+  return null
+})
 /** Message id currently in view (scroll-spy); null until the observer fires. */
 const activeTocId = ref<number | string | null>(null)
 
@@ -591,6 +622,9 @@ async function loadSnapshot() {
 
     title.value = payload?.session?.title || t('share.sharedConversation')
     backendLabel.value = payload?.session?.backend || ''
+    sessionAgent.value = payload?.sessionAgent || null
+    speakers.value = payload?.speakers || null
+    hostMemberId.value = payload?.session?.hostMemberId || ''
     const rawMessages = Array.isArray(payload?.messages) ? payload.messages : []
     messageCount.value = rawMessages.length
 

@@ -4,6 +4,7 @@ package handler
 import (
 	"bytes"
 	"database/sql"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
@@ -220,6 +221,10 @@ func serveAgentsDuplicate(w http.ResponseWriter, r *http.Request) {
 	clone, err := service.DuplicateAgent(req.SourceID, req.Name)
 	if err != nil {
 		slog.Error("failed to duplicate agent", "source", req.SourceID, "error", err)
+		if errors.Is(err, service.ErrAgentNameTaken) {
+			writeLocalizedErrorf(w, r, http.StatusConflict, "AgentNameTaken")
+			return
+		}
 		if strings.Contains(err.Error(), "not found") {
 			writeLocalizedErrorf(w, r, http.StatusNotFound, "AgentNotFound")
 			return
@@ -580,15 +585,9 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 	// the SVG safety scan below sees the actual markup.
 	if v, exists := patch["avatar"]; exists {
 		avatar, _ := v.(string)
-		if avatar != "" {
-			if len(avatar) > maxAgentAvatarBytes {
-				writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidAgentAvatar")
-				return
-			}
-			if !avatarSVGLooksSafe([]byte(avatar)) {
-				writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidAgentAvatar")
-				return
-			}
+		if avatar != "" && (len(avatar) > maxAgentAvatarBytes || !avatarSVGLooksSafe([]byte(avatar))) {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidAgentAvatar")
+			return
 		}
 		ap.Avatar = &avatar
 	}
@@ -642,6 +641,10 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 
 	// Persist to database
 	if err := service.PatchAgentFields(agentID, ap); err != nil {
+		if errors.Is(err, service.ErrAgentNameTaken) {
+			writeLocalizedErrorf(w, r, http.StatusConflict, "AgentNameTaken")
+			return
+		}
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 		return
 	}

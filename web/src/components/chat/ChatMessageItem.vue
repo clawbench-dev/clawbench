@@ -1,9 +1,36 @@
 <template>
-  <div class="chat-message" :class="[msg.role, { 'has-metadata': msg.role === 'assistant' && msg.metadata }]" :data-msg-key="msg.id ? 'db-' + msg.id : null">
+  <div class="chat-message" :class="[msg.role, { 'has-metadata': msg.role === 'assistant' && msg.metadata }]" :data-msg-key="msg.id ? 'db-' + msg.id : null" :data-streaming="msg.streaming ? 'true' : null">
+
+    <div v-if="msg.role === 'system'" class="chat-system-row">{{ msg.content }}</div>
+    <template v-else>
+    <!-- Group-chat speaker attribution: a member (not the user) produced this
+         assistant message. agentId is the member row id, resolved via the
+         speaker resolver prop. Sits OUTSIDE the bubble, at the row's top-left,
+         above the message box.
+
+         When the host routes the discussion it @-mentions its targets. The
+         "@" sigil is NOT part of the pill: it sits OUTSIDE the chip, which
+         carries only the icon + agent name. The chips stay left-aligned, right
+         after the speaker label — the bubble stays purely the host's prose. -->
+    <div v-if="msg.role === 'assistant' && speaker" class="msg-speaker" :class="{ 'msg-speaker-host': isHostMessage }">
+      <AgentIcon :backend="speaker.backend" :name="speaker.name" :avatar="speaker.avatar" size="lg" />
+      <span class="msg-speaker-name">{{ speaker.name }}</span>
+      <span v-if="isHostMessage" class="msg-speaker-host-tag">{{ t('group.host') }}</span>
+    </div>
+
+    <!-- Mention summary row: a one-line "本条 @ 了 B、C" above the bubble, for
+         BOTH host and free modes. The mentions also render INLINE in the body
+         (as @name chips, see renderMentionChips); this row is the scannable
+         summary. It shows the raw parsed targets (a routing intent that may
+         name a member who has since left must stay visible). -->
+    <div v-if="mentionTargets.length > 0" class="msg-mention-summary">
+      <span class="msg-mention-summary-at">@</span>
+      <span class="msg-mention-summary-names">{{ mentionTargets.map((s) => s.name).join('、') }}</span>
+    </div>
 
     <!-- Message card (bubble). The meta bar deliberately lives OUTSIDE this
          element so it sits on the panel background for both roles. -->
-    <div class="msg-card">
+    <div class="msg-card" :class="{ 'msg-card-host': isHostMessage }">
     <!-- Collapsible content wrapper -->
     <div ref="wrapperRef" class="msg-content-wrapper">
       <FileAttachmentList v-if="msg.role === 'user' && msg.files && msg.files.length > 0 && !hasImagesInContent(msg.content)" :files="msg.files" @file-tag-click="$emit('file-tag-click', $event)" />
@@ -34,6 +61,7 @@
         :staticBlockCache="staticBlockCache"
         :active="active"
         :readOnly="readOnly"
+        :isGroupSession="isGroupSession"
         @toggle-tool="$emit('toggle-tool', $event)"
         @show-tool-detail="$emit('show-tool-detail', $event)"
         @task-card-click="$emit('task-card-click', $event)"
@@ -55,6 +83,48 @@
 
     <!-- Cancelled marker: shown after file changes banner, hidden when last block is thinking (shown inline in thinking-header instead) -->
     <div v-if="msg.cancelled && !isLastBlockThinking" class="chat-cancelled-mark">{{ t('chat.contentBlocks.cancelled') }}</div>
+
+    <!-- Host's private notes (密送), at the BOTTOM of the bubble.
+         Two forms, deliberately different:
+           - a note addressed to the USER is expanded by default, labelled
+             "to you" and visually distinct — it carries something meant for the
+             reader (e.g. their secret word), so hiding it would be wrong.
+           - notes addressed to AI members stay collapsed: the reader can audit
+             them, but they are not addressed to the reader.
+         The collapsed header does NOT list the target names — knowing WHO got a
+         note is itself a hint (in a deduction game, "B got a private note" is
+         information). The targets stay visible per entry once expanded.
+         Sits INSIDE .msg-card, unlike the @-mention routing chips which live in
+         the speaker row above the bubble. -->
+    <template v-if="groupRouting.bcc.length > 0">
+      <div v-for="(e, i) in bccToUser" :key="'u' + i" class="msg-bcc msg-bcc-user">
+        <div class="msg-bcc-header is-static">
+          <User :size="12" class="msg-bcc-user-icon" />
+          <span class="msg-bcc-title">{{ t('group.bcc.toYou') }}</span>
+        </div>
+        <div class="msg-bcc-body">
+          <div class="msg-bcc-entry-content">{{ e.content }}</div>
+        </div>
+      </div>
+      <div v-if="bccToMembers.length > 0" class="msg-bcc">
+        <button
+          type="button"
+          class="msg-bcc-header"
+          :aria-expanded="bccExpanded"
+          @click="bccExpanded = !bccExpanded"
+        >
+          <Lock :size="12" class="msg-bcc-lock" />
+          <span class="msg-bcc-title">{{ t('group.bcc.title') }}</span>
+          <ChevronDown :size="14" class="msg-bcc-chevron" :class="{ 'is-collapsed': !bccExpanded }" />
+        </button>
+        <div v-show="bccExpanded" class="msg-bcc-body">
+          <div v-for="(e, i) in bccToMembers" :key="i" class="msg-bcc-entry">
+            <div class="msg-bcc-entry-targets">{{ t('group.bcc.to') }}: {{ e.targets.join('、') }}</div>
+            <div class="msg-bcc-entry-content">{{ e.content }}</div>
+          </div>
+        </div>
+      </div>
+    </template>
     </div><!-- /.msg-card -->
 
     <!-- ── Meta bar (OUTSIDE the bubble, both roles) ──
@@ -95,7 +165,7 @@
           <MessageSquareQuote :size="14" />
         </button>
         <template v-if="msg.role === 'assistant'">
-          <button v-if="msgText && !readOnly" ref="speakBtnRef" class="chat-action-btn chat-speak-btn" :class="{ 'chat-action-btn--wide': autoSpeech.isActive(msg.id), active: autoSpeech.isActive(msg.id), loading: autoSpeech.isGeneratingText(msg.id) }" :title="speakBtnLabel" :aria-label="speakBtnLabel" @click.stop="handleSpeak">
+          <button v-if="speakableText && !readOnly" ref="speakBtnRef" class="chat-action-btn chat-speak-btn" :class="{ 'chat-action-btn--wide': autoSpeech.isActive(msg.id), active: autoSpeech.isActive(msg.id), loading: autoSpeech.isGeneratingText(msg.id) }" :title="speakBtnLabel" :aria-label="speakBtnLabel" @click.stop="handleSpeak">
             <!-- Generating states: summarizing / synthesizing -->
             <template v-if="autoSpeech.isGeneratingText(msg.id)">
               <Clock :size="14" class="speak-spinner" />
@@ -119,12 +189,12 @@
           class="chat-action-btn"
         />
         <template v-if="msg.role === 'assistant'">
-          <button v-if="!readOnly && !msg.streaming && !hideSessionActions" class="chat-action-btn" :class="{ 'is-forking': isForking }" :disabled="isForking" @click="$emit('fork-from-message', msg)" :title="isForking ? t('chat.busy.forking') : t('chat.actions.forkSession')">
+          <button v-if="!readOnly && !msg.streaming && !hideSessionActions && !isGroupSession" class="chat-action-btn" :class="{ 'is-forking': isForking }" :disabled="isForking" @click="$emit('fork-from-message', msg)" :title="isForking ? t('chat.busy.forking') : t('chat.actions.forkSession')">
             <LoadingIndicator v-if="isForking" size="sm" inline />
             <Split v-else :size="14" />
           </button>
           <button
-            v-if="!readOnly && !msg.streaming && !hideSessionActions"
+            v-if="!readOnly && !msg.streaming && !hideSessionActions && !isGroupSession"
             class="chat-action-btn"
             :disabled="isLastMessage"
             :title="isLastMessage ? t('chat.session.nothingToRewind') : t('chat.actions.rewindSession')"
@@ -138,6 +208,7 @@
         </button>
       </div>
     </div>
+    </template>
 
     <!-- File changes sheet -->
     <FileChangesDrawer
@@ -169,10 +240,12 @@
 <script setup>
 import { ref, inject, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Clock, Pause, Volume2, Info, FileDiff, Split, Rewind, MessageSquareQuote } from 'lucide-vue-next'
+import { Clock, Pause, Volume2, Info, FileDiff, Split, Rewind, MessageSquareQuote, ChevronDown, Lock, User } from 'lucide-vue-next'
 import { formatDuration, formatRelativeTime } from '@/utils/format.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
 import { extractFileChanges } from '@/utils/chatStreamUtils.ts'
+import { parseGroupRouting, stripGroupProtocolTags } from '@/utils/groupRouting.ts'
+import { quotableMessageText } from '@/utils/quoteItem.ts'
 import { isShowingSummary, normalizeDisplayMode } from '@/utils/chatSessionUtils.ts'
 import { localConfig } from '@/composables/useSettingsConfig'
 import { openFilePath } from '@/composables/useFilePathAnnotation.ts'
@@ -185,6 +258,7 @@ import { useTabDrawer } from '@/composables/useTabDrawer'
 import SummaryToggle from '@/components/common/SummaryToggle.vue'
 import CopyButton from '@/components/common/CopyButton.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import AgentIcon from '@/components/common/AgentIcon.vue'
 
 const { t } = useI18n()
 
@@ -207,6 +281,11 @@ const props = defineProps({
    *  execution record does not have. The rest of the bar (summary toggle,
    *  speak, copy, details) stays useful there. */
   hideSessionActions: { type: Boolean, default: false },
+  /** Group-chat session: fork/rewind operate on ONE agent's history, but the
+   *  group timeline is an aggregation of several members' sessions, so both are
+   *  meaningless (and broken) here. Also forwarded to ContentBlocks to suppress
+   *  its reset-session button. */
+  isGroupSession: { type: Boolean, default: false },
   /** Message id whose fork button is mid-flight. The fork POST can take
    *  seconds (it copies the whole history), so the clicked button swaps to a
    *  spinner and disables — without it the click reads as a no-op. */
@@ -221,9 +300,64 @@ const props = defineProps({
    *  blocks; `showSummary` falls back to the summary only when there are none).
    *  Only the timestamp line is kept — it is information, not a control. */
   readOnly: { type: Boolean, default: false },
+  /** Resolves a group-chat speaker (msg.agentId = member row id) to
+   *  { name, backend }. Returns null outside a group / when unresolved. */
+  resolveSpeaker: { type: Function, default: null },
+  /** Resolves a member DISPLAY NAME (a routing target) to
+   *  { name, backend, avatar } for @-mention chips. */
+  resolveSpeakerByName: { type: Function, default: null },
+  /** Host member row id, so the host's messages get a distinct style. */
+  hostMemberId: { type: String, default: '' },
 })
 
 const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'fork-from-message', 'rewind-from-message', 'reset-session', 'quote-message'])
+
+// Group-chat speaker for this message (null for user/single-agent messages).
+const speaker = computed(() => {
+  const id = props.msg?.agentId
+  if (!id || typeof props.resolveSpeaker !== 'function') return null
+  return props.resolveSpeaker(id)
+})
+const isHostMessage = computed(() => !!props.msg?.agentId && props.msg.agentId === props.hostMemberId)
+
+// Group-chat mention parsing. In BOTH modes an agent's speech may carry
+// <clawbench-mention> tags: host mode's routing, free mode's @-relay. The tags
+// are rendered inline as @name chips by renderMentionChips; this parse feeds
+// the summary row and the private-note card. Unparseable tags are NOT stripped
+// from the body (parseGroupRouting never mutates text).
+const groupRouting = computed(() => {
+  const empty = { found: false, speakers: [], instruction: '', before: '', after: '', bcc: [], mentions: [], end: false, raw: '' }
+  // Only group-chat agent speech carries the tags (a plain single-agent chat
+  // never does), so gate on the speaker being a group member.
+  if (!speaker.value) return empty
+  return parseGroupRouting(msgText.value || '')
+})
+
+// Private notes (密送) addressed to AI members are collapsed by default — the
+// user can audit them, but they are not addressed to the reader.
+const bccExpanded = ref(false)
+
+// The reserved participant name of the human user (mirrors the backend
+// groupUserTarget constant). A note addressed to it is meant for the reader.
+const GROUP_USER_TARGET = 'User'
+
+// bccToUser / bccToMembers split the notes by audience. The user's own notes
+// render expanded and labelled "to you"; the rest stay behind a collapsed
+// header whose title deliberately omits the target names (who got a note is
+// itself a hint).
+const bccToUser = computed(() => groupRouting.value.bcc.filter((e) => e.targets.includes(GROUP_USER_TARGET)))
+const bccToMembers = computed(() => groupRouting.value.bcc.filter((e) => !e.targets.includes(GROUP_USER_TARGET)))
+
+// mentionTargets maps the parsed mention targets to display info for the
+// summary row. Names that no longer resolve (removed members) still render as a
+// plain @name so the routing intent stays visible.
+const mentionTargets = computed(() => {
+  const resolve = props.resolveSpeakerByName
+  return groupRouting.value.speakers.map((name) => {
+    const hit = typeof resolve === 'function' ? resolve(name) : null
+    return hit || { name, backend: '', avatar: '' }
+  })
+})
 
 const autoSpeech = inject('autoSpeech')
 const wrapperRef = ref(null)
@@ -290,6 +424,13 @@ const msgText = computed(() => {
   return ''
 })
 
+// The text the user READS/HEARS: the same as msgText, minus any private notes
+// (and with public mentions unwrapped to plain prose). A private note is visible
+// only in the collapsed card; it must not be read aloud, copied, quoted, or
+// counted as message content. `msgText` itself stays RAW because `groupRouting`
+// parses the note out of it.
+const speakableText = computed(() => stripGroupProtocolTags(msgText.value))
+
 // Friendly relative timestamp shown in the meta bar for BOTH roles.
 // formatRelativeTime returns '' for missing/invalid dates (including Go zero-value
 // times), so the label and its separator stay hidden when there is nothing to show.
@@ -306,7 +447,7 @@ const copyableUserText = computed(() => {
 // user messages show it as soon as there is a timestamp or copyable text.
 const showMetaBar = computed(() => {
   if (props.msg?.role === 'assistant') {
-    return !props.msg.streaming && !!(msgText.value || props.msg.blocks?.length || props.msg.summary)
+    return !props.msg.streaming && !!(speakableText.value || props.msg.blocks?.length || props.msg.summary)
   }
   if (props.msg?.role !== 'user' || props.msg.streaming) return false
   return !!(relativeTime.value || copyableUserText.value)
@@ -319,7 +460,9 @@ const showMetaBar = computed(() => {
  *   - user: the message content.
  * Empty means there is nothing worth quoting, and the button is hidden.
  */
-const quotableText = computed(() => (props.msg?.role === 'user' ? copyableUserText.value : msgText.value))
+// Shared with ChatPanelContent's quote handler so both entries strip the host's
+// private notes identically (a quote feeds a member's injected context).
+const quotableText = computed(() => quotableMessageText(props.msg?.role, props.msg?.blocks, props.msg?.content, props.msg?.summary))
 
 // Accessible name/tooltip for the read-aloud button. While audio is playing the
 // button acts as a stop control, so it must not advertise "read aloud".
@@ -380,8 +523,8 @@ watch(needsLazyOriginal, (needs) => {
 function handleSpeak() {
   if (autoSpeech.isActive(props.msg?.id)) {
     autoSpeech.stopAudio()
-  } else if (msgText.value && props.msg?.id) {
-    autoSpeech.speakText(props.msg.id, msgText.value)
+  } else if (speakableText.value && props.msg?.id) {
+    autoSpeech.speakText(props.msg.id, speakableText.value)
   }
 }
 
@@ -613,6 +756,84 @@ const copyPayload = quotableText
   .chat-meta-bar-user:hover {
     color: var(--text-secondary);
   }
+}
+
+/* ── Host private notes (密送), inside the bubble at its bottom ── */
+.msg-bcc {
+  margin-top: var(--space-3);
+  border-top: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
+  padding-top: var(--space-2);
+}
+/* <button> defaults to text-align:center — force left so the row reads as a
+   disclosure header, not a centered label. */
+.msg-bcc-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+.msg-bcc-lock {
+  flex-shrink: 0;
+}
+.msg-bcc-title {
+  font-weight: var(--font-weight-medium, 500);
+}
+.msg-bcc-chevron {
+  flex-shrink: 0;
+  transition: transform var(--duration-base) ease;
+}
+.msg-bcc-chevron.is-collapsed {
+  transform: rotate(-90deg);
+}
+/* A note addressed to the READER (the user): expanded, accented, and visually
+   distinct from the collapsed member notes, so "this one is for me" reads at a
+   glance. */
+.msg-bcc-user {
+  margin-top: var(--space-3);
+  border-top: none;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--accent-color);
+  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+}
+.msg-bcc-user .msg-bcc-header.is-static {
+  cursor: default;
+  color: var(--accent-color);
+}
+.msg-bcc-user .msg-bcc-title {
+  font-weight: var(--font-weight-semibold, 600);
+}
+.msg-bcc-user-icon {
+  flex-shrink: 0;
+}
+.msg-bcc-body {
+  margin-top: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.msg-bcc-entry {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+}
+.msg-bcc-entry-targets {
+  font-size: var(--font-size-2xs);
+  color: var(--text-muted);
+  margin-bottom: var(--space-1);
+}
+.msg-bcc-entry-content {
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 </style>
 
@@ -1192,5 +1413,85 @@ const copyPayload = quotableText
    baseline gap. */
 .chat-message .chat-img {
   vertical-align: middle;
+}
+
+/* ── Group-chat speaker header (outside the bubble, top-left of the row) ── */
+.msg-speaker {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-2) var(--space-2);
+  font-size: var(--font-size-lg);
+  color: var(--text-secondary);
+}
+.msg-speaker-name {
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+}
+.msg-speaker-host-tag {
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 15%, transparent);
+  color: var(--accent-color, #0066cc);
+  font-size: var(--font-size-2xs);
+}
+/* The host's bubble is centered with an accent border to read as "chair". */
+.msg-card-host {
+  border-left: 2px solid var(--accent-color, #0066cc);
+}
+/* Mention summary row: a one-line "本条 @ 了 B、C" above the bubble, for BOTH
+   host and free modes. The mentions also render inline in the body (as
+   .msg-mention-chip); this row is the scannable summary. */
+.msg-mention-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
+  margin: 0 0 var(--space-1);
+  font-size: var(--font-size-sm);
+  color: var(--accent-color, #0066cc);
+}
+.msg-mention-summary-at {
+  font-weight: var(--font-weight-medium);
+}
+.msg-mention-summary-names {
+  font-weight: var(--font-weight-medium);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+/* Inline @name chip, injected into the rendered markdown body by
+   renderMentionChips (a plain <span>, so DOMPurify keeps it by default). */
+.msg-mention-chip {
+  display: inline-block;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full, 999px);
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
+  color: var(--accent-color, #0066cc);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.5;
+}
+
+/* ── Group-chat system event row (member joined / left) ──
+   A centered thin pill: NOT a bubble (no .msg-card, no avatar, no meta bar).
+   Global block (not scoped) because it is a shared row style, and because a
+   future v-html/markdown surface could reuse the class name. */
+.chat-system-row {
+  align-self: center;
+  max-width: 100%;
+  margin: var(--space-2) auto;
+  padding: var(--space-1) var(--space-4);
+  border-radius: var(--radius-full, 999px);
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-snug);
+  text-align: center;
+  box-sizing: border-box;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 </style>

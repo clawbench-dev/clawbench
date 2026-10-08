@@ -12,6 +12,33 @@
  */
 import type { FileEntry } from '@/utils/fileAttachmentUtils'
 import { isQuoteEntry } from '@/utils/fileAttachmentUtils'
+import { extractSpeakableText } from '@/utils/speakableText'
+import { stripGroupProtocolTags } from '@/utils/groupRouting.ts'
+
+/**
+ * The text a "quote this message" action should capture — the SAME text the
+ * user reads, minus the host's private notes (bcc).
+ *
+ * Why strip here: a quote becomes a `kind:'quote'` attachment, and attachments
+ * are rendered into a group member's injected context (`RenderQuoteBlock`). A
+ * note that reached a quote would therefore reach EVERY member — the exact
+ * leak the feature exists to prevent. This is the injection boundary, so it
+ * uses the fail-closed stripper (any bcc-like shape), not the display one.
+ *
+ *   - assistant: the speakable text (skips tool/thinking noise), else the summary;
+ *   - user: the message content.
+ */
+export function quotableMessageText(
+  role: string | undefined,
+  blocks: Array<Record<string, unknown>> | undefined,
+  content: string | undefined,
+  summary: string | undefined,
+): string {
+  if (role === 'user') {
+    return stripGroupProtocolTags(extractSpeakableText(blocks || []) || content || '').trim()
+  }
+  return stripGroupProtocolTags(extractSpeakableText(blocks || []) || summary || '').trim()
+}
 
 /**
  * Where a quote came from. Drives the drawer's "jump to source" affordance and

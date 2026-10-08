@@ -2,12 +2,13 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { ref } from 'vue'
 
-const { mockGetAgent, mockLoadAgents, mockPatchAgentField, mockToastShow, mockDeleteAgent, mockDefaultAgentId, mockPopulateACPStateFromCache, mockAgentsLoaded } = vi.hoisted(() => ({
+const { mockGetAgent, mockLoadAgents, mockPatchAgentField, mockToastShow, mockDeleteAgent, mockDuplicateAgent, mockDefaultAgentId, mockPopulateACPStateFromCache, mockAgentsLoaded } = vi.hoisted(() => ({
   mockGetAgent: vi.fn(),
   mockLoadAgents: vi.fn().mockResolvedValue(undefined),
   mockPatchAgentField: vi.fn().mockResolvedValue(undefined),
   mockToastShow: vi.fn(),
   mockDeleteAgent: vi.fn().mockResolvedValue(undefined),
+  mockDuplicateAgent: vi.fn().mockResolvedValue(undefined),
   mockDefaultAgentId: { value: 'other-agent' },
   mockPopulateACPStateFromCache: vi.fn().mockResolvedValue(undefined),
   // Plain hoisted holder; the mock factory below turns it into a real ref so
@@ -47,6 +48,9 @@ vi.mock('vue-i18n', () => ({
         'settings.items.agentNotFound': 'Agent not found or already removed',
         'settings.items.agentNotFoundHint': 'It may have been deleted.',
         'settings.items.agentBackToList': 'Back to agent list',
+        'settings.items.agentCopied': 'Agent duplicated',
+        'settings.items.agentCopyFailed': 'Duplicate failed',
+        'settings.items.agentCopyNameTaken': 'An agent with this name already exists',
       }
       if (key === 'settings.items.agentModelCount' && params) return `${params.count} models`
       if (key === 'settings.items.agentDeleteConfirm' && params) return `Delete ${params.name}?`
@@ -70,6 +74,7 @@ vi.mock('@/composables/useAgents', async () => {
       loadAgents: mockLoadAgents,
       agentsLoaded: loadedRef,
       deleteAgent: mockDeleteAgent,
+      duplicateAgent: mockDuplicateAgent,
       defaultAgentId: mockDefaultAgentId,
     }),
     populateACPStateFromCache: mockPopulateACPStateFromCache,
@@ -89,12 +94,11 @@ vi.mock('@/composables/useDialog', () => ({
   useDialog: () => ({ confirm: mockDialogConfirm }),
 }))
 
-// The picker lazily imports DiceBear; stub the heavy deps so this file does not
+// The picker lazily imports DiceBear; stub the heavy dep so this file does not
 // pull the library (and its ESM/JSON chain) into jsdom.
 vi.mock('@/utils/lazyAvatar', () => ({
   AVATAR_STYLES: ['bottts', 'identicon'],
-  getAvatarLib: vi.fn().mockResolvedValue({}),
-  renderAvatar: vi.fn().mockResolvedValue('<svg viewBox="0 0 2 2"></svg>'),
+  loadAvatarKit: vi.fn().mockResolvedValue({ Avatar: class {}, styles: {} }),
 }))
 vi.mock('@/components/common/AgentIcon.vue', () => ({
   default: { name: 'AgentIcon', props: ['backend', 'name', 'size', 'avatar'], template: '<span class="agent-icon-stub" />' },
@@ -153,6 +157,7 @@ describe('SettingsAgentDetail', () => {
     vi.clearAllMocks()
     mockGetAgent.mockReturnValue(baseAgent)
     mockAgentsLoaded.value = true
+    mockDuplicateAgent.mockResolvedValue(undefined)
   })
 
   it('renders SettingsItem children for a basic CLI agent', () => {
@@ -477,6 +482,89 @@ describe('SettingsAgentDetail', () => {
 
       expect(wrapper.find('.settings-agent-detail--missing').exists()).toBe(false)
       expect(wrapper.findAllComponents({ name: 'SettingsItem' }).length).toBeGreaterThan(0)
+    })
+  })
+
+  // ─── Copy: name collision keeps the dialog open with an inline reason ────
+  describe('copy agent name collision', () => {
+    it('shows the collision inside the dialog and keeps it open', async () => {
+      const wrapper = mountDetail()
+      const vm = wrapper.vm as any
+
+      // Open the copy dialog, then simulate a 409 name collision.
+      vm.$.setupState.startCopy()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.findComponent({ name: 'CopyAgentDialog' }).props('open')).toBe(true)
+
+      const err = Object.assign(new Error('taken'), { msgKey: 'AgentNameTaken' })
+      mockDuplicateAgent.mockRejectedValueOnce(err)
+      await vm.$.setupState.handleCopyConfirmed('Test Agent (Copy)')
+      await wrapper.vm.$nextTick()
+
+      const dialog = wrapper.findComponent({ name: 'CopyAgentDialog' })
+      expect(dialog.props('open')).toBe(true)
+      expect(dialog.props('errorMessage')).toBe('An agent with this name already exists')
+      // A collision is not a generic failure toast.
+      expect(mockToastShow).not.toHaveBeenCalledWith(
+        'Duplicate failed',
+        expect.anything(),
+      )
+    })
+
+    it('closes the dialog on a successful copy', async () => {
+      const wrapper = mountDetail()
+      const vm = wrapper.vm as any
+      vm.$.setupState.startCopy()
+      await wrapper.vm.$nextTick()
+
+      await vm.$.setupState.handleCopyConfirmed('Test Agent (Copy)')
+      await wrapper.vm.$nextTick()
+
+      expect(mockDuplicateAgent).toHaveBeenCalledWith('test-agent', 'Test Agent (Copy)')
+      expect(wrapper.findComponent({ name: 'CopyAgentDialog' }).props('open')).toBe(false)
+    })
+
+    it('navigates to the new agent after a successful copy', async () => {
+      // Copying should switch the panel to the copy's config page, not leave
+      // the user staring at the source agent.
+      mockDuplicateAgent.mockResolvedValueOnce('claude-deadbeef')
+      const wrapper = mountDetail()
+      const vm = wrapper.vm as any
+      vm.$.setupState.startCopy()
+      await wrapper.vm.$nextTick()
+
+      await vm.$.setupState.handleCopyConfirmed('Test Agent (Copy)')
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.emitted('navigateReplace')).toEqual([['agents:claude-deadbeef']])
+    })
+
+    it('does not navigate when the backend returns no new id', async () => {
+      // An older backend answers without the created agent; navigating would
+      // produce a bogus `agents:` (empty-id) route.
+      mockDuplicateAgent.mockResolvedValueOnce('')
+      const wrapper = mountDetail()
+      const vm = wrapper.vm as any
+      vm.$.setupState.startCopy()
+      await wrapper.vm.$nextTick()
+
+      await vm.$.setupState.handleCopyConfirmed('Test Agent (Copy)')
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.emitted('navigateReplace')).toBeUndefined()
+    })
+
+    it('does not navigate when the copy fails', async () => {
+      mockDuplicateAgent.mockRejectedValueOnce(new Error('fail'))
+      const wrapper = mountDetail()
+      const vm = wrapper.vm as any
+      vm.$.setupState.startCopy()
+      await wrapper.vm.$nextTick()
+
+      await vm.$.setupState.handleCopyConfirmed('Test Agent (Copy)')
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.emitted('navigateReplace')).toBeUndefined()
     })
   })
 })

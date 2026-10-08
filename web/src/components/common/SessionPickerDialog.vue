@@ -29,7 +29,7 @@
             :backend="getAgentBackend(session.agentId || '')"
             :name="getAgentName(session.agentId || '')"
             :avatar="getAgentAvatar(session.agentId || '')"
-            :size="16"
+            size="md"
           />
           <span class="sp-title">{{ session.title || t('session.unnamed') }}</span>
           <!-- The current session gets an explicit label, not just the tint/rail:

@@ -375,6 +375,7 @@ vi.mock('@/composables/useAgents', () => ({
     getAgent: () => null,
     getAgentBackend: () => '',
     getAgentName: () => '',
+    getAgentAvatar: () => '',
     isDefaultAgent: () => false,
     getDefaultModelId: () => '',
     getAgentModels: () => [],
@@ -2141,6 +2142,63 @@ describe('ChatInputBar', () => {
     store.state.currentDir = ''
   })
 
+  it('in a group session the @ menu lists members first and inserts a mention tag', async () => {
+    const { store } = await import('@/stores/app.ts')
+    store.state.currentDir = ''
+    store.state.dirEntries = [] as any
+    const wrapper = mountBar({
+      isGroupSession: true,
+      groupMembers: [
+        { id: 'm-a', name: 'Alice', left: false },
+        { id: 'm-b', name: 'Bob', left: false },
+        { id: 'm-gone', name: 'Gone', left: true },
+      ],
+    })
+    wrapper.vm.inputText = '@'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(true)
+    const labels = wrapper.findAll('.completion-item .completion-label').map(i => i.text())
+    // Active members are listed; the left member is not.
+    expect(labels).toEqual(['Alice', 'Bob'])
+
+    await wrapper.findAll('.completion-item')[1].trigger('mousedown')
+    await wrapper.vm.$nextTick()
+    // The member row id is written into the tag (not the name), with an empty body.
+    expect(wrapper.vm.inputText).toBe('<clawbench-mention targets="m-b"></clawbench-mention> ')
+    // Selecting a member is not an attachment.
+    expect(wrapper.emitted('add-attached')).toBeFalsy()
+    // A member pick is a one-shot insertion: the menu must CLOSE (a file pick
+    // keeps it open to browse). Without this the sticky re-arm would re-open the
+    // roster on the next refresh.
+    expect(wrapper.vm.showFileMenu).toBe(false)
+  })
+
+  it('carries the member avatar/backend into the @ menu items', async () => {
+    const { store } = await import('@/stores/app.ts')
+    store.state.currentDir = ''
+    store.state.dirEntries = [] as any
+    const wrapper = mountBar({
+      isGroupSession: true,
+      groupMembers: [{ id: 'm-a', name: 'Alice', left: false, agentId: 'a-1', backend: 'claude' }],
+    })
+    wrapper.vm.inputText = '@'
+    await wrapper.vm.$nextTick()
+    const items = (wrapper.vm as any).fileMenuItems as any[]
+    const member = items.find(i => i.isMember)
+    expect(member.memberBackend).toBe('claude')
+    // getAgentAvatar is mocked to '' here, so the built-in backend icon shows.
+    expect(member.memberAvatar).toBe('')
+  })
+
+  it('does not list members in the @ menu outside a group session', async () => {
+    const wrapper = mountBar({
+      groupMembers: [{ id: 'm-a', name: 'Alice', left: false }],
+    })
+    wrapper.vm.inputText = '@'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(false)
+  })
+
   it('Esc dismisses the @ menu and it stays closed while the query continues', async () => {
     const { store } = await import('@/stores/app.ts')
     store.state.dirEntries = [{ name: 'main.ts', type: 'file' }] as any
@@ -2416,6 +2474,22 @@ describe('ChatInputBar', () => {
     expect(true).toBe(true)
   })
 
+  describe('session info bar (group gating)', () => {
+    it('renders the model/mode/usage info bar for a normal session', () => {
+      const wrapper = mountBar({ currentModelName: 'gpt-5', currentAgentId: 'agent1' })
+      expect(wrapper.find('.chat-session-info').exists()).toBe(true)
+      wrapper.unmount()
+    })
+
+    it('hides the whole session info bar in a group session', () => {
+      // Model / mode+auto-approve / context-usage are per-agent settings with no
+      // owner on a multi-agent timeline.
+      const wrapper = mountBar({ currentModelName: 'gpt-5', currentAgentId: 'agent1', isGroupSession: true })
+      expect(wrapper.find('.chat-session-info').exists()).toBe(false)
+      wrapper.unmount()
+    })
+  })
+
   describe('ACP sync button', () => {
     it('shows sync button in ACP transport and emits sync-acp-session', async () => {
       const wrapper = mountBar({
@@ -2440,6 +2514,22 @@ describe('ChatInputBar', () => {
         currentSessionId: 'sid-1',
         currentSessionRunning: false,
         acpSyncing: false,
+      })
+      expect(wrapper.find('.chat-action-btn.acp-sync-btn').exists()).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('hides sync button in a group session', () => {
+      // Syncing re-establishes ONE agent's ACP session; a group has several, so
+      // the button is suppressed even in ACP transport.
+      const wrapper = mountBar({
+        currentTransport: 'acp-stdio',
+        currentAgentId: 'agent1',
+        currentSessionId: 'sid-1',
+        currentSessionRunning: false,
+        acpSyncing: false,
+        messages: [{ id: 1, role: 'user', content: 'hi' }],
+        isGroupSession: true,
       })
       expect(wrapper.find('.chat-action-btn.acp-sync-btn').exists()).toBe(false)
       wrapper.unmount()

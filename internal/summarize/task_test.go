@@ -201,3 +201,18 @@ func TestExtractLastAnswerFromBlocks_LongAnswerBeforeTerminalToolUse(t *testing.
 	result := ExtractLastAnswerFromBlocks(blocks)
 	assert.Equal(t, longAnswer, result) // picks the longest text block, not the intro
 }
+
+// The host's private notes (bcc) must not enter the "last answer" text: it is
+// the source for reading summaries (persisted) and for push-notification
+// previews (sent to IM bots / OS notifications), so a note would leak both to
+// storage and off-device.
+func TestExtractLastAnswerFromBlocks_StripsBcc(t *testing.T) {
+	blocks := []model.ContentBlock{
+		{Type: "text", Text: "公开表态 <clawbench-mention targets=\"A\" private>只有A能看到的秘密</clawbench-mention> 结束"},
+	}
+	got := ExtractLastAnswerFromBlocks(blocks)
+	assert.NotContains(t, got, "只有A能看到的秘密")
+	assert.NotContains(t, got, "clawbench-mention")
+	assert.Contains(t, got, "公开表态")
+	assert.Contains(t, got, "结束")
+}

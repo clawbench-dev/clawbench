@@ -106,7 +106,8 @@ func reportSlowWrite(s slowWrite) {
 	if s.wait < slowWriteThreshold && s.exec < slowWriteThreshold {
 		return
 	}
-	slog.Warn("db: slow write",
+	slog.Warn(
+		"db: slow write",
 		slog.String("op", s.op),
 		slog.Duration("lock_wait", s.wait),
 		slog.Duration("exec", s.exec),
@@ -298,7 +299,17 @@ func Open(dbPath string) error {
 	Close()
 
 	var err error
-	db, err = sql.Open("sqlite", dbPath)
+	// Apply the concurrency PRAGMAs through the DSN so EVERY connection the
+	// pool creates gets them at open time. Setting them with a one-off Exec is
+	// not enough: PRAGMAs are per-connection, and a pooled *sql.DB may hand a
+	// later statement to a fresh connection that never saw them. The specific
+	// failure this prevents: the read pool used to run
+	// `PRAGMA journal_mode=WAL` BEFORE `PRAGMA busy_timeout`, so the WAL switch
+	// had no busy wait and failed with `database is locked (261)` whenever
+	// another connection held the file for a moment. modernc.org/sqlite sorts
+	// `_pragma` values so busy_timeout is applied first, which closes the race.
+	dsn := dbPath + "?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)"
+	db, err = sql.Open("sqlite", dsn)
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
@@ -319,25 +330,21 @@ func Open(dbPath string) error {
 	// same loop — e.g., the agent prompt migrations' SELECT + UPDATE pattern.
 	db.SetMaxOpenConns(2)
 
-	// Enable WAL mode for concurrent reads during writes
-	if _, err := WriteExec("PRAGMA journal_mode=WAL"); err != nil {
-		return fail(fmt.Errorf("failed to set WAL mode: %w", err))
-	}
-	// Enable foreign key enforcement (required for ON DELETE CASCADE)
+	// Enable foreign key enforcement (required for ON DELETE CASCADE). Not in
+	// the DSN because it is a per-connection setting the pool re-applies lazily;
+	// the DSN pragma list already covers busy_timeout + journal_mode, and mixing
+	// the two mechanisms for the same connection is harmless but this one is a
+	// write-pool concern only.
 	if _, err := WriteExec("PRAGMA foreign_keys = ON"); err != nil {
 		return fail(fmt.Errorf("failed to enable foreign keys: %w", err))
-	}
-
-	// Wait up to 10 seconds when database is locked (defense-in-depth fallback)
-	if _, err := WriteExec("PRAGMA busy_timeout=10000"); err != nil {
-		return fail(fmt.Errorf("failed to set busy_timeout: %w", err))
 	}
 
 	// Initialize read connection pool for concurrent reads (WAL mode).
 	// WAL contract: DB (MaxOpenConns=2) serializes writes + avoids deadlocks; DBRead (MaxOpenConns=2)
 	// allows concurrent reads that never block writes and vice versa.
-	// Both pools must use WAL mode + busy_timeout for this to work correctly.
-	dbRead, err = sql.Open("sqlite", dbPath)
+	// Both pools must use WAL mode + busy_timeout for this to work correctly,
+	// which the shared DSN guarantees for every connection in each pool.
+	dbRead, err = sql.Open("sqlite", dsn)
 	if err != nil {
 		return fail(fmt.Errorf("failed to open read database: %w", err))
 	}
@@ -345,12 +352,6 @@ func Open(dbPath string) error {
 	dbRead.SetMaxIdleConns(2)                   // match MaxOpenConns to avoid churn
 	dbRead.SetConnMaxLifetime(0)                // unlimited — SQLite file DB, no reconnection needed
 	dbRead.SetConnMaxIdleTime(30 * time.Minute) // close idle conns after 30min
-	if _, err := dbRead.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		return fail(fmt.Errorf("failed to set read DB WAL mode: %w", err))
-	}
-	if _, err := dbRead.Exec("PRAGMA busy_timeout=10000"); err != nil {
-		return fail(fmt.Errorf("failed to set read DB busy_timeout: %w", err))
-	}
 	return nil
 }
 
