@@ -1080,19 +1080,23 @@ while 队列非空:
 
 ### 13.6 两模式循环内核统一（2026-10-08，重构，行为不变）
 
-> 自由模式落地后，主持人与自由两套循环存在大量逐字重复（回合脚手架、成员发言+游标+密送投递、@User 交回、目标解析、密送落库）。此节记录统一后的抽象，供代码与文档对齐。**纯重构，无行为变化**。
+> 自由模式落地后，主持人与自由两套循环存在大量逐字重复（回合脚手架、成员发言+游标+密送投递、@User 交回、目标解析、密送落库）。此节记录统一后的抽象，供代码与文档对齐。除「回退成员补系统提示词」（下注）外**无行为变化**。
 
 **共享抽象（`internal/service/group_orchestrator.go`）：**
 
 | 抽象 | 职责 |
 |---|---|
 | `prepareTurn(groupID)` | 名册加载 + ACP 空闲回收保护（`markGroupMembersActive`）+ runner 解析 + 孤儿流式行清理；调用方 `defer clearGroupMembersActive` |
-| `runSpeakerTurn(...)` | 单次成员发言全流程：注入待送达密送 → 构造提示词 → 执行 → **成功推进游标** → 干净回合清账。游标规则（#69）与密送投递不再各写一份 |
+| `runSpeakerTurn(...)` | **所有发言者的唯一回合路径**（主持人自身、被点名成员、回退成员、汇总回合、自由模式成员都走它）：注入待送达密送 → 构造提示词 → 执行 → **成功推进游标** → 干净回合清账 + 落本回合密送 + `/cb-*` 命令注入（给本回合**第一个**发言者）。游标规则（#69）、密送投递/落库、命令只注入一次——三条规则都不再各写一份 |
 | `handUserBack(groupID)` | @User 交回人类、清 User 密送账、写系统行、结束本轮 |
 | `drainSpeakers(...)` | **唯一循环内核**：FIFO 队列驱动 + 三条不变量（取消即停整轮 / @User 交回 / 队列空即结束）。主持人模式用有界 `refill`（主持人回合 + 轮数上限 + 失败计数 + 结束信号 + 末尾汇总），自由模式用自扩展 `onSpoke` |
+| `memberTurn(m, instruction, s)` | 构造主持人模式下一个成员队列项（公开指令 + 成员系统提示词）。**被点名成员与回退成员共用** |
 | `resolveSpeakerTargets(route, members, excludeID)` | 合并原 `resolveTargets` + `resolveMentionNames`：先按行 id 再按名字、排除指定 id 与已离场、保序去重（主持人模式由此也能解析用户按行 id 写的 @） |
+| `lookupMember(tgt, byID, byName)` | 目标解析的**唯一匹配规则**（先行 id 再名字），`resolveSpeakerTargets` 与 `appendFreeTargets` 共用 |
 | `pickFallbackMember(...)` | 从原 `speakNextMember` 拆出的纯选取逻辑（保留轮转语义，#56） |
-| `storeRouteNotes(...)` | 密送落库唯一路径（目标校验 + 按解析后名字键控）；主持人 `route.Bcc` 与自由 `storeFreeSpeakerNotes` 共用 |
+| `memberInfos(members, excludeID, withUser)` | 名册 → 提示词用的 `HostMemberInfo` 切片；`memberRoster`（全量）与 `activeMemberNamesExcept`（排除主持人 + 追加 User）都是它的薄封装 |
+| `activeMembers(members)` | "还能发言的成员"（非离场），自由模式种子与回退选取共用 |
+| `storeSpeakerNotes` / `storeRouteNotes` | 密送落库唯一路径（目标校验 + 按解析后名字键控），由 `runSpeakerTurn` 对每个发言者调用 |
 
 **旧名 → 新名对照（文档他处若仍见旧名，以此为准）：**
 
@@ -1100,12 +1104,17 @@ while 队列非空:
 |---|---|
 | `resolveTargets`（主持人目标解析） | 合并入 `resolveSpeakerTargets` |
 | `resolveMentionNames`（自由目标解析） | 合并入 `resolveSpeakerTargets` |
-| `speakNextMember`（轮转回退，含执行） | 拆为 `pickFallbackMember`（选取）+ `drainSpeakers` 派发 |
+| `speakNextMember`（轮转回退，含执行） | 拆为 `pickFallbackMember`（选取）+ `memberTurn`/`drainSpeakers` 派发 |
 | `lastHostOutput` / `lastSpeakerOutput` | 合并为 `lastMemberOutput`（主持人只是成员行，无需两个变体） |
 | `publicMentionTargets` | 删除（`route.Speakers` 已是等价的有序去重公开目标列表） |
+| `hostPrompt`（主持人回合手写路径） | 删除，主持人回合走 `runSpeakerTurn`（只是 sysPrompt 用 `BuildHostSystemPrompt`） |
+| `storeFreeSpeakerNotes` | 删除，统一为 `storeSpeakerNotes`（`runSpeakerTurn` 内调用） |
+| `groupMemberTurn.IsHost`（死字段） | 删除；消费方按 `MemberRowID == hostMemberID` 判断 |
 | `runRounds` / `runFreeLoop` | **保留**，但退化为 `drainSpeakers` 的薄封装（各自只提供一个 `refill`/`onSpoke` 闭包） |
 | `hostSpeechForMembers` | 删除，统一为 `renderMentionsReadable` |
 | `StripBccSpans`（Go）/ `stripGroupBccTags`（TS） | 统一为 `StripProtocolTags` / `stripGroupProtocolTags`（§13.2 标签统一） |
 | 标签 `<clawbench-speaker>` / `<clawbench-bcc>` | 统一为 `<clawbench-mention>`（+ `private` 属性），见 §13.2 |
+
+**行为修正（唯一一处）**：轮转回退成员此前**没有**成员系统提示词（只有被点名成员有），会诱发"成员自称主持人"；现与 `memberTurn` 共用同一提示词构造。
 
 **顺带修复**：`CreateGroupWithMembers` 的 `gocyclo`/`gocognit` 超阈值（自由模式提交引入，`only-new-issues` 漏报），抽出 `dedupeGroupSpecs` / `groupIdentityFields` / `insertGroupRow` / `insertGroupMemberRows` / `writeGroupModeInline` 降回预算内。

@@ -51,7 +51,7 @@ func TestRunGroupTurnDrain_DoesNotTouchRunningFlag(t *testing.T) {
 	}
 
 	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
-		if turn.IsHost {
+		if turn.MemberRowID == hostID {
 			_, _ = AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
 				`{"blocks":[{"type":"text","text":"`+"<clawbench-group-end/> 结束"+`"}]}`, nil, false, "", hostID)
 			return groupMemberResult{}
@@ -84,7 +84,7 @@ func TestRunGroupTurnDrain_DoesNotDuplicateUserMessage(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
-		if turn.IsHost {
+		if turn.MemberRowID == hostID {
 			_, _ = AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
 				`{"blocks":[{"type":"text","text":"`+"<clawbench-group-end/> 结束"+`"}]}`, nil, false, "", hostID)
 			return groupMemberResult{}
@@ -339,7 +339,7 @@ func TestGroupTurn_ClawbenchCommandInjectsFirstHostPromptOnly(t *testing.T) {
 	}
 	base, _ := newScriptedRunner(t, groupID, project, script)
 	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
-		prompts = append(prompts, seen{turn.MemberRowID, turn.Prompt, turn.IsHost})
+		prompts = append(prompts, seen{turn.MemberRowID, turn.Prompt, turn.MemberRowID == hostID})
 		return base(ctx, gid, turn)
 	}
 
@@ -406,7 +406,7 @@ func TestGroupTurn_NonCommandDoesNotInject(t *testing.T) {
 
 	var hostPrompts []string
 	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
-		if turn.IsHost {
+		if turn.MemberRowID == hostID {
 			hostPrompts = append(hostPrompts, turn.Prompt)
 			_, _ = AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
 				`{"blocks":[{"type":"text","text":"`+"<clawbench-group-end/> 结束"+`"}]}`, nil, false, "", hostID)
@@ -440,7 +440,7 @@ func TestGroupTurn_NilRendererDoesNotPanic(t *testing.T) {
 	defer SetRenderGroupCommandFn(restore)
 
 	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
-		if turn.IsHost {
+		if turn.MemberRowID == hostID {
 			_, _ = AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
 				`{"blocks":[{"type":"text","text":"`+"<clawbench-group-end/> 结束"+`"}]}`, nil, false, "", hostID)
 		}
@@ -471,7 +471,7 @@ func TestGroupTurn_CommandRenderErrorSkipsInjection(t *testing.T) {
 
 	hostRan := false
 	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
-		if turn.IsHost {
+		if turn.MemberRowID == hostID {
 			hostRan = true
 			_, _ = AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
 				`{"blocks":[{"type":"text","text":"`+"<clawbench-group-end/> 结束"+`"}]}`, nil, false, "", hostID)

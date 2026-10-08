@@ -200,7 +200,7 @@ func TestGroupTurn_PersistsUserAttachments(t *testing.T) {
 		t.Fatalf("CreateGroup: %v", err)
 	}
 	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
-		if turn.IsHost {
+		if turn.MemberRowID == hostID {
 			_, _ = AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
 				`{"blocks":[{"type":"text","text":"`+"<clawbench-group-end/> 结束"+`"}]}`, nil, false, "", hostID)
 			return groupMemberResult{}

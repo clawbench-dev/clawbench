@@ -244,7 +244,7 @@ func TestGroupOrchestrator_CancelReachesMemberTurns(t *testing.T) {
 	if _, err := store.ProjectIDForPath(project); err != nil {
 		t.Fatalf("ProjectIDForPath: %v", err)
 	}
-	groupID, _, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	groupID, hostID, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
 	if err != nil {
 		t.Fatalf("CreateGroup: %v", err)
 	}
@@ -258,7 +258,7 @@ func TestGroupOrchestrator_CancelReachesMemberTurns(t *testing.T) {
 	defer FinishSessionRun(groupID)
 
 	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
-		if turn.IsHost {
+		if turn.MemberRowID == hostID {
 			_, _ = AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
 				assistantText("<clawbench-mention targets=\"A\">请发言</clawbench-mention>"), nil, false, "", turn.MemberRowID)
 			return groupMemberResult{}
@@ -303,7 +303,7 @@ func TestGroupOrchestrator_MaxRoundsSummary(t *testing.T) {
 	script := map[string][]string{
 		hostID: {
 			`<clawbench-mention targets="A"> 请发言`, // round 1 route (no end)</clawbench-mention>
-			`结论：到此为止。`,                                     // summary turn (round cap reached)
+			`结论：到此为止。`,                            // summary turn (round cap reached)
 		},
 		mA: {"A 发言"},
 	}
@@ -365,7 +365,7 @@ func TestGroupOrchestrator_HostNeverRoutesToItself(t *testing.T) {
 	counts := map[string]int{}
 	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
 		*order = append(*order, turn.MemberRowID)
-		if turn.IsHost {
+		if turn.MemberRowID == hostID {
 			hostPrompts = append(hostPrompts, turn.Prompt)
 		}
 		texts := script[turn.MemberRowID]
@@ -432,7 +432,7 @@ func TestGroupTurn_FinalizesOrphanStreamingRow(t *testing.T) {
 	// A trivial turn that ends immediately, but leaves a streaming row behind
 	// (as a member whose Finalize failed would).
 	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
-		if turn.IsHost {
+		if turn.MemberRowID == hostID {
 			id, e := AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant", "half a thought", nil, true, "", hostID)
 			if e != nil {
 				return groupMemberResult{Err: e.Error()}
@@ -530,7 +530,7 @@ func TestGroupOrchestrator_FailedHostDoesNotAdvanceCursor(t *testing.T) {
 
 	// The host turn always fails.
 	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
-		if turn.IsHost {
+		if turn.MemberRowID == hostID {
 			return groupMemberResult{Err: "host backend down"}
 		}
 		return groupMemberResult{}
@@ -578,7 +578,7 @@ func TestGroupOrchestrator_SummaryFailureDoesNotAdvanceCursor(t *testing.T) {
 
 	// EVERY host turn fails — the routing turn and the summary turn alike.
 	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
-		if turn.IsHost {
+		if turn.MemberRowID == hostID {
 			return groupMemberResult{Err: "host backend down"}
 		}
 		return groupMemberResult{}
@@ -662,7 +662,7 @@ func TestGroupTurn_MarksMembersRunningForSweep(t *testing.T) {
 				}
 			}
 		}
-		if turn.IsHost {
+		if turn.MemberRowID == hostID {
 			_, _ = AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
 				assistantText("<clawbench-mention targets=\"A\">请表态</clawbench-mention>"), nil, false, "", hostID)
 			return groupMemberResult{}
@@ -700,7 +700,7 @@ func TestGroupTurn_ClearsMemberSweepStateAfterTurn(t *testing.T) {
 		t.Fatalf("AddGroupMember: %v", err)
 	}
 	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
-		if turn.IsHost {
+		if turn.MemberRowID == hostID {
 			_, _ = AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
 				assistantText("<clawbench-mention targets=\"A\">请表态</clawbench-mention>"), nil, false, "", hostID)
 			return groupMemberResult{}
@@ -783,6 +783,44 @@ func TestGroupOrchestrator_FallbackRotates(t *testing.T) {
 	}
 }
 
+// A round-robin FALLBACK member must get the same member system prompt as a
+// routed member: without it the member does not know it is NOT the host, and
+// may imitate the routing format (the "everyone declares itself the chair"
+// incident). The fallback and the routed path share one prompt builder now.
+func TestGroupOrchestrator_FallbackMemberGetsMemberSystemPrompt(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-fallback-prompt"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	mA, _ := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+
+	// The host never routes → every member turn is a round-robin fallback.
+	script := map[string][]string{
+		hostID: {"(no routing tag at all)", "(no routing tag at all)", "<clawbench-group-end/> 结束"},
+		mA:     {"A 的观点"},
+	}
+	base, _ := newScriptedRunner(t, groupID, project, script)
+	var aPrompt string
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		if turn.MemberRowID == mA {
+			aPrompt = turn.Prompt
+		}
+		return base(ctx, gid, turn)
+	}
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	_ = runGroupTurnForTest(t, o, project, "开始", nil)
+
+	if !strings.Contains(aPrompt, "群聊成员") {
+		t.Fatalf("a fallback member must get the member system prompt; got %q", aPrompt)
+	}
+}
+
 // Two consecutive parse failures mean the host is not producing usable routing:
 // continuing burns the whole round budget for nothing. Abort and finalize
 // (decision #56).
@@ -806,7 +844,7 @@ func TestGroupOrchestrator_AbortsAfterTwoParseFailures(t *testing.T) {
 
 	hostTurns := 0
 	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
-		if turn.IsHost {
+		if turn.MemberRowID == hostID {
 			hostTurns++
 			_, _ = AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
 				`{"blocks":[{"type":"text","text":"no tag here"}]}`, nil, false, "", hostID)
@@ -844,7 +882,7 @@ func TestGroupTurn_SummarizesOnce(t *testing.T) {
 	// A turn that leaves a finalized assistant row on the timeline (the row is
 	// what gets summarized).
 	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
-		if turn.IsHost {
+		if turn.MemberRowID == hostID {
 			_, _ = AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
 				`{"blocks":[{"type":"text","text":"结论：可以发布。<clawbench-group-end/>"}]}`, nil, false, "", hostID)
 		}
@@ -1059,7 +1097,7 @@ func TestGroupOrchestrator_CancelledFallbackDoesNotAdvanceCursor(t *testing.T) {
 	// The host never emits a parseable route, so every round falls back to
 	// round-robin; the fallback member's turn is CANCELLED.
 	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
-		if turn.IsHost {
+		if turn.MemberRowID == hostID {
 			_, _ = AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
 				`{"blocks":[{"type":"text","text":"(no tag)"}]}`, nil, false, "", hostID)
 			return groupMemberResult{}
@@ -1099,7 +1137,7 @@ func TestGroupOrchestrator_AbortsAfterRepeatedHostFailure(t *testing.T) {
 
 	hostTurns := 0
 	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
-		if turn.IsHost {
+		if turn.MemberRowID == hostID {
 			hostTurns++
 			return groupMemberResult{Err: "host backend down"}
 		}
@@ -1136,7 +1174,7 @@ func TestGroupOrchestrator_SuccessfulHostResetsFailureStreak(t *testing.T) {
 	// reset, the second failure would abort before the end signal.
 	hostTurns := 0
 	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
-		if turn.IsHost {
+		if turn.MemberRowID == hostID {
 			hostTurns++
 			switch hostTurns {
 			case 1:
