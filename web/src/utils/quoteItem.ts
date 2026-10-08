@@ -12,7 +12,7 @@
  */
 import type { FileEntry } from '@/utils/fileAttachmentUtils'
 import { isQuoteEntry } from '@/utils/fileAttachmentUtils'
-import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
+import { extractSpeakableText } from '@/utils/speakableText'
 import { stripGroupProtocolTags } from '@/utils/groupRouting.ts'
 
 /**
