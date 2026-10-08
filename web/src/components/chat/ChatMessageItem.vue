@@ -429,7 +429,11 @@ const msgText = computed(() => {
 // only in the collapsed card; it must not be read aloud, copied, quoted, or
 // counted as message content. `msgText` itself stays RAW because `groupRouting`
 // parses the note out of it.
-const speakableText = computed(() => stripGroupProtocolTags(msgText.value))
+//
+// Only a GROUP session carries the protocol, so the strip is gated on it: a
+// single chat's reply that merely DISCUSSES the tag syntax must not be
+// truncated by a literal (unclosed) tag in its prose (regression, msg 58879).
+const speakableText = computed(() => (props.isGroupSession ? stripGroupProtocolTags(msgText.value) : msgText.value))
 
 // Friendly relative timestamp shown in the meta bar for BOTH roles.
 // formatRelativeTime returns '' for missing/invalid dates (including Go zero-value
@@ -461,8 +465,10 @@ const showMetaBar = computed(() => {
  * Empty means there is nothing worth quoting, and the button is hidden.
  */
 // Shared with ChatPanelContent's quote handler so both entries strip the host's
-// private notes identically (a quote feeds a member's injected context).
-const quotableText = computed(() => quotableMessageText(props.msg?.role, props.msg?.blocks, props.msg?.content, props.msg?.summary))
+// private notes identically (a quote feeds a member's injected context). Only a
+// group session has the protocol, so the strip is gated on it (a single chat's
+// prose must not be truncated by a literal tag mentioned in discussion).
+const quotableText = computed(() => quotableMessageText(props.msg?.role, props.msg?.blocks, props.msg?.content, props.msg?.summary, props.isGroupSession))
 
 // Accessible name/tooltip for the read-aloud button. While audio is playing the
 // button acts as a stop control, so it must not advertise "read aloud".

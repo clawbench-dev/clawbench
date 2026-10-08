@@ -472,7 +472,7 @@ func (idx *Indexer) chunkMessages(messages []store.UnindexedMessage) ([]msgChunk
 	var allTexts []string
 
 	for _, msg := range messages {
-		text := ExtractTextFromContent(msg.Content, msg.Role)
+		text := ExtractTextFromContent(msg.Content, msg.Role, msg.SessionType)
 		if text == "" {
 			results = append(results, msgChunkResult{msg: msg})
 			continue

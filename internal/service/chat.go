@@ -20,7 +20,6 @@ import (
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
-	"clawbench/internal/summarize"
 )
 
 // GetChatHistory retrieves all chat messages for a given project path, backend, and session.
@@ -193,6 +192,11 @@ const indexSummaryMaxRunes = 200
 // Queued messages are absent by construction: they live in queued_messages
 // until they are dequeued into chat_history.
 func GetConversationIndex(sessionID string) ([]model.ChatMessage, error) {
+	// Resolve the session's group-chat policy ONCE, before the rows cursor is
+	// opened: IsGroupSession issues its own query, and calling it inside the
+	// loop would need a second read connection while the cursor still holds the
+	// first (deadlock on the 1-connection test pool, needless contention in prod).
+	isGroup := IsGroupSession(sessionID)
 	rows, err := store.ReadDB().Query(
 		`SELECT h.id, h.role, h.content, h.files, h.created_at, COALESCE(s.summary, ''), COALESCE(h.agent_id, '')
 		 FROM chat_history h
@@ -221,7 +225,7 @@ func GetConversationIndex(sessionID string) ([]model.ChatMessage, error) {
 			text := summary
 			if text == "" {
 				if blocks, perr := parseMessageBlocks(msg.Content); perr == nil && len(blocks) > 0 {
-					text = summarize.ExtractLastAnswerFromBlocks(blocks)
+					text = assistantConclusionWithPolicy(isGroup, blocks)
 				} else {
 					// Plain-text assistant content (no block JSON) — use it as-is.
 					text = ExtractPlainText(msg.Content)

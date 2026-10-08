@@ -6,7 +6,9 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"clawbench/internal/grouprouting"
 	"clawbench/internal/model"
+	"clawbench/internal/store"
 	"clawbench/internal/summarize"
 )
 
@@ -20,7 +22,16 @@ type TextChunk struct {
 // ExtractTextFromContent extracts text blocks from a chat message content.
 // For user messages, content is plain text.
 // For assistant messages, content is JSON with ContentBlocks.
-func ExtractTextFromContent(content, role string) string {
+//
+// sessionType is the owning session's session_type ("" when unknown). Only a
+// group timeline's speech can carry `<clawbench-mention>` tags, and a private
+// note must never be embedded into a searchable chunk — so the protocol strip
+// (fail-closed) is applied for group sessions only. A single chat's prose is
+// indexed verbatim, so a reply that merely DISCUSSES the tag syntax is not
+// truncated. (RAG cannot import internal/service, which owns the canonical
+// AssistantConclusion, without an import cycle — the store constant is the
+// shared source of truth.)
+func ExtractTextFromContent(content, role, sessionType string) string {
 	if role == "user" {
 		return strings.TrimSpace(content)
 	}
@@ -34,7 +45,11 @@ func ExtractTextFromContent(content, role string) string {
 		return strings.TrimSpace(content)
 	}
 
-	return strings.TrimSpace(summarize.ExtractLastAnswerFromBlocks(msg.Blocks))
+	text := summarize.ExtractLastAnswerFromBlocks(msg.Blocks)
+	if sessionType == store.SessionTypeGroup {
+		text = grouprouting.StripProtocolTags(text)
+	}
+	return strings.TrimSpace(text)
 }
 
 // ChunkText splits text into overlapping chunks of approximately chunkSize tokens.

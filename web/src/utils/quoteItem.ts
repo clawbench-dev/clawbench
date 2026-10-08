@@ -19,11 +19,17 @@ import { stripGroupProtocolTags } from '@/utils/groupRouting.ts'
  * The text a "quote this message" action should capture — the SAME text the
  * user reads, minus the host's private notes (bcc).
  *
- * Why strip here: a quote becomes a `kind:'quote'` attachment, and attachments
- * are rendered into a group member's injected context (`RenderQuoteBlock`). A
- * note that reached a quote would therefore reach EVERY member — the exact
- * leak the feature exists to prevent. This is the injection boundary, so it
- * uses the fail-closed stripper (any bcc-like shape), not the display one.
+ * Why strip for a group: a quote becomes a `kind:'quote'` attachment, and
+ * attachments are rendered into a group member's injected context
+ * (`RenderQuoteBlock`). A note that reached a quote would therefore reach EVERY
+ * member — the exact leak the feature exists to prevent. This is the injection
+ * boundary, so it uses the fail-closed stripper (any bcc-like shape).
+ *
+ * Why NOT strip for a single chat: a single chat has no group protocol, so
+ * stripping has zero security value and truncates an ordinary reply that merely
+ * DISCUSSES the tag syntax (an unclosed literal `<clawbench-mention` in prose
+ * dropped the whole tail — regression, message 58879). `isGroup` is the
+ * session-type gate; callers pass their `isGroupSession`.
  *
  *   - assistant: the speakable text (skips tool/thinking noise), else the summary;
  *   - user: the message content.
@@ -33,11 +39,12 @@ export function quotableMessageText(
   blocks: Array<Record<string, unknown>> | undefined,
   content: string | undefined,
   summary: string | undefined,
+  isGroup: boolean,
 ): string {
-  if (role === 'user') {
-    return stripGroupProtocolTags(extractSpeakableText(blocks || []) || content || '').trim()
-  }
-  return stripGroupProtocolTags(extractSpeakableText(blocks || []) || summary || '').trim()
+  const raw = role === 'user'
+    ? extractSpeakableText(blocks || []) || content || ''
+    : extractSpeakableText(blocks || []) || summary || ''
+  return (isGroup ? stripGroupProtocolTags(raw) : raw).trim()
 }
 
 /**

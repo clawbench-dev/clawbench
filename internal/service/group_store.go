@@ -902,8 +902,14 @@ func GetAgentDisplayName(agentID string) string {
 	return "AI"
 }
 
-// GetSessionType returns a session's session_type ("" if not found).
+// GetSessionType returns a session's session_type ("" if not found or the DB is
+// not ready). The readiness guard keeps callers that run before/without a DB
+// (unit tests, early startup) from panicking on a nil reader; "" is the safe
+// default — it is not a group, so no group-chat policy is applied.
 func GetSessionType(sessionID string) string {
+	if !store.ReadDBReady() {
+		return ""
+	}
 	var t string
 	_ = store.ReadDB().QueryRow("SELECT session_type FROM chat_sessions WHERE id = ?", sessionID).Scan(&t)
 	return t

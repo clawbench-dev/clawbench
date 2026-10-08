@@ -408,12 +408,17 @@ func GetSessionTitlesBatchIncludeArchived(sessionIDs []string) (map[string]strin
 
 // UnindexedMessage represents a chat message that has not yet been indexed by RAG.
 type UnindexedMessage struct {
-	ID          int64     `json:"id"`
-	Content     string    `json:"content"`
-	Role        string    `json:"role"`
-	SessionID   string    `json:"session_id"`
-	ProjectPath string    `json:"project_path"`
-	Backend     string    `json:"backend"`
+	ID          int64  `json:"id"`
+	Content     string `json:"content"`
+	Role        string `json:"role"`
+	SessionID   string `json:"session_id"`
+	ProjectPath string `json:"project_path"`
+	Backend     string `json:"backend"`
+	// SessionType is the owning session's session_type. The indexer needs it to
+	// apply the session's group-chat protocol policy (a private note must not be
+	// embedded into a searchable chunk; a single chat's prose must not be
+	// truncated).
+	SessionType string    `json:"session_type"`
 	CreatedAt   time.Time `json:"created_at"`
 }
 
@@ -423,9 +428,10 @@ type UnindexedMessage struct {
 //nolint:errcheck,noctx // legacy query moved from service; rationale documented at the call site
 func GetUnindexedMessages(limit int) ([]UnindexedMessage, error) {
 	rows, err := dbRead.Query(
-		`SELECT h.id, h.content, h.role, h.session_id, COALESCE(p.path, ''), h.backend, h.created_at
+		`SELECT h.id, h.content, h.role, h.session_id, COALESCE(p.path, ''), h.backend, COALESCE(s.session_type, ''), h.created_at
 		   FROM chat_history h
 		   LEFT JOIN projects p ON p.id = h.project_id
+		   LEFT JOIN chat_sessions s ON s.id = h.session_id
 		  WHERE h.indexed = 0 AND h.streaming = 0
 		  ORDER BY h.created_at DESC LIMIT ?`,
 		limit,
@@ -438,7 +444,7 @@ func GetUnindexedMessages(limit int) ([]UnindexedMessage, error) {
 	var messages []UnindexedMessage
 	for rows.Next() {
 		var m UnindexedMessage
-		if err := rows.Scan(&m.ID, &m.Content, &m.Role, &m.SessionID, &m.ProjectPath, &m.Backend, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.Content, &m.Role, &m.SessionID, &m.ProjectPath, &m.Backend, &m.SessionType, &m.CreatedAt); err != nil {
 			return nil, err
 		}
 		messages = append(messages, m)

@@ -515,8 +515,9 @@ function handleQuoteMessage(msg) {
     if (!msg) return
     // Shared with ChatMessageItem: strips the host's private notes (bcc) — a
     // quote becomes an attachment that is rendered into every member's injected
-    // context, so a note must never ride along.
-    const text = quotableMessageText(msg.role, msg.blocks, msg.content, msg.summary)
+    // context, so a note must never ride along. Gated on the group session type:
+    // a single chat has no protocol to strip.
+    const text = quotableMessageText(msg.role, msg.blocks, msg.content, msg.summary, isGroupSession.value)
     if (!text) return
 
     const id = msg.id !== undefined && msg.id !== null ? Number(msg.id) : NaN
@@ -796,8 +797,11 @@ async function onStreamEnd(reason) {
     if (autoSpeech.enabled.value) {
       const lastMsg = messages.value[messages.value.length - 1]
       if (lastMsg?.role === 'assistant') {
-        // Strip the host's private notes: they are not for the user to hear.
-        const fullText = stripGroupProtocolTags(extractSpeakableText(lastMsg.blocks || []))
+        // Strip the host's private notes for a GROUP session only: a single
+        // chat has no protocol, so stripping would truncate a reply that merely
+        // discusses the tag syntax (regression, msg 58879).
+        const raw = extractSpeakableText(lastMsg.blocks || [])
+        const fullText = isGroupSession.value ? stripGroupProtocolTags(raw) : raw
         if (fullText && lastMsg.id) {
           autoSpeech.speakMessage(lastMsg.id, fullText)
         } else {

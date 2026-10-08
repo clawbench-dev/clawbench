@@ -1063,19 +1063,21 @@ func TestTTSGenerate_WithMessageID_UsesConclusionNotFullText(t *testing.T) {
 	assert.Equal(t, conclusionText, mockSum.lastText)
 }
 
-// ttsExtractConclusion must not read the host's private notes (bcc): the
-// frontend strips them, but when messageId is present the handler OVERRIDES the
-// frontend text with the DB content — so the stripping must happen here too.
+// ttsExtractConclusion must not read a GROUP timeline's private notes (bcc):
+// the frontend strips them, but when messageId is present the handler OVERRIDES
+// the frontend text with the DB content — so the policy must be applied here too.
+// Only a group session carries the protocol, so the message must live on a group
+// timeline for the strip to apply.
 func TestTTSExtractConclusion_StripsBcc(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "TTS", "codebuddy", "", "default", "chat")
+	groupID, _, err := service.CreateGroup(env.ProjectDir, "TTS组", "codebuddy", "codebuddy", "Host")
 	if err != nil {
-		t.Fatalf("CreateSession: %v", err)
+		t.Fatalf("CreateGroup: %v", err)
 	}
 	content := `{"blocks":[{"type":"text","text":"公开表态 <clawbench-mention targets=\"A\" private>只有A能听到的秘密</clawbench-mention> 结束"}]}`
-	msgID, err := service.AddChatMessage(env.ProjectDir, "codebuddy", sessionID, "assistant", content, nil, false, "")
+	msgID, err := service.AddChatMessage(env.ProjectDir, "codebuddy", groupID, "assistant", content, nil, false, "")
 	if err != nil {
 		t.Fatalf("AddChatMessage: %v", err)
 	}
@@ -1089,5 +1091,28 @@ func TestTTSExtractConclusion_StripsBcc(t *testing.T) {
 	}
 	if !strings.Contains(got, "公开表态") {
 		t.Fatalf("the public text must survive: %q", got)
+	}
+}
+
+// A SINGLE chat has no group protocol: a reply that merely DISCUSSES the tag
+// syntax (an unclosed literal tag in prose) must be spoken verbatim, not
+// truncated at the tag. Regression: message 58879's summary was cut 1551 → 1258.
+func TestTTSExtractConclusion_SingleChatKeepsLiteralTag(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "TTS", "codebuddy", "", "default", "chat")
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	content := `{"blocks":[{"type":"text","text":"用户的消息里写 \u003cclawbench-mention private\u003e 不会被落库，后面的内容必须保留"}]}`
+	msgID, err := service.AddChatMessage(env.ProjectDir, "codebuddy", sessionID, "assistant", content, nil, false, "")
+	if err != nil {
+		t.Fatalf("AddChatMessage: %v", err)
+	}
+
+	got := ttsExtractConclusion(msgID)
+	if !strings.Contains(got, "后面的内容必须保留") {
+		t.Fatalf("single-chat tail must be spoken: %q", got)
 	}
 }

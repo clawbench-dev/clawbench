@@ -15,7 +15,6 @@ import (
 	"sync"
 	"time"
 
-	"clawbench/internal/grouprouting"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 	"clawbench/internal/speech"
@@ -363,11 +362,13 @@ func ttsExtractConclusion(messageID int64) string { //nolint:gocyclo,gocognit //
 	blocks := content.Blocks
 
 	// Extract the final answer using the same logic as chat summary.
-	// Strip the host's private notes (bcc) BEFORE speaking: the frontend already
-	// strips them, but this path OVERRIDES the frontend text with the DB content
-	// when a messageId is present, so the stripping must happen here too —
-	// otherwise a note addressed to one member would be read aloud to the user.
-	conclusion := grouprouting.StripProtocolTags(summarize.ExtractLastAnswerFromBlocks(blocks))
+	// Group-chat protocol tags are stripped only for group sessions (the only
+	// place they can carry a private note); a single chat's prose is read
+	// verbatim, so a reply that merely DISCUSSES the tag syntax is not truncated.
+	// The frontend already strips for the group case, but this path OVERRIDES
+	// the frontend text with the DB content when a messageId is present, so the
+	// policy must be applied here too.
+	conclusion := service.AssistantConclusion(msg.SessionID, blocks)
 
 	// Append AskUserQuestion text (questions + options) so TTS reads them
 	var aqParts []string

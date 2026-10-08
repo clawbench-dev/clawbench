@@ -202,17 +202,30 @@ func TestExtractLastAnswerFromBlocks_LongAnswerBeforeTerminalToolUse(t *testing.
 	assert.Equal(t, longAnswer, result) // picks the longest text block, not the intro
 }
 
-// The host's private notes (bcc) must not enter the "last answer" text: it is
-// the source for reading summaries (persisted) and for push-notification
-// previews (sent to IM bots / OS notifications), so a note would leak both to
-// storage and off-device.
-func TestExtractLastAnswerFromBlocks_StripsBcc(t *testing.T) {
+// ExtractLastAnswerFromBlocks is a PURE text extractor: it must NOT strip
+// group-chat protocol tags. Stripping is a session-level policy applied by
+// service.AssistantConclusion (only group timelines carry tags). Stripping
+// here truncated ordinary single-chat replies that merely DISCUSS the tag
+// syntax — an unclosed literal `<clawbench-mention` in prose dropped the whole
+// tail of the summary (regression: message 58879).
+func TestExtractLastAnswerFromBlocks_PreservesProtocolTags(t *testing.T) {
 	blocks := []model.ContentBlock{
 		{Type: "text", Text: "公开表态 <clawbench-mention targets=\"A\" private>只有A能看到的秘密</clawbench-mention> 结束"},
 	}
 	got := ExtractLastAnswerFromBlocks(blocks)
-	assert.NotContains(t, got, "只有A能看到的秘密")
-	assert.NotContains(t, got, "clawbench-mention")
+	// The extractor keeps the text verbatim; the caller gates the stripping.
 	assert.Contains(t, got, "公开表态")
 	assert.Contains(t, got, "结束")
+	assert.Contains(t, got, "<clawbench-mention")
+}
+
+// A single-chat reply that merely MENTIONS the tag syntax in prose (an unclosed
+// literal tag) must survive extraction intact — the exact 58879 regression.
+func TestExtractLastAnswerFromBlocks_UnclosedLiteralTagSurvives(t *testing.T) {
+	blocks := []model.ContentBlock{
+		{Type: "text", Text: "用户的消息里写 `<clawbench-mention private>` 不会被落库。后面的内容必须保留。"},
+	}
+	got := ExtractLastAnswerFromBlocks(blocks)
+	assert.Contains(t, got, "后面的内容必须保留")
+	assert.Contains(t, got, "不会被落库")
 }

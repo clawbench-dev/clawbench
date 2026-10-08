@@ -6,7 +6,6 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"clawbench/internal/grouprouting"
 	"clawbench/internal/model"
 )
 
@@ -86,10 +85,12 @@ func ExtractTextFromBlocks(blocks []model.ContentBlock) string {
 // If no text exists after the last tool_use, falls back to the longest text block.
 // Returns empty string if no suitable text is found.
 //
-// The host's private notes (bcc) are stripped: this text is the source for
-// reading summaries (persisted to the DB) and for push-notification previews
-// (sent to IM bots and OS notifications), so a note would otherwise leak both
-// to storage and off-device. Fail-closed — any bcc-like shape is removed.
+// This is a PURE text extractor: it does NOT strip group-chat protocol tags.
+// Stripping is a session-level policy (only group timelines carry the tags, and
+// only their readers must not see a private note), so it lives at the caller
+// boundary — see service.AssistantConclusion. Stripping here unconditionally
+// truncated ordinary single-chat replies that merely DISCUSS the tag syntax
+// (an unclosed literal `<clawbench-mention` in prose dropped the whole tail).
 func ExtractLastAnswerFromBlocks(blocks []model.ContentBlock) string {
 	lastToolIdx := -1
 	for i, b := range blocks {
@@ -101,7 +102,7 @@ func ExtractLastAnswerFromBlocks(blocks []model.ContentBlock) string {
 	if lastToolIdx >= 0 {
 		for i := lastToolIdx + 1; i < len(blocks); i++ {
 			if blocks[i].Type == "text" && blocks[i].Text != "" {
-				return grouprouting.StripProtocolTags(blocks[i].Text)
+				return blocks[i].Text
 			}
 		}
 	}
@@ -116,5 +117,5 @@ func ExtractLastAnswerFromBlocks(blocks []model.ContentBlock) string {
 			bestText = b.Text
 		}
 	}
-	return grouprouting.StripProtocolTags(bestText)
+	return bestText
 }
