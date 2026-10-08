@@ -347,11 +347,19 @@ describe('AgentSelectorDrawer', () => {
       vi.advanceTimersByTime(500)
 
       // No host yet -> free mode. The i18n mock returns the key verbatim.
-      expect(wrapper.find('.agent-header-mode').text()).toBe('group.freeMode')
+      const free = wrapper.find('.agent-header-mode')
+      expect(free.text()).toBe('group.freeMode')
+      // Free mode carries the @ glyph (the relay is @-driven).
+      expect(free.find('.lucide-at-sign').exists()).toBe(true)
+      expect(free.find('.lucide-crown').exists()).toBe(false)
 
       await wrapper.setProps({ hostId: 'agent-1' })
       await flushPromises()
-      expect(wrapper.find('.agent-header-mode').text()).toBe('group.hostMode')
+      const host = wrapper.find('.agent-header-mode')
+      expect(host.text()).toBe('group.hostMode')
+      // Host mode carries the crown; the glyph pairing mirrors the session chip.
+      expect(host.find('.lucide-crown').exists()).toBe(true)
+      expect(host.find('.lucide-at-sign').exists()).toBe(false)
     })
 
     it('does not render the mode subtitle outside group mode', async () => {

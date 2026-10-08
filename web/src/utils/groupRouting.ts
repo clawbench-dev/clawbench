@@ -259,8 +259,46 @@ export function stripGroupBccSpans(text: string): string {
   return stripAllMentionSpans(text).trim()
 }
 
+/** A minimal speaker shape the mention-name resolver needs. */
+export interface MentionSpeaker {
+  name: string
+}
+
+/**
+ * resolveMentionDisplayName maps a raw mention target to the label shown in an
+ * inline @chip. A target is either a member ROW id (a user's @ carries the id)
+ * or a display name (an agent writes the name): resolve by id first, then by
+ * name, and fall back to the raw target so an unresolvable target stays
+ * visible. The reserved human name ("User") always renders as `userLabel`
+ * ("你"/"you") — the reader should see themselves, not the raw token.
+ *
+ * `resolveId`/`resolveName` may be null (outside a group), in which case only
+ * the reserved-name and fallback branches apply.
+ */
+export function resolveMentionDisplayName(
+  target: string,
+  resolveId: ((t: string) => MentionSpeaker | null) | null | undefined,
+  resolveName: ((t: string) => MentionSpeaker | null) | null | undefined,
+  userLabel: string,
+): string {
+  if (target === GROUP_USER_TARGET_NAME) return userLabel
+  const byId = resolveId?.(target)
+  if (byId?.name) return byId.name
+  const byName = resolveName?.(target)
+  if (byName?.name) return byName.name
+  return target
+}
+
 /** The inline chip class the message renderer styles (and DOMPurify must keep). */
 export const MENTION_CHIP_CLASS = 'msg-mention-chip'
+
+/**
+ * The reserved group-chat participant name of the HUMAN user (mirrors the Go
+ * `groupUserTarget` in `internal/service/group_store.go`). An agent @-mentions
+ * "User" to hand the floor back; the display layer shows it as "you" instead of
+ * the raw language-neutral token.
+ */
+export const GROUP_USER_TARGET_NAME = 'User'
 
 /**
  * renderMentionChips rewrites a message body for DISPLAY: each well-formed

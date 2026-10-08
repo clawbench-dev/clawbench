@@ -13,7 +13,7 @@
             <AgentIcon :backend="m.backend" :name="m.name" :avatar="getAgentAvatar(m.agentId)" size="lg" />
           </span>
           <span class="gm-name">{{ m.name }}</span>
-          <span v-if="m.isHost" class="gm-tag gm-tag--host">{{ t('group.host') }}</span>
+          <span v-if="m.isHost" class="gm-tag gm-tag--host"><Crown :size="11" class="gm-tag-crown" />{{ t('group.host') }}</span>
           <span v-else-if="m.left" class="gm-tag gm-tag--left">{{ t('group.left') }}</span>
           <button
             v-else
@@ -90,7 +90,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Trash2, Plus } from 'lucide-vue-next'
+import { Trash2, Plus, Crown } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
@@ -228,10 +228,16 @@ defineExpose({ open: openSheet })
 /* Pills: host (accent) / left (muted). */
 .gm-tag {
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   padding: 1px var(--space-3);
   border-radius: var(--radius-full);
-  font-size: var(--font-size-2xs);
+  font-size: var(--font-size-xs);
   line-height: 16px;
+}
+.gm-tag-crown {
+  flex-shrink: 0;
 }
 .gm-tag--host {
   background: color-mix(in srgb, var(--accent-color, #0066cc) 15%, transparent);

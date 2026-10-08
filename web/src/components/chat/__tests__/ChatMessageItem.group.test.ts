@@ -38,7 +38,7 @@ import ChatMessageItem from '@/components/chat/ChatMessageItem.vue'
 const i18n = createI18n({
   legacy: false,
   locale: 'en',
-  messages: { en: { chat: { message: {}, contentBlocks: { cancelled: 'cancelled' }, fileChanges: { title: 'Files' }, pending: {}, speech: {}, busy: {} }, group: { host: 'Host', bcc: { title: 'Private note', to: 'To', toYou: 'Private note to you' } }, common: {} } },
+  messages: { en: { chat: { message: {}, contentBlocks: { cancelled: 'cancelled' }, fileChanges: { title: 'Files' }, pending: {}, speech: {}, busy: {} }, group: { host: 'Host', you: 'you', bcc: { title: 'Private note', to: 'To', toYou: 'Private note to you' } }, common: {} } },
 })
 
 function mountItem(msg: Record<string, unknown>, props: Record<string, unknown> = {}) {
@@ -74,6 +74,9 @@ describe('ChatMessageItem group speaker', () => {
     )
     expect(w.find('.msg-speaker-host-tag').exists()).toBe(true)
     expect(w.find('.msg-card-host').exists()).toBe(true)
+    // The host tag carries a crown icon alongside the label.
+    expect(w.find('.msg-speaker-host-tag .msg-speaker-host-crown').exists()).toBe(true)
+    expect(w.find('.msg-speaker-host-tag .lucide-crown').exists()).toBe(true)
   })
 
   it('renders no speaker header for an ordinary message', () => {
@@ -133,6 +136,24 @@ describe('ChatMessageItem group speaker', () => {
       { resolveSpeaker, hostMemberId: 'host-1' },
     )
     expect(w.find('.msg-mention-summary').exists()).toBe(false)
+  })
+
+  it('shows the reserved human target as "you", not the raw token', () => {
+    const resolveSpeaker = () => ({ name: 'Host', backend: 'codebuddy' })
+    const w = mountItem(
+      {
+        role: 'assistant',
+        id: 8,
+        content: '',
+        blocks: [{ type: 'text', text: '<clawbench-mention targets="User">该你说了</clawbench-mention>' }],
+        agentId: 'host-1',
+      },
+      { resolveSpeaker, hostMemberId: 'host-1' },
+    )
+    const summary = w.find('.msg-mention-summary')
+    expect(summary.exists()).toBe(true)
+    expect(summary.text()).toContain('you')
+    expect(summary.text()).not.toContain('User')
   })
 })
 

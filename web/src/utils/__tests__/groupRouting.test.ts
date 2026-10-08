@@ -6,6 +6,7 @@ import {
   renderMentionChips,
   buildMemberCandidates,
   buildMentionTag,
+  resolveMentionDisplayName,
   MENTION_CHIP_CLASS,
 } from '@/utils/groupRouting.ts'
 
@@ -217,6 +218,28 @@ describe('renderMentionChips', () => {
     )
     expect(html).toContain('@Bob')
     expect(html).not.toContain('m-b')
+  })
+})
+
+describe('resolveMentionDisplayName', () => {
+  const byId = (t: string) => (t === 'm-b' ? { name: 'Bob' } : null)
+  const byName = (t: string) => (t === 'Alice' ? { name: 'Alice' } : null)
+
+  it('renders the reserved human name as the reader label, never the raw token', () => {
+    // "User" must resolve to the label even when the resolvers would (wrongly)
+    // claim it, and even when there is no roster (both resolvers null).
+    expect(resolveMentionDisplayName('User', byId, byName, '你')).toBe('你')
+    expect(resolveMentionDisplayName('User', null, null, 'you')).toBe('you')
+  })
+
+  it('resolves by member row id, then by display name', () => {
+    expect(resolveMentionDisplayName('m-b', byId, byName, '你')).toBe('Bob')
+    expect(resolveMentionDisplayName('Alice', byId, byName, '你')).toBe('Alice')
+  })
+
+  it('falls back to the raw target when nothing resolves (intent stays visible)', () => {
+    expect(resolveMentionDisplayName('ghost', byId, byName, '你')).toBe('ghost')
+    expect(resolveMentionDisplayName('ghost', null, null, '你')).toBe('ghost')
   })
 })
 

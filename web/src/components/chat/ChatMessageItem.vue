@@ -15,7 +15,7 @@
     <div v-if="msg.role === 'assistant' && speaker" class="msg-speaker" :class="{ 'msg-speaker-host': isHostMessage }">
       <AgentIcon :backend="speaker.backend" :name="speaker.name" :avatar="speaker.avatar" size="lg" />
       <span class="msg-speaker-name">{{ speaker.name }}</span>
-      <span v-if="isHostMessage" class="msg-speaker-host-tag">{{ t('group.host') }}</span>
+      <span v-if="isHostMessage" class="msg-speaker-host-tag"><Crown :size="11" class="msg-speaker-host-crown" />{{ t('group.host') }}</span>
     </div>
 
     <!-- Mention summary row: a one-line "本条 @ 了 B、C" above the bubble, for
@@ -240,11 +240,11 @@
 <script setup>
 import { ref, inject, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Clock, Pause, Volume2, Info, FileDiff, Split, Rewind, MessageSquareQuote, ChevronDown, Lock, User } from 'lucide-vue-next'
+import { Clock, Pause, Volume2, Info, FileDiff, Split, Rewind, MessageSquareQuote, ChevronDown, Lock, User, Crown } from 'lucide-vue-next'
 import { formatDuration, formatRelativeTime } from '@/utils/format.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
 import { extractFileChanges } from '@/utils/chatStreamUtils.ts'
-import { parseGroupRouting, stripGroupProtocolTags } from '@/utils/groupRouting.ts'
+import { parseGroupRouting, stripGroupProtocolTags, GROUP_USER_TARGET_NAME } from '@/utils/groupRouting.ts'
 import { quotableMessageText } from '@/utils/quoteItem.ts'
 import { isShowingSummary, normalizeDisplayMode } from '@/utils/chatSessionUtils.ts'
 import { localConfig } from '@/composables/useSettingsConfig'
@@ -338,8 +338,9 @@ const groupRouting = computed(() => {
 const bccExpanded = ref(false)
 
 // The reserved participant name of the human user (mirrors the backend
-// groupUserTarget constant). A note addressed to it is meant for the reader.
-const GROUP_USER_TARGET = 'User'
+// groupUserTarget constant, re-exported by groupRouting). A note addressed to
+// it is meant for the reader.
+const GROUP_USER_TARGET = GROUP_USER_TARGET_NAME
 
 // bccToUser / bccToMembers split the notes by audience. The user's own notes
 // render expanded and labelled "to you"; the rest stay behind a collapsed
@@ -350,12 +351,14 @@ const bccToMembers = computed(() => groupRouting.value.bcc.filter((e) => !e.targ
 
 // mentionTargets maps the parsed mention targets to display info for the
 // summary row. Names that no longer resolve (removed members) still render as a
-// plain @name so the routing intent stays visible.
+// plain @name so the routing intent stays visible. The reserved human name
+// "User" is shown as the reader ("你"/"you") rather than the raw token.
 const mentionTargets = computed(() => {
   const resolve = props.resolveSpeakerByName
   return groupRouting.value.speakers.map((name) => {
     const hit = typeof resolve === 'function' ? resolve(name) : null
-    return hit || { name, backend: '', avatar: '' }
+    if (hit) return name === GROUP_USER_TARGET ? { ...hit, name: t('group.you') } : hit
+    return { name: name === GROUP_USER_TARGET ? t('group.you') : name, backend: '', avatar: '' }
   })
 })
 
@@ -1436,11 +1439,17 @@ const copyPayload = quotableText
   color: var(--text-primary);
 }
 .msg-speaker-host-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   padding: 0 var(--space-2);
   border-radius: var(--radius-xs);
   background: color-mix(in srgb, var(--accent-color, #0066cc) 15%, transparent);
   color: var(--accent-color, #0066cc);
-  font-size: var(--font-size-2xs);
+  font-size: var(--font-size-xs);
+}
+.msg-speaker-host-crown {
+  flex-shrink: 0;
 }
 /* The host's bubble is centered with an accent border to read as "chair". */
 .msg-card-host {
@@ -1456,7 +1465,10 @@ const copyPayload = quotableText
   min-width: 0;
   max-width: 100%;
   flex-wrap: wrap;
-  margin: 0 0 var(--space-1);
+  /* Align with the speaker row above (same 4px inset): both are the message's
+     attribution rows sitting OUTSIDE the bubble, so they share one left edge.
+     Without this the row sits flush against the panel edge. */
+  margin: 0 0 var(--space-1) var(--space-2);
   font-size: var(--font-size-sm);
   color: var(--accent-color, #0066cc);
 }

@@ -234,6 +234,7 @@ import { useI18n } from 'vue-i18n'
 import { appLog } from '@/utils/appLog'
 import { NEAR_BOTTOM_PX } from '@/utils/scrollState'
 import { groupBtwRecords, currentAnchorKey } from '@/utils/btwAnchors.ts'
+import { resolveMentionDisplayName } from '@/utils/groupRouting.ts'
 import { apiGet, apiPost, apiPatch } from '@/utils/api'
 import { gt } from '@/composables/useLocale'
 import { useTabDrawer } from '@/composables/useTabDrawer'
@@ -694,17 +695,13 @@ const render = useChatRender({
   theme,
   currentSessionId: identity.currentSessionId,
   mentionScope,
-  resolveMentionTarget: (target) => {
-    if (typeof props.resolveGroupSpeaker === 'function') {
-      const hit = props.resolveGroupSpeaker(target)
-      if (hit?.name) return hit.name
-    }
-    if (typeof props.resolveGroupSpeakerByName === 'function') {
-      const hit = props.resolveGroupSpeakerByName(target)
-      if (hit?.name) return hit.name
-    }
-    return target
-  },
+  resolveMentionTarget: (target) =>
+    resolveMentionDisplayName(
+      target,
+      props.resolveGroupSpeaker,
+      props.resolveGroupSpeakerByName,
+      t('group.you'),
+    ),
 })
 
 /** Look up the tool_use block from the live messages array by msgId + blockIdx */

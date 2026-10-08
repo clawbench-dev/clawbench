@@ -5,8 +5,14 @@
       <span class="bs-header-title">{{ title }}</span>
       <!-- Group mode: the chosen host decides the group's mode. The subtitle
            sits to the right of the title and flips between host / free as the
-           user sets or clears the host. -->
-      <span v-if="groupMode" class="agent-header-mode">{{ hostId ? t('group.hostMode') : t('group.freeMode') }}</span>
+           user sets or clears the host. Same glyph pairing as the session-list
+           mode chip (crown for host, @ for the free relay) so the two surfaces
+           read as one system. -->
+      <span v-if="groupMode" class="agent-header-mode">
+        <Crown v-if="hostId" :size="12" class="agent-header-mode-icon" />
+        <AtSign v-else :size="12" class="agent-header-mode-icon" />
+        {{ hostId ? t('group.hostMode') : t('group.freeMode') }}
+      </span>
     </template>
     <div class="agent-list">
       <LoadingIndicator v-if="agentsLoading" size="md" />
@@ -67,7 +73,7 @@
 
 <script setup lang="ts">
 import { ref, watch, inject, computed } from 'vue'
-import { Bot, Star, Settings, Check, Crown } from 'lucide-vue-next'
+import { Bot, Star, Settings, Check, Crown, AtSign } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
@@ -524,11 +530,17 @@ watch(() => props.open, async (val) => {
    non-shrinking so it never pushes the title around as it flips between
    "host mode" and "free mode". */
 .agent-header-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   flex-shrink: 0;
   margin-left: auto;
   color: var(--text-muted, #999);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-normal);
+}
+.agent-header-mode-icon {
+  flex-shrink: 0;
 }
 
 .agent-multi-confirm {

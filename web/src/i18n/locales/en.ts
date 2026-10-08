@@ -1115,6 +1115,8 @@ export default {
     newGroup: 'New group chat',
     title: 'Group',
     host: 'Host',
+    // The reserved human participant name ("User") shown to the reader.
+    you: 'you',
     selectHost: 'Select a group host',
     selectMembers: 'Select group members',
     hostLabel: 'Set as host',

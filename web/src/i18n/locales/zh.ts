@@ -1117,6 +1117,8 @@ export default {
     newGroup: '新建群聊',
     title: '群聊',
     host: '主持人',
+    // The reserved human participant name ("User") shown to the reader.
+    you: '你',
     selectHost: '请选择群聊主持人',
     selectMembers: '请选择群聊成员',
     hostLabel: '点击设为主持人',

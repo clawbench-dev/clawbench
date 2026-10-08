@@ -80,6 +80,9 @@ describe('GroupMemberSheet', () => {
     const w = mountSheet(MEMBERS)
     expect(w.find('.gm-tag--host').exists()).toBe(true)
     expect(w.find('.gm-tag--left').exists()).toBe(true)
+    // The host tag carries a crown icon alongside the label.
+    expect(w.find('.gm-tag--host .gm-tag-crown').exists()).toBe(true)
+    expect(w.find('.gm-tag--host .lucide-crown').exists()).toBe(true)
     // Host has no remove; left member has no remove; only Alice does.
     expect(w.findAll('.gm-remove')).toHaveLength(1)
   })
