@@ -34,11 +34,8 @@ func ServeGroupCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Groups are user-visible sessions: they count toward the session limit.
-	if model.SessionMaxCount > 0 {
-		if count, cerr := service.GetSessionCount(projectPath); cerr == nil && count >= model.SessionMaxCount {
-			writeLocalizedErrorf(w, r, http.StatusConflict, "SessionLimitReached", map[string]any{"MaxCount": model.SessionMaxCount})
-			return
-		}
+	if !groupSessionLimitOK(w, r, projectPath) {
+		return
 	}
 
 	var req struct {
@@ -70,37 +67,15 @@ func ServeGroupCreate(w http.ResponseWriter, r *http.Request) {
 	// Resolve every agent BEFORE creating anything: an unknown agent id must
 	// fail the whole request (the service also rolls back, but resolving first
 	// avoids opening a transaction for a request that cannot succeed).
-	specs := make([]service.GroupMemberSpec, 0, len(agentIDs))
-	for _, agentID := range agentIDs {
-		backend, _, _, _, ok := resolveAgentConfig(agentID)
-		if !ok {
-			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
-			return
-		}
-		specs = append(specs, service.GroupMemberSpec{
-			AgentID:     agentID,
-			Backend:     backend,
-			DisplayName: service.GetAgentDisplayName(agentID),
-		})
+	specs, ok := groupMemberSpecs(agentIDs)
+	if !ok {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
+		return
 	}
 
-	// Placeholder title: host mode uses the host's name; free mode has none, so
-	// a generic placeholder (auto-title replaces it after the first message).
-	title := "群聊"
-	if hostAgentID != "" {
-		title = service.GetAgentDisplayName(hostAgentID) + " 的群聊"
-	}
-	groupID, hostMemberID, err := service.CreateGroupWithMembers(projectPath, title, hostAgentID, specs)
+	groupID, hostMemberID, err := service.CreateGroupWithMembers(projectPath, groupPlaceholderTitle(hostAgentID), hostAgentID, specs)
 	if err != nil {
-		if errors.Is(err, service.ErrGroupMemberLimit) {
-			writeLocalizedErrorf(w, r, http.StatusConflict, "GroupMemberLimitReached", map[string]any{"MaxCount": service.MaxGroupMembers})
-			return
-		}
-		if errors.Is(err, service.ErrFreeGroupNeedsTwoMembers) {
-			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
-			return
-		}
-		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "CreateSessionFailed")
+		writeGroupCreateError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -109,6 +84,61 @@ func ServeGroupCreate(w http.ResponseWriter, r *http.Request) {
 		"hostMemberId": hostMemberID,
 		respKeyMode:    service.GetGroupMode(groupID),
 	})
+}
+
+// groupSessionLimitOK reports whether the project may open another group (groups
+// count toward the session limit). It writes the 409 and returns false when the
+// cap is reached, so the caller can return immediately.
+func groupSessionLimitOK(w http.ResponseWriter, r *http.Request, projectPath string) bool {
+	if model.SessionMaxCount <= 0 {
+		return true
+	}
+	count, err := service.GetSessionCount(projectPath)
+	if err == nil && count >= model.SessionMaxCount {
+		writeLocalizedErrorf(w, r, http.StatusConflict, "SessionLimitReached", map[string]any{jsonMaxCount: model.SessionMaxCount})
+		return false
+	}
+	return true
+}
+
+// groupMemberSpecs resolves each agent id to a GroupMemberSpec. ok is false when
+// any id is unknown, in which case the whole request must fail (nothing created).
+func groupMemberSpecs(agentIDs []string) ([]service.GroupMemberSpec, bool) {
+	specs := make([]service.GroupMemberSpec, 0, len(agentIDs))
+	for _, agentID := range agentIDs {
+		backend, _, _, _, ok := resolveAgentConfig(agentID)
+		if !ok {
+			return nil, false
+		}
+		specs = append(specs, service.GroupMemberSpec{
+			AgentID:     agentID,
+			Backend:     backend,
+			DisplayName: service.GetAgentDisplayName(agentID),
+		})
+	}
+	return specs, true
+}
+
+// groupPlaceholderTitle is the group's initial title: host mode uses the host's
+// name; free mode has none, so a generic placeholder (auto-title replaces it
+// after the first message).
+func groupPlaceholderTitle(hostAgentID string) string {
+	if hostAgentID != "" {
+		return service.GetAgentDisplayName(hostAgentID) + " 的群聊"
+	}
+	return "群聊"
+}
+
+// writeGroupCreateError maps a CreateGroupWithMembers error to the right status.
+func writeGroupCreateError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, service.ErrGroupMemberLimit):
+		writeLocalizedErrorf(w, r, http.StatusConflict, "GroupMemberLimitReached", map[string]any{jsonMaxCount: service.MaxGroupMembers})
+	case errors.Is(err, service.ErrFreeGroupNeedsTwoMembers):
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
+	default:
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "CreateSessionFailed")
+	}
 }
 
 // ServeGroupMembers lists, adds, or removes group members.
@@ -123,113 +153,125 @@ func ServeGroupMembers(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		groupID := r.URL.Query().Get("groupId")
-		if groupID == "" {
-			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
-			return
-		}
-		if !requireSessionOwnership(w, r, groupID, projectPath) {
-			return
-		}
-		members, err := service.ListGroupMembers(groupID)
-		if err != nil {
-			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
-			return
-		}
-		hostMemberID := service.GetGroupHostMember(groupID)
-		out := make([]map[string]any, 0, len(members))
-		for _, m := range members {
-			out = append(out, map[string]any{
-				"id":      m.ID,
-				"agentId": m.AgentID,
-				"name":    m.Name,
-				"backend": m.Backend,
-				"left":    m.Left,
-				"isHost":  m.ID == hostMemberID,
-			})
-		}
-		// maxRounds is included so the member sheet can show the SERVER's
-		// current value instead of a hardcoded default (the PATCH endpoint had
-		// no read-back, so the UI lied after a change). mode tells the frontend
-		// whether a host exists (host mode) or the group is free (design §13).
-		writeJSON(w, http.StatusOK, map[string]any{
-			"ok":        true,
-			"members":   out,
-			"maxRounds": service.GetGroupMaxRounds(groupID),
-			respKeyMode: service.GetGroupMode(groupID),
-		})
-
+		serveGroupMembersList(w, r, projectPath)
 	case http.MethodPost:
-		var req struct {
-			GroupID  string   `json:"groupId"`
-			AgentIDs []string `json:"agentIds"`
-		}
-		if !decodeJSON(w, r, &req) {
-			return
-		}
-		if req.GroupID == "" || len(req.AgentIDs) == 0 {
-			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
-			return
-		}
-		if !requireSessionOwnership(w, r, req.GroupID, projectPath) {
-			return
-		}
-		// Resolve every agent first (skip unknown ids), then add them in ONE
-		// service call so the member cap is enforced on the WHOLE batch
-		// (decision #78). Looping AddGroupMember here would commit the earlier
-		// additions and then fail on a later one — the request errors but the
-		// roster silently changed.
-		specs := make([]service.GroupMemberSpec, 0, len(req.AgentIDs))
-		for _, agentID := range req.AgentIDs {
-			backend, _, _, _, ok := resolveAgentConfig(agentID)
-			if !ok {
-				continue
-			}
-			specs = append(specs, service.GroupMemberSpec{
-				AgentID:     agentID,
-				Backend:     backend,
-				DisplayName: service.GetAgentDisplayName(agentID),
-			})
-		}
-		memberIDs, err := service.AddGroupMembers(projectPath, req.GroupID, specs)
-		if err != nil {
-			if errors.Is(err, service.ErrGroupMemberLimit) {
-				writeLocalizedErrorf(w, r, http.StatusConflict, "GroupMemberLimitReached", map[string]any{"MaxCount": service.MaxGroupMembers})
-				return
-			}
-			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "memberIds": memberIDs})
-
+		serveGroupMembersAdd(w, r, projectPath)
 	case http.MethodDelete:
-		var req struct {
-			GroupID  string `json:"groupId"`
-			MemberID string `json:"memberId"`
-		}
-		if !decodeJSON(w, r, &req) {
-			return
-		}
-		if req.GroupID == "" || req.MemberID == "" {
-			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
-			return
-		}
-		if !requireSessionOwnership(w, r, req.GroupID, projectPath) {
-			return
-		}
-		if err := service.RemoveGroupMember(req.GroupID, req.MemberID); err != nil {
-			if errors.Is(err, service.ErrCannotRemoveHost) {
-				writeLocalizedErrorf(w, r, http.StatusConflict, "CannotRemoveHost")
-				return
-			}
-			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-
+		serveGroupMembersRemove(w, r, projectPath)
 	default:
 		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
 	}
+}
+
+// serveGroupMembersList handles GET /api/group/members?groupId=.
+func serveGroupMembersList(w http.ResponseWriter, r *http.Request, projectPath string) {
+	groupID := r.URL.Query().Get("groupId")
+	if groupID == "" {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
+		return
+	}
+	if !requireSessionOwnership(w, r, groupID, projectPath) {
+		return
+	}
+	members, err := service.ListGroupMembers(groupID)
+	if err != nil {
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+		return
+	}
+	hostMemberID := service.GetGroupHostMember(groupID)
+	out := make([]map[string]any, 0, len(members))
+	for _, m := range members {
+		out = append(out, map[string]any{
+			"id":        m.ID,
+			jsonAgentID: m.AgentID,
+			jsonName:    m.Name,
+			jsonBackend: m.Backend,
+			"left":      m.Left,
+			"isHost":    m.ID == hostMemberID,
+		})
+	}
+	// maxRounds is included so the member sheet can show the SERVER's
+	// current value instead of a hardcoded default (the PATCH endpoint had
+	// no read-back, so the UI lied after a change). mode tells the frontend
+	// whether a host exists (host mode) or the group is free (design §13).
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":        true,
+		"members":   out,
+		"maxRounds": service.GetGroupMaxRounds(groupID),
+		respKeyMode: service.GetGroupMode(groupID),
+	})
+}
+
+// serveGroupMembersAdd handles POST /api/group/members {groupId, agentIds}.
+func serveGroupMembersAdd(w http.ResponseWriter, r *http.Request, projectPath string) {
+	var req struct {
+		GroupID  string   `json:"groupId"`
+		AgentIDs []string `json:"agentIds"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.GroupID == "" || len(req.AgentIDs) == 0 {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
+		return
+	}
+	if !requireSessionOwnership(w, r, req.GroupID, projectPath) {
+		return
+	}
+	// Resolve every agent first (skip unknown ids), then add them in ONE
+	// service call so the member cap is enforced on the WHOLE batch
+	// (decision #78). Looping AddGroupMember here would commit the earlier
+	// additions and then fail on a later one — the request errors but the
+	// roster silently changed.
+	specs := make([]service.GroupMemberSpec, 0, len(req.AgentIDs))
+	for _, agentID := range req.AgentIDs {
+		backend, _, _, _, ok := resolveAgentConfig(agentID)
+		if !ok {
+			continue
+		}
+		specs = append(specs, service.GroupMemberSpec{
+			AgentID:     agentID,
+			Backend:     backend,
+			DisplayName: service.GetAgentDisplayName(agentID),
+		})
+	}
+	memberIDs, err := service.AddGroupMembers(projectPath, req.GroupID, specs)
+	if err != nil {
+		if errors.Is(err, service.ErrGroupMemberLimit) {
+			writeLocalizedErrorf(w, r, http.StatusConflict, "GroupMemberLimitReached", map[string]any{jsonMaxCount: service.MaxGroupMembers})
+			return
+		}
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "memberIds": memberIDs})
+}
+
+// serveGroupMembersRemove handles DELETE /api/group/members {groupId, memberId}.
+func serveGroupMembersRemove(w http.ResponseWriter, r *http.Request, projectPath string) {
+	var req struct {
+		GroupID  string `json:"groupId"`
+		MemberID string `json:"memberId"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.GroupID == "" || req.MemberID == "" {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
+		return
+	}
+	if !requireSessionOwnership(w, r, req.GroupID, projectPath) {
+		return
+	}
+	if err := service.RemoveGroupMember(req.GroupID, req.MemberID); err != nil {
+		if errors.Is(err, service.ErrCannotRemoveHost) {
+			writeLocalizedErrorf(w, r, http.StatusConflict, "CannotRemoveHost")
+			return
+		}
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 // ServeGroupSettings reads/updates group settings (currently maxRounds).

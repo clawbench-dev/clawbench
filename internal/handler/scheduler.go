@@ -726,7 +726,7 @@ func serveContinueConversationCreate(w http.ResponseWriter, r *http.Request, tas
 		case strings.Contains(errMsg, "still running"):
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "ExecutionStillRunning")
 		case strings.Contains(errMsg, "session limit"):
-			writeLocalizedErrorf(w, r, http.StatusConflict, "SessionLimitReached", map[string]any{"MaxCount": model.SessionMaxCount})
+			writeLocalizedErrorf(w, r, http.StatusConflict, "SessionLimitReached", map[string]any{jsonMaxCount: model.SessionMaxCount})
 		case strings.Contains(errMsg, "does not belong"):
 			writeLocalizedError(w, r, model.Forbidden(err, "AccessDenied"))
 		default:

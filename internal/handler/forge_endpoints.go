@@ -518,8 +518,8 @@ func ServeForgeRemotes(w http.ResponseWriter, r *http.Request) {
 	out := make([]map[string]any, 0, len(remotes))
 	for _, rem := range remotes {
 		entry := map[string]any{
-			"name": rem.Name,
-			"url":  rem.URL,
+			jsonName: rem.Name,
+			"url":    rem.URL,
 		}
 		if parsed, perr := forge.ParseRemoteURL(rem.URL); perr == nil {
 			entry["platform"] = string(parsed.Platform)

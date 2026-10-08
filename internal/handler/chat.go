@@ -239,10 +239,10 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if err != nil {
-			writeJSON(w, http.StatusOK, map[string]any{"messages": []any{}, "queue": queue, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, "backend": sessionBackend, "agentId": sessionAgentID, "modelId": sessionModelID, "transport": sessionTransport, "sessionType": sessionType, "autoApprove": sessionAutoApprove, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands, "modelListState": modelListState, "planState": planState, "usageState": usageState, "replayPending": replayPending})
+			writeJSON(w, http.StatusOK, map[string]any{"messages": []any{}, "queue": queue, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, jsonBackend: sessionBackend, jsonAgentID: sessionAgentID, "modelId": sessionModelID, "transport": sessionTransport, "sessionType": sessionType, "autoApprove": sessionAutoApprove, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands, "modelListState": modelListState, "planState": planState, "usageState": usageState, "replayPending": replayPending})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"messages": messages, "queue": queue, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, "backend": sessionBackend, "agentId": sessionAgentID, "modelId": sessionModelID, "transport": sessionTransport, "sessionType": sessionType, "autoApprove": sessionAutoApprove, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands, "modelListState": modelListState, "planState": planState, "usageState": usageState, "replayPending": replayPending})
+		writeJSON(w, http.StatusOK, map[string]any{"messages": messages, "queue": queue, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, jsonBackend: sessionBackend, jsonAgentID: sessionAgentID, "modelId": sessionModelID, "transport": sessionTransport, "sessionType": sessionType, "autoApprove": sessionAutoApprove, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands, "modelListState": modelListState, "planState": planState, "usageState": usageState, "replayPending": replayPending})
 		return
 	}
 

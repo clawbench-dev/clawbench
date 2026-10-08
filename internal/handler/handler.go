@@ -29,6 +29,16 @@ const jsonKeyStatus = "status"
 // jsonKeyPort is the template field name for the InvalidPortNumber message.
 const jsonKeyPort = "Port"
 
+// Shared JSON response/request keys. Spelled once because several endpoints
+// emit the same key (goconst): the group member view, the agent patch, and the
+// session-limit error all repeat these names.
+const (
+	jsonName     = "name"
+	jsonAgentID  = "agentId"
+	jsonBackend  = "backend"
+	jsonMaxCount = "MaxCount"
+)
+
 // loc returns the Localizer for the current request.
 func loc(r *http.Request) *i18n.Localizer {
 	return middleware.GetLocalizer(r)

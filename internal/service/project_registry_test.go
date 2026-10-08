@@ -78,11 +78,11 @@ func insertRegistrySession(t *testing.T, db *sql.DB, projectID int64, id, create
 
 // insertTypedRegistrySession inserts a chat_sessions row with an explicit
 // session_type, so the group/member exclusion can be exercised.
-func insertTypedRegistrySession(t *testing.T, db *sql.DB, projectID int64, id, sessionType, createdAt string) {
+func insertTypedRegistrySession(t *testing.T, db *sql.DB, projectID int64, id, sessionType string) {
 	t.Helper()
 	_, err := db.Exec(
 		"INSERT INTO chat_sessions (id, project_id, session_type, created_at) VALUES (?, ?, ?, ?)",
-		id, projectID, sessionType, createdAt,
+		id, projectID, sessionType, "2026-02-01 00:00:00",
 	)
 	require.NoError(t, err)
 }
@@ -155,10 +155,10 @@ func TestListAllProjects_ExcludesGroupMemberRowsFromCount(t *testing.T) {
 	require.Equal(t, 0, before[0].SessionCount)
 
 	// One group timeline + three hidden member rows.
-	insertTypedRegistrySession(t, db, id, "g1", "group", "2026-02-01 00:00:00")
-	insertTypedRegistrySession(t, db, id, "g1-m1", "group_member", "2026-02-01 00:00:00")
-	insertTypedRegistrySession(t, db, id, "g1-m2", "group_member", "2026-02-01 00:00:00")
-	insertTypedRegistrySession(t, db, id, "g1-m3", "group_member", "2026-02-01 00:00:00")
+	insertTypedRegistrySession(t, db, id, "g1", "group")
+	insertTypedRegistrySession(t, db, id, "g1-m1", "group_member")
+	insertTypedRegistrySession(t, db, id, "g1-m2", "group_member")
+	insertTypedRegistrySession(t, db, id, "g1-m3", "group_member")
 
 	items, err := service.ListAllProjects()
 	require.NoError(t, err)
@@ -202,10 +202,10 @@ func TestGetProjectDetail_ExcludesGroupMemberRowsFromCount(t *testing.T) {
 	db := setupProjectRegistryDB(t)
 	id := registerProject(t, db, "/proj/group-detail", "2026-01-01 00:00:00")
 
-	insertTypedRegistrySession(t, db, id, "g1", "group", "2026-02-01 00:00:00")
-	insertTypedRegistrySession(t, db, id, "g1-m1", "group_member", "2026-02-01 00:00:00")
-	insertTypedRegistrySession(t, db, id, "g1-m2", "group_member", "2026-02-01 00:00:00")
-	insertTypedRegistrySession(t, db, id, "g1-m3", "group_member", "2026-02-01 00:00:00")
+	insertTypedRegistrySession(t, db, id, "g1", "group")
+	insertTypedRegistrySession(t, db, id, "g1-m1", "group_member")
+	insertTypedRegistrySession(t, db, id, "g1-m2", "group_member")
+	insertTypedRegistrySession(t, db, id, "g1-m3", "group_member")
 
 	detail, err := service.GetProjectDetail(id)
 	require.NoError(t, err)

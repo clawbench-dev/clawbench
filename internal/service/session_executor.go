@@ -92,6 +92,9 @@ const (
 	roleUser = "user"
 	// contentKeyText is the JSON key for text in content blocks.
 	contentKeyText = "text"
+	// contentKeyContent is the JSON key for the "content" field, shared by the
+	// stream event type, the coalescable-delta set, and several payload maps.
+	contentKeyContent = "content"
 	// contentKeyType is the JSON key for type in content blocks.
 	contentKeyType = "type"
 	// contentKeyReason is the JSON key for reason in content blocks.

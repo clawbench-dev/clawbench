@@ -19,6 +19,14 @@ type ContextStateUsage = ai.UsageState
 // row id, shared by the user_message / queue_drain / queue_inject payloads.
 const payloadKeyMessageID = "messageId"
 
+// JSON payload keys reused across the stream payload builders (goconst):
+// "message_id" is the assistant row id on stream_start/split/finalize, and
+// "content" is the text field shared by content/user_message/system_message.
+const (
+	payloadKeyMessageIDSnake = "message_id"
+	payloadKeyContent        = "content"
+)
+
 // GetContextStateUsageFunc is a function that retrieves persisted usage state
 // for a session. Injected by the service layer to avoid circular imports.
 type GetContextStateUsageFunc func(sessionID string) *ContextStateUsage
@@ -305,7 +313,7 @@ func StreamEventToPayload(event ai.StreamEvent) any { //nolint:gocyclo // one br
 	}
 
 	switch event.Type {
-	case "content", "thinking":
+	case payloadKeyContent, "thinking":
 		return simpleTextPayload(event)
 	case "tool_use":
 		return toolUsePayload(event)
@@ -359,7 +367,7 @@ func simpleTextPayload(event ai.StreamEvent) any {
 			payload["think_id"] = event.ThinkID
 		}
 	} else {
-		payload["content"] = event.Content
+		payload[payloadKeyContent] = event.Content
 	}
 	if event.ParentToolCallID != "" {
 		payload["parent_tool_call_id"] = event.ParentToolCallID
@@ -382,7 +390,7 @@ func streamStartPayload(event ai.StreamEvent) any {
 	if event.StreamStart == nil {
 		return nil
 	}
-	payload := map[string]any{"message_id": event.StreamStart.MessageID}
+	payload := map[string]any{payloadKeyMessageIDSnake: event.StreamStart.MessageID}
 	if event.StreamStart.SpeakerID != "" {
 		payload["agent_id"] = event.StreamStart.SpeakerID
 	}
@@ -395,7 +403,7 @@ func streamSplitPayload(event ai.StreamEvent) any {
 	if event.StreamSplit == nil {
 		return nil
 	}
-	return map[string]any{"message_id": event.StreamSplit.MessageID}
+	return map[string]any{payloadKeyMessageIDSnake: event.StreamSplit.MessageID}
 }
 
 // streamFinishPayload carries the streaming row id of a producer turn that just
@@ -405,7 +413,7 @@ func streamFinishPayload(event ai.StreamEvent) any {
 	if event.StreamFinish == nil {
 		return nil
 	}
-	return map[string]any{"message_id": event.StreamFinish.MessageID}
+	return map[string]any{payloadKeyMessageIDSnake: event.StreamFinish.MessageID}
 }
 
 // acpStatePayload handles ACP state update event types (mode, config, commands, etc.)
@@ -520,7 +528,7 @@ func userMessagePayload(event ai.StreamEvent) any {
 	}
 	payload := map[string]any{
 		payloadKeyMessageID: event.UserMessage.MessageID,
-		"content":           event.UserMessage.Content,
+		payloadKeyContent:   event.UserMessage.Content,
 	}
 	if len(event.UserMessage.Files) > 0 {
 		payload["files"] = event.UserMessage.Files
@@ -544,7 +552,7 @@ func systemMessagePayload(event ai.StreamEvent) any {
 	}
 	return map[string]any{
 		payloadKeyMessageID: event.SystemMessage.MessageID,
-		"content":           event.SystemMessage.Content,
+		payloadKeyContent:   event.SystemMessage.Content,
 	}
 }
 
@@ -698,7 +706,7 @@ func (h *StreamHub) emitACPState(clientID, sessionID string, s ai.ACPCachedState
 // header would be missing for the rest of the turn. Mirrors the broadcast
 // path's streamStartPayload, which carries the same key.
 func (h *StreamHub) EmitStreamStartEvent(clientID, sessionID string, messageID int64, speakerID string) {
-	payload := map[string]any{"message_id": messageID}
+	payload := map[string]any{payloadKeyMessageIDSnake: messageID}
 	if speakerID != "" {
 		payload["agent_id"] = speakerID
 	}
@@ -711,7 +719,7 @@ func (h *StreamHub) EmitStreamStartEvent(clientID, sessionID string, messageID i
 func (h *StreamHub) EmitUserMessageEvent(clientID, sessionID string, messageID int64, content string) {
 	h.emitStateEvent(clientID, sessionID, "user_message", map[string]any{
 		payloadKeyMessageID: messageID,
-		"content":           content,
+		payloadKeyContent:   content,
 	})
 }
 

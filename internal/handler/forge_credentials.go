@@ -219,7 +219,7 @@ func ServeForgeVerifyToken(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":       true,
 		"identity": author.Login,
-		"name":     author.Name,
+		jsonName:   author.Name,
 		jsonHost:   host,
 		jsonScheme: forge.ResolveScheme(scheme, model.ConfigInstance.ForgeScheme(host)),
 	})

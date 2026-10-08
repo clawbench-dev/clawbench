@@ -661,7 +661,7 @@ func TestCreateGroupWithMembers_RejectsTooMany(t *testing.T) {
 
 	// Exactly the cap is allowed.
 	specs := make([]GroupMemberSpec, 0, maxGroupMembers)
-	for i := 0; i < maxGroupMembers; i++ {
+	for i := range maxGroupMembers {
 		specs = append(specs, GroupMemberSpec{
 			AgentID:     fmt.Sprintf("agent-%d", i),
 			Backend:     "claude",
@@ -677,8 +677,8 @@ func TestCreateGroupWithMembers_RejectsTooMany(t *testing.T) {
 	}
 
 	// One over the cap is refused, and creates NOTHING (no half-built group).
-	over := append(specs, GroupMemberSpec{AgentID: "agent-extra", Backend: "claude", DisplayName: "Extra"})
-	if _, _, err := CreateGroupWithMembers(project, "超员群", "agent-0", over); err == nil {
+	specs = append(specs, GroupMemberSpec{AgentID: "agent-extra", Backend: "claude", DisplayName: "Extra"})
+	if _, _, err := CreateGroupWithMembers(project, "超员群", "agent-0", specs); err == nil {
 		t.Fatal("more than maxGroupMembers must be refused")
 	}
 }
@@ -693,7 +693,7 @@ func TestAddGroupMember_CapIgnoresExistingAgent(t *testing.T) {
 		t.Fatalf("ProjectIDForPath: %v", err)
 	}
 	specs := make([]GroupMemberSpec, 0, maxGroupMembers)
-	for i := 0; i < maxGroupMembers; i++ {
+	for i := range maxGroupMembers {
 		specs = append(specs, GroupMemberSpec{
 			AgentID:     fmt.Sprintf("agent-%d", i),
 			Backend:     "claude",
@@ -733,7 +733,7 @@ func TestAddGroupMember_RejoinAllowedAtCap(t *testing.T) {
 		t.Fatalf("ProjectIDForPath: %v", err)
 	}
 	specs := make([]GroupMemberSpec, 0, maxGroupMembers)
-	for i := 0; i < maxGroupMembers; i++ {
+	for i := range maxGroupMembers {
 		specs = append(specs, GroupMemberSpec{
 			AgentID:     fmt.Sprintf("agent-%d", i),
 			Backend:     "claude",
@@ -1136,7 +1136,7 @@ func TestAddGroupMembers_BatchCapIsAtomic(t *testing.T) {
 		t.Fatalf("CreateGroup: %v", err)
 	}
 	// Fill to 9 active (host + 8 members).
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		if _, err := AddGroupMember(project, groupID, "claude", "agent-"+string(rune('a'+i)), "M"); err != nil {
 			t.Fatalf("AddGroupMember %d: %v", i, err)
 		}
@@ -1184,7 +1184,7 @@ func TestAddGroupMembers_DuplicatesDoNotCountTowardCap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGroup: %v", err)
 	}
-	for i := 0; i < 9; i++ { // host + 9 = 10 active (at cap)
+	for i := range 9 { // host + 9 = 10 active (at cap)
 		if _, err := AddGroupMember(project, groupID, "claude", "agent-"+string(rune('a'+i)), "M"); err != nil {
 			t.Fatalf("AddGroupMember %d: %v", i, err)
 		}

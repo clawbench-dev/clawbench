@@ -137,7 +137,7 @@ func TestRecoverGroupDrainPanic_TerminalCleanup(t *testing.T) {
 
 	// The barrier must swallow the panic (the test itself does not crash).
 	func() {
-		defer recoverGroupDrainPanic(groupID, project)
+		defer recoverGroupDrainPanic(groupID)
 		panic("boom in a member turn")
 	}()
 
@@ -156,7 +156,7 @@ func TestRunGroupDrainLoop_InstallsPanicBarrier(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read source: %v", err)
 	}
-	if !strings.Contains(string(src), "defer recoverGroupDrainPanic(groupID, projectPath)") {
+	if !strings.Contains(string(src), "defer recoverGroupDrainPanic(groupID)") {
 		t.Fatal("RunGroupDrainLoop must defer recoverGroupDrainPanic; without it a member-turn panic kills the process")
 	}
 }

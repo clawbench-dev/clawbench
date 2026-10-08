@@ -194,7 +194,7 @@ func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 		// Check session count limit before creating (0 = unlimited)
 		if model.SessionMaxCount > 0 {
 			if count, cerr := service.GetSessionCount(projectPath); cerr == nil && count >= model.SessionMaxCount {
-				writeLocalizedErrorf(w, r, http.StatusConflict, "SessionLimitReached", map[string]any{"MaxCount": model.SessionMaxCount})
+				writeLocalizedErrorf(w, r, http.StatusConflict, "SessionLimitReached", map[string]any{jsonMaxCount: model.SessionMaxCount})
 				return
 			}
 		}
@@ -256,7 +256,7 @@ func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 		// auto-approve flag (initialized from the agent's configured default) so
 		// the frontend reflects server state instead of re-deriving it.
 		sessionCount, _ := service.GetSessionCount(projectPath)
-		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "sessionId": sessionID, "backend": backend, "agentId": resolvedAgentID, "sessionCount": sessionCount, "title": title, "autoApprove": service.GetSessionAutoApprove(sessionID)})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "sessionId": sessionID, jsonBackend: backend, jsonAgentID: resolvedAgentID, "sessionCount": sessionCount, "title": title, "autoApprove": service.GetSessionAutoApprove(sessionID)})
 
 	default:
 		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
@@ -925,7 +925,7 @@ func writeForkError(w http.ResponseWriter, r *http.Request, err error) {
 	if strings.Contains(errMsg, "group sessions are not forkable") {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "GroupNotForkable")
 	} else if strings.Contains(errMsg, "session limit") {
-		writeLocalizedErrorf(w, r, http.StatusConflict, "SessionLimitReached", map[string]any{"MaxCount": model.SessionMaxCount})
+		writeLocalizedErrorf(w, r, http.StatusConflict, "SessionLimitReached", map[string]any{jsonMaxCount: model.SessionMaxCount})
 	} else if strings.Contains(errMsg, "not found in session") || strings.Contains(errMsg, "must be a user or assistant message") || strings.Contains(errMsg, "streaming message") {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidForkPoint")
 	} else if strings.Contains(errMsg, "not found") {

@@ -169,17 +169,7 @@ func Parse(text string) Result {
 	// is stripped from the slice, so a private note placed ahead of a public
 	// mention never leaks into Before. Positional slices, populated whenever a
 	// mention-like span is located.
-	if firstPublicStart < 0 {
-		if span := reMentionSpanAny.FindStringIndex(text); span != nil {
-			firstPublicStart = span[0]
-		}
-	}
-	if firstPublicStart >= 0 {
-		res.Before = strings.TrimSpace(StripEndTag(stripAllMentionSpans(text[:firstPublicStart])))
-	}
-	if lastPublicEnd >= 0 {
-		res.After = strings.TrimSpace(StripEndTag(stripAllMentionSpans(text[lastPublicEnd:])))
-	}
+	res.Before, res.After = surroundingProse(text, firstPublicStart, lastPublicEnd)
 
 	// End is computed on the text OUTSIDE every mention span: an end tag inside
 	// a private note must not end the discussion.
@@ -195,26 +185,53 @@ func Parse(text string) Result {
 
 	// Derive the host orchestrator's flat view: public targets (ordered,
 	// de-duplicated) and the joined public directive.
+	res.Speakers, res.Instruction, res.Bcc = deriveFlatView(res.Mentions)
+	return res
+}
+
+// surroundingProse returns the trimmed text outside every mention span that
+// precedes the first public mention (Before) and follows the last one (After).
+// When there is no public mention, firstPublicStart falls back to the first
+// mention-like span so a malformed tag still delimits Before.
+func surroundingProse(text string, firstPublicStart, lastPublicEnd int) (before, after string) {
+	if firstPublicStart < 0 {
+		if span := reMentionSpanAny.FindStringIndex(text); span != nil {
+			firstPublicStart = span[0]
+		}
+	}
+	if firstPublicStart >= 0 {
+		before = strings.TrimSpace(StripEndTag(stripAllMentionSpans(text[:firstPublicStart])))
+	}
+	if lastPublicEnd >= 0 {
+		after = strings.TrimSpace(StripEndTag(stripAllMentionSpans(text[lastPublicEnd:])))
+	}
+	return before, after
+}
+
+// deriveFlatView flattens the mention list into the host orchestrator's view:
+// public targets (ordered, de-duplicated), the joined public directive, and the
+// private notes in order.
+func deriveFlatView(mentions []MentionEntry) (speakers []string, instruction string, bcc []BccEntry) {
 	seen := map[string]bool{}
-	for _, e := range res.Mentions {
+	for _, e := range mentions {
 		if e.Private {
-			res.Bcc = append(res.Bcc, BccEntry{Targets: e.Targets, Content: e.Content})
+			bcc = append(bcc, BccEntry{Targets: e.Targets, Content: e.Content})
 			continue
 		}
 		for _, t := range e.Targets {
 			if !seen[t] {
 				seen[t] = true
-				res.Speakers = append(res.Speakers, t)
+				speakers = append(speakers, t)
 			}
 		}
 		if e.Content != "" {
-			if res.Instruction != "" {
-				res.Instruction += "\n\n"
+			if instruction != "" {
+				instruction += "\n\n"
 			}
-			res.Instruction += e.Content
+			instruction += e.Content
 		}
 	}
-	return res
+	return speakers, instruction, bcc
 }
 
 // StripEndTag removes the end-signal tag from text, returning the text

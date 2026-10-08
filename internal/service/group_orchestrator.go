@@ -1075,7 +1075,7 @@ var emitGroupSystemMessage = func(groupID string, msgID int64, text string) {
 // Single chat has the same protection (handler/chat.go's AI goroutine,
 // handleSessionPanic). This is a net, not a substitute for fixing panics.
 func RunGroupDrainLoop(runCtx context.Context, groupID, projectPath string, firstMsgID int64, firstText string, firstFiles []model.FileEntry) {
-	defer recoverGroupDrainPanic(groupID, projectPath)
+	defer recoverGroupDrainPanic(groupID)
 
 	markDoneAndSendFinal := func(event ai.StreamEvent) {
 		// Clear running BEFORE the terminal event so a loadHistory triggered by
@@ -1169,7 +1169,7 @@ func SetRenderGroupCommandFn(fn func(rawMsg, projectPath, sessionID string) (str
 // panicking inside a deferred call. Mirrors handleSessionPanic's terminal
 // cleanup: clear the runner, surface an error, notify, and close any streaming
 // row left open so the group does not reload into a phantom bubble.
-func recoverGroupDrainPanic(groupID, projectPath string) {
+func recoverGroupDrainPanic(groupID string) {
 	if r := recover(); r != nil {
 		slog.Error("group drain loop panicked",
 			slog.String("session", groupID),

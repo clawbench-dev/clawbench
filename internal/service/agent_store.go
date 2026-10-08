@@ -282,15 +282,11 @@ func PatchAgentFields(id string, patch AgentPatch) error {
 		addSet("preferred_thinking_effort", *patch.PreferredThinkingEffort)
 	}
 	if patch.Transport != nil {
-		transport := *patch.Transport
-		if transport == "" {
-			transport = transportCLI
-		}
-		addSet("transport", transport)
+		addSet("transport", normalizeAgentTransport(*patch.Transport))
 	}
 	if patch.Name != nil {
-		if AgentNameTaken(*patch.Name, id) {
-			return fmt.Errorf("patch agent %s: %w", id, ErrAgentNameTaken)
+		if err := ensureAgentNameFree(id, *patch.Name); err != nil {
+			return err
 		}
 		addSet("name", *patch.Name)
 	}
@@ -330,6 +326,25 @@ func PatchAgentFields(id string, patch AgentPatch) error {
 		return fmt.Errorf("patch agent %s: %w", id, err)
 	}
 	return nil
+}
+
+// ensureAgentNameFree returns ErrAgentNameTaken (wrapped with the agent id)
+// when name is already used by a different agent. Split out of
+// PatchAgentFields to keep its branch count in budget.
+func ensureAgentNameFree(id, name string) error {
+	if AgentNameTaken(name, id) {
+		return fmt.Errorf("patch agent %s: %w", id, ErrAgentNameTaken)
+	}
+	return nil
+}
+
+// normalizeAgentTransport maps an empty transport to the CLI default. Split out
+// of PatchAgentFields to keep its branch count in budget.
+func normalizeAgentTransport(transport string) string {
+	if transport == "" {
+		return transportCLI
+	}
+	return transport
 }
 
 // LoadAgentsIntoMemory loads agents from the database into the global

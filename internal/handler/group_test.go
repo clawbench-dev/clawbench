@@ -269,7 +269,8 @@ func TestServeSessionsOverview_GroupRowCarriesMemberPreview(t *testing.T) {
 	_, err = store.UnsafeDBForTest().Exec(
 		`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming)
 		 VALUES (?, 'assistant', 'unread', ?, 'codebuddy', 0)`,
-		store.ProjectIDForTest(t, env.ProjectDir), groupID)
+		store.ProjectIDForTest(t, env.ProjectDir), groupID,
+	)
 	require.NoError(t, err)
 
 	req := newRequest(t, http.MethodGet, "/api/ai/sessions/overview", nil)
@@ -437,7 +438,7 @@ func TestServeGroupMembers_BatchOverLimitIsAtomic(t *testing.T) {
 	// accept a 10+-member roster.
 	origAgents := model.Agents
 	agents := map[string]*model.Agent{}
-	for i := 0; i < 12; i++ {
+	for i := range 12 {
 		id := "agent-" + string(rune('a'+i))
 		agents[id] = &model.Agent{ID: id, Name: id, Backend: "claude"}
 	}
@@ -449,7 +450,7 @@ func TestServeGroupMembers_BatchOverLimitIsAtomic(t *testing.T) {
 	require.NoError(t, err)
 
 	// Fill to 9 active members (host + 8) directly at the service layer.
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		agentID := "agent-" + string(rune('a'+i))
 		_, err := service.AddGroupMember(env.ProjectDir, groupID, "claude", agentID, agentID)
 		require.NoError(t, err)

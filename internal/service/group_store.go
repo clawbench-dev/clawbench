@@ -206,8 +206,7 @@ func CreateGroupWithMembers(projectPath, title, hostAgentID string, specs []Grou
 	}
 
 	// Mode marker (and, in host mode, the host pointer) inline on the group
-	// row's context_state. One statement: a second tx.Exec here would only add
-	// a call the noctx linter flags (the existing calls predate this change).
+	// row's context_state. One statement so the mode write cannot half-apply.
 	if err := writeGroupModeInline(tx, groupID, mode, hostMemberID); err != nil {
 		return "", "", err
 	}
@@ -222,14 +221,15 @@ func CreateGroupWithMembers(projectPath, title, hostAgentID string, specs []Grou
 // placeholder (inline, not markSessionTitlePlaceholder which takes the write
 // lock). Extracted from CreateGroupWithMembers.
 func insertGroupRow(tx *sql.Tx, groupID string, projectID int64, backend, agentID, title string) error {
-	if _, err := tx.Exec(
+	if _, err := tx.ExecContext(
+		context.Background(),
 		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, external_session_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		groupID, projectID, backend, title, agentID, "default", "", groupSessionType, "",
 	); err != nil {
 		return fmt.Errorf("create group session: %w", err)
 	}
 	// Inline (not markSessionTitlePlaceholder: that takes the write lock).
-	if _, err := tx.Exec("UPDATE chat_sessions SET title_source = ? WHERE id = ?", TitleSourcePlaceholder, groupID); err != nil {
+	if _, err := tx.ExecContext(context.Background(), "UPDATE chat_sessions SET title_source = ? WHERE id = ?", TitleSourcePlaceholder, groupID); err != nil {
 		return fmt.Errorf("mark group title placeholder: %w", err)
 	}
 	return nil
@@ -240,7 +240,8 @@ func insertGroupRow(tx *sql.Tx, groupID string, projectID int64, backend, agentI
 // function's complexity in budget.
 func insertGroupMemberRows(tx *sql.Tx, groupID string, projectID int64, hostAgentID, mode string, specs []GroupMemberSpec, memberIDs []string) (hostMemberID string, err error) {
 	for i, s := range specs {
-		if _, err := tx.Exec(
+		if _, err := tx.ExecContext(
+			context.Background(),
 			"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, group_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
 			memberIDs[i], projectID, s.Backend, s.DisplayName, s.AgentID, "default", "", groupMemberSessionType, groupID,
 		); err != nil {
@@ -550,7 +551,7 @@ func findGroupMemberByAgent(groupID, agentID string) (GroupMember, bool) {
 		return GroupMember{}, false
 	}
 	defer func() { _ = rows.Close() }()
-	for rows.Next() {
+	if rows.Next() {
 		var m GroupMember
 		var archived int
 		if err := rows.Scan(&m.ID, &m.AgentID, &m.Name, &m.Backend, &archived); err != nil {
@@ -558,6 +559,9 @@ func findGroupMemberByAgent(groupID, agentID string) (GroupMember, bool) {
 		}
 		m.Left = archived != 0
 		return m, true
+	}
+	if err := rows.Err(); err != nil {
+		return GroupMember{}, false
 	}
 	return GroupMember{}, false
 }

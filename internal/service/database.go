@@ -1917,7 +1917,7 @@ func migrateChatThinkingSeq() error {
 // rebuildChatHistoryRoleCheckIfNeeded), so a legacy database that predates an
 // optional column is migrated rather than rejected.
 var chatHistoryRoleCheckMigrationCols = []string{
-	"id", "project_id", "role", "content", "files", "session_id",
+	"id", "project_id", "role", contentKeyContent, "files", "session_id",
 	"backend", "agent_id", "streaming", "indexed", "external_message_id",
 	"created_at", "completed_at",
 }
@@ -2105,7 +2105,7 @@ func chatHistoryCopyColumnList() (string, error) {
 	}
 	// id/project_id/role/content are NOT NULL and must be present; a table
 	// missing any of them is not a chat_history we can safely rebuild.
-	for _, required := range []string{"id", "project_id", "role", "content"} {
+	for _, required := range []string{"id", "project_id", "role", contentKeyContent} {
 		if !srcCols[required] {
 			return "", fmt.Errorf("chat_history missing required column %q; refusing to rebuild", required)
 		}

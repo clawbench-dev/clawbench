@@ -554,7 +554,7 @@ func extractTextFromValue(v any, depth int) string {
 		// 2. ACP notification wrapper: {"content":{"text":"hi","type":"text"},...}.
 		//    Historical bug stored the whole ACP notification JSON as text.
 		if _, isAcp := val["sessionUpdate"]; isAcp {
-			if contentVal, ok := val["content"]; ok {
+			if contentVal, ok := val[contentKeyContent]; ok {
 				if s := extractTextFromValue(contentVal, depth+1); s != "" {
 					return s
 				}

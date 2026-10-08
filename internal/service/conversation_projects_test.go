@@ -70,11 +70,11 @@ func insertSessionRow(t *testing.T, db *sql.DB, projectPath, id, createdAt strin
 
 // insertTypedSessionRow inserts a session with an explicit session_type so the
 // group/member exclusion can be exercised.
-func insertTypedSessionRow(t *testing.T, db *sql.DB, projectPath, id, sessionType, createdAt string) {
+func insertTypedSessionRow(t *testing.T, db *sql.DB, projectPath, id, sessionType string) {
 	t.Helper()
 	_, err := db.Exec(
 		"INSERT INTO chat_sessions (id, project_id, session_type, created_at) VALUES (?, ?, ?, ?)",
-		id, store.ProjectIDForTest(t, projectPath), sessionType, createdAt,
+		id, store.ProjectIDForTest(t, projectPath), sessionType, "2024-01-01 10:00:00",
 	)
 	require.NoError(t, err)
 }
@@ -183,10 +183,10 @@ func TestGetConversationProjects_ExcludesGroupMemberRows(t *testing.T) {
 	db := setupConversationProjectsDB(t)
 
 	dir := canon(t, t.TempDir())
-	insertTypedSessionRow(t, db, dir, "g1", "group", "2024-01-01 10:00:00")
-	insertTypedSessionRow(t, db, dir, "g1-m1", "group_member", "2024-01-01 10:00:00")
-	insertTypedSessionRow(t, db, dir, "g1-m2", "group_member", "2024-01-01 10:00:00")
-	insertTypedSessionRow(t, db, dir, "g1-m3", "group_member", "2024-01-01 10:00:00")
+	insertTypedSessionRow(t, db, dir, "g1", "group")
+	insertTypedSessionRow(t, db, dir, "g1-m1", "group_member")
+	insertTypedSessionRow(t, db, dir, "g1-m2", "group_member")
+	insertTypedSessionRow(t, db, dir, "g1-m3", "group_member")
 
 	projects, err := service.GetConversationProjects()
 	require.NoError(t, err)

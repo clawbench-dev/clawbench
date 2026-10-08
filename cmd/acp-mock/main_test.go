@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// TestGroupRoutingReply covers the mock's group-host behaviour: when the prompt
+// TestGroupRoutingReply covers the mock's group-host behavior: when the prompt
 // carries ClawBench's host instruction it must emit a routing tag naming a real
 // member, so the group E2E can exercise the multi-agent loop.
 func TestGroupRoutingReply(t *testing.T) {

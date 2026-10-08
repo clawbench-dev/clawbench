@@ -12,14 +12,9 @@ import (
 	"clawbench/internal/store"
 )
 
-// scriptedRunner writes a scripted assistant message to the group timeline on
+// newScriptedRunner writes a scripted assistant message to the group timeline on
 // behalf of the given member, mirroring what runTurn would persist. It records
 // the order of speakers so tests can assert sequencing.
-type scriptedTurn struct {
-	member string
-	text   string
-}
-
 func newScriptedRunner(t *testing.T, groupID string, project string, script map[string][]string) (groupTurnRunner, *[]string) {
 	t.Helper()
 	order := &[]string{}
@@ -127,7 +122,7 @@ func TestGroupOrchestrator_SequentialRouting(t *testing.T) {
 	// Assert it directly by capturing each member's injected prompt (the old
 	// comment claimed this but only checked timeline ordering).
 	msgs, _ := GetMessagesBySessionIDRaw(groupID)
-	var aIdx, bIdx = -1, -1
+	aIdx, bIdx := -1, -1
 	for i, m := range msgs {
 		if m.AgentID == mA {
 			aIdx = i
@@ -136,7 +131,7 @@ func TestGroupOrchestrator_SequentialRouting(t *testing.T) {
 			bIdx = i
 		}
 	}
-	if !(aIdx >= 0 && bIdx > aIdx) {
+	if aIdx < 0 || bIdx <= aIdx {
 		t.Fatalf("A must precede B in the timeline (aIdx=%d bIdx=%d)", aIdx, bIdx)
 	}
 }
@@ -1071,7 +1066,7 @@ func TestGroupOrchestrator_CursorUsesPreSpeechHighWater(t *testing.T) {
 	}
 }
 
-// The round-robin FALLBACK path must also honour the cancel rule (decision
+// The round-robin FALLBACK path must also honor the cancel rule (decision
 // #69): unlike the host/routed member loops, speakNextMember has no early
 // return, so its cursor rule lives entirely in advanceCursorOnSuccess. A
 // cancelled fallback turn must not advance the cursor either.

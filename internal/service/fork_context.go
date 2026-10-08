@@ -42,7 +42,7 @@ const forkTruncatedSuffix = "...(truncated)"
 // "[omitted N chars]" marker, while locator keys (file_path, command, pattern,
 // path, query, ...) are preserved so the model still knows what was touched.
 var forkToolInputStripKeys = []string{
-	"content",
+	contentKeyContent,
 	"old_string",
 	"new_string",
 	"old_str",
