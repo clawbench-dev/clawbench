@@ -17,7 +17,17 @@
       @mousedown.prevent="$emit('select', item)"
       @click.stop
     >
-      <component :is="sourceMeta(item.source).icon" :size="14" class="completion-source-icon" :style="{ color: sourceMeta(item.source).color }" />
+      <!-- Group members render their real avatar (custom or built-in backend
+           icon); every other source keeps its generic source icon. -->
+      <AgentIcon
+        v-if="item.isMember"
+        :backend="item.memberBackend || ''"
+        :name="item.label"
+        :avatar="item.memberAvatar || ''"
+        size="md"
+        class="completion-member-avatar"
+      />
+      <component v-else :is="sourceMeta(item.source).icon" :size="14" class="completion-source-icon" :style="{ color: sourceMeta(item.source).color }" />
       <component v-if="item.icon" :is="item.icon" :path="item.key" :is-dir="item.isDir === true" :size="14" class="completion-item-icon" />
       <span class="completion-text">
         <span class="completion-label" v-html="renderLabel(item)"></span>
@@ -33,6 +43,7 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 import PopupMenu from '@/components/common/PopupMenu.vue'
+import AgentIcon from '@/components/common/AgentIcon.vue'
 import { SOURCE_META } from '@/utils/completionSources.ts'
 import { middleEllipsis } from '@/utils/completionMatch.ts'
 import { escapeHtml } from '@/utils/html.ts'
@@ -98,6 +109,11 @@ function renderLabel(item: CompletionItem): string {
 }
 
 .completion-source-icon {
+  flex-shrink: 0;
+}
+
+/* Group-member row: the real avatar (AgentIcon) replaces the source icon. */
+.completion-member-avatar {
   flex-shrink: 0;
 }
 

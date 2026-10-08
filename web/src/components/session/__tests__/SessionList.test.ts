@@ -436,6 +436,66 @@ describe('SessionList', () => {
       wrapper.unmount()
     })
 
+    it('shows the host-mode label when the preview carries a host', async () => {
+      // The i18n mock returns the key verbatim.
+      const hostGroup = {
+        ...groupSession,
+        groupMembers: [
+          { id: 'm1', agentId: 'agent-host', name: 'Host', backend: 'cli', isHost: true },
+          { id: 'm2', agentId: 'agent-2', name: 'Claude', backend: 'acp' },
+        ],
+      }
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [hostGroup], hasMore: false }),
+      })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      const mode = wrapper.find('[data-session-id="g1"] .session-item-group-mode')
+      expect(mode.exists()).toBe(true)
+      expect(mode.text()).toBe('group.hostMode')
+      wrapper.unmount()
+    })
+
+    it('shows the free-mode label when no preview member is the host', async () => {
+      const freeGroup = {
+        ...groupSession,
+        groupMembers: [
+          { id: 'm1', agentId: 'agent-1', name: 'A', backend: 'cli' },
+          { id: 'm2', agentId: 'agent-2', name: 'B', backend: 'acp' },
+        ],
+      }
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [freeGroup], hasMore: false }),
+      })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      const mode = wrapper.find('[data-session-id="g1"] .session-item-group-mode')
+      expect(mode.exists()).toBe(true)
+      expect(mode.text()).toBe('group.freeMode')
+      wrapper.unmount()
+    })
+
+    it('omits the mode label when the roster is empty (mode unknowable)', async () => {
+      // A failed preview fetch (or a free group whose members all left) leaves
+      // the roster empty; guessing the mode from that is worse than omitting it.
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [{ ...groupSession, groupMembers: [] }], hasMore: false }),
+      })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      expect(wrapper.find('[data-session-id="g1"] .session-item-group-mode').exists()).toBe(false)
+      wrapper.unmount()
+    })
+
     it('shows only the group glyph when no active members remain', async () => {
       // A group with zero active members (e.g. all removed) must still read as a
       // group — the Users glyph stays, the stack is simply empty.

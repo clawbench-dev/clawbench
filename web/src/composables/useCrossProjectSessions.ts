@@ -53,6 +53,8 @@ export interface GroupMemberPreview {
   agentId: string
   name: string
   backend: string
+  /** The group host; the row's mode chip is derived from its presence. */
+  isHost?: boolean
 }
 
 export interface CrossProjectGroup {

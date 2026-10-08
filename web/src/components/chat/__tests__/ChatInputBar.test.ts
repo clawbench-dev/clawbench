@@ -375,6 +375,7 @@ vi.mock('@/composables/useAgents', () => ({
     getAgent: () => null,
     getAgentBackend: () => '',
     getAgentName: () => '',
+    getAgentAvatar: () => '',
     isDefaultAgent: () => false,
     getDefaultModelId: () => '',
     getAgentModels: () => [],
@@ -2170,6 +2171,23 @@ describe('ChatInputBar', () => {
     // keeps it open to browse). Without this the sticky re-arm would re-open the
     // roster on the next refresh.
     expect(wrapper.vm.showFileMenu).toBe(false)
+  })
+
+  it('carries the member avatar/backend into the @ menu items', async () => {
+    const { store } = await import('@/stores/app.ts')
+    store.state.currentDir = ''
+    store.state.dirEntries = [] as any
+    const wrapper = mountBar({
+      isGroupSession: true,
+      groupMembers: [{ id: 'm-a', name: 'Alice', left: false, agentId: 'a-1', backend: 'claude' }],
+    })
+    wrapper.vm.inputText = '@'
+    await wrapper.vm.$nextTick()
+    const items = (wrapper.vm as any).fileMenuItems as any[]
+    const member = items.find(i => i.isMember)
+    expect(member.memberBackend).toBe('claude')
+    // getAgentAvatar is mocked to '' here, so the built-in backend icon shows.
+    expect(member.memberAvatar).toBe('')
   })
 
   it('does not list members in the @ menu outside a group session', async () => {

@@ -1339,7 +1339,9 @@ paths:
           description: |
             会话列表。
             群会话（`sessionType: "group"`）额外携带 `groupMembers`（紧凑的**在群**成员预览
-            `{id, agentId, name, backend}`，用于会话列表渲染成员头像堆叠）；非群会话省略该键。
+            `{id, agentId, name, backend, isHost?}`，用于会话列表渲染成员头像堆叠）；
+            `isHost` 来自群行的主持人指针，客户端据此在行内展示模式标签（有主持人 = 主持人模式，
+            非空名单无主持人 = 自由模式；名单为空时不显示，不猜测）。非群会话省略该键。
             完整成员名单（含已离场）见 `GET /api/group/members`。
     post:
       tags: [Sessions]

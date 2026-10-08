@@ -110,6 +110,7 @@
                     <span v-if="row.session.sessionType === 'group'" class="session-item-group">
                       <Users :size="12" />
                       <GroupMemberStack :members="row.session.groupMembers || []" />
+                      <span v-if="groupModeLabel(row.session)" class="session-item-group-mode">{{ groupModeLabel(row.session) }}</span>
                     </span>
                     <span v-else class="session-item-agent"><AgentIcon :backend="getAgentBackend(row.session.agentId)" :name="getAgentName(row.session.agentId)" :avatar="getAgentAvatar(row.session.agentId)" size="sm" /> {{ getAgentName(row.session.agentId) }}</span>
                     <!-- A group's `model` is the HOST's model, not a property of
@@ -213,6 +214,7 @@
                     <span v-if="session.sessionType === 'group'" class="session-item-group">
                       <Users :size="12" />
                       <GroupMemberStack :members="session.groupMembers || []" />
+                      <span v-if="groupModeLabel(session)" class="session-item-group-mode">{{ groupModeLabel(session) }}</span>
                     </span>
                     <span v-else class="session-item-agent"><AgentIcon :backend="getAgentBackend(session.agentId)" :name="getAgentName(session.agentId)" :avatar="getAgentAvatar(session.agentId)" size="sm" /> {{ getAgentName(session.agentId) }}</span>
                     <!-- Same rule as the project pane: a group's model is the
@@ -419,6 +421,31 @@ function rowStatus(session) {
   if (session.pendingApproval) return 'pending'
   if (session.unreadCount > 0) return 'unread'
   return null
+}
+
+/**
+ * The group's chat mode, derived from the member preview: the preview's
+ * `isHost` is read straight from the group row's authoritative host pointer
+ * (see service.GroupMembersForGroups), so a member carrying it means host mode
+ * and a non-empty roster without one means free mode.
+ *
+ * Returns '' when the mode cannot be told apart — an empty roster (a preview
+ * fetch that failed, or a free group whose members all left). The chip is then
+ * simply omitted rather than guessed: showing the wrong mode is worse than
+ * showing none.
+ */
+function groupModeOf(session) {
+  const members = session.groupMembers || []
+  if (members.length === 0) return ''
+  return members.some(m => m.isHost) ? 'host' : 'free'
+}
+
+/** Display label for a group row's mode chip ('' when unknown). */
+function groupModeLabel(session) {
+  const mode = groupModeOf(session)
+  if (mode === 'host') return t('group.hostMode')
+  if (mode === 'free') return t('group.freeMode')
+  return ''
 }
 
 /** Tooltip / aria label for a status slot. */
@@ -1622,6 +1649,16 @@ onUnmounted(() => {
   gap: var(--space-1);
   flex-shrink: 0;
   color: var(--text-muted, #999);
+}
+
+/* The group's chat mode ("host mode" / "free mode"), trailing the member stack.
+   A plain muted label — the meta line is already busy with the time, the
+   stack and (on plain rows) a model chip, so a tinted pill here would compete
+   with them. It inherits the group slot's muted colour. */
+.session-item-group-mode {
+  flex-shrink: 0;
+  font-size: var(--font-size-2xs);
+  white-space: nowrap;
 }
 
 .session-item-model {

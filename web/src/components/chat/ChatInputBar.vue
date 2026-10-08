@@ -383,7 +383,7 @@ import { apiGet } from '@/utils/api'
 
 const { t } = useI18n()
 const { availableCommands, availableModes, currentTransport: sessionTransport, autoApprove, toggleAutoApprove, contextUsed, contextSize, contextInputTokens, contextOutputTokens, contextTotalTokens, contextCachedReadTokens, contextCachedWriteTokens, contextThoughtTokens, contextCost, contextCurrency, contextCacheCreationTokens, contextCacheHitTokens, contextCacheMissTokens, contextCredit, contextUsageByCategory } = useSessionIdentity()
-const { supportsACP, hasPreferredMode } = useAgents()
+const { supportsACP, hasPreferredMode, getAgentAvatar } = useAgents()
 const toast = useToast()
 const { uploadAndAttach, pendingFiles, removeFile } = useFileUpload()
 
@@ -1118,6 +1118,10 @@ const fileMenuItems = computed(() => {
         source: 'agent',
         isMember: true,
         mentionMemberId: item.mentionMemberId,
+        // The avatar belongs to the underlying AGENT, not the member row, so
+        // resolve it from agentId (mirrors useGroupMembers.resolveSpeaker).
+        memberBackend: item.backend || '',
+        memberAvatar: item.agentId ? getAgentAvatar(item.agentId) : '',
       }))
     : []
 

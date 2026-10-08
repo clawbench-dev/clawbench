@@ -307,6 +307,12 @@ export interface MentionableMember {
   id: string
   name: string
   left?: boolean
+  /** The underlying agent id. Carried through so the caller can resolve the
+   *  member's custom avatar (a property of the AGENT, not the member row). */
+  agentId?: string
+  /** The member's backend, used to render its built-in icon when no custom
+   *  avatar is set. */
+  backend?: string
 }
 
 /** A member candidate for the `@` completion menu. */
@@ -317,6 +323,10 @@ export interface MemberCandidate {
   description: string
   /** The member ROW id written into the mention tag on select. */
   mentionMemberId: string
+  /** Underlying agent id (avatar resolution happens in the caller). */
+  agentId?: string
+  /** Member backend (fallback icon when the agent has no custom avatar). */
+  backend?: string
 }
 
 /**
@@ -333,7 +343,7 @@ export function buildMemberCandidates(members: MentionableMember[], query: strin
     if (m.left) continue
     if (!m.id || !m.name) continue
     if (q && !m.name.toLowerCase().includes(q)) continue
-    out.push({ key: `member:${m.id}`, label: m.name, description: '', mentionMemberId: m.id })
+    out.push({ key: `member:${m.id}`, label: m.name, description: '', mentionMemberId: m.id, agentId: m.agentId, backend: m.backend })
   }
   return out
 }

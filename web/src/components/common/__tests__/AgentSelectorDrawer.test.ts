@@ -326,6 +326,41 @@ describe('AgentSelectorDrawer', () => {
       expect(wrapper.emitted('update:hostId')).toBeTruthy()
       expect(wrapper.emitted('update:hostId')!.at(-1)).toEqual([''])
     })
+
+    it('clears the host when the active host button is clicked again (toggle off)', async () => {
+      const wrapper = mountDrawer({ multiple: true, groupMode: true, modelValue: ['agent-1'], hostId: 'agent-1' })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+
+      // The row stays selected; clicking the ACTIVE host button clears the host.
+      await wrapper.findAll('.agent-option')[0].find('.agent-host-btn').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.emitted('update:hostId')!.at(-1)).toEqual([''])
+      expect(wrapper.findAll('.agent-option')[0].classes()).toContain('selected')
+      expect(wrapper.emitted('select')).toBeFalsy()
+    })
+
+    it('shows a host/free mode subtitle that flips with the host', async () => {
+      const wrapper = mountDrawer({ multiple: true, groupMode: true, modelValue: ['agent-1'] })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+
+      // No host yet -> free mode. The i18n mock returns the key verbatim.
+      expect(wrapper.find('.agent-header-mode').text()).toBe('group.freeMode')
+
+      await wrapper.setProps({ hostId: 'agent-1' })
+      await flushPromises()
+      expect(wrapper.find('.agent-header-mode').text()).toBe('group.hostMode')
+    })
+
+    it('does not render the mode subtitle outside group mode', async () => {
+      const wrapper = mountDrawer({ multiple: true, modelValue: ['agent-1'] })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+
+      expect(wrapper.find('.agent-header-mode').exists()).toBe(false)
+    })
   })
 
   describe('close', () => {

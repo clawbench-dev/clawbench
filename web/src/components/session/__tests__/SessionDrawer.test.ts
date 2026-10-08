@@ -259,7 +259,7 @@ describe('SessionDrawer', () => {
       // the host (multi-select + inline host dot, design #25/#33).
       wrapper.findComponent(SessionListHeaderStub).vm.$emit('create-group')
       await nextTick()
-      expect(selector.attributes('data-title')).toBe('group.selectMembersAndHost')
+      expect(selector.attributes('data-title')).toBe('group.selectMembers')
       expect(selector.attributes('data-multiple')).toBe('true')
       expect(selector.attributes('data-group-mode')).toBe('true')
     })

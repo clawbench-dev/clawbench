@@ -3,6 +3,10 @@
     <template #header>
       <Bot :size="16" class="bs-header-icon" />
       <span class="bs-header-title">{{ title }}</span>
+      <!-- Group mode: the chosen host decides the group's mode. The subtitle
+           sits to the right of the title and flips between host / free as the
+           user sets or clears the host. -->
+      <span v-if="groupMode" class="agent-header-mode">{{ hostId ? t('group.hostMode') : t('group.freeMode') }}</span>
     </template>
     <div class="agent-list">
       <LoadingIndicator v-if="agentsLoading" size="md" />
@@ -39,7 +43,7 @@
           :class="{ active: agent.id === hostId }"
           type="button"
           :aria-pressed="agent.id === hostId"
-          :title="hostLabel"
+          :title="agent.id === hostId ? hostActiveLabel : hostLabel"
           @click.stop="handleSetHost(agent.id)"
         >
           <Crown :size="12" />
@@ -56,9 +60,6 @@
       </div>
     </div>
     <template v-if="multiple" #footer>
-      <!-- Group mode: explain that leaving the host unset means free mode
-           (design §13.1). Kept to one line so the footer stays compact. -->
-      <p v-if="groupMode" class="agent-multi-hint">{{ t('group.freeModeHint') }}</p>
       <button class="agent-multi-confirm" :disabled="confirmDisabled" @click="handleConfirmMulti">{{ confirmLabel }}</button>
     </template>
   </BottomSheet>
@@ -100,8 +101,11 @@ const props = withDefaults(defineProps<{
   groupMode?: boolean
   /** The currently chosen host agent id (groupMode only). */
   hostId?: string
-  /** Tooltip/label for the host button. */
+  /** Tooltip/label for the host button when the row is NOT the host. */
   hostLabel?: string
+  /** Tooltip/label for the host button when the row IS the host (clicking
+   *  again clears the host). */
+  hostActiveLabel?: string
   /** Short label shown on the host button (groupMode only). */
   hostBadge?: string
 }>(), {
@@ -118,6 +122,7 @@ const props = withDefaults(defineProps<{
   groupMode: false,
   hostId: '',
   hostLabel: 'Host',
+  hostActiveLabel: 'Host',
   hostBadge: 'Host',
 })
 
@@ -177,11 +182,13 @@ function handleSelect(agentId: string) {
   handleClose()
 }
 
-// The host dot only appears in group mode on SELECTED rows; clicking it sets
-// the single host without toggling the row's selection.
+// The host button only appears in group mode on SELECTED rows; clicking it
+// sets the single host without toggling the row's selection. Clicking the
+// ALREADY-active host clears it (toggle off) — leaving no host is a valid
+// choice (a FREE group, design §13.1).
 function handleSetHost(agentId: string) {
   if (Date.now() - openTime < 400) return
-  emit('update:hostId', agentId)
+  emit('update:hostId', props.hostId === agentId ? '' : agentId)
 }
 
 // Confirm is blocked until there is a valid group. Host mode (a host chosen)
@@ -513,12 +520,15 @@ watch(() => props.open, async (val) => {
   cursor: not-allowed;
 }
 
-.agent-multi-hint {
-  margin: 0 0 var(--space-2);
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-  line-height: var(--line-height-snug);
-  text-align: center;
+/* Group mode: the mode subtitle to the right of the header title. Muted and
+   non-shrinking so it never pushes the title around as it flips between
+   "host mode" and "free mode". */
+.agent-header-mode {
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--text-muted, #999);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-normal);
 }
 
 .agent-multi-confirm {

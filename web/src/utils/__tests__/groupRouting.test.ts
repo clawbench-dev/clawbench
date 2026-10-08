@@ -242,6 +242,19 @@ describe('buildMemberCandidates', () => {
   it('carries the member row id, not the name', () => {
     expect(buildMemberCandidates(members, 'Alice')[0].mentionMemberId).toBe('m-a')
   })
+
+  it('carries the agent id and backend through so the caller can resolve the avatar', () => {
+    const withAvatar = [{ id: 'm-a', name: 'Alice', agentId: 'a-1', backend: 'claude' }]
+    const c = buildMemberCandidates(withAvatar, 'Alice')[0]
+    expect(c.agentId).toBe('a-1')
+    expect(c.backend).toBe('claude')
+  })
+
+  it('leaves agentId/backend undefined when the member does not provide them', () => {
+    const c = buildMemberCandidates(members, 'Alice')[0]
+    expect(c.agentId).toBeUndefined()
+    expect(c.backend).toBeUndefined()
+  })
 })
 
 describe('buildMentionTag', () => {
