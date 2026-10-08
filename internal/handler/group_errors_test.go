@@ -369,7 +369,7 @@ func TestServeGroupMembers_AddOverLimit(t *testing.T) {
 	// Register enough agents to exceed the member cap.
 	origAgents := model.Agents
 	agents := map[string]*model.Agent{}
-	for i := 0; i < service.MaxGroupMembers+2; i++ {
+	for i := range service.MaxGroupMembers + 2 {
 		id := "agent-" + string(rune('a'+i))
 		agents[id] = &model.Agent{ID: id, Name: id, Backend: "claude"}
 	}
@@ -381,7 +381,7 @@ func TestServeGroupMembers_AddOverLimit(t *testing.T) {
 	require.NoError(t, err)
 
 	ids := make([]string, 0, service.MaxGroupMembers+2)
-	for i := 0; i < service.MaxGroupMembers+2; i++ {
+	for i := range service.MaxGroupMembers + 2 {
 		ids = append(ids, "agent-"+string(rune('a'+i)))
 	}
 	req := newRequest(t, http.MethodPost, "/api/group/members", map[string]any{"groupId": groupID, "agentIds": ids})
