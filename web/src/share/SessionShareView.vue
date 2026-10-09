@@ -102,6 +102,7 @@
               :resolve-speaker="resolveSpeaker"
               :resolve-speaker-by-name="resolveSpeakerByName"
               :host-member-id="hostMemberId"
+              :user-nickname="userNickname"
               :hide-session-actions="true"
               :read-only="true"
               @toggle-tool="onToggleTool"
@@ -209,7 +210,7 @@ import ChatMessageItem from '@/components/chat/ChatMessageItem.vue'
 import MessageIndexRow from '@/components/chat/MessageIndexRow.vue'
 import AvatarStack, { type StackMember } from '@/components/common/AvatarStack.vue'
 import { makeSpeakerResolver, type SpeakerIdentity } from '@/utils/speakerIdentity'
-import { resolveMentionDisplayName, type MentionSpeaker } from '@/utils/groupRouting'
+import { resolveMentionDisplayName, GROUP_USER_TARGET_NAME, type MentionSpeaker } from '@/utils/groupRouting'
 import ToolDetailDrawer from '@/components/chat/ToolDetailDrawer.vue'
 import ChatMetadataModal from '@/components/chat/ChatMetadataModal.vue'
 import { useChatRender } from '@/composables/useChatRender'
@@ -291,6 +292,9 @@ const tocItems = computed<TocMessage[]>(() => messages.value as unknown as TocMe
 // share path), so rows render the built-in per-backend brand icon.
 const sessionAgent = ref<SpeakerIdentity | null>(null)
 const speakers = ref<Record<string, SpeakerIdentity> | null>(null)
+// The configured group-chat user nickname, frozen into the snapshot (the viewer
+// cannot read /api/config). Falls back to the built-in reserved name.
+const userNickname = ref(GROUP_USER_TARGET_NAME)
 const resolveSpeaker = computed(() => makeSpeakerResolver(sessionAgent.value, speakers.value))
 // The group's ACTIVE roster, frozen in roster order with the host flagged
 // (group shares only; empty for single-agent). The topbar renders the same
@@ -306,8 +310,8 @@ interface ShareGroupMember {
 const groupMembers = ref<ShareGroupMember[]>([])
 const isGroupShare = computed(() => groupMembers.value.length > 0)
 // AvatarStack resolves avatars from agentId via useAgents, which the anonymous
-// share SPA never loads — so every disc renders the built-in per-backend brand
-// icon, exactly as intended (the server omits avatars on the share path).
+// share SPA never loads — so we feed each disc the avatar frozen in the snapshot
+// roster (keyed by member row id) instead.
 const stackMembers = computed<StackMember[]>(() =>
   groupMembers.value.map((m) => ({
     id: m.id,
@@ -315,6 +319,7 @@ const stackMembers = computed<StackMember[]>(() =>
     name: m.name || '',
     backend: m.backend,
     isHost: !!m.isHost,
+    avatar: speakers.value?.[m.id]?.avatar || '',
   })),
 )
 // The group host's member row id, frozen into the snapshot so the viewer can
@@ -349,13 +354,14 @@ const resolveMentionTarget = (target: string): string =>
       const s = resolveSpeakerByName.value(name)
       return s ? { name: s.name || '' } : null
     },
-    t('group.you'),
+    userNickname.value,
+    userNickname.value,
   )
 // The chip HTML is baked into the rendered-block cache, whose key omits the
 // roster; a chip rendered before the roster loads would keep showing "@<id>".
 // Changing this scope clears + re-renders when the roster identity changes.
 const mentionScope = computed(() =>
-  speakers.value ? Object.keys(speakers.value).sort().join(',') : '',
+  (speakers.value ? Object.keys(speakers.value).sort().join(',') : '') + '|' + userNickname.value,
 )
 /** Message id currently in view (scroll-spy); null until the observer fires. */
 const activeTocId = ref<number | string | null>(null)
@@ -499,10 +505,14 @@ function getAgentBackend(): string {
 function getAgentName(): string {
   return backendLabel.value || t('share.sharedConversation')
 }
-// Custom avatars are not part of the share snapshot; always fall back to the
-// built-in backend icon.
-function getAgentAvatar(): string {
-  return ''
+// Custom avatars ARE part of the share snapshot now: the authenticated owner
+// froze them at creation time, so resolve them from the snapshot identities the
+// viewer already has (it cannot call /api/agents). The session agent answers for
+// an empty id (single-agent messages); a member row id resolves through the
+// frozen roster. A miss falls back to '' → the built-in backend brand icon.
+function getAgentAvatar(agentId: string): string {
+  if (agentId) return speakers.value?.[agentId]?.avatar || ''
+  return sessionAgent.value?.avatar || ''
 }
 
 provide('chatRender', {
@@ -690,6 +700,7 @@ async function loadSnapshot() {
     speakers.value = payload?.speakers || null
     groupMembers.value = Array.isArray(payload?.groupMembers) ? payload.groupMembers : []
     hostMemberId.value = payload?.session?.hostMemberId || ''
+    userNickname.value = payload?.session?.userNickname || GROUP_USER_TARGET_NAME
     const rawMessages = Array.isArray(payload?.messages) ? payload.messages : []
     messageCount.value = rawMessages.length
 

@@ -150,8 +150,8 @@ func TestBuildMemberSystemPrompt(t *testing.T) {
 // The host must see the user as a routable participant, and know that naming
 // the user ends the round.
 func TestBuildHostSystemPrompt_IncludesUser(t *testing.T) {
-	p := BuildHostSystemPrompt([]HostMemberInfo{{Name: "A"}, {Name: "B"}, {Name: groupUserTarget}})
-	if !strings.Contains(p, "可选的成员名：") || !strings.Contains(p, groupUserTarget) {
+	p := BuildHostSystemPrompt([]HostMemberInfo{{Name: "A"}, {Name: "B"}, {Name: groupUserTarget()}})
+	if !strings.Contains(p, "可选的成员名：") || !strings.Contains(p, groupUserTarget()) {
 		t.Fatalf("the user must be in the routable list: %q", p)
 	}
 	if !strings.Contains(p, "点到 User 后本轮结束") {
@@ -169,7 +169,7 @@ func TestBuildHostSystemPrompt_IncludesUser(t *testing.T) {
 // A member should know a human is in the room.
 func TestBuildMemberSystemPrompt_ListsUser(t *testing.T) {
 	p := BuildMemberSystemPrompt([]HostMemberInfo{{Name: "Host"}, {Name: "B"}}, "B")
-	if !strings.Contains(p, groupUserTarget) {
+	if !strings.Contains(p, groupUserTarget()) {
 		t.Fatalf("a member must be told the user is present: %q", p)
 	}
 }

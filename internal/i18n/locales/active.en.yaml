@@ -110,6 +110,9 @@ InvalidModelForAgent: Invalid model for this agent
 InvalidThinkingEffort: Invalid thinking effort level for this agent
 InvalidModeForAgent: Invalid mode for this agent
 AgentNameTaken: An agent with this name already exists
+AgentNameReserved: This name conflicts with the group-chat user nickname
+UserNicknameTaken: This nickname is already used by an agent
+InvalidUserNickname: Invalid nickname (1-32 characters, no quotes, angle brackets, commas or control characters)
 InvalidAgentName: Invalid agent name
 InvalidAgentSpecialty: Invalid description
 InvalidAgentAvatar: Invalid avatar image

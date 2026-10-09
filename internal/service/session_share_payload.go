@@ -111,6 +111,11 @@ type SessionShareSession struct {
 	// render their private notes (bcc) card — a group's timeline otherwise
 	// cannot tell which speaker is the chair.
 	HostMemberID string `json:"hostMemberId,omitempty"`
+	// UserNickname is the reserved display name of the human user in this
+	// group (chat.user_nickname at snapshot time, default "User"). Frozen so
+	// the anonymous viewer can render @-mention chips for the user without
+	// reading the authenticated /api/config.
+	UserNickname string `json:"userNickname,omitempty"`
 }
 
 // SessionShareMessage mirrors model.ChatMessage's JSON shape so the viewer can
@@ -242,8 +247,11 @@ func BuildSessionSharePayload(sessionID string, messageIDs []int64, projectRoot,
 		return "", 0, err
 	}
 
-	// includeAvatar=false: a shared link must not leak user-configured avatars.
-	sessionAgent, speakers := ResolveSessionSpeakers(sessionID, false)
+	// includeAvatar=true: the snapshot is frozen at share-creation time by the
+	// authenticated owner, and the public viewer has no other way to resolve a
+	// speaker's custom avatar (it cannot call /api/agents). Carrying the avatar
+	// lets the shared thread render the same icons the app shows.
+	sessionAgent, speakers := ResolveSessionSpeakers(sessionID, true)
 
 	// The viewer's topbar renders the same avatar stack the in-app group header
 	// shows, so freeze the ACTIVE roster in roster order with the host flagged.
@@ -267,6 +275,7 @@ func BuildSessionSharePayload(sessionID string, messageIDs []int64, projectRoot,
 			AgentID:      info.AgentID,
 			Model:        info.Model,
 			HostMemberID: GetGroupHostMember(sessionID),
+			UserNickname: groupUserTarget(),
 		},
 		Messages:     make([]SessionShareMessage, 0, len(messages)),
 		SessionAgent: sessionAgent,

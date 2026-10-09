@@ -111,6 +111,9 @@ InvalidModelForAgent: 无效的模型
 InvalidThinkingEffort: 无效的思考深度级别
 InvalidModeForAgent: 无效的模式
 AgentNameTaken: 已存在同名智能体
+AgentNameReserved: 该名称与群聊用户昵称冲突
+UserNicknameTaken: 该昵称已被某个智能体使用
+InvalidUserNickname: 昵称无效（1-32 个字符，且不能包含引号、尖括号、逗号或控制字符）
 InvalidAgentName: 无效的智能体名称
 InvalidAgentSpecialty: 无效的描述
 InvalidAgentAvatar: 无效的头像图片

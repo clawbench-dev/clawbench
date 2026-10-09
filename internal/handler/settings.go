@@ -7,6 +7,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -25,6 +26,7 @@ import (
 
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
+	"clawbench/internal/service"
 	"clawbench/internal/skill"
 	"clawbench/internal/speech"
 	"clawbench/internal/version"
@@ -69,6 +71,7 @@ var hotReloadFields = map[string]bool{
 	"chat.auto_continue_enabled":        true,
 	"chat.auto_continue_max_retries":    true,
 	"chat.auto_rename_enabled":          true,
+	"chat.user_nickname":                true,
 	"language":                          true,
 	"session.max_count":                 true,
 	"session.archive_retention_enabled": true,
@@ -260,15 +263,16 @@ type configResponse struct {
 }
 
 type configChat struct {
-	InitialMessages          int  `json:"initial_messages"`
-	PageSize                 int  `json:"page_size"`
-	SystemPromptInterval     int  `json:"system_prompt_interval"`
-	RecommendEnabled         bool `json:"recommend_enabled"`
-	RecommendContextMessages int  `json:"recommend_context_messages"`
-	ForkContextBudget        int  `json:"fork_context_budget"`
-	AutoContinueEnabled      bool `json:"auto_continue_enabled"`
-	AutoContinueMaxRetries   int  `json:"auto_continue_max_retries"`
-	AutoRenameEnabled        bool `json:"auto_rename_enabled"`
+	InitialMessages          int    `json:"initial_messages"`
+	PageSize                 int    `json:"page_size"`
+	SystemPromptInterval     int    `json:"system_prompt_interval"`
+	RecommendEnabled         bool   `json:"recommend_enabled"`
+	RecommendContextMessages int    `json:"recommend_context_messages"`
+	ForkContextBudget        int    `json:"fork_context_budget"`
+	AutoContinueEnabled      bool   `json:"auto_continue_enabled"`
+	AutoContinueMaxRetries   int    `json:"auto_continue_max_retries"`
+	AutoRenameEnabled        bool   `json:"auto_rename_enabled"`
+	UserNickname             string `json:"user_nickname"`
 }
 
 type configSession struct {
@@ -681,6 +685,7 @@ var PatchableConfigPaths = map[string]bool{
 	"chat.auto_continue_enabled":        true,
 	"chat.auto_continue_max_retries":    true,
 	"chat.auto_rename_enabled":          true,
+	"chat.user_nickname":                true,
 	"language":                          true,
 	"session.max_count":                 true,
 	"session.archive_retention_enabled": true,
@@ -833,6 +838,7 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			AutoContinueEnabled:      cfg.Chat.AutoContinueEnabled,
 			AutoContinueMaxRetries:   cfg.Chat.AutoContinueMaxRetries,
 			AutoRenameEnabled:        cfg.Chat.AutoRenameEnabled,
+			UserNickname:             cfg.Chat.UserNickname,
 		},
 		Session: configSession{
 			MaxCount:                cfg.Session.MaxCount,
@@ -999,6 +1005,13 @@ func serveConfigPatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := validatePatchValues(patch); err != nil {
+		// A nickname colliding with an existing agent is a conflict, not a
+		// malformed value: answer 409 with the localized key so the UI can show
+		// the same reason the agent-side guard does.
+		if errors.Is(err, errUserNicknameTaken) {
+			writeLocalizedErrorf(w, r, http.StatusConflict, "UserNicknameTaken")
+			return
+		}
 		writeJSON(w, http.StatusBadRequest, map[string]any{
 			"error":   "invalid_value",
 			"message": err.Error(),
@@ -1101,6 +1114,33 @@ func hasPatchableDescendant(path string) bool {
 	return false
 }
 
+// errUserNicknameTaken is the sentinel for a chat.user_nickname that collides
+// with an existing agent's name. serveConfigPatch maps it to 409 (a conflict),
+// unlike a malformed value which stays a 400.
+var errUserNicknameTaken = errors.New("user nickname is already used by an agent")
+
+// maxUserNicknameRunes bounds the group-chat user nickname. It is written into
+// <clawbench-mention targets="..."> and shown in routing chips, so it must stay
+// short; 32 leaves generous room for CJK names.
+const maxUserNicknameRunes = 32
+
+// validUserNickname reports whether s is a usable group-chat user nickname. It
+// is written verbatim into the routing tag's targets attribute, so the protocol
+// delimiters (double quote, angle brackets, comma) and control characters are
+// rejected — the parser splits targets on commas and closes the attribute on a
+// quote. Internal spaces are allowed.
+func validUserNickname(s string) bool {
+	if strings.TrimSpace(s) == "" || utf8.RuneCountInString(s) > maxUserNicknameRunes {
+		return false
+	}
+	for _, r := range s {
+		if r == '"' || r == '<' || r == '>' || r == ',' || r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
 func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo // exhaustive config validation
 	// language: only locales the bundled translation tables actually carry.
 	// An unknown value would make every background-localized string fall back
@@ -1108,6 +1148,19 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 	if v, ok := patch["language"].(string); ok {
 		if !validUILanguages[v] {
 			return fmt.Errorf("language must be one of: zh,en")
+		}
+	}
+	if chat, ok := patch["chat"].(map[string]any); ok {
+		if v, ok := chat["user_nickname"].(string); ok {
+			if !validUserNickname(v) {
+				return fmt.Errorf("chat.user_nickname must be 1-32 characters with no quotes, angle brackets, commas or control characters")
+			}
+			// Bidirectional uniqueness: the nickname must not shadow an existing
+			// agent (the agent-side guard rejects the reverse). Exact match, to
+			// mirror AgentNameTaken.
+			if service.AgentNameTaken(strings.TrimSpace(v), "") {
+				return errUserNicknameTaken
+			}
 		}
 	}
 	tts, ok := patch["tts"].(map[string]any)
@@ -1564,6 +1617,16 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		if v, ok := chat["auto_rename_enabled"].(bool); ok {
 			cfg.Chat.AutoRenameEnabled = v
 		}
+		if v, ok := chat["user_nickname"].(string); ok {
+			// The group's pending private notes are keyed by the user's name;
+			// migrate them so a rename does not orphan an undelivered note
+			// (delivered on the target's next turn). Old value is the one still
+			// in memory before this assignment.
+			if old := model.ChatUserNickname; old != "" && old != v {
+				service.RenameUserPendingBcc(old, v)
+			}
+			cfg.Chat.UserNickname = v
+		}
 	}
 
 	if session, ok := patch["session"].(map[string]any); ok {
@@ -1881,6 +1944,7 @@ func applyHotReloadGlobals() {
 	model.ChatAutoContinueEnabled = cfg.Chat.AutoContinueEnabled
 	model.ChatAutoContinueMaxRetries = cfg.Chat.AutoContinueMaxRetries
 	model.ChatAutoRenameEnabled = cfg.Chat.AutoRenameEnabled
+	model.ChatUserNickname = cfg.Chat.UserNickname
 	model.Language = cfg.Language
 	model.SessionMaxCount = cfg.Session.MaxCount
 	model.RecentProjectsMaxCount = cfg.RecentProjects.MaxCount

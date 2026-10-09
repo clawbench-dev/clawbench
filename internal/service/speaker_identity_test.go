@@ -76,9 +76,11 @@ func TestResolveSessionSpeakers_Group(t *testing.T) {
 	assert.Equal(t, "Bob Agent", speakers[bobID].Name)
 }
 
-// TestResolveSessionSpeakers_NoAvatarOnSharePath pins the privacy boundary: the
-// public share path must never carry user-configured avatars.
-func TestResolveSessionSpeakers_NoAvatarOnSharePath(t *testing.T) {
+// TestResolveSessionSpeakers_CarriesAvatarOnSharePath pins the current share
+// contract: the snapshot is frozen by the authenticated owner, so the custom
+// avatars ARE carried for the anonymous viewer (which cannot resolve them any
+// other way). This is the deliberate reversal of the earlier no-avatar policy.
+func TestResolveSessionSpeakers_CarriesAvatarOnSharePath(t *testing.T) {
 	setupGroupDB(t)
 	project := "/tmp/speakertest"
 	require.NoError(t, func() error { _, err := store.ProjectIDForPath(project); return err }())
@@ -93,11 +95,11 @@ func TestResolveSessionSpeakers_NoAvatarOnSharePath(t *testing.T) {
 	aliceID, err := AddGroupMember(project, groupID, "claude", "claude", "Alice")
 	require.NoError(t, err)
 
-	sessionAgent, speakers := ResolveSessionSpeakers(groupID, false)
+	sessionAgent, speakers := ResolveSessionSpeakers(groupID, true)
 	require.NotNil(t, sessionAgent)
-	assert.Empty(t, sessionAgent.Avatar, "share path must not leak the session agent's avatar")
-	assert.Empty(t, speakers[hostMemberID].Avatar)
-	assert.Empty(t, speakers[aliceID].Avatar, "share path must not leak member avatars")
+	assert.Equal(t, "<host/>", sessionAgent.Avatar, "the share path must carry the session agent's avatar")
+	assert.Equal(t, "<host/>", speakers[hostMemberID].Avatar)
+	assert.Equal(t, "<alice/>", speakers[aliceID].Avatar, "the share path must carry member avatars")
 	// Names/backends still resolve so the viewer shows the right brand icon.
 	assert.Equal(t, "claude", speakers[aliceID].Backend)
 }

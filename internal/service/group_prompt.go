@@ -51,8 +51,8 @@ func othersLine(members []HostMemberInfo, selfName string) string {
 		}
 		others = append(others, renderHostMember(m))
 	}
-	if selfName != groupUserTarget {
-		others = append(others, groupUserTarget)
+	if selfName != groupUserTarget() {
+		others = append(others, groupUserTarget())
 	}
 	if len(others) == 0 {
 		return ""
@@ -90,9 +90,11 @@ func BuildHostSystemPrompt(members []HostMemberInfo) string {
 	b.WriteString("。\n")
 
 	// Addressing the human user: the user participates as a named participant
-	// (the reserved name "User"). Naming the user ENDS this round — the user
-	// answers in their own time and the next round resumes from their reply.
-	b.WriteString("可点名 User（即用户本人）让其发言；点到 User 后本轮结束，等待用户发言，用户发言后你会在下一轮看到并继续主持。\n")
+	// (the configured nickname, default "User"). Naming the user ENDS this round
+	// — the user answers in their own time and the next round resumes from their
+	// reply.
+	userTarget := groupUserTarget()
+	b.WriteString("可点名 " + userTarget + "（即用户本人）让其发言；点到 " + userTarget + " 后本轮结束，等待用户发言，用户发言后你会在下一轮看到并继续主持。\n")
 
 	// Private notes (密送): a way to tell ONE participant something the others
 	// must not see. It is the SAME tag with the `private` attribute. Documented
@@ -101,7 +103,7 @@ func BuildHostSystemPrompt(members []HostMemberInfo) string {
 	b.WriteString("\n可选：密送（只给个别成员看，其他成员看不到）\n")
 	b.WriteString("若你想对个别成员或用户单独交代、不希望其他人看到，改用 private 属性：\n")
 	b.WriteString("  <clawbench-mention targets=\"成员名\" private>只有该成员能看到的内容</clawbench-mention>\n")
-	b.WriteString("targets 可写多个，用逗号分隔，如 targets=\"A,B\"；targets=\"User\" 即密送给用户。\n")
+	b.WriteString("targets 可写多个，用逗号分隔，如 targets=\"A,B\"；targets=\"" + userTarget + "\" 即密送给用户。\n")
 	b.WriteString("密送可以发给本轮未被点名的成员：会在该成员下次被点名时送达。\n")
 	b.WriteString("公共指令（所有被点名者都能看到）照常写在不带 private 的标签里，密送可与它并存。\n")
 	return b.String()
@@ -169,7 +171,7 @@ func BuildFreeMemberSystemPrompt(members []HostMemberInfo, selfName string) stri
 	b.WriteString("若你希望多人**同时**发言、彼此看不到对方本轮内容（如同时行动/同时表态），加 mode=\"parallel\"：\n")
 	b.WriteString("  <clawbench-mention targets=\"A,B\" mode=\"parallel\">请你们各自独立作答</clawbench-mention>\n")
 	b.WriteString("**如果没有人需要继续说，就不要输出任何 mention 标签**——讨论到此自然结束。\n")
-	b.WriteString("你也可以 @ User（即用户本人）把话筒交回给用户，用户回复后讨论继续。\n")
+	b.WriteString("你也可以 @ " + groupUserTarget() + "（即用户本人）把话筒交回给用户，用户回复后讨论继续。\n")
 	// Private notes: same tag with the `private` attribute. Delivered on the
 	// target's next turn (the group_pending_bcc contract), so a note to someone
 	// not yet speaking still lands.

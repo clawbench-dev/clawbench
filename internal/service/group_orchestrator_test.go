@@ -1661,7 +1661,7 @@ func TestGroupOrchestrator_UserPrivateNoteNotInjectedToUser(t *testing.T) {
 		` <clawbench-mention targets="User" private>给自己的</clawbench-mention>`
 	_ = runGroupTurnForTest(t, o, project, userMsg, nil)
 
-	if left := pendingBccForTarget(groupID, groupUserTarget); len(left) != 0 {
+	if left := pendingBccForTarget(groupID, groupUserTarget()); len(left) != 0 {
 		t.Fatalf("a self-directed user note must not be stored, got %+v", left)
 	}
 }

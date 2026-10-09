@@ -2539,6 +2539,7 @@ export default {
       appearanceHeaderSection: '顶栏',
       chatInteractionSection: '交互',
       chatMessageSection: '消息与历史',
+      groupChatSectionHeader: '群聊',
       debugSection: '调试',
       securitySection: '安全',
       aboutVersionSection: '版本',

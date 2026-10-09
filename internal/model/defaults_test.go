@@ -140,6 +140,9 @@ func TestApplyDefaultsEmptyConfig(t *testing.T) {
 	if cfg.Chat.PageSize != 20 {
 		t.Errorf("Chat.PageSize = %d, want 20", cfg.Chat.PageSize)
 	}
+	if cfg.Chat.UserNickname != "User" {
+		t.Errorf("Chat.UserNickname = %q, want %q", cfg.Chat.UserNickname, "User")
+	}
 	if cfg.Session.MaxCount != 15 {
 		t.Errorf("Session.MaxCount = %d, want 15", cfg.Session.MaxCount)
 	}

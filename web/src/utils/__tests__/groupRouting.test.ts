@@ -233,6 +233,16 @@ describe('resolveMentionDisplayName', () => {
     expect(resolveMentionDisplayName('User', null, null, 'you')).toBe('you')
   })
 
+  it('renders a configured nickname for the reserved human target (5th arg)', () => {
+    // With a nickname configured, both the display label AND the matched token
+    // are the nickname — the raw "User" is no longer special (only-new-nickname
+    // semantics: a historical "User" chip falls through to the raw token).
+    expect(resolveMentionDisplayName('老板', byId, byName, '老板', '老板')).toBe('老板')
+    expect(resolveMentionDisplayName('User', byId, byName, '老板', '老板')).toBe('User')
+    // The default 5th arg keeps the pre-setting behavior intact.
+    expect(resolveMentionDisplayName('User', byId, byName, '老板')).toBe('老板')
+  })
+
   it('resolves by member row id, then by display name', () => {
     expect(resolveMentionDisplayName('m-b', byId, byName, '你')).toBe('Bob')
     expect(resolveMentionDisplayName('Alice', byId, byName, '你')).toBe('Alice')

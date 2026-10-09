@@ -122,6 +122,7 @@
         :resolveSpeakerByName="resolveSpeakerByName"
         :hostMemberId="hostMemberId"
         :isGroupSession="isGroupSession"
+        :userNickname="userNickname"
         @toggle-tool="$emit('toggle-tool', $event)"
         @show-tool-detail="$emit('show-tool-detail', $event)"
         @show-metadata="$emit('show-metadata', $event)"
@@ -227,6 +228,7 @@ import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import ChatSkeleton from './ChatSkeleton.vue'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import UserMsgIndexDrawer from './UserMsgIndexDrawer.vue'
+import { GROUP_USER_TARGET_NAME } from '@/utils/groupRouting.ts'
 import TableRowModal from '@/components/common/TableRowModal.vue'
 import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'
 import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
@@ -292,6 +294,11 @@ const props = defineProps({
    *  to show: the two modes route completely differently, so a single hint would
    *  describe one mode and mislead in the other. */
   groupMode: { type: String, default: 'host' },
+  /** The configured group-chat user nickname (chat.user_nickname); forwarded to
+   *  ChatMessageItem so @-chips render the human target correctly. Defaults to
+   *  the built-in reserved name so the item's own default is never overridden
+   *  with an empty string. */
+  userNickname: { type: String, default: GROUP_USER_TARGET_NAME },
 })
 
 const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'quote-message', 'file-open', 'load-more', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'fork-from-message', 'rewind-from-message', 'reset-session', 'open-btw'])

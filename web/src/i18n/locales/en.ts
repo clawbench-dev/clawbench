@@ -2540,6 +2540,7 @@ export default {
       appearanceHeaderSection: 'Header',
       chatInteractionSection: 'Interaction',
       chatMessageSection: 'Messages & History',
+      groupChatSectionHeader: 'Group Chat',
       debugSection: 'Debug',
       securitySection: 'Security',
       aboutVersionSection: 'Version',

@@ -34,16 +34,28 @@ const (
 	// §13). The mode is chosen at creation (host selected vs not) and is NOT
 	// switchable.
 	GroupModeFree = "free"
-	// groupUserTarget is the reserved display name of the HUMAN user as a group
-	// participant. Agents address the user with this exact name
-	// (<clawbench-mention targets="User">...), so it must stay language-neutral
-	// and must not collide with a real member name.
-	groupUserTarget = "User"
+	// defaultGroupUserTarget is the fallback display name of the HUMAN user as a
+	// group participant when no nickname is configured. Agents address the user
+	// with this exact name (<clawbench-mention targets="User">...). The live
+	// value is groupUserTarget() (config-driven, chat.user_nickname).
+	defaultGroupUserTarget = "User"
 	// groupUserTargetID is a sentinel member row id for the user. It is not a
 	// chat_sessions row: the user has no backend connection and no AI turn.
 	// "__user__" cannot collide with a UUID member row id.
 	groupUserTargetID = "__user__"
 )
+
+// groupUserTarget is the reserved display name of the HUMAN user as a group
+// participant. It is config-driven (chat.user_nickname, default "User") so the
+// user can pick a less jarring name than the language-neutral default; it must
+// stay in sync with the frontend's userNickname and must never collide with a
+// real member name (enforced bidirectionally — see IsUserNickname).
+func groupUserTarget() string {
+	if n := model.ChatUserNickname; n != "" {
+		return n
+	}
+	return defaultGroupUserTarget
+}
 
 // GroupMember is one member of a group (a hidden chat_sessions row).
 type GroupMember struct {
@@ -505,6 +517,24 @@ func deletePendingBccForGroup(groupID string) {
 	}
 	if _, err := store.WriteExec(`DELETE FROM group_pending_bcc WHERE group_id = ?`, groupID); err != nil {
 		slog.Warn("group: clearing pending bcc for group failed", "group", groupID, "err", err)
+	}
+}
+
+// RenameUserPendingBcc migrates every pending private note addressed to the
+// human user from oldName to newName, so a nickname change does not orphan an
+// undelivered note (notes are keyed by target name and delivered on that
+// target's next turn). Called when chat.user_nickname changes; a no-op when the
+// names match or either is empty.
+func RenameUserPendingBcc(oldName, newName string) {
+	oldT := strings.TrimSpace(oldName)
+	newT := strings.TrimSpace(newName)
+	if oldT == "" || newT == "" || oldT == newT {
+		return
+	}
+	if _, err := store.WriteExec(
+		`UPDATE group_pending_bcc SET target_name = ? WHERE target_name = ?`, newT, oldT,
+	); err != nil {
+		slog.Warn("group: renaming pending bcc target failed", "old", oldT, "new", newT, "err", err)
 	}
 }
 

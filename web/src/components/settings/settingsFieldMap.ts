@@ -273,6 +273,10 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.aiSummaryRef', descriptionKey: 'settings.items.aiSummaryRefDesc', key: 'navigateAiSummaryForRename', type: 'action', source: 'local', navigateTo: 'aiSummary', disableUnless: { key: 'chat.auto_rename_enabled', value: true }, showSummaryModelStatus: true, sectionHeader: 'settings.items.autoRenameSectionHeader' } },
     { type: 'item', spec: { labelKey: 'settings.items.archiveRetentionEnabled', descriptionKey: 'settings.items.archiveRetentionEnabledDesc', key: 'session.archive_retention_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.archiveRetentionSectionHeader' } },
     { type: 'item', spec: { labelKey: 'settings.items.archiveRetentionDays', descriptionKey: 'settings.items.archiveRetentionDaysDesc', key: 'session.archive_retention_days', type: 'number', source: 'server', min: 0, disableUnless: { key: 'session.archive_retention_enabled', value: true }, sectionHeader: 'settings.items.archiveRetentionSectionHeader' } },
+    // Group chat: the reserved display name of the human user. A lone new
+    // sectionHeader forms its own card; the value is a global server setting so
+    // the same nickname applies on every device.
+    { type: 'item', spec: { labelKey: 'settings.items.groupUserNickname', descriptionKey: 'settings.items.groupUserNicknameDesc', key: 'chat.user_nickname', type: 'text', source: 'server', sectionHeader: 'settings.items.groupChatSectionHeader' } },
   ],
   project: [
     { type: 'item', spec: { labelKey: 'settings.items.recentProjectsMaxCount', descriptionKey: 'settings.items.recentProjectsMaxCountDesc', key: 'recent_projects.max_count', type: 'number', source: 'server', min: 1, sectionHeader: 'settings.items.projectSectionHeader' } },

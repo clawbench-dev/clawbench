@@ -285,7 +285,7 @@ func (o *GroupOrchestrator) runSpeakerTurn(ctx context.Context, s groupTurnSetup
 // timeline shows why the turn stopped, and returns the (empty) result. Shared
 // by both modes (host: the host named User; free: a speaker @-ed User).
 func (o *GroupOrchestrator) handUserBack(groupID string) DrainResult {
-	deletePendingBccForTarget(groupID, groupUserTarget)
+	deletePendingBccForTarget(groupID, groupUserTarget())
 	writeGroupSystemMessage(o.project, groupID,
 		i18n.T(i18n.LocalizerForLocale(model.Language), "GroupYourTurn"))
 	return DrainResult{}
@@ -1216,7 +1216,7 @@ func memberLookups(members []GroupMember) (byID, byName map[string]GroupMember) 
 			byName[strings.TrimSpace(m.Name)] = m
 		}
 	}
-	byName[groupUserTarget] = GroupMember{ID: groupUserTargetID, Name: groupUserTarget}
+	byName[groupUserTarget()] = GroupMember{ID: groupUserTargetID, Name: groupUserTarget()}
 	return byID, byName
 }
 
@@ -1258,7 +1258,7 @@ func memberInfos(members []GroupMember, excludeID string, withUser bool) []HostM
 		})
 	}
 	if withUser {
-		out = append(out, HostMemberInfo{Name: groupUserTarget})
+		out = append(out, HostMemberInfo{Name: groupUserTarget()})
 	}
 	return out
 }

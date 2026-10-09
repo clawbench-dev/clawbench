@@ -22,6 +22,7 @@
       :resolveSpeaker="props.resolveGroupSpeaker"
       :resolveSpeakerByName="props.resolveGroupSpeakerByName"
       :hostMemberId="props.groupHostMemberId"
+      :userNickname="userNickname"
       :currentSessionId="identity.currentSessionId.value"
       :hasMore="session.hasMore.value"
       :loadingMore="session.loadingMore.value"
@@ -240,7 +241,7 @@ import { useI18n } from 'vue-i18n'
 import { appLog } from '@/utils/appLog'
 import { NEAR_BOTTOM_PX } from '@/utils/scrollState'
 import { groupBtwRecords, currentAnchorKey } from '@/utils/btwAnchors.ts'
-import { resolveMentionDisplayName } from '@/utils/groupRouting.ts'
+import { resolveMentionDisplayName, GROUP_USER_TARGET_NAME } from '@/utils/groupRouting.ts'
 import { apiGet, apiPost, apiPatch } from '@/utils/api'
 import { gt } from '@/composables/useLocale'
 import { useTabDrawer } from '@/composables/useTabDrawer'
@@ -270,7 +271,7 @@ import { useToast } from '@/composables/useToast.ts'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { useNotification } from '@/composables/useNotification.ts'
 import { applySummaryUpdate, isShowingSummary, isLastAssistantMessage, normalizeDisplayMode } from '@/utils/chatSessionUtils.ts'
-import { localConfig } from '@/composables/useSettingsConfig'
+import { localConfig, serverConfig } from '@/composables/useSettingsConfig'
 import { nextClientSeq } from '@/utils/chatStreamUtils.ts'
 import { useFileUpload } from '@/composables/useFileUpload.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
@@ -723,16 +724,28 @@ async function jumpToQuoteSource(q) {
 
 const { planEntries, planCollapsed, planHasUpdate, togglePlanCollapse } = usePlanProgress()
 
+// The configured group-chat user nickname (chat.user_nickname, default "User").
+// Server-side and global, so it is read from the shared serverConfig singleton
+// rather than threaded through props. Falls back to the built-in reserved name
+// before config loads so @-chips never render blank.
+const userNickname = computed(() => {
+  const chat = serverConfig.value?.chat
+  const v = chat && typeof chat === 'object' ? chat.user_nickname : undefined
+  return typeof v === 'string' && v !== '' ? v : GROUP_USER_TARGET_NAME
+})
+
 // resolveMentionTarget maps a mention target to a display name for the inline
 // chip. A target is either a member ROW id (a user's @ carries the id) or a
 // display name (an agent writes the name): try the speaker resolver first, then
-// the by-name resolver, and fall back to the raw target.
+// the by-name resolver, and fall back to the raw target. The reserved human
+// target renders as the configured nickname.
 //
-// mentionScope changes when the roster changes: the chip HTML is baked into the
-// rendered-block cache, whose key does NOT include the roster, so a chip
-// rendered before the roster loaded would otherwise keep showing "@<uuid>".
+// mentionScope changes when the roster OR the nickname changes: the chip HTML is
+// baked into the rendered-block cache, whose key does NOT include either, so a
+// chip rendered before the roster loaded would otherwise keep showing "@<uuid>"
+// and a chip rendered before a rename would keep the old name.
 const mentionScope = computed(() =>
-  (props.groupMembers || []).map(m => `${m.id}:${m.name}`).join(','),
+  (props.groupMembers || []).map(m => `${m.id}:${m.name}`).join(',') + '|' + userNickname.value,
 )
 const render = useChatRender({
   messages,
@@ -744,7 +757,8 @@ const render = useChatRender({
       target,
       props.resolveGroupSpeaker,
       props.resolveGroupSpeakerByName,
-      t('group.you'),
+      userNickname.value,
+      userNickname.value,
     ),
 })
 

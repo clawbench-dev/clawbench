@@ -1290,3 +1290,54 @@ func TestPendingBccStore(t *testing.T) {
 		t.Fatalf("another group must still be untouched: %+v", o)
 	}
 }
+
+// groupUserTarget() is config-driven: it honors chat.user_nickname and falls
+// back to the language-neutral default when unset.
+func TestGroupUserTarget_ConfigDriven(t *testing.T) {
+	orig := model.ChatUserNickname
+	t.Cleanup(func() { model.ChatUserNickname = orig })
+
+	model.ChatUserNickname = ""
+	if got := groupUserTarget(); got != "User" {
+		t.Fatalf("empty config must fall back to the default, got %q", got)
+	}
+	model.ChatUserNickname = "老板"
+	if got := groupUserTarget(); got != "老板" {
+		t.Fatalf("configured nickname must win, got %q", got)
+	}
+}
+
+// A nickname change migrates pending notes keyed by the old user name so an
+// undelivered note is not orphaned.
+func TestRenameUserPendingBcc(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-renamebcc"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, _, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	addPendingBcc(groupID, "User", "给你的")
+	addPendingBcc(groupID, "A", "给A的")
+
+	RenameUserPendingBcc("User", "老板")
+
+	if left := pendingBccForTarget(groupID, "User"); len(left) != 0 {
+		t.Fatalf("the old-name rows must be migrated away: %+v", left)
+	}
+	migrated := pendingBccForTarget(groupID, "老板")
+	if len(migrated) != 1 || migrated[0].Content != "给你的" {
+		t.Fatalf("the note must move to the new name: %+v", migrated)
+	}
+	if a := pendingBccForTarget(groupID, "A"); len(a) != 1 {
+		t.Fatalf("other targets must be untouched: %+v", a)
+	}
+	// A no-op rename (same name / empty) must not error or move anything.
+	RenameUserPendingBcc("老板", "老板")
+	RenameUserPendingBcc("", "x")
+	if m := pendingBccForTarget(groupID, "老板"); len(m) != 1 {
+		t.Fatalf("no-op renames must leave the rows in place: %+v", m)
+	}
+}

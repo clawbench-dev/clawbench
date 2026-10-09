@@ -104,6 +104,12 @@ type Config struct {
 		// the call fails — which is why it can default ON: without the model it
 		// is simply inert. (default: true)
 		AutoRenameEnabled bool `yaml:"auto_rename_enabled"`
+		// UserNickname is the reserved display name of the HUMAN user as a group
+		// participant. Agents address the user with this exact name
+		// (<clawbench-mention targets="...">), so it must not collide with any
+		// agent's name and must not contain the protocol's reserved characters
+		// (", <, >, comma). Default "User". (default: "User")
+		UserNickname string `yaml:"user_nickname"`
 	} `yaml:"chat"`
 	Session struct {
 		MaxCount                int  `yaml:"max_count"`                 // Maximum number of chat sessions per project (default: 15)
@@ -375,6 +381,10 @@ var (
 	// ChatAutoRenameEnabled switches on the AI summary rename of a session at
 	// the moment its local title is written. Read by internal/service.
 	ChatAutoRenameEnabled bool
+	// ChatUserNickname is the reserved display name of the human user in group
+	// chat (default "User"). Read by internal/service at request time so a
+	// rename takes effect without a restart.
+	ChatUserNickname string
 
 	// Session limits (set from config, with defaults)
 	SessionMaxCount int // Default: 15

@@ -837,11 +837,12 @@ func TestGetSessionMessagesForSelection_UnknownSessionIsEmpty(t *testing.T) {
 	assert.Empty(t, items)
 }
 
-// TestSessionSharePayload_FreezesSpeakerIdentitiesWithoutAvatars pins the
-// public-share privacy boundary: the snapshot carries each speaker's name and
-// backend (so the viewer renders the right brand icon) but NEVER a custom
-// avatar — a shared link must not expose the creator's avatars.
-func TestSessionSharePayload_FreezesSpeakerIdentitiesWithoutAvatars(t *testing.T) {
+// TestSessionSharePayload_FreezesSpeakerIdentitiesWithAvatars pins the current
+// share contract: the snapshot carries each speaker's name and backend AND the
+// custom avatar, so the viewer renders the same icon the app shows. The
+// snapshot is frozen by the authenticated owner at creation time; the anonymous
+// viewer has no other way to resolve an avatar.
+func TestSessionSharePayload_FreezesSpeakerIdentitiesWithAvatars(t *testing.T) {
 	db := setupTestDBForSessionSharePayload(t)
 	defer func() { _ = db.Close() }()
 
@@ -872,7 +873,7 @@ func TestSessionSharePayload_FreezesSpeakerIdentitiesWithoutAvatars(t *testing.T
 	require.NotNil(t, payload.SessionAgent, "the viewer needs the session agent to icon single-agent rows")
 	assert.Equal(t, "codebuddy", payload.SessionAgent.Backend)
 	assert.Equal(t, "Host Agent", payload.SessionAgent.Name)
-	assert.Empty(t, payload.SessionAgent.Avatar, "the share snapshot must not freeze custom avatars")
+	assert.Equal(t, "<host/>", payload.SessionAgent.Avatar, "the share snapshot must freeze custom avatars for the viewer")
 }
 
 // A shared GROUP must carry the host's member row id so the public viewer can

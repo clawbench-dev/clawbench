@@ -317,8 +317,13 @@ export interface MentionSpeaker {
  * inline @chip. A target is either a member ROW id (a user's @ carries the id)
  * or a display name (an agent writes the name): resolve by id first, then by
  * name, and fall back to the raw target so an unresolvable target stays
- * visible. The reserved human name ("User") always renders as `userLabel`
- * ("你"/"you") — the reader should see themselves, not the raw token.
+ * visible.
+ *
+ * `userDisplay` is what the reserved human target renders as. Callers pass the
+ * configured nickname so the chip shows the same name agents actually use
+ * (default `GROUP_USER_TARGET_NAME` = "User"). `userTarget` is the raw token
+ * that identifies the human in the protocol; it defaults to
+ * `GROUP_USER_TARGET_NAME` for callers/tests that predate the nickname setting.
  *
  * `resolveId`/`resolveName` may be null (outside a group), in which case only
  * the reserved-name and fallback branches apply.
@@ -327,9 +332,10 @@ export function resolveMentionDisplayName(
   target: string,
   resolveId: ((t: string) => MentionSpeaker | null) | null | undefined,
   resolveName: ((t: string) => MentionSpeaker | null) | null | undefined,
-  userLabel: string,
+  userDisplay: string,
+  userTarget: string = GROUP_USER_TARGET_NAME,
 ): string {
-  if (target === GROUP_USER_TARGET_NAME) return userLabel
+  if (target === userTarget) return userDisplay
   const byId = resolveId?.(target)
   if (byId?.name) return byId.name
   const byName = resolveName?.(target)

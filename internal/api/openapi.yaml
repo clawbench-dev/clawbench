@@ -397,6 +397,10 @@ paths:
         （Electron store 的 `tunnelTransport`，取 `ssh` / `h2`；Android 的
         SharedPreferences 开关 `tunnel_transport_h2_enabled`），服务端读不到，
         这正是监听器必须常开的原因：服务端无法用该值决定是否监听。
+
+        `chat.user_nickname` 是群聊中人类用户的保留显示名（默认 `User`）。它被
+        写进路由标签的 `targets` 属性，故不能包含引号 / 尖括号 / 逗号 / 控制字符，
+        且不得与任何智能体同名（与智能体命名双向校验）。
       operationId: getConfig
       responses:
         "200":

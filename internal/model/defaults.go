@@ -236,6 +236,12 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if !presence["chat.auto_rename_enabled"] {
 		cfg.Chat.AutoRenameEnabled = true
 	}
+	// UserNickname: the reserved display name of the human user in group chat.
+	// An empty value is never valid (it would be an unaddressable participant),
+	// so empty always falls back to the default — no presence map needed.
+	if cfg.Chat.UserNickname == "" {
+		cfg.Chat.UserNickname = "User"
+	}
 
 	// --- Session ---
 	// MaxCount: 0 means "unlimited" (the create-session gate is `> 0`), so it is

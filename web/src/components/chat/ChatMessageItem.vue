@@ -312,6 +312,10 @@ const props = defineProps({
   resolveSpeakerByName: { type: Function, default: null },
   /** Host member row id, so the host's messages get a distinct style. */
   hostMemberId: { type: String, default: '' },
+  /** The configured group-chat user nickname (chat.user_nickname). Renders the
+   *  reserved human target and is what an @chip shows for the reader. Defaults
+   *  to the built-in reserved name so callers that predate the setting work. */
+  userNickname: { type: String, default: GROUP_USER_TARGET_NAME },
 })
 
 const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'fork-from-message', 'rewind-from-message', 'reset-session', 'quote-message'])
@@ -361,25 +365,21 @@ const groupProtocolText = computed(() => {
 // user can audit them, but they are not addressed to the reader.
 const bccExpanded = ref(false)
 
-// The reserved participant name of the human user (mirrors the backend
-// groupUserTarget constant, re-exported by groupRouting). A note addressed to
-// it is meant for the reader.
-const GROUP_USER_TARGET = GROUP_USER_TARGET_NAME
-
 // bccToUser / bccToMembers split the notes by audience and are declared BELOW
 // the chatRender destructuring, because each note's body is rendered through the
 // same markdown pipeline the bubble uses (see renderBccNote).
 
 // mentionTargets maps the parsed mention targets to display info for the
 // summary row. Names that no longer resolve (removed members) still render as a
-// plain @name so the routing intent stays visible. The reserved human name
-// "User" is shown as the reader ("你"/"you") rather than the raw token.
+// plain @name so the routing intent stays visible. The reserved human target is
+// shown as the configured nickname (chat.user_nickname), matching what the
+// agents actually wrote.
 const mentionTargets = computed(() => {
   const resolve = props.resolveSpeakerByName
   return groupRouting.value.speakers.map((name) => {
     const hit = typeof resolve === 'function' ? resolve(name) : null
-    if (hit) return name === GROUP_USER_TARGET ? { ...hit, name: t('group.you') } : hit
-    return { name: name === GROUP_USER_TARGET ? t('group.you') : name, backend: '', avatar: '' }
+    if (hit) return name === props.userNickname ? { ...hit, name: props.userNickname } : hit
+    return { name: name === props.userNickname ? props.userNickname : name, backend: '', avatar: '' }
   })
 })
 
@@ -600,9 +600,9 @@ function renderBccNote(content, noteIdx) {
 const bccEntries = computed(() =>
   groupRouting.value.bcc.map((e, i) => ({
     ...e,
-    toUser: e.targets.includes(GROUP_USER_TARGET),
+    toUser: e.targets.includes(props.userNickname),
     targetLabels: e.targets.map((target) =>
-      resolveMentionDisplayName(target, props.resolveSpeaker, props.resolveSpeakerByName, t('group.you')),
+      resolveMentionDisplayName(target, props.resolveSpeaker, props.resolveSpeakerByName, props.userNickname, props.userNickname),
     ),
     html: renderBccNote(e.content, i),
   })),

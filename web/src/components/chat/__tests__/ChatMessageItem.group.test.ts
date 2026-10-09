@@ -154,12 +154,29 @@ describe('ChatMessageItem group speaker', () => {
     expect(w.find('.msg-mention-summary').exists()).toBe(false)
   })
 
-  it('shows the reserved human target as "you", not the raw token', () => {
+  it('shows the configured user nickname for the reserved human target', () => {
     const resolveSpeaker = () => ({ name: 'Host', backend: 'codebuddy' })
     const w = mountItem(
       {
         role: 'assistant',
         id: 8,
+        content: '',
+        blocks: [{ type: 'text', text: '<clawbench-mention targets="老板">该你说了</clawbench-mention>' }],
+        agentId: 'host-1',
+      },
+      { resolveSpeaker, hostMemberId: 'host-1', userNickname: '老板' },
+    )
+    const summary = w.find('.msg-mention-summary')
+    expect(summary.exists()).toBe(true)
+    expect(summary.text()).toContain('老板')
+  })
+
+  it('falls back to the built-in reserved name when no nickname prop is given', () => {
+    const resolveSpeaker = () => ({ name: 'Host', backend: 'codebuddy' })
+    const w = mountItem(
+      {
+        role: 'assistant',
+        id: 9,
         content: '',
         blocks: [{ type: 'text', text: '<clawbench-mention targets="User">该你说了</clawbench-mention>' }],
         agentId: 'host-1',
@@ -168,8 +185,7 @@ describe('ChatMessageItem group speaker', () => {
     )
     const summary = w.find('.msg-mention-summary')
     expect(summary.exists()).toBe(true)
-    expect(summary.text()).toContain('you')
-    expect(summary.text()).not.toContain('User')
+    expect(summary.text()).toContain('User')
   })
 })
 
@@ -357,6 +373,19 @@ describe('ChatMessageItem bcc card: target names hidden, user note expanded', ()
     const memberCard = w.find('.msg-bcc:not(.msg-bcc-user)')
     expect(memberCard.exists()).toBe(true)
     expect((memberCard.find('.msg-bcc-body').element as HTMLElement).style.display).toBe('none')
+  })
+
+  it('treats a note to the configured nickname as "to you"', () => {
+    // With a nickname configured, the human target is the nickname, not "User".
+    // A note addressed to it renders expanded under the "to you" header.
+    const w = mountItem(
+      hostWithBcc('<clawbench-mention targets="A">表态</clawbench-mention><clawbench-mention targets="老板" private>你的词是西瓜</clawbench-mention>'),
+      { ...opts, userNickname: '老板' },
+    )
+    const card = w.find('.msg-bcc-user')
+    expect(card.exists()).toBe(true)
+    expect(card.text()).toContain('Private note to you')
+    expect(card.text()).toContain('你的词是西瓜')
   })
 })
 

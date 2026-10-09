@@ -163,8 +163,8 @@ function makePayload() {
       agentId: 'codebuddy',
       model: 'claude-sonnet-4',
     },
-    // Speaker identities frozen at share time (no avatars — the server omits
-    // them on the public path). Drives the TOC rows' real agent icon.
+    // Speaker identities frozen at share time (the snapshot carries custom
+    // avatars now). Drives the TOC rows' real agent icon.
     sessionAgent: { name: 'CodeBuddy', backend: 'codebuddy' },
     // Group roster keyed by member ROW id: a user's @-mention carries the row
     // id, so the share view must resolve it back to the agent name for the
@@ -417,8 +417,9 @@ describe('SessionShareView', () => {
     expect(resolve('member-42')).toBe('Reviewer')
     // An agent writes a display name; resolve by name too.
     expect(resolve('CodeBuddy')).toBe('CodeBuddy')
-    // The reserved human target renders as the localized "you".
-    expect(resolve('User')).toBe('you')
+    // The reserved human target renders as the configured nickname (default
+    // "User" when the snapshot carries none).
+    expect(resolve('User')).toBe('User')
     // Unknown target falls back to the raw token (never lost).
     expect(resolve('nope')).toBe('nope')
   })
@@ -467,10 +468,27 @@ describe('SessionShareView', () => {
     expect(assistant.find('.auto-speech-active').text()).toBe('false')
     // The agent identity comes from the snapshot, not from /api/agents.
     expect(assistant.find('.agent-backend').text()).toBe('codebuddy')
-    // Custom avatars are not part of the snapshot: the provider must always
-    // return an empty string so the render chain falls back to the built-in
-    // backend icon.
+    // No avatar in this snapshot, so the provider returns an empty string and
+    // the render chain falls back to the built-in backend icon.
     expect(assistant.find('.agent-avatar').text()).toBe('[]')
+  })
+
+  it('resolves a custom avatar from the frozen snapshot identities', async () => {
+    globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
+      const u = String(url)
+      if (u.includes('/session')) {
+        const p = makePayload()
+        ;(p as Record<string, unknown>).sessionAgent = { name: 'CodeBuddy', backend: 'codebuddy', avatar: '<solo/>' }
+        return { ok: true, json: async () => p } as Response
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as Response
+    }) as unknown as typeof fetch
+
+    const wrapper = await mountView()
+    // The single-agent message has an empty agentId, so the session agent's
+    // frozen avatar answers.
+    const assistant = wrapper.findAll('.chat-message-stub').find(w => w.attributes('data-role') === 'assistant')
+    expect(assistant!.find('.agent-avatar').text()).toBe('[<solo/>]')
   })
 
   it('shows the not-found state when the token is unknown', async () => {
