@@ -60,7 +60,7 @@
               <span class="shared-session-meta">
                 <span v-if="item.messageCount > 0">{{ t('sharedSessions.messageCount', { count: item.messageCount }) }}</span>
                 <span v-if="item.messageCount > 0 && item.createdAt" class="shared-session-sep">·</span>
-                <span v-if="item.createdAt">{{ item.createdAt }}</span>
+                <span v-if="item.createdAt">{{ formatRelativeTime(item.createdAt) }}</span>
               </span>
             </div>
           </div>
@@ -113,6 +113,7 @@ import { useTabDrawer } from '@/composables/useTabDrawer'
 import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast.ts'
 import { openExternalUrl } from '@/utils/externalLink'
+import { formatRelativeTime } from '@/utils/format'
 import { useSessionShare } from '@/composables/useSessionShare'
 import { appLog } from '@/utils/appLog'
 
@@ -331,6 +332,7 @@ defineExpose({ open: openDrawer })
   gap: var(--space-2);
   font-size: var(--font-size-xs);
   color: var(--text-muted, #656d76);
+  min-width: 0;
 }
 .shared-session-sep { opacity: .6; }
 

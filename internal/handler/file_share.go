@@ -273,7 +273,7 @@ func serveShareList(w http.ResponseWriter, r *http.Request) {
 			Token:     s.Token,
 			Name:      s.Name,
 			Path:      display,
-			CreatedAt: s.CreatedAt,
+			CreatedAt: formatShareTime(s.CreatedAt),
 			Exists:    exists,
 		})
 	}

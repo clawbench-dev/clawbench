@@ -22,6 +22,7 @@ interface Drawer {
   file: string
   body: string
   row: string
+  meta: string
   emptyIcon: string
 }
 
@@ -31,6 +32,7 @@ const DRAWERS: Drawer[] = [
     file: join(__dirname, '..', 'SharedSessionsDrawer.vue'),
     body: '.shared-sessions-body',
     row: '.shared-session-row',
+    meta: '.shared-session-meta',
     emptyIcon: '.shared-sessions-empty-icon',
   },
   {
@@ -38,6 +40,7 @@ const DRAWERS: Drawer[] = [
     file: join(__dirname, '..', '..', 'file', 'SharedFilesDrawer.vue'),
     body: '.shared-files-body',
     row: '.shared-file-row',
+    meta: '.shared-file-meta',
     emptyIcon: '.shared-files-empty-icon',
   },
 ]
@@ -56,7 +59,7 @@ function ruleDecls(css: string, sel: string): string | null {
   return m ? m[1] : null
 }
 
-for (const { name, file, body, row, emptyIcon } of DRAWERS) {
+for (const { name, file, body, row, meta, emptyIcon } of DRAWERS) {
   const css = stripComments(readFileSync(file, 'utf8'))
 
   describe(`${name} drawer list container has no surrounding padding`, () => {
@@ -89,5 +92,77 @@ for (const { name, file, body, row, emptyIcon } of DRAWERS) {
       const bare = decls!.replace(/var\([^()]*(?:\([^()]*\)[^()]*)*\)/g, '')
       expect(bare, `${emptyIcon} must not hardcode a colour`).not.toMatch(/#[0-9a-f]{3,8}\b/i)
     })
+
+    it(`lays out ${meta} like its sibling drawer's meta line`, () => {
+      // Both drawers render "name / meta" as the same two-line row. The meta
+      // line must therefore be constructed identically; a drift here is what
+      // made the file row a taller three-line row before.
+      const decls = ruleDecls(css, meta)
+      expect(decls, `${meta} rule must exist`).not.toBeNull()
+      expect(decls, `${meta} must be a flex row`).toMatch(/display:\s*flex/)
+      expect(decls, `${meta} must use the muted token`).toMatch(/color:\s*var\(--text-muted/)
+      expect(decls, `${meta} must be xs-sized`).toMatch(/font-size:\s*var\(--font-size-xs/)
+    })
   })
 }
+
+// The two rows must share the same visual skeleton: a name row + a meta line,
+// with a same-geometry badge. Compared field-by-field rather than as a whole
+// block so the one allowed difference (the badge COLOUR, which carries state)
+// does not mask a geometry drift.
+describe('the two share-list drawers read as one family', () => {
+  const sessionCss = stripComments(
+    readFileSync(join(__dirname, '..', 'SharedSessionsDrawer.vue'), 'utf8'),
+  )
+  const fileCss = stripComments(
+    readFileSync(join(__dirname, '..', '..', 'file', 'SharedFilesDrawer.vue'), 'utf8'),
+  )
+
+  const normalise = (decls: string) =>
+    decls
+      .split(';')
+      .map((d) => d.trim().replace(/\s*:\s*/, ':').replace(/\s+/g, ' '))
+      .filter(Boolean)
+      .sort()
+      .join(';')
+
+  it('gives both meta lines the same declarations', () => {
+    const a = ruleDecls(sessionCss, '.shared-session-meta')
+    const b = ruleDecls(fileCss, '.shared-file-meta')
+    expect(a, '.shared-session-meta rule must exist').not.toBeNull()
+    expect(b, '.shared-file-meta rule must exist').not.toBeNull()
+    expect(normalise(a!)).toBe(normalise(b!))
+  })
+
+  it('gives both badges the same geometry', () => {
+    // Geometry (padding / radius / font-size) is the skeleton; colour is the
+    // state signal and is deliberately allowed to differ (orange "archived"
+    // vs red "deleted").
+    const geom = (decls: string) =>
+      decls
+        .split(';')
+        .map((d) => d.trim().replace(/\s*:\s*/, ':').replace(/\s+/g, ' '))
+        .filter((d) => /^(padding|border-radius|font-size):/.test(d))
+        .sort()
+        .join(';')
+    const a = ruleDecls(sessionCss, '.shared-session-badge')
+    const b = ruleDecls(fileCss, '.shared-file-badge')
+    expect(a, '.shared-session-badge rule must exist').not.toBeNull()
+    expect(b, '.shared-file-badge rule must exist').not.toBeNull()
+    expect(geom(a!), 'both badges must share padding/radius/font-size').toBe(geom(b!))
+  })
+
+  it('renders both meta lines with a separator dot and the shared time formatter', () => {
+    for (const [css, sep, time] of [
+      [sessionCss, 'shared-session-sep', 'shared-session-meta'],
+      [fileCss, 'shared-file-sep', 'shared-file-meta'],
+    ] as const) {
+      // The separator only shows between the two meta parts.
+      expect(css, `${sep} rule must exist`).toMatch(
+        new RegExp(`\\.${sep}\\s*\\{`),
+      )
+      // Both drawers route createdAt through the single relative-time helper.
+      expect(css, `${time} must use formatRelativeTime`).toMatch(/formatRelativeTime\(/)
+    }
+  })
+})

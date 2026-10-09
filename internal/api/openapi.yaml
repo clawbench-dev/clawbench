@@ -2984,6 +2984,7 @@ paths:
           description: |
             分享列表，形如 `{"shares": [{token, sessionId, title, backend,
             messageCount, createdAt, archived}]}`，无分享时 `shares` 为空数组。
+            `createdAt` 为 RFC3339 UTC 时刻（如 `2026-10-09T13:32:07Z`），由前端本地化显示。
         "403":
           $ref: "#/components/responses/Error"
     delete:
@@ -3030,7 +3031,10 @@ paths:
       operationId: shareListAll
       responses:
         "200":
-          description: 分享列表
+          description: |
+            分享列表，形如 `{"shares": [{token, name, path, createdAt, exists}]}`，
+            无分享时 `shares` 为空数组。`createdAt` 为 RFC3339 UTC 时刻（如
+            `2026-10-09T13:32:07Z`），由前端本地化显示。
     delete:
       tags: [Share]
       summary: 撤销文件分享（单条或清空本项目）

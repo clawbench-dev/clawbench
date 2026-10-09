@@ -140,6 +140,22 @@ describe('SharedSessionsDrawer', () => {
     expect(wrapper.text()).toContain('9 messages')
   })
 
+  // The row renders createdAt through the app's single relative-time formatter,
+  // not the raw server string. The API now sends an RFC3339 UTC instant; a bare
+  // "2026-01-01 00:00:00" would otherwise be shown verbatim.
+  it('renders createdAt as a friendly relative time', async () => {
+    const twoHoursAgo = new Date(Date.now() - 2 * 3600000).toISOString()
+    fetchMock.mockResolvedValue(jsonResponse({
+      shares: [{ token: 'tok1', sessionId: 's1', title: 'A', backend: 'codebuddy', messageCount: 1, createdAt: twoHoursAgo, archived: false }],
+    }))
+    const wrapper = mountDrawer()
+    await openAndLoad(wrapper)
+
+    expect(wrapper.text()).toContain('2 hr ago')
+    // The raw ISO string must not leak into the row.
+    expect(wrapper.text()).not.toContain(twoHoursAgo)
+  })
+
   // The row badge in SessionList reads this module-level set, so loading the
   // list must seed it — otherwise the badge would only appear for sessions
   // shared during this page view.
