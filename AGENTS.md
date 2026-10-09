@@ -91,7 +91,7 @@ npx playwright test --config e2e/playwright.config.ts --project=chromium-coverag
 
 ### 前端（Vue 3 + TypeScript）
 
-源码根：`web/src/`。无 Vue Router，基于抽屉的单页布局。单一 `reactive()` store (`stores/app.ts`)。**同一时刻只允许一个标签页跑应用**（`useSingleTab.ts` 用 `BroadcastChannel` 选举，第二标签页只显示阻塞屏、不挂载应用）：服务端按 `localStorage` 里的 `client_id` 键控 WS 订阅槽，同源所有标签页共用同一个 id，两个标签页会互相顶掉 socket 并各自重连，实测 17 分钟 1402 次 subscribe、约 2900 请求/分钟。新增全局唯一资源的消费者前先确认是否也受此约束。
+源码根：`web/src/`。无 Vue Router，基于抽屉的单页布局。单一 `reactive()` store (`stores/app.ts`)。**同一时刻只允许一个标签页跑应用**（`useSingleTab.ts` 选举，第二标签页只显示阻塞屏、不挂载应用）：服务端按 `localStorage` 里的 `client_id` 键控 WS 订阅槽，同源所有标签页共用同一个 id，两个标签页会互相顶掉 socket 并各自重连，实测 17 分钟 1402 次 subscribe、约 2900 请求/分钟。新增全局唯一资源的消费者前先确认是否也受此约束。选举优先用 **Web Locks**（`navigator.locks` 单一独占锁；锁在上下文消亡时由浏览器自动释放，故 owner 崩溃/关闭/导航都不会留下"幽灵占用"永久阻塞等待方），不支持时回退 **BroadcastChannel**（jsdom、老浏览器/WebView）。owner 在**每次** `pagehide` 都释放槽位（含 bfcache 进入——冻结页无法运行代码，持锁会阻塞等待方最长 ~10 分钟），`pageshow` 时重新认领。
 
 Composable 与组件均按域分组（Chat、Session、Terminal、File、Git、Navigation/Gesture、Settings、Agent、Task、Infrastructure、System）。新建 composable 须放 `web/src/composables/` 并以 `useXxx` 命名，测试用 `*.test.ts` 同目录或 `__tests__/`。
 

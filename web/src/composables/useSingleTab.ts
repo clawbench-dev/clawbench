@@ -23,39 +23,58 @@
  *
  * How ownership is decided
  * ------------------------
- * A BroadcastChannel election, because it is available in every target browser
- * (Web Locks is not, notably in jsdom and older WebViews).
+ * Two tiers, in order of preference:
  *
- * The protocol is deliberately simple and self-healing:
- *   1. A tab starts by claiming ownership and broadcasts `claim`.
- *   2. Any other tab holding ownership answers `taken`, and the claimant
- *      stands down (shows the blocked screen).
- *   3. An owner that hears `claim` re-announces `taken`, so a claim racing a
- *      closing owner still resolves to whoever actually holds it.
- *   4. On unload an owner broadcasts `release`; a blocked tab then reloads to
- *      take over, so closing the primary tab hands ownership to the waiting one.
- *   5. A tab restored from the back/forward cache re-runs acquire(), because a
- *      frozen tab cannot observe `release`/`claim` messages and may have lost
- *      (or gained) ownership while it was suspended.
+ *   1. **Web Locks** (`navigator.locks`) — the primary mechanism. A single
+ *      exclusive lock named after the channel is the resource; whichever tab
+ *      holds it owns the app. The lock is released automatically when the
+ *      holding context dies (tab closed, navigated, crashed, or the bfcache
+ *      entry evicted), so a tab can never leave a "ghost owner" behind that
+ *      blocks everyone else forever — which is exactly the failure the
+ *      BroadcastChannel-only protocol was prone to (a `taken` verdict was
+ *      never re-checked, so a lost `release` pinned the blocked tab until the
+ *      user reloaded by hand). A blocked tab also issues a queued lock request
+ *      that the browser grants the instant the owner goes away, which is the
+ *      hand-over signal.
  *
- * The claim window is short (CLAIM_TIMEOUT_MS). If no owner answers, the
- * claimant assumes it is the only tab and proceeds — a lost race then resolves
- * as "both tabs think they own it", which is no worse than today's behaviour
- * and is corrected on the next reload.
+ *   2. **BroadcastChannel** — the fallback for environments without Web Locks
+ *      (jsdom in tests, and older browsers / WebViews). The protocol is
+ *      deliberately simple and self-healing:
+ *        a. A tab starts by claiming ownership and broadcasts `claim`.
+ *        b. Any other tab holding ownership answers `taken`, and the claimant
+ *           stands down (shows the blocked screen).
+ *        c. An owner that hears `claim` re-announces `taken`, so a claim racing
+ *           a closing owner still resolves to whoever actually holds it.
+ *        d. On unload an owner broadcasts `release`; a blocked tab then reloads
+ *           to take over, so closing the primary tab hands ownership to the
+ *           waiting one.
+ *        e. A tab restored from the back/forward cache re-runs acquire(),
+ *           because a frozen tab cannot observe `release`/`claim` messages and
+ *           may have lost (or gained) ownership while it was suspended.
+ *      Its claim window is short (CLAIM_TIMEOUT_MS): if no owner answers, the
+ *      claimant assumes it is the only tab and proceeds — a lost race then
+ *      resolves as "both tabs think they own it", which is no worse than the
+ *      status quo and is corrected on the next reload.
+ *
+ * Both tiers share the same public contract, so `main.ts` is agnostic to which
+ * one is active.
  */
 
-/** Channel name. Versioned so a future protocol change cannot collide. */
+/** Channel / lock name. Versioned so a future protocol change cannot collide. */
 const CHANNEL_NAME = 'clawbench-single-tab-v1'
+const LOCK_NAME = 'clawbench-single-tab-v1'
 
 /**
  * How long a claiming tab waits for an existing owner to object.
  *
- * This delay is paid on EVERY page load, including the common single-tab case,
- * so it is kept small. A BroadcastChannel round-trip is sub-millisecond on the
- * same machine; the margin is for a busy main thread, not for network latency.
- * Measured: a lone tab's acquire() cost ~405ms at 400ms and ~155ms at 150ms.
- * Being too aggressive is self-correcting — a missed objection means two tabs
- * briefly both think they own it, which the next reload resolves.
+ * This applies only to the BroadcastChannel fallback; Web Locks reports
+ * availability directly. It is paid on EVERY page load that uses the fallback,
+ * including the common single-tab case, so it is kept small. A BroadcastChannel
+ * round-trip is sub-millisecond on the same machine; the margin is for a busy
+ * main thread, not for network latency. Measured: a lone tab's acquire() cost
+ * ~405ms at 400ms and ~155ms at 150ms. Being too aggressive is self-correcting
+ * — a missed objection means two tabs briefly both think they own it, which the
+ * next reload resolves.
  */
 export const CLAIM_TIMEOUT_MS = 150
 
@@ -104,6 +123,21 @@ function randomTabId(): string {
 }
 
 /**
+ * The Web Locks `LockManager`, or null where the API is unavailable.
+ *
+ * Typed as present in lib.dom, but undefined at runtime in jsdom and in older
+ * WebViews, so the probe is a real one, not a formality.
+ */
+function getLockManager(): LockManager | null {
+  try {
+    const locks = (navigator as Navigator & { locks?: LockManager }).locks
+    return locks && typeof locks.request === 'function' ? locks : null
+  } catch {
+    return null
+  }
+}
+
+/**
  * True when the guard should be skipped entirely.
  *
  * - Child frames share the parent's storage and would otherwise fight it for
@@ -133,6 +167,22 @@ export function createSingleTabGuard(options: SingleTabGuardOptions = {}): Singl
   let contestedBy: string | null = null
   // Fired when the owner released ownership and this tab may take over.
   let onOwnerReleased: (() => void) | null = null
+  // True once we have observed the owner releasing (either tier). Latched so a
+  // release that lands BEFORE whenOwnerReleases() is registered is not lost —
+  // the owner can go away in the window between acquire() resolving false and
+  // main.ts wiring up the reload callback.
+  let ownerReleased = false
+
+  // ── Web Locks state ──────────────────────────────────────────────────────
+  // True while this tab holds the exclusive lock. Re-entry (bfcache restore)
+  // short-circuits on it: a fresh `ifAvailable` request would report null
+  // because we hold the lock ourselves.
+  let holdsLock = false
+  // Resolving this releases the lock the browser is holding on our behalf.
+  let releaseHold: (() => void) | null = null
+  // A blocked tab registers one queued lock request to learn when the owner
+  // goes away; the browser grants it the moment the lock frees up.
+  let releaseWatchStarted = false
 
   function post(msg: GuardMessage) {
     try {
@@ -140,6 +190,17 @@ export function createSingleTabGuard(options: SingleTabGuardOptions = {}): Singl
     } catch {
       // A closed channel throws; ownership state is unaffected.
     }
+  }
+
+  /**
+   * Record that the owner went away and fire the reload callback if one is
+   * registered. Latches the event so a release observed before the callback is
+   * wired up still triggers a reload once whenOwnerReleases() runs.
+   */
+  function notifyOwnerReleased() {
+    if (disposed) return
+    ownerReleased = true
+    onOwnerReleased?.()
   }
 
   function openChannel(): BroadcastChannel | null {
@@ -161,7 +222,7 @@ export function createSingleTabGuard(options: SingleTabGuardOptions = {}): Singl
           return
         }
         if (msg.type === 'release') {
-          onOwnerReleased?.()
+          notifyOwnerReleased()
         }
       }
       return ch
@@ -170,9 +231,99 @@ export function createSingleTabGuard(options: SingleTabGuardOptions = {}): Singl
     }
   }
 
-  async function acquire(): Promise<boolean> {
-    if (guardNotApplicable()) return true
+  /**
+   * Claim the app through Web Locks.
+   *
+   * `ifAvailable: true` never queues: the callback runs immediately with the
+   * lock when it is free, or with null when another tab holds it. On success we
+   * keep the callback pending (via `releaseHold`) so the browser holds the lock
+   * for as long as this tab lives — releasing it on teardown, crash, or
+   * navigation without any cooperation from us.
+   *
+   * Returns true when granted, false when another tab holds the lock, and null
+   * when Web Locks itself failed — the caller then falls back to the
+   * BroadcastChannel tier rather than blocking on an API error.
+   */
+  async function acquireViaLocks(locks: LockManager): Promise<boolean | null> {
+    // Re-entry while we still hold the lock means we are the owner (a
+    // pageshow re-validation). A new request would see our own lock as taken
+    // and report null, so short-circuit rather than misread it as contested.
+    if (holdsLock) {
+      owns = true
+      return true
+    }
 
+    const granted = await new Promise<boolean | null>((resolve) => {
+      let settled = false
+      const finish = (value: boolean | null) => {
+        if (!settled) {
+          settled = true
+          resolve(value)
+        }
+      }
+      try {
+        const req = locks.request(LOCK_NAME, { ifAvailable: true }, (lock) => {
+          if (!lock) {
+            // Another tab holds it. We are blocked.
+            finish(false)
+            return undefined
+          }
+          // Keep the callback pending until release()/dispose(): the browser
+          // holds the lock while this promise is unsettled.
+          const hold = new Promise<void>((res) => { releaseHold = res })
+          finish(true)
+          return hold
+        })
+        // `ifAvailable` is not expected to reject, but if it does we must not
+        // read that as "another tab owns it" — report the failure so the
+        // caller can fall back.
+        void Promise.resolve(req).catch(() => finish(null))
+      } catch {
+        finish(null)
+      }
+    })
+
+    if (granted === null) return null
+    if (!granted) {
+      owns = false
+      watchForLockRelease(locks)
+      return false
+    }
+
+    holdsLock = true
+    owns = true
+    return true
+  }
+
+  /**
+   * Ask the browser to tell us when the lock frees up.
+   *
+   * A queued (non-`ifAvailable`) request is granted the instant the current
+   * holder releases it — including when that holder is a tab that closed,
+   * navigated, or crashed without running any cleanup. This is the Web Locks
+   * replacement for the BroadcastChannel `release` message, and it cannot get
+   * stuck the way a lost message can.
+   */
+  function watchForLockRelease(locks: LockManager) {
+    if (releaseWatchStarted || disposed) return
+    releaseWatchStarted = true
+    try {
+      void Promise.resolve(
+        locks.request(LOCK_NAME, () => {
+          // Granted: the previous owner is gone. Return immediately, which
+          // frees the lock again for whoever reloads next.
+          notifyOwnerReleased()
+        })
+      ).catch(() => {
+        // A rejected watch is harmless; the tab simply never auto-reloads.
+      })
+    } catch {
+      // Synchronous throw: no watch, no auto-reload.
+    }
+  }
+
+  /** Claim the app through the BroadcastChannel protocol (fallback). */
+  async function acquireViaChannel(): Promise<boolean> {
     // Reuse an existing channel on re-entry (a tab restored from the
     // back/forward cache re-acquires). Opening a second one would leave the
     // first subscribed, so `taken`/`release` could arrive twice.
@@ -204,15 +355,37 @@ export function createSingleTabGuard(options: SingleTabGuardOptions = {}): Singl
     return true
   }
 
+  async function acquire(): Promise<boolean> {
+    if (guardNotApplicable()) return true
+
+    const locks = getLockManager()
+    if (locks) {
+      const viaLocks = await acquireViaLocks(locks)
+      if (viaLocks !== null) return viaLocks
+      // Web Locks errored — fall through to the BroadcastChannel tier rather
+      // than leaving the tab blocked on an API failure.
+    }
+    return acquireViaChannel()
+  }
+
   function release() {
     if (!owns) return
     owns = false
+    holdsLock = false
+    // Releasing the browser-held lock promotes a waiting tab immediately.
+    releaseHold?.()
+    releaseHold = null
     post({ type: 'release', tabId })
   }
 
   function dispose() {
     disposed = true
     onOwnerReleased = null
+    // Drop the lock now rather than waiting for the browser to reclaim it on
+    // teardown, so a waiting tab is promoted without delay.
+    releaseHold?.()
+    releaseHold = null
+    holdsLock = false
     try {
       channel?.close()
     } catch {
@@ -223,6 +396,10 @@ export function createSingleTabGuard(options: SingleTabGuardOptions = {}): Singl
 
   function whenOwnerReleases(cb: () => void) {
     onOwnerReleased = cb
+    // The owner may have gone away before this callback was wired up (the
+    // window between acquire() resolving false and main.ts registering the
+    // reload). Replay the latched release so the tab still takes over.
+    if (ownerReleased) cb()
   }
 
   /** Test-only: expose the channel so tests can assert it is not re-created. */
