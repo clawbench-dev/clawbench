@@ -2217,6 +2217,23 @@ describe('ChatInputBar', () => {
     expect(wrapper.find('[data-action="toggle-parallel"]').exists()).toBe(false)
   })
 
+  it('shows the group-settings button only in a group session', async () => {
+    const group = mountBar({ isGroupSession: true })
+    await group.vm.$nextTick()
+    expect(group.find('[data-action="group-settings"]').exists()).toBe(true)
+
+    const single = mountBar({ isGroupSession: false })
+    await single.vm.$nextTick()
+    expect(single.find('[data-action="group-settings"]').exists()).toBe(false)
+  })
+
+  it('emits open-group-settings when the group-settings button is clicked', async () => {
+    const wrapper = mountBar({ isGroupSession: true })
+    await wrapper.vm.$nextTick()
+    await wrapper.find('[data-action="group-settings"]').trigger('click')
+    expect(wrapper.emitted('open-group-settings')).toBeTruthy()
+  })
+
   it('carries the member avatar/backend into the @ menu items', async () => {
     const { store } = await import('@/stores/app.ts')
     store.state.currentDir = ''

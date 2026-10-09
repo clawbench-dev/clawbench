@@ -75,6 +75,12 @@ function openSheet() {
   sheetRef.value?.open()
 }
 
+// The action bar's group-settings button opens the exact same sheet as clicking
+// the stack, so it drives this component instead of mounting a second instance
+// (a second instance would mean a second roster fetch and two sheets that can
+// drift out of sync).
+defineExpose({ open: openSheet })
+
 // The badge mirrors the session list's mode glyphs: crown = host mode (the host
 // routes turns), @ = free mode (members @-mention each other to hand over the
 // floor). `mode` is undefined outside a group, which falls back to the crown —

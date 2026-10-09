@@ -149,6 +149,7 @@
       @switch-mode="handleSwitchMode"
       @switch-transport="handleSwitchTransport"
       @sync-acp-session="handleSyncAcpSession"
+      @open-group-settings="$emit('open-group-settings')"
     />
 
   </div>
@@ -320,7 +321,7 @@ const props = defineProps({
     resolveGroupSpeaker: { type: Function, default: null },
     resolveGroupSpeakerByName: { type: Function, default: null },
 })
-const emit = defineEmits(['open', 'message', 'task-card-click', 'open-session-search'])
+const emit = defineEmits(['open', 'message', 'task-card-click', 'open-session-search', 'open-group-settings'])
 
 // ── Singletons ──
 const identity = useSessionIdentity()

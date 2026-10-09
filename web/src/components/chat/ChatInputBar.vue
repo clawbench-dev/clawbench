@@ -48,6 +48,17 @@
         <MessageSquareShare :size="14" />
         <span class="chat-action-label">{{ t('chat.actions.wideLabels.share') }}</span>
       </button>
+      <!-- Group sessions only: opens the SAME member/settings sheet as clicking
+           the header avatar stack. The header stack is the primary entry, but on
+           narrow panes the action bar is where every other session action lives,
+           so the group settings need a door here too. -->
+      <button v-if="isGroupSession" class="chat-action-btn"
+        data-action="group-settings"
+        @click="$emit('open-group-settings')"
+        :title="t('group.settings')">
+        <Users :size="14" />
+        <span class="chat-action-label">{{ t('chat.actions.wideLabels.groupSettings') }}</span>
+      </button>
       <!-- Archive sits LAST: it is the destructive/terminal action on the
            session, so it is separated from the navigation buttons. -->
       <button class="chat-action-btn chat-action-btn-archive" :class="{ disabled: !currentSessionId }"
@@ -351,7 +362,7 @@
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted, defineAsyncComponent } from 'vue'
 import { pendingChatInput as pendingChatInputRef, consumePendingChatInput } from '@/utils/chatInputInjection'
 import { useI18n } from 'vue-i18n'
-import { List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Zap, Compass, Activity, MessagesSquare, Minimize2, Sparkles, ArrowRightLeft, Settings, TextCursorInput, MessageSquareShare, Check } from 'lucide-vue-next'
+import { List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Zap, Compass, Activity, MessagesSquare, Minimize2, Sparkles, ArrowRightLeft, Settings, TextCursorInput, MessageSquareShare, Check, Users } from 'lucide-vue-next'
 import { computeRecentReferencedFiles, isImeCompositionEvent } from '@/utils/chatInputUtils.ts'
 import { measureCaretVisualRows } from '@/utils/textareaVisualRows.ts'
 import { fuzzyMatch, parseAtQuery, parseSlashQuery, buildFileCandidates } from '@/utils/completionMatch.ts'
@@ -665,6 +676,7 @@ const emit = defineEmits([
   'switch-mode',
   'switch-transport',
   'sync-acp-session',
+  'open-group-settings',
 ])
 
 const inputText = ref('')

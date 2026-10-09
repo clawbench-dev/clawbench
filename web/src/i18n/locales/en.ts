@@ -556,6 +556,7 @@ export default {
         share: 'Share',
         speak: 'Speak',
         refresh: 'Refresh',
+        groupSettings: 'Group',
       },
     },
     sessionInfo: {
@@ -1135,6 +1136,7 @@ export default {
     hostMode: 'Host mode',
     freeMode: 'Free mode',
     addMembers: 'Add members',
+    settings: 'Group settings',
     members: 'Members',
     left: 'Left',
     maxRounds: 'Max rounds',

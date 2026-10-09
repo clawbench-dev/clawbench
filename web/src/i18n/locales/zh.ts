@@ -559,6 +559,7 @@ export default {
         share: '分享',
         speak: '朗读',
         refresh: '刷新',
+        groupSettings: '群聊',
       },
     },
     sessionInfo: {
@@ -1139,6 +1140,7 @@ export default {
     hostMode: '主持人模式',
     freeMode: '自由模式',
     addMembers: '添加成员',
+    settings: '群聊设置',
     members: '成员',
     left: '已离场',
     maxRounds: '最大轮数',

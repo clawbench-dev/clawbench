@@ -292,6 +292,7 @@
                          keep the original icon + name. -->
                     <GroupAvatarStack
                       v-if="isGroupSession"
+                      ref="groupAvatarStackRef"
                       :sessionId="sessionIdentity.currentSessionId.value"
                       :members="groupMembers"
                       :hostMemberId="groupHostMemberId"
@@ -336,6 +337,7 @@
                       @open="switchTab('chat')"
                       @task-card-click="onTaskCardClick"
                       @open-session-search="sessionSearchDrawer.open()"
+                      @open-group-settings="openGroupSettings"
                     />
                   </TabPanel>
                   <!-- The hint is centered on the CHAT column, not on
@@ -1294,6 +1296,14 @@ const isGroupSession = computed(() => sessionIdentity.currentSessionType.value =
 // identity state (loaded from the group session's GET /api/ai/chat response,
 // which the backend keeps in sync with the member rows — decision #61).
 const groupAutoApprove = sessionIdentity.autoApprove
+
+// The header avatar stack owns the GroupMemberSheet. The action bar's
+// group-settings button opens that SAME sheet (not a second instance), so the
+// roster is fetched once and both entry points stay in sync.
+const groupAvatarStackRef = ref<InstanceType<typeof GroupAvatarStack> | null>(null)
+function openGroupSettings() {
+  groupAvatarStackRef.value?.open()
+}
 
 const sessionSidebar = useSessionSidebar()
 sessionSidebar.registerOpenDrawer(() => sessionIdentity.sessionDrawer.open())
