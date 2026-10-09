@@ -132,3 +132,29 @@ describe('bridge: tunnel transport IPC', () => {
     expect(invoke('native:set-tunnel-transport', 'garbage')).toBe(false)
   })
 })
+
+describe('bridge: native notification IPC', () => {
+  beforeEach(() => {
+    handlers.clear()
+    onHandlers.clear()
+    vi.clearAllMocks()
+    registerBridge()
+  })
+
+  afterEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('registers the dismiss channel the preload invokes', () => {
+    // The preload calls `native:dismiss-notification`; a rename on either side
+    // would make dismissal a silent no-op ("No handler registered"), which no
+    // type checker can see — the two sides are separate files.
+    expect(handlers.has('native:dismiss-notification')).toBe(true)
+  })
+
+  it('dismiss-notification resolves without throwing for any subject', async () => {
+    // Best-effort contract: an unknown subject is a no-op, never a rejection.
+    await expect(invoke('native:dismiss-notification', '', 's1')).resolves.toBeUndefined()
+    await expect(invoke('native:dismiss-notification', '7', '')).resolves.toBeUndefined()
+  })
+})

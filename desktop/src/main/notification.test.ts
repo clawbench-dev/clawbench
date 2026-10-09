@@ -9,6 +9,8 @@ const h = vi.hoisted(() => {
   return {
     showMock: vi.fn(),
     clickHandler: { current: null as null | (() => void) },
+    closeHandler: { current: null as null | (() => void) },
+    closeMock: vi.fn(),
     sent: [] as Array<{ channel: string; nav: unknown }>,
     winState: { minimized: false, visible: true, loading: false, focused: false, destroyed: false },
     calls: { restore: 0, show: 0, focus: 0 },
@@ -22,9 +24,11 @@ vi.mock('electron', () => ({
     constructor(public opts: { title: string; body: string }) {}
     on(event: string, cb: () => void) {
       if (event === 'click') h.clickHandler.current = cb
+      if (event === 'close') h.closeHandler.current = cb
       return this
     }
     show() { h.showMock() }
+    close() { h.closeMock() }
   },
 }))
 
@@ -48,7 +52,9 @@ vi.mock('./window', () => ({
 
 import {
   showTerminalNotification,
+  dismissTerminalNotification,
   getPendingNavigationJson,
+  _resetActiveNotificationsForTesting,
 } from './notification'
 import { markRendererReady, markRendererLoading, resetRendererReady } from './navReady'
 import { NAV_CHANNELS, WINDOW_STATE_CHANNEL, PORT_REBOUND_CHANNEL } from '../shared/types'
@@ -102,7 +108,9 @@ describe('showTerminalNotification', () => {
   beforeEach(() => {
     h.sent.length = 0
     h.clickHandler.current = null
+    h.closeHandler.current = null
     h.showMock.mockReset()
+    h.closeMock.mockReset()
     h.windowAvailable = true
     h.winState.minimized = false
     h.winState.loading = false
@@ -117,6 +125,7 @@ describe('showTerminalNotification', () => {
     h.calls.show = 0
     h.calls.focus = 0
     resetRendererReady()
+    _resetActiveNotificationsForTesting()
   })
 
   it('routes a session notification click to clawbench-open-session', () => {
@@ -340,5 +349,110 @@ describe('showTerminalNotification', () => {
     showTerminalNotification('done', 'body', { sessionId: 's1' })
 
     expect(h.showMock).toHaveBeenCalledTimes(1)
+  })
+})
+
+// ── 已读后主动消除通知 ──
+//
+// 缺陷：通知只在用户点它自己时才消失；手动打开 App 读完后，旧通知仍留在通知
+// 中心，再点会重复派发深链。修复=保留句柄 + dismissTerminalNotification。
+
+describe('dismissTerminalNotification', () => {
+  beforeEach(() => {
+    h.sent.length = 0
+    h.clickHandler.current = null
+    h.closeHandler.current = null
+    h.showMock.mockReset()
+    h.closeMock.mockReset()
+    h.windowAvailable = true
+    h.winState.minimized = true
+    h.winState.visible = false
+    h.winState.destroyed = false
+    resetRendererReady()
+    markRendererReady()
+    _resetActiveNotificationsForTesting()
+  })
+
+  it('closes the retained notification for a read session', () => {
+    showTerminalNotification('done', 'body', { sessionId: 's1' })
+    expect(h.showMock).toHaveBeenCalledTimes(1)
+
+    dismissTerminalNotification(undefined, 's1')
+
+    expect(h.closeMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('closes the retained notification for a read task', () => {
+    showTerminalNotification('done', 'body', { taskId: '7', executionId: 'e1' })
+
+    dismissTerminalNotification('7', undefined)
+
+    expect(h.closeMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('a task notification is keyed by its task, not its session', () => {
+    // A task notification carries BOTH ids; keying it by session would let a
+    // later session read dismiss the wrong notification.
+    showTerminalNotification('done', 'body', { taskId: '7', sessionId: 's1' })
+
+    dismissTerminalNotification(undefined, 's1') // session read: must NOT match
+    expect(h.closeMock).not.toHaveBeenCalled()
+
+    dismissTerminalNotification('7', undefined) // task read: must match
+    expect(h.closeMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('is a no-op when nothing was shown for that subject', () => {
+    dismissTerminalNotification('nonexistent', undefined)
+    expect(h.closeMock).not.toHaveBeenCalled()
+  })
+
+  it('is a no-op with no ids', () => {
+    showTerminalNotification('done', 'body', { sessionId: 's1' })
+    dismissTerminalNotification(undefined, undefined)
+    expect(h.closeMock).not.toHaveBeenCalled()
+  })
+
+  it('dismisses only once — a second dismiss is a no-op', () => {
+    showTerminalNotification('done', 'body', { sessionId: 's1' })
+    dismissTerminalNotification(undefined, 's1')
+    dismissTerminalNotification(undefined, 's1')
+    expect(h.closeMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('forgets the handle when the OS closes the notification', () => {
+    // If the user dismissed it themselves, the map must not keep a stale
+    // handle (a later dismiss would close an unrelated, reused instance).
+    showTerminalNotification('done', 'body', { sessionId: 's1' })
+    h.closeHandler.current?.() // simulate the OS/user close event
+
+    dismissTerminalNotification(undefined, 's1')
+    expect(h.closeMock).not.toHaveBeenCalled()
+  })
+
+  it('replaces (closes) the previous notification for the same subject', () => {
+    // A task emits `running` then `completed`; both map to the same key. Without
+    // replace-by-key, BOTH stay in the tray and a dismiss only closes one.
+    showTerminalNotification('started', 'body', { taskId: '7' })
+    h.closeMock.mockClear()
+    showTerminalNotification('done', 'body', { taskId: '7' })
+
+    expect(h.closeMock).toHaveBeenCalledTimes(1) // the superseded one is closed
+
+    dismissTerminalNotification('7', undefined)
+    expect(h.closeMock).toHaveBeenCalledTimes(2) // and the current one on read
+  })
+
+  it('a superseded notification close does not evict its successor', () => {
+    // The replaced instance's `close` event fires; it must not delete the key
+    // now owned by the newer handle.
+    showTerminalNotification('started', 'body', { taskId: '7' })
+    const supersededClose = h.closeHandler.current
+    showTerminalNotification('done', 'body', { taskId: '7' })
+
+    supersededClose?.() // the old instance's close event arrives late
+
+    dismissTerminalNotification('7', undefined)
+    expect(h.closeMock).toHaveBeenCalled() // successor still dismissible
   })
 })

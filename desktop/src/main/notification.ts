@@ -5,6 +5,13 @@ import type { NavChannel, NotificationNav } from '../shared/types'
 
 let pendingNavigation: string | null = null
 
+/**
+ * Retained OS notification handles, keyed by subject ("task:<id>" /
+ * "session:<id>"). Electron gives no way to enumerate or remove a notification
+ * without its handle, so dismissal requires holding one from `show()` time.
+ */
+const activeNotifications = new Map<string, Notification>()
+
 export function getPendingNavigationJson(): string | null {
   const n = pendingNavigation
   pendingNavigation = null
@@ -99,5 +106,71 @@ export function showTerminalNotification(title: string, body: string, nav?: Noti
   n.on('click', () => {
     if (nav) sendNavToRenderer(channelFor(nav), nav)
   })
+  // Retain the handle so it can be dismissed later. Without a retained handle
+  // there is no way to remove a notification that is still in the OS tray: the
+  // user reads the session by opening the app (not by clicking the
+  // notification), and the stale notification then re-dispatches its deep link
+  // on a later click. Keyed like the Android side (task wins over session).
+  const key = notificationKey(nav)
+  if (key) {
+    // Electron notifications have no tag, so posting a second one for the same
+    // subject would leave BOTH in the tray and a later dismiss would only close
+    // the newer. Close the previous handle to mirror Android's replace-by-id
+    // semantics (a task emits both `running` and `completed`).
+    const prev = activeNotifications.get(key)
+    if (prev) {
+      try { prev.close() } catch { /* already gone */ }
+    }
+    activeNotifications.set(key, n)
+  }
+  n.on('close', () => {
+    // Only forget the key if this instance is still the current one — a
+    // replaced (superseded) notification's close must not evict its successor.
+    if (key && activeNotifications.get(key) === n) activeNotifications.delete(key)
+  })
   n.show()
+}
+
+/**
+ * Dismiss the retained notification for a session or task.
+ *
+ * Called when the renderer learns the subject was marked read (opening the
+ * session/task detail). Symmetric with Android's cancelEventNotification.
+ * Best-effort: an unknown key is a no-op.
+ */
+export function dismissTerminalNotification(taskId?: string, sessionId?: string): void {
+  const key = taskId ? `task:${taskId}` : sessionId ? `session:${sessionId}` : ''
+  if (!key) return
+  const n = activeNotifications.get(key)
+  if (!n) return
+  activeNotifications.delete(key)
+  try {
+    n.close()
+  } catch {
+    // Already closed / dismissed by the OS — nothing to do.
+  }
+}
+
+/**
+ * Stable identity for a notification, matching the renderer's nav payload.
+ *
+ * A task notification carries both a taskId and a sessionId; the task must win,
+ * or a task's notification would be keyed to its session and a later session
+ * read would dismiss the wrong thing (and vice versa).
+ */
+function notificationKey(nav?: NotificationNav): string | null {
+  if (!nav) return null
+  if (nav.taskId) return `task:${nav.taskId}`
+  if (nav.sessionId) return `session:${nav.sessionId}`
+  return null
+}
+
+/**
+ * Test-only: drop all retained handles without closing them.
+ *
+ * `activeNotifications` is module-level state that outlives a single test, so
+ * suites must reset it or handles from earlier cases leak into later ones.
+ */
+export function _resetActiveNotificationsForTesting(): void {
+  activeNotifications.clear()
 }

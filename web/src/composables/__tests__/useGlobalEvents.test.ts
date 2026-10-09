@@ -38,9 +38,11 @@ vi.mock('@/i18n', () => ({
 // in sync with the in-memory cursor so background push doesn't re-deliver
 // terminal events the user already saw in the foreground.
 const mockUpdateLastSeenEventId = vi.fn()
+const mockDismissEventNotification = vi.fn()
 vi.mock('@/utils/clawbenchNative', () => ({
     getNative: () => ({
         updateLastSeenEventId: (...args: unknown[]) => mockUpdateLastSeenEventId(...args),
+        dismissEventNotification: (...args: unknown[]) => mockDismissEventNotification(...args),
     }),
 }))
 
@@ -126,6 +128,7 @@ describe('useGlobalEvents', () => {
         mockShowBrowserNotification.mockReset()
         mockPlayNotificationSound.mockReset()
         mockUpdateLastSeenEventId.mockReset()
+        mockDismissEventNotification.mockReset()
         appModeState.value = false  // Default to browser mode
         desktopAppState.value = false  // Default to non-desktop (Android/web)
         originalWebSocket = globalThis.WebSocket
@@ -291,6 +294,44 @@ describe('useGlobalEvents', () => {
             const taskId = nextId()
             ws.receive({ type: 'event', id: taskId, event: 'task_update', data: { status: 'failed' } })
             expect(mockUpdateLastSeenEventId).toHaveBeenLastCalledWith(taskId)
+        })
+    })
+
+    describe('native notification dismissal on read', () => {
+        it('session read dismisses the native notification', () => {
+            const ws = connectAndGetWs()
+
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'session_update',
+                data: { session_id: 's1', status: 'read' },
+            })
+
+            expect(mockDismissEventNotification).toHaveBeenCalledWith('', 's1')
+        })
+
+        it('task read dismisses the native notification by task id', () => {
+            const ws = connectAndGetWs()
+
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'task_update',
+                data: { task_id: '7', status: 'read' },
+            })
+
+            expect(mockDismissEventNotification).toHaveBeenCalledWith('7', '')
+        })
+
+        it('does not dismiss for non-read statuses', () => {
+            const ws = connectAndGetWs()
+
+            ws.receive({ type: 'event', id: nextId(), event: 'session_update', data: { session_id: 's1', status: 'completed' } })
+            ws.receive({ type: 'event', id: nextId(), event: 'session_update', data: { session_id: 's1', status: 'running' } })
+            ws.receive({ type: 'event', id: nextId(), event: 'task_update', data: { task_id: '7', status: 'failed' } })
+
+            expect(mockDismissEventNotification).not.toHaveBeenCalled()
         })
     })
 

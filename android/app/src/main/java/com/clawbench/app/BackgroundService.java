@@ -94,7 +94,6 @@ public class BackgroundService extends Service {
     private static final int NOTIFICATION_ID = 2;
     private static final String CHANNEL_ID = "clawbench_background";
     private static final String EVENTS_CHANNEL_ID = "clawbench_events";
-    private static final int EVENTS_NOTIFICATION_ID = 3;
     private static final String PREFS_NAME = "clawbench_prefs";
     private static final String KEY_SERVER_URL = "server_url";
     private static final String KEY_SSH_PASSWORD = "ssh_password";
@@ -360,6 +359,29 @@ public class BackgroundService extends Service {
                 .edit()
                 .putString(KEY_LAST_SEEN_EVENT_ID, eventId)
                 .apply();
+    }
+
+    /**
+     * Cancel the event notification for a session or task.
+     *
+     * <p>The notification only auto-cancels when the user taps IT; opening the
+     * app and reading the message leaves the stale notification in the shade,
+     * and a later tap re-dispatches the deep link (the reported duplicate
+     * open/load). This is the active cancel path.
+     *
+     * <p>Static + Context-based because the caller is the WebView bridge
+     * (MainActivity) and the service may not be running. Best-effort: a missing
+     * NotificationManager is a no-op. Passing a taskId cancels the task band;
+     * otherwise the session band is cancelled.
+     */
+    public static void cancelEventNotification(Context context, String taskId, String sessionId) {
+        try {
+            NotificationManager nm = context.getSystemService(NotificationManager.class);
+            if (nm == null) return;
+            nm.cancel(EventNotificationIds.forEvent(taskId, sessionId));
+        } catch (Exception e) {
+            AppLog.w(TAG, "cancelEventNotification failed", e);
+        }
     }
 
     /**
@@ -3447,6 +3469,19 @@ public class BackgroundService extends Service {
                 // must NOT advance the cursor (see advancesCursor).
                 String status = data.optString("status", "");
 
+                // "read" is a dismissal cue, not a notification: the subject was
+                // marked read (here or on another client), so its event
+                // notification must leave the shade. Without this the stale
+                // notification stays tappable and re-dispatches the deep link.
+                // Mirrors the session path's "read" status; the task path now
+                // emits the same status (emitTaskReadEvent). Never notifiable and
+                // never cursor-advancing (it is not persisted server-side).
+                if ("read".equals(status)
+                        && ("session_update".equals(event) || "task_update".equals(event))) {
+                    cancelEventNotification(BackgroundService.this, data.optString("task_id", ""),
+                            data.optString("session_id", ""));
+                }
+
                 if (NativeNotificationPolicy.isNotifiableEvent(event, status)) {
                     // `replayed` is set by the server on reconnect-buffer replays.
                     // `suppress_notification` is currently only produced by the
@@ -3628,13 +3663,10 @@ public class BackgroundService extends Service {
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
             );
 
-            // Use hash of session_id or task_id as notification ID so each gets its own notification
-            int notifId = EVENTS_NOTIFICATION_ID;
-            if (!taskId.isEmpty()) {
-                notifId = EVENTS_NOTIFICATION_ID + 1000 + Math.abs(taskId.hashCode() % 1000);
-            } else if (!sessionId.isEmpty()) {
-                notifId = EVENTS_NOTIFICATION_ID + Math.abs(sessionId.hashCode() % 1000);
-            }
+            // Deterministic per-subject id (shared with the cancel path — see
+            // EventNotificationIds). A task event carries both ids and must
+            // resolve to the task band.
+            int notifId = EventNotificationIds.forEvent(taskId, sessionId);
 
             Notification notification = new NotificationCompat.Builder(this, EVENTS_CHANNEL_ID)
                     .setContentTitle(title)
@@ -4019,12 +4051,7 @@ public class BackgroundService extends Service {
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
             );
 
-            int notifId = EVENTS_NOTIFICATION_ID;
-            if (!taskId.isEmpty()) {
-                notifId = EVENTS_NOTIFICATION_ID + 1000 + Math.abs(taskId.hashCode() % 1000);
-            } else if (!sessionId.isEmpty()) {
-                notifId = EVENTS_NOTIFICATION_ID + Math.abs(sessionId.hashCode() % 1000);
-            }
+            int notifId = EventNotificationIds.forEvent(taskId, sessionId);
 
             Notification notification = new NotificationCompat.Builder(context, EVENTS_CHANNEL_ID)
                     .setContentTitle(title)

@@ -209,6 +209,19 @@ export interface ClawBenchNative {
   reloadApp?(): void | Promise<void>
   /** Optional (Electron): show a native OS notification. Click dispatches session/task navigation. */
   nativeNotify?(title: string, body: string, nav?: NotificationNav): Promise<void>
+  /**
+   * Optional (Electron/Android): dismiss the native OS notification for a
+   * session or task once its subject is marked read.
+   *
+   * The notification only auto-cancels when the user taps IT; opening the app
+   * and reading the message leaves a stale notification in the tray, whose tap
+   * re-dispatches the deep link (duplicate open/load). The renderer calls this
+   * when it observes a `status:"read"` event. A taskId cancels the task's
+   * notification; otherwise the session's is cancelled. Optional: older hosts
+   * lack it and the call is a safe no-op. Android implements it synchronously
+   * (void), Electron asynchronously (Promise) — the caller fires and forgets.
+   */
+  dismissEventNotification?(taskId: string, sessionId: string): void | Promise<void>
   /** Optional (Electron/Android): sync native UI (status bar, splash, floating window) with the app theme. */
   setTheme?(themeId: string, bg?: string, text?: string, textSecondary?: string, accent?: string): void
   /** Optional (Android): get the persisted app theme ID. */

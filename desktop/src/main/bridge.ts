@@ -20,7 +20,7 @@ import {
 } from './window'
 import { downloadFileByPath, downloadFileByPathTo, downloadByUrl, downloadBlob, cancelDownload } from './download'
 import { setKeepScreenOnImpl } from './powersave'
-import { dispatchOpenSession, getPendingNavigationJson, showTerminalNotification } from './notification'
+import { dispatchOpenSession, getPendingNavigationJson, showTerminalNotification, dismissTerminalNotification } from './notification'
 import { markRendererReady } from './navReady'
 import { clearCacheAndReload } from './session'
 import { record, recordError, startClientLog, stopClientLog } from './clientLog'
@@ -200,6 +200,12 @@ export function registerBridge(): void {
   ipcMain.handle('native:reload-app', () => clearCacheAndReload())
   ipcMain.handle('native:notify', (_e, title: string, body: string, nav?: unknown) => {
     showTerminalNotification(title, body, nav as { sessionId?: string; taskId?: string; executionId?: string; projectPath?: string } | undefined)
+    return Promise.resolve()
+  })
+  // Dismiss a notification still in the OS tray once its subject is read.
+  // Symmetric with Android's dismissEventNotification bridge method.
+  ipcMain.handle('native:dismiss-notification', (_e, taskId?: string, sessionId?: string) => {
+    dismissTerminalNotification(taskId, sessionId)
     return Promise.resolve()
   })
 

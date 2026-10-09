@@ -4034,6 +4034,19 @@ public class MainActivity extends AppCompatActivity {
         }
 
         /**
+         * Dismiss the native event notification for a session or task.
+         *
+         * Called by the frontend when the user marks the subject read (opening
+         * the session / task detail). The notification only auto-cancels on tap,
+         * so without this a stale notification stays in the shade and re-opens
+         * the session when tapped again. Best-effort; empty ids are ignored.
+         */
+        @JavascriptInterface
+        public void dismissEventNotification(String taskId, String sessionId) {
+            BackgroundService.cancelEventNotification(activity, taskId, sessionId);
+        }
+
+        /**
          * Enable or disable native push notifications from the WebView settings UI.
          * When disabled, stops the native WS connection and WorkManager polling.
          * When enabled, allows the next onPause() to start native WS.

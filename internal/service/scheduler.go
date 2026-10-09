@@ -1797,7 +1797,11 @@ func MarkTaskExecutionsRead(taskID int64) error {
 		 WHERE task_id = ? AND read_at IS NULL AND status != 'running'`,
 		taskID,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	emitTaskReadEvent(taskID)
+	return nil
 }
 
 // MarkExecutionRead marks a single execution as read by setting its read_at timestamp.
@@ -1806,7 +1810,66 @@ func MarkExecutionRead(executionID string) error {
 		"UPDATE task_executions SET read_at = CURRENT_TIMESTAMP WHERE id = ?",
 		executionID,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	// Resolve the owning task so the read event can carry task_id. An
+	// execution whose task row is gone has nothing to dismiss.
+	var taskID int64
+	if scanErr := store.ReadDB().QueryRow(
+		"SELECT task_id FROM task_executions WHERE id = ?", executionID,
+	).Scan(&taskID); scanErr == nil {
+		emitTaskReadEvent(taskID)
+	}
+	return nil
+}
+
+// emitTaskReadEvent broadcasts a WS-only task_update{status:"read"} so every
+// connected client can dismiss the native notification for that task.
+//
+// Symmetric with the session path (chat.go UpdateLastRead →
+// EmitSessionEventWSOnly): "read" is a UI-sync signal, not a notification — it
+// must NOT produce a push or a pending event, or marking a task read would
+// itself generate a fresh notification. `read` is deliberately absent from
+// IsNotifiableEvent / NativeNotificationPolicy so the client treats it as a
+// dismissal cue only. Best-effort: a lookup failure (task deleted mid-flight)
+// simply skips the broadcast.
+//
+// Known limitation (shared with the session path): because the event is
+// WS-only, a client that is OFFLINE when the read happens never learns to
+// dismiss its stale notification. That does not affect the reported scenario —
+// the reader is the one holding the app open, so its WS is connected.
+func emitTaskReadEvent(taskID int64) {
+	mgr := ws.GetManager()
+	if mgr == nil {
+		return
+	}
+	// Guard the read pool: ReadDB() wraps a possibly-nil *sql.DB, and QueryRow
+	// on it panics rather than erroring. The callers' WriteExec would normally
+	// fail first, but this keeps the "best-effort" contract honest.
+	if !store.ReadDBReady() {
+		return
+	}
+	// Targeted query rather than GetTaskByID: only the project path is needed,
+	// and the full-row scan is brittle (it fails on any legacy NULL column).
+	var projectPath string
+	if err := store.ReadDB().QueryRow(
+		`SELECT COALESCE(p.path, '') FROM scheduled_tasks s
+		 LEFT JOIN projects p ON p.id = s.project_id WHERE s.id = ?`, taskID,
+	).Scan(&projectPath); err != nil {
+		return
+	}
+	data := &ws.TaskUpdateData{
+		TaskID:      strconv.FormatInt(taskID, 10),
+		Status:      "read",
+		ProjectPath: projectPath,
+	}
+	mgr.BroadcastEvent(ws.ServerMessage{
+		Type:  ws.MessageTypeEvent,
+		ID:    ws.GenerateEventID(),
+		Event: "task_update",
+		Data:  data,
+	})
 }
 
 // DeleteTaskExecution deletes a single task execution and archives the
