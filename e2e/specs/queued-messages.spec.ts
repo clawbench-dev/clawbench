@@ -21,6 +21,15 @@ const M3 = 'qmsg-charlie'
 test.describe('Queued messages ordering', () => {
   let chat: ChatPage
 
+  // This spec drives three sequential mock turns (1200ms mock delay each) and
+  // its inner `expect` timeouts alone sum to ~95s, so the 30s config default is
+  // not enough: on a loaded CI runner the happy path (~18s locally) overran it
+  // and the test timed out. Every other multi-turn spec sets 120000 for the same
+  // reason. (Once attempt 1 times out, the retries are structurally doomed: the
+  // markers are fixed strings in a SHARED session, so a re-send renders a second
+  // copy and `toHaveCount(1)` can never hold.)
+  test.setTimeout(120000)
+
   test.beforeEach(async ({ page }) => {
     chat = new ChatPage(page)
     // Block the upgrade check so the "New Version Available" overlay never
