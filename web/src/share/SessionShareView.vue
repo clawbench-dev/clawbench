@@ -777,24 +777,32 @@ onBeforeUnmount(() => {
 
 /* Jump target flash, mirroring ChatMessageList's chat-message-highlight. The
    share SPA does not load that component's styles, so the animation is
-   re-declared here against the message card. */
-:deep(.chat-message.chat-message-highlight .msg-card) {
-  animation: session-share-highlight-flash var(--flash-duration, 0.7s) ease-out 1;
+   re-declared here against the message card. The effect is a background-color
+   pulse over each role's resting bubble background (user: --user-msg-color /
+   assistant: --bg-tertiary) — identical to the main conversation's jump
+   highlight. Timing mirrors the canonical line-flash via --flash-duration
+   (0.7s); keep in sync with LINE_FLASH_MS in web/src/utils/domFlash.ts. */
+:deep(.chat-message.user.chat-message-highlight .msg-card) {
+  --msg-base-bg: var(--user-msg-color);
+  animation: msg-highlight-flash var(--flash-duration, 0.7s) ease-out 1;
 }
-@keyframes session-share-highlight-flash {
-  0%, 100% { outline-color: transparent; }
-  14%      { outline-color: color-mix(in srgb, var(--accent-color) 70%, transparent); }
-  45%      { outline-color: color-mix(in srgb, var(--accent-color) 35%, transparent); }
+:deep(.chat-message.assistant.chat-message-highlight .msg-card) {
+  --msg-base-bg: var(--bg-tertiary);
+  animation: msg-highlight-flash var(--flash-duration, 0.7s) ease-out 1;
 }
-:deep(.chat-message.chat-message-highlight .msg-card) {
-  outline: 2px solid transparent;
-  outline-offset: 2px;
-  border-radius: var(--radius-md);
+@keyframes msg-highlight-flash {
+  0%, 100% { background-color: var(--msg-base-bg); }
+  14%      { background-color: color-mix(in srgb, var(--accent-color) 65%, var(--msg-base-bg)); }
+  45%      { background-color: color-mix(in srgb, var(--accent-color) 35%, var(--msg-base-bg)); }
 }
 @media (prefers-reduced-motion: reduce) {
-  :deep(.chat-message.chat-message-highlight .msg-card) {
+  :deep(.chat-message.user.chat-message-highlight .msg-card) {
     animation: none !important;
-    outline-color: color-mix(in srgb, var(--accent-color) 55%, transparent);
+    background-color: color-mix(in srgb, var(--accent-color) 65%, var(--user-msg-color));
+  }
+  :deep(.chat-message.assistant.chat-message-highlight .msg-card) {
+    animation: none !important;
+    background-color: color-mix(in srgb, var(--accent-color) 35%, var(--bg-tertiary));
   }
 }
 </style>
