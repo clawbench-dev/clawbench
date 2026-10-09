@@ -42,6 +42,18 @@
   background: var(--bg-secondary, #f6f8fa);
 }
 
+/* Brand mark in the top bar. Decorative identity only: the public share page is
+   read-only and has no "home", so this is a plain <img> (unlike the app header
+   logo, which is a button that opens the About panel). Sized to match the app
+   header's 22px round mark. */
+.share-logo {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: block;
+}
+
 .share-file-name {
   font-size: var(--font-size-lg);
   font-weight: var(--font-weight-semibold);

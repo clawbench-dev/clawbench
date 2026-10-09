@@ -6,6 +6,7 @@
          thread. -->
     <div class="share-topbar share-topbar--stacked">
       <div class="share-topbar-main">
+        <img class="share-logo" src="/logo-64.png" alt="ClawBench" />
         <h1 class="share-topbar-title" :title="title">{{ title }}</h1>
         <div class="share-top-actions">
           <!-- Conversation TOC toggle. Hidden until the snapshot lands, since

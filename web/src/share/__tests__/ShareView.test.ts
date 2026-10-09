@@ -151,6 +151,14 @@ function ackLineScrolls() {
 }
 
 describe('ShareView — view toggle (rendered ⇄ source)', () => {
+  it('shows the ClawBench brand logo in the topbar', async () => {
+    const wrapper = await mountShare({ name: 'README.md', path: '/repo/README.md', content: '# Hello\nbody' })
+    const logo = wrapper.find('.share-topbar .share-logo')
+    expect(logo.exists()).toBe(true)
+    expect(logo.attributes('src')).toBe('/logo-64.png')
+    expect(logo.attributes('alt')).toBe('ClawBench')
+  })
+
   it('defaults markdown files to the rendered preview and exposes the toggle', async () => {
     const wrapper = await mountShare({ name: 'README.md', path: '/repo/README.md', content: '# Hello\nbody' })
     expect(wrapper.find('.markdown-preview-stub').exists()).toBe(true)
@@ -195,6 +203,32 @@ describe('ShareView — view toggle (rendered ⇄ source)', () => {
   it('does not lift the wide-screen cap for non-markdown files', async () => {
     const wrapper = await mountShare({ name: 'main.go', path: '/repo/main.go', content: 'package main\n' })
     expect(wrapper.find('.share-content').attributes('data-markdown-rendered')).toBeUndefined()
+  })
+
+  it('marks the content scroller for rendered HTML so wide screens lift the outer cap', async () => {
+    // Rendered HTML preview fills its parent iframe, so the scroll container
+    // must be full-width — a fixed 1080px column would letterbox arbitrary
+    // HTML layouts. Only the TOC rail (when present) reserves space.
+    const wrapper = await mountShare({
+      name: 'page.html',
+      path: '/repo/page.html',
+      content: '<html><body>hi</body></html>',
+    })
+    expect(wrapper.find('iframe.share-html-iframe').exists()).toBe(true)
+    expect(wrapper.find('.share-content').attributes('data-html-rendered')).toBeDefined()
+
+    // Toggling to the raw source view drops the attribute — CodeMirror keeps
+    // the generic wide-screen cap (no self-laying-out page).
+    await wrapper.find('.share-view-toggle').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.share-content').attributes('data-html-rendered')).toBeUndefined()
+  })
+
+  it('does not mark the content scroller as html-rendered for markdown or code', async () => {
+    const md = await mountShare({ name: 'README.md', path: '/repo/README.md', content: '# Hello\nbody' })
+    expect(md.find('.share-content').attributes('data-html-rendered')).toBeUndefined()
+    const code = await mountShare({ name: 'main.go', path: '/repo/main.go', content: 'package main\n' })
+    expect(code.find('.share-content').attributes('data-html-rendered')).toBeUndefined()
   })
 
   it('does not expose the toggle for pure code/plain-text files', async () => {

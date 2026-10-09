@@ -2,6 +2,7 @@
   <div class="share-view">
     <!-- Read-only top bar (not the app FileHeader) -->
     <div class="share-topbar">
+      <img class="share-logo" src="/logo-64.png" alt="ClawBench" />
       <button
         v-if="canGoBack"
         class="share-btn share-back-btn"
@@ -49,6 +50,7 @@
       <div
         class="share-content"
         :data-markdown-rendered="isMarkdownRenderedView || undefined"
+        :data-html-rendered="isHtmlRenderedView || undefined"
         ref="contentRef"
       >
         <!-- Loading -->
@@ -382,6 +384,13 @@ const showRawSourceView = computed(() => {
  *  same as the in-app file viewer, so the wide-screen .share-content cap must
  *  be lifted here to let the scrollbar hug the viewport edge. */
 const isMarkdownRenderedView = computed(() => isMarkdown.value && viewMode.value === 'rendered')
+
+/** Rendered HTML preview is active (sandboxed <iframe srcdoc>). The iframe
+ *  fills its parent, so the wide-screen .share-content cap must be lifted here
+ *  to let the page use the full width beside the TOC — a fixed 1080px column
+ *  would letterbox arbitrary HTML layouts. No reading-column rule replaces the
+ *  cap (unlike markdown): the HTML controls its own layout. */
+const isHtmlRenderedView = computed(() => isHtml.value && viewMode.value === 'rendered')
 
 const hasToc = computed(() => {
   if (!file.value || error.value) return false
@@ -770,12 +779,15 @@ onBeforeUnmount(() => {
   }
 }
 
-/* Rendered markdown preview aligns with the in-app file viewer: the reading
-   column is capped at 900px by the shared .markdown-body padding rule, so the
-   .share-content wide-screen cap must NOT shrink the scroll container here —
-   otherwise the scrollbar would float mid-window instead of hugging the edge. */
+/* Rendered previews align with the in-app file viewer: markdown's reading
+   column is capped at 900px by the shared .markdown-body padding rule, and the
+   HTML iframe is self-laying-out. In both cases the .share-content wide-screen
+   cap must NOT shrink the scroll container — otherwise the scrollbar would
+   float mid-window instead of hugging the edge (markdown) or the HTML page
+   would be letterboxed inside a fixed column (HTML). */
 @media (min-width: 1100px) {
-  .share-content[data-markdown-rendered] {
+  .share-content[data-markdown-rendered],
+  .share-content[data-html-rendered] {
     max-width: none;
     margin: 0;
   }

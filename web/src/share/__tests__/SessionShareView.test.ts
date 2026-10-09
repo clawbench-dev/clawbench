@@ -331,6 +331,14 @@ describe('SessionShareView', () => {
     expect(wrapper.find('h1.share-topbar-title').exists()).toBe(true)
   })
 
+  it('shows the ClawBench brand logo in the topbar', async () => {
+    const wrapper = await mountView()
+    const logo = wrapper.find('.share-topbar .share-logo')
+    expect(logo.exists()).toBe(true)
+    expect(logo.attributes('src')).toBe('/logo-64.png')
+    expect(logo.attributes('alt')).toBe('ClawBench')
+  })
+
   it('renders the agent icon in the byline', async () => {
     const wrapper = await mountView()
     expect(wrapper.find('.session-share-agent .agent-icon-svg, .session-share-agent .agent-icon-initial').exists()).toBe(true)
