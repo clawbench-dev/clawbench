@@ -9,7 +9,6 @@ import { getAgentAvatar, useAgents } from '@/composables/useAgents'
  */
 export function useGroupMembers(currentSessionId: Ref<string>) {
   const members = ref<GroupMemberInfo[]>([])
-  const maxRounds = ref(10)
   const mode = ref<'host' | 'free'>('host')
   /** Free-mode "并发执行" switch (server-authoritative). */
   const parallelDefault = ref(false)
@@ -56,7 +55,6 @@ export function useGroupMembers(currentSessionId: Ref<string>) {
     try {
       const res = await listGroupMembers(sessionId)
       members.value = res.members
-      maxRounds.value = res.maxRounds
       mode.value = res.mode
       parallelDefault.value = res.parallelDefault
     } catch {
@@ -68,5 +66,5 @@ export function useGroupMembers(currentSessionId: Ref<string>) {
 
   watch(currentSessionId, (sid) => { void refresh(sid) }, { immediate: true })
 
-  return { members, maxRounds, mode, parallelDefault, hostMemberId, resolveSpeaker, resolveByName, refresh }
+  return { members, mode, parallelDefault, hostMemberId, resolveSpeaker, resolveByName, refresh }
 }

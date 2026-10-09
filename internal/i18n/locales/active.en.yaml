@@ -20,6 +20,7 @@ FileTooLarge: File too large
 TextTooLong: Text too long, max {{.MaxChars}} characters
 SummarizeFailed: Summarization failed, please retry later
 SynthesizeFailed: Speech synthesis failed, please retry later
+TTSSpeakerSaysPrefix: "{{.Name}} says: "
 BackendCreateFailed: "Failed to create AI backend: {{.Error}}"
 StreamStartFailed: "Failed to start streaming: {{.Error}}"
 MethodNotAllowed: Method not allowed
@@ -158,6 +159,7 @@ RAGSegmenterUnavailable: "Rebuild refused: the text segmenter is unavailable. Re
 RAGRebuildAccepted: Rebuild started in the background
 AutoContinue: Continue
 GroupYourTurn: "It's your turn to speak"
+GroupDiscussionLimitReached: "The agents reached the discussion limit"
 PortForwardUnavailable: port forwarding is not available
 TunnelTargetUnreachable: tunnel target is unreachable
 TunnelReverseRequiresHTTP2: reverse forwarding requires HTTP/2; use the SSH transport on HTTP/1.1

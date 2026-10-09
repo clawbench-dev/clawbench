@@ -110,6 +110,14 @@ type Config struct {
 		// agent's name and must not contain the protocol's reserved characters
 		// (", <, >, comma). Default "User". (default: "User")
 		UserNickname string `yaml:"user_nickname"`
+		// GroupMaxSpeeches caps how many times the AGENTS may speak to each
+		// other in a group before the discussion is forced to stop and the
+		// floor returns to the human. It counts MEMBER speeches only — the
+		// host's routing/summary turns are not counted (the host is the
+		// moderator, not a participant). The cap is mode-agnostic: host and
+		// free mode share the same meaning. Reaching it stops the AI
+		// discussion no matter whose turn it is. (default: 100)
+		GroupMaxSpeeches int `yaml:"group_max_speeches"`
 	} `yaml:"chat"`
 	Session struct {
 		MaxCount                int  `yaml:"max_count"`                 // Maximum number of chat sessions per project (default: 15)
@@ -385,6 +393,10 @@ var (
 	// chat (default "User"). Read by internal/service at request time so a
 	// rename takes effect without a restart.
 	ChatUserNickname string
+	// ChatGroupMaxSpeeches caps member-to-member speeches in a group before
+	// the discussion is forced to stop (default 100). Read by internal/service
+	// at turn time so a change takes effect without a restart.
+	ChatGroupMaxSpeeches int
 
 	// Session limits (set from config, with defaults)
 	SessionMaxCount int // Default: 15

@@ -72,6 +72,7 @@ var hotReloadFields = map[string]bool{
 	"chat.auto_continue_max_retries":    true,
 	"chat.auto_rename_enabled":          true,
 	"chat.user_nickname":                true,
+	"chat.group_max_speeches":           true,
 	"language":                          true,
 	"session.max_count":                 true,
 	"session.archive_retention_enabled": true,
@@ -273,6 +274,7 @@ type configChat struct {
 	AutoContinueMaxRetries   int    `json:"auto_continue_max_retries"`
 	AutoRenameEnabled        bool   `json:"auto_rename_enabled"`
 	UserNickname             string `json:"user_nickname"`
+	GroupMaxSpeeches         int    `json:"group_max_speeches"`
 }
 
 type configSession struct {
@@ -686,6 +688,7 @@ var PatchableConfigPaths = map[string]bool{
 	"chat.auto_continue_max_retries":    true,
 	"chat.auto_rename_enabled":          true,
 	"chat.user_nickname":                true,
+	"chat.group_max_speeches":           true,
 	"language":                          true,
 	"session.max_count":                 true,
 	"session.archive_retention_enabled": true,
@@ -839,6 +842,7 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			AutoContinueMaxRetries:   cfg.Chat.AutoContinueMaxRetries,
 			AutoRenameEnabled:        cfg.Chat.AutoRenameEnabled,
 			UserNickname:             cfg.Chat.UserNickname,
+			GroupMaxSpeeches:         cfg.Chat.GroupMaxSpeeches,
 		},
 		Session: configSession{
 			MaxCount:                cfg.Session.MaxCount,
@@ -1161,6 +1165,9 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 			if service.AgentNameTaken(strings.TrimSpace(v), "") {
 				return errUserNicknameTaken
 			}
+		}
+		if v, ok := chat["group_max_speeches"].(float64); ok && v < 1 {
+			return fmt.Errorf("chat.group_max_speeches must be a positive integer")
 		}
 	}
 	tts, ok := patch["tts"].(map[string]any)
@@ -1627,6 +1634,9 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 			}
 			cfg.Chat.UserNickname = v
 		}
+		if v, ok := chat["group_max_speeches"].(float64); ok {
+			cfg.Chat.GroupMaxSpeeches = int(v)
+		}
 	}
 
 	if session, ok := patch["session"].(map[string]any); ok {
@@ -1945,6 +1955,7 @@ func applyHotReloadGlobals() {
 	model.ChatAutoContinueMaxRetries = cfg.Chat.AutoContinueMaxRetries
 	model.ChatAutoRenameEnabled = cfg.Chat.AutoRenameEnabled
 	model.ChatUserNickname = cfg.Chat.UserNickname
+	model.ChatGroupMaxSpeeches = cfg.Chat.GroupMaxSpeeches
 	model.Language = cfg.Language
 	model.SessionMaxCount = cfg.Session.MaxCount
 	model.RecentProjectsMaxCount = cfg.RecentProjects.MaxCount

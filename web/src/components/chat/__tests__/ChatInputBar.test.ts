@@ -2211,7 +2211,7 @@ describe('ChatInputBar', () => {
 
   it('has no concurrency switch in the action bar (it lives in the group settings sheet)', async () => {
     // The switch was briefly an action-bar button; it now belongs to the group
-    // configuration sheet next to maxRounds. Guard against it creeping back.
+    // configuration sheet. Guard against it creeping back.
     const wrapper = mountBar({ isGroupSession: true })
     await wrapper.vm.$nextTick()
     expect(wrapper.find('[data-action="toggle-parallel"]').exists()).toBe(false)

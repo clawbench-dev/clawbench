@@ -131,32 +131,15 @@ func TestServeGroupCreateInvalidMemberAborts(t *testing.T) {
 	require.Zero(t, count, "failed create must not leave a group row")
 }
 
-func TestServeGroupSettings(t *testing.T) {
+// parallelDefault is the group's only remaining per-group setting (the
+// member-speech cap moved to the global config), so a PATCH carrying it must
+// succeed and round-trip.
+func TestServeGroupSettings_ParallelDefaultRoundTrip(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
 	groupID, _, err := service.CreateGroup(env.ProjectDir, "g", "codebuddy", "codebuddy", "Host")
 	require.NoError(t, err)
-
-	body, _ := json.Marshal(map[string]any{"groupId": groupID, "maxRounds": 7})
-	_ = body
-	req := newRequest(t, http.MethodPatch, "/api/group/settings", map[string]any{"groupId": groupID, "maxRounds": 7})
-	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandlerWithAuth(ServeGroupSettings, req)
-	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-
-	assert.Equal(t, 7, service.GetGroupMaxRounds(groupID))
-}
-
-// parallelDefault is an independent, OPTIONAL group setting: a PATCH carrying
-// only it must succeed (without touching maxRounds), and it must round-trip.
-func TestServeGroupSettings_ParallelDefaultOnly(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	groupID, _, err := service.CreateGroup(env.ProjectDir, "g", "codebuddy", "codebuddy", "Host")
-	require.NoError(t, err)
-	before := service.GetGroupMaxRounds(groupID)
 
 	req := newRequest(t, http.MethodPatch, "/api/group/settings", map[string]any{"groupId": groupID, "parallelDefault": true})
 	req = withProjectCookie(req, env.ProjectDir)
@@ -164,7 +147,6 @@ func TestServeGroupSettings_ParallelDefaultOnly(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
 	assert.True(t, service.GetGroupParallelDefault(groupID), "parallelDefault must round-trip true")
-	assert.Equal(t, before, service.GetGroupMaxRounds(groupID), "a parallelDefault-only PATCH must not touch maxRounds")
 
 	// Turning it back off must also persist.
 	req = newRequest(t, http.MethodPatch, "/api/group/settings", map[string]any{"groupId": groupID, "parallelDefault": false})
@@ -174,8 +156,8 @@ func TestServeGroupSettings_ParallelDefaultOnly(t *testing.T) {
 	assert.False(t, service.GetGroupParallelDefault(groupID), "parallelDefault must round-trip false")
 }
 
-// A PATCH with NEITHER setting is a no-op request and must be rejected: it
-// would otherwise report success while changing nothing.
+// A PATCH with NO setting is a no-op request and must be rejected: it would
+// otherwise report success while changing nothing.
 func TestServeGroupSettings_NoSettingsIsBadRequest(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
@@ -515,16 +497,15 @@ func TestServeGroupMembers_BatchOverLimitIsAtomic(t *testing.T) {
 	require.Equal(t, 9, active, "a rejected batch must not add any member")
 }
 
-// GET /api/group/members must include the group's current maxRounds so the
-// member sheet can show the server value (the PATCH endpoint had no read-back,
-// so the UI showed a hardcoded 10 after the user changed it).
-func TestServeGroupMembers_ReturnsMaxRounds(t *testing.T) {
+// GET /api/group/members must include the free-mode parallelDefault (the
+// action-bar switch reads its value back from here) and must NOT include the
+// member-speech cap, which is now a global setting rather than a per-group one.
+func TestServeGroupMembers_ReturnsParallelDefault(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
 	groupID, _, err := service.CreateGroup(env.ProjectDir, "g", "codebuddy", "codebuddy", "Host")
 	require.NoError(t, err)
-	require.NoError(t, service.SetGroupMaxRounds(groupID, 4))
 
 	req := newRequest(t, http.MethodGet, "/api/group/members?groupId="+groupID, nil)
 	req = withProjectCookie(req, env.ProjectDir)
@@ -532,11 +513,11 @@ func TestServeGroupMembers_ReturnsMaxRounds(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
 	var resp struct {
-		MaxRounds       int  `json:"maxRounds"`
+		MaxRounds       *int `json:"maxRounds"`
 		ParallelDefault bool `json:"parallelDefault"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, 4, resp.MaxRounds)
+	assert.Nil(t, resp.MaxRounds, "maxRounds must no longer be returned (it is a global setting)")
 	assert.False(t, resp.ParallelDefault, "parallelDefault defaults to false (sequential)")
 
 	// The free-mode action-bar switch reads its value back from this endpoint.

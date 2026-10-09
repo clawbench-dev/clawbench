@@ -242,6 +242,15 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if cfg.Chat.UserNickname == "" {
 		cfg.Chat.UserNickname = "User"
 	}
+	// GroupMaxSpeeches: the member-to-member speech cap for a group turn.
+	// A non-positive value is nonsensical (it would stop the discussion before
+	// anyone spoke), so it falls back to the default. The default is generous
+	// enough that a normal discussion is stopped by the host's end signal or
+	// by the members @-ing the human, not by this cap — it exists to bound a
+	// runaway relay (A@B, B@A).
+	if cfg.Chat.GroupMaxSpeeches <= 0 {
+		cfg.Chat.GroupMaxSpeeches = 100
+	}
 
 	// --- Session ---
 	// MaxCount: 0 means "unlimited" (the create-session gate is `> 0`), so it is

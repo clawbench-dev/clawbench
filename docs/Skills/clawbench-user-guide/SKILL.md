@@ -287,7 +287,7 @@ localStorage.setItem('clawbench-widescreen-split-ratio', String(441 / 1232));
 **文件管理器**：工具栏 / 排序菜单 / 多选模式 / 网格视图 / 文件右键菜单 / 目录右键菜单 / 预览窗格 / 搜索三模式
 **文件查看器**：Markdown+TOC / 代码编辑 / 图片灯箱 / PDF / Office / 分享弹窗
 **AI 对话**：输入栏全貌 / 斜杠命令菜单 / @引用 / 附件抽屉 / 消息操作按钮 / 推荐回复 / 工具卡展开 / 权限审批 / 提问卡 / 深度思考 / 会话设置抽屉
-**AI 群聊**：建群抽屉（多选 + 主持胶囊）/ 主持人模式时间线（主持人皇冠 + @汇总行 + 密送卡）/ 自由模式时间线（`@` 接力）/ 成员管理抽屉（主持人版含最大轮数、自由版含并发开关）/ @ 成员卡（输入框附件条）/ 智能体设置（重新扫描列表 + 详情页：智能体从哪来、如何复制改名造角色）
+**AI 群聊**：建群抽屉（多选 + 主持胶囊）/ 主持人模式时间线（主持人皇冠 + @汇总行 + 密送卡）/ 自由模式时间线（`@` 接力）/ 成员管理抽屉（含并发开关（自由模式）+ 自动批准；成员发言次数上限是全局设置）/ @ 成员卡（输入框附件条）/ 智能体设置（重新扫描列表 + 详情页：智能体从哪来、如何复制改名造角色）
 **会话**：侧栏全貌 / 搜索抽屉 / 标签过滤 / 右键菜单
 **Git**：提交列表 / 分支 / 标签 / 工作树 / diff 抽屉 / 工作区变更
 **任务**：列表 / 定时表单 / 事件表单（含事件类型勾选）/ 详情 / 执行历史
@@ -1059,7 +1059,7 @@ sqlite3 "file:$HOME/.clawbench/ClawBench.db?mode=ro&immutable=1" \
 | 系统行 | `.chat-system-row` | 「轮到用户发言」「XX 加入了讨论」等居中细条 |
 | 成员抽屉 | `.gm-row` / `.gm-tag--host` / `.gm-tag--left` / `.gm-remove` | 行 / 主持人标签 / 已离场标签 / 移除按钮 |
 | 抽屉「添加成员」 | `[data-action="add-members"]` | 在**抽屉头部右侧** |
-| 群设置 | `#group-max-rounds`（主持人模式）/ `#group-parallel`（自由模式）/ `#group-auto-approve`（两者） | **两行互为镜像**：主持人模式有最大轮数无并发开关，自由模式反之 |
+| 群设置 | `#group-parallel`（仅自由模式）/ `#group-auto-approve`（两者） | 主持人模式只显示自动批准（无并发开关）；成员发言次数上限是全局设置，不在抽屉里 |
 | 建群入口 | `[data-action="create-group"]` | 会话列表头部 |
 | 建群抽屉 | `.bs-overlay` → `.agent-option`（行）/ `.agent-option-check`（复选框）/ `.agent-host-btn`（主持胶囊，`.active` 为当前主持人）/ `.agent-multi-confirm`（创建按钮） | 抽屉标题右侧 `.agent-header-mode` 实时显示「主持人模式 / 自由模式」 |
 | @ 成员卡 | `.chat-attachment-tags .mention-card`（名字 `.mention-card-name`，锁 `.mention-card-lock`） | 输入框附件条 |
@@ -1070,7 +1070,7 @@ sqlite3 "file:$HOME/.clawbench/ClawBench.db?mode=ro&immutable=1" \
 1. **建群抽屉（`group-01-create`）**：点 `[data-action="create-group"]` → 点 3 个 `.agent-option` 勾选 → 点其中一个行内的 `.agent-host-btn` 设为主持人。自检：`.agent-option-check.checked` 数 = 3、`.agent-host-btn.active` = 1、`.agent-header-mode` 文本为「主持人模式」。
 2. **主持人时间线（`group-02-host`）**：打开群 → 在 `.chat-message` 里找**同时含 `.msg-mention-summary` 与 `.msg-speaker-host-tag`** 的那条，`sc.scrollTop = target.offsetTop - 8` 把它滚到顶部再拍。这样一屏能同时展示「皇冠主持人 + @ 汇总行 + 密送卡」。
 3. **自由时间线（`group-03-free`）**：打开自由群 → 从后往前找含 `.msg-mention-summary` 或 `.msg-bcc` 的消息滚到顶。标题栏左侧的 `.group-mode-badge` 是 `@`。
-4. **成员抽屉**：`.group-avatar-stack` 用 Playwright `el.click()`（合成 `.click()` 对 Teleport 抽屉不可靠）→ 等 ~1.4s。**两种模式各拍一张**（主持人版显示「最大轮数」，自由版显示「并发执行」），这正好把两个模式的群设置差异讲清。
+4. **成员抽屉**：`.group-avatar-stack` 用 Playwright `el.click()`（合成 `.click()` 对 Teleport 抽屉不可靠）→ 等 ~1.4s。**两种模式各拍一张**（主持人版显示「自动批准」，自由版显示「并发执行」+「自动批准」），这正好把两个模式的群设置差异讲清。
 5. **@ 成员卡（`group-06-mention-card`）**：**必须用 Playwright 真实输入事件**——`ta.fill('@')` 打开 `.completion-item` 菜单（群会话里成员候选排最前），点 `.completion-item` 第一项加卡，再 `ta.fill('问题正文')`。合成 `element.click()` / 直接设 `value` **不会**弹出该菜单（同 §八 第 10 条）。自检：`.chat-attachment-tags .mention-card` 存在且 `.mention-card-name` 非空、`.chat-textarea` 的 value **不含** `clawbench-mention`。
 6. **智能体设置（`group-07`/`group-08`）**：说明「智能体从哪来」用。点 `.wide-dock .dock-btn[title="设置"]` → 若不在首页先点返回 → 点 `.settings-index__row`（文本以「智能体」开头）→ 拍列表（`group-07`）；再点某行 `.settings-agents-index__row` 进详情（`group-08`，含标识/偏好/信息三卡 + 复制/删除）。自检：`group-07` 的 `.settings-agents-index__row` > 0 且 `.settings-agents-index__rescan-row` 存在；`group-08` 的 `.settings-agent-detail` 存在。
 

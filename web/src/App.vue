@@ -296,7 +296,6 @@
                       :sessionId="sessionIdentity.currentSessionId.value"
                       :members="groupMembers"
                       :hostMemberId="groupHostMemberId"
-                      :maxRounds="groupMaxRounds"
                       :autoApprove="groupAutoApprove"
                       :mode="groupMode"
                       :parallelDefault="groupParallelDefault"
@@ -1283,7 +1282,6 @@ const { getAgentBackend, getAgentName, getAgentAvatar } = useAgents()
 // fetched once, not twice.
 const {
   members: groupMembers,
-  maxRounds: groupMaxRounds,
   mode: groupMode,
   parallelDefault: groupParallelDefault,
   hostMemberId: groupHostMemberId,

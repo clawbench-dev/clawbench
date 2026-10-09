@@ -1,5 +1,6 @@
 import { test, expect } from '../fixtures'
 import { ChatPage } from '../pages/chat.page'
+import { setGroupMaxSpeeches, restoreGroupMaxSpeeches } from '../helpers/group-config'
 
 /**
  * E2E for the group host's private notes (密送 / BCC).
@@ -22,7 +23,16 @@ test.describe.serial('group chat private notes (bcc)', () => {
   test.skip(({ browserName }) => browserName !== 'chromium', 'serial group test')
   test.setTimeout(120000)
 
+  // The cap is a global server setting; restore it so later specs are unaffected.
+  test.afterAll(async () => {
+    await restoreGroupMaxSpeeches()
+  })
+
   test('host private note renders as a collapsed card, not as body prose', async ({ page }) => {
+    // Cap at 1 member speech so the turn terminates predictably (a global
+    // setting; the afterAll above restores it).
+    await setGroupMaxSpeeches(1)
+
     // A host + a member, so the host has someone to route to (and note).
     const setup = await page.evaluate(async () => {
       const post = async (url: string, body: unknown) =>
@@ -31,7 +41,6 @@ test.describe.serial('group chat private notes (bcc)', () => {
       if (!created.ok) return { ok: false, step: 'create', created }
       const added = await post('/api/group/members', { groupId: created.groupId, agentIds: ['acp-mock-b'] })
       if (!added.ok) return { ok: false, step: 'add', added }
-      await post('/api/group/settings', { groupId: created.groupId, maxRounds: 1 })
       return { ok: true, groupId: created.groupId as string, hostMemberId: created.hostMemberId as string }
     })
     expect(setup.ok).toBe(true)
@@ -82,6 +91,9 @@ test.describe.serial('group chat private notes (bcc)', () => {
   // the floor back (round ends, a system line announces it) and a note addressed
   // to the user renders expanded and labelled "to you".
   test('host can hand the floor to the user, with an expanded note', async ({ page }) => {
+    // Cap at 1 member speech (a global setting; the afterAll above restores it).
+    await setGroupMaxSpeeches(1)
+
     // A host with NO AI members: the only routable name is "User", so the mock
     // host addresses the user (see groupRoutingReply).
     const setup = await page.evaluate(async () => {
@@ -89,7 +101,6 @@ test.describe.serial('group chat private notes (bcc)', () => {
         (await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json()
       const created = await post('/api/group/create', { hostAgentId: 'acp-mock' })
       if (!created.ok) return { ok: false, step: 'create', created }
-      await post('/api/group/settings', { groupId: created.groupId, maxRounds: 1 })
       return { ok: true, groupId: created.groupId as string }
     })
     expect(setup.ok).toBe(true)

@@ -545,6 +545,7 @@ const serverDefaults: Record<string, unknown> = {
   'chat.auto_continue_max_retries': 3,
   'chat.auto_rename_enabled': true,
   'chat.user_nickname': 'User',
+  'chat.group_max_speeches': 100,
   'session.max_count': 15,
   'session.archive_retention_enabled': false,
   'session.archive_retention_days': 30,

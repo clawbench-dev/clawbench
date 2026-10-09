@@ -24,8 +24,10 @@ const (
 	groupSessionType = store.SessionTypeGroup
 	// groupMemberSessionType is the session_type of a hidden member row.
 	groupMemberSessionType = store.SessionTypeGroupMember
-	// defaultGroupMaxRounds is the round cap when the group has no override.
-	defaultGroupMaxRounds = 10
+	// defaultGroupMaxSpeeches is the member-to-member speech cap when the
+	// global config value is unset/invalid. Kept in sync with
+	// model.ApplyDefaults's chat.group_max_speeches default.
+	defaultGroupMaxSpeeches = 100
 	// GroupModeHost is a group whose flow is controlled by a host member that
 	// routes to named speakers (the original mode).
 	GroupModeHost = "host"
@@ -893,31 +895,21 @@ func SetGroupHostMember(groupID, memberID string) error {
 	return nil
 }
 
-// GetGroupMaxRounds returns the group's configured round cap, or the default
-// when unset/invalid.
-func GetGroupMaxRounds(groupID string) int {
-	var raw string
-	_ = store.ReadDB().QueryRow(
-		"SELECT COALESCE(json_extract(context_state, '$.maxRounds'), '') FROM chat_sessions WHERE id = ?",
-		groupID,
-	).Scan(&raw)
-	if raw == "" {
-		return defaultGroupMaxRounds
+// GetGroupMaxSpeeches returns the configured cap on how many times the agents
+// may speak to each other in a group turn before the discussion is forced to
+// stop and the floor returns to the human. It is a GLOBAL setting
+// (chat.group_max_speeches), not per group — the same cap applies to host and
+// free mode alike, and it counts MEMBER speeches only (the host's routing /
+// summary turns do not count).
+//
+// A non-positive runtime value falls back to the default (ApplyDefaults clamps
+// the config, but a value set directly on the global var in a test/edge path
+// must not silently mean "stop immediately").
+func GetGroupMaxSpeeches() int {
+	if model.ChatGroupMaxSpeeches > 0 {
+		return model.ChatGroupMaxSpeeches
 	}
-	var n int
-	if err := json.Unmarshal([]byte(raw), &n); err != nil || n <= 0 {
-		return defaultGroupMaxRounds
-	}
-	return n
-}
-
-// SetGroupMaxRounds stores the group's round cap in its context_state JSON.
-func SetGroupMaxRounds(groupID string, n int) error {
-	if n <= 0 {
-		return fmt.Errorf("maxRounds must be positive, got %d", n)
-	}
-	PatchContextStateMerge(groupID, map[string]string{"maxRounds": fmt.Sprintf("%d", n)})
-	return nil
+	return defaultGroupMaxSpeeches
 }
 
 // GetGroupParallelDefault returns whether the user's free-mode seed runs its

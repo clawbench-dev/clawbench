@@ -244,6 +244,59 @@ func TestFreeLoop_AlreadySpokenMayBeMentionedAgain(t *testing.T) {
 	}
 }
 
+// The member-speech cap applies to free mode too (mode-agnostic): the relay
+// stops once the agents have spoken cap times, even though the scripted members
+// would keep @-ing each other forever. This is the bound that replaced the
+// "unlimited relay" behavior.
+func TestFreeLoop_SpeechCapStopsRelay(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/free-cap"
+	groupID, byName := createFreeGroup(t, project, "A", "B")
+
+	// Both members ALWAYS @ the other — without a cap this never ends. Each gets
+	// several scripted replies so the relay is stopped by the CAP, not by a
+	// script running out (an exhausted script yields a mention-free "(no
+	// script)" reply, which would end the relay naturally).
+	script := map[string][]string{
+		byName["A"]: {
+			`<clawbench-mention targets="B">继续</clawbench-mention>`,
+			`<clawbench-mention targets="B">继续</clawbench-mention>`,
+			`<clawbench-mention targets="B">继续</clawbench-mention>`,
+		},
+		byName["B"]: {
+			`<clawbench-mention targets="A">继续</clawbench-mention>`,
+			`<clawbench-mention targets="A">继续</clawbench-mention>`,
+			`<clawbench-mention targets="A">继续</clawbench-mention>`,
+		},
+	}
+	runner, order := freeScriptedRunner(t, project, groupID, script)
+
+	// Cap at 3 member speeches: the relay must stop after exactly 3.
+	setGroupMaxSpeechesForTest(t, 3)
+
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	msg := `<clawbench-mention targets="` + byName["A"] + `"></clawbench-mention> 开始`
+	_ = runGroupTurnForTest(t, o, project, msg, nil)
+
+	if len(*order) != 3 {
+		t.Fatalf("member speeches=%d, want 3 (cap), order=%v", len(*order), *order)
+	}
+
+	// A one-time system line announces the cap.
+	want := i18n.T(i18n.LocalizerForLocale(model.Language), "GroupDiscussionLimitReached")
+	msgs, _ := GetMessagesBySessionIDRaw(groupID)
+	found := 0
+	for _, m := range msgs {
+		if m.Role == "system" && strings.Contains(ExtractPlainText(m.Content), want) {
+			found++
+		}
+	}
+	if found != 1 {
+		t.Fatalf("cap system line count=%d, want exactly 1", found)
+	}
+}
+
 // A member @-ing the human ("User") hands the floor back and ends the relay.
 func TestFreeLoop_MemberMentionsUserStops(t *testing.T) {
 	setupGroupDB(t)

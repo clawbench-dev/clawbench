@@ -406,6 +406,44 @@ func TestServeConfig_Patch_UserNicknameRejectsInvalidChars(t *testing.T) {
 	}
 }
 
+// group_max_speeches round-trips through PATCH /api/config and is synced into
+// the model global so the group orchestrator picks it up without a restart. It
+// must be a positive integer: 0 / negative would stop the discussion before
+// anyone spoke, so those are rejected.
+func TestServeConfig_Patch_GroupMaxSpeeches(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+	orig := model.ChatGroupMaxSpeeches
+	t.Cleanup(func() { model.ChatGroupMaxSpeeches = orig })
+
+	body := `{"chat":{"group_max_speeches":42}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, 42, model.ConfigInstance.Chat.GroupMaxSpeeches,
+		"group_max_speeches must be applied to ConfigInstance")
+	assert.Equal(t, 42, model.ChatGroupMaxSpeeches,
+		"applyHotReloadGlobals must sync model.ChatGroupMaxSpeeches")
+	assert.NotContains(t, w.Body.String(), `"needs_restart":true`)
+
+	// Non-positive values are rejected and do not overwrite the stored value.
+	model.ConfigInstance.Chat.GroupMaxSpeeches = 42
+	for _, bad := range []int{0, -1} {
+		b, _ := json.Marshal(map[string]any{"chat": map[string]any{"group_max_speeches": bad}})
+		req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(string(b)))
+		req.Header.Set("Content-Type", "application/json")
+		withAuthCookie(req, model.SessionToken)
+		w := callHandler(ServeConfig, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code, "group_max_speeches=%d must be rejected", bad)
+		assert.Equal(t, 42, model.ConfigInstance.Chat.GroupMaxSpeeches, "a rejected value must not be stored")
+	}
+}
+
 // A nickname equal to an existing agent's name is a conflict (409), not a
 // malformed value: the agent-side guard rejects the reverse direction, so the
 // two must agree.

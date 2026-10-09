@@ -143,6 +143,9 @@ func TestApplyDefaultsEmptyConfig(t *testing.T) {
 	if cfg.Chat.UserNickname != "User" {
 		t.Errorf("Chat.UserNickname = %q, want %q", cfg.Chat.UserNickname, "User")
 	}
+	if cfg.Chat.GroupMaxSpeeches != 100 {
+		t.Errorf("Chat.GroupMaxSpeeches = %d, want 100", cfg.Chat.GroupMaxSpeeches)
+	}
 	if cfg.Session.MaxCount != 15 {
 		t.Errorf("Session.MaxCount = %d, want 15", cfg.Session.MaxCount)
 	}

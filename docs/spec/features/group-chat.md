@@ -4,8 +4,8 @@
 
 群聊有两种形态，**建群时是否指定主持人决定模式，且不可中途切换**：
 
-- **主持人模式（host）**：一个被指定为"主持人"的成员控场——它决定下一个该谁发言、给出什么指令，成员发言后主持人再决策，循环直到主持人发出结束信号或达到最大轮数。像真实团队开会：有议程、有分工、有结论。
-- **自由聊天模式（free）**：没有主持人，成员通过 **@ 提及**接力——谁被 @ 谁接着发言，被 @ 的人再把话头传给下一个人，形成一条可以无限延续的讨论链。像微信群里一群人自由接话。
+- **主持人模式（host）**：一个被指定为"主持人"的成员控场——它决定下一个该谁发言、给出什么指令，成员发言后主持人再决策，循环直到主持人发出结束信号或智能体讨论次数达到上限。像真实团队开会：有议程、有分工、有结论。
+- **自由聊天模式（free）**：没有主持人，成员通过 **@ 提及**接力——谁被 @ 谁接着发言，被 @ 的人再把话头传给下一个人，形成一条可以延续的讨论链。像微信群里一群人自由接话。
 
 两种模式都**默认串行**发言（后发言者能看到前者本轮内容）。若本轮的路由标签带 `mode="parallel"`（成员可自行使用，自由模式还可由用户侧的**「并发执行」开关**触发），被点名的成员则**并发发言、互不参考**——它们从同一份"群回合起始高水位"快照出发，谁都看不到同轮其他成员的输出。
 
@@ -24,7 +24,7 @@ sequenceDiagram
     用户->>handler: 发送消息（复用 /api/ai/chat）
     handler->>编排器: RunGroupTurn（群会话委派）
     编排器->>时间线: 写入用户消息（agent_id=''）
-    loop 轮次 1..MaxRounds
+    loop 轮次 1..讨论次数上限
         编排器->>成员A: 主持人回合（增量注入 id>游标 的发言）
         成员A-->>时间线: 主持人发言（含路由标签）
         编排器->>编排器: 解析 <clawbench-mention targets="B,C">
@@ -80,7 +80,7 @@ flowchart TB
 
 - **建群**：会话列表头有独立的「建群」按钮（非复用 `+`），打开智能体多选抽屉，勾选成员、可选指定一个主持人，一次请求原子创建群与全部成员（失败整批回滚，不留"只有主持人的半成品群"）。**建群时不输入群名**——后端用主持人名占位（"XX 的群聊"），自由模式用"群聊"，首条消息后由 auto-title 接管
 - **成员管理**：群会话顶部横向头像条（主持人排最前、最多 4 个）展示成员，尾部 `+` 打开多选抽屉批量加人；群聊设置面板（`GroupSettingsSheet.vue`，点头像条或 actionbar 的「群聊」按钮打开）里可移除成员。增删成员都会在时间线写一条**居中的系统细条**（"XX 加入了讨论"/"XX 已离场"），让全员知道人员变动。**历史发言保留并标记"已离场"**——删掉某人发言会让后续"B 回应 A"失去上下文
-- **最大轮数**：主持人模式默认 10 轮，可在群聊设置面板里改；到上限时强制停并让主持人再产出一份汇总
+- **智能体讨论次数上限**：全局设置（`chat.group_max_speeches`，默认 100，在 设置 → 聊天 → 群聊 里改），含义为「轮到用户发言前，智能体之间最多发言多少次」。**主持人模式与自由模式语义一致，只计成员发言**（主持人的路由 / 汇总回合不计）。达到上限即停止 AI 讨论（不管当前轮到谁发言）、写一条系统消息「成员间讨论次数达到上限」；主持人模式额外再产出一份汇总
 - **@ 接力（自由模式）**：用户和成员都能用 `@` 指定下一个发言人。成员输出里的 @ 把目标排到队尾，@User（保留名）则把话头交回人类、暂停接力
 - **并发执行（自由模式）**：actionbar 有一个「并发」开关（群级持久设置 `parallelDefault`，存 `context_state`）。打开后，**用户 @ 的多个成员合并为一个 parallel 组并发发言**（不 @ 人时全体成员并发）；它只作用于"用户种子"，**不影响智能体之间 @ 出的组**（那些仍按各自标签的 `mode` 走）。主持人模式下用户不参与路由，故开关只在自由模式显示
 - **密送（BCC）**：主持人或成员可发一条只有指定目标看得到的消息（`private` 提及），在该目标**下一次发言时**注入一次。用于"暗中给某人递话"这类场景
@@ -108,7 +108,7 @@ flowchart TB
 |---|---|
 | `chat_sessions.session_type` | `group`（群会话，独占时间线）/ `group_member`（成员连接绑定行，用户不可见） |
 | `chat_sessions.group_id` | 成员行指向所属群（群行自身为空）；索引 `idx_sessions_group` |
-| `chat_sessions.context_state` | 群行存 `group_mode`（`host`/`free`）、`host_member_id`、`maxRounds`、`parallelDefault`；成员行存 `seen_cursor` |
+| `chat_sessions.context_state` | 群行存 `group_mode`（`host`/`free`）、`host_member_id`、`parallelDefault`；成员行存 `seen_cursor` |
 | `chat_history.role='system'` | 成员增删的系统事件（`agent_id=''`，居中细条渲染，计入注入游标但不计入未读） |
 | `chat_history.agent_id` | **发言人成员行 id**（非 agent id）；前端据此解析发言人头像/名字并判定主持人发言 |
 | `group_pending_bcc` | 密送待投递队列，按目标名字键控，成功投递后删除 |
@@ -118,10 +118,11 @@ flowchart TB
 全部经 `middleware.Auth`，且为项目作用域：
 
 - `POST /api/group/create` — 建群（`hostAgentId?` + `memberAgentIds[]`，同一事务创建群与全部成员；`hostAgentId` 缺省即自由模式，须过会话上限门）
-- `GET /api/group/members?groupId=` — 列成员（含 `isHost`、`maxRounds`、`mode`、`parallelDefault`）
+- `GET /api/group/members?groupId=` — 列成员（含 `isHost`、`mode`、`parallelDefault`）
 - `POST /api/group/members` — 批量加成员（整批过成员数上限）
 - `DELETE /api/group/members` — 移除成员（拒绝移除主持人）
-- `PATCH /api/group/settings` — 群设置（`maxRounds` / `parallelDefault`，两者都可选、至少传一个）
+- `PATCH /api/group/settings` — 群设置（仅 `parallelDefault`）
+- 智能体讨论次数上限是**全局配置** `chat.group_max_speeches`（`PATCH /api/config`），不是每群设置
 - 群消息发送**复用 `/api/ai/chat`**——`AIChat` 检测到群会话即委派编排器 `RunGroupTurn`，前端不改，不新增 `/api/group/chat` 以避免双入口
 
 ## 相关流程

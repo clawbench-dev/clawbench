@@ -82,6 +82,17 @@ type GroupOrchestrator struct {
 	// carries the initial @-mentions that seed the relay queue; host mode
 	// ignores it (humans never route in host mode, decision #47).
 	userMessage string
+	// memberSpeeches counts MEMBER turns launched in THIS turn (the host's
+	// routing/summary turns and the user's own turn do not count — the host is
+	// the moderator, not a participant). When it reaches the configured cap
+	// (chat.group_max_speeches) the AI discussion stops no matter whose turn is
+	// next. A fresh orchestrator is built per drained message, so the count is
+	// per user turn ("轮到用户发言前").
+	memberSpeeches int
+	// capReached is latched the first time the member-speech cap is hit, so the
+	// "discussion limit reached" system line is written exactly once and no
+	// further member turns run.
+	capReached bool
 }
 
 // maxConsecutiveParseFailures is how many unparseable host routings in a row
@@ -185,7 +196,7 @@ func renderGroupCommandForHost(rawMsg, projectPath, groupID string) string {
 // thin wrappers over drainSpeakers (the shared queue kernel); the finalization
 // is identical for both.
 //
-// The finalization runs on EVERY exit path (cancel, abort, end, round cap,
+// The finalization runs on EVERY exit path (cancel, abort, end, speech cap,
 // error), which is why it lives here rather than in each branch:
 //
 //   - finalizeGroupOrphans closes a streaming row left open by a Finalize that
@@ -487,6 +498,10 @@ func splitOffUser(g speakerGroup) speakerGroup {
 
 // runSequentialGroup runs a group's turns one at a time. Each turn's snapshot is
 // taken just before it runs, so it sees every previous turn's output.
+//
+// A group that names the human user ends the round (handUserBack); the cap check
+// runs first, so once the member-speech cap is hit no further member runs — the
+// user's turn is a stop point, not a speech.
 func (o *GroupOrchestrator) runSequentialGroup(
 	ctx context.Context,
 	s groupTurnSetup,
@@ -501,6 +516,10 @@ func (o *GroupOrchestrator) runSequentialGroup(
 		if t.member.ID == groupUserTargetID {
 			return o.handUserBack(o.groupID), appended, true
 		}
+		if o.checkSpeechCap() {
+			return DrainResult{}, appended, true
+		}
+		o.memberSpeeches++
 		p := o.snapshotTurn(s, t, GroupTimelineHighWater(o.groupID))
 		r := o.executeTurn(ctx, s, p)
 		if r.CancelReason != "" {
@@ -537,6 +556,16 @@ func (o *GroupOrchestrator) runParallelGroup(
 	g speakerGroup,
 	onSpoke func(ctx context.Context, sp speakerTurn, queue []speakerGroup, pending []speakerTurn) []speakerGroup,
 ) (DrainResult, []speakerGroup, bool) {
+	// Member-speech cap: a parallel group launches every member it names, so the
+	// budget must be applied BEFORE snapshotting — only the first
+	// (cap - spoken) members may run, the rest are dropped.
+	if o.checkSpeechCap() {
+		return DrainResult{}, nil, true
+	}
+	var dropped bool
+	g.turns, dropped = o.truncateToSpeechBudget(g.turns)
+	o.memberSpeeches += len(g.turns)
+
 	highWater := GroupTimelineHighWater(o.groupID)
 	prepared := make([]preparedTurn, 0, len(g.turns))
 	for _, t := range g.turns {
@@ -602,13 +631,20 @@ func (o *GroupOrchestrator) runParallelGroup(
 			}
 		}
 	}
+	// If the cap truncated this group, the turn stops here: the dropped members
+	// must not be replaced by the relay's appends. checkSpeechCap has already
+	// latched the cap and written the system line (the remaining budget is 0).
+	if dropped {
+		o.checkSpeechCap()
+		return DrainResult{}, nil, true
+	}
 	return DrainResult{}, appended, false
 }
 
 // runRounds is the host/member decision loop, driven by drainSpeakers: the
 // refill closure runs one host turn and returns its routed members (or a
 // round-robin fallback pick), and terminates the turn on the end signal, the
-// round cap, or repeated host/parse failures.
+// member-speech cap, or repeated host/parse failures.
 func (o *GroupOrchestrator) runRounds(ctx context.Context, groupID string) DrainResult {
 	hostMemberID := GetGroupHostMember(groupID)
 	if hostMemberID == "" {
@@ -619,20 +655,17 @@ func (o *GroupOrchestrator) runRounds(ctx context.Context, groupID string) Drain
 		return DrainResult{Err: err.Error()}
 	}
 	defer clearGroupMembersActive(s.activeIDs)
-	maxRounds := GetGroupMaxRounds(groupID)
 
-	round := 0
 	// hostSysPrompt is the host's routing instruction; the host turn otherwise
 	// runs through the SAME runSpeakerTurn path as a member (cursor + note
 	// bookkeeping + command injection), so only the prompt differs.
 	hostSysPrompt := BuildHostSystemPrompt(activeMemberNamesExcept(s.members, hostMemberID))
 	refill := func(ctx context.Context) ([]speakerGroup, bool, DrainResult) {
-		if round >= maxRounds {
-			// Round cap reached: run the host once more purely for the summary.
-			o.summarize(ctx, s, hostMemberID)
+		if o.checkSpeechCap() {
+			// Member-speech cap reached: stop before the host routes anyone
+			// else. The summary runs once after drainSpeakers returns.
 			return nil, false, DrainResult{}
 		}
-		round++
 		// Host speaks and routes.
 		hostMember := GroupMember{ID: hostMemberID, Name: s.names[hostMemberID]}
 		hostRes := o.runSpeakerTurn(ctx, s, hostMember, "", hostSysPrompt)
@@ -645,7 +678,7 @@ func (o *GroupOrchestrator) runRounds(ctx context.Context, groupID string) Drain
 			slog.Warn("group: host turn failed", "group", groupID, "err", hostRes.Err)
 			// Design §6: fall back to round-robin once; a SECOND consecutive
 			// host failure means the host is down, so terminate the turn rather
-			// than burn the whole round budget (maxRounds host turns).
+			// than burn the whole budget on a broken host.
 			o.hostFailures++
 			if o.hostFailures >= maxConsecutiveHostFailures {
 				slog.Warn("group: aborting after consecutive host failures",
@@ -675,8 +708,8 @@ func (o *GroupOrchestrator) runRounds(ctx context.Context, groupID string) Drain
 			// Parse failed or no valid speakers: fall back to round-robin.
 			//
 			// Two consecutive failures mean the host is not producing usable
-			// routing at all — continuing would burn the whole round budget on
-			// a broken loop. Abort and finalize (decision #56).
+			// routing at all — continuing would burn the whole budget on a
+			// broken loop. Abort and finalize (decision #56).
 			o.parseFailures++
 			if o.parseFailures >= maxConsecutiveParseFailures {
 				slog.Warn("group: aborting after consecutive parse failures",
@@ -699,7 +732,13 @@ func (o *GroupOrchestrator) runRounds(ctx context.Context, groupID string) Drain
 		return groups, true, DrainResult{}
 	}
 
-	return o.drainSpeakers(ctx, s, nil, refill, nil)
+	res := o.drainSpeakers(ctx, s, nil, refill, nil)
+	// Member-speech cap reached: run the host once more purely for the summary
+	// (kept from the old round-cap behavior), unless the turn was cancelled.
+	if o.capReached && res.CancelReason == "" && res.Err == "" {
+		o.summarize(ctx, s, hostMemberID)
+	}
+	return res
 }
 
 // resolveSpeakerGroups maps a parsed route's public mention GROUPS to member
@@ -761,12 +800,14 @@ func memberTurn(m GroupMember, instruction string, s groupTurnSetup) speakerTurn
 // members, or — when the message mentions nobody — every active member in
 // roster order), and each speaker's own @-mentions append to the queue's tail
 // (via drainSpeakers' onSpoke). The relay runs until the queue drains (nobody
-// is @-ed any more), a member hands the floor back to the human ("User"), or
-// the user stops the turn.
+// is @-ed any more), a member hands the floor back to the human ("User"), the
+// member-speech cap (chat.group_max_speeches) is reached, or the user stops the
+// turn.
 //
-// There is deliberately NO round cap and NO loop detection (decision #F13): the
-// user asked for unlimited relay, stopped by hand. A@B,B@A therefore burns
-// tokens until the user presses stop — a known, accepted risk.
+// The cap is what bounds a runaway relay (A@B, B@A): without it the loop would
+// burn tokens until the user presses stop. It shares the same meaning as host
+// mode — "how many times may the agents speak to each other before the floor
+// returns to the human" — and counts MEMBER speeches only.
 func (o *GroupOrchestrator) runFreeLoop(ctx context.Context, groupID string) DrainResult {
 	s, err := o.prepareTurn(groupID)
 	if err != nil {
@@ -786,6 +827,11 @@ func (o *GroupOrchestrator) runFreeLoop(ctx context.Context, groupID string) Dra
 
 	// The queue is self-extending: free mode has no router, so an empty queue
 	// means the relay is over.
+	//
+	// The member-speech cap is NOT checked here: an empty queue means the relay
+	// ended NATURALLY (nobody was @-ed), which is not the cap stopping it. When
+	// the cap DOES block a pending member, the per-member check in
+	// runSequentialGroup/runParallelGroup latches it and writes the system line.
 	refill := func(context.Context) ([]speakerGroup, bool, DrainResult) {
 		return nil, false, DrainResult{}
 	}
@@ -793,6 +839,41 @@ func (o *GroupOrchestrator) runFreeLoop(ctx context.Context, groupID string) Dra
 		return o.appendFreeTargets(q, pending, groupID, sp.member.ID, s.members, s.names)
 	}
 	return o.drainSpeakers(ctx, s, queue, refill, onSpoke)
+}
+
+// checkSpeechCap reports whether the member-speech cap has been reached. On the
+// first hit it latches capReached and writes the one-time "discussion limit
+// reached" system line, so the stop is visible on the timeline and the message
+// is emitted exactly once per turn. It is called immediately BEFORE a member
+// turn would run (and before the host routes another round), so the stop is
+// observed no matter whose turn is next.
+//
+// Only MEMBER turns are counted (o.memberSpeeches); the host's routing and
+// summary turns are not, since the host moderates rather than participates.
+func (o *GroupOrchestrator) checkSpeechCap() bool {
+	if o.memberSpeeches < GetGroupMaxSpeeches() {
+		return false
+	}
+	if !o.capReached {
+		o.capReached = true
+		writeGroupSystemMessage(o.project, o.groupID,
+			i18n.T(i18n.LocalizerForLocale(model.Language), "GroupDiscussionLimitReached"))
+	}
+	return true
+}
+
+// truncateToSpeechBudget trims a parallel group's turns to the remaining member
+// speech budget, returning the trimmed slice and whether anything was dropped.
+// A parallel group is all-or-nothing per member, so the budget must be applied
+// before the group is snapshotted (see runParallelGroup). Dropping turns latches
+// the cap and stops the whole turn, so the discussion cannot continue past the
+// limit.
+func (o *GroupOrchestrator) truncateToSpeechBudget(turns []speakerTurn) ([]speakerTurn, bool) {
+	remaining := GetGroupMaxSpeeches() - o.memberSpeeches
+	if remaining >= len(turns) {
+		return turns, false
+	}
+	return turns[:remaining], true
 }
 
 // freeInitialGroups resolves the free-mode seed as groups. When the user's
@@ -1420,8 +1501,8 @@ var emitGroupSystemMessage = func(groupID string, msgID int64, text string) {
 // FinishSessionRun; this function does not touch the running flag, because the
 // drain loop's MarkDoneAndSendFinal owns that transition.
 //
-// A panic barrier wraps the whole run: a group turn runs N members × maxRounds
-// turns through runTurn, and a panic anywhere in that chain (a nil deref, a
+// A panic barrier wraps the whole run: a group turn runs N members × the speech
+// cap turns through runTurn, and a panic anywhere in that chain (a nil deref, a
 // backend SDK panic its own recover does not cover) would otherwise unwind the
 // caller's goroutine and — because it is an uncaught panic in a goroutine —
 // terminate the whole process, dropping every session, task and WS connection.

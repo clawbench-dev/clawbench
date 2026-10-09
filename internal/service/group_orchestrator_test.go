@@ -47,6 +47,17 @@ func jsonQuote(s string) string {
 	return string(b)
 }
 
+// setGroupMaxSpeechesForTest overrides the GLOBAL member-speech cap
+// (model.ChatGroupMaxSpeeches) for one test and restores it on cleanup. The cap
+// used to be a per-group setting (SetGroupMaxRounds); it is now global, so tests
+// that need a deterministic stop point set it here.
+func setGroupMaxSpeechesForTest(t *testing.T, n int) {
+	t.Helper()
+	orig := model.ChatGroupMaxSpeeches
+	model.ChatGroupMaxSpeeches = n
+	t.Cleanup(func() { model.ChatGroupMaxSpeeches = orig })
+}
+
 // runGroupTurnForTest drives ONE group turn through the production entry point
 // (RunGroupTurnDrain) and then emits the terminal event the drain loop would
 // send, so tests exercise the same code path production does. The standalone
@@ -281,7 +292,11 @@ func TestGroupOrchestrator_CancelReachesMemberTurns(t *testing.T) {
 	_ = mA
 }
 
-func TestGroupOrchestrator_MaxRoundsSummary(t *testing.T) {
+// TestGroupOrchestrator_SpeechCapSummary pins the cap behavior in host mode: a
+// member-speech cap of 1 lets exactly ONE member speak, then the discussion is
+// forced to stop (the host is NOT asked to route another round) and the host
+// runs ONE summary turn.
+func TestGroupOrchestrator_SpeechCapSummary(t *testing.T) {
 	setupGroupDB(t)
 	project := "/tmp/gorch2"
 	if _, err := store.ProjectIDForPath(project); err != nil {
@@ -292,15 +307,14 @@ func TestGroupOrchestrator_MaxRoundsSummary(t *testing.T) {
 		t.Fatalf("CreateGroup: %v", err)
 	}
 	mA, _ := AddGroupMember(project, groupID, "claude", "agent-a", "A")
-	// Cap at 1 round so the host never ends on its own.
-	if err := SetGroupMaxRounds(groupID, 1); err != nil {
-		t.Fatalf("SetGroupMaxRounds: %v", err)
-	}
+	// Cap at ONE member speech so the host never ends on its own; the cap stops
+	// the loop before a second member turn.
+	setGroupMaxSpeechesForTest(t, 1)
 
 	script := map[string][]string{
 		hostID: {
-			`<clawbench-mention targets="A"> 请发言`, // round 1 route (no end)</clawbench-mention>
-			`结论：到此为止。`,                            // summary turn (round cap reached)
+			`<clawbench-mention targets="A"> 请发言`, // route (no end)
+			`结论：到此为止。`,                            // summary turn (cap reached)
 		},
 		mA: {"A 发言"},
 	}
@@ -310,16 +324,74 @@ func TestGroupOrchestrator_MaxRoundsSummary(t *testing.T) {
 	o.runTurn = runner
 	_ = runGroupTurnForTest(t, o, project, "开始", nil)
 
-	// Host should speak exactly twice: the routing turn + the summary turn.
+	// Host speaks exactly twice: the routing turn + the summary turn. A second
+	// routing turn would mean the cap failed to stop the loop.
 	hostTurns := 0
+	memberTurns := 0
 	for _, id := range *order {
 		if id == hostID {
 			hostTurns++
+		} else {
+			memberTurns++
 		}
 	}
 	if hostTurns != 2 {
 		t.Fatalf("host turns=%d, want 2 (route + summary), order=%v", hostTurns, *order)
 	}
+	if memberTurns != 1 {
+		t.Fatalf("member turns=%d, want 1 (cap=1), order=%v", memberTurns, *order)
+	}
+}
+
+// TestGroupOrchestrator_SpeechCapCountsMembersOnly pins the counting rule: the
+// host's routing turns are NOT counted against the cap, only member speeches
+// are. With a cap of 2 and two members routed per host round, the host must be
+// able to run its routing turns freely and the discussion must stop after
+// exactly 2 MEMBER speeches (not after 2 host turns).
+func TestGroupOrchestrator_SpeechCapCountsMembersOnly(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-capmembers"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	mA, _ := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	mB, _ := AddGroupMember(project, groupID, "claude", "agent-b", "B")
+	setGroupMaxSpeechesForTest(t, 2)
+
+	// The host keeps routing to A every round (never ends on its own); without
+	// the cap this would loop forever.
+	script := map[string][]string{
+		hostID: {`<clawbench-mention targets="A">请发言</clawbench-mention>`},
+		mA:     {"A 发言"},
+		mB:     {"B 发言"},
+	}
+	runner, order := newScriptedRunner(t, groupID, project, script)
+
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	_ = runGroupTurnForTest(t, o, project, "开始", nil)
+
+	memberTurns, hostTurns := 0, 0
+	for _, id := range *order {
+		if id == hostID {
+			hostTurns++
+		} else {
+			memberTurns++
+		}
+	}
+	if memberTurns != 2 {
+		t.Fatalf("member turns=%d, want 2 (cap counts members only), order=%v", memberTurns, *order)
+	}
+	// The host must have run its routing turn(s) WITHOUT them counting toward the
+	// cap, plus the final summary turn.
+	if hostTurns < 2 {
+		t.Fatalf("host turns=%d, want >=2 (route(s) + summary); host turns must not count toward the cap, order=%v", hostTurns, *order)
+	}
+	_ = mB
 }
 
 // TestGroupOrchestrator_HostNeverRoutesToItself is a regression for the reported
@@ -558,11 +630,9 @@ func TestGroupOrchestrator_SummaryFailureDoesNotAdvanceCursor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGroup: %v", err)
 	}
-	// Cap at 1 round so the host never ends on its own → the round cap triggers
+	// Cap at 1 member speech so the host never ends on its own → the cap triggers
 	// the summary turn.
-	if err := SetGroupMaxRounds(groupID, 1); err != nil {
-		t.Fatalf("SetGroupMaxRounds: %v", err)
-	}
+	setGroupMaxSpeechesForTest(t, 1)
 	if _, err := AddGroupMember(project, groupID, "claude", "agent-a", "A"); err != nil {
 		t.Fatalf("AddGroupMember: %v", err)
 	}
@@ -819,8 +889,9 @@ func TestGroupOrchestrator_FallbackMemberGetsMemberSystemPrompt(t *testing.T) {
 }
 
 // Two consecutive parse failures mean the host is not producing usable routing:
-// continuing burns the whole round budget for nothing. Abort and finalize
-// (decision #56).
+// continuing burns the whole budget for nothing. Abort and finalize
+// (decision #56). The global member-speech cap is left at its (large) default,
+// so the abort — not the cap — is what must stop this loop.
 func TestGroupOrchestrator_AbortsAfterTwoParseFailures(t *testing.T) {
 	setupGroupDB(t)
 	project := "/tmp/gorch-abort"
@@ -833,10 +904,6 @@ func TestGroupOrchestrator_AbortsAfterTwoParseFailures(t *testing.T) {
 	}
 	if _, err := AddGroupMember(project, groupID, "claude", "agent-a", "A"); err != nil {
 		t.Fatalf("AddGroupMember: %v", err)
-	}
-	// A large cap so that, without the abort, the loop would run many rounds.
-	if err := SetGroupMaxRounds(groupID, 20); err != nil {
-		t.Fatalf("SetGroupMaxRounds: %v", err)
 	}
 
 	hostTurns := 0
@@ -1110,10 +1177,10 @@ func TestGroupOrchestrator_CancelledFallbackDoesNotAdvanceCursor(t *testing.T) {
 	}
 }
 
-// A host that keeps failing must terminate the turn, not burn the whole round
-// budget. Design §6: "主持人跑挂 → 可见错误 + 回退轮转继续；**再失败终止群回合**".
-// Without a host-failure counter the loop runs every round (a broken host
-// backend means maxRounds host turns + 10 members monologuing).
+// A host that keeps failing must terminate the turn, not burn the whole budget.
+// Design §6: "主持人跑挂 → 可见错误 + 回退轮转继续；**再失败终止群回合**".
+// Without a host-failure counter the loop runs until the member-speech cap (a
+// broken host backend means up to cap member monologues).
 func TestGroupOrchestrator_AbortsAfterRepeatedHostFailure(t *testing.T) {
 	setupGroupDB(t)
 	project := "/tmp/gorch-hostfail"
@@ -1126,10 +1193,6 @@ func TestGroupOrchestrator_AbortsAfterRepeatedHostFailure(t *testing.T) {
 	}
 	if _, err := AddGroupMember(project, groupID, "claude", "agent-a", "A"); err != nil {
 		t.Fatalf("AddGroupMember: %v", err)
-	}
-	// A large cap: without early termination the host would run ~this many times.
-	if err := SetGroupMaxRounds(groupID, 20); err != nil {
-		t.Fatalf("SetGroupMaxRounds: %v", err)
 	}
 
 	hostTurns := 0
@@ -1145,7 +1208,7 @@ func TestGroupOrchestrator_AbortsAfterRepeatedHostFailure(t *testing.T) {
 	_ = runGroupTurnForTest(t, o, project, "开始", nil)
 
 	// Design §6: fall back once, then terminate on the next failure. Allow a
-	// small margin (the fallback + one retry) but nowhere near maxRounds.
+	// small margin (the fallback + one retry) but nowhere near the cap.
 	if hostTurns > 4 {
 		t.Fatalf("repeated host failure must terminate the turn, but the host ran %d turns", hostTurns)
 	}

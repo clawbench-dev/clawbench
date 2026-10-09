@@ -24,7 +24,6 @@
       :groupId="sessionId"
       :members="members"
       :hostMemberId="hostMemberId"
-      :maxRounds="maxRounds"
       :autoApprove="autoApprove"
       :mode="mode"
       :parallelDefault="parallelDefault"
@@ -46,11 +45,9 @@ const props = defineProps<{
   members: GroupMemberInfo[]
   hostMemberId: string
   isGroup: boolean
-  /** The group's current maxRounds (from the roster endpoint), shown in the sheet. */
-  maxRounds: number
   /** The group's current auto-approve flag, shown in the sheet (decision #61). */
   autoApprove: boolean
-  /** The group's mode; "free" hides the maxRounds control in the sheet. */
+  /** The group's mode; "free" shows the concurrency switch, host mode hides it. */
   mode?: 'host' | 'free'
   /** Free-mode concurrency switch value, shown in the sheet (free mode only). */
   parallelDefault?: boolean

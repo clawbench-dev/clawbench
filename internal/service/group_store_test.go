@@ -255,24 +255,27 @@ func countAgentRows(members []GroupMember, agentID string) int {
 	return n
 }
 
-func TestGroupMaxRoundsDefaultAndOverride(t *testing.T) {
-	setupGroupDB(t)
-	project := "/tmp/grouptest"
-	if _, err := store.ProjectIDForPath(project); err != nil {
-		t.Fatalf("ProjectIDForPath: %v", err)
+// The member-speech cap is a GLOBAL setting (chat.group_max_speeches), not a
+// per-group one. It reads model.ChatGroupMaxSpeeches and falls back to the
+// default when that is non-positive (a value set directly on the global var in
+// an edge/test path must not silently mean "stop immediately").
+func TestGroupMaxSpeechesReadsGlobal(t *testing.T) {
+	orig := model.ChatGroupMaxSpeeches
+	t.Cleanup(func() { model.ChatGroupMaxSpeeches = orig })
+
+	model.ChatGroupMaxSpeeches = 42
+	if got := GetGroupMaxSpeeches(); got != 42 {
+		t.Fatalf("GetGroupMaxSpeeches()=%d want 42", got)
 	}
-	groupID, _, err := CreateGroup(project, "g", "codebuddy", "agent-host", "Host")
-	if err != nil {
-		t.Fatalf("CreateGroup: %v", err)
+
+	// A non-positive global falls back to the default (never 0 / negative).
+	model.ChatGroupMaxSpeeches = 0
+	if got := GetGroupMaxSpeeches(); got != defaultGroupMaxSpeeches {
+		t.Fatalf("GetGroupMaxSpeeches()=%d want default %d", got, defaultGroupMaxSpeeches)
 	}
-	if got := GetGroupMaxRounds(groupID); got != defaultGroupMaxRounds {
-		t.Fatalf("default maxRounds=%d want %d", got, defaultGroupMaxRounds)
-	}
-	if err := SetGroupMaxRounds(groupID, 25); err != nil {
-		t.Fatalf("SetGroupMaxRounds: %v", err)
-	}
-	if got := GetGroupMaxRounds(groupID); got != 25 {
-		t.Fatalf("maxRounds=%d want 25", got)
+	model.ChatGroupMaxSpeeches = -5
+	if got := GetGroupMaxSpeeches(); got != defaultGroupMaxSpeeches {
+		t.Fatalf("GetGroupMaxSpeeches()=%d want default %d", got, defaultGroupMaxSpeeches)
 	}
 }
 

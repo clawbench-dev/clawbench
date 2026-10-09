@@ -2,44 +2,41 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { ref, nextTick } from 'vue'
 import { useGroupMembers } from '@/composables/useGroupMembers'
 
-// useGroupMembers loads the roster + maxRounds for the current group session.
-// The maxRounds read-back exists so the member sheet shows the SERVER value
-// instead of a hardcoded default (the PATCH endpoint has no other read path).
+// useGroupMembers loads the roster + mode + parallelDefault for the current
+// group session. The member-speech cap is a global setting, not returned here.
 describe('useGroupMembers', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
   })
 
-  it('exposes the roster and the server maxRounds', async () => {
+  it('exposes the roster', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({
       ok: true,
       json: async () => ({
         members: [{ id: 'm1', agentId: 'a1', name: 'A', backend: 'claude', left: false, isHost: true }],
-        maxRounds: 4,
       }),
     })))
 
     const sid = ref('group-1')
-    const { members, maxRounds } = useGroupMembers(sid)
+    const { members } = useGroupMembers(sid)
     await nextTick()
     await new Promise(r => setTimeout(r, 0))
 
     expect(members.value).toHaveLength(1)
-    expect(maxRounds.value).toBe(4)
   })
 
-  it('defaults maxRounds to 10 when the response omits it', async () => {
+  it('does not expose a per-group maxRounds (the cap is global)', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({
       ok: true,
-      json: async () => ({ members: [] }),
+      json: async () => ({ members: [], maxRounds: 4 }),
     })))
 
     const sid = ref('group-2')
-    const { maxRounds } = useGroupMembers(sid)
+    const result = useGroupMembers(sid) as Record<string, unknown>
     await nextTick()
     await new Promise(r => setTimeout(r, 0))
 
-    expect(maxRounds.value).toBe(10)
+    expect(result.maxRounds).toBeUndefined()
   })
 
   it('exposes parallelDefault from the server and defaults it to false', async () => {

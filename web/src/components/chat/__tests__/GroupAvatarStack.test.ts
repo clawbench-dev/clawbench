@@ -24,7 +24,6 @@ function mountStack(members: any[], props: Record<string, unknown> = {}) {
       sessionId: 'g1',
       members,
       hostMemberId: members.find(m => m.isHost)?.id || '',
-      maxRounds: 10,
       autoApprove: false,
       isGroup: true,
       ...props,
@@ -109,7 +108,7 @@ describe('GroupAvatarStack', () => {
 
   it('does not render when the session is not a group', () => {
     const w = mount(GroupAvatarStack, {
-      props: { sessionId: 's1', members: [], hostMemberId: '', maxRounds: 10, isGroup: false },
+      props: { sessionId: 's1', members: [], hostMemberId: '', isGroup: false },
     })
     expect(w.find('.group-avatar-stack').exists()).toBe(false)
   })

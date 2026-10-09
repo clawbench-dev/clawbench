@@ -8,12 +8,10 @@ vi.mock('vue-i18n', () => ({
 
 const mockAdd = vi.fn().mockResolvedValue(undefined)
 const mockRemove = vi.fn().mockResolvedValue(undefined)
-const mockUpdateSettings = vi.fn().mockResolvedValue(undefined)
 const mockSetParallel = vi.fn().mockResolvedValue(undefined)
 vi.mock('@/composables/useGroupChat', () => ({
   addGroupMembers: (...a: any[]) => mockAdd(...a),
   removeGroupMember: (...a: any[]) => mockRemove(...a),
-  updateGroupSettings: (...a: any[]) => mockUpdateSettings(...a),
   setGroupParallelDefault: (...a: any[]) => mockSetParallel(...a),
 }))
 
@@ -44,7 +42,7 @@ vi.mock('@/components/common/BottomSheet.vue', () => ({
 
 function mountSheet(members: any[], props: Record<string, unknown> = {}) {
   return mount(GroupSettingsSheet, {
-    props: { groupId: 'g1', members, maxRounds: 10, autoApprove: false, ...props },
+    props: { groupId: 'g1', members, autoApprove: false, ...props },
   })
 }
 
@@ -61,12 +59,11 @@ describe('GroupSettingsSheet', () => {
   beforeEach(() => {
     mockRemove.mockClear()
     mockAdd.mockClear()
-    mockUpdateSettings.mockClear()
     mockToggleAutoApprove.mockClear()
   })
 
-  // The panel is the group's settings surface (members + maxRounds + concurrency
-  // + auto-approve), so its header reads "群聊设置" — not "成员", which described
+  // The panel is the group's settings surface (members + concurrency +
+  // auto-approve), so its header reads "群聊设置" — not "成员", which described
   // only the roster and undersold the settings rows below it.
   it('titles the header with the group-settings key, not the members key', () => {
     const w = mountSheet(MEMBERS)
@@ -109,13 +106,6 @@ describe('GroupSettingsSheet', () => {
     await flushPromises()
     expect(mockRemove).toHaveBeenCalledWith('g1', 'm2')
     expect(w.emitted('changed')).toBeTruthy()
-  })
-
-  it('saves max rounds on change', async () => {
-    const w = mountSheet(MEMBERS)
-    await w.find('.gm-setting-input').setValue(5)
-    await flushPromises()
-    expect(mockUpdateSettings).toHaveBeenCalledWith('g1', 5)
   })
 
   // Adding is the sheet's primary action: it lives in the drawer header (right
@@ -167,18 +157,17 @@ describe('GroupSettingsSheet', () => {
     expect(mockToggleAutoApprove).toHaveBeenCalledWith(false)
   })
 
-  it('shows the maxRounds control in host mode', () => {
-    const w = mountSheet(MEMBERS, { mode: 'host' })
-    expect(w.find('#group-max-rounds').exists()).toBe(true)
+  it('never renders a per-group maxRounds control (the cap is global now)', () => {
+    // The member-speech cap moved to Settings → 聊天 → 群聊
+    // (chat.group_max_speeches), so the sheet must not carry a per-group input
+    // for it in either mode.
+    expect(mountSheet(MEMBERS, { mode: 'host' }).find('#group-max-rounds').exists()).toBe(false)
+    expect(mountSheet(MEMBERS, { mode: 'free' }).find('#group-max-rounds').exists()).toBe(false)
+    expect(mountSheet(MEMBERS).find('.gm-setting-input').exists()).toBe(false)
   })
 
-  it('hides the maxRounds control in free mode (no round cap)', () => {
-    const w = mountSheet(MEMBERS, { mode: 'free' })
-    expect(w.find('#group-max-rounds').exists()).toBe(false)
-  })
-
-  // The concurrency switch lives HERE (next to maxRounds), not in the chat
-  // action bar. It is the mirror of the maxRounds row: shown only in free mode
+  // The concurrency switch lives HERE, not in the chat
+  // action bar. It is shown only in free mode
   // (in host mode the host routes, so the user never @-names a speaker).
   describe('free-mode concurrency switch', () => {
     it('shows only in free mode and reflects the server value', () => {

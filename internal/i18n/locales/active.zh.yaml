@@ -20,6 +20,7 @@ FileTooLarge: 文件过大
 TextTooLong: 文本过长，最多支持{{.MaxChars}}字符
 SummarizeFailed: 摘要生成失败，请稍后重试
 SynthesizeFailed: 语音合成失败，请稍后重试
+TTSSpeakerSaysPrefix: "{{.Name}}说："
 BackendCreateFailed: "创建 AI Backend 失败: {{.Error}}"
 StreamStartFailed: "启动流式输出失败: {{.Error}}"
 MethodNotAllowed: 方法不允许
@@ -159,6 +160,7 @@ RAGSegmenterUnavailable: "已拒绝重建：分词器不可用。此时重建会
 RAGRebuildAccepted: 重建已在后台启动
 AutoContinue: 继续
 GroupYourTurn: 轮到用户发言
+GroupDiscussionLimitReached: 成员间讨论次数达到上限
 PortForwardUnavailable: 端口转发不可用
 TunnelTargetUnreachable: 隧道目标不可达
 TunnelReverseRequiresHTTP2: 反向转发需要 HTTP/2；HTTP/1.1 下请使用 SSH 传输

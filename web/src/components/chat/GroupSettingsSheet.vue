@@ -43,27 +43,11 @@
         </li>
       </ul>
 
-      <!-- Settings: max rounds. Host mode only: a free group has no round cap
-           (its relay runs until nobody is @-ed or the user stops it), so the
-           control would be a dead setting there. -->
-      <div v-if="mode !== 'free'" class="gm-setting">
-        <label class="gm-setting-label" for="group-max-rounds">{{ t('group.maxRounds') }}</label>
-        <input
-          id="group-max-rounds"
-          v-model.number="maxRounds"
-          type="number"
-          min="1"
-          class="gm-setting-input"
-          @change="saveMaxRounds"
-        />
-      </div>
-
       <!-- Settings: concurrency. Free mode only: in host mode the host routes
            (the user never @-names speakers), so the switch would be a dead
-           setting there — the mirror image of the maxRounds row above. When on,
-           the members the user @-names (or the whole roster when they name
-           nobody) run concurrently; it never affects an agent's own
-           mode="parallel" mentions. -->
+           setting there. When on, the members the user @-names (or the whole
+           roster when they name nobody) run concurrently; it never affects an
+           agent's own mode="parallel" mentions. -->
       <div v-if="mode === 'free'" class="gm-setting">
         <div class="gm-setting-text">
           <label class="gm-setting-label" for="group-parallel">{{ t('group.parallelLabel') }}</label>
@@ -121,25 +105,24 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Trash2, Plus, Crown } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
 import { getAgentAvatar } from '@/composables/useAgents'
-import { addGroupMembers, removeGroupMember, updateGroupSettings, setGroupParallelDefault, type GroupMemberInfo } from '@/composables/useGroupChat'
+import { addGroupMembers, removeGroupMember, setGroupParallelDefault, type GroupMemberInfo } from '@/composables/useGroupChat'
 import { toggleAutoApprove } from '@/composables/useSessionIdentity'
 
 const props = defineProps<{
   groupId: string
   members: GroupMemberInfo[]
-  /** The group's current maxRounds from the server (roster endpoint). */
-  maxRounds: number
   /** The group's current auto-approve flag (server-authoritative: the backend
    *  mirrors it across every member row, decision #61). */
   autoApprove: boolean
-  /** The group's mode. "free" hides the maxRounds control (no round cap). */
+  /** The group's mode. "free" shows the concurrency switch; host mode hides it
+   *  (the host routes, so the user never @-names a speaker). */
   mode?: 'host' | 'free'
   /** Free-mode concurrency switch value (server-authoritative). Shown only in
    *  free mode — in host mode the host routes, so it would be a dead setting. */
@@ -150,10 +133,6 @@ const emit = defineEmits<{ (e: 'changed'): void }>()
 const { t } = useI18n()
 const open = ref(false)
 const pickerOpen = ref(false)
-// Seed from the server value and keep it in sync: a hardcoded default made the
-// sheet show 10 after the user had changed it (there was no read-back).
-const maxRounds = ref(props.maxRounds)
-watch(() => props.maxRounds, (v) => { maxRounds.value = v })
 
 // Active members' agent ids: shown dimmed + unpickable in the add-members
 // picker (the backend rejoins/no-ops, so offering them would be misleading).
@@ -193,13 +172,6 @@ async function remove(m: GroupMemberInfo) {
   } catch { /* ignore */ }
 }
 
-async function saveMaxRounds() {
-  const n = Number(maxRounds.value)
-  if (n > 0) {
-    try { await updateGroupSettings(props.groupId, n) } catch { /* ignore */ }
-  }
-}
-
 // Delegate to the shared toggle: it PATCHes the current session (the group) and
 // the backend fans the flag out to every member row. We deliberately do NOT
 // keep local state — the parent passes the server value back down, so the
@@ -211,7 +183,6 @@ function onToggleAutoApprove(e: Event) {
 // Persist the free-mode concurrency switch, then refresh the roster so the
 // switch reflects the SERVER value (server-authoritative, same contract as
 // auto-approve: a failed PATCH reverts the checkbox on the next read-back).
-// Sends only parallelDefault, so it never clobbers maxRounds.
 async function onToggleParallel(e: Event) {
   const enabled = (e.target as HTMLInputElement).checked
   try {
@@ -354,21 +325,6 @@ defineExpose({ open: openSheet })
    this the switch would shrink when the hint text is long. */
 .gm-setting .settings-item__switch {
   flex-shrink: 0;
-}
-.gm-setting-input {
-  width: 72px;
-  height: 30px;
-  text-align: center;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  font-size: var(--font-size-md);
-}
-.gm-setting-input:focus {
-  outline: none;
-  border-color: var(--accent-color, #0066cc);
-  box-shadow: 0 0 0 2px var(--focus-ring, rgba(0, 102, 204, 0.2));
 }
 
 /* ── Header: add-members action ──

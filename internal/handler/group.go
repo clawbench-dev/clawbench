@@ -190,15 +190,14 @@ func serveGroupMembersList(w http.ResponseWriter, r *http.Request, projectPath s
 			"isHost":    m.ID == hostMemberID,
 		})
 	}
-	// maxRounds is included so the member sheet can show the SERVER's
-	// current value instead of a hardcoded default (the PATCH endpoint had
-	// no read-back, so the UI lied after a change). mode tells the frontend
-	// whether a host exists (host mode) or the group is free (design §13).
-	// parallelDefault is the free-mode action-bar switch's server value.
+	// mode tells the frontend whether a host exists (host mode) or the group is
+	// free (design §13). parallelDefault is the free-mode action-bar switch's
+	// server value. The member-speech cap is a GLOBAL setting
+	// (chat.group_max_speeches), not a per-group one, so it is not returned
+	// here — the group settings sheet no longer shows it.
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":              true,
 		"members":         out,
-		"maxRounds":       service.GetGroupMaxRounds(groupID),
 		respKeyMode:       service.GetGroupMode(groupID),
 		"parallelDefault": service.GetGroupParallelDefault(groupID),
 	})
@@ -276,13 +275,13 @@ func serveGroupMembersRemove(w http.ResponseWriter, r *http.Request, projectPath
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// ServeGroupSettings reads/updates group settings (maxRounds, parallelDefault).
+// ServeGroupSettings reads/updates group settings (parallelDefault).
 //
-//	PATCH /api/group/settings {groupId, maxRounds?, parallelDefault?} -> {ok}
+//	PATCH /api/group/settings {groupId, parallelDefault} -> {ok}
 //
-// Both settings are OPTIONAL but at least one must be present: a PATCH with
-// neither is a no-op request and is rejected. maxRounds, when present, must be
-// positive. Pointers distinguish "absent" from a meaningful zero value.
+// parallelDefault is the only remaining per-group setting. The member-speech
+// cap moved to the global config (chat.group_max_speeches), so it is no longer
+// accepted here.
 func ServeGroupSettings(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPatch {
 		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
@@ -294,34 +293,21 @@ func ServeGroupSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		GroupID         string `json:"groupId"`
-		MaxRounds       *int   `json:"maxRounds"`
 		ParallelDefault *bool  `json:"parallelDefault"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if req.GroupID == "" || (req.MaxRounds == nil && req.ParallelDefault == nil) {
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
-		return
-	}
-	if req.MaxRounds != nil && *req.MaxRounds <= 0 {
+	if req.GroupID == "" || req.ParallelDefault == nil {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
 		return
 	}
 	if !requireSessionOwnership(w, r, req.GroupID, projectPath) {
 		return
 	}
-	if req.MaxRounds != nil {
-		if err := service.SetGroupMaxRounds(req.GroupID, *req.MaxRounds); err != nil {
-			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
-			return
-		}
-	}
-	if req.ParallelDefault != nil {
-		if err := service.SetGroupParallelDefault(req.GroupID, *req.ParallelDefault); err != nil {
-			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
-			return
-		}
+	if err := service.SetGroupParallelDefault(req.GroupID, *req.ParallelDefault); err != nil {
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

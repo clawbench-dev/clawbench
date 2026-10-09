@@ -289,7 +289,7 @@ func TestServeGroupSettings_NoProjectCookie(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
-	req := newRequest(t, http.MethodPatch, "/api/group/settings", map[string]any{"groupId": "g", "maxRounds": 3})
+	req := newRequest(t, http.MethodPatch, "/api/group/settings", map[string]any{"groupId": "g", "parallelDefault": true})
 	w := callHandlerWithAuth(ServeGroupSettings, req)
 	assert.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
 }
@@ -298,7 +298,7 @@ func TestServeGroupSettings_InvalidParams(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	req := newRequest(t, http.MethodPatch, "/api/group/settings", map[string]any{"groupId": "", "maxRounds": 0})
+	req := newRequest(t, http.MethodPatch, "/api/group/settings", map[string]any{"groupId": ""})
 	req = withProjectCookie(req, env.ProjectDir)
 	w := callHandlerWithAuth(ServeGroupSettings, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
@@ -308,7 +308,7 @@ func TestServeGroupSettings_UnknownGroup(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	req := newRequest(t, http.MethodPatch, "/api/group/settings", map[string]any{"groupId": "nope", "maxRounds": 3})
+	req := newRequest(t, http.MethodPatch, "/api/group/settings", map[string]any{"groupId": "nope", "parallelDefault": true})
 	req = withProjectCookie(req, env.ProjectDir)
 	w := callHandlerWithAuth(ServeGroupSettings, req)
 	assert.Equal(t, http.StatusNotFound, w.Code, w.Body.String())

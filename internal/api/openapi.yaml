@@ -401,6 +401,11 @@ paths:
         `chat.user_nickname` 是群聊中人类用户的保留显示名（默认 `User`）。它被
         写进路由标签的 `targets` 属性，故不能包含引号 / 尖括号 / 逗号 / 控制字符，
         且不得与任何智能体同名（与智能体命名双向校验）。
+
+        `chat.group_max_speeches` 是群聊中智能体相互发言的次数上限（默认 `100`），
+        含义为「轮到用户发言前，智能体之间最多发言多少次」；主持人模式与自由模式
+        语义一致，只计**成员**发言（主持人的路由/汇总回合不计）。达到上限即停止
+        AI 讨论并写一条系统消息。`PATCH` 时须为正整数。
       operationId: getConfig
       responses:
         "200":
@@ -422,6 +427,10 @@ paths:
         出现「重启后才被归一」的中间状态）。其他值返回 400
         （`port_forward.transport must be one of: ssh,h2,both`），非字符串返回 400
         （`port_forward.transport must be a string`）。
+
+        `chat.user_nickname`（群聊用户昵称）非法值（含引号 / 尖括号 / 逗号 / 控制
+        字符，或长度超 32）返回 400；与现有智能体同名返回 **409**
+        （`msgKey=UserNicknameTaken`）。
       operationId: patchConfig
       requestBody:
         required: true
@@ -3889,6 +3898,12 @@ paths:
                 messageId:
                   type: integer
                   description: 关联的 chat_history.id，用于 TTS 摘要缓存。
+                speakerName:
+                  type: string
+                  description: >-
+                    群聊发言人的显示名。设置后朗读音频会加上「<名>说：」前缀
+                    （英文为「<名> says: 」），便于分辨并发发言者；该前缀只作用于
+                    语音合成，不参与摘要、也不写入摘要缓存。
       responses:
         "200":
           description: 音频
@@ -5228,9 +5243,10 @@ paths:
       summary: 列出群成员
       description: |
         返回群的全部成员，含已离场（`left=true`）的成员。`isHost` 标识主持人。
-        同时返回群的当前 `maxRounds`（供成员管理抽屉回显服务端值）、`mode`
-        （`"host"` 主持人模式 / `"free"` 自由聊天模式）与 `parallelDefault`
-        （自由模式 actionbar「并发执行」开关的服务端值；缺省 `false` 即串行）。
+        同时返回 `mode`（`"host"` 主持人模式 / `"free"` 自由聊天模式）与
+        `parallelDefault`（自由模式 actionbar「并发执行」开关的服务端值；缺省
+        `false` 即串行）。成员发言次数上限是**全局配置**（`chat.group_max_speeches`，
+        设置 → 聊天 → 群聊），不是每群设置，故不在此返回。
       operationId: groupMembersList
       parameters:
         - name: groupId
@@ -5257,7 +5273,6 @@ paths:
                         backend: {type: string}
                         left: {type: boolean}
                         isHost: {type: boolean}
-                  maxRounds: {type: integer}
                   mode: {type: string, enum: [host, free]}
                   parallelDefault: {type: boolean}
     post:
@@ -5313,12 +5328,13 @@ paths:
   /api/group/settings:
     patch:
       tags: [Group]
-      summary: 更新群设置（最大轮数 / 用户种子并发默认）
+      summary: 更新群设置（用户种子并发默认）
       description: |
-        两个设置均可选，但至少提供一个：都缺省时返回 400（空请求）。
-        `maxRounds` 提供时必须为正整数。`parallelDefault` 是自由模式下用户 @
-        成员的默认并发开关（打开后用户 @ 的成员并发执行；智能体之间 @ 的
-        `mode` 不受影响）。主持人模式下该开关无作用（用户不参与路由）。
+        `parallelDefault` 是自由模式下用户 @ 成员的默认并发开关（打开后用户 @
+        的成员并发执行；智能体之间 @ 的 `mode` 不受影响）。主持人模式下该开关无
+        作用（用户不参与路由）。成员发言次数上限是**全局配置**
+        （`chat.group_max_speeches`，经 `PATCH /api/config` 修改），不是每群设置，
+        故不在此端点。
       operationId: groupSettingsUpdate
       requestBody:
         required: true
@@ -5326,10 +5342,9 @@ paths:
           application/json:
             schema:
               type: object
-              required: [groupId]
+              required: [groupId, parallelDefault]
               properties:
                 groupId: {type: string}
-                maxRounds: {type: integer, minimum: 1}
                 parallelDefault: {type: boolean}
       responses:
         "200":
