@@ -50,8 +50,9 @@ export async function createGroup(hostAgentId: string, memberAgentIds: string[])
 
 /** listGroupMembers fetches the group roster (including left members) plus the
  *  group's current maxRounds (so the settings UI shows the server value rather
- *  than a hardcoded default) and its mode ("host" | "free"). */
-export async function listGroupMembers(groupId: string): Promise<{ members: GroupMemberInfo[]; maxRounds: number; mode: 'host' | 'free' }> {
+ *  than a hardcoded default), its mode ("host" | "free"), and its
+ *  parallelDefault (the free-mode action-bar "并发执行" switch's server value). */
+export async function listGroupMembers(groupId: string): Promise<{ members: GroupMemberInfo[]; maxRounds: number; mode: 'host' | 'free'; parallelDefault: boolean }> {
   const resp = await fetch(`/api/group/members?groupId=${encodeURIComponent(groupId)}`)
   if (!resp.ok) throw new Error(`request failed: ${resp.status}`)
   const data = await resp.json()
@@ -59,6 +60,7 @@ export async function listGroupMembers(groupId: string): Promise<{ members: Grou
     members: data.members ?? [],
     maxRounds: Number(data.maxRounds) || 10,
     mode: data.mode === 'free' ? 'free' : 'host',
+    parallelDefault: data.parallelDefault === true,
   }
 }
 
@@ -84,6 +86,18 @@ export async function updateGroupSettings(groupId: string, maxRounds: number): P
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ groupId, maxRounds }),
+  })
+  if (!resp.ok) throw new Error(`request failed: ${resp.status}`)
+}
+
+/** setGroupParallelDefault updates the free-mode "并发执行" switch: when on, the
+ *  user's @-mentions run concurrently. Sends ONLY parallelDefault (the backend
+ *  treats both settings as optional), so it cannot clobber maxRounds. */
+export async function setGroupParallelDefault(groupId: string, enabled: boolean): Promise<void> {
+  const resp = await fetch('/api/group/settings', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ groupId, parallelDefault: enabled }),
   })
   if (!resp.ok) throw new Error(`request failed: ${resp.status}`)
 }

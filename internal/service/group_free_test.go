@@ -906,3 +906,154 @@ func TestFreeLoop_ParallelRespectsLaunchCap(t *testing.T) {
 		}
 	}
 }
+
+// peakConcurrencyRunner wraps a base runner, recording peak simultaneous
+// executions and each member's prompt. Members hold briefly so overlaps are
+// observable — a sequential group can never reach peak >= 2. The returned
+// prompts map is shared by reference and read after the turn completes.
+func peakConcurrencyRunner(t *testing.T, project, groupID string, script map[string][]string) (groupTurnRunner, *[]string, *int, map[string]string) {
+	t.Helper()
+	var mu sync.Mutex
+	cur, peak := 0, 0
+	prompts := map[string]string{}
+	base, order := freeScriptedRunner(t, project, groupID, script)
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		mu.Lock()
+		cur++
+		if cur > peak {
+			peak = cur
+		}
+		prompts[turn.MemberRowID] = turn.Prompt
+		mu.Unlock()
+		time.Sleep(20 * time.Millisecond)
+		r := base(ctx, gid, turn)
+		mu.Lock()
+		cur--
+		mu.Unlock()
+		return r
+	}
+	return runner, order, &peak, prompts
+}
+
+// With the "并发执行" switch ON, the user @-naming SEVERAL members (which the
+// cards serialize as SEPARATE tags) must merge into ONE parallel group: they
+// run concurrently and none sees a sibling's output this round. Without the
+// switch the same message is sequential — so this pins that the switch, not the
+// tag shape, decides.
+func TestFreeLoop_ParallelSwitchMergesUserMentions(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/free-switch-merge"
+	groupID, byName := createFreeGroup(t, project, "A", "B")
+	if err := SetGroupParallelDefault(groupID, true); err != nil {
+		t.Fatalf("SetGroupParallelDefault: %v", err)
+	}
+
+	runner, order, peak, prompts := peakConcurrencyRunner(t, project, groupID, map[string][]string{
+		byName["A"]: {"A 的回答"},
+		byName["B"]: {"B 的回答"},
+	})
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	// Two SEPARATE tags (exactly what the member cards serialize to) — the
+	// switch must still merge them into one parallel group.
+	msg := `<clawbench-mention targets="` + byName["A"] + `"></clawbench-mention> ` +
+		`<clawbench-mention targets="` + byName["B"] + `"></clawbench-mention> 同时回答`
+	_ = runGroupTurnForTest(t, o, project, msg, nil)
+
+	if *peak < 2 {
+		t.Fatalf("the switch must merge the user's mentions into one parallel group (peak >= 2), got %d", *peak)
+	}
+	if len(*order) != 2 {
+		t.Fatalf("both members must speak exactly once, order=%v", *order)
+	}
+	if strings.Contains(prompts[byName["A"]], "B 的回答") || strings.Contains(prompts[byName["B"]], "A 的回答") {
+		t.Fatalf("parallel members must not see a sibling's output; A=%q B=%q",
+			prompts[byName["A"]], prompts[byName["B"]])
+	}
+}
+
+// With the switch ON and NO @-mentions, the whole active roster is one parallel
+// group (previously one SEQUENTIAL group).
+func TestFreeLoop_ParallelSwitchNoMentionRunsAllConcurrently(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/free-switch-all"
+	groupID, byName := createFreeGroup(t, project, "A", "B", "C")
+	if err := SetGroupParallelDefault(groupID, true); err != nil {
+		t.Fatalf("SetGroupParallelDefault: %v", err)
+	}
+
+	runner, order, peak, _ := peakConcurrencyRunner(t, project, groupID, map[string][]string{
+		byName["A"]: {"A 的回答"},
+		byName["B"]: {"B 的回答"},
+		byName["C"]: {"C 的回答"},
+	})
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	_ = runGroupTurnForTest(t, o, project, "大家同时说", nil)
+
+	if *peak < 2 {
+		t.Fatalf("the switch must run the whole roster concurrently (peak >= 2), got %d", *peak)
+	}
+	if len(*order) != 3 {
+		t.Fatalf("all three members must speak, order=%v", *order)
+	}
+}
+
+// The switch must NOT override an AGENT's own `mode="parallel"`: with the
+// switch OFF, a member's parallel tag still runs concurrently. (The switch
+// governs only what the USER seeds.) Here the user seeds A (sequential); A's
+// OWN reply @-names B and C with mode="parallel", which must run them
+// concurrently regardless of the switch.
+func TestFreeLoop_ParallelSwitchOffDoesNotOverrideAgentMode(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/free-switch-agent"
+	groupID, byName := createFreeGroup(t, project, "A", "B", "C")
+	// Switch stays at its default (false).
+
+	runner, _, peak, prompts := peakConcurrencyRunner(t, project, groupID, map[string][]string{
+		byName["A"]: {`<clawbench-mention targets="` + byName["B"] + `,` + byName["C"] + `" mode="parallel">你们同时说</clawbench-mention>`},
+		byName["B"]: {"B 的回答"},
+		byName["C"]: {"C 的回答"},
+	})
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	// The user seeds ONLY A; the parallel tag comes from A's own output.
+	msg := `<clawbench-mention targets="` + byName["A"] + `"></clawbench-mention> 开始`
+	_ = runGroupTurnForTest(t, o, project, msg, nil)
+
+	if *peak < 2 {
+		t.Fatalf("an agent's own mode=parallel must still run concurrently with the switch off, got peak %d", *peak)
+	}
+	if strings.Contains(prompts[byName["C"]], "B 的回答") || strings.Contains(prompts[byName["B"]], "C 的回答") {
+		t.Fatalf("parallel members must not see a sibling's output; B=%q C=%q",
+			prompts[byName["B"]], prompts[byName["C"]])
+	}
+}
+
+// With the switch OFF, the user @-naming several members stays SEQUENTIAL (the
+// long-standing behavior): the second member sees the first's output.
+func TestFreeLoop_ParallelSwitchOffUserMentionsSequential(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/free-switch-off"
+	groupID, byName := createFreeGroup(t, project, "A", "B")
+
+	runner, order, peak, prompts := peakConcurrencyRunner(t, project, groupID, map[string][]string{
+		byName["A"]: {"A 的回答"},
+		byName["B"]: {"B 的回答"},
+	})
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	msg := `<clawbench-mention targets="` + byName["A"] + `"></clawbench-mention> ` +
+		`<clawbench-mention targets="` + byName["B"] + `"></clawbench-mention> 依次说`
+	_ = runGroupTurnForTest(t, o, project, msg, nil)
+
+	if *peak != 1 {
+		t.Fatalf("with the switch off the user's mentions must stay sequential (peak == 1), got %d", *peak)
+	}
+	if len(*order) != 2 || (*order)[0] != byName["A"] || (*order)[1] != byName["B"] {
+		t.Fatalf("sequential order must be preserved, order=%v", *order)
+	}
+	if !strings.Contains(prompts[byName["B"]], "A 的回答") {
+		t.Fatalf("a sequential member must see the previous speaker's output; B=%q", prompts[byName["B"]])
+	}
+}

@@ -276,6 +276,36 @@ func TestGroupMaxRoundsDefaultAndOverride(t *testing.T) {
 	}
 }
 
+// The user-seed concurrency default is a tri-state read: absent => sequential
+// (false), and an explicit true/false must round-trip. Sequential is the
+// long-standing behavior, so an old group without the key must stay sequential.
+func TestGroupParallelDefaultRoundTrip(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest-parallel"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, _, err := CreateGroup(project, "g", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	if GetGroupParallelDefault(groupID) {
+		t.Fatal("parallelDefault must default to false when unset")
+	}
+	if err := SetGroupParallelDefault(groupID, true); err != nil {
+		t.Fatalf("SetGroupParallelDefault(true): %v", err)
+	}
+	if !GetGroupParallelDefault(groupID) {
+		t.Fatal("parallelDefault must read back true after being set")
+	}
+	if err := SetGroupParallelDefault(groupID, false); err != nil {
+		t.Fatalf("SetGroupParallelDefault(false): %v", err)
+	}
+	if GetGroupParallelDefault(groupID) {
+		t.Fatal("parallelDefault must read back false after being cleared")
+	}
+}
+
 // TestGroupMembersForGroups pins the batch preview used by the session list:
 // one call covers many groups, left members are excluded, group ids with no
 // active members are absent, and an empty input never touches the DB.

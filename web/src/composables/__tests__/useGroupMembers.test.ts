@@ -41,4 +41,28 @@ describe('useGroupMembers', () => {
 
     expect(maxRounds.value).toBe(10)
   })
+
+  it('exposes parallelDefault from the server and defaults it to false', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ members: [], parallelDefault: true }),
+    })))
+
+    const sid = ref('group-3')
+    const { parallelDefault } = useGroupMembers(sid)
+    await nextTick()
+    await new Promise(r => setTimeout(r, 0))
+    expect(parallelDefault.value).toBe(true)
+
+    // A response without the field (older backend) reads as sequential.
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ members: [] }),
+    })))
+    const sid2 = ref('group-4')
+    const { parallelDefault: pd2 } = useGroupMembers(sid2)
+    await nextTick()
+    await new Promise(r => setTimeout(r, 0))
+    expect(pd2.value).toBe(false)
+  })
 })

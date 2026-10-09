@@ -890,6 +890,34 @@ func SetGroupMaxRounds(groupID string, n int) error {
 	return nil
 }
 
+// GetGroupParallelDefault returns whether the user's free-mode seed runs its
+// members CONCURRENTLY by default (the action-bar "并发执行" switch).
+//
+// Defaults to false when unset/invalid: sequential is the long-standing
+// behavior, so an old group (or one whose context_state was corrupted) keeps it.
+// The key is `parallelDefault` (not `parallel`): it is a DEFAULT applied to the
+// user's seed, not a per-message mode, and it must not collide with the
+// per-tag `mode="parallel"` attribute an agent may write.
+func GetGroupParallelDefault(groupID string) bool {
+	var raw string
+	_ = store.ReadDB().QueryRow(
+		"SELECT COALESCE(json_extract(context_state, '$.parallelDefault'), '') FROM chat_sessions WHERE id = ?",
+		groupID,
+	).Scan(&raw)
+	// SQLite's json_extract renders JSON true as 1 and false as 0; anything
+	// else (empty/absent/invalid) is the sequential default.
+	return raw == "1" || raw == "true"
+}
+
+// SetGroupParallelDefault stores the group's user-seed concurrency default in
+// its context_state JSON. Honored in free mode only (host mode has no user
+// routing — the host routes), but stored unconditionally so the switch
+// round-trips even if the group's mode ever changed.
+func SetGroupParallelDefault(groupID string, enabled bool) error {
+	PatchContextStateMerge(groupID, map[string]string{"parallelDefault": fmt.Sprintf("%t", enabled)})
+	return nil
+}
+
 // GetAgentDisplayName returns an agent's display name (falling back to its id,
 // then "AI"), used to seed a member row's title and the group's placeholder.
 func GetAgentDisplayName(agentID string) string {

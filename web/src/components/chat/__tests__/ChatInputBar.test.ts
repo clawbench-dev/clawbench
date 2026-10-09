@@ -2209,6 +2209,39 @@ describe('ChatInputBar', () => {
     expect((wrapper.vm as any).hasInputContent).toBeTruthy()
   })
 
+  describe('free-mode concurrency switch', () => {
+    it('renders only in a FREE-mode group session', async () => {
+      const free = mountBar({ isGroupSession: true, groupMode: 'free' })
+      expect(free.find('[data-action="toggle-parallel"]').exists()).toBe(true)
+
+      // Host mode: the user does not route, so the switch would do nothing.
+      const host = mountBar({ isGroupSession: true, groupMode: 'host' })
+      expect(host.find('[data-action="toggle-parallel"]').exists()).toBe(false)
+
+      // Single chat: no group, no switch.
+      const single = mountBar({ isGroupSession: false, groupMode: 'free' })
+      expect(single.find('[data-action="toggle-parallel"]').exists()).toBe(false)
+    })
+
+    it('reflects the server value via the active class', async () => {
+      const off = mountBar({ isGroupSession: true, groupMode: 'free', groupParallelDefault: false })
+      expect(off.find('[data-action="toggle-parallel"]').classes()).not.toContain('active')
+
+      const on = mountBar({ isGroupSession: true, groupMode: 'free', groupParallelDefault: true })
+      expect(on.find('[data-action="toggle-parallel"]').classes()).toContain('active')
+    })
+
+    it('emits the NEXT value when clicked', async () => {
+      const off = mountBar({ isGroupSession: true, groupMode: 'free', groupParallelDefault: false })
+      await off.find('[data-action="toggle-parallel"]').trigger('click')
+      expect(off.emitted('toggle-parallel')![0]).toEqual([true])
+
+      const on = mountBar({ isGroupSession: true, groupMode: 'free', groupParallelDefault: true })
+      await on.find('[data-action="toggle-parallel"]').trigger('click')
+      expect(on.emitted('toggle-parallel')![0]).toEqual([false])
+    })
+  })
+
   it('carries the member avatar/backend into the @ menu items', async () => {
     const { store } = await import('@/stores/app.ts')
     store.state.currentDir = ''

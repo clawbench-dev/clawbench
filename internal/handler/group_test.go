@@ -148,6 +148,47 @@ func TestServeGroupSettings(t *testing.T) {
 	assert.Equal(t, 7, service.GetGroupMaxRounds(groupID))
 }
 
+// parallelDefault is an independent, OPTIONAL group setting: a PATCH carrying
+// only it must succeed (without touching maxRounds), and it must round-trip.
+func TestServeGroupSettings_ParallelDefaultOnly(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	groupID, _, err := service.CreateGroup(env.ProjectDir, "g", "codebuddy", "codebuddy", "Host")
+	require.NoError(t, err)
+	before := service.GetGroupMaxRounds(groupID)
+
+	req := newRequest(t, http.MethodPatch, "/api/group/settings", map[string]any{"groupId": groupID, "parallelDefault": true})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupSettings, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	assert.True(t, service.GetGroupParallelDefault(groupID), "parallelDefault must round-trip true")
+	assert.Equal(t, before, service.GetGroupMaxRounds(groupID), "a parallelDefault-only PATCH must not touch maxRounds")
+
+	// Turning it back off must also persist.
+	req = newRequest(t, http.MethodPatch, "/api/group/settings", map[string]any{"groupId": groupID, "parallelDefault": false})
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandlerWithAuth(ServeGroupSettings, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.False(t, service.GetGroupParallelDefault(groupID), "parallelDefault must round-trip false")
+}
+
+// A PATCH with NEITHER setting is a no-op request and must be rejected: it
+// would otherwise report success while changing nothing.
+func TestServeGroupSettings_NoSettingsIsBadRequest(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	groupID, _, err := service.CreateGroup(env.ProjectDir, "g", "codebuddy", "codebuddy", "Host")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPatch, "/api/group/settings", map[string]any{"groupId": groupID})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupSettings, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+}
+
 // TestAIChatDelegatesGroupSend verifies a POST to /api/ai/chat for a group
 // session returns the group-delegation response (the orchestrator runs in the
 // background; the handler itself must not run a single-agent turn).
@@ -491,8 +532,19 @@ func TestServeGroupMembers_ReturnsMaxRounds(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
 	var resp struct {
-		MaxRounds int `json:"maxRounds"`
+		MaxRounds       int  `json:"maxRounds"`
+		ParallelDefault bool `json:"parallelDefault"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, 4, resp.MaxRounds)
+	assert.False(t, resp.ParallelDefault, "parallelDefault defaults to false (sequential)")
+
+	// The free-mode action-bar switch reads its value back from this endpoint.
+	require.NoError(t, service.SetGroupParallelDefault(groupID, true))
+	req = newRequest(t, http.MethodGet, "/api/group/members?groupId="+groupID, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandlerWithAuth(ServeGroupMembers, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.True(t, resp.ParallelDefault, "parallelDefault must reflect the stored value")
 }

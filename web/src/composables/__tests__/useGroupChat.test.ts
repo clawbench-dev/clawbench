@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { createGroup, listGroupMembers, addGroupMembers, removeGroupMember, updateGroupSettings } from '@/composables/useGroupChat'
+import { createGroup, listGroupMembers, addGroupMembers, removeGroupMember, updateGroupSettings, setGroupParallelDefault } from '@/composables/useGroupChat'
 
 vi.mock('@/utils/appLog', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
@@ -49,6 +49,14 @@ describe('useGroupChat API', () => {
     expect(res.maxRounds).toBe(10)
   })
 
+  it('listGroupMembers parses parallelDefault, defaulting to false when absent', async () => {
+    vi.stubGlobal('fetch', mockFetch(200, { ok: true, members: [], parallelDefault: true }))
+    expect((await listGroupMembers('g1')).parallelDefault).toBe(true)
+
+    vi.stubGlobal('fetch', mockFetch(200, { ok: true, members: [] }))
+    expect((await listGroupMembers('g1')).parallelDefault).toBe(false)
+  })
+
   it('addGroupMembers posts an array and returns memberIds', async () => {
     vi.stubGlobal('fetch', mockFetch(200, { ok: true, memberIds: ['m2'] }))
     const ids = await addGroupMembers('g1', ['agent-b'])
@@ -72,6 +80,15 @@ describe('useGroupChat API', () => {
     expect(url).toBe('/api/group/settings')
     expect(opts.method).toBe('PATCH')
     expect(JSON.parse(opts.body)).toEqual({ groupId: 'g1', maxRounds: 8 })
+  })
+
+  it('setGroupParallelDefault PATCHes ONLY parallelDefault (never clobbers maxRounds)', async () => {
+    vi.stubGlobal('fetch', mockFetch(200, { ok: true }))
+    await setGroupParallelDefault('g1', true)
+    const [url, opts] = (fetch as any).mock.calls[0]
+    expect(url).toBe('/api/group/settings')
+    expect(opts.method).toBe('PATCH')
+    expect(JSON.parse(opts.body)).toEqual({ groupId: 'g1', parallelDefault: true })
   })
 
   it('throws on a non-ok response', async () => {

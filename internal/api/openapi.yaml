@@ -5216,8 +5216,9 @@ paths:
       summary: 列出群成员
       description: |
         返回群的全部成员，含已离场（`left=true`）的成员。`isHost` 标识主持人。
-        同时返回群的当前 `maxRounds`（供成员管理抽屉回显服务端值）与 `mode`
-        （`"host"` 主持人模式 / `"free"` 自由聊天模式）。
+        同时返回群的当前 `maxRounds`（供成员管理抽屉回显服务端值）、`mode`
+        （`"host"` 主持人模式 / `"free"` 自由聊天模式）与 `parallelDefault`
+        （自由模式 actionbar「并发执行」开关的服务端值；缺省 `false` 即串行）。
       operationId: groupMembersList
       parameters:
         - name: groupId
@@ -5246,6 +5247,7 @@ paths:
                         isHost: {type: boolean}
                   maxRounds: {type: integer}
                   mode: {type: string, enum: [host, free]}
+                  parallelDefault: {type: boolean}
     post:
       tags: [Group]
       summary: 批量添加群成员
@@ -5299,7 +5301,12 @@ paths:
   /api/group/settings:
     patch:
       tags: [Group]
-      summary: 更新群设置（最大轮数）
+      summary: 更新群设置（最大轮数 / 用户种子并发默认）
+      description: |
+        两个设置均可选，但至少提供一个：都缺省时返回 400（空请求）。
+        `maxRounds` 提供时必须为正整数。`parallelDefault` 是自由模式下用户 @
+        成员的默认并发开关（打开后用户 @ 的成员并发执行；智能体之间 @ 的
+        `mode` 不受影响）。主持人模式下该开关无作用（用户不参与路由）。
       operationId: groupSettingsUpdate
       requestBody:
         required: true
@@ -5307,10 +5314,11 @@ paths:
           application/json:
             schema:
               type: object
-              required: [groupId, maxRounds]
+              required: [groupId]
               properties:
                 groupId: {type: string}
                 maxRounds: {type: integer, minimum: 1}
+                parallelDefault: {type: boolean}
       responses:
         "200":
           description: 更新成功

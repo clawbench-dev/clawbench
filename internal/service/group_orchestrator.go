@@ -812,19 +812,45 @@ func (o *GroupOrchestrator) freeInitialGroups(s groupTurnSetup) []speakerGroup {
 			sysPrompt: BuildFreeMemberSystemPrompt(memberRoster(s.members), s.names[m.ID]),
 		}
 	}
+	// The group's "并发执行" switch (free mode only) makes the USER's seed run
+	// concurrently: every member the user @-names — or the whole active roster
+	// when they name nobody — forms ONE parallel group. It is read here, at
+	// drain time, so the direct-send and queued paths agree (the setting is the
+	// single source of truth; the message text carries no mode for user cards).
+	//
+	// It NEVER touches an AGENT's own `mode="parallel"` tags: those ride in the
+	// agent's output and are honored by appendFreeTargets regardless of this
+	// switch (the switch governs only what the USER seeds).
+	parallelSeed := GetGroupParallelDefault(o.groupID)
+
 	route := grouprouting.Parse(o.userMessage)
 	if groups := resolveSpeakerGroups(route, s.members, "", freeTurn); len(groups) > 0 {
+		if parallelSeed {
+			return []speakerGroup{mergeParallel(groups)}
+		}
 		return groups
 	}
 	active := activeMembers(s.members)
 	if len(active) == 0 {
 		return nil
 	}
-	g := speakerGroup{}
+	g := speakerGroup{parallel: parallelSeed}
 	for _, m := range active {
 		g.turns = append(g.turns, freeTurn(m, ""))
 	}
 	return []speakerGroup{g}
+}
+
+// mergeParallel flattens the user's seeded groups into ONE parallel group,
+// preserving member order. Cross-group de-duplication is already applied by
+// resolveSpeakerGroups (a member appears in at most one group), so flattening
+// cannot make anyone speak twice. Used by the free-mode "并发执行" switch.
+func mergeParallel(groups []speakerGroup) speakerGroup {
+	g := speakerGroup{parallel: true}
+	for _, gr := range groups {
+		g.turns = append(g.turns, gr.turns...)
+	}
+	return g
 }
 
 // pickFallbackMember picks the next round-robin fallback speaker, skipping the

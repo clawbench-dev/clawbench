@@ -532,6 +532,7 @@ export default {
       scheduled: 'Schedule',
       autoSpeech: 'Read aloud',
       readAloud: 'Read',
+      parallel: "Run concurrently (members you {'@'} speak at the same time; agent-to-agent {'@'} is unaffected)",
       sessionSettings: 'Session settings',
       switchThinkingEffort: 'Switch thinking effort',
       forkSession: 'Fork session',
@@ -556,6 +557,7 @@ export default {
         share: 'Share',
         speak: 'Speak',
         refresh: 'Refresh',
+        parallel: 'Parallel',
       },
     },
     sessionInfo: {

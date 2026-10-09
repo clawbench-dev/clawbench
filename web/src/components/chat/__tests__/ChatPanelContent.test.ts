@@ -875,3 +875,30 @@ describe('ChatPanelContent — isGroupSession derives from session type', () => 
     expect(src).toContain('groupMembers: { type: Array')
   })
 })
+
+// ── Free-mode concurrency switch plumbing ──
+//
+// The switch's value lives on App.vue's roster composable and must reach
+// ChatInputBar through this component. A silent break in this chain (a prop
+// renamed on one side only) would make the button render but never reflect or
+// persist anything, which a mount test of either component alone cannot catch.
+describe('ChatPanelContent — concurrency switch plumbing', () => {
+  async function source(): Promise<string> {
+    const mod = await import('@/components/chat/ChatPanelContent.vue?raw')
+    return typeof mod.default === 'string' ? mod.default : ''
+  }
+
+  it('declares the groupMode + groupParallelDefault props and forwards them', async () => {
+    const src = await source()
+    expect(src).toContain("groupMode: { type: String")
+    expect(src).toContain('groupParallelDefault: { type: Boolean')
+    expect(src).toContain(':groupMode="props.groupMode"')
+    expect(src).toContain(':groupParallelDefault="props.groupParallelDefault"')
+  })
+
+  it('bubbles the toggle intent up (roster owner PATCHes + refreshes)', async () => {
+    const src = await source()
+    expect(src).toContain('@toggle-parallel="handleToggleParallel"')
+    expect(src).toContain("'toggle-parallel'")
+  })
+})

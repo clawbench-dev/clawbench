@@ -62,6 +62,21 @@
         <Volume2 :size="14" />
         <span class="chat-action-label">{{ t('chat.actions.wideLabels.speak') }}</span>
       </button>
+      <!-- Free-mode concurrency switch: when on, the members the USER @-names
+           (or the whole roster when they name nobody) run CONCURRENTLY. Hidden
+           in host mode — there the host routes, not the user, so the switch
+           would have nothing to act on. It never affects an AGENT's own
+           `mode="parallel"` mentions (those are the agent's own choice). -->
+      <button
+        v-if="isGroupSession && groupMode === 'free'"
+        class="chat-action-btn parallel-btn"
+        :class="{ active: groupParallelDefault }"
+        data-action="toggle-parallel"
+        @click="$emit('toggle-parallel', !groupParallelDefault)"
+        :title="t('chat.actions.parallel')">
+        <Layers :size="14" />
+        <span class="chat-action-label">{{ t('chat.actions.wideLabels.parallel') }}</span>
+      </button>
       <RefreshButton v-if="currentSessionId" data-action="refresh-session" class="chat-action-btn" :loading="refreshingSession" :title="t('chat.actions.reloadSession')" @click="$emit('refresh-session')">
         <span class="chat-action-label">{{ t('chat.actions.wideLabels.refresh') }}</span>
       </RefreshButton>
@@ -351,7 +366,7 @@
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted, defineAsyncComponent } from 'vue'
 import { pendingChatInput as pendingChatInputRef, consumePendingChatInput } from '@/utils/chatInputInjection'
 import { useI18n } from 'vue-i18n'
-import { List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Zap, Compass, Activity, MessagesSquare, Minimize2, Sparkles, ArrowRightLeft, Settings, TextCursorInput, MessageSquareShare, Check } from 'lucide-vue-next'
+import { List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Zap, Compass, Activity, MessagesSquare, Minimize2, Sparkles, ArrowRightLeft, Settings, TextCursorInput, MessageSquareShare, Check, Layers } from 'lucide-vue-next'
 import { computeRecentReferencedFiles, isImeCompositionEvent } from '@/utils/chatInputUtils.ts'
 import { measureCaretVisualRows } from '@/utils/textareaVisualRows.ts'
 import { fuzzyMatch, parseAtQuery, parseSlashQuery, buildFileCandidates } from '@/utils/completionMatch.ts'
@@ -635,6 +650,11 @@ const props = defineProps({
    *  cards themselves live in useChatContext so they survive a session switch
    *  alongside the file/quote drafts; this is just the render binding. */
   mentions: { type: Array, default: () => [] },
+  /** Group mode ("host" | "free"). The free-mode concurrency switch is shown
+   *  only in free mode (in host mode the host routes, not the user). */
+  groupMode: { type: String, default: 'host' },
+  /** Free-mode "并发执行" switch value (server-authoritative). */
+  groupParallelDefault: { type: Boolean, default: false },
 })
 
 const emit = defineEmits([
@@ -647,6 +667,7 @@ const emit = defineEmits([
   'add-mention',
   'remove-mention',
   'mention-click',
+  'toggle-parallel',
   'remove-quote',
   'quote-click',
   'open-session-tab',

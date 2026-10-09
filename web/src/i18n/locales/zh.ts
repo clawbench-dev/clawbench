@@ -535,6 +535,7 @@ export default {
       scheduled: '定时',
       autoSpeech: '朗读',
       readAloud: '朗读',
+      parallel: "并发执行（你 {'@'} 的成员同时发言；智能体之间的 {'@'} 不受影响）",
       sessionSettings: '会话设置',
       switchThinkingEffort: '切换思考档位',
       forkSession: '分叉会话',
@@ -559,6 +560,7 @@ export default {
         share: '分享',
         speak: '朗读',
         refresh: '刷新',
+        parallel: '并发',
       },
     },
     sessionInfo: {

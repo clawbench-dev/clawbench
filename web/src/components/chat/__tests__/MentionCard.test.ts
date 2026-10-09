@@ -49,11 +49,11 @@ describe('MentionCard', () => {
       expect(mountCard({ mention: mention({ note: '' }) }).classes()).not.toContain('is-private')
     })
 
-    it('shows the lock indicator in both states (the state is the style, not presence)', () => {
-      // The lock is the card's fixed affordance for "you can attach a private
-      // note"; whether one is SET is carried by is-private. Hiding the lock
-      // would make the feature undiscoverable on an empty card.
-      expect(mountCard({ mention: mention({ note: '' }) }).find('.mention-card-lock').exists()).toBe(true)
+    it('shows the lock ONLY when a note is set (presence means "there is a note")', () => {
+      // The lock is the signal that a private note exists. An empty card shows
+      // no lock at all — its presence is the affordance, so it must be absent
+      // without a note.
+      expect(mountCard({ mention: mention({ note: '' }) }).find('.mention-card-lock').exists()).toBe(false)
       expect(mountCard({ mention: mention({ note: 'x' }) }).find('.mention-card-lock').exists()).toBe(true)
     })
   })

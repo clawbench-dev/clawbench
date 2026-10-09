@@ -16,15 +16,16 @@
         - a ROUND agent avatar, vs the file family's square type icon;
         - a PROPORTIONAL-font name, vs the file family's monospace filename;
         - a NEUTRAL surface, vs the file family's accent tint / gradient.
-      The lock is the fixed affordance for the private-note feature; whether a
-      note is SET is carried by `is-private` (the style), not by the lock's
-      presence — hiding it on an empty card would make the feature undiscoverable.
+      The lock is the signal that a private note (密送) is SET: it is shown ONLY
+      when a note exists, so an empty card stays uncluttered (avatar + name) and
+      the lock's presence itself means "there is a private note here". The
+      `is-private` class carries the matching accent border.
     -->
     <span class="mention-card-avatar">
       <AgentIcon :backend="mention.backend || ''" :name="mention.name" :avatar="avatar" size="sm" />
     </span>
     <span class="mention-card-name">{{ mention.name }}</span>
-    <Lock :size="11" class="mention-card-lock" aria-hidden="true" />
+    <Lock v-if="hasNote" :size="11" class="mention-card-lock" aria-hidden="true" />
     <button
       v-if="removable"
       class="mention-card-close"
@@ -127,13 +128,10 @@ const cardTitle = computed(() => props.mention.note || props.mention.name)
   min-width: 0;
 }
 
+/* The lock only renders when a note is set (v-if="hasNote"), so it is always in
+   the accent "private" reading — no muted idle state exists. */
 .mention-card-lock {
   flex-shrink: 0;
-  opacity: 0.55;
-}
-
-.mention-card.is-private .mention-card-lock {
-  opacity: 1;
   color: var(--accent-color, #0066cc);
 }
 
