@@ -1121,7 +1121,7 @@ export default {
     you: '你',
     selectHost: '请选择群聊主持人',
     selectMembers: '请选择群聊成员',
-    hostLabel: '点击设为主持人',
+    hostLabel: '设为主持人',
     hostActiveLabel: '点击取消主持人',
     createGroup: '创建群聊',
     hostMode: '主持人模式',
