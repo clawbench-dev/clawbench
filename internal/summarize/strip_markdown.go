@@ -14,21 +14,33 @@ var (
 	reDisplayMathDollar  = regexp.MustCompile(`(?s)\$\$.*?\$\$`)
 	reDisplayMathBracket = regexp.MustCompile(`(?s)\\\[.*?\\\]`)
 	reInlineMathParen    = regexp.MustCompile(`(?s)\\\(.*?\\\)`)
-	// Inline math with $ delimiters is only stripped when the body carries a
-	// math signal (backslash command, _, ^, {}). A bare "$5 and $10" (currency)
-	// has none, so it survives — matching every $...$ would eat prices.
-	reInlineMathDollar = regexp.MustCompile(`\$[^$\n]*[\\_^{}][^$\n]*\$`)
+	// Inline math with $ delimiters. Two guards keep currency intact:
+	//   1. the body must OPEN with a letter or a backslash command ("$x_1$",
+	//      "$\alpha$"); a currency amount opens with a digit ("$5"), so it is
+	//      never mistaken for math; and
+	//   2. the body must carry a math signal (backslash, _, ^, {}) — a plain
+	//      "$word$" is left alone.
+	// The body is length-bounded so an unmatched $ in prose cannot swallow a
+	// long span up to the next $.
+	reInlineMathDollar = regexp.MustCompile(`\$(?:\\[^$\n]{0,40}|[A-Za-z][^$\n]{0,40}[\\_^{}][^$\n]{0,40})\$`)
 	// Residual LaTeX commands (e.g. \frac{a}{b}) outside math delimiters. A
 	// WHITELIST, not `\\[a-zA-Z]+`: the latter would eat Windows path segments
 	// ("C:\Users\test\file.txt" → "C:.txt") since \Users / \test / \file look
-	// like commands.
-	reLatexCommand = regexp.MustCompile(`\\(?:frac|dfrac|tfrac|sqrt|sum|prod|int|oint|alpha|beta|gamma|delta|epsilon|varepsilon|zeta|eta|theta|vartheta|iota|kappa|lambda|mu|nu|xi|pi|rho|sigma|tau|upsilon|phi|varphi|chi|psi|omega|Gamma|Delta|Theta|Lambda|Xi|Pi|Sigma|Phi|Psi|Omega|times|cdot|div|pm|mp|leq|geq|neq|approx|equiv|propto|infty|partial|nabla|forall|exists|notin|subset|supset|cup|cap|vec|hat|bar|tilde|overline|underline|begin|end|text|mathrm|mathbf|mathbb|mathcal|left|right|quad|qquad|ldots|cdots|dots|to|rightarrow|leftarrow|mapsto)(?:\{[^{}]*\})*`)
+	// like commands. The trailing \b stops a whitelisted name from matching a
+	// mere PREFIX of a path segment: "\pictures" / "\todo" / "\internal" /
+	// "\summary" must survive, so \pi / \to / \int / \sum may only match when
+	// followed by a non-word character (or end of input). RE2 has no lookahead,
+	// so a word-boundary assertion is the tool here.
+	reLatexCommand = regexp.MustCompile(`\\(?:frac|dfrac|tfrac|sqrt|sum|prod|int|oint|alpha|beta|gamma|delta|epsilon|varepsilon|zeta|eta|theta|vartheta|iota|kappa|lambda|mu|nu|xi|pi|rho|sigma|tau|upsilon|phi|varphi|chi|psi|omega|Gamma|Delta|Theta|Lambda|Xi|Pi|Sigma|Phi|Psi|Omega|times|cdot|div|pm|mp|leq|geq|neq|approx|equiv|propto|infty|partial|nabla|forall|exists|notin|subset|supset|cup|cap|vec|hat|bar|tilde|overline|underline|begin|end|text|mathrm|mathbf|mathbb|mathcal|left|right|quad|qquad|ldots|cdots|dots|to|rightarrow|leftarrow|mapsto)\b(?:\{[^{}]*\})*`)
 
 	reCodeBlock = regexp.MustCompile("(?s)```.*?```")
-	// reCodeFenceTail matches an UNCLOSED opening fence; everything from it to
-	// the end is treated as code and dropped (streaming truncation commonly
-	// cuts mid-block, leaving no closing fence for reCodeBlock to match).
-	reCodeFenceTail = regexp.MustCompile("(?s)```.*$")
+	// reCodeFenceTail matches an UNCLOSED opening fence at the START of a line;
+	// everything from it to the end is treated as code and dropped (streaming
+	// truncation commonly cuts mid-block, leaving no closing fence for
+	// reCodeBlock to match). The line-start anchor matters: a fence written
+	// mid-prose ("use ``` to open a fence") is not an opening fence and must not
+	// swallow the rest of the message.
+	reCodeFenceTail = regexp.MustCompile("(?ms)^[ \t]*```.*")
 	reInlineCode    = regexp.MustCompile("`[^`]+`")
 	// reBoldAsterisk / reItalicAsterisk require the delimiters to hug their
 	// content (no leading/trailing space), so "3 * 4 * 5" is not read as italic.
@@ -52,16 +64,23 @@ var (
 	reTaskList      = regexp.MustCompile(`(?m)^[\s]*[-*+]\s+\[[ xX]\]\s*`)
 	reTablePipe     = regexp.MustCompile(`\|`)
 	reTableDivider  = regexp.MustCompile(`(?m)^[\s|]*([-:]+[\s|:-]*)+$`)
-	reHTMLTag       = regexp.MustCompile(`<[^>]+>`)
-	reXMLTag        = regexp.MustCompile(`</?[a-zA-Z][^>]*>`)
-	reAutolink      = regexp.MustCompile(`<([^>]+)>`)
-	reFootnoteRef   = regexp.MustCompile(`\[\^[^\]]+\]`)
-	reFootnoteDef   = regexp.MustCompile(`(?m)^\[\^[^\]]+\]:\s+.*$`)
-	// reEmojiShortcode requires the body to carry a letter or a +/- sign, so a
-	// numeric "12:30:45" or a "host:8080" port is NOT mistaken for a shortcode
-	// (the old `:[a-zA-Z0-9_+-]+:` ate both). Genuine digit-only shortcodes
-	// (":100:") are rare enough to leave in prose.
-	reEmojiShortcode  = regexp.MustCompile(`:[a-zA-Z0-9_+-]*(?:[a-zA-Z_]|[+-])[a-zA-Z0-9_+-]*:`)
+	// reOrphanMarker removes a RUN of emphasis markers (2+ `*` or `~`) that
+	// survived because its partner was truncated mid-message. A doubled marker
+	// is never literal prose, so this is safe — unlike a single `*`/`_`, which
+	// must be left alone (multiplication, identifiers, snake_case).
+	reOrphanMarker = regexp.MustCompile(`\*{2,}|~{2,}`)
+	reHTMLTag      = regexp.MustCompile(`<[^>]+>`)
+	reXMLTag       = regexp.MustCompile(`</?[a-zA-Z][^>]*>`)
+	reAutolink     = regexp.MustCompile(`<([^>]+)>`)
+	reFootnoteRef  = regexp.MustCompile(`\[\^[^\]]+\]`)
+	reFootnoteDef  = regexp.MustCompile(`(?m)^\[\^[^\]]+\]:\s+.*$`)
+	// reEmojiShortcode matches a shortcode whose body STARTS with a letter or
+	// underscore ("smile", "_ok_") or is exactly a sign+digits ("+1", "-1").
+	// Requiring that start keeps time ranges ("10:30-11:45" → body "30-11"
+	// starts with a digit) and ports ("host:8080") from being eaten, while the
+	// old `:[a-zA-Z0-9_+-]+:` swallowed both. Digit-only shortcodes (":100:")
+	// are rare enough to leave in prose.
+	reEmojiShortcode  = regexp.MustCompile(`:(?:[a-zA-Z_][a-zA-Z0-9_+-]*|[+-][0-9]+):`)
 	reBackslashEscape = regexp.MustCompile(`\\([\\` + "`" + `*_{}[\]()#+\-.!|~])`)
 	// Angle-bracket URLs remaining after other stripping
 	reBareURL = regexp.MustCompile(`https?://\S+`)
@@ -127,7 +146,7 @@ func StripMarkdownStats(text string) (cleaned string, originalRunes, keptRunes i
 	text = reBoldAsterisk.ReplaceAllString(text, "$1")
 	text = reBoldUnderscore.ReplaceAllString(text, "$1")
 	text = reItalicAsterisk.ReplaceAllString(text, "$1")
-	text = reItalicUnder.ReplaceAllString(text, "$1$2$3")
+	text = stripUnderscoreEmphasis(text)
 	text = reHeaders.ReplaceAllString(text, "")
 	text = reLinks.ReplaceAllString(text, "$1")
 	text = reAutolink.ReplaceAllString(text, "$1")
@@ -144,6 +163,11 @@ func StripMarkdownStats(text string) (cleaned string, originalRunes, keptRunes i
 
 	// Phase 6: Clean up whitespace
 	text = reMultiBlank.ReplaceAllString(text, "\n\n")
+
+	// Phase 7: Drop emphasis-marker RUNS orphaned by a truncated message
+	// ("**bold truncated" → "bold truncated"). Deliberately narrow: single
+	// `*`/`_` are left alone so multiplication and identifiers survive.
+	text = reOrphanMarker.ReplaceAllString(text, "")
 
 	cleaned = strings.TrimSpace(text)
 	keptRunes = len([]rune(cleaned))
@@ -162,6 +186,22 @@ func stripMath(text string) string {
 	text = reInlineMathDollar.ReplaceAllString(text, "")
 	text = reLatexCommand.ReplaceAllString(text, "")
 	return text
+}
+
+// stripUnderscoreEmphasis unwraps `_emphasis_` while preserving identifiers
+// like `user_id` / `file_name`. The surrounding-character guards mean a single
+// regex pass consumes the separator that would anchor the NEXT span, so
+// "_a_ _b_" left the second span untouched ("a _b_"). Looping until the
+// underscore count stops falling fixes adjacent spans; it terminates because
+// every iteration that changes the text strictly removes underscores.
+func stripUnderscoreEmphasis(text string) string {
+	for {
+		next := reItalicUnder.ReplaceAllString(text, "$1$2$3")
+		if next == text {
+			return text
+		}
+		text = next
+	}
 }
 
 // stripInlineCode processes inline code spans (`xxx`).

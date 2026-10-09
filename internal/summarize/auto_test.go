@@ -3,6 +3,7 @@ package summarize
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -78,7 +79,40 @@ func TestAuto_NilAPIFallsBackToSimple(t *testing.T) {
 }
 
 func TestAuto_ThresholdBoundary(t *testing.T) {
-	// At exactly the threshold the LLM is used (>= comparison).
+	// Pin the >= semantics of the junk-ratio axis by deriving the fixture's
+	// EXACT ratio and setting the threshold to it. A "well above threshold"
+	// fixture (as an earlier version used) passes for both >= and >, so it
+	// cannot catch a reversal.
+	simple := &recordingSummarizer{marker: "SIMPLE"}
+	api := &recordingSummarizer{marker: "API"}
+	a := NewAuto(simple, api)
+
+	text := "看这段：\n```go\nfunc main() {}\n```\n以上。"
+	_, original, kept := StripMarkdownStats(text)
+	require.Greater(t, original, kept, "fixture must actually strip something")
+	exact := float64(original-kept) / float64(original)
+
+	old := AutoJunkRatio
+	defer func() { AutoJunkRatio = old }()
+
+	// Exactly at the threshold → LLM (>=).
+	AutoJunkRatio = exact
+	_, err := a.Summarize(context.Background(), text, "zh")
+	require.NoError(t, err)
+	assert.Equal(t, 1, api.calls, "ratio == threshold must route to the LLM (>=)")
+
+	// Just above the threshold → simple (no LLM).
+	api.calls = 0
+	AutoJunkRatio = exact + 0.001
+	_, err = a.Summarize(context.Background(), text, "zh")
+	require.NoError(t, err)
+	assert.Equal(t, 0, api.calls, "ratio < threshold must stay on the simple path")
+}
+
+func TestAuto_LengthBoundary(t *testing.T) {
+	// Pin the length axis at exactly autoMaxKeptRunes: the cap itself stays on
+	// the simple path (kept > cap is the LLM condition), one rune over goes to
+	// the LLM. Clean prose so the junk ratio is 0 and only length can decide.
 	simple := &recordingSummarizer{marker: "SIMPLE"}
 	api := &recordingSummarizer{marker: "API"}
 	a := NewAuto(simple, api)
@@ -87,11 +121,15 @@ func TestAuto_ThresholdBoundary(t *testing.T) {
 	AutoJunkRatio = 0.5
 	defer func() { AutoJunkRatio = old }()
 
-	// "ab" + a code block whose removal leaves ratio well above 0.5.
-	text := "ab\n```\n" + "xxxxxxxxxx\n" + "```"
-	_, err := a.Summarize(context.Background(), text, "en")
+	atCap := strings.Repeat("a", autoMaxKeptRunes)
+	_, err := a.Summarize(context.Background(), atCap, "en")
 	require.NoError(t, err)
-	assert.Equal(t, 1, api.calls)
+	assert.Equal(t, 0, api.calls, "kept == cap must stay on the simple path")
+
+	overCap := strings.Repeat("a", autoMaxKeptRunes+1)
+	_, err = a.Summarize(context.Background(), overCap, "en")
+	require.NoError(t, err)
+	assert.Equal(t, 1, api.calls, "kept > cap must route to the LLM")
 }
 
 func TestAuto_PropagatesAPIError(t *testing.T) {

@@ -294,6 +294,64 @@ func TestStripMarkdown_PreservesWindowsPaths(t *testing.T) {
 	assert.Equal(t, in2, StripMarkdown(in2))
 }
 
+func TestStripMarkdown_PreservesPathSegmentsMatchingLatexPrefixes(t *testing.T) {
+	// The LaTeX whitelist must match a whole command, not a PREFIX of a path
+	// segment. \pi / \to / \int / \sum used to eat "pictures" / "todo" /
+	// "internal" / "summary" (C:\Users\me\pictures → C:\Users\mectures).
+	for _, in := range []string{
+		`C:\Users\me\pictures\img.png`,
+		`D:\projects\todo\list.txt`,
+		`D:\work\internal\handler.go`,
+		`D:\docs\summary.md`,
+	} {
+		assert.Equal(t, in, StripMarkdown(in), "path must survive verbatim")
+	}
+}
+
+func TestStripMarkdown_PreservesCurrencyWithMathSignal(t *testing.T) {
+	// A currency amount must not be mistaken for inline math even when a later
+	// $...$ pair on the same line carries a math signal. The old body pattern
+	// `[^$\n]*` spanned across both amounts and ate the text between them.
+	assert.Equal(t,
+		"cost $5 for item_1 and $10 total",
+		StripMarkdown("cost $5 for item_1 and $10 total"))
+	assert.Equal(t,
+		"价格 $5 元, 变量 user_id, 还有 $10",
+		StripMarkdown("价格 $5 元, 变量 user_id, 还有 $10"))
+}
+
+func TestStripMarkdown_UnwrapsAdjacentUnderscoreEmphasis(t *testing.T) {
+	// A single pass consumed the separator anchoring the next span.
+	assert.Equal(t, "a b", StripMarkdown("_a_ _b_"))
+	assert.Equal(t, "a x y z b", StripMarkdown("a _x_ _y_ _z_ b"))
+}
+
+func TestStripMarkdown_PreservesTimeRanges(t *testing.T) {
+	// The old emoji body allowed a sign anywhere, so the "-" in a range
+	// satisfied it: "10:30-11:45" → "1045".
+	assert.Equal(t, "10:30-11:45", StripMarkdown("10:30-11:45"))
+	assert.Equal(t, "1:2-3:4", StripMarkdown("1:2-3:4"))
+}
+
+func TestStripMarkdown_KeepsInlineTripleBacktickProse(t *testing.T) {
+	// A fence written mid-prose is not an opening fence; it must not swallow
+	// the rest of the message. Only a line-start fence is treated as unclosed.
+	assert.Equal(t,
+		"use ``` to open a code fence here",
+		StripMarkdown("use ``` to open a code fence here"))
+	assert.Equal(t,
+		"discuss ``` triple backticks",
+		StripMarkdown("discuss ``` triple backticks"))
+}
+
+func TestStripMarkdown_DropsOrphanedEmphasisMarkers(t *testing.T) {
+	// A truncated message leaves a marker run with no partner; it must not be
+	// spoken. Single markers (multiplication, identifiers) are untouched.
+	assert.Equal(t, "bold truncated", StripMarkdown("**bold truncated"))
+	assert.Equal(t, "strike truncated", StripMarkdown("~~strike truncated"))
+	assert.Equal(t, "计算 3 * 4 * 5 的结果", StripMarkdown("计算 3 * 4 * 5 的结果"))
+}
+
 func TestStripMarkdown_PreservesLiteralHashAndHashTag(t *testing.T) {
 	assert.Equal(t, "学习 C# 语言", StripMarkdown("学习 C# 语言"))
 	assert.Equal(t, "关注 #热点 话题", StripMarkdown("关注 #热点 话题"))
