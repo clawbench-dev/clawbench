@@ -582,6 +582,7 @@ const serverDefaults: Record<string, unknown> = {
   'tts.kokoro.lang': 'cmn',
   'tts.moss_nano.backend': 'onnx',
   'summarize.tts_backend': 'simple',
+  'summarize.auto_junk_ratio': 0.5,
   'ai_summary.model': '',
   'ai_summary.format': 'openai',
   'port_forward.allowed_ports': '1024-65535',

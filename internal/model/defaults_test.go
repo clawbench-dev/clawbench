@@ -639,6 +639,35 @@ func TestApplyDefaults_TTSInlineCodeMaxLen(t *testing.T) {
 	}
 }
 
+func TestApplyDefaults_SummarizeAutoJunkRatio(t *testing.T) {
+	setupTestBinDir(t)
+
+	// Zero (field absent) defaults to 0.5.
+	cfg := Config{}
+	ApplyDefaults(&cfg, nil)
+	if cfg.Summarize.AutoJunkRatio != 0.5 {
+		t.Errorf("Summarize.AutoJunkRatio = %v, want 0.5", cfg.Summarize.AutoJunkRatio)
+	}
+
+	// Out-of-range values are clamped back to 0.5.
+	for _, bad := range []float64{-0.2, 1.5} {
+		cfg := Config{}
+		cfg.Summarize.AutoJunkRatio = bad
+		ApplyDefaults(&cfg, nil)
+		if cfg.Summarize.AutoJunkRatio != 0.5 {
+			t.Errorf("Summarize.AutoJunkRatio(%v) = %v, want 0.5", bad, cfg.Summarize.AutoJunkRatio)
+		}
+	}
+
+	// A valid user value is preserved.
+	cfg = Config{}
+	cfg.Summarize.AutoJunkRatio = 0.3
+	ApplyDefaults(&cfg, nil)
+	if cfg.Summarize.AutoJunkRatio != 0.3 {
+		t.Errorf("Summarize.AutoJunkRatio = %v, want 0.3", cfg.Summarize.AutoJunkRatio)
+	}
+}
+
 func TestApplyDefaults_PortForwardHostKey(t *testing.T) {
 	setupTestBinDir(t)
 

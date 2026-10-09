@@ -359,6 +359,13 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if cfg.Summarize.TTSBackend == "" {
 		cfg.Summarize.TTSBackend = "simple"
 	}
+	// AutoJunkRatio is the "auto" backend's routing threshold. Treat the zero
+	// value as unset (a pre-existing config lacks the field) and default it to
+	// 0.5; a threshold of 0 would route even fully-clean text to the LLM, which
+	// is never useful — use tts_backend "api" for that instead.
+	if cfg.Summarize.AutoJunkRatio <= 0 || cfg.Summarize.AutoJunkRatio > 1 {
+		cfg.Summarize.AutoJunkRatio = 0.5
+	}
 
 	// --- AISummary (shared AI model config) ---
 	// Legacy TTS summary config (summarize.tts_model / summarize.tts_api) is

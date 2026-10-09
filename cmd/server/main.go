@@ -67,6 +67,7 @@ import (
 const (
 	summarizeBackendAPI    = "api"
 	summarizeBackendSimple = "simple"
+	summarizeBackendAuto   = "auto"
 
 	// URL schemes. Kept as a pair so the `scheme` value and every comparison
 	// against it stay in sync.
@@ -626,6 +627,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// Apply TTS text processing config (defaults applied in ApplyDefaults)
 	summarize.InlineCodeMaxLen = cfg.TTS.InlineCodeMaxLen
 	summarize.MaxSummarizeRunes = cfg.TTS.MaxSummarizeRunes
+	summarize.AutoJunkRatio = cfg.Summarize.AutoJunkRatio
 
 	// NOTE: TTS summarizer initialization is deferred until after DB init.
 
@@ -895,6 +897,18 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 			slog.Error("summarize.tts_backend is \"api\" but ai_summary.api.base_url is not configured")
 			os.Exit(1)
 		}
+	case summarizeBackendAuto:
+		// "auto" needs no LLM to start: without a configured ai_summary it
+		// degrades to the simple cleaner, which is a valid (if less clever)
+		// configuration — unlike "api", which hard-fails.
+		api := buildAISummarizer(cfg)
+		ttsSummarizer = summarize.NewAuto(summarize.NewSimple(), api)
+		slog.Info(
+			"tts summarizer configured",
+			slog.String("backend", summarizeBackendAuto),
+			slog.Bool("llm_available", api != nil),
+			slog.Float64("auto_junk_ratio", summarize.AutoJunkRatio),
+		)
 	}
 	handler.SetSummarizer(ttsSummarizer)
 
@@ -1574,6 +1588,12 @@ func hotReloadReconfigure(port int) {
 	slog.Info("hot-reload: STT provider reconfigured", slog.String("base_url", cfg.STT.BaseURL))
 
 	// --- Summarize: reconstruct TTS summarizer ---
+	// Re-apply the text-processing globals first: the reconstructed summarizer
+	// (esp. AutoSummarizer) reads them at request time, so a changed
+	// auto_junk_ratio / inline_code_max_len must land before the swap.
+	summarize.InlineCodeMaxLen = cfg.TTS.InlineCodeMaxLen
+	summarize.MaxSummarizeRunes = cfg.TTS.MaxSummarizeRunes
+	summarize.AutoJunkRatio = cfg.Summarize.AutoJunkRatio
 	ttsSummarizer := newTTSSummarizer(cfg)
 	handler.SetSummarizer(ttsSummarizer)
 
@@ -1784,6 +1804,9 @@ func newTTSSummarizer(cfg model.Config) summarize.Summarizer {
 			return summarize.NewSimple()
 		}
 		return s
+	case summarizeBackendAuto:
+		// api may be nil here: auto degrades to simple when no LLM is set.
+		return summarize.NewAuto(summarize.NewSimple(), buildAISummarizer(cfg))
 	default:
 		slog.Warn("hot-reload: unsupported tts_backend, falling back to simple", slog.String("backend", cfg.Summarize.TTSBackend))
 		return summarize.NewSimple()

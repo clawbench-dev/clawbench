@@ -462,7 +462,9 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.summarizeTtsSection', descriptionKey: 'settings.items.summarizeTtsBackendDesc', key: 'summarize.tts_backend', type: 'select', source: 'server', sectionHeader: 'settings.items.voiceSummarySection', options: [
       { labelKey: 'settings.items.summarizeSimple', value: 'simple' },
       { labelKey: 'settings.items.summarizeApi', value: 'api' },
+      { labelKey: 'settings.items.summarizeAuto', value: 'auto' },
     ]} },
+    { type: 'item', spec: { labelKey: 'settings.items.summarizeAutoJunkRatio', descriptionKey: 'settings.items.summarizeAutoJunkRatioDesc', key: 'summarize.auto_junk_ratio', type: 'slider', source: 'server', min: 0.1, max: 0.9, step: 0.05, displayFormat: 'percent', dependsOn: { key: 'summarize.tts_backend', value: 'auto' } } },
     { type: 'item', spec: { labelKey: 'settings.items.aiSummaryRef', descriptionKey: 'settings.items.aiSummaryRefDesc', key: 'navigateAiSummary', type: 'action', source: 'local', navigateTo: 'aiSummary', showSummaryModelStatus: true, sectionHeader: 'settings.items.voiceSummarySection' } },
   ],
   tts_engine: [

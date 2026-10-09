@@ -300,7 +300,11 @@ type AISummaryConfig struct {
 // It only selects the summary type; the detailed model/API configuration
 // lives in AISummaryConfig (shared with next-step recommendation).
 type SummarizeConfig struct {
-	TTSBackend string `yaml:"tts_backend"` // Voice/TTS summarization type: "" (disabled), "simple" (extract conclusion), "api" (LLM via AISummaryConfig)
+	TTSBackend string `yaml:"tts_backend"` // Voice/TTS summarization type: "" (disabled), "simple" (extract conclusion), "api" (LLM via AISummaryConfig), "auto" (route by content)
+	// AutoJunkRatio is the stripped-rune ratio at/above which the "auto"
+	// backend routes a message to the LLM instead of speaking the cleaned text.
+	// See internal/summarize.AutoJunkRatio. Default 0.5.
+	AutoJunkRatio float64 `yaml:"auto_junk_ratio"`
 }
 
 // RAGConfig holds configuration for the RAG history memory system.

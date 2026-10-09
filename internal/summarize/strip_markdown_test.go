@@ -255,6 +255,100 @@ func TestConstants(t *testing.T) {
 	assert.Equal(t, 16, CacheKeyHexLen)
 }
 
+// --- Regression: literal technical characters must survive stripping ---
+// These guard against the former blunt residual sweep that deleted every
+// \ # * ~ ` | character regardless of whether it was markdown.
+
+func TestStripMarkdown_PreservesSnakeCaseIdentifiers(t *testing.T) {
+	// Two underscores on one line used to be paired as _emphasis_ and eaten.
+	in := "变量 user_id 和 file_name 要保留。"
+	assert.Equal(t, in, StripMarkdown(in))
+
+	in2 := "字段 a_b 与 c_d 与 e_f"
+	assert.Equal(t, in2, StripMarkdown(in2))
+}
+
+func TestStripMarkdown_PreservesMultiplicationAsterisks(t *testing.T) {
+	in := "计算 3 * 4 * 5 的结果"
+	assert.Equal(t, in, StripMarkdown(in))
+
+	in2 := "面积 = 3 * 4 平方米"
+	assert.Equal(t, in2, StripMarkdown(in2))
+}
+
+func TestStripMarkdown_PreservesTimesAndPorts(t *testing.T) {
+	// The old emoji-shortcode regex `:[a-zA-Z0-9_+-]+:` ate ":30:" and ":8080:".
+	in := "会议在 12:30:45 开始"
+	assert.Equal(t, in, StripMarkdown(in))
+
+	in2 := "服务跑在 localhost:8080: 端口"
+	assert.Equal(t, in2, StripMarkdown(in2))
+}
+
+func TestStripMarkdown_PreservesWindowsPaths(t *testing.T) {
+	// Backslashes used to be deleted wholesale.
+	in := `路径 C:\Users\test\file.txt 结束`
+	assert.Equal(t, in, StripMarkdown(in))
+
+	in2 := `打开 C:\temp 目录`
+	assert.Equal(t, in2, StripMarkdown(in2))
+}
+
+func TestStripMarkdown_PreservesLiteralHashAndHashTag(t *testing.T) {
+	assert.Equal(t, "学习 C# 语言", StripMarkdown("学习 C# 语言"))
+	assert.Equal(t, "关注 #热点 话题", StripMarkdown("关注 #热点 话题"))
+}
+
+func TestStripMarkdown_PreservesCurrencyDollars(t *testing.T) {
+	// A bare $...$ with no math signal is currency, not inline math.
+	in := "价格是 $5 和 $10 元"
+	assert.Equal(t, in, StripMarkdown(in))
+}
+
+func TestStripMarkdown_StripsUnclosedCodeFence(t *testing.T) {
+	// A truncated (unclosed) fence must not leak the code body.
+	in := "说明：\n```go\nfunc main() {}\n没有闭合"
+	result := StripMarkdown(in)
+	assert.NotContains(t, result, "func main")
+	assert.NotContains(t, result, "```")
+	assert.Contains(t, result, "说明")
+}
+
+func TestStripMarkdown_StripsLatexFormulas(t *testing.T) {
+	for _, in := range []string{
+		"公式 $x_1 + x_2$ 求和",
+		`公式 \frac{a}{b} 结束`,
+		"公式 \\[ a^2 + b^2 \\] 结束",
+	} {
+		result := StripMarkdown(in)
+		assert.NotContains(t, result, "x_1")
+		assert.NotContains(t, result, "frac")
+		assert.NotContains(t, result, "$")
+		assert.NotContains(t, result, "\\")
+	}
+}
+
+func TestStripMarkdown_StillUnwrapsRealEmphasis(t *testing.T) {
+	// De-blunting must not break genuine markdown.
+	assert.Equal(t, "This is bold text.", StripMarkdown("This is **bold** text."))
+	assert.Equal(t, "This is italic text.", StripMarkdown("This is *italic* text."))
+	assert.Equal(t, "这是 下划线强调 文本", StripMarkdown("这是 _下划线强调_ 文本"))
+	assert.Equal(t, "这是 删除 文本", StripMarkdown("这是 ~~删除~~ 文本"))
+}
+
+func TestStripMarkdownStats_ReportsJunkRatio(t *testing.T) {
+	// Mostly code → most runes removed.
+	text := "看：\n```go\nfunc main() { println(1) }\n```\n以上"
+	cleaned, original, kept := StripMarkdownStats(text)
+	assert.Equal(t, len([]rune(text)), original)
+	assert.Equal(t, len([]rune(cleaned)), kept)
+	assert.Less(t, kept, original/2, "a code-dominated message should lose most runes")
+
+	// Clean prose → nothing removed.
+	_, orig2, kept2 := StripMarkdownStats("这是一段干净的纯文本。")
+	assert.Equal(t, orig2, kept2)
+}
+
 // --- Ask-question preservation tests ---
 
 func TestStripMarkdown_AskQuestion_SingleSelect(t *testing.T) {

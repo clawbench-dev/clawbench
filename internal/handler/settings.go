@@ -111,11 +111,12 @@ var hotReloadFields = map[string]bool{
 	"stt.chunk_ms":     true,
 	"stt.shortcut_key": true,
 	// Summarize — reconstruct TTS summarizer from shared ai_summary
-	"summarize.tts_backend":   true,
-	"ai_summary.model":        true,
-	"ai_summary.format":       true,
-	"ai_summary.api.base_url": true,
-	"ai_summary.api.key":      true,
+	"summarize.tts_backend":     true,
+	"summarize.auto_junk_ratio": true,
+	"ai_summary.model":          true,
+	"ai_summary.format":         true,
+	"ai_summary.api.base_url":   true,
+	"ai_summary.api.key":        true,
 	// FRP — in-process frp service; enabled can be toggled, other fields hot-reload
 	"frp.enabled":         true,
 	"frp.server_addr":     true,
@@ -374,7 +375,8 @@ type configFRP struct {
 }
 
 type configSummarize struct {
-	TTSBackend string `json:"tts_backend"`
+	TTSBackend    string  `json:"tts_backend"`
+	AutoJunkRatio float64 `json:"auto_junk_ratio"`
 }
 
 type configAISummary struct {
@@ -744,6 +746,7 @@ var PatchableConfigPaths = map[string]bool{
 	"frp.remote_port":                   true,
 	"frp.ssh_remote_port":               true,
 	"summarize.tts_backend":             true,
+	"summarize.auto_junk_ratio":         true,
 	"ai_summary.model":                  true,
 	"ai_summary.format":                 true,
 	"ai_summary.api.base_url":           true,
@@ -789,7 +792,7 @@ var validUILanguages = map[string]bool{
 
 // validSummarizeBackends is the set of valid summarization backend values.
 var validSummarizeBackends = map[string]bool{
-	"": true, "simple": true, "api": true,
+	"": true, "simple": true, "api": true, "auto": true,
 }
 
 // validTTSFormats is the set of valid TTS output format values.
@@ -915,7 +918,8 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			SSHRemotePort: cfg.FRP.SSHRemotePort,
 		},
 		Summarize: configSummarize{
-			TTSBackend: cfg.Summarize.TTSBackend,
+			TTSBackend:    cfg.Summarize.TTSBackend,
+			AutoJunkRatio: cfg.Summarize.AutoJunkRatio,
 		},
 		AISummary: configAISummary{
 			Model:  cfg.AISummary.Model,
@@ -1398,7 +1402,12 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 	if summarize, ok := patch["summarize"].(map[string]any); ok {
 		if v, ok := summarize["tts_backend"].(string); ok {
 			if !validSummarizeBackends[v] {
-				return fmt.Errorf("summarize.tts_backend must be one of: , simple, api")
+				return fmt.Errorf("summarize.tts_backend must be one of: , simple, api, auto")
+			}
+		}
+		if v, ok := summarize["auto_junk_ratio"].(float64); ok {
+			if v <= 0 || v > 1 {
+				return fmt.Errorf("summarize.auto_junk_ratio must be between 0 (exclusive) and 1")
 			}
 		}
 	}
@@ -1880,6 +1889,9 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 	if summarize, ok := patch["summarize"].(map[string]any); ok {
 		if v, ok := summarize["tts_backend"].(string); ok {
 			cfg.Summarize.TTSBackend = v
+		}
+		if v, ok := summarize["auto_junk_ratio"].(float64); ok {
+			cfg.Summarize.AutoJunkRatio = v
 		}
 	}
 

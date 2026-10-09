@@ -558,6 +558,56 @@ func TestServeConfigPatch_SummarizeTTSBackendSwitchedToAPI(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
+func TestServeConfigPatch_SummarizeTTSBackendAutoValid(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+
+	// "auto" needs no LLM configured — it degrades to simple, so the patch must
+	// succeed even with an empty ai_summary.api.base_url.
+	body := `{"summarize":{"tts_backend":"auto"}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "auto", model.ConfigInstance.Summarize.TTSBackend)
+}
+
+func TestServeConfigPatch_AutoJunkRatioValid(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+
+	body := `{"summarize":{"auto_junk_ratio":0.35}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.InDelta(t, 0.35, model.ConfigInstance.Summarize.AutoJunkRatio, 0.0001)
+}
+
+func TestServeConfigPatch_AutoJunkRatioOutOfRange(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+
+	body := `{"summarize":{"auto_junk_ratio":1.5}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "summarize.auto_junk_ratio")
+}
+
 func TestServeConfigPatch_AISummaryAPISubConfig(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
