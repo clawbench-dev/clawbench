@@ -30,7 +30,8 @@
 
       <!-- Empty -->
       <div v-else-if="items.length === 0" class="shared-sessions-hint">
-        {{ t('sharedSessions.empty') }}
+        <MessageSquareShare :size="32" class="shared-sessions-empty-icon" />
+        <span>{{ t('sharedSessions.empty') }}</span>
       </div>
 
       <!-- List -->
@@ -232,7 +233,10 @@ defineExpose({ open: openDrawer })
 }
 
 .shared-sessions-hint {
-  padding: 24px 0;
+  /* Own breathing room so the empty/loading text never hugs the drawer edge,
+     independent of the (now removed) container padding. */
+  padding: 32px var(--space-7);
+  margin: var(--space-4) 0;
   text-align: center;
   font-size: var(--font-size-md);
   color: var(--text-muted, #656d76);
@@ -240,6 +244,11 @@ defineExpose({ open: openDrawer })
   flex-direction: column;
   align-items: center;
   gap: var(--space-5);
+}
+
+.shared-sessions-empty-icon {
+  color: var(--text-muted, #656d76);
+  opacity: var(--opacity-muted);
 }
 
 .shared-sessions-error { color: #cf222e; }

@@ -30,7 +30,8 @@
 
       <!-- Empty -->
       <div v-else-if="items.length === 0" class="shared-files-hint">
-        {{ t('sharedFiles.empty') }}
+        <ScreenShare :size="32" class="shared-files-empty-icon" />
+        <span>{{ t('sharedFiles.empty') }}</span>
       </div>
 
       <!-- List -->
@@ -209,11 +210,13 @@ defineExpose({ open: openDrawer })
   flex-direction: column;
   max-height: 60vh;
   overflow-y: auto;
-  padding: var(--space-2) var(--space-7) var(--space-7);
 }
 
 .shared-files-hint {
-  padding: 24px 0;
+  /* Own breathing room so the empty/loading text never hugs the drawer edge,
+     independent of the (now removed) container padding. */
+  padding: 32px var(--space-7);
+  margin: var(--space-4) 0;
   text-align: center;
   font-size: var(--font-size-md);
   color: var(--text-muted, #656d76);
@@ -221,6 +224,11 @@ defineExpose({ open: openDrawer })
   flex-direction: column;
   align-items: center;
   gap: var(--space-5);
+}
+
+.shared-files-empty-icon {
+  color: var(--text-muted, #656d76);
+  opacity: var(--opacity-muted);
 }
 
 .shared-files-error { color: #cf222e; }
