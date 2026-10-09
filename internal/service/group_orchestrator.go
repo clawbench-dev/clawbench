@@ -292,14 +292,14 @@ func (o *GroupOrchestrator) runSpeakerTurn(ctx context.Context, s groupTurnSetup
 
 // handUserBack ends the current turn because the floor was handed to the human
 // user: it clears the user's pending-note bookkeeping (the user reads notes in
-// the UI card, never through an injected prompt), leaves a system line so the
-// timeline shows why the turn stopped, and returns the (empty) result. Shared
-// by both modes (host: the host named User; free: a speaker @-ed User).
-func (o *GroupOrchestrator) handUserBack(groupID string) DrainResult {
+// the UI card, never through an injected prompt) and leaves a system line so the
+// timeline shows why the turn stopped. The caller returns the empty DrainResult
+// itself, since a handed-back turn never carries a cancel reason or error.
+// Shared by both modes (host: the host named User; free: a speaker @-ed User).
+func (o *GroupOrchestrator) handUserBack(groupID string) {
 	deletePendingBccForTarget(groupID, groupUserTarget())
 	writeGroupSystemMessage(o.project, groupID,
 		i18n.T(i18n.LocalizerForLocale(model.Language), "GroupYourTurn"))
-	return DrainResult{}
 }
 
 // speakerTurn is one queued speaker plus the mode-specific system prompt that
@@ -478,7 +478,8 @@ func (o *GroupOrchestrator) runSpeakerGroup(
 		// Hand the floor to the user last. The AI members' relay appends are
 		// dropped (the round is over), matching the sequential path when a User
 		// turn is reached.
-		return o.handUserBack(o.groupID), appended, true
+		o.handUserBack(o.groupID)
+		return DrainResult{}, appended, true
 	}
 	return o.runParallelGroup(ctx, s, g, onSpoke)
 }
@@ -514,7 +515,8 @@ func (o *GroupOrchestrator) runSequentialGroup(
 			return DrainResult{CancelReason: cancelReasonUser}, appended, true
 		}
 		if t.member.ID == groupUserTargetID {
-			return o.handUserBack(o.groupID), appended, true
+			o.handUserBack(o.groupID)
+			return DrainResult{}, appended, true
 		}
 		if o.checkSpeechCap() {
 			return DrainResult{}, appended, true

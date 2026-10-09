@@ -90,7 +90,7 @@ type SessionSharePayload struct {
 	// GroupMembers is the group's ACTIVE roster, in roster order, with the host
 	// flagged — present only for group sessions. The viewer's topbar renders the
 	// same overlapping avatar stack the in-app group header shows. Speakers
-	// cannot serve this: it is a map (JSON-marshalled with UUID-sorted keys, so
+	// cannot serve this: it is a map (JSON-marshaled with UUID-sorted keys, so
 	// the order is random) that also includes LEFT members, and it carries no
 	// isHost flag. Avatars are absent by design (same privacy boundary as
 	// Speakers), so each disc renders the built-in per-backend brand icon.
@@ -261,7 +261,7 @@ func BuildSessionSharePayload(sessionID string, messageIDs []int64, projectRoot,
 	// session-agent icon).
 	var groupMembers []model.GroupMemberPreview
 	if GetSessionType(sessionID) == groupSessionType {
-		if byGroup, err := GroupMembersForGroups([]string{sessionID}); err == nil {
+		if byGroup, gmErr := GroupMembersForGroups([]string{sessionID}); gmErr == nil {
 			groupMembers = byGroup[sessionID]
 		}
 	}

@@ -151,7 +151,7 @@ func seedGroupSession(t *testing.T, db *sql.DB, sessionID string) {
 // queued != 0 seeds a queued message instead: those no longer live in
 // chat_history (the dedicated queued_messages table holds them until dequeue),
 // so the snapshot must exclude them simply because they are not history rows.
-func seedMessage(t *testing.T, db *sql.DB, sessionID, role, content string, streaming, queued int) int64 { //nolint:unparam // general-purpose seed helper; all current callers use "s1"
+func seedMessage(t *testing.T, db *sql.DB, sessionID, role, content string, streaming, queued int) int64 {
 	t.Helper()
 	if queued != 0 {
 		res, err := db.Exec(
