@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"clawbench/internal/i18n"
 	"clawbench/internal/model"
@@ -1387,6 +1389,95 @@ func TestGroupOrchestrator_UserTargetStopsRound(t *testing.T) {
 		t.Fatalf("a system line announcing the user's turn must be written (want %q)", want)
 	}
 	_ = mA
+}
+
+// A HOST-issued `mode="parallel"` group that names the user is SPLIT, not
+// downgraded: the AI members run concurrently (mutually non-referencing), then
+// the floor is handed to the user and the round ends. Host mode shares the same
+// runSpeakerGroup kernel as free mode, so this pins the host path too.
+func TestGroupOrchestrator_ParallelUserRunsMembersConcurrently(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-parallel-user"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	mA, _ := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	mB, _ := AddGroupMember(project, groupID, "claude", "agent-b", "B")
+
+	var mu sync.Mutex
+	cur, peak := 0, 0
+	order := &[]string{}
+	prompts := map[string]string{}
+	script := map[string][]string{
+		hostID: {`<clawbench-mention targets="A,B,User" mode="parallel">同时表态</clawbench-mention>`},
+		mA:     {"A 的观点"},
+		mB:     {"B 的观点"},
+	}
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		mu.Lock()
+		*order = append(*order, turn.MemberRowID)
+		texts := script[turn.MemberRowID]
+		text := ""
+		if len(texts) > 0 {
+			text = texts[0]
+		}
+		if turn.MemberRowID != hostID {
+			cur++
+			if cur > peak {
+				peak = cur
+			}
+			prompts[turn.MemberRowID] = turn.Prompt
+		}
+		mu.Unlock()
+		if turn.MemberRowID != hostID {
+			// Hold briefly so member overlaps are observable.
+			time.Sleep(20 * time.Millisecond)
+		}
+		if text == "" {
+			text = "(no script)"
+		}
+		_, err := AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
+			`{"blocks":[{"type":"text","text":`+jsonQuote(text)+`}]}`, nil, false, "", turn.MemberRowID)
+		mu.Lock()
+		if turn.MemberRowID != hostID {
+			cur--
+		}
+		mu.Unlock()
+		if err != nil {
+			return groupMemberResult{Err: err.Error()}
+		}
+		return groupMemberResult{}
+	}
+
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	res := runGroupTurnForTest(t, o, project, "开始", nil)
+	if res.Err != "" || res.CancelReason != "" {
+		t.Fatalf("a user turn must end cleanly: %+v", res)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	seen := map[string]bool{}
+	for _, id := range *order {
+		if id == groupUserTargetID {
+			t.Fatalf("the user sentinel must never be handed to the runner; order=%v", *order)
+		}
+		seen[id] = true
+	}
+	if !seen[mA] || !seen[mB] {
+		t.Fatalf("both AI members must speak; order=%v", *order)
+	}
+	if peak < 2 {
+		t.Fatalf("the AI members must run concurrently (peak >= 2), got %d — the group was downgraded", peak)
+	}
+	if strings.Contains(prompts[mB], "A 的观点") || strings.Contains(prompts[mA], "B 的观点") {
+		t.Fatalf("parallel members must not see a sibling's output; A=%q B=%q", prompts[mA], prompts[mB])
+	}
 }
 
 // A private note addressed to a participant NOT named this round is stored and

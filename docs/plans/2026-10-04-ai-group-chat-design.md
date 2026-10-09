@@ -1177,7 +1177,7 @@ while 队列非空:
 - **游标**（§14.1）：注入用成员自己的 `seen_cursor`（**不变**）；成功后推进到 `H`（`advanceCursorOnSuccess(t.ID, H, res)`，仍是"仅干净回合推进"，决策 #69 不变）。
 - **`/cb-*` 命令注入**：归组内**第一个成员**（在快照阶段确定，**不依赖 goroutine 调度顺序**）。**`firstTurnDone` 是普通 `bool`，并发下是数据竞争**——须在快照阶段（单线程）设置，执行阶段只读。
 - **密送延迟送达**：快照阶段已为全组读好 `pendingBccForTarget`，故组内 A 给 B 的密送**必然**落到 `group_pending_bcc`、下组才送达（不会因 A 先跑完而提前注入 B）。
-- **`@User`（P7）**：并行组含 `User` 时降级为 `sequential` 并写系统提示——否则 `drainSpeakers` 的 `handUserBack` 会终止整组、静默丢弃同组其他成员。
+- **`@User`（P7）**：并行组含 `User` 时**拆分**——AI 成员保持 `parallel` 并发执行，随后 `handUserBack` 交回话语权并终止本轮。`User` 恒在队尾（否则其后的成员会被静默丢弃）。
 
 ### 14.5 流式管道改动（**关键路径**，§12 C1 的落地）
 

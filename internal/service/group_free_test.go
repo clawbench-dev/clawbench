@@ -727,60 +727,118 @@ func TestFreeLoop_ParallelGroupMembersDoNotSeeEachOther(t *testing.T) {
 	}
 }
 
-// A parallel group that names the human user is DOWNGRADED to sequential (P7):
-// the user cannot speak concurrently, and a User turn ends the round. The
-// decisive assertion is that the AI member still gets to speak (the round is
-// not silently dropped) and no panic/duplicate occurs.
-func TestFreeLoop_ParallelWithUserDowngrades(t *testing.T) {
+// A parallel group that names the human user is SPLIT (P7): the AI members keep
+// the tag's `parallel` mode and run CONCURRENTLY (they do not see each other's
+// output), then the floor is handed to the user and the round ends. The
+// decisive assertions are that the AI members really ran in parallel (peak >= 2)
+// and that neither saw a sibling's output this round — a mere "everyone spoke"
+// check would also pass under the old sequential downgrade.
+func TestFreeLoop_ParallelWithUserRunsMembersConcurrently(t *testing.T) {
 	setupGroupDB(t)
 	project := "/tmp/free-parallel-user"
 	groupID, byName := createFreeGroup(t, project, "A", "B")
 
-	runner, order := freeScriptedRunner(t, project, groupID, map[string][]string{
+	var mu sync.Mutex
+	cur, peak := 0, 0
+	prompts := map[string]string{}
+	base, order := freeScriptedRunner(t, project, groupID, map[string][]string{
 		byName["A"]: {"A 的回答"},
 		byName["B"]: {"B 的回答"},
 	})
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		mu.Lock()
+		cur++
+		if cur > peak {
+			peak = cur
+		}
+		prompts[turn.MemberRowID] = turn.Prompt
+		mu.Unlock()
+		// Hold briefly so overlaps are actually observable.
+		time.Sleep(20 * time.Millisecond)
+		r := base(ctx, gid, turn)
+		mu.Lock()
+		cur--
+		mu.Unlock()
+		return r
+	}
+
 	o := NewGroupOrchestrator(groupID)
 	o.runTurn = runner
-	msg := `<clawbench-mention targets="` + byName["A"] + `,User" mode="parallel">同时</clawbench-mention> 开始`
+	// User named LAST, with the AI members in one parallel tag.
+	msg := `<clawbench-mention targets="` + byName["A"] + `,` + byName["B"] + `,User" mode="parallel">同时</clawbench-mention> 开始`
 	_ = runGroupTurnForTest(t, o, project, msg, nil)
 
-	sawA := false
+	mu.Lock()
+	defer mu.Unlock()
+	// Both AI members spoke, and the user sentinel never reached the runner.
+	seen := map[string]bool{}
 	for _, id := range *order {
-		if id == byName["A"] {
-			sawA = true
+		if id == groupUserTargetID {
+			t.Fatalf("the user sentinel must never be handed to the runner; order=%v", *order)
 		}
+		seen[id] = true
 	}
-	if !sawA {
-		t.Fatalf("the AI member must still speak when a parallel group names User; order=%v", *order)
+	if !seen[byName["A"]] || !seen[byName["B"]] {
+		t.Fatalf("both AI members must speak; order=%v", *order)
+	}
+	if peak < 2 {
+		t.Fatalf("the AI members must run concurrently (peak >= 2), got %d — the group was downgraded to sequential", peak)
+	}
+	if strings.Contains(prompts[byName["B"]], "A 的回答") || strings.Contains(prompts[byName["A"]], "B 的回答") {
+		t.Fatalf("parallel members must not see a sibling's output; A=%q B=%q",
+			prompts[byName["A"]], prompts[byName["B"]])
 	}
 }
 
-// P7 must hold regardless of WHERE User sits in the parallel tag. A User turn
-// ends the round (handUserBack), so if User is named BEFORE the AI members and
-// we do not reorder, those members are silently dropped. Regression: only
-// User-last worked; User-first lost the AI members.
+// The split must hold regardless of WHERE User sits in the parallel tag: the
+// members run concurrently and the user is always handed the floor last. A User
+// turn ends the round, so if User were allowed to run first the members after
+// it would be silently dropped.
 func TestFreeLoop_ParallelUserFirstStillSpeaksMembers(t *testing.T) {
 	setupGroupDB(t)
 	project := "/tmp/free-parallel-user-first"
 	groupID, byName := createFreeGroup(t, project, "A", "B")
 
-	runner, order := freeScriptedRunner(t, project, groupID, map[string][]string{
+	var mu sync.Mutex
+	cur, peak := 0, 0
+	base, order := freeScriptedRunner(t, project, groupID, map[string][]string{
 		byName["A"]: {"A 的回答"},
 		byName["B"]: {"B 的回答"},
 	})
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		mu.Lock()
+		cur++
+		if cur > peak {
+			peak = cur
+		}
+		mu.Unlock()
+		time.Sleep(20 * time.Millisecond)
+		r := base(ctx, gid, turn)
+		mu.Lock()
+		cur--
+		mu.Unlock()
+		return r
+	}
 	o := NewGroupOrchestrator(groupID)
 	o.runTurn = runner
 	// User named FIRST, then the two members.
 	msg := `<clawbench-mention targets="User,` + byName["A"] + `,` + byName["B"] + `" mode="parallel">同时</clawbench-mention> 开始`
 	_ = runGroupTurnForTest(t, o, project, msg, nil)
 
+	mu.Lock()
+	defer mu.Unlock()
 	seen := map[string]bool{}
 	for _, id := range *order {
+		if id == groupUserTargetID {
+			t.Fatalf("the user sentinel must never be handed to the runner; order=%v", *order)
+		}
 		seen[id] = true
 	}
 	if !seen[byName["A"]] || !seen[byName["B"]] {
 		t.Fatalf("both AI members must speak even when User is named first; order=%v", *order)
+	}
+	if peak < 2 {
+		t.Fatalf("the AI members must still run concurrently (peak >= 2) when User is named first, got %d", peak)
 	}
 }
 

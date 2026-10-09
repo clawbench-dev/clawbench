@@ -438,50 +438,51 @@ func (o *GroupOrchestrator) drainSpeakers(
 // stop. A sequential group runs its turns in order (each snapshot sees the
 // previous turn's output); a parallel group snapshots every turn from the SAME
 // group-start high-water, then runs them concurrently.
+//
+// A parallel group that names the human user is SPLIT (P7): the AI members keep
+// the tag's `parallel` mode and run concurrently, then the floor is handed to
+// the user and the round ends. The user cannot speak concurrently, and a User
+// turn ends the round (handUserBack), so the user must come last — otherwise the
+// members after it would be silently dropped.
 func (o *GroupOrchestrator) runSpeakerGroup(
 	ctx context.Context,
 	s groupTurnSetup,
 	g speakerGroup,
 	onSpoke func(ctx context.Context, sp speakerTurn, queue []speakerGroup, pending []speakerTurn) []speakerGroup,
 ) (DrainResult, []speakerGroup, bool) {
-	// A parallel group naming the user is downgraded to sequential (P7): the
-	// user cannot speak concurrently, and the User turn ends the round.
 	if !g.parallel {
 		return o.runSequentialGroup(ctx, s, g, onSpoke)
 	}
 	if groupNamesUser(g) {
-		// Downgrade AND move User to the tail. A User turn ends the round
-		// (handUserBack), so if User sits BEFORE other members those members are
-		// silently dropped — the exact loss P7 exists to prevent. Speaking the
-		// AI members first, then handing back to the user, preserves them.
-		g = userLastGroup(g)
-		writeGroupSystemMessage(o.project, o.groupID,
-			i18n.T(i18n.LocalizerForLocale(model.Language), "GroupParallelDowngraded"))
-		return o.runSequentialGroup(ctx, s, g, onSpoke)
+		ai := splitOffUser(g)
+		var appended []speakerGroup
+		if len(ai.turns) > 0 {
+			res, app, stop := o.runParallelGroup(ctx, s, ai, onSpoke)
+			if stop {
+				// A cancelled AI member stops the whole turn; do not hand back.
+				return res, app, true
+			}
+			appended = app
+		}
+		// Hand the floor to the user last. The AI members' relay appends are
+		// dropped (the round is over), matching the sequential path when a User
+		// turn is reached.
+		return o.handUserBack(o.groupID), appended, true
 	}
 	return o.runParallelGroup(ctx, s, g, onSpoke)
 }
 
-// userLastGroup returns the group with any User turn moved to the tail, so the
-// AI members run before the floor is handed back. Order among the others is
-// preserved.
-func userLastGroup(g speakerGroup) speakerGroup {
-	var users, others []speakerTurn
+// splitOffUser returns the group's AI members as a group, preserving its mode
+// and dropping the human-user turn(s). Order among the members is preserved.
+func splitOffUser(g speakerGroup) speakerGroup {
+	ai := speakerGroup{parallel: g.parallel}
 	for _, t := range g.turns {
 		if t.member.ID == groupUserTargetID {
-			users = append(users, t)
-		} else {
-			others = append(others, t)
+			continue
 		}
+		ai.turns = append(ai.turns, t)
 	}
-	if len(users) == 0 {
-		return g
-	}
-	out := g
-	out.turns = make([]speakerTurn, 0, len(g.turns))
-	out.turns = append(out.turns, others...)
-	out.turns = append(out.turns, users...)
-	return out
+	return ai
 }
 
 // runSequentialGroup runs a group's turns one at a time. Each turn's snapshot is
