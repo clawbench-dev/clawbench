@@ -361,6 +361,81 @@ func TestFreeLoop_UserMentionsMultipleInOrder(t *testing.T) {
 	}
 }
 
+// A user-mention-seeded free member must get the FREE-mode system prompt, not
+// the host-mode "member" prompt. The host prompt tells the member NOT to emit
+// mention tags — which would break the free relay at its first step, since the
+// relay IS the mention tag. Regression: an earlier revision routed the seed
+// through memberTurn (host prompt) and injected the user's mention body as a
+// phantom "host directive".
+func TestFreeLoop_SeedUsesFreeModePrompt(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/free-seed-prompt"
+	groupID, byName := createFreeGroup(t, project, "A", "B")
+
+	prompts := map[string]string{}
+	var mu sync.Mutex
+	base, _ := freeScriptedRunner(t, project, groupID, map[string][]string{
+		byName["A"]: {"A 说"},
+	})
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		mu.Lock()
+		prompts[turn.MemberRowID] = turn.Prompt
+		mu.Unlock()
+		return base(ctx, gid, turn)
+	}
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	msg := `<clawbench-mention targets="` + byName["A"] + `"></clawbench-mention> 开始`
+	_ = runGroupTurnForTest(t, o, project, msg, nil)
+
+	mu.Lock()
+	defer mu.Unlock()
+	p := prompts[byName["A"]]
+	if !strings.Contains(p, "自由群聊") {
+		t.Fatalf("a free-mode seed must carry the free-mode prompt; got %q", p)
+	}
+	if strings.Contains(p, "不是主持人") {
+		t.Fatalf("a free-mode seed must NOT carry the host-mode member prompt; got %q", p)
+	}
+	if strings.Contains(p, "主持人要求你") {
+		t.Fatalf("a free-mode seed must NOT receive a phantom host directive; got %q", p)
+	}
+}
+
+// Dedup must count a member still WAITING later in the SAME group: when the
+// user's tag names A and B together and A @s B, B must not be queued twice.
+// Regression: appendFreeTargets only saw the outer queue (not the current
+// group's remaining turns), so B spoke twice ([A,B,B] instead of [A,B]).
+func TestFreeLoop_PeerMentionWithinGroupNotDuplicated(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/free-peer-dedup"
+	groupID, byName := createFreeGroup(t, project, "A", "B")
+
+	script := map[string][]string{
+		byName["A"]: {`<clawbench-mention targets="B">B 你补充</clawbench-mention>`},
+		byName["B"]: {"B 说完了"},
+	}
+	runner, order := freeScriptedRunner(t, project, groupID, script)
+
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	// One tag naming BOTH A and B (A first). A @s B while B is still waiting in
+	// the same group.
+	msg := `<clawbench-mention targets="` + byName["A"] + `,` + byName["B"] + `"></clawbench-mention> 你俩说`
+	_ = runGroupTurnForTest(t, o, project, msg, nil)
+
+	if len(*order) != 2 {
+		t.Fatalf("expected each member once, got order=%v", *order)
+	}
+	counts := map[string]int{}
+	for _, id := range *order {
+		counts[id]++
+	}
+	if counts[byName["B"]] != 1 {
+		t.Fatalf("B must speak exactly once, got %d (order=%v)", counts[byName["B"]], *order)
+	}
+}
+
 // A free-mode member's private note is delivered to its target on the target's
 // next turn (the same group_pending_bcc contract host mode uses).
 func TestFreeLoop_PrivateNoteDeliveredToTarget(t *testing.T) {
@@ -631,6 +706,34 @@ func TestFreeLoop_ParallelWithUserDowngrades(t *testing.T) {
 	}
 	if !sawA {
 		t.Fatalf("the AI member must still speak when a parallel group names User; order=%v", *order)
+	}
+}
+
+// P7 must hold regardless of WHERE User sits in the parallel tag. A User turn
+// ends the round (handUserBack), so if User is named BEFORE the AI members and
+// we do not reorder, those members are silently dropped. Regression: only
+// User-last worked; User-first lost the AI members.
+func TestFreeLoop_ParallelUserFirstStillSpeaksMembers(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/free-parallel-user-first"
+	groupID, byName := createFreeGroup(t, project, "A", "B")
+
+	runner, order := freeScriptedRunner(t, project, groupID, map[string][]string{
+		byName["A"]: {"A 的回答"},
+		byName["B"]: {"B 的回答"},
+	})
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	// User named FIRST, then the two members.
+	msg := `<clawbench-mention targets="User,` + byName["A"] + `,` + byName["B"] + `" mode="parallel">同时</clawbench-mention> 开始`
+	_ = runGroupTurnForTest(t, o, project, msg, nil)
+
+	seen := map[string]bool{}
+	for _, id := range *order {
+		seen[id] = true
+	}
+	if !seen[byName["A"]] || !seen[byName["B"]] {
+		t.Fatalf("both AI members must speak even when User is named first; order=%v", *order)
 	}
 }
 

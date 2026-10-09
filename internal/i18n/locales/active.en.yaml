@@ -155,6 +155,7 @@ RAGSegmenterUnavailable: "Rebuild refused: the text segmenter is unavailable. Re
 RAGRebuildAccepted: Rebuild started in the background
 AutoContinue: Continue
 GroupYourTurn: "It's your turn to speak"
+GroupParallelDowngraded: "This round includes the user, so it switched to speaking in turn"
 PortForwardUnavailable: port forwarding is not available
 TunnelTargetUnreachable: tunnel target is unreachable
 TunnelReverseRequiresHTTP2: reverse forwarding requires HTTP/2; use the SSH transport on HTTP/1.1

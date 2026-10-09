@@ -103,13 +103,17 @@ const RE_MENTION_SPAN_ANY = /<clawbench-mention\b[^>]*>[\s\S]*?<\/clawbench-ment
 const RE_MENTION_CLOSE_ANY = /<\/clawbench-mention>/g
 // The double-quoted targets attribute (case-sensitive, the DISPLAY contract).
 // `\p{Z}` needs the /u flag.
-const RE_TARGETS = /\btargets[\s\p{Z}]*=[\s\p{Z}]*"([^"]*)"/u
-// The boolean `private` attribute (case-sensitive).
-const RE_PRIVATE = /\bprivate\b/
+// The double-quoted targets attribute (case-sensitive, the DISPLAY contract).
+// The leading `(?:^|[\s\p{Z}])` anchors the attribute NAME to a real attribute
+// boundary so `data-targets="x"` is not mistaken for `targets` (`\b` alone
+// matches after the `-` of a hyphenated attribute name).
+const RE_TARGETS = /(?:^|[\s\p{Z}])targets[\s\p{Z}]*=[\s\p{Z}]*"([^"]*)"/u
+// The boolean `private` attribute (case-sensitive), anchored like RE_TARGETS.
+const RE_PRIVATE = /(?:^|[\s\p{Z}])private(?:[\s\p{Z}]|$)/u
 // The double-quoted `mode` attribute value (mirrors RE_TARGETS' display
 // contract). An unknown value falls back to sequential; it never makes the tag
 // malformed.
-const RE_MODE = /\bmode[\s\p{Z}]*=[\s\p{Z}]*"([^"]*)"/u
+const RE_MODE = /(?:^|[\s\p{Z}])mode[\s\p{Z}]*=[\s\p{Z}]*"([^"]*)"/u
 const RE_END = /<clawbench-group-end[\s\p{Z}]*\/>/gu
 // Non-global mirror of RE_END for a one-shot test(). RE_END carries /g, whose
 // lastIndex would otherwise make .test() alternate true/false across calls.

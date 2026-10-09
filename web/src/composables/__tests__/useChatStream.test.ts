@@ -2735,6 +2735,36 @@ describe('useChatStream', () => {
 
       expect(options.messages.value.filter((m: any) => m.role === 'assistant' && m.streaming)).toHaveLength(0)
     })
+
+    it('a finalize for an already-finalized stream does NOT close a live sibling', () => {
+      const options = createOptions()
+      useChatStream(options)
+
+      simulateWsEvent('stream_start', { message_id: 4001 })
+      simulateWsEvent('stream_start', { message_id: 4002 })
+      simulateWsEvent('content', { content: 'A' }, 'test-session-1', 4001)
+      simulateWsEvent('content', { content: 'B' }, 'test-session-1', 4002)
+      // A's turn ends.
+      simulateWsEvent('stream_finalize', { message_id: 4001 })
+      // A late/duplicate finalize for the SAME (now finalized) id arrives.
+      simulateWsEvent('stream_finalize', { message_id: 4001 })
+
+      const b = options.messages.value.find((m: any) => m.id === 4002)
+      expect(b.streaming).toBe(true, 'the sibling stream must survive a duplicate finalize for A')
+    })
+
+    it('a finalize with message_id 0 does NOT close the live stream (early failure)', () => {
+      const options = createOptions()
+      useChatStream(options)
+
+      // A member failed before opening a row → its finalize carries 0.
+      simulateWsEvent('stream_start', { message_id: 5002 })
+      simulateWsEvent('content', { content: 'B' }, 'test-session-1', 5002)
+      simulateWsEvent('stream_finalize', { message_id: 0 })
+
+      const b = options.messages.value.find((m: any) => m.id === 5002)
+      expect(b.streaming).toBe(true, 'a 0-id finalize must be a no-op, not close the live bubble')
+    })
   })
 
   // ── Stream stall watchdog ──

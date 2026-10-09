@@ -1,7 +1,7 @@
 # AI 群聊设计（Group Chat）
 
 日期：2026-10-04
-状态：**v1 基线（阶段 A–M）已合入 main（`aa88f921a`）；阶段 N/O 全部实现并合入 main（24/24 Task）；§14 并发发言为规划中（未实现）**
+状态：**v1 基线（阶段 A–M）已合入 main（`aa88f921a`）；阶段 N/O 全部实现并合入 main（24/24 Task）；§14 并发发言阶段 1–4 全部实现**
 
 ---
 
@@ -1301,3 +1301,27 @@ while 队列非空:
 - M4 跨组去重语义须保留——§14.3 已补。
 - M5 `lastMemberOutput` 全表扫 × N 并发——§14.7 已补 DB 压力。
 - M6 `rePrivate` 正则 `\bprivate\b` 会匹配任意属性值内的词（既有缺陷，与 §14 相邻）——留待实现时顺手锚定。
+
+### 14.12 实现后评审勘误（2026-10-09，Superpower code-reviewer，已核对代码）
+
+> 第二轮评审（对**已实现**的 `5a43534de` + `660701a72`）。**结论：内核（快照纪律、游标规则、by-id 原语、重连恢复、启动上限）正确扎实，但重构在自由模式上引入两个已复现的回归。** 以下均已修复并加守卫测试。
+
+**Critical（已修 + 变异验证）**
+
+- **RC1 — 自由模式种子误用宿主成员提示词。** `freeInitialGroups` 走 `resolveSpeakerGroups` → `memberTurn` → `BuildMemberSystemPrompt`，该提示词**明确禁止成员输出 mention 标签**——而自由模式的中继**就是** mention 标签，接力从第一步被自己的提示词掐断；且把用户 mention 正文当"主持人要求你"注入（自由模式无主持人，且正文已在用户行出现）。**修**：`resolveSpeakerGroups` 改为接收 `turnFor` 构造器，自由模式传 `freeTurn`（`BuildFreeMemberSystemPrompt`、无 instruction）。守卫：`TestFreeLoop_SeedUsesFreeModePrompt`（变异：改回 `memberTurn` → 红）。
+- **RC2 — 自由模式同组内 @ 已排队成员 → 重复发言。** `appendFreeTargets` 的 `waiting` 只含 `appended`（外层队列），**看不到当前组里尚未发言的成员**。用户一条标签点名 A、B，A @B → B 被排队两次（实测 `[A,B,B]` vs 旧版 `[A,B]`）。**修**：`onSpoke` 增加 `pending`（当前组未发言成员）并入 `waiting`。守卫：`TestFreeLoop_PeerMentionWithinGroupNotDuplicated`（变异：去掉 `pending` 并入 → 红）。
+
+**Important（已修）**
+
+- **I1 — `resolveStreamingMsg` 的单流 fallback 会串台。** 带 id 但找不到流式消息时退回"唯一流式"→ 迟到的 finalize 会关掉活着的兄弟流。**修**：带 id 且无匹配 → 直接 `undefined`，不 fallback；无 id 才走单流回退。守卫：前端"重复 finalize 不关兄弟流"。
+- **I2 — `message_id:0` 的 finalize 关掉唯一活流。** 成员早失败（无占位符）时 `MsgID=0`，前端把 0 当 falsy → 单流 fallback → 关掉活着的兄弟。**修**：前端 0-id finalize 明确 no-op。守卫：前端"0-id finalize 是 no-op"。
+- **I3 — `warning`/`ws_error` 未按 id 路由。** 设计 §14.6 已列入穷举，但只改了 reducer、handler dispatch 未带 `messageId` ⇒ 并行下 warning 永不渲染。**修**：两处 handler 补 `messageId`，reducer `ws_error` 改用 `resolveStreamingMsg`。
+- **I4 — P7 只对"User 在组尾"生效。** `User` 在前的并行组降级后，`handUserBack` 立刻终止，**丢弃**其后的成员（实测 `User,A` → `order=[]`）。**修**：降级时 `userLastGroup` 把 User 移到组尾 + 写系统提示（`GroupParallelDowngraded`）。守卫：`TestFreeLoop_ParallelUserFirstStillSpeaksMembers`（变异：去掉重排 → 红）。
+
+**Minor（已修）**
+
+- M1 `queryLiveStreamRows` 补 `rows.Err()`（部分列表 → 整体放弃）。
+- M2 `go mod tidy`：`golang.org/x/sync` 从 indirect 移到直接依赖（仅 `go.mod`）。
+- M3 文档状态行与 §14.8 的矛盾已消除（状态行改为"阶段 1–4 全部实现"）。
+- M4 `forceCleanupStreamingState` 无 id 时恢复"首个流式"语义（`done` 清理循环保证推进），带 id 时仍严格按 id。
+- M5 `targets`/`private`/`mode` 正则加属性边界锚定（`(?:^|[\s\p{Z}])`），`data-mode` 不再误匹配；parity 语料加 `mode_hyphenated_attr_not_matched`（35 例）。

@@ -677,7 +677,14 @@ export function useChatStream(options: UseChatStreamOptions) {
         //
         // Routed by id: under concurrent streams a sibling's finalize must not
         // close a different, still-running bubble.
+        //
+        // A finalize with NO id (0/absent) is not actionable: it means the
+        // producer turn never opened a row (an early failure), so there is
+        // nothing to close. Treating 0 as "finalize whichever bubble is live"
+        // would close a live sibling — the exact cross-talk the id routing
+        // prevents. So require a positive id.
         const finishId = payload.message_id as number | undefined
+        if (!finishId) break
         const sm = resolveStreamingMsg(messages.value, finishId)
         if (sm) {
           dispatch({ type: 'stream_finalize', messageId: finishId })
@@ -928,8 +935,8 @@ export function useChatStream(options: UseChatStreamOptions) {
         // assistant, or to the last assistant when the stream already ended
         // (backend crash after done) — so the user never needs a reload to see
         // it.
-        dispatch({ type: 'ws_error', text: errorData?.error || 'Unknown error', reason: errorData?.reason, errorCode: errorData?.error_code, httpStatus: errorData?.http_status, errorSource: errorData?.error_source, errorDetail: errorData?.error_detail })
-        _forceCleanupStreamingState(messages.value, { onRenderNeeded, onExtractScheduledTasks })
+        dispatch({ type: 'ws_error', messageId: streamMsgId, text: errorData?.error || 'Unknown error', reason: errorData?.reason, errorCode: errorData?.error_code, httpStatus: errorData?.http_status, errorSource: errorData?.error_source, errorDetail: errorData?.error_detail })
+        _forceCleanupStreamingState(messages.value, { onRenderNeeded, onExtractScheduledTasks }, streamMsgId)
         loading.value = false
         onStreamEnd?.('error')
         // Sync from DB in the background (same pattern as 'done' handler).
@@ -943,9 +950,9 @@ export function useChatStream(options: UseChatStreamOptions) {
 
       case 'warning': {
         if (sessionChanged()) return
-        if (!findStreamingMsg(messages.value)) { noteDroppedEvent('warning', 'no streaming placeholder'); return }
+        if (!resolveStreamingMsg(messages.value, streamMsgId)) { noteDroppedEvent('warning', 'no streaming placeholder'); return }
         const warningData = payload as { text?: string; reason?: string; error_code?: number; http_status?: number; error_source?: string; error_detail?: string }
-        dispatch({ type: 'ws_warning', text: warningData.text || '', reason: warningData.reason, errorCode: warningData.error_code, httpStatus: warningData.http_status, errorSource: warningData.error_source, errorDetail: warningData.error_detail })
+        dispatch({ type: 'ws_warning', messageId: streamMsgId, text: warningData.text || '', reason: warningData.reason, errorCode: warningData.error_code, httpStatus: warningData.http_status, errorSource: warningData.error_source, errorDetail: warningData.error_detail })
         if (isOpen.value) {
           onRenderNeeded()
         }

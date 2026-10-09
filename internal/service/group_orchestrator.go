@@ -400,7 +400,7 @@ func (o *GroupOrchestrator) drainSpeakers(
 	s groupTurnSetup,
 	queue []speakerGroup,
 	refill func(ctx context.Context) ([]speakerGroup, bool, DrainResult),
-	onSpoke func(ctx context.Context, sp speakerTurn, queue []speakerGroup) []speakerGroup,
+	onSpoke func(ctx context.Context, sp speakerTurn, queue []speakerGroup, pending []speakerTurn) []speakerGroup,
 ) DrainResult {
 	for {
 		if ctx.Err() != nil {
@@ -435,14 +435,46 @@ func (o *GroupOrchestrator) runSpeakerGroup(
 	ctx context.Context,
 	s groupTurnSetup,
 	g speakerGroup,
-	onSpoke func(ctx context.Context, sp speakerTurn, queue []speakerGroup) []speakerGroup,
+	onSpoke func(ctx context.Context, sp speakerTurn, queue []speakerGroup, pending []speakerTurn) []speakerGroup,
 ) (DrainResult, []speakerGroup, bool) {
 	// A parallel group naming the user is downgraded to sequential (P7): the
 	// user cannot speak concurrently, and the User turn ends the round.
-	if !g.parallel || groupNamesUser(g) {
+	if !g.parallel {
+		return o.runSequentialGroup(ctx, s, g, onSpoke)
+	}
+	if groupNamesUser(g) {
+		// Downgrade AND move User to the tail. A User turn ends the round
+		// (handUserBack), so if User sits BEFORE other members those members are
+		// silently dropped — the exact loss P7 exists to prevent. Speaking the
+		// AI members first, then handing back to the user, preserves them.
+		g = userLastGroup(g)
+		writeGroupSystemMessage(o.project, o.groupID,
+			i18n.T(i18n.LocalizerForLocale(model.Language), "GroupParallelDowngraded"))
 		return o.runSequentialGroup(ctx, s, g, onSpoke)
 	}
 	return o.runParallelGroup(ctx, s, g, onSpoke)
+}
+
+// userLastGroup returns the group with any User turn moved to the tail, so the
+// AI members run before the floor is handed back. Order among the others is
+// preserved.
+func userLastGroup(g speakerGroup) speakerGroup {
+	var users, others []speakerTurn
+	for _, t := range g.turns {
+		if t.member.ID == groupUserTargetID {
+			users = append(users, t)
+		} else {
+			others = append(others, t)
+		}
+	}
+	if len(users) == 0 {
+		return g
+	}
+	out := g
+	out.turns = make([]speakerTurn, 0, len(g.turns))
+	out.turns = append(out.turns, others...)
+	out.turns = append(out.turns, users...)
+	return out
 }
 
 // runSequentialGroup runs a group's turns one at a time. Each turn's snapshot is
@@ -451,10 +483,10 @@ func (o *GroupOrchestrator) runSequentialGroup(
 	ctx context.Context,
 	s groupTurnSetup,
 	g speakerGroup,
-	onSpoke func(ctx context.Context, sp speakerTurn, queue []speakerGroup) []speakerGroup,
+	onSpoke func(ctx context.Context, sp speakerTurn, queue []speakerGroup, pending []speakerTurn) []speakerGroup,
 ) (DrainResult, []speakerGroup, bool) {
 	var appended []speakerGroup
-	for _, t := range g.turns {
+	for i, t := range g.turns {
 		if ctx.Err() != nil {
 			return DrainResult{CancelReason: cancelReasonUser}, appended, true
 		}
@@ -467,7 +499,10 @@ func (o *GroupOrchestrator) runSequentialGroup(
 			return DrainResult{CancelReason: r.CancelReason}, appended, true
 		}
 		if r.Err == "" && onSpoke != nil {
-			appended = onSpoke(ctx, t, appended)
+			// Pass this group's NOT-YET-SPOKEN turns as `pending`: a member still
+			// waiting later in the SAME group must not be re-queued (it would
+			// speak twice). They are neither in the outer queue nor in `appended`.
+			appended = onSpoke(ctx, t, appended, g.turns[i+1:])
 		}
 	}
 	return DrainResult{}, appended, false
@@ -492,7 +527,7 @@ func (o *GroupOrchestrator) runParallelGroup(
 	ctx context.Context,
 	s groupTurnSetup,
 	g speakerGroup,
-	onSpoke func(ctx context.Context, sp speakerTurn, queue []speakerGroup) []speakerGroup,
+	onSpoke func(ctx context.Context, sp speakerTurn, queue []speakerGroup, pending []speakerTurn) []speakerGroup,
 ) (DrainResult, []speakerGroup, bool) {
 	highWater := GroupTimelineHighWater(o.groupID)
 	prepared := make([]preparedTurn, 0, len(g.turns))
@@ -544,12 +579,18 @@ func (o *GroupOrchestrator) runParallelGroup(
 		return DrainResult{CancelReason: cancel}, nil, true
 	}
 	// Free-mode relay: extend the queue from each clean speaker's output, in
-	// group order (deterministic).
+	// group order (deterministic). `pending` is this group's OTHER members (all
+	// of them — in a parallel group they are mutually non-referencing but still
+	// must not be re-queued by a sibling's @), so a mention of a group peer does
+	// not duplicate it.
 	var appended []speakerGroup
 	if onSpoke != nil {
 		for i, t := range g.turns {
 			if results[i].Err == "" {
-				appended = onSpoke(ctx, t, appended)
+				pending := make([]speakerTurn, 0, len(g.turns)-1)
+				pending = append(pending, g.turns[:i]...)
+				pending = append(pending, g.turns[i+1:]...)
+				appended = onSpoke(ctx, t, appended, pending)
 			}
 		}
 	}
@@ -619,7 +660,9 @@ func (o *GroupOrchestrator) runRounds(ctx context.Context, groupID string) Drain
 			return nil, false, DrainResult{}
 		}
 
-		groups := resolveSpeakerGroups(route, s.members, hostMemberID, s)
+		groups := resolveSpeakerGroups(route, s.members, hostMemberID, func(m GroupMember, instruction string) speakerTurn {
+			return memberTurn(m, instruction, s)
+		})
 		if len(groups) == 0 {
 			// Parse failed or no valid speakers: fall back to round-robin.
 			//
@@ -655,9 +698,17 @@ func (o *GroupOrchestrator) runRounds(ctx context.Context, groupID string) Drain
 // groups, preserving each tag's mode and instruction. Members are matched by
 // row id then name; unknown/left targets and excludeID are dropped; a member
 // claimed by an earlier group is not re-listed (it would speak twice). A group
-// left with no unclaimed members is dropped. Mirrors resolveSpeakerGroups' flat predecessor but
-// keeps the per-tag boundary that `mode` requires.
-func resolveSpeakerGroups(route grouprouting.Result, members []GroupMember, excludeID string, s groupTurnSetup) []speakerGroup {
+// left with no unclaimed members is dropped.
+//
+// turnFor builds each member's queued turn. It MUST differ by mode: host mode
+// passes memberTurn (the host's directive + the "member, not host" prompt), free
+// mode passes a builder using BuildFreeMemberSystemPrompt and NO instruction —
+// a free member must be told it may @ others (its prompt teaches the mention
+// tag), and the user's mention body is already in the injected user line, so
+// repeating it as a host directive is both wrong (there is no host) and
+// redundant. Passing memberTurn in free mode told the seeded member NOT to emit
+// mention tags, which broke the relay at its first step.
+func resolveSpeakerGroups(route grouprouting.Result, members []GroupMember, excludeID string, turnFor func(GroupMember, string) speakerTurn) []speakerGroup {
 	if !route.Found {
 		return nil
 	}
@@ -675,7 +726,7 @@ func resolveSpeakerGroups(route grouprouting.Result, members []GroupMember, excl
 				continue
 			}
 			seen[m.ID] = true
-			g.turns = append(g.turns, memberTurn(m, gr.Instruction, s))
+			g.turns = append(g.turns, turnFor(m, gr.Instruction))
 		}
 		if len(g.turns) > 0 {
 			out = append(out, g)
@@ -730,19 +781,31 @@ func (o *GroupOrchestrator) runFreeLoop(ctx context.Context, groupID string) Dra
 	refill := func(context.Context) ([]speakerGroup, bool, DrainResult) {
 		return nil, false, DrainResult{}
 	}
-	onSpoke := func(_ context.Context, sp speakerTurn, q []speakerGroup) []speakerGroup {
-		return o.appendFreeTargets(q, groupID, sp.member.ID, s.members, s.names)
+	onSpoke := func(_ context.Context, sp speakerTurn, q []speakerGroup, pending []speakerTurn) []speakerGroup {
+		return o.appendFreeTargets(q, pending, groupID, sp.member.ID, s.members, s.names)
 	}
 	return o.drainSpeakers(ctx, s, queue, refill, onSpoke)
 }
 
 // freeInitialGroups resolves the free-mode seed as groups. When the user's
-// message carries mention tags, their per-tag mode and order are honored
-// (P5); otherwise every active member forms one sequential group in roster
-// order.
+// message carries mention tags, their per-tag mode and order are honored (P5);
+// otherwise every active member forms one sequential group in roster order.
+//
+// The turn builder is freeTurn: a seeded free member must get the FREE-mode
+// system prompt (which teaches it to @ others and to hand the floor back) and no
+// host instruction. Reusing memberTurn here — as an earlier revision did — told
+// the member NOT to emit mention tags (the host-mode prompt's rule), which
+// breaks the free relay at its very first step, and injected the user's mention
+// body as a phantom "host directive".
 func (o *GroupOrchestrator) freeInitialGroups(s groupTurnSetup) []speakerGroup {
+	freeTurn := func(m GroupMember, _ string) speakerTurn {
+		return speakerTurn{
+			member:    m,
+			sysPrompt: BuildFreeMemberSystemPrompt(memberRoster(s.members), s.names[m.ID]),
+		}
+	}
 	route := grouprouting.Parse(o.userMessage)
-	if groups := resolveSpeakerGroups(route, s.members, "", s); len(groups) > 0 {
+	if groups := resolveSpeakerGroups(route, s.members, "", freeTurn); len(groups) > 0 {
 		return groups
 	}
 	active := activeMembers(s.members)
@@ -751,10 +814,7 @@ func (o *GroupOrchestrator) freeInitialGroups(s groupTurnSetup) []speakerGroup {
 	}
 	g := speakerGroup{}
 	for _, m := range active {
-		g.turns = append(g.turns, speakerTurn{
-			member:    m,
-			sysPrompt: BuildFreeMemberSystemPrompt(memberRoster(s.members), s.names[m.ID]),
-		})
+		g.turns = append(g.turns, freeTurn(m, ""))
 	}
 	return []speakerGroup{g}
 }
@@ -822,19 +882,40 @@ func storeRouteNotes(groupID string, route grouprouting.Result, speakerID string
 // freeInitialGroups is the free-mode seed (see runFreeLoop); it lives next to
 // runFreeLoop. resolveSpeakerGroups is shared by both modes.
 
+// freeRelay carries the per-speaker state appendFreeTargets needs to resolve and
+// de-duplicate the @-mentions a free-mode speaker emitted.
+type freeRelay struct {
+	groupID   string
+	speakerID string
+	members   []GroupMember
+	names     map[string]string
+	byID      map[string]GroupMember
+	byName    map[string]GroupMember
+	// waiting is the set of member row ids already queued (outer queue + the
+	// current group's not-yet-spoken turns). A target in this set is skipped.
+	waiting map[string]bool
+}
+
 // appendFreeTargets parses the just-finished speaker's output for @-mentions and
 // appends the valid, not-already-queued targets to the queue's tail as GROUPS
 // (preserving each tag's mode). Returns the (possibly extended) queue.
 //
-// Dedup rule (decision #F9): only targets already WAITING in the queue are
-// skipped. A member that has already spoken may be @-ed again and will speak
-// again — this is what makes unlimited relay possible (A@B, B@A loops).
+// `queue` is the remaining OUTER queue (groups not yet started) and `pending`
+// is the current group's not-yet-spoken turns. Both count as "waiting" for the
+// dedup rule: a member still queued anywhere must not be appended again. Missing
+// `pending` is what let a member named by a peer in the SAME group be queued
+// twice (it spoke twice) — the outer queue does not contain a group peer that is
+// simply later in the current group.
+//
+// Dedup rule (decision #F9): only targets already WAITING are skipped. A member
+// that has already spoken may be @-ed again and will speak again — this is what
+// makes unlimited relay possible (A@B, B@A loops).
 //
 // Invalid targets (decision #F7): a self-mention and a left-member mention are
 // dropped silently (model slips not worth surfacing); an unknown NAME emits a
 // visible system notice (it usually means a member was removed/renamed, or the
 // model hallucinated — the user should know).
-func (o *GroupOrchestrator) appendFreeTargets(queue []speakerGroup, groupID, speakerID string, members []GroupMember, names map[string]string) []speakerGroup {
+func (o *GroupOrchestrator) appendFreeTargets(queue []speakerGroup, pending []speakerTurn, groupID, speakerID string, members []GroupMember, names map[string]string) []speakerGroup {
 	output := o.lastMemberOutput(groupID, speakerID)
 	if output == "" {
 		return queue
@@ -851,31 +932,18 @@ func (o *GroupOrchestrator) appendFreeTargets(queue []speakerGroup, groupID, spe
 			waiting[st.member.ID] = true
 		}
 	}
+	for _, st := range pending {
+		waiting[st.member.ID] = true
+	}
+	rl := freeRelay{
+		groupID: groupID, speakerID: speakerID, members: members, names: names,
+		byID: byID, byName: byName, waiting: waiting,
+	}
 
 	var unknown []string
 	for _, gr := range route.Groups {
-		g := speakerGroup{parallel: gr.Parallel}
-		for _, tgt := range gr.Members {
-			m, ok := lookupMember(tgt, byID, byName)
-			if !ok {
-				unknown = append(unknown, tgt)
-				continue
-			}
-			if m.ID == speakerID {
-				continue // self-mention: drop silently
-			}
-			if m.Left && m.ID != groupUserTargetID {
-				continue // left member: drop silently
-			}
-			if waiting[m.ID] {
-				continue // already queued: do not duplicate
-			}
-			waiting[m.ID] = true
-			g.turns = append(g.turns, speakerTurn{
-				member:    m,
-				sysPrompt: BuildFreeMemberSystemPrompt(memberRoster(members), names[m.ID]),
-			})
-		}
+		g, miss := o.freeGroupFromRoute(gr, &rl)
+		unknown = append(unknown, miss...)
 		if len(g.turns) > 0 {
 			queue = append(queue, g)
 		}
@@ -891,6 +959,37 @@ func (o *GroupOrchestrator) appendFreeTargets(queue []speakerGroup, groupID, spe
 			fmt.Sprintf("%s @ 了一个不存在的成员：%s（已忽略）", speakerName, strings.Join(unknown, "、")))
 	}
 	return queue
+}
+
+// freeGroupFromRoute resolves ONE mention group's targets to a speakerGroup,
+// applying the free-mode validity rules (unknown → reported, self/left → silent)
+// and the waiting-set dedup (marking each accepted member as waiting). Returns
+// the group plus the unknown names it saw.
+func (o *GroupOrchestrator) freeGroupFromRoute(gr grouprouting.MentionGroup, rl *freeRelay) (speakerGroup, []string) {
+	g := speakerGroup{parallel: gr.Parallel}
+	var unknown []string
+	for _, tgt := range gr.Members {
+		m, ok := lookupMember(tgt, rl.byID, rl.byName)
+		if !ok {
+			unknown = append(unknown, tgt)
+			continue
+		}
+		if m.ID == rl.speakerID {
+			continue // self-mention: drop silently
+		}
+		if m.Left && m.ID != groupUserTargetID {
+			continue // left member: drop silently
+		}
+		if rl.waiting[m.ID] {
+			continue // already queued: do not duplicate
+		}
+		rl.waiting[m.ID] = true
+		g.turns = append(g.turns, speakerTurn{
+			member:    m,
+			sysPrompt: BuildFreeMemberSystemPrompt(memberRoster(rl.members), rl.names[m.ID]),
+		})
+	}
+	return g, unknown
 }
 
 // lastMemberOutput returns a specific member's (or the host's) most recent

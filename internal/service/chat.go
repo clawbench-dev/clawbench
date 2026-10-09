@@ -2893,6 +2893,14 @@ func queryLiveStreamRows(sessionID string) []ws.LiveStreamState {
 		}
 		states = append(states, st)
 	}
+	// A mid-iteration error means the list is partial; returning it would make
+	// the caller believe fewer streams are live than there are. Drop the whole
+	// result so the caller falls back to a full reload.
+	if err := rows.Err(); err != nil {
+		slog.Warn("queryLiveStreamRows: rows error, returning no live state",
+			slog.String("session", sessionID), slog.String("err", err.Error()))
+		return nil
+	}
 	return states
 }
 

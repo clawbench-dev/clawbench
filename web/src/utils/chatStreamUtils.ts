@@ -377,10 +377,13 @@ export function forceCleanupStreamingState(
   },
   // Optional owning row id. When set, only THAT streaming message is finalized
   // (needed under concurrent streams: a sibling's finalize must not close the
-  // wrong bubble). Absent ⇒ legacy "the single streaming message".
+  // wrong bubble). Absent ⇒ the FIRST streaming message (legacy behavior), so a
+  // caller looping "clean up every streaming bubble" always makes progress.
   targetMessageId?: number,
 ): ChatMessage | undefined {
-  const streamingMsg = resolveStreamingMsg(messages, targetMessageId)
+  const streamingMsg = targetMessageId
+    ? resolveStreamingMsg(messages, targetMessageId)
+    : messages.find((m) => m.role === 'assistant' && m.streaming)
   if (streamingMsg) {
     const hasContent = streamingMsg.content || (streamingMsg.blocks && streamingMsg.blocks.length > 0)
     delete streamingMsg.streaming
@@ -456,11 +459,16 @@ export function resolveStreamingMsg(messages: ChatMessage[], messageId?: number)
       (m) => m.role === 'assistant' && m.streaming && String(m.id) === String(messageId),
     )
     if (byId) return byId
-    // A stamped id that matches no STREAMING message is NOT silently redirected
-    // to a different streaming bubble: doing so is exactly the cross-talk this
-    // function exists to prevent. Fall through only when there is no ambiguity
-    // (a single streaming message), else give up.
+    // A stamped id that matches no STREAMING message resolves to NOTHING. We do
+    // NOT fall back to a different streaming bubble: that bubble is a sibling
+    // stream, and routing this event to it is exactly the cross-talk this
+    // function exists to prevent (e.g. a late/replayed finalize for an
+    // already-finalized row would otherwise close a live sibling). The caller
+    // treats `undefined` as "no target", same as before the id was stamped.
+    return undefined
   }
+  // No id: legacy single-stream resolution. Unambiguous only when exactly one
+  // stream is live; with several we cannot know the target, so give up.
   const streaming = messages.filter((m) => m.role === 'assistant' && m.streaming)
   return streaming.length === 1 ? streaming[0] : undefined
 }
@@ -680,7 +688,7 @@ export type ChatMessageAction =
   // A role='system' timeline row (group membership change) written by the
   // backend. Deduped by DB id so a duplicate delivery renders once.
   | { type: 'ws_system_message'; data: { messageId?: number; content?: string } }
-  | { type: 'ws_error'; text: string; reason?: string; errorCode?: number; httpStatus?: number; errorSource?: string; errorDetail?: string }
+  | { type: 'ws_error'; messageId?: number; text: string; reason?: string; errorCode?: number; httpStatus?: number; errorSource?: string; errorDetail?: string }
   | { type: 'stream_finalize'; messageId?: number }
   // ── WS block-level (in-place blocks mutation, same array reference) ──
   // Each carries an optional `messageId` (the backend-stamped owning row) so it
@@ -1954,7 +1962,10 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       if (action.httpStatus) errorBlock.http_status = action.httpStatus
       if (action.errorSource) errorBlock.error_source = action.errorSource
       if (action.errorDetail) errorBlock.error_detail = action.errorDetail
-      const sm = state.find((m) => m.role === 'assistant' && m.streaming)
+      // Route to the erroring stream when its id is known (concurrent streams:
+      // an error must not overwrite a live sibling's bubble). Fall back to the
+      // legacy single-stream / last-assistant placement otherwise.
+      const sm = resolveStreamingMsg(state, action.messageId)
       if (sm) {
         sm.blocks = [errorBlock]
         return state

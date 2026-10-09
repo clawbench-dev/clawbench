@@ -145,15 +145,19 @@ var (
 	// reTargets extracts the double-quoted targets attribute (the DISPLAY
 	// contract: single-quoted / attribute-less / differently-cased forms are
 	// malformed and left untouched, never stripped). Case-sensitive, matching
-	// the old <clawbench-bcc targets=...> display contract.
-	reTargets = regexp.MustCompile(`\btargets[\s\p{Z}]*=[\s\p{Z}]*"([^"]*)"`)
-	// rePrivate detects the boolean `private` attribute (case-sensitive).
-	rePrivate = regexp.MustCompile(`\bprivate\b`)
+	// the old <clawbench-bcc targets=...> display contract. The leading
+	// `(?:^|[\s\p{Z}])` anchors the attribute NAME to a real attribute boundary
+	// so `data-targets="x"` is not mistaken for `targets` (`\b` alone matches
+	// after the `-` of a hyphenated attribute name).
+	reTargets = regexp.MustCompile(`(?:^|[\s\p{Z}])targets[\s\p{Z}]*=[\s\p{Z}]*"([^"]*)"`)
+	// rePrivate detects the boolean `private` attribute (case-sensitive),
+	// anchored to an attribute boundary for the same reason as reTargets.
+	rePrivate = regexp.MustCompile(`(?:^|[\s\p{Z}])private(?:[\s\p{Z}]|$)`)
 	// reMode extracts the double-quoted `mode` attribute value (the display
 	// contract mirrors reTargets: only the double-quoted form is recognized).
 	// An unknown value falls back to sequential; it never makes the tag
 	// malformed.
-	reMode = regexp.MustCompile(`\bmode[\s\p{Z}]*=[\s\p{Z}]*"([^"]*)"`)
+	reMode = regexp.MustCompile(`(?:^|[\s\p{Z}])mode[\s\p{Z}]*=[\s\p{Z}]*"([^"]*)"`)
 	// reEnd matches the discussion-end signal. The whitespace class is
 	// [\s\p{Z}] — Go's \s alone is ASCII-only, while JS's \s includes Unicode
 	// spaces (NBSP, U+3000). Without \p{Z} the two sides would disagree on a

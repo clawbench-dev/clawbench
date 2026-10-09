@@ -156,6 +156,7 @@ RAGSegmenterUnavailable: "已拒绝重建：分词器不可用。此时重建会
 RAGRebuildAccepted: 重建已在后台启动
 AutoContinue: 继续
 GroupYourTurn: 轮到用户发言
+GroupParallelDowngraded: 本轮包含用户，已改为依次发言
 PortForwardUnavailable: 端口转发不可用
 TunnelTargetUnreachable: 隧道目标不可达
 TunnelReverseRequiresHTTP2: 反向转发需要 HTTP/2；HTTP/1.1 下请使用 SSH 传输

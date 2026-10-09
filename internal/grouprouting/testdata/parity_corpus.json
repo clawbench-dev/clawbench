@@ -797,6 +797,30 @@
           }
         ]
       }
+    },
+    {
+      "name": "mode_hyphenated_attr_not_matched",
+      "text": "<clawbench-mention targets=\"A\" data-mode=\"parallel\">照常</clawbench-mention>",
+      "want": {
+        "found": true,
+        "end": false,
+        "speakers": [
+          "A"
+        ],
+        "groups": [
+          {
+            "members": [
+              "A"
+            ],
+            "parallel": false,
+            "instruction": "照常"
+          }
+        ],
+        "instruction": "照常",
+        "before": "",
+        "after": "",
+        "bcc": []
+      }
     }
   ],
   "stripCases": [
