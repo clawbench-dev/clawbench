@@ -203,6 +203,7 @@ import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import ChatMessageItem from '@/components/chat/ChatMessageItem.vue'
 import MessageIndexRow from '@/components/chat/MessageIndexRow.vue'
 import { makeSpeakerResolver, type SpeakerIdentity } from '@/utils/speakerIdentity'
+import { resolveMentionDisplayName, type MentionSpeaker } from '@/utils/groupRouting'
 import ToolDetailDrawer from '@/components/chat/ToolDetailDrawer.vue'
 import ChatMetadataModal from '@/components/chat/ChatMetadataModal.vue'
 import { useChatRender } from '@/composables/useChatRender'
@@ -300,6 +301,31 @@ const resolveSpeakerByName = computed(() => (name: string) => {
   }
   return null
 })
+// Inline @-chips in a message body are resolved by useChatRender (NOT by the
+// ChatMessageItem props, which only drive the speaker header and the private
+// bcc card). A user's @-mention carries the member ROW id, so without a
+// resolver the chip renders the raw id instead of the agent name. Resolve
+// against the same frozen roster, by id first then by display name — mirroring
+// ChatPanelContent's resolveMentionTarget.
+const resolveMentionTarget = (target: string): string =>
+  resolveMentionDisplayName(
+    target,
+    (id): MentionSpeaker | null => {
+      const s = speakers.value?.[id]
+      return s ? { name: s.name || '' } : null
+    },
+    (name): MentionSpeaker | null => {
+      const s = resolveSpeakerByName.value(name)
+      return s ? { name: s.name || '' } : null
+    },
+    t('group.you'),
+  )
+// The chip HTML is baked into the rendered-block cache, whose key omits the
+// roster; a chip rendered before the roster loads would keep showing "@<id>".
+// Changing this scope clears + re-renders when the roster identity changes.
+const mentionScope = computed(() =>
+  speakers.value ? Object.keys(speakers.value).sort().join(',') : '',
+)
 /** Message id currently in view (scroll-spy); null until the observer fires. */
 const activeTocId = ref<number | string | null>(null)
 
@@ -424,7 +450,13 @@ const totalDurationMs = computed(() => {
 // One shared instance drives every message, exactly as the chat panel does.
 // useChatRender's task-block store stays inert because the snapshot carries no
 // TaskIDs (the Go builder strips them).
-const chatRender = useChatRender({ messages, theme: ref(''), currentSessionId: ref('') })
+const chatRender = useChatRender({
+  messages,
+  theme: ref(''),
+  currentSessionId: ref(''),
+  mentionScope,
+  resolveMentionTarget,
+})
 const { expandedTools, blockTasks, blockAskQuestions, staticBlockCache, toggleToolDetail } = chatRender
 
 // ── Provides mirrored from TaskExecDetail (the other standalone chat host) ──
