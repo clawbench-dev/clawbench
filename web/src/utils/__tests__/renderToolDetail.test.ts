@@ -858,8 +858,22 @@ describe('AskUserQuestion renderer (deep)', () => {
     const html = formatToolInput({
       questions: [{ question: 'Pick one', multiSelect: false, options: ['A', 'B'] }],
     }, 'AskUserQuestion')
-    expect(html).toContain('◯')
+    expect(html).toContain('○')
     expect(html).toContain('data-multi="false"')
+  })
+
+  // Regression: the unselected glyph must be the MATCHED-SIZE partner of the
+  // selected ● (U+25CF BLACK CIRCLE), i.e. ○ (U+25CB WHITE CIRCLE). The obvious
+  // "hollow circle" ◯ (U+25EF LARGE CIRCLE) renders noticeably larger than ●
+  // (ink 41px vs 31px at 40pt in DejaVu), so toggling visibly resized the
+  // indicator — the hollow ring dwarfed the filled disc.
+  it('single-select hollow glyph shares ink size with the filled ●', () => {
+    const html = formatToolInput({
+      questions: [{ question: 'Pick one', multiSelect: false, options: ['A'] }],
+    }, 'AskUserQuestion')
+    // U+25CB WHITE CIRCLE — NOT U+25EF LARGE CIRCLE.
+    expect(html).toContain('○')
+    expect(html).not.toContain('◯')
   })
 
   it('renders supplementary input', () => {
@@ -923,13 +937,13 @@ describe('AskUserQuestion action handler', () => {
       <div class="ask-question-item" data-multi="${multiSelect}">
         <div class="ask-question-options">
           <div class="ask-question-option" data-qi="0" data-oi="0" data-label="Option A">
-            <span class="ask-option-indicator">${multiSelect ? '☐' : '◯'}</span>
+            <span class="ask-option-indicator">${multiSelect ? '☐' : '○'}</span>
             <div class="ask-option-content">
               <span class="ask-option-label">Option A</span>
             </div>
           </div>
           <div class="ask-question-option" data-qi="0" data-oi="1" data-label="Option B">
-            <span class="ask-option-indicator">${multiSelect ? '☐' : '◯'}</span>
+            <span class="ask-option-indicator">${multiSelect ? '☐' : '○'}</span>
             <div class="ask-option-content">
               <span class="ask-option-label">Option B</span>
             </div>
@@ -995,9 +1009,9 @@ describe('AskUserQuestion action handler', () => {
       expect(optA.classList.contains('selected')).toBe(false)
       expect(optB.classList.contains('selected')).toBe(true)
 
-      // A's indicator should revert to ◯
+      // A's indicator should revert to ○
       const indicatorA = optA.querySelector('.ask-option-indicator')
-      expect(indicatorA?.textContent).toBe('◯')
+      expect(indicatorA?.textContent).toBe('○')
       cleanup(container)
     })
 
@@ -1018,7 +1032,7 @@ describe('AskUserQuestion action handler', () => {
 
       expect(option.classList.contains('selected')).toBe(false)
       const indicator = option.querySelector('.ask-option-indicator')
-      expect(indicator?.textContent).toBe('◯')
+      expect(indicator?.textContent).toBe('○')
       cleanup(container)
     })
 
@@ -3351,13 +3365,13 @@ describe('AskUserQuestion action handler (uncovered branches)', () => {
       <div class="ask-question-item" data-multi="${multiSelect}">
         <div class="ask-question-options">
           <div class="ask-question-option" data-qi="0" data-oi="0" data-label="Option A">
-            <span class="ask-option-indicator">${multiSelect ? '☐' : '◯'}</span>
+            <span class="ask-option-indicator">${multiSelect ? '☐' : '○'}</span>
             <div class="ask-option-content">
               <span class="ask-option-label">Option A</span>
             </div>
           </div>
           <div class="ask-question-option" data-qi="0" data-oi="1" data-label="Option B">
-            <span class="ask-option-indicator">${multiSelect ? '☐' : '◯'}</span>
+            <span class="ask-option-indicator">${multiSelect ? '☐' : '○'}</span>
             <div class="ask-option-content">
               <span class="ask-option-label">Option B</span>
             </div>
@@ -3462,10 +3476,10 @@ describe('AskUserQuestion answer state persistence', () => {
         <div class="ask-question-item" data-multi="${multiSelect}">
           <div class="ask-question-options">
             <div class="ask-question-option" data-qi="0" data-oi="0" data-label="Option A">
-              <span class="ask-option-indicator">${multiSelect ? '☐' : '◯'}</span>
+              <span class="ask-option-indicator">${multiSelect ? '☐' : '○'}</span>
             </div>
             <div class="ask-question-option" data-qi="0" data-oi="1" data-label="Option B">
-              <span class="ask-option-indicator">${multiSelect ? '☐' : '◯'}</span>
+              <span class="ask-option-indicator">${multiSelect ? '☐' : '○'}</span>
             </div>
           </div>
         </div>
@@ -4081,7 +4095,7 @@ describe('AskUserQuestion submit carries the card key', () => {
         <div class="ask-question-item" data-multi="false">
           <div class="ask-question-options">
             <div class="ask-question-option" data-qi="0" data-oi="0" data-label="Option A">
-              <span class="ask-option-indicator">◯</span>
+              <span class="ask-option-indicator">○</span>
             </div>
           </div>
         </div>
@@ -4125,7 +4139,7 @@ describe('AskUserQuestion submit carries the card key', () => {
       <div class="ask-question-view">
         <div class="ask-question-item" data-multi="false">
           <div class="ask-question-options">
-            <div class="ask-question-option" data-qi="0" data-oi="0" data-label="Option A"><span class="ask-option-indicator">◯</span></div>
+            <div class="ask-question-option" data-qi="0" data-oi="0" data-label="Option A"><span class="ask-option-indicator">○</span></div>
           </div>
         </div>
         <button class="ask-question-submit" disabled>Submit</button>
@@ -4158,7 +4172,7 @@ describe('AskUserQuestion revert clears the DOM as well as the store', () => {
         <div class="ask-question-item" data-multi="false">
           <div class="ask-question-options">
             <div class="ask-question-option" data-qi="0" data-oi="0" data-label="Option A">
-              <span class="ask-option-indicator">◯</span>
+              <span class="ask-option-indicator">○</span>
             </div>
           </div>
         </div>

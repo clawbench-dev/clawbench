@@ -380,7 +380,11 @@ function renderAskUserQuestion(input: ToolInput, blockCtx?: ToolBlockCtx): strin
         const label = typeof opt === 'string' ? opt : (opt.label || '')
         const desc = typeof opt === 'object' ? (opt.description || '') : ''
         html += `<div class="ask-question-option" data-qi="${qi}" data-oi="${oi}" data-label="${escapeHtml(label)}">`
-        html += `<span class="ask-option-indicator">${multiSelect ? '☐' : '◯'}</span>`
+        // Single-select uses ○ (U+25CB WHITE CIRCLE), the matched-size partner
+        // of the selected ● (U+25CF BLACK CIRCLE). Do NOT use ◯ (U+25EF LARGE
+        // CIRCLE): despite the name it renders noticeably larger than ●, so the
+        // hollow ring would dwarf the filled disc when toggled.
+        html += `<span class="ask-option-indicator">${multiSelect ? '☐' : '○'}</span>`
         html += '<div class="ask-option-content">'
         html += `<span class="ask-option-label">${escapeHtml(label)}</span>`
         if (desc) {
@@ -1895,7 +1899,7 @@ export function restoreAskStateFromStore(view: Element): void {
     el.classList.toggle('selected', isSelected)
     const indicator = el.querySelector('.ask-option-indicator')
     if (indicator) {
-      indicator.textContent = multiSelect ? (isSelected ? '☑' : '☐') : (isSelected ? '●' : '◯')
+      indicator.textContent = multiSelect ? (isSelected ? '☑' : '☐') : (isSelected ? '●' : '○')
     }
   }
 
@@ -2093,13 +2097,14 @@ registerToolActionHandler('AskUserQuestion', (event, emit) => {
         for (const s of siblings) {
           s.classList.remove('selected')
           const ind = s.querySelector('.ask-option-indicator')
-          if (ind) ind.textContent = '◯'
+          if (ind) ind.textContent = '○'
         }
         if (!wasSelected) {
           optionEl.classList.add('selected')
           const indicator = optionEl.querySelector('.ask-option-indicator')
-          // Use ● (U+25CF BLACK CIRCLE) — same glyph box/width as the unselected ◯ (U+25EF LARGE CIRCLE),
-          // so the filled state does not render smaller than the hollow one.
+          // ● (U+25CF BLACK CIRCLE) is the filled partner of ○ (U+25CB WHITE
+          // CIRCLE) — both share the same ink size, so toggling does not resize
+          // the indicator. ◯ (U+25EF LARGE CIRCLE) is a DIFFERENT, larger glyph.
           if (indicator) indicator.textContent = '●'
         }
       }
