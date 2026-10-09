@@ -2441,7 +2441,6 @@ export default {
       agentModelCount: '{count} models',
       agentAcpCommand: 'ACP Command',
       agentSectionIdentity: 'Identity',
-      agentSectionAdvanced: 'Advanced',
       agentSectionPreference: 'Preference',
       agentSectionInfo: 'Information',
       agentNoAgents: 'No agents',

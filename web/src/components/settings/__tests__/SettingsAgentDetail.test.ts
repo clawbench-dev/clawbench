@@ -28,7 +28,7 @@ vi.mock('vue-i18n', () => ({
         'settings.items.agentSectionIdentity': 'Identity',
         'settings.items.agentName': 'Name',
         'settings.items.agentSpecialty': 'Specialty',
-        'settings.items.agentSectionAdvanced': 'Advanced',
+        'settings.items.agentSectionPreference': 'Preference',
         'settings.items.agentSystemPrompt': 'System Prompt',
         'settings.items.agentSystemPromptDesc': 'Custom system prompt',
         'settings.items.agentSystemPromptWarning': 'Warning',
@@ -176,6 +176,46 @@ describe('SettingsAgentDetail', () => {
 
     await wrapper.find('.settings-agent-detail__avatar-btn').trigger('click')
     expect(wrapper.findComponent({ name: 'AgentAvatarPicker' }).props('open')).toBe(true)
+  })
+
+  // ─── Identity card leads the page ──────────────
+  // Avatar, identity (name/specialty) and the system prompt were three separate
+  // groups; they are now one leading "Identity" card. The avatar row must live
+  // INSIDE that first card (so it sits with the name), not as a standalone block.
+  describe('identity card', () => {
+    it('leads the page with the Identity card', () => {
+      const wrapper = mountDetail()
+      const headers = wrapper.findAll('.settings-card__header')
+      expect(headers.length).toBeGreaterThan(0)
+      expect(headers[0].text()).toBe('Identity')
+    })
+
+    it('puts the avatar row inside the first (Identity) card', () => {
+      const wrapper = mountDetail()
+      const firstCard = wrapper.findAll('.settings-card')[0]
+      expect(firstCard.find('.settings-agent-detail__avatar-row').exists()).toBe(true)
+    })
+
+    it('groups the name, specialty and system prompt into the Identity card', () => {
+      const wrapper = mountDetail()
+      const firstCard = wrapper.findAll('.settings-card')[0]
+      const labels = firstCard.findAllComponents({ name: 'SettingsItem' }).map(it => it.props('label'))
+      expect(labels).toContain('Name')
+      expect(labels).toContain('Specialty')
+      expect(labels).toContain('System Prompt')
+    })
+
+    it('no longer renders an Advanced section', () => {
+      const wrapper = mountDetail()
+      const headers = wrapper.findAll('.settings-card__header').map(h => h.text())
+      expect(headers).not.toContain('Advanced')
+    })
+
+    it('renders the Preference card after the Identity card', () => {
+      const wrapper = mountDetail()
+      const headers = wrapper.findAll('.settings-card__header').map(h => h.text())
+      expect(headers.indexOf('Preference')).toBeGreaterThan(headers.indexOf('Identity'))
+    })
   })
 
   it('saves a new avatar via patchAgentField', async () => {

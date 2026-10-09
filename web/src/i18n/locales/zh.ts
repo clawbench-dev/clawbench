@@ -2438,7 +2438,6 @@ export default {
       agentModelCount: '{count} 个模型',
       agentAcpCommand: 'ACP命令',
       agentSectionIdentity: '标识',
-      agentSectionAdvanced: '高级',
       agentSectionPreference: '偏好',
       agentSectionInfo: '信息',
       agentNoAgents: '暂无智能体',
