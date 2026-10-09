@@ -18,6 +18,7 @@
       :maxRounds="maxRounds"
       :autoApprove="autoApprove"
       :mode="mode"
+      :parallelDefault="parallelDefault"
       @changed="$emit('changed')"
     />
   </div>
@@ -41,6 +42,8 @@ const props = defineProps<{
   autoApprove: boolean
   /** The group's mode; "free" hides the maxRounds control in the sheet. */
   mode?: 'host' | 'free'
+  /** Free-mode concurrency switch value, shown in the sheet (free mode only). */
+  parallelDefault?: boolean
 }>()
 defineEmits<{ (e: 'changed'): void }>()
 

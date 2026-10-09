@@ -876,44 +876,22 @@ describe('ChatPanelContent — isGroupSession derives from session type', () => 
   })
 })
 
-// ── Free-mode concurrency switch plumbing ──
+// ── Concurrency switch is NOT in the chat panel ──
 //
-// The switch's value lives on App.vue's roster composable and must reach
-// ChatInputBar through this component. A silent break in this chain (a prop
-// renamed on one side only) would make the button render but never reflect or
-// persist anything, which a mount test of either component alone cannot catch.
-describe('ChatPanelContent — concurrency switch plumbing', () => {
+// The free-mode concurrency switch lives in the group configuration sheet
+// (GroupMemberSheet, reached from the header avatar stack), NOT in the chat
+// input's action bar. It was briefly wired through this component; guard that
+// it does not creep back, and that no dead props/handlers remain.
+describe('ChatPanelContent — no concurrency switch plumbing', () => {
   async function source(): Promise<string> {
     const mod = await import('@/components/chat/ChatPanelContent.vue?raw')
     return typeof mod.default === 'string' ? mod.default : ''
   }
 
-  it('declares the groupMode + groupParallelDefault props', async () => {
+  it('does not declare or forward groupMode / groupParallelDefault', async () => {
     const src = await source()
-    expect(src).toContain("groupMode: { type: String")
-    expect(src).toContain('groupParallelDefault: { type: Boolean')
-  })
-
-  it('forwards both props to the ChatInputBar element (not some other child)', async () => {
-    // Scoping to the <ChatInputBar> element is load-bearing: a bare
-    // `src.toContain(':groupMode=...')` also passes when the binding is attached
-    // to the WRONG child (e.g. ChatMessageList, which also takes groupMembers).
-    // That exact mistake shipped once — the button silently never rendered
-    // because ChatInputBar's groupMode defaulted to 'host'. This guard must fail
-    // in that case, so it extracts the ChatInputBar element block first.
-    const src = await source()
-    const start = src.indexOf('<ChatInputBar')
-    expect(start, 'ChatInputBar element must exist').toBeGreaterThan(-1)
-    const end = src.indexOf('/>', start)
-    expect(end, 'ChatInputBar element must self-close').toBeGreaterThan(start)
-    const block = src.slice(start, end)
-    expect(block).toContain(':groupMode="props.groupMode"')
-    expect(block).toContain(':groupParallelDefault="props.groupParallelDefault"')
-  })
-
-  it('bubbles the toggle intent up (roster owner PATCHes + refreshes)', async () => {
-    const src = await source()
-    expect(src).toContain('@toggle-parallel="handleToggleParallel"')
-    expect(src).toContain("'toggle-parallel'")
+    expect(src).not.toContain('groupMode: { type: String')
+    expect(src).not.toContain('groupParallelDefault')
+    expect(src).not.toContain('toggle-parallel')
   })
 })

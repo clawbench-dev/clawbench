@@ -9,10 +9,12 @@ vi.mock('vue-i18n', () => ({
 const mockAdd = vi.fn().mockResolvedValue(undefined)
 const mockRemove = vi.fn().mockResolvedValue(undefined)
 const mockUpdateSettings = vi.fn().mockResolvedValue(undefined)
+const mockSetParallel = vi.fn().mockResolvedValue(undefined)
 vi.mock('@/composables/useGroupChat', () => ({
   addGroupMembers: (...a: any[]) => mockAdd(...a),
   removeGroupMember: (...a: any[]) => mockRemove(...a),
   updateGroupSettings: (...a: any[]) => mockUpdateSettings(...a),
+  setGroupParallelDefault: (...a: any[]) => mockSetParallel(...a),
 }))
 
 // The group sheet's auto-approve switch delegates to the shared session toggle
@@ -136,5 +138,31 @@ describe('GroupMemberSheet', () => {
   it('hides the maxRounds control in free mode (no round cap)', () => {
     const w = mountSheet(MEMBERS, { mode: 'free' })
     expect(w.find('#group-max-rounds').exists()).toBe(false)
+  })
+
+  // The concurrency switch lives HERE (next to maxRounds), not in the chat
+  // action bar. It is the mirror of the maxRounds row: shown only in free mode
+  // (in host mode the host routes, so the user never @-names a speaker).
+  describe('free-mode concurrency switch', () => {
+    it('shows only in free mode and reflects the server value', () => {
+      const off = mountSheet(MEMBERS, { mode: 'free', parallelDefault: false })
+      const offInput = off.find('#group-parallel')
+      expect(offInput.exists()).toBe(true)
+      expect((offInput.element as HTMLInputElement).checked).toBe(false)
+
+      const on = mountSheet(MEMBERS, { mode: 'free', parallelDefault: true })
+      expect((on.find('#group-parallel').element as HTMLInputElement).checked).toBe(true)
+
+      // Host mode: no switch (it would be a dead setting).
+      expect(mountSheet(MEMBERS, { mode: 'host' }).find('#group-parallel').exists()).toBe(false)
+    })
+
+    it('persists the toggle and emits changed', async () => {
+      const w = mountSheet(MEMBERS, { mode: 'free', parallelDefault: false })
+      await w.find('#group-parallel').setValue(true)
+      await flushPromises()
+      expect(mockSetParallel).toHaveBeenCalledWith('g1', true)
+      expect(w.emitted('changed')).toBeTruthy()
+    })
   })
 })

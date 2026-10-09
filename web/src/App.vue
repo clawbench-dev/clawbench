@@ -298,6 +298,7 @@
                       :maxRounds="groupMaxRounds"
                       :autoApprove="groupAutoApprove"
                       :mode="groupMode"
+                      :parallelDefault="groupParallelDefault"
                       :isGroup="isGroupSession"
                       @changed="refreshGroupMembers(sessionIdentity.currentSessionId.value)"
                     />
@@ -335,7 +336,6 @@
                       @open="switchTab('chat')"
                       @task-card-click="onTaskCardClick"
                       @open-session-search="sessionSearchDrawer.open()"
-                      @toggle-parallel="handleToggleGroupParallel"
                     />
                   </TabPanel>
                   <!-- The hint is centered on the CHAT column, not on
@@ -1977,23 +1977,6 @@ async function handleGroupCreate(payload: { hostId: string; memberIds: string[] 
     sessionIdentity.sessionDrawer.close()
   } catch (e) {
     appLog.w('App', `create group failed: ${String(e)}`)
-  }
-}
-
-/**
- * Toggle the free-mode "并发执行" switch. Persists to the group setting, then
- * refreshes the roster so the switch reflects the SERVER value (server-
- * authoritative: on a failed PATCH the refresh reverts the optimistic intent).
- */
-async function handleToggleGroupParallel(next: boolean) {
-  const sid = sessionIdentity.currentSessionId.value
-  if (!sid) return
-  const { setGroupParallelDefault } = await import('@/composables/useGroupChat')
-  try {
-    await setGroupParallelDefault(sid, !!next)
-    await refreshGroupMembers(sid)
-  } catch (e) {
-    appLog.w('App', `toggle group parallel failed: ${String(e)}`)
   }
 }
 

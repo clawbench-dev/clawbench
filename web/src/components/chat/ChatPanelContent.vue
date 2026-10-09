@@ -121,8 +121,6 @@
       :active="props.active"
       :isGroupSession="isGroupSession"
       :groupMembers="props.groupMembers"
-      :groupMode="props.groupMode"
-      :groupParallelDefault="props.groupParallelDefault"
       @send="sendMessage"
       @btw="handleBtw"
       @cancel="stream.cancelStream"
@@ -132,7 +130,6 @@
       @add-mention="handleAddMention"
       @remove-mention="removeStagedMention"
       @mention-click="handleMentionClick"
-      @toggle-parallel="handleToggleParallel"
       @remove-quote="removeStagedQuote($event)"
       @quote-click="handleQuoteClick"
       @open-session-tab="identity.openSessionTab"
@@ -314,16 +311,11 @@ const props = defineProps({
     // Group roster, owned by App.vue (the header avatar stack lives there).
     // Passed down so the roster is fetched once, not once per consumer.
     groupMembers: { type: Array, default: () => [] },
-    /** Group mode ("host" | "free"). The free-mode concurrency switch is hidden
-     *  in host mode (the host routes, not the user). */
-    groupMode: { type: String, default: 'host' },
-    /** Free-mode "并发执行" switch value (server-authoritative). */
-    groupParallelDefault: { type: Boolean, default: false },
     groupHostMemberId: { type: String, default: '' },
     resolveGroupSpeaker: { type: Function, default: null },
     resolveGroupSpeakerByName: { type: Function, default: null },
 })
-const emit = defineEmits(['open', 'message', 'task-card-click', 'open-session-search', 'toggle-parallel'])
+const emit = defineEmits(['open', 'message', 'task-card-click', 'open-session-search'])
 
 // ── Singletons ──
 const identity = useSessionIdentity()
@@ -614,17 +606,6 @@ async function handleMentionClick(mention) {
     // null = cancelled; keep the existing note.
     if (note === null) return
     updateStagedMentionNote(mention.id, note)
-}
-
-/**
- * Toggle the free-mode "并发执行" switch. The roster (and thus the setting's
- * server value) is owned by App.vue, so bubble the intent up: the parent
- * PATCHes the group setting and refreshes the roster, which flows the new value
- * back down as a prop (server-authoritative, like auto-approve — the switch
- * never lies about what is persisted).
- */
-function handleToggleParallel(next) {
-    emit('toggle-parallel', next)
 }
 
 /** True while the annotation save request is in flight (disables the button). */

@@ -42,6 +42,29 @@
         />
       </div>
 
+      <!-- Settings: concurrency. Free mode only: in host mode the host routes
+           (the user never @-names speakers), so the switch would be a dead
+           setting there — the mirror image of the maxRounds row above. When on,
+           the members the user @-names (or the whole roster when they name
+           nobody) run concurrently; it never affects an agent's own
+           mode="parallel" mentions. -->
+      <div v-if="mode === 'free'" class="gm-setting">
+        <div class="gm-setting-text">
+          <label class="gm-setting-label" for="group-parallel">{{ t('group.parallelLabel') }}</label>
+          <span class="gm-setting-desc">{{ t('group.parallelHint') }}</span>
+        </div>
+        <label class="settings-item__switch">
+          <input
+            id="group-parallel"
+            class="settings-item__switch-input"
+            type="checkbox"
+            :checked="parallelDefault"
+            @change="onToggleParallel"
+          />
+          <span class="settings-item__switch-track" />
+        </label>
+      </div>
+
       <!-- Settings: auto-approve. Group sessions have no per-agent model/mode
            chrome (hidden in ChatInputBar), so the SessionDrawer's switch — the
            only other entry point — is unreachable here. This row is the group's
@@ -95,7 +118,7 @@ import BottomSheet from '@/components/common/BottomSheet.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
 import { getAgentAvatar } from '@/composables/useAgents'
-import { addGroupMembers, removeGroupMember, updateGroupSettings, type GroupMemberInfo } from '@/composables/useGroupChat'
+import { addGroupMembers, removeGroupMember, updateGroupSettings, setGroupParallelDefault, type GroupMemberInfo } from '@/composables/useGroupChat'
 import { toggleAutoApprove } from '@/composables/useSessionIdentity'
 
 const props = defineProps<{
@@ -108,6 +131,9 @@ const props = defineProps<{
   autoApprove: boolean
   /** The group's mode. "free" hides the maxRounds control (no round cap). */
   mode?: 'host' | 'free'
+  /** Free-mode concurrency switch value (server-authoritative). Shown only in
+   *  free mode — in host mode the host routes, so it would be a dead setting. */
+  parallelDefault?: boolean
 }>()
 const emit = defineEmits<{ (e: 'changed'): void }>()
 
@@ -170,6 +196,18 @@ async function saveMaxRounds() {
 // checkbox reflects the persisted truth (and reverts if the request fails).
 function onToggleAutoApprove(e: Event) {
   toggleAutoApprove((e.target as HTMLInputElement).checked)
+}
+
+// Persist the free-mode concurrency switch, then refresh the roster so the
+// switch reflects the SERVER value (server-authoritative, same contract as
+// auto-approve: a failed PATCH reverts the checkbox on the next read-back).
+// Sends only parallelDefault, so it never clobbers maxRounds.
+async function onToggleParallel(e: Event) {
+  const enabled = (e.target as HTMLInputElement).checked
+  try {
+    await setGroupParallelDefault(props.groupId, enabled)
+    emit('changed')
+  } catch { /* the parent's refresh reverts the checkbox to the server value */ }
 }
 
 defineExpose({ open: openSheet })
