@@ -473,10 +473,21 @@ func (o *GroupOrchestrator) runSequentialGroup(
 	return DrainResult{}, appended, false
 }
 
-// runParallelGroup runs a group's turns CONCURRENTLY. Every turn is snapshotted
-// from the SAME group-start high-water BEFORE any of them runs (the
-// snapshot-then-launch invariant), so no member sees a sibling's output this
-// round; each member's cursor then advances to that high-water on success.
+// maxParallelLaunches bounds how many members of a parallel group run at once.
+// Each member is a separate agent process (hundreds of MB), so an unbounded
+// fan-out on a 10-member group would spawn 10 processes simultaneously. This is
+// a LAUNCH cap, not an injection cap: every member's prompt is still snapshotted
+// from the group-start high-water BEFORE any of them runs (see runParallelGroup),
+// so batching does not break "mutually non-referencing" — a later batch sees the
+// same group-start snapshot as the first.
+const maxParallelLaunches = 3
+
+// runParallelGroup runs a group's turns CONCURRENTLY, at most maxParallelLaunches
+// at a time. Every turn is snapshotted from the SAME group-start high-water
+// BEFORE any of them runs (the snapshot-then-launch invariant), so no member
+// sees a sibling's output this round — including members in a later batch, whose
+// prompts were fixed before the first batch launched. Each member's cursor then
+// advances to that high-water on success.
 func (o *GroupOrchestrator) runParallelGroup(
 	ctx context.Context,
 	s groupTurnSetup,
@@ -494,20 +505,41 @@ func (o *GroupOrchestrator) runParallelGroup(
 		cancel  string
 		results = make([]groupMemberResult, len(prepared))
 	)
-	eg, egCtx := errgroup.WithContext(ctx)
-	for i := range prepared {
-		eg.Go(func() error {
-			r := o.executeTurn(egCtx, s, prepared[i])
+	// Launch in batches of maxParallelLaunches. Each batch is awaited before the
+	// next launches, bounding concurrent processes; the prompts were all fixed
+	// above, so batching does not affect what any member sees.
+	for start := 0; start < len(prepared); start += maxParallelLaunches {
+		if ctx.Err() != nil {
 			mu.Lock()
-			results[i] = r
-			if r.CancelReason != "" && cancel == "" {
-				cancel = r.CancelReason
+			if cancel == "" {
+				cancel = cancelReasonUser
 			}
 			mu.Unlock()
-			return nil
-		})
+			break
+		}
+		end := min(start+maxParallelLaunches, len(prepared))
+		eg, egCtx := errgroup.WithContext(ctx)
+		for i := start; i < end; i++ {
+			eg.Go(func() error {
+				r := o.executeTurn(egCtx, s, prepared[i])
+				mu.Lock()
+				results[i] = r
+				if r.CancelReason != "" && cancel == "" {
+					cancel = r.CancelReason
+				}
+				mu.Unlock()
+				return nil
+			})
+		}
+		_ = eg.Wait()
+		// A user cancel stops the whole turn: do not launch further batches.
+		mu.Lock()
+		stopped := cancel != ""
+		mu.Unlock()
+		if stopped {
+			break
+		}
 	}
-	_ = eg.Wait()
 	if cancel != "" {
 		return DrainResult{CancelReason: cancel}, nil, true
 	}

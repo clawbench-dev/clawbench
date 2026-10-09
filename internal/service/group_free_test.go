@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"clawbench/internal/i18n"
 	"clawbench/internal/model"
@@ -630,5 +631,70 @@ func TestFreeLoop_ParallelWithUserDowngrades(t *testing.T) {
 	}
 	if !sawA {
 		t.Fatalf("the AI member must still speak when a parallel group names User; order=%v", *order)
+	}
+}
+
+// A parallel group larger than the launch cap runs in batches: peak concurrency
+// never exceeds maxParallelLaunches. This bounds how many agent processes run
+// at once, while the snapshot-then-launch invariant (every prompt fixed before
+// any launch) keeps the members mutually non-referencing.
+func TestFreeLoop_ParallelRespectsLaunchCap(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/free-parallel-cap"
+	// One more member than the cap, so batching must actually trigger.
+	names := []string{"A", "B", "C", "D"}
+	groupID, byName := createFreeGroup(t, project, names...)
+
+	script := map[string][]string{}
+	for _, n := range names {
+		script[byName[n]] = []string{n + " 的回答"}
+	}
+
+	var mu sync.Mutex
+	cur, peak := 0, 0
+	prompts := map[string]string{}
+	base, _ := freeScriptedRunner(t, project, groupID, script)
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		mu.Lock()
+		cur++
+		if cur > peak {
+			peak = cur
+		}
+		prompts[turn.MemberRowID] = turn.Prompt
+		mu.Unlock()
+		// Hold briefly so overlaps are actually observable.
+		time.Sleep(20 * time.Millisecond)
+		r := base(ctx, gid, turn)
+		mu.Lock()
+		cur--
+		mu.Unlock()
+		return r
+	}
+
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	msg := `<clawbench-mention targets="` + byName["A"] + `,` + byName["B"] + `,` + byName["C"] + `,` + byName["D"] + `" mode="parallel">同时回答</clawbench-mention> 开始`
+	_ = runGroupTurnForTest(t, o, project, msg, nil)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if peak > maxParallelLaunches {
+		t.Fatalf("peak concurrency %d exceeded the launch cap %d", peak, maxParallelLaunches)
+	}
+	if peak < 2 {
+		t.Fatalf("expected real concurrency (peak >= 2), got %d — the parallel path did not run concurrently", peak)
+	}
+	// Even the last batch must not have seen an earlier sibling's output: all
+	// prompts came from the same group-start snapshot.
+	for _, n := range names {
+		p := prompts[byName[n]]
+		if !strings.Contains(p, "同时回答") {
+			t.Fatalf("%s did not receive the instruction; prompt=%q", n, p)
+		}
+		for _, other := range names {
+			if other != n && strings.Contains(p, other+" 的回答") {
+				t.Fatalf("%s saw sibling %s's output (batching broke the snapshot invariant); prompt=%q", n, other, p)
+			}
+		}
 	}
 }
