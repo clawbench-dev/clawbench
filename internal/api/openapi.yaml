@@ -3044,6 +3044,14 @@ paths:
         `session`，供分享页判断该渲染哪种视图）与 `{token}/session`（返回冻结的
         会话快照 JSON）。两者同样免鉴权、token 不存在一律 404。
 
+        会话快照另附身份信息供分享页渲染真实智能体图标（均**不含**自定义头像，
+        分享链接不得泄漏属主头像）：`sessionAgent`（会话级智能体，单聊用）、
+        `speakers`（群聊成员行 id → 身份，供每条消息解析发言人）与 `groupMembers`
+        （仅群会话：**在群**成员的有序预览 `{id, agentId, name, backend, isHost?}`，
+        与 `GET /api/sessions` 的 `groupMembers` 同形，供顶栏渲染与群聊 header 一致的
+        头像堆叠；已离场成员不在其中）。`speakers` 是 map（JSON 键按 UUID 排序、且含
+        已离场成员），只用于逐条消息解析；成员堆叠请用 `groupMembers`。
+
         **分享不限文件大小、不限类型**：任何文件都能创建链接并下载。
         `{token}/file` 与 `{token}/content` 需要把内容内联进 JSON，故对超过内联上限
         （10MB）的文件返回 200 但 `content` 为空、`tooLarge: true`（仅元数据），由分享页

@@ -87,6 +87,14 @@ type SessionSharePayload struct {
 	// only for group sessions.
 	SessionAgent *SpeakerIdentity           `json:"sessionAgent,omitempty"`
 	Speakers     map[string]SpeakerIdentity `json:"speakers,omitempty"`
+	// GroupMembers is the group's ACTIVE roster, in roster order, with the host
+	// flagged — present only for group sessions. The viewer's topbar renders the
+	// same overlapping avatar stack the in-app group header shows. Speakers
+	// cannot serve this: it is a map (JSON-marshalled with UUID-sorted keys, so
+	// the order is random) that also includes LEFT members, and it carries no
+	// isHost flag. Avatars are absent by design (same privacy boundary as
+	// Speakers), so each disc renders the built-in per-backend brand icon.
+	GroupMembers []model.GroupMemberPreview `json:"groupMembers,omitempty"`
 }
 
 // SessionShareSession is the session-level metadata shown in the share header.
@@ -237,6 +245,19 @@ func BuildSessionSharePayload(sessionID string, messageIDs []int64, projectRoot,
 	// includeAvatar=false: a shared link must not leak user-configured avatars.
 	sessionAgent, speakers := ResolveSessionSpeakers(sessionID, false)
 
+	// The viewer's topbar renders the same avatar stack the in-app group header
+	// shows, so freeze the ACTIVE roster in roster order with the host flagged.
+	// GroupMembersForGroups is the exact source the session list uses; it already
+	// excludes left members and orders by created_at/rowid. Best-effort: a
+	// failure must not fail the share (the topbar then falls back to the single
+	// session-agent icon).
+	var groupMembers []model.GroupMemberPreview
+	if GetSessionType(sessionID) == groupSessionType {
+		if byGroup, err := GroupMembersForGroups([]string{sessionID}); err == nil {
+			groupMembers = byGroup[sessionID]
+		}
+	}
+
 	out := SessionSharePayload{
 		Version:   sessionSharePayloadVersion,
 		CreatedAt: time.Now().UTC(),
@@ -250,6 +271,7 @@ func BuildSessionSharePayload(sessionID string, messageIDs []int64, projectRoot,
 		Messages:     make([]SessionShareMessage, 0, len(messages)),
 		SessionAgent: sessionAgent,
 		Speakers:     speakers,
+		GroupMembers: groupMembers,
 	}
 	for i := range messages {
 		out.Messages = append(out.Messages,
