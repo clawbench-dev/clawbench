@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { ref, defineComponent } from 'vue'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import QuickCommandDrawer from '@/components/terminal/QuickCommandDrawer.vue'
 
 vi.mock('lucide-vue-next', () => ({
@@ -114,5 +116,29 @@ describe('QuickCommandDrawer', () => {
     await wrapper.setProps({ open: true })
     await wrapper.vm.$nextTick()
     expect((wrapper.vm as any).showMoreMenu).toBe(true)
+  })
+
+  // The add (+) button must sit at the far right of the header. It and the
+  // "more" (⋮) button are the only two actions, and both used to carry
+  // `margin-left: auto` on `.create-btn` — with TWO auto margins flex splits
+  // the free space equally between them, so + landed in the middle. The fix
+  // mirrors QuickSendDrawer: wrap the buttons in `.bs-header-actions` and keep
+  // the single auto margin on the wrapper, never on the button.
+  describe('header action alignment', () => {
+    const vue = readFileSync(resolve(__dirname, '../QuickCommandDrawer.vue'), 'utf8')
+
+    it('groups the header buttons in a right-aligned actions wrapper', () => {
+      expect(vue).toMatch(
+        /<span class="bs-header-actions">[\s\S]*?addNewCommand[\s\S]*?showMoreMenu[\s\S]*?<\/span>/,
+      )
+    })
+
+    it('puts the single auto margin on the wrapper, not on each button', () => {
+      // `[^}]*` keeps each match inside its own rule block — a `[\s\S]*?`
+      // would span past the closing brace and match a later rule.
+      expect(vue).toMatch(/\.bs-header-actions\s*\{[^}]*margin-left:\s*auto;/)
+      // A second auto margin on `.create-btn` would re-split the space.
+      expect(vue).not.toMatch(/\.create-btn\s*\{[^}]*margin-left:\s*auto;/)
+    })
   })
 })
