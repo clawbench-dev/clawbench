@@ -52,8 +52,12 @@ const (
 // user can pick a less jarring name than the language-neutral default; it must
 // stay in sync with the frontend's userNickname and must never collide with a
 // real member name (enforced bidirectionally — see IsUserNickname).
+//
+// The value is trimmed defensively: the PATCH path normalizes it, but a
+// hand-edited config.yaml bypasses that, and the mention parser trims each
+// target before lookup — so an untrimmed nickname would be unreachable.
 func groupUserTarget() string {
-	if n := model.ChatUserNickname; n != "" {
+	if n := strings.TrimSpace(model.ChatUserNickname); n != "" {
 		return n
 	}
 	return defaultGroupUserTarget

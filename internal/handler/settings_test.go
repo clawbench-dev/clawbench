@@ -385,6 +385,63 @@ func TestServeConfig_Patch_UserNickname(t *testing.T) {
 	assert.NotContains(t, w.Body.String(), `"needs_restart":true`)
 }
 
+// Surrounding whitespace must be stripped before validation and storage. The
+// nickname is a routing target and the mention parser trims each target, so a
+// stored "  User  " would be unreachable (byName keys it untrimmed, lookup
+// trims). The PATCH path normalizes it so stored == validated == looked-up.
+func TestServeConfig_Patch_UserNicknameTrimsWhitespace(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+	model.ChatUserNickname = "User"
+	t.Cleanup(func() { model.ChatUserNickname = "" })
+
+	body, _ := json.Marshal(map[string]any{"chat": map[string]any{"user_nickname": "  老板  "}})
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "老板", model.ConfigInstance.Chat.UserNickname, "surrounding whitespace must be stripped")
+	assert.Equal(t, "老板", model.ChatUserNickname, "the model global must hold the trimmed value")
+
+	// An all-whitespace nickname trims to empty and is rejected (it would be an
+	// unaddressable participant), not silently stored as the default.
+	model.ConfigInstance.Chat.UserNickname = "老板"
+	blank, _ := json.Marshal(map[string]any{"chat": map[string]any{"user_nickname": "   "}})
+	req = httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(string(blank)))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w = callHandler(ServeConfig, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code, "an all-whitespace nickname must be rejected")
+	assert.Equal(t, "老板", model.ConfigInstance.Chat.UserNickname, "a rejected value must not be stored")
+}
+
+// A malformed nickname answers 400 with the localized InvalidUserNickname key,
+// not the raw English validation message (which the UI cannot translate).
+func TestServeConfig_Patch_UserNicknameInvalidIsLocalized(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	cfg.Chat.UserNickname = "User"
+	model.ConfigInstance = cfg
+
+	body := `{"chat":{"user_nickname":"a,b"}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "InvalidUserNickname",
+		"the 400 must carry the localized msgKey, not the raw English message")
+	assert.NotContains(t, w.Body.String(), "chat.user_nickname must be",
+		"the raw validation string must not leak into the response")
+}
+
 // A nickname containing a protocol delimiter (quote / angle bracket / comma) or
 // a control character is rejected — it would break the routing tag's targets
 // attribute. The value is validated before it is stored.

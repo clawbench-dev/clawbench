@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // FirstRun records whether this process started against a brand-new install.
@@ -238,7 +239,11 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	}
 	// UserNickname: the reserved display name of the human user in group chat.
 	// An empty value is never valid (it would be an unaddressable participant),
-	// so empty always falls back to the default — no presence map needed.
+	// so empty always falls back to the default — no presence map needed. The
+	// value is trimmed here too: a hand-edited config.yaml bypasses the PATCH
+	// path's normalization, and the mention parser trims each target, so an
+	// untrimmed nickname would be unreachable.
+	cfg.Chat.UserNickname = strings.TrimSpace(cfg.Chat.UserNickname)
 	if cfg.Chat.UserNickname == "" {
 		cfg.Chat.UserNickname = "User"
 	}

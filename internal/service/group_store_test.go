@@ -1308,6 +1308,17 @@ func TestGroupUserTarget_ConfigDriven(t *testing.T) {
 	if got := groupUserTarget(); got != "老板" {
 		t.Fatalf("configured nickname must win, got %q", got)
 	}
+	// Defensive trim: a hand-edited config.yaml bypasses the PATCH
+	// normalization, but the parser trims targets before lookup — an untrimmed
+	// value here would make the user unreachable.
+	model.ChatUserNickname = "  老板  "
+	if got := groupUserTarget(); got != "老板" {
+		t.Fatalf("surrounding whitespace must be trimmed, got %q", got)
+	}
+	model.ChatUserNickname = "   "
+	if got := groupUserTarget(); got != "User" {
+		t.Fatalf("all-whitespace must fall back to the default, got %q", got)
+	}
 }
 
 // A nickname change migrates pending notes keyed by the old user name so an

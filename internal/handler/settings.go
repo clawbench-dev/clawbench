@@ -1008,12 +1008,24 @@ func serveConfigPatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Normalize the nickname BEFORE validation so the validated value, the
+	// stored value and the YAML write all see the same (trimmed) string. This
+	// is a mutation of the request patch, so it must happen before the rollback
+	// snapshot/apply below.
+	normalizeUserNicknameInPatch(patch)
+
 	if err := validatePatchValues(patch); err != nil {
 		// A nickname colliding with an existing agent is a conflict, not a
 		// malformed value: answer 409 with the localized key so the UI can show
 		// the same reason the agent-side guard does.
 		if errors.Is(err, errUserNicknameTaken) {
 			writeLocalizedErrorf(w, r, http.StatusConflict, "UserNicknameTaken")
+			return
+		}
+		// A malformed nickname answers 400 with the localized key (the raw
+		// English fmt.Errorf message would not be translated by the UI).
+		if errors.Is(err, errInvalidUserNickname) {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidUserNickname")
 			return
 		}
 		writeJSON(w, http.StatusBadRequest, map[string]any{
@@ -1123,6 +1135,28 @@ func hasPatchableDescendant(path string) bool {
 // unlike a malformed value which stays a 400.
 var errUserNicknameTaken = errors.New("user nickname is already used by an agent")
 
+// errInvalidUserNickname is the sentinel for a chat.user_nickname that fails the
+// format check. serveConfigPatch maps it to a localized 400 (InvalidUserNickname)
+// rather than echoing the raw English message.
+var errInvalidUserNickname = errors.New("invalid user nickname")
+
+// normalizeUserNicknameInPatch trims the nickname IN PLACE, before validation,
+// storage and the YAML write. The nickname is a routing target and the parser
+// trims each target, so a value like "  User  " would key the byName map
+// differently from how it is looked up — the user would become unaddressable.
+// Trimming here makes the validated value, the stored value, the on-disk value
+// and the frontend all agree. An all-whitespace value trims to "" and is then
+// rejected by validUserNickname.
+func normalizeUserNicknameInPatch(patch map[string]any) {
+	chat, ok := patch["chat"].(map[string]any)
+	if !ok {
+		return
+	}
+	if v, ok := chat["user_nickname"].(string); ok {
+		chat["user_nickname"] = strings.TrimSpace(v)
+	}
+}
+
 // maxUserNicknameRunes bounds the group-chat user nickname. It is written into
 // <clawbench-mention targets="..."> and shown in routing chips, so it must stay
 // short; 32 leaves generous room for CJK names.
@@ -1157,12 +1191,13 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 	if chat, ok := patch["chat"].(map[string]any); ok {
 		if v, ok := chat["user_nickname"].(string); ok {
 			if !validUserNickname(v) {
-				return fmt.Errorf("chat.user_nickname must be 1-32 characters with no quotes, angle brackets, commas or control characters")
+				return errInvalidUserNickname
 			}
 			// Bidirectional uniqueness: the nickname must not shadow an existing
 			// agent (the agent-side guard rejects the reverse). Exact match, to
-			// mirror AgentNameTaken.
-			if service.AgentNameTaken(strings.TrimSpace(v), "") {
+			// mirror AgentNameTaken. v is already trimmed by
+			// normalizeUserNicknameInPatch.
+			if service.AgentNameTaken(v, "") {
 				return errUserNicknameTaken
 			}
 		}
