@@ -2,7 +2,7 @@
 
 ## 项目概述
 
-ClawBench 是面向手机 / 平板 / 桌面的多端 AI 工作台，移动端交互适配优先、桌面端完整支持，将 AI CLI 工具（CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、MiMo-Code、Pi、Copilot、Kimi、Antigravity、Grok Build、ZCode）封装为 Web 平台。Go 后端调用 CLI 工具，通过 WebSocket 流式传输 JSON 事件；Vue 3 前端实时渲染。支持 ACP (Agent Client Protocol) stdio 传输（含桥接适配器）、SSH 隧道端口转发、任务系统（含 GitHub/GitLab 事件触发）。
+ClawBench 是面向手机 / 平板 / 桌面的多端 AI 工作台，移动端交互适配优先、桌面端完整支持，将 AI CLI 工具（CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、MiMo-Code、Pi、Copilot、Kimi、Antigravity、Grok Build、ZCode）封装为 Web 平台。Go 后端调用 CLI 工具，通过 WebSocket 流式传输 JSON 事件；Vue 3 前端实时渲染。支持 ACP (Agent Client Protocol) stdio 传输（含桥接适配器）、**多智能体群聊**（主持人 / 自由两种模式）、SSH 隧道端口转发、任务系统（含 GitHub/GitLab 事件触发）。
 
 规格文档：`docs/spec/`（模块索引见 `docs/spec/README.md`）。面向使用者的图文操作手册：`docs/user-guid/user-guid.md`（截图维护流程见 `docs/Skills/clawbench-user-guide/SKILL.md`）。
 
@@ -69,10 +69,12 @@ npx playwright test --config e2e/playwright.config.ts --project=chromium-coverag
 | `internal/api/` | `go:embed` OpenAPI 规格，按 operationId 渲染内置斜杠命令注入给 AI 的接口提示片段 |
 | `internal/wallpaper/` | 壁纸校验 / 缩放 / 编码 + 磁盘布局与生效解析；handler 与 service worker 共用。缩放上限取舍见源码注释 |
 | `internal/gitignore/` | 判定「git 是否会跟踪该路径」：go-git 模式引擎 + 来自 index 的三条规则（已跟踪文件/含已跟踪文件的目录永不忽略、祖先被排除则整体忽略、自身最后一条匹配）。文件管理器灰显与 cloc 排除共用；按真实 `git check-ignore` 差分验证 |
-| `internal/service/` | 业务逻辑：聊天持久化、摘要与推荐的调度、调度器（cron + 事件触发任务；cron 可选的前置脚本执行器 `task_script.go`，静默成功即跳过 AI 且不发通知）、SQLite、Schema 迁移、Agent 存储、用量聚合、会话截断；**项目以整数 id 为身份**（`projects.go` 的项目注册表 + `projects_migrate.go` 的路径→id 转换：所有项目作用域表存 `project_id` 而非路径，改名/移动目录只需一条 UPDATE；`project_id=0` 是全局标签与无法归属分享的保留哨兵，故不声明外键）；会话运行态收敛在 `session_runner.go`（单一 owner runner，运行态与可取消性同源），AI 回合编排唯一实现 `run_turn.go`，请求构造唯一实现 `chat_request.go`；**排队消息存独立表 `queued_messages`（出队才落 `chat_history`，`queue_store.go` 的 claim 在同一事务内 DELETE 队列行 + INSERT 历史行，使历史行 id 顺序恒等于对话顺序）**，队列兜底回收 `queue_reaper.go`；`/btw` 旁路问答（`btw.go`，独立表 `btw_questions`）；最近项目分组（`recent_project_groups.go` + `repo_layout.go`，纯文件系统识别主仓库/工作树/子目录）；含 SessionCleanupWorker / BingWallpaperWorker / ForgePoller（forge 变化轮询）、桌面端升级检查（`desktop_upgrade.go`）等后台 worker |
+| `internal/store/` | SQLite 数据层叶子包（只依赖 `model` + `dbutil`，供 `service` 与 `rag` 共用而不成环）：连接句柄与**进程级唯一写锁**（同时串行化 service 写池与 RAG 自有 `*sql.DB` 对同一文件的写）、读写原语、`projects.go` 项目注册表（path↔id 解析 + 缓存 + `ForgetProjectPath`/`RenameProject` + 跨包改名钩子）、`session_queries.go`/`cluster.go` 的跨业务会话与聚类查询 |
+| `internal/service/` | 业务逻辑：聊天持久化、摘要与推荐的调度、调度器（cron + 事件触发任务；cron 可选的前置脚本执行器 `task_script.go`，静默成功即跳过 AI 且不发通知）、SQLite、Schema 迁移、Agent 存储、用量聚合、会话截断；**项目以整数 id 为身份**（`internal/store` 的项目注册表 + `projects_migrate.go` 的路径→id 转换：所有项目作用域表存 `project_id` 而非路径，改名/移动目录只需一条 UPDATE；`project_id=0` 是全局标签与无法归属分享的保留哨兵，故不声明外键）；**项目注册表管理**（`project_registry.go` 的 `ListAllProjects`/`GetProjectDetail`——列表只做单次 `os.Stat` 判目录是否存在、详情附 `DetectRepoLayout` 仓库类型；`project_delete.go` 的 `DeleteProjectData` 在同一事务清理约 15 张项目作用域表 + 子表，写锁内判运行中会话守卫，提交后再调 `rag.DeleteProjectData` 避免持锁死锁）；会话运行态收敛在 `session_runner.go`（单一 owner runner，运行态与可取消性同源），AI 回合编排唯一实现 `run_turn.go`，请求构造唯一实现 `chat_request.go`；**排队消息存独立表 `queued_messages`（出队才落 `chat_history`，`queue_store.go` 的 claim 在同一事务内 DELETE 队列行 + INSERT 历史行，使历史行 id 顺序恒等于对话顺序）**，队列兜底回收 `queue_reaper.go`；**AI 群聊编排器 `group_orchestrator.go`**（主持人/自由两模式共用循环内核 `drainSpeakers`/`runSpeakerTurn`；`group_store.go` 成员与群设置、`group_inject.go` 增量注入、`group_prompt.go` 提示词、`group_member_request.go` 成员 resume；成员即隐藏 `chat_sessions` 行 `session_type='group_member'`，消息只存群会话，`run_turn` 新增 `TimelineSessionID` 解耦时间线语义）；`/btw` 旁路问答（`btw.go`，独立表 `btw_questions`）；最近项目分组（`recent_project_groups.go` + `repo_layout.go`，纯文件系统识别主仓库/工作树/子目录）；含 SessionCleanupWorker / BingWallpaperWorker / ForgePoller（forge 变化轮询）、桌面端升级检查（`desktop_upgrade.go`）等后台 worker |
 | `internal/ai/` + `backends/` | AI 后端抽象：`AIBackend` → `CLIBackend`（CLI+行解析）或 `ACPBackend`（JSON-RPC over stdio）；15 个后端子包；CLI/ACP 均支持无进度看门狗（ACP 侧按**模型进展**判定，与连接活性双信号分离）；`compact_detect.go` 识别各后端上下文压缩信号（压缩后下一轮重注入系统提示）；ACP 客户端能力按 agent 定制（CodeBuddy 隐藏 Terminal / `fs.readTextFile`——声明能力会替换其原生工具实现）；ACP 连接缓存状态用 leaf lock `stateMu`（绝不在 RPC 期间持有），避免通知回调与在飞 RPC 互相等待致通知队列溢出杀连接 |
 | `internal/askquestion/` | `<clawbench-ask-question>` 载荷解析的**唯一** Go 实现（叶子包，不 import 任何 internal 包）；与前端 `web/src/utils/askQuestion.ts` 互为镜像，由 `testdata/parity_corpus.json` 双向固化。契约：检测即解析；不可解析时剥离标签、把标签内文字作为 Fallback 交给 Markdown 渲染（`Match.Fallback`），**绝不丢内容**。旧 XML 子元素格式与标签内 JSON 已不再解析 |
-| `internal/model/` | 数据模型、后端注册表、模型发现（`ModelSource` 注册表 + 单一合并点 `ResolveModels`）、27 个 LLM Provider |
+| `internal/grouprouting/` | 群聊路由标签（`<clawbench-mention targets="A,B">…</clawbench-mention>` + `<clawbench-group-end/>`）解析的**唯一** Go 实现（叶子包，不 import 任何 internal 包）；与前端 `web/src/utils/groupRouting.ts` 互为镜像，由 `testdata/parity_corpus.json` 双向固化。契约与 askquestion 一致（检测即解析、不可解析不剥离、绝不丢内容）。密送（`private` 提及）的注入侧 fail-closed（`StripProtocolTags` 剥一切畸形/嵌套形态）与显示侧 fail-open 分列两套 |
+| `internal/model/` | 数据模型、后端注册表、模型发现（`ModelSource` 注册表 + 单一合并点 `ResolveModels`）、27 个 LLM Provider；Agent 含 `avatar` 字段（用户自选的 DiceBear SVG，贯穿 DB 列与两条持久化路径） |
 | `internal/speech/` + `internal/stt/` | 语音：TTS（Edge / Piper / Kokoro / MOSS-TTS-Nano）与 STT（vLLM Whisper，流式 + 非流式） |
 | `internal/rag/` | RAG：SQLite + sqlite-vec 向量存储 + FTS5 全文检索，OpenAI 兼容嵌入 API；消息聚类（ClusterWorker） |
 | `internal/terminal/` | Web 终端：PTY 会话、环形缓冲回放、多标签 |
@@ -82,7 +84,7 @@ npx playwright test --config e2e/playwright.config.ts --project=chromium-coverag
 | `internal/forge/` | GitHub/GitLab 集成：平台无关的只读 `Provider` 抽象（统一 Issue/PR/Comment/Pipeline 模型）+ `github/`（go-github）/ `gitlab/`（轻量 REST client）adapter；remote URL 解析（host 与 scheme 分离解析）、per-host 令牌桶限流、事件推导引擎。**无 host 安全闸门**（内网/自建实例一律放行，风险提示在前端绑定弹窗） |
 | `internal/push/` | IM 机器人推送：`common/`（共享接口 + 会话命令）、`dingtalk/`（Stream API）、`feishu/`（Lark SDK WebSocket + 互动卡片） |
 | `internal/symbol/` | 基于 tree-sitter 的代码符号提取（纯 Go，无 CGO） |
-| `internal/skill/` | 后端无关的跨智能体 Skill 发现框架（Skill = 含 `SKILL.md` 的目录）。只依赖 `internal/model`（不得 import `internal/ai`/`backends`，否则成环）：`scanner.go` 递归扫描（有界深度、跳过 `.git`/`node_modules` 等）、`registry.go` 按 `SourceKind`（本智能体原生 > 用户目录 > git > 其他原生）去重、`git.go`+`worker.go` clone/pull git 源（单例 worker，启动 + 定时 + 手动 `POST /api/skills/refresh` 三触发）。系统提示词注入在 `service.AppendSkillsSection`，**两个 `ai.ChatRequest.SystemPrompt` 生产者都必须调用**（`chat_request.go` 与 `scheduler.go`）。`AutoLoadsNativeSkills` 决定后端是否自加载（codebuddy=false 必须注入；其余多为 true），取值由 `internal/ai/backends/native_skills_test.go` 双向表钉住 |
+| `internal/skill/` | 后端无关的跨智能体 Skill 发现框架（Skill = 含 `SKILL.md` 的目录）。只依赖 `internal/model`（不得 import `internal/ai`/`backends`，否则成环）：`scanner.go` 递归扫描（有界深度、跳过 `.git`/`node_modules` 等）、`registry.go` 按 `SourceKind`（本智能体原生 > 用户目录 > git > 其他原生）去重、`git.go`+`worker.go` clone/pull git 源（单例 worker，启动 + 定时 + 手动 `POST /api/skills/refresh` 三触发）。**本地目录新增走 PATCH 同步重扫、Git 仓库新增由前端在 addRepo 成功后自动调一次 refresh**（PATCH 只落盘不联网，避免在 config 写锁内做网络 IO）；`POST /api/skills/rescan` 是**纯本地重扫**（不联网、不写同步状态）。系统提示词注入在 `service.AppendSkillsSection`，**两个 `ai.ChatRequest.SystemPrompt` 生产者都必须调用**（`chat_request.go` 与 `scheduler.go`）。`AutoLoadsNativeSkills` 决定后端是否自加载（codebuddy=false 必须注入；其余多为 true），取值由 `internal/ai/backends/native_skills_test.go` 双向表钉住 |
 | `internal/summarize/` | 摘要与推荐的底层引擎（多后端 provider、多 pass 压缩、`StripMarkdown`、`RecommendNextStep`） |
 | `internal/system/` | 系统资源监控：CPU / 内存 / 磁盘 / 网络实时采集与推送 |
 | `internal/cli/` | AI Agent 自助命令：仅剩 upgrade-replace（自升级内部机制）；task/rag 业务子命令已移除，改由 `/cb-*` 内置斜杠命令直调 HTTP API |
@@ -95,7 +97,9 @@ npx playwright test --config e2e/playwright.config.ts --project=chromium-coverag
 
 Composable 与组件均按域分组（Chat、Session、Terminal、File、Git、Navigation/Gesture、Settings、Agent、Task、Infrastructure、System）。新建 composable 须放 `web/src/composables/` 并以 `useXxx` 命名，测试用 `*.test.ts` 同目录或 `__tests__/`。
 
-`web/src/utils/askQuestion.ts` 与 Go 的 `internal/askquestion` 互为镜像（共享语料 `internal/askquestion/testdata/parity_corpus.json` 双向固化）——改一侧必须同步另一侧，否则同一段文本会在前后端得到不同解析。
+`web/src/utils/askQuestion.ts` 与 Go 的 `internal/askquestion` 互为镜像（共享语料 `internal/askquestion/testdata/parity_corpus.json` 双向固化）——改一侧必须同步另一侧，否则同一段文本会在前后端得到不同解析。`web/src/utils/groupRouting.ts` 与 Go 的 `internal/grouprouting` 同样互为镜像（群聊 @ 提及 / 结束标签 / 密送，共享 parity 语料）。
+
+**群聊前端**：`useGroupChat.ts`（群回合状态、路由卡片渲染）+ `useGroupMembers.ts`（成员花名册与 `isGroupSession` 判定，用后端 `sessionType === 'group'` 而非"名单非空"）+ `GroupMemberSheet.vue`（成员管理抽屉）、`GroupAvatarStack.vue` / `GroupMemberStack.vue`（头像堆叠，主持人排最前）、`SessionGroupHeader.vue`。建群入口在会话列表头，复用 `AgentSelectorDrawer` 的多选模式。
 
 宽屏 Dock 页签定义在 `web/src/composables/dockTabs.ts`（单一注册表，渲染集合与切换白名单都从它派生），图标单独放 `dockTabMeta.ts`。`dockTabs.ts` 必须保持零 import（`useWideScreenLayout` 依赖它，而多个测试文件对 `lucide-vue-next` 做了窄 mock）。左侧面板归属（宽屏 Dock 显示哪个页签）是**项目属性**而非代码路径属性，由 `useProjectPanel.ts` 按 `clawbench-project-panel:<项目根>` 记忆；项目切换期间用计数器抑制误写（可并发调用，布尔会被先结束者清掉）。
 
