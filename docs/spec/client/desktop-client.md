@@ -114,6 +114,8 @@ flowchart TD
 
 失败一律静默降级为全量下载，因此**载荷包名不一致不会报错**，只会让每次升级又下 150MB——这正是需要跨语言断言（`release.yml` ↔ Go 载荷基名）的原因。macOS 不发布载荷：替换已签名 `.app` 内的 `resources/` 会破坏代码签名封条，Apple Silicon 拒绝运行无效签名。载荷**只经 npm registry 分发**（`desktopPayloadURLs` 直接调 `desktopPayloadNpmURLs`，不含 GitHub 候选）：早期载荷 zip 曾与全量包并列挂在 Release 资产里，但那会让人误以为这个小 zip 可以直接安装（它缺 Electron 运行时），故移出；npm 顺带给了国内镜像加速。
 
+**失败弹框必须同时展示两条错误**：载荷（npm）路径**优先尝试**、失败才回落到全量包，但载荷失败此前只写 console——于是弹框只剩 GitHub 全量包的错误，满屏 `github.com` 地址让人误以为"客户端根本没走 npm 镜像"，而事实是走了并失败了。因此 `formatInstallFailure` 把载荷与全量两条错误各带来源标签一并展示。这是"静默降级"在**诊断信息**上必须付出的代价：降级本身该静默，但降级的原因不能。
+
 ### 分发以 GitHub Release 为唯一渠道
 
 `/api/desktop/latest` **不查询任何外部服务**（不查 npm、不查 GitHub API），直接返回服务端自身版本 + Release 资产地址。桌面端与服务端同版本发布，服务端即权威。
