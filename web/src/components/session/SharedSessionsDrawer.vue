@@ -229,7 +229,6 @@ defineExpose({ open: openDrawer })
   flex-direction: column;
   max-height: 60vh;
   overflow-y: auto;
-  padding: var(--space-2) var(--space-7) var(--space-7);
 }
 
 .shared-sessions-hint {
