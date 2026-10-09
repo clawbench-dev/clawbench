@@ -11,6 +11,7 @@ import (
 
 	"clawbench/internal/store"
 
+	"clawbench/internal/grouprouting"
 	"clawbench/internal/model"
 )
 
@@ -144,6 +145,12 @@ func GetSessionMessagesForSelection(sessionID string) ([]SessionMessagePreview, 
 	if sessionID == "" {
 		return nil, fmt.Errorf("session id is required")
 	}
+	// A group user message may carry the @ protocol, including `private` (密送)
+	// notes. The preview is a human-readable line shown in the share-selection
+	// dialog, so the protocol is stripped for a group session — a note addressed
+	// to one member must not be previewed to everyone. A single chat has no
+	// protocol, so its text stays verbatim.
+	isGroup := GetSessionType(sessionID) == groupSessionType
 	rows, err := store.ReadDB().Query(
 		`SELECT id, role, content, streaming, created_at, COALESCE(agent_id, '') FROM chat_history
 		 WHERE session_id = ? ORDER BY id ASC`,
@@ -167,10 +174,14 @@ func GetSessionMessagesForSelection(sessionID string) ([]SessionMessagePreview, 
 		if err := rows.Scan(&id, &role, &content, &streaming, &createdAt, &agentID); err != nil {
 			return nil, fmt.Errorf("scan session message for selection: %w", err)
 		}
+		preview := ExtractPlainText(content)
+		if isGroup {
+			preview = grouprouting.StripProtocolTags(preview)
+		}
 		items = append(items, SessionMessagePreview{
 			ID:        id,
 			Role:      role,
-			Preview:   clipRunes(ExtractPlainText(content), sessionSharePreviewRunes),
+			Preview:   clipRunes(preview, sessionSharePreviewRunes),
 			Streaming: streaming != 0,
 			CreatedAt: createdAt,
 			AgentID:   agentID,

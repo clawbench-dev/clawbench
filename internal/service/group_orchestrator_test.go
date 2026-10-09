@@ -1439,3 +1439,138 @@ func TestGroupOrchestrator_PendingBccDeliveredNextRound(t *testing.T) {
 	}
 	_ = mA
 }
+
+// A USER-emitted private note is stored and delivered — the user's @ cards
+// serialize a `private` tag on send, and the backend must consume it.
+//
+// The target is written as a member ROW ID (that is what the frontend sends),
+// which is exactly the case storeRouteNotes used to drop: it resolved targets
+// by NAME only, so an id-targeted note was silently discarded as unknown.
+func TestGroupOrchestrator_UserPrivateNoteStoredAndDelivered(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-userbcc"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	// Free mode: the user's @ seeds the queue, so naming B makes B speak and the
+	// note is delivered on that same turn.
+	groupID, _, err := CreateGroupWithMembers(project, "G", "", []GroupMemberSpec{
+		{Backend: "claude", AgentID: "agent-a", DisplayName: "A"},
+		{Backend: "claude", AgentID: "agent-b", DisplayName: "B"},
+	})
+	if err != nil {
+		t.Fatalf("CreateGroupWithMembers: %v", err)
+	}
+	members, err := ListGroupMembers(groupID)
+	if err != nil {
+		t.Fatalf("ListGroupMembers: %v", err)
+	}
+	var mB string
+	for _, m := range members {
+		if m.Name == "B" {
+			mB = m.ID
+		}
+	}
+	if mB == "" {
+		t.Fatal("member B not found")
+	}
+
+	script := map[string][]string{mB: {"B 发言"}}
+	base, _ := newScriptedRunner(t, groupID, project, script)
+	var bPrompt string
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		if turn.MemberRowID == mB {
+			bPrompt = turn.Prompt
+		}
+		return base(ctx, gid, turn)
+	}
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+
+	// The user names B (by ROW ID) and attaches a private note — the exact text
+	// the frontend serializes from a member card with a note.
+	userMsg := `<clawbench-mention targets="` + mB + `"></clawbench-mention>` +
+		` <clawbench-mention targets="` + mB + `" private>你的词是西瓜</clawbench-mention> 你先说`
+	_ = runGroupTurnForTest(t, o, project, userMsg, nil)
+
+	if !strings.Contains(bPrompt, "你的词是西瓜") {
+		t.Fatalf("B must receive the user's private note; got %q", bPrompt)
+	}
+	if left := pendingBccForTarget(groupID, "B"); len(left) != 0 {
+		t.Fatalf("a delivered note must be cleared, %d left", len(left))
+	}
+}
+
+// A user note addressed to a member NOT named this turn is stored for later —
+// the "hand everyone a word, call on one first" setup, driven by the user.
+func TestGroupOrchestrator_UserPrivateNoteDeferred(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-userbcc-defer"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, _, err := CreateGroupWithMembers(project, "G", "", []GroupMemberSpec{
+		{Backend: "claude", AgentID: "agent-a", DisplayName: "A"},
+		{Backend: "claude", AgentID: "agent-b", DisplayName: "B"},
+	})
+	if err != nil {
+		t.Fatalf("CreateGroupWithMembers: %v", err)
+	}
+	members, _ := ListGroupMembers(groupID)
+	var mA, mB string
+	for _, m := range members {
+		if m.Name == "A" {
+			mA = m.ID
+		}
+		if m.Name == "B" {
+			mB = m.ID
+		}
+	}
+
+	script := map[string][]string{mA: {"A 发言"}}
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn, _ = newScriptedRunner(t, groupID, project, script)
+
+	// Name A, note B: A speaks, B's note waits for B's next turn.
+	userMsg := `<clawbench-mention targets="` + mA + `"></clawbench-mention>` +
+		` <clawbench-mention targets="` + mB + `" private>留给 B 的词</clawbench-mention>`
+	_ = runGroupTurnForTest(t, o, project, userMsg, nil)
+
+	got := pendingBccForTarget(groupID, "B")
+	if len(got) != 1 || got[0].Content != "留给 B 的词" {
+		t.Fatalf("B's note must be pending until B's turn, got %+v", got)
+	}
+}
+
+// A user's private note must NOT leak into the user's own injected context
+// (it is addressed to a member, not the reader).
+func TestGroupOrchestrator_UserPrivateNoteNotInjectedToUser(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-userbcc-self"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, _, err := CreateGroupWithMembers(project, "G", "", []GroupMemberSpec{
+		{Backend: "claude", AgentID: "agent-a", DisplayName: "A"},
+		{Backend: "claude", AgentID: "agent-b", DisplayName: "B"},
+	})
+	if err != nil {
+		t.Fatalf("CreateGroupWithMembers: %v", err)
+	}
+	members, _ := ListGroupMembers(groupID)
+	mA := members[0].ID
+
+	script := map[string][]string{mA: {"A 发言"}}
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn, _ = newScriptedRunner(t, groupID, project, script)
+
+	// A note the user addressed to themselves ("User") is dropped: the reader
+	// reads their own note in the UI card, never through an injected prompt.
+	userMsg := `<clawbench-mention targets="` + mA + `"></clawbench-mention>` +
+		` <clawbench-mention targets="User" private>给自己的</clawbench-mention>`
+	_ = runGroupTurnForTest(t, o, project, userMsg, nil)
+
+	if left := pendingBccForTarget(groupID, groupUserTarget); len(left) != 0 {
+		t.Fatalf("a self-directed user note must not be stored, got %+v", left)
+	}
+}

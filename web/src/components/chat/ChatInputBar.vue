@@ -95,6 +95,20 @@
            Wheel scrolls it sideways on PC: the scrollbar is hidden, so without this a plain
            mouse wheel over the strip scrolls the page instead. -->
       <div v-if="hasAttachmentTags" class="chat-attachment-tags" @wheel="onHorizontalWheel">
+        <!-- Group member cards (@ cards). Each names a member the user wants to
+             speak; the card may carry a PRIVATE note (密送) for that member
+             alone. Rendered by a dedicated component so it never looks like a
+             file/quote attachment (round avatar + proportional name + neutral
+             surface vs. square icon + mono label + accent tint). -->
+        <MentionCard
+          v-for="mention in mentionItems"
+          :key="mention.id"
+          :mention="mention"
+          :avatar="mention.agentId ? getAgentAvatar(mention.agentId) : ''"
+          removable
+          @click="$emit('mention-click', mention)"
+          @remove="$emit('remove-mention', mention.id)"
+        />
         <!-- Staged quote cards (shared component — same card as a sent message) -->
         <QuoteCard
           v-for="quote in quoteItems"
@@ -341,7 +355,7 @@ import { List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Z
 import { computeRecentReferencedFiles, isImeCompositionEvent } from '@/utils/chatInputUtils.ts'
 import { measureCaretVisualRows } from '@/utils/textareaVisualRows.ts'
 import { fuzzyMatch, parseAtQuery, parseSlashQuery, buildFileCandidates } from '@/utils/completionMatch.ts'
-import { buildMemberCandidates, buildMentionTag } from '@/utils/groupRouting.ts'
+import { buildMemberCandidates } from '@/utils/groupRouting.ts'
 import { normalizeFileEntry } from '@/utils/fileAttachmentUtils.ts'
 import { joinPath } from '@/utils/path.ts'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
@@ -353,6 +367,7 @@ import RefreshButton from '@/components/common/RefreshButton.vue'
 import AttachDrawer from '@/components/chat/AttachDrawer.vue'
 import AttachmentTags from '@/components/chat/AttachmentTags.vue'
 import QuoteCard from '@/components/chat/QuoteCard.vue'
+import MentionCard from '@/components/chat/MentionCard.vue'
 import { fromStagedQuote } from '@/utils/quoteItem'
 import { onHorizontalWheel } from '@/utils/horizontalWheelScroll'
 import { attachDragScroll, canDragScroll } from '@/utils/dragScroll'
@@ -616,6 +631,10 @@ const props = defineProps({
   /** Group member roster ({ id, name, left }). Feeds the @ completion menu so a
    *  user can name a speaker in a group chat (design §13.4). */
   groupMembers: { type: Array, default: () => [] },
+  /** Staged group member cards (@ cards) for the input's attachment strip. The
+   *  cards themselves live in useChatContext so they survive a session switch
+   *  alongside the file/quote drafts; this is just the render binding. */
+  mentions: { type: Array, default: () => [] },
 })
 
 const emit = defineEmits([
@@ -625,6 +644,9 @@ const emit = defineEmits([
   'add-attached',
   'remove-attached',
   'remove-attached-by-path',
+  'add-mention',
+  'remove-mention',
+  'mention-click',
   'remove-quote',
   'quote-click',
   'open-session-tab',
@@ -1120,6 +1142,7 @@ const fileMenuItems = computed(() => {
         mentionMemberId: item.mentionMemberId,
         // The avatar belongs to the underlying AGENT, not the member row, so
         // resolve it from agentId (mirrors useGroupMembers.resolveSpeaker).
+        memberAgentId: item.agentId || '',
         memberBackend: item.backend || '',
         memberAvatar: item.agentId ? getAgentAvatar(item.agentId) : '',
       }))
@@ -1158,12 +1181,24 @@ const fileMenu = useCompletionMenu({
   // refresh would re-open the roster.
   closeOnSelectFor: (item) => item.isMember === true,
   onSelect: (item) => {
-    if (item.isMember) return // the mention tag is written by buildReplacement
+    // A member pick adds a CARD (rendered in the attachment strip), not text.
+    // Writing the raw protocol tag into the textarea is what made the input
+    // show `<clawbench-mention …>`; the card carries the same identity and is
+    // serialized back to the tag only at send time.
+    if (item.isMember) {
+      emit('add-mention', {
+        memberId: item.mentionMemberId,
+        name: item.label,
+        agentId: item.memberAgentId,
+        backend: item.memberBackend,
+      })
+      return
+    }
     emit('add-attached', item.key, item.isDir === true)
   },
-  // A member selection inserts the mention tag in place of the typed "@query";
-  // a file selection just removes the trigger (the attach handler owns it).
-  buildReplacement: (item) => (item.isMember ? buildMentionTag(item.mentionMemberId) : ''),
+  // A file selection just removes the trigger (the attach handler owns it); a
+  // member selection ALSO just removes the trigger — the card is the payload.
+  buildReplacement: () => '',
   applyText: (value, caret) => {
     inputText.value = value
     nextTick(() => {
@@ -1628,6 +1663,9 @@ const quoteItems = computed(() => props.quotes.length > 0
   ? props.quotes
   : props.quoteData ? [props.quoteData] : [])
 
+/** Staged group member cards (@ cards) shown in the attachment strip. */
+const mentionItems = computed(() => props.mentions || [])
+
 // When a new assistant message starts streaming, any previously surfaced
 // recommendation belongs to the last completed reply and is stale — invalidate
 // the active session's slot so the in-flight value can't be reused.
@@ -1639,7 +1677,7 @@ watch(() => props.loading, (val) => {
   }
 })
 
-const hasInputContent = computed(() => inputText.value.trim() || props.attachedFiles.length > 0 || quoteItems.value.length > 0)
+const hasInputContent = computed(() => inputText.value.trim() || props.attachedFiles.length > 0 || quoteItems.value.length > 0 || mentionItems.value.length > 0)
 
 // The tags row must render only when it has VISIBLE children. pendingFiles
 // retains completed (non-uploading) entries as a mirror of attachedFiles, but
@@ -1647,6 +1685,7 @@ const hasInputContent = computed(() => inputText.value.trim() || props.attachedF
 // mount a childless container whose padding shows as dead vertical space.
 const hasAttachmentTags = computed(() =>
   quoteItems.value.length > 0
+  || mentionItems.value.length > 0
   || props.attachedFiles.length > 0
   || pendingFiles.value.some(f => f.uploading),
 )

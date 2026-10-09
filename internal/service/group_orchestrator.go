@@ -225,6 +225,7 @@ func (o *GroupOrchestrator) runLoop(groupCtx context.Context, groupID string) Dr
 type groupTurnSetup struct {
 	members   []GroupMember
 	names     map[string]string
+	byID      map[string]GroupMember
 	byName    map[string]GroupMember
 	runner    groupTurnRunner
 	activeIDs []string
@@ -250,10 +251,16 @@ func (o *GroupOrchestrator) prepareTurn(groupID string) (groupTurnSetup, error) 
 		runner = o.defaultRunner
 	}
 	finalizeGroupOrphans(groupID)
-	_, byName := memberLookups(members)
+	byID, byName := memberLookups(members)
+	// The user's own private notes (密送) are stored here — the ONE point both
+	// modes share, before any speaker runs, so a note to a member who speaks
+	// THIS turn is already pending when that member's turn is built. Honored in
+	// both modes (a note is a payload, orthogonal to routing — see storeUserNotes).
+	o.storeUserNotes(groupID, byID, byName)
 	return groupTurnSetup{
 		members:   members,
 		names:     memberNameMap(members),
+		byID:      byID,
 		byName:    byName,
 		runner:    runner,
 		activeIDs: activeIDs,
@@ -359,7 +366,7 @@ func (o *GroupOrchestrator) executeTurn(ctx context.Context, s groupTurnSetup, p
 			ids = append(ids, pb.ID)
 		}
 		deletePendingBcc(ids)
-		o.storeSpeakerNotes(o.groupID, p.turn.member.ID, s.byName)
+		o.storeSpeakerNotes(o.groupID, p.turn.member.ID, s.byID, s.byName)
 	}
 	return res
 }
@@ -852,31 +859,63 @@ func (o *GroupOrchestrator) pickFallbackMember(hostMemberID string, members []Gr
 // carry a pre-parsed route) and delegates validation/storage to storeRouteNotes.
 // Called by runSpeakerTurn for EVERY speaker — host and member, both modes — so
 // the note path is identical everywhere.
-func (o *GroupOrchestrator) storeSpeakerNotes(groupID, speakerID string, byName map[string]GroupMember) {
+func (o *GroupOrchestrator) storeSpeakerNotes(groupID, speakerID string, byID, byName map[string]GroupMember) {
 	output := o.lastMemberOutput(groupID, speakerID)
 	if output == "" {
 		return
 	}
-	storeRouteNotes(groupID, grouprouting.Parse(output), speakerID, byName)
+	storeRouteNotes(groupID, grouprouting.Parse(output), speakerID, byID, byName)
 }
 
 // storeRouteNotes persists a parsed route's private notes, validating each
 // target against the roster: an unknown or left target is dropped (it could
 // never be delivered — storing it would be silent loss plus unbounded growth of
 // group_pending_bcc), and a self-directed note is dropped (it would be
-// delivered on the speaker's own next turn). Every speaker stores notes through
-// here. The note is keyed by the RESOLVED member name, which is exactly what
-// the delivery lookup (pendingBccForTarget(names[t.ID])) uses.
-func storeRouteNotes(groupID string, route grouprouting.Result, speakerID string, byName map[string]GroupMember) {
+// delivered on the speaker's own next turn).
+//
+// The target is resolved by ROW ID first, then by display name (lookupMember).
+// A USER's note carries a member ROW ID (the frontend writes ids), while an
+// agent writes a display name; resolving by name alone silently discarded every
+// user note as "unknown target". The note is keyed by the RESOLVED member name,
+// which is exactly what the delivery lookup (pendingBccForTarget(names[t.ID]))
+// uses.
+func storeRouteNotes(groupID string, route grouprouting.Result, speakerID string, byID, byName map[string]GroupMember) {
 	for _, e := range route.Bcc {
 		for _, target := range e.Targets {
-			m, ok := byName[strings.TrimSpace(target)]
+			m, ok := lookupMember(target, byID, byName)
 			if !ok || m.ID == speakerID {
+				continue
+			}
+			// A LEFT member never speaks again, so a note stored for one could
+			// never be delivered — it would sit in group_pending_bcc forever.
+			// (byID includes left members, so the check must be explicit; the
+			// name map already excludes them. The user sentinel is never left.)
+			if m.Left && m.ID != groupUserTargetID {
 				continue
 			}
 			addPendingBcc(groupID, m.Name, e.Content)
 		}
 	}
+}
+
+// storeUserNotes persists the private notes a USER emitted in this turn's
+// message, so each is delivered on its target's next turn — the same
+// group_pending_bcc contract agent notes use (decision #97), reached through the
+// same storeRouteNotes path so validation cannot drift.
+//
+// The user is not a speaker, so its notes are stored separately at turn start.
+// speakerID is the reserved user sentinel: storeRouteNotes drops a note whose
+// target resolves to the speaker, which correctly drops a note the user
+// addressed to themselves (they read it in the UI card, not through a prompt).
+//
+// Honored in BOTH modes: routing (@) is a host-mode no-op (decision #47), but a
+// private note is a payload, orthogonal to who routes the discussion — the user
+// can privately brief a member regardless of mode.
+func (o *GroupOrchestrator) storeUserNotes(groupID string, byID, byName map[string]GroupMember) {
+	if o.userMessage == "" {
+		return
+	}
+	storeRouteNotes(groupID, grouprouting.Parse(o.userMessage), groupUserTargetID, byID, byName)
 }
 
 // freeInitialGroups is the free-mode seed (see runFreeLoop); it lives next to

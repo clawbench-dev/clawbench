@@ -522,21 +522,26 @@ describe('ChatPanelContent — failed send keeps input text', () => {
     return source.slice(source.indexOf(start), source.indexOf(end))
   }
 
-  it('captures inputText before clearing and restores it in the send catch block', async () => {
+  it('captures the raw input text before clearing and restores it in the send catch block', async () => {
     const region = await sourceRegion('async function sendMessage(text)', 'async function sendMessageNow(text, filePaths, files)')
-    // The current input text must be remembered so the catch path can restore it.
-    expect(region).toMatch(/(?:let|const)\s+inputText\s*=/)
-    // The direct-send failure path must restore the captured text instead of
+    // The user's OWN text must be remembered so the catch path can restore it.
+    // It is captured separately from the serialized `inputText` (which appends
+    // the group @ protocol tags): restoring the serialized form would put the
+    // raw tags back in the textarea — the exact ugliness the member cards remove.
+    expect(region).toMatch(/(?:let|const)\s+rawText\s*=/)
+    // The direct-send failure path must restore the captured RAW text instead of
     // leaving the box empty.
-    expect(region).toMatch(/catch\s*(?:\([^)]*\))?\s*\{[\s\S]*?restoreInput\(inputText\)/)
+    expect(region).toMatch(/catch\s*(?:\([^)]*\))?\s*\{[\s\S]*?restoreInput\(rawText\)/)
+    // …and must NOT restore the serialized form.
+    expect(region).not.toMatch(/restoreInput\(inputText\)/)
   })
 
   it('restores input text when the enqueue request fails', async () => {
     const region = await sourceRegion('async function sendMessage(text)', 'async function sendMessageNow(text, filePaths, files)')
     // In the queue path, enqueueMessage returns false on failure — the input
-    // must then be restored with the captured text.
+    // must then be restored with the captured raw text (see above).
     expect(region).toMatch(/enqueueAndMaybeStart\(/)
-    expect(region).toMatch(/restoreInput\(inputText\)/)
+    expect(region).toMatch(/restoreInput\(rawText\)/)
     expect(region).toMatch(/enqueueMessage/)
   })
 })

@@ -28,6 +28,29 @@ export interface StagedQuote extends QuoteData {
   note: string
 }
 
+/**
+ * A staged group-chat member card: the user @-names a member in a group
+ * session, and may attach a PRIVATE note (密送) meant for that member alone.
+ *
+ * The card is the input-side representation; on send it is serialized to the
+ * group protocol text (see serializeMentionCards). Keeping the identity here —
+ * the member ROW id, never the display name — is what makes a rename or a
+ * duplicate name safe: the tag is written from `memberId`, not from `name`.
+ */
+export interface StagedMention {
+  id: string
+  /** The member ROW id (the tag's targets value). */
+  memberId: string
+  /** Display name, for the card label and the mention chips. */
+  name: string
+  /** Underlying agent id — the avatar belongs to the AGENT, not the member row. */
+  agentId?: string
+  /** Member backend, for the built-in icon when no custom avatar is set. */
+  backend?: string
+  /** The private note (密送) for this member. '' = none. */
+  note: string
+}
+
 // ───────────────────────────────────────────────────────────
 // Module-level singleton state — shared across the whole app.
 // useChatContext unifies "context sent to chat" from any tab:
@@ -38,7 +61,9 @@ export interface StagedQuote extends QuoteData {
 const attachedFiles = ref<FileEntry[]>([])
 const quoteData = ref<QuoteData | null>(null)
 const stagedQuotes = ref<StagedQuote[]>([])
+const stagedMentions = ref<StagedMention[]>([])
 let quoteId = 0
+let mentionId = 0
 
 // ── Per-session attachment draft ──
 // Mirrors ChatInputBar's draftCache for text: when switching sessions, the
@@ -49,6 +74,7 @@ interface AttachmentSnapshot {
   files: FileEntry[]
   quotes: StagedQuote[]
   quote: QuoteData | null
+  mentions: StagedMention[]
 }
 
 const attachmentDrafts = new Map<string, AttachmentSnapshot>()
@@ -213,9 +239,53 @@ function clearQuotes() {
   stagedQuotes.value = []
 }
 
+function clearMentions() {
+  stagedMentions.value = []
+}
+
+/**
+ * Mint a member card into `list`, deduping by member row id.
+ *
+ * Dedupe is by ID (not name): the same member must never appear as two cards,
+ * and two members sharing a display name must stay distinct. A re-pick updates
+ * the existing card's identity fields rather than appending.
+ */
+function mintMention(list: StagedMention[], data: Omit<StagedMention, 'id' | 'note'>): StagedMention {
+  const existing = list.find(item => item.memberId === data.memberId)
+  if (existing) {
+    existing.name = data.name
+    if (data.agentId !== undefined) existing.agentId = data.agentId
+    if (data.backend !== undefined) existing.backend = data.backend
+    return existing
+  }
+  const item: StagedMention = {
+    ...data,
+    id: `mention-${Date.now()}-${++mentionId}`,
+    note: '',
+  }
+  list.push(item)
+  return item
+}
+
+function addStagedMention(data: Omit<StagedMention, 'id' | 'note'>): StagedMention {
+  return mintMention(stagedMentions.value, data)
+}
+
+function removeStagedMention(id: string) {
+  const index = stagedMentions.value.findIndex(item => item.id === id)
+  if (index >= 0) stagedMentions.value.splice(index, 1)
+}
+
+/** Replace a member card's private note. No-op when the id is unknown. */
+function updateStagedMentionNote(id: string, note: string) {
+  const item = stagedMentions.value.find(m => m.id === id)
+  if (item) item.note = note.trim()
+}
+
 function clearAll() {
   attachedFiles.value = []
   clearQuotes()
+  clearMentions()
 }
 
 /**
@@ -229,6 +299,7 @@ function snapshotAttachments(sessionId: string) {
     files: attachedFiles.value.map(f => ({ ...f })),
     quotes: stagedQuotes.value.map(q => ({ ...q })),
     quote: quoteData.value ? { ...quoteData.value } : null,
+    mentions: stagedMentions.value.map(m => ({ ...m })),
   })
 }
 
@@ -243,6 +314,7 @@ function restoreAttachments(sessionId: string) {
   attachedFiles.value = snap.files.map(f => ({ ...f }))
   stagedQuotes.value = snap.quotes.map(q => ({ ...q }))
   quoteData.value = snap.quote ? { ...snap.quote } : null
+  stagedMentions.value = (snap.mentions || []).map(m => ({ ...m }))
 }
 
 /** Drop the attachment draft for a session (e.g. when the session is destroyed). */
@@ -261,7 +333,7 @@ function discardAttachmentDraft(sessionId: string) {
 function ensureAttachmentDraft(sessionId: string): AttachmentSnapshot {
   let snap = attachmentDrafts.get(sessionId)
   if (!snap) {
-    snap = { files: [], quotes: [], quote: null }
+    snap = { files: [], quotes: [], quote: null, mentions: [] }
     attachmentDrafts.set(sessionId, snap)
   }
   return snap
@@ -299,11 +371,26 @@ function stageAttachmentIntoDraft(sessionId: string, entry: FileEntry): boolean 
   return true
 }
 
+/**
+ * Put staged quote + member cards back into the live input.
+ *
+ * The send path clears them up front (so the user sees immediate feedback) and
+ * restores on failure. Without this the cards are gone after a failed send while
+ * the text no longer carries their tags — the @ intent and any private note
+ * vanish with no trace. Snapshots are deep-copied on restore so a later edit
+ * cannot mutate the captured list.
+ */
+function restoreStagedCards(mentions: StagedMention[], quotes: StagedQuote[]) {
+  stagedMentions.value = mentions.map(m => ({ ...m }))
+  stagedQuotes.value = quotes.map(q => ({ ...q }))
+}
+
 export function useChatContext() {
   return {
     attachedFiles,
     quoteData,
     stagedQuotes,
+    stagedMentions,
     addAttachedFile,
     addUrlAttachment,
     removeAttachedFile,
@@ -315,11 +402,16 @@ export function useChatContext() {
     removeStagedQuote,
     updateStagedQuoteNote,
     clearQuotes,
+    addStagedMention,
+    removeStagedMention,
+    updateStagedMentionNote,
+    clearMentions,
     clearAll,
     snapshotAttachments,
     restoreAttachments,
     discardAttachmentDraft,
     stageQuoteIntoDraft,
     stageAttachmentIntoDraft,
+    restoreStagedCards,
   }
 }

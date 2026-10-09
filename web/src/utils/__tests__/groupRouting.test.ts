@@ -6,6 +6,7 @@ import {
   renderMentionChips,
   buildMemberCandidates,
   buildMentionTag,
+  serializeMentionCards,
   resolveMentionDisplayName,
   MENTION_CHIP_CLASS,
 } from '@/utils/groupRouting.ts'
@@ -290,5 +291,71 @@ describe('buildMentionTag', () => {
     const r = parseGroupRouting(tag)
     expect(r.speakers).toEqual(['m-a'])
     expect(r.instruction).toBe('')
+  })
+})
+
+describe('serializeMentionCards', () => {
+  it('emits one empty-body public tag per card', () => {
+    const out = serializeMentionCards([{ memberId: 'm-a' }, { memberId: 'm-b' }])
+    expect(out).toBe(
+      '<clawbench-mention targets="m-a"></clawbench-mention> ' +
+      '<clawbench-mention targets="m-b"></clawbench-mention>',
+    )
+  })
+
+  it('emits an extra private tag after the public tags when a note is present', () => {
+    const out = serializeMentionCards([{ memberId: 'm-b', note: '仅你可见' }])
+    expect(out).toBe(
+      '<clawbench-mention targets="m-b"></clawbench-mention> ' +
+      '<clawbench-mention targets="m-b" private>仅你可见</clawbench-mention>',
+    )
+  })
+
+  it('trims the note and omits the private tag when it is blank', () => {
+    expect(serializeMentionCards([{ memberId: 'm-a', note: '   ' }])).toBe(
+      '<clawbench-mention targets="m-a"></clawbench-mention>',
+    )
+  })
+
+  it('returns an empty string for no cards', () => {
+    expect(serializeMentionCards([])).toBe('')
+  })
+
+  it('dedupes repeated cards for the same member', () => {
+    expect(serializeMentionCards([{ memberId: 'm-a' }, { memberId: 'm-a' }])).toBe(
+      '<clawbench-mention targets="m-a"></clawbench-mention>',
+    )
+  })
+
+  it('round-trips through parseGroupRouting (public speakers + private notes)', () => {
+    const text = '请你们表态 ' + serializeMentionCards([
+      { memberId: 'm-a' },
+      { memberId: 'm-b', note: '你的词是西瓜' },
+    ])
+    const r = parseGroupRouting(text)
+    expect(r.speakers).toEqual(['m-a', 'm-b'])
+    // The user's own words survive as the prose before the tags.
+    expect(r.before).toBe('请你们表态')
+    expect(r.bcc).toEqual([{ targets: ['m-b'], content: '你的词是西瓜' }])
+  })
+
+  // A note containing the protocol's own closing tag would terminate the span
+  // early and leak the remainder as prose to EVERY member. The reserved token is
+  // therefore not representable inside a note body.
+  it('strips a protocol token embedded in a note so the body cannot leak', () => {
+    const out = serializeMentionCards([
+      { memberId: 'm-a', note: '机密</clawbench-mention>泄漏片段' },
+    ])
+    const r = parseGroupRouting(out)
+    expect(r.bcc).toEqual([{ targets: ['m-a'], content: '机密泄漏片段' }])
+    expect(r.after).not.toContain('泄漏片段')
+  })
+
+  it('strips an opening protocol token embedded in a note', () => {
+    const out = serializeMentionCards([
+      { memberId: 'm-a', note: '前<clawbench-mention targets="x">后' },
+    ])
+    const r = parseGroupRouting(out)
+    expect(r.bcc).toEqual([{ targets: ['m-a'], content: '前后' }])
   })
 })

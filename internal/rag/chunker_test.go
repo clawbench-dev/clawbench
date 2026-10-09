@@ -20,6 +20,30 @@ func TestExtractTextFromContent_UserMessage_Trimmed(t *testing.T) {
 	assert.Equal(t, "hello world", got)
 }
 
+// A user's private note (密送) lives in the message TEXT as a `private` mention
+// tag. In a group session it must be stripped before the text is embedded into
+// a searchable chunk — otherwise the note becomes retrievable from ANY session,
+// which is the exact confidentiality break the feature exists to prevent.
+//
+// The user branch used to return the content verbatim (the assistant branch was
+// the only one that stripped), so this asserts the group gate explicitly.
+func TestExtractTextFromContent_UserMessage_GroupStripsPrivateNote(t *testing.T) {
+	text := `<clawbench-mention targets="m-b"></clawbench-mention> <clawbench-mention targets="m-b" private>你的词是西瓜</clawbench-mention> 你先说`
+	got := ExtractTextFromContent(text, "user", store.SessionTypeGroup)
+	assert.NotContains(t, got, "你的词是西瓜", "the private note must never be embedded")
+	assert.NotContains(t, got, "clawbench-mention", "the protocol tag must not survive")
+	assert.Contains(t, got, "你先说", "the public prose must survive")
+}
+
+// A single chat has no protocol, so a user who literally types the tag text must
+// keep it verbatim (the same "don't truncate a discussion of the syntax" rule
+// the assistant branch follows).
+func TestExtractTextFromContent_UserMessage_SingleChatKeepsText(t *testing.T) {
+	text := `看这个 <clawbench-mention targets="A" private>字面</clawbench-mention> 语法`
+	got := ExtractTextFromContent(text, "user", "")
+	assert.Equal(t, text, got)
+}
+
 func TestExtractTextFromContent_AssistantMessage_ConclusionOnly(t *testing.T) {
 	blocks := []model.ContentBlock{
 		{Type: "text", Text: "Let me check the code."},

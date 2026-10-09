@@ -1136,6 +1136,11 @@ export default {
       to: 'To',
       toYou: 'Private note to you'
     },
+    mentionCard: {
+      noteTitle: 'Private note',
+      notePrompt: 'Private note to {name} (only they can see it)',
+      notePlaceholder: 'Leave empty to send no private note',
+    },
   },
   task: {
     title: 'Tasks',

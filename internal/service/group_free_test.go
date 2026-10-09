@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/grouprouting"
 	"clawbench/internal/i18n"
 	"clawbench/internal/model"
 	"clawbench/internal/store"
@@ -545,6 +546,52 @@ func TestRemoveGroupMember_DropsPendingNotes(t *testing.T) {
 	}
 	if got := pendingBccForTarget(groupID, "B"); len(got) != 0 {
 		t.Fatalf("a departed member's pending note must be dropped; got %v", got)
+	}
+}
+
+// A note addressed (by ROW ID) to a member who has ALREADY left must not be
+// stored: the member can never speak again, so it would sit in
+// group_pending_bcc forever. byID includes left members (only byName excludes
+// them), so the guard has to be explicit — without it, resolving a user's
+// id-targeted note through byID would resurrect the unbounded-growth bug.
+func TestStoreRouteNotes_DropsNoteToLeftMemberByID(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/free-note-left"
+	groupID, byName := createFreeGroup(t, project, "A", "B")
+	leftID := byName["B"]
+	if err := RemoveGroupMember(groupID, leftID); err != nil {
+		t.Fatalf("RemoveGroupMember: %v", err)
+	}
+
+	members, err := ListGroupMembers(groupID)
+	if err != nil {
+		t.Fatalf("ListGroupMembers: %v", err)
+	}
+	byID, byNameMap := memberLookups(members)
+	route := grouprouting.Parse(`<clawbench-mention targets="` + leftID + `" private>给离场者</clawbench-mention>`)
+	storeRouteNotes(groupID, route, groupUserTargetID, byID, byNameMap)
+
+	if got := pendingBccForTarget(groupID, "B"); len(got) != 0 {
+		t.Fatalf("a note to a left member must not be stored; got %v", got)
+	}
+}
+
+// The same path MUST still store a note to an ACTIVE member (guard the fix does
+// not over-reject).
+func TestStoreRouteNotes_StoresNoteToActiveMemberByID(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/free-note-active"
+	groupID, byName := createFreeGroup(t, project, "A", "B")
+	activeID := byName["B"]
+
+	members, _ := ListGroupMembers(groupID)
+	byID, byNameMap := memberLookups(members)
+	route := grouprouting.Parse(`<clawbench-mention targets="` + activeID + `" private>给在场者</clawbench-mention>`)
+	storeRouteNotes(groupID, route, groupUserTargetID, byID, byNameMap)
+
+	got := pendingBccForTarget(groupID, "B")
+	if len(got) != 1 || got[0].Content != "给在场者" {
+		t.Fatalf("an active member's id-targeted note must be stored; got %v", got)
 	}
 }
 

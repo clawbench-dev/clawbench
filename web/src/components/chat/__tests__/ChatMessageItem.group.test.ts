@@ -276,10 +276,14 @@ describe('ChatMessageItem group bcc card', () => {
   })
 
   it('expands on click to reveal the note content and targets', async () => {
-    const resolveSpeaker = () => ({ name: 'Host', backend: 'codebuddy' })
+    // Realistic resolvers: the id resolver knows only the host's row id, the
+    // name resolver only real display names. (A catch-all "return Host for
+    // anything" mock would make every target resolve to Host.)
+    const resolveSpeaker = (id: string) => (id === 'host-1' ? { name: 'Host', backend: 'codebuddy' } : null)
+    const resolveSpeakerByName = (n: string) => (['A', 'B'].includes(n) ? { name: n, backend: 'claude', avatar: '' } : null)
     const w = mountItem(
       hostWithBcc('<clawbench-mention targets="A"> 表态 </clawbench-mention><clawbench-mention targets="A,B" private>机密内容</clawbench-mention>'),
-      { resolveSpeaker, hostMemberId: 'host-1' },
+      { resolveSpeaker, resolveSpeakerByName, hostMemberId: 'host-1' },
     )
     await w.find('.msg-bcc-header').trigger('click')
     const body = w.find('.msg-bcc-body')
@@ -407,5 +411,70 @@ describe('ChatMessageItem bcc card: note body renders Markdown', () => {
     // DOMPurify drops the event handler; the payload cannot execute.
     expect(body.find('img[onerror]').exists()).toBe(false)
     expect(body.text()).toContain('正文')
+  })
+})
+
+describe('ChatMessageItem: a USER message private note (C3)', () => {
+  // The user's @ cards serialize to protocol tags on send, including `private`
+  // ones (密送). The reader must be able to audit what they sent — so a USER
+  // row must parse and render its own note card.
+  //
+  // This is the regression the design review caught: `msgText` returns '' for
+  // non-assistant rows, and the parse was gated on "has a speaker" (a user row
+  // has no agentId). Either alone leaves the card invisible. A test that only
+  // asserted the parse gate (or only that msgText is non-empty) would pass while
+  // the card stayed missing — so this asserts the RENDERED card.
+  const userWithNote = (text: string) => ({
+    role: 'user',
+    id: 30,
+    content: text,
+    blocks: [{ type: 'text', text }],
+  })
+
+  it('renders the private-note card on a user bubble (collapsed, auditable)', async () => {
+    // The user's note targets a member ROW ID; the card must show the NAME.
+    const resolveSpeaker = (id: string) => (id === 'm-a' ? { name: 'Alice', backend: 'claude' } : null)
+    const w = mountItem(
+      userWithNote('<clawbench-mention targets="m-a"></clawbench-mention> <clawbench-mention targets="m-a" private>你的词是西瓜</clawbench-mention> 你先说'),
+      { isGroupSession: true, resolveSpeaker },
+    )
+    // A note the USER sent to a MEMBER renders as the member card (collapsed by
+    // default, consistent with the host's member notes) — the user can expand it
+    // to audit what they sent. It is NOT the "to you" card: the reader is the
+    // sender here, not the target.
+    const card = w.find('.msg-bcc')
+    expect(card.exists()).toBe(true)
+    await w.find('.msg-bcc-header').trigger('click')
+    expect(w.find('.msg-bcc-entry-content').text()).toContain('你的词是西瓜')
+    // The target label must be the resolved NAME, not the raw row id — the whole
+    // point of an auditable card. (Agents write names, so only user notes need
+    // this, and only a test targeting a user note catches a missing resolver.)
+    const targets = w.find('.msg-bcc-entry-targets').text()
+    expect(targets).toContain('Alice')
+    expect(targets).not.toContain('m-a')
+  })
+
+  it('does not render the mention summary row on a user bubble (chips are already inline)', () => {
+    const resolveSpeakerByName = (n: string) => ({ name: n, backend: 'claude', avatar: '' })
+    const w = mountItem(
+      userWithNote('<clawbench-mention targets="m-a"></clawbench-mention> 你先说'),
+      { isGroupSession: true, resolveSpeakerByName },
+    )
+    expect(w.find('.msg-mention-summary').exists()).toBe(false)
+  })
+
+  it('renders no note card for a user message without one', () => {
+    const w = mountItem(
+      userWithNote('<clawbench-mention targets="m-a"></clawbench-mention> 你先说'),
+      { isGroupSession: true },
+    )
+    expect(w.find('.msg-bcc').exists()).toBe(false)
+  })
+
+  it('does not parse a user message protocol tag OUTSIDE a group session', () => {
+    // A single-agent chat has no protocol; a user who literally types the tag
+    // text must not get a note card.
+    const w = mountItem(userWithNote('<clawbench-mention targets="m-a" private>字面文本</clawbench-mention>'))
+    expect(w.find('.msg-bcc').exists()).toBe(false)
   })
 })

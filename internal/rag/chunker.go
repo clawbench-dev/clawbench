@@ -33,7 +33,17 @@ type TextChunk struct {
 // shared source of truth.)
 func ExtractTextFromContent(content, role, sessionType string) string {
 	if role == "user" {
-		return strings.TrimSpace(content)
+		text := strings.TrimSpace(content)
+		// A group user message carries the @ protocol, including `private`
+		// (密送) notes. Strip it for a group session or a note addressed to one
+		// member becomes a searchable chunk retrievable from ANY session — the
+		// confidentiality break the feature exists to prevent. A single chat has
+		// no protocol, so its text stays verbatim (a reply that merely DISCUSSES
+		// the tag syntax must not be truncated).
+		if sessionType == store.SessionTypeGroup {
+			text = grouprouting.StripProtocolTags(text)
+		}
+		return strings.TrimSpace(text)
 	}
 
 	// Assistant message: parse JSON and extract only the conclusion

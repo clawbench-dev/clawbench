@@ -130,6 +130,63 @@ func TestCollectSessionUserMessages_DedupesTrailingExtraText(t *testing.T) {
 	assert.Equal(t, []string{"同一条消息"}, got)
 }
 
+// A group user message carries the @ protocol, including `private` (密送) notes.
+// The AI rename feeds these messages to a model and writes the result as the
+// session TITLE — which everyone who sees the session list reads. The note must
+// be stripped BEFORE it reaches the model, or the local-title strip is undone.
+func TestCollectSessionUserMessages_GroupStripsPrivateNote(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/collect-group"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, _, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	insertAutoRenameUserMessage(t, 201, groupID,
+		`<clawbench-mention targets="A"></clawbench-mention> <clawbench-mention targets="A" private>你的词是西瓜</clawbench-mention> 大家聊聊`)
+
+	got := CollectSessionUserMessages(groupID, "")
+	require.Len(t, got, 1)
+	assert.NotContains(t, got[0], "你的词是西瓜", "a private note must never reach the title model")
+	assert.NotContains(t, got[0], "clawbench-mention")
+	assert.Contains(t, got[0], "大家聊聊")
+}
+
+// The extraText (a queued, not-yet-persisted first message) goes through the
+// same strip — it is the one path the DB rows do not cover.
+func TestCollectSessionUserMessages_GroupStripsPrivateNoteInExtraText(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/collect-group-extra"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, _, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+
+	got := CollectSessionUserMessages(groupID,
+		`<clawbench-mention targets="A" private>排队中的秘密</clawbench-mention> 请开始`)
+	require.Len(t, got, 1)
+	assert.NotContains(t, got[0], "排队中的秘密")
+	assert.Contains(t, got[0], "请开始")
+}
+
+// A single chat has no protocol, so a message that merely DISCUSSES the tag
+// syntax keeps its text verbatim.
+func TestCollectSessionUserMessages_SingleChatKeepsText(t *testing.T) {
+	_, cleanup := setupRecommendTest(t)
+	defer cleanup()
+
+	insertSessionWithTitle(t, "sess-collect-chat", "t", TitleSourcePlaceholder)
+	insertAutoRenameUserMessage(t, 202, "sess-collect-chat", `看 <clawbench-mention targets="A" private>字面</clawbench-mention> 语法`)
+
+	got := CollectSessionUserMessages("sess-collect-chat", "")
+	assert.Equal(t, []string{`看 <clawbench-mention targets="A" private>字面</clawbench-mention> 语法`}, got)
+}
+
 // ── GenerateSessionTitleFromMessages ──
 
 func TestGenerateSessionTitleFromMessages_NoModelConfigured(t *testing.T) {
@@ -199,6 +256,53 @@ func TestSetSessionTitleAutoIfNotCustom_NeverOverwritesCustom(t *testing.T) {
 }
 
 // ── autoRenameSession (end to end, synchronous call) ──
+
+// A group user message carries the @ protocol, including `private` (密送) notes.
+// Those must never become the session title: a note addressed to one member
+// would be exposed to everyone who sees the session list.
+func TestSessionTitleSourceText_GroupStripsPrivateNote(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/autotitle-group"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, _, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	content := `<clawbench-mention targets="A"></clawbench-mention> <clawbench-mention targets="A" private>你的词是西瓜</clawbench-mention> 大家聊聊`
+
+	tx, err := store.WriteBegin()
+	require.NoError(t, err)
+	defer store.WriteUnlock()
+	defer tx.Rollback()
+
+	got := sessionTitleSourceText(tx, groupID, content)
+	assert.NotContains(t, got, "你的词是西瓜", "a private note must never become the title")
+	assert.NotContains(t, got, "clawbench-mention", "the protocol tag must not survive")
+	assert.Contains(t, got, "大家聊聊", "the public prose must survive")
+}
+
+// A single chat has no protocol, so a message that merely DISCUSSES the tag
+// syntax keeps its text verbatim.
+func TestSessionTitleSourceText_SingleChatKeepsText(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/autotitle-chat"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	chatID, err := CreateSession(project, "codebuddy", "t", "agent-x", "", "default", "chat")
+	require.NoError(t, err)
+	content := `看这个 <clawbench-mention targets="A" private>字面</clawbench-mention> 语法`
+
+	tx, err := store.WriteBegin()
+	require.NoError(t, err)
+	defer store.WriteUnlock()
+	defer tx.Rollback()
+
+	got := sessionTitleSourceText(tx, chatID, content)
+	assert.Equal(t, content, got)
+}
 
 func TestAutoRenameSession_AppliesModelTitle(t *testing.T) {
 	srv, cleanup := setupAutoRenameTest(t, titleServer(`{"choices":[{"message":{"content":"AI 生成的标题"}}]}`))

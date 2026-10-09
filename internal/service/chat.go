@@ -18,6 +18,7 @@ import (
 	"clawbench/internal/store"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/grouprouting"
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
 	"clawbench/internal/ws"
@@ -907,7 +908,7 @@ func maybeAutoTitleSessionTx(tx *sql.Tx, sessionID, content string, files []mode
 		// Already auto-titled or deliberately named — never clobber.
 		return false, nil
 	}
-	title := ExtractPlainText(content)
+	title := sessionTitleSourceText(tx, sessionID, content)
 	if title == "" && len(files) > 0 {
 		title = titleFromFileEntries(files)
 	}
@@ -921,6 +922,27 @@ func maybeAutoTitleSessionTx(tx *sql.Tx, sessionID, content string, files []mode
 		return false, err
 	}
 	return true, nil
+}
+
+// sessionTitleSourceText returns the text a session title should be derived
+// from. For a GROUP session the user's message may carry the @ protocol,
+// including `private` (密送) notes — those must never become the title (a note
+// addressed to one member would be exposed to everyone who sees the session
+// list). The protocol is stripped for group sessions only: a single chat has no
+// protocol, so a message that merely DISCUSSES the tag syntax keeps its text.
+//
+// A read failure falls back to the raw text: titling is best-effort and must
+// never fail the message insert, and the pre-existing behavior is preserved.
+func sessionTitleSourceText(tx *sql.Tx, sessionID, content string) string {
+	plain := ExtractPlainText(content)
+	var sessionType string
+	if err := tx.QueryRow("SELECT COALESCE(session_type, '') FROM chat_sessions WHERE id = ?", sessionID).Scan(&sessionType); err != nil {
+		return plain
+	}
+	if sessionType == store.SessionTypeGroup {
+		return strings.TrimSpace(grouprouting.StripProtocolTags(plain))
+	}
+	return plain
 }
 
 // applyAutoTitle sets the session title from a user message outside a

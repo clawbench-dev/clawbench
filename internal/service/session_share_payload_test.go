@@ -129,6 +129,18 @@ func seedSession(t *testing.T, db *sql.DB, sessionID string) { //nolint:unparam 
 	require.NoError(t, err)
 }
 
+// seedGroupSession seeds a session whose session_type is 'group', so the
+// protocol-stripping branches (which are gated on the type) take effect.
+func seedGroupSession(t *testing.T, db *sql.DB, sessionID string) {
+	t.Helper()
+	_, err := db.Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, model, session_type)
+		 VALUES (?, ?, 'codebuddy', 'Group chat', '', '', 'group')`,
+		sessionID, testProjectRoot,
+	)
+	require.NoError(t, err)
+}
+
 // seedMessage inserts a finalized message and returns its id. sessionID stays a
 // parameter so the helper mirrors the schema rather than hard-coding one id.
 //
@@ -773,6 +785,43 @@ func TestGetSessionMessagesForSelection_PreviewIsTruncated(t *testing.T) {
 	runes := []rune(items[0].Preview)
 	assert.LessOrEqual(t, len(runes), 200, "preview must be bounded")
 	assert.Equal(t, 200, len(runes))
+}
+
+// A group user message carries the @ protocol, including `private` (密送) notes.
+// The selection preview is shown in the share dialog, so the note must be
+// stripped — otherwise a note addressed to one member is previewed to everyone.
+func TestGetSessionMessagesForSelection_GroupStripsPrivateNote(t *testing.T) {
+	db := setupTestDBForSessionSharePayload(t)
+	defer func() { _ = db.Close() }()
+
+	seedGroupSession(t, db, "g1")
+	seedMessage(t, db, "g1", "user",
+		`<clawbench-mention targets="m-b"></clawbench-mention> <clawbench-mention targets="m-b" private>你的词是西瓜</clawbench-mention> 你先说`,
+		0, 0)
+
+	items, err := service.GetSessionMessagesForSelection("g1")
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+
+	assert.NotContains(t, items[0].Preview, "你的词是西瓜", "a private note must never be previewed")
+	assert.NotContains(t, items[0].Preview, "clawbench-mention")
+	assert.Contains(t, items[0].Preview, "你先说")
+}
+
+// A single chat has no protocol, so a message that merely DISCUSSES the tag
+// syntax keeps its text verbatim in the preview.
+func TestGetSessionMessagesForSelection_SingleChatKeepsText(t *testing.T) {
+	db := setupTestDBForSessionSharePayload(t)
+	defer func() { _ = db.Close() }()
+
+	seedSession(t, db, "s1")
+	content := `看这个 <clawbench-mention targets="A" private>字面</clawbench-mention> 语法`
+	seedMessage(t, db, "s1", "user", content, 0, 0)
+
+	items, err := service.GetSessionMessagesForSelection("s1")
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	assert.Equal(t, content, items[0].Preview)
 }
 
 func TestGetSessionMessagesForSelection_UnknownSessionIsEmpty(t *testing.T) {

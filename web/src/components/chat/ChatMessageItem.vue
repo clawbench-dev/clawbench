@@ -22,8 +22,11 @@
          BOTH host and free modes. The mentions also render INLINE in the body
          (as @name chips, see renderMentionChips); this row is the scannable
          summary. It shows the raw parsed targets (a routing intent that may
-         name a member who has since left must stay visible). -->
-    <div v-if="mentionTargets.length > 0" class="msg-mention-summary">
+         name a member who has since left must stay visible).
+         ASSISTANT-only: the row exists to scan an AGENT's routing at a glance.
+         On a user bubble the chips already sit inline in the message the user
+         just typed, so a second "@ B" line would only duplicate them. -->
+    <div v-if="msg.role === 'assistant' && mentionTargets.length > 0" class="msg-mention-summary">
       <span class="msg-mention-summary-at">@</span>
       <span class="msg-mention-summary-names">{{ mentionTargets.map((s) => s.name).join('、') }}</span>
     </div>
@@ -119,7 +122,7 @@
         </button>
         <div v-show="bccExpanded" class="msg-bcc-body">
           <div v-for="(e, i) in bccToMembers" :key="i" class="msg-bcc-entry">
-            <div class="msg-bcc-entry-targets">{{ t('group.bcc.to') }}: {{ e.targets.join('、') }}</div>
+            <div class="msg-bcc-entry-targets">{{ t('group.bcc.to') }}: {{ e.targetLabels.join('、') }}</div>
             <div class="msg-bcc-entry-content" v-html="e.html"></div>
           </div>
         </div>
@@ -245,7 +248,7 @@ import { formatDuration, formatRelativeTime } from '@/utils/format.ts'
 import { escapeHtml } from '@/utils/html.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
 import { extractFileChanges } from '@/utils/chatStreamUtils.ts'
-import { parseGroupRouting, stripGroupProtocolTags, GROUP_USER_TARGET_NAME } from '@/utils/groupRouting.ts'
+import { parseGroupRouting, stripGroupProtocolTags, GROUP_USER_TARGET_NAME, resolveMentionDisplayName } from '@/utils/groupRouting.ts'
 import { quotableMessageText } from '@/utils/quoteItem.ts'
 import { isShowingSummary, normalizeDisplayMode } from '@/utils/chatSessionUtils.ts'
 import { localConfig } from '@/composables/useSettingsConfig'
@@ -322,16 +325,36 @@ const speaker = computed(() => {
 const isHostMessage = computed(() => !!props.msg?.agentId && props.msg.agentId === props.hostMemberId)
 
 // Group-chat mention parsing. In BOTH modes an agent's speech may carry
-// <clawbench-mention> tags: host mode's routing, free mode's @-relay. The tags
-// are rendered inline as @name chips by renderMentionChips; this parse feeds
-// the summary row and the private-note card. Unparseable tags are NOT stripped
-// from the body (parseGroupRouting never mutates text).
+// <clawbench-mention> tags: host mode's routing, free mode's @-relay. A USER
+// message carries them too — the user's @ cards serialize to the same tags on
+// send, including `private` ones (密送). The tags are rendered inline as @name
+// chips by renderMentionChips; this parse feeds the private-note card, and (for
+// agent speech) the summary row. Unparseable tags are NOT stripped from the
+// body (parseGroupRouting never mutates text).
+//
+// Agent speech keeps its original gate (a resolved speaker): outside a group
+// `resolveSpeaker` is null, so a single-agent reply never parses. A USER row has
+// no agentId, so it is admitted only in a GROUP session — that is what lets the
+// reader audit the private notes they sent. Without the user branch the parse
+// yields nothing and the note card is silently missing (C3).
 const groupRouting = computed(() => {
   const empty = { found: false, speakers: [], instruction: '', before: '', after: '', bcc: [], mentions: [], end: false, raw: '' }
-  // Only group-chat agent speech carries the tags (a plain single-agent chat
-  // never does), so gate on the speaker being a group member.
-  if (!speaker.value) return empty
-  return parseGroupRouting(msgText.value || '')
+  const isUserInGroup = props.isGroupSession && props.msg?.role === 'user'
+  if (!speaker.value && !isUserInGroup) return empty
+  return parseGroupRouting(groupProtocolText.value || '')
+})
+
+/**
+ * The RAW protocol text of this message, for BOTH roles: an agent's speech
+ * (extractSpeakableText, which skips tool/thinking noise) or a user message's
+ * own text. Unlike `msgText` (assistant-only), this feeds the mention parse so
+ * a user's private notes are parsed and rendered in their own bubble.
+ */
+const groupProtocolText = computed(() => {
+  if (props.msg?.role === 'user') {
+    return extractSpeakableText(props.msg?.blocks || []) || (props.msg?.content || '')
+  }
+  return msgText.value || ''
 })
 
 // Private notes (密送) addressed to AI members are collapsed by default — the
@@ -569,10 +592,18 @@ function renderBccNote(content, noteIdx) {
 // entry keeps its raw `content` (for the target label and tests) and gains
 // `html` (the rendered body). The split preserves the ORIGINAL bcc index so
 // renderBccNote's key stays unique across both lists.
+//
+// `targetLabels` resolves each raw target for DISPLAY. An agent writes display
+// names, but a USER's note carries member ROW IDs (the frontend writes ids) — so
+// without resolving, the user's own auditable card would read "发给: <uuid>".
+// The resolution order (id then name) mirrors the inline @chips.
 const bccEntries = computed(() =>
   groupRouting.value.bcc.map((e, i) => ({
     ...e,
     toUser: e.targets.includes(GROUP_USER_TARGET),
+    targetLabels: e.targets.map((target) =>
+      resolveMentionDisplayName(target, props.resolveSpeaker, props.resolveSpeakerByName, t('group.you')),
+    ),
     html: renderBccNote(e.content, i),
   })),
 )

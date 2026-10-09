@@ -103,6 +103,7 @@
       :currentDir="currentDir"
       :attachedFiles="attachedFiles"
       :quotes="stagedQuotes"
+      :mentions="stagedMentions"
       :messages="renderedMessages"
       :autoSpeechEnabled="autoSpeech.enabled.value"
       :refreshingSession="refreshingSession"
@@ -126,6 +127,9 @@
       @add-attached="addAttachedFile"
       @remove-attached="removeAttachedFile"
       @remove-attached-by-path="handleRemoveAttachedEntry"
+      @add-mention="handleAddMention"
+      @remove-mention="removeStagedMention"
+      @mention-click="handleMentionClick"
       @remove-quote="removeStagedQuote($event)"
       @quote-click="handleQuoteClick"
       @open-session-tab="identity.openSessionTab"
@@ -271,7 +275,7 @@ import { useChatContext } from '@/composables/useChatContext.ts'
 import { relativizeProjectPath } from '@/utils/quoteQuestionUtils.ts'
 import { resetQuotePin } from '@/composables/useQuoteQuestion.ts'
 import { fromStagedQuote, fromFileEntry, materializeQuotes, buildMessageQuote, quotableMessageText } from '@/utils/quoteItem.ts'
-import { stripGroupProtocolTags } from '@/utils/groupRouting.ts'
+import { stripGroupProtocolTags, serializeMentionCards } from '@/utils/groupRouting.ts'
 import { useQuoteDetail } from '@/composables/useQuoteDetail.ts'
 import { pendingMessageNavigation, consumePendingMessageNavigation, setPendingMessageNavigation } from '@/composables/useMessageNavigation.ts'
 import { openExternalUrl } from '@/utils/externalLink.ts'
@@ -568,6 +572,40 @@ function handleQuoteClick(q) {
 function handleSentQuoteClick(entry) {
     if (!entry) return
     quoteDetail.openQuoteDetail(fromFileEntry(entry), { mode: 'sent' })
+}
+
+/**
+ * Add a group member card (@ card). Payload comes from the input's @ menu: the
+ * member row id (the tag target), the display name and the agent identity for
+ * the avatar. The card lives in useChatContext so it survives a session switch.
+ */
+function handleAddMention(payload) {
+    if (!payload?.memberId) return
+    addStagedMention({
+        memberId: payload.memberId,
+        name: payload.name || '',
+        agentId: payload.agentId || undefined,
+        backend: payload.backend || undefined,
+    })
+}
+
+/**
+ * Open the private-note (密送) editor for a member card.
+ *
+ * A member card's annotation is a PRIVATE note to that member — the same
+ * "attach a note" interaction as the quote card, but the note travels as a
+ * `private` mention tag on send (only the target may see it). Uses the shared
+ * prompt dialog so there is no second bespoke editor to maintain.
+ */
+async function handleMentionClick(mention) {
+    if (!mention) return
+    const note = await dialog.prompt(
+        t('group.mentionCard.notePrompt', { name: mention.name }),
+        { value: mention.note || '', placeholder: t('group.mentionCard.notePlaceholder'), title: t('group.mentionCard.noteTitle') },
+    )
+    // null = cancelled; keep the existing note.
+    if (note === null) return
+    updateStagedMentionNote(mention.id, note)
 }
 
 /** True while the annotation save request is in flight (disables the button). */
@@ -937,7 +975,7 @@ const stream = useChatStream({
 })
 
 const { pendingFiles, attachedFiles, addAttachedFile, removeAttachedFile, removePendingByPath, cleanupPreviewUrls, clearPendingFiles } = useFileUpload()
-const { stagedQuotes, addStagedQuote, removeStagedQuote, updateStagedQuoteNote, clearAll, removeAttachedFileByPath, snapshotAttachments, restoreAttachments, discardAttachmentDraft } = useChatContext()
+const { stagedQuotes, addStagedQuote, removeStagedQuote, updateStagedQuoteNote, clearAll, removeAttachedFileByPath, snapshotAttachments, restoreAttachments, discardAttachmentDraft, stagedMentions, addStagedMention, removeStagedMention, updateStagedMentionNote, restoreStagedCards } = useChatContext()
 
 const manager = useSessionManager({
   messages,
@@ -1348,7 +1386,7 @@ function removePendingBtw(pendingId) {
 watch(() => identity.currentSessionId.value, (sid) => { loadBtwRecords(sid) }, { immediate: true })
 
 async function sendMessage(text) {
-    const inputText = text !== undefined ? text : (inputBarRef.value?.inputText?.trim() || '')
+    const rawText = text !== undefined ? text : (inputBarRef.value?.inputText?.trim() || '')
 
      // Quotes ride as structured attachment cards, not as text baked into the
      // message. Materialise the staged quotes into FileEntry form here (the one
@@ -1356,6 +1394,21 @@ async function sendMessage(text) {
      // the enqueue path used to rely on the quotes already being in `inputText`,
      // which silently dropped them whenever the session was busy.
      const quoteEntries = materializeQuotes(stagedQuotes.value)
+
+     // Group member cards (@ cards) ARE baked into the text: the protocol is a
+     // text tag and the backend parser only reads text. Serialize them here —
+     // the ONE conversion point — so the direct and enqueue paths agree. A card
+     // with a note also emits a `private` (密送) tag.
+     const mentionText = serializeMentionCards(stagedMentions.value)
+     const inputText = mentionText
+       ? (rawText ? rawText + ' ' + mentionText : mentionText)
+       : rawText
+
+     // Snapshot the cards that clearAll() is about to drop. On a send failure the
+     // restored text is the user's RAW text (no protocol tags), so without this
+     // the @ intent and any private note would be lost silently.
+     const capturedMentions = stagedMentions.value.map(m => ({ ...m }))
+     const capturedQuotes = stagedQuotes.value.map(q => ({ ...q }))
 
      const hasFiles = pendingFiles.value.length > 0 || attachedFiles.value.length > 0 || quoteEntries.length > 0
 
@@ -1399,7 +1452,11 @@ async function sendMessage(text) {
          // input so the user's text isn't lost.
          appLog.w(TAG, 'enqueue path failed, restoring input', err)
          try {
-           inputBarRef.value?.restoreInput(inputText || '')
+           // Restore the user's OWN text, not the serialized form: putting the
+           // raw protocol tags back in the textarea is the exact ugliness the
+           // member cards exist to remove. The cards themselves are restored too.
+           inputBarRef.value?.restoreInput(rawText)
+           restoreStagedCards(capturedMentions, capturedQuotes)
          } catch (e) {
            appLog.e(TAG, 'restoreInput failed', e)
          }
@@ -1434,7 +1491,10 @@ async function sendMessage(text) {
       // whether the typed text comes back.
       appLog.w(TAG, 'sendMessage failed, restoring input', err)
       try {
-        inputBarRef.value?.restoreInput(inputText)
+        // Restore the user's OWN text (not the serialized form) plus the cards
+        // that clearAll() dropped — see the enqueue path above.
+        inputBarRef.value?.restoreInput(rawText)
+        restoreStagedCards(capturedMentions, capturedQuotes)
       } catch (e) {
         appLog.e(TAG, 'restoreInput failed', e)
       }

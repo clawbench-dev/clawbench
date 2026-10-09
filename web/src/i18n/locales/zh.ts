@@ -1138,6 +1138,11 @@ export default {
       to: '发给',
       toYou: '密送给你'
     },
+    mentionCard: {
+      noteTitle: '密送',
+      notePrompt: '给 {name} 的密送内容（只有 ta 能看到）',
+      notePlaceholder: '留空则不发送密送',
+    },
   },
   task: {
     title: '任务',

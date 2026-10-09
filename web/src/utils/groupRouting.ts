@@ -441,3 +441,59 @@ export function buildMemberCandidates(members: MentionableMember[], query: strin
 export function buildMentionTag(memberRowId: string): string {
   return `<clawbench-mention targets="${memberRowId}"></clawbench-mention> `
 }
+
+/** One staged member card, as the input serializes it on send. */
+export interface MentionCardSpec {
+  /** The member ROW id (the tag's targets value). */
+  memberId: string
+  /** The card's annotation — a PRIVATE note to that member. '' = no note. */
+  note?: string
+}
+
+/**
+ * serializeMentionCards turns the input's member cards into the protocol text a
+ * send carries. Each card yields ONE public mention (an empty body: the card is
+ * a "who should speak" marker — the user's question is the rest of the message),
+ * and a card WITH a note yields an additional `private` mention carrying that
+ * note (the 密送 channel: only the target may see it).
+ *
+ * Public tags come first, then the private ones, so the public routing block
+ * reads as one contiguous run.
+ *
+ * A note containing the protocol's own tag syntax is stripped of it: the parser
+ * matches spans non-greedily, so an embedded `</clawbench-mention>` would end
+ * the span early and leak the remainder as PROSE — visible to every member. The
+ * reserved token is simply not representable inside a note body (fail-closed,
+ * matching stripAllMentionSpans elsewhere in this module).
+ */
+export function serializeMentionCards(cards: MentionCardSpec[]): string {
+  const seen = new Set<string>()
+  const publicParts: string[] = []
+  const privateParts: string[] = []
+  for (const c of cards) {
+    const id = c.memberId
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    publicParts.push(`<clawbench-mention targets="${id}"></clawbench-mention>`)
+    const note = sanitizeNoteBody(c.note)
+    if (note) {
+      privateParts.push(`<clawbench-mention targets="${id}" private>${note}</clawbench-mention>`)
+    }
+  }
+  return [...publicParts, ...privateParts].join(' ')
+}
+
+/**
+ * sanitizeNoteBody strips any protocol tag token from a note body so a crafted
+ * note cannot terminate its own span and leak the remainder as prose. The
+ * protocol's reserved tokens are simply not representable inside a note.
+ */
+function sanitizeNoteBody(note: string | undefined): string {
+  if (!note) return ''
+  // Remove any opening/closing protocol token, well-formed or not. Done with a
+  // single literal-token scan rather than a tag regex so a malformed/partial
+  // token (which the parser would still treat as a span start) is covered too.
+  return note
+    .replace(/<\/?clawbench-mention\b[^>]*>/gi, '')
+    .trim()
+}
