@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 // versionGate imports electron + install at module scope (they do Electron/fs
 // work), so they are mocked here to load the pure `evaluateGate` decision.
@@ -15,8 +15,11 @@ vi.mock('./install', () => ({
 }))
 vi.mock('./clientLog', () => ({ recordError: vi.fn() }))
 
-import { evaluateGate, beginNavigation } from './versionGate'
+import { evaluateGate, beginNavigation, installServerVersion, formatInstallFailure } from './versionGate'
+import type { VersionGateInfo } from './versionGate'
 import type { DesktopLatest } from './updater'
+import { dialog } from 'electron'
+import { downloadAndInstall, installPayload } from './install'
 
 const latest = (over: Partial<DesktopLatest> = {}): DesktopLatest => ({
   version: 'v1.1.0',
@@ -70,5 +73,74 @@ describe('beginNavigation', () => {
     const a = beginNavigation()
     const b = beginNavigation()
     expect(b).toBeGreaterThan(a)
+  })
+})
+
+const gateInfo = (over: Partial<VersionGateInfo> = {}): VersionGateInfo => ({
+  clientVersion: '1.0.0',
+  serverVersion: '1.1.0',
+  direction: 'older',
+  urls: ['https://example/full.zip'],
+  payloadUrls: [],
+  ...over,
+})
+
+describe('installServerVersion failure reporting', () => {
+  // showMessageBox is overloaded (with/without a parent window); the mock is
+  // typed against the 1-arg overload, so read the options object out of the raw
+  // call args. At runtime the parent is passed explicitly (as `undefined` when
+  // there is none), so the options object is the LAST argument.
+  const dialogDetail = (): string => {
+    const args = vi.mocked(dialog.showMessageBox).mock.calls[0] as unknown as unknown[]
+    const opts = args[args.length - 1] as { detail?: string }
+    return opts?.detail ?? ''
+  }
+
+  beforeEach(() => {
+    vi.mocked(dialog.showMessageBox).mockReset()
+    vi.mocked(downloadAndInstall).mockReset()
+    vi.mocked(installPayload).mockReset()
+  })
+  afterEach(() => vi.restoreAllMocks())
+
+  it('reports the payload (npm) error too when the full download also fails', async () => {
+    // The regression: the payload path failed silently (only console.error), so
+    // the dialog showed only the github.com full-package error — making a
+    // missing/failing npm mirror look like the client never tried npm at all.
+    vi.mocked(installPayload).mockRejectedValue(new Error('payload 404: npm mirror unreachable'))
+    vi.mocked(downloadAndInstall).mockRejectedValue(
+      new Error('all download sources failed:\nhttps://gh-proxy.com/...: read ECONNRESET'),
+    )
+
+    const ok = await installServerVersion(
+      gateInfo({ payloadUrls: ['https://example/payload.tgz'] }),
+      null,
+    )
+    expect(ok).toBe(false)
+
+    expect(dialogDetail()).toContain('read ECONNRESET') // the full-download error
+    expect(dialogDetail()).toContain('npm mirror unreachable') // AND the payload error
+  })
+
+  it('still reports the full-package error when there is no payload path', async () => {
+    vi.mocked(downloadAndInstall).mockRejectedValue(new Error('all download sources failed'))
+
+    const ok = await installServerVersion(gateInfo({ payloadUrls: [] }), null)
+    expect(ok).toBe(false)
+
+    expect(dialogDetail()).toContain('all download sources failed')
+    expect(installPayload).not.toHaveBeenCalled()
+  })
+})
+
+describe('formatInstallFailure', () => {
+  it('shows only the full-download error when the payload path was not attempted', () => {
+    expect(formatInstallFailure(new Error('boom'), null)).toBe('boom')
+  })
+
+  it('labels both attempts so the user can tell npm from github', () => {
+    const s = formatInstallFailure(new Error('github ECONNRESET'), new Error('npm 404'))
+    expect(s).toContain('npm 404')
+    expect(s).toContain('github ECONNRESET')
   })
 })

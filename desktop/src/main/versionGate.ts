@@ -116,6 +116,26 @@ export async function checkVersionGate(url: string, gen: number): Promise<Versio
 }
 
 /**
+ * Build the `detail` text for the "install failed" dialog.
+ *
+ * The payload (npm) path is attempted FIRST and falls back to the full package.
+ * It used to log its failure to console only, so the dialog showed just the
+ * github.com full-package error — which reads as "the client never tried npm",
+ * when in fact npm was tried and failed. On a machine where github.com is
+ * unreachable (mainland China) that is the whole story, and hiding the npm
+ * error sends the reader down the wrong path entirely.
+ *
+ * When the payload was attempted, BOTH errors are shown, each labelled with the
+ * source it came from.
+ */
+export function formatInstallFailure(fullErr: unknown, payloadErr: unknown): string {
+  const full = String((fullErr as Error)?.message || fullErr)
+  if (payloadErr == null) return full
+  const payload = String((payloadErr as Error)?.message || payloadErr)
+  return `增量包（npm）安装失败：\n${payload}\n\n全量包下载失败：\n${full}`
+}
+
+/**
  * Install the server's version (the user chose "download" on the gate).
  *
  * Prefers the small payload archive and falls back to the full package, exactly
@@ -143,6 +163,7 @@ export async function installServerVersion(
   // a dead mirror, an ABI mismatch, a malformed archive — falls through to the
   // full download below rather than failing the upgrade.
   let installed = false
+  let payloadErr: unknown = null
   if (process.platform !== 'darwin' && info.payloadUrls.length > 0) {
     try {
       await installPayload(info.payloadUrls, info.serverVersion, appRoot())
@@ -150,6 +171,9 @@ export async function installServerVersion(
     } catch (err) {
       console.error('[gate] payload install failed, falling back to full download:', err)
       recordError('Install', err)
+      // Keep it so the failure dialog can show BOTH attempts — otherwise the
+      // user only ever sees the github.com error and concludes npm was skipped.
+      payloadErr = err
     }
   }
 
@@ -161,7 +185,7 @@ export async function installServerVersion(
       buttons: ['确定'],
       title: '下载失败',
       message: '下载或安装该版本失败，当前版本不受影响。',
-      detail: String((err as Error)?.message || err),
+      detail: formatInstallFailure(err, payloadErr),
     })
     return false
   }
