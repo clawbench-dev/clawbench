@@ -4633,6 +4633,10 @@ paths:
           description: |
             聚合结果。会话带 `title_match`、`title_match_positions`（标题内
             字符级偏移，用于高亮）与 `title_only`（无内容分块，需懒加载首条消息）。
+            群聊会话另带 `group_members`（在线成员预览，渲染头像堆叠）与
+            `group_speakers`（成员行 id → 显示名，**含已离场成员**，供详情把
+            chunk 的 `agent_id` 归属到具体发言人）；1:1 与任务会话不含这两项。
+            每条命中分块带 `agent_id`（发言人成员行 id，1:1 会话为空）。
 
   /api/rag/session-first-message:
     get:

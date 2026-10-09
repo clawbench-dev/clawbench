@@ -87,16 +87,6 @@ func TestSessionTypeMatchesFilter(t *testing.T) {
 	}
 }
 
-func TestSessionTypeDBValue(t *testing.T) {
-	// "all" must yield the empty string so callers can use it as "no predicate".
-	assert.Equal(t, "", SessionTypeDBValue(""))
-	assert.Equal(t, "", SessionTypeDBValue("all"))
-	assert.Equal(t, "", SessionTypeDBValue("bogus"))
-	assert.Equal(t, "chat", SessionTypeDBValue("chat"))
-	// The user-facing "task" maps onto the DB's 'scheduled'.
-	assert.Equal(t, "scheduled", SessionTypeDBValue("task"))
-}
-
 func TestEscapeLikePattern(t *testing.T) {
 	// Every LIKE metacharacter must be backslash-escaped so it matches
 	// literally once paired with ESCAPE '\'.
@@ -739,8 +729,9 @@ func TestPurgeArchivedData_CascadesGroupMemberRows(t *testing.T) {
 // --- session-type predicate ---
 
 // TestVisibleSessionTypes_MatchClause guards the representations of the
-// visible-session set from drifting apart: the SQL clause, the Go slice, and
-// IsVisibleSessionType must all describe exactly {chat, group}.
+// visible-session set from drifting apart: the SQL clause and the Go slice must
+// both describe exactly {chat, group}, and the "all" type filter must select
+// that same set (the Go/SQL agreement the query builders rely on).
 func TestVisibleSessionTypes_MatchClause(t *testing.T) {
 	assert.Equal(t, "'chat', 'group'", VisibleSessionTypeInClause)
 	assert.Equal(t, []string{SessionTypeChat, SessionTypeGroup}, visibleSessionTypes)
@@ -750,30 +741,8 @@ func TestVisibleSessionTypes_MatchClause(t *testing.T) {
 	assert.Equal(t, quoted, VisibleSessionTypeInClause,
 		"the SQL clause must be derived from visibleSessionTypes, not hand-written")
 
-	// Every visible type must satisfy the predicate (the Go/SQL agreement).
-	for _, typ := range visibleSessionTypes {
-		assert.True(t, IsVisibleSessionType(typ), "%q must be visible", typ)
-	}
-}
-
-// TestIsVisibleSessionType pins the semantics: chat and group are visible, a
-// group_member (hidden) and a scheduled (task) row are not, and an empty stored
-// value is treated as the schema default 'chat'.
-func TestIsVisibleSessionType(t *testing.T) {
-	cases := []struct {
-		stored string
-		want   bool
-	}{
-		{SessionTypeChat, true},
-		{SessionTypeGroup, true},
-		{"", true}, // schema default
-		{SessionTypeGroupMember, false},
-		{SessionTypeScheduled, false},
-		{"unknown", false},
-	}
-	for _, tc := range cases {
-		assert.Equal(t, tc.want, IsVisibleSessionType(tc.stored), "stored=%q", tc.stored)
-	}
+	// The "all" filter selects exactly the visible set.
+	assert.Equal(t, visibleSessionTypes, SessionTypeFilterTypes(SessionTypeFilterAll))
 }
 
 // TestVisibleSessionTypes_EmbeddedInQueryBuilders pins that the two Go-side

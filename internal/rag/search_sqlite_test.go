@@ -232,6 +232,32 @@ func TestRAGSearch_Hybrid_WithMockEmbedder(t *testing.T) {
 	assert.NotEmpty(t, result.Results)
 }
 
+// TestSearchVector_CarriesSpeakerAgentID pins the VECTOR path's scan order: a
+// chunk's speaker id (agent_id) must survive the vec0 KNN join, not just the
+// FTS path. A scan-order slip here is only a runtime error, so assert it.
+func TestSearchVector_CarriesSpeakerAgentID(t *testing.T) {
+	store := setupSQLiteStoreWithDim(t)
+	require.NoError(t, store.ensureVecTable())
+
+	chunk := Chunk{
+		SessionID: "sess-vec", MessageID: 1, ChunkText: "vector speaker test",
+		ChunkTextSegmented: "vector speaker test", ChunkIndex: 0,
+		TokenCount: 3, Embedding: makeTestEmbedding(), HasEmbedding: true,
+		ProjectPath: testProjectPath, Backend: testBackendClaude, Role: testRoleAssistant,
+		AgentID:   "member-row-3",
+		CreatedAt: time.Now().Truncate(time.Millisecond),
+	}
+	require.NoError(t, store.InsertChunks([]Chunk{chunk}))
+	store.loadEmbeddingDimFromDB()
+
+	hits, err := store.SearchVector(makeTestEmbedding(), 5, testProjectPath, "", "", "", "", "", "")
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	assert.Equal(t, "member-row-3", hits[0].AgentID,
+		"the vector path must scan the chunk's speaker id")
+	assert.Equal(t, testRoleAssistant, hits[0].Role, "sanity: adjacent columns still line up")
+}
+
 func TestRAGSearch_EmbeddingFails_FallbackToFTS(t *testing.T) {
 	// Create a mock server that returns errors for embeddings
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -531,19 +557,19 @@ func TestRAGSessionSearch_TypeFilter(t *testing.T) {
 		}))
 	}
 
-	// "all" (and empty) → no type restriction in SEARCH mode: every matching
-	// session is returned (chat, group, and the scheduled task run). Browse mode
-	// ("recent") is the one that narrows "all" to conversations only.
+	// "all" (and empty) → the visible types only: chat + group. The task run is
+	// excluded here just as the title channel and browse mode exclude it — the
+	// two channels of one response must agree.
 	all, err := RAGSessionSearch(context.Background(), store, nil, SearchParams{
 		Query:       "database",
 		ProjectPath: testProjectPath,
 		SessionType: "all",
 	}, 10, 20)
 	require.NoError(t, err)
-	require.Len(t, all.Sessions, 3)
-	allIDs := []string{all.Sessions[0].SessionID, all.Sessions[1].SessionID, all.Sessions[2].SessionID}
-	assert.ElementsMatch(t, []string{"sess-conv", "sess-group", "sess-job"}, allIDs,
-		"search \"all\" applies no type restriction")
+	require.Len(t, all.Sessions, 2)
+	allIDs := []string{all.Sessions[0].SessionID, all.Sessions[1].SessionID}
+	assert.ElementsMatch(t, []string{"sess-conv", "sess-group"}, allIDs,
+		"search \"all\" must include chat + group and exclude scheduled")
 
 	// "task" → only the scheduled session, and its type is reported back.
 	task, err := RAGSessionSearch(context.Background(), store, nil, SearchParams{
@@ -578,7 +604,7 @@ func TestRAGSessionSearch_TypeFilter(t *testing.T) {
 	assert.Equal(t, "sess-group", group.Sessions[0].SessionID)
 	assert.Equal(t, "group", group.Sessions[0].SessionType)
 
-	// An unknown value falls back to "all" (no restriction) rather than
+	// An unknown value falls back to "all" (the visible types) rather than
 	// dropping everything.
 	bogus, err := RAGSessionSearch(context.Background(), store, nil, SearchParams{
 		Query:       "database",
@@ -586,7 +612,7 @@ func TestRAGSessionSearch_TypeFilter(t *testing.T) {
 		SessionType: "bogus",
 	}, 10, 20)
 	require.NoError(t, err)
-	assert.Len(t, bogus.Sessions, 3)
+	assert.Len(t, bogus.Sessions, 2)
 }
 
 // TestRAGSessionSearch_TypeFilterUnknownTypeTreatedAsChat mirrors the archive

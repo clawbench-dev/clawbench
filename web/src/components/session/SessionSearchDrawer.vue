@@ -139,7 +139,7 @@
         :show="openMenu === 'type'"
         :target-element="typeTriggerRef"
         :max-width="150"
-        :menu-items-count="3"
+        :menu-items-count="4"
         anchor="right"
         @update:show="(v: boolean) => { if (!v) openMenu = null }"
       >
@@ -454,12 +454,12 @@ function chunkRoleLabel(chunk: ChunkHit): string {
 }
 
 // resolveMemberName maps a group member row id to its display name using the
-// selected session's roster. Returns '' when there is no id, no roster, or no
-// matching member — the caller then shows the generic role label.
+// selected session's speaker roster (which includes members who have left, so
+// their past speech still resolves). Returns '' when there is no id, no roster,
+// or no matching member — the caller then shows the generic role label.
 function resolveMemberName(agentId?: string): string {
   if (!agentId) return ''
-  const members = selectedSession.value?.group_members || []
-  return members.find(m => m.id === agentId)?.name || ''
+  return selectedSession.value?.group_speakers?.[agentId] || ''
 }
 
 // ── Lazy first-message preview (browse mode only) ──

@@ -2681,40 +2681,40 @@ func TestNormalizeSessionTypeFilter(t *testing.T) {
 	assert.Equal(t, "all", store.NormalizeSessionTypeFilter(""))
 	assert.Equal(t, "all", store.NormalizeSessionTypeFilter("bogus"))
 	assert.Equal(t, "chat", store.NormalizeSessionTypeFilter(" CHAT "))
+	assert.Equal(t, "group", store.NormalizeSessionTypeFilter("Group"))
 	assert.Equal(t, "task", store.NormalizeSessionTypeFilter("Task"))
 }
 
-func TestSessionTypeDBValue(t *testing.T) {
-	// "all" must yield the empty string so callers can use it as "no predicate".
-	assert.Equal(t, "", store.SessionTypeDBValue(""))
-	assert.Equal(t, "", store.SessionTypeDBValue("all"))
-	assert.Equal(t, "", store.SessionTypeDBValue("bogus"))
-	assert.Equal(t, "chat", store.SessionTypeDBValue("chat"))
-	// The user-facing "task" maps onto the DB's 'scheduled'.
-	assert.Equal(t, "scheduled", store.SessionTypeDBValue("task"))
-}
-
 // TestGetRecentSessions_TypeFilterSeparation locks down the browse-mode rule:
-// the type filter never mixes session kinds. "all" and "chat" both list
-// conversations; only an explicit "task" lists task executions.
+// the three concrete types are mutually exclusive. "all" lists the user-visible
+// conversations (chat + group); "chat" lists 1:1 only (no group); "group" lists
+// group chats only; "task" lists task executions.
 func TestGetRecentSessions_TypeFilterSeparation(t *testing.T) {
 	setupDB(t)
 
 	insertSessionWithTime(t, "/project", "conv", "Conversation", "2024-01-01 10:00:00", false)
+	insertSessionWithTypeAndTime(t, "/project", "grp", "Group chat", "group", "2024-01-15 10:00:00", false)
 	insertSessionWithTypeAndTime(t, "/project", "job", "Task run", "scheduled", "2024-02-01 10:00:00", false)
 
-	// Default / "all" → conversations only, never tasks.
+	// Default / "all" → chat + group, never tasks.
 	all, _, err := store.GetRecentSessions("/project", 0, "", "", "", "", "", "", "")
 	assert.NoError(t, err)
-	require.Len(t, all, 1)
-	assert.Equal(t, "conv", all[0].ID)
-	assert.Equal(t, "chat", all[0].SessionType)
+	require.Len(t, all, 2)
+	ids := []string{all[0].ID, all[1].ID}
+	assert.ElementsMatch(t, []string{"conv", "grp"}, ids)
 
-	// Explicit "chat" behaves like "all".
+	// Explicit "chat" lists 1:1 conversations ONLY — a group chat is not a chat.
 	chat, _, err := store.GetRecentSessions("/project", 0, "", store.SessionTypeFilterChat, "", "", "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, chat, 1)
 	assert.Equal(t, "conv", chat[0].ID)
+
+	// Explicit "group" lists the group chat only.
+	group, _, err := store.GetRecentSessions("/project", 0, "", store.SessionTypeFilterGroup, "", "", "", "", "")
+	assert.NoError(t, err)
+	require.Len(t, group, 1)
+	assert.Equal(t, "grp", group[0].ID)
+	assert.Equal(t, "group", group[0].SessionType)
 
 	// Explicit "task" lists the task execution instead.
 	task, _, err := store.GetRecentSessions("/project", 0, "", store.SessionTypeFilterTask, "", "", "", "", "")

@@ -377,10 +377,7 @@ describe('SessionSearchDrawer', () => {
     const groupResult = {
       ...sampleResult,
       session_type: 'group',
-      group_members: [
-        { id: 'm1', agentId: 'a1', name: 'Host', backend: 'claude', isHost: true },
-        { id: 'm2', agentId: 'a2', name: 'Peer', backend: 'codex' },
-      ],
+      group_speakers: { m1: 'Host', m2: 'Peer' },
       chunks: [{
         chunk_id: 1,
         chunk_text: 'spoken by peer',
@@ -403,13 +400,41 @@ describe('SessionSearchDrawer', () => {
     expect(wrapper.find('.detail-chunk-role').text()).toBe('Peer')
   })
 
+  it('resolves a departed member via group_speakers (which includes left members)', async () => {
+    const groupResult = {
+      ...sampleResult,
+      session_type: 'group',
+      // group_members (avatar stack) is active-only, but group_speakers keeps
+      // the departed member so their past speech still resolves to their name.
+      group_members: [{ id: 'm1', agentId: 'a1', name: 'Host', backend: 'claude', isHost: true }],
+      group_speakers: { m1: 'Host', 'm-gone': 'Former Member' },
+      chunks: [{
+        chunk_id: 1,
+        chunk_text: 'spoken by someone who left',
+        match_positions: [],
+        score: 0.9,
+        role: 'assistant',
+        message_id: 1,
+        agent_id: 'm-gone',
+        created_at: '2025-01-01',
+      }],
+    }
+    mockSearchState.mockReturnValue(createState({ query: 'test', results: [groupResult], searchMode: 'hybrid' }))
+
+    const wrapper = mountDrawer()
+    const instance = (wrapper.vm as any).$
+    instance.setupState.selectSession(groupResult)
+    await flushPromises()
+    instance.update()
+
+    expect(wrapper.find('.detail-chunk-role').text()).toBe('Former Member')
+  })
+
   it('falls back to the generic Assistant label when a chunk speaker is unresolved', async () => {
     const groupResult = {
       ...sampleResult,
       session_type: 'group',
-      group_members: [
-        { id: 'm1', agentId: 'a1', name: 'Host', backend: 'claude', isHost: true },
-      ],
+      group_speakers: { m1: 'Host' },
       chunks: [{
         chunk_id: 1,
         chunk_text: 'unknown speaker',
@@ -417,7 +442,7 @@ describe('SessionSearchDrawer', () => {
         score: 0.9,
         role: 'assistant',
         message_id: 1,
-        agent_id: 'm-gone',
+        agent_id: 'm-unknown',
         created_at: '2025-01-01',
       }],
     }

@@ -51,20 +51,11 @@ const (
 // leaking it. Keep in sync with visibleSessionTypes.
 const VisibleSessionTypeInClause = "'" + SessionTypeChat + "', '" + SessionTypeGroup + "'"
 
-// visibleSessionTypes is VisibleSessionTypeInClause as a slice, for the Go-side
-// query builders that bind the two types as parameters. Unexported: callers
-// outside this package embed the SQL clause, so the slice offers no API. Keep
-// in sync with the clause.
+// visibleSessionTypes is VisibleSessionTypeInClause as a slice: the DB types
+// selected by the "all" type filter, returned by SessionTypeFilterTypes and
+// bound as parameters by the Go-side query builders. Keep in sync with the
+// clause.
 var visibleSessionTypes = []string{SessionTypeChat, SessionTypeGroup}
-
-// IsVisibleSessionType reports whether a stored session_type is user-visible
-// (chat or group). An empty value is treated as 'chat' — the schema default.
-func IsVisibleSessionType(storedType string) bool {
-	if storedType == "" {
-		return true
-	}
-	return storedType == SessionTypeChat || storedType == SessionTypeGroup
-}
 
 // NormalizeSessionArchiveFilter maps a raw filter string to a known value,
 // defaulting to "all" for empty/unknown input.
@@ -155,19 +146,6 @@ func SessionTypeMatchesFilter(storedType, filter string) bool {
 	return false
 }
 
-// SessionTypeDBValue maps a type filter to the value stored in
-// chat_sessions.session_type, or "" when the filter is unfiltered ("all").
-// Callers use the empty string as "no predicate". Filters that select more than
-// one type (only "all") also yield "" — use SessionTypeFilterTypes when the
-// concrete set is needed.
-func SessionTypeDBValue(filter string) string {
-	types := SessionTypeFilterTypes(filter)
-	if len(types) != 1 {
-		return ""
-	}
-	return types[0]
-}
-
 // RecentSession is a lightweight listing row used by session search's "browse
 // all" mode (empty query): every chat session for the project, newest first,
 // including archived ones that can still be resumed/restored. It deliberately
@@ -194,10 +172,11 @@ type RecentSession struct {
 // sortOrder selects newest/oldest time ordering (relevance falls back to newest
 // here, since browse mode has no search score).
 //
-// typeFilter narrows by session type. Browse mode is deliberately limited to
-// interactive sessions: "all"/"chat" both list session_type='chat', and only an
-// explicit "task" switches to 'scheduled'. Selecting "task" therefore lists task
-// executions instead of conversations — it never mixes the two.
+// typeFilter narrows by session type via SessionTypeFilterTypes: "chat" lists
+// 1:1 conversations only, "group" lists group chats only, "task" lists task
+// executions, and "all" is the union of the user-visible conversations
+// (chat + group). The three concrete types are mutually exclusive — a filter
+// never mixes them — and hidden group_member rows are never listed.
 //
 // Cursor pagination: pass the last row's created_at (formatted "2006-01-02
 // 15:04:05") and id to fetch the next page. The returned bool reports whether

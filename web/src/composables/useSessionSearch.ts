@@ -48,6 +48,13 @@ export interface SessionSearchResult {
    * stacked avatars. Absent for 1:1 and task sessions.
    */
   group_members?: GroupMemberPreview[]
+  /**
+   * Group member row id → display name, INCLUDING members who have since left.
+   * Resolves a chunk's `agent_id` to a speaker name in the detail view (a left
+   * member's past speech must still resolve to their own name). Absent for 1:1
+   * and task sessions.
+   */
+  group_speakers?: Record<string, string>
 }
 
 /** A compact preview of one active group member (see model.GroupMemberPreview). */

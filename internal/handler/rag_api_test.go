@@ -1025,14 +1025,16 @@ func TestServeRAGSessionSearch_GroupMembersEnriched(t *testing.T) {
 		IsHost bool   `json:"isHost"`
 	}
 	type sess struct {
-		SessionID    string   `json:"session_id"`
-		SessionType  string   `json:"session_type"`
-		GroupMembers []member `json:"group_members"`
+		SessionID     string            `json:"session_id"`
+		SessionType   string            `json:"session_type"`
+		GroupMembers  []member          `json:"group_members"`
+		GroupSpeakers map[string]string `json:"group_speakers"`
 	}
 	type resp struct {
 		Sessions []sess `json:"sessions"`
 	}
 
+	// Browse path (empty query).
 	req := newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{})
 	req = withProjectCookie(req, env.ProjectDir)
 	w := callHandlerWithAuth(ServeRAGSessionSearch, req)
@@ -1050,8 +1052,72 @@ func TestServeRAGSessionSearch_GroupMembersEnriched(t *testing.T) {
 	assert.Equal(t, "gm1", byID["grp"].GroupMembers[0].ID)
 	assert.True(t, byID["grp"].GroupMembers[0].IsHost)
 	assert.Equal(t, "Host", byID["grp"].GroupMembers[0].Name)
-	// The 1:1 conversation has no member preview.
+	// The speaker roster resolves member row ids to names.
+	assert.Equal(t, "Host", byID["grp"].GroupSpeakers["gm1"])
+	assert.Equal(t, "Peer", byID["grp"].GroupSpeakers["gm2"])
+	// The 1:1 conversation has no member preview or roster.
 	assert.Empty(t, byID["conv"].GroupMembers)
+	assert.Empty(t, byID["conv"].GroupSpeakers)
+}
+
+// TestServeRAGSessionSearch_GroupMembersEnrichedOnSearchPath covers the SECOND
+// enrichment call site — the content-search branch (non-empty query). The browse
+// test above exercises the other call site; deleting either must fail a test.
+func TestServeRAGSessionSearch_GroupMembersEnrichedOnSearchPath(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origStore := rag.GlobalStore
+	origEmbedder := rag.GlobalEmbedder
+	t.Cleanup(func() {
+		rag.GlobalStore = origStore
+		rag.GlobalEmbedder = origEmbedder
+	})
+
+	insertSession(t, env.ProjectDir, "grp", "Group chat", "2024-02-01 10:00:00", false, "group")
+	projectID := store.ProjectIDForTest(t, env.ProjectDir)
+	// GroupMembersForGroups reads the host pointer from the group row's
+	// context_state via json_extract, so a real group row carries valid JSON.
+	_, err := store.UnsafeDBForTest().Exec(
+		"UPDATE chat_sessions SET context_state = ? WHERE id = 'grp'",
+		`{"host_member_id":"gm1"}`,
+	)
+	require.NoError(t, err)
+	_, err = store.UnsafeDBForTest().Exec(
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type, group_id, archived, created_at, updated_at) VALUES ('gm1', ?, 'claude', 'Host', 'agent-host', 'group_member', 'grp', 0, '2024-02-01 10:00:00', '2024-02-01 10:00:00')",
+		projectID,
+	)
+	require.NoError(t, err)
+
+	ragStore := setupRAGStore(t)
+	rag.GlobalStore = ragStore
+	rag.GlobalEmbedder = nil // FTS-only; no embedder needed.
+	require.NoError(t, ragStore.InsertChunks([]rag.Chunk{{
+		SessionID: "grp", MessageID: 1, ChunkText: "database query optimization",
+		ChunkTextSegmented: rag.SegmentText("database query optimization"),
+		ChunkIndex:         0, TokenCount: 3, ProjectPath: env.ProjectDir,
+		Backend: "claude", Role: "assistant", AgentID: "gm1",
+	}}))
+
+	type sess struct {
+		SessionID     string            `json:"session_id"`
+		GroupMembers  []json.RawMessage `json:"group_members"`
+		GroupSpeakers map[string]string `json:"group_speakers"`
+	}
+	type resp struct {
+		Sessions []sess `json:"sessions"`
+	}
+
+	req := newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{"q": "database"})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeRAGSessionSearch, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	var got resp
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	require.Len(t, got.Sessions, 1)
+	// The search branch must enrich too.
+	require.Len(t, got.Sessions[0].GroupMembers, 1)
+	assert.Equal(t, "Host", got.Sessions[0].GroupSpeakers["gm1"])
 }
 
 func TestServeRAGSessionSearch_BrowseSortOldest(t *testing.T) {

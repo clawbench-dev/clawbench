@@ -734,6 +734,67 @@ func GroupMembersForGroups(groupIDs []string) (map[string][]model.GroupMemberPre
 	return out, rows.Err()
 }
 
+// GroupMemberSpeakersForGroups returns each group's member-row-id → display-name
+// map, INCLUDING removed (archived) members. It is the speaker-resolution
+// companion to GroupMembersForGroups (which is active-only, for the avatar
+// stack): a message's chat_history.agent_id may name a member who has since
+// left, and their past speech must still resolve to their own name rather than
+// a generic "Assistant" (mirrors ListGroupMembers' include-left rule).
+//
+// One query for all ids. Groups with no members are absent from the map; empty
+// input returns an empty map without touching the DB.
+func GroupMemberSpeakersForGroups(groupIDs []string) (map[string]map[string]string, error) {
+	out := map[string]map[string]string{}
+	if len(groupIDs) == 0 {
+		return out, nil
+	}
+
+	seen := make(map[string]bool, len(groupIDs))
+	ids := make([]string, 0, len(groupIDs))
+	for _, id := range groupIDs {
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+
+	placeholders := strings.Repeat("?,", len(ids))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := make([]any, 0, len(ids)+1)
+	for _, id := range ids {
+		args = append(args, id)
+	}
+
+	// No archived filter: left members are included on purpose (their speech is
+	// kept in the timeline). The name is the member row's title.
+	query := fmt.Sprintf(
+		`SELECT group_id, id, title FROM chat_sessions
+		 WHERE group_id IN (%s) AND session_type = ?`, placeholders)
+	args = append(args, groupMemberSessionType)
+
+	rows, err := store.ReadDB().Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var groupID, memberID, name string
+		if err := rows.Scan(&groupID, &memberID, &name); err != nil {
+			return nil, err
+		}
+		if out[groupID] == nil {
+			out[groupID] = map[string]string{}
+		}
+		out[groupID][memberID] = name
+	}
+	return out, rows.Err()
+}
+
 // ErrCannotRemoveHost is returned when a caller tries to remove the group's
 // host member. The host is the only router, so removing it would leave the
 // group unable to run another turn.

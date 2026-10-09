@@ -230,6 +230,12 @@ type SessionSearchResult struct {
 	// Empty for 1:1 and task sessions. Populated by the handler (which owns the
 	// service dependency; the rag package must not import service).
 	GroupMembers []model.GroupMemberPreview `json:"group_members,omitempty"`
+	// GroupSpeakers maps a group member row id → display name, INCLUDING members
+	// who have since left (their past speech is still in the timeline). The
+	// drawer resolves a chunk's agent_id through this map, so a departed
+	// speaker still shows their own name rather than a generic label. Empty for
+	// 1:1 and task sessions.
+	GroupSpeakers map[string]string `json:"group_speakers,omitempty"`
 }
 
 // ChunkHit represents a single matching chunk within a session search result.
@@ -417,21 +423,25 @@ func contentSessionMatches(ctx context.Context, ragStore *Store, embedder *Embed
 	}
 
 	// Filter by session type. The filter→types mapping lives in
-	// store.SessionTypeFilterTypes so this post-aggregation predicate cannot
-	// drift from the SQL builders (which apply the same mapping up front). A
-	// session whose row is missing (or whose stored type is empty) counts as
-	// 'chat' — the schema default — mirroring how a missing row is treated as
-	// active above. "all" selects the visible types only; hidden group_member
-	// and task executions stay out.
-	if filter := store.NormalizeSessionTypeFilter(params.SessionType); filter != store.SessionTypeFilterAll {
-		filtered := sessions[:0]
-		for _, s := range sessions {
-			if store.SessionTypeMatchesFilter(s.SessionType, filter) {
-				filtered = append(filtered, s)
-			}
+	// store.SessionTypeFilterTypes / SessionTypeMatchesFilter so this
+	// post-aggregation predicate cannot drift from the SQL builders (which apply
+	// the same mapping up front). A session whose row is missing (or whose stored
+	// type is empty) counts as 'chat' — the schema default — mirroring how a
+	// missing row is treated as active above.
+	//
+	// This runs for EVERY filter including "all": rag_chunks carries no type
+	// column, so this is the content channel's ONLY type gate. Skipping it for
+	// "all" would leak hidden group_member and task-execution sessions into a
+	// search that the title channel and browse mode both exclude — the two
+	// channels of one response must agree.
+	filter := store.NormalizeSessionTypeFilter(params.SessionType)
+	filtered := sessions[:0]
+	for _, s := range sessions {
+		if store.SessionTypeMatchesFilter(s.SessionType, filter) {
+			filtered = append(filtered, s)
 		}
-		sessions = filtered
 	}
+	sessions = filtered
 
 	return sessions, result.Mode, nil
 }
