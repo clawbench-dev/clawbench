@@ -18,6 +18,7 @@
       :currentAgent="currentAgent"
       :isGroupSession="isGroupSession"
       :groupMembers="props.groupMembers"
+      :groupMode="props.groupMode"
       :resolveSpeaker="props.resolveGroupSpeaker"
       :resolveSpeakerByName="props.resolveGroupSpeakerByName"
       :hostMemberId="props.groupHostMemberId"
@@ -311,6 +312,10 @@ const props = defineProps({
     // Group roster, owned by App.vue (the header avatar stack lives there).
     // Passed down so the roster is fetched once, not once per consumer.
     groupMembers: { type: Array, default: () => [] },
+    /** Group mode ("host" | "free"). Selects the group empty-state copy in
+     *  ChatMessageList: the two modes route completely differently, so a single
+     *  hint would describe one mode and mislead in the other. */
+    groupMode: { type: String, default: 'host' },
     groupHostMemberId: { type: String, default: '' },
     resolveGroupSpeaker: { type: Function, default: null },
     resolveGroupSpeakerByName: { type: Function, default: null },

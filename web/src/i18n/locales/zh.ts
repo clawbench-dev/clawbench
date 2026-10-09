@@ -837,7 +837,19 @@ export default {
       allMessagesLoaded: '已加载全部消息',
       startConversation: '发送消息开始对话',
       startConversationAI: '发送消息开始与 AI 对话',
-      groupStartHint: '发送消息，主持人会协调成员完成工作',
+      // Group empty-state copy, selected by mode. The two modes route
+      // completely differently, so each gets its own title / one-line
+      // description / three tips.
+      groupModeHostTitle: '主持人模式',
+      groupModeHostDesc: '由主持人协调成员分工，你只需提出目标。',
+      groupModeHostTip1: '主持人决定谁发言、下达什么指令',
+      groupModeHostTip2: '随时发消息可打断并纠偏',
+      groupModeHostTip3: '主持人给出结论或达到最大轮数后结束',
+      groupModeFreeTitle: '自由模式',
+      groupModeFreeDesc: "成员通过互相 {'@'} 接力，没有主持人。",
+      groupModeFreeTip1: "{'@'} 某位成员，可直接让他发言",
+      groupModeFreeTip2: "成员之间 {'@'} 接力，形成讨论",
+      groupModeFreeTip3: '无轮数上限，随时点「停止」结束',
       noAgentsTitle: '暂无可用智能体',
       noAgentsDesc: '安装并配置 AI 智能体以开始对话。',
       noAgentsAction: '配置智能体',

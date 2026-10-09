@@ -123,4 +123,40 @@ describe('GroupAvatarStack', () => {
 
     expect(w.findAll('.avatar-disc.is-speaking')).toHaveLength(0)
   })
+
+  it('leads the strip with a group-mode badge (crown in host mode)', () => {
+    const w = mountStack([
+      { id: 'm1', name: 'Host', backend: 'codebuddy', agentId: 'a1', isHost: true },
+      { id: 'm2', name: 'A', backend: 'claude', agentId: 'a2', isHost: false },
+    ], { mode: 'host' })
+    const badge = w.find('.group-mode-badge')
+    expect(badge.exists()).toBe(true)
+    // Crown for host mode, and NOT the @ (free mode) glyph.
+    expect(badge.find('.lucide-crown').exists()).toBe(true)
+    expect(badge.find('.lucide-at-sign').exists()).toBe(false)
+  })
+
+  it('shows the @ glyph on the badge in free mode', () => {
+    const w = mountStack([
+      { id: 'm1', name: 'A', backend: 'claude', agentId: 'a2', isHost: false },
+    ], { mode: 'free' })
+    const badge = w.find('.group-mode-badge')
+    expect(badge.find('.lucide-at-sign').exists()).toBe(true)
+    expect(badge.find('.lucide-crown').exists()).toBe(false)
+  })
+
+  it('places the badge BEFORE the avatar stack and keeps it out of the a11y tree', () => {
+    const w = mountStack([
+      { id: 'm1', name: 'Host', backend: 'codebuddy', agentId: 'a1', isHost: true },
+      { id: 'm2', name: 'A', backend: 'claude', agentId: 'a2', isHost: false },
+    ])
+    const badge = w.find('.group-mode-badge').element
+    const stack = w.find('.avatar-stack').element
+    // Badge precedes the discs in DOM order (independent leading label).
+    expect(badge.compareDocumentPosition(stack) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // Decorative: the whole strip is one click target, so the badge is hidden
+    // from assistive tech and exposes only a hover tooltip.
+    expect(badge.getAttribute('aria-hidden')).toBe('true')
+    expect(badge.getAttribute('title')).toBe('group.hostMode')
+  })
 })

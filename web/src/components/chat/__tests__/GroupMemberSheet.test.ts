@@ -33,9 +33,13 @@ vi.mock('@/components/common/AgentSelectorDrawer.vue', () => ({
   default: { name: 'AgentSelectorDrawer', props: ['open'], template: '<div class="picker-stub" />' },
 }))
 // BottomSheet teleports to <body> and gates on everOpened; stub it with a
-// pass-through so the sheet's own content is queryable in place.
+// pass-through so the sheet's own content is queryable in place. The header
+// slot must be rendered too — the add-members action lives there.
 vi.mock('@/components/common/BottomSheet.vue', () => ({
-  default: { name: 'BottomSheet', template: '<div class="bs-stub"><slot /></div>' },
+  default: {
+    name: 'BottomSheet',
+    template: '<div class="bs-stub"><div class="bs-header-stub"><slot name="header" /></div><slot /></div>',
+  },
 }))
 
 function mountSheet(members: any[], props: Record<string, unknown> = {}) {
@@ -97,12 +101,35 @@ describe('GroupMemberSheet', () => {
     expect(w.emitted('changed')).toBeTruthy()
   })
 
-  it('saves max rounds on change and renders the add button as a pill', async () => {
+  it('saves max rounds on change', async () => {
     const w = mountSheet(MEMBERS)
     await w.find('.gm-setting-input').setValue(5)
     await flushPromises()
     expect(mockUpdateSettings).toHaveBeenCalledWith('g1', 5)
-    expect(w.find('.gm-add').classes()).toContain('fbtn')
+  })
+
+  // Adding is the sheet's primary action: it lives in the drawer header (right
+  // of the title), not as a full-width pill in the body. A regression would
+  // put it back in the body where it scrolls away with a long roster.
+  it('renders the add-members action in the header, right of the title', () => {
+    const w = mountSheet(MEMBERS)
+    const header = w.find('.bs-header-stub')
+    expect(header.exists()).toBe(true)
+    const add = header.find('[data-action="add-members"]')
+    expect(add.exists()).toBe(true)
+    expect(add.text()).toContain('group.addMembers')
+    // It must NOT also linger in the body.
+    expect(w.find('.group-member-sheet').find('[data-action="add-members"]').exists()).toBe(false)
+    expect(w.find('.gm-add').exists()).toBe(false)
+  })
+
+  it('opens the member picker from the header button', async () => {
+    const w = mountSheet(MEMBERS)
+    const picker = () => w.findComponent({ name: 'AgentSelectorDrawer' })
+    // The picker is closed until the header action is clicked.
+    expect(picker().props('open')).toBe(false)
+    await w.find('[data-action="add-members"]').trigger('click')
+    expect(picker().props('open')).toBe(true)
   })
 
   // Group sessions hide the per-agent model/mode chrome (ChatInputBar), which

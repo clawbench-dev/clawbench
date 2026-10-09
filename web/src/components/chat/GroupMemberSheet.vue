@@ -1,5 +1,21 @@
 <template>
   <BottomSheet :open="open" auto :title="t('group.members')" @close="close">
+    <template #header>
+      <div class="gm-header">
+        <span class="bs-header-title">{{ t('group.members') }}</span>
+        <!-- Add members lives in the HEADER, not as a full-width pill at the
+             bottom of the body: adding is the sheet's primary action and belongs
+             at the top edge where the roster begins, next to the title it
+             extends. Plain icon + text (no pill) to match AttachDrawer's header
+             action. @click.stop is required — the whole header is a close
+             target (BottomSheet's own click handler). -->
+        <button class="gm-header-add" data-action="add-members" @click.stop="openAdd">
+          <Plus :size="16" />
+          <span>{{ t('group.addMembers') }}</span>
+        </button>
+      </div>
+    </template>
+
     <div class="group-member-sheet">
       <!-- Member roster -->
       <ul class="gm-list">
@@ -87,12 +103,6 @@
           <span class="settings-item__switch-track" />
         </label>
       </div>
-
-      <!-- Add members -->
-      <button class="fbtn fbtn-primary gm-add" @click="openAdd">
-        <Plus :size="14" />
-        <span>{{ t('group.addMembers') }}</span>
-      </button>
     </div>
 
     <AgentSelectorDrawer
@@ -361,8 +371,35 @@ defineExpose({ open: openSheet })
   box-shadow: 0 0 0 2px var(--focus-ring, rgba(0, 102, 204, 0.2));
 }
 
-/* ── Add button (full-width pill) ── */
-.gm-add {
+/* ── Header: add-members action ──
+   Mirrors AttachDrawer's header (`.ad-header` / `.ad-upload-btn`): a full-width
+   flex row, the title on the left and a plain icon + text button pushed to the
+   right by margin-left:auto. No pill/background — the accent-coloured text is
+   the whole affordance, same as the attachment drawer's upload action. */
+.gm-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
   width: 100%;
+}
+
+.gm-header-add {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-2);
+  height: 28px;
+  border: none;
+  background: none;
+  color: var(--accent-color, #0066cc);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+  transition: opacity var(--duration-fast);
+}
+
+.gm-header-add:active {
+  opacity: var(--opacity-muted);
 }
 </style>

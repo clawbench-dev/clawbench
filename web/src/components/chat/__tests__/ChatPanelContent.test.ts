@@ -882,16 +882,22 @@ describe('ChatPanelContent — isGroupSession derives from session type', () => 
 // (GroupMemberSheet, reached from the header avatar stack), NOT in the chat
 // input's action bar. It was briefly wired through this component; guard that
 // it does not creep back, and that no dead props/handlers remain.
+//
+// The markers are the SWITCH's plumbing (groupParallelDefault / toggle-parallel),
+// NOT `groupMode`: the mode string ("host" | "free") has an independent consumer
+// here — ChatMessageList's group empty-state copy selects on it — so banning
+// `groupMode` would reject a legitimate pass-through. This guard was written
+// when the two travelled together and must not over-reach.
 describe('ChatPanelContent — no concurrency switch plumbing', () => {
   async function source(): Promise<string> {
     const mod = await import('@/components/chat/ChatPanelContent.vue?raw')
     return typeof mod.default === 'string' ? mod.default : ''
   }
 
-  it('does not declare or forward groupMode / groupParallelDefault', async () => {
+  it('does not declare or forward the concurrency-switch plumbing', async () => {
     const src = await source()
-    expect(src).not.toContain('groupMode: { type: String')
     expect(src).not.toContain('groupParallelDefault')
     expect(src).not.toContain('toggle-parallel')
+    expect(src).not.toContain('setGroupParallelDefault')
   })
 })
