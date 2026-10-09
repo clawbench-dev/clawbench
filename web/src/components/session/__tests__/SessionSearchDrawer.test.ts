@@ -32,7 +32,10 @@ vi.mock('vue-i18n', () => ({
       'sessionSearch.filterType': 'Type',
       'sessionSearch.typeAll': 'All',
       'sessionSearch.typeChat': 'Chat',
+      'sessionSearch.typeGroup': 'Group',
       'sessionSearch.typeTask': 'Task',
+      'group.hostMode': 'Host mode',
+      'group.freeMode': 'Free mode',
       'sessionSearch.sortLabel': 'Sort',
       'sessionSearch.sortRelevance': 'Relevance',
       'sessionSearch.sortNewest': 'Newest',
@@ -112,6 +115,17 @@ vi.mock('@/components/common/SearchInput.vue', () => ({
     name: 'SearchInput',
     template: '<div class="search-input-stub" />',
     methods: { focus: vi.fn() },
+  },
+}))
+
+// GroupMemberStack pulls in AvatarStack → useAgents → utils/api → the i18n
+// runtime, which this suite does not mock. Stub it; the drawer only needs to
+// render it (its avatars are covered by their own tests).
+vi.mock('@/components/session/GroupMemberStack.vue', () => ({
+  default: {
+    name: 'GroupMemberStack',
+    props: ['members'],
+    template: '<span class="group-member-stack-stub" />',
   },
 }))
 
@@ -357,6 +371,90 @@ describe('SessionSearchDrawer', () => {
 
     expect(mockFetchFirstMessage).not.toHaveBeenCalled()
     expect(wrapper.find('.detail-chunk').exists()).toBe(true)
+  })
+
+  it('names the group member as the speaker of an assistant chunk', async () => {
+    const groupResult = {
+      ...sampleResult,
+      session_type: 'group',
+      group_speakers: { m1: 'Host', m2: 'Peer' },
+      chunks: [{
+        chunk_id: 1,
+        chunk_text: 'spoken by peer',
+        match_positions: [],
+        score: 0.9,
+        role: 'assistant',
+        message_id: 1,
+        agent_id: 'm2',
+        created_at: '2025-01-01',
+      }],
+    }
+    mockSearchState.mockReturnValue(createState({ query: 'test', results: [groupResult], searchMode: 'hybrid' }))
+
+    const wrapper = mountDrawer()
+    const instance = (wrapper.vm as any).$
+    instance.setupState.selectSession(groupResult)
+    await flushPromises()
+    instance.update()
+
+    expect(wrapper.find('.detail-chunk-role').text()).toBe('Peer')
+  })
+
+  it('resolves a departed member via group_speakers (which includes left members)', async () => {
+    const groupResult = {
+      ...sampleResult,
+      session_type: 'group',
+      // group_members (avatar stack) is active-only, but group_speakers keeps
+      // the departed member so their past speech still resolves to their name.
+      group_members: [{ id: 'm1', agentId: 'a1', name: 'Host', backend: 'claude', isHost: true }],
+      group_speakers: { m1: 'Host', 'm-gone': 'Former Member' },
+      chunks: [{
+        chunk_id: 1,
+        chunk_text: 'spoken by someone who left',
+        match_positions: [],
+        score: 0.9,
+        role: 'assistant',
+        message_id: 1,
+        agent_id: 'm-gone',
+        created_at: '2025-01-01',
+      }],
+    }
+    mockSearchState.mockReturnValue(createState({ query: 'test', results: [groupResult], searchMode: 'hybrid' }))
+
+    const wrapper = mountDrawer()
+    const instance = (wrapper.vm as any).$
+    instance.setupState.selectSession(groupResult)
+    await flushPromises()
+    instance.update()
+
+    expect(wrapper.find('.detail-chunk-role').text()).toBe('Former Member')
+  })
+
+  it('falls back to the generic Assistant label when a chunk speaker is unresolved', async () => {
+    const groupResult = {
+      ...sampleResult,
+      session_type: 'group',
+      group_speakers: { m1: 'Host' },
+      chunks: [{
+        chunk_id: 1,
+        chunk_text: 'unknown speaker',
+        match_positions: [],
+        score: 0.9,
+        role: 'assistant',
+        message_id: 1,
+        agent_id: 'm-unknown',
+        created_at: '2025-01-01',
+      }],
+    }
+    mockSearchState.mockReturnValue(createState({ query: 'test', results: [groupResult], searchMode: 'hybrid' }))
+
+    const wrapper = mountDrawer()
+    const instance = (wrapper.vm as any).$
+    instance.setupState.selectSession(groupResult)
+    await flushPromises()
+    instance.update()
+
+    expect(wrapper.find('.detail-chunk-role').text()).toBe('Assistant')
   })
 
   it('returns to search list from detail view via back button', async () => {
@@ -671,20 +769,31 @@ describe('SessionSearchDrawer', () => {
   })
 
   // ── Session type filter ──
-  it('opens the type dropdown and lists the three options', async () => {
+  it('opens the type dropdown and lists the four options', async () => {
     const wrapper = mountDrawer()
     await wrapper.findAll('.filter-dropdown-btn')[3].trigger('click')
     const items = wrapper.findAll('.filter-menu-item')
-    expect(items.map(i => i.text())).toEqual(['All', 'Chat', 'Task'])
+    expect(items.map(i => i.text())).toEqual(['All', 'Chat', 'Group', 'Task'])
   })
 
   it('applies the type filter via the dropdown', async () => {
     mockSearchState.mockReturnValue(createState({ query: 'test' }))
     const wrapper = mountDrawer()
 
+    // Type options are All / Chat / Group / Task, so Task is the 4th item.
     await wrapper.findAll('.filter-dropdown-btn')[3].trigger('click')
-    await wrapper.findAll('.filter-menu-item')[2].trigger('click')
+    await wrapper.findAll('.filter-menu-item')[3].trigger('click')
     expect(mockSetFilters).toHaveBeenCalledWith({ type: 'task' })
+  })
+
+  it('offers a dedicated Group type option and applies it', async () => {
+    mockSearchState.mockReturnValue(createState({ query: 'test' }))
+    const wrapper = mountDrawer()
+
+    await wrapper.findAll('.filter-dropdown-btn')[3].trigger('click')
+    // Group sits between Chat and Task.
+    await wrapper.findAll('.filter-menu-item')[2].trigger('click')
+    expect(mockSetFilters).toHaveBeenCalledWith({ type: 'group' })
   })
 
   it('does not re-apply the type filter when choosing the already-active option', async () => {
@@ -714,6 +823,43 @@ describe('SessionSearchDrawer', () => {
     // The class carries the raw stored type so each badge can be styled apart.
     expect(badges[0].classes()).toContain('session-search-item-type-chat')
     expect(badges[1].classes()).toContain('session-search-item-type-scheduled')
+  })
+
+  it('labels a group session "Group" with its own badge class', () => {
+    const groupResult = { ...sampleResult, session_id: 's3', session_type: 'group' }
+    mockSearchState.mockReturnValue(createState({ query: 'test', results: [groupResult] }))
+    const wrapper = mountDrawer()
+
+    const badge = wrapper.find('.session-search-item-type')
+    expect(badge.text()).toBe('Group')
+    expect(badge.classes()).toContain('session-search-item-type-group')
+  })
+
+  it('renders the member stack and host-mode chip for a group result', () => {
+    const groupResult = {
+      ...sampleResult,
+      session_id: 's3',
+      session_type: 'group',
+      group_members: [
+        { id: 'm1', agentId: 'a1', name: 'Host', backend: 'claude', isHost: true },
+        { id: 'm2', agentId: 'a2', name: 'Peer', backend: 'codex' },
+      ],
+    }
+    mockSearchState.mockReturnValue(createState({ query: 'test', results: [groupResult] }))
+    const wrapper = mountDrawer()
+
+    const group = wrapper.find('.session-search-item-group')
+    expect(group.exists()).toBe(true)
+    expect(group.find('.group-member-stack-stub').exists()).toBe(true)
+    expect(group.text()).toContain('Host mode')
+  })
+
+  it('omits the member stack for a group result with no preview', () => {
+    const groupResult = { ...sampleResult, session_id: 's3', session_type: 'group' }
+    mockSearchState.mockReturnValue(createState({ query: 'test', results: [groupResult] }))
+    const wrapper = mountDrawer()
+
+    expect(wrapper.find('.session-search-item-group').exists()).toBe(false)
   })
 
   it('omits the type badge when the backend reports no session type', () => {

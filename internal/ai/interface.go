@@ -472,6 +472,15 @@ type StreamEvent struct {
 	// resolved from the latest team snapshot. Lets the member's timeline accent
 	// match the roster. Empty when unknown.
 	MemberColor string `json:"member_color,omitempty"`
+	// StreamingMessageID is the chat_history row id of the assistant message
+	// this event belongs to. The service layer stamps it on every outgoing
+	// event of a turn. It lets the frontend route a content/thinking/tool event
+	// to the CORRECT bubble when several streams run concurrently on one
+	// timeline (parallel group speaking): without it the frontend can only pick
+	// "the single streaming bubble", which is wrong once there are several.
+	// 0 means "not stamped" (e.g. session-level events with no owning row), and
+	// the frontend then falls back to single-stream resolution.
+	StreamingMessageID int64 `json:"streaming_message_id,omitempty"`
 }
 
 // StreamStartData carries the streaming message DB id for the stream_start event.

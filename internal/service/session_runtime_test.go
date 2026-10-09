@@ -1987,13 +1987,13 @@ func TestTruncatePreview_MultibyteOver(t *testing.T) {
 // --- extractPreviewFromBlocks tests ---
 
 func TestExtractPreviewFromBlocks_Empty(t *testing.T) {
-	assert.Equal(t, "", extractPreviewFromBlocks(nil))
-	assert.Equal(t, "", extractPreviewFromBlocks([]model.ContentBlock{}))
+	assert.Equal(t, "", extractPreviewFromBlocksRaw("", nil))
+	assert.Equal(t, "", extractPreviewFromBlocksRaw("", []model.ContentBlock{}))
 }
 
 func TestExtractPreviewFromBlocks_SingleText(t *testing.T) {
 	blocks := []model.ContentBlock{{Type: "text", Text: "answer"}}
-	assert.Equal(t, "answer", extractPreviewFromBlocks(blocks))
+	assert.Equal(t, "answer", extractPreviewFromBlocksRaw("", blocks))
 }
 
 func TestExtractPreviewFromBlocks_TextAfterToolUse(t *testing.T) {
@@ -2002,7 +2002,7 @@ func TestExtractPreviewFromBlocks_TextAfterToolUse(t *testing.T) {
 		{Type: "tool_use", Name: "Bash", ID: "t1"},
 		{Type: "text", Text: "final answer"},
 	}
-	assert.Equal(t, "final answer", extractPreviewFromBlocks(blocks))
+	assert.Equal(t, "final answer", extractPreviewFromBlocksRaw("", blocks))
 }
 
 func TestExtractPreviewFromBlocks_FallbackLongestText(t *testing.T) {
@@ -2011,7 +2011,7 @@ func TestExtractPreviewFromBlocks_FallbackLongestText(t *testing.T) {
 		{Type: "tool_use", Name: "Bash", ID: "t1"},
 	}
 	// No text after tool_use → fallback to longest text block
-	assert.Equal(t, "short", extractPreviewFromBlocks(blocks))
+	assert.Equal(t, "short", extractPreviewFromBlocksRaw("", blocks))
 }
 
 func TestExtractPreviewFromBlocks_FallbackPicksLongest(t *testing.T) {
@@ -2021,7 +2021,7 @@ func TestExtractPreviewFromBlocks_FallbackPicksLongest(t *testing.T) {
 		{Type: "tool_use", Name: "Bash", ID: "t1"},
 	}
 	// No text after tool_use → fallback picks the longest text block
-	assert.Equal(t, "this is a much longer text block", extractPreviewFromBlocks(blocks))
+	assert.Equal(t, "this is a much longer text block", extractPreviewFromBlocksRaw("", blocks))
 }
 
 func TestExtractPreviewFromBlocks_OnlyToolUses(t *testing.T) {
@@ -2029,7 +2029,7 @@ func TestExtractPreviewFromBlocks_OnlyToolUses(t *testing.T) {
 		{Type: "tool_use", Name: "Bash", ID: "t1"},
 		{Type: "tool_use", Name: "Read", ID: "t2"},
 	}
-	assert.Equal(t, "", extractPreviewFromBlocks(blocks))
+	assert.Equal(t, "", extractPreviewFromBlocksRaw("", blocks))
 }
 
 func TestExtractPreviewFromBlocks_EmptyTextSkipped(t *testing.T) {
@@ -2039,14 +2039,18 @@ func TestExtractPreviewFromBlocks_EmptyTextSkipped(t *testing.T) {
 		{Type: "text", Text: ""},
 	}
 	// All text blocks empty → empty result
-	assert.Equal(t, "", extractPreviewFromBlocks(blocks))
+	assert.Equal(t, "", extractPreviewFromBlocksRaw("", blocks))
 }
 
 func TestExtractPreviewFromBlocks_Truncation(t *testing.T) {
+	// The raw extractor does NOT truncate (that is truncatePreview's job, applied
+	// by the push/WS callers). This test pins that boundary: the raw text is
+	// returned whole, and truncatePreview adds the ellipsis.
 	longText := strings.Repeat("x", responsePreviewMaxRunes+10)
 	blocks := []model.ContentBlock{{Type: "text", Text: longText}}
-	result := extractPreviewFromBlocks(blocks)
-	assert.True(t, strings.HasSuffix(result, "…"))
+	raw := extractPreviewFromBlocksRaw("", blocks)
+	assert.Equal(t, longText, raw, "raw extractor must not truncate")
+	assert.True(t, strings.HasSuffix(truncatePreview(raw), "…"))
 }
 
 // --- GetRunningSessionIDs tests ---

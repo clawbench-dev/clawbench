@@ -10,6 +10,7 @@ import (
 
 	"clawbench/internal/store"
 
+	"clawbench/internal/grouprouting"
 	"clawbench/internal/model"
 	"clawbench/internal/summarize"
 	"clawbench/internal/ws"
@@ -51,20 +52,33 @@ func CollectSessionUserMessages(sessionID, extraText string) []string {
 			slog.String("session", sessionID), slog.String("err", err.Error()))
 		return nil
 	}
+	// A group user message may carry the @ protocol, including `private` (密送)
+	// notes. These texts are handed to a MODEL and the result becomes the session
+	// TITLE — read by everyone who sees the session list. Strip the protocol for
+	// a group session, or the local-title strip (sessionTitleSourceText) is
+	// undone by the AI rename. A single chat has no protocol, so its text stays
+	// verbatim (a message merely DISCUSSING the tag syntax is not truncated).
+	isGroup := GetSessionType(sessionID) == groupSessionType
+	clean := func(s string) string {
+		if isGroup {
+			return strings.TrimSpace(grouprouting.StripProtocolTags(s))
+		}
+		return s
+	}
 	out := make([]string, 0, len(messages)+1)
 	last := ""
 	for _, m := range messages {
 		if m.Role != roleUser {
 			continue
 		}
-		text := strings.TrimSpace(ExtractPlainText(m.Content))
+		text := strings.TrimSpace(clean(ExtractPlainText(m.Content)))
 		if text == "" {
 			continue
 		}
 		out = append(out, text)
 		last = text
 	}
-	if extra := strings.TrimSpace(extraText); extra != "" && extra != last {
+	if extra := strings.TrimSpace(clean(extraText)); extra != "" && extra != last {
 		out = append(out, extra)
 	}
 	return out

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"clawbench/internal/model"
 	"clawbench/internal/store"
 )
 
@@ -224,6 +225,17 @@ type SessionSearchResult struct {
 	// therefore carries no chunks: the detail view has nothing to show, so the
 	// client fetches the first message instead (as it does in browse mode).
 	TitleOnly bool `json:"title_only"`
+	// GroupMembers is the active-member preview for a group-chat row, so the
+	// search result can render the same stacked avatars as the session list.
+	// Empty for 1:1 and task sessions. Populated by the handler (which owns the
+	// service dependency; the rag package must not import service).
+	GroupMembers []model.GroupMemberPreview `json:"group_members,omitempty"`
+	// GroupSpeakers maps a group member row id → display name, INCLUDING members
+	// who have since left (their past speech is still in the timeline). The
+	// drawer resolves a chunk's agent_id through this map, so a departed
+	// speaker still shows their own name rather than a generic label. Empty for
+	// 1:1 and task sessions.
+	GroupSpeakers map[string]string `json:"group_speakers,omitempty"`
 }
 
 // ChunkHit represents a single matching chunk within a session search result.
@@ -234,7 +246,11 @@ type ChunkHit struct {
 	Score          float64      `json:"score"`
 	Role           string       `json:"role"`
 	MessageID      int64        `json:"message_id"`
-	CreatedAt      time.Time    `json:"created_at"`
+	// AgentID is the group-chat speaker (member row id) that produced this
+	// chunk's message, or "" for a single-agent message. The drawer maps it to
+	// a display name via the session's group_members roster.
+	AgentID   string    `json:"agent_id,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // SessionSearchResponse is the response for session-aggregated RAG search.
@@ -406,27 +422,26 @@ func contentSessionMatches(ctx context.Context, ragStore *Store, embedder *Embed
 		sessions = filtered
 	}
 
-	// Filter by session type. A session whose row is missing (or whose stored
+	// Filter by session type. The filter→types mapping lives in
+	// store.SessionTypeFilterTypes / SessionTypeMatchesFilter so this
+	// post-aggregation predicate cannot drift from the SQL builders (which apply
+	// the same mapping up front). A session whose row is missing (or whose stored
 	// type is empty) counts as 'chat' — the schema default — mirroring how a
 	// missing row is treated as active above.
-	if dbType := store.SessionTypeDBValue(params.SessionType); dbType != "" {
-		filtered := sessions[:0]
-		for _, s := range sessions {
-			st := s.SessionType
-			if st == "" {
-				st = "chat"
-			}
-			// A "chat" filter also includes group chats (user-visible
-			// conversations); any other filter matches its type exactly. The
-			// "chat includes group" rule lives in store.IsVisibleSessionType so
-			// it cannot drift from the SQL predicate.
-			match := st == dbType || (dbType == store.SessionTypeChat && store.IsVisibleSessionType(st))
-			if match {
-				filtered = append(filtered, s)
-			}
+	//
+	// This runs for EVERY filter including "all": rag_chunks carries no type
+	// column, so this is the content channel's ONLY type gate. Skipping it for
+	// "all" would leak hidden group_member and task-execution sessions into a
+	// search that the title channel and browse mode both exclude — the two
+	// channels of one response must agree.
+	filter := store.NormalizeSessionTypeFilter(params.SessionType)
+	filtered := sessions[:0]
+	for _, s := range sessions {
+		if store.SessionTypeMatchesFilter(s.SessionType, filter) {
+			filtered = append(filtered, s)
 		}
-		sessions = filtered
 	}
+	sessions = filtered
 
 	return sessions, result.Mode, nil
 }
@@ -566,6 +581,7 @@ func aggregateSessionHits(hits []SearchHit) []*SessionSearchResult {
 			Score:          hit.Score,
 			Role:           hit.Role,
 			MessageID:      hit.MessageID,
+			AgentID:        hit.AgentID,
 			CreatedAt:      hit.CreatedAt,
 		})
 		// Keep the best score for the session

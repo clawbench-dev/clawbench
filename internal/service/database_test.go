@@ -2644,6 +2644,114 @@ func TestSchema_DropHistoryDeletedColumn_Idempotent(t *testing.T) {
 	assert.NotContains(t, columns, "deleted", "deleted column should still not exist after second InitDB")
 }
 
+// TestSchema_UpgradePreProjectScopeQuickCommands is the end-to-end regression
+// for a startup crash on upgrades from old databases.
+//
+// Two independent classes of missing column were found by replaying real
+// release databases through InitDB:
+//
+//  1. Columns whose only backfill shipped as the one-time "clawbench migrate"
+//     CLI subcommand (since removed), never as an automatic migration:
+//     chat_sessions.archived (databases from before soft-delete carried neither
+//     deleted nor archived), chat_sessions.session_type, and
+//     task_executions.session_id / status. createTables builds indexes over all
+//     of them, so their absence aborts the whole Exec.
+//
+//  2. project_id on the quick-command tables: migrateProjectsToIDs only
+//     converts a table that still has project_path, so a database from before
+//     project scoping entirely (terminal_quick_commands had neither column) is
+//     skipped — yet that migration unconditionally DROPs
+//     idx_quick_commands_auto_execute, after which createTables' CREATE UNIQUE
+//     INDEX IF NOT EXISTS no longer short-circuits on the name and resolves the
+//     missing project_id.
+//
+// In every case main() calls os.Exit(1) on an InitDB error, so the server
+// refused to start. This fixture is the union of the two shapes: a
+// pre-soft-delete chat_sessions, a pre-reshape task_executions, a project_path
+// chat_history, and a project-less terminal_quick_commands with its old index.
+func TestSchema_UpgradePreProjectScopeQuickCommands(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	restoreDB := store.SnapshotDBForTest()
+	defer restoreDB()
+
+	dbDir := filepath.Join(tmpDir, ".clawbench")
+	require.NoError(t, os.MkdirAll(dbDir, 0o755))
+	oldDB, err := sql.Open("sqlite", filepath.Join(dbDir, "ClawBench.db"))
+	require.NoError(t, err)
+	oldDB.SetMaxOpenConns(1)
+
+	// chat_history keeps project_path → the project-id migration runs and drops
+	// idx_quick_commands_auto_execute. terminal_quick_commands has neither
+	// project_path nor project_id, plus the OLD single-column index.
+	// chat_sessions has neither deleted nor archived (pre-soft-delete) and no
+	// session_type. task_executions still has the old `content` column.
+	_, err = oldDB.Exec(`
+		CREATE TABLE chat_history (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			project_path TEXT NOT NULL,
+			role TEXT NOT NULL,
+			content TEXT NOT NULL,
+			session_id TEXT,
+			backend TEXT NOT NULL DEFAULT 'claude',
+			streaming INTEGER NOT NULL DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE TABLE chat_sessions (
+			id TEXT PRIMARY KEY,
+			project_path TEXT NOT NULL,
+			backend TEXT NOT NULL,
+			title TEXT NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(project_path, backend, id)
+		);
+		CREATE TABLE task_executions (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			task_id INTEGER NOT NULL,
+			content TEXT,
+			trigger_type TEXT NOT NULL DEFAULT 'auto',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE TABLE terminal_quick_commands (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			label TEXT NOT NULL,
+			command TEXT NOT NULL,
+			hidden INTEGER NOT NULL DEFAULT 0,
+			auto_execute INTEGER NOT NULL DEFAULT 0,
+			sort_order INTEGER NOT NULL DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE UNIQUE INDEX idx_quick_commands_auto_execute
+			ON terminal_quick_commands(auto_execute) WHERE auto_execute = 1;
+	`)
+	require.NoError(t, err)
+	require.NoError(t, oldDB.Close())
+
+	// Before the fix this returned "no such column: archived" (then session_type,
+	// then session_id, then project_id).
+	require.NoError(t, InitDB(true), "upgrade from an old database must not abort startup")
+	defer store.Close()
+
+	sessions := getTableColumns(t, store.UnsafeDBForTest(), "chat_sessions")
+	assert.Contains(t, sessions, "archived", "archived must be added before createTables indexes it")
+	assert.Contains(t, sessions, "session_type", "session_type must be added before createTables indexes it")
+
+	execs := getTableColumns(t, store.UnsafeDBForTest(), "task_executions")
+	assert.Contains(t, execs, "session_id", "session_id must be added before createTables indexes it")
+	assert.Contains(t, execs, "status", "status must be added before createTables indexes it")
+
+	quick := getTableColumns(t, store.UnsafeDBForTest(), "terminal_quick_commands")
+	assert.Contains(t, quick, "project_id", "project_id must be added before createTables indexes it")
+	assert.NotContains(t, quick, "project_path", "the legacy path column must be gone after conversion")
+}
+
 // TestSchema_DropsLegacyRawResponsesTable verifies that InitDB drops the
 // legacy ai_raw_responses table on an existing install (the feature was
 // removed because a single multi-hundred-MB row INSERT could hold the global

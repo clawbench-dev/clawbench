@@ -1031,3 +1031,94 @@
     animation: none;
   }
 }
+
+/* ==========================================================================
+   AskUserQuestion option indicator — a CSS-DRAWN control, never a glyph.
+
+   Used by the chat card (ContentBlocks) and the tool detail drawer
+   (ToolDetailDrawer) — hence GLOBAL, not scoped (design-guide red line 2).
+
+   Why not a glyph: the indicator used to be a character (◯/● for radio,
+   ☐/☑ for checkbox). A glyph's rendered size is a property of the FONT, so no
+   pair can be kept size-matched across fonts. Concretely, the obvious
+   "hollow circle" ◯ (U+25EF LARGE CIRCLE) is 41px of ink at 40pt in DejaVu but
+   38px in Noto Sans CJK — while the filled ● (U+25CF) is 31px in DejaVu and
+   36px in Noto Sans CJK. So in the font this app actually renders with, the
+   hollow and filled circles are within 2px (the "fix" was invisible), while in
+   another font they differ by 10px. A fixed box is identical everywhere by
+   construction, so the two states can never diverge.
+
+   What lives here is shape + geometry + the selected-state drawing. Colour is
+   left to the call site (it differs: the card uses orange, the drawer uses
+   --accent-color) and is consumed through `currentColor` — so the existing
+   per-call-site `color` rules keep working unchanged.
+
+   The outer box NEVER changes size between states: the radio grows an inner
+   dot, the checkbox fills and shows a check. That is the whole point.
+   ========================================================================== */
+
+.ask-option-indicator {
+    /* inline-block, not inline: `width`/`height` are ignored on an inline box,
+       so the control would collapse to the border width. The flex parent would
+       blockify it anyway, but making it explicit keeps the box correct even if
+       the indicator is ever rendered outside a flex row. */
+    display: inline-block;
+    flex-shrink: 0;
+    position: relative;
+    box-sizing: border-box;
+    width: 16px;
+    height: 16px;
+    /* Optical alignment with the first line of the option label (12px text):
+       nudges the box centre onto the first line box centre. */
+    margin-top: 2px;
+    border: 1.5px solid currentColor;
+    border-radius: 50%;               /* radio by default */
+    transition: background var(--duration-base), border-color var(--duration-base);
+}
+
+/* Multi-select variant: a square checkbox instead of a round radio. */
+.ask-option-indicator--checkbox {
+    border-radius: var(--radius-xs);
+}
+
+/* Single-select, selected: an inner dot. `inset` is measured from the padding
+   box, so 3px inside the 1.5px border yields a ~7px dot centred in the 16px
+   ring — the ring itself is unchanged, so nothing resizes on toggle. */
+.ask-option-indicator--radio::after {
+    content: '';
+    position: absolute;
+    inset: 3px;
+    border-radius: 50%;
+    background: currentColor;
+    opacity: 0;
+    transition: opacity var(--duration-base);
+}
+
+.ask-question-option.selected .ask-option-indicator--radio::after {
+    opacity: 1;
+}
+
+/* Multi-select, selected: fill the box and draw a check. The check colour is
+   the page background so it reads as a knockout on the filled box, matching
+   the accent-on-white checkbox already used in QuickCommandEditModal. */
+.ask-question-option.selected .ask-option-indicator--checkbox {
+    background: currentColor;
+}
+
+.ask-option-indicator--checkbox::after {
+    content: '';
+    position: absolute;
+    left: 4px;
+    top: 1px;
+    width: 4px;
+    height: 8px;
+    border: solid var(--bg-primary, #fff);
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+    opacity: 0;
+    transition: opacity var(--duration-base);
+}
+
+.ask-question-option.selected .ask-option-indicator--checkbox::after {
+    opacity: 1;
+}

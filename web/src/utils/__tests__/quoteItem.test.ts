@@ -489,9 +489,9 @@ describe('buildMessageQuote', () => {
 })
 
 describe('quotableMessageText (private notes must not be quoted)', () => {
-  it('strips a well-formed private mention from an assistant message', () => {
+  it('strips a well-formed private mention from an assistant message (group)', () => {
     const blocks = [{ type: 'text', text: '前言 <clawbench-mention targets="A" private>只有A看</clawbench-mention> 后记' }]
-    const t = quotableMessageText('assistant', blocks, '', '')
+    const t = quotableMessageText('assistant', blocks, '', '', true)
     expect(t).not.toContain('只有A看')
     expect(t).not.toContain('clawbench-mention')
     expect(t).toContain('前言')
@@ -500,17 +500,27 @@ describe('quotableMessageText (private notes must not be quoted)', () => {
 
   it('strips a malformed private mention too (fail-closed: quoting feeds injection)', () => {
     const blocks = [{ type: 'text', text: "前言 <clawbench-mention targets='A' private>秘密</clawbench-mention> 后记" }]
-    const t = quotableMessageText('assistant', blocks, '', '')
+    const t = quotableMessageText('assistant', blocks, '', '', true)
     expect(t).not.toContain('秘密')
   })
 
   it('keeps a user message verbatim (no notes in user rows)', () => {
-    const t = quotableMessageText('user', [{ type: 'text', text: '用户原话' }], '用户原话', '')
+    const t = quotableMessageText('user', [{ type: 'text', text: '用户原话' }], '用户原话', '', true)
     expect(t).toBe('用户原话')
   })
 
   it('falls back to the summary for an assistant message with no blocks', () => {
-    const t = quotableMessageText('assistant', [], '', '摘要内容')
+    const t = quotableMessageText('assistant', [], '', '摘要内容', true)
     expect(t).toBe('摘要内容')
+  })
+
+  // A single chat has no group protocol: stripping has zero security value and
+  // truncated a reply that merely DISCUSSED the tag syntax (regression: an
+  // unclosed literal `<clawbench-mention` in prose dropped the whole tail).
+  it('does NOT strip for a single-chat session (literal tag in discussion survives)', () => {
+    const blocks = [{ type: 'text', text: '用户的消息里写 `<clawbench-mention private>` 不会被落库，后面的内容必须保留' }]
+    const t = quotableMessageText('assistant', blocks, '', '', false)
+    expect(t).toContain('后面的内容必须保留')
+    expect(t).toContain('clawbench-mention')
   })
 })

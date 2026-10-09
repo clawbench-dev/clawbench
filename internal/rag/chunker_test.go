@@ -5,18 +5,43 @@ import (
 	"testing"
 
 	"clawbench/internal/model"
+	"clawbench/internal/store"
 
 	"github.com/stretchr/testify/assert"
 )
 
 func TestExtractTextFromContent_UserMessage(t *testing.T) {
-	got := ExtractTextFromContent("hello world", "user")
+	got := ExtractTextFromContent("hello world", "user", "")
 	assert.Equal(t, "hello world", got)
 }
 
 func TestExtractTextFromContent_UserMessage_Trimmed(t *testing.T) {
-	got := ExtractTextFromContent("  hello world  ", "user")
+	got := ExtractTextFromContent("  hello world  ", "user", "")
 	assert.Equal(t, "hello world", got)
+}
+
+// A user's private note (密送) lives in the message TEXT as a `private` mention
+// tag. In a group session it must be stripped before the text is embedded into
+// a searchable chunk — otherwise the note becomes retrievable from ANY session,
+// which is the exact confidentiality break the feature exists to prevent.
+//
+// The user branch used to return the content verbatim (the assistant branch was
+// the only one that stripped), so this asserts the group gate explicitly.
+func TestExtractTextFromContent_UserMessage_GroupStripsPrivateNote(t *testing.T) {
+	text := `<clawbench-mention targets="m-b"></clawbench-mention> <clawbench-mention targets="m-b" private>你的词是西瓜</clawbench-mention> 你先说`
+	got := ExtractTextFromContent(text, "user", store.SessionTypeGroup)
+	assert.NotContains(t, got, "你的词是西瓜", "the private note must never be embedded")
+	assert.NotContains(t, got, "clawbench-mention", "the protocol tag must not survive")
+	assert.Contains(t, got, "你先说", "the public prose must survive")
+}
+
+// A single chat has no protocol, so a user who literally types the tag text must
+// keep it verbatim (the same "don't truncate a discussion of the syntax" rule
+// the assistant branch follows).
+func TestExtractTextFromContent_UserMessage_SingleChatKeepsText(t *testing.T) {
+	text := `看这个 <clawbench-mention targets="A" private>字面</clawbench-mention> 语法`
+	got := ExtractTextFromContent(text, "user", "")
+	assert.Equal(t, text, got)
 }
 
 func TestExtractTextFromContent_AssistantMessage_ConclusionOnly(t *testing.T) {
@@ -27,7 +52,7 @@ func TestExtractTextFromContent_AssistantMessage_ConclusionOnly(t *testing.T) {
 	}
 	content, _ := json.Marshal(map[string]any{"blocks": blocks})
 
-	got := ExtractTextFromContent(string(content), "assistant")
+	got := ExtractTextFromContent(string(content), "assistant", "")
 	assert.Equal(t, "The fix is to add a null check.", got)
 }
 
@@ -39,12 +64,12 @@ func TestExtractTextFromContent_AssistantMessage_NoToolUse(t *testing.T) {
 	}
 	content, _ := json.Marshal(map[string]any{"blocks": blocks})
 
-	got := ExtractTextFromContent(string(content), "assistant")
+	got := ExtractTextFromContent(string(content), "assistant", "")
 	assert.Equal(t, "Here is a detailed explanation of the problem and its solution.", got)
 }
 
 func TestExtractTextFromContent_AssistantMessage_InvalidJSON(t *testing.T) {
-	got := ExtractTextFromContent("plain text fallback", "assistant")
+	got := ExtractTextFromContent("plain text fallback", "assistant", "")
 	assert.Equal(t, "plain text fallback", got)
 }
 
@@ -55,7 +80,7 @@ func TestExtractTextFromContent_AssistantMessage_MarkdownPreserved(t *testing.T)
 	}
 	content, _ := json.Marshal(map[string]any{"blocks": blocks})
 
-	got := ExtractTextFromContent(string(content), "assistant")
+	got := ExtractTextFromContent(string(content), "assistant", "")
 	assert.Contains(t, got, "## Result")
 	assert.Contains(t, got, "```go")
 }
@@ -67,8 +92,37 @@ func TestExtractTextFromContent_AssistantMessage_ThinkingSkipped(t *testing.T) {
 	}
 	content, _ := json.Marshal(map[string]any{"blocks": blocks})
 
-	got := ExtractTextFromContent(string(content), "assistant")
+	got := ExtractTextFromContent(string(content), "assistant", "")
 	assert.Equal(t, "Visible answer", got)
+}
+
+// A group timeline's private note must never be embedded into a searchable
+// chunk (fail-closed).
+func TestExtractTextFromContent_GroupSessionStripsPrivateNote(t *testing.T) {
+	blocks := []model.ContentBlock{
+		{Type: "text", Text: "公开 <clawbench-mention targets=\"A\" private>只有A看</clawbench-mention> 结束"},
+	}
+	content, _ := json.Marshal(map[string]any{"blocks": blocks})
+
+	got := ExtractTextFromContent(string(content), "assistant", store.SessionTypeGroup)
+	assert.NotContains(t, got, "只有A看")
+	assert.NotContains(t, got, "clawbench-mention")
+	assert.Contains(t, got, "公开")
+	assert.Contains(t, got, "结束")
+}
+
+// A single chat has no group protocol: a reply that merely DISCUSSES the tag
+// syntax (an unclosed literal tag in prose) must be indexed intact — the 58879
+// regression (the old unconditional strip dropped the whole tail).
+func TestExtractTextFromContent_SingleChatKeepsLiteralTag(t *testing.T) {
+	blocks := []model.ContentBlock{
+		{Type: "text", Text: "用户的消息里写 `<clawbench-mention private>` 不会被落库，后面的内容必须保留"},
+	}
+	content, _ := json.Marshal(map[string]any{"blocks": blocks})
+
+	got := ExtractTextFromContent(string(content), "assistant", store.SessionTypeChat)
+	assert.Contains(t, got, "后面的内容必须保留")
+	assert.Contains(t, got, "clawbench-mention")
 }
 
 func TestChunkText_EmptyInput(t *testing.T) {

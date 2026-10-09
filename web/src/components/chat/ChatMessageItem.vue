@@ -15,15 +15,18 @@
     <div v-if="msg.role === 'assistant' && speaker" class="msg-speaker" :class="{ 'msg-speaker-host': isHostMessage }">
       <AgentIcon :backend="speaker.backend" :name="speaker.name" :avatar="speaker.avatar" size="lg" />
       <span class="msg-speaker-name">{{ speaker.name }}</span>
-      <span v-if="isHostMessage" class="msg-speaker-host-tag">{{ t('group.host') }}</span>
+      <span v-if="isHostMessage" class="msg-speaker-host-tag"><Crown :size="11" class="msg-speaker-host-crown" />{{ t('group.host') }}</span>
     </div>
 
     <!-- Mention summary row: a one-line "本条 @ 了 B、C" above the bubble, for
          BOTH host and free modes. The mentions also render INLINE in the body
          (as @name chips, see renderMentionChips); this row is the scannable
          summary. It shows the raw parsed targets (a routing intent that may
-         name a member who has since left must stay visible). -->
-    <div v-if="mentionTargets.length > 0" class="msg-mention-summary">
+         name a member who has since left must stay visible).
+         ASSISTANT-only: the row exists to scan an AGENT's routing at a glance.
+         On a user bubble the chips already sit inline in the message the user
+         just typed, so a second "@ B" line would only duplicate them. -->
+    <div v-if="msg.role === 'assistant' && mentionTargets.length > 0" class="msg-mention-summary">
       <span class="msg-mention-summary-at">@</span>
       <span class="msg-mention-summary-names">{{ mentionTargets.map((s) => s.name).join('、') }}</span>
     </div>
@@ -103,7 +106,7 @@
           <span class="msg-bcc-title">{{ t('group.bcc.toYou') }}</span>
         </div>
         <div class="msg-bcc-body">
-          <div class="msg-bcc-entry-content">{{ e.content }}</div>
+          <div class="msg-bcc-entry-content" v-html="e.html"></div>
         </div>
       </div>
       <div v-if="bccToMembers.length > 0" class="msg-bcc">
@@ -119,8 +122,8 @@
         </button>
         <div v-show="bccExpanded" class="msg-bcc-body">
           <div v-for="(e, i) in bccToMembers" :key="i" class="msg-bcc-entry">
-            <div class="msg-bcc-entry-targets">{{ t('group.bcc.to') }}: {{ e.targets.join('、') }}</div>
-            <div class="msg-bcc-entry-content">{{ e.content }}</div>
+            <div class="msg-bcc-entry-targets">{{ t('group.bcc.to') }}: {{ e.targetLabels.join('、') }}</div>
+            <div class="msg-bcc-entry-content" v-html="e.html"></div>
           </div>
         </div>
       </div>
@@ -240,11 +243,12 @@
 <script setup>
 import { ref, inject, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Clock, Pause, Volume2, Info, FileDiff, Split, Rewind, MessageSquareQuote, ChevronDown, Lock, User } from 'lucide-vue-next'
+import { Clock, Pause, Volume2, Info, FileDiff, Split, Rewind, MessageSquareQuote, ChevronDown, Lock, User, Crown } from 'lucide-vue-next'
 import { formatDuration, formatRelativeTime } from '@/utils/format.ts'
+import { escapeHtml } from '@/utils/html.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
 import { extractFileChanges } from '@/utils/chatStreamUtils.ts'
-import { parseGroupRouting, stripGroupProtocolTags } from '@/utils/groupRouting.ts'
+import { parseGroupRouting, stripGroupProtocolTags, GROUP_USER_TARGET_NAME, resolveMentionDisplayName } from '@/utils/groupRouting.ts'
 import { quotableMessageText } from '@/utils/quoteItem.ts'
 import { isShowingSummary, normalizeDisplayMode } from '@/utils/chatSessionUtils.ts'
 import { localConfig } from '@/composables/useSettingsConfig'
@@ -308,6 +312,10 @@ const props = defineProps({
   resolveSpeakerByName: { type: Function, default: null },
   /** Host member row id, so the host's messages get a distinct style. */
   hostMemberId: { type: String, default: '' },
+  /** The configured group-chat user nickname (chat.user_nickname). Renders the
+   *  reserved human target and is what an @chip shows for the reader. Defaults
+   *  to the built-in reserved name so callers that predate the setting work. */
+  userNickname: { type: String, default: GROUP_USER_TARGET_NAME },
 })
 
 const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'fork-from-message', 'rewind-from-message', 'reset-session', 'quote-message'])
@@ -321,41 +329,57 @@ const speaker = computed(() => {
 const isHostMessage = computed(() => !!props.msg?.agentId && props.msg.agentId === props.hostMemberId)
 
 // Group-chat mention parsing. In BOTH modes an agent's speech may carry
-// <clawbench-mention> tags: host mode's routing, free mode's @-relay. The tags
-// are rendered inline as @name chips by renderMentionChips; this parse feeds
-// the summary row and the private-note card. Unparseable tags are NOT stripped
-// from the body (parseGroupRouting never mutates text).
+// <clawbench-mention> tags: host mode's routing, free mode's @-relay. A USER
+// message carries them too — the user's @ cards serialize to the same tags on
+// send, including `private` ones (密送). The tags are rendered inline as @name
+// chips by renderMentionChips; this parse feeds the private-note card, and (for
+// agent speech) the summary row. Unparseable tags are NOT stripped from the
+// body (parseGroupRouting never mutates text).
+//
+// Agent speech keeps its original gate (a resolved speaker): outside a group
+// `resolveSpeaker` is null, so a single-agent reply never parses. A USER row has
+// no agentId, so it is admitted only in a GROUP session — that is what lets the
+// reader audit the private notes they sent. Without the user branch the parse
+// yields nothing and the note card is silently missing (C3).
 const groupRouting = computed(() => {
   const empty = { found: false, speakers: [], instruction: '', before: '', after: '', bcc: [], mentions: [], end: false, raw: '' }
-  // Only group-chat agent speech carries the tags (a plain single-agent chat
-  // never does), so gate on the speaker being a group member.
-  if (!speaker.value) return empty
-  return parseGroupRouting(msgText.value || '')
+  const isUserInGroup = props.isGroupSession && props.msg?.role === 'user'
+  if (!speaker.value && !isUserInGroup) return empty
+  return parseGroupRouting(groupProtocolText.value || '')
+})
+
+/**
+ * The RAW protocol text of this message, for BOTH roles: an agent's speech
+ * (extractSpeakableText, which skips tool/thinking noise) or a user message's
+ * own text. Unlike `msgText` (assistant-only), this feeds the mention parse so
+ * a user's private notes are parsed and rendered in their own bubble.
+ */
+const groupProtocolText = computed(() => {
+  if (props.msg?.role === 'user') {
+    return extractSpeakableText(props.msg?.blocks || []) || (props.msg?.content || '')
+  }
+  return msgText.value || ''
 })
 
 // Private notes (密送) addressed to AI members are collapsed by default — the
 // user can audit them, but they are not addressed to the reader.
 const bccExpanded = ref(false)
 
-// The reserved participant name of the human user (mirrors the backend
-// groupUserTarget constant). A note addressed to it is meant for the reader.
-const GROUP_USER_TARGET = 'User'
-
-// bccToUser / bccToMembers split the notes by audience. The user's own notes
-// render expanded and labelled "to you"; the rest stay behind a collapsed
-// header whose title deliberately omits the target names (who got a note is
-// itself a hint).
-const bccToUser = computed(() => groupRouting.value.bcc.filter((e) => e.targets.includes(GROUP_USER_TARGET)))
-const bccToMembers = computed(() => groupRouting.value.bcc.filter((e) => !e.targets.includes(GROUP_USER_TARGET)))
+// bccToUser / bccToMembers split the notes by audience and are declared BELOW
+// the chatRender destructuring, because each note's body is rendered through the
+// same markdown pipeline the bubble uses (see renderBccNote).
 
 // mentionTargets maps the parsed mention targets to display info for the
 // summary row. Names that no longer resolve (removed members) still render as a
-// plain @name so the routing intent stays visible.
+// plain @name so the routing intent stays visible. The reserved human target is
+// shown as the configured nickname (chat.user_nickname), matching what the
+// agents actually wrote.
 const mentionTargets = computed(() => {
   const resolve = props.resolveSpeakerByName
   return groupRouting.value.speakers.map((name) => {
     const hit = typeof resolve === 'function' ? resolve(name) : null
-    return hit || { name, backend: '', avatar: '' }
+    if (hit) return name === props.userNickname ? { ...hit, name: props.userNickname } : hit
+    return { name: name === props.userNickname ? props.userNickname : name, backend: '', avatar: '' }
   })
 })
 
@@ -429,7 +453,11 @@ const msgText = computed(() => {
 // only in the collapsed card; it must not be read aloud, copied, quoted, or
 // counted as message content. `msgText` itself stays RAW because `groupRouting`
 // parses the note out of it.
-const speakableText = computed(() => stripGroupProtocolTags(msgText.value))
+//
+// Only a GROUP session carries the protocol, so the strip is gated on it: a
+// single chat's reply that merely DISCUSSES the tag syntax must not be
+// truncated by a literal (unclosed) tag in its prose (regression, msg 58879).
+const speakableText = computed(() => (props.isGroupSession ? stripGroupProtocolTags(msgText.value) : msgText.value))
 
 // Friendly relative timestamp shown in the meta bar for BOTH roles.
 // formatRelativeTime returns '' for missing/invalid dates (including Go zero-value
@@ -461,8 +489,10 @@ const showMetaBar = computed(() => {
  * Empty means there is nothing worth quoting, and the button is hidden.
  */
 // Shared with ChatPanelContent's quote handler so both entries strip the host's
-// private notes identically (a quote feeds a member's injected context).
-const quotableText = computed(() => quotableMessageText(props.msg?.role, props.msg?.blocks, props.msg?.content, props.msg?.summary))
+// private notes identically (a quote feeds a member's injected context). Only a
+// group session has the protocol, so the strip is gated on it (a single chat's
+// prose must not be truncated by a literal tag mentioned in discussion).
+const quotableText = computed(() => quotableMessageText(props.msg?.role, props.msg?.blocks, props.msg?.content, props.msg?.summary, props.isGroupSession))
 
 // Accessible name/tooltip for the read-aloud button. While audio is playing the
 // button acts as a stop control, so it must not advertise "read aloud".
@@ -534,6 +564,51 @@ const chatSession = inject('chatSession', {})
 const { renderTextBlock, toolCallSummary, formatToolInput, truncate, hasImagesInContent } = chatRender
 const { getAgentBackend, getAgentName, getAgentAvatar } = chatSession
 const sessionId = computed(() => chatSession.sessionId?.() || '')
+
+// Private-note (密送) card bodies render through the SAME markdown pipeline as
+// the bubble body, so an agent that formats its note (bold, lists, inline code,
+// a table, a path) gets it rendered instead of shown as literal markers. The
+// rendered HTML is baked into each entry (e.html) so the template stays a plain
+// v-html. `renderTextBlock` is injected; when absent (a bare host that provides
+// no chatRender) fall back to an HTML-escaped plain-text body so the note is
+// never dropped and never injected raw.
+//
+// `noteIdx` is passed as the block index but NEGATED: renderTextBlock uses it to
+// key the shared blockAskQuestions / scheduled-task side tables (`${msgId}-${i}`),
+// and real block indices are 0..n-1. A non-negative index would let a note's
+// stray <clawbench-ask-question> tag overwrite the message's own block-0 card;
+// a negative index can never collide with a real block.
+function renderBccNote(content, noteIdx) {
+  if (typeof renderTextBlock !== 'function') return escapeHtml(content)
+  // The streaming flag is forwarded so a note revealed mid-turn skips the
+  // enhancements (path verification) exactly like the bubble body does, then
+  // takes the full pipeline once the turn settles.
+  return renderTextBlock(content || '', String(props.msg?.id ?? ''), -(noteIdx + 1), !!props.msg?.streaming)
+}
+
+// Split the notes by audience. The user's own notes render expanded and
+// labelled "to you"; the rest stay behind a collapsed header whose title
+// deliberately omits the target names (who got a note is itself a hint). Each
+// entry keeps its raw `content` (for the target label and tests) and gains
+// `html` (the rendered body). The split preserves the ORIGINAL bcc index so
+// renderBccNote's key stays unique across both lists.
+//
+// `targetLabels` resolves each raw target for DISPLAY. An agent writes display
+// names, but a USER's note carries member ROW IDs (the frontend writes ids) — so
+// without resolving, the user's own auditable card would read "发给: <uuid>".
+// The resolution order (id then name) mirrors the inline @chips.
+const bccEntries = computed(() =>
+  groupRouting.value.bcc.map((e, i) => ({
+    ...e,
+    toUser: e.targets.includes(props.userNickname),
+    targetLabels: e.targets.map((target) =>
+      resolveMentionDisplayName(target, props.resolveSpeaker, props.resolveSpeakerByName, props.userNickname, props.userNickname),
+    ),
+    html: renderBccNote(e.content, i),
+  })),
+)
+const bccToUser = computed(() => bccEntries.value.filter((e) => e.toUser))
+const bccToMembers = computed(() => bccEntries.value.filter((e) => !e.toUser))
 
 // File changes extraction (Write → created, Edit → modified).
 // Uses summaryCards as fallback when blocks are empty (summary-only view).
@@ -832,7 +907,6 @@ const copyPayload = quotableText
 .msg-bcc-entry-content {
   font-size: var(--font-size-sm);
   color: var(--text-primary);
-  white-space: pre-wrap;
   word-break: break-word;
 }
 </style>
@@ -1430,11 +1504,17 @@ const copyPayload = quotableText
   color: var(--text-primary);
 }
 .msg-speaker-host-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   padding: 0 var(--space-2);
   border-radius: var(--radius-xs);
   background: color-mix(in srgb, var(--accent-color, #0066cc) 15%, transparent);
   color: var(--accent-color, #0066cc);
-  font-size: var(--font-size-2xs);
+  font-size: var(--font-size-xs);
+}
+.msg-speaker-host-crown {
+  flex-shrink: 0;
 }
 /* The host's bubble is centered with an accent border to read as "chair". */
 .msg-card-host {
@@ -1450,7 +1530,10 @@ const copyPayload = quotableText
   min-width: 0;
   max-width: 100%;
   flex-wrap: wrap;
-  margin: 0 0 var(--space-1);
+  /* Align with the speaker row above (same 4px inset): both are the message's
+     attribution rows sitting OUTSIDE the bubble, so they share one left edge.
+     Without this the row sits flush against the panel edge. */
+  margin: 0 0 var(--space-1) var(--space-2);
   font-size: var(--font-size-sm);
   color: var(--accent-color, #0066cc);
 }

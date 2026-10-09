@@ -110,9 +110,16 @@
                     <span v-if="row.session.sessionType === 'group'" class="session-item-group">
                       <Users :size="12" />
                       <GroupMemberStack :members="row.session.groupMembers || []" />
-                      <span v-if="groupModeLabel(row.session)" class="session-item-group-mode">{{ groupModeLabel(row.session) }}</span>
                     </span>
                     <span v-else class="session-item-agent"><AgentIcon :backend="getAgentBackend(row.session.agentId)" :name="getAgentName(row.session.agentId)" :avatar="getAgentAvatar(row.session.agentId)" size="sm" /> {{ getAgentName(row.session.agentId) }}</span>
+                    <!-- Group mode: an independent tag with its own glyph, so it
+                         reads as metadata about the group rather than a suffix
+                         of the member stack. Omitted when the mode is unknowable
+                         (empty roster) — never guessed. -->
+                    <span v-if="row.session.sessionType === 'group' && groupModeLabel(row.session)" class="session-item-group-mode">
+                      <component :is="groupModeIcon(row.session)" :size="10" />
+                      {{ groupModeLabel(row.session) }}
+                    </span>
                     <!-- A group's `model` is the HOST's model, not a property of
                          the group; showing it beside the member stack reads as
                          "the group runs on one model". Suppressed for groups. -->
@@ -214,9 +221,13 @@
                     <span v-if="session.sessionType === 'group'" class="session-item-group">
                       <Users :size="12" />
                       <GroupMemberStack :members="session.groupMembers || []" />
-                      <span v-if="groupModeLabel(session)" class="session-item-group-mode">{{ groupModeLabel(session) }}</span>
                     </span>
                     <span v-else class="session-item-agent"><AgentIcon :backend="getAgentBackend(session.agentId)" :name="getAgentName(session.agentId)" :avatar="getAgentAvatar(session.agentId)" size="sm" /> {{ getAgentName(session.agentId) }}</span>
+                    <!-- Group mode tag: same independent tag as the project pane. -->
+                    <span v-if="session.sessionType === 'group' && groupModeLabel(session)" class="session-item-group-mode">
+                      <component :is="groupModeIcon(session)" :size="10" />
+                      {{ groupModeLabel(session) }}
+                    </span>
                     <!-- Same rule as the project pane: a group's model is the
                          host's, not the group's, so it is not shown. -->
                     <span v-if="session.model && session.sessionType !== 'group'" class="session-item-model">{{ session.model }}</span>
@@ -301,7 +312,7 @@
 import { ref, reactive, watch, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { VueDraggable } from 'vue-draggable-plus'
-import { Archive, ChevronDown, Pin, PinOff, PencilLine, MessageSquareShare, Tags, Trash2, MoreVertical, Split, Users } from 'lucide-vue-next'
+import { Archive, ChevronDown, Pin, PinOff, PencilLine, MessageSquareShare, Tags, Trash2, MoreVertical, Split, Users, Crown, AtSign } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import SessionGroupHeader from '@/components/session/SessionGroupHeader.vue'
 import SessionTagDialog from '@/components/session/SessionTagDialog.vue'
@@ -446,6 +457,12 @@ function groupModeLabel(session) {
   if (mode === 'host') return t('group.hostMode')
   if (mode === 'free') return t('group.freeMode')
   return ''
+}
+
+/** Icon for a group row's mode chip: a crown for the host, an @ for the
+ *  free-mode relay (members @-mention each other to hand over the floor). */
+function groupModeIcon(session) {
+  return groupModeOf(session) === 'host' ? Crown : AtSign
 }
 
 /** Tooltip / aria label for a status slot. */
@@ -1651,13 +1668,20 @@ onUnmounted(() => {
   color: var(--text-muted, #999);
 }
 
-/* The group's chat mode ("host mode" / "free mode"), trailing the member stack.
-   A plain muted label — the meta line is already busy with the time, the
-   stack and (on plain rows) a model chip, so a tinted pill here would compete
-   with them. It inherits the group slot's muted colour. */
+/* The group's chat mode ("host mode" / "free mode") as an INDEPENDENT tag with
+   its own glyph (crown / @), trailing the member stack. It carries a faint pill
+   background so it reads as metadata about the group rather than a suffix of the
+   stack; the muted tint keeps it subordinate to the title and the model chip. */
 .session-item-group-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   flex-shrink: 0;
   font-size: var(--font-size-2xs);
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-xs);
+  background: rgba(100, 100, 100, 0.08);
+  color: var(--text-muted, #999);
   white-space: nowrap;
 }
 

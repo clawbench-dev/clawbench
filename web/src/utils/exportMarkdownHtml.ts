@@ -34,6 +34,12 @@ import { buildKatexFontCss } from '@/utils/katexFontEmbed.ts'
 // The share SPA (ShareView) and this export embed the SAME chrome stylesheet so
 // the exported document keeps the exact look of the public share page.
 import shareChromeCss from '../../css/share-chrome.css?raw'
+// Brand mark for the exported topbar. Inlined as a data URI (`?inline`) rather
+// than referenced as `/logo-64.png`: the exported .html is opened from file://
+// or any host, where a root-absolute URL would 404. Relative import (not the
+// `/logo-64.png` public path) is required — Vite skips inlining for imports
+// that resolve inside publicDir and would emit a copied asset URL instead.
+import shareLogoDataUri from '../../../assets/logo-64.png?inline'
 import { COPY_ICON_SVG, CHECK_ICON_SVG, COPY_FEEDBACK_MS } from '@/utils/copyButton.ts'
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
@@ -464,7 +470,7 @@ function buildTocStandalone(container: HTMLElement, locale: string, displayName:
     // in .share-top-actions (same skeleton as ShareView.vue). The single list
     // icon is the share page's TOC affordance; no download action — the offline
     // .html already holds everything.
-    const topbarHtml = `<div class="share-topbar"><span class="share-file-name">${escapeHtml(displayName)}</span><span class="share-spacer"></span><div class="share-top-actions"><button id="toc-toggle" class="share-btn" type="button" title="${tocToggleTitle}" aria-expanded="true" aria-controls="share-toc">
+    const topbarHtml = `<div class="share-topbar"><img class="share-logo" src="${shareLogoDataUri}" alt="ClawBench"><span class="share-file-name">${escapeHtml(displayName)}</span><span class="share-spacer"></span><div class="share-top-actions"><button id="toc-toggle" class="share-btn" type="button" title="${tocToggleTitle}" aria-expanded="true" aria-controls="share-toc">
 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
 </button></div></div>`
 

@@ -292,12 +292,13 @@
                          keep the original icon + name. -->
                     <GroupAvatarStack
                       v-if="isGroupSession"
+                      ref="groupAvatarStackRef"
                       :sessionId="sessionIdentity.currentSessionId.value"
                       :members="groupMembers"
                       :hostMemberId="groupHostMemberId"
-                      :maxRounds="groupMaxRounds"
                       :autoApprove="groupAutoApprove"
                       :mode="groupMode"
+                      :parallelDefault="groupParallelDefault"
                       :isGroup="isGroupSession"
                       @changed="refreshGroupMembers(sessionIdentity.currentSessionId.value)"
                     />
@@ -327,12 +328,15 @@
                       :current-file="currentFile"
                       :current-dir="currentDir"
                       :group-members="groupMembers"
+                      :group-mode="groupMode"
+                      :group-parallel-default="groupParallelDefault"
                       :group-host-member-id="groupHostMemberId"
                       :resolve-group-speaker="resolveGroupSpeaker"
                       :resolve-group-speaker-by-name="resolveGroupSpeakerByName"
                       @open="switchTab('chat')"
                       @task-card-click="onTaskCardClick"
                       @open-session-search="sessionSearchDrawer.open()"
+                      @open-group-settings="openGroupSettings"
                     />
                   </TabPanel>
                   <!-- The hint is centered on the CHAT column, not on
@@ -1278,8 +1282,8 @@ const { getAgentBackend, getAgentName, getAgentAvatar } = useAgents()
 // fetched once, not twice.
 const {
   members: groupMembers,
-  maxRounds: groupMaxRounds,
   mode: groupMode,
+  parallelDefault: groupParallelDefault,
   hostMemberId: groupHostMemberId,
   resolveSpeaker: resolveGroupSpeaker,
   resolveByName: resolveGroupSpeakerByName,
@@ -1290,6 +1294,14 @@ const isGroupSession = computed(() => sessionIdentity.currentSessionType.value =
 // identity state (loaded from the group session's GET /api/ai/chat response,
 // which the backend keeps in sync with the member rows — decision #61).
 const groupAutoApprove = sessionIdentity.autoApprove
+
+// The header avatar stack owns the GroupSettingsSheet. The action bar's
+// group-settings button opens that SAME sheet (not a second instance), so the
+// roster is fetched once and both entry points stay in sync.
+const groupAvatarStackRef = ref<InstanceType<typeof GroupAvatarStack> | null>(null)
+function openGroupSettings() {
+  groupAvatarStackRef.value?.open()
+}
 
 const sessionSidebar = useSessionSidebar()
 sessionSidebar.registerOpenDrawer(() => sessionIdentity.sessionDrawer.open())

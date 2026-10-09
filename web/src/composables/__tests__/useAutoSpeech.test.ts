@@ -966,3 +966,141 @@ describe('useAutoSpeech — regression: WS error paths reset state', () => {
   })
 })
 
+
+// ── Auto-speech sequential queue (group chat: 轮流播放) ──
+// A group run triggers auto-speech once per member. Without a queue each new
+// trigger preempted the previous one, so only the last speaker was ever heard.
+
+describe('useAutoSpeech — sequential auto-speech queue', () => {
+  let fetchSpy: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    fetchSpy = vi.fn()
+    globalThis.fetch = fetchSpy
+    toastShowMock.mockClear()
+    mseIsSupportedMock.mockReturnValue(false)
+    const { stopAudio } = useAutoSpeech()
+    stopAudio()
+  })
+
+  afterEach(() => {
+    const { stopAudio } = useAutoSpeech()
+    stopAudio()
+    vi.restoreAllMocks()
+  })
+
+  // Helper: mock Audio capturing instances + their onended handlers.
+  function setupAudio() {
+    const audioInstances: any[] = []
+    vi.stubGlobal('Audio', vi.fn(function(this: any) {
+      this.play = vi.fn().mockResolvedValue(undefined)
+      this.pause = vi.fn()
+      this.onended = null
+      this.onerror = null
+      this.currentTime = 0
+      this.duration = 10
+      this.addEventListener = vi.fn()
+      this.removeEventListener = vi.fn()
+      audioInstances.push(this)
+    }))
+    return audioInstances
+  }
+
+  it('plays a second auto trigger only after the first finishes', async () => {
+    const audioInstances = setupAudio()
+    // Two cached responses, one per speaker.
+    fetchSpy.mockResolvedValue({
+      ok: true,
+      json: async () => ({ cached: true, audioPath: '/tts/x.mp3' }),
+    })
+
+    const { speakMessage, enabled, stopAudio } = useAutoSpeech()
+    stopAudio()
+    enabled.value = true
+
+    speakMessage('1', 'speaker one')
+    await vi.waitFor(() => expect(audioInstances.length).toBe(1))
+
+    // Second speaker triggers while the first is still playing → must QUEUE,
+    // not preempt (no second fetch yet).
+    speakMessage('2', 'speaker two')
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+
+    // Finishing the first hands off to the queued second.
+    audioInstances[0].onended()
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(audioInstances.length).toBe(2))
+  })
+
+  it('forwards speakerName to the backend only for the speaker that has one', async () => {
+    setupAudio()
+    fetchSpy.mockResolvedValue({
+      ok: true,
+      json: async () => ({ cached: true, audioPath: '/tts/x.mp3' }),
+    })
+
+    const { speakMessage, enabled, stopAudio } = useAutoSpeech()
+    stopAudio()
+    enabled.value = true
+
+    speakMessage('7', 'hello', '张三')
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1))
+    const body = JSON.parse(fetchSpy.mock.calls[0][1].body)
+    expect(body.speakerName).toBe('张三')
+
+    // No speakerName ⇒ key absent (single chat / manual read-aloud unchanged).
+    const { speakText } = useAutoSpeech()
+    speakText('8', 'single chat')
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(2))
+    const body2 = JSON.parse(fetchSpy.mock.calls[1][1].body)
+    expect(body2.speakerName).toBeUndefined()
+  })
+
+  it('manual speakText clears the pending auto queue (deliberate preempt)', async () => {
+    const audioInstances = setupAudio()
+    fetchSpy.mockResolvedValue({
+      ok: true,
+      json: async () => ({ cached: true, audioPath: '/tts/x.mp3' }),
+    })
+
+    const { speakMessage, speakText, enabled, stopAudio } = useAutoSpeech()
+    stopAudio()
+    enabled.value = true
+
+    speakMessage('1', 'auto one')
+    await vi.waitFor(() => expect(audioInstances.length).toBe(1))
+    speakMessage('2', 'auto two') // queued
+
+    // User clicks read-aloud on some message → preempts and drops the queue.
+    speakText('9', 'manual')
+    await vi.waitFor(() => expect(audioInstances.length).toBe(2))
+
+    // Finish the manual playback: the queued auto-two must NOT play.
+    audioInstances[1].onended()
+    await new Promise((r) => setTimeout(r, 20))
+    expect(audioInstances.length).toBe(2)
+  })
+
+  it('stopAudio clears the queue so a stopped run does not resume', async () => {
+    const audioInstances = setupAudio()
+    fetchSpy.mockResolvedValue({
+      ok: true,
+      json: async () => ({ cached: true, audioPath: '/tts/x.mp3' }),
+    })
+
+    const { speakMessage, stopAudio, enabled } = useAutoSpeech()
+    stopAudio()
+    enabled.value = true
+
+    speakMessage('1', 'auto one')
+    await vi.waitFor(() => expect(audioInstances.length).toBe(1))
+    speakMessage('2', 'auto two') // queued
+
+    stopAudio() // user stops
+    // Even if the old audio were to end, nothing queued remains.
+    expect(audioInstances.length).toBe(1)
+    audioInstances[0].onended?.()
+    await new Promise((r) => setTimeout(r, 20))
+    expect(audioInstances.length).toBe(1)
+  })
+})

@@ -26,6 +26,29 @@ export interface MentionEntry {
   content: string
   /** Whether the tag carried the `private` attribute. */
   private: boolean
+  /** Delivery mode: 'parallel' when the tag carried `mode="parallel"`, else
+   *  'sequential'. Only affects PUBLIC mentions; an unknown/absent value is
+   *  'sequential' and never makes the tag malformed. */
+  mode: DeliveryMode
+}
+
+/** Delivery modes for a mention tag (the `mode` attribute). */
+export type DeliveryMode = 'sequential' | 'parallel'
+
+/**
+ * MentionGroup is one public mention tag flattened for the orchestrator: the
+ * members it names plus how they should speak. It is the source of truth for
+ * routing (`speakers` is derived from it), because it preserves the PER-TAG
+ * boundary that the flat `speakers` list loses — and `mode` is a per-tag
+ * property.
+ */
+export interface MentionGroup {
+  /** The group's targets, in order, trimmed, and de-duplicated ACROSS groups. */
+  members: string[]
+  /** Whether this group speaks concurrently. */
+  parallel: boolean
+  /** This tag's body (the directive handed to its members). */
+  instruction: string
 }
 
 export interface BccEntry {
@@ -38,6 +61,13 @@ export interface BccEntry {
 export interface GroupRouting {
   found: boolean
   speakers: string[]
+  /**
+   * The ordered list of PUBLIC mention tags, each flattened to its members +
+   * mode + instruction. The source of truth for routing (`speakers` is its
+   * flat de-duplicated concatenation); a group left with no unclaimed members
+   * is dropped.
+   */
+  groups: MentionGroup[]
   instruction: string
   /**
    * Text OUTSIDE the mention tags that precedes the first public mention,
@@ -73,9 +103,17 @@ const RE_MENTION_SPAN_ANY = /<clawbench-mention\b[^>]*>[\s\S]*?<\/clawbench-ment
 const RE_MENTION_CLOSE_ANY = /<\/clawbench-mention>/g
 // The double-quoted targets attribute (case-sensitive, the DISPLAY contract).
 // `\p{Z}` needs the /u flag.
-const RE_TARGETS = /\btargets[\s\p{Z}]*=[\s\p{Z}]*"([^"]*)"/u
-// The boolean `private` attribute (case-sensitive).
-const RE_PRIVATE = /\bprivate\b/
+// The double-quoted targets attribute (case-sensitive, the DISPLAY contract).
+// The leading `(?:^|[\s\p{Z}])` anchors the attribute NAME to a real attribute
+// boundary so `data-targets="x"` is not mistaken for `targets` (`\b` alone
+// matches after the `-` of a hyphenated attribute name).
+const RE_TARGETS = /(?:^|[\s\p{Z}])targets[\s\p{Z}]*=[\s\p{Z}]*"([^"]*)"/u
+// The boolean `private` attribute (case-sensitive), anchored like RE_TARGETS.
+const RE_PRIVATE = /(?:^|[\s\p{Z}])private(?:[\s\p{Z}]|$)/u
+// The double-quoted `mode` attribute value (mirrors RE_TARGETS' display
+// contract). An unknown value falls back to sequential; it never makes the tag
+// malformed.
+const RE_MODE = /(?:^|[\s\p{Z}])mode[\s\p{Z}]*=[\s\p{Z}]*"([^"]*)"/u
 const RE_END = /<clawbench-group-end[\s\p{Z}]*\/>/gu
 // Non-global mirror of RE_END for a one-shot test(). RE_END carries /g, whose
 // lastIndex would otherwise make .test() alternate true/false across calls.
@@ -97,12 +135,14 @@ function splitNames(s: string): string[] {
  * attribute or it is empty — such a tag is malformed and NOT parsed (the
  * fail-open display contract: its text stays visible).
  */
-function parseMentionAttrs(attrs: string): { targets: string[]; private: boolean } | null {
+function parseMentionAttrs(attrs: string): { targets: string[]; private: boolean; mode: DeliveryMode } | null {
   const m = attrs.match(RE_TARGETS)
   if (!m) return null
   const targets = splitNames(m[1])
   if (targets.length === 0) return null
-  return { targets, private: RE_PRIVATE.test(attrs) }
+  const modeMatch = attrs.match(RE_MODE)
+  const mode: DeliveryMode = modeMatch && modeMatch[1].trim().toLowerCase() === 'parallel' ? 'parallel' : 'sequential'
+  return { targets, private: RE_PRIVATE.test(attrs), mode }
 }
 
 /**
@@ -122,7 +162,7 @@ function replaceMentionSpans(text: string, fn: (entry: MentionEntry | null, raw:
       const m = RE_MENTION.exec(span)
       if (m) {
         const attrs = parseMentionAttrs(m[1])
-        if (attrs) return fn({ targets: attrs.targets, content: m[2].trim(), private: attrs.private }, span)
+        if (attrs) return fn({ targets: attrs.targets, content: m[2].trim(), private: attrs.private, mode: attrs.mode }, span)
       }
       return fn(null, span)
     })
@@ -159,7 +199,7 @@ function stripAllMentionSpans(text: string): string {
 /** parseGroupRouting locates every mention tag in an agent message. */
 export function parseGroupRouting(text: string): GroupRouting {
   const res: GroupRouting = {
-    found: false, speakers: [], instruction: '', before: '', after: '',
+    found: false, speakers: [], groups: [], instruction: '', before: '', after: '',
     bcc: [], mentions: [], end: false, raw: '',
   }
 
@@ -171,7 +211,7 @@ export function parseGroupRouting(text: string): GroupRouting {
   while ((m = RE_MENTION.exec(text)) !== null) {
     const attrs = parseMentionAttrs(m[1])
     if (!attrs) continue // malformed: not a mention, leave the span in place
-    res.mentions.push({ targets: attrs.targets, content: m[2].trim(), private: attrs.private })
+    res.mentions.push({ targets: attrs.targets, content: m[2].trim(), private: attrs.private, mode: attrs.mode })
     res.raw = m[0]
     if (!attrs.private) {
       if (firstPublicStart < 0) firstPublicStart = m.index
@@ -206,17 +246,25 @@ export function parseGroupRouting(text: string): GroupRouting {
   if (res.mentions.length === 0) return res
 
   res.found = true
-  // Derive the flat host view: public targets (ordered, de-duplicated) and the
-  // joined public directive.
+  // Derive the routing view. `groups` is the source of truth: it preserves the
+  // PER-TAG boundary (needed because `mode` is a per-tag property) and the
+  // per-tag instruction. `speakers` is the flat de-duplicated concatenation of
+  // the groups' members. Cross-group de-duplication: a member named by an
+  // earlier group is not re-listed in a later one (it would speak twice).
   const seen = new Set<string>()
   for (const e of res.mentions) {
     if (e.private) {
       res.bcc.push({ targets: e.targets, content: e.content })
       continue
     }
+    const group: MentionGroup = { members: [], parallel: e.mode === 'parallel', instruction: e.content }
     for (const t of e.targets) {
-      if (!seen.has(t)) { seen.add(t); res.speakers.push(t) }
+      if (seen.has(t)) continue
+      seen.add(t)
+      group.members.push(t)
+      res.speakers.push(t)
     }
+    if (group.members.length > 0) res.groups.push(group)
     if (e.content !== '') {
       if (res.instruction !== '') res.instruction += '\n\n'
       res.instruction += e.content
@@ -259,8 +307,52 @@ export function stripGroupBccSpans(text: string): string {
   return stripAllMentionSpans(text).trim()
 }
 
+/** A minimal speaker shape the mention-name resolver needs. */
+export interface MentionSpeaker {
+  name: string
+}
+
+/**
+ * resolveMentionDisplayName maps a raw mention target to the label shown in an
+ * inline @chip. A target is either a member ROW id (a user's @ carries the id)
+ * or a display name (an agent writes the name): resolve by id first, then by
+ * name, and fall back to the raw target so an unresolvable target stays
+ * visible.
+ *
+ * `userDisplay` is what the reserved human target renders as. Callers pass the
+ * configured nickname so the chip shows the same name agents actually use
+ * (default `GROUP_USER_TARGET_NAME` = "User"). `userTarget` is the raw token
+ * that identifies the human in the protocol; it defaults to
+ * `GROUP_USER_TARGET_NAME` for callers/tests that predate the nickname setting.
+ *
+ * `resolveId`/`resolveName` may be null (outside a group), in which case only
+ * the reserved-name and fallback branches apply.
+ */
+export function resolveMentionDisplayName(
+  target: string,
+  resolveId: ((t: string) => MentionSpeaker | null) | null | undefined,
+  resolveName: ((t: string) => MentionSpeaker | null) | null | undefined,
+  userDisplay: string,
+  userTarget: string = GROUP_USER_TARGET_NAME,
+): string {
+  if (target === userTarget) return userDisplay
+  const byId = resolveId?.(target)
+  if (byId?.name) return byId.name
+  const byName = resolveName?.(target)
+  if (byName?.name) return byName.name
+  return target
+}
+
 /** The inline chip class the message renderer styles (and DOMPurify must keep). */
 export const MENTION_CHIP_CLASS = 'msg-mention-chip'
+
+/**
+ * The reserved group-chat participant name of the HUMAN user (mirrors the Go
+ * `groupUserTarget` in `internal/service/group_store.go`). An agent @-mentions
+ * "User" to hand the floor back; the display layer shows it as "you" instead of
+ * the raw language-neutral token.
+ */
+export const GROUP_USER_TARGET_NAME = 'User'
 
 /**
  * renderMentionChips rewrites a message body for DISPLAY: each well-formed
@@ -354,4 +446,60 @@ export function buildMemberCandidates(members: MentionableMember[], query: strin
  *  so a rename or a duplicate display name cannot misroute it. */
 export function buildMentionTag(memberRowId: string): string {
   return `<clawbench-mention targets="${memberRowId}"></clawbench-mention> `
+}
+
+/** One staged member card, as the input serializes it on send. */
+export interface MentionCardSpec {
+  /** The member ROW id (the tag's targets value). */
+  memberId: string
+  /** The card's annotation — a PRIVATE note to that member. '' = no note. */
+  note?: string
+}
+
+/**
+ * serializeMentionCards turns the input's member cards into the protocol text a
+ * send carries. Each card yields ONE public mention (an empty body: the card is
+ * a "who should speak" marker — the user's question is the rest of the message),
+ * and a card WITH a note yields an additional `private` mention carrying that
+ * note (the 密送 channel: only the target may see it).
+ *
+ * Public tags come first, then the private ones, so the public routing block
+ * reads as one contiguous run.
+ *
+ * A note containing the protocol's own tag syntax is stripped of it: the parser
+ * matches spans non-greedily, so an embedded `</clawbench-mention>` would end
+ * the span early and leak the remainder as PROSE — visible to every member. The
+ * reserved token is simply not representable inside a note body (fail-closed,
+ * matching stripAllMentionSpans elsewhere in this module).
+ */
+export function serializeMentionCards(cards: MentionCardSpec[]): string {
+  const seen = new Set<string>()
+  const publicParts: string[] = []
+  const privateParts: string[] = []
+  for (const c of cards) {
+    const id = c.memberId
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    publicParts.push(`<clawbench-mention targets="${id}"></clawbench-mention>`)
+    const note = sanitizeNoteBody(c.note)
+    if (note) {
+      privateParts.push(`<clawbench-mention targets="${id}" private>${note}</clawbench-mention>`)
+    }
+  }
+  return [...publicParts, ...privateParts].join(' ')
+}
+
+/**
+ * sanitizeNoteBody strips any protocol tag token from a note body so a crafted
+ * note cannot terminate its own span and leak the remainder as prose. The
+ * protocol's reserved tokens are simply not representable inside a note.
+ */
+function sanitizeNoteBody(note: string | undefined): string {
+  if (!note) return ''
+  // Remove any opening/closing protocol token, well-formed or not. Done with a
+  // single literal-token scan rather than a tag regex so a malformed/partial
+  // token (which the parser would still treat as a span start) is covered too.
+  return note
+    .replace(/<\/?clawbench-mention\b[^>]*>/gi, '')
+    .trim()
 }

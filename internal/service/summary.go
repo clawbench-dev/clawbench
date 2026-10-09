@@ -4,10 +4,40 @@ import (
 	"log/slog"
 	"sync"
 
+	"clawbench/internal/grouprouting"
 	"clawbench/internal/model"
 	"clawbench/internal/summarize"
 	"clawbench/internal/ws"
 )
+
+// AssistantConclusion extracts an assistant reply's conclusion text and applies
+// the group-chat protocol policy for the session.
+//
+// A group timeline's speech may carry `<clawbench-mention>` tags; a private note
+// must never leave the timeline (fail-closed), so a group session's conclusion
+// is stripped with the injection-boundary primitive. A non-group session has no
+// protocol, so its text is returned VERBATIM — stripping it would truncate an
+// ordinary reply that merely DISCUSSES the tag syntax (an unclosed literal
+// `<clawbench-mention` in prose dropped the whole tail: regression, message
+// 58879, where a single chat's summary was cut from 1551 to 1258 chars).
+//
+// Every consumer of assistant conclusion text (reading summary, push preview,
+// recommendation, TTS, RAG index) must go through this so the policy lives in
+// exactly one place.
+func AssistantConclusion(sessionID string, blocks []model.ContentBlock) string {
+	return assistantConclusionWithPolicy(IsGroupSession(sessionID), blocks)
+}
+
+// assistantConclusionWithPolicy is AssistantConclusion with the group policy
+// already resolved. Callers that must resolve the policy BEFORE holding a read
+// cursor (GetConversationIndex) use this so the lookup is not repeated per row.
+func assistantConclusionWithPolicy(isGroup bool, blocks []model.ContentBlock) string {
+	text := summarize.ExtractLastAnswerFromBlocks(blocks)
+	if isGroup {
+		text = grouprouting.StripProtocolTags(text)
+	}
+	return text
+}
 
 // summaryInFlight tracks chat-message IDs currently being summarized by the
 // bulk background paths (triggerChatSummarization, backfillMissingSummaries).
@@ -38,7 +68,7 @@ func summarizeMessageOnce(targetID int64, blocks []model.ContentBlock, projectPa
 // Returns an error when the summary could not be saved; async callers discard
 // it and rely on the internal logging.
 func summarizeMessage(targetID int64, blocks []model.ContentBlock, projectPath, sessionID string) error {
-	text := summarize.ExtractLastAnswerFromBlocks(blocks)
+	text := AssistantConclusion(sessionID, blocks)
 	if text == "" {
 		return nil
 	}

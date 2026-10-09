@@ -54,30 +54,36 @@ vi.mock('@/components/chat/ChatMetadataModal.vue', () => ({
 }))
 
 // useChatRender pulls the markdown pipeline + task-block store; stub it so the
-// test asserts on wiring rather than on rendering internals.
+// test asserts on wiring rather than on rendering internals. The options object
+// is captured so a test can assert the share view wires mention resolution in
+// (the inline @-chip is resolved here, not in ChatMessageItem).
+const chatRenderOptions = vi.hoisted(() => ({ last: null as Record<string, unknown> | null }))
 vi.mock('@/composables/useChatRender', () => ({
-  useChatRender: () => ({
-    expandedTools: { value: {} },
-    blockTasks: {},
-    blockAskQuestions: {},
-    staticBlockCache: {},
-    toggleToolDetail: vi.fn(),
-    renderTextBlock: vi.fn(() => '<p>rendered</p>'),
-    formatDetailTime: vi.fn(() => ''),
-    toolCallSummary: vi.fn(() => ''),
-    formatToolInput: vi.fn(() => '<div>input</div>'),
-    truncate: vi.fn((s: string) => s),
-    hasImagesInContent: vi.fn(() => false),
-    parseAssistantContent: (content: string) => {
-      // Mirror the real parser closely enough for the assertions below.
-      try {
-        const parsed = JSON.parse(content)
-        return { blocks: parsed.blocks || [], metadata: parsed.metadata || null, cancelled: false }
-      } catch {
-        return { blocks: content ? [{ type: 'text', text: content }] : [], metadata: null }
-      }
-    },
-  }),
+  useChatRender: (options: Record<string, unknown>) => {
+    chatRenderOptions.last = options
+    return {
+      expandedTools: { value: {} },
+      blockTasks: {},
+      blockAskQuestions: {},
+      staticBlockCache: {},
+      toggleToolDetail: vi.fn(),
+      renderTextBlock: vi.fn(() => '<p>rendered</p>'),
+      formatDetailTime: vi.fn(() => ''),
+      toolCallSummary: vi.fn(() => ''),
+      formatToolInput: vi.fn(() => '<div>input</div>'),
+      truncate: vi.fn((s: string) => s),
+      hasImagesInContent: vi.fn(() => false),
+      parseAssistantContent: (content: string) => {
+        // Mirror the real parser closely enough for the assertions below.
+        try {
+          const parsed = JSON.parse(content)
+          return { blocks: parsed.blocks || [], metadata: parsed.metadata || null, cancelled: false }
+        } catch {
+          return { blocks: content ? [{ type: 'text', text: content }] : [], metadata: null }
+        }
+      },
+    }
+  },
 }))
 
 // Shared drawer spies so event-forwarding tests can assert the view delegates
@@ -138,6 +144,7 @@ const i18n = createI18n({
         exportFailed: 'Could not export the snapshot',
       },
       common: { loading: 'Loading...' },
+      group: { you: 'you' },
       chat: {
         contentBlocks: { detailsUnavailable: 'unavailable', detailsLoadFailed: 'failed' },
       },
@@ -156,9 +163,16 @@ function makePayload() {
       agentId: 'codebuddy',
       model: 'claude-sonnet-4',
     },
-    // Speaker identities frozen at share time (no avatars — the server omits
-    // them on the public path). Drives the TOC rows' real agent icon.
+    // Speaker identities frozen at share time (the snapshot carries custom
+    // avatars now). Drives the TOC rows' real agent icon.
     sessionAgent: { name: 'CodeBuddy', backend: 'codebuddy' },
+    // Group roster keyed by member ROW id: a user's @-mention carries the row
+    // id, so the share view must resolve it back to the agent name for the
+    // inline chip (otherwise it renders the raw id).
+    speakers: {
+      'member-42': { name: 'Reviewer', backend: 'claude' },
+      'member-7': { name: 'CodeBuddy', backend: 'codebuddy' },
+    },
     messages: [
       { id: 11, role: 'user', content: 'please fix it', createdAt: '2026-09-22T09:00:00Z' },
       {
@@ -331,9 +345,45 @@ describe('SessionShareView', () => {
     expect(wrapper.find('h1.share-topbar-title').exists()).toBe(true)
   })
 
+  it('shows the ClawBench brand logo in the topbar', async () => {
+    const wrapper = await mountView()
+    const logo = wrapper.find('.share-topbar .share-logo')
+    expect(logo.exists()).toBe(true)
+    expect(logo.attributes('src')).toBe('/logo-64.png')
+    expect(logo.attributes('alt')).toBe('ClawBench')
+  })
+
   it('renders the agent icon in the byline', async () => {
     const wrapper = await mountView()
     expect(wrapper.find('.session-share-agent .agent-icon-svg, .session-share-agent .agent-icon-initial').exists()).toBe(true)
+  })
+
+  // A shared GROUP mirrors the in-app group header: an overlapping avatar stack
+  // (host first, +N overflow) built from the frozen ACTIVE roster — not the
+  // single session-agent icon a 1:1 share shows.
+  it('renders an avatar stack for a group share', async () => {
+    globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
+      const u = String(url)
+      if (u.includes('/session')) {
+        const p = makePayload()
+        ;(p as Record<string, unknown>).groupMembers = [
+          { id: 'm-host', agentId: 'a1', name: 'Host', backend: 'codebuddy', isHost: true },
+          { id: 'm-second', agentId: 'a2', name: 'Second', backend: 'claude' },
+        ]
+        return { ok: true, json: async () => p } as Response
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as Response
+    }) as unknown as typeof fetch
+
+    const wrapper = await mountView()
+    const stack = wrapper.find('.session-share-byline .avatar-stack')
+    expect(stack.exists()).toBe(true)
+    // One disc per active member, host led first.
+    const discs = stack.findAll('.avatar-disc')
+    expect(discs).toHaveLength(2)
+    expect(discs[0].classes()).toContain('is-host')
+    // The single-agent icon is replaced by the stack.
+    expect(wrapper.find('.session-share-byline .session-share-agent-name').exists()).toBe(false)
   })
 
   it('renders one message per snapshot entry with blocks parsed', async () => {
@@ -351,6 +401,38 @@ describe('SessionShareView', () => {
     for (const row of wrapper.findAll('.chat-message-stub')) {
       expect(row.attributes('data-read-only')).toBe('true')
     }
+  })
+
+  // A user's @-mention carries the member ROW id. The inline @-chip is resolved
+  // by useChatRender (NOT by the ChatMessageItem props), so the share view must
+  // wire resolveMentionTarget against the frozen roster — otherwise the chip
+  // renders the raw id instead of the agent name.
+  it('resolves a user @-mention row id to the agent name in the inline chip', async () => {
+    await mountView()
+    const opts = chatRenderOptions.last
+    expect(opts, 'useChatRender must receive options').not.toBeNull()
+    expect(typeof opts!.resolveMentionTarget).toBe('function')
+    const resolve = opts!.resolveMentionTarget as (t: string) => string
+    // Row id → the speaker's display name.
+    expect(resolve('member-42')).toBe('Reviewer')
+    // An agent writes a display name; resolve by name too.
+    expect(resolve('CodeBuddy')).toBe('CodeBuddy')
+    // The reserved human target renders as the configured nickname (default
+    // "User" when the snapshot carries none).
+    expect(resolve('User')).toBe('User')
+    // Unknown target falls back to the raw token (never lost).
+    expect(resolve('nope')).toBe('nope')
+  })
+
+  // The chip HTML is baked into the rendered-block cache, whose key omits the
+  // roster; mentionScope changes when the roster identity changes so a chip
+  // rendered before the roster loaded is re-rendered.
+  it('wires a mentionScope that changes with the roster', async () => {
+    await mountView()
+    const opts = chatRenderOptions.last
+    expect(opts!.mentionScope).toBeTruthy()
+    expect((opts!.mentionScope as { value: string }).value).toContain('member-42')
+    expect((opts!.mentionScope as { value: string }).value).toContain('member-7')
   })
 
   it('exposes the inlined thinking text and tool payload to the render chain', async () => {
@@ -386,10 +468,27 @@ describe('SessionShareView', () => {
     expect(assistant.find('.auto-speech-active').text()).toBe('false')
     // The agent identity comes from the snapshot, not from /api/agents.
     expect(assistant.find('.agent-backend').text()).toBe('codebuddy')
-    // Custom avatars are not part of the snapshot: the provider must always
-    // return an empty string so the render chain falls back to the built-in
-    // backend icon.
+    // No avatar in this snapshot, so the provider returns an empty string and
+    // the render chain falls back to the built-in backend icon.
     expect(assistant.find('.agent-avatar').text()).toBe('[]')
+  })
+
+  it('resolves a custom avatar from the frozen snapshot identities', async () => {
+    globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
+      const u = String(url)
+      if (u.includes('/session')) {
+        const p = makePayload()
+        ;(p as Record<string, unknown>).sessionAgent = { name: 'CodeBuddy', backend: 'codebuddy', avatar: '<solo/>' }
+        return { ok: true, json: async () => p } as Response
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as Response
+    }) as unknown as typeof fetch
+
+    const wrapper = await mountView()
+    // The single-agent message has an empty agentId, so the session agent's
+    // frozen avatar answers.
+    const assistant = wrapper.findAll('.chat-message-stub').find(w => w.attributes('data-role') === 'assistant')
+    expect(assistant!.find('.agent-avatar').text()).toBe('[<solo/>]')
   })
 
   it('shows the not-found state when the token is unknown', async () => {

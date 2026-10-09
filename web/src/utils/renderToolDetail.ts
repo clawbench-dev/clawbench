@@ -380,7 +380,14 @@ function renderAskUserQuestion(input: ToolInput, blockCtx?: ToolBlockCtx): strin
         const label = typeof opt === 'string' ? opt : (opt.label || '')
         const desc = typeof opt === 'object' ? (opt.description || '') : ''
         html += `<div class="ask-question-option" data-qi="${qi}" data-oi="${oi}" data-label="${escapeHtml(label)}">`
-        html += `<span class="ask-option-indicator">${multiSelect ? '☐' : '◯'}</span>`
+        // The indicator is an EMPTY box drawn entirely in CSS (see
+        // .ask-option-indicator in web/css/components.css) — never a glyph. A
+        // glyph's size depends on the font, so no ◯/● (or ☐/☑) pair can be kept
+        // size-matched across fonts; a fixed box is identical everywhere. State
+        // is carried by the option's `.selected` class alone, so the markup for
+        // the two states is byte-identical.
+        const indicatorVariant = multiSelect ? 'ask-option-indicator--checkbox' : 'ask-option-indicator--radio'
+        html += `<span class="ask-option-indicator ${indicatorVariant}"></span>`
         html += '<div class="ask-option-content">'
         html += `<span class="ask-option-label">${escapeHtml(label)}</span>`
         if (desc) {
@@ -1883,20 +1890,15 @@ export function restoreAskStateFromStore(view: Element): void {
   const state = getAskState(key)
   if (!state) return
 
-  // 1. Selection — restore the class and the indicator glyph. Both glyph sets
-  //    are handled because the same card can be rendered single- or
-  //    multi-select, and the glyph is what the user actually reads.
+  // 1. Selection — restore the `.selected` class. The indicator itself is a
+  //    CSS-drawn box that reads that class, so there is no glyph to write and
+  //    the same code covers both single- and multi-select cards.
   const options = view.querySelectorAll('.ask-question-option')
   for (const opt of options) {
     const el = opt as HTMLElement
     const labels = state.selected[el.dataset.qi ?? '0'] ?? []
     const isSelected = labels.includes(el.dataset.label ?? '')
-    const multiSelect = (el.closest('.ask-question-item') as HTMLElement | null)?.dataset.multi === 'true'
     el.classList.toggle('selected', isSelected)
-    const indicator = el.querySelector('.ask-option-indicator')
-    if (indicator) {
-      indicator.textContent = multiSelect ? (isSelected ? '☑' : '☐') : (isSelected ? '●' : '◯')
-    }
   }
 
   // 2. Supplementary text. The field is a textarea, so a restored multi-line
@@ -2080,10 +2082,11 @@ registerToolActionHandler('AskUserQuestion', (event, emit) => {
     if (view && !view.classList.contains('ask-submitted')) {
       const multiSelect = (optionEl.closest('.ask-question-item') as HTMLElement | null)?.dataset.multi === 'true'
 
+      // Selection is expressed ONLY through the `.selected` class — the
+      // indicator is a CSS-drawn box that reads it (see web/css/components.css).
+      // Nothing to write into the DOM beyond the class.
       if (multiSelect) {
         optionEl.classList.toggle('selected')
-        const indicator = optionEl.querySelector('.ask-option-indicator')
-        if (indicator) indicator.textContent = optionEl.classList.contains('selected') ? '☑' : '☐'
       } else {
         // Single-select: clicking the already-selected option clears it (deselect),
         // otherwise it becomes the sole selection. This lets a user undo a mis-tap
@@ -2092,15 +2095,9 @@ registerToolActionHandler('AskUserQuestion', (event, emit) => {
         const siblings = optionEl.parentElement!.querySelectorAll('.ask-question-option')
         for (const s of siblings) {
           s.classList.remove('selected')
-          const ind = s.querySelector('.ask-option-indicator')
-          if (ind) ind.textContent = '◯'
         }
         if (!wasSelected) {
           optionEl.classList.add('selected')
-          const indicator = optionEl.querySelector('.ask-option-indicator')
-          // Use ● (U+25CF BLACK CIRCLE) — same glyph box/width as the unselected ◯ (U+25EF LARGE CIRCLE),
-          // so the filled state does not render smaller than the hollow one.
-          if (indicator) indicator.textContent = '●'
         }
       }
 

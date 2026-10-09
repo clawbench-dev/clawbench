@@ -24,6 +24,7 @@ interface Corpus {
       found: boolean
       end: boolean
       speakers: string[]
+      groups: Array<{ members: string[]; parallel: boolean; instruction: string }>
       instruction: string
       before: string
       after: string
@@ -50,6 +51,7 @@ describe('groupRouting parity with internal/grouprouting', () => {
       expect(r.found).toBe(tc.want.found)
       expect(r.end).toBe(tc.want.end)
       expect(r.speakers).toEqual(tc.want.speakers)
+      expect(r.groups).toEqual(tc.want.groups ?? [])
       expect(r.instruction).toBe(tc.want.instruction)
       expect(r.before).toBe(tc.want.before)
       expect(r.after).toBe(tc.want.after ?? '')

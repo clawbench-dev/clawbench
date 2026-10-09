@@ -8,7 +8,7 @@
       :style="{ zIndex: visible.length - i }"
       :title="m.isHost ? `${m.name} (Host)` : m.name"
     >
-      <AgentIcon :backend="m.backend" :name="m.name" :avatar="getAgentAvatar(m.agentId)" :size="size" />
+      <AgentIcon :backend="m.backend" :name="m.name" :avatar="m.avatar || getAgentAvatar(m.agentId)" :size="size" />
     </span>
     <!-- Overflow count as plain text to the RIGHT, never a disc: it is extra
          info, not a member, and keeping it out of the stack leaves the overlap
@@ -31,6 +31,10 @@ export interface StackMember {
   backend: string
   /** Draws the accent ring (the group host). */
   isHost?: boolean
+  /** Pre-resolved custom avatar SVG. Used by hosts that cannot reach the agent
+   *  registry (the public share page freezes avatars into its snapshot), and
+   *  takes precedence over `getAgentAvatar(agentId)`. */
+  avatar?: string
 }
 
 const props = withDefaults(defineProps<{

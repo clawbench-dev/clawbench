@@ -881,11 +881,22 @@ describe('ChatMessageList — group gating (single-agent chrome suppressed)', ()
     expect(src).toMatch(/v-else-if="currentAgent && !isGroupSession"/)
   })
 
-  it('shows a group empty state (avatar stack + hint) when a group has no messages', async () => {
+  it('shows a mode-aware group empty state when a group has no messages', async () => {
     const src = await source()
     // Group empty state: its own branch, before the generic fallback text.
     expect(src).toContain('class="group-welcome"')
     expect(src).toContain('groupMembers')
-    expect(src).toContain("t('chat.messageList.groupStartHint')")
+    // The card is driven by the group MODE, not a single fixed hint: host and
+    // free route differently, so each needs its own title/description/tips.
+    expect(src).toContain('groupMode: { type: String, default: \'host\' }')
+    expect(src).toContain("t('chat.messageList.groupModeHostTitle')")
+    expect(src).toContain("t('chat.messageList.groupModeFreeTitle')")
+    expect(src).toContain("t('chat.messageList.groupModeHostTip1')")
+    expect(src).toContain("t('chat.messageList.groupModeFreeTip3')")
+  })
+
+  it('forwards groupMode from the panel into the message list', async () => {
+    const panelSource = await import('@/components/chat/ChatPanelContent.vue?raw')
+    expect(String(panelSource.default)).toContain(':groupMode="props.groupMode"')
   })
 })

@@ -1656,10 +1656,10 @@ onUpdated(restoreAskStates)
   background: color-mix(in srgb, var(--accent-color) 8%, transparent);
   border-color: var(--accent-color);
 }
+/* Shape/geometry is GLOBAL — see .ask-option-indicator in web/css/components.css.
+   Only colour lives here, consumed by the global rule via `currentColor`. Do not
+   re-declare size/border/radius: a scoped selector outranks the global class. */
 .tool-detail-body .ask-option-indicator {
-  flex-shrink: 0;
-  font-size: var(--font-size-lg);
-  line-height: var(--line-height-snug);
   color: var(--text-muted);
 }
 .tool-detail-body .ask-question-option.selected .ask-option-indicator {

@@ -43,17 +43,48 @@ func TestNormalizeSessionTypeFilter(t *testing.T) {
 	assert.Equal(t, SessionTypeFilterAll, NormalizeSessionTypeFilter(""))
 	assert.Equal(t, SessionTypeFilterAll, NormalizeSessionTypeFilter("bogus"))
 	assert.Equal(t, SessionTypeFilterChat, NormalizeSessionTypeFilter(" CHAT "))
+	assert.Equal(t, SessionTypeFilterGroup, NormalizeSessionTypeFilter("Group"))
 	assert.Equal(t, SessionTypeFilterTask, NormalizeSessionTypeFilter("Task"))
 }
 
-func TestSessionTypeDBValue(t *testing.T) {
-	// "all" must yield the empty string so callers can use it as "no predicate".
-	assert.Equal(t, "", SessionTypeDBValue(""))
-	assert.Equal(t, "", SessionTypeDBValue("all"))
-	assert.Equal(t, "", SessionTypeDBValue("bogus"))
-	assert.Equal(t, "chat", SessionTypeDBValue("chat"))
-	// The user-facing "task" maps onto the DB's 'scheduled'.
-	assert.Equal(t, "scheduled", SessionTypeDBValue("task"))
+func TestSessionTypeFilterTypes(t *testing.T) {
+	// "all" is the user-visible set (chat + group), NOT everything: hidden
+	// group_member and task executions stay out.
+	assert.Equal(t, []string{SessionTypeChat, SessionTypeGroup}, SessionTypeFilterTypes("all"))
+	assert.Equal(t, []string{SessionTypeChat, SessionTypeGroup}, SessionTypeFilterTypes("bogus"))
+	// Each concrete filter selects exactly one type — the three are mutually
+	// exclusive ("chat" no longer drags group chats in with it).
+	assert.Equal(t, []string{SessionTypeChat}, SessionTypeFilterTypes("chat"))
+	assert.Equal(t, []string{SessionTypeGroup}, SessionTypeFilterTypes("group"))
+	assert.Equal(t, []string{SessionTypeScheduled}, SessionTypeFilterTypes("task"))
+}
+
+func TestSessionTypeMatchesFilter(t *testing.T) {
+	cases := []struct {
+		stored, filter string
+		want           bool
+	}{
+		// chat filter matches only 1:1 sessions.
+		{SessionTypeChat, "chat", true},
+		{SessionTypeGroup, "chat", false},
+		{"", "chat", true}, // empty = schema default 'chat'
+		// group filter matches only group chats.
+		{SessionTypeGroup, "group", true},
+		{SessionTypeChat, "group", false},
+		// task filter matches only scheduled.
+		{SessionTypeScheduled, "task", true},
+		{SessionTypeChat, "task", false},
+		// "all" matches every visible type but not hidden/scheduled.
+		{SessionTypeChat, "all", true},
+		{SessionTypeGroup, "all", true},
+		{SessionTypeGroupMember, "all", false},
+		{SessionTypeScheduled, "all", false},
+		{SessionTypeGroupMember, "chat", false},
+	}
+	for _, tc := range cases {
+		assert.Equal(t, tc.want, SessionTypeMatchesFilter(tc.stored, tc.filter),
+			"stored=%q filter=%q", tc.stored, tc.filter)
+	}
 }
 
 func TestEscapeLikePattern(t *testing.T) {
@@ -698,8 +729,9 @@ func TestPurgeArchivedData_CascadesGroupMemberRows(t *testing.T) {
 // --- session-type predicate ---
 
 // TestVisibleSessionTypes_MatchClause guards the representations of the
-// visible-session set from drifting apart: the SQL clause, the Go slice, and
-// IsVisibleSessionType must all describe exactly {chat, group}.
+// visible-session set from drifting apart: the SQL clause and the Go slice must
+// both describe exactly {chat, group}, and the "all" type filter must select
+// that same set (the Go/SQL agreement the query builders rely on).
 func TestVisibleSessionTypes_MatchClause(t *testing.T) {
 	assert.Equal(t, "'chat', 'group'", VisibleSessionTypeInClause)
 	assert.Equal(t, []string{SessionTypeChat, SessionTypeGroup}, visibleSessionTypes)
@@ -709,30 +741,8 @@ func TestVisibleSessionTypes_MatchClause(t *testing.T) {
 	assert.Equal(t, quoted, VisibleSessionTypeInClause,
 		"the SQL clause must be derived from visibleSessionTypes, not hand-written")
 
-	// Every visible type must satisfy the predicate (the Go/SQL agreement).
-	for _, typ := range visibleSessionTypes {
-		assert.True(t, IsVisibleSessionType(typ), "%q must be visible", typ)
-	}
-}
-
-// TestIsVisibleSessionType pins the semantics: chat and group are visible, a
-// group_member (hidden) and a scheduled (task) row are not, and an empty stored
-// value is treated as the schema default 'chat'.
-func TestIsVisibleSessionType(t *testing.T) {
-	cases := []struct {
-		stored string
-		want   bool
-	}{
-		{SessionTypeChat, true},
-		{SessionTypeGroup, true},
-		{"", true}, // schema default
-		{SessionTypeGroupMember, false},
-		{SessionTypeScheduled, false},
-		{"unknown", false},
-	}
-	for _, tc := range cases {
-		assert.Equal(t, tc.want, IsVisibleSessionType(tc.stored), "stored=%q", tc.stored)
-	}
+	// The "all" filter selects exactly the visible set.
+	assert.Equal(t, visibleSessionTypes, SessionTypeFilterTypes(SessionTypeFilterAll))
 }
 
 // TestVisibleSessionTypes_EmbeddedInQueryBuilders pins that the two Go-side
@@ -754,6 +764,24 @@ func TestVisibleSessionTypes_EmbeddedInQueryBuilders(t *testing.T) {
 	}
 	assert.ElementsMatch(t, []string{"c1", "g1"}, ids,
 		"browse must include chat+group and exclude scheduled")
+
+	// Each concrete filter lists exactly one type: "chat" excludes group chats,
+	// "group" lists only groups. This is the mutually-exclusive contract.
+	chatOnly, _, err := GetRecentSessions("/project", 0, SessionArchiveFilterAll, SessionTypeFilterChat, SessionSortNewest, "", "", "", "")
+	require.NoError(t, err)
+	chatIDs := make([]string, 0, len(chatOnly))
+	for _, s := range chatOnly {
+		chatIDs = append(chatIDs, s.ID)
+	}
+	assert.Equal(t, []string{"c1"}, chatIDs, "chat filter must exclude group chats")
+
+	groupOnly, _, err := GetRecentSessions("/project", 0, SessionArchiveFilterAll, SessionTypeFilterGroup, SessionSortNewest, "", "", "", "")
+	require.NoError(t, err)
+	groupIDs := make([]string, 0, len(groupOnly))
+	for _, s := range groupOnly {
+		groupIDs = append(groupIDs, s.ID)
+	}
+	assert.Equal(t, []string{"g1"}, groupIDs, "group filter must list only group chats")
 }
 
 // TestGetExpiredArchivedSessions_ExcludesGroupMember pins that the retention

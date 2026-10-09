@@ -9,8 +9,9 @@ import { getAgentAvatar, useAgents } from '@/composables/useAgents'
  */
 export function useGroupMembers(currentSessionId: Ref<string>) {
   const members = ref<GroupMemberInfo[]>([])
-  const maxRounds = ref(10)
   const mode = ref<'host' | 'free'>('host')
+  /** Free-mode "并发执行" switch (server-authoritative). */
+  const parallelDefault = ref(false)
   const { loadAgents } = useAgents()
 
   const hostMemberId = computed(() => members.value.find(m => m.isHost)?.id || '')
@@ -45,6 +46,7 @@ export function useGroupMembers(currentSessionId: Ref<string>) {
     if (!sessionId) {
       members.value = []
       mode.value = 'host'
+      parallelDefault.value = false
       return
     }
     // Agents carry the custom avatars the member bar/speaker header render, so
@@ -53,15 +55,16 @@ export function useGroupMembers(currentSessionId: Ref<string>) {
     try {
       const res = await listGroupMembers(sessionId)
       members.value = res.members
-      maxRounds.value = res.maxRounds
       mode.value = res.mode
+      parallelDefault.value = res.parallelDefault
     } catch {
       members.value = []
       mode.value = 'host'
+      parallelDefault.value = false
     }
   }
 
   watch(currentSessionId, (sid) => { void refresh(sid) }, { immediate: true })
 
-  return { members, maxRounds, mode, hostMemberId, resolveSpeaker, resolveByName, refresh }
+  return { members, mode, parallelDefault, hostMemberId, resolveSpeaker, resolveByName, refresh }
 }

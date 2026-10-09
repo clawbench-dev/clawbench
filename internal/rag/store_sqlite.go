@@ -32,11 +32,14 @@ type Chunk struct {
 	HasEmbedding       bool      `json:"has_embedding"`
 	// ProjectID is the stored key; ProjectPath mirrors it for the JSON contract
 	// (and is what the indexer naturally has in hand).
-	ProjectID   int64     `json:"-"`
-	ProjectPath string    `json:"project_path"`
-	Backend     string    `json:"backend"`
-	Role        string    `json:"role"`
-	CreatedAt   time.Time `json:"created_at"`
+	ProjectID   int64  `json:"-"`
+	ProjectPath string `json:"project_path"`
+	Backend     string `json:"backend"`
+	Role        string `json:"role"`
+	// AgentID is the group-chat speaker (member row id) of the source message,
+	// or "" for a single-agent message. It lets a search hit name the member.
+	AgentID   string    `json:"agent_id,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // MatchRange represents a character-level (rune offset) match position within chunk text.
@@ -47,15 +50,18 @@ type MatchRange struct {
 
 // SearchHit represents a search result with similarity score.
 type SearchHit struct {
-	ChunkID        int64        `json:"chunk_id"`
-	ChunkText      string       `json:"chunk_text"`
-	Score          float64      `json:"score"`
-	SessionID      string       `json:"session_id"`
-	SessionTitle   string       `json:"session_title"`
-	MessageID      int64        `json:"message_id"`
-	Role           string       `json:"role"`
-	ProjectPath    string       `json:"project_path"`
-	Backend        string       `json:"backend"`
+	ChunkID      int64   `json:"chunk_id"`
+	ChunkText    string  `json:"chunk_text"`
+	Score        float64 `json:"score"`
+	SessionID    string  `json:"session_id"`
+	SessionTitle string  `json:"session_title"`
+	MessageID    int64   `json:"message_id"`
+	Role         string  `json:"role"`
+	ProjectPath  string  `json:"project_path"`
+	Backend      string  `json:"backend"`
+	// AgentID is the group-chat speaker (member row id) of the source message,
+	// or "" for a single-agent message.
+	AgentID        string       `json:"agent_id,omitempty"`
 	CreatedAt      time.Time    `json:"created_at"`
 	MatchPositions []MatchRange `json:"match_positions,omitempty"`
 }
@@ -242,6 +248,7 @@ func (s *Store) initSchema() error {
 			project_id INTEGER NOT NULL DEFAULT 0,
 			backend TEXT NOT NULL,
 			role TEXT NOT NULL,
+			agent_id TEXT NOT NULL DEFAULT '',
 			created_at DATETIME NOT NULL
 		);
 
@@ -311,12 +318,21 @@ func (s *Store) addMissingColumns() error {
 		"INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
+	// agent_id is the group-chat speaker (member row id) of the source message,
+	// so a search hit can name the member who said it. Existing chunks predate
+	// the column and stay '' until their message is re-indexed; the drawer then
+	// falls back to the generic "Assistant" label.
+	if err := s.addColumnIfMissing("rag_chunks", "agent_id",
+		"TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	// The project index is created HERE, not in initSchema: on a database whose
 	// rag_chunks predates project_id, initSchema's CREATE TABLE is a no-op and
 	// an index on the new column would abort the whole schema init. By this
 	// point the column is guaranteed to exist.
 	if _, err := s.db.Exec(
-		"CREATE INDEX IF NOT EXISTS idx_rag_chunks_project ON rag_chunks(project_id)"); err != nil {
+		"CREATE INDEX IF NOT EXISTS idx_rag_chunks_project ON rag_chunks(project_id)",
+	); err != nil {
 		return fmt.Errorf("create rag_chunks project index: %w", err)
 	}
 	return nil
@@ -327,7 +343,8 @@ func (s *Store) addMissingColumns() error {
 func (s *Store) addColumnIfMissing(table, column, decl string) error {
 	var exists int
 	err := s.db.QueryRow(
-		"SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?", table, column).Scan(&exists)
+		"SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?", table, column,
+	).Scan(&exists)
 	if err != nil {
 		return fmt.Errorf("inspect %s.%s: %w", table, column, err)
 	}
@@ -849,7 +866,8 @@ func (s *Store) insertOneChunk(tx *sql.Tx, c Chunk, vecReady bool, vecDim int) (
 		if vecReady && vecDim > 0 && len(c.Embedding) != vecDim {
 			return 0, fmt.Errorf(
 				"embedding dimension mismatch for chunk (message_id=%d): got %d, rag_vec expects %d",
-				c.MessageID, len(c.Embedding), vecDim)
+				c.MessageID, len(c.Embedding), vecDim,
+			)
 		}
 	}
 
@@ -877,11 +895,11 @@ func (s *Store) insertOneChunk(tx *sql.Tx, c Chunk, vecReady bool, vecDim int) (
 	result, err := tx.Exec(
 		`INSERT INTO rag_chunks (session_id, message_id, chunk_text, chunk_text_segmented,
 			chunk_index, token_count, embedding, has_embedding, embedding_dim,
-			project_id, backend, role, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			project_id, backend, role, agent_id, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		c.SessionID, c.MessageID, c.ChunkText, c.ChunkTextSegmented,
 		c.ChunkIndex, c.TokenCount, embBlob, boolToInt(willStoreVector), embDim,
-		c.ProjectID, c.Backend, c.Role, c.CreatedAt,
+		c.ProjectID, c.Backend, c.Role, c.AgentID, c.CreatedAt,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("insert chunk (message_id=%d, chunk_index=%d): %w", c.MessageID, c.ChunkIndex, err)
@@ -1010,7 +1028,7 @@ func (s *Store) SearchVector(queryEmbedding []float64, limit int, projectPath, b
 	query := `
 		SELECT v.rowid, v.distance,
 		       c.chunk_text, c.session_id, c.message_id, c.role,
-		       c.project_id, c.backend, c.created_at
+		       c.project_id, c.backend, c.agent_id, c.created_at
 		FROM rag_vec v
 		JOIN rag_chunks c ON c.id = v.rowid
 		WHERE v.embedding MATCH ? AND v.k = ?`
@@ -1048,7 +1066,7 @@ func (s *Store) SearchVector(queryEmbedding []float64, limit int, projectPath, b
 		var h SearchHit
 		var projectID int64
 		if err := rows.Scan(&h.ChunkID, &h.Score, &h.ChunkText, &h.SessionID,
-			&h.MessageID, &h.Role, &projectID, &h.Backend, &h.CreatedAt); err != nil {
+			&h.MessageID, &h.Role, &projectID, &h.Backend, &h.AgentID, &h.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan vector hit: %w", err)
 		}
 		hits = append(hits, h)
@@ -1122,6 +1140,7 @@ func (s *Store) SearchFTS(queryText string, limit int, projectPath, backend, rol
 		       rag_chunks.role,
 		       rag_chunks.project_id,
 		       rag_chunks.backend,
+		       rag_chunks.agent_id,
 		       rag_chunks.created_at
 		FROM rag_chunks_fts
 		JOIN rag_chunks ON rag_chunks.id = rag_chunks_fts.rowid
@@ -1140,7 +1159,8 @@ func (s *Store) SearchFTS(queryText string, limit int, projectPath, backend, rol
 		query += " AND rag_chunks.project_id = ?"
 		args = append(args, projectID)
 	}
-	query, args = appendEqualityFilters(query, args,
+	query, args = appendEqualityFilters(
+		query, args,
 		[2]string{"rag_chunks.backend", backend},
 		[2]string{"rag_chunks.role", role},
 		[2]string{"rag_chunks.session_id", sessionID},
@@ -1172,7 +1192,7 @@ func (s *Store) SearchFTS(queryText string, limit int, projectPath, backend, rol
 	for rows.Next() {
 		var h SearchHit
 		var projectID int64
-		if err := rows.Scan(&h.ChunkID, &h.ChunkText, &h.Score, &h.SessionID, &h.MessageID, &h.Role, &projectID, &h.Backend, &h.CreatedAt); err != nil {
+		if err := rows.Scan(&h.ChunkID, &h.ChunkText, &h.Score, &h.SessionID, &h.MessageID, &h.Role, &projectID, &h.Backend, &h.AgentID, &h.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan fts hit: %w", err)
 		}
 		// BM25 returns negative scores for better ranking; negate for consistency
@@ -1686,7 +1706,8 @@ type pendingResegmentChunk struct {
 // GetPendingResegmentChunks returns up to limit chunks awaiting re-segmentation.
 func (s *Store) GetPendingResegmentChunks(limit int) ([]pendingResegmentChunk, error) {
 	rows, err := s.db.Query(
-		"SELECT id, chunk_text, chunk_text_segmented FROM rag_chunks WHERE needs_resegment = 1 ORDER BY id LIMIT ?", limit)
+		"SELECT id, chunk_text, chunk_text_segmented FROM rag_chunks WHERE needs_resegment = 1 ORDER BY id LIMIT ?", limit,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("query pending resegment chunks: %w", err)
 	}
@@ -1767,7 +1788,8 @@ type resegmentStmts struct {
 // already-prepared ones if a later prepare fails.
 func prepareResegmentStmts(tx *sql.Tx) (*resegmentStmts, error) {
 	upd, err := tx.Prepare(
-		`UPDATE rag_chunks SET chunk_text_segmented = ?, needs_resegment = 0 WHERE id = ?`)
+		`UPDATE rag_chunks SET chunk_text_segmented = ?, needs_resegment = 0 WHERE id = ?`,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("prepare resegment update: %w", err)
 	}
@@ -1777,13 +1799,15 @@ func prepareResegmentStmts(tx *sql.Tx) (*resegmentStmts, error) {
 	// the index ("database disk image is malformed"). The documented pattern is an
 	// explicit 'delete' carrying the OLD value, followed by an insert of the new.
 	del, err := tx.Prepare(
-		`INSERT INTO rag_chunks_fts(rag_chunks_fts, rowid, chunk_text_segmented) VALUES('delete', ?, ?)`)
+		`INSERT INTO rag_chunks_fts(rag_chunks_fts, rowid, chunk_text_segmented) VALUES('delete', ?, ?)`,
+	)
 	if err != nil {
 		_ = upd.Close()
 		return nil, fmt.Errorf("prepare fts delete: %w", err)
 	}
 	ins, err := tx.Prepare(
-		`INSERT INTO rag_chunks_fts(rowid, chunk_text_segmented) VALUES(?, ?)`)
+		`INSERT INTO rag_chunks_fts(rowid, chunk_text_segmented) VALUES(?, ?)`,
+	)
 	if err != nil {
 		_ = del.Close()
 		_ = upd.Close()

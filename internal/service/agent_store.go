@@ -20,6 +20,22 @@ import (
 // indistinguishable entries are a real hazard.
 var ErrAgentNameTaken = errors.New("agent name already taken")
 
+// ErrAgentNameReserved is returned when an agent name collides with the
+// configured group-chat user nickname (chat.user_nickname). The nickname is a
+// routing target, so an agent sharing it would be unreachable (and would shadow
+// the human in group routing). The collision is rejected in BOTH directions —
+// this sentinel covers the agent side; the config side rejects a nickname that
+// matches an existing agent.
+var ErrAgentNameReserved = errors.New("agent name conflicts with the user nickname")
+
+// IsUserNickname reports whether name equals the configured group-chat user
+// nickname. Empty names never collide (callers validate non-empty separately),
+// and an unset nickname falls back to the default so the guard holds even before
+// config is applied.
+func IsUserNickname(name string) bool {
+	return name != "" && name == groupUserTarget()
+}
+
 // AgentNameTaken reports whether any agent OTHER than excludeID already uses
 // name. The exclusion is essential: SaveAgent is an ON CONFLICT(id) upsert that
 // built-in backend registration calls repeatedly, so comparing against all rows
@@ -178,6 +194,9 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 		autoApprove = 1
 	}
 
+	if IsUserNickname(agent.Name) {
+		return fmt.Errorf("save agent %s: %w", agent.ID, ErrAgentNameReserved)
+	}
 	if AgentNameTaken(agent.Name, agent.ID) {
 		return fmt.Errorf("save agent %s: %w", agent.ID, ErrAgentNameTaken)
 	}
@@ -332,6 +351,9 @@ func PatchAgentFields(id string, patch AgentPatch) error {
 // when name is already used by a different agent. Split out of
 // PatchAgentFields to keep its branch count in budget.
 func ensureAgentNameFree(id, name string) error {
+	if IsUserNickname(name) {
+		return fmt.Errorf("patch agent %s: %w", id, ErrAgentNameReserved)
+	}
 	if AgentNameTaken(name, id) {
 		return fmt.Errorf("patch agent %s: %w", id, ErrAgentNameTaken)
 	}

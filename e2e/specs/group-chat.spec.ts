@@ -34,7 +34,7 @@ test.describe('AI group chat', () => {
       const settings = await (await fetch('/api/group/settings', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ groupId: created.groupId, maxRounds: 4 }),
+        body: JSON.stringify({ groupId: created.groupId, parallelDefault: true }),
       })).json()
 
       const memberId = added.memberIds?.[0]

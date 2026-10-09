@@ -9,6 +9,15 @@
         "speakers": [
           "B"
         ],
+        "groups": [
+          {
+            "members": [
+              "B"
+            ],
+            "parallel": false,
+            "instruction": "请回应 A 的质疑"
+          }
+        ],
         "instruction": "请回应 A 的质疑",
         "before": "",
         "after": "",
@@ -26,6 +35,17 @@
           "B",
           "C"
         ],
+        "groups": [
+          {
+            "members": [
+              "A",
+              "B",
+              "C"
+            ],
+            "parallel": false,
+            "instruction": "各自表态"
+          }
+        ],
         "instruction": "各自表态",
         "before": "",
         "after": "",
@@ -39,6 +59,7 @@
         "found": false,
         "end": true,
         "speakers": [],
+        "groups": [],
         "instruction": "",
         "before": "",
         "after": "",
@@ -54,6 +75,15 @@
         "speakers": [
           "B"
         ],
+        "groups": [
+          {
+            "members": [
+              "B"
+            ],
+            "parallel": false,
+            "instruction": "请回应"
+          }
+        ],
         "instruction": "请回应",
         "before": "",
         "after": "",
@@ -67,6 +97,7 @@
         "found": false,
         "end": false,
         "speakers": [],
+        "groups": [],
         "instruction": "",
         "before": "",
         "after": "",
@@ -80,6 +111,7 @@
         "found": false,
         "end": false,
         "speakers": [],
+        "groups": [],
         "instruction": "",
         "before": "",
         "after": "",
@@ -93,6 +125,7 @@
         "found": false,
         "end": false,
         "speakers": [],
+        "groups": [],
         "instruction": "",
         "before": "",
         "after": "",
@@ -106,6 +139,7 @@
         "found": false,
         "end": true,
         "speakers": [],
+        "groups": [],
         "instruction": "",
         "before": "",
         "after": "",
@@ -120,6 +154,15 @@
         "end": false,
         "speakers": [
           "B"
+        ],
+        "groups": [
+          {
+            "members": [
+              "B"
+            ],
+            "parallel": false,
+            "instruction": "请回应"
+          }
         ],
         "instruction": "请回应",
         "before": "A 的观点不错",
@@ -136,6 +179,15 @@
         "speakers": [
           "B"
         ],
+        "groups": [
+          {
+            "members": [
+              "B"
+            ],
+            "parallel": false,
+            "instruction": "请回应"
+          }
+        ],
         "instruction": "请回应",
         "before": "A 的观点不错",
         "after": "",
@@ -150,6 +202,15 @@
         "end": false,
         "speakers": [
           "B"
+        ],
+        "groups": [
+          {
+            "members": [
+              "B"
+            ],
+            "parallel": false,
+            "instruction": "请回应"
+          }
         ],
         "instruction": "请回应",
         "before": "",
@@ -166,6 +227,15 @@
         "speakers": [
           "B"
         ],
+        "groups": [
+          {
+            "members": [
+              "B"
+            ],
+            "parallel": false,
+            "instruction": "请回应"
+          }
+        ],
         "instruction": "请回应",
         "before": "背景",
         "after": "收尾语",
@@ -179,6 +249,7 @@
         "found": true,
         "end": false,
         "speakers": [],
+        "groups": [],
         "instruction": "",
         "before": "",
         "after": "",
@@ -202,6 +273,16 @@
           "A",
           "B"
         ],
+        "groups": [
+          {
+            "members": [
+              "A",
+              "B"
+            ],
+            "parallel": false,
+            "instruction": "请表态"
+          }
+        ],
         "instruction": "请表态",
         "before": "",
         "after": "",
@@ -224,6 +305,16 @@
         "speakers": [
           "A",
           "B"
+        ],
+        "groups": [
+          {
+            "members": [
+              "A",
+              "B"
+            ],
+            "parallel": false,
+            "instruction": "表态"
+          }
         ],
         "instruction": "表态",
         "before": "",
@@ -253,6 +344,15 @@
         "speakers": [
           "A"
         ],
+        "groups": [
+          {
+            "members": [
+              "A"
+            ],
+            "parallel": false,
+            "instruction": "请回应"
+          }
+        ],
         "instruction": "请回应",
         "before": "背景在此",
         "after": "",
@@ -273,6 +373,7 @@
         "found": false,
         "end": false,
         "speakers": [],
+        "groups": [],
         "instruction": "",
         "before": "",
         "after": "",
@@ -286,6 +387,7 @@
         "found": false,
         "end": false,
         "speakers": [],
+        "groups": [],
         "instruction": "",
         "before": "",
         "after": "",
@@ -299,6 +401,7 @@
         "found": false,
         "end": false,
         "speakers": [],
+        "groups": [],
         "instruction": "",
         "before": "",
         "after": "",
@@ -313,6 +416,15 @@
         "end": false,
         "speakers": [
           "A"
+        ],
+        "groups": [
+          {
+            "members": [
+              "A"
+            ],
+            "parallel": false,
+            "instruction": "NBSP"
+          }
         ],
         "instruction": "NBSP",
         "before": "",
@@ -329,6 +441,15 @@
         "speakers": [
           "A"
         ],
+        "groups": [
+          {
+            "members": [
+              "A"
+            ],
+            "parallel": false,
+            "instruction": "全角空格"
+          }
+        ],
         "instruction": "全角空格",
         "before": "",
         "after": "",
@@ -343,6 +464,15 @@
         "end": false,
         "speakers": [
           "A"
+        ],
+        "groups": [
+          {
+            "members": [
+              "A"
+            ],
+            "parallel": false,
+            "instruction": "表态"
+          }
         ],
         "instruction": "表态",
         "before": "",
@@ -367,6 +497,22 @@
           "A",
           "B"
         ],
+        "groups": [
+          {
+            "members": [
+              "A"
+            ],
+            "parallel": false,
+            "instruction": "先说"
+          },
+          {
+            "members": [
+              "B"
+            ],
+            "parallel": false,
+            "instruction": "再说"
+          }
+        ],
         "instruction": "先说\n\n再说",
         "before": "",
         "after": "",
@@ -380,6 +526,7 @@
         "found": false,
         "end": false,
         "speakers": [],
+        "groups": [],
         "instruction": "",
         "before": "",
         "after": "",
@@ -395,9 +542,283 @@
         "speakers": [
           "A"
         ],
+        "groups": [
+          {
+            "members": [
+              "A"
+            ],
+            "parallel": false,
+            "instruction": "x"
+          }
+        ],
         "instruction": "x",
         "before": "",
         "after": "y",
+        "bcc": []
+      }
+    },
+    {
+      "name": "mode_parallel_single_tag",
+      "text": "<clawbench-mention targets=\"A,B\" mode=\"parallel\">同时表态</clawbench-mention>",
+      "want": {
+        "found": true,
+        "end": false,
+        "speakers": [
+          "A",
+          "B"
+        ],
+        "groups": [
+          {
+            "members": [
+              "A",
+              "B"
+            ],
+            "parallel": true,
+            "instruction": "同时表态"
+          }
+        ],
+        "instruction": "同时表态",
+        "before": "",
+        "after": "",
+        "bcc": []
+      }
+    },
+    {
+      "name": "mode_sequential_explicit",
+      "text": "<clawbench-mention targets=\"A,B\" mode=\"sequential\">依次表态</clawbench-mention>",
+      "want": {
+        "found": true,
+        "end": false,
+        "speakers": [
+          "A",
+          "B"
+        ],
+        "groups": [
+          {
+            "members": [
+              "A",
+              "B"
+            ],
+            "parallel": false,
+            "instruction": "依次表态"
+          }
+        ],
+        "instruction": "依次表态",
+        "before": "",
+        "after": "",
+        "bcc": []
+      }
+    },
+    {
+      "name": "mode_unknown_falls_back_sequential",
+      "text": "<clawbench-mention targets=\"A\" mode=\"turbo\">照常</clawbench-mention>",
+      "want": {
+        "found": true,
+        "end": false,
+        "speakers": [
+          "A"
+        ],
+        "groups": [
+          {
+            "members": [
+              "A"
+            ],
+            "parallel": false,
+            "instruction": "照常"
+          }
+        ],
+        "instruction": "照常",
+        "before": "",
+        "after": "",
+        "bcc": []
+      }
+    },
+    {
+      "name": "mode_absent_is_sequential",
+      "text": "<clawbench-mention targets=\"A\">照常</clawbench-mention>",
+      "want": {
+        "found": true,
+        "end": false,
+        "speakers": [
+          "A"
+        ],
+        "groups": [
+          {
+            "members": [
+              "A"
+            ],
+            "parallel": false,
+            "instruction": "照常"
+          }
+        ],
+        "instruction": "照常",
+        "before": "",
+        "after": "",
+        "bcc": []
+      }
+    },
+    {
+      "name": "mode_mixed_groups",
+      "text": "<clawbench-mention targets=\"C\">先请 C</clawbench-mention><clawbench-mention targets=\"A,B\" mode=\"parallel\">再同时</clawbench-mention>",
+      "want": {
+        "found": true,
+        "end": false,
+        "speakers": [
+          "C",
+          "A",
+          "B"
+        ],
+        "groups": [
+          {
+            "members": [
+              "C"
+            ],
+            "parallel": false,
+            "instruction": "先请 C"
+          },
+          {
+            "members": [
+              "A",
+              "B"
+            ],
+            "parallel": true,
+            "instruction": "再同时"
+          }
+        ],
+        "instruction": "先请 C\n\n再同时",
+        "before": "",
+        "after": "",
+        "bcc": []
+      }
+    },
+    {
+      "name": "mode_parallel_with_user_target",
+      "text": "<clawbench-mention targets=\"A,User\" mode=\"parallel\">同时</clawbench-mention>",
+      "want": {
+        "found": true,
+        "end": false,
+        "speakers": [
+          "A",
+          "User"
+        ],
+        "groups": [
+          {
+            "members": [
+              "A",
+              "User"
+            ],
+            "parallel": true,
+            "instruction": "同时"
+          }
+        ],
+        "instruction": "同时",
+        "before": "",
+        "after": "",
+        "bcc": []
+      }
+    },
+    {
+      "name": "mode_cross_group_dedup",
+      "text": "<clawbench-mention targets=\"A,B\" mode=\"parallel\">并行</clawbench-mention><clawbench-mention targets=\"B,C\">串行</clawbench-mention>",
+      "want": {
+        "found": true,
+        "end": false,
+        "speakers": [
+          "A",
+          "B",
+          "C"
+        ],
+        "groups": [
+          {
+            "members": [
+              "A",
+              "B"
+            ],
+            "parallel": true,
+            "instruction": "并行"
+          },
+          {
+            "members": [
+              "C"
+            ],
+            "parallel": false,
+            "instruction": "串行"
+          }
+        ],
+        "instruction": "并行\n\n串行",
+        "before": "",
+        "after": "",
+        "bcc": []
+      }
+    },
+    {
+      "name": "mode_parallel_uppercase_value",
+      "text": "<clawbench-mention targets=\"A,B\" mode=\"PARALLEL\">同时</clawbench-mention>",
+      "want": {
+        "found": true,
+        "end": false,
+        "speakers": [
+          "A",
+          "B"
+        ],
+        "groups": [
+          {
+            "members": [
+              "A",
+              "B"
+            ],
+            "parallel": true,
+            "instruction": "同时"
+          }
+        ],
+        "instruction": "同时",
+        "before": "",
+        "after": "",
+        "bcc": []
+      }
+    },
+    {
+      "name": "mode_private_ignored_for_groups",
+      "text": "<clawbench-mention targets=\"A\" private mode=\"parallel\">悄悄话</clawbench-mention>",
+      "want": {
+        "found": true,
+        "end": false,
+        "speakers": [],
+        "groups": [],
+        "instruction": "",
+        "before": "",
+        "after": "",
+        "bcc": [
+          {
+            "targets": [
+              "A"
+            ],
+            "content": "悄悄话"
+          }
+        ]
+      }
+    },
+    {
+      "name": "mode_hyphenated_attr_not_matched",
+      "text": "<clawbench-mention targets=\"A\" data-mode=\"parallel\">照常</clawbench-mention>",
+      "want": {
+        "found": true,
+        "end": false,
+        "speakers": [
+          "A"
+        ],
+        "groups": [
+          {
+            "members": [
+              "A"
+            ],
+            "parallel": false,
+            "instruction": "照常"
+          }
+        ],
+        "instruction": "照常",
+        "before": "",
+        "after": "",
         "bcc": []
       }
     }

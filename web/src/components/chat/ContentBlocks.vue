@@ -3058,13 +3058,13 @@ onUnmounted(() => {
   border-color: #fb923c;
 }
 
+/* The indicator's shape/geometry (size, ring, dot, check) is GLOBAL — see
+   .ask-option-indicator in web/css/components.css. Only colour is per-call-site,
+   consumed by the global rule through `currentColor`. Do NOT re-declare size,
+   border or radius here: a scoped selector outranks the global class and would
+   silently desync the two states again. */
 .content-blocks .tool-detail .ask-option-indicator {
-  flex-shrink: 0;
-  font-size: var(--font-size-lg);
-  line-height: 1.3;
   color: var(--text-muted, #999);
-  user-select: none;
-  -webkit-user-select: none;
 }
 
 .content-blocks .tool-detail .ask-question-option.selected .ask-option-indicator {

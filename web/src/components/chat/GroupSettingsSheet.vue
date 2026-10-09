@@ -1,6 +1,22 @@
 <template>
-  <BottomSheet :open="open" auto :title="t('group.members')" @close="close">
-    <div class="group-member-sheet">
+  <BottomSheet :open="open" auto :title="t('group.settings')" @close="close">
+    <template #header>
+      <div class="gm-header">
+        <span class="bs-header-title">{{ t('group.settings') }}</span>
+        <!-- Add members lives in the HEADER, not as a full-width pill at the
+             bottom of the body: adding is the sheet's primary action and belongs
+             at the top edge where the roster begins, next to the title it
+             extends. Plain icon + text (no pill) to match AttachDrawer's header
+             action. @click.stop is required — the whole header is a close
+             target (BottomSheet's own click handler). -->
+        <button class="gm-header-add" data-action="add-members" @click.stop="openAdd">
+          <Plus :size="16" />
+          <span>{{ t('group.addMembers') }}</span>
+        </button>
+      </div>
+    </template>
+
+    <div class="group-settings-sheet">
       <!-- Member roster -->
       <ul class="gm-list">
         <li
@@ -13,7 +29,7 @@
             <AgentIcon :backend="m.backend" :name="m.name" :avatar="getAgentAvatar(m.agentId)" size="lg" />
           </span>
           <span class="gm-name">{{ m.name }}</span>
-          <span v-if="m.isHost" class="gm-tag gm-tag--host">{{ t('group.host') }}</span>
+          <span v-if="m.isHost" class="gm-tag gm-tag--host"><Crown :size="11" class="gm-tag-crown" />{{ t('group.host') }}</span>
           <span v-else-if="m.left" class="gm-tag gm-tag--left">{{ t('group.left') }}</span>
           <button
             v-else
@@ -27,19 +43,26 @@
         </li>
       </ul>
 
-      <!-- Settings: max rounds. Host mode only: a free group has no round cap
-           (its relay runs until nobody is @-ed or the user stops it), so the
-           control would be a dead setting there. -->
-      <div v-if="mode !== 'free'" class="gm-setting">
-        <label class="gm-setting-label" for="group-max-rounds">{{ t('group.maxRounds') }}</label>
-        <input
-          id="group-max-rounds"
-          v-model.number="maxRounds"
-          type="number"
-          min="1"
-          class="gm-setting-input"
-          @change="saveMaxRounds"
-        />
+      <!-- Settings: concurrency. Free mode only: in host mode the host routes
+           (the user never @-names speakers), so the switch would be a dead
+           setting there. When on, the members the user @-names (or the whole
+           roster when they name nobody) run concurrently; it never affects an
+           agent's own mode="parallel" mentions. -->
+      <div v-if="mode === 'free'" class="gm-setting">
+        <div class="gm-setting-text">
+          <label class="gm-setting-label" for="group-parallel">{{ t('group.parallelLabel') }}</label>
+          <span class="gm-setting-desc">{{ t('group.parallelHint') }}</span>
+        </div>
+        <label class="settings-item__switch">
+          <input
+            id="group-parallel"
+            class="settings-item__switch-input"
+            type="checkbox"
+            :checked="parallelDefault"
+            @change="onToggleParallel"
+          />
+          <span class="settings-item__switch-track" />
+        </label>
       </div>
 
       <!-- Settings: auto-approve. Group sessions have no per-agent model/mode
@@ -64,12 +87,6 @@
           <span class="settings-item__switch-track" />
         </label>
       </div>
-
-      <!-- Add members -->
-      <button class="fbtn fbtn-primary gm-add" @click="openAdd">
-        <Plus :size="14" />
-        <span>{{ t('group.addMembers') }}</span>
-      </button>
     </div>
 
     <AgentSelectorDrawer
@@ -88,36 +105,34 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Trash2, Plus } from 'lucide-vue-next'
+import { Trash2, Plus, Crown } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
 import { getAgentAvatar } from '@/composables/useAgents'
-import { addGroupMembers, removeGroupMember, updateGroupSettings, type GroupMemberInfo } from '@/composables/useGroupChat'
+import { addGroupMembers, removeGroupMember, setGroupParallelDefault, type GroupMemberInfo } from '@/composables/useGroupChat'
 import { toggleAutoApprove } from '@/composables/useSessionIdentity'
 
 const props = defineProps<{
   groupId: string
   members: GroupMemberInfo[]
-  /** The group's current maxRounds from the server (roster endpoint). */
-  maxRounds: number
   /** The group's current auto-approve flag (server-authoritative: the backend
    *  mirrors it across every member row, decision #61). */
   autoApprove: boolean
-  /** The group's mode. "free" hides the maxRounds control (no round cap). */
+  /** The group's mode. "free" shows the concurrency switch; host mode hides it
+   *  (the host routes, so the user never @-names a speaker). */
   mode?: 'host' | 'free'
+  /** Free-mode concurrency switch value (server-authoritative). Shown only in
+   *  free mode — in host mode the host routes, so it would be a dead setting. */
+  parallelDefault?: boolean
 }>()
 const emit = defineEmits<{ (e: 'changed'): void }>()
 
 const { t } = useI18n()
 const open = ref(false)
 const pickerOpen = ref(false)
-// Seed from the server value and keep it in sync: a hardcoded default made the
-// sheet show 10 after the user had changed it (there was no read-back).
-const maxRounds = ref(props.maxRounds)
-watch(() => props.maxRounds, (v) => { maxRounds.value = v })
 
 // Active members' agent ids: shown dimmed + unpickable in the add-members
 // picker (the backend rejoins/no-ops, so offering them would be misleading).
@@ -157,13 +172,6 @@ async function remove(m: GroupMemberInfo) {
   } catch { /* ignore */ }
 }
 
-async function saveMaxRounds() {
-  const n = Number(maxRounds.value)
-  if (n > 0) {
-    try { await updateGroupSettings(props.groupId, n) } catch { /* ignore */ }
-  }
-}
-
 // Delegate to the shared toggle: it PATCHes the current session (the group) and
 // the backend fans the flag out to every member row. We deliberately do NOT
 // keep local state — the parent passes the server value back down, so the
@@ -172,11 +180,22 @@ function onToggleAutoApprove(e: Event) {
   toggleAutoApprove((e.target as HTMLInputElement).checked)
 }
 
+// Persist the free-mode concurrency switch, then refresh the roster so the
+// switch reflects the SERVER value (server-authoritative, same contract as
+// auto-approve: a failed PATCH reverts the checkbox on the next read-back).
+async function onToggleParallel(e: Event) {
+  const enabled = (e.target as HTMLInputElement).checked
+  try {
+    await setGroupParallelDefault(props.groupId, enabled)
+    emit('changed')
+  } catch { /* the parent's refresh reverts the checkbox to the server value */ }
+}
+
 defineExpose({ open: openSheet })
 </script>
 
 <style scoped>
-.group-member-sheet {
+.group-settings-sheet {
   display: flex;
   flex-direction: column;
   gap: var(--space-5);
@@ -228,10 +247,16 @@ defineExpose({ open: openSheet })
 /* Pills: host (accent) / left (muted). */
 .gm-tag {
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   padding: 1px var(--space-3);
   border-radius: var(--radius-full);
-  font-size: var(--font-size-2xs);
+  font-size: var(--font-size-xs);
   line-height: 16px;
+}
+.gm-tag-crown {
+  flex-shrink: 0;
 }
 .gm-tag--host {
   background: color-mix(in srgb, var(--accent-color, #0066cc) 15%, transparent);
@@ -301,24 +326,36 @@ defineExpose({ open: openSheet })
 .gm-setting .settings-item__switch {
   flex-shrink: 0;
 }
-.gm-setting-input {
-  width: 72px;
-  height: 30px;
-  text-align: center;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  font-size: var(--font-size-md);
-}
-.gm-setting-input:focus {
-  outline: none;
-  border-color: var(--accent-color, #0066cc);
-  box-shadow: 0 0 0 2px var(--focus-ring, rgba(0, 102, 204, 0.2));
+
+/* ── Header: add-members action ──
+   Mirrors AttachDrawer's header (`.ad-header` / `.ad-upload-btn`): a full-width
+   flex row, the title on the left and a plain icon + text button pushed to the
+   right by margin-left:auto. No pill/background — the accent-coloured text is
+   the whole affordance, same as the attachment drawer's upload action. */
+.gm-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  width: 100%;
 }
 
-/* ── Add button (full-width pill) ── */
-.gm-add {
-  width: 100%;
+.gm-header-add {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-2);
+  height: 28px;
+  border: none;
+  background: none;
+  color: var(--accent-color, #0066cc);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+  transition: opacity var(--duration-fast);
+}
+
+.gm-header-add:active {
+  opacity: var(--opacity-muted);
 }
 </style>

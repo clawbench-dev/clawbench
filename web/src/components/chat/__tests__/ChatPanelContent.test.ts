@@ -522,21 +522,26 @@ describe('ChatPanelContent — failed send keeps input text', () => {
     return source.slice(source.indexOf(start), source.indexOf(end))
   }
 
-  it('captures inputText before clearing and restores it in the send catch block', async () => {
+  it('captures the raw input text before clearing and restores it in the send catch block', async () => {
     const region = await sourceRegion('async function sendMessage(text)', 'async function sendMessageNow(text, filePaths, files)')
-    // The current input text must be remembered so the catch path can restore it.
-    expect(region).toMatch(/(?:let|const)\s+inputText\s*=/)
-    // The direct-send failure path must restore the captured text instead of
+    // The user's OWN text must be remembered so the catch path can restore it.
+    // It is captured separately from the serialized `inputText` (which appends
+    // the group @ protocol tags): restoring the serialized form would put the
+    // raw tags back in the textarea — the exact ugliness the member cards remove.
+    expect(region).toMatch(/(?:let|const)\s+rawText\s*=/)
+    // The direct-send failure path must restore the captured RAW text instead of
     // leaving the box empty.
-    expect(region).toMatch(/catch\s*(?:\([^)]*\))?\s*\{[\s\S]*?restoreInput\(inputText\)/)
+    expect(region).toMatch(/catch\s*(?:\([^)]*\))?\s*\{[\s\S]*?restoreInput\(rawText\)/)
+    // …and must NOT restore the serialized form.
+    expect(region).not.toMatch(/restoreInput\(inputText\)/)
   })
 
   it('restores input text when the enqueue request fails', async () => {
     const region = await sourceRegion('async function sendMessage(text)', 'async function sendMessageNow(text, filePaths, files)')
     // In the queue path, enqueueMessage returns false on failure — the input
-    // must then be restored with the captured text.
+    // must then be restored with the captured raw text (see above).
     expect(region).toMatch(/enqueueAndMaybeStart\(/)
-    expect(region).toMatch(/restoreInput\(inputText\)/)
+    expect(region).toMatch(/restoreInput\(rawText\)/)
     expect(region).toMatch(/enqueueMessage/)
   })
 })
@@ -868,5 +873,75 @@ describe('ChatPanelContent — isGroupSession derives from session type', () => 
   it('still receives the roster as a prop (used only to render members)', async () => {
     const src = await source()
     expect(src).toContain('groupMembers: { type: Array')
+  })
+})
+
+// ── Group auto-speech reads PER SPEAKER, not once at the terminal done ──
+//
+// A group run's `done` fires only once after EVERY member has spoken, so
+// triggering auto-speech there reads just the last speaker. Each member turn
+// finalizes on its own (`stream_finalize` → onMemberFinalize), which is the
+// per-speaker hook. These are source guards because ChatPanelContent pulls in
+// the whole chat tree.
+
+describe('ChatPanelContent — group auto-speech is per speaker', () => {
+  async function source(): Promise<string> {
+    const mod = await import('@/components/chat/ChatPanelContent.vue?raw')
+    return typeof mod.default === 'string' ? mod.default : ''
+  }
+
+  it('registers onMemberFinalize on the stream', async () => {
+    const src = await source()
+    expect(src).toContain('onMemberFinalize: handleMemberFinalize')
+  })
+
+  it('handleMemberFinalize gates on group, resolves the speaker and forwards its name', async () => {
+    const src = await source()
+    const start = src.indexOf('function handleMemberFinalize(')
+    expect(start, 'handleMemberFinalize must exist').toBeGreaterThan(-1)
+    const region = src.slice(start, src.indexOf('\n}\n', start))
+    expect(region).toMatch(/isGroupSession\.value/)
+    expect(region).toMatch(/stripGroupProtocolTags/)
+    expect(region).toMatch(/resolveGroupSpeaker/)
+    // The speaker name is the third arg to speakMessage (the "xxx说" prefix).
+    expect(region).toMatch(/autoSpeech\.speakMessage\([^)]*speaker\?\.name/)
+  })
+
+  it('the terminal done path does NOT auto-speak a group run', async () => {
+    const src = await source()
+    const start = src.indexOf('async function onStreamEnd(')
+    expect(start, 'onStreamEnd must exist').toBeGreaterThan(-1)
+    const region = src.slice(start, src.indexOf('\n}\n', start))
+    // A group branch must short-circuit to onOutputEndNoSpeech and never call
+    // speakMessage (that would duplicate/replace the per-speaker reads).
+    expect(region).toMatch(/isGroupSession\.value[\s\S]*?onOutputEndNoSpeech\(\)/)
+    const groupBranch = region.slice(region.indexOf('isGroupSession.value'), region.indexOf('} else {', region.indexOf('isGroupSession.value')))
+    expect(groupBranch).not.toContain('speakMessage')
+  })
+})
+
+// ── Concurrency switch is NOT in the chat panel ──
+//
+// The free-mode concurrency switch lives in the group configuration sheet
+// (GroupSettingsSheet, reached from the header avatar stack), NOT in the chat
+// input's action bar. It was briefly wired through this component; guard that
+// it does not creep back, and that no dead props/handlers remain.
+//
+// The markers are the SWITCH's plumbing (groupParallelDefault / toggle-parallel),
+// NOT `groupMode`: the mode string ("host" | "free") has an independent consumer
+// here — ChatMessageList's group empty-state copy selects on it — so banning
+// `groupMode` would reject a legitimate pass-through. This guard was written
+// when the two travelled together and must not over-reach.
+describe('ChatPanelContent — no concurrency switch plumbing', () => {
+  async function source(): Promise<string> {
+    const mod = await import('@/components/chat/ChatPanelContent.vue?raw')
+    return typeof mod.default === 'string' ? mod.default : ''
+  }
+
+  it('does not declare or forward the concurrency-switch plumbing', async () => {
+    const src = await source()
+    expect(src).not.toContain('groupParallelDefault')
+    expect(src).not.toContain('toggle-parallel')
+    expect(src).not.toContain('setGroupParallelDefault')
   })
 })

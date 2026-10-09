@@ -24,8 +24,10 @@ const (
 	groupSessionType = store.SessionTypeGroup
 	// groupMemberSessionType is the session_type of a hidden member row.
 	groupMemberSessionType = store.SessionTypeGroupMember
-	// defaultGroupMaxRounds is the round cap when the group has no override.
-	defaultGroupMaxRounds = 10
+	// defaultGroupMaxSpeeches is the member-to-member speech cap when the
+	// global config value is unset/invalid. Kept in sync with
+	// model.ApplyDefaults's chat.group_max_speeches default.
+	defaultGroupMaxSpeeches = 100
 	// GroupModeHost is a group whose flow is controlled by a host member that
 	// routes to named speakers (the original mode).
 	GroupModeHost = "host"
@@ -34,16 +36,32 @@ const (
 	// §13). The mode is chosen at creation (host selected vs not) and is NOT
 	// switchable.
 	GroupModeFree = "free"
-	// groupUserTarget is the reserved display name of the HUMAN user as a group
-	// participant. Agents address the user with this exact name
-	// (<clawbench-mention targets="User">...), so it must stay language-neutral
-	// and must not collide with a real member name.
-	groupUserTarget = "User"
+	// defaultGroupUserTarget is the fallback display name of the HUMAN user as a
+	// group participant when no nickname is configured. Agents address the user
+	// with this exact name (<clawbench-mention targets="User">...). The live
+	// value is groupUserTarget() (config-driven, chat.user_nickname).
+	defaultGroupUserTarget = "User"
 	// groupUserTargetID is a sentinel member row id for the user. It is not a
 	// chat_sessions row: the user has no backend connection and no AI turn.
 	// "__user__" cannot collide with a UUID member row id.
 	groupUserTargetID = "__user__"
 )
+
+// groupUserTarget is the reserved display name of the HUMAN user as a group
+// participant. It is config-driven (chat.user_nickname, default "User") so the
+// user can pick a less jarring name than the language-neutral default; it must
+// stay in sync with the frontend's userNickname and must never collide with a
+// real member name (enforced bidirectionally — see IsUserNickname).
+//
+// The value is trimmed defensively: the PATCH path normalizes it, but a
+// hand-edited config.yaml bypasses that, and the mention parser trims each
+// target before lookup — so an untrimmed nickname would be unreachable.
+func groupUserTarget() string {
+	if n := strings.TrimSpace(model.ChatUserNickname); n != "" {
+		return n
+	}
+	return defaultGroupUserTarget
+}
 
 // GroupMember is one member of a group (a hidden chat_sessions row).
 type GroupMember struct {
@@ -138,7 +156,7 @@ func CreateGroupWithMembers(projectPath, title, hostAgentID string, specs []Grou
 	}
 	// Validate + DEDUPE before touching the DB. Duplicates must collapse here
 	// (not just be rejected): a member's only identity is its agent, and
-	// resolveSpeakerTargets maps names through a map, so two rows for one agent
+	// resolveSpeakerGroups maps names through a map, so two rows for one agent
 	// leave one unreachable — a mute member that still occupies a connection
 	// and a slot, and inflates the active count toward the cap. The Web drawer
 	// is a multi-select and never sends duplicates, but POST /api/group/create
@@ -281,7 +299,7 @@ func writeGroupModeInline(tx *sql.Tx, groupID, mode, hostMemberID string) error 
 // the same (group, agent) already exists.
 //
 // Why dedup: a member's only identity is its agent — the routing tag addresses
-// members by NAME, and resolveSpeakerTargets maps names through a map, so two rows for
+// members by NAME, and resolveSpeakerGroups maps names through a map, so two rows for
 // the same agent would make one of them unreachable (a "mute" member that can
 // be selected but never spoken to). Re-adding an agent that LEFT the group
 // therefore reuses its original row and clears the archived flag (the A
@@ -508,6 +526,24 @@ func deletePendingBccForGroup(groupID string) {
 	}
 }
 
+// RenameUserPendingBcc migrates every pending private note addressed to the
+// human user from oldName to newName, so a nickname change does not orphan an
+// undelivered note (notes are keyed by target name and delivered on that
+// target's next turn). Called when chat.user_nickname changes; a no-op when the
+// names match or either is empty.
+func RenameUserPendingBcc(oldName, newName string) {
+	oldT := strings.TrimSpace(oldName)
+	newT := strings.TrimSpace(newName)
+	if oldT == "" || newT == "" || oldT == newT {
+		return
+	}
+	if _, err := store.WriteExec(
+		`UPDATE group_pending_bcc SET target_name = ? WHERE target_name = ?`, newT, oldT,
+	); err != nil {
+		slog.Warn("group: renaming pending bcc target failed", "old", oldT, "new", newT, "err", err)
+	}
+}
+
 // pendingBcc is one stored private note awaiting delivery.
 type pendingBcc struct {
 	ID      int64
@@ -698,6 +734,67 @@ func GroupMembersForGroups(groupIDs []string) (map[string][]model.GroupMemberPre
 	return out, rows.Err()
 }
 
+// GroupMemberSpeakersForGroups returns each group's member-row-id → display-name
+// map, INCLUDING removed (archived) members. It is the speaker-resolution
+// companion to GroupMembersForGroups (which is active-only, for the avatar
+// stack): a message's chat_history.agent_id may name a member who has since
+// left, and their past speech must still resolve to their own name rather than
+// a generic "Assistant" (mirrors ListGroupMembers' include-left rule).
+//
+// One query for all ids. Groups with no members are absent from the map; empty
+// input returns an empty map without touching the DB.
+func GroupMemberSpeakersForGroups(groupIDs []string) (map[string]map[string]string, error) {
+	out := map[string]map[string]string{}
+	if len(groupIDs) == 0 {
+		return out, nil
+	}
+
+	seen := make(map[string]bool, len(groupIDs))
+	ids := make([]string, 0, len(groupIDs))
+	for _, id := range groupIDs {
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+
+	placeholders := strings.Repeat("?,", len(ids))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := make([]any, 0, len(ids)+1)
+	for _, id := range ids {
+		args = append(args, id)
+	}
+
+	// No archived filter: left members are included on purpose (their speech is
+	// kept in the timeline). The name is the member row's title.
+	query := fmt.Sprintf(
+		`SELECT group_id, id, title FROM chat_sessions
+		 WHERE group_id IN (%s) AND session_type = ?`, placeholders)
+	args = append(args, groupMemberSessionType)
+
+	rows, err := store.ReadDB().Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var groupID, memberID, name string
+		if err := rows.Scan(&groupID, &memberID, &name); err != nil {
+			return nil, err
+		}
+		if out[groupID] == nil {
+			out[groupID] = map[string]string{}
+		}
+		out[groupID][memberID] = name
+	}
+	return out, rows.Err()
+}
+
 // ErrCannotRemoveHost is returned when a caller tries to remove the group's
 // host member. The host is the only router, so removing it would leave the
 // group unable to run another turn.
@@ -863,30 +960,48 @@ func SetGroupHostMember(groupID, memberID string) error {
 	return nil
 }
 
-// GetGroupMaxRounds returns the group's configured round cap, or the default
-// when unset/invalid.
-func GetGroupMaxRounds(groupID string) int {
-	var raw string
-	_ = store.ReadDB().QueryRow(
-		"SELECT COALESCE(json_extract(context_state, '$.maxRounds'), '') FROM chat_sessions WHERE id = ?",
-		groupID,
-	).Scan(&raw)
-	if raw == "" {
-		return defaultGroupMaxRounds
+// GetGroupMaxSpeeches returns the configured cap on how many times the agents
+// may speak to each other in a group turn before the discussion is forced to
+// stop and the floor returns to the human. It is a GLOBAL setting
+// (chat.group_max_speeches), not per group — the same cap applies to host and
+// free mode alike, and it counts MEMBER speeches only (the host's routing /
+// summary turns do not count).
+//
+// A non-positive runtime value falls back to the default (ApplyDefaults clamps
+// the config, but a value set directly on the global var in a test/edge path
+// must not silently mean "stop immediately").
+func GetGroupMaxSpeeches() int {
+	if model.ChatGroupMaxSpeeches > 0 {
+		return model.ChatGroupMaxSpeeches
 	}
-	var n int
-	if err := json.Unmarshal([]byte(raw), &n); err != nil || n <= 0 {
-		return defaultGroupMaxRounds
-	}
-	return n
+	return defaultGroupMaxSpeeches
 }
 
-// SetGroupMaxRounds stores the group's round cap in its context_state JSON.
-func SetGroupMaxRounds(groupID string, n int) error {
-	if n <= 0 {
-		return fmt.Errorf("maxRounds must be positive, got %d", n)
-	}
-	PatchContextStateMerge(groupID, map[string]string{"maxRounds": fmt.Sprintf("%d", n)})
+// GetGroupParallelDefault returns whether the user's free-mode seed runs its
+// members CONCURRENTLY by default (the action-bar "并发执行" switch).
+//
+// Defaults to false when unset/invalid: sequential is the long-standing
+// behavior, so an old group (or one whose context_state was corrupted) keeps it.
+// The key is `parallelDefault` (not `parallel`): it is a DEFAULT applied to the
+// user's seed, not a per-message mode, and it must not collide with the
+// per-tag `mode="parallel"` attribute an agent may write.
+func GetGroupParallelDefault(groupID string) bool {
+	var raw string
+	_ = store.ReadDB().QueryRow(
+		"SELECT COALESCE(json_extract(context_state, '$.parallelDefault'), '') FROM chat_sessions WHERE id = ?",
+		groupID,
+	).Scan(&raw)
+	// SQLite's json_extract renders JSON true as 1 and false as 0; anything
+	// else (empty/absent/invalid) is the sequential default.
+	return raw == "1" || raw == "true"
+}
+
+// SetGroupParallelDefault stores the group's user-seed concurrency default in
+// its context_state JSON. Honored in free mode only (host mode has no user
+// routing — the host routes), but stored unconditionally so the switch
+// round-trips even if the group's mode ever changed.
+func SetGroupParallelDefault(groupID string, enabled bool) error {
+	PatchContextStateMerge(groupID, map[string]string{"parallelDefault": fmt.Sprintf("%t", enabled)})
 	return nil
 }
 
@@ -902,8 +1017,14 @@ func GetAgentDisplayName(agentID string) string {
 	return "AI"
 }
 
-// GetSessionType returns a session's session_type ("" if not found).
+// GetSessionType returns a session's session_type ("" if not found or the DB is
+// not ready). The readiness guard keeps callers that run before/without a DB
+// (unit tests, early startup) from panicking on a nil reader; "" is the safe
+// default — it is not a group, so no group-chat policy is applied.
 func GetSessionType(sessionID string) string {
+	if !store.ReadDBReady() {
+		return ""
+	}
 	var t string
 	_ = store.ReadDB().QueryRow("SELECT session_type FROM chat_sessions WHERE id = ?", sessionID).Scan(&t)
 	return t

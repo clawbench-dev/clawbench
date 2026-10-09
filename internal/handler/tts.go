@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"clawbench/internal/grouprouting"
+	"clawbench/internal/i18n"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 	"clawbench/internal/speech"
@@ -85,10 +85,51 @@ type ttsGenerateRequest struct {
 	Text      string `json:"text"`
 	Language  string `json:"language"`  // language code, e.g. "zh", "en"; defaults to "zh" if empty
 	MessageID int64  `json:"messageId"` // chat_history.id for TTS summary caching
+	// SpeakerName is the group-chat speaker's display name. When set, the spoken
+	// audio is prefixed with "<name>说：" / "<name> says: " so a listener can tell
+	// concurrent speakers apart. The prefix is applied ONLY at synthesis time —
+	// it is deliberately kept out of the summary and the cached summary row, so
+	// it never participates in summarization ("不参与摘要").
+	SpeakerName string `json:"speakerName"`
 }
 
 // ttsSynthesizeFunc is the signature for TTS synthesis operations (streaming or non-streaming).
 type ttsSynthesizeFunc func(ctx context.Context, summary, absAudioPath, language string) error
+
+// ttsSynthText prepends the group-chat speaker prefix to the summary that will
+// be SPOKEN. It is applied here — after summarization and just before synthesis
+// — so the prefix is heard but never summarized and never stored: the summary
+// returned to the client and the cached tts_summaries row both stay clean
+// ("xxx说 不参与摘要"). An empty speakerPrefix (single chats) is a no-op.
+func ttsSynthText(speakerPrefix, summary string) string {
+	if speakerPrefix == "" {
+		return summary
+	}
+	return speakerPrefix + summary
+}
+
+// ttsCacheKeyAndPrefix computes the audio cache key and the spoken speaker
+// prefix for a TTS request.
+//
+// The speaker name is folded into the key so two members who happen to utter
+// the SAME words (a common group-chat occurrence: "同意", "好的") do not share
+// an audio file — the spoken prefix differs, so the audio must differ too. An
+// empty speaker name (single chats) keeps the key identical to the pre-existing
+// scheme (sha256 of the text alone).
+//
+// The prefix is built in the SPOKEN language (req.Language), not the request's
+// UI locale: the audio is synthesized in that language, so a Chinese sentence
+// must not be prefixed with " says: ". It is deliberately kept out of the
+// summarizer — it is applied only at synthesis time (see ttsRunJob).
+func ttsCacheKeyAndPrefix(text, speakerName, language string) (cacheKey, speakerPrefix string) {
+	hashInput := text
+	if speakerName != "" {
+		hashInput = speakerName + "\x00" + text
+		speakerPrefix = i18n.T(i18n.LocalizerForLocale(language), "TTSSpeakerSaysPrefix", map[string]any{"Name": speakerName})
+	}
+	hash := sha256.Sum256([]byte(hashInput))
+	return hex.EncodeToString(hash[:])[:summarize.CacheKeyHexLen], speakerPrefix
+}
 
 // ttsRunJob runs the summarize + synthesize pipeline in a background goroutine.
 // It unifies the streaming and non-streaming code paths.
@@ -100,6 +141,7 @@ func ttsRunJob(
 	req ttsGenerateRequest,
 	curSummarizer summarize.Summarizer,
 	errSummarizeFailed, errSynthesizeFailed string,
+	speakerPrefix string,
 	isStreaming bool,
 	synthesizeFunc ttsSynthesizeFunc,
 ) {
@@ -118,7 +160,7 @@ func ttsRunJob(
 		service.SendTTSEvent(cacheKey, service.TTSEvent{Type: "phase", Phase: "synthesizing", Streaming: isStreaming})
 
 		synthesizeCtx, synthesizeCancel := context.WithTimeout(ctx, ttsSynthesizeTimeout)
-		err := synthesizeFunc(synthesizeCtx, summary, absAudioPath, req.Language)
+		err := synthesizeFunc(synthesizeCtx, ttsSynthText(speakerPrefix, summary), absAudioPath, req.Language)
 		synthesizeCancel()
 
 		// Close AudioCh BEFORE sending result event (streaming only).
@@ -213,9 +255,9 @@ func TTSGenerate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Compute cache key from text content
-	hash := sha256.Sum256([]byte(req.Text))
-	cacheKey := hex.EncodeToString(hash[:])[:summarize.CacheKeyHexLen]
+	// Compute the cache key and the spoken speaker prefix together (see
+	// ttsCacheKeyAndPrefix for why the speaker name is folded into the key).
+	cacheKey, speakerPrefix := ttsCacheKeyAndPrefix(req.Text, req.SpeakerName, req.Language)
 
 	// Snapshot current providers for consistency within this request
 	curProvider := GetSpeechProvider()
@@ -265,7 +307,7 @@ func TTSGenerate(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithCancel(context.Background())
 		job := service.RegisterStreamingTTSJob(cacheKey, cancel)
 		ttsRunJob(ctx, job, cacheKey, projectPath, relAudioPath, absAudioPath,
-			req, curSummarizer, errSummarizeFailed, errSynthesizeFailed, true,
+			req, curSummarizer, errSummarizeFailed, errSynthesizeFailed, speakerPrefix, true,
 			func(sCtx context.Context, summary, outPath, lang string) error {
 				return streamingProvider.SynthesizeStream(sCtx, summary, outPath, lang, job.AudioCh)
 			},
@@ -275,7 +317,7 @@ func TTSGenerate(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithCancel(context.Background())
 		job := service.RegisterTTSJob(cacheKey, cancel)
 		ttsRunJob(ctx, job, cacheKey, projectPath, relAudioPath, absAudioPath,
-			req, curSummarizer, errSummarizeFailed, errSynthesizeFailed, false,
+			req, curSummarizer, errSummarizeFailed, errSynthesizeFailed, speakerPrefix, false,
 			func(sCtx context.Context, summary, outPath, lang string) error {
 				return curProvider.Synthesize(sCtx, summary, outPath, lang)
 			},
@@ -363,11 +405,13 @@ func ttsExtractConclusion(messageID int64) string { //nolint:gocyclo,gocognit //
 	blocks := content.Blocks
 
 	// Extract the final answer using the same logic as chat summary.
-	// Strip the host's private notes (bcc) BEFORE speaking: the frontend already
-	// strips them, but this path OVERRIDES the frontend text with the DB content
-	// when a messageId is present, so the stripping must happen here too —
-	// otherwise a note addressed to one member would be read aloud to the user.
-	conclusion := grouprouting.StripProtocolTags(summarize.ExtractLastAnswerFromBlocks(blocks))
+	// Group-chat protocol tags are stripped only for group sessions (the only
+	// place they can carry a private note); a single chat's prose is read
+	// verbatim, so a reply that merely DISCUSSES the tag syntax is not truncated.
+	// The frontend already strips for the group case, but this path OVERRIDES
+	// the frontend text with the DB content when a messageId is present, so the
+	// policy must be applied here too.
+	conclusion := service.AssistantConclusion(msg.SessionID, blocks)
 
 	// Append AskUserQuestion text (questions + options) so TTS reads them
 	var aqParts []string

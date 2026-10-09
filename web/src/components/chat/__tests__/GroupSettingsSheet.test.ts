@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import GroupMemberSheet from '../GroupMemberSheet.vue'
+import GroupSettingsSheet from '../GroupSettingsSheet.vue'
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (k: string) => k }),
@@ -8,11 +8,11 @@ vi.mock('vue-i18n', () => ({
 
 const mockAdd = vi.fn().mockResolvedValue(undefined)
 const mockRemove = vi.fn().mockResolvedValue(undefined)
-const mockUpdateSettings = vi.fn().mockResolvedValue(undefined)
+const mockSetParallel = vi.fn().mockResolvedValue(undefined)
 vi.mock('@/composables/useGroupChat', () => ({
   addGroupMembers: (...a: any[]) => mockAdd(...a),
   removeGroupMember: (...a: any[]) => mockRemove(...a),
-  updateGroupSettings: (...a: any[]) => mockUpdateSettings(...a),
+  setGroupParallelDefault: (...a: any[]) => mockSetParallel(...a),
 }))
 
 // The group sheet's auto-approve switch delegates to the shared session toggle
@@ -31,14 +31,18 @@ vi.mock('@/components/common/AgentSelectorDrawer.vue', () => ({
   default: { name: 'AgentSelectorDrawer', props: ['open'], template: '<div class="picker-stub" />' },
 }))
 // BottomSheet teleports to <body> and gates on everOpened; stub it with a
-// pass-through so the sheet's own content is queryable in place.
+// pass-through so the sheet's own content is queryable in place. The header
+// slot must be rendered too — the add-members action lives there.
 vi.mock('@/components/common/BottomSheet.vue', () => ({
-  default: { name: 'BottomSheet', template: '<div class="bs-stub"><slot /></div>' },
+  default: {
+    name: 'BottomSheet',
+    template: '<div class="bs-stub"><div class="bs-header-stub"><slot name="header" /></div><slot /></div>',
+  },
 }))
 
 function mountSheet(members: any[], props: Record<string, unknown> = {}) {
-  return mount(GroupMemberSheet, {
-    props: { groupId: 'g1', members, maxRounds: 10, autoApprove: false, ...props },
+  return mount(GroupSettingsSheet, {
+    props: { groupId: 'g1', members, autoApprove: false, ...props },
   })
 }
 
@@ -51,12 +55,21 @@ const MEMBERS = [
   { id: 'm1', name: 'Host', backend: 'codebuddy', agentId: 'a1', isHost: true },
 ]
 
-describe('GroupMemberSheet', () => {
+describe('GroupSettingsSheet', () => {
   beforeEach(() => {
     mockRemove.mockClear()
     mockAdd.mockClear()
-    mockUpdateSettings.mockClear()
     mockToggleAutoApprove.mockClear()
+  })
+
+  // The panel is the group's settings surface (members + concurrency +
+  // auto-approve), so its header reads "群聊设置" — not "成员", which described
+  // only the roster and undersold the settings rows below it.
+  it('titles the header with the group-settings key, not the members key', () => {
+    const w = mountSheet(MEMBERS)
+    const title = w.find('.bs-header-title')
+    expect(title.exists()).toBe(true)
+    expect(title.text()).toBe('group.settings')
   })
 
   it('renders one row per member with an avatar and name, host pinned first', () => {
@@ -80,6 +93,9 @@ describe('GroupMemberSheet', () => {
     const w = mountSheet(MEMBERS)
     expect(w.find('.gm-tag--host').exists()).toBe(true)
     expect(w.find('.gm-tag--left').exists()).toBe(true)
+    // The host tag carries a crown icon alongside the label.
+    expect(w.find('.gm-tag--host .gm-tag-crown').exists()).toBe(true)
+    expect(w.find('.gm-tag--host .lucide-crown').exists()).toBe(true)
     // Host has no remove; left member has no remove; only Alice does.
     expect(w.findAll('.gm-remove')).toHaveLength(1)
   })
@@ -92,12 +108,28 @@ describe('GroupMemberSheet', () => {
     expect(w.emitted('changed')).toBeTruthy()
   })
 
-  it('saves max rounds on change and renders the add button as a pill', async () => {
+  // Adding is the sheet's primary action: it lives in the drawer header (right
+  // of the title), not as a full-width pill in the body. A regression would
+  // put it back in the body where it scrolls away with a long roster.
+  it('renders the add-members action in the header, right of the title', () => {
     const w = mountSheet(MEMBERS)
-    await w.find('.gm-setting-input').setValue(5)
-    await flushPromises()
-    expect(mockUpdateSettings).toHaveBeenCalledWith('g1', 5)
-    expect(w.find('.gm-add').classes()).toContain('fbtn')
+    const header = w.find('.bs-header-stub')
+    expect(header.exists()).toBe(true)
+    const add = header.find('[data-action="add-members"]')
+    expect(add.exists()).toBe(true)
+    expect(add.text()).toContain('group.addMembers')
+    // It must NOT also linger in the body.
+    expect(w.find('.group-settings-sheet').find('[data-action="add-members"]').exists()).toBe(false)
+    expect(w.find('.gm-add').exists()).toBe(false)
+  })
+
+  it('opens the member picker from the header button', async () => {
+    const w = mountSheet(MEMBERS)
+    const picker = () => w.findComponent({ name: 'AgentSelectorDrawer' })
+    // The picker is closed until the header action is clicked.
+    expect(picker().props('open')).toBe(false)
+    await w.find('[data-action="add-members"]').trigger('click')
+    expect(picker().props('open')).toBe(true)
   })
 
   // Group sessions hide the per-agent model/mode chrome (ChatInputBar), which
@@ -125,13 +157,38 @@ describe('GroupMemberSheet', () => {
     expect(mockToggleAutoApprove).toHaveBeenCalledWith(false)
   })
 
-  it('shows the maxRounds control in host mode', () => {
-    const w = mountSheet(MEMBERS, { mode: 'host' })
-    expect(w.find('#group-max-rounds').exists()).toBe(true)
+  it('never renders a per-group maxRounds control (the cap is global now)', () => {
+    // The member-speech cap moved to Settings → 聊天 → 群聊
+    // (chat.group_max_speeches), so the sheet must not carry a per-group input
+    // for it in either mode.
+    expect(mountSheet(MEMBERS, { mode: 'host' }).find('#group-max-rounds').exists()).toBe(false)
+    expect(mountSheet(MEMBERS, { mode: 'free' }).find('#group-max-rounds').exists()).toBe(false)
+    expect(mountSheet(MEMBERS).find('.gm-setting-input').exists()).toBe(false)
   })
 
-  it('hides the maxRounds control in free mode (no round cap)', () => {
-    const w = mountSheet(MEMBERS, { mode: 'free' })
-    expect(w.find('#group-max-rounds').exists()).toBe(false)
+  // The concurrency switch lives HERE, not in the chat
+  // action bar. It is shown only in free mode
+  // (in host mode the host routes, so the user never @-names a speaker).
+  describe('free-mode concurrency switch', () => {
+    it('shows only in free mode and reflects the server value', () => {
+      const off = mountSheet(MEMBERS, { mode: 'free', parallelDefault: false })
+      const offInput = off.find('#group-parallel')
+      expect(offInput.exists()).toBe(true)
+      expect((offInput.element as HTMLInputElement).checked).toBe(false)
+
+      const on = mountSheet(MEMBERS, { mode: 'free', parallelDefault: true })
+      expect((on.find('#group-parallel').element as HTMLInputElement).checked).toBe(true)
+
+      // Host mode: no switch (it would be a dead setting).
+      expect(mountSheet(MEMBERS, { mode: 'host' }).find('#group-parallel').exists()).toBe(false)
+    })
+
+    it('persists the toggle and emits changed', async () => {
+      const w = mountSheet(MEMBERS, { mode: 'free', parallelDefault: false })
+      await w.find('#group-parallel').setValue(true)
+      await flushPromises()
+      expect(mockSetParallel).toHaveBeenCalledWith('g1', true)
+      expect(w.emitted('changed')).toBeTruthy()
+    })
   })
 })

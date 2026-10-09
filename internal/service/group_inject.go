@@ -105,7 +105,7 @@ func renderTimelineLine(m model.ChatMessage, text string, names map[string]strin
 		// so it is rendered readable AND resolved to the display name — a
 		// member must see "@Alice", not the raw protocol tag with a UUID.
 		userText := renderMentionsReadable(userTextWithAttachments(text, m.Files), names)
-		return groupUserTarget + ": " + userText + "\n"
+		return groupUserTarget() + ": " + userText + "\n"
 	}
 	name := names[m.AgentID]
 	if name == "" {

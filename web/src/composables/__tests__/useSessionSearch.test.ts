@@ -406,6 +406,22 @@ describe('useSessionSearch', () => {
       }))
     })
 
+    it('sends the group type filter to the API', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [], total: 0, mode: 'fts' }),
+      })
+
+      const { state, setFilters } = useSessionSearch()
+      state.query = 'deploy'
+      await setFilters({ type: 'group' })
+
+      expect(state.typeFilter).toBe('group')
+      expect(mockFetch).toHaveBeenCalledWith('/api/rag/session-search', expect.objectContaining({
+        body: JSON.stringify({ q: 'deploy', prefer_mode: 'hybrid', archived: 'all', session_type: 'group', sort: 'relevance' }),
+      }))
+    })
+
     it('keeps the type filter independent of the archive filter', async () => {
       mockFetch.mockResolvedValue({
         ok: true,

@@ -151,6 +151,14 @@ function ackLineScrolls() {
 }
 
 describe('ShareView — view toggle (rendered ⇄ source)', () => {
+  it('shows the ClawBench brand logo in the topbar', async () => {
+    const wrapper = await mountShare({ name: 'README.md', path: '/repo/README.md', content: '# Hello\nbody' })
+    const logo = wrapper.find('.share-topbar .share-logo')
+    expect(logo.exists()).toBe(true)
+    expect(logo.attributes('src')).toBe('/logo-64.png')
+    expect(logo.attributes('alt')).toBe('ClawBench')
+  })
+
   it('defaults markdown files to the rendered preview and exposes the toggle', async () => {
     const wrapper = await mountShare({ name: 'README.md', path: '/repo/README.md', content: '# Hello\nbody' })
     expect(wrapper.find('.markdown-preview-stub').exists()).toBe(true)
@@ -197,11 +205,55 @@ describe('ShareView — view toggle (rendered ⇄ source)', () => {
     expect(wrapper.find('.share-content').attributes('data-markdown-rendered')).toBeUndefined()
   })
 
+  it('marks the content scroller for rendered HTML so wide screens lift the outer cap', async () => {
+    // Rendered HTML preview fills its parent iframe, so the scroll container
+    // must be full-width — a fixed 1080px column would letterbox arbitrary
+    // HTML layouts. Only the TOC rail (when present) reserves space.
+    const wrapper = await mountShare({
+      name: 'page.html',
+      path: '/repo/page.html',
+      content: '<html><body>hi</body></html>',
+    })
+    expect(wrapper.find('iframe.share-html-iframe').exists()).toBe(true)
+    expect(wrapper.find('.share-content').attributes('data-html-rendered')).toBeDefined()
+
+    // Toggling to the raw source view drops the attribute — CodeMirror keeps
+    // the generic wide-screen cap (no self-laying-out page).
+    await wrapper.find('.share-view-toggle').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.share-content').attributes('data-html-rendered')).toBeUndefined()
+  })
+
+  it('does not mark the content scroller as html-rendered for markdown or code', async () => {
+    const md = await mountShare({ name: 'README.md', path: '/repo/README.md', content: '# Hello\nbody' })
+    expect(md.find('.share-content').attributes('data-html-rendered')).toBeUndefined()
+    const code = await mountShare({ name: 'main.go', path: '/repo/main.go', content: 'package main\n' })
+    expect(code.find('.share-content').attributes('data-html-rendered')).toBeUndefined()
+  })
+
   it('does not expose the toggle for pure code/plain-text files', async () => {
     const wrapper = await mountShare({ name: 'main.go', path: '/repo/main.go', content: 'package main\n' })
     expect(wrapper.find('.share-view-toggle').exists()).toBe(false)
     // Code files render through the code viewer directly (no preview branch).
     expect(wrapper.find('.cm-viewer-stub').exists()).toBe(true)
+  })
+
+  it('wraps the code viewer in a definite-height box so TOC line jumps can scroll', async () => {
+    // .share-content is a block overflow:auto scroller. A bare CodeMirrorViewer
+    // (flex:1) would size to content height, so CodeMirror's own .cm-scroller
+    // never overflows and centeredScrollTop clamps every jump to the top. The
+    // fill-viewer box (position:absolute; inset:0) gives the editor a definite
+    // height, mirroring the in-app FileViewer's flex chain.
+    const wrapper = await mountShare({ name: 'main.go', path: '/repo/main.go', content: 'package main\n' })
+    const box = wrapper.find('.share-fill-viewer')
+    expect(box.exists()).toBe(true)
+    expect(box.find('.cm-viewer-stub').exists()).toBe(true)
+
+    // Same for the source view of a markdown file after toggling to raw.
+    const mdWrapper = await mountShare({ name: 'README.md', path: '/repo/README.md', content: '# Hello\nbody' })
+    await mdWrapper.find('.share-view-toggle').trigger('click')
+    await flushPromises()
+    expect(mdWrapper.find('.share-fill-viewer .cm-viewer-stub').exists()).toBe(true)
   })
 
   it('toggles HTML files between the rendered iframe and source', async () => {
@@ -217,6 +269,28 @@ describe('ShareView — view toggle (rendered ⇄ source)', () => {
     await flushPromises()
     expect(wrapper.find('iframe.share-html-iframe').exists()).toBe(false)
     expect(wrapper.find('.cm-viewer-stub').exists()).toBe(true)
+  })
+
+  it('hides the TOC for the rendered HTML preview but restores it in source view', async () => {
+    // The rendered HTML preview is a sandboxed <iframe srcdoc>: its inner DOM is
+    // unreachable, so a source-derived outline can neither index the rendered
+    // headings nor jump to them. The TOC toggle/rail must not be offered there.
+    const wrapper = await mountShare({
+      name: 'page.html',
+      path: '/repo/page.html',
+      content: '<h1>Title</h1>\n<h2>Section</h2>',
+    })
+    expect(wrapper.find('iframe.share-html-iframe').exists()).toBe(true)
+    expect(wrapper.find('.share-top-actions .share-btn[title="Toggle table of contents"]').exists()).toBe(false)
+    expect(wrapper.find('.share-body .share-toc').exists()).toBe(false)
+
+    // Source view renders through CodeMirror, where entries jump by line — the
+    // TOC toggle and rail come back.
+    await wrapper.find('.share-view-toggle').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.cm-viewer-stub').exists()).toBe(true)
+    expect(wrapper.find('.share-top-actions .share-btn[title="Toggle table of contents"]').exists()).toBe(true)
+    expect(wrapper.find('.share-body .share-toc').exists()).toBe(true)
   })
 
   it('toggles OpenAPI specs between the Swagger viewer and source', async () => {

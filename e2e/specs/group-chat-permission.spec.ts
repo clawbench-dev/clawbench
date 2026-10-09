@@ -1,6 +1,7 @@
 import { test, expect } from '../fixtures'
 import { ChatPage } from '../pages/chat.page'
 import { restoreNonBlockingMode } from '../helpers/agent-mode'
+import { setGroupMaxSpeeches, restoreGroupMaxSpeeches } from '../helpers/group-config'
 
 /**
  * E2E for the group-chat permission approval path.
@@ -36,6 +37,7 @@ test.describe.serial('group chat permission approval', () => {
   // not affected (see helpers/agent-mode.ts).
   test.afterAll(async () => {
     await restoreNonBlockingMode()
+    await restoreGroupMaxSpeeches()
   })
 
   test('member permission is approved through the group timeline', async ({ page }) => {
@@ -43,6 +45,11 @@ test.describe.serial('group chat permission approval', () => {
     // host member (which uses the agent default) is in bypass and routes rather
     // than blocking on a permission request of its own.
     await restoreNonBlockingMode()
+
+    // Cap at one member speech so the turn terminates predictably (a global
+    // setting; the afterAll above restores it). Without a cap the turn would run
+    // a second member and block on another unanswered permission request.
+    await setGroupMaxSpeeches(1)
 
     const setup = await page.evaluate(async () => {
       const post = async (url: string, body: unknown) =>
@@ -60,17 +67,6 @@ test.describe.serial('group chat permission approval', () => {
       if (!memberId || memberId === created.hostMemberId) {
         return { ok: false, step: 'dedup', memberId, hostMemberId: created.hostMemberId }
       }
-
-      // Cap at one round so the turn terminates predictably. This endpoint is
-      // PATCH-only; a POST returns 405 and the round cap silently stays at the
-      // default, which then runs a SECOND round and blocks on another
-      // unanswered permission request.
-      const settingsResp = await fetch('/api/group/settings', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ groupId: created.groupId, maxRounds: 1 }),
-      })
-      if (settingsResp.status !== 200) return { ok: false, step: 'settings', status: settingsResp.status }
 
       // Put the MEMBER into Code mode. The host keeps the agent default
       // (bypass), so only the member blocks on a permission request. The mode is

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { createGroup, listGroupMembers, addGroupMembers, removeGroupMember, updateGroupSettings } from '@/composables/useGroupChat'
+import { createGroup, listGroupMembers, addGroupMembers, removeGroupMember, setGroupParallelDefault } from '@/composables/useGroupChat'
 
 vi.mock('@/utils/appLog', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
@@ -36,17 +36,20 @@ describe('useGroupChat API', () => {
     expect(r).toEqual({ groupId: 'g2', hostMemberId: '', mode: 'free' })
   })
 
-  it('listGroupMembers returns members and maxRounds', async () => {
-    vi.stubGlobal('fetch', mockFetch(200, { ok: true, members: [{ id: 'm1', isHost: true }], maxRounds: 4 }))
+  it('listGroupMembers returns members, mode and parallelDefault', async () => {
+    vi.stubGlobal('fetch', mockFetch(200, { ok: true, members: [{ id: 'm1', isHost: true }], mode: 'free', parallelDefault: true }))
     const res = await listGroupMembers('g1')
     expect(res.members).toEqual([{ id: 'm1', isHost: true }])
-    expect(res.maxRounds).toBe(4)
+    expect(res.mode).toBe('free')
+    expect(res.parallelDefault).toBe(true)
   })
 
-  it('listGroupMembers defaults maxRounds to 10 when absent', async () => {
+  it('listGroupMembers parses parallelDefault, defaulting to false when absent', async () => {
+    vi.stubGlobal('fetch', mockFetch(200, { ok: true, members: [], parallelDefault: true }))
+    expect((await listGroupMembers('g1')).parallelDefault).toBe(true)
+
     vi.stubGlobal('fetch', mockFetch(200, { ok: true, members: [] }))
-    const res = await listGroupMembers('g1')
-    expect(res.maxRounds).toBe(10)
+    expect((await listGroupMembers('g1')).parallelDefault).toBe(false)
   })
 
   it('addGroupMembers posts an array and returns memberIds', async () => {
@@ -65,13 +68,13 @@ describe('useGroupChat API', () => {
     expect(opts.method).toBe('DELETE')
   })
 
-  it('updateGroupSettings uses PATCH', async () => {
+  it('setGroupParallelDefault PATCHes parallelDefault', async () => {
     vi.stubGlobal('fetch', mockFetch(200, { ok: true }))
-    await updateGroupSettings('g1', 8)
+    await setGroupParallelDefault('g1', true)
     const [url, opts] = (fetch as any).mock.calls[0]
     expect(url).toBe('/api/group/settings')
     expect(opts.method).toBe('PATCH')
-    expect(JSON.parse(opts.body)).toEqual({ groupId: 'g1', maxRounds: 8 })
+    expect(JSON.parse(opts.body)).toEqual({ groupId: 'g1', parallelDefault: true })
   })
 
   it('throws on a non-ok response', async () => {

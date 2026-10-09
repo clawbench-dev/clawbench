@@ -2,6 +2,7 @@
   <div class="share-view">
     <!-- Read-only top bar (not the app FileHeader) -->
     <div class="share-topbar">
+      <img class="share-logo" src="/logo-64.png" alt="ClawBench" />
       <button
         v-if="canGoBack"
         class="share-btn share-back-btn"
@@ -49,6 +50,7 @@
       <div
         class="share-content"
         :data-markdown-rendered="isMarkdownRenderedView || undefined"
+        :data-html-rendered="isHtmlRenderedView || undefined"
         ref="contentRef"
       >
         <!-- Loading -->
@@ -145,16 +147,24 @@
           <!-- Raw source view for markdown/html/openapi after the view toggle,
                and code/plain text files which have no rendered preview.
                stickyScroll is disabled: the share SPA has no auth for the
-               backend symbol API the sticky overlay would query. -->
-          <CodeMirrorViewer
-            v-else-if="showRawSourceView"
-            :file="file"
-            :content="file.content"
-            :language="rawLanguage"
-            :editable="false"
-            :word-wrap="wordWrap"
-            :sticky-scroll="false"
-          />
+               backend symbol API the sticky overlay would query.
+
+               Wrapped in the fill-viewer box (position:absolute; inset:0) so the
+               editor gets a DEFINITE height. .share-content is a block
+               overflow:auto scroller, so a bare CodeMirrorViewer (flex:1) would
+               size to content height; CodeMirror's own .cm-scroller would then
+               never overflow, centeredScrollTop would compute maxScrollTop=0,
+               and every TOC line jump would clamp to the top (i.e. not move). -->
+          <div v-else-if="showRawSourceView" class="share-fill-viewer">
+            <CodeMirrorViewer
+              :file="file"
+              :content="file.content"
+              :language="rawLanguage"
+              :editable="false"
+              :word-wrap="wordWrap"
+              :sticky-scroll="false"
+            />
+          </div>
 
           <!-- Binary / too-large / unsupported fallback: download -->
           <div v-else class="share-center-hint share-unsupported">
@@ -375,6 +385,13 @@ const showRawSourceView = computed(() => {
  *  be lifted here to let the scrollbar hug the viewport edge. */
 const isMarkdownRenderedView = computed(() => isMarkdown.value && viewMode.value === 'rendered')
 
+/** Rendered HTML preview is active (sandboxed <iframe srcdoc>). The iframe
+ *  fills its parent, so the wide-screen .share-content cap must be lifted here
+ *  to let the page use the full width beside the TOC — a fixed 1080px column
+ *  would letterbox arbitrary HTML layouts. No reading-column rule replaces the
+ *  cap (unlike markdown): the HTML controls its own layout. */
+const isHtmlRenderedView = computed(() => isHtml.value && viewMode.value === 'rendered')
+
 const hasToc = computed(() => {
   if (!file.value || error.value) return false
   if (file.value.isBinary || file.value.tooLarge) return false
@@ -382,6 +399,11 @@ const hasToc = computed(() => {
   // sidebar (fileSupportsToc returns false for openapi in rendered view),
   // so no heading outline is extracted or shown.
   if (file.value.subtype === 'openapi') return false
+  // HTML rendered preview is a sandboxed <iframe srcdoc>: its inner DOM is
+  // unreachable from here, so a source-derived outline can neither index the
+  // rendered headings nor jump to them. Hide the TOC in that mode — it comes
+  // back in source view, where entries jump by line through the code viewer.
+  if (isHtml.value && viewMode.value === 'rendered') return false
   return isMarkdown.value || isTextContent.value
 })
 
@@ -757,12 +779,15 @@ onBeforeUnmount(() => {
   }
 }
 
-/* Rendered markdown preview aligns with the in-app file viewer: the reading
-   column is capped at 900px by the shared .markdown-body padding rule, so the
-   .share-content wide-screen cap must NOT shrink the scroll container here —
-   otherwise the scrollbar would float mid-window instead of hugging the edge. */
+/* Rendered previews align with the in-app file viewer: markdown's reading
+   column is capped at 900px by the shared .markdown-body padding rule, and the
+   HTML iframe is self-laying-out. In both cases the .share-content wide-screen
+   cap must NOT shrink the scroll container — otherwise the scrollbar would
+   float mid-window instead of hugging the edge (markdown) or the HTML page
+   would be letterboxed inside a fixed column (HTML). */
 @media (min-width: 1100px) {
-  .share-content[data-markdown-rendered] {
+  .share-content[data-markdown-rendered],
+  .share-content[data-html-rendered] {
     max-width: none;
     margin: 0;
   }

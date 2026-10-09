@@ -30,7 +30,8 @@
 
       <!-- Empty -->
       <div v-else-if="items.length === 0" class="shared-sessions-hint">
-        {{ t('sharedSessions.empty') }}
+        <MessageSquareShare :size="32" class="shared-sessions-empty-icon" />
+        <span>{{ t('sharedSessions.empty') }}</span>
       </div>
 
       <!-- List -->
@@ -59,7 +60,7 @@
               <span class="shared-session-meta">
                 <span v-if="item.messageCount > 0">{{ t('sharedSessions.messageCount', { count: item.messageCount }) }}</span>
                 <span v-if="item.messageCount > 0 && item.createdAt" class="shared-session-sep">·</span>
-                <span v-if="item.createdAt">{{ item.createdAt }}</span>
+                <span v-if="item.createdAt">{{ formatRelativeTime(item.createdAt) }}</span>
               </span>
             </div>
           </div>
@@ -112,6 +113,7 @@ import { useTabDrawer } from '@/composables/useTabDrawer'
 import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast.ts'
 import { openExternalUrl } from '@/utils/externalLink'
+import { formatRelativeTime } from '@/utils/format'
 import { useSessionShare } from '@/composables/useSessionShare'
 import { appLog } from '@/utils/appLog'
 
@@ -229,11 +231,13 @@ defineExpose({ open: openDrawer })
   flex-direction: column;
   max-height: 60vh;
   overflow-y: auto;
-  padding: var(--space-2) var(--space-7) var(--space-7);
 }
 
 .shared-sessions-hint {
-  padding: 24px 0;
+  /* Own breathing room so the empty/loading text never hugs the drawer edge,
+     independent of the (now removed) container padding. */
+  padding: 32px var(--space-7);
+  margin: var(--space-4) 0;
   text-align: center;
   font-size: var(--font-size-md);
   color: var(--text-muted, #656d76);
@@ -241,6 +245,11 @@ defineExpose({ open: openDrawer })
   flex-direction: column;
   align-items: center;
   gap: var(--space-5);
+}
+
+.shared-sessions-empty-icon {
+  color: var(--text-muted, #656d76);
+  opacity: var(--opacity-muted);
 }
 
 .shared-sessions-error { color: #cf222e; }
@@ -264,7 +273,7 @@ defineExpose({ open: openDrawer })
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
-  padding: var(--space-5) var(--space-2);
+  padding: var(--space-5) var(--space-4);
   border-bottom: 1px solid var(--border-color, rgba(128,128,128,.15));
 }
 .shared-session-row:last-child { border-bottom: none; }
@@ -323,6 +332,7 @@ defineExpose({ open: openDrawer })
   gap: var(--space-2);
   font-size: var(--font-size-xs);
   color: var(--text-muted, #656d76);
+  min-width: 0;
 }
 .shared-session-sep { opacity: .6; }
 

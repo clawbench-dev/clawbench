@@ -120,6 +120,41 @@ describe('SharedFilesDrawer', () => {
     expect(wrapper.text()).toContain('File deleted') // exists=false badge
   })
 
+  // The row renders createdAt through the app's single relative-time formatter,
+  // not the raw server string. The API now sends an RFC3339 UTC instant.
+  it('renders createdAt as a friendly relative time', async () => {
+    const twoHoursAgo = new Date(Date.now() - 2 * 3600000).toISOString()
+    fetchMock.mockResolvedValue(jsonResponse({
+      shares: [{ token: 'tok1', name: 'a.md', path: 'docs/a.md', createdAt: twoHoursAgo, exists: true }],
+    }))
+    const wrapper = mountDrawer()
+    ;(wrapper.vm as any).open()
+    await flushPromises()
+    await nextTick()
+
+    expect(wrapper.text()).toContain('2 hr ago')
+    expect(wrapper.text()).not.toContain(twoHoursAgo)
+  })
+
+  // Both drawers render name + one meta line, so the two lists read as one
+  // family. This pins the merged path · time line (the file row used to stack
+  // path and time on separate lines, making it a taller three-line row).
+  it('renders path and time on a single meta line', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({
+      shares: [{ token: 'tok1', name: 'a.md', path: 'docs/a.md', createdAt: '2026-01-01', exists: true }],
+    }))
+    const wrapper = mountDrawer()
+    ;(wrapper.vm as any).open()
+    await flushPromises()
+    await nextTick()
+
+    const meta = wrapper.find('.shared-file-meta')
+    expect(meta.exists()).toBe(true)
+    expect(meta.find('.shared-file-path').exists()).toBe(true)
+    expect(meta.find('.shared-file-sep').exists()).toBe(true)
+    expect(meta.find('.shared-file-time').exists()).toBe(true)
+  })
+
   it('shows the empty state when there are no shares', async () => {
     fetchMock.mockResolvedValue(jsonResponse({ shares: [] }))
     const wrapper = mountDrawer()

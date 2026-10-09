@@ -106,13 +106,13 @@ flowchart TD
 flowchart TD
     A[有更新] --> B{该平台有载荷资产?}
     B -->|macOS 无| F[全量下载]
-    B -->|有| C[按候选列表取载荷包<br/>npm 镜像优先，GitHub 兜底]
+    B -->|有| C[取载荷包<br/>npm tarball，唯一来源]
     C --> D{Electron 主版本 + 壳指纹匹配?}
     D -->|否| F
     D -->|是| E[克隆当前版本目录 → 覆盖 resources/ → 翻转指针]
 ```
 
-失败一律静默降级为全量下载，因此**载荷资产名不一致不会报错**，只会让每次升级又下 150MB——这正是需要跨语言断言（`release.yml` ↔ Go 资产基名）的原因。macOS 不发布载荷：替换已签名 `.app` 内的 `resources/` 会破坏代码签名封条，Apple Silicon 拒绝运行无效签名。载荷同时发到 npm registry 作为国内镜像加速源，但**永远不是唯一来源**（镜像同步有滞后，未命中是干净的 404，客户端会走到下一个候选）。
+失败一律静默降级为全量下载，因此**载荷包名不一致不会报错**，只会让每次升级又下 150MB——这正是需要跨语言断言（`release.yml` ↔ Go 载荷基名）的原因。macOS 不发布载荷：替换已签名 `.app` 内的 `resources/` 会破坏代码签名封条，Apple Silicon 拒绝运行无效签名。载荷**只经 npm registry 分发**（`desktopPayloadURLs` 直接调 `desktopPayloadNpmURLs`，不含 GitHub 候选）：早期载荷 zip 曾与全量包并列挂在 Release 资产里，但那会让人误以为这个小 zip 可以直接安装（它缺 Electron 运行时），故移出；npm 顺带给了国内镜像加速。
 
 ### 分发以 GitHub Release 为唯一渠道
 
@@ -120,7 +120,7 @@ flowchart TD
 
 改为 Release 优先的直接原因是体积：Electron 44 的运行时让桌面端 tarball 达到 ~120MiB，超过 npm 的 100MiB 文档上限，而裁剪 locale/LICENSES 只能省约 4.7MiB（实测），瘦身不可行。原先 npm registry 是**唯一**渠道，一旦超限不发 npm，自升级与官网下载入口会双双静默失效。
 
-桌面端因此**不再发布到 npm**（`publish-npm-desktop` 与 `npm/desktop-main/` 一并移除）；服务端的 `publish-npm` 只发 CLI `@xulongzhe/clawbench`，与桌面端无关。
+桌面端**全量包因此不再发布到 npm**（`npm/desktop-main/` 已移除）；服务端的 `publish-npm` 只发 CLI `@xulongzhe/clawbench`，与桌面端无关。但 `publish-npm-desktop` 仍然存在——它只发**载荷包**（`clawbench-desktop-<plat>-payload`，约 3MB，远低于 npm 上限），这也是载荷的唯一分发渠道。
 
 每个平台返回**候选 URL 列表**：国内镜像优先、直连 github.com 始终兜底，客户端与前端都按序取首个可用项——一个镜像失效不致命。`tag` 为空表示当前是 dev/未打标签构建（无对应 Release），此时 `downloads` 为空、前端隐藏下载入口——这是正常状态，不是错误。
 

@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"clawbench/internal/i18n"
 	"clawbench/internal/model"
@@ -43,6 +45,17 @@ func newScriptedRunner(t *testing.T, groupID string, project string, script map[
 func jsonQuote(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
+}
+
+// setGroupMaxSpeechesForTest overrides the GLOBAL member-speech cap
+// (model.ChatGroupMaxSpeeches) for one test and restores it on cleanup. The cap
+// used to be a per-group setting (SetGroupMaxRounds); it is now global, so tests
+// that need a deterministic stop point set it here.
+func setGroupMaxSpeechesForTest(t *testing.T, n int) {
+	t.Helper()
+	orig := model.ChatGroupMaxSpeeches
+	model.ChatGroupMaxSpeeches = n
+	t.Cleanup(func() { model.ChatGroupMaxSpeeches = orig })
 }
 
 // runGroupTurnForTest drives ONE group turn through the production entry point
@@ -279,7 +292,11 @@ func TestGroupOrchestrator_CancelReachesMemberTurns(t *testing.T) {
 	_ = mA
 }
 
-func TestGroupOrchestrator_MaxRoundsSummary(t *testing.T) {
+// TestGroupOrchestrator_SpeechCapSummary pins the cap behavior in host mode: a
+// member-speech cap of 1 lets exactly ONE member speak, then the discussion is
+// forced to stop (the host is NOT asked to route another round) and the host
+// runs ONE summary turn.
+func TestGroupOrchestrator_SpeechCapSummary(t *testing.T) {
 	setupGroupDB(t)
 	project := "/tmp/gorch2"
 	if _, err := store.ProjectIDForPath(project); err != nil {
@@ -290,15 +307,14 @@ func TestGroupOrchestrator_MaxRoundsSummary(t *testing.T) {
 		t.Fatalf("CreateGroup: %v", err)
 	}
 	mA, _ := AddGroupMember(project, groupID, "claude", "agent-a", "A")
-	// Cap at 1 round so the host never ends on its own.
-	if err := SetGroupMaxRounds(groupID, 1); err != nil {
-		t.Fatalf("SetGroupMaxRounds: %v", err)
-	}
+	// Cap at ONE member speech so the host never ends on its own; the cap stops
+	// the loop before a second member turn.
+	setGroupMaxSpeechesForTest(t, 1)
 
 	script := map[string][]string{
 		hostID: {
-			`<clawbench-mention targets="A"> 请发言`, // round 1 route (no end)</clawbench-mention>
-			`结论：到此为止。`,                            // summary turn (round cap reached)
+			`<clawbench-mention targets="A"> 请发言`, // route (no end)
+			`结论：到此为止。`,                            // summary turn (cap reached)
 		},
 		mA: {"A 发言"},
 	}
@@ -308,16 +324,74 @@ func TestGroupOrchestrator_MaxRoundsSummary(t *testing.T) {
 	o.runTurn = runner
 	_ = runGroupTurnForTest(t, o, project, "开始", nil)
 
-	// Host should speak exactly twice: the routing turn + the summary turn.
+	// Host speaks exactly twice: the routing turn + the summary turn. A second
+	// routing turn would mean the cap failed to stop the loop.
 	hostTurns := 0
+	memberTurns := 0
 	for _, id := range *order {
 		if id == hostID {
 			hostTurns++
+		} else {
+			memberTurns++
 		}
 	}
 	if hostTurns != 2 {
 		t.Fatalf("host turns=%d, want 2 (route + summary), order=%v", hostTurns, *order)
 	}
+	if memberTurns != 1 {
+		t.Fatalf("member turns=%d, want 1 (cap=1), order=%v", memberTurns, *order)
+	}
+}
+
+// TestGroupOrchestrator_SpeechCapCountsMembersOnly pins the counting rule: the
+// host's routing turns are NOT counted against the cap, only member speeches
+// are. With a cap of 2 and two members routed per host round, the host must be
+// able to run its routing turns freely and the discussion must stop after
+// exactly 2 MEMBER speeches (not after 2 host turns).
+func TestGroupOrchestrator_SpeechCapCountsMembersOnly(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-capmembers"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	mA, _ := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	mB, _ := AddGroupMember(project, groupID, "claude", "agent-b", "B")
+	setGroupMaxSpeechesForTest(t, 2)
+
+	// The host keeps routing to A every round (never ends on its own); without
+	// the cap this would loop forever.
+	script := map[string][]string{
+		hostID: {`<clawbench-mention targets="A">请发言</clawbench-mention>`},
+		mA:     {"A 发言"},
+		mB:     {"B 发言"},
+	}
+	runner, order := newScriptedRunner(t, groupID, project, script)
+
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	_ = runGroupTurnForTest(t, o, project, "开始", nil)
+
+	memberTurns, hostTurns := 0, 0
+	for _, id := range *order {
+		if id == hostID {
+			hostTurns++
+		} else {
+			memberTurns++
+		}
+	}
+	if memberTurns != 2 {
+		t.Fatalf("member turns=%d, want 2 (cap counts members only), order=%v", memberTurns, *order)
+	}
+	// The host must have run its routing turn(s) WITHOUT them counting toward the
+	// cap, plus the final summary turn.
+	if hostTurns < 2 {
+		t.Fatalf("host turns=%d, want >=2 (route(s) + summary); host turns must not count toward the cap, order=%v", hostTurns, *order)
+	}
+	_ = mB
 }
 
 // TestGroupOrchestrator_HostNeverRoutesToItself is a regression for the reported
@@ -556,11 +630,9 @@ func TestGroupOrchestrator_SummaryFailureDoesNotAdvanceCursor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGroup: %v", err)
 	}
-	// Cap at 1 round so the host never ends on its own → the round cap triggers
+	// Cap at 1 member speech so the host never ends on its own → the cap triggers
 	// the summary turn.
-	if err := SetGroupMaxRounds(groupID, 1); err != nil {
-		t.Fatalf("SetGroupMaxRounds: %v", err)
-	}
+	setGroupMaxSpeechesForTest(t, 1)
 	if _, err := AddGroupMember(project, groupID, "claude", "agent-a", "A"); err != nil {
 		t.Fatalf("AddGroupMember: %v", err)
 	}
@@ -817,8 +889,9 @@ func TestGroupOrchestrator_FallbackMemberGetsMemberSystemPrompt(t *testing.T) {
 }
 
 // Two consecutive parse failures mean the host is not producing usable routing:
-// continuing burns the whole round budget for nothing. Abort and finalize
-// (decision #56).
+// continuing burns the whole budget for nothing. Abort and finalize
+// (decision #56). The global member-speech cap is left at its (large) default,
+// so the abort — not the cap — is what must stop this loop.
 func TestGroupOrchestrator_AbortsAfterTwoParseFailures(t *testing.T) {
 	setupGroupDB(t)
 	project := "/tmp/gorch-abort"
@@ -831,10 +904,6 @@ func TestGroupOrchestrator_AbortsAfterTwoParseFailures(t *testing.T) {
 	}
 	if _, err := AddGroupMember(project, groupID, "claude", "agent-a", "A"); err != nil {
 		t.Fatalf("AddGroupMember: %v", err)
-	}
-	// A large cap so that, without the abort, the loop would run many rounds.
-	if err := SetGroupMaxRounds(groupID, 20); err != nil {
-		t.Fatalf("SetGroupMaxRounds: %v", err)
 	}
 
 	hostTurns := 0
@@ -1108,10 +1177,10 @@ func TestGroupOrchestrator_CancelledFallbackDoesNotAdvanceCursor(t *testing.T) {
 	}
 }
 
-// A host that keeps failing must terminate the turn, not burn the whole round
-// budget. Design §6: "主持人跑挂 → 可见错误 + 回退轮转继续；**再失败终止群回合**".
-// Without a host-failure counter the loop runs every round (a broken host
-// backend means maxRounds host turns + 10 members monologuing).
+// A host that keeps failing must terminate the turn, not burn the whole budget.
+// Design §6: "主持人跑挂 → 可见错误 + 回退轮转继续；**再失败终止群回合**".
+// Without a host-failure counter the loop runs until the member-speech cap (a
+// broken host backend means up to cap member monologues).
 func TestGroupOrchestrator_AbortsAfterRepeatedHostFailure(t *testing.T) {
 	setupGroupDB(t)
 	project := "/tmp/gorch-hostfail"
@@ -1124,10 +1193,6 @@ func TestGroupOrchestrator_AbortsAfterRepeatedHostFailure(t *testing.T) {
 	}
 	if _, err := AddGroupMember(project, groupID, "claude", "agent-a", "A"); err != nil {
 		t.Fatalf("AddGroupMember: %v", err)
-	}
-	// A large cap: without early termination the host would run ~this many times.
-	if err := SetGroupMaxRounds(groupID, 20); err != nil {
-		t.Fatalf("SetGroupMaxRounds: %v", err)
 	}
 
 	hostTurns := 0
@@ -1143,7 +1208,7 @@ func TestGroupOrchestrator_AbortsAfterRepeatedHostFailure(t *testing.T) {
 	_ = runGroupTurnForTest(t, o, project, "开始", nil)
 
 	// Design §6: fall back once, then terminate on the next failure. Allow a
-	// small margin (the fallback + one retry) but nowhere near maxRounds.
+	// small margin (the fallback + one retry) but nowhere near the cap.
 	if hostTurns > 4 {
 		t.Fatalf("repeated host failure must terminate the turn, but the host ran %d turns", hostTurns)
 	}
@@ -1389,6 +1454,95 @@ func TestGroupOrchestrator_UserTargetStopsRound(t *testing.T) {
 	_ = mA
 }
 
+// A HOST-issued `mode="parallel"` group that names the user is SPLIT, not
+// downgraded: the AI members run concurrently (mutually non-referencing), then
+// the floor is handed to the user and the round ends. Host mode shares the same
+// runSpeakerGroup kernel as free mode, so this pins the host path too.
+func TestGroupOrchestrator_ParallelUserRunsMembersConcurrently(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-parallel-user"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	mA, _ := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	mB, _ := AddGroupMember(project, groupID, "claude", "agent-b", "B")
+
+	var mu sync.Mutex
+	cur, peak := 0, 0
+	order := &[]string{}
+	prompts := map[string]string{}
+	script := map[string][]string{
+		hostID: {`<clawbench-mention targets="A,B,User" mode="parallel">同时表态</clawbench-mention>`},
+		mA:     {"A 的观点"},
+		mB:     {"B 的观点"},
+	}
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		mu.Lock()
+		*order = append(*order, turn.MemberRowID)
+		texts := script[turn.MemberRowID]
+		text := ""
+		if len(texts) > 0 {
+			text = texts[0]
+		}
+		if turn.MemberRowID != hostID {
+			cur++
+			if cur > peak {
+				peak = cur
+			}
+			prompts[turn.MemberRowID] = turn.Prompt
+		}
+		mu.Unlock()
+		if turn.MemberRowID != hostID {
+			// Hold briefly so member overlaps are observable.
+			time.Sleep(20 * time.Millisecond)
+		}
+		if text == "" {
+			text = "(no script)"
+		}
+		_, err := AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
+			`{"blocks":[{"type":"text","text":`+jsonQuote(text)+`}]}`, nil, false, "", turn.MemberRowID)
+		mu.Lock()
+		if turn.MemberRowID != hostID {
+			cur--
+		}
+		mu.Unlock()
+		if err != nil {
+			return groupMemberResult{Err: err.Error()}
+		}
+		return groupMemberResult{}
+	}
+
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	res := runGroupTurnForTest(t, o, project, "开始", nil)
+	if res.Err != "" || res.CancelReason != "" {
+		t.Fatalf("a user turn must end cleanly: %+v", res)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	seen := map[string]bool{}
+	for _, id := range *order {
+		if id == groupUserTargetID {
+			t.Fatalf("the user sentinel must never be handed to the runner; order=%v", *order)
+		}
+		seen[id] = true
+	}
+	if !seen[mA] || !seen[mB] {
+		t.Fatalf("both AI members must speak; order=%v", *order)
+	}
+	if peak < 2 {
+		t.Fatalf("the AI members must run concurrently (peak >= 2), got %d — the group was downgraded", peak)
+	}
+	if strings.Contains(prompts[mB], "A 的观点") || strings.Contains(prompts[mA], "B 的观点") {
+		t.Fatalf("parallel members must not see a sibling's output; A=%q B=%q", prompts[mA], prompts[mB])
+	}
+}
+
 // A private note addressed to a participant NOT named this round is stored and
 // delivered with that participant's next turn (the "hand everyone a word, then
 // call on one player first" setup).
@@ -1438,4 +1592,139 @@ func TestGroupOrchestrator_PendingBccDeliveredNextRound(t *testing.T) {
 		t.Fatalf("a delivered note must be cleared, %d left", len(left))
 	}
 	_ = mA
+}
+
+// A USER-emitted private note is stored and delivered — the user's @ cards
+// serialize a `private` tag on send, and the backend must consume it.
+//
+// The target is written as a member ROW ID (that is what the frontend sends),
+// which is exactly the case storeRouteNotes used to drop: it resolved targets
+// by NAME only, so an id-targeted note was silently discarded as unknown.
+func TestGroupOrchestrator_UserPrivateNoteStoredAndDelivered(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-userbcc"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	// Free mode: the user's @ seeds the queue, so naming B makes B speak and the
+	// note is delivered on that same turn.
+	groupID, _, err := CreateGroupWithMembers(project, "G", "", []GroupMemberSpec{
+		{Backend: "claude", AgentID: "agent-a", DisplayName: "A"},
+		{Backend: "claude", AgentID: "agent-b", DisplayName: "B"},
+	})
+	if err != nil {
+		t.Fatalf("CreateGroupWithMembers: %v", err)
+	}
+	members, err := ListGroupMembers(groupID)
+	if err != nil {
+		t.Fatalf("ListGroupMembers: %v", err)
+	}
+	var mB string
+	for _, m := range members {
+		if m.Name == "B" {
+			mB = m.ID
+		}
+	}
+	if mB == "" {
+		t.Fatal("member B not found")
+	}
+
+	script := map[string][]string{mB: {"B 发言"}}
+	base, _ := newScriptedRunner(t, groupID, project, script)
+	var bPrompt string
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		if turn.MemberRowID == mB {
+			bPrompt = turn.Prompt
+		}
+		return base(ctx, gid, turn)
+	}
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+
+	// The user names B (by ROW ID) and attaches a private note — the exact text
+	// the frontend serializes from a member card with a note.
+	userMsg := `<clawbench-mention targets="` + mB + `"></clawbench-mention>` +
+		` <clawbench-mention targets="` + mB + `" private>你的词是西瓜</clawbench-mention> 你先说`
+	_ = runGroupTurnForTest(t, o, project, userMsg, nil)
+
+	if !strings.Contains(bPrompt, "你的词是西瓜") {
+		t.Fatalf("B must receive the user's private note; got %q", bPrompt)
+	}
+	if left := pendingBccForTarget(groupID, "B"); len(left) != 0 {
+		t.Fatalf("a delivered note must be cleared, %d left", len(left))
+	}
+}
+
+// A user note addressed to a member NOT named this turn is stored for later —
+// the "hand everyone a word, call on one first" setup, driven by the user.
+func TestGroupOrchestrator_UserPrivateNoteDeferred(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-userbcc-defer"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, _, err := CreateGroupWithMembers(project, "G", "", []GroupMemberSpec{
+		{Backend: "claude", AgentID: "agent-a", DisplayName: "A"},
+		{Backend: "claude", AgentID: "agent-b", DisplayName: "B"},
+	})
+	if err != nil {
+		t.Fatalf("CreateGroupWithMembers: %v", err)
+	}
+	members, _ := ListGroupMembers(groupID)
+	var mA, mB string
+	for _, m := range members {
+		if m.Name == "A" {
+			mA = m.ID
+		}
+		if m.Name == "B" {
+			mB = m.ID
+		}
+	}
+
+	script := map[string][]string{mA: {"A 发言"}}
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn, _ = newScriptedRunner(t, groupID, project, script)
+
+	// Name A, note B: A speaks, B's note waits for B's next turn.
+	userMsg := `<clawbench-mention targets="` + mA + `"></clawbench-mention>` +
+		` <clawbench-mention targets="` + mB + `" private>留给 B 的词</clawbench-mention>`
+	_ = runGroupTurnForTest(t, o, project, userMsg, nil)
+
+	got := pendingBccForTarget(groupID, "B")
+	if len(got) != 1 || got[0].Content != "留给 B 的词" {
+		t.Fatalf("B's note must be pending until B's turn, got %+v", got)
+	}
+}
+
+// A user's private note must NOT leak into the user's own injected context
+// (it is addressed to a member, not the reader).
+func TestGroupOrchestrator_UserPrivateNoteNotInjectedToUser(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-userbcc-self"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, _, err := CreateGroupWithMembers(project, "G", "", []GroupMemberSpec{
+		{Backend: "claude", AgentID: "agent-a", DisplayName: "A"},
+		{Backend: "claude", AgentID: "agent-b", DisplayName: "B"},
+	})
+	if err != nil {
+		t.Fatalf("CreateGroupWithMembers: %v", err)
+	}
+	members, _ := ListGroupMembers(groupID)
+	mA := members[0].ID
+
+	script := map[string][]string{mA: {"A 发言"}}
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn, _ = newScriptedRunner(t, groupID, project, script)
+
+	// A note the user addressed to themselves ("User") is dropped: the reader
+	// reads their own note in the UI card, never through an injected prompt.
+	userMsg := `<clawbench-mention targets="` + mA + `"></clawbench-mention>` +
+		` <clawbench-mention targets="User" private>给自己的</clawbench-mention>`
+	_ = runGroupTurnForTest(t, o, project, userMsg, nil)
+
+	if left := pendingBccForTarget(groupID, groupUserTarget()); len(left) != 0 {
+		t.Fatalf("a self-directed user note must not be stored, got %+v", left)
+	}
 }

@@ -475,4 +475,103 @@ describe('useChatContext', () => {
       expect(ctx.attachedFiles.value).toHaveLength(0)
     })
   })
+
+  describe('stagedMentions (group @ cards)', () => {
+    it('addStagedMention adds a card carrying the member identity', () => {
+      ctx.addStagedMention({ memberId: 'm-a', name: 'Alice', agentId: 'a-1', backend: 'claude' })
+      expect(ctx.stagedMentions.value).toHaveLength(1)
+      const card = ctx.stagedMentions.value[0]
+      expect(card.memberId).toBe('m-a')
+      expect(card.name).toBe('Alice')
+      expect(card.agentId).toBe('a-1')
+      expect(card.backend).toBe('claude')
+      expect(card.note).toBe('')
+      expect(card.id).toBeTruthy()
+    })
+
+    it('adding the same member twice updates in place (no duplicate card)', () => {
+      const first = ctx.addStagedMention({ memberId: 'm-a', name: 'Alice' })
+      const second = ctx.addStagedMention({ memberId: 'm-a', name: 'Alice' })
+      expect(ctx.stagedMentions.value).toHaveLength(1)
+      expect(second.id).toBe(first.id)
+    })
+
+    it('removeStagedMention drops the card by id', () => {
+      const card = ctx.addStagedMention({ memberId: 'm-a', name: 'Alice' })
+      ctx.addStagedMention({ memberId: 'm-b', name: 'Bob' })
+      ctx.removeStagedMention(card.id)
+      expect(ctx.stagedMentions.value.map(c => c.memberId)).toEqual(['m-b'])
+    })
+
+    it('updateStagedMentionNote sets the private note and trims it', () => {
+      const card = ctx.addStagedMention({ memberId: 'm-a', name: 'Alice' })
+      ctx.updateStagedMentionNote(card.id, '  你的词是西瓜  ')
+      expect(ctx.stagedMentions.value[0].note).toBe('你的词是西瓜')
+    })
+
+    it('updateStagedMentionNote on an unknown id is a no-op', () => {
+      ctx.addStagedMention({ memberId: 'm-a', name: 'Alice' })
+      ctx.updateStagedMentionNote('nope', 'x')
+      expect(ctx.stagedMentions.value[0].note).toBe('')
+    })
+
+    it('clearAll drops the staged mentions too', () => {
+      ctx.addStagedMention({ memberId: 'm-a', name: 'Alice' })
+      ctx.clearAll()
+      expect(ctx.stagedMentions.value).toHaveLength(0)
+    })
+
+    it('snapshotAttachments stores and restoreAttachments restores mentions', () => {
+      const card = ctx.addStagedMention({ memberId: 'm-a', name: 'Alice' })
+      ctx.updateStagedMentionNote(card.id, '机密')
+      ctx.snapshotAttachments('session-m1')
+      ctx.clearAll()
+      expect(ctx.stagedMentions.value).toHaveLength(0)
+
+      ctx.restoreAttachments('session-m1')
+      expect(ctx.stagedMentions.value).toHaveLength(1)
+      expect(ctx.stagedMentions.value[0].memberId).toBe('m-a')
+      expect(ctx.stagedMentions.value[0].note).toBe('机密')
+    })
+
+    it('restoreAttachments does not leak mention mutation back into the snapshot', () => {
+      const card = ctx.addStagedMention({ memberId: 'm-a', name: 'Alice' })
+      ctx.snapshotAttachments('session-m2')
+      ctx.restoreAttachments('session-m2')
+      ctx.updateStagedMentionNote(card.id, '改了')
+      ctx.restoreAttachments('session-m2')
+      expect(ctx.stagedMentions.value[0].note).toBe('')
+    })
+
+    // The send path clears the cards up front and restores them on failure.
+    // Without this the @ intent (and any private note) is lost silently, since
+    // the restored text is the user's RAW text with no protocol tags.
+    it('restoreStagedCards puts back the mentions and quotes cleared by a send', () => {
+      const card = ctx.addStagedMention({ memberId: 'm-a', name: 'Alice' })
+      ctx.updateStagedMentionNote(card.id, '机密')
+      ctx.addStagedQuote({ text: 'x', filePath: '/a.ts', language: 'ts', startLine: 1, endLine: 1 }, 'note')
+
+      const mentions = ctx.stagedMentions.value.map(m => ({ ...m }))
+      const quotes = ctx.stagedQuotes.value.map(q => ({ ...q }))
+      ctx.clearAll()
+      expect(ctx.stagedMentions.value).toHaveLength(0)
+      expect(ctx.stagedQuotes.value).toHaveLength(0)
+
+      ctx.restoreStagedCards(mentions, quotes)
+      expect(ctx.stagedMentions.value).toHaveLength(1)
+      expect(ctx.stagedMentions.value[0].memberId).toBe('m-a')
+      expect(ctx.stagedMentions.value[0].note).toBe('机密')
+      expect(ctx.stagedQuotes.value).toHaveLength(1)
+    })
+
+    it('restoreStagedCards deep-copies so later edits do not mutate the snapshot', () => {
+      const card = ctx.addStagedMention({ memberId: 'm-a', name: 'Alice' })
+      const mentions = ctx.stagedMentions.value.map(m => ({ ...m }))
+      ctx.clearAll()
+      ctx.restoreStagedCards(mentions, [])
+      ctx.updateStagedMentionNote(card.id, '改了')
+      // The captured array must be untouched.
+      expect(mentions[0].note).toBe('')
+    })
+  })
 })

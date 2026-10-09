@@ -255,9 +255,36 @@ func countAgentRows(members []GroupMember, agentID string) int {
 	return n
 }
 
-func TestGroupMaxRoundsDefaultAndOverride(t *testing.T) {
+// The member-speech cap is a GLOBAL setting (chat.group_max_speeches), not a
+// per-group one. It reads model.ChatGroupMaxSpeeches and falls back to the
+// default when that is non-positive (a value set directly on the global var in
+// an edge/test path must not silently mean "stop immediately").
+func TestGroupMaxSpeechesReadsGlobal(t *testing.T) {
+	orig := model.ChatGroupMaxSpeeches
+	t.Cleanup(func() { model.ChatGroupMaxSpeeches = orig })
+
+	model.ChatGroupMaxSpeeches = 42
+	if got := GetGroupMaxSpeeches(); got != 42 {
+		t.Fatalf("GetGroupMaxSpeeches()=%d want 42", got)
+	}
+
+	// A non-positive global falls back to the default (never 0 / negative).
+	model.ChatGroupMaxSpeeches = 0
+	if got := GetGroupMaxSpeeches(); got != defaultGroupMaxSpeeches {
+		t.Fatalf("GetGroupMaxSpeeches()=%d want default %d", got, defaultGroupMaxSpeeches)
+	}
+	model.ChatGroupMaxSpeeches = -5
+	if got := GetGroupMaxSpeeches(); got != defaultGroupMaxSpeeches {
+		t.Fatalf("GetGroupMaxSpeeches()=%d want default %d", got, defaultGroupMaxSpeeches)
+	}
+}
+
+// The user-seed concurrency default is a tri-state read: absent => sequential
+// (false), and an explicit true/false must round-trip. Sequential is the
+// long-standing behavior, so an old group without the key must stay sequential.
+func TestGroupParallelDefaultRoundTrip(t *testing.T) {
 	setupGroupDB(t)
-	project := "/tmp/grouptest"
+	project := "/tmp/grouptest-parallel"
 	if _, err := store.ProjectIDForPath(project); err != nil {
 		t.Fatalf("ProjectIDForPath: %v", err)
 	}
@@ -265,14 +292,20 @@ func TestGroupMaxRoundsDefaultAndOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGroup: %v", err)
 	}
-	if got := GetGroupMaxRounds(groupID); got != defaultGroupMaxRounds {
-		t.Fatalf("default maxRounds=%d want %d", got, defaultGroupMaxRounds)
+	if GetGroupParallelDefault(groupID) {
+		t.Fatal("parallelDefault must default to false when unset")
 	}
-	if err := SetGroupMaxRounds(groupID, 25); err != nil {
-		t.Fatalf("SetGroupMaxRounds: %v", err)
+	if err := SetGroupParallelDefault(groupID, true); err != nil {
+		t.Fatalf("SetGroupParallelDefault(true): %v", err)
 	}
-	if got := GetGroupMaxRounds(groupID); got != 25 {
-		t.Fatalf("maxRounds=%d want 25", got)
+	if !GetGroupParallelDefault(groupID) {
+		t.Fatal("parallelDefault must read back true after being set")
+	}
+	if err := SetGroupParallelDefault(groupID, false); err != nil {
+		t.Fatalf("SetGroupParallelDefault(false): %v", err)
+	}
+	if GetGroupParallelDefault(groupID) {
+		t.Fatal("parallelDefault must read back false after being cleared")
 	}
 }
 
@@ -1258,5 +1291,145 @@ func TestPendingBccStore(t *testing.T) {
 	}
 	if o := pendingBccForTarget(otherGroup, "B"); len(o) != 1 {
 		t.Fatalf("another group must still be untouched: %+v", o)
+	}
+}
+
+// groupUserTarget() is config-driven: it honors chat.user_nickname and falls
+// back to the language-neutral default when unset.
+func TestGroupUserTarget_ConfigDriven(t *testing.T) {
+	orig := model.ChatUserNickname
+	t.Cleanup(func() { model.ChatUserNickname = orig })
+
+	model.ChatUserNickname = ""
+	if got := groupUserTarget(); got != "User" {
+		t.Fatalf("empty config must fall back to the default, got %q", got)
+	}
+	model.ChatUserNickname = "老板"
+	if got := groupUserTarget(); got != "老板" {
+		t.Fatalf("configured nickname must win, got %q", got)
+	}
+	// Defensive trim: a hand-edited config.yaml bypasses the PATCH
+	// normalization, but the parser trims targets before lookup — an untrimmed
+	// value here would make the user unreachable.
+	model.ChatUserNickname = "  老板  "
+	if got := groupUserTarget(); got != "老板" {
+		t.Fatalf("surrounding whitespace must be trimmed, got %q", got)
+	}
+	model.ChatUserNickname = "   "
+	if got := groupUserTarget(); got != "User" {
+		t.Fatalf("all-whitespace must fall back to the default, got %q", got)
+	}
+}
+
+// A nickname change migrates pending notes keyed by the old user name so an
+// undelivered note is not orphaned.
+func TestRenameUserPendingBcc(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-renamebcc"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, _, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	addPendingBcc(groupID, "User", "给你的")
+	addPendingBcc(groupID, "A", "给A的")
+
+	RenameUserPendingBcc("User", "老板")
+
+	if left := pendingBccForTarget(groupID, "User"); len(left) != 0 {
+		t.Fatalf("the old-name rows must be migrated away: %+v", left)
+	}
+	migrated := pendingBccForTarget(groupID, "老板")
+	if len(migrated) != 1 || migrated[0].Content != "给你的" {
+		t.Fatalf("the note must move to the new name: %+v", migrated)
+	}
+	if a := pendingBccForTarget(groupID, "A"); len(a) != 1 {
+		t.Fatalf("other targets must be untouched: %+v", a)
+	}
+	// A no-op rename (same name / empty) must not error or move anything.
+	RenameUserPendingBcc("老板", "老板")
+	RenameUserPendingBcc("", "x")
+	if m := pendingBccForTarget(groupID, "老板"); len(m) != 1 {
+		t.Fatalf("no-op renames must leave the rows in place: %+v", m)
+	}
+}
+
+// GroupMemberSpeakersForGroups resolves a message's chat_history.agent_id back
+// to the member's display name. Unlike GroupMembersForGroups it must INCLUDE
+// left (archived) members — a departed member's past speech still has to render
+// as their own name rather than a generic "Assistant". It is also the
+// speaker-resolution companion used by the share/RAG paths, so the empty-input,
+// dedup and multi-group paths matter.
+func TestGroupMemberSpeakersForGroups(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-speakers"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+
+	groupA, hostA, err := CreateGroup(project, "A 组", "codebuddy", "agent-host-a", "HostA")
+	if err != nil {
+		t.Fatalf("CreateGroup A: %v", err)
+	}
+	mA1, _ := AddGroupMember(project, groupA, "claude", "agent-a1", "A1")
+	mA2, _ := AddGroupMember(project, groupA, "claude", "agent-a2", "A2")
+
+	groupB, _, err := CreateGroup(project, "B 组", "codebuddy", "agent-host-b", "HostB")
+	if err != nil {
+		t.Fatalf("CreateGroup B: %v", err)
+	}
+	mB1, _ := AddGroupMember(project, groupB, "claude", "agent-b1", "B1")
+
+	// Empty input must short-circuit without touching the DB.
+	empty, err := GroupMemberSpeakersForGroups(nil)
+	if err != nil {
+		t.Fatalf("empty input must not error: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("empty input must yield an empty map, got %+v", empty)
+	}
+	// All-empty ids collapse to no ids and still return an empty map.
+	if got, err := GroupMemberSpeakersForGroups([]string{"", ""}); err != nil || len(got) != 0 {
+		t.Fatalf("all-empty ids must yield an empty map without error, got %+v err=%v", got, err)
+	}
+
+	// Duplicate ids must be de-duplicated (the query would otherwise build a
+	// redundant IN list, and the result must still be correct).
+	got, err := GroupMemberSpeakersForGroups([]string{groupA, groupA, "", groupB})
+	if err != nil {
+		t.Fatalf("GroupMemberSpeakersForGroups: %v", err)
+	}
+	if got[groupA][hostA] != "HostA" || got[groupA][mA1] != "A1" || got[groupA][mA2] != "A2" {
+		t.Fatalf("group A speakers wrong: %+v", got[groupA])
+	}
+	if got[groupB][mB1] != "B1" {
+		t.Fatalf("group B speakers wrong: %+v", got[groupB])
+	}
+	if len(got[groupA]) != 3 {
+		t.Fatalf("group A must have exactly 3 members, got %d (%+v)", len(got[groupA]), got[groupA])
+	}
+
+	// A member who LEFT must still resolve (include-left rule): their earlier
+	// messages keep their name instead of degrading to a generic assistant.
+	if err := RemoveGroupMember(groupA, mA2); err != nil {
+		t.Fatalf("RemoveGroupMember: %v", err)
+	}
+	got, err = GroupMemberSpeakersForGroups([]string{groupA})
+	if err != nil {
+		t.Fatalf("GroupMemberSpeakersForGroups after removal: %v", err)
+	}
+	if got[groupA][mA2] != "A2" {
+		t.Fatalf("a left member must still resolve its name, got %+v", got[groupA])
+	}
+
+	// An unknown group id is simply absent from the map (no error).
+	got, err = GroupMemberSpeakersForGroups([]string{"does-not-exist"})
+	if err != nil {
+		t.Fatalf("unknown group must not error: %v", err)
+	}
+	if _, ok := got["does-not-exist"]; ok {
+		t.Fatalf("unknown group must be absent from the map, got %+v", got)
 	}
 }

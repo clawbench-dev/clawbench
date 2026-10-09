@@ -3,12 +3,14 @@
     <template #header>
       <ZapIcon :size="16" class="bs-header-icon" />
       <span class="bs-header-title">{{ t('terminal.quickCommands') }}</span>
-      <button class="create-btn" @click.stop="addNewCommand" :title="t('terminal.addCommand')">
-        <PlusIcon :size="16" />
-      </button>
-      <button ref="moreBtnRef" class="create-btn" @click.stop="showMoreMenu = !showMoreMenu" :title="t('terminal.moreActions')">
-        <MoreVerticalIcon :size="16" />
-      </button>
+      <span class="bs-header-actions">
+        <button class="create-btn" @click.stop="addNewCommand" :title="t('terminal.addCommand')">
+          <PlusIcon :size="16" />
+        </button>
+        <button ref="moreBtnRef" class="create-btn" @click.stop="showMoreMenu = !showMoreMenu" :title="t('terminal.moreActions')">
+          <MoreVerticalIcon :size="16" />
+        </button>
+      </span>
     </template>
 
     <PopupMenu
@@ -329,8 +331,14 @@ async function onDragEnd() {
   color: var(--text-muted, #999);
 }
 
-.create-btn {
+.bs-header-actions {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.create-btn {
   width: 24px;
   height: 24px;
   border: none;

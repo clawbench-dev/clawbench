@@ -65,11 +65,16 @@ describe('main.ts single-tab gate', () => {
     expect(pageshowCount).toBe(2)
   })
 
-  it('keeps the slot when entering the back/forward cache', () => {
-    // pagehide with persisted=true is a bfcache entry, not a real unload;
-    // releasing there would let a waiting tab steal the slot from a tab the
-    // user can still restore.
-    expect(src).toMatch(/pagehide[\s\S]{0,80}persisted/)
+  it('releases the slot on EVERY pagehide, including bfcache entry', () => {
+    // A frozen tab cannot run code, so holding the slot across a bfcache entry
+    // would block a waiting tab for as long as the browser keeps the page
+    // cached (up to ~10 minutes) — the Web Locks counterpart of the ghost-owner
+    // bug this guard exists to prevent. The owner must release unconditionally
+    // and re-claim on pageshow if it is restored.
+    expect(src).toMatch(/addEventListener\('pagehide',\s*\(\)\s*=>\s*guard\.release\(\)\)/)
+    // The old persisted-gated form took the event and checked e.persisted; it
+    // must not come back.
+    expect(src).not.toMatch(/addEventListener\('pagehide',\s*\(e\)/)
   })
 
   it('releases ownership on page unload so a waiting tab can take over', () => {

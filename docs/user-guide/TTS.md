@@ -38,8 +38,9 @@ ClawBench 支持 TTS 语音合成，自动将 AI 回复总结后朗读。需要�
 |------|------|---------|
 | `simple` | 纯文本清洗（默认），零延迟 | 无 |
 | `api` | 远程 AI API（OpenAI/Anthropic 格式），模型配置复用 `ai_summary` | 需配置 URL 和 API Key |
+| `auto` | 按内容自动分流：杂质（代码/表格/公式/链接等）占比 ≥ `summarize.auto_junk_ratio`（默认 0.5）或清洗后文本过长时走 `api`，否则直接朗读清洗文本 | 未配置 `ai_summary` 时自动降级为 `simple` |
 
-> **没有云端专用 TTS 引擎**：语音合成引擎只有上表四种（edge / piper / kokoro / moss-nano），全部在本地或通过 Edge 服务完成。需要云端大模型参与时，走的是**总结后端**（`api`）而非 TTS 引擎——它把长文总结成短句后再交给 TTS 朗读，配置见下方「API 总结后端」。
+> **没有云端专用 TTS 引擎**：语音合成引擎只有上表四种（edge / piper / kokoro / moss-nano），全部在本地或通过 Edge 服务完成。需要云端大模型参与时，走的是**总结后端**（`api` / `auto`）而非 TTS 引擎——它把长文总结成短句后再交给 TTS 朗读，配置见下方「API 总结后端」。
 
 ## 文本处理参数
 
@@ -47,6 +48,7 @@ ClawBench 支持 TTS 语音合成，自动将 AI 回复总结后朗读。需要�
 |------|--------|------|
 | `inline_code_max_len` | 100 | 行内代码保留的最大字符数（rune）；超出则整段删除 |
 | `max_summarize_runes` | 10000 | 总结输入的最大字符数；超出则截取尾部（simple 模式: 1000） |
+| `auto_junk_ratio` | 0.5 | `auto` 后端的杂质比例阈值（0~1）：占比 ≥ 该值或清洗后文本过长时走 LLM，否则直接朗读 |
 
 ---
 
@@ -208,7 +210,7 @@ tts:
   speed: 1
 
 summarize:
-  tts_backend: "api"                # 语音摘要类型（""/simple/api）
+  tts_backend: "api"                # 语音摘要类型（""/simple/api/auto）
 
 # 共享的 AI 模型配置（语音摘要 + 推荐回复共用）
 ai_summary:

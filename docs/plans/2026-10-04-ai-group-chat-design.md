@@ -1,7 +1,7 @@
 # AI 群聊设计（Group Chat）
 
 日期：2026-10-04
-状态：**v1 基线（阶段 A–M）已合入 main（`aa88f921a`）；阶段 N/O 全部实现并合入 main（24/24 Task）**
+状态：**v1 基线（阶段 A–M）已合入 main（`aa88f921a`）；阶段 N/O 全部实现并合入 main（24/24 Task）；§14 并发发言阶段 1–4 全部实现**
 
 ---
 
@@ -1118,3 +1118,210 @@ while 队列非空:
 **行为修正（唯一一处）**：轮转回退成员此前**没有**成员系统提示词（只有被点名成员有），会诱发"成员自称主持人"；现与 `memberTurn` 共用同一提示词构造。
 
 **顺带修复**：`CreateGroupWithMembers` 的 `gocyclo`/`gocognit` 超阈值（自由模式提交引入，`only-new-issues` 漏报），抽出 `dedupeGroupSpecs` / `groupIdentityFields` / `insertGroupRow` / `insertGroupMemberRows` / `writeGroupModeInline` 降回预算内。
+
+## 14. 并发发言（Parallel Speaking，规划中，2026-10-08）
+
+> 本节是**待实现的设计**，不是现状。动机：桌游类场景需要"**同时发言、互不参考**"——例如一轮里先让 C 单独表态，再让 A、B **同时**行动（狼人夜晚、同时亮牌、并行出招），且 A、B 各自**看不到对方本轮**的发言。现系统**严格串行**（§5.6 / §12 C1），本节的语义恰好比"真并行"弱，因此成本可控。
+
+### 14.1 语义：快照后启动（snapshot-then-launch）
+
+"同时发言、互不参考"的**真正**保证不是游标，而是**调度不变量**：
+
+> **同一并行组内所有成员的提示词，都在任何人开始写时间线之前，从同一份组开始快照构建完毕。**
+
+因为注入规则是 `id > 游标 且作者 ≠ 自己`（§5.2 / 决策 #23），若 A 的提示词在 B 的行落库**之后**才构建，A 就会看到 B——所以"看不到彼此"**必须**靠"先全部构建、再一起启动"，而**不是**靠游标。
+
+由此得出精确的组内语义：
+
+- **注入游标 = 成员各自的 `seen_cursor`（不变）**。它决定"这个人上次之后漏看了什么"——若改成组开始高水位，会把成员**上轮尚未消化**的发言永久跳过（静默丢上下文）。
+- **推进目标 = 组开始高水位 `H`**。组内每人成功后，`seen_cursor` 推进到 `H`（而非各自的发言后高水位）——这样下一组开始时，组内没人"看过"本组其他人的发言。
+- **组间严格串行**：`errgroup.Wait` 收尾后才构建下一组快照，故下一组能看到上一组的**全部**发言。
+
+**所以不引入新的可见性模型**：注入规则、游标规则都不变，只新增"快照先于启动"这一条调度纪律（当前 `runSpeakerTurn` 把构建与执行混在一起，须拆开——见 §14.4）。
+
+> **评审修正（2026-10-08，Superpower code-reviewer）**：本节初稿把"看不到彼此"归因于"共用组开始游标"，是**逻辑倒置**——在 `id > 游标` 规则下共用游标会让成员**互相看见**。且初稿写"用组开始高水位作游标基准"，会**永久丢弃**成员上轮未消化的上下文。两者已按上文本修正。
+
+### 14.2 决策点
+
+| # | 决策 | 说明 |
+|---|---|---|
+| P1 | **粒度 = 每个 mention 标签** | "顺序 / 同时"由**发起点名的那一方**逐个 mention 决定，而非群级开关。这样"先一人、再多人同时"的混合节奏可表达。 |
+| P2 | **属性承载** | mention 标签新增一个属性 `mode`，取值 `sequential`（默认）| `parallel`。缺省即 `sequential`，故旧消息与未标注场景行为不变。 |
+| P3 | **谁可发起** | 主持人（host 模式）与 @ 人的成员（free 模式）都可标注。free 模式里"同时 @"多个成员 = 让他们并行接力。 |
+| P4 | **组内不互相注入** | 见 §14.1：靠"快照先于启动"，注入游标仍是各成员自己的。 |
+| P5 | **用户消息的 mention 也可带 `mode`** | free 模式种子队列按用户的 mention 分组（首个 `parallel` 组并行）。 |
+| P6 | **不做"边写边被看到"** | 明确排除流式互相可见——那是另一套语义，本设计不做。 |
+| P7 | **`parallel` 组内禁止 `User`** | 用户无法"同时发言"。并行组的 targets 含 `User` 时按 `sequential` 处理并写一条可见系统提示（否则会像现状一样 `handUserBack` 直接终止整组，静默丢弃同组其他成员）。 |
+| P8 | **并行度上限 = 启动上限，非注入上限** | 见 §14.7：超过上限时分批**启动**，但所有成员的提示词**仍从组开始快照构建**，故"互不参考"不被破坏。 |
+
+### 14.3 解析层改动（`internal/grouprouting` + 前端镜像）
+
+**问题**：现在 `Parse` 把所有 mention 的 targets **摊平**成一个有序去重的 `Speakers` 列表，**丢失了每个 mention 的边界**。而 `mode` 是**每个 mention 各自的**。
+
+**改动**：
+- `MentionEntry` 新增 `Mode` 字段（`"sequential"` | `"parallel"`）；`parseMentionAttrs` 一并解析 `mode`（未知值按 `sequential` 处理，不视为畸形）。
+- `Result` **新增**按 mention 分组的分组视图：`Groups []MentionGroup`，每组 = `{Members []string, Parallel bool, Instruction string}`。**`Groups` 是新的真源，`Speakers` 由它派生**（保持既有消费者不变）——**方向不能反**：`Speakers` 已跨 mention 去重，无法还原边界。
+- **跨组去重保留**：同一成员若同时出现在 `parallel` 组与后续 mention 里，仍按现有 `resolveSpeakerTargets` 语义去重（否则一轮内说两次）。
+- **畸形契约不变**：只有 `targets` 属性是良构的判定依据；`mode` 非法值**不使标签畸形**（回退 `sequential`）。
+- **前后端镜像 + parity 语料**：`web/src/utils/groupRouting.ts` 同步；`testdata/parity_corpus.json` 增加并行/混合/非法 mode/含 User 四类 case，双向固化。
+
+### 14.4 编排层改动（`group_orchestrator.go`）
+
+`runRounds` / `runFreeLoop` 现在向 `drainSpeakers` 返回**一个** `[]speakerTurn` 队列（严格 FIFO）。改为：
+
+- refill / 种子返回**若干组**（`[]speakerGroup`），组内 `Parallel` 标记；`runRounds` 的**每条 mention 的 `Instruction` 只给该组**（不再是现在的"整条 route 的 Instruction 摊给所有成员"）。
+- **两阶段执行**（这是 §14.1 的落地）：
+  1. **快照阶段**（串行，启动任何成员之前）：为**整组**每个成员计算注入文本（`GetMemberCursor` + `pendingBccForTarget` + `groupInjectionTextOrEmpty`），取一次 `GroupTimelineHighWater` 作 `H`，并**确定性地**决定 `/cb-*` 命令注入归谁（组内第一个成员）并置 `firstTurnDone`。
+  2. **执行阶段**：`Parallel` 组用 `errgroup` 并发跑（每人用**快照好的**提示词与 `H`）；`Sequential` 组沿用现有 FIFO。
+- **`runSpeakerTurn` 须拆分**：把"构建提示词"（现 L272-286）与"执行 + 推进游标 + 落密送"分开——否则快照阶段无法在启动前完成。
+- **游标**（§14.1）：注入用成员自己的 `seen_cursor`（**不变**）；成功后推进到 `H`（`advanceCursorOnSuccess(t.ID, H, res)`，仍是"仅干净回合推进"，决策 #69 不变）。
+- **`/cb-*` 命令注入**：归组内**第一个成员**（在快照阶段确定，**不依赖 goroutine 调度顺序**）。**`firstTurnDone` 是普通 `bool`，并发下是数据竞争**——须在快照阶段（单线程）设置，执行阶段只读。
+- **密送延迟送达**：快照阶段已为全组读好 `pendingBccForTarget`，故组内 A 给 B 的密送**必然**落到 `group_pending_bcc`、下组才送达（不会因 A 先跑完而提前注入 B）。
+- **`@User`（P7）**：并行组含 `User` 时**拆分**——AI 成员保持 `parallel` 并发执行，随后 `handUserBack` 交回话语权并终止本轮。`User` 恒在队尾（否则其后的成员会被静默丢弃）。
+
+### 14.5 流式管道改动（**关键路径**，§12 C1 的落地）
+
+这是**唯一真正困难**的部分，且**必须先做**，否则并行会内容串台。
+
+**根因**：`UpdateStreamingMessage` / `FinalizeStreamingMessage`（以及 `FinalizeCancelledStreamingMessage`）的定位是
+`WHERE project_id=? AND backend=? AND session_id=? AND role='assistant' AND streaming=1 ORDER BY id DESC LIMIT 1`（`chat.go`）——**没有消息 id**。群时间线共享，并行时后启动者的占位行（id 更大）会被先启动者的后续写入命中 ⇒ 互相覆盖。
+
+> **注意 `backend` 谓词**：同 backend 的两个成员才互相覆盖；不同 backend 已天然隔离。故**回归测试矩阵**用"同 backend 一对成员"复现。
+
+**改动**：
+1. **新增按消息 id 的原语**：`UpdateStreamingMessageByID(id, content)` / `FinalizeStreamingMessageByID(id, content)` / `FinalizeCancelledStreamingMessageByID(id, content)`（`UpdateMessageContent` 是雏形，但它不改 `streaming` / `completed_at`，不能直接用）。旧原语保留给单聊（单聊天然只有一条流）。
+2. **executor 全程用消息 id**：`session_executor.go` 的 **3 处 `UpdateStreamingMessage` + 3 处 finalize**（L1208 的 `FinalizeStreamingMessage`、L1666 的 `FinalizeCancelledStreamingMessage`、L1668 的 `FinalizeStreamingMessage`）改用 `e.cfg.StreamingMessageID`。**取消路径（L1666）必须一并改**——§14.7 要求"取消整组"，漏改它会让被取消的成员覆盖同组的行。
+3. **归属键已就绪**：`e.cfg.StreamingMessageID` **已存在**（`RunConfig`，非 `TurnSpec`）且**已被思考/工具调用写入使用**（`thinking.go` / `tool_calls.go` 按 `message_id` 归属）；`run_turn.go` 建占位行时已拿到 id 并放进 `RunConfig`，无需新机制。
+
+**影响面（已核实）**：`UpdateStreamingMessage` 3 个调用点（全在 executor）；finalize 共 6 个——executor 3 个须改，`scheduler.go:955` / `session_command.go:625` / `handler/chat.go:630` 是单聊/panic 路径，保留旧原语；测试引用 3 个文件。
+
+### 14.6 前端路由改动
+
+**根因**：所有内容事件都走 `findStreamingMsg`——**取唯一**的流式气泡（`chatStreamUtils.ts` 的 reducer 内联 `state.find(...)` 有 15 处，`useChatStream.ts` 另有 8 处）。并行时多条流同时存在，取唯一必错。
+
+**须按 id 路由的消费者（穷举，不止 content）**：
+- `content` / `content_reset`（后者**清空首个**流式气泡的 blocks——并行下会清错人的输出）
+- `thinking` / `thinking_done` / `tool_use` / `tool_result` / `metadata` / `warning` / `ws_error` / `stream_split`
+- `stream_finalize`：reducer（`chatStreamUtils.ts`）也是 `forceCleanupStreamingState`=首个匹配，**不是"最新的"**——故成员 2 的 finalize 在成员 1 仍在流式时是 **no-op**。须加按 id 的收尾变体（改 reducer，不只改 dispatch 层）。
+- `done`：`_forceCleanupStreamingState` 只收尾**一个**气泡；并行下其余 N−1 个会一直 `streaming:true` 直到 `loadHistory` 重建。
+
+**改动**：
+- 后端在每个内容事件上补 `message_id`（`stream_start` 已带；delta 类事件当前不带，见 §14.9 的 `interface.go`）。
+- 前端改为**按 `message_id` 路由**到对应气泡；保留"取唯一"作**单流 fallback**（单聊与串行群聊不受影响）。
+- **事件缓冲须按 id 分桶**：现 `pendingStreamEvents` 是**全局单桶**，`replayBufferedEvents` 以"存在任一流式气泡"为触发、且被 `connectStream`/`done`/切会话整体清空——并行下成员 2 的缓冲会在成员 1 开占位时被误回放到错误气泡。须改为按 `message_id` 分桶、按 id 触发回放。
+- 头部头像栈的"发言中高亮"（O9 已移除）若未来恢复，可同时高亮多个——**本次不做**。
+
+### 14.7 资源与护栏
+
+每个成员是一条独立 ACP 子进程（数百 MB）。顺序执行时"10 人最多 1 个在跑"是隐性护栏；并行会同时拉起 N 个。
+
+- **并行度上限 = 启动上限**（建议 ≤ 3~4）：超出时分批**启动**，但**注入快照仍取自组开始**（§14.1/§14.4），故分批不破坏"互不参考"。**这是 P8 的关键**——若把上限理解成"注入也分批"，第 2 批就会看到第 1 批。
+- **成员数上限 10**（决策 #78）不变。
+- **取消语义**：用户停止时须取消**整组**（组内所有在飞回合），沿用现有 `groupCtx` 传播；`drainSpeakers` 的"取消即停整轮"不变量扩展到组。**取消路径的 finalize 必须按 id**（§14.5 I1）。
+- **DB 压力**：`storeSpeakerNotes` → `lastMemberOutput` 每次全量扫群时间线；并行组内 N 个成员 = N 次并发全表读。非正确性问题，但须与进程内存一并纳入护栏考量。
+
+### 14.8 分阶段实施
+
+> **实施进度（2026-10-09）**：**阶段 1–4 全部实现**（含 §14.1 快照纪律、§14.3 `mode` 属性 + `Groups`、§14.4 两阶段分组执行、§14.5 by-id 原语、§14.6 前端按 id 路由、§14.7 启动上限 + P7/P8、§14.9 多流重连恢复）。后端并行、前端多气泡并行渲染、重连恢复、并发上限全部打通。
+
+| 阶段 | 内容 | 可验证的交付（**注意验收标准**） | 状态 |
+|---|---|---|---|
+| **1. 后端管道** | §14.5 按消息 id 原语 + executor（含取消路径）改用 `StreamingMessageID` | **单元级**：两个并发 executor、不同 `StreamingMessageID`、同一时间线，断言两行各自正确 finalize（这正是 §12 I6 要求的测试）。此阶段**用户可见行为无变化**（仍串行），故不能靠"界面并行"验收。 | ✅ 已实现 |
+| **2. 解析 + 编排** | §14.3 `mode` 属性 + 分组视图；§14.4 两阶段执行 + 组高水位 | **DB 行级**：同 backend 两成员同组并发、两行内容不串台、组间有序。用户可见仍会串台（前端未改）。 | ✅ 已实现 |
+| **3. 前端路由** | §14.6 内容事件补 id + 按 id 路由 + 按 id 分桶缓冲 + 按 id 收尾 | 前端多气泡并行渲染正确。 | ✅ 已实现 |
+| **4. 语义收尾** | §14.1 快照纪律落地校验；§14.7 启动上限；P7 含 User 降级 | 组内互不参考、组间可见。 | ✅ 已实现 |
+
+
+> **阶段耦合**：阶段 2 与 3 **必须一起落地**才能有用户可见验收（否则只见后端行正确、界面串台）。阶段 1 单独可验（单元测试），但**没有用户可见产出**——不要按"界面并行"验收它。
+>
+> **已实现部分的落地差异（2026-10-08/09）**：
+> - 按 id 原语**额外带 `session_id` 谓词**（`UpdateStreamingMessageByID(sessionID, id, content)` 等）。原计划只按 id，但 `FlushStreamingNow` 会遍历**所有**已注册 executor，一个陈旧 executor 的行 id 可能与另一会话的活动行相撞 ⇒ 必须用 session 限定（这也是既有 `FlushStreamingNow` 测试的护栏）。executor 传 `e.timelineSID()`。
+> - `NewSessionExecutor` 在 `StreamingMessageID` 为 0 时按**时间线会话**解析一次（生产总由 `run_turn.go` 传入；此兜底为测试与旧调用方保留，且带 `store.DBReady()` 守卫）。
+> - §14.6 的 `message_id` 放在 **WS 信封层**（`ChatStreamData.MessageID`，`payload` 的兄弟），而非每个 payload 内部——这样所有事件类型统一携带，无需每个 payload builder 感知。
+> - **`stream_start` 不再"finalize 上一个流式气泡"**：并行下那个"不同的流式消息"可能是**活着的兄弟流**，finalize 会误杀。改为按 id 判断占位符是否存在；真正陈旧的气泡由其自己的 `stream_finalize`（后端每个 producer 回合都发）或 `done`/reload 收尾。
+> - **`forwardEvent` 不得取 `e.mu`**：早期实现为读 `StreamingMessageID` 加了 `e.mu.Lock()`，导致每个事件排在 flush 的 DB I/O 之后，全量 service 测试从 190s 涨到 400s+。`cfg.StreamingMessageID` 只由同一事件循环 goroutine 写，无需锁。
+> - §14.7 的**并行度启动上限**已实现（`maxParallelLaunches = 3`）：并行组按批启动，批间 await，但**所有成员的提示词仍从组开始快照构建**（在启动任何一批之前），故分批不破坏"互不参考"——第 2 批看到的是与第 1 批相同的组开始快照。用户取消时不再启动后续批次。
+
+
+
+### 14.9 受影响文件（初判）
+
+| 层 | 文件 |
+|---|---|
+| 标签解析（叶子） | `internal/grouprouting/grouprouting.go` + `testdata/parity_corpus.json` |
+| 前端镜像 | `web/src/utils/groupRouting.ts` |
+| 编排器 | `internal/service/group_orchestrator.go`（分组 + 两阶段 + 组高水位；`runRounds` 逐组 Instruction；free 的 `freeInitialTargets`/`appendFreeTargets` 分组） |
+| 落库原语 | `internal/service/chat.go`（by-id 变体，含 cancelled） |
+| 执行器 | `internal/service/session_executor.go`（改用 `StreamingMessageID`） |
+| 事件载荷 | `internal/ai/interface.go`（delta 类事件补 `message_id`） |
+| 实时状态恢复 | `internal/service/chat.go` 的 `GetLiveRunState`（单行 → **全部**在飞流，见下） |
+| 前端流 | `web/src/composables/useChatStream.ts` + `web/src/utils/chatStreamUtils.ts`（按 id 路由 / 分桶缓冲 / 按 id 收尾） |
+
+**重连/恢复（此前遗漏，属前置依赖）**：`GetLiveRunState`（`chat.go`）只取**一条** `streaming=1` 行，`EmitLiveRunStateToClient` 据此只补发**一个** `stream_start`；而前端缓冲回放的**唯一**触发点就是 `stream_start`。故并行下"切走再切回/重连"只会恢复 N 条流中的 1 条，其余成员的流开始事件已错过 ⇒ 须让 `GetLiveRunState` 返回**全部**在飞流、前端处理 N 个补发的 `stream_start`。这是阶段 3 的**硬前置**，不是可选清理。
+
+### 14.10 与既有决策的关系
+
+- **修订决策 #22**（同轮执行 = 顺序）：本设计是它明确预留的 v2 路径（原文"同轮并行是 v2 候选，需先完成 §12 C1 的流式行按 id 重写"）。**#22 对未标注 `mode` 的场景仍然成立**（默认 `sequential`）。
+- **落地 §12 C1 的修法**：C1 已给出 by-id 原语方案，本节把它具体化（并补上 C1 未提的取消路径与重连恢复）。
+- **不改决策 #9**（成员间只交换发言文本）：并行组内成员之间**连发言文本也不交换**（快照先于启动），比 #9 更严，方向一致。
+- **§5.6 顺序不变量**：**`sequential` 路径保留**；`parallel` 路径用 by-id 原语替代"唯一流式行"前提。原 §5.6 的"串行 await"守卫测试须**限定在 `sequential` 路径**（否则并行会误触发它）。
+- **决策 #69**（仅干净回合推进游标）：不变，只是推进目标在并行组内取组开始高水位。
+- **`golang.org/x/sync`**：`errgroup` 当前是**间接**依赖，引入后变直接（`go mod tidy` 会改 `go.mod`）。
+
+### 14.11 评审勘误（2026-10-08，Superpower code-reviewer，已核对代码）
+
+> 首轮评审（对 §14 初稿）。**结论：目标成立、§14.5 的 by-id 原语是正解，但初稿不可照实现。** 以下 Critical/Important 已并入正文；此节保留原始记录。
+
+**Critical（已修）**
+
+- **C1 — 初稿把"注入游标"与"推进目标"混为一谈。** 初稿写"组内成员用组开始高水位作游标基准（而非各自 `GetMemberCursor`）"。代码里注入用 `GetMemberCursor(t.ID)`（`group_orchestrator.go:274`），推进用 `advanceCursorOnSuccess(t.ID, preH, res)`。若注入也改用组高水位 `H`，则 `(成员游标, H]` 的行被跳过——而那正是**上轮后发言者**的发言，且推进到 `H` 后**永久**成为 `< 游标` ⇒ **静默永久丢上下文**。**修**：注入仍用成员自己的游标，只有推进目标取 `H`。
+- **C2 — §14.1 的等价论证逻辑倒置。** 初稿称"组内 A 看不到 B，因为 B 的行 id > A 的游标"——但注入规则正是 `id > 游标 ⇒ 注入`，共用游标会让 A **看见** B。真正机制是**时间性**的：A 的提示词在 B 的行落库**之前**构建。**修**：§14.1 改为"快照先于启动（snapshot-then-launch）"调度不变量。
+- **C3 — 提示词构建竞态未处理。** `runSpeakerTurn` 把"构建提示词"与"执行"混在一起；`errgroup` 下成员 2 的构建可能发生在成员 1 首次 flush（executor 每 500ms）之后。**修**：§14.4 拆成"快照阶段（串行）+ 执行阶段（并行）"。
+- **C4 — §14.7 的"分批"直接违反 §14.1。** 分批会让第 2 批看到第 1 批。**修**：上限是**启动上限**，注入快照仍取自组开始（P8）。
+- **C5 — `firstTurnDone` 数据竞争。** 它是普通 `bool`，`errgroup` 下两个成员可同时读到 `false` ⇒ `/cb-*` 注入两次（`go test -race` 会报）。**修**：在快照阶段（单线程）确定归属。
+- **C6 — 重连/恢复只恢复 N 条流中的 1 条（初稿完全未提）。** `GetLiveRunState` 取单行、`EmitLiveRunStateToClient` 只补发一个 `stream_start`，而前端缓冲回放唯一触发点就是它。**修**：§14.9 增列，列为阶段 3 硬前置。
+
+**Important（已修）**
+
+- **I1 — §14.5 漏了取消路径 `FinalizeCancelledStreamingMessage`（L1666）。** 它同样用 `ORDER BY id DESC LIMIT 1`，而 §14.7 恰恰要求"取消整组"。**修**：executor 的 **3 处 finalize**（含取消）全改 by-id。
+- **I2 — §14.5 的 WHERE 引用漏了 `backend` 谓词。** 同 backend 才互相覆盖；不同 backend 已隔离。**修**：正文补全 WHERE，并据此定回归矩阵（同 backend 一对成员）。
+- **I3 — §14.6 事件枚举不全。** 还有 `content_reset`（会清错人的 blocks）、`thinking_done`/`warning`/`ws_error`/`stream_split`；且 `stream_finalize` 在 **reducer** 里也是"首个匹配"（非"最新的"），成员 2 的 finalize 是 no-op；`done` 只收尾一个气泡。**修**：正文穷举 + 明确须改 reducer。
+- **I4 — 前端缓冲是单流形状。** `pendingStreamEvents` 全局单桶、回放以"存在任一流式气泡"触发、整体清空。**修**：按 `message_id` 分桶。
+- **I5 — `@User` 在并行组内未定义。** 现状 `handUserBack` 会终止整组、丢弃同组其他成员。**修**：P7 定义（并行组含 User 降级为顺序 + 系统提示）。
+- **I6 — 密送可跨并行组提前送达。** 若发送者先跑完 `addPendingBcc`，慢的同组成员可能本轮就读到。**修**：快照阶段为全组读好 `pendingBccForTarget`。
+- **I7 — §14.8 阶段 1 的验收标准不可达。** 阶段 1 后仍串行，用户可见无变化。**修**：改为单元级验收（两并发 executor 各自正确 finalize，即 §12 I6 要求的测试），并标注阶段 2↔3 耦合。
+- **I8 — 逐组 Instruction / free 模式分组未接线。** `runRounds` 现把扁平 `route.Instruction` 给所有成员；`freeInitialTargets`/`appendFreeTargets` 也消费 `route.Speakers`。且 §14.3 的派生方向写反了（`Groups` 须为真源）。**修**：正文补明 + 反转派生方向 + §14.9 补文件。
+- **I9 — §14.10 说"不改 §5.6"是误导。** §5.6 的"串行 await"正是被并行打破的。**修**：改为"`sequential` 路径保留，守卫测试须限定路径"。
+
+**Minor（已采纳）**
+
+- M1 占位 id 放在 `RunConfig`（非 `TurnSpec`）——正文已改。
+- M2 `errgroup` 使 `golang.org/x/sync` 从间接变直接——已注明。
+- M3 并行组内行 id 顺序**不确定**（下一组按任意序看到，内容无损）——已隐含在"组间串行"表述中。
+- M4 跨组去重语义须保留——§14.3 已补。
+- M5 `lastMemberOutput` 全表扫 × N 并发——§14.7 已补 DB 压力。
+- M6 `rePrivate` 正则 `\bprivate\b` 会匹配任意属性值内的词（既有缺陷，与 §14 相邻）——留待实现时顺手锚定。
+
+### 14.12 实现后评审勘误（2026-10-09，Superpower code-reviewer，已核对代码）
+
+> 第二轮评审（对**已实现**的 `5a43534de` + `660701a72`）。**结论：内核（快照纪律、游标规则、by-id 原语、重连恢复、启动上限）正确扎实，但重构在自由模式上引入两个已复现的回归。** 以下均已修复并加守卫测试。
+
+**Critical（已修 + 变异验证）**
+
+- **RC1 — 自由模式种子误用宿主成员提示词。** `freeInitialGroups` 走 `resolveSpeakerGroups` → `memberTurn` → `BuildMemberSystemPrompt`，该提示词**明确禁止成员输出 mention 标签**——而自由模式的中继**就是** mention 标签，接力从第一步被自己的提示词掐断；且把用户 mention 正文当"主持人要求你"注入（自由模式无主持人，且正文已在用户行出现）。**修**：`resolveSpeakerGroups` 改为接收 `turnFor` 构造器，自由模式传 `freeTurn`（`BuildFreeMemberSystemPrompt`、无 instruction）。守卫：`TestFreeLoop_SeedUsesFreeModePrompt`（变异：改回 `memberTurn` → 红）。
+- **RC2 — 自由模式同组内 @ 已排队成员 → 重复发言。** `appendFreeTargets` 的 `waiting` 只含 `appended`（外层队列），**看不到当前组里尚未发言的成员**。用户一条标签点名 A、B，A @B → B 被排队两次（实测 `[A,B,B]` vs 旧版 `[A,B]`）。**修**：`onSpoke` 增加 `pending`（当前组未发言成员）并入 `waiting`。守卫：`TestFreeLoop_PeerMentionWithinGroupNotDuplicated`（变异：去掉 `pending` 并入 → 红）。
+
+**Important（已修）**
+
+- **I1 — `resolveStreamingMsg` 的单流 fallback 会串台。** 带 id 但找不到流式消息时退回"唯一流式"→ 迟到的 finalize 会关掉活着的兄弟流。**修**：带 id 且无匹配 → 直接 `undefined`，不 fallback；无 id 才走单流回退。守卫：前端"重复 finalize 不关兄弟流"。
+- **I2 — `message_id:0` 的 finalize 关掉唯一活流。** 成员早失败（无占位符）时 `MsgID=0`，前端把 0 当 falsy → 单流 fallback → 关掉活着的兄弟。**修**：前端 0-id finalize 明确 no-op。守卫：前端"0-id finalize 是 no-op"。
+- **I3 — `warning`/`ws_error` 未按 id 路由。** 设计 §14.6 已列入穷举，但只改了 reducer、handler dispatch 未带 `messageId` ⇒ 并行下 warning 永不渲染。**修**：两处 handler 补 `messageId`，reducer `ws_error` 改用 `resolveStreamingMsg`。
+- **I4 — P7 只对"User 在组尾"生效。** `User` 在前的并行组降级后，`handUserBack` 立刻终止，**丢弃**其后的成员（实测 `User,A` → `order=[]`）。**修**：降级时 `userLastGroup` 把 User 移到组尾 + 写系统提示（`GroupParallelDowngraded`）。守卫：`TestFreeLoop_ParallelUserFirstStillSpeaksMembers`（变异：去掉重排 → 红）。
+
+**Minor（已修）**
+
+- M1 `queryLiveStreamRows` 补 `rows.Err()`（部分列表 → 整体放弃）。
+- M2 `go mod tidy`：`golang.org/x/sync` 从 indirect 移到直接依赖（仅 `go.mod`）。
+- M3 文档状态行与 §14.8 的矛盾已消除（状态行改为"阶段 1–4 全部实现"）。
+- M4 `forceCleanupStreamingState` 无 id 时恢复"首个流式"语义（`done` 清理循环保证推进），带 id 时仍严格按 id。
+- M5 `targets`/`private`/`mode` 正则加属性边界锚定（`(?:^|[\s\p{Z}])`），`data-mode` 不再误匹配；parity 语料加 `mode_hyphenated_attr_not_matched`（35 例）。

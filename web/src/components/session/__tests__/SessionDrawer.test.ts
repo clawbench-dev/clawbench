@@ -117,22 +117,25 @@ describe('SessionDrawer', () => {
   })
 
   describe('shared-sessions entry button', () => {
-    it('is hidden when the project has no shared conversation', async () => {
+    // The button is the only entry to the share-management drawer, which now
+    // shows its own empty state — so it must be present even with nothing
+    // shared, rather than being hidden behind a "has any share" gate.
+    it('is present when the project has no shared conversation', async () => {
       const { useSessionShare } = await import('@/composables/useSessionShare')
       const { resetSessionShareState } = useSessionShare()
       resetSessionShareState()
 
       const wrapper = mountDrawer()
-      expect(wrapper.find('[data-action="shared-sessions"]').exists()).toBe(false)
+      expect(wrapper.find('[data-action="shared-sessions"]').exists()).toBe(true)
     })
 
-    it('appears as soon as one conversation is shared', async () => {
+    it('stays present after one conversation is shared', async () => {
       const { useSessionShare } = await import('@/composables/useSessionShare')
       const { resetSessionShareState, markShared } = useSessionShare()
       resetSessionShareState()
 
       const wrapper = mountDrawer()
-      expect(wrapper.find('[data-action="shared-sessions"]').exists()).toBe(false)
+      expect(wrapper.find('[data-action="shared-sessions"]').exists()).toBe(true)
 
       markShared('s1')
       await nextTick()
@@ -141,7 +144,7 @@ describe('SessionDrawer', () => {
       resetSessionShareState()
     })
 
-    it('disappears again when the last share is revoked', async () => {
+    it('stays present when the last share is revoked', async () => {
       const { useSessionShare } = await import('@/composables/useSessionShare')
       const { resetSessionShareState, markShared, markUnshared } = useSessionShare()
       resetSessionShareState()
@@ -152,7 +155,7 @@ describe('SessionDrawer', () => {
 
       markUnshared('s1')
       await nextTick()
-      expect(wrapper.find('[data-action="shared-sessions"]').exists()).toBe(false)
+      expect(wrapper.find('[data-action="shared-sessions"]').exists()).toBe(true)
 
       resetSessionShareState()
     })

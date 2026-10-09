@@ -1,4 +1,5 @@
 import { test, expect } from '../fixtures'
+import { setGroupMaxSpeeches, restoreGroupMaxSpeeches } from '../helpers/group-config'
 
 /**
  * E2E for the group-chat subscribe-time recovery carrying the speaker.
@@ -36,7 +37,16 @@ test.describe.serial('group chat subscribe-time recovery carries the speaker', (
   test.skip(({ browserName }) => browserName !== 'chromium', 'serial group test')
   test.setTimeout(120000)
 
+  // The cap is a global server setting; restore it so later specs are unaffected.
+  test.afterAll(async () => {
+    await restoreGroupMaxSpeeches()
+  })
+
   test('re-emitted stream_start for a mid-turn subscriber carries agent_id', async ({ page }) => {
+    // Several member speeches keeps the loop producing turns while the probe
+    // subscribes (a global setting; the afterAll above restores it).
+    await setGroupMaxSpeeches(8)
+
     // Create a host + member group and start a real turn via the HTTP handler.
     const setup = await page.evaluate(async () => {
       const post = async (url: string, body: unknown) =>
@@ -46,8 +56,6 @@ test.describe.serial('group chat subscribe-time recovery carries the speaker', (
       if (!created.ok) return { ok: false, step: 'create', created }
       const added = await post('/api/group/members', { groupId: created.groupId, agentIds: ['acp-mock-b'] })
       if (!added.ok) return { ok: false, step: 'add', added }
-      // Several rounds keeps the loop producing turns while the probe subscribes.
-      await post('/api/group/settings', { groupId: created.groupId, maxRounds: 8 })
 
       // Start the group turn through the real handler (same path as the UI).
       const send = await fetch(`/api/ai/chat?session_id=${encodeURIComponent(created.groupId)}`, {

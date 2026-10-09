@@ -8,9 +8,10 @@ import "clawbench/internal/model"
 // endpoints so the frontend can resolve a message's icon the same way everywhere.
 //
 // Avatar is the user-configured SVG string (model.Agent.Avatar), NOT a data URI.
-// It is deliberately EMPTY on the public share path (see ResolveSessionSpeakers'
-// includeAvatar) so a shared link never leaks the creator's custom avatars —
-// the viewer falls back to the built-in per-backend brand icon.
+// It is carried on every path (see ResolveSessionSpeakers' includeAvatar): the
+// public share snapshot freezes it at creation time so the anonymous viewer can
+// render the same icons the app shows. The snapshot is the only copy the viewer
+// ever sees — it cannot reach the authenticated agent endpoints.
 type SpeakerIdentity struct {
 	Name    string `json:"name,omitempty"`
 	Backend string `json:"backend"`
@@ -26,9 +27,10 @@ type SpeakerIdentity struct {
 //     message's chat_history.agent_id is the SPEAKER's member row id (NOT a real
 //     agent id), so it is resolved through this map.
 //
-// includeAvatar controls the custom-avatar leak: pass false on the public share
-// path (anyone with the link must not see user avatars) and true for the
-// authenticated in-app endpoints.
+// includeAvatar controls whether each identity carries the agent's custom
+// avatar. Both the authenticated in-app endpoints and the public share path
+// pass true: the share snapshot is built by the authenticated owner and freezes
+// the avatars for the viewer, which has no other way to resolve them.
 //
 // Either return value may be nil: sessionAgent when the session is unknown,
 // speakers when the session is not a group (or has no members). Callers treat a

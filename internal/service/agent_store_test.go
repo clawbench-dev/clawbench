@@ -629,6 +629,34 @@ func TestSaveAgent_RejectsNameTakenByOtherID(t *testing.T) {
 	assert.Equal(t, "pi", agents[0].ID)
 }
 
+// An agent name equal to the configured group-chat user nickname is rejected in
+// both the create and rename paths: the nickname is a routing target, so an
+// agent sharing it would shadow the human.
+func TestAgentName_RejectsUserNickname(t *testing.T) {
+	db := setupTestDBForAgents(t)
+	orig := model.ChatUserNickname
+	t.Cleanup(func() { model.ChatUserNickname = orig })
+	model.ChatUserNickname = "老板"
+
+	// Create path.
+	err := service.SaveAgent(db, &model.Agent{ID: "claude", Name: "老板", Backend: "claude"})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, service.ErrAgentNameReserved)
+	assert.False(t, service.IsUserNickname(""), "an empty name never collides")
+	assert.True(t, service.IsUserNickname("老板"))
+
+	// Rename path: seed a normal agent, then try to rename it onto the nickname.
+	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"}))
+	name := "老板"
+	err = service.PatchAgentFields("pi", service.AgentPatch{Name: &name})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, service.ErrAgentNameReserved)
+
+	// The reserved name is released once the nickname changes.
+	model.ChatUserNickname = "Boss"
+	require.NoError(t, service.PatchAgentFields("pi", service.AgentPatch{Name: &name}))
+}
+
 // Re-saving the same agent (same id) with the same name is the built-in backend
 // re-registration path (SaveAgent is an ON CONFLICT(id) upsert called
 // repeatedly). It must never self-reject.

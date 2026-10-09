@@ -90,14 +90,15 @@ async function bootstrap() {
     return
   }
 
-  // This tab owns the app. Release only on a real unload: `pagehide` with
-  // persisted=true means the tab is entering the back/forward cache and may be
-  // restored, so it keeps the slot. A frozen tab cannot answer claims, so a
-  // waiting tab still takes over by timeout — keeping the slot here cannot
-  // deadlock anyone.
-  window.addEventListener('pagehide', (e) => {
-    if (!e.persisted) guard.release()
-  })
+  // This tab owns the app. Release on every pagehide — including entry to the
+  // back/forward cache (persisted=true). A frozen tab cannot run code, so if it
+  // kept the lock it would block a waiting tab for as long as the browser keeps
+  // the page cached (up to ~10 minutes), which is the Web Locks counterpart of
+  // the ghost-owner bug this guard exists to prevent. Releasing lets a waiting
+  // tab take over at once; the pageshow handler below re-claims the slot when
+  // the page is restored, so a lone tab (the common case) still owns it on
+  // return.
+  window.addEventListener('pagehide', () => guard.release())
   window.addEventListener('beforeunload', () => guard.release())
 
   // Restored from the back/forward cache: another tab may have taken the slot

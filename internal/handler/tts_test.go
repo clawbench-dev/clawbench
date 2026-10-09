@@ -1063,19 +1063,21 @@ func TestTTSGenerate_WithMessageID_UsesConclusionNotFullText(t *testing.T) {
 	assert.Equal(t, conclusionText, mockSum.lastText)
 }
 
-// ttsExtractConclusion must not read the host's private notes (bcc): the
-// frontend strips them, but when messageId is present the handler OVERRIDES the
-// frontend text with the DB content — so the stripping must happen here too.
+// ttsExtractConclusion must not read a GROUP timeline's private notes (bcc):
+// the frontend strips them, but when messageId is present the handler OVERRIDES
+// the frontend text with the DB content — so the policy must be applied here too.
+// Only a group session carries the protocol, so the message must live on a group
+// timeline for the strip to apply.
 func TestTTSExtractConclusion_StripsBcc(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "TTS", "codebuddy", "", "default", "chat")
+	groupID, _, err := service.CreateGroup(env.ProjectDir, "TTS组", "codebuddy", "codebuddy", "Host")
 	if err != nil {
-		t.Fatalf("CreateSession: %v", err)
+		t.Fatalf("CreateGroup: %v", err)
 	}
 	content := `{"blocks":[{"type":"text","text":"公开表态 <clawbench-mention targets=\"A\" private>只有A能听到的秘密</clawbench-mention> 结束"}]}`
-	msgID, err := service.AddChatMessage(env.ProjectDir, "codebuddy", sessionID, "assistant", content, nil, false, "")
+	msgID, err := service.AddChatMessage(env.ProjectDir, "codebuddy", groupID, "assistant", content, nil, false, "")
 	if err != nil {
 		t.Fatalf("AddChatMessage: %v", err)
 	}
@@ -1090,4 +1092,139 @@ func TestTTSExtractConclusion_StripsBcc(t *testing.T) {
 	if !strings.Contains(got, "公开表态") {
 		t.Fatalf("the public text must survive: %q", got)
 	}
+}
+
+// A SINGLE chat has no group protocol: a reply that merely DISCUSSES the tag
+// syntax (an unclosed literal tag in prose) must be spoken verbatim, not
+// truncated at the tag. Regression: message 58879's summary was cut 1551 → 1258.
+func TestTTSExtractConclusion_SingleChatKeepsLiteralTag(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "TTS", "codebuddy", "", "default", "chat")
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	content := `{"blocks":[{"type":"text","text":"用户的消息里写 \u003cclawbench-mention private\u003e 不会被落库，后面的内容必须保留"}]}`
+	msgID, err := service.AddChatMessage(env.ProjectDir, "codebuddy", sessionID, "assistant", content, nil, false, "")
+	if err != nil {
+		t.Fatalf("AddChatMessage: %v", err)
+	}
+
+	got := ttsExtractConclusion(msgID)
+	if !strings.Contains(got, "后面的内容必须保留") {
+		t.Fatalf("single-chat tail must be spoken: %q", got)
+	}
+}
+
+// --- TTS speaker prefix (group chat) ---
+
+// The spoken audio must carry "<name>说：" while the summary (returned to the
+// client and stored for cache reuse) stays clean — the prefix must never
+// participate in summarization.
+func TestTTSGenerate_SpeakerName_PrefixSpokenNotSummarized(t *testing.T) {
+	mockProvider := &mockSpeechProvider{}
+	mockSum := &mockSummarizer{result: "这是核心结论"}
+	env, teardown := setupTTSTest(t, mockProvider, mockSum)
+	defer teardown()
+
+	text := "群聊里的一段回复，需要被总结后朗读出来，并带上发言人的名字前缀。"
+	req := newRequest(t, http.MethodPost, "/api/tts/generate", map[string]any{
+		"text":        text,
+		"speakerName": "张三",
+		"language":    "zh",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := httptest.NewRecorder()
+
+	TTSGenerate(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// Speaker name is folded into the cache key.
+	hash := sha256.Sum256([]byte("张三\x00" + text))
+	cacheKey := hex.EncodeToString(hash[:])[:summarize.CacheKeyHexLen]
+	job, ok := service.GetTTSJob(cacheKey)
+	if ok {
+		select {
+		case <-job.Done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("TTS job did not complete in time")
+		}
+	}
+
+	// The prefix is spoken...
+	assert.Equal(t, "张三说：这是核心结论", mockProvider.lastSynthText)
+	// ...but the summarizer never saw the speaker name (it receives the raw
+	// request text, which the frontend sends without any prefix).
+	assert.Equal(t, text, mockSum.lastText)
+}
+
+// A single chat (no speakerName) must be byte-for-byte unchanged: no prefix and
+// the legacy cache key.
+func TestTTSGenerate_NoSpeakerName_NoPrefixLegacyCacheKey(t *testing.T) {
+	mockProvider := &mockSpeechProvider{}
+	mockSum := &mockSummarizer{result: "结论"}
+	env, teardown := setupTTSTest(t, mockProvider, mockSum)
+	defer teardown()
+
+	text := "单聊的一段回复，不应带任何前缀。"
+	req := newRequest(t, http.MethodPost, "/api/tts/generate", map[string]string{"text": text, "language": "zh"})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := httptest.NewRecorder()
+
+	TTSGenerate(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	hash := sha256.Sum256([]byte(text))
+	cacheKey := hex.EncodeToString(hash[:])[:summarize.CacheKeyHexLen]
+	job, ok := service.GetTTSJob(cacheKey)
+	if ok {
+		select {
+		case <-job.Done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("TTS job did not complete in time")
+		}
+	}
+
+	assert.Equal(t, "结论", mockProvider.lastSynthText)
+}
+
+func TestTTSSynthText(t *testing.T) {
+	assert.Equal(t, "正文", ttsSynthText("", "正文"), "empty prefix is a no-op")
+	assert.Equal(t, "Alice says: 正文", ttsSynthText("Alice says: ", "正文"))
+	assert.Equal(t, "张三说：正文", ttsSynthText("张三说：", "正文"))
+}
+
+// The prefix follows the SPOKEN language, not the UI locale: an English TTS
+// request must say "Alice says: ", never a Chinese prefix.
+func TestTTSGenerate_SpeakerName_EnglishPrefix(t *testing.T) {
+	mockProvider := &mockSpeechProvider{}
+	mockSum := &mockSummarizer{result: "the conclusion"}
+	env, teardown := setupTTSTest(t, mockProvider, mockSum)
+	defer teardown()
+
+	text := "a group reply to be summarized and spoken with the speaker name."
+	req := newRequest(t, http.MethodPost, "/api/tts/generate", map[string]any{
+		"text":        text,
+		"speakerName": "Alice",
+		"language":    "en",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := httptest.NewRecorder()
+
+	TTSGenerate(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	hash := sha256.Sum256([]byte("Alice\x00" + text))
+	cacheKey := hex.EncodeToString(hash[:])[:summarize.CacheKeyHexLen]
+	job, ok := service.GetTTSJob(cacheKey)
+	if ok {
+		select {
+		case <-job.Done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("TTS job did not complete in time")
+		}
+	}
+
+	assert.Equal(t, "Alice says: the conclusion", mockProvider.lastSynthText)
 }

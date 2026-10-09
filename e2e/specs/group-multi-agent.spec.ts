@@ -1,4 +1,5 @@
 import { test, expect } from '../fixtures'
+import { setGroupMaxSpeeches, restoreGroupMaxSpeeches } from '../helpers/group-config'
 
 /**
  * E2E for the multi-agent group loop against the REAL backend path.
@@ -19,7 +20,16 @@ test.describe.serial('AI group chat multi-agent loop', () => {
   test.skip(({ browserName }) => browserName !== 'chromium', 'serial group test')
   test.setTimeout(120000)
 
+  // The cap is a global server setting; restore it so later specs are unaffected.
+  test.afterAll(async () => {
+    await restoreGroupMaxSpeeches()
+  })
+
   test('host routes to a member, and the member produces a timeline row', async ({ page }) => {
+    // Cap at 1 member speech so the turn terminates predictably (a global
+    // setting; the afterAll above restores it).
+    await setGroupMaxSpeeches(1)
+
     const result = await page.evaluate(async () => {
       const post = async (url: string, body: unknown) =>
         (await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json()
@@ -34,9 +44,6 @@ test.describe.serial('AI group chat multi-agent loop', () => {
       // row, i.e. tautological and unable to catch the regression it names.
       const added = await post('/api/group/members', { groupId: created.groupId, agentIds: ['acp-mock-b'] })
       if (!added.ok) return { ok: false, step: 'add', added }
-
-      // Cap at 1 round so the turn terminates predictably.
-      await post('/api/group/settings', { groupId: created.groupId, maxRounds: 1 })
 
       const send = await fetch(`/api/ai/chat?session_id=${encodeURIComponent(created.groupId)}`, {
         method: 'POST',

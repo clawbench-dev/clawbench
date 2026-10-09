@@ -41,11 +41,15 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 			backend TEXT NOT NULL DEFAULT '',
 			title TEXT NOT NULL DEFAULT '',
 			agent_id TEXT NOT NULL DEFAULT '',
+			agent_source TEXT NOT NULL DEFAULT '',
 			model TEXT NOT NULL DEFAULT '',
 			transport TEXT NOT NULL DEFAULT '',
 			auto_approve INTEGER NOT NULL DEFAULT 0,
 			archived INTEGER NOT NULL DEFAULT 0,
 			session_type TEXT NOT NULL DEFAULT 'chat',
+			group_id TEXT NOT NULL DEFAULT '',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			context_state TEXT NOT NULL DEFAULT ''
 		)`,
 		`CREATE TABLE IF NOT EXISTS chat_history (
@@ -129,13 +133,25 @@ func seedSession(t *testing.T, db *sql.DB, sessionID string) { //nolint:unparam 
 	require.NoError(t, err)
 }
 
+// seedGroupSession seeds a session whose session_type is 'group', so the
+// protocol-stripping branches (which are gated on the type) take effect.
+func seedGroupSession(t *testing.T, db *sql.DB, sessionID string) {
+	t.Helper()
+	_, err := db.Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, model, session_type)
+		 VALUES (?, ?, 'codebuddy', 'Group chat', '', '', 'group')`,
+		sessionID, testProjectRoot,
+	)
+	require.NoError(t, err)
+}
+
 // seedMessage inserts a finalized message and returns its id. sessionID stays a
 // parameter so the helper mirrors the schema rather than hard-coding one id.
 //
 // queued != 0 seeds a queued message instead: those no longer live in
 // chat_history (the dedicated queued_messages table holds them until dequeue),
 // so the snapshot must exclude them simply because they are not history rows.
-func seedMessage(t *testing.T, db *sql.DB, sessionID, role, content string, streaming, queued int) int64 { //nolint:unparam // general-purpose seed helper; all current callers use "s1"
+func seedMessage(t *testing.T, db *sql.DB, sessionID, role, content string, streaming, queued int) int64 {
 	t.Helper()
 	if queued != 0 {
 		res, err := db.Exec(
@@ -775,6 +791,43 @@ func TestGetSessionMessagesForSelection_PreviewIsTruncated(t *testing.T) {
 	assert.Equal(t, 200, len(runes))
 }
 
+// A group user message carries the @ protocol, including `private` (密送) notes.
+// The selection preview is shown in the share dialog, so the note must be
+// stripped — otherwise a note addressed to one member is previewed to everyone.
+func TestGetSessionMessagesForSelection_GroupStripsPrivateNote(t *testing.T) {
+	db := setupTestDBForSessionSharePayload(t)
+	defer func() { _ = db.Close() }()
+
+	seedGroupSession(t, db, "g1")
+	seedMessage(t, db, "g1", "user",
+		`<clawbench-mention targets="m-b"></clawbench-mention> <clawbench-mention targets="m-b" private>你的词是西瓜</clawbench-mention> 你先说`,
+		0, 0)
+
+	items, err := service.GetSessionMessagesForSelection("g1")
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+
+	assert.NotContains(t, items[0].Preview, "你的词是西瓜", "a private note must never be previewed")
+	assert.NotContains(t, items[0].Preview, "clawbench-mention")
+	assert.Contains(t, items[0].Preview, "你先说")
+}
+
+// A single chat has no protocol, so a message that merely DISCUSSES the tag
+// syntax keeps its text verbatim in the preview.
+func TestGetSessionMessagesForSelection_SingleChatKeepsText(t *testing.T) {
+	db := setupTestDBForSessionSharePayload(t)
+	defer func() { _ = db.Close() }()
+
+	seedSession(t, db, "s1")
+	content := `看这个 <clawbench-mention targets="A" private>字面</clawbench-mention> 语法`
+	seedMessage(t, db, "s1", "user", content, 0, 0)
+
+	items, err := service.GetSessionMessagesForSelection("s1")
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	assert.Equal(t, content, items[0].Preview)
+}
+
 func TestGetSessionMessagesForSelection_UnknownSessionIsEmpty(t *testing.T) {
 	db := setupTestDBForSessionSharePayload(t)
 	defer func() { _ = db.Close() }()
@@ -784,11 +837,12 @@ func TestGetSessionMessagesForSelection_UnknownSessionIsEmpty(t *testing.T) {
 	assert.Empty(t, items)
 }
 
-// TestSessionSharePayload_FreezesSpeakerIdentitiesWithoutAvatars pins the
-// public-share privacy boundary: the snapshot carries each speaker's name and
-// backend (so the viewer renders the right brand icon) but NEVER a custom
-// avatar — a shared link must not expose the creator's avatars.
-func TestSessionSharePayload_FreezesSpeakerIdentitiesWithoutAvatars(t *testing.T) {
+// TestSessionSharePayload_FreezesSpeakerIdentitiesWithAvatars pins the current
+// share contract: the snapshot carries each speaker's name and backend AND the
+// custom avatar, so the viewer renders the same icon the app shows. The
+// snapshot is frozen by the authenticated owner at creation time; the anonymous
+// viewer has no other way to resolve an avatar.
+func TestSessionSharePayload_FreezesSpeakerIdentitiesWithAvatars(t *testing.T) {
 	db := setupTestDBForSessionSharePayload(t)
 	defer func() { _ = db.Close() }()
 
@@ -819,7 +873,7 @@ func TestSessionSharePayload_FreezesSpeakerIdentitiesWithoutAvatars(t *testing.T
 	require.NotNil(t, payload.SessionAgent, "the viewer needs the session agent to icon single-agent rows")
 	assert.Equal(t, "codebuddy", payload.SessionAgent.Backend)
 	assert.Equal(t, "Host Agent", payload.SessionAgent.Name)
-	assert.Empty(t, payload.SessionAgent.Avatar, "the share snapshot must not freeze custom avatars")
+	assert.Equal(t, "<host/>", payload.SessionAgent.Avatar, "the share snapshot must freeze custom avatars for the viewer")
 }
 
 // A shared GROUP must carry the host's member row id so the public viewer can
@@ -872,4 +926,85 @@ func TestSessionSharePayload_PlainSessionHasNoHostMemberID(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal([]byte(raw), &payload))
 	assert.Empty(t, payload.Session.HostMemberID)
+}
+
+// A shared GROUP must carry its ACTIVE roster (ordered, host flagged) so the
+// public topbar can render the same overlapping avatar stack the in-app group
+// header shows. Left members must be excluded and order must be roster order
+// (created_at, rowid) — NOT the UUID-sorted order the `speakers` map marshals.
+func TestSessionSharePayload_GroupCarriesOrderedActiveMembers(t *testing.T) {
+	db := setupTestDBForSessionSharePayload(t)
+	defer db.Close()
+
+	_, err := db.Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, model, session_type, context_state)
+		 VALUES ('g1', 1, 'codebuddy', 'Group', 'codebuddy', 'm', 'group', '{"host_member_id":"m-host"}')`)
+	require.NoError(t, err)
+	// Member rows: the host first (created_at order), then a plain member, then a
+	// LEFT member that must be excluded. group_id points each row at the group.
+	insertMember := func(id, name, backend string, archived int, createdAt string) {
+		t.Helper()
+		_, err := db.Exec(
+			`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type, group_id, archived, created_at)
+			 VALUES (?, 1, ?, ?, ?, 'group_member', 'g1', ?, ?)`,
+			id, backend, name, id, archived, createdAt)
+		require.NoError(t, err)
+	}
+	insertMember("m-host", "Host", "codebuddy", 0, "2026-01-01 10:00:00")
+	insertMember("m-second", "Second", "claude", 0, "2026-01-01 10:01:00")
+	insertMember("m-left", "Gone", "gemini", 1, "2026-01-01 10:02:00")
+
+	_, err = db.Exec(
+		`INSERT INTO chat_history (project_id, role, content, session_id, backend, agent_id, streaming, indexed)
+		 VALUES (1, 'assistant', '{"blocks":[{"type":"text","text":"hi"}]}', 'g1', 'codebuddy', 'm-host', 0, 0)`)
+	require.NoError(t, err)
+
+	raw, _, err := service.BuildSessionSharePayload("g1", nil, testProjectRoot, "/home/u")
+	require.NoError(t, err)
+
+	var payload struct {
+		GroupMembers []struct {
+			ID      string `json:"id"`
+			AgentID string `json:"agentId"`
+			Name    string `json:"name"`
+			Backend string `json:"backend"`
+			IsHost  bool   `json:"isHost"`
+		} `json:"groupMembers"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(raw), &payload))
+
+	require.Len(t, payload.GroupMembers, 2, "left members must be excluded from the stack")
+	// Roster order: host first (created_at), then the second member.
+	assert.Equal(t, "m-host", payload.GroupMembers[0].ID)
+	assert.Equal(t, "Host", payload.GroupMembers[0].Name)
+	assert.True(t, payload.GroupMembers[0].IsHost, "the host must be flagged")
+	assert.Equal(t, "m-second", payload.GroupMembers[1].ID)
+	assert.False(t, payload.GroupMembers[1].IsHost)
+	// The left member is absent.
+	for _, m := range payload.GroupMembers {
+		assert.NotEqual(t, "m-left", m.ID)
+	}
+}
+
+// A plain (non-group) session must not carry a groupMembers array — the topbar
+// then renders the single session-agent icon.
+func TestSessionSharePayload_PlainSessionHasNoGroupMembers(t *testing.T) {
+	db := setupTestDBForSessionSharePayload(t)
+	defer db.Close()
+
+	_, err := db.Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, model) VALUES ('s1', 1, 'claude', 'Plain', 'claude', 'm')`)
+	require.NoError(t, err)
+	_, err = db.Exec(
+		`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming, indexed)
+		 VALUES (1, 'assistant', '{"blocks":[{"type":"text","text":"hi"}]}', 's1', 'claude', 0, 0)`)
+	require.NoError(t, err)
+
+	raw, _, err := service.BuildSessionSharePayload("s1", nil, testProjectRoot, "/home/u")
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal([]byte(raw), &payload))
+	_, present := payload["groupMembers"]
+	assert.False(t, present, "a single-agent session must not carry groupMembers")
 }

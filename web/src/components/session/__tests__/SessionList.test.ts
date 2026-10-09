@@ -436,7 +436,7 @@ describe('SessionList', () => {
       wrapper.unmount()
     })
 
-    it('shows the host-mode label when the preview carries a host', async () => {
+    it('shows the host-mode tag with a crown icon when the preview carries a host', async () => {
       // The i18n mock returns the key verbatim.
       const hostGroup = {
         ...groupSession,
@@ -455,11 +455,14 @@ describe('SessionList', () => {
 
       const mode = wrapper.find('[data-session-id="g1"] .session-item-group-mode')
       expect(mode.exists()).toBe(true)
-      expect(mode.text()).toBe('group.hostMode')
+      expect(mode.text()).toContain('group.hostMode')
+      // Independent tag: its own glyph, and NOT nested inside the member stack.
+      expect(mode.find('svg').exists()).toBe(true)
+      expect(wrapper.find('[data-session-id="g1"] .session-item-group .session-item-group-mode').exists()).toBe(false)
       wrapper.unmount()
     })
 
-    it('shows the free-mode label when no preview member is the host', async () => {
+    it('shows the free-mode tag with an @ icon when no preview member is the host', async () => {
       const freeGroup = {
         ...groupSession,
         groupMembers: [
@@ -477,8 +480,38 @@ describe('SessionList', () => {
 
       const mode = wrapper.find('[data-session-id="g1"] .session-item-group-mode')
       expect(mode.exists()).toBe(true)
-      expect(mode.text()).toBe('group.freeMode')
+      expect(mode.text()).toContain('group.freeMode')
+      expect(mode.find('svg').exists()).toBe(true)
       wrapper.unmount()
+    })
+
+    it('gives the host and free mode tags distinct icons', async () => {
+      // A crown for the host (it controls the flow) vs an @ for the free-mode
+      // relay (members @-mention each other). Source guard: the two branches
+      // must resolve to different components, not the same one reused.
+      const host = { ...groupSession, groupMembers: [{ id: 'm1', agentId: 'a', name: 'H', backend: 'cli', isHost: true }] }
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [host], hasMore: false }),
+      })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+      const hostSvg = wrapper.find('[data-session-id="g1"] .session-item-group-mode svg').html()
+      wrapper.unmount()
+
+      const free = { ...groupSession, groupMembers: [{ id: 'm1', agentId: 'a', name: 'A', backend: 'cli' }] }
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [free], hasMore: false }),
+      })
+      const wrapper2 = await mountList()
+      await wrapper2.vm.loadSessions()
+      await flushPromises()
+      const freeSvg = wrapper2.find('[data-session-id="g1"] .session-item-group-mode svg').html()
+      wrapper2.unmount()
+
+      expect(hostSvg).not.toBe(freeSvg)
     })
 
     it('omits the mode label when the roster is empty (mode unknowable)', async () => {

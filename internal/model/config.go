@@ -104,6 +104,20 @@ type Config struct {
 		// the call fails — which is why it can default ON: without the model it
 		// is simply inert. (default: true)
 		AutoRenameEnabled bool `yaml:"auto_rename_enabled"`
+		// UserNickname is the reserved display name of the HUMAN user as a group
+		// participant. Agents address the user with this exact name
+		// (<clawbench-mention targets="...">), so it must not collide with any
+		// agent's name and must not contain the protocol's reserved characters
+		// (", <, >, comma). Default "User". (default: "User")
+		UserNickname string `yaml:"user_nickname"`
+		// GroupMaxSpeeches caps how many times the AGENTS may speak to each
+		// other in a group before the discussion is forced to stop and the
+		// floor returns to the human. It counts MEMBER speeches only — the
+		// host's routing/summary turns are not counted (the host is the
+		// moderator, not a participant). The cap is mode-agnostic: host and
+		// free mode share the same meaning. Reaching it stops the AI
+		// discussion no matter whose turn it is. (default: 100)
+		GroupMaxSpeeches int `yaml:"group_max_speeches"`
 	} `yaml:"chat"`
 	Session struct {
 		MaxCount                int  `yaml:"max_count"`                 // Maximum number of chat sessions per project (default: 15)
@@ -286,7 +300,11 @@ type AISummaryConfig struct {
 // It only selects the summary type; the detailed model/API configuration
 // lives in AISummaryConfig (shared with next-step recommendation).
 type SummarizeConfig struct {
-	TTSBackend string `yaml:"tts_backend"` // Voice/TTS summarization type: "" (disabled), "simple" (extract conclusion), "api" (LLM via AISummaryConfig)
+	TTSBackend string `yaml:"tts_backend"` // Voice/TTS summarization type: "" (disabled), "simple" (extract conclusion), "api" (LLM via AISummaryConfig), "auto" (route by content)
+	// AutoJunkRatio is the stripped-rune ratio at/above which the "auto"
+	// backend routes a message to the LLM instead of speaking the cleaned text.
+	// See internal/summarize.AutoJunkRatio. Default 0.5.
+	AutoJunkRatio float64 `yaml:"auto_junk_ratio"`
 }
 
 // RAGConfig holds configuration for the RAG history memory system.
@@ -375,6 +393,14 @@ var (
 	// ChatAutoRenameEnabled switches on the AI summary rename of a session at
 	// the moment its local title is written. Read by internal/service.
 	ChatAutoRenameEnabled bool
+	// ChatUserNickname is the reserved display name of the human user in group
+	// chat (default "User"). Read by internal/service at request time so a
+	// rename takes effect without a restart.
+	ChatUserNickname string
+	// ChatGroupMaxSpeeches caps member-to-member speeches in a group before
+	// the discussion is forced to stop (default 100). Read by internal/service
+	// at turn time so a change takes effect without a restart.
+	ChatGroupMaxSpeeches int
 
 	// Session limits (set from config, with defaults)
 	SessionMaxCount int // Default: 15

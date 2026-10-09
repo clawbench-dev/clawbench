@@ -1,6 +1,8 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { ref, nextTick } from 'vue'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (key: string) => key }),
@@ -286,6 +288,49 @@ describe('AgentSelectorDrawer', () => {
       expect(rows[0].find('.agent-host-btn').classes()).not.toContain('active')
     })
 
+    it('labels a non-host row with the action, and the host row with the badge', async () => {
+      const wrapper = mountDrawer({
+        multiple: true, groupMode: true,
+        modelValue: ['agent-1', 'agent-2'], hostId: 'agent-1',
+        hostLabel: 'Set as host', hostBadge: 'Host',
+      })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+
+      const rows = wrapper.findAll('.agent-option')
+      // The host row shows the resulting state badge…
+      expect(rows[0].find('.agent-host-btn-label').text()).toBe('Host')
+      // …while a merely-selected row shows the ACTION, not the state.
+      expect(rows[1].find('.agent-host-btn-label').text()).toBe('Set as host')
+    })
+
+    it('uses the group glyph in the header only in group mode', async () => {
+      const group = mountDrawer({ multiple: true, groupMode: true, modelValue: [] })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+      // Group creation reads as a group: the Users mark replaces the Bot mark.
+      expect(group.find('.bs-header-icon.lucide-users').exists()).toBe(true)
+      expect(group.find('.bs-header-icon.lucide-bot').exists()).toBe(false)
+
+      const single = mountDrawer({ multiple: true, modelValue: [] })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+      expect(single.find('.bs-header-icon.lucide-bot').exists()).toBe(true)
+      expect(single.find('.bs-header-icon.lucide-users').exists()).toBe(false)
+    })
+
+    it('renders the confirm as a plain pill, not a full-width bar', () => {
+      const src = readFileSync(
+        join(__dirname, '..', 'AgentSelectorDrawer.vue'),
+        'utf8',
+      )
+      // The shared pill language supplies the shape; a scoped geometry
+      // declaration (width:100%) would silently re-diverge from .fbtn.
+      const confirmRule = src.match(/\.agent-multi-confirm\s*\{[^}]*\}/)
+      expect(confirmRule).toBeNull()
+      expect(src).toMatch(/class="fbtn fbtn-primary agent-multi-confirm"/)
+    })
+
     it('enables confirm once a valid group is formed (host mode: host chosen)', async () => {
       const wrapper = mountDrawer({ multiple: true, groupMode: true, modelValue: ['agent-1'], hostId: '' })
       await flushPromises()
@@ -347,11 +392,19 @@ describe('AgentSelectorDrawer', () => {
       vi.advanceTimersByTime(500)
 
       // No host yet -> free mode. The i18n mock returns the key verbatim.
-      expect(wrapper.find('.agent-header-mode').text()).toBe('group.freeMode')
+      const free = wrapper.find('.agent-header-mode')
+      expect(free.text()).toBe('group.freeMode')
+      // Free mode carries the @ glyph (the relay is @-driven).
+      expect(free.find('.lucide-at-sign').exists()).toBe(true)
+      expect(free.find('.lucide-crown').exists()).toBe(false)
 
       await wrapper.setProps({ hostId: 'agent-1' })
       await flushPromises()
-      expect(wrapper.find('.agent-header-mode').text()).toBe('group.hostMode')
+      const host = wrapper.find('.agent-header-mode')
+      expect(host.text()).toBe('group.hostMode')
+      // Host mode carries the crown; the glyph pairing mirrors the session chip.
+      expect(host.find('.lucide-crown').exists()).toBe(true)
+      expect(host.find('.lucide-at-sign').exists()).toBe(false)
     })
 
     it('does not render the mode subtitle outside group mode', async () => {

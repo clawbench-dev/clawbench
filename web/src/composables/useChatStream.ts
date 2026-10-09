@@ -7,7 +7,7 @@ import { updateModeState, updateCommandState, updateThinkingEffortState, current
 import { updateACPModelList, applyResolvedModelList } from './useAgents'
 import { updatePlanEntries } from './usePlanProgress'
 import { updateTeamState } from './useTeamState'
-import { FILE_MODIFYING_TOOLS, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, isSubagentToolName, messageText, nextClientSeq, untrackInFlightSend, type ChatMessage, type ChatMessageAction, type ContentBlock, type ContentEventData, type ThinkingEventData, type ToolUseEventData, type QueueEventData, type ErrorEventData } from '@/utils/chatStreamUtils.ts'
+import { FILE_MODIFYING_TOOLS, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, resolveStreamingMsg, isSubagentToolName, messageText, nextClientSeq, untrackInFlightSend, type ChatMessage, type ChatMessageAction, type ContentBlock, type ContentEventData, type ThinkingEventData, type ToolUseEventData, type QueueEventData, type ErrorEventData } from '@/utils/chatStreamUtils.ts'
 import type { FileEntry } from '@/utils/fileAttachmentUtils'
 import type { ChatStreamEventData } from '@/utils/chatStreamUtils.ts'
 import { ToolUseWatchdog } from '@/utils/toolUseWatchdog'
@@ -48,6 +48,14 @@ export interface UseChatStreamOptions {
   onToolResult?: (toolId: string) => void
   onToolUpdate?: (toolId: string) => void
   onReplayDone?: () => void
+  /**
+   * Fires when ONE producer turn finalizes via `stream_finalize` (a group
+   * chat emits one per member turn, while the terminal `done` fires only once
+   * after the whole run). The host uses it to trigger per-speaker auto-speech:
+   * reading only at `done` would hear just the last member of a group run.
+   * Receives the finalized message id so the host can resolve its speaker.
+   */
+  onMemberFinalize?: (messageId: number) => void
 }
 
 export function useChatStream(options: UseChatStreamOptions) {
@@ -71,6 +79,7 @@ export function useChatStream(options: UseChatStreamOptions) {
     onToolResult,
     onToolUpdate,
     onReplayDone,
+    onMemberFinalize,
   } = options
 
   const renderScheduler = new StreamFrameScheduler()
@@ -464,19 +473,19 @@ export function useChatStream(options: UseChatStreamOptions) {
   // They are buffered instead and replayed once the placeholder exists. The
   // buffer is bounded: if no placeholder ever appears (a genuinely lost
   // stream_start), the run's events must not accumulate without limit.
-  type BufferedStreamEvent = { sessionId: string; eventType: string; payload: Record<string, unknown> }
+  type BufferedStreamEvent = { sessionId: string; eventType: string; payload: Record<string, unknown>; messageId?: number }
   const MAX_BUFFERED_EVENTS = 200
   let pendingStreamEvents: BufferedStreamEvent[] = []
   let isReplayingBuffered = false
 
-  const bufferEvent = (sessionId: string, eventType: string, payload: Record<string, unknown>) => {
+  const bufferEvent = (sessionId: string, eventType: string, payload: Record<string, unknown>, messageId?: number) => {
     if (pendingStreamEvents.length >= MAX_BUFFERED_EVENTS) {
       // Drop the oldest: the newest events are what the user is about to see,
       // and an unbounded buffer would leak for a stream that never starts.
       pendingStreamEvents.shift()
       appLog.w(TAG, `stream event buffer full (${MAX_BUFFERED_EVENTS}), dropped oldest before replay`)
     }
-    pendingStreamEvents.push({ sessionId, eventType, payload })
+    pendingStreamEvents.push({ sessionId, eventType, payload, messageId })
   }
 
   // Buffered events belong to one session's in-flight turn, so they are
@@ -491,12 +500,31 @@ export function useChatStream(options: UseChatStreamOptions) {
   // Re-invoking the same handler keeps ONE code path for applying an event, so
   // replay cannot drift from live handling. The buffer is cleared first: an
   // event that still cannot be applied must not be re-buffered and looped.
-  const replayBufferedEvents = () => {
+  //
+  // `forMessageId` scopes the replay to ONE stream: under concurrent streams a
+  // sibling's placeholder appearing must not drain THIS stream's buffered
+  // deltas (they would be routed to the wrong bubble). Events with no stamped
+  // id are only replayed when no id-scoped replay is requested (legacy path).
+  const replayBufferedEvents = (forMessageId?: number) => {
     if (pendingStreamEvents.length === 0 || isReplayingBuffered) return
-    if (!findStreamingMsg(messages.value)) return
+    if (!resolveStreamingMsg(messages.value, forMessageId)) return
 
-    const queued = pendingStreamEvents
-    pendingStreamEvents = []
+    const queued: BufferedStreamEvent[] = []
+    const rest: BufferedStreamEvent[] = []
+    for (const item of pendingStreamEvents) {
+      // Only a STAMPED event is id-scoped: it replays solely for its own stream,
+      // so a sibling's buffered deltas are never drained into the wrong bubble.
+      // An UNSTAMPED event (an older backend, or a test) has no stream identity,
+      // so it replays for whatever placeholder appears — the legacy
+      // single-stream behavior.
+      if (forMessageId && item.messageId && item.messageId !== forMessageId) {
+        rest.push(item)
+      } else {
+        queued.push(item)
+      }
+    }
+    pendingStreamEvents = rest
+    if (queued.length === 0) return
     isReplayingBuffered = true
     try {
       appLog.i(TAG, `replaying ${queued.length} buffered stream event(s) after placeholder appeared`)
@@ -505,6 +533,7 @@ export function useChatStream(options: UseChatStreamOptions) {
           session_id: item.sessionId,
           event_type: item.eventType,
           payload: item.payload,
+          message_id: item.messageId,
         })
       }
     } finally {
@@ -562,6 +591,12 @@ export function useChatStream(options: UseChatStreamOptions) {
 
     const sessionId = csData.session_id
     const payload = csData.payload as Record<string, unknown>
+    // The owning streaming row, stamped by the backend on every event of a
+    // turn. It routes block-level events to the CORRECT bubble when several
+    // streams run concurrently on one timeline (parallel group speaking);
+    // absent (0) ⇒ legacy single-stream resolution. Read from the envelope,
+    // not the payload, so every event type carries it uniformly.
+    const streamMsgId = csData.message_id || undefined
     const sessionChanged = () => currentSessionId.value !== sessionId
 
     // Any event for OUR session proves the subscription is alive — including one
@@ -589,23 +624,33 @@ export function useChatStream(options: UseChatStreamOptions) {
         // only after the DB row loads.
         const speakerId = (payload.agent_id as string | undefined) || ''
         if (messageId) {
-          // A NEW producer turn: if a DIFFERENT message is still marked
-          // streaming (a previous group member whose per-member finalize event
-          // was dropped, or a turn that ended without one), close it first.
-          // Otherwise this stream_start would find the stale bubble and never
-          // open one for the new member — the "other agents don't stream at all
-          // until you switch sessions" defect.
-          const existing = findStreamingMsg(messages.value)
-          if (existing && typeof existing.id === 'number' && existing.id !== messageId) {
-            dispatch({ type: 'stream_finalize' })
-          }
-          // Event-driven placeholder: if no streaming assistant message exists
-          // (e.g. client opened the session mid-stream, or the optimistic
-          // placeholder was dropped by a loadHistory), create one. The DB row id
-          // is used as the message id so subsequent content events
-          // (findStreamingMsg) match it. Ordering is by DB id, so no anchor is
-          // needed: the user row was materialized before this placeholder.
-          if (!findStreamingMsg(messages.value)) {
+          // A stale bubble from a PREVIOUS producer turn used to be finalized
+          // here so this stream_start could open its own (the "other agents
+          // don't stream at all until you switch sessions" defect). Under
+          // concurrent streams (parallel group speaking) a DIFFERENT streaming
+          // bubble may instead be a LIVE SIBLING, and finalizing it would kill a
+          // running stream — the two cases are indistinguishable here.
+          //
+          // So we no longer finalize on stream_start. The new bubble still opens
+          // because the placeholder check below is by THIS event's id (a fresh
+          // id is absent ⇒ a new bubble is created alongside any sibling). A
+          // genuinely stale leftover is closed by its own `stream_finalize`
+          // (the backend emits one per producer turn) or by `done`/reload.
+          //
+          // Event-driven placeholder: create one only when NO message can adopt
+          // this id. Two adoptable shapes exist:
+          //   - a message already carrying this id (idempotent re-emit), and
+          //   - an optimistic placeholder with a NON-numeric id (the bubble
+          //     created at send time, which this event renames to the DB id).
+          // Under concurrent streams a sibling placeholder already holds a
+          // numeric id, so it is neither of these and never absorbs this event.
+          const hasPlaceholder = messages.value.some(
+            (m) => m.role === 'assistant' && (
+              String(m.id) === String(messageId) ||
+              (m.streaming && typeof m.id !== 'number')
+            ),
+          )
+          if (!hasPlaceholder) {
             dispatch({ type: 'stream_placeholder', msg: {
               role: 'assistant',
               id: messageId,
@@ -626,9 +671,9 @@ export function useChatStream(options: UseChatStreamOptions) {
           dispatch({ type: 'ws_stream_start', messageId, speakerId: speakerId || undefined })
         }
         // A placeholder now exists, so anything that arrived before it can be
-        // applied. Done after the dispatch above so the replayed events land on
-        // the real placeholder rather than being dropped again.
-        replayBufferedEvents()
+        // applied. Scoped to THIS stream's id so a sibling's buffered deltas are
+        // not drained into the wrong bubble.
+        replayBufferedEvents(messageId)
         break
       }
 
@@ -638,13 +683,25 @@ export function useChatStream(options: UseChatStreamOptions) {
         // streaming bubble WITHOUT ending the run (loading stays true, so the
         // stop button remains and the next member's stream_start opens a new
         // bubble). This is distinct from the terminal 'done'.
+        //
+        // Routed by id: under concurrent streams a sibling's finalize must not
+        // close a different, still-running bubble.
+        //
+        // A finalize with NO id (0/absent) is not actionable: it means the
+        // producer turn never opened a row (an early failure), so there is
+        // nothing to close. Treating 0 as "finalize whichever bubble is live"
+        // would close a live sibling — the exact cross-talk the id routing
+        // prevents. So require a positive id.
         const finishId = payload.message_id as number | undefined
-        const sm = findStreamingMsg(messages.value)
-        // Only finalize the bubble this event refers to; a stale finalize for a
-        // previous member must not close the current one.
-        if (sm && (finishId === undefined || finishId === 0 || sm.id === finishId)) {
-          dispatch({ type: 'stream_finalize' })
+        if (!finishId) break
+        const sm = resolveStreamingMsg(messages.value, finishId)
+        if (sm) {
+          dispatch({ type: 'stream_finalize', messageId: finishId })
           onRenderNeeded()
+          // One producer turn (group chats: one member) just ended. The host
+          // uses this to auto-speak THIS speaker's reply, so a multi-member run
+          // is read speaker by speaker rather than only at the terminal 'done'.
+          onMemberFinalize?.(finishId)
         }
         break
       }
@@ -665,31 +722,31 @@ export function useChatStream(options: UseChatStreamOptions) {
 
       case 'content_reset': {
         if (sessionChanged()) return
-        if (!findStreamingMsg(messages.value)) { noteDroppedEvent('content_reset', 'no streaming placeholder'); return }
+        if (!resolveStreamingMsg(messages.value, streamMsgId)) { noteDroppedEvent('content_reset', 'no streaming placeholder'); return }
         // The backend deletes this message's chat_thinking rows on content_reset
         // (the failed Prompt's reasoning must not survive the retry), so the
         // cached text for those think_ids is now a lie. Drop it: a lazy-load
         // would otherwise serve reasoning from the attempt that was thrown away.
         clearThinkingCache()
-        dispatch({ type: 'ws_content_reset' })
+        dispatch({ type: 'ws_content_reset', messageId: streamMsgId })
         onRenderNeeded()
         break
       }
 
       case 'content': {
         if (sessionChanged()) return
-        if (!findStreamingMsg(messages.value)) { bufferEvent(sessionId, 'content', payload); noteDroppedEvent('content', 'buffered until placeholder'); return }
+        if (!resolveStreamingMsg(messages.value, streamMsgId)) { bufferEvent(sessionId, 'content', payload, streamMsgId); noteDroppedEvent('content', 'buffered until placeholder'); return }
         const contentData = payload as unknown as ContentEventData
-        dispatch({ type: 'ws_content', text: contentData.content ?? '', parentToolCallId: contentData.parent_tool_call_id, memberName: contentData.member_name, memberColor: contentData.member_color })
+        dispatch({ type: 'ws_content', text: contentData.content ?? '', messageId: streamMsgId, parentToolCallId: contentData.parent_tool_call_id, memberName: contentData.member_name, memberColor: contentData.member_color })
         debouncedRender()
         break
       }
 
       case 'thinking': {
         if (sessionChanged()) return
-        if (!findStreamingMsg(messages.value)) { bufferEvent(sessionId, 'thinking', payload); noteDroppedEvent('thinking', 'buffered until placeholder'); return }
+        if (!resolveStreamingMsg(messages.value, streamMsgId)) { bufferEvent(sessionId, 'thinking', payload, streamMsgId); noteDroppedEvent('thinking', 'buffered until placeholder'); return }
         const thinkingData = payload as unknown as ThinkingEventData
-        dispatch({ type: 'ws_thinking', text: thinkingData.text ?? '', key: `thinking-${thinkingBlockCounter++}`, thinkId: thinkingData.think_id, parentToolCallId: thinkingData.parent_tool_call_id, memberName: thinkingData.member_name, memberColor: thinkingData.member_color })
+        dispatch({ type: 'ws_thinking', text: thinkingData.text ?? '', messageId: streamMsgId, key: `thinking-${thinkingBlockCounter++}`, thinkId: thinkingData.think_id, parentToolCallId: thinkingData.parent_tool_call_id, memberName: thinkingData.member_name, memberColor: thinkingData.member_color })
         // debouncedRender schedules the scroll pin in the same rAF — no
         // separate onScrollBottom here (duplicate pin in the same frame).
         debouncedRender()
@@ -698,27 +755,27 @@ export function useChatStream(options: UseChatStreamOptions) {
 
       case 'thinking_done': {
         if (sessionChanged()) return
-        if (!findStreamingMsg(messages.value)) { bufferEvent(sessionId, 'thinking_done', payload); noteDroppedEvent('thinking_done', 'buffered until placeholder'); return }
+        if (!resolveStreamingMsg(messages.value, streamMsgId)) { bufferEvent(sessionId, 'thinking_done', payload, streamMsgId); noteDroppedEvent('thinking_done', 'buffered until placeholder'); return }
         // Carry the parent so a sub-agent's completion closes ITS OWN thinking
         // block (concurrent sub-agents interleave on the wire).
         const doneData = payload as unknown as ThinkingEventData
-        dispatch({ type: 'ws_thinking_done', parentToolCallId: doneData.parent_tool_call_id })
+        dispatch({ type: 'ws_thinking_done', messageId: streamMsgId, parentToolCallId: doneData.parent_tool_call_id })
         onRenderNeeded()
         break
       }
 
       case 'tool_use': {
         if (sessionChanged()) return
-        if (!findStreamingMsg(messages.value)) { bufferEvent(sessionId, 'tool_use', payload); noteDroppedEvent('tool_use', 'buffered until placeholder'); return }
+        if (!resolveStreamingMsg(messages.value, streamMsgId)) { bufferEvent(sessionId, 'tool_use', payload, streamMsgId); noteDroppedEvent('tool_use', 'buffered until placeholder'); return }
         const data = payload as unknown as ToolUseEventData
         // Snapshot the block's done state BEFORE the reducer applies this event,
         // so a repeated done frame does not refresh the preview twice.
-        const wasDone = !!findStreamingMsg(messages.value)?.blocks?.find(
+        const wasDone = !!resolveStreamingMsg(messages.value, streamMsgId)?.blocks?.find(
           (b) => b.type === 'tool_use' && b.id === data.id,
         )?.done
-        dispatch({ type: 'ws_tool_use', data })
+        dispatch({ type: 'ws_tool_use', messageId: streamMsgId, data })
         // Side effects that depend on the block's updated state.
-        const smAfter = findStreamingMsg(messages.value)
+        const smAfter = resolveStreamingMsg(messages.value, streamMsgId)
         const blocksAfter = smAfter?.blocks || []
         const existing = blocksAfter.find((b) => b.type === 'tool_use' && b.id === data.id)
         if (data.done) {
@@ -749,15 +806,15 @@ export function useChatStream(options: UseChatStreamOptions) {
 
       case 'tool_result': {
         if (sessionChanged()) return
-        if (!findStreamingMsg(messages.value)) { bufferEvent(sessionId, 'tool_result', payload); noteDroppedEvent('tool_result', 'buffered until placeholder'); return }
+        if (!resolveStreamingMsg(messages.value, streamMsgId)) { bufferEvent(sessionId, 'tool_result', payload, streamMsgId); noteDroppedEvent('tool_result', 'buffered until placeholder'); return }
         const data = payload as unknown as ToolUseEventData
         // Capture the pre-dispatch state: the reducer forces `done = true`, so
         // this is the only place the "already finished" fact is still visible.
-        const existing = findStreamingMsg(messages.value)?.blocks?.find(
+        const existing = resolveStreamingMsg(messages.value, streamMsgId)?.blocks?.find(
           (b) => b.type === 'tool_use' && b.id === data.id,
         )
         const wasDone = !!existing?.done
-        dispatch({ type: 'ws_tool_result', data })
+        dispatch({ type: 'ws_tool_result', messageId: streamMsgId, data })
         toolUseWatchdog.clear(data.id!)
         maybeNotifyFileModified(data, existing, wasDone)
         onRenderNeeded()
@@ -772,8 +829,8 @@ export function useChatStream(options: UseChatStreamOptions) {
 
       case 'metadata': {
         if (sessionChanged()) return
-        if (!findStreamingMsg(messages.value)) { bufferEvent(sessionId, 'metadata', payload); noteDroppedEvent('metadata', 'buffered until placeholder'); return }
-        dispatch({ type: 'ws_metadata', metadata: payload as Record<string, unknown> })
+        if (!resolveStreamingMsg(messages.value, streamMsgId)) { bufferEvent(sessionId, 'metadata', payload, streamMsgId); noteDroppedEvent('metadata', 'buffered until placeholder'); return }
+        dispatch({ type: 'ws_metadata', messageId: streamMsgId, metadata: payload as Record<string, unknown> })
         break
       }
 
@@ -786,7 +843,15 @@ export function useChatStream(options: UseChatStreamOptions) {
         clearBufferedEvents()
         stopStreaming()
 
-        _forceCleanupStreamingState(messages.value, { onRenderNeeded, onExtractScheduledTasks })
+        // The whole run is over, so finalize EVERY still-streaming bubble. Under
+        // concurrent streams (parallel group speaking) several may be open at
+        // once; the single-message cleanup would leave the rest spinning until
+        // the post-done loadHistory rebuilt them from the DB.
+        for (let guard = 0; guard < 32; guard++) {
+          const next = messages.value.find((m) => m.role === 'assistant' && m.streaming)
+          if (!next) break
+          _forceCleanupStreamingState(messages.value, { onRenderNeeded, onExtractScheduledTasks }, typeof next.id === 'number' ? next.id : undefined)
+        }
 
         // Unlock input bar and fire stream-end callbacks immediately so the user
         // sees the final state (meta bar, file-changes banner, summary toggle)
@@ -883,8 +948,8 @@ export function useChatStream(options: UseChatStreamOptions) {
         // assistant, or to the last assistant when the stream already ended
         // (backend crash after done) — so the user never needs a reload to see
         // it.
-        dispatch({ type: 'ws_error', text: errorData?.error || 'Unknown error', reason: errorData?.reason, errorCode: errorData?.error_code, httpStatus: errorData?.http_status, errorSource: errorData?.error_source, errorDetail: errorData?.error_detail })
-        _forceCleanupStreamingState(messages.value, { onRenderNeeded, onExtractScheduledTasks })
+        dispatch({ type: 'ws_error', messageId: streamMsgId, text: errorData?.error || 'Unknown error', reason: errorData?.reason, errorCode: errorData?.error_code, httpStatus: errorData?.http_status, errorSource: errorData?.error_source, errorDetail: errorData?.error_detail })
+        _forceCleanupStreamingState(messages.value, { onRenderNeeded, onExtractScheduledTasks }, streamMsgId)
         loading.value = false
         onStreamEnd?.('error')
         // Sync from DB in the background (same pattern as 'done' handler).
@@ -898,9 +963,9 @@ export function useChatStream(options: UseChatStreamOptions) {
 
       case 'warning': {
         if (sessionChanged()) return
-        if (!findStreamingMsg(messages.value)) { noteDroppedEvent('warning', 'no streaming placeholder'); return }
+        if (!resolveStreamingMsg(messages.value, streamMsgId)) { noteDroppedEvent('warning', 'no streaming placeholder'); return }
         const warningData = payload as { text?: string; reason?: string; error_code?: number; http_status?: number; error_source?: string; error_detail?: string }
-        dispatch({ type: 'ws_warning', text: warningData.text || '', reason: warningData.reason, errorCode: warningData.error_code, httpStatus: warningData.http_status, errorSource: warningData.error_source, errorDetail: warningData.error_detail })
+        dispatch({ type: 'ws_warning', messageId: streamMsgId, text: warningData.text || '', reason: warningData.reason, errorCode: warningData.error_code, httpStatus: warningData.http_status, errorSource: warningData.error_source, errorDetail: warningData.error_detail })
         if (isOpen.value) {
           onRenderNeeded()
         }

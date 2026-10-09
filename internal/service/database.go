@@ -177,6 +177,11 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// should reflect that. Must run before createTables because its indexes
 	// reference the archived column. SQLite RENAME COLUMN also rewrites any
 	// index definitions referencing the old column name.
+	//
+	// Databases from before soft-delete existed carry NEITHER `deleted` nor
+	// `archived` (the RENAME below only fires when `deleted` is present), so add
+	// `archived` directly for them — createTables' idx_sessions_type and
+	// idx_sessions_order reference it and would otherwise abort the Exec.
 	var hasSessionDeleted int
 	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='deleted'").Scan(&hasSessionDeleted)
 	if hasSessionDeleted > 0 {
@@ -184,6 +189,18 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			return fmt.Errorf("failed to rename chat_sessions.deleted to archived: %w", err)
 		}
 		slog.Info("renamed chat_sessions.deleted column to archived")
+	} else {
+		var hasArchived int
+		_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='archived'").Scan(&hasArchived)
+		if hasArchived == 0 {
+			var sessionsExists int
+			_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='chat_sessions'").Scan(&sessionsExists)
+			if sessionsExists > 0 {
+				if _, err := store.WriteExec("ALTER TABLE chat_sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0"); err != nil {
+					return fmt.Errorf("failed to add chat_sessions.archived: %w", err)
+				}
+			}
+		}
 	}
 
 	// Pre-migration: add project_meta.forge_bind_opt_out before createTables runs.
@@ -217,6 +234,46 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		if hasShareProject == 0 {
 			if _, err := store.WriteExec("ALTER TABLE file_shares ADD COLUMN project_id INTEGER NOT NULL DEFAULT 0"); err != nil {
 				return fmt.Errorf("failed to add file_shares.project_id column: %w", err)
+			}
+		}
+	}
+
+	// Pre-migration: make sure the quick-command / quick-send tables carry
+	// project_id before createTables builds idx_quick_commands_auto_execute over
+	// it.
+	//
+	// These two tables are the one project-scoped pair that migrateProjectsToIDs
+	// cannot cover on its own. That migration converts a table only when it finds
+	// a project_path column; a database from before project scoping entirely
+	// (terminal_quick_commands/chat_quick_send existed but had neither
+	// project_path nor project_id) is therefore skipped. Yet the same migration
+	// unconditionally DROPs idx_quick_commands_auto_execute (it is in
+	// legacyProjectPathIndexes, to free the column for the DROP COLUMN on tables
+	// that DO have project_path). With the old index gone, the CREATE UNIQUE
+	// INDEX IF NOT EXISTS below no longer short-circuits on the name, so it
+	// resolves COALESCE(project_id, 0) against a table that never got the column
+	// and aborts the whole multi-statement Exec — the server refuses to start
+	// (main exits on an InitDB error). migrateQuickProjectScope() runs too late
+	// for this: it is called after createTables.
+	//
+	// Guarded on BOTH columns being absent: when project_path is present,
+	// migrateProjectsToIDs (below) adds project_id itself, and adding it here too
+	// would make that ALTER fail with a duplicate-column error.
+	for _, c := range []struct{ table, ddl string }{
+		{"terminal_quick_commands", "ALTER TABLE terminal_quick_commands ADD COLUMN project_id INTEGER DEFAULT NULL"},
+		{"chat_quick_send", "ALTER TABLE chat_quick_send ADD COLUMN project_id INTEGER DEFAULT NULL"},
+	} {
+		var tblExists int
+		_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?", c.table).Scan(&tblExists)
+		if tblExists == 0 {
+			continue
+		}
+		var cols int
+		_ = store.ReadDB().QueryRow(
+			"SELECT COUNT(*) FROM pragma_table_info(?) WHERE name IN ('project_id','project_path')", c.table).Scan(&cols)
+		if cols == 0 {
+			if _, err := store.WriteExec(c.ddl); err != nil {
+				return fmt.Errorf("failed to add %s.project_id column: %w", c.table, err)
 			}
 		}
 	}
@@ -298,6 +355,47 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		if hasGroupID == 0 {
 			if _, err := store.WriteExec("ALTER TABLE chat_sessions ADD COLUMN group_id TEXT DEFAULT ''"); err != nil {
 				return fmt.Errorf("failed to add chat_sessions.group_id: %w", err)
+			}
+		}
+		// session_type predates the automatic migration path: it was introduced
+		// together with idx_sessions_type but its backfill shipped only as the
+		// one-time "clawbench migrate" CLI subcommand (since removed), so a
+		// database from before that feature was never upgraded by simply
+		// starting the server. createTables' CREATE INDEX idx_sessions_type
+		// references the column, so without this ALTER an upgrade aborts the
+		// whole Exec and the server refuses to start.
+		//
+		// The chat_sessions rebuild in migrateProjectsToIDs cannot cover this:
+		// it copies only the source table's existing columns, so a table that
+		// never had session_type stays without it.
+		var hasSessionType int
+		_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='session_type'").Scan(&hasSessionType)
+		if hasSessionType == 0 {
+			if _, err := store.WriteExec("ALTER TABLE chat_sessions ADD COLUMN session_type TEXT NOT NULL DEFAULT 'chat'"); err != nil {
+				return fmt.Errorf("failed to add chat_sessions.session_type: %w", err)
+			}
+		}
+	}
+
+	// Pre-migration: task_executions.session_id / status. Same story as
+	// chat_sessions.session_type above: the columns replaced the old `content`
+	// column in the same reshape, whose backfill shipped only as the one-time
+	// "clawbench migrate" CLI subcommand (since removed). createTables'
+	// CREATE INDEX idx_executions_session references session_id, so an older
+	// database would abort the whole Exec without these.
+	var taskExecutionsExists int
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='task_executions'").Scan(&taskExecutionsExists)
+	if taskExecutionsExists > 0 {
+		for _, col := range []struct{ name, ddl string }{
+			{"session_id", "ALTER TABLE task_executions ADD COLUMN session_id TEXT NOT NULL DEFAULT ''"},
+			{"status", "ALTER TABLE task_executions ADD COLUMN status TEXT NOT NULL DEFAULT 'completed'"},
+		} {
+			var hasCol int
+			_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('task_executions') WHERE name=?", col.name).Scan(&hasCol)
+			if hasCol == 0 {
+				if _, err := store.WriteExec(col.ddl); err != nil {
+					return fmt.Errorf("failed to add task_executions.%s column: %w", col.name, err)
+				}
 			}
 		}
 	}

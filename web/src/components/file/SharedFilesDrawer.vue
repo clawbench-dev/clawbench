@@ -30,7 +30,8 @@
 
       <!-- Empty -->
       <div v-else-if="items.length === 0" class="shared-files-hint">
-        {{ t('sharedFiles.empty') }}
+        <ScreenShare :size="32" class="shared-files-empty-icon" />
+        <span>{{ t('sharedFiles.empty') }}</span>
       </div>
 
       <!-- List -->
@@ -52,8 +53,14 @@
                 <span class="shared-file-name" :title="item.name">{{ item.name }}</span>
                 <span v-if="!item.exists" class="shared-file-badge deleted-badge">{{ t('sharedFiles.fileDeleted') }}</span>
               </div>
-              <span class="shared-file-path" :title="item.path">{{ item.path }}</span>
-              <span v-if="item.createdAt" class="shared-file-time">{{ item.createdAt }}</span>
+              <!-- Path and time share one meta line, mirroring the shared-
+                   conversations row (name + badge / meta). Keeps both drawers
+                   the same two-line shape instead of this one being three. -->
+              <span class="shared-file-meta">
+                <span class="shared-file-path" :title="item.path">{{ item.path }}</span>
+                <span v-if="item.path && item.createdAt" class="shared-file-sep">·</span>
+                <span v-if="item.createdAt" class="shared-file-time">{{ formatRelativeTime(item.createdAt) }}</span>
+              </span>
             </div>
           </div>
 
@@ -101,6 +108,7 @@ import { useTabDrawer } from '@/composables/useTabDrawer'
 import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast.ts'
 import { openExternalUrl } from '@/utils/externalLink'
+import { formatRelativeTime } from '@/utils/format'
 import { useFileShare } from '@/composables/useFileShare'
 
 const emit = defineEmits(['selectFile', 'close'])
@@ -209,11 +217,13 @@ defineExpose({ open: openDrawer })
   flex-direction: column;
   max-height: 60vh;
   overflow-y: auto;
-  padding: var(--space-2) var(--space-7) var(--space-7);
 }
 
 .shared-files-hint {
-  padding: 24px 0;
+  /* Own breathing room so the empty/loading text never hugs the drawer edge,
+     independent of the (now removed) container padding. */
+  padding: 32px var(--space-7);
+  margin: var(--space-4) 0;
   text-align: center;
   font-size: var(--font-size-md);
   color: var(--text-muted, #656d76);
@@ -221,6 +231,11 @@ defineExpose({ open: openDrawer })
   flex-direction: column;
   align-items: center;
   gap: var(--space-5);
+}
+
+.shared-files-empty-icon {
+  color: var(--text-muted, #656d76);
+  opacity: var(--opacity-muted);
 }
 
 .shared-files-error { color: #cf222e; }
@@ -244,7 +259,7 @@ defineExpose({ open: openDrawer })
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
-  padding: var(--space-5) var(--space-2);
+  padding: var(--space-5) var(--space-4);
   border-bottom: 1px solid var(--border-color, rgba(128,128,128,.15));
 }
 .shared-file-row:last-child { border-bottom: none; }
@@ -288,12 +303,23 @@ defineExpose({ open: openDrawer })
 .shared-file-badge {
   flex-shrink: 0;
   font-size: var(--font-size-2xs);
-  padding:1px var(--space-3);
-  border-radius: var(--radius-sm);
+  padding: 1px 5px;
+  border-radius: var(--radius-xs);
   background: rgba(128,128,128,.15);
   color: var(--text-secondary, #57606a);
 }
 .deleted-badge { color: #cf222e; }
+
+/* Path + time on one line, identical construction to .shared-session-meta so
+   the two drawers read as one family. The path ellipsises; the time does not. */
+.shared-file-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-xs);
+  color: var(--text-muted, #656d76);
+  min-width: 0;
+}
 
 .shared-file-path {
   font-size: var(--font-size-xs);
@@ -301,11 +327,16 @@ defineExpose({ open: openDrawer })
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
 }
 
+.shared-file-sep { opacity: .6; }
+
 .shared-file-time {
+  flex-shrink: 0;
   font-size: var(--font-size-xs);
   color: var(--text-muted, #656d76);
+  white-space: nowrap;
 }
 
 .shared-file-actions {

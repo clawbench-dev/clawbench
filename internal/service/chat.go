@@ -18,9 +18,10 @@ import (
 	"clawbench/internal/store"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/grouprouting"
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
-	"clawbench/internal/summarize"
+	"clawbench/internal/ws"
 )
 
 // GetChatHistory retrieves all chat messages for a given project path, backend, and session.
@@ -193,6 +194,11 @@ const indexSummaryMaxRunes = 200
 // Queued messages are absent by construction: they live in queued_messages
 // until they are dequeued into chat_history.
 func GetConversationIndex(sessionID string) ([]model.ChatMessage, error) {
+	// Resolve the session's group-chat policy ONCE, before the rows cursor is
+	// opened: IsGroupSession issues its own query, and calling it inside the
+	// loop would need a second read connection while the cursor still holds the
+	// first (deadlock on the 1-connection test pool, needless contention in prod).
+	isGroup := IsGroupSession(sessionID)
 	rows, err := store.ReadDB().Query(
 		`SELECT h.id, h.role, h.content, h.files, h.created_at, COALESCE(s.summary, ''), COALESCE(h.agent_id, '')
 		 FROM chat_history h
@@ -221,7 +227,7 @@ func GetConversationIndex(sessionID string) ([]model.ChatMessage, error) {
 			text := summary
 			if text == "" {
 				if blocks, perr := parseMessageBlocks(msg.Content); perr == nil && len(blocks) > 0 {
-					text = summarize.ExtractLastAnswerFromBlocks(blocks)
+					text = assistantConclusionWithPolicy(isGroup, blocks)
 				} else {
 					// Plain-text assistant content (no block JSON) — use it as-is.
 					text = ExtractPlainText(msg.Content)
@@ -902,7 +908,7 @@ func maybeAutoTitleSessionTx(tx *sql.Tx, sessionID, content string, files []mode
 		// Already auto-titled or deliberately named — never clobber.
 		return false, nil
 	}
-	title := ExtractPlainText(content)
+	title := sessionTitleSourceText(tx, sessionID, content)
 	if title == "" && len(files) > 0 {
 		title = titleFromFileEntries(files)
 	}
@@ -916,6 +922,27 @@ func maybeAutoTitleSessionTx(tx *sql.Tx, sessionID, content string, files []mode
 		return false, err
 	}
 	return true, nil
+}
+
+// sessionTitleSourceText returns the text a session title should be derived
+// from. For a GROUP session the user's message may carry the @ protocol,
+// including `private` (密送) notes — those must never become the title (a note
+// addressed to one member would be exposed to everyone who sees the session
+// list). The protocol is stripped for group sessions only: a single chat has no
+// protocol, so a message that merely DISCUSSES the tag syntax keeps its text.
+//
+// A read failure falls back to the raw text: titling is best-effort and must
+// never fail the message insert, and the pre-existing behavior is preserved.
+func sessionTitleSourceText(tx *sql.Tx, sessionID, content string) string {
+	plain := ExtractPlainText(content)
+	var sessionType string
+	if err := tx.QueryRow("SELECT COALESCE(session_type, '') FROM chat_sessions WHERE id = ?", sessionID).Scan(&sessionType); err != nil {
+		return plain
+	}
+	if sessionType == store.SessionTypeGroup {
+		return strings.TrimSpace(grouprouting.StripProtocolTags(plain))
+	}
+	return plain
 }
 
 // applyAutoTitle sets the session title from a user message outside a
@@ -2135,6 +2162,9 @@ type FirstMessage struct {
 	MessageID int64
 	Role      string
 	Content   string
+	// AgentID is the group-chat speaker (member row id) of this message, or ""
+	// for a single-agent message. The detail preview maps it to a display name.
+	AgentID   string
 	CreatedAt time.Time
 }
 
@@ -2146,10 +2176,10 @@ func GetSessionFirstMessage(sessionID string) (*FirstMessage, error) {
 	var msg FirstMessage
 	var content string
 	err := store.ReadDB().QueryRow(
-		`SELECT id, role, content, created_at FROM chat_history
+		`SELECT id, role, content, COALESCE(agent_id, ''), created_at FROM chat_history
 		 WHERE session_id = ? ORDER BY created_at ASC, id ASC LIMIT 1`,
 		sessionID,
-	).Scan(&msg.MessageID, &msg.Role, &content, &msg.CreatedAt)
+	).Scan(&msg.MessageID, &msg.Role, &content, &msg.AgentID, &msg.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -2539,9 +2569,41 @@ func GetAssistantMessageCount(sessionID string) int {
 	return count
 }
 
+// UpdateStreamingMessageByID updates the content of a SPECIFIC streaming
+// assistant row, identified by BOTH its session and its id.
+//
+// Why this exists: UpdateStreamingMessage locates the row by
+// `session_id + streaming=1 ORDER BY id DESC LIMIT 1`. That is only correct
+// when a session has exactly one in-flight stream. A group turn can run
+// several members CONCURRENTLY on one shared timeline (parallel speaking), so
+// "the latest streaming row" would let one member's write land on another's
+// row. Callers that own a specific placeholder id (the executor, via
+// cfg.StreamingMessageID) must use this variant instead.
+//
+// The session predicate is defense-in-depth, not decoration: FlushStreamingNow
+// iterates EVERY registered executor, so a stale executor whose row id happens
+// to collide with a live row in another session must not be able to write it.
+//
+// streaming is left untouched (this is an in-flight content flush, not a
+// finalize), matching UpdateStreamingMessage.
+func UpdateStreamingMessageByID(sessionID string, messageID int64, content string) error {
+	if messageID <= 0 || sessionID == "" {
+		return nil
+	}
+	_, err := store.WriteExec(
+		"UPDATE chat_history SET content = ? WHERE id = ? AND session_id = ? AND streaming = 1",
+		content, messageID, sessionID,
+	)
+	return err
+}
+
 // UpdateStreamingMessage updates the content of the latest streaming assistant message for a session.
 // Uses subquery with ORDER BY id DESC LIMIT 1 to target only the most recent streaming=1 row,
 // preventing accidental updates to stale streaming rows left by failed finalizations.
+//
+// Only valid when the session has ONE in-flight stream (single chat, or a
+// sequential group turn). For concurrent streams on one timeline use
+// UpdateStreamingMessageByID.
 func UpdateStreamingMessage(projectPath, backend, sessionID, content string) error {
 	projectID, idErr := store.ProjectIDForPath(projectPath)
 	if idErr != nil {
@@ -2616,11 +2678,59 @@ func CreateStreamingMessageWithAgent(projectPath, backend, sessionID, agentID st
 	return AddChatMessageWithAgent(projectPath, backend, sessionID, "assistant", string(emptyContent), nil, true, "", agentID)
 }
 
+// FinalizeStreamingMessageByID finalizes a SPECIFIC streaming assistant row,
+// identified by BOTH its session and its id. The concurrency-safe counterpart
+// of FinalizeStreamingMessage: a group turn running several members
+// concurrently on one timeline must finalize each member's own placeholder, not
+// "the latest streaming row" (which may belong to a sibling). Returns the row
+// id (0 if the row was not found or not streaming).
+func FinalizeStreamingMessageByID(sessionID string, messageID int64, content string) (int64, error) {
+	return finalizeStreamingMessageByID(sessionID, messageID, content, true)
+}
+
+// FinalizeCancelledStreamingMessageByID is FinalizeCancelledStreamingMessage by
+// explicit session+id. See FinalizeStreamingMessageByID for why the id variant
+// is required under concurrent streams.
+func FinalizeCancelledStreamingMessageByID(sessionID string, messageID int64, content string) (int64, error) {
+	return finalizeStreamingMessageByID(sessionID, messageID, content, false)
+}
+
+// finalizeStreamingMessageByID performs the shared finalize write against an
+// explicit session+row id. stampCompletedAt carries the same meaning as in
+// finalizeStreamingMessage (normal completion vs user cancel).
+func finalizeStreamingMessageByID(sessionID string, messageID int64, content string, stampCompletedAt bool) (int64, error) {
+	if messageID <= 0 || sessionID == "" {
+		return 0, nil
+	}
+	// Both values are compile-time constants chosen by the branch below, never
+	// caller input, so building the SET clause by concatenation is safe.
+	completedAtSet := "completed_at = CURRENT_TIMESTAMP"
+	if !stampCompletedAt {
+		completedAtSet = "completed_at = NULL"
+	}
+	result, err := store.WriteExec(
+		"UPDATE chat_history SET content = ?, streaming = 0, indexed = 0, "+completedAtSet+
+			" WHERE id = ? AND session_id = ? AND streaming = 1",
+		content, messageID, sessionID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return 0, nil
+	}
+	return messageID, nil
+}
+
 // FinalizeStreamingMessage marks the latest streaming assistant message as complete and updates its content.
 // Also marks the message as unindexed (indexed=0) so the RAG indexer picks it up.
 // Uses subquery with ORDER BY id DESC LIMIT 1 to target only the most recent streaming=1 row,
 // preventing accidental finalization of stale streaming rows left by previous failed finalizations.
 // Returns the message ID of the finalized message (0 if not found).
+//
+// Only valid when the session has ONE in-flight stream. For concurrent streams
+// on one timeline use FinalizeStreamingMessageByID.
 //
 // Stamps completed_at with CURRENT_TIMESTAMP — the moment the reply actually
 // landed. created_at cannot serve that purpose: it is written when the turn
@@ -2746,23 +2856,77 @@ func GetStreamingMessageID(sessionID string) int64 {
 // the group speaker header then stays missing for the rest of the turn (the
 // frontend's db_load merge can heal it only because it also adopts agentId;
 // see rebuildFromDb).
+//
+// Returns the NEWEST stream only. Callers that must recover a session with
+// several concurrent streams (parallel group speaking) use
+// GetLiveRunStates instead.
 func GetLiveRunState(sessionID string) (messageID int64, questionID int64, questionContent, speakerID string) {
-	err := store.ReadDB().QueryRow(
-		"SELECT id, COALESCE(agent_id, '') FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 1 ORDER BY id DESC LIMIT 1",
-		sessionID,
-	).Scan(&messageID, &speakerID)
-	if err != nil || messageID <= 0 {
+	states := GetLiveRunStates(sessionID)
+	if len(states) == 0 {
 		return 0, 0, "", ""
 	}
+	st := states[0]
+	return st.MessageID, st.QuestionID, st.QuestionContent, st.SpeakerID
+}
 
-	err = store.ReadDB().QueryRow(
-		"SELECT id, content FROM chat_history WHERE session_id = ? AND role = 'user' AND id < ? ORDER BY id DESC LIMIT 1",
-		sessionID, messageID,
-	).Scan(&questionID, &questionContent)
-	if err != nil {
-		return messageID, 0, "", speakerID
+// GetLiveRunStates returns EVERY in-flight stream for a session, newest row
+// first. A session normally has one, but a group turn can run several members
+// CONCURRENTLY on one timeline (parallel speaking), and a client that subscribes
+// mid-flight must be told about all of them or it recovers only one bubble.
+//
+// Each entry resolves its own question (the greatest user id below that
+// streaming row), so each recovered bubble is anchored to the right question.
+func GetLiveRunStates(sessionID string) []ws.LiveStreamState {
+	states := queryLiveStreamRows(sessionID)
+
+	// Resolve each stream's question independently (id order is the conversation
+	// order — see GetLiveRunState). Done AFTER the row cursor is closed: the read
+	// pool is small (2 connections), and issuing a second query while a cursor is
+	// still open holds one connection per in-flight stream.
+	for i := range states {
+		var qID int64
+		var qContent string
+		if qErr := store.ReadDB().QueryRow(
+			"SELECT id, content FROM chat_history WHERE session_id = ? AND role = 'user' AND id < ? ORDER BY id DESC LIMIT 1",
+			sessionID, states[i].MessageID,
+		).Scan(&qID, &qContent); qErr == nil {
+			states[i].QuestionID = qID
+			states[i].QuestionContent = qContent
+		}
 	}
-	return messageID, questionID, questionContent, speakerID
+	return states
+}
+
+// queryLiveStreamRows reads the streaming assistant rows for a session (newest
+// first) and closes its cursor before returning, so the caller may issue further
+// queries without holding a read-pool connection.
+func queryLiveStreamRows(sessionID string) []ws.LiveStreamState {
+	rows, err := store.ReadDB().Query(
+		"SELECT id, COALESCE(agent_id, '') FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 1 ORDER BY id DESC",
+		sessionID,
+	)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var states []ws.LiveStreamState
+	for rows.Next() {
+		var st ws.LiveStreamState
+		if err := rows.Scan(&st.MessageID, &st.SpeakerID); err != nil || st.MessageID <= 0 {
+			continue
+		}
+		states = append(states, st)
+	}
+	// A mid-iteration error means the list is partial; returning it would make
+	// the caller believe fewer streams are live than there are. Drop the whole
+	// result so the caller falls back to a full reload.
+	if err := rows.Err(); err != nil {
+		slog.Warn("queryLiveStreamRows: rows error, returning no live state",
+			slog.String("session", sessionID), slog.String("err", err.Error()))
+		return nil
+	}
+	return states
 }
 
 // UpdateMessageContent updates the content of a specific message by its ID.

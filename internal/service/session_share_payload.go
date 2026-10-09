@@ -11,6 +11,7 @@ import (
 
 	"clawbench/internal/store"
 
+	"clawbench/internal/grouprouting"
 	"clawbench/internal/model"
 )
 
@@ -86,6 +87,14 @@ type SessionSharePayload struct {
 	// only for group sessions.
 	SessionAgent *SpeakerIdentity           `json:"sessionAgent,omitempty"`
 	Speakers     map[string]SpeakerIdentity `json:"speakers,omitempty"`
+	// GroupMembers is the group's ACTIVE roster, in roster order, with the host
+	// flagged — present only for group sessions. The viewer's topbar renders the
+	// same overlapping avatar stack the in-app group header shows. Speakers
+	// cannot serve this: it is a map (JSON-marshaled with UUID-sorted keys, so
+	// the order is random) that also includes LEFT members, and it carries no
+	// isHost flag. Avatars are absent by design (same privacy boundary as
+	// Speakers), so each disc renders the built-in per-backend brand icon.
+	GroupMembers []model.GroupMemberPreview `json:"groupMembers,omitempty"`
 }
 
 // SessionShareSession is the session-level metadata shown in the share header.
@@ -102,6 +111,11 @@ type SessionShareSession struct {
 	// render their private notes (bcc) card — a group's timeline otherwise
 	// cannot tell which speaker is the chair.
 	HostMemberID string `json:"hostMemberId,omitempty"`
+	// UserNickname is the reserved display name of the human user in this
+	// group (chat.user_nickname at snapshot time, default "User"). Frozen so
+	// the anonymous viewer can render @-mention chips for the user without
+	// reading the authenticated /api/config.
+	UserNickname string `json:"userNickname,omitempty"`
 }
 
 // SessionShareMessage mirrors model.ChatMessage's JSON shape so the viewer can
@@ -144,6 +158,12 @@ func GetSessionMessagesForSelection(sessionID string) ([]SessionMessagePreview, 
 	if sessionID == "" {
 		return nil, fmt.Errorf("session id is required")
 	}
+	// A group user message may carry the @ protocol, including `private` (密送)
+	// notes. The preview is a human-readable line shown in the share-selection
+	// dialog, so the protocol is stripped for a group session — a note addressed
+	// to one member must not be previewed to everyone. A single chat has no
+	// protocol, so its text stays verbatim.
+	isGroup := GetSessionType(sessionID) == groupSessionType
 	rows, err := store.ReadDB().Query(
 		`SELECT id, role, content, streaming, created_at, COALESCE(agent_id, '') FROM chat_history
 		 WHERE session_id = ? ORDER BY id ASC`,
@@ -167,10 +187,14 @@ func GetSessionMessagesForSelection(sessionID string) ([]SessionMessagePreview, 
 		if err := rows.Scan(&id, &role, &content, &streaming, &createdAt, &agentID); err != nil {
 			return nil, fmt.Errorf("scan session message for selection: %w", err)
 		}
+		preview := ExtractPlainText(content)
+		if isGroup {
+			preview = grouprouting.StripProtocolTags(preview)
+		}
 		items = append(items, SessionMessagePreview{
 			ID:        id,
 			Role:      role,
-			Preview:   clipRunes(ExtractPlainText(content), sessionSharePreviewRunes),
+			Preview:   clipRunes(preview, sessionSharePreviewRunes),
 			Streaming: streaming != 0,
 			CreatedAt: createdAt,
 			AgentID:   agentID,
@@ -223,8 +247,24 @@ func BuildSessionSharePayload(sessionID string, messageIDs []int64, projectRoot,
 		return "", 0, err
 	}
 
-	// includeAvatar=false: a shared link must not leak user-configured avatars.
-	sessionAgent, speakers := ResolveSessionSpeakers(sessionID, false)
+	// includeAvatar=true: the snapshot is frozen at share-creation time by the
+	// authenticated owner, and the public viewer has no other way to resolve a
+	// speaker's custom avatar (it cannot call /api/agents). Carrying the avatar
+	// lets the shared thread render the same icons the app shows.
+	sessionAgent, speakers := ResolveSessionSpeakers(sessionID, true)
+
+	// The viewer's topbar renders the same avatar stack the in-app group header
+	// shows, so freeze the ACTIVE roster in roster order with the host flagged.
+	// GroupMembersForGroups is the exact source the session list uses; it already
+	// excludes left members and orders by created_at/rowid. Best-effort: a
+	// failure must not fail the share (the topbar then falls back to the single
+	// session-agent icon).
+	var groupMembers []model.GroupMemberPreview
+	if GetSessionType(sessionID) == groupSessionType {
+		if byGroup, gmErr := GroupMembersForGroups([]string{sessionID}); gmErr == nil {
+			groupMembers = byGroup[sessionID]
+		}
+	}
 
 	out := SessionSharePayload{
 		Version:   sessionSharePayloadVersion,
@@ -235,10 +275,12 @@ func BuildSessionSharePayload(sessionID string, messageIDs []int64, projectRoot,
 			AgentID:      info.AgentID,
 			Model:        info.Model,
 			HostMemberID: GetGroupHostMember(sessionID),
+			UserNickname: groupUserTarget(),
 		},
 		Messages:     make([]SessionShareMessage, 0, len(messages)),
 		SessionAgent: sessionAgent,
 		Speakers:     speakers,
+		GroupMembers: groupMembers,
 	}
 	for i := range messages {
 		out.Messages = append(out.Messages,

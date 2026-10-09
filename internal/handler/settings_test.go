@@ -21,7 +21,9 @@ import (
 
 	"clawbench/internal/middleware"
 	"clawbench/internal/model"
+	"clawbench/internal/service"
 	"clawbench/internal/speech"
+	"clawbench/internal/store"
 	"clawbench/internal/version"
 
 	"github.com/stretchr/testify/assert"
@@ -357,6 +359,169 @@ func TestServeConfig_Patch_AutoRename(t *testing.T) {
 		"applyHotReloadGlobals must sync model.ChatAutoRenameEnabled")
 	// It is a hot-reload field: no restart may be requested.
 	assert.NotContains(t, w.Body.String(), `"needs_restart":true`)
+}
+
+// The group-chat user nickname must survive a PATCH round trip and be mirrored
+// into the model global so group prompts pick it up without a restart.
+func TestServeConfig_Patch_UserNickname(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+	model.ChatUserNickname = "User"
+	t.Cleanup(func() { model.ChatUserNickname = "" })
+
+	body := `{"chat":{"user_nickname":"老板"}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "老板", model.ConfigInstance.Chat.UserNickname,
+		"user_nickname must be applied to ConfigInstance")
+	assert.Equal(t, "老板", model.ChatUserNickname,
+		"applyHotReloadGlobals must sync model.ChatUserNickname")
+	assert.NotContains(t, w.Body.String(), `"needs_restart":true`)
+}
+
+// Surrounding whitespace must be stripped before validation and storage. The
+// nickname is a routing target and the mention parser trims each target, so a
+// stored "  User  " would be unreachable (byName keys it untrimmed, lookup
+// trims). The PATCH path normalizes it so stored == validated == looked-up.
+func TestServeConfig_Patch_UserNicknameTrimsWhitespace(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+	model.ChatUserNickname = "User"
+	t.Cleanup(func() { model.ChatUserNickname = "" })
+
+	body, _ := json.Marshal(map[string]any{"chat": map[string]any{"user_nickname": "  老板  "}})
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "老板", model.ConfigInstance.Chat.UserNickname, "surrounding whitespace must be stripped")
+	assert.Equal(t, "老板", model.ChatUserNickname, "the model global must hold the trimmed value")
+
+	// An all-whitespace nickname trims to empty and is rejected (it would be an
+	// unaddressable participant), not silently stored as the default.
+	model.ConfigInstance.Chat.UserNickname = "老板"
+	blank, _ := json.Marshal(map[string]any{"chat": map[string]any{"user_nickname": "   "}})
+	req = httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(string(blank)))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w = callHandler(ServeConfig, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code, "an all-whitespace nickname must be rejected")
+	assert.Equal(t, "老板", model.ConfigInstance.Chat.UserNickname, "a rejected value must not be stored")
+}
+
+// A malformed nickname answers 400 with the localized InvalidUserNickname key,
+// not the raw English validation message (which the UI cannot translate).
+func TestServeConfig_Patch_UserNicknameInvalidIsLocalized(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	cfg.Chat.UserNickname = "User"
+	model.ConfigInstance = cfg
+
+	body := `{"chat":{"user_nickname":"a,b"}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "InvalidUserNickname",
+		"the 400 must carry the localized msgKey, not the raw English message")
+	assert.NotContains(t, w.Body.String(), "chat.user_nickname must be",
+		"the raw validation string must not leak into the response")
+}
+
+// A nickname containing a protocol delimiter (quote / angle bracket / comma) or
+// a control character is rejected — it would break the routing tag's targets
+// attribute. The value is validated before it is stored.
+func TestServeConfig_Patch_UserNicknameRejectsInvalidChars(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	for _, bad := range []string{`a"b`, `a<b`, `a>b`, `a,b`, "a\nb"} {
+		cfg := model.Config{}
+		cfg.Chat.UserNickname = "User"
+		model.ConfigInstance = cfg
+		body, _ := json.Marshal(map[string]any{"chat": map[string]any{"user_nickname": bad}})
+		req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(string(body)))
+		req.Header.Set("Content-Type", "application/json")
+		withAuthCookie(req, model.SessionToken)
+		w := callHandler(ServeConfig, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code, "nickname %q must be rejected", bad)
+		assert.Equal(t, "User", model.ConfigInstance.Chat.UserNickname, "a rejected value must not be stored")
+	}
+}
+
+// group_max_speeches round-trips through PATCH /api/config and is synced into
+// the model global so the group orchestrator picks it up without a restart. It
+// must be a positive integer: 0 / negative would stop the discussion before
+// anyone spoke, so those are rejected.
+func TestServeConfig_Patch_GroupMaxSpeeches(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+	orig := model.ChatGroupMaxSpeeches
+	t.Cleanup(func() { model.ChatGroupMaxSpeeches = orig })
+
+	body := `{"chat":{"group_max_speeches":42}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, 42, model.ConfigInstance.Chat.GroupMaxSpeeches,
+		"group_max_speeches must be applied to ConfigInstance")
+	assert.Equal(t, 42, model.ChatGroupMaxSpeeches,
+		"applyHotReloadGlobals must sync model.ChatGroupMaxSpeeches")
+	assert.NotContains(t, w.Body.String(), `"needs_restart":true`)
+
+	// Non-positive values are rejected and do not overwrite the stored value.
+	model.ConfigInstance.Chat.GroupMaxSpeeches = 42
+	for _, bad := range []int{0, -1} {
+		b, _ := json.Marshal(map[string]any{"chat": map[string]any{"group_max_speeches": bad}})
+		req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(string(b)))
+		req.Header.Set("Content-Type", "application/json")
+		withAuthCookie(req, model.SessionToken)
+		w := callHandler(ServeConfig, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code, "group_max_speeches=%d must be rejected", bad)
+		assert.Equal(t, 42, model.ConfigInstance.Chat.GroupMaxSpeeches, "a rejected value must not be stored")
+	}
+}
+
+// A nickname equal to an existing agent's name is a conflict (409), not a
+// malformed value: the agent-side guard rejects the reverse direction, so the
+// two must agree.
+func TestServeConfig_Patch_UserNicknameCollidesWithAgent(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	cfg.Chat.UserNickname = "User"
+	model.ConfigInstance = cfg
+	require.NoError(t, service.SaveAgent(store.WriteDB(), &model.Agent{ID: "claude", Name: "老板", Backend: "claude"}))
+
+	body := `{"chat":{"user_nickname":"老板"}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusConflict, w.Code)
+	assert.Contains(t, w.Body.String(), "UserNicknameTaken")
+	assert.Equal(t, "User", model.ConfigInstance.Chat.UserNickname, "a rejected nickname must not be stored")
 }
 
 // Retry counts below the -1 sentinel are unrepresentable and must be rejected

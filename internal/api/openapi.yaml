@@ -397,6 +397,15 @@ paths:
         （Electron store 的 `tunnelTransport`，取 `ssh` / `h2`；Android 的
         SharedPreferences 开关 `tunnel_transport_h2_enabled`），服务端读不到，
         这正是监听器必须常开的原因：服务端无法用该值决定是否监听。
+
+        `chat.user_nickname` 是群聊中人类用户的保留显示名（默认 `User`）。它被
+        写进路由标签的 `targets` 属性，故不能包含引号 / 尖括号 / 逗号 / 控制字符，
+        且不得与任何智能体同名（与智能体命名双向校验）。
+
+        `chat.group_max_speeches` 是群聊中智能体相互发言的次数上限（默认 `100`），
+        含义为「轮到用户发言前，智能体之间最多发言多少次」；主持人模式与自由模式
+        语义一致，只计**成员**发言（主持人的路由/汇总回合不计）。达到上限即停止
+        AI 讨论并写一条系统消息。`PATCH` 时须为正整数。
       operationId: getConfig
       responses:
         "200":
@@ -418,6 +427,10 @@ paths:
         出现「重启后才被归一」的中间状态）。其他值返回 400
         （`port_forward.transport must be one of: ssh,h2,both`），非字符串返回 400
         （`port_forward.transport must be a string`）。
+
+        `chat.user_nickname`（群聊用户昵称）非法值（含引号 / 尖括号 / 逗号 / 控制
+        字符，或长度超 32）返回 400；与现有智能体同名返回 **409**
+        （`msgKey=UserNicknameTaken`）。
       operationId: patchConfig
       requestBody:
         required: true
@@ -445,6 +458,10 @@ paths:
                       type: string
         "400":
           $ref: "#/components/responses/Error"
+        "409":
+          description: |
+            `chat.user_nickname` 与现有智能体同名（`msgKey=UserNicknameTaken`）。
+            这是冲突而非格式错误，故用 409 而非 400。
 
   /api/config/test:
     post:
@@ -2967,6 +2984,7 @@ paths:
           description: |
             分享列表，形如 `{"shares": [{token, sessionId, title, backend,
             messageCount, createdAt, archived}]}`，无分享时 `shares` 为空数组。
+            `createdAt` 为 RFC3339 UTC 时刻（如 `2026-10-09T13:32:07Z`），由前端本地化显示。
         "403":
           $ref: "#/components/responses/Error"
     delete:
@@ -3013,7 +3031,10 @@ paths:
       operationId: shareListAll
       responses:
         "200":
-          description: 分享列表
+          description: |
+            分享列表，形如 `{"shares": [{token, name, path, createdAt, exists}]}`，
+            无分享时 `shares` 为空数组。`createdAt` 为 RFC3339 UTC 时刻（如
+            `2026-10-09T13:32:07Z`），由前端本地化显示。
     delete:
       tags: [Share]
       summary: 撤销文件分享（单条或清空本项目）
@@ -3043,6 +3064,14 @@ paths:
         会话分享走另外两个子路径：`{token}/meta`（返回 `kind` 为 `file` 或
         `session`，供分享页判断该渲染哪种视图）与 `{token}/session`（返回冻结的
         会话快照 JSON）。两者同样免鉴权、token 不存在一律 404。
+
+        会话快照另附身份信息供分享页渲染真实智能体图标（均**不含**自定义头像，
+        分享链接不得泄漏属主头像）：`sessionAgent`（会话级智能体，单聊用）、
+        `speakers`（群聊成员行 id → 身份，供每条消息解析发言人）与 `groupMembers`
+        （仅群会话：**在群**成员的有序预览 `{id, agentId, name, backend, isHost?}`，
+        与 `GET /api/sessions` 的 `groupMembers` 同形，供顶栏渲染与群聊 header 一致的
+        头像堆叠；已离场成员不在其中）。`speakers` 是 map（JSON 键按 UUID 排序、且含
+        已离场成员），只用于逐条消息解析；成员堆叠请用 `groupMembers`。
 
         **分享不限文件大小、不限类型**：任何文件都能创建链接并下载。
         `{token}/file` 与 `{token}/content` 需要把内容内联进 JSON，故对超过内联上限
@@ -3785,13 +3814,15 @@ paths:
       description: |
         复制（body 含 `source_id` + `name`）或新建 agent。**智能体名称全局唯一**
         （决策 #50）：`name` 与其它 agent 重名时返回 `409` + `msgKey=AgentNameTaken`
-        （复制自身同一名称两次会撞预填名，同样被拒）。
+        （复制自身同一名称两次会撞预填名，同样被拒）。`name` 等于群聊用户昵称
+        （`chat.user_nickname`）时也返回 `409` + `msgKey=AgentNameReserved`——
+        昵称是路由目标，同名会遮蔽人类用户。
       operationId: agentsCreate
       responses:
         "200":
           description: 新 agent
         "409":
-          description: 名称已被其它 agent 占用（`AgentNameTaken`）
+          description: 名称已被其它 agent 占用（`AgentNameTaken`），或等于群聊用户昵称（`AgentNameReserved`）
     patch:
       tags: [Agents]
       summary: 更新 agent
@@ -3804,13 +3835,14 @@ paths:
         非空时校验大小上限与 SVG 安全性。
 
         `name` 全局唯一（决策 #50）：改名撞上其它 agent 时返回 `409` +
-        `msgKey=AgentNameTaken`；改回自身当前名称不是冲突。
+        `msgKey=AgentNameTaken`；改回自身当前名称不是冲突。改成群聊用户昵称
+        （`chat.user_nickname`）时返回 `409` + `msgKey=AgentNameReserved`。
       operationId: agentsUpdate
       responses:
         "200":
           description: 更新结果
         "409":
-          description: 名称已被其它 agent 占用（`AgentNameTaken`）
+          description: 名称已被其它 agent 占用（`AgentNameTaken`），或等于群聊用户昵称（`AgentNameReserved`）
     delete:
       tags: [Agents]
       summary: 删除 agent
@@ -3877,6 +3909,12 @@ paths:
                 messageId:
                   type: integer
                   description: 关联的 chat_history.id，用于 TTS 摘要缓存。
+                speakerName:
+                  type: string
+                  description: >-
+                    群聊发言人的显示名。设置后朗读音频会加上「<名>说：」前缀
+                    （英文为「<名> says: 」），便于分辨并发发言者；该前缀只作用于
+                    语音合成，不参与摘要、也不写入摘要缓存。
       responses:
         "200":
           description: 音频
@@ -4539,8 +4577,6 @@ paths:
         跨会话聚合搜索并返回命中位置，供会话搜索抽屉高亮。
         `q` 为空时进入「浏览全部」模式：列出该项目下的会话，此时
         `archived`/`session_type`/`sort`/`cursor` 仍然生效。
-        浏览态不会混排两类会话：`all`/`chat` 均列出对话会话，只有显式
-        `task` 才切换到任务执行会话。
         项目范围由项目 Cookie 决定：Cookie 值为任意项目路径时只搜该项目，
         不发送 Cookie 时跨全部项目（仅本机 AI 令牌可省略 Cookie）。
         同时匹配会话名称与消息内容，名称命中排在内容命中之前；两通道都命中的
@@ -4577,13 +4613,12 @@ paths:
                   description: 归档筛选（字符串，非布尔）。默认 `all`。
                 session_type:
                   type: string
-                  enum: [all, chat, task]
+                  enum: [all, chat, group, task]
                   description: |
-                    会话类型筛选。`task` 对应库中的 `scheduled` 会话（计划任务的
-                    单次执行会话），`chat` 为交互式对话。默认 `all`，即不做类型
-                    限制（搜索态下两类都会返回）。
-                    浏览态（`q` 为空）一次只列出一类：`all`/`chat` 列出对话，
-                    `task` 列出任务执行。
+                    会话类型筛选。`task` 对应库中的 `scheduled`（计划任务单次执行），
+                    `chat` 为 1:1 对话，`group` 为群聊。三类互斥：`chat` 不含群聊。
+                    默认 `all`（返回 `chat` + `group`，不含隐藏成员行与任务执行）。
+                    浏览态一次只列出一类。
                 sort:
                   type: string
                   enum: [newest, oldest, relevance]
@@ -4598,6 +4633,10 @@ paths:
           description: |
             聚合结果。会话带 `title_match`、`title_match_positions`（标题内
             字符级偏移，用于高亮）与 `title_only`（无内容分块，需懒加载首条消息）。
+            群聊会话另带 `group_members`（在线成员预览，渲染头像堆叠）与
+            `group_speakers`（成员行 id → 显示名，**含已离场成员**，供详情把
+            chunk 的 `agent_id` 归属到具体发言人）；1:1 与任务会话不含这两项。
+            每条命中分块带 `agent_id`（发言人成员行 id，1:1 会话为空）。
 
   /api/rag/session-first-message:
     get:
@@ -4612,7 +4651,9 @@ paths:
             type: string
       responses:
         "200":
-          description: 首条消息
+          description: |
+            首条消息。群聊消息带 `agent_id`（发言人成员行 id），供搜索详情把
+            该条归属到具体成员；1:1 会话的消息不含该字段。
 
   # ── Upgrade ───────────────────────────────────────────────────────────────
   /api/upgrade/check:
@@ -5216,8 +5257,10 @@ paths:
       summary: 列出群成员
       description: |
         返回群的全部成员，含已离场（`left=true`）的成员。`isHost` 标识主持人。
-        同时返回群的当前 `maxRounds`（供成员管理抽屉回显服务端值）与 `mode`
-        （`"host"` 主持人模式 / `"free"` 自由聊天模式）。
+        同时返回 `mode`（`"host"` 主持人模式 / `"free"` 自由聊天模式）与
+        `parallelDefault`（自由模式 actionbar「并发执行」开关的服务端值；缺省
+        `false` 即串行）。成员发言次数上限是**全局配置**（`chat.group_max_speeches`，
+        设置 → 聊天 → 群聊），不是每群设置，故不在此返回。
       operationId: groupMembersList
       parameters:
         - name: groupId
@@ -5244,8 +5287,8 @@ paths:
                         backend: {type: string}
                         left: {type: boolean}
                         isHost: {type: boolean}
-                  maxRounds: {type: integer}
                   mode: {type: string, enum: [host, free]}
+                  parallelDefault: {type: boolean}
     post:
       tags: [Group]
       summary: 批量添加群成员
@@ -5299,7 +5342,13 @@ paths:
   /api/group/settings:
     patch:
       tags: [Group]
-      summary: 更新群设置（最大轮数）
+      summary: 更新群设置（用户种子并发默认）
+      description: |
+        `parallelDefault` 是自由模式下用户 @ 成员的默认并发开关（打开后用户 @
+        的成员并发执行；智能体之间 @ 的 `mode` 不受影响）。主持人模式下该开关无
+        作用（用户不参与路由）。成员发言次数上限是**全局配置**
+        （`chat.group_max_speeches`，经 `PATCH /api/config` 修改），不是每群设置，
+        故不在此端点。
       operationId: groupSettingsUpdate
       requestBody:
         required: true
@@ -5307,10 +5356,10 @@ paths:
           application/json:
             schema:
               type: object
-              required: [groupId, maxRounds]
+              required: [groupId, parallelDefault]
               properties:
                 groupId: {type: string}
-                maxRounds: {type: integer, minimum: 1}
+                parallelDefault: {type: boolean}
       responses:
         "200":
           description: 更新成功

@@ -281,23 +281,17 @@ func getSessionResponsePreviewRaw(sessionID string) string {
 		if err := json.Unmarshal([]byte(raw), &content); err != nil {
 			continue
 		}
-		if preview := extractPreviewFromBlocksRaw(content.Blocks); preview != "" {
+		if preview := extractPreviewFromBlocksRaw(sessionID, content.Blocks); preview != "" {
 			return preview
 		}
 	}
 	return ""
 }
 
-// extractPreviewFromBlocks returns a preview string from content blocks.
-// Delegates to summarize.ExtractLastAnswerFromBlocks for the extraction logic,
-// then truncates for display in push notifications and WS events.
-func extractPreviewFromBlocks(blocks []model.ContentBlock) string {
-	return truncatePreview(extractPreviewFromBlocksRaw(blocks))
-}
-
 // extractPreviewFromBlocksRaw returns the un-truncated preview from content blocks.
-func extractPreviewFromBlocksRaw(blocks []model.ContentBlock) string {
-	return summarize.ExtractLastAnswerFromBlocks(blocks)
+// Applies the session's group-chat protocol policy (see AssistantConclusion).
+func extractPreviewFromBlocksRaw(sessionID string, blocks []model.ContentBlock) string {
+	return AssistantConclusion(sessionID, blocks)
 }
 
 // truncatePreview truncates text to responsePreviewMaxRunes with ellipsis if needed.
@@ -896,7 +890,17 @@ func triggerChatSummarization(ctx context.Context, sessionID string) {
 	}
 	began := time.Now()
 	projectPath := GetSessionProjectPath(sessionID)
-	messages, err := GetMessagesBySessionID(sessionID)
+	// Use the RAW reader (no enrichment): this function summarizes every
+	// unsummarized assistant message itself, so it must not go through
+	// GetMessagesBySessionID, whose enrichMessagesWithSummaries spawns a
+	// background backfillMissingSummaries goroutine over the SAME messages.
+	// Both paths summarize via summarizeMessageOnce's shared summaryInFlight
+	// guard, so the background goroutine could win the guard and the synchronous
+	// save here would be skipped — a race that intermittently dropped the
+	// summary (and, under test, let the goroutine write after teardown closed
+	// the DB). The raw reader also keeps the real content blocks (enrichment
+	// strips summarized messages), which the block-parse below needs.
+	messages, err := GetMessagesBySessionIDRaw(sessionID)
 	if err != nil || len(messages) == 0 {
 		return
 	}
@@ -1038,7 +1042,7 @@ func triggerChatRecommendation(ctx context.Context, sessionID, projectPath strin
 	if model.ConfigInstance.AISummary.API.BaseURL == "" {
 		return
 	}
-	conclusion := summarize.ExtractLastAnswerFromBlocks(blocks)
+	conclusion := AssistantConclusion(sessionID, blocks)
 	if strings.TrimSpace(conclusion) == "" {
 		return
 	}
@@ -1153,7 +1157,7 @@ func recentConversation(ctx context.Context, sessionID string, n int) []string {
 			// an empty {"blocks":[]}). Re-read the raw content so the conclusion
 			// the recommendation LLM sees is the real answer, not nothing.
 			blocks, _ := rawAssistantBlocks(ctx, messages[i].ID, messages[i].Content)
-			text = assistantConclusionFromBlocks(blocks)
+			text = assistantConclusionFromBlocks(sessionID, blocks)
 			// Legacy assistant content that is not blocks JSON (bare content
 			// array, ACP notification wrapper, plain text) parses to zero blocks;
 			// fall back to plain-text extraction so such messages still contribute
@@ -1175,12 +1179,13 @@ func recentConversation(ctx context.Context, sessionID string, n int) []string {
 // assistantConclusionFromBlocks extracts the conclusion text from an already
 // parsed ContentBlock array: the last answer (text after the last tool_use),
 // plus any AskUserQuestion cards so the recommendation prompt can reference
-// the options. Returns an empty string when there are no blocks.
-func assistantConclusionFromBlocks(blocks []model.ContentBlock) string {
+// the options. Group-chat protocol tags are stripped only for group sessions
+// (see AssistantConclusion). Returns an empty string when there are no blocks.
+func assistantConclusionFromBlocks(sessionID string, blocks []model.ContentBlock) string {
 	if len(blocks) == 0 {
 		return ""
 	}
-	conclusion := summarize.ExtractLastAnswerFromBlocks(blocks)
+	conclusion := AssistantConclusion(sessionID, blocks)
 	if q := askQuestionText(blocks); q != "" {
 		conclusion += q
 	}

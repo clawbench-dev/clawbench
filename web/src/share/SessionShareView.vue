@@ -6,6 +6,7 @@
          thread. -->
     <div class="share-topbar share-topbar--stacked">
       <div class="share-topbar-main">
+        <img class="share-logo" src="/logo-64.png" alt="ClawBench" />
         <h1 class="share-topbar-title" :title="title">{{ title }}</h1>
         <div class="share-top-actions">
           <!-- Conversation TOC toggle. Hidden until the snapshot lands, since
@@ -43,11 +44,16 @@
         <span v-if="loading" class="share-status">{{ t('share.loading') }}</span>
         <span v-else-if="error" class="share-status share-error">{{ error }}</span>
         <template v-else>
-          <span v-if="backendLabel" class="session-share-agent">
+          <!-- Group shares mirror the in-app group header: an overlapping
+               avatar stack (host first) instead of a single agent icon. -->
+          <span v-if="isGroupShare" class="session-share-agent session-share-group">
+            <AvatarStack :members="stackMembers" size="sm" :max="4" />
+          </span>
+          <span v-else-if="backendLabel" class="session-share-agent">
             <AgentIcon :backend="backendLabel" :name="agentName" size="sm" />
             <span class="session-share-agent-name">{{ agentName }}</span>
           </span>
-          <span v-if="backendLabel && messageCount > 0" class="session-share-dot" aria-hidden="true">·</span>
+          <span v-if="(isGroupShare || backendLabel) && messageCount > 0" class="session-share-dot" aria-hidden="true">·</span>
           <span v-if="messageCount > 0" class="session-share-count">
             {{ t('share.messageCount', { count: messageCount }) }}
           </span>
@@ -96,6 +102,7 @@
               :resolve-speaker="resolveSpeaker"
               :resolve-speaker-by-name="resolveSpeakerByName"
               :host-member-id="hostMemberId"
+              :user-nickname="userNickname"
               :hide-session-actions="true"
               :read-only="true"
               @toggle-tool="onToggleTool"
@@ -201,7 +208,9 @@ import AgentIcon from '@/components/common/AgentIcon.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import ChatMessageItem from '@/components/chat/ChatMessageItem.vue'
 import MessageIndexRow from '@/components/chat/MessageIndexRow.vue'
+import AvatarStack, { type StackMember } from '@/components/common/AvatarStack.vue'
 import { makeSpeakerResolver, type SpeakerIdentity } from '@/utils/speakerIdentity'
+import { resolveMentionDisplayName, GROUP_USER_TARGET_NAME, type MentionSpeaker } from '@/utils/groupRouting'
 import ToolDetailDrawer from '@/components/chat/ToolDetailDrawer.vue'
 import ChatMetadataModal from '@/components/chat/ChatMetadataModal.vue'
 import { useChatRender } from '@/composables/useChatRender'
@@ -283,7 +292,36 @@ const tocItems = computed<TocMessage[]>(() => messages.value as unknown as TocMe
 // share path), so rows render the built-in per-backend brand icon.
 const sessionAgent = ref<SpeakerIdentity | null>(null)
 const speakers = ref<Record<string, SpeakerIdentity> | null>(null)
+// The configured group-chat user nickname, frozen into the snapshot (the viewer
+// cannot read /api/config). Falls back to the built-in reserved name.
+const userNickname = ref(GROUP_USER_TARGET_NAME)
 const resolveSpeaker = computed(() => makeSpeakerResolver(sessionAgent.value, speakers.value))
+// The group's ACTIVE roster, frozen in roster order with the host flagged
+// (group shares only; empty for single-agent). The topbar renders the same
+// overlapping avatar stack the in-app group header shows. This is NOT derived
+// from `speakers`: that is a map (UUID-sorted keys) and includes left members.
+interface ShareGroupMember {
+  id: string
+  agentId?: string
+  name?: string
+  backend: string
+  isHost?: boolean
+}
+const groupMembers = ref<ShareGroupMember[]>([])
+const isGroupShare = computed(() => groupMembers.value.length > 0)
+// AvatarStack resolves avatars from agentId via useAgents, which the anonymous
+// share SPA never loads — so we feed each disc the avatar frozen in the snapshot
+// roster (keyed by member row id) instead.
+const stackMembers = computed<StackMember[]>(() =>
+  groupMembers.value.map((m) => ({
+    id: m.id,
+    agentId: m.agentId || '',
+    name: m.name || '',
+    backend: m.backend,
+    isHost: !!m.isHost,
+    avatar: speakers.value?.[m.id]?.avatar || '',
+  })),
+)
 // The group host's member row id, frozen into the snapshot so the viewer can
 // mark the host's messages AND render their private notes (bcc) card — without
 // it every group message reads as a plain member and the card never appears.
@@ -299,6 +337,32 @@ const resolveSpeakerByName = computed(() => (name: string) => {
   }
   return null
 })
+// Inline @-chips in a message body are resolved by useChatRender (NOT by the
+// ChatMessageItem props, which only drive the speaker header and the private
+// bcc card). A user's @-mention carries the member ROW id, so without a
+// resolver the chip renders the raw id instead of the agent name. Resolve
+// against the same frozen roster, by id first then by display name — mirroring
+// ChatPanelContent's resolveMentionTarget.
+const resolveMentionTarget = (target: string): string =>
+  resolveMentionDisplayName(
+    target,
+    (id): MentionSpeaker | null => {
+      const s = speakers.value?.[id]
+      return s ? { name: s.name || '' } : null
+    },
+    (name): MentionSpeaker | null => {
+      const s = resolveSpeakerByName.value(name)
+      return s ? { name: s.name || '' } : null
+    },
+    userNickname.value,
+    userNickname.value,
+  )
+// The chip HTML is baked into the rendered-block cache, whose key omits the
+// roster; a chip rendered before the roster loads would keep showing "@<id>".
+// Changing this scope clears + re-renders when the roster identity changes.
+const mentionScope = computed(() =>
+  (speakers.value ? Object.keys(speakers.value).sort().join(',') : '') + '|' + userNickname.value,
+)
 /** Message id currently in view (scroll-spy); null until the observer fires. */
 const activeTocId = ref<number | string | null>(null)
 
@@ -423,7 +487,13 @@ const totalDurationMs = computed(() => {
 // One shared instance drives every message, exactly as the chat panel does.
 // useChatRender's task-block store stays inert because the snapshot carries no
 // TaskIDs (the Go builder strips them).
-const chatRender = useChatRender({ messages, theme: ref(''), currentSessionId: ref('') })
+const chatRender = useChatRender({
+  messages,
+  theme: ref(''),
+  currentSessionId: ref(''),
+  mentionScope,
+  resolveMentionTarget,
+})
 const { expandedTools, blockTasks, blockAskQuestions, staticBlockCache, toggleToolDetail } = chatRender
 
 // ── Provides mirrored from TaskExecDetail (the other standalone chat host) ──
@@ -435,10 +505,14 @@ function getAgentBackend(): string {
 function getAgentName(): string {
   return backendLabel.value || t('share.sharedConversation')
 }
-// Custom avatars are not part of the share snapshot; always fall back to the
-// built-in backend icon.
-function getAgentAvatar(): string {
-  return ''
+// Custom avatars ARE part of the share snapshot now: the authenticated owner
+// froze them at creation time, so resolve them from the snapshot identities the
+// viewer already has (it cannot call /api/agents). The session agent answers for
+// an empty id (single-agent messages); a member row id resolves through the
+// frozen roster. A miss falls back to '' → the built-in backend brand icon.
+function getAgentAvatar(agentId: string): string {
+  if (agentId) return speakers.value?.[agentId]?.avatar || ''
+  return sessionAgent.value?.avatar || ''
 }
 
 provide('chatRender', {
@@ -624,7 +698,9 @@ async function loadSnapshot() {
     backendLabel.value = payload?.session?.backend || ''
     sessionAgent.value = payload?.sessionAgent || null
     speakers.value = payload?.speakers || null
+    groupMembers.value = Array.isArray(payload?.groupMembers) ? payload.groupMembers : []
     hostMemberId.value = payload?.session?.hostMemberId || ''
+    userNickname.value = payload?.session?.userNickname || GROUP_USER_TARGET_NAME
     const rawMessages = Array.isArray(payload?.messages) ? payload.messages : []
     messageCount.value = rawMessages.length
 
@@ -776,24 +852,32 @@ onBeforeUnmount(() => {
 
 /* Jump target flash, mirroring ChatMessageList's chat-message-highlight. The
    share SPA does not load that component's styles, so the animation is
-   re-declared here against the message card. */
-:deep(.chat-message.chat-message-highlight .msg-card) {
-  animation: session-share-highlight-flash var(--flash-duration, 0.7s) ease-out 1;
+   re-declared here against the message card. The effect is a background-color
+   pulse over each role's resting bubble background (user: --user-msg-color /
+   assistant: --bg-tertiary) — identical to the main conversation's jump
+   highlight. Timing mirrors the canonical line-flash via --flash-duration
+   (0.7s); keep in sync with LINE_FLASH_MS in web/src/utils/domFlash.ts. */
+:deep(.chat-message.user.chat-message-highlight .msg-card) {
+  --msg-base-bg: var(--user-msg-color);
+  animation: msg-highlight-flash var(--flash-duration, 0.7s) ease-out 1;
 }
-@keyframes session-share-highlight-flash {
-  0%, 100% { outline-color: transparent; }
-  14%      { outline-color: color-mix(in srgb, var(--accent-color) 70%, transparent); }
-  45%      { outline-color: color-mix(in srgb, var(--accent-color) 35%, transparent); }
+:deep(.chat-message.assistant.chat-message-highlight .msg-card) {
+  --msg-base-bg: var(--bg-tertiary);
+  animation: msg-highlight-flash var(--flash-duration, 0.7s) ease-out 1;
 }
-:deep(.chat-message.chat-message-highlight .msg-card) {
-  outline: 2px solid transparent;
-  outline-offset: 2px;
-  border-radius: var(--radius-md);
+@keyframes msg-highlight-flash {
+  0%, 100% { background-color: var(--msg-base-bg); }
+  14%      { background-color: color-mix(in srgb, var(--accent-color) 65%, var(--msg-base-bg)); }
+  45%      { background-color: color-mix(in srgb, var(--accent-color) 35%, var(--msg-base-bg)); }
 }
 @media (prefers-reduced-motion: reduce) {
-  :deep(.chat-message.chat-message-highlight .msg-card) {
+  :deep(.chat-message.user.chat-message-highlight .msg-card) {
     animation: none !important;
-    outline-color: color-mix(in srgb, var(--accent-color) 55%, transparent);
+    background-color: color-mix(in srgb, var(--accent-color) 65%, var(--user-msg-color));
+  }
+  :deep(.chat-message.assistant.chat-message-highlight .msg-card) {
+    animation: none !important;
+    background-color: color-mix(in srgb, var(--accent-color) 35%, var(--bg-tertiary));
   }
 }
 </style>

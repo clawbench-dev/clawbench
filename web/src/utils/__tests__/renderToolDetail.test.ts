@@ -846,20 +846,36 @@ describe('AskUserQuestion renderer (deep)', () => {
     expect(html).toContain('Desc A')
   })
 
-  it('renders multi-select with checkbox indicator', () => {
+  it('renders multi-select with a checkbox-variant indicator', () => {
     const html = formatToolInput({
       questions: [{ question: 'Pick many', multiSelect: true, options: ['A', 'B'] }],
     }, 'AskUserQuestion')
-    expect(html).toContain('☐')
+    expect(html).toContain('ask-option-indicator--checkbox')
     expect(html).toContain('data-multi="true"')
   })
 
-  it('renders single-select with circle indicator', () => {
+  it('renders single-select with a radio-variant indicator', () => {
     const html = formatToolInput({
       questions: [{ question: 'Pick one', multiSelect: false, options: ['A', 'B'] }],
     }, 'AskUserQuestion')
-    expect(html).toContain('◯')
+    expect(html).toContain('ask-option-indicator--radio')
     expect(html).toContain('data-multi="false"')
+  })
+
+  // Regression: the indicator must be a CSS-DRAWN box, never a glyph. A glyph's
+  // size is a property of the font, so no ◯/● (or ☐/☑) pair stays size-matched
+  // across fonts — the hollow ◯ (U+25EF) is 41px of ink vs ● (U+25CF) 31px in
+  // DejaVu, and 38 vs 36 in Noto Sans CJK. A fixed box is identical everywhere.
+  it('indicator is an empty CSS-drawn element, not a text glyph', () => {
+    const html = formatToolInput({
+      questions: [{ question: 'Pick one', multiSelect: false, options: ['A'] }],
+    }, 'AskUserQuestion')
+    // The span is empty — no glyph text inside it.
+    expect(html).toContain('<span class="ask-option-indicator ask-option-indicator--radio"></span>')
+    // And no circle/box glyphs survive anywhere in the markup.
+    for (const glyph of ['◯', '○', '●', '☐', '☑']) {
+      expect(html).not.toContain(glyph)
+    }
   })
 
   it('renders supplementary input', () => {
@@ -923,13 +939,13 @@ describe('AskUserQuestion action handler', () => {
       <div class="ask-question-item" data-multi="${multiSelect}">
         <div class="ask-question-options">
           <div class="ask-question-option" data-qi="0" data-oi="0" data-label="Option A">
-            <span class="ask-option-indicator">${multiSelect ? '☐' : '◯'}</span>
+            <span class="ask-option-indicator ${multiSelect ? 'ask-option-indicator--checkbox' : 'ask-option-indicator--radio'}"></span>
             <div class="ask-option-content">
               <span class="ask-option-label">Option A</span>
             </div>
           </div>
           <div class="ask-question-option" data-qi="0" data-oi="1" data-label="Option B">
-            <span class="ask-option-indicator">${multiSelect ? '☐' : '◯'}</span>
+            <span class="ask-option-indicator ${multiSelect ? 'ask-option-indicator--checkbox' : 'ask-option-indicator--radio'}"></span>
             <div class="ask-option-content">
               <span class="ask-option-label">Option B</span>
             </div>
@@ -962,7 +978,7 @@ describe('AskUserQuestion action handler', () => {
   })
 
   describe('single-select mode', () => {
-    it('selecting an option marks it as selected and changes indicator to ●', () => {
+    it('selecting an option marks it as selected (indicator reads the class)', () => {
       const { container, emit } = createAskDOM(false)
       const option = container.querySelector('.ask-question-option') as HTMLElement
 
@@ -971,8 +987,11 @@ describe('AskUserQuestion action handler', () => {
       handleToolAction('AskUserQuestion', clickEvent, emit)
 
       expect(option.classList.contains('selected')).toBe(true)
+      // Selection is expressed by the class alone; the indicator is a
+      // CSS-drawn empty box that reads it (no glyph is written).
       const indicator = option.querySelector('.ask-option-indicator')
-      expect(indicator?.textContent).toBe('●')
+      expect(indicator?.textContent).toBe('')
+      expect(indicator?.classList.contains('ask-option-indicator--radio')).toBe(true)
       cleanup(container)
     })
 
@@ -995,9 +1014,10 @@ describe('AskUserQuestion action handler', () => {
       expect(optA.classList.contains('selected')).toBe(false)
       expect(optB.classList.contains('selected')).toBe(true)
 
-      // A's indicator should revert to ◯
+      // A's indicator reverts because its `.selected` class is gone — the
+      // markup itself never changes.
       const indicatorA = optA.querySelector('.ask-option-indicator')
-      expect(indicatorA?.textContent).toBe('◯')
+      expect(indicatorA?.textContent).toBe('')
       cleanup(container)
     })
 
@@ -1018,7 +1038,7 @@ describe('AskUserQuestion action handler', () => {
 
       expect(option.classList.contains('selected')).toBe(false)
       const indicator = option.querySelector('.ask-option-indicator')
-      expect(indicator?.textContent).toBe('◯')
+      expect(indicator?.textContent).toBe('')
       cleanup(container)
     })
 
@@ -1066,15 +1086,17 @@ describe('AskUserQuestion action handler', () => {
       Object.defineProperty(click1, 'target', { value: option, writable: false })
       handleToolAction('AskUserQuestion', click1, emit)
       expect(option.classList.contains('selected')).toBe(true)
+      // The checkbox glyph is gone: state is the class, the box is CSS-drawn.
       const indicator = option.querySelector('.ask-option-indicator')
-      expect(indicator?.textContent).toBe('☑')
+      expect(indicator?.textContent).toBe('')
+      expect(indicator?.classList.contains('ask-option-indicator--checkbox')).toBe(true)
 
       // Second click: deselect
       const click2 = new MouseEvent('click', { bubbles: true, cancelable: true })
       Object.defineProperty(click2, 'target', { value: option, writable: false })
       handleToolAction('AskUserQuestion', click2, emit)
       expect(option.classList.contains('selected')).toBe(false)
-      expect(indicator?.textContent).toBe('☐')
+      expect(indicator?.textContent).toBe('')
 
       cleanup(container)
     })
@@ -3351,13 +3373,13 @@ describe('AskUserQuestion action handler (uncovered branches)', () => {
       <div class="ask-question-item" data-multi="${multiSelect}">
         <div class="ask-question-options">
           <div class="ask-question-option" data-qi="0" data-oi="0" data-label="Option A">
-            <span class="ask-option-indicator">${multiSelect ? '☐' : '◯'}</span>
+            <span class="ask-option-indicator ${multiSelect ? 'ask-option-indicator--checkbox' : 'ask-option-indicator--radio'}"></span>
             <div class="ask-option-content">
               <span class="ask-option-label">Option A</span>
             </div>
           </div>
           <div class="ask-question-option" data-qi="0" data-oi="1" data-label="Option B">
-            <span class="ask-option-indicator">${multiSelect ? '☐' : '◯'}</span>
+            <span class="ask-option-indicator ${multiSelect ? 'ask-option-indicator--checkbox' : 'ask-option-indicator--radio'}"></span>
             <div class="ask-option-content">
               <span class="ask-option-label">Option B</span>
             </div>
@@ -3414,24 +3436,26 @@ describe('AskUserQuestion action handler (uncovered branches)', () => {
     cleanup(container)
   })
 
-  it('multi-select toggling changes checkbox indicators', () => {
+  it('multi-select toggling flips the selected class (indicator is CSS-drawn)', () => {
     const { container, emit } = createAskDOM(true)
     const option = container.querySelector('.ask-question-option') as HTMLElement
 
-    // First click: select → ☑
+    // First click: select
     const click1 = new MouseEvent('click', { bubbles: true, cancelable: true })
     Object.defineProperty(click1, 'target', { value: option, writable: false })
     handleToolAction('AskUserQuestion', click1, emit)
     const indicator = option.querySelector('.ask-option-indicator')
-    expect(indicator?.textContent).toBe('☑')
     expect(option.classList.contains('selected')).toBe(true)
+    // No glyph is written — the box is styled from the class.
+    expect(indicator?.textContent).toBe('')
+    expect(indicator?.classList.contains('ask-option-indicator--checkbox')).toBe(true)
 
-    // Second click: deselect → ☐
+    // Second click: deselect
     const click2 = new MouseEvent('click', { bubbles: true, cancelable: true })
     Object.defineProperty(click2, 'target', { value: option, writable: false })
     handleToolAction('AskUserQuestion', click2, emit)
-    expect(indicator?.textContent).toBe('☐')
     expect(option.classList.contains('selected')).toBe(false)
+    expect(indicator?.textContent).toBe('')
 
     cleanup(container)
   })
@@ -3462,10 +3486,10 @@ describe('AskUserQuestion answer state persistence', () => {
         <div class="ask-question-item" data-multi="${multiSelect}">
           <div class="ask-question-options">
             <div class="ask-question-option" data-qi="0" data-oi="0" data-label="Option A">
-              <span class="ask-option-indicator">${multiSelect ? '☐' : '◯'}</span>
+              <span class="ask-option-indicator ${multiSelect ? 'ask-option-indicator--checkbox' : 'ask-option-indicator--radio'}"></span>
             </div>
             <div class="ask-question-option" data-qi="0" data-oi="1" data-label="Option B">
-              <span class="ask-option-indicator">${multiSelect ? '☐' : '◯'}</span>
+              <span class="ask-option-indicator ${multiSelect ? 'ask-option-indicator--checkbox' : 'ask-option-indicator--radio'}"></span>
             </div>
           </div>
         </div>
@@ -3621,7 +3645,7 @@ describe('AskUserQuestion answer state persistence', () => {
   })
 
   describe('restoring state after the DOM is rebuilt', () => {
-    it('re-selects the recorded option and fixes its indicator glyph', () => {
+    it('re-selects the recorded option after the DOM is rebuilt', () => {
       // Answer in the first card instance...
       const first = createCard('tool:tu-1')
       clickOn(first.view.querySelectorAll('.ask-question-option')[0], first.emit)
@@ -3633,11 +3657,15 @@ describe('AskUserQuestion answer state persistence', () => {
 
       const option = rebuilt.view.querySelectorAll('.ask-question-option')[0]
       expect(option.classList.contains('selected')).toBe(true)
-      expect(option.querySelector('.ask-option-indicator')?.textContent).toBe('●')
+      // The rebuilt span carries the radio variant and no glyph; the box is
+      // drawn from the class, so restoring the class is all that is needed.
+      const indicator = option.querySelector('.ask-option-indicator')
+      expect(indicator?.classList.contains('ask-option-indicator--radio')).toBe(true)
+      expect(indicator?.textContent).toBe('')
       rebuilt.container.remove()
     })
 
-    it('restores a multi-select choice glyph as ☑', () => {
+    it('restores a multi-select choice after the DOM is rebuilt', () => {
       const first = createCard('tool:tu-1', true)
       clickOn(first.view.querySelectorAll('.ask-question-option')[0], first.emit)
       first.container.remove()
@@ -3647,7 +3675,9 @@ describe('AskUserQuestion answer state persistence', () => {
 
       const option = rebuilt.view.querySelectorAll('.ask-question-option')[0]
       expect(option.classList.contains('selected')).toBe(true)
-      expect(option.querySelector('.ask-option-indicator')?.textContent).toBe('☑')
+      const indicator = option.querySelector('.ask-option-indicator')
+      expect(indicator?.classList.contains('ask-option-indicator--checkbox')).toBe(true)
+      expect(indicator?.textContent).toBe('')
       rebuilt.container.remove()
     })
 
@@ -4081,7 +4111,7 @@ describe('AskUserQuestion submit carries the card key', () => {
         <div class="ask-question-item" data-multi="false">
           <div class="ask-question-options">
             <div class="ask-question-option" data-qi="0" data-oi="0" data-label="Option A">
-              <span class="ask-option-indicator">◯</span>
+              <span class="ask-option-indicator ask-option-indicator--radio"></span>
             </div>
           </div>
         </div>
@@ -4125,7 +4155,7 @@ describe('AskUserQuestion submit carries the card key', () => {
       <div class="ask-question-view">
         <div class="ask-question-item" data-multi="false">
           <div class="ask-question-options">
-            <div class="ask-question-option" data-qi="0" data-oi="0" data-label="Option A"><span class="ask-option-indicator">◯</span></div>
+            <div class="ask-question-option" data-qi="0" data-oi="0" data-label="Option A"><span class="ask-option-indicator ask-option-indicator--radio"></span></div>
           </div>
         </div>
         <button class="ask-question-submit" disabled>Submit</button>
@@ -4158,7 +4188,7 @@ describe('AskUserQuestion revert clears the DOM as well as the store', () => {
         <div class="ask-question-item" data-multi="false">
           <div class="ask-question-options">
             <div class="ask-question-option" data-qi="0" data-oi="0" data-label="Option A">
-              <span class="ask-option-indicator">◯</span>
+              <span class="ask-option-indicator ask-option-indicator--radio"></span>
             </div>
           </div>
         </div>

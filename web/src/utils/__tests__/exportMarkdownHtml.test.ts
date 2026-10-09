@@ -283,6 +283,18 @@ describe('exportMarkdownToHtml', () => {
     expect(result.html).not.toContain('share-download')
   })
 
+  it('embeds the brand logo as a data URI so the offline doc is self-contained', async () => {
+    const result = await exportMarkdownToHtml(opts({ content: '# T' }))
+    // The exported .html is opened from file://, so the logo must be inlined —
+    // a root-absolute /logo-64.png would 404. Relative `?inline` import is
+    // required (Vite skips inlining imports that resolve inside publicDir).
+    const logo = result.html.match(/<img class="share-logo" src="([^"]+)"/)
+    expect(logo, 'topbar must carry the brand logo').not.toBeNull()
+    expect(logo![1]).toMatch(/^data:image\/png;base64,/)
+    // And no bare public-path reference survives.
+    expect(result.html).not.toContain('src="/logo-64.png"')
+  })
+
   it('flashes the jumped heading when a TOC item is clicked', async () => {
     const result = await exportMarkdownToHtml(opts({ content: '# T' }))
     // The click handler adds .line-flash to the heading after scrolling.

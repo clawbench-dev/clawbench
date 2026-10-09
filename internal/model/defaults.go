@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // FirstRun records whether this process started against a brand-new install.
@@ -236,6 +237,25 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if !presence["chat.auto_rename_enabled"] {
 		cfg.Chat.AutoRenameEnabled = true
 	}
+	// UserNickname: the reserved display name of the human user in group chat.
+	// An empty value is never valid (it would be an unaddressable participant),
+	// so empty always falls back to the default — no presence map needed. The
+	// value is trimmed here too: a hand-edited config.yaml bypasses the PATCH
+	// path's normalization, and the mention parser trims each target, so an
+	// untrimmed nickname would be unreachable.
+	cfg.Chat.UserNickname = strings.TrimSpace(cfg.Chat.UserNickname)
+	if cfg.Chat.UserNickname == "" {
+		cfg.Chat.UserNickname = "User"
+	}
+	// GroupMaxSpeeches: the member-to-member speech cap for a group turn.
+	// A non-positive value is nonsensical (it would stop the discussion before
+	// anyone spoke), so it falls back to the default. The default is generous
+	// enough that a normal discussion is stopped by the host's end signal or
+	// by the members @-ing the human, not by this cap — it exists to bound a
+	// runaway relay (A@B, B@A).
+	if cfg.Chat.GroupMaxSpeeches <= 0 {
+		cfg.Chat.GroupMaxSpeeches = 100
+	}
 
 	// --- Session ---
 	// MaxCount: 0 means "unlimited" (the create-session gate is `> 0`), so it is
@@ -338,6 +358,13 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	}
 	if cfg.Summarize.TTSBackend == "" {
 		cfg.Summarize.TTSBackend = "simple"
+	}
+	// AutoJunkRatio is the "auto" backend's routing threshold. Treat the zero
+	// value as unset (a pre-existing config lacks the field) and default it to
+	// 0.5; a threshold of 0 would route even fully-clean text to the LLM, which
+	// is never useful — use tts_backend "api" for that instead.
+	if cfg.Summarize.AutoJunkRatio <= 0 || cfg.Summarize.AutoJunkRatio > 1 {
+		cfg.Summarize.AutoJunkRatio = 0.5
 	}
 
 	// --- AISummary (shared AI model config) ---

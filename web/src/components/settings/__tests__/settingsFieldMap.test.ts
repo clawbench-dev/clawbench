@@ -406,15 +406,29 @@ describe('settingsFieldMap', () => {
     const spec = (ttsBackend as { type: 'item'; spec: ItemSpec }).spec
     expect(spec.type).toBe('select')
     expect(spec.source).toBe('server')
-    // Only two options: simple (extract conclusion) and api (LLM). No "off".
+    // Three options: simple (extract conclusion), api (LLM), auto (route by
+    // content). No "off".
     const values = (spec.options ?? []).map(o => o.value)
-    expect(values).toEqual(['simple', 'api'])
+    expect(values).toEqual(['simple', 'api', 'auto'])
 
     // Jump link to the top-level aiSummary panel
     const jump = items.find(e => e.type === 'item' && e.spec.key === 'navigateAiSummary')
     expect(jump).toBeDefined()
     const jumpSpec = (jump as { type: 'item'; spec: ItemSpec }).spec
     expect(jumpSpec.navigateTo).toBe('aiSummary')
+  })
+
+  it('auto_junk_ratio is a server slider shown only when the backend is auto', () => {
+    const items = categoryItems.tts
+    const ratio = items.find(e => e.type === 'item' && e.spec.key === 'summarize.auto_junk_ratio')
+    expect(ratio).toBeDefined()
+    if (ratio!.type !== 'item') throw new Error('expected item entry for auto_junk_ratio')
+    expect(ratio.spec.type).toBe('slider')
+    expect(ratio.spec.source).toBe('server')
+    // The row is meaningful only in "auto" mode.
+    expect(ratio.spec.dependsOn).toEqual({ key: 'summarize.tts_backend', value: 'auto' })
+    expect(ratio.spec.min).toBe(0.1)
+    expect(ratio.spec.max).toBe(0.9)
   })
 
   it('ai_summary panel has shared model fields', () => {

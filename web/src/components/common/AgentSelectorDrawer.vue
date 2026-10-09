@@ -1,12 +1,22 @@
 <template>
   <BottomSheet :open="open" auto @close="handleClose">
     <template #header>
-      <Bot :size="16" class="bs-header-icon" />
+      <!-- Group-creation mode reads as a group, not a single agent: the header
+           glyph is the same Users mark the session list / create-group button
+           use, so the two surfaces stay one system. -->
+      <Users v-if="groupMode" :size="16" class="bs-header-icon" />
+      <Bot v-else :size="16" class="bs-header-icon" />
       <span class="bs-header-title">{{ title }}</span>
       <!-- Group mode: the chosen host decides the group's mode. The subtitle
            sits to the right of the title and flips between host / free as the
-           user sets or clears the host. -->
-      <span v-if="groupMode" class="agent-header-mode">{{ hostId ? t('group.hostMode') : t('group.freeMode') }}</span>
+           user sets or clears the host. Same glyph pairing as the session-list
+           mode chip (crown for host, @ for the free relay) so the two surfaces
+           read as one system. -->
+      <span v-if="groupMode" class="agent-header-mode">
+        <Crown v-if="hostId" :size="12" class="agent-header-mode-icon" />
+        <AtSign v-else :size="12" class="agent-header-mode-icon" />
+        {{ hostId ? t('group.hostMode') : t('group.freeMode') }}
+      </span>
     </template>
     <div class="agent-list">
       <LoadingIndicator v-if="agentsLoading" size="md" />
@@ -36,7 +46,10 @@
         </div>
         <!-- Group mode: the host control sits where the per-row default star
              normally is, but is a labelled button so it reads as an action.
-             Only selected rows can be host (the host must be a member). -->
+             Only selected rows can be host (the host must be a member). The
+             label states the ACTION ("set as host") until the row IS the host,
+             at which point it shows the resulting state badge ("Host") — a
+             never-set row must not read as if it were already the host. -->
         <button
           v-if="groupMode && isSelected(agent.id)"
           class="agent-host-btn"
@@ -47,7 +60,7 @@
           @click.stop="handleSetHost(agent.id)"
         >
           <Crown :size="12" />
-          <span class="agent-host-btn-label">{{ hostBadge }}</span>
+          <span class="agent-host-btn-label">{{ agent.id === hostId ? hostBadge : hostLabel }}</span>
         </button>
         <span v-if="isExcluded(agent.id)" class="agent-tag agent-added-tag">{{ addedLabel }}</span>
         <span v-if="showAgentActions && isDefaultAgent(agent.id)" class="agent-default-badge-pill">{{ defaultBadge }}</span>
@@ -59,15 +72,18 @@
         </button>
       </div>
     </div>
+    <!-- Confirm is a plain footer pill (the shared .fbtn language), not a
+         full-width bar: .bs-footer already right-aligns its content, so the
+         button hugs the trailing edge like every other drawer confirm. -->
     <template v-if="multiple" #footer>
-      <button class="agent-multi-confirm" :disabled="confirmDisabled" @click="handleConfirmMulti">{{ confirmLabel }}</button>
+      <button class="fbtn fbtn-primary agent-multi-confirm" :disabled="confirmDisabled" @click="handleConfirmMulti">{{ confirmLabel }}</button>
     </template>
   </BottomSheet>
 </template>
 
 <script setup lang="ts">
 import { ref, watch, inject, computed } from 'vue'
-import { Bot, Star, Settings, Check, Crown } from 'lucide-vue-next'
+import { Bot, Star, Settings, Check, Crown, AtSign, Users } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
@@ -76,6 +92,9 @@ import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
 import { useAgents } from '@/composables/useAgents'
 import { setPendingSettingsCategory } from '@/composables/useSettingsNavigation'
+// The confirm button uses the shared .fbtn language; import it directly rather
+// than relying on BottomSheet happening to load it (design-guide rule).
+import '@/assets/modal-footer-btn.css'
 
 const { t } = useI18n()
 
@@ -515,31 +534,24 @@ watch(() => props.open, async (val) => {
   line-height: 1;
 }
 
-.agent-multi-confirm:disabled {
-  opacity: var(--opacity-disabled, 0.4);
-  cursor: not-allowed;
-}
-
 /* Group mode: the mode subtitle to the right of the header title. Muted and
    non-shrinking so it never pushes the title around as it flips between
    "host mode" and "free mode". */
 .agent-header-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   flex-shrink: 0;
   margin-left: auto;
   color: var(--text-muted, #999);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-normal);
 }
-
-.agent-multi-confirm {
-  width: 100%;
-  padding: var(--space-3) var(--space-4);
-  border: none;
-  border-radius: var(--radius-md, 8px);
-  background: var(--accent-color, #0066cc);
-  color: #fff;
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-medium);
-  cursor: pointer;
+.agent-header-mode-icon {
+  flex-shrink: 0;
 }
+
+/* Confirm button: shape/colour come from the shared .fbtn / .fbtn-primary
+   language (modal-footer-btn.css). Nothing to declare here — a scoped override
+   would out-specify the shared rules and silently re-diverge. */
 </style>

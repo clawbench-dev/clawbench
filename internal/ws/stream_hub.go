@@ -31,13 +31,25 @@ const (
 // for a session. Injected by the service layer to avoid circular imports.
 type GetContextStateUsageFunc func(sessionID string) *ContextStateUsage
 
-// StreamStateLookupFunc returns the live run's state for a session: the
+// LiveStreamState is one in-flight stream's subscribe-time recovery state: the
 // streaming assistant row id, the question that run answers (id 0 and empty
 // content when the run has no question, e.g. a scheduled task), and the
 // streaming row's speaker (group-member row id; empty for ordinary turns).
+type LiveStreamState struct {
+	MessageID       int64
+	QuestionID      int64
+	QuestionContent string
+	SpeakerID       string
+}
+
+// StreamStateLookupFunc returns EVERY live run's state for a session, newest
+// row first. A session normally has one in-flight stream, but a group turn can
+// run several members CONCURRENTLY on one timeline (parallel speaking), and a
+// client that subscribes mid-flight must be told about all of them — otherwise
+// it recovers only one bubble and the rest appear only after the run ends.
 //
 // Injected by the service layer to avoid a circular import.
-type StreamStateLookupFunc func(sessionID string) (messageID int64, questionID int64, questionContent, speakerID string)
+type StreamStateLookupFunc func(sessionID string) []LiveStreamState
 
 // StreamHub manages session-scoped streaming event fan-out via WebSocket.
 // It replaces the single-consumer SSE channel with multi-client WS delivery.
@@ -223,6 +235,7 @@ func buildChatStreamMessage(sessionID string, event ai.StreamEvent) (ServerMessa
 			SessionID: sessionID,
 			EventType: event.Type,
 			Payload:   payload,
+			MessageID: event.StreamingMessageID,
 		},
 	}, true
 }
@@ -753,14 +766,27 @@ func (h *StreamHub) EmitLiveRunStateToClient(clientID, sessionID string) {
 	if stateFn == nil {
 		return
 	}
-	msgID, questionID, questionContent, speakerID := stateFn(sessionID)
-	if msgID <= 0 {
+	states := stateFn(sessionID)
+	if len(states) == 0 {
 		return
 	}
-	if questionID > 0 {
-		h.EmitUserMessageEvent(clientID, sessionID, questionID, questionContent)
+	// Emit every live stream, each anchored to its own question. A group turn
+	// running members concurrently has one entry per member; a client that
+	// subscribed mid-flight must learn about all of them, not just the newest
+	// (the rest would otherwise stay invisible until the run ended).
+	//
+	// Ordering: the caller returns newest-first; emit oldest-first so the
+	// placeholders are created in DB-id order and sort naturally.
+	for i := len(states) - 1; i >= 0; i-- {
+		st := states[i]
+		if st.MessageID <= 0 {
+			continue
+		}
+		if st.QuestionID > 0 {
+			h.EmitUserMessageEvent(clientID, sessionID, st.QuestionID, st.QuestionContent)
+		}
+		h.EmitStreamStartEvent(clientID, sessionID, st.MessageID, st.SpeakerID)
 	}
-	h.EmitStreamStartEvent(clientID, sessionID, msgID, speakerID)
 }
 
 // emitStateEvent sends a single chat_stream state event to a specific client.

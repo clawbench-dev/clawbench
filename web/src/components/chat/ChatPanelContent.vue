@@ -18,9 +18,11 @@
       :currentAgent="currentAgent"
       :isGroupSession="isGroupSession"
       :groupMembers="props.groupMembers"
+      :groupMode="props.groupMode"
       :resolveSpeaker="props.resolveGroupSpeaker"
       :resolveSpeakerByName="props.resolveGroupSpeakerByName"
       :hostMemberId="props.groupHostMemberId"
+      :userNickname="userNickname"
       :currentSessionId="identity.currentSessionId.value"
       :hasMore="session.hasMore.value"
       :loadingMore="session.loadingMore.value"
@@ -103,6 +105,7 @@
       :currentDir="currentDir"
       :attachedFiles="attachedFiles"
       :quotes="stagedQuotes"
+      :mentions="stagedMentions"
       :messages="renderedMessages"
       :autoSpeechEnabled="autoSpeech.enabled.value"
       :refreshingSession="refreshingSession"
@@ -126,6 +129,9 @@
       @add-attached="addAttachedFile"
       @remove-attached="removeAttachedFile"
       @remove-attached-by-path="handleRemoveAttachedEntry"
+      @add-mention="handleAddMention"
+      @remove-mention="removeStagedMention"
+      @mention-click="handleMentionClick"
       @remove-quote="removeStagedQuote($event)"
       @quote-click="handleQuoteClick"
       @open-session-tab="identity.openSessionTab"
@@ -144,6 +150,7 @@
       @switch-mode="handleSwitchMode"
       @switch-transport="handleSwitchTransport"
       @sync-acp-session="handleSyncAcpSession"
+      @open-group-settings="$emit('open-group-settings')"
     />
 
   </div>
@@ -234,6 +241,7 @@ import { useI18n } from 'vue-i18n'
 import { appLog } from '@/utils/appLog'
 import { NEAR_BOTTOM_PX } from '@/utils/scrollState'
 import { groupBtwRecords, currentAnchorKey } from '@/utils/btwAnchors.ts'
+import { resolveMentionDisplayName, GROUP_USER_TARGET_NAME } from '@/utils/groupRouting.ts'
 import { apiGet, apiPost, apiPatch } from '@/utils/api'
 import { gt } from '@/composables/useLocale'
 import { useTabDrawer } from '@/composables/useTabDrawer'
@@ -263,14 +271,14 @@ import { useToast } from '@/composables/useToast.ts'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { useNotification } from '@/composables/useNotification.ts'
 import { applySummaryUpdate, isShowingSummary, isLastAssistantMessage, normalizeDisplayMode } from '@/utils/chatSessionUtils.ts'
-import { localConfig } from '@/composables/useSettingsConfig'
+import { localConfig, serverConfig } from '@/composables/useSettingsConfig'
 import { nextClientSeq } from '@/utils/chatStreamUtils.ts'
 import { useFileUpload } from '@/composables/useFileUpload.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import { relativizeProjectPath } from '@/utils/quoteQuestionUtils.ts'
 import { resetQuotePin } from '@/composables/useQuoteQuestion.ts'
 import { fromStagedQuote, fromFileEntry, materializeQuotes, buildMessageQuote, quotableMessageText } from '@/utils/quoteItem.ts'
-import { stripGroupProtocolTags } from '@/utils/groupRouting.ts'
+import { stripGroupProtocolTags, serializeMentionCards } from '@/utils/groupRouting.ts'
 import { useQuoteDetail } from '@/composables/useQuoteDetail.ts'
 import { pendingMessageNavigation, consumePendingMessageNavigation, setPendingMessageNavigation } from '@/composables/useMessageNavigation.ts'
 import { openExternalUrl } from '@/utils/externalLink.ts'
@@ -306,11 +314,15 @@ const props = defineProps({
     // Group roster, owned by App.vue (the header avatar stack lives there).
     // Passed down so the roster is fetched once, not once per consumer.
     groupMembers: { type: Array, default: () => [] },
+    /** Group mode ("host" | "free"). Selects the group empty-state copy in
+     *  ChatMessageList: the two modes route completely differently, so a single
+     *  hint would describe one mode and mislead in the other. */
+    groupMode: { type: String, default: 'host' },
     groupHostMemberId: { type: String, default: '' },
     resolveGroupSpeaker: { type: Function, default: null },
     resolveGroupSpeakerByName: { type: Function, default: null },
 })
-const emit = defineEmits(['open', 'message', 'task-card-click', 'open-session-search'])
+const emit = defineEmits(['open', 'message', 'task-card-click', 'open-session-search', 'open-group-settings'])
 
 // ── Singletons ──
 const identity = useSessionIdentity()
@@ -515,8 +527,9 @@ function handleQuoteMessage(msg) {
     if (!msg) return
     // Shared with ChatMessageItem: strips the host's private notes (bcc) — a
     // quote becomes an attachment that is rendered into every member's injected
-    // context, so a note must never ride along.
-    const text = quotableMessageText(msg.role, msg.blocks, msg.content, msg.summary)
+    // context, so a note must never ride along. Gated on the group session type:
+    // a single chat has no protocol to strip.
+    const text = quotableMessageText(msg.role, msg.blocks, msg.content, msg.summary, isGroupSession.value)
     if (!text) return
 
     const id = msg.id !== undefined && msg.id !== null ? Number(msg.id) : NaN
@@ -566,6 +579,40 @@ function handleQuoteClick(q) {
 function handleSentQuoteClick(entry) {
     if (!entry) return
     quoteDetail.openQuoteDetail(fromFileEntry(entry), { mode: 'sent' })
+}
+
+/**
+ * Add a group member card (@ card). Payload comes from the input's @ menu: the
+ * member row id (the tag target), the display name and the agent identity for
+ * the avatar. The card lives in useChatContext so it survives a session switch.
+ */
+function handleAddMention(payload) {
+    if (!payload?.memberId) return
+    addStagedMention({
+        memberId: payload.memberId,
+        name: payload.name || '',
+        agentId: payload.agentId || undefined,
+        backend: payload.backend || undefined,
+    })
+}
+
+/**
+ * Open the private-note (密送) editor for a member card.
+ *
+ * A member card's annotation is a PRIVATE note to that member — the same
+ * "attach a note" interaction as the quote card, but the note travels as a
+ * `private` mention tag on send (only the target may see it). Uses the shared
+ * prompt dialog so there is no second bespoke editor to maintain.
+ */
+async function handleMentionClick(mention) {
+    if (!mention) return
+    const note = await dialog.prompt(
+        t('group.mentionCard.notePrompt', { name: mention.name }),
+        { value: mention.note || '', placeholder: t('group.mentionCard.notePlaceholder'), title: t('group.mentionCard.noteTitle') },
+    )
+    // null = cancelled; keep the existing note.
+    if (note === null) return
+    updateStagedMentionNote(mention.id, note)
 }
 
 /** True while the annotation save request is in flight (disables the button). */
@@ -677,33 +724,42 @@ async function jumpToQuoteSource(q) {
 
 const { planEntries, planCollapsed, planHasUpdate, togglePlanCollapse } = usePlanProgress()
 
+// The configured group-chat user nickname (chat.user_nickname, default "User").
+// Server-side and global, so it is read from the shared serverConfig singleton
+// rather than threaded through props. Falls back to the built-in reserved name
+// before config loads so @-chips never render blank.
+const userNickname = computed(() => {
+  const chat = serverConfig.value?.chat
+  const v = chat && typeof chat === 'object' ? chat.user_nickname : undefined
+  return typeof v === 'string' && v !== '' ? v : GROUP_USER_TARGET_NAME
+})
+
 // resolveMentionTarget maps a mention target to a display name for the inline
 // chip. A target is either a member ROW id (a user's @ carries the id) or a
 // display name (an agent writes the name): try the speaker resolver first, then
-// the by-name resolver, and fall back to the raw target.
+// the by-name resolver, and fall back to the raw target. The reserved human
+// target renders as the configured nickname.
 //
-// mentionScope changes when the roster changes: the chip HTML is baked into the
-// rendered-block cache, whose key does NOT include the roster, so a chip
-// rendered before the roster loaded would otherwise keep showing "@<uuid>".
+// mentionScope changes when the roster OR the nickname changes: the chip HTML is
+// baked into the rendered-block cache, whose key does NOT include either, so a
+// chip rendered before the roster loaded would otherwise keep showing "@<uuid>"
+// and a chip rendered before a rename would keep the old name.
 const mentionScope = computed(() =>
-  (props.groupMembers || []).map(m => `${m.id}:${m.name}`).join(','),
+  (props.groupMembers || []).map(m => `${m.id}:${m.name}`).join(',') + '|' + userNickname.value,
 )
 const render = useChatRender({
   messages,
   theme,
   currentSessionId: identity.currentSessionId,
   mentionScope,
-  resolveMentionTarget: (target) => {
-    if (typeof props.resolveGroupSpeaker === 'function') {
-      const hit = props.resolveGroupSpeaker(target)
-      if (hit?.name) return hit.name
-    }
-    if (typeof props.resolveGroupSpeakerByName === 'function') {
-      const hit = props.resolveGroupSpeakerByName(target)
-      if (hit?.name) return hit.name
-    }
-    return target
-  },
+  resolveMentionTarget: (target) =>
+    resolveMentionDisplayName(
+      target,
+      props.resolveGroupSpeaker,
+      props.resolveGroupSpeakerByName,
+      userNickname.value,
+      userNickname.value,
+    ),
 })
 
 /** Look up the tool_use block from the live messages array by msgId + blockIdx */
@@ -785,6 +841,27 @@ function handleQueueDrainBoundary(sessionId) {
   session.markSessionRead(sessionId).catch(() => {})
 }
 
+// onMemberFinalize: fires per producer turn (group chats: one member) when the
+// backend emits its `stream_finalize`. Auto-speech is triggered HERE for group
+// runs — the terminal `done` fires only once after every member has spoken, so
+// speaking there would read just the last speaker. Each speaker's reply is
+// enqueued (useAutoSpeech plays them in order) and tagged with the speaker's
+// name so the backend can prefix the audio with "<name>说：".
+function handleMemberFinalize(messageId) {
+  if (!autoSpeech.enabled.value) return
+  if (!isGroupSession.value) return
+  if (!messageId) return
+  const msg = messages.value.find(m => String(m.id) === String(messageId))
+  if (!msg || msg.role !== 'assistant') return
+  const raw = extractSpeakableText(msg.blocks || [])
+  const fullText = stripGroupProtocolTags(raw)
+  if (!fullText) return
+  const speaker = typeof props.resolveGroupSpeaker === 'function'
+    ? props.resolveGroupSpeaker(msg.agentId)
+    : null
+  autoSpeech.speakMessage(msg.id, fullText, speaker?.name || '')
+}
+
 // onStreamEnd: fires when current session stream completes with a reason
 // - 'done': normal completion → play sound, auto-speech; queue sync handled by
 //   useSessionManager's watch(loading) safety net (loading true→false triggers fetchQueue)
@@ -794,18 +871,26 @@ async function onStreamEnd(reason) {
   if (reason === 'done') {
     playNotificationSound()
     if (autoSpeech.enabled.value) {
-      const lastMsg = messages.value[messages.value.length - 1]
-      if (lastMsg?.role === 'assistant') {
-        // Strip the host's private notes: they are not for the user to hear.
-        const fullText = stripGroupProtocolTags(extractSpeakableText(lastMsg.blocks || []))
-        if (fullText && lastMsg.id) {
-          autoSpeech.speakMessage(lastMsg.id, fullText)
+      if (isGroupSession.value) {
+        // Group runs are read per speaker at stream_finalize
+        // (handleMemberFinalize). The terminal `done` carries only the LAST
+        // member's reply, so speaking here would duplicate/replace it.
+        // onOutputEndNoSpeech is still called so the screen lock is released
+        // when nothing is queued or playing.
+        autoSpeech.onOutputEndNoSpeech()
+      } else {
+        const lastMsg = messages.value[messages.value.length - 1]
+        if (lastMsg?.role === 'assistant') {
+          const raw = extractSpeakableText(lastMsg.blocks || [])
+          if (raw && lastMsg.id) {
+            autoSpeech.speakMessage(lastMsg.id, raw)
+          } else {
+            // Output ended but no speakable text — restore screen lock
+            autoSpeech.onOutputEndNoSpeech()
+          }
         } else {
-          // Output ended but no speakable text — restore screen lock
           autoSpeech.onOutputEndNoSpeech()
         }
-      } else {
-        autoSpeech.onOutputEndNoSpeech()
       }
     } else {
       // Auto-speech off — restore screen lock since no TTS will play
@@ -884,6 +969,7 @@ const stream = useChatStream({
   onNotification: (title, opts) => notification.show(title, opts),
   onStreamEnd,
   onQueueDrainBoundary: handleQueueDrainBoundary,
+  onMemberFinalize: handleMemberFinalize,
   onReplayDone: () => { inputDisabled.value = false },
   onFileModified: (filePath) => {
     // Chat-driven file refresh: when AI's Write/Edit tool completes,
@@ -936,7 +1022,7 @@ const stream = useChatStream({
 })
 
 const { pendingFiles, attachedFiles, addAttachedFile, removeAttachedFile, removePendingByPath, cleanupPreviewUrls, clearPendingFiles } = useFileUpload()
-const { stagedQuotes, addStagedQuote, removeStagedQuote, updateStagedQuoteNote, clearAll, removeAttachedFileByPath, snapshotAttachments, restoreAttachments, discardAttachmentDraft } = useChatContext()
+const { stagedQuotes, addStagedQuote, removeStagedQuote, updateStagedQuoteNote, clearAll, removeAttachedFileByPath, snapshotAttachments, restoreAttachments, discardAttachmentDraft, stagedMentions, addStagedMention, removeStagedMention, updateStagedMentionNote, restoreStagedCards } = useChatContext()
 
 const manager = useSessionManager({
   messages,
@@ -1347,7 +1433,7 @@ function removePendingBtw(pendingId) {
 watch(() => identity.currentSessionId.value, (sid) => { loadBtwRecords(sid) }, { immediate: true })
 
 async function sendMessage(text) {
-    const inputText = text !== undefined ? text : (inputBarRef.value?.inputText?.trim() || '')
+    const rawText = text !== undefined ? text : (inputBarRef.value?.inputText?.trim() || '')
 
      // Quotes ride as structured attachment cards, not as text baked into the
      // message. Materialise the staged quotes into FileEntry form here (the one
@@ -1355,6 +1441,21 @@ async function sendMessage(text) {
      // the enqueue path used to rely on the quotes already being in `inputText`,
      // which silently dropped them whenever the session was busy.
      const quoteEntries = materializeQuotes(stagedQuotes.value)
+
+     // Group member cards (@ cards) ARE baked into the text: the protocol is a
+     // text tag and the backend parser only reads text. Serialize them here —
+     // the ONE conversion point — so the direct and enqueue paths agree. A card
+     // with a note also emits a `private` (密送) tag.
+     const mentionText = serializeMentionCards(stagedMentions.value)
+     const inputText = mentionText
+       ? (rawText ? rawText + ' ' + mentionText : mentionText)
+       : rawText
+
+     // Snapshot the cards that clearAll() is about to drop. On a send failure the
+     // restored text is the user's RAW text (no protocol tags), so without this
+     // the @ intent and any private note would be lost silently.
+     const capturedMentions = stagedMentions.value.map(m => ({ ...m }))
+     const capturedQuotes = stagedQuotes.value.map(q => ({ ...q }))
 
      const hasFiles = pendingFiles.value.length > 0 || attachedFiles.value.length > 0 || quoteEntries.length > 0
 
@@ -1398,7 +1499,11 @@ async function sendMessage(text) {
          // input so the user's text isn't lost.
          appLog.w(TAG, 'enqueue path failed, restoring input', err)
          try {
-           inputBarRef.value?.restoreInput(inputText || '')
+           // Restore the user's OWN text, not the serialized form: putting the
+           // raw protocol tags back in the textarea is the exact ugliness the
+           // member cards exist to remove. The cards themselves are restored too.
+           inputBarRef.value?.restoreInput(rawText)
+           restoreStagedCards(capturedMentions, capturedQuotes)
          } catch (e) {
            appLog.e(TAG, 'restoreInput failed', e)
          }
@@ -1433,7 +1538,10 @@ async function sendMessage(text) {
       // whether the typed text comes back.
       appLog.w(TAG, 'sendMessage failed, restoring input', err)
       try {
-        inputBarRef.value?.restoreInput(inputText)
+        // Restore the user's OWN text (not the serialized form) plus the cards
+        // that clearAll() dropped — see the enqueue path above.
+        inputBarRef.value?.restoreInput(rawText)
+        restoreStagedCards(capturedMentions, capturedQuotes)
       } catch (e) {
         appLog.e(TAG, 'restoreInput failed', e)
       }

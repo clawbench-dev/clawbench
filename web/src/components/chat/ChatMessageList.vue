@@ -40,15 +40,24 @@
       </template>
       <template v-else-if="isGroupSession">
         <!-- Group empty state. Same card language as the single-agent welcome
-             (surface + border + radius + 280px cap), with the roster stack
-             standing in for the agent icon and the hint as its text.
-             Deliberately minimal — the group name and the member list are
-             already in the header. -->
+             (surface + border + radius + 280px cap). The card leads with the
+             roster stack + the group's MODE chip, then explains how that mode
+             works — the two modes route completely differently (a host decides
+             who speaks; free mode relays via @-mentions) and that difference is
+             invisible from the roster alone. The group name and member list are
+             already in the header, so they are not repeated here. -->
         <div class="group-welcome">
-          <AvatarStack :members="groupStackMembers" size="lg" :max="4" />
-          <div class="group-welcome-info">
-            <span class="group-welcome-hint">{{ t('chat.messageList.groupStartHint') }}</span>
+          <div class="group-welcome-head">
+            <AvatarStack :members="groupStackMembers" size="lg" :max="4" />
+            <span class="group-welcome-mode" :class="`group-welcome-mode--${groupMode}`">
+              <component :is="groupModeIcon" :size="11" />
+              {{ groupModeTitle }}
+            </span>
           </div>
+          <span class="group-welcome-hint">{{ groupModeDesc }}</span>
+          <ul class="group-welcome-tips">
+            <li v-for="(tip, i) in groupModeTips" :key="i">{{ tip }}</li>
+          </ul>
         </div>
       </template>
       <template v-else-if="currentAgent && !isGroupSession">
@@ -113,6 +122,7 @@
         :resolveSpeakerByName="resolveSpeakerByName"
         :hostMemberId="hostMemberId"
         :isGroupSession="isGroupSession"
+        :userNickname="userNickname"
         @toggle-tool="$emit('toggle-tool', $event)"
         @show-tool-detail="$emit('show-tool-detail', $event)"
         @show-metadata="$emit('show-metadata', $event)"
@@ -210,7 +220,7 @@
 <script setup>
 import { ref, nextTick, inject, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronUp, ChevronsUp, ArrowUp, ChevronsDown, ArrowDown, Bot, Settings, MessageCircleQuestion } from 'lucide-vue-next'
+import { ChevronUp, ChevronsUp, ArrowUp, ChevronsDown, ArrowDown, Bot, Settings, MessageCircleQuestion, Crown, AtSign } from 'lucide-vue-next'
 import ChatMessageItem from './ChatMessageItem.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import AvatarStack from '@/components/common/AvatarStack.vue'
@@ -218,6 +228,7 @@ import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import ChatSkeleton from './ChatSkeleton.vue'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import UserMsgIndexDrawer from './UserMsgIndexDrawer.vue'
+import { GROUP_USER_TARGET_NAME } from '@/utils/groupRouting.ts'
 import TableRowModal from '@/components/common/TableRowModal.vue'
 import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'
 import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
@@ -279,6 +290,15 @@ const props = defineProps({
   /** Group-chat roster (active members, host flagged). Drives the empty-state
    *  avatar stack; empty for non-group sessions. */
   groupMembers: { type: Array, default: () => [] },
+  /** Group mode ("host" | "free"). Selects which set of empty-state instructions
+   *  to show: the two modes route completely differently, so a single hint would
+   *  describe one mode and mislead in the other. */
+  groupMode: { type: String, default: 'host' },
+  /** The configured group-chat user nickname (chat.user_nickname); forwarded to
+   *  ChatMessageItem so @-chips render the human target correctly. Defaults to
+   *  the built-in reserved name so the item's own default is never overridden
+   *  with an empty string. */
+  userNickname: { type: String, default: GROUP_USER_TARGET_NAME },
 })
 
 const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'quote-message', 'file-open', 'load-more', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'fork-from-message', 'rewind-from-message', 'reset-session', 'open-btw'])
@@ -303,6 +323,32 @@ const groupStackMembers = computed(() =>
   (props.groupMembers || [])
     .filter((m) => !m.left)
     .map((m) => ({ id: m.id, agentId: m.agentId, name: m.name, backend: m.backend, isHost: m.isHost })),
+)
+
+// Group empty-state copy, selected by mode. The two modes route completely
+// differently — a host decides who speaks, free mode relays via @-mentions — so
+// one shared hint would describe one mode and mislead in the other. The chip
+// icon mirrors the session list's mode chip (Crown for host, AtSign for the
+// free-mode relay) so the two surfaces read as the same vocabulary.
+const groupModeIcon = computed(() => (props.groupMode === 'free' ? AtSign : Crown))
+const groupModeTitle = computed(() =>
+  props.groupMode === 'free' ? t('chat.messageList.groupModeFreeTitle') : t('chat.messageList.groupModeHostTitle'),
+)
+const groupModeDesc = computed(() =>
+  props.groupMode === 'free' ? t('chat.messageList.groupModeFreeDesc') : t('chat.messageList.groupModeHostDesc'),
+)
+const groupModeTips = computed(() =>
+  props.groupMode === 'free'
+    ? [
+        t('chat.messageList.groupModeFreeTip1'),
+        t('chat.messageList.groupModeFreeTip2'),
+        t('chat.messageList.groupModeFreeTip3'),
+      ]
+    : [
+        t('chat.messageList.groupModeHostTip1'),
+        t('chat.messageList.groupModeHostTip2'),
+        t('chat.messageList.groupModeHostTip3'),
+      ],
 )
 
 /** Number of /btw questions asked after this message (0 = no anchor). */
@@ -1500,33 +1546,79 @@ defineExpose({
 }
 
 /* Group empty state. Mirrors .agent-welcome's card (surface, border, radius,
-   280px cap) so both empty states read as one family; the roster stack takes
-   the icon slot and the hint takes the text slot. */
+   280px cap) so both empty states read as one family. Unlike the single-agent
+   card this is a vertical stack: a head row (roster + mode chip), the mode's
+   one-line description, then its bullet tips — the mode's routing rules need
+   more than a single line to explain. */
 .group-welcome {
   display: flex;
-  align-items: center;
-  gap: var(--space-6);
+  flex-direction: column;
+  gap: var(--space-4);
   padding: 14px var(--space-7);
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
-  max-width: 280px;
+  max-width: 300px;
   width: 100%;
   text-align: left;
 }
 
-.group-welcome-info {
-  flex: 1;
+.group-welcome-head {
   display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-5);
+}
+
+/* Mode chip: same neutral recipe as the session list's mode chip (muted
+   tertiary surface), with the icon carrying the host/free distinction. */
+.group-welcome-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  padding: 2px var(--space-3);
+  border-radius: var(--radius-full);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  white-space: nowrap;
 }
 
 .group-welcome-hint {
   font-size: var(--font-size-md);
   color: var(--text-secondary);
   line-height: var(--line-height-snug);
+}
+
+.group-welcome-tips {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.group-welcome-tips li {
+  position: relative;
+  padding-left: var(--space-6);
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+  line-height: var(--line-height-snug);
+}
+
+.group-welcome-tips li::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 0.55em;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: var(--opacity-muted);
 }
 
 .agent-welcome-icon {

@@ -39,7 +39,7 @@ flowchart LR
 - **任务执行摘要**：任务执行完成后生成摘要，与聊天摘要共享 `summarizeMessage` 调度入口和存储模型，续接对话时无需类型转换
 - **SummaryCards 结构化卡片**：摘要结果携带结构化卡片元数据（`SummaryCards`），持久化到 `summaries.summary_cards` 列。包含三类卡片：工具卡片（`SummaryTool`，记录工具名称和输入摘要）、任务 ID（关联执行记录）、ask-question 卡片（`AskQuestionCard`，含标题和选项）。前端据此在摘要视图中渲染工具调用摘要和交互选项，无需加载完整消息内容
 - **摘要视图 warning/error 横幅**：摘要生成时把原回复中的 warning/error 块收集进 `SummaryCards.Warnings` 通道（与 file-changes 卡片同机制），随 DB → loadHistory API / summary_update WS 透传到前端，摘要分支渲染时复用原文的横幅样式与继续/重试按钮逻辑——消息一旦有摘要，后端会把 content 剥离为 `{"blocks":[]}`，warning/error 数据不再随原文下发，因此必须走摘要卡片通道才能在摘要视图保留错误提示
-- **TTS 语音摘要**：TTS 请求触发时按需生成语音专用摘要。提取 AI 结论和 AskUserQuestion 内容，合并为可朗读文本。结果缓存到独立的 `tts_summaries` 表。语音摘要后端可配置：`simple`（提取结论）或 `api`（LLM 二次压缩）
+- **TTS 语音摘要**：TTS 请求触发时按需生成语音专用摘要。提取 AI 结论和 AskUserQuestion 内容，合并为可朗读文本。结果缓存到独立的 `tts_summaries` 表。语音摘要后端可配置：`simple`（提取结论）、`api`（LLM 二次压缩）或 `auto`（按内容杂质比例自动在两者间分流）
 - **多 pass 压缩**：AI（语音）摘要结果超过 4KB 时自动触发二次摘要，最多两轮。防止超长中间结果传递给下游（尤其是 TTS）
 - **Block 提取算法**：`ExtractLastAnswerFromBlocks` 跳过中间推理，提取最后一个 tool_use 之后的文本作为 AI 结论。无后续文本时回退到最长的文本块——AI Agent 的对话模式通常在工具调用后给出最终综合回答
 - **Markdown 清理**：TTS 模式的 `StripMarkdown` 多阶段清理：代码块移除、行内代码按长度保留或删除（短变量名保留，长代码片段移除）、粗体/标题/列表/表格/脚注剥离、AskUserQuestion 块转为自然语言朗读格式
@@ -48,7 +48,7 @@ flowchart LR
 
 ### 设计要点
 
-- **双管线分离**：TTS 摘要（纯文本、激进压缩）和阅读摘要（提取结论、保留 Markdown 和代码）互不干扰。阅读摘要固定提取结论、不做 AI 压缩，故不暴露后端配置；TTS 摘要后端可配置，支持 `simple` 提取结论或 `api` LLM 压缩。TTS 摘要器故障不影响阅读摘要，反之亦然
+- **双管线分离**：TTS 摘要（纯文本、激进压缩）和阅读摘要（提取结论、保留 Markdown 和代码）互不干扰。阅读摘要固定提取结论、不做 AI 压缩，故不暴露后端配置；TTS 摘要后端可配置，支持 `simple` 提取结论、`api` LLM 压缩或 `auto` 按内容分流。TTS 摘要器故障不影响阅读摘要，反之亦然
 - **AISummaryConfig 共享**：语音摘要（`api` 模式）和推荐回复共享 `ai_summary` 配置（模型、API 端点、格式），用户只需配置一次 LLM 后端，两种功能自动可用
 - **summarizeMessage 统一调度**：聊天和任务共享 `summarizeMessage` 调度入口，均固定提取结论，不区分模式。之前任务绕过 `chatSummaryMode` 直接走 AI 路径，导致短任务输出被存为空摘要——统一后所有场景行为一致
 - **短文本处理**：阅读摘要对短文本直接保存提取的结论（前端展示原文），不触发 AI 调用

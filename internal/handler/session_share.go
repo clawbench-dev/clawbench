@@ -296,7 +296,7 @@ func serveSessionShareList(w http.ResponseWriter, r *http.Request) {
 			Title:        s.Title,
 			Backend:      s.Backend,
 			MessageCount: s.MessageCount,
-			CreatedAt:    s.CreatedAt,
+			CreatedAt:    formatShareTime(s.CreatedAt),
 			Archived:     s.Archived,
 		})
 	}

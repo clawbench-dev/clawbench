@@ -2142,7 +2142,7 @@ describe('ChatInputBar', () => {
     store.state.currentDir = ''
   })
 
-  it('in a group session the @ menu lists members first and inserts a mention tag', async () => {
+  it('in a group session the @ menu lists members first and adds a card (no raw tag)', async () => {
     const { store } = await import('@/stores/app.ts')
     store.state.currentDir = ''
     store.state.dirEntries = [] as any
@@ -2163,14 +2163,75 @@ describe('ChatInputBar', () => {
 
     await wrapper.findAll('.completion-item')[1].trigger('mousedown')
     await wrapper.vm.$nextTick()
-    // The member row id is written into the tag (not the name), with an empty body.
-    expect(wrapper.vm.inputText).toBe('<clawbench-mention targets="m-b"></clawbench-mention> ')
+    // The pick ADDS A CARD (member row id carried in the payload) and leaves the
+    // textarea alone — the raw protocol tag must never appear in the input.
+    expect(wrapper.emitted('add-mention')![0]).toEqual([
+      { memberId: 'm-b', name: 'Bob', agentId: '', backend: '' },
+    ])
+    expect(wrapper.vm.inputText).toBe('')
+    expect(wrapper.vm.inputText).not.toContain('clawbench-mention')
     // Selecting a member is not an attachment.
     expect(wrapper.emitted('add-attached')).toBeFalsy()
     // A member pick is a one-shot insertion: the menu must CLOSE (a file pick
     // keeps it open to browse). Without this the sticky re-arm would re-open the
     // roster on the next refresh.
     expect(wrapper.vm.showFileMenu).toBe(false)
+  })
+
+  it('renders a staged member card in the attachment strip', async () => {
+    const wrapper = mountBar({
+      isGroupSession: true,
+      mentions: [{ id: 'mt-1', memberId: 'm-a', name: 'Alice', agentId: 'a-1', backend: 'claude', note: '' }],
+    })
+    await wrapper.vm.$nextTick()
+    const card = wrapper.find('.mention-card')
+    expect(card.exists()).toBe(true)
+    expect(card.find('.mention-card-name').text()).toBe('Alice')
+  })
+
+  it('marks a member card with a private note and emits remove', async () => {
+    const wrapper = mountBar({
+      isGroupSession: true,
+      mentions: [{ id: 'mt-1', memberId: 'm-a', name: 'Alice', note: '机密' }],
+    })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.mention-card').classes()).toContain('is-private')
+    await wrapper.find('.mention-card-close').trigger('click')
+    expect(wrapper.emitted('remove-mention')![0]).toEqual(['mt-1'])
+  })
+
+  it('a member card alone counts as input content (send button not in quick-menu mode)', async () => {
+    const wrapper = mountBar({
+      isGroupSession: true,
+      mentions: [{ id: 'mt-1', memberId: 'm-a', name: 'Alice', note: '' }],
+    })
+    await wrapper.vm.$nextTick()
+    expect((wrapper.vm as any).hasInputContent).toBeTruthy()
+  })
+
+  it('has no concurrency switch in the action bar (it lives in the group settings sheet)', async () => {
+    // The switch was briefly an action-bar button; it now belongs to the group
+    // configuration sheet. Guard against it creeping back.
+    const wrapper = mountBar({ isGroupSession: true })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-action="toggle-parallel"]').exists()).toBe(false)
+  })
+
+  it('shows the group-settings button only in a group session', async () => {
+    const group = mountBar({ isGroupSession: true })
+    await group.vm.$nextTick()
+    expect(group.find('[data-action="group-settings"]').exists()).toBe(true)
+
+    const single = mountBar({ isGroupSession: false })
+    await single.vm.$nextTick()
+    expect(single.find('[data-action="group-settings"]').exists()).toBe(false)
+  })
+
+  it('emits open-group-settings when the group-settings button is clicked', async () => {
+    const wrapper = mountBar({ isGroupSession: true })
+    await wrapper.vm.$nextTick()
+    await wrapper.find('[data-action="group-settings"]').trigger('click')
+    expect(wrapper.emitted('open-group-settings')).toBeTruthy()
   })
 
   it('carries the member avatar/backend into the @ menu items', async () => {

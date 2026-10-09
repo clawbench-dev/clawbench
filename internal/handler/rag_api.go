@@ -537,12 +537,14 @@ func ServeRAGSessionFirstMessage(w http.ResponseWriter, r *http.Request) {
 		MessageID int64      `json:"message_id"`
 		Role      string     `json:"role"`
 		Content   string     `json:"content"`
+		AgentID   string     `json:"agent_id,omitempty"`
 		CreatedAt *time.Time `json:"created_at"`
 	}{}
 	if msg != nil {
 		resp.MessageID = msg.MessageID
 		resp.Role = msg.Role
 		resp.Content = msg.Content
+		resp.AgentID = msg.AgentID
 		resp.CreatedAt = &msg.CreatedAt
 	}
 
@@ -606,6 +608,7 @@ func ServeRAGSessionSearch(w http.ResponseWriter, r *http.Request) {
 		if result.Sessions == nil {
 			result.Sessions = []rag.SessionSearchResult{}
 		}
+		attachGroupMembersToSearchResults(result.Sessions)
 		writeJSON(w, http.StatusOK, result)
 		return
 	}
@@ -639,5 +642,43 @@ func ServeRAGSessionSearch(w http.ResponseWriter, r *http.Request) {
 	if result.Sessions == nil {
 		result.Sessions = []rag.SessionSearchResult{}
 	}
+	attachGroupMembersToSearchResults(result.Sessions)
 	writeJSON(w, http.StatusOK, result)
+}
+
+// attachGroupMembersToSearchResults batch-loads the group preview and speaker
+// roster for group-chat results. GroupMembers (active only) drives the stacked
+// avatars; GroupSpeakers (left members included) resolves a chunk's speaker to
+// a name even after that member has left. The rag package owns no service
+// dependency, so the enrichment lives here. Like the session list's
+// attachGroupMembers, a lookup failure is logged and swallowed: this is
+// decoration and must not take down a search that otherwise succeeded.
+func attachGroupMembersToSearchResults(sessions []rag.SessionSearchResult) {
+	groupIDs := make([]string, 0, len(sessions))
+	for i := range sessions {
+		if service.IsGroupSessionType(sessions[i].SessionType) {
+			groupIDs = append(groupIDs, sessions[i].SessionID)
+		}
+	}
+	if len(groupIDs) == 0 {
+		return
+	}
+	if membersByGroup, err := service.GroupMembersForGroups(groupIDs); err != nil {
+		slog.Warn("failed to load group members for search results", "error", err)
+	} else {
+		for i := range sessions {
+			if members := membersByGroup[sessions[i].SessionID]; len(members) > 0 {
+				sessions[i].GroupMembers = members
+			}
+		}
+	}
+	if speakersByGroup, err := service.GroupMemberSpeakersForGroups(groupIDs); err != nil {
+		slog.Warn("failed to load group speakers for search results", "error", err)
+	} else {
+		for i := range sessions {
+			if speakers := speakersByGroup[sessions[i].SessionID]; len(speakers) > 0 {
+				sessions[i].GroupSpeakers = speakers
+			}
+		}
+	}
 }

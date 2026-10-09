@@ -221,6 +221,10 @@ func serveAgentsDuplicate(w http.ResponseWriter, r *http.Request) {
 	clone, err := service.DuplicateAgent(req.SourceID, req.Name)
 	if err != nil {
 		slog.Error("failed to duplicate agent", "source", req.SourceID, "error", err)
+		if errors.Is(err, service.ErrAgentNameReserved) {
+			writeLocalizedErrorf(w, r, http.StatusConflict, "AgentNameReserved")
+			return
+		}
 		if errors.Is(err, service.ErrAgentNameTaken) {
 			writeLocalizedErrorf(w, r, http.StatusConflict, "AgentNameTaken")
 			return
@@ -641,6 +645,10 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 
 	// Persist to database
 	if err := service.PatchAgentFields(agentID, ap); err != nil {
+		if errors.Is(err, service.ErrAgentNameReserved) {
+			writeLocalizedErrorf(w, r, http.StatusConflict, "AgentNameReserved")
+			return
+		}
 		if errors.Is(err, service.ErrAgentNameTaken) {
 			writeLocalizedErrorf(w, r, http.StatusConflict, "AgentNameTaken")
 			return
