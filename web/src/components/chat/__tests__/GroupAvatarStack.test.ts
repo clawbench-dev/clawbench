@@ -14,8 +14,8 @@ vi.mock('@/composables/useAgents', () => ({
   getAgentAvatar: () => '',
 }))
 const sheetOpen = vi.fn()
-vi.mock('../GroupMemberSheet.vue', () => ({
-  default: { name: 'GroupMemberSheet', template: '<div class="sheet-stub" />', methods: { open: () => sheetOpen() } },
+vi.mock('../GroupSettingsSheet.vue', () => ({
+  default: { name: 'GroupSettingsSheet', template: '<div class="sheet-stub" />', methods: { open: () => sheetOpen() } },
 }))
 
 function mountStack(members: any[], props: Record<string, unknown> = {}) {

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import GroupMemberSheet from '../GroupMemberSheet.vue'
+import GroupSettingsSheet from '../GroupSettingsSheet.vue'
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (k: string) => k }),
@@ -43,7 +43,7 @@ vi.mock('@/components/common/BottomSheet.vue', () => ({
 }))
 
 function mountSheet(members: any[], props: Record<string, unknown> = {}) {
-  return mount(GroupMemberSheet, {
+  return mount(GroupSettingsSheet, {
     props: { groupId: 'g1', members, maxRounds: 10, autoApprove: false, ...props },
   })
 }
@@ -57,12 +57,22 @@ const MEMBERS = [
   { id: 'm1', name: 'Host', backend: 'codebuddy', agentId: 'a1', isHost: true },
 ]
 
-describe('GroupMemberSheet', () => {
+describe('GroupSettingsSheet', () => {
   beforeEach(() => {
     mockRemove.mockClear()
     mockAdd.mockClear()
     mockUpdateSettings.mockClear()
     mockToggleAutoApprove.mockClear()
+  })
+
+  // The panel is the group's settings surface (members + maxRounds + concurrency
+  // + auto-approve), so its header reads "群聊设置" — not "成员", which described
+  // only the roster and undersold the settings rows below it.
+  it('titles the header with the group-settings key, not the members key', () => {
+    const w = mountSheet(MEMBERS)
+    const title = w.find('.bs-header-title')
+    expect(title.exists()).toBe(true)
+    expect(title.text()).toBe('group.settings')
   })
 
   it('renders one row per member with an avatar and name, host pinned first', () => {
@@ -119,7 +129,7 @@ describe('GroupMemberSheet', () => {
     expect(add.exists()).toBe(true)
     expect(add.text()).toContain('group.addMembers')
     // It must NOT also linger in the body.
-    expect(w.find('.group-member-sheet').find('[data-action="add-members"]').exists()).toBe(false)
+    expect(w.find('.group-settings-sheet').find('[data-action="add-members"]').exists()).toBe(false)
     expect(w.find('.gm-add').exists()).toBe(false)
   })
 

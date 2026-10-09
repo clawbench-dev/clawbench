@@ -1,8 +1,8 @@
 <template>
-  <BottomSheet :open="open" auto :title="t('group.members')" @close="close">
+  <BottomSheet :open="open" auto :title="t('group.settings')" @close="close">
     <template #header>
       <div class="gm-header">
-        <span class="bs-header-title">{{ t('group.members') }}</span>
+        <span class="bs-header-title">{{ t('group.settings') }}</span>
         <!-- Add members lives in the HEADER, not as a full-width pill at the
              bottom of the body: adding is the sheet's primary action and belongs
              at the top edge where the roster begins, next to the title it
@@ -16,7 +16,7 @@
       </div>
     </template>
 
-    <div class="group-member-sheet">
+    <div class="group-settings-sheet">
       <!-- Member roster -->
       <ul class="gm-list">
         <li
@@ -224,7 +224,7 @@ defineExpose({ open: openSheet })
 </script>
 
 <style scoped>
-.group-member-sheet {
+.group-settings-sheet {
   display: flex;
   flex-direction: column;
   gap: var(--space-5);

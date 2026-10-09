@@ -879,7 +879,7 @@ describe('ChatPanelContent — isGroupSession derives from session type', () => 
 // ── Concurrency switch is NOT in the chat panel ──
 //
 // The free-mode concurrency switch lives in the group configuration sheet
-// (GroupMemberSheet, reached from the header avatar stack), NOT in the chat
+// (GroupSettingsSheet, reached from the header avatar stack), NOT in the chat
 // input's action bar. It was briefly wired through this component; guard that
 // it does not creep back, and that no dead props/handlers remain.
 //

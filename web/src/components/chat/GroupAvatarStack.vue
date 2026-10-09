@@ -19,7 +19,7 @@
       <component :is="modeIcon" :size="12" />
     </span>
     <AvatarStack :members="stackMembers" size="md" :max="4" />
-    <GroupMemberSheet
+    <GroupSettingsSheet
       ref="sheetRef"
       :groupId="sessionId"
       :members="members"
@@ -38,7 +38,7 @@ import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Crown, AtSign } from 'lucide-vue-next'
 import AvatarStack from '@/components/common/AvatarStack.vue'
-import GroupMemberSheet from './GroupMemberSheet.vue'
+import GroupSettingsSheet from './GroupSettingsSheet.vue'
 import type { GroupMemberInfo } from '@/composables/useGroupChat'
 
 const props = defineProps<{
@@ -58,7 +58,7 @@ const props = defineProps<{
 defineEmits<{ (e: 'changed'): void }>()
 
 const { t } = useI18n()
-const sheetRef = ref<InstanceType<typeof GroupMemberSheet> | null>(null)
+const sheetRef = ref<InstanceType<typeof GroupSettingsSheet> | null>(null)
 
 // Map the group roster to the generic stack shape (isHost drives the ring).
 const stackMembers = computed(() =>

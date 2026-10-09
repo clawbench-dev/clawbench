@@ -1297,7 +1297,7 @@ const isGroupSession = computed(() => sessionIdentity.currentSessionType.value =
 // which the backend keeps in sync with the member rows — decision #61).
 const groupAutoApprove = sessionIdentity.autoApprove
 
-// The header avatar stack owns the GroupMemberSheet. The action bar's
+// The header avatar stack owns the GroupSettingsSheet. The action bar's
 // group-settings button opens that SAME sheet (not a second instance), so the
 // roster is fetched once and both entry points stay in sync.
 const groupAvatarStackRef = ref<InstanceType<typeof GroupAvatarStack> | null>(null)

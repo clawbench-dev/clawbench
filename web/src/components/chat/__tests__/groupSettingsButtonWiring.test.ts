@@ -4,7 +4,7 @@ import { readWebFile } from '@/testUtils/readWebFile'
 /**
  * Guard: the chat action bar must expose a group-settings button in group
  * sessions, and it must open the SAME sheet as clicking the header avatar
- * stack — not a second GroupMemberSheet instance.
+ * stack — not a second GroupSettingsSheet instance.
  *
  * The header stack is the primary entry, but the action bar is where every
  * other session action lives and it is the reachable door on narrow panes. A
@@ -53,9 +53,9 @@ describe('group settings button in the input action bar', () => {
     // App listens for the panel's emit and forwards to the ref's open().
     expect(app).toContain('@open-group-settings="openGroupSettings"')
     expect(app).toMatch(/function openGroupSettings\(\)\s*\{[\s\S]*?groupAvatarStackRef\.value\?\.open\(\)/)
-    // Exactly ONE GroupMemberSheet is rendered in the whole app (inside the
+    // Exactly ONE GroupSettingsSheet is rendered in the whole app (inside the
     // stack) — a second one would fetch the roster twice and desync.
-    expect(app).not.toContain('<GroupMemberSheet')
+    expect(app).not.toContain('<GroupSettingsSheet')
   })
 
   it('exposes open() on the header avatar stack', () => {

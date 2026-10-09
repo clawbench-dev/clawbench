@@ -99,7 +99,7 @@ Composable 与组件均按域分组（Chat、Session、Terminal、File、Git、N
 
 `web/src/utils/askQuestion.ts` 与 Go 的 `internal/askquestion` 互为镜像（共享语料 `internal/askquestion/testdata/parity_corpus.json` 双向固化）——改一侧必须同步另一侧，否则同一段文本会在前后端得到不同解析。`web/src/utils/groupRouting.ts` 与 Go 的 `internal/grouprouting` 同样互为镜像（群聊 @ 提及 / 结束标签 / 密送，共享 parity 语料）。
 
-**群聊前端**：`useGroupChat.ts`（群回合状态、路由卡片渲染）+ `useGroupMembers.ts`（成员花名册与 `isGroupSession` 判定，用后端 `sessionType === 'group'` 而非"名单非空"）+ `GroupMemberSheet.vue`（成员管理抽屉）、`GroupAvatarStack.vue` / `GroupMemberStack.vue`（头像堆叠，主持人排最前）、`SessionGroupHeader.vue`。建群入口在会话列表头，复用 `AgentSelectorDrawer` 的多选模式。
+**群聊前端**：`useGroupChat.ts`（群回合状态、路由卡片渲染）+ `useGroupMembers.ts`（成员花名册与 `isGroupSession` 判定，用后端 `sessionType === 'group'` 而非"名单非空"）+ `GroupSettingsSheet.vue`（群聊设置抽屉：成员管理 + 群设置）、`GroupAvatarStack.vue` / `GroupMemberStack.vue`（头像堆叠，主持人排最前）、`SessionGroupHeader.vue`。建群入口在会话列表头，复用 `AgentSelectorDrawer` 的多选模式。
 
 宽屏 Dock 页签定义在 `web/src/composables/dockTabs.ts`（单一注册表，渲染集合与切换白名单都从它派生），图标单独放 `dockTabMeta.ts`。`dockTabs.ts` 必须保持零 import（`useWideScreenLayout` 依赖它，而多个测试文件对 `lucide-vue-next` 做了窄 mock）。左侧面板归属（宽屏 Dock 显示哪个页签）是**项目属性**而非代码路径属性，由 `useProjectPanel.ts` 按 `clawbench-project-panel:<项目根>` 记忆；项目切换期间用计数器抑制误写（可并发调用，布尔会被先结束者清掉）。
 
