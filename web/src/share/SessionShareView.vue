@@ -44,11 +44,16 @@
         <span v-if="loading" class="share-status">{{ t('share.loading') }}</span>
         <span v-else-if="error" class="share-status share-error">{{ error }}</span>
         <template v-else>
-          <span v-if="backendLabel" class="session-share-agent">
+          <!-- Group shares mirror the in-app group header: an overlapping
+               avatar stack (host first) instead of a single agent icon. -->
+          <span v-if="isGroupShare" class="session-share-agent session-share-group">
+            <AvatarStack :members="stackMembers" size="sm" :max="4" />
+          </span>
+          <span v-else-if="backendLabel" class="session-share-agent">
             <AgentIcon :backend="backendLabel" :name="agentName" size="sm" />
             <span class="session-share-agent-name">{{ agentName }}</span>
           </span>
-          <span v-if="backendLabel && messageCount > 0" class="session-share-dot" aria-hidden="true">·</span>
+          <span v-if="(isGroupShare || backendLabel) && messageCount > 0" class="session-share-dot" aria-hidden="true">·</span>
           <span v-if="messageCount > 0" class="session-share-count">
             {{ t('share.messageCount', { count: messageCount }) }}
           </span>
@@ -202,6 +207,7 @@ import AgentIcon from '@/components/common/AgentIcon.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import ChatMessageItem from '@/components/chat/ChatMessageItem.vue'
 import MessageIndexRow from '@/components/chat/MessageIndexRow.vue'
+import AvatarStack, { type StackMember } from '@/components/common/AvatarStack.vue'
 import { makeSpeakerResolver, type SpeakerIdentity } from '@/utils/speakerIdentity'
 import { resolveMentionDisplayName, type MentionSpeaker } from '@/utils/groupRouting'
 import ToolDetailDrawer from '@/components/chat/ToolDetailDrawer.vue'
@@ -286,6 +292,31 @@ const tocItems = computed<TocMessage[]>(() => messages.value as unknown as TocMe
 const sessionAgent = ref<SpeakerIdentity | null>(null)
 const speakers = ref<Record<string, SpeakerIdentity> | null>(null)
 const resolveSpeaker = computed(() => makeSpeakerResolver(sessionAgent.value, speakers.value))
+// The group's ACTIVE roster, frozen in roster order with the host flagged
+// (group shares only; empty for single-agent). The topbar renders the same
+// overlapping avatar stack the in-app group header shows. This is NOT derived
+// from `speakers`: that is a map (UUID-sorted keys) and includes left members.
+interface ShareGroupMember {
+  id: string
+  agentId?: string
+  name?: string
+  backend: string
+  isHost?: boolean
+}
+const groupMembers = ref<ShareGroupMember[]>([])
+const isGroupShare = computed(() => groupMembers.value.length > 0)
+// AvatarStack resolves avatars from agentId via useAgents, which the anonymous
+// share SPA never loads — so every disc renders the built-in per-backend brand
+// icon, exactly as intended (the server omits avatars on the share path).
+const stackMembers = computed<StackMember[]>(() =>
+  groupMembers.value.map((m) => ({
+    id: m.id,
+    agentId: m.agentId || '',
+    name: m.name || '',
+    backend: m.backend,
+    isHost: !!m.isHost,
+  })),
+)
 // The group host's member row id, frozen into the snapshot so the viewer can
 // mark the host's messages AND render their private notes (bcc) card — without
 // it every group message reads as a plain member and the card never appears.
@@ -657,6 +688,7 @@ async function loadSnapshot() {
     backendLabel.value = payload?.session?.backend || ''
     sessionAgent.value = payload?.sessionAgent || null
     speakers.value = payload?.speakers || null
+    groupMembers.value = Array.isArray(payload?.groupMembers) ? payload.groupMembers : []
     hostMemberId.value = payload?.session?.hostMemberId || ''
     const rawMessages = Array.isArray(payload?.messages) ? payload.messages : []
     messageCount.value = rawMessages.length

@@ -358,6 +358,34 @@ describe('SessionShareView', () => {
     expect(wrapper.find('.session-share-agent .agent-icon-svg, .session-share-agent .agent-icon-initial').exists()).toBe(true)
   })
 
+  // A shared GROUP mirrors the in-app group header: an overlapping avatar stack
+  // (host first, +N overflow) built from the frozen ACTIVE roster — not the
+  // single session-agent icon a 1:1 share shows.
+  it('renders an avatar stack for a group share', async () => {
+    globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
+      const u = String(url)
+      if (u.includes('/session')) {
+        const p = makePayload()
+        ;(p as Record<string, unknown>).groupMembers = [
+          { id: 'm-host', agentId: 'a1', name: 'Host', backend: 'codebuddy', isHost: true },
+          { id: 'm-second', agentId: 'a2', name: 'Second', backend: 'claude' },
+        ]
+        return { ok: true, json: async () => p } as Response
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as Response
+    }) as unknown as typeof fetch
+
+    const wrapper = await mountView()
+    const stack = wrapper.find('.session-share-byline .avatar-stack')
+    expect(stack.exists()).toBe(true)
+    // One disc per active member, host led first.
+    const discs = stack.findAll('.avatar-disc')
+    expect(discs).toHaveLength(2)
+    expect(discs[0].classes()).toContain('is-host')
+    // The single-agent icon is replaced by the stack.
+    expect(wrapper.find('.session-share-byline .session-share-agent-name').exists()).toBe(false)
+  })
+
   it('renders one message per snapshot entry with blocks parsed', async () => {
     const wrapper = await mountView()
     const rows = wrapper.findAll('.chat-message-stub')
