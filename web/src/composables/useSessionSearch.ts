@@ -13,6 +13,12 @@ export interface ChunkHit {
   score: number
   role: string
   message_id: number
+  /**
+   * The group-chat speaker (member row id) that produced this chunk's message,
+   * or absent for a single-agent message. Resolved to a display name via the
+   * owning session's group_members roster.
+   */
+  agent_id?: string
   created_at: string
 }
 
@@ -37,6 +43,21 @@ export interface SessionSearchResult {
    * lazily fetches the first message instead, exactly as browse mode does.
    */
   title_only: boolean
+  /**
+   * Active-member preview for a group-chat row, mirroring the session list's
+   * stacked avatars. Absent for 1:1 and task sessions.
+   */
+  group_members?: GroupMemberPreview[]
+}
+
+/** A compact preview of one active group member (see model.GroupMemberPreview). */
+export interface GroupMemberPreview {
+  id: string
+  agentId: string
+  name: string
+  backend: string
+  /** The group host; the stack leads with it (leading disc is fully visible). */
+  isHost?: boolean
 }
 
 interface SessionSearchResponse {
@@ -52,8 +73,9 @@ export type SessionArchiveFilter = 'all' | 'active' | 'archived'
 export type SessionSortOrder = 'relevance' | 'newest' | 'oldest'
 export type SessionTimeRange = 'all' | 'today' | '7d' | '30d' | 'custom'
 // 'task' is the user-facing name for sessions stored as session_type='scheduled'
-// (one per task execution).
-export type SessionTypeFilter = 'all' | 'chat' | 'task'
+// (one per task execution); 'group' is an AI group chat. The three concrete
+// types are mutually exclusive — 'chat' is a 1:1 conversation only.
+export type SessionTypeFilter = 'all' | 'chat' | 'group' | 'task'
 
 // formatLocalDate renders a Date as "YYYY-MM-DD" in local time. Using
 // toISOString() here would shift the day for users east/west of UTC, so the
@@ -112,6 +134,7 @@ export async function fetchSessionFirstMessage(sessionId: string): Promise<Chunk
       score: 0,
       role: data.role ?? '',
       message_id: data.message_id ?? 0,
+      agent_id: data.agent_id || undefined,
       created_at: data.created_at ?? '',
     }
   } catch (err: unknown) {

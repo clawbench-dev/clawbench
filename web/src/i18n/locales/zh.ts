@@ -1110,6 +1110,7 @@ export default {
     filterType: '类型',
     typeAll: '全部',
     typeChat: '对话',
+    typeGroup: '群聊',
     typeTask: '任务',
     sortLabel: '排序',
     sortRelevance: '相关性',

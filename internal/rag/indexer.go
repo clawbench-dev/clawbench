@@ -516,6 +516,7 @@ func (idx *Indexer) chunkMessages(messages []store.UnindexedMessage) ([]msgChunk
 				ProjectPath:        msg.ProjectPath,
 				Backend:            msg.Backend,
 				Role:               msg.Role,
+				AgentID:            msg.AgentID,
 				CreatedAt:          msg.CreatedAt,
 			}
 			allTexts = append(allTexts, tc.Text)

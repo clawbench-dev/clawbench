@@ -519,21 +519,31 @@ func TestRAGSessionSearch_TypeFilter(t *testing.T) {
 		testProjectID,
 	)
 	require.NoError(t, err)
+	_, err = serviceDB.Exec(
+		"INSERT INTO chat_sessions (id, project_id, backend, title, session_type) VALUES ('sess-group', ?, 'claude', 'Group chat', 'group')",
+		testProjectID,
+	)
+	require.NoError(t, err)
 
-	for i, sid := range []string{"sess-conv", "sess-job"} {
+	for i, sid := range []string{"sess-conv", "sess-job", "sess-group"} {
 		require.NoError(t, store.InsertChunks([]Chunk{
 			makeTestChunk(sid, int64(i+1), 0, testDBQueryOptimization),
 		}))
 	}
 
-	// "all" (and empty) → no type restriction, both sessions returned.
+	// "all" (and empty) → no type restriction in SEARCH mode: every matching
+	// session is returned (chat, group, and the scheduled task run). Browse mode
+	// ("recent") is the one that narrows "all" to conversations only.
 	all, err := RAGSessionSearch(context.Background(), store, nil, SearchParams{
 		Query:       "database",
 		ProjectPath: testProjectPath,
 		SessionType: "all",
 	}, 10, 20)
 	require.NoError(t, err)
-	require.Len(t, all.Sessions, 2)
+	require.Len(t, all.Sessions, 3)
+	allIDs := []string{all.Sessions[0].SessionID, all.Sessions[1].SessionID, all.Sessions[2].SessionID}
+	assert.ElementsMatch(t, []string{"sess-conv", "sess-group", "sess-job"}, allIDs,
+		"search \"all\" applies no type restriction")
 
 	// "task" → only the scheduled session, and its type is reported back.
 	task, err := RAGSessionSearch(context.Background(), store, nil, SearchParams{
@@ -546,7 +556,7 @@ func TestRAGSessionSearch_TypeFilter(t *testing.T) {
 	assert.Equal(t, "sess-job", task.Sessions[0].SessionID)
 	assert.Equal(t, "scheduled", task.Sessions[0].SessionType)
 
-	// "chat" → only the conversation.
+	// "chat" → only the 1:1 conversation; group chats are now a separate filter.
 	chat, err := RAGSessionSearch(context.Background(), store, nil, SearchParams{
 		Query:       "database",
 		ProjectPath: testProjectPath,
@@ -557,14 +567,26 @@ func TestRAGSessionSearch_TypeFilter(t *testing.T) {
 	assert.Equal(t, "sess-conv", chat.Sessions[0].SessionID)
 	assert.Equal(t, "chat", chat.Sessions[0].SessionType)
 
-	// An unknown value falls back to "all" rather than dropping everything.
+	// "group" → only the group chat.
+	group, err := RAGSessionSearch(context.Background(), store, nil, SearchParams{
+		Query:       "database",
+		ProjectPath: testProjectPath,
+		SessionType: "group",
+	}, 10, 20)
+	require.NoError(t, err)
+	require.Len(t, group.Sessions, 1)
+	assert.Equal(t, "sess-group", group.Sessions[0].SessionID)
+	assert.Equal(t, "group", group.Sessions[0].SessionType)
+
+	// An unknown value falls back to "all" (no restriction) rather than
+	// dropping everything.
 	bogus, err := RAGSessionSearch(context.Background(), store, nil, SearchParams{
 		Query:       "database",
 		ProjectPath: testProjectPath,
 		SessionType: "bogus",
 	}, 10, 20)
 	require.NoError(t, err)
-	assert.Len(t, bogus.Sessions, 2)
+	assert.Len(t, bogus.Sessions, 3)
 }
 
 // TestRAGSessionSearch_TypeFilterUnknownTypeTreatedAsChat mirrors the archive
@@ -596,6 +618,38 @@ func TestRAGSessionSearch_TypeFilterUnknownTypeTreatedAsChat(t *testing.T) {
 	}, 10, 20)
 	require.NoError(t, err)
 	assert.Empty(t, task.Sessions)
+}
+
+// TestRAGSessionSearch_CarriesSpeakerAgentID pins that a chunk's speaker
+// (chat_history.agent_id, set for group-chat messages) round-trips through the
+// RAG store and out to the search result's chunk hits, so the drawer can name
+// the member who said it. A single-agent chunk carries no agent id.
+func TestRAGSessionSearch_CarriesSpeakerAgentID(t *testing.T) {
+	store := setupSQLiteStore(t)
+	SetEmbedderHealthy(false)
+
+	groupChunk := makeTestChunk("sess-group", 1, 0, testDBQueryOptimization)
+	groupChunk.AgentID = "member-row-7"
+	plainChunk := makeTestChunk("sess-plain", 2, 0, testDBQueryOptimization)
+	require.NoError(t, store.InsertChunks([]Chunk{groupChunk, plainChunk}))
+
+	res, err := RAGSessionSearch(context.Background(), store, nil, SearchParams{
+		Query:       "database",
+		ProjectPath: testProjectPath,
+		SessionType: "all",
+	}, 10, 20)
+	require.NoError(t, err)
+
+	chunksBySession := map[string][]ChunkHit{}
+	for _, s := range res.Sessions {
+		chunksBySession[s.SessionID] = s.Chunks
+	}
+	require.Len(t, chunksBySession["sess-group"], 1)
+	assert.Equal(t, "member-row-7", chunksBySession["sess-group"][0].AgentID,
+		"a group chunk must carry its speaker's member row id")
+	require.Len(t, chunksBySession["sess-plain"], 1)
+	assert.Empty(t, chunksBySession["sess-plain"][0].AgentID,
+		"a single-agent chunk must carry no speaker")
 }
 
 // ---------- aggregateSessionHits / sessionIDSet / sortSessionResults ----------

@@ -196,6 +196,13 @@
             <div class="session-search-item-footer">
               <span v-if="session.title_match" class="session-search-item-titlematch">{{ t('sessionSearch.titleMatch') }}</span>
               <span v-if="session.session_type" class="session-search-item-type" :class="'session-search-item-type-' + session.session_type">{{ sessionTypeLabel(session.session_type) }}</span>
+              <span v-if="session.session_type === 'group' && session.group_members && session.group_members.length" class="session-search-item-group">
+                <GroupMemberStack :members="session.group_members" />
+                <template v-if="groupModeLabel(session)">
+                  <component :is="groupModeIcon(session)" :size="10" />
+                  {{ groupModeLabel(session) }}
+                </template>
+              </span>
               <span v-if="session.archived" class="session-search-item-archived">{{ t('sessionSearch.archived') }}</span>
               <span v-if="session.backend" class="session-search-item-backend">{{ session.backend }}</span>
               <span v-if="!isBrowseMode && session.chunks.length > 0" class="session-search-item-chunks">{{ t('sessionSearch.chunks', { count: session.match_count }) }}</span>
@@ -226,7 +233,7 @@
         <div class="detail-chunk-role" :class="'role-' + chunk.role">
           <User :size="11" v-if="chunk.role === 'user'" />
           <Bot :size="11" v-else />
-          {{ chunk.role === 'user' ? t('sessionSearch.roleUser') : t('sessionSearch.roleAssistant') }}
+          {{ chunkRoleLabel(chunk) }}
         </div>
         <div
           :ref="el => setChunkRef(chunk.chunk_id, el)"
@@ -259,11 +266,12 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onBeforeUpdate, onBeforeUnmount, onUnmounted, type ComponentPublicInstance } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Search, ChevronLeft, ChevronDown, Check, User, Bot, RotateCcw, Import, MessageSquare, Trash2 } from 'lucide-vue-next'
+import { Search, ChevronLeft, ChevronDown, Check, User, Bot, RotateCcw, Import, MessageSquare, Trash2, Crown, AtSign } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
 import PopupMenu from '@/components/common/PopupMenu.vue'
+import GroupMemberStack from '@/components/session/GroupMemberStack.vue'
 import { useSessionSearch, fetchSessionFirstMessage, type SessionSearchResult, type ChunkHit, type SessionArchiveFilter, type SessionSortOrder, type SessionTimeRange, type SessionTypeFilter } from '@/composables/useSessionSearch'
 import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
@@ -366,6 +374,7 @@ const sortOptions = computed(() => [
 const typeOptions = computed(() => [
   { value: 'all' as SessionTypeFilter, label: t('sessionSearch.typeAll') },
   { value: 'chat' as SessionTypeFilter, label: t('sessionSearch.typeChat') },
+  { value: 'group' as SessionTypeFilter, label: t('sessionSearch.typeGroup') },
   { value: 'task' as SessionTypeFilter, label: t('sessionSearch.typeTask') },
 ])
 
@@ -404,10 +413,53 @@ function chooseType(type: SessionTypeFilter) {
   setTypeFilter(type)
 }
 
-// sessionTypeLabel renders the badge text for a stored session_type. 'scheduled'
-// is the DB value for a task execution; anything else is a conversation.
+// sessionTypeLabel renders the badge text for a stored session_type.
+// 'scheduled' is the DB value for a task execution, 'group' for a group chat;
+// anything else (including the schema-default empty string) is a 1:1 chat.
 function sessionTypeLabel(sessionType: string): string {
-  return sessionType === 'scheduled' ? t('sessionSearch.typeTask') : t('sessionSearch.typeChat')
+  if (sessionType === 'scheduled') return t('sessionSearch.typeTask')
+  if (sessionType === 'group') return t('sessionSearch.typeGroup')
+  return t('sessionSearch.typeChat')
+}
+
+// ── Group row: mode chip (mirrors SessionList) ──
+// The mode is inferred from the member preview: a roster carrying the host
+// marker is host mode, a non-empty roster without it is free mode. An empty
+// roster leaves it unknowable — the chip is then omitted rather than guessed.
+function groupModeOf(session: SessionSearchResult): '' | 'host' | 'free' {
+  const members = session.group_members || []
+  if (members.length === 0) return ''
+  return members.some(m => m.isHost) ? 'host' : 'free'
+}
+
+function groupModeLabel(session: SessionSearchResult): string {
+  const mode = groupModeOf(session)
+  if (mode === 'host') return t('group.hostMode')
+  if (mode === 'free') return t('group.freeMode')
+  return ''
+}
+
+function groupModeIcon(session: SessionSearchResult) {
+  return groupModeOf(session) === 'host' ? Crown : AtSign
+}
+
+// chunkRoleLabel names the speaker of a detail chunk. For a group session an
+// assistant chunk carries the speaker's member row id (agent_id), which is
+// resolved against the session's roster; an unresolved or single-agent chunk
+// falls back to the generic User/Assistant labels.
+function chunkRoleLabel(chunk: ChunkHit): string {
+  if (chunk.role === 'user') return t('sessionSearch.roleUser')
+  const name = resolveMemberName(chunk.agent_id)
+  return name || t('sessionSearch.roleAssistant')
+}
+
+// resolveMemberName maps a group member row id to its display name using the
+// selected session's roster. Returns '' when there is no id, no roster, or no
+// matching member — the caller then shows the generic role label.
+function resolveMemberName(agentId?: string): string {
+  if (!agentId) return ''
+  const members = selectedSession.value?.group_members || []
+  return members.find(m => m.id === agentId)?.name || ''
 }
 
 // ── Lazy first-message preview (browse mode only) ──
@@ -1036,6 +1088,17 @@ defineExpose({ focusSearchInput })
   color: var(--text-secondary, #666);
 }
 
+/* Group row: stacked member avatars + an inline mode chip, matching the
+   session list's treatment. Kept off the pill background the plain badges use
+   so the avatar rings read as a cluster rather than another label. */
+.session-search-item-group {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--font-size-2xs);
+  color: var(--text-muted, #999);
+}
+
 /* Title-match badge: the session was found by its name, not (only) by its
    message content. Accent-tinted so it reads as the stronger signal — title
    matches are ranked first in the list. */
@@ -1065,6 +1128,13 @@ defineExpose({ focusSearchInput })
 .session-search-item-type-chat {
   background: var(--bg-tertiary, #eee);
   color: var(--text-secondary, #666);
+}
+
+/* Group chats get their own hue so they read apart from both a 1:1 chat
+   (neutral) and a task execution (orange) at a glance in the result list. */
+.session-search-item-type-group {
+  background: color-mix(in srgb, var(--color-purple) 12%, transparent);
+  color: var(--color-purple);
 }
 
 .session-search-item-chunks {
@@ -1186,6 +1256,13 @@ defineExpose({ focusSearchInput })
 .detail-meta-type-chat {
   background: var(--bg-tertiary, #eee);
   color: var(--text-secondary, #666);
+}
+
+/* Mirrors .session-search-item-type-group so the drilldown badge keeps the
+   same colour language as the result list it came from. */
+.detail-meta-type-group {
+  background: color-mix(in srgb, var(--color-purple) 12%, transparent);
+  color: var(--color-purple);
 }
 
 .detail-meta-time {

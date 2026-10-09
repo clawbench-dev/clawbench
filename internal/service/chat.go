@@ -2162,6 +2162,9 @@ type FirstMessage struct {
 	MessageID int64
 	Role      string
 	Content   string
+	// AgentID is the group-chat speaker (member row id) of this message, or ""
+	// for a single-agent message. The detail preview maps it to a display name.
+	AgentID   string
 	CreatedAt time.Time
 }
 
@@ -2173,10 +2176,10 @@ func GetSessionFirstMessage(sessionID string) (*FirstMessage, error) {
 	var msg FirstMessage
 	var content string
 	err := store.ReadDB().QueryRow(
-		`SELECT id, role, content, created_at FROM chat_history
+		`SELECT id, role, content, COALESCE(agent_id, ''), created_at FROM chat_history
 		 WHERE session_id = ? ORDER BY created_at ASC, id ASC LIMIT 1`,
 		sessionID,
-	).Scan(&msg.MessageID, &msg.Role, &content, &msg.CreatedAt)
+	).Scan(&msg.MessageID, &msg.Role, &content, &msg.AgentID, &msg.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

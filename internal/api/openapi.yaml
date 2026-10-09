@@ -4577,8 +4577,6 @@ paths:
         跨会话聚合搜索并返回命中位置，供会话搜索抽屉高亮。
         `q` 为空时进入「浏览全部」模式：列出该项目下的会话，此时
         `archived`/`session_type`/`sort`/`cursor` 仍然生效。
-        浏览态不会混排两类会话：`all`/`chat` 均列出对话会话，只有显式
-        `task` 才切换到任务执行会话。
         项目范围由项目 Cookie 决定：Cookie 值为任意项目路径时只搜该项目，
         不发送 Cookie 时跨全部项目（仅本机 AI 令牌可省略 Cookie）。
         同时匹配会话名称与消息内容，名称命中排在内容命中之前；两通道都命中的
@@ -4615,13 +4613,12 @@ paths:
                   description: 归档筛选（字符串，非布尔）。默认 `all`。
                 session_type:
                   type: string
-                  enum: [all, chat, task]
+                  enum: [all, chat, group, task]
                   description: |
-                    会话类型筛选。`task` 对应库中的 `scheduled` 会话（计划任务的
-                    单次执行会话），`chat` 为交互式对话。默认 `all`，即不做类型
-                    限制（搜索态下两类都会返回）。
-                    浏览态（`q` 为空）一次只列出一类：`all`/`chat` 列出对话，
-                    `task` 列出任务执行。
+                    会话类型筛选。`task` 对应库中的 `scheduled`（计划任务单次执行），
+                    `chat` 为 1:1 对话，`group` 为群聊。三类互斥：`chat` 不含群聊。
+                    默认 `all`（返回 `chat` + `group`，不含隐藏成员行与任务执行）。
+                    浏览态一次只列出一类。
                 sort:
                   type: string
                   enum: [newest, oldest, relevance]
@@ -4650,7 +4647,9 @@ paths:
             type: string
       responses:
         "200":
-          description: 首条消息
+          description: |
+            首条消息。群聊消息带 `agent_id`（发言人成员行 id），供搜索详情把
+            该条归属到具体成员；1:1 会话的消息不含该字段。
 
   # ── Upgrade ───────────────────────────────────────────────────────────────
   /api/upgrade/check:

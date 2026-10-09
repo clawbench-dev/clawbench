@@ -94,11 +94,15 @@ func NormalizeSessionSortOrder(v string) string {
 
 // Session type filter values for session search. "task" is the user-facing name
 // for sessions whose stored session_type is 'scheduled' (one per task
-// execution); "chat" is an interactive conversation.
+// execution); "chat" is a 1:1 conversation and "group" an AI group chat. The
+// three are MUTUALLY EXCLUSIVE: selecting "chat" lists only 1:1 sessions, never
+// group chats (they get their own entry so a user can find one or the other
+// without the other mixed in). "all" is the union of the visible types.
 const (
-	SessionTypeFilterAll  = "all"
-	SessionTypeFilterChat = "chat"
-	SessionTypeFilterTask = "task"
+	SessionTypeFilterAll   = "all"
+	SessionTypeFilterChat  = "chat"
+	SessionTypeFilterGroup = "group"
+	SessionTypeFilterTask  = "task"
 )
 
 // NormalizeSessionTypeFilter maps a raw type filter to a known value, defaulting
@@ -107,6 +111,8 @@ func NormalizeSessionTypeFilter(v string) string {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case SessionTypeFilterChat:
 		return SessionTypeFilterChat
+	case SessionTypeFilterGroup:
+		return SessionTypeFilterGroup
 	case SessionTypeFilterTask:
 		return SessionTypeFilterTask
 	default:
@@ -114,18 +120,52 @@ func NormalizeSessionTypeFilter(v string) string {
 	}
 }
 
-// SessionTypeDBValue maps a type filter to the value stored in
-// chat_sessions.session_type, or "" when the filter is unfiltered ("all").
-// Callers use the empty string as "no predicate".
-func SessionTypeDBValue(filter string) string {
+// SessionTypeFilterTypes returns the DB session_type values a filter selects,
+// in a stable order. It is the single source of the filter→types mapping, so
+// the SQL builders (browse + title) and the RAG content-channel post-filter
+// cannot drift apart. "all" is the visible set (chat + group), NOT everything:
+// hidden group_member and task executions stay out.
+func SessionTypeFilterTypes(filter string) []string {
 	switch NormalizeSessionTypeFilter(filter) {
 	case SessionTypeFilterChat:
-		return SessionTypeChat
+		return []string{SessionTypeChat}
+	case SessionTypeFilterGroup:
+		return []string{SessionTypeGroup}
 	case SessionTypeFilterTask:
-		return SessionTypeScheduled
+		return []string{SessionTypeScheduled}
 	default:
+		return visibleSessionTypes
+	}
+}
+
+// SessionTypeMatchesFilter reports whether a stored session_type is selected by
+// the given filter. It is the Go-side mirror of SessionTypeFilterTypes for
+// callers that hold a session's type rather than building SQL (the RAG content
+// channel filters after aggregation, since rag_chunks carries no type column).
+// An empty stored value is treated as the schema default 'chat'.
+func SessionTypeMatchesFilter(storedType, filter string) bool {
+	if storedType == "" {
+		storedType = SessionTypeChat
+	}
+	for _, t := range SessionTypeFilterTypes(filter) {
+		if storedType == t {
+			return true
+		}
+	}
+	return false
+}
+
+// SessionTypeDBValue maps a type filter to the value stored in
+// chat_sessions.session_type, or "" when the filter is unfiltered ("all").
+// Callers use the empty string as "no predicate". Filters that select more than
+// one type (only "all") also yield "" — use SessionTypeFilterTypes when the
+// concrete set is needed.
+func SessionTypeDBValue(filter string) string {
+	types := SessionTypeFilterTypes(filter)
+	if len(types) != 1 {
 		return ""
 	}
+	return types[0]
 }
 
 // RecentSession is a lightweight listing row used by session search's "browse
@@ -166,17 +206,19 @@ type RecentSession struct {
 //nolint:errcheck,gocyclo,noctx // legacy query moved from service; rationale documented at the call site
 func GetRecentSessions(projectPath string, limit int, archiveFilter, typeFilter, sortOrder, fromTime, toTime, cursor, cursorID string) ([]RecentSession, bool, error) {
 	// Browse mode never mixes session types: each selection lists exactly one
-	// type, and "all" means "all conversations" (not "conversations + tasks").
-	// "Conversations" now includes group chats, which are user-visible sessions.
-	sessionTypes := visibleSessionTypes
-	if NormalizeSessionTypeFilter(typeFilter) == SessionTypeFilterTask {
-		sessionTypes = []string{SessionTypeScheduled, SessionTypeScheduled}
-	}
+	// type ("chat" = 1:1 only, "group" = group chats only, "task" = scheduled
+	// executions), and "all" is the union of the user-visible conversations
+	// (chat + group). See SessionTypeFilterTypes for the single source of this
+	// mapping.
+	sessionTypes := SessionTypeFilterTypes(typeFilter)
 	query := `SELECT s.id, s.title, s.backend, COALESCE(p.path, ''), s.archived, s.created_at, s.session_type
 		FROM chat_sessions s
 		LEFT JOIN projects p ON p.id = s.project_id
-		WHERE s.session_type IN (?, ?)`
-	args := []interface{}{sessionTypes[0], sessionTypes[1]}
+		WHERE s.session_type IN (` + sqlPlaceholders(len(sessionTypes)) + `)`
+	args := make([]interface{}, 0, len(sessionTypes))
+	for _, t := range sessionTypes {
+		args = append(args, t)
+	}
 	if projectPath != "" {
 		projectID, idErr := ProjectIDForPath(projectPath)
 		if idErr != nil {
@@ -285,15 +327,15 @@ func SearchSessionsByTitle(projectPath string, terms []string, limit int, archiv
 		return []RecentSession{}, nil
 	}
 
-	sessionTypes := visibleSessionTypes
-	if NormalizeSessionTypeFilter(typeFilter) == SessionTypeFilterTask {
-		sessionTypes = []string{SessionTypeScheduled, SessionTypeScheduled}
-	}
+	sessionTypes := SessionTypeFilterTypes(typeFilter)
 	query := `SELECT s.id, s.title, s.backend, COALESCE(p.path, ''), s.archived, s.created_at, s.session_type
 		FROM chat_sessions s
 		LEFT JOIN projects p ON p.id = s.project_id
-		WHERE s.session_type IN (?, ?)`
-	args := []interface{}{sessionTypes[0], sessionTypes[1]}
+		WHERE s.session_type IN (` + sqlPlaceholders(len(sessionTypes)) + `)`
+	args := make([]interface{}, 0, len(sessionTypes))
+	for _, t := range sessionTypes {
+		args = append(args, t)
+	}
 	if projectPath != "" {
 		projectID, idErr := ProjectIDForPath(projectPath)
 		if idErr != nil {
@@ -353,6 +395,13 @@ func SearchSessionsByTitle(projectPath string, terms []string, limit int, archiv
 		sessions = append(sessions, s)
 	}
 	return sessions, rows.Err()
+}
+
+// sqlPlaceholders returns "?, ?, ..." with n placeholders for an IN (...) list.
+// n is at least 1 at every call site (SessionTypeFilterTypes never returns an
+// empty slice), so no empty-list guard is needed.
+func sqlPlaceholders(n int) string {
+	return strings.TrimSuffix(strings.Repeat("?,", n), ",")
 }
 
 // escapeLikePattern escapes the SQL LIKE wildcards in s so it matches
@@ -418,8 +467,12 @@ type UnindexedMessage struct {
 	// apply the session's group-chat protocol policy (a private note must not be
 	// embedded into a searchable chunk; a single chat's prose must not be
 	// truncated).
-	SessionType string    `json:"session_type"`
-	CreatedAt   time.Time `json:"created_at"`
+	SessionType string `json:"session_type"`
+	// AgentID is the group-chat speaker (member row id) that produced this
+	// message, or "" for a single-agent message. Carried into the chunk so a
+	// search hit can name the member who said it.
+	AgentID   string    `json:"agent_id"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // GetUnindexedMessages fetches chat messages that have not been indexed by RAG.
@@ -428,7 +481,7 @@ type UnindexedMessage struct {
 //nolint:errcheck,noctx // legacy query moved from service; rationale documented at the call site
 func GetUnindexedMessages(limit int) ([]UnindexedMessage, error) {
 	rows, err := dbRead.Query(
-		`SELECT h.id, h.content, h.role, h.session_id, COALESCE(p.path, ''), h.backend, COALESCE(s.session_type, ''), h.created_at
+		`SELECT h.id, h.content, h.role, h.session_id, COALESCE(p.path, ''), h.backend, COALESCE(s.session_type, ''), COALESCE(h.agent_id, ''), h.created_at
 		   FROM chat_history h
 		   LEFT JOIN projects p ON p.id = h.project_id
 		   LEFT JOIN chat_sessions s ON s.id = h.session_id
@@ -444,7 +497,7 @@ func GetUnindexedMessages(limit int) ([]UnindexedMessage, error) {
 	var messages []UnindexedMessage
 	for rows.Next() {
 		var m UnindexedMessage
-		if err := rows.Scan(&m.ID, &m.Content, &m.Role, &m.SessionID, &m.ProjectPath, &m.Backend, &m.SessionType, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.Content, &m.Role, &m.SessionID, &m.ProjectPath, &m.Backend, &m.SessionType, &m.AgentID, &m.CreatedAt); err != nil {
 			return nil, err
 		}
 		messages = append(messages, m)

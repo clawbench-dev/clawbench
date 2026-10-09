@@ -1106,6 +1106,7 @@ export default {
     filterType: 'Type',
     typeAll: 'All',
     typeChat: 'Chat',
+    typeGroup: 'Group',
     typeTask: 'Task',
     sortLabel: 'Sort',
     sortRelevance: 'Relevance',

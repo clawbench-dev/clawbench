@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"clawbench/internal/model"
 	"clawbench/internal/store"
 )
 
@@ -224,6 +225,11 @@ type SessionSearchResult struct {
 	// therefore carries no chunks: the detail view has nothing to show, so the
 	// client fetches the first message instead (as it does in browse mode).
 	TitleOnly bool `json:"title_only"`
+	// GroupMembers is the active-member preview for a group-chat row, so the
+	// search result can render the same stacked avatars as the session list.
+	// Empty for 1:1 and task sessions. Populated by the handler (which owns the
+	// service dependency; the rag package must not import service).
+	GroupMembers []model.GroupMemberPreview `json:"group_members,omitempty"`
 }
 
 // ChunkHit represents a single matching chunk within a session search result.
@@ -234,7 +240,11 @@ type ChunkHit struct {
 	Score          float64      `json:"score"`
 	Role           string       `json:"role"`
 	MessageID      int64        `json:"message_id"`
-	CreatedAt      time.Time    `json:"created_at"`
+	// AgentID is the group-chat speaker (member row id) that produced this
+	// chunk's message, or "" for a single-agent message. The drawer maps it to
+	// a display name via the session's group_members roster.
+	AgentID   string    `json:"agent_id,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // SessionSearchResponse is the response for session-aggregated RAG search.
@@ -406,22 +416,17 @@ func contentSessionMatches(ctx context.Context, ragStore *Store, embedder *Embed
 		sessions = filtered
 	}
 
-	// Filter by session type. A session whose row is missing (or whose stored
-	// type is empty) counts as 'chat' — the schema default — mirroring how a
-	// missing row is treated as active above.
-	if dbType := store.SessionTypeDBValue(params.SessionType); dbType != "" {
+	// Filter by session type. The filter→types mapping lives in
+	// store.SessionTypeFilterTypes so this post-aggregation predicate cannot
+	// drift from the SQL builders (which apply the same mapping up front). A
+	// session whose row is missing (or whose stored type is empty) counts as
+	// 'chat' — the schema default — mirroring how a missing row is treated as
+	// active above. "all" selects the visible types only; hidden group_member
+	// and task executions stay out.
+	if filter := store.NormalizeSessionTypeFilter(params.SessionType); filter != store.SessionTypeFilterAll {
 		filtered := sessions[:0]
 		for _, s := range sessions {
-			st := s.SessionType
-			if st == "" {
-				st = "chat"
-			}
-			// A "chat" filter also includes group chats (user-visible
-			// conversations); any other filter matches its type exactly. The
-			// "chat includes group" rule lives in store.IsVisibleSessionType so
-			// it cannot drift from the SQL predicate.
-			match := st == dbType || (dbType == store.SessionTypeChat && store.IsVisibleSessionType(st))
-			if match {
+			if store.SessionTypeMatchesFilter(s.SessionType, filter) {
 				filtered = append(filtered, s)
 			}
 		}
@@ -566,6 +571,7 @@ func aggregateSessionHits(hits []SearchHit) []*SessionSearchResult {
 			Score:          hit.Score,
 			Role:           hit.Role,
 			MessageID:      hit.MessageID,
+			AgentID:        hit.AgentID,
 			CreatedAt:      hit.CreatedAt,
 		})
 		// Keep the best score for the session

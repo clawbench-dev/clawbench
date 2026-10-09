@@ -334,6 +334,40 @@ func TestGetChatHistory_Empty(t *testing.T) {
 	assert.Empty(t, msgs)
 }
 
+// TestGetSessionFirstMessage_CarriesSpeakerAgentID pins that the browse-mode
+// detail preview carries the group-chat speaker (chat_history.agent_id) so the
+// drawer can name the member rather than showing a generic "Assistant".
+func TestGetSessionFirstMessage_CarriesSpeakerAgentID(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Group")
+	// AddChatMessageWithAgent writes the speaker id into chat_history.agent_id.
+	_, err := service.AddChatMessageWithAgent("/project", "claude", sid, "assistant", "spoken by a member", nil, false, "", "member-row-9")
+	require.NoError(t, err)
+
+	msg, err := service.GetSessionFirstMessage(sid)
+	require.NoError(t, err)
+	require.NotNil(t, msg)
+	assert.Equal(t, "assistant", msg.Role)
+	assert.Equal(t, "member-row-9", msg.AgentID,
+		"the first-message preview must carry the speaker's member row id")
+}
+
+// TestGetSessionFirstMessage_NoSpeakerForPlainMessage pins the negative case:
+// a single-agent message carries no speaker id.
+func TestGetSessionFirstMessage_NoSpeakerForPlainMessage(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Plain")
+	_, err := service.AddChatMessage("/project", "claude", sid, "assistant", "plain reply", nil, false, "")
+	require.NoError(t, err)
+
+	msg, err := service.GetSessionFirstMessage(sid)
+	require.NoError(t, err)
+	require.NotNil(t, msg)
+	assert.Empty(t, msg.AgentID)
+}
+
 func TestAddChatMessage_AutoTitle(t *testing.T) {
 	setupDB(t)
 

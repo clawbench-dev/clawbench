@@ -942,6 +942,118 @@ func TestServeRAGSessionSearch_BrowseTypeFilter(t *testing.T) {
 	assert.Equal(t, "scheduled", task.Sessions[0].SessionType)
 }
 
+// TestServeRAGSessionSearch_BrowseGroupTypeFilter covers the new "group" type
+// filter: the three concrete types are mutually exclusive, so "chat" no longer
+// drags group chats in with it and "group" lists only group chats.
+func TestServeRAGSessionSearch_BrowseGroupTypeFilter(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	insertSession(t, env.ProjectDir, "conv", "Conversation", "2024-01-01 10:00:00", false, "")
+	insertSession(t, env.ProjectDir, "grp", "Group chat", "2024-02-01 10:00:00", false, "group")
+
+	type resp struct {
+		Sessions []struct {
+			SessionID   string `json:"session_id"`
+			SessionType string `json:"session_type"`
+		} `json:"sessions"`
+	}
+
+	// Default "all" → both visible conversations (chat + group).
+	req := newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeRAGSessionSearch, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	var all resp
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &all))
+	require.Len(t, all.Sessions, 2)
+
+	// "chat" → the 1:1 conversation only, no group.
+	req = newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{"session_type": "chat"})
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandlerWithAuth(ServeRAGSessionSearch, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	var chat resp
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &chat))
+	require.Len(t, chat.Sessions, 1)
+	assert.Equal(t, "conv", chat.Sessions[0].SessionID)
+
+	// "group" → the group chat only.
+	req = newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{"session_type": "group"})
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandlerWithAuth(ServeRAGSessionSearch, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	var group resp
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &group))
+	require.Len(t, group.Sessions, 1)
+	assert.Equal(t, "grp", group.Sessions[0].SessionID)
+	assert.Equal(t, "group", group.Sessions[0].SessionType)
+}
+
+// TestServeRAGSessionSearch_GroupMembersEnriched covers the handler-side member
+// preview: a group result must carry group_members (so the drawer renders the
+// stacked avatars) while a 1:1 result must not.
+func TestServeRAGSessionSearch_GroupMembersEnriched(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	insertSession(t, env.ProjectDir, "conv", "Conversation", "2024-01-01 10:00:00", false, "")
+	insertSession(t, env.ProjectDir, "grp", "Group chat", "2024-02-01 10:00:00", false, "group")
+
+	projectID := store.ProjectIDForTest(t, env.ProjectDir)
+	// Two active member rows bound to the group. The host pointer lives in the
+	// group row's context_state, which is what drives isHost on the preview.
+	_, err := store.UnsafeDBForTest().Exec(
+		"UPDATE chat_sessions SET context_state = ? WHERE id = 'grp'",
+		`{"host_member_id":"gm1"}`,
+	)
+	require.NoError(t, err)
+	for _, m := range []struct{ id, agentID, title string }{
+		{"gm1", "agent-host", "Host"},
+		{"gm2", "agent-peer", "Peer"},
+	} {
+		_, err = store.UnsafeDBForTest().Exec(
+			"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type, group_id, archived, created_at, updated_at) VALUES (?, ?, 'claude', ?, ?, 'group_member', 'grp', 0, '2024-02-01 10:00:00', '2024-02-01 10:00:00')",
+			m.id, projectID, m.title, m.agentID,
+		)
+		require.NoError(t, err)
+	}
+
+	type member struct {
+		ID     string `json:"id"`
+		Name   string `json:"name"`
+		IsHost bool   `json:"isHost"`
+	}
+	type sess struct {
+		SessionID    string   `json:"session_id"`
+		SessionType  string   `json:"session_type"`
+		GroupMembers []member `json:"group_members"`
+	}
+	type resp struct {
+		Sessions []sess `json:"sessions"`
+	}
+
+	req := newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeRAGSessionSearch, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	var got resp
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	require.Len(t, got.Sessions, 2)
+
+	byID := map[string]sess{}
+	for _, s := range got.Sessions {
+		byID[s.SessionID] = s
+	}
+	// The group row carries both members, host first.
+	require.Len(t, byID["grp"].GroupMembers, 2)
+	assert.Equal(t, "gm1", byID["grp"].GroupMembers[0].ID)
+	assert.True(t, byID["grp"].GroupMembers[0].IsHost)
+	assert.Equal(t, "Host", byID["grp"].GroupMembers[0].Name)
+	// The 1:1 conversation has no member preview.
+	assert.Empty(t, byID["conv"].GroupMembers)
+}
+
 func TestServeRAGSessionSearch_BrowseSortOldest(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
