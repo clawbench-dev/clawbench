@@ -1355,3 +1355,81 @@ func TestRenameUserPendingBcc(t *testing.T) {
 		t.Fatalf("no-op renames must leave the rows in place: %+v", m)
 	}
 }
+
+// GroupMemberSpeakersForGroups resolves a message's chat_history.agent_id back
+// to the member's display name. Unlike GroupMembersForGroups it must INCLUDE
+// left (archived) members — a departed member's past speech still has to render
+// as their own name rather than a generic "Assistant". It is also the
+// speaker-resolution companion used by the share/RAG paths, so the empty-input,
+// dedup and multi-group paths matter.
+func TestGroupMemberSpeakersForGroups(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-speakers"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+
+	groupA, hostA, err := CreateGroup(project, "A 组", "codebuddy", "agent-host-a", "HostA")
+	if err != nil {
+		t.Fatalf("CreateGroup A: %v", err)
+	}
+	mA1, _ := AddGroupMember(project, groupA, "claude", "agent-a1", "A1")
+	mA2, _ := AddGroupMember(project, groupA, "claude", "agent-a2", "A2")
+
+	groupB, _, err := CreateGroup(project, "B 组", "codebuddy", "agent-host-b", "HostB")
+	if err != nil {
+		t.Fatalf("CreateGroup B: %v", err)
+	}
+	mB1, _ := AddGroupMember(project, groupB, "claude", "agent-b1", "B1")
+
+	// Empty input must short-circuit without touching the DB.
+	empty, err := GroupMemberSpeakersForGroups(nil)
+	if err != nil {
+		t.Fatalf("empty input must not error: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("empty input must yield an empty map, got %+v", empty)
+	}
+	// All-empty ids collapse to no ids and still return an empty map.
+	if got, err := GroupMemberSpeakersForGroups([]string{"", ""}); err != nil || len(got) != 0 {
+		t.Fatalf("all-empty ids must yield an empty map without error, got %+v err=%v", got, err)
+	}
+
+	// Duplicate ids must be de-duplicated (the query would otherwise build a
+	// redundant IN list, and the result must still be correct).
+	got, err := GroupMemberSpeakersForGroups([]string{groupA, groupA, "", groupB})
+	if err != nil {
+		t.Fatalf("GroupMemberSpeakersForGroups: %v", err)
+	}
+	if got[groupA][hostA] != "HostA" || got[groupA][mA1] != "A1" || got[groupA][mA2] != "A2" {
+		t.Fatalf("group A speakers wrong: %+v", got[groupA])
+	}
+	if got[groupB][mB1] != "B1" {
+		t.Fatalf("group B speakers wrong: %+v", got[groupB])
+	}
+	if len(got[groupA]) != 3 {
+		t.Fatalf("group A must have exactly 3 members, got %d (%+v)", len(got[groupA]), got[groupA])
+	}
+
+	// A member who LEFT must still resolve (include-left rule): their earlier
+	// messages keep their name instead of degrading to a generic assistant.
+	if err := RemoveGroupMember(groupA, mA2); err != nil {
+		t.Fatalf("RemoveGroupMember: %v", err)
+	}
+	got, err = GroupMemberSpeakersForGroups([]string{groupA})
+	if err != nil {
+		t.Fatalf("GroupMemberSpeakersForGroups after removal: %v", err)
+	}
+	if got[groupA][mA2] != "A2" {
+		t.Fatalf("a left member must still resolve its name, got %+v", got[groupA])
+	}
+
+	// An unknown group id is simply absent from the map (no error).
+	got, err = GroupMemberSpeakersForGroups([]string{"does-not-exist"})
+	if err != nil {
+		t.Fatalf("unknown group must not error: %v", err)
+	}
+	if _, ok := got["does-not-exist"]; ok {
+		t.Fatalf("unknown group must be absent from the map, got %+v", got)
+	}
+}
