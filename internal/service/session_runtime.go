@@ -890,7 +890,17 @@ func triggerChatSummarization(ctx context.Context, sessionID string) {
 	}
 	began := time.Now()
 	projectPath := GetSessionProjectPath(sessionID)
-	messages, err := GetMessagesBySessionID(sessionID)
+	// Use the RAW reader (no enrichment): this function summarizes every
+	// unsummarized assistant message itself, so it must not go through
+	// GetMessagesBySessionID, whose enrichMessagesWithSummaries spawns a
+	// background backfillMissingSummaries goroutine over the SAME messages.
+	// Both paths summarize via summarizeMessageOnce's shared summaryInFlight
+	// guard, so the background goroutine could win the guard and the synchronous
+	// save here would be skipped — a race that intermittently dropped the
+	// summary (and, under test, let the goroutine write after teardown closed
+	// the DB). The raw reader also keeps the real content blocks (enrichment
+	// strips summarized messages), which the block-parse below needs.
+	messages, err := GetMessagesBySessionIDRaw(sessionID)
 	if err != nil || len(messages) == 0 {
 		return
 	}
