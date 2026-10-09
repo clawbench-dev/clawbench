@@ -2147,7 +2147,7 @@ export default {
       approved: '已批准',
       denied: '已拒绝',
       autoApprovedTitle: '自动批准',
-      autoApproved: '自动批准',
+      autoApproved: '已自动批准',
     },
   },
   agents: {
