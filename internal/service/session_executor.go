@@ -377,6 +377,18 @@ func NewSessionExecutor(ctx context.Context, cfg RunConfig) *SessionExecutor {
 	// as a callback so the coalescer stays free of executor state and can be
 	// unit-tested on its own.
 	e.coalescer = &streamCoalescer{emit: e.emitStreamEvent}
+	// Resolve the streaming row ONCE when the caller did not supply one. The
+	// production caller (run_turn.go) always passes the placeholder id it just
+	// created, because content writes must target THAT row even when several
+	// streams share a timeline (parallel group speaking). This fallback exists
+	// for callers that build a RunConfig without the id (chiefly tests); it
+	// resolves against the TIMELINE session (where the row lives) rather than
+	// the connection session. Resolving here, before any concurrent write, is
+	// what makes the later by-id writes consistent. Guarded on DBReady so a
+	// bare executor in an isolated unit test (no DB) stays a no-op.
+	if e.cfg.StreamingMessageID <= 0 && store.DBReady() {
+		e.cfg.StreamingMessageID = GetStreamingMessageID(e.cfg.effectiveTimelineSessionID())
+	}
 	// Register so graceful shutdown can flush this stream's accumulated blocks.
 	// Removed by unregisterActiveStream once the executor has finished.
 	activeStreams.Store(cfg.SessionID, e)
@@ -554,7 +566,7 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 		// Reset the streaming message in DB to empty so stale partial content
 		// doesn't persist if the retry Prompt fails or the server crashes.
 		emptyContent, _ := json.Marshal(map[string]any{contentKeyBlocks: []any{}}) // safe: known structure
-		if err := UpdateStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.timelineSID(), string(emptyContent)); err != nil {
+		if err := UpdateStreamingMessageByID(e.timelineSID(), e.cfg.StreamingMessageID, string(emptyContent)); err != nil {
 			slog.Error("failed to reset streaming message after content_reset",
 				slog.String("session", e.cfg.SessionID),
 				slog.String("err", err.Error()))
@@ -706,6 +718,15 @@ func (e *SessionExecutor) forwardEvent(event ai.StreamEvent) {
 	if (event.Type == eventTypeToolUse || event.Type == eventTypeToolResult) && event.Tool != nil {
 		meta := ai.ExtractToolCallMeta(event)
 		forwardEvent.ToolMeta = &meta
+	}
+	// Stamp the owning streaming row so the frontend can route this event to
+	// the correct bubble when several streams share a timeline (parallel group
+	// speaking). cfg.StreamingMessageID is written only from this same event
+	// loop (NewSessionExecutor before the executor is shared, and the steer
+	// split), so reading it here needs no lock — taking e.mu would serialize
+	// every event behind a flush's DB I/O and stall the stream.
+	if forwardEvent.StreamingMessageID == 0 {
+		forwardEvent.StreamingMessageID = e.cfg.StreamingMessageID
 	}
 
 	// Deltas are buffered and merged; every other type is an ordering barrier
@@ -1208,7 +1229,7 @@ func (e *SessionExecutor) splitAtSteerBoundaryLocked(queueID string) bool {
 	// ordering we want.
 	beforeContent := e.buildSplitContentLocked()
 	beforeID := e.cfg.StreamingMessageID
-	if _, err := FinalizeStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.timelineSID(), beforeContent); err != nil {
+	if _, err := FinalizeStreamingMessageByID(e.timelineSID(), beforeID, beforeContent); err != nil {
 		slog.Error("session executor: failed to finalize assistant half at steer boundary; "+
 			"continuing in the original row (no split)",
 			slog.String("session", e.cfg.SessionID),
@@ -1419,7 +1440,7 @@ func (e *SessionExecutor) flushStreamingLocked(includeThinking bool) {
 	if !includeThinking && content == e.lastWrittenContent {
 		return
 	}
-	if err := UpdateStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.timelineSID(), content); err != nil {
+	if err := UpdateStreamingMessageByID(e.timelineSID(), e.cfg.StreamingMessageID, content); err != nil {
 		slog.Error("failed to update streaming message",
 			slog.String("session", e.cfg.SessionID),
 			slog.String("err", err.Error()))
@@ -1432,7 +1453,7 @@ func (e *SessionExecutor) flushStreamingLocked(includeThinking bool) {
 		// Finalize does, so the streaming row and chat_thinking stay consistent
 		// across a restart. Finalize is idempotent over this.
 		if slimContent := persistThinkingToDB(content, e.cfg.StreamingMessageID, e.timelineSID()); slimContent != content {
-			_ = UpdateStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.timelineSID(), slimContent)
+			_ = UpdateStreamingMessageByID(e.timelineSID(), e.cfg.StreamingMessageID, slimContent)
 		}
 		// flushPendingThinking is guarded off while forceIncludeThinking is set
 		// (persistThinkingToDB above fully owns thinking persistence in force
@@ -1665,10 +1686,13 @@ func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEve
 	var msgID int64
 	var err error
 	doneFinalize := ft.phase("finalize_row")
+	// Finalize by explicit id (not "the latest streaming row"): a group turn can
+	// run several members concurrently on one shared timeline, so locating by
+	// session would let one member's finalize land on a sibling's row.
 	if result.CancelReason == cancelReasonUser {
-		msgID, err = FinalizeCancelledStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.timelineSID(), dbContent)
+		msgID, err = FinalizeCancelledStreamingMessageByID(e.timelineSID(), e.cfg.StreamingMessageID, dbContent)
 	} else {
-		msgID, err = FinalizeStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.timelineSID(), dbContent)
+		msgID, err = FinalizeStreamingMessageByID(e.timelineSID(), e.cfg.StreamingMessageID, dbContent)
 	}
 	doneFinalize()
 	if err != nil {

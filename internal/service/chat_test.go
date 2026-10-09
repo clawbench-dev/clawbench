@@ -1821,6 +1821,42 @@ func TestGetLiveRunState_CarriesGroupSpeaker(t *testing.T) {
 	assert.Equal(t, "member-row-7", speaker, "the streaming row's speaker must be reported")
 }
 
+// TestGetLiveRunStates_ReturnsAllConcurrentStreams guards the parallel-speaking
+// switch-back path: a group turn can run several members concurrently on one
+// timeline, so a client that subscribes mid-flight must be told about EVERY
+// live stream — otherwise it recovers only one bubble and the rest appear only
+// after the run ends. Each entry must carry its OWN speaker and question.
+func TestGetLiveRunStates_ReturnsAllConcurrentStreams(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "codebuddy", "Parallel Group")
+	pid := store.ProjectIDForTest(t, "/project")
+
+	// One shared question, then two member replies streaming concurrently.
+	_, err := store.UnsafeDBForTest().Exec(
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming) VALUES (?, 'codebuddy', ?, 'user', 'q', 0)",
+		pid, sid)
+	require.NoError(t, err)
+	_, err = store.UnsafeDBForTest().Exec(
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming, agent_id) VALUES (?, 'codebuddy', ?, 'assistant', '', 1, 'member-a')",
+		pid, sid)
+	require.NoError(t, err)
+	_, err = store.UnsafeDBForTest().Exec(
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming, agent_id) VALUES (?, 'codebuddy', ?, 'assistant', '', 1, 'member-b')",
+		pid, sid)
+	require.NoError(t, err)
+
+	states := service.GetLiveRunStates(sid)
+	require.Len(t, states, 2, "both concurrent streams must be reported")
+	// Newest first.
+	assert.Equal(t, "member-b", states[0].SpeakerID)
+	assert.Equal(t, "member-a", states[1].SpeakerID)
+	assert.Greater(t, states[0].MessageID, states[1].MessageID, "newest row first")
+	for _, st := range states {
+		assert.Equal(t, "q", st.QuestionContent, "each stream anchors to the shared question")
+		assert.NotZero(t, st.QuestionID)
+	}
+}
+
 // TestUnread_MarkReadAfterCompletionClearsBadge is the counterpart: once the
 // user is actually looking at the session when it completes, marking read must
 // clear the badge. This is what keeps the fix from turning every reply into a
@@ -4478,6 +4514,92 @@ func TestGetStreamingMessageID_SessionIsolation(t *testing.T) {
 	assert.Equal(t, s1StreamingID, id1, "session 1 should return its own streaming message")
 	assert.Equal(t, s2StreamingID, id2, "session 2 should return its own streaming message")
 	assert.NotEqual(t, id1, id2, "different sessions should not return each other's message IDs")
+}
+
+// ---------- by-id streaming primitives (parallel-speaking stage 1) ----------
+
+// Two concurrent streams on ONE shared timeline (the group case) must each
+// update and finalize their OWN row. The session-scoped primitives locate
+// "the latest streaming row", so under concurrency one writer would land on
+// the other's row — this pins the by-id variants that fix it.
+func TestStreamingPrimitivesByID_ConcurrentStreamsOnOneTimeline(t *testing.T) {
+	setupDB(t)
+
+	// One shared timeline (the group session), two member placeholders on it,
+	// same backend (the colliding case the reviewer called out).
+	sid := helperCreateSession(t, "/project", "claude", "Group")
+	memberA, err := service.AddChatMessageWithAgent("/project", "claude", sid, "assistant", "{}", nil, true, "", "member-a")
+	assert.NoError(t, err)
+	memberB, err := service.AddChatMessageWithAgent("/project", "claude", sid, "assistant", "{}", nil, true, "", "member-b")
+	assert.NoError(t, err)
+	assert.NotEqual(t, memberA, memberB)
+
+	// Interleave writes the way two concurrent executors would.
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		assert.NoError(t, service.UpdateStreamingMessageByID(sid, memberA, `{"blocks":[{"type":"text","text":"A says"}]}`))
+	}()
+	go func() {
+		defer wg.Done()
+		assert.NoError(t, service.UpdateStreamingMessageByID(sid, memberB, `{"blocks":[{"type":"text","text":"B says"}]}`))
+	}()
+	wg.Wait()
+
+	// Finalize both by id, concurrently.
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		_, e := service.FinalizeStreamingMessageByID(sid, memberA, `{"blocks":[{"type":"text","text":"A final"}]}`)
+		assert.NoError(t, e)
+	}()
+	go func() {
+		defer wg.Done()
+		_, e := service.FinalizeStreamingMessageByID(sid, memberB, `{"blocks":[{"type":"text","text":"B final"}]}`)
+		assert.NoError(t, e)
+	}()
+	wg.Wait()
+
+	// Each row must carry its OWN content, and both must be finalized.
+	msgs, err := service.GetMessagesBySessionIDRaw(sid)
+	assert.NoError(t, err)
+	byID := map[int64]string{}
+	streamingByID := map[int64]bool{}
+	for _, m := range msgs {
+		byID[m.ID] = m.Content
+		streamingByID[m.ID] = m.Streaming
+	}
+	assert.Contains(t, byID[memberA], "A final", "member A row must keep A's content")
+	assert.Contains(t, byID[memberB], "B final", "member B row must keep B's content")
+	assert.False(t, streamingByID[memberA], "member A row must be finalized")
+	assert.False(t, streamingByID[memberB], "member B row must be finalized")
+}
+
+// The by-id finalize must be a no-op on a row that is not streaming, so a
+// double-finalize (or a stale id) cannot resurrect/clear a landed row.
+func TestFinalizeStreamingMessageByID_NotStreamingIsNoop(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Group")
+	id, err := service.AddChatMessageWithAgent("/project", "claude", sid, "assistant", "{}", nil, true, "", "member-a")
+	assert.NoError(t, err)
+
+	if _, err := service.FinalizeStreamingMessageByID(sid, id, `{"blocks":[{"type":"text","text":"first"}]}`); err != nil {
+		t.Fatalf("first finalize: %v", err)
+	}
+	// Second call: row is streaming=0 now, so it must report 0 and leave content.
+	got, err := service.FinalizeStreamingMessageByID(sid, id, `{"blocks":[{"type":"text","text":"second"}]}`)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(0), got, "finalizing a non-streaming row must be a no-op")
+
+	msgs, err := service.GetMessagesBySessionIDRaw(sid)
+	assert.NoError(t, err)
+	for _, m := range msgs {
+		if m.ID == id {
+			assert.Contains(t, m.Content, "first", "content must not be overwritten by the no-op finalize")
+		}
+	}
 }
 
 // ---------- GetStreamingMessageID ----------

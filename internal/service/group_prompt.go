@@ -70,6 +70,8 @@ func BuildHostSystemPrompt(members []HostMemberInfo) string {
 	b.WriteString("  <clawbench-mention targets=\"成员名\">给该成员的指令</clawbench-mention>\n")
 	b.WriteString("可一次点名多个成员（逗号分隔），他们将按顺序依次发言：\n")
 	b.WriteString("  <clawbench-mention targets=\"A,B\">请分别表态</clawbench-mention>\n")
+	b.WriteString("若你希望多人**同时**发言、彼此看不到对方本轮内容（如同时行动/同时表态），加 mode=\"parallel\"：\n")
+	b.WriteString("  <clawbench-mention targets=\"A,B\" mode=\"parallel\">请你们各自独立作答</clawbench-mention>\n")
 	b.WriteString("当讨论已充分、可以收敛时，输出结束标签：\n")
 	b.WriteString("  <clawbench-group-end/>\n")
 	b.WriteString("在结束标签之后，必须再写一段简短的讨论结论（最终汇总），供用户阅读。\n")
@@ -164,6 +166,8 @@ func BuildFreeMemberSystemPrompt(members []HostMemberInfo, selfName string) stri
 	b.WriteString("  <clawbench-mention targets=\"成员名\">你想对他说的话</clawbench-mention>\n")
 	b.WriteString("可一次 @ 多个成员（逗号分隔），他们会依次发言：\n")
 	b.WriteString("  <clawbench-mention targets=\"A,B\">请你们分别表态</clawbench-mention>\n")
+	b.WriteString("若你希望多人**同时**发言、彼此看不到对方本轮内容（如同时行动/同时表态），加 mode=\"parallel\"：\n")
+	b.WriteString("  <clawbench-mention targets=\"A,B\" mode=\"parallel\">请你们各自独立作答</clawbench-mention>\n")
 	b.WriteString("**如果没有人需要继续说，就不要输出任何 mention 标签**——讨论到此自然结束。\n")
 	b.WriteString("你也可以 @ User（即用户本人）把话筒交回给用户，用户回复后讨论继续。\n")
 	// Private notes: same tag with the `private` attribute. Delivered on the

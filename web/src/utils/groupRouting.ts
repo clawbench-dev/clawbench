@@ -26,6 +26,29 @@ export interface MentionEntry {
   content: string
   /** Whether the tag carried the `private` attribute. */
   private: boolean
+  /** Delivery mode: 'parallel' when the tag carried `mode="parallel"`, else
+   *  'sequential'. Only affects PUBLIC mentions; an unknown/absent value is
+   *  'sequential' and never makes the tag malformed. */
+  mode: DeliveryMode
+}
+
+/** Delivery modes for a mention tag (the `mode` attribute). */
+export type DeliveryMode = 'sequential' | 'parallel'
+
+/**
+ * MentionGroup is one public mention tag flattened for the orchestrator: the
+ * members it names plus how they should speak. It is the source of truth for
+ * routing (`speakers` is derived from it), because it preserves the PER-TAG
+ * boundary that the flat `speakers` list loses — and `mode` is a per-tag
+ * property.
+ */
+export interface MentionGroup {
+  /** The group's targets, in order, trimmed, and de-duplicated ACROSS groups. */
+  members: string[]
+  /** Whether this group speaks concurrently. */
+  parallel: boolean
+  /** This tag's body (the directive handed to its members). */
+  instruction: string
 }
 
 export interface BccEntry {
@@ -38,6 +61,13 @@ export interface BccEntry {
 export interface GroupRouting {
   found: boolean
   speakers: string[]
+  /**
+   * The ordered list of PUBLIC mention tags, each flattened to its members +
+   * mode + instruction. The source of truth for routing (`speakers` is its
+   * flat de-duplicated concatenation); a group left with no unclaimed members
+   * is dropped.
+   */
+  groups: MentionGroup[]
   instruction: string
   /**
    * Text OUTSIDE the mention tags that precedes the first public mention,
@@ -76,6 +106,10 @@ const RE_MENTION_CLOSE_ANY = /<\/clawbench-mention>/g
 const RE_TARGETS = /\btargets[\s\p{Z}]*=[\s\p{Z}]*"([^"]*)"/u
 // The boolean `private` attribute (case-sensitive).
 const RE_PRIVATE = /\bprivate\b/
+// The double-quoted `mode` attribute value (mirrors RE_TARGETS' display
+// contract). An unknown value falls back to sequential; it never makes the tag
+// malformed.
+const RE_MODE = /\bmode[\s\p{Z}]*=[\s\p{Z}]*"([^"]*)"/u
 const RE_END = /<clawbench-group-end[\s\p{Z}]*\/>/gu
 // Non-global mirror of RE_END for a one-shot test(). RE_END carries /g, whose
 // lastIndex would otherwise make .test() alternate true/false across calls.
@@ -97,12 +131,14 @@ function splitNames(s: string): string[] {
  * attribute or it is empty — such a tag is malformed and NOT parsed (the
  * fail-open display contract: its text stays visible).
  */
-function parseMentionAttrs(attrs: string): { targets: string[]; private: boolean } | null {
+function parseMentionAttrs(attrs: string): { targets: string[]; private: boolean; mode: DeliveryMode } | null {
   const m = attrs.match(RE_TARGETS)
   if (!m) return null
   const targets = splitNames(m[1])
   if (targets.length === 0) return null
-  return { targets, private: RE_PRIVATE.test(attrs) }
+  const modeMatch = attrs.match(RE_MODE)
+  const mode: DeliveryMode = modeMatch && modeMatch[1].trim().toLowerCase() === 'parallel' ? 'parallel' : 'sequential'
+  return { targets, private: RE_PRIVATE.test(attrs), mode }
 }
 
 /**
@@ -122,7 +158,7 @@ function replaceMentionSpans(text: string, fn: (entry: MentionEntry | null, raw:
       const m = RE_MENTION.exec(span)
       if (m) {
         const attrs = parseMentionAttrs(m[1])
-        if (attrs) return fn({ targets: attrs.targets, content: m[2].trim(), private: attrs.private }, span)
+        if (attrs) return fn({ targets: attrs.targets, content: m[2].trim(), private: attrs.private, mode: attrs.mode }, span)
       }
       return fn(null, span)
     })
@@ -159,7 +195,7 @@ function stripAllMentionSpans(text: string): string {
 /** parseGroupRouting locates every mention tag in an agent message. */
 export function parseGroupRouting(text: string): GroupRouting {
   const res: GroupRouting = {
-    found: false, speakers: [], instruction: '', before: '', after: '',
+    found: false, speakers: [], groups: [], instruction: '', before: '', after: '',
     bcc: [], mentions: [], end: false, raw: '',
   }
 
@@ -171,7 +207,7 @@ export function parseGroupRouting(text: string): GroupRouting {
   while ((m = RE_MENTION.exec(text)) !== null) {
     const attrs = parseMentionAttrs(m[1])
     if (!attrs) continue // malformed: not a mention, leave the span in place
-    res.mentions.push({ targets: attrs.targets, content: m[2].trim(), private: attrs.private })
+    res.mentions.push({ targets: attrs.targets, content: m[2].trim(), private: attrs.private, mode: attrs.mode })
     res.raw = m[0]
     if (!attrs.private) {
       if (firstPublicStart < 0) firstPublicStart = m.index
@@ -206,17 +242,25 @@ export function parseGroupRouting(text: string): GroupRouting {
   if (res.mentions.length === 0) return res
 
   res.found = true
-  // Derive the flat host view: public targets (ordered, de-duplicated) and the
-  // joined public directive.
+  // Derive the routing view. `groups` is the source of truth: it preserves the
+  // PER-TAG boundary (needed because `mode` is a per-tag property) and the
+  // per-tag instruction. `speakers` is the flat de-duplicated concatenation of
+  // the groups' members. Cross-group de-duplication: a member named by an
+  // earlier group is not re-listed in a later one (it would speak twice).
   const seen = new Set<string>()
   for (const e of res.mentions) {
     if (e.private) {
       res.bcc.push({ targets: e.targets, content: e.content })
       continue
     }
+    const group: MentionGroup = { members: [], parallel: e.mode === 'parallel', instruction: e.content }
     for (const t of e.targets) {
-      if (!seen.has(t)) { seen.add(t); res.speakers.push(t) }
+      if (seen.has(t)) continue
+      seen.add(t)
+      group.members.push(t)
+      res.speakers.push(t)
     }
+    if (group.members.length > 0) res.groups.push(group)
     if (e.content !== '') {
       if (res.instruction !== '') res.instruction += '\n\n'
       res.instruction += e.content

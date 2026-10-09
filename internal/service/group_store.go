@@ -138,7 +138,7 @@ func CreateGroupWithMembers(projectPath, title, hostAgentID string, specs []Grou
 	}
 	// Validate + DEDUPE before touching the DB. Duplicates must collapse here
 	// (not just be rejected): a member's only identity is its agent, and
-	// resolveSpeakerTargets maps names through a map, so two rows for one agent
+	// resolveSpeakerGroups maps names through a map, so two rows for one agent
 	// leave one unreachable — a mute member that still occupies a connection
 	// and a slot, and inflates the active count toward the cap. The Web drawer
 	// is a multi-select and never sends duplicates, but POST /api/group/create
@@ -281,7 +281,7 @@ func writeGroupModeInline(tx *sql.Tx, groupID, mode, hostMemberID string) error 
 // the same (group, agent) already exists.
 //
 // Why dedup: a member's only identity is its agent — the routing tag addresses
-// members by NAME, and resolveSpeakerTargets maps names through a map, so two rows for
+// members by NAME, and resolveSpeakerGroups maps names through a map, so two rows for
 // the same agent would make one of them unreachable (a "mute" member that can
 // be selected but never spoken to). Re-adding an agent that LEFT the group
 // therefore reuses its original row and clears the archived flag (the A

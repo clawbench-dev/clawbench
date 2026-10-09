@@ -139,12 +139,13 @@ function createOptions(overrides: Record<string, any> = {}) {
 }
 
 /** Simulate a WS chat_stream event arriving via onEvent handler */
-function simulateWsEvent(eventType: string, payload: Record<string, unknown>, sessionId = 'test-session-1') {
+function simulateWsEvent(eventType: string, payload: Record<string, unknown>, sessionId = 'test-session-1', messageId?: number) {
   if (!registeredEventHandler) throw new Error('No WS event handler registered')
   registeredEventHandler('chat_stream', {
     session_id: sessionId,
     event_type: eventType,
     payload,
+    ...(messageId !== undefined ? { message_id: messageId } : {}),
   })
 }
 
@@ -2676,6 +2677,63 @@ describe('useChatStream', () => {
 
       vi.advanceTimersByTime(10000)
       vi.useRealTimers()
+    })
+  })
+
+  // ── Concurrent streams (parallel group speaking): by-id routing ──
+  describe('concurrent streams route by message_id', () => {
+    it('routes content to the bubble named by message_id, not the first streaming one', () => {
+      const options = createOptions()
+      useChatStream(options)
+
+      // Two members stream concurrently on one timeline.
+      simulateWsEvent('stream_start', { message_id: 1001, agent_id: 'member-a' })
+      simulateWsEvent('stream_start', { message_id: 1002, agent_id: 'member-b' })
+      expect(options.messages.value.filter((m: any) => m.role === 'assistant' && m.streaming)).toHaveLength(2)
+
+      // Content stamped with member-b's row must land on member-b's bubble.
+      simulateWsEvent('content', { content: 'B says' }, 'test-session-1', 1002)
+      simulateWsEvent('content', { content: 'A says' }, 'test-session-1', 1001)
+
+      const a = options.messages.value.find((m: any) => m.id === 1001)
+      const b = options.messages.value.find((m: any) => m.id === 1002)
+      const textOf = (m: any) => (m.blocks || []).filter((x: any) => x.type === 'text').map((x: any) => x.text).join('')
+      expect(textOf(a)).toContain('A says')
+      expect(textOf(a)).not.toContain('B says')
+      expect(textOf(b)).toContain('B says')
+      expect(textOf(b)).not.toContain('A says')
+    })
+
+    it('stream_finalize closes only the named stream, leaving its sibling running', () => {
+      const options = createOptions()
+      useChatStream(options)
+
+      simulateWsEvent('stream_start', { message_id: 2001 })
+      simulateWsEvent('stream_start', { message_id: 2002 })
+      // Give the finalized stream content so it is not removed as an empty
+      // placeholder (an empty bubble is cleaned up entirely — existing behavior).
+      simulateWsEvent('content', { content: 'A done' }, 'test-session-1', 2001)
+
+      simulateWsEvent('stream_finalize', { message_id: 2001 })
+
+      const a = options.messages.value.find((m: any) => m.id === 2001)
+      const b = options.messages.value.find((m: any) => m.id === 2002)
+      expect(a.streaming).toBeFalsy()
+      expect(b.streaming).toBe(true)
+    })
+
+    it('done finalizes EVERY still-streaming bubble (whole run over)', () => {
+      const options = createOptions()
+      useChatStream(options)
+
+      simulateWsEvent('stream_start', { message_id: 3001 })
+      simulateWsEvent('stream_start', { message_id: 3002 })
+      simulateWsEvent('content', { content: 'x' }, 'test-session-1', 3001)
+      simulateWsEvent('content', { content: 'y' }, 'test-session-1', 3002)
+
+      simulateWsEvent('done', {})
+
+      expect(options.messages.value.filter((m: any) => m.role === 'assistant' && m.streaming)).toHaveLength(0)
     })
   })
 

@@ -1169,8 +1169,8 @@ func TestStreamHub_EmitLiveRunState_QuestionBeforeStreamStart(t *testing.T) {
 	sub := mgr.Subscribe(nil, &writeMu, "client-late", "")
 	hub.Subscribe("client-late", "session-live")
 
-	hub.SetStreamStateLookupFunc(func(sessionID string) (int64, int64, string, string) {
-		return 51660, 51659, "hello from dingtalk", ""
+	hub.SetStreamStateLookupFunc(func(sessionID string) []LiveStreamState {
+		return []LiveStreamState{{MessageID: 51660, QuestionID: 51659, QuestionContent: "hello from dingtalk"}}
 	})
 
 	hub.EmitLiveRunStateToClient("client-late", "session-live")
@@ -1203,7 +1203,9 @@ func TestStreamHub_EmitLiveRunState_NoQuestion(t *testing.T) {
 	sub := mgr.Subscribe(nil, &writeMu, "client-sched", "")
 	hub.Subscribe("client-sched", "session-sched")
 
-	hub.SetStreamStateLookupFunc(func(string) (int64, int64, string, string) { return 99, 0, "", "" })
+	hub.SetStreamStateLookupFunc(func(string) []LiveStreamState {
+		return []LiveStreamState{{MessageID: 99}}
+	})
 
 	hub.EmitLiveRunStateToClient("client-sched", "session-sched")
 
@@ -1222,7 +1224,7 @@ func TestStreamHub_EmitLiveRunState_NothingStreaming(t *testing.T) {
 	sub := mgr.Subscribe(nil, &writeMu, "client-idle", "")
 	hub.Subscribe("client-idle", "session-idle")
 
-	hub.SetStreamStateLookupFunc(func(string) (int64, int64, string, string) { return 0, 0, "", "" })
+	hub.SetStreamStateLookupFunc(func(string) []LiveStreamState { return nil })
 
 	hub.EmitLiveRunStateToClient("client-idle", "session-idle")
 
@@ -1241,8 +1243,8 @@ func TestStreamHub_EmitLiveRunState_CarriesSpeaker(t *testing.T) {
 	sub := mgr.Subscribe(nil, &writeMu, "client-group", "")
 	hub.Subscribe("client-group", "session-group")
 
-	hub.SetStreamStateLookupFunc(func(string) (int64, int64, string, string) {
-		return 700, 699, "question", "member-row-1"
+	hub.SetStreamStateLookupFunc(func(string) []LiveStreamState {
+		return []LiveStreamState{{MessageID: 700, QuestionID: 699, QuestionContent: "question", SpeakerID: "member-row-1"}}
 	})
 
 	hub.EmitLiveRunStateToClient("client-group", "session-group")
@@ -1266,8 +1268,8 @@ func TestStreamHub_EmitLiveRunState_NoSpeakerOmitsKey(t *testing.T) {
 	sub := mgr.Subscribe(nil, &writeMu, "client-solo", "")
 	hub.Subscribe("client-solo", "session-solo")
 
-	hub.SetStreamStateLookupFunc(func(string) (int64, int64, string, string) {
-		return 701, 700, "question", ""
+	hub.SetStreamStateLookupFunc(func(string) []LiveStreamState {
+		return []LiveStreamState{{MessageID: 701, QuestionID: 700, QuestionContent: "question"}}
 	})
 
 	hub.EmitLiveRunStateToClient("client-solo", "session-solo")

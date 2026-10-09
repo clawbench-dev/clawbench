@@ -1253,7 +1253,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 
 	// Inject the lookup behind the subscribe-time live-run recovery emit
 	// (breaks import cycle between ws and service).
-	ws.GetManager().StreamHub().SetStreamStateLookupFunc(service.GetLiveRunState)
+	ws.GetManager().StreamHub().SetStreamStateLookupFunc(service.GetLiveRunStates)
 
 	// Inject pending_events write-ahead for user_message events (breaks import
 	// cycle between ws and service). StreamHub.Emit stores user_message before

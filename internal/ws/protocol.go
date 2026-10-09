@@ -83,6 +83,14 @@ type ChatStreamData struct {
 	SessionID string `json:"session_id"`
 	EventType string `json:"event_type"` // "content", "thinking", "tool_use", etc.
 	Payload   any    `json:"payload"`
+	// MessageID is the chat_history row id this event belongs to, stamped on
+	// every event of a turn (0/absent when the event has no owning row). It is
+	// a SIBLING of payload, not inside it, so every event type carries it
+	// uniformly without each payload builder knowing about it. The frontend
+	// uses it to route content/thinking/tool events to the correct bubble when
+	// several streams run concurrently on one timeline (parallel group
+	// speaking); it falls back to single-stream resolution when absent.
+	MessageID int64 `json:"message_id,omitempty"`
 }
 
 // SummaryUpdateData is the data payload for "summary_update" events.

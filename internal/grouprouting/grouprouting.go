@@ -42,6 +42,40 @@ type MentionEntry struct {
 	Content string
 	// Private reports whether the tag carried the `private` attribute.
 	Private bool
+	// Mode is the delivery mode for this tag's targets: ModeParallel when the
+	// tag carried `mode="parallel"`, else ModeSequential. It only affects
+	// PUBLIC mentions (a private note's delivery is governed by the pending-BCC
+	// contract, not by this field). An unknown/absent mode value is
+	// ModeSequential and does NOT make the tag malformed.
+	Mode string
+}
+
+// Delivery modes for a mention tag (the `mode` attribute).
+const (
+	// ModeSequential means the tag's targets speak one after another, each
+	// seeing the previous speaker's output. This is the default and preserves
+	// pre-existing behavior for untagged mentions.
+	ModeSequential = "sequential"
+	// ModeParallel means the tag's targets speak CONCURRENTLY and must not see
+	// each other's output this round (the "simultaneous, mutually
+	// non-referencing" semantics). See the design's parallel-speaking section.
+	ModeParallel = "parallel"
+)
+
+// MentionGroup is one public mention tag flattened for the orchestrator: the
+// members it names plus how they should speak. It is the source of truth for
+// routing (Result.Speakers is derived from it), because it preserves the
+// PER-TAG boundary that the flat Speakers list loses — and `mode` is a per-tag
+// property.
+type MentionGroup struct {
+	// Members are the group's targets, in order, trimmed, empties dropped, and
+	// de-duplicated ACROSS groups (a member appears in at most one group — the
+	// first that names it).
+	Members []string `json:"members"`
+	// Parallel reports whether this group speaks concurrently.
+	Parallel bool `json:"parallel"`
+	// Instruction is this tag's body (the directive handed to its members).
+	Instruction string `json:"instruction"`
 }
 
 // BccEntry is one private note from a speaker to a subset of the named
@@ -61,9 +95,17 @@ type Result struct {
 	// Mentions is every well-formed mention tag in the order it appeared,
 	// public and private interleaved.
 	Mentions []MentionEntry
+	// Groups is the ordered list of PUBLIC mention tags, each flattened to its
+	// members + mode + instruction. It is the source of truth for routing: the
+	// orchestrator iterates groups so it can run a `parallel` group
+	// concurrently and a `sequential` group one-at-a-time. Groups whose members
+	// are all already claimed by an earlier group are dropped (they would be
+	// empty). Speakers is derived from Groups.
+	Groups []MentionGroup
 	// Speakers is the ordered, de-duplicated list of targets across the PUBLIC
-	// mentions. Non-empty only when Found is true. It is the host orchestrator's
-	// routing list and the free orchestrator's relay list.
+	// mentions (== the concatenation of Groups' members). Non-empty only when
+	// Found is true. It is the host orchestrator's routing list and the free
+	// orchestrator's relay list, for callers that do not need grouping.
 	Speakers []string
 	// Instruction is the PUBLIC content: every public mention's body joined by
 	// a blank line, trimmed. It is the directive handed to the named members
@@ -107,6 +149,11 @@ var (
 	reTargets = regexp.MustCompile(`\btargets[\s\p{Z}]*=[\s\p{Z}]*"([^"]*)"`)
 	// rePrivate detects the boolean `private` attribute (case-sensitive).
 	rePrivate = regexp.MustCompile(`\bprivate\b`)
+	// reMode extracts the double-quoted `mode` attribute value (the display
+	// contract mirrors reTargets: only the double-quoted form is recognized).
+	// An unknown value falls back to sequential; it never makes the tag
+	// malformed.
+	reMode = regexp.MustCompile(`\bmode[\s\p{Z}]*=[\s\p{Z}]*"([^"]*)"`)
 	// reEnd matches the discussion-end signal. The whitespace class is
 	// [\s\p{Z}] — Go's \s alone is ASCII-only, while JS's \s includes Unicode
 	// spaces (NBSP, U+3000). Without \p{Z} the two sides would disagree on a
@@ -114,21 +161,27 @@ var (
 	reEnd = regexp.MustCompile(`<clawbench-group-end[\s\p{Z}]*/>`)
 )
 
-// parseMentionAttrs extracts (targets, private) from a tag's raw attribute
-// string. ok is false when there is no well-formed double-quoted targets
-// attribute or it is empty — such a tag is malformed and NOT parsed (the
-// fail-open display contract: its text stays visible).
-func parseMentionAttrs(attrs string) (targets []string, private bool, ok bool) {
+// parseMentionAttrs extracts (targets, private, mode) from a tag's raw
+// attribute string. ok is false when there is no well-formed double-quoted
+// targets attribute or it is empty — such a tag is malformed and NOT parsed
+// (the fail-open display contract: its text stays visible). mode is
+// ModeParallel only for the exact value `parallel`; any other value (including
+// absent) is ModeSequential and never affects ok.
+func parseMentionAttrs(attrs string) (targets []string, private bool, mode string, ok bool) {
 	m := reTargets.FindStringSubmatch(attrs)
 	if m == nil {
-		return nil, false, false
+		return nil, false, "", false
 	}
 	targets = splitNames(m[1])
 	if len(targets) == 0 {
-		return nil, false, false
+		return nil, false, "", false
 	}
 	private = rePrivate.MatchString(attrs)
-	return targets, private, true
+	mode = ModeSequential
+	if mm := reMode.FindStringSubmatch(attrs); len(mm) > 1 && strings.EqualFold(strings.TrimSpace(mm[1]), ModeParallel) {
+		mode = ModeParallel
+	}
+	return targets, private, mode, true
 }
 
 // Parse locates every mention tag in an agent message and the end signal.
@@ -144,7 +197,7 @@ func Parse(text string) Result {
 	firstPublicStart, lastPublicEnd := -1, -1
 	for _, m := range matches {
 		// m: [start, end, attrsStart, attrsEnd, bodyStart, bodyEnd]
-		targets, private, ok := parseMentionAttrs(text[m[2]:m[3]])
+		targets, private, mode, ok := parseMentionAttrs(text[m[2]:m[3]])
 		if !ok {
 			continue // malformed: not a mention, leave the span in place
 		}
@@ -152,6 +205,7 @@ func Parse(text string) Result {
 			Targets: targets,
 			Content: strings.TrimSpace(text[m[4]:m[5]]),
 			Private: private,
+			Mode:    mode,
 		})
 		res.Raw = text[m[0]:m[1]]
 		if !private {
@@ -182,10 +236,7 @@ func Parse(text string) Result {
 	}
 
 	res.Found = true
-
-	// Derive the host orchestrator's flat view: public targets (ordered,
-	// de-duplicated) and the joined public directive.
-	res.Speakers, res.Instruction, res.Bcc = deriveFlatView(res.Mentions)
+	res.deriveRoutingView()
 	return res
 }
 
@@ -208,30 +259,44 @@ func surroundingProse(text string, firstPublicStart, lastPublicEnd int) (before,
 	return before, after
 }
 
-// deriveFlatView flattens the mention list into the host orchestrator's view:
-// public targets (ordered, de-duplicated), the joined public directive, and the
-// private notes in order.
-func deriveFlatView(mentions []MentionEntry) (speakers []string, instruction string, bcc []BccEntry) {
-	seen := map[string]bool{}
-	for _, e := range mentions {
+// deriveRoutingView fills Bcc, Groups, Speakers and Instruction from Mentions.
+// Groups is the source of truth: it preserves the PER-TAG boundary (needed
+// because `mode` is a per-tag property) and the per-tag instruction. Speakers
+// is the flat de-duplicated concatenation of the groups' members, kept for
+// callers that do not care about grouping.
+//
+// Cross-group de-duplication: a member named by an earlier group is not
+// re-listed in a later one (it would otherwise speak twice in one round). A
+// group left with no unclaimed members is dropped (empty group).
+func (r *Result) deriveRoutingView() {
+	claimed := map[string]bool{}
+	for _, e := range r.Mentions {
 		if e.Private {
-			bcc = append(bcc, BccEntry{Targets: e.Targets, Content: e.Content})
+			r.Bcc = append(r.Bcc, BccEntry{Targets: e.Targets, Content: e.Content})
 			continue
 		}
+		group := MentionGroup{
+			Parallel:    e.Mode == ModeParallel,
+			Instruction: e.Content,
+		}
 		for _, t := range e.Targets {
-			if !seen[t] {
-				seen[t] = true
-				speakers = append(speakers, t)
+			if claimed[t] {
+				continue
 			}
+			claimed[t] = true
+			group.Members = append(group.Members, t)
+			r.Speakers = append(r.Speakers, t)
+		}
+		if len(group.Members) > 0 {
+			r.Groups = append(r.Groups, group)
 		}
 		if e.Content != "" {
-			if instruction != "" {
-				instruction += "\n\n"
+			if r.Instruction != "" {
+				r.Instruction += "\n\n"
 			}
-			instruction += e.Content
+			r.Instruction += e.Content
 		}
 	}
-	return speakers, instruction, bcc
 }
 
 // StripEndTag removes the end-signal tag from text, returning the text
@@ -290,8 +355,8 @@ func replaceMentionSpans(text string, fn func(*MentionEntry) string) string {
 			next := reMentionSpanAny.ReplaceAllStringFunc(cleaned, func(span string) string {
 				var entry *MentionEntry
 				if m := reMention.FindStringSubmatch(span); m != nil {
-					if targets, private, ok := parseMentionAttrs(m[1]); ok {
-						entry = &MentionEntry{Targets: targets, Content: strings.TrimSpace(m[2]), Private: private}
+					if targets, private, mode, ok := parseMentionAttrs(m[1]); ok {
+						entry = &MentionEntry{Targets: targets, Content: strings.TrimSpace(m[2]), Private: private, Mode: mode}
 					}
 				}
 				return fn(entry)

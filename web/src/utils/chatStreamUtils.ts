@@ -199,6 +199,12 @@ export interface ChatStreamEventData {
   session_id: string
   event_type: string
   payload: Record<string, unknown>
+  /**
+   * The chat_history row id this event belongs to, stamped by the backend on
+   * every event of a turn (absent/0 when the event has no owning row). Routes
+   * block-level events to the correct bubble under concurrent streams.
+   */
+  message_id?: number
 }
 
 /** Polling response data */
@@ -368,9 +374,13 @@ export function forceCleanupStreamingState(
   callbacks: {
     onRenderNeeded: (forceFull?: boolean) => void
     onExtractScheduledTasks?: (msgs: ChatMessage[]) => void
-  }
+  },
+  // Optional owning row id. When set, only THAT streaming message is finalized
+  // (needed under concurrent streams: a sibling's finalize must not close the
+  // wrong bubble). Absent ⇒ legacy "the single streaming message".
+  targetMessageId?: number,
 ): ChatMessage | undefined {
-  const streamingMsg = messages.find((m) => m.role === 'assistant' && m.streaming)
+  const streamingMsg = resolveStreamingMsg(messages, targetMessageId)
   if (streamingMsg) {
     const hasContent = streamingMsg.content || (streamingMsg.blocks && streamingMsg.blocks.length > 0)
     delete streamingMsg.streaming
@@ -426,6 +436,33 @@ export function forceCleanupStreamingState(
  */
 export function findStreamingMsg(messages: ChatMessage[]): ChatMessage | undefined {
   return messages.find((m) => m.role === 'assistant' && m.streaming)
+}
+
+/**
+ * Resolve the target streaming assistant message for a block-level event.
+ *
+ * When the backend stamps a `messageId` (every content/thinking/tool event of a
+ * turn carries one), the message with that id is authoritative — this is what
+ * lets several concurrent streams on one timeline (parallel group speaking)
+ * each route to their OWN bubble. Without it the only option was "the single
+ * streaming message", which cross-talks the moment there are two.
+ *
+ * `messageId` is optional so an older backend (or an event with no owning row)
+ * falls back to the legacy single-stream resolution.
+ */
+export function resolveStreamingMsg(messages: ChatMessage[], messageId?: number): ChatMessage | undefined {
+  if (messageId) {
+    const byId = messages.find(
+      (m) => m.role === 'assistant' && m.streaming && String(m.id) === String(messageId),
+    )
+    if (byId) return byId
+    // A stamped id that matches no STREAMING message is NOT silently redirected
+    // to a different streaming bubble: doing so is exactly the cross-talk this
+    // function exists to prevent. Fall through only when there is no ambiguity
+    // (a single streaming message), else give up.
+  }
+  const streaming = messages.filter((m) => m.role === 'assistant' && m.streaming)
+  return streaming.length === 1 ? streaming[0] : undefined
 }
 
 /**
@@ -644,16 +681,19 @@ export type ChatMessageAction =
   // backend. Deduped by DB id so a duplicate delivery renders once.
   | { type: 'ws_system_message'; data: { messageId?: number; content?: string } }
   | { type: 'ws_error'; text: string; reason?: string; errorCode?: number; httpStatus?: number; errorSource?: string; errorDetail?: string }
-  | { type: 'stream_finalize' }
+  | { type: 'stream_finalize'; messageId?: number }
   // ── WS block-level (in-place blocks mutation, same array reference) ──
-  | { type: 'ws_content'; text: string; parentToolCallId?: string; memberName?: string; memberColor?: string }
-  | { type: 'ws_thinking'; text: string; key?: string; thinkId?: string; parentToolCallId?: string; memberName?: string; memberColor?: string }
-  | { type: 'ws_thinking_done'; parentToolCallId?: string }
-  | { type: 'ws_content_reset' }
-  | { type: 'ws_tool_use'; data: ToolUseEventData }
-  | { type: 'ws_tool_result'; data: ToolUseEventData }
-  | { type: 'ws_metadata'; metadata: Record<string, unknown> }
-  | { type: 'ws_warning'; text: string; reason?: string; errorCode?: number; httpStatus?: number; errorSource?: string; errorDetail?: string }
+  // Each carries an optional `messageId` (the backend-stamped owning row) so it
+  // can be routed to the correct bubble under concurrent streams. Absent ⇒
+  // legacy single-stream resolution.
+  | { type: 'ws_content'; text: string; messageId?: number; parentToolCallId?: string; memberName?: string; memberColor?: string }
+  | { type: 'ws_thinking'; text: string; messageId?: number; key?: string; thinkId?: string; parentToolCallId?: string; memberName?: string; memberColor?: string }
+  | { type: 'ws_thinking_done'; messageId?: number; parentToolCallId?: string }
+  | { type: 'ws_content_reset'; messageId?: number }
+  | { type: 'ws_tool_use'; messageId?: number; data: ToolUseEventData }
+  | { type: 'ws_tool_result'; messageId?: number; data: ToolUseEventData }
+  | { type: 'ws_metadata'; messageId?: number; metadata: Record<string, unknown> }
+  | { type: 'ws_warning'; messageId?: number; text: string; reason?: string; errorCode?: number; httpStatus?: number; errorSource?: string; errorDetail?: string }
   // ── DB rebuild (loadHistory) ──
   // `sessionRunning` lets the rebuild distinguish a stale snapshot (fetched
   // before the backend committed the streaming row) from real convergence —
@@ -1701,7 +1741,15 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       return state
     }
     case 'ws_stream_start': {
-      const sm = state.find((m) => m.role === 'assistant' && m.streaming)
+      // Prefer the message that already carries this id; otherwise adopt the id
+      // on a still-unidentified placeholder (the optimistic bubble created at
+      // send time, which has no numeric DB id yet). Under concurrent streams the
+      // sibling placeholders already hold numeric ids, so they are never
+      // mistaken for the one this event names.
+      let sm = state.find((m) => m.role === 'assistant' && String(m.id) === String(action.messageId))
+      if (!sm) {
+        sm = state.find((m) => m.role === 'assistant' && m.streaming && typeof m.id !== 'number')
+      }
       if (sm) {
         // Adopt the DB id ONLY when this placeholder does not already carry one.
         // A mid-turn split opens a second streaming row in the same turn; if a
@@ -1844,12 +1892,12 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       return state
     }
     case 'stream_finalize': {
-      forceCleanupStreamingState(state, { onRenderNeeded: () => {} })
+      forceCleanupStreamingState(state, { onRenderNeeded: () => {} }, action.messageId)
       return state
     }
     // ── Block-level: mutate the streaming message's blocks in place ──
     case 'ws_content': {
-      const sm = state.find((m) => m.role === 'assistant' && m.streaming)
+      const sm = resolveStreamingMsg(state, action.messageId)
       if (!sm) return state
       const blocks = sm.blocks!
       const parent = action.parentToolCallId
@@ -1865,7 +1913,7 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       return state
     }
     case 'ws_thinking': {
-      const sm = state.find((m) => m.role === 'assistant' && m.streaming)
+      const sm = resolveStreamingMsg(state, action.messageId)
       if (!sm) return state
       const blocks = sm.blocks!
       const parent = action.parentToolCallId
@@ -1931,7 +1979,7 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       return state
     }
     case 'ws_thinking_done': {
-      const sm = state.find((m) => m.role === 'assistant' && m.streaming)
+      const sm = resolveStreamingMsg(state, action.messageId)
       if (!sm || !sm.blocks) return state
       // Marks the most recently emitted thinking block OF THIS PARENT as done.
       // The parent filter matters with concurrent sub-agents: an unfiltered
@@ -1963,14 +2011,14 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       return state
     }
     case 'ws_content_reset': {
-      const sm = state.find((m) => m.role === 'assistant' && m.streaming)
+      const sm = resolveStreamingMsg(state, action.messageId)
       if (!sm) return state
       sm.blocks = []
       sm.metadata = undefined
       return state
     }
     case 'ws_tool_use': {
-      const sm = state.find((m) => m.role === 'assistant' && m.streaming)
+      const sm = resolveStreamingMsg(state, action.messageId)
       if (!sm) return state
       const data = action.data
       const blocks = sm.blocks!
@@ -2007,7 +2055,7 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       return state
     }
     case 'ws_tool_result': {
-      const sm = state.find((m) => m.role === 'assistant' && m.streaming)
+      const sm = resolveStreamingMsg(state, action.messageId)
       if (!sm || !sm.blocks) return state
       const data = action.data
       const block = sm.blocks.find((b) => b.type === 'tool_use' && b.id === data.id)
@@ -2023,12 +2071,12 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       return state
     }
     case 'ws_metadata': {
-      const sm = state.find((m) => m.role === 'assistant' && m.streaming)
+      const sm = resolveStreamingMsg(state, action.messageId)
       if (sm) sm.metadata = action.metadata
       return state
     }
     case 'ws_warning': {
-      const sm = state.find((m) => m.role === 'assistant' && m.streaming)
+      const sm = resolveStreamingMsg(state, action.messageId)
       if (!sm) return state
       const warningBlock: ContentBlock = { type: 'warning', text: action.text }
       if (action.reason) warningBlock.reason = action.reason

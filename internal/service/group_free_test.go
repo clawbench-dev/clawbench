@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 
 	"clawbench/internal/i18n"
@@ -47,11 +48,15 @@ func createFreeGroup(t *testing.T, project string, memberNames ...string) (strin
 
 // freeScriptedRunner writes a scripted reply per member (keyed by row id),
 // recording the speaking order. Unlike newScriptedRunner it takes row ids.
+// It is safe for concurrent use: a parallel group runs members in goroutines,
+// so the shared order/counts must be mutex-guarded.
 func freeScriptedRunner(t *testing.T, project, groupID string, script map[string][]string) (groupTurnRunner, *[]string) {
 	t.Helper()
 	order := &[]string{}
 	counts := map[string]int{}
+	var mu sync.Mutex
 	return func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		mu.Lock()
 		*order = append(*order, turn.MemberRowID)
 		texts := script[turn.MemberRowID]
 		i := counts[turn.MemberRowID]
@@ -60,6 +65,7 @@ func freeScriptedRunner(t *testing.T, project, groupID string, script map[string
 			text = texts[i]
 		}
 		counts[turn.MemberRowID]++
+		mu.Unlock()
 		_, err := AddChatMessageWithAgent(project, "claude", groupID, "assistant",
 			assistantText(text), nil, false, "", turn.MemberRowID)
 		if err != nil {
@@ -554,3 +560,75 @@ func TestHostMode_IgnoresHumanMention(t *testing.T) {
 }
 
 var _ = model.FileEntry{}
+
+// A `mode="parallel"` mention makes its members run CONCURRENTLY from one shared
+// snapshot: neither sees the other's output this round. The decisive assertion
+// is that both members' prompts were built before either turn produced output —
+// i.e. member B's injected context does NOT contain member A's reply, even
+// though A also spoke this round.
+func TestFreeLoop_ParallelGroupMembersDoNotSeeEachOther(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/free-parallel"
+	groupID, byName := createFreeGroup(t, project, "A", "B")
+
+	prompts := map[string]string{}
+	var mu sync.Mutex
+	base, _ := freeScriptedRunner(t, project, groupID, map[string][]string{
+		byName["A"]: {"A 的回答"},
+		byName["B"]: {"B 的回答"},
+	})
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		mu.Lock()
+		prompts[turn.MemberRowID] = turn.Prompt
+		mu.Unlock()
+		return base(ctx, gid, turn)
+	}
+
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	// The user @-mentions A and B in ONE parallel tag → they run concurrently.
+	msg := `<clawbench-mention targets="` + byName["A"] + `,` + byName["B"] + `" mode="parallel">同时回答</clawbench-mention> 开始`
+	_ = runGroupTurnForTest(t, o, project, msg, nil)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !strings.Contains(prompts[byName["A"]], "同时回答") || !strings.Contains(prompts[byName["B"]], "同时回答") {
+		t.Fatalf("both members must receive the parallel group's instruction; A=%q B=%q",
+			prompts[byName["A"]], prompts[byName["B"]])
+	}
+	if strings.Contains(prompts[byName["B"]], "A 的回答") {
+		t.Fatalf("a parallel member must NOT see a sibling's output this round; B prompt=%q", prompts[byName["B"]])
+	}
+	if strings.Contains(prompts[byName["A"]], "B 的回答") {
+		t.Fatalf("a parallel member must NOT see a sibling's output this round; A prompt=%q", prompts[byName["A"]])
+	}
+}
+
+// A parallel group that names the human user is DOWNGRADED to sequential (P7):
+// the user cannot speak concurrently, and a User turn ends the round. The
+// decisive assertion is that the AI member still gets to speak (the round is
+// not silently dropped) and no panic/duplicate occurs.
+func TestFreeLoop_ParallelWithUserDowngrades(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/free-parallel-user"
+	groupID, byName := createFreeGroup(t, project, "A", "B")
+
+	runner, order := freeScriptedRunner(t, project, groupID, map[string][]string{
+		byName["A"]: {"A 的回答"},
+		byName["B"]: {"B 的回答"},
+	})
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	msg := `<clawbench-mention targets="` + byName["A"] + `,User" mode="parallel">同时</clawbench-mention> 开始`
+	_ = runGroupTurnForTest(t, o, project, msg, nil)
+
+	sawA := false
+	for _, id := range *order {
+		if id == byName["A"] {
+			sawA = true
+		}
+	}
+	if !sawA {
+		t.Fatalf("the AI member must still speak when a parallel group names User; order=%v", *order)
+	}
+}
