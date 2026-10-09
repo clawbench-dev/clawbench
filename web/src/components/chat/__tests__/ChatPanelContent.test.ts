@@ -876,6 +876,50 @@ describe('ChatPanelContent — isGroupSession derives from session type', () => 
   })
 })
 
+// ── Group auto-speech reads PER SPEAKER, not once at the terminal done ──
+//
+// A group run's `done` fires only once after EVERY member has spoken, so
+// triggering auto-speech there reads just the last speaker. Each member turn
+// finalizes on its own (`stream_finalize` → onMemberFinalize), which is the
+// per-speaker hook. These are source guards because ChatPanelContent pulls in
+// the whole chat tree.
+
+describe('ChatPanelContent — group auto-speech is per speaker', () => {
+  async function source(): Promise<string> {
+    const mod = await import('@/components/chat/ChatPanelContent.vue?raw')
+    return typeof mod.default === 'string' ? mod.default : ''
+  }
+
+  it('registers onMemberFinalize on the stream', async () => {
+    const src = await source()
+    expect(src).toContain('onMemberFinalize: handleMemberFinalize')
+  })
+
+  it('handleMemberFinalize gates on group, resolves the speaker and forwards its name', async () => {
+    const src = await source()
+    const start = src.indexOf('function handleMemberFinalize(')
+    expect(start, 'handleMemberFinalize must exist').toBeGreaterThan(-1)
+    const region = src.slice(start, src.indexOf('\n}\n', start))
+    expect(region).toMatch(/isGroupSession\.value/)
+    expect(region).toMatch(/stripGroupProtocolTags/)
+    expect(region).toMatch(/resolveGroupSpeaker/)
+    // The speaker name is the third arg to speakMessage (the "xxx说" prefix).
+    expect(region).toMatch(/autoSpeech\.speakMessage\([^)]*speaker\?\.name/)
+  })
+
+  it('the terminal done path does NOT auto-speak a group run', async () => {
+    const src = await source()
+    const start = src.indexOf('async function onStreamEnd(')
+    expect(start, 'onStreamEnd must exist').toBeGreaterThan(-1)
+    const region = src.slice(start, src.indexOf('\n}\n', start))
+    // A group branch must short-circuit to onOutputEndNoSpeech and never call
+    // speakMessage (that would duplicate/replace the per-speaker reads).
+    expect(region).toMatch(/isGroupSession\.value[\s\S]*?onOutputEndNoSpeech\(\)/)
+    const groupBranch = region.slice(region.indexOf('isGroupSession.value'), region.indexOf('} else {', region.indexOf('isGroupSession.value')))
+    expect(groupBranch).not.toContain('speakMessage')
+  })
+})
+
 // ── Concurrency switch is NOT in the chat panel ──
 //
 // The free-mode concurrency switch lives in the group configuration sheet

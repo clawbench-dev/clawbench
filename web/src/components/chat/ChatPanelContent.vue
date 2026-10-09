@@ -841,6 +841,27 @@ function handleQueueDrainBoundary(sessionId) {
   session.markSessionRead(sessionId).catch(() => {})
 }
 
+// onMemberFinalize: fires per producer turn (group chats: one member) when the
+// backend emits its `stream_finalize`. Auto-speech is triggered HERE for group
+// runs — the terminal `done` fires only once after every member has spoken, so
+// speaking there would read just the last speaker. Each speaker's reply is
+// enqueued (useAutoSpeech plays them in order) and tagged with the speaker's
+// name so the backend can prefix the audio with "<name>说：".
+function handleMemberFinalize(messageId) {
+  if (!autoSpeech.enabled.value) return
+  if (!isGroupSession.value) return
+  if (!messageId) return
+  const msg = messages.value.find(m => String(m.id) === String(messageId))
+  if (!msg || msg.role !== 'assistant') return
+  const raw = extractSpeakableText(msg.blocks || [])
+  const fullText = stripGroupProtocolTags(raw)
+  if (!fullText) return
+  const speaker = typeof props.resolveGroupSpeaker === 'function'
+    ? props.resolveGroupSpeaker(msg.agentId)
+    : null
+  autoSpeech.speakMessage(msg.id, fullText, speaker?.name || '')
+}
+
 // onStreamEnd: fires when current session stream completes with a reason
 // - 'done': normal completion → play sound, auto-speech; queue sync handled by
 //   useSessionManager's watch(loading) safety net (loading true→false triggers fetchQueue)
@@ -850,21 +871,26 @@ async function onStreamEnd(reason) {
   if (reason === 'done') {
     playNotificationSound()
     if (autoSpeech.enabled.value) {
-      const lastMsg = messages.value[messages.value.length - 1]
-      if (lastMsg?.role === 'assistant') {
-        // Strip the host's private notes for a GROUP session only: a single
-        // chat has no protocol, so stripping would truncate a reply that merely
-        // discusses the tag syntax (regression, msg 58879).
-        const raw = extractSpeakableText(lastMsg.blocks || [])
-        const fullText = isGroupSession.value ? stripGroupProtocolTags(raw) : raw
-        if (fullText && lastMsg.id) {
-          autoSpeech.speakMessage(lastMsg.id, fullText)
+      if (isGroupSession.value) {
+        // Group runs are read per speaker at stream_finalize
+        // (handleMemberFinalize). The terminal `done` carries only the LAST
+        // member's reply, so speaking here would duplicate/replace it.
+        // onOutputEndNoSpeech is still called so the screen lock is released
+        // when nothing is queued or playing.
+        autoSpeech.onOutputEndNoSpeech()
+      } else {
+        const lastMsg = messages.value[messages.value.length - 1]
+        if (lastMsg?.role === 'assistant') {
+          const raw = extractSpeakableText(lastMsg.blocks || [])
+          if (raw && lastMsg.id) {
+            autoSpeech.speakMessage(lastMsg.id, raw)
+          } else {
+            // Output ended but no speakable text — restore screen lock
+            autoSpeech.onOutputEndNoSpeech()
+          }
         } else {
-          // Output ended but no speakable text — restore screen lock
           autoSpeech.onOutputEndNoSpeech()
         }
-      } else {
-        autoSpeech.onOutputEndNoSpeech()
       }
     } else {
       // Auto-speech off — restore screen lock since no TTS will play
@@ -943,6 +969,7 @@ const stream = useChatStream({
   onNotification: (title, opts) => notification.show(title, opts),
   onStreamEnd,
   onQueueDrainBoundary: handleQueueDrainBoundary,
+  onMemberFinalize: handleMemberFinalize,
   onReplayDone: () => { inputDisabled.value = false },
   onFileModified: (filePath) => {
     // Chat-driven file refresh: when AI's Write/Edit tool completes,

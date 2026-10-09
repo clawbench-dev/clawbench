@@ -58,6 +58,19 @@ let playbackEndAudio: HTMLAudioElement | null = null
 /** Set to true after MSE endOfStream() — signals that no more chunks will arrive */
 let mseStreamEnded = false
 
+/**
+ * FIFO of auto-speech items waiting for the current playback to finish.
+ *
+ * A group chat can have several members speak in one run (and, in free mode,
+ * concurrently). Each member turn finalizes on its own, so auto-speech is
+ * triggered once per speaker — without a queue every new trigger would preempt
+ * the previous one (`_speak` stops the current audio first) and only the LAST
+ * speaker would ever be heard. Queuing makes them play one after another
+ * ("轮流播放"). Manual playback (the read-aloud button) and an explicit stop
+ * clear the queue, since those are deliberate user actions.
+ */
+let autoQueue: Array<{ id: string; text: string; speakerName?: string }> = []
+
 function clearPlaybackEndTimer() {
   if (playbackEndTimer) {
     clearInterval(playbackEndTimer)
@@ -177,12 +190,38 @@ export function useAutoSpeech() {
 
   // --- Audio Playback ---
 
-  /** Reset all TTS state to idle and release screen lock. */
-  function resetToIdle() {
-    activeId.value = ''
-    playingSummary.value = ''
-    state.value = 'idle'
-    releaseScreenLockOnError()
+  /** True while a TTS generation/playback cycle is in flight (including the
+   *  window between the POST and the first audio, when `state` is still idle). */
+  function isBusy(): boolean {
+    return state.value !== 'idle' || activeId.value !== ''
+  }
+
+  /** Append an auto-speech item and play it now when nothing is in flight. */
+  function enqueueOrPlay(id: string, text: string, speakerName?: string) {
+    if (!text) return
+    if (isBusy()) {
+      autoQueue.push({ id, text, speakerName })
+      return
+    }
+    void _speak(id, text, speakerName)
+  }
+
+  /** Play the next queued item (if any). Called when a cycle ends. */
+  function drainAutoQueue() {
+    const next = autoQueue.shift()
+    if (!next) return
+    void _speak(next.id, next.text, next.speakerName)
+  }
+
+  /**
+   * Finish the current cycle and hand off to the next queued speaker.
+   * The screen wake lock is kept across a hand-off (there is still output to
+   * play) and released only when the queue drains.
+   */
+  function advancePlayback() {
+    const hasMore = autoQueue.length > 0
+    stopPlayback(!hasMore)
+    if (hasMore) drainAutoQueue()
   }
 
   /** Handle audio.play() rejection uniformly. */
@@ -194,16 +233,17 @@ export function useAutoSpeech() {
       message = gt('autoSpeech.autoplayBlocked')
     }
     reportError(message)
-    stopAudio()
+    // A failed speaker must not stall the rest of the run — advance the queue.
+    advancePlayback()
   }
 
   /**
-   * Stop current audio/TTS playback.
-   * @param releaseScreenLock If true (default), release the screen wake lock.
-   *   Pass false when stopping previous audio to start a new TTS in the same
-   *   output cycle (e.g. inside _speak), so the screen lock stays suppressed.
+   * Stop the current audio/TTS cycle (does NOT touch the queue — callers that
+   * mean "stop everything" go through the exported `stopAudio`).
+   * @param releaseScreenLock If true, release the screen wake lock. Pass false
+   *   when handing off to the next queued speaker, so the lock stays held.
    */
-  function stopAudio(releaseScreenLock = true) {
+  function stopPlayback(releaseScreenLock = true) {
     abortController?.abort()
     abortController = null
     if (currentEventSource) {
@@ -236,6 +276,16 @@ export function useAutoSpeech() {
     }
   }
 
+  /**
+   * Stop playback AND clear any queued speakers. This is the deliberate
+   * user-facing stop (read-aloud button acting as stop, toggling auto-speech
+   * off): it must not be followed by "the next speaker" surprising the user.
+   */
+  function stopAudio(releaseScreenLock = true) {
+    autoQueue = []
+    stopPlayback(releaseScreenLock)
+  }
+
   function reportError(message: string) {
     lastError.value = message
     toast.show(message, { icon: '🔊', type: 'error', duration: 5000 })
@@ -250,18 +300,18 @@ export function useAutoSpeech() {
 
     audio.onended = () => {
       appLog.i(TAG, 'playAudio: onended fired')
-      stopAudio()
+      advancePlayback()
     }
     audio.onerror = () => {
       appLog.i(TAG, 'playAudio: onerror fired')
-      stopAudio()
       reportError(gt('autoSpeech.playbackFailed'))
+      advancePlayback()
     }
 
     // Fallback: detect playback end via polling if 'ended' event is missed
     startPlaybackEndTimer(audio, () => {
-      appLog.i(TAG, 'playAudio: fallback timer triggered stopAudio')
-      stopAudio()
+      appLog.i(TAG, 'playAudio: fallback timer triggered advancePlayback')
+      advancePlayback()
     })
 
     audio.play().catch(handlePlayError)
@@ -284,19 +334,19 @@ export function useAutoSpeech() {
 
     audio.onended = () => {
       appLog.i(TAG, 'playStreamingAudio: onended fired')
-      stopAudio()
+      advancePlayback()
     }
     audio.onerror = () => {
       appLog.i(TAG, 'playStreamingAudio: onerror fired')
-      stopAudio()
       reportError(gt('autoSpeech.playbackFailed'))
+      advancePlayback()
     }
 
     // Fallback: some browsers (notably Android WebView) may not fire 'ended'
     // after MSE endOfStream(). Use timeupdate + polling to detect completion.
     startPlaybackEndTimer(audio, () => {
-      appLog.i(TAG, 'playStreamingAudio: fallback timer triggered stopAudio')
-      stopAudio()
+      appLog.i(TAG, 'playStreamingAudio: fallback timer triggered advancePlayback')
+      advancePlayback()
     })
 
     // Build WebSocket URL
@@ -391,25 +441,25 @@ export function useAutoSpeech() {
       }
       if (controller?.signal.aborted) return
       reportError(gt('autoSpeech.generateFailedGeneric'))
-      resetToIdle()
+      advancePlayback()
     }
 
     function handleResult(result: Record<string, unknown> | null) {
       if (!result) {
         reportError(gt('autoSpeech.noResult'))
-        resetToIdle()
+        advancePlayback()
         return
       }
 
       if (result.synthesizeFailed) {
         reportError(result.synthesizeError ? gt('autoSpeech.synthesisFailedDetail', { error: result.synthesizeError }) : gt('autoSpeech.synthesisFailed'))
-        resetToIdle()
+        advancePlayback()
         return
       }
 
       if (!result.audioPath) {
         reportError(gt('autoSpeech.noAudioFile'))
-        resetToIdle()
+        advancePlayback()
         return
       }
 
@@ -426,17 +476,15 @@ export function useAutoSpeech() {
   }
 
   // --- Internal: generate and play TTS for text ---
-  async function _speak(id: string, text: string) {
+  async function _speak(id: string, text: string, speakerName?: string) {
     if (!text) {
-      // No speakable text — release screen lock since TTS won't play
-      if (screenLockSuppressed) {
-        wakeLock.release()
-        screenLockSuppressed = false
-      }
+      // Nothing to speak for this item — hand off to the next queued speaker
+      // rather than silently dropping the rest of the run.
+      advancePlayback()
       return
     }
 
-    stopAudio(false)
+    stopPlayback(false)
     lastError.value = ''
 
     const controller = new AbortController()
@@ -448,6 +496,9 @@ export function useAutoSpeech() {
       const body: Record<string, unknown> = { text, language: i18n.global.locale.value }
       const msgId = parseInt(id, 10)
       if (!isNaN(msgId)) body.messageId = msgId
+      // Group chat: the backend prepends "<name>说：" to the SPOKEN audio only
+      // (never to the summary) so concurrent speakers are distinguishable.
+      if (speakerName) body.speakerName = speakerName
       const resp = await fetch('/api/tts/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -500,7 +551,7 @@ export function useAutoSpeech() {
         message = gt('autoSpeech.generateFailedDetail', { error: errMsg })
       }
       reportError(message)
-      resetToIdle()
+      advancePlayback()
     } finally {
       if (abortController === controller) {
         abortController = null
@@ -508,13 +559,21 @@ export function useAutoSpeech() {
     }
   }
 
-  function speakMessage(id: string, text: string) {
+  /**
+   * Auto-speech entry point: enqueue the item so it plays AFTER any speaker
+   * already being read (a group run triggers this once per member). No-op when
+   * auto-speech is disabled.
+   */
+  function speakMessage(id: string, text: string, speakerName?: string) {
     if (!enabled.value) return
-    _speak(id, text)
+    enqueueOrPlay(id, text, speakerName)
   }
 
+  /** Manual playback (read-aloud button): a deliberate user action, so it
+   *  preempts whatever is playing and clears any pending auto queue. */
   function speakText(id: string, text: string) {
-    _speak(id, text)
+    autoQueue = []
+    void _speak(id, text)
   }
 
   function isActive(id: string): boolean {
@@ -546,14 +605,6 @@ export function useAutoSpeech() {
 
   // --- Screen Lock ---
 
-  /** Release screen lock on TTS error paths */
-  function releaseScreenLockOnError() {
-    if (screenLockSuppressed) {
-      wakeLock.release()
-      screenLockSuppressed = false
-    }
-  }
-
   /**
    * Called when AI output starts.
    * Suppresses screen lock so the display stays on during
@@ -574,7 +625,10 @@ export function useAutoSpeech() {
    * suppressed at output start.
    */
   function onOutputEndNoSpeech() {
-    if (screenLockSuppressed && state.value === 'idle') {
+    // Keep the lock while a queued speaker is still pending: between two queued
+    // items `state` is momentarily 'idle' (the hand-off in advancePlayback), and
+    // releasing here would drop the lock mid-run.
+    if (screenLockSuppressed && state.value === 'idle' && autoQueue.length === 0) {
       wakeLock.release()
       screenLockSuppressed = false
       appLog.i(TAG, 'Screen lock restored: output ended without TTS')

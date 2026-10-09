@@ -2765,6 +2765,31 @@ describe('useChatStream', () => {
       const b = options.messages.value.find((m: any) => m.id === 5002)
       expect(b.streaming).toBe(true, 'a 0-id finalize must be a no-op, not close the live bubble')
     })
+
+    it('fires onMemberFinalize with the finalized id (per-speaker hook)', () => {
+      const onMemberFinalize = vi.fn()
+      const options = createOptions({ onMemberFinalize })
+      useChatStream(options)
+
+      simulateWsEvent('stream_start', { message_id: 6001 })
+      simulateWsEvent('content', { content: 'A speaks' }, 'test-session-1', 6001)
+      simulateWsEvent('stream_finalize', { message_id: 6001 })
+
+      expect(onMemberFinalize).toHaveBeenCalledTimes(1)
+      expect(onMemberFinalize).toHaveBeenCalledWith(6001)
+    })
+
+    it('does NOT fire onMemberFinalize for a no-op 0-id finalize', () => {
+      const onMemberFinalize = vi.fn()
+      const options = createOptions({ onMemberFinalize })
+      useChatStream(options)
+
+      simulateWsEvent('stream_start', { message_id: 6002 })
+      simulateWsEvent('content', { content: 'B' }, 'test-session-1', 6002)
+      simulateWsEvent('stream_finalize', { message_id: 0 })
+
+      expect(onMemberFinalize).not.toHaveBeenCalled()
+    })
   })
 
   // ── Stream stall watchdog ──

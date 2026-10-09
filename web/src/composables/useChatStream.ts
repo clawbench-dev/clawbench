@@ -48,6 +48,14 @@ export interface UseChatStreamOptions {
   onToolResult?: (toolId: string) => void
   onToolUpdate?: (toolId: string) => void
   onReplayDone?: () => void
+  /**
+   * Fires when ONE producer turn finalizes via `stream_finalize` (a group
+   * chat emits one per member turn, while the terminal `done` fires only once
+   * after the whole run). The host uses it to trigger per-speaker auto-speech:
+   * reading only at `done` would hear just the last member of a group run.
+   * Receives the finalized message id so the host can resolve its speaker.
+   */
+  onMemberFinalize?: (messageId: number) => void
 }
 
 export function useChatStream(options: UseChatStreamOptions) {
@@ -71,6 +79,7 @@ export function useChatStream(options: UseChatStreamOptions) {
     onToolResult,
     onToolUpdate,
     onReplayDone,
+    onMemberFinalize,
   } = options
 
   const renderScheduler = new StreamFrameScheduler()
@@ -689,6 +698,10 @@ export function useChatStream(options: UseChatStreamOptions) {
         if (sm) {
           dispatch({ type: 'stream_finalize', messageId: finishId })
           onRenderNeeded()
+          // One producer turn (group chats: one member) just ended. The host
+          // uses this to auto-speak THIS speaker's reply, so a multi-member run
+          // is read speaker by speaker rather than only at the terminal 'done'.
+          onMemberFinalize?.(finishId)
         }
         break
       }

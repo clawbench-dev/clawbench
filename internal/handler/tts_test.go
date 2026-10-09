@@ -1116,3 +1116,115 @@ func TestTTSExtractConclusion_SingleChatKeepsLiteralTag(t *testing.T) {
 		t.Fatalf("single-chat tail must be spoken: %q", got)
 	}
 }
+
+// --- TTS speaker prefix (group chat) ---
+
+// The spoken audio must carry "<name>说：" while the summary (returned to the
+// client and stored for cache reuse) stays clean — the prefix must never
+// participate in summarization.
+func TestTTSGenerate_SpeakerName_PrefixSpokenNotSummarized(t *testing.T) {
+	mockProvider := &mockSpeechProvider{}
+	mockSum := &mockSummarizer{result: "这是核心结论"}
+	env, teardown := setupTTSTest(t, mockProvider, mockSum)
+	defer teardown()
+
+	text := "群聊里的一段回复，需要被总结后朗读出来，并带上发言人的名字前缀。"
+	req := newRequest(t, http.MethodPost, "/api/tts/generate", map[string]any{
+		"text":        text,
+		"speakerName": "张三",
+		"language":    "zh",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := httptest.NewRecorder()
+
+	TTSGenerate(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// Speaker name is folded into the cache key.
+	hash := sha256.Sum256([]byte("张三\x00" + text))
+	cacheKey := hex.EncodeToString(hash[:])[:summarize.CacheKeyHexLen]
+	job, ok := service.GetTTSJob(cacheKey)
+	if ok {
+		select {
+		case <-job.Done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("TTS job did not complete in time")
+		}
+	}
+
+	// The prefix is spoken...
+	assert.Equal(t, "张三说：这是核心结论", mockProvider.lastSynthText)
+	// ...but the summarizer never saw the speaker name (it receives the raw
+	// request text, which the frontend sends without any prefix).
+	assert.Equal(t, text, mockSum.lastText)
+}
+
+// A single chat (no speakerName) must be byte-for-byte unchanged: no prefix and
+// the legacy cache key.
+func TestTTSGenerate_NoSpeakerName_NoPrefixLegacyCacheKey(t *testing.T) {
+	mockProvider := &mockSpeechProvider{}
+	mockSum := &mockSummarizer{result: "结论"}
+	env, teardown := setupTTSTest(t, mockProvider, mockSum)
+	defer teardown()
+
+	text := "单聊的一段回复，不应带任何前缀。"
+	req := newRequest(t, http.MethodPost, "/api/tts/generate", map[string]string{"text": text, "language": "zh"})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := httptest.NewRecorder()
+
+	TTSGenerate(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	hash := sha256.Sum256([]byte(text))
+	cacheKey := hex.EncodeToString(hash[:])[:summarize.CacheKeyHexLen]
+	job, ok := service.GetTTSJob(cacheKey)
+	if ok {
+		select {
+		case <-job.Done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("TTS job did not complete in time")
+		}
+	}
+
+	assert.Equal(t, "结论", mockProvider.lastSynthText)
+}
+
+func TestTTSSynthText(t *testing.T) {
+	assert.Equal(t, "正文", ttsSynthText("", "正文"), "empty prefix is a no-op")
+	assert.Equal(t, "Alice says: 正文", ttsSynthText("Alice says: ", "正文"))
+	assert.Equal(t, "张三说：正文", ttsSynthText("张三说：", "正文"))
+}
+
+// The prefix follows the SPOKEN language, not the UI locale: an English TTS
+// request must say "Alice says: ", never a Chinese prefix.
+func TestTTSGenerate_SpeakerName_EnglishPrefix(t *testing.T) {
+	mockProvider := &mockSpeechProvider{}
+	mockSum := &mockSummarizer{result: "the conclusion"}
+	env, teardown := setupTTSTest(t, mockProvider, mockSum)
+	defer teardown()
+
+	text := "a group reply to be summarized and spoken with the speaker name."
+	req := newRequest(t, http.MethodPost, "/api/tts/generate", map[string]any{
+		"text":        text,
+		"speakerName": "Alice",
+		"language":    "en",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := httptest.NewRecorder()
+
+	TTSGenerate(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	hash := sha256.Sum256([]byte("Alice\x00" + text))
+	cacheKey := hex.EncodeToString(hash[:])[:summarize.CacheKeyHexLen]
+	job, ok := service.GetTTSJob(cacheKey)
+	if ok {
+		select {
+		case <-job.Done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("TTS job did not complete in time")
+		}
+	}
+
+	assert.Equal(t, "Alice says: the conclusion", mockProvider.lastSynthText)
+}
