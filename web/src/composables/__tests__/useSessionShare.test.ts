@@ -7,7 +7,7 @@ import { useSessionShare } from '@/composables/useSessionShare'
  * tests and a "badge absent" assertion could pass for the wrong reason.
  */
 describe('useSessionShare', () => {
-  const { markShared, markUnshared, isSessionShared, hasAnySharedSession, setSharedSessionIds, resetSessionShareState } = useSessionShare()
+  const { markShared, markUnshared, isSessionShared, setSharedSessionIds, resetSessionShareState } = useSessionShare()
 
   beforeEach(() => {
     resetSessionShareState()
@@ -15,47 +15,6 @@ describe('useSessionShare', () => {
 
   it('reports a session as unshared initially', () => {
     expect(isSessionShared('s1')).toBe(false)
-  })
-
-  // Drives whether the management button is rendered at all.
-  describe('hasAnySharedSession', () => {
-    it('is false when nothing is shared', () => {
-      expect(hasAnySharedSession.value).toBe(false)
-    })
-
-    it('is true as soon as one session is shared', () => {
-      markShared('s1')
-      expect(hasAnySharedSession.value).toBe(true)
-    })
-
-    // The button must disappear again once the last share goes, otherwise it
-    // would linger with an empty drawer behind it.
-    it('goes false again when the last share is removed', () => {
-      markShared('s1')
-      markUnshared('s1')
-      expect(hasAnySharedSession.value).toBe(false)
-    })
-
-    it('stays true while other shares remain', () => {
-      markShared('s1')
-      markShared('s2')
-      markUnshared('s1')
-      expect(hasAnySharedSession.value).toBe(true)
-    })
-
-    it('tracks the authoritative list on replace', () => {
-      setSharedSessionIds(['a', 'b'])
-      expect(hasAnySharedSession.value).toBe(true)
-
-      setSharedSessionIds([])
-      expect(hasAnySharedSession.value).toBe(false)
-    })
-
-    // The list is the sole seed, so an empty result must not read as "unknown".
-    it('is false after an empty list is loaded', () => {
-      setSharedSessionIds([])
-      expect(hasAnySharedSession.value).toBe(false)
-    })
   })
 
   it('marks a session shared and unshared', () => {

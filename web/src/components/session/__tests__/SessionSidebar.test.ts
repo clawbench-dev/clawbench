@@ -6,6 +6,11 @@ import { SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH } from '@/composables/useSessionSi
 
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (k: string) => k, locale: { value: 'en' } }) }))
 vi.mock('@/utils/appLog', () => ({ appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() } }))
+// SharedSessionsDrawer (imported by the sidebar) renders dates through the
+// shared formatter, which imports the real i18n instance and its createI18n —
+// which this suite's narrow vue-i18n mock does not provide. Mocking the
+// formatter keeps the i18n chain out, as this suite intends.
+vi.mock('@/utils/format', () => ({ formatRelativeTime: (d: string) => d || '' }))
 
 const loadSessionsMock = vi.hoisted(() => vi.fn())
 

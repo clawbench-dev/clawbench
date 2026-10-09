@@ -20,11 +20,10 @@
           @create-group="handleGroupCreateClick"
         >
           <template #actions>
-            <!-- Only when this project actually has a shared conversation:
-                 with nothing to manage the button is pure header clutter.
-                 hasAnySharedSession stays false until the list loads, so it
-                 does not flash in for the common "nothing shared" case. -->
-            <button v-if="hasAnySharedSession" class="header-action-btn" data-action="shared-sessions" :title="t('sharedSessions.button')" @click.stop="sharedSessionsRef?.open()">
+            <!-- Always present: the drawer is the only place to review and
+                 revoke links, and it shows an empty state when there is
+                 nothing shared, so hiding the entry point only stranded it. -->
+            <button class="header-action-btn" data-action="shared-sessions" :title="t('sharedSessions.button')" @click.stop="sharedSessionsRef?.open()">
               <MessageSquareShare :size="16" />
             </button>
           </template>
@@ -94,7 +93,6 @@ import SharedSessionsDrawer from '@/components/session/SharedSessionsDrawer.vue'
 import SessionListTabs from '@/components/session/SessionListTabs.vue'
 import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
 import { useAgents } from '@/composables/useAgents'
-import { useSessionShare } from '@/composables/useSessionShare'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
 import { store } from '@/stores/app.ts'
@@ -113,7 +111,6 @@ const { isWideScreen } = useWideScreenLayout()
 
 const bottomSheetRef = ref(null)
 const agentSelectorRef = ref(null)
-const { hasAnySharedSession } = useSessionShare()
 const listRef = ref(null)
 const sharedSessionsRef = ref(null)
 // Which pane the list shows. Owned here (not in SessionList) because the tab bar
