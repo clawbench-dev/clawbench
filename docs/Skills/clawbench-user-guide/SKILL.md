@@ -157,6 +157,7 @@ if (meStatus !== 200) {
 | 文件预览窗格 | `.fm-preview-pane` | 先点 `title="开启预览模式：单击文件快捷预览"`，再单击文件 |
 | Markdown 查看器 | `.file-viewer` / `.markdown-body` | 双击文件打开；TOC 按钮 `title="目录"` → `.toc-dock` |
 | 聊天 | `.chat-tab-panel` / `.chat-messages` | 消息 `.chat-message`，工具卡 `.chat-tool-call`、`.tool-detail.chat-inline-card` |
+| AI 群聊 | 同上 + 群专属类 | 见 §二十七；会话行 `[data-session-id]`、群行含 `.session-item-group` + `.session-item-group-mode` |
 | Git 历史 | `.git-history-content` | 提交行 `.drilldown-item`；文件行 `.git-file-info` → diff 抽屉 |
 | 任务 | `.task-tab` | 含事件任务 + 定时任务 |
 | 终端 | `.terminal-panel` | xterm；输入焦点 `.xterm-helper-textarea` |
@@ -226,6 +227,7 @@ localStorage.setItem('clawbench-widescreen-split-ratio', String(441 / 1232));
 |---|---|
 | 快速上手 | `getting-started.md` |
 | AI 对话 | `chat.md` |
+| AI 群聊 | `group-chat.md` |
 | 会话管理 | `session.md` |
 | 文件管理 | `file-manager.md` |
 | 文件查看与编辑 | `file-viewer.md` |
@@ -285,6 +287,7 @@ localStorage.setItem('clawbench-widescreen-split-ratio', String(441 / 1232));
 **文件管理器**：工具栏 / 排序菜单 / 多选模式 / 网格视图 / 文件右键菜单 / 目录右键菜单 / 预览窗格 / 搜索三模式
 **文件查看器**：Markdown+TOC / 代码编辑 / 图片灯箱 / PDF / Office / 分享弹窗
 **AI 对话**：输入栏全貌 / 斜杠命令菜单 / @引用 / 附件抽屉 / 消息操作按钮 / 推荐回复 / 工具卡展开 / 权限审批 / 提问卡 / 深度思考 / 会话设置抽屉
+**AI 群聊**：建群抽屉（多选 + 主持胶囊）/ 主持人模式时间线（主持人皇冠 + @汇总行 + 密送卡）/ 自由模式时间线（`@` 接力）/ 成员管理抽屉（主持人版含最大轮数、自由版含并发开关）/ @ 成员卡（输入框附件条）
 **会话**：侧栏全貌 / 搜索抽屉 / 标签过滤 / 右键菜单
 **Git**：提交列表 / 分支 / 标签 / 工作树 / diff 抽屉 / 工作区变更
 **任务**：列表 / 定时表单 / 事件表单（含事件类型勾选）/ 详情 / 执行历史
@@ -1018,3 +1021,61 @@ await p.waitForTimeout(4000);   // 等输出渲染
 2. **语音输入的长按用的是 `pointerdown`/`pointerup`**（`ChatInputBar.vue:703-723`），
    不是 touch 事件，且条件为 `!hasInputContent.value`（空输入时）。
    但即使触发成功，`start()` 仍会因无麦克风而报错——**这张只能真机拍**。
+
+---
+
+## 二十七、AI 群聊（截图要点）
+
+群聊是**独立一类会话**（`session_type='group'`），详解文档 `group-chat.md`。**两种模式**由建群时是否指定主持人决定，**建群后不可切换**；两套界面的选择器与取景方式不同，务必分清。
+
+### 演示素材：优先复用真实群会话，不要新建
+
+群聊需要**多轮真实讨论**（成员发言、@ 接力、密送、系统行）才有信息量，**新建群跑一轮成本极高**（每个成员是一条独立 AI 子进程）。所以优先用用户已有的群会话。
+
+**发现群会话**（只读）：
+
+```bash
+sqlite3 "file:$HOME/.clawbench/ClawBench.db?mode=ro&immutable=1" \
+  "select id, title, context_state from chat_sessions where session_type='group';"
+```
+
+`context_state` 里 **`group_mode`** 决定模式（`"host"` / `"free"`），`host_member_id` 是主持人成员行 id，`parallelDefault` 是自由模式的并发开关。成员行查 `where group_id='<群id>'`（`title` 即展示名，`archived=1` 即已离场）。
+
+**挑素材的判据**（各拍一张，选内容最丰富的）：
+- **主持人模式**：时间线里同时有「主持人皇冠发言 + `@` 汇总行 + 密送卡 + 系统行」的那条。
+- **自由模式**：有成员互相 `@` 接力（`.msg-mention-summary` 多条）的那条。
+
+### DOM 选择器
+
+| 元素 | 选择器 | 说明 |
+|---|---|---|
+| 会话行 | `[data-session-id="<群id>"] .session-item` | 点开该群（**稳定 hook**，勿用 `.session-row` 位置索引） |
+| 群行标识 | `.session-item-group` / `.session-item-group-mode` | 群图标堆叠 / 模式标签（皇冠=主持人、`@`=自由） |
+| 顶部头像条 | `.group-avatar-stack` | **点击整条**打开成员抽屉；`.avatar-disc` 是成员头像 |
+| 模式徽标 | `.group-mode-badge` | 皇冠 / `@`（装饰性，`textContent` 为空，看内部 `<svg>`） |
+| 主持人气泡 | `.msg-speaker-host-tag` | 发言人标签上的皇冠 + 「主持人」 |
+| @ 汇总行 | `.msg-mention-summary` | 气泡顶部「@ A、B」一行 |
+| 密送卡 | `.msg-bcc`（成员，折叠）/ `.msg-bcc-user`（发给你，默认展开） | |
+| 系统行 | `.chat-system-row` | 「轮到用户发言」「XX 加入了讨论」等居中细条 |
+| 成员抽屉 | `.gm-row` / `.gm-tag--host` / `.gm-tag--left` / `.gm-remove` | 行 / 主持人标签 / 已离场标签 / 移除按钮 |
+| 抽屉「添加成员」 | `[data-action="add-members"]` | 在**抽屉头部右侧** |
+| 群设置 | `#group-max-rounds`（主持人模式）/ `#group-parallel`（自由模式）/ `#group-auto-approve`（两者） | **两行互为镜像**：主持人模式有最大轮数无并发开关，自由模式反之 |
+| 建群入口 | `[data-action="create-group"]` | 会话列表头部 |
+| 建群抽屉 | `.bs-overlay` → `.agent-option`（行）/ `.agent-option-check`（复选框）/ `.agent-host-btn`（主持胶囊，`.active` 为当前主持人）/ `.agent-multi-confirm`（创建按钮） | 抽屉标题右侧 `.agent-header-mode` 实时显示「主持人模式 / 自由模式」 |
+| @ 成员卡 | `.chat-attachment-tags .mention-card`（名字 `.mention-card-name`，锁 `.mention-card-lock`） | 输入框附件条 |
+
+### 拍法要点
+
+1. **建群抽屉（`group-01-create`）**：点 `[data-action="create-group"]` → 点 3 个 `.agent-option` 勾选 → 点其中一个行内的 `.agent-host-btn` 设为主持人。自检：`.agent-option-check.checked` 数 = 3、`.agent-host-btn.active` = 1、`.agent-header-mode` 文本为「主持人模式」。
+2. **主持人时间线（`group-02-host`）**：打开群 → 在 `.chat-message` 里找**同时含 `.msg-mention-summary` 与 `.msg-speaker-host-tag`** 的那条，`sc.scrollTop = target.offsetTop - 8` 把它滚到顶部再拍。这样一屏能同时展示「皇冠主持人 + @ 汇总行 + 密送卡」。
+3. **自由时间线（`group-03-free`）**：打开自由群 → 从后往前找含 `.msg-mention-summary` 或 `.msg-bcc` 的消息滚到顶。标题栏左侧的 `.group-mode-badge` 是 `@`。
+4. **成员抽屉**：`.group-avatar-stack` 用 Playwright `el.click()`（合成 `.click()` 对 Teleport 抽屉不可靠）→ 等 ~1.4s。**两种模式各拍一张**（主持人版显示「最大轮数」，自由版显示「并发执行」），这正好把两个模式的群设置差异讲清。
+5. **@ 成员卡（`group-06-mention-card`）**：**必须用 Playwright 真实输入事件**——`ta.fill('@')` 打开 `.completion-item` 菜单（群会话里成员候选排最前），点 `.completion-item` 第一项加卡，再 `ta.fill('问题正文')`。合成 `element.click()` / 直接设 `value` **不会**弹出该菜单（同 §八 第 10 条）。自检：`.chat-attachment-tags .mention-card` 存在且 `.mention-card-name` 非空、`.chat-textarea` 的 value **不含** `clawbench-mention`。
+
+### 群聊专属陷阱
+
+1. **`group_mode` 键名不是 `mode`**（`ContextState` 已用 `$.mode` 存智能体模式）；查库判模式读 `group_mode`。
+2. **完成通知卡的类名已变**：现在是 `.completion-notify-layer` / `.completion-notify`（**不是**旧的 `.completion-popover-backdrop`）。cap3.sh 的 `ov.card` 自检与清队列逻辑仍查旧类名 → **判据失效**，须自行用新类名补判，或依赖截图前 `page.reload()`（reload 仍能清空内存队列）。
+3. **群会话隐藏了单聊的模型/模式/用量控件**（`ChatInputBar.vue` 按 `isGroupSession` 隐藏）——拍群聊时底部信息行**不会**有 model/mode 选择器，这是设计而非缺陷。
+4. **`isGroupSession` 由 `session_type` 派生**，不是「名单非空」；不要靠成员数判断模式。
+5. **主持人模式里用户的 `@` 不路由**：拍自由模式的「@ 接力」素材只能从**自由群**取。
