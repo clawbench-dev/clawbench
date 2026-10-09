@@ -272,7 +272,7 @@ defineExpose({ open: openDrawer })
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
-  padding: var(--space-5) var(--space-2);
+  padding: var(--space-5) var(--space-4);
   border-bottom: 1px solid var(--border-color, rgba(128,128,128,.15));
 }
 .shared-session-row:last-child { border-bottom: none; }

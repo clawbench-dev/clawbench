@@ -21,6 +21,7 @@ interface Drawer {
   name: string
   file: string
   body: string
+  row: string
   emptyIcon: string
 }
 
@@ -29,12 +30,14 @@ const DRAWERS: Drawer[] = [
     name: 'shared sessions',
     file: join(__dirname, '..', 'SharedSessionsDrawer.vue'),
     body: '.shared-sessions-body',
+    row: '.shared-session-row',
     emptyIcon: '.shared-sessions-empty-icon',
   },
   {
     name: 'shared files',
     file: join(__dirname, '..', '..', 'file', 'SharedFilesDrawer.vue'),
     body: '.shared-files-body',
+    row: '.shared-file-row',
     emptyIcon: '.shared-files-empty-icon',
   },
 ]
@@ -53,7 +56,7 @@ function ruleDecls(css: string, sel: string): string | null {
   return m ? m[1] : null
 }
 
-for (const { name, file, body, emptyIcon } of DRAWERS) {
+for (const { name, file, body, row, emptyIcon } of DRAWERS) {
   const css = stripComments(readFileSync(file, 'utf8'))
 
   describe(`${name} drawer list container has no surrounding padding`, () => {
@@ -62,6 +65,18 @@ for (const { name, file, body, emptyIcon } of DRAWERS) {
       expect(decls, `${body} rule must exist`).not.toBeNull()
       expect(decls).not.toMatch(/(?:^|;|\{)\s*padding\s*:/)
       expect(decls).not.toMatch(/(?:^|;|\{)\s*padding-(?:top|right|bottom|left)\s*:/)
+    })
+
+    it(`gives ${row} its own horizontal inset`, () => {
+      // With the container padding gone, each row owns its horizontal inset so
+      // its content never touches the drawer edge. Vertical padding stays as
+      // the literal-first token pair (`<N>px var(--space-*)`).
+      const decls = ruleDecls(css, row)
+      expect(decls, `${row} rule must exist`).not.toBeNull()
+      const m = decls!.match(/padding:\s*\S+\s+var\(--space-(\d+)\)/)
+      expect(m, `${row} must declare a vertical/horizontal padding pair`).not.toBeNull()
+      // --space-4 is 8px; anything less re-hugs the edge.
+      expect(Number(m![1]), `${row} horizontal padding must be at least --space-4`).toBeGreaterThanOrEqual(4)
     })
 
     it(`keeps ${emptyIcon} tinted from the muted token`, () => {
