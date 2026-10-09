@@ -145,16 +145,24 @@
           <!-- Raw source view for markdown/html/openapi after the view toggle,
                and code/plain text files which have no rendered preview.
                stickyScroll is disabled: the share SPA has no auth for the
-               backend symbol API the sticky overlay would query. -->
-          <CodeMirrorViewer
-            v-else-if="showRawSourceView"
-            :file="file"
-            :content="file.content"
-            :language="rawLanguage"
-            :editable="false"
-            :word-wrap="wordWrap"
-            :sticky-scroll="false"
-          />
+               backend symbol API the sticky overlay would query.
+
+               Wrapped in the fill-viewer box (position:absolute; inset:0) so the
+               editor gets a DEFINITE height. .share-content is a block
+               overflow:auto scroller, so a bare CodeMirrorViewer (flex:1) would
+               size to content height; CodeMirror's own .cm-scroller would then
+               never overflow, centeredScrollTop would compute maxScrollTop=0,
+               and every TOC line jump would clamp to the top (i.e. not move). -->
+          <div v-else-if="showRawSourceView" class="share-fill-viewer">
+            <CodeMirrorViewer
+              :file="file"
+              :content="file.content"
+              :language="rawLanguage"
+              :editable="false"
+              :word-wrap="wordWrap"
+              :sticky-scroll="false"
+            />
+          </div>
 
           <!-- Binary / too-large / unsupported fallback: download -->
           <div v-else class="share-center-hint share-unsupported">
@@ -382,6 +390,11 @@ const hasToc = computed(() => {
   // sidebar (fileSupportsToc returns false for openapi in rendered view),
   // so no heading outline is extracted or shown.
   if (file.value.subtype === 'openapi') return false
+  // HTML rendered preview is a sandboxed <iframe srcdoc>: its inner DOM is
+  // unreachable from here, so a source-derived outline can neither index the
+  // rendered headings nor jump to them. Hide the TOC in that mode — it comes
+  // back in source view, where entries jump by line through the code viewer.
+  if (isHtml.value && viewMode.value === 'rendered') return false
   return isMarkdown.value || isTextContent.value
 })
 

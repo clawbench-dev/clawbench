@@ -204,6 +204,24 @@ describe('ShareView — view toggle (rendered ⇄ source)', () => {
     expect(wrapper.find('.cm-viewer-stub').exists()).toBe(true)
   })
 
+  it('wraps the code viewer in a definite-height box so TOC line jumps can scroll', async () => {
+    // .share-content is a block overflow:auto scroller. A bare CodeMirrorViewer
+    // (flex:1) would size to content height, so CodeMirror's own .cm-scroller
+    // never overflows and centeredScrollTop clamps every jump to the top. The
+    // fill-viewer box (position:absolute; inset:0) gives the editor a definite
+    // height, mirroring the in-app FileViewer's flex chain.
+    const wrapper = await mountShare({ name: 'main.go', path: '/repo/main.go', content: 'package main\n' })
+    const box = wrapper.find('.share-fill-viewer')
+    expect(box.exists()).toBe(true)
+    expect(box.find('.cm-viewer-stub').exists()).toBe(true)
+
+    // Same for the source view of a markdown file after toggling to raw.
+    const mdWrapper = await mountShare({ name: 'README.md', path: '/repo/README.md', content: '# Hello\nbody' })
+    await mdWrapper.find('.share-view-toggle').trigger('click')
+    await flushPromises()
+    expect(mdWrapper.find('.share-fill-viewer .cm-viewer-stub').exists()).toBe(true)
+  })
+
   it('toggles HTML files between the rendered iframe and source', async () => {
     const wrapper = await mountShare({
       name: 'page.html',
@@ -217,6 +235,28 @@ describe('ShareView — view toggle (rendered ⇄ source)', () => {
     await flushPromises()
     expect(wrapper.find('iframe.share-html-iframe').exists()).toBe(false)
     expect(wrapper.find('.cm-viewer-stub').exists()).toBe(true)
+  })
+
+  it('hides the TOC for the rendered HTML preview but restores it in source view', async () => {
+    // The rendered HTML preview is a sandboxed <iframe srcdoc>: its inner DOM is
+    // unreachable, so a source-derived outline can neither index the rendered
+    // headings nor jump to them. The TOC toggle/rail must not be offered there.
+    const wrapper = await mountShare({
+      name: 'page.html',
+      path: '/repo/page.html',
+      content: '<h1>Title</h1>\n<h2>Section</h2>',
+    })
+    expect(wrapper.find('iframe.share-html-iframe').exists()).toBe(true)
+    expect(wrapper.find('.share-top-actions .share-btn[title="Toggle table of contents"]').exists()).toBe(false)
+    expect(wrapper.find('.share-body .share-toc').exists()).toBe(false)
+
+    // Source view renders through CodeMirror, where entries jump by line — the
+    // TOC toggle and rail come back.
+    await wrapper.find('.share-view-toggle').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.cm-viewer-stub').exists()).toBe(true)
+    expect(wrapper.find('.share-top-actions .share-btn[title="Toggle table of contents"]').exists()).toBe(true)
+    expect(wrapper.find('.share-body .share-toc').exists()).toBe(true)
   })
 
   it('toggles OpenAPI specs between the Swagger viewer and source', async () => {
