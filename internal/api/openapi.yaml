@@ -3073,13 +3073,17 @@ paths:
         `session`，供分享页判断该渲染哪种视图）与 `{token}/session`（返回冻结的
         会话快照 JSON）。两者同样免鉴权、token 不存在一律 404。
 
-        会话快照另附身份信息供分享页渲染真实智能体图标（均**不含**自定义头像，
-        分享链接不得泄漏属主头像）：`sessionAgent`（会话级智能体，单聊用）、
-        `speakers`（群聊成员行 id → 身份，供每条消息解析发言人）与 `groupMembers`
+        会话快照另附身份信息供分享页渲染真实智能体图标：`sessionAgent`（会话级智能体，
+        单聊用）、`speakers`（群聊成员行 id → 身份，供每条消息解析发言人）与 `groupMembers`
         （仅群会话：**在群**成员的有序预览 `{id, agentId, name, backend, avatar?, isHost?}`，
         与 `GET /api/sessions` 的 `groupMembers` 同形，供顶栏渲染与群聊 header 一致的
         头像堆叠；已离场成员不在其中）。`speakers` 是 map（JSON 键按 UUID 排序、且含
         已离场成员），只用于逐条消息解析；成员堆叠请用 `groupMembers`。
+
+        **头像在创建分享时一并冻结进快照**：匿名查看者无法访问 `/api/agents`，只能靠
+        快照里的 SVG 渲染图标，故 `sessionAgent`/`speakers` 携带会话智能体与各群成员的
+        自定义头像。成员头像取该成员自己的快照（`agent_avatar`，即入群时的头像），缺失
+        时回退到其智能体的共享头像；`groupMembers[].avatar` 同理为逐成员快照。
 
         **分享不限文件大小、不限类型**：任何文件都能创建链接并下载。
         `{token}/file` 与 `{token}/content` 需要把内容内联进 JSON，故对超过内联上限

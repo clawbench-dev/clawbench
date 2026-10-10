@@ -287,9 +287,10 @@ interface TocMessage {
 const tocItems = computed<TocMessage[]>(() => messages.value as unknown as TocMessage[])
 
 // Speaker identities frozen into the snapshot. The public viewer is anonymous
-// and cannot call /api/agents or /api/group/members, so the roster must travel
-// with the payload. Avatars are absent by design (the server omits them on the
-// share path), so rows render the built-in per-backend brand icon.
+// and cannot call /api/agents or /api/group/members, so the roster AND each
+// speaker's custom avatar travel with the payload (frozen at share-creation
+// time). A row with no frozen avatar falls back to the built-in per-backend
+// brand icon.
 const sessionAgent = ref<SpeakerIdentity | null>(null)
 const speakers = ref<Record<string, SpeakerIdentity> | null>(null)
 // The configured group-chat user nickname, frozen into the snapshot (the viewer
