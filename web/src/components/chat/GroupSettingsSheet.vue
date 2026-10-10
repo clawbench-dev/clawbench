@@ -113,7 +113,7 @@ import BottomSheet from '@/components/common/BottomSheet.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
 import { getAgentAvatar } from '@/composables/useAgents'
-import { addGroupMembers, removeGroupMember, setGroupParallelDefault, type GroupMemberInfo } from '@/composables/useGroupChat'
+import { addGroupMembers, generateMemberAvatars, removeGroupMember, setGroupParallelDefault, type GroupMemberInfo } from '@/composables/useGroupChat'
 import { toggleAutoApprove } from '@/composables/useSessionIdentity'
 import { store } from '@/stores/app.ts'
 
@@ -159,7 +159,9 @@ async function onAgentsPicked(ids: string | string[]) {
   const list = Array.isArray(ids) ? ids : [ids]
   if (list.length > 0) {
     try {
-      await addGroupMembers(props.groupId, list)
+      const newIds = await addGroupMembers(props.groupId, list)
+      // Backfill avatars only for the just-added members; fire-and-forget.
+      void generateMemberAvatars(props.groupId, newIds).catch(() => {})
       emit('changed')
     } catch { /* ignore */ }
   }

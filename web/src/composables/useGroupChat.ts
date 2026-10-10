@@ -79,6 +79,25 @@ export async function setMemberAvatars(groupId: string, avatars: { memberId: str
   await postJSON('/api/group/member-avatars', { groupId, avatars })
 }
 
+/**
+ * Generate + persist avatars for group members that lack one. Called right
+ * after a create/add (so only NEW members are backfilled — old groups are
+ * deliberately left alone, their members keep whatever avatar they already
+ * have). Idempotent: members that already have an avatar are skipped, so a
+ * partial failure can be retried by a later add.
+ *
+ * The DiceBear runtime is imported lazily so the generator chunk never enters
+ * the main bundle and is only fetched on the (rare) create/add path.
+ */
+export async function generateMemberAvatars(groupId: string, onlyMemberIds?: string[]): Promise<void> {
+  const { members } = await listGroupMembers(groupId)
+  const targets = members.filter(m => !m.avatar && (!onlyMemberIds || onlyMemberIds.includes(m.id)))
+  if (!targets.length) return
+  const { generateAvatarSvg } = await import('@/utils/lazyAvatar')
+  const avatars = await Promise.all(targets.map(async m => ({ memberId: m.id, avatar: await generateAvatarSvg(m.name) })))
+  await setMemberAvatars(groupId, avatars)
+}
+
 /** removeGroupMember soft-removes a member (keeps their past speech). */
 export async function removeGroupMember(groupId: string, memberId: string): Promise<void> {
   const resp = await fetch('/api/group/members', {

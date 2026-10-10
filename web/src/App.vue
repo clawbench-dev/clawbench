@@ -1961,6 +1961,11 @@ async function handleGroupCreate(payload: { hostId: string; memberIds: string[] 
   try {
     const { groupId } = await createGroup(hostAgentId, memberAgentIds)
     if (!groupId) return
+    // Backfill avatars for the freshly created members (all of them lack one).
+    // Fire-and-forget: avatars are non-critical and a failure must not block
+    // entering the group.
+    const { generateMemberAvatars } = await import('@/composables/useGroupChat')
+    void generateMemberAvatars(groupId).catch(() => {})
     await sessionIdentity.switchSession(groupId)
     const session = {
       id: groupId,
