@@ -8,7 +8,7 @@ export interface SkillRow {
   name: string
   description: string
   path: string
-  source_kind: 'own' | 'user' | 'git' | 'other'
+  source_kind: 'own' | 'project' | 'user' | 'git' | 'other'
   source_label: string
   agent_id?: string
   /**
@@ -81,6 +81,8 @@ export function skillSourceLabel(
   switch (s.source_kind) {
     case 'own':
       return t('settings.items.skillsSourceOwn')
+    case 'project':
+      return t('settings.items.skillsSourceProject')
     case 'user':
       return t('settings.items.skillsSourceUser')
     case 'git':

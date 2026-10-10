@@ -3421,6 +3421,81 @@ func TestInitDB_CreatesAgentTables(t *testing.T) {
 	assert.Contains(t, tables, "id", "agents table should exist with id column")
 	assert.Contains(t, tables, "name", "agents table should exist with name column")
 	assert.Contains(t, tables, "backend", "agents table should exist with backend column")
+	assert.Contains(t, tables, "disabled", "agents table should include the disabled column")
+}
+
+// TestSchema_AgentDisabledMigration_FromOldSchema guards the upgrade path for
+// the disabled column: a database created before it existed must gain the
+// column via ALTER TABLE, and pre-existing rows must default to enabled (0) —
+// otherwise an upgrade would silently hide every existing agent.
+func TestSchema_AgentDisabledMigration_FromOldSchema(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	dbDir := filepath.Join(tmpDir, ".clawbench")
+	assert.NoError(t, os.MkdirAll(dbDir, 0o755))
+	oldDB, err := sql.Open("sqlite", filepath.Join(dbDir, "ClawBench.db"))
+	assert.NoError(t, err)
+	oldDB.SetMaxOpenConns(1)
+	oldDB.Exec("PRAGMA journal_mode=WAL")
+	oldDB.Exec("PRAGMA busy_timeout=5000")
+	// agents WITHOUT the disabled column (every other column present, so later
+	// migrations that rebuild the table still find what they need), with one
+	// pre-existing row.
+	_, err = oldDB.Exec(`
+		CREATE TABLE IF NOT EXISTS agents (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			icon TEXT NOT NULL DEFAULT '',
+			specialty TEXT NOT NULL DEFAULT '',
+			backend TEXT NOT NULL,
+			command TEXT NOT NULL DEFAULT '',
+			thinking_effort TEXT NOT NULL DEFAULT '',
+			thinking_effort_levels TEXT NOT NULL DEFAULT '[]',
+			preferred_mode TEXT NOT NULL DEFAULT '',
+			preferred_model TEXT NOT NULL DEFAULT '',
+			preferred_thinking_effort TEXT NOT NULL DEFAULT '',
+			custom_system_prompt TEXT NOT NULL DEFAULT '',
+			avatar TEXT NOT NULL DEFAULT '',
+			models TEXT NOT NULL DEFAULT '[]',
+			models_auto_detected INTEGER NOT NULL DEFAULT 0,
+			sort_order INTEGER NOT NULL DEFAULT 0,
+			transport TEXT NOT NULL DEFAULT 'cli',
+			acp_command TEXT NOT NULL DEFAULT '',
+			acp_available_modes TEXT NOT NULL DEFAULT '[]',
+			acp_available_thinking_efforts TEXT NOT NULL DEFAULT '[]',
+			acp_available_commands TEXT NOT NULL DEFAULT '[]',
+			acp_available_models TEXT NOT NULL DEFAULT '[]',
+			acp_config_options TEXT NOT NULL DEFAULT '',
+			auto_approve INTEGER NOT NULL DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+	`)
+	assert.NoError(t, err)
+	_, err = oldDB.Exec("INSERT INTO agents (id, name, backend) VALUES ('legacy', 'Legacy', 'claude')")
+	assert.NoError(t, err)
+	assert.NoError(t, oldDB.Close())
+
+	// Real migration.
+	assert.NoError(t, InitDB())
+	defer store.Close()
+
+	columns := getTableColumns(t, store.UnsafeDBForTest(), "agents")
+	assert.Contains(t, columns, "disabled", "disabled column should exist after migration")
+
+	// The pre-existing row must survive and default to enabled.
+	var disabled int
+	require.NoError(t, store.UnsafeDBForTest().
+		QueryRow("SELECT disabled FROM agents WHERE id = 'legacy'").Scan(&disabled))
+	assert.Equal(t, 0, disabled, "pre-existing agents must default to enabled after migration")
+
+	// Idempotent: a second InitDB must not error on the already-present column.
+	assert.NoError(t, InitDB())
 }
 
 // ---------- ReorderQuickCommands: store.UnsafeDBForTest().Begin error path ----------

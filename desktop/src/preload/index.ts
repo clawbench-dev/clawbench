@@ -150,6 +150,7 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   shareFiles: (paths: string, mimes: string) => invoke('native:share-files', paths, mimes),
   openExternalUrl: (url: string) => invoke('native:open-external-url', url),
   nativeNotify: (title: string, body: string, nav?: unknown) => invoke('native:notify', title, body, nav),
+  dismissEventNotification: (taskId: string, sessionId: string) => invoke('native:dismiss-notification', taskId, sessionId),
   reloadApp: () => invoke('native:reload-app'),
   setTheme: (theme: string, bg?: string, text?: string, textSecondary?: string, accent?: string) => {
     // Desktop has no floating window; only the theme id is meaningful here.

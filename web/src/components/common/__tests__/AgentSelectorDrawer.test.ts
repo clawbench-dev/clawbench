@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { ref, nextTick } from 'vue'
+import { ref, computed, nextTick } from 'vue'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -12,24 +12,33 @@ vi.mock('@/utils/appLog', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
 }))
 
-const { mockLoadAgents, mockIsDefaultAgent, mockGetAgentDefaultModelName, mockSetDefaultAgent } = vi.hoisted(() => ({
+const { mockLoadAgents, mockIsDefaultAgent, mockGetAgentDefaultModelName, mockSetDefaultAgent, mockAgents } = vi.hoisted(() => ({
   mockLoadAgents: vi.fn().mockResolvedValue(undefined),
   mockIsDefaultAgent: vi.fn(() => false),
   mockGetAgentDefaultModelName: vi.fn(() => ''),
   mockSetDefaultAgent: vi.fn().mockResolvedValue(undefined),
+  mockAgents: [
+    { id: 'agent-1', name: 'Agent One', backend: 'cli', specialty: 'Coding' },
+    { id: 'agent-2', name: 'Agent Two', backend: 'acp', specialty: 'Design' },
+  ],
 }))
 
 vi.mock('@/composables/useAgents', () => ({
-  useAgents: () => ({
-    agents: ref([
-      { id: 'agent-1', name: 'Agent One', backend: 'cli', specialty: 'Coding' },
-      { id: 'agent-2', name: 'Agent Two', backend: 'acp', specialty: 'Design' },
-    ]),
-    loadAgents: mockLoadAgents,
-    isDefaultAgent: mockIsDefaultAgent,
-    getAgentDefaultModelName: mockGetAgentDefaultModelName,
-    setDefaultAgent: mockSetDefaultAgent,
-  }),
+  useAgents: () => {
+    const agents = ref(mockAgents)
+    // Mirror the real composable: the picker renders selectableAgents, which
+    // filters out disabled agents. Derived from the same ref so tests can flip
+    // a `disabled` flag and observe the row disappear.
+    const selectableAgents = computed(() => agents.value.filter((a: { disabled?: boolean }) => !a.disabled))
+    return {
+      agents,
+      selectableAgents,
+      loadAgents: mockLoadAgents,
+      isDefaultAgent: mockIsDefaultAgent,
+      getAgentDefaultModelName: mockGetAgentDefaultModelName,
+      setDefaultAgent: mockSetDefaultAgent,
+    }
+  },
 }))
 
 vi.mock('@/components/common/BottomSheet.vue', () => ({
@@ -329,6 +338,32 @@ describe('AgentSelectorDrawer', () => {
       const confirmRule = src.match(/\.agent-multi-confirm\s*\{[^}]*\}/)
       expect(confirmRule).toBeNull()
       expect(src).toMatch(/class="fbtn fbtn-primary agent-multi-confirm"/)
+    })
+
+    it('hides disabled agents (renders selectableAgents, not the raw list)', async () => {
+      mockAgents.push({ id: 'agent-3', name: 'Agent Three', backend: 'cli', specialty: '', disabled: true } as any)
+      try {
+        const wrapper = mountDrawer()
+        await flushPromises()
+        vi.advanceTimersByTime(500)
+        const names = wrapper.findAll('.agent-option-name').map(n => n.text())
+        expect(names).toEqual(['Agent One', 'Agent Two'])
+        expect(names).not.toContain('Agent Three')
+      } finally {
+        mockAgents.pop()
+      }
+    })
+
+    it('source guard: the list is rendered from selectableAgents', () => {
+      // The component test above proves behavior with the mock; this pins the
+      // actual render source so a future edit cannot silently swap back to the
+      // unfiltered `agents` list (which would show disabled agents again).
+      const src = readFileSync(
+        join(__dirname, '..', 'AgentSelectorDrawer.vue'),
+        'utf8',
+      )
+      expect(src).toMatch(/v-for="\(agent, idx\) in selectableAgents"/)
+      expect(src).not.toMatch(/v-for="\(agent, idx\) in agents"/)
     })
 
     it('enables confirm once a valid group is formed (host mode: host chosen)', async () => {

@@ -174,6 +174,31 @@ function syncNativeCursor(eventId: string) {
     }
 }
 
+/**
+ * Dismiss the host's native OS notification for a subject that was just read.
+ *
+ * The notification only auto-cancels on tap, so a user who opens the app and
+ * reads the message leaves a stale notification that re-dispatches its deep
+ * link when tapped later (the reported duplicate open/load). The server
+ * broadcasts `status:"read"` when a session/task is marked read — from this or
+ * any other client — which is the cue to clear it. Best-effort: the bridge
+ * method is optional (older hosts) and a failure is non-critical.
+ */
+function dismissNativeNotification(taskId: string | undefined, sessionId: string | undefined) {
+    try {
+        const native = getNative()
+        if (!native?.dismissEventNotification) return
+        if (!taskId && !sessionId) return
+        // The method is `void | Promise<void>` (Android sync, Electron invoke).
+        // Swallow a rejection: ipcRenderer.invoke rejects if the handler throws,
+        // and dismissal is best-effort — an unhandled rejection would surface
+        // as noise. Mirrors useNotification.ts's nativeNotify handling.
+        void Promise.resolve(native.dismissEventNotification(taskId ?? '', sessionId ?? '')).catch(() => {})
+    } catch {
+        // Non-critical
+    }
+}
+
 const { isAppMode, isDesktopApp } = useAppMode()
 
 const reconnect = useReconnect({
@@ -374,6 +399,20 @@ function connect() {
                 // Dispatch to handlers
                 for (const handler of handlers) {
                     handler(msg.event!, msg.data)
+                }
+
+                // Dismiss the host's native notification when the subject is
+                // read. "read" is not a terminal/notifiable state, so it is not
+                // handled by showEventBrowserNotification below — but it IS the
+                // cue to clear a notification the user already acted on (the
+                // reported stale-notification / duplicate deep-link defect).
+                if ((msg.event === 'session_update' || msg.event === 'task_update')
+                    && (msg.data as Record<string, unknown>)?.status === 'read') {
+                    const d = msg.data as Record<string, unknown>
+                    dismissNativeNotification(
+                        d.task_id as string | undefined,
+                        d.session_id as string | undefined,
+                    )
                 }
 
                 // Dispatch summary_update as a custom event for ChatPanelContent

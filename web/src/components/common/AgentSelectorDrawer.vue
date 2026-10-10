@@ -20,9 +20,9 @@
     </template>
     <div class="agent-list">
       <LoadingIndicator v-if="agentsLoading" size="md" />
-      <div v-else-if="agents.length === 0" class="agent-list-empty">{{ t('chat.messageList.noAgentsTitle') }}</div>
+      <div v-else-if="selectableAgents.length === 0" class="agent-list-empty">{{ t('chat.messageList.noAgentsTitle') }}</div>
       <div
-        v-for="(agent, idx) in agents"
+        v-for="(agent, idx) in selectableAgents"
         :key="agent.id"
         class="agent-option"
         :class="{ selected: isSelected(agent.id), 'agent-option-active': listNav.activeIndex.value === idx, 'agent-option-disabled': isExcluded(agent.id) }"
@@ -152,7 +152,7 @@ const emit = defineEmits<{
   (e: 'select', agentId: string | string[]): void
 }>()
 
-const { agents, loadAgents, isDefaultAgent, getAgentDefaultModelName, setDefaultAgent } = useAgents()
+const { selectableAgents, loadAgents, isDefaultAgent, getAgentDefaultModelName, setDefaultAgent } = useAgents()
 
 // Guard against accidental clicks right after opening the agent selector
 let openTime = 0
@@ -250,8 +250,8 @@ function defaultModelName(agentId: string): string {
 
 // ── Keyboard ↑/↓ + Enter navigation over the agent list ──
 const listNav = useListNav({
-  getCount: () => agents.value.length,
-  onConfirm: (idx) => handleSelect(agents.value[idx].id),
+  getCount: () => selectableAgents.value.length,
+  onConfirm: (idx) => handleSelect(selectableAgents.value[idx].id),
   onActiveChange: scrollActiveIntoView,
 })
 // Document-level keys so navigation works regardless of where focus is inside the drawer
@@ -265,7 +265,7 @@ function scrollActiveIntoView(index: number) {
   }
 }
 
-watch(agents, () => listNav.reset())
+watch(selectableAgents, () => listNav.reset())
 
 // Auto-reset touch guard and preload agents when drawer opens
 watch(() => props.open, async (val) => {

@@ -1778,6 +1778,205 @@ func TestAgentDelete_DefaultAgent(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+// ── Delete guard: refuse while the agent is still in use ──
+
+func TestAgentDelete_BlockedBySessions(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+	model.DefaultAgentID = "codebuddy"
+
+	_, err := store.UnsafeDBForTest().Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type, archived)
+		 VALUES ('s1', 1, 'claude', 'chat', 'claude', 'chat', 0)`)
+	require.NoError(t, err)
+
+	body := map[string]any{"id": "claude"}
+	req := newRequest(t, http.MethodDelete, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusConflict, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, "AgentInUse", resp["msgKey"])
+	// Not deleted.
+	assert.Contains(t, model.Agents, "claude")
+}
+
+func TestAgentDelete_BlockedByTasks(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+	model.DefaultAgentID = "codebuddy"
+
+	_, err := store.UnsafeDBForTest().Exec(
+		`INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt)
+		 VALUES (1, 't', '0 8 * * *', 'claude', 'do')`)
+	require.NoError(t, err)
+
+	body := map[string]any{"id": "claude"}
+	req := newRequest(t, http.MethodDelete, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusConflict, w.Code)
+	assert.Contains(t, model.Agents, "claude")
+}
+
+func TestAgentDelete_BlockedByGroupMembership(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+	model.DefaultAgentID = "codebuddy"
+
+	// An active (archived=0) group-member row for this agent.
+	_, err := store.UnsafeDBForTest().Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type, group_id, archived)
+		 VALUES ('m1', 1, 'claude', 'Claude', 'claude', 'group_member', 'g1', 0)`)
+	require.NoError(t, err)
+
+	body := map[string]any{"id": "claude"}
+	req := newRequest(t, http.MethodDelete, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusConflict, w.Code)
+	assert.Contains(t, model.Agents, "claude")
+}
+
+// A scheduled task's execution sessions must NOT count as "sessions" — deleting
+// the task only ARCHIVES them, so counting them would make the session count
+// impossible to clear. Only the task itself blocks deletion.
+func TestAgentDelete_ScheduledSessionsDoNotCountAsSessions(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+	model.DefaultAgentID = "codebuddy"
+
+	_, err := store.UnsafeDBForTest().Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type, archived)
+		 VALUES ('exec1', 1, 'claude', '⏰ task', 'claude', 'scheduled', 0)`)
+	require.NoError(t, err)
+
+	body := map[string]any{"id": "claude"}
+	req := newRequest(t, http.MethodDelete, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	// No interactive session / task / membership → deletion succeeds.
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.NotContains(t, model.Agents, "claude")
+}
+
+// An archived (left) group member row must not block deletion.
+func TestAgentDelete_ArchivedGroupMemberDoesNotBlock(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+	model.DefaultAgentID = "codebuddy"
+
+	_, err := store.UnsafeDBForTest().Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type, group_id, archived)
+		 VALUES ('m1', 1, 'claude', 'Claude', 'claude', 'group_member', 'g1', 1)`)
+	require.NoError(t, err)
+
+	body := map[string]any{"id": "claude"}
+	req := newRequest(t, http.MethodDelete, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// ── PATCH disabled ──
+
+func TestAgentPatch_Disabled(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	body := map[string]any{"id": "claude", "disabled": true}
+	req := newRequest(t, http.MethodPatch, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	assert.True(t, model.Agents["claude"].Disabled)
+	var disabled int
+	require.NoError(t, store.UnsafeDBForTest().
+		QueryRow("SELECT disabled FROM agents WHERE id = ?", "claude").Scan(&disabled))
+	assert.Equal(t, 1, disabled)
+
+	// Re-enable.
+	body["disabled"] = false
+	req = newRequest(t, http.MethodPatch, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w = callHandler(ServeAgents, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.False(t, model.Agents["claude"].Disabled)
+}
+
+func TestAgentPatch_DisableDefaultAgentRejected(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+	model.DefaultAgentID = "claude"
+
+	body := map[string]any{"id": "claude", "disabled": true}
+	req := newRequest(t, http.MethodPatch, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, "CannotDisableDefaultAgent", resp["msgKey"])
+	assert.False(t, model.Agents["claude"].Disabled)
+}
+
+func TestAgentPatch_DisabledInvalidType(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	body := map[string]any{"id": "claude", "disabled": "yes"}
+	req := newRequest(t, http.MethodPatch, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// ── GET /api/agents carries usage counts ──
+
+func TestServeAgents_IncludesUsageCounts(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	_, err := store.UnsafeDBForTest().Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type, archived)
+		 VALUES ('s1', 1, 'claude', 'chat', 'claude', 'chat', 0)`)
+	require.NoError(t, err)
+	_, err = store.UnsafeDBForTest().Exec(
+		`INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt)
+		 VALUES (1, 't', '0 8 * * *', 'claude', 'do')`)
+	require.NoError(t, err)
+	// codebuddy participates in a group only as a plain member (its group row
+	// belongs to another agent). It must still be counted as a session.
+	_, err = store.UnsafeDBForTest().Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type, group_id, archived)
+		 VALUES ('gm1', 1, 'codebuddy', 'Codebuddy', 'codebuddy', 'group_member', 'grp', 0)`)
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodGet, "/api/agents", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp struct {
+		Agents []struct {
+			ID              string `json:"id"`
+			SessionCount    int    `json:"sessionCount"`
+			TaskCount       int    `json:"taskCount"`
+			MembershipCount int    `json:"membershipCount"`
+		} `json:"agents"`
+	}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	byID := map[string]struct{ sessions, tasks, memberships int }{}
+	for _, a := range resp.Agents {
+		byID[a.ID] = struct{ sessions, tasks, memberships int }{a.SessionCount, a.TaskCount, a.MembershipCount}
+	}
+	assert.Equal(t, 1, byID["claude"].sessions)
+	assert.Equal(t, 1, byID["claude"].tasks)
+	// codebuddy: the group membership counts as its session too.
+	assert.Equal(t, 1, byID["codebuddy"].sessions)
+	assert.Equal(t, 1, byID["codebuddy"].memberships)
+	assert.Equal(t, 0, byID["codebuddy"].tasks)
+}
+
 func TestIsValidAgentID(t *testing.T) {
 	tests := []struct {
 		id    string

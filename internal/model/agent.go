@@ -93,6 +93,15 @@ type Agent struct {
 	// snapshot: changing this default later does not rewrite existing sessions,
 	// and the user can still toggle it per session in the session drawer.
 	AutoApprove bool `json:"autoApprove"`
+
+	// Disabled hides this agent from every NEW-ENTRY picker (new session, new
+	// task, group member add) while leaving existing sessions and tasks
+	// untouched — those keep running so the user can clean them up (deletion is
+	// blocked while any remain). The default agent can never be disabled. The
+	// filter is applied client-side (useAgents.selectableAgents) with a
+	// server-side fallback on the create endpoints, so an old client or a race
+	// cannot slip a disabled agent into a new session/task.
+	Disabled bool `json:"disabled"`
 }
 
 // DefaultModelID returns the default model ID for this agent.

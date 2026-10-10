@@ -121,6 +121,9 @@ InvalidAgentAvatar: 无效的头像图片
 InvalidSystemPrompt: 系统提示过长
 SystemPromptOverride: 系统提示包含不安全的覆盖指令
 InvalidSortOrder: 无效的排序值
+AgentInUse: "该智能体仍在使用中（{{.SessionCount}} 个会话、{{.TaskCount}} 个任务、{{.MembershipCount}} 个群成员关系），请先删除后再操作"
+AgentDisabled: 该智能体已被禁用
+CannotDisableDefaultAgent: 默认智能体不能被禁用
 InvalidSHA: 无效的提交SHA格式
 InvalidBranchName: 无效的分支名
 ModelDiscoveryNotSupported: 该智能体不支持模型自动发现

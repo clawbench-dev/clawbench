@@ -99,6 +99,37 @@ func TestServeTasks_Post(t *testing.T) {
 	assert.Equal(t, true, result["ok"])
 }
 
+// A disabled agent must not be usable for a NEW task (server-side fallback for
+// the picker filter).
+func TestServeTasks_PostDisabledAgentRejected(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.Agents = map[string]*model.Agent{
+		"coder": {ID: "coder", Name: "Coder", Backend: "claude", Disabled: true},
+	}
+	defer func() { model.Agents = nil }()
+
+	s := service.NewScheduler()
+	defer s.Stop()
+	service.GlobalScheduler = s
+	defer func() { service.GlobalScheduler = nil }()
+
+	req := newRequest(t, http.MethodPost, "/api/tasks", map[string]any{
+		"name":      "Test Task",
+		"cron_expr": "0 * * * *",
+		"agent_id":  "coder",
+		"prompt":    "Do something",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeTasks, req)
+
+	assertStatus(t, w, http.StatusBadRequest)
+	var resp map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	assert.Equal(t, "AgentDisabled", resp["msgKey"])
+}
+
 // TestServeTasks_PostEventTask verifies an event-triggered task can be created
 // without a cron expression, which the cron path would reject.
 func TestServeTasks_PostEventTask(t *testing.T) {

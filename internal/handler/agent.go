@@ -187,8 +187,37 @@ func serveAgentsGet(w http.ResponseWriter, _ *http.Request) {
 		agents[i] = &clone
 	}
 
+	// Attach usage counts (interactive sessions / tasks / group memberships) so
+	// the config panel can display them and gate the delete button without a
+	// second round trip. These are DERIVED values, not persisted columns, so
+	// they ride on a wrapper rather than on model.Agent. Fetched in three
+	// grouped queries (not per-agent) and after configMutex is released — never
+	// hold the config lock across SQL.
+	type agentWithUsage struct {
+		*model.Agent
+		SessionCount    int `json:"sessionCount"`
+		TaskCount       int `json:"taskCount"`
+		MembershipCount int `json:"membershipCount"`
+	}
+	usageByAgent, usageErr := service.GetAllAgentUsage()
+	if usageErr != nil {
+		// Counts are advisory (they gate a button, and deletion re-checks
+		// server-side); a failed count must not break the whole list.
+		slog.Warn("failed to load agent usage counts", "error", usageErr)
+	}
+	out := make([]agentWithUsage, len(agents))
+	for i, a := range agents {
+		u := usageByAgent[a.ID]
+		out[i] = agentWithUsage{
+			Agent:           a,
+			SessionCount:    u.Sessions,
+			TaskCount:       u.Tasks,
+			MembershipCount: u.Memberships,
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
-		"agents":       agents,
+		"agents":       out,
 		"defaultAgent": defaultAgent,
 		"acpStates":    states,
 	})
@@ -310,6 +339,27 @@ func serveAgentsDelete(w http.ResponseWriter, r *http.Request) {
 	agent := model.GetAgent(req.ID)
 	if agent == nil {
 		writeLocalizedErrorf(w, r, http.StatusNotFound, "AgentNotFound")
+		return
+	}
+
+	// Refuse deletion while the agent is still in use: any interactive session,
+	// scheduled task, or active group membership blocks it. The user must clean
+	// those up first (that is the whole point of the guard — deleting the agent
+	// would otherwise strand its sessions/tasks on a dangling agent_id). Checked
+	// BEFORE closing ACP connections so a refused delete does not kill live
+	// connections.
+	usage, err := service.GetAgentUsage(req.ID)
+	if err != nil {
+		slog.Error("failed to check agent usage before delete", "agent", req.ID, "error", err)
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+		return
+	}
+	if usage.Total() > 0 {
+		writeLocalizedErrorf(w, r, http.StatusConflict, "AgentInUse", map[string]any{
+			"SessionCount":    usage.Sessions,
+			"TaskCount":       usage.Tasks,
+			"MembershipCount": usage.Memberships,
+		})
 		return
 	}
 
@@ -643,6 +693,22 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 		ap.AutoApprove = &autoApprove
 	}
 
+	// Validate and apply disabled (hide from every new-entry picker). The
+	// default agent must stay usable, so disabling it is refused — mirroring
+	// the delete guard's CannotDeleteDefaultAgent.
+	if v, exists := patch["disabled"]; exists {
+		disabled, ok := v.(bool)
+		if !ok {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
+			return
+		}
+		if disabled && agentID == model.GetDefaultAgentID() {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "CannotDisableDefaultAgent")
+			return
+		}
+		ap.Disabled = &disabled
+	}
+
 	// Persist to database
 	if err := service.PatchAgentFields(agentID, ap); err != nil {
 		if errors.Is(err, service.ErrAgentNameReserved) {
@@ -697,6 +763,9 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 		}
 		if ap.AutoApprove != nil {
 			agent.AutoApprove = *ap.AutoApprove
+		}
+		if ap.Disabled != nil {
+			agent.Disabled = *ap.Disabled
 		}
 	})
 

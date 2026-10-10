@@ -10,13 +10,16 @@ const h = vi.hoisted(() => ({
   userDataDir: '',
   serverUrl: '',
   cookies: [] as Array<{ name: string; value: string }>,
+  lastCookieQuery: undefined as unknown,
 }))
 
 vi.mock('electron', () => ({
   app: { getPath: () => h.userDataDir },
   session: {
     defaultSession: {
-      cookies: { get: async () => h.cookies },
+      cookies: {
+        get: async (q?: unknown) => { h.lastCookieQuery = q; return h.cookies },
+      },
     },
   },
 }))
@@ -31,6 +34,7 @@ import {
   startClientLog,
   stopClientLog,
   flushOnShutdown,
+  getCookieHeaderForUrl,
   _resetForTesting,
   _bufferForTesting,
   _flushLocalForTesting,
@@ -295,5 +299,35 @@ describe('clientLog (Electron main process)', () => {
     expect(lines[1]).toContain('[I] Renderer: i')
     expect(lines[2]).toContain('[W] Renderer: w')
     expect(lines[3]).toContain('[E] Renderer: e')
+  })
+
+  it('getCookieHeaderForUrl joins every jar cookie applicable to the URL', async () => {
+    // The authenticated /api/fs/raw/ endpoint needs BOTH the session cookie
+    // (auth) and the project cookie (requireProject). Matching only the session
+    // name — as getSessionCookie does — would still answer 403.
+    h.cookies = [
+      { name: 'clawbench_session', value: 'tok' },
+      { name: 'clawbench_project', value: '%2Fproj' },
+    ]
+
+    const header = await getCookieHeaderForUrl('https://x.top:20000/api/fs/raw/?target=/a')
+    expect(header).toBe('clawbench_session=tok; clawbench_project=%2Fproj')
+    // The lookup must be scoped to the URL so the jar applies domain/path rules.
+    expect(h.lastCookieQuery).toEqual({ url: 'https://x.top:20000/api/fs/raw/?target=/a' })
+  })
+
+  it('getCookieHeaderForUrl returns undefined when the jar has nothing', async () => {
+    h.cookies = []
+    await expect(getCookieHeaderForUrl('https://x.top/api/fs/raw/')).resolves.toBeUndefined()
+  })
+
+  it('getCookieHeaderForUrl swallows a cookie-jar failure', async () => {
+    // Best-effort, like the rest of this module: a jar error must not break the
+    // caller (which would then skip the request entirely).
+    h.cookies = []
+    const original = h.cookies
+    h.cookies = null as unknown as typeof h.cookies
+    await expect(getCookieHeaderForUrl('https://x.top/')).resolves.toBeUndefined()
+    h.cookies = original
   })
 })

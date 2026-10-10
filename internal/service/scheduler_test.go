@@ -3,6 +3,7 @@ package service_test
 import (
 	"database/sql"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 
 	"clawbench/internal/model"
 	"clawbench/internal/service"
+	"clawbench/internal/ws"
 
 	_ "modernc.org/sqlite"
 
@@ -2088,4 +2090,95 @@ func TestUnread_IgnoresLastReadAtWatermark(t *testing.T) {
 	require.Len(t, tasks, 1)
 	assert.Equal(t, 1, tasks[0].UnreadCount,
 		"an unopened execution older than the watermark is still unread")
+}
+
+// TestMarkTaskExecutionsRead_BroadcastsReadEvent: marking a task read must
+// broadcast a WS-only task_update{status:"read"} so clients can dismiss the
+// native notification (the Android/Electron stale-notification defect). The
+// event is the task-side mirror of UpdateLastRead's session "read" broadcast.
+func TestMarkTaskExecutionsRead_BroadcastsReadEvent(t *testing.T) {
+	_, cleanup := setupScheduler(t)
+	defer cleanup()
+
+	mgr := ws.NewManagerForTest()
+	ws.SetManagerForTest(mgr)
+	defer ws.SetManagerForTest(nil)
+
+	now := time.Now()
+	res, err := store.UnsafeDBForTest().Exec(
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		store.ProjectIDForTest(t, "/proj"), "Task", "0 * * * *", "agent1", "p", "active", "unlimited", now, now,
+	)
+	assert.NoError(t, err)
+	taskID, _ := res.LastInsertId()
+
+	_, err = store.UnsafeDBForTest().Exec(
+		"INSERT INTO task_executions (task_id, session_id, trigger_type, status, created_at) VALUES (?, ?, 'auto', 'completed', ?)",
+		taskID, "sess-1", now,
+	)
+	assert.NoError(t, err)
+
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(nil, &writeMu, "test-client-task-read", "")
+
+	assert.NoError(t, service.MarkTaskExecutionsRead(taskID))
+
+	buffered := sub.GetBufferedEvents()
+	require.NotEmpty(t, buffered, "expected a task_update broadcast after marking read")
+	assert.Equal(t, "task_update", buffered[0].Event)
+	data, ok := buffered[0].Data.(*ws.TaskUpdateData)
+	require.True(t, ok, "expected TaskUpdateData")
+	assert.Equal(t, "read", data.Status)
+	assert.Equal(t, fmt.Sprintf("%d", taskID), data.TaskID)
+	// NormalizeProjectPath, not the raw literal: on Windows the fixture path
+	// canonicalizes to an absolute drive path (D:\proj), so comparing to
+	// "/proj" fails there while passing on POSIX.
+	assert.Equal(t, store.NormalizeProjectPath("/proj"), data.ProjectPath)
+}
+
+// TestMarkExecutionRead_BroadcastsReadEvent: the per-execution read path must
+// broadcast the same dismissal event, carrying the owning task's id.
+func TestMarkExecutionRead_BroadcastsReadEvent(t *testing.T) {
+	_, cleanup := setupScheduler(t)
+	defer cleanup()
+
+	mgr := ws.NewManagerForTest()
+	ws.SetManagerForTest(mgr)
+	defer ws.SetManagerForTest(nil)
+
+	now := time.Now()
+	res, err := store.UnsafeDBForTest().Exec(
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		store.ProjectIDForTest(t, "/proj"), "Task", "0 * * * *", "agent1", "p", "active", "unlimited", now, now,
+	)
+	assert.NoError(t, err)
+	taskID, _ := res.LastInsertId()
+
+	execRes, err := store.UnsafeDBForTest().Exec(
+		"INSERT INTO task_executions (task_id, session_id, trigger_type, status, created_at) VALUES (?, ?, 'auto', 'completed', ?)",
+		taskID, "sess-1", now,
+	)
+	assert.NoError(t, err)
+	execID, _ := execRes.LastInsertId()
+
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(nil, &writeMu, "test-client-exec-read", "")
+
+	assert.NoError(t, service.MarkExecutionRead(fmt.Sprintf("%d", execID)))
+
+	buffered := sub.GetBufferedEvents()
+	require.NotEmpty(t, buffered, "expected a task_update broadcast after marking an execution read")
+	data, ok := buffered[0].Data.(*ws.TaskUpdateData)
+	require.True(t, ok, "expected TaskUpdateData")
+	assert.Equal(t, "read", data.Status)
+	assert.Equal(t, fmt.Sprintf("%d", taskID), data.TaskID)
+}
+
+// TestMarkTaskExecutionsRead_ReadEventIsNotNotifiable: "read" must never be
+// persisted as a pending event or pushed. It is a dismissal cue only — if it
+// were notifiable, marking read would itself generate a fresh notification.
+func TestMarkTaskExecutionsRead_ReadEventIsNotNotifiable(t *testing.T) {
+	assert.False(t, service.IsNotifiableEvent("task_update",
+		&ws.TaskUpdateData{TaskID: "1", Status: "read"}),
+		"task_update read must not be a notifiable/persisted event")
 }

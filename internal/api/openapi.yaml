@@ -1364,6 +1364,9 @@ paths:
       tags: [Sessions]
       summary: 新建会话
       operationId: sessionsCreate
+      description: |
+        新建会话。显式指定 `agentId` 时，若该 agent 已被禁用，返回 `400` +
+        `msgKey=AgentDisabled`（禁用只影响新建；已存在会话继续可用）。
       requestBody:
         required: true
         content:
@@ -1380,6 +1383,8 @@ paths:
       responses:
         "200":
           description: 新会话
+        "400":
+          description: 目标 agent 已被禁用（`AgentDisabled`）
 
   /api/ai/sessions/reorder:
     put:
@@ -1657,6 +1662,8 @@ paths:
         **群会话不可分叉**（`400`）：分叉会硬编码 `session_type='chat'` 并复制源会话的
         backend/agent，而群时间线的消息带**成员行 id**——新单聊里解析不到成员，
         表现为一整屏无归属的 AI 发言。与回溯（rewind）的处理对称（决策 #74）。
+        显式指定 `agentId` 时，若该 agent 已被禁用，返回 `400` + `msgKey=AgentDisabled`
+        （分叉会新建会话，故与新建会话同样拦截禁用智能体）。
       operationId: sessionFork
       requestBody:
         required: false
@@ -1675,7 +1682,7 @@ paths:
         "200":
           description: 新会话
         "400":
-          description: 分叉点非法，或源会话是群（`msgKey=GroupNotForkable`）
+          description: 分叉点非法，或源会话是群（`msgKey=GroupNotForkable`），或目标 agent 已被禁用（`msgKey=AgentDisabled`）
 
   /api/ai/session/btw:
     post:
@@ -3121,10 +3128,13 @@ paths:
       operationId: skillsList
       description: |
         返回跨智能体 Skill 发现的当前状态：每个来源（各智能体原生目录、用户自定义目录、
-        克隆的 git 仓库）扫描到的 Skill 清单，以及 git 同步状态。
+        克隆的 git 仓库、当前项目的 `.agents/skills`）扫描到的 Skill 清单，以及 git 同步状态。
 
         同一名字的 Skill 可能来自多个来源；清单按来源如实列出（`source_kind` 为
-        `own` / `user` / `git` / `other`），注入系统提示词时再按优先级去重。
+        `own` / `project` / `user` / `git` / `other`），注入系统提示词时再按优先级去重。
+
+        项目级来源（`project`）按请求项目的 Cookie 限定：只列出**当前项目**的
+        `<projectPath>/.agents/skills`，其他项目的技能不会出现。
 
         仓库令牌只写不读：`repos[].has_token` 只表示是否已配置。
       responses:
@@ -3178,7 +3188,7 @@ paths:
                           description: SKILL.md 的绝对路径
                         source_kind:
                           type: string
-                          enum: [own, user, git, other]
+                          enum: [own, project, user, git, other]
                         source_label:
                           type: string
                         agent_id:
@@ -3807,7 +3817,12 @@ paths:
       operationId: agentsList
       responses:
         "200":
-          description: agent 列表与 acpStates
+          description: |
+            agent 列表与 acpStates。每个 agent 另附派生计数（非持久化列）：
+            `sessionCount` = 该 agent 参与的会话数（1:1 聊天 `chat`，含归档；加上
+            它作为**活跃成员**参与的群聊——群聊时间线行只记录主持人，普通成员须按
+            `group_member` 成员行计入）；`taskCount` = 定时任务数；`membershipCount`
+            = 活跃群成员关系数（是 `sessionCount` 的子集，单列供 UI 说明其中有群聊）。
     post:
       tags: [Agents]
       summary: 复制 / 新建 agent
@@ -3830,9 +3845,12 @@ paths:
         部分更新单个 agent（body 含 `id`）。可更新字段：
         `preferred_model`、`preferred_thinking_effort`、`preferred_mode`、
         `transport`、`name`、`specialty`、`custom_system_prompt`、`avatar`、
-        `sort_order`、`auto_approve`。
+        `sort_order`、`auto_approve`、`disabled`。
         `avatar` 为原始 SVG 字符串（客户端生成）；传空串表示恢复内置图标，
         非空时校验大小上限与 SVG 安全性。
+        `disabled` 为布尔值：禁用后该 agent 不再出现在任何新建入口（新建会话 /
+        任务 / 群成员）。**默认智能体不能被禁用**，禁用默认智能体返回 `400` +
+        `msgKey=CannotDisableDefaultAgent`。
 
         `name` 全局唯一（决策 #50）：改名撞上其它 agent 时返回 `409` +
         `msgKey=AgentNameTaken`；改回自身当前名称不是冲突。改成群聊用户昵称
@@ -3841,15 +3859,26 @@ paths:
       responses:
         "200":
           description: 更新结果
+        "400":
+          description: 请求非法，或试图禁用默认智能体（`CannotDisableDefaultAgent`）
         "409":
           description: 名称已被其它 agent 占用（`AgentNameTaken`），或等于群聊用户昵称（`AgentNameReserved`）
     delete:
       tags: [Agents]
       summary: 删除 agent
+      description: |
+        删除一个 agent。**仅当该 agent 不再被使用时才允许删除**：只要还存在该 agent
+        参与的会话（1:1 聊天 `chat`，含归档；或它作为活跃成员的群聊
+        `group_member`）、定时任务，就返回 `409` + `msgKey=AgentInUse`，并在
+        `detail` 中给出 `{SessionCount, TaskCount, MembershipCount}`
+        （`MembershipCount` 是 `SessionCount` 的子集）。默认智能体不可删除
+        （`CannotDeleteDefaultAgent`）。
       operationId: agentsDelete
       responses:
         "200":
           description: 结果
+        "409":
+          description: 该 agent 仍在使用中（`AgentInUse`）
 
   /api/agents/{id}:
     get:
@@ -4212,6 +4241,8 @@ paths:
       responses:
         "200":
           description: 新任务
+        "400":
+          description: 字段缺失 / cron 非法 / 脚本超时为负，或目标 agent 已被禁用（`AgentDisabled`）
 
   /api/tasks/{id}:
     get:

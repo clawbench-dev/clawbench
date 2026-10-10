@@ -131,6 +131,73 @@ func TestServeGroupCreateInvalidMemberAborts(t *testing.T) {
 	require.Zero(t, count, "failed create must not leave a group row")
 }
 
+// POST /api/group/members must SKIP a disabled agent (like an unknown id)
+// rather than failing the whole batch, so a stale picker payload cannot add a
+// disabled agent to a live group.
+func TestServeGroupMembersAdd_SkipsDisabledAgent(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	groupID, _, err := service.CreateGroup(env.ProjectDir, "g", "codebuddy", "codebuddy", "Host")
+	require.NoError(t, err)
+
+	// "claude" is disabled; "codebuddy" is a valid addable agent.
+	require.NotNil(t, model.Agents["claude"])
+	model.Agents["claude"].Disabled = true
+	defer func() { model.Agents["claude"].Disabled = false }()
+
+	req := newRequest(t, http.MethodPost, "/api/group/members", map[string]any{
+		"groupId":  groupID,
+		"agentIds": []string{"claude", "codebuddy"},
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupMembers, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var resp struct {
+		MemberIDs []string `json:"memberIds"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Len(t, resp.MemberIDs, 1, "only the enabled agent may be added")
+
+	members, err := service.ListGroupMembers(groupID)
+	require.NoError(t, err)
+	added := 0
+	for _, m := range members {
+		if m.AgentID == "claude" && !m.Left {
+			added++
+		}
+	}
+	require.Zero(t, added, "the disabled agent must not become an active member")
+}
+
+// A disabled agent must not be seeded into a NEW group (server-side fallback
+// for the picker filter), and — like an unknown id — must abort the whole
+// request rather than silently dropping the member.
+func TestServeGroupCreateDisabledMemberAborts(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Mark one of the default test agents disabled.
+	require.NotNil(t, model.Agents["claude"])
+	model.Agents["claude"].Disabled = true
+	defer func() { model.Agents["claude"].Disabled = false }()
+
+	req := newRequest(t, http.MethodPost, "/api/group/create", map[string]any{
+		"hostAgentId":    "codebuddy",
+		"memberAgentIds": []string{"codebuddy", "claude"},
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupCreate, req)
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+
+	var count int
+	require.NoError(t, store.ReadDB().QueryRow(
+		"SELECT COUNT(*) FROM chat_sessions WHERE session_type = 'group'",
+	).Scan(&count))
+	require.Zero(t, count, "failed create must not leave a group row")
+}
+
 // parallelDefault is the group's only remaining per-group setting (the
 // member-speech cap moved to the global config), so a PATCH carrying it must
 // succeed and round-trip.

@@ -527,3 +527,176 @@ type skill2Source struct {
 	shared bool
 	kind   SourceKind
 }
+
+// projectSkillsDir returns the project-scoped skill directory under a project
+// root: <project>/.agents/skills.
+func projectSkillsDir(project string) string {
+	return filepath.Join(project, ".agents", "skills")
+}
+
+// TestInjectedForProject_ScansProjectDir pins the basic contract: the session's
+// <project>/.agents/skills entries appear in the injected table, tagged
+// SourceProject, and no other project's do.
+func TestInjectedForProject_ScansProjectDir(t *testing.T) {
+	_, _, reg := setupRegistry(t)
+	reg.ScanAll()
+
+	projA := t.TempDir()
+	projB := t.TempDir()
+	writeSkill(t, projectSkillsDir(projA), "only-a", "---\nname: only-a\ndescription: from a\n---\n")
+	writeSkill(t, projectSkillsDir(projB), "only-b", "---\nname: only-b\ndescription: from b\n---\n")
+
+	gotA := reg.InjectedForProject("me", projA)
+	namesA := map[string]SourceKind{}
+	for _, s := range gotA {
+		namesA[s.Name] = s.Source.Kind
+	}
+	assert.Contains(t, namesA, "only-a")
+	assert.NotContains(t, namesA, "only-b", "another project's skills must not leak in")
+	assert.Equal(t, SourceProject, namesA["only-a"])
+
+	// And the empty project path must NOT include project skills at all.
+	gotGlobal := reg.InjectedForProject("me", "")
+	for _, s := range gotGlobal {
+		assert.NotEqual(t, "only-a", s.Name, "an empty project path must not include project skills")
+	}
+}
+
+// TestInjectedForProject_BeatsGlobalButLosesToOwnNative pins the priority
+// placement: project outranks user/git/other, but the agent's own native dir
+// still wins.
+func TestInjectedForProject_BeatsGlobalButLosesToOwnNative(t *testing.T) {
+	ownDir, otherDir, reg := setupRegistry(t)
+	// A user dir (priority below project) and the agent's own native dir
+	// (priority above project).
+	userDir := filepath.Join(model.DataDir, "user")
+	require.NoError(t, os.MkdirAll(userDir, 0o755))
+	model.ConfigInstance.Skills.Dirs = []string{userDir}
+
+	writeSkill(t, ownDir, "own-skill", "---\nname: own-skill\ndescription: own\n---\n")
+	writeSkill(t, userDir, "user-skill", "---\nname: user-skill\ndescription: user\n---\n")
+	writeSkill(t, otherDir, "other-skill", "---\nname: other-skill\ndescription: other\n---\n")
+
+	project := t.TempDir()
+	// Same names as the global sources: the project copy must win for user- and
+	// other-sourced names, but NOT for the agent's own native name.
+	writeSkill(t, projectSkillsDir(project), "user-skill", "---\nname: user-skill\ndescription: project\n---\n")
+	writeSkill(t, projectSkillsDir(project), "other-skill", "---\nname: other-skill\ndescription: project\n---\n")
+	writeSkill(t, projectSkillsDir(project), "own-skill", "---\nname: own-skill\ndescription: project\n---\n")
+
+	reg.ScanAll()
+	byName := map[string]Skill{}
+	for _, s := range reg.InjectedForProject("me", project) {
+		byName[s.Name] = s
+	}
+
+	require.Contains(t, byName, "user-skill")
+	assert.Equal(t, "project", byName["user-skill"].Description, "project must beat a user dir")
+	assert.Equal(t, SourceProject, byName["user-skill"].Source.Kind)
+
+	require.Contains(t, byName, "other-skill")
+	assert.Equal(t, "project", byName["other-skill"].Description, "project must beat another agent's native dir")
+
+	require.Contains(t, byName, "own-skill")
+	assert.Equal(t, "own", byName["own-skill"].Description, "the agent's own native skill must still win")
+	assert.Equal(t, SourceOwnNative, byName["own-skill"].Source.Kind)
+}
+
+// TestInjectedForProject_AlwaysInjectedForAutoLoadBackend pins the deliberate
+// "always inject" decision: unlike a declared native dir, the project directory
+// is never treated as own, so a backend that auto-loads its own skills still
+// receives the project table.
+func TestInjectedForProject_AlwaysInjectedForAutoLoadBackend(t *testing.T) {
+	ownDir, otherDir, reg := setupRegistry(t)
+	// Turn "me" into an auto-loading backend: its own native dir is skipped...
+	setSpecs(ownDir, otherDir, true)
+	// ...but a project skill is NOT a declared native dir, so it is still
+	// injected. Populate the own dir to prove the two are treated differently.
+	writeSkill(t, ownDir, "own-skill", "---\nname: own-skill\ndescription: o\n---\n")
+
+	project := t.TempDir()
+	writeSkill(t, projectSkillsDir(project), "proj-skill", "---\nname: proj-skill\ndescription: p\n---\n")
+
+	reg.ScanAll()
+	got := reg.InjectedForProject("me", project)
+
+	names := map[string]bool{}
+	for _, s := range got {
+		names[s.Name] = true
+	}
+	assert.True(t, names["proj-skill"], "the project skill must be injected even when the backend auto-loads its own")
+	assert.False(t, names["own-skill"], "the agent's own native skill must still be skipped for an auto-loading backend")
+}
+
+// TestInjectedForProject_CachesScan pins that the project scan is cached: a
+// skill deleted from disk after the first lookup is still returned, because the
+// result is memoized until the next ScanAll/Invalidate.
+func TestInjectedForProject_CachesScan(t *testing.T) {
+	_, _, reg := setupRegistry(t)
+	reg.ScanAll()
+
+	project := t.TempDir()
+	writeSkill(t, projectSkillsDir(project), "cached", "---\nname: cached\ndescription: c\n---\n")
+
+	first := reg.InjectedForProject("me", project)
+	require.Len(t, first, 1)
+
+	// Remove the skill from disk; the cached result must still be returned.
+	require.NoError(t, os.RemoveAll(projectSkillsDir(project)))
+	second := reg.InjectedForProject("me", project)
+	assert.Equal(t, first, second, "the project scan must be cached between lookups")
+
+	// A global rescan drops the cache, so the removed skill disappears.
+	reg.ScanAll()
+	assert.Empty(t, reg.InjectedForProject("me", project))
+}
+
+// TestAllForProject pins the listing view: project skills are included only for
+// the requested project.
+func TestAllForProject(t *testing.T) {
+	_, _, reg := setupRegistry(t)
+	reg.ScanAll()
+
+	projA := t.TempDir()
+	projB := t.TempDir()
+	writeSkill(t, projectSkillsDir(projA), "a-skill", "---\nname: a-skill\ndescription: a\n---\n")
+	writeSkill(t, projectSkillsDir(projB), "b-skill", "---\nname: b-skill\ndescription: b\n---\n")
+
+	got := reg.AllForProject(projA)
+	names := map[string]bool{}
+	for _, s := range got {
+		names[s.Name] = true
+	}
+	assert.True(t, names["a-skill"])
+	assert.False(t, names["b-skill"], "another project's skills must not appear in the listing")
+
+	// The global view (empty path) includes neither.
+	global := reg.AllForProject("")
+	for _, s := range global {
+		assert.NotEqual(t, SourceProject, s.Source.Kind, "the global view must not include project skills")
+	}
+}
+
+// TestAllForProject_NoDuplicateWhenProjectIsGlobalDir pins the dedup: when the
+// project root is $HOME, <project>/.agents/skills IS the shared ~/.agents/skills
+// that the global scan already covers, so the same SKILL.md must be listed
+// exactly once (the UI keys rows by path).
+func TestAllForProject_NoDuplicateWhenProjectIsGlobalDir(t *testing.T) {
+	_, _, reg := setupRegistry(t)
+
+	// The project root is the isolated home; its .agents/skills is the shared
+	// dir scanned globally.
+	home := os.Getenv("HOME")
+	writeSkill(t, filepath.Join(home, SharedSkillsDir), "shared-skill",
+		"---\nname: shared-skill\ndescription: s\n---\n")
+	reg.ScanAll()
+
+	got := reg.AllForProject(home)
+	count := 0
+	for _, s := range got {
+		if s.Name == "shared-skill" {
+			count++
+		}
+	}
+	assert.Equal(t, 1, count, "a project dir that is also a global source must not be listed twice")
+}

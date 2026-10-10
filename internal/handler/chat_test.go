@@ -614,6 +614,28 @@ func TestServeSessions_Post_InitializesAutoApproveFromAgentDefault(t *testing.T)
 		"POST response must expose the persisted autoApprove so the frontend stays server-authoritative")
 }
 
+// A disabled agent must not be usable for a NEW session (server-side fallback
+// for the picker filter).
+func TestServeSessions_Post_DisabledAgentRejected(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"off": {ID: "off", Name: "Off", Backend: "codebuddy", Disabled: true},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	req := newRequest(t, http.MethodPost, "/api/ai/sessions", map[string]any{"agentId": "off"})
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(ServeSessions, req)
+	assertStatus(t, w, http.StatusBadRequest)
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "AgentDisabled", resp["msgKey"])
+}
+
 // TestServeSessions_Post_AutoApproveStaysOffWithoutAgentDefault guards against
 // the flag being enabled unconditionally.
 func TestServeSessions_Post_AutoApproveStaysOffWithoutAgentDefault(t *testing.T) {

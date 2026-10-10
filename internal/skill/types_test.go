@@ -15,6 +15,7 @@ func TestSourceKindString(t *testing.T) {
 		want string
 	}{
 		{SourceOwnNative, "own"},
+		{SourceProject, "project"},
 		{SourceUserDir, "user"},
 		{SourceGit, "git"},
 		{SourceOtherNative, "other"},
@@ -26,10 +27,11 @@ func TestSourceKindString(t *testing.T) {
 }
 
 // TestSourceKindPriorityOrder pins that the numeric values encode the dedup
-// priority documented on the type: own < user < git < other. A reorder silently
-// changes which duplicate skill wins, so guard it explicitly.
+// priority documented on the type: own < project < user < git < other. A reorder
+// silently changes which duplicate skill wins, so guard it explicitly.
 func TestSourceKindPriorityOrder(t *testing.T) {
-	assert.Less(t, int(SourceOwnNative), int(SourceUserDir))
+	assert.Less(t, int(SourceOwnNative), int(SourceProject))
+	assert.Less(t, int(SourceProject), int(SourceUserDir))
 	assert.Less(t, int(SourceUserDir), int(SourceGit))
 	assert.Less(t, int(SourceGit), int(SourceOtherNative))
 }
@@ -45,6 +47,7 @@ func TestSourceKey(t *testing.T) {
 	}{
 		{"own native keyed by dir", Source{Kind: SourceOwnNative, Dir: "/a/skills"}, "native:/a/skills"},
 		{"other native shares the native namespace", Source{Kind: SourceOtherNative, Dir: "/a/skills"}, "native:/a/skills"},
+		{"project dir", Source{Kind: SourceProject, Dir: "/p/.agents/skills"}, "project:/p/.agents/skills"},
 		{"user dir", Source{Kind: SourceUserDir, Dir: "/u/skills"}, "user:/u/skills"},
 		{"git repo", Source{Kind: SourceGit, Dir: "/r/skills"}, "git:/r/skills"},
 	}

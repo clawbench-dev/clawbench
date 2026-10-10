@@ -471,17 +471,21 @@ func saveAgentToDB(db dbutil.Writer, agent *Agent) error {
 	if agent.AutoApprove {
 		autoApprove = 1
 	}
+	disabled := 0
+	if agent.Disabled {
+		disabled = 1
+	}
 
 	_, err = db.Exec(`INSERT INTO agents (id, name, specialty, backend, command,
 		thinking_effort, thinking_effort_levels,
 		preferred_mode, preferred_model, preferred_thinking_effort,
 		custom_system_prompt, avatar, models, models_auto_detected, sort_order,
-		transport, acp_command, auto_approve)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		transport, acp_command, auto_approve, disabled)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		agent.ID, agent.Name, agent.Specialty, agent.Backend, agent.Command,
 		agent.ThinkingEffort, string(levelsJSON), agent.PreferredMode, agent.PreferredModel, agent.PreferredThinkingEffort,
 		agent.CustomSystemPrompt, agent.Avatar, string(modelsJSON), agent.ModelsAutoDetected, agent.SortOrder,
-		transport, agent.AcpCommand, autoApprove)
+		transport, agent.AcpCommand, autoApprove, disabled)
 	return err
 }
 
@@ -640,7 +644,7 @@ func loadAgentsFromDBRows(db dbutil.Reader) ([]*Agent, error) {
 		thinking_effort, thinking_effort_levels,
 		preferred_mode, preferred_model, preferred_thinking_effort,
 		custom_system_prompt, avatar, models, models_auto_detected, sort_order,
-		transport, acp_command, auto_approve
+		transport, acp_command, auto_approve, disabled
 		FROM agents ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -651,18 +655,19 @@ func loadAgentsFromDBRows(db dbutil.Reader) ([]*Agent, error) {
 	for rows.Next() {
 		agent := &Agent{}
 		var modelsJSON, levelsJSON string
-		var autoDetected, autoApprove int
+		var autoDetected, autoApprove, disabled int
 
 		if err := rows.Scan(&agent.ID, &agent.Name, &agent.Specialty,
 			&agent.Backend, &agent.Command, &agent.ThinkingEffort, &levelsJSON,
 			&agent.PreferredMode, &agent.PreferredModel, &agent.PreferredThinkingEffort,
 			&agent.CustomSystemPrompt, &agent.Avatar, &modelsJSON, &autoDetected,
-			&agent.SortOrder, &agent.Transport, &agent.AcpCommand, &autoApprove); err != nil {
+			&agent.SortOrder, &agent.Transport, &agent.AcpCommand, &autoApprove, &disabled); err != nil {
 			return nil, err
 		}
 
 		agent.ModelsAutoDetected = autoDetected == 1
 		agent.AutoApprove = autoApprove == 1
+		agent.Disabled = disabled == 1
 
 		if err := json.Unmarshal([]byte(modelsJSON), &agent.Models); err != nil {
 			agent.Models = nil
