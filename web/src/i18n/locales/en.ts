@@ -1129,6 +1129,7 @@ export default {
     newGroup: 'New group chat',
     title: 'Group',
     host: 'Host',
+    realAgent: 'Agent',
     // The reserved human participant name ("User") shown to the reader.
     you: 'you',
     selectHost: 'Select a group host',

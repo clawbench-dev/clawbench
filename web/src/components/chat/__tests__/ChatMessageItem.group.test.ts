@@ -82,6 +82,38 @@ describe('ChatMessageItem group speaker', () => {
     expect(w.find('.msg-speaker-name').text()).toBe('Alice')
   })
 
+  it('shows the real agent name after the nickname when they differ', () => {
+    const resolveSpeaker = () => ({ name: 'Alice', backend: 'claude', avatar: '', agentName: 'Claude' })
+    const w = mountItem(
+      { role: 'assistant', id: 40, content: '', blocks: [], agentId: 'member-1' },
+      { resolveSpeaker },
+    )
+    expect(w.find('.msg-speaker-name').text()).toBe('Alice')
+    const real = w.find('.msg-speaker-real')
+    expect(real.exists()).toBe(true)
+    expect(real.text()).toBe('Claude')
+  })
+
+  it('hides the real agent name when it equals the nickname', () => {
+    const resolveSpeaker = () => ({ name: 'Claude', backend: 'claude', avatar: '', agentName: 'Claude' })
+    const w = mountItem(
+      { role: 'assistant', id: 41, content: '', blocks: [], agentId: 'member-1' },
+      { resolveSpeaker },
+    )
+    expect(w.find('.msg-speaker-real').exists()).toBe(false)
+    // The name appears exactly once — no duplicated "Claude · Claude".
+    expect((w.text().match(/Claude/g) || []).length).toBe(1)
+  })
+
+  it('renders no real-agent label when agentName is absent', () => {
+    const resolveSpeaker = () => ({ name: 'Alice', backend: 'claude' })
+    const w = mountItem(
+      { role: 'assistant', id: 42, content: '', blocks: [], agentId: 'member-1' },
+      { resolveSpeaker },
+    )
+    expect(w.find('.msg-speaker-real').exists()).toBe(false)
+  })
+
   it('marks the host message', () => {
     const resolveSpeaker = () => ({ name: 'Host', backend: 'codebuddy' })
     const w = mountItem(

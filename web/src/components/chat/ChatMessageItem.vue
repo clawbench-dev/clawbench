@@ -15,6 +15,11 @@
     <div v-if="msg.role === 'assistant' && speaker" class="msg-speaker" :class="{ 'msg-speaker-host': isHostMessage }">
       <AgentIcon :backend="speaker.backend" :name="speaker.name" :avatar="speaker.avatar" size="lg" />
       <span class="msg-speaker-name">{{ speaker.name }}</span>
+      <span
+        v-if="speaker.agentName && speaker.agentName !== speaker.name"
+        class="msg-speaker-real"
+        :title="t('group.realAgent')"
+      >{{ speaker.agentName }}</span>
       <span v-if="isHostMessage" class="msg-speaker-host-tag"><Crown :size="11" class="msg-speaker-host-crown" />{{ t('group.host') }}</span>
     </div>
 
@@ -305,7 +310,9 @@ const props = defineProps({
    *  Only the timestamp line is kept — it is information, not a control. */
   readOnly: { type: Boolean, default: false },
   /** Resolves a group-chat speaker (msg.agentId = member row id) to
-   *  { name, backend }. Returns null outside a group / when unresolved. */
+   *  { name, backend, avatar, agentName }. Returns null outside a group / when
+   *  unresolved. `agentName` is the underlying real agent name, set only when it
+   *  differs from the display `name` (rendered as a muted suffix). */
   resolveSpeaker: { type: Function, default: null },
   /** Resolves a member DISPLAY NAME (a routing target) to
    *  { name, backend, avatar } for @-mention chips. */
@@ -1502,6 +1509,13 @@ const copyPayload = quotableText
 .msg-speaker-name {
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
+}
+.msg-speaker-real {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-xs);
+  background: var(--bg-tertiary);
 }
 .msg-speaker-host-tag {
   display: inline-flex;

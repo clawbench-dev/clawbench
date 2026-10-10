@@ -22,6 +22,8 @@ export interface SpeakerIdentity {
   name?: string
   backend: string
   avatar?: string
+  /** 底层真实智能体名；仅当与显示名不同时由后端填充（见 service.SpeakerIdentity）。 */
+  agentName?: string
 }
 
 /**

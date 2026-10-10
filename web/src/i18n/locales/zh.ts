@@ -1133,6 +1133,7 @@ export default {
     newGroup: '新建群聊',
     title: '群聊',
     host: '主持人',
+    realAgent: '真实智能体',
     // The reserved human participant name ("User") shown to the reader.
     you: '你',
     selectHost: '请选择群聊主持人',
