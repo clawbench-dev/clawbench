@@ -1148,7 +1148,6 @@ export default {
     parallelHint: "打开后你 {'@'} 的成员同时发言（不 {'@'} 人时全体成员并发）；智能体之间的 {'@'} 不受影响。",
     autoApproveHint: '自动批准所有成员的权限请求。',
     confirm: '添加',
-    alreadyMember: '已加入',
     increaseInstance: '再添加一个该智能体实例',
     decreaseInstance: '减少一个该智能体实例',
     bcc: {

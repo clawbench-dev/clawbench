@@ -25,7 +25,7 @@
         v-for="(agent, idx) in selectableAgents"
         :key="agent.id"
         class="agent-option"
-        :class="{ selected: isSelected(agent.id), 'agent-option-active': listNav.activeIndex.value === idx, 'agent-option-disabled': isExcluded(agent.id) }"
+        :class="{ selected: isSelected(agent.id), 'agent-option-active': listNav.activeIndex.value === idx }"
         role="button"
         tabindex="0"
         @click="handleSelect(agent.id)"
@@ -87,7 +87,6 @@
           <Crown :size="12" />
           <span class="agent-host-btn-label">{{ agent.id === hostId ? hostBadge : hostLabel }}</span>
         </button>
-        <span v-if="isExcluded(agent.id)" class="agent-tag agent-added-tag">{{ addedLabel }}</span>
         <span v-if="showAgentActions && isDefaultAgent(agent.id)" class="agent-default-badge-pill">{{ defaultBadge }}</span>
         <button v-else-if="showAgentActions" class="agent-set-default-btn" @click.stop="handleSetDefaultAgent(agent.id)" :title="setDefaultTitle">
           <Star :size="14" />
@@ -108,7 +107,7 @@
 
 <script setup lang="ts">
 import { ref, watch, inject, computed } from 'vue'
-import { Bot, Star, Settings, Check, Crown, AtSign, Users } from 'lucide-vue-next'
+import { Bot, Star, Settings, Check, Crown, AtSign, Users, Plus, Minus } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
@@ -135,11 +134,6 @@ const props = withDefaults(defineProps<{
   /** Show the per-row default badge / set-default star and the settings button.
    *  False for the group "add members" picker, where those actions are noise. */
   showAgentActions?: boolean
-  /** Agent ids that cannot be picked (already members). Rendered dimmed with an
-   *  "added" tag; clicking them is a no-op. */
-  excludedAgentIds?: string[]
-  /** Label shown on excluded rows. */
-  addedLabel?: string
   /** Group-creation mode: each SELECTED row grows a "host" radio dot so the
    *  user picks the host inline, in the same list as the members. */
   groupMode?: boolean
@@ -165,8 +159,6 @@ const props = withDefaults(defineProps<{
   configTitle: 'Agent settings',
   confirmLabel: 'OK',
   showAgentActions: true,
-  excludedAgentIds: () => [],
-  addedLabel: 'Added',
   groupMode: false,
   hostId: '',
   hostLabel: 'Host',
@@ -221,18 +213,11 @@ function decrement(agentId: string) {
   }
 }
 
-/** isExcluded reports whether the agent is already in the group (unpickable). */
-function isExcluded(agentId: string): boolean {
-  return props.excludedAgentIds.includes(agentId)
-}
-
 function handleClose() {
   emit('update:open', false)
 }
 
 function handleSelect(agentId: string) {
-  // Already a member: not selectable (the backend would rejoin/no-op anyway).
-  if (isExcluded(agentId)) return
   // Ignore clicks within 400ms of opening — prevents accidental selection
   // from touch events that propagate to the newly rendered dialog
   if (Date.now() - openTime < 400) return
@@ -419,22 +404,6 @@ watch(() => props.open, async (val) => {
   background: color-mix(in srgb, var(--accent-color) 10%, transparent);
 }
 
-/* Already a member: dimmed, not clickable, and no hover affordance. */
-.agent-option-disabled {
-  opacity: var(--opacity-disabled, 0.4);
-  cursor: default;
-  pointer-events: none;
-}
-.agent-added-tag {
-  flex-shrink: 0;
-  padding: 1px var(--space-3);
-  border-radius: var(--radius-full);
-  background: var(--bg-tertiary, #eee);
-  color: var(--text-muted, #999);
-  font-size: var(--font-size-2xs);
-  line-height: 16px;
-  opacity: 1;
-}
 
 .agent-option-icon {
   flex-shrink: 0;

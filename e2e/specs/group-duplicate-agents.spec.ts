@@ -81,6 +81,10 @@ test.describe.serial('group duplicate agents', () => {
     const picker = page.locator('.bs-panel').filter({ has: page.locator('.agent-list') }).last()
     await expect(picker).toBeVisible({ timeout: 5000 })
 
+    // The drawer ignores clicks within 400ms of opening (accidental-touch
+    // guard), so wait past it before selecting.
+    await page.waitForTimeout(500)
+
     // Select the first agent, then bump it to 2 instances via the stepper.
     const firstRow = picker.locator('.agent-option').first()
     await firstRow.click()

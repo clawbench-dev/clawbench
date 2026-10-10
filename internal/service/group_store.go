@@ -169,9 +169,10 @@ func groupIdentityFields(mode string, specs []GroupMemberSpec, hostAgentID strin
 	return "", ""
 }
 
-// GroupMemberSpec is one member to create at group-creation time. DisplayName
-// is only used on first creation (the row's stored title is authoritative
-// afterwards).
+// GroupMemberSpec is one member to create. DisplayName, when non-empty, is the
+// BASE display name (the service appends a numeric suffix for repeat instances
+// of the same agent); when empty the base is derived from the agent's name. The
+// assigned name is stored in the member row's agent_name.
 type GroupMemberSpec struct {
 	AgentID     string
 	Backend     string
@@ -380,9 +381,9 @@ func createMemberRow(projectPath, groupID, backend, agentID, displayName string)
 }
 
 // AddGroupMembers adds several agents to a group in one call, enforcing the
-// member cap (decision #78) on the WHOLE batch: if the batch would push the
-// ACTIVE member count past maxGroupMembers, it rejects the entire batch WITHOUT
-// writing any row. The cap counts INSTANCES: every spec is a new member, and
+// member cap (decision #78) on the WHOLE batch and writing every row in ONE
+// transaction: if the cap rejects the batch, OR any row fails to insert, NO row
+// is committed. The cap counts INSTANCES: every spec is a new member, and
 // duplicates of one agent each consume a slot.
 //
 // Every spec gets a UNIQUE display name assigned here (design §4): existing
@@ -392,18 +393,17 @@ func createMemberRow(projectPath, groupID, backend, agentID, displayName string)
 //
 // Why a service-level batch rather than looping AddGroupMember in the handler
 // (which is what O19's spec explicitly forbids): the per-call slot check cannot
-// see the rest of the batch, so a loop commits the earlier additions and then
-// returns an error on a later one — the request "fails" but the roster silently
-// changed.
+// see the rest of the batch, and per-call writes commit independently — a loop
+// commits the earlier additions and then returns an error on a later one, so
+// the request "fails" but the roster silently changed.
 //
 // Returns the member row id for each spec, in input order.
 //
-// Concurrency note: the active-count read and the writes are not under one
+// Concurrency note: the active-count read and the transaction are not under one
 // lock, so two concurrent callers could each read "11 active" and both add one
 // (a TOCTOU that could reach 13). This is a single-user, low-frequency
 // operation (the drawer's add-members action), so the window is not closed with
-// a write-lock-held read; if group membership ever becomes concurrent, move the
-// slot check inside the write transaction.
+// a write-lock-held read.
 func AddGroupMembers(projectPath, groupID string, specs []GroupMemberSpec) ([]string, error) {
 	if len(specs) == 0 {
 		return nil, nil
@@ -425,6 +425,18 @@ func AddGroupMembers(projectPath, groupID string, specs []GroupMemberSpec) ([]st
 		return nil, ErrGroupMemberLimit
 	}
 
+	// Drop empty specs (defensive; callers never send them) so ids, names and
+	// rows stay aligned.
+	kept := make([]GroupMemberSpec, 0, len(specs))
+	for _, s := range specs {
+		if s.AgentID != "" {
+			kept = append(kept, s)
+		}
+	}
+	if len(kept) == 0 {
+		return nil, nil
+	}
+
 	// Seed unique names. existingCounts counts ALL member rows (archived
 	// included) per agent, so the ordinal is monotonic across add/remove cycles.
 	existingCounts := make(map[string]int, len(members))
@@ -433,23 +445,59 @@ func AddGroupMembers(projectPath, groupID string, specs []GroupMemberSpec) ([]st
 		existingCounts[m.AgentID]++
 		taken[m.Name] = true
 	}
-	assignMemberNames(specs, existingCounts, taken)
+	assignMemberNames(kept, existingCounts, taken)
 
-	// The batch is known to fit, so the per-call slot check cannot trip
-	// mid-way. Reuse AddGroupMember so the system-event behavior stays
-	// single-sourced.
-	ids := make([]string, 0, len(specs))
-	for _, s := range specs {
-		if s.AgentID == "" {
-			continue
-		}
-		id, err := AddGroupMember(projectPath, groupID, s.Backend, s.AgentID, s.DisplayName)
-		if err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
+	projectID, idErr := store.ProjectIDForPath(projectPath)
+	if idErr != nil {
+		return nil, idErr
 	}
-	return ids, nil
+
+	// Generate every id BEFORE opening the transaction (generateSessionID probes
+	// the DB via store.ReadDB(); a read inside the write transaction deadlocks
+	// when the read and write pools share one connection, as the handler test
+	// fixture does).
+	memberIDs := make([]string, len(kept))
+	for i := range kept {
+		memberIDs[i] = generateSessionID()
+		if memberIDs[i] == "" {
+			return nil, fmt.Errorf("failed to generate unique member session ID")
+		}
+	}
+
+	// Insert every row in ONE transaction. The write lock is acquired and
+	// released inside insertGroupMemberRowsTx (NOT via a deferred unlock in this
+	// function): the lock is a non-reentrant mutex, and the best-effort side
+	// effects below call WriteExec, which would deadlock if this frame still held
+	// the lock.
+	if err := insertGroupMemberRowsTx(groupID, projectID, kept, memberIDs); err != nil {
+		return nil, err
+	}
+
+	// Best-effort side effects AFTER commit (a failure here must not roll back
+	// the membership change): the per-agent auto-approve default (matching the
+	// single-add path) and the timeline system events.
+	for i, s := range kept {
+		applyAgentAutoApproveDefault(memberIDs[i], s.AgentID)
+		writeMemberSystemEvent(projectPath, groupID, s.AgentID, s.DisplayName, "加入了讨论")
+	}
+	return memberIDs, nil
+}
+
+// insertGroupMemberRowsTx inserts the member rows for AddGroupMembers in one
+// transaction, acquiring and releasing the write lock itself so the caller can
+// run best-effort side effects afterwards without holding the lock.
+func insertGroupMemberRowsTx(groupID string, projectID int64, specs []GroupMemberSpec, memberIDs []string) error {
+	tx, err := store.WriteBegin()
+	if err != nil {
+		return err
+	}
+	defer store.WriteUnlock()
+	defer func() { _ = tx.Rollback() }()
+	// Free mode + empty host: the add path tracks no host pointer.
+	if _, err := insertGroupMemberRows(tx, groupID, projectID, "", GroupModeFree, specs, memberIDs); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // writeMemberSystemEvent appends a membership-change row to the group timeline
@@ -602,7 +650,7 @@ func memberSpecialtySuffix(agentID string) string {
 
 // ensureGroupMemberSlot returns ErrGroupMemberLimit when the group is already at
 // maxGroupMembers active members. Callers invoke it only on paths that would
-// ADD an active member (new row, or rejoining a left one).
+// ADD a new member instance.
 func ensureGroupMemberSlot(groupID string) error {
 	members, err := ListGroupMembers(groupID)
 	if err != nil {
