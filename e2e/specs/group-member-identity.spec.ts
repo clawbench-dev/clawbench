@@ -5,13 +5,14 @@ import { createGroupViaUI, fetchGroupMembers } from '../helpers/group'
 /**
  * E2E for group-member IDENTITY:
  *  1. NAMING: adding the SAME agent to a group twice yields two DIFFERENT
- *     nicknames — the first keeps the agent's own name, the duplicate draws the
- *     built-in English pool name (groupNamePool[0] = "Alice").
+ *     nicknames. A MULTI-instance agent keeps NO bare name — every instance
+ *     draws a built-in English pool name (groupNamePool[0..] = "Alice", "Bob").
  *  2. AVATARS: each member gets its OWN DiceBear avatar persisted to the backend,
  *     so the two instances render DISTINCT images even though they share one agent.
  *  3. REAL-NAME DISCLOSURE: a pooled member's message shows the real agent name
- *     in `.msg-speaker-real`; a member whose nickname IS the agent name shows no
- *     such badge.
+ *     in `.msg-speaker-real`. (The "nickname == agent name ⇒ no badge" negative
+ *     case is covered by the ChatMessageItem unit test, since a two-instance
+ *     group has no bare-named member.)
  *
  * The shared agent is acp-mock (deterministic, fast). All three tests are
  * UI/roster assertions against the real backend, so the naming + avatar +
@@ -57,9 +58,10 @@ test.describe.serial('group member identity', () => {
     await expect(names).toHaveCount(2, { timeout: 10000 })
 
     const texts = await names.allTextContents()
-    // The first instance keeps the agent's own name; the duplicate draws the pool.
-    expect(texts).toContain('ACP Mock Agent')
+    // A multi-instance agent keeps NO bare name: both draw pool names.
     expect(texts).toContain('Alice')
+    expect(texts).toContain('Bob')
+    expect(texts).not.toContain('ACP Mock Agent')
     // The two nicknames are distinct (the whole point of the pool).
     expect(new Set(texts).size).toBe(2)
   })
@@ -105,8 +107,9 @@ test.describe.serial('group member identity', () => {
   })
 
   test('a pooled member discloses its real agent name', async ({ page }) => {
-    // Free-mode group with the same agent twice: members "ACP Mock Agent" and
-    // "Alice". Create via API (no avatars needed) and open it in the UI.
+    // Free-mode group with the same agent twice: BOTH are pool names ("Alice"
+    // and "Bob"), since a multi-instance agent keeps no bare name. Create via
+    // API (no avatars needed) and open it in the UI.
     const gid = await page.evaluate(async () => {
       const r = await fetch('/api/group/create', {
         method: 'POST',
@@ -150,16 +153,6 @@ test.describe.serial('group member identity', () => {
     const real = pooledMsg.locator('.msg-speaker-real')
     await expect(real).toBeVisible({ timeout: 15000 })
     await expect(real).toHaveText('ACP Mock Agent')
-
-    // The first instance's nickname IS the real name, so it carries NO badge.
-    // (The acp-mock free relay hands the floor to the other member, so it also
-    // speaks during the same turn.)
-    const baseMsg = page
-      .locator('.chat-message.assistant')
-      .filter({ has: page.locator('.msg-speaker-name', { hasText: /^ACP Mock Agent$/ }) })
-      .first()
-    await expect(baseMsg).toBeVisible({ timeout: 90000 })
-    await expect(baseMsg.locator('.msg-speaker-real')).toHaveCount(0)
 
     // Let the turn finish so the next spec does not inherit a busy mock.
     await expect

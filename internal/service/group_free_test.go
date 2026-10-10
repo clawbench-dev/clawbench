@@ -1122,9 +1122,10 @@ func TestFreeLoop_DuplicateInstancesGetDistinctOwnNames(t *testing.T) {
 	if _, err := store.ProjectIDForPath(project); err != nil {
 		t.Fatalf("ProjectIDForPath: %v", err)
 	}
-	// Two instances of the SAME agent in a free group. DisplayName is the BASE;
-	// the first keeps it, the second draws the first unused pool name.
-	secondName := groupNamePool[0]
+	// Two instances of the SAME agent in a free group. BOTH draw pool names (a
+	// multi-instance agent keeps no bare name).
+	name0 := groupNamePool[0]
+	name1 := groupNamePool[1]
 	groupID, _, err := CreateGroupWithMembers(project, "群聊", "", []GroupMemberSpec{
 		{AgentID: "codebuddy", Backend: "claude", DisplayName: "Codebuddy"},
 		{AgentID: "codebuddy", Backend: "claude", DisplayName: "Codebuddy"},
@@ -1140,13 +1141,13 @@ func TestFreeLoop_DuplicateInstancesGetDistinctOwnNames(t *testing.T) {
 	for _, m := range members {
 		byName[m.Name] = m.ID
 	}
-	if byName["Codebuddy"] == "" || byName[secondName] == "" {
+	if byName[name0] == "" || byName[name1] == "" {
 		t.Fatalf("expected two instances, got %v", byName)
 	}
 
 	script := map[string][]string{
-		byName["Codebuddy"]: {"我在"},
-		byName[secondName]:  {"我也在"},
+		byName[name0]: {"我在"},
+		byName[name1]: {"我也在"},
 	}
 	base, _ := freeScriptedRunner(t, project, groupID, script)
 	prompts := map[string]string{}
@@ -1160,16 +1161,16 @@ func TestFreeLoop_DuplicateInstancesGetDistinctOwnNames(t *testing.T) {
 
 	// Each instance's prompt must declare ITS OWN name, and must not declare the
 	// other's.
-	if !strings.Contains(prompts[byName["Codebuddy"]], "你的群内显示名是「Codebuddy」") {
-		t.Fatalf("instance 1 must be told its own name; got %q", prompts[byName["Codebuddy"]])
+	if !strings.Contains(prompts[byName[name0]], "你的群内显示名是「"+name0+"」") {
+		t.Fatalf("instance 1 must be told its own name; got %q", prompts[byName[name0]])
 	}
-	if !strings.Contains(prompts[byName[secondName]], "你的群内显示名是「"+secondName+"」") {
-		t.Fatalf("instance 2 must be told its own name; got %q", prompts[byName[secondName]])
+	if !strings.Contains(prompts[byName[name1]], "你的群内显示名是「"+name1+"」") {
+		t.Fatalf("instance 2 must be told its own name; got %q", prompts[byName[name1]])
 	}
-	if strings.Contains(prompts[byName["Codebuddy"]], "你的群内显示名是「"+secondName+"」") {
+	if strings.Contains(prompts[byName[name0]], "你的群内显示名是「"+name1+"」") {
 		t.Fatal("instance 1 must not be told the sibling's name")
 	}
-	if strings.Contains(prompts[byName[secondName]], "你的群内显示名是「Codebuddy」") {
+	if strings.Contains(prompts[byName[name1]], "你的群内显示名是「"+name0+"」") {
 		t.Fatal("instance 2 must not be told the sibling's name")
 	}
 }

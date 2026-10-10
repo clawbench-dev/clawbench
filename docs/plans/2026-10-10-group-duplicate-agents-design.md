@@ -67,24 +67,27 @@
 
 ### 4.1 算法
 
-对 agent `A` 在群 `G` 中创建第 `k` 个实例（`k` 从 1 计）：
+对 agent `A` 在群 `G` 中命名本批次的每个实例：
 
 ```
-base = GetAgentDisplayName(A)
-n    = countMemberRows(G, A)          // 含 archived，即历史所有实例
-k    = n + batchOrdinal               // batchOrdinal 为本次批次内该 agent 的第几个（1 起）
-candidate = base                 if k == 1            // 首个实例保留本名
-          = nextPoolName(used)    otherwise           // 重复实例取名池第一个未占用名
+base  = GetAgentDisplayName(A)                       // 或 spec.DisplayName
+n     = countMemberRows(G, A)                         // 含 archived，即历史所有实例
+multi = n + batchCount(A) > 1                         // 该 agent 在群内（含本批次）实例数 > 1
+k     = n + batchOrdinal                              // 实例序号（1 起，含 archived）
+candidate = nextPoolName(used)  if multi              // 多实例：每个实例都取名池未占用名
+          = base                otherwise             // 单实例：保留智能体本名
 if candidate == "" or collides(candidate, G):
-    candidate = base + " " + k                        // 池耗尽 / 本名冲突 → 回退序号
+    m = max(k, 2)                                     // 池耗尽 / 本名冲突 → 回退 base + " " + m
+    candidate = base + " " + m
     while collides(candidate, G):
-        k += 1
-        candidate = base + " " + k
-return candidate
+        m += 1
+        candidate = base + " " + m
 ```
 
-- **永不出现 `base + " 1"`**：`k==1` 直接用原名。
-- **池优先**（2026-10-10 后续演进）：重复实例从代码内置的英文名池 `groupNamePool`（`internal/service/group_name_pool.go`：`Alice`/`Bob`/…）取第一个未被占用的名字；名池刻意不可配置、无设置 UI。池耗尽才回退 `base + " " + k`。
+- **多实例不保留本名**（2026-10-11 调整）：只要该 agent 在群内的实例数 > 1（已存在 + 本批次），它的**全部实例（含第 1 个）都取名池名**，不再保留智能体本名——避免「一个叫 `Claude`、一个叫 `Alice`」这种混排。群内仅此一个实例时才保留本名。
+- **已存在的实例不改名**：改名会改写历史快照（历史消息里的 @ 引用的是旧名），故**后续加第 2 个实例**时，先存在的那个保持它已有的名字，**只有新实例**取名池名。因此「多实例不保留本名」对同一批次内命名的实例完全成立；跨批次新增时，先前已命名的实例不回改。
+- **永不出现 `base + " 1"`**：池耗尽 / 冲突回退时编号从 2 起。
+- **池优先**：多实例从代码内置的英文名池 `groupNamePool`（`internal/service/group_name_pool.go`：`Alice`/`Bob`/…）取第一个未被占用的名字；名池刻意不可配置、无设置 UI。池耗尽才回退 `base + " " + m`。
 - **递增不复用**：`n` 含已离场（archived）行，且 D9 决定一律新建，故回退序号单调递增、历史消息中的昵称永远指向同一个实例。
 - **唯一性兜底**：与群内任一成员名、或用户昵称（`IsUserNickname` / `groupUserTarget()`）冲突时继续取下一个未占用池名（池尽则序号 +1），直到唯一。
 

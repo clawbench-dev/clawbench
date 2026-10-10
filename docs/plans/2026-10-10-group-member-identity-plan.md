@@ -1,5 +1,7 @@
 # 群成员身份：内置英文名池 + 按名生成头像 + 真实智能体名披露
 
+> **变更说明（2026-10-11）**：命名规则已调整——**同一智能体在群内实例数 > 1 时，其全部实例（含第一个）都取名池名，不保留本名**；仅群内唯一实例保留本名。下文 §命名 的「第一个实例保留本名」为**过时描述**，以本节与 `docs/spec/features/group-chat.md`、`internal/service/group_store.go` 的 `assignMemberNames` 为准。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 让群聊里同一个智能体的多个实例各自拥有唯一昵称（内置英文名池）与各自生成的头像（按名做种子、落库），并在消息里显示该成员底层的真实智能体名。

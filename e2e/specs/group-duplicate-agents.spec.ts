@@ -39,21 +39,21 @@ test.describe.serial('group duplicate agents', () => {
     // Names must be unique across the whole roster.
     expect(new Set(names).size).toBe(names.length)
     // Naming is assigned in SPEC order (the order of memberAgentIds), drawing
-    // pool names from groupNamePool[0] upward: ["acp-mock", "acp-mock",
-    // "acp-mock-b", "acp-mock-b", "acp-mock-b"] gives
-    //   acp-mock   → "ACP Mock Agent" (first, keeps own name), "Alice" (pool[0])
-    //   acp-mock-b → "ACP Mock Agent B" (first), then "Bob" (pool[1]), "Carol" (pool[2])
-    // (the acp-mock duplicate consumed pool[0] first, so acp-mock-b's duplicates
-    //  continue from pool[1]).
+    // pool names from groupNamePool[0] upward. An agent with MULTIPLE instances
+    // keeps NO bare name — every instance (the first included) draws a pool
+    // name — so ["acp-mock","acp-mock","acp-mock-b","acp-mock-b","acp-mock-b"]
+    // gives, in order: Alice(pool0), Bob(pool1) for acp-mock; then
+    // Carol(pool2), Dave(pool3), Erin(pool4) for acp-mock-b.
     const bNames = members.filter(m => m.agentId === 'acp-mock-b').map(m => m.name).sort()
-    expect(bNames).toEqual(['ACP Mock Agent B', 'Bob', 'Carol'])
-    // acp-mock instances: the first keeps the bare name, the second draws a pool name.
+    expect(bNames).toEqual(['Carol', 'Dave', 'Erin'])
+    // acp-mock instances: both are pool names (no bare "ACP Mock Agent").
     const aNames = members.filter(m => m.agentId === 'acp-mock').map(m => m.name).sort()
-    expect(aNames).toEqual(['ACP Mock Agent', 'Alice'])
+    expect(aNames).toEqual(['Alice', 'Bob'])
     // The pre-pool "<name> <ordinal>" form never appears while the pool has room.
     expect(names.every(n => !/\s\d+$/.test(n))).toBe(true)
-    // Pool names are assigned, not the agent's display name plus an ordinal.
-    expect(names).toContain('Alice')
+    // Neither agent kept its display name.
+    expect(names).not.toContain('ACP Mock Agent')
+    expect(names).not.toContain('ACP Mock Agent B')
   })
 
   test('add-members API draws the next pool name (no reuse)', async ({ page }) => {
