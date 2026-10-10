@@ -1222,6 +1222,20 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		return fmt.Errorf("failed to backfill agent_name: %w", err)
 	}
 
+	// Migrate: add agent_avatar column — the per-MEMBER avatar SVG snapshot of a
+	// group member row. Unlike agent_name (a name snapshot), the avatar is
+	// generated CLIENT-side (DiceBear) from the member's own name and frozen
+	// here so the public share/export snapshot (built server-side) can render
+	// the exact same icon without a JS runtime. Non-member rows leave it ''.
+	// Guarded by column existence so it is a no-op on re-run.
+	var hasSessionAgentAvatar int
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='agent_avatar'").Scan(&hasSessionAgentAvatar)
+	if hasSessionAgentAvatar == 0 {
+		if _, err := store.WriteExec("ALTER TABLE chat_sessions ADD COLUMN agent_avatar TEXT NOT NULL DEFAULT ''"); err != nil {
+			return fmt.Errorf("failed to add agent_avatar column: %w", err)
+		}
+	}
+
 	// Migrate: add compacted column — set when the agent compacts the session's
 	// context (auto or user-triggered /compact). Compaction rewrites the
 	// conversation into a summary, so the injected system prompt (tool rules,
