@@ -28,7 +28,9 @@ vi.mock('@/composables/useSessionIdentity', () => ({
   toggleAutoApprove: (...a: any[]) => mockToggleAutoApprove(...a),
 }))
 
-vi.mock('@/composables/useAgents', () => ({ getAgentAvatar: () => '' }))
+vi.mock('@/composables/useAgents', () => ({
+  getAgentAvatar: (agentId: string) => (agentId ? `<svg>agent-${agentId}</svg>` : ''),
+}))
 vi.mock('@/components/common/AgentIcon.vue', () => ({
   default: { name: 'AgentIcon', props: ['backend', 'name', 'avatar', 'size'], template: '<span class="agent-icon-stub" />' },
 }))
@@ -103,6 +105,16 @@ describe('GroupSettingsSheet', () => {
     expect(w.find('.gm-tag--host .lucide-crown').exists()).toBe(true)
     // Host has no remove; left member has no remove; only Alice does.
     expect(w.findAll('.gm-remove')).toHaveLength(1)
+  })
+
+  it('renders each member own avatar, falling back to the agent avatar', () => {
+    const w = mountSheet([
+      { id: 'm1', name: 'Host', backend: 'codebuddy', agentId: 'a1', isHost: true, avatar: '<svg>member-1</svg>' },
+      { id: 'm2', name: 'Alice', backend: 'claude', agentId: 'a2', isHost: false },
+    ])
+    const avatars = w.findAllComponents({ name: 'AgentIcon' }).map(c => c.props('avatar'))
+    expect(avatars[0]).toBe('<svg>member-1</svg>')
+    expect(avatars[1]).toBe('<svg>agent-a2</svg>')
   })
 
   it('removes a member through the API and emits changed', async () => {

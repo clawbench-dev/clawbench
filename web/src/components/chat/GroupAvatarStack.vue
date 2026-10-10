@@ -64,6 +64,7 @@ const stackMembers = computed(() =>
     agentId: m.agentId,
     name: m.name,
     backend: m.backend,
+    avatar: m.avatar,
     isHost: m.isHost,
   })),
 )

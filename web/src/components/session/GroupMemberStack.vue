@@ -20,6 +20,8 @@ export interface GroupMemberPreview {
   agentId: string
   name: string
   backend: string
+  /** 成员自身头像 SVG（agent_avatar）；缺失时 AvatarStack 回退智能体头像。 */
+  avatar?: string
   /** The group host; the stack leads with it (leading disc is fully visible). */
   isHost?: boolean
 }

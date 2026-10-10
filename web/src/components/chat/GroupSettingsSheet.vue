@@ -26,7 +26,7 @@
           :class="{ 'is-left': m.left }"
         >
           <span class="gm-avatar">
-            <AgentIcon :backend="m.backend" :name="m.name" :avatar="getAgentAvatar(m.agentId)" size="lg" />
+            <AgentIcon :backend="m.backend" :name="m.name" :avatar="m.avatar || getAgentAvatar(m.agentId)" size="lg" />
           </span>
           <span class="gm-name">{{ m.name }}</span>
           <span v-if="m.isHost" class="gm-tag gm-tag--host"><Crown :size="11" class="gm-tag-crown" />{{ t('group.host') }}</span>

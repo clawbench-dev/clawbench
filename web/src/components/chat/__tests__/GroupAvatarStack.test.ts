@@ -11,7 +11,7 @@ vi.mock('@/components/common/AgentIcon.vue', () => ({
   default: { name: 'AgentIcon', props: ['backend', 'name', 'avatar', 'size'], template: '<span class="agent-icon-stub" />' },
 }))
 vi.mock('@/composables/useAgents', () => ({
-  getAgentAvatar: () => '',
+  getAgentAvatar: (agentId: string) => (agentId ? `<svg>agent-${agentId}</svg>` : ''),
 }))
 const sheetOpen = vi.fn()
 vi.mock('../GroupSettingsSheet.vue', () => ({
@@ -157,5 +157,15 @@ describe('GroupAvatarStack', () => {
     // from assistive tech and exposes only a hover tooltip.
     expect(badge.getAttribute('aria-hidden')).toBe('true')
     expect(badge.getAttribute('title')).toBe('group.hostMode')
+  })
+
+  it('passes each member own avatar through the stack (falls back to the agent avatar)', () => {
+    const w = mountStack([
+      { id: 'm1', name: 'Host', backend: 'codebuddy', agentId: 'a1', isHost: true, avatar: '<svg>member-1</svg>' },
+      { id: 'm2', name: 'A', backend: 'claude', agentId: 'a2', isHost: false },
+    ])
+    const avatars = w.findAllComponents({ name: 'AgentIcon' }).map(c => c.props('avatar'))
+    expect(avatars[0]).toBe('<svg>member-1</svg>')
+    expect(avatars[1]).toBe('<svg>agent-a2</svg>')
   })
 })
