@@ -2130,7 +2130,10 @@ func TestMarkTaskExecutionsRead_BroadcastsReadEvent(t *testing.T) {
 	require.True(t, ok, "expected TaskUpdateData")
 	assert.Equal(t, "read", data.Status)
 	assert.Equal(t, fmt.Sprintf("%d", taskID), data.TaskID)
-	assert.Equal(t, "/proj", data.ProjectPath)
+	// NormalizeProjectPath, not the raw literal: on Windows the fixture path
+	// canonicalizes to an absolute drive path (D:\proj), so comparing to
+	// "/proj" fails there while passing on POSIX.
+	assert.Equal(t, store.NormalizeProjectPath("/proj"), data.ProjectPath)
 }
 
 // TestMarkExecutionRead_BroadcastsReadEvent: the per-execution read path must
