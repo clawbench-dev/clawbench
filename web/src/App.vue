@@ -1952,7 +1952,7 @@ async function handleSessionCreate(agentId: string) {
 // in FREE mode (no host; participants relay via @-mentions). A free group needs
 // at least two members.
 async function handleGroupCreate(payload: { hostId: string; memberIds: string[] }) {
-  const { createGroup } = await import('@/composables/useGroupChat')
+  const { createGroup, generateMemberAvatars } = await import('@/composables/useGroupChat')
   const hostAgentId = payload?.hostId ?? ''
   const memberAgentIds = payload?.memberIds ?? []
   if (memberAgentIds.length === 0) return
@@ -1964,8 +1964,7 @@ async function handleGroupCreate(payload: { hostId: string; memberIds: string[] 
     // Backfill avatars for the freshly created members (all of them lack one).
     // Fire-and-forget: avatars are non-critical and a failure must not block
     // entering the group.
-    const { generateMemberAvatars } = await import('@/composables/useGroupChat')
-    void generateMemberAvatars(groupId).catch(() => {})
+    void generateMemberAvatars(groupId).catch(e => appLog.w('Group', 'member avatar generation failed', e))
     await sessionIdentity.switchSession(groupId)
     const session = {
       id: groupId,

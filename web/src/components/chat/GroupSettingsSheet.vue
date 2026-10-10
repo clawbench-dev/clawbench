@@ -115,6 +115,7 @@ import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
 import { getAgentAvatar } from '@/composables/useAgents'
 import { addGroupMembers, generateMemberAvatars, removeGroupMember, setGroupParallelDefault, type GroupMemberInfo } from '@/composables/useGroupChat'
 import { toggleAutoApprove } from '@/composables/useSessionIdentity'
+import { appLog } from '@/utils/appLog'
 import { store } from '@/stores/app.ts'
 
 const props = defineProps<{
@@ -161,7 +162,7 @@ async function onAgentsPicked(ids: string | string[]) {
     try {
       const newIds = await addGroupMembers(props.groupId, list)
       // Backfill avatars only for the just-added members; fire-and-forget.
-      void generateMemberAvatars(props.groupId, newIds).catch(() => {})
+      void generateMemberAvatars(props.groupId, newIds).catch(e => appLog.w('Group', 'member avatar generation failed', e))
       emit('changed')
     } catch { /* ignore */ }
   }

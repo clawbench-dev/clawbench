@@ -1,8 +1,14 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { createGroup, listGroupMembers, addGroupMembers, removeGroupMember, setGroupParallelDefault } from '@/composables/useGroupChat'
+import { createGroup, listGroupMembers, generateMemberAvatars, addGroupMembers, removeGroupMember, setGroupParallelDefault } from '@/composables/useGroupChat'
 
 vi.mock('@/utils/appLog', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
+}))
+
+// generateMemberAvatars pulls the DiceBear runtime via a dynamic import; stub it
+// so the test stays deterministic and never loads a real style chunk.
+vi.mock('@/utils/lazyAvatar', () => ({
+  generateAvatarSvg: vi.fn(async (seed: string) => `<svg>${seed}</svg>`),
 }))
 
 function mockFetch(status: number, body: unknown) {
@@ -80,5 +86,71 @@ describe('useGroupChat API', () => {
   it('throws on a non-ok response', async () => {
     vi.stubGlobal('fetch', mockFetch(500, {}))
     await expect(createGroup('agent-a', ['agent-a'])).rejects.toThrow()
+  })
+})
+
+describe('generateMemberAvatars', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  // Route GET /api/group/members to `members` and capture the POST body sent to
+  // /api/group/member-avatars. Throws on any other URL so an unexpected call
+  // (e.g. a stray POST when there is nothing to backfill) fails the test.
+  function stubRoutes(members: unknown[], onPost?: (body: any) => void) {
+    vi.stubGlobal('fetch', vi.fn(async (url: string, opts?: any) => {
+      if (url.startsWith('/api/group/members')) {
+        return { ok: true, status: 200, json: async () => ({ members }) }
+      }
+      if (url === '/api/group/member-avatars') {
+        onPost?.(JSON.parse(opts.body))
+        return { ok: true, status: 200, json: async () => ({}) }
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    }))
+  }
+
+  it('posts a generated avatar for every member that lacks one', async () => {
+    let posted: any
+    stubRoutes(
+      [{ id: 'm1', name: 'Alice', avatar: '' }, { id: 'm2', name: 'Bob', avatar: '' }],
+      body => { posted = body },
+    )
+    await generateMemberAvatars('g1')
+    expect(posted).toEqual({
+      groupId: 'g1',
+      avatars: [
+        { memberId: 'm1', avatar: '<svg>Alice</svg>' },
+        { memberId: 'm2', avatar: '<svg>Bob</svg>' },
+      ],
+    })
+  })
+
+  it('skips members that already have an avatar', async () => {
+    let posted: any
+    stubRoutes(
+      [{ id: 'm1', name: 'Alice', avatar: '<svg>existing</svg>' }, { id: 'm2', name: 'Bob', avatar: '' }],
+      body => { posted = body },
+    )
+    await generateMemberAvatars('g1')
+    expect(posted.avatars).toEqual([{ memberId: 'm2', avatar: '<svg>Bob</svg>' }])
+  })
+
+  it('scopes to onlyMemberIds when provided', async () => {
+    let posted: any
+    stubRoutes(
+      [{ id: 'm1', name: 'Alice', avatar: '' }, { id: 'm2', name: 'Bob', avatar: '' }],
+      body => { posted = body },
+    )
+    await generateMemberAvatars('g1', ['m2'])
+    expect(posted.avatars).toEqual([{ memberId: 'm2', avatar: '<svg>Bob</svg>' }])
+  })
+
+  it('does not POST when there is nothing to backfill (idempotent)', async () => {
+    stubRoutes([{ id: 'm1', name: 'Alice', avatar: '<svg>existing</svg>' }])
+    await generateMemberAvatars('g1')
+    // Only the roster GET happened.
+    expect((fetch as any).mock.calls).toHaveLength(1)
+    expect((fetch as any).mock.calls[0][0]).toContain('/api/group/members')
   })
 })

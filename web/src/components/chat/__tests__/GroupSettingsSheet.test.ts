@@ -12,10 +12,12 @@ vi.mock('vue-i18n', () => ({
 const mockAdd = vi.fn().mockResolvedValue(undefined)
 const mockRemove = vi.fn().mockResolvedValue(undefined)
 const mockSetParallel = vi.fn().mockResolvedValue(undefined)
+const mockGenerateAvatars = vi.fn().mockResolvedValue(undefined)
 vi.mock('@/composables/useGroupChat', () => ({
   addGroupMembers: (...a: any[]) => mockAdd(...a),
   removeGroupMember: (...a: any[]) => mockRemove(...a),
   setGroupParallelDefault: (...a: any[]) => mockSetParallel(...a),
+  generateMemberAvatars: (...a: any[]) => mockGenerateAvatars(...a),
 }))
 
 // The group sheet's auto-approve switch delegates to the shared session toggle
