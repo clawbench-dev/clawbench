@@ -633,3 +633,106 @@ describe('AgentSelectorDrawer', () => {
     })
   })
 })
+
+// Instance mode (allowInstances): the same agent can be added several times.
+// A selected row grows a − count + stepper; confirming repeats the agent id
+// once per instance.
+describe('AgentSelectorDrawer instance mode', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.useFakeTimers()
+  })
+  afterEach(() => vi.useRealTimers())
+
+  it('shows a stepper only on a selected row when allowInstances is on', async () => {
+    const wrapper = mountDrawer({ multiple: true, allowInstances: true, modelValue: [] })
+    vi.advanceTimersByTime(500)
+    await flushPromises()
+
+    // Nothing selected yet: no stepper anywhere.
+    expect(wrapper.findAll('.agent-stepper').length).toBe(0)
+
+    await wrapper.find('.agent-option').trigger('click')
+    await flushPromises()
+    // The selected row shows exactly one stepper with count 1.
+    expect(wrapper.findAll('.agent-stepper').length).toBe(1)
+    expect(wrapper.find('.agent-stepper-count').text()).toBe('1')
+  })
+
+  it('increments the count with the + button and confirms repeated ids', async () => {
+    const wrapper = mountDrawer({ multiple: true, allowInstances: true, modelValue: [] })
+    vi.advanceTimersByTime(500)
+    await flushPromises()
+
+    await wrapper.find('.agent-option').trigger('click')
+    await flushPromises()
+    // + twice → 3 instances.
+    const plus = wrapper.find('.agent-stepper .agent-stepper-btn:last-child')
+    await plus.trigger('click')
+    await plus.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.agent-stepper-count').text()).toBe('3')
+
+    await wrapper.find('.agent-multi-confirm').trigger('click')
+    await flushPromises()
+    expect(wrapper.emitted('select')![0]).toEqual([['agent-1', 'agent-1', 'agent-1']])
+  })
+
+  it('disables − at one instance and deselects via the row click', async () => {
+    const wrapper = mountDrawer({ multiple: true, allowInstances: true, modelValue: [] })
+    vi.advanceTimersByTime(500)
+    await flushPromises()
+
+    await wrapper.find('.agent-option').trigger('click')
+    await flushPromises()
+    // At 1 the − is disabled (the stepper never goes below one instance).
+    expect((wrapper.find('.agent-stepper .agent-stepper-btn:first-child').element as HTMLButtonElement).disabled).toBe(true)
+
+    const plus = wrapper.find('.agent-stepper .agent-stepper-btn:last-child')
+    await plus.trigger('click')
+    await flushPromises()
+    // At 2 the − is enabled and steps back to 1.
+    await wrapper.find('.agent-stepper .agent-stepper-btn:first-child').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.agent-stepper-count').text()).toBe('1')
+
+    // Deselecting entirely is a row click (clears all instances).
+    await wrapper.find('.agent-option').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('.agent-stepper').length).toBe(0)
+  })
+
+  it('clicking an already-selected row clears all its instances', async () => {
+    const wrapper = mountDrawer({ multiple: true, allowInstances: true, modelValue: [] })
+    vi.advanceTimersByTime(500)
+    await flushPromises()
+
+    await wrapper.find('.agent-option').trigger('click')
+    await flushPromises()
+    const plus = wrapper.find('.agent-stepper .agent-stepper-btn:last-child')
+    await plus.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.agent-stepper-count').text()).toBe('2')
+
+    // Clicking the row clears the whole selection for that agent.
+    await wrapper.find('.agent-option').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('.agent-stepper').length).toBe(0)
+  })
+
+  it('free-mode confirm stays disabled with a single instance', async () => {
+    const wrapper = mountDrawer({ multiple: true, allowInstances: true, groupMode: true, hostId: '', modelValue: [] })
+    vi.advanceTimersByTime(500)
+    await flushPromises()
+
+    await wrapper.find('.agent-option').trigger('click')
+    await flushPromises()
+    // One instance is not enough for a free group.
+    expect((wrapper.find('.agent-multi-confirm').element as HTMLButtonElement).disabled).toBe(true)
+
+    // Two instances of the SAME agent satisfy the ≥2 rule.
+    await wrapper.find('.agent-stepper .agent-stepper-btn:last-child').trigger('click')
+    await flushPromises()
+    expect((wrapper.find('.agent-multi-confirm').element as HTMLButtonElement).disabled).toBe(false)
+  })
+})

@@ -84,12 +84,12 @@ func TestCreateGroupAndMembers(t *testing.T) {
 	}
 }
 
-// TestAddGroupMemberDedup covers the A contract: adding an agent that is
-// already a member does NOT create a second row (two rows for one agent make
-// one of them unreachable — routing addresses members by name), and re-adding
-// an agent that LEFT rejoins its original row (archived cleared) instead of
-// duplicating it.
-func TestAddGroupMemberDedup(t *testing.T) {
+// TestAddGroupMemberCreatesNewInstance covers the multi-instance contract:
+// adding the same agent again creates a SECOND independent row (the same agent
+// may appear several times in one group), and re-adding an agent that LEFT also
+// creates a new row (there is no rejoin). Each row's display name comes from
+// the caller; uniqueness across a batch is assigned by AddGroupMembers.
+func TestAddGroupMemberCreatesNewInstance(t *testing.T) {
 	setupGroupDB(t)
 	project := "/tmp/groupdedup"
 	if _, err := store.ProjectIDForPath(project); err != nil {
@@ -105,38 +105,39 @@ func TestAddGroupMemberDedup(t *testing.T) {
 		t.Fatalf("AddGroupMember: %v", err)
 	}
 
-	// Re-adding an ACTIVE member returns the same row and creates nothing.
-	again, err := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	// Re-adding the SAME agent creates a distinct row (a second instance).
+	second, err := AddGroupMember(project, groupID, "claude", "agent-a", "A 2")
 	if err != nil {
-		t.Fatalf("AddGroupMember (again): %v", err)
+		t.Fatalf("AddGroupMember (second): %v", err)
 	}
-	if again != first {
-		t.Fatalf("re-adding an active member returned a new row: %q != %q", again, first)
+	if second == first {
+		t.Fatalf("adding the same agent twice must create two rows, got the same id %q", second)
 	}
 	members, _ := ListGroupMembers(groupID)
-	if got := countAgentRows(members, "agent-a"); got != 1 {
-		t.Fatalf("want 1 row for agent-a, got %d", got)
+	if got := countAgentRows(members, "agent-a"); got != 2 {
+		t.Fatalf("want 2 rows for agent-a, got %d", got)
 	}
 
-	// Removing then re-adding REJOINS the original row (archived cleared),
-	// preserving its id so past speech attribution stays intact.
+	// Removing then re-adding creates ANOTHER new row (no rejoin): the removed
+	// row stays archived, a fresh instance is added.
 	if err := RemoveGroupMember(groupID, first); err != nil {
 		t.Fatalf("RemoveGroupMember: %v", err)
 	}
-	rejoined, err := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	rejoined, err := AddGroupMember(project, groupID, "claude", "agent-a", "A 3")
 	if err != nil {
-		t.Fatalf("AddGroupMember (rejoin): %v", err)
+		t.Fatalf("AddGroupMember (after remove): %v", err)
 	}
-	if rejoined != first {
-		t.Fatalf("rejoin created a new row: %q != %q", rejoined, first)
+	if rejoined == first {
+		t.Fatal("re-adding after removal must create a NEW row, not reactivate the old one")
 	}
 	members, _ = ListGroupMembers(groupID)
-	if got := countAgentRows(members, "agent-a"); got != 1 {
-		t.Fatalf("rejoin must reuse the row: want 1 row, got %d", got)
+	if got := countAgentRows(members, "agent-a"); got != 3 {
+		t.Fatalf("want 3 rows for agent-a (2 active + 1 archived), got %d", got)
 	}
+	// The first row must remain archived (its past speech stays attributed).
 	for _, m := range members {
-		if m.AgentID == "agent-a" && m.Left {
-			t.Fatal("rejoined member must no longer be marked left")
+		if m.ID == first && !m.Left {
+			t.Fatal("the removed row must stay archived (no rejoin)")
 		}
 	}
 }
@@ -716,10 +717,10 @@ func TestCreateGroupWithMembers_RejectsTooMany(t *testing.T) {
 	}
 }
 
-// Re-adding an existing agent (active OR left) reuses its row and must not be
-// counted as a new member — otherwise a group at the cap could never re-add
-// someone who left.
-func TestAddGroupMember_CapIgnoresExistingAgent(t *testing.T) {
+// The cap counts INSTANCES: filling the roster to the cap and then adding any
+// further instance (even of an agent already present) must be refused. There is
+// no rejoin, so a removed member frees a slot for a NEW instance only.
+func TestAddGroupMember_CapCountsInstances(t *testing.T) {
 	setupGroupDB(t)
 	project := "/tmp/grouptest"
 	if _, err := store.ProjectIDForPath(project); err != nil {
@@ -737,68 +738,38 @@ func TestAddGroupMember_CapIgnoresExistingAgent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGroupWithMembers: %v", err)
 	}
-
-	// A brand-new agent at the cap is refused.
-	if _, err := AddGroupMember(project, groupID, "claude", "agent-new", "New"); err == nil {
-		t.Fatal("adding a new agent at the cap must be refused")
+	// At the cap, another instance of an EXISTING agent is refused (it is a new
+	// member, so it would exceed the cap).
+	if _, err := AddGroupMember(project, groupID, "claude", "agent-0", "M0 2"); err == nil {
+		t.Fatal("adding another instance at the cap must be refused")
 	}
-
-	// Re-adding an EXISTING agent (idempotent reuse) must succeed even at the cap.
-	if _, err := AddGroupMember(project, groupID, "claude", "agent-3", "M3"); err != nil {
-		t.Fatalf("re-adding an existing agent must not be capped: %v", err)
-	}
-
-	// Free a slot, then the new agent fits.
-	if err := RemoveGroupMember(groupID, mustMemberID(t, groupID, "agent-3")); err != nil {
-		t.Fatalf("RemoveGroupMember: %v", err)
-	}
-	if _, err := AddGroupMember(project, groupID, "claude", "agent-new", "New"); err != nil {
-		t.Fatalf("adding after freeing a slot must succeed: %v", err)
-	}
-}
-
-// Rejoining (re-adding a LEFT member) reuses the row, so it must be allowed at
-// the cap — the roster does not actually grow.
-func TestAddGroupMember_RejoinAllowedAtCap(t *testing.T) {
-	setupGroupDB(t)
-	project := "/tmp/grouptest"
-	if _, err := store.ProjectIDForPath(project); err != nil {
-		t.Fatalf("ProjectIDForPath: %v", err)
-	}
-	specs := make([]GroupMemberSpec, 0, maxGroupMembers)
-	for i := range maxGroupMembers {
-		specs = append(specs, GroupMemberSpec{
-			AgentID:     fmt.Sprintf("agent-%d", i),
-			Backend:     "claude",
-			DisplayName: fmt.Sprintf("M%d", i),
-		})
-	}
-	groupID, _, err := CreateGroupWithMembers(project, "满员群", "agent-0", specs)
-	if err != nil {
-		t.Fatalf("CreateGroupWithMembers: %v", err)
-	}
+	// A member leaves: a slot frees up and a NEW instance fits.
 	leaver := mustMemberID(t, groupID, "agent-5")
 	if err := RemoveGroupMember(groupID, leaver); err != nil {
 		t.Fatalf("RemoveGroupMember: %v", err)
 	}
-	// Fill the freed slot with a new agent...
 	if _, err := AddGroupMember(project, groupID, "claude", "agent-new", "New"); err != nil {
 		t.Fatalf("filling the freed slot: %v", err)
 	}
-	// ...then the left member rejoins, which grows the ACTIVE count back to the
-	// cap only if a slot exists. It is at the cap now, so this must be refused.
-	if _, err := AddGroupMember(project, groupID, "claude", "agent-5", "M5"); err == nil {
-		t.Fatal("rejoining at the cap must be refused (it would exceed the cap)")
+	// Back at the cap, one more is refused again.
+	if _, err := AddGroupMember(project, groupID, "claude", "agent-0", "M0 2"); err == nil {
+		t.Fatal("adding at the cap must be refused (it would exceed the cap)")
 	}
 }
 
 func mustMemberID(t *testing.T, groupID, agentID string) string {
 	t.Helper()
-	m, ok := findGroupMemberByAgent(groupID, agentID)
-	if !ok {
-		t.Fatalf("member for agent %q not found", agentID)
+	members, err := ListGroupMembers(groupID)
+	if err != nil {
+		t.Fatalf("ListGroupMembers: %v", err)
 	}
-	return m.ID
+	for _, m := range members {
+		if m.AgentID == agentID {
+			return m.ID
+		}
+	}
+	t.Fatalf("member for agent %q not found", agentID)
+	return ""
 }
 
 // ---------- N3: system events on member add/remove ----------
@@ -1109,17 +1080,11 @@ func TestRemoveGroupMember_CrossGroupRemovalWritesNoEvent(t *testing.T) {
 	}
 }
 
-// CreateGroupWithMembers must DEDUPE by agent id, exactly like AddGroupMember.
-// A member's only identity is its agent: the routing tag addresses members by
-// NAME and resolveTargets maps names through a map, so two rows for the same
-// agent leave one of them unreachable (a "mute" member that occupies a
-// connection and a slot but can never be spoken to). It also inflates the
-// active count toward the 10-member cap.
-//
-// The Web drawer is multi-select (a Set), so it never sends duplicates — but
-// POST /api/group/create accepts an arbitrary array, and that is the reachable
-// path.
-func TestCreateGroupWithMembers_DedupesAgents(t *testing.T) {
+// CreateGroupWithMembers must KEEP duplicate agents: the same agent may be
+// added several times, each an independent member (a separate row, a separate
+// connection) with its OWN unique display name. The numeric suffix makes the
+// names distinct so name-based routing stays unambiguous ("A", "A 2", "A 3").
+func TestCreateGroupWithMembers_KeepsDuplicateAgents(t *testing.T) {
 	setupGroupDB(t)
 	project := "/tmp/groupdedup-create"
 	if _, err := store.ProjectIDForPath(project); err != nil {
@@ -1144,12 +1109,32 @@ func TestCreateGroupWithMembers_DedupesAgents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListGroupMembers: %v", err)
 	}
-	if got := countAgentRows(members, "agent-a"); got != 1 {
-		t.Fatalf("duplicate agent ids must collapse to one row, got %d", got)
+	// Every duplicate is kept: 1 host + 3 instances of agent-a = 4 rows.
+	if len(members) != 4 {
+		t.Fatalf("want 4 member rows (host + 3x A), got %d", len(members))
 	}
-	// 1 host + 1 unique member = 2 rows total.
-	if len(members) != 2 {
-		t.Fatalf("want 2 member rows (host + A), got %d", len(members))
+	if got := countAgentRows(members, "agent-a"); got != 3 {
+		t.Fatalf("duplicate agent ids must each get their own row, got %d", got)
+	}
+	// Names must be unique: A, A 2, A 3 (first keeps the bare name; "A 1" is
+	// never produced).
+	names := map[string]bool{}
+	for _, m := range members {
+		if m.AgentID != "agent-a" {
+			continue
+		}
+		if names[m.Name] {
+			t.Fatalf("duplicate member name %q", m.Name)
+		}
+		names[m.Name] = true
+	}
+	for _, want := range []string{"A", "A 2", "A 3"} {
+		if !names[want] {
+			t.Fatalf("missing expected instance name %q (got %v)", want, names)
+		}
+	}
+	if names["A 1"] {
+		t.Fatal(`"A 1" must never be produced`)
 	}
 }
 
@@ -1168,18 +1153,18 @@ func TestAddGroupMembers_BatchCapIsAtomic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGroup: %v", err)
 	}
-	// Fill to 9 active (host + 8 members).
-	for i := range 8 {
+	// Fill to (cap - 1) active: host + (cap-2) members.
+	for i := range maxGroupMembers - 2 {
 		if _, err := AddGroupMember(project, groupID, "claude", "agent-"+string(rune('a'+i)), "M"); err != nil {
 			t.Fatalf("AddGroupMember %d: %v", i, err)
 		}
 	}
 	before, _ := ListGroupMembers(groupID)
-	if countActiveMembers(before) != 9 {
-		t.Fatalf("precondition: want 9 active, got %d", countActiveMembers(before))
+	if countActiveMembers(before) != maxGroupMembers-1 {
+		t.Fatalf("precondition: want %d active, got %d", maxGroupMembers-1, countActiveMembers(before))
 	}
 
-	// Batch of 2 new agents would make 11 → must reject the WHOLE batch.
+	// Batch of 2 new instances would exceed the cap → must reject the WHOLE batch.
 	_, err = AddGroupMembers(project, groupID, []GroupMemberSpec{
 		{AgentID: "agent-new-1", Backend: "claude", DisplayName: "N1"},
 		{AgentID: "agent-new-2", Backend: "claude", DisplayName: "N2"},
@@ -1188,26 +1173,26 @@ func TestAddGroupMembers_BatchCapIsAtomic(t *testing.T) {
 		t.Fatal("a batch exceeding the cap must be rejected")
 	}
 	after, _ := ListGroupMembers(groupID)
-	if countActiveMembers(after) != 9 {
+	if countActiveMembers(after) != maxGroupMembers-1 {
 		t.Fatalf("a rejected batch must not add ANY member: active %d -> %d", countActiveMembers(before), countActiveMembers(after))
 	}
 
-	// A batch of exactly 1 is accepted (9 -> 10).
+	// A batch of exactly 1 is accepted (cap-1 -> cap).
 	if _, err := AddGroupMembers(project, groupID, []GroupMemberSpec{
 		{AgentID: "agent-new-1", Backend: "claude", DisplayName: "N1"},
 	}); err != nil {
 		t.Fatalf("a batch within the cap must be accepted: %v", err)
 	}
 	final, _ := ListGroupMembers(groupID)
-	if countActiveMembers(final) != 10 {
-		t.Fatalf("want 10 active after the accepted batch, got %d", countActiveMembers(final))
+	if countActiveMembers(final) != maxGroupMembers {
+		t.Fatalf("want %d active after the accepted batch, got %d", maxGroupMembers, countActiveMembers(final))
 	}
 }
 
-// A batch whose members are ALL already active does not grow the roster and must
-// not be rejected even at the cap (net-new = 0). This is the "重复 agent 不算
-// 超限" rule from O19.
-func TestAddGroupMembers_DuplicatesDoNotCountTowardCap(t *testing.T) {
+// Every spec in a batch is a NEW instance, so duplicates of an already-present
+// agent DO consume slots (the cap counts instances). A batch that would push the
+// active count over the cap is rejected as a whole.
+func TestAddGroupMembers_EverySpecConsumesSlot(t *testing.T) {
 	setupGroupDB(t)
 	project := "/tmp/groupbatch-dup"
 	if _, err := store.ProjectIDForPath(project); err != nil {
@@ -1217,29 +1202,21 @@ func TestAddGroupMembers_DuplicatesDoNotCountTowardCap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGroup: %v", err)
 	}
-	for i := range 9 { // host + 9 = 10 active (at cap)
+	for i := range maxGroupMembers - 1 { // host + (cap-1) = at cap
 		if _, err := AddGroupMember(project, groupID, "claude", "agent-"+string(rune('a'+i)), "M"); err != nil {
 			t.Fatalf("AddGroupMember %d: %v", i, err)
 		}
 	}
-	if members, _ := ListGroupMembers(groupID); countActiveMembers(members) != 10 {
-		t.Fatalf("precondition: want 10 active, got %d", countActiveMembers(members))
+	if members, _ := ListGroupMembers(groupID); countActiveMembers(members) != maxGroupMembers {
+		t.Fatalf("precondition: want %d active, got %d", maxGroupMembers, countActiveMembers(members))
 	}
 
-	// Re-adding two existing agents is a no-op (net-new 0) → accepted.
+	// Adding another instance of an ALREADY-present agent is a new member and
+	// must be rejected at the cap.
 	if _, err := AddGroupMembers(project, groupID, []GroupMemberSpec{
 		{AgentID: "agent-a", Backend: "claude", DisplayName: "A"},
-		{AgentID: "agent-b", Backend: "claude", DisplayName: "B"},
-	}); err != nil {
-		t.Fatalf("re-adding existing agents must not exceed the cap: %v", err)
-	}
-
-	// But one existing + one NEW at the cap → net-new 1 → rejected.
-	if _, err := AddGroupMembers(project, groupID, []GroupMemberSpec{
-		{AgentID: "agent-a", Backend: "claude", DisplayName: "A"},
-		{AgentID: "agent-fresh", Backend: "claude", DisplayName: "F"},
 	}); err == nil {
-		t.Fatal("net-new 1 at the cap must be rejected")
+		t.Fatal("adding an instance at the cap must be rejected")
 	}
 }
 

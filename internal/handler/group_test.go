@@ -525,10 +525,10 @@ func TestServeGroupMembers_BatchOverLimitIsAtomic(t *testing.T) {
 	defer teardown()
 
 	// Register enough distinct agents for the handler's resolveAgentConfig to
-	// accept a 10+-member roster.
+	// accept a full-size roster.
 	origAgents := model.Agents
 	agents := map[string]*model.Agent{}
-	for i := range 12 {
+	for i := range 20 {
 		id := "agent-" + string(rune('a'+i))
 		agents[id] = &model.Agent{ID: id, Name: id, Backend: "claude"}
 	}
@@ -539,15 +539,18 @@ func TestServeGroupMembers_BatchOverLimitIsAtomic(t *testing.T) {
 	groupID, _, err := service.CreateGroup(env.ProjectDir, "g", "codebuddy", "codebuddy", "Host")
 	require.NoError(t, err)
 
-	// Fill to 9 active members (host + 8) directly at the service layer.
-	for i := range 8 {
+	// Fill to (cap - 1) active members (host + cap-2) directly at the service
+	// layer. The cap counts INSTANCES.
+	memberCap := service.MaxGroupMembers
+	for i := range memberCap - 2 {
 		agentID := "agent-" + string(rune('a'+i))
 		_, err := service.AddGroupMember(env.ProjectDir, groupID, "claude", agentID, agentID)
 		require.NoError(t, err)
 	}
 
-	// Two more agents would make 11 → 409 and NO change.
-	body := map[string]any{"groupId": groupID, "agentIds": []string{"agent-i", "agent-j"}}
+	// Two more instances would exceed the cap → 409 and NO change. "agent-k"/"agent-l"
+	// are registered but not yet members (members are agent-a .. agent-j).
+	body := map[string]any{"groupId": groupID, "agentIds": []string{"agent-k", "agent-l"}}
 	req := newRequest(t, http.MethodPost, "/api/group/members", body)
 	req = withProjectCookie(req, env.ProjectDir)
 	w := callHandlerWithAuth(ServeGroupMembers, req)
@@ -561,7 +564,7 @@ func TestServeGroupMembers_BatchOverLimitIsAtomic(t *testing.T) {
 			active++
 		}
 	}
-	require.Equal(t, 9, active, "a rejected batch must not add any member")
+	require.Equal(t, memberCap-1, active, "a rejected batch must not add any member")
 }
 
 // GET /api/group/members must include the free-mode parallelDefault (the

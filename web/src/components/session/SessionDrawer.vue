@@ -64,6 +64,7 @@
       :open="agentSelectorDrawer.effectiveOpen.value"
       :multiple="creatingGroup"
       :group-mode="creatingGroup"
+      :allow-instances="creatingGroup"
       :host-id="groupHostId"
       :host-label="t('group.hostLabel')"
       :host-active-label="t('group.hostActiveLabel')"

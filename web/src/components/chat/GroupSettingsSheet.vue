@@ -92,9 +92,8 @@
     <AgentSelectorDrawer
       :open="pickerOpen"
       multiple
+      allow-instances
       :showAgentActions="false"
-      :excludedAgentIds="activeAgentIds"
-      :addedLabel="t('group.alreadyMember')"
       :modelValue="[]"
       :title="t('group.addMembers')"
       :confirm-label="t('group.confirm')"
@@ -133,12 +132,6 @@ const emit = defineEmits<{ (e: 'changed'): void }>()
 const { t } = useI18n()
 const open = ref(false)
 const pickerOpen = ref(false)
-
-// Active members' agent ids: shown dimmed + unpickable in the add-members
-// picker (the backend rejoins/no-ops, so offering them would be misleading).
-const activeAgentIds = computed(() =>
-  props.members.filter(m => !m.left).map(m => m.agentId),
-)
 
 // The host always leads the roster. The server orders members by created_at, so
 // a host that joined later (or was removed and re-added) would otherwise appear

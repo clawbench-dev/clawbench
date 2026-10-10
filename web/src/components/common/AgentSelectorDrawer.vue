@@ -44,6 +44,31 @@
             <span v-if="defaultModelName(agent.id)" class="agent-tag model-tag">{{ defaultModelName(agent.id) }}</span>
           </div>
         </div>
+        <!-- Instance stepper (group mode + allowInstances): the same agent may
+             be added several times, so a selected row grows a − count + control
+             instead of a plain toggle. Only the count is shown (no nickname
+             preview). Sits left of the host button so the host control keeps the
+             trailing slot. -->
+        <div v-if="allowInstances && isSelected(agent.id)" class="agent-stepper" @click.stop>
+          <button
+            class="agent-stepper-btn"
+            type="button"
+            :aria-label="t('group.decreaseInstance')"
+            :disabled="countOf(agent.id) <= 1"
+            @click.stop="decrement(agent.id)"
+          >
+            <Minus :size="12" />
+          </button>
+          <span class="agent-stepper-count">{{ countOf(agent.id) }}</span>
+          <button
+            class="agent-stepper-btn"
+            type="button"
+            :aria-label="t('group.increaseInstance')"
+            @click.stop="increment(agent.id)"
+          >
+            <Plus :size="12" />
+          </button>
+        </div>
         <!-- Group mode: the host control sits where the per-row default star
              normally is, but is a labelled button so it reads as an action.
              Only selected rows can be host (the host must be a member). The
@@ -127,6 +152,10 @@ const props = withDefaults(defineProps<{
   hostActiveLabel?: string
   /** Short label shown on the host button (groupMode only). */
   hostBadge?: string
+  /** Allow the same agent to be selected multiple times (group creation / add
+   *  members). A selected row then shows a − count + stepper instead of a plain
+   *  toggle; the confirm payload repeats the agent id once per instance. */
+  allowInstances?: boolean
 }>(), {
   modelValue: '',
   multiple: false,
@@ -143,6 +172,7 @@ const props = withDefaults(defineProps<{
   hostLabel: 'Host',
   hostActiveLabel: 'Host',
   hostBadge: 'Host',
+  allowInstances: false,
 })
 
 const emit = defineEmits<{
@@ -167,6 +197,30 @@ function isSelected(agentId: string): boolean {
   return agentId === props.modelValue
 }
 
+/** countOf reports how many instances of the agent are currently selected. */
+function countOf(agentId: string): number {
+  return selectedIds.value.filter(id => id === agentId).length
+}
+
+/** increment adds one more instance of the agent (used by the stepper's +). */
+function increment(agentId: string) {
+  if (Date.now() - openTime < 400) return
+  selectedIds.value.push(agentId)
+}
+
+/** decrement removes one instance; dropping to 0 deselects the row. Removing
+ *  the last instance also clears the host if the host was this agent (the host
+ *  must remain a member). */
+function decrement(agentId: string) {
+  if (Date.now() - openTime < 400) return
+  const i = selectedIds.value.lastIndexOf(agentId)
+  if (i < 0) return
+  selectedIds.value.splice(i, 1)
+  if (props.groupMode && props.hostId === agentId && countOf(agentId) === 0) {
+    emit('update:hostId', '')
+  }
+}
+
 /** isExcluded reports whether the agent is already in the group (unpickable). */
 function isExcluded(agentId: string): boolean {
   return props.excludedAgentIds.includes(agentId)
@@ -184,6 +238,19 @@ function handleSelect(agentId: string) {
   if (Date.now() - openTime < 400) return
   if (props.multiple) {
     // Toggle; do not close.
+    if (props.allowInstances) {
+      // Instance mode: clicking a row selects one instance; clicking an
+      // already-selected row clears ALL its instances (back to 0). Fine-grained
+      // counts are adjusted with the row's − / + stepper, not by the row click.
+      const n = countOf(agentId)
+      if (n > 0) {
+        selectedIds.value = selectedIds.value.filter(id => id !== agentId)
+        if (props.groupMode && props.hostId === agentId) emit('update:hostId', '')
+      } else {
+        selectedIds.value.push(agentId)
+      }
+      return
+    }
     const i = selectedIds.value.indexOf(agentId)
     if (i >= 0) {
       selectedIds.value.splice(i, 1)
@@ -501,6 +568,54 @@ watch(() => props.open, async (val) => {
 .agent-option-check.checked {
   border-color: var(--accent-color, #0066cc);
   background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
+}
+
+/* Instance stepper: − count + for a selected row when the same agent may be
+   added several times. Compact pill matching the host button's language. */
+.agent-stepper {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px var(--space-1);
+  border: 1px solid var(--border-color, #ccc);
+  border-radius: var(--radius-full);
+  background: none;
+}
+
+.agent-stepper-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: var(--radius-full);
+  background: none;
+  color: var(--text-secondary, #666);
+  cursor: pointer;
+  transition: background var(--duration-base), color var(--duration-base);
+}
+
+.agent-stepper-btn:disabled {
+  opacity: var(--opacity-disabled, 0.4);
+  cursor: default;
+}
+
+@media (hover: hover) {
+  .agent-stepper-btn:not(:disabled):hover {
+    background: var(--bg-hover, rgba(0,0,0,0.06));
+    color: var(--accent-color, #0066cc);
+  }
+}
+
+.agent-stepper-count {
+  min-width: 14px;
+  text-align: center;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary, #1a1a1a);
+  font-variant-numeric: tabular-nums;
 }
 
 /* Group mode: the host control sits where the default star normally is, but is

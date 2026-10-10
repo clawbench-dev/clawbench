@@ -1145,6 +1145,8 @@ export default {
     autoApproveHint: 'Auto-approve every member\u2019s permission requests.',
     confirm: 'Add',
     alreadyMember: 'Added',
+    increaseInstance: 'Add another instance of this agent',
+    decreaseInstance: 'Remove one instance of this agent',
     bcc: {
       title: 'Private note',
       to: 'To',

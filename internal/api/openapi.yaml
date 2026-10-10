@@ -5262,6 +5262,12 @@ paths:
           参与者靠 @ 接力；至少需要 2 名成员；标题占位为「群聊」。
         标题均不接受入参（首条消息后由 auto-title 接管）。
         群计入会话上限（成员不计）。
+
+        **同一智能体可出现多次**：`memberAgentIds` 允许重复元素，每个元素是
+        一个独立成员（独立连接）。后端按出现顺序为每个实例生成唯一显示名
+        （首个用原名，其后 `名字 2`、`名字 3`……，永不生成 `名字 1`），
+        以免按名字路由时歧义。主持人取该 agent 的**首个实例**。成员数上限
+        按**实例数**计（当前 12）。
       operationId: groupCreate
       requestBody:
         required: true
@@ -5273,6 +5279,7 @@ paths:
                 hostAgentId: {type: string}
                 memberAgentIds:
                   type: array
+                  description: 智能体 id 列表；允许重复，每个元素是一个独立成员实例
                   items: {type: string}
       responses:
         "200":
@@ -5324,10 +5331,11 @@ paths:
       tags: [Group]
       summary: 批量添加群成员
       description: |
-        活跃成员数上限为 10（每个成员是一个独立的 ACP 子进程，连接池无上限）。
-        重新添加**已存在的 agent**（含已离场者）复用原行：活跃成员不加，
-        故不受上限约束；离场者重新加入会占一个名额。
-        上限在**整批**上判定：超限则整批拒绝、不落任何行。
+        活跃成员数上限为 12（每个成员是一个独立的 ACP 子进程，连接池无上限）。
+        `agentIds` 允许重复：每个元素是一个**新的独立成员实例**（不再复用已有
+        行，也没有「重新加入」语义——离场成员再加会新建实例）。后端按批内出现
+        顺序为每个实例生成唯一显示名（首个用原名，其后 `名字 2`、`名字 3`……）。
+        上限按**实例数**在**整批**上判定：超限则整批拒绝、不落任何行。
       operationId: groupMembersAdd
       requestBody:
         required: true
@@ -5340,6 +5348,7 @@ paths:
                 groupId: {type: string}
                 agentIds:
                   type: array
+                  description: 智能体 id 列表；允许重复，每个元素是一个独立成员实例
                   items: {type: string}
       responses:
         "200":

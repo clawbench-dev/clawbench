@@ -1149,6 +1149,8 @@ export default {
     autoApproveHint: '自动批准所有成员的权限请求。',
     confirm: '添加',
     alreadyMember: '已加入',
+    increaseInstance: '再添加一个该智能体实例',
+    decreaseInstance: '减少一个该智能体实例',
     bcc: {
       title: '密送',
       to: '发给',

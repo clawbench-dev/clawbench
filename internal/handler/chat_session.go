@@ -628,8 +628,16 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 		// Manual rename: lock the title so the first-message auto-title does
 		// not overwrite the user's explicit choice. Trimmed so a whitespace-only
 		// value cannot latch a blank title.
-		//nolint:errcheck,gosec // best-effort persistence; failure is non-fatal for an idempotent update
-		service.SetSessionTitleLocked(sessionID, title)
+		//
+		// A group MEMBER row is a hidden session with no meaningful title (its
+		// display name lives in agent_name). Renaming one is a no-op with a
+		// confusing side effect (it would set title_source), so ignore it. This
+		// is defense in depth: member rows are not reachable from the UI, but a
+		// hand-crafted request could still name one.
+		if !service.IsGroupMemberSession(sessionID) {
+			//nolint:errcheck,gosec // best-effort persistence; failure is non-fatal for an idempotent update
+			service.SetSessionTitleLocked(sessionID, title)
+		}
 	}
 	if req.Pinned != nil {
 		//nolint:errcheck,gosec // best-effort persistence; failure is non-fatal for an idempotent update

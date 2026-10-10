@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 			project_id INTEGER NOT NULL,
 			backend TEXT NOT NULL,
 			title TEXT NOT NULL,
+	agent_name TEXT NOT NULL DEFAULT '',
 			archived INTEGER NOT NULL DEFAULT 0
 		);`)
 	require.NoError(t, err)

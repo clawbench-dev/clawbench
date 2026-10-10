@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 	project_id INTEGER NOT NULL,
 	backend TEXT NOT NULL,
 	title TEXT NOT NULL,
+	agent_name TEXT NOT NULL DEFAULT '',
 	agent_id TEXT DEFAULT '',
 	session_type TEXT NOT NULL DEFAULT 'chat',
 	group_id TEXT DEFAULT '',

@@ -1008,13 +1008,13 @@ func TestServeRAGSessionSearch_GroupMembersEnriched(t *testing.T) {
 		`{"host_member_id":"gm1"}`,
 	)
 	require.NoError(t, err)
-	for _, m := range []struct{ id, agentID, title string }{
+	for _, m := range []struct{ id, agentID, name string }{
 		{"gm1", "agent-host", "Host"},
 		{"gm2", "agent-peer", "Peer"},
 	} {
 		_, err = store.UnsafeDBForTest().Exec(
-			"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type, group_id, archived, created_at, updated_at) VALUES (?, ?, 'claude', ?, ?, 'group_member', 'grp', 0, '2024-02-01 10:00:00', '2024-02-01 10:00:00')",
-			m.id, projectID, m.title, m.agentID,
+			"INSERT INTO chat_sessions (id, project_id, backend, title, agent_name, agent_id, session_type, group_id, archived, created_at, updated_at) VALUES (?, ?, 'claude', '', ?, ?, 'group_member', 'grp', 0, '2024-02-01 10:00:00', '2024-02-01 10:00:00')",
+			m.id, projectID, m.name, m.agentID,
 		)
 		require.NoError(t, err)
 	}
@@ -1084,7 +1084,7 @@ func TestServeRAGSessionSearch_GroupMembersEnrichedOnSearchPath(t *testing.T) {
 	)
 	require.NoError(t, err)
 	_, err = store.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type, group_id, archived, created_at, updated_at) VALUES ('gm1', ?, 'claude', 'Host', 'agent-host', 'group_member', 'grp', 0, '2024-02-01 10:00:00', '2024-02-01 10:00:00')",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_name, agent_id, session_type, group_id, archived, created_at, updated_at) VALUES ('gm1', ?, 'claude', '', 'Host', 'agent-host', 'group_member', 'grp', 0, '2024-02-01 10:00:00', '2024-02-01 10:00:00')",
 		projectID,
 	)
 	require.NoError(t, err)

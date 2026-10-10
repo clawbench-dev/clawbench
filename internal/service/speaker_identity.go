@@ -55,14 +55,38 @@ func ResolveSessionSpeakers(sessionID string, includeAvatar bool) (*SpeakerIdent
 	}
 	speakers := make(map[string]SpeakerIdentity, len(members))
 	for _, m := range members {
-		speakers[m.ID] = speakerFromAgent(m.AgentID, m.Backend, m.Name, includeAvatar)
+		speakers[m.ID] = speakerFromMember(m, includeAvatar)
 	}
 	return &sessionAgent, speakers
+}
+
+// speakerFromMember builds a member's SpeakerIdentity. Unlike speakerFromAgent,
+// the member's stored name (agent_name) is AUTHORITATIVE and is never overridden
+// by the live agents.name: a member's name is a snapshot taken when it joined
+// the group, so renaming the agent must not rewrite past speech, and duplicate
+// instances of one agent (each with its own name) must stay distinguishable.
+// The backend and custom avatar still come from the agent registry (avatar is a
+// property of the agent, shared by all its instances).
+func speakerFromMember(m GroupMember, includeAvatar bool) SpeakerIdentity {
+	s := SpeakerIdentity{Backend: m.Backend, Name: m.Name}
+	if a := model.GetAgent(m.AgentID); a != nil {
+		if a.Backend != "" {
+			s.Backend = a.Backend
+		}
+		if includeAvatar {
+			s.Avatar = a.Avatar
+		}
+	}
+	return s
 }
 
 // speakerFromAgent builds a SpeakerIdentity from an agent id, falling back to the
 // provided backend/name when the agent is not (or no longer) in the registry.
 // A custom avatar is only carried when includeAvatar is true.
+//
+// This is used for a SESSION's own agent (single-agent replies and the group
+// row's identity), where the live agent name is correct. Member rows must use
+// speakerFromMember instead, which treats the stored name as authoritative.
 func speakerFromAgent(agentID, backend, fallbackName string, includeAvatar bool) SpeakerIdentity {
 	s := SpeakerIdentity{Backend: backend, Name: fallbackName}
 	if a := model.GetAgent(agentID); a != nil {

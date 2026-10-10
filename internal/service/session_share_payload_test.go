@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 			project_id INTEGER NOT NULL DEFAULT 0,
 			backend TEXT NOT NULL DEFAULT '',
 			title TEXT NOT NULL DEFAULT '',
+			agent_name TEXT NOT NULL DEFAULT '',
 			agent_id TEXT NOT NULL DEFAULT '',
 			agent_source TEXT NOT NULL DEFAULT '',
 			model TEXT NOT NULL DEFAULT '',
@@ -942,11 +943,12 @@ func TestSessionSharePayload_GroupCarriesOrderedActiveMembers(t *testing.T) {
 	require.NoError(t, err)
 	// Member rows: the host first (created_at order), then a plain member, then a
 	// LEFT member that must be excluded. group_id points each row at the group.
+	// The member's display name lives in agent_name (title is left empty).
 	insertMember := func(id, name, backend string, archived int, createdAt string) {
 		t.Helper()
 		_, err := db.Exec(
-			`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type, group_id, archived, created_at)
-			 VALUES (?, 1, ?, ?, ?, 'group_member', 'g1', ?, ?)`,
+			`INSERT INTO chat_sessions (id, project_id, backend, title, agent_name, agent_id, session_type, group_id, archived, created_at)
+			 VALUES (?, 1, ?, '', ?, ?, 'group_member', 'g1', ?, ?)`,
 			id, backend, name, id, archived, createdAt)
 		require.NoError(t, err)
 	}

@@ -184,3 +184,37 @@ func TestCloseGroupMemberConns_NonGroupNoop(t *testing.T) {
 	assert.Equal(t, "chat", service.GetSessionType(sid))
 	_ = model.Agents
 }
+
+// Renaming a group MEMBER row via PATCH /api/ai/session must be ignored: a member
+// row is a hidden session with no meaningful title (its display name lives in
+// agent_name), so a rename is a no-op rather than a confusing title_source write.
+func TestServeAISessionUpdate_RenameMemberRowIgnored(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	groupID, _, err := service.CreateGroup(env.ProjectDir, "讨论组", "claude", "claude", "Host")
+	require.NoError(t, err)
+	memberID, err := service.AddGroupMember(env.ProjectDir, groupID, "claude", "claude", "Claude")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPatch, "/api/ai/session/update", map[string]any{
+		"sessionId": memberID,
+		"title":     "Renamed Member",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeAISessionUpdate, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	title, err := service.GetSessionTitle(memberID)
+	require.NoError(t, err)
+	assert.Equal(t, "", title, "a member row's title must not be settable via the rename path")
+
+	// The member's authoritative name (agent_name) is untouched.
+	members, err := service.ListGroupMembers(groupID)
+	require.NoError(t, err)
+	for _, m := range members {
+		if m.ID == memberID {
+			assert.Equal(t, "Claude", m.Name, "the member display name must be unchanged")
+		}
+	}
+}

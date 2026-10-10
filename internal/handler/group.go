@@ -105,6 +105,10 @@ func groupSessionLimitOK(w http.ResponseWriter, r *http.Request, projectPath str
 // any id is unknown OR disabled, in which case the whole request must fail
 // (nothing created). A disabled agent must not be seeded into a NEW group, just
 // as it is hidden from every other new-entry picker.
+//
+// The display name is NOT set here: the service assigns a unique name per
+// instance (the same agent may appear multiple times), deriving the base from
+// the agent's name. AgentIDs may contain duplicates.
 func groupMemberSpecs(agentIDs []string) ([]service.GroupMemberSpec, bool) {
 	specs := make([]service.GroupMemberSpec, 0, len(agentIDs))
 	for _, agentID := range agentIDs {
@@ -116,9 +120,8 @@ func groupMemberSpecs(agentIDs []string) ([]service.GroupMemberSpec, bool) {
 			return nil, false
 		}
 		specs = append(specs, service.GroupMemberSpec{
-			AgentID:     agentID,
-			Backend:     backend,
-			DisplayName: service.GetAgentDisplayName(agentID),
+			AgentID: agentID,
+			Backend: backend,
 		})
 	}
 	return specs, true
@@ -242,9 +245,8 @@ func serveGroupMembersAdd(w http.ResponseWriter, r *http.Request, projectPath st
 			continue
 		}
 		specs = append(specs, service.GroupMemberSpec{
-			AgentID:     agentID,
-			Backend:     backend,
-			DisplayName: service.GetAgentDisplayName(agentID),
+			AgentID: agentID,
+			Backend: backend,
 		})
 	}
 	memberIDs, err := service.AddGroupMembers(projectPath, req.GroupID, specs)

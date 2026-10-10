@@ -1,7 +1,7 @@
 # 群聊支持同一智能体多实例（临时昵称）设计
 
 日期：2026-10-10
-状态：设计已定，待实施
+状态：已实施（分支 `feat/group-duplicate-agents`）
 关联：`docs/spec/features/group-chat.md`
 
 ## 1. 目标

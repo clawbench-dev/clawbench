@@ -44,6 +44,7 @@ CREATE TABLE chat_sessions (
 			project_id INTEGER NOT NULL,
 			backend TEXT NOT NULL,
 			title TEXT NOT NULL,
+	agent_name TEXT NOT NULL DEFAULT '',
 			session_type TEXT NOT NULL DEFAULT 'chat',
 			group_id TEXT DEFAULT '',
 			archived INTEGER NOT NULL DEFAULT 0,

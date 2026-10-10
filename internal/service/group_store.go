@@ -87,27 +87,70 @@ func CreateGroup(projectPath, title, backend, hostAgentID, hostName string) (gro
 	})
 }
 
-// dedupeGroupSpecs validates the specs and collapses duplicate agents, so the
-// cap counts UNIQUE agents and every member is addressable (see
-// CreateGroupWithMembers). Extracted to keep that function's complexity in
-// budget.
-func dedupeGroupSpecs(specs []GroupMemberSpec) ([]GroupMemberSpec, error) {
-	seen := make(map[string]bool, len(specs))
-	deduped := make([]GroupMemberSpec, 0, len(specs))
+// validateGroupSpecs validates the specs and enforces the member cap. The cap
+// now counts INSTANCES (not unique agents): the same agent may be added to one
+// group multiple times, each an independent member with its own name.
+// Extracted to keep CreateGroupWithMembers' complexity in budget.
+func validateGroupSpecs(specs []GroupMemberSpec) error {
 	for _, s := range specs {
 		if s.AgentID == "" {
-			return nil, fmt.Errorf("create group: member with empty agent id")
+			return fmt.Errorf("create group: member with empty agent id")
 		}
-		if seen[s.AgentID] {
-			continue
+	}
+	if len(specs) > maxGroupMembers {
+		return ErrGroupMemberLimit
+	}
+	return nil
+}
+
+// assignMemberNames gives every spec a UNIQUE display name derived from its
+// agent's name, in the order the specs appear.
+//
+// Naming rule (design §4): the first instance of an agent keeps its bare name
+// ("Claude"); later instances get a numeric suffix starting at 2 ("Claude 2",
+// "Claude 3"). "Claude 1" is never produced. The starting ordinal is
+// (existing member rows for that agent in this group) + (ordinal within this
+// batch); because member rows are only ever archived (never deleted) and a
+// re-add always creates a NEW instance, the ordinal is monotonic and a
+// historical nickname always refers to the same member. A collision (with
+// another member's name or the reserved user nickname) advances the ordinal
+// until unique, so routing by name stays unambiguous.
+//
+// existingCounts maps agent id → number of member rows already in the group
+// (archived included). It may be nil (no existing members). taken holds names
+// already in use in the group, including the reserved user nickname.
+//
+// A spec's DisplayName, when non-empty, is used as the BASE name (callers such
+// as CreateGroup may pass an explicit name); otherwise the base is derived from
+// the agent's display name. The suffix/ordinal logic applies on top of the base.
+func assignMemberNames(specs []GroupMemberSpec, existingCounts map[string]int, taken map[string]bool) {
+	used := make(map[string]bool, len(taken)+len(specs))
+	for n := range taken {
+		used[n] = true
+	}
+	used[groupUserTarget()] = true
+	nextOrdinal := make(map[string]int, len(specs))
+	for i := range specs {
+		s := &specs[i]
+		base := strings.TrimSpace(s.DisplayName)
+		if base == "" {
+			base = GetAgentDisplayName(s.AgentID)
 		}
-		seen[s.AgentID] = true
-		deduped = append(deduped, s)
+		// Ordinal for this instance: existing rows + how many of this agent we
+		// have already named in this batch, then +1 (the new instance's index).
+		k := existingCounts[s.AgentID] + nextOrdinal[s.AgentID] + 1
+		candidate := base
+		if k > 1 {
+			candidate = fmt.Sprintf("%s %d", base, k)
+		}
+		for used[candidate] {
+			k++
+			candidate = fmt.Sprintf("%s %d", base, k)
+		}
+		nextOrdinal[s.AgentID]++
+		used[candidate] = true
+		s.DisplayName = candidate
 	}
-	if len(deduped) > maxGroupMembers {
-		return nil, ErrGroupMemberLimit
-	}
-	return deduped, nil
 }
 
 // groupIdentityFields picks the group row's (backend, agent_id) identity: the
@@ -154,19 +197,13 @@ func CreateGroupWithMembers(projectPath, title, hostAgentID string, specs []Grou
 	if len(specs) == 0 {
 		return "", "", fmt.Errorf("create group: no members")
 	}
-	// Validate + DEDUPE before touching the DB. Duplicates must collapse here
-	// (not just be rejected): a member's only identity is its agent, and
-	// resolveSpeakerGroups maps names through a map, so two rows for one agent
-	// leave one unreachable — a mute member that still occupies a connection
-	// and a slot, and inflates the active count toward the cap. The Web drawer
-	// is a multi-select and never sends duplicates, but POST /api/group/create
-	// takes an arbitrary array (review B2).
-	//
-	// Dedupe first so the cap counts UNIQUE agents: 10 distinct agents plus a
-	// duplicate must not be rejected as 11.
-	specs, err = dedupeGroupSpecs(specs)
-	if err != nil {
-		return "", "", err
+	// Validate before touching the DB. The same agent MAY appear multiple times
+	// (each occurrence is an independent instance with its own name); the cap
+	// therefore counts instances, not unique agents. Every spec must carry a
+	// non-empty AgentID. The Web drawer can send duplicates by design; POST
+	// /api/group/create takes an arbitrary array.
+	if verr := validateGroupSpecs(specs); verr != nil {
+		return "", "", verr
 	}
 
 	// Mode: a named host that is among the members ⇒ host mode; no host ⇒ free.
@@ -179,6 +216,11 @@ func CreateGroupWithMembers(projectPath, title, hostAgentID string, specs []Grou
 	if mode == GroupModeFree && len(specs) < 2 {
 		return "", "", ErrFreeGroupNeedsTwoMembers
 	}
+
+	// Seed each spec with a unique display name. A brand-new group has no
+	// existing member rows, so the ordinal starts at 1 for every agent; the
+	// reserved user nickname is the only pre-taken name.
+	assignMemberNames(specs, nil, nil)
 
 	projectID, idErr := store.ProjectIDForPath(projectPath)
 	if idErr != nil {
@@ -254,14 +296,20 @@ func insertGroupRow(tx *sql.Tx, groupID string, projectID int64, backend, agentI
 }
 
 // insertGroupMemberRows writes every member row and returns the host's member
-// id (host mode only). Extracted from CreateGroupWithMembers to keep that
-// function's complexity in budget.
+// id (host mode only). The member's display name goes into agent_name; `title`
+// is left empty (a member row is a hidden session, so a session title is
+// meaningless — see the agent_name migration note in database.go). Extracted
+// from CreateGroupWithMembers to keep that function's complexity in budget.
+//
+// Host selection: the FIRST instance of the host agent becomes the host. With
+// duplicate instances of the same agent, hostMemberID is set on the first
+// match and never overwritten.
 func insertGroupMemberRows(tx *sql.Tx, groupID string, projectID int64, hostAgentID, mode string, specs []GroupMemberSpec, memberIDs []string) (hostMemberID string, err error) {
 	for i, s := range specs {
 		if _, err := tx.ExecContext(
 			context.Background(),
-			"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, group_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-			memberIDs[i], projectID, s.Backend, s.DisplayName, s.AgentID, "default", "", groupMemberSessionType, groupID,
+			"INSERT INTO chat_sessions (id, project_id, backend, title, agent_name, agent_id, agent_source, model, session_type, group_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			memberIDs[i], projectID, s.Backend, "", s.DisplayName, s.AgentID, "default", "", groupMemberSessionType, groupID,
 		); err != nil {
 			return "", fmt.Errorf("create member session: %w", err)
 		}
@@ -295,70 +343,64 @@ func writeGroupModeInline(tx *sql.Tx, groupID, mode, hostMemberID string) error 
 	return nil
 }
 
-// AddGroupMember adds an agent to the group, or REJOINS it if a member row for
-// the same (group, agent) already exists.
+// AddGroupMember adds an agent to the group as a NEW instance. There is no
+// rejoin/reuse: adding an agent that is already (or was previously) a member
+// creates another independent instance with its own name, so the same agent can
+// appear several times. displayName is the display name to store in agent_name;
+// callers that need the auto-numbered name should go through AddGroupMembers
+// (which assigns unique names across the batch).
 //
-// Why dedup: a member's only identity is its agent — the routing tag addresses
-// members by NAME, and resolveSpeakerGroups maps names through a map, so two rows for
-// the same agent would make one of them unreachable (a "mute" member that can
-// be selected but never spoken to). Re-adding an agent that LEFT the group
-// therefore reuses its original row and clears the archived flag (the A
-// contract), preserving its past speech attribution instead of creating a
-// duplicate row. displayName is only applied on first creation; the row's
-// stored title is authoritative afterwards.
-//
-// Returns the member row id (existing or new).
+// Returns the new member row id.
 func AddGroupMember(projectPath, groupID, backend, agentID, displayName string) (string, error) {
-	if existing, ok := findGroupMemberByAgent(groupID, agentID); ok {
-		// Re-adding an ACTIVE member is a no-op reuse: the active count does not
-		// change, so the cap does not apply. No system event either — nothing
-		// changed on the timeline.
-		if !existing.Left {
-			return existing.ID, nil
-		}
-		// Rejoining a left member reactivates an existing row, but that still
-		// grows the active count by one, so it must clear the cap too.
-		if err := ensureGroupMemberSlot(groupID); err != nil {
-			return "", err
-		}
-		if err := setGroupMemberArchived(existing.ID, false); err != nil {
-			return "", err
-		}
-		writeMemberSystemEvent(projectPath, groupID, agentID, displayName, " 重新加入")
-		return existing.ID, nil
-	}
 	if err := ensureGroupMemberSlot(groupID); err != nil {
 		return "", err
 	}
-	memberID, err := CreateSession(projectPath, backend, displayName, agentID, "", "default", groupMemberSessionType)
+	memberID, err := createMemberRow(projectPath, groupID, backend, agentID, displayName)
 	if err != nil {
-		return "", fmt.Errorf("create member session: %w", err)
-	}
-	if err := SetSessionGroupID(memberID, groupID); err != nil {
 		return "", err
 	}
 	writeMemberSystemEvent(projectPath, groupID, agentID, displayName, "加入了讨论")
 	return memberID, nil
 }
 
+// createMemberRow inserts one hidden member session row with the display name in
+// agent_name and an empty title, then binds it to the group.
+func createMemberRow(projectPath, groupID, backend, agentID, displayName string) (string, error) {
+	memberID, err := CreateSession(projectPath, backend, "", agentID, "", "default", groupMemberSessionType)
+	if err != nil {
+		return "", fmt.Errorf("create member session: %w", err)
+	}
+	if err := SetMemberAgentName(memberID, displayName); err != nil {
+		return "", err
+	}
+	if err := SetSessionGroupID(memberID, groupID); err != nil {
+		return "", err
+	}
+	return memberID, nil
+}
+
 // AddGroupMembers adds several agents to a group in one call, enforcing the
 // member cap (decision #78) on the WHOLE batch: if the batch would push the
 // ACTIVE member count past maxGroupMembers, it rejects the entire batch WITHOUT
-// writing any row.
+// writing any row. The cap counts INSTANCES: every spec is a new member, and
+// duplicates of one agent each consume a slot.
+//
+// Every spec gets a UNIQUE display name assigned here (design §4): existing
+// member rows of the same agent in this group (archived included) determine the
+// starting ordinal, and the name is bumped on collision, so routing by name
+// stays unambiguous.
 //
 // Why a service-level batch rather than looping AddGroupMember in the handler
 // (which is what O19's spec explicitly forbids): the per-call slot check cannot
 // see the rest of the batch, so a loop commits the earlier additions and then
 // returns an error on a later one — the request "fails" but the roster silently
-// changed. Net-new counts UNIQUE agents not already active, so re-adding
-// existing agents (or duplicates within the batch) does not consume a slot.
+// changed.
 //
-// Returns the member row id for each spec, in input order (existing rows for
-// agents already present, new/rejoined rows otherwise).
+// Returns the member row id for each spec, in input order.
 //
 // Concurrency note: the active-count read and the writes are not under one
-// lock, so two concurrent callers could each read "9 active" and both add one
-// (a TOCTOU that could reach 11). This is a single-user, low-frequency
+// lock, so two concurrent callers could each read "11 active" and both add one
+// (a TOCTOU that could reach 13). This is a single-user, low-frequency
 // operation (the drawer's add-members action), so the window is not closed with
 // a write-lock-held read; if group membership ever becomes concurrent, move the
 // slot check inside the write transaction.
@@ -371,22 +413,11 @@ func AddGroupMembers(projectPath, groupID string, specs []GroupMemberSpec) ([]st
 		return nil, err
 	}
 	active := countActiveMembers(members)
-	activeAgents := make(map[string]bool, len(members))
-	for _, m := range members {
-		if !m.Left {
-			activeAgents[m.AgentID] = true
-		}
-	}
 
-	// Count UNIQUE agents not already active, deduping within the batch too.
+	// Each spec is a new instance, so every non-empty spec consumes a slot.
 	netNew := 0
-	seen := make(map[string]bool, len(specs))
 	for _, s := range specs {
-		if s.AgentID == "" || seen[s.AgentID] {
-			continue
-		}
-		seen[s.AgentID] = true
-		if !activeAgents[s.AgentID] {
+		if s.AgentID != "" {
 			netNew++
 		}
 	}
@@ -394,9 +425,19 @@ func AddGroupMembers(projectPath, groupID string, specs []GroupMemberSpec) ([]st
 		return nil, ErrGroupMemberLimit
 	}
 
-	// The batch is known to fit, so the per-call AddGroupMember cannot trip the
-	// cap mid-way (its own slot check will pass for every call). Reuse it so the
-	// dedup / rejoin / system-event behavior stays single-sourced.
+	// Seed unique names. existingCounts counts ALL member rows (archived
+	// included) per agent, so the ordinal is monotonic across add/remove cycles.
+	existingCounts := make(map[string]int, len(members))
+	taken := make(map[string]bool, len(members))
+	for _, m := range members {
+		existingCounts[m.AgentID]++
+		taken[m.Name] = true
+	}
+	assignMemberNames(specs, existingCounts, taken)
+
+	// The batch is known to fit, so the per-call slot check cannot trip
+	// mid-way. Reuse AddGroupMember so the system-event behavior stays
+	// single-sourced.
 	ids := make([]string, 0, len(specs))
 	for _, s := range specs {
 		if s.AgentID == "" {
@@ -573,48 +614,17 @@ func ensureGroupMemberSlot(groupID string) error {
 	return nil
 }
 
-// findGroupMemberByAgent returns the group's member row for agentID, preferring
-// an active (non-archived) row when both exist. ok is false when the agent is
-// not a member.
-func findGroupMemberByAgent(groupID, agentID string) (GroupMember, bool) {
-	rows, err := store.ReadDB().Query(
-		`SELECT id, agent_id, title, backend, archived FROM chat_sessions
-		 WHERE group_id = ? AND session_type = ? AND agent_id = ?
-		 ORDER BY archived ASC, created_at ASC, id ASC`,
-		groupID, groupMemberSessionType, agentID,
-	)
-	if err != nil {
-		return GroupMember{}, false
-	}
-	defer func() { _ = rows.Close() }()
-	if rows.Next() {
-		var m GroupMember
-		var archived int
-		if err := rows.Scan(&m.ID, &m.AgentID, &m.Name, &m.Backend, &archived); err != nil {
-			return GroupMember{}, false
-		}
-		m.Left = archived != 0
-		return m, true
-	}
-	if err := rows.Err(); err != nil {
-		return GroupMember{}, false
-	}
-	return GroupMember{}, false
-}
-
-// setGroupMemberArchived flips a member row's archived flag (false = rejoined).
-func setGroupMemberArchived(memberID string, archived bool) error {
-	v := 0
-	if archived {
-		v = 1
-	}
-	_, err := store.WriteExec("UPDATE chat_sessions SET archived = ? WHERE id = ?", v, memberID)
-	return err
-}
-
 // SetSessionGroupID points a member row at its owning group.
 func SetSessionGroupID(memberID, groupID string) error {
 	_, err := store.WriteExec("UPDATE chat_sessions SET group_id = ? WHERE id = ?", groupID, memberID)
+	return err
+}
+
+// SetMemberAgentName sets a member row's authoritative display name (the
+// agent_name column). It never touches `title`, which is left empty for member
+// rows (see the agent_name migration note in database.go).
+func SetMemberAgentName(memberID, name string) error {
+	_, err := store.WriteExec("UPDATE chat_sessions SET agent_name = ? WHERE id = ?", name, memberID)
 	return err
 }
 
@@ -629,7 +639,7 @@ func SetSessionGroupID(memberID, groupID string) error {
 // deterministically, whereas `id` (a random UUID) would not.
 func ListGroupMembers(groupID string) ([]GroupMember, error) {
 	rows, err := store.ReadDB().Query(
-		`SELECT id, agent_id, title, backend, archived FROM chat_sessions
+		`SELECT id, agent_id, agent_name, backend, archived FROM chat_sessions
 		 WHERE group_id = ? AND session_type = ?
 		 ORDER BY created_at ASC, rowid ASC`,
 		groupID, groupMemberSessionType,
@@ -707,7 +717,7 @@ func GroupMembersForGroups(groupIDs []string) (map[string][]model.GroupMemberPre
 	// subquery per member — still one statement for all groups. The frontend
 	// uses it to lead the stack with the host.
 	query := fmt.Sprintf(`
-		SELECT m.group_id, m.id, m.agent_id, m.title, m.backend,
+		SELECT m.group_id, m.id, m.agent_id, m.agent_name, m.backend,
 		       (m.id = COALESCE(json_extract(g.context_state, '$.host_member_id'), '')) AS is_host
 		FROM chat_sessions m
 		LEFT JOIN chat_sessions g ON g.id = m.group_id
@@ -770,9 +780,9 @@ func GroupMemberSpeakersForGroups(groupIDs []string) (map[string]map[string]stri
 	}
 
 	// No archived filter: left members are included on purpose (their speech is
-	// kept in the timeline). The name is the member row's title.
+	// kept in the timeline). The name is the member row's agent_name.
 	query := fmt.Sprintf(
-		`SELECT group_id, id, title FROM chat_sessions
+		`SELECT group_id, id, agent_name FROM chat_sessions
 		 WHERE group_id IN (%s) AND session_type = ?`, placeholders)
 	args = append(args, groupMemberSessionType)
 
@@ -809,15 +819,17 @@ var ErrGroupMemberLimit = errors.New("group member limit reached")
 var ErrFreeGroupNeedsTwoMembers = errors.New("free group needs at least two members")
 
 // MaxGroupMembers caps a group's ACTIVE members (decision #78). Exported so the
-// handler can report the limit to the user.
+// handler can report the limit to the user. The count is INSTANCES, not unique
+// agents: the same agent may be added several times, and each instance is a
+// separate member (and a separate ACP subprocess).
 //
 // Why a cap at all: every member is a separate ACP subprocess carrying its own
 // node/npx runtime (hundreds of MB), and the ACP connection pool has no upper
 // bound (its conns map is unbounded; minAliveConns is a floor, not a ceiling).
 // A group turn touches every member, so an uncapped roster can spawn dozens of
-// agents at once. Ten is also the point past which a "discussion" stops being
+// agents at once. Twelve is also past the point where a "discussion" stops being
 // useful to a model.
-const MaxGroupMembers = 10
+const MaxGroupMembers = 12
 
 // maxGroupMembers is the internal alias used by the store.
 const maxGroupMembers = MaxGroupMembers
@@ -871,7 +883,7 @@ func RemoveGroupMember(groupID, memberID string) error {
 // memberDisplayName returns a member row's display name (empty if unknown).
 func memberDisplayName(memberID string) string {
 	var name string
-	_ = store.ReadDB().QueryRow("SELECT COALESCE(title, '') FROM chat_sessions WHERE id = ?", memberID).Scan(&name)
+	_ = store.ReadDB().QueryRow("SELECT COALESCE(agent_name, '') FROM chat_sessions WHERE id = ?", memberID).Scan(&name)
 	return name
 }
 
@@ -1006,7 +1018,8 @@ func SetGroupParallelDefault(groupID string, enabled bool) error {
 }
 
 // GetAgentDisplayName returns an agent's display name (falling back to its id,
-// then "AI"), used to seed a member row's title and the group's placeholder.
+// then "AI"), used as the base for a member row's agent_name and the group's
+// placeholder title.
 func GetAgentDisplayName(agentID string) string {
 	if a := model.GetAgent(agentID); a != nil && a.Name != "" {
 		return a.Name
@@ -1043,6 +1056,14 @@ func IsGroupSession(sessionID string) bool {
 // list row) and would otherwise compare it to a literal.
 func IsGroupSessionType(storedType string) bool {
 	return storedType == groupSessionType
+}
+
+// IsGroupMemberSession reports whether sessionID is a hidden group MEMBER row
+// (as opposed to a group timeline row or an ordinary chat). Exported so callers
+// outside this package can guard operations that make no sense on a member row
+// (e.g. renaming a session) without spelling the literal.
+func IsGroupMemberSession(sessionID string) bool {
+	return GetSessionType(sessionID) == groupMemberSessionType
 }
 
 // GetMemberCursor returns a member's seen_cursor: the group-timeline high-water

@@ -37,11 +37,11 @@ test.describe.serial('AI group chat multi-agent loop', () => {
       const created = await post('/api/group/create', { hostAgentId: 'acp-mock' })
       if (!created.ok) return { ok: false, step: 'create', created }
 
-      // The member MUST be a DIFFERENT agent id than the host. Adding 'acp-mock'
-      // here (same as the host) would just return the host row (AddGroupMember
-      // dedups by agent id), leaving a single-member group — and then the
-      // "a member spoke" assertion below would be satisfied by the HOST's own
-      // row, i.e. tautological and unable to catch the regression it names.
+      // Use a DIFFERENT agent id than the host so the member is a genuinely
+      // distinct speaker. (The same agent MAY now be added twice as separate
+      // instances, but this test wants a distinct member, so a different id is
+      // used; adding the host's own id would make the "a member spoke"
+      // assertion below tautological — satisfied by the HOST's own row.)
       const added = await post('/api/group/members', { groupId: created.groupId, agentIds: ['acp-mock-b'] })
       if (!added.ok) return { ok: false, step: 'add', added }
 
