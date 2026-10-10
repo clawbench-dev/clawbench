@@ -49,11 +49,7 @@
             @touchmove.passive="onTouchMove"
           >
             <span class="model-item-indicator" :class="{ active: m.id === currentModelId }"></span>
-            <ProviderIcon :model-name="m.name || m.id" :size="16" />
-            <span class="model-item-labels">
-              <span class="model-item-name">{{ m.name }}</span>
-              <span v-if="m.id !== m.name" class="model-item-id">{{ formatModelIdForDisplay(m.id) }}</span>
-            </span>
+            <ModelRow :name="m.name" :model-id="m.id" :active="m.id === currentModelId" />
             <span v-if="m.id === defaultModelId" class="default-label">
               <span class="default-text">{{ t('chat.sessionSetting.defaultBadge') }}</span>
               <span class="default-star"><Star :size="12" fill="currentColor" /></span>
@@ -215,7 +211,7 @@ import { Star, Cpu, Brain, Compass, Cable } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
-import ProviderIcon from '@/components/common/ProviderIcon.vue'
+import ModelRow from '@/components/common/ModelRow.vue'
 import { useAgents, restoreOriginalModels, applyRefreshedModelList, populateACPStateFromCache, invalidateACPStateCache } from '@/composables/useAgents'
 import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
@@ -804,36 +800,11 @@ defineExpose({
   background: var(--accent-color, #0066cc);
 }
 
-/* Name + raw id share the flexible middle slot; the id is the first thing
-   ellipsized away when the row is narrow. */
-.model-item-labels {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-}
-
 .model-item-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-/* The raw model id, kept visible but subdued next to the display name so two
-   models that share a name (e.g. deepseek-v4-pro / deepseek-v4-pro-exclusive)
-   stay distinguishable. Hidden when the name already IS the id. */
-.model-item-id {
-  flex-shrink: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--font-mono);
-  font-size: var(--font-size-2xs);
-  color: var(--text-muted, #999);
-  opacity: var(--opacity-soft);
 }
 
 .model-item.current .model-item-name,
@@ -847,9 +818,9 @@ defineExpose({
   gap: var(--space-2);
   flex-shrink: 0;
   /* Pin the badge to the row's right edge. The model tab already ends up there
-     because its label sits in .model-item-labels (flex: 1) and absorbs the free
-     space; the thinking / mode / transport tabs render a bare .model-item-name
-     with no growth, so without this the badge trails the text instead. */
+     because its ModelRow (flex: 1) absorbs the free space; the thinking / mode /
+     transport tabs render a bare .model-item-name with no growth, so without
+     this the badge trails the text instead. */
   margin-left: auto;
   color: var(--accent-color, #0066cc);
 }

@@ -118,6 +118,35 @@ describe('providerIcons', () => {
             expect(getModelProvider('groq-llama-3.1')).toBe('groq')
         })
 
+        // LongCat (Meituan)
+        it('detects LongCat models', () => {
+            expect(getModelProvider('longcat-2.0')).toBe('longcat')
+            expect(getModelProvider('opencode/longcat-2.5-preview-free')).toBe('longcat')
+        })
+
+        // StepFun (Step-N)
+        it('detects StepFun models', () => {
+            expect(getModelProvider('step-5-preview-free')).toBe('stepfun')
+            expect(getModelProvider('opencode/step-5-preview-free')).toBe('stepfun')
+        })
+
+        // NVIDIA (Nemotron)
+        it('detects NVIDIA Nemotron models', () => {
+            expect(getModelProvider('nemotron-3-ultra-free')).toBe('nvidia')
+        })
+
+        // Gateway prefixes (provider carried in the id, not the display name)
+        it('detects gateway prefixes as a provider fallback', () => {
+            // A model served through a gateway whose name carries no known
+            // provider falls back to the gateway's own brand icon.
+            expect(getModelProvider('opencode-go/space-bunny')).toBe('opencode-go')
+            expect(getModelProvider('github-copilot/mai-code-1.1-flash')).toBe('github-copilot')
+            // The model-name part still wins when it is recognizable, so a
+            // gateway-hosted Claude model shows the Claude icon, not the gateway.
+            expect(getModelProvider('github-copilot/claude-opus-4.8')).toBe('claude')
+            expect(getModelProvider('opencode-go/deepseek-v4-pro')).toBe('deepseek')
+        })
+
         // Provider prefixes (Pi model IDs)
         it('detects provider prefixes with slash', () => {
             expect(getModelProvider('google/gemini-2.0-flash')).toBe('gemini')
@@ -146,7 +175,7 @@ describe('providerIcons', () => {
 
     describe('getProviderIcon', () => {
         it('returns icon data for known providers', () => {
-            const providers = ['openai', 'anthropic', 'claude', 'gemini', 'deepseek', 'mistral', 'meta', 'qwen', 'kimi', 'xiaomi', 'groq', 'xai', 'copilot', 'codex', 'codebuddy', 'zhipu', 'chatglm', 'glm']
+            const providers = ['openai', 'anthropic', 'claude', 'gemini', 'deepseek', 'mistral', 'meta', 'qwen', 'kimi', 'xiaomi', 'groq', 'xai', 'copilot', 'codex', 'codebuddy', 'zhipu', 'chatglm', 'glm', 'longcat', 'stepfun', 'nvidia', 'opencode-go', 'github-copilot']
             for (const id of providers) {
                 const data = getProviderIcon(id)
                 expect(data, `provider "${id}" should have icon data`).not.toBeNull()

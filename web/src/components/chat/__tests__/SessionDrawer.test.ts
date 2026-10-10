@@ -208,9 +208,9 @@ describe('SessionDrawer', () => {
     expect(items.length).toBe(2)
   })
 
-  it('shows the raw model id next to the display name', () => {
+  it('shows the raw model id on the shared model row', () => {
     const wrapper = mountDrawer()
-    const ids = wrapper.findAll('.model-item-id').map(n => n.text())
+    const ids = wrapper.findAll('.model-row__id').map(n => n.text())
     expect(ids).toEqual(['claude-sonnet-4-6', 'claude-opus-4-5'])
   })
 
@@ -219,7 +219,7 @@ describe('SessionDrawer', () => {
     // twice would be noise.
     mockAgents.agents.value[0].models = [{ id: 'gpt-5.1-codex', name: 'gpt-5.1-codex', default: true }]
     const wrapper = mountDrawer()
-    expect(wrapper.find('.model-item-id').exists()).toBe(false)
+    expect(wrapper.find('.model-row__id').exists()).toBe(false)
     mockAgents.agents.value[0].models = [
       { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', default: true },
       { id: 'claude-opus-4-5', name: 'Claude Opus 4.5', default: false },
@@ -235,7 +235,7 @@ describe('SessionDrawer', () => {
       { id: '["deepseek-official","deepseek-v4-pro"]', name: 'DeepSeek-V4-Pro', default: true },
     ]
     const wrapper = mountDrawer()
-    const idText = wrapper.find('.model-item-id').text()
+    const idText = wrapper.find('.model-row__id').text()
     expect(idText).toBe('deepseek-official/deepseek-v4-pro')
     expect(idText).not.toContain('[')
     expect(idText).not.toContain('"')
@@ -254,7 +254,7 @@ describe('SessionDrawer', () => {
     const input = wrapper.find('.model-search-input')
     input.setValue('official/deepseek-v4')
     return wrapper.vm.$nextTick().then(() => {
-      const names = wrapper.findAll('.model-item-name').map(n => n.text())
+      const names = wrapper.findAll('.model-row__name').map(n => n.text())
       expect(names).toEqual(['DeepSeek-V4-Pro'])
       mockAgents.agents.value[0].models = [
         { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', default: true },

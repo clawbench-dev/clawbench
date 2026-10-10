@@ -94,7 +94,6 @@ import CopyAgentDialog from './CopyAgentDialog.vue'
 import AgentAvatarPicker from './AgentAvatarPicker.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import { useAgents, populateACPStateFromCache } from '@/composables/useAgents'
-import { formatModelIdForDisplay } from '@/utils/modelDisplay'
 import { patchAgentField } from '@/composables/useSettingsConfig'
 import { useToast } from '@/composables/useToast'
 import { useDialog } from '@/composables/useDialog'
@@ -245,8 +244,9 @@ const items = computed<AgentItem[]>(() => {
         // CodeBuddy ships models that share a display name (deepseek-v4-pro and
         // deepseek-v4-pro-exclusive are both "Deepseek-V4-Pro"), so the id is
         // the only way to tell them apart in the picker. Some ACP agents carry
-        // a JSON-shaped wire id; show it readably (the value stays untouched).
-        sublabel: m.name && m.name !== m.id ? formatModelIdForDisplay(m.id) : undefined,
+        // a JSON-shaped wire id; the shared ModelRow shows it readably on a
+        // second line (the value stays untouched).
+        modelId: m.id,
       })),
       patchField: 'preferred_model',
     })
