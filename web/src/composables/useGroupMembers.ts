@@ -22,24 +22,23 @@ export function useGroupMembers(currentSessionId: Ref<string>) {
     return map
   })
 
-  /** resolveSpeaker maps a member row id to { name, backend, avatar } or null. */
-  function resolveSpeaker(memberRowId: string): { name: string; backend: string; avatar: string } | null {
+  /** resolveSpeaker maps a member row id to { name, backend, avatar, agentName } or null. */
+  function resolveSpeaker(memberRowId: string): { name: string; backend: string; avatar: string; agentName: string } | null {
     const m = byId.value.get(memberRowId)
     if (!m) return null
-    // Avatar is a property of the underlying AGENT, not the member row: resolve
-    // it from the member's agentId so a custom avatar set on the agent shows.
-    return { name: m.name, backend: m.backend, avatar: getAgentAvatar(m.agentId) || '' }
+    // 成员自己的头像快照优先；旧成员无快照时回退智能体头像。
+    return { name: m.name, backend: m.backend, avatar: m.avatar || getAgentAvatar(m.agentId) || '', agentName: m.agentName }
   }
 
-  /** resolveByName maps a display name to { name, backend, avatar } or null.
+  /** resolveByName maps a display name to { name, backend, avatar, agentName } or null.
    *  Used to render @-mention chips for the host's routing targets, which are
    *  named (not id'd) in the routing tag. */
-  function resolveByName(name: string): { name: string; backend: string; avatar: string } | null {
+  function resolveByName(name: string): { name: string; backend: string; avatar: string; agentName: string } | null {
     const target = name.trim()
     if (!target) return null
     const m = members.value.find(x => x.name.trim() === target)
     if (!m) return null
-    return { name: m.name, backend: m.backend, avatar: getAgentAvatar(m.agentId) || '' }
+    return { name: m.name, backend: m.backend, avatar: m.avatar || getAgentAvatar(m.agentId) || '', agentName: m.agentName }
   }
 
   async function refresh(sessionId: string) {

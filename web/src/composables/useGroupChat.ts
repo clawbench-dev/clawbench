@@ -10,6 +10,10 @@ export interface GroupMemberInfo {
   agentId: string
   name: string
   backend: string
+  /** 成员自身的头像 SVG（agent_avatar）；空 = 回退到智能体头像。 */
+  avatar: string
+  /** 底层真实智能体名；与 name 相同时也带回，供 UI 判定是否披露。 */
+  agentName: string
   left: boolean
   isHost: boolean
 }
@@ -68,6 +72,11 @@ export async function listGroupMembers(groupId: string): Promise<{ members: Grou
 export async function addGroupMembers(groupId: string, agentIds: string[]): Promise<string[]> {
   const data = await postJSON('/api/group/members', { groupId, agentIds })
   return (data.memberIds as string[]) ?? []
+}
+
+/** setMemberAvatars 批量写回成员头像（DiceBear 生成，落库以对齐分享/导出）。 */
+export async function setMemberAvatars(groupId: string, avatars: { memberId: string; avatar: string }[]): Promise<void> {
+  await postJSON('/api/group/member-avatars', { groupId, avatars })
 }
 
 /** removeGroupMember soft-removes a member (keeps their past speech). */
