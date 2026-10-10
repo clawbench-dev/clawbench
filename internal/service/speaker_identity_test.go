@@ -140,7 +140,7 @@ func TestResolveSessionSpeakers_DuplicateInstancesDistinctNames(t *testing.T) {
 	require.Contains(t, speakers, ids[0])
 	require.Contains(t, speakers, ids[1])
 	assert.Equal(t, "Claude", speakers[ids[0]].Name)
-	assert.Equal(t, "Claude 2", speakers[ids[1]].Name)
+	assert.Equal(t, groupNamePool[0], speakers[ids[1]].Name)
 	assert.NotEqual(t, speakers[ids[0]].Name, speakers[ids[1]].Name,
 		"two instances of one agent must have distinct names")
 }

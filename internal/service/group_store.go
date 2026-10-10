@@ -103,18 +103,20 @@ func validateGroupSpecs(specs []GroupMemberSpec) error {
 	return nil
 }
 
-// assignMemberNames gives every spec a UNIQUE display name derived from its
-// agent's name, in the order the specs appear.
+// assignMemberNames gives every spec a UNIQUE display name, in the order the
+// specs appear.
 //
-// Naming rule (design §4): the first instance of an agent keeps its bare name
-// ("Claude"); later instances get a numeric suffix starting at 2 ("Claude 2",
-// "Claude 3"). "Claude 1" is never produced. The starting ordinal is
-// (existing member rows for that agent in this group) + (ordinal within this
-// batch); because member rows are only ever archived (never deleted) and a
-// re-add always creates a NEW instance, the ordinal is monotonic and a
-// historical nickname always refers to the same member. A collision (with
-// another member's name or the reserved user nickname) advances the ordinal
-// until unique, so routing by name stays unambiguous.
+// Naming rule (design §4, updated for the built-in pool): the FIRST instance of
+// an agent keeps its bare name ("Claude"); later instances draw the first
+// unused name from groupNamePool ("Alice", "Bob", …). When the pool is
+// exhausted the name falls back to the pre-pool rule ("<base> <ordinal>").
+//
+// The starting ordinal is (existing member rows for that agent in this group) +
+// (ordinal within this batch); because member rows are only ever archived
+// (never deleted) and a re-add always creates a NEW instance, the ordinal is
+// monotonic and a historical nickname always refers to the same member. A
+// collision (with another member's name, a pool name, or the reserved user
+// nickname) advances until unique, so routing by name stays unambiguous.
 //
 // existingCounts maps agent id → number of member rows already in the group
 // (archived included). It may be nil (no existing members). taken holds names
@@ -122,7 +124,7 @@ func validateGroupSpecs(specs []GroupMemberSpec) error {
 //
 // A spec's DisplayName, when non-empty, is used as the BASE name (callers such
 // as CreateGroup may pass an explicit name); otherwise the base is derived from
-// the agent's display name. The suffix/ordinal logic applies on top of the base.
+// the agent's display name.
 func assignMemberNames(specs []GroupMemberSpec, existingCounts map[string]int, taken map[string]bool) {
 	used := make(map[string]bool, len(taken)+len(specs))
 	for n := range taken {
@@ -136,16 +138,27 @@ func assignMemberNames(specs []GroupMemberSpec, existingCounts map[string]int, t
 		if base == "" {
 			base = GetAgentDisplayName(s.AgentID)
 		}
-		// Ordinal for this instance: existing rows + how many of this agent we
-		// have already named in this batch, then +1 (the new instance's index).
+		// Instance index: existing rows + already-named in this batch, then +1.
 		k := existingCounts[s.AgentID] + nextOrdinal[s.AgentID] + 1
-		candidate := base
-		if k > 1 {
-			candidate = fmt.Sprintf("%s %d", base, k)
+		candidate := ""
+		if k == 1 {
+			// First instance keeps the agent's own name.
+			candidate = base
+		} else {
+			// Duplicate instance: prefer an unused pool name.
+			candidate = nextPoolName(used)
 		}
-		for used[candidate] {
-			k++
-			candidate = fmt.Sprintf("%s %d", base, k)
+		if candidate == "" || used[candidate] {
+			// Pool exhausted, or the first instance's bare name collides:
+			// fall back to "<base> <ordinal>", advancing until unique.
+			candidate = base
+			if k > 1 {
+				candidate = fmt.Sprintf("%s %d", base, k)
+			}
+			for used[candidate] {
+				k++
+				candidate = fmt.Sprintf("%s %d", base, k)
+			}
 		}
 		nextOrdinal[s.AgentID]++
 		used[candidate] = true

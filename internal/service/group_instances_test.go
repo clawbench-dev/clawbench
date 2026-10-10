@@ -16,9 +16,9 @@ func withTestAgents(t *testing.T, agents map[string]*model.Agent) {
 }
 
 // TestAddGroupMembers_AssignsUniqueNames covers the naming rule for a batch:
-// the first instance keeps the bare agent name, later instances get " 2", " 3",
-// and " 1" is never produced. A second batch continues the ordinal (monotonic,
-// never reused).
+// the first instance keeps the bare agent name, later instances draw the next
+// unused pool name, and " 1" is never produced. A second batch continues the
+// ordinal (monotonic, never reusing a taken pool name).
 func TestAddGroupMembers_AssignsUniqueNames(t *testing.T) {
 	setupGroupDB(t)
 	project := "/tmp/group-names"
@@ -44,17 +44,17 @@ func TestAddGroupMembers_AssignsUniqueNames(t *testing.T) {
 		t.Fatalf("AddGroupMembers: %v", err)
 	}
 	names := memberNames(t, groupID, "claude")
-	assertNames(t, names, "Claude", "Claude 2", "Claude 3")
+	assertNames(t, names, "Claude", groupNamePool[0], groupNamePool[1])
 
-	// Second batch: the ordinal continues from the existing rows (never reuses
-	// " 2" / " 3").
+	// Second batch: continues from the existing rows, drawing the next unused
+	// pool name (never reusing a taken one).
 	if _, err := AddGroupMembers(project, groupID, []GroupMemberSpec{
 		{AgentID: "claude", Backend: "claude"},
 	}); err != nil {
 		t.Fatalf("AddGroupMembers (second): %v", err)
 	}
 	names = memberNames(t, groupID, "claude")
-	assertNames(t, names, "Claude", "Claude 2", "Claude 3", "Claude 4")
+	assertNames(t, names, "Claude", groupNamePool[0], groupNamePool[1], groupNamePool[2])
 }
 
 // TestAddGroupMembers_OrdinalNotReusedAfterRemoval covers D6: removing an
@@ -83,18 +83,18 @@ func TestAddGroupMembers_OrdinalNotReusedAfterRemoval(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddGroupMembers: %v", err)
 	}
-	// Remove "Claude 2" (the second instance).
+	// 删除的是第 2 个实例（池名 groupNamePool[0]）。再加一个不得复用该池名，
+	// 取下一个未占用池名（被删实例仍在 taken 中，故跳到 groupNamePool[2]）。
 	if err := RemoveGroupMember(groupID, ids[1]); err != nil {
 		t.Fatalf("RemoveGroupMember: %v", err)
 	}
-	// Adding another instance must NOT reuse "Claude 2"; it becomes "Claude 4".
 	if _, err := AddGroupMembers(project, groupID, []GroupMemberSpec{
 		{AgentID: "claude", Backend: "claude"},
 	}); err != nil {
 		t.Fatalf("AddGroupMembers (after removal): %v", err)
 	}
 	active := activeMemberNames(t, groupID, "claude")
-	assertNames(t, active, "Claude", "Claude 3", "Claude 4")
+	assertNames(t, active, "Claude", groupNamePool[1], groupNamePool[2])
 }
 
 // TestAddGroupMembers_NameCollisionWithUserNickname covers the uniqueness
