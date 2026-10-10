@@ -93,6 +93,10 @@ flowchart TD
 - **ACP 模型持久化**：ACP 上报的模型列表写入 `agents.acp_available_models`，因此重启后仍然可见。此前它只存在于内存，导致同一 agent 的模型列表在重启前后跳变（首个 ACP 会话前是 CLI 列表，之后是 ACP 列表）
 - **后台模型刷新**：模型探测在启动后台执行（`model.StartModelDiscoveryAsync`，`internal/model/refresh.go`）。完成后服务端广播 WS 事件 `agents_updated`，前端 `useAgents` 收到后强制重拉 `GET /api/agents`。手动刷新仍走 `POST /api/agents/rescan`（失效缓存、重跑完整发现）或单个 agent 的 `POST /api/agents/{id}/refresh-models`（只重探该 agent 的模型）
 - **用户配置优先**：用户手动定义的模型列表不会被自动发现覆盖（`models_auto_detected = 0` 且列表非空即受保护）；自动管理的 agent 保持其自动管理状态，该标记不是单向闩锁
+- **智能体生命周期管理（计数 / 禁用 / 删除守卫）**：`agents` 表新增 `disabled` 列，配合删除前的用量守卫。
+  - **计数**：`GET /api/agents` 为每个 agent 附 `sessionCount` / `taskCount`（派生字段，不进 `model.Agent` 持久化模型）。会话数 = 1:1 聊天（`session_type='chat'`，含归档）+ 该 agent 的**活跃群成员关系**（`session_type='group_member'` 且 `archived=0`）——群聊的时间线行只记录主持人，普通成员若按 `group` 行统计会永远是 0，故必须按成员行统计。任务执行自动产生的 `scheduled` 会话**不计入**：删任务只归档其会话、用户又没有单条清理入口，计入会让计数永不清零。列表用 `GetAllAgentUsage` 三条 GROUP BY 查询一次性取回（而非 per-agent N+1，读池只有 2 连接）
+  - **删除守卫**：`DELETE /api/agents` 在关闭 ACP 连接**之前**校验会话/任务/成员关系是否为空，非空则 409 `AgentInUse` 并带三项计数。守卫顺序不能颠倒——否则被拒绝的删除会误杀健康连接。会话「归档」只是软删除、行仍在，故用户须走 `destroy`（UI 文案「移除」）才能清零
+  - **禁用开关**：`PATCH /api/agents` 支持 `disabled`（默认智能体禁止禁用，`CannotDisableDefaultAgent`）。禁用后从所有**新建**入口隐藏（前端 `useAgents.selectableAgents` 统一过滤，`AgentSelectorDrawer` 改用它渲染，覆盖新建会话/任务/群成员/fork 四处），服务端在建会话、建任务、加群成员三处**兜底拒绝**（`AgentDisabled`）。**已存在的会话与任务不受影响**（继续发消息/执行不拦，否则禁用会打死在跑的任务且用户无法清理）。`DuplicateAgent` 刻意**不**复制 `disabled`——副本应是可用智能体
 - **运行时连通性与升级**：前端 `useConnectivityTest` 检查服务连通性；`useUpgrade` 调用 `/api/upgrade/check`、`/api/upgrade/start` 和 `/api/upgrade/status` 完成版本检查、启动升级和进度查询，三个端点均要求认证；`useSystemResources` 经 WS 的 `system_resources` 推送获取 CPU、内存、磁盘、网络和负载指标（用 `metrics_preference` 声明速率，服务端按需采样），用于设置页资源监控（详见[系统资源监控](../features/system-resources.md)）
 - **供应商注册表**：内置 27 个 LLM 供应商规格（含 minimax / minimax-cn）。供应商规格 `ProviderSpec` 只描述 Chat/Models 端点与 API 格式，不含模型清单；Agent 的模型列表由后端通过 `RegisterModelSource()` 动态发现，或由用户手动定义。运行时可通过 `POST /api/agents/rescan` 重新扫描 PATH
 - **API 密钥加密存储**：LLM 供应商的 API 密钥使用 AES-256-GCM 加密后存储，加密密钥由登录密码经 HKDF-SHA256 派生。`agent_api_keys` 表和 `crypto.go` 已移除，API Key 加密功能保留用于自定义 Agent 的密钥管理
