@@ -263,40 +263,61 @@ func DeleteAgent(id string) error {
 // AgentUsage reports how many things still reference an agent, so deletion can
 // be refused while any remain and the config panel can display the counts.
 //
-// The three numbers answer different questions and are deliberately NOT merged:
+// Sessions is the number of conversations the agent takes part in:
+//   - 1:1 chats (session_type='chat', archived included), plus
+//   - group chats it is an ACTIVE member of (session_type='group_member',
+//     archived=0).
 //
-//   - Sessions counts only INTERACTIVE sessions (session_type IN VisibleSessionTypeInClause,
-//     i.e. 'chat','group'), archived included. Task-execution sessions
-//     (session_type='scheduled') are excluded on purpose: deleting a task only
-//     ARCHIVES its execution sessions, so counting them would make the session
-//     count impossible to clear (a permanent deletion deadlock). Tasks are
-//     counted separately below.
-//   - Tasks counts scheduled_tasks rows (any status).
-//   - Memberships counts ACTIVE group-member rows (session_type='group_member',
-//     archived=0). A left member is archived and no longer blocks deletion; the
-//     host row is never archived, so it always blocks (the host cannot be
-//     removed from its group).
+// A group's timeline row (session_type='group') names only its host (or, in
+// free mode, its first member); every OTHER member exists only as a hidden
+// group_member row. So a group is counted through the membership row, not by
+// matching the group row's agent_id — otherwise a plain member's groups would
+// never appear in their session count. Task-execution sessions
+// (session_type='scheduled') are excluded on purpose: deleting a task only
+// ARCHIVES its execution sessions, so counting them would make the session
+// count impossible to clear (a permanent deletion deadlock).
+//
+// Tasks counts scheduled_tasks rows (any status).
+//
+// Memberships counts ACTIVE group-member rows. It is a SUBSET of Sessions (each
+// active group membership IS one of the agent's group-chat sessions); it is
+// reported separately only so the UI can explain that some sessions are groups.
+// A left member is archived and no longer counts or blocks.
 type AgentUsageCounts struct {
 	Sessions    int
 	Tasks       int
 	Memberships int
 }
 
-// Total returns the sum used by the deletion guard.
+// Total returns the count used by the deletion guard. Memberships is already
+// included in Sessions, so it is not added again.
 func (u AgentUsageCounts) Total() int {
-	return u.Sessions + u.Tasks + u.Memberships
+	return u.Sessions + u.Tasks
 }
 
 // GetAgentUsage returns the session / task / membership counts for an agent.
 func GetAgentUsage(agentID string) (AgentUsageCounts, error) {
 	var u AgentUsageCounts
+
+	// 1:1 chats (archived included — an archived chat still references the agent).
 	err := store.ReadDB().QueryRow(
-		"SELECT COUNT(*) FROM chat_sessions WHERE agent_id = ? AND session_type IN ("+store.VisibleSessionTypeInClause+")",
-		agentID,
+		"SELECT COUNT(*) FROM chat_sessions WHERE agent_id = ? AND session_type = ?",
+		agentID, store.SessionTypeChat,
 	).Scan(&u.Sessions)
 	if err != nil {
-		return u, fmt.Errorf("count sessions for agent %s: %w", agentID, err)
+		return u, fmt.Errorf("count chat sessions for agent %s: %w", agentID, err)
 	}
+
+	// Group chats the agent is an active member of. Counted here (not from the
+	// group row, which names only the host) and folded into Sessions.
+	err = store.ReadDB().QueryRow(
+		"SELECT COUNT(*) FROM chat_sessions WHERE agent_id = ? AND session_type = ? AND archived = 0",
+		agentID, store.SessionTypeGroupMember,
+	).Scan(&u.Memberships)
+	if err != nil {
+		return u, fmt.Errorf("count group memberships for agent %s: %w", agentID, err)
+	}
+	u.Sessions += u.Memberships
 
 	err = store.ReadDB().QueryRow(
 		"SELECT COUNT(*) FROM scheduled_tasks WHERE agent_id = ?",
@@ -304,14 +325,6 @@ func GetAgentUsage(agentID string) (AgentUsageCounts, error) {
 	).Scan(&u.Tasks)
 	if err != nil {
 		return u, fmt.Errorf("count tasks for agent %s: %w", agentID, err)
-	}
-
-	err = store.ReadDB().QueryRow(
-		"SELECT COUNT(*) FROM chat_sessions WHERE agent_id = ? AND session_type = ? AND archived = 0",
-		agentID, store.SessionTypeGroupMember,
-	).Scan(&u.Memberships)
-	if err != nil {
-		return u, fmt.Errorf("count group memberships for agent %s: %w", agentID, err)
 	}
 
 	return u, nil
@@ -344,24 +357,29 @@ func GetAllAgentUsage() (map[string]AgentUsageCounts, error) {
 		return rows.Err()
 	}
 
+	// 1:1 chats (archived included).
 	if err := scan(
-		"SELECT agent_id, COUNT(*) FROM chat_sessions WHERE agent_id != '' AND session_type IN ("+store.VisibleSessionTypeInClause+") GROUP BY agent_id",
+		"SELECT agent_id, COUNT(*) FROM chat_sessions WHERE agent_id != '' AND session_type = ? GROUP BY agent_id",
 		func(u *AgentUsageCounts, c int) { u.Sessions = c },
+		store.SessionTypeChat,
 	); err != nil {
-		return nil, fmt.Errorf("count sessions by agent: %w", err)
+		return nil, fmt.Errorf("count chat sessions by agent: %w", err)
+	}
+	// Active group memberships: each is one group chat the agent takes part in,
+	// so it folds into Sessions (see GetAgentUsage). Also kept as Memberships
+	// for the UI.
+	if err := scan(
+		"SELECT agent_id, COUNT(*) FROM chat_sessions WHERE agent_id != '' AND session_type = ? AND archived = 0 GROUP BY agent_id",
+		func(u *AgentUsageCounts, c int) { u.Memberships = c; u.Sessions += c },
+		store.SessionTypeGroupMember,
+	); err != nil {
+		return nil, fmt.Errorf("count group memberships by agent: %w", err)
 	}
 	if err := scan(
 		"SELECT agent_id, COUNT(*) FROM scheduled_tasks WHERE agent_id != '' GROUP BY agent_id",
 		func(u *AgentUsageCounts, c int) { u.Tasks = c },
 	); err != nil {
 		return nil, fmt.Errorf("count tasks by agent: %w", err)
-	}
-	if err := scan(
-		"SELECT agent_id, COUNT(*) FROM chat_sessions WHERE agent_id != '' AND session_type = ? AND archived = 0 GROUP BY agent_id",
-		func(u *AgentUsageCounts, c int) { u.Memberships = c },
-		store.SessionTypeGroupMember,
-	); err != nil {
-		return nil, fmt.Errorf("count group memberships by agent: %w", err)
 	}
 
 	return out, nil

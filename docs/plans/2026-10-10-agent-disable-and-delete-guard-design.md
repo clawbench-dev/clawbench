@@ -28,8 +28,8 @@
 | D3 | 默认智能体 | **不可禁用**（与不可删除一致） |
 | D4 | 禁用按钮形态 | **开关式**：未禁用显示「禁用」，禁用后同位置显示「启用」，可反复切换 |
 | D5 | 删除被阻止时的交互 | **可点但拦截**：按钮可点，弹出提示「请先删除所有会话和任务」，不执行删除 |
-| D6 | 计数范围 | 会话 = **仅交互会话**（`session_type IN ('chat','group')`，含归档）；任务执行自动产生的 `scheduled` 会话**不计入**（任务单独计数，避免「删任务只归档其会话 → 计数永不清零」的死锁）；群成员关系单独作为一条守卫 |
-| D7 | 群成员关系 | **也阻断删除**：X 只是某群普通成员时，需先从群里移除 X 才能删 X |
+| D6 | 计数范围 | 会话 = 该 agent **参与**的会话：1:1 聊天（`session_type='chat'`，含归档）+ 它作为**活跃成员**参与的群聊（`session_type='group_member'` 且 `archived=0`）。任务执行自动产生的 `scheduled` 会话**不计入**（任务单独计数，避免「删任务只归档其会话 → 计数永不清零」的死锁） |
+| D7 | 群成员关系 | **也阻断删除**：X 只是某群普通成员时，需先从群里移除 X 才能删 X。群成员关系数**单独一列**（`membershipCount`），但它是 `sessionCount` 的**子集**——每个活跃群成员关系本身就是该 agent 的一个群聊会话 |
 
 ## 数据模型
 
@@ -65,25 +65,35 @@
 
 ### 计数与守卫查询（新增，`internal/service/agent_store.go`）
 
+**关键：群聊不能按 `group` 行的 `agent_id` 统计。** 群聊的时间线行
+（`session_type='group'`）只记录**主持人**（自由模式记第一个成员）的 `agent_id`；
+其余成员**只有一条隐藏的 `group_member` 行**。因此：
+
+- 按 `agent_id = ? AND session_type='group'` 统计，会把群聊只算给主持人，
+  而普通成员参与的群聊**永远不计数**（用户实测到的缺陷）。
+- 正确做法：群聊会话数 = 该 agent 的**活跃 `group_member` 行数**
+  （`session_type='group_member' AND archived=0`），与 1:1 的 `chat` 行相加。
+
 ```go
-// 交互会话数（含归档），排除任务执行会话与群成员行
-func CountSessionsForAgent(agentID string) (int, error)
+// 1:1 聊天数（含归档）
 // SELECT COUNT(*) FROM chat_sessions
-//  WHERE agent_id = ? AND session_type IN ('chat','group')
+//  WHERE agent_id = ? AND session_type = 'chat'
 
-// 任务数
-func CountTasksForAgent(agentID string) (int, error)
-// SELECT COUNT(*) FROM scheduled_tasks WHERE agent_id = ?
-
-// 群成员关系数（仅未归档的成员行）
-func CountGroupMembershipsForAgent(agentID string) (int, error)
+// 活跃群成员关系数（= 该 agent 参与的群聊数）
 // SELECT COUNT(*) FROM chat_sessions
 //  WHERE agent_id = ? AND session_type = 'group_member' AND archived = 0
+
+// sessions = chats + memberships
+
+// 任务数
+// SELECT COUNT(*) FROM scheduled_tasks WHERE agent_id = ?
 ```
 
 三者合并为一个 `AgentUsage(agentID) (sessions, tasks, memberships int, err error)`
-供 handler 复用。会话类型常量复用 `store.VisibleSessionTypeInClause`
-（= `'chat','group'`，见 `internal/store/session_queries.go:52`），避免硬编码漂移。
+供 handler 复用。会话类型常量复用 `store.SessionTypeChat` /
+`store.SessionTypeGroupMember`（见 `internal/store/session_queries.go`）。
+`Total()`（删除守卫判据）= `Sessions + Tasks`（`Memberships` 已含在 `Sessions` 内，
+不重复相加）。
 
 ## 后端行为
 
@@ -175,11 +185,11 @@ if v, exists := patch["disabled"]; exists {
 ### 删除拦截（D5）
 
 `handleDelete`（`SettingsAgentDetail.vue:461-480`）：先本地判断
-`sessionCount` / `taskCount`，若 > 0 直接 toast 提示
+`sessionCount` / `taskCount`（`sessionCount` 已含群聊），若 > 0 直接 toast 提示
 `settings.items.agentDeleteBlocked`（带数量），**不弹确认框**。同时在
 `deleteAgent`（`useAgents.ts:602-605`）里捕获后端 409 `AgentInUse`
 （`err.msgKey === 'AgentInUse'`）并向上抛出，供 UI 显示后端权威计数——
-防止本地计数陈旧。群成员关系同样纳入本地拦截文案（或统一为「仍在使用中」）。
+防止本地计数陈旧。
 
 ### 禁用开关按钮
 

@@ -1132,14 +1132,16 @@ func insertUsageSession(t *testing.T, db *sql.DB, id, agentID, sessionType strin
 	require.NoError(t, err)
 }
 
-func TestGetAgentUsage_CountsInteractiveSessionsTasksMemberships(t *testing.T) {
+func TestGetAgentUsage_CountsChatsGroupsAndTasks(t *testing.T) {
 	db := setupTestDBForAgents(t)
 	setupUsageSchema(t, db)
 
-	// Interactive sessions (chat + group), archived included.
+	// 1:1 chats — archived included.
 	insertUsageSession(t, db, "c1", "a", "chat", 0)
-	// archived still counts
-	insertUsageSession(t, db, "c2", "a", "chat", 1)
+	insertUsageSession(t, db, "c2", "a", "chat", 1) // archived still counts
+	// A group's TIMELINE row names only the host; it must NOT be counted by
+	// matching its agent_id (that would double-count the host and, worse, make
+	// a plain member's group invisible).
 	insertUsageSession(t, db, "g1", "a", "group", 0)
 	// Excluded: a task-execution session.
 	insertUsageSession(t, db, "s1", "a", "scheduled", 0)
@@ -1149,16 +1151,38 @@ func TestGetAgentUsage_CountsInteractiveSessionsTasksMemberships(t *testing.T) {
 	_, err := db.Exec(`INSERT INTO scheduled_tasks (agent_id) VALUES ('a'), ('a'), ('b')`)
 	require.NoError(t, err)
 
-	// Active group membership blocks; an archived one does not.
+	// Active group memberships (each is one group chat the agent is in);
+	// an archived (left) membership does not count.
 	insertUsageSession(t, db, "m1", "a", "group_member", 0)
 	insertUsageSession(t, db, "m2", "a", "group_member", 1)
 
 	u, err := service.GetAgentUsage("a")
 	require.NoError(t, err)
-	assert.Equal(t, 3, u.Sessions, "chat + archived chat + group")
+	// Sessions = 2 chats + 1 active group membership. The 'group' timeline row
+	// is deliberately NOT added again.
+	assert.Equal(t, 3, u.Sessions, "2 chats + 1 active group membership")
 	assert.Equal(t, 2, u.Tasks)
 	assert.Equal(t, 1, u.Memberships, "only the active member row")
-	assert.Equal(t, 6, u.Total())
+	assert.Equal(t, 5, u.Total(), "Total = Sessions + Tasks (Memberships is a subset of Sessions)")
+}
+
+// A plain (non-host) group member has no 'chat' row and is not named by any
+// 'group' row's agent_id — only its group_member row references it. It must
+// still be counted as a session, otherwise a member-only agent shows 0.
+func TestGetAgentUsage_PlainGroupMemberCountsAsSession(t *testing.T) {
+	db := setupTestDBForAgents(t)
+	setupUsageSchema(t, db)
+
+	// The group row belongs to the host ("host"), not to "member".
+	insertUsageSession(t, db, "grp", "host", "group", 0)
+	// "member" only exists as a group_member row.
+	insertUsageSession(t, db, "gm", "member", "group_member", 0)
+
+	u, err := service.GetAgentUsage("member")
+	require.NoError(t, err)
+	assert.Equal(t, 1, u.Sessions, "a plain group member must count the group as a session")
+	assert.Equal(t, 1, u.Memberships)
+	assert.Equal(t, 1, u.Total())
 }
 
 func TestGetAgentUsage_Empty(t *testing.T) {
@@ -1175,22 +1199,26 @@ func TestGetAllAgentUsage_GroupsByAgent(t *testing.T) {
 	setupUsageSchema(t, db)
 
 	insertUsageSession(t, db, "a1", "a", "chat", 0)
-	insertUsageSession(t, db, "a2", "a", "group", 0)
+	insertUsageSession(t, db, "a2", "a", "group", 0) // host row → not counted directly
 	insertUsageSession(t, db, "b1", "b", "chat", 1)
 	insertUsageSession(t, db, "am", "a", "group_member", 0)
 	insertUsageSession(t, db, "am2", "a", "group_member", 1) // archived → not counted
 	insertUsageSession(t, db, "as", "a", "scheduled", 0)     // excluded
+	// "member" has only a group_member row.
+	insertUsageSession(t, db, "mm", "member", "group_member", 0)
 	_, err := db.Exec(`INSERT INTO scheduled_tasks (agent_id) VALUES ('a'), ('b')`)
 	require.NoError(t, err)
 
 	m, err := service.GetAllAgentUsage()
 	require.NoError(t, err)
-	assert.Equal(t, 2, m["a"].Sessions)
+	assert.Equal(t, 2, m["a"].Sessions, "1 chat + 1 active group membership")
 	assert.Equal(t, 1, m["b"].Sessions)
+	assert.Equal(t, 1, m["member"].Sessions, "member-only group must count")
 	assert.Equal(t, 1, m["a"].Tasks)
 	assert.Equal(t, 1, m["b"].Tasks)
 	assert.Equal(t, 1, m["a"].Memberships)
 	assert.Equal(t, 0, m["b"].Memberships)
+	assert.Equal(t, 1, m["member"].Memberships)
 	// An agent with no rows is simply absent (callers treat missing as zero).
 	_, ok := m["ghost"]
 	assert.False(t, ok)

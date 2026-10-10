@@ -3814,9 +3814,10 @@ paths:
         "200":
           description: |
             agent 列表与 acpStates。每个 agent 另附派生计数（非持久化列）：
-            `sessionCount` = 交互会话数（`session_type` 为 `chat`/`group`，含归档；
-            任务执行自动产生的 `scheduled` 会话不计入），`taskCount` = 定时任务数，
-            `membershipCount` = 未离场的群成员关系数。
+            `sessionCount` = 该 agent 参与的会话数（1:1 聊天 `chat`，含归档；加上
+            它作为**活跃成员**参与的群聊——群聊时间线行只记录主持人，普通成员须按
+            `group_member` 成员行计入）；`taskCount` = 定时任务数；`membershipCount`
+            = 活跃群成员关系数（是 `sessionCount` 的子集，单列供 UI 说明其中有群聊）。
     post:
       tags: [Agents]
       summary: 复制 / 新建 agent

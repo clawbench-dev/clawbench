@@ -1944,6 +1944,12 @@ func TestServeAgents_IncludesUsageCounts(t *testing.T) {
 		`INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt)
 		 VALUES (1, 't', '0 8 * * *', 'claude', 'do')`)
 	require.NoError(t, err)
+	// codebuddy participates in a group only as a plain member (its group row
+	// belongs to another agent). It must still be counted as a session.
+	_, err = store.UnsafeDBForTest().Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type, group_id, archived)
+		 VALUES ('gm1', 1, 'codebuddy', 'Codebuddy', 'codebuddy', 'group_member', 'grp', 0)`)
+	require.NoError(t, err)
 
 	req := newRequest(t, http.MethodGet, "/api/agents", nil)
 	withAuthCookie(req, model.SessionToken)
@@ -1965,7 +1971,9 @@ func TestServeAgents_IncludesUsageCounts(t *testing.T) {
 	}
 	assert.Equal(t, 1, byID["claude"].sessions)
 	assert.Equal(t, 1, byID["claude"].tasks)
-	assert.Equal(t, 0, byID["codebuddy"].sessions)
+	// codebuddy: the group membership counts as its session too.
+	assert.Equal(t, 1, byID["codebuddy"].sessions)
+	assert.Equal(t, 1, byID["codebuddy"].memberships)
 	assert.Equal(t, 0, byID["codebuddy"].tasks)
 }
 

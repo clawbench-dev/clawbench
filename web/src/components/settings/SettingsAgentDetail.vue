@@ -521,8 +521,9 @@ async function handleDelete() {
     toast.show(t('settings.items.agentDeleteDefault'), { icon: '⚠️', type: 'error', duration: 3000 })
     return
   }
-  // Block locally when the agent is still in use (sessions/tasks/group
-  // memberships). The backend enforces the same rule authoritatively; this
+  // Block locally when the agent is still in use. `sessionCount` already
+  // includes group chats the agent is a member of, so sessions + tasks is the
+  // complete picture. The backend enforces the same rule authoritatively; this
   // avoids a pointless confirm dialog. Counts come from GET /api/agents and may
   // be stale, so the backend 409 below is still handled.
   if ((a.sessionCount ?? 0) > 0 || (a.taskCount ?? 0) > 0 || (a.membershipCount ?? 0) > 0) {
@@ -530,7 +531,6 @@ async function handleDelete() {
       t('settings.items.agentDeleteBlocked', {
         sessions: a.sessionCount ?? 0,
         tasks: a.taskCount ?? 0,
-        memberships: a.membershipCount ?? 0,
       }),
       { icon: '⚠️', type: 'error', duration: 4000 },
     )
@@ -550,12 +550,11 @@ async function handleDelete() {
     // were stale (e.g. a session was created since the last load).
     const msgKey = (err as { msgKey?: string } | null)?.msgKey
     if (msgKey === 'AgentInUse') {
-      const detail = (err as { detail?: { SessionCount?: number; TaskCount?: number; MembershipCount?: number } } | null)?.detail
+      const detail = (err as { detail?: { SessionCount?: number; TaskCount?: number } } | null)?.detail
       toast.show(
         t('settings.items.agentDeleteBlocked', {
           sessions: detail?.SessionCount ?? (a.sessionCount ?? 0),
           tasks: detail?.TaskCount ?? (a.taskCount ?? 0),
-          memberships: detail?.MembershipCount ?? (a.membershipCount ?? 0),
         }),
         { icon: '⚠️', type: 'error', duration: 4000 },
       )
