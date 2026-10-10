@@ -17,11 +17,11 @@ type SpeakerIdentity struct {
 	Name    string `json:"name,omitempty"`
 	Backend string `json:"backend"`
 	Avatar  string `json:"avatar,omitempty"`
-	// AgentName is the underlying REAL agent's display name. For a member whose
-	// display name was auto-derived (a built-in pool name, or "<base> <n>"), it
-	// differs from Name, and the UI shows it after the nickname so the reader
-	// knows which agent is speaking. Empty when it equals Name (no disclosure
-	// needed) or the agent is gone.
+	// AgentName is the underlying REAL agent's display name, set whenever the
+	// member's display name differs from the live agent name (e.g. an
+	// auto-derived pool name or "<base> <n>"). The UI shows it after the
+	// nickname so the reader knows which agent is speaking. Empty when it equals
+	// Name (no disclosure needed) or the agent is gone.
 	AgentName string `json:"agentName,omitempty"`
 }
 

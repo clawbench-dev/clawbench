@@ -202,11 +202,11 @@ func TestResolveSessionSpeakers_MissingAgentFallsBackToRow(t *testing.T) {
 	assert.Empty(t, sessionAgent.Avatar)
 }
 
-// TestSpeakerFromMember_PrefersMemberAvatarAndCarriesAgentName pins the member
+// TestSpeakerFromMember_PrefersMemberAvatarOverAgentAvatar pins the member
 // avatar precedence: a member's OWN avatar snapshot wins over the agent's shared
 // avatar. Here the member's display name equals the agent's, so AgentName stays
 // empty (no redundant "Claude · Claude" disclosure).
-func TestSpeakerFromMember_PrefersMemberAvatarAndCarriesAgentName(t *testing.T) {
+func TestSpeakerFromMember_PrefersMemberAvatarOverAgentAvatar(t *testing.T) {
 	setupGroupDB(t)
 	withAgents(t, agentMap(&model.Agent{ID: "claude", Name: "Claude", Backend: "claude", Avatar: "<svg>agent</svg>"}))
 
