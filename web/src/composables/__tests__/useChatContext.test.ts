@@ -497,6 +497,16 @@ describe('useChatContext', () => {
       expect(ctx.stagedMentions.value[0].memberAvatar).toBe('NEW')
     })
 
+    it('re-picking with an EMPTY avatar clears the previous one (member avatar removed + no agent avatar)', () => {
+      // The re-pick path (ChatPanelContent.handleAddMention) forwards '' (not
+      // undefined) precisely so this overwrite fires; mintMention only skips
+      // undefined. An empty avatar must actually clear the stale card avatar.
+      ctx.addStagedMention({ memberId: 'm-a', name: 'Alice', memberAvatar: 'STALE' })
+      ctx.addStagedMention({ memberId: 'm-a', name: 'Alice', memberAvatar: '' })
+      expect(ctx.stagedMentions.value).toHaveLength(1)
+      expect(ctx.stagedMentions.value[0].memberAvatar).toBe('')
+    })
+
     it('adding the same member twice updates in place (no duplicate card)', () => {
       const first = ctx.addStagedMention({ memberId: 'm-a', name: 'Alice' })
       const second = ctx.addStagedMention({ memberId: 'm-a', name: 'Alice' })

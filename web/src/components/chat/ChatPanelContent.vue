@@ -593,7 +593,10 @@ function handleAddMention(payload) {
         memberId: payload.memberId,
         name: payload.name || '',
         agentId: payload.agentId || undefined,
-        memberAvatar: payload.memberAvatar || undefined,
+        // Preserve the empty string (not `|| undefined`): a re-pick whose avatar
+        // resolves to '' must CLEAR a previously staged avatar, and mintMention
+        // only overwrites on a defined value.
+        memberAvatar: payload.memberAvatar ?? '',
         backend: payload.backend || undefined,
     })
 }
