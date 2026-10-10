@@ -81,10 +81,11 @@ type SessionSharePayload struct {
 	Session   SessionShareSession   `json:"session"`
 	Messages  []SessionShareMessage `json:"messages"`
 	// SessionAgent + Speakers let the public viewer render the real speaker icon
-	// per message. Avatars are deliberately NOT frozen here (the resolver is
-	// called with includeAvatar=false): a shared link must not expose the
-	// creator's custom avatars. Speakers is keyed by member row id and present
-	// only for group sessions.
+	// per message. The resolver is called with includeAvatar=true: the snapshot
+	// is frozen by the authenticated owner and the public viewer has no other way
+	// to resolve a speaker's avatar (it cannot call /api/agents), so the avatars
+	// ARE embedded in the snapshot. Speakers is keyed by member row id and
+	// present only for group sessions.
 	SessionAgent *SpeakerIdentity           `json:"sessionAgent,omitempty"`
 	Speakers     map[string]SpeakerIdentity `json:"speakers,omitempty"`
 	// GroupMembers is the group's ACTIVE roster, in roster order, with the host
@@ -92,8 +93,10 @@ type SessionSharePayload struct {
 	// same overlapping avatar stack the in-app group header shows. Speakers
 	// cannot serve this: it is a map (JSON-marshaled with UUID-sorted keys, so
 	// the order is random) that also includes LEFT members, and it carries no
-	// isHost flag. Avatars are absent by design (same privacy boundary as
-	// Speakers), so each disc renders the built-in per-backend brand icon.
+	// isHost flag. Each preview carries the member's own avatar snapshot
+	// (agent_avatar, frozen into the payload like Speakers), so the viewer draws
+	// the same discs without a DiceBear runtime; a member with no snapshot falls
+	// back to the per-backend brand icon.
 	GroupMembers []model.GroupMemberPreview `json:"groupMembers,omitempty"`
 }
 

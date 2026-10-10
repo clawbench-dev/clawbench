@@ -43,12 +43,12 @@
 | # | 决策 | 选择 |
 |---|---|---|
 | D1 | 选人交互 | 行内**计数步进器** `− N +`，只显示计数徽标，**不预览昵称** |
-| D2 | 昵称规则 | 首个实例用原名 `Claude`；后续 `Claude 2`、`Claude 3`…；**永不出现 `Claude 1`** |
+| D2 | 昵称规则 | 首个实例用原名 `Claude`；后续实例优先取名池名（`Alice`/`Bob`/…），池尽回退 `Claude 2`、`Claude 3`…；**永不出现 `Claude 1`**（名池为 2026-10-10 后续演进，见 §4.1） |
 | D3 | 单实例 | 保持原名，不带序号 |
 | D4 | 主持人 | 仅**第一实例**可当主持；主持人仍是**行级**（agent id）操作 |
 | D5 | 成员上限 | 按**实例总数**计，上限 **10 → 12** |
-| D6 | 序号分配 | **递增不复用**：新实例序号 = 该 agent 已有成员行数（含已离场）+ 1 |
-| D7 | 头像 | **不变**（同 agent 各实例视觉相同，靠名字区分） |
+| D6 | 序号分配 | **递增不复用**：新实例序号 = 该 agent 已有成员行数（含已离场）+ 1（仅在名池耗尽回退时用作序号） |
+| D7 | 头像 | **每实例各生成**（按成员名做种子，落 `agent_avatar`；2026-10-10 后续演进，见 §4.1） |
 | D8 | 显示名存储 | **方案 B**：成员行新增专用列 **`agent_name`** 作为成员显示名的**权威来源**；成员行 `title` 留空 |
 | D9 | 重新加入 | **一律新建实例**（不 rejoin；放弃连接恢复） |
 | D10 | 线格式 | 不变；`memberAgentIds[]` / `agentIds[]` **允许含重复元素** |
@@ -73,17 +73,20 @@
 base = GetAgentDisplayName(A)
 n    = countMemberRows(G, A)          // 含 archived，即历史所有实例
 k    = n + batchOrdinal               // batchOrdinal 为本次批次内该 agent 的第几个（1 起）
-candidate = base        if k == 1
-          = base + " " + k  otherwise
-while collides(candidate, G):         // 与群内其它成员名或用户昵称冲突
-    k += 1
-    candidate = base + " " + k
+candidate = base                 if k == 1            // 首个实例保留本名
+          = nextPoolName(used)    otherwise           // 重复实例取名池第一个未占用名
+if candidate == "" or collides(candidate, G):
+    candidate = base + " " + k                        // 池耗尽 / 本名冲突 → 回退序号
+    while collides(candidate, G):
+        k += 1
+        candidate = base + " " + k
 return candidate
 ```
 
 - **永不出现 `base + " 1"`**：`k==1` 直接用原名。
-- **递增不复用**：`n` 含已离场（archived）行，且 D9 决定一律新建，故序号单调递增、历史消息中的昵称永远指向同一个实例。
-- **唯一性兜底**：与群内任一成员名、或用户昵称（`IsUserNickname` / `groupUserTarget()`）冲突时继续 +1，直到唯一。
+- **池优先**（2026-10-10 后续演进）：重复实例从代码内置的英文名池 `groupNamePool`（`internal/service/group_name_pool.go`：`Alice`/`Bob`/…）取第一个未被占用的名字；名池刻意不可配置、无设置 UI。池耗尽才回退 `base + " " + k`。
+- **递增不复用**：`n` 含已离场（archived）行，且 D9 决定一律新建，故回退序号单调递增、历史消息中的昵称永远指向同一个实例。
+- **唯一性兜底**：与群内任一成员名、或用户昵称（`IsUserNickname` / `groupUserTarget()`）冲突时继续取下一个未占用池名（池尽则序号 +1），直到唯一。
 
 ### 4.2 唯一性的意义
 
@@ -134,7 +137,7 @@ return candidate
 
 - `ResolveSessionSpeakers` 的成员循环中，成员发言人名以 `m.Name`（成员行 `agent_name`）为**权威**，**不再回退** `agents.name`。
 - `speakerFromAgent` 保留给 `sessionAgent`（会话自身 agent，仍应用 `agents.name`）；为成员另走一条不做名字覆盖的构造路径（backend 兜底与 avatar 查找保留）。
-- 头像仍来自 agent（`includeAvatar` 时取 `agents.avatar`），符合 D7。
+- 头像优先取成员自身快照（`includeAvatar` 时 `m.Avatar` 优先，缺失回退 `agents.avatar`），符合 D7 的 2026-10-10 演进。
 
 ### 5.3 `internal/handler/group.go`
 
@@ -172,7 +175,7 @@ return candidate
 ### 6.3 其余
 
 - `useGroupChat.ts`：类型不变（`GroupMemberInfo` 等无需新增字段——`name` 仍是显示名，只是后端来源改为 `agent_name`）。
-- 头像解析（`useGroupMembers.resolveSpeaker` / `AvatarStack.vue`）不变（D7）。
+- 头像解析（`useGroupMembers.resolveSpeaker` / `AvatarStack.vue`）改为**优先成员自身头像快照**（`avatar`），缺失回退智能体头像（D7 的 2026-10-10 演进）。
 
 ## 7. API 与文档
 

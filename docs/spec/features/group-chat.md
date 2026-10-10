@@ -79,7 +79,9 @@ flowchart TB
 ### 功能清单
 
 - **建群**：会话列表头有独立的「建群」按钮（非复用 `+`），打开智能体多选抽屉，勾选成员、可选指定一个主持人，一次请求原子创建群与全部成员（失败整批回滚，不留"只有主持人的半成品群"）。**同一智能体可被加进同一群多次**：选中行的步进器 `− N +` 可把同一智能体加多份，每个实例是一个独立成员。**建群时不输入群名**——后端用主持人名占位（"XX 的群聊"），自由模式用"群聊"，首条消息后由 auto-title 接管
-- **成员多实例与临时昵称**：同一智能体的多个实例自动获得唯一显示名——首个用原名（`Claude`），其后 `Claude 2`、`Claude 3`……**永不生成 `Claude 1`**；序号只增不复用（含已离场实例计数），且与用户昵称/其它成员名冲突时继续 +1。这样 AI 之间按名字路由时不会歧义。**主持人**仍按智能体指定，取该智能体的**首个实例**。头像不做区分（各实例视觉相同，靠名字区分）
+- **成员多实例与临时昵称**：同一智能体的多个实例自动获得唯一显示名——**首个实例保留智能体本名**（`Claude`）；**重复实例（第 2 个及以后）从代码内置英文名池 `groupNamePool` 取第一个未占用的名字**（`Alice`/`Bob`/…），**池耗尽时回退 `本名 序号`**（`Claude 2`、`Claude 3`……，**永不生成 `Claude 1`**）；取名避开群内其它成员名与用户昵称。这样 AI 之间按名字路由时不会歧义。**主持人**仍按智能体指定，取该智能体的**首个实例**。名池刻意不可配置、无设置 UI
+- **成员头像**：`chat_sessions.agent_avatar` 存成员**自身**的头像 SVG 快照（前端 DiceBear 按成员名生成、随机风格、经 `POST /api/group/member-avatars` 落库，以对齐分享/导出——公开分享页无 DiceBear 运行时）；`speakerFromMember` 优先成员头像、缺失回退智能体头像。存量群不回填，只在建群/加成员时生成
+- **真实智能体名披露**：`SpeakerIdentity.agentName` 携带底层真实智能体名（成员显示名 ≠ 实时智能体名时非空），前端在消息的「头像 + 昵称」之后以弱化样式 `.msg-speaker-real` 显示，让读者知道发言的智能体是谁
 - **成员管理**：群会话顶部横向头像条（主持人排最前、最多 4 个）展示成员，尾部 `+` 打开多选抽屉批量加人（同样支持多实例）；群聊设置面板（`GroupSettingsSheet.vue`，点头像条或 actionbar 的「群聊」按钮打开）里可移除成员。增删成员都会在时间线写一条**居中的系统细条**（"XX 加入了讨论"/"XX 已离场"），让全员知道人员变动。**历史发言保留并标记"已离场"**——删掉某人发言会让后续"B 回应 A"失去上下文。**移除后再加同一智能体 = 新建实例**（不复用旧行、无连接恢复），序号继续递增
 - **智能体讨论次数上限**：全局设置（`chat.group_max_speeches`，默认 100，在 设置 → 聊天 → 群聊 里改），含义为「轮到用户发言前，智能体之间最多发言多少次」。**主持人模式与自由模式语义一致，只计成员发言**（主持人的路由 / 汇总回合不计）。达到上限即停止 AI 讨论（不管当前轮到谁发言）、写一条系统消息「成员间讨论次数达到上限」；主持人模式额外再产出一份汇总
 - **@ 接力（自由模式）**：用户和成员都能用 `@` 指定下一个发言人。成员输出里的 @ 把目标排到队尾，@User（保留名）则把话头交回人类、暂停接力
@@ -96,8 +98,8 @@ flowchart TB
 - **`run_turn` 的时间线解耦**：执行器里 `SessionID` 身兼两职——连接语义（用成员行 id，如写 `external_session_id`、查连接池）与时间线语义（用群会话 id，如落库、广播、摘要）。因此引入第二个字段 `TimelineSessionID`（缺省等于 `SessionID`，单聊路径行为不变），连接调用点用 `SessionID`、时间线调用点用 `effectiveTimelineSessionID()`。**`UpdateLastRead` 是例外**——它保持成员行 id，否则任一成员回合都会把**群**标记已读、群徽章永不亮
 - **增量注入靠"发言游标"而非全量重放**：每个成员在 `context_state` 里存一个 `seen_cursor`（上次发言时群时间线的最大消息 id），下次发言只注入 `id > 游标 且作者≠自己` 的消息。这既保证成员看到讨论进展、又不重放自己说过的话。**游标只在回合成功时推进**——失败时推过去会让那段上下文永久丢失（成员后续答非所问且时间线看不出）
 - **路由用结构化标签，解析失败回退轮转**：主持人输出 `<clawbench-mention targets="A,B">指令</clawbench-mention>`，后端解析出本轮发言者（有序）；标签可选带 `mode="parallel"` 表示这批目标并发发言（缺省串行，未知值回退串行）。**检测即解析、不可解析不剥离**（与 `askquestion` 的"绝不丢内容"契约一致），并回退到"下一个未发言成员"轮转；连续失败 2 次自动收尾。标签解析是独立叶子包 `internal/grouprouting`，与前端 `groupRouting.ts` 互为镜像、由 parity 语料双向固化
-- **路由标识不对称是有意的：AI 用名字、用户用成员行 id**：`lookupMember` 先按成员行 id 精确匹配、再按显示名匹配。AI（主持人/成员）拿不到成员行 id，只能写**显示名**；用户 @ 提及由前端插入**成员行 id**（精确引用，改名/重名都不会误路由）。因此成员名**必须唯一**——这正是多实例需要临时昵称（`Claude 2`）的原因；用户侧本就按 id 路由，天然支持多实例
-- **成员显示名以 `agent_name` 为权威，不回退智能体名**：`speakerFromAgent`（会话自身 agent）仍用实时 `agents.name`，但成员走 `speakerFromMember`，成员名取存储的 `agent_name` 快照。这样改智能体名不会追溯性改写群历史发言在分享/导出里的名字，多实例也各有其名
+- **路由标识不对称是有意的：AI 用名字、用户用成员行 id**：`lookupMember` 先按成员行 id 精确匹配、再按显示名匹配。AI（主持人/成员）拿不到成员行 id，只能写**显示名**；用户 @ 提及由前端插入**成员行 id**（精确引用，改名/重名都不会误路由）。因此成员名**必须唯一**——这正是多实例需要唯一昵称（名池名 / `Claude 2`）的原因；用户侧本就按 id 路由，天然支持多实例
+- **成员显示名以 `agent_name` 为权威，不回退智能体名**：`speakerFromAgent`（会话自身 agent）仍用实时 `agents.name`，但成员走 `speakerFromMember`，成员名取存储的 `agent_name` 快照。这样改智能体名不会追溯性改写群历史发言在分享/导出里的名字，多实例也各有其名。成员头像同理以 `agent_avatar` 快照为准，`speakerFromMember` 缺失时才回退智能体头像；真实智能体名经 `SpeakerIdentity.agentName` 单独披露（不覆盖昵称）
 - **每个成员的 prompt 会声明其"自身显示名"**：成员/主持人/自由成员的 system prompt 都注入「你的群内显示名是「X」」，并附「其他成员」名单（排除自己）。**这是多实例身份不混淆的前提**——否则 AI 会退回 CLI 自身身份（agent 名），多个实例都自称 `Codebuddy`（甚至照名单瞎编数字），真实缺陷即四个同名实例全部报错自己的名字
 - **两模式共用同一循环内核**：主持人模式与自由模式的回合脚手架、成员发言+游标推进+密送投递、@User 交回、目标解析全部收敛到共享抽象（`prepareTurn` / `runSpeakerTurn` / `drainSpeakers` / `resolveSpeakerTargets`），差异只在"如何补充下一个发言者"（主持人用有界 `refill`，自由模式用自扩展 `onSpoke`）。避免两套循环逐字重复后各自漂移
 - **串行发言可用"最新流式行"定位，并发发言必须按 id 定位**：`UpdateStreamingMessage` 按 `session_id=群 AND streaming=1 ORDER BY id DESC LIMIT 1` 命中行——这只在"一条时间线上只有一路在飞"时成立（单聊、或**串行**群回合）。并发发言时多个成员的流式行共存，落错行就会串台，因此执行器持有自己的占位符 id、改用 `UpdateStreamingMessageByID`（按 `id + session_id` 精确命中）。**并发组的快照必须整组一次性取自"回合起始高水位"**（`runParallelGroup` 在启动任何成员前先 snapshot 全部），否则后启动的成员会看到先启动者的输出，破坏"互不参考"。并发度另有启动上限（`maxParallelLaunches`），分批启动不影响快照不变性
@@ -112,7 +114,8 @@ flowchart TB
 |---|---|
 | `chat_sessions.session_type` | `group`（群会话，独占时间线）/ `group_member`（成员连接绑定行，用户不可见） |
 | `chat_sessions.group_id` | 成员行指向所属群（群行自身为空）；索引 `idx_sessions_group` |
-| `chat_sessions.agent_name` | **成员行的显示名（权威）**；由后端按实例序号生成。非成员行留空。成员行的 `title` 留空（会话标题对成员无意义） |
+| `chat_sessions.agent_name` | **成员行的显示名（权威）**；由后端生成（首个实例用本名，重复实例取名池名，池尽回退 `本名 序号`）。非成员行留空。成员行的 `title` 留空（会话标题对成员无意义） |
+| `chat_sessions.agent_avatar` | **成员行自身的头像 SVG 快照**（前端 DiceBear 按名生成、随机风格）；非成员行留空。缺失时回退智能体头像 |
 | `chat_sessions.context_state` | 群行存 `group_mode`（`host`/`free`）、`host_member_id`、`parallelDefault`；成员行存 `seen_cursor` |
 | `chat_history.role='system'` | 成员增删的系统事件（`agent_id=''`，居中细条渲染，计入注入游标但不计入未读） |
 | `chat_history.agent_id` | **发言人成员行 id**（非 agent id）；前端据此解析发言人头像/名字并判定主持人发言 |
@@ -123,8 +126,9 @@ flowchart TB
 全部经 `middleware.Auth`，且为项目作用域：
 
 - `POST /api/group/create` — 建群（`hostAgentId?` + `memberAgentIds[]`，同一事务创建群与全部成员；`hostAgentId` 缺省即自由模式，须过会话上限门）
-- `GET /api/group/members?groupId=` — 列成员（含 `isHost`、`mode`、`parallelDefault`）
+- `GET /api/group/members?groupId=` — 列成员（含 `isHost`、`mode`、`parallelDefault`、`avatar`、`agentName`）
 - `POST /api/group/members` — 批量加成员（整批过成员数上限）
+- `POST /api/group/member-avatars` — 批量写回成员头像（`{groupId, avatars:[{memberId, avatar}]}`；每个 SVG 过 `avatarSVGLooksSafe` 安全门）
 - `DELETE /api/group/members` — 移除成员（拒绝移除主持人）
 - `PATCH /api/group/settings` — 群设置（仅 `parallelDefault`）
 - 智能体讨论次数上限是**全局配置** `chat.group_max_speeches`（`PATCH /api/config`），不是每群设置
