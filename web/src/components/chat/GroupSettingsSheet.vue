@@ -93,6 +93,8 @@
       :open="pickerOpen"
       multiple
       allow-instances
+      :max-instances="store.state.groupMaxMembers"
+      :used-instances="activeMemberCount"
       :showAgentActions="false"
       :modelValue="[]"
       :title="t('group.addMembers')"
@@ -113,6 +115,7 @@ import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
 import { getAgentAvatar } from '@/composables/useAgents'
 import { addGroupMembers, removeGroupMember, setGroupParallelDefault, type GroupMemberInfo } from '@/composables/useGroupChat'
 import { toggleAutoApprove } from '@/composables/useSessionIdentity'
+import { store } from '@/stores/app.ts'
 
 const props = defineProps<{
   groupId: string
@@ -146,6 +149,11 @@ const orderedMembers = computed(() => {
 function openSheet() { open.value = true }
 function close() { open.value = false }
 function openAdd() { pickerOpen.value = true }
+
+// Instances ALREADY in the group (active only; left members do not occupy a
+// slot). The picker counts these against the group-wide cap so "+" disables at
+// the right point, and the footer total includes them.
+const activeMemberCount = computed(() => props.members.filter(m => !m.left).length)
 
 async function onAgentsPicked(ids: string | string[]) {
   const list = Array.isArray(ids) ? ids : [ids]

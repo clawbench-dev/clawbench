@@ -147,6 +147,11 @@ interface AppState {
     sessionMaxCount: number
     sessionCount: number
 
+    // Group-chat member cap (max INSTANCES across all agents in one group).
+    // Server-authoritative (service.MaxGroupMembers), mirrored here so the
+    // create/add-members picker can disable "+" at the limit.
+    groupMaxMembers: number
+
     // Monotonic version bumped whenever the session list changes (create,
     // archive, destroy, read, running-state). Watched by the session list
     // components to refresh in real time even when no WS event fires.
@@ -213,6 +218,7 @@ const state = reactive<AppState>({
     chatSessionPageSize: 10,
     sessionMaxCount: 15,
     sessionCount: 0,
+    groupMaxMembers: 12,
     sessionListVersion: 0,
     recentProjectsMaxCount: 10,
     chatUnreadCount: 0,
@@ -272,7 +278,7 @@ async function setProject(path: string): Promise<string> {
         ok: string; path: string; homeDir?: string
         roots?: string[]; uploadMaxSizeMB?: number; uploadMaxFiles?: number
         chatInitialMessages?: number; chatPageSize?: number; chatSessionPageSize?: number
-        sessionMaxCount?: number; recentProjectsMaxCount?: number
+        sessionMaxCount?: number; groupMaxMembers?: number; recentProjectsMaxCount?: number
     }>('/api/project', { path })
     resetProjectState()
     // Apply expanded response from POST — eliminates follow-up GET /api/roots + GET /api/project
@@ -304,9 +310,10 @@ async function setProject(path: string): Promise<string> {
 export function applyServerLimits(limits: {
     uploadMaxSizeMB?: number; uploadMaxFiles?: number
     chatInitialMessages?: number; chatPageSize?: number; chatSessionPageSize?: number
-    sessionMaxCount?: number; recentProjectsMaxCount?: number
+    sessionMaxCount?: number; recentProjectsMaxCount?: number; groupMaxMembers?: number
 }): void {
     if (typeof limits.sessionMaxCount === 'number') state.sessionMaxCount = limits.sessionMaxCount
+    if ((limits.groupMaxMembers ?? 0) > 0) state.groupMaxMembers = limits.groupMaxMembers!
     if ((limits.uploadMaxSizeMB ?? 0) > 0) state.uploadMaxSizeMB = limits.uploadMaxSizeMB!
     if ((limits.uploadMaxFiles ?? 0) > 0) state.uploadMaxFiles = limits.uploadMaxFiles!
     if ((limits.chatInitialMessages ?? 0) > 0) state.chatInitialMessages = limits.chatInitialMessages!

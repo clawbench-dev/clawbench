@@ -915,6 +915,9 @@ func TestServeRoots(t *testing.T) {
 		// Check config fields exist
 		assert.NotNil(t, result["uploadMaxSizeMB"])
 		assert.NotNil(t, result["uploadMaxFiles"])
+		// The group member cap is surfaced so the create/add-members picker can
+		// disable "+" at the limit. It must match the service constant.
+		assert.Equal(t, float64(service.MaxGroupMembers), result["groupMaxMembers"])
 	})
 }
 

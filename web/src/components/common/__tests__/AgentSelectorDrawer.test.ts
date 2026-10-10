@@ -5,7 +5,16 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 vi.mock('vue-i18n', () => ({
-  useI18n: () => ({ t: (key: string) => key }),
+  // Return the key, but interpolate named params so assertions on counts
+  // (e.g. "已添加 {count}/{max} 个") can check real values. Param names are
+  // preserved in the output via `key(param=value)`.
+  useI18n: () => ({
+    t: (key: string, params?: Record<string, unknown>) => {
+      if (!params) return key
+      const parts = Object.entries(params).map(([k, v]) => `${k}=${v}`).join(',')
+      return `${key}(${parts})`
+    },
+  }),
 }))
 
 vi.mock('@/utils/appLog', () => ({
@@ -53,6 +62,17 @@ vi.mock('@/components/common/AgentIcon.vue', () => ({
   default: {
     name: 'AgentIcon',
     template: '<span class="agent-icon-stub" />',
+  },
+}))
+
+// PopupMenu uses <Teleport> + <Transition>, which break reactivity in
+// test-utils Vue 3.5. Stub it so GroupModeHint's chip still renders while the
+// popover content is skipped (show is false until hover/tap).
+vi.mock('@/components/common/PopupMenu.vue', () => ({
+  default: {
+    name: 'PopupMenu',
+    props: ['show', 'targetElement', 'maxWidth', 'maxHeight', 'menuItemsCount', 'anchor'],
+    template: '<div v-if="show" class="popup-menu-stub"><slot /></div>',
   },
 }))
 
@@ -421,33 +441,114 @@ describe('AgentSelectorDrawer', () => {
       expect(wrapper.emitted('select')).toBeFalsy()
     })
 
-    it('shows a host/free mode subtitle that flips with the host', async () => {
+    it('shows a host/free mode hint in the footer that flips with the host', async () => {
       const wrapper = mountDrawer({ multiple: true, groupMode: true, modelValue: ['agent-1'] })
       await flushPromises()
       vi.advanceTimersByTime(500)
 
       // No host yet -> free mode. The i18n mock returns the key verbatim.
-      const free = wrapper.find('.agent-header-mode')
-      expect(free.text()).toBe('group.freeMode')
+      const free = wrapper.find('.agent-mode-hint')
+      expect(free.exists()).toBe(true)
+      expect(free.text()).toContain('group.freeMode')
       // Free mode carries the @ glyph (the relay is @-driven).
       expect(free.find('.lucide-at-sign').exists()).toBe(true)
       expect(free.find('.lucide-crown').exists()).toBe(false)
 
       await wrapper.setProps({ hostId: 'agent-1' })
       await flushPromises()
-      const host = wrapper.find('.agent-header-mode')
-      expect(host.text()).toBe('group.hostMode')
+      const host = wrapper.find('.agent-mode-hint')
+      expect(host.text()).toContain('group.hostMode')
       // Host mode carries the crown; the glyph pairing mirrors the session chip.
       expect(host.find('.lucide-crown').exists()).toBe(true)
       expect(host.find('.lucide-at-sign').exists()).toBe(false)
     })
 
-    it('does not render the mode subtitle outside group mode', async () => {
+    it('does not render the mode hint outside group mode', async () => {
       const wrapper = mountDrawer({ multiple: true, modelValue: ['agent-1'] })
       await flushPromises()
       vi.advanceTimersByTime(500)
 
-      expect(wrapper.find('.agent-header-mode').exists()).toBe(false)
+      expect(wrapper.find('.agent-mode-hint').exists()).toBe(false)
+    })
+  })
+
+  // Single vs group creation share one page; the segmented switch in the header
+  // flips between them. Only the create page opts in (showModeSwitch).
+  describe('mode switch (single | group)', () => {
+    it('does not render the switch unless showModeSwitch is set', async () => {
+      const wrapper = mountDrawer({ multiple: true, modelValue: [] })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+
+      expect(wrapper.find('.agent-mode-switch').exists()).toBe(false)
+    })
+
+    it('renders the switch when showModeSwitch is set and >= 2 selectable agents', async () => {
+      const wrapper = mountDrawer({ showModeSwitch: true })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+
+      const sw = wrapper.find('.agent-mode-switch')
+      expect(sw.exists()).toBe(true)
+      expect(sw.findAll('.agent-mode-tab').length).toBe(2)
+      // Single mode -> the single tab is active.
+      expect(sw.find('[data-mode="single"]').classes()).toContain('active')
+      expect(sw.find('[data-mode="group"]').classes()).not.toContain('active')
+    })
+
+    it('marks the group tab active in group mode', async () => {
+      const wrapper = mountDrawer({ multiple: true, groupMode: true, showModeSwitch: true, modelValue: [] })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+
+      const sw = wrapper.find('.agent-mode-switch')
+      expect(sw.find('[data-mode="group"]').classes()).toContain('active')
+      expect(sw.find('[data-mode="single"]').classes()).not.toContain('active')
+    })
+
+    it('emits switch-mode with the target when a tab is clicked, without closing', async () => {
+      const wrapper = mountDrawer({ showModeSwitch: true })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+
+      await wrapper.find('[data-mode="group"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.emitted('switch-mode')).toBeTruthy()
+      expect(wrapper.emitted('switch-mode')![0]).toEqual(['group'])
+      // @click.stop: the header's own click must NOT close the drawer.
+      expect(wrapper.emitted('update:open')).toBeFalsy()
+    })
+
+    it('hides the whole switch when fewer than two selectable agents exist', async () => {
+      // A group needs at least two members; with one agent the switch would
+      // degrade to a single-item segmented control — noise, so hide it.
+      const original = [...mockAgents]
+      mockAgents.splice(0, mockAgents.length, { id: 'agent-1', name: 'Agent One', backend: 'cli', specialty: 'Coding' } as any)
+      try {
+        const wrapper = mountDrawer({ showModeSwitch: true })
+        await flushPromises()
+        vi.advanceTimersByTime(500)
+        expect(wrapper.find('.agent-mode-switch').exists()).toBe(false)
+      } finally {
+        mockAgents.splice(0, mockAgents.length, ...original)
+      }
+    })
+
+    it('clears the member buffer when the mode flips', async () => {
+      const wrapper = mountDrawer({ multiple: true, groupMode: false, showModeSwitch: true, modelValue: [] })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+
+      // Buffer a member in the current mode.
+      await wrapper.findAll('.agent-option')[0].trigger('click')
+      await flushPromises()
+      expect(wrapper.findAll('.agent-option')[0].classes()).toContain('selected')
+
+      // Flipping modes must drop the stale buffer.
+      await wrapper.setProps({ groupMode: true })
+      await flushPromises()
+      expect(wrapper.findAll('.agent-option')[0].classes()).not.toContain('selected')
     })
   })
 
@@ -716,5 +817,112 @@ describe('AgentSelectorDrawer instance mode', () => {
     await wrapper.find('.agent-stepper .agent-stepper-btn:last-child').trigger('click')
     await flushPromises()
     expect((wrapper.find('.agent-multi-confirm').element as HTMLButtonElement).disabled).toBe(false)
+  })
+})
+
+// Instance cap: the group member limit counts every instance across ALL agents.
+// At the cap the "+" buttons disable and the footer warns.
+describe('AgentSelectorDrawer instance limit', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.useFakeTimers()
+  })
+  afterEach(() => vi.useRealTimers())
+
+  it('disables + at the total-instance limit (across all agents)', async () => {
+    // Cap 2: select agent-1 once, agent-2 once → both rows at the cap.
+    const wrapper = mountDrawer({ multiple: true, allowInstances: true, maxInstances: 2, modelValue: [] })
+    vi.advanceTimersByTime(500)
+    await flushPromises()
+
+    const rows = wrapper.findAll('.agent-option')
+    await rows[0].trigger('click')
+    await flushPromises()
+    // 1/2: still room.
+    expect((rows[0].find('.agent-stepper .agent-stepper-btn:last-child').element as HTMLButtonElement).disabled).toBe(false)
+
+    await rows[1].trigger('click')
+    await flushPromises()
+    // 2/2: BOTH rows' "+" are now disabled — the cap is group-wide.
+    expect((rows[0].find('.agent-stepper .agent-stepper-btn:last-child').element as HTMLButtonElement).disabled).toBe(true)
+    expect((rows[1].find('.agent-stepper .agent-stepper-btn:last-child').element as HTMLButtonElement).disabled).toBe(true)
+
+    // Clicking "+" at the cap must not add anything.
+    await rows[0].find('.agent-stepper .agent-stepper-btn:last-child').trigger('click')
+    await flushPromises()
+    expect(rows[0].find('.agent-stepper-count').text()).toBe('1')
+  })
+
+  it('does not select a fresh row at the cap', async () => {
+    const wrapper = mountDrawer({ multiple: true, allowInstances: true, maxInstances: 1, modelValue: [] })
+    vi.advanceTimersByTime(500)
+    await flushPromises()
+
+    const rows = wrapper.findAll('.agent-option')
+    await rows[0].trigger('click')
+    await flushPromises()
+    // At 1/1, selecting a different agent must be refused.
+    await rows[1].trigger('click')
+    await flushPromises()
+    expect(rows[1].classes()).not.toContain('selected')
+    expect(wrapper.findAll('.agent-stepper').length).toBe(1)
+  })
+
+  it('shows the running total and a warning at the limit', async () => {
+    const wrapper = mountDrawer({ multiple: true, allowInstances: true, maxInstances: 3, modelValue: [] })
+    vi.advanceTimersByTime(500)
+    await flushPromises()
+
+    // Empty: 0/3.
+    expect(wrapper.find('.agent-count-hint').text()).toContain('count=0')
+    expect(wrapper.find('.agent-count-hint').text()).toContain('max=3')
+    expect(wrapper.find('.agent-count-hint').classes()).not.toContain('at-limit')
+
+    await wrapper.find('.agent-option').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.agent-count-hint').text()).toContain('count=1')
+
+    const plus = wrapper.find('.agent-stepper .agent-stepper-btn:last-child')
+    await plus.trigger('click')
+    await plus.trigger('click')
+    await flushPromises()
+    // 3/3: warning state.
+    expect(wrapper.find('.agent-count-hint').classes()).toContain('at-limit')
+  })
+
+  it('counts instances already in the group (usedInstances) toward the cap', async () => {
+    // Add-members flow: 11 already in the group, cap 12 → only 1 slot left.
+    const wrapper = mountDrawer({ multiple: true, allowInstances: true, maxInstances: 12, usedInstances: 11, modelValue: [] })
+    vi.advanceTimersByTime(500)
+    await flushPromises()
+
+    // Footer total includes the 11 existing.
+    expect(wrapper.find('.agent-count-hint').text()).toContain('count=11')
+    expect(wrapper.find('.agent-count-hint').text()).toContain('max=12')
+
+    const row = wrapper.find('.agent-option')
+    await row.trigger('click')
+    await flushPromises()
+    // 12/12 → "+" disabled, cannot add a second instance.
+    expect((row.find('.agent-stepper .agent-stepper-btn:last-child').element as HTMLButtonElement).disabled).toBe(true)
+    await row.find('.agent-stepper .agent-stepper-btn:last-child').trigger('click')
+    await flushPromises()
+    expect(row.find('.agent-stepper-count').text()).toBe('1')
+  })
+
+  it('lays the stepper above the host action in instance mode', async () => {
+    const wrapper = mountDrawer({ multiple: true, allowInstances: true, groupMode: true, hostId: '', modelValue: [] })
+    vi.advanceTimersByTime(500)
+    await flushPromises()
+
+    await wrapper.find('.agent-option').trigger('click')
+    await flushPromises()
+    const actions = wrapper.find('.agent-row-actions')
+    expect(actions.exists()).toBe(true)
+    // Stepper first (top, name/description line), host action second (bottom,
+    // model-tag line).
+    const children = actions.element.children
+    expect(children[0].classList.contains('agent-stepper')).toBe(true)
+    expect(children[1].classList.contains('agent-host-btn')).toBe(true)
   })
 })

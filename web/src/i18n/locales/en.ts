@@ -1027,6 +1027,8 @@ export default {
     title: 'Sessions',
     newSession: 'New session',
     selectAgent: 'Select agent',
+    singleChat: 'Single chat',
+    groupChat: 'Group chat',
     setAsDefaultAgent: 'Set as default agent',
     configAgent: 'Agent settings',
     noSessions: 'No sessions',
@@ -1146,6 +1148,8 @@ export default {
     confirm: 'Add',
     increaseInstance: 'Add another instance of this agent',
     decreaseInstance: 'Remove one instance of this agent',
+    memberCountHint: '{count}/{max} added',
+    memberLimitReached: 'Member limit reached',
     bcc: {
       title: 'Private note',
       to: 'To',

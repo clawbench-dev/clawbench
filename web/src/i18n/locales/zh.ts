@@ -1031,6 +1031,8 @@ export default {
     title: '会话',
     newSession: '新建会话',
     selectAgent: '选择智能体',
+    singleChat: '单聊',
+    groupChat: '群聊',
     setAsDefaultAgent: '设为默认智能体',
     configAgent: '智能体配置',
     noSessions: '暂无会话',
@@ -1134,7 +1136,7 @@ export default {
     // The reserved human participant name ("User") shown to the reader.
     you: '你',
     selectHost: '请选择群聊主持人',
-    selectMembers: '请选择群聊成员',
+    selectMembers: '选择群聊成员',
     hostLabel: '设为主持人',
     hostActiveLabel: '点击取消主持人',
     createGroup: '创建群聊',
@@ -1150,6 +1152,8 @@ export default {
     confirm: '添加',
     increaseInstance: '再添加一个该智能体实例',
     decreaseInstance: '减少一个该智能体实例',
+    memberCountHint: '已添加 {count}/{max} 个',
+    memberLimitReached: '已达成员上限',
     bcc: {
       title: '密送',
       to: '发给',

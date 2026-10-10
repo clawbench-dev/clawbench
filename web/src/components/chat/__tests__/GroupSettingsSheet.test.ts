@@ -4,6 +4,9 @@ import GroupSettingsSheet from '../GroupSettingsSheet.vue'
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (k: string) => k }),
+  // The component now imports the shared store, which transitively imports the
+  // i18n singleton; that module calls createI18n at load time.
+  createI18n: () => ({ global: { t: (key: string) => key, locale: { value: 'en' } } }),
 }))
 
 const mockAdd = vi.fn().mockResolvedValue(undefined)

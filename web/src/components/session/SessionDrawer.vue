@@ -17,7 +17,6 @@
           :session-max-count="sessionMaxCount"
           @open-search="$emit('open-session-search')"
           @create="handleCreateClick"
-          @create-group="handleGroupCreateClick"
         >
           <template #actions>
             <!-- Always present: the drawer is the only place to review and
@@ -57,14 +56,18 @@
       </template>
     </BottomSheet>
 
-    <!-- Agent selector drawer. In group mode it is multi-select with an inline
-         "host" dot so members and host are chosen in one pass (design #25/#33). -->
+    <!-- Agent selector drawer — the shared create page. The single/group
+         segmented switch lives in its header; flipping it toggles creatingGroup,
+         which turns the picker into multi-select with an inline "host" button so
+         members and host are chosen in one pass (design #25/#33). -->
     <AgentSelectorDrawer
       ref="agentSelectorRef"
       :open="agentSelectorDrawer.effectiveOpen.value"
       :multiple="creatingGroup"
       :group-mode="creatingGroup"
       :allow-instances="creatingGroup"
+      :max-instances="creatingGroup ? store.state.groupMaxMembers : 0"
+      :show-mode-switch="true"
       :host-id="groupHostId"
       :host-label="t('group.hostLabel')"
       :host-active-label="t('group.hostActiveLabel')"
@@ -76,6 +79,7 @@
       :set-default-title="t('session.setAsDefaultAgent')"
       :config-title="t('session.configAgent')"
       @update:open="handleAgentSelectorOpen"
+      @switch-mode="handleSwitchMode"
       @update:host-id="v => groupHostId = v"
       @select="handleAgentPicked"
     />
@@ -123,7 +127,7 @@ const agentSelectorDrawer = useTabDrawer('chat', { autoRestore: false })
 const sessionCount = computed(() => store.state.sessionCount)
 const sessionMaxCount = computed(() => store.state.sessionMaxCount)
 
-defineExpose({ openAgentSelector, addSessionLocally, openGroupHostSelector })
+defineExpose({ openAgentSelector, addSessionLocally })
 
 async function openAgentSelector() {
   await loadAgents()
@@ -132,21 +136,17 @@ async function openAgentSelector() {
   // session. Requiring an explicit selection prevents accidental creation.
   // 始终打开选择器（哪怕只有一个智能体）——直接创建是一键动作，
   // 移动端容易误触生成空会话；强制选择可避免误建。
-  agentSelectorDrawer.open()
-}
-
-// openGroupHostSelector opens the shared agent picker in group-creation mode
-// (multi-select members + inline host dot). Exposed so the desktop sidebar's
-// create-group button (which has no local picker) can reuse it via the ref.
-async function openGroupHostSelector() {
-  await loadAgents()
-  creatingGroup.value = true
+  // Start on the single-chat tab (defensive: a stale group flag must not leak
+  // into this open).
+  creatingGroup.value = false
   groupHostId.value = ''
   agentSelectorDrawer.open()
 }
 
 async function handleCreateClick() {
   await loadAgents()
+  creatingGroup.value = false
+  groupHostId.value = ''
   agentSelectorDrawer.open()
 }
 
@@ -158,15 +158,18 @@ function createSession(agentId) {
 
 // creatingGroup distinguishes the "create a group" flow (multi-select members +
 // inline host dot) from the ordinary "pick an agent for a new session" flow,
-// since both reuse the same AgentSelectorDrawer.
+// since both reuse the same AgentSelectorDrawer. It is driven by the picker's
+// own single/group segmented switch.
 const creatingGroup = ref(false)
 // The host agent id chosen inline via the row dot (group mode only).
 const groupHostId = ref('')
 
-function handleGroupCreateClick() {
-  creatingGroup.value = true
+// The user flipped the segmented switch inside the picker. Leaving group mode
+// must also drop the host (a host only exists for a group), and entering it
+// starts fresh. The picker clears its own member buffer on the mode change.
+function handleSwitchMode(mode) {
+  creatingGroup.value = mode === 'group'
   groupHostId.value = ''
-  agentSelectorDrawer.open()
 }
 
 // Closing the picker (cancel or confirm) must also leave group mode, otherwise

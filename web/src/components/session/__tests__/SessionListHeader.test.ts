@@ -44,6 +44,14 @@ describe('SessionListHeader', () => {
     expect(wrapper.emitted('create')).toBeTruthy()
   })
 
+  it('no longer renders a separate create-group button', () => {
+    // Group creation merged into the create page (single/group switch there), so
+    // the session-list header must not keep a standalone group entry.
+    const wrapper = mountHeader()
+    expect(wrapper.find('[data-action="create-group"]').exists()).toBe(false)
+    expect(wrapper.emitted('create-group')).toBeUndefined()
+  })
+
   it('renders a leading extra button passed via slot', () => {
     const wrapper = mount(SessionListHeader, {
       props: { sessionCount: 0, sessionMaxCount: 0 },

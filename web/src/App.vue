@@ -357,8 +357,6 @@
                     @resize="sessionSidebar.setWidth"
                     @close="sessionSidebar.closeSidebar"
                     @select="handleSessionSelect"
-                    @create="handleSessionCreate"
-                    @create-group="handleSidebarGroupCreate"
                     @archive="handleSessionArchive"
                     @destroy="handleSessionDestroy"
                     @open-session-search="sessionSearchDrawer.open()"
@@ -1944,13 +1942,6 @@ async function handleSessionCreate(agentId: string) {
   }
   sessionSidebar.addSessionLocally(session)
   sessionIdentity.sessionDrawer.close()
-}
-
-// The desktop sidebar's create-group button has no local agent picker; it opens
-// the SessionDrawer's shared picker in group mode (members + inline host dot),
-// which then emits create-group with {hostId, memberIds}.
-function handleSidebarGroupCreate() {
-  sessionDrawerRef.value?.openGroupHostSelector()
 }
 
 // handleGroupCreate creates a group with the chosen host and members in one

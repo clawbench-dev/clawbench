@@ -353,6 +353,7 @@ func ServeRoots(w http.ResponseWriter, r *http.Request) {
 		"chatPageSize":           model.ChatPageSize,
 		"chatSessionPageSize":    model.ChatSessionPageSize,
 		"sessionMaxCount":        model.SessionMaxCount,
+		"groupMaxMembers":        service.MaxGroupMembers,
 		"recentProjectsMaxCount": model.RecentProjectsMaxCount,
 	})
 }

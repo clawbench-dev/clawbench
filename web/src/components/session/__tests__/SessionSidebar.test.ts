@@ -25,8 +25,8 @@ vi.mock('@/components/session/SessionList.vue', () => ({
 vi.mock('@/components/session/SessionListHeader.vue', () => ({
   default: {
     name: 'SessionListHeader',
-    template: '<div class="header-stub"><slot name="actions" /><button class="refresh-stub" @click="$emit(\'refresh\')" /><slot name="actions-end" /></div>',
-    emits: ['refresh'],
+    template: '<div class="header-stub"><slot name="actions" /><button class="refresh-stub" @click="$emit(\'refresh\')" /><button class="create-stub" @click="$emit(\'create\')" /><slot name="actions-end" /></div>',
+    emits: ['refresh', 'create'],
   },
 }))
 // Stubbed so the test does not pull in the real tabs component (and with it the
@@ -114,6 +114,17 @@ describe('SessionSidebar', () => {
     loadSessionsMock.mockClear()
     await wrapper.find('.refresh-stub').trigger('click')
     expect(loadSessionsMock).toHaveBeenCalled()
+  })
+
+  it('create always opens the merged create page (never a direct create)', async () => {
+    // Even with a single agent the sidebar must open the picker: a direct create
+    // is a one-tap mis-tap risk, and the group tab would otherwise be
+    // unreachable. Mirrors the mobile drawer.
+    const wrapper = mountSidebar()
+    await wrapper.find('.create-stub').trigger('click')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.emitted('create-agent-select')).toBeTruthy()
+    expect(wrapper.emitted('create')).toBeUndefined()
   })
 
   it('forwards archive with sessionId and backend', async () => {
