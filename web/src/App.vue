@@ -1962,9 +1962,16 @@ async function handleGroupCreate(payload: { hostId: string; memberIds: string[] 
     const { groupId } = await createGroup(hostAgentId, memberAgentIds)
     if (!groupId) return
     // Backfill avatars for the freshly created members (all of them lack one).
-    // Fire-and-forget: avatars are non-critical and a failure must not block
-    // entering the group.
-    void generateMemberAvatars(groupId).catch(e => appLog.w('Group', 'member avatar generation failed', e))
+    // Avatars are non-critical, so generation runs in the background and must
+    // not block entering the group. When it finishes we refresh the roster:
+    // the group view fetches members on entry, BEFORE generation completes, so
+    // without this second fetch the fallback icons would stick until a session
+    // switch happens to reload the roster.
+    void generateMemberAvatars(groupId)
+      .then(() => {
+        if (sessionIdentity.currentSessionId.value === groupId) refreshGroupMembers(groupId)
+      })
+      .catch(e => appLog.w('Group', 'member avatar generation failed', e))
     await sessionIdentity.switchSession(groupId)
     const session = {
       id: groupId,

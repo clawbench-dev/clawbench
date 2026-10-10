@@ -66,6 +66,7 @@ describe('GroupSettingsSheet', () => {
   beforeEach(() => {
     mockRemove.mockClear()
     mockAdd.mockClear()
+    mockGenerateAvatars.mockClear()
     mockToggleAutoApprove.mockClear()
   })
 
@@ -138,6 +139,29 @@ describe('GroupSettingsSheet', () => {
     // It must NOT also linger in the body.
     expect(w.find('.group-settings-sheet').find('[data-action="add-members"]').exists()).toBe(false)
     expect(w.find('.gm-add').exists()).toBe(false)
+  })
+
+  // Avatars are generated AFTER the members are added, so the roster must be
+  // refreshed a SECOND time once generation resolves — otherwise the new
+  // members keep their fallback icons until a session switch reloads them.
+  it('refreshes the roster after avatar generation, not just on add', async () => {
+    let resolveGen: () => void = () => {}
+    mockGenerateAvatars.mockImplementationOnce(() => new Promise<void>(res => { resolveGen = res }))
+    mockAdd.mockResolvedValueOnce(['m9'])
+
+    const w = mountSheet(MEMBERS)
+    w.findComponent({ name: 'AgentSelectorDrawer' }).vm.$emit('select', ['a4'])
+    await flushPromises()
+
+    // Members added → immediate refresh; generation still in flight.
+    expect(mockAdd).toHaveBeenCalledWith('g1', ['a4'])
+    expect(mockGenerateAvatars).toHaveBeenCalledWith('g1', ['m9'])
+    expect(w.emitted('changed')?.length).toBe(1)
+
+    // Generation resolves → second refresh so the avatars replace the fallbacks.
+    resolveGen()
+    await flushPromises()
+    expect(w.emitted('changed')?.length).toBe(2)
   })
 
   it('opens the member picker from the header button', async () => {

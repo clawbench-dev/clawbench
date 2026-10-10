@@ -161,9 +161,14 @@ async function onAgentsPicked(ids: string | string[]) {
   if (list.length > 0) {
     try {
       const newIds = await addGroupMembers(props.groupId, list)
-      // Backfill avatars only for the just-added members; fire-and-forget.
-      void generateMemberAvatars(props.groupId, newIds).catch(e => appLog.w('Group', 'member avatar generation failed', e))
+      // Show the new members immediately, then backfill their avatars in the
+      // background and refresh AGAIN when done. The roster is fetched before
+      // generation completes, so without the second refresh the fresh members
+      // would keep their fallback icons until a session switch reloaded them.
       emit('changed')
+      void generateMemberAvatars(props.groupId, newIds)
+        .then(() => emit('changed'))
+        .catch(e => appLog.w('Group', 'member avatar generation failed', e))
     } catch { /* ignore */ }
   }
   pickerOpen.value = false
