@@ -5400,6 +5400,10 @@ paths:
         只写入属于 `groupId` 的 `session_type='group_member'` 行；成员行 id 属于
         其它群时该条为 no-op（不会跨群写入）。
         **整批先校验后写入**：任一条非法即整批返回 400，不写入任何条目（不会半应用）。
+
+        **批次有界**：`avatars` 条数不得超过群成员上限（12），且整个请求体不得超过
+        `群成员上限 × 256 KiB + 1 MiB`；超出即以 400 拒绝（解码前用 `MaxBytesReader`
+        封顶，避免超大请求体触发巨额分配）。
       operationId: groupMemberAvatarsSet
       requestBody:
         required: true
@@ -5412,7 +5416,8 @@ paths:
                 groupId: {type: string}
                 avatars:
                   type: array
-                  description: 每个元素写回一个成员的头像；memberId 为成员行 id
+                  maxItems: 12
+                  description: 每个元素写回一个成员的头像；memberId 为成员行 id；条数上限为群成员上限（12）
                   items:
                     type: object
                     required: [memberId, avatar]

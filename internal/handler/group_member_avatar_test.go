@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"clawbench/internal/service"
@@ -203,5 +204,68 @@ func TestServeGroupMemberAvatars_BatchValidatesAllBeforeWrite(t *testing.T) {
 	require.NoError(t, err)
 	for _, m := range members {
 		assert.Empty(t, m.Avatar, "a rejected batch must not write any member (member %s)", m.ID)
+	}
+}
+
+// TestServeGroupMemberAvatars_OverCountRejected pins the entry-count bound: a
+// batch larger than the group member cap is rejected with 400 before any write.
+// A group can never hold more members than the cap, so such a batch is always
+// bogus (and could otherwise fan out into an unbounded write loop).
+func TestServeGroupMemberAvatars_OverCountRejected(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	groupID, hostID, err := service.CreateGroup(env.ProjectDir, "g", "codebuddy", "codebuddy", "Host")
+	require.NoError(t, err)
+
+	const validSVG = `<svg xmlns="http://www.w3.org/2000/svg"></svg>`
+	avatars := make([]map[string]any, 0, service.MaxGroupMembers+1)
+	avatars = append(avatars, map[string]any{"memberId": hostID, "avatar": validSVG})
+	for i := 0; i < service.MaxGroupMembers; i++ {
+		avatars = append(avatars, map[string]any{"memberId": "m", "avatar": validSVG})
+	}
+	require.Len(t, avatars, service.MaxGroupMembers+1)
+
+	req := newRequest(t, http.MethodPost, "/api/group/member-avatars", map[string]any{
+		"groupId": groupID,
+		"avatars": avatars,
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupMemberAvatars, req)
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+
+	members, err := service.ListGroupMembers(groupID)
+	require.NoError(t, err)
+	for _, m := range members {
+		assert.Empty(t, m.Avatar, "an over-count batch must not write anything")
+	}
+}
+
+// TestServeGroupMemberAvatars_OversizedBodyRejected pins the body-size bound: a
+// body larger than the per-member cap times the member cap is rejected (the
+// json.Decode never builds the huge slice) rather than being buffered wholesale.
+func TestServeGroupMemberAvatars_OversizedBodyRejected(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	groupID, hostID, err := service.CreateGroup(env.ProjectDir, "g", "codebuddy", "codebuddy", "Host")
+	require.NoError(t, err)
+
+	// One avatar alone exceeds the whole-request body cap (member cap × avatar
+	// cap + slack), so the count check cannot be what rejects it.
+	huge := `<svg xmlns="http://www.w3.org/2000/svg">` + strings.Repeat(" ", maxGroupMemberAvatarsBody) + `</svg>`
+
+	req := newRequest(t, http.MethodPost, "/api/group/member-avatars", map[string]any{
+		"groupId": groupID,
+		"avatars": []map[string]any{{"memberId": hostID, "avatar": huge}},
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupMemberAvatars, req)
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+
+	members, err := service.ListGroupMembers(groupID)
+	require.NoError(t, err)
+	for _, m := range members {
+		assert.Empty(t, m.Avatar, "an oversized body must not write anything")
 	}
 }

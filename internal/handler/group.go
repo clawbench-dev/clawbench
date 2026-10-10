@@ -331,6 +331,11 @@ func ServeGroupSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// maxGroupMemberAvatarsBody caps the raw request body of
+// ServeGroupMemberAvatars: every member slot at the maximum avatar size, plus
+// 1 MiB of slack for JSON syntax and the memberId/groupId keys.
+const maxGroupMemberAvatarsBody = service.MaxGroupMembers*maxAgentAvatarBytes + 1<<20
+
 // ServeGroupMemberAvatars persists per-member avatar SVGs generated client-side
 // (DiceBear). Batch so a freshly created/expanded group writes all its new
 // members in ONE round trip.
@@ -342,6 +347,12 @@ func ServeGroupSettings(w http.ResponseWriter, r *http.Request) {
 // the stored string is later replayed into the public share page. The batch is
 // validated in FULL before any write, so an invalid item never leaves the group
 // half-updated.
+//
+// The batch is BOUNDED on both axes. The entry count is capped at the group
+// member cap (a group can never have more members, so a larger batch is
+// meaningless), and the raw body is capped at the same per-avatar size times
+// that count (plus slack), so an unauthenticated-sized allocation from a valid
+// caller is impossible.
 func ServeGroupMemberAvatars(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
@@ -351,6 +362,11 @@ func ServeGroupMemberAvatars(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Bound the body BEFORE decodeJSON reads it: decoding builds the whole
+	// []avatar first, so without this a single request could make the server
+	// allocate hundreds of MiB. The 1 MiB slack absorbs JSON punctuation and key
+	// names, which are not counted by the avatar cap.
+	r.Body = http.MaxBytesReader(w, r.Body, maxGroupMemberAvatarsBody)
 	var req struct {
 		GroupID string `json:"groupId"`
 		Avatars []struct {
@@ -361,7 +377,7 @@ func ServeGroupMemberAvatars(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if req.GroupID == "" || len(req.Avatars) == 0 {
+	if req.GroupID == "" || len(req.Avatars) == 0 || len(req.Avatars) > service.MaxGroupMembers {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
 		return
 	}

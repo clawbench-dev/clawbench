@@ -81,8 +81,8 @@ type SessionSharePayload struct {
 	Session   SessionShareSession   `json:"session"`
 	Messages  []SessionShareMessage `json:"messages"`
 	// SessionAgent + Speakers let the public viewer render the real speaker icon
-	// per message. The resolver is called with includeAvatar=true: the snapshot
-	// is frozen by the authenticated owner and the public viewer has no other way
+	// per message. The identities always carry the avatar: the snapshot is
+	// frozen by the authenticated owner and the public viewer has no other way
 	// to resolve a speaker's avatar (it cannot call /api/agents), so the avatars
 	// ARE embedded in the snapshot. Speakers is keyed by member row id and
 	// present only for group sessions.
@@ -250,11 +250,11 @@ func BuildSessionSharePayload(sessionID string, messageIDs []int64, projectRoot,
 		return "", 0, err
 	}
 
-	// includeAvatar=true: the snapshot is frozen at share-creation time by the
-	// authenticated owner, and the public viewer has no other way to resolve a
-	// speaker's custom avatar (it cannot call /api/agents). Carrying the avatar
-	// lets the shared thread render the same icons the app shows.
-	sessionAgent, speakers := ResolveSessionSpeakers(sessionID, true)
+	// The snapshot is frozen at share-creation time by the authenticated owner,
+	// and the public viewer has no other way to resolve a speaker's custom
+	// avatar (it cannot call /api/agents). Every identity carries the avatar so
+	// the shared thread renders the same icons the app shows.
+	sessionAgent, speakers := ResolveSessionSpeakers(sessionID)
 
 	// The viewer's topbar renders the same avatar stack the in-app group header
 	// shows, so freeze the ACTIVE roster in roster order with the host flagged.

@@ -361,14 +361,16 @@ describe('SessionShareView', () => {
   // A shared GROUP mirrors the in-app group header: an overlapping avatar stack
   // (host first, +N overflow) built from the frozen ACTIVE roster — not the
   // single session-agent icon a 1:1 share shows.
-  it('renders an avatar stack for a group share', async () => {
+  it('renders an avatar stack for a group share, using each member\'s own frozen avatar', async () => {
+    const hostSvg = '<svg>host-avatar</svg>'
+    const secondSvg = '<svg>second-avatar</svg>'
     globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
       const u = String(url)
       if (u.includes('/session')) {
         const p = makePayload()
         ;(p as Record<string, unknown>).groupMembers = [
-          { id: 'm-host', agentId: 'a1', name: 'Host', backend: 'codebuddy', isHost: true },
-          { id: 'm-second', agentId: 'a2', name: 'Second', backend: 'claude' },
+          { id: 'm-host', agentId: 'a1', name: 'Host', backend: 'codebuddy', isHost: true, avatar: hostSvg },
+          { id: 'm-second', agentId: 'a2', name: 'Second', backend: 'claude', avatar: secondSvg },
         ]
         return { ok: true, json: async () => p } as Response
       }
@@ -382,6 +384,11 @@ describe('SessionShareView', () => {
     const discs = stack.findAll('.avatar-disc')
     expect(discs).toHaveLength(2)
     expect(discs[0].classes()).toContain('is-host')
+    // The stack reads the avatar off the roster entry itself (the payload's
+    // groupMembers[].avatar), not indirectly via the speakers map.
+    const srcs = discs.map((d) => decodeURIComponent((d.find('.agent-icon-img').attributes('src') || '').split(',')[1] || ''))
+    expect(srcs[0]).toBe(hostSvg)
+    expect(srcs[1]).toBe(secondSvg)
     // The single-agent icon is replaced by the stack.
     expect(wrapper.find('.session-share-byline .session-share-agent-name').exists()).toBe(false)
   })

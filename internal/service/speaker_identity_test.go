@@ -31,7 +31,7 @@ func TestResolveSessionSpeakers_SingleAgent(t *testing.T) {
 	sessionID, err := CreateSession(project, "claude", "T", "solo", "", "default", "chat")
 	require.NoError(t, err)
 
-	sessionAgent, speakers := ResolveSessionSpeakers(sessionID, true)
+	sessionAgent, speakers := ResolveSessionSpeakers(sessionID)
 	require.NotNil(t, sessionAgent)
 	assert.Equal(t, "Solo Agent", sessionAgent.Name)
 	assert.Equal(t, "claude", sessionAgent.Backend)
@@ -62,7 +62,7 @@ func TestResolveSessionSpeakers_Group(t *testing.T) {
 	// Bob leaves; his speech remains in the timeline.
 	require.NoError(t, RemoveGroupMember(groupID, bobID))
 
-	sessionAgent, speakers := ResolveSessionSpeakers(groupID, true)
+	sessionAgent, speakers := ResolveSessionSpeakers(groupID)
 	require.NotNil(t, sessionAgent)
 	// The session-level agent is the group row's identity; it uses the LIVE
 	// agent name.
@@ -106,7 +106,7 @@ func TestResolveSessionSpeakers_MemberNameIsSnapshot(t *testing.T) {
 		&model.Agent{ID: "claude", Name: "Renamed Agent", Backend: "claude"},
 	))
 
-	_, speakers := ResolveSessionSpeakers(groupID, true)
+	_, speakers := ResolveSessionSpeakers(groupID)
 	require.Contains(t, speakers, aliceID)
 	assert.Equal(t, "Alice", speakers[aliceID].Name,
 		"a member's past speech must keep its join-time name, not the renamed agent's")
@@ -136,7 +136,7 @@ func TestResolveSessionSpeakers_DuplicateInstancesDistinctNames(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, ids, 2)
 
-	_, speakers := ResolveSessionSpeakers(groupID, true)
+	_, speakers := ResolveSessionSpeakers(groupID)
 	require.Contains(t, speakers, ids[0])
 	require.Contains(t, speakers, ids[1])
 	assert.Equal(t, "Claude", speakers[ids[0]].Name)
@@ -164,7 +164,7 @@ func TestResolveSessionSpeakers_CarriesAvatarOnSharePath(t *testing.T) {
 	aliceID, err := AddGroupMember(project, groupID, "claude", "claude", "Alice")
 	require.NoError(t, err)
 
-	sessionAgent, speakers := ResolveSessionSpeakers(groupID, true)
+	sessionAgent, speakers := ResolveSessionSpeakers(groupID)
 	require.NotNil(t, sessionAgent)
 	assert.Equal(t, "<host/>", sessionAgent.Avatar, "the share path must carry the session agent's avatar")
 	assert.Equal(t, "<host/>", speakers[hostMemberID].Avatar)
@@ -177,7 +177,7 @@ func TestResolveSessionSpeakers_CarriesAvatarOnSharePath(t *testing.T) {
 // yields nothing rather than a panic.
 func TestResolveSessionSpeakers_UnknownSession(t *testing.T) {
 	setupGroupDB(t)
-	sessionAgent, speakers := ResolveSessionSpeakers("no-such-session", true)
+	sessionAgent, speakers := ResolveSessionSpeakers("no-such-session")
 	assert.Nil(t, sessionAgent)
 	assert.Nil(t, speakers)
 }
@@ -196,7 +196,7 @@ func TestResolveSessionSpeakers_MissingAgentFallsBackToRow(t *testing.T) {
 	sessionID, err := CreateSession(project, "codex", "T", "ghost-agent", "", "default", "chat")
 	require.NoError(t, err)
 
-	sessionAgent, _ := ResolveSessionSpeakers(sessionID, true)
+	sessionAgent, _ := ResolveSessionSpeakers(sessionID)
 	require.NotNil(t, sessionAgent)
 	assert.Equal(t, "codex", sessionAgent.Backend, "falls back to the session row's backend")
 	assert.Empty(t, sessionAgent.Avatar)
@@ -223,18 +223,19 @@ func TestSpeakerFromMember_PrefersMemberAvatarOverAgentAvatar(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, members)
 
-	s := speakerFromMember(members[0], true)
+	s := speakerFromMember(members[0])
 	assert.Equal(t, memberSvg, s.Avatar, "the member's own avatar must win over the agent's")
 	assert.Empty(t, s.AgentName, "name equals agent name → no disclosure")
 }
 
 // TestSpeakerFromMember_CarriesAgentNameWhenDifferent pins that when a member's
 // display name was auto-derived (a pool nickname, or "<base> <n>"), the real
-// agent name is carried so the UI can disclose which agent is speaking.
+// agent name is carried so the UI can disclose which agent is speaking. The
+// avatar is empty here only because the agent has no custom avatar configured.
 func TestSpeakerFromMember_CarriesAgentNameWhenDifferent(t *testing.T) {
 	withAgents(t, agentMap(&model.Agent{ID: "claude", Name: "Claude", Backend: "claude"}))
 
-	s := speakerFromMember(GroupMember{AgentID: "claude", Name: "Alice", Backend: "claude"}, false)
+	s := speakerFromMember(GroupMember{AgentID: "claude", Name: "Alice", Backend: "claude"})
 	assert.Equal(t, "Claude", s.AgentName)
 	assert.Empty(t, s.Avatar)
 }
@@ -244,6 +245,6 @@ func TestSpeakerFromMember_CarriesAgentNameWhenDifferent(t *testing.T) {
 func TestSpeakerFromMember_FallsBackToAgentAvatar(t *testing.T) {
 	withAgents(t, agentMap(&model.Agent{ID: "claude", Name: "Claude", Backend: "claude", Avatar: "<svg>agent</svg>"}))
 
-	s := speakerFromMember(GroupMember{AgentID: "claude", Name: "Alice", Backend: "claude"}, true)
+	s := speakerFromMember(GroupMember{AgentID: "claude", Name: "Alice", Backend: "claude"})
 	assert.Equal(t, "<svg>agent</svg>", s.Avatar)
 }
