@@ -1431,14 +1431,20 @@ func TestListGroupMembers_ReturnsAvatar(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListGroupMembers: %v", err)
 	}
-	if len(members) == 0 || members[0].Avatar != svg {
+	if len(members) == 0 {
+		t.Fatal("ListGroupMembers returned no members")
+	}
+	if members[0].Avatar != svg {
 		t.Fatalf("member avatar = %q, want %q", members[0].Avatar, svg)
 	}
 	previews, err := GroupMembersForGroups([]string{groupID})
 	if err != nil {
 		t.Fatalf("GroupMembersForGroups: %v", err)
 	}
-	if len(previews[groupID]) == 0 || previews[groupID][0].Avatar != svg {
+	if len(previews[groupID]) == 0 {
+		t.Fatal("GroupMembersForGroups returned no previews")
+	}
+	if previews[groupID][0].Avatar != svg {
 		t.Fatalf("preview avatar = %q, want %q", previews[groupID][0].Avatar, svg)
 	}
 }

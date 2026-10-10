@@ -311,9 +311,9 @@ type ChatSession struct {
 }
 
 // GroupMemberPreview is the wire shape of one active group member in a session
-// list row: just enough to render a stacked avatar (the member's agentId drives
-// the avatar, name the tooltip). It is NOT the full roster — the member
-// management sheet loads that via GET /api/group/members.
+// list row: just enough to render a stacked avatar (the member's own frozen
+// Avatar snapshot drives the icon, name the tooltip). It is NOT the full roster
+// — the member management sheet loads that via GET /api/group/members.
 type GroupMemberPreview struct {
 	ID      string `json:"id"`
 	AgentID string `json:"agentId"`
