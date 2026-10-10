@@ -46,11 +46,22 @@
         />
       </template>
     </SettingsCard>
-    <!-- Copy / delete on the same row -->
+    <!-- Copy / disable / delete on the same row -->
     <div class="settings-agent-detail__actions">
       <button class="fbtn settings-agent-detail__action-btn" @click="startCopy">
         <Copy :size="16" class="settings-agent-detail__action-icon" />
         <span>{{ t('settings.items.agentCopy') }}</span>
+      </button>
+      <!-- Disable / enable toggle. The default agent cannot be disabled (the
+           backend refuses it too), so its button is inert with a tooltip. -->
+      <button
+        class="fbtn settings-agent-detail__action-btn"
+        :disabled="isDefaultAgentValue"
+        :title="isDefaultAgentValue ? t('settings.items.agentCannotDisableDefault') : undefined"
+        @click="handleToggleDisabled"
+      >
+        <component :is="agent?.disabled ? Play : Ban" :size="16" class="settings-agent-detail__action-icon" />
+        <span>{{ agent?.disabled ? t('settings.items.agentEnable') : t('settings.items.agentDisable') }}</span>
       </button>
       <button class="fbtn fbtn-danger settings-agent-detail__delete-btn" @click="handleDelete">
         <Trash2 :size="16" class="settings-agent-detail__delete-icon" />
@@ -75,7 +86,7 @@
 
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
-import { ArrowLeft, Copy, Trash2, UserX } from 'lucide-vue-next'
+import { ArrowLeft, Ban, Copy, Play, Trash2, UserX } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import SettingsItem from './SettingsItem.vue'
 import SettingsCard from './SettingsCard.vue'
@@ -127,6 +138,11 @@ onMounted(async () => {
 })
 
 const agent = computed(() => getAgent(props.agentId))
+
+// Whether this is the global default agent. The default agent can neither be
+// deleted nor disabled (the backend refuses both), so the disable button is
+// inert for it.
+const isDefaultAgentValue = computed(() => agent.value?.id === defaultAgentId.value)
 
 // The requested agent is gone (deleted, or dropped by a rescan). Requiring
 // agentsLoaded keeps the first paint of a valid agent from being reported as
@@ -306,6 +322,24 @@ const items = computed<AgentItem[]>(() => {
     value: t('settings.items.agentModelCount', { count: modelCount }),
   })
 
+  // Usage counts: interactive sessions (archived included) and tasks bound to
+  // this agent. Both are derived server-side and gate the delete button.
+  result.push({
+    key: 'session_count',
+    label: t('settings.items.agentSessionCountLabel'),
+    description: t('settings.items.agentSessionCountDesc'),
+    type: 'info',
+    value: t('settings.items.agentSessionCount', { count: a.sessionCount ?? 0 }),
+  })
+
+  result.push({
+    key: 'task_count',
+    label: t('settings.items.agentTaskCountLabel'),
+    description: t('settings.items.agentTaskCountDesc'),
+    type: 'info',
+    value: t('settings.items.agentTaskCount', { count: a.taskCount ?? 0 }),
+  })
+
   if (a.acpCommand) {
     result.push({
       key: 'acp_command',
@@ -458,11 +492,48 @@ async function handleCopyConfirmed(newName: string) {
   }
 }
 
+// Toggle the disabled flag. The default agent is guarded client-side (the
+// backend also refuses it). patchAgentField updates the reactive record, so the
+// button label/icon flip immediately.
+async function handleToggleDisabled() {
+  const a = agent.value
+  if (!a) return
+  if (a.id === defaultAgentId.value) {
+    toast.show(t('settings.items.agentCannotDisableDefault'), { icon: '⚠️', type: 'error', duration: 3000 })
+    return
+  }
+  const next = !a.disabled
+  try {
+    await patchAgentField(a.id, 'disabled', next)
+    toast.show(
+      next ? t('settings.items.agentDisabledToast') : t('settings.items.agentEnabledToast'),
+      { icon: '✅', type: 'success', duration: 3000 },
+    )
+  } catch {
+    toast.show(t('settings.saveFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
+  }
+}
+
 async function handleDelete() {
   const a = agent.value
   if (!a) return
   if (a.id === defaultAgentId.value) {
     toast.show(t('settings.items.agentDeleteDefault'), { icon: '⚠️', type: 'error', duration: 3000 })
+    return
+  }
+  // Block locally when the agent is still in use (sessions/tasks/group
+  // memberships). The backend enforces the same rule authoritatively; this
+  // avoids a pointless confirm dialog. Counts come from GET /api/agents and may
+  // be stale, so the backend 409 below is still handled.
+  if ((a.sessionCount ?? 0) > 0 || (a.taskCount ?? 0) > 0 || (a.membershipCount ?? 0) > 0) {
+    toast.show(
+      t('settings.items.agentDeleteBlocked', {
+        sessions: a.sessionCount ?? 0,
+        tasks: a.taskCount ?? 0,
+        memberships: a.membershipCount ?? 0,
+      }),
+      { icon: '⚠️', type: 'error', duration: 4000 },
+    )
     return
   }
   const confirmed = await dialog.confirm(
@@ -474,7 +545,22 @@ async function handleDelete() {
     await deleteAgent(a.id)
     toast.show(t('settings.items.agentDeleted'), { icon: '✅', type: 'success', duration: 3000 })
     emit('deleted')
-  } catch {
+  } catch (err) {
+    // The backend is authoritative: a 409 AgentInUse means the local counts
+    // were stale (e.g. a session was created since the last load).
+    const msgKey = (err as { msgKey?: string } | null)?.msgKey
+    if (msgKey === 'AgentInUse') {
+      const detail = (err as { detail?: { SessionCount?: number; TaskCount?: number; MembershipCount?: number } } | null)?.detail
+      toast.show(
+        t('settings.items.agentDeleteBlocked', {
+          sessions: detail?.SessionCount ?? (a.sessionCount ?? 0),
+          tasks: detail?.TaskCount ?? (a.taskCount ?? 0),
+          memberships: detail?.MembershipCount ?? (a.membershipCount ?? 0),
+        }),
+        { icon: '⚠️', type: 'error', duration: 4000 },
+      )
+      return
+    }
     toast.show(t('settings.items.agentDeleteFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
   }
 }

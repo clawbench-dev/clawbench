@@ -73,6 +73,13 @@ func ServeTasks(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo,gocog
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "TaskFieldsRequired")
 			return
 		}
+		// Server-side fallback for the disabled-agent picker filter: a new task
+		// must not be created on an agent the user disabled (only affects
+		// creation — existing tasks keep running so they can be cleaned up).
+		if a := model.GetAgent(req.AgentID); a != nil && a.Disabled {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "AgentDisabled")
+			return
+		}
 		if req.TriggerMode == "" {
 			req.TriggerMode = "cron"
 		}

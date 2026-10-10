@@ -51,6 +51,7 @@ func setupTestDBForDiscovery(t *testing.T) *sql.DB {
 			acp_available_models TEXT NOT NULL DEFAULT '[]',
 			acp_config_options TEXT NOT NULL DEFAULT '',
 			auto_approve INTEGER NOT NULL DEFAULT 0,
+			disabled INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);

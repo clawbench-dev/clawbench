@@ -79,7 +79,7 @@ describe('useAgents', () => {
     syncModelFromAgent, getAgentThinkingEffortLevels, hasThinkingEffortLevels,
     updateAgentField, canRefreshModels, getEffectiveThinkingEffort,
     agentCanResume, supportsACP, supportsCLI, supportsDualTransport, getAgentTransport,
-    setDefaultAgent, duplicateAgent, deleteAgent, rescanAgents, hasPreferredMode, applyRefreshedModelList } = useAgents()
+    setDefaultAgent, duplicateAgent, deleteAgent, rescanAgents, hasPreferredMode, applyRefreshedModelList, selectableAgents } = useAgents()
 
   // Register mock identity updaters — normally done by useSessionIdentity at
   // module evaluation time, but that module is mocked so we wire manually.
@@ -135,9 +135,35 @@ describe('useAgents', () => {
     defaultAgentId.value = ''
     mockApiGet.mockReset()
 
+    // testAgents objects are module-level and shared across tests; clear any
+    // `disabled` flag a previous test set so state cannot leak forward.
+    for (const a of testAgents) delete (a as { disabled?: boolean }).disabled
+
     // Load test agents
     mockApiGet.mockResolvedValue({ agents: testAgents, defaultAgent: 'claude' })
     await loadAgents()
+  })
+
+  // --- selectableAgents (new-entry pickers hide disabled agents) ---
+
+  describe('selectableAgents', () => {
+    it('returns every agent when none is disabled', () => {
+      expect(selectableAgents.value).toHaveLength(3)
+    })
+
+    it('filters out disabled agents', () => {
+      agents.value[1].disabled = true
+      const ids = selectableAgents.value.map(a => a.id)
+      expect(ids).toEqual(['claude', 'simple'])
+    })
+
+    it('exposes disabled agents through the raw list (existing views still see them)', () => {
+      agents.value[0].disabled = true
+      // The raw list keeps every agent so existing sessions/tasks and the
+      // settings roster still resolve the disabled one by id.
+      expect(agents.value).toHaveLength(3)
+      expect(selectableAgents.value).toHaveLength(2)
+    })
   })
 
   // --- loadAgents ---

@@ -131,6 +131,33 @@ func TestServeGroupCreateInvalidMemberAborts(t *testing.T) {
 	require.Zero(t, count, "failed create must not leave a group row")
 }
 
+// A disabled agent must not be seeded into a NEW group (server-side fallback
+// for the picker filter), and — like an unknown id — must abort the whole
+// request rather than silently dropping the member.
+func TestServeGroupCreateDisabledMemberAborts(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Mark one of the default test agents disabled.
+	require.NotNil(t, model.Agents["claude"])
+	model.Agents["claude"].Disabled = true
+	defer func() { model.Agents["claude"].Disabled = false }()
+
+	req := newRequest(t, http.MethodPost, "/api/group/create", map[string]any{
+		"hostAgentId":    "codebuddy",
+		"memberAgentIds": []string{"codebuddy", "claude"},
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupCreate, req)
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+
+	var count int
+	require.NoError(t, store.ReadDB().QueryRow(
+		"SELECT COUNT(*) FROM chat_sessions WHERE session_type = 'group'",
+	).Scan(&count))
+	require.Zero(t, count, "failed create must not leave a group row")
+}
+
 // parallelDefault is the group's only remaining per-group setting (the
 // member-speech cap moved to the global config), so a PATCH carrying it must
 // succeed and round-trip.

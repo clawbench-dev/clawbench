@@ -38,13 +38,25 @@ vi.mock('vue-i18n', () => ({
         'settings.items.agentCommand': 'Command',
         'settings.items.agentModels': 'Models',
         'settings.items.agentModelCount': `${params?.count ?? 0} models`,
+        'settings.items.agentSessionCountLabel': 'Sessions',
+        'settings.items.agentSessionCountDesc': 'Conversations using this agent',
+        'settings.items.agentSessionCount': `${params?.count ?? 0} sessions`,
+        'settings.items.agentTaskCountLabel': 'Tasks',
+        'settings.items.agentTaskCountDesc': 'Tasks using this agent',
+        'settings.items.agentTaskCount': `${params?.count ?? 0} tasks`,
         'settings.items.agentAcpCommand': 'ACP Command',
         'settings.saveFailed': 'Save failed',
         'settings.items.agentDelete': 'Delete',
         'settings.items.agentDeleteConfirm': `Delete ${params?.name ?? ''}?`,
         'settings.items.agentDeleteDefault': 'Cannot delete default agent',
+        'settings.items.agentDeleteBlocked': `In use (${params?.sessions ?? 0} sessions, ${params?.tasks ?? 0} tasks)`,
         'settings.items.agentDeleted': 'Deleted',
         'settings.items.agentDeleteFailed': 'Delete failed',
+        'settings.items.agentDisable': 'Disable',
+        'settings.items.agentEnable': 'Enable',
+        'settings.items.agentDisabledToast': 'Agent disabled',
+        'settings.items.agentEnabledToast': 'Agent enabled',
+        'settings.items.agentCannotDisableDefault': 'The default agent cannot be disabled',
         'settings.items.agentNotFound': 'Agent not found or already removed',
         'settings.items.agentNotFoundHint': 'It may have been deleted.',
         'settings.items.agentBackToList': 'Back to agent list',
@@ -366,6 +378,138 @@ describe('SettingsAgentDetail', () => {
       const deleteRow = wrapper.find('.settings-agent-detail__delete-btn')
       await deleteRow.trigger('click')
       expect(mockToastShow).toHaveBeenCalledWith('Delete failed', expect.any(Object))
+    })
+
+    it('blocks deletion locally when the agent still has sessions', async () => {
+      mockDefaultAgentId.value = 'other-agent'
+      const wrapper = mountDetail({ sessionCount: 3, taskCount: 0 })
+      await wrapper.find('.settings-agent-detail__delete-btn').trigger('click')
+      // No confirm dialog, no delete call — a toast explains why.
+      expect(mockDialogConfirm).not.toHaveBeenCalled()
+      expect(mockDeleteAgent).not.toHaveBeenCalled()
+      expect(mockToastShow).toHaveBeenCalledWith(
+        expect.stringContaining('In use'),
+        expect.any(Object),
+      )
+    })
+
+    it('blocks deletion locally when the agent still has tasks', async () => {
+      mockDefaultAgentId.value = 'other-agent'
+      const wrapper = mountDetail({ sessionCount: 0, taskCount: 2 })
+      await wrapper.find('.settings-agent-detail__delete-btn').trigger('click')
+      expect(mockDialogConfirm).not.toHaveBeenCalled()
+      expect(mockDeleteAgent).not.toHaveBeenCalled()
+    })
+
+    it('blocks deletion locally when the agent is only a group member', async () => {
+      mockDefaultAgentId.value = 'other-agent'
+      const wrapper = mountDetail({ sessionCount: 0, taskCount: 0, membershipCount: 1 })
+      await wrapper.find('.settings-agent-detail__delete-btn').trigger('click')
+      expect(mockDialogConfirm).not.toHaveBeenCalled()
+      expect(mockDeleteAgent).not.toHaveBeenCalled()
+      expect(mockToastShow).toHaveBeenCalledWith(
+        expect.stringContaining('In use'),
+        expect.any(Object),
+      )
+    })
+
+    it('surfaces the backend AgentInUse 409 with its authoritative counts', async () => {
+      mockDefaultAgentId.value = 'other-agent'
+      mockDialogConfirm.mockResolvedValueOnce(true)
+      // Local counts are stale (0), so the dialog opens; the backend refuses.
+      mockDeleteAgent.mockRejectedValueOnce(
+        Object.assign(new Error('in use'), {
+          msgKey: 'AgentInUse',
+          detail: { SessionCount: 5, TaskCount: 1 },
+        }),
+      )
+      const wrapper = mountDetail({ sessionCount: 0, taskCount: 0 })
+      await wrapper.find('.settings-agent-detail__delete-btn').trigger('click')
+      expect(mockDeleteAgent).toHaveBeenCalledWith('test-agent')
+      expect(mockToastShow).toHaveBeenCalledWith(
+        expect.stringContaining('5 sessions'),
+        expect.any(Object),
+      )
+      // The generic failure toast must NOT also fire.
+      expect(mockToastShow).not.toHaveBeenCalledWith('Delete failed', expect.any(Object))
+    })
+  })
+
+  // ─── Disable / enable ──────────────────────────────
+  describe('disable toggle', () => {
+    it('renders the disable button with the Disable label when enabled', () => {
+      const wrapper = mountDetail({ disabled: false })
+      const btns = wrapper.findAll('.settings-agent-detail__action-btn')
+      // Copy + disable share the action-btn class; the disable one carries the label.
+      expect(btns.some(b => b.text() === 'Disable')).toBe(true)
+    })
+
+    it('shows Enable when the agent is disabled', () => {
+      const wrapper = mountDetail({ disabled: true })
+      const btns = wrapper.findAll('.settings-agent-detail__action-btn')
+      expect(btns.some(b => b.text() === 'Enable')).toBe(true)
+    })
+
+    it('patches disabled=true when toggled on', async () => {
+      mockDefaultAgentId.value = 'other-agent'
+      const wrapper = mountDetail({ disabled: false })
+      const vm = wrapper.vm as any
+      await vm.$.setupState.handleToggleDisabled()
+      expect(mockPatchAgentField).toHaveBeenCalledWith('test-agent', 'disabled', true)
+      expect(mockToastShow).toHaveBeenCalledWith('Agent disabled', expect.any(Object))
+    })
+
+    it('patches disabled=false when toggled off', async () => {
+      mockDefaultAgentId.value = 'other-agent'
+      const wrapper = mountDetail({ disabled: true })
+      const vm = wrapper.vm as any
+      await vm.$.setupState.handleToggleDisabled()
+      expect(mockPatchAgentField).toHaveBeenCalledWith('test-agent', 'disabled', false)
+      expect(mockToastShow).toHaveBeenCalledWith('Agent enabled', expect.any(Object))
+    })
+
+    it('refuses to disable the default agent', async () => {
+      mockDefaultAgentId.value = 'test-agent'
+      const wrapper = mountDetail({ disabled: false })
+      const vm = wrapper.vm as any
+      await vm.$.setupState.handleToggleDisabled()
+      expect(mockPatchAgentField).not.toHaveBeenCalled()
+      expect(mockToastShow).toHaveBeenCalledWith(
+        'The default agent cannot be disabled',
+        expect.any(Object),
+      )
+    })
+
+    it('disables the toggle button for the default agent', () => {
+      mockDefaultAgentId.value = 'test-agent'
+      const wrapper = mountDetail({ disabled: false })
+      const btns = wrapper.findAll('.settings-agent-detail__action-btn')
+      const toggle = btns.find(b => b.text() === 'Disable')
+      expect(toggle?.attributes('disabled')).toBeDefined()
+    })
+  })
+
+  // ─── Usage counts (Information section) ──────────────────────────────
+  describe('usage counts', () => {
+    // SettingsItem is stubbed, so the count strings ride on the stub's
+    // model-value prop rather than rendered text.
+    function countValues(wrapper: ReturnType<typeof mountDetail>): string[] {
+      return wrapper.findAllComponents({ name: 'SettingsItem' })
+        .map(s => s.props('modelValue') as string)
+    }
+
+    it('renders session and task counts from the agent record', () => {
+      const wrapper = mountDetail({ sessionCount: 4, taskCount: 2 })
+      const values = countValues(wrapper)
+      expect(values).toContain('4 sessions')
+      expect(values).toContain('2 tasks')
+    })
+
+    it('renders zero counts when the fields are absent', () => {
+      const wrapper = mountDetail()
+      const values = countValues(wrapper)
+      expect(values).toContain('0 sessions')
+      expect(values).toContain('0 tasks')
     })
   })
 

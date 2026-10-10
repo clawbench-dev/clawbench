@@ -1676,6 +1676,17 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Migrate: add disabled column to agents. A disabled agent is hidden from
+	// every new-entry picker (new session / task / group member) while its
+	// existing sessions and tasks keep running. Default 0 = enabled.
+	var hasAgentDisabled int
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='disabled'").Scan(&hasAgentDisabled)
+	if hasAgentDisabled == 0 {
+		if _, err := store.WriteExec("ALTER TABLE agents ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0"); err != nil {
+			return fmt.Errorf("failed to add disabled column to agents: %w", err)
+		}
+	}
+
 	// Migrate: ensure the project scope column on the quick-send /
 	// quick-command tables (project-scoped / 仅本项目 items). NULL means global;
 	// a value scopes the item to that project only.

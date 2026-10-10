@@ -90,6 +90,7 @@ CREATE TABLE IF NOT EXISTS agents (
 	acp_available_models TEXT NOT NULL DEFAULT '[]',
 	acp_config_options TEXT NOT NULL DEFAULT '',
 	auto_approve INTEGER NOT NULL DEFAULT 0,
+	disabled INTEGER NOT NULL DEFAULT 0,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -105,7 +106,7 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 			preferred_mode, preferred_model, preferred_thinking_effort,
 			custom_system_prompt, avatar, models, models_auto_detected,
 			sort_order,
-			transport, acp_command, auto_approve
+			transport, acp_command, auto_approve, disabled
 		FROM agents ORDER BY id
 	`)
 	if err != nil {
@@ -117,7 +118,7 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 	for rows.Next() {
 		a := &model.Agent{}
 		var modelsJSON, levelsJSON string
-		var modelsAutoDetected, autoApprove int
+		var modelsAutoDetected, autoApprove, disabled int
 
 		err := rows.Scan(
 			&a.ID, &a.Name, &a.Specialty, &a.Backend, &a.Command,
@@ -125,7 +126,7 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 			&a.PreferredMode, &a.PreferredModel, &a.PreferredThinkingEffort,
 			&a.CustomSystemPrompt, &a.Avatar, &modelsJSON, &modelsAutoDetected,
 			&a.SortOrder,
-			&a.Transport, &a.AcpCommand, &autoApprove,
+			&a.Transport, &a.AcpCommand, &autoApprove, &disabled,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan agent: %w", err)
@@ -133,6 +134,7 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 
 		a.ModelsAutoDetected = modelsAutoDetected == 1
 		a.AutoApprove = autoApprove == 1
+		a.Disabled = disabled == 1
 
 		// Parse models JSON
 		if modelsJSON != "" && modelsJSON != "[]" {
@@ -194,6 +196,11 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 		autoApprove = 1
 	}
 
+	disabled := 0
+	if agent.Disabled {
+		disabled = 1
+	}
+
 	if IsUserNickname(agent.Name) {
 		return fmt.Errorf("save agent %s: %w", agent.ID, ErrAgentNameReserved)
 	}
@@ -207,8 +214,8 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 			preferred_mode, preferred_model, preferred_thinking_effort,
 			custom_system_prompt, avatar, models, models_auto_detected,
 			sort_order,
-			transport, acp_command, auto_approve)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			transport, acp_command, auto_approve, disabled)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name = excluded.name,
 			specialty = excluded.specialty,
@@ -227,13 +234,14 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 			transport = excluded.transport,
 			acp_command = excluded.acp_command,
 			auto_approve = excluded.auto_approve,
+			disabled = excluded.disabled,
 			updated_at = CURRENT_TIMESTAMP
 	`, agent.ID, agent.Name, agent.Specialty, agent.Backend, agent.Command,
 		agent.ThinkingEffort, string(levelsJSON),
 		agent.PreferredMode, agent.PreferredModel, agent.PreferredThinkingEffort,
 		agent.CustomSystemPrompt, agent.Avatar, string(modelsJSON), modelsAutoDetected,
 		sortOrder,
-		transport, agent.AcpCommand, autoApprove)
+		transport, agent.AcpCommand, autoApprove, disabled)
 	if err != nil {
 		return fmt.Errorf("save agent %s: %w", agent.ID, err)
 	}
@@ -250,6 +258,113 @@ func DeleteAgent(id string) error {
 		return fmt.Errorf("delete agent %s: %w", id, err)
 	}
 	return nil
+}
+
+// AgentUsage reports how many things still reference an agent, so deletion can
+// be refused while any remain and the config panel can display the counts.
+//
+// The three numbers answer different questions and are deliberately NOT merged:
+//
+//   - Sessions counts only INTERACTIVE sessions (session_type IN VisibleSessionTypeInClause,
+//     i.e. 'chat','group'), archived included. Task-execution sessions
+//     (session_type='scheduled') are excluded on purpose: deleting a task only
+//     ARCHIVES its execution sessions, so counting them would make the session
+//     count impossible to clear (a permanent deletion deadlock). Tasks are
+//     counted separately below.
+//   - Tasks counts scheduled_tasks rows (any status).
+//   - Memberships counts ACTIVE group-member rows (session_type='group_member',
+//     archived=0). A left member is archived and no longer blocks deletion; the
+//     host row is never archived, so it always blocks (the host cannot be
+//     removed from its group).
+type AgentUsageCounts struct {
+	Sessions    int
+	Tasks       int
+	Memberships int
+}
+
+// Total returns the sum used by the deletion guard.
+func (u AgentUsageCounts) Total() int {
+	return u.Sessions + u.Tasks + u.Memberships
+}
+
+// GetAgentUsage returns the session / task / membership counts for an agent.
+func GetAgentUsage(agentID string) (AgentUsageCounts, error) {
+	var u AgentUsageCounts
+	err := store.ReadDB().QueryRow(
+		"SELECT COUNT(*) FROM chat_sessions WHERE agent_id = ? AND session_type IN ("+store.VisibleSessionTypeInClause+")",
+		agentID,
+	).Scan(&u.Sessions)
+	if err != nil {
+		return u, fmt.Errorf("count sessions for agent %s: %w", agentID, err)
+	}
+
+	err = store.ReadDB().QueryRow(
+		"SELECT COUNT(*) FROM scheduled_tasks WHERE agent_id = ?",
+		agentID,
+	).Scan(&u.Tasks)
+	if err != nil {
+		return u, fmt.Errorf("count tasks for agent %s: %w", agentID, err)
+	}
+
+	err = store.ReadDB().QueryRow(
+		"SELECT COUNT(*) FROM chat_sessions WHERE agent_id = ? AND session_type = ? AND archived = 0",
+		agentID, store.SessionTypeGroupMember,
+	).Scan(&u.Memberships)
+	if err != nil {
+		return u, fmt.Errorf("count group memberships for agent %s: %w", agentID, err)
+	}
+
+	return u, nil
+}
+
+// GetAllAgentUsage returns the same counts as GetAgentUsage for EVERY agent in
+// three grouped queries. The list endpoint (GET /api/agents) uses this instead
+// of calling GetAgentUsage per agent: the latter is 3 queries each (N+1), and
+// the read pool is tiny, so a 14-agent list would issue ~42 sequential scans.
+// Agents with no rows are absent from the map (callers treat missing as zero).
+func GetAllAgentUsage() (map[string]AgentUsageCounts, error) {
+	out := make(map[string]AgentUsageCounts)
+
+	scan := func(query string, apply func(u *AgentUsageCounts, count int), args ...any) error {
+		rows, err := store.ReadDB().Query(query, args...)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			var agentID string
+			var count int
+			if err := rows.Scan(&agentID, &count); err != nil {
+				return err
+			}
+			u := out[agentID]
+			apply(&u, count)
+			out[agentID] = u
+		}
+		return rows.Err()
+	}
+
+	if err := scan(
+		"SELECT agent_id, COUNT(*) FROM chat_sessions WHERE agent_id != '' AND session_type IN ("+store.VisibleSessionTypeInClause+") GROUP BY agent_id",
+		func(u *AgentUsageCounts, c int) { u.Sessions = c },
+	); err != nil {
+		return nil, fmt.Errorf("count sessions by agent: %w", err)
+	}
+	if err := scan(
+		"SELECT agent_id, COUNT(*) FROM scheduled_tasks WHERE agent_id != '' GROUP BY agent_id",
+		func(u *AgentUsageCounts, c int) { u.Tasks = c },
+	); err != nil {
+		return nil, fmt.Errorf("count tasks by agent: %w", err)
+	}
+	if err := scan(
+		"SELECT agent_id, COUNT(*) FROM chat_sessions WHERE agent_id != '' AND session_type = ? AND archived = 0 GROUP BY agent_id",
+		func(u *AgentUsageCounts, c int) { u.Memberships = c },
+		store.SessionTypeGroupMember,
+	); err != nil {
+		return nil, fmt.Errorf("count group memberships by agent: %w", err)
+	}
+
+	return out, nil
 }
 
 // PatchAgent updates only the original user-editable fields (preferred_model, preferred_thinking_effort, transport).
@@ -277,6 +392,7 @@ type AgentPatch struct {
 	Avatar                  *string
 	SortOrder               *int
 	AutoApprove             *bool
+	Disabled                *bool
 }
 
 // PatchAgentFields updates only the non-nil fields in the AgentPatch struct.
@@ -325,11 +441,10 @@ func PatchAgentFields(id string, patch AgentPatch) error {
 		addSet("sort_order", *patch.SortOrder)
 	}
 	if patch.AutoApprove != nil {
-		autoApprove := 0
-		if *patch.AutoApprove {
-			autoApprove = 1
-		}
-		addSet("auto_approve", autoApprove)
+		addSet("auto_approve", boolToInt(*patch.AutoApprove))
+	}
+	if patch.Disabled != nil {
+		addSet("disabled", boolToInt(*patch.Disabled))
 	}
 
 	if len(setClauses) == 0 {
@@ -358,6 +473,15 @@ func ensureAgentNameFree(id, name string) error {
 		return fmt.Errorf("patch agent %s: %w", id, ErrAgentNameTaken)
 	}
 	return nil
+}
+
+// boolToInt maps a bool to the 0/1 integer SQLite stores for a flag column.
+// Split out of PatchAgentFields to keep its branch count in budget.
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // normalizeAgentTransport maps an empty transport to the CLI default. Split out

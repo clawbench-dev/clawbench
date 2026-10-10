@@ -1,4 +1,4 @@
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { apiGet, apiPatch, apiPost, apiDelete } from '@/utils/api'
 import { gt } from '@/composables/useLocale'
 import { updatePlanEntries } from '@/composables/usePlanProgress'
@@ -54,11 +54,23 @@ interface AgentRecord {
   supportsCLI?: boolean
   supportsMidTurn?: boolean
   autoApprove?: boolean
+  /** Hidden from every new-entry picker (new session / task / group member). */
+  disabled?: boolean
+  /** Derived usage counts from GET /api/agents (not persisted). */
+  sessionCount?: number
+  taskCount?: number
+  membershipCount?: number
 }
 
 const agents = ref<AgentRecord[]>([])
 const defaultAgentId = ref('')
 let loadPromise: Promise<void> | null = null
+
+// Agents that may be chosen at a NEW-entry point (new session / new task /
+// group member add). Disabled agents are filtered out here so every picker
+// (AgentSelectorDrawer) hides them from one place. Existing sessions/tasks
+// keep their disabled agent — this only gates creation.
+const selectableAgents = computed(() => agents.value.filter(a => !a.disabled))
 
 // Whether the agent list has been fetched successfully. The list starts empty,
 // so "id not in list" is ambiguous between "not loaded yet" and "deleted" —
@@ -598,7 +610,13 @@ async function duplicateAgent(sourceId: string, newName: string): Promise<string
     return created?.id ?? ''
 }
 
-/** Delete an agent by ID. */
+/**
+ * Delete an agent by ID.
+ *
+ * The backend refuses (409, msgKey=AgentInUse) while the agent still has
+ * sessions, tasks, or active group memberships. The error is re-thrown with
+ * its msgKey/detail intact so the caller can show the authoritative counts.
+ */
 async function deleteAgent(agentId: string): Promise<void> {
     await apiDelete('/api/agents', { body: { id: agentId } })
     await loadAgents(true)
@@ -613,6 +631,8 @@ async function rescanAgents(): Promise<void> {
 export function useAgents() {
     return {
         agents,
+        // Agents eligible for a NEW entry point (disabled filtered out).
+        selectableAgents,
         defaultAgentId,
         // True once the list has loaded successfully — callers use it to tell
         // "agent deleted" apart from "not fetched yet".

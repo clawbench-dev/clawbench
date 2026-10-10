@@ -102,12 +102,17 @@ func groupSessionLimitOK(w http.ResponseWriter, r *http.Request, projectPath str
 }
 
 // groupMemberSpecs resolves each agent id to a GroupMemberSpec. ok is false when
-// any id is unknown, in which case the whole request must fail (nothing created).
+// any id is unknown OR disabled, in which case the whole request must fail
+// (nothing created). A disabled agent must not be seeded into a NEW group, just
+// as it is hidden from every other new-entry picker.
 func groupMemberSpecs(agentIDs []string) ([]service.GroupMemberSpec, bool) {
 	specs := make([]service.GroupMemberSpec, 0, len(agentIDs))
 	for _, agentID := range agentIDs {
 		backend, _, _, _, ok := resolveAgentConfig(agentID)
 		if !ok {
+			return nil, false
+		}
+		if a := model.GetAgent(agentID); a != nil && a.Disabled {
 			return nil, false
 		}
 		specs = append(specs, service.GroupMemberSpec{
@@ -228,6 +233,12 @@ func serveGroupMembersAdd(w http.ResponseWriter, r *http.Request, projectPath st
 	for _, agentID := range req.AgentIDs {
 		backend, _, _, _, ok := resolveAgentConfig(agentID)
 		if !ok {
+			continue
+		}
+		// Server-side fallback for the disabled-agent picker filter: a disabled
+		// agent must not be added as a NEW group member. Skipped (like unknown
+		// ids) rather than failing the whole batch.
+		if a := model.GetAgent(agentID); a != nil && a.Disabled {
 			continue
 		}
 		specs = append(specs, service.GroupMemberSpec{

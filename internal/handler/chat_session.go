@@ -212,6 +212,16 @@ func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 		agentID := req.AgentID
 		resolvedAgentID := agentID
 		agentSource := "default"
+		// Server-side fallback for the disabled-agent picker filter: an old
+		// client (or a race) must not open a NEW session on an agent the user
+		// disabled. Only an EXPLICIT agent choice is checked — the default
+		// fallback can never be disabled (the PATCH guard refuses it).
+		if agentID != "" {
+			if a := model.GetAgent(agentID); a != nil && a.Disabled {
+				writeLocalizedErrorf(w, r, http.StatusBadRequest, "AgentDisabled")
+				return
+			}
+		}
 		backend2, _, _, _, ok := resolveAgentConfig(agentID)
 		if !ok {
 			writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "NoAgentsAvailable")

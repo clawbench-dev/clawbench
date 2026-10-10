@@ -147,6 +147,9 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		// so it is the one key most likely to be added on only one side.
 		"AutoContinue",
 		"InvalidAgentAvatar",
+		"AgentInUse",
+		"AgentDisabled",
+		"CannotDisableDefaultAgent",
 		"GroupYourTurn",
 		"GroupDiscussionLimitReached",
 	}
