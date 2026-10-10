@@ -89,6 +89,23 @@ return candidate
 
 `memberLookups.byName`（`group_orchestrator.go:1293`）与前端 `resolveByName`（`useGroupMembers.ts:37`）都按名字匹配。保证成员名唯一后，主持人路由、自由模式 @、用户 @ 自动补全都能精确命中单个实例。
 
+### 4.2.1 路由标识：AI 用名字、用户用成员行 id（不对称是有意的）
+
+解析入口 `lookupMember`（`group_orchestrator.go:1310-1317`）**先按成员行 id 精确匹配，再按显示名匹配**。两侧用不同标识：
+
+| 来源 | target 取值 | 原因 |
+|---|---|---|
+| **AI（主持人/成员）** | **显示名**（`<clawbench-mention targets="Claude 2">`） | LLM 拿不到成员行 id，只能写名字（`BuildHostSystemPrompt`，`group_prompt.go:69`） |
+| **用户 @ 提及** | **成员行 id**（`buildMentionTag`，`groupRouting.ts:443`） | 前端在 @ 菜单选中时手里就有 id；用 id 是精确引用，改名/重名都不会误路由 |
+
+**不统一为名字的原因**：
+
+- **各用各的最强标识**：用户侧此刻有 id，用 id 绕过归一化/唯一性/大小写等一整类匹配脆弱点；AI 侧只有名字。
+- **名字"固化"≠"永不变"**：固化只挡住"智能体改名"；若将来加"成员改名"，或用户手改输入框里的标签，名字路由会解析失败，id 不会。
+- **避免"一物两用"**：名字是显示标识、id 是身份标识，分开与 §3.1 的取舍一致。
+
+**对本需求的意义**：AI 之间用名字 ⇒ 名字必须唯一（否则 `byName` 覆盖、成员不可达），这正是当前去重的根因，也是昵称方案（`Claude` / `Claude 2`）解锁多实例的关键；用户侧本就是 id 路由，**天然支持多实例、前端无需改**。
+
 ### 4.3 主持人的实例归属
 
 主持人仍以 **agent id** 标识（`hostAgentId`）。建群时取该 agent 的**第一实例**为 `hostMemberId`（D4）。`insertGroupMemberRows` 的 host 匹配逻辑（`group_store.go:268`）需保证在重复 agent 下命中的是首个实例。
