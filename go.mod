@@ -17,7 +17,7 @@ require (
 	github.com/larksuite/oapi-sdk-go/v3 v3.9.9
 	github.com/nicksnyder/go-i18n/v2 v2.6.1
 	github.com/odvcencio/gotreesitter v0.20.0
-	github.com/open-dingtalk/dingtalk-stream-sdk-go v0.9.1
+	github.com/open-dingtalk/dingtalk-stream-sdk-go v0.9.2-beta.1
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/sahilm/fuzzy v0.1.3
 	github.com/shirou/gopsutil/v3 v3.24.5
