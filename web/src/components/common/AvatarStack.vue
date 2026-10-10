@@ -31,9 +31,10 @@ export interface StackMember {
   backend: string
   /** Draws the accent ring (the group host). */
   isHost?: boolean
-  /** Pre-resolved custom avatar SVG. Used by hosts that cannot reach the agent
-   *  registry (the public share page freezes avatars into its snapshot), and
-   *  takes precedence over `getAgentAvatar(agentId)`. */
+  /** Pre-resolved custom avatar SVG. Sources include the public share page
+   *  (which freezes avatars into its snapshot) and in-app group-member
+   *  snapshots (a member carries its own frozen avatar). Takes precedence over
+   *  `getAgentAvatar(agentId)`. */
   avatar?: string
 }
 
