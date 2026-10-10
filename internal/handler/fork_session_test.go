@@ -123,6 +123,32 @@ func TestServeForkSession_InvalidAgentID(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+// A fork with an explicit DISABLED agent override creates a new session, so it
+// must be rejected like the other new-entry paths (the picker hides disabled
+// agents, but the server is the authoritative gate).
+func TestServeForkSession_DisabledAgentID(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.Agents["disabled-agent"] = &model.Agent{ID: "disabled-agent", Backend: "codebuddy", Disabled: true}
+	t.Cleanup(func() { delete(model.Agents, "disabled-agent") })
+
+	sessID, err := service.CreateSession(env.ProjectDir, "claude", "Original", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	_, err = service.AddChatMessage(env.ProjectDir, "claude", sessID, "user", "Hello", nil, false, "")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPost, "/api/ai/session/fork", map[string]any{"sessionId": sessID, "agentId": "disabled-agent"})
+	req = withProjectCookie(req, env.ProjectDir)
+	req.AddCookie(&http.Cookie{Name: model.ScopedCookieName("chat_session_id"), Value: sessID})
+
+	w := callHandler(ServeForkSession, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "AgentDisabled", resp["msgKey"])
+}
+
 func TestServeForkSession_SessionNotFound(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()

@@ -1662,6 +1662,8 @@ paths:
         **群会话不可分叉**（`400`）：分叉会硬编码 `session_type='chat'` 并复制源会话的
         backend/agent，而群时间线的消息带**成员行 id**——新单聊里解析不到成员，
         表现为一整屏无归属的 AI 发言。与回溯（rewind）的处理对称（决策 #74）。
+        显式指定 `agentId` 时，若该 agent 已被禁用，返回 `400` + `msgKey=AgentDisabled`
+        （分叉会新建会话，故与新建会话同样拦截禁用智能体）。
       operationId: sessionFork
       requestBody:
         required: false
@@ -1680,7 +1682,7 @@ paths:
         "200":
           description: 新会话
         "400":
-          description: 分叉点非法，或源会话是群（`msgKey=GroupNotForkable`）
+          description: 分叉点非法，或源会话是群（`msgKey=GroupNotForkable`），或目标 agent 已被禁用（`msgKey=AgentDisabled`）
 
   /api/ai/session/btw:
     post:
@@ -3865,10 +3867,11 @@ paths:
       tags: [Agents]
       summary: 删除 agent
       description: |
-        删除一个 agent。**仅当该 agent 不再被使用时才允许删除**：只要还存在交互
-        会话（`chat`/`group`，含归档）、定时任务、或未离场的群成员关系，就返回
-        `409` + `msgKey=AgentInUse`，并在 `detail` 中给出
-        `{SessionCount, TaskCount, MembershipCount}`。默认智能体不可删除
+        删除一个 agent。**仅当该 agent 不再被使用时才允许删除**：只要还存在该 agent
+        参与的会话（1:1 聊天 `chat`，含归档；或它作为活跃成员的群聊
+        `group_member`）、定时任务，就返回 `409` + `msgKey=AgentInUse`，并在
+        `detail` 中给出 `{SessionCount, TaskCount, MembershipCount}`
+        （`MembershipCount` 是 `SessionCount` 的子集）。默认智能体不可删除
         （`CannotDeleteDefaultAgent`）。
       operationId: agentsDelete
       responses:

@@ -903,6 +903,13 @@ func ServeForkSession(w http.ResponseWriter, r *http.Request) {
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidAgentID")
 			return
 		}
+		// A fork creates a NEW session, so the disabled-agent fallback applies
+		// here too (the picker hides disabled agents, but the server is the
+		// authoritative gate).
+		if a := model.GetAgent(overrideAgentID); a != nil && a.Disabled {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "AgentDisabled")
+			return
+		}
 	}
 
 	title := buildForkTitle(r, sourceID)

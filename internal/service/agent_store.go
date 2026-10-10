@@ -573,6 +573,9 @@ func DuplicateAgent(sourceID, newName string) (*model.Agent, error) {
 		AcpCommand:              source.AcpCommand,
 		SortOrder:               source.SortOrder,
 		AutoApprove:             source.AutoApprove,
+		// Disabled is deliberately NOT copied: a duplicate is a new, usable
+		// agent — inheriting "disabled" would hand the user a copy that is
+		// invisible in every picker with no hint why.
 	}
 	copy(clone.ThinkingEffortLevels, source.ThinkingEffortLevels)
 	if len(source.Models) > 0 {

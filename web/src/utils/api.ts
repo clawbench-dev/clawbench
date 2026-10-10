@@ -150,7 +150,16 @@ export async function apiDelete<T = unknown>(url: string, opts: ApiOptions = {})
         }
         const resp = await fetch(url, init)
         const data = await resp.json().catch(() => ({})) as Record<string, unknown>
-        if (!resp.ok) throw new Error(data.error ? String(data.error) : resp.statusText)
+        if (!resp.ok) {
+            const err = new Error(data.error ? String(data.error) : resp.statusText)
+            const typedErr = err as Error & { status?: number; msgKey?: string; detail?: unknown }
+            typedErr.status = resp.status
+            // Carry msgKey/detail like apiPost: callers (e.g. agent deletion)
+            // branch on msgKey and read detail for authoritative counts.
+            if (data.msgKey) typedErr.msgKey = String(data.msgKey)
+            if (data.detail) typedErr.detail = data.detail
+            throw err
+        }
         return data as T
     } finally {
         cleanup()
