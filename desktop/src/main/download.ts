@@ -5,6 +5,7 @@ import http from 'node:http'
 import https from 'node:https'
 import { getStore } from './store'
 import { getMainWindow } from './window'
+import { getCookieHeaderForUrl } from './clientLog'
 
 function pickSavePath(defaultName: string): Promise<string | null> {
   return dialog.showSaveDialog({ defaultPath: defaultName }).then(r => r.canceled || !r.filePath ? null : r.filePath)
@@ -59,9 +60,23 @@ interface StreamOptions {
  */
 async function fetchToFile(url: string, dest: string, opts: StreamOptions = {}): Promise<void> {
   const { downloadId } = opts
+  // The main process has no `document.cookie`; the auth cookies live in
+  // Electron's jar (see clientLog.getCookieHeaderForUrl). Without them the
+  // authenticated /api/fs/raw/ endpoint answers 401 (or 403 with no project
+  // cookie), so every desktop download would fail silently at the transfer —
+  // the save dialog still appears, making the failure look like "nothing
+  // happened". Read them before opening the request.
+  const cookie = await getCookieHeaderForUrl(url)
   await new Promise<void>((resolve, reject) => {
     const lib = url.startsWith('https:') ? https : http
-    const req = lib.get(url, (res: import('node:http').IncomingMessage) => {
+    const req = lib.get(url, {
+      headers: cookie ? { Cookie: cookie } : undefined,
+      // A self-hosted server commonly uses a self-signed certificate. The
+      // shell already talks to it this way elsewhere (tunnel.ts, clientLog.ts,
+      // h2Transport.ts); refusing it here would break downloads on exactly
+      // those installs. The session cookie, not the cert, is the credential.
+      rejectUnauthorized: false,
+    }, (res: import('node:http').IncomingMessage) => {
       if (res.statusCode && res.statusCode >= 400) {
         res.resume()
         if (downloadId !== undefined) emitProgress(downloadId, 0, 0, true, true)

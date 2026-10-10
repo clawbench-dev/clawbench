@@ -100,6 +100,31 @@ export async function getSessionCookie(): Promise<string | null> {
 }
 
 /**
+ * Build a `Cookie` request header for `url` from Electron's cookie jar.
+ *
+ * The main process has no `document.cookie`; the cookies the server sets (the
+ * session cookie AND the port-scoped project cookie) live in Electron's jar.
+ * Unlike getSessionCookie, this returns EVERY cookie applicable to the URL, in
+ * one jar read — the authenticated `/api/fs/raw/` endpoint needs the session
+ * cookie for auth AND the project cookie for requireProject(), so matching only
+ * the session name would still answer 403. Scoping the lookup to the URL lets
+ * the jar apply the same domain/path rules the renderer would.
+ *
+ * Returns undefined when the jar has nothing for this URL (not logged in), so
+ * the header is simply omitted and the server answers 401 rather than the
+ * request being malformed.
+ */
+export async function getCookieHeaderForUrl(url: string): Promise<string | undefined> {
+  try {
+    const cookies = await session.defaultSession.cookies.get({ url })
+    if (cookies.length === 0) return undefined
+    return cookies.map((c) => `${c.name}=${c.value}`).join('; ')
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * POST one batch. Returns silently on any failure — the server may be
  * unreachable, and a log relay must not surface errors of its own (nor retry
  * into a storm).

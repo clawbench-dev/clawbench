@@ -13,9 +13,10 @@ import path from 'node:path'
  * as `clawbench-download-progress`.
  */
 
-const { sentEvents, httpGetImpl } = vi.hoisted(() => ({
+const { sentEvents, httpGetImpl, cookieHeader } = vi.hoisted(() => ({
   sentEvents: [] as Array<{ channel: string; payload: unknown }>,
   httpGetImpl: vi.fn(),
+  cookieHeader: { value: undefined as string | undefined },
 }))
 
 vi.mock('electron', () => ({
@@ -34,6 +35,14 @@ vi.mock('./window', () => ({
       send: (channel: string, payload: unknown) => { sentEvents.push({ channel, payload }) },
     },
   }),
+}))
+
+// The download reads the auth cookies from Electron's jar (the main process has
+// no document.cookie). Mock the reader so the tests can assert the header is
+// actually attached, and so importing ./clientLog does not pull in electron's
+// `app`/`session` mocks this file does not provide.
+vi.mock('./clientLog', () => ({
+  getCookieHeaderForUrl: async () => cookieHeader.value,
 }))
 
 vi.mock('node:http', () => ({ default: { get: httpGetImpl } }))
@@ -73,7 +82,7 @@ function fakeResponse(opts: {
   req.destroy = vi.fn(() => {
     queueMicrotask(() => req.emit('error', Object.assign(new Error('aborted'), { code: 'ECONNRESET' })))
   })
-  httpGetImpl.mockImplementation((_url: string, cb: (r: unknown) => void) => {
+  httpGetImpl.mockImplementation((_url: string, _opts: unknown, cb: (r: unknown) => void) => {
     queueMicrotask(() => cb(res))
     return req
   })
@@ -87,6 +96,7 @@ describe('desktop download progress', () => {
   beforeEach(() => {
     sentEvents.length = 0
     httpGetImpl.mockReset()
+    cookieHeader.value = undefined
     dir = mkdtempSync(path.join(tmpdir(), 'clawbench-dl-'))
     dest = path.join(dir, 'out.bin')
     vi.mocked(dialog.showSaveDialog).mockResolvedValue({ canceled: false, filePath: dest })
@@ -120,6 +130,43 @@ describe('desktop download progress', () => {
 
     expect(readFileSync(dest, 'utf8')).toBe('hello')
     expect(shell.showItemInFolder).toHaveBeenCalledWith(dest)
+  })
+
+  it('attaches the session cookies so the authenticated endpoint accepts it', async () => {
+    // Without a Cookie header the server answers 401/403 and the download
+    // silently writes nothing (the save dialog still appeared first). This is
+    // the regression: the main process has no document.cookie, so it must read
+    // the jar itself.
+    cookieHeader.value = 'clawbench_session=tok; clawbench_project=%2Fproj'
+    fakeResponse({ contentLength: 5, chunks: [Buffer.from('hello')] })
+
+    await downloadFileByPath('data/out.bin', 'out.bin', 21)
+
+    expect(httpGetImpl).toHaveBeenCalled()
+    const opts = (httpGetImpl.mock.calls[0] as unknown[])[1] as { headers?: Record<string, string> }
+    expect(opts.headers?.Cookie).toBe('clawbench_session=tok; clawbench_project=%2Fproj')
+  })
+
+  it('omits the Cookie header when not logged in (no cookies in the jar)', async () => {
+    cookieHeader.value = undefined
+    fakeResponse({ contentLength: 5, chunks: [Buffer.from('hello')] })
+
+    await downloadFileByPath('data/out.bin', 'out.bin', 22)
+
+    const opts = (httpGetImpl.mock.calls[0] as unknown[])[1] as { headers?: Record<string, string> }
+    expect(opts.headers).toBeUndefined()
+  })
+
+  it('accepts a self-signed certificate (rejectUnauthorized: false)', async () => {
+    // A self-hosted server commonly uses a self-signed cert; refusing it would
+    // break downloads on exactly those installs. The cookie is the credential,
+    // matching tunnel.ts / clientLog.ts / h2Transport.ts.
+    fakeResponse({ contentLength: 5, chunks: [Buffer.from('hello')] })
+
+    await downloadFileByPath('data/out.bin', 'out.bin', 23)
+
+    const opts = (httpGetImpl.mock.calls[0] as unknown[])[1] as { rejectUnauthorized?: boolean }
+    expect(opts.rejectUnauthorized).toBe(false)
   })
 
   it('reports total 0 (indeterminate) when the server sends no Content-Length', async () => {
