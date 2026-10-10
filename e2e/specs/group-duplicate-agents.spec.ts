@@ -4,8 +4,9 @@ import { ChatPage } from '../pages/chat.page'
 /**
  * E2E for adding the SAME agent to a group multiple times (multi-instance) and
  * the auto-assigned unique nicknames. Runs against the real backend so the
- * naming rule (bare name, then " 2", " 3") and the roster wiring are exercised
- * end to end.
+ * naming rule (first instance keeps the agent's own name; later instances draw
+ * the built-in English name pool — "Alice", "Bob", …) and the roster wiring are
+ * exercised end to end.
  */
 test.describe.serial('group duplicate agents', () => {
   test.skip(({ browserName }) => browserName !== 'chromium', 'serial group test')
@@ -37,18 +38,25 @@ test.describe.serial('group duplicate agents', () => {
     const names = members.map(m => m.name)
     // Names must be unique across the whole roster.
     expect(new Set(names).size).toBe(names.length)
-    // acp-mock-b instances derive from its DISPLAY name "ACP Mock Agent B":
-    // "ACP Mock Agent B", "ACP Mock Agent B 2", "ACP Mock Agent B 3".
+    // Naming is assigned in SPEC order (the order of memberAgentIds), drawing
+    // pool names from groupNamePool[0] upward: ["acp-mock", "acp-mock",
+    // "acp-mock-b", "acp-mock-b", "acp-mock-b"] gives
+    //   acp-mock   → "ACP Mock Agent" (first, keeps own name), "Alice" (pool[0])
+    //   acp-mock-b → "ACP Mock Agent B" (first), then "Bob" (pool[1]), "Carol" (pool[2])
+    // (the acp-mock duplicate consumed pool[0] first, so acp-mock-b's duplicates
+    //  continue from pool[1]).
     const bNames = members.filter(m => m.agentId === 'acp-mock-b').map(m => m.name).sort()
-    expect(bNames).toEqual(['ACP Mock Agent B', 'ACP Mock Agent B 2', 'ACP Mock Agent B 3'])
-    // acp-mock instances: the first keeps the bare name, the second is " 2".
+    expect(bNames).toEqual(['ACP Mock Agent B', 'Bob', 'Carol'])
+    // acp-mock instances: the first keeps the bare name, the second draws a pool name.
     const aNames = members.filter(m => m.agentId === 'acp-mock').map(m => m.name).sort()
-    expect(aNames).toEqual(['ACP Mock Agent', 'ACP Mock Agent 2'])
-    // " 1" is never produced.
-    expect(names.some(n => n.endsWith(' 1'))).toBe(false)
+    expect(aNames).toEqual(['ACP Mock Agent', 'Alice'])
+    // The pre-pool "<name> <ordinal>" form never appears while the pool has room.
+    expect(names.every(n => !/\s\d+$/.test(n))).toBe(true)
+    // Pool names are assigned, not the agent's display name plus an ordinal.
+    expect(names).toContain('Alice')
   })
 
-  test('add-members API continues the ordinal (no reuse)', async ({ page }) => {
+  test('add-members API draws the next pool name (no reuse)', async ({ page }) => {
     const result = await page.evaluate(async () => {
       const post = async (url: string, body: unknown) =>
         (await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json()
@@ -66,7 +74,9 @@ test.describe.serial('group duplicate agents', () => {
     })
 
     expect(result.ok).toBe(true)
-    expect((result as { bNames: string[] }).bNames).toEqual(['ACP Mock Agent B', 'ACP Mock Agent B 2'])
+    // The duplicate draws the first unused pool name; the acp-mock-b base name is
+    // already taken by the first instance, so the second becomes "Alice".
+    expect((result as { bNames: string[] }).bNames).toEqual(['ACP Mock Agent B', 'Alice'])
   })
 
   test('UI: stepper adds a second instance of the same agent', async ({ page }) => {
@@ -75,14 +85,21 @@ test.describe.serial('group duplicate agents', () => {
     const sessionDrawer = page.locator('.bs-panel.session-drawer-sheet')
     await expect(sessionDrawer).toBeVisible({ timeout: 5000 })
 
-    // Open the create-group picker.
-    await sessionDrawer.locator('[data-action="create-group"]').click()
+    // Open the create page, then flip the single/group segmented switch to
+    // group mode (there is no dedicated create-group button any more).
+    await sessionDrawer.locator('[data-action="create"]').click()
 
     const picker = page.locator('.bs-panel').filter({ has: page.locator('.agent-list') }).last()
     await expect(picker).toBeVisible({ timeout: 5000 })
 
     // The drawer ignores clicks within 400ms of opening (accidental-touch
     // guard), so wait past it before selecting.
+    await page.waitForTimeout(500)
+
+    await picker.locator('.agent-mode-tab[data-mode="group"]').click()
+
+    // Switching mode RESETS the drawer's 400ms touch guard (watch on groupMode),
+    // so wait past the restarted window before selecting.
     await page.waitForTimeout(500)
 
     // Select the first agent, then bump it to 2 instances via the stepper.
