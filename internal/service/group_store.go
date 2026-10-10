@@ -138,6 +138,31 @@ func assignMemberNames(specs []GroupMemberSpec, existingCounts map[string]int, t
 		used[n] = true
 	}
 	used[groupUserTarget()] = true
+	// Base name per spec (agent's own display name, or an explicit spec name).
+	bases := make([]string, len(specs))
+	for i := range specs {
+		b := strings.TrimSpace(specs[i].DisplayName)
+		if b == "" {
+			b = GetAgentDisplayName(specs[i].AgentID)
+		}
+		bases[i] = b
+	}
+	// Names the pool must NEVER draw: the real display names of every agent
+	// involved (this batch's specs + agents already in the group). Without this
+	// a duplicate of one agent could draw a pool name equal to another agent's
+	// name and push that agent's lone instance to "<name> 2" (order-dependent).
+	// Reserving keeps a genuine agent name for its own instance.
+	reserved := make(map[string]bool, len(specs)+len(existingCounts))
+	for _, b := range bases {
+		if b != "" {
+			reserved[b] = true
+		}
+	}
+	for agentID := range existingCounts {
+		if n := GetAgentDisplayName(agentID); n != "" {
+			reserved[n] = true
+		}
+	}
 	// Occurrences per agent in THIS batch. Combined with existingCounts it
 	// decides whether the agent is "multi" (⇒ no instance keeps the bare name).
 	batchCount := make(map[string]int, len(specs))
@@ -147,17 +172,14 @@ func assignMemberNames(specs []GroupMemberSpec, existingCounts map[string]int, t
 	nextOrdinal := make(map[string]int, len(specs))
 	for i := range specs {
 		s := &specs[i]
-		base := strings.TrimSpace(s.DisplayName)
-		if base == "" {
-			base = GetAgentDisplayName(s.AgentID)
-		}
+		base := bases[i]
 		// Instance index: existing rows + already-named in this batch, then +1.
 		k := existingCounts[s.AgentID] + nextOrdinal[s.AgentID] + 1
 		multi := existingCounts[s.AgentID]+batchCount[s.AgentID] > 1
 		candidate := ""
 		if multi {
 			// Every instance of a multi agent draws a pool name.
-			candidate = nextPoolName(used)
+			candidate = nextPoolName(used, reserved)
 		} else {
 			// A lone instance keeps the agent's own name.
 			candidate = base

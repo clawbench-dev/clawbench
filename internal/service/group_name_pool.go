@@ -18,11 +18,15 @@ var groupNamePool = []string{
 	"Gavin", "Hazel", "Ian", "Julia", "Kevin", "Luna", "Milo", "Nora",
 }
 
-// nextPoolName returns the first pool name not present in used, or "" when the
-// whole pool is taken.
-func nextPoolName(used map[string]bool) string {
+// nextPoolName returns the first pool name present in neither used nor reserved,
+// or "" when the whole pool is taken or reserved. `reserved` holds names the
+// pool must never draw even while unused — the real display names of the
+// group's agents — so a genuine agent name stays available to its own instance
+// (a duplicate of some OTHER agent must not take "Alice" out from under a
+// member whose agent is literally named "Alice").
+func nextPoolName(used, reserved map[string]bool) string {
 	for _, n := range groupNamePool {
-		if !used[n] {
+		if !used[n] && !reserved[n] {
 			return n
 		}
 	}
