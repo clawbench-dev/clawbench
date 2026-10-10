@@ -378,9 +378,26 @@ func (r *Registry) All() []Skill {
 // This is the view GET /api/skills renders: the caller passes the requesting
 // project (from the cookie), so a project's own .agents/skills appear in the
 // list while another project's never do.
+//
+// Project entries whose path is already listed globally are dropped: when the
+// project root is $HOME, <project>/.agents/skills IS the shared ~/.agents/skills
+// that scanNativeDirs already scans, and the same SKILL.md would otherwise be
+// listed twice (the UI keys rows by path, so duplicates break its :key). The
+// global entry wins; the dedup only affects this listing, not injection
+// (dedupe collapses same-named entries by source priority).
 func (r *Registry) AllForProject(projectPath string) []Skill {
 	out := r.All()
-	out = append(out, r.scanProject(projectPath)...)
+	if projectPath != "" {
+		seen := make(map[string]bool, len(out))
+		for _, s := range out {
+			seen[s.Path] = true
+		}
+		for _, s := range r.scanProject(projectPath) {
+			if !seen[s.Path] {
+				out = append(out, s)
+			}
+		}
+	}
 	sortSkills(out)
 	return out
 }

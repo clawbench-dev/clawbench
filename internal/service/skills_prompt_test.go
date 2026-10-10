@@ -138,9 +138,11 @@ func TestAppendSkillsSection_NoSkillsLeavesPromptUnchanged(t *testing.T) {
 // sites are asserted directly.
 func TestSkillsSectionWiredIntoBothProducers(t *testing.T) {
 	// Three arguments: (systemPrompt, agentID, projectPath). Requiring the
-	// projectPath argument is the point — a two-arg call would silently drop
-	// every project-scoped skill from that producer.
-	call := regexp.MustCompile(`AppendSkillsSection\([^,]+,[^,]+,[^)]+\)`)
+	// projectPath argument is the point — a two-arg call, or a third literal
+	// empty string, would silently drop every project-scoped skill from that
+	// producer. Both call sites pass the identifier `projectPath` verbatim, so
+	// the guard demands exactly that.
+	call := regexp.MustCompile(`AppendSkillsSection\([^,]+,\s*[^,]+,\s*projectPath\)`)
 	cases := []struct {
 		file string
 		why  string

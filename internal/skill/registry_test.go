@@ -610,6 +610,9 @@ func TestInjectedForProject_AlwaysInjectedForAutoLoadBackend(t *testing.T) {
 	ownDir, otherDir, reg := setupRegistry(t)
 	// Turn "me" into an auto-loading backend: its own native dir is skipped...
 	setSpecs(ownDir, otherDir, true)
+	// ...but a project skill is NOT a declared native dir, so it is still
+	// injected. Populate the own dir to prove the two are treated differently.
+	writeSkill(t, ownDir, "own-skill", "---\nname: own-skill\ndescription: o\n---\n")
 
 	project := t.TempDir()
 	writeSkill(t, projectSkillsDir(project), "proj-skill", "---\nname: proj-skill\ndescription: p\n---\n")
@@ -622,6 +625,7 @@ func TestInjectedForProject_AlwaysInjectedForAutoLoadBackend(t *testing.T) {
 		names[s.Name] = true
 	}
 	assert.True(t, names["proj-skill"], "the project skill must be injected even when the backend auto-loads its own")
+	assert.False(t, names["own-skill"], "the agent's own native skill must still be skipped for an auto-loading backend")
 }
 
 // TestInjectedForProject_CachesScan pins that the project scan is cached: a
@@ -671,4 +675,28 @@ func TestAllForProject(t *testing.T) {
 	for _, s := range global {
 		assert.NotEqual(t, SourceProject, s.Source.Kind, "the global view must not include project skills")
 	}
+}
+
+// TestAllForProject_NoDuplicateWhenProjectIsGlobalDir pins the dedup: when the
+// project root is $HOME, <project>/.agents/skills IS the shared ~/.agents/skills
+// that the global scan already covers, so the same SKILL.md must be listed
+// exactly once (the UI keys rows by path).
+func TestAllForProject_NoDuplicateWhenProjectIsGlobalDir(t *testing.T) {
+	_, _, reg := setupRegistry(t)
+
+	// The project root is the isolated home; its .agents/skills is the shared
+	// dir scanned globally.
+	home := os.Getenv("HOME")
+	writeSkill(t, filepath.Join(home, SharedSkillsDir), "shared-skill",
+		"---\nname: shared-skill\ndescription: s\n---\n")
+	reg.ScanAll()
+
+	got := reg.AllForProject(home)
+	count := 0
+	for _, s := range got {
+		if s.Name == "shared-skill" {
+			count++
+		}
+	}
+	assert.Equal(t, 1, count, "a project dir that is also a global source must not be listed twice")
 }
