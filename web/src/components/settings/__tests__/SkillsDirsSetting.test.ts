@@ -49,6 +49,7 @@ const i18n = createI18n({
           skillsNameMismatch: 'Name mismatch',
           skillsNameMismatchDesc: 'desc',
           skillsSourceOwn: 'This agent (native)',
+          skillsSourceProject: 'Project',
           skillsSourceUser: 'User directory',
           skillsSourceGit: 'Repository {name}',
           skillsSourceOther: 'Agent {agent}',

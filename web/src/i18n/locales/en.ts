@@ -2818,6 +2818,7 @@ export default {
       skillsNameMismatch: 'Name mismatch',
       skillsNameMismatchDesc: 'The frontmatter name does not match the containing directory name (the Agent Skills spec requires them to match). This skill is still injected, but is not offered in the slash-command menu — an agent resolves a skill by directory name. Rename the directory or the name so they agree.',
       skillsSourceOwn: 'This agent (native)',
+      skillsSourceProject: 'Project',
       skillsSourceUser: 'User directory',
       skillsSourceGit: 'Repository {name}',
       skillsSourceOther: 'Agent {agent}',

@@ -13,12 +13,16 @@ import (
 //
 // It is safe to call concurrently with InjectedFor: directory IO happens
 // outside the lock and results are published in one write-locked swap.
+//
+// Project-scoped scans are dropped too: their directories were read under the
+// previous global view, so a rescan invalidates them along with everything else.
 func (r *Registry) ScanAll() {
 	next := r.scanSources()
 
 	r.mu.Lock()
 	r.bySource = next
-	r.injected = make(map[string][]Skill)
+	r.projectSources = make(map[string][]Skill)
+	r.injectedProject = make(map[string][]Skill)
 	r.mu.Unlock()
 }
 
@@ -120,17 +124,54 @@ func scanNativeDirs(next map[string][]Skill) map[string][]Skill {
 
 // Invalidate drops the per-agent injection cache. Call after a config change or
 // a git sync so the next InjectedFor recomputes.
+//
+// The project-scoped scan cache is intentionally kept: a project's
+// .agents/skills directory is unaffected by a config/git change, and dropping
+// it would force a filesystem walk on the next turn of every project session.
 func (r *Registry) Invalidate() {
 	r.mu.Lock()
-	r.injected = make(map[string][]Skill)
+	r.injectedProject = make(map[string][]Skill)
 	r.mu.Unlock()
 }
 
+// scanProject returns the project-scoped skills for projectPath, scanning
+// <projectPath>/.agents/skills once and caching the result.
+//
+// It is the same convention qoder and codewhale read when their cwd is the
+// project root: skills committed alongside the project, visible only to that
+// project's sessions. An empty projectPath scans nothing.
+//
+// IO happens outside the lock; the result is published in one write-locked
+// store. A missing directory yields nil, which is cached like any other result
+// (the walk is cheap and the directory rarely appears mid-session).
+func (r *Registry) scanProject(projectPath string) []Skill {
+	if projectPath == "" {
+		return nil
+	}
+
+	r.mu.RLock()
+	if cached, ok := r.projectSources[projectPath]; ok {
+		r.mu.RUnlock()
+		return cached
+	}
+	r.mu.RUnlock()
+
+	dir := filepath.Join(projectPath, ".agents", "skills")
+	src := Source{Kind: SourceProject, Label: "project", Dir: dir}
+	skills := ScanDir(dir, src)
+
+	r.mu.Lock()
+	r.projectSources[projectPath] = skills
+	r.mu.Unlock()
+	return skills
+}
+
 // InjectedFor returns the deduplicated list of skills to inject into the given
-// agent's system prompt.
+// agent's system prompt, without any project scope. Callers that know the
+// session's project should use InjectedForProject instead.
 //
 // Dedup rule (by canonical name, priority = SourceKind order):
-//   - own native > user dir > git > other agent's native
+//   - own native > project > user dir > git > other agent's native
 //   - when several entries share a name, the highest-priority one wins
 //   - if the winner is the agent's OWN native skill AND the backend loads that
 //     directory itself, nothing is injected for that name (the agent already
@@ -139,6 +180,21 @@ func (r *Registry) Invalidate() {
 //
 // Returns nil when skills are disabled or nothing applies.
 func (r *Registry) InjectedFor(agentID string) []Skill {
+	return r.InjectedForProject(agentID, "")
+}
+
+// InjectedForProject is InjectedFor with project scope: the session's project
+// root contributes its <projectPath>/.agents/skills entries at SourceProject
+// priority (above every global source, below the agent's own native dirs).
+//
+// A project skill is ALWAYS injected, even for a backend that loads the
+// directory itself: unlike the shared ~/.agents/skills (whose ownership is
+// declared per backend via NativeSkillsDirs), the project directory is not a
+// declared native dir, so dedupe never treats it as own. This is deliberate —
+// see the "总是注入" decision in the plan.
+//
+// An empty projectPath is exactly InjectedFor.
+func (r *Registry) InjectedForProject(agentID, projectPath string) []Skill {
 	agent := model.GetAgent(agentID)
 	if agent == nil {
 		return nil
@@ -150,8 +206,9 @@ func (r *Registry) InjectedFor(agentID string) []Skill {
 	}
 	autoLoads := spec != nil && spec.AutoLoadsNativeSkills
 
+	cacheKey := agentID + "\x00" + projectPath
 	r.mu.RLock()
-	if cached, ok := r.injected[agentID]; ok {
+	if cached, ok := r.injectedProject[cacheKey]; ok {
 		r.mu.RUnlock()
 		return cached
 	}
@@ -162,10 +219,11 @@ func (r *Registry) InjectedFor(agentID string) []Skill {
 	}
 
 	candidates := r.candidatesFor(ownDirs)
+	candidates = append(candidates, r.scanProject(projectPath)...)
 	injected := dedupe(candidates, ownDirs, autoLoads)
 
 	r.mu.Lock()
-	r.injected[agentID] = injected
+	r.injectedProject[cacheKey] = injected
 	r.mu.Unlock()
 
 	return injected
@@ -310,13 +368,31 @@ func (r *Registry) All() []Skill {
 	for _, skills := range r.bySource {
 		out = append(out, skills...)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Name != out[j].Name {
-			return out[i].Name < out[j].Name
-		}
-		return out[i].Path < out[j].Path
-	})
+	sortSkills(out)
 	return out
+}
+
+// AllForProject returns every discovered skill across all sources plus the
+// project-scoped skills for projectPath, sorted for display.
+//
+// This is the view GET /api/skills renders: the caller passes the requesting
+// project (from the cookie), so a project's own .agents/skills appear in the
+// list while another project's never do.
+func (r *Registry) AllForProject(projectPath string) []Skill {
+	out := r.All()
+	out = append(out, r.scanProject(projectPath)...)
+	sortSkills(out)
+	return out
+}
+
+// sortSkills orders skills by name then path for deterministic output.
+func sortSkills(skills []Skill) {
+	sort.Slice(skills, func(i, j int) bool {
+		if skills[i].Name != skills[j].Name {
+			return skills[i].Name < skills[j].Name
+		}
+		return skills[i].Path < skills[j].Path
+	})
 }
 
 // RepoDir returns the local checkout directory for a repo slug:
@@ -343,5 +419,6 @@ func ResetForTest() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.bySource = make(map[string][]Skill)
-	r.injected = make(map[string][]Skill)
+	r.projectSources = make(map[string][]Skill)
+	r.injectedProject = make(map[string][]Skill)
 }

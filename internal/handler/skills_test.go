@@ -188,6 +188,70 @@ func TestServeSkills_SharedHasNoBackends(t *testing.T) {
 		"a shared skill must not carry the roster of backends that read the directory")
 }
 
+// A project skill (<project>/.agents/skills) is listed only for the requesting
+// project: the cookie selects it, and another project's skills never appear.
+func TestServeSkills_ListsCurrentProjectSkills(t *testing.T) {
+	isolateSkillGlobals(t)
+	model.DataDir = t.TempDir()
+	setSkillTestHome(t, t.TempDir())
+	model.ConfigInstance = model.Config{Skills: model.SkillsConfig{Enabled: true}}
+	model.GetBackendRegistry()
+	model.BackendRegistry = nil
+	model.ReplaceAgents(nil, nil)
+	skill.ResetForTest()
+	skill.Global().ScanAll()
+
+	projA := t.TempDir()
+	projB := t.TempDir()
+	writeSkillMD(t, filepath.Join(projA, ".agents", "skills", "a-skill"), "a-skill")
+	writeSkillMD(t, filepath.Join(projB, ".agents", "skills", "b-skill"), "b-skill")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/skills", http.NoBody)
+	withAuthCookie(req, model.SessionToken)
+	withProjectCookie(req, projA)
+	w := callHandler(ServeSkills, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp skillsListResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	byName := map[string]skillInfoJSON{}
+	for _, s := range resp.Skills {
+		byName[s.Name] = s
+	}
+	require.Contains(t, byName, "a-skill", "the current project's skill must be listed")
+	assert.Equal(t, "project", byName["a-skill"].SourceKind)
+	assert.Empty(t, byName["a-skill"].AgentID)
+	assert.Empty(t, byName["a-skill"].Backends)
+	assert.NotContains(t, byName, "b-skill", "another project's skill must not be listed")
+}
+
+// Without a project cookie the listing is the global view: no project skills.
+func TestServeSkills_NoProjectCookieOmitsProjectSkills(t *testing.T) {
+	isolateSkillGlobals(t)
+	model.DataDir = t.TempDir()
+	setSkillTestHome(t, t.TempDir())
+	model.ConfigInstance = model.Config{Skills: model.SkillsConfig{Enabled: true}}
+	model.GetBackendRegistry()
+	model.BackendRegistry = nil
+	model.ReplaceAgents(nil, nil)
+	skill.ResetForTest()
+	skill.Global().ScanAll()
+
+	proj := t.TempDir()
+	writeSkillMD(t, filepath.Join(proj, ".agents", "skills", "p-skill"), "p-skill")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/skills", http.NoBody)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeSkills, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp skillsListResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	for _, s := range resp.Skills {
+		assert.NotEqual(t, "p-skill", s.Name, "no project cookie means no project skills")
+	}
+}
+
 func TestServeSkills_MethodNotAllowed(t *testing.T) {
 	setupSkillsEnv(t)
 

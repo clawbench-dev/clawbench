@@ -20,13 +20,17 @@ import (
 // AppendSkillsSection appends the deduplicated skill table for agentID to a
 // system prompt. Returns the input unchanged when there is nothing to inject.
 //
-// This is safe to call on every turn; the registry caches the per-agent
-// result and only rescans on an explicit Invalidate.
-func AppendSkillsSection(systemPrompt, agentID string) string {
+// projectPath scopes the table to the session's project: its
+// <projectPath>/.agents/skills entries are included (at project priority) and
+// no other project's are. An empty projectPath yields the global table only.
+//
+// This is safe to call on every turn; the registry caches the per-agent (and
+// per-project) result and only rescans on an explicit Invalidate.
+func AppendSkillsSection(systemPrompt, agentID, projectPath string) string {
 	if agentID == "" {
 		return systemPrompt
 	}
-	section := skill.BuildSystemPromptSection(skill.Global().InjectedFor(agentID))
+	section := skill.BuildSystemPromptSection(skill.Global().InjectedForProject(agentID, projectPath))
 	if section == "" {
 		return systemPrompt
 	}

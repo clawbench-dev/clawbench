@@ -3,6 +3,7 @@ package service
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -63,22 +64,41 @@ func TestAppendSkillsSection(t *testing.T) {
 	agentID := setupSkillInjection(t)
 
 	t.Run("empty prompt becomes the section alone", func(t *testing.T) {
-		got := AppendSkillsSection("", agentID)
+		got := AppendSkillsSection("", agentID, "")
 		assert.Contains(t, got, "demo-skill")
 		assert.Contains(t, got, "## Available Skills")
 	})
 
 	t.Run("existing prompt is preserved and the section appended", func(t *testing.T) {
-		got := AppendSkillsSection("BASE PROMPT", agentID)
+		got := AppendSkillsSection("BASE PROMPT", agentID, "")
 		assert.True(t, strings.HasPrefix(got, "BASE PROMPT"))
 		assert.Contains(t, got, "demo-skill")
 		assert.Contains(t, got, "BASE PROMPT\n\n## Available Skills")
 	})
 
 	t.Run("unknown agent leaves the prompt untouched", func(t *testing.T) {
-		assert.Equal(t, "BASE PROMPT", AppendSkillsSection("BASE PROMPT", "nobody"))
-		assert.Equal(t, "", AppendSkillsSection("", ""))
+		assert.Equal(t, "BASE PROMPT", AppendSkillsSection("BASE PROMPT", "nobody", ""))
+		assert.Equal(t, "", AppendSkillsSection("", "", ""))
 	})
+}
+
+// TestAppendSkillsSection_IncludesProjectSkills pins that the session's project
+// scope reaches the injected table: a skill in <project>/.agents/skills shows up
+// for that project and nowhere else.
+func TestAppendSkillsSection_IncludesProjectSkills(t *testing.T) {
+	agentID := setupSkillInjection(t)
+
+	project := t.TempDir()
+	projSkillDir := filepath.Join(project, ".agents", "skills", "proj-demo")
+	require.NoError(t, os.MkdirAll(projSkillDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(projSkillDir, "SKILL.md"),
+		[]byte("---\nname: proj-demo\ndescription: project skill\n---\n"), 0o644))
+
+	got := AppendSkillsSection("BASE", agentID, project)
+	assert.Contains(t, got, "proj-demo", "the project skill must be injected")
+
+	// Without the project path the project skill is absent.
+	assert.NotContains(t, AppendSkillsSection("BASE", agentID, ""), "proj-demo")
 }
 
 func TestAppendSkillsSection_NoSkillsLeavesPromptUnchanged(t *testing.T) {
@@ -107,15 +127,20 @@ func TestAppendSkillsSection_NoSkillsLeavesPromptUnchanged(t *testing.T) {
 	skill.ResetForTest()
 	skill.Global().ScanAll()
 
-	assert.Equal(t, "BASE", AppendSkillsSection("BASE", "bare"))
+	assert.Equal(t, "BASE", AppendSkillsSection("BASE", "bare", ""))
 }
 
 // TestSkillsSectionWiredIntoBothProducers is a source guard: there are two
 // producers of ai.ChatRequest.SystemPrompt and BOTH must append the skill
-// table. A behavior test cannot catch a missing call in one of them (the
-// scheduled-task path is not reachable from a unit test without a full
-// scheduler), so the call sites are asserted directly.
+// table, passing the project path so project-scoped skills are included. A
+// behavior test cannot catch a missing call in one of them (the scheduled-task
+// path is not reachable from a unit test without a full scheduler), so the call
+// sites are asserted directly.
 func TestSkillsSectionWiredIntoBothProducers(t *testing.T) {
+	// Three arguments: (systemPrompt, agentID, projectPath). Requiring the
+	// projectPath argument is the point — a two-arg call would silently drop
+	// every project-scoped skill from that producer.
+	call := regexp.MustCompile(`AppendSkillsSection\([^,]+,[^,]+,[^)]+\)`)
 	cases := []struct {
 		file string
 		why  string
@@ -127,8 +152,8 @@ func TestSkillsSectionWiredIntoBothProducers(t *testing.T) {
 		t.Run(tc.file, func(t *testing.T) {
 			src, err := os.ReadFile(tc.file)
 			require.NoError(t, err)
-			assert.Contains(t, string(src), "AppendSkillsSection(",
-				"%s must call AppendSkillsSection (%s)", tc.file, tc.why)
+			assert.Regexp(t, call, string(src),
+				"%s must call AppendSkillsSection with a project path (%s)", tc.file, tc.why)
 		})
 	}
 }

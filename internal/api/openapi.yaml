@@ -3126,10 +3126,13 @@ paths:
       operationId: skillsList
       description: |
         返回跨智能体 Skill 发现的当前状态：每个来源（各智能体原生目录、用户自定义目录、
-        克隆的 git 仓库）扫描到的 Skill 清单，以及 git 同步状态。
+        克隆的 git 仓库、当前项目的 `.agents/skills`）扫描到的 Skill 清单，以及 git 同步状态。
 
         同一名字的 Skill 可能来自多个来源；清单按来源如实列出（`source_kind` 为
-        `own` / `user` / `git` / `other`），注入系统提示词时再按优先级去重。
+        `own` / `project` / `user` / `git` / `other`），注入系统提示词时再按优先级去重。
+
+        项目级来源（`project`）按请求项目的 Cookie 限定：只列出**当前项目**的
+        `<projectPath>/.agents/skills`，其他项目的技能不会出现。
 
         仓库令牌只写不读：`repos[].has_token` 只表示是否已配置。
       responses:
@@ -3183,7 +3186,7 @@ paths:
                           description: SKILL.md 的绝对路径
                         source_kind:
                           type: string
-                          enum: [own, user, git, other]
+                          enum: [own, project, user, git, other]
                         source_label:
                           type: string
                         agent_id:

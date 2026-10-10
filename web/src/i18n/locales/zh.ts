@@ -2817,6 +2817,7 @@ export default {
       skillsNameMismatch: '名称不匹配',
       skillsNameMismatchDesc: 'frontmatter 的 name 与所在目录名不一致（Agent Skills 规范要求一致）。该技能仍会注入提示词，但不会出现在斜杠命令菜单中——智能体按目录名解析技能。建议把目录名与 name 改成一致。',
       skillsSourceOwn: '本智能体原生',
+      skillsSourceProject: '项目',
       skillsSourceUser: '用户目录',
       skillsSourceGit: '仓库 {name}',
       skillsSourceOther: '智能体 {agent}',

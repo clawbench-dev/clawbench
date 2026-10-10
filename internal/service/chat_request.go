@@ -210,7 +210,7 @@ func resolveAgentConfig(agentID, projectPath, modelOverride, thinkingEffort, mod
 	// Append the cross-agent skill table. It is added here rather than baked
 	// into RuntimeSystemPrompt (composed once at load time) so a skill installed
 	// after startup — or a completed git sync — shows up on the next turn.
-	systemPrompt = AppendSkillsSection(systemPrompt, agentID)
+	systemPrompt = AppendSkillsSection(systemPrompt, agentID, projectPath)
 	// Replace {{PROJECT_PATH}} per-request with the actual project path from cookie
 	if projectPath != "" {
 		systemPrompt = strings.ReplaceAll(systemPrompt, "{{PROJECT_PATH}}", projectPath)

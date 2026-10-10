@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"clawbench/internal/middleware"
 	"clawbench/internal/model"
 	"clawbench/internal/skill"
 )
@@ -117,7 +118,13 @@ func ServeSkills(w http.ResponseWriter, r *http.Request) {
 	cfg := model.ConfigInstance
 	configMutex.RUnlock()
 
-	found := skill.Global().All()
+	// Scope the listing to the requesting project: its <projectPath>/.agents/skills
+	// entries are included, and no other project's are. The cookie is optional —
+	// without one this is the global view (the endpoint is authenticated, but a
+	// client may not have selected a project yet).
+	projectPath := middleware.GetProjectFromCookie(r)
+
+	found := skill.Global().AllForProject(projectPath)
 	skills := make([]skillInfoJSON, 0, len(found))
 	for _, s := range found {
 		skills = append(skills, skillInfoJSON{

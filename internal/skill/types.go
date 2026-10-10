@@ -27,14 +27,19 @@ type SourceKind int
 const (
 	// SourceOwnNative is the skill directory owned by the agent being served.
 	SourceOwnNative SourceKind = 0
+	// SourceProject is the project-scoped skill directory
+	// (<projectPath>/.agents/skills) of the session's working directory. It
+	// outranks every global source: a skill committed with the project is the
+	// most specific answer to "what does this project use".
+	SourceProject SourceKind = 1
 	// SourceUserDir is a directory the user configured explicitly
 	// (config skills.dir).
-	SourceUserDir SourceKind = 1
+	SourceUserDir SourceKind = 2
 	// SourceGit is a skill repository cloned from a remote git URL
 	// (config skills.repos).
-	SourceGit SourceKind = 2
+	SourceGit SourceKind = 3
 	// SourceOtherNative is another agent's native skill directory.
-	SourceOtherNative SourceKind = 3
+	SourceOtherNative SourceKind = 4
 )
 
 // String returns a stable identifier used by the HTTP API and tests.
@@ -42,6 +47,8 @@ func (k SourceKind) String() string {
 	switch k {
 	case SourceOwnNative:
 		return "own"
+	case SourceProject:
+		return "project"
 	case SourceUserDir:
 		return "user"
 	case SourceGit:
@@ -120,8 +127,15 @@ type Registry struct {
 	mu sync.RWMutex
 	// bySource maps Source.Key() to the skills found in that source.
 	bySource map[string][]Skill
-	// injected caches InjectedFor results per agent ID. Cleared by Invalidate.
-	injected map[string][]Skill
+	// projectSources caches project-scoped scans keyed by project path. A
+	// project's directory does not change between global rescans, so a scan is
+	// reused until the next ScanAll. Cleared by ScanAll.
+	projectSources map[string][]Skill
+	// injectedProject caches injected results, keyed by
+	// agentID + "\x00" + projectPath (the NUL cannot occur in either). An empty
+	// project path is the global (project-less) view. Cleared by Invalidate and
+	// ScanAll.
+	injectedProject map[string][]Skill
 }
 
 var (
@@ -133,8 +147,9 @@ var (
 func Global() *Registry {
 	globalRegistryOnce.Do(func() {
 		globalRegistry = &Registry{
-			bySource: make(map[string][]Skill),
-			injected: make(map[string][]Skill),
+			bySource:        make(map[string][]Skill),
+			projectSources:  make(map[string][]Skill),
+			injectedProject: make(map[string][]Skill),
 		}
 	})
 	return globalRegistry
