@@ -29,14 +29,14 @@
 
 ### 2.3 两个既有缺陷（本需求正好一并修掉）
 
-成员显示名存在成员行的 `title` 列，但**读取端并不以 `title` 为准**：
+成员显示名当前存在成员行的 `title` 列，但**读取端并不以 `title` 为准**：
 
 `speakerFromAgent`（`internal/service/speaker_identity.go:66-79`）的逻辑是「只要 `agents` 表里还有该 agent，就用它的当前 `name` 覆盖 `title`，`title` 仅作兜底」。由此产生两个问题：
 
-- **缺陷 1（既有 bug）**：用户改了智能体的 `name`，群里历史发言在**分享/导出快照**里的发言人名会追溯性改变，而应用内（前端直接读 `m.name`，来自 `title`）显示的是建群快照 → 同一份对话，应用内外名字不一致。
-- **缺陷 2（会阻断本需求）**：临时昵称 `Claude 2` 存在 `title`，但 `speakerFromAgent` 会用 `agents.name`（`Claude`）覆盖它 → 分享快照里两个实例都叫 `Claude`，昵称失效。
+- **缺陷 1（既有 bug）**：用户改了智能体的 `name`，群里历史发言在**分享/导出快照**里的发言人名会追溯性改变，而应用内（前端直接读 `m.name`，来自成员行存储的名字）显示的是建群快照 → 同一份对话，应用内外名字不一致。（注：改智能体名**不会**改动任何 `chat_sessions` 行——`PatchAgentFields` 只写 `agents` 表；不一致纯粹来自分享路径读了实时 `agents.name`。）
+- **缺陷 2（会阻断本需求）**：临时昵称 `Claude 2` 存下来后，`speakerFromAgent` 会用 `agents.name`（`Claude`）覆盖它 → 分享快照里两个实例都叫 `Claude`，昵称失效。
 
-因此本设计必须**把「成员显示名以什么为准」定死**。
+因此本设计必须**把「成员显示名以什么为准」定死**：新增专用列 `agent_name` 作为唯一权威，读取端不再回退 `agents.name`。
 
 ## 3. 已确认的决策
 
@@ -49,15 +49,17 @@
 | D5 | 成员上限 | 按**实例总数**计，上限 **10 → 12** |
 | D6 | 序号分配 | **递增不复用**：新实例序号 = 该 agent 已有成员行数（含已离场）+ 1 |
 | D7 | 头像 | **不变**（同 agent 各实例视觉相同，靠名字区分） |
-| D8 | 显示名存储 | **方案 A**：继续用 `title` 作为成员显示名的**权威来源** |
+| D8 | 显示名存储 | **方案 B**：成员行新增专用列 **`agent_name`** 作为成员显示名的**权威来源**；成员行 `title` 留空 |
 | D9 | 重新加入 | **一律新建实例**（不 rejoin；放弃连接恢复） |
 | D10 | 线格式 | 不变；`memberAgentIds[]` / `agentIds[]` **允许含重复元素** |
 
-### 3.1 为什么选方案 A（显示名存储）
+### 3.1 为什么选方案 B（成员显示名专用列 `agent_name`）
 
-- 零数据库迁移：`title` 本来就是成员行存显示名的列（`insertGroupMemberRows` 写入，`ListGroupMembers` 读取）。
-- 一次性修掉缺陷 1 与缺陷 2：把 `title` 显式定为成员显示名的权威来源，读取端不再回退 `agents.name`。
-- 备选（已否决）：新增 `display_name` 列（需 `ALTER TABLE` + 改全部读写点与夹具）；独立 `group_members` 表（成员行 id 是 ACP 池 key + 历史署名 + 7 个共享访问器入参，搬表需数据迁移与重接连接层，代价与风险高一个数量级）。
+- **不复用 `title`**：`title` 本是会话标题语义，成员行借用它属于"一列两用"。新增 `agent_name` 让"成员显示名"有独立、无歧义的归属。
+- **成员行 `title` 留空**：成员行是隐藏会话，`title` 对它无意义；写入时置空串（列是 `NOT NULL`），显示名只走 `agent_name`。已核实 `title` 的成员读点仅 5 处（全在 `group_store.go`），且 `speaker_identity.go:43` 读的是**群行**的 `title`（非成员行），故留空安全。
+- **修掉缺陷 1、2**：`agent_name` 为快照值，读取端**不再回退** `agents.name`，改智能体名不影响群历史名；多实例昵称（`Claude 2`）也因此稳定。
+- 迁移：一次 `ALTER TABLE chat_sessions ADD COLUMN agent_name TEXT NOT NULL DEFAULT ''`；存量成员行 `agent_name` 从现有 `title` 回填、`title` 置空（一次性数据迁移）。
+- 备选（已否决）：方案 A（复用 `title`，语义不纯）；独立 `group_members` 表（成员行 id 是 ACP 池 key + 历史署名 + 7 个共享访问器入参，搬表需数据迁移与重接连接层，代价与风险高一个数量级）。
 
 ## 4. 昵称生成（后端，唯一真源）
 
@@ -93,18 +95,27 @@ return candidate
 
 ## 5. 后端改动
 
+### 5.0 数据模型：新增列 `agent_name`
+
+- `ALTER TABLE chat_sessions ADD COLUMN agent_name TEXT NOT NULL DEFAULT ''`（按现有迁移风格，`database.go` 里加一段 `pragma_table_info` 守卫的 `ADD COLUMN`）。
+- **成员行**：`agent_name` = 成员显示名（权威）；`title` 写入空串。
+- **非成员行**（`chat` / `group`）：`agent_name` 留空，不受影响。
+- **存量数据迁移**（一次性，同一迁移段内）：`UPDATE chat_sessions SET agent_name = title, title = '' WHERE session_type = 'group_member' AND agent_name = ''`（幂等；`agent_name` 已有值则跳过，可重入）。
+- 成员显示名读点（`group_store.go` 共 5 处：`findGroupMemberByAgent:581`、`ListGroupMembers:632`、`GroupMembersForGroups:710`、`GroupMemberSpeakersForGroups:775`、`memberDisplayName:874`）**全部改读 `agent_name`**；写入路径（`insertGroupMemberRows:263`、`AddGroupMember` 经 `CreateSession`）改为写 `agent_name` 并令 `title=''`。
+
 ### 5.1 `internal/service/group_store.go`
 
 - **删** `dedupeGroupSpecs`，改为 `validateGroupSpecs`：仅做空 `AgentID` 校验 + 实例数上限校验。
-- **`CreateGroupWithMembers`**：移除去重；改为按批内顺序为每个 spec 生成唯一 `DisplayName`（§4.1）；上限按实例数计。
-- **`insertGroupMemberRows`**：host 指针匹配改为「该 agent 的首个实例」。
+- **`CreateGroupWithMembers`**：移除去重；改为按批内顺序为每个 spec 生成唯一显示名（§4.1），写入 `agent_name`；上限按实例数计。
+- **`insertGroupMemberRows`**：写 `agent_name`（而非 `title`），`title` 置空；host 指针匹配改为「该 agent 的首个实例」。
 - **`AddGroupMember` / `AddGroupMembers`**：移除 rejoin 分支（`findGroupMemberByAgent` 复用逻辑删除），一律新建实例；`netNew` 改为「新实例数」（不再按唯一 agent 去重）；批量调用时按批内出现顺序递增序号。
 - **`MaxGroupMembers`**：`10 → 12`；语义注释从「去重 agent 数」改为「实例总数」。
 - **`memberNameMap` / `memberLookups`**：无需改（依赖名字唯一，由 §4 保证）。
+- **`GroupMember` 结构体**：`Name` 字段语义不变（显示名），数据来源改为 `agent_name` 列。
 
 ### 5.2 `internal/service/speaker_identity.go`（修缺陷 1、2）
 
-- `ResolveSessionSpeakers` 的成员循环中，成员发言人名以 `m.Name`（成员行 `title`）为**权威**，**不再回退** `agents.name`。
+- `ResolveSessionSpeakers` 的成员循环中，成员发言人名以 `m.Name`（成员行 `agent_name`）为**权威**，**不再回退** `agents.name`。
 - `speakerFromAgent` 保留给 `sessionAgent`（会话自身 agent，仍应用 `agents.name`）；为成员另走一条不做名字覆盖的构造路径（backend 兜底与 avatar 查找保留）。
 - 头像仍来自 agent（`includeAvatar` 时取 `agents.avatar`），符合 D7。
 
@@ -116,8 +127,8 @@ return candidate
 
 ### 5.4 `session_type` 守卫（堵结构性隐患）
 
-- 会话重命名路径（`PATCH /api/ai/session` → `SetSessionTitleLocked`，`chat_session.go:627`）对 `session_type='group_member'` 的行应**拒绝或忽略**，避免误改成员显示名。
-- 说明：成员行在 UI 中隐藏、当前不可达，此守卫为纵深防御，非本需求必需。
+- 会话重命名路径（`PATCH /api/ai/session` → `SetSessionTitleLocked`，`chat_session.go:627`）对 `session_type='group_member'` 的行应**拒绝或忽略**。
+- 说明：改用 `agent_name` 后，成员显示名已与 `title` 解耦，误改 `title` 不再影响显示名；此守卫仍建议加（纵深防御，防止对成员行做无意义的会话操作）。
 
 ### 5.5 不改动
 
@@ -143,21 +154,22 @@ return candidate
 
 ### 6.3 其余
 
-- `useGroupChat.ts`：类型不变（`GroupMemberInfo` 等无需新增字段）。
+- `useGroupChat.ts`：类型不变（`GroupMemberInfo` 等无需新增字段——`name` 仍是显示名，只是后端来源改为 `agent_name`）。
 - 头像解析（`useGroupMembers.resolveSpeaker` / `AvatarStack.vue`）不变（D7）。
 
 ## 7. API 与文档
 
-- **线格式不变**。仅语义扩展：`memberAgentIds[]` / `agentIds[]` 允许重复元素代表多实例；`hostAgentId` 仍为 agent id。
+- **线格式不变**。仅语义扩展：`memberAgentIds[]` / `agentIds[]` 允许重复元素代表多实例；`hostAgentId` 仍为 agent id；成员的 `name` 字段语义不变。
 - `internal/api/openapi.yaml`：更新 `/api/group/create`、`/api/group/members` 的字段描述（说明可含重复、上限 12）；无字段增删。
-- `docs/spec/features/group-chat.md`：更新成员上限（12）、昵称规则、去重移除说明、显示名权威来源。
+- `docs/spec/features/group-chat.md`：更新成员上限（12）、昵称规则、去重移除说明、成员显示名权威来源改为 `agent_name`；更新数据模型表（`chat_sessions.agent_name`）。
 
 ## 8. 边界与影响
 
 - **放弃 rejoin 的连接恢复**（D9 代价）：离场后再加回 = 新实例、新 ACP 进程、新 `external_session_id`。
 - **资源**：每个实例 = 一个独立 ACP 子进程；上限 12 即最多 12 个。
 - **上限语义变化**：`Claude ×3 + GPT ×2` 现在计 5（此前按去重 agent 计 2）。
-- **既有测试需改**：`TestCreateGroupWithMembers_DedupesAgents`（`group_store_test.go:1122-1154`）等钉住去重行为的用例须改为钉住「多实例 + 唯一昵称」。
+- **一次 schema 迁移**：新增 `agent_name` 列 + 存量成员行回填（`agent_name = title, title = ''`）。迁移须幂等、可重入，且对无成员的旧库是 no-op。
+- **既有测试需改**：`TestCreateGroupWithMembers_DedupesAgents`（`group_store_test.go:1122-1154`）等钉住去重行为的用例须改为钉住「多实例 + 唯一昵称」；读成员名的用例改断言 `agent_name`。
 
 ## 9. 测试计划
 
@@ -167,8 +179,10 @@ return candidate
 - 建群：同 agent 多次出现在 `memberAgentIds` 生成多个成员行。
 - 加成员：同 agent 可再加（新建实例，非 rejoin）。
 - 主持人：重复 agent 时 `hostMemberId` 指向首实例。
-- `speaker_identity`：成员发言人名取 `title`，改 `agents.name` 后分享快照名字**不变**（回归缺陷 1）。
-- `session_type` 守卫：对成员行重命名被拒。
+- 数据模型：成员行 `agent_name` 有值、`title` 为空；非成员行 `agent_name` 为空、`title` 正常。
+- 迁移：旧库（成员行 `title` 有值、无 `agent_name` 列）升级后 `agent_name` 回填正确、`title` 清空；重复执行迁移结果不变（幂等）。
+- `speaker_identity`：成员发言人名取 `agent_name`，改 `agents.name` 后分享快照名字**不变**（回归缺陷 1）；多实例分享快照中 `Claude` 与 `Claude 2` 名字不同（回归缺陷 2）。
+- `session_type` 守卫：对成员行做会话重命名被拒/忽略。
 
 **前端**
 - 步进器计数增减、减到 0 取消选中。
@@ -181,9 +195,10 @@ return candidate
 
 ## 10. 实施顺序（建议）
 
-1. service：`validateGroupSpecs` + 昵称生成 + `MaxGroupMembers=12` + 去重/rejoin 移除。
-2. `speaker_identity`：成员名以 `title` 为权威（修缺陷 1、2）。
-3. handler：specs 不再填名；错误映射与上限。
-4. 前端：`AgentSelectorDrawer` 步进器 + `GroupSettingsSheet` 去排除。
-5. 测试：Go + 前端 + E2E；更新既有去重用例。
-6. 文档：openapi.yaml + group-chat.md。
+1. **schema**：`database.go` 新增 `agent_name` 列迁移 + 存量成员行回填（幂等）。
+2. service：`validateGroupSpecs` + 昵称生成 + `MaxGroupMembers=12` + 去重/rejoin 移除；成员显示名读写全部切到 `agent_name`。
+3. `speaker_identity`：成员名以 `agent_name` 为权威（修缺陷 1、2）。
+4. handler：specs 不再填名；错误映射与上限；`session_type` 守卫。
+5. 前端：`AgentSelectorDrawer` 步进器 + `GroupSettingsSheet` 去排除。
+6. 测试：Go + 前端 + E2E；更新既有去重用例。
+7. 文档：openapi.yaml + group-chat.md。
