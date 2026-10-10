@@ -895,6 +895,14 @@ describe('ChatMessageList — group gating (single-agent chrome suppressed)', ()
     expect(src).toContain("t('chat.messageList.groupModeFreeTip3')")
   })
 
+  it('passes each member own avatar into the group empty-state stack', async () => {
+    const src = await source()
+    // The empty-state avatar stack must render the GENERATED member avatars,
+    // not the agent fallback. Regression: the map omitted `avatar`, so the
+    // stack kept showing brand icons.
+    expect(src).toContain('avatar: m.avatar')
+  })
+
   it('forwards groupMode from the panel into the message list', async () => {
     const panelSource = await import('@/components/chat/ChatPanelContent.vue?raw')
     expect(String(panelSource.default)).toContain(':groupMode="props.groupMode"')
