@@ -454,6 +454,44 @@ func TestLoadAgentsFromDBRows_ToleratesEmptyJSONColumns(t *testing.T) {
 	assert.Nil(t, agents[0].ThinkingEffortLevels)
 }
 
+// TestLoadAgentsFromDBRows_DisabledRoundTrip pins that the disabled flag
+// survives the save → load round trip through the model layer's own SQL (the
+// service layer has a parallel path). Both true and false must round-trip: a
+// missing column in the upsert would silently pin the flag at its old value.
+func TestLoadAgentsFromDBRows_DisabledRoundTrip(t *testing.T) {
+	db := setupTestDBForDiscovery(t)
+
+	require.NoError(t, saveAgentToDB(db, &Agent{ID: "pi", Name: "Pi", Backend: "pi", Disabled: true}))
+	agents, err := loadAgentsFromDBRows(db)
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+	assert.True(t, agents[0].Disabled, "disabled=true must persist through saveAgentToDB")
+
+	// Re-save the SAME id with disabled=false (the upsert path). A column
+	// omitted from the INSERT list would leave the row at 1.
+	_, err = db.Exec(`DELETE FROM agents`)
+	require.NoError(t, err)
+	require.NoError(t, saveAgentToDB(db, &Agent{ID: "pi", Name: "Pi", Backend: "pi", Disabled: false}))
+	agents, err = loadAgentsFromDBRows(db)
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+	assert.False(t, agents[0].Disabled, "disabled=false must persist through saveAgentToDB")
+}
+
+// TestLoadAgentsFromDBRows_MalformedDisabledErrors pins the scan-error path: a
+// non-integer disabled value must surface as an error rather than being
+// silently coerced (the loader's contract is to fail loudly on a broken row).
+func TestLoadAgentsFromDBRows_MalformedDisabledErrors(t *testing.T) {
+	db := setupTestDBForDiscovery(t)
+
+	_, err := db.Exec(`INSERT INTO agents (id, name, backend, disabled) VALUES ('bad', 'Bad', 'b', 'not-an-int')`)
+	require.NoError(t, err)
+
+	_, err = loadAgentsFromDBRows(db)
+	require.Error(t, err, "a malformed disabled column must surface as a scan error")
+	assert.Contains(t, err.Error(), "disabled")
+}
+
 // ---------------------------------------------------------------------------
 // Infrastructure sync helper
 // ---------------------------------------------------------------------------
@@ -725,7 +763,8 @@ func TestStartModelDiscoveryAsync_PersistsAndReloads(t *testing.T) {
 
 	var modelsJSON string
 	require.NoError(t, db.QueryRow(
-		`SELECT models FROM agents WHERE backend = ?`, backend).Scan(&modelsJSON))
+		`SELECT models FROM agents WHERE backend = ?`, backend,
+	).Scan(&modelsJSON))
 	assert.Contains(t, modelsJSON, "m1", "发现的模型必须已落库")
 
 	// 内存必须已重载：Agents 是 map[string]*Agent，按 agent id 索引；这里
