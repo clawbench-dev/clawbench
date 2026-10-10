@@ -478,15 +478,23 @@ describe('useChatContext', () => {
 
   describe('stagedMentions (group @ cards)', () => {
     it('addStagedMention adds a card carrying the member identity', () => {
-      ctx.addStagedMention({ memberId: 'm-a', name: 'Alice', agentId: 'a-1', backend: 'claude' })
+      ctx.addStagedMention({ memberId: 'm-a', name: 'Alice', agentId: 'a-1', memberAvatar: 'MEMBER_A', backend: 'claude' })
       expect(ctx.stagedMentions.value).toHaveLength(1)
       const card = ctx.stagedMentions.value[0]
       expect(card.memberId).toBe('m-a')
       expect(card.name).toBe('Alice')
       expect(card.agentId).toBe('a-1')
+      expect(card.memberAvatar).toBe('MEMBER_A')
       expect(card.backend).toBe('claude')
       expect(card.note).toBe('')
       expect(card.id).toBeTruthy()
+    })
+
+    it('re-picking the same member refreshes its member avatar in place', () => {
+      ctx.addStagedMention({ memberId: 'm-a', name: 'Alice', memberAvatar: 'OLD' })
+      ctx.addStagedMention({ memberId: 'm-a', name: 'Alice', memberAvatar: 'NEW' })
+      expect(ctx.stagedMentions.value).toHaveLength(1)
+      expect(ctx.stagedMentions.value[0].memberAvatar).toBe('NEW')
     })
 
     it('adding the same member twice updates in place (no duplicate card)', () => {

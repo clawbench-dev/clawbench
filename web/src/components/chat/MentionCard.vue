@@ -46,7 +46,8 @@ const props = withDefaults(defineProps<{
   mention: StagedMention
   /** Show the remove button (input side only — a sent card is not removable). */
   removable?: boolean
-  /** The member's custom avatar SVG (resolved from agentId by the caller). */
+  /** The member's avatar SVG: its own snapshot when set, else the resolved
+   *  underlying-agent avatar ('' shows the backend's built-in icon). */
   avatar?: string
 }>(), {
   removable: false,

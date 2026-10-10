@@ -583,8 +583,9 @@ function handleSentQuoteClick(entry) {
 
 /**
  * Add a group member card (@ card). Payload comes from the input's @ menu: the
- * member row id (the tag target), the display name and the agent identity for
- * the avatar. The card lives in useChatContext so it survives a session switch.
+ * member row id (the tag target), the display name and the agent identity plus
+ * the resolved member avatar for the card. The card lives in useChatContext so
+ * it survives a session switch.
  */
 function handleAddMention(payload) {
     if (!payload?.memberId) return
@@ -592,6 +593,7 @@ function handleAddMention(payload) {
         memberId: payload.memberId,
         name: payload.name || '',
         agentId: payload.agentId || undefined,
+        memberAvatar: payload.memberAvatar || undefined,
         backend: payload.backend || undefined,
     })
 }
