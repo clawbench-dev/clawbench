@@ -690,16 +690,26 @@ func SetMemberAgentName(memberID, name string) error {
 	return err
 }
 
-// SetMemberAvatar stores a member's own avatar SVG (agent_avatar). The WHERE
-// clause pins both the member row AND its group, so a caller cannot write an
-// avatar onto a member of a different group even if it learns the row id; only
-// group_member rows are touched (a plain session has no agent_avatar meaning).
-func SetMemberAvatar(groupID, memberID, avatar string) error {
-	_, err := store.WriteExec(
+// SetMemberAvatar stores a member's own avatar SVG (agent_avatar) and returns
+// how many rows were actually updated. The WHERE clause pins both the member row
+// AND its group, so a caller cannot write an avatar onto a member of a different
+// group even if it learns the row id; only group_member rows are touched (a
+// plain session has no agent_avatar meaning). A member id belonging to another
+// group matches no row, so the count is 0 and the caller reports an honest
+// "saved" total.
+func SetMemberAvatar(groupID, memberID, avatar string) (int64, error) {
+	res, err := store.WriteExec(
 		`UPDATE chat_sessions SET agent_avatar = ? WHERE id = ? AND group_id = ? AND session_type = ?`,
 		avatar, memberID, groupID, groupMemberSessionType,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 // ListGroupMembers returns every member row of a group, including removed

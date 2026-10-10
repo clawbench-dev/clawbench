@@ -122,10 +122,86 @@ func TestServeGroupMemberAvatars_ScopedByGroup(t *testing.T) {
 
 	// Address memberA under groupB: the UPDATE is scoped by group_id, so it
 	// matches no row and leaves memberA untouched.
-	require.NoError(t, service.SetMemberAvatar(groupB, memberA, validSVG))
+	affected, err := service.SetMemberAvatar(groupB, memberA, validSVG)
+	require.NoError(t, err)
+	assert.Zero(t, affected, "a cross-group member id must update no row")
 
 	members, err := service.ListGroupMembers(groupA)
 	require.NoError(t, err)
 	require.Len(t, members, 1)
 	assert.Empty(t, members[0].Avatar, "cross-group avatar write must be a no-op")
+}
+
+// TestServeGroupMemberAvatars_BatchWritesAll pins the batch contract: a valid
+// 2-member payload writes both members in one round trip and reports saved == 2.
+func TestServeGroupMemberAvatars_BatchWritesAll(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	groupID, hostID, err := service.CreateGroup(env.ProjectDir, "g", "codebuddy", "codebuddy", "Host")
+	require.NoError(t, err)
+	memberID, err := service.AddGroupMember(env.ProjectDir, groupID, "claude", "claude", "Claude")
+	require.NoError(t, err)
+
+	const hostSVG = `<svg xmlns="http://www.w3.org/2000/svg"><g id="host"/></svg>`
+	const memberSVG = `<svg xmlns="http://www.w3.org/2000/svg"><g id="member"/></svg>`
+
+	req := newRequest(t, http.MethodPost, "/api/group/member-avatars", map[string]any{
+		"groupId": groupID,
+		"avatars": []map[string]any{
+			{"memberId": hostID, "avatar": hostSVG},
+			{"memberId": memberID, "avatar": memberSVG},
+		},
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupMemberAvatars, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var saved struct {
+		Saved int `json:"saved"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &saved))
+	assert.Equal(t, 2, saved.Saved)
+
+	byID := map[string]string{}
+	members, err := service.ListGroupMembers(groupID)
+	require.NoError(t, err)
+	for _, m := range members {
+		byID[m.ID] = m.Avatar
+	}
+	assert.Equal(t, hostSVG, byID[hostID])
+	assert.Equal(t, memberSVG, byID[memberID])
+}
+
+// TestServeGroupMemberAvatars_BatchValidatesAllBeforeWrite pins validate-all-
+// then-write: when the SECOND item is unsafe the whole request is rejected AND
+// the first (valid) member is left untouched — no half-applied batch.
+func TestServeGroupMemberAvatars_BatchValidatesAllBeforeWrite(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	groupID, hostID, err := service.CreateGroup(env.ProjectDir, "g", "codebuddy", "codebuddy", "Host")
+	require.NoError(t, err)
+	memberID, err := service.AddGroupMember(env.ProjectDir, groupID, "claude", "claude", "Claude")
+	require.NoError(t, err)
+
+	const validSVG = `<svg xmlns="http://www.w3.org/2000/svg"></svg>`
+	const unsafeSVG = `<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`
+
+	req := newRequest(t, http.MethodPost, "/api/group/member-avatars", map[string]any{
+		"groupId": groupID,
+		"avatars": []map[string]any{
+			{"memberId": hostID, "avatar": validSVG},
+			{"memberId": memberID, "avatar": unsafeSVG},
+		},
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupMemberAvatars, req)
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+
+	members, err := service.ListGroupMembers(groupID)
+	require.NoError(t, err)
+	for _, m := range members {
+		assert.Empty(t, m.Avatar, "a rejected batch must not write any member (member %s)", m.ID)
+	}
 }

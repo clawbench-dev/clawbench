@@ -337,9 +337,11 @@ func ServeGroupSettings(w http.ResponseWriter, r *http.Request) {
 //
 //	POST /api/group/member-avatars {groupId, avatars:[{memberId, avatar}]} -> {ok, saved:int}
 //
-// Each avatar must pass the same SVG safety gate as agent avatars
-// (avatarSVGLooksSafe): this is a stored-XSS sink reachable by any authenticated
-// caller, and the stored string is later replayed into the public share page.
+// Each avatar must pass the same SVG safety gate (and size cap) as agent
+// avatars: this is a stored-XSS sink reachable by any authenticated caller, and
+// the stored string is later replayed into the public share page. The batch is
+// validated in FULL before any write, so an invalid item never leaves the group
+// half-updated.
 func ServeGroupMemberAvatars(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
@@ -366,17 +368,26 @@ func ServeGroupMemberAvatars(w http.ResponseWriter, r *http.Request) {
 	if !requireSessionOwnership(w, r, req.GroupID, projectPath) {
 		return
 	}
-	saved := 0
+	// Pass 1: validate EVERY item before writing anything. A per-item
+	// validate-and-write loop would persist the valid items before returning
+	// 400 on a later invalid one, leaving the batch half-applied.
 	for _, a := range req.Avatars {
-		if a.MemberID == "" || !avatarSVGLooksSafe([]byte(a.Avatar)) {
+		if a.MemberID == "" || len(a.Avatar) > maxAgentAvatarBytes || !avatarSVGLooksSafe([]byte(a.Avatar)) {
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
 			return
 		}
-		if err := service.SetMemberAvatar(req.GroupID, a.MemberID, a.Avatar); err != nil {
+	}
+	// Pass 2: write. saved counts rows actually affected — a member id that
+	// belongs to another group matches no row and contributes 0 rather than
+	// inflating the total.
+	saved := int64(0)
+	for _, a := range req.Avatars {
+		n, err := service.SetMemberAvatar(req.GroupID, a.MemberID, a.Avatar)
+		if err != nil {
 			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 			return
 		}
-		saved++
+		saved += n
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "saved": saved})
 }

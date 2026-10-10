@@ -5390,11 +5390,12 @@ paths:
         持久化各成员自身的头像 SVG（`chat_sessions.agent_avatar`）。头像由前端用
         DiceBear 按成员名生成，批量提交，使建群/加人后只发一次请求即可写完所有新成员。
 
-        每个头像必须通过与智能体头像**同一道** SVG 安全闸门（拒绝 `<script>`、
-        `foreignObject`、外链 `href`、内联事件处理器等）：本端点是存储型 XSS 汇，
-        且存下的字符串会被回放到**公开分享页**。空头像同样被拒。
+        每个头像必须通过与智能体头像**同一道** SVG 安全闸门（含 256 KiB 大小上限；
+        拒绝 `<script>`、`foreignObject`、外链 `href`、内联事件处理器等）：本端点是
+        存储型 XSS 汇，且存下的字符串会被回放到**公开分享页**。空头像同样被拒。
         只写入属于 `groupId` 的 `session_type='group_member'` 行；成员行 id 属于
-        其它群时该条为 no-op（不会跨群写入）。任一条非法即整批返回 400 且不写后续条目。
+        其它群时该条为 no-op（不会跨群写入）。
+        **整批先校验后写入**：任一条非法即整批返回 400，不写入任何条目（不会半应用）。
       operationId: groupMemberAvatarsSet
       requestBody:
         required: true
