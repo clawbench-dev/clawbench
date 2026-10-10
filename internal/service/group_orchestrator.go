@@ -661,7 +661,7 @@ func (o *GroupOrchestrator) runRounds(ctx context.Context, groupID string) Drain
 	// hostSysPrompt is the host's routing instruction; the host turn otherwise
 	// runs through the SAME runSpeakerTurn path as a member (cursor + note
 	// bookkeeping + command injection), so only the prompt differs.
-	hostSysPrompt := BuildHostSystemPrompt(activeMemberNamesExcept(s.members, hostMemberID))
+	hostSysPrompt := BuildHostSystemPrompt(s.names[hostMemberID], activeMemberNamesExcept(s.members, hostMemberID))
 	refill := func(ctx context.Context) ([]speakerGroup, bool, DrainResult) {
 		if o.checkSpeechCap() {
 			// Member-speech cap reached: stop before the host routes anyone
@@ -1163,7 +1163,7 @@ func (o *GroupOrchestrator) lastMemberOutput(groupID, memberID string) string {
 func (o *GroupOrchestrator) summarize(ctx context.Context, s groupTurnSetup, hostMemberID string) {
 	hostMember := GroupMember{ID: hostMemberID, Name: s.names[hostMemberID]}
 	o.runSpeakerTurn(ctx, s, hostMember, "",
-		BuildHostSummaryPrompt(activeMemberNamesExcept(s.members, hostMemberID)))
+		BuildHostSummaryPrompt(s.names[hostMemberID], activeMemberNamesExcept(s.members, hostMemberID)))
 }
 
 // advanceCursorOnSuccess records a member's seen_cursor after a turn, applying

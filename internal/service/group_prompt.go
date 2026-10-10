@@ -40,6 +40,20 @@ func renderMemberList(members []HostMemberInfo) string {
 	return strings.Join(rendered, "、")
 }
 
+// selfIdentityLine states the acting agent's OWN group display name. Without it
+// a member falls back to the CLI's own identity (its agent name), which is wrong
+// when the same agent appears several times under numbered nicknames
+// ("Codebuddy", "Codebuddy 2", …): every instance would claim the same bare
+// name (or invent a number it saw in the roster). Declaring the name up front is
+// what keeps duplicate instances distinguishable to themselves. Returns "" for
+// an empty name so a caller without one adds no confusing sentence.
+func selfIdentityLine(selfName string) string {
+	if strings.TrimSpace(selfName) == "" {
+		return ""
+	}
+	return "你的群内显示名是「" + selfName + "」。在群里就用这个名字自称——不要用名单里别人的名字，也不要自己编造带数字的名字。\n"
+}
+
 // othersLine renders the "本群其他成员：…。" line for a member-facing prompt,
 // excluding selfName (a member is not told about itself) and appending the
 // human user as a participant. Returns "" when there is nobody else.
@@ -61,11 +75,14 @@ func othersLine(members []HostMemberInfo, selfName string) string {
 }
 
 // BuildHostSystemPrompt returns the instruction appended to the host agent's
-// system prompt so it emits a parseable routing decision. members are the
-// display names the host may address, with their specialties.
-func BuildHostSystemPrompt(members []HostMemberInfo) string {
+// system prompt so it emits a parseable routing decision. selfName is the host's
+// OWN group display name (declared so a duplicated host instance does not lose
+// its own identity); members are the display names the host may address, with
+// their specialties.
+func BuildHostSystemPrompt(selfName string, members []HostMemberInfo) string {
 	var b strings.Builder
 	b.WriteString("\n\n[群聊主持人] 你是本次多智能体讨论的主持人。你的职责是控场，而不是代替成员回答问题。\n")
+	b.WriteString(selfIdentityLine(selfName))
 	b.WriteString("每次发言必须包含一个路由标签，指定接下来该谁发言，并把你对他们说的话写在标签里：\n")
 	b.WriteString("  <clawbench-mention targets=\"成员名\">给该成员的指令</clawbench-mention>\n")
 	b.WriteString("可一次点名多个成员（逗号分隔），他们将按顺序依次发言：\n")
@@ -120,6 +137,7 @@ func BuildHostSystemPrompt(members []HostMemberInfo) string {
 func BuildMemberSystemPrompt(members []HostMemberInfo, selfName string) string {
 	var b strings.Builder
 	b.WriteString("\n\n[群聊成员] 你是一个多智能体群聊中的**参与者**，**不是主持人**。\n")
+	b.WriteString(selfIdentityLine(selfName))
 	b.WriteString("主持人负责控场、点名和汇总；你只负责在被点名时，就当前话题发表你自己的看法。\n")
 	b.WriteString("你**不要**替主持人安排别人发言，也**不要**输出以下协议标签（那是主持人专用的，你输出会打乱秩序）：\n")
 	b.WriteString("  <clawbench-mention …>…</clawbench-mention>\n")
@@ -136,9 +154,11 @@ func BuildMemberSystemPrompt(members []HostMemberInfo, selfName string) string {
 // loop ran out of rounds before the host chose to end, so we run the host once
 // more purely to produce the final summary. It MUST NOT ask for a routing tag —
 // the orchestrator ignores any tag in this turn to avoid re-entering the loop.
-func BuildHostSummaryPrompt(members []HostMemberInfo) string {
+// selfName is the host's own display name (see BuildHostSystemPrompt).
+func BuildHostSummaryPrompt(selfName string, members []HostMemberInfo) string {
 	var b strings.Builder
 	b.WriteString("\n\n[群聊主持人] 讨论轮数已达上限，现在只做收尾。\n")
+	b.WriteString(selfIdentityLine(selfName))
 	b.WriteString("请直接写一段简短的讨论结论（最终汇总），总结各成员观点与你的判断，供用户阅读。\n")
 	b.WriteString("不要再输出任何路由标签或结束标签。\n")
 	b.WriteString("参与成员：")
@@ -163,6 +183,7 @@ func BuildHostSummaryPrompt(members []HostMemberInfo) string {
 func BuildFreeMemberSystemPrompt(members []HostMemberInfo, selfName string) string {
 	var b strings.Builder
 	b.WriteString("\n\n[自由群聊] 你是一个多智能体自由群聊中的参与者，没有主持人，大家平等对话。\n")
+	b.WriteString(selfIdentityLine(selfName))
 	b.WriteString("轮到你时，直接就当前话题发表你的看法即可（简洁、直接）。\n")
 	b.WriteString("如果你希望某位成员接着发言（补充、反驳、回应你），就把话筒递给他——在你的发言里写：\n")
 	b.WriteString("  <clawbench-mention targets=\"成员名\">你想对他说的话</clawbench-mention>\n")

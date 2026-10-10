@@ -1110,3 +1110,65 @@ func TestFreeLoop_ParallelSwitchOffUserMentionsSequential(t *testing.T) {
 		t.Fatalf("a sequential member must see the previous speaker's output; B=%q", prompts[byName["B"]])
 	}
 }
+
+// Duplicate instances of one agent must each be told their OWN name: the free
+// prompt carries the per-member identity line, so two "Codebuddy" instances
+// receive different names and do not both claim the bare agent name. This is the
+// end-to-end guard for the real defect where four duplicate instances each
+// misreported themselves.
+func TestFreeLoop_DuplicateInstancesGetDistinctOwnNames(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/free-dup-names"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	// Two instances of the SAME agent in a free group. DisplayName is the BASE;
+	// the service appends the instance ordinal (second becomes "Codebuddy 2").
+	groupID, _, err := CreateGroupWithMembers(project, "群聊", "", []GroupMemberSpec{
+		{AgentID: "codebuddy", Backend: "claude", DisplayName: "Codebuddy"},
+		{AgentID: "codebuddy", Backend: "claude", DisplayName: "Codebuddy"},
+	})
+	if err != nil {
+		t.Fatalf("CreateGroupWithMembers: %v", err)
+	}
+	members, err := ListGroupMembers(groupID)
+	if err != nil {
+		t.Fatalf("ListGroupMembers: %v", err)
+	}
+	byName := map[string]string{}
+	for _, m := range members {
+		byName[m.Name] = m.ID
+	}
+	if byName["Codebuddy"] == "" || byName["Codebuddy 2"] == "" {
+		t.Fatalf("expected two instances, got %v", byName)
+	}
+
+	script := map[string][]string{
+		byName["Codebuddy"]:   {"我在"},
+		byName["Codebuddy 2"]: {"我也在"},
+	}
+	base, _ := freeScriptedRunner(t, project, groupID, script)
+	prompts := map[string]string{}
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		prompts[turn.MemberRowID] = turn.Prompt
+		return base(ctx, gid, turn)
+	}
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	_ = runGroupTurnForTest(t, o, project, "大家聊聊", nil)
+
+	// Each instance's prompt must declare ITS OWN name, and must not declare the
+	// other's.
+	if !strings.Contains(prompts[byName["Codebuddy"]], "你的群内显示名是「Codebuddy」") {
+		t.Fatalf("instance 1 must be told its own name; got %q", prompts[byName["Codebuddy"]])
+	}
+	if !strings.Contains(prompts[byName["Codebuddy 2"]], "你的群内显示名是「Codebuddy 2」") {
+		t.Fatalf("instance 2 must be told its own name; got %q", prompts[byName["Codebuddy 2"]])
+	}
+	if strings.Contains(prompts[byName["Codebuddy"]], "你的群内显示名是「Codebuddy 2」") {
+		t.Fatal("instance 1 must not be told the sibling's name")
+	}
+	if strings.Contains(prompts[byName["Codebuddy 2"]], "你的群内显示名是「Codebuddy」") {
+		t.Fatal("instance 2 must not be told the sibling's name")
+	}
+}
