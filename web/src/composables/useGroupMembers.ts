@@ -2,6 +2,14 @@ import { ref, computed, watch, type Ref } from 'vue'
 import { listGroupMembers, type GroupMemberInfo } from '@/composables/useGroupChat'
 import { getAgentAvatar, useAgents } from '@/composables/useAgents'
 
+/** GroupSpeakerIdentity is the resolved shape a message speaker renders with. */
+export interface GroupSpeakerIdentity {
+  name: string
+  backend: string
+  avatar: string
+  agentName: string
+}
+
 /**
  * Loads and caches the member roster of the CURRENT group session, and exposes
  * helpers to resolve a message's speaker (by member row id) and identify the
@@ -22,23 +30,27 @@ export function useGroupMembers(currentSessionId: Ref<string>) {
     return map
   })
 
-  /** resolveSpeaker maps a member row id to { name, backend, avatar, agentName } or null. */
-  function resolveSpeaker(memberRowId: string): { name: string; backend: string; avatar: string; agentName: string } | null {
-    const m = byId.value.get(memberRowId)
-    if (!m) return null
+  function toIdentity(m: GroupMemberInfo): GroupSpeakerIdentity {
     // 成员自己的头像快照优先；旧成员无快照时回退智能体头像。
     return { name: m.name, backend: m.backend, avatar: m.avatar || getAgentAvatar(m.agentId) || '', agentName: m.agentName }
   }
 
-  /** resolveByName maps a display name to { name, backend, avatar, agentName } or null.
+  /** resolveSpeaker maps a member row id to a speaker identity or null. */
+  function resolveSpeaker(memberRowId: string): GroupSpeakerIdentity | null {
+    const m = byId.value.get(memberRowId)
+    if (!m) return null
+    return toIdentity(m)
+  }
+
+  /** resolveByName maps a display name to a speaker identity or null.
    *  Used to render @-mention chips for the host's routing targets, which are
    *  named (not id'd) in the routing tag. */
-  function resolveByName(name: string): { name: string; backend: string; avatar: string; agentName: string } | null {
+  function resolveByName(name: string): GroupSpeakerIdentity | null {
     const target = name.trim()
     if (!target) return null
     const m = members.value.find(x => x.name.trim() === target)
     if (!m) return null
-    return { name: m.name, backend: m.backend, avatar: m.avatar || getAgentAvatar(m.agentId) || '', agentName: m.agentName }
+    return toIdentity(m)
   }
 
   async function refresh(sessionId: string) {

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { ref, nextTick } from 'vue'
 import { useGroupMembers } from '@/composables/useGroupMembers'
 
@@ -16,6 +16,10 @@ describe('useGroupMembers', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     for (const k of Object.keys(agentAvatars)) delete agentAvatars[k]
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
   })
 
   it('exposes the roster', async () => {
@@ -114,5 +118,33 @@ describe('useGroupMembers', () => {
     expect(resolveSpeaker('m1')).toEqual({
       name: 'Alice', backend: 'claude', avatar: '<svg>agent</svg>', agentName: 'Claude',
     })
+  })
+
+  it('resolveByName prefers the member avatar snapshot and exposes agentName', async () => {
+    agentAvatars['claude'] = '<svg>agent</svg>'
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        members: [{
+          id: 'm1', agentId: 'claude', name: 'Alice', backend: 'claude',
+          avatar: '<svg>member</svg>', agentName: 'Claude', left: false, isHost: false,
+        }],
+      }),
+    })))
+
+    const sid = ref('group-by-name')
+    const { resolveByName } = useGroupMembers(sid)
+    await nextTick()
+    await new Promise(r => setTimeout(r, 0))
+
+    expect(resolveByName('Alice')).toEqual({
+      name: 'Alice', backend: 'claude', avatar: '<svg>member</svg>', agentName: 'Claude',
+    })
+    // Trimmed input resolves the same member.
+    expect(resolveByName('  Alice  ')).toEqual({
+      name: 'Alice', backend: 'claude', avatar: '<svg>member</svg>', agentName: 'Claude',
+    })
+    // Unknown name resolves to null.
+    expect(resolveByName('Bob')).toBeNull()
   })
 })
