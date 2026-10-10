@@ -7,7 +7,8 @@ import "clawbench/internal/model"
 // wire shape shared by the conversation-index, share-selection and share-payload
 // endpoints so the frontend can resolve a message's icon the same way everywhere.
 //
-// Avatar is the user-configured SVG string (model.Agent.Avatar), NOT a data URI.
+// Avatar is an SVG string (a member's own snapshot when present, otherwise the
+// agent's model.Agent.Avatar), NOT a data URI.
 // It is carried on every path (see ResolveSessionSpeakers' includeAvatar): the
 // public share snapshot freezes it at creation time so the anonymous viewer can
 // render the same icons the app shows. The snapshot is the only copy the viewer
@@ -16,6 +17,12 @@ type SpeakerIdentity struct {
 	Name    string `json:"name,omitempty"`
 	Backend string `json:"backend"`
 	Avatar  string `json:"avatar,omitempty"`
+	// AgentName is the underlying REAL agent's display name. For a member whose
+	// display name was auto-derived (a built-in pool name, or "<base> <n>"), it
+	// differs from Name, and the UI shows it after the nickname so the reader
+	// knows which agent is speaking. Empty when it equals Name (no disclosure
+	// needed) or the agent is gone.
+	AgentName string `json:"agentName,omitempty"`
 }
 
 // ResolveSessionSpeakers resolves a session's speaker identities ONCE, so each
@@ -65,16 +72,28 @@ func ResolveSessionSpeakers(sessionID string, includeAvatar bool) (*SpeakerIdent
 // by the live agents.name: a member's name is a snapshot taken when it joined
 // the group, so renaming the agent must not rewrite past speech, and duplicate
 // instances of one agent (each with its own name) must stay distinguishable.
-// The backend and custom avatar still come from the agent registry (avatar is a
-// property of the agent, shared by all its instances).
+// The backend still comes from the agent registry. When the live agent name
+// differs from the stored member name, it is carried as AgentName so the UI can
+// disclose the real agent behind an auto-derived nickname.
+//
+// The custom avatar prefers the member's OWN snapshot (m.Avatar); the agent's
+// shared avatar is only a fallback for members created before per-member avatars
+// existed.
 func speakerFromMember(m GroupMember, includeAvatar bool) SpeakerIdentity {
 	s := SpeakerIdentity{Backend: m.Backend, Name: m.Name}
 	if a := model.GetAgent(m.AgentID); a != nil {
 		if a.Backend != "" {
 			s.Backend = a.Backend
 		}
+		if a.Name != "" && a.Name != m.Name {
+			s.AgentName = a.Name
+		}
 		if includeAvatar {
-			s.Avatar = a.Avatar
+			if m.Avatar != "" {
+				s.Avatar = m.Avatar
+			} else {
+				s.Avatar = a.Avatar
+			}
 		}
 	}
 	return s

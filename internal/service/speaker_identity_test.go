@@ -201,3 +201,49 @@ func TestResolveSessionSpeakers_MissingAgentFallsBackToRow(t *testing.T) {
 	assert.Equal(t, "codex", sessionAgent.Backend, "falls back to the session row's backend")
 	assert.Empty(t, sessionAgent.Avatar)
 }
+
+// TestSpeakerFromMember_PrefersMemberAvatarAndCarriesAgentName pins the member
+// avatar precedence: a member's OWN avatar snapshot wins over the agent's shared
+// avatar. Here the member's display name equals the agent's, so AgentName stays
+// empty (no redundant "Claude · Claude" disclosure).
+func TestSpeakerFromMember_PrefersMemberAvatarAndCarriesAgentName(t *testing.T) {
+	setupGroupDB(t)
+	withAgents(t, agentMap(&model.Agent{ID: "claude", Name: "Claude", Backend: "claude", Avatar: "<svg>agent</svg>"}))
+
+	project := "/tmp/speaker-avatar"
+	require.NoError(t, func() error { _, err := store.ProjectIDForPath(project); return err }())
+	groupID, hostID, err := CreateGroup(project, "G", "claude", "claude", "Claude")
+	require.NoError(t, err)
+
+	const memberSvg = "<svg>member</svg>"
+	_, err = store.WriteExec("UPDATE chat_sessions SET agent_avatar = ? WHERE id = ?", memberSvg, hostID)
+	require.NoError(t, err)
+
+	members, err := ListGroupMembers(groupID)
+	require.NoError(t, err)
+	require.NotEmpty(t, members)
+
+	s := speakerFromMember(members[0], true)
+	assert.Equal(t, memberSvg, s.Avatar, "the member's own avatar must win over the agent's")
+	assert.Empty(t, s.AgentName, "name equals agent name → no disclosure")
+}
+
+// TestSpeakerFromMember_CarriesAgentNameWhenDifferent pins that when a member's
+// display name was auto-derived (a pool nickname, or "<base> <n>"), the real
+// agent name is carried so the UI can disclose which agent is speaking.
+func TestSpeakerFromMember_CarriesAgentNameWhenDifferent(t *testing.T) {
+	withAgents(t, agentMap(&model.Agent{ID: "claude", Name: "Claude", Backend: "claude"}))
+
+	s := speakerFromMember(GroupMember{AgentID: "claude", Name: "Alice", Backend: "claude"}, false)
+	assert.Equal(t, "Claude", s.AgentName)
+	assert.Empty(t, s.Avatar)
+}
+
+// TestSpeakerFromMember_FallsBackToAgentAvatar pins the legacy behavior: a
+// member with no per-member snapshot still resolves the agent's shared avatar.
+func TestSpeakerFromMember_FallsBackToAgentAvatar(t *testing.T) {
+	withAgents(t, agentMap(&model.Agent{ID: "claude", Name: "Claude", Backend: "claude", Avatar: "<svg>agent</svg>"}))
+
+	s := speakerFromMember(GroupMember{AgentID: "claude", Name: "Alice", Backend: "claude"}, true)
+	assert.Equal(t, "<svg>agent</svg>", s.Avatar)
+}
