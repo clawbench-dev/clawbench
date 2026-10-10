@@ -50,7 +50,7 @@ import ChatMessageItem from '@/components/chat/ChatMessageItem.vue'
 const i18n = createI18n({
   legacy: false,
   locale: 'en',
-  messages: { en: { chat: { message: {}, contentBlocks: { cancelled: 'cancelled' }, fileChanges: { title: 'Files' }, pending: {}, speech: {}, busy: {} }, group: { host: 'Host', you: 'you', bcc: { title: 'Private note', to: 'To', toYou: 'Private note to you' } }, common: {} } },
+  messages: { en: { chat: { message: {}, contentBlocks: { cancelled: 'cancelled' }, fileChanges: { title: 'Files' }, pending: {}, speech: {}, busy: {} }, group: { host: 'Host', realAgent: 'Agent', you: 'you', bcc: { title: 'Private note', to: 'To', toYou: 'Private note to you' } }, common: {} } },
 })
 
 function mountItem(msg: Record<string, unknown>, props: Record<string, unknown> = {}) {
@@ -92,6 +92,7 @@ describe('ChatMessageItem group speaker', () => {
     const real = w.find('.msg-speaker-real')
     expect(real.exists()).toBe(true)
     expect(real.text()).toBe('Claude')
+    expect(real.attributes('title')).toBe('Agent')
   })
 
   it('hides the real agent name when it equals the nickname', () => {

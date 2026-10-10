@@ -1515,7 +1515,10 @@ const copyPayload = quotableText
   color: var(--text-muted);
   padding: 0 var(--space-1);
   border-radius: var(--radius-xs);
-  background: var(--bg-tertiary);
+  /* Mix --text-primary into --bg-secondary (design-guide redline 4): a fixed
+     step like --bg-tertiary is invisible on ~15 of 36 themes. The chip sits
+     outside the bubble, directly on the chat panel. */
+  background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 }
 .msg-speaker-host-tag {
   display: inline-flex;
