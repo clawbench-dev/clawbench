@@ -1082,8 +1082,9 @@ func TestRemoveGroupMember_CrossGroupRemovalWritesNoEvent(t *testing.T) {
 
 // CreateGroupWithMembers must KEEP duplicate agents: the same agent may be
 // added several times, each an independent member (a separate row, a separate
-// connection) with its OWN unique display name. The numeric suffix makes the
-// names distinct so name-based routing stays unambiguous ("A", "A 2", "A 3").
+// connection) with its OWN unique display name. The first instance keeps the
+// bare base name; duplicates draw distinct pool names, so name-based routing
+// stays unambiguous ("A", "Alice", "Bob").
 func TestCreateGroupWithMembers_KeepsDuplicateAgents(t *testing.T) {
 	setupGroupDB(t)
 	project := "/tmp/groupdedup-create"

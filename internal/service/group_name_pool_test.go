@@ -8,11 +8,10 @@ func TestAssignMemberNames_DuplicatesUsePool(t *testing.T) {
 		{AgentID: "a"}, {AgentID: "a"}, {AgentID: "a"},
 	}
 	assignMemberNames(specs, nil, nil)
-	want := []string{"", groupNamePool[0], groupNamePool[1]}
-	// 第一个实例的 base 由 GetAgentDisplayName 决定（测试环境无注册表 → 空）
-	// 这里只断言重复实例名来自池。
-	if specs[1].DisplayName != want[1] || specs[2].DisplayName != want[2] {
-		t.Fatalf("dup names = %q,%q want %q,%q", specs[1].DisplayName, specs[2].DisplayName, want[1], want[2])
+	// 第一个实例保留本名（无注册表时 GetAgentDisplayName("a") 回退到 agent id
+	// "a"，不是空），这里只断言重复实例名按序取自池。
+	if specs[1].DisplayName != groupNamePool[0] || specs[2].DisplayName != groupNamePool[1] {
+		t.Fatalf("dup names = %q,%q want %q,%q", specs[1].DisplayName, specs[2].DisplayName, groupNamePool[0], groupNamePool[1])
 	}
 }
 

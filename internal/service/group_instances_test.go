@@ -163,8 +163,8 @@ func activeMemberNames(t *testing.T, groupID, agentID string) []string {
 }
 
 // assertNames asserts the names EXACTLY, in roster order. Order matters: the
-// ordinal must land on the right instance (a swap of "Claude 2"/"Claude 3" onto
-// the wrong rows would otherwise pass a set comparison).
+// assigned name must land on the right instance (a swap of two members' names
+// onto the wrong rows would otherwise pass a set comparison).
 func assertNames(t *testing.T, got []string, want ...string) {
 	t.Helper()
 	if len(got) != len(want) {

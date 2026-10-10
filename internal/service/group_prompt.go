@@ -42,11 +42,12 @@ func renderMemberList(members []HostMemberInfo) string {
 
 // selfIdentityLine states the acting agent's OWN group display name. Without it
 // a member falls back to the CLI's own identity (its agent name), which is wrong
-// when the same agent appears several times under numbered nicknames
-// ("Codebuddy", "Codebuddy 2", …): every instance would claim the same bare
-// name (or invent a number it saw in the roster). Declaring the name up front is
-// what keeps duplicate instances distinguishable to themselves. Returns "" for
-// an empty name so a caller without one adds no confusing sentence.
+// when the same agent appears several times (duplicates get distinct
+// auto-assigned pool names; in the niche pool-exhausted fallback they get
+// "<base> <n>"): every instance would otherwise claim the same bare name (or
+// invent a number it saw in the roster). Declaring the name up front is what
+// keeps duplicate instances distinguishable to themselves. Returns "" for an
+// empty name so a caller without one adds no confusing sentence.
 func selfIdentityLine(selfName string) string {
 	if strings.TrimSpace(selfName) == "" {
 		return ""
