@@ -319,6 +319,9 @@ type GroupMemberPreview struct {
 	AgentID string `json:"agentId"`
 	Name    string `json:"name"`
 	Backend string `json:"backend"`
+	// Avatar is the member's own frozen avatar SVG (agent_avatar); empty for
+	// members created before the per-member avatar feature.
+	Avatar string `json:"avatar,omitempty"`
 	// IsHost lets the list-row stack put the host first (the leading disc is
 	// the only fully visible one). Without it the preview cannot order the
 	// stack the way the header does.

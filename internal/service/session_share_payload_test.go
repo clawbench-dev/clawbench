@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 			backend TEXT NOT NULL DEFAULT '',
 			title TEXT NOT NULL DEFAULT '',
 			agent_name TEXT NOT NULL DEFAULT '',
+			agent_avatar TEXT NOT NULL DEFAULT '',
 			agent_id TEXT NOT NULL DEFAULT '',
 			agent_source TEXT NOT NULL DEFAULT '',
 			model TEXT NOT NULL DEFAULT '',

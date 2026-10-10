@@ -67,9 +67,10 @@ func groupUserTarget() string {
 type GroupMember struct {
 	ID      string // member session row id (also the speaker id in chat_history.agent_id)
 	AgentID string // real agent id
-	Name    string // display name (member row title)
+	Name    string // display name (member row agent_name)
 	Backend string
-	Left    bool // archived=1: removed from the group but its speech is kept
+	Avatar  string // per-member avatar SVG snapshot (may be empty → fall back to agent avatar)
+	Left    bool   // archived=1: removed from the group but its speech is kept
 }
 
 // CreateGroup creates a group timeline row plus its host member row. The host
@@ -700,7 +701,7 @@ func SetMemberAgentName(memberID, name string) error {
 // deterministically, whereas `id` (a random UUID) would not.
 func ListGroupMembers(groupID string) ([]GroupMember, error) {
 	rows, err := store.ReadDB().Query(
-		`SELECT id, agent_id, agent_name, backend, archived FROM chat_sessions
+		`SELECT id, agent_id, agent_name, backend, agent_avatar, archived FROM chat_sessions
 		 WHERE group_id = ? AND session_type = ?
 		 ORDER BY created_at ASC, rowid ASC`,
 		groupID, groupMemberSessionType,
@@ -714,7 +715,7 @@ func ListGroupMembers(groupID string) ([]GroupMember, error) {
 	for rows.Next() {
 		var m GroupMember
 		var archived int
-		if err := rows.Scan(&m.ID, &m.AgentID, &m.Name, &m.Backend, &archived); err != nil {
+		if err := rows.Scan(&m.ID, &m.AgentID, &m.Name, &m.Backend, &m.Avatar, &archived); err != nil {
 			return nil, err
 		}
 		m.Left = archived != 0
@@ -778,7 +779,7 @@ func GroupMembersForGroups(groupIDs []string) (map[string][]model.GroupMemberPre
 	// subquery per member — still one statement for all groups. The frontend
 	// uses it to lead the stack with the host.
 	query := fmt.Sprintf(`
-		SELECT m.group_id, m.id, m.agent_id, m.agent_name, m.backend,
+		SELECT m.group_id, m.id, m.agent_id, m.agent_name, m.backend, m.agent_avatar,
 		       (m.id = COALESCE(json_extract(g.context_state, '$.host_member_id'), '')) AS is_host
 		FROM chat_sessions m
 		LEFT JOIN chat_sessions g ON g.id = m.group_id
@@ -796,7 +797,7 @@ func GroupMembersForGroups(groupIDs []string) (map[string][]model.GroupMemberPre
 		var groupID string
 		var p model.GroupMemberPreview
 		var isHost int
-		if err := rows.Scan(&groupID, &p.ID, &p.AgentID, &p.Name, &p.Backend, &isHost); err != nil {
+		if err := rows.Scan(&groupID, &p.ID, &p.AgentID, &p.Name, &p.Backend, &p.Avatar, &isHost); err != nil {
 			return nil, err
 		}
 		p.IsHost = isHost != 0

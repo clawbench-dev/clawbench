@@ -1411,3 +1411,34 @@ func TestGroupMemberSpeakersForGroups(t *testing.T) {
 		t.Fatalf("unknown group must be absent from the map, got %+v", got)
 	}
 }
+
+// ListGroupMembers 读回成员自身的头像列；GroupMembersForGroups 预览也带头像。
+func TestListGroupMembers_ReturnsAvatar(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/group-avatar-list"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "G", "codebuddy", "codebuddy", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	const svg = "<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>"
+	if _, err := store.WriteExec("UPDATE chat_sessions SET agent_avatar = ? WHERE id = ?", svg, hostID); err != nil {
+		t.Fatalf("set avatar: %v", err)
+	}
+	members, err := ListGroupMembers(groupID)
+	if err != nil {
+		t.Fatalf("ListGroupMembers: %v", err)
+	}
+	if len(members) == 0 || members[0].Avatar != svg {
+		t.Fatalf("member avatar = %q, want %q", members[0].Avatar, svg)
+	}
+	previews, err := GroupMembersForGroups([]string{groupID})
+	if err != nil {
+		t.Fatalf("GroupMembersForGroups: %v", err)
+	}
+	if len(previews[groupID]) == 0 || previews[groupID][0].Avatar != svg {
+		t.Fatalf("preview avatar = %q, want %q", previews[groupID][0].Avatar, svg)
+	}
+}
