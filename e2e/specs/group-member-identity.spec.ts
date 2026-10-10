@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '../fixtures'
 import { ChatPage } from '../pages/chat.page'
+import { createGroupViaUI, fetchGroupMembers } from '../helpers/group'
 
 /**
  * E2E for group-member IDENTITY:
@@ -21,48 +22,11 @@ test.describe.serial('group member identity', () => {
   test.setTimeout(120000)
 
   /**
-   * createGroupWithDuplicate opens the create page, flips to group mode, selects
-   * the acp-mock agent `instances` times via the stepper, and confirms. Returns
-   * once the newly created group is the open session (its header avatar stack is
-   * visible).
+   * createGroupWithDuplicate creates a group with the acp-mock agent added
+   * `instances` times, via the shared create-group UI flow.
    */
   async function createGroupWithDuplicate(page: Page, instances: number): Promise<void> {
-    const chat = new ChatPage(page)
-    await chat.openSessionList()
-    const sessionDrawer = page.locator('.bs-panel.session-drawer-sheet')
-    await expect(sessionDrawer).toBeVisible({ timeout: 5000 })
-
-    // There is no dedicated "create group" button: open the create page and flip
-    // the single/group segmented switch.
-    await sessionDrawer.locator('[data-action="create"]').click()
-    const picker = page.locator('.bs-panel').filter({ has: page.locator('.agent-list') }).last()
-    await expect(picker).toBeVisible({ timeout: 5000 })
-
-    await picker.locator('.agent-mode-tab[data-mode="group"]').click()
-    // The mode switch resets the drawer's 400ms touch guard (watch on groupMode),
-    // so wait past the restarted window before selecting a row.
-    await page.waitForTimeout(500)
-
-    // Pick acp-mock by EXACT name: the "ACP Mock Agent B" row also contains it as
-    // a prefix, so a substring match would be ambiguous.
-    const row = picker
-      .locator('.agent-option')
-      .filter({ has: page.locator('.agent-option-name', { hasText: /^ACP Mock Agent$/ }) })
-      .first()
-    await expect(row).toBeVisible({ timeout: 5000 })
-    await row.click()
-
-    const stepper = row.locator('.agent-stepper')
-    await expect(stepper).toBeVisible({ timeout: 5000 })
-    for (let i = 1; i < instances; i++) {
-      await stepper.locator('.agent-stepper-btn').last().click()
-    }
-    await expect(stepper.locator('.agent-stepper-count')).toHaveText(String(instances))
-
-    await picker.locator('.agent-multi-confirm').click()
-
-    // The group is created and switched to; its header avatar stack appears.
-    await expect(page.locator('.group-avatar-stack')).toBeVisible({ timeout: 15000 })
+    await createGroupViaUI(page, 'ACP Mock Agent', instances)
   }
 
   /** currentSessionId reads the frontend's per-project recent-session id. */
@@ -82,19 +46,6 @@ test.describe.serial('group member identity', () => {
       }
       return best
     })
-  }
-
-  /** fetchMembers returns the roster (id / name / real agent name / avatar). */
-  async function fetchMembers(page: Page, groupId: string) {
-    return page.evaluate(async (gid) => {
-      const j = await (await fetch(`/api/group/members?groupId=${encodeURIComponent(gid)}`)).json()
-      return (j.members || []).map((m: { id: string; name: string; agentName: string; avatar: string }) => ({
-        id: m.id,
-        name: m.name,
-        agentName: m.agentName,
-        avatar: m.avatar,
-      }))
-    }, groupId)
   }
 
   test('adding the same agent twice yields two distinct nicknames', async ({ page }) => {
@@ -123,12 +74,12 @@ test.describe.serial('group member identity', () => {
     // BOTH members have a persisted (non-empty) avatar.
     await expect
       .poll(async () => {
-        const members = await fetchMembers(page, gid)
+        const members = await fetchGroupMembers(page, gid)
         return members.length === 2 && members.every(m => !!m.avatar)
       }, { timeout: 30000 })
       .toBe(true)
 
-    const avatars = (await fetchMembers(page, gid)).map(m => m.avatar)
+    const avatars = (await fetchGroupMembers(page, gid)).map(m => m.avatar)
     // Two avatars seeded by two different names must differ.
     expect(avatars[0]).not.toBe(avatars[1])
 
@@ -172,7 +123,7 @@ test.describe.serial('group member identity', () => {
     }, gid)
     await expect(page.locator('.group-avatar-stack')).toBeVisible({ timeout: 15000 })
 
-    const members = await fetchMembers(page, gid)
+    const members = await fetchGroupMembers(page, gid)
     const pooled = members.find(m => m.name === 'Alice')
     expect(pooled, 'the duplicate instance must draw the pool name').toBeTruthy()
     expect(pooled!.agentName).toBe('ACP Mock Agent')

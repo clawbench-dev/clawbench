@@ -1,5 +1,5 @@
 import { test, expect } from '../fixtures'
-import { ChatPage } from '../pages/chat.page'
+import { openCreateGroupPicker, selectAgentRow } from '../helpers/group'
 
 /**
  * E2E for adding the SAME agent to a group multiple times (multi-instance) and
@@ -80,31 +80,10 @@ test.describe.serial('group duplicate agents', () => {
   })
 
   test('UI: stepper adds a second instance of the same agent', async ({ page }) => {
-    const chat = new ChatPage(page)
-    await chat.openSessionList()
-    const sessionDrawer = page.locator('.bs-panel.session-drawer-sheet')
-    await expect(sessionDrawer).toBeVisible({ timeout: 5000 })
-
-    // Open the create page, then flip the single/group segmented switch to
-    // group mode (there is no dedicated create-group button any more).
-    await sessionDrawer.locator('[data-action="create"]').click()
-
-    const picker = page.locator('.bs-panel').filter({ has: page.locator('.agent-list') }).last()
-    await expect(picker).toBeVisible({ timeout: 5000 })
-
-    // The drawer ignores clicks within 400ms of opening (accidental-touch
-    // guard), so wait past it before selecting.
-    await page.waitForTimeout(500)
-
-    await picker.locator('.agent-mode-tab[data-mode="group"]').click()
-
-    // Switching mode RESETS the drawer's 400ms touch guard (watch on groupMode),
-    // so wait past the restarted window before selecting.
-    await page.waitForTimeout(500)
+    const picker = await openCreateGroupPicker(page)
 
     // Select the first agent, then bump it to 2 instances via the stepper.
-    const firstRow = picker.locator('.agent-option').first()
-    await firstRow.click()
+    const firstRow = await selectAgentRow(picker, page)
     const stepper = firstRow.locator('.agent-stepper')
     await expect(stepper).toBeVisible()
     await expect(stepper.locator('.agent-stepper-count')).toHaveText('1')
