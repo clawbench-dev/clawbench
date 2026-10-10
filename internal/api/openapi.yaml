@@ -1356,7 +1356,8 @@ paths:
           description: |
             会话列表。
             群会话（`sessionType: "group"`）额外携带 `groupMembers`（紧凑的**在群**成员预览
-            `{id, agentId, name, backend, isHost?}`，用于会话列表渲染成员头像堆叠）；
+            `{id, agentId, name, backend, avatar?, isHost?}`，用于会话列表渲染成员头像堆叠；
+            `avatar` 为成员自身冻结的头像 SVG，缺失时前端回退智能体头像）；
             `isHost` 来自群行的主持人指针，客户端据此在行内展示模式标签（有主持人 = 主持人模式，
             非空名单无主持人 = 自由模式；名单为空时不显示，不猜测）。非群会话省略该键。
             完整成员名单（含已离场）见 `GET /api/group/members`。
@@ -2911,7 +2912,7 @@ paths:
         需要 `session_id` 查询参数。返回该会话当前的分享状态，并附带**全部**消息
         （含仍在生成/排队的）供分享对话框渲染：生成中的消息不可勾选。
         未分享时 `token` 为空但 `messages` 照常返回，使打开对话框只需一次请求。
-        另附 `sessionAgent`（会话级智能体）与 `speakers`（群聊成员行 id → 身份），供对话框为每条助手消息渲染真实智能体图标；此端点需登录（仅属主），故身份**含**自定义头像。
+        另附 `sessionAgent`（会话级智能体）与 `speakers`（群聊成员行 id → 身份），供对话框为每条助手消息渲染真实智能体图标；此端点需登录（仅属主），故身份**含**自定义头像。群成员身份现额外携带 `agentName`（底层**真实**智能体显示名；当成员昵称被自动派生——内置名池名或「本名 序号」——时与 `name` 不同，供 UI 在昵称后披露），且头像**优先**取成员自身的头像快照（`agent_avatar`），无快照时回退智能体头像。
       operationId: sessionShareStatus
       parameters:
         - name: session_id
@@ -3075,7 +3076,7 @@ paths:
         会话快照另附身份信息供分享页渲染真实智能体图标（均**不含**自定义头像，
         分享链接不得泄漏属主头像）：`sessionAgent`（会话级智能体，单聊用）、
         `speakers`（群聊成员行 id → 身份，供每条消息解析发言人）与 `groupMembers`
-        （仅群会话：**在群**成员的有序预览 `{id, agentId, name, backend, isHost?}`，
+        （仅群会话：**在群**成员的有序预览 `{id, agentId, name, backend, avatar?, isHost?}`，
         与 `GET /api/sessions` 的 `groupMembers` 同形，供顶栏渲染与群聊 header 一致的
         头像堆叠；已离场成员不在其中）。`speakers` 是 map（JSON 键按 UUID 排序、且含
         已离场成员），只用于逐条消息解析；成员堆叠请用 `groupMembers`。
@@ -5323,6 +5324,8 @@ paths:
                         agentId: {type: string}
                         name: {type: string}
                         backend: {type: string}
+                        avatar: {type: string}
+                        agentName: {type: string}
                         left: {type: boolean}
                         isHost: {type: boolean}
                   mode: {type: string, enum: [host, free]}
@@ -5378,6 +5381,57 @@ paths:
           description: 移除成功
         "409":
           description: 目标是主持人（`msgKey=CannotRemoveHost`）
+
+  /api/group/member-avatars:
+    post:
+      tags: [Group]
+      summary: 批量写回群成员头像
+      description: |
+        持久化各成员自身的头像 SVG（`chat_sessions.agent_avatar`）。头像由前端用
+        DiceBear 按成员名生成，批量提交，使建群/加人后只发一次请求即可写完所有新成员。
+
+        每个头像必须通过与智能体头像**同一道** SVG 安全闸门（拒绝 `<script>`、
+        `foreignObject`、外链 `href`、内联事件处理器等）：本端点是存储型 XSS 汇，
+        且存下的字符串会被回放到**公开分享页**。空头像同样被拒。
+        只写入属于 `groupId` 的 `session_type='group_member'` 行；成员行 id 属于
+        其它群时该条为 no-op（不会跨群写入）。任一条非法即整批返回 400 且不写后续条目。
+      operationId: groupMemberAvatarsSet
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [groupId, avatars]
+              properties:
+                groupId: {type: string}
+                avatars:
+                  type: array
+                  description: 每个元素写回一个成员的头像；memberId 为成员行 id
+                  items:
+                    type: object
+                    required: [memberId, avatar]
+                    properties:
+                      memberId: {type: string}
+                      avatar:
+                        type: string
+                        description: DiceBear 生成的原始 SVG 字符串
+      responses:
+        "200":
+          description: 写入成功，返回实际写入条数
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean}
+                  saved: {type: integer}
+        "400":
+          description: 请求非法或某个头像未通过 SVG 安全校验（含空头像）
+        "401":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
 
   /api/group/settings:
     patch:

@@ -189,11 +189,17 @@ func serveGroupMembersList(w http.ResponseWriter, r *http.Request, projectPath s
 	hostMemberID := service.GetGroupHostMember(groupID)
 	out := make([]map[string]any, 0, len(members))
 	for _, m := range members {
+		agentName := ""
+		if a := model.GetAgent(m.AgentID); a != nil {
+			agentName = a.Name
+		}
 		out = append(out, map[string]any{
 			"id":        m.ID,
 			jsonAgentID: m.AgentID,
 			jsonName:    m.Name,
 			jsonBackend: m.Backend,
+			"avatar":    m.Avatar,
+			"agentName": agentName,
 			"left":      m.Left,
 			"isHost":    m.ID == hostMemberID,
 		})
@@ -323,4 +329,54 @@ func ServeGroupSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// ServeGroupMemberAvatars persists per-member avatar SVGs generated client-side
+// (DiceBear). Batch so a freshly created/expanded group writes all its new
+// members in ONE round trip.
+//
+//	POST /api/group/member-avatars {groupId, avatars:[{memberId, avatar}]} -> {ok, saved:int}
+//
+// Each avatar must pass the same SVG safety gate as agent avatars
+// (avatarSVGLooksSafe): this is a stored-XSS sink reachable by any authenticated
+// caller, and the stored string is later replayed into the public share page.
+func ServeGroupMemberAvatars(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
+		return
+	}
+	projectPath, ok := requireProject(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		GroupID string `json:"groupId"`
+		Avatars []struct {
+			MemberID string `json:"memberId"`
+			Avatar   string `json:"avatar"`
+		} `json:"avatars"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.GroupID == "" || len(req.Avatars) == 0 {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
+		return
+	}
+	if !requireSessionOwnership(w, r, req.GroupID, projectPath) {
+		return
+	}
+	saved := 0
+	for _, a := range req.Avatars {
+		if a.MemberID == "" || !avatarSVGLooksSafe([]byte(a.Avatar)) {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
+			return
+		}
+		if err := service.SetMemberAvatar(req.GroupID, a.MemberID, a.Avatar); err != nil {
+			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+			return
+		}
+		saved++
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "saved": saved})
 }
