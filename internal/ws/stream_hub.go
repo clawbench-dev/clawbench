@@ -552,6 +552,13 @@ func userMessagePayload(event ai.StreamEvent) any {
 	if event.UserMessage.QueueID != "" {
 		payload["queueId"] = event.UserMessage.QueueID
 	}
+	// Merge-only mid-turn injection: carried so the LIVE bubble shows the
+	// "回复已并入上一轮" hint immediately, matching what a reload reads back from
+	// chat_history.injected. Without it the hint only appeared after switching
+	// away and back (the DB path), never while the reply was still streaming.
+	if event.UserMessage.Injected {
+		payload["injected"] = true
+	}
 	return payload
 }
 
