@@ -110,47 +110,121 @@ describe('generateMemberAvatars', () => {
     }))
   }
 
-  it('posts a generated avatar for every member that lacks one', async () => {
+  /** rosterCalls returns the URLs of the requests made (the GET plus any POST). */
+  function fetchUrls(): string[] {
+    return (fetch as any).mock.calls.map((c: any[]) => c[0])
+  }
+
+  // A lone agent keeps the agent's own configured avatar: there is only one
+  // copy, so there is nothing to tell apart and no generated avatar is written.
+  it('does not generate an avatar for a lone agent', async () => {
+    stubRoutes([{ id: 'm1', agentId: 'a1', name: 'Claude', avatar: '' }])
+    await generateMemberAvatars('g1')
+    // Only the roster GET happened — no POST.
+    expect(fetchUrls()).toHaveLength(1)
+    expect(fetchUrls()[0]).toContain('/api/group/members')
+  })
+
+  // Distinct agents, each added once: no generated avatars anywhere.
+  it('does not generate avatars when every agent is added once', async () => {
+    stubRoutes([
+      { id: 'm1', agentId: 'a1', name: 'Claude', avatar: '' },
+      { id: 'm2', agentId: 'a2', name: 'Codex', avatar: '' },
+    ])
+    await generateMemberAvatars('g1')
+    expect(fetchUrls()).toHaveLength(1)
+  })
+
+  // The same agent added twice: only the SECOND instance gets a generated
+  // avatar; the first keeps the agent avatar.
+  it('generates an avatar only for the second instance of a repeated agent', async () => {
     let posted: any
     stubRoutes(
-      [{ id: 'm1', name: 'Alice', avatar: '' }, { id: 'm2', name: 'Bob', avatar: '' }],
+      [
+        { id: 'm1', agentId: 'a1', name: 'Claude', avatar: '' },
+        { id: 'm2', agentId: 'a1', name: 'Alice', avatar: '' },
+      ],
       body => { posted = body },
     )
     await generateMemberAvatars('g1')
     expect(posted).toEqual({
       groupId: 'g1',
-      avatars: [
-        { memberId: 'm1', avatar: '<svg>Alice</svg>' },
-        { memberId: 'm2', avatar: '<svg>Bob</svg>' },
-      ],
+      avatars: [{ memberId: 'm2', avatar: '<svg>Alice</svg>' }],
     })
   })
 
-  it('skips members that already have an avatar', async () => {
+  // A third instance also gets one; the first still does not.
+  it('generates for every instance after the first', async () => {
     let posted: any
     stubRoutes(
-      [{ id: 'm1', name: 'Alice', avatar: '<svg>existing</svg>' }, { id: 'm2', name: 'Bob', avatar: '' }],
+      [
+        { id: 'm1', agentId: 'a1', name: 'Claude', avatar: '' },
+        { id: 'm2', agentId: 'a1', name: 'Alice', avatar: '' },
+        { id: 'm3', agentId: 'a1', name: 'Bob', avatar: '' },
+      ],
       body => { posted = body },
     )
     await generateMemberAvatars('g1')
-    expect(posted.avatars).toEqual([{ memberId: 'm2', avatar: '<svg>Bob</svg>' }])
+    expect(posted.avatars).toEqual([
+      { memberId: 'm2', avatar: '<svg>Alice</svg>' },
+      { memberId: 'm3', avatar: '<svg>Bob</svg>' },
+    ])
   })
 
+  // The first instance already has an avatar (from a previous run); the second
+  // still needs one, and the first is never re-generated.
+  it('skips instances that already have an avatar', async () => {
+    let posted: any
+    stubRoutes(
+      [
+        { id: 'm1', agentId: 'a1', name: 'Claude', avatar: '<svg>existing</svg>' },
+        { id: 'm2', agentId: 'a1', name: 'Alice', avatar: '' },
+      ],
+      body => { posted = body },
+    )
+    await generateMemberAvatars('g1')
+    expect(posted.avatars).toEqual([{ memberId: 'm2', avatar: '<svg>Alice</svg>' }])
+  })
+
+  // onlyMemberIds scopes the backfill to freshly added members: a new SECOND
+  // instance is generated, a pre-existing first is untouched.
   it('scopes to onlyMemberIds when provided', async () => {
     let posted: any
     stubRoutes(
-      [{ id: 'm1', name: 'Alice', avatar: '' }, { id: 'm2', name: 'Bob', avatar: '' }],
+      [
+        { id: 'm1', agentId: 'a1', name: 'Claude', avatar: '' },
+        { id: 'm2', agentId: 'a1', name: 'Alice', avatar: '' },
+      ],
       body => { posted = body },
     )
     await generateMemberAvatars('g1', ['m2'])
-    expect(posted.avatars).toEqual([{ memberId: 'm2', avatar: '<svg>Bob</svg>' }])
+    expect(posted.avatars).toEqual([{ memberId: 'm2', avatar: '<svg>Alice</svg>' }])
+  })
+
+  // A newly added FIRST instance (the agent had no active copy) keeps the agent
+  // avatar even when it is the only id in scope.
+  it('does not generate for a newly added first instance', async () => {
+    stubRoutes([{ id: 'm1', agentId: 'a1', name: 'Claude', avatar: '' }])
+    await generateMemberAvatars('g1', ['m1'])
+    expect(fetchUrls()).toHaveLength(1)
+  })
+
+  // A left (archived) copy does not count: the remaining active instance is the
+  // first and keeps the agent avatar.
+  it('ignores left members when deciding the first instance', async () => {
+    stubRoutes([
+      { id: 'm0', agentId: 'a1', name: 'Old', avatar: '', left: true },
+      { id: 'm1', agentId: 'a1', name: 'Claude', avatar: '' },
+    ])
+    await generateMemberAvatars('g1')
+    expect(fetchUrls()).toHaveLength(1)
   })
 
   it('does not POST when there is nothing to backfill (idempotent)', async () => {
-    stubRoutes([{ id: 'm1', name: 'Alice', avatar: '<svg>existing</svg>' }])
+    stubRoutes([{ id: 'm1', agentId: 'a1', name: 'Alice', avatar: '<svg>existing</svg>' }])
     await generateMemberAvatars('g1')
     // Only the roster GET happened.
-    expect((fetch as any).mock.calls).toHaveLength(1)
-    expect((fetch as any).mock.calls[0][0]).toContain('/api/group/members')
+    expect(fetchUrls()).toHaveLength(1)
+    expect(fetchUrls()[0]).toContain('/api/group/members')
   })
 })

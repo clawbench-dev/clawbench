@@ -1,6 +1,8 @@
 # 群成员身份：内置英文名池 + 按名生成头像 + 真实智能体名披露
 
 > **变更说明（2026-10-11）**：命名规则已调整——**同一智能体在群内实例数 > 1 时，其全部实例（含第一个）都取名池名，不保留本名**；仅群内唯一实例保留本名。下文 §命名 的「第一个实例保留本名」为**过时描述**，以本节与 `docs/spec/features/group-chat.md`、`internal/service/group_store.go` 的 `assignMemberNames` 为准。
+>
+> **头像规则已调整**：只有**同一智能体被添加多次**时才生成成员头像——**第 2 个及以后**的实例各生成一个（用于区分副本），**第 1 个/群内唯一实例不生成**，保留智能体自身头像。下文 §头像 与决策表中「所有新成员都按名生成、忽略并覆盖智能体原头像」为**过时描述**，以本节与 `docs/spec/features/group-chat.md`、`web/src/composables/useGroupChat.ts` 的 `generateMemberAvatars` 为准。
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

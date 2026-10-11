@@ -7,8 +7,11 @@ import { createGroupViaUI, fetchGroupMembers } from '../helpers/group'
  *  1. NAMING: adding the SAME agent to a group twice yields two DIFFERENT
  *     nicknames. A MULTI-instance agent keeps NO bare name — every instance
  *     draws a built-in English pool name (groupNamePool[0..] = "Alice", "Bob").
- *  2. AVATARS: each member gets its OWN DiceBear avatar persisted to the backend,
- *     so the two instances render DISTINCT images even though they share one agent.
+ *  2. AVATARS: only the SECOND-and-later instance of a repeated agent gets its
+ *     OWN DiceBear avatar persisted to the backend; the FIRST instance keeps
+ *     the agent's configured avatar (no generated avatar). A LONE agent also
+ *     keeps the agent avatar. So a two-instance group has exactly ONE persisted
+ *     member avatar, and the two discs still render distinctly.
  *  3. REAL-NAME DISCLOSURE: a pooled member's message shows the real agent name
  *     in `.msg-speaker-real`. (The "nickname == agent name ⇒ no badge" negative
  *     case is covered by the ChatMessageItem unit test, since a two-instance
@@ -66,27 +69,29 @@ test.describe.serial('group member identity', () => {
     expect(new Set(texts).size).toBe(2)
   })
 
-  test('duplicate members render distinct avatars', async ({ page }) => {
+  test('only the repeated instance gets its own avatar', async ({ page }) => {
     await createGroupWithDuplicate(page, 2)
 
     const gid = await currentSessionId(page)
     expect(gid).toBeTruthy()
 
-    // The frontend backfills avatars asynchronously after creation; wait until
-    // BOTH members have a persisted (non-empty) avatar.
+    // The frontend backfills avatars asynchronously after creation. Only the
+    // SECOND instance is generated; the FIRST keeps the agent avatar (empty
+    // member avatar ⇒ falls back to the agent's own icon).
     await expect
       .poll(async () => {
         const members = await fetchGroupMembers(page, gid)
-        return members.length === 2 && members.every(m => !!m.avatar)
+        return members.length === 2 && members.filter(m => !!m.avatar).length === 1
       }, { timeout: 30000 })
       .toBe(true)
 
-    const avatars = (await fetchGroupMembers(page, gid)).map(m => m.avatar)
-    // Two avatars seeded by two different names must differ.
-    expect(avatars[0]).not.toBe(avatars[1])
+    const members = await fetchGroupMembers(page, gid)
+    // Exactly one persisted avatar, on the second instance (roster order).
+    expect(members[0].avatar).toBe('')
+    expect(members[1].avatar).not.toBe('')
 
     // Re-open the group from a fresh load so the roster is fetched WITH the
-    // persisted avatars (the in-memory roster is not refreshed by the backfill).
+    // persisted avatar (the in-memory roster is not refreshed by the backfill).
     await page.reload()
     await page.waitForLoadState('networkidle')
     const chat = new ChatPage(page)
@@ -100,10 +105,9 @@ test.describe.serial('group member identity', () => {
 
     await page.locator('.group-avatar-stack').click()
     const imgs = page.locator('.gm-list .gm-avatar img.agent-icon-img')
-    await expect(imgs).toHaveCount(2, { timeout: 10000 })
-    const srcs = await imgs.evaluateAll(els => els.map(e => e.getAttribute('src') || ''))
-    expect(srcs.every(Boolean)).toBe(true)
-    expect(new Set(srcs).size).toBe(2)
+    // The first instance falls back to the agent's built-in icon (an inline SVG,
+    // not an <img>), so only ONE <img> disc is present.
+    await expect(imgs).toHaveCount(1, { timeout: 10000 })
   })
 
   test('a pooled member discloses its real agent name', async ({ page }) => {
