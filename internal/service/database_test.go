@@ -64,6 +64,7 @@ func setupTestDBForTTS(t *testing.T) (*sql.DB, func()) {
 			session_id TEXT,
 			backend TEXT NOT NULL DEFAULT 'claude',
 			agent_id TEXT DEFAULT '',
+			injected INTEGER NOT NULL DEFAULT 0,
 			streaming INTEGER NOT NULL DEFAULT 0,
 			indexed INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -606,6 +607,53 @@ func TestSchema_CompletedAtMigration(t *testing.T) {
 	assert.Equal(t, 0, sessions[0].UnreadCount, "reading a legacy row must clear it")
 }
 
+// TestSchema_InjectedColumnMigration verifies a database created before the
+// `injected` column existed is upgraded in place, and that legacy rows default
+// to injected=0 (a normal message, not a mid-turn injection).
+func TestSchema_InjectedColumnMigration(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	restoreDB := store.SnapshotDBForTest()
+	defer restoreDB()
+
+	// Phase 1: build the current schema, then drop `injected` to simulate a
+	// database created before the column existed. Building via InitDB guarantees
+	// every other table/index is present, so the second InitDB below exercises
+	// ONLY the injected migration.
+	require.NoError(t, InitDB())
+	store.Close()
+
+	raw, err := sql.Open("sqlite", filepath.Join(model.DataDir, "ClawBench.db"))
+	require.NoError(t, err)
+	_, err = raw.Exec("ALTER TABLE chat_history DROP COLUMN injected")
+	require.NoError(t, err)
+	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('legacy-inj', 1, 'claude', 'Legacy')")
+	require.NoError(t, err)
+	_, err = raw.Exec("INSERT INTO chat_history (project_id, role, content, session_id, streaming, created_at) VALUES (1, 'user', 'old msg', 'legacy-inj', 0, '2025-01-01 10:00:00')")
+	require.NoError(t, err)
+	raw.Close()
+
+	// Phase 2: InitDB re-adds the column.
+	require.NoError(t, InitDB())
+	defer store.Close()
+
+	assert.Contains(t, getTableColumns(t, store.UnsafeDBForTest(), "chat_history"), "injected")
+
+	// A legacy row must read back as injected=0 (a normal message).
+	msgs, err := GetMessagesBySessionID("legacy-inj")
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	assert.False(t, msgs[0].Injected, "a legacy row must not be marked injected")
+
+	// Running InitDB again must be a no-op (the ALTER is guarded by a column check).
+	require.NoError(t, InitDB())
+}
+
 // TestSchema_CompletedAtMigration_Idempotent verifies running InitDB twice does
 // not fail on the already-present completed_at column.
 func TestSchema_CompletedAtMigration_Idempotent(t *testing.T) {
@@ -826,6 +874,7 @@ func TestMigrateAddsExternalMessageID(t *testing.T) {
 		content TEXT NOT NULL, session_id TEXT,
 		backend TEXT NOT NULL DEFAULT 'claude',
 		agent_id TEXT DEFAULT '',
+		injected INTEGER NOT NULL DEFAULT 0,
 		streaming INTEGER NOT NULL DEFAULT 0,
 		indexed INTEGER NOT NULL DEFAULT 0,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -869,6 +918,7 @@ func TestMigrateQueuedMessagesToOwnTable(t *testing.T) {
 			files TEXT,
 			backend TEXT NOT NULL DEFAULT 'claude',
 			agent_id TEXT DEFAULT '',
+			injected INTEGER NOT NULL DEFAULT 0,
 			streaming INTEGER NOT NULL DEFAULT 0,
 			indexed INTEGER NOT NULL DEFAULT 0,
 			queue_id TEXT DEFAULT '',
@@ -2127,6 +2177,7 @@ func TestSchema_ForwardedPortsMigration_HostColumnFromOldSchema(t *testing.T) {
 			session_id TEXT,
 			backend TEXT NOT NULL DEFAULT 'claude',
 			agent_id TEXT DEFAULT '',
+			injected INTEGER NOT NULL DEFAULT 0,
 			streaming INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			completed_at DATETIME
@@ -2514,6 +2565,7 @@ func TestSchema_DropHistoryDeletedColumn_FromOldSchema(t *testing.T) {
 			session_id TEXT,
 			backend TEXT NOT NULL DEFAULT 'claude',
 			agent_id TEXT DEFAULT '',
+			injected INTEGER NOT NULL DEFAULT 0,
 			streaming INTEGER NOT NULL DEFAULT 0,
 			deleted INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -2789,6 +2841,7 @@ func TestSchema_DropsLegacyRawResponsesTable(t *testing.T) {
 			session_id TEXT,
 			backend TEXT NOT NULL DEFAULT 'claude',
 			agent_id TEXT DEFAULT '',
+			injected INTEGER NOT NULL DEFAULT 0,
 			streaming INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			completed_at DATETIME
@@ -3557,6 +3610,7 @@ func setupTestDBForToolCallMigration(t *testing.T) func() {
 			session_id TEXT,
 			backend TEXT NOT NULL DEFAULT 'claude',
 			agent_id TEXT DEFAULT '',
+			injected INTEGER NOT NULL DEFAULT 0,
 			streaming INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			completed_at DATETIME
@@ -3916,6 +3970,7 @@ func setupTestDBForMessageStats(t *testing.T) func() {
 			session_id TEXT,
 			backend TEXT NOT NULL DEFAULT 'claude',
 			agent_id TEXT DEFAULT '',
+			injected INTEGER NOT NULL DEFAULT 0,
 			streaming INTEGER NOT NULL DEFAULT 0,
 			indexed INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,

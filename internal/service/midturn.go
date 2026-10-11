@@ -71,7 +71,16 @@ func InjectQueuedMessage(sessionID, queueID string) (bool, int64, error) {
 	// Claim + materialize atomically: the row must still be queued (a concurrent
 	// drain may have picked it up already, in which case there is nothing to
 	// insert).
-	row, msgID, ok, err := ClaimByQueueIDAndMaterialize(sessionID, queueID)
+	//
+	// The row is materialized with injected=1 when the backend's injection does
+	// NOT split the reply (claude/codex merge-only): the frontend then shows a
+	// "回复已并入上一轮" hint, since the bubble lands after the still-streaming
+	// reply with nothing following it. CodeBuddy splits the reply, so its
+	// injected message needs no hint (injected=0). A declined injection deletes
+	// the row entirely (RequeueMaterialized), so an optimistic flag here can
+	// never leak onto a message that was never injected.
+	mergeOnly := !model.BackendMidTurnSplitsReply(GetSessionBackend(sessionID))
+	row, msgID, ok, err := ClaimByQueueIDAndMaterialize(sessionID, queueID, mergeOnly)
 	if err != nil {
 		slog.Warn("midturn: failed to claim queued message for injection",
 			"session", sessionID, "queue_id", queueID, "err", err)
@@ -108,7 +117,8 @@ func InjectQueuedMessage(sessionID, queueID string) (bool, int64, error) {
 	// here (not by the caller) because this is where the content lives; the
 	// caller follows up with queue_inject to drop the entry from the queue panel.
 	// No SenderClientID: the message may have been queued by another device.
-	emitUserMessage(sessionID, msgID, row)
+	// mergeOnly tells the frontend to annotate the bubble (see above).
+	emitUserMessage(sessionID, msgID, row, mergeOnly)
 
 	slog.Info("midturn: inserted queued message into running turn",
 		"session", sessionID, "backend", row.Backend,

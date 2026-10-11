@@ -113,6 +113,67 @@ func TestInjectQueuedMessage_Success(t *testing.T) {
 	assert.Equal(t, "queued text", msgs[0].Content)
 }
 
+// TestInjectQueuedMessage_MergeOnlyMarksInjected pins the flag that drives the
+// "回复已并入上一轮" hint: a merge-only backend (claude — no split boundary) must
+// persist injected=1 on the materialized row, so the bubble is annotated both
+// live (via the user_message event) and after a reload (from chat_history).
+func TestInjectQueuedMessage_MergeOnlyMarksInjected(t *testing.T) {
+	db := setupDB(t)
+	_ = db
+	sid := helperCreateSession(t, "/project", "claude", "Insert Merge Only")
+
+	_, err := service.AddQueuedMessage("/project", "claude", sid, "merged text", nil, "q-merge", "")
+	require.NoError(t, err)
+
+	stubInjector(t, ai.MidTurnInjectResult{Injected: true, OwnerRequestID: "req-1"})
+
+	inserted, msgID, err := service.InjectQueuedMessage(sid, "q-merge")
+	require.NoError(t, err)
+	require.True(t, inserted)
+	require.NotZero(t, msgID)
+
+	msgs, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 50, 0)
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	assert.True(t, msgs[0].Injected,
+		"a merge-only backend's injected message must be flagged for the hint")
+}
+
+// TestInjectQueuedMessage_SplitBackendNotMarkedInjected is the contrast:
+// CodeBuddy SPLITS the reply, so its injected bubble needs no hint and must NOT
+// carry the flag. The backend id drives the decision through
+// model.BackendMidTurnSplitsReply.
+//
+// The service test binary does not import internal/ai/backends, so the
+// capability function variable is nil (→ merge-only for every backend). Stub it
+// here so the split branch is exercised for real.
+func TestInjectQueuedMessage_SplitBackendNotMarkedInjected(t *testing.T) {
+	db := setupDB(t)
+	_ = db
+
+	orig := model.BackendMidTurnSplitsReplyFn
+	model.BackendMidTurnSplitsReplyFn = func(backendID string) bool { return backendID == "codebuddy" }
+	t.Cleanup(func() { model.BackendMidTurnSplitsReplyFn = orig })
+
+	sid := helperCreateSession(t, "/project", "codebuddy", "Insert Split")
+
+	_, err := service.AddQueuedMessage("/project", "codebuddy", sid, "split text", nil, "q-split", "")
+	require.NoError(t, err)
+
+	stubInjector(t, ai.MidTurnInjectResult{Injected: true, OwnerRequestID: "req-2"})
+
+	inserted, msgID, err := service.InjectQueuedMessage(sid, "q-split")
+	require.NoError(t, err)
+	require.True(t, inserted)
+	require.NotZero(t, msgID)
+
+	msgs, _, err := service.GetChatHistoryPaged("/project", "codebuddy", sid, 50, 0)
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	assert.False(t, msgs[0].Injected,
+		"a split-capable backend must not flag its injected message (no hint needed)")
+}
+
 // TestInjectQueuedMessage_DeclinedRestoresQueue is the safety property that
 // matters most: a declined insertion must put the message BACK in the queue.
 // The claim is what makes the attempt race-free, so without the restore a

@@ -53,6 +53,32 @@ func TestInit_WiresMidTurnCapabilityReporter(t *testing.T) {
 	assert.False(t, model.BackendSupportsMidTurn("wire-test-nonexistent"))
 }
 
+// TestInit_WiresMidTurnSplitsReplyReporter verifies the init hook wires
+// model.BackendMidTurnSplitsReplyFn to the registry lookup. This bit decides
+// whether an injected user bubble gets the merge-only hint: CodeBuddy splits
+// the reply (no hint), claude/codex merge (hint). A nil function silently
+// degrades every backend to "merge-only" — the wrong hint on CodeBuddy.
+func TestInit_WiresMidTurnSplitsReplyReporter(t *testing.T) {
+	require.NotNil(t, model.BackendMidTurnSplitsReplyFn,
+		"init must wire the mid-turn splits-reply reporter")
+
+	const splits = "wire-test-splits"
+	const merges = "wire-test-merges"
+	if Lookup(splits) == nil {
+		Register(&BackendPlugin{ID: splits, MidTurn: wireStubInjector{}, MidTurnSplitsReply: true})
+	}
+	if Lookup(merges) == nil {
+		Register(&BackendPlugin{ID: merges, MidTurn: wireStubInjector{}})
+	}
+
+	assert.True(t, model.BackendMidTurnSplitsReply(splits),
+		"a backend flagged MidTurnSplitsReply must report true")
+	assert.False(t, model.BackendMidTurnSplitsReply(merges),
+		"a merge-only backend must report false")
+	assert.False(t, model.BackendMidTurnSplitsReply("wire-test-nonexistent"),
+		"an unknown backend must default to merge-only (false)")
+}
+
 // TestInit_WiresBackendSpecLoader verifies the spec loader bridge used by model
 // discovery to build the registry from backend plugins. The external test
 // package imports every backend, so their init registrations are visible here

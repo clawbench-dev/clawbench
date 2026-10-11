@@ -88,6 +88,17 @@
       <span class="chat-file-changes-count count-badge count-badge--md">{{ fileChanges.created.length + fileChanges.modified.length }}</span>
     </button>
 
+    <!-- Injected-into-running-reply marker (user bubbles only). A mid-turn
+         injection that MERGED into the running reply (claude/codex: no split
+         boundary) lands AFTER the still-streaming assistant reply with nothing
+         following it, which reads as "sent but ignored". This quiet annotation
+         explains it. Split-capable backends (CodeBuddy) never set msg.injected,
+         so their bubble is unchanged. -->
+    <div v-if="msg.role === 'user' && msg.injected" class="chat-injected-mark">
+      <CornerDownRight :size="12" aria-hidden="true" />
+      <span>{{ t('chat.pending.mergedIntoPrev') }}</span>
+    </div>
+
     <!-- Cancelled marker: shown after file changes banner, hidden when last block is thinking (shown inline in thinking-header instead) -->
     <div v-if="msg.cancelled && !isLastBlockThinking" class="chat-cancelled-mark">{{ t('chat.contentBlocks.cancelled') }}</div>
 
@@ -247,7 +258,7 @@
 <script setup>
 import { ref, inject, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Clock, Pause, Volume2, Info, FileDiff, Split, Rewind, MessageSquareQuote, ChevronDown, Lock, User, Crown, Megaphone } from 'lucide-vue-next'
+import { Clock, Pause, Volume2, Info, FileDiff, Split, Rewind, MessageSquareQuote, ChevronDown, Lock, User, Crown, Megaphone, CornerDownRight } from 'lucide-vue-next'
 import { formatDuration, formatRelativeTime } from '@/utils/format.ts'
 import { escapeHtml } from '@/utils/html.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
@@ -699,6 +710,21 @@ const copyPayload = quotableText
   background: var(--bg-tertiary, #f0f0f0);
   padding: var(--space-1) var(--space-4);
   border-radius: var(--radius-xs);
+  margin-top: var(--space-2);
+}
+
+/* ── Injected-into-running-reply marker (user bubbles) ──
+   Quiet, muted annotation: it explains WHY this bubble sits after a reply that
+   was still streaming, so it must read as incidental metadata, not a warning.
+   Same inline treatment as .chat-cancelled-mark (it sits in .msg-card, a plain
+   block, so it stays content-width and left-aligned inside the card). */
+.chat-injected-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--font-size-xs);
+  color: var(--text-muted, #999);
+  padding: 0 var(--space-2);
   margin-top: var(--space-2);
 }
 

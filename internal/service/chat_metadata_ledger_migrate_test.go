@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 			session_id TEXT,
 			backend TEXT NOT NULL DEFAULT 'claude',
 			agent_id TEXT DEFAULT '',
+			injected INTEGER NOT NULL DEFAULT 0,
 			streaming INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			completed_at DATETIME
@@ -232,6 +233,7 @@ func TestMigrateChatMetadataLedger_SkipsBackfillWhenAttributionPresent(t *testin
 			session_id TEXT,
 			backend TEXT NOT NULL DEFAULT 'claude',
 			agent_id TEXT DEFAULT '',
+			injected INTEGER NOT NULL DEFAULT 0,
 			streaming INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)

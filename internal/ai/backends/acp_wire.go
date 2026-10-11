@@ -32,4 +32,10 @@ func init() {
 	model.BackendSupportsMidTurnFn = func(backendID string) bool {
 		return LookupMidTurnInjector(backendID) != nil
 	}
+
+	// Wire up the "does an injection split the reply?" reporter so core flow can
+	// decide whether an injected user message needs the merge-only hint
+	// ("回复已并入上一轮") on its bubble. CodeBuddy splits (true); claude/codex
+	// merge (false) because their steering emits no correlation echo.
+	model.BackendMidTurnSplitsReplyFn = LookupMidTurnSplitsReply
 }

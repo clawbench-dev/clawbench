@@ -131,10 +131,17 @@ type ChatMessage struct {
 	// AgentID is the speaker's group-member session row id for group-chat
 	// messages (see docs/plans/2026-10-04-ai-group-chat-design.md §4.3). It is
 	// NOT a real agent id and is empty for ordinary single-agent messages.
-	AgentID      string        `json:"agentId,omitempty"`
-	ProjectPath  string        `json:"projectPath,omitempty"`
-	Streaming    bool          `json:"streaming,omitempty"`
-	Indexed      bool          `json:"indexed,omitempty"`
+	AgentID     string `json:"agentId,omitempty"`
+	ProjectPath string `json:"projectPath,omitempty"`
+	Streaming   bool   `json:"streaming,omitempty"`
+	Indexed     bool   `json:"indexed,omitempty"`
+	// Injected marks a user message that was injected into the RUNNING assistant
+	// reply (mid-turn steering) instead of starting its own turn. Set only when
+	// the backend's injection MERGES into the reply rather than splitting it
+	// (claude/codex); the frontend shows a "回复已并入上一轮" hint on such a
+	// bubble, since it otherwise sits after the still-streaming reply with
+	// nothing following it.
+	Injected     bool          `json:"injected,omitempty"`
 	CreatedAt    time.Time     `json:"createdAt"`
 	Summary      *string       `json:"summary,omitempty"`      // reading summary (nil=not summarized, ""=too short, non-empty=summary)
 	SummaryCards *SummaryCards `json:"summaryCards,omitempty"` // structured card metadata for summary view

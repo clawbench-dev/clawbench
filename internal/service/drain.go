@@ -95,7 +95,11 @@ var dequeueQueuedMessage = ClaimNextAndMaterialize
 // chat_history. It is the single source of a user bubble's content: queue_drain
 // carries no text/files and never creates a bubble, so a client can never render
 // two bubbles for the same message.
-func emitUserMessage(sessionID string, msgID int64, row QueuedRow) {
+//
+// injected marks a message that joined the RUNNING assistant reply (mid-turn
+// steering) rather than starting its own turn; only a merge-only injection
+// (claude/codex) sets it, so the frontend can annotate the bubble.
+func emitUserMessage(sessionID string, msgID int64, row QueuedRow, injected bool) {
 	ws.EmitToSession(sessionID, ai.StreamEvent{
 		Type: eventTypeUserMessage,
 		UserMessage: &ai.UserMessageData{
@@ -103,6 +107,7 @@ func emitUserMessage(sessionID string, msgID int64, row QueuedRow) {
 			Content:   row.Content,
 			Files:     row.Files,
 			QueueID:   row.QueueID,
+			Injected:  injected,
 		},
 	})
 }
@@ -359,7 +364,7 @@ func RunDrainLoop(cfg DrainConfig, result DrainResult) {
 			slog.String("text", row.Content))
 
 		// 1. Announce the real user message (content lives here, and only here).
-		emitUserMessage(cfg.SessionID, msgID, row)
+		emitUserMessage(cfg.SessionID, msgID, row, false)
 
 		// 2. Signal the turn boundary: finalize the previous reply, adopt the
 		//    bubble, open a placeholder. Carries no content by design.

@@ -82,6 +82,15 @@ export interface ChatMessage {
    * the speaker's avatar/name. Mirrors backend chat_history.agent_id.
    */
   agentId?: string
+  /**
+   * True when this user message was injected into the RUNNING assistant reply
+   * (mid-turn steering) and MERGED into it rather than splitting it — claude
+   * and codex emit no correlation echo, so the bubble lands after the
+   * still-streaming reply with nothing following it. The bubble renders a
+   * "回复已并入上一轮" hint so it does not read as "sent but ignored". Mirrors
+   * backend chat_history.injected (false for CodeBuddy, which splits the reply).
+   */
+  injected?: boolean
   createdAt?: string
   files?: FileEntry[]
   /**
@@ -684,7 +693,7 @@ export type ChatMessageAction =
   // A queued message started its own turn: the reply that was streaming is now
   // complete (the backend only emits `done` when the whole drain loop exits).
   | { type: 'ws_queue_drain' }
-  | { type: 'ws_user_message'; data: { messageId?: number; content?: string; files?: FileEntry[]; senderClientId?: string; queueId?: string; backend?: string } }
+  | { type: 'ws_user_message'; data: { messageId?: number; content?: string; files?: FileEntry[]; senderClientId?: string; queueId?: string; backend?: string; injected?: boolean } }
   // A role='system' timeline row (group membership change) written by the
   // backend. Deduped by DB id so a duplicate delivery renders once.
   | { type: 'ws_system_message'; data: { messageId?: number; content?: string } }
@@ -1867,6 +1876,7 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
         _remote: true,
         ...(data.backend ? { backend: data.backend } : {}),
         ...(remoteQueueId ? { _remoteQueueId: remoteQueueId } : {}),
+        ...(data.injected ? { injected: true } : {}),
         seq: nextClientSeq(),
       } as ChatMessage)
       sortMessages(state)

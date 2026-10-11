@@ -105,6 +105,19 @@ func LookupMidTurnInjector(backendID string) ai.MidTurnInjector {
 	return nil
 }
 
+// LookupMidTurnSplitsReply reports whether the backend's mid-turn injection
+// splits the running assistant reply (true) rather than merely merging into it
+// (false). Only meaningful for backends that can inject at all — a backend with
+// no MidTurn policy returns false, which is the merge-only default.
+func LookupMidTurnSplitsReply(backendID string) bool {
+	pluginsMu.RLock()
+	defer pluginsMu.RUnlock()
+	if p, ok := plugins[backendID]; ok {
+		return p.MidTurnSplitsReply
+	}
+	return false
+}
+
 // genericACPRemaps is the fallback ACP input normalization map.
 // Migrated from common_stream.go's "generic_acp" entry.
 var genericACPRemaps = map[string]string{

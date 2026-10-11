@@ -32,7 +32,7 @@ func GetChatHistory(projectPath, backend, sessionID string) ([]model.ChatMessage
 		return nil, err
 	}
 	rows, err := store.ReadDB().Query(
-		"SELECT id, role, content, files, backend, streaming, created_at, indexed, agent_id FROM chat_history WHERE project_id = ? AND session_id = ? ORDER BY id ASC",
+		"SELECT id, role, content, files, backend, streaming, created_at, indexed, agent_id, injected FROM chat_history WHERE project_id = ? AND session_id = ? ORDER BY id ASC",
 		projectID, sessionID,
 	)
 	if err != nil {
@@ -45,11 +45,13 @@ func GetChatHistory(projectPath, backend, sessionID string) ([]model.ChatMessage
 		var filesJSON sql.NullString
 		var streaming int
 		var indexed int
-		if err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &streaming, &msg.CreatedAt, &indexed, &msg.AgentID); err != nil {
+		var injected int
+		if err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &streaming, &msg.CreatedAt, &indexed, &msg.AgentID, &injected); err != nil {
 			return nil, err
 		}
 		msg.Streaming = streaming != 0
 		msg.Indexed = indexed != 0
+		msg.Injected = injected != 0
 		if filesJSON.Valid && filesJSON.String != "" {
 			msg.Files = unmarshalFilesJSON(filesJSON.String)
 		}
@@ -86,8 +88,8 @@ func GetChatHistoryPaged(projectPath, backend, sessionID string, limit int, befo
 
 	if limit > 0 && beforeID > 0 {
 		// Cursor-based: load messages older than beforeID
-		query := `SELECT id, role, content, files, backend, streaming, created_at, indexed, agent_id FROM (
-			SELECT id, role, content, files, backend, streaming, created_at, indexed, agent_id FROM chat_history
+		query := `SELECT id, role, content, files, backend, streaming, created_at, indexed, agent_id, injected FROM (
+			SELECT id, role, content, files, backend, streaming, created_at, indexed, agent_id, injected FROM chat_history
 			WHERE project_id = ? AND session_id = ? AND id < ?
 			ORDER BY id DESC LIMIT ?
 		) sub ORDER BY id ASC`
@@ -102,8 +104,8 @@ func GetChatHistoryPaged(projectPath, backend, sessionID string, limit int, befo
 
 	if limit > 0 {
 		// Initial load: get the most recent (limit) messages
-		query := `SELECT id, role, content, files, backend, streaming, created_at, indexed, agent_id FROM (
-			SELECT id, role, content, files, backend, streaming, created_at, indexed, agent_id FROM chat_history
+		query := `SELECT id, role, content, files, backend, streaming, created_at, indexed, agent_id, injected FROM (
+			SELECT id, role, content, files, backend, streaming, created_at, indexed, agent_id, injected FROM chat_history
 			WHERE project_id = ? AND session_id = ?
 			ORDER BY id DESC LIMIT ?
 		) sub ORDER BY id ASC`
@@ -117,7 +119,7 @@ func GetChatHistoryPaged(projectPath, backend, sessionID string, limit int, befo
 	}
 
 	// No limit: return all messages in chronological order
-	query := `SELECT id, role, content, files, backend, streaming, created_at, indexed, agent_id FROM chat_history WHERE project_id = ? AND session_id = ? ORDER BY id ASC`
+	query := `SELECT id, role, content, files, backend, streaming, created_at, indexed, agent_id, injected FROM chat_history WHERE project_id = ? AND session_id = ? ORDER BY id ASC`
 	rows, err := store.ReadDB().Query(query, projectID, sessionID)
 	if err != nil {
 		return messages, totalCount, err
@@ -136,11 +138,13 @@ func scanMessages(rows *sql.Rows, sessionID string) ([]model.ChatMessage, error)
 		var filesJSON sql.NullString
 		var streaming int
 		var indexed int
-		if err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &streaming, &msg.CreatedAt, &indexed, &msg.AgentID); err != nil {
+		var injected int
+		if err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &streaming, &msg.CreatedAt, &indexed, &msg.AgentID, &injected); err != nil {
 			return nil, err
 		}
 		msg.Streaming = streaming != 0
 		msg.Indexed = indexed != 0
+		msg.Injected = injected != 0
 		if filesJSON.Valid && filesJSON.String != "" {
 			msg.Files = unmarshalFilesJSON(filesJSON.String)
 		}
@@ -312,22 +316,24 @@ func GetMessageByID(id int64) (*model.ChatMessage, error) {
 	var filesJSON sql.NullString
 	var streaming int
 	var indexed int
+	var injected int
 
 	// project_path is resolved through projects so the wire type keeps carrying a
 	// path even though the column is now an id.
 	err := store.ReadDB().QueryRow(
 		`SELECT h.id, h.role, h.content, h.files, h.backend, h.streaming, h.created_at, h.indexed, h.session_id,
-		        COALESCE(p.path, ''), h.agent_id
+		        COALESCE(p.path, ''), h.agent_id, h.injected
 		   FROM chat_history h
 		   LEFT JOIN projects p ON p.id = h.project_id
 		  WHERE h.id = ?`,
 		id,
-	).Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &streaming, &msg.CreatedAt, &indexed, &msg.SessionID, &msg.ProjectPath, &msg.AgentID)
+	).Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &streaming, &msg.CreatedAt, &indexed, &msg.SessionID, &msg.ProjectPath, &msg.AgentID, &injected)
 	if err != nil {
 		return nil, err
 	}
 	msg.Streaming = streaming != 0
 	msg.Indexed = indexed != 0
+	msg.Injected = injected != 0
 	if filesJSON.Valid && filesJSON.String != "" {
 		msg.Files = unmarshalFilesJSON(filesJSON.String)
 	}
@@ -346,7 +352,7 @@ func GetMessageByID(id int64) (*model.ChatMessage, error) {
 // until dequeued), so no queued filter is needed.
 func GetMessagesBySessionID(sessionID string) ([]model.ChatMessage, error) {
 	rows, err := store.ReadDB().Query(
-		"SELECT id, role, content, files, backend, streaming, created_at, indexed, agent_id FROM chat_history WHERE session_id = ? AND streaming = 0 ORDER BY id ASC",
+		"SELECT id, role, content, files, backend, streaming, created_at, indexed, agent_id, injected FROM chat_history WHERE session_id = ? AND streaming = 0 ORDER BY id ASC",
 		sessionID,
 	)
 	if err != nil {
@@ -364,7 +370,7 @@ func GetMessagesBySessionID(sessionID string) ([]model.ChatMessage, error) {
 // must use this function.
 func GetMessagesBySessionIDRaw(sessionID string) ([]model.ChatMessage, error) {
 	rows, err := store.ReadDB().Query(
-		"SELECT id, role, content, files, backend, streaming, created_at, indexed, agent_id FROM chat_history WHERE session_id = ? AND streaming = 0 ORDER BY id ASC",
+		"SELECT id, role, content, files, backend, streaming, created_at, indexed, agent_id, injected FROM chat_history WHERE session_id = ? AND streaming = 0 ORDER BY id ASC",
 		sessionID,
 	)
 	if err != nil {
@@ -377,11 +383,13 @@ func GetMessagesBySessionIDRaw(sessionID string) ([]model.ChatMessage, error) {
 		var filesJSON sql.NullString
 		var streaming int
 		var indexed int
-		if err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &streaming, &msg.CreatedAt, &indexed, &msg.AgentID); err != nil {
+		var injected int
+		if err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &streaming, &msg.CreatedAt, &indexed, &msg.AgentID, &injected); err != nil {
 			return nil, err
 		}
 		msg.Streaming = streaming != 0
 		msg.Indexed = indexed != 0
+		msg.Injected = injected != 0
 		if filesJSON.Valid && filesJSON.String != "" {
 			msg.Files = unmarshalFilesJSON(filesJSON.String)
 		}
@@ -665,7 +673,7 @@ func AddChatMessageWithAgent(projectPath, backend, sessionID, role, content stri
 	defer store.WriteUnlock()
 	defer tx.Rollback()
 
-	msgID, titled, txErr = insertChatMessageTx(tx, projectID, backend, sessionID, role, content, files, streamingInt, fallbackTitle, agentID)
+	msgID, titled, txErr = insertChatMessageTx(tx, projectID, backend, sessionID, role, content, files, streamingInt, fallbackTitle, agentID, false)
 	if txErr != nil {
 		return 0, txErr
 	}
@@ -789,16 +797,20 @@ func UpdateChatQuoteNote(sessionID string, messageID int64, quoteID, note string
 // It returns the LastInsertId (msgID) and whether this call wrote the session's
 // local title (titled), so the caller can schedule the AI rename for exactly the
 // message that earned the title. The caller owns Commit/Rollback.
-func insertChatMessageTx(tx *sql.Tx, projectID int64, backend, sessionID, role, content string, files []model.FileEntry, streamingInt int, fallbackTitle, agentID string) (int64, bool, error) {
+func insertChatMessageTx(tx *sql.Tx, projectID int64, backend, sessionID, role, content string, files []model.FileEntry, streamingInt int, fallbackTitle, agentID string, injected bool) (int64, bool, error) {
 	var filesJSON string
 	if len(files) > 0 {
 		data, _ := json.Marshal(files)
 		filesJSON = string(data)
 	}
 
+	injectedInt := 0
+	if injected {
+		injectedInt = 1
+	}
 	result, txErr := tx.Exec(
-		"INSERT INTO chat_history (project_id, backend, session_id, role, content, files, streaming, indexed, agent_id) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)",
-		projectID, backend, sessionID, role, content, filesJSON, streamingInt, agentID,
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, files, streaming, indexed, agent_id, injected) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
+		projectID, backend, sessionID, role, content, filesJSON, streamingInt, agentID, injectedInt,
 	)
 	if txErr != nil {
 		return 0, false, txErr

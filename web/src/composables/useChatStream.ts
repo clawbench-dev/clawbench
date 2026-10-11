@@ -1096,7 +1096,7 @@ export function useChatStream(options: UseChatStreamOptions) {
 
       case 'user_message': {
         if (sessionChanged()) return
-        const userData = payload as { messageId?: number; content?: string; files?: FileEntry[]; senderClientId?: string; queueId?: string }
+        const userData = payload as { messageId?: number; content?: string; files?: FileEntry[]; senderClientId?: string; queueId?: string; injected?: boolean }
 
         // A message whose queueId is still in the queue is being MATERIALIZED
         // right now: drop the queue entry and render it inline. This covers the

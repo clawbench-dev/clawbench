@@ -44,6 +44,19 @@ type BackendPlugin struct {
 	// This is behavior, not mapping data, so it lives at the top level rather
 	// than under ACP — a non-ACP backend could implement it too.
 	MidTurn ai.MidTurnInjector
+
+	// MidTurnSplitsReply reports whether an injected message SPLITS the running
+	// assistant reply into two (a "before" and "after" half) rather than merely
+	// merging into it. Only meaningful when MidTurn is non-nil.
+	//
+	// CodeBuddy echoes the injected message back on the wire with a
+	// correlation id, so the host can cut the reply exactly at the injection
+	// point — the split. claude/codex's `_session/steering` emits no such echo,
+	// so their injected message MERGES: the user bubble lands after the
+	// still-streaming reply with nothing following it, which reads as "sent but
+	// ignored". The frontend renders a hint on the injected bubble ONLY for the
+	// merge-only case, so this bit is the switch that turns it on.
+	MidTurnSplitsReply bool
 }
 
 // CLIPlugin provides CLI-mode configuration for backends using the CLIBackend skeleton.

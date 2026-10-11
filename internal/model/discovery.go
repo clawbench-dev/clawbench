@@ -80,6 +80,23 @@ func BackendSupportsMidTurn(backendID string) bool {
 	return BackendSupportsMidTurnFn(backendID)
 }
 
+// BackendMidTurnSplitsReplyFn is set by the backends package at init time to
+// report whether a backend's mid-turn injection SPLITS the running assistant
+// reply into two rather than merely merging into it. Uses function-variable
+// injection to avoid an import cycle (model cannot import ai).
+var BackendMidTurnSplitsReplyFn func(backendID string) bool
+
+// BackendMidTurnSplitsReply reports whether an injected message splits the
+// running reply. Falls back to false (merge-only) when not wired or unknown —
+// the conservative default, since a merge-only injection is the case that needs
+// the "回复已并入上一轮" hint.
+func BackendMidTurnSplitsReply(backendID string) bool {
+	if BackendMidTurnSplitsReplyFn == nil {
+		return false
+	}
+	return BackendMidTurnSplitsReplyFn(backendID)
+}
+
 // BackendRegistry lists all known AI backends for auto-discovery.
 // Populated lazily from backend plugins via GetBackendRegistry().
 // Direct reads should use GetBackendRegistry() to ensure initialization.

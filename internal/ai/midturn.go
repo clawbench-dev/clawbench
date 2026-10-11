@@ -37,6 +37,13 @@ import (
 type RawRPCTransport interface {
 	CallRaw(ctx context.Context, method string, params any) (json.RawMessage, error)
 	AcpSessionID() string
+	// PromptInFlight reports whether a prompt is currently running on this
+	// connection. A policy whose agent silently STARTS A NEW TURN when it has
+	// no turn to join (Codex: `_session/steering` with no live turn returns
+	// outcome="startedNewTurn") MUST consult this and decline when false —
+	// otherwise the adapter detaches a turn the host does not own (a "ghost
+	// turn": its output streams outside ClawBench's turn bookkeeping).
+	PromptInFlight() bool
 }
 
 // MidTurnInjectRequest describes a user message that arrived mid-turn.

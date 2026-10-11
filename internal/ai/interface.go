@@ -587,6 +587,11 @@ type UserMessageData struct {
 	Files          []model.FileEntry `json:"files,omitempty"`          // File attachments
 	SenderClientID string            `json:"senderClientId,omitempty"` // WS client ID of the sender (to skip self-echo)
 	QueueID        string            `json:"queueId,omitempty"`        // Client queue ID the sender used, so it can adopt this row's id
+	// Injected marks a message that joined the RUNNING assistant reply
+	// (mid-turn steering) rather than starting its own turn. Set only for a
+	// merge-only injection (claude/codex), which the frontend annotates with a
+	// "回复已并入上一轮" hint. Mirrors chat_history.injected.
+	Injected bool `json:"injected,omitempty"`
 }
 
 // SystemMessageData carries a role='system' timeline event (a membership change)
