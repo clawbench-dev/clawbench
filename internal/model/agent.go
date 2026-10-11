@@ -1,6 +1,7 @@
 package model
 
 import (
+	"sort"
 	"strings"
 	"sync"
 )
@@ -314,6 +315,22 @@ func SetAgentList(list []*Agent) {
 	agentsMu.Lock()
 	defer agentsMu.Unlock()
 	AgentList = list
+}
+
+// SortAgentsByOrder sorts agents in place by the user's manual order: sort_order
+// ascending, then ID ascending as a stable tiebreak. This is the single rule the
+// DB load path (LoadAgentsIntoMemoryFromDB) and the reorder handler both use, so
+// an in-memory reorder can never disagree with what a reload would produce.
+//
+// Every agent defaults to sort_order 0, so the ID tiebreak keeps the initial
+// order identical to before sort_order was honored.
+func SortAgentsByOrder(agents []*Agent) {
+	sort.SliceStable(agents, func(i, j int) bool {
+		if agents[i].SortOrder != agents[j].SortOrder {
+			return agents[i].SortOrder < agents[j].SortOrder
+		}
+		return agents[i].ID < agents[j].ID
+	})
 }
 
 // commonRulesTemplate is the built-in system prompt prepended to all agents.

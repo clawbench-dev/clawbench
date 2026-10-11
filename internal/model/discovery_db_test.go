@@ -127,6 +127,27 @@ func TestLoadAgentsIntoMemoryFromDB_SortsBySortOrder(t *testing.T) {
 	assert.Equal(t, []string{"a", "b", "c"}, got, "equal sort_order falls back to id")
 }
 
+// TestSortAgentsByOrder pins the shared comparator used by BOTH the DB load
+// path and the reorder handler: sort_order ascending, id ascending as tiebreak.
+// It sorts in place and is stable, so equal sort_order keeps insertion order
+// only as far as the id tiebreak is deterministic.
+func TestSortAgentsByOrder(t *testing.T) {
+	agents := []*Agent{
+		{ID: "b", SortOrder: 2},
+		{ID: "a", SortOrder: 0},
+		{ID: "c", SortOrder: 1},
+		{ID: "d", SortOrder: 0},
+	}
+	SortAgentsByOrder(agents)
+
+	var got []string
+	for _, a := range agents {
+		got = append(got, a.ID)
+	}
+	// sort_order 0 → a,d (id order), then c (1), then b (2).
+	assert.Equal(t, []string{"a", "d", "c", "b"}, got)
+}
+
 // RefreshAgents — the single pipeline entry point
 // ---------------------------------------------------------------------------
 

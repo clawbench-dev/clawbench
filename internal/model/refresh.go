@@ -604,12 +604,7 @@ func LoadAgentsIntoMemoryFromDB(db dbutil.Reader) error {
 	// user drags rows in the settings page, that order becomes authoritative
 	// for AgentList — and thus for every in-memory consumer (agent pickers,
 	// the AgentList[0] default fallback).
-	sort.SliceStable(agents, func(i, j int) bool {
-		if agents[i].SortOrder != agents[j].SortOrder {
-			return agents[i].SortOrder < agents[j].SortOrder
-		}
-		return agents[i].ID < agents[j].ID
-	})
+	SortAgentsByOrder(agents)
 
 	newAgentsMap := make(map[string]*Agent, len(agents))
 

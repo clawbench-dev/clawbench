@@ -1427,11 +1427,30 @@ func TestServeAgentsReorder(t *testing.T) {
 	assert.Equal(t, 0, claudeOrder)
 	assert.Equal(t, 1, cbOrder)
 
-	// In-memory list reordered immediately (no DB reload needed).
+	// In-memory list reordered immediately (no DB reload needed) AND each
+	// agent's SortOrder field updated to match — GET marshals that field and the
+	// settings page re-sorts by it, so a stale value would undo the drag on the
+	// next read.
 	list := model.GetAgentList()
 	require.Len(t, list, 2)
 	assert.Equal(t, "claude", list[0].ID)
 	assert.Equal(t, "codebuddy", list[1].ID)
+	assert.Equal(t, 0, model.GetAgent("claude").SortOrder, "in-memory SortOrder must match the DB")
+	assert.Equal(t, 1, model.GetAgent("codebuddy").SortOrder)
+
+	// A SECOND drag in the opposite direction must also stick — this is the case
+	// a stale SortOrder field breaks (memory reorders but the field still says
+	// the old position, so the client sorts the drag away).
+	req2 := newRequest(t, http.MethodPut, "/api/agents/reorder", map[string]any{"ids": []string{"codebuddy", "claude"}})
+	withAuthCookie(req2, model.SessionToken)
+	w2 := callHandler(ServeAgentSubRoutes, req2)
+	assert.Equal(t, http.StatusOK, w2.Code)
+
+	list = model.GetAgentList()
+	assert.Equal(t, "codebuddy", list[0].ID)
+	assert.Equal(t, "claude", list[1].ID)
+	assert.Equal(t, 0, model.GetAgent("codebuddy").SortOrder)
+	assert.Equal(t, 1, model.GetAgent("claude").SortOrder)
 }
 
 func TestServeAgentsReorder_Empty(t *testing.T) {
@@ -1455,17 +1474,35 @@ func TestServeAgentsReorder_MethodNotAllowed(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-// TestReorderAgentList pins the pure reorder helper: listed ids first in order,
-// unknown/duplicate ids skipped, unlisted agents keep their relative order.
-func TestReorderAgentList(t *testing.T) {
-	a := &model.Agent{ID: "a"}
-	b := &model.Agent{ID: "b"}
-	c := &model.Agent{ID: "c"}
-	got := reorderAgentList([]*model.Agent{a, b, c}, []string{"c", "ghost", "c", "a"})
-	require.Len(t, got, 3)
-	assert.Equal(t, "c", got[0].ID)
-	assert.Equal(t, "a", got[1].ID)
-	assert.Equal(t, "b", got[2].ID, "unlisted agent follows in its previous relative order")
+// TestServeAgentsReorder_MatchesReload pins that the in-memory order produced
+// by the handler equals what a fresh DB load would produce. The handler writes
+// sort_order = raw index (unknown ids leave gaps) and then sorts by the shared
+// model.SortAgentsByOrder rule, so the two paths must agree exactly — otherwise
+// the drag would appear to undo itself on the next reload/rescan.
+func TestServeAgentsReorder_MatchesReload(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	// "claude" and "codebuddy" are the fixture agents; include an unknown id to
+	// exercise the gap the raw-index write leaves.
+	req := newRequest(t, http.MethodPut, "/api/agents/reorder", map[string]any{"ids": []string{"claude", "ghost", "codebuddy"}})
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgentSubRoutes, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	inMemory := model.GetAgentList()
+	var memIDs []string
+	for _, a := range inMemory {
+		memIDs = append(memIDs, a.ID)
+	}
+
+	// Reload from the DB the same way the server does on startup/rescan.
+	require.NoError(t, model.LoadAgentsIntoMemoryFromDB(store.ReadDB()))
+	var reloadedIDs []string
+	for _, a := range model.GetAgentList() {
+		reloadedIDs = append(reloadedIDs, a.ID)
+	}
+
+	assert.Equal(t, reloadedIDs, memIDs, "handler in-memory order must equal a fresh DB load")
 }
 
 // ── Extended PATCH field tests ──

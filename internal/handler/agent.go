@@ -115,36 +115,26 @@ func serveAgentsReorder(w http.ResponseWriter, r *http.Request) {
 	}
 	// Reflect the new order in memory so this process serves it immediately,
 	// without waiting for the next DB reload.
-	model.SetAgentList(reorderAgentList(model.GetAgentList(), req.IDs))
+	//
+	// Each agent's SortOrder field is written (same raw index the DB just got),
+	// not just the slice order: GET /api/agents marshals that field
+	// (json:"sortOrder") and the settings page sorts by it, so a stale value
+	// would re-sort the drag away on the very next read. Agents absent from ids
+	// keep their field, exactly as their row keeps its column. Sorting by the
+	// shared model.SortAgentsByOrder rule (rather than a bespoke compaction) is
+	// what makes the in-memory order identical to what a reload would produce.
+	//
+	// UpdateAgent publishes copy-on-write, so shared pointers readers may hold
+	// stay frozen. configMutex is held across the updates and the re-sort, and
+	// serveAgentsGet takes configMutex.RLock, so no GET can observe a half-updated
+	// set.
+	for i, id := range req.IDs {
+		model.UpdateAgent(id, func(a *model.Agent) { a.SortOrder = i })
+	}
+	list := model.GetAgentList()
+	model.SortAgentsByOrder(list)
+	model.SetAgentList(list)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true})
-}
-
-// reorderAgentList returns list reordered so the agents named in ids come first
-// in that exact order; agents not in ids keep their existing relative order and
-// follow. Duplicate and unknown ids are skipped. Pure, so it is unit-testable
-// without touching the global agent set.
-func reorderAgentList(list []*model.Agent, ids []string) []*model.Agent {
-	byID := make(map[string]*model.Agent, len(list))
-	for _, a := range list {
-		byID[a.ID] = a
-	}
-	out := make([]*model.Agent, 0, len(list))
-	seen := make(map[string]bool, len(ids))
-	for _, id := range ids {
-		if seen[id] {
-			continue
-		}
-		if a, ok := byID[id]; ok {
-			out = append(out, a)
-			seen[id] = true
-		}
-	}
-	for _, a := range list {
-		if !seen[a.ID] {
-			out = append(out, a)
-		}
-	}
-	return out
 }
 
 // ServeAgents returns the list of configured AI agents.

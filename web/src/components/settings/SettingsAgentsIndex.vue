@@ -17,7 +17,7 @@
         class="settings-agents-index__row"
         @click="$emit('navigate', `agents:${agent.id}`)"
       >
-        <span class="settings-agents-index__drag-handle" :title="t('settings.items.agentDragHandle')">≡</span>
+        <span class="settings-agents-index__drag-handle" :title="t('settings.items.agentDragHandle')" @click.stop>≡</span>
         <div class="settings-agents-index__left">
           <span class="settings-agents-index__icon"><AgentIcon :backend="agent.backend" :name="agent.name" :avatar="agent.avatar" size="md" /></span>
           <div class="settings-agents-index__text">
