@@ -12,10 +12,19 @@
       @keydown.escape="handleClose"
     >
       <div class="modal-dialog" :class="{ 'modal-leaving': leaving, 'modal-full-height': fullHeight }" :style="maxWidthStyle" @click.stop>
-        <div class="modal-header" @click="handleClose">
+        <div class="modal-header">
           <slot name="header">
             <span class="modal-title">{{ title }}</span>
           </slot>
+          <button
+            type="button"
+            class="modal-close-btn"
+            :aria-label="closeLabel"
+            :title="closeLabel"
+            @click.stop="handleClose"
+          >
+            <X :size="16" />
+          </button>
         </div>
         <div class="modal-body">
           <slot />
@@ -30,7 +39,10 @@
 </template>
 
 <script setup>
-import { ref, watch, nextTick, computed } from 'vue'
+import { ref, watch, nextTick, computed, onBeforeUnmount } from 'vue'
+import { X } from 'lucide-vue-next'
+import i18n from '@/i18n'
+import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
 import '@/assets/modal-card.css'
 import '@/assets/modal-footer-btn.css'
 
@@ -45,11 +57,42 @@ const props = defineProps({
 const emit = defineEmits(['close'])
 
 const maxWidthStyle = computed(() => props.maxWidth ? { maxWidth: `${Math.round(props.maxWidth * 1.3)}px` } : {})
+const closeLabel = computed(() => i18n.global.t('common.close'))
 
 const leaving = ref(false)
 const everOpened = ref(false)
 const overlayRef = ref(null)
 let leaveTimer = null
+let unregisterBack = null
+
+// Register a back handler while open so the Android hardware back button and
+// the web edge-swipe gesture (both dispatch `clawbench-back-press`) close this
+// dialog instead of falling through to a page-level handler / app exit.
+//
+// Priority is `PRIORITY_OVERLAY + 1`: dialogs paint above every BottomSheet
+// drawer (z-index 2100/2500 vs the 1000 band; drawers rank at
+// `PRIORITY_OVERLAY + seq*0.001` ≤ 1000.049), so a dialog opened from inside a
+// drawer must win the back press. A consumer that must intercept back BEFORE
+// the dialog closes (e.g. block dismissal during an in-flight submit) registers
+// its own handler at a still-higher priority.
+const BACK_PRIORITY = PRIORITY_OVERLAY + 1
+
+function registerBack() {
+  if (unregisterBack) return
+  unregisterBack = registerBackHandler({
+    id: 'modal-dialog',
+    canGoBack: () => props.open && !leaving.value,
+    goBack: () => handleClose(),
+    priority: BACK_PRIORITY,
+  })
+}
+
+function unregisterBackHandler() {
+  if (unregisterBack) {
+    unregisterBack()
+    unregisterBack = null
+  }
+}
 
 watch(() => props.open, (val) => {
   clearTimeout(leaveTimer)
@@ -60,11 +103,15 @@ watch(() => props.open, (val) => {
     nextTick(() => {
       overlayRef.value?.focus()
     })
+    registerBack()
   } else if (leaving.value) {
     // Close triggered externally while animating — cancel animation, hide now
     leaving.value = false
   }
+  if (!val) unregisterBackHandler()
 }, { immediate: true })
+
+onBeforeUnmount(unregisterBackHandler)
 
 function handleClose() {
   if (leaving.value) return

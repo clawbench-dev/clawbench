@@ -1,8 +1,12 @@
 /**
  * Edge swipe back gesture detection for drill-down pages.
  *
- * Detects swipe from the right edge of the screen going left,
- * and triggers back navigation via the global back handler.
+ * Detects a horizontal inward swipe that STARTS at either screen edge —
+ * right edge swiping left, or left edge swiping right — and triggers back
+ * navigation via the global back handler. Supporting both edges lets a modal
+ * or drawer opened over the content be dismissed from whichever edge the
+ * finger reaches first (on large phones a one-handed user often starts from
+ * the left).
  *
  * Also prevents Android's edge-swipe-to-exit by consuming touch
  * events that start within the edge zones (left 20px and right 20px).
@@ -77,8 +81,14 @@ export function useEdgeSwipeBack() {
         const deltaY = touch.clientY - touchStartY
         const duration = Date.now() - touchStartTime
 
-        // Right edge swipe left → back navigation
-        if (touchStartEdge === 'right' && deltaX < -SWIPE_THRESHOLD) {
+        // Inward swipe: right edge → left (deltaX < 0), or left edge → right
+        // (deltaX > 0). The sign must match the edge the touch started on, so a
+        // right-edge swipe that goes right (outward) does nothing.
+        const inward =
+            (touchStartEdge === 'right' && deltaX < -SWIPE_THRESHOLD) ||
+            (touchStartEdge === 'left' && deltaX > SWIPE_THRESHOLD)
+
+        if (inward) {
             // Must be more horizontal than vertical
             if (Math.abs(deltaY) <= Math.abs(deltaX) * MAX_VERTICAL_RATIO) {
                 // Must be a quick swipe or significant distance

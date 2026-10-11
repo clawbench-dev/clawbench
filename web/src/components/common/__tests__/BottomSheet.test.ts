@@ -213,14 +213,24 @@ describe('BottomSheet overlay click & escape key', () => {
     expect(wrapper!.emitted('close')).toBeFalsy()
   })
 
-  it('clicking header emits close after animation', async () => {
+  it('clicking the close button emits close after animation', async () => {
+    wrapper = mountSheet()
+    await nextTick()
+    const btn = $('.modal-close-btn')!
+    btn.click()
+    await nextTick()
+    vi.advanceTimersByTime(300)
+    expect(wrapper!.emitted('close')).toBeTruthy()
+  })
+
+  it('clicking the header no longer closes the sheet', async () => {
     wrapper = mountSheet()
     await nextTick()
     const header = $('.bs-header')!
     header.click()
     await nextTick()
     vi.advanceTimersByTime(300)
-    expect(wrapper!.emitted('close')).toBeTruthy()
+    expect(wrapper!.emitted('close')).toBeFalsy()
   })
 })
 
@@ -524,19 +534,31 @@ describe('BottomSheet wide-screen card (all drawers match ModalDialog)', () => {
     expect($('.bs-panel')?.classList.contains('bs-wide-auto')).toBe(true)
   })
 
-  it('does not render a close button in wide-screen mode', () => {
+  it('renders a close button in wide-screen mode', () => {
     wideState.isWideScreen.value = true
     wrapper = mountSheet({ title: 'Test' })
-    expect($('.modal-close-btn')).toBeFalsy()
+    expect($('.modal-close-btn')).toBeTruthy()
   })
 
-  it('does not render a close button in narrow mode', () => {
+  it('renders a close button in narrow mode', () => {
     wideState.isWideScreen.value = false
     wrapper = mountSheet({ title: 'Test' })
-    expect($('.modal-close-btn')).toBeFalsy()
+    expect($('.modal-close-btn')).toBeTruthy()
   })
 
-  it('clicking the header emits close after animation', async () => {
+  it('clicking the close button emits close after animation', async () => {
+    vi.useFakeTimers()
+    wideState.isWideScreen.value = true
+    wrapper = mountSheet({ title: 'Test' })
+    const btn = $('.modal-close-btn')!
+    btn.click()
+    await nextTick()
+    vi.advanceTimersByTime(300)
+    expect(wrapper!.emitted('close')).toBeTruthy()
+    vi.useRealTimers()
+  })
+
+  it('clicking the header itself no longer closes the sheet', async () => {
     vi.useFakeTimers()
     wideState.isWideScreen.value = true
     wrapper = mountSheet({ title: 'Test' })
@@ -544,7 +566,7 @@ describe('BottomSheet wide-screen card (all drawers match ModalDialog)', () => {
     header.click()
     await nextTick()
     vi.advanceTimersByTime(300)
-    expect(wrapper!.emitted('close')).toBeTruthy()
+    expect(wrapper!.emitted('close')).toBeFalsy()
     vi.useRealTimers()
   })
 

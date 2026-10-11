@@ -2,12 +2,14 @@ import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest'
 import { mount, VueWrapper } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import ModalDialog from '@/components/common/ModalDialog.vue'
+import { handleBackNavigation, canNavigateBack, _resetHandlers } from '@/composables/useBackHandler'
 
 describe('ModalDialog', () => {
   let wrapper: VueWrapper<any> | null = null
   let container: HTMLDivElement
 
   beforeEach(() => {
+    _resetHandlers()
     container = document.createElement('div')
     document.body.appendChild(container)
   })
@@ -22,6 +24,7 @@ describe('ModalDialog', () => {
     if (container.parentNode) {
       document.body.removeChild(container)
     }
+    _resetHandlers()
   })
 
   function mountDialog(props = {}, slots = {}) {
@@ -53,20 +56,23 @@ describe('ModalDialog', () => {
     expect($('.modal-title')?.textContent).toBe('Test Dialog')
   })
 
-  it('does not render a close button', async () => {
+  it('renders a circular close button in the header', async () => {
     mountDialog({ title: 'Test' })
     await nextTick()
 
-    expect($('.modal-close-btn')).toBeFalsy()
+    const btn = $('.modal-close-btn')
+    expect(btn).toBeTruthy()
+    // Circular (fully rounded) icon button, top-right of the header.
+    expect(btn!.querySelector('svg')).toBeTruthy()
   })
 
-  it('emits close when the header is clicked (after animation)', async () => {
+  it('emits close when the close button is clicked (after animation)', async () => {
     vi.useFakeTimers()
     mountDialog({ title: 'Test' })
     await nextTick()
 
-    const header = $('.modal-header')!
-    header.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    const btn = $('.modal-close-btn')!
+    btn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await nextTick()
 
     expect(wrapper!.vm.leaving).toBe(true)
@@ -76,6 +82,24 @@ describe('ModalDialog', () => {
 
     expect(wrapper!.emitted('close')).toBeTruthy()
     expect(wrapper!.vm.leaving).toBe(false)
+  })
+
+  it('does not close when the header itself is clicked', async () => {
+    vi.useFakeTimers()
+    mountDialog({ title: 'Test' })
+    await nextTick()
+
+    // Header click is no longer a close target — only the X button is.
+    const header = $('.modal-header')!
+    header.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await nextTick()
+
+    expect(wrapper!.vm.leaving).toBe(false)
+    vi.advanceTimersByTime(250)
+    await nextTick()
+
+    expect(wrapper!.emitted('close')).toBeFalsy()
+    vi.useRealTimers()
   })
 
   it('emits close when overlay is clicked (after animation)', async () => {
@@ -110,23 +134,23 @@ describe('ModalDialog', () => {
     expect(wrapper!.emitted('close')).toBeFalsy()
   })
 
-  it('emits close when the header is clicked (after animation)', async () => {
+  it('does not close when the header slot content is clicked', async () => {
     vi.useFakeTimers()
-    mountDialog({ title: 'Test' })
+    mountDialog({}, { header: '<span class="custom-hdr">Custom</span>' })
     await nextTick()
 
-    // Click the header directly
-    const header = $('.modal-header')!
-    header.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    // Clicking header content (not the X) must not close the dialog.
+    const hdr = $('.custom-hdr')!
+    hdr.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await nextTick()
 
-    // handleClose sets leaving=true
-    expect(wrapper!.vm.leaving).toBe(true)
+    expect(wrapper!.vm.leaving).toBe(false)
 
     vi.advanceTimersByTime(250)
     await nextTick()
 
-    expect(wrapper!.emitted('close')).toBeTruthy()
+    expect(wrapper!.emitted('close')).toBeFalsy()
+    vi.useRealTimers()
   })
 
   it('uses custom zIndex', async () => {
@@ -268,5 +292,34 @@ describe('ModalDialog', () => {
     expect(wrapper!.vm.leaving).toBe(false)
 
     vi.useRealTimers()
+  })
+
+  it('registers a back handler while open so Android back / edge swipe closes it', async () => {
+    vi.useFakeTimers()
+    mountDialog({ title: 'Test' })
+    await nextTick()
+
+    expect(canNavigateBack()).toBe(true)
+    handleBackNavigation()
+    await nextTick()
+
+    expect(wrapper!.vm.leaving).toBe(true)
+
+    vi.advanceTimersByTime(250)
+    await nextTick()
+
+    expect(wrapper!.emitted('close')).toBeTruthy()
+    vi.useRealTimers()
+  })
+
+  it('unregisters the back handler when closed', async () => {
+    mountDialog({ title: 'Test' })
+    await nextTick()
+    expect(canNavigateBack()).toBe(true)
+
+    await wrapper!.setProps({ open: false })
+    await nextTick()
+
+    expect(canNavigateBack()).toBe(false)
   })
 })

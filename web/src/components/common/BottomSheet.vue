@@ -19,11 +19,21 @@
         ]"
       >
         <!-- Header -->
-        <div v-if="!noHeader" class="bs-header" :class="{ 'bs-header-handle-only': handleOnly }" @click="handleClose">
+        <div v-if="!noHeader" class="bs-header" :class="{ 'bs-header-handle-only': handleOnly, 'bs-header-has-close': !handleOnly }">
           <div class="bs-handle" />
           <slot v-if="!handleOnly" name="header">
             <span class="bs-title">{{ title }}</span>
           </slot>
+          <button
+            v-if="!handleOnly"
+            type="button"
+            class="modal-close-btn"
+            :aria-label="closeLabel"
+            :title="closeLabel"
+            @click.stop="handleClose"
+          >
+            <X :size="16" />
+          </button>
         </div>
         <!-- Body -->
         <div class="bs-body">
@@ -39,10 +49,13 @@
 </template>
 
 <script setup>
-import { ref, watch, nextTick, onBeforeUnmount } from 'vue'
+import { ref, watch, nextTick, onBeforeUnmount, computed } from 'vue'
+import { X } from 'lucide-vue-next'
+import i18n from '@/i18n'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
 import { getWideScreenState } from '@/composables/useWideScreenLayout'
 import { nextDrawerId, pushDrawer, removeDrawer, drawerZOffset } from '@/utils/drawerStack'
+import '@/assets/modal-card.css'
 import '@/assets/modal-footer-btn.css'
 
 const props = defineProps({
@@ -73,6 +86,8 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['close'])
+
+const closeLabel = computed(() => i18n.global.t('common.close'))
 
 // Wide-screen detection mirrors useWideScreenLayout (physical-width aware, so
 // high-DPR tablets in landscape are constrained even when CSS width < 1024px).
@@ -317,9 +332,11 @@ defineExpose({
   box-shadow: 0 1px 0 var(--border-color, #e5e5e5);
   background: var(--bg-secondary, #f8f9fa);
   flex-shrink: 0;
-  cursor: pointer;
   position: relative;
 }
+
+/* The header's right padding (to clear the absolute .modal-close-btn) and the
+   button's own styling live in modal-card.css, which this component imports. */
 
 /* Android-style drag handle */
 .bs-handle {

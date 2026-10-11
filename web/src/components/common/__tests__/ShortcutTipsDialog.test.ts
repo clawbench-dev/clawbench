@@ -3,10 +3,16 @@ import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import ShortcutTipsDialog from '../ShortcutTipsDialog.vue'
 
-vi.mock('vue-i18n', () => ({
-  useI18n: () => ({ t: (key: string, params?: Record<string, unknown>) =>
-    params && params.count !== undefined ? `${key} [${params.count}]` : key }),
-}))
+vi.mock('vue-i18n', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('vue-i18n')>()
+  // Keep the real module (createI18n etc.) so shared shells that import the
+  // i18n singleton still load; only the t() used by the component is stubbed.
+  return {
+    ...actual,
+    useI18n: () => ({ t: (key: string, params?: Record<string, unknown>) =>
+      params && params.count !== undefined ? `${key} [${params.count}]` : key }),
+  }
+})
 
 type MockTip = { context: string; contextKey: string; keys?: string[]; actionKey: string }
 const mockAll = vi.fn<() => MockTip[]>()

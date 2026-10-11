@@ -16,8 +16,13 @@ const { mockGetAgent, mockLoadAgents, mockPatchAgentField, mockToastShow, mockDe
   mockAgentsLoaded: { value: true },
 }))
 
-vi.mock('vue-i18n', () => ({
-  useI18n: () => ({
+vi.mock('vue-i18n', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('vue-i18n')>()
+  // Keep the real module (createI18n etc.) so shared shells that import the
+  // i18n singleton still load; only the component's t() is stubbed.
+  return {
+    ...actual,
+    useI18n: () => ({
     t: (key: string, params?: any) => {
       const map: Record<string, string> = {
         'settings.items.agentPreferredModel': 'Preferred Model',
@@ -69,7 +74,8 @@ vi.mock('vue-i18n', () => ({
       return map[key] ?? key
     },
   }),
-}))
+  }
+})
 
 vi.mock('@/composables/useAgents', async () => {
   // Dynamic import: the factory is hoisted above the top-level `import { ref }`,

@@ -516,7 +516,8 @@ describe('AgentSelectorDrawer', () => {
 
       expect(wrapper.emitted('switch-mode')).toBeTruthy()
       expect(wrapper.emitted('switch-mode')![0]).toEqual(['group'])
-      // @click.stop: the header's own click must NOT close the drawer.
+      // The mode switch sits in the header; interacting with it must not close
+      // the drawer (header click is no longer a close target either).
       expect(wrapper.emitted('update:open')).toBeFalsy()
     })
 
