@@ -21,6 +21,8 @@ RAG：同一数据库文件，独立连接池
 | external_session_id | TEXT | | `''` | 外部 CLI 会话 ID |
 | session_type | TEXT | NOT NULL | `'chat'` | chat / task / **group**（群会话）/ **group_member**（群成员连接绑定行，用户不可见） |
 | group_id | TEXT | | `''` | 所属群会话 id（仅 `group_member` 行非空）；索引 `idx_sessions_group(group_id, session_type)` |
+| agent_name | TEXT | NOT NULL | `''` | **群成员行的显示名（权威快照）**：首个实例=智能体本名，重复实例=名池名（池尽回退 `本名 序号`）。非成员行留空；成员行的 `title` 留空 |
+| agent_avatar | TEXT | NOT NULL | `''` | **群成员行自身的头像 SVG 快照**（前端 DiceBear 按成员名生成）。仅同一智能体的第 2+ 个实例写入（用于区分副本）；第 1 个/唯一实例留空，回退智能体头像 |
 | deleted | INTEGER | NOT NULL | `0` | 软删除标记 |
 | last_read_at | DATETIME | | — | 最后阅读时间 |
 | created_at | DATETIME | | CURRENT_TIMESTAMP | 创建时间 |
@@ -43,6 +45,7 @@ UNIQUE：`(backend, id)`
 | session_id | TEXT | | — | FK → chat_sessions.id (CASCADE) |
 | backend | TEXT | NOT NULL | `'claude'` | AI 后端名称 |
 | agent_id | TEXT | | `''` | **群聊发言人成员行 id**（非 agent id；普通会话留空）。前端据此解析发言人头像/名字并判定主持人发言 |
+| injected | INTEGER | NOT NULL | `0` | 1=该用户消息被**并入正在生成的回复**（运行中插话，合并式后端）而非另起一回合；前端据此在气泡上显示「回复已并入上一轮」 |
 | streaming | INTEGER | NOT NULL | `0` | 1=正在流式输出 |
 | indexed | INTEGER | NOT NULL | `0` | RAG 已索引标记 |
 | created_at | DATETIME | | CURRENT_TIMESTAMP | 创建时间 |
@@ -184,6 +187,7 @@ UNIQUE：`(message_id)`
 | custom_system_prompt | TEXT | NOT NULL | `''` | 用户自定义提示词 |
 | avatar | TEXT | NOT NULL | `''` | 用户自选的 DiceBear 头像 SVG（空＝用内置图标）；写入前经 `avatarSVGLooksSafe` 校验 |
 | disabled | INTEGER | NOT NULL | `0` | 已禁用：从所有**新建**入口（新建会话/任务/群成员）隐藏，服务端兜底拒绝；已有会话/任务不受影响 |
+| project_id | INTEGER | | `NULL` | 项目作用域：`NULL`=全局可见；值=仅在该 `projects.id` 项目可见（设置列表 + 所有新建入口）。只拦新建，不追溯已有会话/任务 |
 | models | TEXT | NOT NULL | `'[]'` | 可用模型列表 JSON |
 | models_auto_detected | INTEGER | NOT NULL | `0` | 自动检测模型标记 |
 | sort_order | INTEGER | NOT NULL | `0` | 排序顺序 |
@@ -376,6 +380,8 @@ erDiagram
         TEXT external_session_id
         TEXT session_type
         TEXT group_id
+        TEXT agent_name
+        TEXT agent_avatar
         INTEGER deleted
         DATETIME last_read_at
         DATETIME created_at
@@ -394,6 +400,7 @@ erDiagram
         TEXT session_id FK
         TEXT backend
         TEXT agent_id
+        INTEGER injected
         INTEGER streaming
         INTEGER indexed
         DATETIME created_at
@@ -564,6 +571,7 @@ erDiagram
         TEXT custom_system_prompt
         TEXT avatar
         INTEGER disabled
+        INTEGER project_id
         TEXT models
         INTEGER models_auto_detected
         INTEGER sort_order

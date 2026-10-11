@@ -315,6 +315,7 @@
 - **`.context-menu`**（`components.css:188`）：`position:fixed`、`--z-context-menu`、`--radius-md`、`--shadow-md`、`min-width:140px`。
 - **`PopupMenu.vue`**：`Teleport to="body"` + `<Transition name="menu-fade">`，定位走 `@/utils/popupMenuPosition`。
 - 弹窗外壳用 `ModalDialog.vue`（宽屏）/ `BottomSheet.vue`（窄屏），样式在 `modal-card.css` / `BottomSheet.vue` 的 keyframes 里。
+- **共享外壳的关闭按钮与返回**：两个外壳各有一个右上角圆形关闭按钮 `.modal-close-btn`（lucide `X`、28px，与下钻返回键 `.fd-back-btn` 同尺寸；底色沿用 `.window-controls` 的 `--text-primary` 混入 `--bg-secondary` 配方，静止 16% / hover 24% / active 32%，跨 36 主题最差对比 1.110，hover 用 `@media (hover:hover)` 门控避免触屏残留）。**它必须绝对定位**——header 的右侧动作簇（如 `.bs-header-actions`）自带 `margin-left:auto`，把它作为 flex 子项会被挤走；因此 header 预留对应右内边距（窄屏 BottomSheet 用 `.bs-header-has-close` 修饰类，因 TabPanel 复用 `.bs-header` 却无关闭按钮）。**header 点击不再关闭**（避免误触），backdrop 点击与 Escape 保留。**ModalDialog 会注册返回处理器**（优先级 `PRIORITY_OVERLAY+1`，高于所有 BottomSheet 抽屉），因此 Android 返回键与左右边缘内划都能关闭弹窗——此前它没注册，弹窗对返回无响应。
 - **跨面板弹层不要用 `useTabDrawer` 的单 tab 绑定**（`effectiveOpen = currentTab===tabId && open`）——窄屏下会把可从多面板触发的弹层在其它 tab 静默吞掉。正解是直绑共享 `open` + 切 tab 时显式关闭。
 
 ### 图标
