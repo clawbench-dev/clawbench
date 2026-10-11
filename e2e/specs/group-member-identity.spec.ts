@@ -168,4 +168,42 @@ test.describe.serial('group member identity', () => {
       }, { timeout: 90000 })
       .toBe(false)
   })
+
+  test('the @ member list discloses the real agent name for an auto-named member', async ({ page }) => {
+    // Two instances of one agent → both draw pool names, so the @ list must show
+    // each nickname WITH the underlying real agent name.
+    const gid = await page.evaluate(async () => {
+      const r = await fetch('/api/group/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memberAgentIds: ['acp-mock', 'acp-mock'] }),
+      })
+      const j = await r.json()
+      return j.groupId as string
+    })
+    expect(gid).toBeTruthy()
+    await page.evaluate(async (gid) => {
+      await (window as unknown as { __clawbench: { switchSession: (id: string) => Promise<void> } })
+        .__clawbench.switchSession(gid)
+    }, gid)
+    await expect(page.locator('.group-avatar-stack')).toBeVisible({ timeout: 15000 })
+
+    // Type "@" to open the member completion menu.
+    const textarea = page.locator('.chat-textarea')
+    await expect(textarea).toBeVisible({ timeout: 15000 })
+    await textarea.fill('@')
+
+    const rows = page.locator('.completion-item--agent')
+    await expect(rows.first()).toBeVisible({ timeout: 5000 })
+    // Every member row carries the real-agent disclosure chip.
+    const chips = page.locator('.completion-item--agent .completion-real-name')
+    await expect(chips.first()).toBeVisible({ timeout: 5000 })
+    await expect(chips.first()).toHaveText('ACP Mock Agent')
+    // The nickname itself is a pool name, not the raw agent name.
+    const labels = page.locator('.completion-item--agent .completion-label')
+    await expect(labels.first()).not.toHaveText('ACP Mock Agent')
+
+    // Dismiss the menu so it does not linger into the next spec.
+    await textarea.fill('')
+  })
 })

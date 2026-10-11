@@ -2251,6 +2251,21 @@ describe('ChatInputBar', () => {
     expect(member.memberAvatar).toBe('')
   })
 
+  it('carries the real agent name into the @ menu item for an auto-named member', async () => {
+    const { store } = await import('@/stores/app.ts')
+    store.state.currentDir = ''
+    store.state.dirEntries = [] as any
+    const wrapper = mountBar({
+      isGroupSession: true,
+      groupMembers: [{ id: 'm-a', name: 'Alice', left: false, agentId: 'a-1', agentName: 'Claude', backend: 'claude' }],
+    })
+    wrapper.vm.inputText = '@'
+    await wrapper.vm.$nextTick()
+    const items = (wrapper.vm as any).fileMenuItems as any[]
+    const member = items.find(i => i.isMember)
+    expect(member.memberAgentName).toBe('Claude')
+  })
+
   it('prefers the member avatar over the agent avatar, so same-agent members stay distinct', async () => {
     const { store } = await import('@/stores/app.ts')
     store.state.currentDir = ''

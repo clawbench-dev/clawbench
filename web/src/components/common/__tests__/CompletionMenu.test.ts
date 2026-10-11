@@ -24,6 +24,7 @@ function makeI18n() {
             },
           },
         },
+        group: { realAgent: 'Agent' },
       },
     },
   })
@@ -196,6 +197,34 @@ describe('CompletionMenu', () => {
     const row = wrapper.findAll('.completion-item')[0]
     expect(row.find('.completion-member-avatar').exists()).toBe(false)
     expect(row.find('.completion-source-icon').exists()).toBe(true)
+  })
+
+  it('discloses the real agent name next to an auto-derived member nickname', () => {
+    const items: CompletionItem[] = [
+      { key: 'member:m-1', label: 'Alice', description: '', source: 'agent', isMember: true, memberAgentName: 'Claude' },
+    ]
+    const wrapper = mountMenu(items)
+    const chip = wrapper.find('.completion-item .completion-real-name')
+    expect(chip.exists()).toBe(true)
+    expect(chip.text()).toBe('Claude')
+  })
+
+  it('omits the real-name chip when the nickname IS the agent name', () => {
+    // Backend only sends agentName when it differs; when it equals the label
+    // there is nothing to disclose, so no chip renders.
+    const items: CompletionItem[] = [
+      { key: 'member:m-1', label: 'Claude', description: '', source: 'agent', isMember: true, memberAgentName: 'Claude' },
+    ]
+    const wrapper = mountMenu(items)
+    expect(wrapper.find('.completion-real-name').exists()).toBe(false)
+  })
+
+  it('omits the real-name chip for members with no agent name', () => {
+    const items: CompletionItem[] = [
+      { key: 'member:m-1', label: 'Alice', description: '', source: 'agent', isMember: true },
+    ]
+    const wrapper = mountMenu(items)
+    expect(wrapper.find('.completion-real-name').exists()).toBe(false)
   })
 })
 

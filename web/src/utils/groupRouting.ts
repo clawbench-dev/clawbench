@@ -409,6 +409,10 @@ export interface MentionableMember {
   /** The member's backend, used to render its built-in icon when no custom
    *  avatar is set. */
   backend?: string
+  /** The underlying REAL agent name. Set only when the member's display name
+   *  differs from the live agent name (an auto-derived pool name / "<base> <n>"),
+   *  so the @ list can disclose which agent a nickname belongs to. */
+  agentName?: string
 }
 
 /** A member candidate for the `@` completion menu. */
@@ -426,6 +430,10 @@ export interface MemberCandidate {
   avatar?: string
   /** Member backend (fallback icon when the agent has no custom avatar). */
   backend?: string
+  /** The underlying REAL agent name, when it differs from the display name.
+   *  The @ list renders it as a disclosure chip next to an auto-derived
+   *  nickname. */
+  agentName?: string
 }
 
 /**
@@ -442,7 +450,7 @@ export function buildMemberCandidates(members: MentionableMember[], query: strin
     if (m.left) continue
     if (!m.id || !m.name) continue
     if (q && !m.name.toLowerCase().includes(q)) continue
-    out.push({ key: `member:${m.id}`, label: m.name, description: '', mentionMemberId: m.id, agentId: m.agentId, avatar: m.avatar, backend: m.backend })
+    out.push({ key: `member:${m.id}`, label: m.name, description: '', mentionMemberId: m.id, agentId: m.agentId, avatar: m.avatar, backend: m.backend, agentName: m.agentName })
   }
   return out
 }

@@ -1159,6 +1159,9 @@ const fileMenuItems = computed(() => {
         memberAgentId: item.agentId || '',
         memberBackend: item.backend || '',
         memberAvatar: item.avatar || (item.agentId ? getAgentAvatar(item.agentId) : ''),
+        // The underlying real agent name (only set when the nickname was
+        // auto-derived), so the row can disclose which agent it names.
+        memberAgentName: item.agentName || '',
       }))
     : []
 

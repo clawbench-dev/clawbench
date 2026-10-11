@@ -292,6 +292,17 @@ describe('buildMemberCandidates', () => {
     expect(c.avatar).toBeUndefined()
   })
 
+  // The underlying real agent name rides through so the @ list can disclose it
+  // next to an auto-derived nickname (pool name / "<base> <n>").
+  it('carries the underlying agent name through', () => {
+    const withName = [{ id: 'm-a', name: 'Alice', agentId: 'a-1', agentName: 'Claude' }]
+    expect(buildMemberCandidates(withName, 'Alice')[0].agentName).toBe('Claude')
+  })
+
+  it('leaves agentName undefined when the member does not provide it', () => {
+    expect(buildMemberCandidates(members, 'Alice')[0].agentName).toBeUndefined()
+  })
+
   it('keeps two instances of the same agent distinguishable by their own avatar', () => {
     const two = [
       { id: 'm-a', name: 'Alice', agentId: 'a-1', avatar: '<svg>alice</svg>' },

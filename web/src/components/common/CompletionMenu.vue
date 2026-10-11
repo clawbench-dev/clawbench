@@ -30,7 +30,18 @@
       <component v-else :is="sourceMeta(item.source).icon" :size="14" class="completion-source-icon" :style="{ color: sourceMeta(item.source).color }" />
       <component v-if="item.icon" :is="item.icon" :path="item.key" :is-dir="item.isDir === true" :size="14" class="completion-item-icon" />
       <span class="completion-text">
-        <span class="completion-label" v-html="renderLabel(item)"></span>
+        <span class="completion-name-row">
+          <span class="completion-label" v-html="renderLabel(item)"></span>
+          <!-- Real-agent disclosure: a member whose nickname was auto-derived (a
+               pool name / "<base> <n>") shows the underlying agent's real name,
+               the same convention as the message speaker label and the settings
+               sheet. Hidden when the nickname IS the agent name. -->
+          <span
+            v-if="item.isMember && item.memberAgentName && item.memberAgentName !== item.label"
+            class="completion-real-name"
+            :title="t('group.realAgent')"
+          >{{ item.memberAgentName }}</span>
+        </span>
         <span v-if="item.description" class="completion-desc">{{ middleEllipsis(item.description, 34) }}</span>
       </span>
       <span class="completion-source" :class="'completion-source--' + item.source" :style="{ color: sourceMeta(item.source).color }">
@@ -128,13 +139,37 @@ function renderLabel(item: CompletionItem): string {
   flex: 1;
 }
 
+/* Nickname + optional real-agent chip on one line. The label takes the slack
+   and ellipsises; the chip stays intact at the trailing edge. */
+.completion-name-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
 .completion-label {
+  min-width: 0;
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Real-agent disclosure chip (nickname ≠ real agent name). Same treatment as
+   the message speaker label / settings sheet: muted, faint pill. */
+.completion-real-name {
+  flex-shrink: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-xs);
+  /* Mix --text-primary into --bg-secondary (design-guide redline 4): a fixed
+     step like --bg-tertiary is invisible on ~15 of 36 themes. */
+  background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
+  white-space: nowrap;
 }
 
 .completion-label mark {

@@ -131,6 +131,11 @@ export interface CompletionItem {
   isMember?: boolean
   memberBackend?: string
   memberAvatar?: string
+  /** Group member candidate: the underlying REAL agent name, set only when it
+   *  differs from the display name (an auto-derived pool name / "<base> <n>").
+   *  Rendered as a disclosure chip so the @ list shows which agent a nickname
+   *  belongs to. */
+  memberAgentName?: string
   /** Matched basename indices for per-character highlighting. */
   positions?: number[]
   score?: number
