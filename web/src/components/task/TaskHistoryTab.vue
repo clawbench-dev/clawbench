@@ -330,6 +330,15 @@ onUnmounted(() => {
 // hasExecutions is a computed ref so the parent's v-if stays reactive.
 const hasExecutions = computed(() => allExecutions.value.length > 0)
 
+// Whether ANY execution is running — AI phase OR the pre-AI gating script.
+// The parent's action bar keys its Terminate button on this rather than the
+// task list's `runningCount`, which counts only the AI phase (deliberately, so
+// a script's start/stop cannot fire a false "completed" toast). This component
+// already fetches the authoritative running list via GET /api/tasks/{id}, so
+// exposing it avoids a second request and covers the script-phase window that
+// `runningCount` misses.
+const hasAnyRunning = computed(() => allExecutions.value.some(isRunning))
+
 /** Reload execution history + running status (used by the page refresh button) */
 async function reload() {
   await loadExecutions()
@@ -339,6 +348,7 @@ async function reload() {
 defineExpose({
   deleteAllExecutions,
   hasExecutions,
+  hasAnyRunning,
   reload,
 })
 </script>

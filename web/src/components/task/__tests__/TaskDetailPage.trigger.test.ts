@@ -1,7 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { ref } from 'vue'
+import { nextTick, ref } from 'vue'
 import { mount } from '@vue/test-utils'
 import TaskDetailPage from '../TaskDetailPage.vue'
+
+// Controllable stub state, hoisted so the vi.mock factory below can close over
+// it (vi.mock calls are hoisted above these imports). The page ORs the history
+// tab's exposed hasAnyRunning into its Terminate condition, to cover the
+// script phase which runningCount excludes.
+const historyRunning = vi.hoisted(() => ({ value: false }))
 
 // ── Mocks ──
 vi.mock('vue-i18n', () => ({
@@ -51,9 +57,21 @@ vi.mock('@/components/common/RefreshButton.vue', () => ({
 vi.mock('@/components/task/TaskOverviewTab.vue', () => ({
   default: { name: 'TaskOverviewTab', template: '<div class="overview-stub" />' },
 }))
-vi.mock('@/components/task/TaskHistoryTab.vue', () => ({
-  default: { name: 'TaskHistoryTab', template: '<div class="history-stub" />' },
-}))
+// Controllable stub: the page ORs this component's exposed hasAnyRunning into
+// its Terminate condition (to cover the script phase, which runningCount
+// excludes). Tests set the value via historyRunning.value before mounting.
+vi.mock('@/components/task/TaskHistoryTab.vue', async () => {
+  const { computed } = await import('vue')
+  return {
+    default: {
+      name: 'TaskHistoryTab',
+      setup(_props: unknown, { expose }: { expose: (v: unknown) => void }) {
+        expose({ hasAnyRunning: computed(() => historyRunning.value) })
+        return () => null
+      },
+    },
+  }
+})
 
 const baseTask = {
   id: 1,
@@ -82,6 +100,7 @@ function actionLabels(wrapper: ReturnType<typeof mount>): string[] {
 describe('TaskDetailPage manual-run button', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    historyRunning.value = false
   })
 
   it('offers the run button on an active cron task', () => {
@@ -125,6 +144,7 @@ describe('TaskDetailPage manual-run button', () => {
 describe('TaskDetailPage terminate button', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    historyRunning.value = false
   })
 
   // While a run is in flight, the run button is replaced by a terminate button
@@ -166,6 +186,30 @@ describe('TaskDetailPage terminate button', () => {
   // yet show terminate on every idle task in production.
   it('shows the run button when runningCount is absent (omitempty)', () => {
     const labels = actionLabels(mountWith({ runningCount: undefined }))
+    expect(labels).toContain('task.run')
+    expect(labels).not.toContain('task.stop')
+  })
+
+  // The pre-AI gating script runs before any session exists, so runningCount
+  // (AI-phase-only) is 0 while it executes. The history tab's authoritative
+  // running list DOES include it, so the bar must still offer terminate —
+  // otherwise the user sees a Run button that only 409s (task already running).
+  it('offers terminate during the script phase even though runningCount is 0', async () => {
+    historyRunning.value = true
+    const wrapper = mountWith({ runningCount: 0 })
+    // The child ref binds during mount; the parent's computed re-evaluates a
+    // tick later (first paint happens before the ref exists).
+    await nextTick()
+    const labels = actionLabels(wrapper)
+    expect(labels).toContain('task.stop')
+    expect(labels).not.toContain('task.run')
+  })
+
+  // Conversely, an idle task must not show terminate just because the history
+  // tab is mounted (hasAnyRunning false).
+  it('shows the run button when the history tab reports nothing running', () => {
+    historyRunning.value = false
+    const labels = actionLabels(mountWith({ runningCount: 0 }))
     expect(labels).toContain('task.run')
     expect(labels).not.toContain('task.stop')
   })

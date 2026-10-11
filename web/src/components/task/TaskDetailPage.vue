@@ -34,8 +34,10 @@
              a task is running is to stop it — offering that directly is the
              conventional affordance. An event task has no manual run to offer,
              but it can still be running (an event fired), so it gets the
-             terminate button too. -->
-        <button v-if="taskRunningCount > 0" class="fbtn fbtn-danger" :disabled="actionLoading" @click="stopTask" :title="t('task.stop')">
+             terminate button too. Gated on isTaskRunning (not runningCount) so
+             the pre-AI script phase — which runningCount excludes — also gets a
+             terminate button instead of a Run button that only 409s. -->
+        <button v-if="isTaskRunning" class="fbtn fbtn-danger" :disabled="actionLoading" @click="stopTask" :title="t('task.stop')">
           <Square :size="14" />
           <span class="action-text">{{ t('task.stop') }}</span>
         </button>
@@ -59,7 +61,7 @@
       <template v-else-if="taskStatus === 'paused'">
         <!-- A task can be paused while a run is still in flight, so the
              terminate button applies here too. -->
-        <button v-if="taskRunningCount > 0" class="fbtn fbtn-danger" :disabled="actionLoading" @click="stopTask" :title="t('task.stop')">
+        <button v-if="isTaskRunning" class="fbtn fbtn-danger" :disabled="actionLoading" @click="stopTask" :title="t('task.stop')">
           <Square :size="14" />
           <span class="action-text">{{ t('task.stop') }}</span>
         </button>
@@ -130,6 +132,17 @@ const isEventTriggered = computed(() => (props.task.triggerMode as string) === '
 const refreshing = ref(false)
 const scrollRef = ref<HTMLElement | null>(null)
 const historyTabRef = ref<InstanceType<typeof TaskHistoryTab> | null>(null)
+
+// Whether a run is currently in flight, driving the Terminate button.
+//
+// Two sources, OR'd: the task list's runningCount is available immediately and
+// covers the AI phase; the history tab's hasAnyRunning additionally covers the
+// pre-AI gating-script phase, which runningCount deliberately excludes (so a
+// script's start/stop cannot fire a false "completed" toast). Without the
+// second source a script-phase task showed a Run button that only 409'd.
+const isTaskRunning = computed(() =>
+  taskRunningCount.value > 0 || (historyTabRef.value?.hasAnyRunning ?? false),
+)
 
 function onClearAll() {
   historyTabRef.value?.deleteAllExecutions()
