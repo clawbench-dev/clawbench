@@ -446,9 +446,15 @@ function handleExitEditRequest() {
 
 let unregisterExitEdit = null
 let unregisterDirtyGetter = null
+let unregisterLeaveGuard = null
 onMounted(() => {
     unregisterExitEdit = fileEditor.registerExitEditHandler(handleExitEditRequest)
     unregisterDirtyGetter = fileEditor.registerDirtyGetter(() => cmEditorRef.value?.isDirty?.() ?? false)
+    // A project switch unmounts this viewer and would silently drop unsaved
+    // edits. Reuse the canonical guard (save/discard/cancel) without the back
+    // gesture's untitled close side effect, so the switch aborts only when the
+    // user cancels or a save fails.
+    unregisterLeaveGuard = fileEditor.registerLeaveGuard(() => guardExitEdit(() => {}))
 })
 onBeforeUnmount(() => {
     if (unregisterExitEdit) {
@@ -458,6 +464,10 @@ onBeforeUnmount(() => {
     if (unregisterDirtyGetter) {
         unregisterDirtyGetter()
         unregisterDirtyGetter = null
+    }
+    if (unregisterLeaveGuard) {
+        unregisterLeaveGuard()
+        unregisterLeaveGuard = null
     }
 })
 

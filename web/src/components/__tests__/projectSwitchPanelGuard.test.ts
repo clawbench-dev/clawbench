@@ -150,6 +150,34 @@ describe('project switch suppresses panel writes', () => {
   })
 })
 
+describe('project switch guards unsaved file edits', () => {
+  const body = functionBody(code, 'hotSwitchProject')
+
+  it('consults the file-editor leave guard before touching any switch state', () => {
+    // The switch destroys the editor subtree (Phase 4), so the save/discard
+    // confirmation has to run first — otherwise unsaved edits vanish silently.
+    const guardAt = body.indexOf('fileEditor.confirmLeave()')
+    expect(guardAt, 'confirmLeave() missing from hotSwitchProject').toBeGreaterThan(-1)
+    // Awaited: the confirm dialog is async, and the switch must not proceed
+    // until the user has answered.
+    expect(body.slice(guardAt - 6, guardAt)).toContain('await ')
+    const beginAt = body.indexOf('beginPanelSwitch()')
+    const setProjectAt = body.indexOf('store.setProject(')
+    expect(beginAt).toBeGreaterThan(-1)
+    expect(setProjectAt).toBeGreaterThan(-1)
+    expect(guardAt).toBeLessThan(beginAt)
+    expect(guardAt).toBeLessThan(setProjectAt)
+  })
+
+  it('aborts the switch when the guard refuses to leave', () => {
+    // Cancelling the save prompt (or a failed save) must return early — an
+    // unguarded fall-through would switch projects and drop the edits anyway.
+    const guardAt = body.indexOf('fileEditor.confirmLeave()')
+    const lineEnd = body.indexOf('\n', guardAt)
+    expect(body.slice(guardAt, lineEnd)).toContain('return')
+  })
+})
+
 describe('the file-closed fallback watcher respects the switch guard', () => {
   it('is guarded by isPanelSwitchInFlight()', () => {
     const src = code

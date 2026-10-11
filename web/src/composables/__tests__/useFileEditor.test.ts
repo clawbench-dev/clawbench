@@ -66,4 +66,61 @@ describe('useFileEditor', () => {
     expect(first).not.toHaveBeenCalled()
     expect(second).toHaveBeenCalledTimes(1)
   })
+
+  describe('confirmLeave', () => {
+    it('returns true when no guard is registered', async () => {
+      const { confirmLeave } = useFileEditor()
+      await expect(confirmLeave()).resolves.toBe(true)
+    })
+
+    it('passes through a guard that allows leaving', async () => {
+      const { registerLeaveGuard, confirmLeave } = useFileEditor()
+      registerLeaveGuard(() => true)
+      await expect(confirmLeave()).resolves.toBe(true)
+    })
+
+    it('returns false when the guard blocks leaving (user cancelled)', async () => {
+      const { registerLeaveGuard, confirmLeave } = useFileEditor()
+      registerLeaveGuard(() => false)
+      await expect(confirmLeave()).resolves.toBe(false)
+    })
+
+    it('normalizes a non-boolean guard result to false (fail closed)', async () => {
+      const { registerLeaveGuard, confirmLeave } = useFileEditor()
+      // A malformed guard must never be read as "safe to leave".
+      registerLeaveGuard((() => undefined) as () => boolean)
+      await expect(confirmLeave()).resolves.toBe(false)
+    })
+
+    it('awaits an async guard', async () => {
+      const { registerLeaveGuard, confirmLeave } = useFileEditor()
+      const order: string[] = []
+      registerLeaveGuard(async () => {
+        await Promise.resolve()
+        order.push('guard')
+        return true
+      })
+      const result = confirmLeave()
+      order.push('after-call')
+      await expect(result).resolves.toBe(true)
+      expect(order).toEqual(['after-call', 'guard'])
+    })
+
+    it('unregister restores the no-guard default', async () => {
+      const { registerLeaveGuard, confirmLeave } = useFileEditor()
+      const unregister = registerLeaveGuard(() => false)
+      await expect(confirmLeave()).resolves.toBe(false)
+      unregister()
+      await expect(confirmLeave()).resolves.toBe(true)
+    })
+
+    it('latest registered guard replaces the previous one', async () => {
+      const { registerLeaveGuard, confirmLeave } = useFileEditor()
+      const first = vi.fn(() => false)
+      registerLeaveGuard(first)
+      registerLeaveGuard(() => true)
+      await expect(confirmLeave()).resolves.toBe(true)
+      expect(first).not.toHaveBeenCalled()
+    })
+  })
 })

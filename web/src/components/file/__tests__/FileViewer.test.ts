@@ -842,6 +842,98 @@ describe('FileViewer', () => {
     })
   })
 
+  describe('leave guard (project switch protection)', () => {
+    const editableFile = {
+      name: 'main.ts',
+      path: '/tmp/main.ts',
+      content: 'const x = 1',
+      isMarkdown: false,
+      isHtml: false,
+      isImage: false,
+      isAudio: false,
+      isVideo: false,
+      isPdf: false,
+      isOffice: false,
+      isBinary: false,
+      tooLarge: false,
+    }
+
+    beforeEach(async () => {
+      ;(await import('@/composables/useFileEditor'))._resetForTesting()
+      mockHandleExit.mockReset()
+    })
+
+    function setupState(wrapper: ReturnType<typeof mount>) {
+      return (wrapper.vm as any).$.setupState
+    }
+
+    it('registers a leave guard that runs the canonical exit confirmation', async () => {
+      const editor = (await import('@/composables/useFileEditor')).useFileEditor()
+      mockHandleExit.mockResolvedValue(true)
+      const wrapper = mountViewer({ file: editableFile })
+      const ss = setupState(wrapper)
+      ss.handleToggleEdit()
+      await nextTick()
+      expect(ss.editing).toBe(true)
+      mockHandleExit.mockImplementation(() => {
+        editor.editing.value = false
+        return true
+      })
+      await expect(editor.confirmLeave()).resolves.toBe(true)
+      expect(mockHandleExit).toHaveBeenCalled()
+    })
+
+    it('returns false when the user cancels the save prompt', async () => {
+      const editor = (await import('@/composables/useFileEditor')).useFileEditor()
+      mockHandleExit.mockResolvedValue(false)
+      const wrapper = mountViewer({ file: editableFile })
+      const ss = setupState(wrapper)
+      ss.handleToggleEdit()
+      await nextTick()
+      await expect(editor.confirmLeave()).resolves.toBe(false)
+      expect(ss.editing).toBe(true)
+    })
+
+    it('allows leaving with no prompt when not editing', async () => {
+      const editor = (await import('@/composables/useFileEditor')).useFileEditor()
+      mockHandleExit.mockResolvedValue(true)
+      const wrapper = mountViewer({ file: editableFile })
+      await nextTick()
+      await expect(editor.confirmLeave()).resolves.toBe(true)
+      expect(mockHandleExit).not.toHaveBeenCalled()
+    })
+
+    it('does not close an untitled buffer (the switch owns the navigation)', async () => {
+      const editor = (await import('@/composables/useFileEditor')).useFileEditor()
+      mockHandleExit.mockImplementation(() => {
+        editor.editing.value = false
+        return true
+      })
+      const wrapper = mountViewer({ file: { name: '', path: '', content: '', untitled: true, targetDir: 'docs' } })
+      await nextTick()
+      await expect(editor.confirmLeave()).resolves.toBe(true)
+      // handleExitEditRequest would emit this; the leave guard must not, or the
+      // overlay would close / the tab jump to browse mid-switch.
+      expect(wrapper.emitted('closeUntitled')).toBeFalsy()
+    })
+
+    it('unregisters the guard on unmount so a stale editor cannot block later switches', async () => {
+      const editor = (await import('@/composables/useFileEditor')).useFileEditor()
+      mockHandleExit.mockResolvedValue(false)
+      const wrapper = mountViewer({ file: editableFile })
+      const ss = setupState(wrapper)
+      ss.handleToggleEdit()
+      await nextTick()
+      expect(ss.editing).toBe(true)
+      // While mounted, the guard would refuse (handleExit → false).
+      await expect(editor.confirmLeave()).resolves.toBe(false)
+      wrapper.unmount()
+      // `editing` is module-level and survives unmount, so a leaked guard would
+      // still consult the dead editor. Unregistered → nothing to protect.
+      await expect(editor.confirmLeave()).resolves.toBe(true)
+    })
+  })
+
   describe('search routing', () => {
     const mdFile = {
       name: 'readme.md',
