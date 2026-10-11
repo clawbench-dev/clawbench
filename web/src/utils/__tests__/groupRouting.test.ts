@@ -269,6 +269,26 @@ describe('buildMemberCandidates', () => {
     expect(buildMemberCandidates(members, 'bo').map((c) => c.label)).toEqual(['Bob'])
   })
 
+  // The @ menu highlights member names with the same per-character contract as
+  // the @-file menu (fuzzyMatch positions), so a matched name must carry them.
+  it('returns the matched character positions for highlighting', () => {
+    const c = buildMemberCandidates(members, 'bo')[0]
+    expect(c.positions).toEqual([0, 1])
+    expect(c.score).toBeGreaterThan(0)
+  })
+
+  it('matches as a fuzzy subsequence, like the @-file menu', () => {
+    // 'ac' is not a substring of 'Alice' but is a subsequence, so the two
+    // menus agree on what matches.
+    expect(buildMemberCandidates([{ id: 'm-a', name: 'Alice' }], 'ac').map((c) => c.label)).toEqual(['Alice'])
+  })
+
+  it('leaves positions undefined for an empty query (nothing to highlight)', () => {
+    const c = buildMemberCandidates(members, '')[0]
+    expect(c.positions).toBeUndefined()
+    expect(c.score).toBeUndefined()
+  })
+
   it('excludes left members', () => {
     expect(buildMemberCandidates(members, 'gone')).toEqual([])
   })

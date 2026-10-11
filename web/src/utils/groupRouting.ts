@@ -19,6 +19,8 @@
  * NEVER stripped — the caller keeps the original text visible.
  */
 
+import { fuzzyMatch } from '@/utils/completionMatch.ts'
+
 export interface MentionEntry {
   /** Named members the tag addresses, in order, trimmed, empties dropped. */
   targets: string[]
@@ -434,23 +436,44 @@ export interface MemberCandidate {
    *  The @ list renders it as a disclosure chip next to an auto-derived
    *  nickname. */
   agentName?: string
+  /** Matched character indices in the display name, for per-character
+   *  highlighting in the @ menu (same contract as the file candidates). */
+  positions?: number[]
+  /** Fuzzy-match score (higher = better); used for ranking. */
+  score?: number
 }
 
 /**
  * buildMemberCandidates returns the group members matching `query`, for the `@`
- * completion menu. The query matches the display name (case-insensitive
- * substring). Left members are excluded (they cannot speak). Order follows the
- * roster. An empty query returns every active member, so typing a bare "@"
- * lists the whole roster.
+ * completion menu. The query is matched with the same fuzzy subsequence matcher
+ * as the @-file menu (case-insensitive), and the matched indices are returned
+ * as `positions` so the shared menu can highlight them. Left members are
+ * excluded (they cannot speak). Order follows the roster. An empty query
+ * returns every active member, so typing a bare "@" lists the whole roster.
  */
 export function buildMemberCandidates(members: MentionableMember[], query: string): MemberCandidate[] {
-  const q = query.trim().toLowerCase()
+  const q = query.trim()
   const out: MemberCandidate[] = []
   for (const m of members) {
     if (m.left) continue
     if (!m.id || !m.name) continue
-    if (q && !m.name.toLowerCase().includes(q)) continue
-    out.push({ key: `member:${m.id}`, label: m.name, description: '', mentionMemberId: m.id, agentId: m.agentId, avatar: m.avatar, backend: m.backend, agentName: m.agentName })
+    // Match through the SAME fuzzy matcher the @-file menu uses, so a member
+    // name highlights the matched characters exactly like a filename does.
+    // An empty query matches everything with no positions.
+    const match = q ? fuzzyMatch(q, m.name) : null
+    if (q && !match) continue
+    out.push({
+      key: `member:${m.id}`,
+      label: m.name,
+      description: '',
+      mentionMemberId: m.id,
+      agentId: m.agentId,
+      avatar: m.avatar,
+      backend: m.backend,
+      agentName: m.agentName,
+      positions: match?.positions,
+      score: match?.score,
+    })
   }
   return out
 }

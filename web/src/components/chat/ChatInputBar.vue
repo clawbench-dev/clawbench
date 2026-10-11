@@ -1163,6 +1163,11 @@ const fileMenuItems = computed(() => {
         // The underlying real agent name (only set when the nickname was
         // auto-derived), so the row can disclose which agent it names.
         memberAgentName: item.agentName || '',
+        // Same per-character highlight contract as file rows: the shared menu
+        // marks `positions` inside the label. Without these a member name would
+        // render unhighlighted while filenames highlight.
+        positions: item.positions,
+        score: item.score,
       }))
     : []
 
