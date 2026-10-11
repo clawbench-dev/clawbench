@@ -125,11 +125,17 @@ export interface CompletionItem {
   /** Optional row icon component (files pass FileIcon; commands omit it). */
   icon?: unknown
   /** Group member candidate: render the member's real avatar instead of the
-   *  generic source icon. `memberAvatar` is the agent's custom-avatar SVG ("" =
-   *  fall back to `memberBackend`'s built-in icon). */
+   *  generic source icon. `memberAvatar` is the member's own avatar snapshot
+   *  (the underlying agent's avatar is only a pick-time fallback; "" = fall back
+   *  to `memberBackend`'s built-in icon). */
   isMember?: boolean
   memberBackend?: string
   memberAvatar?: string
+  /** Group member candidate: the underlying REAL agent name, set only when it
+   *  differs from the display name (an auto-derived pool name / "<base> <n>").
+   *  Rendered as a disclosure chip so the @ list shows which agent a nickname
+   *  belongs to. */
+  memberAgentName?: string
   /** Matched basename indices for per-character highlighting. */
   positions?: number[]
   score?: number

@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 	project_id INTEGER NOT NULL,
 	backend TEXT NOT NULL,
 	title TEXT NOT NULL,
+	agent_name TEXT NOT NULL DEFAULT '',
 	agent_id TEXT DEFAULT '',
 	session_type TEXT NOT NULL DEFAULT 'chat',
 	group_id TEXT DEFAULT '',
@@ -150,6 +151,13 @@ CREATE TABLE IF NOT EXISTS btw_questions (
 	answer TEXT NOT NULL DEFAULT '',
 	model TEXT NOT NULL DEFAULT '',
 	error TEXT NOT NULL DEFAULT '',
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS group_pending_bcc (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	group_id TEXT NOT NULL,
+	target_name TEXT NOT NULL,
+	content TEXT NOT NULL,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 `

@@ -346,6 +346,7 @@ func LaunchSessionExecution(cfg LaunchConfig) {
 					Err:            nextResult.err,
 					Empty:          nextResult.empty,
 					AbnormalReason: nextResult.abnormalReason,
+					MsgID:          nextResult.msgID,
 				}
 			},
 			// Resume an abnormally terminated turn by sending a localized
@@ -368,6 +369,7 @@ func LaunchSessionExecution(cfg LaunchConfig) {
 						Err:            res.err,
 						Empty:          res.empty,
 						AbnormalReason: res.abnormalReason,
+						MsgID:          res.msgID,
 					}
 				},
 			}),
@@ -383,6 +385,7 @@ func LaunchSessionExecution(cfg LaunchConfig) {
 			Err:            result.err,
 			Empty:          result.empty,
 			AbnormalReason: result.abnormalReason,
+			MsgID:          result.msgID,
 		})
 	}()
 }
@@ -708,6 +711,7 @@ type streamRunResultShared struct {
 	err            string
 	empty          bool
 	abnormalReason string
+	msgID          int64
 }
 
 // executeStreamRunShared runs one AI backend execution.
@@ -749,5 +753,6 @@ func executeStreamRunShared(ctx context.Context, cfg LaunchConfig) streamRunResu
 		err:            res.Err,
 		empty:          res.Empty,
 		abnormalReason: res.AbnormalReason,
+		msgID:          res.MsgID,
 	}
 }

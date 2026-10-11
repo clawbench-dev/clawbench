@@ -16,8 +16,13 @@ const { mockGetAgent, mockLoadAgents, mockPatchAgentField, mockToastShow, mockDe
   mockAgentsLoaded: { value: true },
 }))
 
-vi.mock('vue-i18n', () => ({
-  useI18n: () => ({
+vi.mock('vue-i18n', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('vue-i18n')>()
+  // Keep the real module (createI18n etc.) so shared shells that import the
+  // i18n singleton still load; only the component's t() is stubbed.
+  return {
+    ...actual,
+    useI18n: () => ({
     t: (key: string, params?: any) => {
       const map: Record<string, string> = {
         'settings.items.agentPreferredModel': 'Preferred Model',
@@ -69,7 +74,8 @@ vi.mock('vue-i18n', () => ({
       return map[key] ?? key
     },
   }),
-}))
+  }
+})
 
 vi.mock('@/composables/useAgents', async () => {
   // Dynamic import: the factory is hoisted above the top-level `import { ref }`,
@@ -547,9 +553,10 @@ describe('SettingsAgentDetail', () => {
 
   // ─── Preferred model select ──────────────────────────────
   describe('preferred model select', () => {
-    it('adds the raw id as a sublabel when two models share a display name', () => {
+    it('carries the raw id so two models sharing a display name stay distinguishable', () => {
       // CodeBuddy ships deepseek-v4-pro and deepseek-v4-pro-exclusive, both
-      // named "Deepseek-V4-Pro"; the id is the only distinguishing label.
+      // named "Deepseek-V4-Pro"; the id (rendered by the shared ModelRow) is the
+      // only distinguishing label.
       const wrapper = mountDetail({
         models: [
           { id: 'deepseek-v4-pro', name: 'Deepseek-V4-Pro', default: true },
@@ -560,15 +567,15 @@ describe('SettingsAgentDetail', () => {
       const item = items.find((it: any) => it.props('label') === 'Preferred Model')
       expect(item).toBeTruthy()
 
-      const options = item!.props('options') as Array<{ label: string; value: string; sublabel?: string }>
+      const options = item!.props('options') as Array<{ label: string; value: string; modelId?: string }>
       expect(options.map(o => o.value)).toEqual(['deepseek-v4-pro', 'deepseek-v4-pro-exclusive'])
-      expect(options.map(o => o.sublabel)).toEqual(['deepseek-v4-pro', 'deepseek-v4-pro-exclusive'])
+      expect(options.map(o => o.modelId)).toEqual(['deepseek-v4-pro', 'deepseek-v4-pro-exclusive'])
     })
 
-    it('renders a JSON-shaped wire id as provider/model, not raw JSON', () => {
+    it('keeps a JSON-shaped wire id untouched (the shared row formats it for display)', () => {
       // DeepSeek Harness identifies a model by a JSON-stringified pair; the id
-      // must stay untouched (it is the wire value) but the sublabel must be
-      // readable rather than a JSON blob.
+      // must stay untouched (it is the wire value). Formatting happens in the
+      // shared ModelRow via formatModelIdForDisplay.
       const wrapper = mountDetail({
         models: [
           { id: '["deepseek-official","deepseek-v4-pro"]', name: 'DeepSeek-V4-Pro', default: true },
@@ -577,22 +584,11 @@ describe('SettingsAgentDetail', () => {
       const items = wrapper.findAllComponents({ name: 'SettingsItem' })
       const item = items.find((it: any) => it.props('label') === 'Preferred Model')
 
-      const options = item!.props('options') as Array<{ label: string; value: string; sublabel?: string }>
-      // The value (what gets sent to the agent) is unchanged...
+      const options = item!.props('options') as Array<{ label: string; value: string; modelId?: string }>
+      // The value (what gets sent to the agent) is unchanged, and the model id
+      // is passed through verbatim — ModelRow does the display formatting.
       expect(options[0].value).toBe('["deepseek-official","deepseek-v4-pro"]')
-      // ...while the sublabel is the readable form.
-      expect(options[0].sublabel).toBe('deepseek-official/deepseek-v4-pro')
-    })
-
-    it('omits the sublabel when the display name already is the id', () => {
-      const wrapper = mountDetail({
-        models: [{ id: 'gpt-5.1-codex', name: 'gpt-5.1-codex', default: true }],
-      })
-      const items = wrapper.findAllComponents({ name: 'SettingsItem' })
-      const item = items.find((it: any) => it.props('label') === 'Preferred Model')
-
-      const options = item!.props('options') as Array<{ sublabel?: string }>
-      expect(options[0].sublabel).toBeUndefined()
+      expect(options[0].modelId).toBe('["deepseek-official","deepseek-v4-pro"]')
     })
   })
 

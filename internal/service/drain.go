@@ -22,6 +22,13 @@ type DrainResult struct {
 	// auto-continue" — which covers both a clean finish and a non-retryable
 	// failure such as a user cancel.
 	AbnormalReason string
+	// MsgID is the finalized assistant row id this turn produced (0 when the
+	// turn never opened one). Auto-continue needs it to emit a stream_finalize
+	// for the failed turn before resuming: without that per-turn boundary the
+	// frontend's still-streaming bubble keeps its spinner until the whole run's
+	// terminal `done` sweeps every streaming bubble (or a session switch rebuilds
+	// from the DB).
+	MsgID int64
 }
 
 // DrainConfig holds the parameters for the drain loop.

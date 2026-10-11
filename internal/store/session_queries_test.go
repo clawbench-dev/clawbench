@@ -726,6 +726,31 @@ func TestPurgeArchivedData_CascadesGroupMemberRows(t *testing.T) {
 	assert.Equal(t, 0, count, "purging a group must cascade its member rows (no orphans)")
 }
 
+// group_pending_bcc has no FK to chat_sessions; the cascade above does not catch
+// it. Without this DELETE the bcc rows survive forever after the group is purged.
+func TestPurgeArchivedData_CleansGroupPendingBcc(t *testing.T) {
+	setupStoreTestDB(t)
+
+	insertSession(t, "/project", "grp", "Group", "group", "2024-01-01 10:00:00", true)
+
+	// Insert two bcc notes for the group.
+	_, err := UnsafeDBForTest().Exec(
+		"INSERT INTO group_pending_bcc (group_id, target_name, content) VALUES ('grp', 'Alice', 'private note')",
+	)
+	require.NoError(t, err)
+	_, err = UnsafeDBForTest().Exec(
+		"INSERT INTO group_pending_bcc (group_id, target_name, content) VALUES ('grp', 'Bob', 'another note')",
+	)
+	require.NoError(t, err)
+
+	_, _, err = PurgeArchivedData([]string{"grp"})
+	require.NoError(t, err)
+
+	var bccCount int
+	require.NoError(t, UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM group_pending_bcc WHERE group_id = 'grp'").Scan(&bccCount))
+	assert.Equal(t, 0, bccCount, "purging a group must also delete its pending bcc rows (no orphans)")
+}
+
 // --- session-type predicate ---
 
 // TestVisibleSessionTypes_MatchClause guards the representations of the

@@ -65,12 +65,76 @@
   align-items: center;
   gap: 7px;
   padding: 5px 9px;
+  /* Reserve room for the absolutely-positioned .modal-close-btn so right-aligned
+     header content (e.g. .bs-header-actions) never slides under it. */
+  padding-right: 38px;
   height: auto;
   border-bottom: 1px solid color-mix(in srgb, var(--accent-color, #0066cc) 15%, var(--border-color, #e5e5e5));
   background: color-mix(in srgb, var(--accent-color, #0066cc) 6%, transparent);
   flex-shrink: 0;
-  cursor: pointer;
+  position: relative;
   box-shadow: none;
+}
+
+/* Narrow-mode BottomSheet header: same right padding, keyed on a modifier so
+   TabPanel (which reuses .bs-header and has no close button) is unaffected. */
+.bs-header.bs-header-has-close {
+  padding-right: 38px;
+}
+
+/* ── Close button ──
+   Shared by ModalDialog and BottomSheet headers. Absolute so it always sits at
+   the header's right edge regardless of how much (or how wide) the header slot
+   content is — a flex child would be pushed around by the slot's own
+   `margin-left:auto` action clusters. The header reserves matching right
+   padding.
+
+   The resting fill is derived by mixing `--text-primary` into `--bg-secondary`
+   (NOT a fixed step like `--bg-tertiary`): that recipe is what makes the
+   direction correct in every theme — the same reason `.window-controls` uses it
+   (see AppHeader.vue). Measured across all 36 themes, 16% keeps the button
+   distinct from the header's own tinted band (min contrast 1.110) while the
+   deeper hover/active steps stay strictly monotonic (24% → min 1.218,
+   32% → min 1.340). A transparent fill — the obvious first choice — sits at
+   exactly 1.000, i.e. invisible against the header. */
+.modal-close-btn {
+  position: absolute;
+  right: var(--space-2, 4px);
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* 28px matches the drill-down back button (.fd-back-btn) and sits just under
+     the 24px header icon buttons — 30px filled the ~33px header edge to edge. */
+  width: 28px;
+  height: 28px;
+  /* Explicit border: this is a <button> and the shared icon-button language
+     elsewhere is defined on <a>; without it the UA button border shows. */
+  border: none;
+  border-radius: var(--radius-full, 999px);
+  background: color-mix(in srgb, var(--text-primary, #1a1a1a) 16%, var(--bg-secondary, #fff));
+  color: var(--text-secondary, #555);
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  transition: background var(--duration-base), color var(--duration-base);
+}
+
+/* Hover deepens the SAME recipe rather than switching tokens, so the direction
+   stays correct in every theme. Gated on a real pointer: on touch devices
+   `:hover` sticks after a tap, which would leave the button looking pressed.
+   Same guard used across the app (see web/css/*). */
+@media (hover: hover) {
+  .modal-close-btn:hover {
+    background: color-mix(in srgb, var(--text-primary, #1a1a1a) 24%, var(--bg-secondary, #fff));
+    color: var(--text-primary, #1a1a1a);
+  }
+}
+
+.modal-close-btn:active {
+  background: color-mix(in srgb, var(--text-primary, #1a1a1a) 32%, var(--bg-secondary, #fff));
+  color: var(--text-primary, #1a1a1a);
 }
 
 .modal-header-icon {
@@ -118,6 +182,20 @@
 }
 
 .modal-footer-default {
+  min-height: 8px;
+  padding: var(--space-4) var(--space-5);
+  justify-content: center;
+}
+
+/* BottomSheet shown as a centered card (wide mode) always renders a footer so
+   it matches the native modal chrome. When the footer has no ELEMENT content it
+   collapses to the same slim bar as `.modal-footer-default`. `:not(:has(> *))`
+   covers both cases a class binding cannot: no footer slot at all, and a slot
+   whose own `v-if` is false (the session list's tab bar hides when there are no
+   cross-project sessions). Comments are not element nodes, so a Vue `v-if=false`
+   placeholder still counts as empty. Scoped to the wide overlay so the narrow
+   bottom drawer keeps its slot-only footer. */
+.bs-overlay.bs-overlay-wide-auto .bs-footer:not(:has(> *)) {
   min-height: 8px;
   padding: var(--space-4) var(--space-5);
   justify-content: center;

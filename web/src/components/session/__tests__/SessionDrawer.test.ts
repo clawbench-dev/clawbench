@@ -50,8 +50,9 @@ const {
   },
   AgentSelectorDrawerStub: {
     name: 'AgentSelectorDrawer',
-    props: ['title', 'multiple', 'groupMode', 'hostId', 'confirmLabel'],
-    template: '<div class="agent-selector-drawer-stub" :data-title="title" :data-multiple="String(multiple)" :data-group-mode="String(groupMode)" :data-host-id="hostId" />',
+    props: ['title', 'multiple', 'groupMode', 'hostId', 'confirmLabel', 'showModeSwitch'],
+    emits: ['switch-mode', 'select', 'update:hostId', 'update:open'],
+    template: '<div class="agent-selector-drawer-stub" :data-title="title" :data-multiple="String(multiple)" :data-group-mode="String(groupMode)" :data-host-id="hostId" :data-show-mode-switch="String(showModeSwitch)" />',
     methods: { preload: vi.fn(), open: vi.fn(), close: vi.fn() },
   },
   SessionListStub: {
@@ -249,28 +250,47 @@ describe('SessionDrawer', () => {
       expect(wrapper.vm.agentSelectorDrawer.isOpen.value).toBe(true)
     })
 
-    it('opens the selector in multi-select group mode when creating a group', async () => {
+    it('opens the selector in multi-select group mode after the switch flips to group', async () => {
       const wrapper = mountDrawer()
       await nextTick()
       const selector = wrapper.find('.agent-selector-drawer-stub')
       // The i18n mock returns the key verbatim.
-      // Ordinary new-session flow: single-select, no host dot.
+      // Ordinary new-session flow: single-select, no host button.
       expect(selector.attributes('data-title')).toBe('session.selectAgent')
       expect(selector.attributes('data-multiple')).toBe('false')
       expect(selector.attributes('data-group-mode')).toBe('false')
-      // Group-creation flow reuses the same drawer but must ask for members AND
-      // the host (multi-select + inline host dot, design #25/#33).
-      wrapper.findComponent(SessionListHeaderStub).vm.$emit('create-group')
+      // The create page opts into the single/group segmented switch.
+      expect(selector.attributes('data-show-mode-switch')).toBe('true')
+      // Flipping the switch inside the picker reuses the same drawer but must
+      // ask for members AND the host (multi-select + inline host button).
+      wrapper.findComponent(AgentSelectorDrawerStub).vm.$emit('switch-mode', 'group')
       await nextTick()
       expect(selector.attributes('data-title')).toBe('group.selectMembers')
       expect(selector.attributes('data-multiple')).toBe('true')
       expect(selector.attributes('data-group-mode')).toBe('true')
     })
 
+    it('clears the host when the switch flips back to single', async () => {
+      const wrapper = mountDrawer()
+      await nextTick()
+      const selector = wrapper.findComponent(AgentSelectorDrawerStub)
+      selector.vm.$emit('switch-mode', 'group')
+      await nextTick()
+      selector.vm.$emit('update:hostId', 'agent-1')
+      await nextTick()
+      expect(wrapper.find('.agent-selector-drawer-stub').attributes('data-host-id')).toBe('agent-1')
+
+      selector.vm.$emit('switch-mode', 'single')
+      await nextTick()
+      const el = wrapper.find('.agent-selector-drawer-stub')
+      expect(el.attributes('data-host-id')).toBe('')
+      expect(el.attributes('data-group-mode')).toBe('false')
+    })
+
     it('emits create-group with {hostId, memberIds} (host mode)', async () => {
       const wrapper = mountDrawer()
       await nextTick()
-      wrapper.findComponent(SessionListHeaderStub).vm.$emit('create-group')
+      wrapper.findComponent(AgentSelectorDrawerStub).vm.$emit('switch-mode', 'group')
       await nextTick()
       const selector = wrapper.findComponent(AgentSelectorDrawerStub)
 
@@ -285,7 +305,7 @@ describe('SessionDrawer', () => {
     it('emits create-group with no host for a free group (>= 2 members)', async () => {
       const wrapper = mountDrawer()
       await nextTick()
-      wrapper.findComponent(SessionListHeaderStub).vm.$emit('create-group')
+      wrapper.findComponent(AgentSelectorDrawerStub).vm.$emit('switch-mode', 'group')
       await nextTick()
       const selector = wrapper.findComponent(AgentSelectorDrawerStub)
 
@@ -298,7 +318,7 @@ describe('SessionDrawer', () => {
     it('does not create a free group with a single member', async () => {
       const wrapper = mountDrawer()
       await nextTick()
-      wrapper.findComponent(SessionListHeaderStub).vm.$emit('create-group')
+      wrapper.findComponent(AgentSelectorDrawerStub).vm.$emit('switch-mode', 'group')
       await nextTick()
       const selector = wrapper.findComponent(AgentSelectorDrawerStub)
 

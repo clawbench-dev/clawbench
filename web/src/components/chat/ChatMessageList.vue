@@ -322,7 +322,7 @@ function isLastAssistant(msg, _i) {
 const groupStackMembers = computed(() =>
   (props.groupMembers || [])
     .filter((m) => !m.left)
-    .map((m) => ({ id: m.id, agentId: m.agentId, name: m.name, backend: m.backend, isHost: m.isHost })),
+    .map((m) => ({ id: m.id, agentId: m.agentId, name: m.name, backend: m.backend, avatar: m.avatar, isHost: m.isHost })),
 )
 
 // Group empty-state copy, selected by mode. The two modes route completely

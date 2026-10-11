@@ -287,9 +287,10 @@ interface TocMessage {
 const tocItems = computed<TocMessage[]>(() => messages.value as unknown as TocMessage[])
 
 // Speaker identities frozen into the snapshot. The public viewer is anonymous
-// and cannot call /api/agents or /api/group/members, so the roster must travel
-// with the payload. Avatars are absent by design (the server omits them on the
-// share path), so rows render the built-in per-backend brand icon.
+// and cannot call /api/agents or /api/group/members, so the roster AND each
+// speaker's custom avatar travel with the payload (frozen at share-creation
+// time). A row with no frozen avatar falls back to the built-in per-backend
+// brand icon.
 const sessionAgent = ref<SpeakerIdentity | null>(null)
 const speakers = ref<Record<string, SpeakerIdentity> | null>(null)
 // The configured group-chat user nickname, frozen into the snapshot (the viewer
@@ -306,12 +307,17 @@ interface ShareGroupMember {
   name?: string
   backend: string
   isHost?: boolean
+  /** The member's own frozen avatar SVG (backend GroupMemberPreview.Avatar).
+   *  This is the roster's single source for the stack icon; the `speakers` map
+   *  is only a fallback for older snapshots whose roster omitted it. */
+  avatar?: string
 }
 const groupMembers = ref<ShareGroupMember[]>([])
 const isGroupShare = computed(() => groupMembers.value.length > 0)
 // AvatarStack resolves avatars from agentId via useAgents, which the anonymous
 // share SPA never loads — so we feed each disc the avatar frozen in the snapshot
-// roster (keyed by member row id) instead.
+// roster. The member's own frozen avatar is the source of truth; the `speakers`
+// map is only a fallback for snapshots predating the roster's avatar field.
 const stackMembers = computed<StackMember[]>(() =>
   groupMembers.value.map((m) => ({
     id: m.id,
@@ -319,7 +325,7 @@ const stackMembers = computed<StackMember[]>(() =>
     name: m.name || '',
     backend: m.backend,
     isHost: !!m.isHost,
-    avatar: speakers.value?.[m.id]?.avatar || '',
+    avatar: m.avatar || speakers.value?.[m.id]?.avatar || '',
   })),
 )
 // The group host's member row id, frozen into the snapshot so the viewer can

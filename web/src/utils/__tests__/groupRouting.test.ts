@@ -277,17 +277,40 @@ describe('buildMemberCandidates', () => {
     expect(buildMemberCandidates(members, 'Alice')[0].mentionMemberId).toBe('m-a')
   })
 
-  it('carries the agent id and backend through so the caller can resolve the avatar', () => {
-    const withAvatar = [{ id: 'm-a', name: 'Alice', agentId: 'a-1', backend: 'claude' }]
+  it('carries the agent id, backend and member avatar through', () => {
+    const withAvatar = [{ id: 'm-a', name: 'Alice', agentId: 'a-1', avatar: '<svg>alice</svg>', backend: 'claude' }]
     const c = buildMemberCandidates(withAvatar, 'Alice')[0]
     expect(c.agentId).toBe('a-1')
     expect(c.backend).toBe('claude')
+    expect(c.avatar).toBe('<svg>alice</svg>')
   })
 
-  it('leaves agentId/backend undefined when the member does not provide them', () => {
+  it('leaves agentId/backend/avatar undefined when the member does not provide them', () => {
     const c = buildMemberCandidates(members, 'Alice')[0]
     expect(c.agentId).toBeUndefined()
     expect(c.backend).toBeUndefined()
+    expect(c.avatar).toBeUndefined()
+  })
+
+  // The underlying real agent name rides through so the @ list can disclose it
+  // next to an auto-derived nickname (pool name / "<base> <n>").
+  it('carries the underlying agent name through', () => {
+    const withName = [{ id: 'm-a', name: 'Alice', agentId: 'a-1', agentName: 'Claude' }]
+    expect(buildMemberCandidates(withName, 'Alice')[0].agentName).toBe('Claude')
+  })
+
+  it('leaves agentName undefined when the member does not provide it', () => {
+    expect(buildMemberCandidates(members, 'Alice')[0].agentName).toBeUndefined()
+  })
+
+  it('keeps two instances of the same agent distinguishable by their own avatar', () => {
+    const two = [
+      { id: 'm-a', name: 'Alice', agentId: 'a-1', avatar: '<svg>alice</svg>' },
+      { id: 'm-b', name: 'Alicia', agentId: 'a-1', avatar: '<svg>alicia</svg>' },
+    ]
+    const [a, b] = buildMemberCandidates(two, '')
+    expect(a.agentId).toBe(b.agentId)
+    expect(a.avatar).not.toBe(b.avatar)
   })
 })
 

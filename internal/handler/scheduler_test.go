@@ -893,6 +893,42 @@ func TestServeTaskByID_UpdateWithMaxRuns(t *testing.T) {
 	assert.Equal(t, float64(0), returnedTask["maxRuns"], "maxRuns should be explicitly set to 0")
 }
 
+func TestServeTaskByID_UpdateWithDisabledAgent(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.Agents = map[string]*model.Agent{
+		"coder":    {ID: "coder", Name: "Coder", Backend: "claude"},
+		"disabled": {ID: "disabled", Name: "Disabled", Backend: "claude", Disabled: true},
+	}
+	defer func() { model.Agents = nil }()
+
+	s := service.NewScheduler()
+	defer s.Stop()
+	service.GlobalScheduler = s
+	defer func() { service.GlobalScheduler = nil }()
+
+	task := &model.ScheduledTask{
+		ProjectPath: env.ProjectDir,
+		Name:        "DisabledAgentTask",
+		CronExpr:    "0 * * * *",
+		AgentID:     "coder",
+		Prompt:      "Test",
+	}
+	_ = s.AddTask(task)
+
+	// Try to change agent to a disabled one
+	req := newRequest(t, http.MethodPut, fmt.Sprintf("/api/tasks/%d", task.ID), map[string]any{
+		"action":   "update",
+		"agent_id": "disabled",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeTaskByID, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "This agent is disabled")
+}
+
 // ========== ServeTaskByID — update reactivates completed task ==========
 
 func TestServeTaskByID_UpdateReactivatesCompletedTask(t *testing.T) {

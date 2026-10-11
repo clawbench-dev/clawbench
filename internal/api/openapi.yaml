@@ -1356,7 +1356,8 @@ paths:
           description: |
             会话列表。
             群会话（`sessionType: "group"`）额外携带 `groupMembers`（紧凑的**在群**成员预览
-            `{id, agentId, name, backend, isHost?}`，用于会话列表渲染成员头像堆叠）；
+            `{id, agentId, name, backend, avatar?, isHost?}`，用于会话列表渲染成员头像堆叠；
+            `avatar` 为成员自身冻结的头像 SVG，缺失时前端回退智能体头像）；
             `isHost` 来自群行的主持人指针，客户端据此在行内展示模式标签（有主持人 = 主持人模式，
             非空名单无主持人 = 自由模式；名单为空时不显示，不猜测）。非群会话省略该键。
             完整成员名单（含已离场）见 `GET /api/group/members`。
@@ -2911,7 +2912,7 @@ paths:
         需要 `session_id` 查询参数。返回该会话当前的分享状态，并附带**全部**消息
         （含仍在生成/排队的）供分享对话框渲染：生成中的消息不可勾选。
         未分享时 `token` 为空但 `messages` 照常返回，使打开对话框只需一次请求。
-        另附 `sessionAgent`（会话级智能体）与 `speakers`（群聊成员行 id → 身份），供对话框为每条助手消息渲染真实智能体图标；此端点需登录（仅属主），故身份**含**自定义头像。
+        另附 `sessionAgent`（会话级智能体）与 `speakers`（群聊成员行 id → 身份），供对话框为每条助手消息渲染真实智能体图标；此端点需登录（仅属主），故身份**含**自定义头像。群成员身份现额外携带 `agentName`（底层**真实**智能体显示名；当成员昵称被自动派生——内置名池名或「本名 序号」——时与 `name` 不同，供 UI 在昵称后披露），且头像**优先**取成员自身的头像快照（`agent_avatar`），无快照时回退智能体头像。
       operationId: sessionShareStatus
       parameters:
         - name: session_id
@@ -3072,13 +3073,17 @@ paths:
         `session`，供分享页判断该渲染哪种视图）与 `{token}/session`（返回冻结的
         会话快照 JSON）。两者同样免鉴权、token 不存在一律 404。
 
-        会话快照另附身份信息供分享页渲染真实智能体图标（均**不含**自定义头像，
-        分享链接不得泄漏属主头像）：`sessionAgent`（会话级智能体，单聊用）、
-        `speakers`（群聊成员行 id → 身份，供每条消息解析发言人）与 `groupMembers`
-        （仅群会话：**在群**成员的有序预览 `{id, agentId, name, backend, isHost?}`，
+        会话快照另附身份信息供分享页渲染真实智能体图标：`sessionAgent`（会话级智能体，
+        单聊用）、`speakers`（群聊成员行 id → 身份，供每条消息解析发言人）与 `groupMembers`
+        （仅群会话：**在群**成员的有序预览 `{id, agentId, name, backend, avatar?, isHost?}`，
         与 `GET /api/sessions` 的 `groupMembers` 同形，供顶栏渲染与群聊 header 一致的
         头像堆叠；已离场成员不在其中）。`speakers` 是 map（JSON 键按 UUID 排序、且含
         已离场成员），只用于逐条消息解析；成员堆叠请用 `groupMembers`。
+
+        **头像在创建分享时一并冻结进快照**：匿名查看者无法访问 `/api/agents`，只能靠
+        快照里的 SVG 渲染图标，故 `sessionAgent`/`speakers` 携带会话智能体与各群成员的
+        自定义头像。成员头像取该成员自己的快照（`agent_avatar`，即入群时的头像），缺失
+        时回退到其智能体的共享头像；`groupMembers[].avatar` 同理为逐成员快照。
 
         **分享不限文件大小、不限类型**：任何文件都能创建链接并下载。
         `{token}/file` 与 `{token}/content` 需要把内容内联进 JSON，故对超过内联上限
@@ -5262,6 +5267,12 @@ paths:
           参与者靠 @ 接力；至少需要 2 名成员；标题占位为「群聊」。
         标题均不接受入参（首条消息后由 auto-title 接管）。
         群计入会话上限（成员不计）。
+
+        **同一智能体可出现多次**：`memberAgentIds` 允许重复元素，每个元素是
+        一个独立成员（独立连接）。后端按出现顺序为每个实例生成唯一显示名
+        （首个用原名，其后 `名字 2`、`名字 3`……，永不生成 `名字 1`），
+        以免按名字路由时歧义。主持人取该 agent 的**首个实例**。成员数上限
+        按**实例数**计（当前 12）。
       operationId: groupCreate
       requestBody:
         required: true
@@ -5273,6 +5284,7 @@ paths:
                 hostAgentId: {type: string}
                 memberAgentIds:
                   type: array
+                  description: 智能体 id 列表；允许重复，每个元素是一个独立成员实例
                   items: {type: string}
       responses:
         "200":
@@ -5316,6 +5328,8 @@ paths:
                         agentId: {type: string}
                         name: {type: string}
                         backend: {type: string}
+                        avatar: {type: string}
+                        agentName: {type: string}
                         left: {type: boolean}
                         isHost: {type: boolean}
                   mode: {type: string, enum: [host, free]}
@@ -5324,10 +5338,11 @@ paths:
       tags: [Group]
       summary: 批量添加群成员
       description: |
-        活跃成员数上限为 10（每个成员是一个独立的 ACP 子进程，连接池无上限）。
-        重新添加**已存在的 agent**（含已离场者）复用原行：活跃成员不加，
-        故不受上限约束；离场者重新加入会占一个名额。
-        上限在**整批**上判定：超限则整批拒绝、不落任何行。
+        活跃成员数上限为 12（每个成员是一个独立的 ACP 子进程，连接池无上限）。
+        `agentIds` 允许重复：每个元素是一个**新的独立成员实例**（不再复用已有
+        行，也没有「重新加入」语义——离场成员再加会新建实例）。后端按批内出现
+        顺序为每个实例生成唯一显示名（首个用原名，其后 `名字 2`、`名字 3`……）。
+        上限按**实例数**在**整批**上判定：超限则整批拒绝、不落任何行。
       operationId: groupMembersAdd
       requestBody:
         required: true
@@ -5340,6 +5355,7 @@ paths:
                 groupId: {type: string}
                 agentIds:
                   type: array
+                  description: 智能体 id 列表；允许重复，每个元素是一个独立成员实例
                   items: {type: string}
       responses:
         "200":
@@ -5369,6 +5385,63 @@ paths:
           description: 移除成功
         "409":
           description: 目标是主持人（`msgKey=CannotRemoveHost`）
+
+  /api/group/member-avatars:
+    post:
+      tags: [Group]
+      summary: 批量写回群成员头像
+      description: |
+        持久化各成员自身的头像 SVG（`chat_sessions.agent_avatar`）。头像由前端用
+        DiceBear 按成员名生成，批量提交，使建群/加人后只发一次请求即可写完所有新成员。
+
+        每个头像必须通过与智能体头像**同一道** SVG 安全闸门（含 256 KiB 大小上限；
+        拒绝 `<script>`、`foreignObject`、外链 `href`、内联事件处理器等）：本端点是
+        存储型 XSS 汇，且存下的字符串会被回放到**公开分享页**。空头像同样被拒。
+        只写入属于 `groupId` 的 `session_type='group_member'` 行；成员行 id 属于
+        其它群时该条为 no-op（不会跨群写入）。
+        **整批先校验后写入**：任一条非法即整批返回 400，不写入任何条目（不会半应用）。
+
+        **批次有界**：`avatars` 条数不得超过群成员上限（12），且整个请求体不得超过
+        `群成员上限 × 256 KiB + 1 MiB`；超出即以 400 拒绝（解码前用 `MaxBytesReader`
+        封顶，避免超大请求体触发巨额分配）。
+      operationId: groupMemberAvatarsSet
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [groupId, avatars]
+              properties:
+                groupId: {type: string}
+                avatars:
+                  type: array
+                  maxItems: 12
+                  description: 每个元素写回一个成员的头像；memberId 为成员行 id；条数上限为群成员上限（12）
+                  items:
+                    type: object
+                    required: [memberId, avatar]
+                    properties:
+                      memberId: {type: string}
+                      avatar:
+                        type: string
+                        description: DiceBear 生成的原始 SVG 字符串
+      responses:
+        "200":
+          description: 写入成功，返回实际写入条数
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean}
+                  saved: {type: integer}
+        "400":
+          description: 请求非法或某个头像未通过 SVG 安全校验（含空头像）
+        "401":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
 
   /api/group/settings:
     patch:

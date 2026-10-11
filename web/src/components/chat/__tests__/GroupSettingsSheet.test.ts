@@ -4,15 +4,20 @@ import GroupSettingsSheet from '../GroupSettingsSheet.vue'
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (k: string) => k }),
+  // The component now imports the shared store, which transitively imports the
+  // i18n singleton; that module calls createI18n at load time.
+  createI18n: () => ({ global: { t: (key: string) => key, locale: { value: 'en' } } }),
 }))
 
 const mockAdd = vi.fn().mockResolvedValue(undefined)
 const mockRemove = vi.fn().mockResolvedValue(undefined)
 const mockSetParallel = vi.fn().mockResolvedValue(undefined)
+const mockGenerateAvatars = vi.fn().mockResolvedValue(undefined)
 vi.mock('@/composables/useGroupChat', () => ({
   addGroupMembers: (...a: any[]) => mockAdd(...a),
   removeGroupMember: (...a: any[]) => mockRemove(...a),
   setGroupParallelDefault: (...a: any[]) => mockSetParallel(...a),
+  generateMemberAvatars: (...a: any[]) => mockGenerateAvatars(...a),
 }))
 
 // The group sheet's auto-approve switch delegates to the shared session toggle
@@ -23,7 +28,9 @@ vi.mock('@/composables/useSessionIdentity', () => ({
   toggleAutoApprove: (...a: any[]) => mockToggleAutoApprove(...a),
 }))
 
-vi.mock('@/composables/useAgents', () => ({ getAgentAvatar: () => '' }))
+vi.mock('@/composables/useAgents', () => ({
+  getAgentAvatar: (agentId: string) => (agentId ? `<svg>agent-${agentId}</svg>` : ''),
+}))
 vi.mock('@/components/common/AgentIcon.vue', () => ({
   default: { name: 'AgentIcon', props: ['backend', 'name', 'avatar', 'size'], template: '<span class="agent-icon-stub" />' },
 }))
@@ -59,6 +66,7 @@ describe('GroupSettingsSheet', () => {
   beforeEach(() => {
     mockRemove.mockClear()
     mockAdd.mockClear()
+    mockGenerateAvatars.mockClear()
     mockToggleAutoApprove.mockClear()
   })
 
@@ -100,6 +108,30 @@ describe('GroupSettingsSheet', () => {
     expect(w.findAll('.gm-remove')).toHaveLength(1)
   })
 
+  it('renders each member own avatar, falling back to the agent avatar', () => {
+    const w = mountSheet([
+      { id: 'm1', name: 'Host', backend: 'codebuddy', agentId: 'a1', isHost: true, avatar: '<svg>member-1</svg>' },
+      { id: 'm2', name: 'Alice', backend: 'claude', agentId: 'a2', isHost: false },
+    ])
+    const avatars = w.findAllComponents({ name: 'AgentIcon' }).map(c => c.props('avatar'))
+    expect(avatars[0]).toBe('<svg>member-1</svg>')
+    expect(avatars[1]).toBe('<svg>agent-a2</svg>')
+  })
+
+  // A pooled member (nickname ≠ real agent name) discloses its real agent name
+  // next to the nickname; a member whose nickname IS the agent name shows none.
+  it('shows the real agent name label only when the nickname differs', () => {
+    const w = mountSheet([
+      { id: 'm1', name: 'Alice', backend: 'claude', agentId: 'a1', isHost: false, agentName: 'Claude' },
+      { id: 'm2', name: 'Claude', backend: 'claude', agentId: 'a2', isHost: true, agentName: 'Claude' },
+    ])
+    const labels = w.findAll('.gm-real-name')
+    expect(labels).toHaveLength(1)
+    expect(labels[0].text()).toBe('Claude')
+    // It sits right after the nickname inside the identity wrapper.
+    expect(w.find('.gm-identity .gm-real-name').exists()).toBe(true)
+  })
+
   it('removes a member through the API and emits changed', async () => {
     const w = mountSheet(MEMBERS)
     await w.find('.gm-remove').trigger('click')
@@ -121,6 +153,29 @@ describe('GroupSettingsSheet', () => {
     // It must NOT also linger in the body.
     expect(w.find('.group-settings-sheet').find('[data-action="add-members"]').exists()).toBe(false)
     expect(w.find('.gm-add').exists()).toBe(false)
+  })
+
+  // Avatars are generated AFTER the members are added, so the roster must be
+  // refreshed a SECOND time once generation resolves — otherwise the new
+  // members keep their fallback icons until a session switch reloads them.
+  it('refreshes the roster after avatar generation, not just on add', async () => {
+    let resolveGen: () => void = () => {}
+    mockGenerateAvatars.mockImplementationOnce(() => new Promise<void>(res => { resolveGen = res }))
+    mockAdd.mockResolvedValueOnce(['m9'])
+
+    const w = mountSheet(MEMBERS)
+    w.findComponent({ name: 'AgentSelectorDrawer' }).vm.$emit('select', ['a4'])
+    await flushPromises()
+
+    // Members added → immediate refresh; generation still in flight.
+    expect(mockAdd).toHaveBeenCalledWith('g1', ['a4'])
+    expect(mockGenerateAvatars).toHaveBeenCalledWith('g1', ['m9'])
+    expect(w.emitted('changed')?.length).toBe(1)
+
+    // Generation resolves → second refresh so the avatars replace the fallbacks.
+    resolveGen()
+    await flushPromises()
+    expect(w.emitted('changed')?.length).toBe(2)
   })
 
   it('opens the member picker from the header button', async () => {

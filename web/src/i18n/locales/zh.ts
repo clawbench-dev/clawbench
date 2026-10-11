@@ -868,6 +868,7 @@ export default {
       conversationIndexNoResults: '无匹配消息',
       conversationIndexRoleUser: '用户',
       conversationIndexRoleAssistant: '助手',
+      conversationIndexRoleSystem: '系统',
       conversationIndexNoText: '（本轮无文字回复）',
     },
     pending: {
@@ -1031,6 +1032,8 @@ export default {
     title: '会话',
     newSession: '新建会话',
     selectAgent: '选择智能体',
+    singleChat: '单聊',
+    groupChat: '群聊',
     setAsDefaultAgent: '设为默认智能体',
     configAgent: '智能体配置',
     noSessions: '暂无会话',
@@ -1131,10 +1134,11 @@ export default {
     newGroup: '新建群聊',
     title: '群聊',
     host: '主持人',
+    realAgent: '真实智能体',
     // The reserved human participant name ("User") shown to the reader.
     you: '你',
     selectHost: '请选择群聊主持人',
-    selectMembers: '请选择群聊成员',
+    selectMembers: '选择群聊成员',
     hostLabel: '设为主持人',
     hostActiveLabel: '点击取消主持人',
     createGroup: '创建群聊',
@@ -1148,7 +1152,10 @@ export default {
     parallelHint: "打开后你 {'@'} 的成员同时发言（不 {'@'} 人时全体成员并发）；智能体之间的 {'@'} 不受影响。",
     autoApproveHint: '自动批准所有成员的权限请求。',
     confirm: '添加',
-    alreadyMember: '已加入',
+    increaseInstance: '再添加一个该智能体实例',
+    decreaseInstance: '减少一个该智能体实例',
+    memberCountHint: '已添加 {count}/{max} 个',
+    memberLimitReached: '已达成员上限',
     bcc: {
       title: '密送',
       to: '发给',
@@ -3371,5 +3378,6 @@ export default {
     active: '已开启分享，任何人通过下方链接即可只读查看选中的会话内容',
     roleUser: '用户',
     roleAssistant: '助手',
+    roleSystem: '系统消息',
   },
 } as const

@@ -1,6 +1,15 @@
 import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest'
 import { mount, VueWrapper } from '@vue/test-utils'
-import { nextTick } from 'vue'
+import { nextTick, ref } from 'vue'
+
+// Pin wide-screen detection to narrow so these drawer-semantics tests are not
+// at the mercy of jsdom's default innerWidth (1024, which is exactly the
+// wide-screen threshold and would flip the sheet into centered-card mode).
+const wideState = { isWideScreen: ref(false) }
+vi.mock('@/composables/useWideScreenLayout', () => ({
+  getWideScreenState: () => wideState,
+}))
+
 import BottomSheet from '@/components/common/BottomSheet.vue'
 
 describe('BottomSheet', () => {

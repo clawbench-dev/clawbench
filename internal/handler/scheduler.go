@@ -399,6 +399,10 @@ func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 			task.CronExpr = req.CronExpr
 		}
 		if req.AgentID != "" {
+			if a := model.GetAgent(req.AgentID); a != nil && a.Disabled {
+				writeLocalizedErrorf(w, r, http.StatusBadRequest, "AgentDisabled")
+				return
+			}
 			task.AgentID = req.AgentID
 		}
 		if req.Prompt != "" {

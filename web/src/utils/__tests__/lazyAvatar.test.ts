@@ -24,7 +24,7 @@ vi.mock('@dicebear/styles/pixel-art.json', () => ({ default: { $id: 'pixel-art' 
 vi.mock('@dicebear/styles/fun-emoji.json', () => ({ default: { $id: 'fun-emoji' } }))
 vi.mock('@dicebear/styles/lorelei.json', () => ({ default: { $id: 'lorelei' } }))
 
-import { AVATAR_STYLES, getAvatarLib, loadAvatarKit } from '@/utils/lazyAvatar'
+import { AVATAR_STYLES, getAvatarLib, generateAvatarSvg, loadAvatarKit } from '@/utils/lazyAvatar'
 import { svgToDataUri } from '@/utils/svgDataUri'
 
 describe('lazyAvatar', () => {
@@ -62,4 +62,14 @@ describe('lazyAvatar', () => {
     expect(uri).toContain('%23') // '#' encoded, not left raw
     expect(decodeURIComponent(uri.split(',')[1])).toBe(svg)
   })
+})
+
+describe('generateAvatarSvg', () => {
+  it('returns a non-empty SVG string seeded by the member name', async () => {
+    const svg = await generateAvatarSvg('Alice')
+    expect(svg).toContain('<svg')
+    // The seed is threaded through to DiceBear (mocked Avatar echoes it), so a
+    // name change produces a different avatar.
+    expect(svg).toContain('Alice')
+  }, 20000)
 })

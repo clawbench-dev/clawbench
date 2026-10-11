@@ -141,15 +141,34 @@ describe('useEdgeSwipeBack', () => {
         window.removeEventListener('clawbench-back-press', listener)
     })
 
-    it('does not dispatch back-press event on left-edge right swipe', () => {
+    it('dispatches back-press event on left-edge right swipe', () => {
         const listener = vi.fn()
         window.addEventListener('clawbench-back-press', listener)
 
         useEdgeSwipeBack()
         mountedCallbacks.forEach(cb => cb())
 
+        // Start within the left edge zone (<= 20px) and swipe right (inward).
         dispatchTouch('touchstart', [{ clientX: 10, clientY: 200 }])
         dispatchTouch('touchend', [{ clientX: 90, clientY: 210 }])
+
+        expect(listener).toHaveBeenCalledTimes(1)
+        expect((listener.mock.calls[0][0] as CustomEvent).detail).toEqual({ reason: 'edge-swipe' })
+
+        window.removeEventListener('clawbench-back-press', listener)
+    })
+
+    it('does not dispatch back-press event on left-edge left swipe (outward)', () => {
+        const listener = vi.fn()
+        window.addEventListener('clawbench-back-press', listener)
+
+        useEdgeSwipeBack()
+        mountedCallbacks.forEach(cb => cb())
+
+        // Starting at the left edge but swiping further left is an outward
+        // gesture (e.g. Android back-to-exit); it must not trigger app back.
+        dispatchTouch('touchstart', [{ clientX: 10, clientY: 200 }])
+        dispatchTouch('touchend', [{ clientX: -80, clientY: 210 }])
 
         expect(listener).not.toHaveBeenCalled()
 

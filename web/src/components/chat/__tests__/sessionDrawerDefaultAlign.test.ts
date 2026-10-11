@@ -14,11 +14,11 @@ import { readWebFile } from '@/testUtils/readWebFile'
  *   模式   126                      211                   786   ✗
  *   协议   110                      141                   786   ✗
  *
- * The model tab happened to be correct by accident: its label lives inside
- * `.model-item-labels { flex: 1 }`, which absorbs the free space and shoves the
- * trailing slot to the right. The thinking / mode / transport tabs render a
- * bare `.model-item-name` with no growth, so the badge/star just trails the
- * text wherever it ends.
+ * The model tab happened to be correct by accident: its label lives inside a
+ * `flex: 1` wrapper (now the shared ModelRow component), which absorbs the free
+ * space and shoves the trailing slot to the right. The thinking / mode /
+ * transport tabs render a bare `.model-item-name` with no growth, so the
+ * badge/star just trails the text wherever it ends.
  *
  * The fix right-aligns the trailing slot itself (`margin-left: auto`), which is
  * independent of what precedes it — so it holds for all four tabs.
@@ -52,19 +52,24 @@ describe('session settings drawer: default badge is right-aligned in every tab',
     expect(block, `${selector} must not shrink`).toMatch(/flex-shrink:\s*0/)
   })
 
-  it('keeps the trailing slot a direct child of the flex row, outside the label wrapper', () => {
+  it('keeps the trailing slot a direct child of the flex row, outside the model row', () => {
     // `margin-left: auto` only reaches the right edge if the trailing slot is a
-    // direct child of the flex row (`.model-item` / `.thinking-item`). If a
-    // refactor moves it inside `.model-item-labels`, the auto margin would push
-    // it away from the *wrapper's* end instead, and the badge would drift back
-    // next to the text. Assert the labels wrapper holds only the name/id.
-    const labelsBlocks = source.match(
-      /<span class="model-item-labels">([\s\S]*?)<\/span>\s*(?=<span v-if=|<button v-if=)/g,
-    ) || []
-    expect(labelsBlocks.length, 'label wrapper markup should be found').toBeGreaterThan(0)
-    for (const block of labelsBlocks) {
-      expect(block, 'labels wrapper must not contain the default badge').not.toContain('default-label')
-      expect(block, 'labels wrapper must not contain the set-default star').not.toContain('set-default-btn')
-    }
+    // direct child of the flex row (`.model-item` / `.thinking-item`). The model
+    // tab now delegates its icon + name/id to the shared ModelRow component
+    // (which is `flex: 1`), so the badge/star must remain SIBLINGS of that
+    // component inside `.model-item` — not passed into its slot, and not part of
+    // the model row. A refactor that moved them inside would push the auto
+    // margin away from the row's end and drift the badge back next to the text.
+    const modelItem = source.match(/<button\s+class="model-item"[\s\S]*?<\/button>/)?.[0] ?? ''
+    expect(modelItem, '.model-item markup should be found').not.toBe('')
+    expect(modelItem, 'model tab must use the shared ModelRow').toContain('<ModelRow')
+    // The default badge / star are direct children of `.model-item`, after the
+    // ModelRow element (which is self-closing, so they are not its slot content).
+    expect(modelItem, 'default badge must be a direct child of the row').toMatch(
+      /<ModelRow[^>]*\/>\s*<span v-if="m\.id === defaultModelId" class="default-label">/,
+    )
+    expect(modelItem, 'set-default star must be a direct child of the row').toMatch(
+      /<button v-if="m\.id !== defaultModelId" class="set-default-btn"/,
+    )
   })
 })

@@ -162,9 +162,9 @@ func serveSessionShareStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// includeAvatar=true: the dialog is authenticated (owner-only), so the real
-	// avatars are fine here — unlike the public share payload.
-	sessionAgent, speakers := service.ResolveSessionSpeakers(sessionID, true)
+	// The dialog is authenticated (owner-only), so the real avatars are fine
+	// here — the share payload needs them too for the anonymous viewer.
+	sessionAgent, speakers := service.ResolveSessionSpeakers(sessionID)
 	resp := sessionShareStatusResponse{Messages: messages, SessionAgent: sessionAgent, Speakers: speakers}
 	token, exists, err := service.GetSessionShareBySession(sessionID)
 	if err != nil {

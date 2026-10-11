@@ -2,21 +2,37 @@
   <BottomSheet :open="open" auto @close="handleClose">
     <template #header>
       <!-- Group-creation mode reads as a group, not a single agent: the header
-           glyph is the same Users mark the session list / create-group button
-           use, so the two surfaces stay one system. -->
+           glyph is the same Users mark the session list uses for group
+           sessions, so the two surfaces stay one system. -->
       <Users v-if="groupMode" :size="16" class="bs-header-icon" />
       <Bot v-else :size="16" class="bs-header-icon" />
-      <span class="bs-header-title">{{ title }}</span>
-      <!-- Group mode: the chosen host decides the group's mode. The subtitle
-           sits to the right of the title and flips between host / free as the
-           user sets or clears the host. Same glyph pairing as the session-list
-           mode chip (crown for host, @ for the free relay) so the two surfaces
-           read as one system. -->
-      <span v-if="groupMode" class="agent-header-mode">
-        <Crown v-if="hostId" :size="12" class="agent-header-mode-icon" />
-        <AtSign v-else :size="12" class="agent-header-mode-icon" />
-        {{ hostId ? t('group.hostMode') : t('group.freeMode') }}
-      </span>
+      <span class="bs-header-title agent-header-title">{{ title }}</span>
+      <!-- Single vs group creation share this one page; the segmented control
+           on the right flips between them. Hidden entirely when fewer than two
+           selectable agents exist: a group needs at least two members, and a
+           one-item segmented control is just noise. @click.stop is required —
+           the whole .bs-header is a close target (BottomSheet's own click
+           handler). -->
+      <div v-if="showModeSwitch && selectableAgents.length >= 2" class="agent-mode-switch" role="tablist">
+        <button
+          type="button"
+          class="agent-mode-tab"
+          :class="{ active: !groupMode }"
+          role="tab"
+          :aria-selected="!groupMode"
+          data-mode="single"
+          @click.stop="emit('switch-mode', 'single')"
+        >{{ t('session.singleChat') }}</button>
+        <button
+          type="button"
+          class="agent-mode-tab"
+          :class="{ active: groupMode }"
+          role="tab"
+          :aria-selected="groupMode"
+          data-mode="group"
+          @click.stop="emit('switch-mode', 'group')"
+        >{{ t('session.groupChat') }}</button>
+      </div>
     </template>
     <div class="agent-list">
       <LoadingIndicator v-if="agentsLoading" size="md" />
@@ -25,7 +41,7 @@
         v-for="(agent, idx) in selectableAgents"
         :key="agent.id"
         class="agent-option"
-        :class="{ selected: isSelected(agent.id), 'agent-option-active': listNav.activeIndex.value === idx, 'agent-option-disabled': isExcluded(agent.id) }"
+        :class="{ selected: isSelected(agent.id), 'agent-option-active': listNav.activeIndex.value === idx }"
         role="button"
         tabindex="0"
         @click="handleSelect(agent.id)"
@@ -44,30 +60,58 @@
             <span v-if="defaultModelName(agent.id)" class="agent-tag model-tag">{{ defaultModelName(agent.id) }}</span>
           </div>
         </div>
-        <!-- Group mode: the host control sits where the per-row default star
-             normally is, but is a labelled button so it reads as an action.
-             Only selected rows can be host (the host must be a member). The
-             label states the ACTION ("set as host") until the row IS the host,
-             at which point it shows the resulting state badge ("Host") — a
-             never-set row must not read as if it were already the host. -->
-        <button
-          v-if="groupMode && isSelected(agent.id)"
-          class="agent-host-btn"
-          :class="{ active: agent.id === hostId }"
-          type="button"
-          :aria-pressed="agent.id === hostId"
-          :title="agent.id === hostId ? hostActiveLabel : hostLabel"
-          @click.stop="handleSetHost(agent.id)"
-        >
-          <Crown :size="12" />
-          <span class="agent-host-btn-label">{{ agent.id === hostId ? hostBadge : hostLabel }}</span>
-        </button>
-        <span v-if="isExcluded(agent.id)" class="agent-tag agent-added-tag">{{ addedLabel }}</span>
-        <span v-if="showAgentActions && isDefaultAgent(agent.id)" class="agent-default-badge-pill">{{ defaultBadge }}</span>
-        <button v-else-if="showAgentActions" class="agent-set-default-btn" @click.stop="handleSetDefaultAgent(agent.id)" :title="setDefaultTitle">
+        <!-- Group/instance trailing controls: a full-height column whose two
+             ends line up with the row's text — the instance stepper near the top
+             (name/description) and the host action at the bottom (model-tag
+             row). The plain star/config actions (single chat / task) keep their
+             original horizontal slots. -->
+        <div v-if="(groupMode || allowInstances) && isSelected(agent.id)" class="agent-row-actions">
+          <!-- Instance stepper: − count + . Only the count is shown (no nickname
+               preview). "+" is disabled at the group-wide instance limit. -->
+          <div v-if="allowInstances" class="agent-stepper" @click.stop>
+            <button
+              class="agent-stepper-btn"
+              type="button"
+              :aria-label="t('group.decreaseInstance')"
+              :disabled="countOf(agent.id) <= 1"
+              @click.stop="decrement(agent.id)"
+            >
+              <Minus :size="12" />
+            </button>
+            <span class="agent-stepper-count">{{ countOf(agent.id) }}</span>
+            <button
+              class="agent-stepper-btn"
+              type="button"
+              :aria-label="t('group.increaseInstance')"
+              :disabled="atInstanceLimit"
+              @click.stop="increment(agent.id)"
+            >
+              <Plus :size="12" />
+            </button>
+          </div>
+          <!-- Host control sits at the bottom, level with the model-tag row. It
+               is a labelled button so it reads as an action. Only selected rows
+               can be host (the host must be a member). The label states the
+               ACTION ("set as host") until the row IS the host, at which point it
+               shows the resulting state badge ("Host"). -->
+          <button
+            v-if="groupMode"
+            class="agent-host-btn"
+            :class="{ active: agent.id === hostId }"
+            type="button"
+            :aria-pressed="agent.id === hostId"
+            :title="agent.id === hostId ? hostActiveLabel : hostLabel"
+            @click.stop="handleSetHost(agent.id)"
+          >
+            <Crown :size="12" />
+            <span class="agent-host-btn-label">{{ agent.id === hostId ? hostBadge : hostLabel }}</span>
+          </button>
+        </div>
+        <span v-if="!allowInstances && showAgentActions && isDefaultAgent(agent.id)" class="agent-default-badge-pill">{{ defaultBadge }}</span>
+        <button v-else-if="!allowInstances && showAgentActions" class="agent-set-default-btn" @click.stop="handleSetDefaultAgent(agent.id)" :title="setDefaultTitle">
           <Star :size="14" />
         </button>
-        <button v-if="showAgentActions" class="agent-config-btn" @click.stop="handleOpenAgentConfig(agent.id)" :title="configTitle">
+        <button v-if="!allowInstances && showAgentActions" class="agent-config-btn" @click.stop="handleOpenAgentConfig(agent.id)" :title="configTitle">
           <Settings :size="14" />
         </button>
       </div>
@@ -76,6 +120,30 @@
          full-width bar: .bs-footer already right-aligns its content, so the
          button hugs the trailing edge like every other drawer confirm. -->
     <template v-if="multiple" #footer>
+      <!-- Leading group (count hint + mode hint) absorbs the free space via a
+           SINGLE margin-right:auto; two separate auto margins would split the
+           slack and strand the confirm pill mid-footer. -->
+      <div class="agent-footer-lead">
+        <!-- Group mode: the chosen host decides the group's mode. The chip, on
+             hover / tap, explains how the current mode routes (title + one line
+             + tips). Same glyph pairing as the session-list mode chip (crown for
+             host, @ for the free relay) so the two surfaces read as one system. -->
+        <GroupModeHint v-if="groupMode" :mode="hostId ? 'host' : 'free'" class="agent-mode-hint" />
+        <!-- Instance count (group create / add members): the cap counts every
+             instance across all agents, so the running total is surfaced here.
+             At the limit the line turns into a warning so the disabled "+" is
+             explained rather than feeling broken. -->
+        <span
+          v-if="allowInstances && maxInstances > 0"
+          class="agent-count-hint"
+          :class="{ 'at-limit': atInstanceLimit }"
+        >
+          <AlertTriangle v-if="atInstanceLimit" :size="12" />
+          {{ atInstanceLimit
+            ? t('group.memberLimitReached')
+            : t('group.memberCountHint', { count: totalInstances, max: maxInstances }) }}
+        </span>
+      </div>
       <button class="fbtn fbtn-primary agent-multi-confirm" :disabled="confirmDisabled" @click="handleConfirmMulti">{{ confirmLabel }}</button>
     </template>
   </BottomSheet>
@@ -83,11 +151,12 @@
 
 <script setup lang="ts">
 import { ref, watch, inject, computed } from 'vue'
-import { Bot, Star, Settings, Check, Crown, AtSign, Users } from 'lucide-vue-next'
+import { Bot, Star, Settings, Check, Crown, Users, Plus, Minus, AlertTriangle } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import GroupModeHint from '@/components/common/GroupModeHint.vue'
 import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
 import { useAgents } from '@/composables/useAgents'
@@ -110,11 +179,6 @@ const props = withDefaults(defineProps<{
   /** Show the per-row default badge / set-default star and the settings button.
    *  False for the group "add members" picker, where those actions are noise. */
   showAgentActions?: boolean
-  /** Agent ids that cannot be picked (already members). Rendered dimmed with an
-   *  "added" tag; clicking them is a no-op. */
-  excludedAgentIds?: string[]
-  /** Label shown on excluded rows. */
-  addedLabel?: string
   /** Group-creation mode: each SELECTED row grows a "host" radio dot so the
    *  user picks the host inline, in the same list as the members. */
   groupMode?: boolean
@@ -127,6 +191,21 @@ const props = withDefaults(defineProps<{
   hostActiveLabel?: string
   /** Short label shown on the host button (groupMode only). */
   hostBadge?: string
+  /** Allow the same agent to be selected multiple times (group creation / add
+   *  members). A selected row then shows a − count + stepper instead of a plain
+   *  toggle; the confirm payload repeats the agent id once per instance. */
+  allowInstances?: boolean
+  /** Max TOTAL instances across all agents (group member cap). 0 = unlimited.
+   *  At the limit the "+" buttons disable and the footer warns. Only meaningful
+   *  with allowInstances. */
+  maxInstances?: number
+  /** Instances ALREADY in the group (add-members flow). The cap is group-wide,
+   *  so the picker must count these against maxInstances even though they are
+   *  not in the selection buffer. 0 for group creation. */
+  usedInstances?: number
+  /** Show the single/group segmented switch in the header (create page only).
+   *  Hidden when fewer than two selectable agents exist. */
+  showModeSwitch?: boolean
 }>(), {
   modelValue: '',
   multiple: false,
@@ -136,13 +215,15 @@ const props = withDefaults(defineProps<{
   configTitle: 'Agent settings',
   confirmLabel: 'OK',
   showAgentActions: true,
-  excludedAgentIds: () => [],
-  addedLabel: 'Added',
   groupMode: false,
   hostId: '',
   hostLabel: 'Host',
   hostActiveLabel: 'Host',
   hostBadge: 'Host',
+  allowInstances: false,
+  maxInstances: 0,
+  usedInstances: 0,
+  showModeSwitch: false,
 })
 
 const emit = defineEmits<{
@@ -150,6 +231,8 @@ const emit = defineEmits<{
   (e: 'update:modelValue', agentId: string | string[]): void
   (e: 'update:hostId', agentId: string): void
   (e: 'select', agentId: string | string[]): void
+  /** User flipped the single/group segmented switch (create page only). */
+  (e: 'switch-mode', mode: 'single' | 'group'): void
 }>()
 
 const { selectableAgents, loadAgents, isDefaultAgent, getAgentDefaultModelName, setDefaultAgent } = useAgents()
@@ -167,9 +250,38 @@ function isSelected(agentId: string): boolean {
   return agentId === props.modelValue
 }
 
-/** isExcluded reports whether the agent is already in the group (unpickable). */
-function isExcluded(agentId: string): boolean {
-  return props.excludedAgentIds.includes(agentId)
+/** countOf reports how many instances of the agent are currently selected. */
+function countOf(agentId: string): number {
+  return selectedIds.value.filter(id => id === agentId).length
+}
+
+/** totalInstances is the instance count across ALL agents — the group member
+ *  cap counts every instance, not unique agents. Includes instances already in
+ *  the group (usedInstances, add-members flow) plus the current selection. */
+const totalInstances = computed(() => props.usedInstances + selectedIds.value.length)
+
+/** atInstanceLimit is true when the group-wide instance cap is reached, so no
+ *  further "+" is allowed. maxInstances <= 0 means unlimited. */
+const atInstanceLimit = computed(() => props.maxInstances > 0 && totalInstances.value >= props.maxInstances)
+
+/** increment adds one more instance of the agent (used by the stepper's +). */
+function increment(agentId: string) {
+  if (Date.now() - openTime < 400) return
+  if (atInstanceLimit.value) return
+  selectedIds.value.push(agentId)
+}
+
+/** decrement removes one instance; dropping to 0 deselects the row. Removing
+ *  the last instance also clears the host if the host was this agent (the host
+ *  must remain a member). */
+function decrement(agentId: string) {
+  if (Date.now() - openTime < 400) return
+  const i = selectedIds.value.lastIndexOf(agentId)
+  if (i < 0) return
+  selectedIds.value.splice(i, 1)
+  if (props.groupMode && props.hostId === agentId && countOf(agentId) === 0) {
+    emit('update:hostId', '')
+  }
 }
 
 function handleClose() {
@@ -177,13 +289,27 @@ function handleClose() {
 }
 
 function handleSelect(agentId: string) {
-  // Already a member: not selectable (the backend would rejoin/no-op anyway).
-  if (isExcluded(agentId)) return
   // Ignore clicks within 400ms of opening — prevents accidental selection
   // from touch events that propagate to the newly rendered dialog
   if (Date.now() - openTime < 400) return
   if (props.multiple) {
     // Toggle; do not close.
+    if (props.allowInstances) {
+      // Instance mode: clicking a row selects one instance; clicking an
+      // already-selected row clears ALL its instances (back to 0). Fine-grained
+      // counts are adjusted with the row's − / + stepper, not by the row click.
+      const n = countOf(agentId)
+      if (n > 0) {
+        selectedIds.value = selectedIds.value.filter(id => id !== agentId)
+        if (props.groupMode && props.hostId === agentId) emit('update:hostId', '')
+      } else {
+        // Selecting a fresh agent adds one instance; refuse at the group-wide
+        // limit (same rule as the stepper's +).
+        if (atInstanceLimit.value) return
+        selectedIds.value.push(agentId)
+      }
+      return
+    }
     const i = selectedIds.value.indexOf(agentId)
     if (i >= 0) {
       selectedIds.value.splice(i, 1)
@@ -266,6 +392,16 @@ function scrollActiveIntoView(index: number) {
 }
 
 watch(selectableAgents, () => listNav.reset())
+
+// Single ↔ group switch on the shared create page: the member buffer and the
+// keyboard highlight belong to the OLD mode, so both are cleared. Re-arm the
+// touch guard too, otherwise the first tap right after switching is swallowed
+// by the same 400ms window that protects the initial open.
+watch(() => props.groupMode, () => {
+  selectedIds.value = []
+  listNav.reset()
+  openTime = Date.now()
+})
 
 // Auto-reset touch guard and preload agents when drawer opens
 watch(() => props.open, async (val) => {
@@ -352,22 +488,6 @@ watch(() => props.open, async (val) => {
   background: color-mix(in srgb, var(--accent-color) 10%, transparent);
 }
 
-/* Already a member: dimmed, not clickable, and no hover affordance. */
-.agent-option-disabled {
-  opacity: var(--opacity-disabled, 0.4);
-  cursor: default;
-  pointer-events: none;
-}
-.agent-added-tag {
-  flex-shrink: 0;
-  padding: 1px var(--space-3);
-  border-radius: var(--radius-full);
-  background: var(--bg-tertiary, #eee);
-  color: var(--text-muted, #999);
-  font-size: var(--font-size-2xs);
-  line-height: 16px;
-  opacity: 1;
-}
 
 .agent-option-icon {
   flex-shrink: 0;
@@ -503,6 +623,69 @@ watch(() => props.open, async (val) => {
   background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
 }
 
+/* Instance-mode trailing actions: a full-height column whose two ends line up
+   with the row's text — the instance stepper near the top (name/description
+   line) and the host action at the bottom (model-tag line). `align-self:
+   stretch` + `justify-content: space-between` let the row's own height drive the
+   placement, so the two controls read as belonging to different text lines
+   instead of one glued block. */
+.agent-row-actions {
+  flex-shrink: 0;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: space-between;
+}
+
+/* Instance stepper: − count + for a selected row when the same agent may be
+   added several times. Compact pill matching the host button's language. */
+.agent-stepper {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px var(--space-1);
+  border: 1px solid var(--border-color, #ccc);
+  border-radius: var(--radius-full);
+  background: none;
+}
+
+.agent-stepper-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: var(--radius-full);
+  background: none;
+  color: var(--text-secondary, #666);
+  cursor: pointer;
+  transition: background var(--duration-base), color var(--duration-base);
+}
+
+.agent-stepper-btn:disabled {
+  opacity: var(--opacity-disabled, 0.4);
+  cursor: default;
+}
+
+@media (hover: hover) {
+  .agent-stepper-btn:not(:disabled):hover {
+    background: var(--bg-hover, rgba(0,0,0,0.06));
+    color: var(--accent-color, #0066cc);
+  }
+}
+
+.agent-stepper-count {
+  min-width: 14px;
+  text-align: center;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary, #1a1a1a);
+  font-variant-numeric: tabular-nums;
+}
+
 /* Group mode: the host control sits where the default star normally is, but is
    a labelled button so it reads as an action rather than a decorative dot.
    Only one may be active; clicking it never toggles the row's selection. */
@@ -534,21 +717,82 @@ watch(() => props.open, async (val) => {
   line-height: 1;
 }
 
-/* Group mode: the mode subtitle to the right of the header title. Muted and
-   non-shrinking so it never pushes the title around as it flips between
-   "host mode" and "free mode". */
-.agent-header-mode {
+/* Header title: the base .bs-header-title is flex-shrink:0 + nowrap, which
+   overflows the narrow drawer header once the segmented switch is added. Let it
+   absorb the slack and ellipsize instead of pushing the switch off-screen. */
+.agent-header-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Single/group segmented switch (create page). Same connected-tab language as
+   SessionListTabs / SummaryToggle, compacted for the header line. */
+.agent-mode-switch {
+  flex-shrink: 0;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--border-color, #ccc);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.agent-mode-tab {
+  border: none;
+  background: none;
+  color: var(--text-secondary, #666);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  line-height: 1;
+  padding: 4px var(--space-4);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color var(--duration-base), background var(--duration-base);
+}
+
+.agent-mode-tab + .agent-mode-tab {
+  border-left: 1px solid var(--border-color, #ccc);
+}
+
+.agent-mode-tab.active {
+  color: var(--accent-color, #0066cc);
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
+}
+
+@media (hover: hover) {
+  .agent-mode-tab:not(.active):hover {
+    color: var(--text-primary, #1a1a1a);
+    background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  }
+}
+
+/* Footer leading group: one auto margin absorbs the slack so the confirm pill
+   keeps the trailing edge; the children lay out inline with a small gap. */
+.agent-footer-lead {
+  margin-right: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+/* Footer instance count / limit warning. The warning state uses the danger hue
+   with an icon. */
+.agent-count-hint {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  flex-shrink: 0;
-  margin-left: auto;
-  color: var(--text-muted, #999);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-normal);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary, #666);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
-.agent-header-mode-icon {
-  flex-shrink: 0;
+
+.agent-count-hint.at-limit {
+  color: var(--color-red, #dc2626);
+  font-weight: var(--font-weight-medium);
 }
 
 /* Confirm button: shape/colour come from the shared .fbtn / .fbtn-primary

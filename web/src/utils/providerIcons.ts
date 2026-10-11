@@ -53,6 +53,9 @@ import codebuddyIcon from '@lobehub/icons-static-svg/icons/codebuddy-color.svg?r
 import mimoIcon from '@lobehub/icons-static-svg/icons/xiaomimimo.svg?raw'
 import qoderIcon from '@lobehub/icons-static-svg/icons/qoder-color.svg?raw'
 import zhipuIcon from '@lobehub/icons-static-svg/icons/zhipu-color.svg?raw'
+import longcatIcon from '@lobehub/icons-static-svg/icons/longcat-color.svg?raw'
+import stepfunIcon from '@lobehub/icons-static-svg/icons/stepfun-color.svg?raw'
+import nvidiaIcon from '@lobehub/icons-static-svg/icons/nvidia-color.svg?raw'
 
 // Monochrome icons (fill="currentColor" — inherit CSS `color`, theme-aware)
 import openaiIcon from '@lobehub/icons-static-svg/icons/openai.svg?raw'
@@ -97,6 +100,11 @@ const providerIconMap: Record<string, ProviderIconData> = {
     groq: { raw: groqIcon, monoCssClass: 'mono-groq' },
     xai: { raw: xaiIcon, needsBg: true, monoCssClass: 'mono-xai' },
 
+    // More LLM providers — color icons
+    longcat: { raw: longcatIcon },
+    stepfun: { raw: stepfunIcon },
+    nvidia: { raw: nvidiaIcon },
+
     // CLI backend tools — color icons
     codex: { raw: codexIcon },
     copilot: { raw: copilotIcon },
@@ -105,6 +113,14 @@ const providerIconMap: Record<string, ProviderIconData> = {
     zhipu: { raw: zhipuIcon },
     chatglm: { raw: zhipuIcon },
     glm: { raw: zhipuIcon },
+
+    // Gateway prefixes: models served through these gateways that do not carry a
+    // recognizable model name fall back to the gateway's own brand icon (the
+    // same thing `opencode/…` already gets via the provider-prefix match). These
+    // are only reached when the model-name part matches nothing, so a
+    // `github-copilot/claude-*` still shows the Claude icon, not this one.
+    'opencode-go': { raw: opencodeIcon, needsBg: true, monoCssClass: 'mono-opencode' },
+    'github-copilot': { raw: copilotIcon },
 
     // CLI backend tools — monochrome icons
     opencode: { raw: opencodeIcon, needsBg: true, monoCssClass: 'mono-opencode' },
@@ -200,6 +216,15 @@ const modelPatterns: [RegExp, string][] = [
 
     // Azure
     [/^azure/, 'azure'],
+
+    // LongCat (Meituan)
+    [/^longcat/, 'longcat'],
+
+    // StepFun (Step-1/2/3…)
+    [/^step-/, 'stepfun'],
+
+    // NVIDIA (Nemotron)
+    [/^nemotron/, 'nvidia'],
 
 ]
 

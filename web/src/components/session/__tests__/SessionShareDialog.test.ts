@@ -63,6 +63,7 @@ const i18n = createI18n({
         loadFailed: 'Failed to load',
         roleUser: 'User',
         roleAssistant: 'Reply',
+        roleSystem: 'System message',
       },
     },
   },
@@ -159,10 +160,32 @@ describe('SessionShareDialog', () => {
     expect(rows[1].find('.agent-icon-img, .agent-icon-svg, .agent-icon-initial').exists()).toBe(true)
   })
 
+  it('gives a system row its own role tag and glyph, not a user tag', async () => {
+    // A group membership event is role='system'; it must not fall through to
+    // the User chip. The unified Megaphone glyph marks it as an announcement.
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        token: '', path: '',
+        messages: [
+          { id: 1, role: 'user', preview: 'hi', streaming: false, createdAt: '2026-09-22T09:00:00Z' },
+          { id: 2, role: 'system', preview: 'Alice joined', streaming: false, createdAt: '2026-09-22T09:00:01Z' },
+        ],
+      }),
+    } as Response)) as unknown as typeof fetch
+
+    const wrapper = await mountDialog()
+    const tag = wrapper.findAll('.session-share-dialog-row')[1].find('.session-share-dialog-role')
+    expect(tag.classes()).toContain('role-system')
+    expect(tag.classes()).not.toContain('role-user')
+    expect(tag.attributes('aria-label')).toBe('System message')
+    expect(tag.find('.lucide-megaphone').exists()).toBe(true)
+    expect(tag.find('.lucide-user').exists()).toBe(false)
+  })
+
   // The default is "share everything" — the user unchecks what they do not want,
   // rather than opting in message by message.
-  it('checks every selectable message by default', async () => {
-    const wrapper = await mountDialog()
+  it('checks every selectable message by default', async () => {    const wrapper = await mountDialog()
     const state = checks(wrapper)
     expect(state).toHaveLength(4)
     expect(state.every((c) => c.checked)).toBe(true)

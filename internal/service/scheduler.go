@@ -1254,6 +1254,12 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		// counts resumes. Passing attempt here would spend one retry too few.
 		if AutoContinueEnabled() && AutoContinueAttemptsAllowed(attempt-1, model.ChatAutoContinueMaxRetries) {
 			if autoContinueSleep(ctx, autoContinueDelay) && ctx.Err() == nil {
+				// Close the failed turn's bubble before resuming, mirroring the
+				// interactive runner. Without this per-turn boundary the live
+				// preview's streaming bubble keeps its spinner until the whole
+				// task's terminal `done`. at.msgID is the placeholder row the
+				// finalize just wrote to (0 when the turn never opened one).
+				emitTurnFinalize(sessionID, at.msgID)
 				if _, err := PrepareAutoContinueMessage(sessionID, projectPath, backendName); err != nil {
 					slog.Error("task auto-continue: failed to persist continue message",
 						slog.Int64("task_id", task.ID),

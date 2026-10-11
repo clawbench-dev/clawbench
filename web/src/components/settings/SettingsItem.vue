@@ -194,19 +194,44 @@
       </template>
     </template>
     <template v-else>
+      <!-- Search (model pickers only): filters by display name and raw id, the
+           same fields the chat model drawer matches on. Sticky so it stays put
+           while the (possibly very long) model list scrolls underneath. -->
+      <div v-if="isModelSelect" class="settings-item__search-row">
+        <input
+          v-model="searchQuery"
+          class="settings-item__search-input"
+          type="text"
+          :placeholder="t('chat.sessionSetting.searchPlaceholder')"
+        />
+      </div>
       <div
-        v-for="opt in renderOptions"
+        v-for="opt in filteredRenderOptions"
         :key="opt.value as PropertyKey"
         class="settings-item__option"
         :class="{ 'settings-item__option--active': modelValue === opt.value }"
         @click="selectOption(opt.value)"
       >
-        <ProviderIcon v-if="opt.modelName" :model-name="opt.modelName" :size="14" />
-        <span class="settings-item__option-labels">
-          <span class="settings-item__option-label" :style="opt.previewFont ? { fontFamily: opt.previewFont } : undefined">{{ opt.label }}</span>
-          <span v-if="opt.sublabel" class="settings-item__option-sublabel">{{ opt.sublabel }}</span>
-        </span>
-        <span v-if="modelValue === opt.value" class="settings-item__option-check">✓</span>
+        <!-- Model options render the shared two-line model row (name over id).
+             Other selects (transport, fonts, …) keep the plain label. -->
+        <ModelRow
+          v-if="opt.modelName"
+          :name="opt.label"
+          :model-id="opt.modelId"
+          :active="modelValue === opt.value"
+          :icon-size="14"
+        >
+          <span v-if="modelValue === opt.value" class="settings-item__option-check">✓</span>
+        </ModelRow>
+        <template v-else>
+          <span class="settings-item__option-labels">
+            <span class="settings-item__option-label" :style="opt.previewFont ? { fontFamily: opt.previewFont } : undefined">{{ opt.label }}</span>
+          </span>
+          <span v-if="modelValue === opt.value" class="settings-item__option-check">✓</span>
+        </template>
+      </div>
+      <div v-if="isModelSelect && filteredRenderOptions && filteredRenderOptions.length === 0" class="settings-item__option-empty">
+        {{ t('chat.sessionSetting.noSearchResults') }}
       </div>
     </template>
   </BottomSheet>
@@ -277,6 +302,7 @@ import '@/assets/modal-footer-btn.css'
 import { Eye, EyeOff, RefreshCw, ChevronsUpDown, Sun, Moon, Palette, Check, AlertTriangle } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
+import ModelRow from '@/components/common/ModelRow.vue'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import TerminalPreviewCard from '@/components/common/TerminalPreviewCard.vue'
 import { isDarkTheme, resolveThemeId } from '@/utils/themeMeta'
@@ -387,12 +413,15 @@ const isTerminalThemeSelect = computed(() =>
 export interface SelectOption {
   label: string
   value: unknown
+  /** When set, the option renders as a shared ModelRow (provider icon + name
+   *  over id) instead of a plain label. Holds the display name for provider
+   *  detection. */
   modelName?: string
+  /** Raw model id shown as the ModelRow's second line (hidden when it equals
+   *  the label). Only meaningful together with `modelName`. */
+  modelId?: string
   groupKey?: string
   badgeKey?: string
-  /** Subdued text shown after the label, e.g. a raw model id when several
-   *  models share the same display name. */
-  sublabel?: string
   /** CSS font-family used to render this option's label in its own font. */
   previewFont?: string
 }
@@ -404,6 +433,28 @@ const displayOptions = ref<SelectOption[] | null>(null)
 
 /** The options list used for rendering (filtered when a filter produced output). */
 const renderOptions = computed<SelectOption[] | undefined>(() => displayOptions.value ?? (props.options as SelectOption[] | undefined))
+
+/**
+ * Whether this select is a model picker (its options carry a `modelName`).
+ * Drives the search box + two-line model rows, which only make sense for model
+ * lists; transport / font / theme selects keep their plain behavior.
+ */
+const isModelSelect = computed(() => !!renderOptions.value?.some(o => o.modelName))
+
+/** Search text for the model picker (mirrors the chat model drawer). */
+const searchQuery = ref('')
+
+/** Model options after applying the search filter (by name or raw id). */
+const filteredRenderOptions = computed<SelectOption[] | undefined>(() => {
+  const opts = renderOptions.value
+  if (!opts) return opts
+  const q = searchQuery.value.toLowerCase().trim()
+  if (!q) return opts
+  return opts.filter(o =>
+    o.label.toLowerCase().includes(q) ||
+    (o.modelId ?? '').toLowerCase().includes(q),
+  )
+})
 
 /** Reset the filtered snapshot (called whenever the plain select closes). */
 function resetDisplayOptions() {
@@ -424,6 +475,7 @@ function refreshDisplayOptions() {
 function closeSelectPicker() {
   selectPicker.close()
   resetDisplayOptions()
+  searchQuery.value = ''
 }
 
 /** Group the plain select options by groupKey (when present). Options without a
@@ -582,6 +634,8 @@ function handleClick() {
     } else {
       selectPicker.open()
       themePicker.close()
+      // Fresh search each open, like the chat model drawer.
+      searchQuery.value = ''
       refreshDisplayOptions()
     }
     emit('editToggle', true)
@@ -939,6 +993,46 @@ function confirmEdit() {
 
 <!-- Non-scoped styles for BottomSheet-teleported select option rows -->
 <style>
+/* Model-picker search row: sticky so it stays put while the list scrolls. */
+.settings-item__search-row {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: var(--space-4) var(--space-7);
+  background: var(--bg-secondary);
+  border-bottom: 0.5px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.settings-item__search-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--space-3) var(--space-5);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: var(--font-size-md);
+  outline: none;
+  transition: border-color var(--duration-base);
+}
+
+.settings-item__search-input:focus {
+  border-color: var(--accent-color);
+}
+
+.settings-item__search-input::placeholder {
+  color: var(--text-muted);
+}
+
+.settings-item__option-empty {
+  padding: 24px var(--space-7);
+  text-align: center;
+  color: var(--text-muted);
+  font-size: var(--font-size-md);
+  flex-shrink: 0;
+}
+
 .settings-item__option {
   display: flex;
   align-items: center;
@@ -947,6 +1041,11 @@ function confirmEdit() {
   cursor: pointer;
   min-height: 38px;
   position: relative;
+  /* The option rows are flex children of the scrolling `.bs-body` column. Without
+     this they default to flex-shrink:1, so a long list (many models) squashes
+     every row toward `min-height` instead of scrolling — the two-line ModelRow
+     gets clipped. Pin the natural height and let the body scroll. */
+  flex-shrink: 0;
 }
 
 .settings-item__option::after {
@@ -977,7 +1076,7 @@ function confirmEdit() {
   background: color-mix(in srgb, var(--accent-color, #4a90d9) 8%, var(--bg-primary, #fff));
 }
 
-/* Label + optional sublabel share the flexible middle slot. */
+/* Plain (non-model) option label takes the flexible middle slot. */
 .settings-item__option-labels {
   flex: 1;
   min-width: 0;
@@ -990,19 +1089,6 @@ function confirmEdit() {
   font-size: var(--font-size-md);
   color: var(--text-primary);
   min-width: 0;
-}
-
-/* Raw id shown next to a label that is not unique on its own. */
-.settings-item__option-sublabel {
-  flex-shrink: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--font-mono);
-  font-size: var(--font-size-2xs);
-  color: var(--text-muted);
-  opacity: var(--opacity-soft);
 }
 
 .settings-item__option-check {

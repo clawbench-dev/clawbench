@@ -22,6 +22,9 @@ export interface SpeakerIdentity {
   name?: string
   backend: string
   avatar?: string
+  /** The underlying real agent name; filled by the backend only when it differs
+   *  from the display `name` (see service.SpeakerIdentity). */
+  agentName?: string
 }
 
 /**

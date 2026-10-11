@@ -864,6 +864,7 @@ export default {
       conversationIndexNoResults: 'No matching messages',
       conversationIndexRoleUser: 'User',
       conversationIndexRoleAssistant: 'Assistant',
+      conversationIndexRoleSystem: 'System',
       conversationIndexNoText: '(no text in this turn)',
     },
     pending: {
@@ -1027,6 +1028,8 @@ export default {
     title: 'Sessions',
     newSession: 'New session',
     selectAgent: 'Select agent',
+    singleChat: 'Single chat',
+    groupChat: 'Group chat',
     setAsDefaultAgent: 'Set as default agent',
     configAgent: 'Agent settings',
     noSessions: 'No sessions',
@@ -1127,6 +1130,7 @@ export default {
     newGroup: 'New group chat',
     title: 'Group',
     host: 'Host',
+    realAgent: 'Agent',
     // The reserved human participant name ("User") shown to the reader.
     you: 'you',
     selectHost: 'Select a group host',
@@ -1144,7 +1148,10 @@ export default {
     parallelHint: "When on, the members you {'@'} speak at the same time (the whole roster when you {'@'} nobody); agent-to-agent {'@'} is unaffected.",
     autoApproveHint: 'Auto-approve every member\u2019s permission requests.',
     confirm: 'Add',
-    alreadyMember: 'Added',
+    increaseInstance: 'Add another instance of this agent',
+    decreaseInstance: 'Remove one instance of this agent',
+    memberCountHint: '{count}/{max} added',
+    memberLimitReached: 'Member limit reached',
     bcc: {
       title: 'Private note',
       to: 'To',
@@ -3372,5 +3379,6 @@ export default {
     active: 'Sharing is on. Anyone can read the selected conversation via the link below',
     roleUser: 'User',
     roleAssistant: 'Reply',
+    roleSystem: 'System message',
   },
 } as const

@@ -918,6 +918,20 @@ describe('ChatPanelContent — group auto-speech is per speaker', () => {
     const groupBranch = region.slice(region.indexOf('isGroupSession.value'), region.indexOf('} else {', region.indexOf('isGroupSession.value')))
     expect(groupBranch).not.toContain('speakMessage')
   })
+
+  it('registers onTurnBoundary and re-anchors last_read_at when the user is watching', async () => {
+    // A group member finalize (stream_finalize) is a turn boundary: the member
+    // reply just stamped its completed_at, so the session is unread for the rest
+    // of the run. The host must re-anchor — same gate as the completion path.
+    const src = await source()
+    expect(src).toContain('onTurnBoundary: handleTurnBoundary')
+    const start = src.indexOf('function handleTurnBoundary(')
+    expect(start, 'handleTurnBoundary must exist').toBeGreaterThan(-1)
+    const region = src.slice(start, src.indexOf('\n}\n', start))
+    expect(region).toMatch(/markSessionRead/)
+    expect(region).toMatch(/appInForeground\.value/)
+    expect(region).toMatch(/currentSessionId\.value/)
+  })
 })
 
 // ── Concurrency switch is NOT in the chat panel ──

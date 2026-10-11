@@ -142,6 +142,21 @@ export interface AvatarKit {
     styles: Record<AvatarStyle, InstanceType<typeof import('@dicebear/core')['Style']>>
 }
 
+/**
+ * Generate ONE DiceBear avatar SVG seeded by `seed`, using a RANDOM style from
+ * the curated set. Loads only the single style chunk it picks (never the whole
+ * kit), so it is cheap enough to call once per new group member. The chosen
+ * style is baked into the returned SVG, so the stored string renders identically
+ * on the public share page (which has no DiceBear runtime).
+ */
+export async function generateAvatarSvg(seed: string): Promise<string> {
+    const core = await getAvatarLib()
+    const styleName = AVATAR_STYLES[Math.floor(Math.random() * AVATAR_STYLES.length)]
+    const mod = await retryableImport(STYLE_LOADERS[styleName])
+    const style = new core.Style(mod.default as StyleDefinition)
+    return new core.Avatar(style, { seed }).toString()
+}
+
 /** How many style chunks to fetch concurrently. 40 parallel imports would
  *  flood the connection; a small pool keeps the picker responsive. */
 const LOAD_CONCURRENCY = 6

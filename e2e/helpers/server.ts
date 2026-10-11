@@ -163,13 +163,12 @@ system_prompt: |
     You are a mock ACP agent for E2E testing.
 `)
 
-  // A SECOND acp-mock agent under a distinct id. A group cannot contain the same
-  // agent twice: AddGroupMember dedups by agent id, so adding "acp-mock" to a
-  // group whose host is also "acp-mock" just returns the HOST row and the group
-  // stays single-member. Specs that need a real host + member pair (e.g. the
-  // group permission approval path, where only the member must block) use this
-  // second id for the member. Same binary, different id ⇒ independent ACP
-  // connection and independent per-session mode.
+  // A SECOND acp-mock agent under a distinct id. Specs that need a genuinely
+  // DISTINCT member (not a second instance of the host) use this id: the same
+  // agent may now be added to a group multiple times as independent instances,
+  // but those instances share one display-name base and one ACP agent identity,
+  // which is not what a "host + a different member" test wants. Same binary,
+  // different id ⇒ independent ACP connection and independent per-session mode.
   writeFileSync(join(agentsDir, 'acp-mock-b.yaml'), `backend: acp-mock
 icon: "\\U0001F916"
 id: acp-mock-b

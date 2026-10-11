@@ -11,6 +11,7 @@ vi.mock('lucide-vue-next', () => ({
   // for the tests to tell the roles apart.
   User: { name: 'UserIcon', render: () => h('i', { class: 'icon-user' }) },
   Bot: { name: 'BotIcon', render: () => h('i', { class: 'icon-bot' }) },
+  Megaphone: { name: 'MegaphoneIcon', render: () => h('i', { class: 'icon-megaphone' }) },
   MessageCircleQuestion: { name: 'BtwIcon', render: () => h('i', { class: 'icon-btw' }) },
 }))
 
@@ -48,6 +49,7 @@ const i18n = createI18n({
         messageList: {
           conversationIndexRoleUser: 'User',
           conversationIndexRoleAssistant: 'Assistant',
+          conversationIndexRoleSystem: 'System',
           conversationIndexNoText: '(no text in this turn)',
           userMsgIndexAttachment: 'Attachment',
         },
@@ -442,6 +444,21 @@ describe('UserMsgIndexDrawer', () => {
       const wrapper = mountSheet({ messages: bothRoles })
       const tag = wrapper.find('.msg-role-tag')
       expect(tag.text()).toBe('')
+    })
+
+    it('gives a system row its own chip, glyph and modifier (not a user chip)', () => {
+      const wrapper = mountSheet({ messages: [
+        { id: 1, role: 'user', content: 'hi' },
+        { id: 2, role: 'system', content: 'Alice joined the discussion' },
+      ] })
+      const sys = wrapper.findAll('.msg-item')[1]
+      const tag = sys.find('.msg-role-tag')
+      expect(tag.classes()).toContain('role-system')
+      expect(tag.classes()).not.toContain('role-user')
+      expect(tag.find('.icon-megaphone').exists()).toBe(true)
+      expect(tag.find('.icon-user').exists()).toBe(false)
+      expect(tag.attributes('aria-label')).toBe('System')
+      expect(sys.classes()).toContain('msg-item--system')
     })
 
     it('marks assistant rows with a distinct class', () => {

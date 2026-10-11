@@ -1,7 +1,10 @@
 <template>
   <div class="chat-message" :class="[msg.role, { 'has-metadata': msg.role === 'assistant' && msg.metadata }]" :data-msg-key="msg.id ? 'db-' + msg.id : null" :data-streaming="msg.streaming ? 'true' : null">
 
-    <div v-if="msg.role === 'system'" class="chat-system-row">{{ msg.content }}</div>
+    <div v-if="msg.role === 'system'" class="chat-system-row">
+      <Megaphone class="chat-system-icon" :size="13" aria-hidden="true" />
+      <span class="chat-system-text">{{ msg.content }}</span>
+    </div>
     <template v-else>
     <!-- Group-chat speaker attribution: a member (not the user) produced this
          assistant message. agentId is the member row id, resolved via the
@@ -15,6 +18,7 @@
     <div v-if="msg.role === 'assistant' && speaker" class="msg-speaker" :class="{ 'msg-speaker-host': isHostMessage }">
       <AgentIcon :backend="speaker.backend" :name="speaker.name" :avatar="speaker.avatar" size="lg" />
       <span class="msg-speaker-name">{{ speaker.name }}</span>
+      <RealAgentNameTag class="msg-speaker-real" :agent-name="speaker.agentName" :display-name="speaker.name" />
       <span v-if="isHostMessage" class="msg-speaker-host-tag"><Crown :size="11" class="msg-speaker-host-crown" />{{ t('group.host') }}</span>
     </div>
 
@@ -243,7 +247,7 @@
 <script setup>
 import { ref, inject, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Clock, Pause, Volume2, Info, FileDiff, Split, Rewind, MessageSquareQuote, ChevronDown, Lock, User, Crown } from 'lucide-vue-next'
+import { Clock, Pause, Volume2, Info, FileDiff, Split, Rewind, MessageSquareQuote, ChevronDown, Lock, User, Crown, Megaphone } from 'lucide-vue-next'
 import { formatDuration, formatRelativeTime } from '@/utils/format.ts'
 import { escapeHtml } from '@/utils/html.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
@@ -263,6 +267,7 @@ import SummaryToggle from '@/components/common/SummaryToggle.vue'
 import CopyButton from '@/components/common/CopyButton.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
+import RealAgentNameTag from '@/components/common/RealAgentNameTag.vue'
 
 const { t } = useI18n()
 
@@ -305,7 +310,9 @@ const props = defineProps({
    *  Only the timestamp line is kept — it is information, not a control. */
   readOnly: { type: Boolean, default: false },
   /** Resolves a group-chat speaker (msg.agentId = member row id) to
-   *  { name, backend }. Returns null outside a group / when unresolved. */
+   *  { name, backend, avatar, agentName }. Returns null outside a group / when
+   *  unresolved. `agentName` is the underlying real agent name, set only when it
+   *  differs from the display `name` (rendered as a muted suffix). */
   resolveSpeaker: { type: Function, default: null },
   /** Resolves a member DISPLAY NAME (a routing target) to
    *  { name, backend, avatar } for @-mention chips. */
@@ -1503,6 +1510,8 @@ const copyPayload = quotableText
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
 }
+/* .msg-speaker-real (the real-agent disclosure chip) is styled by the shared
+   RealAgentNameTag component; no override needed here. */
 .msg-speaker-host-tag {
   display: inline-flex;
   align-items: center;
@@ -1560,6 +1569,8 @@ const copyPayload = quotableText
 
 /* ── Group-chat system event row (member joined / left) ──
    A centered thin pill: NOT a bubble (no .msg-card, no avatar, no meta bar).
+   A single Megaphone glyph marks it as an announcement — the same unified icon
+   the conversation index and the share-selection dialog use for system rows.
    Global block (not scoped) because it is a shared row style, and because a
    future v-html/markdown surface could reuse the class name. */
 .chat-system-row {
@@ -1574,7 +1585,20 @@ const copyPayload = quotableText
   line-height: var(--line-height-snug);
   text-align: center;
   box-sizing: border-box;
+  /* Icon + text on one baseline; the icon is decorative (aria-hidden). */
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.chat-system-icon {
+  flex-shrink: 0;
+  opacity: var(--opacity-hover, 0.7);
+}
+
+.chat-system-text {
+  min-width: 0;
 }
 </style>

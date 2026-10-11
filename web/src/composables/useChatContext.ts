@@ -43,8 +43,12 @@ export interface StagedMention {
   memberId: string
   /** Display name, for the card label and the mention chips. */
   name: string
-  /** Underlying agent id — the avatar belongs to the AGENT, not the member row. */
+  /** Underlying agent id — used to fall back to the AGENT avatar when the
+   *  member has no avatar of its own. */
   agentId?: string
+  /** Resolved avatar for the card: the member's own snapshot when set, else the
+   *  underlying agent's avatar (resolved by the caller at pick time). */
+  memberAvatar?: string
   /** Member backend, for the built-in icon when no custom avatar is set. */
   backend?: string
   /** The private note (密送) for this member. '' = none. */
@@ -255,6 +259,7 @@ function mintMention(list: StagedMention[], data: Omit<StagedMention, 'id' | 'no
   if (existing) {
     existing.name = data.name
     if (data.agentId !== undefined) existing.agentId = data.agentId
+    if (data.memberAvatar !== undefined) existing.memberAvatar = data.memberAvatar
     if (data.backend !== undefined) existing.backend = data.backend
     return existing
   }

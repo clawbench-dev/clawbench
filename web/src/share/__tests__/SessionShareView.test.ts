@@ -361,14 +361,16 @@ describe('SessionShareView', () => {
   // A shared GROUP mirrors the in-app group header: an overlapping avatar stack
   // (host first, +N overflow) built from the frozen ACTIVE roster — not the
   // single session-agent icon a 1:1 share shows.
-  it('renders an avatar stack for a group share', async () => {
+  it('renders an avatar stack for a group share, using each member\'s own frozen avatar', async () => {
+    const hostSvg = '<svg>host-avatar</svg>'
+    const secondSvg = '<svg>second-avatar</svg>'
     globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
       const u = String(url)
       if (u.includes('/session')) {
         const p = makePayload()
         ;(p as Record<string, unknown>).groupMembers = [
-          { id: 'm-host', agentId: 'a1', name: 'Host', backend: 'codebuddy', isHost: true },
-          { id: 'm-second', agentId: 'a2', name: 'Second', backend: 'claude' },
+          { id: 'm-host', agentId: 'a1', name: 'Host', backend: 'codebuddy', isHost: true, avatar: hostSvg },
+          { id: 'm-second', agentId: 'a2', name: 'Second', backend: 'claude', avatar: secondSvg },
         ]
         return { ok: true, json: async () => p } as Response
       }
@@ -382,6 +384,11 @@ describe('SessionShareView', () => {
     const discs = stack.findAll('.avatar-disc')
     expect(discs).toHaveLength(2)
     expect(discs[0].classes()).toContain('is-host')
+    // The stack reads the avatar off the roster entry itself (the payload's
+    // groupMembers[].avatar), not indirectly via the speakers map.
+    const srcs = discs.map((d) => decodeURIComponent((d.find('.agent-icon-img').attributes('src') || '').split(',')[1] || ''))
+    expect(srcs[0]).toBe(hostSvg)
+    expect(srcs[1]).toBe(secondSvg)
     // The single-agent icon is replaced by the stack.
     expect(wrapper.find('.session-share-byline .session-share-agent-name').exists()).toBe(false)
   })
@@ -597,6 +604,33 @@ describe('SessionShareView', () => {
       expect(rows[0].find('.msg-text').text()).toContain('please fix it')
       // The assistant row uses its stored summary when one exists.
       expect(rows[1].find('.msg-text').text()).toContain('A short summary.')
+    })
+
+    it('gives a system row its own chip, not a user chip', async () => {
+      // A group membership event rides in the snapshot as role='system'. The TOC
+      // must mark it with the unified Megaphone chip, never the User chip.
+      globalThis.fetch = vi.fn(async () => ({
+        ok: true,
+        json: async () => {
+          const p = makePayload()
+          p.messages.push({
+            id: 13,
+            role: 'system',
+            content: 'Alice joined the discussion',
+            createdAt: '2026-09-22T09:02:00Z',
+          } as never)
+          return p
+        },
+      } as Response)) as unknown as typeof fetch
+
+      const wrapper = await mountView()
+      const sys = wrapper.findAll('.share-toc .msg-item')[2]
+      const tag = sys.find('.msg-role-tag')
+      expect(tag.classes()).toContain('role-system')
+      expect(tag.classes()).not.toContain('role-user')
+      expect(tag.find('.lucide-megaphone').exists()).toBe(true)
+      expect(tag.find('.lucide-user').exists()).toBe(false)
+      expect(sys.classes()).toContain('msg-item--system')
     })
 
     it('icons the assistant row with the frozen session agent (public TOC)', async () => {

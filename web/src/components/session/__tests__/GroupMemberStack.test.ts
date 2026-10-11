@@ -11,7 +11,7 @@ vi.mock('@/components/common/AgentIcon.vue', () => ({
   default: { name: 'AgentIcon', props: ['backend', 'name', 'avatar', 'size'], template: '<span class="agent-icon-stub" />' },
 }))
 vi.mock('@/composables/useAgents', () => ({
-  getAgentAvatar: () => '',
+  getAgentAvatar: (agentId: string) => (agentId ? `<svg>agent-${agentId}</svg>` : ''),
 }))
 
 function member(i: number) {
@@ -76,5 +76,20 @@ describe('GroupMemberStack', () => {
       },
     })
     expect(w.findAll('.avatar-disc')[0].classes()).toContain('is-host')
+  })
+
+  it('passes each member own avatar to AgentIcon (not the agent avatar)', () => {
+    const w = mount(GroupMemberStack, {
+      props: {
+        members: [
+          { id: 'm1', agentId: 'a1', name: 'M1', backend: 'cli', avatar: '<svg>member-1</svg>' },
+          { id: 'm2', agentId: 'a2', name: 'M2', backend: 'cli' },
+        ],
+      },
+    })
+    const avatars = w.findAllComponents({ name: 'AgentIcon' }).map(c => c.props('avatar'))
+    expect(avatars[0]).toBe('<svg>member-1</svg>')
+    // No member snapshot: AvatarStack falls back to the agent avatar.
+    expect(avatars[1]).toBe('<svg>agent-a2</svg>')
   })
 })

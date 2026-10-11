@@ -40,6 +40,8 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 			project_id INTEGER NOT NULL DEFAULT 0,
 			backend TEXT NOT NULL DEFAULT '',
 			title TEXT NOT NULL DEFAULT '',
+			agent_name TEXT NOT NULL DEFAULT '',
+			agent_avatar TEXT NOT NULL DEFAULT '',
 			agent_id TEXT NOT NULL DEFAULT '',
 			agent_source TEXT NOT NULL DEFAULT '',
 			model TEXT NOT NULL DEFAULT '',
@@ -876,6 +878,65 @@ func TestSessionSharePayload_FreezesSpeakerIdentitiesWithAvatars(t *testing.T) {
 	assert.Equal(t, "<host/>", payload.SessionAgent.Avatar, "the share snapshot must freeze custom avatars for the viewer")
 }
 
+// A shared GROUP must freeze each member's OWN avatar (agent_avatar) into the
+// speaker entry the viewer resolves per message, falling back to the agent's
+// shared avatar only when the member has no snapshot. Without this the anonymous
+// viewer (which cannot reach /api/agents) would draw a generic icon for a member
+// who set a custom one.
+func TestSessionSharePayload_FreezesGroupMemberAvatar(t *testing.T) {
+	db := setupTestDBForSessionSharePayload(t)
+	defer func() { _ = db.Close() }()
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"claude": {ID: "claude", Name: "Claude", Backend: "claude", Avatar: "<agent/>"},
+	}
+	t.Cleanup(func() { model.Agents = origAgents })
+
+	// context_state must be valid JSON: GroupMembersForGroups json_extract()s the
+	// host pointer out of it, and a malformed value makes that query fail (the
+	// builder swallows the error, leaving groupMembers empty).
+	_, err := db.Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, model, session_type, context_state)
+		 VALUES ('g1', ?, 'codebuddy', 'Group', '', '', 'group', '{}')`,
+		testProjectRoot,
+	)
+	require.NoError(t, err)
+	// The member carries its OWN avatar snapshot; the agent's is only a fallback.
+	_, err = db.Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_name, agent_avatar, agent_id, session_type, group_id, archived)
+		 VALUES ('m-1', ?, 'claude', '', 'Alice', '<member/>', 'claude', 'group_member', 'g1', 0)`,
+		testProjectRoot,
+	)
+	require.NoError(t, err)
+
+	seedMessage(t, db, "g1", "assistant", `{"blocks":[{"type":"text","text":"hi"}],"metadata":{}}`, 0, 0)
+
+	raw, _, err := service.BuildSessionSharePayload("g1", nil, testProjectRoot, "/home/u")
+	require.NoError(t, err)
+
+	var payload struct {
+		Speakers map[string]struct {
+			Avatar string `json:"avatar"`
+		} `json:"speakers"`
+		GroupMembers []struct {
+			ID     string `json:"id"`
+			Avatar string `json:"avatar"`
+		} `json:"groupMembers"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(raw), &payload))
+
+	speaker, ok := payload.Speakers["m-1"]
+	require.True(t, ok, "the member must appear in the speakers map")
+	assert.Equal(t, "<member/>", speaker.Avatar,
+		"the member's own avatar snapshot must be frozen into the speaker entry")
+
+	require.Len(t, payload.GroupMembers, 1)
+	assert.Equal(t, "m-1", payload.GroupMembers[0].ID)
+	assert.Equal(t, "<member/>", payload.GroupMembers[0].Avatar,
+		"the avatar stack must draw the same member snapshot")
+}
+
 // A shared GROUP must carry the host's member row id so the public viewer can
 // mark the host's messages and render their private notes (bcc) card.
 func TestSessionSharePayload_GroupCarriesHostMemberID(t *testing.T) {
@@ -942,11 +1003,12 @@ func TestSessionSharePayload_GroupCarriesOrderedActiveMembers(t *testing.T) {
 	require.NoError(t, err)
 	// Member rows: the host first (created_at order), then a plain member, then a
 	// LEFT member that must be excluded. group_id points each row at the group.
+	// The member's display name lives in agent_name (title is left empty).
 	insertMember := func(id, name, backend string, archived int, createdAt string) {
 		t.Helper()
 		_, err := db.Exec(
-			`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type, group_id, archived, created_at)
-			 VALUES (?, 1, ?, ?, ?, 'group_member', 'g1', ?, ?)`,
+			`INSERT INTO chat_sessions (id, project_id, backend, title, agent_name, agent_id, session_type, group_id, archived, created_at)
+			 VALUES (?, 1, ?, '', ?, ?, 'group_member', 'g1', ?, ?)`,
 			id, backend, name, id, archived, createdAt)
 		require.NoError(t, err)
 	}

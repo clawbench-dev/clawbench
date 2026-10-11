@@ -426,6 +426,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// AI group chat (design docs/plans/2026-10-04-ai-group-chat-design.md).
 	register("/api/group/create", ServeGroupCreate)
 	register("/api/group/members", ServeGroupMembers)
+	register("/api/group/member-avatars", ServeGroupMemberAvatars)
 	register("/api/group/settings", ServeGroupSettings)
 	register("/api/ai/chat/tool-call", ServeToolCallDetail)
 	register("/api/ai/chat/thinking", ServeThinkingDetail)

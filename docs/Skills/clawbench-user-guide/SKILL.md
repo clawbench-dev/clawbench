@@ -1056,7 +1056,7 @@ sqlite3 "file:$HOME/.clawbench/ClawBench.db?mode=ro&immutable=1" \
 | 主持人气泡 | `.msg-speaker-host-tag` | 发言人标签上的皇冠 + 「主持人」 |
 | @ 汇总行 | `.msg-mention-summary` | 气泡顶部「@ A、B」一行 |
 | 密送卡 | `.msg-bcc`（成员，折叠）/ `.msg-bcc-user`（发给你，默认展开） | |
-| 系统行 | `.chat-system-row` | 「轮到用户发言」「XX 加入了讨论」等居中细条 |
+| 系统行 | `.chat-system-row`（图标 `.chat-system-icon`） | 「轮到用户发言」「XX 加入了讨论」等居中细条，统一带 Megaphone 图标 |
 | 成员抽屉 | `.gm-row` / `.gm-tag--host` / `.gm-tag--left` / `.gm-remove` | 行 / 主持人标签 / 已离场标签 / 移除按钮 |
 | 抽屉「添加成员」 | `[data-action="add-members"]` | 在**抽屉头部右侧** |
 | 群设置 | `#group-parallel`（仅自由模式）/ `#group-auto-approve`（两者） | 主持人模式只显示自动批准（无并发开关）；成员发言次数上限是全局设置，不在抽屉里 |

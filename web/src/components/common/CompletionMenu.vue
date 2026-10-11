@@ -30,7 +30,18 @@
       <component v-else :is="sourceMeta(item.source).icon" :size="14" class="completion-source-icon" :style="{ color: sourceMeta(item.source).color }" />
       <component v-if="item.icon" :is="item.icon" :path="item.key" :is-dir="item.isDir === true" :size="14" class="completion-item-icon" />
       <span class="completion-text">
-        <span class="completion-label" v-html="renderLabel(item)"></span>
+        <span class="completion-name-row">
+          <span class="completion-label" v-html="renderLabel(item)"></span>
+          <!-- Real-agent disclosure: a member whose nickname was auto-derived (a
+               pool name / "<base> <n>") shows the underlying agent's real name.
+               The visibility rule + styling live in the shared component. -->
+          <RealAgentNameTag
+            v-if="item.isMember"
+            class="completion-real-name"
+            :agent-name="item.memberAgentName"
+            :display-name="item.label"
+          />
+        </span>
         <span v-if="item.description" class="completion-desc">{{ middleEllipsis(item.description, 34) }}</span>
       </span>
       <span class="completion-source" :class="'completion-source--' + item.source" :style="{ color: sourceMeta(item.source).color }">
@@ -44,6 +55,7 @@
 import { useI18n } from 'vue-i18n'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
+import RealAgentNameTag from '@/components/common/RealAgentNameTag.vue'
 import { SOURCE_META } from '@/utils/completionSources.ts'
 import { middleEllipsis } from '@/utils/completionMatch.ts'
 import { escapeHtml } from '@/utils/html.ts'
@@ -128,7 +140,17 @@ function renderLabel(item: CompletionItem): string {
   flex: 1;
 }
 
+/* Nickname + optional real-agent chip on one line. The label takes the slack
+   and ellipsises; the chip stays intact at the trailing edge. */
+.completion-name-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
 .completion-label {
+  min-width: 0;
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
@@ -136,6 +158,9 @@ function renderLabel(item: CompletionItem): string {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* .completion-real-name (the real-agent disclosure chip) is styled by the
+   shared RealAgentNameTag component. */
 
 .completion-label mark {
   background: rgba(255, 230, 0, 0.5);

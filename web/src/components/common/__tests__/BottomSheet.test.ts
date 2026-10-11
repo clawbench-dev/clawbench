@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount, VueWrapper } from '@vue/test-utils'
-import { nextTick, ref } from 'vue'
+import { nextTick, ref, h } from 'vue'
 import { handleBackNavigation, canNavigateBack, _resetHandlers, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
 import { _resetDrawerStack, _drawerStackSnapshot } from '@/utils/drawerStack'
 
@@ -213,7 +213,8 @@ describe('BottomSheet overlay click & escape key', () => {
     expect(wrapper!.emitted('close')).toBeFalsy()
   })
 
-  it('clicking header emits close after animation', async () => {
+  it('narrow (drawer) mode: clicking the header closes the sheet', async () => {
+    wideState.isWideScreen.value = false
     wrapper = mountSheet()
     await nextTick()
     const header = $('.bs-header')!
@@ -221,6 +222,13 @@ describe('BottomSheet overlay click & escape key', () => {
     await nextTick()
     vi.advanceTimersByTime(300)
     expect(wrapper!.emitted('close')).toBeTruthy()
+  })
+
+  it('narrow (drawer) mode: no close button is rendered', async () => {
+    wideState.isWideScreen.value = false
+    wrapper = mountSheet()
+    await nextTick()
+    expect($('.modal-close-btn')).toBeFalsy()
   })
 })
 
@@ -374,10 +382,54 @@ describe('BottomSheet rendering & slots', () => {
     expect($('.custom-footer')?.textContent).toBe('OK')
   })
 
-  it('does not render footer when no footer slot', async () => {
+  it('narrow (drawer) mode: does not render footer when no footer slot', async () => {
+    wideState.isWideScreen.value = false
     wrapper = mountSheet()
     await nextTick()
     expect($('.bs-footer')).toBeNull()
+  })
+
+  it('wide (card) mode: always renders a footer even without a footer slot', async () => {
+    wideState.isWideScreen.value = true
+    wrapper = mountSheet()
+    await nextTick()
+    // The footer element is present but has no element content; the slim-bar
+    // styling is applied by CSS `:not(:has(> *))` (asserted in the css guard).
+    const footer = $('.bs-footer')
+    expect(footer).toBeTruthy()
+    expect(footer!.querySelector(':scope > *')).toBeNull()
+    wideState.isWideScreen.value = false
+  })
+
+  it('wide (card) mode: footer keeps real content when a slot is provided', async () => {
+    wideState.isWideScreen.value = true
+    wrapper = mountSheet({}, { footer: '<button class="custom-footer">OK</button>' })
+    await nextTick()
+    const footer = $('.bs-footer')!
+    expect(footer.querySelector(':scope > *')).toBeTruthy()
+    expect($('.custom-footer')?.textContent).toBe('OK')
+    wideState.isWideScreen.value = false
+  })
+
+  it('wide (card) mode: a slot whose own v-if is false still renders the footer element (empty → slim bar)', async () => {
+    wideState.isWideScreen.value = true
+    const show = ref(false)
+    wrapper = mount(BottomSheet, {
+      props: { open: true, title: 'Test' },
+      slots: { footer: () => (show.value ? h('button', { class: 'late' }, 'x') : null) },
+      attachTo: document.body,
+    })
+    await nextTick()
+    const footer = $('.bs-footer')
+    // Present but empty — this is the session-list case (tab bar hidden).
+    expect(footer).toBeTruthy()
+    expect(footer!.querySelector(':scope > *')).toBeNull()
+
+    // ...and it fills in once the slot renders content.
+    show.value = true
+    await nextTick()
+    expect($('.bs-footer')!.querySelector(':scope > *')).toBeTruthy()
+    wideState.isWideScreen.value = false
   })
 
   it('hides header when noHeader is true', async () => {
@@ -499,6 +551,9 @@ describe('BottomSheet wide-screen card (all drawers match ModalDialog)', () => {
       wrapper = null
     }
     document.body.querySelectorAll('.bs-overlay').forEach(el => el.remove())
+    // Restore the narrow default so this block's wide-mode tests cannot leak
+    // into any later block that relies on the module-level wideState.
+    wideState.isWideScreen.value = false
   })
 
   it('does not apply the centered-card class in narrow (non-wide-screen) mode', () => {
@@ -524,19 +579,31 @@ describe('BottomSheet wide-screen card (all drawers match ModalDialog)', () => {
     expect($('.bs-panel')?.classList.contains('bs-wide-auto')).toBe(true)
   })
 
-  it('does not render a close button in wide-screen mode', () => {
+  it('renders a close button in wide-screen (centered card) mode', () => {
     wideState.isWideScreen.value = true
     wrapper = mountSheet({ title: 'Test' })
-    expect($('.modal-close-btn')).toBeFalsy()
+    expect($('.modal-close-btn')).toBeTruthy()
   })
 
-  it('does not render a close button in narrow mode', () => {
+  it('does not render a close button in narrow (bottom drawer) mode', () => {
     wideState.isWideScreen.value = false
     wrapper = mountSheet({ title: 'Test' })
     expect($('.modal-close-btn')).toBeFalsy()
   })
 
-  it('clicking the header emits close after animation', async () => {
+  it('clicking the close button emits close after animation (wide mode)', async () => {
+    vi.useFakeTimers()
+    wideState.isWideScreen.value = true
+    wrapper = mountSheet({ title: 'Test' })
+    const btn = $('.modal-close-btn')!
+    btn.click()
+    await nextTick()
+    vi.advanceTimersByTime(300)
+    expect(wrapper!.emitted('close')).toBeTruthy()
+    vi.useRealTimers()
+  })
+
+  it('wide mode: clicking the header does NOT close the sheet (X button owns it)', async () => {
     vi.useFakeTimers()
     wideState.isWideScreen.value = true
     wrapper = mountSheet({ title: 'Test' })
@@ -544,7 +611,36 @@ describe('BottomSheet wide-screen card (all drawers match ModalDialog)', () => {
     header.click()
     await nextTick()
     vi.advanceTimersByTime(300)
+    expect(wrapper!.emitted('close')).toBeFalsy()
+    vi.useRealTimers()
+  })
+
+  it('narrow mode: clicking the header closes the sheet (no X button)', async () => {
+    vi.useFakeTimers()
+    wideState.isWideScreen.value = false
+    wrapper = mountSheet({ title: 'Test' })
+    const header = $('.bs-header')!
+    header.click()
+    await nextTick()
+    vi.advanceTimersByTime(300)
     expect(wrapper!.emitted('close')).toBeTruthy()
+    vi.useRealTimers()
+  })
+
+  it('narrow mode: an interactive header-slot element with .stop does not close the sheet', async () => {
+    vi.useFakeTimers()
+    wideState.isWideScreen.value = false
+    wrapper = mount(BottomSheet, {
+      props: { open: true, title: 'Test' },
+      slots: { header: '<button class="hdr-act" @click.stop>act</button>' },
+      attachTo: document.body,
+    })
+    await nextTick()
+    const btn = $('.hdr-act')!
+    btn.click()
+    await nextTick()
+    vi.advanceTimersByTime(300)
+    expect(wrapper!.emitted('close')).toBeFalsy()
     vi.useRealTimers()
   })
 

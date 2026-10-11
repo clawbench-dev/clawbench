@@ -9,9 +9,12 @@ import type { VueWrapper } from '@vue/test-utils'
 // `#private` fields, and wrapping them in a deep reactive proxy throws
 // "Cannot read private member from an object whose class did not declare it".
 // This test renders every tile for real so that regression is caught.
-vi.mock('vue-i18n', () => ({
-  useI18n: () => ({ t: (key: string) => key }),
-}))
+vi.mock('vue-i18n', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('vue-i18n')>()
+  // Keep the real module (createI18n etc.) so shared shells that import the
+  // i18n singleton still load; only t() is stubbed.
+  return { ...actual, useI18n: () => ({ t: (key: string) => key }) }
+})
 
 vi.mock('@/composables/useBackHandler', () => ({
   registerBackHandler: () => () => {},

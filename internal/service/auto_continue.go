@@ -141,6 +141,32 @@ func AutoContinuePrompt() string {
 	return i18n.T(i18n.LocalizerForLocale(model.Language), "AutoContinue")
 }
 
+// emitTurnFinalize tells the session's subscribers that ONE producer turn has
+// ended, so the frontend finalizes that turn's streaming bubble WITHOUT ending
+// the run (the loading state and stop button stay armed for the resume turn).
+//
+// This is the single-agent counterpart of the group orchestrator's per-member
+// stream_finalize (emitGroupMemberFinalize). It exists because the interactive
+// auto-continue path starts a NEW turn after an abnormally terminated one, and
+// without a boundary event the failed turn's bubble keeps its spinner until the
+// whole run's terminal `done` sweeps every still-streaming bubble (or the user
+// switches sessions, which rebuilds from the DB). The queue path has the same
+// need and gets it from `queue_drain`; auto-continue had no equivalent.
+//
+// A msgID of 0 means the failed turn never opened a row (early failure), so
+// there is nothing to finalize — the frontend treats a 0-id finalize as a no-op.
+//
+// It is a var seam so tests can observe the contract without a WS hub.
+var emitTurnFinalize = func(sessionID string, msgID int64) {
+	if msgID <= 0 {
+		return
+	}
+	ws.EmitToSession(sessionID, ai.StreamEvent{
+		Type:         "stream_finalize",
+		StreamFinish: &ai.StreamFinishData{MessageID: msgID},
+	})
+}
+
 // AutoContinueRunnerConfig describes how to resume one session's turns.
 type AutoContinueRunnerConfig struct {
 	// Ctx is the session's execution context — the same one CancelSession
@@ -197,6 +223,12 @@ func NewAutoContinueRunner(cfg AutoContinueRunnerConfig) func(attempt int, prev 
 			slog.Int("attempt", attempt),
 			slog.String("reason", prev.AbnormalReason),
 			slog.Int("max_retries", model.ChatAutoContinueMaxRetries))
+
+		// Close the failed turn's bubble BEFORE resuming. Without this per-turn
+		// boundary the frontend keeps the failed bubble's spinner alive until the
+		// whole run's terminal `done` (or a session switch). Emitted before the
+		// delay so the indicator clears the moment the backend commits to a retry.
+		emitTurnFinalize(cfg.SessionID, prev.MsgID)
 
 		// Let the crashed process be reaped (and a rate-limited upstream cool
 		// off) before issuing the same request again.

@@ -19,18 +19,43 @@
         ]"
       >
         <!-- Header -->
-        <div v-if="!noHeader" class="bs-header" :class="{ 'bs-header-handle-only': handleOnly }" @click="handleClose">
+        <div
+          v-if="!noHeader"
+          class="bs-header"
+          :class="{ 'bs-header-handle-only': handleOnly, 'bs-header-has-close': !handleOnly && isWideScreen }"
+          @click="handleHeaderClick"
+        >
           <div class="bs-handle" />
           <slot v-if="!handleOnly" name="header">
             <span class="bs-title">{{ title }}</span>
           </slot>
+          <!-- Close button only in centered-card (wide) mode. The narrow bottom
+               drawer closes via its header tap / drag handle instead — a floating
+               X on a bottom sheet is redundant with the handle. -->
+          <button
+            v-if="!handleOnly && isWideScreen"
+            type="button"
+            class="modal-close-btn"
+            :aria-label="closeLabel"
+            :title="closeLabel"
+            @click.stop="handleClose"
+          >
+            <X :size="16" />
+          </button>
         </div>
         <!-- Body -->
         <div class="bs-body">
           <slot />
         </div>
-        <!-- Footer slot -->
-        <footer v-if="$slots.footer" class="bs-footer">
+        <!-- Footer slot. In centered-card (wide) mode a footer is ALWAYS
+             rendered, matching ModalDialog, so the card has the same bottom
+             chrome as a native modal. When it ends up with no element content —
+             either no slot at all, or a slot whose own `v-if` is false (the
+             session list's tab bar hides when there are no cross-project
+             sessions) — CSS collapses it to the slim bar via
+             `:not(:has(> *))` in modal-card.css. The bottom drawer (narrow)
+             only shows a footer when the consumer provides one. -->
+        <footer v-if="$slots.footer || isWideScreen" class="bs-footer">
           <slot name="footer" />
         </footer>
       </div>
@@ -39,10 +64,13 @@
 </template>
 
 <script setup>
-import { ref, watch, nextTick, onBeforeUnmount } from 'vue'
+import { ref, watch, nextTick, onBeforeUnmount, computed } from 'vue'
+import { X } from 'lucide-vue-next'
+import i18n from '@/i18n'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
 import { getWideScreenState } from '@/composables/useWideScreenLayout'
 import { nextDrawerId, pushDrawer, removeDrawer, drawerZOffset } from '@/utils/drawerStack'
+import '@/assets/modal-card.css'
 import '@/assets/modal-footer-btn.css'
 
 const props = defineProps({
@@ -73,6 +101,8 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['close'])
+
+const closeLabel = computed(() => i18n.global.t('common.close'))
 
 // Wide-screen detection mirrors useWideScreenLayout (physical-width aware, so
 // high-DPR tablets in landscape are constrained even when CSS width < 1024px).
@@ -179,6 +209,18 @@ function handleEscapeKey(e) {
     overlayRef.value?.focus()
     return
   }
+  handleClose()
+}
+
+/**
+ * Header tap closes the sheet only in narrow (bottom-drawer) mode, where the
+ * header is the close affordance and there is no X button. In wide
+ * (centered-card) mode the dedicated close button owns that job, so the header
+ * stays inert. Interactive elements inside the header slot must `@click.stop`
+ * so they do not bubble here (all current consumers do).
+ */
+function handleHeaderClick() {
+  if (isWideScreen.value) return
   handleClose()
 }
 
@@ -317,9 +359,11 @@ defineExpose({
   box-shadow: 0 1px 0 var(--border-color, #e5e5e5);
   background: var(--bg-secondary, #f8f9fa);
   flex-shrink: 0;
-  cursor: pointer;
   position: relative;
 }
+
+/* The header's right padding (to clear the absolute .modal-close-btn) and the
+   button's own styling live in modal-card.css, which this component imports. */
 
 /* Android-style drag handle */
 .bs-handle {

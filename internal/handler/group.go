@@ -105,6 +105,10 @@ func groupSessionLimitOK(w http.ResponseWriter, r *http.Request, projectPath str
 // any id is unknown OR disabled, in which case the whole request must fail
 // (nothing created). A disabled agent must not be seeded into a NEW group, just
 // as it is hidden from every other new-entry picker.
+//
+// The display name is NOT set here: the service assigns a unique name per
+// instance (the same agent may appear multiple times), deriving the base from
+// the agent's name. AgentIDs may contain duplicates.
 func groupMemberSpecs(agentIDs []string) ([]service.GroupMemberSpec, bool) {
 	specs := make([]service.GroupMemberSpec, 0, len(agentIDs))
 	for _, agentID := range agentIDs {
@@ -116,9 +120,8 @@ func groupMemberSpecs(agentIDs []string) ([]service.GroupMemberSpec, bool) {
 			return nil, false
 		}
 		specs = append(specs, service.GroupMemberSpec{
-			AgentID:     agentID,
-			Backend:     backend,
-			DisplayName: service.GetAgentDisplayName(agentID),
+			AgentID: agentID,
+			Backend: backend,
 		})
 	}
 	return specs, true
@@ -186,11 +189,17 @@ func serveGroupMembersList(w http.ResponseWriter, r *http.Request, projectPath s
 	hostMemberID := service.GetGroupHostMember(groupID)
 	out := make([]map[string]any, 0, len(members))
 	for _, m := range members {
+		agentName := ""
+		if a := model.GetAgent(m.AgentID); a != nil {
+			agentName = a.Name
+		}
 		out = append(out, map[string]any{
 			"id":        m.ID,
 			jsonAgentID: m.AgentID,
 			jsonName:    m.Name,
 			jsonBackend: m.Backend,
+			"avatar":    m.Avatar,
+			"agentName": agentName,
 			"left":      m.Left,
 			"isHost":    m.ID == hostMemberID,
 		})
@@ -242,9 +251,8 @@ func serveGroupMembersAdd(w http.ResponseWriter, r *http.Request, projectPath st
 			continue
 		}
 		specs = append(specs, service.GroupMemberSpec{
-			AgentID:     agentID,
-			Backend:     backend,
-			DisplayName: service.GetAgentDisplayName(agentID),
+			AgentID: agentID,
+			Backend: backend,
 		})
 	}
 	memberIDs, err := service.AddGroupMembers(projectPath, req.GroupID, specs)
@@ -321,4 +329,81 @@ func ServeGroupSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// maxGroupMemberAvatarsBody caps the raw request body of
+// ServeGroupMemberAvatars: every member slot at the maximum avatar size, plus
+// 1 MiB of slack for JSON syntax and the memberId/groupId keys.
+const maxGroupMemberAvatarsBody = service.MaxGroupMembers*maxAgentAvatarBytes + 1<<20
+
+// ServeGroupMemberAvatars persists per-member avatar SVGs generated client-side
+// (DiceBear). Batch so a freshly created/expanded group writes all its new
+// members in ONE round trip.
+//
+//	POST /api/group/member-avatars {groupId, avatars:[{memberId, avatar}]} -> {ok, saved:int}
+//
+// Each avatar must pass the same SVG safety gate (and size cap) as agent
+// avatars: this is a stored-XSS sink reachable by any authenticated caller, and
+// the stored string is later replayed into the public share page. The batch is
+// validated in FULL before any write, so an invalid item never leaves the group
+// half-updated.
+//
+// The batch is BOUNDED on both axes. The entry count is capped at the group
+// member cap (a group can never have more members, so a larger batch is
+// meaningless), and the raw body is capped at the same per-avatar size times
+// that count (plus slack), so an unauthenticated-sized allocation from a valid
+// caller is impossible.
+func ServeGroupMemberAvatars(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
+		return
+	}
+	projectPath, ok := requireProject(w, r)
+	if !ok {
+		return
+	}
+	// Bound the body BEFORE decodeJSON reads it: decoding builds the whole
+	// []avatar first, so without this a single request could make the server
+	// allocate hundreds of MiB. The 1 MiB slack absorbs JSON punctuation and key
+	// names, which are not counted by the avatar cap.
+	r.Body = http.MaxBytesReader(w, r.Body, maxGroupMemberAvatarsBody)
+	var req struct {
+		GroupID string `json:"groupId"`
+		Avatars []struct {
+			MemberID string `json:"memberId"`
+			Avatar   string `json:"avatar"`
+		} `json:"avatars"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.GroupID == "" || len(req.Avatars) == 0 || len(req.Avatars) > service.MaxGroupMembers {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
+		return
+	}
+	if !requireSessionOwnership(w, r, req.GroupID, projectPath) {
+		return
+	}
+	// Pass 1: validate EVERY item before writing anything. A per-item
+	// validate-and-write loop would persist the valid items before returning
+	// 400 on a later invalid one, leaving the batch half-applied.
+	for _, a := range req.Avatars {
+		if a.MemberID == "" || len(a.Avatar) > maxAgentAvatarBytes || !avatarSVGLooksSafe([]byte(a.Avatar)) {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
+			return
+		}
+	}
+	// Pass 2: write. saved counts rows actually affected — a member id that
+	// belongs to another group matches no row and contributes 0 rather than
+	// inflating the total.
+	saved := int64(0)
+	for _, a := range req.Avatars {
+		n, err := service.SetMemberAvatar(req.GroupID, a.MemberID, a.Avatar)
+		if err != nil {
+			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+			return
+		}
+		saved += n
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "saved": saved})
 }

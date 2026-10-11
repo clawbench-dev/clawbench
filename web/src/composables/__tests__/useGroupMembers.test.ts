@@ -1,12 +1,25 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { ref, nextTick } from 'vue'
 import { useGroupMembers } from '@/composables/useGroupMembers'
+
+// getAgentAvatar is the member's fallback avatar source when the member row
+// carries no snapshot of its own. Keep it controllable per test.
+const { agentAvatars } = vi.hoisted(() => ({ agentAvatars: {} as Record<string, string> }))
+vi.mock('@/composables/useAgents', () => ({
+  getAgentAvatar: (id: string) => agentAvatars[id] || '',
+  useAgents: () => ({ loadAgents: vi.fn(async () => {}) }),
+}))
 
 // useGroupMembers loads the roster + mode + parallelDefault for the current
 // group session. The member-speech cap is a global setting, not returned here.
 describe('useGroupMembers', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
+    for (const k of Object.keys(agentAvatars)) delete agentAvatars[k]
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
   })
 
   it('exposes the roster', async () => {
@@ -61,5 +74,77 @@ describe('useGroupMembers', () => {
     await nextTick()
     await new Promise(r => setTimeout(r, 0))
     expect(pd2.value).toBe(false)
+  })
+
+  it('resolveSpeaker prefers the member avatar snapshot and exposes agentName', async () => {
+    agentAvatars['claude'] = '<svg>agent</svg>'
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        members: [{
+          id: 'm1', agentId: 'claude', name: 'Alice', backend: 'claude',
+          avatar: '<svg>member</svg>', agentName: 'Claude', left: false, isHost: false,
+        }],
+      }),
+    })))
+
+    const sid = ref('group-speaker')
+    const { resolveSpeaker } = useGroupMembers(sid)
+    await nextTick()
+    await new Promise(r => setTimeout(r, 0))
+
+    expect(resolveSpeaker('m1')).toEqual({
+      name: 'Alice', backend: 'claude', avatar: '<svg>member</svg>', agentName: 'Claude',
+    })
+  })
+
+  it('resolveSpeaker falls back to the agent avatar when the member has none', async () => {
+    agentAvatars['claude'] = '<svg>agent</svg>'
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        members: [{
+          id: 'm1', agentId: 'claude', name: 'Alice', backend: 'claude',
+          avatar: '', agentName: 'Claude', left: false, isHost: false,
+        }],
+      }),
+    })))
+
+    const sid = ref('group-speaker-fallback')
+    const { resolveSpeaker } = useGroupMembers(sid)
+    await nextTick()
+    await new Promise(r => setTimeout(r, 0))
+
+    expect(resolveSpeaker('m1')).toEqual({
+      name: 'Alice', backend: 'claude', avatar: '<svg>agent</svg>', agentName: 'Claude',
+    })
+  })
+
+  it('resolveByName prefers the member avatar snapshot and exposes agentName', async () => {
+    agentAvatars['claude'] = '<svg>agent</svg>'
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        members: [{
+          id: 'm1', agentId: 'claude', name: 'Alice', backend: 'claude',
+          avatar: '<svg>member</svg>', agentName: 'Claude', left: false, isHost: false,
+        }],
+      }),
+    })))
+
+    const sid = ref('group-by-name')
+    const { resolveByName } = useGroupMembers(sid)
+    await nextTick()
+    await new Promise(r => setTimeout(r, 0))
+
+    expect(resolveByName('Alice')).toEqual({
+      name: 'Alice', backend: 'claude', avatar: '<svg>member</svg>', agentName: 'Claude',
+    })
+    // Trimmed input resolves the same member.
+    expect(resolveByName('  Alice  ')).toEqual({
+      name: 'Alice', backend: 'claude', avatar: '<svg>member</svg>', agentName: 'Claude',
+    })
+    // Unknown name resolves to null.
+    expect(resolveByName('Bob')).toBeNull()
   })
 })

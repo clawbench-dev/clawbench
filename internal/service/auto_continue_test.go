@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
+	"clawbench/internal/ws"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -373,4 +375,94 @@ func TestAutoContinueRunner_PersistsRealUserMessage(t *testing.T) {
 	// It is a real chat_history row, NOT a queued one — a queued message would
 	// render in the queue panel instead of inline.
 	assert.Equal(t, 0, GetQueuedCount(sessionID), "the continue message must not be queued")
+}
+
+// ── Per-turn finalize on resume ────────────────────────────────────────────
+//
+// Resuming a failed turn starts a NEW turn, so the failed turn's bubble must be
+// closed by a stream_finalize BEFORE the resume runs. Without it the frontend
+// keeps the failed bubble's spinner until the whole run's terminal `done`
+// sweeps every streaming bubble (or the user switches sessions) — the reported
+// "backend error message still shows a loading indicator until the run ends".
+
+// A resume must emit exactly one stream_finalize carrying the failed turn's
+// finalized row id, and it must fire BEFORE the resume turn runs (so the
+// spinner clears as the new turn starts, not after it finishes).
+func TestAutoContinueRunner_EmitsPerTurnFinalizeBeforeResume(t *testing.T) {
+	setupDrainTest(t)
+	sessionID := "runner-emits-finalize"
+	setupDrainSession(t, sessionID)
+	SubmitRunForTest(t, sessionID)
+	withInstantAutoContinueSleep(t)
+
+	prevEnabled := model.ChatAutoContinueEnabled
+	prevMax := model.ChatAutoContinueMaxRetries
+	model.ChatAutoContinueEnabled, model.ChatAutoContinueMaxRetries = true, 3
+	t.Cleanup(func() {
+		model.ChatAutoContinueEnabled, model.ChatAutoContinueMaxRetries = prevEnabled, prevMax
+	})
+
+	origFinalize := emitTurnFinalize
+	var calls []int64
+	emitTurnFinalize = func(_ string, msgID int64) { calls = append(calls, msgID) }
+	t.Cleanup(func() { emitTurnFinalize = origFinalize })
+
+	var finalizeSeenBeforeTurn bool
+	runner := NewAutoContinueRunner(AutoContinueRunnerConfig{
+		Ctx:         context.Background(),
+		SessionID:   sessionID,
+		ProjectPath: "/test",
+		BackendName: "codebuddy",
+		RunTurn: func(prompt string) DrainResult {
+			// The finalize must already have been emitted when the resume runs.
+			finalizeSeenBeforeTurn = len(calls) == 1
+			return DrainResult{}
+		},
+	})
+
+	ok := mustRunWithMsgID(t, runner, 1, 4242)
+
+	assert.True(t, ok)
+	assert.Equal(t, []int64{4242}, calls,
+		"the failed turn's row id must be finalized exactly once before resuming")
+	assert.True(t, finalizeSeenBeforeTurn,
+		"stream_finalize must precede the resume turn so the spinner clears immediately")
+}
+
+// A failed turn that never opened a row (msgID 0) must not emit a finalize:
+// there is no bubble to close, and a 0-id finalize is a no-op on the frontend.
+// This exercises the REAL seam (not a stub), because the guard lives inside it.
+func TestEmitTurnFinalize_ZeroMsgIDIsNoOp(t *testing.T) {
+	setupDrainTest(t)
+	sessionID := "emit-finalize-zero"
+
+	mgr := ws.GetManager()
+	clientID := "emit-finalize-observer"
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(nil, &writeMu, clientID, "")
+	mgr.StreamHub().Subscribe(clientID, sessionID)
+
+	// 0 (and negative) ids must emit nothing.
+	emitTurnFinalize(sessionID, 0)
+	emitTurnFinalize(sessionID, -1)
+	assert.Empty(t, sub.GetBufferedEvents(),
+		"a failed turn with no row must not emit a stream_finalize")
+
+	// A positive id emits exactly one stream_finalize carrying that id.
+	emitTurnFinalize(sessionID, 4242)
+	require.Len(t, sub.GetBufferedEvents(), 1)
+	data, ok := sub.GetBufferedEvents()[0].Data.(ws.ChatStreamData)
+	require.True(t, ok, "the emitted event must be a chat_stream frame")
+	assert.Equal(t, "stream_finalize", data.EventType)
+	payload, ok := data.Payload.(map[string]any)
+	require.True(t, ok, "stream_finalize payload must be a map")
+	assert.EqualValues(t, 4242, payload["message_id"])
+}
+
+// mustRunWithMsgID is mustRun with a carried MsgID on prev, so the finalize
+// contract (which reads prev.MsgID) can be exercised.
+func mustRunWithMsgID(t *testing.T, runner func(int, DrainResult) (DrainResult, bool), attempt int, msgID int64) bool {
+	t.Helper()
+	_, ok := runner(attempt, DrainResult{AbnormalReason: abnormalEmpty, MsgID: msgID})
+	return ok
 }

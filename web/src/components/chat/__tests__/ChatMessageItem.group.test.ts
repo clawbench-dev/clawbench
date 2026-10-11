@@ -50,7 +50,7 @@ import ChatMessageItem from '@/components/chat/ChatMessageItem.vue'
 const i18n = createI18n({
   legacy: false,
   locale: 'en',
-  messages: { en: { chat: { message: {}, contentBlocks: { cancelled: 'cancelled' }, fileChanges: { title: 'Files' }, pending: {}, speech: {}, busy: {} }, group: { host: 'Host', you: 'you', bcc: { title: 'Private note', to: 'To', toYou: 'Private note to you' } }, common: {} } },
+  messages: { en: { chat: { message: {}, contentBlocks: { cancelled: 'cancelled' }, fileChanges: { title: 'Files' }, pending: {}, speech: {}, busy: {} }, group: { host: 'Host', realAgent: 'Agent', you: 'you', bcc: { title: 'Private note', to: 'To', toYou: 'Private note to you' } }, common: {} } },
 })
 
 function mountItem(msg: Record<string, unknown>, props: Record<string, unknown> = {}) {
@@ -80,6 +80,39 @@ describe('ChatMessageItem group speaker', () => {
     )
     expect(w.find('.msg-speaker').exists()).toBe(true)
     expect(w.find('.msg-speaker-name').text()).toBe('Alice')
+  })
+
+  it('shows the real agent name after the nickname when they differ', () => {
+    const resolveSpeaker = () => ({ name: 'Alice', backend: 'claude', avatar: '', agentName: 'Claude' })
+    const w = mountItem(
+      { role: 'assistant', id: 40, content: '', blocks: [], agentId: 'member-1' },
+      { resolveSpeaker },
+    )
+    expect(w.find('.msg-speaker-name').text()).toBe('Alice')
+    const real = w.find('.msg-speaker-real')
+    expect(real.exists()).toBe(true)
+    expect(real.text()).toBe('Claude')
+    expect(real.attributes('title')).toBe('Agent')
+  })
+
+  it('hides the real agent name when it equals the nickname', () => {
+    const resolveSpeaker = () => ({ name: 'Claude', backend: 'claude', avatar: '', agentName: 'Claude' })
+    const w = mountItem(
+      { role: 'assistant', id: 41, content: '', blocks: [], agentId: 'member-1' },
+      { resolveSpeaker },
+    )
+    expect(w.find('.msg-speaker-real').exists()).toBe(false)
+    // The name appears exactly once — no duplicated "Claude · Claude".
+    expect((w.text().match(/Claude/g) || []).length).toBe(1)
+  })
+
+  it('renders no real-agent label when agentName is absent', () => {
+    const resolveSpeaker = () => ({ name: 'Alice', backend: 'claude' })
+    const w = mountItem(
+      { role: 'assistant', id: 42, content: '', blocks: [], agentId: 'member-1' },
+      { resolveSpeaker },
+    )
+    expect(w.find('.msg-speaker-real').exists()).toBe(false)
   })
 
   it('marks the host message', () => {
@@ -200,6 +233,19 @@ describe('ChatMessageItem group system events', () => {
     expect(w.find('.msg-speaker').exists()).toBe(false)
     expect(w.find('.chat-meta-bar').exists()).toBe(false)
     expect(w.find('.agent-icon-stub').exists()).toBe(false)
+  })
+
+  it('marks a system row with the unified announcement icon', () => {
+    // The Megaphone glyph is the single marker shared with the conversation
+    // index chip and the share-selection dialog, so a system row is visually
+    // distinct from a user turn everywhere it is listed.
+    const w = mountItem({ role: 'system', id: 23, content: 'Bob joined' })
+    const icon = w.find('.chat-system-icon')
+    expect(icon.exists()).toBe(true)
+    // Decorative: the icon is aria-hidden so it is not announced twice.
+    expect(icon.attributes('aria-hidden')).toBe('true')
+    // The icon lives inside the pill, next to the text.
+    expect(w.find('.chat-system-row .chat-system-text').text()).toBe('Bob joined')
   })
 
   it('renders system text verbatim (no markdown parsing)', () => {

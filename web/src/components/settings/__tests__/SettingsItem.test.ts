@@ -754,6 +754,93 @@ describe('SettingsItem', () => {
     })
   })
 
+  // ── Model picker: search + two-line rows ──
+  //
+  // The picker renders inside BottomSheet, which Teleports to <body>, so its
+  // DOM is reached through `document`, not `wrapper.find`. Logic is asserted
+  // via setupState (filteredRenderOptions) to keep these tests independent of
+  // the teleport target.
+
+  describe('model select search', () => {
+    const modelOptions = [
+      { label: 'Claude Sonnet 4.6', value: 'claude-sonnet-4-6', modelName: 'Claude Sonnet 4.6', modelId: 'claude-sonnet-4-6' },
+      { label: 'Deepseek-V4-Pro', value: 'deepseek-v4-pro', modelName: 'Deepseek-V4-Pro', modelId: 'deepseek-v4-pro' },
+      { label: 'Deepseek-V4-Pro', value: 'deepseek-v4-pro-exclusive', modelName: 'Deepseek-V4-Pro', modelId: 'deepseek-v4-pro-exclusive' },
+    ]
+
+    // NOTE: the search box lives in the teleported BottomSheet, whose visibility
+    // is driven by the (non-reactive) useTabDrawer mock — so the DOM is not a
+    // reliable signal here. Assert the gate (`isModelSelect`) and the filter
+    // logic through setupState instead.
+
+    it('enables the search box for model selects', () => {
+      const wrapper = mountItem({ type: 'select', modelValue: 'claude-sonnet-4-6', options: modelOptions })
+      const vm = wrapper.vm as any
+      expect(vm.$.setupState.isModelSelect).toBe(true)
+    })
+
+    it('does not enable the search box for non-model selects', () => {
+      const wrapper = mountItem({
+        type: 'select',
+        modelValue: 'cli',
+        options: [{ label: 'CLI', value: 'cli' }, { label: 'ACP', value: 'acp' }],
+      })
+      const vm = wrapper.vm as any
+      expect(vm.$.setupState.isModelSelect).toBe(false)
+    })
+
+    it('filters by display name', async () => {
+      const wrapper = mountItem({ type: 'select', modelValue: 'claude-sonnet-4-6', options: modelOptions })
+      const vm = wrapper.vm as any
+      await wrapper.find('.settings-item').trigger('click')
+      await nextTick()
+      vm.$.setupState.searchQuery = 'sonnet'
+      await nextTick()
+      const filtered = vm.$.setupState.filteredRenderOptions
+      expect(filtered.map((o: any) => o.value)).toEqual(['claude-sonnet-4-6'])
+      wrapper.unmount()
+    })
+
+    it('filters by raw model id', async () => {
+      const wrapper = mountItem({ type: 'select', modelValue: 'claude-sonnet-4-6', options: modelOptions })
+      const vm = wrapper.vm as any
+      await wrapper.find('.settings-item').trigger('click')
+      await nextTick()
+      // "exclusive" appears only in the id, not the shared display name.
+      vm.$.setupState.searchQuery = 'exclusive'
+      await nextTick()
+      const filtered = vm.$.setupState.filteredRenderOptions
+      expect(filtered.map((o: any) => o.value)).toEqual(['deepseek-v4-pro-exclusive'])
+      wrapper.unmount()
+    })
+
+    it('yields an empty list when nothing matches', async () => {
+      const wrapper = mountItem({ type: 'select', modelValue: 'claude-sonnet-4-6', options: modelOptions })
+      const vm = wrapper.vm as any
+      await wrapper.find('.settings-item').trigger('click')
+      await nextTick()
+      vm.$.setupState.searchQuery = 'zzzz'
+      await nextTick()
+      expect(vm.$.setupState.filteredRenderOptions).toEqual([])
+      wrapper.unmount()
+    })
+
+    it('resets the search when the picker reopens', async () => {
+      const wrapper = mountItem({ type: 'select', modelValue: 'claude-sonnet-4-6', options: modelOptions })
+      const vm = wrapper.vm as any
+      await wrapper.find('.settings-item').trigger('click')
+      await nextTick()
+      vm.$.setupState.searchQuery = 'sonnet'
+      await nextTick()
+      vm.$.setupState.selectOption('claude-sonnet-4-6')
+      await nextTick()
+      await wrapper.find('.settings-item').trigger('click')
+      await nextTick()
+      expect(vm.$.setupState.searchQuery).toBe('')
+      wrapper.unmount()
+    })
+  })
+
   // ── Display value ──
 
   describe('displayValue computed', () => {
@@ -991,5 +1078,28 @@ describe('SettingsItem', () => {
       await wrapper.find('.settings-item').trigger('click')
       expect(wrapper.find('.settings-item__textarea-warning').exists()).toBe(false)
     })
+  })
+})
+
+// ── Option-row layout contract (source check) ──
+//
+// The option rows are flex children of the scrolling `.bs-body` column. Without
+// `flex-shrink: 0` they default to shrink:1, so a long list (many models)
+// squashes every row toward `min-height` instead of scrolling, clipping the
+// two-line ModelRow. jsdom has no CSS engine, so this reads the SFC source.
+describe('select option row layout', () => {
+  it('pins the option row height so a long model list scrolls instead of squeezing', async () => {
+    const { readFileSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    let src = ''
+    for (const base of [process.cwd(), join(process.cwd(), 'web')]) {
+      try { src = readFileSync(join(base, 'src/components/settings/SettingsItem.vue'), 'utf8'); break } catch { /* next */ }
+    }
+    expect(src, 'SettingsItem.vue source should be found').not.toBe('')
+    const block = src.match(/\.settings-item__option\s*\{([^}]*)\}/)
+    expect(block, '.settings-item__option rule should exist').not.toBeNull()
+    expect(block![1], 'option rows must not shrink in the column flex body').toMatch(
+      /flex-shrink:\s*0/,
+    )
   })
 })

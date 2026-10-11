@@ -114,7 +114,7 @@
 | 33 | 指定主持人方式 | **已勾选行内的「主持」胶囊按钮**（皇冠 + 文字，位于原默认星标位置）；**勾选第一个成员时自动成为主持人**（可改，同一时刻仅一个） |
 | 34 | 成员管理容器 | **`BottomSheet` 抽屉** + 已离场成员**灰显并标注"已离场"** |
 | 35 | 路由标签展示 | **后端保留标签，前端解析成路由卡片**（"主持人 → A、B"） |
-| 36 | 成员展示名 | 存成员行的 **`title` 列**（复用现有字段） |
+| 36 | 成员展示名 | 存成员行的 **`agent_name` 列**（专用权威列；`title` 对成员行留空）。命名规则与头像/真实名披露见 §4.5 |
 | 37 | 会话上限计入 | **群计入、成员不计**：**4 处** COUNT 改 `session_type IN ('chat','group')`（`chat.go:2046`、`continue_conversation.go:161,430`、`handler/session_resume.go:358`）；`POST /api/group/create` 也须过上限门 |
 | 38 | 群设置位置 | **成员管理 BottomSheet 内**（不进设置页） |
 | 39 | 离场成员的注入标注 | 注入上下文里离场成员名后加 **"（已离场）"**；主持人提示词的**可点名名单**同时区分"在场 / 已离场" |
@@ -174,7 +174,8 @@
 | 93 | 密送分享页 | share payload 增 `session.hostMemberId`，分享页传 `resolveSpeaker`/`resolveSpeakerByName`/`hostMemberId` 给 `ChatMessageItem`，使密送卡片在分享页也按决策 #85 渲染（默认折叠） |
 | 94 | 密送折叠头不显示目标名 | 折叠头只写「密送」——**谁知道收到了密送本身就是线索**（推理游戏里"B 收到私密信息"是信息）。展开后每条仍显示「发给 XX」（保留可审计性，决策 #85） |
 | 95 | 用户是可点名参与者 | 用户在群里的**保留名是英文 `User`**（`groupUserTarget`，语言中性；注入前缀 `User: ...` 与之同名）。`activeMemberNamesExcept` 追加 `User` → 主持人可在「可选的成员名」里看到并点名。哨兵 id `__user__`（无成员行、无 AI turn、无后端连接） |
-| 96 | 点名 User 结束本轮 | targets 循环遇到 `groupUserTargetID` → 写一条 `role='system'` 行（i18n `GroupYourTurn`）并 `return DrainResult{}`（`running=false`）；**其后的 targets 不跑**。用户随时发言即开新回合。前端**不做**"轮到你"提示 |
+| 96 | 点名 User 结束本轮 | targets 循环遇到 `groupUserTargetID` → 清 User 密送账 + `return DrainResult{}`（`running=false`）；**其后的 targets 不跑**。用户随时发言即开新回合。前端**不做**"轮到你"提示 |
+| 96b | 交回用户必写系统行（2026-10-11 修订） | 「轮到用户发言」（i18n `GroupYourTurn`）**不再**只由点名 User 触发：`runLoop` 在**每个干净收尾**（`CancelReason=="" && Err==""`）且**无排队消息**（`GetQueuedCount==0`）时统一写一条，覆盖：自由模式接力自然耗尽、主持人结束信号、成员发言次数达上限、显式 `@User`、以及**成员/主持人发出 AskUserQuestion**。中间排队轮次不写（否则会在用户自己的两条消息之间误报）。取消/报错收尾不写（时间线已有可见失败） |
 | 97 | 密送延迟送达 | 密送目标本轮未被点名 → 存 `group_pending_bcc`，随该目标**下次被点名**的 turn 送达（AI 成员与 User 一视同仁）。这是「给所有人发词、只点一人先说」的必要条件。交付成功即 DELETE；失败/取消保留（#69 语义） |
 | 98 | 密送给 User 的卡片 | 与成员密送**同一张卡片**但形态不同：默认**展开**、文案 `group.bcc.toYou`（密送给你）、`User` 图标 + accent 强调色；成员密送仍折叠。两段式渲染（按 `targets.includes('User')` 分流），而非单一 toggle 改默认值——后者会让 User 密送把成员密送一并展开 |
 
@@ -265,7 +266,17 @@
 
 ### 4.4 成员表？
 
-**不新建成员表**。成员即隐藏 session 行；花名册通过 `SELECT ... FROM chat_sessions WHERE group_id = ? AND session_type='group_member'` 得到。成员的**展示名存成员行的 `title` 列**（决策 #36；成员行无 chat_history，auto-title 永不触发，故 `title` 安全）。建成员时由 agent 名派生写入。
+**不新建成员表**。成员即隐藏 session 行；花名册通过 `SELECT ... FROM chat_sessions WHERE group_id = ? AND session_type='group_member'` 得到。成员的**展示名存成员行的 `agent_name` 列**（决策 #36 修订；专用权威列，`title` 对成员行留空）。建成员时由 agent 名/名池派生写入。
+
+### 4.5 成员身份演进（2026-10-10，以本小节为准）
+
+**显示名存放（修订决策 #36）**：成员展示名不再复用 `title`，改存专用列 **`agent_name`**——`title` 是会话标题语义，成员行借用属"一列两用"；独立列让"成员显示名"有唯一权威归属，读取端（`speakerFromMember`）不再回退 `agents.name`，改智能体名不追溯改写群历史发言在分享/导出里的名字。
+
+**重复实例命名（内置英文名池）**：同一智能体的**首个实例保留智能体本名**（`Claude`）；**重复实例（第 2 个及以后）从代码内置的英文名池 `groupNamePool` 取第一个未占用的名字**（`Alice`/`Bob`/…，见 `internal/service/group_name_pool.go`）；**池耗尽时回退 `本名 序号`**（`Claude 2`、`Claude 3`……，永不出现 `Claude 1`）。**已存在的实例不被改名**（名字是历史快照），故跨批次再加实例时先前那个保持原名、只有新实例取名池名。取名时避开群内其它成员名与用户保留名；池名**永不取**与本批次任一实例本名、或群内已有智能体本名相同的名字（**真名预留**，与顺序无关，真实智能体名恒被保留），保证按名路由唯一。名池**刻意不可配置、无设置 UI**（英文 token 语言中性，且不与路由协议保留字符冲突）。
+
+**成员头像**：`chat_sessions` 新增 **`agent_avatar` 列**，存成员**自身**的头像 SVG 快照——前端 DiceBear 按成员名生成、随机风格、经 `POST /api/group/member-avatars` 落库，使公开分享页（无 DiceBear 运行时）能渲染同一图标。`speakerFromMember` **优先成员头像**（`m.Avatar`），缺失时回退智能体头像。**存量群不回填**，只在建群/加成员时生成。
+
+**真实智能体名披露**：`SpeakerIdentity` 新增 **`agentName`**（底层真实智能体名）——当成员显示名（池名/序号名）≠ 实时智能体名时非空。前端在消息的「头像 + 昵称」之后，仅当 `agentName != name` 时以弱化样式 `.msg-speaker-real` 显示。分享/导出走同一 `SpeakerIdentity`，与 App 内自动一致。
 
 **主持人成员行 id 存群行 `context_state`**（`host_member_id`）——**读取须用专门的 reader**（`ContextState`（`chat.go:2200`）只认 `Mode`/`ThinkingEffort`/`Usage`，不含 `maxRounds`/`host_member_id`）。需新增 `GetGroupHostMember(groupID)` / `GetGroupMaxRounds(groupID)`（用 `json_extract` 或独立解析），见 §10 #31 与计划 E1。
 
@@ -459,7 +470,7 @@ Claude（代码编写与推理）、CodeBuddy（全栈开发助手）、Grok（x
 
 - **入口**：群会话顶部头像条**尾部一个 `+`**，点击打开多选 `AgentSelectorDrawer`（加成员模式），一次可勾多个、确认后批量加入。
 - **扩展 `AgentSelectorDrawer` 支持多选**：加 `multiple` prop + `v-model` 数组 + checkbox 行 + 选中不自动关闭；单选模式（单聊入口）行为不变。列表行（`AgentIcon` + 名字 + 专业 + 后端标签 + 默认徽章）直接复用。
-- **成员展示名/颜色**：展示名存成员行 **`title` 列**（决策 #36）；颜色复用 `AgentIcon` + `teamMemberColor.ts`（与 `TeamPanel.vue` 同款）。
+- **成员展示名/头像/颜色**：展示名存成员行 **`agent_name` 列**（决策 #36 修订）；头像存 **`agent_avatar` 列**（成员自身 DiceBear 快照，缺失回退智能体头像，见 §4.5）；颜色复用 `AgentIcon` + `teamMemberColor.ts`（与 `TeamPanel.vue` 同款）。
 
 ### 删成员
 
@@ -530,7 +541,7 @@ Claude（代码编写与推理）、CodeBuddy（全栈开发助手）、Grok（x
 4. ~~前端是否解析路由标签~~ → **是**（决策 #35：后端保留标签，前端解析成路由卡片）。
 5. ~~`group_id` 索引~~ → `idx_sessions_group(group_id, session_type)`（Task A2）。
 6. ~~群标题自动生成~~ → 占位用**主持人名** + auto-title（决策 #28）。
-7. ~~成员展示名存放~~ → 成员行 **`title` 列**（决策 #36）。
+7. ~~成员展示名存放~~ → 成员行 **`agent_name` 列**（决策 #36 修订，见 §4.5）。
 8. ~~多群并发连接串扰~~ → 预期无串扰（每成员独立 session id），E2E 验证。
 9. **（v2）** 同轮并发最大成员数上限。
 10. **（v2）** 成员并发失败原子性。

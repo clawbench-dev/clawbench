@@ -115,7 +115,7 @@
           v-for="mention in mentionItems"
           :key="mention.id"
           :mention="mention"
-          :avatar="mention.agentId ? getAgentAvatar(mention.agentId) : ''"
+          :avatar="mention.memberAvatar || (mention.agentId ? getAgentAvatar(mention.agentId) : '')"
           removable
           @click="$emit('mention-click', mention)"
           @remove="$emit('remove-mention', mention.id)"
@@ -1152,11 +1152,16 @@ const fileMenuItems = computed(() => {
         source: 'agent',
         isMember: true,
         mentionMemberId: item.mentionMemberId,
-        // The avatar belongs to the underlying AGENT, not the member row, so
-        // resolve it from agentId (mirrors useGroupMembers.resolveSpeaker).
+        // Prefer the MEMBER's own avatar snapshot; only fall back to the
+        // underlying AGENT's avatar when the member has none, so two instances
+        // of the same agent keep distinct avatars (mirrors
+        // useGroupMembers.resolveSpeaker).
         memberAgentId: item.agentId || '',
         memberBackend: item.backend || '',
-        memberAvatar: item.agentId ? getAgentAvatar(item.agentId) : '',
+        memberAvatar: item.avatar || (item.agentId ? getAgentAvatar(item.agentId) : ''),
+        // The underlying real agent name (only set when the nickname was
+        // auto-derived), so the row can disclose which agent it names.
+        memberAgentName: item.agentName || '',
       }))
     : []
 
@@ -1202,6 +1207,7 @@ const fileMenu = useCompletionMenu({
         memberId: item.mentionMemberId,
         name: item.label,
         agentId: item.memberAgentId,
+        memberAvatar: item.memberAvatar,
         backend: item.memberBackend,
       })
       return

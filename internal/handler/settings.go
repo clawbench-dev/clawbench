@@ -1386,7 +1386,7 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		// auto-detects the default dir or lets the CLI auto-download models).
 	}
 
-	// 3. default_agent must be an existing agent ID.
+	// 3. default_agent must be an existing, enabled agent ID.
 	if v, ok := patch["default_agent"].(string); ok && v != "" {
 		if model.AgentSetLoaded() && !model.HasAgent(v) {
 			list := model.GetAgentList()
@@ -1395,6 +1395,9 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 				available = append(available, a.ID)
 			}
 			return fmt.Errorf("default_agent \"%s\" not found (available: %s)", v, strings.Join(available, ", "))
+		}
+		if a := model.GetAgent(v); a != nil && a.Disabled {
+			return fmt.Errorf("default_agent \"%s\" is disabled", v)
 		}
 	}
 

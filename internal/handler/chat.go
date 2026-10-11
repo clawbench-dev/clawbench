@@ -711,6 +711,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 					Err:            nextResult.err,
 					Empty:          nextResult.empty,
 					AbnormalReason: nextResult.abnormalReason,
+					MsgID:          nextResult.msgID,
 				}
 			},
 			// Resume an abnormally terminated turn by sending a localized
@@ -730,6 +731,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 						Err:            retryResult.err,
 						Empty:          retryResult.empty,
 						AbnormalReason: retryResult.abnormalReason,
+						MsgID:          retryResult.msgID,
 					}
 				},
 			}),
@@ -745,6 +747,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 			Err:            result.err,
 			Empty:          result.empty,
 			AbnormalReason: result.abnormalReason,
+			MsgID:          result.msgID,
 		})
 	}()
 }
@@ -755,6 +758,7 @@ type streamRunResult struct {
 	err            string // error message if execution failed
 	empty          bool   // true if AI returned no content
 	abnormalReason string // non-empty when the turn may be auto-resumed
+	msgID          int64  // finalized assistant row id (0 if none) — see DrainResult.MsgID
 }
 
 // executeStreamRun runs one AI backend execution from start to finish.
@@ -794,6 +798,7 @@ func executeStreamRun(
 		err:            res.Err,
 		empty:          res.Empty,
 		abnormalReason: res.AbnormalReason,
+		msgID:          res.MsgID,
 	}
 }
 

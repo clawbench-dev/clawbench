@@ -36,13 +36,20 @@ export interface UseChatStreamOptions {
   onNotification: (title: string, opts?: { body?: string; onClick?: () => void }) => void
   onStreamEnd?: (reason: 'done' | 'cancelled' | 'error') => void
   /**
-   * Fires at every queue_drain turn boundary for the current session: the
-   * previous turn's reply just finalized (stamping its completed_at) and the
-   * next queued message is starting. The host decides whether the user was
-   * watching and should therefore clear the unread state — the backend cannot
-   * know (a queued message may come from another device or an IM push).
+   * Fires at every "producer turn ended" boundary for the current session — a
+   * reply just finalized (stamping its completed_at), so the session is
+   * momentarily unread. Two sources:
+   *   - queue_drain: the previous turn's reply finalized and the next queued
+   *     message is starting;
+   *   - stream_finalize: one group member turn finalized (a group run finalizes
+   *     one member at a time; the terminal `done` fires only once at the end).
+   * The host decides whether the user was watching and should therefore clear
+   * the unread state — the backend cannot know (a queued message may come from
+   * another device, and a member reply may finalize while the user is away).
+   * Never fires for replayed events (the user was disconnected then, so the
+   * badge must survive).
    */
-  onQueueDrainBoundary?: (sessionId: string) => void
+  onTurnBoundary?: (sessionId: string) => void
   onFileModified?: (filePath: string) => void
   onExtractScheduledTasks?: (msgs: ChatMessage[]) => void
   onToolResult?: (toolId: string) => void
@@ -73,7 +80,7 @@ export function useChatStream(options: UseChatStreamOptions) {
     isOpen,
     onNotification,
     onStreamEnd,
-    onQueueDrainBoundary,
+    onTurnBoundary,
     onFileModified,
     onExtractScheduledTasks,
     onToolResult,
@@ -694,6 +701,19 @@ export function useChatStream(options: UseChatStreamOptions) {
         // prevents. So require a positive id.
         const finishId = payload.message_id as number | undefined
         if (!finishId) break
+        // Turn boundary: this member's reply just finalized (its completed_at
+        // now stamped past last_read_at), so the group session counts as unread
+        // for the rest of the run even though the user may be watching — a
+        // group run finalizes one member at a time and the terminal `done`
+        // (which does re-anchor) fires only once at the very end. Let the host
+        // re-anchor last_read_at when it can prove the user is present. Fires
+        // regardless of whether the placeholder is still findable below (the
+        // DB stamp is what makes the session unread). Gated on a live
+        // (non-replayed) event: a replayed finalize means the user was
+        // disconnected, so the badge must survive.
+        if (!isReplayingEvents.value) {
+          onTurnBoundary?.(sessionId)
+        }
         const sm = resolveStreamingMsg(messages.value, finishId)
         if (sm) {
           dispatch({ type: 'stream_finalize', messageId: finishId })
@@ -1167,7 +1187,7 @@ export function useChatStream(options: UseChatStreamOptions) {
         // user is present. Gated on a live (non-replayed) event: a replayed
         // drain means the user was disconnected, so the badge must survive.
         if (!isReplayingEvents.value) {
-          onQueueDrainBoundary?.(eventSessionId)
+          onTurnBoundary?.(eventSessionId)
         }
         // The new turn's placeholder is normally created by the stream_start
         // that follows. Ensure one exists anyway so a lost stream_start still

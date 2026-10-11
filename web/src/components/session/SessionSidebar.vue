@@ -11,7 +11,6 @@
           @refresh="handleRefresh"
           @open-search="$emit('open-session-search')"
           @create="handleCreateClick"
-          @create-group="$emit('create-group')"
         >
           <template #actions>
             <!-- Always present: the drawer is the only place to review and
@@ -63,7 +62,6 @@ import SessionList from '@/components/session/SessionList.vue'
 import SessionListHeader from '@/components/session/SessionListHeader.vue'
 import SharedSessionsDrawer from '@/components/session/SharedSessionsDrawer.vue'
 import SessionListTabs from '@/components/session/SessionListTabs.vue'
-import { useAgents } from '@/composables/useAgents'
 import { SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH } from '@/composables/useSessionSidebar'
 import { store } from '@/stores/app.ts'
 
@@ -74,9 +72,8 @@ defineProps({
   isActive: { type: Boolean, default: true },
 })
 
-const emit = defineEmits(['select', 'archive', 'destroy', 'close', 'resize', 'open-session-search', 'create', 'create-agent-select', 'create-group'])
+const emit = defineEmits(['select', 'archive', 'destroy', 'close', 'resize', 'open-session-search', 'create-agent-select'])
 const { t } = useI18n()
-const { agents, loadAgents } = useAgents()
 
 const listRef = ref(null)
 const sharedSessionsRef = ref(null)
@@ -107,13 +104,12 @@ function onDragMove(clientX) {
   emit('resize', clampWidth(newWidth))
 }
 
-async function handleCreateClick() {
-  await loadAgents()
-  if (agents.value.length === 1) {
-    emit('create', agents.value[0].id)
-  } else {
-    emit('create-agent-select')
-  }
+// The create button always opens the merged create page (single / group) via
+// the shared agent selector, even with a single agent. Direct-creating a
+// session would be a one-tap mis-tap risk on touch, and would make the group
+// tab unreachable. Mirrors the mobile drawer and ChatPanelContent.
+function handleCreateClick() {
+  emit('create-agent-select')
 }
 
 // Manual refresh in the pinned sidebar: reload the session list from the API.

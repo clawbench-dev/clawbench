@@ -7,7 +7,7 @@ import (
 
 func TestBuildHostSystemPrompt(t *testing.T) {
 	members := []HostMemberInfo{{Name: "A"}, {Name: "B"}, {Name: "C"}}
-	p := BuildHostSystemPrompt(members)
+	p := BuildHostSystemPrompt("Host", members)
 	if !strings.Contains(p, "<clawbench-mention targets=") {
 		t.Fatal("must document the mention tag")
 	}
@@ -33,7 +33,7 @@ func TestBuildHostSystemPrompt(t *testing.T) {
 // each member is good at (decision #39). A member with a specialty renders as
 // "Name（specialty）"; one without renders as a bare name — no empty "（）".
 func TestBuildHostSystemPrompt_Specialty(t *testing.T) {
-	p := BuildHostSystemPrompt([]HostMemberInfo{
+	p := BuildHostSystemPrompt("Host", []HostMemberInfo{
 		{Name: "Claude", Specialty: "代码编写与推理"},
 		{Name: "Plain"},
 	})
@@ -52,7 +52,7 @@ func TestBuildHostSystemPrompt_Specialty(t *testing.T) {
 // prompt list (its past speech is still on the timeline) but must be visibly
 // marked so the host does not route to it (decision #39).
 func TestBuildHostSystemPrompt_LeftMarked(t *testing.T) {
-	p := BuildHostSystemPrompt([]HostMemberInfo{
+	p := BuildHostSystemPrompt("Host", []HostMemberInfo{
 		{Name: "Active", Specialty: "X"},
 		{Name: "Gone", Left: true},
 	})
@@ -65,7 +65,7 @@ func TestBuildHostSystemPrompt_LeftMarked(t *testing.T) {
 // there is nobody to route to, so the prompt must tell the host to answer
 // directly instead of naming a non-existent member.
 func TestBuildHostSystemPrompt_NoOtherMembers(t *testing.T) {
-	p := BuildHostSystemPrompt(nil)
+	p := BuildHostSystemPrompt("Host", nil)
 	if !strings.Contains(p, "没有其他成员") {
 		t.Fatal("host-only prompt must state there are no other members")
 	}
@@ -75,7 +75,7 @@ func TestBuildHostSystemPrompt_NoOtherMembers(t *testing.T) {
 }
 
 func TestBuildHostSummaryPromptHasNoRoutingTag(t *testing.T) {
-	p := BuildHostSummaryPrompt([]HostMemberInfo{{Name: "A"}, {Name: "B"}})
+	p := BuildHostSummaryPrompt("Host", []HostMemberInfo{{Name: "A"}, {Name: "B"}})
 	if strings.Contains(p, "clawbench-mention") || strings.Contains(p, "<clawbench-group-end/>") {
 		t.Fatal("summary prompt must not ask for routing/end tags (would re-enter loop)")
 	}
@@ -88,7 +88,7 @@ func TestBuildHostSummaryPromptHasNoRoutingTag(t *testing.T) {
 // private note, that targets are comma-separated and must be named this round,
 // and that other members cannot see it.
 func TestBuildHostSystemPrompt_DocumentsBcc(t *testing.T) {
-	p := BuildHostSystemPrompt([]HostMemberInfo{{Name: "A"}, {Name: "B"}})
+	p := BuildHostSystemPrompt("Host", []HostMemberInfo{{Name: "A"}, {Name: "B"}})
 	if !strings.Contains(p, "<clawbench-mention targets=") {
 		t.Fatalf("prompt must document the bcc tag syntax: %q", p)
 	}
@@ -108,7 +108,7 @@ func TestBuildHostSystemPrompt_DocumentsBcc(t *testing.T) {
 // nowhere). The plain mention form is still documented — it is how the host
 // answers — so the check is for the `private` attribute, not the tag name.
 func TestBuildHostSystemPrompt_NoMembersOmitsBcc(t *testing.T) {
-	p := BuildHostSystemPrompt(nil)
+	p := BuildHostSystemPrompt("Host", nil)
 	if strings.Contains(p, "private") {
 		t.Fatalf("host-only prompt must not document the private form: %q", p)
 	}
@@ -117,7 +117,7 @@ func TestBuildHostSystemPrompt_NoMembersOmitsBcc(t *testing.T) {
 // The summary prompt is a pure wrap-up: it must not invite any tag, bcc
 // included (the orchestrator ignores tags in that turn).
 func TestBuildHostSummaryPromptOmitsBcc(t *testing.T) {
-	p := BuildHostSummaryPrompt([]HostMemberInfo{{Name: "A"}})
+	p := BuildHostSummaryPrompt("Host", []HostMemberInfo{{Name: "A"}})
 	if strings.Contains(p, "clawbench-mention") {
 		t.Fatalf("summary prompt must not document bcc: %q", p)
 	}
@@ -150,7 +150,7 @@ func TestBuildMemberSystemPrompt(t *testing.T) {
 // The host must see the user as a routable participant, and know that naming
 // the user ends the round.
 func TestBuildHostSystemPrompt_IncludesUser(t *testing.T) {
-	p := BuildHostSystemPrompt([]HostMemberInfo{{Name: "A"}, {Name: "B"}, {Name: groupUserTarget()}})
+	p := BuildHostSystemPrompt("Host", []HostMemberInfo{{Name: "A"}, {Name: "B"}, {Name: groupUserTarget()}})
 	if !strings.Contains(p, "可选的成员名：") || !strings.Contains(p, groupUserTarget()) {
 		t.Fatalf("the user must be in the routable list: %q", p)
 	}
@@ -171,5 +171,47 @@ func TestBuildMemberSystemPrompt_ListsUser(t *testing.T) {
 	p := BuildMemberSystemPrompt([]HostMemberInfo{{Name: "Host"}, {Name: "B"}}, "B")
 	if !strings.Contains(p, groupUserTarget()) {
 		t.Fatalf("a member must be told the user is present: %q", p)
+	}
+}
+
+// A member must be told its OWN group display name. Without it, a duplicated
+// instance falls back to the CLI's agent name ("Codebuddy") and every instance
+// claims the same name — the real defect where four "Codebuddy" instances each
+// misreported themselves.
+func TestBuildMemberSystemPrompt_StatesOwnName(t *testing.T) {
+	p := BuildMemberSystemPrompt(
+		[]HostMemberInfo{{Name: "Codebuddy"}, {Name: "Codebuddy 2"}, {Name: "Codebuddy 3"}},
+		"Codebuddy 3",
+	)
+	if !strings.Contains(p, "你的群内显示名是「Codebuddy 3」") {
+		t.Fatalf("member prompt must state its own display name: %q", p)
+	}
+	// The others list must exclude self but include the sibling instances.
+	if strings.Contains(p, "本群其他成员：Codebuddy 3") {
+		t.Fatalf("others list must not include self: %q", p)
+	}
+	if !strings.Contains(p, "Codebuddy 2") {
+		t.Fatalf("others list must include sibling instances: %q", p)
+	}
+}
+
+// The HOST must also be told its own display name: when the host agent is
+// duplicated, it must not lose its own identity.
+func TestBuildHostSystemPrompt_StatesOwnName(t *testing.T) {
+	p := BuildHostSystemPrompt("Codebuddy", []HostMemberInfo{{Name: "Codebuddy 2"}})
+	if !strings.Contains(p, "你的群内显示名是「Codebuddy」") {
+		t.Fatalf("host prompt must state its own display name: %q", p)
+	}
+	if !strings.Contains(p, "Codebuddy 2") {
+		t.Fatalf("host prompt must still list the other instance: %q", p)
+	}
+}
+
+// An empty self name must not produce a dangling identity sentence (the builder
+// is also called from paths that may not have a name).
+func TestSelfIdentityLine_EmptyIsOmitted(t *testing.T) {
+	p := BuildMemberSystemPrompt([]HostMemberInfo{{Name: "A"}}, "")
+	if strings.Contains(p, "你的群内显示名是") {
+		t.Fatalf("empty self name must omit the identity line: %q", p)
 	}
 }

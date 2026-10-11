@@ -357,8 +357,6 @@
                     @resize="sessionSidebar.setWidth"
                     @close="sessionSidebar.closeSidebar"
                     @select="handleSessionSelect"
-                    @create="handleSessionCreate"
-                    @create-group="handleSidebarGroupCreate"
                     @archive="handleSessionArchive"
                     @destroy="handleSessionDestroy"
                     @open-session-search="sessionSearchDrawer.open()"
@@ -1946,13 +1944,6 @@ async function handleSessionCreate(agentId: string) {
   sessionIdentity.sessionDrawer.close()
 }
 
-// The desktop sidebar's create-group button has no local agent picker; it opens
-// the SessionDrawer's shared picker in group mode (members + inline host dot),
-// which then emits create-group with {hostId, memberIds}.
-function handleSidebarGroupCreate() {
-  sessionDrawerRef.value?.openGroupHostSelector()
-}
-
 // handleGroupCreate creates a group with the chosen host and members in one
 // call (design #25) and switches into it. The group then appears in the
 // session list like any other session.
@@ -1961,7 +1952,7 @@ function handleSidebarGroupCreate() {
 // in FREE mode (no host; participants relay via @-mentions). A free group needs
 // at least two members.
 async function handleGroupCreate(payload: { hostId: string; memberIds: string[] }) {
-  const { createGroup } = await import('@/composables/useGroupChat')
+  const { createGroup, generateMemberAvatars } = await import('@/composables/useGroupChat')
   const hostAgentId = payload?.hostId ?? ''
   const memberAgentIds = payload?.memberIds ?? []
   if (memberAgentIds.length === 0) return
@@ -1970,6 +1961,17 @@ async function handleGroupCreate(payload: { hostId: string; memberIds: string[] 
   try {
     const { groupId } = await createGroup(hostAgentId, memberAgentIds)
     if (!groupId) return
+    // Backfill avatars for the freshly created members (all of them lack one).
+    // Avatars are non-critical, so generation runs in the background and must
+    // not block entering the group. When it finishes we refresh the roster:
+    // the group view fetches members on entry, BEFORE generation completes, so
+    // without this second fetch the fallback icons would stick until a session
+    // switch happens to reload the roster.
+    void generateMemberAvatars(groupId)
+      .then(() => {
+        if (sessionIdentity.currentSessionId.value === groupId) refreshGroupMembers(groupId)
+      })
+      .catch(e => appLog.w('Group', 'member avatar generation failed', e))
     await sessionIdentity.switchSession(groupId)
     const session = {
       id: groupId,

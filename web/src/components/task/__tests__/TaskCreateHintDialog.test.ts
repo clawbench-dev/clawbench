@@ -15,9 +15,12 @@ vi.mock('@/utils/clipboard', () => ({
   copyText: (text: string, onSuccess?: () => void) => mockCopyText(text, onSuccess),
 }))
 
-vi.mock('lucide-vue-next', () => {
+vi.mock('lucide-vue-next', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('lucide-vue-next')>()
   const stub = (name: string) => ({ name, props: { size: Number }, template: '<svg />' })
-  return { Sparkles: stub('Sparkles'), Copy: stub('Copy'), Check: stub('Check') }
+  // Spread the real module so icons added by shared shells (e.g. ModalDialog's
+  // close X) resolve instead of becoming undefined and crashing the render.
+  return { ...actual, Sparkles: stub('Sparkles'), Copy: stub('Copy'), Check: stub('Check') }
 })
 
 import TaskCreateHintDialog from '../TaskCreateHintDialog.vue'

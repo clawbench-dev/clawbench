@@ -2166,7 +2166,7 @@ describe('ChatInputBar', () => {
     // The pick ADDS A CARD (member row id carried in the payload) and leaves the
     // textarea alone — the raw protocol tag must never appear in the input.
     expect(wrapper.emitted('add-mention')![0]).toEqual([
-      { memberId: 'm-b', name: 'Bob', agentId: '', backend: '' },
+      { memberId: 'm-b', name: 'Bob', agentId: '', memberAvatar: '', backend: '' },
     ])
     expect(wrapper.vm.inputText).toBe('')
     expect(wrapper.vm.inputText).not.toContain('clawbench-mention')
@@ -2249,6 +2249,44 @@ describe('ChatInputBar', () => {
     expect(member.memberBackend).toBe('claude')
     // getAgentAvatar is mocked to '' here, so the built-in backend icon shows.
     expect(member.memberAvatar).toBe('')
+  })
+
+  it('carries the real agent name into the @ menu item for an auto-named member', async () => {
+    const { store } = await import('@/stores/app.ts')
+    store.state.currentDir = ''
+    store.state.dirEntries = [] as any
+    const wrapper = mountBar({
+      isGroupSession: true,
+      groupMembers: [{ id: 'm-a', name: 'Alice', left: false, agentId: 'a-1', agentName: 'Claude', backend: 'claude' }],
+    })
+    wrapper.vm.inputText = '@'
+    await wrapper.vm.$nextTick()
+    const items = (wrapper.vm as any).fileMenuItems as any[]
+    const member = items.find(i => i.isMember)
+    expect(member.memberAgentName).toBe('Claude')
+  })
+
+  it('prefers the member avatar over the agent avatar, so same-agent members stay distinct', async () => {
+    const { store } = await import('@/stores/app.ts')
+    store.state.currentDir = ''
+    store.state.dirEntries = [] as any
+    const wrapper = mountBar({
+      isGroupSession: true,
+      groupMembers: [
+        { id: 'm-a', name: 'Alice', left: false, agentId: 'a-1', avatar: 'MEMBER_A', backend: 'claude' },
+        { id: 'm-b', name: 'Alicia', left: false, agentId: 'a-1', avatar: 'MEMBER_B', backend: 'claude' },
+      ],
+    })
+    wrapper.vm.inputText = '@'
+    await wrapper.vm.$nextTick()
+    const items = (wrapper.vm as any).fileMenuItems as any[]
+    const members = items.filter(i => i.isMember)
+    expect(members).toHaveLength(2)
+    // Same underlying agent, but each candidate carries its OWN member avatar.
+    expect(members[0].memberAgentId).toBe('a-1')
+    expect(members[1].memberAgentId).toBe('a-1')
+    expect(members[0].memberAvatar).toBe('MEMBER_A')
+    expect(members[1].memberAvatar).toBe('MEMBER_B')
   })
 
   it('does not list members in the @ menu outside a group session', async () => {

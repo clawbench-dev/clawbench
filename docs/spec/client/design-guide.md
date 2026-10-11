@@ -306,6 +306,7 @@
 - 助手气泡：`--bg-tertiary`，直角；用户气泡：`--user-msg-color`，`border-radius: 20px 20px 0 20px`。
 - 元信息栏（复制/详情）在**气泡外**。
 - **禁止**给 `.chat-message` 加 `content-visibility: auto`——见[红线 5](#红线-5content-visibility-会造成滚动跳变)。
+- **系统消息（`role='system'`，群聊成员加入/离开等）统一用 `Megaphone` 图标**，四处一致：聊天气泡的居中细条 `.chat-system-row`（图标 `.chat-system-icon` + 文本 `.chat-system-text`）、会话索引 / 分享目录的 role chip（`MessageIndexRow` 的 `.msg-role-tag.role-system` + 行修饰类 `.msg-item--system`）、分享选择弹窗的角色标签（`.session-share-dialog-role.role-system`）。中性色（`--text-muted`）以示「公告」而非「参与者」。**不得复用 User/Bot 图标**——那会让系统行在列表里被误读成用户消息。图标装饰性（`aria-hidden`），语义由 chip 的 `title`/`aria-label`（`conversationIndexRoleSystem` / `sessionShare.roleSystem`）承载。
 
 ### 弹层 / 菜单
 

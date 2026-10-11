@@ -26,9 +26,15 @@
           :class="{ 'is-left': m.left }"
         >
           <span class="gm-avatar">
-            <AgentIcon :backend="m.backend" :name="m.name" :avatar="getAgentAvatar(m.agentId)" size="lg" />
+            <AgentIcon :backend="m.backend" :name="m.name" :avatar="m.avatar || getAgentAvatar(m.agentId)" size="lg" />
           </span>
-          <span class="gm-name">{{ m.name }}</span>
+          <span class="gm-identity">
+            <span class="gm-name">{{ m.name }}</span>
+            <!-- Real-agent disclosure: a member whose nickname was auto-derived
+                 (pool name) shows the underlying agent's real name right after
+                 it, the same convention as the message speaker label. -->
+            <RealAgentNameTag class="gm-real-name" :agent-name="m.agentName" :display-name="m.name" />
+          </span>
           <span v-if="m.isHost" class="gm-tag gm-tag--host"><Crown :size="11" class="gm-tag-crown" />{{ t('group.host') }}</span>
           <span v-else-if="m.left" class="gm-tag gm-tag--left">{{ t('group.left') }}</span>
           <button
@@ -92,9 +98,10 @@
     <AgentSelectorDrawer
       :open="pickerOpen"
       multiple
+      allow-instances
+      :max-instances="store.state.groupMaxMembers"
+      :used-instances="activeMemberCount"
       :showAgentActions="false"
-      :excludedAgentIds="activeAgentIds"
-      :addedLabel="t('group.alreadyMember')"
       :modelValue="[]"
       :title="t('group.addMembers')"
       :confirm-label="t('group.confirm')"
@@ -110,10 +117,13 @@ import { useI18n } from 'vue-i18n'
 import { Trash2, Plus, Crown } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
+import RealAgentNameTag from '@/components/common/RealAgentNameTag.vue'
 import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
 import { getAgentAvatar } from '@/composables/useAgents'
-import { addGroupMembers, removeGroupMember, setGroupParallelDefault, type GroupMemberInfo } from '@/composables/useGroupChat'
+import { addGroupMembers, generateMemberAvatars, removeGroupMember, setGroupParallelDefault, type GroupMemberInfo } from '@/composables/useGroupChat'
 import { toggleAutoApprove } from '@/composables/useSessionIdentity'
+import { appLog } from '@/utils/appLog'
+import { store } from '@/stores/app.ts'
 
 const props = defineProps<{
   groupId: string
@@ -134,12 +144,6 @@ const { t } = useI18n()
 const open = ref(false)
 const pickerOpen = ref(false)
 
-// Active members' agent ids: shown dimmed + unpickable in the add-members
-// picker (the backend rejoins/no-ops, so offering them would be misleading).
-const activeAgentIds = computed(() =>
-  props.members.filter(m => !m.left).map(m => m.agentId),
-)
-
 // The host always leads the roster. The server orders members by created_at, so
 // a host that joined later (or was removed and re-added) would otherwise appear
 // mid-list, which reads as "not in charge". Everyone else keeps their incoming
@@ -154,12 +158,24 @@ function openSheet() { open.value = true }
 function close() { open.value = false }
 function openAdd() { pickerOpen.value = true }
 
+// Instances ALREADY in the group (active only; left members do not occupy a
+// slot). The picker counts these against the group-wide cap so "+" disables at
+// the right point, and the footer total includes them.
+const activeMemberCount = computed(() => props.members.filter(m => !m.left).length)
+
 async function onAgentsPicked(ids: string | string[]) {
   const list = Array.isArray(ids) ? ids : [ids]
   if (list.length > 0) {
     try {
-      await addGroupMembers(props.groupId, list)
+      const newIds = await addGroupMembers(props.groupId, list)
+      // Show the new members immediately, then backfill their avatars in the
+      // background and refresh AGAIN when done. The roster is fetched before
+      // generation completes, so without the second refresh the fresh members
+      // would keep their fallback icons until a session switch reloaded them.
       emit('changed')
+      void generateMemberAvatars(props.groupId, newIds)
+        .then(() => emit('changed'))
+        .catch(e => appLog.w('Group', 'member avatar generation failed', e))
     } catch { /* ignore */ }
   }
   pickerOpen.value = false
@@ -221,7 +237,8 @@ defineExpose({ open: openSheet })
   border-top: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
 }
 .gm-row.is-left .gm-avatar,
-.gm-row.is-left .gm-name {
+.gm-row.is-left .gm-name,
+.gm-row.is-left :deep(.gm-real-name) {
   opacity: var(--opacity-disabled, 0.4);
 }
 .gm-avatar {
@@ -234,8 +251,16 @@ defineExpose({ open: openSheet })
   align-items: center;
   justify-content: center;
 }
-.gm-name {
+/* Nickname + real-agent label sit together; the wrapper takes the flex slack
+   so the host tag / remove button stay pinned to the trailing edge. */
+.gm-identity {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.gm-name {
   min-width: 0;
   font-size: var(--font-size-md);
   color: var(--text-primary);

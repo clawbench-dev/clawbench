@@ -654,6 +654,11 @@ func PurgeArchivedData(sessionIDs []string) (sessionsPurged int64, messagesPurge
 	// excludes member rows, so they can never be reaped by a later pass.
 	_, _ = tx.Exec("DELETE FROM chat_sessions WHERE session_type = ? AND group_id IN ("+placeholders+")", append([]any{SessionTypeGroupMember}, args...)...)
 
+	// Delete pending bcc notes for the group (no FK, so the cascade above does
+	// not catch them; HardDeleteSession also cleans them via the group's session
+	// id, and this path was missed).
+	_, _ = tx.Exec("DELETE FROM group_pending_bcc WHERE group_id IN ("+placeholders+")", args...)
+
 	// Delete the session records
 	result, err = tx.Exec("DELETE FROM chat_sessions WHERE id IN ("+placeholders+") AND archived = 1", args...)
 	if err != nil {

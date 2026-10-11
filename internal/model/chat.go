@@ -311,14 +311,17 @@ type ChatSession struct {
 }
 
 // GroupMemberPreview is the wire shape of one active group member in a session
-// list row: just enough to render a stacked avatar (the member's agentId drives
-// the avatar, name the tooltip). It is NOT the full roster — the member
-// management sheet loads that via GET /api/group/members.
+// list row: just enough to render a stacked avatar (the member's own frozen
+// Avatar snapshot drives the icon, name the tooltip). It is NOT the full roster
+// — the member management sheet loads that via GET /api/group/members.
 type GroupMemberPreview struct {
 	ID      string `json:"id"`
 	AgentID string `json:"agentId"`
 	Name    string `json:"name"`
 	Backend string `json:"backend"`
+	// Avatar is the member's own frozen avatar SVG (agent_avatar); empty for
+	// members created before the per-member avatar feature.
+	Avatar string `json:"avatar,omitempty"`
 	// IsHost lets the list-row stack put the host first (the leading disc is
 	// the only fully visible one). Without it the preview cannot order the
 	// stack the way the header does.

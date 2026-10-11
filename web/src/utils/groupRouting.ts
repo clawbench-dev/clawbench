@@ -399,12 +399,20 @@ export interface MentionableMember {
   id: string
   name: string
   left?: boolean
-  /** The underlying agent id. Carried through so the caller can resolve the
-   *  member's custom avatar (a property of the AGENT, not the member row). */
+  /** The underlying agent id. Carried through so the caller can fall back to
+   *  the AGENT avatar when the member has no avatar snapshot of its own. */
   agentId?: string
+  /** The member's own avatar snapshot. Callers prefer it and only fall back to
+   *  the underlying agent's avatar when it is empty, so two instances of the
+   *  same agent show distinct avatars. */
+  avatar?: string
   /** The member's backend, used to render its built-in icon when no custom
    *  avatar is set. */
   backend?: string
+  /** The underlying REAL agent name. Set only when the member's display name
+   *  differs from the live agent name (an auto-derived pool name / "<base> <n>"),
+   *  so the @ list can disclose which agent a nickname belongs to. */
+  agentName?: string
 }
 
 /** A member candidate for the `@` completion menu. */
@@ -415,10 +423,17 @@ export interface MemberCandidate {
   description: string
   /** The member ROW id written into the mention tag on select. */
   mentionMemberId: string
-  /** Underlying agent id (avatar resolution happens in the caller). */
+  /** Underlying agent id (avatar fallback resolution happens in the caller). */
   agentId?: string
+  /** The member's own avatar snapshot. The caller prefers it and only falls
+   *  back to the underlying agent's avatar when it is empty. */
+  avatar?: string
   /** Member backend (fallback icon when the agent has no custom avatar). */
   backend?: string
+  /** The underlying REAL agent name, when it differs from the display name.
+   *  The @ list renders it as a disclosure chip next to an auto-derived
+   *  nickname. */
+  agentName?: string
 }
 
 /**
@@ -435,7 +450,7 @@ export function buildMemberCandidates(members: MentionableMember[], query: strin
     if (m.left) continue
     if (!m.id || !m.name) continue
     if (q && !m.name.toLowerCase().includes(q)) continue
-    out.push({ key: `member:${m.id}`, label: m.name, description: '', mentionMemberId: m.id, agentId: m.agentId, backend: m.backend })
+    out.push({ key: `member:${m.id}`, label: m.name, description: '', mentionMemberId: m.id, agentId: m.agentId, avatar: m.avatar, backend: m.backend, agentName: m.agentName })
   }
   return out
 }
