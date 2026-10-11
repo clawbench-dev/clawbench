@@ -187,6 +187,20 @@
   justify-content: center;
 }
 
+/* BottomSheet shown as a centered card (wide mode) always renders a footer so
+   it matches the native modal chrome. When the footer has no ELEMENT content it
+   collapses to the same slim bar as `.modal-footer-default`. `:not(:has(> *))`
+   covers both cases a class binding cannot: no footer slot at all, and a slot
+   whose own `v-if` is false (the session list's tab bar hides when there are no
+   cross-project sessions). Comments are not element nodes, so a Vue `v-if=false`
+   placeholder still counts as empty. Scoped to the wide overlay so the narrow
+   bottom drawer keeps its slot-only footer. */
+.bs-overlay.bs-overlay-wide-auto .bs-footer:not(:has(> *)) {
+  min-height: 8px;
+  padding: var(--space-4) var(--space-5);
+  justify-content: center;
+}
+
 /* ── Animations ── */
 @keyframes modal-fadeIn {
   from { opacity: 0; }

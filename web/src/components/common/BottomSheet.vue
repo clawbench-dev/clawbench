@@ -19,13 +19,21 @@
         ]"
       >
         <!-- Header -->
-        <div v-if="!noHeader" class="bs-header" :class="{ 'bs-header-handle-only': handleOnly, 'bs-header-has-close': !handleOnly }">
+        <div
+          v-if="!noHeader"
+          class="bs-header"
+          :class="{ 'bs-header-handle-only': handleOnly, 'bs-header-has-close': !handleOnly && isWideScreen }"
+          @click="handleHeaderClick"
+        >
           <div class="bs-handle" />
           <slot v-if="!handleOnly" name="header">
             <span class="bs-title">{{ title }}</span>
           </slot>
+          <!-- Close button only in centered-card (wide) mode. The narrow bottom
+               drawer closes via its header tap / drag handle instead — a floating
+               X on a bottom sheet is redundant with the handle. -->
           <button
-            v-if="!handleOnly"
+            v-if="!handleOnly && isWideScreen"
             type="button"
             class="modal-close-btn"
             :aria-label="closeLabel"
@@ -39,8 +47,15 @@
         <div class="bs-body">
           <slot />
         </div>
-        <!-- Footer slot -->
-        <footer v-if="$slots.footer" class="bs-footer">
+        <!-- Footer slot. In centered-card (wide) mode a footer is ALWAYS
+             rendered, matching ModalDialog, so the card has the same bottom
+             chrome as a native modal. When it ends up with no element content —
+             either no slot at all, or a slot whose own `v-if` is false (the
+             session list's tab bar hides when there are no cross-project
+             sessions) — CSS collapses it to the slim bar via
+             `:not(:has(> *))` in modal-card.css. The bottom drawer (narrow)
+             only shows a footer when the consumer provides one. -->
+        <footer v-if="$slots.footer || isWideScreen" class="bs-footer">
           <slot name="footer" />
         </footer>
       </div>
@@ -194,6 +209,18 @@ function handleEscapeKey(e) {
     overlayRef.value?.focus()
     return
   }
+  handleClose()
+}
+
+/**
+ * Header tap closes the sheet only in narrow (bottom-drawer) mode, where the
+ * header is the close affordance and there is no X button. In wide
+ * (centered-card) mode the dedicated close button owns that job, so the header
+ * stays inert. Interactive elements inside the header slot must `@click.stop`
+ * so they do not bubble here (all current consumers do).
+ */
+function handleHeaderClick() {
+  if (isWideScreen.value) return
   handleClose()
 }
 

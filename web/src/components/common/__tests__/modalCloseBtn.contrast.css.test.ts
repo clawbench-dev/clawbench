@@ -93,3 +93,30 @@ describe('modal-close-btn resting fill derives from the header colour', () => {
     expect(css).toMatch(/@media\s*\(hover:\s*hover\)\s*\{[\s\S]*?\.modal-close-btn:hover/)
   })
 })
+
+/**
+ * A BottomSheet shown as a centered card (wide mode) must carry the same slim
+ * bottom bar as a native ModalDialog, so the two shells read as one modal
+ * language. The shared footer recipe lives here; the wide-overlay-scoped slim
+ * variant must exist and must NOT leak onto the narrow bottom drawer.
+ */
+describe('centered-card footer chrome', () => {
+  it('collapses an element-empty wide footer to the slim bar', async () => {
+    const css = await rawCss()
+    // `:not(:has(> *))` is required, not a class binding: the session list
+    // provides a footer slot whose own v-if is false, so `!$slots.footer` is
+    // never true and the footer would otherwise collapse to a ~12px stub.
+    const rule = css.match(/\.bs-overlay\.bs-overlay-wide-auto\s+\.bs-footer:not\(:has\(>\s*\*\)\)\s*\{([\s\S]*?)\}/)
+    expect(rule, '.bs-overlay-wide-auto .bs-footer:not(:has(> *)) must exist').not.toBeNull()
+    expect(rule![1]).toContain('min-height: 8px')
+  })
+
+  it('scopes the wide footer recipe to the centered-card overlay only', async () => {
+    const css = await rawCss()
+    // The shared footer rule must key on the wide overlay, not bare `.bs-footer`
+    // — otherwise the narrow bottom drawer would gain a footer it never had.
+    const shared = css.match(/\.modal-footer,\s*([^{]*)\{/)
+    expect(shared, 'shared footer rule must exist').not.toBeNull()
+    expect(shared![1]).toContain('.bs-overlay.bs-overlay-wide-auto .bs-footer')
+  })
+})

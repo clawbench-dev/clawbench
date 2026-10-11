@@ -4,7 +4,7 @@
       <div class="ad-header">
         <Paperclip :size="16" class="bs-header-icon" />
         <span class="bs-header-title">{{ t('chat.attach.drawerTitle') }}</span>
-        <button class="ad-upload-btn" @click="handleUploadClick" :title="t('chat.attach.uploadFile')">
+        <button class="ad-upload-btn" @click.stop="handleUploadClick" :title="t('chat.attach.uploadFile')">
           <Upload :size="16" />
           <span class="ad-upload-label">{{ t('chat.attach.uploadFile') }}</span>
         </button>
