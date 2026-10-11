@@ -77,12 +77,12 @@ describe('useGroupMembers', () => {
   })
 
   it('resolveSpeaker prefers the member avatar snapshot and exposes agentName', async () => {
-    agentAvatars['claude'] = '<svg>agent</svg>'
+    agentAvatars['agent-claude'] = '<svg>agent</svg>'
     vi.stubGlobal('fetch', vi.fn(async () => ({
       ok: true,
       json: async () => ({
         members: [{
-          id: 'm1', agentId: 'claude', name: 'Alice', backend: 'claude',
+          id: 'm1', agentId: 'agent-claude', name: 'Alice', backend: 'claude',
           avatar: '<svg>member</svg>', agentName: 'Claude', left: false, isHost: false,
         }],
       }),
@@ -94,17 +94,17 @@ describe('useGroupMembers', () => {
     await new Promise(r => setTimeout(r, 0))
 
     expect(resolveSpeaker('m1')).toEqual({
-      name: 'Alice', backend: 'claude', avatar: '<svg>member</svg>', agentName: 'Claude',
+      name: 'Alice', backend: 'claude', avatar: '<svg>member</svg>', agentName: 'Claude', agentId: 'agent-claude',
     })
   })
 
   it('resolveSpeaker falls back to the agent avatar when the member has none', async () => {
-    agentAvatars['claude'] = '<svg>agent</svg>'
+    agentAvatars['agent-claude'] = '<svg>agent</svg>'
     vi.stubGlobal('fetch', vi.fn(async () => ({
       ok: true,
       json: async () => ({
         members: [{
-          id: 'm1', agentId: 'claude', name: 'Alice', backend: 'claude',
+          id: 'm1', agentId: 'agent-claude', name: 'Alice', backend: 'claude',
           avatar: '', agentName: 'Claude', left: false, isHost: false,
         }],
       }),
@@ -116,17 +116,17 @@ describe('useGroupMembers', () => {
     await new Promise(r => setTimeout(r, 0))
 
     expect(resolveSpeaker('m1')).toEqual({
-      name: 'Alice', backend: 'claude', avatar: '<svg>agent</svg>', agentName: 'Claude',
+      name: 'Alice', backend: 'claude', avatar: '<svg>agent</svg>', agentName: 'Claude', agentId: 'agent-claude',
     })
   })
 
   it('resolveByName prefers the member avatar snapshot and exposes agentName', async () => {
-    agentAvatars['claude'] = '<svg>agent</svg>'
+    agentAvatars['agent-claude'] = '<svg>agent</svg>'
     vi.stubGlobal('fetch', vi.fn(async () => ({
       ok: true,
       json: async () => ({
         members: [{
-          id: 'm1', agentId: 'claude', name: 'Alice', backend: 'claude',
+          id: 'm1', agentId: 'agent-claude', name: 'Alice', backend: 'claude',
           avatar: '<svg>member</svg>', agentName: 'Claude', left: false, isHost: false,
         }],
       }),
@@ -138,11 +138,11 @@ describe('useGroupMembers', () => {
     await new Promise(r => setTimeout(r, 0))
 
     expect(resolveByName('Alice')).toEqual({
-      name: 'Alice', backend: 'claude', avatar: '<svg>member</svg>', agentName: 'Claude',
+      name: 'Alice', backend: 'claude', avatar: '<svg>member</svg>', agentName: 'Claude', agentId: 'agent-claude',
     })
     // Trimmed input resolves the same member.
     expect(resolveByName('  Alice  ')).toEqual({
-      name: 'Alice', backend: 'claude', avatar: '<svg>member</svg>', agentName: 'Claude',
+      name: 'Alice', backend: 'claude', avatar: '<svg>member</svg>', agentName: 'Claude', agentId: 'agent-claude',
     })
     // Unknown name resolves to null.
     expect(resolveByName('Bob')).toBeNull()

@@ -49,6 +49,7 @@
       @reset-session="handleResetSession"
       @fork-from-message="handleForkFromMessage"
       @rewind-from-message="handleRewindFromMessage"
+      @open-agent-config="(agentId) => $emit('open-agent-config', agentId)"
     />
 
     <!-- Session swipe indicator — floats above the message area -->
@@ -322,7 +323,7 @@ const props = defineProps({
     resolveGroupSpeaker: { type: Function, default: null },
     resolveGroupSpeakerByName: { type: Function, default: null },
 })
-const emit = defineEmits(['open', 'message', 'task-card-click', 'open-session-search', 'open-group-settings'])
+const emit = defineEmits(['open', 'message', 'task-card-click', 'open-session-search', 'open-group-settings', 'open-agent-config'])
 
 // ── Singletons ──
 const identity = useSessionIdentity()

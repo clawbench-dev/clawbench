@@ -337,6 +337,7 @@
                       @task-card-click="onTaskCardClick"
                       @open-session-search="sessionSearchDrawer.open()"
                       @open-group-settings="openGroupSettings"
+                      @open-agent-config="openAgentConfig"
                     />
                   </TabPanel>
                   <!-- The hint is centered on the CHAT column, not on
@@ -1304,6 +1305,25 @@ const groupAutoApprove = sessionIdentity.autoApprove
 const groupAvatarStackRef = ref<InstanceType<typeof GroupAvatarStack> | null>(null)
 function openGroupSettings() {
   groupAvatarStackRef.value?.open()
+}
+
+/**
+ * Group-chat speaker header → that agent's config page.
+ *
+ * The config page is a sub-page of the settings tab, so the jump records the
+ * chat as its origin first: Back (Android hardware / edge swipe) then returns
+ * to the conversation instead of landing on whatever tab preceded the jump.
+ * (The settings breadcrumb is NOT this path — it truncates the settings nav
+ * stack and lands on the settings index without switching tabs.) Same pattern
+ * as handleOpenPortForwardSettings. The settings TabPanel mounts lazily, so the
+ * target category travels through the module-level pending-category ref, which
+ * SettingsPage consumes on mount or on activation.
+ */
+function openAgentConfig(agentId: string) {
+  if (!agentId) return
+  beginExternalJump('chat', surfaceLabel('chat'), { tab: 'chat' })
+  setPendingSettingsCategory(`agents:${agentId}`)
+  switchTab('settings')
 }
 
 const sessionSidebar = useSessionSidebar()

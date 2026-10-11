@@ -50,7 +50,7 @@ import ChatMessageItem from '@/components/chat/ChatMessageItem.vue'
 const i18n = createI18n({
   legacy: false,
   locale: 'en',
-  messages: { en: { chat: { message: {}, contentBlocks: { cancelled: 'cancelled' }, fileChanges: { title: 'Files' }, pending: {}, speech: {}, busy: {} }, group: { host: 'Host', realAgent: 'Agent', you: 'you', bcc: { title: 'Private note', to: 'To', toYou: 'Private note to you' } }, common: {} } },
+  messages: { en: { chat: { message: {}, contentBlocks: { cancelled: 'cancelled' }, fileChanges: { title: 'Files' }, pending: {}, speech: {}, busy: {} }, group: { host: 'Host', realAgent: 'Agent', you: 'you', bcc: { title: 'Private note', to: 'To', toYou: 'Private note to you' } }, session: { configAgent: 'Agent settings' }, common: {} } },
 })
 
 function mountItem(msg: Record<string, unknown>, props: Record<string, unknown> = {}) {
@@ -219,6 +219,60 @@ describe('ChatMessageItem group speaker', () => {
     const summary = w.find('.msg-mention-summary')
     expect(summary.exists()).toBe(true)
     expect(summary.text()).toContain('User')
+  })
+})
+
+describe('ChatMessageItem group speaker → agent config', () => {
+  // The message's own agentId is the member ROW id; only the resolved speaker
+  // carries the REAL agent id the config page needs. A test that emitted the
+  // member row id would pass a naive "emits something" check while opening a
+  // nonexistent agent — so assert the emitted value is the real agent id.
+  const withAgentId = (resolveSpeaker: (id: string) => unknown) => () =>
+    mountItem(
+      { role: 'assistant', id: 60, content: '', blocks: [], agentId: 'member-row-1' },
+      { resolveSpeaker },
+    )
+
+  it('wraps the avatar in a button and emits the real agent id on click', async () => {
+    const w = withAgentId((id) => (id === 'member-row-1'
+      ? { name: 'Alice', backend: 'claude', avatar: '', agentName: 'Claude', agentId: 'real-agent-9' }
+      : null))()
+    const btn = w.find('.msg-speaker-btn')
+    expect(btn.exists()).toBe(true)
+    await btn.trigger('click')
+    const emitted = w.emitted('open-agent-config')
+    expect(emitted).toBeTruthy()
+    expect(emitted![0][0]).toBe('real-agent-9')
+  })
+
+  it('keeps the avatar non-interactive when the speaker has no real agent id', () => {
+    // A legacy resolver that predates agentId: the avatar must NOT become a
+    // button that emits an unresolvable id.
+    const w = withAgentId(() => ({ name: 'Alice', backend: 'claude', avatar: '', agentName: 'Claude' }))()
+    expect(w.find('.msg-speaker-btn').exists()).toBe(false)
+    expect(w.find('.msg-speaker .agent-icon-stub').exists()).toBe(true)
+  })
+
+  it('keeps the avatar non-interactive on the read-only share page', () => {
+    const w = mountItem(
+      { role: 'assistant', id: 61, content: '', blocks: [], agentId: 'member-row-1' },
+      {
+        readOnly: true,
+        resolveSpeaker: () => ({ name: 'Alice', backend: 'claude', avatar: '', agentName: 'Claude', agentId: 'real-agent-9' }),
+      },
+    )
+    expect(w.find('.msg-speaker-btn').exists()).toBe(false)
+    // ...but the avatar itself must still render (a read-only viewer should see
+    // who spoke). Asserting only the button's absence would pass if the whole
+    // icon were dropped.
+    expect(w.find('.msg-speaker .agent-icon-stub').exists()).toBe(true)
+  })
+
+  it('carries an accessible label on the interactive avatar', () => {
+    const w = withAgentId(() => ({ name: 'Alice', backend: 'claude', avatar: '', agentName: 'Claude', agentId: 'real-agent-9' }))()
+    const btn = w.find('.msg-speaker-btn')
+    expect(btn.attributes('title')).toBe('Agent settings')
+    expect(btn.attributes('aria-label')).toBe('Agent settings')
   })
 })
 

@@ -8,6 +8,10 @@ export interface GroupSpeakerIdentity {
   backend: string
   avatar: string
   agentName: string
+  /** The underlying real agent id (GroupMemberInfo.agentId). Lets the speaker
+   *  header open that agent's config page — the message's own `agentId` is the
+   *  member ROW id, which no config page can resolve. */
+  agentId: string
 }
 
 /**
@@ -32,7 +36,7 @@ export function useGroupMembers(currentSessionId: Ref<string>) {
 
   function toIdentity(m: GroupMemberInfo): GroupSpeakerIdentity {
     // 成员自己的头像快照优先；旧成员无快照时回退智能体头像。
-    return { name: m.name, backend: m.backend, avatar: m.avatar || getAgentAvatar(m.agentId) || '', agentName: m.agentName }
+    return { name: m.name, backend: m.backend, avatar: m.avatar || getAgentAvatar(m.agentId) || '', agentName: m.agentName, agentId: m.agentId }
   }
 
   /** resolveSpeaker maps a member row id to a speaker identity or null. */
