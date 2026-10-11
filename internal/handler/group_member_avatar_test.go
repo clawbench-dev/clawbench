@@ -221,7 +221,7 @@ func TestServeGroupMemberAvatars_OverCountRejected(t *testing.T) {
 	const validSVG = `<svg xmlns="http://www.w3.org/2000/svg"></svg>`
 	avatars := make([]map[string]any, 0, service.MaxGroupMembers+1)
 	avatars = append(avatars, map[string]any{"memberId": hostID, "avatar": validSVG})
-	for i := 0; i < service.MaxGroupMembers; i++ {
+	for range service.MaxGroupMembers {
 		avatars = append(avatars, map[string]any{"memberId": "m", "avatar": validSVG})
 	}
 	require.Len(t, avatars, service.MaxGroupMembers+1)
