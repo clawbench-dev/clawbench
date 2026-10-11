@@ -118,6 +118,20 @@ describe('GroupSettingsSheet', () => {
     expect(avatars[1]).toBe('<svg>agent-a2</svg>')
   })
 
+  // A pooled member (nickname ≠ real agent name) discloses its real agent name
+  // next to the nickname; a member whose nickname IS the agent name shows none.
+  it('shows the real agent name label only when the nickname differs', () => {
+    const w = mountSheet([
+      { id: 'm1', name: 'Alice', backend: 'claude', agentId: 'a1', isHost: false, agentName: 'Claude' },
+      { id: 'm2', name: 'Claude', backend: 'claude', agentId: 'a2', isHost: true, agentName: 'Claude' },
+    ])
+    const labels = w.findAll('.gm-real-name')
+    expect(labels).toHaveLength(1)
+    expect(labels[0].text()).toBe('Claude')
+    // It sits right after the nickname inside the identity wrapper.
+    expect(w.find('.gm-identity .gm-real-name').exists()).toBe(true)
+  })
+
   it('removes a member through the API and emits changed', async () => {
     const w = mountSheet(MEMBERS)
     await w.find('.gm-remove').trigger('click')

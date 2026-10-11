@@ -28,7 +28,18 @@
           <span class="gm-avatar">
             <AgentIcon :backend="m.backend" :name="m.name" :avatar="m.avatar || getAgentAvatar(m.agentId)" size="lg" />
           </span>
-          <span class="gm-name">{{ m.name }}</span>
+          <span class="gm-identity">
+            <span class="gm-name">{{ m.name }}</span>
+            <!-- Real-agent disclosure: a member whose nickname was auto-derived
+                 (pool name) shows the underlying agent's real name right after
+                 it, the same convention as the message speaker label. Hidden
+                 when the nickname IS the agent name. -->
+            <span
+              v-if="m.agentName && m.agentName !== m.name"
+              class="gm-real-name"
+              :title="t('group.realAgent')"
+            >{{ m.agentName }}</span>
+          </span>
           <span v-if="m.isHost" class="gm-tag gm-tag--host"><Crown :size="11" class="gm-tag-crown" />{{ t('group.host') }}</span>
           <span v-else-if="m.left" class="gm-tag gm-tag--left">{{ t('group.left') }}</span>
           <button
@@ -230,7 +241,8 @@ defineExpose({ open: openSheet })
   border-top: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
 }
 .gm-row.is-left .gm-avatar,
-.gm-row.is-left .gm-name {
+.gm-row.is-left .gm-name,
+.gm-row.is-left .gm-real-name {
   opacity: var(--opacity-disabled, 0.4);
 }
 .gm-avatar {
@@ -243,14 +255,31 @@ defineExpose({ open: openSheet })
   align-items: center;
   justify-content: center;
 }
-.gm-name {
+/* Nickname + real-agent label sit together; the wrapper takes the flex slack
+   so the host tag / remove button stay pinned to the trailing edge. */
+.gm-identity {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.gm-name {
   min-width: 0;
   font-size: var(--font-size-md);
   color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* Real-agent disclosure chip (nickname ≠ real agent name). */
+.gm-real-name {
+  flex-shrink: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 }
 
 /* Pills: host (accent) / left (muted). */
