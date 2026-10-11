@@ -827,17 +827,22 @@ const session = useChatSession({
   onResubscribeStream: (sid) => stream.resubscribe(sid),
 })
 
-// onQueueDrainBoundary: a queued message started its own turn, which means the
-// PREVIOUS turn's reply just finalized and stamped its completed_at. The unread
-// query compares COALESCE(completed_at, created_at) > last_read_at, so that
-// reply now counts as unread for the whole duration of the next turn — the
-// session row dot lights up mid-stream even though the user is watching it.
+// onTurnBoundary: a producer turn just ended for the current session, which
+// means that turn's reply just finalized and stamped its completed_at. The
+// unread query compares COALESCE(completed_at, created_at) > last_read_at, so
+// the reply now counts as unread until the session is re-anchored. Two sources:
+//   - queue_drain: a queued message started its own turn (the PREVIOUS turn's
+//     reply finalized);
+//   - stream_finalize: one GROUP member turn finalized — a group run finalizes
+//     one member at a time, so without this the session row lights up mid-run
+//     even though the user is watching (the terminal `done` re-anchors only at
+//     the very end).
 //
 // The backend cannot fix this itself: a queued message may come from another
 // device or an IM push, so "a turn boundary happened" is not evidence that
 // anyone is looking. Only the client knows, so the gate lives here — same
 // condition as the completion path (foreground, current session).
-function handleQueueDrainBoundary(sessionId) {
+function handleTurnBoundary(sessionId) {
   if (!sessionId) return
   if (sessionId !== identity.currentSessionId.value) return
   if (!appInForeground.value) return
@@ -973,7 +978,7 @@ const stream = useChatStream({
   onToast: (msg, opts) => toast.show(msg, opts),
   onNotification: (title, opts) => notification.show(title, opts),
   onStreamEnd,
-  onQueueDrainBoundary: handleQueueDrainBoundary,
+  onTurnBoundary: handleTurnBoundary,
   onMemberFinalize: handleMemberFinalize,
   onReplayDone: () => { inputDisabled.value = false },
   onFileModified: (filePath) => {

@@ -48,7 +48,7 @@ vi.mock('@/utils/appLog', async (importOriginal) => ({
 let registeredEventHandler: ((event: string, data: unknown) => void) | null = null
 let mockSendWsMessage: ReturnType<typeof vi.fn>
 let mockConnected: ReturnType<typeof ref<boolean>>
-// `isReplayingEvents` gates the onQueueDrainBoundary hook (a replayed drain
+// `isReplayingEvents` gates the onTurnBoundary hook (a replayed turn boundary
 // must NOT re-anchor the unread badge). Tests flip this to exercise both paths.
 let mockIsReplayingEvents: ReturnType<typeof ref<boolean>>
 
@@ -1549,44 +1549,87 @@ describe('useChatStream', () => {
       expect(newStreaming.backend).toBe('claude-code')
     })
 
-    it('calls onQueueDrainBoundary for a LIVE drain of the current session', () => {
+    it('calls onTurnBoundary for a LIVE drain of the current session', () => {
       // The hook backs the unread-badge fix: the previous reply just finalized
       // (its completed_at now past last_read_at), so the host re-anchors
       // last_read_at while the user is present.
-      const onQueueDrainBoundary = vi.fn()
-      const options = createOptions({ onQueueDrainBoundary })
+      const onTurnBoundary = vi.fn()
+      const options = createOptions({ onTurnBoundary })
       const { connectStream } = useChatStream(options)
       connectStream('test-session-1')
 
       simulateWsEvent('queue_drain', { sessionId: 'test-session-1', queueId: 'q-1', messageId: 3 })
 
-      expect(onQueueDrainBoundary).toHaveBeenCalledTimes(1)
-      expect(onQueueDrainBoundary).toHaveBeenCalledWith('test-session-1')
+      expect(onTurnBoundary).toHaveBeenCalledTimes(1)
+      expect(onTurnBoundary).toHaveBeenCalledWith('test-session-1')
     })
 
-    it('does NOT call onQueueDrainBoundary when the drain event is a replay', () => {
+    it('does NOT call onTurnBoundary when the drain event is a replay', () => {
       // A replayed drain means the user was disconnected while it happened, so
       // the unread badge must survive — the host must not re-anchor.
-      const onQueueDrainBoundary = vi.fn()
-      const options = createOptions({ onQueueDrainBoundary })
+      const onTurnBoundary = vi.fn()
+      const options = createOptions({ onTurnBoundary })
       const { connectStream } = useChatStream(options)
       connectStream('test-session-1')
       mockIsReplayingEvents.value = true
 
       simulateWsEvent('queue_drain', { sessionId: 'test-session-1', queueId: 'q-1', messageId: 3 })
 
-      expect(onQueueDrainBoundary).not.toHaveBeenCalled()
+      expect(onTurnBoundary).not.toHaveBeenCalled()
     })
 
-    it('does NOT call onQueueDrainBoundary for a different session', () => {
-      const onQueueDrainBoundary = vi.fn()
-      const options = createOptions({ onQueueDrainBoundary })
+    it('does NOT call onTurnBoundary for a different session', () => {
+      const onTurnBoundary = vi.fn()
+      const options = createOptions({ onTurnBoundary })
       const { connectStream } = useChatStream(options)
       connectStream('test-session-1')
 
       simulateWsEvent('queue_drain', { sessionId: 'other-session', queueId: 'q-1', messageId: 3 })
 
-      expect(onQueueDrainBoundary).not.toHaveBeenCalled()
+      expect(onTurnBoundary).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('WS event handling — stream_finalize turn boundary (group member)', () => {
+    // A group run finalizes one member at a time (stream_finalize) and only the
+    // terminal `done` fires at the very end. Each member finalize stamps its
+    // completed_at, making the session unread for the rest of the run, so the
+    // host must re-anchor on each member finalize — the exact same boundary as
+    // queue_drain. These mirror the queue_drain cases above. The boundary hook
+    // fires before the placeholder lookup, so no placeholder is required.
+    it('calls onTurnBoundary for a LIVE member finalize of the current session', () => {
+      const onTurnBoundary = vi.fn()
+      const options = createOptions({ onTurnBoundary })
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      simulateWsEvent('stream_finalize', { message_id: 42 })
+
+      expect(onTurnBoundary).toHaveBeenCalledTimes(1)
+      expect(onTurnBoundary).toHaveBeenCalledWith('test-session-1')
+    })
+
+    it('does NOT call onTurnBoundary when the member finalize is a replay', () => {
+      const onTurnBoundary = vi.fn()
+      const options = createOptions({ onTurnBoundary })
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+      mockIsReplayingEvents.value = true
+
+      simulateWsEvent('stream_finalize', { message_id: 42 })
+
+      expect(onTurnBoundary).not.toHaveBeenCalled()
+    })
+
+    it('does NOT call onTurnBoundary for a different session', () => {
+      const onTurnBoundary = vi.fn()
+      const options = createOptions({ onTurnBoundary })
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      simulateWsEvent('stream_finalize', { message_id: 42 }, 'other-session')
+
+      expect(onTurnBoundary).not.toHaveBeenCalled()
     })
   })
 
