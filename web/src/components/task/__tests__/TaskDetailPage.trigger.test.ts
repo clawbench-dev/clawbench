@@ -19,6 +19,7 @@ vi.mock('lucide-vue-next', () => {
     Pencil: stub('Pencil'),
     Pause: stub('Pause'),
     Power: stub('Power'),
+    Square: stub('Square'),
     Zap: stub('Zap'),
     Trash2: stub('Trash2'),
   }
@@ -34,6 +35,7 @@ vi.mock('@/composables/useTaskOverview.ts', () => ({
   useTaskOverview: () => ({
     actionLoading: ref(false),
     triggerTask: vi.fn(),
+    stopTask: vi.fn(),
     pauseTask: vi.fn(),
     resumeTask: vi.fn(),
     deleteTask: vi.fn(),
@@ -117,5 +119,54 @@ describe('TaskDetailPage manual-run button', () => {
     const labels = actionLabels(mountWith({ status: 'completed' }))
     expect(labels).not.toContain('task.run')
     expect(labels).toEqual(['common.edit', 'task.delete'])
+  })
+})
+
+describe('TaskDetailPage terminate button', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  // While a run is in flight, the run button is replaced by a terminate button
+  // (not merely disabled) — the conventional affordance, and the user's actual
+  // intent when a task is running is to stop it.
+  it('replaces the run button with terminate on an active task while running', () => {
+    const labels = actionLabels(mountWith({ runningCount: 1 }))
+    expect(labels).toContain('task.stop')
+    expect(labels).not.toContain('task.run')
+    // pause/delete stay available
+    expect(labels).toContain('task.pause')
+    expect(labels).toContain('task.delete')
+  })
+
+  it('replaces the run button with terminate on a paused task while running', () => {
+    const labels = actionLabels(mountWith({ status: 'paused', runningCount: 1 }))
+    expect(labels).toContain('task.stop')
+    expect(labels).not.toContain('task.run')
+    expect(labels).toContain('task.resume')
+  })
+
+  // An event task has no manual run, but it can still be running (an event
+  // fired) — so it must offer terminate too.
+  it('offers terminate for a running event task even though it has no run button', () => {
+    const labels = actionLabels(mountWith({ triggerMode: 'event', eventTypes: 'pr.opened', runningCount: 1 }))
+    expect(labels).toContain('task.stop')
+    expect(labels).not.toContain('task.run')
+  })
+
+  it('shows the run button (not terminate) when nothing is running', () => {
+    const labels = actionLabels(mountWith({ runningCount: 0 }))
+    expect(labels).toContain('task.run')
+    expect(labels).not.toContain('task.stop')
+  })
+
+  // RunningCount carries `omitempty`, so an idle task's payload has NO
+  // runningCount key — the value is undefined, not 0. The check must treat
+  // "absent" as not-running; a refactor to `=== 0` would pass the other tests
+  // yet show terminate on every idle task in production.
+  it('shows the run button when runningCount is absent (omitempty)', () => {
+    const labels = actionLabels(mountWith({ runningCount: undefined }))
+    expect(labels).toContain('task.run')
+    expect(labels).not.toContain('task.stop')
   })
 })

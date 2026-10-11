@@ -1183,6 +1183,8 @@ export default {
     pause: 'Disable',
     resume: 'Enable',
     run: 'Run',
+    stop: 'Terminate',
+    confirmStop: 'Terminate this running task?',
     delete: 'Delete',
     clearUnread: 'Mark all read',
     actionFailed: 'Action failed',

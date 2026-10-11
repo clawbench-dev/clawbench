@@ -28,11 +28,22 @@
       </button>
 
       <template v-if="taskStatus === 'active'">
+        <!-- While a run is in flight the manual-run button is replaced by a
+             terminate button, for every task including event tasks. A disabled
+             "Run" reads as "you cannot do anything", but the user's intent when
+             a task is running is to stop it — offering that directly is the
+             conventional affordance. An event task has no manual run to offer,
+             but it can still be running (an event fired), so it gets the
+             terminate button too. -->
+        <button v-if="taskRunningCount > 0" class="fbtn fbtn-danger" :disabled="actionLoading" @click="stopTask" :title="t('task.stop')">
+          <Square :size="14" />
+          <span class="action-text">{{ t('task.stop') }}</span>
+        </button>
         <!-- An event task has no event to inject on a manual run, so its
              {{TITLE}}/{{URL}} placeholders would go unsubstituted. The backend
              rejects such a trigger (409); hide the button rather than offer an
              action that can only fail. -->
-        <button v-if="!isEventTriggered" class="fbtn fbtn-primary" :disabled="actionLoading || taskRunningCount > 0" @click="triggerTask" :title="taskRunningCount > 0 ? t('chat.contentBlocks.statusRunning') : t('task.run')">
+        <button v-else-if="!isEventTriggered" class="fbtn fbtn-primary" :disabled="actionLoading" @click="triggerTask" :title="t('task.run')">
           <Zap :size="14" />
           <span class="action-text">{{ t('task.run') }}</span>
         </button>
@@ -46,7 +57,13 @@
         </button>
       </template>
       <template v-else-if="taskStatus === 'paused'">
-        <button v-if="!isEventTriggered" class="fbtn fbtn-primary" :disabled="actionLoading || taskRunningCount > 0" @click="triggerTask" :title="taskRunningCount > 0 ? t('chat.contentBlocks.statusRunning') : t('task.run')">
+        <!-- A task can be paused while a run is still in flight, so the
+             terminate button applies here too. -->
+        <button v-if="taskRunningCount > 0" class="fbtn fbtn-danger" :disabled="actionLoading" @click="stopTask" :title="t('task.stop')">
+          <Square :size="14" />
+          <span class="action-text">{{ t('task.stop') }}</span>
+        </button>
+        <button v-else-if="!isEventTriggered" class="fbtn fbtn-primary" :disabled="actionLoading" @click="triggerTask" :title="t('task.run')">
           <Zap :size="14" />
           <span class="action-text">{{ t('task.run') }}</span>
         </button>
@@ -71,7 +88,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { History, Pencil, Pause, Power, Zap, Trash2 } from 'lucide-vue-next'
+import { History, Pencil, Pause, Power, Square, Zap, Trash2 } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import TaskBreadcrumb from '@/components/task/TaskBreadcrumb.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
@@ -95,7 +112,7 @@ const emit = defineEmits<{
 
 // Task actions (moved up from TaskOverviewTab so the action bar can be
 // fixed at the bottom of the unified scroll container)
-const { actionLoading, triggerTask, pauseTask, resumeTask, deleteTask } = useTaskOverview({
+const { actionLoading, triggerTask, stopTask, pauseTask, resumeTask, deleteTask } = useTaskOverview({
   task: computed(() => props.task),
   emit: {
     deleted: () => emit('deleted'),

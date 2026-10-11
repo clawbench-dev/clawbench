@@ -1187,6 +1187,8 @@ export default {
     pause: '禁用',
     resume: '启用',
     run: '执行',
+    stop: '终止',
+    confirmStop: '确定终止正在执行的任务？',
     delete: '删除',
     clearUnread: '全部标为已读',
     actionFailed: '操作失败',

@@ -4291,7 +4291,9 @@ paths:
       summary: 更新任务 / 删除执行记录
       description: |
         更新任务字段，并承载多种动作（`action`）：`update`、`pause`、`resume`、
-        `read`、`trigger`、`cancel`、`deleteExecution`、`deleteAllExecutions`。
+        `read`、`trigger`、`cancel`、`stop`、`deleteExecution`、`deleteAllExecutions`。
+        `cancel` 按执行实例中止（需 `executionId`）；`stop` 是任务级中止，终止该任务
+        当前所有运行中的执行，无需 `executionId`，且幂等（无运行中的执行时也返回成功）。
         删除执行记录走 `action: "deleteExecution"` + `executionId`（字符串）删除单条，
         或 `action: "deleteAllExecutions"` 清空该任务执行历史。
         **注意**：`trigger`（手动立即执行一次）对 `trigger_mode=event` 的任务不适用，
@@ -4312,10 +4314,10 @@ paths:
               properties:
                 action:
                   type: string
-                  enum: [update, pause, resume, read, trigger, cancel, deleteExecution, deleteAllExecutions]
+                  enum: [update, pause, resume, read, trigger, cancel, stop, deleteExecution, deleteAllExecutions]
                 executionId:
                   type: string
-                  description: 仅 `deleteExecution` 需要（字符串形式）。
+                  description: 仅 `cancel` / `deleteExecution` 需要（字符串形式）。`stop` 不需要。
                 script:
                   type: string
                   description: |
