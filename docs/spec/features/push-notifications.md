@@ -90,6 +90,7 @@ flowchart TD
 - **Write-ahead**：先存储后广播，确保事件日志无间隙
 - **客户端游标**：每个客户端维护 `last_seen_event_id` 游标（前端为会话级内存态，重启后置空；Android 端持久化到设备），收到终态事件时同步推进，重连时用 `after` 参数拉取游标之后的事件。前端只同步 Android 设备游标、不反向读取——避免后台推送重复投递用户在前台已看到的事件
 - **已读门控（suppress_notification）**：原生通知通道本身没有"已读"概念，也不理解服务端的重放标记，因此已读消息会被反复弹通知（issue #495）。服务端在 `GetPendingEvents` 按事件**主题**查已读状态，命中则给事件打 `suppress_notification`（字段缺省即通知，老客户端不受影响）。已读判据复用未读角标的语义：会话侧 `last_read_at` 非空且无更晚的 finalized 回复，任务侧查 `task_executions.read_at`；**`permission_pending` 豁免**——它是待处理的审批请求，不是已读回复。事件仍照常返回：客户端必须继续推进游标，否则下次拉取会永远重复返回它（游标推进与是否通知**彻底解耦**）。查询失败非致命，退回「通知」——绝不静默吞掉真完成
+- **已读后主动消除原生通知**：`suppress_notification` 只管"新事件要不要弹"，管不到"已经挂在通知栏上的旧通知"——Android/Electron 的事件通知原先只设 `setAutoCancel(true)`，仅在**点击通知本身**时消失。用户手动打开 App 读消息后，旧通知仍留在通知栏，再点会重复派发深链，导致会话/任务重复打开、重复加载（issue #529）。因此已读动作会**广播 WS-only 的 `read` 事件**：`MarkExecutionRead` / `MarkTaskExecutionsRead` 发 `task_update{status:"read"}`（对称于会话侧的 `UpdateLastRead` → `EmitSessionEventWSOnly`），客户端收到后撤销对应通知（Android 走 `EventNotificationIds` 统一 ID 公式 + `cancelEventNotification`；Electron 按 subject 键控保留句柄 + `native:dismiss-notification`）。`read` **刻意不进 `IsNotifiableEvent`**——否则"标记已读"本身会产生一条新通知，形成弹-读-再弹的循环
 - **游标推进必须与服务端持久化谓词逐条对齐**：客户端原先的 `advancesCursor` 谓词含 `task_update running`，而服务端 `IsNotifiableEvent` 只存 `completed/failed/cancelled`。游标指向服务端从未持久化的行时，`GetPendingEvents` 返回空列表（不回退全集），离线期间落地的完成事件将**永远无法恢复**。谓词不一致是隐蔽的——两端各自看都对，只有把二者逐条比对才会暴露
 - **TTL**：
   - 终端状态事件（completed/cancelled/failed）：24 小时
