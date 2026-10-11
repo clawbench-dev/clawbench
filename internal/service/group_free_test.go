@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -1211,5 +1212,254 @@ func TestFreeLoop_DuplicateInstancesGetDistinctOwnNames(t *testing.T) {
 	}
 	if strings.Contains(prompts[byName[name1]], "你的群内显示名是「"+name0+"」") {
 		t.Fatal("instance 2 must not be told the sibling's name")
+	}
+}
+
+// countUserTurnLines returns how many "轮到用户发言" system rows the group
+// timeline carries. Locale-independent (matches the active locale's text).
+func countUserTurnLines(t *testing.T, groupID string) int {
+	t.Helper()
+	want := i18n.T(i18n.LocalizerForLocale(model.Language), "GroupYourTurn")
+	msgs, err := GetMessagesBySessionIDRaw(groupID)
+	if err != nil {
+		t.Fatalf("GetMessagesBySessionIDRaw: %v", err)
+	}
+	n := 0
+	for _, m := range msgs {
+		if m.Role == "system" && strings.Contains(ExtractPlainText(m.Content), want) {
+			n++
+		}
+	}
+	return n
+}
+
+// A free relay that drains NATURALLY (the last speaker @s nobody) still returns
+// the floor to the user, so the "轮到用户发言" line must be written. This is the
+// reported defect: only an explicit @User used to write it, so a discussion that
+// simply wound down ended with no visible "your turn" marker.
+func TestFreeLoop_NaturalExhaustionAnnouncesUserTurn(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/free-natural-turn"
+	groupID, byName := createFreeGroup(t, project, "A", "B")
+
+	// A @s B; B @s nobody → the relay drains naturally.
+	script := map[string][]string{
+		byName["A"]: {`<clawbench-mention targets="B">B 你补充</clawbench-mention>`},
+		byName["B"]: {"B 说完了，没有要点名的人"},
+	}
+	runner, order := freeScriptedRunner(t, project, groupID, script)
+
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	msg := `<clawbench-mention targets="` + byName["A"] + `"></clawbench-mention> 开始`
+	_ = runGroupTurnForTest(t, o, project, msg, nil)
+
+	if len(*order) != 2 {
+		t.Fatalf("precondition: both members must speak, order=%v", *order)
+	}
+	if got := countUserTurnLines(t, groupID); got != 1 {
+		t.Fatalf("natural exhaustion must write exactly one user-turn line, got %d", got)
+	}
+}
+
+// The host's end signal (no explicit @User) also returns the floor, so the line
+// must be written there too.
+func TestHostLoop_EndSignalAnnouncesUserTurn(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/host-end-turn"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+
+	script := map[string][]string{
+		hostID: {`讨论充分。<clawbench-group-end/> 结论：可以发布。`},
+	}
+	runner, _ := newScriptedRunner(t, groupID, project, script)
+
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	_ = runGroupTurnForTest(t, o, project, "大家讨论一下", nil)
+
+	if got := countUserTurnLines(t, groupID); got != 1 {
+		t.Fatalf("the host's end signal must write exactly one user-turn line, got %d", got)
+	}
+}
+
+// Reaching the member-speech cap also returns the floor to the user (no more AI
+// may speak), so the line must be written alongside the cap notice.
+func TestFreeLoop_SpeechCapAnnouncesUserTurn(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/free-cap-turn"
+	groupID, byName := createFreeGroup(t, project, "A", "B")
+
+	// Both always @ the other, so only the cap can stop the relay.
+	script := map[string][]string{
+		byName["A"]: {`<clawbench-mention targets="B">继续</clawbench-mention>`, `<clawbench-mention targets="B">继续</clawbench-mention>`},
+		byName["B"]: {`<clawbench-mention targets="A">继续</clawbench-mention>`, `<clawbench-mention targets="A">继续</clawbench-mention>`},
+	}
+	runner, _ := freeScriptedRunner(t, project, groupID, script)
+	setGroupMaxSpeechesForTest(t, 2)
+
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	msg := `<clawbench-mention targets="` + byName["A"] + `"></clawbench-mention> 开始`
+	_ = runGroupTurnForTest(t, o, project, msg, nil)
+
+	if got := countUserTurnLines(t, groupID); got != 1 {
+		t.Fatalf("the speech cap must write exactly one user-turn line, got %d", got)
+	}
+}
+
+// A member that asks the user a question (AskUserQuestion) is addressing the
+// human: the relay must stop and the floor return, exactly like an @User. The
+// member that would have been @-ed next must NOT speak.
+func TestFreeLoop_MemberAskUserQuestionHandsBack(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/free-ask"
+	groupID, byName := createFreeGroup(t, project, "A", "B")
+
+	// A's output carries an AskUserQuestion tool block AND @s B in the SAME
+	// output. Without the AskUserQuestion hand-back, B WOULD be queued by the
+	// @ and speak — so this pins that the question wins over the mention.
+	var order []string
+	var mu sync.Mutex
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		mu.Lock()
+		order = append(order, turn.MemberRowID)
+		mu.Unlock()
+		text := "我需要你拍板"
+		if turn.MemberRowID == byName["A"] {
+			text = "我需要你拍板 <clawbench-mention targets=\"" + byName["B"] + "\">B 你说</clawbench-mention>"
+		}
+		content := askQuestionBlocks(text)
+		if _, err := AddChatMessageWithAgent(project, "claude", groupID, "assistant",
+			content, nil, false, "", turn.MemberRowID); err != nil {
+			return groupMemberResult{Err: err.Error()}
+		}
+		return groupMemberResult{}
+	}
+
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	msg := `<clawbench-mention targets="` + byName["A"] + `"></clawbench-mention> 开始`
+	_ = runGroupTurnForTest(t, o, project, msg, nil)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(order) != 1 || order[0] != byName["A"] {
+		t.Fatalf("an AskUserQuestion must stop the relay before B speaks, order=%v", order)
+	}
+	if got := countUserTurnLines(t, groupID); got != 1 {
+		t.Fatalf("an AskUserQuestion hand-back must write exactly one user-turn line, got %d", got)
+	}
+}
+
+// askQuestionBlocks builds a persisted assistant content JSON carrying an
+// AskUserQuestion tool_use block (the converted form the Finalize path writes)
+// plus a text block, so memberAskedQuestion can detect the question.
+func askQuestionBlocks(text string) string {
+	b, _ := json.Marshal(map[string]any{"blocks": []any{
+		map[string]any{"type": "text", "text": text},
+		map[string]any{"type": "tool_use", "name": "AskUserQuestion", "id": "ask-test-1", "done": true},
+	}})
+	return string(b)
+}
+
+// A raw <clawbench-ask-question> text block (pre-conversion) must ALSO hand the
+// floor back — a conversion gap must not silently drop the hand-back.
+func TestFreeLoop_RawAskQuestionTagHandsBack(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/free-ask-raw"
+	groupID, byName := createFreeGroup(t, project, "A", "B")
+
+	var order []string
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		order = append(order, turn.MemberRowID)
+		text := "请选择"
+		if turn.MemberRowID == byName["A"] {
+			// The raw tag AND an @ of B in the same output: the ask-question
+			// hand-back must beat the mention (otherwise B is queued and speaks).
+			text = `<clawbench-ask-question>` + "\n- 选项一\n- 选项二\n" + `</clawbench-ask-question>` +
+				` <clawbench-mention targets="` + byName["B"] + `">B 你说</clawbench-mention>`
+		}
+		if _, err := AddChatMessageWithAgent(project, "claude", groupID, "assistant",
+			assistantText(text), nil, false, "", turn.MemberRowID); err != nil {
+			return groupMemberResult{Err: err.Error()}
+		}
+		return groupMemberResult{}
+	}
+
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	msg := `<clawbench-mention targets="` + byName["A"] + `"></clawbench-mention> 开始`
+	_ = runGroupTurnForTest(t, o, project, msg, nil)
+
+	if len(order) != 1 || order[0] != byName["A"] {
+		t.Fatalf("a raw ask-question tag must stop the relay, order=%v", order)
+	}
+	if got := countUserTurnLines(t, groupID); got != 1 {
+		t.Fatalf("a raw ask-question hand-back must write exactly one user-turn line, got %d", got)
+	}
+}
+
+// During a multi-message drain each queued message is its own turn, so the
+// "轮到用户发言" line must NOT be written between two of the user's own queued
+// messages — only once, after the last. A line mid-drain would falsely claim
+// the floor is free while the next queued message is about to run.
+func TestFreeLoop_QueuedMessageSuppressesMidDrainLine(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/free-queued-line"
+	groupID, byName := createFreeGroup(t, project, "A", "B")
+
+	// A queued message waiting behind the current turn.
+	if _, err := AddQueuedMessage(project, "claude", groupID, "排队的一条", nil, "q-late", ""); err != nil {
+		t.Fatalf("AddQueuedMessage: %v", err)
+	}
+
+	script := map[string][]string{
+		byName["A"]: {"A 说完了"},
+		byName["B"]: {"B 说完了"},
+	}
+	runner, _ := freeScriptedRunner(t, project, groupID, script)
+
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	msg := `<clawbench-mention targets="` + byName["A"] + `"></clawbench-mention> 开始`
+	_ = runGroupTurnForTest(t, o, project, msg, nil)
+
+	if got := countUserTurnLines(t, groupID); got != 0 {
+		t.Fatalf("a queued message must suppress the mid-drain user-turn line, got %d", got)
+	}
+}
+
+// A CANCELLED turn returns the floor too, but with a visible cancel on the
+// timeline — it is not "your turn", so the line must NOT be written (the user
+// must read the failure first). This pins the CancelReason gate.
+func TestFreeLoop_CancelledTurnDoesNotAnnounceUserTurn(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/free-cancel-line"
+	groupID, byName := createFreeGroup(t, project, "A", "B")
+
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		if turn.MemberRowID == byName["A"] {
+			return groupMemberResult{CancelReason: cancelReasonUser}
+		}
+		return groupMemberResult{}
+	}
+
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	msg := `<clawbench-mention targets="` + byName["A"] + `"></clawbench-mention> 开始`
+	res := runGroupTurnForTest(t, o, project, msg, nil)
+	if res.CancelReason == "" {
+		t.Fatal("precondition: the turn must be cancelled")
+	}
+
+	if got := countUserTurnLines(t, groupID); got != 0 {
+		t.Fatalf("a cancelled turn must not announce the user's turn, got %d", got)
 	}
 }

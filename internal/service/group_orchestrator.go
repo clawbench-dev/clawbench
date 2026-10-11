@@ -39,6 +39,12 @@ type groupMemberTurn struct {
 type groupMemberResult struct {
 	Err          string
 	CancelReason string
+	// AskedQuestion is set when this turn's output carried an AskUserQuestion
+	// card (the converted tool_use form, or a raw <clawbench-ask-question> text
+	// block). A member asking the user a question is addressing the human, so
+	// the relay stops and the floor returns to the user — exactly like an
+	// explicit @User hand-back. Only ever set on a clean turn.
+	AskedQuestion bool
 }
 
 // groupTurnRunner runs one member's turn. Production wires it to runTurn with a
@@ -225,9 +231,37 @@ func (o *GroupOrchestrator) runLoop(groupCtx context.Context, groupID string) Dr
 	} else {
 		res = o.runRounds(groupCtx, groupID)
 	}
+	o.announceUserTurn(groupID, res)
 	finalizeGroupOrphans(groupID)
 	triggerChatSummarization(context.Background(), groupID)
 	return res
+}
+
+// announceUserTurn writes the "轮到用户发言" system line when a group turn
+// ended CLEANLY and returned the floor to the human. This is the single place
+// the line is written, so every clean ending is covered identically:
+//
+//   - free mode: the relay drained naturally (nobody @-ed anyone), or a member
+//     handed back with an explicit @User / an AskUserQuestion;
+//   - host mode: the host emitted the end signal, the member-speech cap was
+//     reached, or the host named the user / asked a question.
+//
+// It is deliberately gated on the WHOLE TURN being over (no queued message
+// left): during a multi-message drain each message is its own turn, and the
+// line belongs only after the last one — otherwise the user would see it
+// between two of their own queued messages, before the AI even saw the second.
+// A cancelled or errored turn also returns the floor, but with a visible
+// cancel/error already on the timeline, so it is not "your turn" — the user
+// must read the failure first.
+func (o *GroupOrchestrator) announceUserTurn(groupID string, res DrainResult) {
+	if res.CancelReason != "" || res.Err != "" {
+		return
+	}
+	if GetQueuedCount(groupID) > 0 {
+		return
+	}
+	writeGroupSystemMessage(o.project, groupID,
+		i18n.T(i18n.LocalizerForLocale(model.Language), "GroupYourTurn"))
 }
 
 // groupTurnSetup is the shared per-turn scaffolding both modes need: the
@@ -290,16 +324,24 @@ func (o *GroupOrchestrator) runSpeakerTurn(ctx context.Context, s groupTurnSetup
 	return o.executeTurn(ctx, s, p)
 }
 
+// clearUserPendingNotes drops the pending-note bookkeeping addressed to the
+// human user. The user reads notes in the UI card, never through an injected
+// prompt, so a note left for them would otherwise be re-sent forever (the user
+// has no turn to consume it). Called whenever the floor returns to the user.
+func (o *GroupOrchestrator) clearUserPendingNotes(groupID string) {
+	deletePendingBccForTarget(groupID, groupUserTarget())
+}
+
 // handUserBack ends the current turn because the floor was handed to the human
-// user: it clears the user's pending-note bookkeeping (the user reads notes in
-// the UI card, never through an injected prompt) and leaves a system line so the
-// timeline shows why the turn stopped. The caller returns the empty DrainResult
-// itself, since a handed-back turn never carries a cancel reason or error.
+// user: it clears the user's pending-note bookkeeping. The "轮到用户发言"
+// system line is NOT written here — it is written once by runLoop for every
+// clean turn that returns the floor to the user (natural exhaustion, the host's
+// end signal, the speech cap, an explicit @User, and a member asking the user a
+// question). Centralizing it there is what keeps the timeline message
+// consistent across all those paths instead of only the explicit-@User one.
 // Shared by both modes (host: the host named User; free: a speaker @-ed User).
 func (o *GroupOrchestrator) handUserBack(groupID string) {
-	deletePendingBccForTarget(groupID, groupUserTarget())
-	writeGroupSystemMessage(o.project, groupID,
-		i18n.T(i18n.LocalizerForLocale(model.Language), "GroupYourTurn"))
+	o.clearUserPendingNotes(groupID)
 }
 
 // speakerTurn is one queued speaker plus the mode-specific system prompt that
@@ -378,6 +420,11 @@ func (o *GroupOrchestrator) executeTurn(ctx context.Context, s groupTurnSetup, p
 		}
 		deletePendingBcc(ids)
 		o.storeSpeakerNotes(o.groupID, p.turn.member.ID, s.byID, s.byName)
+		// A member that asked the user a question is addressing the human, so
+		// the relay must hand the floor back (the group loop treats it like an
+		// @User). Detected here, on the clean-turn path, from the speaker's own
+		// persisted output.
+		res.AskedQuestion = memberAskedQuestion(o.groupID, p.turn.member.ID)
 	}
 	return res
 }
@@ -533,6 +580,13 @@ func (o *GroupOrchestrator) runSequentialGroup(
 		if r.CancelReason != "" {
 			return DrainResult{CancelReason: r.CancelReason}, appended, true
 		}
+		// A member that asked the user a question is addressing the human: hand
+		// the floor back and end the round, dropping the remaining turns exactly
+		// like an @User stop. The relay's appends are dropped (the round is over).
+		if r.Err == "" && r.AskedQuestion {
+			o.handUserBack(o.groupID)
+			return DrainResult{}, appended, true
+		}
 		if r.Err == "" && onSpoke != nil {
 			// Pass this group's NOT-YET-SPOKEN turns as `pending`: a member still
 			// waiting later in the SAME group must not be re-queued (it would
@@ -628,22 +682,19 @@ func (o *GroupOrchestrator) runParallelGroup(
 	if cancel != "" {
 		return DrainResult{CancelReason: cancel}, nil, true
 	}
+	// A member that asked the user a question is addressing the human: hand the
+	// floor back and end the round. The AI members already ran (they are
+	// mutually non-referencing), but the relay's appends are dropped — the round
+	// is over, exactly like an @User stop in the sequential path.
+	if o.handbackIfQuestionAsked(results) {
+		return DrainResult{}, nil, true
+	}
 	// Free-mode relay: extend the queue from each clean speaker's output, in
 	// group order (deterministic). `pending` is this group's OTHER members (all
 	// of them — in a parallel group they are mutually non-referencing but still
 	// must not be re-queued by a sibling's @), so a mention of a group peer does
 	// not duplicate it.
-	var appended []speakerGroup
-	if onSpoke != nil {
-		for i, t := range g.turns {
-			if results[i].Err == "" {
-				pending := make([]speakerTurn, 0, len(g.turns)-1)
-				pending = append(pending, g.turns[:i]...)
-				pending = append(pending, g.turns[i+1:]...)
-				appended = append(appended, onSpoke(ctx, t, outer, appended, pending)...)
-			}
-		}
-	}
+	appended := o.appendParallelRelay(ctx, g, outer, results, onSpoke)
 	// If the cap truncated this group, the turn stops here: the dropped members
 	// must not be replaced by the relay's appends. checkSpeechCap has already
 	// latched the cap and written the system line (the remaining budget is 0).
@@ -652,6 +703,70 @@ func (o *GroupOrchestrator) runParallelGroup(
 		return DrainResult{}, nil, true
 	}
 	return DrainResult{}, appended, false
+}
+
+// appendParallelRelay extends the free-mode queue from a parallel group's clean
+// speakers, in group order (deterministic). A speaker's `pending` set is the
+// group's OTHER members, so a mention of a peer does not re-queue it. Extracted
+// from runParallelGroup to keep its complexity in budget; nil onSpoke (host
+// mode) appends nothing.
+func (o *GroupOrchestrator) appendParallelRelay(
+	ctx context.Context,
+	g speakerGroup,
+	outer []speakerGroup,
+	results []groupMemberResult,
+	onSpoke func(ctx context.Context, sp speakerTurn, outer, appended []speakerGroup, pending []speakerTurn) []speakerGroup,
+) []speakerGroup {
+	if onSpoke == nil {
+		return nil
+	}
+	var appended []speakerGroup
+	for i, t := range g.turns {
+		if results[i].Err != "" {
+			continue
+		}
+		pending := make([]speakerTurn, 0, len(g.turns)-1)
+		pending = append(pending, g.turns[:i]...)
+		pending = append(pending, g.turns[i+1:]...)
+		appended = append(appended, onSpoke(ctx, t, outer, appended, pending)...)
+	}
+	return appended
+}
+
+// hostFailureFallback handles a FAILED host turn (backend error / timeout,
+// distinct from an unparseable route). Design §6: fall back to round-robin
+// once; a SECOND consecutive host failure means the host is down, so terminate
+// the turn (after the summary) rather than burn the whole budget on a broken
+// host. Extracted from runRounds' refill closure to keep its complexity in
+// budget.
+func (o *GroupOrchestrator) hostFailureFallback(ctx context.Context, s groupTurnSetup, hostMemberID, hostErr string) ([]speakerGroup, bool, DrainResult) {
+	slog.Warn("group: host turn failed", "group", o.groupID, "err", hostErr)
+	o.hostFailures++
+	if o.hostFailures >= maxConsecutiveHostFailures {
+		slog.Warn("group: aborting after consecutive host failures",
+			"group", o.groupID, "failures", o.hostFailures)
+		o.summarize(ctx, s, hostMemberID)
+		return nil, false, DrainResult{Err: "host turn failed repeatedly"}
+	}
+	fb, ok := o.pickFallbackMember(hostMemberID, s.members)
+	if !ok {
+		return nil, false, DrainResult{Err: "host turn failed and no member could take over"}
+	}
+	return []speakerGroup{{turns: []speakerTurn{memberTurn(fb, "", s)}}}, true, DrainResult{}
+}
+
+// handbackIfQuestionAsked hands the floor back to the user when any of the
+// group's clean results carries an AskUserQuestion, reporting whether it did.
+// Extracted from runParallelGroup so the hand-back rule (a member addressing the
+// human ends the round) is one named step rather than an inline loop.
+func (o *GroupOrchestrator) handbackIfQuestionAsked(results []groupMemberResult) bool {
+	for i := range results {
+		if results[i].Err == "" && results[i].AskedQuestion {
+			o.handUserBack(o.groupID)
+			return true
+		}
+	}
+	return false
 }
 
 // runRounds is the host/member decision loop, driven by drainSpeakers: the
@@ -688,25 +803,17 @@ func (o *GroupOrchestrator) runRounds(ctx context.Context, groupID string) Drain
 			return nil, false, DrainResult{CancelReason: hostRes.CancelReason}
 		}
 		if hostRes.Err != "" {
-			slog.Warn("group: host turn failed", "group", groupID, "err", hostRes.Err)
-			// Design §6: fall back to round-robin once; a SECOND consecutive
-			// host failure means the host is down, so terminate the turn rather
-			// than burn the whole budget on a broken host.
-			o.hostFailures++
-			if o.hostFailures >= maxConsecutiveHostFailures {
-				slog.Warn("group: aborting after consecutive host failures",
-					"group", groupID, "failures", o.hostFailures)
-				o.summarize(ctx, s, hostMemberID)
-				return nil, false, DrainResult{Err: "host turn failed repeatedly"}
-			}
-			fb, ok := o.pickFallbackMember(hostMemberID, s.members)
-			if !ok {
-				return nil, false, DrainResult{Err: "host turn failed and no member could take over"}
-			}
-			return []speakerGroup{{turns: []speakerTurn{memberTurn(fb, "", s)}}}, true, DrainResult{}
+			return o.hostFailureFallback(ctx, s, hostMemberID, hostRes.Err)
 		}
 		// A successful host turn clears the failure streak.
 		o.hostFailures = 0
+
+		// The host asking the user a question addresses the human: hand the
+		// floor back and end the turn instead of routing anyone else.
+		if hostRes.AskedQuestion {
+			o.handUserBack(groupID)
+			return nil, false, DrainResult{}
+		}
 
 		route := grouprouting.Parse(o.lastMemberOutput(groupID, hostMemberID))
 		if route.End {
@@ -1181,6 +1288,48 @@ func (o *GroupOrchestrator) lastMemberOutput(groupID, memberID string) string {
 		}
 	}
 	return ""
+}
+
+// memberAskedQuestion reports whether a member's most recent assistant speech
+// carried an AskUserQuestion card. A member asking the user a question is
+// addressing the human, so the group loop hands the floor back (see
+// groupMemberResult.AskedQuestion). Two persisted shapes count, because the
+// question may not have been converted yet:
+//
+//   - a tool_use block named AskUserQuestion — the CONVERTED form produced by
+//     postProcessBlocks on the Finalize path (the normal case);
+//   - a text block still carrying the raw <clawbench-ask-question> tag — the
+//     pre-conversion form, matched so a conversion gap cannot silently drop the
+//     hand-back.
+//
+// The read is on the speaker's OWN persisted output (like lastMemberOutput),
+// never on an injected prompt, so a member merely QUOTING the tag in prose
+// cannot trigger it for another speaker.
+func memberAskedQuestion(groupID, memberID string) bool {
+	msgs, err := GetMessagesBySessionIDRaw(groupID)
+	if err != nil {
+		return false
+	}
+	for i := len(msgs) - 1; i >= 0; i-- {
+		m := msgs[i]
+		if m.AgentID != memberID || m.Role != roleAssistant {
+			continue
+		}
+		blocks, err := parseMessageBlocks(m.Content)
+		if err != nil {
+			return false
+		}
+		for _, b := range blocks {
+			if b.Type == eventTypeToolUse && strings.EqualFold(b.Name, "AskUserQuestion") {
+				return true
+			}
+			if b.Type == contentKeyText && strings.Contains(b.Text, "<clawbench-ask-question") {
+				return true
+			}
+		}
+		return false
+	}
+	return false
 }
 
 // summarize runs the host once more with the summary-only prompt. The host's

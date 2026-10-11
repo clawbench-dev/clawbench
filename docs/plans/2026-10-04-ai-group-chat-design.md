@@ -174,7 +174,8 @@
 | 93 | 密送分享页 | share payload 增 `session.hostMemberId`，分享页传 `resolveSpeaker`/`resolveSpeakerByName`/`hostMemberId` 给 `ChatMessageItem`，使密送卡片在分享页也按决策 #85 渲染（默认折叠） |
 | 94 | 密送折叠头不显示目标名 | 折叠头只写「密送」——**谁知道收到了密送本身就是线索**（推理游戏里"B 收到私密信息"是信息）。展开后每条仍显示「发给 XX」（保留可审计性，决策 #85） |
 | 95 | 用户是可点名参与者 | 用户在群里的**保留名是英文 `User`**（`groupUserTarget`，语言中性；注入前缀 `User: ...` 与之同名）。`activeMemberNamesExcept` 追加 `User` → 主持人可在「可选的成员名」里看到并点名。哨兵 id `__user__`（无成员行、无 AI turn、无后端连接） |
-| 96 | 点名 User 结束本轮 | targets 循环遇到 `groupUserTargetID` → 写一条 `role='system'` 行（i18n `GroupYourTurn`）并 `return DrainResult{}`（`running=false`）；**其后的 targets 不跑**。用户随时发言即开新回合。前端**不做**"轮到你"提示 |
+| 96 | 点名 User 结束本轮 | targets 循环遇到 `groupUserTargetID` → 清 User 密送账 + `return DrainResult{}`（`running=false`）；**其后的 targets 不跑**。用户随时发言即开新回合。前端**不做**"轮到你"提示 |
+| 96b | 交回用户必写系统行（2026-10-11 修订） | 「轮到用户发言」（i18n `GroupYourTurn`）**不再**只由点名 User 触发：`runLoop` 在**每个干净收尾**（`CancelReason=="" && Err==""`）且**无排队消息**（`GetQueuedCount==0`）时统一写一条，覆盖：自由模式接力自然耗尽、主持人结束信号、成员发言次数达上限、显式 `@User`、以及**成员/主持人发出 AskUserQuestion**。中间排队轮次不写（否则会在用户自己的两条消息之间误报）。取消/报错收尾不写（时间线已有可见失败） |
 | 97 | 密送延迟送达 | 密送目标本轮未被点名 → 存 `group_pending_bcc`，随该目标**下次被点名**的 turn 送达（AI 成员与 User 一视同仁）。这是「给所有人发词、只点一人先说」的必要条件。交付成功即 DELETE；失败/取消保留（#69 语义） |
 | 98 | 密送给 User 的卡片 | 与成员密送**同一张卡片**但形态不同：默认**展开**、文案 `group.bcc.toYou`（密送给你）、`User` 图标 + accent 强调色；成员密送仍折叠。两段式渲染（按 `targets.includes('User')` 分流），而非单一 toggle 改默认值——后者会让 User 密送把成员密送一并展开 |
 
