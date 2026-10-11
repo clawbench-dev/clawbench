@@ -559,6 +559,41 @@ func TestPatchAgentFields_SortOrder(t *testing.T) {
 	assert.Equal(t, 5, agents[0].SortOrder)
 }
 
+// TestReorderAgents pins the drag-order write: each id's sort_order becomes its
+// index, an id that matches no row is ignored, and a row absent from ids keeps
+// its previous sort_order.
+func TestReorderAgents(t *testing.T) {
+	db := setupTestDBForAgents(t)
+	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "a", Name: "A", Backend: "x"}))
+	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "b", Name: "B", Backend: "x"}))
+	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "c", Name: "C", Backend: "x"}))
+	// Give c a non-zero order so we can prove an unlisted row is left alone.
+	order := 9
+	require.NoError(t, service.PatchAgentFields("c", service.AgentPatch{SortOrder: &order}))
+
+	require.NoError(t, service.ReorderAgents([]string{"b", "ghost", "a"}))
+
+	agents, err := service.LoadAgentsFromDB()
+	require.NoError(t, err)
+	byID := map[string]*model.Agent{}
+	for _, a := range agents {
+		byID[a.ID] = a
+	}
+	assert.Equal(t, 0, byID["b"].SortOrder, "first id becomes 0")
+	// sort_order is the raw index in ids (same convention as crudHelpers.reorder):
+	// an unknown id at index 1 is a no-op but still consumes that index, leaving
+	// a harmless gap that never changes the visible relative order.
+	assert.Equal(t, 2, byID["a"].SortOrder, "third id becomes 2")
+	assert.Equal(t, 9, byID["c"].SortOrder, "a row absent from ids keeps its order")
+}
+
+// TestReorderAgents_Empty is a no-op: the handler short-circuits, but the
+// service must also tolerate an empty slice without opening a write txn.
+func TestReorderAgents_Empty(t *testing.T) {
+	_ = setupTestDBForAgents(t)
+	assert.NoError(t, service.ReorderAgents(nil))
+}
+
 func TestPatchAgentFields_Avatar(t *testing.T) {
 	db := setupTestDBForAgents(t)
 	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"}))

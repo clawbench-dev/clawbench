@@ -1408,6 +1408,66 @@ func TestServeAgentSubRoutes(t *testing.T) {
 	}
 }
 
+// ── PUT /api/agents/reorder ──
+
+func TestServeAgentsReorder(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	// Reverse the two fixture agents: claude first, codebuddy second.
+	req := newRequest(t, http.MethodPut, "/api/agents/reorder", map[string]any{"ids": []string{"claude", "codebuddy"}})
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgentSubRoutes, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// DB persisted: claude=0, codebuddy=1.
+	var claudeOrder, cbOrder int
+	require.NoError(t, store.UnsafeDBForTest().QueryRow("SELECT sort_order FROM agents WHERE id = 'claude'").Scan(&claudeOrder))
+	require.NoError(t, store.UnsafeDBForTest().QueryRow("SELECT sort_order FROM agents WHERE id = 'codebuddy'").Scan(&cbOrder))
+	assert.Equal(t, 0, claudeOrder)
+	assert.Equal(t, 1, cbOrder)
+
+	// In-memory list reordered immediately (no DB reload needed).
+	list := model.GetAgentList()
+	require.Len(t, list, 2)
+	assert.Equal(t, "claude", list[0].ID)
+	assert.Equal(t, "codebuddy", list[1].ID)
+}
+
+func TestServeAgentsReorder_Empty(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	req := newRequest(t, http.MethodPut, "/api/agents/reorder", map[string]any{"ids": []string{}})
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgentSubRoutes, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestServeAgentsReorder_MethodNotAllowed(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	req := newRequest(t, http.MethodGet, "/api/agents/reorder", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgentSubRoutes, req)
+
+	// A GET on /reorder is not the PUT branch; it falls through to NotFound.
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// TestReorderAgentList pins the pure reorder helper: listed ids first in order,
+// unknown/duplicate ids skipped, unlisted agents keep their relative order.
+func TestReorderAgentList(t *testing.T) {
+	a := &model.Agent{ID: "a"}
+	b := &model.Agent{ID: "b"}
+	c := &model.Agent{ID: "c"}
+	got := reorderAgentList([]*model.Agent{a, b, c}, []string{"c", "ghost", "c", "a"})
+	require.Len(t, got, 3)
+	assert.Equal(t, "c", got[0].ID)
+	assert.Equal(t, "a", got[1].ID)
+	assert.Equal(t, "b", got[2].ID, "unlisted agent follows in its previous relative order")
+}
+
 // ── Extended PATCH field tests ──
 
 func TestAgentPatch_Name(t *testing.T) {

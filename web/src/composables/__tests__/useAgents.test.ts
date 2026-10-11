@@ -37,11 +37,13 @@ const mockApiGet = vi.fn()
 const mockApiPatch = vi.fn()
 const mockApiPost = vi.fn()
 const mockApiDelete = vi.fn()
+const mockApiPut = vi.fn()
 vi.mock('@/utils/api', () => ({
   apiGet: (...args: any[]) => mockApiGet(...args),
   apiPatch: (...args: any[]) => mockApiPatch(...args),
   apiPost: (...args: any[]) => mockApiPost(...args),
   apiDelete: (...args: any[]) => mockApiDelete(...args),
+  apiPut: (...args: any[]) => mockApiPut(...args),
 }))
 
 // Mock useLocale gt function
@@ -79,7 +81,7 @@ describe('useAgents', () => {
     syncModelFromAgent, getAgentThinkingEffortLevels, hasThinkingEffortLevels,
     updateAgentField, canRefreshModels, getEffectiveThinkingEffort,
     agentCanResume, supportsACP, supportsCLI, supportsDualTransport, getAgentTransport,
-    setDefaultAgent, duplicateAgent, deleteAgent, rescanAgents, hasPreferredMode, applyRefreshedModelList, selectableAgents } = useAgents()
+    setDefaultAgent, duplicateAgent, deleteAgent, rescanAgents, reorderAgents, hasPreferredMode, applyRefreshedModelList, selectableAgents } = useAgents()
 
   // Register mock identity updaters — normally done by useSessionIdentity at
   // module evaluation time, but that module is mocked so we wire manually.
@@ -1383,6 +1385,21 @@ describe('useAgents', () => {
     it('calls apiPost to rescan, then reloads agents', async () => {
       await rescanAgents()
       expect(mockApiPost).toHaveBeenCalledWith('/api/agents/rescan', {}, { timeoutMs: 60_000 })
+    })
+  })
+
+  // --- reorderAgents ---
+
+  describe('reorderAgents', () => {
+    beforeEach(() => {
+      mockApiPut.mockReset().mockResolvedValue({ success: true })
+    })
+
+    it('PUTs the ids to /api/agents/reorder, then reloads agents', async () => {
+      await reorderAgents(['simple', 'claude'])
+      expect(mockApiPut).toHaveBeenCalledWith('/api/agents/reorder', { ids: ['simple', 'claude'] })
+      // The shared list is re-fetched so every picker follows the new order.
+      expect(mockApiGet).toHaveBeenCalledWith('/api/agents')
     })
   })
 

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
-import { ref } from 'vue'
+import { ref, defineComponent } from 'vue'
 import SettingsAgentsIndex from '@/components/settings/SettingsAgentsIndex.vue'
 
 const i18n = createI18n({
@@ -26,6 +26,8 @@ const i18n = createI18n({
           agentRescanning: 'Scanning...',
           agentRescanSuccess: 'Rescan complete',
           agentRescanFailed: 'Rescan failed',
+          agentReorderFailed: 'Reorder failed',
+          agentDragHandle: 'Drag to reorder',
         },
         saveFailed: 'Save failed',
       },
@@ -44,6 +46,7 @@ const mockLoadAgents = vi.fn()
 const mockDuplicateAgent = vi.fn()
 const mockRescanAgents = vi.fn()
 const mockSetDefaultAgent = vi.fn()
+const mockReorderAgents = vi.fn().mockResolvedValue(undefined)
 vi.mock('@/composables/useAgents', () => ({
   useAgents: () => ({
     agents: mockAgents,
@@ -52,6 +55,19 @@ vi.mock('@/composables/useAgents', () => ({
     duplicateAgent: (...args: unknown[]) => mockDuplicateAgent(...args),
     rescanAgents: (...args: unknown[]) => mockRescanAgents(...args),
     setDefaultAgent: (...args: unknown[]) => mockSetDefaultAgent(...args),
+    reorderAgents: (...args: unknown[]) => mockReorderAgents(...args),
+  }),
+}))
+
+// Mock vue-draggable-plus (same stub shape as QuickSendDrawer.test.ts). The
+// real component reorders the bound array; tests set localAgents and call
+// onDragEnd directly instead of simulating a drag.
+vi.mock('vue-draggable-plus', () => ({
+  VueDraggable: defineComponent({
+    name: 'VueDraggable',
+    props: ['modelValue', 'handle'],
+    emits: ['update:modelValue', 'end'],
+    template: `<div class="vdp-stub"><slot /></div>`,
   }),
 }))
 
@@ -90,6 +106,7 @@ describe('SettingsAgentsIndex', () => {
     mockDuplicateAgent.mockReset()
     mockRescanAgents.mockReset()
     mockSetDefaultAgent.mockReset()
+    mockReorderAgents.mockReset().mockResolvedValue(undefined)
     mockToastShow.mockReset()
     mockAgents.value = []
     mockDefaultAgentId.value = 'agent-1'
@@ -250,5 +267,52 @@ describe('SettingsAgentsIndex', () => {
     await rescanPromise
     await wrapper.vm.$nextTick()
     expect(vm.$.setupState.rescanning).toBe(false)
+  })
+
+  // --- drag-to-reorder ---
+
+  it('renders a drag handle for each agent row', () => {
+    mockAgents.value = [
+      { id: 'agent-1', name: 'CodeBuddy', backend: 'codebuddy', specialty: '', sortOrder: 0 },
+    ]
+    const wrapper = mountIndex()
+    expect(wrapper.findAll('.settings-agents-index__drag-handle')).toHaveLength(1)
+  })
+
+  it('onDragEnd persists the local order via reorderAgents', async () => {
+    mockAgents.value = [
+      { id: 'agent-1', name: 'CodeBuddy', backend: 'codebuddy', specialty: '', sortOrder: 0 },
+      { id: 'agent-2', name: 'Claude', backend: 'claude', specialty: '', sortOrder: 1 },
+    ]
+    const wrapper = mountIndex()
+    const vm = wrapper.vm as any
+    // Simulate the drag: Sortable mutates the bound array in place.
+    vm.$.setupState.localAgents = [
+      { id: 'agent-2', name: 'Claude', backend: 'claude', specialty: '', sortOrder: 0 },
+      { id: 'agent-1', name: 'CodeBuddy', backend: 'codebuddy', specialty: '', sortOrder: 1 },
+    ]
+    await vm.$.setupState.onDragEnd()
+    expect(mockReorderAgents).toHaveBeenCalledWith(['agent-2', 'agent-1'])
+  })
+
+  it('onDragEnd rolls back and toasts on failure', async () => {
+    mockAgents.value = [
+      { id: 'agent-1', name: 'CodeBuddy', backend: 'codebuddy', specialty: '', sortOrder: 0 },
+      { id: 'agent-2', name: 'Claude', backend: 'claude', specialty: '', sortOrder: 1 },
+    ]
+    const wrapper = mountIndex()
+    const vm = wrapper.vm as any
+    mockReorderAgents.mockRejectedValueOnce(new Error('fail'))
+    vm.$.setupState.localAgents = [
+      { id: 'agent-2', name: 'Claude', backend: 'claude', specialty: '', sortOrder: 0 },
+      { id: 'agent-1', name: 'CodeBuddy', backend: 'codebuddy', specialty: '', sortOrder: 1 },
+    ]
+    await vm.$.setupState.onDragEnd()
+    await wrapper.vm.$nextTick()
+
+    expect(mockToastShow).toHaveBeenCalledWith('Reorder failed', expect.any(Object))
+    // Rolled back to the server order.
+    const ids = (vm.$.setupState.localAgents as any[]).map(a => a.id)
+    expect(ids).toEqual(['agent-1', 'agent-2'])
   })
 })

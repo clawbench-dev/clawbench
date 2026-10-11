@@ -503,6 +503,32 @@ func PatchAgentFields(id string, patch AgentPatch) error {
 	return nil
 }
 
+// ReorderAgents persists a manual drag order: the i-th id in ids becomes that
+// agent's sort_order (0 = top). One transaction, so a crash cannot leave the
+// list half-renumbered. Ids that do not match any row are ignored (UPDATE with
+// no match is a no-op); rows absent from ids keep their current sort_order.
+//
+// The settings page posts the complete visible order, so every agent it shows
+// is renumbered. Rows it does not show (e.g. scoped to another project) keep
+// their number and are placed by the (sort_order, id) load order.
+func ReorderAgents(ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	tx, err := store.WriteBegin() //nolint:noctx // DB global, context not applicable
+	if err != nil {
+		return err
+	}
+	defer store.WriteUnlock()
+	for i, id := range ids {
+		if _, err := tx.Exec("UPDATE agents SET sort_order = ? WHERE id = ?", i, id); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // applyProjectScopeSet appends the project_id assignment for a patch: an
 // explicit NULL when clearing, the new id when scoping, and nothing when the
 // field was not provided. Split out of PatchAgentFields to keep its branch

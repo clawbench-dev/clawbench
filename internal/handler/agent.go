@@ -77,7 +77,74 @@ func ServeAgentSubRoutes(w http.ResponseWriter, r *http.Request) {
 		serveAgentsRescan(w, r)
 		return
 	}
+	if strings.HasSuffix(path, "/reorder") && r.Method == http.MethodPut {
+		serveAgentsReorder(w, r)
+		return
+	}
 	writeLocalizedErrorf(w, r, http.StatusNotFound, "NotFound")
+}
+
+// serveAgentsReorder handles PUT /api/agents/reorder — persists a manual drag
+// order for the agent list (settings → agents).
+//
+// The body carries the visible order as `{ids: [...]}`; each agent's sort_order
+// becomes its index. Ids that match no agent are ignored, and rows absent from
+// ids keep their current sort_order (see service.ReorderAgents). The order is
+// global: GET /api/agents and every in-memory consumer (agent pickers, the
+// AgentList[0] default fallback) follow (sort_order, id) after the next load, so
+// this also reorders the in-memory list immediately.
+func serveAgentsReorder(w http.ResponseWriter, r *http.Request) {
+	configMutex.Lock()
+	defer configMutex.Unlock()
+
+	var req struct {
+		IDs []string `json:"ids"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxChatBodySize)
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if len(req.IDs) == 0 {
+		writeJSON(w, http.StatusOK, map[string]any{"success": true})
+		return
+	}
+	if err := service.ReorderAgents(req.IDs); err != nil {
+		slog.Error("failed to reorder agents", "error", err)
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+		return
+	}
+	// Reflect the new order in memory so this process serves it immediately,
+	// without waiting for the next DB reload.
+	model.SetAgentList(reorderAgentList(model.GetAgentList(), req.IDs))
+	writeJSON(w, http.StatusOK, map[string]any{"success": true})
+}
+
+// reorderAgentList returns list reordered so the agents named in ids come first
+// in that exact order; agents not in ids keep their existing relative order and
+// follow. Duplicate and unknown ids are skipped. Pure, so it is unit-testable
+// without touching the global agent set.
+func reorderAgentList(list []*model.Agent, ids []string) []*model.Agent {
+	byID := make(map[string]*model.Agent, len(list))
+	for _, a := range list {
+		byID[a.ID] = a
+	}
+	out := make([]*model.Agent, 0, len(list))
+	seen := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		if a, ok := byID[id]; ok {
+			out = append(out, a)
+			seen[id] = true
+		}
+	}
+	for _, a := range list {
+		if !seen[a.ID] {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 // ServeAgents returns the list of configured AI agents.

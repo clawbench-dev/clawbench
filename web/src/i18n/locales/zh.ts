@@ -2493,6 +2493,8 @@ export default {
       agentRescanning: '扫描中...',
       agentRescanSuccess: '重新扫描完成',
       agentRescanFailed: '重新扫描失败',
+      agentReorderFailed: '排序失败',
+      agentDragHandle: '拖动排序',
       agentDelete: '删除',
       agentDeleteConfirm: '确定要删除智能体「{name}」吗？',
       agentDeleteDefault: '无法删除默认智能体',

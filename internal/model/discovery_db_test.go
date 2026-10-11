@@ -92,6 +92,41 @@ func withBackendSpec(t *testing.T, spec BackendSpec) {
 }
 
 // ---------------------------------------------------------------------------
+// TestLoadAgentsIntoMemoryFromDB_SortsBySortOrder pins the user-order contract:
+// AgentList is ordered by (sort_order, id), so the settings-page drag order is
+// what every in-memory consumer sees. All-equal sort_order (the upgrade case)
+// falls back to id, keeping the pre-existing order.
+func TestLoadAgentsIntoMemoryFromDB_SortsBySortOrder(t *testing.T) {
+	db := setupTestDBForDiscovery(t)
+	isolateAgentGlobals(t)
+
+	// Inserted in an order that differs from both id and sort_order so the test
+	// distinguishes "as inserted", "by id" and "by sort_order".
+	_, err := db.Exec(`INSERT INTO agents (id, name, backend, sort_order) VALUES
+		('b', 'B', 'x', 0),
+		('a', 'A', 'x', 2),
+		('c', 'C', 'x', 1)`)
+	require.NoError(t, err)
+
+	require.NoError(t, LoadAgentsIntoMemoryFromDB(db))
+
+	var got []string
+	for _, a := range GetAgentList() {
+		got = append(got, a.ID)
+	}
+	assert.Equal(t, []string{"b", "c", "a"}, got, "ordered by sort_order, not id")
+
+	// All-equal sort_order falls back to id.
+	_, err = db.Exec(`UPDATE agents SET sort_order = 0`)
+	require.NoError(t, err)
+	require.NoError(t, LoadAgentsIntoMemoryFromDB(db))
+	got = nil
+	for _, a := range GetAgentList() {
+		got = append(got, a.ID)
+	}
+	assert.Equal(t, []string{"a", "b", "c"}, got, "equal sort_order falls back to id")
+}
+
 // RefreshAgents — the single pipeline entry point
 // ---------------------------------------------------------------------------
 

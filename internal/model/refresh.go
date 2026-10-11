@@ -598,7 +598,18 @@ func LoadAgentsIntoMemoryFromDB(db dbutil.Reader) error {
 	if err != nil {
 		return err
 	}
-	sort.Slice(agents, func(i, j int) bool { return agents[i].ID < agents[j].ID })
+	// Order by the user's manual sort_order, falling back to ID as a stable
+	// tiebreak. Every agent starts at sort_order 0, so the ID tiebreak keeps
+	// the initial order identical to before this field was honored; once the
+	// user drags rows in the settings page, that order becomes authoritative
+	// for AgentList — and thus for every in-memory consumer (agent pickers,
+	// the AgentList[0] default fallback).
+	sort.SliceStable(agents, func(i, j int) bool {
+		if agents[i].SortOrder != agents[j].SortOrder {
+			return agents[i].SortOrder < agents[j].SortOrder
+		}
+		return agents[i].ID < agents[j].ID
+	})
 
 	newAgentsMap := make(map[string]*Agent, len(agents))
 

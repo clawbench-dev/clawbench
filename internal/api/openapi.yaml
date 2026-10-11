@@ -3940,6 +3940,33 @@ paths:
         "200":
           description: 操作结果
 
+  /api/agents/reorder:
+    put:
+      tags: [Agents]
+      summary: 持久化智能体手动排序
+      description: |
+        拖拽排序后写回智能体顺序。body `ids` 是当前可见的完整顺序，第 i 个
+        agent 的 `sort_order` 变为 i（0 在最上）。未出现在 ids 中的 agent 保持
+        原 `sort_order`（加载时按 `(sort_order, id)` 排在已列出者之后）。
+        **顺序全局生效**：GET /api/agents 与所有选择入口（新建会话 / 任务 /
+        群成员）都按 `(sort_order, id)` 返回。空 `ids` 直接返回成功。
+      operationId: agentsReorder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids]
+              properties:
+                ids:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        "200":
+          description: 结果
+
   /api/backends:
     get:
       tags: [Agents]

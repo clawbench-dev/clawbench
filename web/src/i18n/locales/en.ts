@@ -2494,6 +2494,8 @@ export default {
       agentRescanning: 'Scanning...',
       agentRescanSuccess: 'Rescan complete',
       agentRescanFailed: 'Rescan failed',
+      agentReorderFailed: 'Reorder failed',
+      agentDragHandle: 'Drag to reorder',
       agentDelete: 'Delete',
       agentDeleteConfirm: 'Delete agent "{name}"?',
       agentDeleteDefault: 'Cannot delete default agent',

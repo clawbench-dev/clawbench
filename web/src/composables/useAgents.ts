@@ -1,5 +1,5 @@
 import { ref, computed } from 'vue'
-import { apiGet, apiPatch, apiPost, apiDelete } from '@/utils/api'
+import { apiGet, apiPatch, apiPost, apiDelete, apiPut } from '@/utils/api'
 import { gt } from '@/composables/useLocale'
 import { updatePlanEntries } from '@/composables/usePlanProgress'
 import { appLog } from '@/utils/appLog'
@@ -56,6 +56,8 @@ interface AgentRecord {
   autoApprove?: boolean
   /** Hidden from every new-entry picker (new session / task / group member). */
   disabled?: boolean
+  /** Manual display order (lower first); the server returns the list already sorted by it. */
+  sortOrder?: number
   /**
    * When set, the agent is scoped to that project id and is visible only there.
    * Absent/null means global (visible in every project). The backend already
@@ -635,6 +637,20 @@ async function rescanAgents(): Promise<void> {
     await loadAgents(true)
 }
 
+/**
+ * Persist a manual agent order (settings → agents drag).
+ *
+ * The backend writes each agent's sort_order to its index and reorders the
+ * in-memory list, so the order is global. We re-fetch rather than mirroring
+ * locally: the shared `agents` array is consumed by every picker, and letting
+ * the server be the single source keeps them all in step (same rationale as
+ * patchAgentField's project_scope branch).
+ */
+async function reorderAgents(ids: string[]): Promise<void> {
+    await apiPut('/api/agents/reorder', { ids })
+    await loadAgents(true)
+}
+
 export function useAgents() {
     return {
         agents,
@@ -680,5 +696,6 @@ export function useAgents() {
         duplicateAgent,
         deleteAgent,
         rescanAgents,
+        reorderAgents,
     }
 }
