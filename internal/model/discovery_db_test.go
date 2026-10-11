@@ -549,6 +549,31 @@ func TestLoadAgentsFromDBRows_MalformedDisabledErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "disabled")
 }
 
+// TestLoadAgentsFromDBRows_ProjectScopeRoundTrip pins that a non-NULL project_id
+// decodes into ProjectID (and NULL leaves it nil), so the project-scope filter
+// sees exactly what the DB holds. A NULL-only test would still pass if the
+// decoder never populated the field, so both shapes are seeded.
+func TestLoadAgentsFromDBRows_ProjectScopeRoundTrip(t *testing.T) {
+	db := setupTestDBForDiscovery(t)
+
+	_, err := db.Exec(`INSERT INTO agents (id, name, backend, project_id) VALUES ('scoped', 'Scoped', 'b', 42)`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO agents (id, name, backend, project_id) VALUES ('global', 'Global', 'b', NULL)`)
+	require.NoError(t, err)
+
+	agents, err := loadAgentsFromDBRows(db)
+	require.NoError(t, err)
+	require.Len(t, agents, 2)
+
+	byID := map[string]*Agent{}
+	for _, a := range agents {
+		byID[a.ID] = a
+	}
+	require.NotNil(t, byID["scoped"].ProjectID, "a project-scoped row must decode its project_id")
+	assert.Equal(t, int64(42), *byID["scoped"].ProjectID)
+	assert.Nil(t, byID["global"].ProjectID, "a NULL project_id must decode to nil (global)")
+}
+
 // ---------------------------------------------------------------------------
 // Infrastructure sync helper
 // ---------------------------------------------------------------------------

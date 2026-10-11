@@ -205,6 +205,65 @@ func TestDeleteProjectData_PromotesStillReferencedScopedAgent(t *testing.T) {
 	assert.False(t, projectID.Valid, "a still-referenced scoped agent must be promoted to global (NULL)")
 }
 
+// TestDeleteProjectData_ReloadsAgentsEvenWhenReloadFails pins the post-commit
+// best-effort reload: a broken agents table (here, a malformed `disabled` value
+// the loader's Scan rejects) must NOT turn a successful delete into a failure —
+// the rows are already gone, so reporting an error would invite a retry that
+// finds nothing. It also exercises the reload-failure branch itself.
+func TestDeleteProjectData_ReloadsAgentsEvenWhenReloadFails(t *testing.T) {
+	setupProjectDeleteDB(t)
+	id := seedProjectRow(t, "/proj/reload-fail")
+
+	// A GLOBAL (project_id NULL) agent with a non-integer disabled value: it
+	// survives the project-scoped delete (NULL never equals the id), so the
+	// post-commit reload hits it and fails to Scan.
+	_, err := store.WriteExec(
+		"INSERT INTO agents (id, name, backend, disabled) VALUES ('bad-global', 'Bad', 'b', 'not-an-int')",
+	)
+	require.NoError(t, err)
+
+	require.NoError(t, DeleteProjectData(id),
+		"a failed post-commit agent reload must be logged, not returned")
+
+	// The malformed row is global, so it is still there.
+	var n int
+	require.NoError(t, store.ReadDB().QueryRow("SELECT COUNT(*) FROM agents WHERE id = 'bad-global'").Scan(&n))
+	assert.Equal(t, 1, n)
+}
+
+// TestDeleteProjectData_ScopedAgentDeleteErrorIsSurfaced pins that a failure in
+// the project-scoped-agent cleanup aborts the whole transaction (the delete must
+// be atomic — a half-applied project delete would strand rows). A BEFORE UPDATE
+// trigger forces the promote step to fail.
+func TestDeleteProjectData_ScopedAgentDeleteErrorIsSurfaced(t *testing.T) {
+	setupProjectDeleteDB(t)
+	id := seedProjectRow(t, "/proj/agent-cleanup-fail")
+	otherID := seedProjectRow(t, "/proj/agent-cleanup-other")
+
+	exec := func(q string, args ...any) {
+		t.Helper()
+		_, err := store.WriteExec(q, args...)
+		require.NoError(t, err)
+	}
+	// A scoped agent still referenced from ANOTHER project: this is the row the
+	// promote UPDATE targets, so the trigger below actually fires.
+	exec("INSERT INTO agents (id, name, backend, project_id) VALUES ('shared', 'Shared', 'claude', ?)", id)
+	exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type, archived) VALUES ('sess-o', ?, 'claude', 't', 'shared', 'chat', 0)", otherID)
+
+	exec("CREATE TRIGGER block_agent_update BEFORE UPDATE ON agents BEGIN SELECT RAISE(ABORT, 'blocked by test'); END")
+
+	err := DeleteProjectData(id)
+	require.Error(t, err, "a failure cleaning up project-scoped agents must abort the delete")
+	assert.Contains(t, err.Error(), "promote still-referenced", "the error must name the failing step")
+
+	// The transaction rolled back: the project and its agent must survive.
+	var n int
+	require.NoError(t, store.ReadDB().QueryRow("SELECT COUNT(*) FROM projects WHERE id = ?", id).Scan(&n))
+	assert.Equal(t, 1, n, "a failed delete must roll back and keep the project row")
+	require.NoError(t, store.ReadDB().QueryRow("SELECT COUNT(*) FROM agents WHERE id = 'shared'").Scan(&n))
+	assert.Equal(t, 1, n, "a failed delete must roll back and keep the scoped agent")
+}
+
 func TestDeleteProjectData_KeepsGlobalTags(t *testing.T) {
 	setupProjectDeleteDB(t)
 	id := seedProjectRow(t, "/proj/tagged")

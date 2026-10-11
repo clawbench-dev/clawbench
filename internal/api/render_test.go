@@ -147,7 +147,7 @@ func TestRenderCommand_Deterministic(t *testing.T) {
 // wholesale switch to tag-based selection for most commands, since a whole
 // tag's endpoints are far larger than the hand-picked subset (measured at the
 // time of writing: Agents tag 4839 > agent budget 4500; RAG 4943 > chatsearch
-// 2600; System 3516 > usage 2000). It is NOT the primary defence, though: the
+// 2600; System 3516 > usage 2000). It is NOT the primary defense, though: the
 // real guard is the operationId selection itself — endpointsForOperations
 // binds each id to its expected tag and fails loudly on a retag — plus each
 // command's notWant assertions in CoversExpectedOperations, which pin the
