@@ -78,6 +78,28 @@ func TestRenderCommand_CoversExpectedOperations(t *testing.T) {
 				"POST /api/ai/chat",
 			},
 		},
+		{
+			cmd: CommandAgent,
+			want: []string{
+				// The list is both the search/view surface (no dedicated
+				// search endpoint exists) and how the AI finds a source to
+				// clone — creation is by cloning, not from scratch.
+				"GET /api/agents",
+				"POST /api/agents",
+				"PATCH /api/agents",
+				"DELETE /api/agents",
+			},
+			// Agent management must not drag in unrelated operations that
+			// share the Agents tag (sub-resources, backend discovery) or any
+			// task endpoint.
+			notWant: []string{
+				"GET /api/agents/{id}",
+				"POST /api/agents/{id}",
+				"GET /api/backends",
+				"POST /api/tasks",
+				"DELETE /api/tasks",
+			},
+		},
 	}
 
 	for _, tc := range tests {
@@ -107,7 +129,7 @@ func TestRenderCommand_UnknownCommand(t *testing.T) {
 // every request, so nondeterminism would defeat prompt caching and make tests
 // flaky.
 func TestRenderCommand_Deterministic(t *testing.T) {
-	for _, cmd := range []Command{CommandChatSearch, CommandTask, CommandUsage} {
+	for _, cmd := range []Command{CommandChatSearch, CommandTask, CommandUsage, CommandAgent} {
 		first, err := RenderCommand(cmd)
 		require.NoError(t, err)
 		for range 5 {
@@ -131,9 +153,16 @@ func TestRenderCommand_SizeBudget(t *testing.T) {
 		// selection would blow past it.
 		CommandChatSearch: 2600,
 		// The task body grew when the gating-script fields (script,
-		// script_timeout) joined it; the headroom is deliberate, not drift.
-		CommandTask:  8000,
+		// script_timeout) joined it, and again when GET /api/agents gained the
+		// project-filtering description; the headroom is deliberate, not drift.
+		CommandTask:  8800,
 		CommandUsage: 2000,
+		// The agent command renders four operations whose PATCH/POST bodies
+		// carry long field notes (name uniqueness, avatar, disabled,
+		// project_scope). The headroom is deliberate; a switch back to
+		// tag-based selection would pull in sub-resources and backends and
+		// blow past it.
+		CommandAgent: 4500,
 	}
 	for cmd, budget := range budgets {
 		out, err := RenderCommand(cmd)
@@ -276,7 +305,7 @@ func TestRenderCommand_NoRepeatHintWithoutArrayParams(t *testing.T) {
 // actually exists in the spec. This is the drift guard's first half: renaming
 // an operation without updating commandOperations fails here.
 func TestOperationIDs_Resolvable(t *testing.T) {
-	for _, cmd := range []Command{CommandChatSearch, CommandTask, CommandUsage} {
+	for _, cmd := range []Command{CommandChatSearch, CommandTask, CommandUsage, CommandAgent} {
 		ids := OperationIDs(cmd)
 		require.NotEmptyf(t, ids, "command %q declares no operations", cmd)
 		for _, id := range ids {

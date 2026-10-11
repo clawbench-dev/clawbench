@@ -63,6 +63,9 @@ test.describe.serial('ACP Slash Commands', () => {
 
     const userGuideItem = page.locator('.completion-item--clawbench').filter({ hasText: '/cb-user-guide' })
     await expect(userGuideItem).toBeVisible()
+
+    const agentItem = page.locator('.completion-item--clawbench').filter({ hasText: '/cb-agent' })
+    await expect(agentItem).toBeVisible()
   })
 
   test('should filter to /cb-chatsearch when typing /cb-c', async ({ page }) => {

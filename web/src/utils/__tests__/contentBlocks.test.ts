@@ -510,6 +510,14 @@ describe('extractSlashCommand', () => {
     expect(result!.clawbench).toBe(true)
   })
 
+  it('marks ClawBench /cb-agent as clawbench', () => {
+    const result = extractSlashCommand('/cb-agent create a code reviewer')
+    expect(result).not.toBeNull()
+    expect(result!.command).toBe('/cb-agent')
+    expect(result!.rest).toBe(' create a code reviewer')
+    expect(result!.clawbench).toBe(true)
+  })
+
   it('does not mark a cb-prefixed agent command as clawbench', () => {
     // Only the known built-ins are ClawBench commands; a hypothetical
     // agent command named /cb-something must render as an agent badge.

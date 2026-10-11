@@ -21,6 +21,7 @@ const (
 	ClawbenchCmdTask       = "/cb-task"
 	ClawbenchCmdUsage      = "/cb-usage"
 	ClawbenchCmdUserGuide  = "/cb-user-guide"
+	ClawbenchCmdAgent      = "/cb-agent"
 )
 
 // The endpoint reference embedded in each template is rendered from the
@@ -93,6 +94,50 @@ Rules:
 - Use the user's language for task names and prompts
 `
 
+// agentInjectTemplate is the on-demand instruction template injected when
+// the user sends a message starting with "/cb-agent ".
+//
+// Agents are project-scoped: GET /api/agents filters by the project cookie
+// (global agents plus this project's scoped agents), and PATCH uses the cookie
+// to resolve the project_scope field — so the template carries the cookie just
+// like /cb-task.
+// Placeholders: {{BASE_URL}}, {{AI_TOKEN_HEADER}}, {{AI_TOKEN}}, {{PROJECT_COOKIE}}, {{PROJECT_PATH}}
+const agentInjectTemplate = `[You have access to AI agent management for this request. Use the Bash tool to call the local ClawBench HTTP API with curl.]
+
+Base URL: {{BASE_URL}}
+Auth: send the header "{{AI_TOKEN_HEADER}}: {{AI_TOKEN}}" on every request. If a request returns 401 the token has expired — tell the user to re-run the command rather than retrying.
+
+Endpoints:
+{{ENDPOINTS}}
+
+Project scope:
+- Send the cookie "{{PROJECT_COOKIE}}={{PROJECT_PATH}}" on every request. "GET /api/agents" returns only the agents visible in this project (global agents plus agents scoped to it), and "PATCH /api/agents" uses the cookie to resolve "project_scope". Without the cookie, project-scoped agents are invisible.
+
+Creating an agent:
+- There is NO create-from-scratch: an agent is always created by CLONING an existing one. Call "GET /api/agents" first, pick the agent whose backend (the "backend" field) matches what the user wants, then POST /api/agents with "source_id" (that agent's "id") and "name" (the new agent's name). The clone inherits the source's backend, command, models and transport.
+- If the user does not name a source, ask which existing agent to base it on, or choose the default agent ("defaultAgent" in the list response) and say so.
+- The new name is globally unique: a name already used by another agent is rejected with 409 (AgentNameTaken), and a name equal to the group-chat user nickname is rejected with 409 (AgentNameReserved). If rejected, ask the user for a different name instead of retrying the same one.
+
+Searching and viewing:
+- There is no search endpoint. Call "GET /api/agents" and filter the returned list yourself by the user's criteria (name, specialty, backend, disabled, usage counts). Each agent also carries "sessionCount" / "taskCount" / "membershipCount" and the default agent id is in "defaultAgent".
+- For a single agent's details, use the same list — there is no per-id GET for the agent record.
+
+Updating an agent (PATCH /api/agents):
+- Always include "id". Only the documented fields may be changed; unknown fields are ignored.
+- Validate against the current values first (e.g. "preferred_model" must be one of the agent's "models", "preferred_mode" must be an ACP mode the agent advertises). A bad value returns 400 with a specific msgKey rather than being silently dropped.
+- "project_scope": true limits the agent to the current project, false makes it globally visible again. The default agent cannot be scoped (CannotScopeDefaultAgent), and scoping requires a selected project (NoProjectSelected).
+
+Deleting an agent (DELETE /api/agents):
+- Deletion is destructive and only allowed when the agent is unused: if it still has sessions, tasks, or active group memberships the call returns 409 (AgentInUse) with the counts in "detail". Relay those counts to the user instead of forcing the delete.
+- The default agent cannot be deleted (CannotDeleteDefaultAgent) and cannot be disabled (CannotDisableDefaultAgent).
+- NEVER delete without explicit user confirmation of which agent.
+
+Rules:
+- Use the user's language when relaying names, specialties and results.
+- Report the concrete id returned by create/update so the user can act on it.
+- Do not invent agent fields or backends — read the current list before answering.
+`
+
 // usageInjectTemplate is the on-demand instruction template injected when the
 // user sends a message starting with "/cb-usage ".
 // Placeholders: {{BASE_URL}}, {{AI_TOKEN_HEADER}}, {{AI_TOKEN}}, {{PROJECT_COOKIE}}, {{PROJECT_PATH}}, {{NOW}}
@@ -160,7 +205,8 @@ func IsClawbenchCommand(rawMsg string) bool {
 	return matchClawbenchCommand(rawMsg, ClawbenchCmdChatSearch) ||
 		matchClawbenchCommand(rawMsg, ClawbenchCmdTask) ||
 		matchClawbenchCommand(rawMsg, ClawbenchCmdUsage) ||
-		matchClawbenchCommand(rawMsg, ClawbenchCmdUserGuide)
+		matchClawbenchCommand(rawMsg, ClawbenchCmdUserGuide) ||
+		matchClawbenchCommand(rawMsg, ClawbenchCmdAgent)
 }
 
 // clawbenchNow is the current time in the form the AI needs for RFC3339 query
@@ -254,6 +300,8 @@ func processClawbenchCommand(rawMsg, projectPath, sessionID string) (string, err
 		return renderUsageTemplate(projectPath)
 	case matchClawbenchCommand(rawMsg, ClawbenchCmdUserGuide):
 		return renderUserGuideTemplate()
+	case matchClawbenchCommand(rawMsg, ClawbenchCmdAgent):
+		return renderAgentTemplate(projectPath)
 	}
 	return rawMsg, nil
 }
@@ -339,4 +387,19 @@ func renderUserGuideTemplate() (string, error) {
 		return "", fmt.Errorf("user guide not extracted")
 	}
 	return strings.ReplaceAll(userGuideInjectTemplate, "{{GUIDE_DIR}}", dir), nil
+}
+
+// renderAgentTemplate builds the agent-management prompt. Agents are
+// project-scoped (the list filters by project, and PATCH resolves project_scope
+// from it), so like the task template this one carries the project cookie.
+func renderAgentTemplate(projectPath string) (string, error) {
+	endpoints, err := api.RenderCommand(api.CommandAgent)
+	if err != nil {
+		return "", fmt.Errorf("render agent endpoints: %w", err)
+	}
+	tmpl := strings.ReplaceAll(agentInjectTemplate, "{{ENDPOINTS}}", endpoints)
+	tmpl = strings.ReplaceAll(tmpl, "{{BASE_URL}}", clawbenchBaseURL())
+	tmpl = strings.ReplaceAll(tmpl, "{{PROJECT_COOKIE}}", clawbenchProjectCookie())
+	tmpl = strings.ReplaceAll(tmpl, "{{PROJECT_PATH}}", projectPath)
+	return applyAuthPlaceholders(tmpl), nil
 }

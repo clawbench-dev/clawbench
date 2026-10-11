@@ -471,6 +471,7 @@ export default {
       taskDesc: 'Manage tasks',
       usageDesc: 'View token usage',
       userGuideDesc: 'Look up the ClawBench user manual',
+      agentDesc: 'Manage AI agents',
       btwDesc: 'Ask a side question (answered by the summary model, without disturbing this session)',
     },
     btw: {

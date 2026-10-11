@@ -96,7 +96,7 @@ func TestProcessClawbenchCommand_TaskDocumentsGatingScript(t *testing.T) {
 func TestProcessClawbenchCommand_NoCliReferences(t *testing.T) {
 	withServerPort(t, 20000)
 
-	for _, msg := range []string{"/cb-chatsearch auth bug", "/cb-task daily build", "/cb-usage last week"} {
+	for _, msg := range []string{"/cb-chatsearch auth bug", "/cb-task daily build", "/cb-usage last week", "/cb-agent list"} {
 		result, err := processClawbenchCommand(msg, "/project", "sess-1")
 		require.NoError(t, err)
 		assert.NotContainsf(t, result, "clawbench rag", "%s must not reference the rag CLI", msg)
@@ -161,6 +161,79 @@ func TestProcessClawbenchCommand_AgentSlashCommandPassesThrough(t *testing.T) {
 	result, err := processClawbenchCommand("/compact", "/project", "session-123")
 	require.NoError(t, err)
 	assert.Equal(t, "/compact", result)
+}
+
+// --- /cb-agent ---
+
+func TestProcessClawbenchCommand_AgentInjects(t *testing.T) {
+	withServerPort(t, 20000)
+
+	result, err := processClawbenchCommand("/cb-agent 创建一个代码审查智能体", "/project", "sess-1")
+	require.NoError(t, err)
+
+	assert.Contains(t, result, "AI agent management")
+	assert.Contains(t, result, "GET /api/agents")
+	assert.Contains(t, result, "POST /api/agents")
+	assert.Contains(t, result, "PATCH /api/agents")
+	assert.Contains(t, result, "DELETE /api/agents")
+	// Returns only the template; the caller prepends the original message.
+	assert.NotContains(t, result, "/cb-agent 创建一个代码审查智能体")
+}
+
+// TestProcessClawbenchCommand_AgentIsProjectScoped asserts the agent command
+// carries the project cookie. GET /api/agents filters by project and PATCH
+// resolves project_scope from it, so omitting the cookie would hide
+// project-scoped agents.
+func TestProcessClawbenchCommand_AgentIsProjectScoped(t *testing.T) {
+	withServerPort(t, 20000)
+
+	result, err := processClawbenchCommand("/cb-agent list", "/project", "sess-1")
+	require.NoError(t, err)
+
+	assert.Contains(t, result, "clawbench_project=/project",
+		"agent management is project-scoped and must carry the project cookie")
+	assert.Contains(t, result, "http://localhost:20000")
+}
+
+// TestProcessClawbenchCommand_AgentDocumentsCreateByClone pins the create
+// semantics: there is no create-from-scratch, so the prompt must tell the AI to
+// clone via source_id + name and to check name-uniqueness conflicts.
+func TestProcessClawbenchCommand_AgentDocumentsCreateByClone(t *testing.T) {
+	withServerPort(t, 20000)
+
+	result, err := processClawbenchCommand("/cb-agent create a reviewer", "/project", "sess-1")
+	require.NoError(t, err)
+
+	assert.Contains(t, result, "source_id", "the clone contract must be stated")
+	assert.Contains(t, result, "CLONING", "the AI must know creation is by cloning")
+	assert.Contains(t, result, "AgentNameTaken", "the name-uniqueness conflict must be stated")
+	assert.Contains(t, result, "AgentNameReserved", "the reserved-nickname conflict must be stated")
+}
+
+// TestProcessClawbenchCommand_AgentDocumentsDeleteGuard pins the destructive-op
+// guardrails: deletion is refused while the agent is in use, the default agent
+// is protected, and the AI must confirm before deleting.
+func TestProcessClawbenchCommand_AgentDocumentsDeleteGuard(t *testing.T) {
+	withServerPort(t, 20000)
+
+	result, err := processClawbenchCommand("/cb-agent delete myagent", "/project", "sess-1")
+	require.NoError(t, err)
+
+	assert.Contains(t, result, "AgentInUse", "the in-use guard must be stated")
+	assert.Contains(t, result, "CannotDeleteDefaultAgent", "the default-agent protection must be stated")
+	assert.Contains(t, result, "CannotDisableDefaultAgent", "the disable protection must be stated")
+	assert.Contains(t, result, "NEVER delete without explicit user confirmation",
+		"the AI must confirm before a destructive delete")
+}
+
+// TestProcessClawbenchCommand_AgentIsRecognizedAsBuiltin guards the routing:
+// IsClawbenchCommand must claim "/cb-agent" or it is forwarded to the agent as
+// an ACP slash command and the injection never happens.
+func TestProcessClawbenchCommand_AgentIsRecognizedAsBuiltin(t *testing.T) {
+	assert.True(t, IsClawbenchCommand("/cb-agent"))
+	assert.True(t, IsClawbenchCommand("/cb-agent list all"))
+	assert.False(t, IsClawbenchCommand("/cb-agentx"))
+	assert.False(t, IsClawbenchCommand("/cb-agen"))
 }
 
 // --- /cb-user-guide ---
@@ -234,11 +307,13 @@ func TestIsClawbenchCommand(t *testing.T) {
 	assert.True(t, IsClawbenchCommand("/cb-chatsearch query"))
 	assert.True(t, IsClawbenchCommand("/cb-task do thing"))
 	assert.True(t, IsClawbenchCommand("/cb-user-guide archive"))
+	assert.True(t, IsClawbenchCommand("/cb-agent list"))
 	// Bare commands (no trailing space) are what the frontend sends after
 	// trimming — they must still be recognized so they are not misrouted to
 	// the ACP slash-command path (regression).
 	assert.True(t, IsClawbenchCommand("/cb-chatsearch"))
 	assert.True(t, IsClawbenchCommand("/cb-task"))
+	assert.True(t, IsClawbenchCommand("/cb-agent"))
 	assert.False(t, IsClawbenchCommand("/compact"))
 	assert.False(t, IsClawbenchCommand("/cb-chatsearchx query")) // no space after command
 	assert.False(t, IsClawbenchCommand("hello"))
@@ -270,6 +345,7 @@ func TestProcessClawbenchCommand_PlaceholderReplacement(t *testing.T) {
 	}{
 		{"/cb-chatsearch auth bug", nil},
 		{"/cb-task daily report", allowedForTask},
+		{"/cb-agent create a reviewer", nil},
 	}
 	for _, tc := range tests {
 		result, err := processClawbenchCommand(tc.msg, "/my/project", "sess-abc")
@@ -545,7 +621,7 @@ func TestProcessClawbenchCommand_UsageIsRecognizedAsBuiltin(t *testing.T) {
 func TestProcessClawbenchCommand_ProjectCookieIsPortScoped(t *testing.T) {
 	t.Run("default port uses bare name", func(t *testing.T) {
 		withServerPort(t, 20000)
-		for _, msg := range []string{"/cb-chatsearch auth bug", "/cb-task daily", "/cb-usage last week"} {
+		for _, msg := range []string{"/cb-chatsearch auth bug", "/cb-task daily", "/cb-usage last week", "/cb-agent list"} {
 			result, err := processClawbenchCommand(msg, "/project", "sess-1")
 			require.NoError(t, err)
 			assert.Containsf(t, result, "clawbench_project=/project",
@@ -555,7 +631,7 @@ func TestProcessClawbenchCommand_ProjectCookieIsPortScoped(t *testing.T) {
 
 	t.Run("custom port uses scoped name", func(t *testing.T) {
 		withServerPort(t, 21999)
-		for _, msg := range []string{"/cb-chatsearch auth bug", "/cb-task daily", "/cb-usage last week"} {
+		for _, msg := range []string{"/cb-chatsearch auth bug", "/cb-task daily", "/cb-usage last week", "/cb-agent list"} {
 			result, err := processClawbenchCommand(msg, "/project", "sess-1")
 			require.NoError(t, err)
 			assert.Containsf(t, result, "cb21999_clawbench_project=/project",
@@ -604,7 +680,7 @@ func TestClawbenchCommandPrecheck(t *testing.T) {
 	})
 
 	t.Run("commands without a precondition pass through", func(t *testing.T) {
-		for _, msg := range []string{"/cb-task daily", "/cb-usage totals", "/compact"} {
+		for _, msg := range []string{"/cb-task daily", "/cb-usage totals", "/cb-agent list", "/compact"} {
 			w := httptest.NewRecorder()
 			r := httptest.NewRequest(http.MethodPost, "/api/ai/chat", http.NoBody)
 			assert.Truef(t, clawbenchCommandPrecheck(w, r, msg),
@@ -656,7 +732,7 @@ func TestProcessClawbenchCommand_InjectsVerifiableToken(t *testing.T) {
 	model.CookieToken = "instance-key"
 	withServerPort(t, 20000)
 
-	for _, msg := range []string{"/cb-chatsearch auth bug", "/cb-task daily", "/cb-usage last week"} {
+	for _, msg := range []string{"/cb-chatsearch auth bug", "/cb-task daily", "/cb-usage last week", "/cb-agent list"} {
 		result, err := processClawbenchCommand(msg, "/project", "sess-1")
 		require.NoError(t, err)
 
