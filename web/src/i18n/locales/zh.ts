@@ -868,6 +868,7 @@ export default {
       conversationIndexNoResults: '无匹配消息',
       conversationIndexRoleUser: '用户',
       conversationIndexRoleAssistant: '助手',
+      conversationIndexRoleSystem: '系统',
       conversationIndexNoText: '（本轮无文字回复）',
     },
     pending: {
@@ -3377,5 +3378,6 @@ export default {
     active: '已开启分享，任何人通过下方链接即可只读查看选中的会话内容',
     roleUser: '用户',
     roleAssistant: '助手',
+    roleSystem: '系统消息',
   },
 } as const

@@ -1,7 +1,10 @@
 <template>
   <div class="chat-message" :class="[msg.role, { 'has-metadata': msg.role === 'assistant' && msg.metadata }]" :data-msg-key="msg.id ? 'db-' + msg.id : null" :data-streaming="msg.streaming ? 'true' : null">
 
-    <div v-if="msg.role === 'system'" class="chat-system-row">{{ msg.content }}</div>
+    <div v-if="msg.role === 'system'" class="chat-system-row">
+      <Megaphone class="chat-system-icon" :size="13" aria-hidden="true" />
+      <span class="chat-system-text">{{ msg.content }}</span>
+    </div>
     <template v-else>
     <!-- Group-chat speaker attribution: a member (not the user) produced this
          assistant message. agentId is the member row id, resolved via the
@@ -244,7 +247,7 @@
 <script setup>
 import { ref, inject, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Clock, Pause, Volume2, Info, FileDiff, Split, Rewind, MessageSquareQuote, ChevronDown, Lock, User, Crown } from 'lucide-vue-next'
+import { Clock, Pause, Volume2, Info, FileDiff, Split, Rewind, MessageSquareQuote, ChevronDown, Lock, User, Crown, Megaphone } from 'lucide-vue-next'
 import { formatDuration, formatRelativeTime } from '@/utils/format.ts'
 import { escapeHtml } from '@/utils/html.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
@@ -1566,6 +1569,8 @@ const copyPayload = quotableText
 
 /* ── Group-chat system event row (member joined / left) ──
    A centered thin pill: NOT a bubble (no .msg-card, no avatar, no meta bar).
+   A single Megaphone glyph marks it as an announcement — the same unified icon
+   the conversation index and the share-selection dialog use for system rows.
    Global block (not scoped) because it is a shared row style, and because a
    future v-html/markdown surface could reuse the class name. */
 .chat-system-row {
@@ -1580,7 +1585,20 @@ const copyPayload = quotableText
   line-height: var(--line-height-snug);
   text-align: center;
   box-sizing: border-box;
+  /* Icon + text on one baseline; the icon is decorative (aria-hidden). */
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.chat-system-icon {
+  flex-shrink: 0;
+  opacity: var(--opacity-hover, 0.7);
+}
+
+.chat-system-text {
+  min-width: 0;
 }
 </style>

@@ -23,6 +23,7 @@ const i18n = createI18n({
         messageList: {
           conversationIndexRoleAssistant: 'assistant',
           conversationIndexRoleUser: 'user',
+          conversationIndexRoleSystem: 'system',
           conversationIndexNoText: '(no text)',
           userMsgIndexAttachment: 'attachment',
         },
@@ -91,6 +92,29 @@ describe('MessageIndexRow — speaker icon resolution', () => {
   it('never resolves a speaker for a USER row', () => {
     const resolve = makeSpeakerResolver({ name: 'Solo', backend: 'claude' }, null)
     const w = mountRow({ id: 4, role: 'user', content: 'me' }, { resolveSpeaker: resolve })
+    expect(w.find('.agent-icon-stub').exists()).toBe(false)
+  })
+
+  it('marks a SYSTEM row with its own role chip, not a user chip', () => {
+    // A system row is a group membership announcement; it must never borrow the
+    // User chip (which is what the old `role === 'assistant' ? ... : 'role-user'`
+    // fallback did).
+    const w = mountRow({ id: 5, role: 'system', content: 'Alice joined' })
+    const tag = w.find('.msg-role-tag')
+    expect(tag.classes()).toContain('role-system')
+    expect(tag.classes()).not.toContain('role-user')
+    expect(tag.attributes('aria-label')).toBe('system')
+    // The unified Megaphone glyph, not the User glyph. Real lucide renders
+    // `class="lucide lucide-megaphone"` (this test does not mock the library).
+    expect(tag.find('.lucide-megaphone').exists()).toBe(true)
+    expect(tag.find('.lucide-user').exists()).toBe(false)
+    // The row itself carries a system modifier for the muted styling.
+    expect(w.find('.msg-item').classes()).toContain('msg-item--system')
+  })
+
+  it('never resolves a speaker for a SYSTEM row', () => {
+    const resolve = makeSpeakerResolver({ name: 'Solo', backend: 'claude' }, null)
+    const w = mountRow({ id: 6, role: 'system', content: 'joined' }, { resolveSpeaker: resolve })
     expect(w.find('.agent-icon-stub').exists()).toBe(false)
   })
 })

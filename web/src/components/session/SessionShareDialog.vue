@@ -86,11 +86,12 @@
             <span
               class="session-share-dialog-role"
               :class="'role-' + m.role"
-              :title="m.role === 'user' ? t('sessionShare.roleUser') : t('sessionShare.roleAssistant')"
-              :aria-label="m.role === 'user' ? t('sessionShare.roleUser') : t('sessionShare.roleAssistant')"
+              :title="roleLabel(m.role)"
+              :aria-label="roleLabel(m.role)"
             >
               <AgentIcon v-if="m.role === 'assistant' && speakerFor(m)" :backend="speakerFor(m).backend" :name="speakerFor(m).name" :avatar="speakerFor(m).avatar" size="md" />
               <Bot v-else-if="m.role === 'assistant'" :size="16" />
+              <Megaphone v-else-if="m.role === 'system'" :size="16" />
               <User v-else :size="16" />
             </span>
             <span class="session-share-dialog-preview" :title="m.preview">{{ m.preview || '—' }}</span>
@@ -143,7 +144,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Bot, ExternalLink, Info, Link2, RefreshCw, Trash2, User } from 'lucide-vue-next'
+import { Bot, ExternalLink, Info, Link2, Megaphone, RefreshCw, Trash2, User } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
@@ -203,6 +204,13 @@ function isSelectable(m) {
 function speakerFor(m) {
   if (!m || m.role !== 'assistant') return null
   return resolveSpeaker.value(m.agentId || '') || null
+}
+
+/** Accessible role label for a row's icon chip (icon-only, so it lives here). */
+function roleLabel(role) {
+  if (role === 'assistant') return t('sessionShare.roleAssistant')
+  if (role === 'system') return t('sessionShare.roleSystem')
+  return t('sessionShare.roleUser')
 }
 
 const selectableCount = computed(() => messages.value.filter(isSelectable).length)
@@ -497,6 +505,14 @@ watch(() => props.open, (isOpen) => {
   color: var(--text-secondary);
   background: color-mix(in srgb, var(--text-secondary) 12%, transparent);
   border-color: color-mix(in srgb, var(--text-secondary) 24%, transparent);
+}
+
+/* System rows (group membership events) use the neutral muted tone and the
+   shared Megaphone glyph, matching the in-app system pill and the index chip. */
+.session-share-dialog-role.role-system {
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+  border-color: color-mix(in srgb, var(--text-muted) 24%, transparent);
 }
 
 .session-share-dialog-preview {

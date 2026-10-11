@@ -606,6 +606,33 @@ describe('SessionShareView', () => {
       expect(rows[1].find('.msg-text').text()).toContain('A short summary.')
     })
 
+    it('gives a system row its own chip, not a user chip', async () => {
+      // A group membership event rides in the snapshot as role='system'. The TOC
+      // must mark it with the unified Megaphone chip, never the User chip.
+      globalThis.fetch = vi.fn(async () => ({
+        ok: true,
+        json: async () => {
+          const p = makePayload()
+          p.messages.push({
+            id: 13,
+            role: 'system',
+            content: 'Alice joined the discussion',
+            createdAt: '2026-09-22T09:02:00Z',
+          } as never)
+          return p
+        },
+      } as Response)) as unknown as typeof fetch
+
+      const wrapper = await mountView()
+      const sys = wrapper.findAll('.share-toc .msg-item')[2]
+      const tag = sys.find('.msg-role-tag')
+      expect(tag.classes()).toContain('role-system')
+      expect(tag.classes()).not.toContain('role-user')
+      expect(tag.find('.lucide-megaphone').exists()).toBe(true)
+      expect(tag.find('.lucide-user').exists()).toBe(false)
+      expect(sys.classes()).toContain('msg-item--system')
+    })
+
     it('icons the assistant row with the frozen session agent (public TOC)', async () => {
       const wrapper = await mountView()
       const rows = wrapper.findAll('.share-toc .msg-item')

@@ -864,6 +864,7 @@ export default {
       conversationIndexNoResults: 'No matching messages',
       conversationIndexRoleUser: 'User',
       conversationIndexRoleAssistant: 'Assistant',
+      conversationIndexRoleSystem: 'System',
       conversationIndexNoText: '(no text in this turn)',
     },
     pending: {
@@ -3378,5 +3379,6 @@ export default {
     active: 'Sharing is on. Anyone can read the selected conversation via the link below',
     roleUser: 'User',
     roleAssistant: 'Reply',
+    roleSystem: 'System message',
   },
 } as const

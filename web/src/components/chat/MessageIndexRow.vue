@@ -15,6 +15,7 @@
       active,
       'msg-item-active': navActive,
       'msg-item--assistant': msg.role === 'assistant',
+      'msg-item--system': msg.role === 'system',
     }"
     :aria-current="active || undefined"
     tabindex="0"
@@ -28,13 +29,15 @@
     <div class="msg-body">
       <span
         class="msg-role-tag"
-        :class="msg.role === 'assistant' ? 'role-assistant' : 'role-user'"
+        :class="roleClass"
         :title="roleLabel"
         :aria-label="roleLabel"
       >
         <!-- Assistant rows show the ACTUAL speaker's agent icon when the host
              can resolve one; otherwise the generic Bot. User rows always keep
-             the generic User glyph (the human is not an agent).
+             the generic User glyph (the human is not an agent). System rows
+             (group membership events) get one unified Megaphone glyph so they
+             read as announcements and can never be mistaken for a user turn.
              AgentIcon uses `md` (18px) because the chip's content box is exactly
              18px (20px − 2×1px border): `sm` (14px) left a 2px gap on each side
              that made the icon read as smaller than its chip. -->
@@ -46,6 +49,7 @@
           size="md"
         />
         <Bot v-else-if="msg.role === 'assistant'" :size="16" />
+        <Megaphone v-else-if="msg.role === 'system'" :size="16" />
         <User v-else :size="16" />
       </span>
       <span class="msg-text" :class="{ 'msg-text--muted': isPlaceholder }" v-html="rowHighlight"></span>
@@ -68,7 +72,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Bot, User, MessageCircleQuestion } from 'lucide-vue-next'
+import { Bot, User, Megaphone, MessageCircleQuestion } from 'lucide-vue-next'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import { assistantIndexText, formatIndexMsg } from '@/utils/userMsgIndexUtils.ts'
 import { highlightText } from '@/utils/searchUtils'
@@ -139,13 +143,21 @@ const isPlaceholder = computed(
 /**
  * The role chip shows only an icon, so the label lives in title/aria-label —
  * otherwise the role would be invisible to screen readers and to anyone who
- * cannot tell the two glyphs apart.
+ * cannot tell the glyphs apart. System rows (group membership events) get their
+ * own label so they are never read as a user turn.
  */
-const roleLabel = computed(() =>
-  props.msg.role === 'assistant'
-    ? t('chat.messageList.conversationIndexRoleAssistant')
-    : t('chat.messageList.conversationIndexRoleUser'),
-)
+const roleLabel = computed(() => {
+  if (props.msg.role === 'assistant') return t('chat.messageList.conversationIndexRoleAssistant')
+  if (props.msg.role === 'system') return t('chat.messageList.conversationIndexRoleSystem')
+  return t('chat.messageList.conversationIndexRoleUser')
+})
+
+/** The chip's role modifier class. A system row is neither user nor assistant. */
+const roleClass = computed(() => {
+  if (props.msg.role === 'assistant') return 'role-assistant'
+  if (props.msg.role === 'system') return 'role-system'
+  return 'role-user'
+})
 
 /** Row display text with the active query's matches wrapped in <mark>. */
 const rowHighlight = computed(() =>
@@ -323,6 +335,16 @@ const speaker = computed<SpeakerIdentity | null>(() => {
   border-color: color-mix(in srgb, var(--text-secondary) 24%, transparent);
 }
 
+/* System rows (group membership events) carry the same neutral tone as the
+   in-app .chat-system-row pill, so the chip reads as an announcement rather
+   than a participant. The Megaphone glyph is the single marker shared with the
+   chat body and the share-selection dialog. */
+.msg-role-tag.role-system {
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+  border-color: color-mix(in srgb, var(--text-muted) 24%, transparent);
+}
+
 /* The row's only flexible element: everything past one line is clipped with an
    ellipsis, so every row keeps the same height regardless of message length. */
 .msg-text {
@@ -346,6 +368,17 @@ const speaker = computed<SpeakerIdentity | null>(() => {
    distinguishable even when the row is not the active one. */
 .msg-item--assistant .msg-node {
   border-color: color-mix(in srgb, var(--text-muted) 28%, transparent);
+}
+
+/* System rows read as announcements: a muted preview plus a dashed node
+   outline, mirroring the neutral centered pill the chat body renders. */
+.msg-item--system .msg-node {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--text-muted) 38%, transparent);
+}
+
+.msg-item--system .msg-text {
+  color: var(--text-muted);
 }
 
 .msg-text :deep(mark) {

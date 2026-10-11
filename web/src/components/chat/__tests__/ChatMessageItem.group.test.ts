@@ -235,6 +235,19 @@ describe('ChatMessageItem group system events', () => {
     expect(w.find('.agent-icon-stub').exists()).toBe(false)
   })
 
+  it('marks a system row with the unified announcement icon', () => {
+    // The Megaphone glyph is the single marker shared with the conversation
+    // index chip and the share-selection dialog, so a system row is visually
+    // distinct from a user turn everywhere it is listed.
+    const w = mountItem({ role: 'system', id: 23, content: 'Bob joined' })
+    const icon = w.find('.chat-system-icon')
+    expect(icon.exists()).toBe(true)
+    // Decorative: the icon is aria-hidden so it is not announced twice.
+    expect(icon.attributes('aria-hidden')).toBe('true')
+    // The icon lives inside the pill, next to the text.
+    expect(w.find('.chat-system-row .chat-system-text').text()).toBe('Bob joined')
+  })
+
   it('renders system text verbatim (no markdown parsing)', () => {
     const w = mountItem({ role: 'system', id: 21, content: '**Alice** joined' })
     const row = w.find('.chat-system-row')
