@@ -19,6 +19,10 @@ import (
 type fakeTransport struct {
 	sessionID string
 
+	// promptInFlight feeds PromptInFlight. CodeBuddy's policy does not consult
+	// it (session/steer reports "idle" itself), but the interface requires it.
+	promptInFlight bool
+
 	calls       []string
 	lastParams  any
 	response    json.RawMessage
@@ -37,6 +41,8 @@ func (f *fakeTransport) CallRaw(_ context.Context, method string, params any) (j
 }
 
 func (f *fakeTransport) AcpSessionID() string { return f.sessionID }
+
+func (f *fakeTransport) PromptInFlight() bool { return f.promptInFlight }
 
 func mustSteerResponse(t *testing.T, v any) json.RawMessage {
 	t.Helper()

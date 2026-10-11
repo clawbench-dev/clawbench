@@ -77,7 +77,64 @@ func ServeAgentSubRoutes(w http.ResponseWriter, r *http.Request) {
 		serveAgentsRescan(w, r)
 		return
 	}
+	if strings.HasSuffix(path, "/reorder") && r.Method == http.MethodPut {
+		serveAgentsReorder(w, r)
+		return
+	}
 	writeLocalizedErrorf(w, r, http.StatusNotFound, "NotFound")
+}
+
+// serveAgentsReorder handles PUT /api/agents/reorder — persists a manual drag
+// order for the agent list (settings → agents).
+//
+// The body carries the visible order as `{ids: [...]}`; each agent's sort_order
+// becomes its index. Ids that match no agent are ignored, and rows absent from
+// ids keep their current sort_order (see service.ReorderAgents). The order is
+// global: GET /api/agents and every in-memory consumer (agent pickers, the
+// AgentList[0] default fallback) follow (sort_order, id) after the next load, so
+// this also reorders the in-memory list immediately.
+func serveAgentsReorder(w http.ResponseWriter, r *http.Request) {
+	configMutex.Lock()
+	defer configMutex.Unlock()
+
+	var req struct {
+		IDs []string `json:"ids"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxChatBodySize)
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if len(req.IDs) == 0 {
+		writeJSON(w, http.StatusOK, map[string]any{"success": true})
+		return
+	}
+	if err := service.ReorderAgents(req.IDs); err != nil {
+		slog.Error("failed to reorder agents", "error", err)
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+		return
+	}
+	// Reflect the new order in memory so this process serves it immediately,
+	// without waiting for the next DB reload.
+	//
+	// Each agent's SortOrder field is written (same raw index the DB just got),
+	// not just the slice order: GET /api/agents marshals that field
+	// (json:"sortOrder") and the settings page sorts by it, so a stale value
+	// would re-sort the drag away on the very next read. Agents absent from ids
+	// keep their field, exactly as their row keeps its column. Sorting by the
+	// shared model.SortAgentsByOrder rule (rather than a bespoke compaction) is
+	// what makes the in-memory order identical to what a reload would produce.
+	//
+	// UpdateAgent publishes copy-on-write, so shared pointers readers may hold
+	// stay frozen. configMutex is held across the updates and the re-sort, and
+	// serveAgentsGet takes configMutex.RLock, so no GET can observe a half-updated
+	// set.
+	for i, id := range req.IDs {
+		model.UpdateAgent(id, func(a *model.Agent) { a.SortOrder = i })
+	}
+	list := model.GetAgentList()
+	model.SortAgentsByOrder(list)
+	model.SetAgentList(list)
+	writeJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
 // ServeAgents returns the list of configured AI agents.
@@ -101,11 +158,55 @@ func ServeAgents(w http.ResponseWriter, r *http.Request) {
 	writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
 }
 
-func serveAgentsGet(w http.ResponseWriter, _ *http.Request) {
+// visibleAgentsInProject filters an agent list to those visible in projectPath:
+// global agents (no project_id) are always included; a project-scoped agent is
+// included only in its own project. Other projects therefore never see it in the
+// settings list or any picker. Resolution is read-only (ProjectIDByPath does not
+// register an unknown project); an unknown project simply sees the globals,
+// which is the same as before the agent existed.
+func visibleAgentsInProject(agents []*model.Agent, projectPath string) []*model.Agent {
+	projectID, projectKnown, pidErr := store.ProjectIDByPath(projectPath)
+	if pidErr != nil {
+		projectKnown = false
+	}
+	visible := make([]*model.Agent, 0, len(agents))
+	for _, a := range agents {
+		if a.ProjectID == nil || (projectKnown && *a.ProjectID == projectID) {
+			visible = append(visible, a)
+		}
+	}
+	return visible
+}
+
+// visibleDefaultAgent returns a default agent usable in projectPath. If the
+// configured default is not visible there (possible only if it was scoped BEFORE
+// becoming default, which the settings guard now refuses), it falls back to the
+// first visible, non-disabled agent so the project still has a usable default.
+// An empty configured default is left empty (the same "no agents" state as
+// before) — the fallback only kicks in for a default that exists but is hidden.
+func visibleDefaultAgent(defaultAgent string, agents []*model.Agent, projectPath string) string {
+	if defaultAgent == "" || agentVisibleInProject(model.GetAgent(defaultAgent), projectPath) {
+		return defaultAgent
+	}
+	for _, a := range agents {
+		if !a.Disabled {
+			return a.ID
+		}
+	}
+	return ""
+}
+
+func serveAgentsGet(w http.ResponseWriter, r *http.Request) {
 	configMutex.RLock()
 	agents := model.GetAgentList()
 	defaultAgent := model.GetDefaultAgentID()
 	configMutex.RUnlock()
+
+	// Scope the list to the caller's current project, then make the reported
+	// default consistent with what is actually visible here.
+	projectPath := middleware.GetProjectFromCookie(r)
+	agents = visibleAgentsInProject(agents, projectPath)
+	defaultAgent = visibleDefaultAgent(defaultAgent, agents, projectPath)
 
 	// Attach cached ACP mode/thinking/commands state to each agent.
 	// This lets the frontend populate mode chips and slash commands without
@@ -304,9 +405,14 @@ func serveAgentsRescan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Return the current agent list (same shape as GET /api/agents)
-	agents := model.GetAgentList()
-	defaultAgent := model.GetDefaultAgentID()
+	// Return the current agent list (same shape as GET /api/agents), scoped to
+	// the caller's project. Without the same filter GET applies, rescan would
+	// leak every project-scoped agent (and a possibly-scoped default) to any
+	// caller — including the /cb-agent command, which is told GET only returns
+	// the current project's agents.
+	projectPath := middleware.GetProjectFromCookie(r)
+	agents := visibleAgentsInProject(model.GetAgentList(), projectPath)
+	defaultAgent := visibleDefaultAgent(model.GetDefaultAgentID(), agents, projectPath)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"agents":       agents,
@@ -709,6 +815,41 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 		ap.Disabled = &disabled
 	}
 
+	// Validate and apply project_scope (仅当前项目). true binds the agent to the
+	// caller's current project; false clears the scope back to global. The
+	// default agent must stay globally visible, so scoping it is refused —
+	// mirroring CannotDisableDefaultAgent (other projects must always be able
+	// to fall back to a default agent).
+	if v, exists := patch["project_scope"]; exists {
+		scoped, ok := v.(bool)
+		if !ok {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
+			return
+		}
+		if scoped {
+			if agentID == model.GetDefaultAgentID() {
+				writeLocalizedErrorf(w, r, http.StatusBadRequest, "CannotScopeDefaultAgent")
+				return
+			}
+			projectPath := middleware.GetProjectFromCookie(r)
+			if projectPath == "" {
+				writeLocalizedErrorf(w, r, http.StatusBadRequest, "NoProjectSelected")
+				return
+			}
+			// Write path: registering an unknown project is intentional (see
+			// projectIDArg) — scoping must work even if the project has no row
+			// yet, and the read side resolves the id back through the registry.
+			projectID, pidErr := store.ProjectIDForPath(projectPath)
+			if pidErr != nil {
+				writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+				return
+			}
+			ap.ProjectID = &projectID
+		} else {
+			ap.ClearProjectID = true
+		}
+	}
+
 	// Persist to database
 	if err := service.PatchAgentFields(agentID, ap); err != nil {
 		if errors.Is(err, service.ErrAgentNameReserved) {
@@ -766,6 +907,12 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 		}
 		if ap.Disabled != nil {
 			agent.Disabled = *ap.Disabled
+		}
+		if ap.ClearProjectID {
+			agent.ProjectID = nil
+		} else if ap.ProjectID != nil {
+			pid := *ap.ProjectID
+			agent.ProjectID = &pid
 		}
 	})
 

@@ -287,7 +287,7 @@ localStorage.setItem('clawbench-widescreen-split-ratio', String(441 / 1232));
 **文件管理器**：工具栏 / 排序菜单 / 多选模式 / 网格视图 / 文件右键菜单 / 目录右键菜单 / 预览窗格 / 搜索三模式
 **文件查看器**：Markdown+TOC / 代码编辑 / 图片灯箱 / PDF / Office / 分享弹窗
 **AI 对话**：输入栏全貌 / 斜杠命令菜单 / @引用 / 附件抽屉 / 消息操作按钮 / 推荐回复 / 工具卡展开 / 权限审批 / 提问卡 / 深度思考 / 会话设置抽屉
-**AI 群聊**：建群抽屉（多选 + 主持胶囊）/ 主持人模式时间线（主持人皇冠 + @汇总行 + 密送卡）/ 自由模式时间线（`@` 接力）/ 成员管理抽屉（含并发开关（自由模式）+ 自动批准；成员发言次数上限是全局设置）/ @ 成员卡（输入框附件条）/ 智能体设置（重新扫描列表 + 详情页：智能体从哪来、如何复制改名造角色）
+**AI 群聊**：建群抽屉（`+` 抽屉内单聊/群聊分段开关 + 多选 + 实例步进器 + 主持按钮 + 页脚计数）/ 主持人模式时间线（主持人皇冠 + @汇总行 + 密送卡）/ 自由模式时间线（`@` 接力）/ 群聊设置抽屉（含并发开关（自由模式）+ 自动批准；成员发言次数上限是全局设置）/ @ 成员卡（输入框附件条，含密送锁）/ 智能体设置（重新扫描列表 + 详情页：智能体从哪来、如何复制改名造角色、禁用/删除守卫）
 **会话**：侧栏全貌 / 搜索抽屉 / 标签过滤 / 右键菜单
 **Git**：提交列表 / 分支 / 标签 / 工作树 / diff 抽屉 / 工作区变更
 **任务**：列表 / 定时表单 / 事件表单（含事件类型勾选）/ 详情 / 执行历史
@@ -1039,7 +1039,11 @@ sqlite3 "file:$HOME/.clawbench/ClawBench.db?mode=ro&immutable=1" \
   "select id, title, context_state from chat_sessions where session_type='group';"
 ```
 
-`context_state` 里 **`group_mode`** 决定模式（`"host"` / `"free"`），`host_member_id` 是主持人成员行 id，`parallelDefault` 是自由模式的并发开关。成员行查 `where group_id='<群id>'`（`title` 即展示名，`archived=1` 即已离场）。
+`context_state` 里 **`group_mode`** 决定模式（`"host"` / `"free"`），`host_member_id` 是主持人成员行 id，`parallelDefault` 是自由模式的并发开关。成员行查 `where group_id='<群id>'`（**展示名在 `agent_name` 列，不是 `title`**——成员行 `title` 留空；`archived=1` 即已离场，`agent_avatar` 非空表示该实例有自己的头像）。
+
+**多实例命名/头像**：首个实例用智能体本名 + 原头像；第 2+ 个实例取名池名（`Alice`/`Bob`…，池尽回退 `本名 序号` 且永不 `本名 1`）并生成自己的头像。
+
+**重要**：群会话与成员行**按项目归属**（`project_id`）。截图前必须切到该群所属的项目（`POST /api/project {path}` + reload），否则会话列表里看不到它。
 
 **挑素材的判据**（各拍一张，选内容最丰富的）：
 - **主持人模式**：时间线里同时有「主持人皇冠发言 + `@` 汇总行 + 密送卡 + 系统行」的那条。
@@ -1060,19 +1064,22 @@ sqlite3 "file:$HOME/.clawbench/ClawBench.db?mode=ro&immutable=1" \
 | 成员抽屉 | `.gm-row` / `.gm-tag--host` / `.gm-tag--left` / `.gm-remove` | 行 / 主持人标签 / 已离场标签 / 移除按钮 |
 | 抽屉「添加成员」 | `[data-action="add-members"]` | 在**抽屉头部右侧** |
 | 群设置 | `#group-parallel`（仅自由模式）/ `#group-auto-approve`（两者） | 主持人模式只显示自动批准（无并发开关）；成员发言次数上限是全局设置，不在抽屉里 |
-| 建群入口 | `[data-action="create-group"]` | 会话列表头部 |
-| 建群抽屉 | `.bs-overlay` → `.agent-option`（行）/ `.agent-option-check`（复选框）/ `.agent-host-btn`（主持胶囊，`.active` 为当前主持人）/ `.agent-multi-confirm`（创建按钮） | 抽屉标题右侧 `.agent-header-mode` 实时显示「主持人模式 / 自由模式」 |
+| 建群入口 | `[data-action="create"]`（**共用的 `+`**） | **独立的 `[data-action="create-group"]` 已删除**——群聊改从 `+` 抽屉内的分段开关进入 |
+| 建群分段开关 | `.agent-mode-switch` / `.agent-mode-tab[data-mode="single"\|"group"]`（`.active` 为当前） | 抽屉头部右侧；**仅当可选智能体 ≥ 2 时显示** |
+| 建群抽屉 | `.agent-option`（行）/ `.agent-option-check`（复选框）/ `.agent-host-btn`（主持按钮，`.active` = 当前主持人）/ `.agent-stepper`（`− N +` 实例步进器，`.agent-stepper-count` 是数量）/ `.agent-count-hint`（页脚「已添加 N/上限 个」）/ `.agent-multi-confirm`（创建按钮） | 标题用 `.agent-header-title`（「选择群聊成员」）；主持人模式/自由模式由 `GroupModeHint` 的 `.group-mode-hint-chip` 表示（皇冠/`@`），**没有 `.agent-header-mode`** |
+| 用户昵称 | 设置 → 聊天 → 群聊 → 用户昵称（`chat.user_nickname`） | 智能体在群里称呼你的名字，默认 `User`；@ 芯片显示它（不再显示「你」） |
+| 真实名标签 | `.real-agent-name-tag`（共享组件 `RealAgentNameTag`） | 昵称是自动名池名/`本名 序号` 时显示底层真实智能体名；消息头 `.msg-speaker-real`、成员行 `.gm-real-name`、补全行 `.completion-real-name` 都用它 |
 | @ 成员卡 | `.chat-attachment-tags .mention-card`（名字 `.mention-card-name`，锁 `.mention-card-lock`） | 输入框附件条 |
 | 智能体设置 | `.settings-agents-index__row` / `.settings-agents-index__rescan-row` / `.settings-agents-index__name` | 进设置 → 点「智能体」分类行；详情页 `.settings-agent-detail`（含「复制」「删除」按钮） |
 
 ### 拍法要点
 
-1. **建群抽屉（`group-01-create`）**：点 `[data-action="create-group"]` → 点 3 个 `.agent-option` 勾选 → 点其中一个行内的 `.agent-host-btn` 设为主持人。自检：`.agent-option-check.checked` 数 = 3、`.agent-host-btn.active` = 1、`.agent-header-mode` 文本为「主持人模式」。
+1. **建群抽屉（`group-01-create`）**：点 `[data-action="create"]` → 点 `.agent-mode-tab[data-mode="group"]` 切到群聊 → 点 3 个 `.agent-option` 勾选 → 点其中一个行内的 `.agent-host-btn` 设为主持人 → 用 `.agent-stepper` 的 `+` 给同一智能体加第 2 个实例。自检：`.agent-option-check.checked` 数 = 3、`.agent-host-btn.active` = 1、`.agent-count-hint` 显示「已添加 N/12 个」、`.group-mode-hint-chip` 文本为「主持人模式」。**注意：抽屉头部没有 `.agent-header-mode`**（旧文案），模式由页脚 `.group-mode-hint-chip` 表达。
 2. **主持人时间线（`group-02-host`）**：打开群 → 在 `.chat-message` 里找**同时含 `.msg-mention-summary` 与 `.msg-speaker-host-tag`** 的那条，`sc.scrollTop = target.offsetTop - 8` 把它滚到顶部再拍。这样一屏能同时展示「皇冠主持人 + @ 汇总行 + 密送卡」。
 3. **自由时间线（`group-03-free`）**：打开自由群 → 从后往前找含 `.msg-mention-summary` 或 `.msg-bcc` 的消息滚到顶。标题栏左侧的 `.group-mode-badge` 是 `@`。
-4. **成员抽屉**：`.group-avatar-stack` 用 Playwright `el.click()`（合成 `.click()` 对 Teleport 抽屉不可靠）→ 等 ~1.4s。**两种模式各拍一张**（主持人版显示「自动批准」，自由版显示「并发执行」+「自动批准」），这正好把两个模式的群设置差异讲清。
-5. **@ 成员卡（`group-06-mention-card`）**：**必须用 Playwright 真实输入事件**——`ta.fill('@')` 打开 `.completion-item` 菜单（群会话里成员候选排最前），点 `.completion-item` 第一项加卡，再 `ta.fill('问题正文')`。合成 `element.click()` / 直接设 `value` **不会**弹出该菜单（同 §八 第 10 条）。自检：`.chat-attachment-tags .mention-card` 存在且 `.mention-card-name` 非空、`.chat-textarea` 的 value **不含** `clawbench-mention`。
-6. **智能体设置（`group-07`/`group-08`）**：说明「智能体从哪来」用。点 `.wide-dock .dock-btn[title="设置"]` → 若不在首页先点返回 → 点 `.settings-index__row`（文本以「智能体」开头）→ 拍列表（`group-07`）；再点某行 `.settings-agents-index__row` 进详情（`group-08`，含标识/偏好/信息三卡 + 复制/删除）。自检：`group-07` 的 `.settings-agents-index__row` > 0 且 `.settings-agents-index__rescan-row` 存在；`group-08` 的 `.settings-agent-detail` 存在。
+4. **群设置抽屉**：点 `.group-avatar-stack`（Playwright `el.click()`，合成 `.click()` 对 Teleport 抽屉不可靠）→ 等 ~1.6s。**两种模式各拍一张**（主持人版显示「自动批准」，自由版显示「并发执行」+「自动批准」），这正好把两个模式的群设置差异讲清。抽屉标题是「群聊设置」。
+5. **@ 成员卡（`group-06-mention-card`）**：**必须用 Playwright 真实输入事件**——`ta.fill('@')` 打开 `.completion-item` 菜单（群会话里成员候选排最前，池名成员带 `.completion-real-name` 标签），点第 2 个候选（池名成员，如 `Alice`）加卡；**再点卡片**弹出密送批注框（`.dlg-textarea`），填入内容点「确定」→ 卡片出现锁（`.mention-card-lock` / `.is-private`）；最后 `ta.fill('问题正文')`。合成 `element.click()` / 直接设 `value` **不会**弹出该菜单（同 §八 第 10 条）。自检：`.chat-attachment-tags .mention-card` 存在且 `.mention-card-name` 非空、`.mention-card-lock` 存在、`.chat-textarea` 的 value **不含** `clawbench-mention`。
+6. **智能体设置（`group-07`/`group-08`）**：说明「智能体从哪来」用。点 `.wide-dock .dock-btn[data-tab="settings"]`（**只在 settings 标签未激活时点**，否则会把它切换关闭）→ 点 `.settings-index__row`（文本以「智能体」开头）→ 拍列表（`group-07`）；再点某行 `.settings-agents-index__row` 进详情（`group-08`）。自检：`group-07` 的 `.settings-agents-index__row` > 0 且 `.settings-agents-index__rescan-row` 存在；`group-08` 的 `.settings-agent-detail` 存在、底部三个按钮 `.settings-agent-detail__action-btn`（复制/禁用）与 `.settings-agent-detail__delete-btn`（删除）。
 
 ### 群聊专属陷阱
 

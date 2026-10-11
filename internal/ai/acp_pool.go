@@ -1429,6 +1429,17 @@ func (c *ACPConn) CallRaw(ctx context.Context, method string, params any) (json.
 	return rpc.CallRaw(ctx, method, params)
 }
 
+// PromptInFlight reports whether a prompt is currently running on this
+// connection. ACPConn sets promptCancel for the duration of Prompt and clears
+// it on return, so its presence is the authoritative "a turn is running" signal.
+// Satisfies ai.RawRPCTransport; a mid-turn policy whose agent starts a new turn
+// when idle (Codex) uses it to decline instead of detaching a ghost turn.
+func (c *ACPConn) PromptInFlight() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.promptCancel != nil
+}
+
 // ExpectSteerEcho registers a mid-turn injection id so the ACP notification
 // layer can recognize the agent's echo of it and emit a steer_boundary event.
 // Satisfies ai.SteerEchoTracker.

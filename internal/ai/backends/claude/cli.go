@@ -28,6 +28,10 @@ func init() {
 			NativeSkillsDirs:      []string{".claude/skills"},
 			AutoLoadsNativeSkills: true,
 		},
+		// Claude can inject a message into the running turn via the ACP
+		// steering extension (_session/steering). It emits no echo boundary, so
+		// the injection MERGES into the running reply (no split).
+		MidTurn: &midTurnInjector{},
 	})
 }
 

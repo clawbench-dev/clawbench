@@ -495,7 +495,7 @@ func EnqueueAndMaybeStart(cfg EnqueueStartConfig) (started bool, msgID int64, er
 			return false, 0, fmt.Errorf("queued message could not be materialized")
 		}
 		// Announce the real user message so every device renders it inline.
-		emitUserMessage(cfg.SessionID, matMsgID, row)
+		emitUserMessage(cfg.SessionID, matMsgID, row, false)
 
 		// Start execution now; the loop inside will consume the REST of the
 		// queue (any messages beyond the first).
@@ -583,7 +583,7 @@ func EnqueueGroupMessage(sessionID, message string, files []model.FileEntry, que
 		FinishSessionRun(sessionID)
 		return false, fmt.Errorf("group queued message could not be materialized")
 	}
-	emitUserMessage(sessionID, matMsgID, row)
+	emitUserMessage(sessionID, matMsgID, row, false)
 	go func() {
 		defer FinishSessionRun(sessionID)
 		runGroupDrainLoopFn(runCtx, sessionID, info.ProjectPath, matMsgID, row.Content, row.Files)

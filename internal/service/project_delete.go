@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -77,6 +78,16 @@ func DeleteProjectData(id int64) error {
 
 	if err := deleteProjectRows(id); err != nil {
 		return err
+	}
+
+	// Reload the agent roster so agents deleted above (those scoped to this
+	// project) disappear from the live in-memory map immediately. Without this
+	// they would linger until the next rescan and remain selectable in pickers
+	// (the /api/agents list reads the in-memory list, not the DB). Failures are
+	// logged, not returned — the rows are already gone.
+	if err := LoadAgentsIntoMemory(); err != nil {
+		slog.Warn("failed to reload agents after project delete",
+			slog.Int64("project_id", id), slog.String("err", err.Error()))
 	}
 
 	// Post-commit, best-effort: drop the caches that key off this project so a
@@ -182,12 +193,46 @@ func deleteProjectRows(id int64) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM chat_sessions WHERE project_id = ?", id); err != nil {
 		return fmt.Errorf("delete chat sessions: %w", err)
 	}
+
+	if err := deleteScopedAgents(ctx, tx, id); err != nil {
+		return err
+	}
+
 	if _, err := tx.ExecContext(ctx, "DELETE FROM projects WHERE id = ?", id); err != nil {
 		return fmt.Errorf("delete project row: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit project delete: %w", err)
+	}
+	return nil
+}
+
+// deleteScopedAgents removes the agents scoped to the project being deleted.
+//
+// They normally go with the project — leaving them would strand rows pointing at
+// a project that no longer exists. BUT an agent may have been scoped to this
+// project AFTER being used to create sessions/tasks in ANOTHER project (scoping
+// only gates new entries; existing sessions are deliberately left alone).
+// Deleting it outright would orphan those cross-project references, and
+// resolveAgentConfig would then fail so the session could no longer run — a
+// state the manual delete path (AgentInUse) explicitly refuses to allow. So any
+// still-referenced agent is promoted back to GLOBAL (project_id = NULL) first;
+// agents with no remaining references are deleted.
+//
+// Called AFTER this project's chat_sessions are deleted, so the references the
+// promote step matches are necessarily from OTHER projects.
+func deleteScopedAgents(ctx context.Context, tx *sql.Tx, id int64) error {
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE agents SET project_id = NULL
+		WHERE project_id = ?
+		  AND (id IN (SELECT agent_id FROM chat_sessions WHERE agent_id <> '')
+		       OR id IN (SELECT agent_id FROM scheduled_tasks WHERE agent_id <> ''))
+	`, id); err != nil {
+		return fmt.Errorf("promote still-referenced project-scoped agents: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM agents WHERE project_id = ?", id); err != nil {
+		return fmt.Errorf("delete project-scoped agents: %w", err)
 	}
 	return nil
 }

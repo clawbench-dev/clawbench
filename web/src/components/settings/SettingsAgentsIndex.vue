@@ -5,24 +5,32 @@
       <span class="settings-agents-index__rescan-label">{{ rescanning ? t('settings.items.agentRescanning') : t('settings.items.agentRescan') }}</span>
       <RefreshCw :size="16" class="settings-agents-index__rescan-icon" />
     </div>
-    <div
-      v-for="agent in agentList"
-      :key="agent.id"
-      class="settings-agents-index__row"
-      @click="$emit('navigate', `agents:${agent.id}`)"
+    <VueDraggable
+      v-if="localAgents.length > 0"
+      v-model="localAgents"
+      handle=".settings-agents-index__drag-handle"
+      @end="onDragEnd"
     >
-      <div class="settings-agents-index__left">
-        <span class="settings-agents-index__icon"><AgentIcon :backend="agent.backend" :name="agent.name" :avatar="agent.avatar" size="md" /></span>
-        <div class="settings-agents-index__text">
-          <div class="settings-agents-index__name-row">
-            <span class="settings-agents-index__name">{{ agent.name }}</span>
-            <span v-if="agent.id === defaultAgentId" class="settings-agents-index__default-badge">{{ t('chat.sessionSetting.defaultBadge') }}</span>
+      <div
+        v-for="agent in localAgents"
+        :key="agent.id"
+        class="settings-agents-index__row"
+        @click="$emit('navigate', `agents:${agent.id}`)"
+      >
+        <span class="settings-agents-index__drag-handle" :title="t('settings.items.agentDragHandle')" @click.stop>≡</span>
+        <div class="settings-agents-index__left">
+          <span class="settings-agents-index__icon"><AgentIcon :backend="agent.backend" :name="agent.name" :avatar="agent.avatar" size="md" /></span>
+          <div class="settings-agents-index__text">
+            <div class="settings-agents-index__name-row">
+              <span class="settings-agents-index__name">{{ agent.name }}</span>
+              <span v-if="agent.id === defaultAgentId" class="settings-agents-index__default-badge">{{ t('chat.sessionSetting.defaultBadge') }}</span>
+            </div>
+            <span v-if="agent.specialty" class="settings-agents-index__specialty">{{ agent.specialty }}</span>
           </div>
-          <span v-if="agent.specialty" class="settings-agents-index__specialty">{{ agent.specialty }}</span>
         </div>
+        <ChevronRight class="settings-agents-index__arrow" :size="18" />
       </div>
-      <ChevronRight class="settings-agents-index__arrow" :size="18" />
-    </div>
+    </VueDraggable>
     <div v-if="agentList.length === 0" class="settings-agents-index__empty">
       {{ t('settings.items.agentNoAgents') }}
     </div>
@@ -30,8 +38,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ChevronRight, RefreshCw } from 'lucide-vue-next'
+import { VueDraggable } from 'vue-draggable-plus'
 import { useI18n } from 'vue-i18n'
 import { useAgents } from '@/composables/useAgents'
 import AgentIcon from '@/components/common/AgentIcon.vue'
@@ -43,7 +52,7 @@ defineEmits<{
 
 const { t } = useI18n()
 const toast = useToast()
-const { agents, defaultAgentId, loadAgents, rescanAgents } = useAgents()
+const { agents, defaultAgentId, loadAgents, rescanAgents, reorderAgents } = useAgents()
 
 const rescanning = ref(false)
 
@@ -52,8 +61,25 @@ onMounted(() => {
 })
 
 const agentList = computed(() =>
-  [...agents.value].sort((a, b) => ((a as Record<string, unknown>).sortOrder as number ?? 0) - ((b as Record<string, unknown>).sortOrder as number ?? 0))
+  [...agents.value].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
 )
+
+// Local mirror the draggable mutates in place. Synced from the server order so
+// a failed reorder (rolled back) or a background reload lands here too.
+const localAgents = ref([...agentList.value])
+watch(agentList, (val) => {
+  localAgents.value = [...val]
+}, { deep: true })
+
+async function onDragEnd() {
+  const ids = localAgents.value.map(a => a.id)
+  try {
+    await reorderAgents(ids)
+  } catch {
+    toast.show(t('settings.items.agentReorderFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
+    localAgents.value = [...agentList.value]
+  }
+}
 
 async function handleRescan() {
   rescanning.value = true
@@ -138,7 +164,8 @@ async function handleRescan() {
   content: '';
   position: absolute;
   bottom: 0;
-  left: 48px;
+  /* Inset to the text start: row padding + drag handle + row gap + icon + gap. */
+  left: calc(var(--space-7) + var(--icon-size-md) + var(--space-6) + var(--icon-size-md) + var(--space-6));
   right: 0;
   height: 0.5px;
   background: var(--border-color);
@@ -152,6 +179,23 @@ async function handleRescan() {
 
 .settings-agents-index__row:active {
   background: var(--bg-tertiary);
+}
+
+.settings-agents-index__drag-handle {
+  flex-shrink: 0;
+  /* Fixed width (the icon's own size) so the divider inset below stays aligned
+     no matter how wide the glyph renders. */
+  width: var(--icon-size-md);
+  text-align: center;
+  cursor: grab;
+  color: var(--text-muted);
+  font-size: var(--font-size-2xl);
+  line-height: 1;
+  user-select: none;
+}
+
+.settings-agents-index__drag-handle:active {
+  cursor: grabbing;
 }
 
 .settings-agents-index__left {

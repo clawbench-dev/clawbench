@@ -19,6 +19,7 @@ import (
 	"clawbench/internal/platform"
 	"clawbench/internal/proxy"
 	"clawbench/internal/service"
+	"clawbench/internal/store"
 	"clawbench/internal/ws"
 	"github.com/nicksnyder/go-i18n/v2/i18n"
 )
@@ -290,6 +291,59 @@ func resolveAgentConfig(agentID string) (string, string, string, string, bool) {
 		return "", "", "", "", false
 	}
 	return agent.Backend, agent.DefaultModelID(), agent.RuntimeSystemPrompt, agent.Command, true
+}
+
+// agentVisibleInProject reports whether an agent may be used as a NEW entry in
+// the given project. A global agent (ProjectID == nil) is visible everywhere; a
+// project-scoped agent is visible only in the project whose id it carries.
+//
+// This mirrors the /api/agents list filter and is the server-side fallback for
+// the client-side picker filter (selectableAgents): an old client or a race
+// must not slip a project-only agent into a new session/task/group in another
+// project. Existing sessions/tasks are deliberately NOT re-checked — the
+// visibility rule gates NEW entries only, so a session created while the agent
+// was global keeps running after the agent is scoped.
+//
+// A resolution error is treated as "not visible" (fail closed): the caller is
+// about to create a NEW entry, and refusing is the safe default.
+func agentVisibleInProject(agent *model.Agent, projectPath string) bool {
+	if agent == nil {
+		return false
+	}
+	if agent.ProjectID == nil {
+		return true // global
+	}
+	projectID, ok, err := store.ProjectIDByPath(projectPath)
+	if err != nil || !ok {
+		return false
+	}
+	return *agent.ProjectID == projectID
+}
+
+// resolveDefaultAgentForProject returns the default agent to use when a caller
+// creates a NEW session without an explicit agent choice, scoped to
+// projectPath.
+//
+// model.GetDefaultAgentID() is NOT scope-aware: when no default is configured it
+// falls back to AgentList[0], which may be an agent scoped to a different
+// project. Using it directly on a create path would let a project-only agent be
+// opened as the default in another project — exactly the hole the explicit-agent
+// gate closes. This walks the configured default, then every agent in order,
+// returning the first one visible in projectPath (matching how
+// visibleDefaultAgent picks a fallback for the list).
+//
+// Returns "" when no agent is visible in this project; callers treat that as
+// "no agents available".
+func resolveDefaultAgentForProject(projectPath string) string {
+	if def := model.GetDefaultAgentID(); def != "" && agentVisibleInProject(model.GetAgent(def), projectPath) {
+		return def
+	}
+	for _, a := range model.GetAgentList() {
+		if agentVisibleInProject(a, projectPath) {
+			return a.ID
+		}
+	}
+	return ""
 }
 
 // requireSessionID extracts session ID from query param or cookie.

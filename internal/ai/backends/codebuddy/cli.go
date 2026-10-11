@@ -34,7 +34,10 @@ func init() {
 		},
 		// CodeBuddy can inject a message into the running turn via its private
 		// session/steer method, instead of queueing it for the next turn.
-		MidTurn: &midTurnInjector{},
+		// It echoes the injected message back with a correlation id, so the
+		// reply can be SPLIT exactly at the injection point.
+		MidTurn:            &midTurnInjector{},
+		MidTurnSplitsReply: true,
 	})
 }
 

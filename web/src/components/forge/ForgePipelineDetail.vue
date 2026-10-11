@@ -15,7 +15,7 @@
           @mousedown.prevent
           @click="onQuote"
         >
-          <MessageSquareQuote :size="15" />
+          <MessageSquare :size="15" />
         </button>
         <a
           v-if="detail.run.value"
@@ -160,7 +160,7 @@
 import { computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
-  ChevronLeft, ChevronRight, ExternalLink, MessageSquareQuote, AlertCircle, ListChecks,
+  ChevronLeft, ChevronRight, ExternalLink, MessageSquare, AlertCircle, ListChecks,
   GitPullRequest,
 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'

@@ -1575,6 +1575,27 @@ describe('duplicate message root causes (regression)', () => {
     expect(bubble._remoteQueueId).toBe('remote-q-queued')
   })
 
+  it('ws_user_message carries the injected flag (merge-only hint) only when the event sets it', () => {
+    // A merge-only mid-turn injection (claude/codex) sets injected=true so the
+    // bubble renders "回复已并入上一轮". A normal message must NOT gain the flag —
+    // the reducer builds the bubble field-by-field, so an absent flag stays off.
+    let s: any[] = []
+
+    s = chatMessageReducer(s, {
+      type: 'ws_user_message',
+      data: { messageId: 300, content: 'merged', injected: true },
+    } as any)
+    const merged = s.find((m: any) => m.id === 300)
+    expect(merged.injected).toBe(true)
+
+    s = chatMessageReducer(s, {
+      type: 'ws_user_message',
+      data: { messageId: 301, content: 'normal' },
+    } as any)
+    const normal = s.find((m: any) => m.id === 301)
+    expect(normal.injected).toBeUndefined()
+  })
+
   it('auto-continue: repeated identical user messages each get their own bubble', () => {
     // The auto-continue feature sends the SAME localized text ("继续" /
     // "Continue") up to N times for one user turn. The reducer's content-based

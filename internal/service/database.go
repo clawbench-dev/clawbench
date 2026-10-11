@@ -339,11 +339,22 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// multi-statement Exec, breaking startup. Add the columns first.
 	// (chatHistoryExists is declared in the earlier pre-migration block above.)
 	if chatHistoryExists > 0 {
-		var hasAgentID int
-		_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_history') WHERE name='agent_id'").Scan(&hasAgentID)
-		if hasAgentID == 0 {
-			if _, err := store.WriteExec("ALTER TABLE chat_history ADD COLUMN agent_id TEXT DEFAULT ''"); err != nil {
-				return fmt.Errorf("failed to add chat_history.agent_id: %w", err)
+		for _, col := range []struct{ name, ddl string }{
+			{"agent_id", "ALTER TABLE chat_history ADD COLUMN agent_id TEXT DEFAULT ''"},
+			// injected marks a user message that was injected into the RUNNING
+			// assistant reply (mid-turn steering) rather than starting its own
+			// turn. The frontend renders a "回复已并入上一轮" hint on such a
+			// bubble — needed because a merge-only injection (claude/codex)
+			// leaves the bubble AFTER the still-streaming reply with nothing
+			// following it, which reads as "sent but ignored".
+			{"injected", "ALTER TABLE chat_history ADD COLUMN injected INTEGER NOT NULL DEFAULT 0"},
+		} {
+			var hasCol int
+			_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_history') WHERE name=?", col.name).Scan(&hasCol)
+			if hasCol == 0 {
+				if _, err := store.WriteExec(col.ddl); err != nil {
+					return fmt.Errorf("failed to add chat_history.%s: %w", col.name, err)
+				}
 			}
 		}
 	}
@@ -414,6 +425,10 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			session_id TEXT,
 			backend TEXT NOT NULL DEFAULT 'claude',
 			agent_id TEXT DEFAULT '',
+			-- injected=1 marks a user message that joined the RUNNING assistant
+			-- reply (mid-turn steering) instead of starting its own turn; the
+			-- frontend shows a "回复已并入上一轮" hint on it.
+			injected INTEGER NOT NULL DEFAULT 0,
 			streaming INTEGER NOT NULL DEFAULT 0,
 			indexed INTEGER NOT NULL DEFAULT 0,
 			external_message_id TEXT DEFAULT '',
@@ -1725,6 +1740,17 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Migrate: add project_id column to agents. NULL = global (visible in every
+	// project); a value scopes the agent to that project only. Existing agents
+	// default to NULL so they stay globally visible after the upgrade.
+	var hasAgentProjectID int
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='project_id'").Scan(&hasAgentProjectID)
+	if hasAgentProjectID == 0 {
+		if _, err := store.WriteExec("ALTER TABLE agents ADD COLUMN project_id INTEGER DEFAULT NULL"); err != nil {
+			return fmt.Errorf("failed to add project_id column to agents: %w", err)
+		}
+	}
+
 	// Migrate: ensure the project scope column on the quick-send /
 	// quick-command tables (project-scoped / 仅本项目 items). NULL means global;
 	// a value scopes the item to that project only.
@@ -2065,7 +2091,7 @@ func migrateChatThinkingSeq() error {
 // optional column is migrated rather than rejected.
 var chatHistoryRoleCheckMigrationCols = []string{
 	"id", "project_id", "role", contentKeyContent, "files", "session_id",
-	"backend", "agent_id", "streaming", "indexed", "external_message_id",
+	"backend", "agent_id", "injected", "streaming", "indexed", "external_message_id",
 	"created_at", "completed_at",
 }
 
@@ -2083,6 +2109,7 @@ const chatHistoryRoleCheckMigrationDDL = `
 		session_id TEXT,
 		backend TEXT NOT NULL DEFAULT 'claude',
 		agent_id TEXT DEFAULT '',
+		injected INTEGER NOT NULL DEFAULT 0,
 		streaming INTEGER NOT NULL DEFAULT 0,
 		indexed INTEGER NOT NULL DEFAULT 0,
 		external_message_id TEXT DEFAULT '',

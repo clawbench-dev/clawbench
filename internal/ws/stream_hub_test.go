@@ -810,6 +810,35 @@ func TestStreamEventToPayload_UserMessage_NoFiles(t *testing.T) {
 	assert.False(t, hasQueued, "queued should be omitted when false")
 }
 
+// TestStreamEventToPayload_UserMessage_Injected pins the flag that drives the
+// LIVE "回复已并入上一轮" hint. It must survive the payload builder — the builder
+// constructs the map field-by-field, so an unlisted field is silently dropped
+// and the hint would only appear after a reload (which reads chat_history
+// directly). A normal message must NOT carry the key.
+func TestStreamEventToPayload_UserMessage_Injected(t *testing.T) {
+	payload := StreamEventToPayload(ai.StreamEvent{
+		Type: "user_message",
+		UserMessage: &ai.UserMessageData{
+			MessageID: 7,
+			Content:   "merged",
+			Injected:  true,
+		},
+	})
+	m, ok := payload.(map[string]any)
+	assert.True(t, ok)
+	assert.Equal(t, true, m["injected"],
+		"an injected user_message must carry injected=true on the wire")
+
+	normal := StreamEventToPayload(ai.StreamEvent{
+		Type:        "user_message",
+		UserMessage: &ai.UserMessageData{MessageID: 8, Content: "normal"},
+	})
+	nm, ok := normal.(map[string]any)
+	assert.True(t, ok)
+	_, hasInjected := nm["injected"]
+	assert.False(t, hasInjected, "a normal user_message must omit injected")
+}
+
 // TestStreamEventToPayload_QueueAdded covers the event that replaced the old
 // user_message{queued:true} misuse: an enqueued message has no chat_history row
 // yet, so it carries no messageId — only the queueId/text/files the queue panel

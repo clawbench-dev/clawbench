@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"database/sql"
+
+	"clawbench/internal/store"
 )
 
 // InitInMemoryDB creates an in-memory SQLite database with the agents table
@@ -19,6 +21,13 @@ func InitInMemoryDB() (*sql.DB, error) {
 	db.SetMaxOpenConns(1)
 
 	if _, err := db.ExecContext(context.Background(), AgentDDL); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+
+	// The projects registry: agent project-scope resolution (ProjectIDForPath /
+	// ProjectIDByPath) reads it, so handler tests that exercise scoping need it.
+	if _, err := db.ExecContext(context.Background(), store.ProjectsDDL); err != nil {
 		_ = db.Close()
 		return nil, err
 	}

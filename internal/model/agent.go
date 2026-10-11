@@ -1,6 +1,7 @@
 package model
 
 import (
+	"sort"
 	"strings"
 	"sync"
 )
@@ -102,6 +103,17 @@ type Agent struct {
 	// server-side fallback on the create endpoints, so an old client or a race
 	// cannot slip a disabled agent into a new session/task.
 	Disabled bool `json:"disabled"`
+
+	// ProjectID scopes this agent to a single project when non-nil: it is then
+	// visible only in that project (and hidden from every other project's
+	// settings list and new-entry pickers). nil means global — visible in every
+	// project. The id is a projects.id, matching the terminal_quick_commands /
+	// chat_quick_send convention (NULL = global, value = project-only).
+	//
+	// Existing sessions/tasks are deliberately NOT re-scoped: the visibility
+	// filter only gates NEW entries and the settings list, so a session created
+	// while the agent was global keeps working after it is scoped.
+	ProjectID *int64 `json:"projectId,omitempty"`
 }
 
 // DefaultModelID returns the default model ID for this agent.
@@ -303,6 +315,22 @@ func SetAgentList(list []*Agent) {
 	agentsMu.Lock()
 	defer agentsMu.Unlock()
 	AgentList = list
+}
+
+// SortAgentsByOrder sorts agents in place by the user's manual order: sort_order
+// ascending, then ID ascending as a stable tiebreak. This is the single rule the
+// DB load path (LoadAgentsIntoMemoryFromDB) and the reorder handler both use, so
+// an in-memory reorder can never disagree with what a reload would produce.
+//
+// Every agent defaults to sort_order 0, so the ID tiebreak keeps the initial
+// order identical to before sort_order was honored.
+func SortAgentsByOrder(agents []*Agent) {
+	sort.SliceStable(agents, func(i, j int) bool {
+		if agents[i].SortOrder != agents[j].SortOrder {
+			return agents[i].SortOrder < agents[j].SortOrder
+		}
+		return agents[i].ID < agents[j].ID
+	})
 }
 
 // commonRulesTemplate is the built-in system prompt prepended to all agents.

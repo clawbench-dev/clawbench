@@ -474,6 +474,7 @@ export default {
       taskDesc: '管理任务',
       usageDesc: '查看 token 用量',
       userGuideDesc: '查阅 ClawBench 用户手册',
+      agentDesc: '管理智能体',
       btwDesc: '顺便问一句（用摘要模型回答，不打扰当前会话）',
     },
     btw: {
@@ -890,6 +891,11 @@ export default {
       collapse: '收起',
       remove: '删除这条排队消息',
       attachment: '附件',
+      // Bubble annotation for a mid-turn injection that MERGED into the running
+      // reply (claude/codex — no split boundary). Without it the bubble sits
+      // after the still-streaming reply with nothing following it, which reads
+      // as "sent but ignored".
+      mergedIntoPrev: '回复已并入上一轮',
     },
     contentBlocks: {
       scheduledTaskCreated: '任务已创建',
@@ -1181,6 +1187,8 @@ export default {
     pause: '禁用',
     resume: '启用',
     run: '执行',
+    stop: '终止',
+    confirmStop: '确定终止正在执行的任务？',
     delete: '删除',
     clearUnread: '全部标为已读',
     actionFailed: '操作失败',
@@ -2439,6 +2447,9 @@ export default {
       agentTransport: '协议',
       agentAutoApprove: '新建会话默认自动审批',
       agentAutoApproveDesc: '用此智能体新建会话时，自动审批默认开启并写入会话，重启后仍保留；之后仍可在会话中单独关闭',
+      agentProjectOnly: '仅当前项目',
+      agentProjectOnlyDesc: '开启后，该智能体只在当前项目可见，其他项目下不会出现在列表和选择器中；已创建的会话不受影响',
+      agentCannotScopeDefault: '默认智能体不能仅限当前项目',
       agentName: '名称',
       agentSpecialty: '描述',
       agentAvatar: '头像',
@@ -2482,6 +2493,8 @@ export default {
       agentRescanning: '扫描中...',
       agentRescanSuccess: '重新扫描完成',
       agentRescanFailed: '重新扫描失败',
+      agentReorderFailed: '排序失败',
+      agentDragHandle: '拖动排序',
       agentDelete: '删除',
       agentDeleteConfirm: '确定要删除智能体「{name}」吗？',
       agentDeleteDefault: '无法删除默认智能体',

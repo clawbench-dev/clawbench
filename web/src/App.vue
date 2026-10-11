@@ -730,6 +730,11 @@ const switchingProject = ref(false)
 const navigationByProject = new Map()
 
 async function hotSwitchProject(newProjectPath: string, pendingSessionId?: string | null, pendingTaskNav?: { taskId: string; executionId?: string } | null) {
+  // Guard unsaved file edits BEFORE anything is armed. The switch destroys the
+  // editor subtree (Phase 4), so without this an in-progress edit would be lost
+  // silently. Runs the save/discard/cancel flow and aborts the switch when the
+  // user cancels or a save fails. Placed first so a cancel leaks no panel state.
+  if (!(await fileEditor.confirmLeave())) return
   const previousProjectPath = store.state.projectRoot
   if (previousProjectPath) {
     navigationByProject.set(previousProjectPath, navigation.snapshot())

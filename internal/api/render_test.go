@@ -78,6 +78,28 @@ func TestRenderCommand_CoversExpectedOperations(t *testing.T) {
 				"POST /api/ai/chat",
 			},
 		},
+		{
+			cmd: CommandAgent,
+			want: []string{
+				// The list is both the search/view surface (no dedicated
+				// search endpoint exists) and how the AI finds a source to
+				// clone — creation is by cloning, not from scratch.
+				"GET /api/agents",
+				"POST /api/agents",
+				"PATCH /api/agents",
+				"DELETE /api/agents",
+			},
+			// Agent management must not drag in unrelated operations that
+			// share the Agents tag (sub-resources, backend discovery) or any
+			// task endpoint.
+			notWant: []string{
+				"GET /api/agents/{id}",
+				"POST /api/agents/{id}",
+				"GET /api/backends",
+				"POST /api/tasks",
+				"DELETE /api/tasks",
+			},
+		},
 	}
 
 	for _, tc := range tests {
@@ -107,7 +129,7 @@ func TestRenderCommand_UnknownCommand(t *testing.T) {
 // every request, so nondeterminism would defeat prompt caching and make tests
 // flaky.
 func TestRenderCommand_Deterministic(t *testing.T) {
-	for _, cmd := range []Command{CommandChatSearch, CommandTask, CommandUsage} {
+	for _, cmd := range []Command{CommandChatSearch, CommandTask, CommandUsage, CommandAgent} {
 		first, err := RenderCommand(cmd)
 		require.NoError(t, err)
 		for range 5 {
@@ -118,22 +140,32 @@ func TestRenderCommand_Deterministic(t *testing.T) {
 	}
 }
 
-// TestRenderCommand_SizeBudget keeps the injected fragments from creeping back
-// toward the size of the full spec. The budget leaves headroom for ordinary
-// spec growth (adding a documented field to the task body is legitimate) while
-// staying far below the full spec, so a switch back to tag-based selection
-// would blow past it immediately.
+// TestRenderCommand_SizeBudget caps the injected fragments so a command's
+// prompt cannot creep back toward the size of the full spec.
+//
+// This guards unbounded prose growth, and — as a side effect — also rejects a
+// wholesale switch to tag-based selection for most commands, since a whole
+// tag's endpoints are far larger than the hand-picked subset (measured at the
+// time of writing: Agents tag 4839 > agent budget 4500; RAG 4943 > chatsearch
+// 2600; System 3516 > usage 2000). It is NOT the primary defense, though: the
+// real guard is the operationId selection itself — endpointsForOperations
+// binds each id to its expected tag and fails loudly on a retag — plus each
+// command's notWant assertions in CoversExpectedOperations, which pin the
+// operations that must stay out regardless of size.
 func TestRenderCommand_SizeBudget(t *testing.T) {
 	budgets := map[Command]int{
 		// chatsearch grew when the project-list endpoint joined it, so the AI
-		// can resolve a project the user names to its exact path. The budget
-		// still sits far below the full spec, so a switch back to tag-based
-		// selection would blow past it.
+		// can resolve a project the user names to its exact path.
 		CommandChatSearch: 2600,
 		// The task body grew when the gating-script fields (script,
-		// script_timeout) joined it; the headroom is deliberate, not drift.
-		CommandTask:  8000,
+		// script_timeout) joined it, and again when GET /api/agents gained the
+		// project-filtering description; the headroom is deliberate, not drift.
+		CommandTask:  8800,
 		CommandUsage: 2000,
+		// The agent command renders four operations whose PATCH/POST bodies
+		// carry long field notes (name uniqueness, avatar, disabled,
+		// project_scope).
+		CommandAgent: 4500,
 	}
 	for cmd, budget := range budgets {
 		out, err := RenderCommand(cmd)
@@ -276,7 +308,7 @@ func TestRenderCommand_NoRepeatHintWithoutArrayParams(t *testing.T) {
 // actually exists in the spec. This is the drift guard's first half: renaming
 // an operation without updating commandOperations fails here.
 func TestOperationIDs_Resolvable(t *testing.T) {
-	for _, cmd := range []Command{CommandChatSearch, CommandTask, CommandUsage} {
+	for _, cmd := range []Command{CommandChatSearch, CommandTask, CommandUsage, CommandAgent} {
 		ids := OperationIDs(cmd)
 		require.NotEmptyf(t, ids, "command %q declares no operations", cmd)
 		for _, id := range ids {

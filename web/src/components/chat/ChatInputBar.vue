@@ -1022,6 +1022,7 @@ const clawbenchCommands = computed(() => {
     { key: '/cb-task', label: '/cb-task', description: t('chat.clawbenchCommand.taskDesc') },
     { key: '/cb-usage', label: '/cb-usage', description: t('chat.clawbenchCommand.usageDesc') },
     { key: '/cb-user-guide', label: '/cb-user-guide', description: t('chat.clawbenchCommand.userGuideDesc') },
+    { key: '/cb-agent', label: '/cb-agent', description: t('chat.clawbenchCommand.agentDesc') },
     { key: '/btw', label: '/btw', description: t('chat.clawbenchCommand.btwDesc') },
   ]
 })
@@ -1162,6 +1163,11 @@ const fileMenuItems = computed(() => {
         // The underlying real agent name (only set when the nickname was
         // auto-derived), so the row can disclose which agent it names.
         memberAgentName: item.agentName || '',
+        // Same per-character highlight contract as file rows: the shared menu
+        // marks `positions` inside the label. Without these a member name would
+        // render unhighlighted while filenames highlight.
+        positions: item.positions,
+        score: item.score,
       }))
     : []
 

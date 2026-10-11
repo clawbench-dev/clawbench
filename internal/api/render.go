@@ -16,6 +16,9 @@ const (
 	CommandTask Command = "task"
 	// CommandUsage backs /cb-usage — token / cost usage statistics.
 	CommandUsage Command = "usage"
+	// CommandAgent backs /cb-agent — managing agents (create by cloning,
+	// search / view, update, delete).
+	CommandAgent Command = "agent"
 )
 
 // Spec tags referenced by commandOperations. They are named constants so the
@@ -68,6 +71,16 @@ var commandOperations = map[Command][]struct {
 	CommandUsage: {
 		{"conversationProjectsList", tagProjects},
 		{"usageStats", "System"},
+	},
+	CommandAgent: {
+		// The list endpoint is both the search/view surface (there is no
+		// dedicated search endpoint — the AI filters the list) and how the AI
+		// discovers the source_id needed to create an agent (creation is by
+		// cloning an existing one; there is no create-from-scratch).
+		{"agentsList", tagAgents},
+		{"agentsCreate", tagAgents},
+		{"agentsUpdate", tagAgents},
+		{"agentsDelete", tagAgents},
 	},
 }
 

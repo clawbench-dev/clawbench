@@ -936,6 +936,11 @@ paths:
             `sessionType` 是该会话存储的 `session_type`（`chat` / `group` /
             `scheduled` / …），客户端据此判定群会话。**不要**用成员名单是否为空
             来推断群会话——名单在拉取失败时会被清空，会把群会话误判成单聊。
+
+            `messages[].injected`（仅用户消息，`true` 时出现）：该消息是运行中
+            插话（mid-turn steering）并入上一回复的，且该后端**不切分**回复
+            （claude/codex）——前端据此在气泡上标注「回复已并入上一轮」。切分型后端
+            （CodeBuddy）不置此位。
     post:
       tags: [Chat]
       summary: 发送聊天消息
@@ -1616,7 +1621,11 @@ paths:
     post:
       tags: [Sessions]
       summary: ACP 显式 LoadSession
-      description: 强制触发一次 ACP LoadSession 回放（慢，仅显式调用）。
+      description: |
+        强制触发一次 ACP LoadSession 回放（慢，仅显式调用）。会创建一个**新**会话，
+        因此与手动新建会话一样受新建入口闸门约束：`agentId` 指向的 agent 若已被禁用
+        返回 `400` + `msgKey=AgentDisabled`；若被标记「仅当前项目」且不属于当前项目
+        返回 `400` + `msgKey=AgentNotInProject`。
       operationId: sessionACPLoad
       requestBody:
         required: true
@@ -1632,6 +1641,8 @@ paths:
       responses:
         "200":
           description: 回放结果
+        "400":
+          description: 参数非法，或 agent 被禁用（`AgentDisabled`）/ 不属于当前项目（`AgentNotInProject`）
 
   /api/ai/session/acp-sync:
     post:
@@ -3819,6 +3830,12 @@ paths:
 
         同一对列表也挂在 `acpStates[].modelListState` 的 `resolvedModels` /
         `cliModels` 字段上，便于客户端仅凭 ACP 状态缓存刷新视图。
+
+        **按项目过滤**：返回的列表只包含当前项目可见的 agent——全局 agent
+        （`project_id` 为空）始终可见，被标记「仅当前项目」的 agent 只在其所属
+        项目中可见（依据请求的 `clawbench_project` cookie）。`defaultAgent` 同样
+        受此约束：若配置的默认 agent 不在当前项目可见，则回退为列表中第一个未
+        禁用的 agent。
       operationId: agentsList
       responses:
         "200":
@@ -3850,12 +3867,18 @@ paths:
         部分更新单个 agent（body 含 `id`）。可更新字段：
         `preferred_model`、`preferred_thinking_effort`、`preferred_mode`、
         `transport`、`name`、`specialty`、`custom_system_prompt`、`avatar`、
-        `sort_order`、`auto_approve`、`disabled`。
+        `sort_order`、`auto_approve`、`disabled`、`project_scope`。
         `avatar` 为原始 SVG 字符串（客户端生成）；传空串表示恢复内置图标，
         非空时校验大小上限与 SVG 安全性。
         `disabled` 为布尔值：禁用后该 agent 不再出现在任何新建入口（新建会话 /
         任务 / 群成员）。**默认智能体不能被禁用**，禁用默认智能体返回 `400` +
         `msgKey=CannotDisableDefaultAgent`。
+        `project_scope` 为布尔值：`true` 表示「仅当前项目」——服务端从请求的
+        `clawbench_project` cookie 解析当前项目并把该 agent 绑定到它，此后该 agent
+        只在当前项目可见（其它项目的列表与新建入口都不显示）；`false` 表示恢复为
+        全局可见。开启时若未选择项目返回 `400` + `msgKey=NoProjectSelected`。
+        **默认智能体不能被限定到单个项目**，否则返回 `400` +
+        `msgKey=CannotScopeDefaultAgent`。已创建的会话不受作用域变化影响。
 
         `name` 全局唯一（决策 #50）：改名撞上其它 agent 时返回 `409` +
         `msgKey=AgentNameTaken`；改回自身当前名称不是冲突。改成群聊用户昵称
@@ -3865,7 +3888,7 @@ paths:
         "200":
           description: 更新结果
         "400":
-          description: 请求非法，或试图禁用默认智能体（`CannotDisableDefaultAgent`）
+          description: 请求非法，或试图禁用默认智能体（`CannotDisableDefaultAgent`）、把默认智能体限定到单个项目（`CannotScopeDefaultAgent`）、在未选择项目时开启 `project_scope`（`NoProjectSelected`）
         "409":
           description: 名称已被其它 agent 占用（`AgentNameTaken`），或等于群聊用户昵称（`AgentNameReserved`）
     delete:
@@ -3906,12 +3929,43 @@ paths:
         返回 `{ models, cliModels }`——与 GET /api/agents 同一形状。`models` 是发现结果
         与已缓存的 ACP 模型列表合并后的列表（ACP 对成员资格有权威性），`cliModels` 是
         未经合并的纯 CLI 列表，供客户端在切换到 CLI 传输时直接渲染。
+
+        `/api/agents/rescan`：重跑 agent 刷新流水线（探测 CLI → 发现模型 → 落库 →
+        重载内存），返回与 GET /api/agents 相同形状、同样按当前项目过滤的
+        `{ agents, defaultAgent }`（被标记「仅当前项目」的 agent 不会泄漏到其它项目）。
       operationId: agentSubPost
       parameters:
         - $ref: "#/components/parameters/Id"
       responses:
         "200":
           description: 操作结果
+
+  /api/agents/reorder:
+    put:
+      tags: [Agents]
+      summary: 持久化智能体手动排序
+      description: |
+        拖拽排序后写回智能体顺序。body `ids` 是当前可见的完整顺序，第 i 个
+        agent 的 `sort_order` 变为 i（0 在最上）。未出现在 ids 中的 agent 保持
+        原 `sort_order`（加载时按 `(sort_order, id)` 排在已列出者之后）。
+        **顺序全局生效**：GET /api/agents 与所有选择入口（新建会话 / 任务 /
+        群成员）都按 `(sort_order, id)` 返回。空 `ids` 直接返回成功。
+      operationId: agentsReorder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids]
+              properties:
+                ids:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        "200":
+          description: 结果
 
   /api/backends:
     get:
@@ -4264,7 +4318,9 @@ paths:
       summary: 更新任务 / 删除执行记录
       description: |
         更新任务字段，并承载多种动作（`action`）：`update`、`pause`、`resume`、
-        `read`、`trigger`、`cancel`、`deleteExecution`、`deleteAllExecutions`。
+        `read`、`trigger`、`cancel`、`stop`、`deleteExecution`、`deleteAllExecutions`。
+        `cancel` 按执行实例中止（需 `executionId`）；`stop` 是任务级中止，终止该任务
+        当前所有运行中的执行，无需 `executionId`，且幂等（无运行中的执行时也返回成功）。
         删除执行记录走 `action: "deleteExecution"` + `executionId`（字符串）删除单条，
         或 `action: "deleteAllExecutions"` 清空该任务执行历史。
         **注意**：`trigger`（手动立即执行一次）对 `trigger_mode=event` 的任务不适用，
@@ -4285,10 +4341,10 @@ paths:
               properties:
                 action:
                   type: string
-                  enum: [update, pause, resume, read, trigger, cancel, deleteExecution, deleteAllExecutions]
+                  enum: [update, pause, resume, read, trigger, cancel, stop, deleteExecution, deleteAllExecutions]
                 executionId:
                   type: string
-                  description: 仅 `deleteExecution` 需要（字符串形式）。
+                  description: 仅 `cancel` / `deleteExecution` 需要（字符串形式）。`stop` 不需要。
                 script:
                   type: string
                   description: |

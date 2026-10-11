@@ -273,7 +273,7 @@ func EnsureConsumer(sessionID string) bool {
 	}
 
 	// Announce the materialized user message so every device renders it inline.
-	emitUserMessage(sessionID, msgID, row)
+	emitUserMessage(sessionID, msgID, row, false)
 
 	// Group-chat recovery (decision #45/#76): a stranded group message must be
 	// run by the group orchestrator, never as a host-only single-agent turn.

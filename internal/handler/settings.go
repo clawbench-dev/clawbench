@@ -1399,6 +1399,12 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		if a := model.GetAgent(v); a != nil && a.Disabled {
 			return fmt.Errorf("default_agent \"%s\" is disabled", v)
 		}
+		// A project-scoped agent cannot be the global default: the default
+		// fallback is used from every project, so scoping it would leave other
+		// projects without a usable default. Mirrors CannotScopeDefaultAgent.
+		if a := model.GetAgent(v); a != nil && a.ProjectID != nil {
+			return fmt.Errorf("default_agent \"%s\" is project-scoped", v)
+		}
 	}
 
 	// Validate summarize section

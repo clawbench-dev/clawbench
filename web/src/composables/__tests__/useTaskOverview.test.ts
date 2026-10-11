@@ -109,6 +109,49 @@ describe('useTaskOverview', () => {
     })
   })
 
+  describe('stopTask', () => {
+    it('confirms then calls apiPut with action stop', async () => {
+      const { actions } = createOverview()
+      mockDialogConfirm.mockResolvedValue(true)
+      mockApiPut.mockResolvedValue({})
+
+      await actions.stopTask()
+
+      expect(mockDialogConfirm).toHaveBeenCalled()
+      expect(mockApiPut).toHaveBeenCalledWith('/api/tasks/t1', { action: 'stop' })
+    })
+
+    it('does not call the backend when confirmation is denied', async () => {
+      const { actions } = createOverview()
+      mockDialogConfirm.mockResolvedValue(false)
+
+      await actions.stopTask()
+
+      expect(mockApiPut).not.toHaveBeenCalled()
+    })
+
+    it('calls loadTasks on success', async () => {
+      const { actions } = createOverview()
+      mockDialogConfirm.mockResolvedValue(true)
+      mockApiPut.mockResolvedValue({})
+
+      await actions.stopTask()
+
+      expect(mockLoadTasks).toHaveBeenCalled()
+    })
+
+    it('shows error toast and skips loadTasks on failure', async () => {
+      const { actions } = createOverview()
+      mockDialogConfirm.mockResolvedValue(true)
+      mockApiPut.mockRejectedValue(new Error('Network error'))
+
+      await actions.stopTask()
+
+      expect(mockToastShow).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ type: 'error' }))
+      expect(mockLoadTasks).not.toHaveBeenCalled()
+    })
+  })
+
   describe('pauseTask', () => {
     it('calls apiPut with action pause', async () => {
       const { actions } = createOverview()

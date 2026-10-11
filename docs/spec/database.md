@@ -183,6 +183,7 @@ UNIQUE：`(message_id)`
 | preferred_thinking_effort | TEXT | NOT NULL | `''` | 首选思考力度 |
 | custom_system_prompt | TEXT | NOT NULL | `''` | 用户自定义提示词 |
 | avatar | TEXT | NOT NULL | `''` | 用户自选的 DiceBear 头像 SVG（空＝用内置图标）；写入前经 `avatarSVGLooksSafe` 校验 |
+| disabled | INTEGER | NOT NULL | `0` | 已禁用：从所有**新建**入口（新建会话/任务/群成员）隐藏，服务端兜底拒绝；已有会话/任务不受影响 |
 | models | TEXT | NOT NULL | `'[]'` | 可用模型列表 JSON |
 | models_auto_detected | INTEGER | NOT NULL | `0` | 自动检测模型标记 |
 | sort_order | INTEGER | NOT NULL | `0` | 排序顺序 |
@@ -562,6 +563,7 @@ erDiagram
         TEXT preferred_thinking_effort
         TEXT custom_system_prompt
         TEXT avatar
+        INTEGER disabled
         TEXT models
         INTEGER models_auto_detected
         INTEGER sort_order

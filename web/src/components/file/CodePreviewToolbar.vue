@@ -98,7 +98,7 @@
         @pointerleave="hideTooltip()"
         @click="$emit('quote')"
       >
-        <MessageSquareQuote :size="12" />
+        <MessageSquare :size="12" />
       </button>
       <CopyButton
         v-if="showTextTools && !isRenderedView"
@@ -179,7 +179,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ExternalLink, Eye, Folder, Hash, Link, Maximize2, MessageSquareQuote, RefreshCw, Search, TextWrap } from 'lucide-vue-next'
+import { ExternalLink, Eye, Folder, Hash, Link, Maximize2, MessageSquare, RefreshCw, Search, TextWrap } from 'lucide-vue-next'
 import CopyButton from '@/components/common/CopyButton.vue'
 
 const { t } = useI18n()

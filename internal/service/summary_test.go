@@ -260,6 +260,7 @@ func setupTestDBForMigration(t *testing.T) func() {
 			session_id TEXT,
 			backend TEXT NOT NULL DEFAULT 'claude',
 			agent_id TEXT DEFAULT '',
+			injected INTEGER NOT NULL DEFAULT 0,
 			streaming INTEGER NOT NULL DEFAULT 0,
 			queue_id TEXT DEFAULT '',
 			queued INTEGER NOT NULL DEFAULT 0,

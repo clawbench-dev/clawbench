@@ -22,8 +22,8 @@ export function useTaskOverview(options: UseTaskOverviewOptions) {
   const actionLoading = ref(false)
 
   /**
-   * Runs a task action (trigger/pause/resume) or deletes the task.
-   * `method` is the HTTP verb: 'put' for trigger/pause/resume, 'delete' for delete.
+   * Runs a task action (trigger/pause/resume/stop) or deletes the task.
+   * `method` is the HTTP verb: 'put' for trigger/pause/resume/stop, 'delete' for delete.
    * `action` is passed as the body for PUT calls, or omitted for DELETE.
    */
   async function runAction(
@@ -54,6 +54,20 @@ export function useTaskOverview(options: UseTaskOverviewOptions) {
     await runAction('put', 'trigger')
   }
 
+  /**
+   * Terminate every running execution of the task.
+   *
+   * Unlike the per-execution cancel in taskExecUtils, this is task-level: the
+   * detail page only knows the task's runningCount, not the in-memory execution
+   * ids, so it cannot address a single execution. Confirmed first because the
+   * user may have several queued/parallel runs and stopping is destructive to
+   * the in-flight work.
+   */
+  async function stopTask(): Promise<void> {
+    if (!await dialog.confirm(gt('task.confirmStop'), { dangerous: true })) return
+    await runAction('put', 'stop')
+  }
+
   async function pauseTask(): Promise<void> {
     await runAction('put', 'pause')
   }
@@ -67,5 +81,5 @@ export function useTaskOverview(options: UseTaskOverviewOptions) {
     await runAction('delete')
   }
 
-  return { actionLoading, triggerTask, pauseTask, resumeTask, deleteTask }
+  return { actionLoading, triggerTask, stopTask, pauseTask, resumeTask, deleteTask }
 }

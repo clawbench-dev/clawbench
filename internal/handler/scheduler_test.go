@@ -788,6 +788,94 @@ func TestServeTaskByID_Cancel_ExecutionNotFound(t *testing.T) {
 	assertStatus(t, w, http.StatusNotFound)
 }
 
+// ========== ServeTaskByID — stop action ==========
+
+// TestServeTaskByID_Stop_CancelsRunningExecutions guards the task-level stop:
+// the detail page only knows the task's runningCount, not the in-memory
+// execution ids, so it must be able to terminate every running execution of the
+// task without supplying an executionId.
+func TestServeTaskByID_Stop_CancelsRunningExecutions(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.Agents = map[string]*model.Agent{
+		"coder": {ID: "coder", Name: "Coder", Backend: "claude"},
+	}
+	defer func() { model.Agents = nil }()
+
+	s := service.NewScheduler()
+	defer s.Stop()
+	service.GlobalScheduler = s
+	defer func() { service.GlobalScheduler = nil }()
+
+	task := &model.ScheduledTask{
+		ProjectPath: env.ProjectDir,
+		Name:        "StopRunning",
+		CronExpr:    "0 * * * *",
+		AgentID:     "coder",
+		Prompt:      "Test",
+		RepeatMode:  "unlimited",
+	}
+	_ = s.AddTask(task)
+
+	var cancelledAI, cancelledScript, cancelledOther bool
+	s.AddRunningExecution(&service.RunningExecution{
+		ID: "session-ai", TaskID: task.ID, CancelFunc: func() { cancelledAI = true },
+		StartedAt: time.Now(), TriggerType: "auto", Phase: service.RunningPhaseAI,
+	})
+	s.AddRunningExecution(&service.RunningExecution{
+		ID: "script-x", TaskID: task.ID, CancelFunc: func() { cancelledScript = true },
+		StartedAt: time.Now(), TriggerType: "auto", Phase: service.RunningPhaseScript,
+	})
+	// A different task's execution must be left alone.
+	s.AddRunningExecution(&service.RunningExecution{
+		ID: "session-other", TaskID: task.ID + 1, CancelFunc: func() { cancelledOther = true },
+		StartedAt: time.Now(), TriggerType: "auto", Phase: service.RunningPhaseAI,
+	})
+
+	req := newRequest(t, http.MethodPut, fmt.Sprintf("/api/tasks/%d", task.ID), map[string]any{
+		"action": "stop",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeTaskByID, req)
+
+	assertOK(t, w)
+	assert.True(t, cancelledAI, "the AI-phase execution must be cancelled")
+	assert.True(t, cancelledScript, "the script-phase execution must be cancelled too")
+	assert.False(t, cancelledOther, "another task's execution must not be cancelled")
+}
+
+// TestServeTaskByID_Stop_Idempotent asserts stopping a task with nothing
+// running succeeds: a run finishing just before the click must not surface as
+// an error (the desired end state is already true).
+func TestServeTaskByID_Stop_Idempotent(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	s := service.NewScheduler()
+	defer s.Stop()
+	service.GlobalScheduler = s
+	defer func() { service.GlobalScheduler = nil }()
+
+	task := &model.ScheduledTask{
+		ProjectPath: env.ProjectDir,
+		Name:        "StopIdle",
+		CronExpr:    "0 * * * *",
+		AgentID:     "coder",
+		Prompt:      "Test",
+		RepeatMode:  "unlimited",
+	}
+	_ = s.AddTask(task)
+
+	req := newRequest(t, http.MethodPut, fmt.Sprintf("/api/tasks/%d", task.ID), map[string]any{
+		"action": "stop",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeTaskByID, req)
+
+	assertOK(t, w)
+}
+
 // ========== ServeTaskByID — invalid task ID ==========
 
 func TestServeTaskByID_InvalidTaskID(t *testing.T) {

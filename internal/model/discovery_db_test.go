@@ -52,6 +52,7 @@ func setupTestDBForDiscovery(t *testing.T) *sql.DB {
 			acp_config_options TEXT NOT NULL DEFAULT '',
 			auto_approve INTEGER NOT NULL DEFAULT 0,
 			disabled INTEGER NOT NULL DEFAULT 0,
+			project_id INTEGER DEFAULT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
@@ -91,6 +92,64 @@ func withBackendSpec(t *testing.T, spec BackendSpec) {
 }
 
 // ---------------------------------------------------------------------------
+// TestLoadAgentsIntoMemoryFromDB_SortsBySortOrder pins the user-order contract:
+// AgentList is ordered by (sort_order, id), so the settings-page drag order is
+// what every in-memory consumer sees. All-equal sort_order (the upgrade case)
+// falls back to id, keeping the pre-existing order.
+func TestLoadAgentsIntoMemoryFromDB_SortsBySortOrder(t *testing.T) {
+	db := setupTestDBForDiscovery(t)
+	isolateAgentGlobals(t)
+
+	// Inserted in an order that differs from both id and sort_order so the test
+	// distinguishes "as inserted", "by id" and "by sort_order".
+	_, err := db.Exec(`INSERT INTO agents (id, name, backend, sort_order) VALUES
+		('b', 'B', 'x', 0),
+		('a', 'A', 'x', 2),
+		('c', 'C', 'x', 1)`)
+	require.NoError(t, err)
+
+	require.NoError(t, LoadAgentsIntoMemoryFromDB(db))
+
+	list := GetAgentList()
+	got := make([]string, 0, len(list))
+	for _, a := range list {
+		got = append(got, a.ID)
+	}
+	assert.Equal(t, []string{"b", "c", "a"}, got, "ordered by sort_order, not id")
+
+	// All-equal sort_order falls back to id.
+	_, err = db.Exec(`UPDATE agents SET sort_order = 0`)
+	require.NoError(t, err)
+	require.NoError(t, LoadAgentsIntoMemoryFromDB(db))
+	list = GetAgentList()
+	got = make([]string, 0, len(list))
+	for _, a := range list {
+		got = append(got, a.ID)
+	}
+	assert.Equal(t, []string{"a", "b", "c"}, got, "equal sort_order falls back to id")
+}
+
+// TestSortAgentsByOrder pins the shared comparator used by BOTH the DB load
+// path and the reorder handler: sort_order ascending, id ascending as tiebreak.
+// It sorts in place and is stable, so equal sort_order keeps insertion order
+// only as far as the id tiebreak is deterministic.
+func TestSortAgentsByOrder(t *testing.T) {
+	agents := []*Agent{
+		{ID: "b", SortOrder: 2},
+		{ID: "a", SortOrder: 0},
+		{ID: "c", SortOrder: 1},
+		{ID: "d", SortOrder: 0},
+	}
+	SortAgentsByOrder(agents)
+
+	got := make([]string, 0, len(agents))
+	for _, a := range agents {
+		got = append(got, a.ID)
+	}
+	// sort_order 0 → a,d (id order), then c (1), then b (2).
+	assert.Equal(t, []string{"a", "d", "c", "b"}, got)
+}
+
 // RefreshAgents — the single pipeline entry point
 // ---------------------------------------------------------------------------
 
@@ -490,6 +549,31 @@ func TestLoadAgentsFromDBRows_MalformedDisabledErrors(t *testing.T) {
 	_, err = loadAgentsFromDBRows(db)
 	require.Error(t, err, "a malformed disabled column must surface as a scan error")
 	assert.Contains(t, err.Error(), "disabled")
+}
+
+// TestLoadAgentsFromDBRows_ProjectScopeRoundTrip pins that a non-NULL project_id
+// decodes into ProjectID (and NULL leaves it nil), so the project-scope filter
+// sees exactly what the DB holds. A NULL-only test would still pass if the
+// decoder never populated the field, so both shapes are seeded.
+func TestLoadAgentsFromDBRows_ProjectScopeRoundTrip(t *testing.T) {
+	db := setupTestDBForDiscovery(t)
+
+	_, err := db.Exec(`INSERT INTO agents (id, name, backend, project_id) VALUES ('scoped', 'Scoped', 'b', 42)`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO agents (id, name, backend, project_id) VALUES ('global', 'Global', 'b', NULL)`)
+	require.NoError(t, err)
+
+	agents, err := loadAgentsFromDBRows(db)
+	require.NoError(t, err)
+	require.Len(t, agents, 2)
+
+	byID := map[string]*Agent{}
+	for _, a := range agents {
+		byID[a.ID] = a
+	}
+	require.NotNil(t, byID["scoped"].ProjectID, "a project-scoped row must decode its project_id")
+	assert.Equal(t, int64(42), *byID["scoped"].ProjectID)
+	assert.Nil(t, byID["global"].ProjectID, "a NULL project_id must decode to nil (global)")
 }
 
 // ---------------------------------------------------------------------------

@@ -37,7 +37,6 @@ vi.mock('lucide-vue-next', () => {
     ChevronRight: stub('ChevronRight'),
     ExternalLink: stub('ExternalLink'),
     MessageSquare: stub('MessageSquare'),
-    MessageSquareQuote: stub('MessageSquareQuote'),
     AlertCircle: stub('AlertCircle'),
     Activity: stub('Activity'),
   }
@@ -341,14 +340,13 @@ describe('ForgeDetail quote action (header)', () => {
     expect(quoteButton(wrapper), 'the header must expose a quote action').toBeTruthy()
   })
 
-  it('uses the quote-bubble icon, not the plain comment bubble', () => {
-    // MessageSquare is the COMMENTS counter's icon (same header, a few rows
-    // below). Reusing it for the quote action made two unrelated things look
-    // alike; MessageSquareQuote is the shared icon across every quote entry
-    // point (chat message, file header, code preview, forge detail).
+  it('uses the message icon for the quote action', () => {
+    // The quote action shares the message icon with the COMMENTS counter in the
+    // same header — the product decision is a single "message" icon across every
+    // quote entry point (chat message, file header, code preview, forge detail).
     const wrapper = mountDetail()
     const icon = quoteButton(wrapper)!.find('svg')
-    expect(icon.attributes('data-icon')).toBe('MessageSquareQuote')
+    expect(icon.attributes('data-icon')).toBe('MessageSquare')
   })
 
   it('emits quote without the full body, so nothing is quoted by default', () => {

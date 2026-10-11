@@ -208,13 +208,17 @@ func claimQueuedRowTx(tx *sql.Tx, sessionID string, where string, args ...any) (
 // normal user message, inside the caller's transaction. The returned id is the
 // chat_history message id — allocated NOW, so it sits immediately before the
 // assistant reply the run is about to create.
-func materializeQueuedRowTx(tx *sql.Tx, row QueuedRow) (int64, error) {
+//
+// injected marks a mid-turn injection (the message joined the running reply
+// rather than starting its own turn); it is persisted so the frontend can show
+// the "回复已并入上一轮" hint on the bubble, surviving a reload.
+func materializeQueuedRowTx(tx *sql.Tx, row QueuedRow, injected bool) (int64, error) {
 	// fallbackTitle is empty on purpose: the title was already applied at
 	// enqueue time (AddQueuedMessage). maybeAutoTitleSessionTx short-circuits
 	// once title_source is 'auto', so passing "" here cannot blank the title.
 	// The AI rename was likewise already scheduled at enqueue — its `titled`
 	// result is discarded here on purpose.
-	msgID, _, err := insertChatMessageTx(tx, row.ProjectID, row.Backend, row.SessionID, "user", row.Content, row.Files, 0, "", "")
+	msgID, _, err := insertChatMessageTx(tx, row.ProjectID, row.Backend, row.SessionID, "user", row.Content, row.Files, 0, "", "", injected)
 	return msgID, err
 }
 
@@ -226,23 +230,24 @@ func materializeQueuedRowTx(tx *sql.Tx, row QueuedRow) (int64, error) {
 // real DB failure and must be treated as retryable by the drain loop, never as
 // "queue empty" — that would silently lose messages.
 func ClaimNextAndMaterialize(sessionID string) (QueuedRow, int64, bool, error) {
-	return claimAndMaterialize(sessionID, "", nil)
+	return claimAndMaterialize(sessionID, "", nil, false)
 }
 
 // ClaimByIDAndMaterialize claims a specific queued_messages row by its table id.
 // Used when the caller already knows which row it inserted (idle-path enqueue).
 func ClaimByIDAndMaterialize(sessionID string, queueRowID int64) (QueuedRow, int64, bool, error) {
-	return claimAndMaterialize(sessionID, "q.id = ?", []any{queueRowID})
+	return claimAndMaterialize(sessionID, "q.id = ?", []any{queueRowID}, false)
 }
 
 // ClaimByQueueIDAndMaterialize claims a queued message by its client-generated
 // queue id. Used by mid-turn injection, which is addressed by the id the UI
-// holds.
-func ClaimByQueueIDAndMaterialize(sessionID, queueID string) (QueuedRow, int64, bool, error) {
-	return claimAndMaterialize(sessionID, "q.queue_id = ?", []any{queueID})
+// holds. injected marks the materialized chat_history row as having joined the
+// running reply (see materializeQueuedRowTx).
+func ClaimByQueueIDAndMaterialize(sessionID, queueID string, injected bool) (QueuedRow, int64, bool, error) {
+	return claimAndMaterialize(sessionID, "q.queue_id = ?", []any{queueID}, injected)
 }
 
-func claimAndMaterialize(sessionID, where string, args []any) (QueuedRow, int64, bool, error) {
+func claimAndMaterialize(sessionID, where string, args []any, injected bool) (QueuedRow, int64, bool, error) {
 	tx, err := store.WriteBegin()
 	if err != nil {
 		return QueuedRow{}, 0, false, err
@@ -255,7 +260,7 @@ func claimAndMaterialize(sessionID, where string, args []any) (QueuedRow, int64,
 		return QueuedRow{}, 0, false, err
 	}
 
-	msgID, err := materializeQueuedRowTx(tx, row)
+	msgID, err := materializeQueuedRowTx(tx, row, injected)
 	if err != nil {
 		return QueuedRow{}, 0, false, err
 	}

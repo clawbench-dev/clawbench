@@ -80,6 +80,12 @@ func ServeTasks(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo,gocog
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "AgentDisabled")
 			return
 		}
+		// Same fallback for project scope: a project-only agent from another
+		// project must not be used for a NEW task in this project.
+		if a := model.GetAgent(req.AgentID); a != nil && !agentVisibleInProject(a, projectPath) {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "AgentNotInProject")
+			return
+		}
 		if req.TriggerMode == "" {
 			req.TriggerMode = "cron"
 		}
@@ -179,7 +185,7 @@ func serveTaskSubRoute(w http.ResponseWriter, r *http.Request, taskID int64, sub
 
 // ServeTaskByID handles operations on a single task by ID.
 // GET /api/tasks/{id} - get task details
-// PUT /api/tasks/{id} - update task (pause/resume)
+// PUT /api/tasks/{id} - update task (pause/resume/trigger/cancel/stop)
 // DELETE /api/tasks/{id} - delete task
 // GET /api/tasks/{id}/executions - get execution history
 //
@@ -249,7 +255,7 @@ func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 
 	case http.MethodPut:
 		var req struct {
-			Action      string `json:"action"`      // "pause", "resume", "read", "trigger", "cancel", or "update"
+			Action      string `json:"action"`      // "pause", "resume", "read", "trigger", "cancel", "stop", or "update"
 			ExecutionID string `json:"executionId"` // required for "cancel"
 			Name        string `json:"name"`
 			CronExpr    string `json:"cron_expr"`
@@ -277,7 +283,7 @@ func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 		}
 
 		// For actions that need ownership verification, fetch task first
-		// Actions that only need taskID (pause/resume/trigger/cancel/read) also need ownership check
+		// Actions that only need taskID (pause/resume/trigger/cancel/stop/read) also need ownership check
 		task, err := service.GetTaskByID(taskID)
 		if err != nil {
 			writeLocalizedError(w, r, model.NotFound(nil, "TaskNotFound"))
@@ -356,6 +362,20 @@ func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 			return
 		}
 
+		// "stop" is the task-level counterpart of "cancel": it terminates every
+		// running execution of the task without the caller having to know any
+		// execution id. The task detail page only has the task's runningCount
+		// (not the in-memory execution ids), so it cannot issue a per-execution
+		// cancel. Idempotent: stopping a task with nothing running is a no-op
+		// success rather than an error — the desired end state (not running) is
+		// already true, and a race where the run finishes just before the click
+		// must not surface as a failure.
+		if req.Action == "stop" {
+			service.GlobalScheduler.CancelAllExecutions(taskID)
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+			return
+		}
+
 		if req.Action == "deleteExecution" {
 			if req.ExecutionID == "" {
 				writeLocalizedErrorf(w, r, http.StatusBadRequest, "TaskExecutionIdRequired")
@@ -399,8 +419,15 @@ func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 			task.CronExpr = req.CronExpr
 		}
 		if req.AgentID != "" {
-			if a := model.GetAgent(req.AgentID); a != nil && a.Disabled {
+			a := model.GetAgent(req.AgentID)
+			if a != nil && a.Disabled {
 				writeLocalizedErrorf(w, r, http.StatusBadRequest, "AgentDisabled")
+				return
+			}
+			// Re-pointing a task at a project-only agent from another project is
+			// a NEW binding, so the scope gate applies here too.
+			if a != nil && !agentVisibleInProject(a, projectPath) {
+				writeLocalizedErrorf(w, r, http.StatusBadRequest, "AgentNotInProject")
 				return
 			}
 			task.AgentID = req.AgentID

@@ -36,6 +36,7 @@
 package model
 
 import (
+	"database/sql"
 	"encoding/json"
 	"log/slog"
 	"os"
@@ -597,7 +598,13 @@ func LoadAgentsIntoMemoryFromDB(db dbutil.Reader) error {
 	if err != nil {
 		return err
 	}
-	sort.Slice(agents, func(i, j int) bool { return agents[i].ID < agents[j].ID })
+	// Order by the user's manual sort_order, falling back to ID as a stable
+	// tiebreak. Every agent starts at sort_order 0, so the ID tiebreak keeps
+	// the initial order identical to before this field was honored; once the
+	// user drags rows in the settings page, that order becomes authoritative
+	// for AgentList — and thus for every in-memory consumer (agent pickers,
+	// the AgentList[0] default fallback).
+	SortAgentsByOrder(agents)
 
 	newAgentsMap := make(map[string]*Agent, len(agents))
 
@@ -644,7 +651,7 @@ func loadAgentsFromDBRows(db dbutil.Reader) ([]*Agent, error) {
 		thinking_effort, thinking_effort_levels,
 		preferred_mode, preferred_model, preferred_thinking_effort,
 		custom_system_prompt, avatar, models, models_auto_detected, sort_order,
-		transport, acp_command, auto_approve, disabled
+		transport, acp_command, auto_approve, disabled, project_id
 		FROM agents ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -656,18 +663,23 @@ func loadAgentsFromDBRows(db dbutil.Reader) ([]*Agent, error) {
 		agent := &Agent{}
 		var modelsJSON, levelsJSON string
 		var autoDetected, autoApprove, disabled int
+		var projectID sql.NullInt64
 
 		if err := rows.Scan(&agent.ID, &agent.Name, &agent.Specialty,
 			&agent.Backend, &agent.Command, &agent.ThinkingEffort, &levelsJSON,
 			&agent.PreferredMode, &agent.PreferredModel, &agent.PreferredThinkingEffort,
 			&agent.CustomSystemPrompt, &agent.Avatar, &modelsJSON, &autoDetected,
-			&agent.SortOrder, &agent.Transport, &agent.AcpCommand, &autoApprove, &disabled); err != nil {
+			&agent.SortOrder, &agent.Transport, &agent.AcpCommand, &autoApprove, &disabled, &projectID); err != nil {
 			return nil, err
 		}
 
 		agent.ModelsAutoDetected = autoDetected == 1
 		agent.AutoApprove = autoApprove == 1
 		agent.Disabled = disabled == 1
+		if projectID.Valid {
+			id := projectID.Int64
+			agent.ProjectID = &id
+		}
 
 		if err := json.Unmarshal([]byte(modelsJSON), &agent.Models); err != nil {
 			agent.Models = nil

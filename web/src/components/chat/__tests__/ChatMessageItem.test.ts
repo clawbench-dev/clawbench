@@ -126,7 +126,7 @@ const i18n = createI18n({
           viewDetails: '详情',
         },
         contentBlocks: { cancelled: '已中断' },
-        pending: { queuing: '排队中' },
+        pending: { queuing: '排队中', mergedIntoPrev: '回复已并入上一轮' },
         fileChanges: { title: '文件变更' },
         speech: { summarizing: '总结中' },
         busy: { forking: '正在分叉会话…', syncing: '正在同步原生会话…', elapsed: '{elapsed}s' },
@@ -189,6 +189,28 @@ describe('ChatMessageItem', () => {
       msg: { id: '2', role: 'assistant', content: 'response', blocks: [] },
     })
     expect(wrapper.find('.chat-message').classes()).toContain('assistant')
+  })
+
+  it('shows the merge-into-previous-reply hint only on an injected user bubble', () => {
+    // A merge-only injection (claude/codex) marks the bubble so it does not read
+    // as "sent but ignored". A normal user message must NOT show it, and an
+    // assistant row never carries it (it is a user-only provenance flag).
+    const injected = createWrapper({
+      msg: { id: '10', role: 'user', content: 'merged', blocks: [], injected: true },
+    })
+    const mark = injected.find('.chat-injected-mark')
+    expect(mark.exists()).toBe(true)
+    expect(mark.text()).toContain('回复已并入上一轮')
+
+    const normal = createWrapper({
+      msg: { id: '11', role: 'user', content: 'normal', blocks: [] },
+    })
+    expect(normal.find('.chat-injected-mark').exists()).toBe(false)
+
+    const assistant = createWrapper({
+      msg: { id: '12', role: 'assistant', content: 'reply', blocks: [], injected: true },
+    })
+    expect(assistant.find('.chat-injected-mark').exists()).toBe(false)
   })
 
   // The old 'shows pending hint for pending messages' / 'applies pending class'
