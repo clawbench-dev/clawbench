@@ -12,6 +12,68 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestServeGroupMemberAvatars_MethodNotAllowed pins the method guard: only POST
+// is accepted (a GET cannot carry the batch body).
+func TestServeGroupMemberAvatars_MethodNotAllowed(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/group/member-avatars", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupMemberAvatars, req)
+	require.Equal(t, http.StatusMethodNotAllowed, w.Code, w.Body.String())
+}
+
+// TestServeGroupMemberAvatars_RequiresProjectCookie pins the project guard: a
+// request with no project cookie is rejected before any decode or DB work.
+func TestServeGroupMemberAvatars_RequiresProjectCookie(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/group/member-avatars", map[string]any{
+		"groupId": "g",
+		"avatars": []map[string]any{{"memberId": "m", "avatar": "<svg/>"}},
+	})
+	// Deliberately no project cookie.
+	w := callHandlerWithAuth(ServeGroupMemberAvatars, req)
+	require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+}
+
+// TestServeGroupMemberAvatars_RejectsForeignGroup pins the ownership gate: a
+// group id that does not belong to the requesting project is rejected (404 for
+// an unknown session) rather than written to.
+func TestServeGroupMemberAvatars_RejectsForeignGroup(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	const validSVG = `<svg xmlns="http://www.w3.org/2000/svg"></svg>`
+	req := newRequest(t, http.MethodPost, "/api/group/member-avatars", map[string]any{
+		"groupId": "no-such-group",
+		"avatars": []map[string]any{{"memberId": "m", "avatar": validSVG}},
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupMemberAvatars, req)
+	require.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
+}
+
+// TestServeGroupMemberAvatars_EmptyBatchRejected pins the groupId/empty-batch
+// guard: an empty avatars list is a 400 (there is nothing to write).
+func TestServeGroupMemberAvatars_EmptyBatchRejected(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	groupID, _, err := service.CreateGroup(env.ProjectDir, "g", "codebuddy", "codebuddy", "Host")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPost, "/api/group/member-avatars", map[string]any{
+		"groupId": groupID,
+		"avatars": []map[string]any{},
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupMemberAvatars, req)
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+}
+
 // TestServeGroupMemberAvatars_StoresAndLists pins the write path for a member's
 // own avatar: a valid SVG is persisted (agent_avatar) and echoed back by the
 // member list with the member's REAL agent name alongside it.

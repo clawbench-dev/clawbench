@@ -1551,3 +1551,129 @@ func TestListGroupMembers_ReturnsAvatar(t *testing.T) {
 		t.Fatalf("preview avatar = %q, want %q", previews[groupID][0].Avatar, svg)
 	}
 }
+
+// SetMemberAvatar is the service-level write used by the avatar endpoint. It is
+// exercised here (not only through the handler) because Go coverage is
+// per-package: a function called solely from a handler test leaves this package
+// at 0% for those lines.
+func TestSetMemberAvatar_ScopedWrite(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/group-set-avatar"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "G", "codebuddy", "codebuddy", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	const svg = "<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>"
+
+	// A member id in this group updates exactly one row.
+	n, err := SetMemberAvatar(groupID, hostID, svg)
+	if err != nil {
+		t.Fatalf("SetMemberAvatar: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("SetMemberAvatar affected %d rows, want 1", n)
+	}
+	members, err := ListGroupMembers(groupID)
+	if err != nil {
+		t.Fatalf("ListGroupMembers: %v", err)
+	}
+	if len(members) != 1 || members[0].Avatar != svg {
+		t.Fatalf("stored avatar = %+v, want %q", members, svg)
+	}
+
+	// A member id that belongs to ANOTHER group matches no row: the WHERE clause
+	// pins group_id, so the write is a no-op and the count is 0.
+	otherGroup, _, err := CreateGroup(project, "Other", "codebuddy", "codebuddy", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup other: %v", err)
+	}
+	n, err = SetMemberAvatar(otherGroup, hostID, svg)
+	if err != nil {
+		t.Fatalf("SetMemberAvatar cross-group: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("cross-group write affected %d rows, want 0", n)
+	}
+
+	// An ordinary (non-member) session has no agent_avatar meaning: the
+	// session_type guard means its id matches no member row.
+	plainID, err := CreateSession(project, "codebuddy", "plain", "codebuddy", "", "default", "chat")
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	n, err = SetMemberAvatar(groupID, plainID, svg)
+	if err != nil {
+		t.Fatalf("SetMemberAvatar plain session: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("plain-session write affected %d rows, want 0", n)
+	}
+}
+
+// IsGroupMemberSession distinguishes a hidden member row from a group timeline
+// row and an ordinary chat. It gates operations that make no sense on a member
+// row (e.g. renaming a session), so the three cases matter.
+func TestIsGroupMemberSession(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/group-member-session"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "G", "codebuddy", "codebuddy", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	if !IsGroupMemberSession(hostID) {
+		t.Fatalf("the host member row %q must be a member session", hostID)
+	}
+	if IsGroupMemberSession(groupID) {
+		t.Fatalf("the group timeline row %q must NOT be a member session", groupID)
+	}
+	plainID, err := CreateSession(project, "codebuddy", "plain", "codebuddy", "", "default", "chat")
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if IsGroupMemberSession(plainID) {
+		t.Fatalf("an ordinary chat %q must NOT be a member session", plainID)
+	}
+	if IsGroupMemberSession("does-not-exist") {
+		t.Fatal("an unknown session id must NOT be a member session")
+	}
+}
+
+// AddGroupMembers must treat a batch whose specs all carry an EMPTY agent id as
+// a no-op: the defensive filter drops them and the function returns without
+// touching the DB (no phantom member rows, no error).
+func TestAddGroupMembers_AllEmptySpecsNoOp(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/group-empty-specs"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, _, err := CreateGroup(project, "G", "codebuddy", "codebuddy", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	before, err := ListGroupMembers(groupID)
+	if err != nil {
+		t.Fatalf("ListGroupMembers: %v", err)
+	}
+
+	ids, err := AddGroupMembers(project, groupID, []GroupMemberSpec{{AgentID: ""}, {AgentID: ""}})
+	if err != nil {
+		t.Fatalf("all-empty specs must not error: %v", err)
+	}
+	if len(ids) != 0 {
+		t.Fatalf("all-empty specs must return no ids, got %v", ids)
+	}
+	after, err := ListGroupMembers(groupID)
+	if err != nil {
+		t.Fatalf("ListGroupMembers after: %v", err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("all-empty specs must add no rows: before=%d after=%d", len(before), len(after))
+	}
+}
