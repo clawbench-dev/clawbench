@@ -214,6 +214,109 @@ func TestCreateGroupWithMembers(t *testing.T) {
 	}
 }
 
+// TestCreateGroupWithMembers_AppliesAgentAutoApproveDefault pins WARN-102: when
+// a group is created with members, each member's auto_approve flag is initialized
+// from the agent's AutoApprove default (same as AddGroupMembers). Without this
+// the create path skips applyAgentAutoApproveDefault while the add-member path
+// applies it, so a newly created group member behaves differently from one added
+// later despite having the same agent.
+func TestCreateGroupWithMembers_AppliesAgentAutoApproveDefault(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest-autoapprove"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+
+	// Override model.Agents so GetAgent returns known AutoApprove values.
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"auto-yes": {ID: "auto-yes", Name: "AutoYes", AutoApprove: true},
+		"auto-no":  {ID: "auto-no", Name: "AutoNo", AutoApprove: false},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	specs := []GroupMemberSpec{
+		{AgentID: "auto-yes", Backend: "claude", DisplayName: "AutoYes"},
+		{AgentID: "auto-no", Backend: "claude", DisplayName: "AutoNo"},
+	}
+	groupID, _, err := CreateGroupWithMembers(project, "AutoApprove Test", "auto-yes", specs)
+	if err != nil {
+		t.Fatalf("CreateGroupWithMembers: %v", err)
+	}
+
+	members, err := ListGroupMembers(groupID)
+	if err != nil {
+		t.Fatalf("ListGroupMembers: %v", err)
+	}
+	if len(members) != 2 {
+		t.Fatalf("want 2 members, got %d", len(members))
+	}
+
+	for _, m := range members {
+		got := GetSessionAutoApprove(m.ID)
+		want := m.AgentID == "auto-yes"
+		if got != want {
+			t.Fatalf("member %s (agent %s) auto_approve=%v want %v", m.ID, m.AgentID, got, want)
+		}
+	}
+}
+
+// TestAddGroupMembers_AppliesAgentAutoApproveDefault pins the add-member path:
+// each newly added member's auto_approve flag is initialized from the agent's
+// AutoApprove default, same as the create path. This is the case Erin caught
+// as a regression (the post-commit applyAgentAutoApproveDefault call had been
+// incorrectly removed from AddGroupMembers, leaving the add path with no
+// auto-approve initialization while the create path had it added).
+func TestAddGroupMembers_AppliesAgentAutoApproveDefault(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest-add-autoapprove"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"auto-yes": {ID: "auto-yes", Name: "AutoYes", AutoApprove: true},
+		"auto-no":  {ID: "auto-no", Name: "AutoNo", AutoApprove: false},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	groupID, _, err := CreateGroup(project, "G", "codebuddy", "codebuddy", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+
+	specs := []GroupMemberSpec{
+		{AgentID: "auto-yes", Backend: "claude", DisplayName: "AutoYes"},
+		{AgentID: "auto-no", Backend: "claude", DisplayName: "AutoNo"},
+	}
+	addedIDs, err := AddGroupMembers(project, groupID, specs)
+	if err != nil {
+		t.Fatalf("AddGroupMembers: %v", err)
+	}
+	if len(addedIDs) != 2 {
+		t.Fatalf("want 2 added members, got %d", len(addedIDs))
+	}
+
+	// Map agent id → member id for assertions.
+	idByAgent := map[string]string{}
+	members, err := ListGroupMembers(groupID)
+	if err != nil {
+		t.Fatalf("ListGroupMembers: %v", err)
+	}
+	for _, m := range members {
+		idByAgent[m.AgentID] = m.ID
+	}
+
+	for _, agentID := range []string{"auto-yes", "auto-no"} {
+		got := GetSessionAutoApprove(idByAgent[agentID])
+		want := agentID == "auto-yes"
+		if got != want {
+			t.Fatalf("member %s auto_approve=%v want %v", agentID, got, want)
+		}
+	}
+}
+
 // TestCreateGroupWithMembersRollsBackOnInvalid pins atomicity: if any member
 // spec is invalid (empty agent id), NOTHING is created — no half-built group
 // left behind for the user to clean up (decision #25).

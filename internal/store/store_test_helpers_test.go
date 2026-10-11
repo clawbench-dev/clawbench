@@ -153,6 +153,13 @@ CREATE TABLE IF NOT EXISTS btw_questions (
 	error TEXT NOT NULL DEFAULT '',
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS group_pending_bcc (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	group_id TEXT NOT NULL,
+	target_name TEXT NOT NULL,
+	content TEXT NOT NULL,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
 `
 
 // setupStoreTestDB installs a fresh in-memory database carrying the store

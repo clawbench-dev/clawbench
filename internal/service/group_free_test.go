@@ -456,6 +456,45 @@ func TestFreeLoop_SeedUsesFreeModePrompt(t *testing.T) {
 	}
 }
 
+// ISS-271 regression: dedup must count a member waiting in a LATER OUTER group,
+// not just a peer later in the SAME group. The user seeds TWO independent tags
+// (`targets="A"` + `targets="B"`), producing an outer queue [[A],[B]]. While A
+// (group 0) speaks, B sits in group 1 — a DIFFERENT outer group, so neither
+// `pending` (== g.turns[i+1:], empty for A's single-member group) nor the old
+// `appended`-as-queue could see it. A @s B → B was re-queued → B spoke twice.
+//
+// The pre-existing TestFreeLoop_PeerMentionWithinGroupNotDuplicated uses ONE
+// tag `targets="A,B"` (a single group [A,B]); there `pending` happens to contain
+// B, so it stays green and never exercised this path.
+func TestFreeLoop_PeerMentionInLaterOuterGroupNotDuplicated(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/free-outer-dedup"
+	groupID, byName := createFreeGroup(t, project, "A", "B")
+
+	script := map[string][]string{
+		byName["A"]: {`<clawbench-mention targets="B">B 你补充</clawbench-mention>`},
+		byName["B"]: {"B 说完了"},
+	}
+	runner, order := freeScriptedRunner(t, project, groupID, script)
+
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	// TWO independent tags → outer queue [[A],[B]] (NOT one merged group).
+	msg := `<clawbench-mention targets="` + byName["A"] + `"></clawbench-mention>` +
+		`<clawbench-mention targets="` + byName["B"] + `"></clawbench-mention> 你俩说`
+	_ = runGroupTurnForTest(t, o, project, msg, nil)
+
+	want := []string{byName["A"], byName["B"]}
+	if len(*order) != len(want) {
+		t.Fatalf("order=%v want %v (B must not speak twice)", *order, want)
+	}
+	for i, w := range want {
+		if (*order)[i] != w {
+			t.Fatalf("order[%d]=%q want %q (full=%v)", i, (*order)[i], w, *order)
+		}
+	}
+}
+
 // Dedup must count a member still WAITING later in the SAME group: when the
 // user's tag names A and B together and A @s B, B must not be queued twice.
 // Regression: appendFreeTargets only saw the outer queue (not the current

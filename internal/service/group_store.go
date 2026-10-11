@@ -316,6 +316,18 @@ func CreateGroupWithMembers(projectPath, title, hostAgentID string, specs []Grou
 		return "", "", err
 	}
 
+	// Apply per-agent auto-approve defaults inside the same transaction (the
+	// UPDATE uses the session id as primary key and is idempotent — a no-op when
+	// the agent has AutoApprove=false). This matches AddGroupMembers' post-commit
+	// loop, but must run BEFORE commit because ApplyAgentAutoApproveDefault uses
+	// store.WriteExec which re-acquires the write lock.
+	for i, s := range specs {
+		agent := model.GetAgent(s.AgentID)
+		if agent != nil && agent.AutoApprove {
+			_, _ = tx.ExecContext(context.Background(), "UPDATE chat_sessions SET auto_approve = 1 WHERE id = ?", memberIDs[i])
+		}
+	}
+
 	// Mode marker (and, in host mode, the host pointer) inline on the group
 	// row's context_state. One statement so the mode write cannot half-apply.
 	if err := writeGroupModeInline(tx, groupID, mode, hostMemberID); err != nil {
@@ -524,8 +536,8 @@ func AddGroupMembers(projectPath, groupID string, specs []GroupMemberSpec) ([]st
 	}
 
 	// Best-effort side effects AFTER commit (a failure here must not roll back
-	// the membership change): the per-agent auto-approve default (matching the
-	// single-add path) and the timeline system events.
+	// the membership change): the per-agent auto-approve default and the
+	// timeline system events.
 	for i, s := range kept {
 		applyAgentAutoApproveDefault(memberIDs[i], s.AgentID)
 		writeMemberSystemEvent(projectPath, groupID, s.AgentID, s.DisplayName, "加入了讨论")

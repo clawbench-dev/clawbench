@@ -1025,6 +1025,27 @@ func TestServeConfig_Patch_InvalidDefaultAgent(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "not found")
 }
 
+func TestServeConfig_Patch_DisabledDefaultAgent(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.Agents = map[string]*model.Agent{"test": {ID: "test", Name: "Test", Backend: "test", Disabled: true}}
+	model.AgentList = []*model.Agent{{ID: "test", Name: "Test", Backend: "test", Disabled: true}}
+	defer func() { model.Agents = nil; model.AgentList = nil }()
+
+	cfg := model.Config{}
+	model.ConfigInstance = cfg
+
+	body := `{"default_agent":"test"}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "disabled")
+}
+
 // --- PATCH needs_restart / cold-vs-hot field classification ---
 
 func TestServeConfig_Patch_HotReloadFields_NoRestartNeeded(t *testing.T) {

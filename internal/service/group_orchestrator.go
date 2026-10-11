@@ -418,7 +418,7 @@ func (o *GroupOrchestrator) drainSpeakers(
 	s groupTurnSetup,
 	queue []speakerGroup,
 	refill func(ctx context.Context) ([]speakerGroup, bool, DrainResult),
-	onSpoke func(ctx context.Context, sp speakerTurn, queue []speakerGroup, pending []speakerTurn) []speakerGroup,
+	onSpoke func(ctx context.Context, sp speakerTurn, outer, appended []speakerGroup, pending []speakerTurn) []speakerGroup,
 ) DrainResult {
 	for {
 		if ctx.Err() != nil {
@@ -436,7 +436,11 @@ func (o *GroupOrchestrator) drainSpeakers(
 		}
 		g := queue[0]
 		queue = queue[1:]
-		res, appended, stop := o.runSpeakerGroup(ctx, s, g, onSpoke)
+		// Pass the REMAINING outer queue (groups not yet started) down so the
+		// mode's relay can de-duplicate against members still waiting there —
+		// not just against the current group's peers. Without it a member named
+		// by a peer while it sat in a later outer group was re-queued (ISS-271).
+		res, appended, stop := o.runSpeakerGroup(ctx, s, g, queue, onSpoke)
 		if stop {
 			return res
 		}
@@ -459,16 +463,17 @@ func (o *GroupOrchestrator) runSpeakerGroup(
 	ctx context.Context,
 	s groupTurnSetup,
 	g speakerGroup,
-	onSpoke func(ctx context.Context, sp speakerTurn, queue []speakerGroup, pending []speakerTurn) []speakerGroup,
+	outer []speakerGroup,
+	onSpoke func(ctx context.Context, sp speakerTurn, outer, appended []speakerGroup, pending []speakerTurn) []speakerGroup,
 ) (DrainResult, []speakerGroup, bool) {
 	if !g.parallel {
-		return o.runSequentialGroup(ctx, s, g, onSpoke)
+		return o.runSequentialGroup(ctx, s, g, outer, onSpoke)
 	}
 	if groupNamesUser(g) {
 		ai := splitOffUser(g)
 		var appended []speakerGroup
 		if len(ai.turns) > 0 {
-			res, app, stop := o.runParallelGroup(ctx, s, ai, onSpoke)
+			res, app, stop := o.runParallelGroup(ctx, s, ai, outer, onSpoke)
 			if stop {
 				// A cancelled AI member stops the whole turn; do not hand back.
 				return res, app, true
@@ -481,7 +486,7 @@ func (o *GroupOrchestrator) runSpeakerGroup(
 		o.handUserBack(o.groupID)
 		return DrainResult{}, appended, true
 	}
-	return o.runParallelGroup(ctx, s, g, onSpoke)
+	return o.runParallelGroup(ctx, s, g, outer, onSpoke)
 }
 
 // splitOffUser returns the group's AI members as a group, preserving its mode
@@ -507,7 +512,8 @@ func (o *GroupOrchestrator) runSequentialGroup(
 	ctx context.Context,
 	s groupTurnSetup,
 	g speakerGroup,
-	onSpoke func(ctx context.Context, sp speakerTurn, queue []speakerGroup, pending []speakerTurn) []speakerGroup,
+	outer []speakerGroup,
+	onSpoke func(ctx context.Context, sp speakerTurn, outer, appended []speakerGroup, pending []speakerTurn) []speakerGroup,
 ) (DrainResult, []speakerGroup, bool) {
 	var appended []speakerGroup
 	for i, t := range g.turns {
@@ -530,8 +536,12 @@ func (o *GroupOrchestrator) runSequentialGroup(
 		if r.Err == "" && onSpoke != nil {
 			// Pass this group's NOT-YET-SPOKEN turns as `pending`: a member still
 			// waiting later in the SAME group must not be re-queued (it would
-			// speak twice). They are neither in the outer queue nor in `appended`.
-			appended = onSpoke(ctx, t, appended, g.turns[i+1:])
+			// speak twice). The OUTER queue is passed too — a member waiting in a
+			// LATER group must not be re-queued either (ISS-271). `appended` is
+			// this group's own relay accumulator, also part of the waiting set.
+			// The result is ONLY the new groups, so appending it cannot alias the
+			// outer slice that drainSpeakers still owns.
+			appended = append(appended, onSpoke(ctx, t, outer, appended, g.turns[i+1:])...)
 		}
 	}
 	return DrainResult{}, appended, false
@@ -556,7 +566,8 @@ func (o *GroupOrchestrator) runParallelGroup(
 	ctx context.Context,
 	s groupTurnSetup,
 	g speakerGroup,
-	onSpoke func(ctx context.Context, sp speakerTurn, queue []speakerGroup, pending []speakerTurn) []speakerGroup,
+	outer []speakerGroup,
+	onSpoke func(ctx context.Context, sp speakerTurn, outer, appended []speakerGroup, pending []speakerTurn) []speakerGroup,
 ) (DrainResult, []speakerGroup, bool) {
 	// Member-speech cap: a parallel group launches every member it names, so the
 	// budget must be applied BEFORE snapshotting — only the first
@@ -629,7 +640,7 @@ func (o *GroupOrchestrator) runParallelGroup(
 				pending := make([]speakerTurn, 0, len(g.turns)-1)
 				pending = append(pending, g.turns[:i]...)
 				pending = append(pending, g.turns[i+1:]...)
-				appended = onSpoke(ctx, t, appended, pending)
+				appended = append(appended, onSpoke(ctx, t, outer, appended, pending)...)
 			}
 		}
 	}
@@ -837,8 +848,8 @@ func (o *GroupOrchestrator) runFreeLoop(ctx context.Context, groupID string) Dra
 	refill := func(context.Context) ([]speakerGroup, bool, DrainResult) {
 		return nil, false, DrainResult{}
 	}
-	onSpoke := func(_ context.Context, sp speakerTurn, q []speakerGroup, pending []speakerTurn) []speakerGroup {
-		return o.appendFreeTargets(q, pending, groupID, sp.member.ID, s.members, s.names)
+	onSpoke := func(_ context.Context, sp speakerTurn, outer, appended []speakerGroup, pending []speakerTurn) []speakerGroup {
+		return o.appendFreeTargets(outer, appended, pending, groupID, sp.member.ID, s.members, s.names)
 	}
 	return o.drainSpeakers(ctx, s, queue, refill, onSpoke)
 }
@@ -1046,15 +1057,23 @@ type freeRelay struct {
 }
 
 // appendFreeTargets parses the just-finished speaker's output for @-mentions and
-// appends the valid, not-already-queued targets to the queue's tail as GROUPS
-// (preserving each tag's mode). Returns the (possibly extended) queue.
+// returns the valid, not-already-queued targets as NEW groups (preserving each
+// tag's mode). It returns ONLY the newly appended groups — never the ones it was
+// given — so the caller can `append` the result to its own accumulator without
+// the two sharing a backing array.
 //
-// `queue` is the remaining OUTER queue (groups not yet started) and `pending`
-// is the current group's not-yet-spoken turns. Both count as "waiting" for the
-// dedup rule: a member still queued anywhere must not be appended again. Missing
-// `pending` is what let a member named by a peer in the SAME group be queued
-// twice (it spoke twice) — the outer queue does not contain a group peer that is
-// simply later in the current group.
+// `outer` is the remaining OUTER queue (groups not yet started), `appended` is
+// what earlier speakers in the SAME group already appended, and `pending` is the
+// current group's not-yet-spoken turns. ALL THREE count as "waiting" for the
+// dedup rule: a member still queued anywhere must not be appended again.
+//
+// The OUTER queue is the piece that was missing (ISS-271). onSpoke is called
+// from inside the group executor, which only ever held the current group's
+// turns; the outer queue lived in drainSpeakers and was never threaded down. So
+// a member named by a peer while it sat in a LATER outer group was re-queued and
+// spoke twice (e.g. seed `[[A],[B]]`, A @s B → `[[B],[B]]`). `pending` alone does
+// not cover this: it is `g.turns[i+1:]`, i.e. peers later in the CURRENT group,
+// not members in groups further down the outer queue.
 //
 // Dedup rule (decision #F9): only targets already WAITING are skipped. A member
 // that has already spoken may be @-ed again and will speak again — this is what
@@ -1064,19 +1083,24 @@ type freeRelay struct {
 // dropped silently (model slips not worth surfacing); an unknown NAME emits a
 // visible system notice (it usually means a member was removed/renamed, or the
 // model hallucinated — the user should know).
-func (o *GroupOrchestrator) appendFreeTargets(queue []speakerGroup, pending []speakerTurn, groupID, speakerID string, members []GroupMember, names map[string]string) []speakerGroup {
+func (o *GroupOrchestrator) appendFreeTargets(outer, appended []speakerGroup, pending []speakerTurn, groupID, speakerID string, members []GroupMember, names map[string]string) []speakerGroup {
 	output := o.lastMemberOutput(groupID, speakerID)
 	if output == "" {
-		return queue
+		return nil
 	}
 	route := grouprouting.Parse(output)
 	if !route.Found {
-		return queue
+		return nil
 	}
 
 	byID, byName := memberLookups(members)
 	waiting := map[string]bool{}
-	for _, g := range queue {
+	for _, g := range outer {
+		for _, st := range g.turns {
+			waiting[st.member.ID] = true
+		}
+	}
+	for _, g := range appended {
 		for _, st := range g.turns {
 			waiting[st.member.ID] = true
 		}
@@ -1089,12 +1113,13 @@ func (o *GroupOrchestrator) appendFreeTargets(queue []speakerGroup, pending []sp
 		byID: byID, byName: byName, waiting: waiting,
 	}
 
+	var out []speakerGroup
 	var unknown []string
 	for _, gr := range route.Groups {
 		g, miss := o.freeGroupFromRoute(gr, &rl)
 		unknown = append(unknown, miss...)
 		if len(g.turns) > 0 {
-			queue = append(queue, g)
+			out = append(out, g)
 		}
 	}
 	if len(unknown) > 0 {
@@ -1107,7 +1132,7 @@ func (o *GroupOrchestrator) appendFreeTargets(queue []speakerGroup, pending []sp
 		writeGroupSystemMessage(o.project, groupID,
 			fmt.Sprintf("%s @ 了一个不存在的成员：%s（已忽略）", speakerName, strings.Join(unknown, "、")))
 	}
-	return queue
+	return out
 }
 
 // freeGroupFromRoute resolves ONE mention group's targets to a speakerGroup,
