@@ -15,11 +15,7 @@
     <div v-if="msg.role === 'assistant' && speaker" class="msg-speaker" :class="{ 'msg-speaker-host': isHostMessage }">
       <AgentIcon :backend="speaker.backend" :name="speaker.name" :avatar="speaker.avatar" size="lg" />
       <span class="msg-speaker-name">{{ speaker.name }}</span>
-      <span
-        v-if="speaker.agentName && speaker.agentName !== speaker.name"
-        class="msg-speaker-real"
-        :title="t('group.realAgent')"
-      >{{ speaker.agentName }}</span>
+      <RealAgentNameTag class="msg-speaker-real" :agent-name="speaker.agentName" :display-name="speaker.name" />
       <span v-if="isHostMessage" class="msg-speaker-host-tag"><Crown :size="11" class="msg-speaker-host-crown" />{{ t('group.host') }}</span>
     </div>
 
@@ -268,6 +264,7 @@ import SummaryToggle from '@/components/common/SummaryToggle.vue'
 import CopyButton from '@/components/common/CopyButton.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
+import RealAgentNameTag from '@/components/common/RealAgentNameTag.vue'
 
 const { t } = useI18n()
 
@@ -1510,16 +1507,8 @@ const copyPayload = quotableText
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
 }
-.msg-speaker-real {
-  font-size: var(--font-size-xs);
-  color: var(--text-muted);
-  padding: 0 var(--space-1);
-  border-radius: var(--radius-xs);
-  /* Mix --text-primary into --bg-secondary (design-guide redline 4): a fixed
-     step like --bg-tertiary is invisible on ~15 of 36 themes. The chip sits
-     outside the bubble, directly on the chat panel. */
-  background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
-}
+/* .msg-speaker-real (the real-agent disclosure chip) is styled by the shared
+   RealAgentNameTag component; no override needed here. */
 .msg-speaker-host-tag {
   display: inline-flex;
   align-items: center;

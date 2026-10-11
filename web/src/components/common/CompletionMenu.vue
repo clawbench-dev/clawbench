@@ -33,14 +33,14 @@
         <span class="completion-name-row">
           <span class="completion-label" v-html="renderLabel(item)"></span>
           <!-- Real-agent disclosure: a member whose nickname was auto-derived (a
-               pool name / "<base> <n>") shows the underlying agent's real name,
-               the same convention as the message speaker label and the settings
-               sheet. Hidden when the nickname IS the agent name. -->
-          <span
-            v-if="item.isMember && item.memberAgentName && item.memberAgentName !== item.label"
+               pool name / "<base> <n>") shows the underlying agent's real name.
+               The visibility rule + styling live in the shared component. -->
+          <RealAgentNameTag
+            v-if="item.isMember"
             class="completion-real-name"
-            :title="t('group.realAgent')"
-          >{{ item.memberAgentName }}</span>
+            :agent-name="item.memberAgentName"
+            :display-name="item.label"
+          />
         </span>
         <span v-if="item.description" class="completion-desc">{{ middleEllipsis(item.description, 34) }}</span>
       </span>
@@ -55,6 +55,7 @@
 import { useI18n } from 'vue-i18n'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
+import RealAgentNameTag from '@/components/common/RealAgentNameTag.vue'
 import { SOURCE_META } from '@/utils/completionSources.ts'
 import { middleEllipsis } from '@/utils/completionMatch.ts'
 import { escapeHtml } from '@/utils/html.ts'
@@ -158,19 +159,8 @@ function renderLabel(item: CompletionItem): string {
   text-overflow: ellipsis;
 }
 
-/* Real-agent disclosure chip (nickname ≠ real agent name). Same treatment as
-   the message speaker label / settings sheet: muted, faint pill. */
-.completion-real-name {
-  flex-shrink: 0;
-  font-size: var(--font-size-xs);
-  color: var(--text-muted);
-  padding: 0 var(--space-1);
-  border-radius: var(--radius-xs);
-  /* Mix --text-primary into --bg-secondary (design-guide redline 4): a fixed
-     step like --bg-tertiary is invisible on ~15 of 36 themes. */
-  background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
-  white-space: nowrap;
-}
+/* .completion-real-name (the real-agent disclosure chip) is styled by the
+   shared RealAgentNameTag component. */
 
 .completion-label mark {
   background: rgba(255, 230, 0, 0.5);
