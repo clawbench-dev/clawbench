@@ -110,8 +110,9 @@ func TestLoadAgentsIntoMemoryFromDB_SortsBySortOrder(t *testing.T) {
 
 	require.NoError(t, LoadAgentsIntoMemoryFromDB(db))
 
-	var got []string
-	for _, a := range GetAgentList() {
+	list := GetAgentList()
+	got := make([]string, 0, len(list))
+	for _, a := range list {
 		got = append(got, a.ID)
 	}
 	assert.Equal(t, []string{"b", "c", "a"}, got, "ordered by sort_order, not id")
@@ -120,8 +121,9 @@ func TestLoadAgentsIntoMemoryFromDB_SortsBySortOrder(t *testing.T) {
 	_, err = db.Exec(`UPDATE agents SET sort_order = 0`)
 	require.NoError(t, err)
 	require.NoError(t, LoadAgentsIntoMemoryFromDB(db))
-	got = nil
-	for _, a := range GetAgentList() {
+	list = GetAgentList()
+	got = make([]string, 0, len(list))
+	for _, a := range list {
 		got = append(got, a.ID)
 	}
 	assert.Equal(t, []string{"a", "b", "c"}, got, "equal sort_order falls back to id")
@@ -140,7 +142,7 @@ func TestSortAgentsByOrder(t *testing.T) {
 	}
 	SortAgentsByOrder(agents)
 
-	var got []string
+	got := make([]string, 0, len(agents))
 	for _, a := range agents {
 		got = append(got, a.ID)
 	}

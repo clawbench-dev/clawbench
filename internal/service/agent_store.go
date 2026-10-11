@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
@@ -515,13 +516,14 @@ func ReorderAgents(ids []string) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	tx, err := store.WriteBegin() //nolint:noctx // DB global, context not applicable
+	tx, err := store.WriteBegin()
 	if err != nil {
 		return err
 	}
 	defer store.WriteUnlock()
+	ctx := context.Background()
 	for i, id := range ids {
-		if _, err := tx.Exec("UPDATE agents SET sort_order = ? WHERE id = ?", i, id); err != nil {
+		if _, err := tx.ExecContext(ctx, "UPDATE agents SET sort_order = ? WHERE id = ?", i, id); err != nil {
 			_ = tx.Rollback()
 			return err
 		}

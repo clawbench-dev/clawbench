@@ -1490,15 +1490,16 @@ func TestServeAgentsReorder_MatchesReload(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 
 	inMemory := model.GetAgentList()
-	var memIDs []string
+	memIDs := make([]string, 0, len(inMemory))
 	for _, a := range inMemory {
 		memIDs = append(memIDs, a.ID)
 	}
 
 	// Reload from the DB the same way the server does on startup/rescan.
 	require.NoError(t, model.LoadAgentsIntoMemoryFromDB(store.ReadDB()))
-	var reloadedIDs []string
-	for _, a := range model.GetAgentList() {
+	reloaded := model.GetAgentList()
+	reloadedIDs := make([]string, 0, len(reloaded))
+	for _, a := range reloaded {
 		reloadedIDs = append(reloadedIDs, a.ID)
 	}
 
