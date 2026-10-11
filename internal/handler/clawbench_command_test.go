@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -239,18 +238,20 @@ func TestProcessClawbenchCommand_AgentIsRecognizedAsBuiltin(t *testing.T) {
 	assert.False(t, IsClawbenchCommand("/cb-agen"))
 }
 
-// TestAgentTemplateMsgKeysAreEmitted guards the template↔backend contract: every
-// error msgKey the /cb-agent prompt names must actually be emitted by the
-// handler (non-test) code. A template that tells the AI to expect a msgKey the
-// server never produces is a silent trap — the AI would explain a failure that
-// cannot happen, or miss one that does. The reverse (a renamed msgKey) is
-// caught here too, since the template token would no longer match any emit site.
+// TestAgentTemplateMsgKeysAreEmitted guards the template↔backend contract in
+// both directions: every error msgKey the /cb-agent prompt names must be
+// emitted by a real call site in agent.go, AND must still appear in the
+// agentInjectTemplate constant. A template that names a msgKey the server never
+// produces would make the AI explain a failure that cannot happen; a rename in
+// either place without the other would desync them.
 //
-// This is deliberately a source scan rather than a rendered-string assertion:
-// the earlier version only checked the token appeared in the prompt, which
-// passes even when the backend emits nothing of the sort.
+// The check matches actual writeLocalizedError* call sites (not a bare
+// substring) so a key mentioned only in a comment does not satisfy it, and it
+// is scoped to agent.go because several of these keys (notably
+// NoProjectSelected) are emitted from many other handlers where the agent
+// command's own site could be deleted unnoticed.
 func TestAgentTemplateMsgKeysAreEmitted(t *testing.T) {
-	// msgKeys named in agentInjectTemplate's rules.
+	// The msgKeys named in agentInjectTemplate's rules — the shared contract.
 	keys := []string{
 		"AgentNameTaken",
 		"AgentNameReserved",
@@ -261,23 +262,33 @@ func TestAgentTemplateMsgKeysAreEmitted(t *testing.T) {
 		"NoProjectSelected",
 	}
 
-	// Scan the non-test handler sources for each key as a quoted emit argument.
-	files, err := filepath.Glob("*.go")
+	// Collect the msgKeys agent.go actually passes to writeLocalizedError(f).
+	// The call shape is writeLocalizedErrorf(w, r, status, "Key", ...) — the
+	// first three args (w, r, http.StatusX) never contain a comma, so the
+	// fourth argument is the msgKey. This matches a real call site, so a key
+	// present only in a comment is not counted.
+	src, err := os.ReadFile("agent.go")
 	require.NoError(t, err)
-	var src strings.Builder
-	for _, f := range files {
-		if strings.HasSuffix(f, "_test.go") {
-			continue
-		}
-		b, readErr := os.ReadFile(f)
-		require.NoError(t, readErr)
-		src.Write(b)
+	callRe := regexp.MustCompile(`writeLocalizedErrorf?\(\s*[^,]+,\s*[^,]+,\s*[^,]+,\s*"([A-Za-z0-9_]+)"`)
+	emitted := map[string]bool{}
+	for _, m := range callRe.FindAllStringSubmatch(string(src), -1) {
+		emitted[m[1]] = true
 	}
-	all := src.String()
+	require.NotEmpty(t, emitted, "no writeLocalizedError* call sites found in agent.go — the scan regexp is wrong")
 
+	// The reverse direction is checked against the hand-written template
+	// constant, NOT the rendered prompt: the rendered prompt also carries the
+	// spec's endpoint descriptions, which independently name these msgKeys, so
+	// a rename in the template alone would still match there. The constant
+	// isolates the part this test owns.
 	for _, k := range keys {
-		assert.Containsf(t, all, `"`+k+`"`,
-			"the /cb-agent template names msgKey %q but no handler code emits it — the prompt would describe a failure the server cannot produce", k)
+		assert.Truef(t, emitted[k],
+			"the /cb-agent template names msgKey %q but agent.go has no writeLocalizedError* call emitting it — the prompt would describe a failure the server cannot produce", k)
+		// Word-boundary match: a bare substring check would let a renamed key
+		// ("...AgentXX") satisfy it, since it contains the original token.
+		keyRe := regexp.MustCompile(`\b` + regexp.QuoteMeta(k) + `\b`)
+		assert.Truef(t, keyRe.MatchString(agentInjectTemplate),
+			"msgKey %q is emitted by agent.go but missing from agentInjectTemplate — the contract list and the template have drifted", k)
 	}
 }
 

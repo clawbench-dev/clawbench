@@ -143,13 +143,15 @@ func TestRenderCommand_Deterministic(t *testing.T) {
 // TestRenderCommand_SizeBudget caps the injected fragments so a command's
 // prompt cannot creep back toward the size of the full spec.
 //
-// This guards against unbounded prose growth only — it is NOT the defence
-// against tag-based selection. That defence is the operationId selection
-// itself: endpointsForOperations binds each id to its expected tag and fails
-// loudly on a retag, and each command's notWant assertions (in
-// CoversExpectedOperations) pin the operations that must stay out. A tag-based
-// render happens to fit under these budgets today, so the cap alone would not
-// catch a regression to it.
+// This guards unbounded prose growth, and — as a side effect — also rejects a
+// wholesale switch to tag-based selection for most commands, since a whole
+// tag's endpoints are far larger than the hand-picked subset (measured at the
+// time of writing: Agents tag 4839 > agent budget 4500; RAG 4943 > chatsearch
+// 2600; System 3516 > usage 2000). It is NOT the primary defence, though: the
+// real guard is the operationId selection itself — endpointsForOperations
+// binds each id to its expected tag and fails loudly on a retag — plus each
+// command's notWant assertions in CoversExpectedOperations, which pin the
+// operations that must stay out regardless of size.
 func TestRenderCommand_SizeBudget(t *testing.T) {
 	budgets := map[Command]int{
 		// chatsearch grew when the project-list endpoint joined it, so the AI
