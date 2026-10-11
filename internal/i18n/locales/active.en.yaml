@@ -123,6 +123,7 @@ InvalidSortOrder: Invalid sort order
 AgentInUse: "This agent is still in use ({{.SessionCount}} sessions, {{.TaskCount}} tasks, {{.MembershipCount}} group memberships); delete them first"
 AgentDisabled: This agent is disabled
 CannotDisableDefaultAgent: The default agent cannot be disabled
+CannotDeleteDefaultAgent: The default agent cannot be deleted
 AgentNotInProject: This agent is only available in its own project
 CannotScopeDefaultAgent: The default agent cannot be limited to one project
 InvalidSHA: Invalid commit SHA format
