@@ -273,16 +273,9 @@ func CreateGroupWithMembers(projectPath, title, hostAgentID string, specs []Grou
 	// write transaction is open deadlocks whenever the read and write pools are
 	// the same single-connection handle (the handler test fixture does exactly
 	// that: store.SetDBForTest(db, db) with MaxOpenConns(1)).
-	groupID = generateSessionID()
-	if groupID == "" {
-		return "", "", fmt.Errorf("failed to generate unique session ID")
-	}
-	memberIDs := make([]string, len(specs))
-	for i := range specs {
-		memberIDs[i] = generateSessionID()
-		if memberIDs[i] == "" {
-			return "", "", fmt.Errorf("failed to generate unique member session ID")
-		}
+	groupID, memberIDs, idErr := generateGroupIDs(len(specs))
+	if idErr != nil {
+		return "", "", idErr
 	}
 
 	tx, err := store.WriteBegin()
@@ -311,12 +304,7 @@ func CreateGroupWithMembers(projectPath, title, hostAgentID string, specs []Grou
 	// the agent has AutoApprove=false). This matches AddGroupMembers' post-commit
 	// loop, but must run BEFORE commit because ApplyAgentAutoApproveDefault uses
 	// store.WriteExec which re-acquires the write lock.
-	for i, s := range specs {
-		agent := model.GetAgent(s.AgentID)
-		if agent != nil && agent.AutoApprove {
-			_, _ = tx.ExecContext(context.Background(), "UPDATE chat_sessions SET auto_approve = 1 WHERE id = ?", memberIDs[i])
-		}
-	}
+	applyAutoApproveDefaults(tx, specs, memberIDs)
 
 	// Mode marker (and, in host mode, the host pointer) inline on the group
 	// row's context_state. One statement so the mode write cannot half-apply.
@@ -328,6 +316,42 @@ func CreateGroupWithMembers(projectPath, title, hostAgentID string, specs []Grou
 		return "", "", err
 	}
 	return groupID, hostMemberID, nil
+}
+
+// generateGroupIDs mints the group row id and one member id per spec, all BEFORE
+// any transaction is opened. generateSessionID probes the DB for uniqueness via
+// store.ReadDB(); a read issued while the write transaction is open deadlocks
+// whenever the read and write pools are the same single-connection handle (the
+// handler test fixture does exactly that: store.SetDBForTest(db, db) with
+// MaxOpenConns(1)). Extracted from CreateGroupWithMembers.
+func generateGroupIDs(memberCount int) (groupID string, memberIDs []string, err error) {
+	groupID = generateSessionID()
+	if groupID == "" {
+		return "", nil, fmt.Errorf("failed to generate unique session ID")
+	}
+	memberIDs = make([]string, memberCount)
+	for i := range memberIDs {
+		memberIDs[i] = generateSessionID()
+		if memberIDs[i] == "" {
+			return "", nil, fmt.Errorf("failed to generate unique member session ID")
+		}
+	}
+	return groupID, memberIDs, nil
+}
+
+// applyAutoApproveDefaults sets auto_approve=1 on every new member row whose
+// agent has it enabled, INSIDE the group-creation transaction (the UPDATE uses
+// the session id as primary key and is idempotent — a no-op when the agent has
+// AutoApprove=false). It must run BEFORE commit because ApplyAgentAutoApproveDefault
+// uses store.WriteExec, which re-acquires the write lock and would deadlock while
+// this transaction holds it. Extracted from CreateGroupWithMembers.
+func applyAutoApproveDefaults(tx *sql.Tx, specs []GroupMemberSpec, memberIDs []string) {
+	for i, s := range specs {
+		agent := model.GetAgent(s.AgentID)
+		if agent != nil && agent.AutoApprove {
+			_, _ = tx.ExecContext(context.Background(), "UPDATE chat_sessions SET auto_approve = 1 WHERE id = ?", memberIDs[i])
+		}
+	}
 }
 
 // insertGroupRow writes the group timeline row and marks its title a
