@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -180,18 +181,20 @@ func TestProcessClawbenchCommand_AgentInjects(t *testing.T) {
 	assert.NotContains(t, result, "/cb-agent 创建一个代码审查智能体")
 }
 
-// TestProcessClawbenchCommand_AgentIsProjectScoped asserts the agent command
-// carries the project cookie. GET /api/agents filters by project and PATCH
-// resolves project_scope from it, so omitting the cookie would hide
-// project-scoped agents.
-func TestProcessClawbenchCommand_AgentIsProjectScoped(t *testing.T) {
+// TestProcessClawbenchCommand_AgentCarriesProjectCookie asserts the agent
+// command carries the project cookie in its rendered prompt. This checks the
+// *template* only (that it tells the AI to send the cookie) — it does not
+// exercise the backend. The backend-side contract (GET /api/agents filtering by
+// project, PATCH resolving project_scope) is covered by the agent handler tests
+// (TestServeAgentsGet_FiltersByProjectScope, TestServeAgentsPatch_ProjectScope*).
+func TestProcessClawbenchCommand_AgentCarriesProjectCookie(t *testing.T) {
 	withServerPort(t, 20000)
 
 	result, err := processClawbenchCommand("/cb-agent list", "/project", "sess-1")
 	require.NoError(t, err)
 
 	assert.Contains(t, result, "clawbench_project=/project",
-		"agent management is project-scoped and must carry the project cookie")
+		"the prompt must tell the AI to send the project cookie")
 	assert.Contains(t, result, "http://localhost:20000")
 }
 
@@ -234,6 +237,48 @@ func TestProcessClawbenchCommand_AgentIsRecognizedAsBuiltin(t *testing.T) {
 	assert.True(t, IsClawbenchCommand("/cb-agent list all"))
 	assert.False(t, IsClawbenchCommand("/cb-agentx"))
 	assert.False(t, IsClawbenchCommand("/cb-agen"))
+}
+
+// TestAgentTemplateMsgKeysAreEmitted guards the template↔backend contract: every
+// error msgKey the /cb-agent prompt names must actually be emitted by the
+// handler (non-test) code. A template that tells the AI to expect a msgKey the
+// server never produces is a silent trap — the AI would explain a failure that
+// cannot happen, or miss one that does. The reverse (a renamed msgKey) is
+// caught here too, since the template token would no longer match any emit site.
+//
+// This is deliberately a source scan rather than a rendered-string assertion:
+// the earlier version only checked the token appeared in the prompt, which
+// passes even when the backend emits nothing of the sort.
+func TestAgentTemplateMsgKeysAreEmitted(t *testing.T) {
+	// msgKeys named in agentInjectTemplate's rules.
+	keys := []string{
+		"AgentNameTaken",
+		"AgentNameReserved",
+		"AgentInUse",
+		"CannotDeleteDefaultAgent",
+		"CannotDisableDefaultAgent",
+		"CannotScopeDefaultAgent",
+		"NoProjectSelected",
+	}
+
+	// Scan the non-test handler sources for each key as a quoted emit argument.
+	files, err := filepath.Glob("*.go")
+	require.NoError(t, err)
+	var src strings.Builder
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		b, readErr := os.ReadFile(f)
+		require.NoError(t, readErr)
+		src.Write(b)
+	}
+	all := src.String()
+
+	for _, k := range keys {
+		assert.Containsf(t, all, `"`+k+`"`,
+			"the /cb-agent template names msgKey %q but no handler code emits it — the prompt would describe a failure the server cannot produce", k)
+	}
 }
 
 // --- /cb-user-guide ---

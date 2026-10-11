@@ -140,17 +140,20 @@ func TestRenderCommand_Deterministic(t *testing.T) {
 	}
 }
 
-// TestRenderCommand_SizeBudget keeps the injected fragments from creeping back
-// toward the size of the full spec. The budget leaves headroom for ordinary
-// spec growth (adding a documented field to the task body is legitimate) while
-// staying far below the full spec, so a switch back to tag-based selection
-// would blow past it immediately.
+// TestRenderCommand_SizeBudget caps the injected fragments so a command's
+// prompt cannot creep back toward the size of the full spec.
+//
+// This guards against unbounded prose growth only — it is NOT the defence
+// against tag-based selection. That defence is the operationId selection
+// itself: endpointsForOperations binds each id to its expected tag and fails
+// loudly on a retag, and each command's notWant assertions (in
+// CoversExpectedOperations) pin the operations that must stay out. A tag-based
+// render happens to fit under these budgets today, so the cap alone would not
+// catch a regression to it.
 func TestRenderCommand_SizeBudget(t *testing.T) {
 	budgets := map[Command]int{
 		// chatsearch grew when the project-list endpoint joined it, so the AI
-		// can resolve a project the user names to its exact path. The budget
-		// still sits far below the full spec, so a switch back to tag-based
-		// selection would blow past it.
+		// can resolve a project the user names to its exact path.
 		CommandChatSearch: 2600,
 		// The task body grew when the gating-script fields (script,
 		// script_timeout) joined it, and again when GET /api/agents gained the
@@ -159,9 +162,7 @@ func TestRenderCommand_SizeBudget(t *testing.T) {
 		CommandUsage: 2000,
 		// The agent command renders four operations whose PATCH/POST bodies
 		// carry long field notes (name uniqueness, avatar, disabled,
-		// project_scope). The headroom is deliberate; a switch back to
-		// tag-based selection would pull in sub-resources and backends and
-		// blow past it.
+		// project_scope).
 		CommandAgent: 4500,
 	}
 	for cmd, budget := range budgets {
