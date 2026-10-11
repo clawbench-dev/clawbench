@@ -6,14 +6,16 @@ import (
 	"clawbench/internal/model"
 )
 
-// 一个智能体有多个实例时，其全部实例（含第一个）都取池名，不保留本名。
+// 首个实例保留智能体本名，其余实例取名池名。
 func TestAssignMemberNames_MultiInstanceAllUsePool(t *testing.T) {
 	specs := []GroupMemberSpec{
 		{AgentID: "a"}, {AgentID: "a"}, {AgentID: "a"},
 	}
 	assignMemberNames(specs, nil, nil)
-	// 全部取自池，按序：pool[0], pool[1], pool[2]。
-	want := []string{groupNamePool[0], groupNamePool[1], groupNamePool[2]}
+	// 首个保留本名（无注册表时 GetAgentDisplayName("a") 回退到 agent id "a"），
+	// 其余按序取自池：pool[0], pool[1]。
+	base := GetAgentDisplayName("a")
+	want := []string{base, groupNamePool[0], groupNamePool[1]}
 	for i := range want {
 		if specs[i].DisplayName != want[i] {
 			t.Fatalf("names[%d] = %q want %q (all = %q,%q,%q)",
@@ -22,7 +24,7 @@ func TestAssignMemberNames_MultiInstanceAllUsePool(t *testing.T) {
 	}
 }
 
-// 单实例（本批次只有一个、且组内此前没有）仍保留智能体本名。
+// 单实例（本批次只有一个、且组内此前没有）保留智能体本名。
 func TestAssignMemberNames_LoneInstanceKeepsBase(t *testing.T) {
 	specs := []GroupMemberSpec{{AgentID: "a"}}
 	assignMemberNames(specs, nil, nil)
@@ -32,8 +34,8 @@ func TestAssignMemberNames_LoneInstanceKeepsBase(t *testing.T) {
 	}
 }
 
-// 已有 1 个实例（本名）+ 本批再加 1 个 → 该 agent 变成多实例，但已存在的实例
-// 不改名（历史快照），新实例取池名。
+// 已有 1 个实例（本名）+ 本批再加 1 个 → 已存在实例不改名（历史快照），新实例
+// （k=2）取池名。
 func TestAssignMemberNames_ExistingPlusBatchIsMulti(t *testing.T) {
 	specs := []GroupMemberSpec{{AgentID: "a"}}
 	assignMemberNames(specs, map[string]int{"a": 1}, nil)
@@ -42,14 +44,15 @@ func TestAssignMemberNames_ExistingPlusBatchIsMulti(t *testing.T) {
 	}
 }
 
-// 池被占用时跳到下一个未占用名字（多实例全部取池）。
+// 池被占用时跳到下一个未占用名字（首个保留本名，重复实例取池）。
 func TestAssignMemberNames_PoolSkipsTaken(t *testing.T) {
 	taken := map[string]bool{groupNamePool[0]: true}
 	specs := []GroupMemberSpec{{AgentID: "a"}, {AgentID: "a"}}
 	assignMemberNames(specs, nil, taken)
-	if specs[0].DisplayName != groupNamePool[1] || specs[1].DisplayName != groupNamePool[2] {
+	base := GetAgentDisplayName("a")
+	if specs[0].DisplayName != base || specs[1].DisplayName != groupNamePool[1] {
 		t.Fatalf("names = %q,%q want %q,%q",
-			specs[0].DisplayName, specs[1].DisplayName, groupNamePool[1], groupNamePool[2])
+			specs[0].DisplayName, specs[1].DisplayName, base, groupNamePool[1])
 	}
 }
 
@@ -61,10 +64,11 @@ func TestAssignMemberNames_PoolExhaustedFallsBack(t *testing.T) {
 	}
 	specs := []GroupMemberSpec{{AgentID: "a"}, {AgentID: "a"}}
 	assignMemberNames(specs, nil, taken)
-	// 无注册表时 GetAgentDisplayName("a") 回退到 agent id 本身；多实例编号从 2 起。
+	// 无注册表时 GetAgentDisplayName("a") 回退到 agent id 本身；首个保留本名，
+	// 重复实例编号从 2 起。
 	base := GetAgentDisplayName("a")
-	want0 := base + " 2"
-	want1 := base + " 3"
+	want0 := base
+	want1 := base + " 2"
 	if specs[0].DisplayName != want0 || specs[1].DisplayName != want1 {
 		t.Fatalf("fallback = %q,%q want %q,%q", specs[0].DisplayName, specs[1].DisplayName, want0, want1)
 	}

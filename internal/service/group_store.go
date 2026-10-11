@@ -107,23 +107,20 @@ func validateGroupSpecs(specs []GroupMemberSpec) error {
 // assignMemberNames gives every spec a UNIQUE display name, in the order the
 // specs appear.
 //
-// Naming rule (design §4, pool): an agent that ends up with MORE THAN ONE
-// instance in the group loses its bare name entirely — EVERY instance (the
-// first included) draws the first unused name from groupNamePool ("Alice",
-// "Bob", …). A LONE instance keeps the agent's own name ("Claude"). When the
-// pool is exhausted the name falls back to "<base> <ordinal>", numbered from 2
-// so "<base> 1" is never produced.
+// Naming rule (design §4, pool): the FIRST instance of an agent keeps its bare
+// name ("Claude"); later instances draw the first unused name from
+// groupNamePool ("Alice", "Bob", …). When the pool is exhausted the name falls
+// back to "<base> <ordinal>", numbered from 2 so "<base> 1" is never produced.
 //
-// "More than one instance" counts the whole group AFTER this batch: existing
-// member rows for the agent (archived included) PLUS this batch's occurrences.
-// An instance that ALREADY exists is never renamed (its name is a historical
+// "First instance" is the instance index k == 1, i.e. (existing member rows for
+// that agent in the group, archived included) + (ordinal within this batch) ==
+// 0. An instance that ALREADY exists is never renamed (its name is a historical
 // snapshot referenced by past mentions/rolls), so adding a 2nd instance later
-// leaves the first with whatever name it already had and names only the new
-// ones. The instance index is (existing rows) + (ordinal within this batch);
-// because rows are only ever archived (never deleted) the numbering is
-// monotonic. A collision (with another member's name, a pool name, or the
-// reserved user nickname) advances until unique, so routing by name stays
-// unambiguous.
+// leaves the first with its bare name and names only the new ones. Because rows
+// are only ever archived (never deleted) the index is monotonic and a
+// historical nickname always refers to the same member. A collision (with
+// another member's name, a pool name, or the reserved user nickname) advances
+// until unique, so routing by name stays unambiguous.
 //
 // existingCounts maps agent id → number of member rows already in the group
 // (archived included). It may be nil (no existing members). taken holds names
@@ -163,29 +160,22 @@ func assignMemberNames(specs []GroupMemberSpec, existingCounts map[string]int, t
 			reserved[n] = true
 		}
 	}
-	// Occurrences per agent in THIS batch. Combined with existingCounts it
-	// decides whether the agent is "multi" (⇒ no instance keeps the bare name).
-	batchCount := make(map[string]int, len(specs))
-	for i := range specs {
-		batchCount[specs[i].AgentID]++
-	}
 	nextOrdinal := make(map[string]int, len(specs))
 	for i := range specs {
 		s := &specs[i]
 		base := bases[i]
 		// Instance index: existing rows + already-named in this batch, then +1.
 		k := existingCounts[s.AgentID] + nextOrdinal[s.AgentID] + 1
-		multi := existingCounts[s.AgentID]+batchCount[s.AgentID] > 1
 		candidate := ""
-		if multi {
-			// Every instance of a multi agent draws a pool name.
-			candidate = nextPoolName(used, reserved)
-		} else {
-			// A lone instance keeps the agent's own name.
+		if k == 1 {
+			// First instance keeps the agent's own name.
 			candidate = base
+		} else {
+			// Duplicate instance: prefer an unused pool name.
+			candidate = nextPoolName(used, reserved)
 		}
 		if candidate == "" || used[candidate] {
-			// Pool exhausted, or a lone instance's bare name collides: fall
+			// Pool exhausted, or a first instance's bare name collides: fall
 			// back to "<base> <n>", numbered from 2 so "<base> 1" never appears.
 			n := k
 			if n < 2 {

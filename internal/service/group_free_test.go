@@ -1162,10 +1162,10 @@ func TestFreeLoop_DuplicateInstancesGetDistinctOwnNames(t *testing.T) {
 	if _, err := store.ProjectIDForPath(project); err != nil {
 		t.Fatalf("ProjectIDForPath: %v", err)
 	}
-	// Two instances of the SAME agent in a free group. BOTH draw pool names (a
-	// multi-instance agent keeps no bare name).
-	name0 := groupNamePool[0]
-	name1 := groupNamePool[1]
+	// Two instances of the SAME agent in a free group. The first keeps its
+	// DisplayName (the base); the second draws the first unused pool name.
+	name0 := "Codebuddy"
+	name1 := groupNamePool[0]
 	groupID, _, err := CreateGroupWithMembers(project, "群聊", "", []GroupMemberSpec{
 		{AgentID: "codebuddy", Backend: "claude", DisplayName: "Codebuddy"},
 		{AgentID: "codebuddy", Backend: "claude", DisplayName: "Codebuddy"},

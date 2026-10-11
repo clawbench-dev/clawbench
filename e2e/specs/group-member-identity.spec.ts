@@ -5,17 +5,16 @@ import { createGroupViaUI, fetchGroupMembers } from '../helpers/group'
 /**
  * E2E for group-member IDENTITY:
  *  1. NAMING: adding the SAME agent to a group twice yields two DIFFERENT
- *     nicknames. A MULTI-instance agent keeps NO bare name — every instance
- *     draws a built-in English pool name (groupNamePool[0..] = "Alice", "Bob").
+ *     nicknames — the first keeps the agent's own name, the duplicate draws the
+ *     built-in English pool name (groupNamePool[0] = "Alice").
  *  2. AVATARS: only the SECOND-and-later instance of a repeated agent gets its
  *     OWN DiceBear avatar persisted to the backend; the FIRST instance keeps
  *     the agent's configured avatar (no generated avatar). A LONE agent also
  *     keeps the agent avatar. So a two-instance group has exactly ONE persisted
  *     member avatar, and the two discs still render distinctly.
  *  3. REAL-NAME DISCLOSURE: a pooled member's message shows the real agent name
- *     in `.msg-speaker-real`. (The "nickname == agent name ⇒ no badge" negative
- *     case is covered by the ChatMessageItem unit test, since a two-instance
- *     group has no bare-named member.)
+ *     in `.msg-speaker-real`; a member whose nickname IS the agent name shows no
+ *     such badge.
  *
  * The shared agent is acp-mock (deterministic, fast). All three tests are
  * UI/roster assertions against the real backend, so the naming + avatar +
@@ -61,10 +60,9 @@ test.describe.serial('group member identity', () => {
     await expect(names).toHaveCount(2, { timeout: 10000 })
 
     const texts = await names.allTextContents()
-    // A multi-instance agent keeps NO bare name: both draw pool names.
+    // The first instance keeps the agent's own name; the duplicate draws the pool.
+    expect(texts).toContain('ACP Mock Agent')
     expect(texts).toContain('Alice')
-    expect(texts).toContain('Bob')
-    expect(texts).not.toContain('ACP Mock Agent')
     // The two nicknames are distinct (the whole point of the pool).
     expect(new Set(texts).size).toBe(2)
   })
@@ -111,9 +109,8 @@ test.describe.serial('group member identity', () => {
   })
 
   test('a pooled member discloses its real agent name', async ({ page }) => {
-    // Free-mode group with the same agent twice: BOTH are pool names ("Alice"
-    // and "Bob"), since a multi-instance agent keeps no bare name. Create via
-    // API (no avatars needed) and open it in the UI.
+    // Free-mode group with the same agent twice: members "ACP Mock Agent" and
+    // "Alice". Create via API (no avatars needed) and open it in the UI.
     const gid = await page.evaluate(async () => {
       const r = await fetch('/api/group/create', {
         method: 'POST',
@@ -158,6 +155,16 @@ test.describe.serial('group member identity', () => {
     await expect(real).toBeVisible({ timeout: 15000 })
     await expect(real).toHaveText('ACP Mock Agent')
 
+    // The first instance's nickname IS the real name, so it carries NO badge.
+    // (The acp-mock free relay hands the floor to the other member, so it also
+    // speaks during the same turn.)
+    const baseMsg = page
+      .locator('.chat-message.assistant')
+      .filter({ has: page.locator('.msg-speaker-name', { hasText: /^ACP Mock Agent$/ }) })
+      .first()
+    await expect(baseMsg).toBeVisible({ timeout: 90000 })
+    await expect(baseMsg.locator('.msg-speaker-real')).toHaveCount(0)
+
     // Let the turn finish so the next spec does not inherit a busy mock.
     await expect
       .poll(async () => {
@@ -170,8 +177,9 @@ test.describe.serial('group member identity', () => {
   })
 
   test('the @ member list discloses the real agent name for an auto-named member', async ({ page }) => {
-    // Two instances of one agent → both draw pool names, so the @ list must show
-    // each nickname WITH the underlying real agent name.
+    // Two instances of one agent → the first keeps the bare name, the second
+    // draws a pool name. The @ list must show the pool nickname WITH the
+    // underlying real agent name, and NO chip on the bare-named instance.
     const gid = await page.evaluate(async () => {
       const r = await fetch('/api/group/create', {
         method: 'POST',
@@ -195,13 +203,13 @@ test.describe.serial('group member identity', () => {
 
     const rows = page.locator('.completion-item--agent')
     await expect(rows.first()).toBeVisible({ timeout: 5000 })
-    // Every member row carries the real-agent disclosure chip.
-    const chips = page.locator('.completion-item--agent .completion-real-name')
-    await expect(chips.first()).toBeVisible({ timeout: 5000 })
-    await expect(chips.first()).toHaveText('ACP Mock Agent')
-    // The nickname itself is a pool name, not the raw agent name.
-    const labels = page.locator('.completion-item--agent .completion-label')
-    await expect(labels.first()).not.toHaveText('ACP Mock Agent')
+
+    // The pool-named instance ("Alice") carries the disclosure chip.
+    const pooledRow = rows.filter({ has: page.locator('.completion-label', { hasText: /^Alice$/ }) }).first()
+    await expect(pooledRow.locator('.completion-real-name')).toHaveText('ACP Mock Agent')
+    // The bare-named instance ("ACP Mock Agent") carries NO chip.
+    const bareRow = rows.filter({ has: page.locator('.completion-label', { hasText: /^ACP Mock Agent$/ }) }).first()
+    await expect(bareRow.locator('.completion-real-name')).toHaveCount(0)
 
     // Dismiss the menu so it does not linger into the next spec.
     await textarea.fill('')

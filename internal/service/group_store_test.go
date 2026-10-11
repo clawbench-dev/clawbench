@@ -1220,8 +1220,8 @@ func TestCreateGroupWithMembers_KeepsDuplicateAgents(t *testing.T) {
 	if got := countAgentRows(members, "agent-a"); got != 3 {
 		t.Fatalf("duplicate agent ids must each get their own row, got %d", got)
 	}
-	// Names must be unique. agent-a is MULTI-instance, so NONE keeps the bare
-	// "A" — all three draw pool names ("A 1" is never produced).
+	// Names must be unique: the first keeps the bare name, duplicates draw the
+	// next unused pool names ("A 1" is never produced).
 	names := map[string]bool{}
 	for _, m := range members {
 		if m.AgentID != "agent-a" {
@@ -1232,13 +1232,13 @@ func TestCreateGroupWithMembers_KeepsDuplicateAgents(t *testing.T) {
 		}
 		names[m.Name] = true
 	}
-	for _, want := range []string{groupNamePool[0], groupNamePool[1], groupNamePool[2]} {
+	for _, want := range []string{"A", groupNamePool[0], groupNamePool[1]} {
 		if !names[want] {
 			t.Fatalf("missing expected instance name %q (got %v)", want, names)
 		}
 	}
-	if names["A"] || names["A 1"] {
-		t.Fatalf(`multi-instance agents must not keep the bare name or "A 1" (got %v)`, names)
+	if names["A 1"] {
+		t.Fatal(`"A 1" must never be produced`)
 	}
 }
 

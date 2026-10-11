@@ -72,10 +72,9 @@
 ```
 base  = GetAgentDisplayName(A)                       // 或 spec.DisplayName
 n     = countMemberRows(G, A)                         // 含 archived，即历史所有实例
-multi = n + batchCount(A) > 1                         // 该 agent 在群内（含本批次）实例数 > 1
 k     = n + batchOrdinal                              // 实例序号（1 起，含 archived）
-candidate = nextPoolName(used)  if multi              // 多实例：每个实例都取名池未占用名
-          = base                otherwise             // 单实例：保留智能体本名
+candidate = base                if k == 1             // 首个实例：保留智能体本名
+          = nextPoolName(used)  otherwise             // 重复实例：取名池未占用名
 if candidate == "" or collides(candidate, G):
     m = max(k, 2)                                     // 池耗尽 / 本名冲突 → 回退 base + " " + m
     candidate = base + " " + m
@@ -84,8 +83,8 @@ if candidate == "" or collides(candidate, G):
         candidate = base + " " + m
 ```
 
-- **多实例不保留本名**（2026-10-11 调整）：只要该 agent 在群内的实例数 > 1（已存在 + 本批次），它的**全部实例（含第 1 个）都取名池名**，不再保留智能体本名——避免「一个叫 `Claude`、一个叫 `Alice`」这种混排。群内仅此一个实例时才保留本名。
-- **已存在的实例不改名**：改名会改写历史快照（历史消息里的 @ 引用的是旧名），故**后续加第 2 个实例**时，先存在的那个保持它已有的名字，**只有新实例**取名池名。因此「多实例不保留本名」对同一批次内命名的实例完全成立；跨批次新增时，先前已命名的实例不回改。
+- **首个实例保留本名**：实例序号 `k == 1` 的实例用智能体本名（`Claude`）；`k >= 2` 的重复实例取名池名。群内仅此一个实例时自然也是本名。
+- **已存在的实例不改名**：改名会改写历史快照（历史消息里的 @ 引用的是旧名），故**后续加第 2 个实例**时，先存在的那个保持它已有的名字，**只有新实例**取名池名。
 - **永不出现 `base + " 1"`**：池耗尽 / 冲突回退时编号从 2 起。
 - **池优先**：多实例从代码内置的英文名池 `groupNamePool`（`internal/service/group_name_pool.go`：`Alice`/`Bob`/…）取第一个未被占用的名字；名池刻意不可配置、无设置 UI。池耗尽才回退 `base + " " + m`。
 - **真名预留**（2026-10-11）：池名**永不取**与本批次任一实例本名、或群内已有智能体本名相同的名字。这样真实智能体名**恒被保留**、池确定性避让，且**与 specs 顺序无关**——否则「一组重复实例先取走池名 `Alice`、而另一个 agent 恰好叫 `Alice`」会把后者挤成 `Alice 2`。
