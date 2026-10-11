@@ -217,8 +217,16 @@ func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 		// disabled. Only an EXPLICIT agent choice is checked — the default
 		// fallback can never be disabled (the PATCH guard refuses it).
 		if agentID != "" {
-			if a := model.GetAgent(agentID); a != nil && a.Disabled {
+			a := model.GetAgent(agentID)
+			if a != nil && a.Disabled {
 				writeLocalizedErrorf(w, r, http.StatusBadRequest, "AgentDisabled")
+				return
+			}
+			// Server-side fallback for the project-scope picker filter: a
+			// project-only agent must not be used to open a NEW session from a
+			// different project. Same reasoning as the disabled check above.
+			if a != nil && !agentVisibleInProject(a, projectPath) {
+				writeLocalizedErrorf(w, r, http.StatusBadRequest, "AgentNotInProject")
 				return
 			}
 		}
@@ -916,6 +924,12 @@ func ServeForkSession(w http.ResponseWriter, r *http.Request) {
 		// authoritative gate).
 		if a := model.GetAgent(overrideAgentID); a != nil && a.Disabled {
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "AgentDisabled")
+			return
+		}
+		// Same for project scope: the fork is a NEW session in the caller's
+		// project, so a project-only agent from another project is refused.
+		if a := model.GetAgent(overrideAgentID); a != nil && !agentVisibleInProject(a, projectPath) {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "AgentNotInProject")
 			return
 		}
 	}

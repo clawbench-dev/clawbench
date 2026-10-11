@@ -80,6 +80,12 @@ func ServeTasks(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo,gocog
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "AgentDisabled")
 			return
 		}
+		// Same fallback for project scope: a project-only agent from another
+		// project must not be used for a NEW task in this project.
+		if a := model.GetAgent(req.AgentID); a != nil && !agentVisibleInProject(a, projectPath) {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "AgentNotInProject")
+			return
+		}
 		if req.TriggerMode == "" {
 			req.TriggerMode = "cron"
 		}
@@ -399,8 +405,15 @@ func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 			task.CronExpr = req.CronExpr
 		}
 		if req.AgentID != "" {
-			if a := model.GetAgent(req.AgentID); a != nil && a.Disabled {
+			a := model.GetAgent(req.AgentID)
+			if a != nil && a.Disabled {
 				writeLocalizedErrorf(w, r, http.StatusBadRequest, "AgentDisabled")
+				return
+			}
+			// Re-pointing a task at a project-only agent from another project is
+			// a NEW binding, so the scope gate applies here too.
+			if a != nil && !agentVisibleInProject(a, projectPath) {
+				writeLocalizedErrorf(w, r, http.StatusBadRequest, "AgentNotInProject")
 				return
 			}
 			task.AgentID = req.AgentID

@@ -295,6 +295,7 @@ func TestAgentSchemaMatchesProduction(t *testing.T) {
 		"acp_available_modes": true, "acp_available_thinking_efforts": true, "acp_available_commands": true,
 		"acp_available_models": true,
 		"acp_config_options":   true, "auto_approve": true, "disabled": true,
+		"project_id": true,
 		"created_at": true, "updated_at": true,
 	}
 

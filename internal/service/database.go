@@ -1725,6 +1725,17 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Migrate: add project_id column to agents. NULL = global (visible in every
+	// project); a value scopes the agent to that project only. Existing agents
+	// default to NULL so they stay globally visible after the upgrade.
+	var hasAgentProjectID int
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='project_id'").Scan(&hasAgentProjectID)
+	if hasAgentProjectID == 0 {
+		if _, err := store.WriteExec("ALTER TABLE agents ADD COLUMN project_id INTEGER DEFAULT NULL"); err != nil {
+			return fmt.Errorf("failed to add project_id column to agents: %w", err)
+		}
+	}
+
 	// Migrate: ensure the project scope column on the quick-send /
 	// quick-command tables (project-scoped / 仅本项目 items). NULL means global;
 	// a value scopes the item to that project only.

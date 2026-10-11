@@ -19,6 +19,7 @@ import (
 	"clawbench/internal/platform"
 	"clawbench/internal/proxy"
 	"clawbench/internal/service"
+	"clawbench/internal/store"
 	"clawbench/internal/ws"
 	"github.com/nicksnyder/go-i18n/v2/i18n"
 )
@@ -290,6 +291,33 @@ func resolveAgentConfig(agentID string) (string, string, string, string, bool) {
 		return "", "", "", "", false
 	}
 	return agent.Backend, agent.DefaultModelID(), agent.RuntimeSystemPrompt, agent.Command, true
+}
+
+// agentVisibleInProject reports whether an agent may be used as a NEW entry in
+// the given project. A global agent (ProjectID == nil) is visible everywhere; a
+// project-scoped agent is visible only in the project whose id it carries.
+//
+// This mirrors the /api/agents list filter and is the server-side fallback for
+// the client-side picker filter (selectableAgents): an old client or a race
+// must not slip a project-only agent into a new session/task/group in another
+// project. Existing sessions/tasks are deliberately NOT re-checked — the
+// visibility rule gates NEW entries only, so a session created while the agent
+// was global keeps running after the agent is scoped.
+//
+// A resolution error is treated as "not visible" (fail closed): the caller is
+// about to create a NEW entry, and refusing is the safe default.
+func agentVisibleInProject(agent *model.Agent, projectPath string) bool {
+	if agent == nil {
+		return false
+	}
+	if agent.ProjectID == nil {
+		return true // global
+	}
+	projectID, ok, err := store.ProjectIDByPath(projectPath)
+	if err != nil || !ok {
+		return false
+	}
+	return *agent.ProjectID == projectID
 }
 
 // requireSessionID extracts session ID from query param or cookie.

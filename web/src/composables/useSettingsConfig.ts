@@ -621,7 +621,15 @@ export async function patchAgentPref(agentId: string, field: 'preferred_model' |
  */
 export async function patchAgentField(agentId: string, field: string, value: string | boolean | number | null): Promise<void> {
   await apiPatch('/api/agents', { id: agentId, [field]: value })
-  const { updateAgentField } = useAgents()
+  const { updateAgentField, loadAgents } = useAgents()
+  // project_scope: the server derives the numeric projectId from the request
+  // cookie, so the client cannot mirror the new value locally. Re-fetch the
+  // list instead so projectId (and thus the switch's checked state) is
+  // authoritative.
+  if (field === 'project_scope') {
+    await loadAgents(true)
+    return
+  }
   const fieldMap: Record<string, string> = {
     preferred_model: 'preferredModel',
     preferred_thinking_effort: 'preferredThinkingEffort',

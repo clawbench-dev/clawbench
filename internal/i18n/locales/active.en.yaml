@@ -123,6 +123,8 @@ InvalidSortOrder: Invalid sort order
 AgentInUse: "This agent is still in use ({{.SessionCount}} sessions, {{.TaskCount}} tasks, {{.MembershipCount}} group memberships); delete them first"
 AgentDisabled: This agent is disabled
 CannotDisableDefaultAgent: The default agent cannot be disabled
+AgentNotInProject: This agent is only available in its own project
+CannotScopeDefaultAgent: The default agent cannot be limited to one project
 InvalidSHA: Invalid commit SHA format
 InvalidBranchName: Invalid branch name
 ModelDiscoveryNotSupported: This agent does not support model discovery

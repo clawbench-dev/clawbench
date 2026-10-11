@@ -150,6 +150,8 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		"AgentInUse",
 		"AgentDisabled",
 		"CannotDisableDefaultAgent",
+		"AgentNotInProject",
+		"CannotScopeDefaultAgent",
 		"GroupYourTurn",
 		"GroupDiscussionLimitReached",
 	}

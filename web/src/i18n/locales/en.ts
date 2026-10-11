@@ -887,6 +887,11 @@ export default {
       collapse: 'Collapse',
       remove: 'Remove this queued message',
       attachment: 'Attachment',
+      // Bubble annotation for a mid-turn injection that MERGED into the running
+      // reply (claude/codex — no split boundary). Without it the bubble sits
+      // after the still-streaming reply with nothing following it, which reads
+      // as "sent but ignored".
+      mergedIntoPrev: 'Reply merged into the previous turn',
     },
     contentBlocks: {
       scheduledTaskCreated: 'Task created',
@@ -2441,6 +2446,9 @@ export default {
       agentTransport: 'Protocol',
       agentAutoApprove: 'Auto-Approve by Default',
       agentAutoApproveDesc: 'New sessions created with this agent start with Auto-Approve on, saved to the session so it survives a reload; you can still turn it off per session',
+      agentProjectOnly: 'Only This Project',
+      agentProjectOnlyDesc: 'When on, this agent is visible only in the current project — it does not appear in the list or pickers in other projects. Existing sessions are unaffected',
+      agentCannotScopeDefault: 'The default agent cannot be limited to one project',
       agentName: 'Name',
       agentSpecialty: 'Description',
       agentAvatar: 'Avatar',

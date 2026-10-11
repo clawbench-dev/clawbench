@@ -67,7 +67,7 @@ func ServeGroupCreate(w http.ResponseWriter, r *http.Request) {
 	// Resolve every agent BEFORE creating anything: an unknown agent id must
 	// fail the whole request (the service also rolls back, but resolving first
 	// avoids opening a transaction for a request that cannot succeed).
-	specs, ok := groupMemberSpecs(agentIDs)
+	specs, ok := groupMemberSpecs(agentIDs, projectPath)
 	if !ok {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
 		return
@@ -102,21 +102,26 @@ func groupSessionLimitOK(w http.ResponseWriter, r *http.Request, projectPath str
 }
 
 // groupMemberSpecs resolves each agent id to a GroupMemberSpec. ok is false when
-// any id is unknown OR disabled, in which case the whole request must fail
-// (nothing created). A disabled agent must not be seeded into a NEW group, just
-// as it is hidden from every other new-entry picker.
+// any id is unknown, disabled, or scoped to a different project, in which case
+// the whole request must fail (nothing created). A disabled or out-of-project
+// agent must not be seeded into a NEW group, just as it is hidden from every
+// other new-entry picker.
 //
 // The display name is NOT set here: the service assigns a unique name per
 // instance (the same agent may appear multiple times), deriving the base from
 // the agent's name. AgentIDs may contain duplicates.
-func groupMemberSpecs(agentIDs []string) ([]service.GroupMemberSpec, bool) {
+func groupMemberSpecs(agentIDs []string, projectPath string) ([]service.GroupMemberSpec, bool) {
 	specs := make([]service.GroupMemberSpec, 0, len(agentIDs))
 	for _, agentID := range agentIDs {
 		backend, _, _, _, ok := resolveAgentConfig(agentID)
 		if !ok {
 			return nil, false
 		}
-		if a := model.GetAgent(agentID); a != nil && a.Disabled {
+		a := model.GetAgent(agentID)
+		if a != nil && a.Disabled {
+			return nil, false
+		}
+		if !agentVisibleInProject(a, projectPath) {
 			return nil, false
 		}
 		specs = append(specs, service.GroupMemberSpec{
@@ -247,7 +252,13 @@ func serveGroupMembersAdd(w http.ResponseWriter, r *http.Request, projectPath st
 		// Server-side fallback for the disabled-agent picker filter: a disabled
 		// agent must not be added as a NEW group member. Skipped (like unknown
 		// ids) rather than failing the whole batch.
-		if a := model.GetAgent(agentID); a != nil && a.Disabled {
+		a := model.GetAgent(agentID)
+		if a != nil && a.Disabled {
+			continue
+		}
+		// Same fallback for project scope: an agent scoped to another project is
+		// not visible here and must not be added.
+		if !agentVisibleInProject(a, projectPath) {
 			continue
 		}
 		specs = append(specs, service.GroupMemberSpec{

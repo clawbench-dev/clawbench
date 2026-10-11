@@ -146,6 +146,34 @@ func TestDeleteProjectData_RemovesAllProjectScopedRows(t *testing.T) {
 	assert.Zero(t, n, "the projects row must be deleted")
 }
 
+// TestDeleteProjectData_DeletesScopedAgents verifies that agents scoped to the
+// deleted project are removed with it, while global agents and agents scoped to
+// another project survive.
+func TestDeleteProjectData_DeletesScopedAgents(t *testing.T) {
+	setupProjectDeleteDB(t)
+	id := seedProjectRow(t, "/proj/agents-owner")
+	otherID := seedProjectRow(t, "/proj/agents-other")
+
+	exec := func(q string, args ...any) {
+		t.Helper()
+		_, err := store.WriteExec(q, args...)
+		require.NoError(t, err)
+	}
+	exec("INSERT INTO agents (id, name, backend, project_id) VALUES ('scoped-a', 'Scoped A', 'claude', ?)", id)
+	exec("INSERT INTO agents (id, name, backend, project_id) VALUES ('scoped-b', 'Scoped B', 'claude', ?)", otherID)
+	exec("INSERT INTO agents (id, name, backend, project_id) VALUES ('global-a', 'Global A', 'claude', NULL)")
+
+	require.NoError(t, DeleteProjectData(id))
+
+	var n int
+	require.NoError(t, store.ReadDB().QueryRow("SELECT COUNT(*) FROM agents WHERE id = 'scoped-a'").Scan(&n))
+	assert.Zero(t, n, "agent scoped to the deleted project must be removed")
+	require.NoError(t, store.ReadDB().QueryRow("SELECT COUNT(*) FROM agents WHERE id = 'scoped-b'").Scan(&n))
+	assert.Equal(t, 1, n, "agent scoped to another project must survive")
+	require.NoError(t, store.ReadDB().QueryRow("SELECT COUNT(*) FROM agents WHERE id = 'global-a'").Scan(&n))
+	assert.Equal(t, 1, n, "global agent must survive")
+}
+
 func TestDeleteProjectData_KeepsGlobalTags(t *testing.T) {
 	setupProjectDeleteDB(t)
 	id := seedProjectRow(t, "/proj/tagged")

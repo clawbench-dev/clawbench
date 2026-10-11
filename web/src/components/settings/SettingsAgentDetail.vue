@@ -40,6 +40,7 @@
           :model-value="getItemValue(item)"
           :options="item.options"
           :warning="item.warning"
+          :disabled="item.disabled"
           :force-close="activeKey !== null && activeKey !== item.key"
           @update:model-value="(v: unknown) => handleUpdate(item, v)"
           @edit-toggle="(open: boolean) => handleEditToggle(item.key, open)"
@@ -171,6 +172,7 @@ interface AgentItem {
   warning?: string
   value?: unknown
   patchField?: string
+  disabled?: boolean
 }
 
 const items = computed<AgentItem[]>(() => {
@@ -297,6 +299,19 @@ const items = computed<AgentItem[]>(() => {
     patchField: 'auto_approve',
   })
 
+  // Scope: 仅当前项目 (only visible in the current project). The default agent
+  // cannot be scoped (the backend refuses it too), so its switch is disabled
+  // with a tooltip — mirroring the disable-default rule.
+  result.push({
+    key: 'project_scope',
+    label: t('settings.items.agentProjectOnly'),
+    description: t('settings.items.agentProjectOnlyDesc'),
+    type: 'switch',
+    patchField: 'project_scope',
+    warning: isDefaultAgentValue.value ? t('settings.items.agentCannotScopeDefault') : undefined,
+    disabled: isDefaultAgentValue.value,
+  })
+
   // -- Information section --
   result.push({ key: 'header-info', label: t('settings.items.agentSectionInfo'), type: 'header' })
 
@@ -388,6 +403,10 @@ function getItemValue(item: AgentItem): unknown {
       return a.transport || (a.acpCommand ? 'acp-stdio' : 'cli')
     case 'auto_approve':
       return !!a.autoApprove
+    case 'project_scope':
+      // Scoped iff the agent carries a project id. The list is already filtered
+      // to this project, so a truthy projectId means "only this project".
+      return a.projectId != null
     case 'name':
       return a.name || ''
     case 'specialty':

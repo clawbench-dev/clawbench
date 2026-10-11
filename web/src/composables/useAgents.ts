@@ -56,6 +56,13 @@ interface AgentRecord {
   autoApprove?: boolean
   /** Hidden from every new-entry picker (new session / task / group member). */
   disabled?: boolean
+  /**
+   * When set, the agent is scoped to that project id and is visible only there.
+   * Absent/null means global (visible in every project). The backend already
+   * filters /api/agents by the current project cookie, so the list the client
+   * receives contains only agents visible here.
+   */
+  projectId?: number
   /** Derived usage counts from GET /api/agents (not persisted). */
   sessionCount?: number
   taskCount?: number

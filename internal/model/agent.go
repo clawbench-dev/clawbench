@@ -102,6 +102,17 @@ type Agent struct {
 	// server-side fallback on the create endpoints, so an old client or a race
 	// cannot slip a disabled agent into a new session/task.
 	Disabled bool `json:"disabled"`
+
+	// ProjectID scopes this agent to a single project when non-nil: it is then
+	// visible only in that project (and hidden from every other project's
+	// settings list and new-entry pickers). nil means global — visible in every
+	// project. The id is a projects.id, matching the terminal_quick_commands /
+	// chat_quick_send convention (NULL = global, value = project-only).
+	//
+	// Existing sessions/tasks are deliberately NOT re-scoped: the visibility
+	// filter only gates NEW entries and the settings list, so a session created
+	// while the agent was global keeps working after it is scoped.
+	ProjectID *int64 `json:"projectId,omitempty"`
 }
 
 // DefaultModelID returns the default model ID for this agent.

@@ -936,6 +936,11 @@ paths:
             `sessionType` 是该会话存储的 `session_type`（`chat` / `group` /
             `scheduled` / …），客户端据此判定群会话。**不要**用成员名单是否为空
             来推断群会话——名单在拉取失败时会被清空，会把群会话误判成单聊。
+
+            `messages[].injected`（仅用户消息，`true` 时出现）：该消息是运行中
+            插话（mid-turn steering）并入上一回复的，且该后端**不切分**回复
+            （claude/codex）——前端据此在气泡上标注「回复已并入上一轮」。切分型后端
+            （CodeBuddy）不置此位。
     post:
       tags: [Chat]
       summary: 发送聊天消息
@@ -3819,6 +3824,12 @@ paths:
 
         同一对列表也挂在 `acpStates[].modelListState` 的 `resolvedModels` /
         `cliModels` 字段上，便于客户端仅凭 ACP 状态缓存刷新视图。
+
+        **按项目过滤**：返回的列表只包含当前项目可见的 agent——全局 agent
+        （`project_id` 为空）始终可见，被标记「仅当前项目」的 agent 只在其所属
+        项目中可见（依据请求的 `clawbench_project` cookie）。`defaultAgent` 同样
+        受此约束：若配置的默认 agent 不在当前项目可见，则回退为列表中第一个未
+        禁用的 agent。
       operationId: agentsList
       responses:
         "200":
@@ -3850,12 +3861,18 @@ paths:
         部分更新单个 agent（body 含 `id`）。可更新字段：
         `preferred_model`、`preferred_thinking_effort`、`preferred_mode`、
         `transport`、`name`、`specialty`、`custom_system_prompt`、`avatar`、
-        `sort_order`、`auto_approve`、`disabled`。
+        `sort_order`、`auto_approve`、`disabled`、`project_scope`。
         `avatar` 为原始 SVG 字符串（客户端生成）；传空串表示恢复内置图标，
         非空时校验大小上限与 SVG 安全性。
         `disabled` 为布尔值：禁用后该 agent 不再出现在任何新建入口（新建会话 /
         任务 / 群成员）。**默认智能体不能被禁用**，禁用默认智能体返回 `400` +
         `msgKey=CannotDisableDefaultAgent`。
+        `project_scope` 为布尔值：`true` 表示「仅当前项目」——服务端从请求的
+        `clawbench_project` cookie 解析当前项目并把该 agent 绑定到它，此后该 agent
+        只在当前项目可见（其它项目的列表与新建入口都不显示）；`false` 表示恢复为
+        全局可见。开启时若未选择项目返回 `400` + `msgKey=NoProjectSelected`。
+        **默认智能体不能被限定到单个项目**，否则返回 `400` +
+        `msgKey=CannotScopeDefaultAgent`。已创建的会话不受作用域变化影响。
 
         `name` 全局唯一（决策 #50）：改名撞上其它 agent 时返回 `409` +
         `msgKey=AgentNameTaken`；改回自身当前名称不是冲突。改成群聊用户昵称
@@ -3865,7 +3882,7 @@ paths:
         "200":
           description: 更新结果
         "400":
-          description: 请求非法，或试图禁用默认智能体（`CannotDisableDefaultAgent`）
+          description: 请求非法，或试图禁用默认智能体（`CannotDisableDefaultAgent`）、把默认智能体限定到单个项目（`CannotScopeDefaultAgent`）、在未选择项目时开启 `project_scope`（`NoProjectSelected`）
         "409":
           description: 名称已被其它 agent 占用（`AgentNameTaken`），或等于群聊用户昵称（`AgentNameReserved`）
     delete:

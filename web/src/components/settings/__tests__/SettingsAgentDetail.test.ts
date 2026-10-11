@@ -30,6 +30,9 @@ vi.mock('vue-i18n', async (importOriginal) => {
         'settings.items.agentTransport': 'Protocol',
         'settings.items.agentAutoApprove': 'Auto-Approve by Default',
         'settings.items.agentAutoApproveDesc': 'New sessions use this',
+        'settings.items.agentProjectOnly': 'Only This Project',
+        'settings.items.agentProjectOnlyDesc': 'Visible only in the current project',
+        'settings.items.agentCannotScopeDefault': 'The default agent cannot be limited to one project',
         'settings.items.agentSectionIdentity': 'Identity',
         'settings.items.agentName': 'Name',
         'settings.items.agentSpecialty': 'Specialty',
@@ -615,6 +618,43 @@ describe('SettingsAgentDetail', () => {
       const vm = wrapper.vm as any
       const value = vm.$.setupState.getItemValue({ key: 'auto_approve' })
       expect(value).toBe(true)
+    })
+  })
+
+  describe('project-scope (仅当前项目) toggle', () => {
+    it('renders a project_scope switch reflecting whether the agent carries a projectId', () => {
+      const scoped = mountDetail({ projectId: 42 })
+      const scopedItem = scoped.findAllComponents({ name: 'SettingsItem' })
+        .find((it: any) => it.props('label') === 'Only This Project')
+      expect(scopedItem).toBeTruthy()
+      expect(scopedItem?.props('type')).toBe('switch')
+      expect(scopedItem?.props('modelValue')).toBe(true)
+
+      const global = mountDetail({ projectId: undefined })
+      const globalItem = global.findAllComponents({ name: 'SettingsItem' })
+        .find((it: any) => it.props('label') === 'Only This Project')
+      expect(globalItem?.props('modelValue')).toBe(false)
+    })
+
+    it('handleUpdate patches project_scope on the server', async () => {
+      const wrapper = mountDetail()
+      const vm = wrapper.vm as any
+      await vm.$.setupState.handleUpdate({ key: 'project_scope', patchField: 'project_scope' }, true)
+      expect(mockPatchAgentField).toHaveBeenCalledWith('test-agent', 'project_scope', true)
+    })
+
+    it('disables the switch when this agent is the default agent', () => {
+      mockDefaultAgentId.value = 'test-agent'
+      const asDefault = mountDetail()
+      const disabledItem = asDefault.findAllComponents({ name: 'SettingsItem' })
+        .find((it: any) => it.props('label') === 'Only This Project')
+      expect(disabledItem?.props('disabled')).toBe(true)
+
+      mockDefaultAgentId.value = 'other-agent'
+      const notDefault = mountDetail()
+      const enabledItem = notDefault.findAllComponents({ name: 'SettingsItem' })
+        .find((it: any) => it.props('label') === 'Only This Project')
+      expect(enabledItem?.props('disabled')).toBeFalsy()
     })
   })
 

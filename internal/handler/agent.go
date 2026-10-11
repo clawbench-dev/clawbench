@@ -101,11 +101,55 @@ func ServeAgents(w http.ResponseWriter, r *http.Request) {
 	writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
 }
 
-func serveAgentsGet(w http.ResponseWriter, _ *http.Request) {
+// visibleAgentsInProject filters an agent list to those visible in projectPath:
+// global agents (no project_id) are always included; a project-scoped agent is
+// included only in its own project. Other projects therefore never see it in the
+// settings list or any picker. Resolution is read-only (ProjectIDByPath does not
+// register an unknown project); an unknown project simply sees the globals,
+// which is the same as before the agent existed.
+func visibleAgentsInProject(agents []*model.Agent, projectPath string) []*model.Agent {
+	projectID, projectKnown, pidErr := store.ProjectIDByPath(projectPath)
+	if pidErr != nil {
+		projectKnown = false
+	}
+	visible := make([]*model.Agent, 0, len(agents))
+	for _, a := range agents {
+		if a.ProjectID == nil || (projectKnown && *a.ProjectID == projectID) {
+			visible = append(visible, a)
+		}
+	}
+	return visible
+}
+
+// visibleDefaultAgent returns a default agent usable in projectPath. If the
+// configured default is not visible there (possible only if it was scoped BEFORE
+// becoming default, which the settings guard now refuses), it falls back to the
+// first visible, non-disabled agent so the project still has a usable default.
+// An empty configured default is left empty (the same "no agents" state as
+// before) — the fallback only kicks in for a default that exists but is hidden.
+func visibleDefaultAgent(defaultAgent string, agents []*model.Agent, projectPath string) string {
+	if defaultAgent == "" || agentVisibleInProject(model.GetAgent(defaultAgent), projectPath) {
+		return defaultAgent
+	}
+	for _, a := range agents {
+		if !a.Disabled {
+			return a.ID
+		}
+	}
+	return ""
+}
+
+func serveAgentsGet(w http.ResponseWriter, r *http.Request) {
 	configMutex.RLock()
 	agents := model.GetAgentList()
 	defaultAgent := model.GetDefaultAgentID()
 	configMutex.RUnlock()
+
+	// Scope the list to the caller's current project, then make the reported
+	// default consistent with what is actually visible here.
+	projectPath := middleware.GetProjectFromCookie(r)
+	agents = visibleAgentsInProject(agents, projectPath)
+	defaultAgent = visibleDefaultAgent(defaultAgent, agents, projectPath)
 
 	// Attach cached ACP mode/thinking/commands state to each agent.
 	// This lets the frontend populate mode chips and slash commands without
@@ -709,6 +753,41 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 		ap.Disabled = &disabled
 	}
 
+	// Validate and apply project_scope (仅当前项目). true binds the agent to the
+	// caller's current project; false clears the scope back to global. The
+	// default agent must stay globally visible, so scoping it is refused —
+	// mirroring CannotDisableDefaultAgent (other projects must always be able
+	// to fall back to a default agent).
+	if v, exists := patch["project_scope"]; exists {
+		scoped, ok := v.(bool)
+		if !ok {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
+			return
+		}
+		if scoped {
+			if agentID == model.GetDefaultAgentID() {
+				writeLocalizedErrorf(w, r, http.StatusBadRequest, "CannotScopeDefaultAgent")
+				return
+			}
+			projectPath := middleware.GetProjectFromCookie(r)
+			if projectPath == "" {
+				writeLocalizedErrorf(w, r, http.StatusBadRequest, "NoProjectSelected")
+				return
+			}
+			// Write path: registering an unknown project is intentional (see
+			// projectIDArg) — scoping must work even if the project has no row
+			// yet, and the read side resolves the id back through the registry.
+			projectID, pidErr := store.ProjectIDForPath(projectPath)
+			if pidErr != nil {
+				writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+				return
+			}
+			ap.ProjectID = &projectID
+		} else {
+			ap.ClearProjectID = true
+		}
+	}
+
 	// Persist to database
 	if err := service.PatchAgentFields(agentID, ap); err != nil {
 		if errors.Is(err, service.ErrAgentNameReserved) {
@@ -766,6 +845,12 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 		}
 		if ap.Disabled != nil {
 			agent.Disabled = *ap.Disabled
+		}
+		if ap.ClearProjectID {
+			agent.ProjectID = nil
+		} else if ap.ProjectID != nil {
+			pid := *ap.ProjectID
+			agent.ProjectID = &pid
 		}
 	})
 

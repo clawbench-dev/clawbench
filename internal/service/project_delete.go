@@ -79,6 +79,16 @@ func DeleteProjectData(id int64) error {
 		return err
 	}
 
+	// Reload the agent roster so agents deleted above (those scoped to this
+	// project) disappear from the live in-memory map immediately. Without this
+	// they would linger until the next rescan and remain selectable in pickers
+	// (the /api/agents list reads the in-memory list, not the DB). Failures are
+	// logged, not returned — the rows are already gone.
+	if err := LoadAgentsIntoMemory(); err != nil {
+		slog.Warn("failed to reload agents after project delete",
+			slog.Int64("project_id", id), slog.String("err", err.Error()))
+	}
+
 	// Post-commit, best-effort: drop the caches that key off this project so a
 	// later re-registration of the same directory starts clean, and purge the
 	// RAG index. Failures here are logged, not returned: the project rows are
@@ -182,6 +192,16 @@ func deleteProjectRows(id int64) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM chat_sessions WHERE project_id = ?", id); err != nil {
 		return fmt.Errorf("delete chat sessions: %w", err)
 	}
+
+	// Agents scoped to this project (project_id = id) are deleted with it: they
+	// exist only for this project, so leaving them behind would strand rows
+	// pointing at a project that no longer exists. Global agents (project_id
+	// NULL) are untouched. This runs after chat_sessions because a scoped agent
+	// may still be referenced by this project's sessions, which are now gone.
+	if _, err := tx.ExecContext(ctx, "DELETE FROM agents WHERE project_id = ?", id); err != nil {
+		return fmt.Errorf("delete project-scoped agents: %w", err)
+	}
+
 	if _, err := tx.ExecContext(ctx, "DELETE FROM projects WHERE id = ?", id); err != nil {
 		return fmt.Errorf("delete project row: %w", err)
 	}
