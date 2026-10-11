@@ -67,7 +67,9 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 				// No sessions exist, create a new one with default agent.
 				// Don't pre-fill agent default model — leave empty so frontend
 				// falls back to global localStorage preference (cross-project).
-				agentID := model.GetDefaultAgentID()
+				// Scope-aware: the configured default may be scoped to another
+				// project, so resolve to the first agent visible here.
+				agentID := resolveDefaultAgentForProject(projectPath)
 				sessionBackend2, _, _, _, ok := resolveAgentConfig(agentID)
 				if !ok {
 					writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "NoAgentsAvailable")

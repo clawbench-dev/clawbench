@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -193,13 +194,8 @@ func deleteProjectRows(id int64) error {
 		return fmt.Errorf("delete chat sessions: %w", err)
 	}
 
-	// Agents scoped to this project (project_id = id) are deleted with it: they
-	// exist only for this project, so leaving them behind would strand rows
-	// pointing at a project that no longer exists. Global agents (project_id
-	// NULL) are untouched. This runs after chat_sessions because a scoped agent
-	// may still be referenced by this project's sessions, which are now gone.
-	if _, err := tx.ExecContext(ctx, "DELETE FROM agents WHERE project_id = ?", id); err != nil {
-		return fmt.Errorf("delete project-scoped agents: %w", err)
+	if err := deleteScopedAgents(ctx, tx, id); err != nil {
+		return err
 	}
 
 	if _, err := tx.ExecContext(ctx, "DELETE FROM projects WHERE id = ?", id); err != nil {
@@ -208,6 +204,35 @@ func deleteProjectRows(id int64) error {
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit project delete: %w", err)
+	}
+	return nil
+}
+
+// deleteScopedAgents removes the agents scoped to the project being deleted.
+//
+// They normally go with the project — leaving them would strand rows pointing at
+// a project that no longer exists. BUT an agent may have been scoped to this
+// project AFTER being used to create sessions/tasks in ANOTHER project (scoping
+// only gates new entries; existing sessions are deliberately left alone).
+// Deleting it outright would orphan those cross-project references, and
+// resolveAgentConfig would then fail so the session could no longer run — a
+// state the manual delete path (AgentInUse) explicitly refuses to allow. So any
+// still-referenced agent is promoted back to GLOBAL (project_id = NULL) first;
+// agents with no remaining references are deleted.
+//
+// Called AFTER this project's chat_sessions are deleted, so the references the
+// promote step matches are necessarily from OTHER projects.
+func deleteScopedAgents(ctx context.Context, tx *sql.Tx, id int64) error {
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE agents SET project_id = NULL
+		WHERE project_id = ?
+		  AND (id IN (SELECT agent_id FROM chat_sessions WHERE agent_id <> '')
+		       OR id IN (SELECT agent_id FROM scheduled_tasks WHERE agent_id <> ''))
+	`, id); err != nil {
+		return fmt.Errorf("promote still-referenced project-scoped agents: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM agents WHERE project_id = ?", id); err != nil {
+		return fmt.Errorf("delete project-scoped agents: %w", err)
 	}
 	return nil
 }

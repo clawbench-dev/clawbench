@@ -320,6 +320,32 @@ func agentVisibleInProject(agent *model.Agent, projectPath string) bool {
 	return *agent.ProjectID == projectID
 }
 
+// resolveDefaultAgentForProject returns the default agent to use when a caller
+// creates a NEW session without an explicit agent choice, scoped to
+// projectPath.
+//
+// model.GetDefaultAgentID() is NOT scope-aware: when no default is configured it
+// falls back to AgentList[0], which may be an agent scoped to a different
+// project. Using it directly on a create path would let a project-only agent be
+// opened as the default in another project — exactly the hole the explicit-agent
+// gate closes. This walks the configured default, then every agent in order,
+// returning the first one visible in projectPath (matching how
+// visibleDefaultAgent picks a fallback for the list).
+//
+// Returns "" when no agent is visible in this project; callers treat that as
+// "no agents available".
+func resolveDefaultAgentForProject(projectPath string) string {
+	if def := model.GetDefaultAgentID(); def != "" && agentVisibleInProject(model.GetAgent(def), projectPath) {
+		return def
+	}
+	for _, a := range model.GetAgentList() {
+		if agentVisibleInProject(a, projectPath) {
+			return a.ID
+		}
+	}
+	return ""
+}
+
 // requireSessionID extracts session ID from query param or cookie.
 // Writes 400 if not found. Returns (sessionID, true) on success.
 func requireSessionID(w http.ResponseWriter, r *http.Request) (string, bool) {

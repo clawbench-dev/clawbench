@@ -1,6 +1,7 @@
 package service
 
 import (
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -172,6 +173,36 @@ func TestDeleteProjectData_DeletesScopedAgents(t *testing.T) {
 	assert.Equal(t, 1, n, "agent scoped to another project must survive")
 	require.NoError(t, store.ReadDB().QueryRow("SELECT COUNT(*) FROM agents WHERE id = 'global-a'").Scan(&n))
 	assert.Equal(t, 1, n, "global agent must survive")
+}
+
+// TestDeleteProjectData_PromotesStillReferencedScopedAgent verifies the orphan
+// guard: an agent scoped to the deleted project but still referenced by a
+// session in ANOTHER project is promoted back to global (project_id = NULL)
+// rather than deleted, so those sessions keep resolving their agent.
+func TestDeleteProjectData_PromotesStillReferencedScopedAgent(t *testing.T) {
+	setupProjectDeleteDB(t)
+	id := seedProjectRow(t, "/proj/promote-owner")
+	otherID := seedProjectRow(t, "/proj/promote-other")
+
+	exec := func(q string, args ...any) {
+		t.Helper()
+		_, err := store.WriteExec(q, args...)
+		require.NoError(t, err)
+	}
+	// Agent scoped to the project being deleted.
+	exec("INSERT INTO agents (id, name, backend, project_id) VALUES ('shared-agent', 'Shared', 'claude', ?)", id)
+	// A session in ANOTHER project that references it (created while global).
+	exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type, archived) VALUES ('sess-other', ?, 'claude', 't', 'shared-agent', 'chat', 0)", otherID)
+
+	require.NoError(t, DeleteProjectData(id))
+
+	var n int
+	require.NoError(t, store.ReadDB().QueryRow("SELECT COUNT(*) FROM agents WHERE id = 'shared-agent'").Scan(&n))
+	assert.Equal(t, 1, n, "a still-referenced scoped agent must NOT be deleted")
+
+	var projectID sql.NullInt64
+	require.NoError(t, store.ReadDB().QueryRow("SELECT project_id FROM agents WHERE id = 'shared-agent'").Scan(&projectID))
+	assert.False(t, projectID.Valid, "a still-referenced scoped agent must be promoted to global (NULL)")
 }
 
 func TestDeleteProjectData_KeepsGlobalTags(t *testing.T) {

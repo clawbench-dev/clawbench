@@ -244,7 +244,14 @@ func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 		// to the session only when the user explicitly sends a message with a modelId.
 		agentModel := ""
 		if resolvedAgentID == "" {
-			resolvedAgentID = model.GetDefaultAgentID()
+			// Scope-aware default: model.GetDefaultAgentID() can be an agent
+			// scoped to another project (AgentList[0] fallback), so resolve to
+			// the first agent visible HERE. See resolveDefaultAgentForProject.
+			resolvedAgentID = resolveDefaultAgentForProject(projectPath)
+			if resolvedAgentID == "" {
+				writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "NoAgentsAvailable")
+				return
+			}
 		}
 		// If user explicitly specified an agent, mark source as "user"
 		if agentID != "" {

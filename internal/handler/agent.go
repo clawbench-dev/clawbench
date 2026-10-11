@@ -348,9 +348,14 @@ func serveAgentsRescan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Return the current agent list (same shape as GET /api/agents)
-	agents := model.GetAgentList()
-	defaultAgent := model.GetDefaultAgentID()
+	// Return the current agent list (same shape as GET /api/agents), scoped to
+	// the caller's project. Without the same filter GET applies, rescan would
+	// leak every project-scoped agent (and a possibly-scoped default) to any
+	// caller — including the /cb-agent command, which is told GET only returns
+	// the current project's agents.
+	projectPath := middleware.GetProjectFromCookie(r)
+	agents := visibleAgentsInProject(model.GetAgentList(), projectPath)
+	defaultAgent := visibleDefaultAgent(model.GetDefaultAgentID(), agents, projectPath)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"agents":       agents,

@@ -1621,7 +1621,11 @@ paths:
     post:
       tags: [Sessions]
       summary: ACP 显式 LoadSession
-      description: 强制触发一次 ACP LoadSession 回放（慢，仅显式调用）。
+      description: |
+        强制触发一次 ACP LoadSession 回放（慢，仅显式调用）。会创建一个**新**会话，
+        因此与手动新建会话一样受新建入口闸门约束：`agentId` 指向的 agent 若已被禁用
+        返回 `400` + `msgKey=AgentDisabled`；若被标记「仅当前项目」且不属于当前项目
+        返回 `400` + `msgKey=AgentNotInProject`。
       operationId: sessionACPLoad
       requestBody:
         required: true
@@ -1637,6 +1641,8 @@ paths:
       responses:
         "200":
           description: 回放结果
+        "400":
+          description: 参数非法，或 agent 被禁用（`AgentDisabled`）/ 不属于当前项目（`AgentNotInProject`）
 
   /api/ai/session/acp-sync:
     post:
@@ -3923,6 +3929,10 @@ paths:
         返回 `{ models, cliModels }`——与 GET /api/agents 同一形状。`models` 是发现结果
         与已缓存的 ACP 模型列表合并后的列表（ACP 对成员资格有权威性），`cliModels` 是
         未经合并的纯 CLI 列表，供客户端在切换到 CLI 传输时直接渲染。
+
+        `/api/agents/rescan`：重跑 agent 刷新流水线（探测 CLI → 发现模型 → 落库 →
+        重载内存），返回与 GET /api/agents 相同形状、同样按当前项目过滤的
+        `{ agents, defaultAgent }`（被标记「仅当前项目」的 agent 不会泄漏到其它项目）。
       operationId: agentSubPost
       parameters:
         - $ref: "#/components/parameters/Id"

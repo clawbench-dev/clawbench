@@ -441,6 +441,19 @@ func ServeACPLoadSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// acp-load creates a NEW session, so the same new-entry gates as the manual
+	// create path apply: a disabled agent, or one scoped to a different project,
+	// must not be loaded here (the picker hides both, but the server is the
+	// authoritative gate).
+	if agent.Disabled {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "AgentDisabled")
+		return
+	}
+	if !agentVisibleInProject(agent, projectPath) {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "AgentNotInProject")
+		return
+	}
+
 	// Use BackendSpec as authoritative source for LoadSession capability.
 	// Some agents (e.g. CodeBuddy) report LoadSession=true in ACP Initialize
 	// but don't actually support it.

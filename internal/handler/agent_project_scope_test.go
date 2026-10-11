@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"clawbench/internal/model"
+	"clawbench/internal/service"
 	"clawbench/internal/store"
 
 	"github.com/stretchr/testify/assert"
@@ -179,6 +180,13 @@ func TestServeSessions_Post_ScopedAgentFromOtherProjectRejected(t *testing.T) {
 	otherID, err := store.ProjectIDForPath(otherProj)
 	require.NoError(t, err)
 
+	// Register env.ProjectDir too, so the rejection below is provably because
+	// the agent belongs to a DIFFERENT (resolvable) project — not merely because
+	// the request's project is unknown. Without this, ProjectIDByPath returns
+	// ok=false and the gate would fail for the wrong reason.
+	_, err = store.ProjectIDForPath(env.ProjectDir)
+	require.NoError(t, err)
+
 	origAgents := model.Agents
 	origList := model.AgentList
 	model.Agents = map[string]*model.Agent{
@@ -220,4 +228,232 @@ func TestServeSessions_Post_ScopedAgentInOwnProjectAllowed(t *testing.T) {
 
 	w := callHandler(ServeSessions, req)
 	assertOK(t, w)
+}
+
+// TestServeSessions_Post_DefaultFallbackRespectsScope verifies the fix for the
+// default-agent fallback hole: when no agent is specified, the server must not
+// pick a default that is scoped to a DIFFERENT project (model.GetDefaultAgentID
+// falls back to AgentList[0], which may be scoped elsewhere).
+func TestServeSessions_Post_DefaultFallbackRespectsScope(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	otherID, err := store.ProjectIDForPath("/tmp/agent-scope-default-other")
+	require.NoError(t, err)
+	_, err = store.ProjectIDForPath(env.ProjectDir)
+	require.NoError(t, err)
+
+	origAgents := model.Agents
+	origList := model.AgentList
+	origDefault := model.GetDefaultAgentID()
+	// AgentList[0] (and the configured default) is scoped to ANOTHER project;
+	// a second agent is global and must be chosen instead.
+	scoped := &model.Agent{ID: "scoped-default", Name: "ScopedDefault", Backend: "claude", ProjectID: &otherID}
+	global := &model.Agent{ID: "global-agent", Name: "Global", Backend: "claude"}
+	model.Agents = map[string]*model.Agent{"scoped-default": scoped, "global-agent": global}
+	model.AgentList = []*model.Agent{scoped, global}
+	model.SetDefaultAgentID("scoped-default")
+	defer func() {
+		model.Agents = origAgents
+		model.AgentList = origList
+		model.SetDefaultAgentID(origDefault)
+	}()
+
+	// No agentId: the server resolves the default itself.
+	req := newRequest(t, http.MethodPost, "/api/ai/sessions", map[string]any{})
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(ServeSessions, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "global-agent", resp["agentId"],
+		"the scope-aware default fallback must skip an agent scoped to another project")
+}
+
+// TestServeAgentsRescan_FiltersByProjectScope verifies POST /api/agents/rescan
+// returns the same project-filtered list as GET (it previously leaked every
+// scoped agent).
+func TestServeAgentsRescan_FiltersByProjectScope(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	projA := "/tmp/agent-rescan-a"
+	projB := "/tmp/agent-rescan-b"
+	idA, err := store.ProjectIDForPath(projA)
+	require.NoError(t, err)
+	_, err = store.ProjectIDForPath(projB)
+	require.NoError(t, err)
+
+	scoped := model.Agents["claude"]
+	scoped.ProjectID = &idA
+	model.Agents["claude"] = scoped
+	for i, a := range model.AgentList {
+		if a.ID == "claude" {
+			model.AgentList[i] = scoped
+		}
+	}
+	// The scope must ALSO be in the DB: rescan reloads the roster from disk, so
+	// an in-memory-only edit is wiped before the response is built.
+	_, err = store.WriteExec("UPDATE agents SET project_id = ? WHERE id = 'claude'", idA)
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPost, "/api/agents/rescan", nil)
+	req = withAuthCookie(req, model.SessionToken)
+	req = withProjectCookie(req, projB)
+	w := callHandler(ServeAgentSubRoutes, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	ids := agentIDsFromList(t, w.Body.Bytes())
+	assert.False(t, ids["claude"], "rescan must not leak an agent scoped to another project")
+	assert.True(t, ids["codebuddy"], "global agents must still appear in rescan")
+}
+
+// scopeAgentToOtherProject swaps the in-memory roster to a single agent scoped
+// to a project other than env.ProjectDir, returning a restore func.
+func scopeAgentToOtherProject(t *testing.T, env *testEnv, agentID string) func() {
+	t.Helper()
+	otherID, err := store.ProjectIDForPath("/tmp/agent-scope-gate-other")
+	require.NoError(t, err)
+	// Register the request's project too, so a rejection is provably about the
+	// scope, not an unresolvable project.
+	_, err = store.ProjectIDForPath(env.ProjectDir)
+	require.NoError(t, err)
+
+	origAgents := model.Agents
+	origList := model.AgentList
+	model.Agents = map[string]*model.Agent{
+		agentID: {ID: agentID, Name: agentID, Backend: "claude", ProjectID: &otherID},
+	}
+	model.AgentList = []*model.Agent{model.Agents[agentID]}
+	return func() { model.Agents = origAgents; model.AgentList = origList }
+}
+
+// TestServeForkSession_ScopedAgentFromOtherProjectRejected verifies the fork
+// gate: a fork is a NEW session, so a project-only agent from another project
+// must be refused.
+func TestServeForkSession_ScopedAgentFromOtherProjectRejected(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+	defer scopeAgentToOtherProject(t, env, "scoped-fork")()
+
+	sessID, err := service.CreateSession(env.ProjectDir, "claude", "Original", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	_, err = service.AddChatMessage(env.ProjectDir, "claude", sessID, "user", "Hello", nil, false, "")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPost, "/api/ai/session/fork", map[string]any{"sessionId": sessID, "agentId": "scoped-fork"})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeForkSession, req)
+
+	assertStatus(t, w, http.StatusBadRequest)
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "AgentNotInProject", resp["msgKey"])
+}
+
+// TestServeTasks_PostScopedAgentFromOtherProjectRejected verifies the task
+// create gate for a project-only agent from another project.
+func TestServeTasks_PostScopedAgentFromOtherProjectRejected(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+	defer scopeAgentToOtherProject(t, env, "scoped-task")()
+
+	s := service.NewScheduler()
+	defer s.Stop()
+	service.GlobalScheduler = s
+	defer func() { service.GlobalScheduler = nil }()
+
+	req := newRequest(t, http.MethodPost, "/api/tasks", map[string]any{
+		"name":      "Scoped Task",
+		"cron_expr": "0 * * * *",
+		"agent_id":  "scoped-task",
+		"prompt":    "Do something",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeTasks, req)
+
+	assertStatus(t, w, http.StatusBadRequest)
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "AgentNotInProject", resp["msgKey"])
+}
+
+// TestServeGroupCreate_ScopedAgentFromOtherProjectRejected verifies the group
+// create gate: a project-only agent from another project must not be seeded
+// into a NEW group.
+func TestServeGroupCreate_ScopedAgentFromOtherProjectRejected(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+	defer scopeAgentToOtherProject(t, env, "scoped-group")()
+
+	req := newRequest(t, http.MethodPost, "/api/group/create", map[string]any{
+		"hostAgentId":    "scoped-group",
+		"memberAgentIds": []string{"scoped-group"},
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeGroupCreate, req)
+
+	assertStatus(t, w, http.StatusBadRequest)
+}
+
+// TestGroupMemberSpecs_ScopeGate pins the group-membership predicate directly:
+// an out-of-project agent yields ok=false, a global one yields ok=true. This is
+// stronger than asserting only "400" on the endpoint, which other failure modes
+// (e.g. missing host) also produce.
+func TestGroupMemberSpecs_ScopeGate(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	otherID, err := store.ProjectIDForPath("/tmp/agent-scope-specs-other")
+	require.NoError(t, err)
+	_, err = store.ProjectIDForPath(env.ProjectDir)
+	require.NoError(t, err)
+
+	origAgents := model.Agents
+	origList := model.AgentList
+	model.Agents = map[string]*model.Agent{
+		"scoped": {ID: "scoped", Name: "Scoped", Backend: "claude", ProjectID: &otherID},
+		"global": {ID: "global", Name: "Global", Backend: "claude"},
+	}
+	model.AgentList = []*model.Agent{model.Agents["scoped"], model.Agents["global"]}
+	defer func() { model.Agents = origAgents; model.AgentList = origList }()
+
+	_, ok := groupMemberSpecs([]string{"scoped"}, env.ProjectDir)
+	assert.False(t, ok, "an agent scoped to another project must not be a valid group member here")
+
+	specs, ok := groupMemberSpecs([]string{"global"}, env.ProjectDir)
+	assert.True(t, ok, "a global agent is a valid group member")
+	require.Len(t, specs, 1)
+	assert.Equal(t, "global", specs[0].AgentID)
+}
+
+// TestServeACPLoadSession_ScopedAgentFromOtherProjectRejected verifies acp-load
+// (which creates a NEW session) enforces the scope gate.
+func TestServeACPLoadSession_ScopedAgentFromOtherProjectRejected(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	otherID, err := store.ProjectIDForPath("/tmp/agent-scope-acpload-other")
+	require.NoError(t, err)
+	_, err = store.ProjectIDForPath(env.ProjectDir)
+	require.NoError(t, err)
+
+	origAgents := model.Agents
+	origList := model.AgentList
+	model.Agents = map[string]*model.Agent{
+		"scoped-acp": {ID: "scoped-acp", Name: "ScopedACP", Backend: "claude", AcpCommand: "claude-acp", ProjectID: &otherID},
+	}
+	model.AgentList = []*model.Agent{model.Agents["scoped-acp"]}
+	defer func() { model.Agents = origAgents; model.AgentList = origList }()
+
+	req := newRequest(t, http.MethodPost, "/api/ai/session/acp-load", map[string]any{
+		"agentId":      "scoped-acp",
+		"acpSessionId": "acp-123",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeACPLoadSession, req)
+
+	assertStatus(t, w, http.StatusBadRequest)
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "AgentNotInProject", resp["msgKey"])
 }
