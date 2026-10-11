@@ -1,7 +1,7 @@
 <template>
   <BottomSheet :open="open" auto @close="$emit('close')">
     <template #header>
-      <MessageSquareQuote :size="16" class="bs-header-icon" />
+      <MessageSquare :size="16" class="bs-header-icon" />
       <span class="bs-header-title">{{ t('quoteBar.drawerTitle') }}</span>
     </template>
 
@@ -83,7 +83,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MessageSquareQuote, ExternalLink } from 'lucide-vue-next'
+import { MessageSquare, ExternalLink } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { quoteLabel, quoteLineRange, canJumpToSource, resolveQuoteType, type QuoteItem } from '@/utils/quoteItem'
