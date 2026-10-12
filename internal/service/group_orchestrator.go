@@ -168,7 +168,78 @@ func RunGroupTurnDrain(ctx context.Context, groupID string, msgID int64, row Que
 	//
 	// ctx is the claim's context, so CancelSession still reaches every member
 	// turn (their TurnSpec.Ctx derives from it).
-	return o.runLoop(ctx, groupID)
+	//
+	// A per-turn child context is registered under the GROUP id so
+	// "interrupt and send" can stop just THIS turn while the runner (and the
+	// queued messages behind it) survive. The member rows cannot carry that
+	// registration: a member row has no runner, so runTurn's per-turn
+	// registration (keyed by the member row) is a silent no-op, and the
+	// interrupt endpoint's CurrentTurnID(groupID) always reported "idle" — the
+	// reported "clicking 插话 does nothing". Registering here (under the id the
+	// queue and the endpoint actually use) makes the endpoint find a live turn.
+	//
+	// The unregister is done EXPLICITLY below (not deferred): the read of the
+	// group's cancel reason must happen only after the turn stops advertising
+	// itself, or a late interrupt could write "interrupt" into the group slot
+	// for the NEXT turn to misread as its own outcome. A `defer` would let that
+	// ordering be silently destroyed by a later refactor.
+	turnCtx, turnCancel := context.WithCancel(ctx)
+	RegisterSessionTurnCancel(groupID, turnCancel)
+
+	res := o.runLoop(turnCtx, groupID)
+	UnregisterSessionTurnCancel(groupID)
+
+	// Translate the group-level cancel reason into the result the drain loop
+	// acts on (see translateGroupCancelReason).
+	res = translateGroupCancelReason(res, GetAndClearCancelReason(groupID))
+	return res
+}
+
+// translateGroupCancelReason maps the GROUP's recorded cancel reason onto the
+// DrainResult the drain loop acts on.
+//
+// Why a translation is needed at all: a group turn runs N member turns, and the
+// cancel signal is written to the GROUP session — but a member turn's executor
+// reads the MEMBER row's reason (empty) and therefore reports the generic
+// "cancel". The kernel's own ctx check reports "user" when the cancel lands
+// BETWEEN turns. Neither matches what the drain loop must do:
+//
+//   - interrupt ⇒ KEEP the queue (run the next message);
+//   - user cancel ⇒ DROP the queue (the user does not want any of it).
+//
+// Two guards, both load-bearing:
+//
+//   - Only a CLEAN result is translated. drainHandleTerminal checks the
+//     interrupt reason BEFORE Err, so overwriting CancelReason on a FAILED turn
+//     would silently swallow the terminal error event — the user would get no
+//     failure signal and the queue would be kept as if nothing went wrong. A
+//     failed turn keeps its Err.
+//   - The translation only fires for a result the member reported as the
+//     generic "cancel" (or already "interrupt"). A clean turn stays clean: the
+//     group slot holding a stale "user" must not turn a normal finish into a
+//     cancel.
+func translateGroupCancelReason(res DrainResult, groupReason string) DrainResult {
+	if res.Err != "" {
+		return res
+	}
+	switch groupReason {
+	case cancelReasonInterrupt:
+		// Interrupt is the stronger signal: a member's generic "cancel" (or the
+		// kernel's "user" from a between-turns cancel) becomes an interrupt, so
+		// the queue survives and the next message runs.
+		res.CancelReason = cancelReasonInterrupt
+	case cancelReasonUser:
+		// A genuine user cancel. The member reported the generic "cancel" (its
+		// own slot was empty); restore "user" so the drain loop drops the queue.
+		// Without this, a cancel landing mid-member-speech kept the queue and
+		// the reaper revived a turn the user explicitly stopped — and the
+		// behavior differed depending on WHEN the cancel landed (between turns
+		// reported "user" and dropped it).
+		if res.CancelReason == "cancel" {
+			res.CancelReason = cancelReasonUser
+		}
+	}
+	return res
 }
 
 // renderGroupCommandForHost returns the rendered /cb-* template for a message,

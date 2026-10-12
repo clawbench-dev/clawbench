@@ -840,7 +840,10 @@ describe('ChatPanelContent — tool detail drawer is session-scoped', () => {
     const src = await source()
     const start = src.indexOf('= useToolDetailDrawer({')
     expect(start).toBeGreaterThan(-1)
-    // Bound the region at the closing paren of the call.
+    // Bound the region at the closing paren of the call. The call's own closer
+    // is `\n})` (the object literal's brace, then the paren); using a looser
+    // terminator would widen the window past unrelated code and let a regression
+    // hide behind an unrelated `sessionId: () =>` elsewhere in the component.
     const region = src.slice(start, src.indexOf('\n})', start))
     expect(region).toMatch(/sessionId:\s*\(\)\s*=>/)
   })
@@ -934,8 +937,52 @@ describe('ChatPanelContent — group auto-speech is per speaker', () => {
   })
 })
 
-// ── Concurrency switch is NOT in the chat panel ──
+// ── Group sessions always use "interrupt and send" ──
 //
+// The queued bubble's action must be "interrupt and send" in a group, never
+// "insert into the current reply": a group turn has no single running reply to
+// join, and the inject endpoint resolves the connection by the group id, which
+// never exists (members run on connections keyed by their own row ids). The
+// rule lives in resolveMidTurnSupported so it is unit tested; this pins the
+// WIRING so the component cannot drift back to reading only the agent flag.
+describe('ChatPanelContent — group forces interrupt mode', () => {
+  async function source(): Promise<string> {
+    const mod = await import('@/components/chat/ChatPanelContent.vue?raw')
+    return typeof mod.default === 'string' ? mod.default : ''
+  }
+
+  /** Slice the arrow-function body of a `const X = computed(() => ...)` by
+   *  brace depth, so the region is exactly that expression. A fixed-string
+   *  terminator is fragile: a looser one (`\n)` vs `\n})`) silently widens the
+   *  window into unrelated code and lets a regression hide behind an unrelated
+   *  `isGroupSession.value` elsewhere in the component. */
+  function computedBody(src: string, header: string): string {
+    const start = src.indexOf(header)
+    if (start < 0) return ''
+    const open = src.indexOf('(', start)
+    if (open < 0) return ''
+    let depth = 0
+    for (let i = open; i < src.length; i++) {
+      const ch = src[i]
+      if (ch === '(') depth++
+      else if (ch === ')') {
+        depth--
+        if (depth === 0) return src.slice(open, i + 1)
+      }
+    }
+    return ''
+  }
+
+  it('routes midTurnSupported through resolveMidTurnSupported with the group flag', async () => {
+    const src = await source()
+    const region = computedBody(src, 'const midTurnSupported = computed(')
+    expect(region, 'midTurnSupported must exist').not.toBe('')
+    expect(region, 'the group flag must gate insert').toMatch(/isGroupSession\.value/)
+    expect(region, 'the shared rule must be used').toMatch(/resolveMidTurnSupported\(/)
+  })
+})
+
+// ── Concurrency switch is NOT in the chat panel ──
 // The free-mode concurrency switch lives in the group configuration sheet
 // (GroupSettingsSheet, reached from the header avatar stack), NOT in the chat
 // input's action bar. It was briefly wired through this component; guard that

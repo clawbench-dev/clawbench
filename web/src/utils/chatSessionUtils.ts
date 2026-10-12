@@ -258,3 +258,31 @@ export function applySummaryUpdate(msg: Record<string, unknown>, summary: string
   // undefined (until the user toggles) means "default to summary when one
   // exists", which is the correct behavior for both live and reloaded messages.
 }
+
+/**
+ * Whether a queued message's single action should be "insert into the current
+ * reply" (true) or "interrupt and send" (false).
+ *
+ * Two conditions for a single chat, because the capability is per-backend but
+ * the ability is per-transport: injection goes through the agent's live ACP
+ * connection, so a CLI session of a steer-capable backend cannot actually
+ * insert. Unknown transport assumes ACP (a steer-capable backend defaults to
+ * it), and the button still fails safe — the backend declines and the UI
+ * reports it.
+ *
+ * A GROUP session is forced to interrupt regardless of both. A group turn is a
+ * multi-round loop with no single running reply to join, and the inject
+ * endpoint resolves the connection by the session id it is given — but every
+ * group member runs on its own connection keyed by the MEMBER row id, so the
+ * group id has no connection and insertion always declines. Showing "insert"
+ * there would promise something that can never work.
+ */
+export function resolveMidTurnSupported(
+  isGroupSession: boolean,
+  agentSupportsMidTurn: boolean,
+  transport: string,
+): boolean {
+  if (isGroupSession) return false
+  if (!agentSupportsMidTurn) return false
+  return transport !== 'cli'
+}
