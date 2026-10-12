@@ -2465,6 +2465,42 @@ describe('CodeLinkPreview.vue — Markdown rendered document view', () => {
 
     wrapper.unmount()
   })
+
+  it('forwards the HTML body retry click to preview.refresh()', async () => {
+    // The HTML body shows a retry button on a network error; CodeLinkPreview must
+    // wire its `refresh` emit back to the controller. Without that wiring the
+    // button is dead — the user cannot retry a failed HTML preview — and nothing
+    // else in the component reaches this path (the toolbar's refresh button is a
+    // separate, already-covered action).
+    //
+    // Both render shells carry their own copy of the body, so each must be wired:
+    // the floating card (wide screen) and the BottomSheet (narrow screen).
+    for (const mode of ['pinned', 'sheet'] as const) {
+      const preview = createMockPreviewController({
+        mode: ref(mode),
+        target: ref(makeHtmlTarget()),
+        isHtml: ref(true),
+        canRenderDocument: ref(true),
+        effectiveRenderMode: ref('rendered'),
+        status: ref('error'),
+        errorCode: ref('network'),
+        errorMessage: ref('boom'),
+      })
+      const wrapper = mount(CodeLinkPreview, {
+        props: { preview },
+        global: { plugins: [i18n] },
+      })
+      await nextTick()
+
+      const retry = document.querySelector('.code-preview-status button') as HTMLButtonElement
+      expect(retry, `retry button must exist in ${mode} mode`).not.toBeNull()
+      retry.click()
+      await nextTick()
+      expect(preview.refresh, `refresh must fire in ${mode} mode`).toHaveBeenCalled()
+
+      wrapper.unmount()
+    }
+  })
 })
 
 describe('CodeLinkPreview.vue — media body (image / SVG / video / audio / PDF)', () => {
