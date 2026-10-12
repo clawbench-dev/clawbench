@@ -64,9 +64,8 @@ const i18n = createI18n({
         search: {
           searching: 'Searching...',
           resultCountPlus: '{limit}+ files found',
-          inertHeading: 'Find “{name}”',
-          inertHint: 'This path could not be resolved. Pick the matching file:',
-          inertNoResults: 'No file named “{name}” in the project',
+          inertHeading: 'Find {name}',
+          inertNoResults: 'No file named {name} in the project',
           inertNoResultsHint: 'It may have been renamed or moved.',
         },
       },
@@ -249,6 +248,70 @@ describe('InertPathPicker', () => {
 
     expect(wrapper.find('.ip-item').exists()).toBe(false)
     expect(wrapper.find('.ip-empty').text()).toContain('renamed_away.go')
+  })
+
+  it('renders the filename as its own element in the header, not as quoted prose', async () => {
+    // The name used to be interpolated into `Find “{name}”` — the quote marks
+    // were doing the visual work of "this is an identifier". It is now a
+    // dedicated `.ip-name-chip` element so it reads as one (and matches the
+    // file-path chips used in chat).
+    const wrapper = mountPanel()
+    openInertPathPicker({ path: 'internal/service/chat_history.go' })
+    await nextTick()
+
+    const header = wrapper.find('.bs-stub')
+    const chip = header.find('.bs-header-title .ip-name-chip')
+    expect(chip.exists()).toBe(true)
+    expect(chip.text()).toBe('chat_history.go')
+    // The verb stays outside the chip; the quotes are gone.
+    expect(header.find('.bs-header-title').text()).toContain('Find')
+    expect(header.find('.bs-header-title').text()).not.toContain('“')
+  })
+
+  it('also renders the filename as a chip in the empty state', async () => {
+    const wrapper = mountPanel()
+    openInertPathPicker({ path: 'src/renamed_away.go' })
+    await nextTick()
+
+    const chip = wrapper.find('.ip-empty-text .ip-name-chip')
+    expect(chip.exists()).toBe(true)
+    expect(chip.text()).toBe('renamed_away.go')
+    expect(wrapper.find('.ip-empty-text').text()).not.toContain('“')
+  })
+
+  it('no longer renders the explanatory hint line', async () => {
+    const wrapper = mountPanel()
+    openInertPathPicker({ path: 'src/main.go' })
+    await nextTick()
+
+    expect(wrapper.find('.ip-hint').exists()).toBe(false)
+  })
+
+  it('makes result rows full-bleed (square corners, no horizontal body inset)', async () => {
+    // The rows span the panel edge to edge: the body carries no horizontal
+    // padding and the row corners are square, so the hover fill reaches both
+    // edges. Source-level because jsdom has no layout engine to resolve the
+    // padding/radius.
+    const wrapper = mountPanel()
+    searchState.results = [
+      { name: 'main.go', path: 'src/main.go', type: 'file', matchedIndices: [] },
+    ]
+    openInertPathPicker({ path: 'src/main.go' })
+    await nextTick()
+    expect(wrapper.find('.ip-item').exists()).toBe(true)
+
+    const mod = await import('../InertPathPicker.vue?raw')
+    const src = String(mod.default)
+
+    const bodyRule = src.match(/\.ip-body\s*\{([^}]*)\}/)
+    expect(bodyRule, '.ip-body rule must exist').not.toBeNull()
+    // No horizontal inset: `padding: var(--space-4) 0` (or any `0`/`0px` second
+    // value) — the rows must not be held off the panel edges.
+    expect(bodyRule![1]).toMatch(/padding:\s*[^;]*\b0\b\s*;/)
+
+    const itemRule = src.match(/\n\.ip-item\s*\{([^}]*)\}/)
+    expect(itemRule, '.ip-item rule must exist').not.toBeNull()
+    expect(itemRule![1]).toMatch(/border-radius:\s*0\s*;/)
   })
 
   it('shows a loading state while the walk is in flight', async () => {

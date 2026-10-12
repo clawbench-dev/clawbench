@@ -1693,9 +1693,8 @@ export default {
       // Verified-missing path chip: the path failed existence checks against
       // both resolution candidates, but the file may exist elsewhere in the
       // project. Clicking searches for it by filename (issue #501 follow-up).
-      inertHeading: 'Find “{name}”',
-      inertHint: 'This path could not be resolved. Pick the matching file:',
-      inertNoResults: 'No file named “{name}” in the project',
+      inertHeading: 'Find {name}',
+      inertNoResults: 'No file named {name} in the project',
       inertNoResultsHint: 'It may have been renamed or moved. Try searching from the file manager.',
     },
     contentSearch: {

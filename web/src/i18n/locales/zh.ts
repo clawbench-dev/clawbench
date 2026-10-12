@@ -1694,9 +1694,8 @@ export default {
       scopeGlobal: '全局搜索',
       // 验证失效的路径 chip：两个候选位置都不存在，但文件可能改名/移动到了
       // 项目别处。点击按文件名搜索（issue #501 后续）。
-      inertHeading: '查找“{name}”',
-      inertHint: '该路径无法解析。请选择匹配的文件：',
-      inertNoResults: '项目中没有名为“{name}”的文件',
+      inertHeading: '查找 {name}',
+      inertNoResults: '项目中没有名为 {name} 的文件',
       inertNoResultsHint: '它可能已被改名或移动。可到文件管理器中搜索。',
     },
     contentSearch: {
