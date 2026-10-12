@@ -82,6 +82,14 @@
     </div>
     <!-- Inline description (always visible below label row) -->
     <div v-if="description" class="settings-item__desc">{{ description }}</div>
+    <!-- Inline note (always visible): a caveat about WHEN an edit takes effect.
+         Distinct from `description` (what the field IS) and from `warning`
+         (which only shows inside the open editor). Kept in the row so the
+         caveat is visible before the user opens the field. -->
+    <div v-if="note" class="settings-item__note">
+      <Info :size="12" class="settings-item__note-icon" />
+      <span>{{ note }}</span>
+    </div>
     <!-- Info-type: detail line with action icons (quantity on left, icons on right) -->
     <div v-if="type === 'info' && displayValue" class="settings-item__info-row">
       <span class="settings-item__info-detail">{{ displayValue }}</span>
@@ -299,7 +307,7 @@ import { ref, computed, watch, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 // Shared pill button language (.fbtn) used by the row's confirm/retry buttons.
 import '@/assets/modal-footer-btn.css'
-import { Eye, EyeOff, RefreshCw, ChevronsUpDown, Sun, Moon, Palette, Check, AlertTriangle } from 'lucide-vue-next'
+import { Eye, EyeOff, RefreshCw, ChevronsUpDown, Sun, Moon, Palette, Check, AlertTriangle, Info } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import ModelRow from '@/components/common/ModelRow.vue'
@@ -319,6 +327,10 @@ export type OptionPreview = ColorPreview | TerminalPreview
 interface Props {
   label: string
   description?: string
+  /** Caveat about WHEN an edit takes effect (e.g. "may not apply mid-session").
+   *  Always visible in the row, unlike `warning` which only shows inside the
+   *  open editor. Absent means no note. */
+  note?: string
   type: 'switch' | 'select' | 'number' | 'text' | 'slider' | 'action' | 'info' | 'header' | 'password' | 'textarea'
   modelValue?: unknown
   options?: SelectOption[]
@@ -375,6 +387,7 @@ const props = withDefaults(defineProps<Props>(), {
   step: undefined,
   placeholder: '',
   description: '',
+  note: '',
   needsRestart: false,
   disabled: false,
   forceClose: false,
@@ -789,6 +802,25 @@ function confirmEdit() {
   line-height: var(--line-height-normal);
   word-break: break-word;
   margin-top: 0;
+}
+
+/* Inline note: a "when does this take effect" caveat. Muted like the desc but
+   with a leading info glyph so it reads as an aside, not part of the field's
+   own description. */
+.settings-item__note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  width: 100%;
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+  line-height: var(--line-height-normal);
+  word-break: break-word;
+  margin-top: var(--space-2);
+}
+.settings-item__note-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
 }
 
 .settings-item__right {

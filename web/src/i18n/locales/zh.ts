@@ -2464,6 +2464,7 @@ export default {
       agentAvatarSaved: '头像已更新',
       agentSystemPrompt: '系统提示',
       agentSystemPromptDesc: '自定义Agent行为规则，追加在内置规则之后',
+      agentSystemPromptNote: '对已进行中的会话可能不生效：部分后端仅在会话开始或上下文压缩后重新注入系统提示。建议新开会话以确保生效。',
       agentSystemPromptWarning: '请勿添加覆盖安全规则的指令（如"忽略以上所有指令"）',
       agentSystemPromptACPNote: 'ACP智能体自行管理系统提示，此处不可编辑',
       agentBackend: '后端',

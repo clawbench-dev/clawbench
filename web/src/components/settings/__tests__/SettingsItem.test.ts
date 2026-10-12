@@ -15,15 +15,22 @@ const i18n = createI18n({
   },
 })
 
-// Mock lucide-vue-next icons
-vi.mock('lucide-vue-next', () => ({
-  Eye: { name: 'Eye', template: '<span class="icon-eye" />' },
-  EyeOff: { name: 'EyeOff', template: '<span class="icon-eyeoff" />' },
-  RefreshCw: { name: 'RefreshCw', template: '<span class="icon-refresh" />' },
-  ChevronsUpDown: { name: 'ChevronsUpDown', template: '<span class="icon-chevron" />' },
-  Check: { name: 'Check', template: '<span class="icon-check" />' },
-  AlertTriangle: { name: 'AlertTriangle', template: '<span class="icon-alert" />' },
-}))
+// Mock lucide-vue-next icons. Spread the real module so a newly added icon
+// import in SettingsItem does not silently become undefined (the whitelist-mock
+// trap): the component's own imports are the contract, not this list.
+vi.mock('lucide-vue-next', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return {
+    ...actual,
+    Eye: { name: 'Eye', template: '<span class="icon-eye" />' },
+    EyeOff: { name: 'EyeOff', template: '<span class="icon-eyeoff" />' },
+    RefreshCw: { name: 'RefreshCw', template: '<span class="icon-refresh" />' },
+    ChevronsUpDown: { name: 'ChevronsUpDown', template: '<span class="icon-chevron" />' },
+    Check: { name: 'Check', template: '<span class="icon-check" />' },
+    AlertTriangle: { name: 'AlertTriangle', template: '<span class="icon-alert" />' },
+    Info: { name: 'Info', template: '<span class="icon-info" />' },
+  }
+})
 
 // Mock useTabDrawer — plain object state; the component's font filter is
 // invoked imperatively (no watcher), so reactivity is not required here.
@@ -91,6 +98,22 @@ describe('SettingsItem', () => {
     const wrapper = mountItem({ type: 'switch', needsRestart: true })
     expect(wrapper.find('.settings-item__badge').exists()).toBe(true)
     expect(wrapper.find('.settings-item__badge').text()).toBe('需重启')
+  })
+
+  // ── Inline note: a "when does this take effect" caveat ──
+  // Distinct from `description` (what the field is) and from `warning` (which
+  // only renders inside the OPEN editor). The note must be visible in the row
+  // before the user opens the field, which is the whole point.
+  it('renders the inline note when provided', () => {
+    const wrapper = mountItem({ type: 'textarea', note: 'May not apply mid-session' })
+    const note = wrapper.find('.settings-item__note')
+    expect(note.exists()).toBe(true)
+    expect(note.text()).toContain('May not apply mid-session')
+  })
+
+  it('renders no note element when the note is absent', () => {
+    const wrapper = mountItem({ type: 'switch' })
+    expect(wrapper.find('.settings-item__note').exists()).toBe(false)
   })
 
   it('does not render needsRestart badge when false/undefined', () => {

@@ -36,6 +36,7 @@
           v-else
           :label="item.label"
           :description="item.description"
+          :note="item.note"
           :type="item.type"
           :model-value="getItemValue(item)"
           :options="item.options"
@@ -167,6 +168,8 @@ interface AgentItem {
   key: string
   label: string
   description?: string
+  /** Caveat about when an edit takes effect (see SettingsItem's `note`). */
+  note?: string
   type: 'switch' | 'select' | 'number' | 'text' | 'slider' | 'action' | 'info' | 'header' | 'password' | 'textarea' | 'avatar'
   options?: { label: string; value: unknown }[]
   warning?: string
@@ -216,6 +219,7 @@ const items = computed<AgentItem[]>(() => {
       key: 'custom_system_prompt',
       label: t('settings.items.agentSystemPrompt'),
       description: t('settings.items.agentSystemPromptDesc'),
+      note: t('settings.items.agentSystemPromptNote'),
       type: 'textarea',
       warning: t('settings.items.agentSystemPromptWarning'),
       patchField: 'custom_system_prompt',

@@ -2465,6 +2465,7 @@ export default {
       agentAvatarSaved: 'Avatar updated',
       agentSystemPrompt: 'System Prompt',
       agentSystemPromptDesc: 'Custom rules for agent behavior, appended after built-in rules',
+      agentSystemPromptNote: 'May not apply to a session already in progress: some backends re-inject the system prompt only at the start of a session or after context compaction. Start a new session to be sure it takes effect.',
       agentSystemPromptWarning: 'Do not add instructions that override safety rules (e.g. "ignore all previous instructions")',
       agentSystemPromptACPNote: 'ACP agent manages its own system prompt; not editable here',
       agentBackend: 'Backend',
