@@ -25,9 +25,6 @@
              It leads the Identity card so the avatar sits with the name. -->
         <div v-if="item.type === 'avatar'" class="settings-agent-detail__avatar-row">
           <AgentIcon :backend="agent?.backend || ''" :name="agent?.name" :avatar="agent?.avatar" size="xl" />
-          <div class="settings-agent-detail__avatar-text">
-            <span class="settings-agent-detail__avatar-label">{{ t('settings.items.agentAvatar') }}</span>
-          </div>
           <button class="fbtn settings-agent-detail__avatar-btn" @click="avatarPickerOpen = true">
             {{ t('settings.items.agentAvatarChange') }}
           </button>
@@ -616,18 +613,9 @@ async function handleDelete() {
   background: var(--border-color);
 }
 
-.settings-agent-detail__avatar-text {
-  flex: 1;
-  min-width: 0;
-}
-
-.settings-agent-detail__avatar-label {
-  font-size: var(--font-size-md);
-  color: var(--text-primary);
-}
-
 .settings-agent-detail__avatar-btn {
   flex-shrink: 0;
+  margin-left: auto;
 }
 
 /* Stale-reference fallback: centred block, matching the task panel's missing

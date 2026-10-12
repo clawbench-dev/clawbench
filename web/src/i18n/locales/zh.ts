@@ -2453,7 +2453,7 @@ export default {
       agentName: '名称',
       agentSpecialty: '描述',
       agentAvatar: '头像',
-      agentAvatarChange: '更换',
+      agentAvatarChange: '更换头像',
       agentAvatarTitle: '自定义头像',
       agentAvatarSeed: '种子',
       agentAvatarShuffle: '随机',

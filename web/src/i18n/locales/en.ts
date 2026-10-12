@@ -2454,7 +2454,7 @@ export default {
       agentName: 'Name',
       agentSpecialty: 'Description',
       agentAvatar: 'Avatar',
-      agentAvatarChange: 'Change',
+      agentAvatarChange: 'Change Avatar',
       agentAvatarTitle: 'Custom Avatar',
       agentAvatarSeed: 'Seed',
       agentAvatarShuffle: 'Shuffle',
