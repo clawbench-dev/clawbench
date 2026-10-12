@@ -337,6 +337,7 @@
                       @task-card-click="onTaskCardClick"
                       @open-session-search="sessionSearchDrawer.open()"
                       @open-group-settings="openGroupSettings"
+                      @open-agent-config="openAgentConfig"
                     />
                   </TabPanel>
                   <!-- The hint is centered on the CHAT column, not on
@@ -666,8 +667,10 @@ import {
   endPanelSwitch,
   isPanelSwitchInFlight,
   loadProjectPanel,
+  loadProjectPanelCollapsed,
   resolvePanelTab,
   saveProjectPanel,
+  saveProjectPanelCollapsed,
 } from './composables/useProjectPanel.ts'
 import { openPendingSessionWhenReady } from './composables/usePendingSessionOpen.ts'
 import { guardStartupWithSplash } from './composables/useStartupGuard.ts'
@@ -730,6 +733,12 @@ const switchingProject = ref(false)
 const navigationByProject = new Map()
 
 async function hotSwitchProject(newProjectPath: string, pendingSessionId?: string | null, pendingTaskNav?: { taskId: string; executionId?: string } | null) {
+  // Capture the session being left BEFORE any await. Two awaits below
+  // (confirmLeave, setProject) can each let the current subtree's in-flight
+  // loadHistory resolve a session id — and setProject flips the project cookie
+  // first — so reading it later could snapshot the old project's staged quote
+  // under the NEW project's session and re-introduce the very leak this fixes.
+  const leavingSessionId = sessionIdentity.currentSessionId.value
   // Guard unsaved file edits BEFORE anything is armed. The switch destroys the
   // editor subtree (Phase 4), so without this an in-progress edit would be lost
   // silently. Runs the save/discard/cancel flow and aborts the switch when the
@@ -809,6 +818,8 @@ async function hotSwitchProject(newProjectPath: string, pendingSessionId?: strin
   resetTabDrawerState()
   resetAllCrudLists()
   completionPopover.reset()
+  // Drop the live staged input now that it is snapshotted (see above).
+  leaveInputDraft(leavingSessionId)
   // Navigation context is a module-level singleton, so it survives the
   // keyed project subtree replacement. Never carry a return target from the
   // previous project into the newly selected project.
@@ -819,6 +830,19 @@ async function hotSwitchProject(newProjectPath: string, pendingSessionId?: strin
   // A browse preview session belongs to the previous project's file manager.
   browseFileSession.value = false
   activeTab.value = 'chat'
+
+  // Apply the target project's collapsed flag BEFORE the keyed rebuild. Unlike
+  // the tab, this is a pure localStorage read with no `currentFile` dependency,
+  // so it does not need the workspace restore — and waiting for Phase 6 would
+  // paint the OLD project's expanded column first: Phase 5 fades the new tree in
+  // long before `restoreProjectWorkspace()`'s network round-trip completes, so a
+  // project remembered as hidden flickered visible-then-hidden.
+  //
+  // Guarded like Phase 6: a newer switch may already own the store, and writing
+  // this project's flag then would collapse the wrong project's column.
+  if (isWideScreen.value && store.state.projectRoot === resolvedProjectPath) {
+    setLeftCollapsed(loadProjectPanelCollapsed(resolvedProjectPath))
+  }
 
   // ── Phase 4: Change key → Vue destroys old component tree & builds new one ──
   projectKey.value = newProjectPath
@@ -834,6 +858,14 @@ async function hotSwitchProject(newProjectPath: string, pendingSessionId?: strin
 
   // ── Phase 6: Background data loading — all independent, fully parallel, non-blocking ──
   await sessionIdentity.initSessionFromAPI()
+  // Restore the new project's session draft now that identity is resolved.
+  // The project switch bypasses the session manager (which does this on a
+  // session switch), so the restore has to happen here; without it the
+  // snapshot taken on departure would never come back when the user returns.
+  // onlyIfLiveEmpty: the new subtree is already interactive (Phase 5 faded in
+  // before this await), so anything the user staged during the network round-
+  // trip must not be silently discarded.
+  restoreAttachments(sessionIdentity.currentSessionId.value, { onlyIfLiveEmpty: true })
   Promise.allSettled([
     loadSessionsOnce(),
     store.loadGitBranch(),
@@ -863,9 +895,7 @@ async function hotSwitchProject(newProjectPath: string, pendingSessionId?: strin
   // panel under this one's key. The latest completed switch owns the landing
   // state, so this one stands down.
   if (store.state.projectRoot === resolvedProjectPath) {
-    const rememberedPanel = loadProjectPanel(resolvedProjectPath)
-    applyPanelTab(resolvePanelTab(rememberedPanel, isWideScreen.value, !!store.state.currentFile))
-    saveProjectPanel(resolvedProjectPath, currentPanelTab.value)
+    applyProjectPanel(resolvedProjectPath)
   }
   // Re-enable panel persistence before Phase 7: a pending navigation switches to
   // tasks or opens a session, and THAT landing panel is what the user should come
@@ -946,11 +976,51 @@ function applyPanelTab(tab: string) {
   else switchTab(tab)
 }
 
+/**
+ * Restore `root`'s remembered left-panel state: the tab AND (wide-screen only)
+ * whether the column was collapsed. The single entry point for both cold start
+ * and project switch, so the two paths cannot drift.
+ *
+ * Ordering is load-bearing. `applyPanelTab` → `switchLeftTab` unconditionally
+ * EXPANDS the column, so the collapsed flag must be applied AFTER the tab;
+ * doing it first would be silently undone.
+ *
+ * Collapsed state is a wide-screen concept only (on a narrow screen the column
+ * is just "the active tab"), so it is neither applied nor recorded there.
+ * Applying it on a narrow screen would park `leftCollapsed = true` in state and
+ * hide the column the next time the window widens.
+ *
+ * Both values are written back explicitly because during a switch the save
+ * watchers are still suppressed — without this the first visit to a project
+ * would record nothing. The write-back also normalizes the record (a remembered
+ * 'view' with no surviving file is stored back as 'browse').
+ */
+function applyProjectPanel(root: string) {
+  applyPanelTab(resolvePanelTab(loadProjectPanel(root), isWideScreen.value, !!store.state.currentFile))
+  if (isWideScreen.value) {
+    // A project with no record lands on the layout default (hidden) rather than
+    // inheriting the previous project's state — otherwise a first visit would
+    // depend on which project the user came from.
+    setLeftCollapsed(loadProjectPanelCollapsed(root))
+    saveProjectPanelCollapsed(root, leftCollapsed.value)
+  }
+  saveProjectPanel(root, currentPanelTab.value)
+}
+
 // Remember which panel each project was last on, so switching back restores it.
 // Suppressed during a project switch — see beginPanelSwitch() in hotSwitchProject.
 watch(currentPanelTab, (tab) => {
   if (isPanelSwitchInFlight()) return
   saveProjectPanel(store.state.projectRoot, tab)
+})
+
+// Same per-project memory for the collapsed left column. Gated on wide screen
+// for the same reason applyProjectPanel is: on a narrow screen the flag is
+// meaningless and recording it would hide the column on a later widen.
+watch(leftCollapsed, (collapsed) => {
+  if (isPanelSwitchInFlight()) return
+  if (!isWideScreen.value) return
+  saveProjectPanelCollapsed(store.state.projectRoot, collapsed)
 })
 
 // Focus-aware keyboard gating: a panel's global shortcuts only fire when the
@@ -1304,6 +1374,25 @@ const groupAutoApprove = sessionIdentity.autoApprove
 const groupAvatarStackRef = ref<InstanceType<typeof GroupAvatarStack> | null>(null)
 function openGroupSettings() {
   groupAvatarStackRef.value?.open()
+}
+
+/**
+ * Group-chat speaker header → that agent's config page.
+ *
+ * The config page is a sub-page of the settings tab, so the jump records the
+ * chat as its origin first: Back (Android hardware / edge swipe) then returns
+ * to the conversation instead of landing on whatever tab preceded the jump.
+ * (The settings breadcrumb is NOT this path — it truncates the settings nav
+ * stack and lands on the settings index without switching tabs.) Same pattern
+ * as handleOpenPortForwardSettings. The settings TabPanel mounts lazily, so the
+ * target category travels through the module-level pending-category ref, which
+ * SettingsPage consumes on mount or on activation.
+ */
+function openAgentConfig(agentId: string) {
+  if (!agentId) return
+  beginExternalJump('chat', surfaceLabel('chat'), { tab: 'chat' })
+  setPendingSettingsCategory(`agents:${agentId}`)
+  switchTab('settings')
 }
 
 const sessionSidebar = useSessionSidebar()
@@ -2216,7 +2305,7 @@ async function initializeApp() {
   // component ref) because the app subtree is not mounted yet — isAuthenticated
   // only flips after this function resolves, so the dock/file manager do not
   // exist here. `currentFile` is already populated by the restore above.
-  applyPanelTab(resolvePanelTab(loadProjectPanel(store.state.projectRoot), isWideScreen.value, !!store.state.currentFile))
+  applyProjectPanel(store.state.projectRoot)
   return true
 }
 
@@ -2770,6 +2859,14 @@ watch(isWideScreen, (val) => {
       // isn't blocked by a stale 'chat' activeTab.
       activeTab.value = next
     }
+    // Continuity for the left column. Entering wide-screen while the single
+    // column was on a non-chat panel means the user is still working on that
+    // surface, so it must stay visible — otherwise widening from the file
+    // manager would land on chat with the column hidden (the default) and read
+    // as "my panel disappeared". `switchLeftTab` above already expands when the
+    // tab changed; this covers the case where `leftTab` already matched, which
+    // would otherwise leave the column at whatever collapsed state it held.
+    if (enteredTab !== 'chat') setLeftCollapsed(false)
     onTabSwitch('chat')
     overflowMenuOpen.value = false
     // Focus continuity: the pane the user was working in becomes the active one.
@@ -2825,7 +2922,7 @@ function handleWideDockTabClick(tab: string) {
 }
 
 // ── Drag file/dir onto the chat panel → show the panel-wide overlay and attach/upload ──
-const { addAttachedFile, addStagedQuote } = useChatContext()
+const { addAttachedFile, addStagedQuote, restoreAttachments } = useChatContext()
 const { forgeUnreadCount, refresh: refreshForgeUnread } = useForgeUnread()
 // The forge dock icon reflects the bound platform (GitHub vs GitLab).
 const { platform: forgePlatform, refresh: refreshForgePlatform } = useForgeBinding()
@@ -2861,7 +2958,7 @@ function handleFileQuoteInChat(path: string) {
     onAdd: () => switchTab('chat'),
   })
 }
-const { uploadAndAttach } = useFileUpload()
+const { uploadAndAttach, leaveInputDraft } = useFileUpload()
 const chatDropActive = ref(false)
 let chatDropCounter = 0
 

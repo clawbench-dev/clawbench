@@ -626,6 +626,131 @@ func TestTestTTS_NanoInvalidModelDir(t *testing.T) {
 	_ = result
 }
 
+// ── OpenAI TTS connectivity tests ─────────────────────────────
+
+func TestTestTTS_OpenAIRequiresFields(t *testing.T) {
+	cases := []struct {
+		name    string
+		values  map[string]any
+		wantSub string
+	}{
+		{
+			name:    "missing base_url",
+			values:  map[string]any{"tts.openai.model": "m", "tts.openai.voice": "alloy"},
+			wantSub: "base URL is required",
+		},
+		{
+			name:    "missing model",
+			values:  map[string]any{"tts.openai.base_url": "https://api.openai.com/v1", "tts.openai.voice": "alloy"},
+			wantSub: "model is required",
+		},
+		{
+			name:    "missing voice",
+			values:  map[string]any{"tts.openai.base_url": "https://api.openai.com/v1", "tts.openai.model": "m"},
+			wantSub: "voice is required",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := testTTSOpenAI(context.Background(), tc.values)
+			assert.False(t, result.Success)
+			assert.Contains(t, result.Message, tc.wantSub)
+		})
+	}
+}
+
+// The probe must issue a real synthesis request (not a models lookup), because
+// gateways commonly do not enumerate every model — and it must ask for the raw
+// audio body, which every model supports, rather than SSE.
+func TestTestTTS_OpenAIProbeRequestShape(t *testing.T) {
+	var gotBody map[string]any
+	var gotAuth, gotPath string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotPath = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "audio/mpeg")
+		_, _ = w.Write([]byte("fake-mp3"))
+	}))
+	defer srv.Close()
+
+	result := testTTSOpenAI(context.Background(), map[string]any{
+		"tts.openai.base_url": srv.URL + "/v1",
+		"tts.openai.api_key":  "sk-test",
+		"tts.openai.model":    "gpt-4o-mini-tts",
+		"tts.openai.voice":    "alloy",
+	})
+
+	assert.True(t, result.Success, result.Message)
+	assert.Contains(t, result.Message, "gpt-4o-mini-tts")
+	assert.Contains(t, result.Message, "alloy")
+
+	assert.Equal(t, "/v1/audio/speech", gotPath, "base_url ending in /v1 must complete to the speech endpoint")
+	assert.Equal(t, "Bearer sk-test", gotAuth)
+	assert.Equal(t, "gpt-4o-mini-tts", gotBody["model"])
+	assert.Equal(t, "alloy", gotBody["voice"])
+	assert.Equal(t, "audio", gotBody["stream_format"], "probe must use the shape every model supports")
+	assert.NotEmpty(t, gotBody["input"])
+}
+
+func TestTestTTS_OpenAIErrorStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"message":"bad key"}}`))
+	}))
+	defer srv.Close()
+
+	result := testTTSOpenAI(context.Background(), map[string]any{
+		"tts.openai.base_url": srv.URL,
+		"tts.openai.model":    "m",
+		"tts.openai.voice":    "alloy",
+	})
+
+	assert.False(t, result.Success)
+	assert.Contains(t, result.Message, "401")
+	assert.Contains(t, result.Message, "bad key")
+}
+
+// A 200 with an empty body would otherwise read as success while playback
+// fails with no audio.
+func TestTestTTS_OpenAIEmptyBodyFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "audio/mpeg")
+	}))
+	defer srv.Close()
+
+	result := testTTSOpenAI(context.Background(), map[string]any{
+		"tts.openai.base_url": srv.URL,
+		"tts.openai.model":    "m",
+		"tts.openai.voice":    "alloy",
+	})
+
+	assert.False(t, result.Success)
+	assert.Contains(t, result.Message, "empty audio body")
+}
+
+func TestTestTTS_OpenAIUnreachable(t *testing.T) {
+	result := testTTSOpenAI(context.Background(), map[string]any{
+		"tts.openai.base_url": "http://127.0.0.1:1/v1",
+		"tts.openai.model":    "m",
+		"tts.openai.voice":    "alloy",
+	})
+	assert.False(t, result.Success)
+	assert.Contains(t, result.Message, "unreachable")
+}
+
+// The engine dispatcher must route "openai" to the OpenAI probe rather than
+// falling into the unknown-engine branch.
+func TestTestTTS_RoutesToOpenAI(t *testing.T) {
+	result := testTTS(context.Background(), map[string]any{
+		"tts.engine": "openai",
+	})
+	assert.False(t, result.Success)
+	assert.NotContains(t, result.Message, "Unknown TTS engine")
+	assert.Contains(t, result.Message, "base URL is required")
+}
+
 // ── Port Forward tests ────────────────────────────────────────
 
 func TestTestPortForward_ServerNotListening(t *testing.T) {

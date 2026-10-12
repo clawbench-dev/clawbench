@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { getServerFieldToLabelKey, categoryItems, categoryHasPanels, isPanelOnlyCategory, getCategoryPanels, isSubPageRoute, getSubPagePanel, getSubPageTitleKey, subPagePanelMap, buildFontFamilyOptions } from '@/components/settings/settingsFieldMap'
+import { getServerFieldToLabelKey, categoryItems, categoryHasPanels, isPanelOnlyCategory, getCategoryPanels, isSubPageRoute, getSubPagePanel, getSubPageTitleKey, subPagePanelMap, buildFontFamilyOptions, isDependsOnMet } from '@/components/settings/settingsFieldMap'
 import { UI_SCALE_STEP } from '@/utils/uiScale'
 import i18n from '@/i18n'
 
@@ -356,9 +356,10 @@ describe('settingsFieldMap', () => {
     expect(cfg.entrySelector).toBeDefined()
     expect(cfg.entrySelector!.key).toBe('tts.engine')
     expect(cfg.entrySelector!.type).toBe('select')
-    expect(cfg.entrySelector!.options!.length).toBe(4)
+    expect(cfg.entrySelector!.options!.length).toBe(5)
+    expect(cfg.entrySelector!.options!.map(o => o.value)).toContain('openai')
     expect(cfg.commonFields.length).toBe(3)
-    expect(cfg.optionSubFields!.length).toBe(3)
+    expect(cfg.optionSubFields!.length).toBe(4)
 
     const piperSub = cfg.optionSubFields!.find(osf => osf.when === 'piper')
     expect(piperSub).toBeDefined()
@@ -373,9 +374,49 @@ describe('settingsFieldMap', () => {
     expect(mossNanoSub).toBeDefined()
     expect(mossNanoSub!.fields.length).toBe(2)
 
-    expect(cfg.requiredFields).toEqual(['tts.piper.model_path', 'tts.kokoro.model_path', 'tts.kokoro.voices_path'])
+    const openaiSub = cfg.optionSubFields!.find(osf => osf.when === 'openai')
+    expect(openaiSub).toBeDefined()
+    expect(openaiSub!.fields.map(f => f.key)).toEqual([
+      'tts.openai.base_url',
+      'tts.openai.api_key',
+      'tts.openai.model',
+      'tts.openai.voice',
+    ])
+    // The API key must be masked like every other credential row.
+    expect(openaiSub!.fields.find(f => f.key === 'tts.openai.api_key')!.type).toBe('password')
+    // Model and voice are free text — a compatible server may accept values
+    // outside OpenAI's documented list (custom voices are referenced by id).
+    expect(openaiSub!.fields.find(f => f.key === 'tts.openai.model')!.type).toBe('text')
+    expect(openaiSub!.fields.find(f => f.key === 'tts.openai.voice')!.type).toBe('text')
+
+    expect(cfg.requiredFields).toEqual([
+      'tts.piper.model_path',
+      'tts.kokoro.model_path',
+      'tts.kokoro.voices_path',
+      'tts.openai.base_url',
+      'tts.openai.model',
+      'tts.openai.voice',
+    ])
     expect(cfg.needsVoiceReset).toBe(true)
     expect(cfg.hasConnectivityTest).toBe(true)
+  })
+
+  // The shared tts.voice row is a fixed per-engine dropdown. For "openai" it
+  // must be hidden (that engine uses its own free-text tts.openai.voice) — and
+  // it must stay visible for every other engine.
+  it('tts shared voice row is hidden only for the openai engine', () => {
+    const cfg = getCategoryPanels('tts_engine')[0]
+    const voiceField = cfg.commonFields.find(f => f.key === 'tts.voice')!
+
+    expect(voiceField.dependsOn).toEqual({
+      key: 'tts.engine',
+      values: ['edge', 'piper', 'kokoro', 'moss-nano'],
+    })
+
+    const getValue = (engine: string) => (key: string) => (key === 'tts.engine' ? engine : undefined)
+    expect(isDependsOnMet(voiceField.dependsOn, getValue('edge'))).toBe(true)
+    expect(isDependsOnMet(voiceField.dependsOn, getValue('moss-nano'))).toBe(true)
+    expect(isDependsOnMet(voiceField.dependsOn, getValue('openai'))).toBe(false)
   })
 
   // ── Auto rename (自动命名) ──

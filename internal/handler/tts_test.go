@@ -454,16 +454,77 @@ func TestTTSGenerate_StreamingSynthesizeFailure(t *testing.T) {
 
 // --- TTSGenerate: cache key is deterministic ---
 
-func TestTTSGenerate_CacheKeyDeterministic(t *testing.T) {
+// The cache key must be stable for identical inputs (so repeated playback hits
+// the cache) and must vary with everything that changes the audio: the text,
+// the group-chat speaker (whose name is spoken as a prefix) and the provider's
+// synthesis configuration (voice / model / rate).
+func TestTTSCacheKey_Deterministic(t *testing.T) {
 	text := "同样的文本应该产生同样的缓存键"
-	hash1 := sha256.Sum256([]byte(text))
-	key1 := hex.EncodeToString(hash1[:])[:summarize.CacheKeyHexLen]
+	k1, _ := ttsCacheKeyAndPrefix(text, "", "zh", "edge|zh-CN-XiaoxiaoNeural|+0%")
+	k2, _ := ttsCacheKeyAndPrefix(text, "", "zh", "edge|zh-CN-XiaoxiaoNeural|+0%")
 
-	hash2 := sha256.Sum256([]byte(text))
-	key2 := hex.EncodeToString(hash2[:])[:summarize.CacheKeyHexLen]
+	assert.Equal(t, k1, k2, "identical inputs must produce an identical cache key")
+	assert.Len(t, k1, summarize.CacheKeyHexLen)
+}
 
-	assert.Equal(t, key1, key2)
-	assert.Len(t, key1, summarize.CacheKeyHexLen)
+func TestTTSCacheKey_VariesWithProviderIdentity(t *testing.T) {
+	text := "同一句话"
+
+	xiaoxiao, _ := ttsCacheKeyAndPrefix(text, "", "zh", "edge|zh-CN-XiaoxiaoNeural|+0%")
+	yunxi, _ := ttsCacheKeyAndPrefix(text, "", "zh", "edge|zh-CN-YunxiNeural|+0%")
+	openai, _ := ttsCacheKeyAndPrefix(text, "", "zh", "openai|https://api.openai.com/v1|gpt-4o-mini-tts|alloy")
+	noIdentity, _ := ttsCacheKeyAndPrefix(text, "", "zh", "")
+
+	assert.NotEqual(t, xiaoxiao, yunxi, "changing the voice must invalidate the cached audio")
+	assert.NotEqual(t, xiaoxiao, openai, "changing the engine must invalidate the cached audio")
+	assert.NotEqual(t, xiaoxiao, noIdentity, "a provider with no identity must not collide with one that has one")
+}
+
+func TestTTSCacheKey_VariesWithSpeaker(t *testing.T) {
+	text := "同意"
+
+	alice, prefixA := ttsCacheKeyAndPrefix(text, "Alice", "zh", "edge|v|+0%")
+	bob, prefixB := ttsCacheKeyAndPrefix(text, "Bob", "zh", "edge|v|+0%")
+	anon, prefixAnon := ttsCacheKeyAndPrefix(text, "", "zh", "edge|v|+0%")
+
+	assert.NotEqual(t, alice, bob, "two speakers saying the same words need distinct audio")
+	assert.NotEqual(t, alice, anon)
+	assert.NotEmpty(t, prefixA)
+	assert.NotEmpty(t, prefixB)
+	assert.Empty(t, prefixAnon, "a single-chat request has no speaker prefix")
+}
+
+// The speaker prefix is spoken, so it must be built in the language being
+// synthesized, not the UI locale.
+func TestTTSCacheKey_SpeakerPrefixUsesSpokenLanguage(t *testing.T) {
+	_, zhPrefix := ttsCacheKeyAndPrefix("hi", "Alice", "zh", "")
+	_, enPrefix := ttsCacheKeyAndPrefix("hi", "Alice", "en", "")
+
+	assert.Contains(t, zhPrefix, "说", "a Chinese synthesis must use the Chinese prefix")
+	assert.Contains(t, enPrefix, "says", "an English synthesis must use the English prefix")
+}
+
+func TestTTSProviderCacheIdentity(t *testing.T) {
+	// Providers that implement CacheIdentityProvider report their config.
+	edge := &speech.EdgeTTSProvider{Voice: "zh-CN-XiaoxiaoNeural", Rate: "+0%"}
+	assert.Equal(t, "edge|zh-CN-XiaoxiaoNeural|+0%", ttsProviderCacheIdentity(edge))
+
+	openai := &speech.OpenAITTSProvider{BaseURL: "https://api.openai.com/v1", Model: "gpt-4o-mini-tts", Voice: "alloy", APIKey: "sk-secret"}
+	identity := ttsProviderCacheIdentity(openai)
+	assert.Contains(t, identity, "gpt-4o-mini-tts")
+	assert.Contains(t, identity, "alloy")
+	assert.NotContains(t, identity, "sk-secret", "the API key must not enter the cache identity")
+
+	// A provider without the method yields no identity rather than panicking.
+	assert.Empty(t, ttsProviderCacheIdentity(mockSpeechProviderWithoutIdentity{}))
+}
+
+// mockSpeechProviderWithoutIdentity implements only SpeechProvider, to cover
+// the CacheIdentityProvider type-assertion miss.
+type mockSpeechProviderWithoutIdentity struct{}
+
+func (mockSpeechProviderWithoutIdentity) Synthesize(context.Context, string, string, string) error {
+	return nil
 }
 
 // --- SetSpeechProvider and SetSummarizer ---

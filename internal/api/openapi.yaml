@@ -1913,6 +1913,14 @@ paths:
     post:
       tags: [Queue]
       summary: 中断并发送
+      description: |
+        停止当前正在生成的回合，**保留队列**，让排队的下一条消息作为它自己的
+        回合运行（与用户取消不同：取消会清空队列）。
+
+        单聊与**群聊**均可用。群回合按**群会话 id** 注册可中断回合，因此本端点
+        在群聊下同样能命中正在跑的回合（此前群回合只按成员行注册，端点恒返回
+        `reason: "idle"`，按钮点了没反应）。群聊不提供「插入当前回复」
+        （`/api/ai/queue/inject`）：群回合是多轮循环，没有单一在跑回合可注入。
       operationId: queueInterrupt
       parameters:
         - name: session_id
@@ -1927,7 +1935,11 @@ paths:
             type: string
       responses:
         "200":
-          description: 已中断
+          description: |
+            已中断（`{interrupted: true}`）；或无可中断回合时返回
+            `{interrupted: false, reason: "idle"}`（队列照常由 drain 循环消费）。
+        "409":
+          description: '该消息已不在队列（`reason: "not_queued"`），未中断当前回复'
 
   /api/ai/queue/merge:
     post:

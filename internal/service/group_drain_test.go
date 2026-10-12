@@ -234,6 +234,188 @@ func TestRunGroupDrainLoop_NotifiesOncePerTurn(t *testing.T) {
 	}
 }
 
+// "Interrupt and send" in a group must stop the turn in flight and KEEP the
+// queue, so the drain loop runs the next message. That only works if the group
+// turn is registered under the GROUP id — the session the queue belongs to.
+// Member rows have no runner, so runTurn's per-turn registration (keyed by the
+// member row) is a silent no-op, and the interrupt endpoint's
+// CurrentTurnID(groupID) always reported "idle".
+//
+// This drives the real RunGroupTurnDrain and simulates the interrupt endpoint
+// acting while the host speaks, exactly as a click on the queued bubble does.
+func TestRunGroupTurnDrain_InterruptKeepsQueue(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-interrupt"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	if _, err := AddGroupMember(project, groupID, "claude", "agent-a", "A"); err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+
+	// The caller owns the running state (as the handler's claim does); the turn
+	// registration requires a live runner.
+	runCtx, claimed := TryClaimSessionRun(groupID)
+	if !claimed {
+		t.Fatal("precondition: the group must start idle")
+	}
+	defer FinishSessionRun(groupID)
+
+	foundTurn := false
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		if turn.MemberRowID != hostID {
+			return groupMemberResult{}
+		}
+		// The interrupt endpoint's lookup must find the turn under the GROUP id.
+		turnID, ok := CurrentTurnID(gid)
+		foundTurn = ok
+		if ok {
+			InterruptSessionTurnIfCurrent(gid, turnID)
+		}
+		// A cancelled member turn reports the generic "cancel": the member
+		// executor reads the MEMBER row's reason, which is empty, and falls back
+		// to ctx cancellation.
+		return groupMemberResult{CancelReason: "cancel"}
+	}
+
+	msgID, err := AddChatMessageWithAgent(project, "codebuddy", groupID, "user", "开始", nil, false, "", "")
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	res := RunGroupTurnDrain(runCtx, groupID, msgID, QueuedRow{Content: "开始"}, runner)
+
+	if !foundTurn {
+		t.Fatal("the group turn must be registered under the GROUP id so the interrupt can find it")
+	}
+	if res.CancelReason != cancelReasonInterrupt {
+		t.Fatalf("an interrupt must surface as %q so the drain loop keeps the queue; got %q",
+			cancelReasonInterrupt, res.CancelReason)
+	}
+}
+
+// The drain loop must actually DELIVER the queued message after an interrupt:
+// an interrupt keeps the queue (unlike a user cancel, which drops it), so the
+// next message runs as its own turn. Without the group-level interrupt
+// translation the loop reports the member's generic "cancel" and the terminal
+// branch drops the queue — the exact opposite of "interrupt and send".
+func TestRunGroupDrainLoop_InterruptRunsQueuedMessageNext(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-interrupt-drain"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	if _, err := AddGroupMember(project, groupID, "claude", "agent-a", "A"); err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+
+	if _, err := AddQueuedMessage(project, "codebuddy", groupID, "queued next", nil, "q-int", ""); err != nil {
+		t.Fatalf("AddQueuedMessage: %v", err)
+	}
+
+	runCtx, claimed := TryClaimSessionRun(groupID)
+	if !claimed {
+		t.Fatal("precondition: the group must start idle")
+	}
+	defer FinishSessionRun(groupID)
+
+	turnNo := 0
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		turnNo++
+		if turnNo == 1 {
+			if turnID, ok := CurrentTurnID(gid); ok {
+				InterruptSessionTurnIfCurrent(gid, turnID)
+			}
+			return groupMemberResult{CancelReason: "cancel"}
+		}
+		// The queued message's own turn: end cleanly.
+		if turn.MemberRowID == hostID {
+			_, _ = AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
+				assistantText("<clawbench-group-end/> 结束"), nil, false, "", hostID)
+		}
+		return groupMemberResult{}
+	}
+	restore := SetGroupDrainRunnerForTest(runner)
+	defer SetGroupDrainRunnerForTest(restore)
+
+	firstID, err := AddChatMessageWithAgent(project, "codebuddy", groupID, "user", "开始", nil, false, "", "")
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	RunGroupDrainLoop(runCtx, groupID, project, firstID, "开始", nil)
+
+	msgs, _ := GetMessagesBySessionIDRaw(groupID)
+	delivered := false
+	for _, m := range msgs {
+		if m.Role == "user" && m.Content == "queued next" {
+			delivered = true
+		}
+	}
+	if !delivered {
+		t.Fatal("an interrupt must keep the queue and run the next message, not drop it")
+	}
+}
+
+// A turn that FAILED must not be relabelled as a clean interrupt. The group
+// reason is written by the interrupt path, but drainHandleTerminal checks the
+// interrupt reason BEFORE Err — so overwriting CancelReason on a failed turn
+// silently swallows the terminal error event (the user gets no failure signal
+// and the queue is kept as if nothing went wrong).
+//
+// This is a pure-function table test rather than an integration drive: reaching
+// the {Err != "", groupReason == "interrupt"} state through RunGroupTurnDrain
+// would require an interrupt that does NOT cancel the context (an interrupt
+// always cancels it, so the kernel's ctx check fires first). The state is
+// nevertheless reachable in production — an interrupt can land and then the
+// member turn fail for an unrelated reason (backend crash, timeout) — so the
+// translation must be guarded against it.
+func TestTranslateGroupCancelReason(t *testing.T) {
+	cases := []struct {
+		name        string
+		res         DrainResult
+		groupReason string
+		wantCancel  string
+		wantErrKept bool
+	}{
+		{"clean turn + interrupt → interrupt (keeps the queue)", DrainResult{}, cancelReasonInterrupt, cancelReasonInterrupt, true},
+		{"clean turn + user → untouched (drain loop drops the queue)", DrainResult{}, cancelReasonUser, "", true},
+		{"clean turn + empty → untouched", DrainResult{}, "", "", true},
+		{"failed turn + interrupt → Err survives, NOT relabelled", DrainResult{Err: "backend died"}, cancelReasonInterrupt, "", false},
+		{"failed turn + user → untouched", DrainResult{Err: "backend died"}, cancelReasonUser, "", false},
+		{"already-cancelled clean turn + interrupt → interrupt", DrainResult{CancelReason: "cancel"}, cancelReasonInterrupt, cancelReasonInterrupt, true},
+		// A member executor reports the generic "cancel" (it reads the MEMBER
+		// row's slot, which is empty). When the GROUP slot says "user", that is a
+		// genuine user cancel and must be restored, so the drain loop drops the
+		// queue — otherwise the queue survives a cancel and the reaper revives a
+		// turn the user explicitly stopped.
+		{"member's generic cancel + group user → restored to user", DrainResult{CancelReason: "cancel"}, cancelReasonUser, cancelReasonUser, true},
+		// A clean turn must NOT be turned into a cancel just because the group
+		// slot holds a stale "user": the turn finished normally.
+		{"clean turn + group user → untouched (not a cancel)", DrainResult{}, cancelReasonUser, "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := translateGroupCancelReason(tc.res, tc.groupReason)
+			if got.CancelReason != tc.wantCancel {
+				t.Fatalf("CancelReason = %q, want %q", got.CancelReason, tc.wantCancel)
+			}
+			if tc.wantErrKept && got.Err != tc.res.Err {
+				t.Fatalf("Err = %q, want %q", got.Err, tc.res.Err)
+			}
+			if !tc.wantErrKept && got.Err == "" {
+				t.Fatal("a failed turn must keep its error — the interrupt must not swallow it")
+			}
+		})
+	}
+}
+
 // The REAL production chain (RunGroupDrainLoop → RunGroupTurnDrain → runLoop →
 // member turns) must actually run. Every other group test either replaces the
 // whole drain loop (SetRunGroupDrainLoopForTest) or the whole turn runner

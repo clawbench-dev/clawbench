@@ -294,12 +294,39 @@ function clearAll() {
 }
 
 /**
+ * Session id most recently snapshotted-and-cleared on departure.
+ *
+ * Makes a repeated departure from the SAME session idempotent: two overlapping
+ * project switches both capture the same leaving session, and the second must
+ * not overwrite the first's snapshot with the already-cleared (empty) live
+ * state. Reset by `restoreAttachments` (a restore ends the departure), so a
+ * genuine user-driven "removed everything, then left" still snapshots — that is
+ * a different departure, not a repeat of this one.
+ */
+let lastDepartedSessionId: string | null = null
+
+/** Whether the live staged input currently holds nothing. */
+function liveStagedEmpty(): boolean {
+  return attachedFiles.value.length === 0
+    && stagedQuotes.value.length === 0
+    && stagedMentions.value.length === 0
+    && !quoteData.value
+}
+
+/**
  * Snapshot the current input attachments + staged quotes under a session id.
  * Called before switching away — the snapshot is restored when the user
  * switches back to that session.
  */
 function snapshotAttachments(sessionId: string) {
   if (!sessionId) return
+  // A second departure from the same session in one switch (concurrent project
+  // switches) must not clobber the first snapshot — the live refs were already
+  // cleared, so it would store an empty draft and lose the user's staged input.
+  // A real "user removed everything then left" is a different departure:
+  // restoreAttachments reset the marker in between, so it still snapshots.
+  if (liveStagedEmpty() && lastDepartedSessionId === sessionId) return
+  lastDepartedSessionId = sessionId
   attachmentDrafts.set(sessionId, {
     files: attachedFiles.value.map(f => ({ ...f })),
     quotes: stagedQuotes.value.map(q => ({ ...q })),
@@ -311,11 +338,20 @@ function snapshotAttachments(sessionId: string) {
 /**
  * Restore a previously snapshotted attachment draft for the given session.
  * Overwrites the current input state (call right after switching in).
+ *
+ * `onlyIfLiveEmpty` skips the restore when the live input already holds
+ * something — used by the project switch, whose restore runs after the new
+ * subtree is already interactive, so anything the user staged during that
+ * window must not be discarded. The session-switch path leaves it off: there
+ * the input was cleared up front and the target draft is meant to replace it.
  */
-function restoreAttachments(sessionId: string) {
+function restoreAttachments(sessionId: string, opts?: { onlyIfLiveEmpty?: boolean }) {
   if (!sessionId) return
   const snap = attachmentDrafts.get(sessionId)
   if (!snap) return
+  if (opts?.onlyIfLiveEmpty && !liveStagedEmpty()) return
+  // The departure is over — a later departure from this session is a new one.
+  lastDepartedSessionId = null
   attachedFiles.value = snap.files.map(f => ({ ...f }))
   stagedQuotes.value = snap.quotes.map(q => ({ ...q }))
   quoteData.value = snap.quote ? { ...snap.quote } : null
@@ -324,7 +360,10 @@ function restoreAttachments(sessionId: string) {
 
 /** Drop the attachment draft for a session (e.g. when the session is destroyed). */
 function discardAttachmentDraft(sessionId: string) {
-  if (sessionId) attachmentDrafts.delete(sessionId)
+  if (!sessionId) return
+  attachmentDrafts.delete(sessionId)
+  // The draft is gone — a later departure from this session is not a repeat.
+  if (lastDepartedSessionId === sessionId) lastDepartedSessionId = null
 }
 
 /**

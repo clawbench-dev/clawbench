@@ -16,7 +16,21 @@
          carries only the icon + agent name. The chips stay left-aligned, right
          after the speaker label — the bubble stays purely the host's prose. -->
     <div v-if="msg.role === 'assistant' && speaker" class="msg-speaker" :class="{ 'msg-speaker-host': isHostMessage }">
-      <AgentIcon :backend="speaker.backend" :name="speaker.name" :avatar="speaker.avatar" size="lg" />
+      <!-- The avatar is the entry point to the speaking agent's config page.
+           Only when it can actually resolve a real agent id AND this is not the
+           read-only share page — otherwise it stays a plain (non-interactive)
+           icon, so a share viewer never gets a dead button. -->
+      <button
+        v-if="canOpenAgentConfig"
+        type="button"
+        class="msg-speaker-btn"
+        :title="t('session.configAgent')"
+        :aria-label="t('session.configAgent')"
+        @click.stop="$emit('open-agent-config', speaker.agentId)"
+      >
+        <AgentIcon :backend="speaker.backend" :name="speaker.name" :avatar="speaker.avatar" size="lg" />
+      </button>
+      <AgentIcon v-else :backend="speaker.backend" :name="speaker.name" :avatar="speaker.avatar" size="lg" />
       <span class="msg-speaker-name">{{ speaker.name }}</span>
       <RealAgentNameTag class="msg-speaker-real" :agent-name="speaker.agentName" :display-name="speaker.name" />
       <span v-if="isHostMessage" class="msg-speaker-host-tag"><Crown :size="11" class="msg-speaker-host-crown" />{{ t('group.host') }}</span>
@@ -336,7 +350,7 @@ const props = defineProps({
   userNickname: { type: String, default: GROUP_USER_TARGET_NAME },
 })
 
-const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'fork-from-message', 'rewind-from-message', 'reset-session', 'quote-message'])
+const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'fork-from-message', 'rewind-from-message', 'reset-session', 'quote-message', 'open-agent-config'])
 
 // Group-chat speaker for this message (null for user/single-agent messages).
 const speaker = computed(() => {
@@ -345,6 +359,12 @@ const speaker = computed(() => {
   return props.resolveSpeaker(id)
 })
 const isHostMessage = computed(() => !!props.msg?.agentId && props.msg.agentId === props.hostMemberId)
+
+// The speaker header opens the agent's config page. It needs the REAL agent id
+// (speaker.agentId) — msg.agentId is the member ROW id, which no config page can
+// resolve. Suppressed on the read-only share page (there is no settings tab to
+// open) so a share viewer never sees a dead button.
+const canOpenAgentConfig = computed(() => !props.readOnly && !!speaker.value?.agentId)
 
 // Group-chat mention parsing. In BOTH modes an agent's speech may carry
 // <clawbench-mention> tags: host mode's routing, free mode's @-relay. A USER
@@ -1535,6 +1555,27 @@ const copyPayload = quotableText
 .msg-speaker-name {
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
+}
+/* The avatar doubles as the entry point to the agent's config page. It wraps
+   only the icon, so it must carry no button chrome of its own — the size is the
+   icon's, and the whole control is the touch target. Hover raises the icon to
+   signal it is interactive. */
+.msg-speaker-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  border-radius: var(--radius-full);
+  transition: opacity var(--duration-fast) ease;
+}
+.msg-speaker-btn:hover {
+  opacity: 0.8;
+}
+.msg-speaker-btn:active {
+  opacity: 0.6;
 }
 /* .msg-speaker-real (the real-agent disclosure chip) is styled by the shared
    RealAgentNameTag component; no override needed here. */

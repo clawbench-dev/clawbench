@@ -137,6 +137,7 @@
         @reset-session="$emit('reset-session', $event)"
         @fork-from-message="$emit('fork-from-message', $event)"
         @rewind-from-message="$emit('rewind-from-message', $event)"
+        @open-agent-config="$emit('open-agent-config', $event)"
       />
       <!-- /btw anchor: marks where the user asked a side question. Sits AFTER
            its message so it reads as "here I asked something". One anchor per
@@ -301,7 +302,7 @@ const props = defineProps({
   userNickname: { type: String, default: GROUP_USER_TARGET_NAME },
 })
 
-const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'quote-message', 'file-open', 'load-more', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'fork-from-message', 'rewind-from-message', 'reset-session', 'open-btw'])
+const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'quote-message', 'file-open', 'load-more', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'fork-from-message', 'rewind-from-message', 'reset-session', 'open-btw', 'open-agent-config'])
 
 const messagesRef = ref(null)
 const { handleDblClick } = useDoubleClickCopy()

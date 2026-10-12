@@ -65,10 +65,24 @@ test.describe.serial('group chat UI', () => {
     expect(sawStreamingState).toBe(true)
 
     // (3) speaker header is a SIBLING of .msg-card, not a descendant.
+    //
+    // The positive half RETRIES rather than taking a one-shot `.count()`. The
+    // speaker is stamped by an EVENT, not by the row itself: the live broadcast
+    // stream_start carries agent_id, but the subscribe-time recovery re-emit
+    // omits it, so a placeholder created from a dropped event is legitimately
+    // speakerless until the DB-backed rebuild (db_load, which merges the row's
+    // agent_id) supplies it — see rebuildFromDb's speaker-merge comment, and
+    // group-speaker-switch.spec.ts, which was rewritten for this same
+    // db_load-vs-stream_start race. The roster load is a second transient: until
+    // the members arrive, resolveSpeaker returns null and no speaker renders.
+    // A one-shot sample right after the streaming loop therefore races both and
+    // fails on slower CI runners while passing locally. Polling preserves the
+    // original `count > 0` semantics while letting the DOM settle.
+    await expect
+      .poll(() => page.locator('.chat-message.assistant > .msg-speaker').count(), { timeout: 60000 })
+      .toBeGreaterThan(0)
     const speakerInsideCard = await page.locator('.msg-card .msg-speaker').count()
     expect(speakerInsideCard).toBe(0)
-    const speakerOutside = await page.locator('.chat-message.assistant > .msg-speaker').count()
-    expect(speakerOutside).toBeGreaterThan(0)
 
     // Let the turn finish so the next test is not affected.
     await expect(page.locator('.chat-stop-btn')).toHaveCount(0, { timeout: 60000 })

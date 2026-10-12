@@ -63,11 +63,24 @@ export type ActivePane = typeof PANE_LEFT | typeof PANE_RIGHT
 /** Wide-screen focus tracking: which pane the user is currently working in. */
 const activePane = ref<ActivePane>(PANE_RIGHT)
 /**
+ * Default collapsed state of the wide-screen left column: hidden.
+ *
+ * A fresh view (no per-project record) opens on chat alone; the user opts into
+ * the left column by clicking a dock tab. Single source of truth — the ref
+ * initializer, `resetWideScreenState`, and the per-project fallback in
+ * `useProjectPanel`'s consumer all read this, so the three cannot drift.
+ */
+export const DEFAULT_LEFT_COLLAPSED = true
+
+/**
  * Wide-screen left pane collapsed state. When true, the left column is hidden
  * and the chat (right) pane takes the full width. Toggled by clicking the
  * currently-active dock tab again (VS Code-style).
+ *
+ * Starts collapsed (see DEFAULT_LEFT_COLLAPSED). `switchLeftTab` expands it on
+ * any tab change, so this only governs the state before the first tab click.
  */
-const leftCollapsed = ref(false)
+const leftCollapsed = ref(DEFAULT_LEFT_COLLAPSED)
 /**
  * Wide-screen right (chat) pane collapsed state. When true, the chat pane is
  * hidden and the left pane takes the full width. Toggled by the chat button at
@@ -266,7 +279,7 @@ export function resetWideScreenState() {
   splitRatio.value = DEFAULT_RATIO
   isWideScreen.value = false
   activePane.value = 'right'
-  leftCollapsed.value = false
+  leftCollapsed.value = DEFAULT_LEFT_COLLAPSED
   chatCollapsed.value = false
   sideEffects = null
   setActiveTab = null

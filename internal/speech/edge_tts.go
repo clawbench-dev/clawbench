@@ -307,6 +307,14 @@ func removeIncompatibleChars(s string) string {
 // Compile-time assertion that EdgeTTSProvider implements StreamingSpeechProvider.
 var _ StreamingSpeechProvider = (*EdgeTTSProvider)(nil)
 
+// Compile-time assertion that EdgeTTSProvider reports its cache identity.
+var _ CacheIdentityProvider = (*EdgeTTSProvider)(nil)
+
+// CacheIdentity reports the voice and rate, which both change the audio.
+func (p *EdgeTTSProvider) CacheIdentity() string {
+	return "edge|" + p.Voice + "|" + p.Rate
+}
+
 // SynthesizeStream generates audio from text using Microsoft Edge TTS, streaming
 // audio chunks to chunkCh while simultaneously writing the complete file to outputPath
 // for caching. The caller is responsible for closing chunkCh after this method returns.

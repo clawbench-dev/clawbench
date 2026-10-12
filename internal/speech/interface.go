@@ -22,3 +22,21 @@ type StreamingSpeechProvider interface {
 	// closing chunkCh after SynthesizeStream returns.
 	SynthesizeStream(ctx context.Context, text string, outputPath string, language string, chunkCh chan<- []byte) error
 }
+
+// CacheIdentityProvider is implemented by providers whose audio output depends
+// on configuration beyond the input text — voice, model, rate, and so on.
+//
+// The TTS cache key is derived from the spoken text alone, so without this the
+// same sentence would replay audio synthesized with a *previous* voice after
+// the user changes one. Folding the identity into the key makes a
+// configuration change produce a different cache entry, which is what the
+// user expects ("I changed the voice and it sounds the same" is otherwise
+// indistinguishable from a broken setting).
+//
+// The returned string must cover every field that changes the audio, and must
+// NOT include secrets — it is hashed into an on-disk file name.
+type CacheIdentityProvider interface {
+	// CacheIdentity returns a stable description of the settings that affect
+	// synthesis. An empty string means "no identity beyond the text".
+	CacheIdentity() string
+}

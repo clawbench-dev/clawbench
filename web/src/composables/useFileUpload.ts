@@ -119,7 +119,7 @@ export function useFileUpload() {
 
   // attachedFiles is managed globally via useChatContext so any tab
   // (file preview, chat input, quote-question) can read/write it.
-  const { attachedFiles, addAttachedFile, removeAttachedFile } = useChatContext()
+  const { attachedFiles, addAttachedFile, removeAttachedFile, snapshotAttachments, clearAll } = useChatContext()
 
   /**
    * Upload one file. Resolves with the server-assigned path on success, or
@@ -721,6 +721,34 @@ export function useFileUpload() {
     pendingFiles.value = []
   }
 
+  /**
+   * Leave the current session's staged input.
+   *
+   * Snapshots the staged attachments / quotes / mentions (plus any uploads that
+   * finished and hold a server path) under `sessionId`, then clears the live
+   * refs — the exact counterpart of `restoreAttachments`, and what a session
+   * switch already does via the session manager.
+   *
+   * Needed on its own because a PROJECT switch does not go through the session
+   * manager: it rebuilds the app subtree, so the module-level live refs
+   * (`attachedFiles` / `stagedQuotes` / `stagedMentions` / `pendingFiles`)
+   * survive into the next project and the previous project's quote reappears in
+   * the new input box. Calling this before the switch keeps the new project's
+   * input clean while preserving the draft for the session the user returns to.
+   *
+   * In-flight uploads are cancelled, not snapshotted: they have no server path
+   * yet and were targeted at the project being left behind.
+   */
+  function leaveInputDraft(sessionId: string) {
+    if (sessionId) {
+      const pendingPaths = pendingFiles.value.filter(f => f.path && !f.uploading).map(f => f.path)
+      for (const p of pendingPaths) addAttachedFile(p)
+    }
+    snapshotAttachments(sessionId)
+    clearAll()
+    clearPendingFiles()
+  }
+
   return {
     pendingFiles,
     attachedFiles,
@@ -733,6 +761,7 @@ export function useFileUpload() {
     removeAttachedFile,
     cleanupPreviewUrls,
     clearPendingFiles,
+    leaveInputDraft,
     // Chat upload batch termination (AttachDrawer)
     cancelChatUpload,
     chatUploadCancelled,

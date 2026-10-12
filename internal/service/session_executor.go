@@ -892,6 +892,26 @@ func (e *SessionExecutor) buildResult(receivedTerminal bool, wallStart time.Time
 	cancelReason := ""
 	if e.cfg.Mode == ModeInteractive {
 		cancelReason = GetAndClearCancelReason(e.cfg.SessionID)
+		// A group MEMBER turn: the interrupt is recorded on the GROUP session
+		// (the endpoint interrupts by group id), but this executor's own slot is
+		// keyed by the MEMBER row — so it reads empty and would fall through to
+		// the generic ctx-cancel branch, stamping a deliberately-cut-short
+		// member speech as "cancelled" (i.e. "the user abandoned the reply",
+		// the opposite of interrupt). Fall back to the timeline (group) slot.
+		//
+		// Only "interrupt" is taken: a group-level "user" cancel must keep the
+		// drain loop's own classification (it drops the queue), and the member
+		// executor's job here is only to avoid the cancelled badge.
+		//
+		// READ WITHOUT CLEARING: RunGroupTurnDrain consumes the group slot AFTER
+		// runLoop to translate the group-level reason for the drain loop. If this
+		// read cleared it, that translation would see "" and the drain loop would
+		// drop the queue instead of running the next message.
+		if cancelReason == "" && e.cfg.TimelineSessionID != "" {
+			if groupReason := GetCancelReason(e.cfg.TimelineSessionID); groupReason == cancelReasonInterrupt {
+				cancelReason = groupReason
+			}
+		}
 	}
 
 	// Determine if empty

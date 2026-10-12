@@ -117,18 +117,36 @@ func ttsSynthText(speakerPrefix, summary string) string {
 // empty speaker name (single chats) keeps the key identical to the pre-existing
 // scheme (sha256 of the text alone).
 //
+// providerIdentity is the synthesis configuration (engine / voice / model /
+// rate) obtained from the provider's CacheIdentity method. It is folded in for
+// the same reason: without it, changing the voice would keep serving the audio
+// cached under the old voice, which is indistinguishable from a broken setting.
+//
 // The prefix is built in the SPOKEN language (req.Language), not the request's
 // UI locale: the audio is synthesized in that language, so a Chinese sentence
 // must not be prefixed with " says: ". It is deliberately kept out of the
 // summarizer — it is applied only at synthesis time (see ttsRunJob).
-func ttsCacheKeyAndPrefix(text, speakerName, language string) (cacheKey, speakerPrefix string) {
+func ttsCacheKeyAndPrefix(text, speakerName, language, providerIdentity string) (cacheKey, speakerPrefix string) {
 	hashInput := text
 	if speakerName != "" {
 		hashInput = speakerName + "\x00" + text
 		speakerPrefix = i18n.T(i18n.LocalizerForLocale(language), "TTSSpeakerSaysPrefix", map[string]any{"Name": speakerName})
 	}
+	if providerIdentity != "" {
+		hashInput += "\x00" + providerIdentity
+	}
 	hash := sha256.Sum256([]byte(hashInput))
 	return hex.EncodeToString(hash[:])[:summarize.CacheKeyHexLen], speakerPrefix
+}
+
+// ttsProviderCacheIdentity returns the provider's cache identity, or "" for
+// providers that do not implement CacheIdentityProvider (no configuration
+// beyond the text affects their output).
+func ttsProviderCacheIdentity(p speech.SpeechProvider) string {
+	if cip, ok := p.(speech.CacheIdentityProvider); ok {
+		return cip.CacheIdentity()
+	}
+	return ""
 }
 
 // ttsRunJob runs the summarize + synthesize pipeline in a background goroutine.
@@ -193,7 +211,9 @@ func ttsRunJob(
 }
 
 // audioExtForProvider returns the audio file extension for the given provider.
-// Piper, Kokoro, and MOSS-Nano produce WAV; all others produce MP3.
+// Piper, Kokoro, and MOSS-Nano produce WAV; Edge TTS and OpenAI TTS produce MP3.
+// Keep this in sync with each provider's response_format / output encoding —
+// the extension feeds the playback URL, so a mismatch yields a silent failure.
 func audioExtForProvider(p speech.SpeechProvider) string {
 	switch p.(type) {
 	case *speech.PiperProvider, *speech.KokoroProvider, *speech.MossNanoProvider:
@@ -255,13 +275,16 @@ func TTSGenerate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Compute the cache key and the spoken speaker prefix together (see
-	// ttsCacheKeyAndPrefix for why the speaker name is folded into the key).
-	cacheKey, speakerPrefix := ttsCacheKeyAndPrefix(req.Text, req.SpeakerName, req.Language)
-
-	// Snapshot current providers for consistency within this request
+	// Snapshot current providers for consistency within this request. Taken
+	// BEFORE the cache key so the key reflects the provider that will actually
+	// synthesize (and so a concurrent hot-reload cannot split the two).
 	curProvider := GetSpeechProvider()
 	curSummarizer := GetSummarizer()
+
+	// Compute the cache key and the spoken speaker prefix together (see
+	// ttsCacheKeyAndPrefix for why the speaker name and the provider identity
+	// are folded into the key).
+	cacheKey, speakerPrefix := ttsCacheKeyAndPrefix(req.Text, req.SpeakerName, req.Language, ttsProviderCacheIdentity(curProvider))
 
 	// Determine audio file extension based on TTS engine
 	audioExt := audioExtForProvider(curProvider)

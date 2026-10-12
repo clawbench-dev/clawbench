@@ -431,6 +431,41 @@ func TestPersist_MossNanoBackend(t *testing.T) {
 	assert.Equal(t, "pytorch", getNestedValue(cfg, "tts.moss_nano.backend"))
 }
 
+// The OpenAI TTS sub-config must survive a round trip through config.yaml.
+// Engine is set to "openai" first so the required-field validation for the
+// sub-config applies (a partial write would otherwise be accepted).
+func TestPersist_OpenAITTSSubConfig(t *testing.T) {
+	_, cleanup := setupPersistTestEnv(t)
+	defer cleanup()
+
+	model.ConfigInstance = model.Config{}
+	model.ConfigInstance.TTS.Engine = "openai"
+	model.ConfigInstance.TTS.OpenAI.BaseURL = "https://api.openai.com/v1"
+	model.ConfigInstance.TTS.OpenAI.Model = "gpt-4o-mini-tts"
+	model.ConfigInstance.TTS.OpenAI.Voice = "alloy"
+
+	cfg := patchAndReadConfig(t, `{"tts":{"openai":{"api_key":"sk-1234567890abcdef"}}}`)
+	assert.Equal(t, "sk-1234567890abcdef", getNestedValue(cfg, "tts.openai.api_key"))
+	assert.Equal(t, "https://api.openai.com/v1", getNestedValue(cfg, "tts.openai.base_url"))
+	assert.Equal(t, "gpt-4o-mini-tts", getNestedValue(cfg, "tts.openai.model"))
+	assert.Equal(t, "alloy", getNestedValue(cfg, "tts.openai.voice"))
+}
+
+func TestPersist_OpenAITTSEngineAndVoice(t *testing.T) {
+	_, cleanup := setupPersistTestEnv(t)
+	defer cleanup()
+
+	model.ConfigInstance = model.Config{}
+
+	// Switching engine first (no sub-config yet) must be accepted, then the
+	// free-text model and voice land on their own.
+	cfg := patchAndReadConfig(t, `{"tts":{"engine":"openai"}}`)
+	assert.Equal(t, "openai", getNestedValue(cfg, "tts.engine"))
+
+	cfg = patchAndReadConfig(t, `{"tts":{"openai":{"base_url":"https://api.openai.com/v1","model":"gpt-4o-mini-tts","voice":"verse"}}}`)
+	assert.Equal(t, "verse", getNestedValue(cfg, "tts.openai.voice"))
+}
+
 // ─── TTS API sub-config ──────────────────────────────────────
 
 func TestPersist_SummarizeTTSAPIBaseURL(t *testing.T) {

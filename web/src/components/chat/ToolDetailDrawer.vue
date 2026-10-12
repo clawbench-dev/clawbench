@@ -39,7 +39,7 @@
 </template>
 
 <script setup>
-import { computed, ref, onMounted, onUpdated, nextTick } from 'vue'
+import { computed, ref, onMounted, onUpdated, nextTick, inject } from 'vue'
 import { CheckCircle2, XCircle } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
@@ -81,7 +81,14 @@ const displayName = computed(() => {
 const { handleLocalhostUrlClick } = useLocalhostUrlClickHandler()
 const { tableRowModal, closeTableRowModal, tableRowPrev, tableRowNext, handleTableRowClick, onTableMouseDown, onTableTouchStart } = useTableRowExpand()
 
-function handleBodyClick(event) {
+// Switching to a worktree is a PROJECT switch — route it through the injected
+// hotSwitchProject (provided by App.vue) instead of a direct store.setProject,
+// which would skip the keyed subtree rebuild and the staged-input clear (a
+// quote staged in the previous project would then leak into the new one).
+// Falls back to setProject when the provider is absent (shallow mounts).
+const hotSwitchProject = inject('hotSwitchProject', null)
+
+async function handleBodyClick(event) {
   // Handle tool content header clicks (copy + wrap toggle) — highest priority
   if (handleToolContentHeaderClick(event)) return
 
@@ -118,7 +125,10 @@ function handleBodyClick(event) {
   const wtBtn = event.target.closest('.chat-worktree-btn')
   if (wtBtn) {
     const wtPath = wtBtn.getAttribute('data-worktree-path')
-    if (wtPath) store.setProject(wtPath)
+    if (wtPath) {
+      if (hotSwitchProject) await hotSwitchProject(wtPath)
+      else await store.setProject(wtPath)
+    }
     return
   }
   event.stopPropagation()

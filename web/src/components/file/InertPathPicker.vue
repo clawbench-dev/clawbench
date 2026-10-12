@@ -7,16 +7,21 @@
   >
     <template #header>
       <Search :size="16" class="bs-header-icon" />
-      <span class="bs-header-title">
-        {{ t('file.search.inertHeading', { name: state.query }) }}
-      </span>
+      <!-- The filename is its own visual element (a monospace chip) rather than
+           being quoted inside the sentence, so the name reads as an identifier
+           and matches the file-path chips used in chat. i18n-t keeps the
+           surrounding verb translatable around the injected chip. -->
+      <i18n-t keypath="file.search.inertHeading" tag="span" class="bs-header-title">
+        <template #name>
+          <span class="ip-name-chip">{{ state.query }}</span>
+        </template>
+      </i18n-t>
     </template>
 
     <div class="ip-body">
       <!-- The failing path, so the user can see WHAT was annotated (the panel
            is reached from a chip whose text may be truncated in a dense row). -->
       <div class="ip-source" :title="state.sourcePath">{{ state.sourcePath }}</div>
-      <p class="ip-hint">{{ t('file.search.inertHint') }}</p>
 
       <div class="ip-content">
         <div v-if="state.open && search.state.searching && search.state.results.length === 0" class="ip-loading">
@@ -25,7 +30,13 @@
 
         <div v-else-if="search.state.results.length === 0" class="ip-empty">
           <FileQuestion :size="56" :stroke-width="1.25" class="ip-empty-icon" />
-          <p class="ip-empty-text">{{ t('file.search.inertNoResults', { name: state.query }) }}</p>
+          <p class="ip-empty-text">
+            <i18n-t keypath="file.search.inertNoResults" tag="span">
+              <template #name>
+                <span class="ip-name-chip">{{ state.query }}</span>
+              </template>
+            </i18n-t>
+          </p>
           <p class="ip-empty-hint">{{ t('file.search.inertNoResultsHint') }}</p>
         </div>
 
@@ -163,22 +174,36 @@ watch(
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-  padding: var(--space-4) var(--space-5);
+  /* No horizontal padding: the result rows must reach the panel's left/right
+     edges (full-bleed). The inset lives on the individual non-row elements
+     (.ip-source, .ip-more, the empty/loading states) instead. */
+  padding: var(--space-4) 0;
   min-height: 0;
   height: 100%;
 }
 
 .ip-source {
+  padding: 0 var(--space-5);
   font-family: var(--font-mono);
   font-size: var(--font-size-sm);
   color: var(--text-muted, #888);
   word-break: break-all;
 }
 
-.ip-hint {
-  margin: 0;
-  font-size: var(--font-size-sm);
-  color: var(--text-secondary, #5f6368);
+/* The filename, as its own element: a monospace pill tinted like the inert
+   path chip it was clicked from (see annotation-buttons.css). It sits inside
+   the header title (and the empty-state sentence), so it must not inherit the
+   title's semibold weight or primary colour — it reads as an identifier, not
+   as prose. */
+.ip-name-chip {
+  font-family: var(--font-mono);
+  font-weight: var(--font-weight-normal);
+  font-size: var(--font-size-md);
+  color: var(--text-primary, #1a1a1a);
+  background: color-mix(in srgb, var(--text-muted, #999) 12%, transparent);
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-xs);
+  word-break: break-all;
 }
 
 .ip-content {
@@ -194,6 +219,9 @@ watch(
   align-items: center;
   justify-content: center;
   gap: var(--space-3);
+  /* The body has no horizontal padding now, so the centred states carry their
+     own inset (kept equal to the row padding so the empty text lines up with
+     the result names). */
   padding: var(--space-10) var(--space-5);
   text-align: center;
 }
@@ -228,14 +256,17 @@ watch(
   align-items: flex-start;
   gap: var(--space-3);
   width: 100%;
-  padding: var(--space-3) var(--space-4);
+  /* Full-bleed: the hover fill spans the panel's full width with square
+     corners. The inset is INTERNAL (icon/text indent) so the row still aligns
+     with the source line above, but the fill itself reaches both edges. */
+  padding: var(--space-3) var(--space-5);
   border: none;
   background: none;
   color: var(--text-primary, #1a1a1a);
   font-size: var(--font-size-md);
   text-align: left;
   cursor: pointer;
-  border-radius: var(--radius-sm);
+  border-radius: 0;
   transition: background var(--duration-fast);
 }
 
@@ -281,7 +312,7 @@ watch(
 }
 
 .ip-more {
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-3) var(--space-5);
   color: var(--text-muted, #888);
   font-size: var(--font-size-sm);
 }

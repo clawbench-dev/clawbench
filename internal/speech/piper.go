@@ -117,3 +117,12 @@ func ResolveModelPath(voice, modelPath string) string {
 	}
 	return resolveModelFile("piper-models", voice+".onnx")
 }
+
+// Compile-time assertion that PiperProvider reports its cache identity.
+var _ CacheIdentityProvider = (*PiperProvider)(nil)
+
+// CacheIdentity reports the model and the rate controls. The voice is embedded
+// in ModelPath for Piper, so the path covers it.
+func (p *PiperProvider) CacheIdentity() string {
+	return fmt.Sprintf("piper|%s|%g|%g|%g", p.ModelPath, p.NoiseScale, p.LengthScale, p.SentenceSilence)
+}

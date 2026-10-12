@@ -75,7 +75,7 @@ npx playwright test --config e2e/playwright.config.ts --project=chromium-coverag
 | `internal/askquestion/` | `<clawbench-ask-question>` 载荷解析的**唯一** Go 实现（叶子包，不 import 任何 internal 包）；与前端 `web/src/utils/askQuestion.ts` 互为镜像，由 `testdata/parity_corpus.json` 双向固化。契约：检测即解析；不可解析时剥离标签、把标签内文字作为 Fallback 交给 Markdown 渲染（`Match.Fallback`），**绝不丢内容**。旧 XML 子元素格式与标签内 JSON 已不再解析 |
 | `internal/grouprouting/` | 群聊路由标签（`<clawbench-mention targets="A,B">…</clawbench-mention>` + `<clawbench-group-end/>`）解析的**唯一** Go 实现（叶子包，不 import 任何 internal 包）；与前端 `web/src/utils/groupRouting.ts` 互为镜像，由 `testdata/parity_corpus.json` 双向固化。契约与 askquestion 一致（检测即解析、不可解析不剥离、绝不丢内容）。密送（`private` 提及）的注入侧 fail-closed（`StripProtocolTags` 剥一切畸形/嵌套形态）与显示侧 fail-open 分列两套 |
 | `internal/model/` | 数据模型、后端注册表、模型发现（`ModelSource` 注册表 + 单一合并点 `ResolveModels`）、27 个 LLM Provider；Agent 含 `avatar`（用户自选的 DiceBear SVG）与 `disabled`（禁用开关）字段，两者都贯穿 DB 列与两条持久化路径（`LoadAgentsFromDB`/`loadAgentsFromDBRows` 读、`SaveAgent`/`saveAgentToDB` 写） |
-| `internal/speech/` + `internal/stt/` | 语音：TTS（Edge / Piper / Kokoro / MOSS-TTS-Nano）与 STT（vLLM Whisper，流式 + 非流式） |
+| `internal/speech/` + `internal/stt/` | 语音：TTS（Edge / OpenAI 兼容 / Piper / Kokoro / MOSS-TTS-Nano）与 STT（vLLM Whisper，流式 + 非流式） |
 | `internal/rag/` | RAG：SQLite + sqlite-vec 向量存储 + FTS5 全文检索，OpenAI 兼容嵌入 API；消息聚类（ClusterWorker） |
 | `internal/terminal/` | Web 终端：PTY 会话、环形缓冲回放、多标签 |
 | `internal/ws/` | WebSocket 事件通道：StreamHub 会话级扇出，Manager 广播 + 重连缓冲回放；`delivery_stats.go` 记录按原因的投递丢弃计数（`GET /api/ws/delivery-stats`），关键事件在通道满时等待空位（ACP 来源除外）。遥测类事件（`system_resources`）走**非缓冲投递**路径（不写回放缓冲、队列满时丢弃而非断连），需求由客户端 `metrics_preference` 声明 |

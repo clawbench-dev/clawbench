@@ -100,6 +100,31 @@ describe('markedConfig', () => {
         })
     })
 
+    describe('strikethrough (single vs double tilde)', () => {
+        // marked's GFM `del` tokenizer uses /^(~~?)/, so a SINGLE tilde pair
+        // (~text~) is also turned into <del> — unlike the GFM spec, which
+        // requires ~~. That silently mangles ordinary prose such as
+        // "版本 ~1.2~ 发布" or "foo~bar~baz". We guard the tokenizer so a lone
+        // leading tilde stays literal, while ~~ keeps working.
+        it('does not treat a single tilde pair as strikethrough', () => {
+            const html = marked.parse('~xxx~')
+            expect(html).not.toContain('<del>')
+            expect(html).toContain('~xxx~')
+        })
+
+        it('keeps single tildes inside prose literal', () => {
+            expect(marked.parse('版本 ~1.2~ 发布')).not.toContain('<del>')
+            expect(marked.parse('foo~bar~baz')).not.toContain('<del>')
+            expect(marked.parse('~5~10')).not.toContain('<del>')
+        })
+
+        it('still renders double-tilde strikethrough', () => {
+            expect(marked.parse('~~gone~~')).toContain('<del>gone</del>')
+            expect(marked.parse('a ~~b~~ c')).toContain('a <del>b</del> c')
+            expect(marked.parse('~~**bold**~~')).toContain('<del><strong>bold</strong></del>')
+        })
+    })
+
     describe('data-source-line annotation', () => {
         it('annotates block elements with their 1-based source line and end', () => {
             const md = ['# 标题', '', '第一段。', '', '- 甲', '- 乙', '', '> 引用', '', '| 列A | 列B |', '|---|---|', '| 1 | 2 |', '', '```js', 'const a = 1', '```'].join('\n')

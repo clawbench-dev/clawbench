@@ -128,17 +128,18 @@ type Config struct {
 		MaxCount int `yaml:"max_count"` // Maximum number of recent projects to keep (default: 10)
 	} `yaml:"recent_projects"`
 	TTS struct {
-		Engine            string         `yaml:"engine"`              // TTS engine: "edge" (default), "piper", "kokoro", "moss-nano"
-		TTSModel          string         `yaml:"tts_model"`           // TTS model for speech synthesis (default: "Speech-2.8-Turbo")
-		Voice             string         `yaml:"voice"`               // Voice ID for TTS (default: "female-chengshu")
-		Speed             float64        `yaml:"speed"`               // Speech speed multiplier (default: 1.0)
-		Format            string         `yaml:"format"`              // Audio output format (default: "mp3")
-		InlineCodeMaxLen  int            `yaml:"inline_code_max_len"` // Max inline code content length (runes) to preserve for TTS; longer code is removed (default: 100)
-		MaxSummarizeRunes int            `yaml:"max_summarize_runes"` // Max runes for summarization input; longer text is truncated (default: 10000, simple mode: 1000)
-		MaxCacheFiles     int            `yaml:"max_cache_files"`     // Max cached TTS audio files to keep; oldest are auto-deleted (0=unlimited, default: 100)
-		Piper             PiperConfig    `yaml:"piper"`               // Piper-specific configuration (only used when engine: "piper")
-		Kokoro            KokoroConfig   `yaml:"kokoro"`              // Kokoro-specific configuration (only used when engine: "kokoro")
-		MossNano          MossNanoConfig `yaml:"moss_nano"`           // MOSS-TTS-Nano-specific configuration (only used when engine: "moss-nano")
+		Engine            string          `yaml:"engine"`              // TTS engine: "edge" (default), "piper", "kokoro", "moss-nano", "openai"
+		TTSModel          string          `yaml:"tts_model"`           // TTS model for speech synthesis (default: "Speech-2.8-Turbo")
+		Voice             string          `yaml:"voice"`               // Voice ID for TTS (default: "female-chengshu")
+		Speed             float64         `yaml:"speed"`               // Speech speed multiplier (default: 1.0)
+		Format            string          `yaml:"format"`              // Audio output format (default: "mp3")
+		InlineCodeMaxLen  int             `yaml:"inline_code_max_len"` // Max inline code content length (runes) to preserve for TTS; longer code is removed (default: 100)
+		MaxSummarizeRunes int             `yaml:"max_summarize_runes"` // Max runes for summarization input; longer text is truncated (default: 10000, simple mode: 1000)
+		MaxCacheFiles     int             `yaml:"max_cache_files"`     // Max cached TTS audio files to keep; oldest are auto-deleted (0=unlimited, default: 100)
+		Piper             PiperConfig     `yaml:"piper"`               // Piper-specific configuration (only used when engine: "piper")
+		Kokoro            KokoroConfig    `yaml:"kokoro"`              // Kokoro-specific configuration (only used when engine: "kokoro")
+		MossNano          MossNanoConfig  `yaml:"moss_nano"`           // MOSS-TTS-Nano-specific configuration (only used when engine: "moss-nano")
+		OpenAI            OpenAITTSConfig `yaml:"openai"`              // OpenAI-compatible /v1/audio/speech configuration (only used when engine: "openai")
 	} `yaml:"tts"`
 	STT         STTConfig         `yaml:"stt"`          // Speech-to-text (voice input) configuration
 	AISummary   AISummaryConfig   `yaml:"ai_summary"`   // Shared AI model configuration (TTS summary + next-step recommendation)
@@ -345,6 +346,24 @@ type MossNanoConfig struct {
 	ModelDir string `yaml:"model_dir"` // Directory for ONNX model files (empty = models/moss-nano-models; CLI auto-downloads if missing)
 	Backend  string `yaml:"backend"`   // Inference backend: "onnx" (default, CPU) or "pytorch" (requires GPU)
 	// Voice is not stored here — moss-nano reuses the shared cfg.TTS.Voice field.
+}
+
+// OpenAITTSConfig holds configuration for the OpenAI-compatible TTS engine.
+//
+// Unlike the other engines, this one is a remote HTTP API rather than a local
+// CLI, so it carries its own endpoint and credential — reusing ai_summary.api
+// would force the speech endpoint and the summarization endpoint to be the
+// same service, which they need not be.
+//
+// Voice is a free-text field rather than a fixed list: the built-in voices
+// (alloy, ash, ballad, coral, echo, fable, onyx, nova, sage, shimmer, verse,
+// marin, cedar) are a subset of what a compatible server may accept, and the
+// API also supports custom voice objects referenced by id.
+type OpenAITTSConfig struct {
+	BaseURL string `yaml:"base_url"` // OpenAI-compatible base URL, e.g. "https://api.openai.com/v1" (completed to …/audio/speech)
+	APIKey  string `yaml:"api_key"`  // Bearer token (may be empty for a local server)
+	Model   string `yaml:"model"`    // TTS model, e.g. "gpt-4o-mini-tts"; user-supplied (no default)
+	Voice   string `yaml:"voice"`    // Voice name or custom voice id, e.g. "alloy" / "voice_1234"
 }
 
 // APIConfig holds configuration for the API-based summarization backend.

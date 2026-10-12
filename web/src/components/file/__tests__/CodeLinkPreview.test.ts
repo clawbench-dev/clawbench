@@ -211,17 +211,19 @@ function createMockPreviewController(overrides: Partial<ReturnType<typeof useCod
     quadrant: 'bottom-right',
   })
 
-  // ── Rendered Markdown view state ──
+  // ── Rendered document view state ──
   // The mock mirrors the real composable: renderMode is per-open defaulted to
-  // 'rendered' for a Markdown file WITHOUT a line range, otherwise 'source'.
-  // canRenderMarkdown reflects the FILE's renderability (any Markdown file,
-  // with or without a line annotation), so the eye toggle stays available.
+  // 'rendered' for a renderable document (Markdown / HTML) WITHOUT a line range,
+  // otherwise 'source'. canRenderDocument reflects the FILE's renderability (any
+  // Markdown/HTML file, with or without a line annotation), so the eye toggle
+  // stays available.
   const renderMode = ref<'rendered' | 'source'>('source')
   const isMarkdown = ref(false)
+  const isHtml = (overrides.isHtml as Ref<boolean> | undefined) ?? ref(false)
   const hasExplicitLineRange = ref(false)
-  const canRenderMarkdown = computed(() => isMarkdown.value)
+  const canRenderDocument = computed(() => isMarkdown.value || isHtml.value)
   const effectiveRenderMode = computed<'rendered' | 'source'>(() =>
-    canRenderMarkdown.value ? renderMode.value : 'source'
+    canRenderDocument.value ? renderMode.value : 'source'
   )
 
   // ── Media target state (image / SVG / video / audio / PDF) ──
@@ -238,7 +240,7 @@ function createMockPreviewController(overrides: Partial<ReturnType<typeof useCod
   const isPdfTarget = computed(() => mediaKind.value === 'pdf' && !isDirTarget.value)
   const isMediaTarget = computed(() => mediaKind.value !== null && !isDirTarget.value)
   const toggleRenderMode = vi.fn(() => {
-    if (!canRenderMarkdown.value) return
+    if (!canRenderDocument.value) return
     renderMode.value = renderMode.value === 'rendered' ? 'source' : 'rendered'
   })
 
@@ -271,8 +273,9 @@ function createMockPreviewController(overrides: Partial<ReturnType<typeof useCod
     placement,
     renderMode,
     isMarkdown,
+    isHtml,
     hasExplicitLineRange,
-    canRenderMarkdown,
+    canRenderDocument,
     effectiveRenderMode,
     mediaKind,
     isImageTarget,
@@ -332,6 +335,7 @@ describe('CodeLinkPreview.vue', () => {
     document.body.innerHTML = ''
     localStorage.clear()
     useChatContext().clearAll()
+    buildPreviewMarkdownHtml.mockClear()
   })
 
   it('renders loading status with aria-live="polite"', () => {
@@ -2146,7 +2150,7 @@ describe('CodeLinkPreview.vue — Markdown rendered document view', () => {
   it('defaults a line-less Markdown file to the rendered view', async () => {
     const preview = createMockPreviewController({
       target: ref(makeMdTarget()),
-      canRenderMarkdown: ref(true),
+      canRenderDocument: ref(true),
       effectiveRenderMode: ref('rendered'),
       slicedCode: ref({
         code: '# Guide\n\nHello **world**',
@@ -2180,7 +2184,7 @@ describe('CodeLinkPreview.vue — Markdown rendered document view', () => {
     // available since the file is renderable)
     const mdWithLine = createMockPreviewController({
       target: ref(makeMdTarget({ lineStart: 12, lineEnd: 14 })),
-      canRenderMarkdown: ref(true),
+      canRenderDocument: ref(true),
       effectiveRenderMode: ref('source'),
     })
     const wrapperMd = mount(CodeLinkPreview, {
@@ -2196,7 +2200,7 @@ describe('CodeLinkPreview.vue — Markdown rendered document view', () => {
     // Non-markdown file (ts) -> source slice, no render toggle
     const tsFile = createMockPreviewController({
       target: ref({ filePath: 'src/main.ts', anchorEl: document.createElement('span') }),
-      canRenderMarkdown: ref(false),
+      canRenderDocument: ref(false),
       effectiveRenderMode: ref('source'),
     })
     const wrapperTs = mount(CodeLinkPreview, {
@@ -2207,6 +2211,12 @@ describe('CodeLinkPreview.vue — Markdown rendered document view', () => {
     await nextTick()
     expect(document.querySelector('.code-preview-line-row')).not.toBeNull()
     expect(document.querySelector('.md-preview-body')).toBeNull()
+    // No render toggle for a non-renderable file (ts) — the eye must be absent,
+    // not merely inert. It is the only button labeled Rendered preview / Source
+    // code, so its absence is unambiguous.
+    const renderToggle = Array.from(document.querySelectorAll('.code-preview-actions button'))
+      .find(b => /Rendered preview|Source code/.test(b.getAttribute('aria-label') || ''))
+    expect(renderToggle).toBeUndefined()
     wrapperTs.unmount()
   })
 
@@ -2214,7 +2224,7 @@ describe('CodeLinkPreview.vue — Markdown rendered document view', () => {
     const effectiveRenderMode = ref<'rendered' | 'source'>('rendered')
     const mdNoLine = createMockPreviewController({
       target: ref(makeMdTarget()),
-      canRenderMarkdown: ref(true),
+      canRenderDocument: ref(true),
       effectiveRenderMode,
       toggleRenderMode: vi.fn(() => {
         effectiveRenderMode.value = effectiveRenderMode.value === 'rendered' ? 'source' : 'rendered'
@@ -2261,7 +2271,7 @@ describe('CodeLinkPreview.vue — Markdown rendered document view', () => {
     const effectiveRenderMode = ref<'rendered' | 'source'>('source')
     const mdWithLine = createMockPreviewController({
       target: ref(makeMdTarget({ lineStart: 3 })),
-      canRenderMarkdown: ref(true),
+      canRenderDocument: ref(true),
       effectiveRenderMode,
       toggleRenderMode: vi.fn(() => {
         effectiveRenderMode.value = effectiveRenderMode.value === 'rendered' ? 'source' : 'rendered'
@@ -2305,7 +2315,7 @@ describe('CodeLinkPreview.vue — Markdown rendered document view', () => {
     const mdNoLine = createMockPreviewController({
       mode: ref('sheet'),
       target: ref(makeMdTarget()),
-      canRenderMarkdown: ref(true),
+      canRenderDocument: ref(true),
       effectiveRenderMode: ref('rendered'),
       slicedCode: ref({
         code: '# Sheet\n\ndoc',
@@ -2326,6 +2336,170 @@ describe('CodeLinkPreview.vue — Markdown rendered document view', () => {
     expect(document.querySelector('.code-preview-meta .code-preview-actions .copy-path-btn')).not.toBeNull()
 
     wrapper.unmount()
+  })
+
+  // ── Rendered HTML document view ─────────────────────────────────────────
+  function makeHtmlTarget(overrides: Record<string, unknown> = {}) {
+    return {
+      filePath: 'public/index.html',
+      anchorEl: document.createElement('span'),
+      ...overrides,
+    }
+  }
+
+  it('defaults a line-less HTML file to the rendered view (sandboxed iframe)', async () => {
+    const preview = createMockPreviewController({
+      target: ref(makeHtmlTarget()),
+      isHtml: ref(true),
+      canRenderDocument: ref(true),
+      effectiveRenderMode: ref('rendered'),
+      fileContent: ref({
+        content: '<html><body><h1>Hi</h1></body></html>',
+        name: 'index.html',
+        path: 'public/index.html',
+        supported: true,
+        size: 40,
+      }),
+    })
+
+    const wrapper = mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+    await flushPromises()
+
+    const floating = document.querySelector('.code-link-preview-floating')
+    expect(floating).not.toBeNull()
+
+    // Rendered HTML body (iframe), not the markdown body and not code lines.
+    const iframe = floating?.querySelector('iframe.html-preview-iframe') as HTMLIFrameElement
+    expect(iframe).not.toBeNull()
+    expect(floating?.querySelector('.md-preview-body')).toBeNull()
+    expect(floating?.querySelectorAll('.code-preview-line-row').length).toBe(0)
+
+    // The iframe loads the document by real URL (so relative assets resolve)
+    // and grants scripts + same-origin (the deliberate trade; see
+    // fileViewerSandbox.test.ts).
+    expect(iframe.getAttribute('src')).toContain('/api/fs/raw/public/index.html')
+    expect(iframe.getAttribute('sandbox')).toBe('allow-scripts allow-same-origin')
+
+    // The markdown pipeline must NOT run for an HTML target — its output would
+    // be discarded, and running it pulls in the heavy markdown/katex/mermaid
+    // bundle for nothing. Assert on the argument (not a global call count) so a
+    // late-resolving import from a sibling markdown test cannot mask this.
+    const htmlBuildCalls = buildPreviewMarkdownHtml.mock.calls
+      .filter(([arg]) => String(arg?.path || '').endsWith('.html'))
+    expect(htmlBuildCalls).toHaveLength(0)
+
+    wrapper.unmount()
+  })
+
+  it('falls back to srcdoc for an external (absolute-path) HTML file', async () => {
+    const preview = createMockPreviewController({
+      target: ref(makeHtmlTarget({ filePath: '/tmp/external/index.html' })),
+      isHtml: ref(true),
+      canRenderDocument: ref(true),
+      effectiveRenderMode: ref('rendered'),
+      fileContent: ref({
+        content: '<html><body>external</body></html>',
+        name: 'index.html',
+        path: '/tmp/external/index.html',
+        supported: true,
+        size: 40,
+      }),
+    })
+
+    const wrapper = mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+    await flushPromises()
+
+    const iframe = document.querySelector('iframe.html-preview-iframe') as HTMLIFrameElement
+    expect(iframe).not.toBeNull()
+    // No usable URL for an external file, so srcdoc carries the document.
+    expect(iframe.getAttribute('src')).toBeNull()
+    expect(iframe.getAttribute('srcdoc')).toContain('external')
+
+    wrapper.unmount()
+  })
+
+  it('shows the eye toggle for HTML and switches to the source slice', async () => {
+    const effectiveRenderMode = ref<'rendered' | 'source'>('rendered')
+    const htmlNoLine = createMockPreviewController({
+      target: ref(makeHtmlTarget()),
+      isHtml: ref(true),
+      canRenderDocument: ref(true),
+      effectiveRenderMode,
+      toggleRenderMode: vi.fn(() => {
+        effectiveRenderMode.value = effectiveRenderMode.value === 'rendered' ? 'source' : 'rendered'
+      }),
+      slicedCode: ref({
+        code: '<html>\n<body>Hi</body>\n</html>',
+        startLine: 1,
+        endLine: 3,
+        totalLines: 3,
+        lineOutOfRange: false,
+        renderTruncated: false,
+      }),
+    })
+    const wrapper = mount(CodeLinkPreview, {
+      props: { preview: htmlNoLine },
+      global: { plugins: [i18n] },
+    })
+    await nextTick()
+
+    // Rendered view active + eye toggle present.
+    let eyeBtn = document.querySelector('.code-preview-actions .code-preview-btn') as HTMLElement
+    expect(eyeBtn).not.toBeNull()
+    expect(eyeBtn.getAttribute('aria-label')).toContain('Source')
+    expect(document.querySelector('iframe.html-preview-iframe')).not.toBeNull()
+
+    // Toggle to source -> the line-slice view (which keeps its own slicing).
+    eyeBtn.click()
+    await nextTick()
+    eyeBtn = document.querySelector('.code-preview-actions .code-preview-btn') as HTMLElement
+    expect(eyeBtn.getAttribute('aria-label')).toContain('Rendered')
+    expect(document.querySelector('.code-preview-line-row')).not.toBeNull()
+    expect(document.querySelector('iframe.html-preview-iframe')).toBeNull()
+
+    wrapper.unmount()
+  })
+
+  it('forwards the HTML body retry click to preview.refresh()', async () => {
+    // The HTML body shows a retry button on a network error; CodeLinkPreview must
+    // wire its `refresh` emit back to the controller. Without that wiring the
+    // button is dead — the user cannot retry a failed HTML preview — and nothing
+    // else in the component reaches this path (the toolbar's refresh button is a
+    // separate, already-covered action).
+    //
+    // Both render shells carry their own copy of the body, so each must be wired:
+    // the floating card (wide screen) and the BottomSheet (narrow screen).
+    for (const mode of ['pinned', 'sheet'] as const) {
+      const preview = createMockPreviewController({
+        mode: ref(mode),
+        target: ref(makeHtmlTarget()),
+        isHtml: ref(true),
+        canRenderDocument: ref(true),
+        effectiveRenderMode: ref('rendered'),
+        status: ref('error'),
+        errorCode: ref('network'),
+        errorMessage: ref('boom'),
+      })
+      const wrapper = mount(CodeLinkPreview, {
+        props: { preview },
+        global: { plugins: [i18n] },
+      })
+      await nextTick()
+
+      const retry = document.querySelector('.code-preview-status button') as HTMLButtonElement
+      expect(retry, `retry button must exist in ${mode} mode`).not.toBeNull()
+      retry.click()
+      await nextTick()
+      expect(preview.refresh, `refresh must fire in ${mode} mode`).toHaveBeenCalled()
+
+      wrapper.unmount()
+    }
   })
 })
 

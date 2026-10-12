@@ -30,6 +30,7 @@ import i18n from '../i18n'
 import { LongPressDirective } from '../directives/longPress'
 import { configureMarkedRenderer } from '../utils/markedConfig'
 import { installLocalMediaFallback } from '../utils/localMediaFallback'
+import { installMediaFullscreenGuard } from '../utils/mediaFullscreenGuard'
 
 configureMarkedRenderer()
 
@@ -38,6 +39,10 @@ configureMarkedRenderer()
 // 404. Show the same labelled placeholder the main app uses instead of a
 // silent broken image (issue #501).
 installLocalMediaFallback()
+
+// The share SPA renders the same VideoPreview, so a fullscreen video whose file
+// disappears would otherwise leave the page unclickable (see the guard's docs).
+installMediaFullscreenGuard()
 
 const app = createApp(ShareRoot)
 app.use(i18n)

@@ -295,8 +295,8 @@ import { useFileNavStack } from '@/composables/useFileNavStack.ts'
 import { useFileEditor } from '@/composables/useFileEditor.ts'
 import { useTocDockPreference } from '@/composables/useTocDockPreference.ts'
 import { exportMarkdownToHtml, imageIssueReasonKey } from '@/utils/exportMarkdownHtml.ts'
-import { downloadBlob, buildLocalFileUrl, downloadFileByPath } from '@/utils/download.ts'
-import { isAbsolutePath } from '@/utils/path.ts'
+import { downloadBlob, downloadFileByPath } from '@/utils/download.ts'
+import { buildHtmlPreviewSrc } from '@/utils/htmlPreview.ts'
 import { useToast } from '@/composables/useToast.ts'
 import { useCodeEditorSave } from '@/composables/useCodeEditorSave.ts'
 import { getNative } from '@/utils/clawbenchNative'
@@ -353,36 +353,12 @@ const htmlPreviewTimestamp = ref(Date.now())
 // HTML preview loads the document through /api/fs/raw/ rather than inlining it
 // via srcdoc, so the browser resolves the document's own relative references
 // (stylesheets, scripts, images, fonts) against its real URL instead of the
-// app's root. A srcdoc document has no URL of its own and inherits the parent's
-// base, which sent every relative reference to /<name> and 404'd.
-//
-// This REQUIRES `allow-same-origin` on the iframe sandbox: without it the frame
-// is an opaque origin, its subresource requests are cross-site, and the
-// SameSite=Lax session cookie is withheld — the document itself still loads
-// (a top-level navigation counts as same-site) but none of its assets do.
-//
-// Cost, accepted deliberately: with same-origin the previewed HTML runs with
-// the user's session. It can call any authenticated API and read/write the
-// parent document. Previewed HTML is untrusted (AI-written or downloaded), so
-// this is a real trade — see fileViewerSandbox.test.ts, which records it.
-//
-// The `?t=` cache-buster is bumped on file change so a rewritten HTML file
-// re-renders; without it the iframe would keep serving the cached document.
-//
-// Returns '' for an EXTERNAL (absolute-path) file, which falls back to srcdoc.
-// An external file is served as `/api/fs/raw/?target=/abs/dir/index.html`, and
-// the browser strips the query when deriving the base URL — so the document's
-// base becomes `/api/fs/raw/`, and `src="pic.png"` resolves to
-// `/api/fs/raw/pic.png`, i.e. `<project>/pic.png`. That is silently the WRONG
-// file whenever the project root happens to contain one of the same name, so
-// the URL form is worse than useless here. srcdoc keeps the old (also
-// unresolved, but never-wrong) behaviour for this case.
-const htmlPreviewSrc = computed(() => {
-    if (!props.file?.path) return ''
-    if (isAbsolutePath(props.file.path)) return ''
-    const base = buildLocalFileUrl(props.file.path)
-    return base + (base.includes('?') ? '&' : '?') + `t=${htmlPreviewTimestamp.value}`
-})
+// app's root. The URL rules (including the srcdoc fallback for absolute paths)
+// and the sandbox trade live in buildHtmlPreviewSrc — the single source of
+// truth shared with the quick code-link preview pane. See fileViewerSandbox.test.ts.
+const htmlPreviewSrc = computed(() =>
+    buildHtmlPreviewSrc(props.file?.path || '', htmlPreviewTimestamp.value)
+)
 
 // Edit mode (source text editing via CodeEditor).
 // Shared at module level so the global back gesture (App.vue) can exit edit

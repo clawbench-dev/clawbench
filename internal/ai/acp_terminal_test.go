@@ -50,8 +50,6 @@ func TestAppendTerminalEnv_Empty(t *testing.T) {
 	assert.Nil(t, cmd.Env)
 }
 
-func ptrStr(s string) *string { return &s }
-
 func TestCreateTerminal_ArgsAreExecuted(t *testing.T) {
 	// Regression: Kimi ACP sends terminal/create with Command "/bin/bash" and
 	// the real command in Args ["-c", "..."]. When Args were ignored, the bare

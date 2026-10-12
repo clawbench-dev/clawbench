@@ -102,6 +102,10 @@ var hotReloadFields = map[string]bool{
 	"tts.kokoro.lang":            true,
 	"tts.moss_nano.model_dir":    true,
 	"tts.moss_nano.backend":      true,
+	"tts.openai.base_url":        true,
+	"tts.openai.api_key":         true,
+	"tts.openai.model":           true,
+	"tts.openai.voice":           true,
 	// STT — speech-to-text config, hot-reloadable
 	"stt.base_url":     true,
 	"stt.api_key":      true,
@@ -301,15 +305,23 @@ type configTerminal struct {
 }
 
 type configTTS struct {
-	Engine        string          `json:"engine"`
-	TTSModel      string          `json:"tts_model"`
-	Format        string          `json:"format"`
-	Speed         float64         `json:"speed"`
-	Voice         string          `json:"voice"`
-	MaxCacheFiles int             `json:"max_cache_files"`
-	Piper         *configPiper    `json:"piper,omitempty"`
-	Kokoro        *configKokoro   `json:"kokoro,omitempty"`
-	MossNano      *configMossNano `json:"moss_nano,omitempty"`
+	Engine        string           `json:"engine"`
+	TTSModel      string           `json:"tts_model"`
+	Format        string           `json:"format"`
+	Speed         float64          `json:"speed"`
+	Voice         string           `json:"voice"`
+	MaxCacheFiles int              `json:"max_cache_files"`
+	Piper         *configPiper     `json:"piper,omitempty"`
+	Kokoro        *configKokoro    `json:"kokoro,omitempty"`
+	MossNano      *configMossNano  `json:"moss_nano,omitempty"`
+	OpenAI        *configOpenAITTS `json:"openai,omitempty"`
+}
+
+type configOpenAITTS struct {
+	BaseURL string `json:"base_url"`
+	APIKey  string `json:"api_key"`
+	Model   string `json:"model"`
+	Voice   string `json:"voice"`
 }
 
 type configPiper struct {
@@ -717,6 +729,10 @@ var PatchableConfigPaths = map[string]bool{
 	"tts.kokoro.lang":                   true,
 	"tts.moss_nano.model_dir":           true,
 	"tts.moss_nano.backend":             true,
+	"tts.openai.base_url":               true,
+	"tts.openai.api_key":                true,
+	"tts.openai.model":                  true,
+	"tts.openai.voice":                  true,
 	"stt.base_url":                      true,
 	"stt.api_key":                       true,
 	"stt.model":                         true,
@@ -780,7 +796,7 @@ var PatchableConfigPaths = map[string]bool{
 
 // validTTSEngines is the set of valid TTS engine values.
 var validTTSEngines = map[string]bool{
-	"edge": true, "piper": true, "kokoro": true, "moss-nano": true,
+	"edge": true, "piper": true, "kokoro": true, "moss-nano": true, strOpenAI: true,
 }
 
 // validUILanguages is the set of UI languages the bundled i18n tables carry
@@ -981,6 +997,13 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 		resp.TTS.MossNano = &configMossNano{
 			ModelDir: cfg.TTS.MossNano.ModelDir,
 			Backend:  cfg.TTS.MossNano.Backend,
+		}
+	case strOpenAI:
+		resp.TTS.OpenAI = &configOpenAITTS{
+			BaseURL: cfg.TTS.OpenAI.BaseURL,
+			APIKey:  cfg.TTS.OpenAI.APIKey,
+			Model:   cfg.TTS.OpenAI.Model,
+			Voice:   cfg.TTS.OpenAI.Voice,
 		}
 	}
 
@@ -1213,7 +1236,7 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 	if ok {
 		if engine, ok := tts["engine"].(string); ok {
 			if !validTTSEngines[engine] {
-				return fmt.Errorf("tts.engine must be one of: edge,piper,kokoro,moss-nano")
+				return fmt.Errorf("tts.engine must be one of: edge,piper,kokoro,moss-nano,openai")
 			}
 		}
 		if format, ok := tts["format"].(string); ok {
@@ -1247,6 +1270,13 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 			if v, ok := mossNano["backend"].(string); ok {
 				if !validMossNanoBackends[v] {
 					return fmt.Errorf("tts.moss_nano.backend must be one of: onnx,pytorch")
+				}
+			}
+		}
+		if openai, ok := tts["openai"].(map[string]any); ok {
+			if v, ok := openai["base_url"].(string); ok && v != "" {
+				if _, err := url.ParseRequestURI(v); err != nil {
+					return fmt.Errorf("tts.openai.base_url must be a valid URL")
 				}
 			}
 		}
@@ -1384,6 +1414,38 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		}
 		// model_dir is optional — empty value is valid (ResolveMossNanoModelDir
 		// auto-detects the default dir or lets the CLI auto-download models).
+	case strOpenAI:
+		if engineSwitched {
+			break // will be validated after user fills in sub-config
+		}
+		// base_url, model and voice are all required: the provider has no
+		// sensible default for any of them (a guessed model name would fail
+		// upstream with a confusing error, and voice is server-dependent).
+		effectiveBaseURL := cfg.TTS.OpenAI.BaseURL
+		effectiveModel := cfg.TTS.OpenAI.Model
+		effectiveVoice := cfg.TTS.OpenAI.Voice
+		if tts, ok := patch["tts"].(map[string]any); ok {
+			if openai, ok := tts["openai"].(map[string]any); ok {
+				if v, ok := openai["base_url"].(string); ok {
+					effectiveBaseURL = v
+				}
+				if v, ok := openai["model"].(string); ok {
+					effectiveModel = v
+				}
+				if v, ok := openai["voice"].(string); ok {
+					effectiveVoice = v
+				}
+			}
+		}
+		if effectiveBaseURL == "" {
+			return fmt.Errorf("tts.openai.base_url is required when tts.engine is \"openai\"")
+		}
+		if effectiveModel == "" {
+			return fmt.Errorf("tts.openai.model is required when tts.engine is \"openai\"")
+		}
+		if effectiveVoice == "" {
+			return fmt.Errorf("tts.openai.voice is required when tts.engine is \"openai\"")
+		}
 	}
 
 	// 3. default_agent must be an existing, enabled agent ID.
@@ -1789,6 +1851,21 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 				cfg.TTS.MossNano.Backend = v
 			}
 		}
+		// OpenAI TTS sub-config
+		if openai, ok := tts["openai"].(map[string]any); ok {
+			if v, ok := openai["base_url"].(string); ok {
+				cfg.TTS.OpenAI.BaseURL = v
+			}
+			if v, ok := openai["api_key"].(string); ok {
+				cfg.TTS.OpenAI.APIKey = v
+			}
+			if v, ok := openai["model"].(string); ok {
+				cfg.TTS.OpenAI.Model = v
+			}
+			if v, ok := openai["voice"].(string); ok {
+				cfg.TTS.OpenAI.Voice = v
+			}
+		}
 	}
 
 	if sttVal, ok := patch["stt"].(map[string]any); ok {
@@ -2035,6 +2112,13 @@ func applyHotReloadGlobals() {
 		}
 		// Piper: voice is embedded in model_path, not a standalone field
 		// MOSS-Nano: uses tts.voice (shared with Edge/Kokoro)
+		// OpenAI: uses its own tts.openai.voice, applied below
+	}
+	if p, ok := curProvider.(*speech.OpenAITTSProvider); ok {
+		p.BaseURL = cfg.TTS.OpenAI.BaseURL
+		p.APIKey = cfg.TTS.OpenAI.APIKey
+		p.Model = cfg.TTS.OpenAI.Model
+		p.Voice = cfg.TTS.OpenAI.Voice
 	}
 	if cfg.TTS.Speed > 0 {
 		if p, ok := curProvider.(*speech.EdgeTTSProvider); ok {
@@ -2055,6 +2139,9 @@ func applyHotReloadGlobals() {
 			if cfg.TTS.Piper.LengthScale <= 0 {
 				p.LengthScale = 1.0 / cfg.TTS.Speed
 			}
+		}
+		if p, ok := curProvider.(*speech.OpenAITTSProvider); ok {
+			p.Speed = cfg.TTS.Speed
 		}
 		// MOSS-Nano: speed not supported
 	}

@@ -7,6 +7,7 @@ import {
   isShowingSummary,
   isLastAssistantMessage,
   normalizeDisplayMode,
+  resolveMidTurnSupported,
 } from '@/utils/chatSessionUtils.ts'
 
 // ── buildMessageSnapshot ──
@@ -707,5 +708,42 @@ describe('normalizeDisplayMode', () => {
     expect(normalizeDisplayMode(undefined)).toBe('mixed')
     expect(normalizeDisplayMode(null)).toBe('mixed')
     expect(normalizeDisplayMode(42)).toBe('mixed')
+  })
+})
+
+// ── resolveMidTurnSupported ──
+//
+// A group turn is a multi-round loop with no single "current reply" to join, so
+// mid-turn INSERT is never available in a group — the only meaningful action on
+// a queued group message is "interrupt and send". The capability is per-backend
+// and per-transport, but the GROUP branch must win regardless of both: a
+// CodeBuddy-hosted group is steer-capable and ACP, yet its "insert" path can
+// never land (the inject endpoint looks up a connection keyed by the group id,
+// which never exists) so showing "insert into the current reply" is a lie that
+// fails on click.
+describe('resolveMidTurnSupported', () => {
+  it('forces interrupt for a group session even when the backend is steer-capable over ACP', () => {
+    expect(resolveMidTurnSupported(true, true, 'acp-stdio')).toBe(false)
+  })
+
+  it('forces interrupt for a group session regardless of transport', () => {
+    expect(resolveMidTurnSupported(true, true, 'cli')).toBe(false)
+    expect(resolveMidTurnSupported(true, true, '')).toBe(false)
+  })
+
+  it('allows insert for a single chat when the backend is steer-capable over ACP', () => {
+    expect(resolveMidTurnSupported(false, true, 'acp-stdio')).toBe(true)
+  })
+
+  it('falls back to interrupt for a CLI session of a steer-capable backend', () => {
+    expect(resolveMidTurnSupported(false, true, 'cli')).toBe(false)
+  })
+
+  it('falls back to interrupt when the backend is not steer-capable', () => {
+    expect(resolveMidTurnSupported(false, false, 'acp-stdio')).toBe(false)
+  })
+
+  it('assumes ACP when the transport is unknown', () => {
+    expect(resolveMidTurnSupported(false, true, '')).toBe(true)
   })
 })

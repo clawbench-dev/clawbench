@@ -13,7 +13,8 @@
     </div>
 
     <div class="code-preview-actions" @pointerdown.stop>
-      <!-- Rendered / Source toggle (Markdown only, no line range) -->
+      <!-- Rendered / Source toggle (Markdown / HTML; always shown for a
+           renderable document, even with a line range) -->
       <button
         v-if="showRenderToggle"
         class="code-preview-btn"

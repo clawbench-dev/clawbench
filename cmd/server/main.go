@@ -69,6 +69,11 @@ const (
 	summarizeBackendSimple = "simple"
 	summarizeBackendAuto   = "auto"
 
+	// strOpenAI is the TTS engine key for the OpenAI-compatible
+	// /v1/audio/speech provider. Shared by the startup switch and the
+	// hot-reload factory so the two cannot drift.
+	strOpenAI = "openai"
+
 	// URL schemes. Kept as a pair so the `scheme` value and every comparison
 	// against it stay in sync.
 	schemeHTTP  = "http"
@@ -721,6 +726,16 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 			slog.String("backend", m.Backend),
 			slog.String("model_dir", m.ModelDir),
 			slog.String("voice", m.Voice),
+		)
+	case strOpenAI:
+		o := newOpenAITTSProvider(cfg)
+		ttsProvider = o
+		slog.Info(
+			"tts provider configured",
+			slog.String("engine", strOpenAI),
+			slog.String("base_url", o.BaseURL),
+			slog.String("model", o.Model),
+			slog.String("voice", o.Voice),
 		)
 	default:
 		// Default to Edge TTS when engine is empty or unrecognized
@@ -1716,6 +1731,8 @@ func newTTSProvider(cfg model.Config) speech.SpeechProvider {
 		return newKokoroTTSProvider(cfg)
 	case "moss-nano":
 		return newMossNanoTTSProvider(cfg)
+	case strOpenAI:
+		return newOpenAITTSProvider(cfg)
 	default:
 		return newEdgeTTSProvider(cfg)
 	}
@@ -1779,6 +1796,22 @@ func newMossNanoTTSProvider(cfg model.Config) *speech.MossNanoProvider {
 		m.Voice = cfg.TTS.Voice
 	}
 	return m
+}
+
+// newOpenAITTSProvider builds the OpenAI-compatible TTS provider. Every field
+// is user configuration — no defaults are applied here, matching the provider's
+// own validate(), so an unconfigured engine fails with a message naming the
+// missing config path rather than synthesizing with a guessed model.
+func newOpenAITTSProvider(cfg model.Config) *speech.OpenAITTSProvider {
+	o := speech.NewOpenAITTSProvider()
+	o.BaseURL = cfg.TTS.OpenAI.BaseURL
+	o.APIKey = cfg.TTS.OpenAI.APIKey
+	o.Model = cfg.TTS.OpenAI.Model
+	o.Voice = cfg.TTS.OpenAI.Voice
+	if cfg.TTS.Speed > 0 {
+		o.Speed = cfg.TTS.Speed
+	}
+	return o
 }
 
 // buildAISummarizer creates an LLM summarizer from the shared ai_summary config.

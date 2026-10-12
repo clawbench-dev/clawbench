@@ -475,9 +475,13 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
         { labelKey: 'settings.items.ttsEnginePiper', value: 'piper' },
         { labelKey: 'settings.items.ttsEngineKokoro', value: 'kokoro' },
         { labelKey: 'settings.items.ttsEngineMossNano', value: 'moss-nano' },
+        { labelKey: 'settings.items.ttsEngineOpenAI', value: 'openai' },
       ]},
       commonFields: [
-        { labelKey: 'settings.items.ttsVoice', descriptionKey: 'settings.items.ttsVoiceDesc', key: 'tts.voice', type: 'select', source: 'server' },
+        // The shared voice row is a fixed dropdown per engine, so it is hidden
+        // for "openai": that engine takes a free-text voice name (or a custom
+        // voice id) in its own tts.openai.voice row below.
+        { labelKey: 'settings.items.ttsVoice', descriptionKey: 'settings.items.ttsVoiceDesc', key: 'tts.voice', type: 'select', source: 'server', dependsOn: { key: 'tts.engine', values: ['edge', 'piper', 'kokoro', 'moss-nano'] } },
         { labelKey: 'settings.items.ttsSpeed', descriptionKey: 'settings.items.ttsSpeedDesc', key: 'tts.speed', type: 'slider', source: 'server', min: 0.5, max: 3, step: 0.1 },
         { labelKey: 'settings.items.ttsMaxCacheFiles', descriptionKey: 'settings.items.ttsMaxCacheFilesDesc', key: 'tts.max_cache_files', type: 'number', source: 'server' },
       ],
@@ -509,8 +513,20 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
             ]},
           ],
         },
+        {
+          when: 'openai',
+          fields: [
+            { labelKey: 'settings.items.openaiTTSBaseUrl', descriptionKey: 'settings.items.openaiTTSBaseUrlDesc', key: 'tts.openai.base_url', type: 'text', source: 'server', sectionHeader: 'settings.items.ttsOpenAIHeader' },
+            { labelKey: 'settings.items.openaiTTSApiKey', descriptionKey: 'settings.items.openaiTTSApiKeyDesc', key: 'tts.openai.api_key', type: 'password', source: 'server' },
+            // Model and voice are free text on purpose: the set of models and
+            // voices a compatible server accepts is not bounded by OpenAI's
+            // documented list (custom voices are referenced by id).
+            { labelKey: 'settings.items.openaiTTSModel', descriptionKey: 'settings.items.openaiTTSModelDesc', key: 'tts.openai.model', type: 'text', source: 'server' },
+            { labelKey: 'settings.items.openaiTTSVoice', descriptionKey: 'settings.items.openaiTTSVoiceDesc', key: 'tts.openai.voice', type: 'text', source: 'server' },
+          ],
+        },
       ],
-      requiredFields: ['tts.piper.model_path', 'tts.kokoro.model_path', 'tts.kokoro.voices_path'],
+      requiredFields: ['tts.piper.model_path', 'tts.kokoro.model_path', 'tts.kokoro.voices_path', 'tts.openai.base_url', 'tts.openai.model', 'tts.openai.voice'],
       hasConnectivityTest: true,
       getTestCategories: (values) => [{ category: 'tts', values }],
       needsVoiceReset: true,

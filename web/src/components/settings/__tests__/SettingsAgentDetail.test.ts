@@ -39,6 +39,7 @@ vi.mock('vue-i18n', async (importOriginal) => {
         'settings.items.agentSectionPreference': 'Preference',
         'settings.items.agentSystemPrompt': 'System Prompt',
         'settings.items.agentSystemPromptDesc': 'Custom system prompt',
+        'settings.items.agentSystemPromptNote': 'May not apply mid-session',
         'settings.items.agentSystemPromptWarning': 'Warning',
         'settings.items.agentSystemPromptACPNote': 'ACP note',
         'settings.items.agentSectionInfo': 'Info',
@@ -224,6 +225,28 @@ describe('SettingsAgentDetail', () => {
       expect(labels).toContain('Name')
       expect(labels).toContain('Specialty')
       expect(labels).toContain('System Prompt')
+    })
+
+    // The system prompt is the one field whose edit may NOT reach a session
+    // already in progress: some backends (ACP, and CLI backends without a
+    // --system-prompt flag) only inject it at session start or after a
+    // compaction. The field carries a note so the user is not surprised.
+    it('passes the mid-session caveat note to the System Prompt field', () => {
+      const wrapper = mountDetail()
+      const item = wrapper.findAllComponents({ name: 'SettingsItem' })
+        .find(it => it.props('label') === 'System Prompt')
+      expect(item, 'System Prompt item must exist').toBeTruthy()
+      expect(item!.props('note')).toBe('May not apply mid-session')
+    })
+
+    it('does not put the caveat note on unrelated fields', () => {
+      // A blanket note would be wrong: model/transport/name apply to the next
+      // turn. Only the system prompt carries this caveat.
+      const wrapper = mountDetail()
+      const nameItem = wrapper.findAllComponents({ name: 'SettingsItem' })
+        .find(it => it.props('label') === 'Name')
+      expect(nameItem).toBeTruthy()
+      expect(nameItem!.props('note')).toBeFalsy()
     })
 
     it('no longer renders an Advanced section', () => {

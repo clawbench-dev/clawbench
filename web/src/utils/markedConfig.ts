@@ -135,6 +135,18 @@ export function configureMarkedRenderer(): void {
     markedRendererConfigured = true
 
     marked.use({
+        // GFM strikethrough must use two tildes (~~text~~). marked's built-in
+        // `del` tokenizer, however, accepts a single tilde too (its left
+        // delimiter is /^(~~?)/), so ordinary prose like "版本 ~1.2~ 发布" or
+        // "foo~bar~baz" is silently struck through. Return undefined for a lone
+        // leading tilde to keep it literal; anything else delegates to marked's
+        // default tokenizer (returning false lets marked fall through to it).
+        tokenizer: {
+            del(src: string) {
+                if (src[0] === '~' && src[1] !== '~') return
+                return false
+            },
+        },
         // Add a source position to every block token during marked.parse so
         // the block renderers can emit data-source-line (1-based source line).
         // Token positions survive protectMarkdown because it keeps the row

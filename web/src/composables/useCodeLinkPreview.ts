@@ -17,7 +17,7 @@ import { appLog } from '@/utils/appLog'
 import { apiGet } from '@/utils/api'
 import { openFilePath } from '@/composables/useFilePathAnnotation'
 import { parseLineRanges } from '@/utils/lineRanges'
-import { joinPath } from '@/utils/path'
+import { joinPath, isAbsolutePath } from '@/utils/path'
 import { buildDirListUrl } from '@/utils/dirList'
 import { getFileType } from '@/utils/fileType'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
@@ -67,6 +67,18 @@ export interface PreviewTarget {
 export function isMarkdownTarget(target: PreviewTarget | null): boolean {
   const filePath = target?.filePath || ''
   return filePath ? Boolean(getFileType(filePath).isMarkdown) : false
+}
+
+/** Whether the preview target is an HTML file (by extension). */
+export function isHtmlTarget(target: PreviewTarget | null): boolean {
+  const filePath = target?.filePath || ''
+  return filePath ? Boolean(getFileType(filePath).isHtml) : false
+}
+
+/** Whether the preview target is a document renderable in the rendered view
+ *  (Markdown or HTML). Non-document files (code, media, directory) are not. */
+export function isRenderableTarget(target: PreviewTarget | null): boolean {
+  return isMarkdownTarget(target) || isHtmlTarget(target)
 }
 
 /** Whether the preview target carries an explicit line annotation. */
@@ -158,6 +170,13 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     if (isDirTarget.value) return false
     const filePath = target.value?.filePath || ''
     return filePath ? Boolean(getFileType(filePath).isMarkdown) : false
+  })
+
+  /** Whether the current target is an HTML file (renderable in the doc view). */
+  const isHtml = computed(() => {
+    if (isDirTarget.value) return false
+    const filePath = target.value?.filePath || ''
+    return filePath ? Boolean(getFileType(filePath).isHtml) : false
   })
 
   const dirEntries = ref<DirPreviewEntry[]>([])
@@ -256,15 +275,19 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     return !!(t && t.lineStart && Number.isInteger(t.lineStart) && t.lineStart > 0)
   })
 
-  /** Whether the current target is a Markdown file (renderable in the doc view). */
-  // `isMarkdown` and `isMediaTarget` already return false for a directory target
-  // (see their definitions), so this stays a plain alias.
-  const canRenderMarkdown = computed(() => isMarkdown.value)
+  /**
+   * Whether the current target can be shown in the rendered document view.
+   * Markdown and HTML both qualify; code/media/directory do not.
+   */
+  // `isMarkdown`, `isHtml` and `isMediaTarget` already return false for a
+  // directory target (see their definitions), so this stays a plain alias.
+  const canRenderDocument = computed(() => isMarkdown.value || isHtml.value)
 
-  // A Markdown file default-renders unless the annotation pinned a line range
-  // (source slice is the useful view then). Re-evaluate on each target change.
+  // A renderable document default-renders unless the annotation pinned a line
+  // range (the source slice is the useful view then). Re-evaluate on each
+  // target change.
   const effectiveRenderMode = computed<PreviewRenderMode>(() =>
-    canRenderMarkdown.value ? renderMode.value : 'source'
+    canRenderDocument.value ? renderMode.value : 'source'
   )
 
   // Timers & concurrency
@@ -583,8 +606,15 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     // Ask for just the lines this preview can render (plus margin), so a large
     // file is never transferred in full. Later growth is incremental
     // (fetchChunk / loadMore) instead of one ever-wider request.
-    const win: FetchWindow = windowOverride
-      ?? computeFetchWindow(newTarget, fileTotalLines.value)
+    //
+    // HTML is the exception, but ONLY for an external (absolute-path) file:
+    // that case renders via srcdoc, which needs the WHOLE document (a line
+    // window would truncate it). A project-relative HTML file renders through
+    // the iframe's own URL, so the source view keeps the ordinary windowed
+    // slicing — same as any other code file.
+    const htmlNeedsWholeFile = isHtmlTarget(newTarget) && isAbsolutePath(newTarget.filePath)
+    const win: FetchWindow | null = windowOverride
+      ?? (htmlNeedsWholeFile ? null : computeFetchWindow(newTarget, fileTotalLines.value))
 
     const projectRoot = store.state.projectRoot || ''
     const cacheKey = previewCache.buildKey(projectRoot, newTarget.filePath, win)
@@ -693,10 +723,10 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     mediaRefreshNonce.value = 0
     visible.value = true
 
-    // Markdown files without a pinned line range default to the rendered
-    // document view on every open; anything else (line-annotated paths, code)
-    // stays in the source slice view.
-    renderMode.value = isMarkdownTarget(newTarget) && !hasLineRange(newTarget) ? 'rendered' : 'source'
+    // Renderable documents (Markdown / HTML) without a pinned line range
+    // default to the rendered document view on every open; anything else
+    // (line-annotated paths, code, media) stays in the source slice view.
+    renderMode.value = isRenderableTarget(newTarget) && !hasLineRange(newTarget) ? 'rendered' : 'source'
 
     // Once pinned (including after dragging), retain the current placement
     // while switching to another link. The card is reused in-place.
@@ -761,9 +791,10 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     else pin()
   }
 
-  /** Toggle between the rendered document and the source slice (Markdown only). */
+  /** Toggle between the rendered document and the source slice
+   *  (Markdown / HTML only). */
   const toggleRenderMode = () => {
-    if (!canRenderMarkdown.value) return
+    if (!canRenderDocument.value) return
     renderMode.value = renderMode.value === 'rendered' ? 'source' : 'rendered'
   }
 
@@ -1010,8 +1041,9 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     placement,
     renderMode,
     isMarkdown,
+    isHtml,
     hasExplicitLineRange,
-    canRenderMarkdown,
+    canRenderDocument,
     effectiveRenderMode,
     isImageTarget,
     isVideoTarget,

@@ -143,3 +143,13 @@ func ResolveKokoroPaths(modelPath, voicesPath string) (string, string) {
 	}
 	return modelPath, voicesPath
 }
+
+// Compile-time assertion that KokoroProvider reports its cache identity.
+var _ CacheIdentityProvider = (*KokoroProvider)(nil)
+
+// CacheIdentity reports the model, voice pack, voice, language and speed.
+// VoicesPath selects the voice-embedding pack and is passed to the bridge
+// script, so a different pack produces different audio.
+func (p *KokoroProvider) CacheIdentity() string {
+	return fmt.Sprintf("kokoro|%s|%s|%s|%s|%g", p.ModelPath, p.VoicesPath, p.Voice, p.Lang, p.Speed)
+}

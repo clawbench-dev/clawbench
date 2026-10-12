@@ -123,12 +123,39 @@ describe('project switch suppresses panel writes', () => {
 
   it('applies the remembered panel only after the workspace restore', () => {
     const restoreAt = body.indexOf('await restoreProjectWorkspace()')
-    const applyAt = body.indexOf('applyPanelTab(')
+    const applyAt = body.indexOf('applyProjectPanel(')
     expect(restoreAt).toBeGreaterThan(-1)
     expect(applyAt).toBeGreaterThan(-1)
     // currentFile must already be populated, or a remembered 'view' panel would
     // resolve to an empty viewer.
     expect(restoreAt).toBeLessThan(applyAt)
+  })
+
+  it('collapses the left column BEFORE the subtree rebuild, not after fade-in', () => {
+    // The reported bug: switching to a project whose column is remembered hidden
+    // showed the panel first, then hid it. The collapsed flag was only applied
+    // in Phase 6 (after `await restoreProjectWorkspace()`), but Phase 5 fades the
+    // new tree in long before that network round-trip finishes — so the old
+    // project's expanded state painted first.
+    //
+    // The flag is pure localStorage (no `currentFile` dependency, unlike the
+    // tab), so it must be resolved before the keyed rebuild.
+    const collapseAt = body.indexOf('setLeftCollapsed(loadProjectPanelCollapsed(resolvedProjectPath))')
+    const rebuildAt = body.indexOf('projectKey.value = newProjectPath')
+    expect(collapseAt, 'early collapsed application missing').toBeGreaterThan(-1)
+    expect(rebuildAt, 'subtree rebuild missing').toBeGreaterThan(-1)
+    expect(collapseAt).toBeLessThan(rebuildAt)
+  })
+
+  it('guards the early collapsed application against a concurrent switch', () => {
+    // Same re-entrancy reason as Phase 6: a newer switch may already own the
+    // store, and writing THIS project's flag then would show the wrong collapse.
+    // The call sits inside the guarded `if`, so take the condition line too.
+    const at = body.indexOf('setLeftCollapsed(loadProjectPanelCollapsed(resolvedProjectPath))')
+    const condAt = body.lastIndexOf('if (', at)
+    const guarded = body.slice(condAt, body.indexOf('\n', at))
+    expect(guarded).toContain('store.state.projectRoot === resolvedProjectPath')
+    expect(guarded).toContain('isWideScreen.value')
   })
 
   it('stands down when a newer switch already landed on another project', () => {
@@ -137,16 +164,17 @@ describe('project switch suppresses panel writes', () => {
     // the wrong project's tab and record the wrong panel under this key.
     const guardAt = body.indexOf('store.state.projectRoot === resolvedProjectPath')
     expect(guardAt, 'missing re-entrancy guard before applying the panel').toBeGreaterThan(-1)
-    const applyAt = body.indexOf('applyPanelTab(')
-    const saveAt = body.indexOf('saveProjectPanel(resolvedProjectPath, currentPanelTab.value)')
+    const applyAt = body.indexOf('applyProjectPanel(')
     expect(applyAt).toBeGreaterThan(guardAt)
-    expect(saveAt).toBeGreaterThan(guardAt)
   })
 
   it('writes the applied panel back to the target project explicitly', () => {
     // The save watcher is still suppressed at this point, so the write must be
     // explicit — otherwise the first switch to a project never records anything.
-    expect(body).toContain('saveProjectPanel(resolvedProjectPath, currentPanelTab.value)')
+    // Both the tab and the collapsed flag are written by applyProjectPanel.
+    const applyBody = functionBody(code, 'applyProjectPanel')
+    expect(applyBody).toContain('saveProjectPanel(root, currentPanelTab.value)')
+    expect(applyBody).toContain('saveProjectPanelCollapsed(root, leftCollapsed.value)')
   })
 })
 
@@ -176,6 +204,86 @@ describe('project switch guards unsaved file edits', () => {
     const lineEnd = body.indexOf('\n', guardAt)
     expect(body.slice(guardAt, lineEnd)).toContain('return')
   })
+})
+
+describe('project switch does not leak staged input across projects', () => {
+  const body = functionBody(code, 'hotSwitchProject')
+
+  it('captures the leaving session before the first await, not just before resetIdentity', () => {
+    // The capture must precede ANY await: setProject() flips the project cookie,
+    // so a later read could pick up a NEW-project session id resolved by the
+    // old subtree's in-flight loadHistory, snapshotting the old quote under the
+    // new session (re-introducing the leak).
+    const captureAt = body.indexOf('const leavingSessionId = sessionIdentity.currentSessionId.value')
+    const firstAwaitAt = body.indexOf('await ')
+    const resetAt = body.indexOf('resetIdentity()')
+    expect(captureAt, 'leaving session id is not captured').toBeGreaterThan(-1)
+    expect(firstAwaitAt).toBeGreaterThan(-1)
+    expect(resetAt).toBeGreaterThan(-1)
+    expect(captureAt, 'capture must precede the first await').toBeLessThan(firstAwaitAt)
+    expect(captureAt).toBeLessThan(resetAt)
+  })
+
+  it('clears the live staged input via leaveInputDraft', () => {
+    // Without this the previous project's quote stays in the live refs and
+    // reappears in the new project's input box.
+    expect(body, 'hotSwitchProject never clears the staged input').toContain('leaveInputDraft(leavingSessionId)')
+  })
+
+  it('restores the current session draft after identity resolves, without clobbering fresh input', () => {
+    // The switch bypasses the session manager (which restores on a session
+    // switch), so the restore has to happen here or a returning user loses
+    // their draft. The ARGUMENT matters: restoreAttachments('') is a permanent
+    // no-op, so asserting only the call name would let that regression pass.
+    // onlyIfLiveEmpty matters too: the new subtree is already interactive when
+    // this runs, so input staged during the round-trip must not be discarded.
+    const initAt = body.indexOf('await sessionIdentity.initSessionFromAPI()')
+    const restoreAt = body.indexOf('restoreAttachments(sessionIdentity.currentSessionId.value')
+    expect(initAt).toBeGreaterThan(-1)
+    expect(restoreAt, 'staged input is never restored after the switch').toBeGreaterThan(-1)
+    expect(initAt).toBeLessThan(restoreAt)
+    expect(body.slice(restoreAt), 'restore must not clobber input staged meanwhile')
+      .toContain('onlyIfLiveEmpty: true')
+  })
+})
+
+describe('the session-switch path shares the same staged-input clear', () => {
+  it('ChatPanelContent routes its clearInputState through leaveInputDraft', () => {
+    // The commit's whole point is that the project-switch and session-switch
+    // paths share one helper so they cannot drift. Without this guard the
+    // ChatPanelContent half could be reverted to its own inline copy silently.
+    const cpc = stripComments(readFileSync(
+      join(__dirname, '..', 'chat', 'ChatPanelContent.vue'),
+      'utf8',
+    ))
+    expect(cpc, 'ChatPanelContent no longer uses the shared leaveInputDraft')
+      .toContain('leaveInputDraft(getSessionId())')
+  })
+})
+
+describe('worktree jumps go through hotSwitchProject, not a direct setProject', () => {
+  // A worktree jump IS a project switch. Calling store.setProject directly
+  // skips the keyed subtree rebuild AND the staged-input clear, so the previous
+  // project's staged quote leaks into the new one — the exact bug this change
+  // fixes. Each component must inject hotSwitchProject and prefer it, keeping
+  // setProject only as the provider-absent fallback.
+  const sites = [
+    ['chat', 'ToolDetailDrawer.vue'],
+    ['task', 'TaskOverviewTab.vue'],
+    ['task', 'TaskExecDetail.vue'],
+  ] as const
+
+  for (const [dir, file] of sites) {
+    it(`${file} prefers the injected hotSwitchProject`, () => {
+      const src = stripComments(readFileSync(join(__dirname, '..', dir, file), 'utf8'))
+      expect(src, `${file} does not inject hotSwitchProject`)
+        .toContain("inject('hotSwitchProject'")
+      expect(src, `${file} does not guard on the injected hotSwitchProject`)
+        .toMatch(/if \(hotSwitchProject\)/)
+      expect(src, `${file} does not call the injected hotSwitchProject`)
+        .toMatch(/await hotSwitchProject\(/)
+    })
+  }
 })
 
 describe('the file-closed fallback watcher respects the switch guard', () => {
@@ -212,11 +320,61 @@ describe('panel persistence', () => {
   it('restores the panel on cold start too', () => {
     const body = functionBody(code, 'initializeApp')
     const restoreAt = body.indexOf('await restoreProjectWorkspace()')
-    const applyAt = body.indexOf('applyPanelTab(')
+    const applyAt = body.indexOf('applyProjectPanel(')
     expect(restoreAt).toBeGreaterThan(-1)
     expect(applyAt, 'cold start does not restore the remembered panel').toBeGreaterThan(-1)
     expect(restoreAt).toBeLessThan(applyAt)
-    expect(body).toContain('loadProjectPanel(store.state.projectRoot)')
+  })
+})
+
+describe('the collapsed left column is remembered per project', () => {
+  it('applies the collapsed flag AFTER the tab (switchLeftTab re-expands)', () => {
+    // switchLeftTab unconditionally sets leftCollapsed = false. Applying the
+    // collapsed flag first would be silently undone, so the order is the whole
+    // reason this is one function.
+    const body = functionBody(code, 'applyProjectPanel')
+    const tabAt = body.indexOf('applyPanelTab(')
+    const collapsedAt = body.indexOf('setLeftCollapsed(')
+    expect(tabAt).toBeGreaterThan(-1)
+    expect(collapsedAt, 'collapsed flag is never restored').toBeGreaterThan(-1)
+    expect(tabAt).toBeLessThan(collapsedAt)
+  })
+
+  it('defaults an unrecorded project to expanded, not the previous state', () => {
+    // loadProjectPanelCollapsed returns false (not null) for a project with no
+    // record, so a first visit lands on the layout default instead of inheriting
+    // the previous project's collapse.
+    const body = functionBody(code, 'applyProjectPanel')
+    expect(body).toContain('setLeftCollapsed(loadProjectPanelCollapsed(root))')
+  })
+
+  it('only reads/writes collapsed state on a wide screen', () => {
+    // Collapsed is a wide-screen concept. On a narrow screen recording it would
+    // park leftCollapsed = true and hide the column on the next widen.
+    const applyBody = functionBody(code, 'applyProjectPanel')
+    const guardAt = applyBody.indexOf('if (isWideScreen.value)')
+    expect(guardAt, 'applyProjectPanel does not gate collapsed state on wide screen').toBeGreaterThan(-1)
+    expect(applyBody.slice(guardAt)).toContain('setLeftCollapsed(')
+
+    // The save watcher must carry the same gate.
+    const watcherAt = code.indexOf('watch(leftCollapsed')
+    expect(watcherAt, 'collapsed-save watcher missing').toBeGreaterThan(-1)
+    const watcherBody = code.slice(watcherAt, code.indexOf('\n})', watcherAt))
+    expect(watcherBody).toContain('isPanelSwitchInFlight()')
+    expect(watcherBody).toContain('isWideScreen.value')
+    expect(watcherBody).toContain('saveProjectPanelCollapsed(store.state.projectRoot, collapsed)')
+  })
+
+  it('keeps the left column visible when widening from a non-chat panel', () => {
+    // With the column hidden by default, entering wide-screen while the single
+    // narrow column was on a non-chat panel must NOT hide it — otherwise
+    // widening from the file manager lands on chat and reads as "my panel
+    // disappeared". `switchLeftTab` already expands when the tab changes; the
+    // guard covers the case where leftTab already matched.
+    const at = code.indexOf('watch(isWideScreen')
+    expect(at).toBeGreaterThan(-1)
+    const block = code.slice(at, code.indexOf('}, { immediate: true })', at))
+    expect(block).toContain("if (enteredTab !== 'chat') setLeftCollapsed(false)")
   })
 })
 
