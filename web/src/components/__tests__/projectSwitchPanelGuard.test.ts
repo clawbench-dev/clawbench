@@ -131,33 +131,6 @@ describe('project switch suppresses panel writes', () => {
     expect(restoreAt).toBeLessThan(applyAt)
   })
 
-  it('collapses the left column BEFORE the subtree rebuild, not after fade-in', () => {
-    // The reported bug: switching to a project whose column is remembered hidden
-    // showed the panel first, then hid it. The collapsed flag was only applied
-    // in Phase 6 (after `await restoreProjectWorkspace()`), but Phase 5 fades the
-    // new tree in long before that network round-trip finishes — so the old
-    // project's expanded state painted first.
-    //
-    // The flag is pure localStorage (no `currentFile` dependency, unlike the
-    // tab), so it must be resolved before the keyed rebuild.
-    const collapseAt = body.indexOf('setLeftCollapsed(loadProjectPanelCollapsed(resolvedProjectPath))')
-    const rebuildAt = body.indexOf('projectKey.value = newProjectPath')
-    expect(collapseAt, 'early collapsed application missing').toBeGreaterThan(-1)
-    expect(rebuildAt, 'subtree rebuild missing').toBeGreaterThan(-1)
-    expect(collapseAt).toBeLessThan(rebuildAt)
-  })
-
-  it('guards the early collapsed application against a concurrent switch', () => {
-    // Same re-entrancy reason as Phase 6: a newer switch may already own the
-    // store, and writing THIS project's flag then would show the wrong collapse.
-    // The call sits inside the guarded `if`, so take the condition line too.
-    const at = body.indexOf('setLeftCollapsed(loadProjectPanelCollapsed(resolvedProjectPath))')
-    const condAt = body.lastIndexOf('if (', at)
-    const guarded = body.slice(condAt, body.indexOf('\n', at))
-    expect(guarded).toContain('store.state.projectRoot === resolvedProjectPath')
-    expect(guarded).toContain('isWideScreen.value')
-  })
-
   it('stands down when a newer switch already landed on another project', () => {
     // Two switches can overlap (callers are not serialized). If a newer one
     // finished first, applying this older switch's panel would drag the user to
@@ -168,13 +141,22 @@ describe('project switch suppresses panel writes', () => {
     expect(applyAt).toBeGreaterThan(guardAt)
   })
 
-  it('writes the applied panel back to the target project explicitly', () => {
+  it('writes the applied tab back to the target project explicitly', () => {
     // The save watcher is still suppressed at this point, so the write must be
     // explicit — otherwise the first switch to a project never records anything.
-    // Both the tab and the collapsed flag are written by applyProjectPanel.
     const applyBody = functionBody(code, 'applyProjectPanel')
     expect(applyBody).toContain('saveProjectPanel(root, currentPanelTab.value)')
-    expect(applyBody).toContain('saveProjectPanelCollapsed(root, leftCollapsed.value)')
+  })
+
+  it('leaves the collapsed flag alone (it is global, not per-project)', () => {
+    // The column's collapse is a device-level state now. A project switch must
+    // not read or write it — otherwise a project would appear to "remember" a
+    // collapse that is really global.
+    const applyBody = functionBody(code, 'applyProjectPanel')
+    expect(applyBody).not.toContain('leftCollapsed')
+    expect(applyBody).not.toContain('Collapsed')
+    // And the switch must not apply it before the keyed rebuild either.
+    expect(body).not.toContain('loadProjectPanelCollapsed')
   })
 })
 
@@ -327,58 +309,48 @@ describe('panel persistence', () => {
   })
 })
 
-describe('the collapsed left column is remembered per project', () => {
-  it('applies the collapsed flag AFTER the tab (switchLeftTab re-expands)', () => {
-    // switchLeftTab unconditionally sets leftCollapsed = false. Applying the
-    // collapsed flag first would be silently undone, so the order is the whole
-    // reason this is one function.
-    const body = functionBody(code, 'applyProjectPanel')
-    const tabAt = body.indexOf('applyPanelTab(')
-    const collapsedAt = body.indexOf('setLeftCollapsed(')
-    expect(tabAt).toBeGreaterThan(-1)
-    expect(collapsedAt, 'collapsed flag is never restored').toBeGreaterThan(-1)
-    expect(tabAt).toBeLessThan(collapsedAt)
-  })
-
-  it('defaults an unrecorded project to expanded, not the previous state', () => {
-    // loadProjectPanelCollapsed returns false (not null) for a project with no
-    // record, so a first visit lands on the layout default instead of inheriting
-    // the previous project's collapse.
-    const body = functionBody(code, 'applyProjectPanel')
-    expect(body).toContain('setLeftCollapsed(loadProjectPanelCollapsed(root))')
-  })
-
-  it('only reads/writes collapsed state on a wide screen', () => {
-    // Collapsed is a wide-screen concept. On a narrow screen recording it would
-    // park leftCollapsed = true and hide the column on the next widen.
-    const applyBody = functionBody(code, 'applyProjectPanel')
-    const guardAt = applyBody.indexOf('if (isWideScreen.value)')
-    expect(guardAt, 'applyProjectPanel does not gate collapsed state on wide screen').toBeGreaterThan(-1)
-    expect(applyBody.slice(guardAt)).toContain('setLeftCollapsed(')
-
-    // The save watcher must carry the same gate.
-    const watcherAt = code.indexOf('watch(leftCollapsed')
-    expect(watcherAt, 'collapsed-save watcher missing').toBeGreaterThan(-1)
-    const watcherBody = code.slice(watcherAt, code.indexOf('\n})', watcherAt))
-    expect(watcherBody).toContain('isPanelSwitchInFlight()')
-    expect(watcherBody).toContain('isWideScreen.value')
-    expect(watcherBody).toContain('saveProjectPanelCollapsed(store.state.projectRoot, collapsed)')
-  })
-
+describe('the left column collapse is global, not per-project', () => {
   it('keeps the left column visible when widening from a non-chat panel', () => {
-    // With the column hidden by default, entering wide-screen while the single
-    // narrow column was on a non-chat panel must NOT hide it — otherwise
-    // widening from the file manager lands on chat and reads as "my panel
-    // disappeared". `switchLeftTab` already expands when the tab changes; the
-    // guard covers the case where leftTab already matched.
+    // Entering wide-screen while the single narrow column was on a non-chat
+    // panel must NOT hide it — otherwise widening from the file manager lands
+    // on chat with the column hidden and reads as "my panel disappeared".
     const at = code.indexOf('watch(isWideScreen')
     expect(at).toBeGreaterThan(-1)
     const block = code.slice(at, code.indexOf('}, { immediate: true })', at))
     expect(block).toContain("if (enteredTab !== 'chat') setLeftCollapsed(false)")
   })
+
+  it('has no per-project collapsed watcher or storage', () => {
+    // The collapse is a device-level panel state registered globally; a
+    // per-project watcher would resurrect the scope confusion this refactor
+    // removed. Regex rather than a literal so `watch( leftCollapsed` or a
+    // newline before the argument cannot evade the check.
+    expect(code).not.toMatch(/watch\(\s*leftCollapsed/)
+    expect(code).not.toContain('saveProjectPanelCollapsed')
+  })
+
+  it('expands the column inside the wide-screen branch of switchTab', () => {
+    // switchLeftTab deliberately no longer expands (it is also the programmatic
+    // restore path). switchTab's wide branch is the user-intent entry point, so
+    // it must expand explicitly — on the NON-chat path, i.e. after the
+    // `if (tab === 'chat') return` early-out. Expanding before that would also
+    // run for a chat switch (where the column should stay as the user left it).
+    const body = functionBody(code, 'switchTab')
+    const guardAt = body.indexOf('if (isWideScreen.value)')
+    expect(guardAt, 'switchTab has no wide-screen branch').toBeGreaterThan(-1)
+    const branch = body.slice(guardAt, body.indexOf('\n  }', guardAt))
+    const chatReturnAt = branch.indexOf("if (tab === 'chat') return")
+    const expandAt = branch.indexOf('setLeftCollapsed(false)')
+    const switchAt = branch.indexOf('switchLeftTab(tab)')
+    expect(chatReturnAt, 'the wide branch no longer early-returns for chat').toBeGreaterThan(-1)
+    expect(expandAt, 'the wide branch does not expand the left column').toBeGreaterThan(-1)
+    // Must sit after the chat early-out and before the tab switch.
+    expect(expandAt).toBeGreaterThan(chatReturnAt)
+    expect(switchAt).toBeGreaterThan(expandAt)
+  })
 })
 
-describe('the wide-screen layout keeps no global leftTab storage', () => {
+describe('the wide-screen layout keeps no storage keys of its own', () => {
   const layoutSrc = readFileSync(
     join(__dirname, '..', '..', 'composables', 'useWideScreenLayout.ts'),
     'utf8',
@@ -389,6 +361,42 @@ describe('the wide-screen layout keeps no global leftTab storage', () => {
     const stripped = stripComments(layoutSrc)
     expect(stripped).not.toContain('clawbench-widescreen-left-tab')
     expect(stripped).not.toContain('WIDE_SCREEN_LEFT_TAB_KEY')
+  })
+
+  it('declares no localStorage key literals — the registry owns them', () => {
+    // Every panel-state key lives in utils/panelState.ts. A stray literal here
+    // would be a second writer with its own scope decision.
+    const stripped = stripComments(layoutSrc)
+    expect(stripped).not.toContain('clawbench-widescreen-split-ratio')
+    expect(stripped).not.toContain('clawbench-widescreen-chat-collapsed')
+    expect(stripped).not.toMatch(/localStorage\.setItem/)
+  })
+})
+
+describe('the panel-state registry stays a leaflet', () => {
+  const registrySrc = readFileSync(
+    join(__dirname, '..', '..', 'utils', 'panelState.ts'),
+    'utf8',
+  )
+  const projectPanelSrc = readFileSync(
+    join(__dirname, '..', '..', 'composables', 'useProjectPanel.ts'),
+    'utf8',
+  )
+
+  it('panelState imports no composable (would create a cycle)', () => {
+    // The registry is imported BY the composables that own each state, so an
+    // import of any of them here closes a cycle.
+    const imports = registrySrc.match(/^import .*$/gm) ?? []
+    for (const line of imports) {
+      expect(line).not.toMatch(/useWideScreenLayout|useProjectPanel|useTocDockPreference|useSessionSidebar/)
+    }
+  })
+
+  it('useProjectPanel does not import useWideScreenLayout', () => {
+    // That edge existed only to borrow DEFAULT_LEFT_COLLAPSED; the constant now
+    // lives in the registry, so the edge must be gone.
+    const stripped = stripComments(projectPanelSrc)
+    expect(stripped).not.toContain('useWideScreenLayout')
   })
 })
 

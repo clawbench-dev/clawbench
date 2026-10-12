@@ -1,7 +1,14 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { nextTick } from 'vue'
 
-import { useTocDockPreference, _resetForTest, TOC_DOCK_OPEN_KEY, TOC_DOCK_WIDTH_KEY, TOC_DOCK_SIDE_KEY, TOC_DOCK_MIN_WIDTH, TOC_DOCK_MAX_WIDTH, TOC_DOCK_DEFAULT_WIDTH, TOC_DOCK_DEFAULT_SIDE } from '@/composables/useTocDockPreference'
+import { useTocDockPreference, _resetForTest, TOC_DOCK_MIN_WIDTH, TOC_DOCK_MAX_WIDTH, TOC_DOCK_DEFAULT_WIDTH, TOC_DOCK_DEFAULT_SIDE } from '@/composables/useTocDockPreference'
+import { PANEL_KEY_PREFIX } from '@/utils/panelState'
+
+// Key names are owned by the panel-state registry now, so the tests read them
+// from there rather than from the composable.
+const TOC_DOCK_OPEN_KEY = PANEL_KEY_PREFIX + 'toc-dock-open'
+const TOC_DOCK_WIDTH_KEY = PANEL_KEY_PREFIX + 'toc-dock-width'
+const TOC_DOCK_SIDE_KEY = PANEL_KEY_PREFIX + 'toc-dock-side'
 import { _setWideScreenForTest, _resetForTest as _resetWideForTest } from '@/composables/useWideScreenLayout'
 import { useFileEditor, _resetForTesting as _resetEditorForTesting } from '@/composables/useFileEditor'
 

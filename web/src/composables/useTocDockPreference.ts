@@ -2,10 +2,8 @@ import { ref, computed, watch } from 'vue'
 import { appLog } from '@/utils/appLog'
 import { getWideScreenState } from './useWideScreenLayout'
 import { useFileEditor } from './useFileEditor'
+import { readPanelState, writePanelState } from '@/utils/panelState'
 
-export const TOC_DOCK_OPEN_KEY = 'clawbench.tocDock.open'
-export const TOC_DOCK_WIDTH_KEY = 'clawbench.tocDock.width'
-export const TOC_DOCK_SIDE_KEY = 'clawbench.tocDock.side'
 export const TOC_DOCK_MIN_WIDTH = 200
 export const TOC_DOCK_MAX_WIDTH = 400
 export const TOC_DOCK_DEFAULT_WIDTH = 260
@@ -53,29 +51,6 @@ watch(editing, (isEditing) => {
     }
 })
 
-function readStoredOpen(): boolean {
-    try {
-        const v = localStorage.getItem(TOC_DOCK_OPEN_KEY)
-        if (v !== null) return v === '1'
-    } catch {
-        // localStorage may throw in restricted environments — fall through
-    }
-    return false
-}
-
-function readStoredWidth(): number {
-    try {
-        const stored = localStorage.getItem(TOC_DOCK_WIDTH_KEY)
-        if (stored !== null) {
-            const raw = Number(stored)
-            if (Number.isFinite(raw)) return clampWidth(raw)
-        }
-    } catch {
-        // ignore
-    }
-    return TOC_DOCK_DEFAULT_WIDTH
-}
-
 function clampWidth(w: number): number {
     return Math.min(TOC_DOCK_MAX_WIDTH, Math.max(TOC_DOCK_MIN_WIDTH, w))
 }
@@ -84,29 +59,19 @@ function clampSide(value: string): TocDockSide {
     return value === 'left' ? 'left' : 'right'
 }
 
-function readStoredSide(): TocDockSide {
-    try {
-        const stored = localStorage.getItem(TOC_DOCK_SIDE_KEY)
-        if (stored !== null) return clampSide(stored)
-    } catch {
-        // ignore
-    }
-    return TOC_DOCK_DEFAULT_SIDE
-}
-
 function init() {
     if (initialized) return
     initialized = true
-    tocDockOpen.value = readStoredOpen()
-    tocDockWidth.value = readStoredWidth()
-    tocDockSide.value = readStoredSide()
+    // Key names, scope and encoding live in the panel-state registry; the
+    // clamping below is this dock's own business rule and stays here.
+    tocDockOpen.value = readPanelState<boolean>('tocDockOpen')
+    tocDockWidth.value = clampWidth(readPanelState<number>('tocDockWidth'))
+    tocDockSide.value = clampSide(readPanelState<string>('tocDockSide'))
 }
 
 function persistOpen() {
-    try {
-        localStorage.setItem(TOC_DOCK_OPEN_KEY, tocDockOpen.value ? '1' : '0')
-    } catch (e) {
-        appLog.w(TAG, 'persist open failed', e)
+    if (!writePanelState('tocDockOpen', tocDockOpen.value)) {
+        appLog.w(TAG, 'persist open failed')
     }
 }
 
@@ -129,20 +94,16 @@ export function useTocDockPreference() {
 
     function setWidth(w: number) {
         tocDockWidth.value = clampWidth(w)
-        try {
-            localStorage.setItem(TOC_DOCK_WIDTH_KEY, String(tocDockWidth.value))
-        } catch (e) {
-            appLog.w(TAG, 'persist width failed', e)
+        if (!writePanelState('tocDockWidth', tocDockWidth.value)) {
+            appLog.w(TAG, 'persist width failed')
         }
     }
 
     /** Toggle the dock between the left and right edges. */
     function toggleSide() {
         tocDockSide.value = tocDockSide.value === 'left' ? 'right' : 'left'
-        try {
-            localStorage.setItem(TOC_DOCK_SIDE_KEY, tocDockSide.value)
-        } catch (e) {
-            appLog.w(TAG, 'persist side failed', e)
+        if (!writePanelState('tocDockSide', tocDockSide.value)) {
+            appLog.w(TAG, 'persist side failed')
         }
     }
 

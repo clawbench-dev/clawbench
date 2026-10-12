@@ -2,6 +2,7 @@ import { ref } from 'vue'
 import { DEFAULT_RATIO, normalizeRatio } from '@/utils/splitRatio'
 import { appLog } from '@/utils/appLog'
 import { DOCK_TAB_IDS, WIDE_SCREEN_PRIMARY_TABS, isDockTabId, type DockTabId } from '@/composables/dockTabs'
+import { DEFAULT_LEFT_COLLAPSED, readPanelState, writePanelState } from '@/utils/panelState'
 
 const TAG = 'WideScreenLayout'
 
@@ -13,12 +14,10 @@ export const WIDE_SCREEN_MIN_PHYSICAL_WIDTH = 1280
 // The active left tab used to be persisted here under a single global key
 // ('clawbench-widescreen-left-tab'). That gave the tab no project dimension, so
 // switching to project B overwrote project A's tab and switching back restored
-// B's. Persistence now lives in composables/useProjectPanel.ts, keyed by project
-// root, and App.vue applies it after the workspace is restored. This module
+// B's. Persistence now lives in utils/panelState.ts, keyed per project, and
+// App.vue applies it after the workspace is restored. This module
 // deliberately keeps no storage for `leftTab` — a second writer here would race
 // the per-project one.
-export const WIDE_SCREEN_SPLIT_RATIO_KEY = 'clawbench-widescreen-split-ratio'
-export const WIDE_SCREEN_CHAT_COLLAPSED_KEY = 'clawbench-widescreen-chat-collapsed'
 /**
  * Validation whitelist for the wide-screen dock. Derived from the DOCK_TABS
  * registry (composables/dockTabs.ts) so it can never drift from what the dock
@@ -63,22 +62,16 @@ export type ActivePane = typeof PANE_LEFT | typeof PANE_RIGHT
 /** Wide-screen focus tracking: which pane the user is currently working in. */
 const activePane = ref<ActivePane>(PANE_RIGHT)
 /**
- * Default collapsed state of the wide-screen left column: hidden.
- *
- * A fresh view (no per-project record) opens on chat alone; the user opts into
- * the left column by clicking a dock tab. Single source of truth — the ref
- * initializer, `resetWideScreenState`, and the per-project fallback in
- * `useProjectPanel`'s consumer all read this, so the three cannot drift.
- */
-export const DEFAULT_LEFT_COLLAPSED = true
-
-/**
  * Wide-screen left pane collapsed state. When true, the left column is hidden
  * and the chat (right) pane takes the full width. Toggled by clicking the
  * currently-active dock tab again (VS Code-style).
  *
- * Starts collapsed (see DEFAULT_LEFT_COLLAPSED). `switchLeftTab` expands it on
- * any tab change, so this only governs the state before the first tab click.
+ * Starts collapsed (see DEFAULT_LEFT_COLLAPSED) and persists globally via the
+ * panel-state registry, so a hidden column survives a reload. It is NOT
+ * expanded implicitly on a tab change: `switchLeftTab` leaves it alone, and the
+ * callers that represent a user switching tabs expand it explicitly. That
+ * distinction is what keeps a programmatic restore (cold start, project switch)
+ * from un-hiding a column the user had hidden.
  */
 const leftCollapsed = ref(DEFAULT_LEFT_COLLAPSED)
 /**
@@ -100,21 +93,13 @@ let mqlChangeListener: (() => void) | null = null
 function initWideScreen() {
   if (initialized) return
   initialized = true
-  try {
-    const stored = localStorage.getItem(WIDE_SCREEN_SPLIT_RATIO_KEY)
-    if (stored !== null) {
-      const raw = Number(stored)
-      if (Number.isFinite(raw)) splitRatio.value = normalizeRatio(raw)
-    }
-  } catch {
-    // ignore
-  }
-  try {
-    const stored = localStorage.getItem(WIDE_SCREEN_CHAT_COLLAPSED_KEY)
-    if (stored !== null) chatCollapsed.value = stored === '1'
-  } catch {
-    // ignore
-  }
+  // All three are global panel states read through the registry, which owns the
+  // key names, encodings and defaults. `splitRatio` is normalized because the
+  // registry stores a plain number and an out-of-range value (e.g. hand-edited
+  // storage) must not produce a degenerate split.
+  splitRatio.value = normalizeRatio(readPanelState<number>('splitRatio'))
+  chatCollapsed.value = readPanelState<boolean>('chatCollapsed')
+  leftCollapsed.value = readPanelState<boolean>('leftCollapsed')
   if (typeof window !== 'undefined') {
     const recompute = () => {
       isWideScreen.value = computeIsWideScreen(
@@ -164,7 +149,7 @@ export function setActivePane(pane: 'left' | 'right') {
   activePane.value = pane
 }
 
-/** Collapse (true) or expand (false) the wide-screen left pane. */
+/** Collapse (true) or expand (false) the wide-screen left pane. Persisted globally. */
 export function setLeftCollapsed(collapsed: boolean) {
   // Mutual-exclusion guard: the left pane cannot be collapsed while the right
   // (chat) pane is hidden — otherwise both panes would be display:none and the
@@ -172,6 +157,7 @@ export function setLeftCollapsed(collapsed: boolean) {
   // already takes the full width, so collapsing it is a no-op anyway.
   if (collapsed && chatCollapsed.value) return
   leftCollapsed.value = collapsed
+  writePanelState('leftCollapsed', collapsed)
 }
 
 /**
@@ -181,13 +167,10 @@ export function setLeftCollapsed(collapsed: boolean) {
 export function setChatCollapsed(collapsed: boolean) {
   chatCollapsed.value = collapsed
   // Mutual-exclusion guard: hiding the chat pane forces the left pane back open
-  // so there is always at least one visible pane (see setLeftCollapsed).
-  if (collapsed) leftCollapsed.value = false
-  try {
-    localStorage.setItem(WIDE_SCREEN_CHAT_COLLAPSED_KEY, collapsed ? '1' : '0')
-  } catch {
-    // ignore
-  }
+  // so there is always at least one visible pane (see setLeftCollapsed). Goes
+  // through the setter so the reopen is persisted too.
+  if (collapsed) setLeftCollapsed(false)
+  writePanelState('chatCollapsed', collapsed)
 }
 
 /**
@@ -232,8 +215,14 @@ export function registerWideScreenCallbacks(opts: { sideEffects?: (tab: DockTabI
  * Switch the wide-screen left column tab. Writes activeTab + side-effects via
  * callbacks; does NOT call onTabSwitch.
  *
- * Does not persist: the tab is remembered per project by useProjectPanel.ts,
- * driven from App.vue's watcher on the active panel tab.
+ * Does NOT touch `leftCollapsed`. It used to expand the column unconditionally,
+ * which broke "the user hid the column": restoring a tab programmatically (cold
+ * start, project switch) ran through here and un-hid it. Callers that represent
+ * a user switching tabs must expand explicitly — see `switchTab`'s wide branch
+ * and `handleWideDockTabClick`.
+ *
+ * Does not persist: the tab is remembered per project via the panel-state
+ * registry, driven from App.vue's watcher on the active panel tab.
  *
  * Rejects unknown tabs loudly: a tab that the dock renders but that is not in
  * DOCK_TABS would otherwise be a silently dead button (the original forge bug
@@ -249,7 +238,6 @@ export function switchLeftTab(tab: string) {
   }
   if (leftTab.value === tab) return
   leftTab.value = tab
-  leftCollapsed.value = false
   setActiveTab?.(tab)
   sideEffects?.(tab)
 }
@@ -267,11 +255,7 @@ export function resolveLeftTabOnEnter(currentActiveTab: string, currentLeftTab: 
 /** Normalize + persist the split ratio (persistence owned here, not in SplitView). */
 export function setSplitRatio(ratio: number) {
   splitRatio.value = normalizeRatio(ratio)
-  try {
-    localStorage.setItem(WIDE_SCREEN_SPLIT_RATIO_KEY, String(splitRatio.value))
-  } catch {
-    // ignore
-  }
+  writePanelState('splitRatio', splitRatio.value)
 }
 
 export function resetWideScreenState() {

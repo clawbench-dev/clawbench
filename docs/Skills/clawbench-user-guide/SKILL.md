@@ -166,7 +166,7 @@ if (meStatus !== 200) {
 
 **TabPanel 用 `v-show` 不是 `v-if`**：切过的面板留在 DOM（opacity:0）。自检必须判 `.tab-panel-active` 或走 `checkVisibility`，不能数元素个数。
 
-**宽屏分栏比例是全局共享的**（`localStorage['clawbench-widescreen-split-ratio']`，默认 0.5），所有左侧页签共用。拖 `.split-view__divider` 调整。不同面板需要不同宽度时分别拖——**注意这是改浏览器状态，不要改源码默认值**。
+**宽屏分栏比例是全局共享的**（`localStorage['clawbench-panel.split-ratio']`，默认 0.4），所有左侧页签共用。拖 `.split-view__divider` 调整。不同面板需要不同宽度时分别拖——**注意这是改浏览器状态，不要改源码默认值**。
 
 ## 五、720p 的固有构图约束
 
@@ -184,14 +184,14 @@ if (meStatus !== 200) {
 
 实测：左栏 441px 时，文件管理器 **338 个叶子节点 0 截断**（`scrollWidth > clientWidth` 计数为 0）、Markdown 预览 **922 个节点 0 截断**、表格 **183 个单元格 0 裁剪**（最长 `package-lock.json`、`CONTRIBUTING.en.md` 完整）。
 
-**为什么第一版会跑到 615px**：分栏比例是**全局共享**的（`localStorage['clawbench-widescreen-split-ratio']`），默认 0.5；1280px 视口下容器 1232px，0.5 就是左 616 / 聊天 335。必须显式设置。
+**为什么第一版会跑到 615px**：分栏比例是**全局共享**的（`localStorage['clawbench-panel.split-ratio']`），默认 0.4；1280px 视口下容器 1232px，0.5 就是左 616 / 聊天 335。必须显式设置。
 
 **正确设置方式——写 localStorage 比例 + reload**（不要用拖拽事件，脆弱且被 zoom 干扰）：
 
 ```js
 // 容器 = (colRight.x + colRight.w) - colLeft.x，实测 zoom=2 下 2464 设备px → 1232 逻辑px
 // ratio = 441 / 1232 = 0.3580
-localStorage.setItem('clawbench-widescreen-split-ratio', String(441 / 1232));
+localStorage.setItem('clawbench-panel.split-ratio', String(441 / 1232));
 ```
 
 **三个必须注意的时序陷阱**（都实测踩过）：
@@ -560,7 +560,7 @@ await page.evaluate(async () => {
 ### 第二版补充（返工实测）
 
 23. **完成通知卡片：截图前 `page.reload()`**（首选手段）——卡片是内存队列，reload 即清；`App.vue:1209` 跳过 replay 的历史 completed 事件，故不会复活。第一版三个脚本没做这件事，交付了 **22 张带卡片的图**。判据见 §二（像素级 x=300/979, y=110）。**交付前对全部图跑一遍检测。**
-24. **左栏默认收窄到 441px**（聊天 510px）。默认比例 0.5 在 1280 视口下是左 616 / 聊天 **334px**，太窄。设置方式＝写 `localStorage['clawbench-widescreen-split-ratio'] = 441/1232` 再 reload；**测量必须在 zoom=2 且三栏已渲染之后**。见 §五。
+24. **左栏默认收窄到 441px**（聊天 510px）。默认比例 0.4 在 1280 视口下是左 493 / 聊天 **459px**，仍偏窄。设置方式＝写 `localStorage['clawbench-panel.split-ratio'] = 441/1232` 再 reload；**测量必须在 zoom=2 且三栏已渲染之后**。见 §五。
 25. **`cap.sh` 式的多命令往返在本机不可靠** —— 有 11+ 个并发 `codebuddy --acp` agent（各 ~750MB），可用内存常 < 5GB，playwright 的 chrome 会在两条命令之间被 OOM 杀掉（`Browser 'ug' is not open` / `Session closed`）。**解法：把 open → 登录 → 设置 → setup → 截图压进一次 `run-code`**，并内置重试。
 26. **登录判定必须用 `/api/me` 而非 DOM**。用 `input[type=password]` 判会在已登录时误判 → `page.click('button.login-btn')` 等 30s 超时 → **整个 evaluate 从未执行，截图落成上一轮残留图**（实测 5 张设置图 md5 完全相同）。并且**产出侧要加防线**：setup 返回错误字符串 / `ov.card===true` 时给文件名打 `[NEEDS REVIEW]`。
 27. **`page.evaluate` 的页面上下文没有裸 `setTimeout`** —— 必须 `window.setTimeout`。统一在 setup 包装里注入 `const sleep = ms => new Promise(r => window.setTimeout(r, ms))`，否则每段 setup 各自声明会撞 `Identifier 'sleep' has already been declared`。

@@ -1,5 +1,5 @@
-// Per-project memory of which left-column panel the user was last on, and
-// whether that column was collapsed.
+// Per-project memory of which left-column panel the user was last on, plus the
+// in-flight flag that suppresses those writes while a project switch is running.
 //
 // Background (issue #474): switching projects destroyed the left panel's open
 // state. The root cause was two-fold — `leftTab` was persisted under a single
@@ -7,27 +7,19 @@
 // the switch `resetProjectState()` nulled `currentFile`, which fired a watcher
 // that "helpfully" fell back to the file manager and rewrote that global key.
 //
-// This module owns the per-project key instead, plus the in-flight flag that
-// suppresses those two writes while a switch is running.
+// This module owns the switch-in-flight flag and the panel-tab resolution rules.
+// The storage itself now goes through the panel-state registry
+// (utils/panelState.ts), which is the single place that decides a state's key
+// name, scope and encoding — the left tab is registered there as the one
+// per-project entry. The column's collapsed flag used to live here too; it is a
+// global state now and belongs to that registry instead.
 //
 // Why the flag is needed at all: `hotSwitchProject` resets the module
 // singletons (including `currentFile`) BEFORE the new project root is known to
 // the watchers, so any watcher that persists on change would write the OLD
 // project's panel into the NEW project's key.
-//
-// The collapsed flag (wide-screen: the left column hidden, chat full width) is
-// remembered the same way and for the same reason. It lives in a separate key
-// from the tab because the two are independent: a project can be on `browse`
-// with the column collapsed. It is ALSO affected by the switch — `switchLeftTab`
-// unconditionally expands the column, so restoring the remembered tab alone
-// would silently un-collapse the project's column.
 import { isDockTabId, type TabId } from '@/composables/dockTabs'
-import { DEFAULT_LEFT_COLLAPSED } from '@/composables/useWideScreenLayout'
-
-/** localStorage key prefix; the project root is appended. */
-export const PROJECT_PANEL_PREFIX = 'clawbench-project-panel:'
-/** Separate key for the collapsed flag; the project root is appended. */
-export const PROJECT_PANEL_COLLAPSED_PREFIX = 'clawbench-project-panel-collapsed:'
+import { readPanelState, writePanelState } from '@/utils/panelState'
 
 /**
  * Depth of in-flight project switches (normally 0 or 1).
@@ -67,40 +59,12 @@ export function isPanelSwitchInFlight(): boolean {
 
 /** Remember `tab` as the panel `root` was last on. No-op without a root. */
 export function saveProjectPanel(root: string, tab: string): void {
-  if (!root) return
-  try {
-    localStorage.setItem(PROJECT_PANEL_PREFIX + root, tab)
-  } catch { /* ignore */ }
+  writePanelState('leftTab', tab, root)
 }
 
 /** The remembered panel for `root`, or null when nothing was stored. */
 export function loadProjectPanel(root: string): string | null {
-  if (!root) return null
-  try {
-    return localStorage.getItem(PROJECT_PANEL_PREFIX + root)
-  } catch { return null }
-}
-
-/** Remember `collapsed` as the left column's state for `root`. No-op without a root. */
-export function saveProjectPanelCollapsed(root: string, collapsed: boolean): void {
-  if (!root) return
-  try {
-    localStorage.setItem(PROJECT_PANEL_COLLAPSED_PREFIX + root, collapsed ? '1' : '0')
-  } catch { /* ignore */ }
-}
-
-/**
- * The remembered collapsed flag for `root`. Falls back to DEFAULT_LEFT_COLLAPSED
- * (hidden) when this project has no record, so a first visit matches the
- * layout's own default rather than inheriting whatever the previous project had.
- */
-export function loadProjectPanelCollapsed(root: string): boolean {
-  if (!root) return DEFAULT_LEFT_COLLAPSED
-  try {
-    const stored = localStorage.getItem(PROJECT_PANEL_COLLAPSED_PREFIX + root)
-    if (stored === null) return DEFAULT_LEFT_COLLAPSED
-    return stored === '1'
-  } catch { return DEFAULT_LEFT_COLLAPSED }
+  return readPanelState<string | null>('leftTab', root)
 }
 
 /**

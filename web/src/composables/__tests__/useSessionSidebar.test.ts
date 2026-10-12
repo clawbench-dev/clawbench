@@ -1,7 +1,8 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest'
 import { useSessionSidebar, _resetForTest, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH } from '@/composables/useSessionSidebar'
+import { PANEL_KEY_PREFIX } from '@/utils/panelState'
 
-const KEY = 'clawbench-session-sidebar'
+const KEY = PANEL_KEY_PREFIX + 'session-sidebar'
 
 describe('useSessionSidebar', () => {
   beforeEach(() => {

@@ -101,7 +101,7 @@ Composable 与组件均按域分组（Chat、Session、Terminal、File、Git、N
 
 **群聊前端**：`useGroupChat.ts`（群回合状态、路由卡片渲染）+ `useGroupMembers.ts`（成员花名册与 `isGroupSession` 判定，用后端 `sessionType === 'group'` 而非"名单非空"）+ `GroupSettingsSheet.vue`（群聊设置抽屉：成员管理 + 群设置）、`GroupAvatarStack.vue` / `GroupMemberStack.vue`（头像堆叠，主持人排最前）、`SessionGroupHeader.vue`。建群入口在会话列表头，复用 `AgentSelectorDrawer` 的多选模式。
 
-宽屏 Dock 页签定义在 `web/src/composables/dockTabs.ts`（单一注册表，渲染集合与切换白名单都从它派生），图标单独放 `dockTabMeta.ts`。`dockTabs.ts` 必须保持零 import（`useWideScreenLayout` 依赖它，而多个测试文件对 `lucide-vue-next` 做了窄 mock）。左侧面板归属（宽屏 Dock 显示哪个页签）是**项目属性**而非代码路径属性，由 `useProjectPanel.ts` 按 `clawbench-project-panel:<项目根>` 记忆；项目切换期间用计数器抑制误写（可并发调用，布尔会被先结束者清掉）。
+宽屏 Dock 页签定义在 `web/src/composables/dockTabs.ts`（单一注册表，渲染集合与切换白名单都从它派生），图标单独放 `dockTabMeta.ts`。`dockTabs.ts` 必须保持零 import（`useWideScreenLayout` 依赖它，而多个测试文件对 `lucide-vue-next` 做了窄 mock）。**所有面板/布局状态**（左栏折叠、聊天区折叠、分割比例、会话侧栏、TOC 停靠栏、文件管理器预览比例、左栏页签）统一登记在 `web/src/utils/panelState.ts`（叶子模块）：id / 键 / scope / 默认值 / 编解码一处声明，读写走 `readPanelState`/`writePanelState`，键名统一 `clawbench-panel.<名>`（按项目项追加 `:<项目根>`），并有一次性老键迁移。**除左栏页签（`leftTab`）按项目外，其余全为全局**；左栏页签由 `useProjectPanel.ts` 记忆；项目切换期间用计数器抑制误写（可并发调用，布尔会被先结束者清掉）。`switchLeftTab` **不隐式展开左栏**（它是程序性恢复路径），用户点页签的入口显式展开。
 
 `web/vendor-build/excalidraw/` 是独立的 Excalidraw 编辑器构建（React），由 `build.sh` 单独构建到 `.clawbench-web/vendor/excalidraw/`，`.excalidraw` 文件通过 iframe 懒加载，Vue 主包不含 React 依赖。它**有意不进根 Vite 构建**（否则主 bundle 会膨胀约 8MB），因此根 `npm run build` 不产出它——**所有 CI / release job 都必须显式构建该 vendor bundle**，否则发布二进制内嵌的前端里没有 `vendor/excalidraw/`，`/vendor/excalidraw/index.html` 走 `ServeIndex` 的 `http.NotFound` 返回 Go 的 "404 page not found"（本地用 `build.sh` 构建正常，缺陷只在 release / Docker 产物上暴露）。
 
