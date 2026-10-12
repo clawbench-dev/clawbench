@@ -13,6 +13,7 @@ import { resolve } from 'node:path'
 import { createI18n } from 'vue-i18n'
 import FileManagerContent from '@/components/file/FileManagerContent.vue'
 import { cleanupDragGhost } from '@/utils/attachDrag'
+import { PANEL_KEY_PREFIX, DEFAULT_FM_PREVIEW_RATIO } from '@/utils/panelState'
 import SplitView from '@/components/common/SplitView.vue'
 // jsdom does not implement CSS.escape (used by scrollToEntryAndSelect). Polyfill it.
 const cssGlobal = globalThis as unknown as { CSS?: { escape?: (v: string) => string } }
@@ -4951,7 +4952,7 @@ describe('FileManagerContent — docked preview pane', () => {
   it('persists the dragged ratio to localStorage', async () => {
     mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = true
-    localStorage.removeItem('clawbench-fm-preview-split-ratio')
+    localStorage.removeItem(PANEL_KEY_PREFIX + 'fm-preview-ratio')
     const wrapper = mountContent()
     await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
     mockPreviewRefs.visible!.value = true
@@ -4960,11 +4961,11 @@ describe('FileManagerContent — docked preview pane', () => {
     await wrapper.findComponent(SplitView).vm.$emit('update:ratio', 0.42)
     await nextTick()
 
-    expect(localStorage.getItem('clawbench-fm-preview-split-ratio')).toBe('0.42')
+    expect(localStorage.getItem(PANEL_KEY_PREFIX + 'fm-preview-ratio')).toBe('0.42')
   })
 
   it('restores the persisted ratio on mount', async () => {
-    localStorage.setItem('clawbench-fm-preview-split-ratio', '0.35')
+    localStorage.setItem(PANEL_KEY_PREFIX + 'fm-preview-ratio', '0.35')
     mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent()
@@ -4974,7 +4975,27 @@ describe('FileManagerContent — docked preview pane', () => {
 
     const split = wrapper.findComponent(SplitView)
     expect(split.props('ratio')).toBeCloseTo(0.35, 5)
-    localStorage.removeItem('clawbench-fm-preview-split-ratio')
+    localStorage.removeItem(PANEL_KEY_PREFIX + 'fm-preview-ratio')
+  })
+
+  it('falls back to the default ratio when storage holds a degenerate value', async () => {
+    // The registry stores a plain number; the 0 < r < 1 guard lives here. A
+    // stored 0 or 1 (hand-edited storage, or a divider dragged to the extreme)
+    // must not collapse the pane to zero or swallow the list entirely.
+    for (const degenerate of ['0', '1', '-0.5', '2']) {
+      localStorage.setItem(PANEL_KEY_PREFIX + 'fm-preview-ratio', degenerate)
+      mockIsTouchPrimary.value = false
+      mockLocalConfig.filePreviewMode = true
+      const wrapper = mountContent()
+      await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
+      mockPreviewRefs.visible!.value = true
+      await nextTick()
+
+      const split = wrapper.findComponent(SplitView)
+      expect(split.props('ratio'), `stored ${degenerate}`).toBeCloseTo(DEFAULT_FM_PREVIEW_RATIO, 5)
+      wrapper.unmount()
+    }
+    localStorage.removeItem(PANEL_KEY_PREFIX + 'fm-preview-ratio')
   })
 
   it('scrolls the clicked file back into view after the pane opens', async () => {

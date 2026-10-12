@@ -16,17 +16,21 @@ import {
   computeIsWideScreen,
   isChatPanelVisible,
   WIDE_SCREEN_DOCK_TABS,
-  WIDE_SCREEN_SPLIT_RATIO_KEY,
-  WIDE_SCREEN_CHAT_COLLAPSED_KEY,
   WIDE_SCREEN_PRIMARY_TABS,
   wideDockTabOrder,
 } from '@/composables/useWideScreenLayout'
 import { DOCK_TABS, DOCK_TAB_IDS, isDockTabId, secondaryDockTabs } from '@/composables/dockTabs'
+import { PANEL_KEY_PREFIX } from '@/utils/panelState'
 import { portForwardUnavailable } from '@/utils/portForwardUtils'
 import { DEFAULT_RATIO } from '@/utils/splitRatio'
 import enMessages from '@/i18n/locales/en'
 import zhMessages from '@/i18n/locales/zh'
 import { DOCK_TABS_WITH_ICONS } from '@/composables/dockTabMeta'
+
+// Persistence keys are owned by the panel-state registry.
+const WIDE_SCREEN_SPLIT_RATIO_KEY = PANEL_KEY_PREFIX + 'split-ratio'
+const WIDE_SCREEN_CHAT_COLLAPSED_KEY = PANEL_KEY_PREFIX + 'chat-collapsed'
+const LEFT_COLLAPSED_KEY = PANEL_KEY_PREFIX + 'left-collapsed'
 
 beforeEach(() => {
   _resetForTest()
@@ -163,22 +167,59 @@ describe('leftCollapsed (dock tab toggle)', () => {
   it('resetWideScreenState resets to collapsed', () => {
     setLeftCollapsed(false)
     resetWideScreenState()
+    // The flag is persisted now, so a re-init would restore the stored '0' —
+    // clear storage first (same pattern as the chatCollapsed reset test).
+    localStorage.clear()
+    _resetForTest()
     const { leftCollapsed } = useWideScreenLayout()
     expect(leftCollapsed.value).toBe(true)
   })
 
-  it('switchLeftTab expands the collapsed pane when switching to a different tab', () => {
+  it('does NOT expand the collapsed pane on a tab switch', () => {
+    // Deliberate: switchLeftTab is also the programmatic restore path (cold
+    // start / project switch), so expanding here would override a column the
+    // user had hidden. Callers that represent a user switching tabs expand
+    // explicitly (switchTab's wide branch, handleWideDockTabClick).
     const { leftCollapsed } = useWideScreenLayout()
     switchLeftTab('history')
     setLeftCollapsed(true)
     expect(leftCollapsed.value).toBe(true)
-    // Switching to a different tab expands
-    switchLeftTab('tasks')
-    expect(leftCollapsed.value).toBe(false)
-    // Re-clicking the same tab does NOT switch (stays collapsed) — toggle handled elsewhere
-    setLeftCollapsed(true)
     switchLeftTab('tasks')
     expect(leftCollapsed.value).toBe(true)
+  })
+
+  it('persists the collapsed flag globally', () => {
+    setLeftCollapsed(true)
+    expect(localStorage.getItem(LEFT_COLLAPSED_KEY)).toBe('1')
+    setLeftCollapsed(false)
+    expect(localStorage.getItem(LEFT_COLLAPSED_KEY)).toBe('0')
+  })
+
+  it('regression: a programmatic tab restore leaves a hidden column hidden', () => {
+    // The reported bug: hide the left column, switch projects (which restores
+    // that project's remembered tab through switchLeftTab), and the column
+    // reappeared. The collapse is a global device state, so a project switch
+    // must not disturb it — neither by the implicit expand that used to live in
+    // switchLeftTab, nor by reading a per-project collapsed record.
+    const { leftCollapsed } = useWideScreenLayout()
+    setLeftCollapsed(true)
+    expect(leftCollapsed.value).toBe(true)
+
+    // Simulate applyProjectPanel's restore path: switchLeftTab only.
+    switchLeftTab('history')
+    switchLeftTab('view')
+    expect(leftCollapsed.value).toBe(true)
+
+    // A fresh layout init (e.g. reload) still reads the global flag.
+    _resetForTest()
+    expect(useWideScreenLayout().leftCollapsed.value).toBe(true)
+  })
+
+  it('restores the persisted collapsed flag on init', () => {
+    localStorage.setItem(LEFT_COLLAPSED_KEY, '0')
+    _resetForTest()
+    const { leftCollapsed } = useWideScreenLayout()
+    expect(leftCollapsed.value).toBe(false)
   })
 })
 

@@ -560,6 +560,7 @@ import { appLog } from '@/utils/appLog'
 import { copyText } from '@/utils/clipboard'
 import { getNative } from '@/utils/clawbenchNative'
 import { joinPath, normalizeSlashes, baseName, dirName, isAbsolutePath } from '@/utils/path'
+import { readPanelState, writePanelState, DEFAULT_FM_PREVIEW_RATIO } from '@/utils/panelState'
 import { useDirPreview } from '@/composables/useDirPreview'
 import { mediaVersionFor } from '@/composables/useMediaWatch.ts'
 import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, ScreenShare, FileX, LocateFixed, FolderDown, FolderSearch, FolderTree, Globe, WholeWord, Link2, ScanEye, ArrowLeft, SearchCode } from 'lucide-vue-next'
@@ -940,25 +941,18 @@ const codeLinkPreview = useCodeLinkPreview({
 // The pane is visible while preview mode is on AND a file is open; the close
 // button collapses it without turning preview mode off, so the list fills the
 // panel until the next single-click re-opens it.
-const PREVIEW_PANE_RATIO_KEY = 'clawbench-fm-preview-split-ratio'
-const DEFAULT_PREVIEW_PANE_RATIO = 0.6
-const previewSplitRatio = ref(readStoredPreviewRatio())
+const previewSplitRatio = ref(clampPreviewRatio(readPanelState('fmPreviewRatio')))
 /** Set false by the pane's close button; reset true on every new preview. */
 const previewPaneOpen = ref(false)
 
-function readStoredPreviewRatio() {
-    try {
-        const raw = Number(localStorage.getItem(PREVIEW_PANE_RATIO_KEY))
-        if (Number.isFinite(raw) && raw > 0 && raw < 1) return raw
-    } catch { /* ignore */ }
-    return DEFAULT_PREVIEW_PANE_RATIO
+/** Keep the pane a genuine split — reject a degenerate 0 or 1 ratio. */
+function clampPreviewRatio(ratio) {
+    return ratio > 0 && ratio < 1 ? ratio : DEFAULT_FM_PREVIEW_RATIO
 }
 
 function onPreviewRatioChange(ratio) {
     previewSplitRatio.value = ratio
-    try {
-        localStorage.setItem(PREVIEW_PANE_RATIO_KEY, String(ratio))
-    } catch { /* ignore */ }
+    writePanelState('fmPreviewRatio', ratio)
 }
 
 /** Split only when preview mode is on and something is previewed, and the pane

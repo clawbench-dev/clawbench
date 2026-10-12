@@ -1,7 +1,12 @@
 import { ref } from 'vue'
+import {
+  DEFAULT_SESSION_SIDEBAR_WIDTH,
+  readPanelState,
+  writePanelState,
+  type SessionSidebarState,
+} from '@/utils/panelState'
 
-export const SESSION_SIDEBAR_KEY = 'clawbench-session-sidebar'
-export const SIDEBAR_DEFAULT_WIDTH = 280
+export const SIDEBAR_DEFAULT_WIDTH = DEFAULT_SESSION_SIDEBAR_WIDTH
 export const SIDEBAR_MIN_WIDTH = 220
 export const SIDEBAR_MAX_WIDTH = 480
 
@@ -29,25 +34,16 @@ function clampWidth(w: number): number {
 }
 
 function load() {
-  try {
-    const raw = localStorage.getItem(SESSION_SIDEBAR_KEY)
-    if (!raw) return
-    const parsed = JSON.parse(raw)
-    if (parsed && typeof parsed === 'object') {
-      open.value = parsed.open === true
-      width.value = clampWidth(Number(parsed.width) || SIDEBAR_DEFAULT_WIDTH)
-    }
-  } catch {
-    // corrupted storage → keep defaults
-  }
+  // Key name, scope and JSON encoding are owned by the panel-state registry.
+  // Clamping stays here: it is a business rule about this sidebar, not a
+  // storage concern.
+  const stored = readPanelState<SessionSidebarState>('sessionSidebar')
+  open.value = stored.open === true
+  width.value = clampWidth(stored.width)
 }
 
 function persist() {
-  try {
-    localStorage.setItem(SESSION_SIDEBAR_KEY, JSON.stringify({ open: open.value, width: width.value }))
-  } catch {
-    // ignore
-  }
+  writePanelState('sessionSidebar', { open: open.value, width: width.value })
 }
 
 export function useSessionSidebar() {

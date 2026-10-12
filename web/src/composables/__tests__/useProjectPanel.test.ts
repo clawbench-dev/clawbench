@@ -1,17 +1,14 @@
 import { describe, expect, it, beforeEach } from 'vitest'
 import {
-  PROJECT_PANEL_COLLAPSED_PREFIX,
-  PROJECT_PANEL_PREFIX,
   _clearProjectPanelForTesting,
   beginPanelSwitch,
   endPanelSwitch,
   isPanelSwitchInFlight,
   loadProjectPanel,
-  loadProjectPanelCollapsed,
   resolvePanelTab,
   saveProjectPanel,
-  saveProjectPanelCollapsed,
 } from '@/composables/useProjectPanel'
+import { physicalKey } from '@/utils/panelState'
 
 describe('useProjectPanel storage', () => {
   const PROJECT_A = '/project/a'
@@ -30,7 +27,7 @@ describe('useProjectPanel storage', () => {
     // panel overwrite another's (the old single global key did exactly that).
     expect(loadProjectPanel(PROJECT_A)).toBe('view')
     expect(loadProjectPanel(PROJECT_B)).toBe('tasks')
-    expect(localStorage.getItem(PROJECT_PANEL_PREFIX + PROJECT_A)).toBe('view')
+    expect(localStorage.getItem(physicalKey('leftTab', PROJECT_A)!)).toBe('view')
   })
 
   it('overwrites only the key it is given', () => {
@@ -44,7 +41,8 @@ describe('useProjectPanel storage', () => {
 
   it('does not write for an empty project root', () => {
     saveProjectPanel('', 'view')
-    expect(localStorage.getItem(PROJECT_PANEL_PREFIX)).toBeNull()
+    expect(physicalKey('leftTab', '')).toBeNull()
+    expect(Object.keys(localStorage).filter((k) => k.startsWith('clawbench-panel.'))).toHaveLength(0)
   })
 
   it('returns null for an unknown or empty project root', () => {
@@ -60,45 +58,6 @@ describe('useProjectPanel storage', () => {
     // A stray write during the switch would land in whichever project is current.
     // The guard is what prevents it; here we assert the read stays intact.
     expect(loadProjectPanel(PROJECT_B)).toBe('view')
-  })
-})
-
-describe('useProjectPanel collapsed-state storage', () => {
-  const PROJECT_A = '/project/a'
-  const PROJECT_B = '/project/b'
-
-  beforeEach(() => {
-    localStorage.clear()
-    _clearProjectPanelForTesting()
-  })
-
-  it('keeps each project\'s collapsed flag in its own key', () => {
-    saveProjectPanelCollapsed(PROJECT_A, true)
-    saveProjectPanelCollapsed(PROJECT_B, false)
-
-    // Same rationale as the panel-tab key: a single global flag would let one
-    // project's collapse state overwrite another's.
-    expect(loadProjectPanelCollapsed(PROJECT_A)).toBe(true)
-    expect(loadProjectPanelCollapsed(PROJECT_B)).toBe(false)
-    expect(localStorage.getItem(PROJECT_PANEL_COLLAPSED_PREFIX + PROJECT_A)).toBe('1')
-  })
-
-  it('defaults to collapsed when nothing was stored for the project', () => {
-    // A never-visited project must land on the layout default (left column
-    // hidden), not inherit the previous project's state.
-    expect(loadProjectPanelCollapsed(PROJECT_A)).toBe(true)
-    expect(loadProjectPanelCollapsed('')).toBe(true)
-  })
-
-  it('does not write for an empty project root', () => {
-    saveProjectPanelCollapsed('', true)
-    expect(localStorage.getItem(PROJECT_PANEL_COLLAPSED_PREFIX)).toBeNull()
-  })
-
-  it('reads back an explicitly-expanded project as false', () => {
-    saveProjectPanelCollapsed(PROJECT_A, true)
-    saveProjectPanelCollapsed(PROJECT_A, false)
-    expect(loadProjectPanelCollapsed(PROJECT_A)).toBe(false)
   })
 })
 
