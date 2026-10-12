@@ -143,3 +143,11 @@ func ResolveKokoroPaths(modelPath, voicesPath string) (string, string) {
 	}
 	return modelPath, voicesPath
 }
+
+// Compile-time assertion that KokoroProvider reports its cache identity.
+var _ CacheIdentityProvider = (*KokoroProvider)(nil)
+
+// CacheIdentity reports the model, voice, language and speed.
+func (p *KokoroProvider) CacheIdentity() string {
+	return fmt.Sprintf("kokoro|%s|%s|%s|%g", p.ModelPath, p.Voice, p.Lang, p.Speed)
+}

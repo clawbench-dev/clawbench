@@ -36,6 +36,7 @@ const (
 	strPiper    = "piper"
 	strKokoro   = "kokoro"
 	strMossNano = "moss-nano"
+	strOpenAI   = "openai"
 	strReqError = "error"
 )
 
@@ -614,6 +615,8 @@ func testTTS(ctx context.Context, values map[string]any) ConnectivityTestResult 
 		return testTTSKokoro(values)
 	case strMossNano:
 		return testTTSNano(values)
+	case strOpenAI:
+		return testTTSOpenAI(ctx, values)
 	default:
 		return ConnectivityTestResult{Success: false, Message: "Unknown TTS engine: " + engine}
 	}
@@ -718,6 +721,81 @@ func testTTSNano(values map[string]any) ConnectivityTestResult {
 
 	// No model dir configured but binary found — MOSS-Nano can auto-download
 	return ConnectivityTestResult{Success: true, Message: fmt.Sprintf("MOSS-Nano binary found (%s), model will auto-download on first use", binPath)}
+}
+
+// testTTSOpenAI probes an OpenAI-compatible /v1/audio/speech endpoint.
+//
+// It sends a real synthesis request with a one-word input rather than a HEAD
+// or a /v1/models lookup: gateways frequently do not enumerate every model in
+// the models list, and a bare connectivity check would not catch a wrong model
+// name or a rejected voice — which is exactly what the user needs told.
+//
+// The probe asks for the raw audio body (`stream_format: "audio"`), not SSE:
+// that is the shape every model supports, so a failure here means the
+// endpoint / key / model is wrong, not that this particular model lacks SSE.
+func testTTSOpenAI(ctx context.Context, values map[string]any) ConnectivityTestResult {
+	baseURL := resolveStringValue(values, "tts.openai.base_url", model.ConfigInstance.TTS.OpenAI.BaseURL)
+	apiKey := resolveStringValue(values, "tts.openai.api_key", model.ConfigInstance.TTS.OpenAI.APIKey)
+	ttsModel := resolveStringValue(values, "tts.openai.model", model.ConfigInstance.TTS.OpenAI.Model)
+	voice := resolveStringValue(values, "tts.openai.voice", model.ConfigInstance.TTS.OpenAI.Voice)
+
+	if baseURL == "" {
+		return ConnectivityTestResult{Success: false, Message: "OpenAI TTS base URL is required"}
+	}
+	if ttsModel == "" {
+		return ConnectivityTestResult{Success: false, Message: "OpenAI TTS model is required"}
+	}
+	if voice == "" {
+		return ConnectivityTestResult{Success: false, Message: "OpenAI TTS voice is required"}
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"model":           ttsModel,
+		"input":           "ok",
+		"voice":           voice,
+		"response_format": "mp3",
+		"stream_format":   "audio",
+	})
+	if err != nil {
+		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("Failed to encode probe: %v", err)}
+	}
+
+	url := speech.ResolveOpenAISpeechURL(baseURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("Failed to create request: %v", err)}
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+
+	client := &http.Client{Timeout: 20 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("OpenAI TTS service unreachable at %s: %v", baseURL, err)}
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return ConnectivityTestResult{
+			Success: false,
+			Message: fmt.Sprintf("OpenAI TTS returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody))),
+		}
+	}
+
+	// Drain a little of the body: a 200 with an empty body would otherwise look
+	// like success while playback fails with no audio.
+	audio, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if len(audio) == 0 {
+		return ConnectivityTestResult{Success: false, Message: "OpenAI TTS returned an empty audio body"}
+	}
+
+	return ConnectivityTestResult{
+		Success: true,
+		Message: fmt.Sprintf("OpenAI TTS ready (model: %s, voice: %s)", ttsModel, voice),
+	}
 }
 
 // resolvePiperBinary finds the piper binary path.

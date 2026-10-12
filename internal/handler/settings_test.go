@@ -1003,6 +1003,112 @@ func TestServeConfig_Patch_MossNanoSubConfigWithoutModelDir(t *testing.T) {
 	assert.Equal(t, "Junhao", model.ConfigInstance.TTS.Voice)
 }
 
+// Switching to the OpenAI engine must be accepted without sub-config (the user
+// fills it in one field at a time), matching the piper / kokoro / moss-nano
+// behavior.
+func TestServeConfig_Patch_OpenAIEngineWithoutConfig(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	cfg.TTS.Engine = "edge"
+	model.ConfigInstance = cfg
+
+	body := `{"tts":{"engine":"openai"}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "openai", model.ConfigInstance.TTS.Engine)
+}
+
+// Once the engine is already "openai", saving a partial sub-config that leaves
+// base_url / model / voice empty must be rejected — the provider has no
+// sensible default for any of them.
+func TestServeConfig_Patch_OpenAISubConfigRequiresFields(t *testing.T) {
+	cases := []struct {
+		name    string
+		cfg     model.Config
+		body    string
+		wantSub string
+	}{
+		{
+			name:    "missing base_url",
+			cfg:     model.Config{},
+			body:    `{"tts":{"openai":{"model":"gpt-4o-mini-tts","voice":"alloy"}}}`,
+			wantSub: "openai.base_url is required",
+		},
+		{
+			name:    "missing model",
+			cfg:     model.Config{},
+			body:    `{"tts":{"openai":{"base_url":"https://api.openai.com/v1","voice":"alloy"}}}`,
+			wantSub: "openai.model is required",
+		},
+		{
+			name:    "missing voice",
+			cfg:     model.Config{},
+			body:    `{"tts":{"openai":{"base_url":"https://api.openai.com/v1","model":"gpt-4o-mini-tts"}}}`,
+			wantSub: "openai.voice is required",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, teardown := setupTestEnv(t)
+			defer teardown()
+
+			tc.cfg.TTS.Engine = "openai"
+			model.ConfigInstance = tc.cfg
+
+			req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			withAuthCookie(req, model.SessionToken)
+			w := callHandler(ServeConfig, req)
+
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			assert.Contains(t, w.Body.String(), tc.wantSub)
+		})
+	}
+}
+
+func TestServeConfig_Patch_OpenAISubConfigAccepted(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	cfg.TTS.Engine = "openai"
+	cfg.TTS.OpenAI.BaseURL = "https://api.openai.com/v1"
+	cfg.TTS.OpenAI.Model = "gpt-4o-mini-tts"
+	cfg.TTS.OpenAI.Voice = "alloy"
+	model.ConfigInstance = cfg
+
+	body := `{"tts":{"openai":{"api_key":"sk-abc"}}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "sk-abc", model.ConfigInstance.TTS.OpenAI.APIKey)
+}
+
+func TestServeConfig_Patch_OpenAIInvalidBaseURL(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+
+	body := `{"tts":{"openai":{"base_url":"not a url"}}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "tts.openai.base_url must be a valid URL")
+}
+
 func TestServeConfig_Patch_InvalidDefaultAgent(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()

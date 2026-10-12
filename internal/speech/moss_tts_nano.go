@@ -76,3 +76,11 @@ func ResolveMossNanoModelDir(modelDir string) string {
 
 	return "" // let CLI auto-download
 }
+
+// Compile-time assertion that MossNanoProvider reports its cache identity.
+var _ CacheIdentityProvider = (*MossNanoProvider)(nil)
+
+// CacheIdentity reports the model directory, backend and voice.
+func (p *MossNanoProvider) CacheIdentity() string {
+	return "moss-nano|" + p.ModelDir + "|" + p.Backend + "|" + p.Voice
+}

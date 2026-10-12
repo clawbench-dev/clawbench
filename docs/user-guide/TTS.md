@@ -11,7 +11,7 @@ ClawBench 支持 TTS 语音合成，自动将 AI 回复总结后朗读。需要�
 - **TTS 引擎入口**：进入引擎子页配置
 - **朗读摘要后端**：simple / api / auto
 
-引擎子页可选 Edge / Piper / Kokoro / MOSS-TTS-Nano，并配置音色、语速、缓存上限；不同引擎有各自的模型路径等专属字段（各引擎的字段与安装步骤见下方章节）。
+引擎子页可选 Edge / OpenAI / Piper / Kokoro / MOSS-TTS-Nano，并配置音色、语速、缓存上限；不同引擎有各自的模型路径等专属字段（各引擎的字段与安装步骤见下方章节）。
 
 朗读的触发方式：
 
@@ -27,6 +27,7 @@ ClawBench 支持 TTS 语音合成，自动将 AI 回复总结后朗读。需要�
 | 引擎 | 说明 | 网络要求 |
 |------|------|---------|
 | `edge` | 微软 Edge TTS，免费无限制（默认） | 需要网络 |
+| `openai` | 任意 OpenAI 兼容的 `/v1/audio/speech` 端点 | 需要网络 |
 | `piper` | 本地离线，速度极快（中文识别较差，推荐英文环境） | 无需网络 |
 | `kokoro` | 本地离线，高质量中文 | 无需网络 |
 | `moss-nano` | 本地离线，多语言，48kHz 音色克隆 | 首次需下载模型，之后无需网络 |
@@ -41,7 +42,7 @@ ClawBench 支持 TTS 语音合成，自动将 AI 回复总结后朗读。需要�
 | `api` | 远程 AI API（OpenAI/Anthropic 格式），模型配置复用 `ai_summary` | 需配置 URL 和 API Key |
 | `auto` | 按内容自动分流：杂质（代码/表格/公式/链接等）占比 ≥ `summarize.auto_junk_ratio`（默认 0.5）或清洗后文本过长时走 `api`，否则直接朗读清洗文本 | 未配置 `ai_summary` 时自动降级为 `simple` |
 
-> **没有云端专用 TTS 引擎**：语音合成引擎只有上表四种（edge / piper / kokoro / moss-nano），全部在本地或通过 Edge 服务完成。需要云端大模型参与时，走的是**总结后端**（`api` / `auto`）而非 TTS 引擎——它把长文总结成短句后再交给 TTS 朗读，配置见下方「API 总结后端」。
+> **云端引擎说明**：`edge` 与 `openai` 都需要网络。`openai` 走的是标准 `/v1/audio/speech` 接口，因此除官方 OpenAI 外，任何实现了该接口的服务（自建网关、代理、其他厂商的兼容端点）都可以直接填进来。需要云端大模型参与**文本总结**时，走的是**总结后端**（`api` / `auto`）而非 TTS 引擎——它把长文总结成短句后再交给 TTS 朗读，配置见下方「API 总结后端」。
 
 ## 文本处理参数
 
@@ -69,6 +70,32 @@ tts:
 **完整列表**：https://speech.microsoft.com/portal/voicegallery
 
 无需额外安装，开箱即用。
+
+---
+
+## OpenAI 兼容 TTS（需网络）
+
+调用任意 OpenAI 兼容的 `POST /v1/audio/speech` 端点。除官方 OpenAI 外，自建网关 / 代理 / 其他厂商的兼容端点均可使用。
+
+```yaml
+tts:
+  engine: "openai"
+  speed: 1
+  openai:
+    base_url: "https://api.openai.com/v1"   # 根地址，自动补全为 …/v1/audio/speech
+    api_key: "sk-..."                       # Bearer 令牌；本地服务可留空
+    model: "gpt-4o-mini-tts"                # 由你填写
+    voice: "alloy"                          # 由你填写
+```
+
+**模型与音色由你填写，没有默认值**：
+
+- 模型名不在 OpenAI 文档列表内、或填了服务端不支持的模型时，会在合成时报上游错误。设置页的「测试连通性」会发一次真实合成请求（而不是查模型列表），因此能提前发现模型名或音色写错。
+- 音色既可以是内置名（`alloy` / `ash` / `ballad` / `coral` / `echo` / `fable` / `onyx` / `nova` / `sage` / `shimmer` / `verse` / `marin` / `cedar`），也可以是自定义音色 ID（如 `voice_1234`）——兼容服务端接受哪些值不受官方列表约束。
+
+**流式行为**：引擎优先请求 `stream_format: "sse"`（逐块事件，边合成边播放）。该形态**只有新模型支持**；若服务端返回 400（例如 `tts-1` / `tts-1-hd`），会自动回退为 `stream_format: "audio"`（原始音频字节流，所有模型都支持），播放体验仍然是边下边播，无需手动配置。
+
+> 改动音色 / 模型 / 端点后，缓存键会随之变化，因此不会复用上一套配置生成的音频。
 
 ---
 
