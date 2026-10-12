@@ -667,8 +667,10 @@ import {
   endPanelSwitch,
   isPanelSwitchInFlight,
   loadProjectPanel,
+  loadProjectPanelCollapsed,
   resolvePanelTab,
   saveProjectPanel,
+  saveProjectPanelCollapsed,
 } from './composables/useProjectPanel.ts'
 import { openPendingSessionWhenReady } from './composables/usePendingSessionOpen.ts'
 import { guardStartupWithSplash } from './composables/useStartupGuard.ts'
@@ -879,9 +881,7 @@ async function hotSwitchProject(newProjectPath: string, pendingSessionId?: strin
   // panel under this one's key. The latest completed switch owns the landing
   // state, so this one stands down.
   if (store.state.projectRoot === resolvedProjectPath) {
-    const rememberedPanel = loadProjectPanel(resolvedProjectPath)
-    applyPanelTab(resolvePanelTab(rememberedPanel, isWideScreen.value, !!store.state.currentFile))
-    saveProjectPanel(resolvedProjectPath, currentPanelTab.value)
+    applyProjectPanel(resolvedProjectPath)
   }
   // Re-enable panel persistence before Phase 7: a pending navigation switches to
   // tasks or opens a session, and THAT landing panel is what the user should come
@@ -962,11 +962,51 @@ function applyPanelTab(tab: string) {
   else switchTab(tab)
 }
 
+/**
+ * Restore `root`'s remembered left-panel state: the tab AND (wide-screen only)
+ * whether the column was collapsed. The single entry point for both cold start
+ * and project switch, so the two paths cannot drift.
+ *
+ * Ordering is load-bearing. `applyPanelTab` → `switchLeftTab` unconditionally
+ * EXPANDS the column, so the collapsed flag must be applied AFTER the tab;
+ * doing it first would be silently undone.
+ *
+ * Collapsed state is a wide-screen concept only (on a narrow screen the column
+ * is just "the active tab"), so it is neither applied nor recorded there.
+ * Applying it on a narrow screen would park `leftCollapsed = true` in state and
+ * hide the column the next time the window widens.
+ *
+ * Both values are written back explicitly because during a switch the save
+ * watchers are still suppressed — without this the first visit to a project
+ * would record nothing. The write-back also normalizes the record (a remembered
+ * 'view' with no surviving file is stored back as 'browse').
+ */
+function applyProjectPanel(root: string) {
+  applyPanelTab(resolvePanelTab(loadProjectPanel(root), isWideScreen.value, !!store.state.currentFile))
+  if (isWideScreen.value) {
+    // A project with no record lands on the layout default (hidden) rather than
+    // inheriting the previous project's state — otherwise a first visit would
+    // depend on which project the user came from.
+    setLeftCollapsed(loadProjectPanelCollapsed(root))
+    saveProjectPanelCollapsed(root, leftCollapsed.value)
+  }
+  saveProjectPanel(root, currentPanelTab.value)
+}
+
 // Remember which panel each project was last on, so switching back restores it.
 // Suppressed during a project switch — see beginPanelSwitch() in hotSwitchProject.
 watch(currentPanelTab, (tab) => {
   if (isPanelSwitchInFlight()) return
   saveProjectPanel(store.state.projectRoot, tab)
+})
+
+// Same per-project memory for the collapsed left column. Gated on wide screen
+// for the same reason applyProjectPanel is: on a narrow screen the flag is
+// meaningless and recording it would hide the column on a later widen.
+watch(leftCollapsed, (collapsed) => {
+  if (isPanelSwitchInFlight()) return
+  if (!isWideScreen.value) return
+  saveProjectPanelCollapsed(store.state.projectRoot, collapsed)
 })
 
 // Focus-aware keyboard gating: a panel's global shortcuts only fire when the
@@ -2251,7 +2291,7 @@ async function initializeApp() {
   // component ref) because the app subtree is not mounted yet — isAuthenticated
   // only flips after this function resolves, so the dock/file manager do not
   // exist here. `currentFile` is already populated by the restore above.
-  applyPanelTab(resolvePanelTab(loadProjectPanel(store.state.projectRoot), isWideScreen.value, !!store.state.currentFile))
+  applyProjectPanel(store.state.projectRoot)
   return true
 }
 
@@ -2805,6 +2845,14 @@ watch(isWideScreen, (val) => {
       // isn't blocked by a stale 'chat' activeTab.
       activeTab.value = next
     }
+    // Continuity for the left column. Entering wide-screen while the single
+    // column was on a non-chat panel means the user is still working on that
+    // surface, so it must stay visible — otherwise widening from the file
+    // manager would land on chat with the column hidden (the default) and read
+    // as "my panel disappeared". `switchLeftTab` above already expands when the
+    // tab changed; this covers the case where `leftTab` already matched, which
+    // would otherwise leave the column at whatever collapsed state it held.
+    if (enteredTab !== 'chat') setLeftCollapsed(false)
     onTabSwitch('chat')
     overflowMenuOpen.value = false
     // Focus continuity: the pane the user was working in becomes the active one.

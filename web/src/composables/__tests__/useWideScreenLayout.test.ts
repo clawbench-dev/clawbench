@@ -145,24 +145,26 @@ describe('useWideScreenLayout', () => {
 })
 
 describe('leftCollapsed (dock tab toggle)', () => {
-  it('defaults to expanded (false)', () => {
+  it('defaults to collapsed (left column hidden)', () => {
+    // A fresh view opens on chat alone; the user opts into the left column by
+    // clicking a dock tab.
     const { leftCollapsed } = useWideScreenLayout()
-    expect(leftCollapsed.value).toBe(false)
+    expect(leftCollapsed.value).toBe(true)
   })
 
   it('setLeftCollapsed toggles the shared state', () => {
     const { leftCollapsed } = useWideScreenLayout()
-    setLeftCollapsed(true)
-    expect(leftCollapsed.value).toBe(true)
     setLeftCollapsed(false)
     expect(leftCollapsed.value).toBe(false)
+    setLeftCollapsed(true)
+    expect(leftCollapsed.value).toBe(true)
   })
 
-  it('resetWideScreenState resets to expanded', () => {
-    setLeftCollapsed(true)
+  it('resetWideScreenState resets to collapsed', () => {
+    setLeftCollapsed(false)
     resetWideScreenState()
     const { leftCollapsed } = useWideScreenLayout()
-    expect(leftCollapsed.value).toBe(false)
+    expect(leftCollapsed.value).toBe(true)
   })
 
   it('switchLeftTab expands the collapsed pane when switching to a different tab', () => {
