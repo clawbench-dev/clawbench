@@ -226,6 +226,15 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 			bridgeCodeBuddyPlanFromToolUpdate(ch, conn, *tcu)
 		}
 
+		// OpenCode exposes its checklist through the `todowrite` tool rather
+		// than ACP plan notifications; bridge its terminal snapshot into
+		// plan_update so the frontend PlanPanel renders the checklist. Placed
+		// before the debouncer for the same reason as the CodeBuddy bridge
+		// (the debouncer's terminal path breaks out of the switch).
+		if isOpenCodePlanBackend(backendID) {
+			bridgeOpenCodePlanFromToolUpdate(ch, conn, *tcu)
+		}
+
 		// Debounce non-terminal ToolCallUpdate events to reduce WS traffic.
 		// ACP agents emit ToolCallUpdate deltas every ~30ms during tool input
 		// streaming. Batching these into a single event per 50ms window cuts
