@@ -139,6 +139,17 @@
         :refresh-nonce="preview.mediaRefreshNonce?.value ?? 0"
         @loaded="onMediaLoaded"
       />
+      <HtmlPreviewBody
+        v-else-if="isRenderedView && isHtmlView"
+        ref="bodyRef"
+        :status="preview.status.value"
+        :error-message-text="errorMessageText"
+        :error-code="preview.errorCode.value"
+        :html-src="htmlPreviewSrc"
+        :html-content="htmlPreviewContent"
+        :file-path="targetFilePath"
+        @refresh="preview.refresh()"
+      />
       <MarkdownPreviewBody
         v-else-if="isRenderedView"
         ref="bodyRef"
@@ -402,6 +413,17 @@
         :refresh-nonce="preview.mediaRefreshNonce?.value ?? 0"
         @loaded="onMediaLoaded"
       />
+      <HtmlPreviewBody
+        v-else-if="isRenderedView && isHtmlView"
+        ref="bodyRef"
+        :status="preview.status.value"
+        :error-message-text="errorMessageText"
+        :error-code="preview.errorCode.value"
+        :html-src="htmlPreviewSrc"
+        :html-content="htmlPreviewContent"
+        :file-path="targetFilePath"
+        @refresh="preview.refresh()"
+      />
       <MarkdownPreviewBody
         v-else-if="isRenderedView"
         ref="bodyRef"
@@ -449,6 +471,7 @@ import BottomSheet from '@/components/common/BottomSheet.vue'
 import CodePreviewToolbar from '@/components/file/CodePreviewToolbar.vue'
 import CodePreviewBody from '@/components/file/CodePreviewBody.vue'
 import MarkdownPreviewBody from '@/components/file/MarkdownPreviewBody.vue'
+import HtmlPreviewBody from '@/components/file/HtmlPreviewBody.vue'
 import MediaPreviewBody from '@/components/file/MediaPreviewBody.vue'
 import DirPreviewBody from '@/components/file/DirPreviewBody.vue'
 import UnsupportedFileBody from '@/components/file/UnsupportedFileBody.vue'
@@ -459,6 +482,7 @@ import { getFileType } from '@/utils/fileType'
 import { copyText } from '@/utils/clipboard'
 import { useToast } from '@/composables/useToast'
 import { buildLocalFileUrl, downloadFileByPath } from '@/utils/download'
+import { buildHtmlPreviewSrc } from '@/utils/htmlPreview'
 import { clampCardPosition, splitHighlightedHtml, getAppHeaderBottom, SCROLL_LOAD_STEP } from '@/utils/codeLinkPreview'
 import { toFixedCSS, useSettingsConfig, getZoomedViewport } from '@/composables/useSettingsConfig'
 import { useChatContext } from '@/composables/useChatContext'
@@ -543,7 +567,10 @@ const renderedHtml = ref('')
 let renderedSliceKey = ''
 
 const isRenderedView = computed(() => props.preview.effectiveRenderMode?.value === 'rendered')
-const showRenderToggle = computed(() => Boolean(props.preview.canRenderMarkdown?.value))
+const showRenderToggle = computed(() => Boolean(props.preview.canRenderDocument?.value))
+/** The rendered target is an HTML document (rendered by iframe, not the
+ *  markdown pipeline). Markdown keeps using MarkdownPreviewBody. */
+const isHtmlView = computed(() => Boolean(props.preview.isHtml?.value))
 
 // ── Media body (image / SVG / video / audio / PDF) ─────────────────────────
 // When the target is a media file the card renders MediaPreviewBody instead of
@@ -609,7 +636,11 @@ watch(
   async () => {
     // Leaving the rendered view (closed, switched target, toggled to source)
     // clears the cached slice so re-opening the same file re-renders it.
-    if (!isRenderedView.value || props.preview.status.value !== 'ready') {
+    //
+    // HTML is rendered by the iframe body, not the markdown pipeline, so skip
+    // it here — otherwise opening any HTML file would pull in the heavy
+    // markdown/katex/mermaid pipeline for a result nothing consumes.
+    if (!isRenderedView.value || isHtmlView.value || props.preview.status.value !== 'ready') {
       renderedHtml.value = ''
       renderedSliceKey = ''
       return
@@ -633,6 +664,35 @@ watch(
   },
   { immediate: true }
 )
+
+// ── Rendered HTML document view ─────────────────────────────────────────────
+// An HTML target renders in a sandboxed iframe loaded by real URL (see
+// buildHtmlPreviewSrc), so its own relative references resolve beside it and
+// the COMPLETE document shows with no line slicing. External (absolute-path)
+// files have no usable URL and fall back to srcdoc, which needs the raw text —
+// the composable fetches HTML whole for exactly this reason.
+//
+// The `?t=` cache-buster is bumped whenever the target or its content changes,
+// so a rewritten HTML file re-renders instead of the iframe serving the cached
+// document.
+const htmlPreviewTimestamp = ref(Date.now())
+
+watch(
+  () => [
+    props.preview.target.value?.filePath,
+    props.preview.fileContent.value?.content,
+  ],
+  () => {
+    htmlPreviewTimestamp.value = Date.now()
+  }
+)
+
+const htmlPreviewSrc = computed(() =>
+  buildHtmlPreviewSrc(props.preview.target.value?.filePath || '', htmlPreviewTimestamp.value)
+)
+
+/** Raw document text for the srcdoc fallback (external / absolute paths). */
+const htmlPreviewContent = computed(() => props.preview.fileContent.value?.content || '')
 
 const STORAGE_KEY_WRAP = 'clawbench:code-preview-word-wrap'
 

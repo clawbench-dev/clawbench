@@ -233,7 +233,7 @@ describe('useCodeLinkPreview', () => {
 
     expect(preview.isMarkdown.value).toBe(true)
     expect(preview.hasExplicitLineRange.value).toBe(false)
-    expect(preview.canRenderMarkdown.value).toBe(true)
+    expect(preview.canRenderDocument.value).toBe(true)
     expect(preview.effectiveRenderMode.value).toBe('rendered')
   })
 
@@ -254,7 +254,7 @@ describe('useCodeLinkPreview', () => {
     expect(preview.hasExplicitLineRange.value).toBe(true)
     // A Markdown file stays render-capable even with a line annotation — only
     // the DEFAULT view is the code slice so the user can pinpoint the lines.
-    expect(preview.canRenderMarkdown.value).toBe(true)
+    expect(preview.canRenderDocument.value).toBe(true)
     expect(preview.effectiveRenderMode.value).toBe('source')
   })
 
@@ -292,7 +292,7 @@ describe('useCodeLinkPreview', () => {
     await vi.runAllTicks()
 
     expect(preview.isMarkdown.value).toBe(false)
-    expect(preview.canRenderMarkdown.value).toBe(false)
+    expect(preview.canRenderDocument.value).toBe(false)
     expect(preview.effectiveRenderMode.value).toBe('source')
   })
 
@@ -332,6 +332,93 @@ describe('useCodeLinkPreview', () => {
 
     preview.toggleRenderMode()
     expect(preview.effectiveRenderMode.value).toBe('source')
+  })
+
+  it('defaults an HTML file to the rendered document view', async () => {
+    mockApiGet.mockResolvedValueOnce({
+      content: '<html><body><h1>Hi</h1></body></html>',
+      name: 'index.html',
+      path: 'index.html',
+      supported: true,
+      size: 40,
+    })
+
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'index.html' })
+    await vi.runAllTicks()
+
+    expect(preview.isHtml.value).toBe(true)
+    expect(preview.isMarkdown.value).toBe(false)
+    expect(preview.hasExplicitLineRange.value).toBe(false)
+    expect(preview.canRenderDocument.value).toBe(true)
+    expect(preview.effectiveRenderMode.value).toBe('rendered')
+  })
+
+  it('keeps a line-annotated HTML file on the source slice view by default', async () => {
+    mockApiGet.mockResolvedValue({
+      content: '<html><body><h1>Hi</h1></body></html>',
+      name: 'index.html',
+      path: 'index.html',
+      supported: true,
+      size: 40,
+    })
+
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'index.html', lineStart: 3, lineEnd: 5 })
+    await vi.runAllTicks()
+
+    expect(preview.isHtml.value).toBe(true)
+    expect(preview.hasExplicitLineRange.value).toBe(true)
+    // HTML stays render-capable even with a line annotation — only the DEFAULT
+    // view is the code slice, and the eye toggle still reaches the render.
+    expect(preview.canRenderDocument.value).toBe(true)
+    expect(preview.effectiveRenderMode.value).toBe('source')
+
+    preview.toggleRenderMode()
+    expect(preview.effectiveRenderMode.value).toBe('rendered')
+  })
+
+  it('fetches an external (absolute-path) HTML file whole so srcdoc stays complete', async () => {
+    mockApiGet.mockResolvedValueOnce({
+      content: '<html><body><h1>Hi</h1></body></html>',
+      name: 'index.html',
+      path: '/tmp/external/index.html',
+      supported: true,
+      size: 40,
+    })
+
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: '/tmp/external/index.html' })
+    await vi.runAllTicks()
+
+    const url = mockApiGet.mock.calls[0][0] as string
+    // An external file renders via srcdoc, which needs the whole document — a
+    // line window would truncate it.
+    expect(url).not.toContain('lineStart=')
+    expect(url).not.toContain('lineEnd=')
+  })
+
+  it('keeps windowed slicing for a project-relative HTML file (source view)', async () => {
+    mockApiGet.mockResolvedValueOnce({
+      content: '<html><body><h1>Hi</h1></body></html>',
+      name: 'index.html',
+      path: 'index.html',
+      supported: true,
+      size: 40,
+      totalLines: 3,
+      windowStart: 1,
+      windowEnd: 3,
+    })
+
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'index.html' })
+    await vi.runAllTicks()
+
+    const url = mockApiGet.mock.calls[0][0] as string
+    // A relative HTML file renders through the iframe's own URL, so the source
+    // view keeps the ordinary line window — same as any other code file.
+    expect(url).toContain('lineStart=')
+    expect(url).toContain('lineEnd=')
   })
 
   it('resets renderMode to source when the preview closes', async () => {
@@ -681,6 +768,31 @@ describe('useCodeLinkPreview', () => {
     expect(preview.dirEntries.value.map(e => e.name)).toEqual(['logo.png'])
     // And the card is not put into the media view.
     expect(preview.isMediaTarget.value).toBe(false)
+  })
+
+  it('lists a directory even when its name ends in an HTML extension', async () => {
+    // Same rule as the media/markdown case above: a DIRECTORY named
+    // `index.html` is not an HTML document, so the render classification must
+    // defer to the verified isDir flag and the listing must be fetched.
+    mockApiGet.mockResolvedValueOnce({
+      items: [{ name: 'page.html', type: 'file' }],
+    })
+    const preview = useCodeLinkPreview()
+    const dirAnchor = document.createElement('span')
+    dirAnchor.className = 'chat-file-path'
+    dirAnchor.setAttribute('data-file-path', 'index.html')
+    dirAnchor.setAttribute('data-path-type', 'dir')
+
+    preview.handleClick({ target: dirAnchor, preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as MouseEvent)
+
+    await vi.runAllTicks()
+    await Promise.resolve()
+
+    const url = mockApiGet.mock.calls[0]?.[0] as string
+    expect(url).toContain('/api/dir?path=index.html')
+    expect(preview.isHtml.value).toBe(false)
+    expect(preview.canRenderDocument.value).toBe(false)
+    expect(preview.effectiveRenderMode.value).toBe('source')
   })
 
   it('ignores a line annotation on a directory target', () => {

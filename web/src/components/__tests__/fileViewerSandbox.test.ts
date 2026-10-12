@@ -97,11 +97,15 @@ describe('FileViewer iframe sandbox (ISS-021, decision reversed)', () => {
   })
 
   it('htmlPreviewSrc returns empty for absolute paths', () => {
-    // Source-level guard for the branch above (jsdom cannot resolve this: the
-    // component would need a real server to observe which file is fetched).
-    const computedBody = source.match(/const htmlPreviewSrc = computed\(\(\) => \{[\s\S]*?\n\}\)/)
-    expect(computedBody, 'htmlPreviewSrc computed not found').not.toBeNull()
-    expect(computedBody![0]).toContain('isAbsolutePath(props.file.path)')
-    expect(computedBody![0]).toMatch(/isAbsolutePath\(props\.file\.path\)\)\s*return ''/)
+    // The URL rules now live in buildHtmlPreviewSrc (the single source of truth
+    // shared with the quick preview pane), so this guard reads the helper rather
+    // than the component. jsdom cannot resolve this behaviourally: the component
+    // would need a real server to observe which file is fetched.
+    const helperPath = resolve(__dirname, '../../utils/htmlPreview.ts')
+    const helperSource = readFileSync(helperPath, 'utf-8')
+    const fnBody = helperSource.match(/export function buildHtmlPreviewSrc[\s\S]*?\n\}/)
+    expect(fnBody, 'buildHtmlPreviewSrc not found').not.toBeNull()
+    expect(fnBody![0]).toContain('isAbsolutePath(path)')
+    expect(fnBody![0]).toMatch(/isAbsolutePath\(path\)\)\s*return ''/)
   })
 })
