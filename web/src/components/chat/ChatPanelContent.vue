@@ -1036,8 +1036,8 @@ const stream = useChatStream({
   },
 })
 
-const { pendingFiles, attachedFiles, addAttachedFile, removeAttachedFile, removePendingByPath, cleanupPreviewUrls, clearPendingFiles } = useFileUpload()
-const { stagedQuotes, addStagedQuote, removeStagedQuote, updateStagedQuoteNote, clearAll, removeAttachedFileByPath, snapshotAttachments, restoreAttachments, discardAttachmentDraft, stagedMentions, addStagedMention, removeStagedMention, updateStagedMentionNote, restoreStagedCards } = useChatContext()
+const { pendingFiles, attachedFiles, addAttachedFile, removeAttachedFile, removePendingByPath, cleanupPreviewUrls, clearPendingFiles, leaveInputDraft } = useFileUpload()
+const { stagedQuotes, addStagedQuote, removeStagedQuote, updateStagedQuoteNote, clearAll, removeAttachedFileByPath, restoreAttachments, discardAttachmentDraft, stagedMentions, addStagedMention, removeStagedMention, updateStagedMentionNote, restoreStagedCards } = useChatContext()
 
 const manager = useSessionManager({
   messages,
@@ -1057,19 +1057,11 @@ const manager = useSessionManager({
     // Save the typed text (per-session draftCache) before clearing.
     inputBarRef.value?.saveDraft()
     // Snapshot attachments + staged quotes under the session we're leaving so
-    // they can be restored when the user switches back. Also fold in pending
-    // uploads that finished uploading (they hold a server path) — their
-    // blob preview URLs are dropped with clearPendingFiles, but the attached
-    // file ref (path) must survive the round-trip.
-    const leavingSessionId = getSessionId()
-    if (leavingSessionId) {
-      const pendingPaths = pendingFiles.value.filter(f => f.path && !f.uploading).map(f => f.path)
-      for (const p of pendingPaths) addAttachedFile(p)
-    }
-    snapshotAttachments(leavingSessionId)
-    clearAll()
+    // they can be restored when the user switches back, then drop the live
+    // refs (see leaveInputDraft). Shared with the project-switch path in
+    // App.vue so the two cannot drift.
+    leaveInputDraft(getSessionId())
     inputBarRef.value?.clearInputPreserveDraft()
-    clearPendingFiles()
   },
   // Restore attachments/quotes after the switch completes (currentSessionId
   // now points at the target session). Also carries cleanupDraft so

@@ -799,6 +799,14 @@ async function hotSwitchProject(newProjectPath: string, pendingSessionId?: strin
   }
 
   // ── Phase 3: Reset module-level singletons ──
+  // Capture the session being left BEFORE resetIdentity() clears it. The
+  // staged input (attachments / quotes / @ cards) lives in module-level
+  // singletons that survive the keyed subtree rebuild below, so without
+  // snapshotting it under this session the previous project's quote would
+  // reappear in the new project's input box. leaveInputDraft snapshots it and
+  // clears the live refs; ChatPanelContent restores the new session's draft
+  // once identity resolves.
+  const leavingSessionId = sessionIdentity.currentSessionId.value
   resetIdentity()
   resetAgents()
   resetChatSessionState()
@@ -810,6 +818,8 @@ async function hotSwitchProject(newProjectPath: string, pendingSessionId?: strin
   resetTabDrawerState()
   resetAllCrudLists()
   completionPopover.reset()
+  // Drop the live staged input now that it is snapshotted (see above).
+  leaveInputDraft(leavingSessionId)
   // Navigation context is a module-level singleton, so it survives the
   // keyed project subtree replacement. Never carry a return target from the
   // previous project into the newly selected project.
@@ -835,6 +845,11 @@ async function hotSwitchProject(newProjectPath: string, pendingSessionId?: strin
 
   // ── Phase 6: Background data loading — all independent, fully parallel, non-blocking ──
   await sessionIdentity.initSessionFromAPI()
+  // Restore the new project's session draft now that identity is resolved.
+  // The project switch bypasses the session manager (which does this on a
+  // session switch), so the restore has to happen here; without it the
+  // snapshot taken in Phase 3 would never come back when the user returns.
+  restoreAttachments(sessionIdentity.currentSessionId.value)
   Promise.allSettled([
     loadSessionsOnce(),
     store.loadGitBranch(),
@@ -2845,7 +2860,7 @@ function handleWideDockTabClick(tab: string) {
 }
 
 // ── Drag file/dir onto the chat panel → show the panel-wide overlay and attach/upload ──
-const { addAttachedFile, addStagedQuote } = useChatContext()
+const { addAttachedFile, addStagedQuote, restoreAttachments } = useChatContext()
 const { forgeUnreadCount, refresh: refreshForgeUnread } = useForgeUnread()
 // The forge dock icon reflects the bound platform (GitHub vs GitLab).
 const { platform: forgePlatform, refresh: refreshForgePlatform } = useForgeBinding()
@@ -2881,7 +2896,7 @@ function handleFileQuoteInChat(path: string) {
     onAdd: () => switchTab('chat'),
   })
 }
-const { uploadAndAttach } = useFileUpload()
+const { uploadAndAttach, leaveInputDraft } = useFileUpload()
 const chatDropActive = ref(false)
 let chatDropCounter = 0
 

@@ -233,6 +233,73 @@ describe('useFileUpload', () => {
     })
   })
 
+  describe('leaveInputDraft', () => {
+    it('snapshots staged input under the leaving session and clears the live refs', () => {
+      // The project switch uses this: the staged refs are module-level and
+      // survive the keyed subtree rebuild, so they must be cleared here or the
+      // previous project's quote reappears in the new project's input box.
+      const upload = useFileUpload()
+      const ctx = useChatContext()
+      ctx.addStagedQuote({ text: 'q', filePath: '/a.ts', language: 'ts', startLine: 1, endLine: 1 }, '')
+      ctx.addAttachedFile('/attached.txt')
+
+      upload.leaveInputDraft('sess-1')
+
+      expect(ctx.stagedQuotes.value).toHaveLength(0)
+      expect(ctx.attachedFiles.value).toHaveLength(0)
+
+      // ...and the snapshot is restorable when the user returns to that session.
+      ctx.restoreAttachments('sess-1')
+      expect(ctx.stagedQuotes.value).toHaveLength(1)
+      expect(ctx.attachedFiles.value.map(f => f.path)).toEqual(['/attached.txt'])
+    })
+
+    it('folds a finished pending upload into the snapshot and drops the blob', () => {
+      // A completed upload holds a server path but its preview URL is a blob
+      // owned by the project being left behind. Keep the path, revoke the blob.
+      if (!URL.revokeObjectURL) URL.revokeObjectURL = vi.fn()
+      const revokeSpy = vi.spyOn(URL, 'revokeObjectURL')
+      const upload = useFileUpload()
+      const ctx = useChatContext()
+      upload.pendingFiles.value.push({ path: '.clawbench/uploads/done.png', previewUrl: 'blob:done', isImage: true, uploading: false, progress: 100, size: 10 })
+
+      upload.leaveInputDraft('sess-2')
+
+      expect(upload.pendingFiles.value).toHaveLength(0)
+      expect(revokeSpy).toHaveBeenCalledWith('blob:done')
+      ctx.restoreAttachments('sess-2')
+      expect(ctx.attachedFiles.value.map(f => f.path)).toEqual(['.clawbench/uploads/done.png'])
+      revokeSpy.mockRestore()
+    })
+
+    it('cancels an in-flight upload instead of snapshotting it', () => {
+      // An uploading entry has no server path yet and was targeted at the
+      // project being left, so it must be dropped rather than carried over.
+      const upload = useFileUpload()
+      const ctx = useChatContext()
+      upload.pendingFiles.value.push({ path: '', previewUrl: null, isImage: false, uploading: true, progress: 40, size: 10 })
+
+      upload.leaveInputDraft('sess-3')
+
+      expect(upload.pendingFiles.value).toHaveLength(0)
+      ctx.restoreAttachments('sess-3')
+      expect(ctx.attachedFiles.value).toHaveLength(0)
+    })
+
+    it('clears the live refs even when the session id is empty', () => {
+      // The very first project switch can run before identity resolves. The
+      // leak must still be fixed (clear), even though there is nowhere to
+      // snapshot to.
+      const upload = useFileUpload()
+      const ctx = useChatContext()
+      ctx.addStagedQuote({ text: 'q', filePath: '/a.ts', language: 'ts', startLine: 1, endLine: 1 }, '')
+
+      upload.leaveInputDraft('')
+
+      expect(ctx.stagedQuotes.value).toHaveLength(0)
+    })
+  })
+
   describe('chat upload (no dir)', () => {
     it('successful upload adds to pendingFiles and updates entry', async () => {
       xhrSendHandler = (xhr) => respondSuccess(xhr, '.clawbench/uploads/test.txt')

@@ -178,6 +178,38 @@ describe('project switch guards unsaved file edits', () => {
   })
 })
 
+describe('project switch does not leak staged input across projects', () => {
+  const body = functionBody(code, 'hotSwitchProject')
+
+  it('snapshots the leaving session before resetIdentity clears it', () => {
+    // Staged quotes/attachments are module-level singletons that survive the
+    // keyed subtree rebuild. The session id must be read BEFORE resetIdentity()
+    // clears it, or the snapshot lands under '' and is never restorable.
+    const captureAt = body.indexOf('const leavingSessionId = sessionIdentity.currentSessionId.value')
+    const resetAt = body.indexOf('resetIdentity()')
+    expect(captureAt, 'leaving session id is not captured').toBeGreaterThan(-1)
+    expect(resetAt).toBeGreaterThan(-1)
+    expect(captureAt).toBeLessThan(resetAt)
+  })
+
+  it('clears the live staged input via leaveInputDraft', () => {
+    // Without this the previous project's quote stays in the live refs and
+    // reappears in the new project's input box.
+    expect(body, 'hotSwitchProject never clears the staged input').toContain('leaveInputDraft(leavingSessionId)')
+  })
+
+  it('restores the new session draft after identity resolves', () => {
+    // The switch bypasses the session manager (which restores on a session
+    // switch), so the restore has to happen here or a returning user loses
+    // their draft.
+    const initAt = body.indexOf('await sessionIdentity.initSessionFromAPI()')
+    const restoreAt = body.indexOf('restoreAttachments(')
+    expect(initAt).toBeGreaterThan(-1)
+    expect(restoreAt, 'staged input is never restored after the switch').toBeGreaterThan(-1)
+    expect(initAt).toBeLessThan(restoreAt)
+  })
+})
+
 describe('the file-closed fallback watcher respects the switch guard', () => {
   it('is guarded by isPanelSwitchInFlight()', () => {
     const src = code
