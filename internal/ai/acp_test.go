@@ -2367,6 +2367,13 @@ func TestExtractModelListFromOpts_NoModelCategory(t *testing.T) {
 
 // --- ACP test helpers ---
 
+// ptrStr returns a pointer to s, for ACP SDK fields typed *string.
+//
+// Lives here (untagged) rather than beside any single test: it was previously
+// declared in acp_terminal_test.go, which is `//go:build !windows`, so the
+// cross-platform opencode_plan_bridge_test.go failed to compile on Windows.
+func ptrStr(s string) *string { return &s }
+
 // drainACPEvents reads exactly count events from ch.
 func drainACPEvents(ch chan StreamEvent, count int) []StreamEvent {
 	events := make([]StreamEvent, 0, count)
