@@ -23,6 +23,7 @@ import { registerPwaServiceWorker } from './utils/pwaServiceWorker.ts'
 import { createSingleTabGuard } from './composables/useSingleTab.ts'
 import SingleTabBlocked from './components/common/SingleTabBlocked.vue'
 import { installLocalMediaFallback } from './utils/localMediaFallback.ts'
+import { installMediaFullscreenGuard } from './utils/mediaFullscreenGuard.ts'
 
 configureMarkedRenderer()
 
@@ -35,6 +36,12 @@ installAuthRedirectInterceptor()
 // /api/fs/* with no existence check, so a missing file previously left an
 // unexplained gap (issue #501). Document-level capture listener, installed once.
 installLocalMediaFallback()
+
+// A media element that fails to load while it holds HTML5 fullscreen would be
+// hidden but stay the fullscreen element, leaving the top-layer <html>
+// swallowing every pointer event (the UI looks closed but is unclickable).
+// Exit fullscreen on that error. Document-level capture listener, installed once.
+installMediaFullscreenGuard()
 
 // ── Single-tab gate ─────────────────────────────────────────────────────────
 // Only one tab may run the app. The server keys a client's WebSocket
