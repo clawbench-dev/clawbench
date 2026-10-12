@@ -733,6 +733,12 @@ const switchingProject = ref(false)
 const navigationByProject = new Map()
 
 async function hotSwitchProject(newProjectPath: string, pendingSessionId?: string | null, pendingTaskNav?: { taskId: string; executionId?: string } | null) {
+  // Capture the session being left BEFORE any await. Two awaits below
+  // (confirmLeave, setProject) can each let the current subtree's in-flight
+  // loadHistory resolve a session id — and setProject flips the project cookie
+  // first — so reading it later could snapshot the old project's staged quote
+  // under the NEW project's session and re-introduce the very leak this fixes.
+  const leavingSessionId = sessionIdentity.currentSessionId.value
   // Guard unsaved file edits BEFORE anything is armed. The switch destroys the
   // editor subtree (Phase 4), so without this an in-progress edit would be lost
   // silently. Runs the save/discard/cancel flow and aborts the switch when the
@@ -801,14 +807,6 @@ async function hotSwitchProject(newProjectPath: string, pendingSessionId?: strin
   }
 
   // ── Phase 3: Reset module-level singletons ──
-  // Capture the session being left BEFORE resetIdentity() clears it. The
-  // staged input (attachments / quotes / @ cards) lives in module-level
-  // singletons that survive the keyed subtree rebuild below, so without
-  // snapshotting it under this session the previous project's quote would
-  // reappear in the new project's input box. leaveInputDraft snapshots it and
-  // clears the live refs; ChatPanelContent restores the new session's draft
-  // once identity resolves.
-  const leavingSessionId = sessionIdentity.currentSessionId.value
   resetIdentity()
   resetAgents()
   resetChatSessionState()
@@ -850,8 +848,11 @@ async function hotSwitchProject(newProjectPath: string, pendingSessionId?: strin
   // Restore the new project's session draft now that identity is resolved.
   // The project switch bypasses the session manager (which does this on a
   // session switch), so the restore has to happen here; without it the
-  // snapshot taken in Phase 3 would never come back when the user returns.
-  restoreAttachments(sessionIdentity.currentSessionId.value)
+  // snapshot taken on departure would never come back when the user returns.
+  // onlyIfLiveEmpty: the new subtree is already interactive (Phase 5 faded in
+  // before this await), so anything the user staged during the network round-
+  // trip must not be silently discarded.
+  restoreAttachments(sessionIdentity.currentSessionId.value, { onlyIfLiveEmpty: true })
   Promise.allSettled([
     loadSessionsOnce(),
     store.loadGitBranch(),

@@ -20,7 +20,8 @@ vi.mock('@/utils/renderToolDetail.ts', async (importOriginal) => {
 vi.mock('@/utils/icons', () => ({
   getToolIcon: () => ({ icon: { template: '<span />' }, category: 'ask' }),
 }))
-vi.mock('@/stores/app.ts', () => ({ store: { state: {} } }))
+const { mockSetProject } = vi.hoisted(() => ({ mockSetProject: vi.fn(() => Promise.resolve()) }))
+vi.mock('@/stores/app.ts', () => ({ store: { state: {}, setProject: mockSetProject } }))
 
 import ToolDetailDrawer from '@/components/chat/ToolDetailDrawer.vue'
 import { restoreAskStatesInContainer, handleAskSupplementaryInput } from '@/utils/renderToolDetail.ts'
@@ -36,7 +37,7 @@ const LucideStub = { template: '<span />' }
 
 const wrappers: ReturnType<typeof mount>[] = []
 
-function mountDrawer(props: Record<string, unknown> = {}) {
+function mountDrawer(props: Record<string, unknown> = {}, provideData: Record<string, unknown> = {}) {
   const wrapper = mount(ToolDetailDrawer, {
     props: {
       show: true,
@@ -46,6 +47,9 @@ function mountDrawer(props: Record<string, unknown> = {}) {
     },
     global: {
       plugins: [i18n],
+      provide: {
+        hotSwitchProject: provideData.hotSwitchProject ?? null,
+      },
       stubs: {
         BottomSheet: { template: '<div class="sheet-stub"><slot name="header" /><slot /></div>' },
         LoadingIndicator: { template: '<span />' },
@@ -126,6 +130,43 @@ describe('ToolDetailDrawer — ask-card answer state', () => {
     await nextTick()
 
     expect(handleAskSupplementaryInput).toHaveBeenCalled()
+  })
+})
+
+// A worktree jump is a PROJECT switch. Routing it through the injected
+// hotSwitchProject (rather than a direct store.setProject) is what makes the
+// previous project's staged quote get snapshotted and cleared — a direct
+// setProject skips both. The fallback keeps shallow mounts working.
+describe('ToolDetailDrawer — worktree button routes through hotSwitchProject', () => {
+  beforeEach(() => {
+    mockSetProject.mockClear()
+  })
+
+  function clickWorktree(vm: any) {
+    const wtBtn = document.createElement('button')
+    wtBtn.className = 'chat-worktree-btn'
+    wtBtn.setAttribute('data-worktree-path', '/path/to/wt')
+    const target = document.createElement('div')
+    Object.defineProperty(target, 'closest', {
+      value: (sel: string) => sel === '.chat-worktree-btn' ? wtBtn : null,
+    })
+    return vm.handleBodyClick({ target, stopPropagation: vi.fn() } as any)
+  }
+
+  it('calls the injected hotSwitchProject with the worktree path', async () => {
+    const hotSwitchProject = vi.fn(() => Promise.resolve())
+    const wrapper = mountDrawer({}, { hotSwitchProject })
+    await nextTick()
+    await clickWorktree(wrapper.vm as any)
+    expect(hotSwitchProject).toHaveBeenCalledWith('/path/to/wt')
+    expect(mockSetProject).not.toHaveBeenCalled()
+  })
+
+  it('falls back to store.setProject when no provider is present', async () => {
+    const wrapper = mountDrawer()
+    await nextTick()
+    await clickWorktree(wrapper.vm as any)
+    expect(mockSetProject).toHaveBeenCalledWith('/path/to/wt')
   })
 })
 

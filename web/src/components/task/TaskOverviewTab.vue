@@ -52,7 +52,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick, inject } from 'vue'
 import { ChevronDown, MessageSquare } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { renderMarkdown } from '@/composables/useMarkdownRenderer'
@@ -105,6 +105,14 @@ let promptRenderId = 0
 
 // Code link preview for annotated file paths in the prompt body.
 const codeLinkPreview = useCodeLinkPreview({ containerRef: promptBodyRef, source: 'task' })
+
+// Switching to a worktree is a PROJECT switch. Route it through the injected
+// hotSwitchProject (provided by App.vue) rather than calling store.setProject
+// directly: the direct call skips the keyed subtree rebuild AND the staged-input
+// clear, so a quote/attachment staged in the previous project would leak into
+// the new one. Falls back to setProject only when the provider is absent (e.g.
+// a shallow mount).
+const hotSwitchProject = inject('hotSwitchProject', null) as ((path: string) => Promise<void>) | null
 
 // Clickable task id. This is TEXT, not a button, so it keeps its own affordance
 // rather than gaining a check glyph (the copy-button unification covers
@@ -159,7 +167,7 @@ watch(
   { immediate: true }
 )
 
-function handlePromptClick(event: MouseEvent) {
+async function handlePromptClick(event: MouseEvent) {
   // Handle localhost URL clicks
   if (handleLocalhostUrlClick(event)) return
 
@@ -194,7 +202,8 @@ function handlePromptClick(event: MouseEvent) {
     codeLinkPreview.close()
     const wtPath = wtBtn.getAttribute('data-worktree-path')
     if (wtPath) {
-      store.setProject(wtPath)
+      if (hotSwitchProject) await hotSwitchProject(wtPath)
+      else await store.setProject(wtPath)
     }
     return
   }

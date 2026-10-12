@@ -195,6 +195,12 @@ const quoteSourceLabel = computed(() => {
 const { openFilePath, verifyFilePaths, readLineTargetFromEl } = useFilePathAnnotation()
 const { handleLocalhostUrlClick } = useLocalhostUrlClickHandler()
 const switchTab = inject('switchTab', () => {})
+// Switching to a worktree is a PROJECT switch — route it through the injected
+// hotSwitchProject (provided by App.vue) instead of a direct store.setProject,
+// which would skip the keyed subtree rebuild and the staged-input clear (a
+// quote staged in the previous project would then leak into the new one).
+// Falls back to setProject when the provider is absent (shallow mounts).
+const hotSwitchProject = inject('hotSwitchProject', null)
 const { tableRowModal, closeTableRowModal, tableRowPrev, tableRowNext, handleTableRowClick, onTableMouseDown, onTableTouchStart } = useTableRowExpand()
 
 // ── Continue conversation logic ──
@@ -569,7 +575,7 @@ watch(activeMsgData, () => {
   nextTick(scrollToBottom)
 })
 
-function handleContentClick(event) {
+async function handleContentClick(event) {
   // 0. Code block header buttons (copy/wrap)
   if (handleCodeBlockClick(event)) return
 
@@ -607,7 +613,8 @@ function handleContentClick(event) {
     codeLinkPreview.close()
     const wtPath = wtBtn.getAttribute('data-worktree-path')
     if (wtPath) {
-      appStore.setProject(wtPath)
+      if (hotSwitchProject) await hotSwitchProject(wtPath)
+      else await appStore.setProject(wtPath)
     }
     return
   }

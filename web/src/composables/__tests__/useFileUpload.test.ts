@@ -275,9 +275,12 @@ describe('useFileUpload', () => {
     it('cancels an in-flight upload instead of snapshotting it', () => {
       // An uploading entry has no server path yet and was targeted at the
       // project being left, so it must be dropped rather than carried over.
+      // Give it a REAL path: with an empty path the `f.path` clause alone would
+      // exclude it and the `!f.uploading` clause under test would never run
+      // (a tautological test — mutation-verified).
       const upload = useFileUpload()
       const ctx = useChatContext()
-      upload.pendingFiles.value.push({ path: '', previewUrl: null, isImage: false, uploading: true, progress: 40, size: 10 })
+      upload.pendingFiles.value.push({ path: '.clawbench/uploads/live.png', previewUrl: null, isImage: false, uploading: true, progress: 40, size: 10 })
 
       upload.leaveInputDraft('sess-3')
 

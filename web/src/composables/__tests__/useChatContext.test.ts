@@ -474,6 +474,52 @@ describe('useChatContext', () => {
       ctx.restoreAttachments('')
       expect(ctx.attachedFiles.value).toHaveLength(0)
     })
+
+    it('a repeated departure from the same session does not clobber the snapshot', () => {
+      // Two overlapping project switches both leave the SAME session: the first
+      // snapshots the staged input and clears the live refs; the second must not
+      // overwrite that snapshot with the now-empty state (which would lose the
+      // user's staged quote entirely).
+      ctx.addStagedQuote({ text: 'q', filePath: '/keep.ts', language: 'ts', startLine: 1, endLine: 1 }, '')
+      ctx.snapshotAttachments('sess-x')   // first departure
+      ctx.clearAll()                       // live refs now empty
+      ctx.snapshotAttachments('sess-x')   // second departure, same session
+      ctx.restoreAttachments('sess-x')
+      expect(ctx.stagedQuotes.value.map(q => q.filePath)).toEqual(['/keep.ts'])
+    })
+
+    it('a fresh departure after a restore still snapshots an emptied input', () => {
+      // Counterpart of the clobber guard: the user removes everything, then
+      // leaves. That is a NEW departure (a restore reset the marker), so the
+      // empty state must be recorded — otherwise the old draft would resurrect.
+      ctx.addAttachedFile('/a.txt')
+      ctx.snapshotAttachments('sess-y')
+      ctx.restoreAttachments('sess-y')     // marker reset by the restore
+      ctx.removeAttachedFile(0)            // user removes it
+      ctx.snapshotAttachments('sess-y')    // leave again
+      ctx.restoreAttachments('sess-y')
+      expect(ctx.attachedFiles.value).toHaveLength(0)
+    })
+
+    it('restoreAttachments onlyIfLiveEmpty keeps input staged meanwhile', () => {
+      // The project-switch restore runs after the new subtree is interactive, so
+      // anything staged during the round-trip must survive.
+      ctx.addAttachedFile('/draft.txt')
+      ctx.snapshotAttachments('sess-z')
+      ctx.clearAll()
+      ctx.addStagedQuote({ text: 'fresh', filePath: '/fresh.ts', language: 'ts', startLine: 1, endLine: 1 }, '')
+      ctx.restoreAttachments('sess-z', { onlyIfLiveEmpty: true })
+      expect(ctx.stagedQuotes.value.map(q => q.filePath)).toEqual(['/fresh.ts'])
+      expect(ctx.attachedFiles.value).toHaveLength(0)
+    })
+
+    it('restoreAttachments onlyIfLiveEmpty still restores into an empty input', () => {
+      ctx.addAttachedFile('/draft.txt')
+      ctx.snapshotAttachments('sess-w')
+      ctx.clearAll()
+      ctx.restoreAttachments('sess-w', { onlyIfLiveEmpty: true })
+      expect(ctx.attachedFiles.value.map(f => f.path)).toEqual(['/draft.txt'])
+    })
   })
 
   describe('stagedMentions (group @ cards)', () => {

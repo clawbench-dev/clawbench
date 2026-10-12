@@ -182,14 +182,18 @@ describe('project switch guards unsaved file edits', () => {
 describe('project switch does not leak staged input across projects', () => {
   const body = functionBody(code, 'hotSwitchProject')
 
-  it('snapshots the leaving session before resetIdentity clears it', () => {
-    // Staged quotes/attachments are module-level singletons that survive the
-    // keyed subtree rebuild. The session id must be read BEFORE resetIdentity()
-    // clears it, or the snapshot lands under '' and is never restorable.
+  it('captures the leaving session before the first await, not just before resetIdentity', () => {
+    // The capture must precede ANY await: setProject() flips the project cookie,
+    // so a later read could pick up a NEW-project session id resolved by the
+    // old subtree's in-flight loadHistory, snapshotting the old quote under the
+    // new session (re-introducing the leak).
     const captureAt = body.indexOf('const leavingSessionId = sessionIdentity.currentSessionId.value')
+    const firstAwaitAt = body.indexOf('await ')
     const resetAt = body.indexOf('resetIdentity()')
     expect(captureAt, 'leaving session id is not captured').toBeGreaterThan(-1)
+    expect(firstAwaitAt).toBeGreaterThan(-1)
     expect(resetAt).toBeGreaterThan(-1)
+    expect(captureAt, 'capture must precede the first await').toBeLessThan(firstAwaitAt)
     expect(captureAt).toBeLessThan(resetAt)
   })
 
@@ -199,16 +203,60 @@ describe('project switch does not leak staged input across projects', () => {
     expect(body, 'hotSwitchProject never clears the staged input').toContain('leaveInputDraft(leavingSessionId)')
   })
 
-  it('restores the new session draft after identity resolves', () => {
+  it('restores the current session draft after identity resolves, without clobbering fresh input', () => {
     // The switch bypasses the session manager (which restores on a session
     // switch), so the restore has to happen here or a returning user loses
-    // their draft.
+    // their draft. The ARGUMENT matters: restoreAttachments('') is a permanent
+    // no-op, so asserting only the call name would let that regression pass.
+    // onlyIfLiveEmpty matters too: the new subtree is already interactive when
+    // this runs, so input staged during the round-trip must not be discarded.
     const initAt = body.indexOf('await sessionIdentity.initSessionFromAPI()')
-    const restoreAt = body.indexOf('restoreAttachments(')
+    const restoreAt = body.indexOf('restoreAttachments(sessionIdentity.currentSessionId.value')
     expect(initAt).toBeGreaterThan(-1)
     expect(restoreAt, 'staged input is never restored after the switch').toBeGreaterThan(-1)
     expect(initAt).toBeLessThan(restoreAt)
+    expect(body.slice(restoreAt), 'restore must not clobber input staged meanwhile')
+      .toContain('onlyIfLiveEmpty: true')
   })
+})
+
+describe('the session-switch path shares the same staged-input clear', () => {
+  it('ChatPanelContent routes its clearInputState through leaveInputDraft', () => {
+    // The commit's whole point is that the project-switch and session-switch
+    // paths share one helper so they cannot drift. Without this guard the
+    // ChatPanelContent half could be reverted to its own inline copy silently.
+    const cpc = stripComments(readFileSync(
+      join(__dirname, '..', 'chat', 'ChatPanelContent.vue'),
+      'utf8',
+    ))
+    expect(cpc, 'ChatPanelContent no longer uses the shared leaveInputDraft')
+      .toContain('leaveInputDraft(getSessionId())')
+  })
+})
+
+describe('worktree jumps go through hotSwitchProject, not a direct setProject', () => {
+  // A worktree jump IS a project switch. Calling store.setProject directly
+  // skips the keyed subtree rebuild AND the staged-input clear, so the previous
+  // project's staged quote leaks into the new one — the exact bug this change
+  // fixes. Each component must inject hotSwitchProject and prefer it, keeping
+  // setProject only as the provider-absent fallback.
+  const sites = [
+    ['chat', 'ToolDetailDrawer.vue'],
+    ['task', 'TaskOverviewTab.vue'],
+    ['task', 'TaskExecDetail.vue'],
+  ] as const
+
+  for (const [dir, file] of sites) {
+    it(`${file} prefers the injected hotSwitchProject`, () => {
+      const src = stripComments(readFileSync(join(__dirname, '..', dir, file), 'utf8'))
+      expect(src, `${file} does not inject hotSwitchProject`)
+        .toContain("inject('hotSwitchProject'")
+      expect(src, `${file} does not guard on the injected hotSwitchProject`)
+        .toMatch(/if \(hotSwitchProject\)/)
+      expect(src, `${file} does not call the injected hotSwitchProject`)
+        .toMatch(/await hotSwitchProject\(/)
+    })
+  }
 })
 
 describe('the file-closed fallback watcher respects the switch guard', () => {
