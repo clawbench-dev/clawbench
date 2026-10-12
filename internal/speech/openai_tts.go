@@ -74,12 +74,12 @@ var (
 	_ CacheIdentityProvider   = (*OpenAITTSProvider)(nil)
 )
 
-// CacheIdentity reports the endpoint, model and voice. BaseURL is included
-// because two different compatible servers serving the same model name can
-// produce different audio. APIKey is deliberately excluded: it does not affect
-// the audio, and this string is hashed into an on-disk file name.
+// CacheIdentity reports the endpoint, model, voice and rate. BaseURL is
+// included because two different compatible servers serving the same model
+// name can produce different audio. APIKey is deliberately excluded: it does
+// not affect the audio, and this string is hashed into an on-disk file name.
 func (p *OpenAITTSProvider) CacheIdentity() string {
-	return "openai|" + p.BaseURL + "|" + p.Model + "|" + p.Voice
+	return fmt.Sprintf("openai|%s|%s|%s|%g", p.BaseURL, p.Model, p.Voice, p.Speed)
 }
 
 // NewOpenAITTSProvider creates a provider with no defaults — every field is

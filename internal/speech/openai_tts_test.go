@@ -342,7 +342,7 @@ func TestOpenAITTS_SpeedOmittedWhenUnset(t *testing.T) {
 // CacheIdentity must distinguish configurations that change the audio, and
 // must not leak the API key (it is hashed into an on-disk file name).
 func TestOpenAITTS_CacheIdentity(t *testing.T) {
-	base := &OpenAITTSProvider{BaseURL: "https://api.openai.com/v1", Model: "m", Voice: "alloy", APIKey: "sk-secret"}
+	base := &OpenAITTSProvider{BaseURL: "https://api.openai.com/v1", Model: "m", Voice: "alloy", Speed: 1.0, APIKey: "sk-secret"}
 
 	otherVoice := *base
 	otherVoice.Voice = "verse"
@@ -352,6 +352,9 @@ func TestOpenAITTS_CacheIdentity(t *testing.T) {
 	otherHost.BaseURL = "https://other.example/v1"
 	otherKey := *base
 	otherKey.APIKey = "sk-different"
+	// Speed is sent in the request body, so it changes the audio.
+	otherSpeed := *base
+	otherSpeed.Speed = 1.5
 
 	if base.CacheIdentity() == otherVoice.CacheIdentity() {
 		t.Error("voice change must change the cache identity")
@@ -361,6 +364,9 @@ func TestOpenAITTS_CacheIdentity(t *testing.T) {
 	}
 	if base.CacheIdentity() == otherHost.CacheIdentity() {
 		t.Error("endpoint change must change the cache identity")
+	}
+	if base.CacheIdentity() == otherSpeed.CacheIdentity() {
+		t.Error("speed change must change the cache identity")
 	}
 	if base.CacheIdentity() != otherKey.CacheIdentity() {
 		t.Error("the API key does not affect the audio and must not change the identity")

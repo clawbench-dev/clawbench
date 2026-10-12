@@ -51,11 +51,12 @@ func TestCacheIdentity_ChangesWithAudioAffectingConfig(t *testing.T) {
 	})
 
 	t.Run("kokoro", func(t *testing.T) {
-		a := &KokoroProvider{ModelPath: "/m/k.onnx", Voice: "zf_001", Lang: "cmn", Speed: 1.0}
-		b := &KokoroProvider{ModelPath: "/m/k.onnx", Voice: "zm_010", Lang: "cmn", Speed: 1.0}
-		c := &KokoroProvider{ModelPath: "/m/k.onnx", Voice: "zf_001", Lang: "en-us", Speed: 1.0}
-		d := &KokoroProvider{ModelPath: "/m/k.onnx", Voice: "zf_001", Lang: "cmn", Speed: 1.5}
-		e := &KokoroProvider{ModelPath: "/m/other.onnx", Voice: "zf_001", Lang: "cmn", Speed: 1.0}
+		a := &KokoroProvider{ModelPath: "/m/k.onnx", VoicesPath: "/m/v.bin", Voice: "zf_001", Lang: "cmn", Speed: 1.0}
+		b := &KokoroProvider{ModelPath: "/m/k.onnx", VoicesPath: "/m/v.bin", Voice: "zm_010", Lang: "cmn", Speed: 1.0}
+		c := &KokoroProvider{ModelPath: "/m/k.onnx", VoicesPath: "/m/v.bin", Voice: "zf_001", Lang: "en-us", Speed: 1.0}
+		d := &KokoroProvider{ModelPath: "/m/k.onnx", VoicesPath: "/m/v.bin", Voice: "zf_001", Lang: "cmn", Speed: 1.5}
+		e := &KokoroProvider{ModelPath: "/m/other.onnx", VoicesPath: "/m/v.bin", Voice: "zf_001", Lang: "cmn", Speed: 1.0}
+		f := &KokoroProvider{ModelPath: "/m/k.onnx", VoicesPath: "/m/other.bin", Voice: "zf_001", Lang: "cmn", Speed: 1.0}
 
 		if a.CacheIdentity() == b.CacheIdentity() {
 			t.Error("voice change must change the identity")
@@ -68,6 +69,9 @@ func TestCacheIdentity_ChangesWithAudioAffectingConfig(t *testing.T) {
 		}
 		if a.CacheIdentity() == e.CacheIdentity() {
 			t.Error("model path change must change the identity")
+		}
+		if a.CacheIdentity() == f.CacheIdentity() {
+			t.Error("voices path change must change the identity")
 		}
 		if !strings.HasPrefix(a.CacheIdentity(), "kokoro|") {
 			t.Errorf("identity %q should be namespaced by engine", a.CacheIdentity())
