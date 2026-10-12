@@ -131,6 +131,33 @@ describe('project switch suppresses panel writes', () => {
     expect(restoreAt).toBeLessThan(applyAt)
   })
 
+  it('collapses the left column BEFORE the subtree rebuild, not after fade-in', () => {
+    // The reported bug: switching to a project whose column is remembered hidden
+    // showed the panel first, then hid it. The collapsed flag was only applied
+    // in Phase 6 (after `await restoreProjectWorkspace()`), but Phase 5 fades the
+    // new tree in long before that network round-trip finishes — so the old
+    // project's expanded state painted first.
+    //
+    // The flag is pure localStorage (no `currentFile` dependency, unlike the
+    // tab), so it must be resolved before the keyed rebuild.
+    const collapseAt = body.indexOf('setLeftCollapsed(loadProjectPanelCollapsed(resolvedProjectPath))')
+    const rebuildAt = body.indexOf('projectKey.value = newProjectPath')
+    expect(collapseAt, 'early collapsed application missing').toBeGreaterThan(-1)
+    expect(rebuildAt, 'subtree rebuild missing').toBeGreaterThan(-1)
+    expect(collapseAt).toBeLessThan(rebuildAt)
+  })
+
+  it('guards the early collapsed application against a concurrent switch', () => {
+    // Same re-entrancy reason as Phase 6: a newer switch may already own the
+    // store, and writing THIS project's flag then would show the wrong collapse.
+    // The call sits inside the guarded `if`, so take the condition line too.
+    const at = body.indexOf('setLeftCollapsed(loadProjectPanelCollapsed(resolvedProjectPath))')
+    const condAt = body.lastIndexOf('if (', at)
+    const guarded = body.slice(condAt, body.indexOf('\n', at))
+    expect(guarded).toContain('store.state.projectRoot === resolvedProjectPath')
+    expect(guarded).toContain('isWideScreen.value')
+  })
+
   it('stands down when a newer switch already landed on another project', () => {
     // Two switches can overlap (callers are not serialized). If a newer one
     // finished first, applying this older switch's panel would drag the user to

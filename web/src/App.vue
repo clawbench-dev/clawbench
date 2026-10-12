@@ -831,6 +831,19 @@ async function hotSwitchProject(newProjectPath: string, pendingSessionId?: strin
   browseFileSession.value = false
   activeTab.value = 'chat'
 
+  // Apply the target project's collapsed flag BEFORE the keyed rebuild. Unlike
+  // the tab, this is a pure localStorage read with no `currentFile` dependency,
+  // so it does not need the workspace restore — and waiting for Phase 6 would
+  // paint the OLD project's expanded column first: Phase 5 fades the new tree in
+  // long before `restoreProjectWorkspace()`'s network round-trip completes, so a
+  // project remembered as hidden flickered visible-then-hidden.
+  //
+  // Guarded like Phase 6: a newer switch may already own the store, and writing
+  // this project's flag then would collapse the wrong project's column.
+  if (isWideScreen.value && store.state.projectRoot === resolvedProjectPath) {
+    setLeftCollapsed(loadProjectPanelCollapsed(resolvedProjectPath))
+  }
+
   // ── Phase 4: Change key → Vue destroys old component tree & builds new one ──
   projectKey.value = newProjectPath
 
