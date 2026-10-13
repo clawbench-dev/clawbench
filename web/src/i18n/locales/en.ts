@@ -1292,6 +1292,11 @@ export default {
       // Must match the backend's EventContextSeparator so the preview reads
       // exactly like the prompt the AI receives.
       eventContextSeparator: ': ',
+      // Yes/no values the BACKEND injects for the flag variables (its
+      // EventContextYes/No). The overview card resolves these so the sample
+      // matches the prompt in the active language.
+      eventContextYes: 'yes',
+      eventContextNo: 'no',
       varEventType: 'Event type',
       varRepo: 'Repository',
       varItem: 'Item',

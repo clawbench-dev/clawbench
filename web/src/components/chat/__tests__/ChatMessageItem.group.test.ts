@@ -50,7 +50,7 @@ import ChatMessageItem from '@/components/chat/ChatMessageItem.vue'
 const i18n = createI18n({
   legacy: false,
   locale: 'en',
-  messages: { en: { chat: { message: {}, contentBlocks: { cancelled: 'cancelled' }, fileChanges: { title: 'Files' }, pending: {}, speech: {}, busy: {} }, group: { host: 'Host', realAgent: 'Agent', you: 'you', bcc: { title: 'Private note', to: 'To', toYou: 'Private note to you' } }, session: { configAgent: 'Agent settings' }, common: {} } },
+  messages: { en: { chat: { message: {}, contentBlocks: { cancelled: 'cancelled' }, fileChanges: { title: 'Files' }, pending: {}, speech: {}, busy: {} }, group: { host: 'Host', realAgent: 'Agent', you: 'you', bcc: { title: 'Private note', to: 'To', toYou: 'Private note to you' } }, session: { configAgent: 'Agent settings' }, common: { listSeparator: ', ' } } },
 })
 
 function mountItem(msg: Record<string, unknown>, props: Record<string, unknown> = {}) {
@@ -405,7 +405,8 @@ describe('ChatMessageItem group bcc card', () => {
     const body = w.find('.msg-bcc-body')
     expect((body.element as HTMLElement).style.display).not.toBe('none')
     expect(body.text()).toContain('机密内容')
-    expect(body.text()).toContain('A、B')
+    // The separator is localized (common.listSeparator), not a hardcoded '、'.
+    expect(body.text()).toContain('A, B')
   })
 
   it('renders no card when the host has no private note', () => {

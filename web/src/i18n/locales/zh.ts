@@ -1295,6 +1295,10 @@ export default {
       // 变量标签与取值之间的分隔符，须与后端 EventContextSeparator 一致，
       // 预览才能与 AI 实际收到的提示词逐字相同。
       eventContextSeparator: '：',
+      // 后端为开关类变量注入的是/否取值（其 EventContextYes/No）。总览卡解析同一
+      // 组键，使示例值与提示词在当前语言下一致。
+      eventContextYes: '是',
+      eventContextNo: '否',
       varEventType: '事件类型',
       varRepo: '仓库',
       varItem: '条目',

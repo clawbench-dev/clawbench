@@ -722,13 +722,18 @@ type pendingBcc struct {
 	Content string
 }
 
-// memberSpecialtySuffix renders "（specialty）" or "" — omitted entirely when the
-// agent has no specialty, so a description-less member does not read "Name（）".
+// memberSpecialtySuffix renders a parenthesized specialty or "" — omitted
+// entirely when the agent has no specialty, so a description-less member does
+// not read "Name（）".
+//
+// The wrapping parentheses are localized: they end up in the group timeline
+// system row, which is user-visible text.
 func memberSpecialtySuffix(agentID string) string {
-	if s := GetAgentSpecialty(agentID); s != "" {
-		return "（" + s + "）"
+	s := GetAgentSpecialty(agentID)
+	if s == "" {
+		return ""
 	}
-	return ""
+	return i18n.T(i18n.LocalizerForLocale(model.Language), "GroupSpecialtySuffix", map[string]any{"Specialty": s})
 }
 
 // ensureGroupMemberSlot returns ErrGroupMemberLimit when the group is already at

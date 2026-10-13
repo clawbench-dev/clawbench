@@ -559,7 +559,10 @@ func (m *Manager) handleSessionList(ctx context.Context, openID string) {
 	}
 
 	var sb strings.Builder
-	sb.WriteString(common.T("PushSessionListIntro") + "\n\n")
+	// Feishu keeps the bold span on the ID alone (DingTalk bolds the whole
+	// placeholder); the wording is otherwise identical. Restored per-platform so
+	// this refactor does not change the rendered card.
+	sb.WriteString(common.T("PushSessionListIntroFeishu") + "\n\n")
 
 	// Group sessions by project path
 	type group struct {

@@ -179,6 +179,7 @@ PushSelectSessionTitle: 请选择会话
 PushSubscribedTitle: 已订阅
 PushSessionListTitle: 会话列表
 PushSessionListIntro: 发送 **@会话ID <消息>** 向会话发送消息：
+PushSessionListIntroFeishu: 发送 **@会话ID** <消息> 向会话发送消息：
 PushNoProject: （无项目）
 PushNoTitle: （无标题）
 PushSessionLabelPrefix: '会话 '
@@ -223,6 +224,7 @@ GroupMemberLeft: '{{.Name}} 已离场'
 GroupMemberUnknown: 成员
 GroupUnknownMention: '{{.Speaker}} @ 了一个不存在的成员：{{.Names}}（已忽略）'
 GroupMemberListSeparator: 、
+GroupSpecialtySuffix: '（{{.Specialty}}）'
 GroupHostTitle: '{{.Name}} 的群聊'
 GroupFreeTitle: 群聊
 # Forge 事件上下文块。后端渲染的标签与任务表单预览

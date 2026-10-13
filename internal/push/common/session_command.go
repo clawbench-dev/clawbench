@@ -132,7 +132,11 @@ func ResolveTarget(messenger SessionMessenger, route Route, stickySessionID stri
 	}
 	info, err := messenger.GetSessionInfo(stickySessionID)
 	if err != nil {
-		return "", "", errors.New(T("PushRecentSessionUnavailable", map[string]any{"Error": err.Error()}))
+		// Keep the underlying error reachable via errors.Is/As: the localized
+		// message is what the user sees, but callers may still want to match the
+		// cause. Wrapping with %w (not errors.New) preserves that.
+		return "", "", fmt.Errorf("%s: %w",
+			T("PushRecentSessionUnavailable", map[string]any{"Error": err.Error()}), err)
 	}
 	return info.ID, info.Title, nil
 }

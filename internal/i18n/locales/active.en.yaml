@@ -180,6 +180,7 @@ PushSelectSessionTitle: Select a session
 PushSubscribedTitle: Subscribed
 PushSessionListTitle: Session list
 PushSessionListIntro: 'Send **@sessionID <message>** to send a message to a session:'
+PushSessionListIntroFeishu: 'Send **@sessionID** <message> to send a message to a session:'
 PushNoProject: (no project)
 PushNoTitle: (untitled)
 PushSessionLabelPrefix: 'Session '
@@ -226,6 +227,7 @@ GroupMemberLeft: '{{.Name}} left'
 GroupMemberUnknown: Member
 GroupUnknownMention: '{{.Speaker}} @-mentioned a member who does not exist: {{.Names}} (ignored)'
 GroupMemberListSeparator: ', '
+GroupSpecialtySuffix: ' ({{.Specialty}})'
 GroupHostTitle: "{{.Name}}'s group chat"
 GroupFreeTitle: Group chat
 # Forge event-context block. The backend renders the SAME labels the task form

@@ -22,6 +22,11 @@ import (
 // labels are now keyed on both sides; this guards the keys AND the resolved
 // text so they cannot drift apart again.
 func TestEventContextLabelsMatchFrontendRegistry(t *testing.T) {
+	// Restore via Cleanup, not a trailing assignment: a require/assert failure
+	// mid-loop would otherwise return early and leak the last locale into every
+	// subsequent test in the package.
+	t.Cleanup(func() { model.Language = model.DefaultLanguage })
+
 	beKeys := make([]string, 0, len(eventContextVars))
 	for _, v := range eventContextVars {
 		beKeys = append(beKeys, v.labelKey)
@@ -64,8 +69,19 @@ func TestEventContextLabelsMatchFrontendRegistry(t *testing.T) {
 		feHeader := parseFrontendScalar(t, loc.path, "eventContextHeader")
 		assert.Equal(t, feHeader, eventContextText("EventContextHeader"),
 			"%s: block header disagrees between backend and frontend", loc.code)
+		// The yes/no flag values are injected by the backend and previewed by
+		// the card's sample rows. A mismatch here is the same class of defect
+		// the labels guard against: the preview would show the other language.
+		for _, pair := range []struct{ key, backendKey string }{
+			{"eventContextYes", "EventContextYes"},
+			{"eventContextNo", "EventContextNo"},
+		} {
+			feVal := parseFrontendScalar(t, loc.path, pair.key)
+			require.NotEmpty(t, feVal, "%s: frontend locale missing %s", loc.code, pair.key)
+			assert.Equal(t, feVal, eventContextText(pair.backendKey),
+				"%s: %s disagrees between backend and frontend", loc.code, pair.backendKey)
+		}
 	}
-	model.Language = model.DefaultLanguage
 }
 
 // readFrontendRegistry reads web/src/utils/forgeEventContextVars.ts.

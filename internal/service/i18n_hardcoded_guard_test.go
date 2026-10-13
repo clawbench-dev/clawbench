@@ -11,19 +11,33 @@ import (
 
 // This file is the "no new hardcoded user-visible CJK" guard.
 //
-// Background: a scan found user-visible strings written as Chinese literals in
-// both the frontend and the Go backend — the IM push bodies, group system rows,
-// forge event-context labels, PDF/voice/split UI strings. They were all keyed
-// into i18n (active.{en,zh}.yaml / web locales). This guard stops the list from
-// growing again: it scans the source for CJK outside the locale tables and
-// fails on any occurrence that is not in the explicit allowlist below.
+// Background: an audit found user-visible strings written as Chinese literals
+// in the frontend, the Go backend, the desktop main process and the IM push
+// backends. They were all keyed into i18n (active.{en,zh}.yaml / web locales).
+// These guards stop the list from growing: they scan the source for CJK outside
+// the locale tables and fail on anything not in an explicit allowlist.
 //
-// The allowlist is deliberately a list of FILE + REASON pairs, not a blanket
-// path ignore, so adding a legitimate Chinese string is a conscious act with a
-// justification rather than a silent path exclusion.
+// The allowlist is a list of FILE + REASON pairs, not a blanket path ignore, so
+// adding a legitimate Chinese string is a conscious act with a justification.
+//
+// Scanner scope (deliberately wide, see the tests below for the guarantees):
+//   - Go:   internal/**/*.go   (comments and raw strings stripped)
+//   - Web:  web/src/**/*.{ts,js,vue} + web/index.html + web/share.html
+//   - Android: android/**/*.java (values/ must be English; values-zh/ is the
+//     Chinese mirror and is excluded)
+//
+// The desktop main process has its own guard (desktop/src/main/i18nGuard.test.ts).
 
-// cjkRe matches a Han character.
-var cjkRe = regexp.MustCompile(`[\x{4e00}-\x{9fff}]`)
+// cjkRe matches Han characters plus CJK punctuation and fullwidth forms.
+//
+// Han alone is not enough: a user-visible string can be punctuation-only (e.g.
+// the "（specialty）" wrapper in group_store.go), and a Han-only regex let that
+// through. The ranges are:
+//   - \x{4e00}-\x{9fff}  CJK Unified Ideographs
+//   - \x{3000}-\x{303f}  CJK punctuation (、。「」…)
+//   - \x{ff00}-\x{ffef}  Fullwidth forms (（）：，)
+//   - \x{fe30}-\x{fe4f}  CJK compatibility forms
+var cjkRe = regexp.MustCompile(`[\x{4e00}-\x{9fff}\x{3000}-\x{303f}\x{ff00}-\x{ffef}\x{fe30}-\x{fe4f}]`)
 
 // allowedCJKFiles maps a repo-relative path to the reason its CJK is legitimate
 // (an AI prompt, a parser regex, a font probe — never a string shown to a human
@@ -41,25 +55,32 @@ var allowedCJKFiles = map[string]string{
 	// output; the literals are matched, not displayed.
 	"internal/askquestion/markdown.go":           "ordered-list marker regex (CJK numerals)",
 	"internal/ai/backends/deepseek/discovery.go": "model-list output parser (（默认：/ 的模型)",
-	// Backend registry metadata: the Specialty/Name fields ship from each
-	// backend's registration and are surfaced in the agent picker. They are
-	// product-provided agent descriptions, not UI chrome, and are intentionally
-	// left in the language of the vendor that owns them.
-	"internal/ai/backends/antigravity/register.go": "backend Specialty metadata",
-	"internal/ai/backends/claude/cli.go":           "backend Specialty metadata",
-	"internal/ai/backends/codebuddy/cli.go":        "backend Specialty metadata",
-	"internal/ai/backends/codex/custom.go":         "backend Specialty metadata",
-	"internal/ai/backends/copilot/cli.go":          "backend Specialty metadata",
-	"internal/ai/backends/deepseek/cli.go":         "backend Specialty metadata",
-	"internal/ai/backends/dsh/register.go":         "backend Specialty metadata",
-	"internal/ai/backends/grok/register.go":        "backend Specialty metadata",
-	"internal/ai/backends/kimi/cli.go":             "backend Specialty metadata",
-	"internal/ai/backends/mimo/cli.go":             "backend Specialty metadata",
-	"internal/ai/backends/opencode/cli.go":         "backend Specialty metadata",
-	"internal/ai/backends/pi/cli.go":               "backend Specialty metadata",
-	"internal/ai/backends/qoder/cli.go":            "backend Specialty metadata",
-	"internal/ai/backends/vecli/custom.go":         "backend Specialty metadata",
-	"internal/ai/backends/zcode/register.go":       "backend Specialty metadata",
+	"internal/rag/chunker.go":                    "sentence-boundary detector (。！？) for chunking",
+	// Backend registry metadata — KNOWN GAP, not "not user-visible".
+	//
+	// `Specialty` IS shown to users (the onboarding agent picker reads it live
+	// from the registry via /api/backends; the settings agent list reads a
+	// one-time snapshot seeded into the user-editable agents.specialty column).
+	// It is allowlisted rather than localized because a correct fix needs a
+	// product decision: localize the registry (fixes the picker, but existing
+	// installs keep their seeded snapshot) vs. re-seed per locale (would clobber
+	// user edits). Tracked as a follow-up; listed here so the guard does not
+	// silently hide it behind a false "not user-visible" claim.
+	"internal/ai/backends/antigravity/register.go": "Specialty metadata (user-visible; localization pending a product decision)",
+	"internal/ai/backends/claude/cli.go":           "Specialty metadata (user-visible; localization pending a product decision)",
+	"internal/ai/backends/codebuddy/cli.go":        "Specialty metadata (user-visible; localization pending a product decision)",
+	"internal/ai/backends/codex/custom.go":         "Specialty metadata (user-visible; localization pending a product decision)",
+	"internal/ai/backends/copilot/cli.go":          "Specialty metadata (user-visible; localization pending a product decision)",
+	"internal/ai/backends/deepseek/cli.go":         "Specialty metadata (user-visible; localization pending a product decision)",
+	"internal/ai/backends/dsh/register.go":         "Specialty metadata (user-visible; localization pending a product decision)",
+	"internal/ai/backends/grok/register.go":        "Specialty metadata (user-visible; localization pending a product decision)",
+	"internal/ai/backends/kimi/cli.go":             "Specialty metadata (user-visible; localization pending a product decision)",
+	"internal/ai/backends/mimo/cli.go":             "Specialty metadata (user-visible; localization pending a product decision)",
+	"internal/ai/backends/opencode/cli.go":         "Specialty metadata (user-visible; localization pending a product decision)",
+	"internal/ai/backends/pi/cli.go":               "Specialty metadata (user-visible; localization pending a product decision)",
+	"internal/ai/backends/qoder/cli.go":            "Specialty metadata (user-visible; localization pending a product decision)",
+	"internal/ai/backends/vecli/custom.go":         "Specialty metadata (user-visible; localization pending a product decision)",
+	"internal/ai/backends/zcode/register.go":       "Specialty metadata (user-visible; localization pending a product decision)",
 }
 
 // repoRoot walks up until it finds go.mod.
@@ -80,10 +101,13 @@ func repoRoot(t *testing.T) string {
 }
 
 // stripGoComments removes // and /* */ comments and the body of raw string
-// literals, so only real code (including ordinary string literals) remains.
+// literals, leaving ordinary ("…") string literals — where a user-visible Go
+// string lives.
 //
-// Raw strings are stripped because they hold SQL DDL whose `--` comments carry
-// Chinese prose; that text is never rendered.
+// Raw strings are stripped because in Go they hold SQL DDL and long prompts
+// whose `--`/prose carries Chinese; that text is never rendered. (Go raw
+// strings are NOT template literals — the JS scanner below keeps backtick
+// bodies precisely because in JS they are.)
 func stripGoComments(src string) string {
 	var out strings.Builder
 	i, n := 0, len(src)
@@ -137,8 +161,57 @@ func stripGoComments(src string) string {
 	return out.String()
 }
 
+// stripJSComments removes // and /* */ comments but KEEPS string literals,
+// including backtick template literals — in JS/TS a backtick body is where
+// user-visible text most often lives, so it must be scanned.
+func stripJSComments(src string) string {
+	var out strings.Builder
+	i, n := 0, len(src)
+	for i < n {
+		c := src[i]
+		var next byte
+		if i+1 < n {
+			next = src[i+1]
+		}
+		switch {
+		case c == '/' && next == '/':
+			for i < n && src[i] != '\n' {
+				i++
+			}
+		case c == '/' && next == '*':
+			i += 2
+			for i+1 < n && (src[i] != '*' || src[i+1] != '/') {
+				i++
+			}
+			i += 2
+		case c == '"' || c == '\'' || c == '`':
+			quote := c
+			out.WriteByte(c)
+			i++
+			for i < n {
+				out.WriteByte(src[i])
+				if src[i] == '\\' && i+1 < n {
+					i++
+					out.WriteByte(src[i])
+					i++
+					continue
+				}
+				if src[i] == quote {
+					i++
+					break
+				}
+				i++
+			}
+		default:
+			out.WriteByte(c)
+			i++
+		}
+	}
+	return out.String()
+}
+
 // TestNoNewHardcodedUserVisibleCJK fails on any CJK in Go source outside the
-// allowlist and the locale tables. See the file header for the rationale.
+// allowlist and the locale tables.
 func TestNoNewHardcodedUserVisibleCJK(t *testing.T) {
 	root := repoRoot(t)
 	var offenders []string
@@ -177,9 +250,8 @@ func TestNoNewHardcodedUserVisibleCJK(t *testing.T) {
 	}
 }
 
-// TestNoNewHardcodedUserVisibleCJKFrontend does the same for web/src, excluding
-// the locale tables and tests. Only .ts/.js/.vue script+template bodies are
-// scanned; SFC <style> blocks and comments are ignored.
+// TestNoNewHardcodedUserVisibleCJKFrontend scans web/src plus the top-level HTML
+// entry points, excluding the locale tables and tests.
 func TestNoNewHardcodedUserVisibleCJKFrontend(t *testing.T) {
 	root := repoRoot(t)
 	srcRoot := filepath.Join(root, "web", "src")
@@ -189,14 +261,11 @@ func TestNoNewHardcodedUserVisibleCJKFrontend(t *testing.T) {
 
 	// Frontend files whose CJK is legitimate. Each entry states why.
 	allow := map[string]string{
-		// The backend AI prompts/registry already carry Chinese; these are the
-		// frontend mirrors of parser regexes and probes.
-		"utils/askQuestion.ts":  "ordered-list marker regex (mirrors internal/askquestion)",
-		"utils/groupRouting.ts": "mention-tag parser (mirrors internal/grouprouting)",
-		"utils/fontConfig.ts":   "CJK font-availability probe text",
-		// The event-context sample values mirror the backend's literal 是/否
-		// rendering (see the file's own comment); they are data, not chrome.
-		"utils/forgeEventContextVars.ts": "sample values mirroring backend 是/否",
+		// Frontend mirrors of backend parser regexes / probes.
+		"utils/askQuestion.ts":      "ordered-list marker regex (mirrors internal/askquestion)",
+		"utils/groupRouting.ts":     "mention-tag parser (mirrors internal/grouprouting)",
+		"utils/fontConfig.ts":       "CJK font-availability probe text",
+		"utils/doubleClickUtils.ts": "leading-marker stripper regex (CJK numerals/punctuation)",
 		// Pre-existing ad-hoc bilingual strings: each already branches on the
 		// locale (zh ? '…' : '…'), so neither language is stuck with the other's
 		// text. Not the "Chinese-only, no English path" defect this guard
@@ -215,7 +284,8 @@ func TestNoNewHardcodedUserVisibleCJKFrontend(t *testing.T) {
 		if info.IsDir() {
 			return nil
 		}
-		if strings.Contains(path, "__tests__") || strings.Contains(path, string(filepath.Separator)+"i18n"+string(filepath.Separator)+"locales") {
+		if strings.Contains(path, "__tests__") ||
+			strings.Contains(path, string(filepath.Separator)+"i18n"+string(filepath.Separator)+"locales") {
 			return nil
 		}
 		ext := filepath.Ext(path)
@@ -234,16 +304,25 @@ func TestNoNewHardcodedUserVisibleCJKFrontend(t *testing.T) {
 		if err != nil {
 			return nil //nolint:nilerr // unreadable file is skipped, not a scan failure
 		}
-		body := string(b)
-		if ext == ".vue" {
-			body = vueTemplateAndScript(body)
-		}
-		body = stripGoComments(body) // same comment/string scanner works for JS-ish text
-		if cjkRe.MatchString(body) {
+		if cjkRe.MatchString(scanFrontendSource(ext, string(b))) {
 			offenders = append(offenders, rel)
 		}
 		return nil
 	})
+
+	// Top-level HTML entry points (SEO/share-preview text lives here).
+	for _, rel := range []string{"web/index.html", "web/share.html"} {
+		b, err := os.ReadFile(filepath.Join(root, rel))
+		if err != nil {
+			continue
+		}
+		// HTML comments are not rendered; the <style> block may hold font names.
+		body := regexp.MustCompile(`(?s)<!--.*?-->`).ReplaceAllString(string(b), "")
+		body = regexp.MustCompile(`(?s)<style[^>]*>.*?</style>`).ReplaceAllString(body, "")
+		if cjkRe.MatchString(body) {
+			offenders = append(offenders, rel)
+		}
+	}
 
 	sort.Strings(offenders)
 	if len(offenders) > 0 {
@@ -254,17 +333,120 @@ func TestNoNewHardcodedUserVisibleCJKFrontend(t *testing.T) {
 	}
 }
 
-// vueTemplateAndScript returns an SFC's <template> and <script> bodies, dropping
-// <style> (which may hold font names with CJK) and the SFC's own comments.
-func vueTemplateAndScript(src string) string {
-	var out strings.Builder
-	for _, tag := range []string{"template", "script"} {
-		re := regexp.MustCompile(`(?s)<` + tag + `[^>]*>(.*?)</` + tag + `>`)
-		for _, m := range re.FindAllStringSubmatch(src, -1) {
-			out.WriteString(m[1])
-			out.WriteString("\n")
+// scanFrontendSource returns the scannable body of a frontend file.
+//
+// A .vue file is scanned in full EXCEPT its <style> blocks. Extracting only the
+// `<template>`/`<script>` blocks with a non-greedy regex silently truncated the
+// scan at the first nested `<template #slot>` — 18+ files (some 85% of their
+// body) were never checked. Whole-file-minus-style avoids that class entirely.
+func scanFrontendSource(ext, src string) string {
+	if ext == ".vue" {
+		src = regexp.MustCompile(`(?s)<style[^>]*>.*?</style>`).ReplaceAllString(src, "")
+		src = regexp.MustCompile(`(?s)<!--.*?-->`).ReplaceAllString(src, "")
+	}
+	return stripJSComments(src)
+}
+
+// TestNoNewHardcodedUserVisibleCJKAndroid scans Android Java for hardcoded CJK.
+//
+// Android native strings live in res/values (English) and res/values-zh
+// (Chinese mirror); a Java literal is a string that bypassed the resource
+// system and will not follow the locale. values-zh is excluded (its CJK is the
+// point), values/ is NOT (an English resource file must not contain CJK).
+func TestNoNewHardcodedUserVisibleCJKAndroid(t *testing.T) {
+	root := repoRoot(t)
+	androidRoot := filepath.Join(root, "android")
+	if _, err := os.Stat(androidRoot); err != nil {
+		t.Skip("android/ not present")
+	}
+
+	var offenders []string
+	_ = filepath.Walk(androidRoot, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		// Exclude the Chinese resource mirror and test sources.
+		if strings.Contains(path, "values-zh") || strings.Contains(path, string(filepath.Separator)+"test"+string(filepath.Separator)) {
+			return nil
+		}
+		if !strings.HasSuffix(path, ".java") {
+			return nil
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return nil //nolint:nilerr // unreadable file is skipped, not a scan failure
+		}
+		// Java: strip comments, keep string literals.
+		if cjkRe.MatchString(stripJavaComments(string(b))) {
+			rel, _ := filepath.Rel(root, path)
+			offenders = append(offenders, filepath.ToSlash(rel))
+		}
+		return nil
+	})
+
+	sort.Strings(offenders)
+	if len(offenders) > 0 {
+		t.Errorf("CJK found in Android Java outside res/values-zh:\n  %s\n\n"+
+			"Move native strings into res/values/strings.xml (English) + res/values-zh/strings.xml.",
+			strings.Join(offenders, "\n  "))
+	}
+}
+
+// stripJavaComments removes // and /* */ comments, keeping string literals.
+func stripJavaComments(src string) string {
+	// Java has no backtick strings; reuse the JS scanner (same comment syntax).
+	return stripJSComments(src)
+}
+
+// TestCJKScannerCatchesKnownShapes is the scanner's own regression test: it
+// feeds the exact shapes the first version missed and asserts they are caught.
+// Without this, a future edit to the scanner could silently narrow it and every
+// other test would still pass.
+func TestCJKScannerCatchesKnownShapes(t *testing.T) {
+	han := "加载中"
+	fullwidth := "（产品经理）：、"
+
+	// JS: backtick template literals must be scanned (the first version
+	// stripped them, treating a backtick as a Go raw string).
+	jsCases := []struct{ name, src string }{
+		{"js single", `const s = '` + han + `'`},
+		{"js double", `const s = "` + han + `"`},
+		{"js backtick", "const s = `" + han + "`"},
+		{"js backtick expr", "const s = `共 " + han + " ${n} 项`"},
+		{"js fullwidth", `const s = '` + fullwidth + `'`},
+		{"js template-literal comment-like", "const s = `a // " + han + "`"},
+	}
+	for _, tc := range jsCases {
+		if !cjkRe.MatchString(stripJSComments(tc.src)) {
+			t.Errorf("JS scanner missed %s: %q -> %q", tc.name, tc.src, stripJSComments(tc.src))
 		}
 	}
-	// Strip HTML comments.
-	return regexp.MustCompile(`(?s)<!--.*?-->`).ReplaceAllString(out.String(), "")
+
+	// Go: ordinary string literals must be scanned; raw strings (SQL/prompts)
+	// must NOT (their Chinese prose is not rendered).
+	goCases := []struct{ name, src string }{
+		{"go string", `s := "` + han + `"`},
+		{"go fullwidth", `s := "` + fullwidth + `"`},
+	}
+	for _, tc := range goCases {
+		if !cjkRe.MatchString(stripGoComments(tc.src)) {
+			t.Errorf("Go scanner missed %s: %q", tc.name, tc.src)
+		}
+	}
+	if cjkRe.MatchString(stripGoComments("s := `" + han + "`")) {
+		t.Error("Go scanner must skip raw-string bodies (SQL/prompt prose)")
+	}
+
+	// .vue: a nested <template #slot> must not truncate the scan.
+	vue := "<template>\n  <template #header>ok</template>\n  <p>" + han + "</p>\n</template>\n<style>.x{}</style>"
+	if !cjkRe.MatchString(scanFrontendSource(".vue", vue)) {
+		t.Error("Vue scanner truncated at a nested <template> and missed a later literal")
+	}
+	// <style> is excluded (font names may be Chinese).
+	if cjkRe.MatchString(scanFrontendSource(".vue", "<template>ok</template><style>.x{content:'"+han+"'}</style>")) {
+		t.Error("Vue scanner must exclude <style> content")
+	}
 }

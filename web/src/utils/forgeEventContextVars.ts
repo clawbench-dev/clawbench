@@ -45,8 +45,19 @@ export interface EventContextVar {
      * arrive (and would render as "pipeline #0").
      */
     requiresItem?: boolean
-    /** Sample value for the overview card. Absent for a yes/no flag. */
+    /**
+     * Sample value for the overview card. Literal — use `sampleKey` when the
+     * value is itself localized.
+     */
     sample?: string
+    /**
+     * i18n key for a sample whose value the BACKEND localizes. The yes/no flags
+     * render `EventContextYes`/`EventContextNo` in the injected prompt, so the
+     * preview must resolve the same key rather than hardcode '是'/'否' — an
+     * English user would otherwise see Chinese in the card and English in the
+     * prompt. Takes precedence over `sample`.
+     */
+    sampleKey?: string
 }
 
 /**
@@ -91,7 +102,13 @@ export const EVENT_CONTEXT_VARS: EventContextVar[] = [
         requiresItem: true,
         sample: 'alice, bob',
     },
-    { labelKey: 'task.form.varDraft', placeholder: 'DRAFT', scope: 'all', requiresItem: true, sample: '是' },
+    {
+        labelKey: 'task.form.varDraft',
+        placeholder: 'DRAFT',
+        scope: 'all',
+        requiresItem: true,
+        sampleKey: 'task.form.eventContextYes',
+    },
     {
         labelKey: 'task.form.varSourceBranch',
         placeholder: 'SOURCE_BRANCH',
@@ -174,9 +191,10 @@ export const EVENT_CONTEXT_VARS: EventContextVar[] = [
         labelKey: 'task.form.varActorIsSelf',
         placeholder: 'ACTOR_IS_SELF',
         scope: 'pipeline',
-        // The value is the backend's literal rendering (是 / 否), not a
-        // translated string: the sample mirrors exactly what will be injected.
-        sample: '否',
+        // The backend renders EventContextYes/No, which are localized — so the
+        // sample must resolve the same key (a hardcoded '否' would show Chinese
+        // in an English UI while the injected prompt says "no").
+        sampleKey: 'task.form.eventContextNo',
     },
 ]
 
@@ -254,7 +272,11 @@ export function eventContextSampleRows(
     return visibleEventContextVars(ctx).map(v => ({
         label: i18n.global.t(v.labelKey),
         placeholder: v.placeholder,
-        value: overrides[v.placeholder] ?? v.sample ?? '',
+        // sampleKey wins: it is the backend's localized rendering. Resolved at
+        // call time so a locale switch updates the card.
+        value: overrides[v.placeholder]
+            ?? (v.sampleKey ? i18n.global.t(v.sampleKey) : v.sample)
+            ?? '',
     }))
 }
 

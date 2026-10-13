@@ -46,7 +46,7 @@
          just typed, so a second "@ B" line would only duplicate them. -->
     <div v-if="msg.role === 'assistant' && mentionTargets.length > 0" class="msg-mention-summary">
       <span class="msg-mention-summary-at">@</span>
-      <span class="msg-mention-summary-names">{{ mentionTargets.map((s) => s.name).join('、') }}</span>
+      <span class="msg-mention-summary-names">{{ mentionTargets.map((s) => s.name).join(t('common.listSeparator')) }}</span>
     </div>
 
     <!-- Message card (bubble). The meta bar deliberately lives OUTSIDE this
@@ -151,7 +151,7 @@
         </button>
         <div v-show="bccExpanded" class="msg-bcc-body">
           <div v-for="(e, i) in bccToMembers" :key="i" class="msg-bcc-entry">
-            <div class="msg-bcc-entry-targets">{{ t('group.bcc.to') }}: {{ e.targetLabels.join('、') }}</div>
+            <div class="msg-bcc-entry-targets">{{ t('group.bcc.to') }}: {{ e.targetLabels.join(t('common.listSeparator')) }}</div>
             <div class="msg-bcc-entry-content" v-html="e.html"></div>
           </div>
         </div>
