@@ -11,6 +11,7 @@ import (
 	_ "clawbench/internal/ai/backends/deepseek"
 	_ "clawbench/internal/ai/backends/dsh"
 	_ "clawbench/internal/ai/backends/grok"
+	_ "clawbench/internal/ai/backends/hermes"
 	_ "clawbench/internal/ai/backends/kimi"
 	_ "clawbench/internal/ai/backends/mimo"
 	_ "clawbench/internal/ai/backends/opencode"
@@ -27,7 +28,7 @@ import (
 // --- Test 1: BackendRegistry ---
 
 func TestBackendRegistry_ContainsAllBackends(t *testing.T) {
-	expectedIDs := []string{"claude", "codebuddy", "opencode", "codex", "qoder", "vecli", "deepseek", "pi", "kimi", "copilot", "mimo", "grok", "antigravity", "zcode", "dsh"}
+	expectedIDs := []string{"claude", "codebuddy", "opencode", "codex", "qoder", "vecli", "deepseek", "pi", "kimi", "copilot", "mimo", "grok", "antigravity", "zcode", "dsh", "hermes"}
 	assert.Len(t, model.GetBackendRegistry(), len(expectedIDs))
 
 	seen := make(map[string]bool)

@@ -11,6 +11,7 @@ func init() {
 	// importing the backends package (avoiding import cycles).
 	ai.LookupACPRemapsFn = LookupACPRemaps
 	ai.LookupACPToolCallIDPrefixesFn = LookupACPToolCallIDPrefixes
+	ai.LookupACPTitlePrefixesFn = LookupACPTitlePrefixes
 
 	// Wire up the mid-turn injection policy lookup so core flow can ask a
 	// backend whether a mid-turn message can join the running turn (e.g.

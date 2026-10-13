@@ -563,6 +563,63 @@ func TestExtractToolName_LowerAliasList(t *testing.T) {
 	assert.Equal(t, "LS", extractToolName("list", acp.ToolKindOther, ""))
 }
 
+// --- backend title-prefix lookup (Hermes-style "<tool_name>: <preview>" titles) ---
+
+// withTitlePrefixes installs a backend title-prefix map for the duration of a
+// test, restoring the previous wiring afterwards. The lookup runs through the
+// same function variable the backends package sets, so this exercises the real
+// code path rather than calling lookupByTitlePrefix in isolation.
+func withTitlePrefixes(t *testing.T, prefixes map[string]string) {
+	t.Helper()
+	prev := LookupACPTitlePrefixesFn
+	LookupACPTitlePrefixesFn = func(id string) map[string]string {
+		if id == "probe" {
+			return prefixes
+		}
+		return nil
+	}
+	t.Cleanup(func() { LookupACPTitlePrefixesFn = prev })
+}
+
+func TestExtractToolName_TitlePrefixMatch(t *testing.T) {
+	withTitlePrefixes(t, map[string]string{
+		"delegate_task": "Agent",
+		"todo_list":     "TodoWrite",
+	})
+	// kind=execute would otherwise collapse to Bash; the title prefix wins.
+	assert.Equal(t, "Agent", extractToolName("delegate_task: x", acp.ToolKindExecute, "probe"))
+	// kind=other would otherwise leak the raw native name.
+	assert.Equal(t, "TodoWrite", extractToolName("todo_list: planning 1 task(s)", acp.ToolKindOther, "probe"))
+}
+
+func TestExtractToolName_TitlePrefixRequiresColonBoundary(t *testing.T) {
+	withTitlePrefixes(t, map[string]string{"todo_list": "TodoWrite"})
+	// A longer native name that merely shares the prefix characters must not match.
+	assert.Equal(t, "todo_lists: x", extractToolName("todo_lists: x", acp.ToolKindOther, "probe"))
+	// The bare name (no preview) still matches.
+	assert.Equal(t, "TodoWrite", extractToolName("todo_list", acp.ToolKindOther, "probe"))
+}
+
+func TestExtractToolName_TitlePrefixLongestKeyWins(t *testing.T) {
+	withTitlePrefixes(t, map[string]string{
+		"browser":          "Bash",
+		"browser_navigate": "WebFetch",
+	})
+	// Map iteration order is random; the longer key must always win for its title.
+	for range 20 {
+		assert.Equal(t, "WebFetch", extractToolName("browser_navigate: x", acp.ToolKindOther, "probe"))
+	}
+	assert.Equal(t, "Bash", extractToolName("browser: x", acp.ToolKindOther, "probe"))
+}
+
+func TestExtractToolName_TitlePrefixScopedToBackend(t *testing.T) {
+	withTitlePrefixes(t, map[string]string{"todo_list": "TodoWrite"})
+	// Another backend must not inherit probe's table.
+	assert.Equal(t, "todo_list: x", extractToolName("todo_list: x", acp.ToolKindOther, "other-backend"))
+	// Empty backendID must not match either.
+	assert.Equal(t, "todo_list: x", extractToolName("todo_list: x", acp.ToolKindOther, ""))
+}
+
 // --- extractInputFromContent additional tests ---
 
 func TestExtractInputFromContent_TerminalWithTitle(t *testing.T) {

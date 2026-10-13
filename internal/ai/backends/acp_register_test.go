@@ -9,6 +9,7 @@ import (
 	_ "clawbench/internal/ai/backends/codebuddy"
 	_ "clawbench/internal/ai/backends/deepseek"
 	_ "clawbench/internal/ai/backends/grok"
+	_ "clawbench/internal/ai/backends/hermes"
 	_ "clawbench/internal/ai/backends/kimi"
 	_ "clawbench/internal/ai/backends/opencode"
 	_ "clawbench/internal/ai/backends/pi"
@@ -218,6 +219,26 @@ func TestACPInitRegistration(t *testing.T) {
 			t.Errorf("expected read_file->Read, got %q", prefixes["read_file"])
 		}
 	})
+
+	t.Run("hermes", func(t *testing.T) {
+		p := mustLookup(t, "hermes")
+		ACP := mustACP(t, p)
+
+		// Hermes encodes the tool name at the START of the title, not in the
+		// toolCallID, so it registers ToolTitlePrefixes and no ToolCallIDPrefixes.
+		if ACP.ToolCallIDPrefixes != nil {
+			t.Error("expected nil ToolCallIDPrefixes for hermes (toolCallID is opaque 'tc-<hex>')")
+		}
+		if ACP.ToolTitlePrefixes["todo_list"] != "TodoWrite" {
+			t.Errorf("expected todo_list->TodoWrite, got %q", ACP.ToolTitlePrefixes["todo_list"])
+		}
+		if ACP.ToolTitlePrefixes["delegate_task"] != "Agent" {
+			t.Errorf("expected delegate_task->Agent, got %q", ACP.ToolTitlePrefixes["delegate_task"])
+		}
+		if len(ACP.InputRemaps) == 0 {
+			t.Error("expected non-empty InputRemaps for hermes ACP")
+		}
+	})
 }
 
 // TestACPLookupAfterInit verifies LookupACPRemaps and LookupACPToolCallIDPrefixes
@@ -282,6 +303,29 @@ func TestACPLookupAfterInit(t *testing.T) {
 		prefixes := backends.LookupACPToolCallIDPrefixes("nonexistent_backend")
 		if prefixes != nil {
 			t.Errorf("expected nil prefixes for nonexistent backend, got %v", prefixes)
+		}
+	})
+
+	t.Run("hermes_title_prefixes", func(t *testing.T) {
+		prefixes := backends.LookupACPTitlePrefixes("hermes")
+		if prefixes == nil {
+			t.Fatal("expected non-nil title prefixes for hermes")
+		}
+		if prefixes["memory"] != "save_memory" {
+			t.Errorf("expected memory->save_memory, got %q", prefixes["memory"])
+		}
+	})
+
+	t.Run("nonexistent_title_prefixes_nil", func(t *testing.T) {
+		if prefixes := backends.LookupACPTitlePrefixes("nonexistent_backend"); prefixes != nil {
+			t.Errorf("expected nil title prefixes for nonexistent backend, got %v", prefixes)
+		}
+	})
+
+	t.Run("backend_without_title_prefixes_nil", func(t *testing.T) {
+		// kimi registers only ToolCallIDPrefixes, so its title map must be nil.
+		if prefixes := backends.LookupACPTitlePrefixes("kimi"); prefixes != nil {
+			t.Errorf("expected nil title prefixes for kimi, got %v", prefixes)
 		}
 	})
 }

@@ -94,6 +94,17 @@ func LookupACPToolCallIDPrefixes(backendID string) map[string]string {
 	return nil
 }
 
+// LookupACPTitlePrefixes returns the ACP tool-TITLE prefix map for the given
+// backend. Returns nil if the backend has no ACP plugin or no ToolTitlePrefixes.
+func LookupACPTitlePrefixes(backendID string) map[string]string {
+	pluginsMu.RLock()
+	defer pluginsMu.RUnlock()
+	if p, ok := plugins[backendID]; ok && p.ACP != nil {
+		return p.ACP.ToolTitlePrefixes
+	}
+	return nil
+}
+
 // LookupMidTurnInjector returns the backend's mid-turn injection policy, or nil
 // when the backend cannot inject a message into a running turn.
 func LookupMidTurnInjector(backendID string) ai.MidTurnInjector {

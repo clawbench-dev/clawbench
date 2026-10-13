@@ -9,6 +9,7 @@ describe('getBackendDisplayName', () => {
     expect(getBackendDisplayName('deepseek')).toBe('CodeWhale')
     expect(getBackendDisplayName('dsh')).toBe('DeepSeek Harness')
     expect(getBackendDisplayName('vecli')).toBe('VeCLI')
+    expect(getBackendDisplayName('hermes')).toBe('Hermes Agent')
   })
 
   it('falls back to the backend id for unknown backends', () => {

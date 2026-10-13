@@ -20,6 +20,7 @@ const backendDisplayNames: Record<string, string> = {
   vecli: 'VeCLI',
   grok: 'Grok',
   antigravity: 'Antigravity',
+  hermes: 'Hermes Agent',
 }
 
 /**

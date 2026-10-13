@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"sort"
 	"strings"
 
 	acp "github.com/coder/acp-go-sdk"
@@ -15,6 +16,13 @@ import (
 // package during init() to enable backend-specific prefix lookup.
 // Returns nil if no backend-specific prefixes are registered.
 var LookupACPToolCallIDPrefixesFn func(backendID string) map[string]string
+
+// LookupACPTitlePrefixesFn is a function variable that returns the ACP
+// tool-TITLE prefix map for the given backendID. Set by the backends package
+// during init(). Used by agents that encode the tool name at the START of the
+// title (e.g. Hermes "read_file: foo.go") rather than in the toolCallID.
+// Returns nil if no backend-specific title prefixes are registered.
+var LookupACPTitlePrefixesFn func(backendID string) map[string]string
 
 // LookupACPRemapsFn is a function variable that returns the ACP input
 // remapping map for the given backendID. Set by the backends package during
@@ -168,6 +176,15 @@ func extractToolName(title string, kind acp.ToolKind, backendID string, toolCall
 		return name
 	}
 
+	// Backend-specific TITLE prefix lookup: agents that put the tool name at the
+	// start of the title (Hermes "read_file: foo.go"). Runs before the shared
+	// title patterns so the backend's native names win (e.g. Hermes
+	// "delegate_task" → Agent, which the shared patterns would otherwise miss
+	// because kind=execute maps to Bash).
+	if name := lookupByTitlePrefix(title, backendID); name != "" {
+		return name
+	}
+
 	if title != "" {
 		if name := lookupByTitle(title); name != "" {
 			return name
@@ -214,6 +231,37 @@ func lookupByToolCallID(toolCallID []string, backendID string) string {
 	// Legacy global fallback
 	if canonical, ok := acpToolCallIDPrefix[prefix]; ok {
 		return canonical
+	}
+	return ""
+}
+
+// lookupByTitlePrefix resolves a tool name from the backend's title-prefix map.
+// Agents that do not encode the tool in the toolCallID put it at the start of
+// the title instead (Hermes: "read_file: foo.go"). A title matches an entry when
+// it equals the key or begins with "<key>:" — the "<tool_name>: <preview>" shape
+// every such agent uses, so "read_file" never matches "read_files".
+//
+// Keys are tried longest-first so a specific entry ("browser_navigate") wins over
+// a shorter prefix of it ("browser") regardless of map iteration order.
+func lookupByTitlePrefix(title, backendID string) string {
+	if title == "" || backendID == "" || LookupACPTitlePrefixesFn == nil {
+		return ""
+	}
+	prefixes := LookupACPTitlePrefixesFn(backendID)
+	if len(prefixes) == 0 {
+		return ""
+	}
+	// Longest keys first: map iteration is random, and a shorter key that is a
+	// prefix of a longer one would otherwise win arbitrarily.
+	keys := make([]string, 0, len(prefixes))
+	for k := range prefixes {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool { return len(keys[i]) > len(keys[j]) })
+	for _, k := range keys {
+		if title == k || strings.HasPrefix(title, k+":") {
+			return prefixes[k]
+		}
 	}
 	return ""
 }
