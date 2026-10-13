@@ -71,6 +71,7 @@ var allowedCJKFiles = map[string]string{
 	"internal/ai/backends/codebuddy/cli.go":        "Specialty metadata (user-visible; localization pending a product decision)",
 	"internal/ai/backends/codex/custom.go":         "Specialty metadata (user-visible; localization pending a product decision)",
 	"internal/ai/backends/copilot/cli.go":          "Specialty metadata (user-visible; localization pending a product decision)",
+	"internal/ai/backends/cursor/register.go":      "Specialty metadata (user-visible; localization pending a product decision)",
 	"internal/ai/backends/deepseek/cli.go":         "Specialty metadata (user-visible; localization pending a product decision)",
 	"internal/ai/backends/dsh/register.go":         "Specialty metadata (user-visible; localization pending a product decision)",
 	"internal/ai/backends/grok/register.go":        "Specialty metadata (user-visible; localization pending a product decision)",

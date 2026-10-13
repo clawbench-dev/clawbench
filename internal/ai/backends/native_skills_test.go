@@ -11,6 +11,7 @@ import (
 	_ "clawbench/internal/ai/backends/codebuddy"
 	_ "clawbench/internal/ai/backends/codex"
 	_ "clawbench/internal/ai/backends/copilot"
+	_ "clawbench/internal/ai/backends/cursor"
 	_ "clawbench/internal/ai/backends/deepseek"
 	_ "clawbench/internal/ai/backends/dsh"
 	_ "clawbench/internal/ai/backends/grok"
@@ -46,6 +47,7 @@ var skillAwareBackends = map[string]bool{
 	"deepseek": true, // CodeWhale: .codewhale/skills + .agents/skills
 	"pi":       true, // ~/.pi/agent/skills + <available_skills> injection
 	"hermes":   true, // ~/.hermes/skills (hermes-acp toolset: skills_list/skill_view/skill_manage); does NOT read ~/.agents/skills by default
+	"cursor":   true, // .cursor/skills + .claude/skills + .codex/skills + .grok/skills + .agents/skills (verified with marker SKILL.md files; skills also surface as ACP slash commands)
 
 	// Do NOT load their own skills → ClawBench must inject.
 	//
@@ -117,6 +119,7 @@ func TestSharedSkillsDirDeclaredWhereReadable(t *testing.T) {
 	readsShared := map[string]bool{
 		"codex": true, "copilot": true, "opencode": true,
 		"mimo": true, "qoder": true, "dsh": true, "deepseek": true,
+		"cursor": true,
 	}
 	for _, p := range backends.All() {
 		if !readsShared[p.ID] {
