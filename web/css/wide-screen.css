@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Wide-screen (≥1024px) two-column layout
+   Wide-screen (≥960px CSS viewport) two-column layout
    Activated via .wide-screen class on .main-content (bound to useWideScreenLayout.isWideScreen)
    ========================================================================== */
 

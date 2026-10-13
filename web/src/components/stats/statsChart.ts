@@ -1,6 +1,7 @@
 import type { EChartsCoreOption } from 'echarts/core'
 import { gt } from '@/composables/useLocale'
 import type { UsageMetricId, UsageRow } from '@/composables/useUsageStats'
+import { WIDE_SCREEN_MIN_WIDTH } from '@/composables/useWideScreenLayout'
 
 // Sentinel the backend uses for a missing group label
 // (internal/service/usage_stats.go emptyGroupLabel). Keep in sync on both
@@ -87,14 +88,15 @@ export function barValueLabelStyle(p: StatsPalette, surface: string, formatter: 
 }
 
 /**
- * Whether we are on a narrow (mobile) viewport. Mirrors the app's wide-screen
- * threshold (WIDE_SCREEN_MIN_WIDTH = 1024) so charts share the same split.
+ * Whether we are on a narrow (mobile) viewport. Uses the app's wide-screen
+ * threshold (WIDE_SCREEN_MIN_WIDTH) so charts share the same split — imported
+ * rather than duplicated so it cannot drift when that threshold changes.
  * On narrow screens value-axis tick text is dropped — tooltips/labels still
  * show the exact numbers — while category/date labels are kept.
  */
 export function isNarrowScreen(): boolean {
   try {
-    return typeof window === 'undefined' || window.innerWidth < 1024
+    return typeof window === 'undefined' || window.innerWidth < WIDE_SCREEN_MIN_WIDTH
   } catch {
     return false
   }

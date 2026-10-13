@@ -226,10 +226,11 @@
 
 ### 宽屏 vs 窄屏
 
-- 阈值（`useWideScreenLayout.ts:8`）：CSS 宽度 ≥1024px，**或**物理宽度 ≥1280px **且**横屏。
-- 物理宽度那条是为了高分辨率平板：2400 物理 px / DPR 2.5 = 960 CSS px，只看 CSS 宽度会漏判。
-- 横屏判定用 `screen.width/height` 而非 `window` 内尺寸，防止 Android 软键盘 `adjustResize` 把竖屏平板抖成宽屏。
+- 阈值（`useWideScreenLayout.ts` 的 `WIDE_SCREEN_MIN_WIDTH`）：**CSS 视口宽度 ≥960px**，仅此一条。
+- **为什么是纯 CSS 宽度、且不带物理像素回退**：布局实际能用的只有 CSS 像素，所以「放得下第二栏吗」只在 CSS 像素里有意义。早期版本带一条「物理宽度 ≥1280 且横屏」的回退，本意是救高 DPR 平板（2400 物理 px / DPR 2.5 = 960 CSS px），但副作用是拿「屏幕玻璃尺寸」越权替「可用布局空间」做决定，产出自相矛盾的结果——横屏手机（CSS 698px）被判宽屏，而桌面 960px 窗口反而不算。它也无法用 CSS 表达（媒体查询只认 CSS 像素），会让 JS 信号与 CSS 媒体查询在边界处分歧。把阈值从 1024 降到 960 就把平板那个 case 直接并进阈值里，回退条款可整体删除。
+- **UI 缩放不影响判定**：外观「缩放」走 `html { zoom }`，实测不改变 `innerWidth`，也不改变媒体查询求值。
 - 生效方式是给 `.main-content` 加 `.wide-screen` 类，`wide-screen.css` 切成 `flex-direction: row`。
+- **不要拿宽屏阈值当「布局放得下吗」的通用判据**：那是另一个问题、另一个阈值。例如头部胶囊的段标签用 `@media (min-width: 600px)`（见 `AppHeader.vue` 的 `.seg-label`）——带标签的胶囊实测仅约 215px，600 就够，用 960 反而会在有空间的横屏手机上隐藏标签。
 - **默认分屏比例是 4:6（左侧稍窄）**，常量 `DEFAULT_RATIO` 在 `utils/splitRatio.ts`——composable 初值与 `resetWideScreenState` 都引用它，不要把 0.4 散落成魔数。用户已持久化的自定义比例不受影响（localStorage 优先）。
 
 ### 安全区
