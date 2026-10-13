@@ -6,7 +6,30 @@ import (
 	"time"
 
 	"clawbench/internal/forge"
+	"clawbench/internal/i18n"
+	"clawbench/internal/model"
 )
+
+// eventContextText localizes one forge event-context string.
+//
+// The block is rendered from the scheduler goroutine (no HTTP request), so it
+// localizes via model.Language — the language the frontend persists — exactly
+// like AutoContinue. The labels mirror the task-form preview's i18n keys
+// (web/src/utils/forgeEventContextVars.ts) so the preview and the actually
+// injected prompt can no longer disagree.
+func eventContextText(messageID string) string {
+	return i18n.T(i18n.LocalizerForLocale(model.Language), messageID)
+}
+
+// eventContextLabel resolves a variable's display label from its i18n key.
+func eventContextLabel(v eventContextVar) string {
+	return eventContextText(v.labelKey)
+}
+
+// eventContextSeparator is the label/value separator ("："/": ").
+func eventContextSeparator() string {
+	return eventContextText("EventContextSeparator")
+}
 
 // eventBodyMaxRunes bounds a free-text field (an item description or a comment
 // body) before it enters the prompt.
@@ -184,7 +207,11 @@ func formatLinkedPullRequests(prs []forge.PipelinePullRequest) string {
 // eventContextVar describes one variable in the fixed event-context block. The
 // placeholder is the template token; the value extracts it from a context.
 type eventContextVar struct {
-	label       string
+	// labelKey is an i18n message ID resolved at render time, so the label
+	// follows the active locale. It mirrors the frontend registry's labelKey
+	// (web/src/utils/forgeEventContextVars.ts) — the two used to be separate
+	// hardcoded tables that drifted.
+	labelKey    string
 	placeholder string
 	value       func(EventContext) string
 	// eventScoped, when non-empty, restricts the variable to events of those
@@ -229,10 +256,10 @@ var stateTransitionEvents = []string{
 // eventContextVars is the ordered variable set. Order is stable so the rendered
 // prompt and the read-only UI template stay in lockstep.
 var eventContextVars = []eventContextVar{
-	{label: "事件类型", placeholder: "EVENT_TYPE", value: func(e EventContext) string { return e.EventType }},
-	{label: "仓库", placeholder: "REPO", value: func(e EventContext) string { return e.Repo }},
+	{labelKey: "EventVarEventType", placeholder: "EVENT_TYPE", value: func(e EventContext) string { return e.EventType }},
+	{labelKey: "EventVarRepo", placeholder: "REPO", value: func(e EventContext) string { return e.Repo }},
 	{
-		label:       "条目",
+		labelKey:    "EventVarItem",
 		placeholder: "ITEM_TYPE #ITEM_NUMBER",
 		value: func(e EventContext) string {
 			if e.ItemType == string(forge.ItemTypePipeline) {
@@ -242,86 +269,86 @@ var eventContextVars = []eventContextVar{
 		},
 		requiresItem: true,
 	},
-	{label: "标题", placeholder: "TITLE", value: func(e EventContext) string { return e.Title }},
-	{label: "链接", placeholder: "URL", value: func(e EventContext) string { return e.URL }},
-	{label: "作者", placeholder: "AUTHOR", value: func(e EventContext) string { return e.Author }},
-	{label: "状态", placeholder: "STATE", value: func(e EventContext) string { return e.State }},
+	{labelKey: "EventVarTitle", placeholder: "TITLE", value: func(e EventContext) string { return e.Title }},
+	{labelKey: "EventVarUrl", placeholder: "URL", value: func(e EventContext) string { return e.URL }},
+	{labelKey: "EventVarAuthor", placeholder: "AUTHOR", value: func(e EventContext) string { return e.Author }},
+	{labelKey: "EventVarState", placeholder: "STATE", value: func(e EventContext) string { return e.State }},
 	{
 		// Only a genuine transition has a previous state; see
 		// stateTransitionEvents for why `commented` is excluded.
-		label:       "前一状态",
+		labelKey:    "EventVarPrevState",
 		placeholder: "PREV_STATE",
 		value:       func(e EventContext) string { return e.PrevState },
 		eventScoped: stateTransitionEvents,
 	},
 	{
-		label:        "正文",
+		labelKey:     "EventVarBody",
 		placeholder:  "BODY",
 		value:        func(e EventContext) string { return truncateRunes(e.Body, eventBodyMaxRunes) },
 		requiresItem: true,
 	},
 	{
-		label:        "标签",
+		labelKey:     "EventVarLabels",
 		placeholder:  "LABELS",
 		value:        func(e EventContext) string { return e.Labels },
 		requiresItem: true,
 	},
 	{
-		label:        "指派人",
+		labelKey:     "EventVarAssignees",
 		placeholder:  "ASSIGNEES",
 		value:        func(e EventContext) string { return e.Assignees },
 		requiresItem: true,
 	},
 	{
-		label:       "草稿",
+		labelKey:    "EventVarDraft",
 		placeholder: "DRAFT",
 		value: func(e EventContext) string {
 			if e.Draft {
-				return "是"
+				return eventContextText("EventContextYes")
 			}
 			return ""
 		},
 		requiresItem: true,
 	},
 	{
-		label:        "源分支",
+		labelKey:     "EventVarSourceBranch",
 		placeholder:  "SOURCE_BRANCH",
 		value:        func(e EventContext) string { return e.SourceBranch },
 		requiresItem: true,
 	},
 	{
-		label:        "合并时间",
+		labelKey:     "EventVarMergedAt",
 		placeholder:  "MERGED_AT",
 		value:        func(e EventContext) string { return formatOptionalTime(e.MergedAt) },
 		requiresItem: true,
 	},
-	{label: "创建时间", placeholder: "CREATED_AT", value: func(e EventContext) string { return formatTime(e.CreatedAt) }},
-	{label: "更新时间", placeholder: "UPDATED_AT", value: func(e EventContext) string { return formatTime(e.UpdatedAt) }},
+	{labelKey: "EventVarCreatedAt", placeholder: "CREATED_AT", value: func(e EventContext) string { return formatTime(e.CreatedAt) }},
+	{labelKey: "EventVarUpdatedAt", placeholder: "UPDATED_AT", value: func(e EventContext) string { return formatTime(e.UpdatedAt) }},
 	{
-		label:        "评论数",
+		labelKey:     "EventVarCommentCount",
 		placeholder:  "COMMENT_COUNT",
 		value:        func(e EventContext) string { return formatCommentCount(e.CommentCount) },
 		requiresItem: true,
 	},
 	{
-		label: "评论内容", placeholder: "COMMENT_BODY",
+		labelKey: "EventVarCommentBody", placeholder: "COMMENT_BODY",
 		value:       func(e EventContext) string { return truncateRunes(e.CommentBody, eventBodyMaxRunes) },
 		eventScoped: []string{string(forge.EventCommented)},
 	},
 	{
-		label: "评论 ID", placeholder: "COMMENT_ID",
+		labelKey: "EventVarCommentId", placeholder: "COMMENT_ID",
 		value:       func(e EventContext) string { return formatCommentID(e.CommentID) },
 		eventScoped: []string{string(forge.EventCommented)},
 	},
 	{
-		label: "流水线状态", placeholder: "PIPELINE_STATUS",
+		labelKey: "EventVarPipelineStatus", placeholder: "PIPELINE_STATUS",
 		value: func(e EventContext) string {
 			return pipelineField(e, func(p *forge.PipelineRun) string { return string(p.Status) })
 		},
 		eventScoped: []string{string(forge.EventPipeline)},
 	},
 	{
-		label: "流水线链接", placeholder: "PIPELINE_URL",
+		labelKey: "EventVarPipelineUrl", placeholder: "PIPELINE_URL",
 		value: func(e EventContext) string {
 			return pipelineField(e, func(p *forge.PipelineRun) string { return p.URL })
 		},
@@ -330,7 +357,7 @@ var eventContextVars = []eventContextVar{
 	{
 		// The run's own identity, which the synthetic item cannot express (it
 		// carries Number 0 for every run).
-		label: "流水线编号", placeholder: "PIPELINE_NUMBER",
+		labelKey: "EventVarPipelineNumber", placeholder: "PIPELINE_NUMBER",
 		value: func(e EventContext) string {
 			return pipelineField(e, func(p *forge.PipelineRun) string {
 				if p.Number <= 0 {
@@ -344,7 +371,7 @@ var eventContextVars = []eventContextVar{
 	{
 		// The branch or tag the run executed on. This is the field a repair task
 		// needs in order to check out the failing revision.
-		label:       "流水线分支",
+		labelKey:    "EventVarPipelineRef",
 		placeholder: "PIPELINE_REF",
 		value: func(e EventContext) string {
 			return pipelineField(e, func(p *forge.PipelineRun) string { return p.Ref })
@@ -354,7 +381,7 @@ var eventContextVars = []eventContextVar{
 	{
 		// The commit the run executed against — the other half of "which
 		// revision failed".
-		label:       "流水线提交",
+		labelKey:    "EventVarPipelineSha",
 		placeholder: "PIPELINE_SHA",
 		value: func(e EventContext) string {
 			return pipelineField(e, func(p *forge.PipelineRun) string { return p.SHA })
@@ -365,7 +392,7 @@ var eventContextVars = []eventContextVar{
 		// What started the run, in the platform's own vocabulary ("push",
 		// "pull_request", "schedule", "web", ...). Passed through rather than
 		// normalized: it is informational and the two vocabularies differ.
-		label:       "流水线触发方式",
+		labelKey:    "EventVarPipelineTrigger",
 		placeholder: "PIPELINE_TRIGGER",
 		value: func(e EventContext) string {
 			return pipelineField(e, func(p *forge.PipelineRun) string { return p.Event })
@@ -373,7 +400,7 @@ var eventContextVars = []eventContextVar{
 		eventScoped: []string{string(forge.EventPipeline)},
 	},
 	{
-		label:       "流水线耗时",
+		labelKey:    "EventVarPipelineDuration",
 		placeholder: "PIPELINE_DURATION",
 		value: func(e EventContext) string {
 			return pipelineField(e, func(p *forge.PipelineRun) string { return formatDuration(p.Duration) })
@@ -381,7 +408,7 @@ var eventContextVars = []eventContextVar{
 		eventScoped: []string{string(forge.EventPipeline)},
 	},
 	{
-		label:       "关联合并请求",
+		labelKey:    "EventVarPipelineLinkedPrs",
 		placeholder: "PIPELINE_LINKED_PRS",
 		value: func(e EventContext) string {
 			return pipelineField(e, func(p *forge.PipelineRun) string { return formatLinkedPullRequests(p.PullRequests) })
@@ -394,13 +421,13 @@ var eventContextVars = []eventContextVar{
 		// prompt's only way to tell — the AI cannot know the credential's login
 		// on its own. Only meaningful for pipeline events: for issue/PR events
 		// the equivalent decision is already made in code.
-		label:       "是否自身触发",
+		labelKey:    "EventVarActorIsSelf",
 		placeholder: "ACTOR_IS_SELF",
 		value: func(e EventContext) string {
 			if e.ActorIsSelf {
-				return "是"
+				return eventContextText("EventContextYes")
 			}
-			return "否"
+			return eventContextText("EventContextNo")
 		},
 		eventScoped: []string{string(forge.EventPipeline)},
 	},
@@ -442,7 +469,7 @@ func formatCommentID(id int64) string {
 // than rendered empty, so the block stays coherent for every event type.
 func RenderEventContext(ec EventContext) string {
 	var b strings.Builder
-	b.WriteString("## Forge 事件\n")
+	b.WriteString("## " + eventContextText("EventContextHeader") + "\n")
 	for _, v := range eventContextVars {
 		// A variable scoped to another event type must not appear. Without this
 		// check a scoped variable whose value is never empty (the yes/no
@@ -458,7 +485,7 @@ func RenderEventContext(ec EventContext) string {
 		// variable stays one bullet in the block.
 		value = strings.ReplaceAll(value, "\r\n", "\n")
 		value = strings.ReplaceAll(value, "\n", "\n  ")
-		fmt.Fprintf(&b, "- %s：%s\n", v.label, value)
+		fmt.Fprintf(&b, "- %s%s%s\n", eventContextLabel(v), eventContextSeparator(), value)
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
@@ -515,7 +542,7 @@ func EventPromptTemplate(eventTypes []string) string {
 	}
 
 	var b strings.Builder
-	b.WriteString("## Forge 事件\n")
+	b.WriteString("## " + eventContextText("EventContextHeader") + "\n")
 	for _, v := range eventContextVars {
 		if !appliesToSubscription(v, subscribed) {
 			continue
@@ -523,7 +550,7 @@ func EventPromptTemplate(eventTypes []string) string {
 		if repoTargetedOnly && v.requiresItem {
 			continue
 		}
-		fmt.Fprintf(&b, "- %s：{{%s}}\n", v.label, v.placeholder)
+		fmt.Fprintf(&b, "- %s%s{{%s}}\n", eventContextLabel(v), eventContextSeparator(), v.placeholder)
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

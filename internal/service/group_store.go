@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"clawbench/internal/i18n"
 	"clawbench/internal/model"
 	"clawbench/internal/store"
 )
@@ -436,7 +437,7 @@ func AddGroupMember(projectPath, groupID, backend, agentID, displayName string) 
 	if err != nil {
 		return "", err
 	}
-	writeMemberSystemEvent(projectPath, groupID, agentID, displayName, "加入了讨论")
+	writeMemberSystemEvent(projectPath, groupID, agentID, displayName, "GroupMemberJoined")
 	return memberID, nil
 }
 
@@ -554,7 +555,7 @@ func AddGroupMembers(projectPath, groupID string, specs []GroupMemberSpec) ([]st
 	// timeline system events.
 	for i, s := range kept {
 		applyAgentAutoApproveDefault(memberIDs[i], s.AgentID)
-		writeMemberSystemEvent(projectPath, groupID, s.AgentID, s.DisplayName, "加入了讨论")
+		writeMemberSystemEvent(projectPath, groupID, s.AgentID, s.DisplayName, "GroupMemberJoined")
 	}
 	return memberIDs, nil
 }
@@ -580,8 +581,14 @@ func insertGroupMemberRowsTx(groupID string, projectID int64, specs []GroupMembe
 // (decisions #40/#41). The text carries the member's specialty so readers know
 // what the newcomer is for, and is written best-effort: a failure to record a
 // system event must never fail the membership change itself.
-func writeMemberSystemEvent(projectPath, groupID, agentID, displayName, suffix string) {
-	writeGroupSystemMessage(projectPath, groupID, displayName+memberSpecialtySuffix(agentID)+suffix)
+//
+// messageID is an i18n key taking a {{.Name}} placeholder; the row is rendered
+// in the ACTIVE locale at write time (see the group keys in active.*.yaml for
+// why a key is not stored instead).
+func writeMemberSystemEvent(projectPath, groupID, agentID, displayName, messageID string) {
+	writeGroupSystemMessage(projectPath, groupID,
+		i18n.T(i18n.LocalizerForLocale(model.Language), messageID,
+			map[string]any{"Name": displayName + memberSpecialtySuffix(agentID)}))
 }
 
 // writeGroupSystemMessage appends an arbitrary role='system' row to the group
@@ -929,7 +936,8 @@ func GroupMemberSpeakersForGroups(groupIDs []string) (map[string]map[string]stri
 	// kept in the timeline). The name is the member row's agent_name.
 	query := fmt.Sprintf(
 		`SELECT group_id, id, agent_name FROM chat_sessions
-		 WHERE group_id IN (%s) AND session_type = ?`, placeholders)
+		 WHERE group_id IN (%s) AND session_type = ?`, placeholders,
+	)
 	args = append(args, groupMemberSessionType)
 
 	rows, err := store.ReadDB().Query(query, args...)
@@ -1016,7 +1024,7 @@ func RemoveGroupMember(groupID, memberID string) error {
 		// now (left members are excluded from name resolution), so keeping it
 		// would be silent loss plus unbounded growth of group_pending_bcc.
 		deletePendingBccForTarget(groupID, name)
-		text := name + " 已离场"
+		text := i18n.T(i18n.LocalizerForLocale(model.Language), "GroupMemberLeft", map[string]any{"Name": name})
 		if msgID, err := AddSystemMessage(GetSessionProjectPathAnyPath(groupID), groupID, text); err != nil {
 			slog.Warn("group: writing departure system event failed", "group", groupID, "err", err)
 		} else {

@@ -215,6 +215,53 @@ RAGRebuildAccepted: Rebuild started in the background
 AutoContinue: Continue
 GroupYourTurn: "It's your turn to speak"
 GroupDiscussionLimitReached: "The agents reached the discussion limit"
+# Group-timeline system rows. These are WRITTEN (not rendered) in the active
+# locale: the text is persisted to chat_history and ALSO injected into every
+# member's context as "[系统] <text>" (group_inject.go), so it must be a
+# readable sentence, never a key. A locale switch therefore does not retranslate
+# history — matching decision 96b.
+GroupMemberJoined: '{{.Name}} joined the discussion'
+GroupMemberLeft: '{{.Name}} left'
+GroupMemberUnknown: Member
+GroupUnknownMention: '{{.Speaker}} @-mentioned a member who does not exist: {{.Names}} (ignored)'
+GroupMemberListSeparator: ', '
+# Forge event-context block. The backend renders the SAME labels the task form
+# previews (web/src/utils/forgeEventContextVars.ts), so the two can no longer
+# drift — the backend previously held its own Chinese literals while the
+# frontend rendered i18n keys, so an English user's preview and the actually
+# injected prompt disagreed.
+EventContextHeader: Forge event
+EventContextYes: 'yes'
+EventContextNo: 'no'
+EventContextSeparator: ': '
+EventVarEventType: Event type
+EventVarRepo: Repository
+EventVarItem: Item
+EventVarTitle: Title
+EventVarUrl: URL
+EventVarAuthor: Author
+EventVarState: State
+EventVarPrevState: Previous state
+EventVarBody: Body
+EventVarLabels: Labels
+EventVarAssignees: Assignees
+EventVarDraft: Draft
+EventVarSourceBranch: Source branch
+EventVarMergedAt: Merged at
+EventVarCreatedAt: Created at
+EventVarUpdatedAt: Updated at
+EventVarCommentCount: Comment count
+EventVarCommentBody: Comment body
+EventVarCommentId: Comment ID
+EventVarPipelineStatus: Pipeline status
+EventVarPipelineUrl: Pipeline URL
+EventVarPipelineNumber: Pipeline number
+EventVarPipelineRef: Pipeline ref
+EventVarPipelineSha: Pipeline commit
+EventVarPipelineTrigger: Pipeline trigger
+EventVarPipelineDuration: Pipeline duration
+EventVarPipelineLinkedPrs: Linked change requests
+EventVarActorIsSelf: Self-triggered
 PortForwardUnavailable: port forwarding is not available
 TunnelTargetUnreachable: tunnel target is unreachable
 TunnelReverseRequiresHTTP2: reverse forwarding requires HTTP/2; use the SSH transport on HTTP/1.1

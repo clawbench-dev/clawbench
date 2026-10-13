@@ -917,6 +917,63 @@ func TestAddGroupMember_WritesSystemEvent(t *testing.T) {
 	}
 }
 
+// Membership system rows are localized at WRITE time from model.Language (they
+// are persisted to chat_history AND injected into every member's context as
+// "[系统] <text>", so they must be readable sentences, never raw keys).
+func TestGroupMemberSystemEvents_LocalizedAtWriteTime(t *testing.T) {
+	origLang := model.Language
+	defer func() { model.Language = origLang }()
+
+	for _, tc := range []struct {
+		lang   string
+		joined string
+		left   string
+		notKey bool
+	}{
+		{lang: "zh", joined: "加入了讨论", left: "已离场"},
+		{lang: "en", joined: "joined the discussion", left: "left"},
+	} {
+		model.Language = tc.lang
+		setupGroupDB(t)
+		project := "/tmp/grouptest-lang-" + tc.lang
+		if _, err := store.ProjectIDForPath(project); err != nil {
+			t.Fatalf("ProjectIDForPath: %v", err)
+		}
+		groupID, _, err := CreateGroup(project, "讨论组", "codebuddy", "agent-host", "Host")
+		if err != nil {
+			t.Fatalf("CreateGroup: %v", err)
+		}
+		memberID, err := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+		if err != nil {
+			t.Fatalf("AddGroupMember: %v", err)
+		}
+		if err := RemoveGroupMember(groupID, memberID); err != nil {
+			t.Fatalf("RemoveGroupMember: %v", err)
+		}
+
+		joined := false
+		left := false
+		for _, m := range systemMessages(t, groupID) {
+			// A raw key would mean the row was stored untranslated.
+			if strings.Contains(m.Content, "GroupMemberJoined") || strings.Contains(m.Content, "GroupMemberLeft") {
+				t.Fatalf("%s: system row leaked a raw i18n key: %q", tc.lang, m.Content)
+			}
+			if strings.Contains(m.Content, tc.joined) {
+				joined = true
+			}
+			if strings.Contains(m.Content, tc.left) {
+				left = true
+			}
+		}
+		if !joined {
+			t.Errorf("%s: no joined event matching %q", tc.lang, tc.joined)
+		}
+		if !left {
+			t.Errorf("%s: no departure event matching %q", tc.lang, tc.left)
+		}
+	}
+}
+
 // Removing a member writes a departure system event.
 func TestRemoveGroupMember_WritesSystemEvent(t *testing.T) {
 	setupGroupDB(t)

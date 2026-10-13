@@ -214,6 +214,50 @@ RAGRebuildAccepted: 重建已在后台启动
 AutoContinue: 继续
 GroupYourTurn: 轮到用户发言
 GroupDiscussionLimitReached: 成员间讨论次数达到上限
+# 群时间线的系统行。这些文案是「写入时」按当前语言本地化并持久化到 chat_history，
+# 同时还会以 "[系统] <文案>" 注入每个成员的上下文（group_inject.go），因此必须是
+# 可读句子、绝不能是键名。切换语言不会追溯翻译历史（与决策 96b 一致）。
+GroupMemberJoined: '{{.Name}}加入了讨论'
+GroupMemberLeft: '{{.Name}} 已离场'
+GroupMemberUnknown: 成员
+GroupUnknownMention: '{{.Speaker}} @ 了一个不存在的成员：{{.Names}}（已忽略）'
+GroupMemberListSeparator: 、
+# Forge 事件上下文块。后端渲染的标签与任务表单预览
+# （web/src/utils/forgeEventContextVars.ts）完全一致，两者不会再漂移——此前
+# 后端自带一套中文字面量、前端却渲染 i18n 键，导致英文用户看到的预览与实际
+# 注入的提示词不一致。
+EventContextHeader: Forge 事件
+EventContextYes: 是
+EventContextNo: 否
+EventContextSeparator: '：'
+EventVarEventType: 事件类型
+EventVarRepo: 仓库
+EventVarItem: 条目
+EventVarTitle: 标题
+EventVarUrl: 链接
+EventVarAuthor: 作者
+EventVarState: 状态
+EventVarPrevState: 前一状态
+EventVarBody: 正文
+EventVarLabels: 标签
+EventVarAssignees: 指派人
+EventVarDraft: 草稿
+EventVarSourceBranch: 源分支
+EventVarMergedAt: 合并时间
+EventVarCreatedAt: 创建时间
+EventVarUpdatedAt: 更新时间
+EventVarCommentCount: 评论数
+EventVarCommentBody: 评论内容
+EventVarCommentId: 评论 ID
+EventVarPipelineStatus: 流水线状态
+EventVarPipelineUrl: 流水线链接
+EventVarPipelineNumber: 流水线编号
+EventVarPipelineRef: 流水线分支
+EventVarPipelineSha: 流水线提交
+EventVarPipelineTrigger: 流水线触发方式
+EventVarPipelineDuration: 流水线耗时
+EventVarPipelineLinkedPrs: 关联合并请求
+EventVarActorIsSelf: 是否自身触发
 PortForwardUnavailable: 端口转发不可用
 TunnelTargetUnreachable: 隧道目标不可达
 TunnelReverseRequiresHTTP2: 反向转发需要 HTTP/2；HTTP/1.1 下请使用 SSH 传输

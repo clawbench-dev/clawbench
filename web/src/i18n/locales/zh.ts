@@ -1292,6 +1292,9 @@ export default {
       eventContext: '事件上下文（自动注入，不可编辑）',
       eventContextHint: '触发时这些变量会替换为实际值，固定注入在提示词之前。',
       eventContextHeader: 'Forge 事件',
+      // 变量标签与取值之间的分隔符，须与后端 EventContextSeparator 一致，
+      // 预览才能与 AI 实际收到的提示词逐字相同。
+      eventContextSeparator: '：',
       varEventType: '事件类型',
       varRepo: '仓库',
       varItem: '条目',

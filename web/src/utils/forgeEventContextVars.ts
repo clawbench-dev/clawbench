@@ -225,7 +225,11 @@ export function visibleEventContextVars(ctx: EventVarContext): EventContextVar[]
 export function eventContextTemplateText(ctx: EventVarContext): string {
     const visible = visibleEventContextVars(ctx)
     if (visible.length === 0) return ''
-    const lines = visible.map(v => `- ${i18n.global.t(v.labelKey)}：{{${v.placeholder}}}`)
+    // The separator is localized, not a hardcoded '：': the backend's
+    // EventContextSeparator resolves to ': ' in English, so a literal fullwidth
+    // colon here would make the preview differ from the injected prompt.
+    const sep = i18n.global.t('task.form.eventContextSeparator')
+    const lines = visible.map(v => `- ${i18n.global.t(v.labelKey)}${sep}{{${v.placeholder}}}`)
     return `## ${i18n.global.t('task.form.eventContextHeader')}\n${lines.join('\n')}`
 }
 

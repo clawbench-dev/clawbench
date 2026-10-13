@@ -1305,10 +1305,13 @@ func (o *GroupOrchestrator) appendFreeTargets(outer, appended []speakerGroup, pe
 		// flooding the timeline.
 		speakerName := names[speakerID]
 		if speakerName == "" {
-			speakerName = "成员"
+			speakerName = i18n.T(i18n.LocalizerForLocale(model.Language), "GroupMemberUnknown")
 		}
 		writeGroupSystemMessage(o.project, groupID,
-			fmt.Sprintf("%s @ 了一个不存在的成员：%s（已忽略）", speakerName, strings.Join(unknown, "、")))
+			i18n.T(i18n.LocalizerForLocale(model.Language), "GroupUnknownMention", map[string]any{
+				"Speaker": speakerName,
+				"Names":   strings.Join(unknown, i18n.T(i18n.LocalizerForLocale(model.Language), "GroupMemberListSeparator")),
+			}))
 	}
 	return out
 }

@@ -1288,6 +1288,10 @@ export default {
       eventContext: 'Event context (auto-injected, read-only)',
       eventContextHint: 'These variables are replaced with real values at trigger time and injected before your prompt.',
       eventContextHeader: 'Forge event',
+      // Separator between a variable label and its value in the injected block.
+      // Must match the backend's EventContextSeparator so the preview reads
+      // exactly like the prompt the AI receives.
+      eventContextSeparator: ': ',
       varEventType: 'Event type',
       varRepo: 'Repository',
       varItem: 'Item',
