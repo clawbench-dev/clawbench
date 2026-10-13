@@ -442,11 +442,17 @@ describe('inert path wins the colour cascade', () => {
 })
 
 describe('inert path stays visibly non-interactive', () => {
-  it('resolves text-decoration to none, never the link underline', () => {
-    // The generic link rules underline on hover (`.markdown-body a:hover`,
-    // `.chat-message.assistant a:hover` at (0,2,0); `.chat-message.user a:hover`
-    // at (0,3,0)). An inert <a> must not pick that up — the dashed border is the
-    // only underline the state is allowed to show.
+  it('resolves text-decoration to the dashed underline, never a solid link underline', () => {
+    // The underline is a text decoration rather than a border on purpose: an
+    // inline chip that wraps is split into one box per line and a border is
+    // painted per box, so on Android WebView the first fragment's 1px dashed
+    // border was clipped at the slice edge and the dash started mid-path. A
+    // text decoration follows the text run and stays continuous.
+    //
+    // The generic link rules underline (`.markdown-body a`) and underline
+    // harder on hover (`.chat-message.assistant a:hover` at (0,3,1);
+    // `.chat-message.user a:hover` at (0,3,0)). Our dashed decoration must win
+    // against all of them, in both states.
     const offenders: string[] = []
     for (const { name, chain } of SURFACES) {
       for (const [state, c] of [
@@ -454,21 +460,59 @@ describe('inert path stays visibly non-interactive', () => {
         ['hover', chainWithHover(chain)],
       ] as const) {
         const won = resolve(rules, c, 'text-decoration')
-        if (!won || won.value !== 'none') {
+        // Must be a dashed underline, and must NOT be a bare solid underline
+        // (the live-link signal) or `none` (no underline at all).
+        if (!won || !/underline/.test(won.value) || !/dashed/.test(won.value)) {
           offenders.push(`${name} (${state}): text-decoration => ${won ? won.value : '(none declared)'}`)
         }
       }
     }
-    expect(offenders, `inert path picked up a link underline:\n${offenders.join('\n')}`).toEqual([])
+    expect(offenders, `inert path lost its dashed underline:\n${offenders.join('\n')}`).toEqual([])
   })
 
-  it('keeps the dashed underline and drops text-decoration', () => {
+  it('pins the dashed underline with !important so the link underline cannot win', () => {
+    // Mechanism guard: the generic hover rule is MORE specific
+    // (`.chat-message.assistant a:hover` (0,3,1) vs `a.chat-file-path-inert`
+    // (0,1,1)), so without !important the solid underline would take over on
+    // hover and stack a live-link signal on the "not a link" state.
+    const offenders: string[] = []
+    for (const { name, chain } of SURFACES) {
+      for (const [state, c] of [
+        ['rest', chain],
+        ['hover', chainWithHover(chain)],
+      ] as const) {
+        const won = resolve(rules, c, 'text-decoration')
+        if (!won?.important) offenders.push(`${name} (${state}): text-decoration=${won?.value} (not !important)`)
+      }
+    }
+    expect(offenders, offenders.join('\n')).toEqual([])
+  })
+
+  it('declares the dashed underline via text-decoration, not a border-bottom', () => {
+    // Source guard for the exact regression this file exists to prevent: a
+    // `border-bottom` here is what broke the wrap in the first place, so its
+    // absence is part of the contract, not an incidental detail.
     const css = readWebFile('web/src/assets/annotation-buttons.css')
     const rule = css.match(/a\.chat-file-path-inert,[\s\S]*?\{([^}]*)\}/)
     expect(rule, 'the inert rule must exist').not.toBeNull()
     const decls = rule![1]
-    expect(decls).toMatch(/border-bottom:\s*1px dashed/)
-    expect(decls).toMatch(/text-decoration:\s*none/)
+    expect(decls).toMatch(/text-decoration:\s*underline dashed/)
+    expect(decls).not.toMatch(/border-bottom/)
+  })
+
+  it('pins text-decoration-thickness with !important (shorthand reset trap)', () => {
+    // `text-decoration-thickness` is part of the `text-decoration` shorthand, so
+    // the `!important` shorthand above silently resets it to `auto` unless the
+    // longhand is ALSO `!important`. Without this the 1px hairline silently
+    // becomes a font-derived thickness — verified in Chromium (computed
+    // `text-decoration-thickness` was `auto` before the fix, `1px` after).
+    //
+    // Strip comments first: `declValue` anchors on `;`/start-of-string, and a
+    // comment sitting between two declarations makes it miss the one after it.
+    const css = readWebFile('web/src/assets/annotation-buttons.css')
+    const decls = css.replace(/\/\*[\s\S]*?\*\//g, '').match(/a\.chat-file-path-inert,[\s\S]*?\{([^}]*)\}/)![1]
+    expect(declValue(decls, 'text-decoration-thickness')).toMatch(/!important/)
+    expect(declValue(decls, 'text-underline-offset')).toMatch(/!important/)
   })
 
   it('still mutes the colour with !important', () => {
