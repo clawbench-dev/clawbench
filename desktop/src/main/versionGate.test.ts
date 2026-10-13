@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 // versionGate imports electron + install at module scope (they do Electron/fs
 // work), so they are mocked here to load the pure `evaluateGate` decision.
 vi.mock('electron', () => ({
-  app: { getVersion: () => '1.0.0', isPackaged: true },
+  app: { getVersion: () => '1.0.0', isPackaged: true, getLocale: () => 'en' },
   dialog: { showMessageBox: vi.fn() },
 }))
 vi.mock('./install', () => ({
@@ -14,10 +14,16 @@ vi.mock('./install', () => ({
   appRoot: () => '/tmp/app',
 }))
 vi.mock('./clientLog', () => ({ recordError: vi.fn() }))
+// `labels.ts` reads the persisted language through the store; the gate tests
+// exercise the English wording, so pin it to 'en'.
+vi.mock('./store', () => ({
+  getStore: () => ({ get: () => 'en' }),
+}))
 
 import { evaluateGate, beginNavigation, installServerVersion, formatInstallFailure } from './versionGate'
 import type { VersionGateInfo } from './versionGate'
 import type { DesktopLatest } from './updater'
+import { versionGateLabels } from './labels'
 import { dialog } from 'electron'
 import { downloadAndInstall, installPayload } from './install'
 
@@ -142,5 +148,9 @@ describe('formatInstallFailure', () => {
     const s = formatInstallFailure(new Error('github ECONNRESET'), new Error('npm 404'))
     expect(s).toContain('npm 404')
     expect(s).toContain('github ECONNRESET')
+    // The two labels must be distinguishable — that was the whole point of
+    // showing both errors instead of only the full-package one.
+    expect(s).toContain(versionGateLabels('en').payloadInstallFailed)
+    expect(s).toContain(versionGateLabels('en').fullDownloadFailed)
   })
 })
