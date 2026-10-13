@@ -1119,6 +1119,16 @@ describe('ChatInputBar', () => {
       expect(wrapper.vm.skillMenuItems.map(i => i.key)).toEqual(['#pdf', '#web-search'])
     })
 
+    it('shows the bare name in the row but keeps "#" in the inserted key', async () => {
+      // The label is what the row displays (no "#" clutter); the key drives the
+      // inserted text and must keep the "#" so the backend reference is formed.
+      const wrapper = mountBar()
+      wrapper.vm.inputText = '#'
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.skillMenuItems.map(i => i.label)).toEqual(['pdf', 'web-search'])
+      expect(wrapper.vm.skillMenuItems.map(i => i.key)).toEqual(['#pdf', '#web-search'])
+    })
+
     it('fetches the skill list on the first # when it is not loaded yet', async () => {
       mockSkillRows.value = []
       const wrapper = mountBar()

@@ -73,8 +73,12 @@ test.describe.serial('Skill menu', () => {
     const skillItems = page.locator('.completion-item--skill')
     await expect(skillItems.first()).toBeVisible({ timeout: 5000 })
 
-    const demo = skillItems.filter({ hasText: '#e2e-demo-skill' })
+    // The row shows the bare name; the "#" is only in the inserted text.
+    const demo = skillItems.filter({ hasText: 'e2e-demo-skill' })
     await expect(demo).toBeVisible()
+
+    // The per-row source tag is omitted for skills (it stole width).
+    await expect(demo.locator('.completion-source')).not.toBeVisible()
 
     // The "/" menu must NOT be showing at the same time.
     await expect(page.locator('.completion-item--clawbench').first()).not.toBeVisible()

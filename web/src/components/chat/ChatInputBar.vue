@@ -1156,8 +1156,10 @@ const skillMenuItems = computed(() => {
   const trigger = parseHashQuery(inputText.value, currentCaret())
   if (!trigger) return []
   const all = skillMenuRows().map((s) => ({
+    // key carries the "#" because it drives the inserted text ("#name "); the
+    // label does not, so the row reads "pdf" rather than "#pdf".
     key: '#' + s.name,
-    label: '#' + s.name,
+    label: s.name,
     description: s.description,
     source: 'skill',
   }))

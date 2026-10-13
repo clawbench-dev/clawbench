@@ -42,9 +42,17 @@
             :display-name="item.label"
           />
         </span>
-        <span v-if="item.description" class="completion-desc">{{ middleEllipsis(item.description, 34) }}</span>
+        <!-- Skill rows omit the trailing source tag: every skill comes from the
+             same logical place (the discovered skill list), so a per-row "Skill"
+             chip is pure noise and steals width from the name/description. -->
+        <span v-if="item.description" class="completion-desc" :class="{ 'completion-desc--skill': item.source === 'skill' }">{{ item.source === 'skill' ? item.description : middleEllipsis(item.description, 34) }}</span>
       </span>
-      <span class="completion-source" :class="'completion-source--' + item.source" :style="{ color: sourceMeta(item.source).color }">
+      <span
+        v-if="item.source !== 'skill'"
+        class="completion-source"
+        :class="'completion-source--' + item.source"
+        :style="{ color: sourceMeta(item.source).color }"
+      >
         {{ t(sourceMeta(item.source).labelKey) }}
       </span>
     </button>
@@ -182,6 +190,17 @@ function renderLabel(item: CompletionItem): string {
   overflow: hidden;
   text-overflow: ellipsis;
   text-align: left;
+}
+
+/* Skill descriptions are prose, not paths: keep the PREFIX (a middle ellipsis
+   would splice in an unrelated tail) and wrap onto two lines instead of one. */
+.completion-desc--skill {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
 }
 
 .completion-source {

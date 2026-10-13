@@ -201,6 +201,34 @@ describe('CompletionMenu', () => {
     expect(row.find('.completion-source-icon').exists()).toBe(true)
   })
 
+  it('omits the trailing source tag for skill rows', () => {
+    // Every skill comes from the same logical list, so a per-row "Skill" chip is
+    // noise that steals width. Other sources keep theirs.
+    const items: CompletionItem[] = [
+      { key: '#pdf', label: 'pdf', description: 'Read and write PDFs', source: 'skill' },
+    ]
+    const wrapper = mountMenu(items)
+    const row = wrapper.findAll('.completion-item')[0]
+    expect(row.find('.completion-source').exists()).toBe(false)
+    // The source icon still identifies the row kind.
+    expect(row.find('.completion-source-icon').exists()).toBe(true)
+  })
+
+  it('gives skill descriptions the two-line prefix class', () => {
+    // Path descriptions are middle-ellipsised in JS; skill descriptions are
+    // prose and must keep their prefix, wrapping to two lines instead.
+    const items: CompletionItem[] = [
+      { key: '#pdf', label: 'pdf', description: 'Read and write PDFs', source: 'skill' },
+      { key: 'a.ts', label: 'a.ts', description: 'src/deep/dir', source: 'recent-open' },
+    ]
+    const wrapper = mountMenu(items)
+    const rows = wrapper.findAll('.completion-item')
+    expect(rows[0].find('.completion-desc').classes()).toContain('completion-desc--skill')
+    expect(rows[1].find('.completion-desc').classes()).not.toContain('completion-desc--skill')
+    // The skill description keeps its prefix verbatim (no middle ellipsis).
+    expect(rows[0].find('.completion-desc').text()).toBe('Read and write PDFs')
+  })
+
   it('discloses the real agent name next to an auto-derived member nickname', () => {
     const items: CompletionItem[] = [
       { key: 'member:m-1', label: 'Alice', description: '', source: 'agent', isMember: true, memberAgentName: 'Claude' },
