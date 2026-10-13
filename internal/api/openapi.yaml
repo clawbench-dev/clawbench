@@ -3179,7 +3179,7 @@ paths:
                     type: array
                     items:
                       type: string
-                    description: 用户自定义 Skill 目录列表（已解析默认值；为空时回退 `<DataDir>/skills-user`）
+                    description: 用户自定义 Skill 目录列表（已解析：去除空项；为空表示未配置任何自定义目录，不回退默认值）
                   refresh_hours:
                     type: integer
                     description: 定时 git 拉取间隔；0 表示仅启动时拉取

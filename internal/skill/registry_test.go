@@ -347,15 +347,16 @@ func TestInjectedFor_MultipleUserDirsDedupe(t *testing.T) {
 	}
 }
 
-// TestResolveSkillsDirs covers the default fallback and blank filtering.
+// TestResolveSkillsDirs covers blank filtering and the absence of a default
+// fallback: an empty list stays empty.
 func TestResolveSkillsDirs(t *testing.T) {
 	origDataDir := model.DataDir
 	t.Cleanup(func() { model.DataDir = origDataDir })
 	model.DataDir = t.TempDir()
 
-	t.Run("empty list falls back to the default dir", func(t *testing.T) {
+	t.Run("empty list stays empty", func(t *testing.T) {
 		cfg := model.Config{}
-		assert.Equal(t, []string{model.DefaultSkillsDir()}, cfg.ResolveSkillsDirs())
+		assert.Empty(t, cfg.ResolveSkillsDirs())
 	})
 
 	t.Run("configured dirs are returned in order", func(t *testing.T) {
@@ -368,9 +369,9 @@ func TestResolveSkillsDirs(t *testing.T) {
 		assert.Equal(t, []string{"/a", "/b"}, cfg.ResolveSkillsDirs())
 	})
 
-	t.Run("an all-blank list falls back to the default", func(t *testing.T) {
+	t.Run("an all-blank list resolves to empty", func(t *testing.T) {
 		cfg := model.Config{Skills: model.SkillsConfig{Dirs: []string{"", ""}}}
-		assert.Equal(t, []string{model.DefaultSkillsDir()}, cfg.ResolveSkillsDirs())
+		assert.Empty(t, cfg.ResolveSkillsDirs())
 	})
 }
 

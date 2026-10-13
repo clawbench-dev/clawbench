@@ -112,8 +112,8 @@ describe('SkillsDirsSetting', () => {
     await wrapper.find('.skills-dir .fbtn').trigger('click')
     await flushPromises()
 
-    // Removing the only entry sends an empty array; the server then falls back
-    // to the default directory.
+    // Removing the only entry sends an empty array; the server keeps it empty
+    // (there is no default directory to fall back to), so the row stays gone.
     expect(setServerValue).toHaveBeenCalledWith('skills.dirs', [])
   })
 

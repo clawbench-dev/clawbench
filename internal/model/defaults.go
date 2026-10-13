@@ -514,10 +514,12 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 		// only `dir`, and ignoring it would silently drop the user's configured
 		// directory. Only used when the new key is absent — a config carrying
 		// both has already been migrated (or hand-edited), and the new key wins.
+		//
+		// There is deliberately NO default directory: an empty list means the
+		// user has no custom directories, and it must stay empty (a synthesized
+		// default would reappear after the user removed the last entry).
 		if cfg.Skills.LegacyDir != "" {
 			cfg.Skills.Dirs = []string{cfg.Skills.LegacyDir}
-		} else if def := DefaultSkillsDir(); def != "" {
-			cfg.Skills.Dirs = []string{def}
 		}
 	}
 	// The legacy key has served its purpose; clearing it keeps the next config
