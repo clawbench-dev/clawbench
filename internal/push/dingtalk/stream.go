@@ -181,7 +181,7 @@ func (m *Manager) handleIncomingWithMedia(ctx context.Context, data *chatbot.Bot
 
 	if sessionMessenger == nil {
 		slog.Warn("dingtalk: no session messenger for attachment")
-		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte("会话服务不可用，文件未发送。"))
+		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte(common.T("PushSessionServiceUnavailable")))
 		return
 	}
 
@@ -198,7 +198,7 @@ func (m *Manager) handleIncomingWithMedia(ctx context.Context, data *chatbot.Bot
 	info, err := sessionMessenger.GetSessionInfo(sessionID)
 	if err != nil {
 		slog.Warn("dingtalk: session unavailable", "error", err, "session_id", sessionID)
-		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte("会话不可用，文件未发送。"))
+		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte(common.T("PushSessionUnavailable")))
 		return
 	}
 
@@ -215,7 +215,7 @@ func (m *Manager) handleIncomingWithMedia(ctx context.Context, data *chatbot.Bot
 	// AI sees the question and its attachments as a single turn.
 	if err := sessionMessenger.SendMessageToSession(sessionID, route.Message, entries); err != nil {
 		slog.Warn("dingtalk: send attachment to session failed", "error", err, "session_id", sessionID)
-		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte("发送文件失败: "+err.Error()))
+		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte(common.T("PushSendFileFailed")+err.Error()))
 		return
 	}
 
@@ -231,7 +231,7 @@ func (m *Manager) handleIncomingWithMedia(ctx context.Context, data *chatbot.Bot
 		"session_id", sessionID, "count", len(entries), "paths", paths, "staff_id", staffID)
 
 	_ = replier.SimpleReplyMarkdown(ctx, data.SessionWebhook,
-		[]byte("文件已发送"),
+		[]byte(common.T("PushFileSent")),
 		[]byte(m.attachmentSentMarkdown(sessionID, sessionTitle, len(entries), dl)))
 }
 
@@ -289,29 +289,31 @@ func (m *Manager) downloadRef(ctx context.Context, ref mediaRef, projectPath str
 // names the configured cap, which is the actionable part for the user.
 func (m *Manager) downloadFailureText(out downloadOutcome) string {
 	if out.tooLarge {
-		return fmt.Sprintf("文件超过大小上限（%d MB），未发送。", common.AttachmentMaxBytes()/(1024*1024))
+		return common.T("PushFileTooLarge", map[string]any{"MaxMB": common.AttachmentMaxBytes() / (1024 * 1024)})
 	}
 	if out.failed > 1 {
-		return fmt.Sprintf("文件下载失败，未发送（%d 个）。", out.failed)
+		return common.T("PushFilesDownloadFailed", map[string]any{"Count": out.failed})
 	}
-	return "文件下载失败，未发送。"
+	return common.T("PushFileDownloadFailed")
 }
 
 // attachmentSentMarkdown builds the success reply, noting any partial failure
 // or truncation so the user knows the message was not delivered in full.
 func (m *Manager) attachmentSentMarkdown(sessionID, sessionTitle string, sent int, out downloadOutcome) string {
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "### 文件已发送\n已发送到会话 **%s**，AI 正在处理",
-		common.FormatSessionLabel(sessionID, sessionTitle))
+	fmt.Fprintf(&sb, "### %s\n%s",
+		common.T("PushFileSent"),
+		common.T("PushSentToSessionBold", map[string]any{"Label": common.FormatSessionLabel(sessionID, sessionTitle)}))
 	if sent > 1 {
-		fmt.Fprintf(&sb, "（共 %d 个文件）", sent)
+		fmt.Fprintf(&sb, "%s", common.T("PushFilesCount", map[string]any{"Count": sent}))
 	}
 	if out.failed > 0 {
-		fmt.Fprintf(&sb, "\n\n⚠️ 有 %d 个文件下载失败，未发送。", out.failed)
+		fmt.Fprintf(&sb, "\n\n%s", common.T("PushPartialDownloadFailed", map[string]any{"Count": out.failed}))
 	}
 	if out.truncated {
-		fmt.Fprintf(&sb, "\n\n⚠️ 附件数量超过上限（%d），仅发送前 %d 个。",
-			common.AttachmentMaxFiles(), sent)
+		fmt.Fprintf(&sb, "\n\n%s", common.T("PushAttachmentsTruncated", map[string]any{
+			"Max": common.AttachmentMaxFiles(), "Sent": sent,
+		}))
 	}
 	return sb.String()
 }
@@ -321,8 +323,8 @@ func (m *Manager) attachmentSentMarkdown(sessionID, sessionTitle string, sent in
 func (m *Manager) replyUnsupported(ctx context.Context, data *chatbot.BotCallbackDataModel) {
 	slog.Info("dingtalk: unsupported message type", "msgtype", data.Msgtype)
 	replier := chatbot.NewChatbotReplier()
-	_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte(
-		fmt.Sprintf("暂不支持该消息类型（%s）。请发送文字、图片或文件。", data.Msgtype)))
+	_ = replier.SimpleReplyText(ctx, data.SessionWebhook,
+		[]byte(common.T("PushUnsupportedMsgType", map[string]any{"Type": data.Msgtype})))
 }
 
 // deliverToSession resolves the route's target and sends the message, then
@@ -347,7 +349,7 @@ func (m *Manager) deliverToSession(ctx context.Context, data *chatbot.BotCallbac
 	// IsSessionRunning branching is needed here.
 	if err := sessionMessenger.SendMessageToSession(sessionID, route.Message, nil); err != nil {
 		slog.Warn("dingtalk: send message to session failed", "error", err, "session_id", sessionID)
-		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte("发送消息失败: "+err.Error()))
+		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte(common.T("PushSendMessageFailed")+err.Error()))
 		return
 	}
 
@@ -357,7 +359,10 @@ func (m *Manager) deliverToSession(ctx context.Context, data *chatbot.BotCallbac
 
 	slog.Info("dingtalk: message sent to session", "session_id", sessionID, "msg", route.Message)
 	_ = replier.SimpleReplyMarkdown(ctx, data.SessionWebhook,
-		[]byte("消息已发送"), []byte(fmt.Sprintf("### 消息已发送\n已发送到会话 **%s**，AI 正在处理", sessionLabel)))
+		[]byte(common.T("PushMessageSent")),
+		[]byte(fmt.Sprintf("### %s\n%s",
+			common.T("PushMessageSent"),
+			common.T("PushSentToSessionBold", map[string]any{"Label": sessionLabel}))))
 }
 
 // lastSessionID reads the user's sticky target, treating any failure as "none
@@ -392,8 +397,7 @@ func (m *Manager) rememberSession(staffID, sessionID string) {
 // previous session was archived/deleted).
 func (m *Manager) replyNoTarget(ctx context.Context, data *chatbot.BotCallbackDataModel) {
 	replier := chatbot.NewChatbotReplier()
-	_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte(
-		"尚未选择会话。发送 /ls 查看会话列表，然后用 @会话ID <消息> 选择。"))
+	_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte(common.T("PushNoSessionSelected")))
 }
 
 // handleSessionList lists recent sessions so the user can pick one to send a message to.
@@ -401,24 +405,24 @@ func (m *Manager) handleSessionList(ctx context.Context, data *chatbot.BotCallba
 	replier := chatbot.NewChatbotReplier()
 
 	if sessionMessenger == nil {
-		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte("已订阅 ClawBench 通知。暂无可用会话。"))
+		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte(common.T("PushSubscribedNoAvailableDingtalk")))
 		return
 	}
 
 	sessions, err := sessionMessenger.ListRecentSessions(10)
 	if err != nil {
 		slog.Warn("dingtalk: list sessions failed", "error", err)
-		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte("已订阅 ClawBench 通知。获取会话列表失败。"))
+		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte(common.T("PushSubscribedListFailedDingtalk")))
 		return
 	}
 
 	if len(sessions) == 0 {
-		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte("已订阅 ClawBench 通知。暂无会话。"))
+		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte(common.T("PushSubscribedNoSessionsDingtalk")))
 		return
 	}
 
 	var sb strings.Builder
-	sb.WriteString("### 会话列表\n发送 **@会话ID <消息>** 向会话发送消息：\n\n")
+	sb.WriteString("### " + common.T("PushSessionListTitle") + "\n" + common.T("PushSessionListIntro") + "\n\n")
 
 	// Group sessions by project path
 	type group struct {
@@ -430,7 +434,7 @@ func (m *Manager) handleSessionList(ctx context.Context, data *chatbot.BotCallba
 	for _, s := range sessions {
 		project := s.ProjectPath
 		if project == "" {
-			project = "（无项目）"
+			project = common.T("PushNoProject")
 		}
 		if idx, ok := groupIdx[project]; ok {
 			groups[idx].items = append(groups[idx].items, s)
@@ -446,7 +450,7 @@ func (m *Manager) handleSessionList(ctx context.Context, data *chatbot.BotCallba
 			id := common.ShortSessionID(s.ID)
 			title := s.Title
 			if title == "" {
-				title = "（无标题）"
+				title = common.T("PushNoTitle")
 			}
 			running := ""
 			if sessionMessenger.IsSessionRunning(s.ID) {
@@ -456,5 +460,5 @@ func (m *Manager) handleSessionList(ctx context.Context, data *chatbot.BotCallba
 		}
 		sb.WriteString("\n")
 	}
-	_ = replier.SimpleReplyMarkdown(ctx, data.SessionWebhook, []byte("会话列表"), []byte(sb.String()))
+	_ = replier.SimpleReplyMarkdown(ctx, data.SessionWebhook, []byte(common.T("PushSessionListTitle")), []byte(sb.String()))
 }

@@ -144,6 +144,55 @@ PushTaskStarted: Task started
 PushSessionCompleted: Session completed
 PushSessionCancelled: Session cancelled
 PushActionRequired: Action requires approval
+# IM push (DingTalk / Feishu) — the strings the bot writes into the user's chat.
+# The push backends run on their own goroutines with no HTTP request in scope,
+# so they localize via LocalizerForLocale(model.Language), exactly like
+# AutoContinue. DingTalk renders sampleMarkdown; Feishu renders an interactive
+# card, so a few strings differ only in emphasis or word order and are kept
+# separate to preserve each platform's existing output.
+PushLabelSession: Session
+PushLabelProject: Project
+PushLabelTask: Task
+PushLabelAction: Action
+PushLabelCommand: Command
+PushLabelFile: File
+PushReplyHintSend: 'Send `@{{.ID}} <message>` to send a message to the session'
+PushReplyHintQueue: 'Send `@{{.ID}} <message>` to append it to the queue'
+PushSessionServiceUnavailable: Session service unavailable; file not sent.
+PushSessionUnavailable: Session unavailable; file not sent.
+PushSendFileFailed: 'Failed to send file: '
+PushFileSent: File sent
+PushFileTooLarge: File exceeds the size limit ({{.MaxMB}} MB); not sent.
+PushFilesDownloadFailed: Failed to download {{.Count}} files; not sent.
+PushFileDownloadFailed: Failed to download the file; not sent.
+PushSentToSessionBold: Sent to session **{{.Label}}**; the AI is processing it
+PushSentToSessionPlain: Sent to session {{.Label}}; the AI is processing it
+PushFilesCount: ({{.Count}} files)
+PushPartialDownloadFailed: '⚠️ {{.Count}} files failed to download; not sent.'
+PushAttachmentsTruncated: '⚠️ Attachment count exceeds the limit ({{.Max}}); only the first {{.Sent}} were sent.'
+PushUnsupportedMsgType: Unsupported message type ({{.Type}}). Please send text, an image, or a file.
+PushSendMessageFailed: 'Failed to send message: '
+PushMessageSent: Message sent
+PushNoSessionSelected: 'No session selected yet. Send /ls to list sessions, then use @sessionID <message> to pick one.'
+PushErrorTitle: Error
+PushUnsupportedTitle: Unsupported
+PushSelectSessionTitle: Select a session
+PushSubscribedTitle: Subscribed
+PushSessionListTitle: Session list
+PushSessionListIntro: 'Send **@sessionID <message>** to send a message to a session:'
+PushNoProject: (no project)
+PushNoTitle: (untitled)
+PushSessionLabelPrefix: 'Session '
+PushSubscribedNoAvailableDingtalk: Subscribed to ClawBench notifications. No sessions available.
+PushSubscribedNoAvailableFeishu: ClawBench notifications subscribed. No sessions available.
+PushSubscribedListFailedDingtalk: Subscribed to ClawBench notifications. Failed to list sessions.
+PushSubscribedListFailedFeishu: ClawBench notifications subscribed. Failed to list sessions.
+PushSubscribedNoSessionsDingtalk: Subscribed to ClawBench notifications. No sessions.
+PushSubscribedNoSessionsFeishu: ClawBench notifications subscribed. No sessions.
+PushMultipleRunningSessions: 'Multiple running sessions matched; use a longer ID ({{.ID}}…)'
+PushMultipleSessions: 'Multiple sessions matched; use a longer ID ({{.ID}}…)'
+PushSessionNotFound: Session {{.ID}} not found
+PushRecentSessionUnavailable: 'The recent session is unavailable; pick again with /ls: {{.Error}}'
 NotFound: Not found
 PermissionNotFound: No pending permission request found
 ACPSessionNotFound: ACP session no longer exists on the agent side

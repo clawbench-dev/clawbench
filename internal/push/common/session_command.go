@@ -1,6 +1,7 @@
 package common
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -90,7 +91,7 @@ func ResolveShortSessionID(messenger SessionMessenger, shortID string) (string, 
 		return "", "", fmt.Errorf("find running sessions: %w", err)
 	}
 	if len(running) > 1 {
-		return "", "", fmt.Errorf("匹配到多个正在运行的会话，请使用更长的 ID（%s…）", shortID)
+		return "", "", errors.New(T("PushMultipleRunningSessions", map[string]any{"ID": shortID}))
 	}
 	if len(running) == 1 {
 		return running[0].ID, running[0].Title, nil
@@ -102,13 +103,13 @@ func ResolveShortSessionID(messenger SessionMessenger, shortID string) (string, 
 		return "", "", fmt.Errorf("find sessions: %w", err)
 	}
 	if len(all) > 1 {
-		return "", "", fmt.Errorf("匹配到多个会话，请使用更长的 ID（%s…）", shortID)
+		return "", "", errors.New(T("PushMultipleSessions", map[string]any{"ID": shortID}))
 	}
 	if len(all) == 1 {
 		return all[0].ID, all[0].Title, nil
 	}
 
-	return "", "", fmt.Errorf("未找到会话 %s", shortID)
+	return "", "", errors.New(T("PushSessionNotFound", map[string]any{"ID": shortID}))
 }
 
 // ResolveTarget resolves a Route to a concrete session.
@@ -131,7 +132,7 @@ func ResolveTarget(messenger SessionMessenger, route Route, stickySessionID stri
 	}
 	info, err := messenger.GetSessionInfo(stickySessionID)
 	if err != nil {
-		return "", "", fmt.Errorf("最近会话不可用，请用 /ls 重新选择：%w", err)
+		return "", "", errors.New(T("PushRecentSessionUnavailable", map[string]any{"Error": err.Error()}))
 	}
 	return info.ID, info.Title, nil
 }
@@ -141,7 +142,7 @@ func FormatSessionLabel(sessionID, sessionTitle string) string {
 	if sessionTitle != "" {
 		return sessionTitle
 	}
-	return "会话 " + ShortSessionID(sessionID)
+	return T("PushSessionLabelPrefix") + ShortSessionID(sessionID)
 }
 
 // ShortSessionID returns the first 8 characters of a session ID for display.

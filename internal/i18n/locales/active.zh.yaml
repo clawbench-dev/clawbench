@@ -145,6 +145,53 @@ PushTaskStarted: 任务已启动
 PushSessionCompleted: 会话已完成
 PushSessionCancelled: 会话已取消
 PushActionRequired: 操作需批准
+# IM 推送（钉钉 / 飞书）——机器人写进用户聊天里的文案。推送后端跑在各自
+# goroutine 里、没有 HTTP 请求上下文，故与 AutoContinue 一样走
+# LocalizerForLocale(model.Language) 本地化。钉钉渲染 sampleMarkdown、飞书渲染
+# 交互式卡片，少数文案仅强调或语序不同，故按平台分列以保留各自既有输出。
+PushLabelSession: 会话
+PushLabelProject: 项目
+PushLabelTask: 任务
+PushLabelAction: 操作
+PushLabelCommand: 命令
+PushLabelFile: 文件
+PushReplyHintSend: 发送 `@{{.ID}} <消息>` 向会话发送消息
+PushReplyHintQueue: 发送 `@{{.ID}} <消息>` 追加消息到队列
+PushSessionServiceUnavailable: 会话服务不可用，文件未发送。
+PushSessionUnavailable: 会话不可用，文件未发送。
+PushSendFileFailed: '发送文件失败: '
+PushFileSent: 文件已发送
+PushFileTooLarge: 文件超过大小上限（{{.MaxMB}} MB），未发送。
+PushFilesDownloadFailed: 文件下载失败，未发送（{{.Count}} 个）。
+PushFileDownloadFailed: 文件下载失败，未发送。
+PushSentToSessionBold: 已发送到会话 **{{.Label}}**，AI 正在处理
+PushSentToSessionPlain: 已发送到会话 {{.Label}}，AI 正在处理
+PushFilesCount: （共 {{.Count}} 个文件）
+PushPartialDownloadFailed: '⚠️ 有 {{.Count}} 个文件下载失败，未发送。'
+PushAttachmentsTruncated: '⚠️ 附件数量超过上限（{{.Max}}），仅发送前 {{.Sent}} 个。'
+PushUnsupportedMsgType: 暂不支持该消息类型（{{.Type}}）。请发送文字、图片或文件。
+PushSendMessageFailed: '发送消息失败: '
+PushMessageSent: 消息已发送
+PushNoSessionSelected: 尚未选择会话。发送 /ls 查看会话列表，然后用 @会话ID <消息> 选择。
+PushErrorTitle: 错误
+PushUnsupportedTitle: 暂不支持
+PushSelectSessionTitle: 请选择会话
+PushSubscribedTitle: 已订阅
+PushSessionListTitle: 会话列表
+PushSessionListIntro: 发送 **@会话ID <消息>** 向会话发送消息：
+PushNoProject: （无项目）
+PushNoTitle: （无标题）
+PushSessionLabelPrefix: '会话 '
+PushSubscribedNoAvailableDingtalk: 已订阅 ClawBench 通知。暂无可用会话。
+PushSubscribedNoAvailableFeishu: ClawBench 通知已订阅。暂无可用会话。
+PushSubscribedListFailedDingtalk: 已订阅 ClawBench 通知。获取会话列表失败。
+PushSubscribedListFailedFeishu: ClawBench 通知已订阅。获取会话列表失败。
+PushSubscribedNoSessionsDingtalk: 已订阅 ClawBench 通知。暂无会话。
+PushSubscribedNoSessionsFeishu: ClawBench 通知已订阅。暂无会话。
+PushMultipleRunningSessions: 匹配到多个正在运行的会话，请使用更长的 ID（{{.ID}}…）
+PushMultipleSessions: 匹配到多个会话，请使用更长的 ID（{{.ID}}…）
+PushSessionNotFound: 未找到会话 {{.ID}}
+PushRecentSessionUnavailable: 最近会话不可用，请用 /ls 重新选择：{{.Error}}
 NotFound: 未找到
 PermissionNotFound: 未找到待审批的权限请求
 ACPSessionNotFound: 该会话在智能体端已不存在

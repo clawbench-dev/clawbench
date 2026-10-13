@@ -41,28 +41,28 @@ func PushSessionEvent(sessionID, status, sessionTitle, responsePreview, projectP
 
 	switch status {
 	case "completed":
-		title = "会话已完成"
-		replyHint := fmt.Sprintf("\n\n---\n发送 @%s <消息> 向会话发送消息", shortID)
-		content = fmt.Sprintf("**会话**: %s\n**项目**: %s\n\n%s%s",
-			sessionTitle,
-			projectPath,
+		title = common.T("PushSessionCompleted")
+		replyHint := "\n\n---\n" + common.T("PushReplyHintSend", map[string]any{"ID": shortID})
+		content = fmt.Sprintf("**%s**: %s\n**%s**: %s\n\n%s%s",
+			common.T("PushLabelSession"), sessionTitle,
+			common.T("PushLabelProject"), projectPath,
 			truncateForFeishu(responsePreview),
 			replyHint)
 	case "cancelled":
-		title = "会话已取消"
-		replyHint := fmt.Sprintf("\n\n---\n发送 @%s <消息> 向会话发送消息", shortID)
-		content = fmt.Sprintf("**会话**: %s\n**项目**: %s\n\n%s%s",
-			sessionTitle,
-			projectPath,
+		title = common.T("PushSessionCancelled")
+		replyHint := "\n\n---\n" + common.T("PushReplyHintSend", map[string]any{"ID": shortID})
+		content = fmt.Sprintf("**%s**: %s\n**%s**: %s\n\n%s%s",
+			common.T("PushLabelSession"), sessionTitle,
+			common.T("PushLabelProject"), projectPath,
 			truncateForFeishu(responsePreview),
 			replyHint)
 	case "permission_pending":
-		title = "操作需批准"
-		replyHint := fmt.Sprintf("\n\n---\n发送 @%s <消息> 追加消息到队列", shortID)
+		title = common.T("PushActionRequired")
+		replyHint := "\n\n---\n" + common.T("PushReplyHintQueue", map[string]any{"ID": shortID})
 		detail := formatPermissionDetail(toolName, toolInput)
-		content = fmt.Sprintf("**会话**: %s\n**项目**: %s\n\n%s%s",
-			sessionTitle,
-			projectPath,
+		content = fmt.Sprintf("**%s**: %s\n**%s**: %s\n\n%s%s",
+			common.T("PushLabelSession"), sessionTitle,
+			common.T("PushLabelProject"), projectPath,
 			detail,
 			replyHint)
 	default:
@@ -76,20 +76,20 @@ func PushSessionEvent(sessionID, status, sessionTitle, responsePreview, projectP
 func formatPermissionDetail(toolName, toolInput string) string {
 	var detail string
 	if toolName != "" {
-		detail += fmt.Sprintf("**操作**: %s\n\n", toolName)
+		detail += fmt.Sprintf("**%s**: %s\n\n", common.T("PushLabelAction"), toolName)
 	}
 	if toolInput != "" {
 		var parsed map[string]any
 		if err := json.Unmarshal([]byte(toolInput), &parsed); err == nil {
 			if command, _ := parsed["command"].(string); command != "" {
-				detail += fmt.Sprintf("**命令**: `%s`\n\n", command)
+				detail += fmt.Sprintf("**%s**: `%s`\n\n", common.T("PushLabelCommand"), command)
 			}
 			filePath, _ := parsed["file_path"].(string)
 			if filePath == "" {
 				filePath, _ = parsed["path"].(string)
 			}
 			if filePath != "" {
-				detail += fmt.Sprintf("**文件**: `%s`\n\n", filePath)
+				detail += fmt.Sprintf("**%s**: `%s`\n\n", common.T("PushLabelFile"), filePath)
 			}
 		}
 	}
@@ -106,27 +106,27 @@ func PushTaskEvent(taskID, status, taskName, responsePreview, projectPath string
 
 	switch status {
 	case "running":
-		title = "任务已启动"
-		content = fmt.Sprintf("**任务**: %s\n**项目**: %s",
-			taskName,
-			projectPath)
+		title = common.T("PushTaskStarted")
+		content = fmt.Sprintf("**%s**: %s\n**%s**: %s",
+			common.T("PushLabelTask"), taskName,
+			common.T("PushLabelProject"), projectPath)
 	case "completed":
-		title = "任务已完成"
-		content = fmt.Sprintf("**任务**: %s\n**项目**: %s\n\n%s",
-			taskName,
-			projectPath,
+		title = common.T("PushTaskCompleted")
+		content = fmt.Sprintf("**%s**: %s\n**%s**: %s\n\n%s",
+			common.T("PushLabelTask"), taskName,
+			common.T("PushLabelProject"), projectPath,
 			truncateForFeishu(responsePreview))
 	case "failed":
-		title = "任务失败"
-		content = fmt.Sprintf("**任务**: %s\n**项目**: %s\n\n%s",
-			taskName,
-			projectPath,
+		title = common.T("PushTaskFailed")
+		content = fmt.Sprintf("**%s**: %s\n**%s**: %s\n\n%s",
+			common.T("PushLabelTask"), taskName,
+			common.T("PushLabelProject"), projectPath,
 			truncateForFeishu(responsePreview))
 	case "cancelled":
-		title = "任务已取消"
-		content = fmt.Sprintf("**任务**: %s\n**项目**: %s\n\n%s",
-			taskName,
-			projectPath,
+		title = common.T("PushTaskCancelled")
+		content = fmt.Sprintf("**%s**: %s\n**%s**: %s\n\n%s",
+			common.T("PushLabelTask"), taskName,
+			common.T("PushLabelProject"), projectPath,
 			truncateForFeishu(responsePreview))
 	default:
 		return false
