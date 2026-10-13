@@ -197,11 +197,20 @@
           <MessageSquare :size="14" />
         </button>
         <template v-if="msg.role === 'assistant'">
-          <button v-if="speakableText && !readOnly" ref="speakBtnRef" class="chat-action-btn chat-speak-btn" :class="{ 'chat-action-btn--wide': autoSpeech.isActive(msg.id), active: autoSpeech.isActive(msg.id), loading: autoSpeech.isGeneratingText(msg.id) }" :title="speakBtnLabel" :aria-label="speakBtnLabel" @click.stop="handleSpeak">
-            <!-- Generating states: summarizing / synthesizing -->
+          <button v-if="speakableText && !readOnly" ref="speakBtnRef" class="chat-action-btn chat-speak-btn" :class="{ 'chat-action-btn--wide': autoSpeech.isPlayingAudio(msg.id), active: autoSpeech.isActive(msg.id), loading: autoSpeech.isGeneratingText(msg.id) }" :title="speakBtnLabel" :aria-label="speakBtnLabel" @click.stop="handleSpeak">
+            <!-- Generating states carry NO text: the two phases are told apart by
+                 the glyph and its motion alone. Summarizing breathes a Sparkles
+                 in place (the same glyph SummaryToggle uses for "summary");
+                 synthesizing uses the app's one shared loading ring — the same
+                 "still working, not playing" language the input bar's voice
+                 button uses for its transcribing state. Waveform bars would be
+                 wrong here: they already mean "audio is playing" (the input
+                 bar's recording state), which is the very state that follows.
+                 The phase name is not lost — speakBtnLabel still puts it on
+                 title/aria-label, which is where a screen reader reads it. -->
             <template v-if="autoSpeech.isGeneratingText(msg.id)">
-              <Clock :size="14" class="speak-spinner" />
-              <span>{{ autoSpeech.getPhaseLabel(msg.id) ? t('chat.speech.' + autoSpeech.getPhaseLabel(msg.id)) : '' }}</span>
+              <Sparkles v-if="autoSpeech.getPhaseLabel(msg.id) === 'summarizing'" :size="14" class="speak-breathe" />
+              <LoadingIndicator v-else size="sm" inline />
             </template>
             <!-- Playing state -->
             <template v-else-if="autoSpeech.isPlayingAudio(msg.id)">
@@ -272,7 +281,7 @@
 <script setup>
 import { ref, inject, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Clock, Pause, Volume2, Info, FileDiff, Split, Rewind, MessageSquare, ChevronDown, Lock, User, Crown, Megaphone, CornerDownRight } from 'lucide-vue-next'
+import { Sparkles, Pause, Volume2, Info, FileDiff, Split, Rewind, MessageSquare, ChevronDown, Lock, User, Crown, Megaphone, CornerDownRight } from 'lucide-vue-next'
 import { formatDuration, formatRelativeTime } from '@/utils/format.ts'
 import { escapeHtml } from '@/utils/html.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
@@ -854,9 +863,19 @@ const copyPayload = quotableText
     align-items: center;
 }
 
-/* Speak button loading spinner animation */
-.chat-action-btn.loading .speak-spinner {
-    animation: speak-spin 1s linear infinite;
+/* Speak button: the "summarizing" phase breathes its glyph in place. This is
+   the only channel that distinguishes it from "synthesizing" (which uses the
+   shared loading ring), so — like BusyBar and the session status slot — it
+   deliberately has NO prefers-reduced-motion opt-out: freezing it would make
+   the two phases look identical. The phase name is still available to screen
+   readers via the button's title/aria-label. See design-guide.md § 动效. */
+.chat-action-btn.loading .speak-breathe {
+    animation: speak-breathe 1.6s ease-in-out infinite;
+}
+
+@keyframes speak-breathe {
+    0%, 100% { opacity: 0.45; transform: scale(0.9); }
+    50%      { opacity: 1;    transform: scale(1); }
 }
 
 /* In-flight fork button. It stays `disabled` so it cannot be clicked twice, but
@@ -873,10 +892,6 @@ const copyPayload = quotableText
 
 .chat-action-btn.is-forking .li-spinner {
     --li-color: var(--accent-color);
-}
-
-@keyframes speak-spin {
-    to { transform: rotate(360deg); }
 }
 
 
