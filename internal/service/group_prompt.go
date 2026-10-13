@@ -86,10 +86,11 @@ func BuildHostSystemPrompt(selfName string, members []HostMemberInfo) string {
 	b.WriteString(selfIdentityLine(selfName))
 	b.WriteString("每次发言必须包含一个路由标签，指定接下来该谁发言，并把你对他们说的话写在标签里：\n")
 	b.WriteString("  <clawbench-mention targets=\"成员名\">给该成员的指令</clawbench-mention>\n")
-	b.WriteString("可一次点名多个成员（逗号分隔），他们将按顺序依次发言：\n")
+	b.WriteString("可一次点名多个成员（逗号分隔），默认**串行**：他们按顺序依次发言，后发言者能看到前者本轮内容。\n")
 	b.WriteString("  <clawbench-mention targets=\"A,B\">请分别表态</clawbench-mention>\n")
-	b.WriteString("若你希望多人**同时**发言、彼此看不到对方本轮内容（如同时行动/同时表态），加 mode=\"parallel\"：\n")
+	b.WriteString("若你希望多人**同时**发言、各自独立互不影响（并发执行也更快），加 mode=\"parallel\"：\n")
 	b.WriteString("  <clawbench-mention targets=\"A,B\" mode=\"parallel\">请你们各自独立作答</clawbench-mention>\n")
+	b.WriteString("如何选择：需要**互相补充、层层深入、后发言者回应前者**时用串行（默认）；需要**彼此不受影响的独立意见**时用 parallel——例如独立评审、各自出方案、分别估算，或你不希望后发言者被前者的观点带偏。\n")
 	b.WriteString("当讨论已充分、可以收敛时，输出结束标签：\n")
 	b.WriteString("  <clawbench-group-end/>\n")
 	b.WriteString("在结束标签之后，必须再写一段简短的讨论结论（最终汇总），供用户阅读。\n")
@@ -188,10 +189,11 @@ func BuildFreeMemberSystemPrompt(members []HostMemberInfo, selfName string) stri
 	b.WriteString("轮到你时，直接就当前话题发表你的看法即可（简洁、直接）。\n")
 	b.WriteString("如果你希望某位成员接着发言（补充、反驳、回应你），就把话筒递给他——在你的发言里写：\n")
 	b.WriteString("  <clawbench-mention targets=\"成员名\">你想对他说的话</clawbench-mention>\n")
-	b.WriteString("可一次 @ 多个成员（逗号分隔），他们会依次发言：\n")
+	b.WriteString("可一次 @ 多个成员（逗号分隔），默认**串行**：他们会依次发言，后发言者能看到前者本轮内容。\n")
 	b.WriteString("  <clawbench-mention targets=\"A,B\">请你们分别表态</clawbench-mention>\n")
-	b.WriteString("若你希望多人**同时**发言、彼此看不到对方本轮内容（如同时行动/同时表态），加 mode=\"parallel\"：\n")
+	b.WriteString("若你希望多人**同时**发言、各自独立互不影响（并发执行也更快），加 mode=\"parallel\"：\n")
 	b.WriteString("  <clawbench-mention targets=\"A,B\" mode=\"parallel\">请你们各自独立作答</clawbench-mention>\n")
+	b.WriteString("如何选择：需要**互相补充、层层深入、后发言者回应前者**时用串行（默认）；需要**彼此不受影响的独立意见**时用 parallel——例如独立评审、各自出方案、分别估算，或你不希望后发言者被前者的观点带偏。\n")
 	b.WriteString("**如果没有人需要继续说，就不要输出任何 mention 标签**——讨论到此自然结束。\n")
 	b.WriteString("你也可以 @ " + groupUserTarget() + "（即用户本人）把话筒交回给用户，用户回复后讨论继续。\n")
 	// Private notes: same tag with the `private` attribute. Delivered on the
@@ -201,5 +203,68 @@ func BuildFreeMemberSystemPrompt(members []HostMemberInfo, selfName string) stri
 	b.WriteString("  <clawbench-mention targets=\"成员名\" private>只有该成员能看到的内容</clawbench-mention>\n")
 
 	b.WriteString(othersLine(members, selfName))
+	return b.String()
+}
+
+// ── Auto-cruise prompts (design §15) ─────────────────────────────────────
+//
+// Cruise is an orthogonal switch on top of host/free. These fragments are
+// appended by the orchestrator when the group's cruise switch is on; they are
+// separate builders so the non-cruise prompts stay byte-identical (existing
+// prompt tests and model behavior are unaffected).
+
+// BuildCruiseHostAddendum is appended to the HOST's system prompt when the group
+// runs in AUTO-CRUISE mode. It changes the END rule: the host's
+// <clawbench-group-end/> no longer ends the discussion directly — it triggers a
+// system confirmation round in which the host is asked whether the goal is met,
+// and only <clawbench-goal-satisfied/> actually ends it. Without this addendum
+// the host keeps emitting group-end expecting to stop, and the confirmation
+// would look like an error to it.
+func BuildCruiseHostAddendum() string {
+	var b strings.Builder
+	b.WriteString("\n\n[自动巡航模式] 本群已开启自动巡航：讨论将持续进行，直到你（主持人）确认任务已完成。\n")
+	b.WriteString("注意：巡航模式下 <clawbench-group-end/> **不再直接结束讨论**——它会让系统向你发起一次「完成确认」，由你判断是否真正完成。\n")
+	b.WriteString("当系统向你确认时：\n")
+	b.WriteString("  - 若你认为已经满足用户的要求，输出结束信号：<clawbench-goal-satisfied/>\n")
+	b.WriteString("  - 若尚未完成，就照常点名（<clawbench-mention targets=\"…\">）继续推进，不要输出 goal-satisfied。\n")
+	b.WriteString("请持续组织成员推进工作，直到确实完成，不要为了收工而过早输出 goal-satisfied。\n")
+	return b.String()
+}
+
+// BuildCruiseFreeMemberAddendum is appended to a FREE-mode member's system
+// prompt when the group runs in AUTO-CRUISE mode. It teaches the completion
+// declaration: a member that judges the goal met emits
+// <clawbench-goal-satisfied/>. It also forbids asking the user, since the floor
+// never returns to the human while cruising.
+func BuildCruiseFreeMemberAddendum() string {
+	var b strings.Builder
+	b.WriteString("\n\n[自动巡航模式] 本群已开启自动巡航：讨论将持续进行，直到过半成员确认任务已完成。\n")
+	b.WriteString("如果你认为已经满足用户的要求，输出结束信号：<clawbench-goal-satisfied/>（可与你的发言并存）。\n")
+	b.WriteString("如果尚未完成，继续正常讨论与 @ 接力，不要输出 goal-satisfied。\n")
+	b.WriteString("巡航期间**不要向用户提问**——用户不会立即回复，所有不明确之处请通过探索、实验、思考与讨论自行决定。\n")
+	return b.String()
+}
+
+// BuildCruiseConfirmPrompt is the hidden instruction injected when a cruise turn
+// reaches a point that would normally hand the floor back to the human (the
+// host's end tag, a drained free relay, an @User, or a question). It is the
+// "confirmation round" prompt: it is NOT persisted to the chat, only injected
+// into the participants' context for that round.
+//
+// freeMode selects the wording: a free member is asked to evaluate and emit
+// <clawbench-goal-satisfied/>; the host is asked to either confirm (goal tag) or
+// keep routing. Both variants forbid asking the user.
+func BuildCruiseConfirmPrompt(freeMode bool) string {
+	var b strings.Builder
+	b.WriteString("\n\n[自动巡航·完成确认] 当前没有新的用户消息，请不要向用户提问，也不要等待用户确认。\n")
+	b.WriteString("所有不明确之处，请通过自主探索、实验、思考与讨论自行决定。\n")
+	b.WriteString("请评估：当前任务是否已经满足了用户最初的要求？\n")
+	if freeMode {
+		b.WriteString("若确认已完成，输出 <clawbench-goal-satisfied/>；否则继续推进尚未完成的部分。\n")
+		b.WriteString("本轮只做表态，不要 @ 任何人。\n")
+	} else {
+		b.WriteString("若确认已完成，输出 <clawbench-goal-satisfied/>；\n")
+		b.WriteString("若尚未完成，照常点名下一批成员（<clawbench-mention targets=\"…\">）继续推进。\n")
+	}
 	return b.String()
 }

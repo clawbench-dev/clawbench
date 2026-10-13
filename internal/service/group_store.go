@@ -1176,6 +1176,35 @@ func SetGroupParallelDefault(groupID string, enabled bool) error {
 	return nil
 }
 
+// GetGroupCruise reports whether AUTO-CRUISE is enabled for the group: instead
+// of ending the turn when the loop would hand the floor back to the human, the
+// orchestrator keeps the participants working until they (or the host, in host
+// mode) declare the goal met via <clawbench-goal-satisfied/>. See the design
+// doc §15.
+//
+// Defaults to false when unset/invalid: cruise is opt-in, so an old group (or
+// one whose context_state was corrupted) keeps the pre-existing behavior. The
+// key is `cruise` (not `goal`/`mode`) to avoid colliding with the existing
+// keys (`usage`/`host_member_id`/`group_mode`/`parallelDefault`/`seen_cursor`/
+// `mode`).
+func GetGroupCruise(groupID string) bool {
+	var raw string
+	_ = store.ReadDB().QueryRow(
+		"SELECT COALESCE(json_extract(context_state, '$.cruise'), '') FROM chat_sessions WHERE id = ?",
+		groupID,
+	).Scan(&raw)
+	// SQLite's json_extract renders JSON true as 1 and false as 0; anything
+	// else (empty/absent/invalid) is the default (off).
+	return raw == "1" || raw == "true"
+}
+
+// SetGroupCruise stores the group's auto-cruise switch in its context_state
+// JSON. Stored unconditionally (both host and free mode may cruise).
+func SetGroupCruise(groupID string, enabled bool) error {
+	PatchContextStateMerge(groupID, map[string]string{"cruise": fmt.Sprintf("%t", enabled)})
+	return nil
+}
+
 // GetAgentDisplayName returns an agent's display name (falling back to its id,
 // then "AI"), used as the base for a member row's agent_name and the group's
 // placeholder title.

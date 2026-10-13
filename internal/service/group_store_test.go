@@ -413,6 +413,46 @@ func TestGroupParallelDefaultRoundTrip(t *testing.T) {
 	}
 }
 
+// The auto-cruise switch is a tri-state read: absent => off, and an explicit
+// true/false must round-trip. Cruise is opt-in, so an old group without the key
+// must stay non-cruising.
+func TestGroupCruiseRoundTrip(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest-cruise"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, _, err := CreateGroup(project, "g", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	if GetGroupCruise(groupID) {
+		t.Fatal("cruise must default to false when unset")
+	}
+	if err := SetGroupCruise(groupID, true); err != nil {
+		t.Fatalf("SetGroupCruise(true): %v", err)
+	}
+	if !GetGroupCruise(groupID) {
+		t.Fatal("cruise must read back true after being set")
+	}
+	// The two switches must not clobber each other (they share context_state).
+	if err := SetGroupParallelDefault(groupID, true); err != nil {
+		t.Fatalf("SetGroupParallelDefault(true): %v", err)
+	}
+	if !GetGroupCruise(groupID) {
+		t.Fatal("setting parallelDefault must not clear cruise")
+	}
+	if err := SetGroupCruise(groupID, false); err != nil {
+		t.Fatalf("SetGroupCruise(false): %v", err)
+	}
+	if GetGroupCruise(groupID) {
+		t.Fatal("cruise must read back false after being cleared")
+	}
+	if !GetGroupParallelDefault(groupID) {
+		t.Fatal("clearing cruise must not clear parallelDefault")
+	}
+}
+
 // TestGroupMembersForGroups pins the batch preview used by the session list:
 // one call covers many groups, left members are excluded, group ids with no
 // active members are absent, and an empty input never touches the DB.

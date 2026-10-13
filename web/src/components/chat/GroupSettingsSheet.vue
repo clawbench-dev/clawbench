@@ -93,6 +93,28 @@
           <span class="settings-item__switch-track" />
         </label>
       </div>
+
+      <!-- Settings: auto-cruise. Available in BOTH modes: it changes only WHEN
+           the turn ends (host mode: the host must confirm; free mode: over half
+           the members must confirm), not who routes. The hint differs by mode so
+           the two rule sets are legible. Placed AFTER auto-approve so the
+           auto-approve row keeps its position in the switch order. -->
+      <div class="gm-setting">
+        <div class="gm-setting-text">
+          <label class="gm-setting-label" for="group-cruise">{{ t('group.cruiseLabel') }}</label>
+          <span class="gm-setting-desc">{{ mode === 'free' ? t('group.cruiseHintFree') : t('group.cruiseHintHost') }}</span>
+        </div>
+        <label class="settings-item__switch">
+          <input
+            id="group-cruise"
+            class="settings-item__switch-input"
+            type="checkbox"
+            :checked="cruise"
+            @change="onToggleCruise"
+          />
+          <span class="settings-item__switch-track" />
+        </label>
+      </div>
     </div>
 
     <AgentSelectorDrawer
@@ -120,7 +142,7 @@ import AgentIcon from '@/components/common/AgentIcon.vue'
 import RealAgentNameTag from '@/components/common/RealAgentNameTag.vue'
 import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
 import { getAgentAvatar } from '@/composables/useAgents'
-import { addGroupMembers, generateMemberAvatars, removeGroupMember, setGroupParallelDefault, type GroupMemberInfo } from '@/composables/useGroupChat'
+import { addGroupMembers, generateMemberAvatars, removeGroupMember, setGroupParallelDefault, setGroupCruise, type GroupMemberInfo } from '@/composables/useGroupChat'
 import { toggleAutoApprove } from '@/composables/useSessionIdentity'
 import { appLog } from '@/utils/appLog'
 import { store } from '@/stores/app.ts'
@@ -137,6 +159,8 @@ const props = defineProps<{
   /** Free-mode concurrency switch value (server-authoritative). Shown only in
    *  free mode — in host mode the host routes, so it would be a dead setting. */
   parallelDefault?: boolean
+  /** Auto-cruise switch value (server-authoritative). Shown in BOTH modes. */
+  cruise?: boolean
 }>()
 const emit = defineEmits<{ (e: 'changed'): void }>()
 
@@ -203,6 +227,16 @@ async function onToggleParallel(e: Event) {
   const enabled = (e.target as HTMLInputElement).checked
   try {
     await setGroupParallelDefault(props.groupId, enabled)
+    emit('changed')
+  } catch { /* the parent's refresh reverts the checkbox to the server value */ }
+}
+
+// Persist the auto-cruise switch, then refresh so the checkbox reflects the
+// SERVER value (same server-authoritative contract as the other switches).
+async function onToggleCruise(e: Event) {
+  const enabled = (e.target as HTMLInputElement).checked
+  try {
+    await setGroupCruise(props.groupId, enabled)
     emit('changed')
   } catch { /* the parent's refresh reverts the checkbox to the server value */ }
 }

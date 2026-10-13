@@ -27,6 +27,7 @@
       :autoApprove="autoApprove"
       :mode="mode"
       :parallelDefault="parallelDefault"
+      :cruise="cruise"
       @changed="$emit('changed')"
     />
   </div>
@@ -51,6 +52,8 @@ const props = defineProps<{
   mode?: 'host' | 'free'
   /** Free-mode concurrency switch value, shown in the sheet (free mode only). */
   parallelDefault?: boolean
+  /** Auto-cruise switch value, shown in the sheet (both modes). */
+  cruise?: boolean
 }>()
 defineEmits<{ (e: 'changed'): void }>()
 

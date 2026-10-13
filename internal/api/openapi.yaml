@@ -5368,10 +5368,11 @@ paths:
       summary: 列出群成员
       description: |
         返回群的全部成员，含已离场（`left=true`）的成员。`isHost` 标识主持人。
-        同时返回 `mode`（`"host"` 主持人模式 / `"free"` 自由聊天模式）与
+        同时返回 `mode`（`"host"` 主持人模式 / `"free"` 自由聊天模式）、
         `parallelDefault`（自由模式 actionbar「并发执行」开关的服务端值；缺省
-        `false` 即串行）。成员发言次数上限是**全局配置**（`chat.group_max_speeches`，
-        设置 → 聊天 → 群聊），不是每群设置，故不在此返回。
+        `false` 即串行）与 `cruise`（自动巡航开关；缺省 `false`）。成员发言次数
+        上限是**全局配置**（`chat.group_max_speeches`，设置 → 聊天 → 群聊），不是
+        每群设置，故不在此返回。
       operationId: groupMembersList
       parameters:
         - name: groupId
@@ -5402,6 +5403,7 @@ paths:
                         isHost: {type: boolean}
                   mode: {type: string, enum: [host, free]}
                   parallelDefault: {type: boolean}
+                  cruise: {type: boolean}
     post:
       tags: [Group]
       summary: 批量添加群成员
@@ -5514,13 +5516,18 @@ paths:
   /api/group/settings:
     patch:
       tags: [Group]
-      summary: 更新群设置（用户种子并发默认）
+      summary: 更新群设置（用户种子并发默认 / 自动巡航）
       description: |
         `parallelDefault` 是自由模式下用户 @ 成员的默认并发开关（打开后用户 @
         的成员并发执行；智能体之间 @ 的 `mode` 不受影响）。主持人模式下该开关无
-        作用（用户不参与路由）。成员发言次数上限是**全局配置**
-        （`chat.group_max_speeches`，经 `PATCH /api/config` 修改），不是每群设置，
-        故不在此端点。
+        作用（用户不参与路由）。
+        `cruise` 是自动巡航开关：开启后，循环本应交回用户时（主持人发结束标签 /
+        自由模式接力枯竭 / @User / 提问）不再交回，改为触发一次「确认回合」，
+        直到参与者（主持人模式由主持人一人、自由模式由过半数活跃成员）输出
+        `<clawbench-goal-satisfied/>` 才真正结束；`chat.group_max_speeches`
+        仍作为安全上限。两者均可省略，至少提供一个；只写提供的字段。
+        成员发言次数上限是**全局配置**（`chat.group_max_speeches`，经
+        `PATCH /api/config` 修改），不是每群设置，故不在此端点。
       operationId: groupSettingsUpdate
       requestBody:
         required: true
@@ -5528,10 +5535,11 @@ paths:
           application/json:
             schema:
               type: object
-              required: [groupId, parallelDefault]
+              required: [groupId]
               properties:
                 groupId: {type: string}
                 parallelDefault: {type: boolean}
+                cruise: {type: boolean}
       responses:
         "200":
           description: 更新成功

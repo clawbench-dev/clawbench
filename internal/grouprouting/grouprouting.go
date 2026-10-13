@@ -6,11 +6,14 @@
 //		<clawbench-mention targets="A,B">给 A、B 的内容</clawbench-mention>
 //		<clawbench-mention targets="C" private>只有 C 能看到的密送</clawbench-mention>
 //		<clawbench-group-end/>
+//		<clawbench-goal-satisfied/>
 //
 //	  - HOST mode: the host names the next speakers (targets) and hands them a
 //	    directive (the tag body).
 //	  - FREE mode: any member @s the member(s) it wants to hand the floor to; the
 //	    tag body is what it says to them.
+//	  - AUTO-CRUISE: a participant declares the goal met (Result.GoalSatisfied),
+//	    the completion signal that ends a cruising turn (see the design doc §15).
 //
 // The `private` attribute marks a note that only its targets may see (the old
 // <clawbench-bcc> concept, folded into this tag). The tag body is the CONTENT
@@ -124,6 +127,13 @@ type Result struct {
 	After string
 	// End reports whether the discussion is over (<clawbench-group-end/>).
 	End bool
+	// GoalSatisfied reports whether the speaker declared the goal met
+	// (<clawbench-goal-satisfied/>), the auto-cruise completion signal. It is
+	// computed on the text OUTSIDE every mention span, exactly like End, so a
+	// signal inside a private note never counts. It is a per-message fact (the
+	// speaker's own declaration), NOT a session-level state: the orchestrator
+	// resets its vote tally every confirmation round.
+	GoalSatisfied bool
 	// Raw is the matched tag text, retained for logging. Callers keep the
 	// original message text regardless (this package never mutates input).
 	Raw string
@@ -163,6 +173,10 @@ var (
 	// spaces (NBSP, U+3000). Without \p{Z} the two sides would disagree on a
 	// CJK-width space. Parity is pinned by the corpus.
 	reEnd = regexp.MustCompile(`<clawbench-group-end[\s\p{Z}]*/>`)
+	// reGoalSatisfied matches the auto-cruise completion signal
+	// (<clawbench-goal-satisfied/>), the same shape as reEnd with the same
+	// [\s\p{Z}] whitespace class for cross-language parity.
+	reGoalSatisfied = regexp.MustCompile(`<clawbench-goal-satisfied[\s\p{Z}]*/>`)
 )
 
 // parseMentionAttrs extracts (targets, private, mode) from a tag's raw
@@ -229,12 +243,15 @@ func Parse(text string) Result {
 	// mention-like span is located.
 	res.Before, res.After = surroundingProse(text, firstPublicStart, lastPublicEnd)
 
-	// End is computed on the text OUTSIDE every mention span: an end tag inside
-	// a private note must not end the discussion.
-	res.End = reEnd.MatchString(stripAllMentionSpans(text))
+	// End and GoalSatisfied are computed on the text OUTSIDE every mention
+	// span: a signal inside a private note must not count (it is addressed to
+	// its target, not a public declaration).
+	outsideSpans := stripAllMentionSpans(text)
+	res.End = reEnd.MatchString(outsideSpans)
+	res.GoalSatisfied = reGoalSatisfied.MatchString(outsideSpans)
 	if len(res.Mentions) == 0 {
 		if res.End {
-			res.Raw = reEnd.FindString(stripAllMentionSpans(text))
+			res.Raw = reEnd.FindString(outsideSpans)
 		}
 		return res
 	}
@@ -303,14 +320,18 @@ func (r *Result) deriveRoutingView() {
 	}
 }
 
-// StripEndTag removes the end-signal tag from text, returning the text
-// unchanged when there is none. It exists because the end tag is internal
-// protocol and must not leak into a member's injected context.
+// StripEndTag removes the end-signal and goal-satisfied tags from text,
+// returning the text unchanged when there is none. It exists because both tags
+// are internal protocol and must not leak into a member's injected context (nor
+// into a user-visible bubble / quote / TTS / push boundary).
 func StripEndTag(text string) string {
-	if !reEnd.MatchString(text) {
-		return text
+	if reEnd.MatchString(text) {
+		text = reEnd.ReplaceAllString(text, "")
 	}
-	return strings.TrimSpace(reEnd.ReplaceAllString(text, ""))
+	if reGoalSatisfied.MatchString(text) {
+		text = reGoalSatisfied.ReplaceAllString(text, "")
+	}
+	return strings.TrimSpace(text)
 }
 
 // StripProtocolTags removes every ClawBench protocol tag from text while keeping

@@ -23,6 +23,7 @@ interface Corpus {
     want: {
       found: boolean
       end: boolean
+      goalSatisfied: boolean
       speakers: string[]
       groups: Array<{ members: string[]; parallel: boolean; instruction: string }>
       instruction: string
@@ -50,6 +51,7 @@ describe('groupRouting parity with internal/grouprouting', () => {
       const r = parseGroupRouting(tc.text)
       expect(r.found).toBe(tc.want.found)
       expect(r.end).toBe(tc.want.end)
+      expect(r.goalSatisfied).toBe(tc.want.goalSatisfied)
       expect(r.speakers).toEqual(tc.want.speakers)
       expect(r.groups).toEqual(tc.want.groups ?? [])
       expect(r.instruction).toBe(tc.want.instruction)

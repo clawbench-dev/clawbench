@@ -155,6 +155,8 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		"CannotScopeDefaultAgent",
 		"GroupYourTurn",
 		"GroupDiscussionLimitReached",
+		"GroupCruiseConfirming",
+		"GroupCruiseSatisfied",
 		"GroupMemberJoined",
 		"GroupMemberLeft",
 		"GroupMemberUnknown",

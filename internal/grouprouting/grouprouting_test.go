@@ -96,11 +96,72 @@ func TestStripEndTag(t *testing.T) {
 		{"讨论充分。<clawbench-group-end/> 结论：可以发布", "讨论充分。 结论：可以发布"},
 		{"<clawbench-group-end/>", ""},
 		{"a <clawbench-group-end/> b <clawbench-group-end/> c", "a  b  c"},
+		// goal-satisfied is stripped by the same primitive (both are internal
+		// protocol that must not leak into an injected context or a bubble).
+		{"完成。<clawbench-goal-satisfied/>", "完成。"},
+		{"<clawbench-goal-satisfied/>", ""},
+		{"结论 <clawbench-goal-satisfied/> <clawbench-group-end/>", "结论"},
 	}
 	for _, tc := range cases {
 		if got := StripEndTag(tc.in); got != tc.want {
 			t.Errorf("StripEndTag(%q) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+// ── Auto-cruise completion signal (goal-satisfied) ───────────────────────
+//
+// <clawbench-goal-satisfied/> is the auto-cruise completion declaration. It is
+// computed OUTSIDE every mention span (like End), so a signal inside a private
+// note never counts.
+
+func TestParseGoalSatisfied(t *testing.T) {
+	r := Parse("任务已完成，验收通过。<clawbench-goal-satisfied/>")
+	if !r.GoalSatisfied {
+		t.Fatal("expected GoalSatisfied=true")
+	}
+	if r.End {
+		t.Fatal("goal-satisfied must not imply End")
+	}
+}
+
+func TestParseGoalSatisfiedAbsent(t *testing.T) {
+	r := Parse("还在讨论中，未完成。")
+	if r.GoalSatisfied {
+		t.Fatal("expected GoalSatisfied=false")
+	}
+}
+
+// TestParseGoalSatisfiedWithEnd: the two signals are independent; a message may
+// carry both (host writes the end tag, then declares satisfaction).
+func TestParseGoalSatisfiedWithEnd(t *testing.T) {
+	r := Parse("<clawbench-goal-satisfied/><clawbench-group-end/>")
+	if !r.GoalSatisfied || !r.End {
+		t.Fatalf("goalSatisfied=%v end=%v, want both true", r.GoalSatisfied, r.End)
+	}
+}
+
+// TestParseGoalSatisfiedInsidePrivateNotCounted: a signal inside a private note
+// is addressed to its target, not a public declaration, so it must not count.
+func TestParseGoalSatisfiedInsidePrivateNotCounted(t *testing.T) {
+	r := Parse(`<clawbench-mention targets="A" private>我想结束 <clawbench-goal-satisfied/></clawbench-mention>`)
+	if r.GoalSatisfied {
+		t.Fatal("a goal-satisfied inside a private note must not count")
+	}
+}
+
+// TestParseGoalSatisfiedUnclosedNotMatched: an unclosed tag is not a signal.
+func TestParseGoalSatisfiedUnclosedNotMatched(t *testing.T) {
+	if Parse("<clawbench-goal-satisfied").GoalSatisfied {
+		t.Fatal("an unclosed goal-satisfied must not match")
+	}
+}
+
+// TestParseGoalSatisfiedWhitespace: the tag tolerates whitespace before `/>`,
+// matching the group-end contract (and JS parity).
+func TestParseGoalSatisfiedWhitespace(t *testing.T) {
+	if !Parse("<clawbench-goal-satisfied  />").GoalSatisfied {
+		t.Fatal("whitespace before /> must still match")
 	}
 }
 

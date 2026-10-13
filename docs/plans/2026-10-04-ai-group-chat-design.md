@@ -1336,3 +1336,108 @@ while 队列非空:
 - M3 文档状态行与 §14.8 的矛盾已消除（状态行改为"阶段 1–4 全部实现"）。
 - M4 `forceCleanupStreamingState` 无 id 时恢复"首个流式"语义（`done` 清理循环保证推进），带 id 时仍严格按 id。
 - M5 `targets`/`private`/`mode` 正则加属性边界锚定（`(?:^|[\s\p{Z}])`），`data-mode` 不再误匹配；parity 语料加 `mode_hyphenated_attr_not_matched`（35 例）。
+
+## 15. 自动巡航模式（Auto-Cruise，2026-10-13）
+
+> **定位**：巡航是一个**正交开关**（不是第三种模式），叠加在 host / free 之上，只改写「何时收敛」这一条——把循环的终止从「主持人发结束标签 / 接力自然枯竭 / 交回用户」改成「成员（或主持人）明确确认任务已满足用户要求」。路由行为（谁点名谁）完全不变。
+
+### 15.1 动机
+
+现有循环的每个终止点都是「把话筒交回用户」：host 发 `<clawbench-group-end/>`、free 接力队列排空、有人 @User、成员提问。但用户提出一个更自主的诉求：**一个轮次内让成员持续循环讨论和工作，直到所有成员都认为已经满足了用户要求**。巡航就是把这个「交回用户」的动作接管为「自动确认完成度」。
+
+### 15.2 开关与存储
+
+- **per-group 布尔**，存群行 `context_state` 的 `cruise` 键（与 `parallelDefault` 同构）。键名不与既有键冲突（现有：`usage`/`host_member_id`/`group_mode`/`parallelDefault`/`seen_cursor`/`mode`）。
+- `GetGroupCruise` / `SetGroupCruise`；`ServeGroupSettings` 的 PATCH 加 `cruise` 字段；`GET /api/group/members` 返回 `cruise`。
+- **默认关**（`false`）：老群与新建群行为不变，用户显式开启。
+- **host / free 两种模式都可开启**，无组合限制。
+- UI：`GroupSettingsSheet` 加开关，两种模式都显示，**按模式给不同副标题**（host「主持人确认完成即结束」/ free「过半成员确认完成即结束」）。
+- 无常驻「巡航中」指示器：巡航的可见痕迹由系统行 + 徽章表达。
+
+### 15.3 协议标签
+
+新增 **`<clawbench-goal-satisfied/>`**（自闭合，无属性、无正文），与 `<clawbench-group-end/>` 同构。
+
+- **并入 `internal/grouprouting` 包**（不新建包）：`Result` 加 `GoalSatisfied bool`，正则用 `[\s\p{Z}]` 空格类（与 `reEnd` 一致，保证 CJK 全角空格前后端一致）。
+- **前后端双镜像**：`internal/grouprouting/grouprouting.go` ↔ `web/src/utils/groupRouting.ts`，由 `testdata/parity_corpus.json` 双向固化（新增 case：单独 / 与 end 并存 / 带空格 / 畸形不剥离）。
+- **剥离**：并入 `StripProtocolTags`（Go）与 `stripGroupProtocolTags`（TS），用户气泡正文不外泄协议标签。
+- **身份约束**：`<clawbench-group-end/>` 只对 **host 的发言**生效；成员违规发出的一律在解析层按发言人身份忽略（保住「成员禁发协议标签」的既有契约）。
+
+### 15.4 终止语义（巡航取代一切「交回用户」）
+
+巡航模式下，**四类「本应交回用户」的动作全部拦截**，改为触发一次**确认回合**：
+
+1. host 发 `<clawbench-group-end/>`——标签**保留在协议里、host 照常写**，但巡航下**降级为触发确认**，不再直接终止（否则主持人一发就结束，系统没机会问它）。
+2. free 接力自然枯竭（队列排空）。
+3. 有人 @User（点名用户）。
+4. 成员 / 主持人提问（AskUserQuestion）。
+
+**真正的结束只由 `goal-satisfied` 决定**；`group_max_speeches` 作为安全阀保留（上限触发时的「讨论已达上限」收尾**不拦截**）。
+
+> **提问卡的处置**：巡航模式下给成员的提示词明确「不要向用户提问」；若模型仍输出了提问标签，**忽略其 handback 语义**（不 handback、不阻塞巡航），卡片本身照常渲染（符合本仓 askquestion「绝不丢内容」的契约）。
+
+### 15.5 确认回合
+
+确认回合是一条**隐藏注入**（不落库）+ 一条**可见系统行**：
+
+- 注入文本（不进聊天记录）：要求参与者「不要向用户提问，未明确处通过自主探索/实验/思考/讨论自行判定；评估是否已满足用户要求，完成则输出 `<clawbench-goal-satisfied/>`」。
+- 可见系统行：**「自动巡航：系统正在向成员确认任务完成情况」**（走 `writeGroupSystemMessage`，与 `GroupYourTurn` 同机制，新增 i18n 键）。
+
+两种模式的确认回合**规则不同**：
+
+| 维度 | host 模式 | free 模式 |
+|---|---|---|
+| 问谁 | **只问主持人** | **群发全体活跃成员**，每人必回一次 |
+| 裁决 | 主持人是否发 `goal-satisfied`（**主持人一人拍板**，成员不投票） | ≥ `ceil(n/2)` 活跃成员发标签（n = 活跃成员数，含 host；free 无 host） |
+| 回复语义 | **双意图**：完成→发标签；未完成→顺带点名（mention） | 仅表态 |
+| 多信号优先级 | `goal-satisfied` 最高，忽略同轮 mention/group-end | — |
+| 沉默 / 无标签 | 回正常点名循环，**不重复触发确认** | 算**反对**（未确认），分母不变 |
+| @ 处理 | — | **丢弃**，确认回合自包含（不与正常接力混流） |
+| 预算 | 计 1 次（按实际发言人数） | 计 N 次（群发几人扣几次） |
+
+- **每回合重置**：只统计**本次确认回合**的声明；正常讨论轮里的 `goal-satisfied` **只显示徽章、不计票**。
+- **统计纯内存**：回合内即时统计（`GroupOrchestrator` 实例字段），回合结束即丢弃，天然实现「每回合重置」，零 DB 迁移。
+- 阈值 `ceil(n/2)`：n=1→1，n=2→1，n=3→2，n=4→2，n=5→3。
+
+### 15.6 未达成后的续跑
+
+- **host**：回正常点名循环，主持人下一轮重新点名；下次 `group-end` 再触发确认。
+- **free**：**重新广播一轮正常讨论**（这轮的 @ 重新驱动接力）；接力再次枯竭时再触发确认。确认与讨论交替推进，既「持续工作」又不空转。
+
+### 15.7 收尾
+
+- 达成 → host 模式跑 `summarize`（`BuildHostSummaryPrompt`）产出汇总；**free 模式不额外汇总**（沿用现状：无主持人，讨论即结论）。
+- 写 **「自动巡航：任务已确认完成，共 N 轮」** 系统行（N = `memberSpeeches`）。
+- **不写「轮到用户发言」行**（巡航下用户全程未被交回）。
+- 撞上限 → **沿用既有上限收尾**（「讨论已达上限」+ 汇总），不写巡航完成行。
+- 用户点停止 → **完全沿用现有取消路径**，不触发确认。
+- 推送通知：**照常推送**（`EmitSessionPushNotification` / `EmitTurnAnsweredNotification`），不改。
+
+### 15.8 提示词
+
+- `BuildHostSystemPrompt`：讲清巡航（`group-end` 不再直接结束、需确认）+ `goal-satisfied`。
+- `BuildFreeMemberSystemPrompt`：教成员使用 `goal-satisfied`。
+- `BuildMemberSystemPrompt`：**不动**（host 模式成员维持禁发一切标签——host 模式确认回合只问主持人，成员永不表态）。
+- 新增**确认回合专用注入**，复用现有注入通道附加到参与者上下文。
+
+### 15.9 前端
+
+- `parseGroupRouting` 加 `goalSatisfied` 字段；**前端解析消息原文**（零后端 / DB 改动，与 mention/bcc/end 同构）。
+- 徽章渲染在**发言者头像 / 昵称旁**，走设计 token、复用 `.msg-speaker-real` 弱化标记层级；i18n 键中英双语（「✓ 已完成」/「✓ Done」）；`✓` 为字符非 emoji。
+- **徽章是历史消息的永久属性**：一旦写入消息内容就永久显示，不随后续回合重置消失（重置只作用于裁决计数）。
+
+### 15.10 边界
+
+- 巡航进行中用户主动发消息 → **排队**（沿用 `queued_messages`），本轮巡航结束后再处理。
+- 上限建议：free 模式「确认 + 讨论交替」会放大发言数，大群可能几轮就撞 `group_max_speeches`（默认 100）；用户可调高。
+
+### 15.11 关键文件
+
+| 层 | 文件 |
+|---|---|
+| 解析 | `internal/grouprouting/grouprouting.go`、`web/src/utils/groupRouting.ts`、`testdata/parity_corpus.json` |
+| 存储 | `internal/service/group_store.go`（`GetGroupCruise`/`SetGroupCruise`） |
+| HTTP | `internal/handler/group.go`（`ServeGroupSettings`、members GET）、`internal/api/openapi.yaml` |
+| 提示词 | `internal/service/group_prompt.go` |
+| 编排 | `internal/service/group_orchestrator.go` |
+| 前端 | `web/src/components/chat/ChatMessageItem.vue`、`GroupSettingsSheet.vue`、`web/src/composables/useGroupMembers.ts` |

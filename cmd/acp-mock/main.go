@@ -535,14 +535,16 @@ func (a *mockACPAgent) simulateTurn(ctx context.Context, sid string, params acp.
 		}
 	}
 	response := "Hello! I am a mock ACP agent for E2E testing. I received your message and processed it successfully."
-	// Group-chat host turns: the ClawBench host instruction is injected into the
-	// prompt. When present, emit a routing tag naming the first addressable
-	// member so the orchestrator can dispatch a real member turn. This makes the
-	// mock usable for the multi-agent group E2E without hard-coding names.
-	if tag := groupRoutingReply(userText); tag != "" {
+	// Auto-cruise confirmation round: the prompt carries the confirmation
+	// marker ("[自动巡航·完成确认]"). The mock always confirms so a cruising
+	// turn terminates deterministically in the E2E. Checked FIRST because the
+	// host confirmation prompt also contains the host routing instruction
+	// ("可选的成员名："), which groupRoutingReply would otherwise match.
+	if tag := cruiseConfirmReply(userText); tag != "" {
 		response = tag
-	}
-	if tag := freeMemberReply(sid, userText); tag != "" {
+	} else if tag := groupRoutingReply(sid, userText); tag != "" {
+		response = tag
+	} else if tag := freeMemberReply(sid, userText); tag != "" {
 		response = tag
 	}
 	words := strings.Fields(response)
@@ -700,11 +702,27 @@ func extractUserText(blocks []acp.ContentBlock) string {
 // Members whose turn prompt carries the host directive ("[群聊主持人]"/host
 // instruction) are themselves ordinary turns and get the default reply, so this
 // only fires for the host. The end signal is emitted when no member remains.
-func groupRoutingReply(prompt string) string {
+//
+// AUTO-CRUISE: the host prompt also carries the cruise addendum ("[自动巡航模式]"),
+// where the end tag triggers a confirmation round rather than ending the turn.
+// To make the cruise E2E exercise that path deterministically, the mock host
+// emits the end tag on its SECOND turn (after routing once), instead of routing
+// forever until the speech cap. The counter is per-session.
+func groupRoutingReply(sid, prompt string) string {
 	const marker = "可选的成员名："
 	idx := strings.Index(prompt, marker)
 	if idx < 0 {
 		return ""
+	}
+	cruise := strings.Contains(prompt, "[自动巡航模式]")
+	if cruise {
+		relayTurnsMu.Lock()
+		relayTurns[sid]++
+		turn := relayTurns[sid]
+		relayTurnsMu.Unlock()
+		if turn > 1 {
+			return "讨论差不多了。<clawbench-group-end/>"
+		}
 	}
 	rest := prompt[idx+len(marker):]
 	// The list ends at the first newline (BuildHostSystemPrompt appends "。\n").
@@ -738,6 +756,21 @@ func groupRoutingReply(prompt string) string {
 		reply += " <clawbench-mention targets=\"" + name + "\" private>SECRET_BCC_FOR_" + name + "</clawbench-mention>"
 	}
 	return reply
+}
+
+// cruiseConfirmReply returns the auto-cruise confirmation reply when the prompt
+// carries the confirmation marker ("[自动巡航·完成确认]"), else "". The mock
+// always declares the goal satisfied, so a cruising turn terminates
+// deterministically in the E2E. ACP_MOCK_NO_CRUISE_CONFIRM=1 suppresses it (to
+// exercise the non-confirming path).
+func cruiseConfirmReply(prompt string) string {
+	if !strings.Contains(prompt, "[自动巡航·完成确认]") {
+		return ""
+	}
+	if os.Getenv("ACP_MOCK_NO_CRUISE_CONFIRM") == "1" {
+		return "还没有完成，继续。"
+	}
+	return "任务已完成，验收通过。<clawbench-goal-satisfied/>"
 }
 
 // freeMemberReply returns a free-chat mode member's @-mention reply when the

@@ -53,11 +53,11 @@ export async function createGroup(hostAgentId: string, memberAgentIds: string[])
 }
 
 /** listGroupMembers fetches the group roster (including left members) plus the
- *  group's mode ("host" | "free") and its parallelDefault (the free-mode
- *  action-bar "并发执行" switch's server value). The member-speech cap is a
- *  global setting (chat.group_max_speeches), not a per-group one, so it is not
- *  returned here. */
-export async function listGroupMembers(groupId: string): Promise<{ members: GroupMemberInfo[]; mode: 'host' | 'free'; parallelDefault: boolean }> {
+ *  group's mode ("host" | "free"), its parallelDefault (the free-mode
+ *  action-bar "并发执行" switch's server value) and its cruise switch (auto-cruise,
+ *  design §15). The member-speech cap is a global setting
+ *  (chat.group_max_speeches), not a per-group one, so it is not returned here. */
+export async function listGroupMembers(groupId: string): Promise<{ members: GroupMemberInfo[]; mode: 'host' | 'free'; parallelDefault: boolean; cruise: boolean }> {
   const resp = await fetch(`/api/group/members?groupId=${encodeURIComponent(groupId)}`)
   if (!resp.ok) throw new Error(`request failed: ${resp.status}`)
   const data = await resp.json()
@@ -65,6 +65,7 @@ export async function listGroupMembers(groupId: string): Promise<{ members: Grou
     members: data.members ?? [],
     mode: data.mode === 'free' ? 'free' : 'host',
     parallelDefault: data.parallelDefault === true,
+    cruise: data.cruise === true,
   }
 }
 
@@ -133,13 +134,25 @@ export async function removeGroupMember(groupId: string, memberId: string): Prom
 }
 
 /** setGroupParallelDefault updates the free-mode "并发执行" switch: when on, the
- *  user's @-mentions run concurrently. It is the group's only remaining
- *  per-group setting; the member-speech cap is global (chat.group_max_speeches). */
+ *  user's @-mentions run concurrently. The member-speech cap is global
+ *  (chat.group_max_speeches). */
 export async function setGroupParallelDefault(groupId: string, enabled: boolean): Promise<void> {
   const resp = await fetch('/api/group/settings', {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ groupId, parallelDefault: enabled }),
+  })
+  if (!resp.ok) throw new Error(`request failed: ${resp.status}`)
+}
+
+/** setGroupCruise updates the auto-cruise switch (design §15): when on, the turn
+ *  keeps the participants working until they declare the goal met instead of
+ *  handing the floor back to the human. */
+export async function setGroupCruise(groupId: string, enabled: boolean): Promise<void> {
+  const resp = await fetch('/api/group/settings', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ groupId, cruise: enabled }),
   })
   if (!resp.ok) throw new Error(`request failed: ${resp.status}`)
 }

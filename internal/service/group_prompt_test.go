@@ -74,6 +74,48 @@ func TestBuildHostSystemPrompt_NoOtherMembers(t *testing.T) {
 	}
 }
 
+// TestBuildHostSystemPrompt_ParallelDecisionRule: the host must be given an
+// explicit rule for WHEN to pick parallel, not just the syntax. Without it the
+// model defaults to sequential and rarely uses parallel (the reported defect:
+// "agents don't tend to use it"). The rule must name the independent-opinion
+// benefit AND the sequential default, so neither mode is a blind guess.
+func TestBuildHostSystemPrompt_ParallelDecisionRule(t *testing.T) {
+	p := BuildHostSystemPrompt("Host", []HostMemberInfo{{Name: "A"}, {Name: "B"}})
+	if !strings.Contains(p, "mode=\"parallel\"") {
+		t.Fatalf("host prompt must document the parallel attribute: %q", p)
+	}
+	// The choice rule itself, with both directions stated.
+	if !strings.Contains(p, "独立意见") {
+		t.Fatalf("host prompt must state the parallel benefit (independent opinions): %q", p)
+	}
+	if !strings.Contains(p, "互相补充") {
+		t.Fatalf("host prompt must state the sequential case (mutual elaboration): %q", p)
+	}
+	// Sequential must be marked as the default so parallel reads as an active
+	// choice rather than a rarely-considered option.
+	if !strings.Contains(p, "默认") {
+		t.Fatalf("host prompt must mark sequential as the default: %q", p)
+	}
+}
+
+// TestBuildFreeMemberSystemPrompt_ParallelDecisionRule: same rule for a
+// free-mode member, which is the other place agents @ multiple peers.
+func TestBuildFreeMemberSystemPrompt_ParallelDecisionRule(t *testing.T) {
+	p := BuildFreeMemberSystemPrompt([]HostMemberInfo{{Name: "A"}, {Name: "B"}}, "A")
+	if !strings.Contains(p, "mode=\"parallel\"") {
+		t.Fatalf("free prompt must document the parallel attribute: %q", p)
+	}
+	if !strings.Contains(p, "独立意见") {
+		t.Fatalf("free prompt must state the parallel benefit: %q", p)
+	}
+	if !strings.Contains(p, "互相补充") {
+		t.Fatalf("free prompt must state the sequential case: %q", p)
+	}
+	if !strings.Contains(p, "默认") {
+		t.Fatalf("free prompt must mark sequential as the default: %q", p)
+	}
+}
+
 func TestBuildHostSummaryPromptHasNoRoutingTag(t *testing.T) {
 	p := BuildHostSummaryPrompt("Host", []HostMemberInfo{{Name: "A"}, {Name: "B"}})
 	if strings.Contains(p, "clawbench-mention") || strings.Contains(p, "<clawbench-group-end/>") {
@@ -213,5 +255,57 @@ func TestSelfIdentityLine_EmptyIsOmitted(t *testing.T) {
 	p := BuildMemberSystemPrompt([]HostMemberInfo{{Name: "A"}}, "")
 	if strings.Contains(p, "你的群内显示名是") {
 		t.Fatalf("empty self name must omit the identity line: %q", p)
+	}
+}
+
+// ── Auto-cruise prompts (design §15) ─────────────────────────────────────
+
+// The host must learn that in cruise mode group-end no longer ends the
+// discussion directly, and that goal-satisfied is the real end signal.
+func TestBuildCruiseHostAddendum(t *testing.T) {
+	p := BuildCruiseHostAddendum()
+	if !strings.Contains(p, "自动巡航") {
+		t.Fatalf("addendum must name the cruise mode: %q", p)
+	}
+	if !strings.Contains(p, "<clawbench-goal-satisfied/>") {
+		t.Fatalf("addendum must document the goal-satisfied signal: %q", p)
+	}
+	if !strings.Contains(p, "<clawbench-group-end/>") || !strings.Contains(p, "不再直接结束") {
+		t.Fatalf("addendum must state group-end no longer ends directly: %q", p)
+	}
+}
+
+// A free member must learn the completion declaration and must be told not to
+// ask the user while cruising.
+func TestBuildCruiseFreeMemberAddendum(t *testing.T) {
+	p := BuildCruiseFreeMemberAddendum()
+	if !strings.Contains(p, "<clawbench-goal-satisfied/>") {
+		t.Fatalf("free addendum must document the goal-satisfied signal: %q", p)
+	}
+	if !strings.Contains(p, "不要向用户提问") {
+		t.Fatalf("free addendum must forbid asking the user: %q", p)
+	}
+}
+
+// The confirmation prompt is hidden (not persisted) and forbids asking the
+// user. The free variant forbids @-ing; the host variant invites routing when
+// not done.
+func TestBuildCruiseConfirmPrompt(t *testing.T) {
+	free := BuildCruiseConfirmPrompt(true)
+	if !strings.Contains(free, "<clawbench-goal-satisfied/>") {
+		t.Fatalf("free confirm prompt must document the goal signal: %q", free)
+	}
+	if !strings.Contains(free, "不要向用户提问") {
+		t.Fatalf("confirm prompt must forbid asking the user: %q", free)
+	}
+	if !strings.Contains(free, "不要 @ 任何人") {
+		t.Fatalf("free confirm prompt must forbid @-ing: %q", free)
+	}
+	host := BuildCruiseConfirmPrompt(false)
+	if !strings.Contains(host, "<clawbench-mention targets=") {
+		t.Fatalf("host confirm prompt must invite routing when not done: %q", host)
+	}
+	if strings.Contains(host, "不要 @ 任何人") {
+		t.Fatalf("host confirm prompt must NOT forbid @-ing: %q", host)
 	}
 }

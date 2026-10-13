@@ -33,6 +33,13 @@
       <AgentIcon v-else :backend="speaker.backend" :name="speaker.name" :avatar="speaker.avatar" size="lg" />
       <span class="msg-speaker-name">{{ speaker.name }}</span>
       <RealAgentNameTag class="msg-speaker-real" :agent-name="speaker.agentName" :display-name="speaker.name" />
+      <!-- Auto-cruise completion badge: this speaker declared the goal met
+           (<clawbench-goal-satisfied/>) in this message. A per-message fact, so
+           it stays on the history bubble permanently (the vote tally resets each
+           confirmation round, but the bubble is already-persisted content). -->
+      <span v-if="groupRouting.goalSatisfied" class="msg-goal-satisfied" :title="t('group.goalSatisfied')">
+        <Check :size="11" class="msg-goal-satisfied-icon" />{{ t('group.goalSatisfied') }}
+      </span>
       <span v-if="isHostMessage" class="msg-speaker-host-tag"><Crown :size="11" class="msg-speaker-host-crown" />{{ t('group.host') }}</span>
     </div>
 
@@ -281,7 +288,7 @@
 <script setup>
 import { ref, inject, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Sparkles, Pause, Volume2, Info, FileDiff, Split, Rewind, MessageSquare, ChevronDown, Lock, User, Crown, Megaphone, CornerDownRight } from 'lucide-vue-next'
+import { Sparkles, Pause, Volume2, Info, FileDiff, Split, Rewind, MessageSquare, ChevronDown, Lock, User, Crown, Megaphone, CornerDownRight, Check } from 'lucide-vue-next'
 import { formatDuration, formatRelativeTime } from '@/utils/format.ts'
 import { escapeHtml } from '@/utils/html.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
@@ -389,7 +396,7 @@ const canOpenAgentConfig = computed(() => !props.readOnly && !!speaker.value?.ag
 // reader audit the private notes they sent. Without the user branch the parse
 // yields nothing and the note card is silently missing (C3).
 const groupRouting = computed(() => {
-  const empty = { found: false, speakers: [], instruction: '', before: '', after: '', bcc: [], mentions: [], end: false, raw: '' }
+  const empty = { found: false, speakers: [], instruction: '', before: '', after: '', bcc: [], mentions: [], end: false, goalSatisfied: false, raw: '' }
   const isUserInGroup = props.isGroupSession && props.msg?.role === 'user'
   if (!speaker.value && !isUserInGroup) return empty
   return parseGroupRouting(groupProtocolText.value || '')
@@ -1605,6 +1612,24 @@ const copyPayload = quotableText
   font-size: var(--font-size-xs);
 }
 .msg-speaker-host-crown {
+  flex-shrink: 0;
+}
+/* Auto-cruise completion badge: same shape/scale as the host tag (a small
+   inline pill next to the speaker name), tinted with the success token so it
+   reads as "done" rather than "role". `flex-shrink:0` keeps it from being
+   squeezed when the speaker row wraps. */
+.msg-goal-satisfied {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--color-success, #16a34a) 15%, transparent);
+  color: var(--color-success, #16a34a);
+  font-size: var(--font-size-xs);
+  flex-shrink: 0;
+}
+.msg-goal-satisfied-icon {
   flex-shrink: 0;
 }
 /* The host's bubble is centered with an accent border to read as "chair". */

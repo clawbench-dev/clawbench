@@ -94,6 +94,13 @@ export interface GroupRouting {
   /** Every well-formed mention tag, in order. */
   mentions: MentionEntry[]
   end: boolean
+  /**
+   * Whether the speaker declared the goal met (`<clawbench-goal-satisfied/>`),
+   * the auto-cruise completion signal. Computed OUTSIDE every mention span,
+   * exactly like `end`, so a signal inside a private note never counts. It is a
+   * per-message fact (the speaker's own declaration), not session state.
+   */
+  goalSatisfied: boolean
   raw: string
 }
 
@@ -120,6 +127,11 @@ const RE_END = /<clawbench-group-end[\s\p{Z}]*\/>/gu
 // Non-global mirror of RE_END for a one-shot test(). RE_END carries /g, whose
 // lastIndex would otherwise make .test() alternate true/false across calls.
 const RE_END_TEST = /<clawbench-group-end[\s\p{Z}]*\/>/u
+// The auto-cruise completion signal, the same shape as RE_END with the same
+// whitespace class. Non-global so a one-shot test() is stable.
+const RE_GOAL_SATISFIED_TEST = /<clawbench-goal-satisfied[\s\p{Z}]*\/>/u
+// Global mirror for replacing/stripping the goal-satisfied signal.
+const RE_GOAL_SATISFIED = /<clawbench-goal-satisfied[\s\p{Z}]*\/>/gu
 
 /** splitNames splits a comma-separated list, trimming and dropping empties. */
 function splitNames(s: string): string[] {
@@ -202,7 +214,7 @@ function stripAllMentionSpans(text: string): string {
 export function parseGroupRouting(text: string): GroupRouting {
   const res: GroupRouting = {
     found: false, speakers: [], groups: [], instruction: '', before: '', after: '',
-    bcc: [], mentions: [], end: false, raw: '',
+    bcc: [], mentions: [], end: false, goalSatisfied: false, raw: '',
   }
 
   // Locate every well-formed mention for display, in order.
@@ -237,14 +249,15 @@ export function parseGroupRouting(text: string): GroupRouting {
     res.after = stripEndTag(stripAllMentionSpans(text.slice(lastPublicEnd))).trim()
   }
 
-  // End is computed OUTSIDE every mention span (an end tag inside a private
-  // note must not end the discussion).
+  // End and goalSatisfied are computed OUTSIDE every mention span (a signal
+  // inside a private note must not count).
   const outside = stripAllMentionSpans(text)
   if (RE_END_TEST.test(outside)) {
     res.end = true
     const em = outside.match(RE_END)
     if (em) res.raw = em[0]
   }
+  res.goalSatisfied = RE_GOAL_SATISFIED_TEST.test(outside)
   if (res.mentions.length === 0) return res
 
   res.found = true
@@ -275,11 +288,18 @@ export function parseGroupRouting(text: string): GroupRouting {
   return res
 }
 
-/** stripEndTag removes the end-signal tag from text. */
+/** stripEndTag removes the end-signal and goal-satisfied tags from text. */
 export function stripEndTag(text: string): string {
-  if (!RE_END_TEST.test(text)) return text
-  RE_END.lastIndex = 0
-  return text.replace(RE_END, '').trim()
+  let out = text
+  if (RE_END_TEST.test(out)) {
+    RE_END.lastIndex = 0
+    out = out.replace(RE_END, '').trim()
+  }
+  if (RE_GOAL_SATISFIED_TEST.test(out)) {
+    RE_GOAL_SATISFIED.lastIndex = 0
+    out = out.replace(RE_GOAL_SATISFIED, '').trim()
+  }
+  return out
 }
 
 /**
