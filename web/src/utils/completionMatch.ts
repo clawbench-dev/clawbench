@@ -137,6 +137,10 @@ export interface CompletionItem {
    *  Rendered as a disclosure chip so the @ list shows which agent a nickname
    *  belongs to. */
   memberAgentName?: string
+  /** Skill candidate: the AI backend id(s) whose native directory holds this
+   *  skill. Rendered as a small icon+name suffix after the label. Empty for
+   *  non-native sources (user dir, git repo, shared dir). */
+  skillBackends?: string[]
   /** Matched basename indices for per-character highlighting. */
   positions?: number[]
   score?: number
