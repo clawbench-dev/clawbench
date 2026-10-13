@@ -730,6 +730,19 @@ func executeStreamRunShared(ctx context.Context, cfg LaunchConfig) streamRunResu
 	parts := model.ClassifyAttachments(cfg.Files, nil)
 	prompt = model.ApplyAttachmentPrefixes(prompt, nil, nil, parts)
 
+	// User-message command injection (built-in "/cb-*" and the explicit "#skill"
+	// reference). Detection runs on the RAW message — attachment prefixes would
+	// bury a leading "/" or "#" — and the rendered template is prepended, so the
+	// AI sees both the injected contract and the attachment context.
+	//
+	// This path builds its own prompt (it does not go through the handler's
+	// builder), so it MUST call the shared seam too: without this, a message
+	// enqueued into an idle session, reaped, or pushed from IM would silently
+	// lose every command injection.
+	if injected := renderCommandInjection(cfg.Message, cfg.ProjectPath, cfg.SessionID); injected != "" {
+		prompt = injected + "\n\n" + prompt
+	}
+
 	agentID := ResolveAgentID(cfg.SessionID, cfg.AgentID)
 
 	chatReq := BuildChatRequest(prompt, cfg.SessionID, cfg.ProjectPath, cfg.BackendName, agentID, "", "", "", "", fileDir, model.HasAttachmentEntries(cfg.Files))

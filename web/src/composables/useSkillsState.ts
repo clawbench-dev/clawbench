@@ -195,6 +195,11 @@ export async function ensureSkillsLoaded(): Promise<void> {
  * a different skill than the one the backend resolves for the same name.
  * Exported so a parity test can pin it against the Go SourceKind values — a
  * comment cannot catch a reorder.
+ *
+ * Only the CROSS-kind order is mirrored. For two entries of the SAME kind, the
+ * backend breaks the tie by directory path while this keeps the first seen;
+ * since the menu only inserts the name (the server re-resolves it on send), the
+ * difference is limited to which description is displayed.
  */
 export const SOURCE_KIND_PRIORITY: SkillRow['source_kind'][] = [
   'own',
@@ -217,11 +222,17 @@ function sourceRank(kind: SkillRow['source_kind']): number {
  * Skills whose frontmatter name disagrees with their directory are dropped, the
  * same way the backend refuses to advertise them: an agent resolves a skill by
  * directory, so such an entry would do nothing when picked.
+ *
+ * A name containing whitespace or "#" is also dropped: the backend reference
+ * grammar is `#<name>` with the name running to the next whitespace, so such a
+ * name cannot be expressed — offering it would insert a reference that resolves
+ * to nothing (the parser reads only the first token).
  */
 export function skillMenuRows(): SkillRow[] {
   const best = new Map<string, SkillRow>()
   for (const s of skills.value) {
     if (s.name_mismatch) continue
+    if (/[\s#]/.test(s.name)) continue
     const key = s.name.trim().replace(/^\//, '').toLowerCase()
     if (!key) continue
     const cur = best.get(key)

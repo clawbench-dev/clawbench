@@ -78,7 +78,7 @@ type GroupOrchestrator struct {
 	// command (or no renderer is wired).
 	commandInjection string
 	// firstTurnDone is set once the command injection has been consumed, so the
-	// /cb-* template reaches exactly ONE speaker per turn — whichever mode
+	// command template reaches exactly ONE speaker per turn — whichever mode
 	// speaks first (host mode: the host; free mode: the first queued member).
 	// runSpeakerTurn owns this so neither mode has to manage the "first turn"
 	// bookkeeping itself. A fresh orchestrator is built per turn, so it starts
@@ -243,26 +243,38 @@ func translateGroupCancelReason(res DrainResult, groupReason string) DrainResult
 	return res
 }
 
-// renderGroupCommandForHost returns the rendered command template for a
-// message (a built-in "/cb-*" command or an explicit "#skill" reference), or
-// "" when the message is not a command (the renderer returns the input
-// unchanged) or no renderer is wired. A render error is logged and treated as
-// "no injection" — the turn must still run, with the user's literal text
-// visible in the injected context.
-func renderGroupCommandForHost(rawMsg, projectPath, groupID string) string {
+// renderCommandInjection returns the rendered command template for a user
+// message (a built-in "/cb-*" command or an explicit "#skill" reference), or ""
+// when the message is not a command (the renderer returns the input unchanged)
+// or no renderer is wired. A render error is logged and treated as "no
+// injection" — the turn must still run, with the user's literal text visible in
+// the injected context.
+//
+// This is the ONE seam every service-layer prompt builder must go through, so a
+// new command kind reaches all of them at once: the group host prompt
+// (renderGroupCommandForHost) and the non-HTTP launch/drain path
+// (executeStreamRunShared) both call it.
+func renderCommandInjection(rawMsg, projectPath, sessionID string) string {
 	if rawMsg == "" || renderGroupCommandFn == nil {
 		return ""
 	}
-	injected, err := renderGroupCommandFn(rawMsg, projectPath, groupID)
+	injected, err := renderGroupCommandFn(rawMsg, projectPath, sessionID)
 	if err != nil {
-		slog.Warn("group: command render failed, running the turn without injection",
-			"group", groupID, "err", err)
+		slog.Warn("service: command render failed, running the turn without injection",
+			"session", sessionID, "err", err)
 		return ""
 	}
 	if injected == rawMsg {
 		return "" // not a command
 	}
 	return injected
+}
+
+// renderGroupCommandForHost is renderCommandInjection with the group's id as the
+// session argument (the renderer only needs it for /cb-chatsearch's session
+// exclusion, which a group turn does not use).
+func renderGroupCommandForHost(rawMsg, projectPath, groupID string) string {
+	return renderCommandInjection(rawMsg, projectPath, groupID)
 }
 
 // runLoop executes one group turn and performs its per-turn finalization,
@@ -457,7 +469,7 @@ type preparedTurn struct {
 // consumes, builds the prompt from the timeline up to the speaker's OWN cursor
 // (never the group high-water — that would skip rows the speaker has not yet
 // seen and lose them permanently), and captures the cursor advance target. The
-// /cb-* template goes to the turn's FIRST speaker (o.firstTurnDone), decided
+// command template goes to the turn's FIRST speaker (o.firstTurnDone), decided
 // here in the single-threaded snapshot phase so it never depends on goroutine
 // scheduling order.
 func (o *GroupOrchestrator) snapshotTurn(s groupTurnSetup, t speakerTurn, highWater int64) preparedTurn {
@@ -532,7 +544,7 @@ func groupNamesUser(g speakerGroup) bool {
 //   - naming the human user ⇒ hand the floor back and end the turn;
 //   - a cancelled speaker turn ⇒ stop the WHOLE turn (the rest of the queue is
 //     dropped; nothing runs after a stop);
-//   - the /cb-* template reaching exactly one speaker (snapshotTurn's job).
+//   - the command template reaching exactly one speaker (snapshotTurn's job).
 func (o *GroupOrchestrator) drainSpeakers(
 	ctx context.Context,
 	s groupTurnSetup,
@@ -1011,7 +1023,7 @@ func (o *GroupOrchestrator) runFreeLoop(ctx context.Context, groupID string) Dra
 	// Seed the queue from the user's message: the @-mentioned members grouped by
 	// their mention tags (a `mode="parallel"` tag seeds a parallel group), or
 	// every active member as one sequential group when nobody is mentioned. The
-	// /cb-* command injection is NOT handled here — the snapshot phase gives it
+	// command injection is NOT handled here — the snapshot phase gives it
 	// to whichever speaker goes first (design §13.3 #F16).
 	queue := o.freeInitialGroups(s)
 	if len(queue) == 0 {

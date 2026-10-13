@@ -3234,3 +3234,89 @@ func TestSendMessageToSessionFromPush_GroupAcceptsAttachments(t *testing.T) {
 		t.Fatal("the group drain loop was never invoked with the attachment")
 	}
 }
+
+// promptCaptureBackend records the last ChatRequest it was asked to run, so a
+// test can assert on the exact prompt the launch/drain path built.
+type promptCaptureBackend struct {
+	mu  sync.Mutex
+	req ai.ChatRequest
+}
+
+func (m *promptCaptureBackend) Name() string { return "test-prompt-capture" }
+func (m *promptCaptureBackend) ExecuteStream(_ context.Context, req ai.ChatRequest) (<-chan ai.StreamEvent, error) {
+	m.mu.Lock()
+	m.req = req
+	m.mu.Unlock()
+	ch := make(chan ai.StreamEvent, 2)
+	ch <- ai.StreamEvent{Type: "content", Content: "ok"}
+	ch <- ai.StreamEvent{Type: "done"}
+	close(ch)
+	return ch, nil
+}
+
+func (m *promptCaptureBackend) lastPrompt() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.req.Prompt
+}
+
+// TestExecuteStreamRunShared_InjectsCommandPrompt pins the FOURTH injection
+// site: executeStreamRunShared builds its own prompt (it does not go through the
+// handler's builder), so it must call the shared command-injection seam itself.
+// Without that call a message enqueued into an idle session, reaped, or pushed
+// from IM silently loses its /cb-* or #skill injection.
+func TestExecuteStreamRunShared_InjectsCommandPrompt(t *testing.T) {
+	backend := &promptCaptureBackend{}
+	ai.RegisterBackend("test-prompt-capture", func() ai.AIBackend { return backend })
+
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Transport: ""},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	// A renderer that mimics the handler's contract: a command returns a
+	// template that differs from the input; anything else is returned verbatim.
+	restore := SetRenderGroupCommandFn(func(rawMsg, _, _ string) (string, error) {
+		if strings.HasPrefix(rawMsg, "/cb-") || strings.HasPrefix(rawMsg, "#") {
+			return "[injected contract]", nil
+		}
+		return rawMsg, nil
+	})
+	defer SetRenderGroupCommandFn(restore)
+
+	sessionID := "inject-prompt-sess"
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'test-prompt-capture', 'Test', 'test-agent', 'default', '', 'chat', 0)", sessionID, store.NormalizeProjectPath("/tmp"))
+	require.NoError(t, err)
+
+	cfg := LaunchConfig{
+		SessionID:   sessionID,
+		ProjectPath: "/tmp",
+		BackendName: "test-prompt-capture",
+		AgentID:     "test-agent",
+		Message:     "#pdf summarize this",
+	}
+	result := executeStreamRunShared(context.Background(), cfg)
+	require.Empty(t, result.err)
+	assert.Contains(t, backend.lastPrompt(), "[injected contract]",
+		"the launch/drain path must inject the command contract")
+	assert.Contains(t, backend.lastPrompt(), "#pdf summarize this",
+		"the user's literal message must still be present")
+
+	// A plain message must pass through untouched (no spurious injection).
+	cfg2 := LaunchConfig{
+		SessionID:   sessionID,
+		ProjectPath: "/tmp",
+		BackendName: "test-prompt-capture",
+		AgentID:     "test-agent",
+		Message:     "just a normal message",
+	}
+	result2 := executeStreamRunShared(context.Background(), cfg2)
+	require.Empty(t, result2.err)
+	assert.NotContains(t, backend.lastPrompt(), "[injected contract]",
+		"a non-command must not be injected")
+	assert.Contains(t, backend.lastPrompt(), "just a normal message")
+}

@@ -539,6 +539,18 @@ describe('ChatInputBar', () => {
     })
   }
 
+  /**
+   * The rendered "#" skill menu's visibility, read from the CompletionMenu's
+   * `show` binding (the PopupMenu stub declares `show` so this is observable).
+   * The skill menu is the one whose items are all "#"-prefixed.
+   */
+  function skillMenuVisible(wrapper: ReturnType<typeof mountBar>): boolean {
+    const menu = wrapper
+      .findAllComponents({ name: 'CompletionMenu' })
+      .find((c) => (c.props('items') as Array<{ key: string }>).some((i) => i.key.startsWith('#')))
+    return menu ? menu.props('show') === true : false
+  }
+
   it('renders the input wrapper', () => {
     const wrapper = mountBar()
     expect(wrapper.find('.chat-input-wrapper').exists()).toBe(true)
@@ -1148,6 +1160,11 @@ describe('ChatInputBar', () => {
       // candidates are still empty, so refresh() alone hides the menu. The
       // wrapper must refresh again once the fetch resolves, or the menu never
       // opens (the user sees nothing after typing "#").
+      //
+      // This asserts on the RENDERED menu's visibility, not just on the
+      // candidate list: skillMenuItems is a computed that reacts to the mocked
+      // rows directly, so asserting on it alone would pass even if the
+      // post-load skillMenu.refresh() were deleted (verified by mutation).
       mockSkillRows.value = []
       let resolveLoad: () => void = () => {}
       mockEnsureSkillsLoaded.mockImplementationOnce(
@@ -1161,11 +1178,14 @@ describe('ChatInputBar', () => {
       wrapper.vm.inputText = '#'
       await wrapper.vm.$nextTick()
       expect(wrapper.vm.skillMenuItems).toEqual([])
+      expect(skillMenuVisible(wrapper)).toBe(false)
 
       resolveLoad()
       await flushPromises()
       await wrapper.vm.$nextTick()
       expect(wrapper.vm.skillMenuItems.map(i => i.key)).toEqual(['#pdf'])
+      // The menu itself is now open — the behavior the test is named for.
+      expect(skillMenuVisible(wrapper)).toBe(true)
     })
   })
 

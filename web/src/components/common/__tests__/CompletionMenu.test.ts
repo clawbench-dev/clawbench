@@ -3,6 +3,8 @@ import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import CompletionMenu from '../CompletionMenu.vue'
 import { SOURCE_META } from '@/utils/completionSources.ts'
+import en from '@/i18n/locales/en'
+import zh from '@/i18n/locales/zh'
 import type { CompletionItem } from '@/utils/completionMatch.ts'
 
 function makeI18n() {
@@ -247,6 +249,22 @@ describe('SOURCE_META', () => {
       expect(meta.icon).toBeTruthy()
       expect(meta.color).toBeTruthy()
       expect(meta.labelKey).toBeTruthy()
+    }
+  })
+
+  // The label key is passed to `t()` as a VARIABLE, so the repo's literal-key
+  // guard (literalKeys.test.ts) cannot see it — a typo would render the raw key
+  // at runtime and pass every other test. Resolve each key against the real
+  // locale objects here instead.
+  it('every labelKey resolves in both locales', () => {
+    for (const locale of [en, zh]) {
+      for (const meta of Object.values(SOURCE_META)) {
+        const value = meta.labelKey
+          .split('.')
+          .reduce<unknown>((acc, part) => (acc && typeof acc === 'object' ? (acc as Record<string, unknown>)[part] : undefined), locale)
+        expect(typeof value, `${meta.labelKey} missing in a locale`).toBe('string')
+        expect(value).not.toBe('')
+      }
     }
   })
 })

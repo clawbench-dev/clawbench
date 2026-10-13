@@ -26,6 +26,12 @@ func TestParseSkillCommand(t *testing.T) {
 		{"leading whitespace", "   #pdf do it", "pdf", true},
 		{"leading newline", "\n#pdf do it", "pdf", true},
 		{"leading tab", "\t#pdf do it", "pdf", true},
+		// Non-ASCII / exotic spaces must be stripped too, matching the
+		// frontend's JS .trim() (otherwise the menu opens and the server does
+		// not recognize the reference).
+		{"leading vertical tab", "\v#pdf do it", "pdf", true},
+		{"leading form feed", "\f#pdf do it", "pdf", true},
+		{"leading nbsp", "\u00a0#pdf do it", "pdf", true},
 		{"hyphenated name", "#web-search find it", "web-search", true},
 		{"name with slash-like chars", "#user/skill", "user/skill", true},
 

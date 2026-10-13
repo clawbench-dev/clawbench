@@ -2,6 +2,7 @@ package handler
 
 import (
 	"strings"
+	"unicode"
 
 	"clawbench/internal/skill"
 )
@@ -44,8 +45,14 @@ SKILL.md: {{SKILL_PATH}}
 // skill the user did not intend.
 //
 // The name runs to the next whitespace and must be non-empty and free of "#".
+//
+// Leading whitespace is stripped with unicode.IsSpace, matching both
+// strings.Fields (used for the token split) and the frontend's JS `.trim()`
+// (completionMatch.ts). An ASCII-only TrimLeft would disagree with the menu on
+// exotic spaces (\v, \f, NBSP): the client would offer the entry and the server
+// would not recognize it.
 func parseSkillCommand(rawMsg string) (string, bool) {
-	trimmed := strings.TrimLeft(rawMsg, " \t\r\n")
+	trimmed := strings.TrimLeftFunc(rawMsg, unicode.IsSpace)
 	if !strings.HasPrefix(trimmed, "#") {
 		return "", false
 	}
