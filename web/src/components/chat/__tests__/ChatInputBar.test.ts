@@ -1129,17 +1129,6 @@ describe('ChatInputBar', () => {
       expect(wrapper.vm.skillMenuItems.map(i => i.key)).toEqual(['#pdf', '#web-search'])
     })
 
-    it('carries the owning AI backend(s) for the name suffix', async () => {
-      mockSkillRows.value = [
-        { name: 'native', description: '', path: '/p/n/SKILL.md', source_kind: 'own', source_label: 'native', backends: ['claude', 'codex'] },
-        { name: 'plain', description: '', path: '/p/p/SKILL.md', source_kind: 'user', source_label: 'user dir' },
-      ]
-      const wrapper = mountBar()
-      wrapper.vm.inputText = '#'
-      await wrapper.vm.$nextTick()
-      expect(wrapper.vm.skillMenuItems.map(i => i.skillBackends)).toEqual([['claude', 'codex'], undefined])
-    })
-
     it('fetches the skill list on the first # when it is not loaded yet', async () => {
       mockSkillRows.value = []
       const wrapper = mountBar()

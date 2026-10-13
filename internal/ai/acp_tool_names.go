@@ -30,6 +30,13 @@ var LookupACPTitlePrefixesFn func(backendID string) map[string]string
 // 6-field map if no backend-specific remaps are registered.
 var LookupACPRemapsFn func(backendID string) map[string]string
 
+// LookupACPModelSwitchMethodFn is a function variable that returns the
+// JSON-RPC method the backend honors for a model switch, or "" for the default
+// config-option path. Set by the backends package during init(). Used by agents
+// that accept a "model" config option but never act on it (Hermes), so the
+// selection must be sent as session/set_model instead.
+var LookupACPModelSwitchMethodFn func(backendID string) string
+
 // acpToolCallIDPrefix maps Kimi-style toolCallID prefixes to canonical tool names.
 // Kimi ACP uses toolCallID formats like "read_file-<ts>-<n>", "list_directory-<ts>-<n>",
 // "glob-<ts>-<n>", "run_shell_command-<ts>-<n>", "ask-<uuid>".

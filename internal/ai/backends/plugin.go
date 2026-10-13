@@ -101,4 +101,20 @@ type ACPPlugin struct {
 
 	// InputRemaps is the backend's ACP-mode tool input field remapping map.
 	InputRemaps map[string]string
+
+	// ModelSwitchMethod names the JSON-RPC method this backend honors for a
+	// model switch. Empty means the default: send the selection as a config
+	// option (session/set_config_option, configId "model").
+	//
+	// Some agents accept that config option but never act on it — Hermes stores
+	// it in its session state and ignores it, so a switch silently keeps the old
+	// model. Those agents implement the standard ACP session/set_model instead
+	// (see ACPModelSwitchSetModel), which the Go SDK does not expose, so it is
+	// sent over the raw JSON-RPC side channel.
+	ModelSwitchMethod string
 }
+
+// ACPModelSwitchSetModel is the ACP-standard model-switch method. Declare it as
+// ACPPlugin.ModelSwitchMethod for agents that honor it instead of (or in
+// addition to) a "model" config option.
+const ACPModelSwitchSetModel = "session/set_model"

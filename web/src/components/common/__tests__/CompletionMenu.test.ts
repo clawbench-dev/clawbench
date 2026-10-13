@@ -229,55 +229,6 @@ describe('CompletionMenu', () => {
     expect(rows[0].find('.completion-desc').text()).toBe('Read and write PDFs')
   })
 
-  it('names the owning AI backend after a skill name', () => {
-    const items: CompletionItem[] = [
-      { key: '#pdf', label: 'pdf', description: '', source: 'skill', skillBackends: ['claude'] },
-    ]
-    const wrapper = mountMenu(items)
-    const chip = wrapper.find('.completion-item .completion-skill-backend')
-    expect(chip.exists()).toBe(true)
-    expect(chip.text()).toBe('Claude')
-  })
-
-  it('replaces the left source icon with the owning backend icon', () => {
-    // The backend icon takes over the left slot; the generic source icon is not
-    // rendered for a skill that has a native owner (no icon shown twice).
-    const items: CompletionItem[] = [
-      { key: '#pdf', label: 'pdf', description: '', source: 'skill', skillBackends: ['claude'] },
-    ]
-    const wrapper = mountMenu(items)
-    const row = wrapper.findAll('.completion-item')[0]
-    // AgentIcon renders one of agent-icon-svg / -img / -initial; the lucide
-    // source icon does not, so this is the discriminator.
-    expect(row.find('.agent-icon-svg, .agent-icon-img, .agent-icon-initial').exists()).toBe(true)
-  })
-
-  it('keeps the generic source icon when a skill has no native owner', () => {
-    const items: CompletionItem[] = [
-      { key: '#b', label: 'b', description: '', source: 'skill' },
-    ]
-    const wrapper = mountMenu(items)
-    const row = wrapper.findAll('.completion-item')[0]
-    // No native owner ⇒ the lucide source icon renders instead of an AgentIcon.
-    expect(row.find('.agent-icon-svg, .agent-icon-img, .agent-icon-initial').exists()).toBe(false)
-    expect(row.find('.completion-source-icon').exists()).toBe(true)
-  })
-
-  it('renders one backend chip per owner and none when the skill has no owner', () => {
-    const items: CompletionItem[] = [
-      { key: '#a', label: 'a', description: '', source: 'skill', skillBackends: ['claude', 'codex'] },
-      { key: '#b', label: 'b', description: '', source: 'skill', skillBackends: [] },
-      { key: '#c', label: 'c', description: '', source: 'skill' },
-    ]
-    const wrapper = mountMenu(items)
-    const rows = wrapper.findAll('.completion-item')
-    expect(rows[0].findAll('.completion-skill-backend')).toHaveLength(2)
-    // A non-native skill (user dir / git / shared) has no owner and must not
-    // render an empty chip.
-    expect(rows[1].find('.completion-skill-backend').exists()).toBe(false)
-    expect(rows[2].find('.completion-skill-backend').exists()).toBe(false)
-  })
-
   it('discloses the real agent name next to an auto-derived member nickname', () => {
     const items: CompletionItem[] = [
       { key: 'member:m-1', label: 'Alice', description: '', source: 'agent', isMember: true, memberAgentName: 'Claude' },

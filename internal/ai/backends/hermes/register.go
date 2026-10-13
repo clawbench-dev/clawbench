@@ -50,6 +50,12 @@ func init() {
 		ACP: &backends.ACPPlugin{
 			ToolTitlePrefixes: HermesACPTitlePrefixes,
 			InputRemaps:       HermesACPInputRemaps,
+			// Hermes accepts a "model" config option but never reads it back
+			// (acp_adapter/server.py: set_config_option only stores the value in
+			// state.config_options), so a config-option switch is a silent no-op.
+			// The method it actually honors is the ACP-standard
+			// session/set_model (server.py: set_session_model → _switch_model).
+			ModelSwitchMethod: backends.ACPModelSwitchSetModel,
 		},
 	})
 }

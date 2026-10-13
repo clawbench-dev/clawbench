@@ -1096,6 +1096,13 @@ type ACPConn struct {
 	// given internal category maps to for the connection's agent.
 	setConfigOptionFn func(ctx context.Context, acpSessionID, configID, value string) error
 
+	// rawCallFnForTest overrides the raw JSON-RPC side channel (CallRaw) for
+	// testing. If non-nil, it is called instead of the real acpRawRPC. Needed
+	// because newACPConn / SetAliveForTest never install a rawRPC, so CallRaw
+	// would otherwise always fail with errRawConnClosed. Production code must
+	// not set this.
+	rawCallFnForTest func(ctx context.Context, method string, params any) (json.RawMessage, error)
+
 	// resumeSessionFnForTest / loadSessionFnForTest override the two recovery
 	// RPCs so recoverExistingSession's fallback can be unit-tested without a live
 	// agent. Nil means use the real ACP call. Production code must not set these.
@@ -1421,7 +1428,13 @@ func (c *ACPConn) CallRaw(ctx context.Context, method string, params any) (json.
 	c.mu.Lock()
 	rpc := c.rawRPC
 	alive := c.alive && c.isAliveLocked()
+	hook := c.rawCallFnForTest
 	c.mu.Unlock()
+
+	// Test override: drive the raw channel without a live agent process.
+	if hook != nil {
+		return hook(ctx, method, params)
+	}
 
 	if rpc == nil || !alive {
 		return nil, errRawConnClosed
@@ -2460,6 +2473,16 @@ func (c *ACPConn) SetListSessionsFnForTest(fn func(ctx context.Context, cursor *
 func (c *ACPConn) SetConfigOptionFnForTest(fn func(ctx context.Context, acpSessionID, configID, value string) error) {
 	c.mu.Lock()
 	c.setConfigOptionFn = fn
+	c.mu.Unlock()
+}
+
+// SetRawCallFnForTest overrides the raw JSON-RPC side channel (CallRaw) for
+// testing. If fn is non-nil, it is called instead of the real acpRawRPC, letting
+// a test assert the method name and params of a raw call (e.g. session/set_model)
+// without a live agent process. Production code must not use this.
+func (c *ACPConn) SetRawCallFnForTest(fn func(ctx context.Context, method string, params any) (json.RawMessage, error)) {
+	c.mu.Lock()
+	c.rawCallFnForTest = fn
 	c.mu.Unlock()
 }
 

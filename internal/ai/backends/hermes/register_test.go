@@ -70,6 +70,16 @@ func TestHermesBackendPlugin_NoStaticThinkingEffort(t *testing.T) {
 	assert.Empty(t, plugin.Spec.ThinkingEffortLevels)
 }
 
+// Hermes accepts a "model" config option but never acts on it, so it must
+// declare the ACP-standard session/set_model; otherwise a model switch is a
+// silent no-op (the agent keeps running its previous model).
+func TestHermesBackendPlugin_DeclaresSetModelSwitchMethod(t *testing.T) {
+	plugin := backends.Lookup("hermes")
+	require.NotNil(t, plugin)
+	require.NotNil(t, plugin.ACP)
+	assert.Equal(t, backends.ACPModelSwitchSetModel, plugin.ACP.ModelSwitchMethod)
+}
+
 // --- ACP tool mapping ---
 
 // TestHermesToolTitlesResolveCanonically is the point of the ACPPlugin: Hermes

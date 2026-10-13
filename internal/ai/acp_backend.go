@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	acp "github.com/coder/acp-go-sdk"
@@ -126,10 +127,11 @@ func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 		// so RequestPermission callbacks use the correct state.
 		conn.SetAutoApprove(getSessionAutoApprove(req.SessionID))
 
-		// Pre-apply user's mode/thinkingEffort selection to the cached state BEFORE
-		// emitting WS events, so the frontend sees the user's choice (e.g. "plan")
-		// instead of the agent's default (e.g. "bypassPermissions") during streaming.
-		// The actual RPC to set the config is still done inside Prompt().
+		// Pre-apply user's mode/thinkingEffort/model selection to the cached state
+		// BEFORE emitting WS events, so the frontend sees the user's choice (e.g.
+		// "plan") instead of the agent's default (e.g. "bypassPermissions")
+		// during streaming. The actual RPC to set the config is still done inside
+		// Prompt().
 		if req.Mode != "" {
 			conn.UpdateCachedCurrent("mode", req.Mode)
 			conn.PreApplyConfigCurrentID("mode", req.Mode)
@@ -137,6 +139,14 @@ func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 		if req.ThinkingEffort != "" {
 			conn.UpdateCachedCurrent("thought_level", req.ThinkingEffort)
 			conn.PreApplyConfigCurrentID("thinkingEffort", req.ThinkingEffort)
+		}
+		// Model: without this the first model_list_update (emitted in step 2,
+		// before Prompt applies the selection in step 3) reports the AGENT's
+		// current model, so the picker would appear to ignore the user's choice
+		// for one turn. applyExtractedState preserves a pre-existing selection
+		// over the agent's default, so this is safe for new sessions too.
+		if req.Model != "" {
+			conn.UpdateCachedCurrent("model", req.Model)
 		}
 
 		// Step 2: Handle new vs recovered session
@@ -342,12 +352,47 @@ func shouldNewSessionFallback(hasHistory bool) bool {
 // emit "ACP error <code>: <message>" instead of err.Error()'s raw JSON blob
 // (which is noisy and unhelpful to the end user). Non-RequestError errors fall
 // through to err.Error() unchanged.
+//
+// A RawRPCError (raw JSON-RPC side channel) is formatted the same way, but its
+// data.details is PREFERRED over the generic message: agents put the actionable
+// cause there (Hermes: "GitHub Copilot is not connected: ... `hermes auth add
+// github-copilot`"), and the frontend renders only this text for a
+// request_failed warning — the structured error_detail is not appended for that
+// reason, so folding details in here is what makes the message reach the user.
 func acpErrorText(err error) string {
 	var reqErr *acp.RequestError
 	if errors.As(err, &reqErr) {
 		return fmt.Sprintf("ACP error %d: %s", reqErr.Code, reqErr.Message)
 	}
+	var rawErr *RawRPCError
+	if errors.As(err, &rawErr) {
+		msg := rawErr.Message
+		if detail := rawRPCErrorDetail(rawErr.Data); detail != "" {
+			msg = detail
+		}
+		return fmt.Sprintf("ACP error %d: %s", rawErr.Code, msg)
+	}
 	return err.Error()
+}
+
+// rawRPCErrorDetail extracts a human-readable cause from a raw JSON-RPC error's
+// data payload. Returns "" when there is nothing more specific than the generic
+// message. Known shapes: {"details":"..."} and {"message":"..."}.
+func rawRPCErrorDetail(data json.RawMessage) string {
+	if len(data) == 0 {
+		return ""
+	}
+	var payload struct {
+		Details string `json:"details"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return ""
+	}
+	if details := strings.TrimSpace(payload.Details); details != "" {
+		return details
+	}
+	return strings.TrimSpace(payload.Message)
 }
 
 // acpErrorDetails extracts the structured JSON-RPC error code and any upstream
@@ -356,7 +401,14 @@ func acpErrorText(err error) string {
 // the RequestError.Data blob (e.g. CodeBuddy refusal payloads embed
 // {"httpStatus":500} there); when absent, code is still surfaced so the
 // frontend can display "ACP error -32603" even without an HTTP status.
+//
+// A RawRPCError (raw channel) contributes its code the same way, so a failed
+// session/set_model shows "-32602" on the warning card.
 func acpErrorDetails(err error) (code int, httpStatus int) {
+	var rawErr *RawRPCError
+	if errors.As(err, &rawErr) {
+		return rawErr.Code, 0
+	}
 	var reqErr *acp.RequestError
 	if !errors.As(err, &reqErr) {
 		return 0, 0

@@ -328,4 +328,23 @@ func TestACPLookupAfterInit(t *testing.T) {
 			t.Errorf("expected nil title prefixes for kimi, got %v", prefixes)
 		}
 	})
+
+	t.Run("hermes_model_switch_method", func(t *testing.T) {
+		if got := backends.LookupACPModelSwitchMethod("hermes"); got != backends.ACPModelSwitchSetModel {
+			t.Errorf("expected hermes model switch method %q, got %q", backends.ACPModelSwitchSetModel, got)
+		}
+	})
+
+	t.Run("default_backend_model_switch_method_empty", func(t *testing.T) {
+		// kimi honors a "model" config option, so it declares no method.
+		if got := backends.LookupACPModelSwitchMethod("kimi"); got != "" {
+			t.Errorf("expected empty model switch method for kimi, got %q", got)
+		}
+	})
+
+	t.Run("nonexistent_model_switch_method_empty", func(t *testing.T) {
+		if got := backends.LookupACPModelSwitchMethod("nonexistent_backend"); got != "" {
+			t.Errorf("expected empty model switch method for nonexistent backend, got %q", got)
+		}
+	})
 }

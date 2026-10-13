@@ -105,6 +105,17 @@ func LookupACPTitlePrefixes(backendID string) map[string]string {
 	return nil
 }
 
+// LookupACPModelSwitchMethod returns the JSON-RPC method the backend honors for
+// a model switch, or "" when the backend uses the default config-option path.
+func LookupACPModelSwitchMethod(backendID string) string {
+	pluginsMu.RLock()
+	defer pluginsMu.RUnlock()
+	if p, ok := plugins[backendID]; ok && p.ACP != nil {
+		return p.ACP.ModelSwitchMethod
+	}
+	return ""
+}
+
 // LookupMidTurnInjector returns the backend's mid-turn injection policy, or nil
 // when the backend cannot inject a message into a running turn.
 func LookupMidTurnInjector(backendID string) ai.MidTurnInjector {
