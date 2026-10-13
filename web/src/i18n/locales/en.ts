@@ -28,6 +28,12 @@ export default {
     noData: 'No data',
     ok: 'OK',
     listSeparator: ', ',
+    // Shown by AsyncComponentError.vue when a lazily-loaded panel chunk fails
+    // to load (offline, deploy swapped the hashed chunk).
+    componentLoadFailed: 'Failed to load this panel. Click retry.',
+    // SplitView / SplitDivider aria title — generic, so it does not live under
+    // `file.` even though the file manager is its most common host.
+    dragToResize: 'Drag to resize',
   },
   codeBlock: {
     wrapOn: 'Word wrap on',
@@ -768,6 +774,12 @@ export default {
     voice: {
       recording: 'Recording',
       transcribing: 'Transcribing',
+      insecureContext: 'Voice input needs HTTPS or localhost (this page is not a secure context, so the microphone is unreachable)',
+      unavailableTitle: 'Voice input unavailable',
+      gotIt: 'Got it',
+      micDenied: 'Microphone permission denied or unavailable',
+      transcribeFailed: 'Speech recognition failed — check the recognition model configuration',
+      connectFailed: 'Speech recognition connection failed',
     },
     archive: {
       confirm: 'Remove the current session from the session list? Or archive it into session search',
@@ -1564,6 +1576,8 @@ export default {
       binaryFile: 'Binary file, cannot preview in browser',
       loadFailed: 'Failed to load document',
       truncated: 'Content truncated, showing partial text only',
+      pdfLoading: 'Loading…',
+      pdfLoadFailed: 'Failed to load PDF',
     },
     details: {
       title: 'File Details',

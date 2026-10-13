@@ -1,9 +1,14 @@
 import { describe, expect, it, vi, afterEach } from 'vitest'
 import { mount, VueWrapper } from '@vue/test-utils'
 import { nextTick } from 'vue'
+import { createI18n } from 'vue-i18n'
 import SplitDivider from '@/components/common/SplitDivider.vue'
+import en from '@/i18n/locales/en'
+import zh from '@/i18n/locales/zh'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+
+const i18n = createI18n({ legacy: false, locale: 'en', messages: { en, zh } })
 
 let wrapper: VueWrapper | null = null
 
@@ -15,7 +20,7 @@ afterEach(() => {
 })
 
 function mountDivider(props = {}) {
-  wrapper = mount(SplitDivider, { props })
+  wrapper = mount(SplitDivider, { props, global: { plugins: [i18n] } })
   return wrapper
 }
 
@@ -42,6 +47,18 @@ describe('SplitDivider', () => {
     expect(el.getAttribute('role')).toBe('separator')
     expect(el.getAttribute('aria-orientation')).toBe('vertical')
     expect(wrapper!.find('.resize-divider__line').exists()).toBe(true)
+  })
+
+  it('uses a localized default title and lets an explicit title win', () => {
+    // The default was a hardcoded Chinese literal, so an English user hovering
+    // the divider saw Chinese. It now resolves through i18n.
+    const defaultWrapper = mountDivider()
+    const el = defaultWrapper.find('.split-view__divider').element as HTMLElement
+    expect(el.getAttribute('title')).toBe(en.common.dragToResize)
+
+    const custom = mountDivider({ title: 'Custom handle' })
+    expect((custom.find('.split-view__divider').element as HTMLElement).getAttribute('title'))
+      .toBe('Custom handle')
   })
 
   it('applies aria-value attributes when provided', () => {

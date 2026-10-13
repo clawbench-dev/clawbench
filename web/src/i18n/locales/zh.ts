@@ -28,6 +28,12 @@ export default {
     noData: '暂无数据',
     ok: '确定',
     listSeparator: '，',
+    // AsyncComponentError.vue 在懒加载面板 chunk 失败时展示（离线、部署换掉了
+    // 带哈希的 chunk）。
+    componentLoadFailed: '组件加载失败，请点击重试。',
+    // SplitView / SplitDivider 的 aria 标题——通用文案，故不放 `file.` 下，
+    // 尽管文件管理器是它最常见的宿主。
+    dragToResize: '拖动调整面板宽度',
   },
   codeBlock: {
     wrapOn: '自动换行已开启',
@@ -771,6 +777,12 @@ export default {
     voice: {
       recording: '录音中',
       transcribing: '识别中',
+      insecureContext: '语音输入需要 HTTPS 或 localhost 环境（当前页面不是安全上下文，无法访问麦克风）',
+      unavailableTitle: '语音输入不可用',
+      gotIt: '知道了',
+      micDenied: '麦克风权限被拒绝或不可用',
+      transcribeFailed: '语音识别失败，请检查识别模型配置',
+      connectFailed: '语音识别连接失败',
     },
     archive: {
       confirm: '从会话列表中移除当前会话？或归档到会话搜索列表',
@@ -1566,6 +1578,8 @@ export default {
       binaryFile: '二进制文件，无法在浏览器中预览',
       loadFailed: '文档加载失败',
       truncated: '内容已截断，仅显示部分文本',
+      pdfLoading: '加载中…',
+      pdfLoadFailed: 'PDF 加载失败',
     },
     details: {
       title: '文件详情',
