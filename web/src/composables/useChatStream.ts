@@ -954,6 +954,24 @@ export function useChatStream(options: UseChatStreamOptions) {
         loading.value = false
         reportCancelRoundTrip('cancelled')
         onStreamEnd?.('cancelled')
+        // Sync from DB in the background, exactly like 'done'/'error'/
+        // 'replay_done'. This branch used to skip it, which lost any block the
+        // backend persisted for this turn but never streamed — most visibly a
+        // warning/error block (the backend forwards those only as non-terminal
+        // warnings, and an ACP connection failure leaves an otherwise-empty
+        // reply). forceCleanupStreamingState then REMOVES an empty placeholder
+        // entirely, so the user saw no assistant message at all until an
+        // unrelated reload rebuilt the array. See the 'error' branch for the
+        // same rationale.
+        onLoadHistory().then(() => {
+          // Re-render Mermaid on the final DOM — loadHistory replaced messages
+          // and Vue rebuilt the DOM, destroying any Mermaid SVGs rendered by the
+          // earlier forceCleanupStreamingState onRenderNeeded(true) call.
+          onRenderNeeded(true)
+        }).catch(() => {
+          // Non-critical: loadHistory has its own error handling (toast).
+          // UI already finalized by forceCleanupStreamingState above.
+        })
         break
       }
 
