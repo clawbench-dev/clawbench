@@ -320,6 +320,15 @@ export default {
     repoKindMain: 'Main',
     repoKindWorktree: 'Worktree',
     repoKindSubdir: 'Subdir',
+    // Descriptive labels for the three header capsule segments (shown only at
+    // ≥768px, see AppHeader.vue). Distinct from the `projects` / `branches`
+    // menu titles: these are a tiny prefix before the icon+value pair that
+    // tells the user what the value to their right means.
+    labels: {
+      project: 'Project',
+      branch: 'Branch',
+      file: 'File',
+    },
     themePicker: 'Switch theme',
     moreAppearanceOptions: 'More appearance options',
     settings: 'Settings',

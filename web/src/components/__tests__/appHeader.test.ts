@@ -6,6 +6,7 @@ import AppHeader from '@/components/common/AppHeader.vue'
 import { pendingSettingsCategory } from '@/composables/useSettingsNavigation'
 import { copyText } from '@/utils/clipboard'
 import { switchLeftTab, resetWideScreenState, _setWideScreenForTest } from '@/composables/useWideScreenLayout'
+import { readWebFile } from '@/testUtils/readWebFile'
 
 const mockedCopyText = vi.mocked(copyText)
 
@@ -145,6 +146,7 @@ const i18n = createI18n({
     removeProjectConfirm: 'Remove "{name}" from recent projects?',
     projectRemoved: 'Project removed',
     removeProjectFailed: 'Failed to remove project',
+    labels: { project: 'Project', branch: 'Branch', file: 'File' },
   }, login: { logout: 'Logout' }, systemResources: { title: 'System Resources' } } },
 })
 
@@ -950,6 +952,53 @@ describe('AppHeader', () => {
   it('disables current-file-badge when recentFilesAvailable is 0', () => {
     mountAndTrack({ currentFileName: 'main.go', recentFilesAvailable: 0 })
     expect($('.current-file-badge')?.hasAttribute('disabled')).toBe(true)
+  })
+
+  // ── Segment labels (项目 / 分支 / 文件) ──
+  // The labels are always in the DOM; visibility is a pure-CSS decision
+  // (@media ≥768px). jsdom does not evaluate media queries, so the tests below
+  // assert the markup and a source guard asserts the CSS gate.
+
+  it('renders a descriptive label before the project and branch values', () => {
+    mockState.gitBranch = 'main'
+    mountAndTrack()
+    const capsule = $('.badge-capsule')
+    // Order matters: label sits between the icon and the value, not after it.
+    const projectHtml = capsule?.querySelector('.project-switch-btn')?.innerHTML || ''
+    const branchHtml = capsule?.querySelector('.branch-badge')?.innerHTML || ''
+    expect(projectHtml.indexOf('Project')).toBeGreaterThan(-1)
+    expect(projectHtml.indexOf('Project')).toBeLessThan(projectHtml.indexOf('my-project'))
+    expect(branchHtml.indexOf('Branch')).toBeGreaterThan(-1)
+    expect(branchHtml.indexOf('Branch')).toBeLessThan(branchHtml.indexOf('main'))
+    expect(capsule?.querySelectorAll('.seg-label').length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('labels the file segment when a file is open', () => {
+    mountAndTrack({ currentFileName: 'main.go', recentFilesAvailable: 3 })
+    const badge = $('.current-file-badge')
+    const label = badge?.querySelector('.seg-label')
+    expect(label?.textContent).toBe('File')
+    expect(label?.nextElementSibling?.textContent).toBe('main.go')
+  })
+
+  it('omits the file label in the empty state (value already reads "Recent files")', () => {
+    mountAndTrack({ currentFileName: '', recentFilesAvailable: 3 })
+    const badge = $('.current-file-badge')
+    // No duplicate: the label is absent, the value carries the meaning.
+    expect(badge?.querySelector('.seg-label')).toBeFalsy()
+    expect(badge?.querySelector('.current-file-name')?.textContent).toBe('Recent files')
+  })
+
+  it('gates the label reveal behind a 768px media query (source guard)', () => {
+    // jsdom never evaluates media queries, so the display:none → inline switch
+    // is unobservable at runtime. Pin it at the source: the base rule must hide
+    // the label and only a ≥768px block may reveal it.
+    const src = readWebFile('src/components/common/AppHeader.vue')
+    const base = src.match(/\.seg-label\s*\{[^}]*\}/)?.[0] || ''
+    expect(base).toContain('display: none')
+    const media = src.match(/@media \(min-width: 768px\)\s*\{[\s\S]*?\n\}/)?.[0] || ''
+    expect(media).toContain('.seg-label')
+    expect(media).toContain('display: inline')
   })
 
   it('toggles file dropdown open on click', async () => {

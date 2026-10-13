@@ -323,6 +323,14 @@ export default {
     repoKindMain: '主仓库',
     repoKindWorktree: '工作树',
     repoKindSubdir: '子目录',
+    // 头部胶囊三段的说明性标签（宽屏 ≥768px 才显示，见 AppHeader.vue）。
+    // 与 projects / branches 这类菜单标题不同：它们是「图标 + 值」前面的一枚
+    // 微型前缀，用来告诉用户右边那个值是什么。
+    labels: {
+      project: '项目',
+      branch: '分支',
+      file: '文件',
+    },
     themePicker: '切换主题',
     moreAppearanceOptions: '更多外观选项',
     settings: '设置',
