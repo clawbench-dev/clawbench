@@ -956,7 +956,7 @@ describe('AppHeader', () => {
 
   // ── Segment labels (项目 / 分支 / 文件) ──
   // The labels are always in the DOM; visibility is a pure-CSS decision
-  // (@media ≥768px). jsdom does not evaluate media queries, so the tests below
+  // (@media ≥600px). jsdom does not evaluate media queries, so the tests below
   // assert the markup and a source guard asserts the CSS gate.
 
   it('renders a descriptive label before the project and branch values', () => {
@@ -989,14 +989,19 @@ describe('AppHeader', () => {
     expect(badge?.querySelector('.current-file-name')?.textContent).toBe('Recent files')
   })
 
-  it('gates the label reveal behind a 768px media query (source guard)', () => {
+  it('gates the label reveal behind a 600px media query (source guard)', () => {
     // jsdom never evaluates media queries, so the display:none → inline switch
     // is unobservable at runtime. Pin it at the source: the base rule must hide
-    // the label and only a ≥768px block may reveal it.
+    // the label and only a ≥600px block may reveal it.
+    //
+    // 600 (not 768) is deliberate: this is a pure layout-space question, so it
+    // is answered in CSS px. Landscape phones have only ~640–914 CSS px even
+    // though they are physically wide, and the labelled capsule fits in ~215px,
+    // so 600 covers them. See the .seg-label comment in AppHeader.vue.
     const src = readWebFile('src/components/common/AppHeader.vue')
     const base = src.match(/\.seg-label\s*\{[^}]*\}/)?.[0] || ''
     expect(base).toContain('display: none')
-    const media = src.match(/@media \(min-width: 768px\)\s*\{[\s\S]*?\n\}/)?.[0] || ''
+    const media = src.match(/@media \(min-width: 600px\)\s*\{[\s\S]*?\n\}/)?.[0] || ''
     expect(media).toContain('.seg-label')
     expect(media).toContain('display: inline')
   })

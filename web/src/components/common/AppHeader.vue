@@ -1266,10 +1266,24 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 /* Segment labels — a tiny "项目 / 分支 / 文件" prefix before each value,
    so the icon+value pair is self-explanatory instead of an unlabelled name.
 
-   Hidden by default and revealed only at ≥768px: on phones the capsule is
-   width-constrained and every label would eat into the (already truncated)
-   value. `display:none` (not width:0) so a hidden label occupies no space
-   at all and the capsule collapses exactly back to today's icon+value look.
+   Hidden by default and revealed only at ≥600px CSS viewport width: on a
+   narrow phone the capsule is width-constrained and every label would eat into
+   the (already truncated) value. `display:none` (not width:0) so a hidden label
+   occupies no space at all and the capsule collapses exactly back to the
+   icon+value look.
+
+   Why 600 and not a device-size test: this is a pure layout question ("does the
+   capsule have room?"), so it must be answered in CSS pixels — the unit the
+   layout actually has. Measured: the labelled capsule is ~215px wide and fits
+   with no overflow even at 393px CSS width, so 600 is comfortably safe. A
+   physical-pixel / device-size criterion would be the wrong unit here: a phone
+   in landscape is physically wide (e.g. 1920px) but has only ~698px of CSS
+   layout space, and it is the 698 that decides whether the labels fit.
+
+   Note this deliberately does NOT reuse `isWideScreen` (the two-column
+   threshold, 960px): that answers a different question ("is there room for a
+   second column?") and its higher bar would hide these labels on exactly the
+   landscape phones that have room for them.
 
    The label must read as *secondary* to its value, which sits at 12px /
    --text-primary / weight 500. Three independent axes separate them — smaller
@@ -1289,7 +1303,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     display: none;
 }
 
-@media (min-width: 768px) {
+@media (min-width: 600px) {
     .seg-label {
         display: inline;
     }
