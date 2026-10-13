@@ -71,11 +71,11 @@ type GroupOrchestrator struct {
 	// (design §6: "主持人跑挂 → 回退轮转继续；再失败终止群回合"). Reset by a
 	// successful host turn.
 	hostFailures int
-	// commandInjection is the rendered /cb-* prompt template for THIS turn (the
-	// drained message). It is prepended to the FIRST speaker's turn only, so
-	// that speaker executes the built-in command once and its spoken result
-	// enters the timeline for the others to discuss. Empty = the message was
-	// not a built-in command (or no renderer is wired).
+	// commandInjection is the rendered command prompt template for THIS turn
+	// (the drained message). It is prepended to the FIRST speaker's turn only,
+	// so that speaker executes the command once and its spoken result enters
+	// the timeline for the others to discuss. Empty = the message was not a
+	// command (or no renderer is wired).
 	commandInjection string
 	// firstTurnDone is set once the command injection has been consumed, so the
 	// /cb-* template reaches exactly ONE speaker per turn — whichever mode
@@ -151,11 +151,12 @@ func RunGroupTurnDrain(ctx context.Context, groupID string, msgID int64, row Que
 		// the backend stubbed (see groupDrainRunnerOverride).
 		o.runTurn = groupDrainRunnerOverride
 	}
-	// A built-in /cb-* command rides in the FIRST speaker's prompt only: that
-	// speaker runs the command and reports the result as its speech, and the
-	// others discuss it. It is NOT injected into the timeline content (the
-	// bubble keeps the user's literal text) and NOT injected to members (the
-	// API contract is noise to them, decision #9).
+	// A user-message command (built-in /cb-* or an explicit #skill reference)
+	// rides in the FIRST speaker's prompt only: that speaker runs it and reports
+	// the result as its speech, and the others discuss it. It is NOT injected
+	// into the timeline content (the bubble keeps the user's literal text) and
+	// NOT injected to members (the injected contract is noise to them,
+	// decision #9).
 	o.commandInjection = renderGroupCommandForHost(row.Content, o.project, groupID)
 	// The user's message carries the free-mode initial targets (@-mentions).
 	// Host mode ignores them (decision #47: humans never route in host mode).
@@ -242,23 +243,24 @@ func translateGroupCancelReason(res DrainResult, groupReason string) DrainResult
 	return res
 }
 
-// renderGroupCommandForHost returns the rendered /cb-* template for a message,
-// or "" when the message is not a built-in command (the renderer returns the
-// input unchanged) or no renderer is wired. A render error is logged and
-// treated as "no injection" — the turn must still run, with the user's literal
-// text visible in the injected context.
+// renderGroupCommandForHost returns the rendered command template for a
+// message (a built-in "/cb-*" command or an explicit "#skill" reference), or
+// "" when the message is not a command (the renderer returns the input
+// unchanged) or no renderer is wired. A render error is logged and treated as
+// "no injection" — the turn must still run, with the user's literal text
+// visible in the injected context.
 func renderGroupCommandForHost(rawMsg, projectPath, groupID string) string {
 	if rawMsg == "" || renderGroupCommandFn == nil {
 		return ""
 	}
 	injected, err := renderGroupCommandFn(rawMsg, projectPath, groupID)
 	if err != nil {
-		slog.Warn("group: /cb-* render failed, running the turn without injection",
+		slog.Warn("group: command render failed, running the turn without injection",
 			"group", groupID, "err", err)
 		return ""
 	}
 	if injected == rawMsg {
-		return "" // not a built-in command
+		return "" // not a command
 	}
 	return injected
 }
@@ -1829,17 +1831,18 @@ func SetGroupDrainRunnerForTest(fn groupTurnRunner) groupTurnRunner {
 	return prev
 }
 
-// renderGroupCommandFn renders a ClawBench built-in command's (/cb-*) prompt
-// template for a group's HOST turn. It is injected by main.go from the handler
-// package, which owns the OpenAPI-rendered templates, because the orchestrator
-// (service) cannot import handler (that would be a cycle). Same pattern as
+// renderGroupCommandFn renders a user-message command prompt template for a
+// group's HOST turn — every injection kind (the built-in "/cb-*" commands and
+// the explicit "#skill" reference). It is injected by main.go from the handler
+// package, which owns the renderers, because the orchestrator (service) cannot
+// import handler (that would be a cycle). Same pattern as
 // SetPersistBingStateFn / SetSessionRunningChecker.
 //
 // Contract: for a non-command input it returns the input unchanged, and the
 // caller treats "unchanged" as "no injection". Nil disables injection entirely.
 var renderGroupCommandFn func(rawMsg, projectPath, sessionID string) (string, error)
 
-// SetRenderGroupCommandFn wires the /cb-* renderer for group host prompts and
+// SetRenderGroupCommandFn wires the command renderer for group host prompts and
 // returns the previous one. Pass nil to disable. Called once from main.go;
 // tests use the return value to restore.
 func SetRenderGroupCommandFn(fn func(rawMsg, projectPath, sessionID string) (string, error)) func(rawMsg, projectPath, sessionID string) (string, error) {

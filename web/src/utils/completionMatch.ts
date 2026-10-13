@@ -86,6 +86,7 @@ export type CompletionSource =
   | 'recent-share'
   | 'clawbench'
   | 'agent'
+  | 'skill'
 
 /** Source priority: lower index wins a dedupe conflict / an empty-query tie. */
 export const SOURCE_PRIORITY: CompletionSource[] = [
@@ -283,22 +284,37 @@ export function parseAtQuery(text: string, caret: number): TriggerRange | null {
 }
 
 /**
- * Parse a slash-command trigger from the text left of the caret.
+ * Parse a trigger that is only meaningful as the FIRST token of the message.
  *
- * A slash command is only meaningful as the first token of the message — the
- * backend routes `/xxx` purely by its leading slash — so, unlike `@` which may
- * sit anywhere on a whitespace boundary, the slash must be the first
- * non-whitespace character. Triggering mid-text would offer commands the
- * server then treats as plain text (and would false-positive on paths such as
- * `cd /test`).
+ * Both the slash-command and skill-reference menus require this: the backend
+ * routes `/xxx` purely by its leading slash and recognizes `#xxx` only at the
+ * message start, so a trigger mid-text would offer entries the server then
+ * treats as plain text (and would false-positive on paths such as `cd /test`
+ * or prose such as "issue #4").
  *
- * Everything else mirrors `@`: the query runs from the slash to the caret and
- * must not contain whitespace, so text already present after the slash (or
- * after the caret) no longer suppresses the menu.
+ * Unlike `@` (which may sit anywhere on a whitespace boundary), the trigger
+ * character must be the first non-whitespace character. The query runs from the
+ * trigger to the caret and must not contain whitespace, so text already present
+ * after the trigger (or after the caret) does not suppress the menu.
  */
-export function parseSlashQuery(text: string, caret: number): TriggerRange | null {
-  return parseTrigger(text, caret, '/', (left, at) =>
+function parseFirstTokenQuery(text: string, caret: number, char: string): TriggerRange | null {
+  return parseTrigger(text, caret, char, (left, at) =>
     left.slice(0, at).trim() === '')
+}
+
+/** Parse a slash-command trigger (`/`) from the text left of the caret. */
+export function parseSlashQuery(text: string, caret: number): TriggerRange | null {
+  return parseFirstTokenQuery(text, caret, '/')
+}
+
+/**
+ * Parse a skill-reference trigger (`#`) from the text left of the caret.
+ *
+ * The backend only recognizes an explicit skill reference at the very start
+ * (a `#` mid-sentence is prose), so the menu opens only there.
+ */
+export function parseHashQuery(text: string, caret: number): TriggerRange | null {
+  return parseFirstTokenQuery(text, caret, '#')
 }
 
 // ── Display helpers ────────────────────────────────────────

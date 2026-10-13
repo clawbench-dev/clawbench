@@ -50,6 +50,7 @@ const i18n = createI18n({
         input: {
           placeholder: 'Type a message...',
           placeholderCommand: 'Command',
+          placeholderSkill: 'Skill',
           placeholderFileRef: 'File ref',
           placeholderQuickSend: 'Quick send',
           placeholderSwipeHistory: 'Swipe history',
@@ -403,6 +404,17 @@ vi.mock('@/composables/useAgents', () => ({
 
 vi.mock('@/utils/appLog.ts', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
+}))
+
+// Controllable skill source for the "#" menu. `importOriginal` keeps the real
+// module's exports (useSkillsState, loadSkills, …) so a future import from the
+// component does not become undefined here.
+const mockSkillRows = ref<Array<Record<string, unknown>>>([])
+const mockEnsureSkillsLoaded = vi.fn().mockResolvedValue(undefined)
+vi.mock('@/composables/useSkillsState', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/composables/useSkillsState')>()),
+  skillMenuRows: () => mockSkillRows.value,
+  ensureSkillsLoaded: (...a: unknown[]) => mockEnsureSkillsLoaded(...a),
 }))
 
 // Mock useVoiceInput — controllable fake for voice input tests
@@ -1077,6 +1089,84 @@ describe('ChatInputBar', () => {
     // The candidate list is what the completion menu renders from.
     const keys = wrapper.vm.commandMenuItems.map(i => i.key)
     expect(keys).toContain('/btw')
+  })
+
+  describe('# skill menu', () => {
+    beforeEach(() => {
+      mockSkillRows.value = [
+        { name: 'pdf', description: 'PDF tools', path: '/p/pdf/SKILL.md', source_kind: 'user', source_label: 'user dir' },
+        { name: 'web-search', description: 'Search', path: '/p/ws/SKILL.md', source_kind: 'git', source_label: 'repo' },
+      ]
+      mockEnsureSkillsLoaded.mockClear()
+    })
+
+    it('lists skills when the input starts with #', async () => {
+      const wrapper = mountBar()
+      wrapper.vm.inputText = '#'
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.skillMenuItems.map(i => i.key)).toEqual(['#pdf', '#web-search'])
+    })
+
+    it('fetches the skill list on the first # when it is not loaded yet', async () => {
+      mockSkillRows.value = []
+      const wrapper = mountBar()
+      wrapper.vm.inputText = '#'
+      await wrapper.vm.$nextTick()
+      expect(mockEnsureSkillsLoaded).toHaveBeenCalled()
+    })
+
+    it('filters by the typed query', async () => {
+      const wrapper = mountBar()
+      wrapper.vm.inputText = '#web'
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.skillMenuItems.map(i => i.key)).toEqual(['#web-search'])
+    })
+
+    it('does not open for a # that is not the first token', async () => {
+      const wrapper = mountBar()
+      wrapper.vm.inputText = 'use #pdf'
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.skillMenuItems).toEqual([])
+    })
+
+    it('inserts "#name " when a skill is selected', async () => {
+      const wrapper = mountBar()
+      wrapper.vm.inputText = '#pdf'
+      await wrapper.vm.$nextTick()
+      wrapper.vm.handleSkillSelect(wrapper.vm.skillMenuItems[0])
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.inputText).toBe('#pdf ')
+    })
+
+    it('includes the # hint in the rotating placeholder hints', () => {
+      const wrapper = mountBar()
+      expect(wrapper.vm.placeholderHints).toContain('Skill')
+    })
+
+    it('opens the menu after the async skill list arrives', async () => {
+      // The list is fetched lazily on the first "#": at that instant the
+      // candidates are still empty, so refresh() alone hides the menu. The
+      // wrapper must refresh again once the fetch resolves, or the menu never
+      // opens (the user sees nothing after typing "#").
+      mockSkillRows.value = []
+      let resolveLoad: () => void = () => {}
+      mockEnsureSkillsLoaded.mockImplementationOnce(
+        () => new Promise<void>((r) => { resolveLoad = () => { mockSkillRows.value = [
+          { name: 'pdf', description: 'PDF', path: '/p/pdf/SKILL.md', source_kind: 'user', source_label: 'user dir' },
+        ]; r() } }),
+      )
+
+      const wrapper = mountBar()
+      await wrapper.find('.chat-textarea').trigger('focus')
+      wrapper.vm.inputText = '#'
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.skillMenuItems).toEqual([])
+
+      resolveLoad()
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.skillMenuItems.map(i => i.key)).toEqual(['#pdf'])
+    })
   })
 
   it('never shows a btw loading state and never disables the composer', async () => {

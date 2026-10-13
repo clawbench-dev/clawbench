@@ -407,27 +407,26 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		prompt = model.ApplyAttachmentPrefixes(prompt, validatedFilePaths, validatedDirPaths, attachmentParts)
 	}
 
-	// ClawBench built-in command injection: detect on raw req.Message, prepend
-	// template to prompt. Must happen after file path prefixes are added so the
-	// AI sees both the injected context and file context, but detection is on
-	// raw req.Message (since file prefixes would break the "/cb-" prefix check).
-	// matchClawbenchCommand also matches the bare command (no trailing space),
-	// which is what the frontend sends after trimming a menu selection.
+	// User-message command injection: detect on raw req.Message, prepend the
+	// rendered template to prompt. Must happen after file path prefixes are
+	// added so the AI sees both the injected context and file context, but
+	// detection is on raw req.Message (since file prefixes would break the
+	// "/cb-" prefix check and bury a leading "#").
 	//
-	// Every built-in command shares the same shape — optional precondition,
-	// then render-and-prepend — so new commands only need an entry in
-	// clawbenchCommandPrecheck and processClawbenchCommand, not another branch
-	// here.
-	if IsClawbenchCommand(req.Message) {
-		if !clawbenchCommandPrecheck(w, r, req.Message) {
-			return
-		}
-		injected, err := processClawbenchCommand(req.Message, projectPath, sessionID)
-		if err != nil {
-			slog.Error("failed to render clawbench command injection", slog.String("err", err.Error()))
-			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
-			return
-		}
+	// processCommandInjection dispatches every injection kind ("/cb-*" and the
+	// explicit "#skill" reference); a non-command is returned unchanged, which
+	// is read here as "no injection". The precondition check stays separate
+	// because it only applies to the built-in commands.
+	if IsClawbenchCommand(req.Message) && !clawbenchCommandPrecheck(w, r, req.Message) {
+		return
+	}
+	injected, injectErr := processCommandInjection(req.Message, projectPath, sessionID)
+	if injectErr != nil {
+		slog.Error("failed to render command injection", slog.String("err", injectErr.Error()))
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+		return
+	}
+	if injected != req.Message {
 		prompt = injected + "\n\n" + prompt
 	}
 
@@ -866,12 +865,13 @@ func buildChatRequestFromQueue(qMsg model.QueuedMessage, sessionID, projectPath,
 	parts := model.ClassifyAttachments(qMsg.Files, lookup)
 	prompt = model.ApplyAttachmentPrefixes(prompt, filePaths, dirPaths, parts)
 
-	// ClawBench built-in command injection for queued messages (same logic as
-	// the primary message path). A render failure means the embedded spec is
-	// unusable — surface it rather than sending the AI an incomplete contract.
-	injected, err := processClawbenchCommand(qMsg.Text, projectPath, sessionID)
+	// User-message command injection for queued messages (same logic as the
+	// primary message path, via the shared dispatcher so the two cannot drift).
+	// A render failure means the embedded spec is unusable — surface it rather
+	// than sending the AI an incomplete contract.
+	injected, err := processCommandInjection(qMsg.Text, projectPath, sessionID)
 	if err != nil {
-		slog.Error("failed to render clawbench command injection", slog.String("err", err.Error()))
+		slog.Error("failed to render command injection", slog.String("err", err.Error()))
 		return ai.ChatRequest{}, err
 	}
 	if injected != qMsg.Text {

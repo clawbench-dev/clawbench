@@ -12,6 +12,7 @@ import {
   FolderOpen,
   History,
   Share2,
+  Sparkles,
   Upload,
   Wrench,
   type LucideIcon,
@@ -34,4 +35,8 @@ export const SOURCE_META: Record<CompletionSource, SourceMeta> = {
   'recent-share': { icon: Share2, color: '#ec4899', labelKey: 'chat.completion.source.recentShare' },
   clawbench: { icon: Wrench, color: '#8b5cf6', labelKey: 'chat.completion.source.clawbench' },
   agent: { icon: Bot, color: '#0ea5e9', labelKey: 'chat.completion.source.agent' },
+  // A discovered skill, referenced explicitly as `#name`. Distinct from
+  // `agent` (an agent-provided slash command): a skill is not executable — the
+  // agent reads its SKILL.md — so the two must not share an icon/label.
+  skill: { icon: Sparkles, color: '#14b8a6', labelKey: 'chat.completion.source.skill' },
 }

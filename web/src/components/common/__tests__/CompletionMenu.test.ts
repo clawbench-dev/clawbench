@@ -229,7 +229,7 @@ describe('CompletionMenu', () => {
 })
 
 describe('SOURCE_META', () => {
-  it('covers all seven completion sources', () => {
+  it('covers all eight completion sources', () => {
     expect(Object.keys(SOURCE_META).sort()).toEqual([
       'agent',
       'clawbench',
@@ -238,6 +238,7 @@ describe('SOURCE_META', () => {
       'recent-ref',
       'recent-share',
       'recent-upload',
+      'skill',
     ])
   })
 
