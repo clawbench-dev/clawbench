@@ -1162,6 +1162,10 @@ const skillMenuItems = computed(() => {
     label: s.name,
     description: s.description,
     source: 'skill',
+    // The owning AI backend(s), rendered as a suffix after the name so a skill
+    // installed for one tool is recognizable at a glance. Empty for non-native
+    // sources (user dir / git repo / shared dir), which have no single owner.
+    skillBackends: s.backends,
   }))
   if (!trigger.query) return all
   const matched = []
