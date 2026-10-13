@@ -47,13 +47,18 @@ func TestHermesBackendPlugin_IsACPIOnly(t *testing.T) {
 	assert.False(t, ai.BackendSupportsCLI("hermes"), "hermes is ACP-only")
 }
 
-// Hermes loads its own skills (the hermes-acp toolset enables skills_list /
-// skill_view / skill_manage), so ClawBench must not inject a second copy.
+// Hermes loads its own skills from ~/.hermes/skills (the hermes-acp toolset
+// enables skills_list / skill_view / skill_manage), so ClawBench must not inject
+// a second copy. ~/.agents/skills is NOT declared: Hermes only reads it when it
+// is listed in skills.external_dirs (default []), so claiming it would make
+// dedupe suppress those skills and hide them from Hermes entirely.
 func TestHermesBackendPlugin_LoadsNativeSkills(t *testing.T) {
 	plugin := backends.Lookup("hermes")
 	require.NotNil(t, plugin)
 	assert.True(t, plugin.Spec.AutoLoadsNativeSkills)
-	assert.Equal(t, []string{".hermes/skills", ".agents/skills"}, plugin.Spec.NativeSkillsDirs)
+	assert.Equal(t, []string{".hermes/skills"}, plugin.Spec.NativeSkillsDirs)
+	assert.NotContains(t, plugin.Spec.NativeSkillsDirs, ".agents/skills",
+		"Hermes does not read ~/.agents/skills by default; declaring it would hide those skills")
 }
 
 // Hermes advertises no static effort levels and no `thought_level` config
@@ -82,6 +87,13 @@ func TestHermesToolTitlesResolveCanonically(t *testing.T) {
 		{"todo_list: planning 1 task(s)", "other", "TodoWrite"},
 		{"memory: Memory manage (memory)", "other", "save_memory"},
 		{"session_search: recall: \"foo\"", "other", "Grep"},
+		{"process_manage: x", "other", "Bash"},
+		{"browser_console: x", "other", "Bash"},
+		{"browser_cdp: x", "other", "Bash"},
+		{"browser_dialog: x", "other", "Bash"},
+		{"browser_exec: x", "other", "Bash"},
+		{"browser_vault: x", "other", "Bash"},
+		{"manage_connections: x", "other", "Skill"},
 		// kind=read/edit → dedicated Skill entries.
 		{"skill_view: Loading skill 'x'", "read", "Skill"},
 		{"skills_list: x", "read", "Skill"},
@@ -94,6 +106,42 @@ func TestHermesToolTitlesResolveCanonically(t *testing.T) {
 	for _, c := range cases {
 		got := ai.ExtractToolNameForTest(c.title, acp.ToolKind(c.kind), "hermes")
 		assert.Equal(t, c.want, got, "title %q (kind=%s)", c.title, c.kind)
+	}
+}
+
+// TestHermesAllEnabledToolsResolveCanonically is the guard for the whole
+// `hermes-acp` toolset (toolsets.py: _CODING_TOOLS minus clarify — 32 tools).
+// Every tool must resolve to a name that is EITHER already canonical
+// (kind-mapped, e.g. read_file→Read) OR explicitly in the title-prefix table;
+// none may fall through to its raw native name (which renders as a generic
+// wrench + snake_case label). The list is the reviewed source of truth, so a
+// Hermes version that adds a tool — or a table edit that drops one — fails here
+// instead of silently degrading a tool card.
+func TestHermesAllEnabledToolsResolveCanonically(t *testing.T) {
+	// name → the ACP kind Hermes reports (TOOL_KIND_MAP in acp_adapter/tools.py;
+	// tools absent from that map are "other").
+	tools := map[string]string{
+		"web_search": "fetch", "web_extract": "fetch",
+		"terminal": "execute", "process_manage": "other",
+		"read_file": "read", "write_file": "edit", "patch": "edit", "search_files": "search",
+		"vision_analyze": "read",
+		"skills_list":    "read", "skill_view": "read", "skill_manage": "edit",
+		"browser_navigate": "fetch", "browser_snapshot": "read", "browser_click": "execute",
+		"browser_type": "execute", "browser_scroll": "execute", "browser_back": "execute",
+		"browser_press": "execute", "browser_get_images": "read", "browser_vision": "read",
+		"browser_console": "other", "browser_cdp": "other", "browser_dialog": "other",
+		"browser_vault": "other", "browser_exec": "other",
+		"todo_list": "other", "memory": "other", "session_search": "other",
+		"execute_code": "execute", "delegate_task": "execute",
+		"manage_connections": "other",
+	}
+	for name, kind := range tools {
+		// Hermes titles are "<name>: <preview>"; a bare name also occurs.
+		got := ai.ExtractToolNameForTest(name+": preview", acp.ToolKind(kind), "hermes")
+		assert.NotEqual(t, name+": preview", got,
+			"tool %q (kind=%s) leaked its raw native title; add it to HermesACPTitlePrefixes", name, kind)
+		assert.NotContains(t, got, ":",
+			"tool %q resolved to a non-canonical name %q", name, got)
 	}
 }
 

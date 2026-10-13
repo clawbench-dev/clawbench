@@ -30,11 +30,18 @@ func init() {
 			ACPLoadSession: true,
 			InstallCmd:     "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash",
 			SortOrder:      17,
-			// Hermes loads its own skills from ~/.hermes/skills and the shared
-			// ~/.agents/skills (toolsets.py + agent/skill_utils.py: the
-			// "hermes-acp" toolset enables skills_list/skill_view/skill_manage),
-			// so ClawBench must not inject them again.
-			NativeSkillsDirs:      []string{".hermes/skills", ".agents/skills"},
+			// Hermes loads its own skills from ~/.hermes/skills (the
+			// "hermes-acp" toolset enables skills_list/skill_view/skill_manage,
+			// and agent/skill_utils.py's home tier is get_skills_dir() =
+			// HERMES_HOME/skills), so ClawBench must not inject them again.
+			//
+			// ~/.agents/skills is deliberately NOT declared: unlike codex/copilot/
+			// opencode/qoder/dsh, Hermes does not read it by default — the shared
+			// dir is only loaded when listed in skills.external_dirs, which
+			// defaults to []. Declaring it here with AutoLoadsNativeSkills=true
+			// would make dedupe SUPPRESS injection of every skill that lives only
+			// in ~/.agents/skills, leaving Hermes unable to see them at all.
+			NativeSkillsDirs:      []string{".hermes/skills"},
 			AutoLoadsNativeSkills: true,
 			// ThinkingEffortLevels is intentionally nil: Hermes has no static
 			// effort levels and advertises no `thought_level` ACP config option,

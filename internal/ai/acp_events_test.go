@@ -600,16 +600,28 @@ func TestExtractToolName_TitlePrefixRequiresColonBoundary(t *testing.T) {
 	assert.Equal(t, "TodoWrite", extractToolName("todo_list", acp.ToolKindOther, "probe"))
 }
 
+// TestExtractToolName_TitlePrefixLongestKeyWins pins the longest-first ordering
+// of lookupByTitlePrefix. The colon boundary alone already separates colon-free
+// keys ("browser" never matches "browser_navigate: x"), so ordering only decides
+// the outcome when BOTH keys match the same title — which happens when a shorter
+// key is a colon-prefix of a longer one (MCP-style "server" vs
+// "server:create_issue"). Map iteration order is random, so without the sort the
+// short key wins roughly half the time; the sort must make the long key win
+// every time.
 func TestExtractToolName_TitlePrefixLongestKeyWins(t *testing.T) {
 	withTitlePrefixes(t, map[string]string{
-		"browser":          "Bash",
-		"browser_navigate": "WebFetch",
+		"github":              "Skill",
+		"github:create_issue": "TaskCreate",
 	})
-	// Map iteration order is random; the longer key must always win for its title.
-	for range 20 {
-		assert.Equal(t, "WebFetch", extractToolName("browser_navigate: x", acp.ToolKindOther, "probe"))
+	// Both keys match this title ("github" via "github:", the longer via
+	// "github:create_issue:"); only the longer one is correct.
+	for range 50 {
+		assert.Equal(t, "TaskCreate",
+			extractToolName("github:create_issue: #12", acp.ToolKindOther, "probe"),
+			"the longer colon-prefixed key must win regardless of map order")
 	}
-	assert.Equal(t, "Bash", extractToolName("browser: x", acp.ToolKindOther, "probe"))
+	// A title that matches only the short key still resolves through it.
+	assert.Equal(t, "Skill", extractToolName("github:list: x", acp.ToolKindOther, "probe"))
 }
 
 func TestExtractToolName_TitlePrefixScopedToBackend(t *testing.T) {
