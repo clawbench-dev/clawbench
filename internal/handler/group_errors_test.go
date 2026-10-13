@@ -317,8 +317,18 @@ func TestServeGroupSettings_UnknownGroup(t *testing.T) {
 // --- helper unit coverage ---
 
 func TestGroupPlaceholderTitle(t *testing.T) {
-	assert.Equal(t, "群聊", groupPlaceholderTitle(""))
-	assert.Contains(t, groupPlaceholderTitle("codebuddy"), "的群聊")
+	// The placeholder is stored on the session row and shown in the session
+	// list, so it must follow the request locale rather than being hardcoded
+	// Chinese.
+	zh := httptest.NewRequest(http.MethodPost, "/api/group/create", http.NoBody)
+	zh.Header.Set("X-Locale", "zh")
+	assert.Equal(t, "群聊", groupPlaceholderTitle(zh, ""))
+	assert.Contains(t, groupPlaceholderTitle(zh, "codebuddy"), "的群聊")
+
+	en := httptest.NewRequest(http.MethodPost, "/api/group/create", http.NoBody)
+	en.Header.Set("X-Locale", "en")
+	assert.Equal(t, "Group chat", groupPlaceholderTitle(en, ""))
+	assert.Contains(t, groupPlaceholderTitle(en, "codebuddy"), "group chat")
 }
 
 // groupSessionLimitOK returns true unconditionally when the cap is unlimited.

@@ -213,6 +213,7 @@ RAGResetFailed: Index rebuild failed
 RAGSegmenterUnavailable: "Rebuild refused: the text segmenter is unavailable. Rebuilding now would replace correctly segmented text with unsplit text and break Chinese search — restart the service and try again."
 RAGRebuildAccepted: Rebuild started in the background
 AutoContinue: Continue
+ACPSessionRecoveredNew: ACP session could not be restored; started a new session (the previous conversation context was lost).
 GroupYourTurn: "It's your turn to speak"
 GroupDiscussionLimitReached: "The agents reached the discussion limit"
 # Group-timeline system rows. These are WRITTEN (not rendered) in the active
@@ -225,6 +226,8 @@ GroupMemberLeft: '{{.Name}} left'
 GroupMemberUnknown: Member
 GroupUnknownMention: '{{.Speaker}} @-mentioned a member who does not exist: {{.Names}} (ignored)'
 GroupMemberListSeparator: ', '
+GroupHostTitle: "{{.Name}}'s group chat"
+GroupFreeTitle: Group chat
 # Forge event-context block. The backend renders the SAME labels the task form
 # previews (web/src/utils/forgeEventContextVars.ts), so the two can no longer
 # drift — the backend previously held its own Chinese literals while the
@@ -262,6 +265,22 @@ EventVarPipelineTrigger: Pipeline trigger
 EventVarPipelineDuration: Pipeline duration
 EventVarPipelineLinkedPrs: Linked change requests
 EventVarActorIsSelf: Self-triggered
+# Forge event IM notification (title + body pushed to DingTalk/Feishu). The
+# dispatcher runs on a background goroutine, so it localizes via model.Language
+# like the other push strings.
+ForgeEventItemIssue: Issue
+ForgeEventItemChangeRequest: Change request
+ForgeEventItemPipeline: Repository pipeline
+ForgeEventOpened: opened
+ForgeEventClosed: closed
+ForgeEventMerged: merged
+ForgeEventReopened: reopened
+ForgeEventCommented: new comment
+ForgeEventPipelineDone: pipeline finished
+ForgeEventLabelRepo: Repo
+ForgeEventLabelEvent: Event
+ForgeEventLabelAuthor: Author
+ForgeEventViewDetail: View details
 PortForwardUnavailable: port forwarding is not available
 TunnelTargetUnreachable: tunnel target is unreachable
 TunnelReverseRequiresHTTP2: reverse forwarding requires HTTP/2; use the SSH transport on HTTP/1.1

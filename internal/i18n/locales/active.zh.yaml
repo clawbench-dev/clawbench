@@ -212,6 +212,7 @@ RAGResetFailed: 索引重建失败
 RAGSegmenterUnavailable: "已拒绝重建：分词器不可用。此时重建会把已正确分词的文本替换为未切分文本，导致中文搜索失效 — 请重启服务后重试。"
 RAGRebuildAccepted: 重建已在后台启动
 AutoContinue: 继续
+ACPSessionRecoveredNew: ACP 会话无法恢复，已开启新会话（原有对话上下文已丢失）。
 GroupYourTurn: 轮到用户发言
 GroupDiscussionLimitReached: 成员间讨论次数达到上限
 # 群时间线的系统行。这些文案是「写入时」按当前语言本地化并持久化到 chat_history，
@@ -222,6 +223,8 @@ GroupMemberLeft: '{{.Name}} 已离场'
 GroupMemberUnknown: 成员
 GroupUnknownMention: '{{.Speaker}} @ 了一个不存在的成员：{{.Names}}（已忽略）'
 GroupMemberListSeparator: 、
+GroupHostTitle: '{{.Name}} 的群聊'
+GroupFreeTitle: 群聊
 # Forge 事件上下文块。后端渲染的标签与任务表单预览
 # （web/src/utils/forgeEventContextVars.ts）完全一致，两者不会再漂移——此前
 # 后端自带一套中文字面量、前端却渲染 i18n 键，导致英文用户看到的预览与实际
@@ -258,6 +261,21 @@ EventVarPipelineTrigger: 流水线触发方式
 EventVarPipelineDuration: 流水线耗时
 EventVarPipelineLinkedPrs: 关联合并请求
 EventVarActorIsSelf: 是否自身触发
+# Forge 事件 IM 通知（推送钉钉/飞书的标题 + 正文）。分发器跑在后台 goroutine，
+# 故与其它推送文案一样按 model.Language 本地化。
+ForgeEventItemIssue: 议题
+ForgeEventItemChangeRequest: 合并请求
+ForgeEventItemPipeline: 仓库流水线
+ForgeEventOpened: 新开
+ForgeEventClosed: 关闭
+ForgeEventMerged: 合并
+ForgeEventReopened: 重新打开
+ForgeEventCommented: 有新评论
+ForgeEventPipelineDone: 流水线完成
+ForgeEventLabelRepo: 仓库
+ForgeEventLabelEvent: 事件
+ForgeEventLabelAuthor: 作者
+ForgeEventViewDetail: 查看详情
 PortForwardUnavailable: 端口转发不可用
 TunnelTargetUnreachable: 隧道目标不可达
 TunnelReverseRequiresHTTP2: 反向转发需要 HTTP/2；HTTP/1.1 下请使用 SSH 传输

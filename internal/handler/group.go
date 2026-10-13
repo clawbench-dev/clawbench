@@ -73,7 +73,7 @@ func ServeGroupCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	groupID, hostMemberID, err := service.CreateGroupWithMembers(projectPath, groupPlaceholderTitle(hostAgentID), hostAgentID, specs)
+	groupID, hostMemberID, err := service.CreateGroupWithMembers(projectPath, groupPlaceholderTitle(r, hostAgentID), hostAgentID, specs)
 	if err != nil {
 		writeGroupCreateError(w, r, err)
 		return
@@ -135,11 +135,15 @@ func groupMemberSpecs(agentIDs []string, projectPath string) ([]service.GroupMem
 // groupPlaceholderTitle is the group's initial title: host mode uses the host's
 // name; free mode has none, so a generic placeholder (auto-title replaces it
 // after the first message).
-func groupPlaceholderTitle(hostAgentID string) string {
+//
+// Localized from the request's locale: the title is stored on the session row
+// and shown in the session list, so an English user must not get a Chinese
+// placeholder.
+func groupPlaceholderTitle(r *http.Request, hostAgentID string) string {
 	if hostAgentID != "" {
-		return service.GetAgentDisplayName(hostAgentID) + " 的群聊"
+		return T(r, "GroupHostTitle", map[string]any{"Name": service.GetAgentDisplayName(hostAgentID)})
 	}
-	return "群聊"
+	return T(r, "GroupFreeTitle")
 }
 
 // writeGroupCreateError maps a CreateGroupWithMembers error to the right status.

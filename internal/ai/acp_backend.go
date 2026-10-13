@@ -10,6 +10,7 @@ import (
 
 	acp "github.com/coder/acp-go-sdk"
 
+	"clawbench/internal/i18n"
 	"clawbench/internal/model"
 )
 
@@ -84,7 +85,7 @@ func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 					conn, isNew, err = fb, true, nil
 					forwardACPEvent(ch, StreamEvent{
 						Type:    "warning",
-						Content: "ACP 会话无法恢复，已开启新会话（原有对话上下文已丢失）。", Reason: ReasonBackendExit,
+						Content: i18n.T(i18n.LocalizerForLocale(model.Language), "ACPSessionRecoveredNew"), Reason: ReasonBackendExit,
 					})
 				}
 			}
