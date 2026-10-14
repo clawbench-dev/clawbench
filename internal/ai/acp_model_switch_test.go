@@ -427,3 +427,67 @@ func TestClassifyModelSwitchFailure_CanceledRetryable(t *testing.T) {
 	err := classifyModelSwitchFailure(context.Canceled)
 	assert.True(t, IsModelSwitchRetryable(err), "a dropped request must be retryable")
 }
+
+// A set_model that killed the agent process is a retryable connection crash
+// (the next prompt respawns and re-applies), not a hard failure.
+func TestClassifyModelSwitchFailure_ConfigKilledRetryable(t *testing.T) {
+	err := classifyModelSwitchFailure(errConfigKilledConnection("model", "m1"))
+	assert.True(t, IsModelSwitchRetryable(err), "a process crash must be retryable")
+
+	mse, ok := AsModelSwitchError(err)
+	require.True(t, ok)
+	assert.Contains(t, mse.Detail, "model")
+}
+
+// A failure that is none of the known classes (e.g. an arbitrary transport
+// error) is surfaced verbatim and is NOT retryable — the caller must not keep
+// a choice the agent refused for an unrecognized reason.
+func TestClassifyModelSwitchFailure_UnknownIsNotRetryable(t *testing.T) {
+	err := classifyModelSwitchFailure(errors.New("weird failure"))
+	require.Error(t, err)
+	assert.False(t, IsModelSwitchRetryable(err))
+	mse, ok := AsModelSwitchError(err)
+	require.True(t, ok)
+	assert.Equal(t, "weird failure", mse.Detail)
+}
+
+// classifyModelSwitchFailure(nil) is a no-op, so a successful switch is never
+// wrapped into a spurious error.
+func TestClassifyModelSwitchFailure_NilIsNil(t *testing.T) {
+	assert.NoError(t, classifyModelSwitchFailure(nil))
+}
+
+// ModelSwitchError.Error() renders the code when present and omits it when the
+// failure was not a JSON-RPC error (Code == 0). The HTTP layer relies on the
+// text being non-empty for the toast fallback.
+func TestModelSwitchError_Error(t *testing.T) {
+	withCode := (&ModelSwitchError{Code: -32602, Detail: "Invalid params"}).Error()
+	assert.Contains(t, withCode, "-32602")
+	assert.Contains(t, withCode, "Invalid params")
+
+	noCode := (&ModelSwitchError{Detail: "timed out"}).Error()
+	assert.Equal(t, "model switch failed: timed out", noCode)
+	assert.NotContains(t, noCode, "(")
+}
+
+// AsModelSwitchError reports false for a nil error and for an unrelated error,
+// so callers can safely use it as a type check.
+func TestAsModelSwitchError_NonMatch(t *testing.T) {
+	_, ok := AsModelSwitchError(nil)
+	assert.False(t, ok)
+	_, ok = AsModelSwitchError(errors.New("unrelated"))
+	assert.False(t, ok)
+}
+
+// A backend that declares no set_model method and is asked to apply an empty
+// value is a no-op (nothing to send, no error) — this is the "no explicit
+// selection" case on every turn.
+func TestApplyModelSelection_EmptyValueIsNoOp(t *testing.T) {
+	withModelSwitchMethod(t, "hermes", "session/set_model")
+	conn := newConnForModelSwitchTest(t, "hermes")
+	rec := &rawCallRecorder{}
+	conn.SetRawCallFnForTest(rec.hook)
+
+	require.NoError(t, conn.applyModelSelection(context.Background(), "acp-sid-hermes", ""))
+	assert.Empty(t, rec.all(), "an empty model must not be sent")
+}

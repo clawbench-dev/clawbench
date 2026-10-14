@@ -146,7 +146,7 @@ func TestRenderCommand_Deterministic(t *testing.T) {
 // This guards unbounded prose growth, and — as a side effect — also rejects a
 // wholesale switch to tag-based selection for most commands, since a whole
 // tag's endpoints are far larger than the hand-picked subset (measured at the
-// time of writing: Agents tag 4839 > agent budget 4500; RAG 4943 > chatsearch
+// time of writing: Agents tag 6409 > agent budget 4800; RAG 4943 > chatsearch
 // 2600; System 3516 > usage 2000). It is NOT the primary defense, though: the
 // real guard is the operationId selection itself — endpointsForOperations
 // binds each id to its expected tag and fails loudly on a retag — plus each
@@ -158,14 +158,16 @@ func TestRenderCommand_SizeBudget(t *testing.T) {
 		// can resolve a project the user names to its exact path.
 		CommandChatSearch: 2600,
 		// The task body grew when the gating-script fields (script,
-		// script_timeout) joined it, and again when GET /api/agents gained the
-		// project-filtering description; the headroom is deliberate, not drift.
-		CommandTask:  8800,
+		// script_timeout) joined it, again when GET /api/agents gained the
+		// project-filtering description, and again when it gained the
+		// "ACP unconfirmed → empty models" contract note; the headroom is
+		// deliberate, not drift.
+		CommandTask:  9700,
 		CommandUsage: 2000,
 		// The agent command renders four operations whose PATCH/POST bodies
 		// carry long field notes (name uniqueness, avatar, disabled,
-		// project_scope).
-		CommandAgent: 4500,
+		// project_scope) plus the same GET /api/agents ACP-model-list note.
+		CommandAgent: 4800,
 	}
 	for cmd, budget := range budgets {
 		out, err := RenderCommand(cmd)

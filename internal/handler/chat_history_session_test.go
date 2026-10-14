@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -858,4 +859,46 @@ func TestServeAISessionUpdate_HardModelFailureKeepsOtherFields(t *testing.T) {
 			assert.True(t, s.Pinned, "pinned must not be dropped by the model failure")
 		}
 	}
+}
+
+// writeModelSwitchError is the single mapper from a rejected switch to the 422
+// the frontend toasts. Its three branches must each produce a distinct, valid
+// response — a defensive non-ModelSwitchError, an error without agent detail,
+// and one carrying the agent's own explanation.
+func TestWriteModelSwitchError(t *testing.T) {
+	t.Run("non-model-switch error falls back to the bare key", func(t *testing.T) {
+		req := newRequest(t, http.MethodPatch, "/api/ai/session/update", nil)
+		w := httptest.NewRecorder()
+		writeModelSwitchError(w, req, errors.New("unrelated failure"))
+
+		require.Equal(t, http.StatusUnprocessableEntity, w.Code)
+		var resp map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, "ModelSwitchFailed", resp["msgKey"])
+	})
+
+	t.Run("empty detail uses the bare key, not a dangling colon", func(t *testing.T) {
+		req := newRequest(t, http.MethodPatch, "/api/ai/session/update", nil)
+		w := httptest.NewRecorder()
+		writeModelSwitchError(w, req, &ai.ModelSwitchError{Code: -32603, Detail: ""})
+
+		require.Equal(t, http.StatusUnprocessableEntity, w.Code)
+		var resp map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, "ModelSwitchFailed", resp["msgKey"])
+	})
+
+	t.Run("agent detail is surfaced in both msgKey and detail", func(t *testing.T) {
+		req := newRequest(t, http.MethodPatch, "/api/ai/session/update", nil)
+		w := httptest.NewRecorder()
+		writeModelSwitchError(w, req, &ai.ModelSwitchError{Code: -32602, Detail: "provider not connected"})
+
+		require.Equal(t, http.StatusUnprocessableEntity, w.Code)
+		var resp map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, "ModelSwitchFailedDetail", resp["msgKey"])
+		detail, ok := resp["detail"].(map[string]any)
+		require.True(t, ok, "detail payload missing: %v", resp["detail"])
+		assert.Equal(t, "provider not connected", detail["Detail"])
+	})
 }
