@@ -45,7 +45,10 @@ export interface RepoRow {
 //   - one request per refresh instead of one per card,
 //   - a sync triggered in the settings card updates the list card too (a
 //     per-component fetch would leave the list stale until the page reopened).
-const enabled = ref(true)
+// Mirrors the server default (skills.enabled defaults to false — auto-injection
+// is opt-in). Overwritten by loadSkills() with the server's actual value; this
+// only avoids showing "on" for the instant before the first load resolves.
+const enabled = ref(false)
 const dirs = ref<string[]>([])
 const repos = ref<RepoRow[]>([])
 const skills = ref<SkillRow[]>([])

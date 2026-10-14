@@ -532,11 +532,14 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	normalizeForgeCredentialKeys(cfg)
 
 	// --- Skills (cross-agent skill discovery) ---
-	// Enabled defaults to true: skills are read-only context, and an install
-	// with no skill directories simply injects nothing. Use the presence map so
-	// an explicit "enabled: false" is respected.
-	if !presence["skills.enabled"] {
-		cfg.Skills.Enabled = true
+	// Enabled defaults to false: auto-injecting every discovered skill spends
+	// context on every turn whether or not the user wants it, so it is opt-in.
+	// Use the presence map to distinguish "user wrote true" from "user omitted
+	// the field" — a present key means respect the parsed value. Scanning and
+	// the settings listing still work when off; the explicit "#skill" reference
+	// is unaffected (it is a direct user instruction, not automatic injection).
+	if p, ok := presence["skills.enabled"]; !ok || !p {
+		cfg.Skills.Enabled = false
 	}
 	if len(cfg.Skills.Dirs) == 0 {
 		// Migrate the pre-list key. `dir` was the single user skill directory

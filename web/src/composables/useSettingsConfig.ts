@@ -556,6 +556,8 @@ const serverDefaults: Record<string, unknown> = {
   'terminal.idle_timeout': '10m',
   'terminal.max_sessions': 10,
   'terminal.buffer_lines': 2000,
+  // Auto-injection of discovered skills is opt-in (mirrors the server default).
+  'skills.enabled': false,
   'default_agent': '',
   'tts.engine': 'edge',
   'tts.format': '',

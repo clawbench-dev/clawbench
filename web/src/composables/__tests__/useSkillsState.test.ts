@@ -12,7 +12,7 @@ vi.mock('@/utils/appLog', () => ({
 
 // The module-level singleton persists across tests in this file, so reset the
 // pieces each test cares about before it runs.
-const { skills, loaded } = useSkillsState()
+const { skills, loaded, enabled } = useSkillsState()
 
 function skill(over: Partial<SkillRow>): SkillRow {
   return {
@@ -104,5 +104,13 @@ describe('skillMenuRows', () => {
   it('sorts by name', () => {
     skills.value = [skill({ name: 'zeta' }), skill({ name: 'alpha' })]
     expect(skillMenuRows().map((s) => s.name)).toEqual(['alpha', 'zeta'])
+  })
+})
+
+describe('enabled default', () => {
+  it('starts false so auto-injection is opt-in before the first load', () => {
+    // Mirrors the server default (skills.enabled defaults to false). The value
+    // is overwritten by loadSkills(), but the pre-load state must not read "on".
+    expect(enabled.value).toBe(false)
   })
 })

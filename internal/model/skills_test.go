@@ -110,16 +110,16 @@ func TestApplyDefaults_SkillsMigratesLegacyDir(t *testing.T) {
 		assert.Empty(t, cfg.Skills.Dirs, "there is no default directory to synthesize")
 	})
 
-	t.Run("enabled defaults to true", func(t *testing.T) {
+	t.Run("enabled defaults to false (auto-injection is opt-in)", func(t *testing.T) {
 		cfg := Config{}
 		ApplyDefaults(&cfg, nil)
-		assert.True(t, cfg.Skills.Enabled)
+		assert.False(t, cfg.Skills.Enabled)
 	})
 
-	t.Run("an explicit disable is respected", func(t *testing.T) {
-		cfg := Config{}
+	t.Run("an explicit enable is respected", func(t *testing.T) {
+		cfg := Config{Skills: SkillsConfig{Enabled: true}}
 		ApplyDefaults(&cfg, map[string]bool{"skills.enabled": true})
-		assert.False(t, cfg.Skills.Enabled)
+		assert.True(t, cfg.Skills.Enabled)
 	})
 
 	t.Run("refresh_hours defaults to 6 but 0 is expressible", func(t *testing.T) {

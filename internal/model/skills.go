@@ -56,8 +56,12 @@ func SkillSlug(url string) string {
 // internal/skill). Which directory a skill came from only affects dedup
 // priority, not visibility.
 type SkillsConfig struct {
-	// Enabled is the master switch. When false, no skills section is injected
-	// into any system prompt (scanning and the UI listing still work).
+	// Enabled is the master switch for AUTOMATIC injection. It defaults to
+	// false (opt-in): injecting every discovered skill spends context on every
+	// turn, so the user must turn it on. When false, no skills section is
+	// injected into any system prompt (scanning and the UI listing still work),
+	// but an explicit "#skill" reference is unaffected — it is a direct user
+	// instruction, not automatic injection.
 	Enabled bool `yaml:"enabled"`
 	// Dirs are the user's own skill directories, scanned in order. Each is an
 	// absolute path; a skill found in more than one is deduplicated by name
