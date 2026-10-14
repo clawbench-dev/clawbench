@@ -204,7 +204,8 @@ func (m *Manager) runService(ctx context.Context, svc *client.Service) {
 	err := svc.Run(ctx)
 
 	m.mu.Lock()
-	if !m.stopped {
+	stopped := m.stopped
+	if !stopped {
 		if err != nil {
 			m.state = StateFailed
 		} else {
@@ -213,7 +214,16 @@ func (m *Manager) runService(ctx context.Context, svc *client.Service) {
 	}
 	m.mu.Unlock()
 
-	if err != nil {
+	// A service torn down by Stop() returns a context-cancellation error, which
+	// is an orderly shutdown, not a failure. Emitting "failed" for it is wrong
+	// (it would show a red status after the user stopped FRP) AND it races: the
+	// event goes to the process-wide ws manager, so a stopped manager's late
+	// emit lands on whatever subscriber is active at that instant — a later
+	// test, or a real reconnect. Only report a failure for a service that
+	// exited on its own.
+	if stopped {
+		slog.Info("frp: service stopped")
+	} else if err != nil {
 		slog.Error("frp: service exited with error", slog.String("err", err.Error()))
 		emitEvent("failed", map[string]any{"error": err.Error()})
 	} else {
