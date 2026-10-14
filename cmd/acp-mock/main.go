@@ -39,7 +39,12 @@ type mockSession struct {
 	mode           string
 	thinkingEffort string
 	model          string
-	messages       []mockMessage // in-memory history (loaded from disk on resume/load)
+	// turn increments per Prompt. Real ACP agents mint a fresh toolCallId for
+	// every tool call; reusing a fixed id across turns collides with the
+	// client's per-(session, toolCallId) caches and the frontend's id-keyed
+	// blocks, which is what made the permission e2e order-dependent.
+	turn     int
+	messages []mockMessage // in-memory history (loaded from disk on resume/load)
 }
 
 // Mock slash commands (similar to what CodeBuddy provides)
@@ -494,6 +499,22 @@ func (a *mockACPAgent) simulateTurn(ctx context.Context, sid string, params acp.
 	userText := extractUserText(params.Prompt)
 	// Record the user's message into the session's persisted history.
 	a.appendMessage(sid, "user", userText)
+
+	// Mint fresh toolCallIds for this turn, like a real agent. A fixed id reused
+	// across turns collides with the client's (session, toolCallId)-keyed caches
+	// and the frontend's id-keyed blocks, which made the permission e2e
+	// order-dependent (a second turn's frames merged into the first turn's
+	// block and the approval card never rendered).
+	a.mu.Lock()
+	turn := 1
+	if sess := a.sessions[sid]; sess != nil {
+		sess.turn++
+		turn = sess.turn
+	}
+	a.mu.Unlock()
+	readCallID := acp.ToolCallId(fmt.Sprintf("call_read_%d", turn))
+	writeCallID := acp.ToolCallId(fmt.Sprintf("call_write_perm_%d", turn))
+
 	if err := a.conn.SessionUpdate(ctx, acp.SessionNotification{
 		SessionId: acp.SessionId(sid),
 		Update:    acp.UpdateAgentThoughtText(fmt.Sprintf("Processing user request: %s", truncate(userText, 80))),
@@ -508,7 +529,7 @@ func (a *mockACPAgent) simulateTurn(ctx context.Context, sid string, params acp.
 	if err := a.conn.SessionUpdate(ctx, acp.SessionNotification{
 		SessionId: acp.SessionId(sid),
 		Update: acp.StartToolCall(
-			acp.ToolCallId("call_read_1"),
+			readCallID,
 			"Reading project files",
 			acp.WithStartKind(acp.ToolKindRead),
 			acp.WithStartStatus(acp.ToolCallStatusPending),
@@ -526,7 +547,7 @@ func (a *mockACPAgent) simulateTurn(ctx context.Context, sid string, params acp.
 	if err := a.conn.SessionUpdate(ctx, acp.SessionNotification{
 		SessionId: acp.SessionId(sid),
 		Update: acp.UpdateToolCall(
-			acp.ToolCallId("call_read_1"),
+			readCallID,
 			acp.WithUpdateStatus(acp.ToolCallStatusCompleted),
 			acp.WithUpdateContent([]acp.ToolCallContent{acp.ToolContent(acp.TextBlock("# Mock Project\n\nThis is a sample project for E2E testing."))}),
 		),
@@ -553,7 +574,7 @@ func (a *mockACPAgent) simulateTurn(ctx context.Context, sid string, params acp.
 			if err := a.conn.SessionUpdate(ctx, acp.SessionNotification{
 				SessionId: acp.SessionId(sid),
 				Update: acp.StartToolCall(
-					acp.ToolCallId("call_write_perm_1"),
+					writeCallID,
 					writeTitle,
 					acp.WithStartKind(writeKind),
 					acp.WithStartStatus(acp.ToolCallStatusPending),
@@ -567,7 +588,7 @@ func (a *mockACPAgent) simulateTurn(ctx context.Context, sid string, params acp.
 			}
 		}
 		permToolCall := acp.ToolCallUpdate{
-			ToolCallId: acp.ToolCallId("call_write_perm_1"),
+			ToolCallId: writeCallID,
 			Title:      &writeTitle,
 			Kind:       &writeKind,
 			Status:     nil,
