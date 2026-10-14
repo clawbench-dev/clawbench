@@ -102,6 +102,7 @@ sequenceDiagram
 - **ACP 连接状态提取**：`acp_state_extract.go` 从 ACP 协议响应（NewSession/ResumeSession）提取 mode、thinking effort、model、config option 状态。ACP v2 Agent 通过 `ConfigOptions` 的 category 字段暴露模式（`mode`）和思考深度（`thought_level`），旧版通过独立的 `Modes` 字段暴露——两条路径同时支持，保证新旧 Agent 兼容
 - **ACP 崩溃诊断**：Agent 进程意外退出时，`crashDiagnostics` 收集退出码、stderr 尾部（~2KB）、进程存活时间、信号名（SIGKILL/SIGSEGV 等）、父进程 PID、内存占用和 FD 数。数据在 `Wait()` 前从 `/proc/<pid>/status` 和 `/proc/<pid>/fd` 采集（进程 reap 后 `/proc` 数据消失）。诊断结果以紧凑字符串形式记录到日志，帮助定位崩溃根因（如 OOM Kill、SIGSEGV、SIGPIPE）
 - **ACP 权限审批**：ACP 后端请求用户审批工具调用时，系统推送 `permission_pending` 事件，前端展示审批界面，用户批准/拒绝后通过 WS `permission_respond` 消息回传（HTTP `/api/ai/permission/respond` 作为备选通道）
+- **运行中插话（mid-turn steering）**：用户在 AI 正在生成时发消息，可以**并入当前回合**而不必等它说完。这是各 Agent 私有扩展，不是 ACP 标准能力——CodeBuddy 走 `session/steer`、Claude 与 Codex 走 `_session/steering`，策略按后端分列（`internal/ai/backends/<backend>/midturn.go`），统一实现 `ai.MidTurnInjector`。**能力位 `MidTurnSplitsReply` 决定「插入边界」能否拿到**：CodeBuddy 会回一条带我方 id 的 `user_message_chunk`，据此可把回复切成"插话前/后"两段（true）；Claude/Codex 实测**不回显任何插入帧**（0 帧），拿不到切分点，只能做「合并」不做「切分」（false）。合并降级下气泡会落在仍在流式的回复之后、后面再无内容，读起来像"发了没人理"，因此在用户气泡上打 `injected` 标记、前端渲染「回复已并入上一轮」提示。**注入前必须确认「真有在途回合」**：Codex 的 `_session/steering` 在无活跃回合时不会拒绝而是**静默开一个新回合**（`outcome="startedNewTurn"`），其输出会脱离 ClawBench 的回合记账（幽灵轮），因此策略必须先问 `RawRPCTransport.PromptInFlight()`，无在途回合即放弃注入（Claude 另附 `_meta.steering.idleBehavior=promptRequired` 让适配器直接回报空闲，Codex 无此参数、只能靠 `PromptInFlight` 拦）。注入调用**走裸 JSON-RPC 通道**（`CallRaw`）而非 SDK typed 方法——它与 SDK 共用同一把 `lockedWriter`，因此不会与并发的标准请求交错字节。任何「不确定是否安全」的情形（带附件、无 ACP 会话、无在途回合、outcome 非 `injected`）一律**放弃注入并回落到普通排队**，绝不半途改写回合
 - **ACP LoadSession 异步回放**：ACP LoadSession 立即返回 `replayPending: true`，前端无需等待历史回放即可发送新消息——Agent 已从加载的会话获得完整上下文。回放在后台 goroutine 中异步执行，持久化消息到 DB 后通过 `replay_done` WS 事件通知前端。LoadSession 能力来源是 `BackendSpec.ACPLoadSession` 而非 ACP Initialize 响应（Initialize 报告的 LoadSession 可能不可靠，以 BackendSpec 为准）。CodeBuddy 经集成测试验证真实支持 `session/load`（RPC 成功且能恢复上下文），其 `BackendSpec.ACPLoadSession=true`
 - **工具名称归一化**：不同后端对同一操作使用不同的工具名称（如 `read_file` vs `Read`），归一化层统一映射，保证前端显示和 RAG 索引的一致性
 - **孤儿进程清理**：服务启动时扫描系统中的 AI 子进程孤儿（通过环境变量标记），检查父进程存活后安全清理。防止服务崩溃后遗留的进程占用资源
@@ -151,6 +152,7 @@ sequenceDiagram
 ### 设计要点
 
 - **双传输分流在 factory 层**：`NewBackendForAgentWithTransport` 根据 Agent 的 `Transport` 字段（"cli" / "acp-stdio"）决定创建 ACPBackend 还是 CLIBackend。ACP 不可用时降级到 CLI 并记录警告——用户选择 ACP 是有意的，降级是容错而非静默回退
+- **插话能力按后端分列，且「能否切分」必须实测而非读能力广告**：`session/steer`（CodeBuddy）与 `_session/steering`（Claude/Codex）是各家的私有扩展，参数、返回与是否回显插入帧都不一致，因此策略按后端分文件而非抽象出统一协议。**切分能力靠真机探针判定**（`acp_steering_probe_integration_test.go` 读 raw wire 数插入帧），不靠 Initialize 广告——能力位广告与实际行为脱节在本仓已有先例。合并降级不是"降级实现"，而是唯一正确的选择：拿不到插入边界却硬切，只会把回复切错位置
 - **ACP 一对一连接而非连接池**：`ACPConnManager` 是单例，管理每个 ClawBench 会话独占一个 ACP 连接。AI Agent 的会话状态是私有的，无法在连接间共享。`ACPConn` 内部可能复用 goroutine，但对外是一对一映射
 - **CLIBackend 是通用骨架**：所有 shell-out 后端共享 `CLIBackend` 的进程管理、stdout 管道、上下文取消逻辑，差异仅在于 CLI 参数构建和输出解析策略——新增后端只需提供这两个策略
 - **后端规格集中声明**：所有后端的规格（CLI 命令、ACP 命令）在 `BackendRegistry` 中集中声明，factory 通过后端类型字符串匹配创建实例。新增后端需要同时添加规格条目和 factory 分支。模型发现是**独立注册表**而非规格字段——发现方式（静态目录 / CLI 探测 / 插件）与后端执行方式正交，混在一个结构里会让"只加模型目录"这类改动也不得不触碰 factory
