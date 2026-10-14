@@ -171,6 +171,12 @@ func ttsRunJob(
 		// Phase 1: Summarize
 		summary, ok := ttsSummarize(ctx, curSummarizer, cacheKey, req.Text, req.Language, req.MessageID, errSummarizeFailed, isStreaming)
 		if !ok {
+			// The summarize failure already emitted a terminal result event.
+			// Close AudioCh so the WS handler's drain loop can exit; otherwise it
+			// blocks forever on an unclosed channel (leaking the connection).
+			if job.AudioCh != nil {
+				close(job.AudioCh)
+			}
 			return
 		}
 
@@ -181,7 +187,8 @@ func ttsRunJob(
 		err := synthesizeFunc(synthesizeCtx, ttsSynthText(speakerPrefix, summary), absAudioPath, req.Language)
 		synthesizeCancel()
 
-		// Close AudioCh BEFORE sending result event (streaming only).
+		// Close AudioCh BEFORE sending result event (streaming only) so the WS
+		// handler drains all audio chunks before the terminal done/error frame.
 		if job.AudioCh != nil {
 			close(job.AudioCh)
 		}
