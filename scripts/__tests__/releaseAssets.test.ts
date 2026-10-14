@@ -226,6 +226,26 @@ describe('no-FRP Windows asset', () => {
     expect(nofrp[0]).toContain('windows')
   })
 
+  it('keeps the normal Windows asset as well', () => {
+    // The inverse of the check above, and the reason it is not enough on its
+    // own: the no-FRP build is meant to be ADDITIONAL. If someone replaced the
+    // normal job with it (or deleted the normal one), the "exactly one nofrp
+    // asset" assertion would still pass while every user who wants FRP silently
+    // lost their download. So assert both Windows assets coexist, and that the
+    // normal one is genuinely distinct from the no-FRP one.
+    //
+    // Matched on the server asset prefix specifically: a bare `windows` filter
+    // also matches the desktop package (clawbench-desktop-windows-x64-…), which
+    // is a different artifact entirely.
+    const targets = releaseUploadTargets(releaseYml())
+    const normalWindows = targets.filter(
+      (t) => t.includes('clawbench-windows-amd64-') && !t.includes('nofrp'),
+    )
+    expect(normalWindows.length, 'the normal Windows asset must still be published').toBe(1)
+    expect(normalWindows[0]).toContain('RELEASE_TAG')
+    expect(normalWindows[0]).not.toBe(targets.find((t) => t.includes('nofrp')))
+  })
+
   it('builds with the nofrp tag', () => {
     // Without the tag the job produces the same binary as build-windows and the
     // exclusion — the entire reason the asset exists — does not happen.

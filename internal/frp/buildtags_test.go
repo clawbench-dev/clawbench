@@ -43,20 +43,22 @@ func buildConstraint(src string) string {
 	return ""
 }
 
-// importBlock returns the contents of the file's `import ( ... )` block, or ""
-// when the file has none. Assertions about dependencies must be scoped to this
-// block: the package doc comment names the library on purpose (to explain why
-// the build tag exists), so a whole-file substring check would match prose
-// rather than a real dependency.
-func importBlock(src string) string {
+// importBlock returns the contents of the file's `import ( ... )` block.
+// Assertions about dependencies must be scoped to this block: the package doc
+// comment names the library on purpose (to explain why the build tag exists),
+// so a whole-file substring check would match prose rather than a real
+// dependency.
+//
+// It FAILS the test when the block cannot be found rather than returning "".
+// An empty string would make the stub's `NotContains` assertion pass
+// vacuously — the guard would silently stop guarding exactly when the file it
+// guards was reformatted.
+func importBlock(t *testing.T, src string) string {
+	t.Helper()
 	_, rest, found := strings.Cut(src, "\nimport (")
-	if !found {
-		return ""
-	}
+	require.True(t, found, "no `import (` block found — the dependency guard below cannot run")
 	block, _, found := strings.Cut(rest, "\n)")
-	if !found {
-		return ""
-	}
+	require.True(t, found, "unterminated `import (` block — the dependency guard below cannot run")
 	return block
 }
 
@@ -64,7 +66,7 @@ func TestBuildTagSplit_RealManagerExcludedFromNoFRP(t *testing.T) {
 	src := readSource(t, "manager.go")
 	assert.Equal(t, "!nofrp", buildConstraint(src),
 		"manager.go must be excluded by the nofrp tag — it is the only file importing fatedier/frp")
-	assert.Contains(t, importBlock(src), "github.com/fatedier/frp/client",
+	assert.Contains(t, importBlock(t, src), "github.com/fatedier/frp/client",
 		"manager.go is expected to be the real implementation")
 }
 
@@ -76,7 +78,7 @@ func TestBuildTagSplit_StubHasNoFRPDependency(t *testing.T) {
 	// The whole point: if the stub imports the library, the dependency survives
 	// into the no-FRP binary and the detection this feature exists to avoid
 	// comes right back.
-	assert.NotContains(t, importBlock(src), "fatedier/frp",
+	assert.NotContains(t, importBlock(t, src), "fatedier/frp",
 		"the no-FRP stub must not import fatedier/frp — that would defeat the entire build tag")
 }
 
@@ -86,7 +88,7 @@ func TestBuildTagSplit_TypesAreShared(t *testing.T) {
 	// State/Status and break the build.
 	src := readSource(t, "types.go")
 	assert.Empty(t, buildConstraint(src), "types.go must build under every tag combination")
-	assert.NotContains(t, importBlock(src), "fatedier/frp")
+	assert.NotContains(t, importBlock(t, src), "fatedier/frp")
 }
 
 func TestBuildTagSplit_TestFilesMatchTheirSubject(t *testing.T) {

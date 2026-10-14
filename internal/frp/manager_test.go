@@ -16,6 +16,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// --- Available ---
+
+// The behavioral counterpart to TestNoFRP_AvailableIsFalse. buildtags_test.go
+// pins Available's *source text* in both variants, but a text assertion only
+// catches a literal rewrite — it would miss e.g. `return !false` or a value
+// routed through a variable. This asserts the actual value the handler reads.
+func TestAvailable_TrueOnRealBuild(t *testing.T) {
+	assert.True(t, Available(), "a build that links the frp client must report FRP as available")
+}
+
 // --- NewManager ---
 
 func TestNewManager(t *testing.T) {
