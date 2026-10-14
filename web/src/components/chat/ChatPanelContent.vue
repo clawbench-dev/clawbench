@@ -1187,11 +1187,94 @@ async function handleShowAgentSelector() {
   identity.openAgentSelector()
 }
 
-function handleSwitchModel(model) {
+// Apply the model switch at CLICK time (not deferred to the next message), so
+// the user standing in the picker gets an answer now.
+//
+// The chip is updated optimistically and the server persists the choice
+// immediately, so the selection is never lost:
+//   - a transient rejection (agent busy / slow / dropped connection) is NOT an
+//     error here — the server keeps the choice and re-applies it at the next
+//     prompt, which is how every other agent's model switch has always worked;
+//   - a hard rejection (e.g. the provider is not connected) fails identically on
+//     every retry, so it is toasted right away.
+const MODEL_SWITCH_TIMEOUT_MS = 45_000
+
+async function handleSwitchModel(model) {
+  if (!model?.id) return
   identity.currentModelId.value = model.id
   identity.currentModelName.value = model.name
-  // Persist model selection immediately so it survives page reload
-  persistSessionUpdate({ modelId: model.id })
+
+  const sid = identity.currentSessionId.value
+  if (!sid) {
+    // No session yet — nothing to push; the selection rides along on the first
+    // message, exactly as before.
+    return
+  }
+
+  // Immediate feedback: the agent-side switch can take ~10s cold (Hermes
+  // rebuilds its session agent and may probe the network), which without a
+  // spinner reads as "the click did nothing".
+  toast.show(t('chat.modelSwitcher.switching'), { type: 'loading', duration: 0 })
+  try {
+    const res = await apiPatch(
+      `/api/ai/session/update?session_id=${encodeURIComponent(sid)}`,
+      { modelId: model.id },
+      { timeoutMs: MODEL_SWITCH_TIMEOUT_MS },
+    )
+    // The result belongs to a session the user already left: drop the sticky
+    // spinner (nothing else will) and don't touch the new session's chip.
+    if (identity.currentSessionId.value !== sid) return dismissSwitchingToast()
+    // The agent was busy, so the server kept the choice and will re-apply it at
+    // the next prompt. Say so rather than implying the switch already took
+    // effect (this is the "remember and defer" path).
+    if (res?.modelSwitchDeferred) {
+      toast.show(t('chat.modelSwitcher.deferred'), { icon: '⏳', type: 'info' })
+    } else {
+      dismissSwitchingToast()
+    }
+  } catch (err) {
+    // Same stale-session guard on the failure path — and the spinner must go,
+    // or it hangs on screen for a switch the user has already navigated away from.
+    if (identity.currentSessionId.value !== sid) return dismissSwitchingToast()
+    const detail = err?.detail?.Detail
+    // The server sends the bare key when the agent gave no explanation, and the
+    // *Detail key when it did. Either way its `error` text is already localized,
+    // so prefer that and only rebuild the message when we have a detail to fold in.
+    const msg = detail
+      ? t('chat.modelSwitcher.switchFailedDetail', { detail })
+      : err?.message || t('chat.modelSwitcher.switchFailed')
+    toast.show(msg, { icon: '⚠️', type: 'error' })
+    // The server rejected the switch outright and did not keep it, so the
+    // optimistic chip would lie. Restore the previous model.
+    restoreModelSelection(sid)
+  }
+}
+
+/** Clear the sticky "switching…" toast, leaving a result toast in place. */
+function dismissSwitchingToast() {
+  if (toast.type.value === 'loading') toast.dismiss()
+}
+
+/** Re-read the session's authoritative model after a rejected switch. */
+function restoreModelSelection(sid) {
+  apiGet(`/api/ai/chat?limit=1&session_id=${encodeURIComponent(sid)}`)
+    .then((data) => {
+      if (identity.currentSessionId.value !== sid) return
+      if (data?.modelId) {
+        identity.currentModelId.value = data.modelId
+        const m = agentsComposable.getAgentModel(identity.currentAgentId.value, data.modelId)
+        identity.currentModelName.value = m?.name || data.modelId
+        return
+      }
+      // A session created via POST /api/ai/sessions deliberately has model=''
+      // (the agent default is not pre-filled), so the chip's pre-click value came
+      // from the agent, not the DB. Falling back to the agent default is what
+      // actually reverts the rejected model on that path.
+      const fallback = agentsComposable.syncModelFromAgent(identity.currentAgentId.value)
+      identity.currentModelId.value = fallback.modelId
+      identity.currentModelName.value = fallback.modelName
+    })
+    .catch(() => { /* best effort — the next loadHistory reconciles */ })
 }
 
 function handleSwitchThinkingEffort(level) {

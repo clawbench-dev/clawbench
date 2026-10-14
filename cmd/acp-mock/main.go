@@ -38,7 +38,13 @@ type mockSession struct {
 	cancel         context.CancelFunc
 	mode           string
 	thinkingEffort string
-	messages       []mockMessage // in-memory history (loaded from disk on resume/load)
+	model          string
+	// turn increments per Prompt. Real ACP agents mint a fresh toolCallId for
+	// every tool call; reusing a fixed id across turns collides with the
+	// client's per-(session, toolCallId) caches and the frontend's id-keyed
+	// blocks, which is what made the permission e2e order-dependent.
+	turn     int
+	messages []mockMessage // in-memory history (loaded from disk on resume/load)
 }
 
 // Mock slash commands (similar to what CodeBuddy provides)
@@ -73,8 +79,48 @@ const (
 	effortHighName   = "High"
 )
 
+// Model constants. A real ACP agent reports its model list as a
+// `category: "model"` session config option in the session/new response — it is
+// how the client learns which models the agent can actually run. The mock must
+// do the same: without it, ClawBench's "ACP unconfirmed → hide CLI guess list"
+// gate (see ai.HasConfirmedACPModels) correctly hides the agent's CLI-discovered
+// models, and the model picker renders empty.
+const (
+	modelProID    = "mock-pro"
+	modelProName  = "Mock Pro"
+	modelFastID   = "mock-fast"
+	modelFastName = "Mock Fast"
+)
+
 // Config option types (ACP protocol field).
 const configOptionTypeSelect = "select"
+
+// modelConfigOption builds the `category: "model"` session config option a real
+// ACP agent reports at session/new. current is the agent's selected model id.
+func modelConfigOption(current string) acp.SessionConfigOption {
+	category := acp.SessionConfigOptionCategoryModel
+	return acp.SessionConfigOption{
+		Select: &acp.SessionConfigOptionSelect{
+			Id:           acp.SessionConfigId("model"),
+			Name:         "Model",
+			Type:         configOptionTypeSelect,
+			Category:     &category,
+			CurrentValue: acp.SessionConfigValueId(current),
+			Options: acp.SessionConfigSelectOptions{
+				Ungrouped: &acp.SessionConfigSelectOptionsUngrouped{
+					acp.SessionConfigSelectOption{Name: modelProName, Value: acp.SessionConfigValueId(modelProID)},
+					acp.SessionConfigSelectOption{Name: modelFastName, Value: acp.SessionConfigValueId(modelFastID)},
+				},
+			},
+		},
+	}
+}
+
+// acpMockOmitPermRawInputMarker in a user prompt makes the mock reproduce
+// Cursor's permission framing: the tool_call carries rawInput but the
+// session/request_permission for the same tool call omits it. Used by the
+// permission e2e to verify the server recovers the input from the tool_call.
+const acpMockOmitPermRawInputMarker = "[mock:omit-perm-rawinput]"
 
 func (a *mockACPAgent) Initialize(ctx context.Context, params acp.InitializeRequest) (acp.InitializeResponse, error) {
 	return acp.InitializeResponse{
@@ -99,7 +145,7 @@ func (a *mockACPAgent) Logout(ctx context.Context, params acp.LogoutRequest) (ac
 func (a *mockACPAgent) NewSession(ctx context.Context, params acp.NewSessionRequest) (acp.NewSessionResponse, error) {
 	sid := randomID()
 	a.mu.Lock()
-	a.sessions[sid] = &mockSession{mode: modeBypass, thinkingEffort: effortMedium}
+	a.sessions[sid] = &mockSession{mode: modeBypass, thinkingEffort: effortMedium, model: modelProID}
 	a.mu.Unlock()
 	modeCategory := acp.SessionConfigOptionCategoryMode
 	thoughtLevelCategory := acp.SessionConfigOptionCategoryThoughtLevel
@@ -115,6 +161,7 @@ func (a *mockACPAgent) NewSession(ctx context.Context, params acp.NewSessionRequ
 			CurrentModeId: acp.SessionModeId(modeBypass),
 		},
 		ConfigOptions: []acp.SessionConfigOption{
+			modelConfigOption(modelProID),
 			{
 				Select: &acp.SessionConfigOptionSelect{
 					Id:           acp.SessionConfigId("mode"),
@@ -186,7 +233,7 @@ func (a *mockACPAgent) LoadSession(ctx context.Context, params acp.LoadSessionRe
 	a.mu.Lock()
 	s, ok := a.sessions[sid]
 	if !ok {
-		s = &mockSession{mode: modeCode, thinkingEffort: effortMedium}
+		s = &mockSession{mode: modeCode, thinkingEffort: effortMedium, model: modelProID}
 		a.sessions[sid] = s
 	}
 	// Cache the loaded history in-memory: a reused process returns this cached
@@ -196,6 +243,7 @@ func (a *mockACPAgent) LoadSession(ctx context.Context, params acp.LoadSessionRe
 	if len(s.messages) == 0 {
 		s.messages = a.loadMessages(sid)
 	}
+	curModel := s.model
 	a.mu.Unlock()
 
 	// Replay the session's actual chat history (recorded by Prompt / external
@@ -229,6 +277,7 @@ func (a *mockACPAgent) LoadSession(ctx context.Context, params acp.LoadSessionRe
 			CurrentModeId: acp.SessionModeId(modeCode),
 		},
 		ConfigOptions: []acp.SessionConfigOption{
+			modelConfigOption(curModel),
 			{
 				Select: &acp.SessionConfigOptionSelect{
 					Id:           acp.SessionConfigId("mode"),
@@ -271,7 +320,7 @@ func (a *mockACPAgent) ResumeSession(ctx context.Context, params acp.ResumeSessi
 	s, ok := a.sessions[sid]
 	if !ok || s == nil {
 		// Session not found — treat as new session with the given ID
-		s = &mockSession{mode: modeBypass, thinkingEffort: effortMedium}
+		s = &mockSession{mode: modeBypass, thinkingEffort: effortMedium, model: modelProID}
 		a.sessions[sid] = s
 	}
 	s.messages = a.loadMessages(sid)
@@ -290,6 +339,7 @@ func (a *mockACPAgent) ResumeSession(ctx context.Context, params acp.ResumeSessi
 			CurrentModeId: acp.SessionModeId(s.mode),
 		},
 		ConfigOptions: []acp.SessionConfigOption{
+			modelConfigOption(s.model),
 			{
 				Select: &acp.SessionConfigOptionSelect{
 					Id:           acp.SessionConfigId("mode"),
@@ -347,6 +397,8 @@ func (a *mockACPAgent) SetSessionConfigOption(ctx context.Context, params acp.Se
 				s.mode = string(params.ValueId.Value)
 			case "thinkingEffort":
 				s.thinkingEffort = string(params.ValueId.Value)
+			case "model":
+				s.model = string(params.ValueId.Value)
 			}
 		}
 		a.mu.Unlock()
@@ -447,6 +499,22 @@ func (a *mockACPAgent) simulateTurn(ctx context.Context, sid string, params acp.
 	userText := extractUserText(params.Prompt)
 	// Record the user's message into the session's persisted history.
 	a.appendMessage(sid, "user", userText)
+
+	// Mint fresh toolCallIds for this turn, like a real agent. A fixed id reused
+	// across turns collides with the client's (session, toolCallId)-keyed caches
+	// and the frontend's id-keyed blocks, which made the permission e2e
+	// order-dependent (a second turn's frames merged into the first turn's
+	// block and the approval card never rendered).
+	a.mu.Lock()
+	turn := 1
+	if sess := a.sessions[sid]; sess != nil {
+		sess.turn++
+		turn = sess.turn
+	}
+	a.mu.Unlock()
+	readCallID := acp.ToolCallId(fmt.Sprintf("call_read_%d", turn))
+	writeCallID := acp.ToolCallId(fmt.Sprintf("call_write_perm_%d", turn))
+
 	if err := a.conn.SessionUpdate(ctx, acp.SessionNotification{
 		SessionId: acp.SessionId(sid),
 		Update:    acp.UpdateAgentThoughtText(fmt.Sprintf("Processing user request: %s", truncate(userText, 80))),
@@ -461,7 +529,7 @@ func (a *mockACPAgent) simulateTurn(ctx context.Context, sid string, params acp.
 	if err := a.conn.SessionUpdate(ctx, acp.SessionNotification{
 		SessionId: acp.SessionId(sid),
 		Update: acp.StartToolCall(
-			acp.ToolCallId("call_read_1"),
+			readCallID,
 			"Reading project files",
 			acp.WithStartKind(acp.ToolKindRead),
 			acp.WithStartStatus(acp.ToolCallStatusPending),
@@ -479,7 +547,7 @@ func (a *mockACPAgent) simulateTurn(ctx context.Context, sid string, params acp.
 	if err := a.conn.SessionUpdate(ctx, acp.SessionNotification{
 		SessionId: acp.SessionId(sid),
 		Update: acp.UpdateToolCall(
-			acp.ToolCallId("call_read_1"),
+			readCallID,
 			acp.WithUpdateStatus(acp.ToolCallStatusCompleted),
 			acp.WithUpdateContent([]acp.ToolCallContent{acp.ToolContent(acp.TextBlock("# Mock Project\n\nThis is a sample project for E2E testing."))}),
 		),
@@ -495,15 +563,42 @@ func (a *mockACPAgent) simulateTurn(ctx context.Context, sid string, params acp.
 	if currentMode != modeBypass {
 		writeTitle := "Writing to main.go"
 		writeKind := acp.ToolKindEdit
+		// When the prompt carries the marker, reproduce Cursor's framing: emit
+		// the tool_call carrying rawInput, then omit rawInput from the
+		// permission request for the same tool call (Cursor encodes the target
+		// only in the request's title). The server must recover the input from
+		// the preceding tool_call so the approval card still shows it.
+		// Gated on a marker so every other spec keeps the original framing.
+		omitPermRawInput := strings.Contains(userText, acpMockOmitPermRawInputMarker)
+		if omitPermRawInput {
+			if err := a.conn.SessionUpdate(ctx, acp.SessionNotification{
+				SessionId: acp.SessionId(sid),
+				Update: acp.StartToolCall(
+					writeCallID,
+					writeTitle,
+					acp.WithStartKind(writeKind),
+					acp.WithStartStatus(acp.ToolCallStatusPending),
+					acp.WithStartRawInput(map[string]any{"file_path": "/project/main.go", "content": "package main\nfunc main() {}"}),
+				),
+			}); err != nil {
+				return err
+			}
+			if err := pause(ctx, 50*time.Millisecond); err != nil {
+				return err
+			}
+		}
+		permToolCall := acp.ToolCallUpdate{
+			ToolCallId: writeCallID,
+			Title:      &writeTitle,
+			Kind:       &writeKind,
+			Status:     nil,
+		}
+		if !omitPermRawInput {
+			permToolCall.RawInput = map[string]any{"file_path": "/project/main.go", "content": "package main\nfunc main() {}"}
+		}
 		permResp, err := a.conn.RequestPermission(ctx, acp.RequestPermissionRequest{
 			SessionId: acp.SessionId(sid),
-			ToolCall: acp.ToolCallUpdate{
-				ToolCallId: acp.ToolCallId("call_write_perm_1"),
-				Title:      &writeTitle,
-				Kind:       &writeKind,
-				RawInput:   map[string]any{"file_path": "/project/main.go", "content": "package main\nfunc main() {}"},
-				Status:     nil,
-			},
+			ToolCall:  permToolCall,
 			Options: []acp.PermissionOption{
 				{Kind: acp.PermissionOptionKindAllowOnce, Name: "Allow Once", OptionId: "allow_once"},
 				{Kind: acp.PermissionOptionKindAllowAlways, Name: "Allow Always", OptionId: "allow_always"},
@@ -535,14 +630,16 @@ func (a *mockACPAgent) simulateTurn(ctx context.Context, sid string, params acp.
 		}
 	}
 	response := "Hello! I am a mock ACP agent for E2E testing. I received your message and processed it successfully."
-	// Group-chat host turns: the ClawBench host instruction is injected into the
-	// prompt. When present, emit a routing tag naming the first addressable
-	// member so the orchestrator can dispatch a real member turn. This makes the
-	// mock usable for the multi-agent group E2E without hard-coding names.
-	if tag := groupRoutingReply(userText); tag != "" {
+	// Auto-cruise confirmation round: the prompt carries the confirmation
+	// marker ("[自动巡航·完成确认]"). The mock always confirms so a cruising
+	// turn terminates deterministically in the E2E. Checked FIRST because the
+	// host confirmation prompt also contains the host routing instruction
+	// ("可选的成员名："), which groupRoutingReply would otherwise match.
+	if tag := cruiseConfirmReply(userText); tag != "" {
 		response = tag
-	}
-	if tag := freeMemberReply(sid, userText); tag != "" {
+	} else if tag := groupRoutingReply(sid, userText); tag != "" {
+		response = tag
+	} else if tag := freeMemberReply(sid, userText); tag != "" {
 		response = tag
 	}
 	words := strings.Fields(response)
@@ -615,7 +712,7 @@ func (a *mockACPAgent) appendMessage(sid, role, text string) {
 	a.mu.Lock()
 	s, ok := a.sessions[sid]
 	if !ok || s == nil {
-		s = &mockSession{mode: modeBypass, thinkingEffort: effortMedium}
+		s = &mockSession{mode: modeBypass, thinkingEffort: effortMedium, model: modelProID}
 		a.sessions[sid] = s
 	}
 	s.messages = append(s.messages, mockMessage{Role: role, Text: text})
@@ -700,11 +797,27 @@ func extractUserText(blocks []acp.ContentBlock) string {
 // Members whose turn prompt carries the host directive ("[群聊主持人]"/host
 // instruction) are themselves ordinary turns and get the default reply, so this
 // only fires for the host. The end signal is emitted when no member remains.
-func groupRoutingReply(prompt string) string {
+//
+// AUTO-CRUISE: the host prompt also carries the cruise addendum ("[自动巡航模式]"),
+// where the end tag triggers a confirmation round rather than ending the turn.
+// To make the cruise E2E exercise that path deterministically, the mock host
+// emits the end tag on its SECOND turn (after routing once), instead of routing
+// forever until the speech cap. The counter is per-session.
+func groupRoutingReply(sid, prompt string) string {
 	const marker = "可选的成员名："
 	idx := strings.Index(prompt, marker)
 	if idx < 0 {
 		return ""
+	}
+	cruise := strings.Contains(prompt, "[自动巡航模式]")
+	if cruise {
+		relayTurnsMu.Lock()
+		relayTurns[sid]++
+		turn := relayTurns[sid]
+		relayTurnsMu.Unlock()
+		if turn > 1 {
+			return "讨论差不多了。<clawbench-group-end/>"
+		}
 	}
 	rest := prompt[idx+len(marker):]
 	// The list ends at the first newline (BuildHostSystemPrompt appends "。\n").
@@ -738,6 +851,21 @@ func groupRoutingReply(prompt string) string {
 		reply += " <clawbench-mention targets=\"" + name + "\" private>SECRET_BCC_FOR_" + name + "</clawbench-mention>"
 	}
 	return reply
+}
+
+// cruiseConfirmReply returns the auto-cruise confirmation reply when the prompt
+// carries the confirmation marker ("[自动巡航·完成确认]"), else "". The mock
+// always declares the goal satisfied, so a cruising turn terminates
+// deterministically in the E2E. ACP_MOCK_NO_CRUISE_CONFIRM=1 suppresses it (to
+// exercise the non-confirming path).
+func cruiseConfirmReply(prompt string) string {
+	if !strings.Contains(prompt, "[自动巡航·完成确认]") {
+		return ""
+	}
+	if os.Getenv("ACP_MOCK_NO_CRUISE_CONFIRM") == "1" {
+		return "还没有完成，继续。"
+	}
+	return "任务已完成，验收通过。<clawbench-goal-satisfied/>"
 }
 
 // freeMemberReply returns a free-chat mode member's @-mention reply when the

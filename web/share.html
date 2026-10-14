@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <meta name="theme-color" content="#161b22">
+    <meta name="theme-color" content="#1d2021">
 
     <!-- Resolve theme BEFORE CSS loads to prevent flash of default colors. -->
     <script>
@@ -13,9 +13,9 @@
         try { var s = localStorage.getItem('clawbench-settings-theme'); if (s) t = JSON.parse(s); } catch {}
         if (t === null) { try { t = localStorage.getItem('theme'); } catch {} }
         if (t === 'light') { t = 'github-light'; }
-        else if (t === 'dark') { t = 'github-dark'; }
+        else if (t === 'dark') { t = 'gruvbox-dark'; }
         if (!t || t === 'auto') {
-          t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'github-dark' : 'github-light';
+          t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'gruvbox-dark' : 'github-light';
         }
         var base = DARK_IDS.indexOf(t) >= 0 ? 'dark' : 'light';
         document.documentElement.setAttribute('data-theme', t);

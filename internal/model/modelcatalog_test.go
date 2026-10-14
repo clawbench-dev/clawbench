@@ -733,6 +733,37 @@ func TestResolveModels_MetaDefaultTierIsIgnored(t *testing.T) {
 	assert.Equal(t, "deepseek-v3", got[0].Name)
 }
 
+// A parameterized variant ID is a concrete, selectable model — NOT a tier alias.
+//
+// Regression: cursor's ACP advertises its default model as id "default[]" /
+// name "Auto". Stripping the bracket suffix collapsed it onto the bare meta
+// marker "default" and dropped it, so "Auto" vanished from the model list and
+// the wrong entry (the first concrete model) was flagged as the default. The
+// session then displayed the raw id "default[]".
+func TestResolveModels_ParameterizedDefaultVariantIsNotAnAlias(t *testing.T) {
+	// Cursor's real ACP shape (verified live): the CLI list is empty for this
+	// ACP-only backend, so this is the whole list.
+	acp := []AgentModel{
+		{ID: "default[]", Name: "Auto"},
+		{ID: "grok-4.7[context=256k,reasoning_effort=high,fast=true]", Name: "grok-4.7"},
+	}
+
+	got := ResolveModels(nil, acp, "default[]")
+
+	require.Len(t, got, 2, "the parameterized default variant must not be dropped")
+	assert.Equal(t, "default[]", got[0].ID)
+	assert.Equal(t, "Auto", got[0].Name)
+	assert.True(t, got[0].Default, "the current model must be the default, not the first concrete one")
+	assert.False(t, got[1].Default, "a non-current model must not be flagged as default")
+}
+
+func TestIsTierAliasID_ParameterizedVariantsAreConcrete(t *testing.T) {
+	for _, id := range []string{"opus[1m]", "default[]", "sonnet[1m]", "grok-4.7[context=256k]"} {
+		assert.False(t, isTierAliasID(id),
+			"%q carries variant parameters, so it names a concrete model, not a tier", id)
+	}
+}
+
 // An alias the CLI skeleton cannot represent is appended, so a tier the user can
 // still select is not silently lost.
 func TestResolveModels_UnmatchedTierAliasIsAppended(t *testing.T) {

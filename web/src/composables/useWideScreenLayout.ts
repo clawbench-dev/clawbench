@@ -6,11 +6,25 @@ import { DEFAULT_LEFT_COLLAPSED, readPanelState, writePanelState } from '@/utils
 
 const TAG = 'WideScreenLayout'
 
-export const WIDE_SCREEN_MIN_WIDTH = 1024
-// Physical (device-pixel) width threshold for the wide-screen layout. CSS width
-// alone can miss high-resolution tablets whose devicePixelRatio shrinks the CSS
-// viewport below 1024 (e.g. 2400 physical px at DPR 2.5 → 960 CSS px).
-export const WIDE_SCREEN_MIN_PHYSICAL_WIDTH = 1280
+/**
+ * Wide-screen (two-column) threshold, in CSS pixels.
+ *
+ * 960 rather than 1024: the original 1024 existed only so that a 2400-physical-px
+ * tablet at DPR 2.5 (→ 960 CSS px) could be rescued by a separate physical-width
+ * clause. Once the criterion is pure CSS width, that rescue is unnecessary — 960
+ * CSS px is itself enough room for two columns — so folding the tablet case into
+ * the threshold lets the physical clause go entirely.
+ *
+ * Why CSS px and nothing else: the layout can only ever use CSS pixels, so that
+ * is the only unit in which "is there room for a second column?" has a meaning.
+ * The removed physical-width clause measured device glass, which produced
+ * self-contradictory results — a 698 CSS px landscape phone was "wide" while a
+ * 960 CSS px desktop window was not — and it also could not be expressed in CSS
+ * (media queries see CSS px only), so the JS signal and any CSS media query would
+ * disagree at the boundary. UI scale (`html { zoom }`) does not affect this: it
+ * changes neither `innerWidth` nor media-query evaluation (measured).
+ */
+export const WIDE_SCREEN_MIN_WIDTH = 960
 // The active left tab used to be persisted here under a single global key
 // ('clawbench-widescreen-left-tab'). That gave the tab no project dimension, so
 // switching to project B overwrote project A's tab and switching back restored
@@ -40,16 +54,16 @@ export function wideDockTabOrder(overflowTabs: readonly string[]): string[] {
 }
 
 /**
- * Wide-screen detection. Active when the CSS viewport is ≥1024px (desktop), or
- * when the device's physical width (CSS width × devicePixelRatio) is ≥1280px
- * AND the screen is landscape. Uses screen.width/screen.height (not window
- * inner dimensions) for the landscape check so that soft-keyboard resizing on
- * Android adjustResize cannot flip a portrait tablet into wide-screen mode.
+ * Wide-screen detection: active when the CSS viewport is at least
+ * WIDE_SCREEN_MIN_WIDTH (960) CSS px.
+ *
+ * Takes only the CSS width. It used to also take screen dimensions and
+ * devicePixelRatio for a physical-width fallback; that fallback is gone because
+ * it measured the wrong thing (device glass, not layout space) and produced
+ * self-contradictory results — see WIDE_SCREEN_MIN_WIDTH above.
  */
-export function computeIsWideScreen(cssWidth: number, screenWidth: number, screenHeight: number, devicePixelRatio: number): boolean {
-  const physicalWidth = cssWidth * (devicePixelRatio || 1)
+export function computeIsWideScreen(cssWidth: number): boolean {
   return cssWidth >= WIDE_SCREEN_MIN_WIDTH
-    || (physicalWidth >= WIDE_SCREEN_MIN_PHYSICAL_WIDTH && screenWidth > screenHeight)
 }
 
 const isWideScreen = ref(false)
@@ -102,12 +116,7 @@ function initWideScreen() {
   leftCollapsed.value = readPanelState<boolean>('leftCollapsed')
   if (typeof window !== 'undefined') {
     const recompute = () => {
-      isWideScreen.value = computeIsWideScreen(
-        window.innerWidth,
-        window.screen.width,
-        window.screen.height,
-        window.devicePixelRatio || 1,
-      )
+      isWideScreen.value = computeIsWideScreen(window.innerWidth)
     }
     recompute()
     // Remove any previously registered listeners (a prior init in this

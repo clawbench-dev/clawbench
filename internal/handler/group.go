@@ -73,7 +73,7 @@ func ServeGroupCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	groupID, hostMemberID, err := service.CreateGroupWithMembers(projectPath, groupPlaceholderTitle(hostAgentID), hostAgentID, specs)
+	groupID, hostMemberID, err := service.CreateGroupWithMembers(projectPath, groupPlaceholderTitle(r, hostAgentID), hostAgentID, specs)
 	if err != nil {
 		writeGroupCreateError(w, r, err)
 		return
@@ -135,11 +135,15 @@ func groupMemberSpecs(agentIDs []string, projectPath string) ([]service.GroupMem
 // groupPlaceholderTitle is the group's initial title: host mode uses the host's
 // name; free mode has none, so a generic placeholder (auto-title replaces it
 // after the first message).
-func groupPlaceholderTitle(hostAgentID string) string {
+//
+// Localized from the request's locale: the title is stored on the session row
+// and shown in the session list, so an English user must not get a Chinese
+// placeholder.
+func groupPlaceholderTitle(r *http.Request, hostAgentID string) string {
 	if hostAgentID != "" {
-		return service.GetAgentDisplayName(hostAgentID) + " 的群聊"
+		return T(r, "GroupHostTitle", map[string]any{"Name": service.GetAgentDisplayName(hostAgentID)})
 	}
-	return "群聊"
+	return T(r, "GroupFreeTitle")
 }
 
 // writeGroupCreateError maps a CreateGroupWithMembers error to the right status.
@@ -211,14 +215,16 @@ func serveGroupMembersList(w http.ResponseWriter, r *http.Request, projectPath s
 	}
 	// mode tells the frontend whether a host exists (host mode) or the group is
 	// free (design §13). parallelDefault is the free-mode action-bar switch's
-	// server value. The member-speech cap is a GLOBAL setting
-	// (chat.group_max_speeches), not a per-group one, so it is not returned
-	// here — the group settings sheet no longer shows it.
+	// server value; cruise is the auto-cruise switch (design §15). The
+	// member-speech cap is a GLOBAL setting (chat.group_max_speeches), not a
+	// per-group one, so it is not returned here — the group settings sheet no
+	// longer shows it.
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":              true,
 		"members":         out,
 		respKeyMode:       service.GetGroupMode(groupID),
 		"parallelDefault": service.GetGroupParallelDefault(groupID),
+		"cruise":          service.GetGroupCruise(groupID),
 	})
 }
 
@@ -305,13 +311,15 @@ func serveGroupMembersRemove(w http.ResponseWriter, r *http.Request, projectPath
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// ServeGroupSettings reads/updates group settings (parallelDefault).
+// ServeGroupSettings reads/updates group settings (parallelDefault, cruise).
 //
-//	PATCH /api/group/settings {groupId, parallelDefault} -> {ok}
+//	PATCH /api/group/settings {groupId, parallelDefault?, cruise?} -> {ok}
 //
-// parallelDefault is the only remaining per-group setting. The member-speech
-// cap moved to the global config (chat.group_max_speeches), so it is no longer
-// accepted here.
+// Both fields are optional pointers: at least one must be present, and only the
+// ones provided are written, so a caller toggling one switch does not clobber
+// the other. parallelDefault is the free-mode user-seed concurrency switch;
+// cruise is the auto-cruise switch (design §15). The member-speech cap moved to
+// the global config (chat.group_max_speeches), so it is no longer accepted here.
 func ServeGroupSettings(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPatch {
 		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
@@ -324,20 +332,29 @@ func ServeGroupSettings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		GroupID         string `json:"groupId"`
 		ParallelDefault *bool  `json:"parallelDefault"`
+		Cruise          *bool  `json:"cruise"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if req.GroupID == "" || req.ParallelDefault == nil {
+	if req.GroupID == "" || (req.ParallelDefault == nil && req.Cruise == nil) {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
 		return
 	}
 	if !requireSessionOwnership(w, r, req.GroupID, projectPath) {
 		return
 	}
-	if err := service.SetGroupParallelDefault(req.GroupID, *req.ParallelDefault); err != nil {
-		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
-		return
+	if req.ParallelDefault != nil {
+		if err := service.SetGroupParallelDefault(req.GroupID, *req.ParallelDefault); err != nil {
+			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+			return
+		}
+	}
+	if req.Cruise != nil {
+		if err := service.SetGroupCruise(req.GroupID, *req.Cruise); err != nil {
+			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

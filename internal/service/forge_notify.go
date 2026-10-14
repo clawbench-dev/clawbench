@@ -124,48 +124,52 @@ func (d *ForgeEventDispatcher) HandleChange(_ context.Context, repo ForgeRepoRef
 // FormatForgeEventMessage renders a forge event as an IM-ready title + body.
 // It lives in the service package so the wording is shared by every push
 // backend, while the backends own only the transport.
+//
+// Localized from model.Language (the dispatcher runs on a background goroutine
+// with no HTTP request in scope, like the other push strings).
 func FormatForgeEventMessage(event ForgeEvent, item forge.Item) (title, body string) {
-	// The message body is Chinese, so the item type uses the Chinese term too
-	// (the previous English "issue"/"PR/MR" read as a mixed-language sentence).
-	// 合并请求 covers both a GitHub pull request and a GitLab merge request.
-	kind := "议题"
+	kind := eventContextText("ForgeEventItemIssue")
 	switch event.ItemType {
 	case string(forge.ItemTypeChangeRequest):
-		kind = "合并请求"
+		kind = eventContextText("ForgeEventItemChangeRequest")
 	case string(forge.ItemTypePipeline):
 		// A pipeline belongs to the repository, not to an item. Rendering it as
 		// an issue/PR would produce "合并请求 #0", which is meaningless.
-		kind = "仓库流水线"
+		kind = eventContextText("ForgeEventItemPipeline")
 	}
 	verb := map[string]string{
-		string(forge.EventOpened):    "新开",
-		string(forge.EventClosed):    "关闭",
-		string(forge.EventMerged):    "合并",
-		string(forge.EventReopened):  "重新打开",
-		string(forge.EventCommented): "有新评论",
-		string(forge.EventPipeline):  "流水线完成",
+		string(forge.EventOpened):    eventContextText("ForgeEventOpened"),
+		string(forge.EventClosed):    eventContextText("ForgeEventClosed"),
+		string(forge.EventMerged):    eventContextText("ForgeEventMerged"),
+		string(forge.EventReopened):  eventContextText("ForgeEventReopened"),
+		string(forge.EventCommented): eventContextText("ForgeEventCommented"),
+		string(forge.EventPipeline):  eventContextText("ForgeEventPipelineDone"),
 	}[event.EventType]
 	if verb == "" {
 		verb = event.EventType
 	}
 
+	labelRepo := eventContextText("ForgeEventLabelRepo")
+	labelEvent := eventContextText("ForgeEventLabelEvent")
+	sep := eventContextSeparator()
+
 	// A pipeline has no item number, so its heading omits the "#0" that would
 	// otherwise be rendered.
 	if event.ItemType == string(forge.ItemTypePipeline) {
 		title = fmt.Sprintf("%s %s %s", event.Owner+"/"+event.Repo, kind, verb)
-		body = fmt.Sprintf("### %s\n\n**仓库**: %s/%s\n\n**%s**: %s\n\n**事件**: %s",
-			title, event.Owner, event.Repo, kind, item.Title, verb)
+		body = fmt.Sprintf("### %s\n\n**%s**%s%s/%s\n\n**%s**%s%s\n\n**%s**%s%s",
+			title, labelRepo, sep, event.Owner, event.Repo, kind, sep, item.Title, labelEvent, sep, verb)
 	} else {
 		title = fmt.Sprintf("%s %s #%d %s", event.Owner+"/"+event.Repo, kind, event.Number, verb)
-		body = fmt.Sprintf("### %s\n\n**仓库**: %s/%s\n\n**%s**: #%d %s\n\n**事件**: %s",
-			title, event.Owner, event.Repo, kind, event.Number, item.Title, verb)
+		body = fmt.Sprintf("### %s\n\n**%s**%s%s/%s\n\n**%s**%s#%d %s\n\n**%s**%s%s",
+			title, labelRepo, sep, event.Owner, event.Repo, kind, sep, event.Number, item.Title, labelEvent, sep, verb)
 	}
 
 	if item.Author.Login != "" {
-		body += fmt.Sprintf("\n\n**作者**: %s", item.Author.Login)
+		body += fmt.Sprintf("\n\n**%s**%s%s", eventContextText("ForgeEventLabelAuthor"), sep, item.Author.Login)
 	}
 	if item.URL != "" {
-		body += fmt.Sprintf("\n\n[查看详情](%s)", item.URL)
+		body += fmt.Sprintf("\n\n[%s](%s)", eventContextText("ForgeEventViewDetail"), item.URL)
 	}
 	return title, body
 }

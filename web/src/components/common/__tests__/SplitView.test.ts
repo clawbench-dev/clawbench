@@ -4,7 +4,12 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { defineComponent } from 'vue'
 import { nextTick } from 'vue'
+import { createI18n } from 'vue-i18n'
 import SplitView from '@/components/common/SplitView.vue'
+import en from '@/i18n/locales/en'
+import zh from '@/i18n/locales/zh'
+
+const i18n = createI18n({ legacy: false, locale: 'en', messages: { en, zh } })
 
 vi.mock('@/utils/appLog', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
@@ -18,6 +23,7 @@ function mountSplit(props = {}) {
       right: '<div class="pane-right">R</div>',
     },
     attachTo: document.body,
+    global: { plugins: [i18n] },
   })
 }
 
@@ -187,6 +193,7 @@ describe('SplitView — vertical orientation', () => {
         bottom: '<div class="pane-bottom">B</div>',
       },
       attachTo: document.body,
+      global: { plugins: [i18n] },
     })
   }
 
@@ -296,7 +303,7 @@ describe('SplitView — nested splits (file manager inside App split)', () => {
         </SplitView>
       `,
     })
-    wrapper = mount(Nested, { attachTo: document.body })
+    wrapper = mount(Nested, { attachTo: document.body, global: { plugins: [i18n] } })
 
     const outer = wrapper.find('.split-view--horizontal')
     const inner = wrapper.find('.split-view--vertical')

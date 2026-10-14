@@ -1,7 +1,7 @@
 /**
  * Theme ID handling for the desktop shell.
  *
- * The desktop shell persists the FULL theme ID (e.g. 'github-dark', 'nord')
+ * The desktop shell persists the FULL theme ID (e.g. 'gruvbox-dark', 'nord')
  * because the login page resolves its colours from `[data-theme="<id>"]`
  * blocks. It has no rule for a bare 'dark', so collapsing the ID would make the
  * login page silently fall back to its defaults and never match the main UI.
@@ -9,8 +9,8 @@
  * Android stores the raw ID for the same reason (see ThemePalette.java).
  */
 
-/** Theme used when nothing is persisted or the ID is unknown. */
-export const DEFAULT_THEME_ID = 'github-dark'
+/** Theme used when nothing is persisted or the ID is unknown (the factory theme). */
+export const DEFAULT_THEME_ID = 'gruvbox-dark'
 
 /** Light counterpart of {@link DEFAULT_THEME_ID}, used for legacy 'light'. */
 export const DEFAULT_LIGHT_THEME_ID = 'github-light'

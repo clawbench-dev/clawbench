@@ -314,11 +314,57 @@ func TestServeGroupSettings_UnknownGroup(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
 }
 
+// The settings PATCH accepts the cruise switch on its own (both fields are
+// optional, at least one required), and a cruise-only request must not clobber
+// parallelDefault.
+func TestServeGroupSettings_CruiseToggle(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	groupID, _, err := service.CreateGroup(env.ProjectDir, "g", "codebuddy", "codebuddy", "Host")
+	require.NoError(t, err)
+
+	// Turn parallelDefault on first so we can prove cruise does not clobber it.
+	req := newRequest(t, http.MethodPatch, "/api/group/settings", map[string]any{
+		"groupId": groupID, "parallelDefault": true,
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupSettings, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	// Cruise-only PATCH must be accepted (no parallelDefault field).
+	req = newRequest(t, http.MethodPatch, "/api/group/settings", map[string]any{
+		"groupId": groupID, "cruise": true,
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandlerWithAuth(ServeGroupSettings, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	assert.True(t, service.GetGroupCruise(groupID), "cruise must be persisted")
+	assert.True(t, service.GetGroupParallelDefault(groupID), "parallelDefault must survive a cruise-only PATCH")
+
+	// A request with neither switch is a bad request.
+	req = newRequest(t, http.MethodPatch, "/api/group/settings", map[string]any{"groupId": groupID})
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandlerWithAuth(ServeGroupSettings, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+}
+
 // --- helper unit coverage ---
 
 func TestGroupPlaceholderTitle(t *testing.T) {
-	assert.Equal(t, "群聊", groupPlaceholderTitle(""))
-	assert.Contains(t, groupPlaceholderTitle("codebuddy"), "的群聊")
+	// The placeholder is stored on the session row and shown in the session
+	// list, so it must follow the request locale rather than being hardcoded
+	// Chinese.
+	zh := httptest.NewRequest(http.MethodPost, "/api/group/create", http.NoBody)
+	zh.Header.Set("X-Locale", "zh")
+	assert.Equal(t, "群聊", groupPlaceholderTitle(zh, ""))
+	assert.Contains(t, groupPlaceholderTitle(zh, "codebuddy"), "的群聊")
+
+	en := httptest.NewRequest(http.MethodPost, "/api/group/create", http.NoBody)
+	en.Header.Set("X-Locale", "en")
+	assert.Equal(t, "Group chat", groupPlaceholderTitle(en, ""))
+	assert.Contains(t, groupPlaceholderTitle(en, "codebuddy"), "group chat")
 }
 
 // groupSessionLimitOK returns true unconditionally when the cap is unlimited.

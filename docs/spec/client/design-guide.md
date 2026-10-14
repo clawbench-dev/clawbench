@@ -161,8 +161,9 @@
   - `data-theme="<id>"` — 选色板
   - `data-theme-base="light|dark"` — 明暗快捷选择器（`color-scheme`、hljs、diff 浓度、`.fbtn` 深色覆盖都靠它）
   - `data-hljs-theme="light|dark"` — 代码高亮主题
-- `'auto'` 解析为 `matchMedia('(prefers-color-scheme: dark)')` → `github-dark` / `github-light`。
-- **首屏不闪白**：`web/index.html:20` 有一段**在 CSS 加载前**跑的内联脚本读 localStorage 并设属性。全新安装猜 `gruvbox-dark`（用 `localStorage.length === 0` 判断，因为服务端的 `config.first_run` 那时还拿不到），记 `clawbench-fresh-theme-guess` 供之后回退。
+- **出厂默认主题 = `gruvbox-dark`**，全平台一致（web 内联脚本 / 桌面壳 `DEFAULT_THEME_ID` / Android `ThemePalette.DEFAULT_THEME_ID`）。它就是 `'auto'` 在深色系统下的解析结果（`getDefaultDarkTheme()`）。
+- `'auto'` 解析为 `matchMedia('(prefers-color-scheme: dark)')` → `gruvbox-dark` / `github-light`。
+- **首屏不闪白**：`web/index.html` 有一段**在 CSS 加载前**跑的内联脚本读 localStorage 并设属性。它同时是**出厂主题的唯一权威**：`localStorage` 里从未存过主题 ⇒ 判定为全新安装，**当场把 `gruvbox-dark` 落盘**（不是只改 DOM），因此重启 / 刷新后依然是它。**不要**再用服务端 `config.first_run` 判定——那个标记是进程级的，`InitDB` 建库后就翻成 false，重启（docker restart / 升级 / 重启机器）会把新安装静默打回系统主题；而且它要等 `/api/config` 异步返回，首屏必然先闪一下系统主题。`clawbench-fresh-theme-guess` 与 `applyFirstRunThemeDefaults` 已随该方案一并删除。
 - 主题是**纯前端本地设置**（只进 localStorage）——同一服务器多设备各选各的，互不干扰。
 
 ### 加一套新主题要改的地方
@@ -226,10 +227,11 @@
 
 ### 宽屏 vs 窄屏
 
-- 阈值（`useWideScreenLayout.ts:8`）：CSS 宽度 ≥1024px，**或**物理宽度 ≥1280px **且**横屏。
-- 物理宽度那条是为了高分辨率平板：2400 物理 px / DPR 2.5 = 960 CSS px，只看 CSS 宽度会漏判。
-- 横屏判定用 `screen.width/height` 而非 `window` 内尺寸，防止 Android 软键盘 `adjustResize` 把竖屏平板抖成宽屏。
+- 阈值（`useWideScreenLayout.ts` 的 `WIDE_SCREEN_MIN_WIDTH`）：**CSS 视口宽度 ≥960px**，仅此一条。
+- **为什么是纯 CSS 宽度、且不带物理像素回退**：布局实际能用的只有 CSS 像素，所以「放得下第二栏吗」只在 CSS 像素里有意义。早期版本带一条「物理宽度 ≥1280 且横屏」的回退，本意是救高 DPR 平板（2400 物理 px / DPR 2.5 = 960 CSS px），但副作用是拿「屏幕玻璃尺寸」越权替「可用布局空间」做决定，产出自相矛盾的结果——横屏手机（CSS 698px）被判宽屏，而桌面 960px 窗口反而不算。它也无法用 CSS 表达（媒体查询只认 CSS 像素），会让 JS 信号与 CSS 媒体查询在边界处分歧。把阈值从 1024 降到 960 就把平板那个 case 直接并进阈值里，回退条款可整体删除。
+- **UI 缩放不影响判定**：外观「缩放」走 `html { zoom }`，实测不改变 `innerWidth`，也不改变媒体查询求值。
 - 生效方式是给 `.main-content` 加 `.wide-screen` 类，`wide-screen.css` 切成 `flex-direction: row`。
+- **不要拿宽屏阈值当「布局放得下吗」的通用判据**：那是另一个问题、另一个阈值。例如头部胶囊的段标签用 `@media (min-width: 600px)`（见 `AppHeader.vue` 的 `.seg-label`）——带标签的胶囊实测仅约 215px，600 就够，用 960 反而会在有空间的横屏手机上隐藏标签。
 - **默认分屏比例是 4:6（左侧稍窄）**，常量 `DEFAULT_RATIO` 在 `utils/splitRatio.ts`——composable 初值与 `resetWideScreenState` 都引用它，不要把 0.4 散落成魔数。用户已持久化的自定义比例不受影响（localStorage 优先）。
 
 ### 安全区
@@ -313,6 +315,7 @@
 - **`.context-menu`**（`components.css:188`）：`position:fixed`、`--z-context-menu`、`--radius-md`、`--shadow-md`、`min-width:140px`。
 - **`PopupMenu.vue`**：`Teleport to="body"` + `<Transition name="menu-fade">`，定位走 `@/utils/popupMenuPosition`。
 - 弹窗外壳用 `ModalDialog.vue`（宽屏）/ `BottomSheet.vue`（窄屏），样式在 `modal-card.css` / `BottomSheet.vue` 的 keyframes 里。
+- **共享外壳的关闭按钮与返回**：两个外壳各有一个右上角圆形关闭按钮 `.modal-close-btn`（lucide `X`、28px，与下钻返回键 `.fd-back-btn` 同尺寸；底色沿用 `.window-controls` 的 `--text-primary` 混入 `--bg-secondary` 配方，静止 16% / hover 24% / active 32%，跨 36 主题最差对比 1.110，hover 用 `@media (hover:hover)` 门控避免触屏残留）。**它必须绝对定位**——header 的右侧动作簇（如 `.bs-header-actions`）自带 `margin-left:auto`，把它作为 flex 子项会被挤走；因此 header 预留对应右内边距（窄屏 BottomSheet 用 `.bs-header-has-close` 修饰类，因 TabPanel 复用 `.bs-header` 却无关闭按钮）。**header 点击不再关闭**（避免误触），backdrop 点击与 Escape 保留。**ModalDialog 会注册返回处理器**（优先级 `PRIORITY_OVERLAY+1`，高于所有 BottomSheet 抽屉），因此 Android 返回键与左右边缘内划都能关闭弹窗——此前它没注册，弹窗对返回无响应。
 - **跨面板弹层不要用 `useTabDrawer` 的单 tab 绑定**（`effectiveOpen = currentTab===tabId && open`）——窄屏下会把可从多面板触发的弹层在其它 tab 静默吞掉。正解是直绑共享 `open` + 切 tab 时显式关闭。
 
 ### 图标

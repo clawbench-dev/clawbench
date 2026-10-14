@@ -105,8 +105,14 @@ func TTSAudioWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// Goroutine: Forward phase/result events from StreamCh → WS text frames
-	go ttsWSForwardEvents(job, conn, &writeMu, cancel)
+	// Goroutine: Forward phase/result events from StreamCh → WS text frames.
+	// forwardDone closes once the terminal frame has been written, so the main
+	// goroutine can wait for delivery before tearing down the connection.
+	forwardDone := make(chan struct{})
+	go func() {
+		defer close(forwardDone)
+		ttsWSForwardEvents(job, conn, &writeMu, cancel)
+	}()
 
 	// Main goroutine: Forward audio chunks from AudioCh → WS binary frames
 	for chunk := range job.AudioCh {
@@ -120,9 +126,13 @@ func TTSAudioWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Wait for job completion or context cancellation
+	// Wait for the terminal frame (done/error) to be forwarded before closing
+	// the connection. job.Done closes as soon as the job goroutine returns,
+	// which can be BEFORE the buffered result event has been written — closing
+	// on job.Done alone drops the terminal frame and leaves the client stuck on
+	// "synthesizing" forever with no error shown.
 	select {
-	case <-job.Done:
+	case <-forwardDone:
 	case <-ctx.Done():
 	}
 }

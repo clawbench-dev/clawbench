@@ -62,7 +62,7 @@ const specData = computed(() => {
 })
 
 // Reactively track theme via App.vue provide('theme', theme)
-const theme = inject('theme', ref('github-dark'))
+const theme = inject('theme', ref('gruvbox-dark'))
 const isDark = computed(() => isDarkTheme(theme.value))
 
 // Fixed scrollbar colors — one for light, one for dark.

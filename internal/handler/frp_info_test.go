@@ -1,3 +1,5 @@
+//go:build !nofrp
+
 package handler
 
 import (
@@ -12,6 +14,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// These tests drive the real frp.Manager, which only exists in a build that
+// includes the client library. The `available` contract — which must hold in
+// BOTH builds — is covered separately in frp_availability_test.go.
 
 // --- ServeFRPInfo tests ---
 

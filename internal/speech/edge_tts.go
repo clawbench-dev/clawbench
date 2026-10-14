@@ -3,12 +3,10 @@ package speech
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"log/slog"
-	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -102,9 +100,11 @@ func (p *EdgeTTSProvider) Synthesize(ctx context.Context, text string, outputPat
 //
 //nolint:gocognit,gocyclo // WebSocket protocol requires sequential message handling with multiple error paths
 func (p *EdgeTTSProvider) synthesizeViaWebSocket(ctx context.Context, ssml string, w io.Writer) error {
-	// Generate DRM token and connection ID
-	secMsGec := generateSecMsGec()
-	secMsGecVersion := fmt.Sprintf("1-%s", edgeChromiumVersion)
+	// Generate DRM token and connection ID.
+	// Sec-MS-GEC-Version "2-<ver>" pairs with the v2 token; a v1 token with a
+	// "1-" version is rejected by the service with HTTP 403.
+	secMsGec := generateSecMsGecV2(time.Now().Unix())
+	secMsGecVersion := fmt.Sprintf("2-%s", edgeChromiumVersion)
 	connID := generateConnectID()
 	muid := generateMUID()
 
@@ -219,28 +219,7 @@ func (p *EdgeTTSProvider) synthesizeViaWebSocket(ctx context.Context, ssml strin
 
 // --- DRM Token Generation ---
 
-// generateSecMsGec generates the Sec-MS-GEC token required by Microsoft Edge TTS.
-// Ported from Python edge-tts v7.x DRM.generate_sec_ms_gec().
-func generateSecMsGec() string {
-	// Get current Unix timestamp
-	ticks := float64(time.Now().Unix())
-
-	// Switch to Windows file time epoch (1601-01-01 00:00:00 UTC)
-	ticks += float64(winEpochOffset)
-
-	// Round down to the nearest 5 minutes (300 seconds)
-	ticks -= math.Mod(ticks, 300)
-
-	// Convert the ticks to 100-nanosecond intervals (Windows file time format)
-	ticks *= 1e7 // 1e9 / 100
-
-	// Create the string to hash
-	strToHash := fmt.Sprintf("%.0f%s", ticks, edgeTrustedClientToken)
-
-	// Compute the SHA256 hash and return uppercased hex digest
-	hash := sha256.Sum256([]byte(strToHash))
-	return strings.ToUpper(hex.EncodeToString(hash[:]))
-}
+// The Sec-MS-GEC token generator (v2) lives in edge_tts_drm.go.
 
 // generateMUID generates a random MUID (32 hex characters, uppercase).
 func generateMUID() string {

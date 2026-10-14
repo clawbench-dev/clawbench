@@ -1,6 +1,8 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import ChatMessageItem from '@/components/chat/ChatMessageItem.vue'
 
 // Mocks for composables and stores used by ChatMessageItem
@@ -128,7 +130,7 @@ const i18n = createI18n({
         contentBlocks: { cancelled: '已中断' },
         pending: { queuing: '排队中', mergedIntoPrev: '回复已并入上一轮' },
         fileChanges: { title: '文件变更' },
-        speech: { summarizing: '总结中' },
+        speech: { summarizing: '总结中', synthesizing: '合成中' },
         busy: { forking: '正在分叉会话…', syncing: '正在同步原生会话…', elapsed: '{elapsed}s' },
       },
       common: { remove: '移除', copy: '复制' },
@@ -602,8 +604,13 @@ describe('ChatMessageItem', () => {
       expect(btn.attributes('title')).toBe('正在朗读')
     })
 
-    it('shows the generating/loading state when speech is being generated', () => {
-      const wrapper = createWrapper(
+    it('distinguishes the two generating phases by glyph, not by text', () => {
+      // The phases used to carry a text label ("摘要中" / "合成中"). They are now
+      // motion-only, so the glyph IS the distinction: summarizing breathes a
+      // Sparkles, synthesizing shows the shared loading ring. A behavioural
+      // assertion is the only thing that catches a regression where both
+      // branches collapse into one (the DOM still renders either way).
+      const summarizing = createWrapper(
         { msg: { id: 'sp3', role: 'assistant', content: 'speak me', blocks: [{ type: 'text', text: 'speak me' }], streaming: false } },
         {
           autoSpeech: {
@@ -618,9 +625,107 @@ describe('ChatMessageItem', () => {
           },
         },
       )
+      const sumBtn = summarizing.find('.chat-speak-btn')
+      expect(sumBtn.classes()).toContain('loading')
+      // No text label any more — the glyph carries it.
+      expect(sumBtn.text()).toBe('')
+      expect(sumBtn.find('.speak-breathe').exists()).toBe(true)
+      expect(sumBtn.find('.loading-indicator-stub').exists()).toBe(false)
+
+      const synthesizing = createWrapper(
+        { msg: { id: 'sp4', role: 'assistant', content: 'speak me', blocks: [{ type: 'text', text: 'speak me' }], streaming: false } },
+        {
+          autoSpeech: {
+            isActive: vi.fn(() => true),
+            isGeneratingText: vi.fn(() => true),
+            isPlayingAudio: vi.fn(() => false),
+            playAudio: vi.fn(),
+            stopAudio: vi.fn(),
+            speakText: vi.fn(),
+            getSummary: vi.fn(() => null),
+            getPhaseLabel: vi.fn(() => 'synthesizing'),
+          },
+        },
+      )
+      const synBtn = synthesizing.find('.chat-speak-btn')
+      expect(synBtn.classes()).toContain('loading')
+      expect(synBtn.text()).toBe('')
+      expect(synBtn.find('.loading-indicator-stub').exists()).toBe(true)
+      expect(synBtn.find('.speak-breathe').exists()).toBe(false)
+    })
+
+    it('does not widen the button while generating (there is no label to fit)', () => {
+      // The `--wide` variant exists to give a text label room. With the labels
+      // gone, keeping it would make the button jump wider on idle → generating
+      // and shove the rest of the action row sideways.
+      const wrapper = createWrapper(
+        { msg: { id: 'sp5', role: 'assistant', content: 'speak me', blocks: [{ type: 'text', text: 'speak me' }], streaming: false } },
+        {
+          autoSpeech: {
+            isActive: vi.fn(() => true),
+            isGeneratingText: vi.fn(() => true),
+            isPlayingAudio: vi.fn(() => false),
+            playAudio: vi.fn(),
+            stopAudio: vi.fn(),
+            speakText: vi.fn(),
+            getSummary: vi.fn(() => null),
+            getPhaseLabel: vi.fn(() => 'summarizing'),
+          },
+        },
+      )
+      expect(wrapper.find('.chat-speak-btn').classes()).not.toContain('chat-action-btn--wide')
+    })
+
+    it('keeps the phase name on the accessible name even though it is not rendered', () => {
+      // The label moved off the button face, but a screen-reader user must still
+      // be told which phase is running.
+      const wrapper = createWrapper(
+        { msg: { id: 'sp6', role: 'assistant', content: 'speak me', blocks: [{ type: 'text', text: 'speak me' }], streaming: false } },
+        {
+          autoSpeech: {
+            isActive: vi.fn(() => true),
+            isGeneratingText: vi.fn(() => true),
+            isPlayingAudio: vi.fn(() => false),
+            playAudio: vi.fn(),
+            stopAudio: vi.fn(),
+            speakText: vi.fn(),
+            getSummary: vi.fn(() => null),
+            getPhaseLabel: vi.fn(() => 'summarizing'),
+          },
+        },
+      )
       const btn = wrapper.find('.chat-speak-btn')
-      expect(btn.classes()).toContain('loading')
-      expect(btn.text()).toContain('总结中')
+      expect(btn.attributes('title')).toBe('总结中')
+      expect(btn.attributes('aria-label')).toBe('总结中')
+    })
+  })
+
+  describe('speak-button generating motion (source contract)', () => {
+    // jsdom has no CSS engine, so the animation itself is pinned at the source
+    // level (the pattern BusyBar.test.ts uses).
+    const src = readFileSync(resolve(__dirname, '../ChatMessageItem.vue'), 'utf8')
+    const css = src
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/<!--[\s\S]*?-->/g, '')
+
+    it('breathes the summarizing glyph and keeps the animation', () => {
+      // Asserting only the absence of the media query below would also pass if
+      // someone deleted the animation entirely, leaving a dead glyph.
+      expect(css).toMatch(/animation:\s*speak-breathe/)
+      expect(css).toMatch(/@keyframes\s+speak-breathe/)
+    })
+
+    it('has no prefers-reduced-motion opt-out (the motion is the only phase cue)', () => {
+      // Same deliberate exception as BusyBar / the session status slot: the
+      // breathe is the ONLY thing separating "summarizing" from "synthesizing".
+      // Freezing it would merge the two states.
+      expect(css).not.toMatch(/prefers-reduced-motion/)
+    })
+
+    it('leaves no dead spinner keyframes behind', () => {
+      // The old Clock glyph rotated via speak-spin; that glyph is gone.
+      expect(css).not.toMatch(/@keyframes\s+speak-spin\b/)
+      expect(css).not.toContain('speak-spinner')
     })
   })
 

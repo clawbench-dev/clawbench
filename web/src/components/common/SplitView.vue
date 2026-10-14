@@ -56,7 +56,6 @@ const props = withDefaults(defineProps<{
   minLeft: MIN_PANEL_WIDTH,
   minRight: MIN_PANEL_WIDTH,
   gutterSize: 1,
-  title: '拖动调整面板宽度',
   collapsed: false,
   rightCollapsed: false,
 })

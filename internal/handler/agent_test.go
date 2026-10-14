@@ -855,9 +855,59 @@ func TestAgentRefreshModels_ResolvesAgainstCachedACPModels(t *testing.T) {
 	require.Len(t, model.Agents["codebuddy"].Models, 2)
 }
 
-func TestAgentRefreshModels_AgentNotFound(t *testing.T) {
+// An acp-stdio agent whose runtime has not reported models must not have the
+// freshly discovered CLI list reported as `models`: the client writes that
+// straight onto the agent for acp-stdio, so one manual refresh would undo the
+// gate GET /api/agents applies.
+func TestAgentRefreshModels_UnconfirmedACPHidesResolvedList(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 
+	// A dedicated agent id keeps the ACP capability registry clean: UpdateModels
+	// merges, so a nil list does not clear another test's models, and this agent
+	// must start with none. The backend reuses "claude" so the model source
+	// registered by setupAgentTestEnv applies.
+	const agentID = "acp-refresh-unconfirmed"
+	agent := &model.Agent{
+		ID: agentID, Name: "ACP Refresh", Backend: "claude",
+		AcpCommand: "acp-server", Transport: "acp-stdio",
+	}
+	model.Agents[agentID] = agent
+	model.AgentList = append(model.AgentList, agent)
+	require.False(t, ai.HasConfirmedACPModels(agentID), "precondition: no ACP models yet")
+
+	origDiscover := model.DiscoverWithDetail
+	model.DiscoverWithDetail = func(backend string) ([]model.AgentModel, string) {
+		if backend == "claude" {
+			return []model.AgentModel{
+				{ID: "cli-a", Name: "CLI A", Default: true},
+				{ID: "cli-b", Name: "CLI B"},
+			}, ""
+		}
+		return nil, ""
+	}
+	defer func() { model.DiscoverWithDetail = origDiscover }()
+
+	req := newRequest(t, http.MethodPost, "/api/agents/"+agentID+"/refresh-models", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgentRefreshModels, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp struct {
+		Models    []model.AgentModel `json:"models"`
+		CLIModels []model.AgentModel `json:"cliModels"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	assert.Empty(t, resp.Models,
+		"the resolved list must stay empty until the ACP runtime reports models")
+	require.Len(t, resp.CLIModels, 2, "the CLI list is still returned for the CLI view")
+
+	// Discovery still persists — the gate is a view, not a data loss.
+	require.Len(t, model.Agents[agentID].Models, 2)
+}
+
+func TestAgentRefreshModels_AgentNotFound(t *testing.T) {
+	defer setupAgentTestEnv(t)()
 	req := newRequest(t, http.MethodPost, "/api/agents/nonexistent/refresh-models", nil)
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeAgentRefreshModels, req)
@@ -2235,6 +2285,109 @@ func TestServeAgentsGet_DoesNotMutateSharedAgent(t *testing.T) {
 	require.Len(t, acpAgent.Models, 1, "the stored CLI list must stay the CLI list")
 	assert.Equal(t, "cli-m1", acpAgent.Models[0].ID,
 		"resolution must not write the merged list back onto the shared agent")
+}
+
+// ACP has no client-side "default model": the agent reports its own currentValue
+// at session/new, so before that handshake the CLI-discovered list is a GUESS.
+// GET /api/agents must not present it as runnable over ACP.
+func TestServeAgentsGet_UnconfirmedACPHidesCLIModels(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	agent := &model.Agent{
+		ID: "acp-unconfirmed", Name: "ACP Unconfirmed", Backend: "acp-backend",
+		AcpCommand: "acp-server",
+		Transport:  "acp-stdio",
+		Models: []model.AgentModel{
+			{ID: "cli-m1", Name: "CLI M1", Default: true},
+			{ID: "cli-m2", Name: "CLI M2"},
+		},
+	}
+	model.Agents[agent.ID] = agent
+	model.AgentList = append(model.AgentList, agent)
+
+	got := fetchAgentFromAPI(t, agent.ID)
+
+	assert.Empty(t, got.Models,
+		"an acp-stdio agent whose ACP runtime has not reported models must expose no model list")
+	require.Len(t, got.CLIModels, 2,
+		"the CLI list is still shipped for the CLI transport view")
+	assert.Equal(t, "cli-m1", got.CLIModels[0].ID)
+}
+
+// The same agent on the CLI transport legitimately uses its CLI list.
+func TestServeAgentsGet_CLITransportKeepsCLIModels(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	agent := &model.Agent{
+		ID: "dual-cli", Name: "Dual CLI", Backend: "acp-backend",
+		AcpCommand: "acp-server",
+		Transport:  "cli",
+		Models: []model.AgentModel{
+			{ID: "cli-m1", Name: "CLI M1", Default: true},
+			{ID: "cli-m2", Name: "CLI M2"},
+		},
+	}
+	model.Agents[agent.ID] = agent
+	model.AgentList = append(model.AgentList, agent)
+
+	got := fetchAgentFromAPI(t, agent.ID)
+
+	require.Len(t, got.Models, 2,
+		"a dual-transport agent currently on CLI uses its CLI list")
+	assert.Equal(t, "cli-m1", got.Models[0].ID)
+}
+
+// Once the ACP runtime has reported models, they are authoritative for
+// membership — the CLI list must not leak back in.
+func TestServeAgentsGet_ConfirmedACPUsesACPMembership(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	ai.GetAgentCapabilityRegistry().UpdateModels("acp-confirmed", []model.AgentModel{
+		{ID: "acp-live", Name: "ACP Live"},
+	})
+
+	agent := &model.Agent{
+		ID: "acp-confirmed", Name: "ACP Confirmed", Backend: "acp-backend",
+		AcpCommand: "acp-server",
+		Transport:  "acp-stdio",
+		Models: []model.AgentModel{
+			{ID: "cli-stale", Name: "CLI Stale", Default: true},
+			{ID: "acp-live", Name: "CLI Name For Live"},
+		},
+	}
+	model.Agents[agent.ID] = agent
+	model.AgentList = append(model.AgentList, agent)
+
+	got := fetchAgentFromAPI(t, agent.ID)
+
+	ids := make([]string, len(got.Models))
+	for i, m := range got.Models {
+		ids[i] = m.ID
+	}
+	assert.Contains(t, ids, "acp-live")
+	assert.NotContains(t, ids, "cli-stale",
+		"a CLI model the ACP runtime does not report must be dropped")
+}
+
+// fetchAgentFromAPI runs GET /api/agents and returns the named agent's entry.
+func fetchAgentFromAPI(t *testing.T, agentID string) *model.Agent {
+	t.Helper()
+	req := newRequest(t, http.MethodGet, "/api/agents", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp struct {
+		Agents []model.Agent `json:"agents"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	for i := range resp.Agents {
+		if resp.Agents[i].ID == agentID {
+			return &resp.Agents[i]
+		}
+	}
+	t.Fatalf("agent %s missing from response", agentID)
+	return nil
 }
 
 func TestServeAgentsGet_NoACPStateKeepsCLIModels(t *testing.T) {

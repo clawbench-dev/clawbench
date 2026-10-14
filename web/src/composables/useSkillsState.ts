@@ -45,7 +45,10 @@ export interface RepoRow {
 //   - one request per refresh instead of one per card,
 //   - a sync triggered in the settings card updates the list card too (a
 //     per-component fetch would leave the list stale until the page reopened).
-const enabled = ref(true)
+// Mirrors the server default (skills.enabled defaults to false — auto-injection
+// is opt-in). Overwritten by loadSkills() with the server's actual value; this
+// only avoids showing "on" for the instant before the first load resolves.
+const enabled = ref(false)
 const dirs = ref<string[]>([])
 const repos = ref<RepoRow[]>([])
 const skills = ref<SkillRow[]>([])
@@ -161,6 +164,86 @@ export async function rescanSkills(enabledFallback: boolean): Promise<void> {
     rescanning.value = false
   }
   await loadSkills(enabledFallback)
+}
+
+/**
+ * Load the discovered skills if they have not been loaded yet. This is the
+ * chat input's lazy path for the `#` skill menu: the list is fetched the first
+ * time the trigger appears, then reused.
+ *
+ * It deliberately does NOT touch `enabled`. The master switch governs AUTOMATIC
+ * injection (the system-prompt table); an explicit `#name` reference works
+ * either way, so the menu must list skills even when the switch is off.
+ */
+export async function ensureSkillsLoaded(): Promise<void> {
+  if (loaded.value) return
+  try {
+    const res = await fetch('/api/skills')
+    if (!res.ok) return
+    const data = await res.json()
+    skills.value = Array.isArray(data?.skills) ? data.skills : []
+    // Mark loaded even on an empty list: otherwise every keystroke after "#"
+    // would re-fetch. A later rescan/refresh still repopulates it.
+    loaded.value = true
+  } catch (err) {
+    appLog.w(TAG, 'ensure load failed', err)
+  }
+}
+
+/**
+ * Source priority for the `#` menu's dedupe, mirroring the backend's
+ * SourceKind ordering (internal/skill/types.go): a lower index wins.
+ *
+ * It must match the server's `sourceLess`, or the row the menu shows could be
+ * a different skill than the one the backend resolves for the same name.
+ * Exported so a parity test can pin it against the Go SourceKind values — a
+ * comment cannot catch a reorder.
+ *
+ * Only the CROSS-kind order is mirrored. For two entries of the SAME kind, the
+ * backend breaks the tie by directory path while this keeps the first seen;
+ * since the menu only inserts the name (the server re-resolves it on send), the
+ * difference is limited to which description is displayed.
+ */
+export const SOURCE_KIND_PRIORITY: SkillRow['source_kind'][] = [
+  'own',
+  'project',
+  'user',
+  'git',
+  'other',
+]
+
+function sourceRank(kind: SkillRow['source_kind']): number {
+  const i = SOURCE_KIND_PRIORITY.indexOf(kind)
+  return i < 0 ? SOURCE_KIND_PRIORITY.length : i
+}
+
+/**
+ * The rows the `#` menu offers: every discovered skill, deduped by canonical
+ * name (case-insensitive, leading "/" stripped — the server's identity rule),
+ * keeping the highest-priority source.
+ *
+ * Skills whose frontmatter name disagrees with their directory are dropped, the
+ * same way the backend refuses to advertise them: an agent resolves a skill by
+ * directory, so such an entry would do nothing when picked.
+ *
+ * A name containing whitespace or "#" is also dropped: the backend reference
+ * grammar is `#<name>` with the name running to the next whitespace, so such a
+ * name cannot be expressed — offering it would insert a reference that resolves
+ * to nothing (the parser reads only the first token).
+ */
+export function skillMenuRows(): SkillRow[] {
+  const best = new Map<string, SkillRow>()
+  for (const s of skills.value) {
+    if (s.name_mismatch) continue
+    if (/[\s#]/.test(s.name)) continue
+    const key = s.name.trim().replace(/^\//, '').toLowerCase()
+    if (!key) continue
+    const cur = best.get(key)
+    if (!cur || sourceRank(s.source_kind) < sourceRank(cur.source_kind)) {
+      best.set(key, s)
+    }
+  }
+  return [...best.values()].sort((a, b) => a.name.localeCompare(b.name))
 }
 
 /** Shared, read-only view of the skills state for both cards. */

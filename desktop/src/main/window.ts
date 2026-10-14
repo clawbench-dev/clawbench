@@ -1,8 +1,9 @@
-import { app, BrowserWindow, Menu, MenuItem, clipboard, shell } from 'electron'
+import { BrowserWindow, Menu, MenuItem, clipboard, shell } from 'electron'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { getStore } from './store'
 import { contextMenuLabels } from './contextMenu'
+import { resolveNativeLanguage } from './labels'
 import { classifyUrl } from './urlPolicy'
 import { markRendererLoading } from './navReady'
 import { handleShortcut } from './shortcuts'
@@ -163,11 +164,16 @@ function registerKeyboardShortcuts(webContents: Electron.WebContents): void {
 
 /** Register native context menu handlers for text selection, editable fields, links, and images. */
 function registerContextMenu(webContents: Electron.WebContents): void {
-  // cut/copy/paste use Electron roles (auto-localized by the OS); only the
-  // custom items are translated from the current app locale.
-  const labels = contextMenuLabels(app.getLocale())
-
   webContents.on('context-menu', (_e, params) => {
+    // cut/copy/paste use Electron roles (auto-localized by the OS); only the
+    // custom items are translated from the current app language.
+    //
+    // Resolved INSIDE the handler, not once at registration: the labels used to
+    // be frozen at window creation, so switching the UI language mid-session
+    // kept showing the old wording until a restart. `resolveNativeLanguage()`
+    // prefers the web UI's choice (mirrored into the store) and falls back to
+    // the OS locale, so it tracks the user's live preference.
+    const labels = contextMenuLabels(resolveNativeLanguage())
     const menu = new Menu()
 
     // 1. Editable inputs (input, textarea, contenteditable)

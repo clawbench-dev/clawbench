@@ -184,6 +184,22 @@ describe('forgeEventContextVars', () => {
       expect(byPlaceholder.get('ITEM_TYPE #ITEM_NUMBER')).toBe('issue #7')
     })
 
+    it('resolves the flag samples through i18n, not a hardcoded 是/否', () => {
+      // The backend renders these values localized (EventContextYes/No), so the
+      // sample must be a translated key too — a literal '是'/'否' would show
+      // Chinese in an English card while the prompt says "yes"/"no".
+      // The @/i18n mock returns the key, which is exactly what proves the value
+      // came from a t() call rather than a literal.
+      const rows = eventContextSampleRows(ctx(['pr.opened', 'pipeline_done']))
+      const byPlaceholder = new Map(rows.map(r => [r.placeholder, r.value]))
+      expect(byPlaceholder.get('DRAFT')).toBe('task.form.eventContextYes')
+      expect(byPlaceholder.get('ACTOR_IS_SELF')).toBe('task.form.eventContextNo')
+      // Guard against the old literal sneaking back.
+      for (const row of rows) {
+        expect(row.value).not.toMatch(/[\u4e00-\u9fff]/)
+      }
+    })
+
     it('excludes the item row for a pipeline-only subscription', () => {
       const rows = eventContextSampleRows(ctx(['pipeline_done']))
       expect(rows.map(r => r.placeholder)).not.toContain('ITEM_TYPE #ITEM_NUMBER')

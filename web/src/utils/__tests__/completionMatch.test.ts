@@ -3,6 +3,7 @@ import {
   fuzzyMatch,
   buildFileCandidates,
   parseAtQuery,
+  parseHashQuery,
   parseSlashQuery,
   middleEllipsis,
   type FileCandidateSources,
@@ -267,6 +268,38 @@ describe('parseSlashQuery', () => {
 
   it('returns null when the caret sits before the slash', () => {
     expect(parseSlashQuery('/cb', 0)).toBeNull()
+  })
+})
+
+describe('parseHashQuery', () => {
+  it('parses a bare skill reference', () => {
+    expect(parseHashQuery('#pdf', 4)).toEqual({ start: 0, end: 4, query: 'pdf' })
+  })
+
+  it('parses an empty query right after the hash', () => {
+    expect(parseHashQuery('#', 1)).toEqual({ start: 0, end: 1, query: '' })
+  })
+
+  it('returns null once a space appears inside the query', () => {
+    expect(parseHashQuery('#pdf ', 5)).toBeNull()
+  })
+
+  it('returns null when the hash is not the first token', () => {
+    // A "#" mid-sentence is prose (e.g. "issue #12"), which the backend does
+    // not treat as a skill reference — so the menu must not open either.
+    expect(parseHashQuery('use #pdf', 8)).toBeNull()
+  })
+
+  it('allows the hash at the start even when text follows the caret', () => {
+    expect(parseHashQuery('#pdf rest', 4)).toEqual({ start: 0, end: 4, query: 'pdf' })
+  })
+
+  it('ignores leading whitespace before the hash', () => {
+    expect(parseHashQuery('  #pdf', 6)).toEqual({ start: 2, end: 6, query: 'pdf' })
+  })
+
+  it('returns null when the caret sits before the hash', () => {
+    expect(parseHashQuery('#pdf', 0)).toBeNull()
   })
 })
 

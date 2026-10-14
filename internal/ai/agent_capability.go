@@ -323,6 +323,23 @@ func (r *AgentCapabilityRegistry) GetModelListState(agentID, currentModelID stri
 	}
 }
 
+// HasConfirmedACPModels reports whether the ACP runtime has ever reported a
+// model list for this agent — i.e. whether the model list is CONFIRMED by the
+// agent rather than guessed by the separate CLI discovery pipeline.
+//
+// ACP has no "automatic model selection": the agent always reports a
+// currentValue in its `category: "model"` config option, and the client either
+// leaves it alone or sends session/set_config_option. So before the agent has
+// spoken, any model list ClawBench shows is a CLI-side guess, and sending one
+// as a set_config_option can select a model the agent cannot run.
+//
+// The data comes from the AgentCapabilityRegistry, written on the session/new
+// handshake and persisted to agents.acp_available_models, so it stays true
+// across restarts.
+func HasConfirmedACPModels(agentID string) bool {
+	return GetAgentCapabilityRegistry().GetModelListState(agentID, "") != nil
+}
+
 // GetCommands returns the available commands for an agent.
 func (r *AgentCapabilityRegistry) GetCommands(agentID string) []AvailableCommandInfo {
 	r.mu.RLock()

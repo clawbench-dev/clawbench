@@ -402,6 +402,42 @@ func (r *Registry) AllForProject(projectPath string) []Skill {
 	return out
 }
 
+// ResolveForProject returns the highest-priority skill whose canonical name
+// matches, from the project-scoped view (every global source plus
+// <projectPath>/.agents/skills).
+//
+// This backs the user's explicit "#name" reference in the chat input. It is
+// deliberately NOT gated by Skills.Enabled: that switch controls AUTOMATIC
+// injection (InjectedForProject), whereas an explicit reference is a direct
+// user instruction and must keep working when automatic injection is off.
+// Both callers rely on this asymmetry, so do not add the gate here.
+//
+// Name comparison uses canonicalName (lowercased, leading "/" stripped), the
+// same identity dedupe() uses. The winner is chosen with sourceLess, so the
+// resolved skill is the same entry the listing view (GET /api/skills) shows for
+// that name. Note that view reports every native directory as "other" — own-ness
+// is relative to an agent, and this view has no agent in scope — so a project
+// skill outranks a native-directory skill of the same name.
+// Returns false for an empty name or no match.
+func (r *Registry) ResolveForProject(name, projectPath string) (Skill, bool) {
+	key := canonicalName(name)
+	if key == "" {
+		return Skill{}, false
+	}
+	var best Skill
+	found := false
+	for _, s := range r.AllForProject(projectPath) {
+		if canonicalName(s.Name) != key {
+			continue
+		}
+		if !found || sourceLess(s.Source, best.Source) {
+			best = s
+			found = true
+		}
+	}
+	return best, found
+}
+
 // sortSkills orders skills by name then path for deterministic output.
 func sortSkills(skills []Skill) {
 	sort.Slice(skills, func(i, j int) bool {

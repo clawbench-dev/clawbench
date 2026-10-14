@@ -212,7 +212,7 @@ import BottomSheet from '@/components/common/BottomSheet.vue'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import ModelRow from '@/components/common/ModelRow.vue'
-import { useAgents, restoreOriginalModels, applyRefreshedModelList, populateACPStateFromCache, invalidateACPStateCache } from '@/composables/useAgents'
+import { useAgents, restoreOriginalModels, resetModelViewForTransport, applyRefreshedModelList, populateACPStateFromCache, invalidateACPStateCache } from '@/composables/useAgents'
 import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
 import { useSessionIdentity, clearModeState, clearCommandState, clearThinkingEffortState } from '@/composables/useSessionIdentity'
@@ -406,10 +406,14 @@ async function applyTransportSwitch(transport) {
     invalidateACPStateCache(props.agentId || '')
   }
 
-  // When switching to ACP, re-populate ACP state from cache (force-refresh)
+  // When switching to ACP, re-populate ACP state from cache (force-refresh).
+  // resetModelViewForTransport runs AFTER the populate so it can clear the list
+  // when the cache holds no ACP models — otherwise the CLI baseline left by the
+  // branch above would survive the switch back and re-enter the ACP view.
   if (transport === 'acp-stdio') {
     invalidateACPStateCache(props.agentId || '')
     await populateACPStateFromCache(props.agentId || '')
+    resetModelViewForTransport(props.agentId || '')
   }
 }
 

@@ -63,9 +63,9 @@ public class FloatingStatusPanelView extends FrameLayout {
     private static final int COLOR_PERMISSION_PENDING = 0xFFE6A23C; // yellow
     private static final int COLOR_UNREAD = 0xFF3B82F6; // blue
 
-    // github-dark fallback palette (overridden at construction by the
-    // persisted theme palette via FloatingThemeColors).
-    private static final int COLOR_BORDER = 0xFF30363D;
+    // gruvbox-dark fallback palette (the factory theme; overridden at
+    // construction by the persisted theme palette via FloatingThemeColors).
+    private static final int COLOR_BORDER = 0xFF3C3836;
 
     // Layout constants.
     private static final int PANEL_WIDTH_DP = 280;

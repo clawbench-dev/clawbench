@@ -57,7 +57,7 @@ public class ThemePaletteTest {
     }
 
     @Test
-    public void forId_nullEmptyAndUnknown_fallBackToGithubDark() {
+    public void forId_nullEmptyAndUnknown_fallBackToDefault() {
         String fallback = ThemePalette.DEFAULT_THEME_ID;
         assertEquals(fallback, ThemePalette.forId(null).id);
         assertEquals(fallback, ThemePalette.forId("").id);
@@ -88,7 +88,7 @@ public class ThemePaletteTest {
     }
 
     @Test
-    public void current_noPersistedTheme_fallsBackToGithubDark() {
+    public void current_noPersistedTheme_fallsBackToDefault() {
         assertEquals(ThemePalette.DEFAULT_THEME_ID, ThemePalette.current(appContext).id);
     }
 
@@ -109,7 +109,7 @@ public class ThemePaletteTest {
     }
 
     @Test
-    public void table_fallbackRowIsGithubDark() {
+    public void table_fallbackRowIsDefaultTheme() {
         // The static initialiser enforces this; assert it so a reordering that
         // slips past class-init is still caught here.
         assertSame(ThemePalette.forId(ThemePalette.DEFAULT_THEME_ID),
@@ -117,8 +117,24 @@ public class ThemePaletteTest {
     }
 
     // =====================================================
-    // Representative values (github-dark / github-light / gruvbox-light)
+    // Representative values (gruvbox-dark / github-dark / github-light / gruvbox-light)
     // =====================================================
+
+    @Test
+    public void gruvboxDark_matchesVariablesCss() {
+        // The factory theme, and the fallback row for unknown IDs.
+        ThemePalette p = ThemePalette.forId("gruvbox-dark");
+
+        assertEquals(0xFF282828, p.bgPrimary);
+        assertEquals(0xFF1D2021, p.bgSecondary);
+        assertEquals(0xFF3C3836, p.bgTertiary);
+        assertEquals(0xFFEBDBB2, p.textPrimary);
+        assertEquals(0xFFD5C4A1, p.textSecondary);
+        assertEquals(0xFF9D9188, p.textMuted);
+        assertEquals(0xFF7C6F64, p.textHint);
+        assertEquals(0xFFFE8019, p.accent);
+        assertFalse(p.light);
+    }
 
     @Test
     public void githubDark_matchesVariablesCss() {
@@ -261,7 +277,7 @@ public class ThemePaletteTest {
 
         assertEquals("gruvbox-light", p.id);
         assertEquals(0xFFF2E5BC, p.bgSecondary);
-        assertTrue("must not degrade to the github-dark floating fallback", p.light);
+        assertTrue("must not degrade to the default-theme floating fallback", p.light);
     }
 
     // =====================================================

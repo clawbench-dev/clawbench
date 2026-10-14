@@ -131,6 +131,8 @@ InvalidSHA: 无效的提交SHA格式
 InvalidBranchName: 无效的分支名
 ModelDiscoveryNotSupported: 该智能体不支持模型自动发现
 ModelDiscoveryFailed: 模型发现未返回结果
+ModelSwitchFailed: 切换模型失败
+ModelSwitchFailedDetail: 切换模型失败：{{.Detail}}
 CLINotFound: 未找到CLI工具，请先安装
 CustomURLOpenAIFormat: OpenAI 格式的自定义 URL 应以 /chat/completions 结尾
 CustomURLAnthropicFormat: Anthropic 格式的自定义 URL 应以 /v1/messages 结尾
@@ -145,6 +147,54 @@ PushTaskStarted: 任务已启动
 PushSessionCompleted: 会话已完成
 PushSessionCancelled: 会话已取消
 PushActionRequired: 操作需批准
+# IM 推送（钉钉 / 飞书）——机器人写进用户聊天里的文案。推送后端跑在各自
+# goroutine 里、没有 HTTP 请求上下文，故与 AutoContinue 一样走
+# LocalizerForLocale(model.Language) 本地化。钉钉渲染 sampleMarkdown、飞书渲染
+# 交互式卡片，少数文案仅强调或语序不同，故按平台分列以保留各自既有输出。
+PushLabelSession: 会话
+PushLabelProject: 项目
+PushLabelTask: 任务
+PushLabelAction: 操作
+PushLabelCommand: 命令
+PushLabelFile: 文件
+PushReplyHintSend: 发送 `@{{.ID}} <消息>` 向会话发送消息
+PushReplyHintQueue: 发送 `@{{.ID}} <消息>` 追加消息到队列
+PushSessionServiceUnavailable: 会话服务不可用，文件未发送。
+PushSessionUnavailable: 会话不可用，文件未发送。
+PushSendFileFailed: '发送文件失败: '
+PushFileSent: 文件已发送
+PushFileTooLarge: 文件超过大小上限（{{.MaxMB}} MB），未发送。
+PushFilesDownloadFailed: 文件下载失败，未发送（{{.Count}} 个）。
+PushFileDownloadFailed: 文件下载失败，未发送。
+PushSentToSessionBold: 已发送到会话 **{{.Label}}**，AI 正在处理
+PushSentToSessionPlain: 已发送到会话 {{.Label}}，AI 正在处理
+PushFilesCount: （共 {{.Count}} 个文件）
+PushPartialDownloadFailed: '⚠️ 有 {{.Count}} 个文件下载失败，未发送。'
+PushAttachmentsTruncated: '⚠️ 附件数量超过上限（{{.Max}}），仅发送前 {{.Sent}} 个。'
+PushUnsupportedMsgType: 暂不支持该消息类型（{{.Type}}）。请发送文字、图片或文件。
+PushSendMessageFailed: '发送消息失败: '
+PushMessageSent: 消息已发送
+PushNoSessionSelected: 尚未选择会话。发送 /ls 查看会话列表，然后用 @会话ID <消息> 选择。
+PushErrorTitle: 错误
+PushUnsupportedTitle: 暂不支持
+PushSelectSessionTitle: 请选择会话
+PushSubscribedTitle: 已订阅
+PushSessionListTitle: 会话列表
+PushSessionListIntro: 发送 **@会话ID <消息>** 向会话发送消息：
+PushSessionListIntroFeishu: 发送 **@会话ID** <消息> 向会话发送消息：
+PushNoProject: （无项目）
+PushNoTitle: （无标题）
+PushSessionLabelPrefix: '会话 '
+PushSubscribedNoAvailableDingtalk: 已订阅 ClawBench 通知。暂无可用会话。
+PushSubscribedNoAvailableFeishu: ClawBench 通知已订阅。暂无可用会话。
+PushSubscribedListFailedDingtalk: 已订阅 ClawBench 通知。获取会话列表失败。
+PushSubscribedListFailedFeishu: ClawBench 通知已订阅。获取会话列表失败。
+PushSubscribedNoSessionsDingtalk: 已订阅 ClawBench 通知。暂无会话。
+PushSubscribedNoSessionsFeishu: ClawBench 通知已订阅。暂无会话。
+PushMultipleRunningSessions: 匹配到多个正在运行的会话，请使用更长的 ID（{{.ID}}…）
+PushMultipleSessions: 匹配到多个会话，请使用更长的 ID（{{.ID}}…）
+PushSessionNotFound: 未找到会话 {{.ID}}
+PushRecentSessionUnavailable: 最近会话不可用，请用 /ls 重新选择：{{.Error}}
 NotFound: 未找到
 PermissionNotFound: 未找到待审批的权限请求
 ACPSessionNotFound: 该会话在智能体端已不存在
@@ -165,8 +215,73 @@ RAGResetFailed: 索引重建失败
 RAGSegmenterUnavailable: "已拒绝重建：分词器不可用。此时重建会把已正确分词的文本替换为未切分文本，导致中文搜索失效 — 请重启服务后重试。"
 RAGRebuildAccepted: 重建已在后台启动
 AutoContinue: 继续
+ACPSessionRecoveredNew: ACP 会话无法恢复，已开启新会话（原有对话上下文已丢失）。
 GroupYourTurn: 轮到用户发言
 GroupDiscussionLimitReached: 成员间讨论次数达到上限
+GroupCruiseConfirming: '自动巡航：系统正在向成员确认任务完成情况'
+GroupCruiseSatisfied: '自动巡航：任务已确认完成，共 {{.Rounds}} 轮'
+# 群时间线的系统行。这些文案是「写入时」按当前语言本地化并持久化到 chat_history，
+# 同时还会以 "[系统] <文案>" 注入每个成员的上下文（group_inject.go），因此必须是
+# 可读句子、绝不能是键名。切换语言不会追溯翻译历史（与决策 96b 一致）。
+GroupMemberJoined: '{{.Name}}加入了讨论'
+GroupMemberLeft: '{{.Name}} 已离场'
+GroupMemberUnknown: 成员
+GroupUnknownMention: '{{.Speaker}} @ 了一个不存在的成员：{{.Names}}（已忽略）'
+GroupMemberListSeparator: 、
+GroupSpecialtySuffix: '（{{.Specialty}}）'
+GroupHostTitle: '{{.Name}} 的群聊'
+GroupFreeTitle: 群聊
+# Forge 事件上下文块。后端渲染的标签与任务表单预览
+# （web/src/utils/forgeEventContextVars.ts）完全一致，两者不会再漂移——此前
+# 后端自带一套中文字面量、前端却渲染 i18n 键，导致英文用户看到的预览与实际
+# 注入的提示词不一致。
+EventContextHeader: Forge 事件
+EventContextYes: 是
+EventContextNo: 否
+EventContextSeparator: '：'
+EventVarEventType: 事件类型
+EventVarRepo: 仓库
+EventVarItem: 条目
+EventVarTitle: 标题
+EventVarUrl: 链接
+EventVarAuthor: 作者
+EventVarState: 状态
+EventVarPrevState: 前一状态
+EventVarBody: 正文
+EventVarLabels: 标签
+EventVarAssignees: 指派人
+EventVarDraft: 草稿
+EventVarSourceBranch: 源分支
+EventVarMergedAt: 合并时间
+EventVarCreatedAt: 创建时间
+EventVarUpdatedAt: 更新时间
+EventVarCommentCount: 评论数
+EventVarCommentBody: 评论内容
+EventVarCommentId: 评论 ID
+EventVarPipelineStatus: 流水线状态
+EventVarPipelineUrl: 流水线链接
+EventVarPipelineNumber: 流水线编号
+EventVarPipelineRef: 流水线分支
+EventVarPipelineSha: 流水线提交
+EventVarPipelineTrigger: 流水线触发方式
+EventVarPipelineDuration: 流水线耗时
+EventVarPipelineLinkedPrs: 关联合并请求
+EventVarActorIsSelf: 是否自身触发
+# Forge 事件 IM 通知（推送钉钉/飞书的标题 + 正文）。分发器跑在后台 goroutine，
+# 故与其它推送文案一样按 model.Language 本地化。
+ForgeEventItemIssue: 议题
+ForgeEventItemChangeRequest: 合并请求
+ForgeEventItemPipeline: 仓库流水线
+ForgeEventOpened: 新开
+ForgeEventClosed: 关闭
+ForgeEventMerged: 合并
+ForgeEventReopened: 重新打开
+ForgeEventCommented: 有新评论
+ForgeEventPipelineDone: 流水线完成
+ForgeEventLabelRepo: 仓库
+ForgeEventLabelEvent: 事件
+ForgeEventLabelAuthor: 作者
+ForgeEventViewDetail: 查看详情
 PortForwardUnavailable: 端口转发不可用
 TunnelTargetUnreachable: 隧道目标不可达
 TunnelReverseRequiresHTTP2: 反向转发需要 HTTP/2；HTTP/1.1 下请使用 SSH 传输

@@ -141,3 +141,19 @@ func TestNormalizeToolInput_WithOpenCodeACPRegistry(t *testing.T) {
 		t.Errorf("replace_all = %v, want true", parsed["replace_all"])
 	}
 }
+
+// TestACPModelSwitchMethodForBackend verifies the model-switch method lookup is
+// wired up (acp_wire.go init()) and reports the right method per backend.
+func TestACPModelSwitchMethodForBackend(t *testing.T) {
+	if ai.LookupACPModelSwitchMethodFn == nil {
+		t.Fatal("LookupACPModelSwitchMethodFn should be wired up by acp_wire.go init()")
+	}
+
+	// A backend with no declaration keeps the default config-option path.
+	if got := ai.LookupACPModelSwitchMethodFn("kimi"); got != "" {
+		t.Errorf("kimi model switch method = %q, want \"\" (config-option path)", got)
+	}
+	if got := ai.LookupACPModelSwitchMethodFn("nonexistent"); got != "" {
+		t.Errorf("nonexistent model switch method = %q, want \"\"", got)
+	}
+}

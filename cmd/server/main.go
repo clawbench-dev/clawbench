@@ -30,9 +30,11 @@ import (
 	_ "clawbench/internal/ai/backends/codebuddy"
 	_ "clawbench/internal/ai/backends/codex"
 	_ "clawbench/internal/ai/backends/copilot"
+	_ "clawbench/internal/ai/backends/cursor"
 	_ "clawbench/internal/ai/backends/deepseek"
 	_ "clawbench/internal/ai/backends/dsh"
 	_ "clawbench/internal/ai/backends/grok"
+	_ "clawbench/internal/ai/backends/hermes"
 	_ "clawbench/internal/ai/backends/kimi"
 	_ "clawbench/internal/ai/backends/mimo"
 	_ "clawbench/internal/ai/backends/opencode"
@@ -420,6 +422,66 @@ func restartFuncAdapter(f func() error) func() {
 		if err := f(); err != nil {
 			slog.Error("restart failed", "error", err)
 		}
+	}
+}
+
+// Main-listener bind retry. The outgoing process holds the main port until
+// shutdown step 4 (srv.Shutdown), which runs AFTER the stream-finalize grace
+// (5s, plus the HTTP drain and ACP grace that follow). A replacement launched
+// in that window — the Windows sentinel waits a fixed 2s, and any manual
+// launch races the drain — used to hit "bind: address already in use" and
+// os.Exit(1) immediately, leaving the service down. This is the same class of
+// race the SSH tunnel port had (see internal/ssh listenWithRetry), and this is
+// the symmetric fix for the main port.
+const (
+	// mainListenRetryWindow must cover the outgoing process's drain, because
+	// (unlike the SSH port, which releaseSSHPortOnShutdown frees in
+	// milliseconds) there is no early-release path for the main port: it stays
+	// bound until srv.Shutdown at shutdown step 4, which runs after the 5s
+	// stream-finalize grace. Issue #538 measured a ~7.3s drain, so 10s left
+	// little margin; 15s also covers the stream grace plus a slow HTTP drain.
+	// Still bounded, so a genuinely occupied port reports its conflict.
+	mainListenRetryWindow = 15 * time.Second
+	// mainListenRetryInterval is the gap between bind attempts. 500ms keeps
+	// the warning log to ~30 lines worst case while still recovering within
+	// half a second of the port being released.
+	mainListenRetryInterval = 500 * time.Millisecond
+)
+
+// listenMainWithRetry binds addr for the main HTTP listener, retrying while
+// the bind keeps failing until the retry window elapses.
+//
+// Retrying on ANY bind failure (rather than only address-in-use) is
+// deliberate and mirrors internal/ssh listenWithRetry: detecting
+// address-in-use portably would need per-OS errno handling, because
+// syscall.EADDRINUSE is an invented value on Windows and never matches the
+// real WSAEADDRINUSE. The cost is bounded — a permanently un-bindable address
+// simply fails after the window instead of immediately.
+func listenMainWithRetry(addr string, window, interval time.Duration) (net.Listener, error) {
+	deadline := time.Now().Add(window)
+	for attempt := 0; ; attempt++ {
+		ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", addr)
+		if err == nil {
+			if attempt > 0 {
+				slog.Info(
+					"main listener bound after retry",
+					slog.String("addr", addr),
+					slog.Int("attempts", attempt+1),
+				)
+			}
+			return ln, nil
+		}
+
+		if !time.Now().Before(deadline) {
+			return nil, err
+		}
+		slog.Warn(
+			"main listener bind failed, retrying (port may still be held by the outgoing process)",
+			slog.String("addr", addr),
+			slog.Int("attempt", attempt+1),
+			slog.String("err", err.Error()),
+		)
+		time.Sleep(interval)
 	}
 }
 
@@ -1328,11 +1390,13 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	handler.SetTriggerBingSyncFunc(service.TriggerBingSync)
 	service.StartBingWallpaperWorker()
 
-	// Wire up the /cb-* command renderer for GROUP host prompts. The templates
-	// live in the handler package (OpenAPI-rendered), and the group orchestrator
-	// is in service, which cannot import handler — so the renderer is injected
-	// here (same pattern as SetPersistBingStateFn).
-	service.SetRenderGroupCommandFn(handler.RenderClawbenchCommand)
+	// Wire up the user-message command renderer for GROUP host prompts. The
+	// templates live in the handler package (OpenAPI-rendered), and the group
+	// orchestrator is in service, which cannot import handler — so the renderer
+	// is injected here (same pattern as SetPersistBingStateFn). It covers every
+	// injection kind: the built-in "/cb-*" commands and the explicit "#skill"
+	// reference.
+	service.SetRenderGroupCommandFn(handler.RenderCommandInjection)
 
 	// Cross-agent skill discovery: scan every agent's native skill directory
 	// (plus the user's own directory and cloned git repos) so a skill installed
@@ -1383,7 +1447,12 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// Without this, PrintBanner shows a password for an instance that immediately fails
 	// to bind, confusing users who then see "wrong password" when they connect to
 	// whichever process actually holds the port.
-	mainLn, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", addr)
+	//
+	// The bind retries: a restart routinely races the outgoing process for this
+	// port, because the old process keeps it until shutdown step 4 (srv.Shutdown)
+	// — after the stream-finalize grace. Failing here is fatal (os.Exit(1)), so
+	// without the retry a replacement launched during the drain stayed down.
+	mainLn, err := listenMainWithRetry(addr, mainListenRetryWindow, mainListenRetryInterval)
 	if err != nil {
 		slog.Error("failed to listen", slog.String("addr", addr), slog.String("err", err.Error()))
 		os.Exit(1)

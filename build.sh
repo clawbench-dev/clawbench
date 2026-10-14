@@ -18,6 +18,7 @@ DO_RESTART=""
 RESTART_SKIP_BUILD=""
 RESTART_PORT=""
 RESTART_DETACHED=""
+NOFRP=""
 for arg in "$@"; do
     case "$arg" in
         --windows)
@@ -47,6 +48,14 @@ for arg in "$@"; do
             ;;
         --android)
             BUILD_ANDROID=1
+            ;;
+        --nofrp)
+            # Exclude the FRP client library (github.com/fatedier/frp) from the
+            # binary. It is a dual-use reverse-proxy tool that endpoint security
+            # products flag as Greyware/riskware; a no-FRP build carries no such
+            # signature. Output filename gains a -nofrp suffix so it cannot
+            # clobber the normal build of the same platform.
+            NOFRP=1
             ;;
         --restart)
             DO_RESTART=1
@@ -95,6 +104,20 @@ LDFLAGS="-X 'clawbench/internal/version.Version=$FULL_VERSION'"
 # could not replace an older dev build.
 VERSION_CODE=$(clawbench_version_code "$SCRIPT_DIR")
 echo "  Version: $FULL_VERSION (code: $VERSION_CODE, release: $IS_RELEASE)"
+
+# Build tags. `nofrp` drops the FRP client library from the binary (see
+# internal/frp/manager_nofrp.go); it is orthogonal to the platform flags above.
+BUILD_TAGS=""
+BINARY_SUFFIX=""
+if [ -n "$NOFRP" ]; then
+    BUILD_TAGS="-tags nofrp"
+    BINARY_SUFFIX="-nofrp"
+    echo "  FRP: excluded (build tag: nofrp)"
+fi
+# `-tags` is omitted entirely (not passed empty) when unset: an empty -tags
+# argument is harmless but noisy in build output.
+GO_TAGS_ARG=""
+[ -n "$BUILD_TAGS" ] && GO_TAGS_ARG="$BUILD_TAGS"
 
 # 1. Build Vue frontend (must come before Go build so embed dir is populated)
 echo "[1/5] Building Vue frontend..."
@@ -164,7 +187,7 @@ fi
 # In restart mode with --restart-skip-build, skip this step
 if [[ -n "$RESTART_SKIP_BUILD" ]]; then
     echo "[3/5] Go backend build skipped (--restart-skip-build)"
-    BIN="$SCRIPT_DIR/$NAME"
+    BIN="$SCRIPT_DIR/$NAME$BINARY_SUFFIX"
     if [[ ! -f "$BIN" ]]; then
         echo "ERROR: Binary not found at $BIN. Run with build first." >&2
         exit 1
@@ -178,11 +201,11 @@ elif command -v go >/dev/null 2>&1; then
         # to keep cross-compiles from clobbering the host binary — a
         # `./build.sh --linux-arm64` in a checkout whose ./clawbench was serving
         # traffic replaced the running server's file with a foreign-arch build.
-        BINARY_NAME="${NAME}-${TARGET_OS}-${TARGET_ARCH}"
+        BINARY_NAME="${NAME}-${TARGET_OS}-${TARGET_ARCH}${BINARY_SUFFIX}"
         if [ "$TARGET_OS" = "windows" ]; then
-            BINARY_NAME="${NAME}-windows-${TARGET_ARCH}.exe"
+            BINARY_NAME="${NAME}-windows-${TARGET_ARCH}${BINARY_SUFFIX}.exe"
         fi
-        GOOS=$TARGET_OS GOARCH=$TARGET_ARCH CGO_ENABLED=0 go build -ldflags "$LDFLAGS" -o "$BINARY_NAME" ./cmd/server || { echo "ERROR: Go cross-compile failed" >&2; exit 1; }
+        GOOS=$TARGET_OS GOARCH=$TARGET_ARCH CGO_ENABLED=0 go build $GO_TAGS_ARG -ldflags "$LDFLAGS" -o "$BINARY_NAME" ./cmd/server || { echo "ERROR: Go cross-compile failed" >&2; exit 1; }
         echo "  Cross-compiled: $BINARY_NAME ($TARGET_OS/$TARGET_ARCH)"
     elif [ -n "$BUILD_ANDROID" ]; then
         # Android/Termux Go binary: must be PIE (interpreter /system/bin/linker64).
@@ -191,12 +214,12 @@ elif command -v go >/dev/null 2>&1; then
         # disable linkname checks for this target only.
         # Named clawbench-android-arm64 (not the bare "$NAME") so building the
         # APK never overwrites the host server binary in the working tree.
-        BINARY_NAME="${NAME}-android-arm64"
-        GOOS=android GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "-checklinkname=0 $LDFLAGS" -o "$BINARY_NAME" ./cmd/server || { echo "ERROR: Go Android build failed" >&2; exit 1; }
+        BINARY_NAME="${NAME}-android-arm64${BINARY_SUFFIX}"
+        GOOS=android GOARCH=arm64 CGO_ENABLED=0 go build $GO_TAGS_ARG -ldflags "-checklinkname=0 $LDFLAGS" -o "$BINARY_NAME" ./cmd/server || { echo "ERROR: Go Android build failed" >&2; exit 1; }
         echo "  Go Android binary: ./$BINARY_NAME (GOOS=android/arm64, PIE)"
     else
-        go build -ldflags "$LDFLAGS" -o "$NAME" ./cmd/server || { echo "ERROR: Go build failed" >&2; exit 1; }
-        echo "  Go binary: ./$NAME"
+        go build $GO_TAGS_ARG -ldflags "$LDFLAGS" -o "$NAME$BINARY_SUFFIX" ./cmd/server || { echo "ERROR: Go build failed" >&2; exit 1; }
+        echo "  Go binary: ./$NAME$BINARY_SUFFIX"
     fi
     # Build ACP mock agent binary (for E2E testing with ACP stdio transport)
     go build -o "acp-mock" ./cmd/acp-mock || { echo "ERROR: acp-mock build failed" >&2; exit 1; }
@@ -211,14 +234,14 @@ echo "[4/5] Skipped (embedded agent download removed)"
 echo ""
 echo "=== Build complete ==="
 if [ -n "$TARGET_OS" ] && [ -n "$TARGET_ARCH" ]; then
-    BINARY_NAME="${NAME}-${TARGET_OS}-${TARGET_ARCH}"
-    [ "$TARGET_OS" = "windows" ] && BINARY_NAME="${NAME}-windows-${TARGET_ARCH}.exe"
+    BINARY_NAME="${NAME}-${TARGET_OS}-${TARGET_ARCH}${BINARY_SUFFIX}"
+    [ "$TARGET_OS" = "windows" ] && BINARY_NAME="${NAME}-windows-${TARGET_ARCH}${BINARY_SUFFIX}.exe"
     echo "  ./$BINARY_NAME       # Go binary ($TARGET_OS/$TARGET_ARCH, frontend+APK embedded)"
 elif [ -n "$BUILD_ANDROID" ]; then
-    echo "  ./${NAME}-android-arm64  # Go binary (android/arm64, frontend+APK embedded)"
+    echo "  ./${NAME}-android-arm64${BINARY_SUFFIX}  # Go binary (android/arm64, frontend+APK embedded)"
     echo "  ./$NAME              # Host server binary (unchanged by --android)"
 else
-    echo "  ./$NAME              # Go binary (frontend+APK embedded)"
+    echo "  ./$NAME${BINARY_SUFFIX}              # Go binary (frontend+APK embedded)"
 fi
 echo "  .clawbench-web/      # Frontend on disk (used if present, overrides embed)"
 
@@ -233,7 +256,7 @@ if [[ -n "$DO_RESTART" ]]; then
     if [[ -n "$RESTART_PORT" ]]; then
         PORT="$RESTART_PORT"
     fi
-    BIN="$SCRIPT_DIR/$NAME"
+    BIN="$SCRIPT_DIR/$NAME$BINARY_SUFFIX"
     LOG="$SCRIPT_DIR/.clawbench/build-and-restart.log"
     mkdir -p "$SCRIPT_DIR/.clawbench"
 
@@ -245,6 +268,7 @@ if [[ -n "$DO_RESTART" ]]; then
         echo "  Log:  $LOG"
         echo "  Detaching restart into a new session..."
         setsid "$SCRIPT_DIR/build.sh" --restart --restart-detached --restart-skip-build \
+            ${NOFRP:+--nofrp} \
             ${RESTART_PORT:+--restart-port=$RESTART_PORT} \
             >> "$LOG" 2>&1 &
         SETSID_PID=$!
@@ -350,6 +374,9 @@ else
     echo "  ./build.sh --darwin-amd64   # macOS amd64 (Intel)"
     echo "  ./build.sh --target=darwin/arm64"
     echo "  ./build.sh --android        # Android APK (release)"
+    echo ""
+    echo "Build options (modifiers):"
+    echo "  ./build.sh --windows --nofrp   # Exclude the FRP client library (no Greyware signature)"
     echo ""
     echo "Restart options (build + restart):"
     echo "  ./build.sh --restart            # Build and restart ClawBench"

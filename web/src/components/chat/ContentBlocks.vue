@@ -343,10 +343,25 @@
         </template>
       </template>
 
-      <!-- Text block with slash command badge (agent /command or ClawBench /cb-* command) -->
+      <!-- Text block with slash command badge (agent /command or ClawBench /cb-* command).
+           The leading icon is what tells the kinds apart (Bot = agent command,
+           Wrench = ClawBench built-in) — colour alone was too subtle, and a
+           solid fill reads as heavy/ugly inside the user bubble. -->
       <template v-else-if="block.type === 'text' && extractSlashCommand(block.text || '')">
-        <span class="slash-command-badge" :class="{ 'clawbench-command-badge': extractSlashCommand(block.text)!.clawbench }">{{ extractSlashCommand(block.text)!.command }}</span>
+        <span class="slash-command-badge" :class="{ 'clawbench-command-badge': extractSlashCommand(block.text)!.clawbench }">
+          <component :is="extractSlashCommand(block.text)!.clawbench ? Wrench : Bot" :size="12" class="command-badge-icon" />
+          {{ extractSlashCommand(block.text)!.command }}
+        </span>
         <span v-if="extractSlashCommand(block.text)!.rest.trim()" class="at-command-rest">{{ extractSlashCommand(block.text)!.rest.trim() }}</span>
+      </template>
+      <!-- Text block with an explicit "#skill" reference badge. Same shape as the
+           slash badge; the Sparkles icon distinguishes it. -->
+      <template v-else-if="block.type === 'text' && extractSkillCommand(block.text || '')">
+        <span class="slash-command-badge skill-command-badge">
+          <Sparkles :size="12" class="command-badge-icon" />
+          {{ '#' + extractSkillCommand(block.text)!.name }}
+        </span>
+        <span v-if="extractSkillCommand(block.text)!.rest.trim()" class="at-command-rest">{{ extractSkillCommand(block.text)!.rest.trim() }}</span>
       </template>
       <!-- Text block: streaming uses throttled render to avoid UI freeze -->
       <div v-else-if="block.type === 'text'" v-html="getBlockHtml(bi, block)"></div>
@@ -370,7 +385,7 @@ import { handleToolAction, shouldAutoExpandTool, updateAskSubmitState, classifyA
 import { askCardKey } from '@/utils/askQuestionState.ts'
 import { getToolIcon, toolDisplayName } from '@/utils/icons'
 import { teamMemberColorVar } from '@/utils/teamMemberColor'
-import { Brain, ChevronDown, ChevronUp, AlertCircle, AlertTriangle, XCircle, CheckCircle2 } from 'lucide-vue-next'
+import { Brain, ChevronDown, ChevronUp, AlertCircle, AlertTriangle, XCircle, CheckCircle2, Bot, Wrench, Sparkles } from 'lucide-vue-next'
 import TaskChatCard from '@/components/chat/TaskChatCard.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { renderMarkdownHtml, renderMermaidInElement } from '@/composables/useMarkdownRenderer.ts'
@@ -399,6 +414,7 @@ import {
   hasScheduledTasks as hasScheduledTasksUtil,
   scheduledTaskKeys as scheduledTaskKeysUtil,
   extractSlashCommand,
+  extractSkillCommand,
 } from '@/utils/contentBlocks.ts'
 
 const TAG = 'ContentBlocks'
@@ -2571,9 +2587,12 @@ onUnmounted(() => {
 
 /* The task preview card lives in TaskChatCard.vue, which owns its own styles. */
 
-/* Slash command badge in user messages (agent commands from ACP) */
+/* Command badge in user messages (agent /command, ClawBench /cb-*, #skill).
+   inline-flex so the leading icon and the text sit on one baseline. */
 .slash-command-badge {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
   padding:1px var(--space-4);
   border-radius: var(--radius-md);
   background: color-mix(in srgb, #0ea5e9 15%, transparent);
@@ -2583,6 +2602,12 @@ onUnmounted(() => {
   margin-right: var(--space-2);
   vertical-align: baseline;
   line-height: var(--line-height-relaxed);
+}
+
+/* The icon is the primary differentiator between the three badge kinds, so it
+   must never be squeezed out by a long command name. */
+.command-badge-icon {
+  flex-shrink: 0;
 }
 
 :root[data-theme-base="dark"] .slash-command-badge {
@@ -2608,6 +2633,27 @@ onUnmounted(() => {
 }
 
 .chat-message.user .slash-command-badge.clawbench-command-badge {
+  background: rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.95);
+}
+
+/* Skill reference badge (#name) — teal tint, matching the completion menu's
+   skill accent (completionSources.ts). Told apart from the slash badges by its
+   Sparkles icon, not by colour alone. */
+.slash-command-badge.skill-command-badge {
+  background: color-mix(in srgb, #14b8a6 15%, transparent);
+  color: #14b8a6;
+  border-radius: var(--radius-full);
+}
+
+:root[data-theme-base="dark"] .slash-command-badge.skill-command-badge {
+  background: color-mix(in srgb, #2dd4bf 15%, transparent);
+  color: #2dd4bf;
+}
+
+/* Inside the user bubble all badges share the same translucent-white recipe;
+   the icon carries the distinction (a solid fill looked heavy here). */
+.chat-message.user .slash-command-badge.skill-command-badge {
   background: rgba(255, 255, 255, 0.2);
   color: rgba(255, 255, 255, 0.95);
 }

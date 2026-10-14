@@ -299,6 +299,7 @@
                       :autoApprove="groupAutoApprove"
                       :mode="groupMode"
                       :parallelDefault="groupParallelDefault"
+                      :cruise="groupCruise"
                       :isGroup="isGroupSession"
                       @changed="refreshGroupMembers(sessionIdentity.currentSessionId.value)"
                     />
@@ -1325,6 +1326,7 @@ const {
   members: groupMembers,
   mode: groupMode,
   parallelDefault: groupParallelDefault,
+  cruise: groupCruise,
   hostMemberId: groupHostMemberId,
   resolveSpeaker: resolveGroupSpeaker,
   resolveByName: resolveGroupSpeakerByName,

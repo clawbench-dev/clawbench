@@ -306,15 +306,18 @@ func processClawbenchCommand(rawMsg, projectPath, sessionID string) (string, err
 	return rawMsg, nil
 }
 
-// RenderClawbenchCommand exposes processClawbenchCommand to the service layer,
-// which needs it to inject a /cb-* template into a GROUP's host prompt. The
+// RenderCommandInjection exposes processCommandInjection to the service layer,
+// which needs it to inject a command template into a GROUP's host prompt. The
 // orchestrator lives in internal/service and cannot import handler (cycle), so
 // main.go wires this function into service.SetRenderGroupCommandFn.
 //
-// Same contract as processClawbenchCommand: non-commands are returned unchanged
-// (the caller treats "unchanged" as "no injection").
-func RenderClawbenchCommand(rawMsg, projectPath, sessionID string) (string, error) {
-	return processClawbenchCommand(rawMsg, projectPath, sessionID)
+// It covers every user-message injection kind (the built-in "/cb-*" commands
+// and the explicit "#skill" reference), not just /cb-*, so the group path
+// cannot silently lack one. Same contract as the individual renderers: a
+// non-command is returned unchanged (the caller treats "unchanged" as "no
+// injection").
+func RenderCommandInjection(rawMsg, projectPath, sessionID string) (string, error) {
+	return processCommandInjection(rawMsg, projectPath, sessionID)
 }
 
 // clawbenchProjectCookie is the cookie name the AI must send for project

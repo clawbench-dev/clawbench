@@ -6,6 +6,7 @@
       "want": {
         "found": true,
         "end": false,
+        "goalSatisfied": false,
         "speakers": [
           "B"
         ],
@@ -30,6 +31,7 @@
       "want": {
         "found": true,
         "end": false,
+        "goalSatisfied": false,
         "speakers": [
           "A",
           "B",
@@ -58,6 +60,7 @@
       "want": {
         "found": false,
         "end": true,
+        "goalSatisfied": false,
         "speakers": [],
         "groups": [],
         "instruction": "",
@@ -72,6 +75,7 @@
       "want": {
         "found": true,
         "end": true,
+        "goalSatisfied": false,
         "speakers": [
           "B"
         ],
@@ -96,6 +100,7 @@
       "want": {
         "found": false,
         "end": false,
+        "goalSatisfied": false,
         "speakers": [],
         "groups": [],
         "instruction": "",
@@ -110,6 +115,7 @@
       "want": {
         "found": false,
         "end": false,
+        "goalSatisfied": false,
         "speakers": [],
         "groups": [],
         "instruction": "",
@@ -124,6 +130,7 @@
       "want": {
         "found": false,
         "end": false,
+        "goalSatisfied": false,
         "speakers": [],
         "groups": [],
         "instruction": "",
@@ -138,6 +145,7 @@
       "want": {
         "found": false,
         "end": true,
+        "goalSatisfied": false,
         "speakers": [],
         "groups": [],
         "instruction": "",
@@ -152,6 +160,7 @@
       "want": {
         "found": true,
         "end": false,
+        "goalSatisfied": false,
         "speakers": [
           "B"
         ],
@@ -176,6 +185,7 @@
       "want": {
         "found": true,
         "end": false,
+        "goalSatisfied": false,
         "speakers": [
           "B"
         ],
@@ -200,6 +210,7 @@
       "want": {
         "found": true,
         "end": false,
+        "goalSatisfied": false,
         "speakers": [
           "B"
         ],
@@ -224,6 +235,7 @@
       "want": {
         "found": true,
         "end": false,
+        "goalSatisfied": false,
         "speakers": [
           "B"
         ],
@@ -248,6 +260,7 @@
       "want": {
         "found": true,
         "end": false,
+        "goalSatisfied": false,
         "speakers": [],
         "groups": [],
         "instruction": "",
@@ -269,6 +282,7 @@
       "want": {
         "found": true,
         "end": false,
+        "goalSatisfied": false,
         "speakers": [
           "A",
           "B"
@@ -302,6 +316,7 @@
       "want": {
         "found": true,
         "end": false,
+        "goalSatisfied": false,
         "speakers": [
           "A",
           "B"
@@ -341,6 +356,7 @@
       "want": {
         "found": true,
         "end": false,
+        "goalSatisfied": false,
         "speakers": [
           "A"
         ],
@@ -372,6 +388,7 @@
       "want": {
         "found": false,
         "end": false,
+        "goalSatisfied": false,
         "speakers": [],
         "groups": [],
         "instruction": "",
@@ -386,6 +403,7 @@
       "want": {
         "found": false,
         "end": false,
+        "goalSatisfied": false,
         "speakers": [],
         "groups": [],
         "instruction": "",
@@ -400,6 +418,7 @@
       "want": {
         "found": false,
         "end": false,
+        "goalSatisfied": false,
         "speakers": [],
         "groups": [],
         "instruction": "",
@@ -414,6 +433,7 @@
       "want": {
         "found": true,
         "end": false,
+        "goalSatisfied": false,
         "speakers": [
           "A"
         ],
@@ -438,6 +458,7 @@
       "want": {
         "found": true,
         "end": false,
+        "goalSatisfied": false,
         "speakers": [
           "A"
         ],
@@ -462,6 +483,7 @@
       "want": {
         "found": true,
         "end": false,
+        "goalSatisfied": false,
         "speakers": [
           "A"
         ],
@@ -493,6 +515,7 @@
       "want": {
         "found": true,
         "end": false,
+        "goalSatisfied": false,
         "speakers": [
           "A",
           "B"
@@ -525,6 +548,7 @@
       "want": {
         "found": false,
         "end": false,
+        "goalSatisfied": false,
         "speakers": [],
         "groups": [],
         "instruction": "",
@@ -539,6 +563,7 @@
       "want": {
         "found": true,
         "end": false,
+        "goalSatisfied": false,
         "speakers": [
           "A"
         ],
@@ -563,6 +588,7 @@
       "want": {
         "found": true,
         "end": false,
+        "goalSatisfied": false,
         "speakers": [
           "A",
           "B"
@@ -589,6 +615,7 @@
       "want": {
         "found": true,
         "end": false,
+        "goalSatisfied": false,
         "speakers": [
           "A",
           "B"
@@ -615,6 +642,7 @@
       "want": {
         "found": true,
         "end": false,
+        "goalSatisfied": false,
         "speakers": [
           "A"
         ],
@@ -639,6 +667,7 @@
       "want": {
         "found": true,
         "end": false,
+        "goalSatisfied": false,
         "speakers": [
           "A"
         ],
@@ -663,6 +692,7 @@
       "want": {
         "found": true,
         "end": false,
+        "goalSatisfied": false,
         "speakers": [
           "C",
           "A",
@@ -697,6 +727,7 @@
       "want": {
         "found": true,
         "end": false,
+        "goalSatisfied": false,
         "speakers": [
           "A",
           "User"
@@ -723,6 +754,7 @@
       "want": {
         "found": true,
         "end": false,
+        "goalSatisfied": false,
         "speakers": [
           "A",
           "B",
@@ -757,6 +789,7 @@
       "want": {
         "found": true,
         "end": false,
+        "goalSatisfied": false,
         "speakers": [
           "A",
           "B"
@@ -783,6 +816,7 @@
       "want": {
         "found": true,
         "end": false,
+        "goalSatisfied": false,
         "speakers": [],
         "groups": [],
         "instruction": "",
@@ -804,6 +838,7 @@
       "want": {
         "found": true,
         "end": false,
+        "goalSatisfied": false,
         "speakers": [
           "A"
         ],
@@ -817,6 +852,113 @@
           }
         ],
         "instruction": "照常",
+        "before": "",
+        "after": "",
+        "bcc": []
+      }
+    },
+    {
+      "name": "goal_satisfied_only",
+      "text": "<clawbench-goal-satisfied/>",
+      "want": {
+        "found": false,
+        "end": false,
+        "goalSatisfied": true,
+        "speakers": [],
+        "groups": [],
+        "instruction": "",
+        "before": "",
+        "after": "",
+        "bcc": []
+      }
+    },
+    {
+      "name": "goal_satisfied_with_end",
+      "text": "<clawbench-goal-satisfied/><clawbench-group-end/>",
+      "want": {
+        "found": false,
+        "end": true,
+        "goalSatisfied": true,
+        "speakers": [],
+        "groups": [],
+        "instruction": "",
+        "before": "",
+        "after": "",
+        "bcc": []
+      }
+    },
+    {
+      "name": "goal_satisfied_with_spaces",
+      "text": "<clawbench-goal-satisfied  />",
+      "want": {
+        "found": false,
+        "end": false,
+        "goalSatisfied": true,
+        "speakers": [],
+        "groups": [],
+        "instruction": "",
+        "before": "",
+        "after": "",
+        "bcc": []
+      }
+    },
+    {
+      "name": "goal_satisfied_inside_private_not_satisfied",
+      "text": "<clawbench-mention targets=\"A\" private>我想结束 <clawbench-goal-satisfied/></clawbench-mention>",
+      "want": {
+        "found": true,
+        "end": false,
+        "goalSatisfied": false,
+        "speakers": [],
+        "groups": [],
+        "instruction": "",
+        "before": "",
+        "after": "",
+        "bcc": [
+          {
+            "targets": [
+              "A"
+            ],
+            "content": "我想结束 <clawbench-goal-satisfied/>"
+          }
+        ]
+      }
+    },
+    {
+      "name": "goal_satisfied_with_mention",
+      "text": "已完成 <clawbench-mention targets=\"A\">继续</clawbench-mention> <clawbench-goal-satisfied/>",
+      "want": {
+        "found": true,
+        "end": false,
+        "goalSatisfied": true,
+        "speakers": [
+          "A"
+        ],
+        "groups": [
+          {
+            "members": [
+              "A"
+            ],
+            "parallel": false,
+            "instruction": "继续"
+          }
+        ],
+        "instruction": "继续",
+        "before": "已完成",
+        "after": "",
+        "bcc": []
+      }
+    },
+    {
+      "name": "goal_satisfied_unclosed_not_matched",
+      "text": "<clawbench-goal-satisfied",
+      "want": {
+        "found": false,
+        "end": false,
+        "goalSatisfied": false,
+        "speakers": [],
+        "groups": [],
+        "instruction": "",
         "before": "",
         "after": "",
         "bcc": []
@@ -878,6 +1020,21 @@
       "name": "strip_no_tag",
       "text": "普通发言",
       "want": "普通发言"
+    },
+    {
+      "name": "strip_goal_satisfied",
+      "text": "结论 <clawbench-goal-satisfied/>",
+      "want": "结论"
+    },
+    {
+      "name": "strip_goal_satisfied_with_end",
+      "text": "结论 <clawbench-goal-satisfied/><clawbench-group-end/>",
+      "want": "结论"
+    },
+    {
+      "name": "strip_goal_satisfied_only",
+      "text": "<clawbench-goal-satisfied/>",
+      "want": ""
     }
   ]
 }

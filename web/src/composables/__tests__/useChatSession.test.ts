@@ -363,6 +363,7 @@ vi.mock('@/composables/useAgents', () => ({
     supportsACP: vi.fn().mockReturnValue(false),
   }),
   restoreOriginalModels: vi.fn(),
+  resetModelViewForTransport: vi.fn(),
   populateACPStateFromCache: vi.fn().mockResolvedValue(undefined),
   getAgentThinkingEffortLevels: vi.fn().mockReturnValue([]),
   updateACPModelList: mockAgentFns.updateACPModelList,

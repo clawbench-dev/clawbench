@@ -24,7 +24,7 @@ describe('statsChart axis labels (mobile vs desktop)', () => {
     vi.restoreAllMocks()
   })
 
-  it('treats <1024px as narrow', () => {
+  it('treats a narrow viewport as narrow (below the wide-screen threshold)', () => {
     setInnerWidth(800)
     expect(isNarrowScreen()).toBe(true)
     setInnerWidth(1440)

@@ -130,6 +130,8 @@ InvalidSHA: Invalid commit SHA format
 InvalidBranchName: Invalid branch name
 ModelDiscoveryNotSupported: This agent does not support model discovery
 ModelDiscoveryFailed: Model discovery returned no results
+ModelSwitchFailed: Could not switch model
+ModelSwitchFailedDetail: "Could not switch model: {{.Detail}}"
 CLINotFound: CLI tool not found, please install it first
 CustomURLOpenAIFormat: Custom URL for OpenAI format should end with /chat/completions
 CustomURLAnthropicFormat: Custom URL for Anthropic format should end with /v1/messages
@@ -144,6 +146,56 @@ PushTaskStarted: Task started
 PushSessionCompleted: Session completed
 PushSessionCancelled: Session cancelled
 PushActionRequired: Action requires approval
+# IM push (DingTalk / Feishu) — the strings the bot writes into the user's chat.
+# The push backends run on their own goroutines with no HTTP request in scope,
+# so they localize via LocalizerForLocale(model.Language), exactly like
+# AutoContinue. DingTalk renders sampleMarkdown; Feishu renders an interactive
+# card, so a few strings differ only in emphasis or word order and are kept
+# separate to preserve each platform's existing output.
+PushLabelSession: Session
+PushLabelProject: Project
+PushLabelTask: Task
+PushLabelAction: Action
+PushLabelCommand: Command
+PushLabelFile: File
+PushReplyHintSend: 'Send `@{{.ID}} <message>` to send a message to the session'
+PushReplyHintQueue: 'Send `@{{.ID}} <message>` to append it to the queue'
+PushSessionServiceUnavailable: Session service unavailable; file not sent.
+PushSessionUnavailable: Session unavailable; file not sent.
+PushSendFileFailed: 'Failed to send file: '
+PushFileSent: File sent
+PushFileTooLarge: File exceeds the size limit ({{.MaxMB}} MB); not sent.
+PushFilesDownloadFailed: Failed to download {{.Count}} files; not sent.
+PushFileDownloadFailed: Failed to download the file; not sent.
+PushSentToSessionBold: Sent to session **{{.Label}}**; the AI is processing it
+PushSentToSessionPlain: Sent to session {{.Label}}; the AI is processing it
+PushFilesCount: ({{.Count}} files)
+PushPartialDownloadFailed: '⚠️ {{.Count}} files failed to download; not sent.'
+PushAttachmentsTruncated: '⚠️ Attachment count exceeds the limit ({{.Max}}); only the first {{.Sent}} were sent.'
+PushUnsupportedMsgType: Unsupported message type ({{.Type}}). Please send text, an image, or a file.
+PushSendMessageFailed: 'Failed to send message: '
+PushMessageSent: Message sent
+PushNoSessionSelected: 'No session selected yet. Send /ls to list sessions, then use @sessionID <message> to pick one.'
+PushErrorTitle: Error
+PushUnsupportedTitle: Unsupported
+PushSelectSessionTitle: Select a session
+PushSubscribedTitle: Subscribed
+PushSessionListTitle: Session list
+PushSessionListIntro: 'Send **@sessionID <message>** to send a message to a session:'
+PushSessionListIntroFeishu: 'Send **@sessionID** <message> to send a message to a session:'
+PushNoProject: (no project)
+PushNoTitle: (untitled)
+PushSessionLabelPrefix: 'Session '
+PushSubscribedNoAvailableDingtalk: Subscribed to ClawBench notifications. No sessions available.
+PushSubscribedNoAvailableFeishu: ClawBench notifications subscribed. No sessions available.
+PushSubscribedListFailedDingtalk: Subscribed to ClawBench notifications. Failed to list sessions.
+PushSubscribedListFailedFeishu: ClawBench notifications subscribed. Failed to list sessions.
+PushSubscribedNoSessionsDingtalk: Subscribed to ClawBench notifications. No sessions.
+PushSubscribedNoSessionsFeishu: ClawBench notifications subscribed. No sessions.
+PushMultipleRunningSessions: 'Multiple running sessions matched; use a longer ID ({{.ID}}…)'
+PushMultipleSessions: 'Multiple sessions matched; use a longer ID ({{.ID}}…)'
+PushSessionNotFound: Session {{.ID}} not found
+PushRecentSessionUnavailable: 'The recent session is unavailable; pick again with /ls: {{.Error}}'
 NotFound: Not found
 PermissionNotFound: No pending permission request found
 ACPSessionNotFound: ACP session no longer exists on the agent side
@@ -164,8 +216,77 @@ RAGResetFailed: Index rebuild failed
 RAGSegmenterUnavailable: "Rebuild refused: the text segmenter is unavailable. Rebuilding now would replace correctly segmented text with unsplit text and break Chinese search — restart the service and try again."
 RAGRebuildAccepted: Rebuild started in the background
 AutoContinue: Continue
+ACPSessionRecoveredNew: ACP session could not be restored; started a new session (the previous conversation context was lost).
 GroupYourTurn: "It's your turn to speak"
 GroupDiscussionLimitReached: "The agents reached the discussion limit"
+GroupCruiseConfirming: "Auto-cruise: checking with the members whether the task is complete"
+GroupCruiseSatisfied: "Auto-cruise: task confirmed complete after {{.Rounds}} rounds"
+# Group-timeline system rows. These are WRITTEN (not rendered) in the active
+# locale: the text is persisted to chat_history and ALSO injected into every
+# member's context as "[系统] <text>" (group_inject.go), so it must be a
+# readable sentence, never a key. A locale switch therefore does not retranslate
+# history — matching decision 96b.
+GroupMemberJoined: '{{.Name}} joined the discussion'
+GroupMemberLeft: '{{.Name}} left'
+GroupMemberUnknown: Member
+GroupUnknownMention: '{{.Speaker}} @-mentioned a member who does not exist: {{.Names}} (ignored)'
+GroupMemberListSeparator: ', '
+GroupSpecialtySuffix: ' ({{.Specialty}})'
+GroupHostTitle: "{{.Name}}'s group chat"
+GroupFreeTitle: Group chat
+# Forge event-context block. The backend renders the SAME labels the task form
+# previews (web/src/utils/forgeEventContextVars.ts), so the two can no longer
+# drift — the backend previously held its own Chinese literals while the
+# frontend rendered i18n keys, so an English user's preview and the actually
+# injected prompt disagreed.
+EventContextHeader: Forge event
+EventContextYes: 'yes'
+EventContextNo: 'no'
+EventContextSeparator: ': '
+EventVarEventType: Event type
+EventVarRepo: Repository
+EventVarItem: Item
+EventVarTitle: Title
+EventVarUrl: URL
+EventVarAuthor: Author
+EventVarState: State
+EventVarPrevState: Previous state
+EventVarBody: Body
+EventVarLabels: Labels
+EventVarAssignees: Assignees
+EventVarDraft: Draft
+EventVarSourceBranch: Source branch
+EventVarMergedAt: Merged at
+EventVarCreatedAt: Created at
+EventVarUpdatedAt: Updated at
+EventVarCommentCount: Comment count
+EventVarCommentBody: Comment body
+EventVarCommentId: Comment ID
+EventVarPipelineStatus: Pipeline status
+EventVarPipelineUrl: Pipeline URL
+EventVarPipelineNumber: Pipeline number
+EventVarPipelineRef: Pipeline ref
+EventVarPipelineSha: Pipeline commit
+EventVarPipelineTrigger: Pipeline trigger
+EventVarPipelineDuration: Pipeline duration
+EventVarPipelineLinkedPrs: Linked change requests
+EventVarActorIsSelf: Self-triggered
+# Forge event IM notification (title + body pushed to DingTalk/Feishu). The
+# dispatcher runs on a background goroutine, so it localizes via model.Language
+# like the other push strings.
+ForgeEventItemIssue: Issue
+ForgeEventItemChangeRequest: Change request
+ForgeEventItemPipeline: Repository pipeline
+ForgeEventOpened: opened
+ForgeEventClosed: closed
+ForgeEventMerged: merged
+ForgeEventReopened: reopened
+ForgeEventCommented: new comment
+ForgeEventPipelineDone: pipeline finished
+ForgeEventLabelRepo: Repo
+ForgeEventLabelEvent: Event
+ForgeEventLabelAuthor: Author
+ForgeEventViewDetail: View details
 PortForwardUnavailable: port forwarding is not available
 TunnelTargetUnreachable: tunnel target is unreachable
 TunnelReverseRequiresHTTP2: reverse forwarding requires HTTP/2; use the SSH transport on HTTP/1.1

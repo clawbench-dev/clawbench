@@ -347,15 +347,16 @@ func TestInjectedFor_MultipleUserDirsDedupe(t *testing.T) {
 	}
 }
 
-// TestResolveSkillsDirs covers the default fallback and blank filtering.
+// TestResolveSkillsDirs covers blank filtering and the absence of a default
+// fallback: an empty list stays empty.
 func TestResolveSkillsDirs(t *testing.T) {
 	origDataDir := model.DataDir
 	t.Cleanup(func() { model.DataDir = origDataDir })
 	model.DataDir = t.TempDir()
 
-	t.Run("empty list falls back to the default dir", func(t *testing.T) {
+	t.Run("empty list stays empty", func(t *testing.T) {
 		cfg := model.Config{}
-		assert.Equal(t, []string{model.DefaultSkillsDir()}, cfg.ResolveSkillsDirs())
+		assert.Empty(t, cfg.ResolveSkillsDirs())
 	})
 
 	t.Run("configured dirs are returned in order", func(t *testing.T) {
@@ -368,9 +369,9 @@ func TestResolveSkillsDirs(t *testing.T) {
 		assert.Equal(t, []string{"/a", "/b"}, cfg.ResolveSkillsDirs())
 	})
 
-	t.Run("an all-blank list falls back to the default", func(t *testing.T) {
+	t.Run("an all-blank list resolves to empty", func(t *testing.T) {
 		cfg := model.Config{Skills: model.SkillsConfig{Dirs: []string{"", ""}}}
-		assert.Equal(t, []string{model.DefaultSkillsDir()}, cfg.ResolveSkillsDirs())
+		assert.Empty(t, cfg.ResolveSkillsDirs())
 	})
 }
 
@@ -699,4 +700,115 @@ func TestAllForProject_NoDuplicateWhenProjectIsGlobalDir(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 1, count, "a project dir that is also a global source must not be listed twice")
+}
+
+// --- ResolveForProject tests ---
+
+// TestResolveForProject_FindsGlobalAndProject pins the two scopes: a global
+// skill and the current project's skill both resolve, while another project's
+// does not.
+func TestResolveForProject_FindsGlobalAndProject(t *testing.T) {
+	_, _, reg := setupRegistry(t)
+
+	userDir := filepath.Join(model.DataDir, "user")
+	require.NoError(t, os.MkdirAll(userDir, 0o755))
+	model.ConfigInstance.Skills.Dirs = []string{userDir}
+	writeSkill(t, userDir, "global-skill", "---\nname: global-skill\ndescription: g\n---\n")
+
+	projA := t.TempDir()
+	projB := t.TempDir()
+	writeSkill(t, projectSkillsDir(projA), "proj-a-skill", "---\nname: proj-a-skill\ndescription: a\n---\n")
+	writeSkill(t, projectSkillsDir(projB), "proj-b-skill", "---\nname: proj-b-skill\ndescription: b\n---\n")
+	reg.ScanAll()
+
+	s, ok := reg.ResolveForProject("global-skill", projA)
+	require.True(t, ok)
+	assert.Equal(t, "global-skill", s.Name)
+
+	s, ok = reg.ResolveForProject("proj-a-skill", projA)
+	require.True(t, ok)
+	assert.Equal(t, SourceProject, s.Source.Kind)
+
+	_, ok = reg.ResolveForProject("proj-b-skill", projA)
+	assert.False(t, ok, "another project's skill must not resolve")
+
+	// The global scope sees no project skills at all.
+	_, ok = reg.ResolveForProject("proj-a-skill", "")
+	assert.False(t, ok, "an empty project path must not resolve project skills")
+}
+
+// TestResolveForProject_CanonicalName pins the identity rule: matching is
+// case-insensitive and tolerates a leading "/" on either side.
+func TestResolveForProject_CanonicalName(t *testing.T) {
+	_, _, reg := setupRegistry(t)
+	userDir := filepath.Join(model.DataDir, "user")
+	require.NoError(t, os.MkdirAll(userDir, 0o755))
+	model.ConfigInstance.Skills.Dirs = []string{userDir}
+	writeSkill(t, userDir, "mmx-cli", "---\nname: mmx-cli\ndescription: m\n---\n")
+	reg.ScanAll()
+
+	for _, query := range []string{"mmx-cli", "MMX-CLI", "/mmx-cli", "  MMX-Cli  "} {
+		_, ok := reg.ResolveForProject(query, "")
+		assert.True(t, ok, "query %q must resolve", query)
+	}
+	_, ok := reg.ResolveForProject("", "")
+	assert.False(t, ok, "an empty name must not resolve")
+	_, ok = reg.ResolveForProject("nope", "")
+	assert.False(t, ok)
+}
+
+// TestResolveForProject_HighestPriorityWins pins that the resolved skill is the
+// same entry the listing view would show for that name: the highest-priority
+// source wins.
+//
+// Note the listing (AllForProject) reports every native dir as "other" — own-ness
+// is relative to an agent, and this view has no agent in scope — so a project
+// skill outranks a native-directory skill of the same name.
+func TestResolveForProject_HighestPriorityWins(t *testing.T) {
+	_, otherDir, reg := setupRegistry(t)
+	userDir := filepath.Join(model.DataDir, "user")
+	require.NoError(t, os.MkdirAll(userDir, 0o755))
+	model.ConfigInstance.Skills.Dirs = []string{userDir}
+
+	writeSkill(t, otherDir, "dup", "---\nname: dup\ndescription: other\n---\n")
+	writeSkill(t, userDir, "dup", "---\nname: dup\ndescription: user\n---\n")
+	reg.ScanAll()
+
+	// A user dir outranks another agent's native dir.
+	s, ok := reg.ResolveForProject("dup", "")
+	require.True(t, ok)
+	assert.Equal(t, "user", s.Description)
+	assert.Equal(t, SourceUserDir, s.Source.Kind)
+
+	// A project skill outranks both.
+	project := t.TempDir()
+	writeSkill(t, projectSkillsDir(project), "dup", "---\nname: dup\ndescription: project\n---\n")
+	reg.ScanAll()
+	s, ok = reg.ResolveForProject("dup", project)
+	require.True(t, ok)
+	assert.Equal(t, "project", s.Description)
+	assert.Equal(t, SourceProject, s.Source.Kind)
+}
+
+// TestResolveForProject_IgnoresDisabledSwitch is the regression guard for the
+// deliberate asymmetry: the master switch gates AUTOMATIC injection, but an
+// explicit "#name" reference must still resolve when it is off.
+func TestResolveForProject_IgnoresDisabledSwitch(t *testing.T) {
+	_, _, reg := setupRegistry(t)
+	userDir := filepath.Join(model.DataDir, "user")
+	require.NoError(t, os.MkdirAll(userDir, 0o755))
+	model.ConfigInstance.Skills.Dirs = []string{userDir}
+	writeSkill(t, userDir, "manual-only", "---\nname: manual-only\ndescription: m\n---\n")
+	reg.ScanAll()
+
+	// Sanity: while the switch is on, the skill is injected automatically.
+	require.NotEmpty(t, reg.InjectedForProject("me", ""), "automatic injection must be on")
+
+	model.ConfigInstance.Skills.Enabled = false
+	reg.Invalidate()
+	assert.Empty(t, reg.InjectedForProject("me", ""), "automatic injection must be off when disabled")
+
+	s, ok := reg.ResolveForProject("manual-only", "")
+	require.True(t, ok, "an explicit reference must resolve even when the switch is off")
+	assert.Equal(t, "manual-only", s.Name)
 }

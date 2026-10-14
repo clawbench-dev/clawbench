@@ -1350,6 +1350,29 @@ describe('useChatStream', () => {
       expect(options.onStreamEnd).toHaveBeenCalledWith('cancelled')
     })
 
+    it('resyncs from the DB on cancelled, like done/error', async () => {
+      // Regression: 'cancelled' was the ONLY terminal branch that skipped
+      // onLoadHistory(). The backend persists a warning/error block for a
+      // failed turn but streams it only as a non-terminal warning; when the
+      // turn ends as 'cancelled' the placeholder is empty, so
+      // forceCleanupStreamingState REMOVES it entirely and the user saw no
+      // assistant message at all until an unrelated reload rebuilt the array
+      // (the reported "AI output finished with no reply until I switch away
+      // and back"). done/error/replay_done all resync for the same reason.
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      options.loading.value = true
+      connectStream('test-session-1')
+      options.onLoadHistory.mockClear()
+
+      simulateWsEvent('cancelled', {})
+
+      await vi.waitFor(() => {
+        expect(options.onLoadHistory).toHaveBeenCalled()
+      })
+    })
+
     it('clears loading when done arrives with no streaming placeholder', () => {
       // The same hang would exist on the completion path if a placeholder were
       // absent. 'done' has no placeholder guard, so this pins the behavior both

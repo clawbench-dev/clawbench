@@ -8,7 +8,7 @@
     :aria-valuenow="ariaValueNow"
     :aria-valuemin="ariaValueMin"
     :aria-valuemax="ariaValueMax"
-    :title="title"
+    :title="resolvedTitle"
     @pointerdown="onDividerPointerDown"
   >
     <div class="resize-divider__line" />
@@ -17,6 +17,9 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
 
 const props = withDefaults(defineProps<{
   /** 'horizontal' = left/right panes (vertical divider line, drag on X).
@@ -28,8 +31,14 @@ const props = withDefaults(defineProps<{
   ariaValueMax?: number
 }>(), {
   orientation: 'horizontal',
-  title: '拖动调整面板宽度',
 })
+
+/**
+ * The aria title. Resolved in a computed rather than a prop default so it
+ * follows the live locale: `withDefaults` is evaluated once at setup, before
+ * any reactive locale change, and would freeze the string in the boot language.
+ */
+const resolvedTitle = computed(() => props.title ?? t('common.dragToResize'))
 
 const isVertical = computed(() => props.orientation === 'vertical')
 

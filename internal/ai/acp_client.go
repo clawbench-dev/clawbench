@@ -44,6 +44,14 @@ type ClawBenchACPClient struct {
 	connRef           *ACPConn                      // reference to ACPConn for cache updates
 	debouncers        map[string]*toolCallDebouncer // acpSessionID → debouncer
 
+	// toolInputs caches the rawInput seen on tool_call / tool_call_update frames,
+	// keyed by PermissionKey (sessionID + ":" + toolCallID). Some agents omit
+	// rawInput from session/request_permission even though they sent it on the
+	// preceding tool_call (Cursor: it encodes the command in the request's title
+	// and leaves rawInput unset). RequestPermission falls back to this cache so
+	// the approval card can still show WHAT the agent wants to run. Guarded by mu.
+	toolInputs map[string]string
+
 	// LoadSession replay buffer: during LoadSession, SessionUpdate messages
 	// are collected here instead of being routed to WS stream channels.
 	loadSessionBuf   []acp.SessionNotification
@@ -81,6 +89,7 @@ func NewClawBenchACPClient() *ClawBenchACPClient {
 		pendingPermission: make(map[string]*pendingPermission),
 		debouncers:        make(map[string]*toolCallDebouncer),
 		terminals:         make(map[string]*terminalSession),
+		toolInputs:        make(map[string]string),
 	}
 }
 
@@ -92,6 +101,16 @@ func (c *ClawBenchACPClient) RegisterSession(acpSessionID string, ch chan<- Stre
 	defer c.mu.Unlock()
 	c.sessionRoutes[acpSessionID] = ch
 	c.debouncers[acpSessionID] = newToolCallDebouncer(ch, c.connRef)
+	// Reset the tool-input cache for this session at the start of each turn: a
+	// tool_call always precedes its permission request within the same turn, so
+	// stale entries from earlier turns are dead weight on a long-lived
+	// connection.
+	prefix := acpSessionID + ":"
+	for k := range c.toolInputs {
+		if strings.HasPrefix(k, prefix) {
+			delete(c.toolInputs, k)
+		}
+	}
 }
 
 // UnregisterSession removes the StreamEvent channel for an ACP session.
@@ -309,6 +328,14 @@ func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNot
 		return nil
 	}
 
+	// Cache tool input from tool_call / tool_call_update frames. Some agents
+	// (Cursor) send rawInput on the tool_call but omit it from the later
+	// session/request_permission, so RequestPermission reads it back from here
+	// to render the approval card's command/file detail. Done after the
+	// replay guard so LoadSession replay frames do not populate the cache with
+	// historical inputs.
+	c.cacheToolInput(n.SessionId, n.Update)
+
 	mapACPSessionUpdate(n.Update, ch, ctx, c.connRef, deb)
 	return nil
 }
@@ -403,6 +430,54 @@ func PermissionKey(sessionID, toolCallID string) string {
 	return sessionID + ":" + toolCallID
 }
 
+// maxCachedToolInputBytes bounds how much rawInput is retained per tool call.
+// Cursor's permission-relevant inputs are tiny ({command} / {path}), while other
+// backends put whole file bodies in a Write tool's rawInput — and those backends
+// already send rawInput on the permission request itself, so caching them is
+// pure waste. Oversized inputs are simply not cached (the card degrades to the
+// tool name for them, which is no worse than the pre-fix behavior).
+const maxCachedToolInputBytes = 32 * 1024
+
+// cacheToolInput records the rawInput carried by a tool_call / tool_call_update
+// frame so a later session/request_permission for the same tool call can reuse
+// it. Cursor sends rawInput on the tool_call but omits it from the permission
+// request (the command is only in the request's title), which otherwise leaves
+// the approval card with no command/file detail.
+//
+// Empty rawInput is ignored: agents send _meta-only updates (e.g. toolResponse)
+// with rawInput absent, and those must not clobber a value captured earlier.
+func (c *ClawBenchACPClient) cacheToolInput(sessionID acp.SessionId, update acp.SessionUpdate) {
+	var toolCallID string
+	var rawInput any
+	switch {
+	case update.ToolCall != nil:
+		toolCallID = string(update.ToolCall.ToolCallId)
+		rawInput = update.ToolCall.RawInput
+	case update.ToolCallUpdate != nil:
+		toolCallID = string(update.ToolCallUpdate.ToolCallId)
+		rawInput = update.ToolCallUpdate.RawInput
+	default:
+		return
+	}
+	if toolCallID == "" || rawInput == nil {
+		return
+	}
+	b, err := json.Marshal(rawInput)
+	if err != nil || len(b) == 0 || string(b) == "{}" || len(b) > maxCachedToolInputBytes {
+		return
+	}
+	c.mu.Lock()
+	c.toolInputs[PermissionKey(string(sessionID), toolCallID)] = string(b)
+	c.mu.Unlock()
+}
+
+// cachedToolInput returns the rawInput captured for a tool call, or "" if none.
+func (c *ClawBenchACPClient) cachedToolInput(sessionID, toolCallID string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.toolInputs[PermissionKey(sessionID, toolCallID)]
+}
+
 // RequestPermission blocks until the user responds to a permission request
 // via the HTTP API, or the context is cancelled (session cancelled/disconnected).
 // The ACP SDK dispatches inbound requests on dedicated goroutines, so blocking
@@ -435,6 +510,18 @@ func (c *ClawBenchACPClient) RequestPermission(ctx context.Context, p acp.Reques
 		if b, err := json.Marshal(p.ToolCall.RawInput); err == nil {
 			toolInput = string(b)
 		}
+	}
+	// An empty object is as useless as no rawInput at all (some agents send
+	// `rawInput: {}`), so treat it the same and fall through to the cache.
+	if toolInput == "{}" {
+		toolInput = ""
+	}
+	// Some agents omit rawInput from session/request_permission even though they
+	// sent it on the preceding tool_call (Cursor: it puts the command only in the
+	// request's title). Fall back to the value cached from that tool_call so the
+	// approval card can still show what the agent wants to run.
+	if toolInput == "" {
+		toolInput = c.cachedToolInput(sessionID, toolCallID)
 	}
 
 	pp := &pendingPermission{

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -781,17 +782,35 @@ func TestTTSStream_Success(t *testing.T) {
 		t.Fatal("TTS job not found after TTSGenerate returned")
 	}
 
-	// Connect to stream endpoint while the job is still alive.
-	// The mock synthesize blocks on `block`, so the goroutine won't finish
-	// and unregister the job before we connect.
+	// Connect to the stream endpoint while the job is still alive.
+	//
+	// This must be synchronized, not merely ordered: releasing the mock lets the
+	// job goroutine run to completion, and its deferred UnregisterTTSJob removes
+	// the job from the registry. If that lands before TTSStream's own lookup,
+	// the handler answers 404 (JobNotFound) instead of streaming — which is
+	// exactly the flake this test used to hit under load (reproduced with
+	// -count=100; macOS CI failed on it). So: run the handler in a goroutine,
+	// wait until it has written its first event (proof it resolved the job and
+	// is draining), and only then release the mock.
 	streamReq := httptest.NewRequest(http.MethodGet, "/api/tts/stream/"+jobID, http.NoBody)
 	streamReq = withProjectCookie(streamReq, env.ProjectDir)
-	streamW := httptest.NewRecorder()
+	streamW := newFirstWriteRecorder()
 
-	// Release the mock so the job can finish after we've connected.
+	streamDone := make(chan struct{})
+	go func() {
+		TTSStream(streamW, streamReq)
+		close(streamDone)
+	}()
+
+	select {
+	case <-streamW.firstWrite:
+		// Handler resolved the job and emitted its first SSE event.
+	case <-time.After(5 * time.Second):
+		t.Fatal("TTSStream did not emit any event within 5s")
+	}
+
+	// Now the handler holds the job; let synthesis finish.
 	close(block)
-
-	TTSStream(streamW, streamReq)
 
 	// Wait for the job to complete so events are fully flushed.
 	select {
@@ -799,12 +818,45 @@ func TestTTSStream_Success(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("TTS job did not complete in time")
 	}
+	select {
+	case <-streamDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("TTSStream did not return after the job finished")
+	}
 
 	body := streamW.Body.String()
 	assert.Contains(t, body, "event: phase")
 	assert.Contains(t, body, "summarizing")
 	assert.Contains(t, body, "synthesizing")
 	assert.Contains(t, body, "event: result")
+}
+
+// firstWriteRecorder is an httptest.ResponseRecorder that closes firstWrite on
+// its first Write. Tests use it to synchronize with a streaming handler that
+// blocks after emitting its first event: the signal proves the handler is
+// running and has already produced output, without a sleep.
+type firstWriteRecorder struct {
+	*httptest.ResponseRecorder
+	firstWrite chan struct{}
+	once       sync.Once
+}
+
+func newFirstWriteRecorder() *firstWriteRecorder {
+	return &firstWriteRecorder{
+		ResponseRecorder: httptest.NewRecorder(),
+		firstWrite:       make(chan struct{}),
+	}
+}
+
+func (w *firstWriteRecorder) Write(b []byte) (int, error) {
+	n, err := w.ResponseRecorder.Write(b)
+	w.once.Do(func() { close(w.firstWrite) })
+	return n, err
+}
+
+// Flush implements http.Flusher so the streaming handler takes its flush path.
+func (w *firstWriteRecorder) Flush() {
+	w.ResponseRecorder.Flush()
 }
 
 func TestTTSStream_JobNotFound(t *testing.T) {

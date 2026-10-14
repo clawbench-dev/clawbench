@@ -310,8 +310,8 @@ func (f *acpStdoutFilter) cacheModelsFromResponse(line []byte) {
 	slog.Info("acp stdout filter: cached SessionModelState extension", "current", state.CurrentModelID, "available", len(state.AvailableModels))
 }
 
-// acpSessionModelState mirrors the ACP SessionModelState extension that some
-// agents (e.g., kimi) return in NewSessionResponse / ResumeSessionResponse.
+// acpSessionModelState mirrors the ACP SessionModelState extension that agents
+// (kimi, hermes, …) return in NewSessionResponse / ResumeSessionResponse.
 // The ACP Go SDK v0.13.5 does not include this field, so we extract it from
 // raw JSON in the stdout filter.
 type acpSessionModelState struct {
@@ -319,7 +319,11 @@ type acpSessionModelState struct {
 	CurrentModelID  string         `json:"currentModelId"`
 }
 
+// acpModelInfo mirrors acp.schema.ModelInfo. Its wire alias is camelCase
+// "modelId" (the official Python schema declares model_id with
+// Field(alias="modelId")), so the JSON tag MUST be modelId — a snake_case tag
+// silently decodes every entry to an empty ID.
 type acpModelInfo struct {
-	ModelID string `json:"model_id"`
+	ModelID string `json:"modelId"`
 	Name    string `json:"name"`
 }

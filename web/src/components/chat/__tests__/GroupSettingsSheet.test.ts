@@ -12,11 +12,13 @@ vi.mock('vue-i18n', () => ({
 const mockAdd = vi.fn().mockResolvedValue(undefined)
 const mockRemove = vi.fn().mockResolvedValue(undefined)
 const mockSetParallel = vi.fn().mockResolvedValue(undefined)
+const mockSetCruise = vi.fn().mockResolvedValue(undefined)
 const mockGenerateAvatars = vi.fn().mockResolvedValue(undefined)
 vi.mock('@/composables/useGroupChat', () => ({
   addGroupMembers: (...a: any[]) => mockAdd(...a),
   removeGroupMember: (...a: any[]) => mockRemove(...a),
   setGroupParallelDefault: (...a: any[]) => mockSetParallel(...a),
+  setGroupCruise: (...a: any[]) => mockSetCruise(...a),
   generateMemberAvatars: (...a: any[]) => mockGenerateAvatars(...a),
 }))
 
@@ -68,6 +70,7 @@ describe('GroupSettingsSheet', () => {
     mockAdd.mockClear()
     mockGenerateAvatars.mockClear()
     mockToggleAutoApprove.mockClear()
+    mockSetCruise.mockClear()
   })
 
   // The panel is the group's settings surface (members + concurrency +
@@ -219,6 +222,37 @@ describe('GroupSettingsSheet', () => {
     expect(mountSheet(MEMBERS, { mode: 'host' }).find('#group-max-rounds').exists()).toBe(false)
     expect(mountSheet(MEMBERS, { mode: 'free' }).find('#group-max-rounds').exists()).toBe(false)
     expect(mountSheet(MEMBERS).find('.gm-setting-input').exists()).toBe(false)
+  })
+
+  // The auto-cruise switch is available in BOTH modes (cruise only changes WHEN
+  // the turn ends, not who routes), and persists via setGroupCruise.
+  describe('auto-cruise switch', () => {
+    it('renders in both modes and reflects the server value', () => {
+      const off = mountSheet(MEMBERS, { mode: 'host', cruise: false })
+      const input = off.find('#group-cruise')
+      expect(input.exists()).toBe(true)
+      expect((input.element as HTMLInputElement).checked).toBe(false)
+
+      const on = mountSheet(MEMBERS, { mode: 'free', cruise: true })
+      expect((on.find('#group-cruise').element as HTMLInputElement).checked).toBe(true)
+    })
+
+    it('persists the toggle via setGroupCruise', async () => {
+      const w = mountSheet(MEMBERS, { mode: 'host', cruise: false })
+      await w.find('#group-cruise').setValue(true)
+      expect(mockSetCruise).toHaveBeenCalledWith('g1', true)
+
+      mockSetCruise.mockClear()
+      const on = mountSheet(MEMBERS, { mode: 'free', cruise: true })
+      await on.find('#group-cruise').setValue(false)
+      expect(mockSetCruise).toHaveBeenCalledWith('g1', false)
+    })
+
+    it('shows a mode-specific hint', () => {
+      // The i18n stub returns the key, so the mode picks WHICH key is shown.
+      expect(mountSheet(MEMBERS, { mode: 'free' }).find('#group-cruise').element.parentElement?.parentElement?.textContent).toContain('group.cruiseHintFree')
+      expect(mountSheet(MEMBERS, { mode: 'host' }).find('#group-cruise').element.parentElement?.parentElement?.textContent).toContain('group.cruiseHintHost')
+    })
   })
 
   // The concurrency switch lives HERE, not in the chat
