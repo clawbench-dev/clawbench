@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
-import { useAgents, resetAgents, updateACPModelList, applyResolvedModelList, restoreOriginalModels, applyRefreshedModelList, populateACPStateFromCache, registerIdentityUpdaters, invalidateACPStateCache } from '@/composables/useAgents'
+import { useAgents, resetAgents, updateACPModelList, applyResolvedModelList, restoreOriginalModels, restoreACPModelView, resetModelViewForTransport, applyRefreshedModelList, populateACPStateFromCache, registerIdentityUpdaters, invalidateACPStateCache } from '@/composables/useAgents'
 
 // ── Controllable useGlobalEvents fake ──
 // useAgents wires an onEvent handler so the async model discovery broadcast
@@ -778,6 +778,96 @@ describe('useAgents', () => {
 
     it('does nothing for an unknown agent', () => {
       restoreOriginalModels('nonexistent')
+    })
+  })
+
+  // --- restoreACPModelView / resetModelViewForTransport ---
+
+  // ACP has no client-side default model: until the agent reports its own list,
+  // the CLI list is a guess and must not survive a switch back into ACP view.
+  describe('restoreACPModelView', () => {
+    beforeEach(async () => {
+      resetAgents()
+      registerMocks()
+      mockApiGet.mockResolvedValue({
+        agents: JSON.parse(JSON.stringify(testAgents)),
+        defaultAgent: 'claude',
+        acpStates: {},
+      })
+      await loadAgents()
+    })
+
+    it('clears the list when the agent has reported no ACP models', () => {
+      restoreOriginalModels('claude')
+      expect(getAgentModels('claude').length).toBeGreaterThan(0)
+
+      const applied = restoreACPModelView('claude')
+
+      expect(applied).toBe(false)
+      expect(getAgentModels('claude')).toEqual([])
+    })
+
+    it('applies the ACP list when the cache has one', async () => {
+      resetAgents()
+      registerMocks()
+      mockApiGet.mockResolvedValue({
+        agents: JSON.parse(JSON.stringify(testAgents)),
+        defaultAgent: 'claude',
+        acpStates: {
+          claude: {
+            modelListState: {
+              resolvedModels: [{ id: 'acp-live', name: 'ACP Live', default: true }],
+              cliModels: [{ id: 'claude-3.5', name: 'Claude 3.5 Sonnet', default: true }],
+              currentModelId: 'acp-live',
+            },
+          },
+        },
+      })
+      await loadAgents()
+
+      const applied = restoreACPModelView('claude')
+
+      expect(applied).toBe(true)
+      expect(getAgentModels('claude').map(m => m.id)).toEqual(['acp-live'])
+    })
+  })
+
+  describe('resetModelViewForTransport', () => {
+    it('clears the list for an acp-stdio agent with no ACP models', async () => {
+      resetAgents()
+      registerMocks()
+      const acpAgent = {
+        id: 'acp-t', name: 'ACP T', backend: 'acp',
+        transport: 'acp-stdio', acpCommand: 'acp-server',
+        models: [],
+        cliModels: [{ id: 'cli-1', name: 'CLI 1', default: true }],
+      }
+      mockApiGet.mockResolvedValue({ agents: [acpAgent], defaultAgent: 'acp-t', acpStates: {} })
+      await loadAgents()
+
+      restoreOriginalModels('acp-t') // simulate the ACP -> CLI half of a toggle
+      expect(getAgentModels('acp-t').map(m => m.id)).toEqual(['cli-1'])
+
+      resetModelViewForTransport('acp-t')
+
+      expect(getAgentModels('acp-t')).toEqual([])
+    })
+
+    it('restores the CLI baseline for a cli-transport agent', async () => {
+      resetAgents()
+      registerMocks()
+      const cliAgent = {
+        id: 'cli-t', name: 'CLI T', backend: 'cli',
+        transport: 'cli',
+        models: [{ id: 'other', name: 'Other', default: true }],
+        cliModels: [{ id: 'cli-1', name: 'CLI 1', default: true }],
+      }
+      mockApiGet.mockResolvedValue({ agents: [cliAgent], defaultAgent: 'cli-t', acpStates: {} })
+      await loadAgents()
+
+      resetModelViewForTransport('cli-t')
+
+      expect(getAgentModels('cli-t').map(m => m.id)).toEqual(['cli-1'])
     })
   })
 

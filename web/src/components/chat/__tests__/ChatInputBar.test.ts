@@ -1377,6 +1377,15 @@ describe('ChatInputBar', () => {
     expect(wrapper.find('.session-info-model').exists()).toBe(true)
   })
 
+  it('shows a Default placeholder when no model is selected', async () => {
+    // An ACP agent that has not reported its models yet has no model to name,
+    // and the turn deliberately carries no modelId. The chip must not render
+    // blank. (This suite's i18n stub renders the raw key.)
+    const wrapper = mountBar({ currentModelName: '' })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.session-info-model').text()).toContain('chat.sessionInfo.default')
+  })
+
   it('textarea focus and blur events', async () => {
     const wrapper = mountBar()
     const textarea = wrapper.find('.chat-textarea')

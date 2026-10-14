@@ -3870,6 +3870,15 @@ paths:
         同一对列表也挂在 `acpStates[].modelListState` 的 `resolvedModels` /
         `cliModels` 字段上，便于客户端仅凭 ACP 状态缓存刷新视图。
 
+        **ACP 未确认时不展示 CLI 猜测列表**：agent 的 `transport` 为 `acp-stdio`
+        且其 ACP 运行时**从未上报过**模型列表时，`agents[].models` 返回**空数组**
+        （`cliModels` 仍照常返回）。ACP 协议没有「客户端默认模型」的概念——模型是
+        `category: "model"` 的会话配置项，agent 在 `session/new` 自带 `currentValue`，
+        客户端只需显示、可选地改；在 agent 开口之前，CLI 发现的列表只是猜测，把它当
+        可运行模型展示（并据此发送 `session/set_config_option`）可能选中 agent 无法
+        运行的模型。客户端此时应显示占位（如「默认」）并在发送时不带 `modelId`，
+        交由 agent 自行决定。传输为 `cli` 的双传输 agent 不受此约束。
+
         **按项目过滤**：返回的列表只包含当前项目可见的 agent——全局 agent
         （`project_id` 为空）始终可见，被标记「仅当前项目」的 agent 只在其所属
         项目中可见（依据请求的 `clawbench_project` cookie）。`defaultAgent` 同样
@@ -3968,6 +3977,10 @@ paths:
         返回 `{ models, cliModels }`——与 GET /api/agents 同一形状。`models` 是发现结果
         与已缓存的 ACP 模型列表合并后的列表（ACP 对成员资格有权威性），`cliModels` 是
         未经合并的纯 CLI 列表，供客户端在切换到 CLI 传输时直接渲染。
+
+        与 GET /api/agents 一致：当 agent 的 `transport` 为 `acp-stdio` 且其 ACP 运行时
+        尚未上报模型时，`models` 返回**空数组**（发现结果仍照常落库，`cliModels` 照常
+        返回）——否则手动刷新一次就会把 CLI 猜测列表写回 ACP 视图。
 
         `/api/agents/rescan`：重跑 agent 刷新流水线（探测 CLI → 发现模型 → 落库 →
         重载内存），返回与 GET /api/agents 相同形状、同样按当前项目过滤的

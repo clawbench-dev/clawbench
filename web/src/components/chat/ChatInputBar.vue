@@ -352,7 +352,11 @@
          Hidden for group sessions: model / mode+auto-approve / context-usage are
          all per-agent settings with no owner on a multi-agent timeline. -->
     <div v-if="!isGroupSession" class="chat-session-info">
-      <span class="session-info-model" @click.stop="openSettingsDrawer('model')"><ProviderIcon :model-name="currentModelName || ''" :size="11" />{{ currentModelName }}</span>
+      <!-- Empty currentModelName is a real state, not a loading gap: an ACP
+           agent that has not reported its models yet has no model to name, and
+           the turn deliberately carries no modelId so the agent picks its own.
+           Show "Default" rather than an empty chip. -->
+      <span class="session-info-model" @click.stop="openSettingsDrawer('model')"><ProviderIcon :model-name="currentModelName || ''" :size="11" />{{ currentModelName || t('chat.sessionInfo.default') }}</span>
       <template v-if="showModeInfo">
         <span class="session-info-divider"></span>
         <span class="session-info-mode" :class="{ 'session-info-mode-auto': autoApprove }" @click.stop="onModeClick" v-long-press="onModeLongPress" @mousedown.stop="onModeMouseDown" @mouseup.stop="onModeMouseUp"><Compass :size="11" />{{ currentModeName }}</span>

@@ -43,6 +43,8 @@ vi.mock('@/components/common/PopupMenu.vue', () => ({
 vi.mock('@/composables/useAgents', () => ({
   useAgents: vi.fn(),
   restoreOriginalModels: vi.fn(),
+  restoreACPModelView: vi.fn(),
+  resetModelViewForTransport: vi.fn(),
   populateACPStateCache: vi.fn().mockResolvedValue(undefined),
   populateACPStateFromCache: vi.fn().mockResolvedValue(undefined),
   invalidateACPStateCache: vi.fn(),

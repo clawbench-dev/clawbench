@@ -47,7 +47,13 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 	effectiveThinkingEffort := thinkingEffortOverride // Explicit pick > session > agent default
 	effectiveMode := modeOverride                     // Explicit pick > session > agent default
 
-	systemPrompt, agentModel, agentCommand, effectiveThinkingEffort, effectiveMode := resolveAgentConfig(agentID, projectPath, modelOverride, effectiveThinkingEffort, effectiveMode)
+	// Resolved before resolveAgentConfig because the model fallback depends on
+	// whether this turn goes over ACP (see resolveAgentConfig). applySessionOverrides
+	// above has already finalized transportOverride, so the effective transport is
+	// known here.
+	isACP := resolveIsACP(agentID, transportOverride)
+
+	systemPrompt, agentModel, agentCommand, effectiveThinkingEffort, effectiveMode := resolveAgentConfig(agentID, projectPath, modelOverride, effectiveThinkingEffort, effectiveMode, isACP)
 
 	// Resolve effective session ID for CLI.
 	// All backends store their CLI-identifiable session ID in external_session_id:
@@ -61,8 +67,6 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 	resumeStart := time.Now()
 	resume := SessionHasAssistant(sessionID)
 	slog.Info("acp perf: buildChatRequest.SessionHasAssistant", "session_id", sessionID, "resume", resume, "elapsed", time.Since(resumeStart))
-
-	isACP := resolveIsACP(agentID, transportOverride)
 
 	// Resolve external_session_id for fork detection (used by both CLI resume and fork context injection).
 	var resolvedExtID string
@@ -197,7 +201,15 @@ func applySessionOverrides(sessionID, modelOverride, transportOverride, thinking
 // thinking effort and mode from it. Overrides win over the agent's defaults;
 // an unknown agent id yields empty fields rather than an error, so a stale
 // agent reference degrades to a plain turn instead of failing the send.
-func resolveAgentConfig(agentID, projectPath, modelOverride, thinkingEffort, mode string) (systemPrompt, agentModel, agentCommand, effectiveThinkingEffort, effectiveMode string) {
+//
+// isACP suppresses ONLY the agent-default model fallback. ACP has no concept of
+// a client-chosen default: the agent reports its own currentValue at session/new
+// and the client should leave it alone until it knows which models the agent can
+// run. Before that first handshake, agent.Models holds the CLI-discovered list,
+// which is a guess — sending one as session/set_config_option can select a model
+// the agent cannot run. An EXPLICIT choice (modelOverride) is always honored:
+// that is the user's intent, not a guess.
+func resolveAgentConfig(agentID, projectPath, modelOverride, thinkingEffort, mode string, isACP bool) (systemPrompt, agentModel, agentCommand, effectiveThinkingEffort, effectiveMode string) {
 	effectiveThinkingEffort = thinkingEffort
 	effectiveMode = mode
 
@@ -217,8 +229,15 @@ func resolveAgentConfig(agentID, projectPath, modelOverride, thinkingEffort, mod
 	}
 	if modelOverride != "" {
 		agentModel = modelOverride
-	} else if defaultID := agent.DefaultModelID(); defaultID != "" {
-		agentModel = defaultID
+	} else if !isACP || ai.HasConfirmedACPModels(agentID) {
+		// No explicit choice. Fall back to the agent default — unless this is an
+		// ACP turn whose agent has not reported its models yet, in which case
+		// the default would come from the CLI list and is a guess. Leaving the
+		// model empty makes applyModelSelection skip its RPC entirely, so the
+		// agent keeps its own default.
+		if defaultID := agent.DefaultModelID(); defaultID != "" {
+			agentModel = defaultID
+		}
 	}
 	if agent.Command != "" {
 		agentCommand = agent.Command
