@@ -295,8 +295,26 @@ describe('ContentBlocks', () => {
       const badge = wrapper.find('.skill-command-badge')
       expect(badge.exists()).toBe(true)
       expect(badge.text()).toBe('#pdf')
+      // The leading icon is what distinguishes the badge kinds.
+      expect(badge.find('.command-badge-icon').exists()).toBe(true)
       // The trailing text is shown outside the badge.
       expect(wrapper.find('.at-command-rest').text()).toBe('summarize this')
+    })
+
+    it('gives every badge kind its own distinguishing icon', () => {
+      // The icon (Bot / Wrench / Sparkles) is the primary cue the user asked
+      // for, so pin each kind to its own glyph — a shared or missing icon would
+      // collapse the distinction. lucide renders class="lucide lucide-<name>".
+      const cases: Array<[string, string]> = [
+        ['/commit fix', 'lucide-bot'],
+        ['/cb-task run', 'lucide-wrench'],
+        ['#pdf do it', 'lucide-sparkles'],
+      ]
+      for (const [text, iconClass] of cases) {
+        const wrapper = mountBlocks({ blocks: [{ type: 'text', text }] })
+        const icon = wrapper.find(`.slash-command-badge .command-badge-icon.${iconClass}`)
+        expect(icon.exists(), `${iconClass} missing for "${text}"`).toBe(true)
+      }
     })
 
     it('renders a bare skill badge with no rest text', () => {
