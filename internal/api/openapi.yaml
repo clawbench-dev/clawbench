@@ -406,6 +406,10 @@ paths:
         含义为「轮到用户发言前，智能体之间最多发言多少次」；主持人模式与自由模式
         语义一致，只计**成员**发言（主持人的路由/汇总回合不计）。达到上限即停止
         AI 讨论并写一条系统消息。`PATCH` 时须为正整数。
+
+        `frp.available` 表示**本构建是否包含 FRP 功能**（与 `frp.enabled` 这一运行时
+        配置无关）：用 `nofrp` tag 编译的二进制不含 frp 客户端，恒为 `false`。
+        前端据此隐藏 FRP 设置面板。
       operationId: getConfig
       responses:
         "200":
@@ -5121,22 +5125,67 @@ paths:
     get:
       tags: [SSH/FRP]
       summary: FRP 完整状态
-      description: 需鉴权（会暴露公网 IP）。
+      description: |
+        需鉴权（会暴露公网 IP）。
+
+        `available` 表示**本构建是否包含 FRP 功能**，与配置无关：用 `nofrp`
+        tag 编译的二进制不含 frp 客户端，恒为 `false`。前端据此隐藏 FRP 设置面板，
+        避免向用户展示一个永远无法生效的开关。
       operationId: frpInfo
       responses:
         "200":
           description: FRP 状态
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+                  running:
+                    type: boolean
+                  state:
+                    type: string
+                    enum: [disabled, starting, running, failed, stopped]
+                  available:
+                    type: boolean
+                    description: 本构建是否包含 FRP 功能（`nofrp` 构建恒为 false）
+                  server_addr:
+                    type: string
+                  remote_port:
+                    type: integer
+                  ssh_remote_port:
+                    type: integer
+                  remote_url:
+                    type: string
+                  message:
+                    type: string
 
   /api/frp/status:
     get:
       tags: [SSH/FRP]
       summary: FRP 最小状态
-      description: 免鉴权，仅返回 enabled + running。
+      description: 免鉴权，仅返回 enabled + running + state + available（不含地址与端口）。
       operationId: frpStatus
       security: []
       responses:
         "200":
           description: 最小状态
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+                  running:
+                    type: boolean
+                  state:
+                    type: string
+                    enum: [disabled, starting, running, failed, stopped]
+                  available:
+                    type: boolean
+                    description: 本构建是否包含 FRP 功能（`nofrp` 构建恒为 false）
 
   # ── Fonts ─────────────────────────────────────────────────────────────────
   /api/fonts/list:

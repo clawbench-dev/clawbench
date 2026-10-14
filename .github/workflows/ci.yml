@@ -110,6 +110,31 @@ jobs:
       - name: Go build
         run: go build ./cmd/server
 
+      - name: Go build (no FRP)
+        # The no-FRP variant is a released artifact, so it must keep compiling.
+        # The build tag swaps internal/frp for a stub with the same exported
+        # surface; a change to that surface (or a new call site in cmd/server)
+        # breaks only this build, which no other job exercises.
+        run: go build -tags nofrp ./cmd/server
+
+      - name: Go test (no FRP)
+        # Compiling is not enough — the stub must also pass its own tests, and
+        # the library-independent tests must keep passing in this variant.
+        run: go test -tags nofrp ./internal/frp/... ./internal/handler/...
+
+      - name: Verify FRP is absent from the no-FRP build
+        # The build tag is the mechanism; this is the outcome. `go version -m`
+        # records linked dependencies, so this fails loudly if the library is
+        # ever pulled back in — which would restore the detection the variant
+        # exists to avoid.
+        run: |
+          go build -tags nofrp -o /tmp/clawbench-nofrp ./cmd/server
+          if go version -m /tmp/clawbench-nofrp | grep -q 'fatedier/frp'; then
+            echo "::error::fatedier/frp is linked into the no-FRP build"
+            exit 1
+          fi
+          echo "OK: no fatedier/frp dependency"
+
   coverage-go:
     name: Coverage Gate (Go)
     runs-on: ubuntu-latest

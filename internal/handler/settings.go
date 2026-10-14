@@ -24,6 +24,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"clawbench/internal/frp"
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
 	"clawbench/internal/service"
@@ -382,6 +383,9 @@ type configFRP struct {
 	AutoPort      bool   `json:"auto_port"`
 	RemotePort    int    `json:"remote_port"`
 	SSHRemotePort int    `json:"ssh_remote_port"`
+	// Available reports whether this build includes FRP support at all. False
+	// on a `nofrp` build, where the client hides the FRP settings panel.
+	Available bool `json:"available"`
 }
 
 type configSummarize struct {
@@ -935,6 +939,7 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			AutoPort:      cfg.FRP.AutoPort,
 			RemotePort:    cfg.FRP.RemotePort,
 			SSHRemotePort: cfg.FRP.SSHRemotePort,
+			Available:     frp.Available(),
 		},
 		Summarize: configSummarize{
 			TTSBackend:    cfg.Summarize.TTSBackend,

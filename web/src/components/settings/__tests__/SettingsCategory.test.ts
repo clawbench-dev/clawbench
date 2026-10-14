@@ -4,6 +4,7 @@ import { createI18n } from 'vue-i18n'
 import { ref, reactive, nextTick } from 'vue'
 import SettingsCategory from '@/components/settings/SettingsCategory.vue'
 import PasswordChangeDialog from '@/components/settings/PasswordChangeDialog.vue'
+import { setFrpAvailable } from '@/utils/frpAvailability'
 
 // Mock composables
 const mockSetLocalConfig = vi.fn()
@@ -1338,4 +1339,23 @@ describe('SettingsCategory', () => {
     })
   })
 
+})
+
+// The FRP panel is hidden when the server was built without FRP support. The
+// index row is hidden too, but a deep link can still land on the category, so
+// the guard must exist here as well.
+describe('SettingsCategory — FRP availability', () => {
+  afterEach(() => setFrpAvailable(true))
+
+  it('hides the FRP panel when the build has no FRP support', () => {
+    setFrpAvailable(false)
+    const wrapper = mountCategory('frp')
+    expect(wrapper.findAllComponents({ name: 'SettingsGroupPanel' }).length).toBe(0)
+  })
+
+  it('renders the FRP panel when the build supports FRP', () => {
+    setFrpAvailable(true)
+    const wrapper = mountCategory('frp')
+    expect(wrapper.findAllComponents({ name: 'SettingsGroupPanel' }).length).toBeGreaterThan(0)
+  })
 })

@@ -9,6 +9,7 @@ import { applyFontConfig } from '@/utils/fontConfig'
 import { normalizeDisplayMode } from '@/utils/chatSessionUtils'
 import { resolveUIScale, computeAutoUIScale, currentScreenHeight } from '@/utils/uiScale'
 import { applyServerLimits } from '@/stores/app.ts'
+import { setFrpAvailable } from '@/utils/frpAvailability'
 
 const LOCAL_PREFIX = 'clawbench-settings-'
 
@@ -749,6 +750,20 @@ export function syncServerLimits(data: Record<string, unknown>): void {
   })
 }
 
+/**
+ * Mirror the server's FRP build capability into the shared availability ref.
+ *
+ * Only an explicit `false` narrows the flag: an older server that does not send
+ * `frp.available` leaves it at the default `true`, so the panel keeps working
+ * against a server that predates this field rather than disappearing.
+ */
+export function syncFrpAvailability(data: Record<string, unknown>): void {
+  const section = data.frp
+  if (section == null || typeof section !== 'object') return
+  const available = (section as Record<string, unknown>).available
+  if (available === false) setFrpAvailable(false)
+}
+
 export function useSettingsConfig() {
   /** Sync push_mode from server config to Android native push state. */
   function syncPushModeToNative() {
@@ -776,6 +791,10 @@ export function useSettingsConfig() {
     try {
       const data = await apiGet<Record<string, unknown>>('/api/config')
       serverConfig.value = data
+      // The FRP settings panel is hidden when the server was built without FRP
+      // support (`nofrp` tag). Read it here because /api/config is the one
+      // response every settings surface already waits on.
+      syncFrpAvailability(data)
       // Mirror hot-reloadable limits into the global store so client-side
       // pre-checks (session-limit guard, upload size/count) and the session
       // header reflect a settings change immediately instead of only after a

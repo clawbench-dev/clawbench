@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { useSettingsConfig, applyUIScale, getUIScale, getEffectiveUIScale, applyEffectiveUIScale, autoFitUIScale, toFixedCSS, getZoomedViewport, localConfig, applyStoredTheme, syncThemeFromSystem, startSystemThemeWatcher } from '@/composables/useSettingsConfig'
+import { useSettingsConfig, applyUIScale, getUIScale, getEffectiveUIScale, applyEffectiveUIScale, autoFitUIScale, toFixedCSS, getZoomedViewport, localConfig, applyStoredTheme, syncThemeFromSystem, startSystemThemeWatcher, syncFrpAvailability } from '@/composables/useSettingsConfig'
+import { frpAvailable, setFrpAvailable } from '@/utils/frpAvailability'
 
 // Mock api.ts
 vi.mock('@/utils/api', () => ({
@@ -1373,5 +1374,56 @@ describe('useSettingsConfig', () => {
         localConfig.theme = 'auto'
       }
     })
+  })
+})
+
+// ── FRP build availability ──────────────────────────────────────────────────
+//
+// `frp.available` comes from the server and decides whether the FRP settings
+// panel is rendered at all. The subtle part is the default: the flag must only
+// ever NARROW on an explicit `false`, so that a server predating the field
+// keeps showing the panel rather than silently losing the feature.
+
+describe('syncFrpAvailability', () => {
+  afterEach(() => setFrpAvailable(true))
+
+  it('hides the panel when the server reports no FRP support', () => {
+    setFrpAvailable(true)
+    syncFrpAvailability({ frp: { available: false } })
+    expect(frpAvailable.value).toBe(false)
+  })
+
+  it('never re-enables the panel once the server said the build lacks FRP', () => {
+    // The flag is monotonic per session: once a no-FRP server has told us, a
+    // later response cannot put the panel back (which would offer a switch that
+    // can never work). This also documents that the flag is not a plain mirror.
+    setFrpAvailable(false)
+    syncFrpAvailability({ frp: { available: true } })
+    expect(frpAvailable.value).toBe(false)
+  })
+
+  it('does not hide the panel when the field is absent', () => {
+    // A server built before this field existed sends no `available` key. The
+    // feature is present there, so the panel must stay.
+    setFrpAvailable(true)
+    syncFrpAvailability({ frp: { enabled: false } })
+    expect(frpAvailable.value).toBe(true)
+  })
+
+  it('tolerates a missing or malformed frp section', () => {
+    setFrpAvailable(true)
+    expect(() => syncFrpAvailability({})).not.toThrow()
+    expect(() => syncFrpAvailability({ frp: null })).not.toThrow()
+    expect(() => syncFrpAvailability({ frp: 'nonsense' })).not.toThrow()
+    expect(frpAvailable.value).toBe(true)
+  })
+
+  it('loadConfig applies the flag from the server response', async () => {
+    // The wiring, not just the helper: loadConfig is the only caller, so a
+    // helper that works but is never invoked would pass the tests above.
+    mockedApiGet.mockResolvedValue({ frp: { available: false } })
+    const { loadConfig } = useSettingsConfig()
+    await loadConfig()
+    expect(frpAvailable.value).toBe(false)
   })
 })

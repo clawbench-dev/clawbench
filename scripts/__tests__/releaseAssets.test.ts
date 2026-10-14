@@ -203,6 +203,47 @@ describe('release.yml — every published asset carries the version', () => {
   })
 })
 
+/**
+ * The no-FRP Windows build is a separate asset beside the normal one.
+ *
+ * It exists because the frp client library is flagged by endpoint security
+ * products as Greyware/riskware, so a variant without it is published for users
+ * who cannot whitelist the normal build. Two properties make it easy to break
+ * silently, and both are asserted here:
+ *
+ *   - it must NOT replace the normal Windows asset (users who want FRP would
+ *     silently lose it), so the `nofrp` name must be distinct; and
+ *   - it must actually pass the `nofrp` tag, or the job builds an identical
+ *     binary under a different name and the detection it exists to avoid
+ *     returns.
+ */
+describe('no-FRP Windows asset', () => {
+  it('publishes a distinct, versioned asset alongside the normal one', () => {
+    const targets = releaseUploadTargets(releaseYml())
+    const nofrp = targets.filter((t) => t.includes('nofrp'))
+    expect(nofrp.length, 'expected exactly one no-FRP asset').toBe(1)
+    expect(nofrp[0]).toContain('RELEASE_TAG')
+    expect(nofrp[0]).toContain('windows')
+  })
+
+  it('builds with the nofrp tag', () => {
+    // Without the tag the job produces the same binary as build-windows and the
+    // exclusion — the entire reason the asset exists — does not happen.
+    const job = jobs(releaseYml())['build-windows-nofrp']
+    expect(job, 'missing build-windows-nofrp job').toBeTruthy()
+    expect(job).toContain('nofrp')
+    expect(job).toMatch(/go build -tags "[^"]*nofrp/)
+  })
+
+  it('verifies the dependency is really gone', () => {
+    // The build tag is the mechanism; this is the outcome check. A job that
+    // passes the tag but somehow still links the library would otherwise ship.
+    const job = jobs(releaseYml())['build-windows-nofrp']
+    expect(job).toContain('go version -m')
+    expect(job).toContain('fatedier/frp')
+  })
+})
+
 describe('desktop asset names match the Go download URLs', () => {
   it('builds the Go asset name from the tag too', () => {
     // The server hands the desktop client these URLs, so the two sides must

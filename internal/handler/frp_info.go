@@ -8,10 +8,11 @@ import (
 
 // FRP info JSON response keys
 const (
-	frpKeyEnabled = "enabled"
-	frpKeyRunning = "running"
-	frpKeyState   = "state"
-	frpKeyMessage = "message"
+	frpKeyEnabled   = "enabled"
+	frpKeyRunning   = "running"
+	frpKeyState     = "state"
+	frpKeyMessage   = "message"
+	frpKeyAvailable = "available"
 )
 
 // frpManagerRef holds a reference to the FRP manager, set from main.go.
@@ -38,12 +39,19 @@ func ServeFRPInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// `available` is a property of the build, not of the current config: a
+	// binary compiled with the `nofrp` tag has no FRP client at all, so the
+	// client hides the settings panel rather than offering a switch that can
+	// never take effect.
+	available := frp.Available()
+
 	if frpManagerRef == nil {
 		writeJSON(w, http.StatusOK, map[string]any{
-			frpKeyEnabled: frpEnabled,
-			frpKeyRunning: false,
-			frpKeyState:   "disabled",
-			frpKeyMessage: "FRP is not enabled",
+			frpKeyEnabled:   frpEnabled,
+			frpKeyRunning:   false,
+			frpKeyState:     "disabled",
+			frpKeyMessage:   "FRP is not enabled",
+			frpKeyAvailable: available,
 		})
 		return
 	}
@@ -53,6 +61,7 @@ func ServeFRPInfo(w http.ResponseWriter, r *http.Request) {
 		frpKeyEnabled:     status.Enabled,
 		frpKeyRunning:     status.Running,
 		frpKeyState:       status.State,
+		frpKeyAvailable:   available,
 		"server_addr":     status.ServerAddr,
 		"remote_port":     status.RemotePort,
 		"ssh_remote_port": status.SSHRemotePort,
@@ -68,19 +77,23 @@ func ServeFRPStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	available := frp.Available()
+
 	if frpManagerRef == nil {
 		writeJSON(w, http.StatusOK, map[string]any{
-			frpKeyEnabled: frpEnabled,
-			frpKeyRunning: false,
-			frpKeyState:   "disabled",
+			frpKeyEnabled:   frpEnabled,
+			frpKeyRunning:   false,
+			frpKeyState:     "disabled",
+			frpKeyAvailable: available,
 		})
 		return
 	}
 
 	status := frpManagerRef.Status()
 	writeJSON(w, http.StatusOK, map[string]any{
-		frpKeyEnabled: status.Enabled,
-		frpKeyRunning: status.Running,
-		frpKeyState:   status.State,
+		frpKeyEnabled:   status.Enabled,
+		frpKeyRunning:   status.Running,
+		frpKeyState:     status.State,
+		frpKeyAvailable: available,
 	})
 }
