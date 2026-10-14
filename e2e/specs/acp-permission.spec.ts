@@ -122,6 +122,38 @@ test.describe.serial('ACP Permission Approval', () => {
     await expect(chat.sendButton).toBeVisible({ timeout: 30000 })
   })
 
+  /**
+   * Cursor omits rawInput from session/request_permission even though it sent
+   * it on the preceding tool_call (it encodes the target only in the request's
+   * title). The approval card must still show WHAT the agent wants to do, so
+   * the server recovers the input from the cached tool_call. The mock
+   * reproduces that framing when the prompt carries its marker.
+   */
+  test('approval card shows the command/file when the permission request omits rawInput', async ({ page }) => {
+    await warmUpAndSwitchToCodeMode(page)
+
+    const countBefore = await chat.sendMessage('write a file [mock:omit-perm-rawinput]')
+    await chat.waitForReply(30000, countBefore)
+
+    // Scope to the LAST assistant message so a card left over from an earlier
+    // test in this serial file cannot satisfy the assertion.
+    const lastMessage = page.locator('.chat-message.assistant').last()
+    const permissionView = lastMessage.locator('.permission-approval-view').first()
+    await expect(permissionView).toBeVisible({ timeout: 15000 })
+
+    // The card body must carry the requested target (from the tool_call's
+    // rawInput), not just the bare tool name.
+    const detail = permissionView.locator('.permission-tool-detail code').first()
+    await expect(detail).toBeVisible({ timeout: 5000 })
+    await expect(detail).toContainText('main.go')
+
+    // And the strip summary must not degrade to the bare tool name.
+    const summary = lastMessage
+      .locator('.chat-inline-card[data-tool-name="PermissionApproval"] .tool-summary')
+      .first()
+    await expect(summary).toContainText('main.go')
+  })
+
   test('permission respond API should work directly', async ({ page }) => {
     // Restore the non-blocking mode: the previous test left the session in Code
     // mode, where the mock blocks on a permission request.

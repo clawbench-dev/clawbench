@@ -76,6 +76,12 @@ const (
 // Config option types (ACP protocol field).
 const configOptionTypeSelect = "select"
 
+// acpMockOmitPermRawInputMarker in a user prompt makes the mock reproduce
+// Cursor's permission framing: the tool_call carries rawInput but the
+// session/request_permission for the same tool call omits it. Used by the
+// permission e2e to verify the server recovers the input from the tool_call.
+const acpMockOmitPermRawInputMarker = "[mock:omit-perm-rawinput]"
+
 func (a *mockACPAgent) Initialize(ctx context.Context, params acp.InitializeRequest) (acp.InitializeResponse, error) {
 	return acp.InitializeResponse{
 		ProtocolVersion: acp.ProtocolVersionNumber,
@@ -495,15 +501,42 @@ func (a *mockACPAgent) simulateTurn(ctx context.Context, sid string, params acp.
 	if currentMode != modeBypass {
 		writeTitle := "Writing to main.go"
 		writeKind := acp.ToolKindEdit
+		// When the prompt carries the marker, reproduce Cursor's framing: emit
+		// the tool_call carrying rawInput, then omit rawInput from the
+		// permission request for the same tool call (Cursor encodes the target
+		// only in the request's title). The server must recover the input from
+		// the preceding tool_call so the approval card still shows it.
+		// Gated on a marker so every other spec keeps the original framing.
+		omitPermRawInput := strings.Contains(userText, acpMockOmitPermRawInputMarker)
+		if omitPermRawInput {
+			if err := a.conn.SessionUpdate(ctx, acp.SessionNotification{
+				SessionId: acp.SessionId(sid),
+				Update: acp.StartToolCall(
+					acp.ToolCallId("call_write_perm_1"),
+					writeTitle,
+					acp.WithStartKind(writeKind),
+					acp.WithStartStatus(acp.ToolCallStatusPending),
+					acp.WithStartRawInput(map[string]any{"file_path": "/project/main.go", "content": "package main\nfunc main() {}"}),
+				),
+			}); err != nil {
+				return err
+			}
+			if err := pause(ctx, 50*time.Millisecond); err != nil {
+				return err
+			}
+		}
+		permToolCall := acp.ToolCallUpdate{
+			ToolCallId: acp.ToolCallId("call_write_perm_1"),
+			Title:      &writeTitle,
+			Kind:       &writeKind,
+			Status:     nil,
+		}
+		if !omitPermRawInput {
+			permToolCall.RawInput = map[string]any{"file_path": "/project/main.go", "content": "package main\nfunc main() {}"}
+		}
 		permResp, err := a.conn.RequestPermission(ctx, acp.RequestPermissionRequest{
 			SessionId: acp.SessionId(sid),
-			ToolCall: acp.ToolCallUpdate{
-				ToolCallId: acp.ToolCallId("call_write_perm_1"),
-				Title:      &writeTitle,
-				Kind:       &writeKind,
-				RawInput:   map[string]any{"file_path": "/project/main.go", "content": "package main\nfunc main() {}"},
-				Status:     nil,
-			},
+			ToolCall:  permToolCall,
 			Options: []acp.PermissionOption{
 				{Kind: acp.PermissionOptionKindAllowOnce, Name: "Allow Once", OptionId: "allow_once"},
 				{Kind: acp.PermissionOptionKindAllowAlways, Name: "Allow Always", OptionId: "allow_always"},
