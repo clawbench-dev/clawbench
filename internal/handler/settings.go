@@ -263,10 +263,6 @@ type configResponse struct {
 	Skills         configSkills         `json:"skills"`
 	Appearance     configAppearance     `json:"appearance"`
 	Forge          configForge          `json:"forge"`
-	// FirstRun is true on a brand-new install. The frontend uses it to apply
-	// out-of-box appearance defaults (the default theme) without overriding
-	// choices an existing user has already made.
-	FirstRun bool `json:"first_run"`
 }
 
 type configChat struct {
@@ -857,7 +853,6 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 		Version:      getBuildVersion(),
 		HasPassword:  model.SessionToken != "",
 		DefaultAgent: cfg.DefaultAgent,
-		FirstRun:     model.FirstRun,
 		Chat: configChat{
 			InitialMessages:          cfg.Chat.InitialMessages,
 			PageSize:                 cfg.Chat.PageSize,
@@ -2254,10 +2249,10 @@ func writeConfigYAML(patch map[string]any) error {
 // file it protects, while config.yaml holds secrets (API keys, forge tokens,
 // password hash).
 //
-// strippedRaw is used instead of the on-disk bytes when useStripped is set, so a
-// caller that just removed a secret from the in-memory map (the auto-password
-// strip) does not leave that secret behind in the backup. Failure is non-fatal —
-// a missing backup must not block the config write.
+// strippedRaw is used instead of the on-disk bytes when useStripped is set, so
+// a caller that just removed a secret from the in-memory map (the auto-password
+// strip) does not leave that secret behind in the backup. Failure is non-fatal
+// — a missing backup must not block the config write.
 func backupConfigYAML(configPath, bakPath string, strippedRaw map[string]any, useStripped bool) {
 	if _, err := os.Stat(configPath); err != nil {
 		return // no previous file to back up

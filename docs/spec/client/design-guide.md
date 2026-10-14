@@ -161,8 +161,9 @@
   - `data-theme="<id>"` — 选色板
   - `data-theme-base="light|dark"` — 明暗快捷选择器（`color-scheme`、hljs、diff 浓度、`.fbtn` 深色覆盖都靠它）
   - `data-hljs-theme="light|dark"` — 代码高亮主题
-- `'auto'` 解析为 `matchMedia('(prefers-color-scheme: dark)')` → `github-dark` / `github-light`。
-- **首屏不闪白**：`web/index.html:20` 有一段**在 CSS 加载前**跑的内联脚本读 localStorage 并设属性。全新安装猜 `gruvbox-dark`（用 `localStorage.length === 0` 判断，因为服务端的 `config.first_run` 那时还拿不到），记 `clawbench-fresh-theme-guess` 供之后回退。
+- **出厂默认主题 = `gruvbox-dark`**，全平台一致（web 内联脚本 / 桌面壳 `DEFAULT_THEME_ID` / Android `ThemePalette.DEFAULT_THEME_ID`）。它就是 `'auto'` 在深色系统下的解析结果（`getDefaultDarkTheme()`）。
+- `'auto'` 解析为 `matchMedia('(prefers-color-scheme: dark)')` → `gruvbox-dark` / `github-light`。
+- **首屏不闪白**：`web/index.html` 有一段**在 CSS 加载前**跑的内联脚本读 localStorage 并设属性。它同时是**出厂主题的唯一权威**：`localStorage` 里从未存过主题 ⇒ 判定为全新安装，**当场把 `gruvbox-dark` 落盘**（不是只改 DOM），因此重启 / 刷新后依然是它。**不要**再用服务端 `config.first_run` 判定——那个标记是进程级的，`InitDB` 建库后就翻成 false，重启（docker restart / 升级 / 重启机器）会把新安装静默打回系统主题；而且它要等 `/api/config` 异步返回，首屏必然先闪一下系统主题。`clawbench-fresh-theme-guess` 与 `applyFirstRunThemeDefaults` 已随该方案一并删除。
 - 主题是**纯前端本地设置**（只进 localStorage）——同一服务器多设备各选各的，互不干扰。
 
 ### 加一套新主题要改的地方

@@ -10,34 +10,6 @@ import (
 	"strings"
 )
 
-// FirstRun records whether this process started against a brand-new install.
-// It is captured during ApplyDefaults (before the database is created) and
-// exposed to the client so the frontend can apply out-of-box appearance
-// defaults such as the default theme. It is process-scoped, not persisted:
-// a restart of an existing install re-evaluates to false.
-var FirstRun bool
-
-// IsFreshInstall reports whether this is a brand-new installation, which is
-// what gates the out-of-box appearance defaults (the default theme).
-//
-// A missing config.yaml alone is not sufficient evidence: config.yaml is
-// optional and is never written at startup, so a long-running install that
-// simply never changed a setting looks identical to a fresh one. The database
-// file, by contrast, is created on every startup (service.InitDB) and is
-// therefore a reliable "this install has run before" marker.
-func IsFreshInstall(presence map[string]bool) bool {
-	if presence != nil {
-		return false
-	}
-	if DataDir == "" {
-		return false
-	}
-	if _, err := os.Stat(filepath.Join(DataDir, "ClawBench.db")); err == nil {
-		return false
-	}
-	return true
-}
-
 // ParsePresenceMap walks a raw YAML map and returns a flat set of dot-separated
 // keys that were explicitly present. For example, given:
 //
@@ -106,14 +78,6 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if cfg.Fonts.Dir == "" {
 		cfg.Fonts.Dir = DefaultFontsDir()
 	}
-
-	// --- First-run marker (NOT wallpaper-related) ---
-	// Captured in FirstRun because the database file this check relies on is
-	// created later in startup, so it cannot be re-evaluated once the server is
-	// serving requests. The frontend reads it as `first_run` to apply the
-	// out-of-box *theme*; nothing about wallpapers depends on it, so do not
-	// remove this line when trimming appearance code.
-	FirstRun = IsFreshInstall(presence)
 
 	// --- DevPort ---
 	// -1 = explicitly disabled; 0 = auto (Port+2 when TLS active, disabled otherwise)

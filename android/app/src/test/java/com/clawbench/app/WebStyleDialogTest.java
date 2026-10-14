@@ -173,7 +173,7 @@ public class WebStyleDialogTest {
     }
 
     @Test
-    public void buildStyle_withoutPersistedTheme_usesGithubDarkDefaults() {
+    public void buildStyle_withoutPersistedTheme_usesDefaultThemeDefaults() {
         WebStyleDialog.Style style = WebStyleDialog.buildStyle(appContext, dp(360));
 
         ThemePalette fallback = ThemePalette.forId(ThemePalette.DEFAULT_THEME_ID);
@@ -183,7 +183,7 @@ public class WebStyleDialogTest {
     }
 
     @Test
-    public void buildStyle_unknownThemeId_fallsBackToGithubDark() {
+    public void buildStyle_unknownThemeId_fallsBackToDefaultTheme() {
         appContext.getSharedPreferences("clawbench_prefs", Context.MODE_PRIVATE).edit()
                 .putString("theme_base", "no-such-theme")
                 .commit();
@@ -199,8 +199,8 @@ public class WebStyleDialogTest {
      * The regression this whole palette refactor exists for: on cold start the
      * login page calls the 1-arg setTheme(theme) bridge overload, which blanks
      * the FloatingThemeColors slots. The dialog must not read that palette — it
-     * used to, and fell back to github-dark, painting a dark card over a light
-     * splash backdrop.
+     * used to, and fell back to the default theme, painting a dark card over a
+     * light splash backdrop.
      */
     @Test
     public void buildStyle_ignoresBlankedFloatingPalette() {
@@ -214,9 +214,9 @@ public class WebStyleDialogTest {
                 .putString("theme_accent", "")
                 .commit();
 
-        // Sanity: the floating palette really did degrade to github-dark here.
-        assertEquals("precondition: the blanked floating palette is github-dark",
-                0xFF161B22, FloatingThemeColors.get(appContext)[0]);
+        // Sanity: the floating palette really did degrade to the default theme here.
+        assertEquals("precondition: the blanked floating palette is gruvbox-dark",
+                0xFF1D2021, FloatingThemeColors.get(appContext)[0]);
 
         WebStyleDialog.Style style = WebStyleDialog.buildStyle(appContext, dp(360));
 

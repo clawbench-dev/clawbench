@@ -91,9 +91,10 @@ describe('splashBackgroundColor', () => {
   })
 
   it('uses the default theme backdrops', () => {
-    // These must stay the github-dark / github-light --bg-primary values, or the
-    // overlay flashes the wrong colour before the page applies its own theme.
-    expect(SPLASH_BG_DARK).toBe('#161b22')
+    // These must stay the gruvbox-dark / github-light --bg-primary values (the
+    // factory theme and its light counterpart), or the overlay flashes the
+    // wrong colour before the page applies its own theme.
+    expect(SPLASH_BG_DARK).toBe('#282828')
     expect(SPLASH_BG_LIGHT).toBe('#f8f9fa')
   })
 })

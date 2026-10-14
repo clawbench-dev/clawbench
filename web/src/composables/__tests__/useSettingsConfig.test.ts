@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { useSettingsConfig, applyUIScale, getUIScale, getEffectiveUIScale, applyEffectiveUIScale, autoFitUIScale, toFixedCSS, getZoomedViewport, applyFirstRunThemeDefaults, localConfig, applyStoredTheme, syncThemeFromSystem, startSystemThemeWatcher } from '@/composables/useSettingsConfig'
+import { useSettingsConfig, applyUIScale, getUIScale, getEffectiveUIScale, applyEffectiveUIScale, autoFitUIScale, toFixedCSS, getZoomedViewport, localConfig, applyStoredTheme, syncThemeFromSystem, startSystemThemeWatcher } from '@/composables/useSettingsConfig'
 
 // Mock api.ts
 vi.mock('@/utils/api', () => ({
@@ -22,7 +22,8 @@ vi.mock('@/composables/useAgents', () => ({
 
 import { apiGet, apiPatch, apiPost } from '@/utils/api'
 import { store } from '@/stores/app.ts'
-import { applyThemeAttributes } from '@/utils/themeMeta'
+import { applyThemeAttributes, getDefaultDarkTheme } from '@/utils/themeMeta'
+import { readWebFile } from '@/testUtils/readWebFile'
 
 const mockedApiGet = vi.mocked(apiGet)
 const mockedApiPatch = vi.mocked(apiPatch)
@@ -1159,95 +1160,38 @@ describe('useSettingsConfig', () => {
     })
   })
 
-  // ── first-run appearance defaults ──
+  // ── first-run appearance defaults (inline bootstrap in index.html) ──
+  //
+  // The factory theme is applied by the synchronous script in index.html, which
+  // runs before CSS loads. That script is the durable authority: "this browser
+  // has never stored a theme" defines a fresh install. A server-side
+  // config.first_run was removed because it is process-scoped (it flipped to
+  // false as soon as InitDB created the database file), so a restart silently
+  // dropped the factory theme for every new install. These guards pin the
+  // script's behaviour against regression.
 
-  describe('applyFirstRunThemeDefaults', () => {
-    it('applies the out-of-box theme on a fresh install with no stored theme', () => {
-      localStorage.removeItem('clawbench-settings-theme')
-      localStorage.removeItem('theme')
+  describe('index.html factory-theme bootstrap', () => {
+    const html = readWebFile('index.html')
+    // Isolate the theme bootstrap (the first inline <script> in <head>).
+    const script = html.slice(html.indexOf('<script>'), html.indexOf('</script>'))
 
-      applyFirstRunThemeDefaults({ first_run: true })
-
-      expect(localConfig.theme).toBe('gruvbox-dark')
-      expect(localStorage.getItem('clawbench-settings-theme')).toBe(JSON.stringify('gruvbox-dark'))
-      expect(document.documentElement.getAttribute('data-theme')).toBe('gruvbox-dark')
+    it('persists gruvbox-dark when no theme has ever been stored', () => {
+      // The factory default must be written to localStorage (not merely applied
+      // to the DOM) so a later reload sees a concrete theme.
+      expect(script).toContain("var DARK_DEFAULT = 'gruvbox-dark'")
+      expect(script).toContain('localStorage.setItem(STORE_KEY, JSON.stringify(id))')
     })
 
-    it('does not override a theme the user already picked', () => {
-      localStorage.setItem('clawbench-settings-theme', JSON.stringify('dracula'))
-      localConfig.theme = 'dracula'
-
-      applyFirstRunThemeDefaults({ first_run: true })
-
-      expect(localConfig.theme).toBe('dracula')
-      expect(localStorage.getItem('clawbench-settings-theme')).toBe(JSON.stringify('dracula'))
-
-      localStorage.removeItem('clawbench-settings-theme')
-      localConfig.theme = 'auto'
+    it('does not depend on a server first_run flag', () => {
+      // Regression guard: the previous design reverted the guess when the
+      // server was not fresh, which broke after any restart.
+      expect(script).not.toContain('first_run')
+      expect(script).not.toContain('fresh-theme-guess')
     })
 
-    it('respects a legacy stored theme key', () => {
-      localStorage.removeItem('clawbench-settings-theme')
-      localStorage.setItem('theme', 'nord')
-      localConfig.theme = 'nord'
-
-      applyFirstRunThemeDefaults({ first_run: true })
-
-      expect(localConfig.theme).toBe('nord')
-      expect(localStorage.getItem('clawbench-settings-theme')).toBeNull()
-
-      localStorage.removeItem('theme')
-      localConfig.theme = 'auto'
-    })
-
-    it('is a no-op on an existing install', () => {
-      localStorage.removeItem('clawbench-settings-theme')
-      localStorage.removeItem('theme')
-      localStorage.removeItem('clawbench-fresh-theme-guess')
-      localConfig.theme = 'auto'
-
-      applyFirstRunThemeDefaults({ first_run: false })
-      applyFirstRunThemeDefaults({})
-
-      expect(localConfig.theme).toBe('auto')
-      expect(localStorage.getItem('clawbench-settings-theme')).toBeNull()
-    })
-
-    it('reverts an optimistic first-visit guess when the server is not fresh', () => {
-      // index.html guesses gruvbox-dark on a first-ever visit because it cannot
-      // know first_run yet; a pre-existing server must undo that guess.
-      // jsdom lacks matchMedia — resolveThemeId('auto') needs it.
-      vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }))
-      localStorage.removeItem('clawbench-settings-theme')
-      localStorage.removeItem('theme')
-      localStorage.setItem('clawbench-fresh-theme-guess', '1')
-      localConfig.theme = 'gruvbox-dark'
-
-      try {
-        applyFirstRunThemeDefaults({ first_run: false })
-
-        expect(localConfig.theme).toBe('auto')
-        expect(localStorage.getItem('clawbench-settings-theme')).toBe(JSON.stringify('auto'))
-        expect(localStorage.getItem('clawbench-fresh-theme-guess')).toBeNull()
-      } finally {
-        vi.unstubAllGlobals()
-        localStorage.removeItem('clawbench-settings-theme')
-      }
-    })
-
-    it('clears the guess marker once a fresh install is confirmed', () => {
-      localStorage.removeItem('clawbench-settings-theme')
-      localStorage.removeItem('theme')
-      localStorage.setItem('clawbench-fresh-theme-guess', '1')
-      localConfig.theme = 'gruvbox-dark'
-
-      applyFirstRunThemeDefaults({ first_run: true })
-
-      expect(localConfig.theme).toBe('gruvbox-dark')
-      expect(localStorage.getItem('clawbench-fresh-theme-guess')).toBeNull()
-
-      localStorage.removeItem('clawbench-settings-theme')
-      localConfig.theme = 'auto'
+    it('resolves auto to the factory default without persisting the resolved id', () => {
+      expect(script).toContain("chosen === 'auto'")
+      expect(script).toContain('prefers-color-scheme: dark')
     })
   })
 
@@ -1336,7 +1280,7 @@ describe('useSettingsConfig', () => {
 
         syncThemeFromSystem()
 
-        expect(document.documentElement.getAttribute('data-theme')).toBe('github-dark')
+        expect(document.documentElement.getAttribute('data-theme')).toBe(getDefaultDarkTheme())
         expect(document.documentElement.getAttribute('data-theme-base')).toBe('dark')
       })
     })
@@ -1351,7 +1295,7 @@ describe('useSettingsConfig', () => {
         try {
           syncThemeFromSystem()
           expect(listener).toHaveBeenCalledTimes(1)
-          expect(listener.mock.calls[0][0].detail).toBe('github-dark')
+          expect(listener.mock.calls[0][0].detail).toBe(getDefaultDarkTheme())
         } finally {
           window.removeEventListener('clawbench-theme-change', listener)
         }
@@ -1361,7 +1305,7 @@ describe('useSettingsConfig', () => {
     it('does not touch the DOM when the resolved theme is already applied', () => {
       withScheme(true, () => {
         localConfig.theme = 'auto'
-        applyThemeAttributes('github-dark')
+        applyThemeAttributes(getDefaultDarkTheme())
         const listener = vi.fn()
         window.addEventListener('clawbench-theme-change', listener)
 
@@ -1370,7 +1314,7 @@ describe('useSettingsConfig', () => {
           // changed — they must not re-render mermaid or ping native.
           syncThemeFromSystem()
           expect(listener).not.toHaveBeenCalled()
-          expect(document.documentElement.getAttribute('data-theme')).toBe('github-dark')
+          expect(document.documentElement.getAttribute('data-theme')).toBe(getDefaultDarkTheme())
         } finally {
           window.removeEventListener('clawbench-theme-change', listener)
         }
@@ -1419,7 +1363,7 @@ describe('useSettingsConfig', () => {
         expect(listeners.size).toBe(1)
 
         for (const cb of [...listeners]) cb()
-        expect(document.documentElement.getAttribute('data-theme')).toBe('github-dark')
+        expect(document.documentElement.getAttribute('data-theme')).toBe(getDefaultDarkTheme())
         expect(listener).toHaveBeenCalledTimes(1)
       } finally {
         window.removeEventListener('clawbench-theme-change', listener)

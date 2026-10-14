@@ -245,7 +245,7 @@ import { store } from '@/stores/app.ts'
 
 // Share the resolved theme id with child components (OpenApiPreview reads it via
 // inject('theme') to pick Swagger UI colors). share.html sets data-theme on <html>.
-const themeId = ref(document.documentElement.getAttribute('data-theme') || 'github-dark')
+const themeId = ref(document.documentElement.getAttribute('data-theme') || 'gruvbox-dark')
 provide('theme', readonly(themeId))
 
 /** The file payload returned by the share /file endpoint (FileContent JSON)

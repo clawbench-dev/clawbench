@@ -3245,35 +3245,6 @@ func TestServeConfig_Patch_BingFileRejected(t *testing.T) {
 	assert.Empty(t, model.ConfigInstance.Appearance.Bing.File)
 }
 
-func TestServeConfig_Get_ExposesFirstRun(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	origFirstRun := model.FirstRun
-	defer func() { model.FirstRun = origFirstRun }()
-
-	// The frontend needs this flag to apply the factory theme only on a fresh
-	// install, without overriding an existing user's choice.
-	model.FirstRun = true
-	req := httptest.NewRequest(http.MethodGet, "/api/config", http.NoBody)
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	require.Equal(t, http.StatusOK, w.Code)
-	var resp map[string]any
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, true, resp["first_run"])
-
-	model.FirstRun = false
-	req2 := httptest.NewRequest(http.MethodGet, "/api/config", http.NoBody)
-	withAuthCookie(req2, model.SessionToken)
-	w2 := callHandler(ServeConfig, req2)
-	require.Equal(t, http.StatusOK, w2.Code)
-	var resp2 map[string]any
-	require.NoError(t, json.Unmarshal(w2.Body.Bytes(), &resp2))
-	assert.Equal(t, false, resp2["first_run"])
-}
-
 // --- port_forward.transport ---
 //
 // The field is PINNED to "both" on both the load path (ApplyDefaults) and the
