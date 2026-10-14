@@ -493,7 +493,17 @@ func isTierAliasID(id string) bool {
 }
 
 // aliasNameFor normalizes an ID and reports the alias it denotes.
+//
+// A parameterized variant is NOT a tier alias. The bracket suffix carries the
+// variant's parameters, and the ID names a concrete, selectable model — so
+// "opus[1m]" and "default[]" must stay concrete. Stripping the brackets used to
+// collapse "default[]" onto the bare meta marker "default" and DROP it, which is
+// exactly how cursor's "Auto" model (id "default[]", name "Auto") disappeared
+// from the picker and left the wrong entry flagged as the default.
 func aliasNameFor(id string) (string, bool) {
+	if strings.ContainsRune(id, '[') {
+		return "", false
+	}
 	normalized := strings.ToLower(id)
 	var b strings.Builder
 	for _, r := range normalized {

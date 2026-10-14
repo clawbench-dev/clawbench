@@ -123,7 +123,7 @@
                     <!-- A group's `model` is the HOST's model, not a property of
                          the group; showing it beside the member stack reads as
                          "the group runs on one model". Suppressed for groups. -->
-                    <span v-if="row.session.model && row.session.sessionType !== 'group'" class="session-item-model">{{ row.session.model }}</span>
+                    <span v-if="row.session.model && row.session.sessionType !== 'group'" class="session-item-model">{{ sessionModelLabel(row.session) }}</span>
                   </div>
                   <!-- Fork-group toggle, inlined on the anchor row itself.
                        A separate header row made the group read as "a session,
@@ -230,7 +230,7 @@
                     </span>
                     <!-- Same rule as the project pane: a group's model is the
                          host's, not the group's, so it is not shown. -->
-                    <span v-if="session.model && session.sessionType !== 'group'" class="session-item-model">{{ session.model }}</span>
+                    <span v-if="session.model && session.sessionType !== 'group'" class="session-item-model">{{ sessionModelLabel(session) }}</span>
                   </div>
                 </div>
                 <span
@@ -348,7 +348,7 @@ const props = defineProps({
 
 const emit = defineEmits(['select', 'archive', 'destroy', 'update:activeTab'])
 const { t } = useI18n()
-const { getAgentBackend, getAgentName, getAgentAvatar } = useAgents()
+const { getAgentBackend, getAgentName, getAgentAvatar, getAgentModel } = useAgents()
 const { isSessionShared, setSharedSessionIds } = useSessionShare()
 const dialog = useDialog()
 const toast = useToast()
@@ -470,6 +470,22 @@ function statusLabel(status) {
   if (status === 'pending') return t('session.statusPending')
   if (status === 'unread') return t('session.statusUnread')
   return ''
+}
+
+/**
+ * Display name for a session row's model chip.
+ *
+ * `session.model` stores the model ID (it is what gets sent back to the agent),
+ * which for ACP backends can be a variant string like cursor's "default[]" —
+ * meaningless to the user. Resolve it against the agent's model list to show the
+ * human name ("Auto"); fall back to the raw ID when the list has no match (the
+ * model was retired, or the agents list has not loaded yet).
+ */
+function sessionModelLabel(session) {
+  const id = session?.model
+  if (!id) return ''
+  const model = session.agentId ? getAgentModel(session.agentId, id) : undefined
+  return model?.name || id
 }
 
 /**
