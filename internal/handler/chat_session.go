@@ -613,14 +613,6 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 	// say so instead of claiming the switch already took effect.
 	modelSwitchDeferred := false
 	applySessionConfigSelections(sessionID, req.ModeID, req.ThinkingEffort)
-	if req.ModelID != "" {
-		deferred, err := applyAndPersistSessionModel(r.Context(), sessionID, req.ModelID)
-		if err != nil {
-			writeModelSwitchError(w, r, err)
-			return
-		}
-		modelSwitchDeferred = deferred
-	}
 	if req.Transport != "" {
 		//nolint:errcheck,gosec // best-effort persistence; failure is non-fatal for an idempotent update
 		service.UpdateSessionTransport(sessionID, req.Transport)
@@ -658,6 +650,18 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 			model.WriteError(w, model.Internal(fmt.Errorf("failed to save session tags")))
 			return
 		}
+	}
+	// Model LAST: it is the only field that can hard-fail the whole request, and
+	// doing it here means a rejection leaves every other field above applied
+	// (a 422 then means "everything else saved, the model was refused"). Running
+	// it earlier would silently drop transport/autoApprove/title/pinned/tags.
+	if req.ModelID != "" {
+		deferred, err := applyAndPersistSessionModel(r.Context(), sessionID, req.ModelID)
+		if err != nil {
+			writeModelSwitchError(w, r, err)
+			return
+		}
+		modelSwitchDeferred = deferred
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "modelSwitchDeferred": modelSwitchDeferred})
 }
@@ -740,6 +744,19 @@ func forwardSessionConfigOption(sessionID, category, value string) {
 // that gives up: a slow-but-successful switch must not be reported as a
 // failure. The frontend uses a slightly longer budget still (its own timeout
 // must outlast this handler).
+//
+// DELIBERATELY SYNCHRONOUS, unlike forwardSessionConfigOption above. That
+// helper's async comment warns about tying up a browser HTTP/1.1 connection,
+// and the trade-off is real here too — but for model it is the point of the
+// feature: the user clicked a model and is standing in the picker waiting to
+// learn whether it took, so the outcome has to reach THIS response. Reporting
+// it over the WebSocket instead would need a new event, a correlation id, and a
+// listener for a case that is otherwise a plain request/response.
+//
+// The cost is bounded in practice: an agent that is BUSY rejects instantly
+// (Hermes checks is_running before any I/O), so only a genuine switch pays the
+// ~10s, and only when the user just asked for it. Non-ACP sessions (no live
+// conn) return immediately.
 const modelSwitchHTTPTimeout = 35 * time.Second
 
 // applySessionModel pushes a model selection to the session's live ACP agent.
@@ -823,9 +840,11 @@ func applyAndPersistSessionModel(ctx context.Context, sessionID, modelID string)
 // Detail so the toast can name the real cause (e.g. which provider to connect).
 func writeModelSwitchError(w http.ResponseWriter, r *http.Request, err error) {
 	var mse *ai.ModelSwitchError
+	// ApplyModel wraps every failure in a *ModelSwitchError, so this branch is
+	// defensive: it keeps a non-nil deref safe if that ever stops being true.
 	if !errors.As(err, &mse) {
 		slog.Warn("model switch failed", "error", err)
-		writeLocalizedErrorf(w, r, http.StatusBadGateway, "ModelSwitchFailed")
+		writeLocalizedErrorf(w, r, http.StatusUnprocessableEntity, "ModelSwitchFailed")
 		return
 	}
 	slog.Warn("model switch rejected", "code", mse.Code, "detail", mse.Detail)

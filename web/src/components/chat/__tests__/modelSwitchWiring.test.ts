@@ -66,11 +66,30 @@ describe('click-time model switch wiring', () => {
     // Both the success and failure paths must check the session is still current.
     const guards = body.match(/identity\.currentSessionId\.value !== sid/g) ?? []
     expect(guards.length, 'both paths must guard against a stale session').toBeGreaterThanOrEqual(2)
+    // ...and each must clear the sticky spinner on the way out, or it hangs on
+    // screen for a switch the user already navigated away from (duration: 0 =
+    // manual dismiss only).
+    const dismissals = body.match(/return dismissSwitchingToast\(\)/g) ?? []
+    expect(dismissals.length, 'every stale-session return must dismiss the sticky toast').toBe(guards.length)
   })
 
   it('gives the request a timeout that outlasts the server budget', () => {
-    expect(PANEL, 'the client timeout must exceed the handler timeout').toMatch(
-      /MODEL_SWITCH_TIMEOUT_MS\s*=\s*45_000/,
+    // The invariant is the NESTING, not the literal number: the client must not
+    // be the one that gives up, or a slow-but-successful switch is reported as a
+    // failure. Server: ai 30s < handler 35s. So assert the relation, and pin the
+    // number only as a floor.
+    const client = Number(PANEL.match(/MODEL_SWITCH_TIMEOUT_MS\s*=\s*([\d_]+)/)?.[1]?.replace(/_/g, ''))
+    expect(Number.isFinite(client), 'MODEL_SWITCH_TIMEOUT_MS must be defined').toBe(true)
+    expect(client, 'client timeout must exceed the 35s handler budget').toBeGreaterThan(35_000)
+  })
+
+  it('reverts to the agent default when the session has no persisted model', () => {
+    // A session created via POST /api/ai/sessions deliberately has model='', so
+    // the chip's pre-click value came from the agent. Without this fallback the
+    // guard `if (data.modelId)` skips and the rejected model stays on the chip.
+    const body = fnBody('function restoreModelSelection')
+    expect(body, 'must fall back to the agent default for an empty model').toMatch(
+      /syncModelFromAgent\(/,
     )
   })
 })

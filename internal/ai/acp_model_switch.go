@@ -96,6 +96,10 @@ func classifyModelSwitchFailure(err error) error {
 		// A slow agent (Hermes' cold model switch does ~10s of I/O) or a wedged
 		// one. Transient: keep the choice and retry at the next prompt.
 		return &ModelSwitchError{Detail: "timed out", Retryable: true}
+	case errors.Is(err, context.Canceled):
+		// The caller went away (client disconnect) mid-RPC. Transient by the
+		// same reasoning as a timeout — nothing about the request was wrong.
+		return &ModelSwitchError{Detail: "canceled", Retryable: true}
 	case errors.Is(err, errRawConnClosed):
 		return &ModelSwitchError{Detail: "connection closed", Retryable: true}
 	case isConfigKilledConnection(err):
@@ -108,6 +112,13 @@ func classifyModelSwitchFailure(err error) error {
 }
 
 // isBusyText reports whether an agent message means "a turn is running".
+//
+// DELIBERATELY a loose substring match. The alternative (an exact match on
+// Hermes' sentence) would break the moment the agent rewords it, and a false
+// NEGATIVE is worse than a false positive here: misreading "busy" as hard would
+// 422 the user and discard a choice that a retry would have applied. The cost of
+// a false positive is a silent defer that never applies — so if you widen this,
+// keep it anchored to the busy concept rather than matching arbitrary text.
 func isBusyText(s string) bool {
 	return strings.Contains(strings.ToLower(s), "busy")
 }
@@ -168,6 +179,14 @@ func (c *ACPConn) applyModelSelection(ctx context.Context, acpSID, value string)
 //
 // Callers must NOT hold c.mu.
 func (c *ACPConn) applyModelViaSetModel(ctx context.Context, acpSID, method, value string) error {
+	// Serialize check → send → record. A click-time apply (PATCH) can run
+	// concurrently with the pre-prompt apply on the same connection; without
+	// this both would pass shouldSetConfig and send session/set_model twice. The
+	// agent rejects the second with "Session is busy", and Prompt would then
+	// abort the whole turn over a switch that had already succeeded.
+	c.modelSwitchMu.Lock()
+	defer c.modelSwitchMu.Unlock()
+
 	if !c.shouldSetConfig("model", value) {
 		slog.Debug("acp conn: set_model skipped (unchanged)",
 			"method", method, "value", value,

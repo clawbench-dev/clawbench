@@ -821,3 +821,41 @@ func TestServeAISessionUpdate_NoLiveConnPersistsOnly(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	assert.Equal(t, "claude-opus-4-5", service.GetSessionModel(sid))
 }
+
+// A hard model rejection must not discard the OTHER fields in the same request:
+// model is applied last, so everything else is already committed when the 422
+// comes back. Regression guard for the early-return that used to drop
+// transport/autoApprove/title/pinned/tags.
+func TestServeAISessionUpdate_HardModelFailureKeepsOtherFields(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sid, err := service.CreateSession(env.ProjectDir, "hermes", "Hermes", "hermes", "", "default", "chat")
+	require.NoError(t, err)
+
+	agent := &model.Agent{ID: "hermes", Backend: "hermes", Transport: "acp-stdio", AcpCommand: "hermes acp"}
+	conn := ai.GetACPConnManager().InjectAliveConnForTest(sid, agent, "acp-sid-order", nil)
+	ai.RegisterModelSwitchMethodForTest(t, "hermes", "session/set_model")
+	ai.FailRawCallsWithDetailForTest(conn, -32602, "Invalid params", `{"details":"not connected"}`)
+	t.Cleanup(func() { ai.GetACPConnManager().CloseConn(sid) })
+
+	req := newRequest(t, http.MethodPatch, "/api/ai/session/update?session_id="+sid, map[string]any{
+		"modelId": "copilot:gpt-5.4", // will be rejected
+		"title":   "Renamed anyway",
+		"pinned":  true,
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeAISessionUpdate, req)
+
+	require.Equal(t, http.StatusUnprocessableEntity, w.Code, w.Body.String())
+
+	// The title/pinned writes happened BEFORE the model apply, so they must be live.
+	sessions, err := service.GetSessions(env.ProjectDir, "")
+	require.NoError(t, err)
+	for _, s := range sessions {
+		if s.ID == sid {
+			assert.Equal(t, "Renamed anyway", s.Title, "title must not be dropped by the model failure")
+			assert.True(t, s.Pinned, "pinned must not be dropped by the model failure")
+		}
+	}
+}

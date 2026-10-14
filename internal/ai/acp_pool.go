@@ -1070,6 +1070,14 @@ type ACPConn struct {
 	lastSetEffort   string
 	lastSetMode     string
 
+	// modelSwitchMu serializes the check-and-send-and-record sequence of a
+	// model switch. shouldSetConfig + markConfigSet are not atomic on their own,
+	// so without this a click-time apply (PATCH) racing the pre-prompt apply
+	// could both pass the dedup check and send session/set_model twice — the
+	// agent rejects the second with "Session is busy", and Prompt would then
+	// abort the whole turn. A leaf lock: never held while taking c.mu.
+	modelSwitchMu sync.Mutex
+
 	// lastSetConfigs is the generalized version of lastSetModel/Effort/Mode.
 	// For well-known categories, the legacy fields remain the canonical source.
 	// For other categories, this map is used.

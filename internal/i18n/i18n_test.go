@@ -3,6 +3,7 @@ package i18n
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"clawbench/internal/model"
@@ -301,5 +302,30 @@ func TestPushTemplatesKeepPlaceholders(t *testing.T) {
 			assert.NotContains(t, msg, "{{", "%s locale %s left a placeholder unrendered: %q", key, loc, msg)
 			assert.NotContains(t, msg, "}}", "%s locale %s left a placeholder unrendered: %q", key, loc, msg)
 		}
+	}
+}
+
+// Model-switch keys are reached from a background-free request path, but they
+// are the entire user-visible feedback for a failed model switch — a raw key or
+// a dropped placeholder would ship silently. The generic list above is a
+// hand-maintained allowlist that does not include them, so they are pinned here.
+func TestModelSwitchKeysPresentAndRenderable(t *testing.T) {
+	require := func(cond bool, format string, args ...any) {
+		if !cond {
+			t.Errorf(format, args...)
+		}
+	}
+
+	for _, loc := range []string{"en", "zh"} {
+		l := LocalizerForLocale(loc)
+
+		bare := T(l, "ModelSwitchFailed")
+		require(bare != "ModelSwitchFailed", "%s: ModelSwitchFailed missing", loc)
+		require(!strings.Contains(bare, "{{"), "%s: bare key must not carry a placeholder: %q", loc, bare)
+
+		withDetail := T(l, "ModelSwitchFailedDetail", map[string]any{"Detail": "provider X is not connected"})
+		require(withDetail != "ModelSwitchFailedDetail", "%s: ModelSwitchFailedDetail missing", loc)
+		require(strings.Contains(withDetail, "provider X is not connected"),
+			"%s: detail must be interpolated, got %q", loc, withDetail)
 	}
 }

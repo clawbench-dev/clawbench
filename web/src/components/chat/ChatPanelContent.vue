@@ -1221,19 +1221,21 @@ async function handleSwitchModel(model) {
       { modelId: model.id },
       { timeoutMs: MODEL_SWITCH_TIMEOUT_MS },
     )
-    if (identity.currentSessionId.value !== sid) return
+    // The result belongs to a session the user already left: drop the sticky
+    // spinner (nothing else will) and don't touch the new session's chip.
+    if (identity.currentSessionId.value !== sid) return dismissSwitchingToast()
     // The agent was busy, so the server kept the choice and will re-apply it at
     // the next prompt. Say so rather than implying the switch already took
     // effect (this is the "remember and defer" path).
     if (res?.modelSwitchDeferred) {
       toast.show(t('chat.modelSwitcher.deferred'), { icon: '⏳', type: 'info' })
-    } else if (toast.type.value === 'loading') {
-      toast.dismiss()
+    } else {
+      dismissSwitchingToast()
     }
   } catch (err) {
-    // A session switch during the await means this result belongs to a session
-    // the user already left — don't toast or touch the (new) chip.
-    if (identity.currentSessionId.value !== sid) return
+    // Same stale-session guard on the failure path — and the spinner must go,
+    // or it hangs on screen for a switch the user has already navigated away from.
+    if (identity.currentSessionId.value !== sid) return dismissSwitchingToast()
     const detail = err?.detail?.Detail
     // The server sends the bare key when the agent gave no explanation, and the
     // *Detail key when it did. Either way its `error` text is already localized,
@@ -1248,6 +1250,11 @@ async function handleSwitchModel(model) {
   }
 }
 
+/** Clear the sticky "switching…" toast, leaving a result toast in place. */
+function dismissSwitchingToast() {
+  if (toast.type.value === 'loading') toast.dismiss()
+}
+
 /** Re-read the session's authoritative model after a rejected switch. */
 function restoreModelSelection(sid) {
   apiGet(`/api/ai/chat?limit=1&session_id=${encodeURIComponent(sid)}`)
@@ -1257,7 +1264,15 @@ function restoreModelSelection(sid) {
         identity.currentModelId.value = data.modelId
         const m = agentsComposable.getAgentModel(identity.currentAgentId.value, data.modelId)
         identity.currentModelName.value = m?.name || data.modelId
+        return
       }
+      // A session created via POST /api/ai/sessions deliberately has model=''
+      // (the agent default is not pre-filled), so the chip's pre-click value came
+      // from the agent, not the DB. Falling back to the agent default is what
+      // actually reverts the rejected model on that path.
+      const fallback = agentsComposable.syncModelFromAgent(identity.currentAgentId.value)
+      identity.currentModelId.value = fallback.modelId
+      identity.currentModelName.value = fallback.modelName
     })
     .catch(() => { /* best effort — the next loadHistory reconciles */ })
 }

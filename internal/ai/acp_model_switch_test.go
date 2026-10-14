@@ -391,3 +391,39 @@ func TestClassifyModelSwitchFailure_TimeoutRetryable(t *testing.T) {
 	assert.True(t, IsModelSwitchRetryable(classifyModelSwitchFailure(context.DeadlineExceeded)))
 	assert.True(t, IsModelSwitchRetryable(classifyModelSwitchFailure(errRawConnClosed)))
 }
+
+// A click-time apply (PATCH) can run concurrently with the pre-prompt apply on
+// the same connection. Both must not send session/set_model: the agent rejects
+// the duplicate with -32603, and Prompt would then abort the whole turn over a
+// switch that already succeeded.
+func TestApplyModelViaSetModel_ConcurrentSendsAreSerialized(t *testing.T) {
+	withModelSwitchMethod(t, "hermes", "session/set_model")
+	conn := newConnForModelSwitchTest(t, "hermes")
+
+	rec := &rawCallRecorder{}
+	conn.SetRawCallFnForTest(rec.hook)
+
+	const n = 8
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start // release all at once to maximize overlap
+			_ = conn.applyModelSelection(context.Background(), "acp-sid-hermes", "m1")
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	assert.Len(t, rec.all(), 1, "the same model must be sent exactly once, even under concurrent callers")
+}
+
+// A client disconnect surfaces as context.Canceled, which is transient by the
+// feature's own definition — it must not be reported as a hard failure (which
+// would 422 + revert the chip + skip persistence).
+func TestClassifyModelSwitchFailure_CanceledRetryable(t *testing.T) {
+	err := classifyModelSwitchFailure(context.Canceled)
+	assert.True(t, IsModelSwitchRetryable(err), "a dropped request must be retryable")
+}

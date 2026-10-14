@@ -1503,10 +1503,10 @@ paths:
         "422":
           description: |
             `modelId` 被 agent 拒绝且重试无用（例如该 provider 未连接）。响应为
-            `{error, code, msgKey: "ModelSwitchFailed", detail: {Detail}}`，其中
-            `Detail` 是 agent 给出的具体原因。**不会写库**（选择未被接受）。
-        "502":
-          description: 切换模型时与 agent 通信失败（非 agent 拒绝，例如传输层错误）。
+            `{error, code, msgKey: "ModelSwitchFailed"|"ModelSwitchFailedDetail",
+            detail: {Detail}}`，其中 `Detail` 是 agent 给出的具体原因。**不会写库**
+            （选择未被接受）。注意：同一请求里其它字段（mode/transport/title/tags 等）
+            **已经生效** —— model 是最后一个应用、且唯一可能让整请求失败的字段。
 
   /api/ai/session/generate-title:
     post:
