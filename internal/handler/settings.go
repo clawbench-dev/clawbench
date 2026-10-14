@@ -24,6 +24,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"clawbench/internal/frp"
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
 	"clawbench/internal/service"
@@ -106,6 +107,7 @@ var hotReloadFields = map[string]bool{
 	"tts.openai.api_key":         true,
 	"tts.openai.model":           true,
 	"tts.openai.voice":           true,
+	"tts.openai.stream_mode":     true,
 	// STT — speech-to-text config, hot-reloadable
 	"stt.base_url":     true,
 	"stt.api_key":      true,
@@ -262,10 +264,6 @@ type configResponse struct {
 	Skills         configSkills         `json:"skills"`
 	Appearance     configAppearance     `json:"appearance"`
 	Forge          configForge          `json:"forge"`
-	// FirstRun is true on a brand-new install. The frontend uses it to apply
-	// out-of-box appearance defaults (the default theme) without overriding
-	// choices an existing user has already made.
-	FirstRun bool `json:"first_run"`
 }
 
 type configChat struct {
@@ -318,10 +316,11 @@ type configTTS struct {
 }
 
 type configOpenAITTS struct {
-	BaseURL string `json:"base_url"`
-	APIKey  string `json:"api_key"`
-	Model   string `json:"model"`
-	Voice   string `json:"voice"`
+	BaseURL    string `json:"base_url"`
+	APIKey     string `json:"api_key"`
+	Model      string `json:"model"`
+	Voice      string `json:"voice"`
+	StreamMode string `json:"stream_mode"`
 }
 
 type configPiper struct {
@@ -384,6 +383,9 @@ type configFRP struct {
 	AutoPort      bool   `json:"auto_port"`
 	RemotePort    int    `json:"remote_port"`
 	SSHRemotePort int    `json:"ssh_remote_port"`
+	// Available reports whether this build includes FRP support at all. False
+	// on a `nofrp` build, where the client hides the FRP settings panel.
+	Available bool `json:"available"`
 }
 
 type configSummarize struct {
@@ -733,6 +735,7 @@ var PatchableConfigPaths = map[string]bool{
 	"tts.openai.api_key":                true,
 	"tts.openai.model":                  true,
 	"tts.openai.voice":                  true,
+	"tts.openai.stream_mode":            true,
 	"stt.base_url":                      true,
 	"stt.api_key":                       true,
 	"stt.model":                         true,
@@ -822,6 +825,11 @@ var validMossNanoBackends = map[string]bool{
 	"onnx": true, "pytorch": true,
 }
 
+// validOpenAIStreamModes is the set of valid OpenAI TTS stream modes.
+var validOpenAIStreamModes = map[string]bool{
+	"auto": true, "sse": true, "audio": true,
+}
+
 // getBuildVersion returns a human-readable version string from build info.
 // Delegates to version.Get() which handles ldflags injection and VCS fallback.
 func getBuildVersion() string {
@@ -849,7 +857,6 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 		Version:      getBuildVersion(),
 		HasPassword:  model.SessionToken != "",
 		DefaultAgent: cfg.DefaultAgent,
-		FirstRun:     model.FirstRun,
 		Chat: configChat{
 			InitialMessages:          cfg.Chat.InitialMessages,
 			PageSize:                 cfg.Chat.PageSize,
@@ -932,6 +939,7 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			AutoPort:      cfg.FRP.AutoPort,
 			RemotePort:    cfg.FRP.RemotePort,
 			SSHRemotePort: cfg.FRP.SSHRemotePort,
+			Available:     frp.Available(),
 		},
 		Summarize: configSummarize{
 			TTSBackend:    cfg.Summarize.TTSBackend,
@@ -1000,10 +1008,11 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 		}
 	case strOpenAI:
 		resp.TTS.OpenAI = &configOpenAITTS{
-			BaseURL: cfg.TTS.OpenAI.BaseURL,
-			APIKey:  cfg.TTS.OpenAI.APIKey,
-			Model:   cfg.TTS.OpenAI.Model,
-			Voice:   cfg.TTS.OpenAI.Voice,
+			BaseURL:    cfg.TTS.OpenAI.BaseURL,
+			APIKey:     cfg.TTS.OpenAI.APIKey,
+			Model:      cfg.TTS.OpenAI.Model,
+			Voice:      cfg.TTS.OpenAI.Voice,
+			StreamMode: cfg.TTS.OpenAI.StreamMode,
 		}
 	}
 
@@ -1277,6 +1286,11 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 			if v, ok := openai["base_url"].(string); ok && v != "" {
 				if _, err := url.ParseRequestURI(v); err != nil {
 					return fmt.Errorf("tts.openai.base_url must be a valid URL")
+				}
+			}
+			if v, ok := openai["stream_mode"].(string); ok {
+				if !validOpenAIStreamModes[v] {
+					return fmt.Errorf("tts.openai.stream_mode must be one of: auto,sse,audio")
 				}
 			}
 		}
@@ -1865,6 +1879,9 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 			if v, ok := openai["voice"].(string); ok {
 				cfg.TTS.OpenAI.Voice = v
 			}
+			if v, ok := openai["stream_mode"].(string); ok {
+				cfg.TTS.OpenAI.StreamMode = v
+			}
 		}
 	}
 
@@ -2119,6 +2136,7 @@ func applyHotReloadGlobals() {
 		p.APIKey = cfg.TTS.OpenAI.APIKey
 		p.Model = cfg.TTS.OpenAI.Model
 		p.Voice = cfg.TTS.OpenAI.Voice
+		p.StreamMode = cfg.TTS.OpenAI.StreamMode
 	}
 	if cfg.TTS.Speed > 0 {
 		if p, ok := curProvider.(*speech.EdgeTTSProvider); ok {
@@ -2186,12 +2204,27 @@ func writeConfigYAML(patch map[string]any) error {
 		}
 	}
 
-	// Backup existing file before overwriting
-	if _, err := os.Stat(configPath); err == nil {
-		if err := copyFile(configPath, bakPath); err != nil {
-			slog.Warn("failed to backup config.yaml", "err", err)
-		}
+	// The auto-generated password is a runtime fallback, not user configuration,
+	// so it must never reach config.yaml. Two ways it could: the fresh-install
+	// branch above dumps the whole ConfigInstance (which holds the plaintext auto
+	// password at this point), and a config.yaml written by an older build may
+	// already carry it. Strip it in both cases so the install stays "no password
+	// configured" — otherwise the next startup sees a password in the file,
+	// deletes auto-password and stops showing it in the banner.
+	//
+	// Guarded on the patch: ServeConfigPassword writes a real password and
+	// clears the flag first, but a direct "password" patch must never be dropped.
+	_, patchingPassword := patch["password"]
+	strippingAutoPassword := model.PasswordIsAutoGenerated && !patchingPassword
+	if strippingAutoPassword {
+		delete(raw, "password")
 	}
+
+	// Backup the previous file before overwriting. When the auto password is
+	// being stripped, the on-disk file still carries it, so the backup must come
+	// from the already-stripped raw — the secret the strip exists to remove must
+	// not survive in the sibling file.
+	backupConfigYAML(configPath, bakPath, raw, strippingAutoPassword)
 
 	// Merge patch into raw map (only touched fields are modified)
 	mergePatchIntoRaw(raw, patch)
@@ -2213,6 +2246,33 @@ func writeConfigYAML(patch map[string]any) error {
 	}
 
 	return nil
+}
+
+// backupConfigYAML copies the current config.yaml to bakPath before it is
+// overwritten. The backup is written 0600, matching config.yaml itself: the
+// generic copyFile helper would create it 0664, i.e. more permissive than the
+// file it protects, while config.yaml holds secrets (API keys, forge tokens,
+// password hash).
+//
+// strippedRaw is used instead of the on-disk bytes when useStripped is set, so
+// a caller that just removed a secret from the in-memory map (the auto-password
+// strip) does not leave that secret behind in the backup. Failure is non-fatal
+// — a missing backup must not block the config write.
+func backupConfigYAML(configPath, bakPath string, strippedRaw map[string]any, useStripped bool) {
+	if _, err := os.Stat(configPath); err != nil {
+		return // no previous file to back up
+	}
+	bakData, readErr := os.ReadFile(configPath)
+	if readErr == nil && useStripped {
+		bakData, readErr = yaml.Marshal(strippedRaw)
+	}
+	if readErr != nil {
+		slog.Warn("failed to prepare config.yaml backup", "err", readErr)
+		return
+	}
+	if err := os.WriteFile(bakPath, bakData, 0o600); err != nil {
+		slog.Warn("failed to backup config.yaml", "err", err)
+	}
 }
 
 // mergePatchIntoRaw merges the PATCH payload into the raw YAML map.
@@ -2347,15 +2407,20 @@ func ServeConfigPassword(w http.ResponseWriter, r *http.Request) { //nolint:gocy
 
 	// Save old value for rollback on disk write failure
 	oldPassword := model.ConfigInstance.Password
+	oldAutoGenerated := model.PasswordIsAutoGenerated
 
-	// Update in-memory config
+	// Update in-memory config. The new password is a real user choice, so clear
+	// the auto-generated flag — otherwise writeConfigYAML would strip the very
+	// password this handler is trying to persist.
 	model.ConfigInstance.Password = hashedPassword
+	model.PasswordIsAutoGenerated = false
 
 	// Write to disk
 	patch := map[string]any{"password": hashedPassword}
 	if err := writeConfigYAML(patch); err != nil {
 		// Rollback memory state
 		model.ConfigInstance.Password = oldPassword
+		model.PasswordIsAutoGenerated = oldAutoGenerated
 		slog.Error("failed to write config.yaml after password change", "err", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]any{
 			"error":   "write_failed",

@@ -268,6 +268,70 @@ var acpBackends = []acpTestConfig{
 		ThinkingLevels: []string{"off", "minimal", "low", "medium", "high"},
 		SupportedTests: allACPTestPoints(),
 	},
+	// Cursor — ACP is a built-in subcommand of Cursor's own CLI
+	// (`cursor-agent acp`), NOT a bridge adapter, so there is no npm package to
+	// depend on. (Do not wire the third-party `cursor-agent-acp`: it never
+	// closes the child's stdin while `cursor-agent -p ""` waits for EOF, so the
+	// child blocks and the adapter returns a hardcoded fake end_turn with zero
+	// output.) The command uses `cursor-agent`, not the CLI's bare `agent`
+	// alias, which collides with Grok's `agent` binary.
+	//
+	// Capability shape (verified against cursor-agent 2026.10.01):
+	//   - initialize advertises loadSession:true, sessionCapabilities.list,
+	//     mcpCapabilities{http,sse}, promptCapabilities.image:true.
+	//   - session/new advertises 3 modes (agent/plan/ask) and ~44 models, both
+	//     via the standard `configOptions` (category=mode/model) and the
+	//     non-standard `modes`/`models` fields.
+	//   - session/set_mode and session/set_model both work.
+	//   - No `thought_level` config option: effort is encoded inside the model
+	//     id (`...[effort=high]`), so ThinkingLevels stays nil and the
+	//     thinking-effort test point takes its graceful-skip branch.
+	//
+	// Needs CURSOR_API_KEY in the environment (cursor does NOT read
+	// ANTHROPIC_BASE_URL/ANTHROPIC_API_KEY) or an `agent login` credential
+	// store; skips when the CLI is absent.
+	{
+		ID:             "cursor",
+		Backend:        "cursor",
+		AcpCommand:     "cursor-agent acp",
+		DefaultCmd:     "cursor-agent",
+		Timeout:        150 * time.Second,
+		HasThinking:    false,
+		SupportsConfig: true,
+		// DefaultModel left empty: cursor's model ids are variant strings
+		// (`name[param=value,...]`) whose exact default depends on the account's
+		// model list, so a hardcoded id risks rejection. The config-switch tests
+		// read the real list from session/new and pick an alternative themselves.
+		SupportedTests: withACPConfigTestPoints(allACPTestPoints()),
+	},
+	// DeepSeek Harness — ACP-only via the built-in `dsh --profile acp` server.
+	//
+	// The automation-only ACP surface omits session/load (answers -32601) and
+	// dsh advertises no config options, so it runs the base test points without
+	// the config-switch set (same posture as qoder). Crash recovery uses
+	// session/resume and is exercised by the base recovery test points.
+	{
+		ID:             "dsh",
+		Backend:        "dsh",
+		AcpCommand:     "dsh --profile acp",
+		DefaultCmd:     "dsh",
+		Timeout:        120 * time.Second,
+		HasThinking:    false,
+		SupportsConfig: false,
+		SupportedTests: allACPTestPoints(),
+	},
+	// ZCode — ACP-only via the zcode-acp-server bridge adapter. Skips unless
+	// that bridge (and the zcode CLI it resolves) is installed.
+	{
+		ID:             "zcode",
+		Backend:        "zcode",
+		AcpCommand:     "npx -y zcode-acp-server",
+		DefaultCmd:     "zcode-acp-server",
+		Timeout:        120 * time.Second,
+		HasThinking:    false,
+		SupportsConfig: false,
+		SupportedTests: allACPTestPoints(),
+	},
 }
 
 // buildACPAgent creates a model.Agent from an acpTestConfig.
@@ -310,6 +374,13 @@ func requireACPBackendAvailable(t *testing.T, cfg acpTestConfig) {
 			return
 		}
 		t.Skipf("%s CLI not available, skipping ACP integration test", cmd)
+	}
+	// Cursor's ACP server requires auth: session/new answers
+	// "-32000 Authentication required" when neither CURSOR_API_KEY nor an
+	// `agent login` credential store is present. Skip rather than fail (the
+	// binary being installed is not enough), matching the dedicated probe.
+	if cfg.ID == "cursor" && os.Getenv("CURSOR_API_KEY") == "" {
+		t.Skip("CURSOR_API_KEY not set, skipping cursor ACP integration test")
 	}
 	// For backends known to support --version with ACP args, verify the subcommand.
 	// Other backends rely on the ACP Initialize protocol itself to verify availability.

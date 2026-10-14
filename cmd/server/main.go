@@ -30,9 +30,11 @@ import (
 	_ "clawbench/internal/ai/backends/codebuddy"
 	_ "clawbench/internal/ai/backends/codex"
 	_ "clawbench/internal/ai/backends/copilot"
+	_ "clawbench/internal/ai/backends/cursor"
 	_ "clawbench/internal/ai/backends/deepseek"
 	_ "clawbench/internal/ai/backends/dsh"
 	_ "clawbench/internal/ai/backends/grok"
+	_ "clawbench/internal/ai/backends/hermes"
 	_ "clawbench/internal/ai/backends/kimi"
 	_ "clawbench/internal/ai/backends/mimo"
 	_ "clawbench/internal/ai/backends/opencode"
@@ -1328,11 +1330,13 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	handler.SetTriggerBingSyncFunc(service.TriggerBingSync)
 	service.StartBingWallpaperWorker()
 
-	// Wire up the /cb-* command renderer for GROUP host prompts. The templates
-	// live in the handler package (OpenAPI-rendered), and the group orchestrator
-	// is in service, which cannot import handler — so the renderer is injected
-	// here (same pattern as SetPersistBingStateFn).
-	service.SetRenderGroupCommandFn(handler.RenderClawbenchCommand)
+	// Wire up the user-message command renderer for GROUP host prompts. The
+	// templates live in the handler package (OpenAPI-rendered), and the group
+	// orchestrator is in service, which cannot import handler — so the renderer
+	// is injected here (same pattern as SetPersistBingStateFn). It covers every
+	// injection kind: the built-in "/cb-*" commands and the explicit "#skill"
+	// reference.
+	service.SetRenderGroupCommandFn(handler.RenderCommandInjection)
 
 	// Cross-agent skill discovery: scan every agent's native skill directory
 	// (plus the user's own directory and cloned git repos) so a skill installed

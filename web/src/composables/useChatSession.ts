@@ -12,7 +12,7 @@ import { updateAvailableModes, updateCommandState, updateAvailableThinkingEffort
 import { getRecentSession, clearRecentSession } from '@/composables/useRecentSession'
 import { clearPlanState, updatePlanEntries } from '@/composables/usePlanProgress'
 import { clearTeamState } from '@/composables/useTeamState'
-import { useAgents, restoreOriginalModels, getAgentThinkingEffortLevels, populateACPStateFromCache, updateACPModelList, applyResolvedModelList } from '@/composables/useAgents'
+import { useAgents, resetModelViewForTransport, getAgentThinkingEffortLevels, populateACPStateFromCache, updateACPModelList, applyResolvedModelList } from '@/composables/useAgents'
 import { store } from '@/stores/app.ts'
 import { buildMessageSnapshot, parseMessages } from '@/utils/chatSessionUtils.ts'
 import { isTransportError } from '@/utils/networkError'
@@ -956,11 +956,14 @@ export function useChatSession(options: UseChatSessionOptions) {
     // Clear stale blockAskQuestions from previous session
     Object.keys(blockTasks).forEach(k => delete blockTasks[k])
     Object.keys(blockAskQuestions).forEach(k => delete blockAskQuestions[k])
-    // Restore original CLI model list in case ACP had overridden it
-    // Must run BEFORE clearing currentAgentId so the old agent's models
-    // can be properly restored.
+    // Reset the previous agent's model list to its own transport's view. ACP
+    // and CLI share the one `agent.models` field, so an unconditional "restore
+    // the CLI list" would leave an acp-stdio agent showing the CLI guess — the
+    // very list the backend withholds until the agent reports its own models.
+    // Must run BEFORE clearing currentAgentId so the old agent's models can be
+    // properly restored.
     const prevAgentId = _currentAgentId.value
-    if (prevAgentId) restoreOriginalModels(prevAgentId)
+    if (prevAgentId) resetModelViewForTransport(prevAgentId)
     // Clear all identity refs and set currentSessionId to the target — avoids
     // flashing stale info during the async fetch. Will be repopulated from
     // the REST response. This also clears ACP state (mode/commands/thinking).

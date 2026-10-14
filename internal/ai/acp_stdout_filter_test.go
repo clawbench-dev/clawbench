@@ -177,7 +177,7 @@ func TestFixStringNumericID(t *testing.T) {
 
 func TestACPStdoutFilter_ExtractsModelsFromSessionNewResponse(t *testing.T) {
 	// Simulates a kimi ACP session/new response with SessionModelState
-	input := `{"jsonrpc":"2.0","id":2,"result":{"models":{"availableModels":[{"model_id":"kimi-code/k3","name":"Kimi K3"},{"model_id":"kimi-code/k3,thinking","name":"Kimi K3 (thinking)"},{"model_id":"kimi-code/kimi-for-coding","name":"Kimi K2.7 Code"}],"currentModelId":"kimi-code/k3"},"modes":{"availableModes":[{"id":"default","name":"Default"}],"currentModeId":"default"},"sessionId":"test-123"}}
+	input := `{"jsonrpc":"2.0","id":2,"result":{"models":{"availableModels":[{"modelId":"kimi-code/k3","name":"Kimi K3"},{"modelId":"kimi-code/k3,thinking","name":"Kimi K3 (thinking)"},{"modelId":"kimi-code/kimi-for-coding","name":"Kimi K2.7 Code"}],"currentModelId":"kimi-code/k3"},"modes":{"availableModes":[{"id":"default","name":"Default"}],"currentModeId":"default"},"sessionId":"test-123"}}
 `
 	f := newACPStdoutFilter(strings.NewReader(input))
 	defer f.Close()
@@ -233,7 +233,7 @@ func TestACPStdoutFilter_ExtractsModelsEmptyList(t *testing.T) {
 }
 
 func TestACPStdoutFilter_GetAndClearCachedModels_ClearsAfterRead(t *testing.T) {
-	input := `{"jsonrpc":"2.0","id":2,"result":{"models":{"availableModels":[{"model_id":"m1","name":"Model 1"}],"currentModelId":"m1"},"sessionId":"test"}}
+	input := `{"jsonrpc":"2.0","id":2,"result":{"models":{"availableModels":[{"modelId":"m1","name":"Model 1"}],"currentModelId":"m1"},"sessionId":"test"}}
 `
 	f := newACPStdoutFilter(strings.NewReader(input))
 	defer f.Close()
@@ -432,7 +432,7 @@ func TestACPStdoutFilter_EmptyLinesStripped(t *testing.T) {
 func TestACPStdoutFilter_MultipleLinesWithModels(t *testing.T) {
 	// Multiple lines where one contains availableModels
 	input := `{"jsonrpc":"2.0","id":1,"result":{"status":"ok"}}
-{"jsonrpc":"2.0","id":2,"result":{"models":{"availableModels":[{"model_id":"m1","name":"Model 1"}],"currentModelId":"m1"},"sessionId":"s1"}}
+{"jsonrpc":"2.0","id":2,"result":{"models":{"availableModels":[{"modelId":"m1","name":"Model 1"}],"currentModelId":"m1"},"sessionId":"s1"}}
 `
 	f := newACPStdoutFilter(strings.NewReader(input))
 	defer f.Close()

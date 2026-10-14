@@ -8,9 +8,11 @@ import (
 	_ "clawbench/internal/ai/backends/codebuddy"
 	_ "clawbench/internal/ai/backends/codex"
 	_ "clawbench/internal/ai/backends/copilot"
+	_ "clawbench/internal/ai/backends/cursor"
 	_ "clawbench/internal/ai/backends/deepseek"
 	_ "clawbench/internal/ai/backends/dsh"
 	_ "clawbench/internal/ai/backends/grok"
+	_ "clawbench/internal/ai/backends/hermes"
 	_ "clawbench/internal/ai/backends/kimi"
 	_ "clawbench/internal/ai/backends/mimo"
 	_ "clawbench/internal/ai/backends/opencode"
@@ -27,7 +29,7 @@ import (
 // --- Test 1: BackendRegistry ---
 
 func TestBackendRegistry_ContainsAllBackends(t *testing.T) {
-	expectedIDs := []string{"claude", "codebuddy", "opencode", "codex", "qoder", "vecli", "deepseek", "pi", "kimi", "copilot", "mimo", "grok", "antigravity", "zcode", "dsh"}
+	expectedIDs := []string{"claude", "codebuddy", "opencode", "codex", "qoder", "vecli", "deepseek", "pi", "kimi", "copilot", "mimo", "grok", "antigravity", "zcode", "dsh", "hermes", "cursor"}
 	assert.Len(t, model.GetBackendRegistry(), len(expectedIDs))
 
 	seen := make(map[string]bool)
@@ -83,6 +85,16 @@ func TestBackendRegistry_SpecificValues(t *testing.T) {
 	assert.False(t, specs["dsh"].ACPLoadSession, "dsh does not implement session/load")
 	assert.Equal(t, "npm install -g @deepseek-ai/dsh", specs["dsh"].InstallCmd)
 	assert.False(t, model.BackendSupportsCLI("dsh"), "dsh is ACP-only: no CLI factory")
+
+	// Cursor is ACP-only via the CLI's built-in `acp` subcommand (no bridge
+	// adapter). `cursor-agent` is the unambiguous binary name — the CLI also
+	// installs a bare `agent` symlink, but that name collides with the Grok
+	// CLI's own `agent` binary, so no AltCmd is declared.
+	assert.Equal(t, "cursor-agent", specs["cursor"].DefaultCmd)
+	assert.Empty(t, specs["cursor"].AltCmd, "`agent` collides with Grok's CLI")
+	assert.Equal(t, "cursor-agent acp", specs["cursor"].AcpCommand)
+	assert.True(t, specs["cursor"].ACPLoadSession, "cursor advertises loadSession:true")
+	assert.False(t, model.BackendSupportsCLI("cursor"), "cursor is ACP-only: no CLI factory")
 }
 
 func TestBackendSupportsCLI_ComputedFromFactoryRegistry(t *testing.T) {

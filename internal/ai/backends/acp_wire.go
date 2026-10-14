@@ -11,6 +11,12 @@ func init() {
 	// importing the backends package (avoiding import cycles).
 	ai.LookupACPRemapsFn = LookupACPRemaps
 	ai.LookupACPToolCallIDPrefixesFn = LookupACPToolCallIDPrefixes
+	ai.LookupACPTitlePrefixesFn = LookupACPTitlePrefixes
+
+	// Wire up the model-switch method lookup so the ACP prompt path can send
+	// session/set_model for agents that ignore a "model" config option (Hermes)
+	// without importing the backends package.
+	ai.LookupACPModelSwitchMethodFn = LookupACPModelSwitchMethod
 
 	// Wire up the mid-turn injection policy lookup so core flow can ask a
 	// backend whether a mid-turn message can join the running turn (e.g.

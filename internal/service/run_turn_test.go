@@ -107,6 +107,84 @@ func setupRunTurnTest(t *testing.T, events []ai.StreamEvent) (*sql.DB, string) {
 	return db, sessionID
 }
 
+// TestRunTurn_ForwardsBackendErrorAsLiveWarning is the regression test for the
+// "AI produced no assistant message until I switched away and back" defect.
+//
+// A backend that fails mid-turn emits a terminal "error" event (e.g. an ACP
+// session/new failure). The executor accumulated it into the persisted warning
+// block but never forwarded it, so a connected client saw an empty reply until
+// some unrelated loadHistory rebuilt the array from the DB.
+//
+// The live frame must be a NON-TERMINAL warning, not the raw error: the run is
+// not necessarily over (auto-continue retries, and the drain loop may still
+// have queued messages), so ending the client's stream here would desync it
+// from a backend that keeps working. Warning is also what every CLI backend
+// emits for the same failure.
+func TestRunTurn_ForwardsBackendErrorAsLiveWarning(t *testing.T) {
+	_, sessionID := setupRunTurnTest(t, []ai.StreamEvent{
+		{Type: "error", Error: "acp: connection: session/new failed", Reason: ai.ReasonBackendExit},
+	})
+
+	origMgr := ws.GetManager()
+	mgr := ws.NewManagerForTest()
+	ws.SetManagerForTest(mgr)
+	t.Cleanup(func() { ws.SetManagerForTest(origMgr) })
+
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(nil, &writeMu, "run-turn-error-client", "")
+	mgr.StreamHub().Subscribe("run-turn-error-client", sessionID)
+
+	res := runTurn(TurnSpec{
+		Ctx:             context.Background(),
+		Mode:            ModeInteractive,
+		ProjectPath:     "/tmp",
+		BackendName:     "run-turn-test",
+		SessionID:       sessionID,
+		AgentID:         "run-turn-agent",
+		ChatReq:         ai.ChatRequest{Prompt: "hi"},
+		FileDir:         "/tmp",
+		DrainOnFinalize: true,
+	})
+
+	// The failure must still be classified as abnormal so auto-continue can act.
+	assert.Equal(t, ai.ReasonBackendExit, res.AbnormalReason,
+		"a backend_exit warning block must still classify the turn as abnormal")
+
+	// A live warning frame carrying the error text must have been broadcast.
+	require.Eventually(t, func() bool {
+		for _, ev := range sub.GetBufferedEvents() {
+			if ev.Event != "chat_stream" {
+				continue
+			}
+			data, ok := ev.Data.(ws.ChatStreamData)
+			if !ok || data.EventType != "warning" {
+				continue
+			}
+			payload, ok := data.Payload.(map[string]any)
+			if !ok {
+				continue
+			}
+			if text, _ := payload["text"].(string); strings.Contains(text, "session/new failed") {
+				return true
+			}
+		}
+		return false
+	}, 2*time.Second, 20*time.Millisecond,
+		"the backend error must be forwarded to WS clients as a live warning")
+
+	// And it must NOT have been forwarded as a terminal "error" frame, which
+	// would end the client's stream while the backend may still be running.
+	for _, ev := range sub.GetBufferedEvents() {
+		if ev.Event != "chat_stream" {
+			continue
+		}
+		if data, ok := ev.Data.(ws.ChatStreamData); ok {
+			assert.NotEqual(t, "error", data.EventType,
+				"the failure must not be sent as a terminal error frame")
+		}
+	}
+}
+
 // TestRunTurn_EmitsStreamStartAndPersistsReply verifies the shared
 // implementation performs the full interactive lifecycle: placeholder row,
 // stream_start broadcast, content persisted, and a clean (non-error) result.

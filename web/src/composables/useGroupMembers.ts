@@ -24,6 +24,8 @@ export function useGroupMembers(currentSessionId: Ref<string>) {
   const mode = ref<'host' | 'free'>('host')
   /** Free-mode "并发执行" switch (server-authoritative). */
   const parallelDefault = ref(false)
+  /** Auto-cruise switch (server-authoritative, design §15). */
+  const cruise = ref(false)
   const { loadAgents } = useAgents()
 
   const hostMemberId = computed(() => members.value.find(m => m.isHost)?.id || '')
@@ -62,6 +64,7 @@ export function useGroupMembers(currentSessionId: Ref<string>) {
       members.value = []
       mode.value = 'host'
       parallelDefault.value = false
+      cruise.value = false
       return
     }
     // Agents carry the custom avatars the member bar/speaker header render, so
@@ -72,14 +75,16 @@ export function useGroupMembers(currentSessionId: Ref<string>) {
       members.value = res.members
       mode.value = res.mode
       parallelDefault.value = res.parallelDefault
+      cruise.value = res.cruise
     } catch {
       members.value = []
       mode.value = 'host'
       parallelDefault.value = false
+      cruise.value = false
     }
   }
 
   watch(currentSessionId, (sid) => { void refresh(sid) }, { immediate: true })
 
-  return { members, mode, parallelDefault, hostMemberId, resolveSpeaker, resolveByName, refresh }
+  return { members, mode, parallelDefault, cruise, hostMemberId, resolveSpeaker, resolveByName, refresh }
 }

@@ -28,6 +28,12 @@ export default {
     noData: '暂无数据',
     ok: '确定',
     listSeparator: '，',
+    // AsyncComponentError.vue 在懒加载面板 chunk 失败时展示（离线、部署换掉了
+    // 带哈希的 chunk）。
+    componentLoadFailed: '组件加载失败，请点击重试。',
+    // SplitView / SplitDivider 的 aria 标题——通用文案，故不放 `file.` 下，
+    // 尽管文件管理器是它最常见的宿主。
+    dragToResize: '拖动调整面板宽度',
   },
   codeBlock: {
     wrapOn: '自动换行已开启',
@@ -317,6 +323,14 @@ export default {
     repoKindMain: '主仓库',
     repoKindWorktree: '工作树',
     repoKindSubdir: '子目录',
+    // 头部胶囊三段的说明性标签（宽屏 ≥768px 才显示，见 AppHeader.vue）。
+    // 与 projects / branches 这类菜单标题不同：它们是「图标 + 值」前面的一枚
+    // 微型前缀，用来告诉用户右边那个值是什么。
+    labels: {
+      project: '项目',
+      branch: '分支',
+      file: '文件',
+    },
     themePicker: '切换主题',
     moreAppearanceOptions: '更多外观选项',
     settings: '设置',
@@ -461,6 +475,7 @@ export default {
       placeholderOptional: '添加描述（可选）...',
       placeholderQuickSend: '点击右侧按钮，快捷发送预置指令 →',
       placeholderCommand: "输入 {'/'} 执行命令",
+      placeholderSkill: "输入 {'#'} 使用技能",
       placeholderFileRef: "输入 {'@'} 引用文件",
       placeholderSwipeHistory: '左右滑动切换历史输入',
       send: '发送',
@@ -499,6 +514,7 @@ export default {
         recentShare: '最近分享',
         clawbench: '内置',
         agent: '智能体',
+        skill: '技能',
       },
     },
     acpSession: {
@@ -599,6 +615,10 @@ export default {
     },
     modelSwitcher: {
       title: '模型',
+      switching: '正在切换模型…',
+      deferred: '会话忙碌，将在下次发送时切换',
+      switchFailed: '切换模型失败',
+      switchFailedDetail: '切换模型失败：{detail}',
     },
     modeSwitcher: {
       title: '模式',
@@ -771,6 +791,12 @@ export default {
     voice: {
       recording: '录音中',
       transcribing: '识别中',
+      insecureContext: '语音输入需要 HTTPS 或 localhost 环境（当前页面不是安全上下文，无法访问麦克风）',
+      unavailableTitle: '语音输入不可用',
+      gotIt: '知道了',
+      micDenied: '麦克风权限被拒绝或不可用',
+      transcribeFailed: '语音识别失败，请检查识别模型配置',
+      connectFailed: '语音识别连接失败',
     },
     archive: {
       confirm: '从会话列表中移除当前会话？或归档到会话搜索列表',
@@ -1156,6 +1182,12 @@ export default {
     left: '已离场',
     parallelLabel: '并发执行',
     parallelHint: "打开后你 {'@'} 的成员同时发言（不 {'@'} 人时全体成员并发）；智能体之间的 {'@'} 不受影响。",
+    cruiseLabel: '自动巡航',
+    cruiseHintHost: '打开后，主持人认为任务完成才会结束（不再随时收工）。',
+    cruiseHintFree: '打开后，过半成员确认任务完成才会结束。',
+    // 当前群开启自动巡航时，聊天标题栏显示的徽章。
+    cruiseActive: '巡航中',
+    goalSatisfied: '已完成',
     autoApproveHint: '自动批准所有成员的权限请求。',
     confirm: '添加',
     increaseInstance: '再添加一个该智能体实例',
@@ -1280,6 +1312,13 @@ export default {
       eventContext: '事件上下文（自动注入，不可编辑）',
       eventContextHint: '触发时这些变量会替换为实际值，固定注入在提示词之前。',
       eventContextHeader: 'Forge 事件',
+      // 变量标签与取值之间的分隔符，须与后端 EventContextSeparator 一致，
+      // 预览才能与 AI 实际收到的提示词逐字相同。
+      eventContextSeparator: '：',
+      // 后端为开关类变量注入的是/否取值（其 EventContextYes/No）。总览卡解析同一
+      // 组键，使示例值与提示词在当前语言下一致。
+      eventContextYes: '是',
+      eventContextNo: '否',
       varEventType: '事件类型',
       varRepo: '仓库',
       varItem: '条目',
@@ -1566,6 +1605,8 @@ export default {
       binaryFile: '二进制文件，无法在浏览器中预览',
       loadFailed: '文档加载失败',
       truncated: '内容已截断，仅显示部分文本',
+      pdfLoading: '加载中…',
+      pdfLoadFailed: 'PDF 加载失败',
     },
     details: {
       title: '文件详情',
@@ -2640,7 +2681,7 @@ export default {
       ttsEnginePiper: 'Piper',
       ttsEngineKokoro: 'Kokoro',
       ttsEngineMossNano: 'MOSS-Nano',
-      ttsEngineOpenAI: 'OpenAI TTS',
+      ttsEngineOpenAI: 'OpenAI TTS兼容接口',
       ttsModel: 'TTS模型',
       ttsModelDesc: 'MiniMax 引擎使用的语音合成模型名称',
       ttsFormat: '输出格式',
@@ -2811,8 +2852,8 @@ export default {
       skillsSection: '技能扫描',
       skillsCard: '跨智能体技能',
       skillsCardDesc: '技能（skill）是含 SKILL.md 的目录，用来给 AI 补充专门的流程和知识。这里汇总所有来源的技能，让装在某个智能体下的技能也能被其他智能体用上。同名技能只保留优先级最高的一个，不会重复注入。',
-      skillsEnabled: '启用技能注入',
-      skillsEnabledDesc: '关闭后不再把技能表写入系统提示词（扫描与下方列表仍可用）。',
+      skillsEnabled: '自动注入技能',
+      skillsEnabledDesc: "开启后所有已扫描技能会自动写入系统提示词；关闭后不自动注入，但你仍可用 {'#'}技能名 手动引用。",
       skillsDirs: '自定义技能目录',
       skillsDirsDesc: '额外的本地技能目录（绝对路径，可添加多个）。目录下的每个子目录若含 SKILL.md 即视为一个技能。',
       skillsDirPlaceholder: '目录绝对路径，如 /home/me/skills',
@@ -2946,7 +2987,7 @@ export default {
       ttsPiperHeader: 'Piper 配置',
       ttsKokoroHeader: 'Kokoro 配置',
       ttsMossNanoHeader: 'MOSS-Nano 配置',
-      ttsOpenAIHeader: 'OpenAI TTS 配置',
+      ttsOpenAIHeader: 'OpenAI TTS兼容接口',
       openaiTTSBaseUrl: '端点地址',
       openaiTTSBaseUrlDesc: 'OpenAI 兼容 API 的根地址，例如 https://api.openai.com/v1（自动补全为 …/v1/audio/speech）',
       openaiTTSApiKey: 'API 密钥',
@@ -2955,6 +2996,11 @@ export default {
       openaiTTSModelDesc: '语音合成模型名称，由你填写（例如 gpt-4o-mini-tts）。注意 tts-1 / tts-1-hd 不支持流式 SSE，将自动回退为整体音频流',
       openaiTTSVoice: '音色',
       openaiTTSVoiceDesc: '音色名称或自定义音色 ID，由你填写（例如 alloy / verse / voice_1234）',
+      openaiTTSStreamMode: '流式方式',
+      openaiTTSStreamModeDesc: '选择请求方式：自动按模型判断；流式（SSE）逐块返回；整体音频一次性返回。模型名无法判断是否支持 SSE 时可手动指定',
+      openaiTTSStreamModeAuto: '自动（按模型）',
+      openaiTTSStreamModeSSE: '流式（SSE）',
+      openaiTTSStreamModeAudio: '整体音频',
       ttsSummarizeHeader: '摘要',
       ttsApiHeader: '语音 API 配置',
       ttsCacheHeader: '缓存',

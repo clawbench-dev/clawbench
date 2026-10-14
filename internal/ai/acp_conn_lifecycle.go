@@ -527,7 +527,7 @@ func (c *ACPConn) recoverViaResumeSession(ctx context.Context, cwd, acpSID strin
 func (c *ACPConn) reapplyConfigAfterResume(ctx context.Context, acpSID string, prevConfig cachedConfigSnapshot) {
 	reapplyStart := time.Now()
 	c.reapplyConfigOption(ctx, acpSID, c.resolveWireConfigIDLocked("mode", "mode"), prevConfig.mode)
-	c.reapplyConfigOption(ctx, acpSID, c.resolveWireConfigIDLocked("model", "model"), prevConfig.model)
+	c.reapplyModelSelection(ctx, acpSID, prevConfig.model)
 	c.reapplyConfigOption(ctx, acpSID, c.resolveWireConfigIDLocked("thought_level", "thinkingEffort"), prevConfig.effort)
 	slog.Info("acp perf: reapplyConfigAfterResume.total", "clawbench_sid", c.clawbenchSID, "elapsed", time.Since(reapplyStart),
 		"mode", prevConfig.mode, "model", prevConfig.model, "effort", prevConfig.effort)

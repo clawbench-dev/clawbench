@@ -1070,6 +1070,14 @@ type ACPConn struct {
 	lastSetEffort   string
 	lastSetMode     string
 
+	// modelSwitchMu serializes the check-and-send-and-record sequence of a
+	// model switch. shouldSetConfig + markConfigSet are not atomic on their own,
+	// so without this a click-time apply (PATCH) racing the pre-prompt apply
+	// could both pass the dedup check and send session/set_model twice — the
+	// agent rejects the second with "Session is busy", and Prompt would then
+	// abort the whole turn. A leaf lock: never held while taking c.mu.
+	modelSwitchMu sync.Mutex
+
 	// lastSetConfigs is the generalized version of lastSetModel/Effort/Mode.
 	// For well-known categories, the legacy fields remain the canonical source.
 	// For other categories, this map is used.
@@ -1095,6 +1103,13 @@ type ACPConn struct {
 	// Invoked with the resolved wire config id so tests can assert which id a
 	// given internal category maps to for the connection's agent.
 	setConfigOptionFn func(ctx context.Context, acpSessionID, configID, value string) error
+
+	// rawCallFnForTest overrides the raw JSON-RPC side channel (CallRaw) for
+	// testing. If non-nil, it is called instead of the real acpRawRPC. Needed
+	// because newACPConn / SetAliveForTest never install a rawRPC, so CallRaw
+	// would otherwise always fail with errRawConnClosed. Production code must
+	// not set this.
+	rawCallFnForTest func(ctx context.Context, method string, params any) (json.RawMessage, error)
 
 	// resumeSessionFnForTest / loadSessionFnForTest override the two recovery
 	// RPCs so recoverExistingSession's fallback can be unit-tested without a live
@@ -1421,7 +1436,13 @@ func (c *ACPConn) CallRaw(ctx context.Context, method string, params any) (json.
 	c.mu.Lock()
 	rpc := c.rawRPC
 	alive := c.alive && c.isAliveLocked()
+	hook := c.rawCallFnForTest
 	c.mu.Unlock()
+
+	// Test override: drive the raw channel without a live agent process.
+	if hook != nil {
+		return hook(ctx, method, params)
+	}
 
 	if rpc == nil || !alive {
 		return nil, errRawConnClosed
@@ -2461,6 +2482,88 @@ func (c *ACPConn) SetConfigOptionFnForTest(fn func(ctx context.Context, acpSessi
 	c.mu.Lock()
 	c.setConfigOptionFn = fn
 	c.mu.Unlock()
+}
+
+// SetRawCallFnForTest overrides the raw JSON-RPC side channel (CallRaw) for
+// testing. If fn is non-nil, it is called instead of the real acpRawRPC, letting
+// a test assert the method name and params of a raw call (e.g. session/set_model)
+// without a live agent process. Production code must not use this.
+func (c *ACPConn) SetRawCallFnForTest(fn func(ctx context.Context, method string, params any) (json.RawMessage, error)) {
+	c.mu.Lock()
+	c.rawCallFnForTest = fn
+	c.mu.Unlock()
+}
+
+// RawCallRecordForTest is one captured raw JSON-RPC call.
+type RawCallRecordForTest struct {
+	Method string
+	Params map[string]any
+}
+
+// RawCallRecorderForTest captures raw calls made through CallRaw.
+type RawCallRecorderForTest struct {
+	mu    sync.Mutex
+	calls []RawCallRecordForTest
+}
+
+// Calls returns a copy of the recorded calls.
+func (r *RawCallRecorderForTest) Calls() []RawCallRecordForTest {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]RawCallRecordForTest, len(r.calls))
+	copy(out, r.calls)
+	return out
+}
+
+// CaptureRawCallsForTest installs a raw-RPC hook that records every call and
+// succeeds. Lets a caller outside package ai assert what was sent (e.g. that a
+// click-time model switch issued session/set_model). Production code must not
+// use this.
+func CaptureRawCallsForTest(c *ACPConn) *RawCallRecorderForTest {
+	rec := &RawCallRecorderForTest{}
+	c.SetRawCallFnForTest(func(_ context.Context, method string, params any) (json.RawMessage, error) {
+		m, _ := params.(map[string]any)
+		rec.mu.Lock()
+		rec.calls = append(rec.calls, RawCallRecordForTest{Method: method, Params: m})
+		rec.mu.Unlock()
+		return nil, nil
+	})
+	return rec
+}
+
+// FailRawCallsForTest installs a raw-RPC hook that fails every call with the
+// given JSON-RPC error (optionally with a data.details payload). Production
+// code must not use this.
+func FailRawCallsForTest(c *ACPConn, code int, message string) {
+	c.SetRawCallFnForTest(func(context.Context, string, any) (json.RawMessage, error) {
+		return nil, &RawRPCError{Code: code, Message: message}
+	})
+}
+
+// FailRawCallsWithDetailForTest is FailRawCallsForTest with a JSON-RPC data
+// payload, for asserting that an agent's own explanation reaches the response.
+// Production code must not use this.
+func FailRawCallsWithDetailForTest(c *ACPConn, code int, message, data string) {
+	c.SetRawCallFnForTest(func(context.Context, string, any) (json.RawMessage, error) {
+		return nil, &RawRPCError{Code: code, Message: message, Data: json.RawMessage(data)}
+	})
+}
+
+// RegisterModelSwitchMethodForTest overrides the model-switch method lookup so a
+// test can make an arbitrary backend id honor a given method. Restores the
+// previous lookup on cleanup. Production code must not use this.
+func RegisterModelSwitchMethodForTest(t interface{ Cleanup(func()) }, backendID, method string) {
+	prev := LookupACPModelSwitchMethodFn
+	LookupACPModelSwitchMethodFn = func(id string) string {
+		if id == backendID {
+			return method
+		}
+		if prev != nil {
+			return prev(id)
+		}
+		return ""
+	}
+	t.Cleanup(func() { LookupACPModelSwitchMethodFn = prev })
 }
 
 // SetRecoveryRPCsFnForTest overrides the session/resume and session/load RPCs so

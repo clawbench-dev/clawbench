@@ -406,6 +406,10 @@ paths:
         含义为「轮到用户发言前，智能体之间最多发言多少次」；主持人模式与自由模式
         语义一致，只计**成员**发言（主持人的路由/汇总回合不计）。达到上限即停止
         AI 讨论并写一条系统消息。`PATCH` 时须为正整数。
+
+        `frp.available` 表示**本构建是否包含 FRP 功能**（与 `frp.enabled` 这一运行时
+        配置无关）：用 `nofrp` tag 编译的二进制不含 frp 客户端，恒为 `false`。
+        前端据此隐藏 FRP 设置面板。
       operationId: getConfig
       responses:
         "200":
@@ -431,6 +435,12 @@ paths:
         `chat.user_nickname`（群聊用户昵称）非法值（含引号 / 尖括号 / 逗号 / 控制
         字符，或长度超 32）返回 400；与现有智能体同名返回 **409**
         （`msgKey=UserNicknameTaken`）。
+
+        `tts.openai.stream_mode`（OpenAI 兼容 TTS 的请求方式）只接受
+        `auto` / `sse` / `audio`，其他值返回 400
+        （`tts.openai.stream_mode must be one of: auto,sse,audio`）。`auto`
+        按模型名决定（`tts-1` / `tts-1-hd` 走 `audio`，其余走 `sse`），
+        `sse` / `audio` 强制指定。
       operationId: patchConfig
       requestBody:
         required: true
@@ -1485,7 +1495,28 @@ paths:
                         description: 仅对新建标签生效；缺省为 `project`
       responses:
         "200":
-          description: 已更新
+          description: |
+            已更新。`modelSwitchDeferred=true` 表示会话正忙，模型选择已写库但需等下一次
+            发送时才应用（"记住但延后"）。
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  modelSwitchDeferred:
+                    type: boolean
+                    description: |
+                      仅当请求带 `modelId` 时可能出现。为 true 表示 agent 当前忙（或超时/
+                      连接断开），切换被推迟到下一次发送；此时选择已持久化。
+        "422":
+          description: |
+            `modelId` 被 agent 拒绝且重试无用（例如该 provider 未连接）。响应为
+            `{error, code, msgKey: "ModelSwitchFailed"|"ModelSwitchFailedDetail",
+            detail: {Detail}}`，其中 `Detail` 是 agent 给出的具体原因。**不会写库**
+            （选择未被接受）。注意：同一请求里其它字段（mode/transport/title/tags 等）
+            **已经生效** —— model 是最后一个应用、且唯一可能让整请求失败的字段。
 
   /api/ai/session/generate-title:
     post:
@@ -3179,7 +3210,7 @@ paths:
                     type: array
                     items:
                       type: string
-                    description: 用户自定义 Skill 目录列表（已解析默认值；为空时回退 `<DataDir>/skills-user`）
+                    description: 用户自定义 Skill 目录列表（已解析：去除空项；为空表示未配置任何自定义目录，不回退默认值）
                   refresh_hours:
                     type: integer
                     description: 定时 git 拉取间隔；0 表示仅启动时拉取
@@ -3843,6 +3874,15 @@ paths:
         同一对列表也挂在 `acpStates[].modelListState` 的 `resolvedModels` /
         `cliModels` 字段上，便于客户端仅凭 ACP 状态缓存刷新视图。
 
+        **ACP 未确认时不展示 CLI 猜测列表**：agent 的 `transport` 为 `acp-stdio`
+        且其 ACP 运行时**从未上报过**模型列表时，`agents[].models` 返回**空数组**
+        （`cliModels` 仍照常返回）。ACP 协议没有「客户端默认模型」的概念——模型是
+        `category: "model"` 的会话配置项，agent 在 `session/new` 自带 `currentValue`，
+        客户端只需显示、可选地改；在 agent 开口之前，CLI 发现的列表只是猜测，把它当
+        可运行模型展示（并据此发送 `session/set_config_option`）可能选中 agent 无法
+        运行的模型。客户端此时应显示占位（如「默认」）并在发送时不带 `modelId`，
+        交由 agent 自行决定。传输为 `cli` 的双传输 agent 不受此约束。
+
         **按项目过滤**：返回的列表只包含当前项目可见的 agent——全局 agent
         （`project_id` 为空）始终可见，被标记「仅当前项目」的 agent 只在其所属
         项目中可见（依据请求的 `clawbench_project` cookie）。`defaultAgent` 同样
@@ -3941,6 +3981,10 @@ paths:
         返回 `{ models, cliModels }`——与 GET /api/agents 同一形状。`models` 是发现结果
         与已缓存的 ACP 模型列表合并后的列表（ACP 对成员资格有权威性），`cliModels` 是
         未经合并的纯 CLI 列表，供客户端在切换到 CLI 传输时直接渲染。
+
+        与 GET /api/agents 一致：当 agent 的 `transport` 为 `acp-stdio` 且其 ACP 运行时
+        尚未上报模型时，`models` 返回**空数组**（发现结果仍照常落库，`cliModels` 照常
+        返回）——否则手动刷新一次就会把 CLI 猜测列表写回 ACP 视图。
 
         `/api/agents/rescan`：重跑 agent 刷新流水线（探测 CLI → 发现模型 → 落库 →
         重载内存），返回与 GET /api/agents 相同形状、同样按当前项目过滤的
@@ -5081,22 +5125,67 @@ paths:
     get:
       tags: [SSH/FRP]
       summary: FRP 完整状态
-      description: 需鉴权（会暴露公网 IP）。
+      description: |
+        需鉴权（会暴露公网 IP）。
+
+        `available` 表示**本构建是否包含 FRP 功能**，与配置无关：用 `nofrp`
+        tag 编译的二进制不含 frp 客户端，恒为 `false`。前端据此隐藏 FRP 设置面板，
+        避免向用户展示一个永远无法生效的开关。
       operationId: frpInfo
       responses:
         "200":
           description: FRP 状态
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+                  running:
+                    type: boolean
+                  state:
+                    type: string
+                    enum: [disabled, starting, running, failed, stopped]
+                  available:
+                    type: boolean
+                    description: 本构建是否包含 FRP 功能（`nofrp` 构建恒为 false）
+                  server_addr:
+                    type: string
+                  remote_port:
+                    type: integer
+                  ssh_remote_port:
+                    type: integer
+                  remote_url:
+                    type: string
+                  message:
+                    type: string
 
   /api/frp/status:
     get:
       tags: [SSH/FRP]
       summary: FRP 最小状态
-      description: 免鉴权，仅返回 enabled + running。
+      description: 免鉴权，仅返回 enabled + running + state + available（不含地址与端口）。
       operationId: frpStatus
       security: []
       responses:
         "200":
           description: 最小状态
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+                  running:
+                    type: boolean
+                  state:
+                    type: string
+                    enum: [disabled, starting, running, failed, stopped]
+                  available:
+                    type: boolean
+                    description: 本构建是否包含 FRP 功能（`nofrp` 构建恒为 false）
 
   # ── Fonts ─────────────────────────────────────────────────────────────────
   /api/fonts/list:
@@ -5368,10 +5457,11 @@ paths:
       summary: 列出群成员
       description: |
         返回群的全部成员，含已离场（`left=true`）的成员。`isHost` 标识主持人。
-        同时返回 `mode`（`"host"` 主持人模式 / `"free"` 自由聊天模式）与
+        同时返回 `mode`（`"host"` 主持人模式 / `"free"` 自由聊天模式）、
         `parallelDefault`（自由模式 actionbar「并发执行」开关的服务端值；缺省
-        `false` 即串行）。成员发言次数上限是**全局配置**（`chat.group_max_speeches`，
-        设置 → 聊天 → 群聊），不是每群设置，故不在此返回。
+        `false` 即串行）与 `cruise`（自动巡航开关；缺省 `false`）。成员发言次数
+        上限是**全局配置**（`chat.group_max_speeches`，设置 → 聊天 → 群聊），不是
+        每群设置，故不在此返回。
       operationId: groupMembersList
       parameters:
         - name: groupId
@@ -5402,6 +5492,7 @@ paths:
                         isHost: {type: boolean}
                   mode: {type: string, enum: [host, free]}
                   parallelDefault: {type: boolean}
+                  cruise: {type: boolean}
     post:
       tags: [Group]
       summary: 批量添加群成员
@@ -5514,13 +5605,18 @@ paths:
   /api/group/settings:
     patch:
       tags: [Group]
-      summary: 更新群设置（用户种子并发默认）
+      summary: 更新群设置（用户种子并发默认 / 自动巡航）
       description: |
         `parallelDefault` 是自由模式下用户 @ 成员的默认并发开关（打开后用户 @
         的成员并发执行；智能体之间 @ 的 `mode` 不受影响）。主持人模式下该开关无
-        作用（用户不参与路由）。成员发言次数上限是**全局配置**
-        （`chat.group_max_speeches`，经 `PATCH /api/config` 修改），不是每群设置，
-        故不在此端点。
+        作用（用户不参与路由）。
+        `cruise` 是自动巡航开关：开启后，循环本应交回用户时（主持人发结束标签 /
+        自由模式接力枯竭 / @User / 提问）不再交回，改为触发一次「确认回合」，
+        直到参与者（主持人模式由主持人一人、自由模式由过半数活跃成员）输出
+        `<clawbench-goal-satisfied/>` 才真正结束；`chat.group_max_speeches`
+        仍作为安全上限。两者均可省略，至少提供一个；只写提供的字段。
+        成员发言次数上限是**全局配置**（`chat.group_max_speeches`，经
+        `PATCH /api/config` 修改），不是每群设置，故不在此端点。
       operationId: groupSettingsUpdate
       requestBody:
         required: true
@@ -5528,10 +5624,11 @@ paths:
           application/json:
             schema:
               type: object
-              required: [groupId, parallelDefault]
+              required: [groupId]
               properties:
                 groupId: {type: string}
                 parallelDefault: {type: boolean}
+                cruise: {type: boolean}
       responses:
         "200":
           description: 更新成功

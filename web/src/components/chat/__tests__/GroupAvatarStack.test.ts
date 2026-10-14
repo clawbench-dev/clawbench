@@ -168,4 +168,31 @@ describe('GroupAvatarStack', () => {
     expect(avatars[0]).toBe('<svg>member-1</svg>')
     expect(avatars[1]).toBe('<svg>agent-a2</svg>')
   })
+
+  it('shows no auto-cruise badge when cruise is off or unset', () => {
+    const off = mountStack([
+      { id: 'm1', name: 'Host', backend: 'codebuddy', agentId: 'a1', isHost: true },
+    ], { cruise: false })
+    expect(off.find('.group-cruise-badge').exists()).toBe(false)
+    // Undefined (older caller that does not pass the prop) must also hide it.
+    const unset = mountStack([
+      { id: 'm1', name: 'Host', backend: 'codebuddy', agentId: 'a1', isHost: true },
+    ])
+    expect(unset.find('.group-cruise-badge').exists()).toBe(false)
+  })
+
+  it('shows an auto-cruise badge while cruise is on, with the icon + label', () => {
+    const w = mountStack([
+      { id: 'm1', name: 'Host', backend: 'codebuddy', agentId: 'a1', isHost: true },
+    ], { cruise: true })
+    const badge = w.find('.group-cruise-badge')
+    expect(badge.exists()).toBe(true)
+    // Leading glyph + the localized "cruising" word (mocked t returns the key).
+    expect(badge.find('.lucide-navigation').exists()).toBe(true)
+    expect(badge.find('.group-cruise-label').text()).toBe('group.cruiseActive')
+    // Decorative: the whole strip is one click target, so the badge stays out of
+    // the a11y tree and exposes only a hover tooltip.
+    expect(badge.attributes('aria-hidden')).toBe('true')
+    expect(badge.attributes('title')).toBe('group.cruiseLabel')
+  })
 })

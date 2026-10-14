@@ -88,8 +88,14 @@ func (c *ACPConn) Prompt(ctx context.Context, prompt []acp.ContentBlock, streamC
 	// Config ids are resolved to what the agent itself advertised
 	// (resolveWireConfigID) with the historical hardcoded ids as fallback —
 	// agents differ (claude-agent-acp: "effort" vs legacy "thinkingEffort").
+	//
+	// Model goes first (as before) but through its own dispatch: a backend may
+	// honor session/set_model instead of a "model" config option, in which case
+	// the config-option path would silently do nothing. See applyModelSelection.
+	if err := c.applyModelSelection(ctx, acpSID, req.Model); err != nil {
+		return err
+	}
 	configs := []configOptionSpec{
-		{configID: c.resolveWireConfigID("model", "model"), value: req.Model, label: "model"},
 		{configID: c.resolveWireConfigID("thought_level", "thinkingEffort"), value: req.ThinkingEffort, label: "thinking_effort"},
 		{configID: c.resolveWireConfigID("mode", "mode"), value: req.Mode, label: "mode"},
 	}

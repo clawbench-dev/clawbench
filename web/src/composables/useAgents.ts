@@ -460,6 +460,63 @@ export function restoreOriginalModels(agentId: string): void {
 }
 
 /**
+ * Restore the agent's model list to the ACP view.
+ *
+ * The counterpart to restoreOriginalModels. Switching ACP → CLI replaces
+ * `agent.models` with the CLI list, so switching back must NOT leave it there:
+ * the CLI list is a guess until the ACP agent has reported its own models
+ * (ACP has no client-side default-model concept). So this either applies the
+ * ACP-reported list or clears the list entirely — never falls through to the
+ * CLI baseline.
+ *
+ * Deliberately separate from populateACPStateFromCache, which the settings page
+ * also calls and which must leave a dual-transport agent's CLI list intact.
+ *
+ * Returns true when an ACP-reported list was applied, false when the list was
+ * cleared because the agent has not reported models yet.
+ */
+export function restoreACPModelView(agentId: string): boolean {
+    const agent = agents.value.find(a => a.id === agentId)
+    if (!agent) return false
+    const state = acpStatesCache[agentId] as AcpState | undefined
+    const ml = state?.modelListState
+    if (ml?.resolvedModels && ml.resolvedModels.length > 0) {
+        applyResolvedModelList(agentId, ml.resolvedModels, ml.cliModels)
+        return true
+    }
+    if (ml?.models && ml.models.length > 0) {
+        updateACPModelList(agentId, ml.models, ml.currentModelId)
+        return true
+    }
+    // No ACP-reported models: an empty list is the honest answer, and it keeps
+    // the send path from shipping a CLI model as the session's selection.
+    agent.models = []
+    return false
+}
+
+/**
+ * Reset the agent's displayed model list to whichever view its CURRENT
+ * transport calls for.
+ *
+ * Both baselines live on the same `agent.models` field, so a caller that resets
+ * "to the CLI list" unconditionally is wrong for an agent running over ACP (and
+ * vice versa). This picks the right one: ACP → the ACP view (see
+ * restoreACPModelView, which clears the list when the agent has not reported
+ * models yet); CLI → the CLI baseline.
+ *
+ * The server response is authoritative and self-heals on the next loadAgents,
+ * so this only covers the window between fetches (a transport toggle, a session
+ * switch).
+ */
+export function resetModelViewForTransport(agentId: string): void {
+    if (getAgentTransport(agentId) === 'acp-stdio') {
+        restoreACPModelView(agentId)
+        return
+    }
+    restoreOriginalModels(agentId)
+}
+
+/**
  * Apply the result of a manual "refresh models".
  *
  * The backend persists the newly discovered CLI list and answers with the same
@@ -691,6 +748,8 @@ export function useAgents() {
         invalidateACPStateCache,
         updateACPModelList,
         restoreOriginalModels,
+        restoreACPModelView,
+        resetModelViewForTransport,
         applyRefreshedModelList,
         populateACPStateFromCache,
         duplicateAgent,

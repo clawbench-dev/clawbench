@@ -121,8 +121,9 @@
     var THEME = (ClawBenchNative.getTheme && ClawBenchNative.getTheme()) || '';
     if (DARK_IDS.indexOf(THEME) < 0 && LIGHT_IDS.indexOf(THEME) < 0) {
       // Keep the colour scheme the caller implied, so a light-mode user is not
-      // flipped to a dark page (and vice versa).
-      THEME = (THEME === 'light') ? 'github-light' : 'github-dark';
+      // flipped to a dark page (and vice versa). The dark fallback is the
+      // factory theme (gruvbox-dark), matching the web app and Android.
+      THEME = (THEME === 'light') ? 'github-light' : 'gruvbox-dark';
     }
     document.documentElement.setAttribute('data-theme', THEME);
     var BASE = DARK_IDS.indexOf(THEME) >= 0 ? 'dark' : 'light';

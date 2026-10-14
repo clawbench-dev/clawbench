@@ -1,7 +1,6 @@
 package model
 
 import (
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -55,12 +54,12 @@ func TestSkillSlug_TruncatesLongName(t *testing.T) {
 
 // TestResolveSkillsDirs pins the resolution order: configured entries win,
 // blank entries are dropped (an empty string would otherwise resolve to the
-// scan root), and an all-blank/empty list falls back to the default dir.
+// scan root), and an all-blank/empty list stays empty — there is no default
+// directory fallback.
 func TestResolveSkillsDirs(t *testing.T) {
 	origDataDir := DataDir
 	t.Cleanup(func() { DataDir = origDataDir })
 	DataDir = t.TempDir()
-	defaultDir := filepath.Join(DataDir, "skills-user")
 
 	t.Run("configured dirs are returned in order", func(t *testing.T) {
 		cfg := Config{Skills: SkillsConfig{Dirs: []string{"/a", "/b"}}}
@@ -72,20 +71,12 @@ func TestResolveSkillsDirs(t *testing.T) {
 		assert.Equal(t, []string{"/a", "/b"}, cfg.ResolveSkillsDirs())
 	})
 
-	t.Run("only blanks falls back to the default", func(t *testing.T) {
+	t.Run("only blanks resolves to empty", func(t *testing.T) {
 		cfg := Config{Skills: SkillsConfig{Dirs: []string{"", ""}}}
-		assert.Equal(t, []string{defaultDir}, cfg.ResolveSkillsDirs())
+		assert.Empty(t, cfg.ResolveSkillsDirs())
 	})
 
-	t.Run("empty list falls back to the default", func(t *testing.T) {
-		cfg := Config{}
-		assert.Equal(t, []string{defaultDir}, cfg.ResolveSkillsDirs())
-	})
-
-	t.Run("no default available returns empty", func(t *testing.T) {
-		saved := DataDir
-		DataDir = ""
-		defer func() { DataDir = saved }()
+	t.Run("empty list stays empty", func(t *testing.T) {
 		cfg := Config{}
 		assert.Empty(t, cfg.ResolveSkillsDirs())
 	})
@@ -113,22 +104,22 @@ func TestApplyDefaults_SkillsMigratesLegacyDir(t *testing.T) {
 		assert.Empty(t, cfg.Skills.LegacyDir)
 	})
 
-	t.Run("neither present falls back to the default dir", func(t *testing.T) {
+	t.Run("neither present leaves dirs empty (no default)", func(t *testing.T) {
 		cfg := Config{}
 		ApplyDefaults(&cfg, nil)
-		assert.Equal(t, []string{filepath.Join(DataDir, "skills-user")}, cfg.Skills.Dirs)
+		assert.Empty(t, cfg.Skills.Dirs, "there is no default directory to synthesize")
 	})
 
-	t.Run("enabled defaults to true", func(t *testing.T) {
+	t.Run("enabled defaults to false (auto-injection is opt-in)", func(t *testing.T) {
 		cfg := Config{}
 		ApplyDefaults(&cfg, nil)
-		assert.True(t, cfg.Skills.Enabled)
-	})
-
-	t.Run("an explicit disable is respected", func(t *testing.T) {
-		cfg := Config{}
-		ApplyDefaults(&cfg, map[string]bool{"skills.enabled": true})
 		assert.False(t, cfg.Skills.Enabled)
+	})
+
+	t.Run("an explicit enable is respected", func(t *testing.T) {
+		cfg := Config{Skills: SkillsConfig{Enabled: true}}
+		ApplyDefaults(&cfg, map[string]bool{"skills.enabled": true})
+		assert.True(t, cfg.Skills.Enabled)
 	})
 
 	t.Run("refresh_hours defaults to 6 but 0 is expressible", func(t *testing.T) {

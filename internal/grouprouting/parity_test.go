@@ -23,14 +23,15 @@ type corpus struct {
 		Name string `json:"name"`
 		Text string `json:"text"`
 		Want struct {
-			Found       bool           `json:"found"`
-			End         bool           `json:"end"`
-			Speakers    []string       `json:"speakers"`
-			Groups      []MentionGroup `json:"groups"`
-			Instruction string         `json:"instruction"`
-			Before      string         `json:"before"`
-			After       string         `json:"after"`
-			Bcc         []BccEntry     `json:"bcc"`
+			Found         bool           `json:"found"`
+			End           bool           `json:"end"`
+			GoalSatisfied bool           `json:"goalSatisfied"`
+			Speakers      []string       `json:"speakers"`
+			Groups        []MentionGroup `json:"groups"`
+			Instruction   string         `json:"instruction"`
+			Before        string         `json:"before"`
+			After         string         `json:"after"`
+			Bcc           []BccEntry     `json:"bcc"`
 		} `json:"want"`
 	} `json:"cases"`
 	StripCases []struct {
@@ -60,6 +61,9 @@ func TestParityCorpus(t *testing.T) {
 			}
 			if r.End != tc.Want.End {
 				t.Errorf("end=%v want %v", r.End, tc.Want.End)
+			}
+			if r.GoalSatisfied != tc.Want.GoalSatisfied {
+				t.Errorf("goalSatisfied=%v want %v", r.GoalSatisfied, tc.Want.GoalSatisfied)
 			}
 			got := r.Speakers
 			if got == nil {

@@ -15,12 +15,14 @@
       <div class="project-dropdown-wrapper" ref="dropdownRef" :class="segmentClass('project', true)">
         <button class="project-switch-btn" @click="toggleDropdown" :title="t('appHeader.switchProject')">
           <Projector :size="12" />
+          <span class="seg-label">{{ t('appHeader.labels.project') }}</span>
           <span class="project-name">{{ projectName }}</span>
         </button>
       </div>
       <div v-if="gitBranch" class="badge-capsule-divider"></div>
       <div v-if="gitBranch" class="branch-badge" :title="gitBranch" @click="toggleBranchDropdown" :class="segmentClass('branch', true)">
         <GitBranch :size="12" class="branch-icon" />
+        <span class="seg-label">{{ t('appHeader.labels.branch') }}</span>
         <span class="branch-name">{{ gitBranch }}</span>
       </div>
       <div v-if="currentFileName || recentFilesAvailable > 0" class="badge-capsule-divider"></div>
@@ -33,6 +35,9 @@
         @click="toggleFileDropdown"
       >
         <FileText :size="12" class="file-icon" />
+        <!-- Label only when a real file is open: the empty state already reads
+             "Recent files", so a "File" label would duplicate it. -->
+        <span v-if="currentFileName" class="seg-label">{{ t('appHeader.labels.file') }}</span>
         <span v-if="currentFileName" class="current-file-name">{{ currentFileName }}</span>
         <span v-else class="current-file-name no-file-name">{{ t('appHeader.noFileOpen') }}</span>
       </button>
@@ -1258,6 +1263,52 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     font-weight: 400;
 }
 
+/* Segment labels — a tiny "项目 / 分支 / 文件" prefix before each value,
+   so the icon+value pair is self-explanatory instead of an unlabelled name.
+
+   Hidden by default and revealed only at ≥600px CSS viewport width: on a
+   narrow phone the capsule is width-constrained and every label would eat into
+   the (already truncated) value. `display:none` (not width:0) so a hidden label
+   occupies no space at all and the capsule collapses exactly back to the
+   icon+value look.
+
+   Why 600 and not a device-size test: this is a pure layout question ("does the
+   capsule have room?"), so it must be answered in CSS pixels — the unit the
+   layout actually has. Measured: the labelled capsule is ~215px wide and fits
+   with no overflow even at 393px CSS width, so 600 is comfortably safe. A
+   physical-pixel / device-size criterion would be the wrong unit here: a phone
+   in landscape is physically wide (e.g. 1920px) but has only ~698px of CSS
+   layout space, and it is the 698 that decides whether the labels fit.
+
+   Note this deliberately does NOT reuse `isWideScreen` (the two-column
+   threshold, 960px): that answers a different question ("is there room for a
+   second column?") and its higher bar would hide these labels on exactly the
+   landscape phones that have room for them.
+
+   The label must read as *secondary* to its value, which sits at 12px /
+   --text-primary / weight 500. Three independent axes separate them — smaller
+   (10px), greyer (--text-muted) and lighter (weight 400) — so the two never
+   blur together even when the value is short.
+
+   `flex-shrink: 0`: the value is the thing that should ellipsize when space
+   runs out, never the label (a truncated "项…" is worse than useless). */
+.seg-label {
+    flex-shrink: 0;
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-normal);
+    color: var(--text-muted);
+    line-height: var(--line-height-snug);
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+    display: none;
+}
+
+@media (min-width: 600px) {
+    .seg-label {
+        display: inline;
+    }
+}
+
 /* Highlight — the changed segment briefly flashes the accent background with
    white foreground (text + icon), then fades back. Pure background/color
    animation: no layout churn (the old fill/collapse collapsed sibling
@@ -1274,6 +1325,14 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 .badge-capsule .badge-highlight .branch-name,
 .badge-capsule .badge-highlight .current-file-name {
     color: #fff;
+}
+
+/* The label is --text-muted grey, which is unreadable on the accent flash.
+   Turn it white too, but keep it visually subordinate via opacity (its size
+   and weight already separate it from the value). */
+.badge-capsule .badge-highlight .seg-label {
+    color: #fff;
+    opacity: var(--opacity-soft);
 }
 
 /* !important: icons (e.g. .project-switch-btn svg:first-child) set

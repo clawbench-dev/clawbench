@@ -3,6 +3,8 @@ import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import CompletionMenu from '../CompletionMenu.vue'
 import { SOURCE_META } from '@/utils/completionSources.ts'
+import en from '@/i18n/locales/en'
+import zh from '@/i18n/locales/zh'
 import type { CompletionItem } from '@/utils/completionMatch.ts'
 
 function makeI18n() {
@@ -199,6 +201,83 @@ describe('CompletionMenu', () => {
     expect(row.find('.completion-source-icon').exists()).toBe(true)
   })
 
+  it('omits the trailing source tag for skill rows', () => {
+    // Every skill comes from the same logical list, so a per-row "Skill" chip is
+    // noise that steals width. Other sources keep theirs.
+    const items: CompletionItem[] = [
+      { key: '#pdf', label: 'pdf', description: 'Read and write PDFs', source: 'skill' },
+    ]
+    const wrapper = mountMenu(items)
+    const row = wrapper.findAll('.completion-item')[0]
+    expect(row.find('.completion-source').exists()).toBe(false)
+    // The source icon still identifies the row kind.
+    expect(row.find('.completion-source-icon').exists()).toBe(true)
+  })
+
+  it('gives skill descriptions the two-line prefix class', () => {
+    // Path descriptions are middle-ellipsised in JS; skill descriptions are
+    // prose and must keep their prefix, wrapping to two lines instead.
+    const items: CompletionItem[] = [
+      { key: '#pdf', label: 'pdf', description: 'Read and write PDFs', source: 'skill' },
+      { key: 'a.ts', label: 'a.ts', description: 'src/deep/dir', source: 'recent-open' },
+    ]
+    const wrapper = mountMenu(items)
+    const rows = wrapper.findAll('.completion-item')
+    expect(rows[0].find('.completion-desc').classes()).toContain('completion-desc--skill')
+    expect(rows[1].find('.completion-desc').classes()).not.toContain('completion-desc--skill')
+    // The skill description keeps its prefix verbatim (no middle ellipsis).
+    expect(rows[0].find('.completion-desc').text()).toBe('Read and write PDFs')
+  })
+
+  it('names the owning AI backend after a skill name', () => {
+    const items: CompletionItem[] = [
+      { key: '#pdf', label: 'pdf', description: '', source: 'skill', skillBackends: ['claude'] },
+    ]
+    const wrapper = mountMenu(items)
+    const chip = wrapper.find('.completion-item .completion-skill-backend')
+    expect(chip.exists()).toBe(true)
+    expect(chip.text()).toBe('Claude')
+  })
+
+  it('replaces the left source icon with the owning backend icon', () => {
+    // The backend icon takes over the left slot; the generic source icon is not
+    // rendered for a skill that has a native owner (no icon shown twice).
+    const items: CompletionItem[] = [
+      { key: '#pdf', label: 'pdf', description: '', source: 'skill', skillBackends: ['claude'] },
+    ]
+    const wrapper = mountMenu(items)
+    const row = wrapper.findAll('.completion-item')[0]
+    // AgentIcon renders one of agent-icon-svg / -img / -initial; the lucide
+    // source icon does not, so this is the discriminator.
+    expect(row.find('.agent-icon-svg, .agent-icon-img, .agent-icon-initial').exists()).toBe(true)
+  })
+
+  it('keeps the generic source icon when a skill has no native owner', () => {
+    const items: CompletionItem[] = [
+      { key: '#b', label: 'b', description: '', source: 'skill' },
+    ]
+    const wrapper = mountMenu(items)
+    const row = wrapper.findAll('.completion-item')[0]
+    // No native owner ⇒ the lucide source icon renders instead of an AgentIcon.
+    expect(row.find('.agent-icon-svg, .agent-icon-img, .agent-icon-initial').exists()).toBe(false)
+    expect(row.find('.completion-source-icon').exists()).toBe(true)
+  })
+
+  it('renders one backend chip per owner and none when the skill has no owner', () => {
+    const items: CompletionItem[] = [
+      { key: '#a', label: 'a', description: '', source: 'skill', skillBackends: ['claude', 'codex'] },
+      { key: '#b', label: 'b', description: '', source: 'skill', skillBackends: [] },
+      { key: '#c', label: 'c', description: '', source: 'skill' },
+    ]
+    const wrapper = mountMenu(items)
+    const rows = wrapper.findAll('.completion-item')
+    expect(rows[0].findAll('.completion-skill-backend')).toHaveLength(2)
+    // A non-native skill (user dir / git / shared) has no owner and must not
+    // render an empty chip.
+    expect(rows[1].find('.completion-skill-backend').exists()).toBe(false)
+    expect(rows[2].find('.completion-skill-backend').exists()).toBe(false)
+  })
+
   it('discloses the real agent name next to an auto-derived member nickname', () => {
     const items: CompletionItem[] = [
       { key: 'member:m-1', label: 'Alice', description: '', source: 'agent', isMember: true, memberAgentName: 'Claude' },
@@ -229,7 +308,7 @@ describe('CompletionMenu', () => {
 })
 
 describe('SOURCE_META', () => {
-  it('covers all seven completion sources', () => {
+  it('covers all eight completion sources', () => {
     expect(Object.keys(SOURCE_META).sort()).toEqual([
       'agent',
       'clawbench',
@@ -238,6 +317,7 @@ describe('SOURCE_META', () => {
       'recent-ref',
       'recent-share',
       'recent-upload',
+      'skill',
     ])
   })
 
@@ -246,6 +326,22 @@ describe('SOURCE_META', () => {
       expect(meta.icon).toBeTruthy()
       expect(meta.color).toBeTruthy()
       expect(meta.labelKey).toBeTruthy()
+    }
+  })
+
+  // The label key is passed to `t()` as a VARIABLE, so the repo's literal-key
+  // guard (literalKeys.test.ts) cannot see it — a typo would render the raw key
+  // at runtime and pass every other test. Resolve each key against the real
+  // locale objects here instead.
+  it('every labelKey resolves in both locales', () => {
+    for (const locale of [en, zh]) {
+      for (const meta of Object.values(SOURCE_META)) {
+        const value = meta.labelKey
+          .split('.')
+          .reduce<unknown>((acc, part) => (acc && typeof acc === 'object' ? (acc as Record<string, unknown>)[part] : undefined), locale)
+        expect(typeof value, `${meta.labelKey} missing in a locale`).toBe('string')
+        expect(value).not.toBe('')
+      }
     }
   })
 })

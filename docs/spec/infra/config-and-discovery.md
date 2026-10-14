@@ -71,7 +71,7 @@ flowchart TD
   - `NewCLISource` —— 执行 CLI 子命令并用共享解析器解析（antigravity / deepseek / grok / opencode / pi）
   - `PluginSource` —— 自定义探测，应对单一命令无法覆盖的布局（codebuddy 读 product JSON 与运行时缓存、codex 读缓存并扫描二进制字符串、claude 扫描二进制 + 读取 settings.json 覆盖、vecli 扫描打包 JS、qoder 读本地缓存）
 
-  纯 ACP 后端（zcode / dsh）不注册 `ModelSource`：它们的模型清单只来自 ACP 的 `configOptions`（`ResolveModels` 的 ACP 独有分支），因此没有 CLI 侧的「刷新模型」入口。
+  纯 ACP 后端（zcode / dsh / hermes / cursor）不注册 `ModelSource`：它们的模型清单只来自 ACP 的 `configOptions` / `session/new` 的 `models`（`ResolveModels` 的 ACP 独有分支），因此没有 CLI 侧的「刷新模型」入口。
 
   发现结果由 `DiscoveryCache` 按后端缓存 5 分钟；显式刷新（`refresh-models` / `rescan`）会先失效缓存再重新探测。内置清单集中在 `internal/model/catalogs.go`，更新清单是单文件改动
 - **模型列表由服务端合并**：`ResolveModels`（`internal/model/modelcatalog.go`）是唯一的合并点。规则：
@@ -82,6 +82,12 @@ flowchart TD
   - 恰好一个模型是默认：会话当前模型 > CLI 默认标记 > 列表首项
 
   前端不再做任何合并，只渲染后端给出的 `resolvedModels`。未经合并的纯 CLI 列表通过 `cliModels` 一并下发，供切换到 CLI 传输时直接渲染。
+
+- **ACP 传输下、ACP 未确认时不展示 CLI 猜测列表**：`transport == "acp-stdio"` 且该 agent 的 ACP 运行时**从未上报过**模型（`ai.HasConfirmedACPModels` 为假，数据源是 `AgentCapabilityRegistry`，经 `agents.acp_available_models` 持久化）时，`GET /api/agents` 与 `POST /api/agents/{id}/refresh-models` 的 `models` 返回**空数组**（`cliModels` 照常返回，发现结果照常落库）。判据用**有效传输**而非「有无 `acp_command`」，故 `transport == "cli"` 的双传输 agent 不受影响。
+  - **理由**：ACP 协议没有「客户端默认模型」的概念——模型是 `category: "model"` 的会话配置项，agent 在 `session/new` 自带 `currentValue`，客户端只需显示、可选地改。在 agent 开口之前，CLI 发现的列表只是猜测；把它当可运行模型展示，会让前端推导出一个「默认模型」并在首条消息里作为 `modelId` 发回，触发一次 `session/set_config_option`，可能选中 agent 无法运行的模型（新装用户在首次 ACP 会话前必然踩到）。
+  - **发送侧同步门控**：`service.BuildChatRequest` 的 `resolveAgentConfig` 在该状态下**跳过** `agent.DefaultModelID()` 兜底（`DefaultModelID` 含 `PreferredModel`，故一并覆盖），使 `ai.ChatRequest.Model` 保持空 —— `applyModelSelection` 对空值直接返回，不发任何模型 RPC，由 agent 用自己的默认。**显式选择一律尊重**（请求参数 / `chat_sessions.model` 持久值 / `preferredModel` 均不受影响）——那是用户意图，不是猜测。
+  - **前端**：列表为空时模型 chip 显示占位（`chat.sessionInfo.default`），发送路径的 `modelId: currentModelId.value || undefined` 自然不发。两个基线共用 `agent.models` 一个字段，故传输切换/会话切换的复位必须按当前传输选择（`resetModelViewForTransport`）：ACP 侧要么应用 ACP 列表、要么清空，绝不回落到 CLI 基线（否则切换 ACP→CLI→ACP 会把 CLI 列表带回 ACP 视图）。
+  - **不在范围**：定时任务（`scheduler.go` 直接构造 `ai.ChatRequest`，不走 `BuildChatRequest`）与设置页的 preferred-model 选择器保持现状。
 
   **三条下发通道同构**（`internal/ai/acp_events.go` 的 `EnrichModelList` 是唯一实现）：
   - `GET /api/agents` → `agents[].models` / `agents[].cliModels`，以及 `acpStates[].modelListState.{resolvedModels,cliModels}`

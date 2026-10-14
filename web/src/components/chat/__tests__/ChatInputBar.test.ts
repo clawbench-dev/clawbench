@@ -50,6 +50,7 @@ const i18n = createI18n({
         input: {
           placeholder: 'Type a message...',
           placeholderCommand: 'Command',
+          placeholderSkill: 'Skill',
           placeholderFileRef: 'File ref',
           placeholderQuickSend: 'Quick send',
           placeholderSwipeHistory: 'Swipe history',
@@ -405,6 +406,17 @@ vi.mock('@/utils/appLog.ts', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
 }))
 
+// Controllable skill source for the "#" menu. `importOriginal` keeps the real
+// module's exports (useSkillsState, loadSkills, …) so a future import from the
+// component does not become undefined here.
+const mockSkillRows = ref<Array<Record<string, unknown>>>([])
+const mockEnsureSkillsLoaded = vi.fn().mockResolvedValue(undefined)
+vi.mock('@/composables/useSkillsState', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/composables/useSkillsState')>()),
+  skillMenuRows: () => mockSkillRows.value,
+  ensureSkillsLoaded: (...a: unknown[]) => mockEnsureSkillsLoaded(...a),
+}))
+
 // Mock useVoiceInput — controllable fake for voice input tests
 const mockVoiceToggle = vi.fn()
 const mockVoiceStart = vi.fn()
@@ -525,6 +537,18 @@ describe('ChatInputBar', () => {
         },
       },
     })
+  }
+
+  /**
+   * The rendered "#" skill menu's visibility, read from the CompletionMenu's
+   * `show` binding (the PopupMenu stub declares `show` so this is observable).
+   * The skill menu is the one whose items are all "#"-prefixed.
+   */
+  function skillMenuVisible(wrapper: ReturnType<typeof mountBar>): boolean {
+    const menu = wrapper
+      .findAllComponents({ name: 'CompletionMenu' })
+      .find((c) => (c.props('items') as Array<{ key: string }>).some((i) => i.key.startsWith('#')))
+    return menu ? menu.props('show') === true : false
   }
 
   it('renders the input wrapper', () => {
@@ -1079,6 +1103,113 @@ describe('ChatInputBar', () => {
     expect(keys).toContain('/btw')
   })
 
+  describe('# skill menu', () => {
+    beforeEach(() => {
+      mockSkillRows.value = [
+        { name: 'pdf', description: 'PDF tools', path: '/p/pdf/SKILL.md', source_kind: 'user', source_label: 'user dir' },
+        { name: 'web-search', description: 'Search', path: '/p/ws/SKILL.md', source_kind: 'git', source_label: 'repo' },
+      ]
+      mockEnsureSkillsLoaded.mockClear()
+    })
+
+    it('lists skills when the input starts with #', async () => {
+      const wrapper = mountBar()
+      wrapper.vm.inputText = '#'
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.skillMenuItems.map(i => i.key)).toEqual(['#pdf', '#web-search'])
+    })
+
+    it('shows the bare name in the row but keeps "#" in the inserted key', async () => {
+      // The label is what the row displays (no "#" clutter); the key drives the
+      // inserted text and must keep the "#" so the backend reference is formed.
+      const wrapper = mountBar()
+      wrapper.vm.inputText = '#'
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.skillMenuItems.map(i => i.label)).toEqual(['pdf', 'web-search'])
+      expect(wrapper.vm.skillMenuItems.map(i => i.key)).toEqual(['#pdf', '#web-search'])
+    })
+
+    it('carries the owning AI backend(s) for the name suffix', async () => {
+      mockSkillRows.value = [
+        { name: 'native', description: '', path: '/p/n/SKILL.md', source_kind: 'own', source_label: 'native', backends: ['claude', 'codex'] },
+        { name: 'plain', description: '', path: '/p/p/SKILL.md', source_kind: 'user', source_label: 'user dir' },
+      ]
+      const wrapper = mountBar()
+      wrapper.vm.inputText = '#'
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.skillMenuItems.map(i => i.skillBackends)).toEqual([['claude', 'codex'], undefined])
+    })
+
+    it('fetches the skill list on the first # when it is not loaded yet', async () => {
+      mockSkillRows.value = []
+      const wrapper = mountBar()
+      wrapper.vm.inputText = '#'
+      await wrapper.vm.$nextTick()
+      expect(mockEnsureSkillsLoaded).toHaveBeenCalled()
+    })
+
+    it('filters by the typed query', async () => {
+      const wrapper = mountBar()
+      wrapper.vm.inputText = '#web'
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.skillMenuItems.map(i => i.key)).toEqual(['#web-search'])
+    })
+
+    it('does not open for a # that is not the first token', async () => {
+      const wrapper = mountBar()
+      wrapper.vm.inputText = 'use #pdf'
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.skillMenuItems).toEqual([])
+    })
+
+    it('inserts "#name " when a skill is selected', async () => {
+      const wrapper = mountBar()
+      wrapper.vm.inputText = '#pdf'
+      await wrapper.vm.$nextTick()
+      wrapper.vm.handleSkillSelect(wrapper.vm.skillMenuItems[0])
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.inputText).toBe('#pdf ')
+    })
+
+    it('includes the # hint in the rotating placeholder hints', () => {
+      const wrapper = mountBar()
+      expect(wrapper.vm.placeholderHints).toContain('Skill')
+    })
+
+    it('opens the menu after the async skill list arrives', async () => {
+      // The list is fetched lazily on the first "#": at that instant the
+      // candidates are still empty, so refresh() alone hides the menu. The
+      // wrapper must refresh again once the fetch resolves, or the menu never
+      // opens (the user sees nothing after typing "#").
+      //
+      // This asserts on the RENDERED menu's visibility, not just on the
+      // candidate list: skillMenuItems is a computed that reacts to the mocked
+      // rows directly, so asserting on it alone would pass even if the
+      // post-load skillMenu.refresh() were deleted (verified by mutation).
+      mockSkillRows.value = []
+      let resolveLoad: () => void = () => {}
+      mockEnsureSkillsLoaded.mockImplementationOnce(
+        () => new Promise<void>((r) => { resolveLoad = () => { mockSkillRows.value = [
+          { name: 'pdf', description: 'PDF', path: '/p/pdf/SKILL.md', source_kind: 'user', source_label: 'user dir' },
+        ]; r() } }),
+      )
+
+      const wrapper = mountBar()
+      await wrapper.find('.chat-textarea').trigger('focus')
+      wrapper.vm.inputText = '#'
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.skillMenuItems).toEqual([])
+      expect(skillMenuVisible(wrapper)).toBe(false)
+
+      resolveLoad()
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.skillMenuItems.map(i => i.key)).toEqual(['#pdf'])
+      // The menu itself is now open — the behavior the test is named for.
+      expect(skillMenuVisible(wrapper)).toBe(true)
+    })
+  })
+
   it('never shows a btw loading state and never disables the composer', async () => {
     // A /btw question runs in the background: the wait is shown on the message
     // anchor, not here. The composer must stay fully usable so the user can keep
@@ -1244,6 +1375,15 @@ describe('ChatInputBar', () => {
     await wrapper.vm.$nextTick()
     expect(wrapper.find('.chat-session-info').exists()).toBe(true)
     expect(wrapper.find('.session-info-model').exists()).toBe(true)
+  })
+
+  it('shows a Default placeholder when no model is selected', async () => {
+    // An ACP agent that has not reported its models yet has no model to name,
+    // and the turn deliberately carries no modelId. The chip must not render
+    // blank. (This suite's i18n stub renders the raw key.)
+    const wrapper = mountBar({ currentModelName: '' })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.session-info-model').text()).toContain('chat.sessionInfo.default')
   })
 
   it('textarea focus and blur events', async () => {

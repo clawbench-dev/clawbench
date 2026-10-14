@@ -35,6 +35,15 @@ func productJSON(t *testing.T, ids ...string) []byte {
 	return data
 }
 
+// productJSONWithTags builds a product-config blob carrying tags, so tests can
+// exercise tag-based filtering (e.g. image-generation models).
+func productJSONWithTags(t *testing.T, entries ...codebuddyProductModel) []byte {
+	t.Helper()
+	data, err := json.Marshal(map[string]any{"models": entries})
+	require.NoError(t, err)
+	return data
+}
+
 // writeProductFile writes a product JSON into dir under the given filename.
 func writeProductFile(t *testing.T, dir, name string, data []byte) string {
 	t.Helper()
@@ -120,22 +129,85 @@ func TestParseCodebuddyModels_NameEqualsID(t *testing.T) {
 
 // --- parseProductModels ---
 
-func TestParseProductModels_FiltersAndDefaults(t *testing.T) {
-	data := productJSON(t, "default", "auto", "hunyuan-image-v3.0", "glm-4.7", "deepseek-v4-pro")
+func TestParseProductModels_FiltersDefaultAndImages(t *testing.T) {
+	data := productJSONWithTags(t,
+		codebuddyProductModel{ID: "default", Name: "Default"},
+		codebuddyProductModel{ID: "hunyuan-image-v3.0-art", Name: "Hunyuan Image V3", Tags: []string{"text-to-image"}},
+		codebuddyProductModel{ID: "glm-4.7", Name: "GLM-4.7"},
+		codebuddyProductModel{ID: "deepseek-v4-pro", Name: "Deepseek-V4-Pro"},
+	)
 	models := parseProductModels(data)
-	require.Len(t, models, 2, "default/auto/hunyuan-image must be filtered out")
+	require.Len(t, models, 2, "only 'default' and image models must be filtered out")
 	assert.Equal(t, "glm-4.7", models[0].ID)
 	assert.True(t, models[0].Default, "first surviving model becomes default")
 	assert.Equal(t, "deepseek-v4-pro", models[1].ID)
 	assert.False(t, models[1].Default)
 }
 
-func TestParseProductModels_HonorsIsDefault(t *testing.T) {
-	data := []byte(`{"models":[{"id":"a","name":"A"},{"id":"b","name":"B","isDefault":true}]}`)
+// TestParseProductModels_KeepsAuto guards issue #539: "auto" is CodeBuddy's real
+// default (isDefault:true) and must survive, unlike the non-selectable
+// "default" fallback marker.
+func TestParseProductModels_KeepsAuto(t *testing.T) {
+	data := productJSONWithTags(t,
+		codebuddyProductModel{ID: "auto", Name: "Auto", IsDefault: true, Tags: []string{"craft"}},
+		codebuddyProductModel{ID: "deepseek-v4-flash", Name: "Deepseek-V4-Flash"},
+	)
 	models := parseProductModels(data)
-	require.Len(t, models, 2)
-	assert.True(t, models[1].Default, "explicit isDefault is honored")
-	assert.True(t, models[0].Default, "first model is forced default regardless")
+	require.Len(t, models, 2, "auto must be kept")
+	assert.Equal(t, "auto", models[0].ID)
+	assert.True(t, models[0].Default, "the isDefault:true entry is the default")
+	assert.False(t, models[1].Default)
+}
+
+// TestParseProductModels_FiltersGenerativeMediaByTag guards the second half of
+// issue #539: the filter must key off tags, not a hardcoded ID, so a renamed
+// image model (hunyuan-image-v3.0 → ...-art, hunyuan-image-alpha) AND video
+// models (kling-video-v3) are all excluded.
+func TestParseProductModels_FiltersGenerativeMediaByTag(t *testing.T) {
+	data := productJSONWithTags(t,
+		codebuddyProductModel{ID: "hunyuan-image-v3.0-art", Name: "Hunyuan Image V3", Tags: []string{"text-to-image"}},
+		codebuddyProductModel{ID: "hunyuan-image-alpha-edit", Name: "Hunyuan Image Alpha Edit", Tags: []string{"image-to-image"}},
+		codebuddyProductModel{ID: "kling-video-v3", Name: "Kling-Video-V3", Tags: []string{"text-to-video", "image-to-video"}},
+		codebuddyProductModel{ID: "kimi-k2.6", Name: "Kimi-K2.6"},
+	)
+	models := parseProductModels(data)
+	require.Len(t, models, 1, "image and video models must be filtered by tag")
+	assert.Equal(t, "kimi-k2.6", models[0].ID)
+}
+
+// TestParseProductModels_SingleDefault guards issue #539's default-mismatch: at
+// most one entry may carry Default, and the isDefault flag wins over position.
+func TestParseProductModels_SingleDefault(t *testing.T) {
+	data := productJSONWithTags(t,
+		codebuddyProductModel{ID: "deepseek-v3-2-volc", Name: "DeepSeek-V3.2"},
+		codebuddyProductModel{ID: "auto", Name: "Auto", IsDefault: true},
+		codebuddyProductModel{ID: "glm-5.1", Name: "GLM-5.1"},
+	)
+	models := parseProductModels(data)
+	require.Len(t, models, 3)
+
+	var defaults []string
+	for _, m := range models {
+		if m.Default {
+			defaults = append(defaults, m.ID)
+		}
+	}
+	assert.Equal(t, []string{"auto"}, defaults,
+		"exactly one default, honoring isDefault rather than the first row")
+}
+
+// TestParseProductModels_DedupesDuplicateIDs verifies the single-default
+// invariant holds even when the config lists the same model twice (the
+// downstream merge dedups by ID, but this function should not emit two rows).
+func TestParseProductModels_DedupesDuplicateIDs(t *testing.T) {
+	data := productJSONWithTags(t,
+		codebuddyProductModel{ID: "auto", Name: "Auto", IsDefault: true},
+		codebuddyProductModel{ID: "auto", Name: "Auto", IsDefault: true},
+		codebuddyProductModel{ID: "glm-5.1", Name: "GLM-5.1"},
+	)
+	models := parseProductModels(data)
+	require.Len(t, models, 2, "duplicate IDs must be collapsed")
+	assert.Equal(t, []string{"auto", "glm-5.1"}, idsOf(models))
 }
 
 func TestParseProductModels_FallsBackNameToID(t *testing.T) {
@@ -183,6 +255,45 @@ func TestDiscoverFrom_NativeLayoutRuntimeCache(t *testing.T) {
 	require.NotEmpty(t, models, "native layout must fall back to the runtime cache")
 	assert.Equal(t, "glm-4.7", models[0].ID)
 	assert.Empty(t, detail)
+}
+
+// TestDiscoverFrom_RuntimeCacheBeatsProductFile is the regression test for the
+// main defect in issue #539: the npm package ships a generic
+// product.cloudhosted.json whose model list can be entirely disjoint from the
+// account's deployment. The per-deployment runtime cache the CLI actually
+// fetched must win, so the picker shows the models the CLI can really run.
+func TestDiscoverFrom_RuntimeCacheBeatsProductFile(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	pkgDir := filepath.Join(root, "node_modules", "@tencent-ai", "codebuddy-code")
+	binDir := filepath.Join(pkgDir, "bin")
+	// Factory default shipped in the npm package (retired models).
+	writeProductFile(t, pkgDir, "product.cloudhosted.json",
+		productJSON(t, "deepseek-v3-2-volc", "glm-4.7", "kimi-k2.5"))
+	// Per-deployment cache the CLI fetched from the enterprise endpoint.
+	writeCacheEntry(t, filepath.Join(home, ".codebuddy", "local_storage"),
+		productJSON(t, "auto", "deepseek-v4-flash", "glm-5.1"))
+	realPath := filepath.Join(binDir, "codebuddy")
+
+	models, detail := discoverCodebuddyModelsFrom(realPath, home, func(string) string { return "" })
+	require.NotEmpty(t, models, "detail: %s", detail)
+	assert.Equal(t, []string{"auto", "deepseek-v4-flash", "glm-5.1"}, idsOf(models),
+		"the runtime cache must win over the bundled product file")
+}
+
+// TestDiscoverFrom_ProductFileUsedWhenNoCache verifies the fallback still
+// applies for installs whose CLI has never run (no runtime cache).
+func TestDiscoverFrom_ProductFileUsedWhenNoCache(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	pkgDir := filepath.Join(root, "node_modules", "@tencent-ai", "codebuddy-code")
+	writeProductFile(t, pkgDir, "product.cloudhosted.json", productJSON(t, "glm-4.7", "deepseek-v4-pro"))
+	realPath := filepath.Join(pkgDir, "bin", "codebuddy")
+
+	models, detail := discoverCodebuddyModelsFrom(realPath, home, func(string) string { return "" })
+	require.NotEmpty(t, models, "detail: %s", detail)
+	assert.Equal(t, []string{"glm-4.7", "deepseek-v4-pro"}, idsOf(models),
+		"the bundled product file is the fallback when no runtime cache exists")
 }
 
 func TestDiscoverFrom_ProductFileAlongsideBinary(t *testing.T) {
@@ -294,13 +405,16 @@ func TestParseProductModels_FirstModelExplicitlyDefault(t *testing.T) {
 }
 
 func TestParseProductModels_LeadingFilteredEntryStillDefaults(t *testing.T) {
-	// "default"/"auto" are filtered before the first surviving model, so the
-	// implicit-default rule must land on the first model that survives.
-	data := []byte(`{"models":[{"id":"default","name":"Auto"},{"id":"auto"},{"id":"glm-4.7"}]}`)
+	// Only the non-selectable "default" marker is filtered; "auto" is a real
+	// model and survives. With no isDefault flag, the implicit-default rule
+	// lands on the first surviving model.
+	data := []byte(`{"models":[{"id":"default","name":"Default"},{"id":"auto"},{"id":"glm-4.7"}]}`)
 	models := parseProductModels(data)
-	require.Len(t, models, 1)
-	assert.Equal(t, "glm-4.7", models[0].ID)
-	assert.True(t, models[0].Default)
+	require.Len(t, models, 2, "auto must be kept, only 'default' is dropped")
+	assert.Equal(t, "auto", models[0].ID)
+	assert.True(t, models[0].Default, "first surviving model becomes default")
+	assert.Equal(t, "glm-4.7", models[1].ID)
+	assert.False(t, models[1].Default)
 }
 
 func TestDiscoverFrom_NoSourcesReportsDetail(t *testing.T) {

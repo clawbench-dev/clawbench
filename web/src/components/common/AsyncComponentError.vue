@@ -1,12 +1,13 @@
 <template>
   <div class="async-component-error">
     <span class="li-msg">{{ message }}</span>
-    <button class="li-retry" role="button" @click="$emit('retry')">重试</button>
+    <button class="li-retry" role="button" @click="$emit('retry')">{{ t('common.retry') }}</button>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{
   label?: string
@@ -14,7 +15,9 @@ const props = defineProps<{
 }>()
 defineEmits<{ (e: 'retry'): void }>()
 
-const message = computed(() => props.label || '组件加载失败，请点击重试。')
+const { t } = useI18n()
+
+const message = computed(() => props.label || t('common.componentLoadFailed'))
 </script>
 
 <style scoped>

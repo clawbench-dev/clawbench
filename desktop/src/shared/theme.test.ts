@@ -151,6 +151,17 @@ describe('login page DARK_IDS stays in sync', () => {
       const overlap = readLoginLightIds(page).filter((id) => dark.has(id))
       expect(overlap, `${page} lists an ID as both dark and light`).toEqual([])
     })
+
+    it(`${page} falls back to the factory theme for an unknown dark id`, () => {
+      // The page substitutes a default when the incoming id matches neither
+      // list. That dark default must be the factory theme (gruvbox-dark), or a
+      // first launch shows a different colour than the app that follows.
+      const html = readRepoFile(page)
+      const m = html.match(/THEME = \(THEME === 'light'\) \? '([^']+)' : '([^']+)'/)
+      if (!m) throw new Error(`${page}: no theme fallback expression found`)
+      expect(m[1], `${page} light fallback`).toBe('github-light')
+      expect(m[2], `${page} dark fallback`).toBe(DEFAULT_THEME_ID)
+    })
   }
 })
 

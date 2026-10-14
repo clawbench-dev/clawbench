@@ -546,23 +546,29 @@ const { mseIsSupportedMock } = vi.hoisted(() => ({
 
 vi.mock('@/composables/useMseAudio', () => {
   return {
+    // Must be constructible (`new MseAudioPlayer()`): an arrow function throws
+    // "not a constructor", which would silently divert the WS path into the
+    // catch branch. Returning an object from a `function` expression keeps
+    // `new` working while still allowing the object to be inspected.
     MseAudioPlayer: Object.assign(
-      vi.fn(() => ({
-        init: vi.fn(() => ({
-          play: vi.fn().mockResolvedValue(undefined),
-          pause: vi.fn(),
-          onended: null,
-          onerror: null,
-          currentTime: 0,
-          duration: 0,
-          addEventListener: vi.fn(),
-          removeEventListener: vi.fn(),
-        })),
-        appendChunk: vi.fn(),
-        endOfStream: vi.fn(),
-        cleanup: vi.fn(),
-        isReady: false,
-      })),
+      vi.fn(function (this: unknown) {
+        return {
+          init: vi.fn(() => ({
+            play: vi.fn().mockResolvedValue(undefined),
+            pause: vi.fn(),
+            onended: null,
+            onerror: null,
+            currentTime: 0,
+            duration: 0,
+            addEventListener: vi.fn(),
+            removeEventListener: vi.fn(),
+          })),
+          appendChunk: vi.fn(),
+          endOfStream: vi.fn(),
+          cleanup: vi.fn(),
+          isReady: false,
+        }
+      }),
       { isSupported: mseIsSupportedMock },
     ),
   }
@@ -662,6 +668,105 @@ describe('useAutoSpeech — streaming TTS path', () => {
 
     expect(pauseFn).toHaveBeenCalled()
     expect(state.value).toBe('idle')
+  })
+})
+
+// ── WebSocket teardown without a terminal frame ──
+//
+// Regression: the server can close the TTS WebSocket without ever sending a
+// done/error frame (e.g. the terminal frame was dropped in the handler's
+// teardown race). Previously ws.onclose only nulled currentWs, leaving the UI
+// stuck on "合成中" forever. It must now reset state and surface an error.
+describe('useAutoSpeech — TTS WebSocket closes without a terminal frame', () => {
+  let fetchSpy: ReturnType<typeof vi.fn>
+
+  /** Minimal fake WebSocket that lets the test drive lifecycle events. */
+  class FakeWebSocket {
+    static instances: FakeWebSocket[] = []
+    binaryType = ''
+    onopen: (() => void) | null = null
+    onmessage: ((e: { data: unknown }) => void) | null = null
+    onerror: (() => void) | null = null
+    onclose: (() => void) | null = null
+    sent: string[] = []
+    closed = false
+
+    constructor(public url: string) {
+      FakeWebSocket.instances.push(this)
+    }
+    send(data: string) { this.sent.push(data) }
+    close() { this.closed = true }
+  }
+
+  beforeEach(() => {
+    FakeWebSocket.instances = []
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+    fetchSpy = vi.fn()
+    globalThis.fetch = fetchSpy
+    toastShowMock.mockClear()
+    mseIsSupportedMock.mockReturnValue(true) // force the WS path
+    const { stopAudio } = useAutoSpeech()
+    stopAudio()
+  })
+
+  afterEach(() => {
+    const { stopAudio } = useAutoSpeech()
+    stopAudio()
+    vi.restoreAllMocks()
+  })
+
+  async function startStreaming(): Promise<FakeWebSocket> {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ streaming: true, jobId: 'deadbeef1234' }),
+    })
+    const { speakText } = useAutoSpeech()
+    speakText('1', 'Stream this')
+    await vi.waitFor(() => {
+      expect(FakeWebSocket.instances.length).toBe(1)
+    })
+    return FakeWebSocket.instances[0]
+  }
+
+  it('resets state and reports an error when closed before any frame', async () => {
+    const ws = await startStreaming()
+    const { state, lastError } = useAutoSpeech()
+    expect(state.value).toBe('synthesizing')
+
+    ws.onclose?.()
+
+    expect(state.value).toBe('idle')
+    expect(lastError.value).toBe('autoSpeech.generateFailedGeneric')
+    expect(toastShowMock).toHaveBeenCalled()
+  })
+
+  it('does not double-report when a terminal error frame was received', async () => {
+    const ws = await startStreaming()
+    const { state } = useAutoSpeech()
+
+    ws.onmessage?.({ data: JSON.stringify({ type: 'error', message: 'boom' }) })
+    expect(state.value).toBe('idle')
+    const callsAfterFrame = toastShowMock.mock.calls.length
+
+    // The subsequent close must not fire a second toast.
+    ws.onclose?.()
+    expect(toastShowMock.mock.calls.length).toBe(callsAfterFrame)
+  })
+
+  it('does not reset when audio already started streaming', async () => {
+    const ws = await startStreaming()
+    const { state } = useAutoSpeech()
+
+    // First binary chunk advances to 'playing'.
+    ws.onmessage?.({ data: new ArrayBuffer(8) })
+    expect(state.value).toBe('playing')
+    const callsBeforeClose = toastShowMock.mock.calls.length
+
+    // A close after audio began is normal completion territory — leave it to
+    // the playback-end timer, don't yank the state to idle.
+    ws.onclose?.()
+    expect(state.value).toBe('playing')
+    expect(toastShowMock.mock.calls.length).toBe(callsBeforeClose)
   })
 })
 

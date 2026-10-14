@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"clawbench/internal/askquestion"
 	"clawbench/internal/grouprouting"
 	"clawbench/internal/model"
 )
@@ -63,11 +64,12 @@ func buildInjectionText(msgs []model.ChatMessage, cursor int64, self string, nam
 		if m.AgentID != "" && m.AgentID == self {
 			continue // never replay the member's own past speech
 		}
-		text := strings.TrimSpace(ExtractPlainText(m.Content))
-		if text == "" {
+		text := strings.TrimSpace(stripAskQuestionTags(ExtractPlainText(m.Content)))
+		questions := askQuestionTexts(m.Content)
+		if text == "" && len(questions) == 0 {
 			continue
 		}
-		if line := renderTimelineLine(m, text, names, leftIDs); line != "" {
+		if line := renderTimelineLine(m, text, questions, names, leftIDs); line != "" {
 			b.WriteString(line)
 		}
 	}
@@ -87,7 +89,12 @@ func buildInjectionText(msgs []model.ChatMessage, cursor int64, self string, nam
 //
 // Agent speech has its mention tags rendered readable (public bodies survive,
 // private notes dropped, end signal removed) — see renderMentionsReadable.
-func renderTimelineLine(m model.ChatMessage, text string, names map[string]string, leftIDs map[string]bool) string {
+//
+// questions holds the ask-question cards this message carried (already
+// rendered as plain text). They are appended as a directional line so the
+// reader knows the question is addressed to the USER, not to it — without that
+// a member reads the question as ordinary discussion and may answer it.
+func renderTimelineLine(m model.ChatMessage, text string, questions []string, names map[string]string, leftIDs map[string]bool) string {
 	if m.Role == "system" {
 		return "[系统] " + text + "\n"
 	}
@@ -114,7 +121,91 @@ func renderTimelineLine(m model.ChatMessage, text string, names map[string]strin
 	if leftIDs[m.AgentID] {
 		name += "（已离场）"
 	}
-	return name + ": " + renderMentionsReadable(text, names) + "\n"
+	line := name + ": " + renderMentionsReadable(text, names)
+	if q := renderAskQuestions(name, questions); q != "" {
+		if strings.TrimSpace(text) != "" {
+			line += "\n"
+		}
+		line += q
+	}
+	return line + "\n"
+}
+
+// renderAskQuestions renders the ask-question cards one member addressed to the
+// USER as a directional line, so another member reads it as a question awaiting
+// the human's answer rather than as discussion it should join.
+func renderAskQuestions(speakerName string, questions []string) string {
+	var b strings.Builder
+	for _, q := range questions {
+		q = strings.TrimSpace(q)
+		if q == "" {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString("[" + speakerName + " 向用户提问，等待用户回答] ")
+		b.WriteString(q)
+	}
+	return b.String()
+}
+
+// askQuestionTexts extracts the questions a persisted message put to the user,
+// rendered as readable plain text (question + options), from EITHER persisted
+// shape:
+//
+//   - a tool_use block named AskUserQuestion — the CONVERTED form
+//     postProcessBlocks writes for a well-formed payload (the normal case);
+//   - a text block still carrying the raw <clawbench-ask-question> tag — the
+//     pre-conversion form, matched so a conversion gap or an unparseable
+//     payload still surfaces the question rather than dropping it.
+//
+// Rendering reuses askquestion.PlainText (the same summary TTS and the
+// recommendation prompt use), so the injected wording cannot drift from the
+// spoken one. Non-question tool_use blocks yield nothing.
+func askQuestionTexts(content string) []string {
+	blocks, err := parseMessageBlocks(content)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, b := range blocks {
+		switch b.Type {
+		case eventTypeToolUse:
+			if !strings.EqualFold(b.Name, "AskUserQuestion") {
+				continue
+			}
+			if items := askquestion.NormalizeInput(b.Input); len(items) > 0 {
+				if s := strings.TrimSpace(askquestion.PlainText(items)); s != "" {
+					out = append(out, s)
+				}
+			}
+		case contentKeyText:
+			for _, m := range askquestion.Extract(b.Text) {
+				if !m.Parsed {
+					continue
+				}
+				if s := strings.TrimSpace(askquestion.PlainText(m.Items)); s != "" {
+					out = append(out, s)
+				}
+			}
+		}
+	}
+	return out
+}
+
+// stripAskQuestionTags removes every parsed <clawbench-ask-question> span from a
+// text block's plain text, so the raw protocol never reaches another member (it
+// would invite imitation, the same incident the mention tags caused — decision
+// #67). The question itself is not lost: it is re-added by renderAskQuestions
+// as readable prose. An UNPARSED span is left untouched (the askquestion
+// "never drop content" contract) — it degrades to readable Markdown, which is
+// also what a member sees.
+func stripAskQuestionTags(text string) string {
+	if !strings.Contains(text, "<clawbench-ask-question") {
+		return text
+	}
+	return askquestion.Strip(text, askquestion.Extract(text))
 }
 
 // appendHostDirectives renders the host's closing instructions: the PUBLIC

@@ -42,28 +42,31 @@ func PushSessionEvent(sessionID, status, sessionTitle, responsePreview, projectP
 
 	switch status {
 	case "completed":
-		title = "会话已完成"
-		replyHint := fmt.Sprintf("\n\n---\n发送 `@%s <消息>` 向会话发送消息", shortID)
-		markdown = fmt.Sprintf("### 会话已完成\n**会话**: %s\n\n**项目**: %s\n\n%s%s",
-			sessionTitle,
-			projectPath,
+		title = common.T("PushSessionCompleted")
+		replyHint := "\n\n---\n" + common.T("PushReplyHintSend", map[string]any{"ID": shortID})
+		markdown = fmt.Sprintf("### %s\n**%s**: %s\n\n**%s**: %s\n\n%s%s",
+			title,
+			common.T("PushLabelSession"), sessionTitle,
+			common.T("PushLabelProject"), projectPath,
 			truncateForDingTalk(responsePreview),
 			replyHint)
 	case "cancelled":
-		title = "会话已取消"
-		replyHint := fmt.Sprintf("\n\n---\n发送 `@%s <消息>` 向会话发送消息", shortID)
-		markdown = fmt.Sprintf("### 会话已取消\n**会话**: %s\n\n**项目**: %s\n\n%s%s",
-			sessionTitle,
-			projectPath,
+		title = common.T("PushSessionCancelled")
+		replyHint := "\n\n---\n" + common.T("PushReplyHintSend", map[string]any{"ID": shortID})
+		markdown = fmt.Sprintf("### %s\n**%s**: %s\n\n**%s**: %s\n\n%s%s",
+			title,
+			common.T("PushLabelSession"), sessionTitle,
+			common.T("PushLabelProject"), projectPath,
 			truncateForDingTalk(responsePreview),
 			replyHint)
 	case "permission_pending":
-		title = "操作需批准"
-		replyHint := fmt.Sprintf("\n\n---\n发送 `@%s <消息>` 追加消息到队列", shortID)
+		title = common.T("PushActionRequired")
+		replyHint := "\n\n---\n" + common.T("PushReplyHintQueue", map[string]any{"ID": shortID})
 		detail := formatPermissionDetail(toolName, toolInput)
-		markdown = fmt.Sprintf("### 操作需批准\n**会话**: %s\n\n**项目**: %s\n\n%s%s",
-			sessionTitle,
-			projectPath,
+		markdown = fmt.Sprintf("### %s\n**%s**: %s\n\n**%s**: %s\n\n%s%s",
+			title,
+			common.T("PushLabelSession"), sessionTitle,
+			common.T("PushLabelProject"), projectPath,
 			detail,
 			replyHint)
 	default:
@@ -79,20 +82,20 @@ func PushSessionEvent(sessionID, status, sessionTitle, responsePreview, projectP
 func formatPermissionDetail(toolName, toolInput string) string {
 	var detail string
 	if toolName != "" {
-		detail += fmt.Sprintf("**操作**: %s\n\n", toolName)
+		detail += fmt.Sprintf("**%s**: %s\n\n", common.T("PushLabelAction"), toolName)
 	}
 	if toolInput != "" {
 		var parsed map[string]any
 		if err := json.Unmarshal([]byte(toolInput), &parsed); err == nil {
 			if command, _ := parsed["command"].(string); command != "" {
-				detail += fmt.Sprintf("**命令**: `%s`\n\n", command)
+				detail += fmt.Sprintf("**%s**: `%s`\n\n", common.T("PushLabelCommand"), command)
 			}
 			filePath, _ := parsed["file_path"].(string)
 			if filePath == "" {
 				filePath, _ = parsed["path"].(string)
 			}
 			if filePath != "" {
-				detail += fmt.Sprintf("**文件**: `%s`\n\n", filePath)
+				detail += fmt.Sprintf("**%s**: `%s`\n\n", common.T("PushLabelFile"), filePath)
 			}
 		}
 	}
@@ -111,27 +114,31 @@ func PushTaskEvent(taskID, status, taskName, responsePreview, projectPath string
 
 	switch status {
 	case "running":
-		title = "任务已启动"
-		markdown = fmt.Sprintf("### 任务已启动\n**任务**: %s\n\n**项目**: %s",
-			taskName,
-			projectPath)
+		title = common.T("PushTaskStarted")
+		markdown = fmt.Sprintf("### %s\n**%s**: %s\n\n**%s**: %s",
+			title,
+			common.T("PushLabelTask"), taskName,
+			common.T("PushLabelProject"), projectPath)
 	case "completed":
-		title = "任务已完成"
-		markdown = fmt.Sprintf("### 任务已完成\n**任务**: %s\n\n**项目**: %s\n\n%s",
-			taskName,
-			projectPath,
+		title = common.T("PushTaskCompleted")
+		markdown = fmt.Sprintf("### %s\n**%s**: %s\n\n**%s**: %s\n\n%s",
+			title,
+			common.T("PushLabelTask"), taskName,
+			common.T("PushLabelProject"), projectPath,
 			truncateForDingTalk(responsePreview))
 	case "failed":
-		title = "任务失败"
-		markdown = fmt.Sprintf("### 任务失败\n**任务**: %s\n\n**项目**: %s\n\n%s",
-			taskName,
-			projectPath,
+		title = common.T("PushTaskFailed")
+		markdown = fmt.Sprintf("### %s\n**%s**: %s\n\n**%s**: %s\n\n%s",
+			title,
+			common.T("PushLabelTask"), taskName,
+			common.T("PushLabelProject"), projectPath,
 			truncateForDingTalk(responsePreview))
 	case "cancelled":
-		title = "任务已取消"
-		markdown = fmt.Sprintf("### 任务已取消\n**任务**: %s\n\n**项目**: %s\n\n%s",
-			taskName,
-			projectPath,
+		title = common.T("PushTaskCancelled")
+		markdown = fmt.Sprintf("### %s\n**%s**: %s\n\n**%s**: %s\n\n%s",
+			title,
+			common.T("PushLabelTask"), taskName,
+			common.T("PushLabelProject"), projectPath,
 			truncateForDingTalk(responsePreview))
 	default:
 		return false

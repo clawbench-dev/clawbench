@@ -25,6 +25,8 @@ import antigravityIcon from '@lobehub/icons-static-svg/icons/antigravity-color.s
 import opencodeIcon from '@lobehub/icons-static-svg/icons/opencode.svg?raw'
 import piIcon from '@lobehub/icons-static-svg/icons/pi.svg?raw'
 import grokIcon from '@lobehub/icons-static-svg/icons/grok.svg?raw'
+import hermesIcon from '@lobehub/icons-static-svg/icons/hermesagent.svg?raw'
+import cursorIcon from '@lobehub/icons-static-svg/icons/cursor.svg?raw'
 
 import { extractSvgInner, extractViewBox } from '@/utils/providerIcons'
 
@@ -55,6 +57,12 @@ const agentSvgMap: Record<string, AgentSvgData> = {
     mimo: { svg: extractSvgInner(mimoIcon), viewBox: extractViewBox(mimoIcon), needsBg: true, monoCssClass: 'mono-mimo' },
     grok: { svg: extractSvgInner(grokIcon), viewBox: extractViewBox(grokIcon), needsBg: true, monoCssClass: 'mono-grok' },
     antigravity: { svg: extractSvgInner(antigravityIcon), viewBox: extractViewBox(antigravityIcon) },
+    // Hermes Agent's mark is monochrome (fill="currentColor"), like the other
+    // mono backends, so it carries a theme-aware color class.
+    hermes: { svg: extractSvgInner(hermesIcon), viewBox: extractViewBox(hermesIcon), needsBg: true, monoCssClass: 'mono-hermes' },
+    // Cursor's mark is monochrome (fill="currentColor"), so it needs the same
+    // theme-aware color treatment as the other mono backends.
+    cursor: { svg: extractSvgInner(cursorIcon), viewBox: extractViewBox(cursorIcon), needsBg: true, monoCssClass: 'mono-cursor' },
 
     // VeCLI not in lobe-icons — kept as inline fallback (explicit fill colors)
     vecli: {

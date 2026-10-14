@@ -1,72 +1,37 @@
 <template>
   <div class="share-view">
-    <!-- Full-width topbar (shared .share-topbar chrome), stacked into two rows:
-         the title, then the byline. The conversation column below keeps its own
-         900px measure, so the chrome can span the viewport without widening the
-         thread. -->
-    <div class="share-topbar share-topbar--stacked">
-      <div class="share-topbar-main">
-        <img class="share-logo" src="/logo-64.png" alt="ClawBench" />
-        <h1 class="share-topbar-title" :title="title">{{ title }}</h1>
-        <div class="share-top-actions">
-          <!-- Conversation TOC toggle. Hidden until the snapshot lands, since
-               the entries are derived from the messages. -->
-          <button
-            v-if="!loading && !error && tocItems.length > 0"
-            class="share-btn share-toc-toggle"
-            type="button"
-            :title="t('share.toggleToc')"
-            :aria-label="t('share.toggleToc')"
-            :aria-expanded="tocOpen"
-            @click="tocOpen = !tocOpen"
-          >
-            <List :size="16" />
-          </button>
-          <!-- Export the snapshot verbatim (client-side; no extra request). -->
-          <button
-            v-if="!loading && !error && snapshot"
-            class="share-btn session-share-export"
-            type="button"
-            :title="t('share.exportJson')"
-            :aria-label="t('share.exportJson')"
-            @click="onExportJson"
-          >
-            <Download :size="16" />
-          </button>
-        </div>
-      </div>
-      <!-- Byline: which CLI produced this conversation, how long it is, and
-           how long the agent actually spent on it. The model is deliberately
-           NOT shown — it is per-message, so a single session-level label
-           would misreport a thread that switched models midway. Each message
-           keeps its own metadata modal. -->
-      <div class="session-share-byline">
-        <span v-if="loading" class="share-status">{{ t('share.loading') }}</span>
-        <span v-else-if="error" class="share-status share-error">{{ error }}</span>
-        <template v-else>
-          <!-- Group shares mirror the in-app group header: an overlapping
-               avatar stack (host first) instead of a single agent icon. -->
-          <span v-if="isGroupShare" class="session-share-agent session-share-group">
-            <AvatarStack :members="stackMembers" size="sm" :max="4" />
-          </span>
-          <span v-else-if="backendLabel" class="session-share-agent">
-            <AgentIcon :backend="backendLabel" :name="agentName" size="sm" />
-            <span class="session-share-agent-name">{{ agentName }}</span>
-          </span>
-          <span v-if="(isGroupShare || backendLabel) && messageCount > 0" class="session-share-dot" aria-hidden="true">·</span>
-          <span v-if="messageCount > 0" class="session-share-count">
-            {{ t('share.messageCount', { count: messageCount }) }}
-          </span>
-          <!-- Total agent time. Summed from each assistant turn's wallMs
-               (the same value its meta bar shows); omitted when no turn
-               carries one, rather than rendering "0ms". -->
-          <template v-if="totalDurationMs > 0">
-            <span v-if="messageCount > 0" class="session-share-dot" aria-hidden="true">·</span>
-            <span class="session-share-duration">
-              {{ t('share.totalDuration', { duration: formatDuration(totalDurationMs) }) }}
-            </span>
-          </template>
-        </template>
+    <!-- Full-width topbar (shared .share-topbar chrome): a single row with the
+         logo, the conversation title and the actions. The conversation column
+         below keeps its own 900px measure, so the chrome can span the viewport
+         without widening the thread. -->
+    <div class="share-topbar">
+      <img class="share-logo" src="/logo-64.png" alt="ClawBench" />
+      <h1 class="session-share-title" :title="title">{{ title }}</h1>
+      <div class="share-top-actions">
+        <!-- Conversation TOC toggle. Hidden until the snapshot lands, since
+             the entries are derived from the messages. -->
+        <button
+          v-if="!loading && !error && tocItems.length > 0"
+          class="share-btn share-toc-toggle"
+          type="button"
+          :title="t('share.toggleToc')"
+          :aria-label="t('share.toggleToc')"
+          :aria-expanded="tocOpen"
+          @click="tocOpen = !tocOpen"
+        >
+          <List :size="16" />
+        </button>
+        <!-- Export the snapshot verbatim (client-side; no extra request). -->
+        <button
+          v-if="!loading && !error && snapshot"
+          class="share-btn session-share-export"
+          type="button"
+          :title="t('share.exportJson')"
+          :aria-label="t('share.exportJson')"
+          @click="onExportJson"
+        >
+          <Download :size="16" />
+        </button>
       </div>
     </div>
 
@@ -85,6 +50,37 @@
         <!-- Conversation column. Mirrors the chat area's 900px measure, with
              no side rules: the messages sit directly on the page background. -->
         <div v-else class="session-share-column">
+          <!-- Conversation meta: which CLI produced this conversation, how long
+               it is, and how long the agent actually spent on it. Kept at the
+               top of the content column (not in the topbar) so the chrome stays
+               a single row and the meta scrolls with the thread. The model is
+               deliberately NOT shown — it is per-message, so a single
+               session-level label would misreport a thread that switched models
+               midway. Each message keeps its own metadata modal. -->
+          <div class="session-share-byline">
+            <!-- Group shares mirror the in-app group header: an overlapping
+                 avatar stack (host first) instead of a single agent icon. -->
+            <span v-if="isGroupShare" class="session-share-agent session-share-group">
+              <AvatarStack :members="stackMembers" size="sm" :max="4" />
+            </span>
+            <span v-else-if="backendLabel" class="session-share-agent">
+              <AgentIcon :backend="backendLabel" :name="agentName" size="sm" />
+              <span class="session-share-agent-name">{{ agentName }}</span>
+            </span>
+            <span v-if="(isGroupShare || backendLabel) && messageCount > 0" class="session-share-dot" aria-hidden="true">·</span>
+            <span v-if="messageCount > 0" class="session-share-count">
+              {{ t('share.messageCount', { count: messageCount }) }}
+            </span>
+            <!-- Total agent time. Summed from each assistant turn's wallMs
+                 (the same value its meta bar shows); omitted when no turn
+                 carries one, rather than rendering "0ms". -->
+            <template v-if="totalDurationMs > 0">
+              <span v-if="messageCount > 0" class="session-share-dot" aria-hidden="true">·</span>
+              <span class="session-share-duration">
+                {{ t('share.totalDuration', { duration: formatDuration(totalDurationMs) }) }}
+              </span>
+            </template>
+          </div>
           <div class="session-share-messages">
             <ChatMessageItem
               v-for="(msg, i) in messages"
@@ -757,9 +753,24 @@ onBeforeUnmount(() => {
 
 <style scoped>
 /* This view reuses the shared share chrome (.share-view / .share-topbar /
-   .share-body / .share-toc) from css/share-chrome.css, with the two-row
-   .share-topbar--stacked variant. Only the conversation-specific pieces live
-   here: the message column and the byline. */
+   .share-body / .share-toc) from css/share-chrome.css. Only the
+   conversation-specific pieces live here: the title, the message column and the
+   conversation meta byline. */
+
+/* Conversation title in the single-row topbar. Occupies the same slot the file
+   share gives .share-file-name: flex: 1 with a single-line ellipsis (the 44px
+   topbar cannot grow to a second line). */
+.session-share-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary, #1f2328);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 /* Scroll container (the shared .share-content). The view keeps a ref to it so
    the TOC's jump math and the scroll-spy root are the same element. */
@@ -796,12 +807,17 @@ onBeforeUnmount(() => {
   flex-direction: column;
 }
 
-/* Byline row inside the stacked topbar. */
+/* Conversation meta at the top of the content column (not the topbar): agent,
+   message count and total agent time. The horizontal inset matches .msg-card's
+   own left/right padding (--space-6) so the byline's text lines up with the
+   message text instead of sticking out past it. Scrolls away with the thread. */
 .session-share-byline {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-3, 6px);
   min-height: 18px;
+  padding: var(--space-6) var(--space-6) 0;
   font-size: var(--font-size-sm, 12px);
   color: var(--text-muted, #656d76);
 }
@@ -826,14 +842,6 @@ onBeforeUnmount(() => {
 .session-share-count,
 .session-share-duration {
   white-space: nowrap;
-}
-
-.share-status {
-  font-size: var(--font-size-sm);
-  color: var(--text-muted, #656d76);
-}
-.share-error {
-  color: #cf222e;
 }
 
 /* Loading / error states fill the content column. */

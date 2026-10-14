@@ -122,6 +122,53 @@ test.describe.serial('ACP Permission Approval', () => {
     await expect(chat.sendButton).toBeVisible({ timeout: 30000 })
   })
 
+  /**
+   * Cursor omits rawInput from session/request_permission even though it sent
+   * it on the preceding tool_call (it encodes the target only in the request's
+   * title). The approval card must still show WHAT the agent wants to do, so
+   * the server recovers the input from the cached tool_call. The mock
+   * reproduces that framing when the prompt carries its marker.
+   */
+  test('approval card shows the command/file when the permission request omits rawInput', async ({ page }) => {
+    // Run this turn in a FRESH session rather than the one the earlier tests in
+    // this serial file share. Each of those tests parks a blocked permission
+    // turn on the shared session, and the leftover streaming state can swallow
+    // this turn's tool frames (they arrive, but resolve to no streaming bubble
+    // and are dropped), leaving the card unrendered. A fresh session starts with
+    // an empty message list, so the marker turn renders deterministically.
+    await chat.createSessionWithAgent('acp-mock')
+    await chat.sendAndAwaitACPReply('hi')
+    await chat.waitForACPModeState()
+    await chat.openModeMenu()
+    await chat.selectMode('Code')
+    await expect(chat.sessionSettingDrawer).not.toBeVisible({ timeout: 5000 })
+
+    const countBefore = await chat.sendMessage('write a file [mock:omit-perm-rawinput]')
+    await chat.waitForReply(30000, countBefore)
+
+    // Scope to the message waitForReply anchored on (index countBefore), NOT
+    // `.last()`: a trailing bubble can appear after this one (e.g. a cancelled
+    // sibling), and `.last()` would then miss the card. Indexing by the
+    // pre-send count still keeps a leftover card from an earlier test in this
+    // serial file from satisfying the assertion — that earlier card lives in an
+    // earlier message.
+    const targetMessage = page.locator('.chat-message.assistant').nth(countBefore)
+    const permissionView = targetMessage.locator('.permission-approval-view').first()
+    await expect(permissionView).toBeVisible({ timeout: 15000 })
+
+    // The card body must carry the requested target (from the tool_call's
+    // rawInput), not just the bare tool name.
+    const detail = permissionView.locator('.permission-tool-detail code').first()
+    await expect(detail).toBeVisible({ timeout: 5000 })
+    await expect(detail).toContainText('main.go')
+
+    // And the strip summary must not degrade to the bare tool name.
+    const summary = targetMessage
+      .locator('.chat-inline-card[data-tool-name="PermissionApproval"] .tool-summary')
+      .first()
+    await expect(summary).toContainText('main.go')
+  })
+
   test('permission respond API should work directly', async ({ page }) => {
     // Restore the non-blocking mode: the previous test left the session in Code
     // mode, where the mock blocks on a permission request.

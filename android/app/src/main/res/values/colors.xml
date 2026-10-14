@@ -1,42 +1,47 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="colorPrimary">#0d1117</color>
-    <color name="colorPrimaryDark">#010409</color>
-    <color name="colorAccent">#58a6ff</color>
+    <!-- Static fallbacks for the factory theme (gruvbox-dark). These cover only
+         the frames before Java runs (the system splash background) and the
+         framework AlertDialogs / browser sandbox that are not themed at runtime.
+         The live theme is resolved from ThemePalette, which is the single
+         native source of truth — keep these in sync with its gruvbox-dark row. -->
+    <color name="colorPrimary">#282828</color>
+    <color name="colorPrimaryDark">#1d2021</color>
+    <color name="colorAccent">#fe8019</color>
     <color name="white">#FFFFFF</color>
     <color name="black">#000000</color>
 
-    <!-- Dialog colors (GitHub dark theme palette) -->
-    <color name="dialog_background">#161b22</color>
-    <color name="dialog_surface">#1c2128</color>
-    <color name="dialog_text_primary">#e6edf3</color>
-    <color name="dialog_text_secondary">#8b949e</color>
-    <color name="dialog_text_hint">#484f58</color>
-    <color name="dialog_input_background">#0d1117</color>
-    <color name="dialog_input_stroke">#30363d</color>
-    <color name="dialog_input_stroke_focused">#58a6ff</color>
-    <color name="dialog_button_positive">#58a6ff</color>
-    <color name="dialog_button_negative">#8b949e</color>
-    <color name="dialog_divider">#21262d</color>
+    <!-- Dialog colors (Gruvbox dark theme palette) -->
+    <color name="dialog_background">#1d2021</color>
+    <color name="dialog_surface">#3c3836</color>
+    <color name="dialog_text_primary">#ebdbb2</color>
+    <color name="dialog_text_secondary">#d5c4a1</color>
+    <color name="dialog_text_hint">#7c6f64</color>
+    <color name="dialog_input_background">#282828</color>
+    <color name="dialog_input_stroke">#3c3836</color>
+    <color name="dialog_input_stroke_focused">#fe8019</color>
+    <color name="dialog_button_positive">#fe8019</color>
+    <color name="dialog_button_negative">#9d9188</color>
+    <color name="dialog_divider">#3c3836</color>
     <!-- Icon tint for dialog decorative icons -->
-    <color name="dialog_icon_tint">#58a6ff</color>
+    <color name="dialog_icon_tint">#fe8019</color>
 
     <!-- Browser sandbox colors -->
-    <color name="browser_background">#0d1117</color>
-    <color name="browser_toolbar_bg">#161b22</color>
-    <color name="browser_url_bg">#0d1117</color>
-    <color name="browser_url_stroke">#30363d</color>
-    <color name="browser_url_text">#e6edf3</color>
-    <color name="browser_url_hint_color">#484f58</color>
-    <color name="browser_icon_tint">#8b949e</color>
-    <color name="browser_text_tertiary">#c9d1d9</color>
-    <color name="browser_log_error">#f85149</color>
-    <color name="browser_log_warn">#d29922</color>
-    <color name="browser_accent_blue">#58a6ff</color>
-    <color name="browser_divider">#21262d</color>
+    <color name="browser_background">#282828</color>
+    <color name="browser_toolbar_bg">#1d2021</color>
+    <color name="browser_url_bg">#282828</color>
+    <color name="browser_url_stroke">#3c3836</color>
+    <color name="browser_url_text">#ebdbb2</color>
+    <color name="browser_url_hint_color">#7c6f64</color>
+    <color name="browser_icon_tint">#d5c4a1</color>
+    <color name="browser_text_tertiary">#ebdbb2</color>
+    <color name="browser_log_error">#fb4934</color>
+    <color name="browser_log_warn">#fabd2f</color>
+    <color name="browser_accent_blue">#fe8019</color>
+    <color name="browser_divider">#3c3836</color>
     <!-- Session picker dialog: slightly lighter surface to contrast with toolbar bg -->
-    <color name="browser_dialog_bg">#252c35</color>
-    <color name="browser_dialog_border">#30363d</color>
-    <color name="browser_dialog_item_selected">#1F58a6ff</color>
-    <color name="browser_running_dot">#3fb950</color>
+    <color name="browser_dialog_bg">#3c3836</color>
+    <color name="browser_dialog_border">#3c3836</color>
+    <color name="browser_dialog_item_selected">#1Ffe8019</color>
+    <color name="browser_running_dot">#b8bb26</color>
 </resources>

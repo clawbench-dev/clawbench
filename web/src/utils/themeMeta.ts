@@ -82,7 +82,13 @@ export function isDarkTheme(themeId: string): boolean {
 
 // ── Defaults ───────────────────────────────────────────────────────────────────
 
-export function getDefaultDarkTheme(): string { return 'github-dark' }
+/**
+ * Factory defaults. The dark default is the out-of-box theme: it is what a
+ * fresh install starts on (persisted by the inline bootstrap in `index.html`)
+ * AND what `'auto'` resolves to when the system prefers dark. The light
+ * default is only the `'auto'` counterpart.
+ */
+export function getDefaultDarkTheme(): string { return 'gruvbox-dark' }
 export function getDefaultLightTheme(): string { return 'github-light' }
 
 // ── Resolution ─────────────────────────────────────────────────────────────────
@@ -158,8 +164,8 @@ export const STATUS_BAR_COLORS: Record<string, string> = Object.fromEntries(
 export function getThemeStatusBarColor(themeId: string): string {
   const color = STATUS_BAR_COLORS[themeId]
   if (!color) {
-    appLog.w('ThemeMeta', `getThemeStatusBarColor: unknown theme '${themeId}', falling back to github-dark`)
-    return '#161b22'
+    appLog.w('ThemeMeta', `getThemeStatusBarColor: unknown theme '${themeId}', falling back to gruvbox-dark`)
+    return '#1d2021'
   }
   return color
 }
@@ -189,28 +195,27 @@ export interface ThemePalette {
   accent: string
 }
 
-/** Default palette for github-dark, used when no color has been persisted. */
+/** Default palette for gruvbox-dark (the factory theme), used when no color has been persisted. */
 export const DEFAULT_THEME_PALETTE: ThemePalette = {
-  bg: '#161b22',
-  text: '#c9d1d9',
-  textSecondary: '#8b949e',
-  accent: '#58a6ff',
+  bg: '#1d2021',
+  text: '#ebdbb2',
+  textSecondary: '#d5c4a1',
+  accent: '#fe8019',
 }
 
 /**
  * Build the full palette (bg/text/textSecondary/accent) for a resolved theme.
  * bg/text/accent come from THEMES metadata; textSecondary is read from the
  * live `--text-secondary` CSS variable when available (falls back to the
- * github-dark secondary color). Unknown theme ids fall back to github-dark.
+ * gruvbox-dark secondary color). Unknown theme ids fall back to gruvbox-dark.
  */
 export function buildThemePalette(themeId: string): ThemePalette {
   const meta = THEMES.find(t => t.id === themeId)
   if (!meta) {
-    appLog.w('ThemeMeta', `buildThemePalette: unknown theme '${themeId}', falling back to github-dark`)
-    const fallback = THEMES.find(t => t.id === 'github-dark')!
-    return { bg: fallback.preview.bg, text: fallback.preview.text, textSecondary: '#8b949e', accent: fallback.preview.accent }
+    appLog.w('ThemeMeta', `buildThemePalette: unknown theme '${themeId}', falling back to gruvbox-dark`)
+    return { ...DEFAULT_THEME_PALETTE }
   }
-  let textSecondary = '#8b949e'
+  let textSecondary = '#d5c4a1'
   try {
     const cs = getComputedStyle(document.documentElement).getPropertyValue('--text-secondary').trim()
     if (cs) textSecondary = cs

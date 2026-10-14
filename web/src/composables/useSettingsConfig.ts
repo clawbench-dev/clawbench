@@ -9,6 +9,7 @@ import { applyFontConfig } from '@/utils/fontConfig'
 import { normalizeDisplayMode } from '@/utils/chatSessionUtils'
 import { resolveUIScale, computeAutoUIScale, currentScreenHeight } from '@/utils/uiScale'
 import { applyServerLimits } from '@/stores/app.ts'
+import { setFrpAvailable } from '@/utils/frpAvailability'
 
 const LOCAL_PREFIX = 'clawbench-settings-'
 
@@ -556,6 +557,8 @@ const serverDefaults: Record<string, unknown> = {
   'terminal.idle_timeout': '10m',
   'terminal.max_sessions': 10,
   'terminal.buffer_lines': 2000,
+  // Auto-injection of discovered skills is opt-in (mirrors the server default).
+  'skills.enabled': false,
   'default_agent': '',
   'tts.engine': 'edge',
   'tts.format': '',
@@ -669,58 +672,14 @@ function getAgentThinkingPref(agentId: string): string | null {
  * settings PATCH applies without a page reload.
  */
 // ── First-run appearance defaults ──────────────────────────────
-
-/**
- * Theme applied on a brand-new install. The server reports `first_run`, but the
- * theme itself lives only in localStorage, so the two must be combined: a fresh
- * server must not override a returning browser's saved theme.
- */
-const FIRST_RUN_THEME = 'gruvbox-dark'
-
-/**
- * Marker written by the inline bootstrap in index.html when it guessed the
- * factory theme for a first-ever visit (before the server could be asked).
- */
-const FRESH_GUESS_KEY = 'clawbench-fresh-theme-guess'
-
-/**
- * Apply the out-of-box theme on a brand-new install. Runs at most once per
- * page load and only when the user has never stored a theme, so an existing
- * install (or a browser that already picked one) is never overridden.
- *
- * Also reverts the index.html guess: that script cannot know `first_run`, so it
- * optimistically used gruvbox-dark on a first-ever visit. If the server turns
- * out to be pre-existing, drop the guess and fall back to the system theme.
- */
-export function applyFirstRunThemeDefaults(data: Record<string, unknown>): void {
-  if (data.first_run === true) {
-    if (hasStoredTheme()) return
-    setThemeAndPersist(FIRST_RUN_THEME)
-    try { localStorage.removeItem(FRESH_GUESS_KEY) } catch { /* ignore */ }
-    return
-  }
-
-  // Not a fresh install — undo an optimistic first-visit guess if we made one.
-  let guessed = false
-  try { guessed = localStorage.getItem(FRESH_GUESS_KEY) !== null } catch { /* ignore */ }
-  if (!guessed) return
-
-  try {
-    localStorage.removeItem(FRESH_GUESS_KEY)
-    localStorage.removeItem(LOCAL_PREFIX + 'theme')
-  } catch { /* ignore */ }
-  const systemTheme = resolveThemeId('auto')
-  localConfig.theme = 'auto'
-  try { localStorage.setItem(LOCAL_PREFIX + 'theme', JSON.stringify('auto')) } catch { /* ignore */ }
-  applyResolvedTheme(systemTheme)
-}
-
-/** Write a theme choice to localConfig + localStorage and apply it to the DOM. */
-function setThemeAndPersist(themeId: string): void {
-  localConfig.theme = themeId
-  try { localStorage.setItem(LOCAL_PREFIX + 'theme', JSON.stringify(themeId)) } catch { /* ignore */ }
-  applyResolvedTheme(themeId)
-}
+//
+// The factory theme is applied by the inline bootstrap in `index.html`, which
+// runs before CSS loads (so the first paint is already correct) and is the
+// durable, local authority: "this browser has never stored a theme" is what
+// defines a fresh install. There is deliberately no server round-trip here —
+// the previous design used `config.first_run`, but that flag is process-scoped
+// and flips to false as soon as InitDB creates the database file, so a restart
+// silently dropped the factory theme for every new install.
 
 /** Apply a resolved theme to the document and notify listeners. */
 function applyResolvedTheme(themeId: string): void {
@@ -775,15 +734,6 @@ export function startSystemThemeWatcher(): void {
   stopSystemThemeWatcher = onSystemColorSchemeChange(syncThemeFromSystem)
 }
 
-/** Whether the user has ever stored a theme (canonical or legacy key). */
-function hasStoredTheme(): boolean {
-  try {
-    if (localStorage.getItem(LOCAL_PREFIX + 'theme') !== null) return true
-    if (localStorage.getItem('theme') !== null) return true
-  } catch { /* ignore */ }
-  return false
-}
-
 export function syncServerLimits(data: Record<string, unknown>): void {
   const pick = (section: unknown, field: string): number | undefined => {
     if (section == null || typeof section !== 'object') return undefined
@@ -798,6 +748,20 @@ export function syncServerLimits(data: Record<string, unknown>): void {
     uploadMaxSizeMB: pick(data.upload, 'max_size_mb'),
     uploadMaxFiles: pick(data.upload, 'max_files'),
   })
+}
+
+/**
+ * Mirror the server's FRP build capability into the shared availability ref.
+ *
+ * Only an explicit `false` narrows the flag: an older server that does not send
+ * `frp.available` leaves it at the default `true`, so the panel keeps working
+ * against a server that predates this field rather than disappearing.
+ */
+export function syncFrpAvailability(data: Record<string, unknown>): void {
+  const section = data.frp
+  if (section == null || typeof section !== 'object') return
+  const available = (section as Record<string, unknown>).available
+  if (available === false) setFrpAvailable(false)
 }
 
 export function useSettingsConfig() {
@@ -827,12 +791,15 @@ export function useSettingsConfig() {
     try {
       const data = await apiGet<Record<string, unknown>>('/api/config')
       serverConfig.value = data
+      // The FRP settings panel is hidden when the server was built without FRP
+      // support (`nofrp` tag). Read it here because /api/config is the one
+      // response every settings surface already waits on.
+      syncFrpAvailability(data)
       // Mirror hot-reloadable limits into the global store so client-side
       // pre-checks (session-limit guard, upload size/count) and the session
       // header reflect a settings change immediately instead of only after a
       // page reload (which re-runs loadProject → /api/roots).
       syncServerLimits(data)
-      applyFirstRunThemeDefaults(data)
       // Reconcile the server's UI language with this browser once per session.
       // Skipped when the locale side-effect already pushed a value (the user
       // changed the language this session), so a PATCH cannot loop back through

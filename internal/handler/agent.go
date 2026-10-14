@@ -196,6 +196,37 @@ func visibleDefaultAgent(defaultAgent string, agents []*model.Agent, projectPath
 	return ""
 }
 
+// acpModelsUnconfirmed reports whether the agent runs over ACP but its runtime
+// has not reported a model list yet.
+//
+// In that state agent.Models holds the CLI-discovered list, which is a GUESS:
+// ACP has no client-side "default model" concept — the agent reports its own
+// currentValue at session/new — so presenting the CLI list as if the agent could
+// run it lets the user pick a model the agent may reject. See
+// ai.HasConfirmedACPModels.
+//
+// Transport (not "has an acp_command") is what decides: a dual-transport agent
+// currently on CLI legitimately uses its CLI list.
+func acpModelsUnconfirmed(a *model.Agent) bool {
+	return a != nil && a.Transport == "acp-stdio" && !ai.HasConfirmedACPModels(a.ID)
+}
+
+// gateUnconfirmedACPModels returns the agent the API should report: the agent
+// itself when nothing needs hiding, or a copy with Models cleared and the raw
+// CLI list preserved under CLIModels.
+//
+// An empty (non-nil) slice rather than nil keeps the JSON field as [] instead of
+// null, so clients can treat "no models" uniformly.
+func gateUnconfirmedACPModels(a *model.Agent) *model.Agent {
+	if !acpModelsUnconfirmed(a) {
+		return a
+	}
+	clone := *a
+	clone.CLIModels = a.Models
+	clone.Models = []model.AgentModel{}
+	return &clone
+}
+
 func serveAgentsGet(w http.ResponseWriter, r *http.Request) {
 	configMutex.RLock()
 	agents := model.GetAgentList()
@@ -248,6 +279,10 @@ func serveAgentsGet(w http.ResponseWriter, r *http.Request) {
 		agentCap := reg.Get(a.ID)
 		if agentCap == nil || !agentCap.HasData() {
 			states[a.ID] = s
+			// No ACP data at all yet (the fresh-install path). The agent's own
+			// Models are the CLI list, which must not be presented as runnable
+			// over ACP.
+			agents[i] = gateUnconfirmedACPModels(a)
 			continue
 		}
 
@@ -265,6 +300,10 @@ func serveAgentsGet(w http.ResponseWriter, r *http.Request) {
 		}
 		resolved := model.ResolveModels(a.Models, acpModels, currentModelID)
 		if len(resolved) == 0 {
+			// The ACP list (when concrete) dropped every CLI model, or there is
+			// nothing to merge. Still gate: without ACP-confirmed models this
+			// would fall through to the raw CLI list.
+			agents[i] = gateUnconfirmedACPModels(a)
 			continue
 		}
 
@@ -285,7 +324,7 @@ func serveAgentsGet(w http.ResponseWriter, r *http.Request) {
 		clone := *a
 		clone.CLIModels = a.Models
 		clone.Models = resolved
-		agents[i] = &clone
+		agents[i] = gateUnconfirmedACPModels(&clone)
 	}
 
 	// Attach usage counts (interactive sessions / tasks / group memberships) so
@@ -1046,22 +1085,42 @@ func ServeAgentRefreshModels(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Resolve against the cached ACP models, if any, exactly like GET /api/agents
-	// does. The freshly discovered list is the CLI skeleton; a concrete ACP list
-	// stays authoritative for membership. Agents without ACP have no runtime to
-	// contradict the CLI list, so they are reported as discovered.
-	resolved := models
-	if agent.SupportsACP() {
-		if ml := modelListStateForAgent(agentID); ml != nil {
-			if r := model.ResolveModels(models, ml.Models, ml.CurrentModelID); len(r) > 0 {
-				resolved = r
-			}
-		}
-	}
+	// does. See resolveRefreshedModels for the gate applied on top.
+	resolved := resolveRefreshedModels(agent, models)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"models":    resolved,
 		"cliModels": models,
 	})
+}
+
+// resolveRefreshedModels turns a freshly discovered CLI list into the list the
+// refresh endpoint should report.
+//
+// The discovered list is the CLI skeleton; a concrete ACP list stays
+// authoritative for membership. Agents without ACP have no runtime to contradict
+// the CLI list, so they are reported as discovered.
+//
+// When the agent runs over ACP but has not reported its models yet, the result
+// is EMPTY: reporting the CLI skeleton would let the client render it in the ACP
+// view (applyRefreshedModelList writes `models` straight onto the agent for
+// acp-stdio), i.e. one manual refresh would undo the gate GET /api/agents
+// applies. The caller still returns the discovered list as `cliModels`.
+func resolveRefreshedModels(agent *model.Agent, discovered []model.AgentModel) []model.AgentModel {
+	if acpModelsUnconfirmed(agent) {
+		return []model.AgentModel{}
+	}
+	if !agent.SupportsACP() {
+		return discovered
+	}
+	ml := modelListStateForAgent(agent.ID)
+	if ml == nil {
+		return discovered
+	}
+	if r := model.ResolveModels(discovered, ml.Models, ml.CurrentModelID); len(r) > 0 {
+		return r
+	}
+	return discovered
 }
 
 // modelListStateForAgent returns the cached ACP model state for an agent, or nil

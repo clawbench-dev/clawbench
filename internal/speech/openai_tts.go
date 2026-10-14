@@ -18,6 +18,13 @@ import (
 // openAISpeechPath is the OpenAI-compatible speech synthesis path.
 const openAISpeechPath = "/v1/audio/speech"
 
+// stream_format values accepted by the endpoint. SSE streams chunks; audio
+// returns the whole body at once (and is the endpoint default).
+const (
+	streamFormatSSE   = "sse"
+	streamFormatAudio = "audio"
+)
+
 // maxSSELineBytes bounds a single SSE `data:` line. Audio chunks arrive
 // base64-encoded, so one line is roughly 4/3 of a chunk — a few KB in
 // practice. The generous ceiling only guards against a malformed or hostile
@@ -45,6 +52,11 @@ const openAITTSTimeout = 150 * time.Second
 // transparently retries with "audio" on a 400. A compatible server that merely
 // ignores the parameter is detected from the response Content-Type instead of
 // the status code, so no retry is needed in that case.
+//
+// The spec names `tts-1` / `tts-1-hd` as NOT supporting `stream_format: "sse"`,
+// so those models skip the SSE attempt entirely (see modelSupportsSSE). Asking
+// anyway is a spec violation, and a server that answers 200 + SSE instead of
+// 400 would strand the client on a stream it should never have requested.
 type OpenAITTSProvider struct {
 	// BaseURL is the OpenAI-compatible API root, e.g.
 	// "https://api.openai.com/v1" or "https://host/v1/audio/speech".
@@ -61,6 +73,12 @@ type OpenAITTSProvider struct {
 	// Speed is the speech rate multiplier (OpenAI accepts 0.25–4.0). <= 0
 	// omits the parameter and lets the server default it.
 	Speed float64
+	// StreamMode overrides the per-model stream_format choice. "" and "auto"
+	// keep the model-based default (see modelSupportsSSE); "sse" forces
+	// Server-Sent Events; "audio" forces the raw audio body. This is the escape
+	// hatch for a compatible server whose model name does not reveal whether it
+	// supports SSE.
+	StreamMode string
 	// HTTPClient is injectable for tests. When nil a client with
 	// openAITTSTimeout is used.
 	HTTPClient *http.Client
@@ -74,12 +92,14 @@ var (
 	_ CacheIdentityProvider   = (*OpenAITTSProvider)(nil)
 )
 
-// CacheIdentity reports the endpoint, model, voice and rate. BaseURL is
-// included because two different compatible servers serving the same model
-// name can produce different audio. APIKey is deliberately excluded: it does
-// not affect the audio, and this string is hashed into an on-disk file name.
+// CacheIdentity reports the endpoint, model, voice, rate and stream mode.
+// BaseURL is included because two different compatible servers serving the
+// same model name can produce different audio. StreamMode is included because
+// it changes the request shape, and a server that streams differently could
+// return different bytes. APIKey is deliberately excluded: it does not affect
+// the audio, and this string is hashed into an on-disk file name.
 func (p *OpenAITTSProvider) CacheIdentity() string {
-	return fmt.Sprintf("openai|%s|%s|%s|%g", p.BaseURL, p.Model, p.Voice, p.Speed)
+	return fmt.Sprintf("openai|%s|%s|%s|%g|%s", p.BaseURL, p.Model, p.Voice, p.Speed, p.StreamMode)
 }
 
 // NewOpenAITTSProvider creates a provider with no defaults — every field is
@@ -201,16 +221,24 @@ func (p *OpenAITTSProvider) SynthesizeStream(ctx context.Context, text string, o
 // synthesize performs the request, preferring SSE and falling back to the raw
 // audio body. It returns the number of audio bytes written to w.
 func (p *OpenAITTSProvider) synthesize(ctx context.Context, text string, w io.Writer) (int64, error) {
-	resp, err := p.doRequest(ctx, text, "sse")
+	// Only ask for SSE when the model is documented to support it. Requesting
+	// it for tts-1 / tts-1-hd is a spec violation, and a server that ignores
+	// the spec and returns 200 + SSE anyway would defeat the 400 fallback
+	// below, leaving the client parsing a stream it never should have asked
+	// for. StreamMode overrides this default.
+	streamFormat := p.resolveStreamFormat()
+
+	resp, err := p.doRequest(ctx, text, streamFormat)
 	if err != nil {
 		return 0, err
 	}
 
 	// A 400 on the SSE attempt means the model does not support
-	// stream_format=sse (tts-1 / tts-1-hd). Retry with the raw audio body,
-	// which every model supports. The body is fully drained first so the
-	// connection can be reused.
-	if resp.StatusCode == http.StatusBadRequest {
+	// stream_format=sse. Retry with the raw audio body, which every model
+	// supports. The body is fully drained first so the connection can be
+	// reused. This only applies when we actually asked for SSE — a 400 on an
+	// `audio` request is a genuine error and must surface as one.
+	if streamFormat == streamFormatSSE && resp.StatusCode == http.StatusBadRequest {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		_ = resp.Body.Close()
 		slog.Warn(
@@ -218,7 +246,7 @@ func (p *OpenAITTSProvider) synthesize(ctx context.Context, text string, w io.Wr
 			slog.Int("status", resp.StatusCode),
 			slog.String("body", strings.TrimSpace(string(body))),
 		)
-		resp, err = p.doRequest(ctx, text, "audio")
+		resp, err = p.doRequest(ctx, text, streamFormatAudio)
 		if err != nil {
 			return 0, err
 		}
@@ -235,10 +263,21 @@ func (p *OpenAITTSProvider) synthesize(ctx context.Context, text string, w io.Wr
 	// directly; the Content-Type is the authoritative signal for which shape
 	// arrived (checking the request parameter would misread that server).
 	if isEventStream(resp.Header.Get("Content-Type")) {
+		// streamSSEAudio validates the decoded audio prefix itself (the SSE
+		// body is text, so it cannot be sniffed at this layer).
 		return streamSSEAudio(resp.Body, w)
 	}
 
-	n, err := io.Copy(w, resp.Body)
+	// The raw body IS the audio, so its leading bytes can be validated before
+	// any of them reach the file. The request asked for response_format=mp3, so
+	// a different container (a server ignoring that parameter) fails fast
+	// instead of being cached under a .mp3 name that playback cannot decode.
+	br := bufio.NewReader(resp.Body)
+	if prefixErr := checkMP3Prefix(br); prefixErr != nil {
+		return 0, prefixErr
+	}
+
+	n, err := io.Copy(w, br)
 	if err != nil {
 		return n, fmt.Errorf("openai-tts: failed to read audio body: %w", err)
 	}
@@ -269,7 +308,7 @@ func (p *OpenAITTSProvider) doRequest(ctx context.Context, text, streamFormat st
 		return nil, fmt.Errorf("openai-tts: failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if streamFormat == "sse" {
+	if streamFormat == streamFormatSSE {
 		req.Header.Set("Accept", "text/event-stream")
 	} else {
 		req.Header.Set("Accept", "application/octet-stream")
@@ -294,8 +333,42 @@ func isEventStream(contentType string) bool {
 	return strings.Contains(strings.ToLower(contentType), "text/event-stream")
 }
 
+// modelSupportsSSE reports whether a TTS model accepts stream_format="sse".
+//
+// The OpenAI spec states that `tts-1` and `tts-1-hd` (and their dated
+// snapshots) do NOT support SSE streaming. Every other model — including
+// `gpt-4o-mini-tts` and compatible-server models unknown to us — is assumed to
+// support it, so the capability is denied by name rather than allow-listed.
+func modelSupportsSSE(model string) bool {
+	switch model {
+	case "tts-1", "tts-1-hd", "tts-1-1106", "tts-1-hd-1106":
+		return false
+	default:
+		return true
+	}
+}
+
+// resolveStreamFormat returns the stream_format to request, honoring the
+// user's StreamMode override and falling back to the per-model default.
+func (p *OpenAITTSProvider) resolveStreamFormat() string {
+	switch p.StreamMode {
+	case streamFormatSSE:
+		return streamFormatSSE
+	case streamFormatAudio:
+		return streamFormatAudio
+	}
+	if modelSupportsSSE(p.Model) {
+		return streamFormatSSE
+	}
+	return streamFormatAudio
+}
+
 // sseAudioEvent is the subset of a `speech.audio.delta` event we consume.
 // The `type` field is read but not required — a compatible server may omit it.
+//
+// `audio` is a base64 STRING per the spec. A non-string value (notably the
+// nested object `{"audio":{"data":"…"}}` some servers emit) fails to unmarshal
+// and is treated as fatal — see streamSSEAudio.
 type sseAudioEvent struct {
 	Type  string `json:"type"`
 	Audio string `json:"audio"`
@@ -304,48 +377,173 @@ type sseAudioEvent struct {
 // streamSSEAudio decodes `speech.audio.delta` events from an SSE body and
 // writes each chunk to w, returning the total bytes written.
 //
-// Events carrying no audio (notably `speech.audio.done`, which reports usage)
-// and lines that are not `data:` are skipped. A malformed data line is skipped
-// rather than fatal: the endpoint is implemented by multiple vendors and one
-// non-JSON keepalive line should not discard an otherwise good stream.
+// Events that legitimately carry no audio (`speech.audio.done`, an audio-less
+// delta, the `[DONE]` sentinel) and non-`data:` lines are skipped. But a
+// `data:` line that fails to decode is FATAL, not skipped: the spec types
+// `audio` as a base64 string, so a payload we cannot parse is a non-compliant
+// server, and swallowing it would turn a clear format error into a 0-byte file
+// plus a misleading "no audio data" message. Failing here names the offending
+// payload so the provider bug is visible in seconds.
 func streamSSEAudio(r io.Reader, w io.Writer) (int64, error) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxSSELineBytes)
 
 	var total int64
+	// The request asked for response_format=mp3, so the decoded audio must be
+	// MP3. Buffer just enough leading bytes to make that decision before any
+	// audio reaches the file; a non-compliant server then fails fast instead of
+	// caching e.g. headerless PCM under a .mp3 name.
+	var prefix []byte
+	validated := false
+
+	writeChunk := func(chunk []byte) error {
+		if validated {
+			return writeAudio(w, chunk, &total)
+		}
+		prefix = append(prefix, chunk...)
+		if len(prefix) < mp3SniffPrefixBytes {
+			return nil
+		}
+		validated = true
+		if !isMP3(prefix) {
+			return errNotMP3(prefix)
+		}
+		err := writeAudio(w, prefix, &total)
+		prefix = nil
+		return err
+	}
+
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if payload == "" || payload == "[DONE]" {
-			continue
-		}
-
-		// Events that carry no audio (notably `speech.audio.done`, which
-		// reports usage) and non-JSON keepalive lines both fall through here:
-		// an empty `audio` field decodes to zero bytes and is skipped below.
-		var ev sseAudioEvent
-		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
-			continue
-		}
-
-		chunk, err := base64.StdEncoding.DecodeString(ev.Audio)
+		chunk, skip, err := decodeSSEAudioLine(scanner.Text())
 		if err != nil {
-			return total, fmt.Errorf("openai-tts: failed to decode audio chunk: %w", err)
+			return total, err
 		}
-		if len(chunk) == 0 {
+		if skip {
 			continue
 		}
-		n, err := w.Write(chunk)
-		total += int64(n)
-		if err != nil {
-			return total, fmt.Errorf("openai-tts: failed to write audio chunk: %w", err)
+		if err := writeChunk(chunk); err != nil {
+			return total, err
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return total, fmt.Errorf("openai-tts: failed to read event stream: %w", err)
 	}
+
+	// A stream shorter than the sniff window still has to be MP3 (a tiny valid
+	// frame qualifies); flush whatever was buffered.
+	if !validated && len(prefix) > 0 {
+		if !isMP3(prefix) {
+			return total, errNotMP3(prefix)
+		}
+		if err := writeAudio(w, prefix, &total); err != nil {
+			return total, err
+		}
+	}
 	return total, nil
+}
+
+// decodeSSEAudioLine extracts the decoded audio from one SSE line. It reports
+// skip=true for lines that carry no audio (non-`data:` lines, an empty payload,
+// the `[DONE]` sentinel, a `speech.audio.done` event, or an empty `audio`
+// field). A payload that cannot be parsed or decoded is an error: the spec
+// types `audio` as a base64 string, so anything else is a non-compliant server.
+func decodeSSEAudioLine(line string) (chunk []byte, skip bool, err error) {
+	line = strings.TrimSpace(line)
+	if !strings.HasPrefix(line, "data:") {
+		return nil, true, nil
+	}
+	payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+	if payload == "" || payload == "[DONE]" {
+		return nil, true, nil
+	}
+
+	var ev sseAudioEvent
+	if unmarshalErr := json.Unmarshal([]byte(payload), &ev); unmarshalErr != nil {
+		return nil, false, fmt.Errorf("openai-tts: malformed speech.audio.delta payload %q: %w", truncateForError(payload), unmarshalErr)
+	}
+
+	chunk, err = base64.StdEncoding.DecodeString(ev.Audio)
+	if err != nil {
+		return nil, false, fmt.Errorf("openai-tts: failed to decode audio chunk: %w", err)
+	}
+	if len(chunk) == 0 {
+		return nil, true, nil
+	}
+	return chunk, false, nil
+}
+
+// writeAudio writes a decoded audio chunk to w and accumulates the byte count.
+func writeAudio(w io.Writer, chunk []byte, total *int64) error {
+	n, err := w.Write(chunk)
+	*total += int64(n)
+	if err != nil {
+		return fmt.Errorf("openai-tts: failed to write audio chunk: %w", err)
+	}
+	return nil
+}
+
+// errNotMP3 reports a non-MP3 payload, naming the detected format.
+func errNotMP3(b []byte) error {
+	return fmt.Errorf("openai-tts: response is not mp3 (%s); the request asked for response_format=mp3", describeAudioFormat(b))
+}
+
+// truncateForError bounds a payload echoed into an error message. A malformed
+// line can be large (base64 audio), and the message is logged and surfaced.
+func truncateForError(s string) string {
+	const maxLen = 256
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "…"
+}
+
+// mp3SniffPrefixBytes is how many leading audio bytes are examined to decide
+// whether the payload is MP3. Enough for an ID3v2 tag or a couple of frame
+// syncs.
+const mp3SniffPrefixBytes = 16
+
+// checkMP3Prefix peeks the leading bytes of an audio stream and fails if they
+// are not MP3. The bytes are left in the reader for the caller to consume.
+//
+// A stream that ends before mp3SniffPrefixBytes arrive is only an error if it
+// carried no bytes at all (the empty case is reported separately as "no audio
+// data") — a short-but-valid MP3 (e.g. a single tiny frame) is accepted as long
+// as its prefix identifies it.
+func checkMP3Prefix(br *bufio.Reader) error {
+	prefix, err := br.Peek(mp3SniffPrefixBytes)
+	if err != nil && len(prefix) == 0 {
+		// Empty (or unreadable) body: let the caller's zero-byte check report
+		// it rather than mislabeling it a format error.
+		return nil
+	}
+	if isMP3(prefix) {
+		return nil
+	}
+	return errNotMP3(prefix)
+}
+
+// isMP3 reports whether the bytes begin with a recognized MP3 signature: an
+// ID3v2 tag ("ID3") or an MPEG audio frame sync (0xFF followed by 0xE0-0xFF,
+// i.e. the top three bits set, leaving the version/layer bits non-reserved).
+func isMP3(b []byte) bool {
+	if len(b) >= 3 && b[0] == 'I' && b[1] == 'D' && b[2] == '3' {
+		return true
+	}
+	return len(b) >= 2 && b[0] == 0xFF && (b[1]&0xE0) == 0xE0
+}
+
+// describeAudioFormat names a non-MP3 payload for the error message, so the
+// user learns what the server actually sent. It recognizes the common
+// containers a misconfigured TTS server returns.
+func describeAudioFormat(b []byte) string {
+	switch {
+	case len(b) >= 4 && string(b[:4]) == "RIFF":
+		return "server returned WAV"
+	case len(b) >= 4 && string(b[:4]) == "OggS":
+		return "server returned Ogg"
+	case len(b) >= 4 && string(b[:4]) == "fLaC":
+		return "server returned FLAC"
+	default:
+		return "expected mp3, got unrecognized data"
+	}
 }

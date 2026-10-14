@@ -4136,13 +4136,13 @@ public class MainActivity extends AppCompatActivity {
         }
 
         /**
-         * Get the persisted theme ID (e.g. 'github-dark', 'one-dark-pro').
+         * Get the persisted theme ID (e.g. 'gruvbox-dark', 'one-dark-pro').
          * Used by the static login page to match the main app's color scheme.
-         * Returns 'github-dark' when no theme has been saved yet.
+         * Returns 'gruvbox-dark' (the factory theme) when no theme has been saved yet.
          */
         @JavascriptInterface
         public String getTheme() {
-            return activity.prefs.getString(KEY_THEME, "github-dark");
+            return activity.prefs.getString(KEY_THEME, "gruvbox-dark");
         }
 
         /**
@@ -4156,7 +4156,7 @@ public class MainActivity extends AppCompatActivity {
          */
         @JavascriptInterface
         public void setTheme(String theme, String bg, String text, String textSecondary, String accent) {
-            String id = (theme != null && !theme.isEmpty()) ? theme : "github-dark";
+            String id = (theme != null && !theme.isEmpty()) ? theme : "gruvbox-dark";
             activity.prefs.edit()
                     .putString(KEY_THEME, id)
                     .putString(KEY_THEME_BG, bg != null ? bg : "")
@@ -4171,7 +4171,7 @@ public class MainActivity extends AppCompatActivity {
         /**
          * Legacy 1-arg overload, kept for callers that only know the theme ID
          * (e.g. the static login page). Persists only the theme ID; the color
-         * slots stay empty so FloatingThemeColors falls back to github-dark.
+         * slots stay empty so FloatingThemeColors falls back to gruvbox-dark.
          */
         @JavascriptInterface
         public void setTheme(String theme) {

@@ -357,6 +357,12 @@ export function useAutoSpeech() {
     currentWs = ws
 
     let firstChunkReceived = false
+    // Set once a terminal frame (done/error) has been handled. A close that
+    // arrives without one means the server dropped the connection before the
+    // result was delivered (e.g. the terminal frame was lost, or the job
+    // failed outside the normal path). Without this guard the UI would stay on
+    // "synthesizing" forever, since `state` is only advanced by those frames.
+    let terminalReceived = false
 
     ws.onopen = () => {
       ws.send(JSON.stringify({ type: 'start', jobId }))
@@ -379,11 +385,13 @@ export function useAutoSpeech() {
             if (msg.phase === 'summarizing') state.value = 'summarizing'
             else if (msg.phase === 'synthesizing') state.value = 'synthesizing'
           } else if (msg.type === 'done') {
+            terminalReceived = true
             if (msg.summary) playingSummary.value = msg.summary
             mseStreamEnded = true
             mse.endOfStream()
             ws.close()
           } else if (msg.type === 'error') {
+            terminalReceived = true
             reportError(msg.message || gt('autoSpeech.synthesisFailed'))
             stopAudio()
             ws.close()
@@ -393,12 +401,21 @@ export function useAutoSpeech() {
     }
 
     ws.onerror = () => {
+      terminalReceived = true
       reportError(gt('autoSpeech.generateFailedGeneric'))
       stopAudio()
     }
 
     ws.onclose = () => {
       if (currentWs === ws) currentWs = null
+      // Closed without a terminal frame: surface an error and reset instead of
+      // leaving the button stuck on "合成中". Skip when audio was already
+      // streaming — the playback-end timer owns completion in that case.
+      if (!terminalReceived && !firstChunkReceived) {
+        appLog.w(TAG, 'TTS WebSocket closed before any result; resetting state')
+        reportError(gt('autoSpeech.generateFailedGeneric'))
+        stopAudio()
+      }
     }
   }
 

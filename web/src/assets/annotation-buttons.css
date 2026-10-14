@@ -31,6 +31,14 @@
    still see and copy it, but is visibly NOT a link: muted, dashed underline,
    and `cursor: help` so the tooltip explaining why is discoverable.
 
+   The underline is a `text-decoration`, NOT a `border-bottom`: an inline chip
+   that wraps is split into one box per line, and a border is painted per box.
+   With `box-decoration-break: slice` the first fragment's 1px low-contrast
+   dashed border is clipped where the radius/padding is sliced, so on Android
+   WebView the dash visibly starts mid-path (the leading characters get no
+   underline at all). A text decoration follows the text run itself, so it
+   stays continuous across the wrap.
+
    Every declaration that must beat the live-chip styling carries `!important`,
    because the inert class cannot out-specify the rules it has to override:
 
@@ -52,12 +60,12 @@
                   `.chat-file-path[data-file-path] { cursor: pointer }` (0,2,0)
                   match them and claim the pointer affordance that the state
                   must deny.
-     - `text-decoration` (hover) — the generic link rules underline on hover
-                  (`.chat-message.assistant a:hover` is (0,3,1)), which outranks
-                  both `a.chat-file-path-inert` (0,1,1) and
-                  `.chat-file-path-inert:hover` (0,2,0). Left alone, an inert
-                  <a> gained a solid underline on hover — a live-link signal
-                  stacked on top of the dashed "not a link" border.
+     - `text-decoration` — the generic link rules underline (`.markdown-body a`)
+                  and underline harder on hover (`.chat-message.assistant a:hover`
+                  is (0,3,1)), which outranks both `a.chat-file-path-inert`
+                  (0,1,1) and `.chat-file-path-inert:hover` (0,2,0). Left alone,
+                  an inert <a> would gain the live-link underline. `!important`
+                  pins our dashed variant against all of them, rest AND hover.
 
    The selectors are also listed with their compound forms (`a.` prefix,
    `.code-file-path.` prefix) so the rule outranks the code-viewer's
@@ -67,8 +75,13 @@ a.chat-file-path-inert,
 .chat-file-path-inert,
 .code-file-path.chat-file-path-inert {
   color: var(--text-muted, #999) !important;
-  text-decoration: none !important;
-  border-bottom: 1px dashed color-mix(in srgb, var(--text-muted, #999) 60%, transparent);
+  text-decoration: underline dashed color-mix(in srgb, var(--text-muted, #999) 60%, transparent) !important;
+  /* `text-decoration-thickness` IS reset by the `text-decoration` shorthand, so
+     the `!important` shorthand above would otherwise force it back to `auto`.
+     Both longhands must therefore be `!important` too. (`text-underline-offset`
+     is NOT part of the shorthand, but pinning it keeps the pair symmetric.) */
+  text-decoration-thickness: 1px !important;
+  text-underline-offset: 3px !important;
   cursor: help !important;
   background: none !important;
 }
@@ -89,7 +102,10 @@ a.chat-file-path-inert,
 a.chat-file-path-inert:hover,
 .chat-file-path-inert:hover {
   color: var(--text-muted, #999) !important;
-  text-decoration: none !important;
+  /* No `text-decoration` here on purpose: the base rule pins the dashed
+     underline with `!important`, so the generic link hover rule's solid
+     underline (`.chat-message.assistant a:hover`, not important) cannot take
+     over. Restating it would only re-open a specificity fight. */
   /* Faint tint only, so the explanatory tooltip stays discoverable without
      resurrecting the live chip's stronger (18%) hover fill. */
   background: color-mix(in srgb, var(--text-muted, #999) 10%, transparent) !important;

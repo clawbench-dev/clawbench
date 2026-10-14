@@ -35,3 +35,11 @@
 /* ---- Grok: dark gray logo — invisible on dark bg ---- */
 .mono-grok { color: #1A1A1A; }
 [data-theme-base="dark"] .mono-grok { color: #e6edf3; }
+
+/* ---- Hermes Agent: near-black mark — invisible on dark bg ---- */
+.mono-hermes { color: #1A1A1A; }
+[data-theme-base="dark"] .mono-hermes { color: #e6edf3; }
+
+/* ---- Cursor: dark logo — invisible on dark bg ---- */
+.mono-cursor { color: #1A1A1A; }
+[data-theme-base="dark"] .mono-cursor { color: #e6edf3; }

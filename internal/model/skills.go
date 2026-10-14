@@ -3,7 +3,6 @@ package model
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"path/filepath"
 	"strings"
 )
 
@@ -57,16 +56,21 @@ func SkillSlug(url string) string {
 // internal/skill). Which directory a skill came from only affects dedup
 // priority, not visibility.
 type SkillsConfig struct {
-	// Enabled is the master switch. When false, no skills section is injected
-	// into any system prompt (scanning and the UI listing still work).
+	// Enabled is the master switch for AUTOMATIC injection. It defaults to
+	// false (opt-in): injecting every discovered skill spends context on every
+	// turn, so the user must turn it on. When false, no skills section is
+	// injected into any system prompt (scanning and the UI listing still work),
+	// but an explicit "#skill" reference is unaffected — it is a direct user
+	// instruction, not automatic injection.
 	Enabled bool `yaml:"enabled"`
 	// Dirs are the user's own skill directories, scanned in order. Each is an
 	// absolute path; a skill found in more than one is deduplicated by name
 	// (all of them share SourceUserDir priority, so the first in this list
 	// wins).
 	//
-	// An empty list resolves to DefaultSkillsDir(). The legacy single-directory
-	// key (`dir`) is migrated into this list on load — see main.go.
+	// An empty list means "no user directories" — it is NOT replaced by a
+	// default. The legacy single-directory key (`dir`) is migrated into this
+	// list on load — see main.go.
 	Dirs []string `yaml:"dirs"`
 	// LegacyDir is the pre-multi-directory key, kept ONLY so a config written
 	// by an older build still parses. Never read at runtime: main.go moves a
@@ -98,33 +102,20 @@ type SkillRepo struct {
 	LastError string `yaml:"last_error,omitempty"`
 }
 
-// DefaultSkillsDir returns the default user skill directory:
-// <DataDir>/skills-user. It is deliberately distinct from <DataDir>/skills,
-// which holds cloned repositories (managed by the server, not the user).
-// Returns "" when DataDir is unset.
-func DefaultSkillsDir() string {
-	if DataDir == "" {
-		return ""
-	}
-	return filepath.Join(DataDir, "skills-user")
-}
-
-// ResolveSkillsDirs returns the user's skill directories, falling back to the
-// default when none are configured. Call this at scan time rather than reading
-// Skills.Dirs directly, so an explicitly-cleared list resolves to the default.
+// ResolveSkillsDirs returns the user's configured skill directories. Call this
+// at scan time rather than reading Skills.Dirs directly, so blank entries are
+// dropped uniformly.
 //
 // Blank entries are dropped: an empty string would otherwise resolve to the
 // scan root itself and turn a whole project tree into skills.
+//
+// An empty list stays empty — there is no default directory. Removing every
+// entry therefore genuinely disables user-directory scanning.
 func (c *Config) ResolveSkillsDirs() []string {
 	var out []string
 	for _, d := range c.Skills.Dirs {
 		if d != "" {
 			out = append(out, d)
-		}
-	}
-	if len(out) == 0 {
-		if def := DefaultSkillsDir(); def != "" {
-			return []string{def}
 		}
 	}
 	return out

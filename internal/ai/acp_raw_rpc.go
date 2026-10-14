@@ -62,6 +62,12 @@ func (w *lockedWriter) Write(p []byte) (int, error) {
 type RawRPCError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
+	// Data is the optional JSON-RPC error data payload. Agents put their
+	// actionable cause here (e.g. Hermes returns
+	// {"details":"GitHub Copilot is not connected: ..."} for a -32602 model
+	// switch), so callers that surface an error to the user should prefer it
+	// over the generic Message.
+	Data json.RawMessage `json:"data,omitempty"`
 }
 
 func (e *RawRPCError) Error() string {

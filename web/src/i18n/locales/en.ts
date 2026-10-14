@@ -28,6 +28,12 @@ export default {
     noData: 'No data',
     ok: 'OK',
     listSeparator: ', ',
+    // Shown by AsyncComponentError.vue when a lazily-loaded panel chunk fails
+    // to load (offline, deploy swapped the hashed chunk).
+    componentLoadFailed: 'Failed to load this panel. Click retry.',
+    // SplitView / SplitDivider aria title — generic, so it does not live under
+    // `file.` even though the file manager is its most common host.
+    dragToResize: 'Drag to resize',
   },
   codeBlock: {
     wrapOn: 'Word wrap on',
@@ -314,6 +320,15 @@ export default {
     repoKindMain: 'Main',
     repoKindWorktree: 'Worktree',
     repoKindSubdir: 'Subdir',
+    // Descriptive labels for the three header capsule segments (shown only at
+    // ≥768px, see AppHeader.vue). Distinct from the `projects` / `branches`
+    // menu titles: these are a tiny prefix before the icon+value pair that
+    // tells the user what the value to their right means.
+    labels: {
+      project: 'Project',
+      branch: 'Branch',
+      file: 'File',
+    },
     themePicker: 'Switch theme',
     moreAppearanceOptions: 'More appearance options',
     settings: 'Settings',
@@ -458,6 +473,7 @@ export default {
       placeholderOptional: 'Add description (optional)...',
       placeholderQuickSend: 'Tap the button on the right to send a preset command →',
       placeholderCommand: "Type {'/'} for commands",
+      placeholderSkill: "Type {'#'} to use a skill",
       placeholderFileRef: "Type {'@'} to reference a file",
       placeholderSwipeHistory: 'Swipe left/right to browse history input',
       send: 'Send',
@@ -496,6 +512,7 @@ export default {
         recentShare: 'Shared',
         clawbench: 'Built-in',
         agent: 'Agent',
+        skill: 'Skill',
       },
     },
     acpSession: {
@@ -596,6 +613,10 @@ export default {
     },
     modelSwitcher: {
       title: 'Model',
+      switching: 'Switching model…',
+      deferred: 'Session is busy — will switch on your next message',
+      switchFailed: 'Could not switch model',
+      switchFailedDetail: 'Could not switch model: {detail}',
     },
     modeSwitcher: {
       title: 'Mode',
@@ -768,6 +789,12 @@ export default {
     voice: {
       recording: 'Recording',
       transcribing: 'Transcribing',
+      insecureContext: 'Voice input needs HTTPS or localhost (this page is not a secure context, so the microphone is unreachable)',
+      unavailableTitle: 'Voice input unavailable',
+      gotIt: 'Got it',
+      micDenied: 'Microphone permission denied or unavailable',
+      transcribeFailed: 'Speech recognition failed — check the recognition model configuration',
+      connectFailed: 'Speech recognition connection failed',
     },
     archive: {
       confirm: 'Remove the current session from the session list? Or archive it into session search',
@@ -1152,6 +1179,12 @@ export default {
     left: 'Left',
     parallelLabel: 'Run concurrently',
     parallelHint: "When on, the members you {'@'} speak at the same time (the whole roster when you {'@'} nobody); agent-to-agent {'@'} is unaffected.",
+    cruiseLabel: 'Auto-cruise',
+    cruiseHintHost: 'When on, the discussion ends only once the host confirms the task is complete.',
+    cruiseHintFree: 'When on, the discussion ends only once over half the members confirm the task is complete.',
+    // Header badge shown while auto-cruise is ON for the current group.
+    cruiseActive: 'Cruising',
+    goalSatisfied: 'Done',
     autoApproveHint: 'Auto-approve every member\u2019s permission requests.',
     confirm: 'Add',
     increaseInstance: 'Add another instance of this agent',
@@ -1276,6 +1309,15 @@ export default {
       eventContext: 'Event context (auto-injected, read-only)',
       eventContextHint: 'These variables are replaced with real values at trigger time and injected before your prompt.',
       eventContextHeader: 'Forge event',
+      // Separator between a variable label and its value in the injected block.
+      // Must match the backend's EventContextSeparator so the preview reads
+      // exactly like the prompt the AI receives.
+      eventContextSeparator: ': ',
+      // Yes/no values the BACKEND injects for the flag variables (its
+      // EventContextYes/No). The overview card resolves these so the sample
+      // matches the prompt in the active language.
+      eventContextYes: 'yes',
+      eventContextNo: 'no',
       varEventType: 'Event type',
       varRepo: 'Repository',
       varItem: 'Item',
@@ -1564,6 +1606,8 @@ export default {
       binaryFile: 'Binary file, cannot preview in browser',
       loadFailed: 'Failed to load document',
       truncated: 'Content truncated, showing partial text only',
+      pdfLoading: 'Loading…',
+      pdfLoadFailed: 'Failed to load PDF',
     },
     details: {
       title: 'File Details',
@@ -2641,7 +2685,7 @@ export default {
       ttsEnginePiper: 'Piper',
       ttsEngineKokoro: 'Kokoro',
       ttsEngineMossNano: 'MOSS-Nano',
-      ttsEngineOpenAI: 'OpenAI TTS',
+      ttsEngineOpenAI: 'OpenAI TTS-compatible API',
       ttsModel: 'TTS Model',
       ttsModelDesc: 'Model name for MiniMax TTS synthesis',
       ttsFormat: 'Output Format',
@@ -2812,8 +2856,8 @@ export default {
       skillsSection: 'Skill Scanning',
       skillsCard: 'Cross-agent skills',
       skillsCardDesc: 'A skill is a directory containing SKILL.md — extra instructions that teach an AI a specific workflow. This page collects skills from every source, so one installed for a single agent also works in the others. When the same name appears twice, only the highest-priority copy is used, so nothing is injected twice.',
-      skillsEnabled: 'Enable skill injection',
-      skillsEnabledDesc: 'When off, the skill table is no longer written into any system prompt (scanning and the list below still work).',
+      skillsEnabled: 'Auto-inject skills',
+      skillsEnabledDesc: "When on, every discovered skill is added to the system prompt automatically. When off, nothing is injected automatically — you can still reference one manually with {'#'}name.",
       skillsDirs: 'Custom skill directories',
       skillsDirsDesc: 'Extra local skill directories (absolute paths; add as many as you need). Each subdirectory containing a SKILL.md counts as one skill.',
       skillsDirPlaceholder: 'Absolute path, e.g. /home/me/skills',
@@ -2947,7 +2991,7 @@ export default {
       ttsPiperHeader: 'Piper Config',
       ttsKokoroHeader: 'Kokoro Config',
       ttsMossNanoHeader: 'MOSS-Nano Config',
-      ttsOpenAIHeader: 'OpenAI TTS Config',
+      ttsOpenAIHeader: 'OpenAI TTS-compatible API',
       openaiTTSBaseUrl: 'Endpoint URL',
       openaiTTSBaseUrlDesc: 'Root URL of the OpenAI-compatible API, e.g. https://api.openai.com/v1 (completed to …/v1/audio/speech)',
       openaiTTSApiKey: 'API Key',
@@ -2956,6 +3000,11 @@ export default {
       openaiTTSModelDesc: 'Speech synthesis model name, supplied by you (e.g. gpt-4o-mini-tts). Note: tts-1 / tts-1-hd do not support SSE streaming and will fall back to a plain audio stream',
       openaiTTSVoice: 'Voice',
       openaiTTSVoiceDesc: 'Voice name or custom voice ID, supplied by you (e.g. alloy / verse / voice_1234)',
+      openaiTTSStreamMode: 'Stream mode',
+      openaiTTSStreamModeDesc: 'Request style: auto picks by model; SSE streams chunk by chunk; audio returns the whole file at once. Force one when the model name does not reveal whether SSE is supported',
+      openaiTTSStreamModeAuto: 'Auto (by model)',
+      openaiTTSStreamModeSSE: 'Streaming (SSE)',
+      openaiTTSStreamModeAudio: 'Whole audio',
       ttsSummarizeHeader: 'Summarization',
       ttsApiHeader: 'API Config',
       ttsCacheHeader: 'Cache',

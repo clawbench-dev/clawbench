@@ -16,17 +16,17 @@
 
     <!-- Global loading overlay -->
     <div v-if="loading" class="pdf-loading-overlay">
-      <LoadingIndicator size="lg" inline label="加载中..." />
+      <LoadingIndicator size="lg" inline :label="t('file.viewer.pdfLoading')" />
     </div>
 
     <!-- Error -->
     <div v-if="error" class="pdf-error">
       <FileX :size="48" />
-      <div class="pdf-error-title">PDF 加载失败</div>
+      <div class="pdf-error-title">{{ t('file.viewer.pdfLoadFailed') }}</div>
       <div class="pdf-error-desc">{{ error }}</div>
       <button class="pdf-download-link" @click="handleDownload">
         <Download :size="14" />
-        下载文件
+        {{ t('common.download') }}
       </button>
     </div>
   </div>
@@ -38,11 +38,14 @@ import {
 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { buildLocalFileUrl, downloadFileByPath } from '@/utils/download.ts'
 
 const MIN_SCALE = 0.25
 const MAX_SCALE = 5.0
 const RENDER_PADDING = 1
+
+const { t } = useI18n()
 
 const props = defineProps({
   file: Object,
@@ -207,7 +210,7 @@ async function loadPdf() {
     setupObserver()
   } catch (e) {
     loading.value = false
-    error.value = e.message || '未知错误'
+    error.value = e.message || t('upload.unknownError')
   }
 }
 

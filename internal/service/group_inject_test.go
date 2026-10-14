@@ -516,3 +516,91 @@ func TestRenderMentionsReadable_NoTagKeepsText(t *testing.T) {
 		t.Fatalf("plain speech must pass through; got %q", got)
 	}
 }
+
+// A member's AskUserQuestion card (converted tool_use form — the normal case)
+// must reach the OTHER members as readable text with a directional label, so
+// they know it is a question awaiting the USER, not discussion to join.
+func TestBuildMemberInjection_IncludesAskQuestionToolUse(t *testing.T) {
+	content := `{"blocks":[{"type":"tool_use","name":"AskUserQuestion","id":"ask-1","done":true,"input":{"questions":[{"header":"方案","question":"用哪个方案？","options":[{"label":"A","description":"快"},{"label":"B","description":"稳"}]}]}}]}`
+	msgs := []model.ChatMessage{
+		{ID: 2, Role: "assistant", AgentID: "row-a", Content: content},
+	}
+	got := buildInjectionText(msgs, 0, "row-b", map[string]string{"row-a": "A"}, nil, nil, "", "")
+	if !strings.Contains(got, "向用户提问") {
+		t.Fatalf("the question must be labeled as addressed to the user: %q", got)
+	}
+	if !strings.Contains(got, "用哪个方案？") {
+		t.Fatalf("the question stem must be injected: %q", got)
+	}
+	if !strings.Contains(got, "A") || !strings.Contains(got, "快") || !strings.Contains(got, "稳") {
+		t.Fatalf("the options must be injected: %q", got)
+	}
+	if !strings.Contains(got, "[A 向用户提问") {
+		t.Fatalf("the label must name the asker: %q", got)
+	}
+}
+
+// A message that is ONLY a question (no prose) must still be injected — the
+// plain-text extraction yields "" for it, so before this it was skipped whole
+// and the other members never learned a question was asked.
+func TestBuildMemberInjection_QuestionOnlyMessageStillInjected(t *testing.T) {
+	content := `{"blocks":[{"type":"tool_use","name":"AskUserQuestion","id":"ask-1","done":true,"input":{"questions":[{"header":"方案","question":"用哪个方案？","options":[{"label":"A"}]}]}}]}`
+	msgs := []model.ChatMessage{
+		{ID: 2, Role: "assistant", AgentID: "row-a", Content: content},
+	}
+	got := buildInjectionText(msgs, 0, "row-b", map[string]string{"row-a": "A"}, nil, nil, "", "")
+	if strings.TrimSpace(got) == "" {
+		t.Fatalf("a question-only message must not be dropped from injection: %q", got)
+	}
+	if !strings.Contains(got, "用哪个方案？") {
+		t.Fatalf("the question must survive injection: %q", got)
+	}
+}
+
+// The pre-conversion form (raw <clawbench-ask-question> tag still in a text
+// block — a conversion gap or an unparseable payload) must ALSO surface the
+// question, and the raw tag itself must never reach another member (they would
+// imitate the protocol — the mention-tag incident, decision #67).
+func TestBuildMemberInjection_RawAskTagRenderedNotLeaked(t *testing.T) {
+	raw := "我想确认一下：\n<clawbench-ask-question>\n**用哪个方案？**\n- A — 快\n- B — 稳\n</clawbench-ask-question>"
+	msgs := []model.ChatMessage{
+		{ID: 2, Role: "assistant", AgentID: "row-a", Content: assistantText(raw)},
+	}
+	got := buildInjectionText(msgs, 0, "row-b", map[string]string{"row-a": "A"}, nil, nil, "", "")
+	if strings.Contains(got, "<clawbench-ask-question") {
+		t.Fatalf("the raw ask tag must never leak into a member's context: %q", got)
+	}
+	if !strings.Contains(got, "用哪个方案？") {
+		t.Fatalf("the question must still be injected: %q", got)
+	}
+	if !strings.Contains(got, "向用户提问") {
+		t.Fatalf("the question must carry the directional label: %q", got)
+	}
+	if !strings.Contains(got, "我想确认一下") {
+		t.Fatalf("the surrounding prose must survive: %q", got)
+	}
+}
+
+// Ordinary speech with no question must NOT gain a spurious label — asserting
+// only the positive case would let a regression that labels every message pass.
+func TestBuildMemberInjection_NoQuestionNoLabel(t *testing.T) {
+	msgs := []model.ChatMessage{
+		{ID: 2, Role: "assistant", AgentID: "row-a", Content: assistantText("普通发言，没有提问。")},
+	}
+	got := buildInjectionText(msgs, 0, "row-b", map[string]string{"row-a": "A"}, nil, nil, "", "")
+	if strings.Contains(got, "向用户提问") {
+		t.Fatalf("plain speech must not be labeled as a question: %q", got)
+	}
+	if !strings.Contains(got, "普通发言") {
+		t.Fatalf("plain speech must still be injected: %q", got)
+	}
+}
+
+// A non-question tool_use block (e.g. Read) must not be rendered as a question
+// — the AskUserQuestion name check is what guards this.
+func TestAskQuestionTexts_IgnoresOtherTools(t *testing.T) {
+	content := `{"blocks":[{"type":"tool_use","name":"Read","id":"t1","done":true,"input":{"file_path":"/x"}}]}`
+	if got := askQuestionTexts(content); len(got) != 0 {
+		t.Fatalf("a non-question tool must yield no question text; got %v", got)
+	}
+}

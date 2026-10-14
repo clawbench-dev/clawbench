@@ -3,6 +3,7 @@ package i18n
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"clawbench/internal/model"
@@ -155,6 +156,33 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		"CannotScopeDefaultAgent",
 		"GroupYourTurn",
 		"GroupDiscussionLimitReached",
+		"GroupCruiseConfirming",
+		"GroupCruiseSatisfied",
+		"GroupMemberJoined",
+		"GroupMemberLeft",
+		"GroupMemberUnknown",
+		"GroupMemberListSeparator",
+		"GroupSpecialtySuffix",
+		"GroupHostTitle",
+		"GroupFreeTitle",
+		"ACPSessionRecoveredNew",
+		"EventContextHeader",
+		"EventContextSeparator",
+		"EventContextYes",
+		"EventContextNo",
+		"ForgeEventItemIssue",
+		"ForgeEventItemChangeRequest",
+		"ForgeEventItemPipeline",
+		"ForgeEventOpened",
+		"ForgeEventClosed",
+		"ForgeEventMerged",
+		"ForgeEventReopened",
+		"ForgeEventCommented",
+		"ForgeEventPipelineDone",
+		"ForgeEventLabelRepo",
+		"ForgeEventLabelEvent",
+		"ForgeEventLabelAuthor",
+		"ForgeEventViewDetail",
 	}
 
 	for _, key := range keys {
@@ -208,8 +236,34 @@ func TestLocalizerForLocale_EmptyDefaultsToEnglish(t *testing.T) {
 }
 
 func TestLocalizerForLocale_PushNotificationKeys(t *testing.T) {
-	// Verify all push notification i18n keys exist in both languages
-	keys := []string{"PushTaskCompleted", "PushTaskFailed", "PushTaskCancelled", "PushTaskStarted", "PushSessionCompleted", "PushSessionCancelled", "PushActionRequired"}
+	// Verify all push notification i18n keys exist in both languages.
+	//
+	// Two groups: the terminal-event titles (used by the dingtalk/feishu push
+	// backends) and the IM reply strings the bot writes into the chat. Both run
+	// on goroutines with no request context, so they localize via
+	// LocalizerForLocale(model.Language) — a key added on only one side would
+	// silently ship as the raw key in the other locale.
+	keys := []string{
+		"PushTaskCompleted", "PushTaskFailed", "PushTaskCancelled", "PushTaskStarted",
+		"PushSessionCompleted", "PushSessionCancelled", "PushActionRequired",
+		"PushLabelSession", "PushLabelProject", "PushLabelTask", "PushLabelAction",
+		"PushLabelCommand", "PushLabelFile",
+		"PushReplyHintSend", "PushReplyHintQueue",
+		"PushSessionServiceUnavailable", "PushSessionUnavailable",
+		"PushSendFileFailed", "PushFileSent", "PushFileTooLarge",
+		"PushFilesDownloadFailed", "PushFileDownloadFailed",
+		"PushSentToSessionBold", "PushSentToSessionPlain", "PushFilesCount",
+		"PushPartialDownloadFailed", "PushAttachmentsTruncated",
+		"PushUnsupportedMsgType", "PushSendMessageFailed", "PushMessageSent",
+		"PushNoSessionSelected", "PushErrorTitle", "PushUnsupportedTitle",
+		"PushSelectSessionTitle", "PushSubscribedTitle", "PushSessionListTitle",
+		"PushSessionListIntro", "PushSessionListIntroFeishu", "PushNoProject", "PushNoTitle", "PushSessionLabelPrefix",
+		"PushSubscribedNoAvailableDingtalk", "PushSubscribedNoAvailableFeishu",
+		"PushSubscribedListFailedDingtalk", "PushSubscribedListFailedFeishu",
+		"PushSubscribedNoSessionsDingtalk", "PushSubscribedNoSessionsFeishu",
+		"PushMultipleRunningSessions", "PushMultipleSessions",
+		"PushSessionNotFound", "PushRecentSessionUnavailable",
+	}
 	for _, key := range keys {
 		enLoc := LocalizerForLocale("en")
 		enMsg := T(enLoc, key)
@@ -220,5 +274,58 @@ func TestLocalizerForLocale_PushNotificationKeys(t *testing.T) {
 		assert.NotEqual(t, key, zhMsg, "Chinese translation missing for push key: %s", key)
 
 		t.Logf("%s: en=%q zh=%q", key, enMsg, zhMsg)
+	}
+}
+
+// The push strings that interpolate must keep their placeholders in BOTH
+// locales — a translator dropping one ships a message with a hole in it.
+func TestPushTemplatesKeepPlaceholders(t *testing.T) {
+	withData := map[string]map[string]any{
+		"PushReplyHintSend":            {"ID": "abc"},
+		"PushReplyHintQueue":           {"ID": "abc"},
+		"PushFileTooLarge":             {"MaxMB": 1},
+		"PushFilesDownloadFailed":      {"Count": 2},
+		"PushSentToSessionBold":        {"Label": "L"},
+		"PushSentToSessionPlain":       {"Label": "L"},
+		"PushFilesCount":               {"Count": 2},
+		"PushPartialDownloadFailed":    {"Count": 2},
+		"PushAttachmentsTruncated":     {"Max": 5, "Sent": 2},
+		"PushUnsupportedMsgType":       {"Type": "audio"},
+		"PushMultipleRunningSessions":  {"ID": "abc"},
+		"PushMultipleSessions":         {"ID": "abc"},
+		"PushSessionNotFound":          {"ID": "abc"},
+		"PushRecentSessionUnavailable": {"Error": "boom"},
+	}
+	for key, data := range withData {
+		for _, loc := range []string{"en", "zh"} {
+			msg := T(LocalizerForLocale(loc), key, data)
+			assert.NotContains(t, msg, "{{", "%s locale %s left a placeholder unrendered: %q", key, loc, msg)
+			assert.NotContains(t, msg, "}}", "%s locale %s left a placeholder unrendered: %q", key, loc, msg)
+		}
+	}
+}
+
+// Model-switch keys are reached from a background-free request path, but they
+// are the entire user-visible feedback for a failed model switch — a raw key or
+// a dropped placeholder would ship silently. The generic list above is a
+// hand-maintained allowlist that does not include them, so they are pinned here.
+func TestModelSwitchKeysPresentAndRenderable(t *testing.T) {
+	require := func(cond bool, format string, args ...any) {
+		if !cond {
+			t.Errorf(format, args...)
+		}
+	}
+
+	for _, loc := range []string{"en", "zh"} {
+		l := LocalizerForLocale(loc)
+
+		bare := T(l, "ModelSwitchFailed")
+		require(bare != "ModelSwitchFailed", "%s: ModelSwitchFailed missing", loc)
+		require(!strings.Contains(bare, "{{"), "%s: bare key must not carry a placeholder: %q", loc, bare)
+
+		withDetail := T(l, "ModelSwitchFailedDetail", map[string]any{"Detail": "provider X is not connected"})
+		require(withDetail != "ModelSwitchFailedDetail", "%s: ModelSwitchFailedDetail missing", loc)
+		require(strings.Contains(withDetail, "provider X is not connected"),
+			"%s: detail must be interpolated, got %q", loc, withDetail)
 	}
 }

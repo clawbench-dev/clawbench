@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -708,4 +709,196 @@ func TestAIChat_NoCLIList_StillReturnsRawACPState(t *testing.T) {
 	require.Len(t, resp.ModelListState.Models, 1)
 	assert.Equal(t, "auto", resp.ModelListState.Models[0].ID)
 	assert.Empty(t, resp.ModelListState.ResolvedModels)
+}
+
+// --- ServeAISessionUpdate: click-time model switch ---
+
+// A live ACP connection must receive the model switch at CLICK time (not
+// deferred to the next message), and the choice must be persisted.
+func TestServeAISessionUpdate_AppliesModelToLiveConn(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sid, err := service.CreateSession(env.ProjectDir, "hermes", "Hermes", "hermes", "", "default", "chat")
+	require.NoError(t, err)
+
+	agent := &model.Agent{ID: "hermes", Backend: "hermes", Transport: "acp-stdio", AcpCommand: "hermes acp"}
+	conn := ai.GetACPConnManager().InjectAliveConnForTest(sid, agent, "acp-sid-1", nil)
+	ai.RegisterModelSwitchMethodForTest(t, "hermes", "session/set_model")
+	rec := ai.CaptureRawCallsForTest(conn)
+	t.Cleanup(func() { ai.GetACPConnManager().CloseConn(sid) })
+
+	req := newRequest(t, http.MethodPatch, "/api/ai/session/update?session_id="+sid, map[string]any{
+		"modelId": "minimax:MiniMax-M3",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeAISessionUpdate, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	calls := rec.Calls()
+	require.Len(t, calls, 1, "the switch must be applied at click time")
+	assert.Equal(t, "session/set_model", calls[0].Method)
+	assert.Equal(t, "minimax:MiniMax-M3", calls[0].Params["modelId"])
+	assert.Equal(t, "minimax:MiniMax-M3", service.GetSessionModel(sid), "the choice must be persisted")
+}
+
+// A busy agent is TRANSIENT: keep the choice (persist it) and report it as
+// deferred rather than failing — the next prompt re-applies it.
+func TestServeAISessionUpdate_BusyModelSwitchIsDeferred(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sid, err := service.CreateSession(env.ProjectDir, "hermes", "Hermes", "hermes", "", "default", "chat")
+	require.NoError(t, err)
+
+	agent := &model.Agent{ID: "hermes", Backend: "hermes", Transport: "acp-stdio", AcpCommand: "hermes acp"}
+	conn := ai.GetACPConnManager().InjectAliveConnForTest(sid, agent, "acp-sid-2", nil)
+	ai.RegisterModelSwitchMethodForTest(t, "hermes", "session/set_model")
+	ai.FailRawCallsForTest(conn, -32603, "Session is busy; switch models while the session is idle")
+	t.Cleanup(func() { ai.GetACPConnManager().CloseConn(sid) })
+
+	req := newRequest(t, http.MethodPatch, "/api/ai/session/update?session_id="+sid, map[string]any{
+		"modelId": "minimax:MiniMax-M3",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeAISessionUpdate, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "a busy session must not fail the request: %s", w.Body.String())
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, true, resp["modelSwitchDeferred"], "the response must say the switch was deferred")
+	assert.Equal(t, "minimax:MiniMax-M3", service.GetSessionModel(sid), "the choice must still be kept")
+}
+
+// A provider that is not connected fails identically on retry: report it now
+// with the agent's own explanation, and do NOT persist the rejected choice.
+func TestServeAISessionUpdate_HardModelSwitchFailureIsReported(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sid, err := service.CreateSession(env.ProjectDir, "hermes", "Hermes", "hermes", "", "default", "chat")
+	require.NoError(t, err)
+	before := service.GetSessionModel(sid)
+
+	agent := &model.Agent{ID: "hermes", Backend: "hermes", Transport: "acp-stdio", AcpCommand: "hermes acp"}
+	conn := ai.GetACPConnManager().InjectAliveConnForTest(sid, agent, "acp-sid-3", nil)
+	ai.RegisterModelSwitchMethodForTest(t, "hermes", "session/set_model")
+	ai.FailRawCallsWithDetailForTest(conn, -32602, "Invalid params", `{"details":"GitHub Copilot is not connected"}`)
+	t.Cleanup(func() { ai.GetACPConnManager().CloseConn(sid) })
+
+	req := newRequest(t, http.MethodPatch, "/api/ai/session/update?session_id="+sid, map[string]any{
+		"modelId": "copilot:gpt-5.4",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeAISessionUpdate, req)
+
+	require.Equal(t, http.StatusUnprocessableEntity, w.Code, w.Body.String())
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "ModelSwitchFailedDetail", resp["msgKey"])
+	// The agent's own explanation must reach the response so the toast can name
+	// the real cause (which provider to connect).
+	detail, ok := resp["detail"].(map[string]any)
+	require.True(t, ok, "detail payload missing: %v", resp["detail"])
+	assert.Equal(t, "GitHub Copilot is not connected", detail["Detail"])
+	assert.Equal(t, before, service.GetSessionModel(sid), "a rejected switch must not be persisted")
+}
+
+// No live connection (CLI transport, or an ACP session that has not started
+// yet): persist only. The next prompt applies it — unchanged behavior.
+func TestServeAISessionUpdate_NoLiveConnPersistsOnly(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sid, err := service.CreateSession(env.ProjectDir, "claude", "CLI", "claude", "", "default", "chat")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPatch, "/api/ai/session/update?session_id="+sid, map[string]any{
+		"modelId": "claude-opus-4-5",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeAISessionUpdate, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, "claude-opus-4-5", service.GetSessionModel(sid))
+}
+
+// A hard model rejection must not discard the OTHER fields in the same request:
+// model is applied last, so everything else is already committed when the 422
+// comes back. Regression guard for the early-return that used to drop
+// transport/autoApprove/title/pinned/tags.
+func TestServeAISessionUpdate_HardModelFailureKeepsOtherFields(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sid, err := service.CreateSession(env.ProjectDir, "hermes", "Hermes", "hermes", "", "default", "chat")
+	require.NoError(t, err)
+
+	agent := &model.Agent{ID: "hermes", Backend: "hermes", Transport: "acp-stdio", AcpCommand: "hermes acp"}
+	conn := ai.GetACPConnManager().InjectAliveConnForTest(sid, agent, "acp-sid-order", nil)
+	ai.RegisterModelSwitchMethodForTest(t, "hermes", "session/set_model")
+	ai.FailRawCallsWithDetailForTest(conn, -32602, "Invalid params", `{"details":"not connected"}`)
+	t.Cleanup(func() { ai.GetACPConnManager().CloseConn(sid) })
+
+	req := newRequest(t, http.MethodPatch, "/api/ai/session/update?session_id="+sid, map[string]any{
+		"modelId": "copilot:gpt-5.4", // will be rejected
+		"title":   "Renamed anyway",
+		"pinned":  true,
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeAISessionUpdate, req)
+
+	require.Equal(t, http.StatusUnprocessableEntity, w.Code, w.Body.String())
+
+	// The title/pinned writes happened BEFORE the model apply, so they must be live.
+	sessions, err := service.GetSessions(env.ProjectDir, "")
+	require.NoError(t, err)
+	for _, s := range sessions {
+		if s.ID == sid {
+			assert.Equal(t, "Renamed anyway", s.Title, "title must not be dropped by the model failure")
+			assert.True(t, s.Pinned, "pinned must not be dropped by the model failure")
+		}
+	}
+}
+
+// writeModelSwitchError is the single mapper from a rejected switch to the 422
+// the frontend toasts. Its three branches must each produce a distinct, valid
+// response — a defensive non-ModelSwitchError, an error without agent detail,
+// and one carrying the agent's own explanation.
+func TestWriteModelSwitchError(t *testing.T) {
+	t.Run("non-model-switch error falls back to the bare key", func(t *testing.T) {
+		req := newRequest(t, http.MethodPatch, "/api/ai/session/update", nil)
+		w := httptest.NewRecorder()
+		writeModelSwitchError(w, req, errors.New("unrelated failure"))
+
+		require.Equal(t, http.StatusUnprocessableEntity, w.Code)
+		var resp map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, "ModelSwitchFailed", resp["msgKey"])
+	})
+
+	t.Run("empty detail uses the bare key, not a dangling colon", func(t *testing.T) {
+		req := newRequest(t, http.MethodPatch, "/api/ai/session/update", nil)
+		w := httptest.NewRecorder()
+		writeModelSwitchError(w, req, &ai.ModelSwitchError{Code: -32603, Detail: ""})
+
+		require.Equal(t, http.StatusUnprocessableEntity, w.Code)
+		var resp map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, "ModelSwitchFailed", resp["msgKey"])
+	})
+
+	t.Run("agent detail is surfaced in both msgKey and detail", func(t *testing.T) {
+		req := newRequest(t, http.MethodPatch, "/api/ai/session/update", nil)
+		w := httptest.NewRecorder()
+		writeModelSwitchError(w, req, &ai.ModelSwitchError{Code: -32602, Detail: "provider not connected"})
+
+		require.Equal(t, http.StatusUnprocessableEntity, w.Code)
+		var resp map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, "ModelSwitchFailedDetail", resp["msgKey"])
+		detail, ok := resp["detail"].(map[string]any)
+		require.True(t, ok, "detail payload missing: %v", resp["detail"])
+		assert.Equal(t, "provider not connected", detail["Detail"])
+	})
 }

@@ -343,3 +343,56 @@ func TestTTSAudioWS_ClientDisconnect(t *testing.T) {
 	_, ok := service.GetTTSJob("baddcafe9012")
 	_ = ok // job may or may not still exist depending on timing
 }
+
+// TestTTSAudioWS_TerminalFrameDeliveredAfterJobDone is a regression test for a
+// teardown race: the job goroutine closes job.Done as soon as it returns, which
+// can happen BEFORE the buffered terminal result event has been forwarded. The
+// WS handler must wait for the terminal frame to be written before closing the
+// connection, otherwise the client never sees the error and stays stuck on
+// "synthesizing" forever.
+//
+// The ordering here is deterministic: job.Done is closed first, then the error
+// event is queued. The old handler (select on job.Done) would close the socket
+// and drop the frame; the fixed handler waits on the forward goroutine.
+func TestTTSAudioWS_TerminalFrameDeliveredAfterJobDone(t *testing.T) {
+	_, server, cleanup := setupTTSAudioWSTest(t)
+	defer cleanup()
+
+	_, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	job := service.RegisterStreamingTTSJob("feedface1234", cancel)
+	defer service.UnregisterTTSJob("feedface1234")
+
+	conn := connectTTSWS(t, server.URL, "")
+	defer conn.CloseNow()
+
+	err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"type":"start","jobId":"feedface1234"}`))
+	if err != nil {
+		t.Fatalf("failed to write: %v", err)
+	}
+
+	// Close AudioCh so the handler's drain loop exits, then signal job
+	// completion BEFORE queueing the terminal error frame. This is exactly the
+	// ordering produced by ttsRunJob: close(AudioCh), then SendTTSEvent(result),
+	// with CloseTTSJobDone deferred.
+	close(job.AudioCh)
+	service.CloseTTSJobDone("feedface1234")
+	service.SendTTSEvent("feedface1234", service.TTSEvent{
+		Type:             "result",
+		SynthesizeFailed: true,
+		SynthesizeError:  "edge-tts: websocket handshake failed (status 403 Forbidden)",
+	})
+
+	// The error frame must still arrive.
+	data := readWSMessage(t, conn)
+	var msg map[string]any
+	if err := json.Unmarshal(data, &msg); err != nil {
+		t.Fatalf("failed to parse message: %v", err)
+	}
+	if msg["type"] != "error" {
+		t.Fatalf("expected type=error, got %v", msg["type"])
+	}
+	if msg["message"] == nil || msg["message"] == "" {
+		t.Error("expected non-empty error message")
+	}
+}

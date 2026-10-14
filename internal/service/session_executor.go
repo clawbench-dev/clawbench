@@ -790,6 +790,37 @@ func (e *SessionExecutor) RunWithChannel(eventCh <-chan ai.StreamEvent) RunResul
 				if event.Type == eventTypeError {
 					ai.AccumulateBlock(&e.blocks, event)
 					e.upsertToolCallToDB(event)
+					// Forward the failure to WS clients as a NON-TERMINAL warning.
+					//
+					// Without this the error only ever reached the DB (as the
+					// warning block AccumulateBlock just appended), so a client
+					// saw an empty reply until some unrelated loadHistory
+					// rebuilt the array — the "no assistant message until I
+					// switch away and back" defect.
+					//
+					// It must be a warning, not the raw "error" event: "error"
+					// is terminal for the frontend (it stops the stream and
+					// clears `loading`), but the RUN is not necessarily over —
+					// auto-continue retries an abnormally terminated turn and
+					// the drain loop may still have queued messages. Ending the
+					// client's stream here would desync it from a backend that
+					// keeps working. Warning also matches what every CLI
+					// backend already emits for the same failure
+					// ("AI backend exited abnormally"), and the block type the
+					// message is persisted as.
+					//
+					// Forwarded BEFORE buildResult/finalize, so it lands on the
+					// still-streaming placeholder (the terminal event that
+					// closes it is sent later by the drain loop / handler).
+					e.forwardEvent(ai.StreamEvent{
+						Type:        blockTypeWarning,
+						Content:     event.Error,
+						Reason:      event.Reason,
+						ErrorCode:   event.ErrorCode,
+						HTTPStatus:  event.HTTPStatus,
+						ErrorSource: event.ErrorSource,
+						ErrorDetail: event.ErrorDetail,
+					})
 				}
 				return e.buildResult(true, wallStart)
 			}

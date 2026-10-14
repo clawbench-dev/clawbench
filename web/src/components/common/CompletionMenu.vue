@@ -27,11 +27,28 @@
         size="md"
         class="completion-member-avatar"
       />
+      <!-- Skill rows: the owning AI backend's icon REPLACES the generic source
+           icon, so a skill installed for one tool is recognizable at a glance.
+           Falls back to the source icon when the skill has no native owner
+           (user dir / git repo / shared dir). -->
+      <AgentIcon
+        v-else-if="item.skillBackends && item.skillBackends.length"
+        :backend="item.skillBackends[0]"
+        size="sm"
+        class="completion-source-icon"
+      />
       <component v-else :is="sourceMeta(item.source).icon" :size="14" class="completion-source-icon" :style="{ color: sourceMeta(item.source).color }" />
       <component v-if="item.icon" :is="item.icon" :path="item.key" :is-dir="item.isDir === true" :size="14" class="completion-item-icon" />
       <span class="completion-text">
         <span class="completion-name-row">
           <span class="completion-label" v-html="renderLabel(item)"></span>
+          <!-- Skill rows name the AI backend(s) that own the skill, right after
+               the name. The icon already sits in the left slot above, so this is
+               name-only to avoid showing the same icon twice. Empty for
+               non-native sources. -->
+          <span v-for="b in item.skillBackends || []" :key="b" class="completion-skill-backend">
+            {{ getBackendDisplayName(b) }}
+          </span>
           <!-- Real-agent disclosure: a member whose nickname was auto-derived (a
                pool name / "<base> <n>") shows the underlying agent's real name.
                The visibility rule + styling live in the shared component. -->
@@ -42,9 +59,17 @@
             :display-name="item.label"
           />
         </span>
-        <span v-if="item.description" class="completion-desc">{{ middleEllipsis(item.description, 34) }}</span>
+        <!-- Skill rows omit the trailing source tag: every skill comes from the
+             same logical place (the discovered skill list), so a per-row "Skill"
+             chip is pure noise and steals width from the name/description. -->
+        <span v-if="item.description" class="completion-desc" :class="{ 'completion-desc--skill': item.source === 'skill' }">{{ item.source === 'skill' ? item.description : middleEllipsis(item.description, 34) }}</span>
       </span>
-      <span class="completion-source" :class="'completion-source--' + item.source" :style="{ color: sourceMeta(item.source).color }">
+      <span
+        v-if="item.source !== 'skill'"
+        class="completion-source"
+        :class="'completion-source--' + item.source"
+        :style="{ color: sourceMeta(item.source).color }"
+      >
         {{ t(sourceMeta(item.source).labelKey) }}
       </span>
     </button>
@@ -57,6 +82,7 @@ import PopupMenu from '@/components/common/PopupMenu.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import RealAgentNameTag from '@/components/common/RealAgentNameTag.vue'
 import { SOURCE_META } from '@/utils/completionSources.ts'
+import { getBackendDisplayName } from '@/utils/backendNames.ts'
 import { middleEllipsis } from '@/utils/completionMatch.ts'
 import { escapeHtml } from '@/utils/html.ts'
 import type { CompletionItem, CompletionSource } from '@/utils/completionMatch.ts'
@@ -136,6 +162,10 @@ function renderLabel(item: CompletionItem): string {
 .completion-text {
   display: flex;
   flex-direction: column;
+  /* Breathing room between the name row and the description. Without it the
+     two lines sit flush, which reads as one cramped block — noticeable now that
+     skill descriptions wrap to two lines. */
+  gap: var(--space-2);
   min-width: 0;
   flex: 1;
 }
@@ -162,6 +192,18 @@ function renderLabel(item: CompletionItem): string {
 /* .completion-real-name (the real-agent disclosure chip) is styled by the
    shared RealAgentNameTag component. */
 
+/* Skill rows: the owning AI backend(s), shown right after the name. Muted and
+   shrink-proof (the label absorbs the slack); one chip per backend. */
+.completion-skill-backend {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted, #999);
+  white-space: nowrap;
+}
+
 .completion-label mark {
   background: rgba(255, 230, 0, 0.5);
   color: inherit;
@@ -182,6 +224,17 @@ function renderLabel(item: CompletionItem): string {
   overflow: hidden;
   text-overflow: ellipsis;
   text-align: left;
+}
+
+/* Skill descriptions are prose, not paths: keep the PREFIX (a middle ellipsis
+   would splice in an unrelated tail) and wrap onto two lines instead of one. */
+.completion-desc--skill {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
 }
 
 .completion-source {

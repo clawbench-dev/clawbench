@@ -10,28 +10,28 @@ import (
 // member, so the group E2E can exercise the multi-agent loop.
 func TestGroupRoutingReply(t *testing.T) {
 	t.Run("non_host_prompt_returns_empty", func(t *testing.T) {
-		if got := groupRoutingReply("just a normal user message"); got != "" {
+		if got := groupRoutingReply("s", "just a normal user message"); got != "" {
 			t.Fatalf("non-host prompt must not route, got %q", got)
 		}
 	})
 
 	t.Run("host_prompt_names_first_member", func(t *testing.T) {
 		prompt := "some context\n[群聊主持人] ...\n可选的成员名：Alice、Bob。\n"
-		got := groupRoutingReply(prompt)
+		got := groupRoutingReply("s", prompt)
 		if !strings.Contains(got, "<clawbench-mention targets=\"Alice\">") {
 			t.Fatalf("expected routing tag for Alice, got %q", got)
 		}
 	})
 
 	t.Run("comma_separated_list", func(t *testing.T) {
-		got := groupRoutingReply("可选的成员名：A,B,C。\n")
+		got := groupRoutingReply("s", "可选的成员名：A,B,C。\n")
 		if !strings.Contains(got, "<clawbench-mention targets=\"A\">") {
 			t.Fatalf("expected first comma-separated name, got %q", got)
 		}
 	})
 
 	t.Run("empty_list_ends_discussion", func(t *testing.T) {
-		got := groupRoutingReply("可选的成员名：（暂无其他成员）\n")
+		got := groupRoutingReply("s", "可选的成员名：（暂无其他成员）\n")
 		if !strings.Contains(got, "<clawbench-group-end/>") {
 			t.Fatalf("empty member list must end the discussion, got %q", got)
 		}
@@ -86,4 +86,49 @@ func TestFreeMemberReply(t *testing.T) {
 			t.Fatalf("the mock must not mention the user, got %q", got)
 		}
 	})
+}
+
+// TestCruiseConfirmReply covers the auto-cruise confirmation reply: a
+// confirmation prompt makes the mock declare the goal satisfied (so a cruising
+// turn terminates), and ACP_MOCK_NO_CRUISE_CONFIRM suppresses that.
+func TestCruiseConfirmReply(t *testing.T) {
+	t.Run("non_confirm_prompt_returns_empty", func(t *testing.T) {
+		if got := cruiseConfirmReply("just a normal message"); got != "" {
+			t.Fatalf("a non-confirm prompt must not reply, got %q", got)
+		}
+	})
+
+	t.Run("confirm_prompt_declares_satisfied", func(t *testing.T) {
+		got := cruiseConfirmReply("上下文\n[自动巡航·完成确认] 请评估……\n")
+		if !strings.Contains(got, "<clawbench-goal-satisfied/>") {
+			t.Fatalf("confirmation must declare satisfied, got %q", got)
+		}
+	})
+
+	t.Run("suppressed_when_env_set", func(t *testing.T) {
+		t.Setenv("ACP_MOCK_NO_CRUISE_CONFIRM", "1")
+		got := cruiseConfirmReply("[自动巡航·完成确认] 请评估……\n")
+		if strings.Contains(got, "<clawbench-goal-satisfied/>") {
+			t.Fatalf("suppressed confirmation must not declare satisfied, got %q", got)
+		}
+	})
+}
+
+// TestGroupRoutingReply_Cruise: in cruise mode the host routes once then emits
+// the end tag (which triggers the confirmation round) instead of routing
+// forever until the speech cap.
+func TestGroupRoutingReply_Cruise(t *testing.T) {
+	relayTurnsMu.Lock()
+	relayTurns = map[string]int{}
+	relayTurnsMu.Unlock()
+
+	prompt := "[自动巡航模式] ...\n可选的成员名：Alice、Bob。\n"
+	first := groupRoutingReply("cs", prompt)
+	if !strings.Contains(first, "<clawbench-mention targets=\"Alice\">") {
+		t.Fatalf("first cruise host turn must route, got %q", first)
+	}
+	second := groupRoutingReply("cs", prompt)
+	if !strings.Contains(second, "<clawbench-group-end/>") {
+		t.Fatalf("second cruise host turn must emit the end tag, got %q", second)
+	}
 }

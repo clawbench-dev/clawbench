@@ -1,6 +1,11 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { createI18n } from 'vue-i18n'
 import PdfPreview from '../PdfPreview.vue'
+import en from '@/i18n/locales/en'
+import zh from '@/i18n/locales/zh'
+
+const i18n = createI18n({ legacy: false, locale: 'en', messages: { en, zh } })
 
 // Mock useAppMode
 vi.mock('@/composables/useAppMode.ts', () => ({
@@ -63,7 +68,7 @@ describe('PdfPreview', () => {
         file: { name: 'doc.pdf', path: 'doc.pdf' },
         ...props,
       },
-      global: { stubs },
+      global: { stubs, plugins: [i18n] },
     })
   }
 

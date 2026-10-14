@@ -33,6 +33,13 @@
       <AgentIcon v-else :backend="speaker.backend" :name="speaker.name" :avatar="speaker.avatar" size="lg" />
       <span class="msg-speaker-name">{{ speaker.name }}</span>
       <RealAgentNameTag class="msg-speaker-real" :agent-name="speaker.agentName" :display-name="speaker.name" />
+      <!-- Auto-cruise completion badge: this speaker declared the goal met
+           (<clawbench-goal-satisfied/>) in this message. A per-message fact, so
+           it stays on the history bubble permanently (the vote tally resets each
+           confirmation round, but the bubble is already-persisted content). -->
+      <span v-if="groupRouting.goalSatisfied" class="msg-goal-satisfied" :title="t('group.goalSatisfied')">
+        <Check :size="11" class="msg-goal-satisfied-icon" />{{ t('group.goalSatisfied') }}
+      </span>
       <span v-if="isHostMessage" class="msg-speaker-host-tag"><Crown :size="11" class="msg-speaker-host-crown" />{{ t('group.host') }}</span>
     </div>
 
@@ -46,7 +53,7 @@
          just typed, so a second "@ B" line would only duplicate them. -->
     <div v-if="msg.role === 'assistant' && mentionTargets.length > 0" class="msg-mention-summary">
       <span class="msg-mention-summary-at">@</span>
-      <span class="msg-mention-summary-names">{{ mentionTargets.map((s) => s.name).join('、') }}</span>
+      <span class="msg-mention-summary-names">{{ mentionTargets.map((s) => s.name).join(t('common.listSeparator')) }}</span>
     </div>
 
     <!-- Message card (bubble). The meta bar deliberately lives OUTSIDE this
@@ -151,7 +158,7 @@
         </button>
         <div v-show="bccExpanded" class="msg-bcc-body">
           <div v-for="(e, i) in bccToMembers" :key="i" class="msg-bcc-entry">
-            <div class="msg-bcc-entry-targets">{{ t('group.bcc.to') }}: {{ e.targetLabels.join('、') }}</div>
+            <div class="msg-bcc-entry-targets">{{ t('group.bcc.to') }}: {{ e.targetLabels.join(t('common.listSeparator')) }}</div>
             <div class="msg-bcc-entry-content" v-html="e.html"></div>
           </div>
         </div>
@@ -197,11 +204,20 @@
           <MessageSquare :size="14" />
         </button>
         <template v-if="msg.role === 'assistant'">
-          <button v-if="speakableText && !readOnly" ref="speakBtnRef" class="chat-action-btn chat-speak-btn" :class="{ 'chat-action-btn--wide': autoSpeech.isActive(msg.id), active: autoSpeech.isActive(msg.id), loading: autoSpeech.isGeneratingText(msg.id) }" :title="speakBtnLabel" :aria-label="speakBtnLabel" @click.stop="handleSpeak">
-            <!-- Generating states: summarizing / synthesizing -->
+          <button v-if="speakableText && !readOnly" ref="speakBtnRef" class="chat-action-btn chat-speak-btn" :class="{ 'chat-action-btn--wide': autoSpeech.isPlayingAudio(msg.id), active: autoSpeech.isActive(msg.id), loading: autoSpeech.isGeneratingText(msg.id) }" :title="speakBtnLabel" :aria-label="speakBtnLabel" @click.stop="handleSpeak">
+            <!-- Generating states carry NO text: the two phases are told apart by
+                 the glyph and its motion alone. Summarizing breathes a Sparkles
+                 in place (the same glyph SummaryToggle uses for "summary");
+                 synthesizing uses the app's one shared loading ring — the same
+                 "still working, not playing" language the input bar's voice
+                 button uses for its transcribing state. Waveform bars would be
+                 wrong here: they already mean "audio is playing" (the input
+                 bar's recording state), which is the very state that follows.
+                 The phase name is not lost — speakBtnLabel still puts it on
+                 title/aria-label, which is where a screen reader reads it. -->
             <template v-if="autoSpeech.isGeneratingText(msg.id)">
-              <Clock :size="14" class="speak-spinner" />
-              <span>{{ autoSpeech.getPhaseLabel(msg.id) ? t('chat.speech.' + autoSpeech.getPhaseLabel(msg.id)) : '' }}</span>
+              <Sparkles v-if="autoSpeech.getPhaseLabel(msg.id) === 'summarizing'" :size="14" class="speak-breathe" />
+              <LoadingIndicator v-else size="sm" inline />
             </template>
             <!-- Playing state -->
             <template v-else-if="autoSpeech.isPlayingAudio(msg.id)">
@@ -272,7 +288,7 @@
 <script setup>
 import { ref, inject, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Clock, Pause, Volume2, Info, FileDiff, Split, Rewind, MessageSquare, ChevronDown, Lock, User, Crown, Megaphone, CornerDownRight } from 'lucide-vue-next'
+import { Sparkles, Pause, Volume2, Info, FileDiff, Split, Rewind, MessageSquare, ChevronDown, Lock, User, Crown, Megaphone, CornerDownRight, Check } from 'lucide-vue-next'
 import { formatDuration, formatRelativeTime } from '@/utils/format.ts'
 import { escapeHtml } from '@/utils/html.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
@@ -380,7 +396,7 @@ const canOpenAgentConfig = computed(() => !props.readOnly && !!speaker.value?.ag
 // reader audit the private notes they sent. Without the user branch the parse
 // yields nothing and the note card is silently missing (C3).
 const groupRouting = computed(() => {
-  const empty = { found: false, speakers: [], instruction: '', before: '', after: '', bcc: [], mentions: [], end: false, raw: '' }
+  const empty = { found: false, speakers: [], instruction: '', before: '', after: '', bcc: [], mentions: [], end: false, goalSatisfied: false, raw: '' }
   const isUserInGroup = props.isGroupSession && props.msg?.role === 'user'
   if (!speaker.value && !isUserInGroup) return empty
   return parseGroupRouting(groupProtocolText.value || '')
@@ -854,9 +870,19 @@ const copyPayload = quotableText
     align-items: center;
 }
 
-/* Speak button loading spinner animation */
-.chat-action-btn.loading .speak-spinner {
-    animation: speak-spin 1s linear infinite;
+/* Speak button: the "summarizing" phase breathes its glyph in place. This is
+   the only channel that distinguishes it from "synthesizing" (which uses the
+   shared loading ring), so — like BusyBar and the session status slot — it
+   deliberately has NO prefers-reduced-motion opt-out: freezing it would make
+   the two phases look identical. The phase name is still available to screen
+   readers via the button's title/aria-label. See design-guide.md § 动效. */
+.chat-action-btn.loading .speak-breathe {
+    animation: speak-breathe 1.6s ease-in-out infinite;
+}
+
+@keyframes speak-breathe {
+    0%, 100% { opacity: 0.45; transform: scale(0.9); }
+    50%      { opacity: 1;    transform: scale(1); }
 }
 
 /* In-flight fork button. It stays `disabled` so it cannot be clicked twice, but
@@ -873,10 +899,6 @@ const copyPayload = quotableText
 
 .chat-action-btn.is-forking .li-spinner {
     --li-color: var(--accent-color);
-}
-
-@keyframes speak-spin {
-    to { transform: rotate(360deg); }
 }
 
 
@@ -1590,6 +1612,24 @@ const copyPayload = quotableText
   font-size: var(--font-size-xs);
 }
 .msg-speaker-host-crown {
+  flex-shrink: 0;
+}
+/* Auto-cruise completion badge: same shape/scale as the host tag (a small
+   inline pill next to the speaker name), tinted with the success token so it
+   reads as "done" rather than "role". `flex-shrink:0` keeps it from being
+   squeezed when the speaker row wraps. */
+.msg-goal-satisfied {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--color-success, #16a34a) 15%, transparent);
+  color: var(--color-success, #16a34a);
+  font-size: var(--font-size-xs);
+  flex-shrink: 0;
+}
+.msg-goal-satisfied-icon {
   flex-shrink: 0;
 }
 /* The host's bubble is centered with an accent border to read as "chair". */

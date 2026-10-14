@@ -239,6 +239,19 @@
         @select="handleFileSelect"
         @update:show="onFileMenuShowChange"
       />
+      <!-- Skill menu ("#" prefix): lists every discovered skill and inserts
+           "#name ". Kept separate from the "/" menu because a skill is not an
+           executable command — it is an explicit request for the agent to read
+           a SKILL.md — and because a "#" trigger cannot collide with the
+           agent-provided slash commands. -->
+      <CompletionMenu
+        :items="skillMenuItems"
+        :active-index="skillMenuIndex"
+        :show="showSkillMenu"
+        :target-element="textareaRef"
+        @select="handleSkillSelect"
+        @update:show="onSkillMenuShowChange"
+      />
       <!-- Context usage detail popup -->
       <PopupMenu v-if="showUsageInfo" :show="usageDrawer.effectiveOpen.value" @update:show="onUsagePopupUpdate" :target-element="usageElRef" :max-width="220" :max-height="320" :menu-items-count="10">
         <div class="usage-popup">
@@ -339,7 +352,11 @@
          Hidden for group sessions: model / mode+auto-approve / context-usage are
          all per-agent settings with no owner on a multi-agent timeline. -->
     <div v-if="!isGroupSession" class="chat-session-info">
-      <span class="session-info-model" @click.stop="openSettingsDrawer('model')"><ProviderIcon :model-name="currentModelName || ''" :size="11" />{{ currentModelName }}</span>
+      <!-- Empty currentModelName is a real state, not a loading gap: an ACP
+           agent that has not reported its models yet has no model to name, and
+           the turn deliberately carries no modelId so the agent picks its own.
+           Show "Default" rather than an empty chip. -->
+      <span class="session-info-model" @click.stop="openSettingsDrawer('model')"><ProviderIcon :model-name="currentModelName || ''" :size="11" />{{ currentModelName || t('chat.sessionInfo.default') }}</span>
       <template v-if="showModeInfo">
         <span class="session-info-divider"></span>
         <span class="session-info-mode" :class="{ 'session-info-mode-auto': autoApprove }" @click.stop="onModeClick" v-long-press="onModeLongPress" @mousedown.stop="onModeMouseDown" @mouseup.stop="onModeMouseUp"><Compass :size="11" />{{ currentModeName }}</span>
@@ -365,7 +382,7 @@ import { useI18n } from 'vue-i18n'
 import { List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Zap, Compass, Activity, MessagesSquare, Minimize2, Sparkles, ArrowRightLeft, Settings, TextCursorInput, MessageSquareShare, Check, Users } from 'lucide-vue-next'
 import { computeRecentReferencedFiles, isImeCompositionEvent } from '@/utils/chatInputUtils.ts'
 import { measureCaretVisualRows } from '@/utils/textareaVisualRows.ts'
-import { fuzzyMatch, parseAtQuery, parseSlashQuery, buildFileCandidates } from '@/utils/completionMatch.ts'
+import { fuzzyMatch, parseAtQuery, parseHashQuery, parseSlashQuery, buildFileCandidates } from '@/utils/completionMatch.ts'
 import { buildMemberCandidates } from '@/utils/groupRouting.ts'
 import { normalizeFileEntry } from '@/utils/fileAttachmentUtils.ts'
 import { joinPath } from '@/utils/path.ts'
@@ -397,6 +414,7 @@ import { useFileUpload } from '@/composables/useFileUpload'
 import { useVoiceInput } from '@/composables/useVoiceInput'
 import { useChatRecommendation } from '@/composables/useChatRecommendation'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
+import { ensureSkillsLoaded, skillMenuRows } from '@/composables/useSkillsState'
 import { useChatContext } from '@/composables/useChatContext'
 import { setChatDraft, getChatDraft, hasChatDraft, deleteChatDraft } from '@/utils/chatDraftStore.ts'
 import { useCompletionMenu } from '@/composables/useCompletionMenu'
@@ -571,6 +589,7 @@ const placeholderHints = computed(() => {
     hints.push(t('chat.input.placeholderQuickSend'))
   }
   hints.push(t('chat.input.placeholderCommand'))
+  hints.push(t('chat.input.placeholderSkill'))
   hints.push(t('chat.input.placeholderFileRef'))
   return hints
 })
@@ -1074,6 +1093,28 @@ const slashCandidates = computed(() => {
   return items
 })
 
+// ── Shared completion-menu wiring ──
+// Every menu (slash / skill / @) writes the edited text back to the same
+// textarea and restores the caret. Both callbacks are identical across menus,
+// so they live here once rather than being copy-pasted per menu — the third
+// menu used to add a third verbatim copy.
+
+/** Write the trigger-stripped text back and restore the caret after it. */
+function applyCompletionText(value, caret) {
+  inputText.value = value
+  nextTick(() => {
+    const el = textareaRef.value
+    if (!el) return
+    el.focus()
+    el.setSelectionRange(caret, caret)
+  })
+}
+
+/** Return focus to the textarea after a selection closed the menu. */
+function focusTextareaAfterSelect() {
+  nextTick(() => textareaRef.value?.focus())
+}
+
 const commandMenuItems = computed(() => {
   // Establish the reactive dependency on the caret position.
   void caretVersion.value
@@ -1096,23 +1137,79 @@ const commandMenu = useCompletionMenu({
   getTrigger: () => parseSlashQuery(inputText.value, currentCaret()),
   getText: () => inputText.value,
   closeOnSelect: true,
-  onSelect: () => {
-    nextTick(() => textareaRef.value?.focus())
-  },
+  onSelect: focusTextareaAfterSelect,
   // Replace the typed "/query" token in place with "/command " so any text the
   // user already typed around the slash survives (mirrors the @ menu's
   // range-based edit; only the replacement differs).
   buildReplacement: (item) => item.key + ' ',
-  applyText: (value, caret) => {
-    inputText.value = value
-    nextTick(() => {
-      const el = textareaRef.value
-      if (!el) return
-      el.focus()
-      el.setSelectionRange(caret, caret)
-    })
-  },
+  applyText: applyCompletionText,
 })
+
+// ── Skill candidates ("#" prefix) ──
+// Every discovered skill, referenced explicitly as "#name". Selecting inserts
+// "#name " and the backend injects an instruction to read that SKILL.md (see
+// internal/handler/skill_command.go). The list is fetched lazily the first time
+// the trigger appears — the same pattern as the @ file sources.
+//
+// Unlike the "/" menu, this is NOT gated on ACP transport: the injection is
+// done server-side and works for CLI backends too. It is also NOT gated on the
+// skills master switch, which only governs AUTOMATIC injection.
+const skillMenuItems = computed(() => {
+  // Establish the reactive dependency on the caret position.
+  void caretVersion.value
+  const trigger = parseHashQuery(inputText.value, currentCaret())
+  if (!trigger) return []
+  const all = skillMenuRows().map((s) => ({
+    // key carries the "#" because it drives the inserted text ("#name "); the
+    // label does not, so the row reads "pdf" rather than "#pdf".
+    key: '#' + s.name,
+    label: s.name,
+    description: s.description,
+    source: 'skill',
+    // The owning AI backend(s), rendered as a suffix after the name so a skill
+    // installed for one tool is recognizable at a glance. Empty for non-native
+    // sources (user dir / git repo / shared dir), which have no single owner.
+    skillBackends: s.backends,
+  }))
+  if (!trigger.query) return all
+  const matched = []
+  for (const item of all) {
+    const m = fuzzyMatch(trigger.query, item.label)
+    if (!m) continue
+    matched.push({ ...item, positions: m.positions, score: m.score })
+  }
+  matched.sort((a, b) => (b.score || 0) - (a.score || 0))
+  return matched
+})
+
+const skillMenu = useCompletionMenu({
+  items: skillMenuItems,
+  getTrigger: () => parseHashQuery(inputText.value, currentCaret()),
+  getText: () => inputText.value,
+  closeOnSelect: true,
+  onSelect: focusTextareaAfterSelect,
+  buildReplacement: (item) => item.key + ' ',
+  applyText: applyCompletionText,
+})
+
+/**
+ * Fetch the skill list on the first "#" trigger, then refresh the menu.
+ *
+ * The fetch is async, so the menu cannot open from the keystroke alone: at that
+ * moment the candidate list is still empty and refresh() hides an empty menu.
+ * Refreshing once the list arrives is what actually opens it — the same reason
+ * ensureFileSourcesLoaded exists for the @ menu.
+ *
+ * The late refresh is gated on the textarea still being focused, so a fetch that
+ * resolves after the user typed "#", clicked away (blur closed the menu) and
+ * moved on does not resurrect a menu they already dismissed.
+ */
+function ensureSkillsMenuLoaded() {
+  if (skillMenuRows().length > 0) return
+  void ensureSkillsLoaded().then(() => {
+    if (isTextareaFocused.value) skillMenu.refresh()
+  })
+}
 
 // ── @ file reference candidates ──
 const recentFiles = useRecentFiles()
@@ -1223,15 +1320,7 @@ const fileMenu = useCompletionMenu({
   // A file selection just removes the trigger (the attach handler owns it); a
   // member selection ALSO just removes the trigger — the card is the payload.
   buildReplacement: () => '',
-  applyText: (value, caret) => {
-    inputText.value = value
-    nextTick(() => {
-      const el = textareaRef.value
-      if (!el) return
-      el.focus()
-      el.setSelectionRange(caret, caret)
-    })
-  },
+  applyText: applyCompletionText,
 })
 
 // Lazily load the share/upload sources the first time an @ trigger appears,
@@ -1268,6 +1357,8 @@ const showCommandMenu = commandMenu.show
 const commandMenuIndex = commandMenu.activeIndex
 const showFileMenu = fileMenu.show
 const fileMenuIndex = fileMenu.activeIndex
+const showSkillMenu = skillMenu.show
+const skillMenuIndex = skillMenu.activeIndex
 
 function onCommandMenuShowChange(v) {
   if (!v) commandMenu.close()
@@ -1275,32 +1366,39 @@ function onCommandMenuShowChange(v) {
 function onFileMenuShowChange(v) {
   if (!v) fileMenu.close()
 }
+function onSkillMenuShowChange(v) {
+  if (!v) skillMenu.close()
+}
 
 /**
- * Dismiss both completion popups together.
+ * Dismiss all completion popups together.
  *
- * The slash-command and @ file menus are the same kind of popup anchored to the
- * same textarea, so every dismissal site must close both — otherwise one menu
- * survives a lifecycle event that dismisses the other (the @ menu used to stay
- * open after a blank click or a tab switch, because only the command menu was
- * closed on blur).
+ * The slash-command, @ file and # skill menus are the same kind of popup
+ * anchored to the same textarea, so every dismissal site must close all of
+ * them — otherwise one menu survives a lifecycle event that dismisses another
+ * (the @ menu used to stay open after a blank click or a tab switch, because
+ * only the command menu was closed on blur).
  */
 function closeCompletionMenus() {
   commandMenu.close()
   fileMenu.close()
+  skillMenu.close()
 }
 
-// Recompute both menus whenever the input text changes. A history entry loaded
+// Recompute every menu whenever the input text changes. A history entry loaded
 // by ArrowUp/ArrowDown must not pop the menu. currentCaret() tolerates the
 // textarea DOM lagging the ref (programmatic restore), so this stays sync.
 // Share/upload sources are fetched as soon as an @ trigger appears — not only
 // once the menu is visible, so an empty current dir does not suppress the
-// merge from those two remote sources.
+// merge from those two remote sources. The skill list is fetched lazily the
+// same way, on the first "#" trigger.
 watch(inputText, () => {
   if (historyNavSuppressMenu) return
   commandMenu.refresh()
   if (parseAtQuery(inputText.value, currentCaret())) ensureFileSourcesLoaded()
   fileMenu.refresh()
+  if (parseHashQuery(inputText.value, currentCaret())) ensureSkillsMenuLoaded()
+  skillMenu.refresh()
 })
 
 // Selection/caret moves (arrow keys inside the textarea, clicks) can enter or
@@ -1327,11 +1425,16 @@ function onTextareaSelectionChange() {
   if (parseAtQuery(inputText.value, caret)) ensureFileSourcesLoaded()
   commandMenu.refresh()
   fileMenu.refresh()
+  if (parseHashQuery(inputText.value, caret)) ensureSkillsMenuLoaded()
+  skillMenu.refresh()
 }
 
 // Default to first item when the command list changes (VSCode-style).
 watch(commandMenuItems, () => {
   if (commandMenu.show.value && commandMenuIndex.value < 0) commandMenuIndex.value = 0
+})
+watch(skillMenuItems, () => {
+  if (skillMenu.show.value && skillMenuIndex.value < 0) skillMenuIndex.value = 0
 })
 
 // Scroll the highlighted item into view. Menus are teleported to <body>, so
@@ -1345,12 +1448,17 @@ function scrollActiveIntoView(idx) {
 }
 watch(commandMenuIndex, scrollActiveIntoView)
 watch(fileMenuIndex, scrollActiveIntoView)
+watch(skillMenuIndex, scrollActiveIntoView)
 
 function handleCommandSelect(cmd) {
   // Route through the composable so the trigger range is removed + menu closed
   // with the same code path as the keyboard. `source` disambiguates a built-in
   // and an agent command that share a name.
   commandMenu.selectByKey(cmd.key, cmd.source)
+}
+
+function handleSkillSelect(item) {
+  skillMenu.selectByKey(item.key, item.source)
 }
 
 function handleFileSelect(item) {
@@ -1556,9 +1664,10 @@ function onTextareaKeydown(e) {
   // owns the keystroke — Enter commits the candidate to the input instead of
   // submitting the message.
   if (isImeCompositionEvent(e)) return
-  // Menu keyboard navigation takes priority (slash menu first, then @ files).
+  // Menu keyboard navigation takes priority (slash menu, then @ files, then # skills).
   if (commandMenu.handleKeydown(e)) return
   if (fileMenu.handleKeydown(e)) return
+  if (skillMenu.handleKeydown(e)) return
   // Input history navigation (ArrowUp/ArrowDown), only when the input is active
   if (handleHistoryKeydown(e)) return
   // Default: Enter (without modifier) sends
@@ -2084,8 +2193,9 @@ function handleSwitchTransport(transport) {
 watch(() => attachDrawer.isOpen.value, (v) => { if (v) { showQuickMenu.value = false; settingsDrawer.close(); closeCompletionMenus(); usageDrawer.close() } })
 watch(showQuickMenu, (v) => { if (v) { attachDrawer.close(); settingsDrawer.close(); closeCompletionMenus(); usageDrawer.close() } })
 watch(() => settingsDrawer.isOpen.value, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; closeCompletionMenus(); usageDrawer.close() } })
-watch(showCommandMenu, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); usageDrawer.close(); fileMenu.close() } })
-watch(showFileMenu, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); usageDrawer.close(); commandMenu.close() } })
+watch(showCommandMenu, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); usageDrawer.close(); fileMenu.close(); skillMenu.close() } })
+watch(showFileMenu, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); usageDrawer.close(); commandMenu.close(); skillMenu.close() } })
+watch(showSkillMenu, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); usageDrawer.close(); commandMenu.close(); fileMenu.close() } })
 watch(() => usageDrawer.isOpen.value, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); closeCompletionMenus() } })
 
 // Leaving the chat tab dismisses the quick-send menu. It is a PopupMenu

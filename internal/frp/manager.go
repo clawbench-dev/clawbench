@@ -1,11 +1,11 @@
+//go:build !nofrp
+
 package frp
 
 import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net"
-	"strconv"
 	"sync"
 	"time"
 
@@ -14,31 +14,13 @@ import (
 	v1 "github.com/fatedier/frp/pkg/config/v1"
 
 	"clawbench/internal/model"
-	"clawbench/internal/ws"
 )
 
-// State represents the FRP tunnel lifecycle state.
-type State string
-
-const (
-	StateDisabled State = "disabled" // FRP not configured
-	StateStarting State = "starting" // service started, waiting for proxy ready
-	StateRunning  State = "running"  // tunnel established, remote port known
-	StateFailed   State = "failed"   // service exited with error
-	StateStopped  State = "stopped"  // user stopped the tunnel
-)
-
-// Status holds the current FRP tunnel status.
-type Status struct {
-	Enabled       bool   `json:"enabled"`
-	Running       bool   `json:"running"`
-	State         State  `json:"state"`
-	ServerAddr    string `json:"server_addr,omitempty"`
-	RemotePort    int    `json:"remote_port,omitempty"`
-	SSHRemotePort int    `json:"ssh_remote_port,omitempty"`
-	RemoteURL     string `json:"remote_url,omitempty"`
-	Message       string `json:"message,omitempty"`
-}
+// Available reports whether this build includes FRP support. It is a constant
+// per build variant: true here, false in manager_nofrp.go. The handler exposes
+// it so a client can hide the (unusable) FRP settings panel instead of letting
+// the user configure a tunnel that can never start.
+func Available() bool { return true }
 
 // Manager manages the in-process frp client.Service lifecycle.
 // A Manager is single-use: after Stop(), create a new Manager to restart.
@@ -222,7 +204,8 @@ func (m *Manager) runService(ctx context.Context, svc *client.Service) {
 	err := svc.Run(ctx)
 
 	m.mu.Lock()
-	if !m.stopped {
+	stopped := m.stopped
+	if !stopped {
 		if err != nil {
 			m.state = StateFailed
 		} else {
@@ -231,7 +214,16 @@ func (m *Manager) runService(ctx context.Context, svc *client.Service) {
 	}
 	m.mu.Unlock()
 
-	if err != nil {
+	// A service torn down by Stop() returns a context-cancellation error, which
+	// is an orderly shutdown, not a failure. Emitting "failed" for it is wrong
+	// (it would show a red status after the user stopped FRP) AND it races: the
+	// event goes to the process-wide ws manager, so a stopped manager's late
+	// emit lands on whatever subscriber is active at that instant — a later
+	// test, or a real reconnect. Only report a failure for a service that
+	// exited on its own.
+	if stopped {
+		slog.Info("frp: service stopped")
+	} else if err != nil {
 		slog.Error("frp: service exited with error", slog.String("err", err.Error()))
 		emitEvent("failed", map[string]any{"error": err.Error()})
 	} else {
@@ -385,46 +377,4 @@ func buildProxyConfigs(cfg model.FRPConfig, httpLocalPort, sshLocalPort int) []v
 	}
 
 	return proxies
-}
-
-// --- utilities (from parser.go) ---
-
-// ProxyPhaseRunning is the frp proxy phase indicating the proxy is active.
-const ProxyPhaseRunning = "running"
-
-// FormatRemoteURL builds the public URL from server address and remote port.
-func FormatRemoteURL(serverAddr string, remotePort int) string {
-	return fmt.Sprintf("http://%s:%d", serverAddr, remotePort)
-}
-
-// parsePortFromAddr extracts the port number from a "host:port" address string.
-func parsePortFromAddr(addr string) int {
-	_, portStr, err := net.SplitHostPort(addr)
-	if err != nil {
-		return 0
-	}
-	port, err := strconv.Atoi(portStr)
-	if err != nil {
-		return 0
-	}
-	return port
-}
-
-// emitEvent broadcasts an frp_status event to connected WS clients.
-func emitEvent(status string, data ...map[string]any) {
-	mgr := ws.GetManager()
-	if mgr == nil {
-		return
-	}
-	payload := map[string]any{"status": status}
-	if len(data) > 0 {
-		for k, v := range data[0] {
-			payload[k] = v
-		}
-	}
-	mgr.BroadcastEvent(ws.ServerMessage{
-		Type:  ws.MessageTypeEvent,
-		Event: "frp_status",
-		Data:  payload,
-	})
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { createGroup, listGroupMembers, generateMemberAvatars, addGroupMembers, removeGroupMember, setGroupParallelDefault } from '@/composables/useGroupChat'
+import { createGroup, listGroupMembers, generateMemberAvatars, addGroupMembers, removeGroupMember, setGroupParallelDefault, setGroupCruise } from '@/composables/useGroupChat'
 
 vi.mock('@/utils/appLog', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
@@ -58,6 +58,14 @@ describe('useGroupChat API', () => {
     expect((await listGroupMembers('g1')).parallelDefault).toBe(false)
   })
 
+  it('listGroupMembers parses cruise, defaulting to false when absent', async () => {
+    vi.stubGlobal('fetch', mockFetch(200, { ok: true, members: [], cruise: true }))
+    expect((await listGroupMembers('g1')).cruise).toBe(true)
+
+    vi.stubGlobal('fetch', mockFetch(200, { ok: true, members: [] }))
+    expect((await listGroupMembers('g1')).cruise).toBe(false)
+  })
+
   it('addGroupMembers posts an array and returns memberIds', async () => {
     vi.stubGlobal('fetch', mockFetch(200, { ok: true, memberIds: ['m2'] }))
     const ids = await addGroupMembers('g1', ['agent-b'])
@@ -81,6 +89,20 @@ describe('useGroupChat API', () => {
     expect(url).toBe('/api/group/settings')
     expect(opts.method).toBe('PATCH')
     expect(JSON.parse(opts.body)).toEqual({ groupId: 'g1', parallelDefault: true })
+  })
+
+  it('setGroupCruise PATCHes cruise', async () => {
+    vi.stubGlobal('fetch', mockFetch(200, { ok: true }))
+    await setGroupCruise('g1', true)
+    const [url, opts] = (fetch as any).mock.calls[0]
+    expect(url).toBe('/api/group/settings')
+    expect(opts.method).toBe('PATCH')
+    expect(JSON.parse(opts.body)).toEqual({ groupId: 'g1', cruise: true })
+  })
+
+  it('setGroupCruise throws on a non-ok response', async () => {
+    vi.stubGlobal('fetch', mockFetch(500, {}))
+    await expect(setGroupCruise('g1', false)).rejects.toThrow()
   })
 
   it('throws on a non-ok response', async () => {

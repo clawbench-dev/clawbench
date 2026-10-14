@@ -8,6 +8,7 @@ import {
 } from './install'
 import { recordError } from './clientLog'
 import { compareVersions, shouldGate } from '../shared/version'
+import { resolveNativeLanguage, versionGateLabels } from './labels'
 
 /**
  * The desktop client/server version-consistency gate.
@@ -131,8 +132,9 @@ export async function checkVersionGate(url: string, gen: number): Promise<Versio
 export function formatInstallFailure(fullErr: unknown, payloadErr: unknown): string {
   const full = String((fullErr as Error)?.message || fullErr)
   if (payloadErr == null) return full
+  const labels = versionGateLabels(resolveNativeLanguage())
   const payload = String((payloadErr as Error)?.message || payloadErr)
-  return `增量包（npm）安装失败：\n${payload}\n\n全量包下载失败：\n${full}`
+  return `${labels.payloadInstallFailed}\n${payload}\n\n${labels.fullDownloadFailed}\n${full}`
 }
 
 /**
@@ -180,26 +182,28 @@ export async function installServerVersion(
   try {
     if (!installed) await downloadAndInstall(info.urls, info.serverVersion, '')
   } catch (err) {
+    const labels = versionGateLabels(resolveNativeLanguage())
     await dialog.showMessageBox(parentArg as BrowserWindow, {
       type: 'error',
-      buttons: ['确定'],
-      title: '下载失败',
-      message: '下载或安装该版本失败，当前版本不受影响。',
+      buttons: [labels.ok],
+      title: labels.downloadFailedTitle,
+      message: labels.downloadFailedMessage,
       detail: formatInstallFailure(err, payloadErr),
     })
     return false
   }
 
+  const labels = versionGateLabels(resolveNativeLanguage())
   const { response } = await dialog.showMessageBox(parentArg as BrowserWindow, {
     type: 'info',
-    buttons: ['立即重启', '稍后'],
+    buttons: [labels.restartNow, labels.later],
     defaultId: 0,
     cancelId: 1,
-    title: '版本已就绪',
-    message: `ClawBench 桌面版 ${info.serverVersion} 已安装。`,
+    title: labels.versionReadyTitle,
+    message: labels.versionReadyMessage.replace('{version}', info.serverVersion),
     // The pointer is already flipped, and startup reads it itself, so "later"
     // still lands on the new version on the next launch.
-    detail: '重启后生效。选择“稍后”也可在下次启动时自动使用该版本。',
+    detail: labels.versionReadyDetail,
   })
   // The install SUCCEEDED, so report it even when the user defers the restart:
   // the caller closes the gate, which would otherwise keep offering a download
@@ -211,9 +215,9 @@ export async function installServerVersion(
   } catch (err) {
     await dialog.showMessageBox(parentArg as BrowserWindow, {
       type: 'error',
-      buttons: ['确定'],
-      title: '重启失败',
-      message: '无法启动该版本，请手动重启应用。',
+      buttons: [labels.ok],
+      title: labels.restartFailedTitle,
+      message: labels.restartFailedMessage,
       detail: String((err as Error)?.message || err),
     })
   }

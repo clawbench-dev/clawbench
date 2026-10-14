@@ -29,11 +29,14 @@ func init() {
 
 // codebuddyProductFiles are the product-config filenames CodeBuddy ships.
 // The npm package and native binary both reference several variants; only one
-// is present for a given distribution channel. Order is preference order:
-// the cloud-hosted config is the public/selectable model list, and the
-// internal/IOA/self-hosted variants carry deployment-specific extras.
-// product.json is the base document the variants are patched from, so it is
-// the last resort.
+// is present for a given distribution channel.
+//
+// These files are a FALLBACK only: they are generic factory defaults whose
+// model list can differ completely from the account's deployment (issue #539).
+// The authoritative source is the runtime cache written by the CLI from the
+// server's per-enterprise response, which discoverCodebuddyModelsFrom probes
+// first. The order below is therefore only a last-resort preference for
+// installs with no cache at all.
 var codebuddyProductFiles = []string{
 	"product.cloudhosted.json",
 	"product.internal.json",
@@ -54,9 +57,10 @@ var codebuddyProductEnvVars = []string{
 
 // codebuddyProductModel represents a model entry in codebuddy's product JSON.
 type codebuddyProductModel struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	IsDefault bool   `json:"isDefault"`
+	ID        string   `json:"id"`
+	Name      string   `json:"name"`
+	IsDefault bool     `json:"isDefault"`
+	Tags      []string `json:"tags"`
 }
 
 // codebuddyProduct represents the top-level structure of codebuddy's product JSON.
@@ -73,8 +77,10 @@ var (
 
 // DiscoverCodebuddyModels discovers CodeBuddy models from, in order:
 //  1. an explicit ACC_PRODUCT_CONFIG* override,
-//  2. a product.*.json file next to the resolved CLI (npm or native layout),
-//  3. CodeBuddy's runtime cache under ~/.codebuddy/local_storage/.
+//  2. CodeBuddy's runtime cache under ~/.codebuddy/local_storage/ — the
+//     per-enterprise config the CLI actually fetched and uses,
+//  3. a product.*.json file next to the resolved CLI (npm or native layout) —
+//     generic factory defaults, used only when no runtime cache exists.
 //
 // Returns nil if none of the sources yields a model list.
 func DiscoverCodebuddyModels() []model.AgentModel {
@@ -95,6 +101,14 @@ func discoverCodebuddyModels() ([]model.AgentModel, string) {
 // discoverCodebuddyModelsFrom is the testable core of DiscoverCodebuddyModels.
 // It returns the discovered models (nil on failure) and a human-readable detail
 // string describing what was attempted (empty on success).
+//
+// Source priority is deliberate (issue #539): the runtime cache is the config
+// the CLI fetched from the server for THIS account's deployment (enterpriseId +
+// deploymentType), so it is the only list that matches what the CLI can
+// actually run. The product.*.json files shipped inside the npm package are
+// generic factory defaults whose models can be entirely disjoint from the
+// deployment's — preferring them made the picker show retired models and miss
+// the ones in use. They are therefore probed only as a fallback.
 func discoverCodebuddyModelsFrom(realPath, home string, getenv func(string) string) ([]model.AgentModel, string) {
 	// 1. Explicit env override wins — but only when the CLI is actually
 	// present. These are CodeBuddy's own variables, read from the ClawBench
@@ -106,7 +120,24 @@ func discoverCodebuddyModelsFrom(realPath, home string, getenv func(string) stri
 		}
 	}
 
-	// 2. Product JSON on disk, probing every candidate directory × filename.
+	// 2. Runtime cache written by the CLI itself: the per-deployment config
+	// fetched from the server, and the authoritative selectable model list.
+	// Also the only source that works for native/standalone installs, where the
+	// product config is compiled into the binary and never written to disk.
+	// Gated on the CLI being present so a stale cache left behind by an
+	// uninstalled CLI is not reported.
+	cacheNote := "skipped (CLI not found)"
+	if realPath != "" {
+		if models := modelsFromRuntimeCache(home); len(models) > 0 {
+			slog.Debug("codebuddy model discovery: parsed runtime cache", "home", home, "models", len(models))
+			return models, ""
+		}
+		cacheNote = "no usable entry"
+	}
+
+	// 3. Product JSON on disk, probing every candidate directory × filename.
+	// These are generic factory defaults, consulted only when the runtime cache
+	// is unavailable (e.g. the CLI has never run against this account).
 	var tried []string
 	for _, dir := range codebuddyProductDirs(realPath, home) {
 		for _, name := range codebuddyProductFiles {
@@ -117,24 +148,11 @@ func discoverCodebuddyModelsFrom(realPath, home string, getenv func(string) stri
 			}
 			tried = append(tried, path)
 			if models := parseProductModels(data); len(models) > 0 {
-				slog.Debug("codebuddy model discovery: parsed product JSON", "path", path, "models", len(models))
+				slog.Debug("codebuddy model discovery: parsed product JSON (runtime cache unavailable)",
+					"path", path, "models", len(models))
 				return models, ""
 			}
 		}
-	}
-
-	// 3. Runtime cache written by the CLI itself. This is the only source that
-	// works for native/standalone installs, where the product config is
-	// compiled into the binary and never written to disk. Gated on the CLI
-	// being present so a stale cache left behind by an uninstalled CLI is not
-	// reported.
-	cacheNote := "skipped (CLI not found)"
-	if realPath != "" {
-		if models := modelsFromRuntimeCache(home); len(models) > 0 {
-			slog.Debug("codebuddy model discovery: parsed runtime cache", "home", home, "models", len(models))
-			return models, ""
-		}
-		cacheNote = "no usable entry"
 	}
 
 	// Build a detail that names every source actually attempted, so a native
@@ -238,6 +256,10 @@ func modelsFromEnvOverride(getenv func(string) string) []model.AgentModel {
 
 // parseProductModels parses product-config JSON bytes into models, applying the
 // same filtering/default rules used previously. Returns nil if no usable models.
+//
+// Only "default" is filtered: it is a fallback marker, not a selectable model.
+// "auto" is kept — CodeBuddy marks it isDefault:true and it is the deployment's
+// real default (issue #539); dropping it silently changed the selected model.
 func parseProductModels(data []byte) []model.AgentModel {
 	var product codebuddyProduct
 	if err := json.Unmarshal(data, &product); err != nil {
@@ -249,28 +271,72 @@ func parseProductModels(data []byte) []model.AgentModel {
 	}
 
 	var models []model.AgentModel
+	seen := make(map[string]bool, len(product.Models))
+	defaultID := ""
 	for _, m := range product.Models {
-		if m.ID == "default" || m.ID == "auto" {
+		if m.ID == "" || m.ID == "default" {
 			continue
 		}
-		if m.ID == "hunyuan-image-v3.0" {
+		if isNonChatModel(m) {
 			continue
 		}
+		// Drop duplicate IDs so the single-default invariant below holds even
+		// if the config lists the same model twice.
+		if seen[m.ID] {
+			continue
+		}
+		seen[m.ID] = true
 		name := m.Name
 		if name == "" {
 			name = m.ID
 		}
-		models = append(models, model.AgentModel{
-			ID:      m.ID,
-			Name:    name,
-			Default: m.IsDefault || (len(models) == 0 && m.ID != "default" && m.ID != "auto"),
-		})
+		models = append(models, model.AgentModel{ID: m.ID, Name: name})
+		if m.IsDefault && defaultID == "" {
+			defaultID = m.ID
+		}
 	}
 
 	if len(models) == 0 {
 		return nil
 	}
+
+	// Emit exactly one default: the entry flagged isDefault wins (CodeBuddy
+	// marks "auto" that way), otherwise the first surviving model. Previously
+	// the first model was always forced default AND isDefault was honored,
+	// producing two defaults; the downstream merge then picked the first row,
+	// overriding the real default with a retired model.
+	if defaultID == "" {
+		defaultID = models[0].ID
+	}
+	for i := range models {
+		models[i].Default = models[i].ID == defaultID
+	}
 	return models
+}
+
+// nonChatModelTags mark product-config entries that are generative-media models
+// (image/video) rather than chat completions. They must never appear in the
+// model picker.
+var nonChatModelTags = map[string]bool{
+	"text-to-image":  true,
+	"image-to-image": true,
+	"text-to-video":  true,
+	"image-to-video": true,
+}
+
+// isNonChatModel reports whether a product-config entry is a generative-media
+// model (image or video) rather than a chat model. It keys off the config's own
+// tags rather than a hardcoded ID: the previous `m.ID == "hunyuan-image-v3.0"`
+// check went stale the moment the model was renamed to "hunyuan-image-v3.0-art",
+// leaking it into the picker (issue #539). The same hardcoding would also miss
+// video models (e.g. kling-video-v3, tagged "text-to-video").
+func isNonChatModel(m codebuddyProductModel) bool {
+	for _, t := range m.Tags {
+		if nonChatModelTags[t] {
+			return true
+		}
+	}
+	return false
 }
 
 // codebuddyCacheMeta is the subset of a cached product config used to rank

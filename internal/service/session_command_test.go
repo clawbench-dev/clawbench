@@ -618,6 +618,72 @@ func TestBuildChatRequest_NoOverride_AgentWithACPTransport(t *testing.T) {
 	assert.Equal(t, "sess-acp-agent", req.SessionID)
 }
 
+// An acp-stdio agent that has NOT reported its models must not have the
+// CLI-discovered default shipped as the turn's model. ACP has no client-side
+// default: the agent reports its own currentValue at session/new, and sending a
+// guessed model as session/set_config_option can select one it cannot run.
+func TestBuildChatRequest_ACPUnconfirmed_NoModelFallback(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+	withAgents(t, map[string]*model.Agent{"acp-unconf": {
+		ID: "acp-unconf", RuntimeSystemPrompt: "s", Transport: "acp-stdio",
+		Models: []model.AgentModel{{ID: "cli-guess", Name: "CLI Guess", Default: true}},
+	}})
+
+	req := BuildChatRequest("hi", "sess-acp-unconf", "", "claude", "acp-unconf", "", "", "", "", "", false)
+
+	assert.Equal(t, "", req.Model,
+		"the CLI-discovered default must not be sent before the ACP runtime reports models")
+}
+
+// An explicit choice is the user's intent, not a guess, so it is honored even
+// when the ACP runtime has not reported models yet.
+func TestBuildChatRequest_ACPUnconfirmed_ExplicitModelStillWins(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+	withAgents(t, map[string]*model.Agent{"acp-unconf2": {
+		ID: "acp-unconf2", RuntimeSystemPrompt: "s", Transport: "acp-stdio",
+		Models: []model.AgentModel{{ID: "cli-guess", Name: "CLI Guess", Default: true}},
+	}})
+
+	req := BuildChatRequest("hi", "sess-acp-explicit", "", "claude", "acp-unconf2", "user-pick", "", "", "", "", false)
+
+	assert.Equal(t, "user-pick", req.Model)
+}
+
+// Once the ACP runtime has reported models, the agent default is a real value
+// again and the fallback applies as before.
+func TestBuildChatRequest_ACPConfirmed_ModelFallbackApplies(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+	withAgents(t, map[string]*model.Agent{"acp-conf": {
+		ID: "acp-conf", RuntimeSystemPrompt: "s", Transport: "acp-stdio",
+		Models: []model.AgentModel{{ID: "cli-default", Name: "CLI Default", Default: true}},
+	}})
+	ai.GetAgentCapabilityRegistry().UpdateModels("acp-conf", []model.AgentModel{
+		{ID: "acp-live", Name: "ACP Live"},
+	})
+
+	req := BuildChatRequest("hi", "sess-acp-conf", "", "claude", "acp-conf", "", "", "", "", "", false)
+
+	assert.Equal(t, "cli-default", req.Model,
+		"with ACP models confirmed the normal agent-default fallback applies")
+}
+
+// The gate is ACP-only: a CLI agent keeps its discovered default.
+func TestBuildChatRequest_CLITransport_KeepsModelFallback(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+	withAgents(t, map[string]*model.Agent{"cli-a": {
+		ID: "cli-a", RuntimeSystemPrompt: "s", Transport: "cli",
+		Models: []model.AgentModel{{ID: "cli-default", Name: "CLI Default", Default: true}},
+	}})
+
+	req := BuildChatRequest("hi", "sess-cli-a", "", "claude", "cli-a", "", "", "", "", "", false)
+
+	assert.Equal(t, "cli-default", req.Model)
+}
+
 func TestBuildChatRequest_NoOverride_AgentWithCLITransport(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
@@ -3233,4 +3299,90 @@ func TestSendMessageToSessionFromPush_GroupAcceptsAttachments(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("the group drain loop was never invoked with the attachment")
 	}
+}
+
+// promptCaptureBackend records the last ChatRequest it was asked to run, so a
+// test can assert on the exact prompt the launch/drain path built.
+type promptCaptureBackend struct {
+	mu  sync.Mutex
+	req ai.ChatRequest
+}
+
+func (m *promptCaptureBackend) Name() string { return "test-prompt-capture" }
+func (m *promptCaptureBackend) ExecuteStream(_ context.Context, req ai.ChatRequest) (<-chan ai.StreamEvent, error) {
+	m.mu.Lock()
+	m.req = req
+	m.mu.Unlock()
+	ch := make(chan ai.StreamEvent, 2)
+	ch <- ai.StreamEvent{Type: "content", Content: "ok"}
+	ch <- ai.StreamEvent{Type: "done"}
+	close(ch)
+	return ch, nil
+}
+
+func (m *promptCaptureBackend) lastPrompt() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.req.Prompt
+}
+
+// TestExecuteStreamRunShared_InjectsCommandPrompt pins the FOURTH injection
+// site: executeStreamRunShared builds its own prompt (it does not go through the
+// handler's builder), so it must call the shared command-injection seam itself.
+// Without that call a message enqueued into an idle session, reaped, or pushed
+// from IM silently loses its /cb-* or #skill injection.
+func TestExecuteStreamRunShared_InjectsCommandPrompt(t *testing.T) {
+	backend := &promptCaptureBackend{}
+	ai.RegisterBackend("test-prompt-capture", func() ai.AIBackend { return backend })
+
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Transport: ""},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	// A renderer that mimics the handler's contract: a command returns a
+	// template that differs from the input; anything else is returned verbatim.
+	restore := SetRenderGroupCommandFn(func(rawMsg, _, _ string) (string, error) {
+		if strings.HasPrefix(rawMsg, "/cb-") || strings.HasPrefix(rawMsg, "#") {
+			return "[injected contract]", nil
+		}
+		return rawMsg, nil
+	})
+	defer SetRenderGroupCommandFn(restore)
+
+	sessionID := "inject-prompt-sess"
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'test-prompt-capture', 'Test', 'test-agent', 'default', '', 'chat', 0)", sessionID, store.NormalizeProjectPath("/tmp"))
+	require.NoError(t, err)
+
+	cfg := LaunchConfig{
+		SessionID:   sessionID,
+		ProjectPath: "/tmp",
+		BackendName: "test-prompt-capture",
+		AgentID:     "test-agent",
+		Message:     "#pdf summarize this",
+	}
+	result := executeStreamRunShared(context.Background(), cfg)
+	require.Empty(t, result.err)
+	assert.Contains(t, backend.lastPrompt(), "[injected contract]",
+		"the launch/drain path must inject the command contract")
+	assert.Contains(t, backend.lastPrompt(), "#pdf summarize this",
+		"the user's literal message must still be present")
+
+	// A plain message must pass through untouched (no spurious injection).
+	cfg2 := LaunchConfig{
+		SessionID:   sessionID,
+		ProjectPath: "/tmp",
+		BackendName: "test-prompt-capture",
+		AgentID:     "test-agent",
+		Message:     "just a normal message",
+	}
+	result2 := executeStreamRunShared(context.Background(), cfg2)
+	require.Empty(t, result2.err)
+	assert.NotContains(t, backend.lastPrompt(), "[injected contract]",
+		"a non-command must not be injected")
+	assert.Contains(t, backend.lastPrompt(), "just a normal message")
 }

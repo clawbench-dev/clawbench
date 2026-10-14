@@ -9,7 +9,7 @@ import android.content.SharedPreferences;
  * The WebView sends a resolved palette (bg / text / textSecondary / accent)
  * through the setTheme bridge; this class is the read-back path used by
  * FloatingStatusView (capsule) and FloatingStatusPanelView (panel) at
- * construction time. When no colors have been persisted yet the github-dark
+ * construction time. When no colors have been persisted yet the gruvbox-dark
  * defaults are returned so the floating window never renders with undefined
  * colors.
  *
@@ -27,11 +27,11 @@ public final class FloatingThemeColors {
     private static final String KEY_THEME_TEXT_SECONDARY = "theme_text_secondary";
     private static final String KEY_THEME_ACCENT = "theme_accent";
 
-    // github-dark defaults (fallback when nothing has been persisted).
-    static final int DEFAULT_BG = 0xFF161B22;
-    static final int DEFAULT_TEXT = 0xFFC9D1D9;
-    static final int DEFAULT_TEXT_SECONDARY = 0xFF8B949E;
-    static final int DEFAULT_ACCENT = 0xFF58A6FF;
+    // gruvbox-dark defaults (the factory theme; fallback when nothing has been persisted).
+    static final int DEFAULT_BG = 0xFF1D2021;
+    static final int DEFAULT_TEXT = 0xFFEBDBB2;
+    static final int DEFAULT_TEXT_SECONDARY = 0xFFD5C4A1;
+    static final int DEFAULT_ACCENT = 0xFFFE8019;
 
     /**
      * Read the persisted palette as ARGB ints.

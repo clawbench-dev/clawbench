@@ -125,6 +125,7 @@ sequenceDiagram
 
 - **Stream API 长连接**：`Manager`（`internal/push/dingtalk/manager.go`）通过钉钉 Stream SDK（`open-dingtalk/dingtalk-stream-sdk-go`）建立长轮询连接，注册 ChatBot 回调处理单聊消息
 - **Markdown 单聊消息**：`SendMarkdownMessage()`（`internal/push/dingtalk/sender.go`）调用 `/v1.0/robot/oToMessages/batchSend` API，以 `sampleMarkdown` 格式发送，4000 字符截断（`truncateForDingTalk`）
+- **文案本地化**：推送后端跑在各自 goroutine（IM 回调 / 终态钩子）里，没有 HTTP 请求上下文，故与 `AutoContinue` 一样走 `common.T()` → `i18n.LocalizerForLocale(model.Language)`——语言取前端持久化到服务端的值，默认中文。**此前所有文案硬编码中文**，英文界面用户收到的机器人消息也是中文。缺键回退到键本身（可见而非空白）
 - **DB Outbox 可靠投递**：`PushSessionEvent()` / `PushTaskEvent()`（`internal/push/dingtalk/push.go`）遍历 DB 订阅者列表逐个发送。**当 WS 客户端在线时抑制推送**——避免重复通知。订阅者数据由 `internal/service/dingtalk_subscribers.go` 管理
 - **交互式命令**：用户在钉钉单聊中发 `@{短ID} 消息内容` 即可向对应会话发送消息。`handleSessionCommand()`（`internal/push/dingtalk/session_command.go`）解析短 ID、匹配运行中会话、入队消息。`handleSessionList()` 列出最近会话按项目分组。消息正文**保留多行**——解析正则使用 `(?s)` 内联标志使 `.` 匹配换行，否则 `@会话ID` 后的多行消息会被截断为第一行；钉钉与飞书共用 `ParseSessionCommand`，一处修复两边生效
 - **粘性会话（无 ID 默认发送）**：不带 `@{短ID}` 的文本、以及文件/图片消息，一律发往该用户**最近一次成功发送过的会话**（`last_session_id`，见下）。首次使用（无记录）回复「发送 /ls 查看会话列表」。`/ls` 是显式列出会话列表的命令，取代了旧的隐式行为（任何无 `@` 前缀的消息都回列表）。用户显式 `@{短ID}` 发送成功后会把粘性目标切换到该会话；**发送失败不切换**，否则用户的下一条无前缀消息会静默进入一个刚拒绝过它的会话
@@ -145,6 +146,7 @@ sequenceDiagram
 
 - **Lark SDK WebSocket 长连接**：`Manager`（`internal/push/feishu/manager.go`）通过飞书 Lark SDK（`larksuite/oapi-sdk-go/v3/ws`）建立 WebSocket 长连接，注册事件回调处理单聊消息。连接生命周期含 OnReady/OnError/OnDisconnected/OnReconnected 四个钩子
 - **交互式卡片（Interactive Card）**：`SendPostMessage()`（`internal/push/feishu/sender.go`）调用 `/open-apis/im/v1/messages` API，使用 `msg_type="interactive"` 发送交互式卡片消息，支持 Markdown 渲染（飞书 Post 消息不支持 Markdown 渲染，需用交互式卡片）。4000 字符截断（`truncateForFeishu`）
+- **文案本地化**：与钉钉同走 `common.T()`（`internal/push/common/text.go`）。钉钉与飞书少数文案仅强调/语序不同（如订阅提示、会话列表首行），故按平台分列键（`PushSubscribedNoAvailableDingtalk` / `...Feishu`），以保留各自既有输出
 - **DB Outbox 可靠投递**：`PushSessionEvent()` / `PushTaskEvent()`（`internal/push/feishu/push.go`）遍历 DB 订阅者列表逐个发送。**当 WS 客户端在线时抑制推送**——避免重复通知。订阅者数据由 `internal/service/feishu_subscribers.go` 管理，存储在 `feishu_subscribers` 表（`user_id`、`chat_id`、`user_name`、`source`）
 - **交互式命令**：用户在飞书单聊中发 `@{短ID} 消息内容` 即可向对应会话发送消息。`handleSessionCommand()`（`internal/push/feishu/stream.go`）解析短 ID、匹配运行中会话、入队消息。`handleSessionList()` 列出最近会话按项目分组
 - **粘性会话与收发文件**：与钉钉行为对齐——不带 `@{短ID}` 的文本和文件/图片消息发往该用户最近成功发送过的会话；`/ls` 显式列出会话；无记录时回复选择提示。文件（`message_type=file`，`file_key`）与图片（`message_type=image`，`image_key`）通过 `GET /open-apis/im/v1/messages/{message_id}/resources/{file_key}?type=file|image` 下载（`type` 按消息类型取 `file` 或 `image`），以纯附件消息发往目标会话。落盘目录与大小上限同钉钉；回调同样立即 ack、下载异步

@@ -97,8 +97,8 @@ export function shouldShowSplash(url: string): boolean {
   return /^https?:\/\//i.test(url)
 }
 
-/** Overlay backdrop for a dark theme — `github-dark`'s `--bg-primary`. */
-export const SPLASH_BG_DARK = '#161b22'
+/** Overlay backdrop for a dark theme — `gruvbox-dark`'s `--bg-primary`. */
+export const SPLASH_BG_DARK = '#282828'
 
 /** Overlay backdrop for a light theme — `github-light`'s `--bg-primary`. */
 export const SPLASH_BG_LIGHT = '#f8f9fa'

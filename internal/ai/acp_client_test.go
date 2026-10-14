@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -506,6 +507,317 @@ func TestClawBenchACPClient_RequestPermission_RespondApprove(t *testing.T) {
 		assert.Equal(t, "success", resultEvent.Tool.Status)
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting for tool_result event")
+	}
+}
+
+// --- Tool-input fallback for permission requests ---
+
+// Cursor sends rawInput on the tool_call but omits it from the later
+// session/request_permission (the command lives only in the request's title).
+// The approval card must still carry the command, so RequestPermission falls
+// back to the rawInput cached from the preceding tool_call frame.
+func TestClawBenchACPClient_RequestPermission_FallsBackToCachedToolInput(t *testing.T) {
+	c := NewClawBenchACPClient()
+	ch := make(chan StreamEvent, 10)
+	c.RegisterSession("sess-1", ch)
+
+	// 1. A tool_call frame arrives carrying the command as rawInput.
+	err := c.SessionUpdate(context.Background(), acp.SessionNotification{
+		SessionId: acp.SessionId("sess-1"),
+		Update: acp.SessionUpdate{
+			ToolCall: &acp.SessionUpdateToolCall{
+				ToolCallId: acp.ToolCallId("tc-1"),
+				Title:      "Run git status",
+				Kind:       acp.ToolKindExecute,
+				RawInput:   map[string]any{"command": "git status"},
+			},
+		},
+	})
+	require.NoError(t, err)
+	drainAllACPEvents(ch)
+
+	// 2. The permission request for the SAME tool call omits rawInput.
+	title := "`git status`"
+	kind := acp.ToolKindExecute
+	req := acp.RequestPermissionRequest{
+		SessionId: acp.SessionId("sess-1"),
+		ToolCall: acp.ToolCallUpdate{
+			ToolCallId: acp.ToolCallId("tc-1"),
+			Title:      &title,
+			Kind:       &kind,
+		},
+		Options: []acp.PermissionOption{
+			{Name: "Allow once", Kind: acp.PermissionOptionKindAllowOnce, OptionId: "allow-once"},
+		},
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = c.RequestPermission(context.Background(), req)
+	}()
+
+	var ev StreamEvent
+	select {
+	case ev = <-ch:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for tool_use event")
+	}
+	require.NotNil(t, ev.Tool)
+	require.Equal(t, "PermissionApproval", ev.Tool.Name)
+	assertToolInputCommand(t, ev.Tool.Input, "git status",
+		"approval card must carry the command cached from the preceding tool_call")
+
+	// Unblock the permission goroutine.
+	assert.True(t, c.RespondPermission(PermissionKey("sess-1", "tc-1"), "allow-once", false))
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for RequestPermission to complete")
+	}
+}
+
+// When the request itself carries rawInput, it wins over any cached value.
+func TestClawBenchACPClient_RequestPermission_PrefersRequestRawInput(t *testing.T) {
+	c := NewClawBenchACPClient()
+	ch := make(chan StreamEvent, 10)
+	c.RegisterSession("sess-1", ch)
+
+	// Cache an older value for the same tool call id.
+	err := c.SessionUpdate(context.Background(), acp.SessionNotification{
+		SessionId: acp.SessionId("sess-1"),
+		Update: acp.SessionUpdate{
+			ToolCall: &acp.SessionUpdateToolCall{
+				ToolCallId: acp.ToolCallId("tc-9"),
+				Title:      "stale",
+				Kind:       acp.ToolKindExecute,
+				RawInput:   map[string]any{"command": "stale-cmd"},
+			},
+		},
+	})
+	require.NoError(t, err)
+	drainAllACPEvents(ch)
+
+	title := "Run"
+	kind := acp.ToolKindExecute
+	req := acp.RequestPermissionRequest{
+		SessionId: acp.SessionId("sess-1"),
+		ToolCall: acp.ToolCallUpdate{
+			ToolCallId: acp.ToolCallId("tc-9"),
+			Title:      &title,
+			Kind:       &kind,
+			RawInput:   map[string]any{"command": "fresh-cmd"},
+		},
+		Options: []acp.PermissionOption{
+			{Name: "Allow once", Kind: acp.PermissionOptionKindAllowOnce, OptionId: "allow-once"},
+		},
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = c.RequestPermission(context.Background(), req)
+	}()
+
+	var ev StreamEvent
+	select {
+	case ev = <-ch:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for tool_use event")
+	}
+	require.NotNil(t, ev.Tool)
+	assertToolInputCommand(t, ev.Tool.Input, "fresh-cmd",
+		"the request's own rawInput must win over the cached value")
+	assert.NotContains(t, ev.Tool.Input, "stale-cmd",
+		"the request's own rawInput must win over the cached value")
+
+	assert.True(t, c.RespondPermission(PermissionKey("sess-1", "tc-9"), "allow-once", false))
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for RequestPermission to complete")
+	}
+}
+
+// A _meta-only update (rawInput absent) must not clobber the value captured
+// from the earlier tool_call — agents send these after the initial frame.
+func TestClawBenchACPClient_ToolInputCache_NotClobberedByEmptyUpdate(t *testing.T) {
+	c := NewClawBenchACPClient()
+	ch := make(chan StreamEvent, 10)
+	c.RegisterSession("sess-1", ch)
+
+	err := c.SessionUpdate(context.Background(), acp.SessionNotification{
+		SessionId: acp.SessionId("sess-1"),
+		Update: acp.SessionUpdate{
+			ToolCall: &acp.SessionUpdateToolCall{
+				ToolCallId: acp.ToolCallId("tc-3"),
+				Title:      "Run ls",
+				Kind:       acp.ToolKindExecute,
+				RawInput:   map[string]any{"command": "ls"},
+			},
+		},
+	})
+	require.NoError(t, err)
+	drainAllACPEvents(ch)
+
+	// Status-only update with no rawInput.
+	err = c.SessionUpdate(context.Background(), acp.SessionNotification{
+		SessionId: acp.SessionId("sess-1"),
+		Update: acp.SessionUpdate{
+			ToolCallUpdate: &acp.SessionToolCallUpdate{
+				ToolCallId: acp.ToolCallId("tc-3"),
+				Status:     statusPtr(acp.ToolCallStatusInProgress),
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, `{"command":"ls"}`, c.cachedToolInput("sess-1", "tc-3"))
+}
+
+// An empty rawInput object on the permission request (`rawInput: {}`, which some
+// agents send) must not mask the richer value cached from the tool_call.
+func TestClawBenchACPClient_RequestPermission_EmptyObjectRawInputUsesCache(t *testing.T) {
+	c := NewClawBenchACPClient()
+	ch := make(chan StreamEvent, 10)
+	c.RegisterSession("sess-1", ch)
+
+	err := c.SessionUpdate(context.Background(), acp.SessionNotification{
+		SessionId: acp.SessionId("sess-1"),
+		Update: acp.SessionUpdate{
+			ToolCall: &acp.SessionUpdateToolCall{
+				ToolCallId: acp.ToolCallId("tc-empty"),
+				Title:      "Run git status",
+				Kind:       acp.ToolKindExecute,
+				RawInput:   map[string]any{"command": "git status"},
+			},
+		},
+	})
+	require.NoError(t, err)
+	drainAllACPEvents(ch)
+
+	title := "`git status`"
+	kind := acp.ToolKindExecute
+	req := acp.RequestPermissionRequest{
+		SessionId: acp.SessionId("sess-1"),
+		ToolCall: acp.ToolCallUpdate{
+			ToolCallId: acp.ToolCallId("tc-empty"),
+			Title:      &title,
+			Kind:       &kind,
+			RawInput:   map[string]any{}, // empty object — no usable detail
+		},
+		Options: []acp.PermissionOption{
+			{Name: "Allow once", Kind: acp.PermissionOptionKindAllowOnce, OptionId: "allow-once"},
+		},
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = c.RequestPermission(context.Background(), req)
+	}()
+
+	var ev StreamEvent
+	select {
+	case ev = <-ch:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for tool_use event")
+	}
+	require.NotNil(t, ev.Tool)
+	assertToolInputCommand(t, ev.Tool.Input, "git status",
+		"an empty rawInput object must fall through to the cached tool input")
+
+	assert.True(t, c.RespondPermission(PermissionKey("sess-1", "tc-empty"), "allow-once", false))
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for RequestPermission to complete")
+	}
+}
+
+// Oversized rawInput (e.g. a Write tool carrying a whole file body) is not
+// cached, bounding memory on a long turn.
+func TestClawBenchACPClient_ToolInputCache_SkipsOversizedInput(t *testing.T) {
+	c := NewClawBenchACPClient()
+	ch := make(chan StreamEvent, 10)
+	c.RegisterSession("sess-1", ch)
+
+	err := c.SessionUpdate(context.Background(), acp.SessionNotification{
+		SessionId: acp.SessionId("sess-1"),
+		Update: acp.SessionUpdate{
+			ToolCall: &acp.SessionUpdateToolCall{
+				ToolCallId: acp.ToolCallId("tc-big"),
+				Title:      "Write",
+				Kind:       acp.ToolKindEdit,
+				RawInput: map[string]any{
+					"file_path": "/project/big.go",
+					"content":   strings.Repeat("x", maxCachedToolInputBytes+1),
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	assert.Empty(t, c.cachedToolInput("sess-1", "tc-big"),
+		"input larger than the cap must not be cached")
+}
+
+// The cache is reset per turn: a new RegisterSession drops entries from the
+// previous turn so a long-lived connection does not accumulate them.
+func TestClawBenchACPClient_ToolInputCache_ResetOnNewTurn(t *testing.T) {
+	c := NewClawBenchACPClient()
+	ch := make(chan StreamEvent, 10)
+	c.RegisterSession("sess-1", ch)
+
+	err := c.SessionUpdate(context.Background(), acp.SessionNotification{
+		SessionId: acp.SessionId("sess-1"),
+		Update: acp.SessionUpdate{
+			ToolCall: &acp.SessionUpdateToolCall{
+				ToolCallId: acp.ToolCallId("tc-old"),
+				Title:      "old",
+				Kind:       acp.ToolKindExecute,
+				RawInput:   map[string]any{"command": "old-cmd"},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, c.cachedToolInput("sess-1", "tc-old"))
+
+	c.RegisterSession("sess-1", ch) // next turn
+	assert.Empty(t, c.cachedToolInput("sess-1", "tc-old"),
+		"a new turn must not see the previous turn's cached tool input")
+}
+
+func statusPtr(s acp.ToolCallStatus) *acp.ToolCallStatus { return &s }
+
+// assertToolInputCommand parses a PermissionApproval card's Input (a JSON object
+// whose toolInput field is itself a JSON string) and asserts the wrapped
+// command equals want.
+func assertToolInputCommand(t *testing.T, cardInput, want, msg string) {
+	t.Helper()
+	var card struct {
+		ToolInput string `json:"toolInput"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(cardInput), &card), "card input must be a JSON object")
+	var inner struct {
+		Command string `json:"command"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(card.ToolInput), &inner),
+		"toolInput must be a JSON object, got %q", card.ToolInput)
+	assert.Equal(t, want, inner.Command, msg)
+}
+
+// drainAllACPEvents removes every event currently buffered on ch. Used to clear
+// the events a tool_call frame emits before asserting on the later permission
+// event (the tool_call emits more than one event, and the exact count is an
+// implementation detail of the mapper).
+func drainAllACPEvents(ch chan StreamEvent) {
+	for {
+		select {
+		case <-ch:
+		default:
+			return
+		}
 	}
 }
 

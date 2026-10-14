@@ -32,8 +32,8 @@ final class ThemePalette {
     static final String PREFS_NAME = "clawbench_prefs";
     static final String KEY_THEME = "theme_base";
 
-    /** Theme used when nothing is persisted or the ID is unknown. */
-    static final String DEFAULT_THEME_ID = "github-dark";
+    /** Theme used when nothing is persisted or the ID is unknown (the factory theme). */
+    static final String DEFAULT_THEME_ID = "gruvbox-dark";
 
     final String id;
     final int bgPrimary;
@@ -151,16 +151,16 @@ final class ThemePalette {
             new ThemePalette("vitesse-light",        "#ffffff", "#f6f6f4", "#ebebe8", "#393a34", "#5b5a54", "#999999", "#adacaa", "#4d9375", true),
     };
 
-    /** The github-dark entry, used for null/empty/unknown IDs. */
-    private static final ThemePalette FALLBACK = TABLE[11];
+    /** The gruvbox-dark entry (the factory theme), used for null/empty/unknown IDs. */
+    private static final ThemePalette FALLBACK = TABLE[13];
 
     static {
         // FALLBACK is indexed positionally; fail loudly at class-init if the
-        // github-dark row ever moves instead of silently resolving to another
+        // gruvbox-dark row ever moves instead of silently resolving to another
         // theme.
         if (!DEFAULT_THEME_ID.equals(FALLBACK.id)) {
             throw new IllegalStateException(
-                    "ThemePalette table row 11 must be " + DEFAULT_THEME_ID
+                    "ThemePalette table row 13 must be " + DEFAULT_THEME_ID
                             + " but was " + FALLBACK.id);
         }
     }

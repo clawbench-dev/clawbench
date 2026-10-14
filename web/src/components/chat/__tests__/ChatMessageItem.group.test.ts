@@ -50,7 +50,7 @@ import ChatMessageItem from '@/components/chat/ChatMessageItem.vue'
 const i18n = createI18n({
   legacy: false,
   locale: 'en',
-  messages: { en: { chat: { message: {}, contentBlocks: { cancelled: 'cancelled' }, fileChanges: { title: 'Files' }, pending: {}, speech: {}, busy: {} }, group: { host: 'Host', realAgent: 'Agent', you: 'you', bcc: { title: 'Private note', to: 'To', toYou: 'Private note to you' } }, session: { configAgent: 'Agent settings' }, common: {} } },
+  messages: { en: { chat: { message: {}, contentBlocks: { cancelled: 'cancelled' }, fileChanges: { title: 'Files' }, pending: {}, speech: {}, busy: {} }, group: { host: 'Host', realAgent: 'Agent', you: 'you', goalSatisfied: 'Done', bcc: { title: 'Private note', to: 'To', toYou: 'Private note to you' } }, session: { configAgent: 'Agent settings' }, common: { listSeparator: ', ' } } },
 })
 
 function mountItem(msg: Record<string, unknown>, props: Record<string, unknown> = {}) {
@@ -131,6 +131,41 @@ describe('ChatMessageItem group speaker', () => {
   it('renders no speaker header for an ordinary message', () => {
     const w = mountItem({ role: 'assistant', id: 3, content: '', blocks: [] })
     expect(w.find('.msg-speaker').exists()).toBe(false)
+  })
+
+  // Auto-cruise completion badge: rendered next to the speaker name when the
+  // message carries <clawbench-goal-satisfied/>.
+  it('shows the cruise completion badge when the speaker declared satisfied', () => {
+    const resolveSpeaker = () => ({ name: 'Alice', backend: 'claude' })
+    const w = mountItem(
+      { role: 'assistant', id: 50, content: '', blocks: [{ type: 'text', text: '任务完成。<clawbench-goal-satisfied/>' }], agentId: 'member-1' },
+      { resolveSpeaker },
+    )
+    const badge = w.find('.msg-goal-satisfied')
+    expect(badge.exists()).toBe(true)
+    expect(badge.text()).toContain('Done')
+    // The raw protocol tag must not leak into the visible text.
+    expect(w.text()).not.toContain('clawbench-goal-satisfied')
+  })
+
+  it('omits the cruise badge when the speaker did not declare satisfied', () => {
+    const resolveSpeaker = () => ({ name: 'Alice', backend: 'claude' })
+    const w = mountItem(
+      { role: 'assistant', id: 51, content: '', blocks: [{ type: 'text', text: '还在讨论。' }], agentId: 'member-1' },
+      { resolveSpeaker },
+    )
+    expect(w.find('.msg-goal-satisfied').exists()).toBe(false)
+  })
+
+  // A goal-satisfied inside a private note is addressed to its target, not a
+  // public declaration, so the badge must not appear (mirrors the parser).
+  it('omits the cruise badge when the signal is only inside a private note', () => {
+    const resolveSpeaker = () => ({ name: 'Alice', backend: 'claude' })
+    const w = mountItem(
+      { role: 'assistant', id: 52, content: '', blocks: [{ type: 'text', text: '<clawbench-mention targets="B" private>我想结束 <clawbench-goal-satisfied/></clawbench-mention>' }], agentId: 'member-1' },
+      { resolveSpeaker },
+    )
+    expect(w.find('.msg-goal-satisfied').exists()).toBe(false)
   })
 
   it('renders the mention summary row above the bubble', () => {
@@ -405,7 +440,8 @@ describe('ChatMessageItem group bcc card', () => {
     const body = w.find('.msg-bcc-body')
     expect((body.element as HTMLElement).style.display).not.toBe('none')
     expect(body.text()).toContain('机密内容')
-    expect(body.text()).toContain('A、B')
+    // The separator is localized (common.listSeparator), not a hardcoded '、'.
+    expect(body.text()).toContain('A, B')
   })
 
   it('renders no card when the host has no private note', () => {

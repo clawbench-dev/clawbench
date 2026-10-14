@@ -82,6 +82,14 @@ describe('dark / light classification', () => {
     expect(isDarkTheme('ayu-dark')).toBe(true)
     expect(isDarkTheme('solarized-light')).toBe(false)
   })
+
+  it('pins the factory dark default to gruvbox-dark', () => {
+    // The factory theme is gruvbox-dark on every platform (web inline
+    // bootstrap, desktop shell, Android). `auto` on a dark system resolves to
+    // it too, so it must be the single dark default.
+    expect(getDefaultDarkTheme()).toBe('gruvbox-dark')
+    expect(isDarkTheme(getDefaultDarkTheme())).toBe(true)
+  })
 })
 
 describe('resolveThemeId', () => {
@@ -215,8 +223,8 @@ describe('status bar & preview lookups', () => {
     expect(getThemePreviewColor('dracula')).toEqual({ bg: '#21222c', text: '#f8f8f2', accent: '#bd93f9' })
   })
 
-  it('falls back to github-dark status bar for unknown themes', () => {
-    expect(getThemeStatusBarColor('not-a-theme')).toBe('#161b22')
+  it('falls back to gruvbox-dark status bar for unknown themes', () => {
+    expect(getThemeStatusBarColor('not-a-theme')).toBe('#1d2021')
   })
 
   it('returns null preview for unknown themes', () => {
@@ -249,16 +257,18 @@ describe('buildThemePalette', () => {
     const p = buildThemePalette('github-dark')
     expect(p.bg).toBe('#161b22')
     expect(p.text).toBe('#c9d1d9')
-    expect(p.textSecondary).toBe('#8b949e')
+    // No --text-secondary CSS variable in jsdom, so this falls back to the
+    // factory theme's secondary color.
+    expect(p.textSecondary).toBe('#d5c4a1')
     expect(p.accent).toBe('#58a6ff')
   })
 
-  it('falls back to github-dark for unknown theme', () => {
+  it('falls back to gruvbox-dark for unknown theme', () => {
     const p = buildThemePalette('not-a-theme')
-    expect(p.bg).toBe('#161b22')
-    expect(p.text).toBe('#c9d1d9')
-    expect(p.textSecondary).toBe('#8b949e')
-    expect(p.accent).toBe('#58a6ff')
+    expect(p.bg).toBe('#1d2021')
+    expect(p.text).toBe('#ebdbb2')
+    expect(p.textSecondary).toBe('#d5c4a1')
+    expect(p.accent).toBe('#fe8019')
   })
 
   it('reads textSecondary from the --text-secondary CSS variable when available', () => {

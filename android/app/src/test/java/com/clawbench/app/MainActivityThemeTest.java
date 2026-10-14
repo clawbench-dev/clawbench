@@ -22,9 +22,9 @@ import static org.junit.Assert.*;
  *
  * Verifies that setTheme (new 5-arg bridge) persists the full palette (bg /
  * text / textSecondary / accent) into SharedPreferences, and that the legacy
- * 1-arg setTheme keeps the github-dark defaults for the color slots.
- * FloatingThemeColors.get() is the read-back path used by FloatingStatusView
- * and FloatingStatusPanelView.
+ * 1-arg setTheme keeps the factory-theme (gruvbox-dark) defaults for the color
+ * slots. FloatingThemeColors.get() is the read-back path used by
+ * FloatingStatusView and FloatingStatusPanelView.
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 28)
@@ -97,16 +97,16 @@ public class MainActivityThemeTest {
         setField(bridge, "activity", activity);
 
         // Legacy 1-arg signature (login.html still calls it) must still persist
-        // the theme id and leave the color slots empty → github-dark defaults.
+        // the theme id and leave the color slots empty → gruvbox-dark defaults.
         bridge.setTheme("github-light");
 
         assertEquals("github-light", prefs.getString("theme_base", ""));
 
         int[] colors = FloatingThemeColors.get(appContext);
-        assertEquals(0xFF161B22, colors[0]);
-        assertEquals(0xFFC9D1D9, colors[1]);
-        assertEquals(0xFF8B949E, colors[2]);
-        assertEquals(0xFF58A6FF, colors[3]);
+        assertEquals(0xFF1D2021, colors[0]);
+        assertEquals(0xFFEBDBB2, colors[1]);
+        assertEquals(0xFFD5C4A1, colors[2]);
+        assertEquals(0xFFFE8019, colors[3]);
     }
 
     // =====================================================
