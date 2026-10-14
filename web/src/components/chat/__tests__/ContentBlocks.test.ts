@@ -99,7 +99,11 @@ vi.mock('@/stores/app.ts', () => ({
   store: { state: reactive({ tasks: [] as unknown[], projectRoot: '/proj/alpha' }) },
 }))
 
-vi.mock('@/utils/contentBlocks.ts', () => ({
+vi.mock('@/utils/contentBlocks.ts', async (importOriginal) => ({
+  // Spread the REAL module first so any export this file does not override
+  // (e.g. extractSkillCommand) is defined. A hand-written whitelist silently
+  // turns new exports into `undefined`, which only surfaces as a render crash.
+  ...(await importOriginal<typeof import('@/utils/contentBlocks.ts')>()),
   isSevereWarning: (block: any) => block.reason === 'disconnect',
   getWarningText: (block: any) => block.text || block.reason || '',
   formatErrorCode: (code: any) => (code ? `ERR-${code}` : ''),
@@ -141,17 +145,9 @@ vi.mock('@/utils/contentBlocks.ts', () => ({
   },
   hasScheduledTasks: (taskKeyIndex: Record<string, string[]>, bi: string | number) => !!(taskKeyIndex[bi]?.length),
   scheduledTaskKeys: (taskKeyIndex: Record<string, string[]>, bi: string | number) => taskKeyIndex[bi] || [],
-  extractSlashCommand: (text: string) => {
-    if (text.startsWith('/')) {
-      const parts = text.split(' ')
-      return {
-        command: parts[0],
-        rest: parts.slice(1).join(' '),
-        clawbench: /^\/cb-(chatsearch|task)$/.test(parts[0]),
-      }
-    }
-    return null
-  },
+  // extractSlashCommand / extractSkillCommand come from the real module via the
+  // importOriginal spread above — no hand-written stub, so the badge tests
+  // exercise the actual parsers.
 }))
 
 const i18n = createI18n({
@@ -290,6 +286,40 @@ describe('ContentBlocks', () => {
       expect(badge.exists()).toBe(true)
       expect(badge.text()).toBe('/commit')
       expect(badge.classes()).not.toContain('clawbench-command-badge')
+    })
+
+    it('renders a skill badge for text starting with #name', () => {
+      const wrapper = mountBlocks({
+        blocks: [{ type: 'text', text: '#pdf summarize this' }],
+      })
+      const badge = wrapper.find('.skill-command-badge')
+      expect(badge.exists()).toBe(true)
+      expect(badge.text()).toBe('#pdf')
+      // The trailing text is shown outside the badge.
+      expect(wrapper.find('.at-command-rest').text()).toBe('summarize this')
+    })
+
+    it('renders a bare skill badge with no rest text', () => {
+      const wrapper = mountBlocks({
+        blocks: [{ type: 'text', text: '#pdf' }],
+      })
+      expect(wrapper.find('.skill-command-badge').text()).toBe('#pdf')
+      expect(wrapper.find('.at-command-rest').exists()).toBe(false)
+    })
+
+    it('does not badge a # that is not the first token', () => {
+      const wrapper = mountBlocks({
+        blocks: [{ type: 'text', text: 'see issue #12' }],
+      })
+      expect(wrapper.find('.skill-command-badge').exists()).toBe(false)
+    })
+
+    it('renders a slash badge, not a skill badge, for /cb-* commands', () => {
+      const wrapper = mountBlocks({
+        blocks: [{ type: 'text', text: '/cb-task run tests' }],
+      })
+      expect(wrapper.find('.skill-command-badge').exists()).toBe(false)
+      expect(wrapper.find('.slash-command-badge').exists()).toBe(true)
     })
   })
 

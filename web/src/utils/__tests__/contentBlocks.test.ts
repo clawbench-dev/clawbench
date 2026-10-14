@@ -14,6 +14,7 @@ import {
   hasScheduledTasks,
   scheduledTaskKeys,
   extractSlashCommand,
+  extractSkillCommand,
 } from '@/utils/contentBlocks.ts'
 
 // ── isSevereWarning ──
@@ -540,5 +541,68 @@ describe('extractSlashCommand', () => {
 
   it('returns null for empty string', () => {
     expect(extractSlashCommand('')).toBeNull()
+  })
+})
+
+// ── extractSkillCommand ──
+describe('extractSkillCommand', () => {
+  it('detects #pdf with rest text', () => {
+    const result = extractSkillCommand('#pdf summarize this')
+    expect(result).not.toBeNull()
+    expect(result!.name).toBe('pdf')
+    expect(result!.rest).toBe(' summarize this')
+  })
+
+  it('detects #pdf with no rest text', () => {
+    const result = extractSkillCommand('#pdf')
+    expect(result).not.toBeNull()
+    expect(result!.name).toBe('pdf')
+    expect(result!.rest).toBe('')
+  })
+
+  it('strips leading whitespace before the # (matches the backend)', () => {
+    const result = extractSkillCommand('  #pdf do it')
+    expect(result).not.toBeNull()
+    expect(result!.name).toBe('pdf')
+    expect(result!.rest).toBe(' do it')
+  })
+
+  it('returns null when # is not the first token', () => {
+    // A "#" later in the body is prose (an issue number, a hashtag).
+    expect(extractSkillCommand('use #pdf')).toBeNull()
+    expect(extractSkillCommand('issue #12 is fixed')).toBeNull()
+  })
+
+  it('returns null for a bare # or # followed by whitespace', () => {
+    expect(extractSkillCommand('#')).toBeNull()
+    expect(extractSkillCommand('# pdf')).toBeNull()
+  })
+
+  it('returns null for a name containing #', () => {
+    expect(extractSkillCommand('#pdf#other')).toBeNull()
+  })
+
+  it('refuses two references (fail-closed, matches the backend)', () => {
+    expect(extractSkillCommand('#pdf #other')).toBeNull()
+    expect(extractSkillCommand('#pdf\t#other')).toBeNull()
+  })
+
+  it('keeps a second NON-# token as ordinary rest text', () => {
+    const result = extractSkillCommand('#pdf and then some')
+    expect(result).not.toBeNull()
+    expect(result!.name).toBe('pdf')
+    expect(result!.rest).toBe(' and then some')
+  })
+
+  it('returns null for plain text', () => {
+    expect(extractSkillCommand('hello world')).toBeNull()
+  })
+
+  it('returns null for a slash command', () => {
+    expect(extractSkillCommand('/commit fix')).toBeNull()
+  })
+
+  it('returns null for empty string', () => {
+    expect(extractSkillCommand('')).toBeNull()
   })
 })

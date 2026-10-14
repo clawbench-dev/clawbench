@@ -264,3 +264,43 @@ export function extractSlashCommand(text: string): SlashCommandBadge | null {
     clawbench: CLAWBENCH_COMMAND_RE.test(text),
   }
 }
+
+// ────────────────────────────────────────────────────────────
+// Skill reference badge detection ("#name" at the start of the message)
+// ────────────────────────────────────────────────────────────
+
+export interface SkillCommandBadge {
+  /** The referenced skill name WITHOUT the leading "#". */
+  name: string
+  /** The rest of the message (the text after the name), or "". */
+  rest: string
+}
+
+/**
+ * Extract an explicit skill reference from a text block, mirroring the
+ * backend's parseSkillCommand (internal/handler/skill_command.go) so the badge
+ * appears on exactly the messages that actually trigger injection.
+ *
+ * Rules: the "#" must be the first non-whitespace character (a "#" later in the
+ * body is prose — "#tag", "issue #12"); the name runs to the next whitespace
+ * and must be non-empty and free of "#"; and exactly ONE reference is allowed
+ * (a second "#..." token right after the first makes the whole message a
+ * non-command, fail-closed).
+ *
+ * Note: like the slash badge, this is a VISUAL parse — it does not verify the
+ * name resolves to a known skill (an unknown "#foo" is shown as a badge, and
+ * the backend treats it as a plain message).
+ */
+export function extractSkillCommand(text: string): SkillCommandBadge | null {
+  const trimmed = text.replace(/^\s+/, '')
+  if (!trimmed.startsWith('#')) return null
+  const fields = trimmed.split(/\s+/)
+  const name = fields[0].slice(1)
+  if (name === '' || name.includes('#')) return null
+  // A second "#..." token in the same leading run means more than one
+  // reference: refuse rather than guess (matches the backend).
+  if (fields.length > 1 && fields[1].startsWith('#')) return null
+  // Rest is everything after the first token, preserving inner whitespace.
+  const rest = trimmed.slice(fields[0].length)
+  return { name, rest }
+}

@@ -348,6 +348,12 @@
         <span class="slash-command-badge" :class="{ 'clawbench-command-badge': extractSlashCommand(block.text)!.clawbench }">{{ extractSlashCommand(block.text)!.command }}</span>
         <span v-if="extractSlashCommand(block.text)!.rest.trim()" class="at-command-rest">{{ extractSlashCommand(block.text)!.rest.trim() }}</span>
       </template>
+      <!-- Text block with an explicit "#skill" reference badge. Same shape as the
+           slash badge but a distinct colour (teal) so the two are told apart. -->
+      <template v-else-if="block.type === 'text' && extractSkillCommand(block.text || '')">
+        <span class="slash-command-badge skill-command-badge">{{ '#' + extractSkillCommand(block.text)!.name }}</span>
+        <span v-if="extractSkillCommand(block.text)!.rest.trim()" class="at-command-rest">{{ extractSkillCommand(block.text)!.rest.trim() }}</span>
+      </template>
       <!-- Text block: streaming uses throttled render to avoid UI freeze -->
       <div v-else-if="block.type === 'text'" v-html="getBlockHtml(bi, block)"></div>
     </template>
@@ -399,6 +405,7 @@ import {
   hasScheduledTasks as hasScheduledTasksUtil,
   scheduledTaskKeys as scheduledTaskKeysUtil,
   extractSlashCommand,
+  extractSkillCommand,
 } from '@/utils/contentBlocks.ts'
 
 const TAG = 'ContentBlocks'
@@ -2610,6 +2617,29 @@ onUnmounted(() => {
 .chat-message.user .slash-command-badge.clawbench-command-badge {
   background: rgba(255, 255, 255, 0.2);
   color: rgba(255, 255, 255, 0.95);
+}
+
+/* Skill reference badge (#name) — teal, distinct from agent blue and ClawBench
+   violet. Matches the completion menu's skill accent (completionSources.ts).
+   The pill radius is a second, colour-independent cue. */
+.slash-command-badge.skill-command-badge {
+  background: color-mix(in srgb, #14b8a6 15%, transparent);
+  color: #14b8a6;
+  border-radius: var(--radius-full);
+}
+
+:root[data-theme-base="dark"] .slash-command-badge.skill-command-badge {
+  background: color-mix(in srgb, #2dd4bf 15%, transparent);
+  color: #2dd4bf;
+}
+
+/* Inside the user bubble the other badges go flat white; the skill badge uses a
+   solid deep-teal fill with white text instead, so it stays distinguishable
+   from a slash command while keeping readable contrast (5.5:1 on every user
+   bubble colour) — a translucent teal tint measured below 3:1. */
+.chat-message.user .slash-command-badge.skill-command-badge {
+  background: #0f766e;
+  color: #ffffff;
 }
 
 .at-command-rest {
