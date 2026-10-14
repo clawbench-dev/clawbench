@@ -44,7 +44,7 @@ sequenceDiagram
 ### 设计要点
 
 - **CLISpeechProvider 是通用包装器**：所有 CLI 类 TTS 引擎共享统一的 CLI 调用模式（构建参数 → 管道文本 → 读取输出文件），差异仅在 CLI 名称和参数格式——新增引擎只需配置命令行参数。OpenAI 兼容引擎是纯 HTTP 客户端，不走这条路径
-- **OpenAI 兼容引擎双形态流式**：`/v1/audio/speech` 的 `stream_format` 有两种取值。`sse` 每块音频是一个 `speech.audio.delta` 事件（base64），由 `speech.audio.done` 收尾，**只有新模型（`gpt-4o-mini-tts` 系）支持**；`audio` 是原始音频字节流（HTTP chunked），所有模型都支持。因此 provider **先请求 `sse`，收到 400 才回退 `audio`**——这样新模型拿到逐块事件、老模型（`tts-1` / `tts-1-hd`）仍然能流式播放而不会硬失败。判断实际返回的是哪种形态**看 `Content-Type` 而不是请求参数**：兼容服务器可能直接忽略 `stream_format` 并回原始音频，按请求参数判断会解析错。两条路径共用同一个 chunk 通道，因此前端 MSE 播放路径无需改动
+- **OpenAI 兼容引擎双形态流式**：`/v1/audio/speech` 的 `stream_format` 有两种取值。`sse` 每块音频是一个 `speech.audio.delta` 事件（base64），由 `speech.audio.done` 收尾，**只有新模型（`gpt-4o-mini-tts` 系）支持**；`audio` 是原始音频字节流（HTTP chunked），所有模型都支持。因此 provider **先请求 `sse`，收到 400 才回退 `audio`**——这样新模型拿到逐块事件、老模型（`tts-1` / `tts-1-hd`）仍然能流式播放而不会硬失败。判断实际返回的是哪种形态**看 `Content-Type` 而不是请求参数**：兼容服务器可能直接忽略 `stream_format` 并回原始音频，按请求参数判断会解析错。两条路径共用同一个 chunk 通道，因此前端 MSE 播放路径无需改动。**`tts.openai.stream_mode` 可手动覆盖**（`auto` 默认按模型名判断 / `sse` 强制逐块 / `audio` 强制整体）——当兼容服务的模型名无法判断是否支持 SSE 时给用户一条出路；该字段也折进 `CacheIdentity`（改变请求形状即改变音频来源）
 - **模型名与音色由用户填写，不设默认**：兼容服务器接受哪些模型/音色不受 OpenAI 文档列表约束（自定义音色以 `{"id":"voice_xxx"}` 引用），猜一个默认值只会在请求时得到一条难懂的上游错误。空值时 provider 在 `validate()` 阶段就报错并指名缺失的配置路径
 - **摘要与 TTS 共享 summarizer 接口**：TTS 摘要和任务摘要使用同一个 `Summarizer` 接口，但配置不同——TTS 摘要剥离 Markdown（朗读不需要格式），任务摘要保留 Markdown（记录需要格式）
 - **`auto` 是"内容感知"而非"配置感知"**：`simple` 与 `api` 的取舍是固定的（要么总是清洗、要么总是调 LLM），用户得为整份会话选一种。`auto` 把决策下移到单条消息——大多数回复是干净散文，清洗即可朗读，不该为它付 LLM 延迟与费用；只有代码/表格/公式占比高、清洗后成了断句碎片时，才值得让 LLM 重新组织。它用 `StripMarkdownStats` 的删除比例作为判据，复用清理阶段已有的产物，不额外解析文本
