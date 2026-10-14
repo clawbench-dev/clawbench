@@ -4815,3 +4815,84 @@ func TestSchema_ForgeSyncStatePerTypeWatermarkMigration(t *testing.T) {
 	assert.False(t, prWM.Valid,
 		"the PR cursor must start empty so the first PR pass baselines instead of replaying")
 }
+
+// TestSchema_UpgradeHalfConvertedProjectPath is the regression for a startup
+// crash loop on databases whose project-path conversion was interrupted between
+// the two halves of the rewrite.
+//
+// convertLegacyPathColumn used to guard solely on project_path: if that column
+// was present it assumed the table still needed converting, and re-issued
+// ALTER TABLE ... ADD COLUMN project_id. A table that already carried
+// project_id — database.go adds it to chat_metadata *before* this migration
+// runs, and rebuildChatMetadataWithoutFK's column list once included
+// project_path, so the rebuild handed the column back — therefore hit
+// "duplicate column name: project_id" on every startup. The whole transaction
+// rolled back, so the migration could never make progress, and main() exits on
+// an InitDB error: the server never started and the container restart policy
+// turned it into a ~1s crash loop.
+//
+// The fixture reproduces that exact shape: chat_metadata carries BOTH columns
+// while chat_history is already converted, so chat_metadata is the only reason
+// the migration runs at all.
+func TestSchema_UpgradeHalfConvertedProjectPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	restoreDB := store.SnapshotDBForTest()
+	defer restoreDB()
+
+	dbDir := filepath.Join(tmpDir, ".clawbench")
+	require.NoError(t, os.MkdirAll(dbDir, 0o755))
+	oldDB, err := sql.Open("sqlite", filepath.Join(dbDir, "ClawBench.db"))
+	require.NoError(t, err)
+	oldDB.SetMaxOpenConns(1)
+
+	// chat_history is already converted (project_id only) so it is not the
+	// migration trigger. chat_metadata still has project_path AND project_id —
+	// the half-converted state that used to abort startup.
+	_, err = oldDB.Exec(`
+		CREATE TABLE chat_history (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			project_id INTEGER NOT NULL DEFAULT 0,
+			role TEXT NOT NULL,
+			content TEXT NOT NULL,
+			session_id TEXT,
+			backend TEXT NOT NULL DEFAULT 'claude',
+			streaming INTEGER NOT NULL DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE TABLE chat_metadata (
+			message_id INTEGER PRIMARY KEY,
+			model TEXT DEFAULT '',
+			project_path TEXT NOT NULL DEFAULT '',
+			project_id INTEGER DEFAULT 0,
+			backend TEXT DEFAULT '',
+			agent_id TEXT DEFAULT '',
+			clawbench_session_id TEXT DEFAULT '',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		INSERT INTO chat_metadata (message_id, project_path, project_id)
+			VALUES (1, '', 7);
+	`)
+	require.NoError(t, err)
+	require.NoError(t, oldDB.Close())
+
+	// Before the fix this returned "add project_id to chat_metadata: SQL logic
+	// error: duplicate column name: project_id (1)".
+	require.NoError(t, InitDB(true), "upgrade from a half-converted database must not abort startup")
+	defer store.Close()
+
+	meta := getTableColumns(t, store.UnsafeDBForTest(), "chat_metadata")
+	assert.Contains(t, meta, "project_id", "the id column must survive the conversion")
+	assert.NotContains(t, meta, "project_path", "the legacy path column must be dropped")
+
+	// The pre-existing attribution must not be clobbered by a re-run backfill.
+	var gotID int
+	require.NoError(t, store.UnsafeDBForTest().QueryRow(
+		`SELECT project_id FROM chat_metadata WHERE message_id = 1`).Scan(&gotID))
+	assert.Equal(t, 7, gotID, "an existing project_id must be preserved, not overwritten")
+}

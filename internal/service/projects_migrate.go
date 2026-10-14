@@ -425,31 +425,50 @@ func convertLegacyPathColumn(tx *sql.Tx, table string, nullable bool) error {
 	if !ok {
 		return nil
 	}
-	hasCol, err := txColumnExists(tx, table, "project_path")
+	hasPath, err := txColumnExists(tx, table, "project_path")
 	if err != nil {
 		return err
 	}
-	if !hasCol {
+	if !hasPath {
 		return nil // already converted (idempotent rerun)
 	}
 
-	colType := "INTEGER NOT NULL DEFAULT 0"
-	if nullable {
-		colType = "INTEGER DEFAULT NULL"
-	}
-	if _, err := tx.ExecContext(context.Background(), "ALTER TABLE "+table+" ADD COLUMN project_id "+colType); err != nil {
-		return fmt.Errorf("add project_id to %s: %w", table, err)
+	// A half-converted table carries BOTH columns: an earlier startup added
+	// project_id (database.go adds it to chat_metadata before this migration
+	// runs, and rebuildChatMetadataWithoutFK's column list once included
+	// project_path, so the rebuild handed it back) but the transaction below
+	// never committed, so project_path is still present. Guarding on
+	// project_path alone would re-issue the ADD COLUMN and abort every startup
+	// with "duplicate column name: project_id" -- a crash loop, since main()
+	// exits on an InitDB error. Skip the ADD and go straight to the drop.
+	hasID, err := txColumnExists(tx, table, "project_id")
+	if err != nil {
+		return err
 	}
 
-	// A NULL project_path (global scope) must stay NULL: the correlated subquery
-	// yields NULL for it, and only the non-nullable tables coalesce to the 0
-	// sentinel so their NOT NULL constraint holds.
-	backfill := "UPDATE " + table + " SET project_id = (SELECT project_id FROM _proj_map WHERE raw = " + table + ".project_path)"
-	if !nullable {
-		backfill = "UPDATE " + table + " SET project_id = COALESCE((SELECT project_id FROM _proj_map WHERE raw = " + table + ".project_path), 0)"
-	}
-	if _, err := tx.ExecContext(context.Background(), backfill); err != nil {
-		return fmt.Errorf("backfill project_id on %s: %w", table, err)
+	if !hasID {
+		colType := "INTEGER NOT NULL DEFAULT 0"
+		if nullable {
+			colType = "INTEGER DEFAULT NULL"
+		}
+		if _, err := tx.ExecContext(context.Background(), "ALTER TABLE "+table+" ADD COLUMN project_id "+colType); err != nil {
+			return fmt.Errorf("add project_id to %s: %w", table, err)
+		}
+
+		// A NULL project_path (global scope) must stay NULL: the correlated
+		// subquery yields NULL for it, and only the non-nullable tables coalesce
+		// to the 0 sentinel so their NOT NULL constraint holds.
+		//
+		// Skipped when the column already existed: its values are the result of
+		// a previous (uncommitted) backfill, and re-running would overwrite any
+		// project_id written since.
+		backfill := "UPDATE " + table + " SET project_id = (SELECT project_id FROM _proj_map WHERE raw = " + table + ".project_path)"
+		if !nullable {
+			backfill = "UPDATE " + table + " SET project_id = COALESCE((SELECT project_id FROM _proj_map WHERE raw = " + table + ".project_path), 0)"
+		}
+		if _, err := tx.ExecContext(context.Background(), backfill); err != nil {
+			return fmt.Errorf("backfill project_id on %s: %w", table, err)
+		}
 	}
 
 	if _, err := tx.ExecContext(context.Background(), "ALTER TABLE "+table+" DROP COLUMN project_path"); err != nil {
