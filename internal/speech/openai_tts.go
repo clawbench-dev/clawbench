@@ -251,10 +251,21 @@ func (p *OpenAITTSProvider) synthesize(ctx context.Context, text string, w io.Wr
 	// directly; the Content-Type is the authoritative signal for which shape
 	// arrived (checking the request parameter would misread that server).
 	if isEventStream(resp.Header.Get("Content-Type")) {
+		// streamSSEAudio validates the decoded audio prefix itself (the SSE
+		// body is text, so it cannot be sniffed at this layer).
 		return streamSSEAudio(resp.Body, w)
 	}
 
-	n, err := io.Copy(w, resp.Body)
+	// The raw body IS the audio, so its leading bytes can be validated before
+	// any of them reach the file. The request asked for response_format=mp3, so
+	// a different container (a server ignoring that parameter) fails fast
+	// instead of being cached under a .mp3 name that playback cannot decode.
+	br := bufio.NewReader(resp.Body)
+	if prefixErr := checkMP3Prefix(br); prefixErr != nil {
+		return 0, prefixErr
+	}
+
+	n, err := io.Copy(w, br)
 	if err != nil {
 		return n, fmt.Errorf("openai-tts: failed to read audio body: %w", err)
 	}
@@ -351,38 +362,102 @@ func streamSSEAudio(r io.Reader, w io.Writer) (int64, error) {
 	scanner.Buffer(make([]byte, 0, 64*1024), maxSSELineBytes)
 
 	var total int64
+	// The request asked for response_format=mp3, so the decoded audio must be
+	// MP3. Buffer just enough leading bytes to make that decision before any
+	// audio reaches the file; a non-compliant server then fails fast instead of
+	// caching e.g. headerless PCM under a .mp3 name.
+	var prefix []byte
+	validated := false
+
+	writeChunk := func(chunk []byte) error {
+		if validated {
+			return writeAudio(w, chunk, &total)
+		}
+		prefix = append(prefix, chunk...)
+		if len(prefix) < mp3SniffPrefixBytes {
+			return nil
+		}
+		validated = true
+		if !isMP3(prefix) {
+			return errNotMP3(prefix)
+		}
+		err := writeAudio(w, prefix, &total)
+		prefix = nil
+		return err
+	}
+
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if payload == "" || payload == "[DONE]" {
-			continue
-		}
-
-		var ev sseAudioEvent
-		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
-			return total, fmt.Errorf("openai-tts: malformed speech.audio.delta payload %q: %w", truncateForError(payload), err)
-		}
-
-		chunk, err := base64.StdEncoding.DecodeString(ev.Audio)
+		chunk, skip, err := decodeSSEAudioLine(scanner.Text())
 		if err != nil {
-			return total, fmt.Errorf("openai-tts: failed to decode audio chunk: %w", err)
+			return total, err
 		}
-		if len(chunk) == 0 {
+		if skip {
 			continue
 		}
-		n, err := w.Write(chunk)
-		total += int64(n)
-		if err != nil {
-			return total, fmt.Errorf("openai-tts: failed to write audio chunk: %w", err)
+		if err := writeChunk(chunk); err != nil {
+			return total, err
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return total, fmt.Errorf("openai-tts: failed to read event stream: %w", err)
 	}
+
+	// A stream shorter than the sniff window still has to be MP3 (a tiny valid
+	// frame qualifies); flush whatever was buffered.
+	if !validated && len(prefix) > 0 {
+		if !isMP3(prefix) {
+			return total, errNotMP3(prefix)
+		}
+		if err := writeAudio(w, prefix, &total); err != nil {
+			return total, err
+		}
+	}
 	return total, nil
+}
+
+// decodeSSEAudioLine extracts the decoded audio from one SSE line. It reports
+// skip=true for lines that carry no audio (non-`data:` lines, an empty payload,
+// the `[DONE]` sentinel, a `speech.audio.done` event, or an empty `audio`
+// field). A payload that cannot be parsed or decoded is an error: the spec
+// types `audio` as a base64 string, so anything else is a non-compliant server.
+func decodeSSEAudioLine(line string) (chunk []byte, skip bool, err error) {
+	line = strings.TrimSpace(line)
+	if !strings.HasPrefix(line, "data:") {
+		return nil, true, nil
+	}
+	payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+	if payload == "" || payload == "[DONE]" {
+		return nil, true, nil
+	}
+
+	var ev sseAudioEvent
+	if unmarshalErr := json.Unmarshal([]byte(payload), &ev); unmarshalErr != nil {
+		return nil, false, fmt.Errorf("openai-tts: malformed speech.audio.delta payload %q: %w", truncateForError(payload), unmarshalErr)
+	}
+
+	chunk, err = base64.StdEncoding.DecodeString(ev.Audio)
+	if err != nil {
+		return nil, false, fmt.Errorf("openai-tts: failed to decode audio chunk: %w", err)
+	}
+	if len(chunk) == 0 {
+		return nil, true, nil
+	}
+	return chunk, false, nil
+}
+
+// writeAudio writes a decoded audio chunk to w and accumulates the byte count.
+func writeAudio(w io.Writer, chunk []byte, total *int64) error {
+	n, err := w.Write(chunk)
+	*total += int64(n)
+	if err != nil {
+		return fmt.Errorf("openai-tts: failed to write audio chunk: %w", err)
+	}
+	return nil
+}
+
+// errNotMP3 reports a non-MP3 payload, naming the detected format.
+func errNotMP3(b []byte) error {
+	return fmt.Errorf("openai-tts: response is not mp3 (%s); the request asked for response_format=mp3", describeAudioFormat(b))
 }
 
 // truncateForError bounds a payload echoed into an error message. A malformed
@@ -393,4 +468,55 @@ func truncateForError(s string) string {
 		return s
 	}
 	return s[:maxLen] + "…"
+}
+
+// mp3SniffPrefixBytes is how many leading audio bytes are examined to decide
+// whether the payload is MP3. Enough for an ID3v2 tag or a couple of frame
+// syncs.
+const mp3SniffPrefixBytes = 16
+
+// checkMP3Prefix peeks the leading bytes of an audio stream and fails if they
+// are not MP3. The bytes are left in the reader for the caller to consume.
+//
+// A stream that ends before mp3SniffPrefixBytes arrive is only an error if it
+// carried no bytes at all (the empty case is reported separately as "no audio
+// data") — a short-but-valid MP3 (e.g. a single tiny frame) is accepted as long
+// as its prefix identifies it.
+func checkMP3Prefix(br *bufio.Reader) error {
+	prefix, err := br.Peek(mp3SniffPrefixBytes)
+	if err != nil && len(prefix) == 0 {
+		// Empty (or unreadable) body: let the caller's zero-byte check report
+		// it rather than mislabeling it a format error.
+		return nil
+	}
+	if isMP3(prefix) {
+		return nil
+	}
+	return errNotMP3(prefix)
+}
+
+// isMP3 reports whether the bytes begin with a recognized MP3 signature: an
+// ID3v2 tag ("ID3") or an MPEG audio frame sync (0xFF followed by 0xE0-0xFF,
+// i.e. the top three bits set, leaving the version/layer bits non-reserved).
+func isMP3(b []byte) bool {
+	if len(b) >= 3 && b[0] == 'I' && b[1] == 'D' && b[2] == '3' {
+		return true
+	}
+	return len(b) >= 2 && b[0] == 0xFF && (b[1]&0xE0) == 0xE0
+}
+
+// describeAudioFormat names a non-MP3 payload for the error message, so the
+// user learns what the server actually sent. It recognizes the common
+// containers a misconfigured TTS server returns.
+func describeAudioFormat(b []byte) string {
+	switch {
+	case len(b) >= 4 && string(b[:4]) == "RIFF":
+		return "server returned WAV"
+	case len(b) >= 4 && string(b[:4]) == "OggS":
+		return "server returned Ogg"
+	case len(b) >= 4 && string(b[:4]) == "fLaC":
+		return "server returned FLAC"
+	default:
+		return "expected mp3, got unrecognized data"
+	}
 }

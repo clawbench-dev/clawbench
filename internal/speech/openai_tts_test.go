@@ -38,6 +38,16 @@ func newTestProvider(t *testing.T, srv *httptest.Server) *OpenAITTSProvider {
 	return p
 }
 
+// mp3HeaderBytes is a minimal valid MP3 frame prefix (0xFF 0xFB = MPEG-1
+// Layer III frame sync). The provider now sniffs the leading bytes against
+// response_format=mp3, so fixtures must be real MP3, not arbitrary text.
+var mp3HeaderBytes = []byte{0xFF, 0xFB, 0x90, 0x00}
+
+// mp3 returns an MP3 fixture that begins with a valid frame sync.
+func mp3(rest string) []byte {
+	return append(append([]byte{}, mp3HeaderBytes...), rest...)
+}
+
 func TestResolveOpenAISpeechURL(t *testing.T) {
 	cases := []struct {
 		name string
@@ -91,7 +101,7 @@ func TestOpenAITTS_ValidateRequiresConfig(t *testing.T) {
 }
 
 func TestOpenAITTS_SSEStreamWritesFileAndChunks(t *testing.T) {
-	chunk1 := []byte("first-audio-chunk")
+	chunk1 := mp3("first-audio-chunk")
 	chunk2 := []byte("second-audio-chunk")
 
 	var gotBody map[string]any
@@ -157,7 +167,7 @@ func TestOpenAITTS_SSEStreamWritesFileAndChunks(t *testing.T) {
 }
 
 func TestOpenAITTS_SSERejectedFallsBackToAudio(t *testing.T) {
-	rawAudio := []byte("raw-mp3-bytes")
+	rawAudio := mp3("raw-mp3-bytes")
 	var formats []string
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -199,7 +209,7 @@ func TestOpenAITTS_SSERejectedFallsBackToAudio(t *testing.T) {
 // body anyway. The Content-Type is authoritative, so no retry should occur and
 // the body must still land in the file.
 func TestOpenAITTS_ServerIgnoresStreamFormat(t *testing.T) {
-	rawAudio := []byte("plain-audio")
+	rawAudio := mp3("plain-audio")
 	requests := 0
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -272,7 +282,7 @@ func TestOpenAITTS_EmptyBodyIsAnError(t *testing.T) {
 // be mistaken for data. None of these may push an empty frame onto the chunk
 // channel, which would surface as a zero-length WebSocket binary frame.
 func TestOpenAITTS_SkipsAudioLessSSEFrames(t *testing.T) {
-	good := []byte("good-audio")
+	good := mp3("good-audio")
 
 	var body strings.Builder
 	body.WriteString(": keepalive comment\n\n")
@@ -375,7 +385,7 @@ func TestOpenAITTS_ModelSelectsInitialStreamFormat(t *testing.T) {
 				_ = json.NewDecoder(r.Body).Decode(&body)
 				formats = append(formats, body["stream_format"].(string))
 				w.Header().Set("Content-Type", "audio/mpeg")
-				_, _ = w.Write([]byte("audio"))
+				_, _ = w.Write(mp3("audio"))
 			}))
 			defer srv.Close()
 
@@ -411,12 +421,112 @@ func TestModelSupportsSSE(t *testing.T) {
 	}
 }
 
+// The request asks for response_format=mp3. A non-compliant server that
+// ignores it and returns WAV (or another format) must fail fast and name what
+// it actually sent — otherwise the bytes are cached as a .mp3, served as
+// audio/mpeg, and playback fails with no explanation ("silent" again, just
+// with a non-empty file this time).
+func TestOpenAITTS_NonMP3ResponseFailsFast(t *testing.T) {
+	wav := append([]byte("RIFF\x24\x00\x00\x00WAVEfmt "), make([]byte, 32)...)
+	ogg := append([]byte("OggS"), make([]byte, 32)...)
+	unknown := []byte{0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77}
+
+	cases := []struct {
+		name       string
+		body       []byte
+		ct         string
+		wantPhrase string
+	}{
+		{"wav body", wav, "audio/mpeg", "WAV"},
+		{"ogg body", ogg, "audio/mpeg", "Ogg"},
+		{"unrecognized body", unknown, "audio/mpeg", "expected mp3"},
+		{"json error body", []byte(`{"error":{"message":"boom"}}`), "audio/mpeg", "expected mp3"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", tc.ct)
+				_, _ = w.Write(tc.body)
+			}))
+			defer srv.Close()
+
+			p := newTestProvider(t, srv)
+			out := filepath.Join(t.TempDir(), "out.mp3")
+			err := p.Synthesize(context.Background(), "hi", out, "en")
+			if err == nil {
+				t.Fatal("expected a hard error for a non-mp3 response")
+			}
+			if !strings.Contains(err.Error(), tc.wantPhrase) {
+				t.Fatalf("error = %q, want it to mention %q", err, tc.wantPhrase)
+			}
+			if _, statErr := os.Stat(out); statErr == nil {
+				t.Fatal("a failed synthesis must not leave an output file behind")
+			}
+		})
+	}
+}
+
+// Both legitimate MP3 framings must pass the sniffer: an ID3v2 tag ("ID3") or
+// a bare MPEG frame sync (0xFF 0xEx/0xFx).
+func TestOpenAITTS_AcceptsMP3Framings(t *testing.T) {
+	cases := []struct {
+		name string
+		body []byte
+	}{
+		{"id3v2 tag", append([]byte("ID3\x04\x00\x00\x00\x00\x00\x00"), make([]byte, 16)...)},
+		{"frame sync", mp3("body")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "audio/mpeg")
+				_, _ = w.Write(tc.body)
+			}))
+			defer srv.Close()
+
+			p := newTestProvider(t, srv)
+			out := filepath.Join(t.TempDir(), "out.mp3")
+			if err := p.Synthesize(context.Background(), "hi", out, "en"); err != nil {
+				t.Fatalf("Synthesize: %v", err)
+			}
+			data, _ := os.ReadFile(out)
+			if !bytes.Equal(data, tc.body) {
+				t.Fatalf("file = %x, want %x", data, tc.body)
+			}
+		})
+	}
+}
+
+// A non-mp3 payload arriving over SSE (the reported "headerless PCM" case)
+// must be caught by the same sniffer.
+func TestOpenAITTS_NonMP3OverSSEFailsFast(t *testing.T) {
+	pcm := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, sseEvent(t, pcm))
+	}))
+	defer srv.Close()
+
+	p := newTestProvider(t, srv)
+	out := filepath.Join(t.TempDir(), "out.mp3")
+	err := p.Synthesize(context.Background(), "hi", out, "en")
+	if err == nil {
+		t.Fatal("expected a hard error for non-mp3 audio over SSE")
+	}
+	if !strings.Contains(err.Error(), "expected mp3") {
+		t.Fatalf("error = %q, want it to flag the missing mp3 header", err)
+	}
+	if _, statErr := os.Stat(out); statErr == nil {
+		t.Fatal("a failed synthesis must not leave an output file behind")
+	}
+}
+
 func TestOpenAITTS_SpeedOmittedWhenUnset(t *testing.T) {
 	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
 		w.Header().Set("Content-Type", "audio/mpeg")
-		_, _ = w.Write([]byte("x"))
+		_, _ = w.Write(mp3("x"))
 	}))
 	defer srv.Close()
 
@@ -478,7 +588,7 @@ func TestOpenAITTS_CacheIdentity(t *testing.T) {
 // The chunk channel is optional: a nil channel means "write the file only",
 // which is how Synthesize delegates to SynthesizeStream.
 func TestOpenAITTS_NilChunkChannelWritesFileOnly(t *testing.T) {
-	audio := []byte("file-only-audio")
+	audio := mp3("file-only-audio")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "audio/mpeg")
 		_, _ = w.Write(audio)
