@@ -431,6 +431,12 @@ paths:
         `chat.user_nickname`（群聊用户昵称）非法值（含引号 / 尖括号 / 逗号 / 控制
         字符，或长度超 32）返回 400；与现有智能体同名返回 **409**
         （`msgKey=UserNicknameTaken`）。
+
+        `tts.openai.stream_mode`（OpenAI 兼容 TTS 的请求方式）只接受
+        `auto` / `sse` / `audio`，其他值返回 400
+        （`tts.openai.stream_mode must be one of: auto,sse,audio`）。`auto`
+        按模型名决定（`tts-1` / `tts-1-hd` 走 `audio`，其余走 `sse`），
+        `sse` / `audio` 强制指定。
       operationId: patchConfig
       requestBody:
         required: true

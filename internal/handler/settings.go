@@ -106,6 +106,7 @@ var hotReloadFields = map[string]bool{
 	"tts.openai.api_key":         true,
 	"tts.openai.model":           true,
 	"tts.openai.voice":           true,
+	"tts.openai.stream_mode":     true,
 	// STT — speech-to-text config, hot-reloadable
 	"stt.base_url":     true,
 	"stt.api_key":      true,
@@ -318,10 +319,11 @@ type configTTS struct {
 }
 
 type configOpenAITTS struct {
-	BaseURL string `json:"base_url"`
-	APIKey  string `json:"api_key"`
-	Model   string `json:"model"`
-	Voice   string `json:"voice"`
+	BaseURL    string `json:"base_url"`
+	APIKey     string `json:"api_key"`
+	Model      string `json:"model"`
+	Voice      string `json:"voice"`
+	StreamMode string `json:"stream_mode"`
 }
 
 type configPiper struct {
@@ -733,6 +735,7 @@ var PatchableConfigPaths = map[string]bool{
 	"tts.openai.api_key":                true,
 	"tts.openai.model":                  true,
 	"tts.openai.voice":                  true,
+	"tts.openai.stream_mode":            true,
 	"stt.base_url":                      true,
 	"stt.api_key":                       true,
 	"stt.model":                         true,
@@ -820,6 +823,11 @@ var validTTSFormats = map[string]bool{
 // validMossNanoBackends is the set of valid MOSS-Nano inference backend values.
 var validMossNanoBackends = map[string]bool{
 	"onnx": true, "pytorch": true,
+}
+
+// validOpenAIStreamModes is the set of valid OpenAI TTS stream modes.
+var validOpenAIStreamModes = map[string]bool{
+	"auto": true, "sse": true, "audio": true,
 }
 
 // getBuildVersion returns a human-readable version string from build info.
@@ -1000,10 +1008,11 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 		}
 	case strOpenAI:
 		resp.TTS.OpenAI = &configOpenAITTS{
-			BaseURL: cfg.TTS.OpenAI.BaseURL,
-			APIKey:  cfg.TTS.OpenAI.APIKey,
-			Model:   cfg.TTS.OpenAI.Model,
-			Voice:   cfg.TTS.OpenAI.Voice,
+			BaseURL:    cfg.TTS.OpenAI.BaseURL,
+			APIKey:     cfg.TTS.OpenAI.APIKey,
+			Model:      cfg.TTS.OpenAI.Model,
+			Voice:      cfg.TTS.OpenAI.Voice,
+			StreamMode: cfg.TTS.OpenAI.StreamMode,
 		}
 	}
 
@@ -1277,6 +1286,11 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 			if v, ok := openai["base_url"].(string); ok && v != "" {
 				if _, err := url.ParseRequestURI(v); err != nil {
 					return fmt.Errorf("tts.openai.base_url must be a valid URL")
+				}
+			}
+			if v, ok := openai["stream_mode"].(string); ok {
+				if !validOpenAIStreamModes[v] {
+					return fmt.Errorf("tts.openai.stream_mode must be one of: auto,sse,audio")
 				}
 			}
 		}
@@ -1865,6 +1879,9 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 			if v, ok := openai["voice"].(string); ok {
 				cfg.TTS.OpenAI.Voice = v
 			}
+			if v, ok := openai["stream_mode"].(string); ok {
+				cfg.TTS.OpenAI.StreamMode = v
+			}
 		}
 	}
 
@@ -2119,6 +2136,7 @@ func applyHotReloadGlobals() {
 		p.APIKey = cfg.TTS.OpenAI.APIKey
 		p.Model = cfg.TTS.OpenAI.Model
 		p.Voice = cfg.TTS.OpenAI.Voice
+		p.StreamMode = cfg.TTS.OpenAI.StreamMode
 	}
 	if cfg.TTS.Speed > 0 {
 		if p, ok := curProvider.(*speech.EdgeTTSProvider); ok {

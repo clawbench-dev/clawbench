@@ -360,10 +360,11 @@ type MossNanoConfig struct {
 // marin, cedar) are a subset of what a compatible server may accept, and the
 // API also supports custom voice objects referenced by id.
 type OpenAITTSConfig struct {
-	BaseURL string `yaml:"base_url"` // OpenAI-compatible base URL, e.g. "https://api.openai.com/v1" (completed to …/audio/speech)
-	APIKey  string `yaml:"api_key"`  // Bearer token (may be empty for a local server)
-	Model   string `yaml:"model"`    // TTS model, e.g. "gpt-4o-mini-tts"; user-supplied (no default)
-	Voice   string `yaml:"voice"`    // Voice name or custom voice id, e.g. "alloy" / "voice_1234"
+	BaseURL    string `yaml:"base_url"`    // OpenAI-compatible base URL, e.g. "https://api.openai.com/v1" (completed to …/audio/speech)
+	APIKey     string `yaml:"api_key"`     // Bearer token (may be empty for a local server)
+	Model      string `yaml:"model"`       // TTS model, e.g. "gpt-4o-mini-tts"; user-supplied (no default)
+	Voice      string `yaml:"voice"`       // Voice name or custom voice id, e.g. "alloy" / "voice_1234"
+	StreamMode string `yaml:"stream_mode"` // "auto" (default, per-model), "sse" (force SSE), "audio" (force raw body)
 }
 
 // APIConfig holds configuration for the API-based summarization backend.

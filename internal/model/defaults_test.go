@@ -788,6 +788,26 @@ func TestApplyDefaults_TTSInlineCodeMaxLen(t *testing.T) {
 	}
 }
 
+// The OpenAI TTS stream mode defaults to "auto" so an unset config keeps the
+// per-model choice; an explicitly-set (even unknown) value is left for the
+// PATCH validation to reject rather than being silently overwritten here.
+func TestApplyDefaults_OpenAITTSStreamMode(t *testing.T) {
+	setupTestBinDir(t)
+
+	cfg := Config{}
+	ApplyDefaults(&cfg, nil)
+	if cfg.TTS.OpenAI.StreamMode != "auto" {
+		t.Errorf("OpenAI.StreamMode = %q, want %q", cfg.TTS.OpenAI.StreamMode, "auto")
+	}
+
+	cfg = Config{}
+	cfg.TTS.OpenAI.StreamMode = "sse"
+	ApplyDefaults(&cfg, nil)
+	if cfg.TTS.OpenAI.StreamMode != "sse" {
+		t.Errorf("an explicit stream mode must be preserved, got %q", cfg.TTS.OpenAI.StreamMode)
+	}
+}
+
 func TestApplyDefaults_SummarizeAutoJunkRatio(t *testing.T) {
 	setupTestBinDir(t)
 

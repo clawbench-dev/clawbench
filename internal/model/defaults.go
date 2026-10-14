@@ -414,6 +414,11 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if cfg.TTS.MaxCacheFiles == 0 {
 		cfg.TTS.MaxCacheFiles = 100
 	}
+	// OpenAI-compatible TTS: default the stream mode to "auto" (per-model
+	// choice). An unknown value is left untouched so validation can reject it.
+	if cfg.TTS.OpenAI.StreamMode == "" {
+		cfg.TTS.OpenAI.StreamMode = "auto"
+	}
 
 	// --- STT ---
 	if cfg.STT.BaseURL == "" {

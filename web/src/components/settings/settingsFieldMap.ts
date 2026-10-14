@@ -523,6 +523,14 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
             // documented list (custom voices are referenced by id).
             { labelKey: 'settings.items.openaiTTSModel', descriptionKey: 'settings.items.openaiTTSModelDesc', key: 'tts.openai.model', type: 'text', source: 'server' },
             { labelKey: 'settings.items.openaiTTSVoice', descriptionKey: 'settings.items.openaiTTSVoiceDesc', key: 'tts.openai.voice', type: 'text', source: 'server' },
+            // Stream mode: "auto" follows the per-model default; "sse" / "audio"
+            // force a transport for servers whose model name does not reveal
+            // whether SSE is supported.
+            { labelKey: 'settings.items.openaiTTSStreamMode', descriptionKey: 'settings.items.openaiTTSStreamModeDesc', key: 'tts.openai.stream_mode', type: 'select', source: 'server', options: [
+              { labelKey: 'settings.items.openaiTTSStreamModeAuto', value: 'auto' },
+              { labelKey: 'settings.items.openaiTTSStreamModeSSE', value: 'sse' },
+              { labelKey: 'settings.items.openaiTTSStreamModeAudio', value: 'audio' },
+            ]},
           ],
         },
       ],

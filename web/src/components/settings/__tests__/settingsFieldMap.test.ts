@@ -381,6 +381,7 @@ describe('settingsFieldMap', () => {
       'tts.openai.api_key',
       'tts.openai.model',
       'tts.openai.voice',
+      'tts.openai.stream_mode',
     ])
     // The API key must be masked like every other credential row.
     expect(openaiSub!.fields.find(f => f.key === 'tts.openai.api_key')!.type).toBe('password')
@@ -388,6 +389,10 @@ describe('settingsFieldMap', () => {
     // outside OpenAI's documented list (custom voices are referenced by id).
     expect(openaiSub!.fields.find(f => f.key === 'tts.openai.model')!.type).toBe('text')
     expect(openaiSub!.fields.find(f => f.key === 'tts.openai.voice')!.type).toBe('text')
+    // Stream mode is a fixed select: auto / sse / audio.
+    const streamField = openaiSub!.fields.find(f => f.key === 'tts.openai.stream_mode')!
+    expect(streamField.type).toBe('select')
+    expect(streamField.options!.map(o => o.value)).toEqual(['auto', 'sse', 'audio'])
 
     expect(cfg.requiredFields).toEqual([
       'tts.piper.model_path',

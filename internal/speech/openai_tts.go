@@ -18,6 +18,13 @@ import (
 // openAISpeechPath is the OpenAI-compatible speech synthesis path.
 const openAISpeechPath = "/v1/audio/speech"
 
+// stream_format values accepted by the endpoint. SSE streams chunks; audio
+// returns the whole body at once (and is the endpoint default).
+const (
+	streamFormatSSE   = "sse"
+	streamFormatAudio = "audio"
+)
+
 // maxSSELineBytes bounds a single SSE `data:` line. Audio chunks arrive
 // base64-encoded, so one line is roughly 4/3 of a chunk — a few KB in
 // practice. The generous ceiling only guards against a malformed or hostile
@@ -66,6 +73,12 @@ type OpenAITTSProvider struct {
 	// Speed is the speech rate multiplier (OpenAI accepts 0.25–4.0). <= 0
 	// omits the parameter and lets the server default it.
 	Speed float64
+	// StreamMode overrides the per-model stream_format choice. "" and "auto"
+	// keep the model-based default (see modelSupportsSSE); "sse" forces
+	// Server-Sent Events; "audio" forces the raw audio body. This is the escape
+	// hatch for a compatible server whose model name does not reveal whether it
+	// supports SSE.
+	StreamMode string
 	// HTTPClient is injectable for tests. When nil a client with
 	// openAITTSTimeout is used.
 	HTTPClient *http.Client
@@ -79,12 +92,14 @@ var (
 	_ CacheIdentityProvider   = (*OpenAITTSProvider)(nil)
 )
 
-// CacheIdentity reports the endpoint, model, voice and rate. BaseURL is
-// included because two different compatible servers serving the same model
-// name can produce different audio. APIKey is deliberately excluded: it does
-// not affect the audio, and this string is hashed into an on-disk file name.
+// CacheIdentity reports the endpoint, model, voice, rate and stream mode.
+// BaseURL is included because two different compatible servers serving the
+// same model name can produce different audio. StreamMode is included because
+// it changes the request shape, and a server that streams differently could
+// return different bytes. APIKey is deliberately excluded: it does not affect
+// the audio, and this string is hashed into an on-disk file name.
 func (p *OpenAITTSProvider) CacheIdentity() string {
-	return fmt.Sprintf("openai|%s|%s|%s|%g", p.BaseURL, p.Model, p.Voice, p.Speed)
+	return fmt.Sprintf("openai|%s|%s|%s|%g|%s", p.BaseURL, p.Model, p.Voice, p.Speed, p.StreamMode)
 }
 
 // NewOpenAITTSProvider creates a provider with no defaults — every field is
@@ -210,11 +225,8 @@ func (p *OpenAITTSProvider) synthesize(ctx context.Context, text string, w io.Wr
 	// it for tts-1 / tts-1-hd is a spec violation, and a server that ignores
 	// the spec and returns 200 + SSE anyway would defeat the 400 fallback
 	// below, leaving the client parsing a stream it never should have asked
-	// for.
-	streamFormat := "audio"
-	if modelSupportsSSE(p.Model) {
-		streamFormat = "sse"
-	}
+	// for. StreamMode overrides this default.
+	streamFormat := p.resolveStreamFormat()
 
 	resp, err := p.doRequest(ctx, text, streamFormat)
 	if err != nil {
@@ -226,7 +238,7 @@ func (p *OpenAITTSProvider) synthesize(ctx context.Context, text string, w io.Wr
 	// supports. The body is fully drained first so the connection can be
 	// reused. This only applies when we actually asked for SSE — a 400 on an
 	// `audio` request is a genuine error and must surface as one.
-	if streamFormat == "sse" && resp.StatusCode == http.StatusBadRequest {
+	if streamFormat == streamFormatSSE && resp.StatusCode == http.StatusBadRequest {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		_ = resp.Body.Close()
 		slog.Warn(
@@ -234,7 +246,7 @@ func (p *OpenAITTSProvider) synthesize(ctx context.Context, text string, w io.Wr
 			slog.Int("status", resp.StatusCode),
 			slog.String("body", strings.TrimSpace(string(body))),
 		)
-		resp, err = p.doRequest(ctx, text, "audio")
+		resp, err = p.doRequest(ctx, text, streamFormatAudio)
 		if err != nil {
 			return 0, err
 		}
@@ -296,7 +308,7 @@ func (p *OpenAITTSProvider) doRequest(ctx context.Context, text, streamFormat st
 		return nil, fmt.Errorf("openai-tts: failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if streamFormat == "sse" {
+	if streamFormat == streamFormatSSE {
 		req.Header.Set("Accept", "text/event-stream")
 	} else {
 		req.Header.Set("Accept", "application/octet-stream")
@@ -334,6 +346,21 @@ func modelSupportsSSE(model string) bool {
 	default:
 		return true
 	}
+}
+
+// resolveStreamFormat returns the stream_format to request, honoring the
+// user's StreamMode override and falling back to the per-model default.
+func (p *OpenAITTSProvider) resolveStreamFormat() string {
+	switch p.StreamMode {
+	case streamFormatSSE:
+		return streamFormatSSE
+	case streamFormatAudio:
+		return streamFormatAudio
+	}
+	if modelSupportsSSE(p.Model) {
+		return streamFormatSSE
+	}
+	return streamFormatAudio
 }
 
 // sseAudioEvent is the subset of a `speech.audio.delta` event we consume.

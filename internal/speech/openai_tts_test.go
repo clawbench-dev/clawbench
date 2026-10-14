@@ -421,6 +421,83 @@ func TestModelSupportsSSE(t *testing.T) {
 	}
 }
 
+// StreamMode lets the user override the per-model default: "" / "auto" keeps
+// the model-based choice, "sse" forces SSE, "audio" forces the raw body. This
+// is the escape hatch for a compatible server whose model name does not reveal
+// whether it supports SSE.
+func TestOpenAITTS_StreamModeOverridesModelDefault(t *testing.T) {
+	cases := []struct {
+		name  string
+		model string
+		mode  string
+		want  string
+	}{
+		{"auto keeps model default (sse)", "gpt-4o-mini-tts", "auto", "sse"},
+		{"auto keeps model default (audio)", "tts-1", "auto", "audio"},
+		{"empty behaves as auto", "tts-1", "", "audio"},
+		{"force sse on tts-1", "tts-1", "sse", "sse"},
+		{"force audio on sse model", "gpt-4o-mini-tts", "audio", "audio"},
+		{"force sse on custom model", "custom", "sse", "sse"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var formats []string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body map[string]any
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				formats = append(formats, body["stream_format"].(string))
+				// Always answer with audio so the forced-SSE case still
+				// terminates without a retry.
+				w.Header().Set("Content-Type", "audio/mpeg")
+				_, _ = w.Write(mp3("audio"))
+			}))
+			defer srv.Close()
+
+			p := newTestProvider(t, srv)
+			p.Model = tc.model
+			p.StreamMode = tc.mode
+			out := filepath.Join(t.TempDir(), "out.mp3")
+			if err := p.Synthesize(context.Background(), "hi", out, "en"); err != nil {
+				t.Fatalf("Synthesize: %v", err)
+			}
+			if len(formats) != 1 || formats[0] != tc.want {
+				t.Fatalf("stream_format attempts = %v, want exactly [%s]", formats, tc.want)
+			}
+		})
+	}
+}
+
+// A forced "sse" on a model the server rejects with 400 still falls back to
+// audio, so an incorrect manual override degrades instead of failing.
+func TestOpenAITTS_ForcedSSEFallsBackOn400(t *testing.T) {
+	var formats []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		format, _ := body["stream_format"].(string)
+		formats = append(formats, format)
+		if format == "sse" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":{"message":"no sse"}}`)
+			return
+		}
+		w.Header().Set("Content-Type", "audio/mpeg")
+		_, _ = w.Write(mp3("audio"))
+	}))
+	defer srv.Close()
+
+	p := newTestProvider(t, srv)
+	p.Model = "tts-1" // would default to audio; force sse to exercise fallback
+	p.StreamMode = "sse"
+	out := filepath.Join(t.TempDir(), "out.mp3")
+	if err := p.Synthesize(context.Background(), "hi", out, "en"); err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+	if len(formats) != 2 || formats[0] != "sse" || formats[1] != "audio" {
+		t.Fatalf("stream_format attempts = %v, want [sse audio]", formats)
+	}
+}
+
 // The request asks for response_format=mp3. A non-compliant server that
 // ignores it and returns WAV (or another format) must fail fast and name what
 // it actually sent — otherwise the bytes are cached as a .mp3, served as
@@ -564,6 +641,9 @@ func TestOpenAITTS_CacheIdentity(t *testing.T) {
 	// Speed is sent in the request body, so it changes the audio.
 	otherSpeed := *base
 	otherSpeed.Speed = 1.5
+	// StreamMode changes the request shape, so it changes the audio path.
+	otherStream := *base
+	otherStream.StreamMode = "audio"
 
 	if base.CacheIdentity() == otherVoice.CacheIdentity() {
 		t.Error("voice change must change the cache identity")
@@ -576,6 +656,9 @@ func TestOpenAITTS_CacheIdentity(t *testing.T) {
 	}
 	if base.CacheIdentity() == otherSpeed.CacheIdentity() {
 		t.Error("speed change must change the cache identity")
+	}
+	if base.CacheIdentity() == otherStream.CacheIdentity() {
+		t.Error("stream mode change must change the cache identity")
 	}
 	if base.CacheIdentity() != otherKey.CacheIdentity() {
 		t.Error("the API key does not affect the audio and must not change the identity")

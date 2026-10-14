@@ -468,6 +468,43 @@ func TestPersist_OpenAITTSEngineAndVoice(t *testing.T) {
 	assert.Equal(t, "verse", getNestedValue(cfg, "tts.openai.voice"))
 }
 
+// The stream mode override must round-trip through config.yaml.
+func TestPersist_OpenAITTSStreamMode(t *testing.T) {
+	_, cleanup := setupPersistTestEnv(t)
+	defer cleanup()
+
+	model.ConfigInstance = model.Config{}
+	model.ConfigInstance.TTS.Engine = "openai"
+	model.ConfigInstance.TTS.OpenAI.BaseURL = "https://api.openai.com/v1"
+	model.ConfigInstance.TTS.OpenAI.Model = "gpt-4o-mini-tts"
+	model.ConfigInstance.TTS.OpenAI.Voice = "alloy"
+	model.ConfigInstance.TTS.OpenAI.StreamMode = "auto"
+
+	cfg := patchAndReadConfig(t, `{"tts":{"openai":{"stream_mode":"audio"}}}`)
+	assert.Equal(t, "audio", getNestedValue(cfg, "tts.openai.stream_mode"))
+}
+
+// An unknown stream_mode must be rejected rather than silently persisted, so a
+// typo cannot leave the provider falling back to the model default unnoticed.
+func TestPersist_OpenAITTSStreamModeRejectsUnknown(t *testing.T) {
+	_, cleanup := setupPersistTestEnv(t)
+	defer cleanup()
+
+	model.ConfigInstance = model.Config{}
+	model.ConfigInstance.TTS.Engine = "openai"
+	model.ConfigInstance.TTS.OpenAI.BaseURL = "https://api.openai.com/v1"
+	model.ConfigInstance.TTS.OpenAI.Model = "gpt-4o-mini-tts"
+	model.ConfigInstance.TTS.OpenAI.Voice = "alloy"
+	model.ConfigInstance.TTS.OpenAI.StreamMode = "auto"
+
+	body := `{"tts":{"openai":{"stream_mode":"bogus"}}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
 // ─── TTS API sub-config ──────────────────────────────────────
 
 func TestPersist_SummarizeTTSAPIBaseURL(t *testing.T) {
