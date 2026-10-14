@@ -331,18 +331,20 @@ describe('SessionShareView', () => {
     // The column must still fill the scroll container's height.
     expect(col![1]).toContain("min-height: 100%")
   })
-  it('puts the title in the full-width stacked topbar', async () => {
+  it('puts the title in the single-row full-width topbar', async () => {
     const wrapper = await mountView()
     expect(wrapper.find('.share-topbar').exists()).toBe(true)
-    expect(wrapper.find('.share-topbar--stacked').exists()).toBe(true)
-    expect(wrapper.find('.share-topbar-title').exists()).toBe(true)
-    // The byline shares the topbar, below the title row.
-    expect(wrapper.find('.share-topbar .session-share-byline').exists()).toBe(true)
+    // The title occupies the topbar's flexible slot.
+    expect(wrapper.find('.share-topbar .session-share-title').exists()).toBe(true)
+    // The conversation meta (agent / count / duration) is NOT in the topbar:
+    // it lives at the top of the content column so the chrome stays one row.
+    expect(wrapper.find('.share-topbar .session-share-byline').exists()).toBe(false)
+    expect(wrapper.find('.session-share-column .session-share-byline').exists()).toBe(true)
   })
 
   it('uses an h1 for the title so it is the page heading', async () => {
     const wrapper = await mountView()
-    expect(wrapper.find('h1.share-topbar-title').exists()).toBe(true)
+    expect(wrapper.find('h1.session-share-title').exists()).toBe(true)
   })
 
   it('shows the ClawBench brand logo in the topbar', async () => {
