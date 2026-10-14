@@ -2,9 +2,115 @@ package ai
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 )
+
+// ModelSwitchError describes a rejected model switch, so a caller (the HTTP
+// layer) can tell a transient rejection from a permanent one without parsing
+// error strings itself.
+type ModelSwitchError struct {
+	// Code is the JSON-RPC error code, or 0 when the failure was not a
+	// JSON-RPC error (e.g. a timeout or a dead connection).
+	Code int
+	// Detail is the human-readable cause, preferring the agent's own
+	// data.details over its generic message.
+	Detail string
+	// Retryable marks a TRANSIENT rejection: the agent was busy, the call timed
+	// out, or the connection dropped. The caller should keep the user's choice
+	// and let the next prompt retry it. A non-retryable failure (e.g. the
+	// provider is not connected) would fail identically on retry.
+	Retryable bool
+}
+
+func (e *ModelSwitchError) Error() string {
+	if e.Code != 0 {
+		return fmt.Sprintf("model switch failed (%d): %s", e.Code, e.Detail)
+	}
+	return "model switch failed: " + e.Detail
+}
+
+// AsModelSwitchError returns the *ModelSwitchError in err's chain, if any.
+func AsModelSwitchError(err error) (*ModelSwitchError, bool) {
+	var mse *ModelSwitchError
+	if errors.As(err, &mse) {
+		return mse, true
+	}
+	return nil, false
+}
+
+// IsModelSwitchRetryable reports whether a failed model switch is transient and
+// should be retried on the next prompt rather than reported as a hard failure.
+func IsModelSwitchRetryable(err error) bool {
+	mse, ok := AsModelSwitchError(err)
+	return ok && mse.Retryable
+}
+
+// ApplyModel applies a model selection to this connection's live session.
+//
+// Exported for the click-time path (PATCH /api/ai/session/update): the picker
+// wants immediate feedback instead of the selection silently deferring to the
+// next message. It dispatches exactly like the pre-prompt path
+// (applyModelSelection), so both agree on the mechanism and on the dedup key.
+//
+// Returns nil when there is nothing to do (no ACP session yet, or the model is
+// already set) or when the switch succeeded. Returns *ModelSwitchError when the
+// agent rejected it.
+//
+// Callers must NOT hold c.mu (CallRaw takes it).
+func (c *ACPConn) ApplyModel(ctx context.Context, modelID string) error {
+	acpSID := c.AcpSID()
+	if acpSID == "" {
+		// Spawned but no session yet: the persisted value is what the first
+		// Prompt will apply, so there is nothing to push now.
+		return nil
+	}
+	if err := c.applyModelSelection(ctx, acpSID, modelID); err != nil {
+		return classifyModelSwitchFailure(err)
+	}
+	return nil
+}
+
+// classifyModelSwitchFailure wraps a raw switch failure in a *ModelSwitchError.
+func classifyModelSwitchFailure(err error) error {
+	if err == nil {
+		return nil
+	}
+	var rawErr *RawRPCError
+	switch {
+	case errors.As(err, &rawErr):
+		detail := rawRPCErrorDetail(rawErr.Data)
+		if detail == "" {
+			detail = rawErr.Message
+		}
+		// Hermes raises -32603 for BOTH "Session is busy" AND a failed rebuild
+		// (a ValueError from rebuilding the agent), so the code alone cannot
+		// mean "busy" — only the wording is transient.
+		busy := rawErr.Code == -32603 &&
+			(isBusyText(rawErr.Message) || isBusyText(detail))
+		return &ModelSwitchError{Code: rawErr.Code, Detail: detail, Retryable: busy}
+	case errors.Is(err, context.DeadlineExceeded):
+		// A slow agent (Hermes' cold model switch does ~10s of I/O) or a wedged
+		// one. Transient: keep the choice and retry at the next prompt.
+		return &ModelSwitchError{Detail: "timed out", Retryable: true}
+	case errors.Is(err, errRawConnClosed):
+		return &ModelSwitchError{Detail: "connection closed", Retryable: true}
+	case isConfigKilledConnection(err):
+		// The switch crashed the process. The next prompt respawns and re-applies
+		// the session model, so this is retryable rather than a hard failure.
+		return &ModelSwitchError{Detail: err.Error(), Retryable: true}
+	default:
+		return &ModelSwitchError{Detail: err.Error()}
+	}
+}
+
+// isBusyText reports whether an agent message means "a turn is running".
+func isBusyText(s string) bool {
+	return strings.Contains(strings.ToLower(s), "busy")
+}
 
 // modelSwitchTimeout bounds a session/set_model RPC.
 //

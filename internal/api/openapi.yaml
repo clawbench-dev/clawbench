@@ -1485,7 +1485,28 @@ paths:
                         description: 仅对新建标签生效；缺省为 `project`
       responses:
         "200":
-          description: 已更新
+          description: |
+            已更新。`modelSwitchDeferred=true` 表示会话正忙，模型选择已写库但需等下一次
+            发送时才应用（"记住但延后"）。
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  modelSwitchDeferred:
+                    type: boolean
+                    description: |
+                      仅当请求带 `modelId` 时可能出现。为 true 表示 agent 当前忙（或超时/
+                      连接断开），切换被推迟到下一次发送；此时选择已持久化。
+        "422":
+          description: |
+            `modelId` 被 agent 拒绝且重试无用（例如该 provider 未连接）。响应为
+            `{error, code, msgKey: "ModelSwitchFailed", detail: {Detail}}`，其中
+            `Detail` 是 agent 给出的具体原因。**不会写库**（选择未被接受）。
+        "502":
+          description: 切换模型时与 agent 通信失败（非 agent 拒绝，例如传输层错误）。
 
   /api/ai/session/generate-title:
     post:

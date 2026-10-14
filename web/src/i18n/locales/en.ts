@@ -613,6 +613,10 @@ export default {
     },
     modelSwitcher: {
       title: 'Model',
+      switching: 'Switching model…',
+      deferred: 'Session is busy — will switch on your next message',
+      switchFailed: 'Could not switch model',
+      switchFailedDetail: 'Could not switch model: {detail}',
     },
     modeSwitcher: {
       title: 'Mode',

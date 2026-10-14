@@ -709,3 +709,115 @@ func TestAIChat_NoCLIList_StillReturnsRawACPState(t *testing.T) {
 	assert.Equal(t, "auto", resp.ModelListState.Models[0].ID)
 	assert.Empty(t, resp.ModelListState.ResolvedModels)
 }
+
+// --- ServeAISessionUpdate: click-time model switch ---
+
+// A live ACP connection must receive the model switch at CLICK time (not
+// deferred to the next message), and the choice must be persisted.
+func TestServeAISessionUpdate_AppliesModelToLiveConn(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sid, err := service.CreateSession(env.ProjectDir, "hermes", "Hermes", "hermes", "", "default", "chat")
+	require.NoError(t, err)
+
+	agent := &model.Agent{ID: "hermes", Backend: "hermes", Transport: "acp-stdio", AcpCommand: "hermes acp"}
+	conn := ai.GetACPConnManager().InjectAliveConnForTest(sid, agent, "acp-sid-1", nil)
+	ai.RegisterModelSwitchMethodForTest(t, "hermes", "session/set_model")
+	rec := ai.CaptureRawCallsForTest(conn)
+	t.Cleanup(func() { ai.GetACPConnManager().CloseConn(sid) })
+
+	req := newRequest(t, http.MethodPatch, "/api/ai/session/update?session_id="+sid, map[string]any{
+		"modelId": "minimax:MiniMax-M3",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeAISessionUpdate, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	calls := rec.Calls()
+	require.Len(t, calls, 1, "the switch must be applied at click time")
+	assert.Equal(t, "session/set_model", calls[0].Method)
+	assert.Equal(t, "minimax:MiniMax-M3", calls[0].Params["modelId"])
+	assert.Equal(t, "minimax:MiniMax-M3", service.GetSessionModel(sid), "the choice must be persisted")
+}
+
+// A busy agent is TRANSIENT: keep the choice (persist it) and report it as
+// deferred rather than failing — the next prompt re-applies it.
+func TestServeAISessionUpdate_BusyModelSwitchIsDeferred(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sid, err := service.CreateSession(env.ProjectDir, "hermes", "Hermes", "hermes", "", "default", "chat")
+	require.NoError(t, err)
+
+	agent := &model.Agent{ID: "hermes", Backend: "hermes", Transport: "acp-stdio", AcpCommand: "hermes acp"}
+	conn := ai.GetACPConnManager().InjectAliveConnForTest(sid, agent, "acp-sid-2", nil)
+	ai.RegisterModelSwitchMethodForTest(t, "hermes", "session/set_model")
+	ai.FailRawCallsForTest(conn, -32603, "Session is busy; switch models while the session is idle")
+	t.Cleanup(func() { ai.GetACPConnManager().CloseConn(sid) })
+
+	req := newRequest(t, http.MethodPatch, "/api/ai/session/update?session_id="+sid, map[string]any{
+		"modelId": "minimax:MiniMax-M3",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeAISessionUpdate, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "a busy session must not fail the request: %s", w.Body.String())
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, true, resp["modelSwitchDeferred"], "the response must say the switch was deferred")
+	assert.Equal(t, "minimax:MiniMax-M3", service.GetSessionModel(sid), "the choice must still be kept")
+}
+
+// A provider that is not connected fails identically on retry: report it now
+// with the agent's own explanation, and do NOT persist the rejected choice.
+func TestServeAISessionUpdate_HardModelSwitchFailureIsReported(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sid, err := service.CreateSession(env.ProjectDir, "hermes", "Hermes", "hermes", "", "default", "chat")
+	require.NoError(t, err)
+	before := service.GetSessionModel(sid)
+
+	agent := &model.Agent{ID: "hermes", Backend: "hermes", Transport: "acp-stdio", AcpCommand: "hermes acp"}
+	conn := ai.GetACPConnManager().InjectAliveConnForTest(sid, agent, "acp-sid-3", nil)
+	ai.RegisterModelSwitchMethodForTest(t, "hermes", "session/set_model")
+	ai.FailRawCallsWithDetailForTest(conn, -32602, "Invalid params", `{"details":"GitHub Copilot is not connected"}`)
+	t.Cleanup(func() { ai.GetACPConnManager().CloseConn(sid) })
+
+	req := newRequest(t, http.MethodPatch, "/api/ai/session/update?session_id="+sid, map[string]any{
+		"modelId": "copilot:gpt-5.4",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeAISessionUpdate, req)
+
+	require.Equal(t, http.StatusUnprocessableEntity, w.Code, w.Body.String())
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "ModelSwitchFailedDetail", resp["msgKey"])
+	// The agent's own explanation must reach the response so the toast can name
+	// the real cause (which provider to connect).
+	detail, ok := resp["detail"].(map[string]any)
+	require.True(t, ok, "detail payload missing: %v", resp["detail"])
+	assert.Equal(t, "GitHub Copilot is not connected", detail["Detail"])
+	assert.Equal(t, before, service.GetSessionModel(sid), "a rejected switch must not be persisted")
+}
+
+// No live connection (CLI transport, or an ACP session that has not started
+// yet): persist only. The next prompt applies it — unchanged behavior.
+func TestServeAISessionUpdate_NoLiveConnPersistsOnly(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sid, err := service.CreateSession(env.ProjectDir, "claude", "CLI", "claude", "", "default", "chat")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPatch, "/api/ai/session/update?session_id="+sid, map[string]any{
+		"modelId": "claude-opus-4-5",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeAISessionUpdate, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, "claude-opus-4-5", service.GetSessionModel(sid))
+}

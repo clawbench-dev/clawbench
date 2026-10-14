@@ -4,6 +4,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -607,27 +608,18 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if req.ModeID != "" {
-		// Persist mode change to DB context_state so it survives restarts
-		persistContextStateModeChange(sessionID, req.ModeID)
-		// Forward mode change to ACP agent so it updates its runtime state.
-		// The internal category key is passed ("mode"); SetSessionConfigOption
-		// resolves it to the config-option id the agent advertised (issue #429).
-		forwardSessionConfigOption(sessionID, "mode", req.ModeID)
-	}
-	if req.ThinkingEffort != "" {
-		// Persist thinking effort change to DB context_state so it survives restarts
-		persistContextStateThinkingEffortChange(sessionID, req.ThinkingEffort)
-		// "thought_level" is the internal category key; SetSessionConfigOption
-		// resolves it to the agent-advertised id (claude-agent-acp: "effort"),
-		// falling back to the historical "thinkingEffort" when unadvertised —
-		// otherwise the effort selector silently fails for agents whose id
-		// naming differs from ours (issue #429).
-		forwardSessionConfigOption(sessionID, "thought_level", req.ThinkingEffort)
-	}
+	// Whether the model switch could only be deferred to the next prompt
+	// (the agent was busy). Reported in the response body so the frontend can
+	// say so instead of claiming the switch already took effect.
+	modelSwitchDeferred := false
+	applySessionConfigSelections(sessionID, req.ModeID, req.ThinkingEffort)
 	if req.ModelID != "" {
-		//nolint:errcheck,gosec // best-effort persistence; failure is non-fatal for an idempotent update
-		service.UpdateSessionModel(sessionID, req.ModelID)
+		deferred, err := applyAndPersistSessionModel(r.Context(), sessionID, req.ModelID)
+		if err != nil {
+			writeModelSwitchError(w, r, err)
+			return
+		}
+		modelSwitchDeferred = deferred
 	}
 	if req.Transport != "" {
 		//nolint:errcheck,gosec // best-effort persistence; failure is non-fatal for an idempotent update
@@ -667,7 +659,7 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "modelSwitchDeferred": modelSwitchDeferred})
 }
 
 // applySessionTags replaces a session's tag set, filing any brand-new labels
@@ -741,6 +733,112 @@ func forwardSessionConfigOption(sessionID, category, value string) {
 		defer cancel()
 		conn.SetSessionConfigOption(ctx, category, value)
 	}()
+}
+
+// modelSwitchHTTPTimeout bounds the click-time model switch. Kept above the
+// agent-side budget (ai.modelSwitchTimeout, 30s) so the client is not the one
+// that gives up: a slow-but-successful switch must not be reported as a
+// failure. The frontend uses a slightly longer budget still (its own timeout
+// must outlast this handler).
+const modelSwitchHTTPTimeout = 35 * time.Second
+
+// applySessionModel pushes a model selection to the session's live ACP agent.
+//
+// Returns (deferred=false, nil) when the switch was applied now (or there was
+// nothing to push: no live connection — CLI transport, or an ACP session that
+// has not started yet).
+//
+// Returns (deferred=true, nil) when the agent rejected it transiently (busy /
+// timed out / connection dropped): the caller still persists the choice, and
+// the next prompt re-applies it — the "remember and defer" behavior.
+//
+// Returns a non-nil error only for a HARD rejection (e.g. the provider is not
+// connected), which would fail identically on every retry and must be reported
+// to the user immediately instead of being silently deferred.
+func applySessionModel(ctx context.Context, sessionID, modelID string) (deferred bool, err error) {
+	conn := ai.GetACPConnManager().GetConn(sessionID)
+	if conn == nil {
+		return false, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, modelSwitchHTTPTimeout)
+	defer cancel()
+
+	err = conn.ApplyModel(ctx, modelID)
+	if err == nil {
+		return false, nil
+	}
+	if ai.IsModelSwitchRetryable(err) {
+		// Keep the user's choice (the caller persists it) and re-apply on the
+		// next prompt — the same end state as any other agent, whose model has
+		// always been applied at prompt time.
+		slog.Info("model switch deferred to the next prompt",
+			"session_id", sessionID, "model", modelID, "error", err)
+		return true, nil
+	}
+	return false, err
+}
+
+// applySessionConfigSelections persists and forwards the mode / thinking-effort
+// selections, each only when the request actually carried one.
+//
+// Config ids are resolved to what the agent advertised (issue #429):
+// "mode" is the internal category key; "thought_level" resolves to
+// claude-agent-acp's "effort", falling back to the historical "thinkingEffort"
+// when unadvertised — otherwise the selector silently fails for agents whose id
+// naming differs from ours.
+func applySessionConfigSelections(sessionID, modeID, thinkingEffort string) {
+	if modeID != "" {
+		// Persist to DB context_state so it survives restarts.
+		persistContextStateModeChange(sessionID, modeID)
+		forwardSessionConfigOption(sessionID, "mode", modeID)
+	}
+	if thinkingEffort != "" {
+		persistContextStateThinkingEffortChange(sessionID, thinkingEffort)
+		forwardSessionConfigOption(sessionID, "thought_level", thinkingEffort)
+	}
+}
+
+// applyAndPersistSessionModel applies a model selection at CLICK time and
+// persists it.
+//
+// Applied at click time (not deferred to the next message) because the picker
+// wants immediate feedback and the user is standing there when they choose.
+//
+// Persist AFTER the apply, so a hard rejection (e.g. the provider is not
+// connected) is not written to the DB — while a retryable one (agent busy) still
+// is, which is the "remember and defer" behavior every other agent has always
+// had. Returns deferred=true for that case.
+func applyAndPersistSessionModel(ctx context.Context, sessionID, modelID string) (deferred bool, err error) {
+	deferred, err = applySessionModel(ctx, sessionID, modelID)
+	if err != nil {
+		return false, err
+	}
+	//nolint:errcheck,gosec // best-effort persistence; failure is non-fatal for an idempotent update
+	service.UpdateSessionModel(sessionID, modelID)
+	return deferred, nil
+}
+
+// writeModelSwitchError maps a rejected model switch to an HTTP response the
+// frontend can toast. The agent's own explanation (data.details) rides in
+// Detail so the toast can name the real cause (e.g. which provider to connect).
+func writeModelSwitchError(w http.ResponseWriter, r *http.Request, err error) {
+	var mse *ai.ModelSwitchError
+	if !errors.As(err, &mse) {
+		slog.Warn("model switch failed", "error", err)
+		writeLocalizedErrorf(w, r, http.StatusBadGateway, "ModelSwitchFailed")
+		return
+	}
+	slog.Warn("model switch rejected", "code", mse.Code, "detail", mse.Detail)
+	if mse.Detail == "" {
+		// No agent explanation to add — use the bare key rather than a message
+		// that dangles on a colon.
+		writeLocalizedErrorf(w, r, http.StatusUnprocessableEntity, "ModelSwitchFailed")
+		return
+	}
+	// The template key is Detail so the agent's own explanation reaches the
+	// toast text (e.g. which provider to connect); the same map also lands in
+	// ErrorResponse.Detail for a client that wants it structured.
+	writeLocalizedErrorf(w, r, http.StatusUnprocessableEntity, "ModelSwitchFailedDetail", map[string]any{"Detail": mse.Detail})
 }
 
 // attachSessionTags batch-loads tags for a page of sessions and sets them in

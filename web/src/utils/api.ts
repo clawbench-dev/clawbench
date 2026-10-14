@@ -133,7 +133,15 @@ export async function apiPatch<T = unknown>(url: string, body: unknown, opts: Ap
             signal,
         })
         const data = await resp.json().catch(() => ({})) as Record<string, unknown>
-        if (!resp.ok) throw new Error(data.error ? String(data.error) : resp.statusText)
+        if (!resp.ok) {
+            const err = new Error(data.error ? String(data.error) : resp.statusText)
+            // Carry the server's machine-readable key/detail so callers can
+            // branch on them (same contract as apiPost/apiGet).
+            const typedErr = err as Error & { msgKey?: string; detail?: unknown }
+            if (data.msgKey) typedErr.msgKey = String(data.msgKey)
+            if (data.detail) typedErr.detail = data.detail
+            throw err
+        }
         return data as T
     } finally {
         cleanup()

@@ -615,6 +615,10 @@ export default {
     },
     modelSwitcher: {
       title: '模型',
+      switching: '正在切换模型…',
+      deferred: '会话忙碌，将在下次发送时切换',
+      switchFailed: '切换模型失败',
+      switchFailedDetail: '切换模型失败：{detail}',
     },
     modeSwitcher: {
       title: '模式',

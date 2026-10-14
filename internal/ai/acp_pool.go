@@ -2486,6 +2486,78 @@ func (c *ACPConn) SetRawCallFnForTest(fn func(ctx context.Context, method string
 	c.mu.Unlock()
 }
 
+// RawCallRecordForTest is one captured raw JSON-RPC call.
+type RawCallRecordForTest struct {
+	Method string
+	Params map[string]any
+}
+
+// RawCallRecorderForTest captures raw calls made through CallRaw.
+type RawCallRecorderForTest struct {
+	mu    sync.Mutex
+	calls []RawCallRecordForTest
+}
+
+// Calls returns a copy of the recorded calls.
+func (r *RawCallRecorderForTest) Calls() []RawCallRecordForTest {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]RawCallRecordForTest, len(r.calls))
+	copy(out, r.calls)
+	return out
+}
+
+// CaptureRawCallsForTest installs a raw-RPC hook that records every call and
+// succeeds. Lets a caller outside package ai assert what was sent (e.g. that a
+// click-time model switch issued session/set_model). Production code must not
+// use this.
+func CaptureRawCallsForTest(c *ACPConn) *RawCallRecorderForTest {
+	rec := &RawCallRecorderForTest{}
+	c.SetRawCallFnForTest(func(_ context.Context, method string, params any) (json.RawMessage, error) {
+		m, _ := params.(map[string]any)
+		rec.mu.Lock()
+		rec.calls = append(rec.calls, RawCallRecordForTest{Method: method, Params: m})
+		rec.mu.Unlock()
+		return nil, nil
+	})
+	return rec
+}
+
+// FailRawCallsForTest installs a raw-RPC hook that fails every call with the
+// given JSON-RPC error (optionally with a data.details payload). Production
+// code must not use this.
+func FailRawCallsForTest(c *ACPConn, code int, message string) {
+	c.SetRawCallFnForTest(func(context.Context, string, any) (json.RawMessage, error) {
+		return nil, &RawRPCError{Code: code, Message: message}
+	})
+}
+
+// FailRawCallsWithDetailForTest is FailRawCallsForTest with a JSON-RPC data
+// payload, for asserting that an agent's own explanation reaches the response.
+// Production code must not use this.
+func FailRawCallsWithDetailForTest(c *ACPConn, code int, message, data string) {
+	c.SetRawCallFnForTest(func(context.Context, string, any) (json.RawMessage, error) {
+		return nil, &RawRPCError{Code: code, Message: message, Data: json.RawMessage(data)}
+	})
+}
+
+// RegisterModelSwitchMethodForTest overrides the model-switch method lookup so a
+// test can make an arbitrary backend id honor a given method. Restores the
+// previous lookup on cleanup. Production code must not use this.
+func RegisterModelSwitchMethodForTest(t interface{ Cleanup(func()) }, backendID, method string) {
+	prev := LookupACPModelSwitchMethodFn
+	LookupACPModelSwitchMethodFn = func(id string) string {
+		if id == backendID {
+			return method
+		}
+		if prev != nil {
+			return prev(id)
+		}
+		return ""
+	}
+	t.Cleanup(func() { LookupACPModelSwitchMethodFn = prev })
+}
+
 // SetRecoveryRPCsFnForTest overrides the session/resume and session/load RPCs so
 // the crash-recovery fallback (recoverExistingSession) can be unit-tested without
 // a live agent process. Either fn may be nil to fall through to the real call.

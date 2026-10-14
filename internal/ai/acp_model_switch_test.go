@@ -298,3 +298,96 @@ func TestACPRawRPCErrorText_Wrapped(t *testing.T) {
 	code, _ := acpErrorDetails(err)
 	assert.Equal(t, -32602, code)
 }
+
+// ---------------------------------------------------------------------------
+// ApplyModel (click-time path) + failure classification
+// ---------------------------------------------------------------------------
+
+// The click-time entry point must dispatch exactly like the pre-prompt path.
+func TestApplyModel_SetModelBackend(t *testing.T) {
+	withModelSwitchMethod(t, "hermes", "session/set_model")
+	conn := newConnForModelSwitchTest(t, "hermes")
+	rec := &rawCallRecorder{}
+	conn.SetRawCallFnForTest(rec.hook)
+
+	require.NoError(t, conn.ApplyModel(context.Background(), "minimax:MiniMax-M3"))
+
+	calls := rec.all()
+	require.Len(t, calls, 1)
+	assert.Equal(t, "session/set_model", calls[0].method)
+	assert.Equal(t, "minimax:MiniMax-M3", calls[0].params["modelId"])
+}
+
+// No session yet: the persisted value is what the first Prompt applies, so
+// there is nothing to push and it must not be reported as a failure.
+func TestApplyModel_NoSessionIsNoOp(t *testing.T) {
+	withModelSwitchMethod(t, "hermes", "session/set_model")
+	agent := &model.Agent{ID: "hermes-nosid", Backend: "hermes", AcpCommand: "echo"}
+	conn := newACPConn(agent, "hermes-nosid")
+	conn.SetAliveForTest() // alive but no session mapping
+	rec := &rawCallRecorder{}
+	conn.SetRawCallFnForTest(rec.hook)
+
+	require.NoError(t, conn.ApplyModel(context.Background(), "m1"))
+	assert.Empty(t, rec.all(), "no session → no RPC")
+}
+
+// A successful click-time apply records the value, so the very next Prompt
+// (which re-applies the selection every turn) dedups instead of re-sending.
+func TestApplyModel_DedupsNextPrompt(t *testing.T) {
+	withModelSwitchMethod(t, "hermes", "session/set_model")
+	conn := newConnForModelSwitchTest(t, "hermes")
+	rec := &rawCallRecorder{}
+	conn.SetRawCallFnForTest(rec.hook)
+
+	require.NoError(t, conn.ApplyModel(context.Background(), "m1"))
+	require.NoError(t, conn.applyModelSelection(context.Background(), "acp-sid-hermes", "m1"))
+	assert.Len(t, rec.all(), 1, "the prompt must not re-send an already-applied model")
+}
+
+// "Session is busy" is transient: the user's choice is kept and retried.
+func TestClassifyModelSwitchFailure_BusyIsRetryable(t *testing.T) {
+	err := classifyModelSwitchFailure(&RawRPCError{
+		Code:    -32603,
+		Message: "Session is busy; switch models while the session is idle",
+	})
+	assert.True(t, IsModelSwitchRetryable(err), "a busy session must be retryable")
+
+	mse, ok := AsModelSwitchError(err)
+	require.True(t, ok)
+	assert.Equal(t, -32603, mse.Code)
+}
+
+// Hermes raises -32603 for a FAILED REBUILD too (not just busy), so the code
+// alone must not be treated as transient.
+func TestClassifyModelSwitchFailure_InternalErrorNotRetryable(t *testing.T) {
+	err := classifyModelSwitchFailure(&RawRPCError{
+		Code:    -32603,
+		Message: "Internal error",
+		Data:    json.RawMessage(`{"details":"provider disabled"}`),
+	})
+	assert.False(t, IsModelSwitchRetryable(err), "a failed rebuild is not transient")
+
+	mse, ok := AsModelSwitchError(err)
+	require.True(t, ok)
+	assert.Equal(t, "provider disabled", mse.Detail, "the agent's detail must be preserved")
+}
+
+// A provider that is not connected fails identically on retry → report it now.
+func TestClassifyModelSwitchFailure_InvalidParamsNotRetryable(t *testing.T) {
+	err := classifyModelSwitchFailure(&RawRPCError{
+		Code:    -32602,
+		Message: "Invalid params",
+		Data:    json.RawMessage(`{"details":"GitHub Copilot is not connected"}`),
+	})
+	assert.False(t, IsModelSwitchRetryable(err))
+
+	mse, _ := AsModelSwitchError(err)
+	assert.Equal(t, "GitHub Copilot is not connected", mse.Detail)
+}
+
+// A timeout / dead connection is transient (the next prompt retries).
+func TestClassifyModelSwitchFailure_TimeoutRetryable(t *testing.T) {
+	assert.True(t, IsModelSwitchRetryable(classifyModelSwitchFailure(context.DeadlineExceeded)))
+	assert.True(t, IsModelSwitchRetryable(classifyModelSwitchFailure(errRawConnClosed)))
+}

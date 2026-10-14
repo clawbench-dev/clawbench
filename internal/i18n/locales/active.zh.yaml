@@ -131,6 +131,8 @@ InvalidSHA: 无效的提交SHA格式
 InvalidBranchName: 无效的分支名
 ModelDiscoveryNotSupported: 该智能体不支持模型自动发现
 ModelDiscoveryFailed: 模型发现未返回结果
+ModelSwitchFailed: 切换模型失败
+ModelSwitchFailedDetail: 切换模型失败：{{.Detail}}
 CLINotFound: 未找到CLI工具，请先安装
 CustomURLOpenAIFormat: OpenAI 格式的自定义 URL 应以 /chat/completions 结尾
 CustomURLAnthropicFormat: Anthropic 格式的自定义 URL 应以 /v1/messages 结尾
