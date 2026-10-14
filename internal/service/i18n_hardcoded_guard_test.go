@@ -229,6 +229,10 @@ func TestNoNewHardcodedUserVisibleCJK(t *testing.T) {
 			return nil
 		}
 		rel, _ := filepath.Rel(root, path)
+		// The allowlist keys are slash-separated repo paths; filepath.Rel uses
+		// the OS separator (backslash on Windows), so normalize before lookup or
+		// every allowlisted file is reported as an offender there.
+		rel = filepath.ToSlash(rel)
 		if _, ok := allowedCJKFiles[rel]; ok {
 			return nil
 		}

@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -944,6 +945,9 @@ func TestPersist_ExplicitPasswordPatch_NotStripped(t *testing.T) {
 // config.yaml itself (0600). copyFile would create it 0664 from the raw on-disk
 // bytes — which still carry the leaked plaintext.
 func TestPersist_AutoPasswordStrippedFromBackupToo(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on Windows: the file-permission model differs (mode bits are not enforced)")
+	}
 	_, cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 

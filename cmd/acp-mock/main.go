@@ -38,6 +38,7 @@ type mockSession struct {
 	cancel         context.CancelFunc
 	mode           string
 	thinkingEffort string
+	model          string
 	messages       []mockMessage // in-memory history (loaded from disk on resume/load)
 }
 
@@ -73,8 +74,42 @@ const (
 	effortHighName   = "High"
 )
 
+// Model constants. A real ACP agent reports its model list as a
+// `category: "model"` session config option in the session/new response — it is
+// how the client learns which models the agent can actually run. The mock must
+// do the same: without it, ClawBench's "ACP unconfirmed → hide CLI guess list"
+// gate (see ai.HasConfirmedACPModels) correctly hides the agent's CLI-discovered
+// models, and the model picker renders empty.
+const (
+	modelProID    = "mock-pro"
+	modelProName  = "Mock Pro"
+	modelFastID   = "mock-fast"
+	modelFastName = "Mock Fast"
+)
+
 // Config option types (ACP protocol field).
 const configOptionTypeSelect = "select"
+
+// modelConfigOption builds the `category: "model"` session config option a real
+// ACP agent reports at session/new. current is the agent's selected model id.
+func modelConfigOption(current string) acp.SessionConfigOption {
+	category := acp.SessionConfigOptionCategoryModel
+	return acp.SessionConfigOption{
+		Select: &acp.SessionConfigOptionSelect{
+			Id:           acp.SessionConfigId("model"),
+			Name:         "Model",
+			Type:         configOptionTypeSelect,
+			Category:     &category,
+			CurrentValue: acp.SessionConfigValueId(current),
+			Options: acp.SessionConfigSelectOptions{
+				Ungrouped: &acp.SessionConfigSelectOptionsUngrouped{
+					acp.SessionConfigSelectOption{Name: modelProName, Value: acp.SessionConfigValueId(modelProID)},
+					acp.SessionConfigSelectOption{Name: modelFastName, Value: acp.SessionConfigValueId(modelFastID)},
+				},
+			},
+		},
+	}
+}
 
 // acpMockOmitPermRawInputMarker in a user prompt makes the mock reproduce
 // Cursor's permission framing: the tool_call carries rawInput but the
@@ -105,7 +140,7 @@ func (a *mockACPAgent) Logout(ctx context.Context, params acp.LogoutRequest) (ac
 func (a *mockACPAgent) NewSession(ctx context.Context, params acp.NewSessionRequest) (acp.NewSessionResponse, error) {
 	sid := randomID()
 	a.mu.Lock()
-	a.sessions[sid] = &mockSession{mode: modeBypass, thinkingEffort: effortMedium}
+	a.sessions[sid] = &mockSession{mode: modeBypass, thinkingEffort: effortMedium, model: modelProID}
 	a.mu.Unlock()
 	modeCategory := acp.SessionConfigOptionCategoryMode
 	thoughtLevelCategory := acp.SessionConfigOptionCategoryThoughtLevel
@@ -121,6 +156,7 @@ func (a *mockACPAgent) NewSession(ctx context.Context, params acp.NewSessionRequ
 			CurrentModeId: acp.SessionModeId(modeBypass),
 		},
 		ConfigOptions: []acp.SessionConfigOption{
+			modelConfigOption(modelProID),
 			{
 				Select: &acp.SessionConfigOptionSelect{
 					Id:           acp.SessionConfigId("mode"),
@@ -192,7 +228,7 @@ func (a *mockACPAgent) LoadSession(ctx context.Context, params acp.LoadSessionRe
 	a.mu.Lock()
 	s, ok := a.sessions[sid]
 	if !ok {
-		s = &mockSession{mode: modeCode, thinkingEffort: effortMedium}
+		s = &mockSession{mode: modeCode, thinkingEffort: effortMedium, model: modelProID}
 		a.sessions[sid] = s
 	}
 	// Cache the loaded history in-memory: a reused process returns this cached
@@ -202,6 +238,7 @@ func (a *mockACPAgent) LoadSession(ctx context.Context, params acp.LoadSessionRe
 	if len(s.messages) == 0 {
 		s.messages = a.loadMessages(sid)
 	}
+	curModel := s.model
 	a.mu.Unlock()
 
 	// Replay the session's actual chat history (recorded by Prompt / external
@@ -235,6 +272,7 @@ func (a *mockACPAgent) LoadSession(ctx context.Context, params acp.LoadSessionRe
 			CurrentModeId: acp.SessionModeId(modeCode),
 		},
 		ConfigOptions: []acp.SessionConfigOption{
+			modelConfigOption(curModel),
 			{
 				Select: &acp.SessionConfigOptionSelect{
 					Id:           acp.SessionConfigId("mode"),
@@ -277,7 +315,7 @@ func (a *mockACPAgent) ResumeSession(ctx context.Context, params acp.ResumeSessi
 	s, ok := a.sessions[sid]
 	if !ok || s == nil {
 		// Session not found — treat as new session with the given ID
-		s = &mockSession{mode: modeBypass, thinkingEffort: effortMedium}
+		s = &mockSession{mode: modeBypass, thinkingEffort: effortMedium, model: modelProID}
 		a.sessions[sid] = s
 	}
 	s.messages = a.loadMessages(sid)
@@ -296,6 +334,7 @@ func (a *mockACPAgent) ResumeSession(ctx context.Context, params acp.ResumeSessi
 			CurrentModeId: acp.SessionModeId(s.mode),
 		},
 		ConfigOptions: []acp.SessionConfigOption{
+			modelConfigOption(s.model),
 			{
 				Select: &acp.SessionConfigOptionSelect{
 					Id:           acp.SessionConfigId("mode"),
@@ -353,6 +392,8 @@ func (a *mockACPAgent) SetSessionConfigOption(ctx context.Context, params acp.Se
 				s.mode = string(params.ValueId.Value)
 			case "thinkingEffort":
 				s.thinkingEffort = string(params.ValueId.Value)
+			case "model":
+				s.model = string(params.ValueId.Value)
 			}
 		}
 		a.mu.Unlock()
@@ -650,7 +691,7 @@ func (a *mockACPAgent) appendMessage(sid, role, text string) {
 	a.mu.Lock()
 	s, ok := a.sessions[sid]
 	if !ok || s == nil {
-		s = &mockSession{mode: modeBypass, thinkingEffort: effortMedium}
+		s = &mockSession{mode: modeBypass, thinkingEffort: effortMedium, model: modelProID}
 		a.sessions[sid] = s
 	}
 	s.messages = append(s.messages, mockMessage{Role: role, Text: text})

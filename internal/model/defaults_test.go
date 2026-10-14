@@ -3,6 +3,7 @@ package model
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -519,6 +520,9 @@ func TestApplyDefaults_NonMatchingUserPasswordPreserved(t *testing.T) {
 // strip by clearing the marker — deleting it would destroy the live password,
 // and a bogus marker could strip a genuine user password from config.yaml.
 func TestApplyDefaults_UnreadableAutoPasswordFileUntouched(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on Windows: chmod 0o000 does not make a file unreadable (mode bits are not enforced)")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("running as root: file permissions are not enforced")
 	}
