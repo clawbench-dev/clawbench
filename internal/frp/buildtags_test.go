@@ -108,8 +108,8 @@ func TestBuildTagSplit_AvailableExistsInBothVariants(t *testing.T) {
 	// It must be defined in exactly one file per variant — a missing definition
 	// breaks the build, a duplicate breaks it differently — so assert each
 	// variant defines it and neither imports the library.
-	real := readSource(t, "manager.go")
+	realSrc := readSource(t, "manager.go")
 	stub := readSource(t, "manager_nofrp.go")
-	assert.Contains(t, real, "func Available() bool { return true }")
+	assert.Contains(t, realSrc, "func Available() bool { return true }")
 	assert.Contains(t, stub, "func Available() bool { return false }")
 }
