@@ -267,16 +267,15 @@ func TestOpenAITTS_EmptyBodyIsAnError(t *testing.T) {
 	}
 }
 
-// A malformed data line (a vendor keepalive, or a truncated frame) must be
-// skipped rather than aborting an otherwise good stream — and events that
-// carry no audio must not push an empty frame onto the chunk channel, which
-// would surface as a zero-length WebSocket binary frame.
-func TestOpenAITTS_SkipsMalformedSSELines(t *testing.T) {
+// Events that carry no audio — `speech.audio.done`, an audio-less delta, and
+// the `[DONE]` sentinel — must be skipped, and a `:` comment keepalive must not
+// be mistaken for data. None of these may push an empty frame onto the chunk
+// channel, which would surface as a zero-length WebSocket binary frame.
+func TestOpenAITTS_SkipsAudioLessSSEFrames(t *testing.T) {
 	good := []byte("good-audio")
 
 	var body strings.Builder
 	body.WriteString(": keepalive comment\n\n")
-	body.WriteString("data: not-json\n\n")
 	body.WriteString("data: {\"type\":\"speech.audio.delta\"}\n\n")                // no audio field
 	body.WriteString("data: {\"type\":\"speech.audio.delta\",\"audio\":\"\"}\n\n") // empty audio
 	body.WriteString("data: [DONE]\n\n")
@@ -309,6 +308,106 @@ func TestOpenAITTS_SkipsMalformedSSELines(t *testing.T) {
 	}
 	if !bytes.Equal(got[0], good) {
 		t.Fatalf("chunk = %q, want %q", got[0], good)
+	}
+}
+
+// A non-standard `speech.audio.delta` payload must fail fast. The spec types
+// `audio` as a base64 STRING; a server that nests it as an object
+// ({"audio":{"data":"…"}}) is non-compliant, and silently discarding the line
+// turns a clear format error into a 0-byte file plus a generic "no audio"
+// message. Fail loudly, and name the malformed payload.
+func TestOpenAITTS_NonStandardDeltaFailsFast(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload string
+	}{
+		{"nested audio object", `{"type":"speech.audio.delta","audio":{"data":"QUJD"}}`},
+		{"not json", `not-json`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = io.WriteString(w, "data: "+tc.payload+"\n\n")
+			}))
+			defer srv.Close()
+
+			p := newTestProvider(t, srv)
+			out := filepath.Join(t.TempDir(), "out.mp3")
+			err := p.Synthesize(context.Background(), "hi", out, "en")
+			if err == nil {
+				t.Fatal("expected a hard error for a non-standard delta payload")
+			}
+			// The error must flag the malformed line, not masquerade as the
+			// generic no-audio failure that hides the real cause.
+			if !strings.Contains(err.Error(), "malformed") {
+				t.Fatalf("error = %q, want it to flag the malformed SSE payload", err)
+			}
+			if strings.Contains(err.Error(), "no audio") {
+				t.Fatalf("error = %q, must not degrade into the generic no-audio failure", err)
+			}
+			if _, statErr := os.Stat(out); statErr == nil {
+				t.Fatal("a failed synthesis must not leave an output file behind")
+			}
+		})
+	}
+}
+
+// The stream_format sent first must follow the spec's per-model capability.
+// tts-1 / tts-1-hd explicitly do NOT support stream_format=sse, so requesting
+// it is a spec violation — and a server that answers 200 + SSE anyway defeats
+// the 400-based fallback, stranding the client on a stream it cannot parse.
+func TestOpenAITTS_ModelSelectsInitialStreamFormat(t *testing.T) {
+	cases := []struct {
+		model string
+		want  string
+	}{
+		{"gpt-4o-mini-tts", "sse"},
+		{"tts-1", "audio"},
+		{"tts-1-hd", "audio"},
+		{"tts-1-1106", "audio"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.model, func(t *testing.T) {
+			var formats []string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body map[string]any
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				formats = append(formats, body["stream_format"].(string))
+				w.Header().Set("Content-Type", "audio/mpeg")
+				_, _ = w.Write([]byte("audio"))
+			}))
+			defer srv.Close()
+
+			p := newTestProvider(t, srv)
+			p.Model = tc.model
+			out := filepath.Join(t.TempDir(), "out.mp3")
+			if err := p.Synthesize(context.Background(), "hi", out, "en"); err != nil {
+				t.Fatalf("Synthesize: %v", err)
+			}
+			if len(formats) != 1 || formats[0] != tc.want {
+				t.Fatalf("stream_format attempts = %v, want exactly [%s]", formats, tc.want)
+			}
+		})
+	}
+}
+
+func TestModelSupportsSSE(t *testing.T) {
+	cases := []struct {
+		model string
+		want  bool
+	}{
+		{"gpt-4o-mini-tts", true},
+		{"tts-1", false},
+		{"tts-1-hd", false},
+		{"tts-1-1106", false},
+		{"tts-1-hd-1106", false},
+		{"some-custom-model", true},
+	}
+	for _, tc := range cases {
+		if got := modelSupportsSSE(tc.model); got != tc.want {
+			t.Errorf("modelSupportsSSE(%q) = %v, want %v", tc.model, got, tc.want)
+		}
 	}
 }
 

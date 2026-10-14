@@ -45,6 +45,11 @@ const openAITTSTimeout = 150 * time.Second
 // transparently retries with "audio" on a 400. A compatible server that merely
 // ignores the parameter is detected from the response Content-Type instead of
 // the status code, so no retry is needed in that case.
+//
+// The spec names `tts-1` / `tts-1-hd` as NOT supporting `stream_format: "sse"`,
+// so those models skip the SSE attempt entirely (see modelSupportsSSE). Asking
+// anyway is a spec violation, and a server that answers 200 + SSE instead of
+// 400 would strand the client on a stream it should never have requested.
 type OpenAITTSProvider struct {
 	// BaseURL is the OpenAI-compatible API root, e.g.
 	// "https://api.openai.com/v1" or "https://host/v1/audio/speech".
@@ -201,16 +206,27 @@ func (p *OpenAITTSProvider) SynthesizeStream(ctx context.Context, text string, o
 // synthesize performs the request, preferring SSE and falling back to the raw
 // audio body. It returns the number of audio bytes written to w.
 func (p *OpenAITTSProvider) synthesize(ctx context.Context, text string, w io.Writer) (int64, error) {
-	resp, err := p.doRequest(ctx, text, "sse")
+	// Only ask for SSE when the model is documented to support it. Requesting
+	// it for tts-1 / tts-1-hd is a spec violation, and a server that ignores
+	// the spec and returns 200 + SSE anyway would defeat the 400 fallback
+	// below, leaving the client parsing a stream it never should have asked
+	// for.
+	streamFormat := "audio"
+	if modelSupportsSSE(p.Model) {
+		streamFormat = "sse"
+	}
+
+	resp, err := p.doRequest(ctx, text, streamFormat)
 	if err != nil {
 		return 0, err
 	}
 
 	// A 400 on the SSE attempt means the model does not support
-	// stream_format=sse (tts-1 / tts-1-hd). Retry with the raw audio body,
-	// which every model supports. The body is fully drained first so the
-	// connection can be reused.
-	if resp.StatusCode == http.StatusBadRequest {
+	// stream_format=sse. Retry with the raw audio body, which every model
+	// supports. The body is fully drained first so the connection can be
+	// reused. This only applies when we actually asked for SSE — a 400 on an
+	// `audio` request is a genuine error and must surface as one.
+	if streamFormat == "sse" && resp.StatusCode == http.StatusBadRequest {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		_ = resp.Body.Close()
 		slog.Warn(
@@ -294,8 +310,27 @@ func isEventStream(contentType string) bool {
 	return strings.Contains(strings.ToLower(contentType), "text/event-stream")
 }
 
+// modelSupportsSSE reports whether a TTS model accepts stream_format="sse".
+//
+// The OpenAI spec states that `tts-1` and `tts-1-hd` (and their dated
+// snapshots) do NOT support SSE streaming. Every other model — including
+// `gpt-4o-mini-tts` and compatible-server models unknown to us — is assumed to
+// support it, so the capability is denied by name rather than allow-listed.
+func modelSupportsSSE(model string) bool {
+	switch model {
+	case "tts-1", "tts-1-hd", "tts-1-1106", "tts-1-hd-1106":
+		return false
+	default:
+		return true
+	}
+}
+
 // sseAudioEvent is the subset of a `speech.audio.delta` event we consume.
 // The `type` field is read but not required — a compatible server may omit it.
+//
+// `audio` is a base64 STRING per the spec. A non-string value (notably the
+// nested object `{"audio":{"data":"…"}}` some servers emit) fails to unmarshal
+// and is treated as fatal — see streamSSEAudio.
 type sseAudioEvent struct {
 	Type  string `json:"type"`
 	Audio string `json:"audio"`
@@ -304,10 +339,13 @@ type sseAudioEvent struct {
 // streamSSEAudio decodes `speech.audio.delta` events from an SSE body and
 // writes each chunk to w, returning the total bytes written.
 //
-// Events carrying no audio (notably `speech.audio.done`, which reports usage)
-// and lines that are not `data:` are skipped. A malformed data line is skipped
-// rather than fatal: the endpoint is implemented by multiple vendors and one
-// non-JSON keepalive line should not discard an otherwise good stream.
+// Events that legitimately carry no audio (`speech.audio.done`, an audio-less
+// delta, the `[DONE]` sentinel) and non-`data:` lines are skipped. But a
+// `data:` line that fails to decode is FATAL, not skipped: the spec types
+// `audio` as a base64 string, so a payload we cannot parse is a non-compliant
+// server, and swallowing it would turn a clear format error into a 0-byte file
+// plus a misleading "no audio data" message. Failing here names the offending
+// payload so the provider bug is visible in seconds.
 func streamSSEAudio(r io.Reader, w io.Writer) (int64, error) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxSSELineBytes)
@@ -323,12 +361,9 @@ func streamSSEAudio(r io.Reader, w io.Writer) (int64, error) {
 			continue
 		}
 
-		// Events that carry no audio (notably `speech.audio.done`, which
-		// reports usage) and non-JSON keepalive lines both fall through here:
-		// an empty `audio` field decodes to zero bytes and is skipped below.
 		var ev sseAudioEvent
 		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
-			continue
+			return total, fmt.Errorf("openai-tts: malformed speech.audio.delta payload %q: %w", truncateForError(payload), err)
 		}
 
 		chunk, err := base64.StdEncoding.DecodeString(ev.Audio)
@@ -348,4 +383,14 @@ func streamSSEAudio(r io.Reader, w io.Writer) (int64, error) {
 		return total, fmt.Errorf("openai-tts: failed to read event stream: %w", err)
 	}
 	return total, nil
+}
+
+// truncateForError bounds a payload echoed into an error message. A malformed
+// line can be large (base64 audio), and the message is logged and surfaced.
+func truncateForError(s string) string {
+	const maxLen = 256
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "…"
 }
