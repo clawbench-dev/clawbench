@@ -998,19 +998,26 @@ func (o *GroupOrchestrator) runRounds(ctx context.Context, groupID string) Drain
 // return those values immediately; when false the caller proceeds to route the
 // host's parsed mentions normally.
 //
-// In AUTO-CRUISE (design §15) the two "hand the floor back" points — the host
-// asking the user a question and the host's <clawbench-group-end/> — do NOT end
-// the turn; they trigger a confirmation round instead. A host that declares the
-// goal met (<clawbench-goal-satisfied/>) confirms directly. Outside cruise, both
-// points end the turn as before.
+// In AUTO-CRUISE (design §15) the "hand the floor back to the human" points do
+// NOT end the turn; they trigger a confirmation round instead. THREE of them are
+// reachable on a host turn: the host asking the user a question, the host's
+// <clawbench-group-end/>, and the host @-naming the user ("User"). The @User case
+// MUST be intercepted too: otherwise resolveSpeakerGroups yields a user turn
+// that the executors silently DROP (cruise never hands back), drainSpeakers sees
+// stop=false, and the host is re-run forever — an unbounded loop, since host
+// turns are not counted toward the speech cap. A host that declares the goal met
+// (<clawbench-goal-satisfied/>) confirms directly, and that wins over any
+// co-emitted end tag / mention (design §15.5). Outside cruise, question and end
+// end the turn as before.
 func (o *GroupOrchestrator) hostTurnOutcome(ctx context.Context, s groupTurnSetup, hostMemberID, hostSysPrompt string, hostRes groupMemberResult, route grouprouting.Result) ([]speakerGroup, bool, DrainResult, bool) {
 	if o.cruise {
-		if hostRes.AskedQuestion || route.End {
-			groups, ok, res := o.runCruiseConfirmHost(ctx, s, hostMemberID, hostSysPrompt)
-			return groups, ok, res, true
-		}
+		// goal-satisfied wins over everything else in the same turn.
 		if route.GoalSatisfied {
 			groups, ok, res := o.confirmCruiseDone(ctx, s, hostMemberID)
+			return groups, ok, res, true
+		}
+		if hostRes.AskedQuestion || route.End || routeNamesUser(route, s.members) {
+			groups, ok, res := o.runCruiseConfirmHost(ctx, s, hostMemberID, hostSysPrompt)
 			return groups, ok, res, true
 		}
 		return nil, false, DrainResult{}, false
@@ -1026,6 +1033,47 @@ func (o *GroupOrchestrator) hostTurnOutcome(ctx context.Context, s groupTurnSetu
 		return nil, false, DrainResult{}, true
 	}
 	return nil, false, DrainResult{}, false
+}
+
+// routeNamesUser reports whether any PUBLIC route target resolves to the human
+// user (by display name or row id). Host-mode cruise uses it to treat an @User
+// as a hand-back point (design §15.4): the executors drop a user turn in cruise,
+// so letting it through would spin the loop.
+func routeNamesUser(route grouprouting.Result, members []GroupMember) bool {
+	if !route.Found {
+		return false
+	}
+	byID, byName := memberLookups(members)
+	for _, gr := range route.Groups {
+		for _, tgt := range gr.Members {
+			if m, ok := lookupMember(tgt, byID, byName); ok && m.ID == groupUserTargetID {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// resolveCruiseSpeakerGroups is resolveSpeakerGroups with the human user DROPPED:
+// cruise never hands the floor back, so a user turn would be a silent no-op that
+// spins the loop. A route that named only the user therefore yields no groups,
+// and the caller falls back to round-robin (which keeps the discussion moving and
+// consumes budget).
+func resolveCruiseSpeakerGroups(route grouprouting.Result, members []GroupMember, excludeID string, turnFor func(GroupMember, string) speakerTurn) []speakerGroup {
+	groups := resolveSpeakerGroups(route, members, excludeID, turnFor)
+	out := make([]speakerGroup, 0, len(groups))
+	for _, g := range groups {
+		turns := make([]speakerTurn, 0, len(g.turns))
+		for _, t := range g.turns {
+			if t.member.ID != groupUserTargetID {
+				turns = append(turns, t)
+			}
+		}
+		if len(turns) > 0 {
+			out = append(out, speakerGroup{parallel: g.parallel, turns: turns})
+		}
+	}
+	return out
 }
 
 // runCruiseConfirmHost runs ONE host-mode auto-cruise confirmation round (design
@@ -1071,10 +1119,12 @@ func (o *GroupOrchestrator) runCruiseConfirmHost(ctx context.Context, s groupTur
 	if route.GoalSatisfied {
 		return o.confirmCruiseDone(ctx, s, hostMemberID)
 	}
-	// Not satisfied: continue with whatever the host routed. Dropping an empty
-	// route to a round-robin fallback lets the next host turn re-route; the
-	// parse-failure streak is NOT advanced here (the host did speak cleanly).
-	if groups := resolveSpeakerGroups(route, s.members, hostMemberID, func(m GroupMember, instruction string) speakerTurn {
+	// Not satisfied: continue with whatever the host routed, DROPPING any user
+	// turn (cruise never hands back — a user turn would be a silent no-op that
+	// spins the loop). Dropping an empty route to a round-robin fallback lets the
+	// next host turn re-route; the parse-failure streak is NOT advanced here (the
+	// host did speak cleanly).
+	if groups := resolveCruiseSpeakerGroups(route, s.members, hostMemberID, func(m GroupMember, instruction string) speakerTurn {
 		return memberTurn(m, instruction, s)
 	}); len(groups) > 0 {
 		return groups, true, DrainResult{}
@@ -1275,13 +1325,16 @@ func (o *GroupOrchestrator) cruiseFreeRound(ctx context.Context, s groupTurnSetu
 // @-mentions are discarded (onSpoke is nil). It returns whether the goal was
 // confirmed (≥ ceil(active/2) declarations) and the round's DrainResult.
 func (o *GroupOrchestrator) runFreeConfirmRound(ctx context.Context, s groupTurnSetup) (bool, DrainResult) {
-	writeGroupSystemMessage(o.project, o.groupID,
-		i18n.T(i18n.LocalizerForLocale(model.Language), "GroupCruiseConfirming"))
-
+	// Guard BEFORE announcing: with no active members there is no round to run,
+	// so the "checking with the members" line would be user-visible noise with no
+	// verdict behind it.
 	active := activeMembers(s.members)
 	if len(active) == 0 {
 		return false, DrainResult{}
 	}
+	writeGroupSystemMessage(o.project, o.groupID,
+		i18n.T(i18n.LocalizerForLocale(model.Language), "GroupCruiseConfirming"))
+
 	g := speakerGroup{}
 	for _, m := range active {
 		g.turns = append(g.turns, speakerTurn{

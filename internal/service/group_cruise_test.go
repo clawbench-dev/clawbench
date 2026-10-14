@@ -117,6 +117,88 @@ func TestCruiseHost_EndTagTriggersConfirmationAndHostConfirms(t *testing.T) {
 	}
 }
 
+// A host that @-names the USER while cruising must NOT spin forever: cruise
+// never hands the floor back, so an un-intercepted @User route yields a dropped
+// turn, the loop re-runs the host, and (host turns not counting toward the cap)
+// it would never stop. The @User must be treated as a confirmation trigger.
+func TestCruiseHost_UserMentionDoesNotSpin(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/cruise-host-usermen"
+	groupID, hostID, byName := createHostGroup(t, project, "A")
+	enableCruise(t, groupID)
+
+	script := map[string][]string{
+		hostID: {
+			// Round 1: route to A so the discussion starts.
+			`<clawbench-mention targets="A">先做</clawbench-mention>`,
+			// Round 2: name the USER -> must trigger confirmation, not loop.
+			`你来定。<clawbench-mention targets="User">该你决定了</clawbench-mention>`,
+			// Round 3 (confirmation): confirm, ending the turn.
+			`<clawbench-goal-satisfied/>`,
+		},
+		byName["A"]: {"A 做了"},
+	}
+	runner, order := newScriptedRunner(t, groupID, project, script)
+
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	res := runGroupTurnForTest(t, o, project, "做个任务", nil)
+
+	if res.CancelReason != "" || res.Err != "" {
+		t.Fatalf("expected a clean confirmed end, got %+v", res)
+	}
+	// The turn must have reached confirmation and confirmed (not spun).
+	if n := countSystemLine(t, groupID, i18n.T(i18n.LocalizerForLocale(model.Language), "GroupCruiseConfirming")); n != 1 {
+		t.Fatalf("confirmation line count=%d want 1 (order=%v)", n, *order)
+	}
+	if n := countSystemLine(t, groupID, "自动巡航：任务已确认完成"); n != 1 {
+		t.Fatalf("expected a confirmed completion, count=%d order=%v", n, *order)
+	}
+	// The turn must be BOUNDED (no spin). Expected host turns: route, the @User
+	// turn, the confirmation round, the summary = 4. A spin would blow past this
+	// (the buggy path re-runs the host until the parse-failure abort).
+	hostTurns := 0
+	for _, id := range *order {
+		if id == hostID {
+			hostTurns++
+		}
+	}
+	if hostTurns > 5 {
+		t.Fatalf("host spoke %d times — @User must not spin the loop (order=%v)", hostTurns, *order)
+	}
+}
+
+// A host that co-emits goal-satisfied with an end tag confirms DIRECTLY (the
+// satisfied signal wins): no extra confirmation round.
+func TestCruiseHost_GoalSatisfiedWinsOverEnd(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/cruise-host-goalwins"
+	groupID, hostID, byName := createHostGroup(t, project, "A")
+	enableCruise(t, groupID)
+
+	script := map[string][]string{
+		hostID: {
+			`<clawbench-mention targets="A">先做</clawbench-mention>`,
+			// Co-emitted end + satisfied: satisfied must win, ending directly.
+			`都好了。<clawbench-group-end/><clawbench-goal-satisfied/>`,
+		},
+		byName["A"]: {"A 做了"},
+	}
+	runner, order := newScriptedRunner(t, groupID, project, script)
+
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	_ = runGroupTurnForTest(t, o, project, "做个任务", nil)
+
+	// No confirmation round: the satisfied signal short-circuits it.
+	if n := countSystemLine(t, groupID, i18n.T(i18n.LocalizerForLocale(model.Language), "GroupCruiseConfirming")); n != 0 {
+		t.Fatalf("goal-satisfied must skip the confirmation round, count=%d order=%v", n, *order)
+	}
+	if n := countSystemLine(t, groupID, "自动巡航：任务已确认完成"); n != 1 {
+		t.Fatalf("expected a confirmed completion, count=%d order=%v", n, *order)
+	}
+}
+
 // When the host does NOT confirm and instead routes on, the discussion
 // continues with the routed members (the "double intent" path).
 func TestCruiseHost_NotConfirmedKeepsRouting(t *testing.T) {
@@ -377,6 +459,12 @@ func TestCruiseFree_ThreeMembersTwoVotesConfirms(t *testing.T) {
 
 // The confirmation round discards @-mentions: a member that @s a peer during
 // confirmation must not spawn an extra speaker from that mention.
+//
+// The assertion is the EXACT turn sequence, not "the tail is a permutation":
+// with the mention wrongly honored, B's confirmation @A appends an extra A turn
+// (order becomes [A,B,A,B,A]); with it discarded the turn ends right after the
+// confirmation round ([A,B,A,B]). A permutation-of-tail assertion passes in
+// BOTH cases, so it cannot fail for the defect it names.
 func TestCruiseFree_ConfirmRoundDiscardsMentions(t *testing.T) {
 	setupGroupDB(t)
 	setGroupMaxSpeechesForTest(t, 10)
@@ -385,11 +473,10 @@ func TestCruiseFree_ConfirmRoundDiscardsMentions(t *testing.T) {
 	enableCruise(t, groupID)
 
 	script := map[string][]string{
-		// Seed: A @s B so B speaks; then confirmation.
-		byName["A"]: {`<clawbench-mention targets="B">B 补充</clawbench-mention>`, "A 确认中"},
-		// B, during confirmation, @s A. That must be discarded (no extra A turn
-		// from the mention) — but the confirmation round itself speaks each
-		// member exactly once.
+		// Seed: A @s B so B speaks; B says plain.
+		byName["A"]: {`<clawbench-mention targets="B">B 补充</clawbench-mention>`, `<clawbench-goal-satisfied/>`},
+		// B, during confirmation, @s A. That must be discarded (no extra A turn);
+		// A's confirmation vote alone reaches the 1/2 threshold and ends the turn.
 		byName["B"]: {"B 补充", `<clawbench-mention targets="A">A 你再看</clawbench-mention>`},
 	}
 	runner, order := freeScriptedRunner(t, project, groupID, script)
@@ -398,15 +485,15 @@ func TestCruiseFree_ConfirmRoundDiscardsMentions(t *testing.T) {
 	o.runTurn = runner
 	_ = runGroupTurnForTest(t, o, project, "大家聊聊", nil)
 
-	// In the confirmation round (the LAST n turns), every active member speaks
-	// exactly once: the tail must be a permutation of {A,B}, not contain A twice.
-	tail := (*order)[len(*order)-2:]
-	seen := map[string]int{}
-	for _, id := range tail {
-		seen[id]++
+	// Exactly: seed A, seed B, confirmation A, confirmation B. No fifth turn.
+	want := []string{byName["A"], byName["B"], byName["A"], byName["B"]}
+	if len(*order) != len(want) {
+		t.Fatalf("order=%v want exactly %v (an honored confirmation @A would add a 5th turn)", *order, want)
 	}
-	if seen[byName["A"]] != 1 || seen[byName["B"]] != 1 {
-		t.Fatalf("confirmation tail must be one turn each, tail=%v full=%v", tail, *order)
+	for i := range want {
+		if (*order)[i] != want[i] {
+			t.Fatalf("order[%d]=%q want %q (full=%v)", i, (*order)[i], want[i], *order)
+		}
 	}
 }
 
