@@ -1005,18 +1005,21 @@ func (o *GroupOrchestrator) runRounds(ctx context.Context, groupID string) Drain
 // MUST be intercepted too: otherwise resolveSpeakerGroups yields a user turn
 // that the executors silently DROP (cruise never hands back), drainSpeakers sees
 // stop=false, and the host is re-run forever — an unbounded loop, since host
-// turns are not counted toward the speech cap. A host that declares the goal met
-// (<clawbench-goal-satisfied/>) confirms directly, and that wins over any
-// co-emitted end tag / mention (design §15.5). Outside cruise, question and end
-// end the turn as before.
+// turns are not counted toward the speech cap.
+//
+// A host that declares the goal met (<clawbench-goal-satisfied/>) is NOT trusted
+// either: an UNSOLICITED declaration triggers a confirmation round just like the
+// others. Letting the host end the turn by its own say-so is exactly the
+// premature wrap-up cruise exists to prevent, so a confirmation round is the
+// ONLY way to confirm (design §15.5). It is also where the final conclusion is
+// written, so there is no separate summary turn. When goal-satisfied is
+// co-emitted with an end tag / mention, the declaration still wins: the turn is
+// confirmed, not routed. Outside cruise, question and end end the turn as before.
 func (o *GroupOrchestrator) hostTurnOutcome(ctx context.Context, s groupTurnSetup, hostMemberID, hostSysPrompt string, hostRes groupMemberResult, route grouprouting.Result) ([]speakerGroup, bool, DrainResult, bool) {
 	if o.cruise {
-		// goal-satisfied wins over everything else in the same turn.
-		if route.GoalSatisfied {
-			groups, ok, res := o.confirmCruiseDone(ctx, s, hostMemberID)
-			return groups, ok, res, true
-		}
-		if hostRes.AskedQuestion || route.End || routeNamesUser(route, s.members) {
+		// goal-satisfied wins over everything else in the same turn, but it does
+		// NOT confirm directly — it enters a confirmation round.
+		if route.GoalSatisfied || hostRes.AskedQuestion || route.End || routeNamesUser(route, s.members) {
 			groups, ok, res := o.runCruiseConfirmHost(ctx, s, hostMemberID, hostSysPrompt)
 			return groups, ok, res, true
 		}
@@ -1117,7 +1120,7 @@ func (o *GroupOrchestrator) runCruiseConfirmHost(ctx context.Context, s groupTur
 	}
 	route := grouprouting.Parse(o.lastMemberOutput(o.groupID, hostMemberID))
 	if route.GoalSatisfied {
-		return o.confirmCruiseDone(ctx, s, hostMemberID)
+		return o.confirmCruiseDone()
 	}
 	// Not satisfied: continue with whatever the host routed, DROPPING any user
 	// turn (cruise never hands back — a user turn would be a silent no-op that
@@ -1145,16 +1148,15 @@ func (o *GroupOrchestrator) cruiseFallbackGroup(s groupTurnSetup, hostMemberID s
 }
 
 // confirmCruiseDone latches a confirmed completion and returns stop=true so the
-// loop exits and the wrap-up runs (host-mode summary + the "cruise complete"
-// line written by runLoop). The true flag is correct on BOTH callers: as a
-// refill's ok it ends the drain (an ok=true-but-empty refill stops too), and as
-// runCruiseConfirmHost's stop it ends the turn. Idempotent: a second
-// confirmation in the same turn is a no-op stop.
-func (o *GroupOrchestrator) confirmCruiseDone(ctx context.Context, s groupTurnSetup, hostMemberID string) ([]speakerGroup, bool, DrainResult) {
-	if !o.cruiseSatisfied {
-		o.cruiseSatisfied = true
-		o.summarize(ctx, s, hostMemberID)
-	}
+// loop exits and the wrap-up runs (the "cruise complete" line written by
+// runLoop). It does NOT run a separate summary turn: the confirmation round's
+// own reply already carries the final conclusion (see BuildCruiseConfirmPrompt),
+// so a second host call would only produce a redundant bubble. As a
+// runCruiseConfirmHost stop, ok=true ends the turn; the empty group list means
+// no further speakers are queued. Idempotent: a second confirmation in the same
+// turn is a no-op stop.
+func (o *GroupOrchestrator) confirmCruiseDone() ([]speakerGroup, bool, DrainResult) {
+	o.cruiseSatisfied = true
 	return nil, true, DrainResult{}
 }
 

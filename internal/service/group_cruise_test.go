@@ -104,16 +104,17 @@ func TestCruiseHost_EndTagTriggersConfirmationAndHostConfirms(t *testing.T) {
 	if n := countSystemLine(t, groupID, i18n.T(i18n.LocalizerForLocale(model.Language), "GroupYourTurn")); n != 0 {
 		t.Fatalf("cruise must not announce the user's turn (count=%d)", n)
 	}
-	// The host must have spoken 4 times: route, end-tag, confirmation, summary
-	// (host mode runs a final summary on a confirmed completion).
+	// The host must have spoken 3 times: route, end-tag, confirmation. There is
+	// NO separate summary turn — the confirmation round's reply already carries
+	// the final conclusion (design §15.7, merged wrap-up).
 	hostTurns := 0
 	for _, id := range *order {
 		if id == hostID {
 			hostTurns++
 		}
 	}
-	if hostTurns != 4 {
-		t.Fatalf("host turns=%d want 4 (route + end + confirm + summary), order=%v", hostTurns, *order)
+	if hostTurns != 3 {
+		t.Fatalf("host turns=%d want 3 (route + end + confirm; no separate summary), order=%v", hostTurns, *order)
 	}
 }
 
@@ -168,9 +169,17 @@ func TestCruiseHost_UserMentionDoesNotSpin(t *testing.T) {
 	}
 }
 
-// A host that co-emits goal-satisfied with an end tag confirms DIRECTLY (the
-// satisfied signal wins): no extra confirmation round.
-func TestCruiseHost_GoalSatisfiedWinsOverEnd(t *testing.T) {
+// A host that emits goal-satisfied UNSOLICITED (in a normal routing turn, before
+// any confirmation was asked) must NOT end the turn directly: an unsolicited
+// declaration is exactly the premature wrap-up cruise exists to prevent, so it
+// triggers a confirmation round.
+//
+// The declaration is emitted ALONE — no co-emitted end tag or mention — so this
+// isolates the rule: if goal-satisfied stopped triggering confirmation, the turn
+// would fall through to routing (round-robin to A) and NO confirmation line
+// would be written. (An end tag in the same reply would mask the rule, since it
+// triggers confirmation on its own.)
+func TestCruiseHost_UnsolicitedGoalSatisfiedTriggersConfirmation(t *testing.T) {
 	setupGroupDB(t)
 	project := "/tmp/cruise-host-goalwins"
 	groupID, hostID, byName := createHostGroup(t, project, "A")
@@ -179,8 +188,11 @@ func TestCruiseHost_GoalSatisfiedWinsOverEnd(t *testing.T) {
 	script := map[string][]string{
 		hostID: {
 			`<clawbench-mention targets="A">先做</clawbench-mention>`,
-			// Co-emitted end + satisfied: satisfied must win, ending directly.
-			`都好了。<clawbench-group-end/><clawbench-goal-satisfied/>`,
+			// Round 2: UNSOLICITED declaration, ALONE. It must NOT end directly —
+			// it enters a confirmation round.
+			`都好了。<clawbench-goal-satisfied/>`,
+			// Round 3 (confirmation): confirm.
+			`<clawbench-goal-satisfied/>`,
 		},
 		byName["A"]: {"A 做了"},
 	}
@@ -190,12 +202,23 @@ func TestCruiseHost_GoalSatisfiedWinsOverEnd(t *testing.T) {
 	o.runTurn = runner
 	_ = runGroupTurnForTest(t, o, project, "做个任务", nil)
 
-	// No confirmation round: the satisfied signal short-circuits it.
-	if n := countSystemLine(t, groupID, i18n.T(i18n.LocalizerForLocale(model.Language), "GroupCruiseConfirming")); n != 0 {
-		t.Fatalf("goal-satisfied must skip the confirmation round, count=%d order=%v", n, *order)
+	// The unsolicited declaration did NOT skip the confirmation round.
+	if n := countSystemLine(t, groupID, i18n.T(i18n.LocalizerForLocale(model.Language), "GroupCruiseConfirming")); n != 1 {
+		t.Fatalf("an unsolicited goal-satisfied must still confirm, count=%d order=%v", n, *order)
 	}
 	if n := countSystemLine(t, groupID, "自动巡航：任务已确认完成"); n != 1 {
 		t.Fatalf("expected a confirmed completion, count=%d order=%v", n, *order)
+	}
+	// A spoke exactly once (round 1's route). The unsolicited declaration must NOT
+	// have been treated as "route on" (which would round-robin A a second time).
+	aTurns := 0
+	for _, id := range *order {
+		if id == byName["A"] {
+			aTurns++
+		}
+	}
+	if aTurns != 1 {
+		t.Fatalf("A must speak exactly once (no round-robin fallback), aTurns=%d order=%v", aTurns, *order)
 	}
 }
 

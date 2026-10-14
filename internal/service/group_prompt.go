@@ -217,17 +217,20 @@ func BuildFreeMemberSystemPrompt(members []HostMemberInfo, selfName string) stri
 // runs in AUTO-CRUISE mode. It changes the END rule: the host's
 // <clawbench-group-end/> no longer ends the discussion directly — it triggers a
 // system confirmation round in which the host is asked whether the goal is met,
-// and only <clawbench-goal-satisfied/> actually ends it. Without this addendum
-// the host keeps emitting group-end expecting to stop, and the confirmation
-// would look like an error to it.
+// and only <clawbench-goal-satisfied/> actually ends it. An UNSOLICITED
+// <clawbench-goal-satisfied/> does not end it either (it just triggers the same
+// confirmation round), so the host is told to wait to be asked. Without this
+// addendum the host keeps emitting group-end expecting to stop, and the
+// confirmation would look like an error to it.
 func BuildCruiseHostAddendum() string {
 	var b strings.Builder
 	b.WriteString("\n\n[自动巡航模式] 本群已开启自动巡航：讨论将持续进行，直到你（主持人）确认任务已完成。\n")
 	b.WriteString("注意：巡航模式下 <clawbench-group-end/> **不再直接结束讨论**——它会让系统向你发起一次「完成确认」，由你判断是否真正完成。\n")
 	b.WriteString("当系统向你确认时：\n")
-	b.WriteString("  - 若你认为已经满足用户的要求，输出结束信号：<clawbench-goal-satisfied/>\n")
+	b.WriteString("  - 若你认为已经满足用户的要求，输出结束信号：<clawbench-goal-satisfied/>，**并在同一条回复里写出最终结论**（供用户阅读，不要再点名）。\n")
 	b.WriteString("  - 若尚未完成，就照常点名（<clawbench-mention targets=\"…\">）继续推进，不要输出 goal-satisfied。\n")
-	b.WriteString("请持续组织成员推进工作，直到确实完成，不要为了收工而过早输出 goal-satisfied。\n")
+	b.WriteString("不要主动输出 <clawbench-goal-satisfied/>——只有系统向你确认时才判断；提前输出不会结束讨论，只会再触发一次确认。\n")
+	b.WriteString("请持续组织成员推进工作，直到确实完成，不要为了收工而过早确认。\n")
 	return b.String()
 }
 
@@ -252,8 +255,13 @@ func BuildCruiseFreeMemberAddendum() string {
 // into the participants' context for that round.
 //
 // freeMode selects the wording: a free member is asked to evaluate and emit
-// <clawbench-goal-satisfied/>; the host is asked to either confirm (goal tag) or
-// keep routing. Both variants forbid asking the user.
+// <clawbench-goal-satisfied/>; the host is asked to either confirm (goal tag,
+// with the final conclusion written in the SAME reply) or keep routing. Both
+// variants forbid asking the user.
+//
+// The host's confirm branch asks for the conclusion too: the confirmation round
+// is the ONLY wrap-up turn (there is no separate summary call after it), so if
+// the host just emitted the tag the user would be left without a conclusion.
 func BuildCruiseConfirmPrompt(freeMode bool) string {
 	var b strings.Builder
 	b.WriteString("\n\n[自动巡航·完成确认] 当前没有新的用户消息，请不要向用户提问，也不要等待用户确认。\n")
@@ -263,8 +271,8 @@ func BuildCruiseConfirmPrompt(freeMode bool) string {
 		b.WriteString("若确认已完成，输出 <clawbench-goal-satisfied/>；否则继续推进尚未完成的部分。\n")
 		b.WriteString("本轮只做表态，不要 @ 任何人。\n")
 	} else {
-		b.WriteString("若确认已完成，输出 <clawbench-goal-satisfied/>；\n")
-		b.WriteString("若尚未完成，照常点名下一批成员（<clawbench-mention targets=\"…\">）继续推进。\n")
+		b.WriteString("若确认已完成：输出 <clawbench-goal-satisfied/>，**并在同一条回复里直接写出最终结论**（汇总各成员观点与你的判断，供用户阅读，不要再提问或点名）。\n")
+		b.WriteString("若尚未完成，照常点名下一批成员（<clawbench-mention targets=\"…\">）继续推进，不要输出 goal-satisfied。\n")
 	}
 	return b.String()
 }

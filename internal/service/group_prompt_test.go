@@ -308,4 +308,14 @@ func TestBuildCruiseConfirmPrompt(t *testing.T) {
 	if strings.Contains(host, "不要 @ 任何人") {
 		t.Fatalf("host confirm prompt must NOT forbid @-ing: %q", host)
 	}
+	// The host's confirm branch must ask for the final conclusion IN THE SAME
+	// reply: there is no separate summary turn after confirmation (design §15.7),
+	// so a tag-only reply would leave the user without a wrap-up.
+	if !strings.Contains(host, "最终结论") {
+		t.Fatalf("host confirm prompt must ask for the conclusion in the same reply: %q", host)
+	}
+	// The free variant stays a bare vote — no conclusion (no host to write one).
+	if strings.Contains(free, "最终结论") {
+		t.Fatalf("free confirm prompt must stay a bare vote: %q", free)
+	}
 }
