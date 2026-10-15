@@ -1937,6 +1937,11 @@ export default {
     clear: 'Clear',
     placeholder: 'Type your question...',
     addToChat: 'Add to chat',
+    // Collapsed floating toolbar (issue #544). `comment` opens the inline
+    // input; `quoteSelection` stages the selection as a quote card. Copy reuses
+    // `common.copy`, so it has no key of its own here.
+    comment: 'Comment',
+    quoteSelection: 'Quote',
     addedToChat: 'Added to chat',
     send: 'Send',
     aiChat: 'AI Chat',

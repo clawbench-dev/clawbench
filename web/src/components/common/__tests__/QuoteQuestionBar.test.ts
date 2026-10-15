@@ -2,7 +2,12 @@ import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import QuoteQuestionBar from '../QuoteQuestionBar.vue'
 
-vi.mock('vue-i18n', () => ({
+// Partial mock: the component now imports computeSelectionToolbarStyle, whose
+// module imports useSettingsConfig — which pulls in @/i18n (createI18n). A
+// whitelist mock that only returns `useI18n` makes createI18n undefined and the
+// whole suite fails to load, so spread the real module and override useI18n.
+vi.mock('vue-i18n', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('vue-i18n')>()),
   useI18n: () => ({ t: (key: string) => key }),
 }))
 
@@ -35,10 +40,10 @@ describe('QuoteQuestionBar', () => {
       expect(wrapper.find('.qq-quoted-snippet').exists()).toBe(false)
     })
 
-    it('skips the collapsed preview row and goes straight to the input', () => {
+    it('skips the collapsed toolbar and goes straight to the input', () => {
       const wrapper = mountBar({ composerMode: true, quoteData: null })
 
-      expect(wrapper.find('.quote-bar-row').exists()).toBe(false)
+      expect(wrapper.find('.quote-bar-toolbar').exists()).toBe(false)
       expect(wrapper.find('.quote-bar-expanded').exists()).toBe(true)
     })
 
@@ -129,11 +134,19 @@ describe('QuoteQuestionBar', () => {
     })
   })
 
-  describe('normal selection flow (unchanged)', () => {
-    it('still renders the collapsed preview row for a quote', () => {
+  describe('collapsed floating toolbar (issue #544)', () => {
+    it('renders the copy / comment / quote actions for a quote', () => {
       const wrapper = mountBar({ quoteData: QUOTE })
 
-      expect(wrapper.find('.quote-bar-row').exists()).toBe(true)
+      const actions = wrapper.findAll('.quote-bar-action')
+      expect(actions).toHaveLength(3)
+      // Copy is the shared CopyButton (so the global is-copied tint applies);
+      // comment and quote are plain buttons. Labels are i18n keys under the
+      // test's identity `t`.
+      expect(actions[0].classes()).toContain('copy-btn')
+      expect(actions[1].text()).toBe('quoteBar.comment')
+      expect(actions[2].text()).toBe('quoteBar.quoteSelection')
+      // The collapsed state has no input until the user chooses "comment".
       expect(wrapper.find('.qq-textarea').exists()).toBe(false)
     })
 
@@ -142,22 +155,61 @@ describe('QuoteQuestionBar', () => {
       expect(wrapper.find('.quote-question-bar').exists()).toBe(false)
     })
 
-    it('expands to the input when the preview row is clicked', async () => {
+    it('expands to the input when the comment action is clicked', async () => {
       const wrapper = mountBar({ quoteData: QUOTE })
-      await wrapper.find('.quote-bar-row').trigger('click')
+      await wrapper.findAll('.quote-bar-action')[1].trigger('click')
       await wrapper.vm.$nextTick()
 
       expect(wrapper.find('.qq-textarea').exists()).toBe(true)
     })
 
-    it('emits add with the typed note', async () => {
+    it('emits add (quote) from the collapsed toolbar without opening the input', async () => {
       const wrapper = mountBar({ quoteData: QUOTE })
-      await wrapper.find('.quote-bar-row').trigger('click')
+      await wrapper.findAll('.quote-bar-action')[2].trigger('click')
+
+      expect(wrapper.emitted('add')).toEqual([['']])
+      // Quote stages the card straight away — it must not also open the input.
+      expect(wrapper.find('.qq-textarea').exists()).toBe(false)
+    })
+
+    it('emits add with the typed note after expanding via comment', async () => {
+      const wrapper = mountBar({ quoteData: QUOTE })
+      await wrapper.findAll('.quote-bar-action')[1].trigger('click')
       await wrapper.vm.$nextTick()
       await wrapper.find('.qq-textarea').setValue('please fix')
       await wrapper.find('.qq-add-btn').trigger('click')
 
       expect(wrapper.emitted('add')).toEqual([['please fix']])
+    })
+
+    it('pins on pointerdown so a click does not lose the selection', async () => {
+      const wrapper = mountBar({ quoteData: QUOTE })
+      await wrapper.find('.quote-bar-toolbar').trigger('pointerdown')
+
+      expect(wrapper.emitted('pin')).toBeTruthy()
+    })
+  })
+
+  describe('floating anchor (issue #544)', () => {
+    const ANCHOR = { top: 300, bottom: 320, left: 400, right: 600 }
+
+    it('applies the floating position and anchored class when an anchor is given', () => {
+      const wrapper = mountBar({ quoteData: QUOTE, anchor: ANCHOR })
+
+      expect(wrapper.find('.quote-question-bar--anchored').exists()).toBe(true)
+      const style = wrapper.find('.quote-question-bar').attributes('style') || ''
+      expect(style).toContain('position: fixed')
+      expect(style).toContain('left:')
+    })
+
+    it('keeps the pinned top position (no inline style, no anchored class) without an anchor', () => {
+      // The fallback that preserves the old behaviour for terminal / CodeMirror
+      // / OpenAPI-iframe selections, which have no measurable DOM selection.
+      const wrapper = mountBar({ quoteData: QUOTE, anchor: null })
+
+      expect(wrapper.find('.quote-question-bar--anchored').exists()).toBe(false)
+      const style = wrapper.find('.quote-question-bar').attributes('style') || ''
+      expect(style).not.toContain('position: fixed')
     })
   })
 })
