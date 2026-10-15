@@ -347,37 +347,50 @@
         </div>
       </PopupMenu>
     </div>
-    <!-- Session info bar (model + mode) — always rendered to reserve vertical space,
-         preventing layout shift when async model/mode data loads after messages.
-         Hidden for group sessions: model / mode+auto-approve / context-usage are
-         all per-agent settings with no owner on a multi-agent timeline. -->
-    <div v-if="!isGroupSession" class="chat-session-info">
-      <!-- Empty currentModelName is a real state, not a loading gap: an ACP
-           agent that has not reported its models yet has no model to name, and
-           the turn deliberately carries no modelId so the agent picks its own.
-           Show "Default" rather than an empty chip. -->
-      <span class="session-info-model" @click.stop="openSettingsDrawer('model')"><ProviderIcon :model-name="currentModelName || ''" :size="11" />{{ currentModelName || t('chat.sessionInfo.default') }}</span>
-      <template v-if="showModeInfo">
+    <!-- Session info bar. Always rendered to reserve vertical space, preventing
+         layout shift when async data loads after messages.
+         Single chat shows model / mode+auto-approve / cruise / context-usage.
+         A GROUP session shows ONLY the group-level switches (auto-cruise and
+         auto-approve) — model/mode/usage are per-agent settings with no owner on
+         a multi-agent timeline, so they stay hidden. These two chips are a
+         second entry point for the same switches as the group settings sheet
+         (which is unchanged); cruise is driven by the group roster prop, and
+         auto-approve by the shared session identity (both server-authoritative). -->
+    <div class="chat-session-info">
+      <template v-if="!isGroupSession">
+        <!-- Empty currentModelName is a real state, not a loading gap: an ACP
+             agent that has not reported its models yet has no model to name, and
+             the turn deliberately carries no modelId so the agent picks its own.
+             Show "Default" rather than an empty chip. -->
+        <span class="session-info-model" @click.stop="openSettingsDrawer('model')"><ProviderIcon :model-name="currentModelName || ''" :size="11" />{{ currentModelName || t('chat.sessionInfo.default') }}</span>
+        <template v-if="showModeInfo">
+          <span class="session-info-divider"></span>
+          <span class="session-info-mode" :class="{ 'session-info-mode-auto': autoApprove }" @click.stop="onModeClick" v-long-press="onModeLongPress" @mousedown.stop="onModeMouseDown" @mouseup.stop="onModeMouseUp"><Compass :size="11" />{{ currentModeName }}</span>
+        </template>
+        <!-- Auto-cruise chip (single chat). Click toggles the session's cruise
+             switch: the turn no longer hands the floor back when the reply
+             finishes — the AI keeps confirming until it declares the goal met.
+             Highlighted + labelled "Cruising" while on. -->
         <span class="session-info-divider"></span>
-        <span class="session-info-mode" :class="{ 'session-info-mode-auto': autoApprove }" @click.stop="onModeClick" v-long-press="onModeLongPress" @mousedown.stop="onModeMouseDown" @mouseup.stop="onModeMouseUp"><Compass :size="11" />{{ currentModeName }}</span>
-      </template>
-      <!-- Auto-cruise chip (single chat). Click toggles the session's cruise
-           switch: the turn no longer hands the floor back when the reply
-           finishes — the AI keeps confirming until it declares the goal met.
-           Highlighted + labelled "Cruising" while on, mirroring the group
-           header pill. -->
-      <span class="session-info-divider"></span>
-      <span class="session-info-cruise" :class="{ 'session-info-cruise-on': cruise }" :title="t('chat.cruise.hint')" @click.stop="onCruiseClick"><Navigation :size="11" />{{ cruise ? t('chat.cruise.active') : t('chat.cruise.label') }}</span>
-      <template v-if="showUsageInfo">
-        <span class="session-info-divider"></span>
-        <span ref="usageElRef" class="session-info-usage" @click.stop="usageDrawer.toggle()">
-          <Activity :size="11" />
-          <span class="usage-bar">
-            <span class="usage-bar-fill" :style="{ width: Math.min(usagePct, 100) + '%', background: usageColor }"></span>
+        <span class="session-info-cruise" :class="{ 'session-info-cruise-on': cruise }" :title="t('chat.cruise.hint')" @click.stop="onCruiseClick"><Navigation :size="11" />{{ cruise ? t('chat.cruise.active') : t('chat.cruise.label') }}</span>
+        <template v-if="showUsageInfo">
+          <span class="session-info-divider"></span>
+          <span ref="usageElRef" class="session-info-usage" @click.stop="usageDrawer.toggle()">
+            <Activity :size="11" />
+            <span class="usage-bar">
+              <span class="usage-bar-fill" :style="{ width: Math.min(usagePct, 100) + '%', background: usageColor }"></span>
+            </span>
           </span>
-        </span>
+        </template>
       </template>
-
+      <!-- Group session: the two group-level switches. Same chips/styling as the
+           single-chat bar; toggling emits up (App owns the group PATCH + roster
+           refresh) so the group settings sheet stays in sync. -->
+      <template v-else>
+        <span class="session-info-cruise" :class="{ 'session-info-cruise-on': groupCruise }" :title="t('chat.cruise.hint')" @click.stop="onGroupCruiseClick"><Navigation :size="11" />{{ groupCruise ? t('chat.cruise.active') : t('chat.cruise.label') }}</span>
+        <span class="session-info-divider"></span>
+        <span class="session-info-approve" :class="{ 'session-info-approve-on': autoApprove }" :title="t('chat.autoApprove.title')" @click.stop="doToggleAutoApprove"><Check :size="11" />{{ t('chat.autoApprove.title') }}</span>
+      </template>
     </div>
   </div>
 </template>
@@ -515,6 +528,19 @@ function doToggleAutoApprove() {
 function onCruiseClick() {
   const next = !cruise.value
   toggleCruise(next)
+  toast.show(next ? t('chat.cruise.enabled') : t('chat.cruise.disabled'), {
+    icon: next ? '🧭' : '⏹️',
+    type: next ? 'success' : 'info',
+  })
+}
+
+// Toggle a GROUP's auto-cruise switch. The group's cruise value is owned by the
+// roster (useGroupMembers) and PATCHed by App, so this only emits the desired
+// next value up; App writes it and refreshes the roster, which is what keeps
+// this chip and the group settings sheet in sync (both read the same value).
+function onGroupCruiseClick() {
+  const next = !props.groupCruise
+  emit('toggle-group-cruise', next)
   toast.show(next ? t('chat.cruise.enabled') : t('chat.cruise.disabled'), {
     icon: next ? '🧭' : '⏹️',
     type: next ? 'success' : 'info',
@@ -674,15 +700,21 @@ const props = defineProps({
   currentAgentId: String,
   currentSessionRunning: Boolean,
   active: Boolean,
-  /** Group-chat session: the session-info chrome (model / mode+auto-approve /
-   *  context-usage) and the ACP sync button are per-AGENT settings, which have
-   *  no owner on a multi-agent timeline — hidden here. The model chip and the
-   *  ACP sync button are also the entry points to SessionDrawer (all per-agent),
-   *  so hiding them closes that drawer's only doors. */
+  /** Group-chat session. The per-AGENT chrome (model chip, mode chip, ACP sync
+   *  button) is hidden here — those settings have no owner on a multi-agent
+   *  timeline, and the model chip / sync button are also the only doors to
+   *  SessionDrawer (all per-agent), so hiding them closes that drawer. The
+   *  session-info bar still renders for a group, but shows ONLY the two
+   *  group-level switches (auto-cruise + auto-approve). */
   isGroupSession: { type: Boolean, default: false },
   /** Group member roster ({ id, name, left }). Feeds the @ completion menu so a
    *  user can name a speaker in a group chat (design §13.4). */
   groupMembers: { type: Array, default: () => [] },
+  /** The group's auto-cruise switch value (server-authoritative, owned by the
+   *  group roster in useGroupMembers). Shown as a chip in the session-info bar
+   *  for a group session; toggling emits `toggle-group-cruise` up to App, which
+   *  PATCHes and refreshes the roster so the settings sheet stays in sync. */
+  groupCruise: { type: Boolean, default: false },
   /** Staged group member cards (@ cards) for the input's attachment strip. The
    *  cards themselves live in useChatContext so they survive a session switch
    *  alongside the file/quote drafts; this is just the render binding. */
@@ -717,6 +749,7 @@ const emit = defineEmits([
   'switch-mode',
   'switch-transport',
   'sync-acp-session',
+  'toggle-group-cruise',
   'open-group-settings',
 ])
 
@@ -2344,7 +2377,8 @@ defineExpose({
 
 .session-info-model,
 .session-info-mode,
-.session-info-cruise {
+.session-info-cruise,
+.session-info-approve {
   display: inline-flex;
   align-items: center;
   gap: 3px;
@@ -2374,6 +2408,21 @@ defineExpose({
   color: #388e3c;
 }
 
+/* Group auto-approve chip: green when ON, matching the single-chat mode chip's
+   auto-approve highlight (`.session-info-mode-auto`) so the same state reads the
+   same way in both bars. */
+.session-info-approve:active {
+  color: var(--accent-color, #0066cc);
+}
+
+.session-info-approve-on {
+  color: #4caf50;
+}
+
+.session-info-approve-on:active {
+  color: #388e3c;
+}
+
 /* Auto-cruise chip: accent-colored when ON so it reads as an active mode
    (mirrors the group header pill), muted when off. */
 .session-info-cruise-on {
@@ -2387,6 +2436,7 @@ defineExpose({
 .session-info-model svg,
 .session-info-mode svg,
 .session-info-cruise svg,
+.session-info-approve svg,
 .session-info-usage svg {
   flex-shrink: 0;
 }

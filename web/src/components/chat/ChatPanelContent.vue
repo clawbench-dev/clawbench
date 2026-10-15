@@ -18,6 +18,7 @@
       :currentAgent="currentAgent"
       :isGroupSession="isGroupSession"
       :groupMembers="props.groupMembers"
+      :groupCruise="props.groupCruise"
       :groupMode="props.groupMode"
       :resolveSpeaker="props.resolveGroupSpeaker"
       :resolveSpeakerByName="props.resolveGroupSpeakerByName"
@@ -152,6 +153,7 @@
       @switch-transport="handleSwitchTransport"
       @sync-acp-session="handleSyncAcpSession"
       @open-group-settings="$emit('open-group-settings')"
+      @toggle-group-cruise="$emit('toggle-group-cruise', $event)"
     />
 
   </div>
@@ -322,8 +324,12 @@ const props = defineProps({
     groupHostMemberId: { type: String, default: '' },
     resolveGroupSpeaker: { type: Function, default: null },
     resolveGroupSpeakerByName: { type: Function, default: null },
+    /** The group's auto-cruise switch value (owned by App's useGroupMembers).
+     *  Forwarded to ChatInputBar's session-info bar chip; the toggle is emitted
+     *  back up so App owns the PATCH + roster refresh. */
+    groupCruise: { type: Boolean, default: false },
 })
-const emit = defineEmits(['open', 'message', 'task-card-click', 'open-session-search', 'open-group-settings', 'open-agent-config'])
+const emit = defineEmits(['open', 'message', 'task-card-click', 'open-session-search', 'open-group-settings', 'open-agent-config', 'toggle-group-cruise'])
 
 // ── Singletons ──
 const identity = useSessionIdentity()

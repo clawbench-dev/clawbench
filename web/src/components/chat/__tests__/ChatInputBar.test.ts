@@ -2732,11 +2732,21 @@ describe('ChatInputBar', () => {
       wrapper.unmount()
     })
 
-    it('hides the whole session info bar in a group session', () => {
-      // Model / mode+auto-approve / context-usage are per-agent settings with no
-      // owner on a multi-agent timeline.
+    it('renders ONLY the group switches in the info bar for a group session', () => {
+      // Model / mode / context-usage are per-agent settings with no owner on a
+      // multi-agent timeline, so they stay hidden. The group-level auto-cruise
+      // and auto-approve switches DO show (a second entry point to the same
+      // switches as the group settings sheet).
       const wrapper = mountBar({ currentModelName: 'gpt-5', currentAgentId: 'agent1', isGroupSession: true })
-      expect(wrapper.find('.chat-session-info').exists()).toBe(false)
+      const bar = wrapper.find('.chat-session-info')
+      expect(bar.exists()).toBe(true)
+      // The two group switches are present.
+      expect(bar.find('.session-info-cruise').exists()).toBe(true)
+      expect(bar.find('.session-info-approve').exists()).toBe(true)
+      // The per-agent chips are absent.
+      expect(bar.find('.session-info-model').exists()).toBe(false)
+      expect(bar.find('.session-info-mode').exists()).toBe(false)
+      expect(bar.find('.session-info-usage').exists()).toBe(false)
       wrapper.unmount()
     })
   })
@@ -2909,6 +2919,8 @@ describe('ChatInputBar', () => {
     beforeEach(() => {
       mockCruise.value = false
       mockToggleCruise.mockReset()
+      mockAutoApprove.value = false
+      mockToggleAutoApprove.mockReset()
     })
 
     it('renders the cruise chip in the single-chat session info bar', () => {
@@ -2934,9 +2946,34 @@ describe('ChatInputBar', () => {
       wrapper.unmount()
     })
 
-    it('hides the cruise chip for a group session', () => {
+    it('renders the group cruise chip and emits toggle-group-cruise on click', async () => {
+      const wrapper = mountBar({ currentModelName: 'gpt-4', isGroupSession: true, groupCruise: false })
+      const chip = wrapper.find('.session-info-cruise')
+      expect(chip.exists()).toBe(true)
+      await chip.trigger('click')
+      // The group's cruise is owned by App (PATCH + roster refresh), so the
+      // component emits the desired next value rather than calling toggleCruise.
+      expect(wrapper.emitted('toggle-group-cruise')).toBeTruthy()
+      expect(wrapper.emitted('toggle-group-cruise')![0]).toEqual([true])
+      wrapper.unmount()
+    })
+
+    it('labels the group chip "Cruising" and highlights it when on', () => {
+      const wrapper = mountBar({ currentModelName: 'gpt-4', isGroupSession: true, groupCruise: true })
+      const chip = wrapper.find('.session-info-cruise')
+      expect(chip.text()).toContain('Cruising')
+      expect(chip.classes()).toContain('session-info-cruise-on')
+      wrapper.unmount()
+    })
+
+    it('renders the group auto-approve chip and toggles via the shared handler', async () => {
       const wrapper = mountBar({ currentModelName: 'gpt-4', isGroupSession: true })
-      expect(wrapper.find('.session-info-cruise').exists()).toBe(false)
+      const chip = wrapper.find('.session-info-approve')
+      expect(chip.exists()).toBe(true)
+      await chip.trigger('click')
+      // Group auto-approve goes through the shared session-identity toggle
+      // (backend fans the flag out to every member row).
+      expect(mockToggleAutoApprove).toHaveBeenCalledWith(true)
       wrapper.unmount()
     })
   })

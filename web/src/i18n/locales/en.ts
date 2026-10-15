@@ -1191,8 +1191,6 @@ export default {
     cruiseLabel: 'Auto-cruise',
     cruiseHintHost: 'When on, the discussion ends only once the host confirms the task is complete.',
     cruiseHintFree: 'When on, the discussion ends only once over half the members confirm the task is complete.',
-    // Header badge shown while auto-cruise is ON for the current group.
-    cruiseActive: 'Cruising',
     goalSatisfied: 'Done',
     autoApproveHint: 'Auto-approve every member\u2019s permission requests.',
     confirm: 'Add',

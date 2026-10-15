@@ -18,16 +18,6 @@
     <span class="group-mode-badge" :title="modeLabel" aria-hidden="true">
       <component :is="modeIcon" :size="12" />
     </span>
-    <!-- Auto-cruise indicator (design §15). Shown only while cruise is ON for
-         this group: the discussion keeps looping until members declare the goal
-         met, so the header needs a persistent "this is running itself" cue. The
-         accent-colored pill + slow breathing glow reads as "live", distinct from
-         the muted mode badge. Decorative (the whole strip is one click target),
-         so it stays out of the a11y tree and exposes only a hover tooltip. -->
-    <span v-if="cruise" class="group-cruise-badge" :title="t('group.cruiseLabel')" aria-hidden="true">
-      <Navigation :size="12" class="group-cruise-icon" />
-      <span class="group-cruise-label">{{ t('group.cruiseActive') }}</span>
-    </span>
     <AvatarStack :members="stackMembers" size="md" :max="4" />
     <GroupSettingsSheet
       ref="sheetRef"
@@ -46,7 +36,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Crown, AtSign, Navigation } from 'lucide-vue-next'
+import { Crown, AtSign } from 'lucide-vue-next'
 import AvatarStack from '@/components/common/AvatarStack.vue'
 import GroupSettingsSheet from './GroupSettingsSheet.vue'
 import type { GroupMemberInfo } from '@/composables/useGroupChat'
@@ -128,45 +118,6 @@ const modeLabel = computed(() => t(props.mode === 'free' ? 'group.freeMode' : 'g
   outline: 2px solid var(--accent-color, #0066cc);
   outline-offset: 2px;
   border-radius: var(--radius-full);
-}
-/* Auto-cruise pill: accent-colored (not the muted mode badge) so it reads as
-   "the group is driving itself". The slow breathing glow is the "live" cue; it
-   uses the same accent-glow recipe as the stale-data refresh pulse so it holds
-   up across all 36 themes (a fixed rgba would stay blue everywhere). */
-.group-cruise-badge {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  padding: 0 var(--space-2);
-  border-radius: var(--radius-full);
-  background: color-mix(in srgb, var(--accent-color) 15%, transparent);
-  color: var(--accent-color);
-  font-size: var(--font-size-2xs);
-  line-height: 1;
-  white-space: nowrap;
-  animation: group-cruise-breathe 2.4s ease-in-out infinite;
-}
-.group-cruise-icon {
-  flex-shrink: 0;
-}
-@keyframes group-cruise-breathe {
-  0%, 100% {
-    box-shadow: 0 0 0 0 transparent;
-    opacity: 0.85;
-  }
-  50% {
-    box-shadow: 0 0 5px 1px color-mix(in srgb, var(--accent-color) 45%, transparent);
-    opacity: 1;
-  }
-}
-/* The glow is decorative (the pill and its label already say "cruising"), so it
-   may stop under reduced-motion — unlike the session status dots, where motion
-   is the only channel. Freeze at the resting state, keep the pill visible. */
-@media (prefers-reduced-motion: reduce) {
-  .group-cruise-badge {
-    animation: none;
-  }
 }
 @media (hover: hover) {
   .group-avatar-stack:hover :deep(.avatar-disc) { transform: translateY(-2px); }

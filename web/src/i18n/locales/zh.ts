@@ -1194,8 +1194,6 @@ export default {
     cruiseLabel: '自动巡航',
     cruiseHintHost: '打开后，主持人认为任务完成才会结束（不再随时收工）。',
     cruiseHintFree: '打开后，过半成员确认任务完成才会结束。',
-    // 当前群开启自动巡航时，聊天标题栏显示的徽章。
-    cruiseActive: '巡航中',
     goalSatisfied: '已完成',
     autoApproveHint: '自动批准所有成员的权限请求。',
     confirm: '添加',

@@ -337,6 +337,7 @@
                       :group-mode="groupMode"
                       :group-parallel-default="groupParallelDefault"
                       :group-host-member-id="groupHostMemberId"
+                      :group-cruise="groupCruise"
                       :resolve-group-speaker="resolveGroupSpeaker"
                       :resolve-group-speaker-by-name="resolveGroupSpeakerByName"
                       @open="switchTab('chat')"
@@ -344,6 +345,7 @@
                       @open-session-search="sessionSearchDrawer.open()"
                       @open-group-settings="openGroupSettings"
                       @open-agent-config="openAgentConfig"
+                      @toggle-group-cruise="onToggleGroupCruise"
                     />
                   </TabPanel>
                   <!-- The hint is centered on the CHAT column, not on
@@ -618,6 +620,7 @@ import { useTaskTab, registerSwitchTab, onTaskEvent } from '@/composables/useTas
 import { useTabDrawer, onTabSwitch, resetTabDrawerState } from '@/composables/useTabDrawer.ts'
 import { resetAgents, useAgents } from '@/composables/useAgents'
 import { useGroupMembers } from '@/composables/useGroupMembers'
+import { setGroupCruise } from '@/composables/useGroupChat'
 import { resetUsageStats } from '@/composables/useUsageStats'
 import { resetGitStats } from '@/composables/useGitCodeStats'
 import { useSessionIdentity, registerSessionDrawerRef, registerOpenSessionTabOverride, resetIdentity } from './composables/useSessionIdentity.ts'
@@ -1351,6 +1354,22 @@ const groupAutoApprove = sessionIdentity.autoApprove
 const groupAvatarStackRef = ref<InstanceType<typeof GroupAvatarStack> | null>(null)
 function openGroupSettings() {
   groupAvatarStackRef.value?.open()
+}
+
+// Toggle the current GROUP's auto-cruise switch from the session-info bar chip.
+// App owns the group PATCH and the roster refresh (the same path the group
+// settings sheet uses), so both entry points read the same server value and stay
+// in sync. On failure the roster refresh still runs, reverting the chip to the
+// persisted truth.
+async function onToggleGroupCruise(enabled: boolean) {
+  const groupId = sessionIdentity.currentSessionId.value
+  if (!groupId) return
+  try {
+    await setGroupCruise(groupId, enabled)
+  } catch (e) {
+    appLog.w('Group', 'setGroupCruise failed', e)
+  }
+  await refreshGroupMembers(groupId)
 }
 
 /**
