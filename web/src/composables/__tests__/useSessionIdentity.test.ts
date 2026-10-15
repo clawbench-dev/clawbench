@@ -594,6 +594,42 @@ describe('useSessionIdentity', () => {
         })
     })
 
+    describe('toggleCruise', () => {
+        it('flips the ref and PATCHes the session', async () => {
+            const identity = useSessionIdentity()
+            identity.currentSessionId.value = 'session-cruise'
+            identity.cruise.value = false
+
+            const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) })
+            vi.stubGlobal('fetch', fetchMock)
+
+            identity.toggleCruise(true)
+
+            expect(identity.cruise.value).toBe(true)
+            const call = fetchMock.mock.calls.find(c => String(c[0]).includes('/api/ai/session/update'))
+            expect(call, 'toggleCruise must PATCH session/update').toBeTruthy()
+            expect(JSON.parse((call![1] as RequestInit).body as string)).toEqual({
+                sessionId: 'session-cruise',
+                cruise: true,
+            })
+
+            vi.unstubAllGlobals()
+        })
+
+        it('updates the ref even without a session (no PATCH)', () => {
+            const identity = useSessionIdentity()
+            identity.currentSessionId.value = ''
+            const fetchMock = vi.fn()
+            vi.stubGlobal('fetch', fetchMock)
+
+            identity.toggleCruise(true)
+
+            expect(identity.cruise.value).toBe(true)
+            expect(fetchMock).not.toHaveBeenCalled()
+            vi.unstubAllGlobals()
+        })
+    })
+
     // ── initSessionFromAPI ──
 
     describe('initSessionFromAPI', () => {

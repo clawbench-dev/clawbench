@@ -340,7 +340,7 @@ func TestServeGroupSettings_CruiseToggle(t *testing.T) {
 	w = callHandlerWithAuth(ServeGroupSettings, req)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
-	assert.True(t, service.GetGroupCruise(groupID), "cruise must be persisted")
+	assert.True(t, service.GetSessionCruise(groupID), "cruise must be persisted")
 	assert.True(t, service.GetGroupParallelDefault(groupID), "parallelDefault must survive a cruise-only PATCH")
 
 	// A request with neither switch is a bad request.

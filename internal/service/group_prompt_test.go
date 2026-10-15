@@ -319,3 +319,45 @@ func TestBuildCruiseConfirmPrompt(t *testing.T) {
 		t.Fatalf("free confirm prompt must stay a bare vote: %q", free)
 	}
 }
+
+// The single-chat cruise addendum teaches the lone AI the completion signal, the
+// no-asking rule, and that an unsolicited tag does not count.
+func TestBuildCruiseSingleAddendum(t *testing.T) {
+	p := BuildCruiseSingleAddendum()
+	if !strings.Contains(p, "自动巡航") {
+		t.Fatalf("addendum must name the cruise mode: %q", p)
+	}
+	if !strings.Contains(p, "<clawbench-goal-satisfied/>") {
+		t.Fatalf("addendum must document the goal-satisfied signal: %q", p)
+	}
+	if !strings.Contains(p, "不要向用户提问") {
+		t.Fatalf("addendum must forbid asking the user: %q", p)
+	}
+	// The strict rule: the AI must not emit the tag on its own.
+	if !strings.Contains(p, "不要主动输出") {
+		t.Fatalf("addendum must forbid unsolicited goal-satisfied: %q", p)
+	}
+}
+
+// The single-chat confirmation prompt is hidden, forbids asking the user, and
+// asks for the final conclusion in the same reply when satisfied. It must carry
+// the SHARED confirmation marker so the e2e mock keys off it unchanged.
+func TestBuildCruiseSingleConfirmPrompt(t *testing.T) {
+	p := BuildCruiseSingleConfirmPrompt()
+	if !strings.Contains(p, "[自动巡航·完成确认]") {
+		t.Fatalf("confirm prompt must carry the shared marker (e2e mock keys off it): %q", p)
+	}
+	if !strings.Contains(p, "<clawbench-goal-satisfied/>") {
+		t.Fatalf("confirm prompt must document the goal signal: %q", p)
+	}
+	if !strings.Contains(p, "不要向用户提问") {
+		t.Fatalf("confirm prompt must forbid asking the user: %q", p)
+	}
+	if !strings.Contains(p, "最终结论") {
+		t.Fatalf("confirm prompt must ask for the conclusion in the same reply: %q", p)
+	}
+	// Single chat has no members to route to, so it must NOT invite mentions.
+	if strings.Contains(p, "<clawbench-mention") {
+		t.Fatalf("single-chat confirm prompt must not mention routing: %q", p)
+	}
+}

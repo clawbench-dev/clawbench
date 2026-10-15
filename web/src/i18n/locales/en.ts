@@ -636,6 +636,13 @@ export default {
       enabled: 'Auto-Approve enabled',
       disabled: 'Auto-Approve disabled',
     },
+    cruise: {
+      label: 'Auto-cruise',
+      active: 'Cruising',
+      hint: 'When on, finishing a reply does not hand the floor back — the AI keeps confirming and pushing forward until it declares the task complete',
+      enabled: 'Auto-cruise enabled',
+      disabled: 'Auto-cruise disabled',
+    },
     plan: {
       title: 'Execution Plan',
       priorityHigh: 'High',

@@ -224,7 +224,7 @@ func serveGroupMembersList(w http.ResponseWriter, r *http.Request, projectPath s
 		"members":         out,
 		respKeyMode:       service.GetGroupMode(groupID),
 		"parallelDefault": service.GetGroupParallelDefault(groupID),
-		"cruise":          service.GetGroupCruise(groupID),
+		"cruise":          service.GetSessionCruise(groupID),
 	})
 }
 
@@ -351,7 +351,7 @@ func ServeGroupSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if req.Cruise != nil {
-		if err := service.SetGroupCruise(req.GroupID, *req.Cruise); err != nil {
+		if err := service.SetSessionCruise(req.GroupID, *req.Cruise); err != nil {
 			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 			return
 		}

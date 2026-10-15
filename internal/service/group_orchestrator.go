@@ -319,7 +319,7 @@ func renderGroupCommandForHost(rawMsg, projectPath, groupID string) string {
 // rounds return but before the caller can send "done", matching single chat
 // where Finalize summarizes before the terminal event.
 func (o *GroupOrchestrator) runLoop(groupCtx context.Context, groupID string) DrainResult {
-	o.cruise = GetGroupCruise(groupID)
+	o.cruise = GetSessionCruise(groupID)
 	var res DrainResult
 	if GetGroupMode(groupID) == GroupModeFree {
 		res = o.runFreeLoop(groupCtx, groupID)

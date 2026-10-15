@@ -159,6 +159,10 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		// (fork/rewind/model chrome reappearing). Empty for a session that no
 		// longer exists.
 		sessionType := service.GetSessionType(sessionID)
+		// Auto-cruise switch (both group and single chat): read from the
+		// session's context_state so the frontend's toggle reflects the persisted
+		// truth on load.
+		sessionCruise := service.GetSessionCruise(sessionID)
 		running := service.IsSessionRunning(sessionID)
 
 		// Look up cached ACP mode/thinking/model list state for this session.
@@ -241,10 +245,10 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if err != nil {
-			writeJSON(w, http.StatusOK, map[string]any{"messages": []any{}, "queue": queue, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, jsonBackend: sessionBackend, jsonAgentID: sessionAgentID, "modelId": sessionModelID, "transport": sessionTransport, "sessionType": sessionType, "autoApprove": sessionAutoApprove, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands, "modelListState": modelListState, "planState": planState, "usageState": usageState, "replayPending": replayPending})
+			writeJSON(w, http.StatusOK, map[string]any{"messages": []any{}, "queue": queue, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, jsonBackend: sessionBackend, jsonAgentID: sessionAgentID, "modelId": sessionModelID, "transport": sessionTransport, "sessionType": sessionType, "autoApprove": sessionAutoApprove, "cruise": sessionCruise, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands, "modelListState": modelListState, "planState": planState, "usageState": usageState, "replayPending": replayPending})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"messages": messages, "queue": queue, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, jsonBackend: sessionBackend, jsonAgentID: sessionAgentID, "modelId": sessionModelID, "transport": sessionTransport, "sessionType": sessionType, "autoApprove": sessionAutoApprove, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands, "modelListState": modelListState, "planState": planState, "usageState": usageState, "replayPending": replayPending})
+		writeJSON(w, http.StatusOK, map[string]any{"messages": messages, "queue": queue, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, jsonBackend: sessionBackend, jsonAgentID: sessionAgentID, "modelId": sessionModelID, "transport": sessionTransport, "sessionType": sessionType, "autoApprove": sessionAutoApprove, "cruise": sessionCruise, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands, "modelListState": modelListState, "planState": planState, "usageState": usageState, "replayPending": replayPending})
 		return
 	}
 
@@ -713,6 +717,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 					Empty:          nextResult.empty,
 					AbnormalReason: nextResult.abnormalReason,
 					MsgID:          nextResult.msgID,
+					GoalSatisfied:  nextResult.goalSatisfied,
 				}
 			},
 			// Resume an abnormally terminated turn by sending a localized
@@ -736,6 +741,27 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 					}
 				},
 			}),
+			// Single-chat auto-cruise: after a clean turn, keep the AI working
+			// through confirmation rounds until it declares the goal met (see
+			// service/cruise.go). Nil here would mean "never cruise"; the
+			// runner itself checks the session's switch.
+			CruiseContinue: service.NewCruiseRunner(service.CruiseRunnerConfig{
+				Ctx:         ctx,
+				SessionID:   sessionID,
+				ProjectPath: projectPath,
+				BackendName: backendName,
+				RunTurn: func(prompt string) service.DrainResult {
+					confirmReq := buildChatRequest(prompt, sessionID, projectPath, backendName, effectiveAgentID, req.ModelID, req.ThinkingEffort, req.ModeID, req.Transport, fileDir, false)
+					confirmResult := executeStreamRun(ctx, r, projectPath, sessionID, backendName, effectiveAgentID, confirmReq, fileDir)
+					return service.DrainResult{
+						CancelReason:  confirmResult.cancelReason,
+						Err:           confirmResult.err,
+						Empty:         confirmResult.empty,
+						MsgID:         confirmResult.msgID,
+						GoalSatisfied: confirmResult.goalSatisfied,
+					}
+				},
+			}),
 			// An intermediate answer in a multi-message drain is its own
 			// completed turn: notify now rather than waiting for the whole
 			// queue (see DrainConfig.OnTurnAnswered).
@@ -749,6 +775,9 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 			Empty:          result.empty,
 			AbnormalReason: result.abnormalReason,
 			MsgID:          result.msgID,
+			// Deliberately NOT carrying the first turn's GoalSatisfied: the
+			// strict rule is that only a CONFIRMATION round ends the run, so a
+			// tag in the user's own turn must not stop it (see cruise.go).
 		})
 	}()
 }
@@ -760,6 +789,7 @@ type streamRunResult struct {
 	empty          bool   // true if AI returned no content
 	abnormalReason string // non-empty when the turn may be auto-resumed
 	msgID          int64  // finalized assistant row id (0 if none) — see DrainResult.MsgID
+	goalSatisfied  bool   // true when the reply declared <clawbench-goal-satisfied/>
 }
 
 // executeStreamRun runs one AI backend execution from start to finish.
@@ -800,6 +830,7 @@ func executeStreamRun(
 		empty:          res.Empty,
 		abnormalReason: res.AbnormalReason,
 		msgID:          res.MsgID,
+		goalSatisfied:  res.GoalSatisfied,
 	}
 }
 

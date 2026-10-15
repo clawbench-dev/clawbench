@@ -361,6 +361,13 @@
         <span class="session-info-divider"></span>
         <span class="session-info-mode" :class="{ 'session-info-mode-auto': autoApprove }" @click.stop="onModeClick" v-long-press="onModeLongPress" @mousedown.stop="onModeMouseDown" @mouseup.stop="onModeMouseUp"><Compass :size="11" />{{ currentModeName }}</span>
       </template>
+      <!-- Auto-cruise chip (single chat). Click toggles the session's cruise
+           switch: the turn no longer hands the floor back when the reply
+           finishes — the AI keeps confirming until it declares the goal met.
+           Highlighted + labelled "Cruising" while on, mirroring the group
+           header pill. -->
+      <span class="session-info-divider"></span>
+      <span class="session-info-cruise" :class="{ 'session-info-cruise-on': cruise }" :title="t('chat.cruise.hint')" @click.stop="onCruiseClick"><Navigation :size="11" />{{ cruise ? t('chat.cruise.active') : t('chat.cruise.label') }}</span>
       <template v-if="showUsageInfo">
         <span class="session-info-divider"></span>
         <span ref="usageElRef" class="session-info-usage" @click.stop="usageDrawer.toggle()">
@@ -379,7 +386,7 @@
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted, defineAsyncComponent } from 'vue'
 import { pendingChatInput as pendingChatInputRef, consumePendingChatInput } from '@/utils/chatInputInjection'
 import { useI18n } from 'vue-i18n'
-import { List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Zap, Compass, Activity, MessagesSquare, Minimize2, Sparkles, ArrowRightLeft, Settings, TextCursorInput, MessageSquareShare, Check, Users } from 'lucide-vue-next'
+import { List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Zap, Compass, Activity, MessagesSquare, Minimize2, Sparkles, ArrowRightLeft, Settings, TextCursorInput, MessageSquareShare, Check, Users, Navigation } from 'lucide-vue-next'
 import { computeRecentReferencedFiles, isImeCompositionEvent } from '@/utils/chatInputUtils.ts'
 import { measureCaretVisualRows } from '@/utils/textareaVisualRows.ts'
 import { fuzzyMatch, parseAtQuery, parseHashQuery, parseSlashQuery, buildFileCandidates } from '@/utils/completionMatch.ts'
@@ -426,7 +433,7 @@ import { store } from '@/stores/app.ts'
 import { apiGet } from '@/utils/api'
 
 const { t } = useI18n()
-const { availableCommands, availableModes, currentTransport: sessionTransport, autoApprove, toggleAutoApprove, contextUsed, contextSize, contextInputTokens, contextOutputTokens, contextTotalTokens, contextCachedReadTokens, contextCachedWriteTokens, contextThoughtTokens, contextCost, contextCurrency, contextCacheCreationTokens, contextCacheHitTokens, contextCacheMissTokens, contextCredit, contextUsageByCategory } = useSessionIdentity()
+const { availableCommands, availableModes, currentTransport: sessionTransport, autoApprove, toggleAutoApprove, cruise, toggleCruise, contextUsed, contextSize, contextInputTokens, contextOutputTokens, contextTotalTokens, contextCachedReadTokens, contextCachedWriteTokens, contextThoughtTokens, contextCost, contextCurrency, contextCacheCreationTokens, contextCacheHitTokens, contextCacheMissTokens, contextCredit, contextUsageByCategory } = useSessionIdentity()
 const { supportsACP, hasPreferredMode, getAgentAvatar } = useAgents()
 const toast = useToast()
 const { uploadAndAttach, pendingFiles, removeFile } = useFileUpload()
@@ -498,6 +505,18 @@ function doToggleAutoApprove() {
   toggleAutoApprove(next)
   toast.show(next ? t('chat.autoApprove.enabled') : t('chat.autoApprove.disabled'), {
     icon: next ? '✅' : '🔒',
+    type: next ? 'success' : 'info',
+  })
+}
+
+// Toggle the session's auto-cruise switch. Single chat only (the chip lives in
+// the session-info bar, which is hidden for groups — groups toggle cruise from
+// their own settings sheet).
+function onCruiseClick() {
+  const next = !cruise.value
+  toggleCruise(next)
+  toast.show(next ? t('chat.cruise.enabled') : t('chat.cruise.disabled'), {
+    icon: next ? '🧭' : '⏹️',
     type: next ? 'success' : 'info',
   })
 }
@@ -2324,7 +2343,8 @@ defineExpose({
 }
 
 .session-info-model,
-.session-info-mode {
+.session-info-mode,
+.session-info-cruise {
   display: inline-flex;
   align-items: center;
   gap: 3px;
@@ -2354,8 +2374,19 @@ defineExpose({
   color: #388e3c;
 }
 
+/* Auto-cruise chip: accent-colored when ON so it reads as an active mode
+   (mirrors the group header pill), muted when off. */
+.session-info-cruise-on {
+  color: var(--accent-color, #0066cc);
+}
+
+.session-info-cruise-on:active {
+  opacity: 0.7;
+}
+
 .session-info-model svg,
 .session-info-mode svg,
+.session-info-cruise svg,
 .session-info-usage svg {
   flex-shrink: 0;
 }

@@ -638,6 +638,13 @@ export default {
       enabled: '自动批准已开启',
       disabled: '自动批准已关闭',
     },
+    cruise: {
+      label: '自动巡航',
+      active: '巡航中',
+      hint: '开启后，一轮回复结束不会停手，AI 会持续确认并推进，直到它确认任务已完成',
+      enabled: '自动巡航已开启',
+      disabled: '自动巡航已关闭',
+    },
     plan: {
       title: '执行计划',
       priorityHigh: '高',

@@ -503,6 +503,47 @@ func TestServeAISessionUpdate_BadMethod(t *testing.T) {
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
 
+// The auto-cruise switch rides PATCH /api/ai/session/update as an optional
+// pointer field: a cruise-only PATCH persists it to the session's context_state,
+// and a PATCH without it leaves it untouched (not sent ≠ false).
+func TestServeAISessionUpdate_CruiseToggle(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sid, err := service.CreateSession(env.ProjectDir, "claude", "Cruise", "claude", "", "default", "chat")
+	require.NoError(t, err)
+
+	// Cruise-only PATCH → persisted.
+	req := newRequest(t, http.MethodPatch, "/api/ai/session/update", map[string]any{
+		"sessionId": sid,
+		"cruise":    true,
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeAISessionUpdate, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.True(t, service.GetSessionCruise(sid), "cruise must be persisted")
+
+	// A PATCH without the field must not clear it.
+	req = newRequest(t, http.MethodPatch, "/api/ai/session/update", map[string]any{
+		"sessionId": sid,
+		"title":     "Renamed",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandler(ServeAISessionUpdate, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.True(t, service.GetSessionCruise(sid), "omitting cruise must not clear it")
+
+	// An explicit false clears it.
+	req = newRequest(t, http.MethodPatch, "/api/ai/session/update", map[string]any{
+		"sessionId": sid,
+		"cruise":    false,
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandler(ServeAISessionUpdate, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.False(t, service.GetSessionCruise(sid), "explicit false must clear cruise")
+}
+
 func TestServeAISessionUpdate_BodySessionIDOverridesCookie(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()

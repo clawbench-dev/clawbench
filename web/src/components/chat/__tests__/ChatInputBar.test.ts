@@ -107,6 +107,13 @@ const i18n = createI18n({
           enabled: 'Auto-approve enabled',
           disabled: 'Auto-approve disabled',
         },
+        cruise: {
+          label: 'Auto-cruise',
+          active: 'Cruising',
+          hint: 'Cruise hint',
+          enabled: 'Auto-cruise enabled',
+          disabled: 'Auto-cruise disabled',
+        },
       },
       common: { copy: 'Copy', remove: 'Remove', cancel: 'Cancel' },
       tool: {
@@ -328,6 +335,8 @@ const mockAvailableModes = ref([])
 const mockSessionTransport = ref('')
 const mockAutoApprove = ref(false)
 const mockToggleAutoApprove = vi.fn()
+const mockCruise = ref(false)
+const mockToggleCruise = vi.fn()
 const mockContextUsed = ref(0)
 const mockContextSize = ref(0)
 const mockContextInputTokens = ref(0)
@@ -350,6 +359,8 @@ vi.mock('@/composables/useSessionIdentity', () => ({
     currentTransport: mockSessionTransport,
     autoApprove: mockAutoApprove,
     toggleAutoApprove: mockToggleAutoApprove,
+    cruise: mockCruise,
+    toggleCruise: mockToggleCruise,
     contextUsed: mockContextUsed,
     contextSize: mockContextSize,
     contextInputTokens: mockContextInputTokens,
@@ -2891,6 +2902,42 @@ describe('ChatInputBar', () => {
       await modeChip.trigger('mouseup')
       expect(mockToggleAutoApprove).toHaveBeenCalledWith(false)
       vi.useRealTimers()
+    })
+  })
+
+  describe('auto-cruise chip', () => {
+    beforeEach(() => {
+      mockCruise.value = false
+      mockToggleCruise.mockReset()
+    })
+
+    it('renders the cruise chip in the single-chat session info bar', () => {
+      const wrapper = mountBar({ currentModelName: 'gpt-4' })
+      expect(wrapper.find('.session-info-cruise').exists()).toBe(true)
+      expect(wrapper.find('.session-info-cruise').text()).toContain('Auto-cruise')
+      wrapper.unmount()
+    })
+
+    it('toggles cruise on click', async () => {
+      const wrapper = mountBar({ currentModelName: 'gpt-4' })
+      await wrapper.find('.session-info-cruise').trigger('click')
+      expect(mockToggleCruise).toHaveBeenCalledWith(true)
+      wrapper.unmount()
+    })
+
+    it('labels the chip "Cruising" and highlights it when on', () => {
+      mockCruise.value = true
+      const wrapper = mountBar({ currentModelName: 'gpt-4' })
+      const chip = wrapper.find('.session-info-cruise')
+      expect(chip.text()).toContain('Cruising')
+      expect(chip.classes()).toContain('session-info-cruise-on')
+      wrapper.unmount()
+    })
+
+    it('hides the cruise chip for a group session', () => {
+      const wrapper = mountBar({ currentModelName: 'gpt-4', isGroupSession: true })
+      expect(wrapper.find('.session-info-cruise').exists()).toBe(false)
+      wrapper.unmount()
     })
   })
 

@@ -29,6 +29,12 @@ type DrainResult struct {
 	// terminal `done` sweeps every streaming bubble (or a session switch rebuilds
 	// from the DB).
 	MsgID int64
+
+	// GoalSatisfied is true when this turn's output declared the auto-cruise
+	// goal met (<clawbench-goal-satisfied/>). Single-chat cruise reads it to
+	// decide whether a CONFIRMATION round ends the run (see cruise.go). It is
+	// only consulted for a clean turn.
+	GoalSatisfied bool
 }
 
 // DrainConfig holds the parameters for the drain loop.
@@ -73,6 +79,21 @@ type DrainConfig struct {
 	// retrying when the session is no longer running, and it never retries
 	// while the user has queued work waiting.
 	AutoContinue func(attempt int, prev DrainResult) (DrainResult, bool)
+
+	// CruiseContinue, when non-nil, is called after a turn finished CLEANLY to
+	// run the next SINGLE-CHAT auto-cruise confirmation round instead of
+	// terminating (see cruise.go). attempt is the 1-based index of the
+	// confirmation round about to run (1 = right after the user's own turn). It
+	// returns the round's result and ok=true to continue, or ok=false to stop —
+	// in which case the loop falls through to its normal terminal handling.
+	//
+	// The loop owns the same liveness guards as AutoContinue: it never cruises
+	// while the user has queued work waiting, and never after the session stops
+	// being running. The caller (NewCruiseRunner) owns the switch check, the
+	// budget, the "already satisfied" decision, and the confirmation prompt.
+	//
+	// Nil means the session never cruises (every non-cruise path).
+	CruiseContinue func(attempt int, prev DrainResult) (DrainResult, bool)
 }
 
 // emitDrainEvent emits a stream event to WS clients via StreamHub.
@@ -254,6 +275,87 @@ func runAutoContinue(cfg DrainConfig, attempt int, prev DrainResult) (result Dra
 	return cfg.AutoContinue(attempt, prev)
 }
 
+// shouldCruiseContinue reports whether the loop may hand this result to the
+// caller's CruiseContinue hook (single-chat auto-cruise).
+//
+// It is the counterpart of shouldAutoContinue and enforces the same two
+// liveness guards (session still running; nothing queued by the user), plus one
+// cruise-specific rule: the turn must have finished CLEANLY. Cruise takes over
+// the "reply finished" point only — a cancelled, empty or abnormal turn is a
+// terminal condition the loop must handle as usual (the user stopped, the model
+// died), never something to wrap in a confirmation round.
+func shouldCruiseContinue(cfg DrainConfig, result DrainResult) bool {
+	if cfg.CruiseContinue == nil {
+		return false
+	}
+	if result.CancelReason != "" || result.Err != "" || result.Empty || result.AbnormalReason != "" {
+		return false
+	}
+	if GetQueuedCount(cfg.SessionID) > 0 {
+		slog.Info("cruise: skipped, user has queued messages",
+			slog.String("session", cfg.SessionID))
+		return false
+	}
+	if !IsSessionRunning(cfg.SessionID) {
+		slog.Info("cruise: skipped, session no longer running",
+			slog.String("session", cfg.SessionID))
+		return false
+	}
+	return true
+}
+
+// runCruiseContinue invokes the caller's hook with a panic barrier, mirroring
+// runAutoContinue: a panic here must not unwind the drain goroutine and leave
+// the session running with no loop and no terminal event. Recovering and
+// refusing the round degrades to a normal finish.
+func runCruiseContinue(cfg DrainConfig, attempt int, prev DrainResult) (result DrainResult, ok bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("cruise: hook panicked, giving up",
+				slog.String("session", cfg.SessionID),
+				slog.Int("attempt", attempt),
+				slog.Any("panic", r),
+				slog.String("stack", string(debug.Stack())))
+			result, ok = prev, false
+		}
+	}()
+	return cfg.CruiseContinue(attempt, prev)
+}
+
+// resumeBeforeTerminal runs the two "the turn is over but the loop is not"
+// hooks, in order, and reports whether either produced a result the loop should
+// continue with:
+//
+//  1. auto-continue resumes an ABNORMALLY terminated turn (a crash, a backend
+//     error). Its budget counter is incremented per attempt.
+//  2. single-chat auto-cruise runs the next confirmation round after a CLEANLY
+//     finished turn. Its round counter is incremented per round.
+//
+// Order matters: an abnormal turn is auto-continue's job (its AbnormalReason
+// makes shouldCruiseContinue false), so the two never both fire for one result.
+// Both are gated on the user having nothing queued and the session still
+// running, which only the loop can see — hence the guards live in the
+// shouldXxx helpers, not in the hooks.
+//
+// Extracted from RunDrainLoop so the loop body stays readable (and under the
+// cyclomatic-complexity gate); the loop owns the `continue` that a non-ok=false
+// return implies.
+func resumeBeforeTerminal(cfg DrainConfig, result DrainResult, autoContinueAttempts, cruiseRounds *int) (DrainResult, bool) {
+	if shouldAutoContinue(cfg, result, *autoContinueAttempts) {
+		*autoContinueAttempts++
+		if next, ok := runAutoContinue(cfg, *autoContinueAttempts, result); ok {
+			return next, true
+		}
+	}
+	if shouldCruiseContinue(cfg, result) {
+		*cruiseRounds++
+		if next, ok := runCruiseContinue(cfg, *cruiseRounds, result); ok {
+			return next, true
+		}
+	}
+	return result, false
+}
+
 // retryDequeueAfterError accounts for one failed dequeue and reports whether
 // the drain loop may keep going. A real DB error must not exit as if the queue
 // were empty (that would silently lose messages): transient blips are retried
@@ -296,19 +398,20 @@ func RunDrainLoop(cfg DrainConfig, result DrainResult) {
 	// message instead of exhausting it once and never resuming again.
 	autoContinueAttempts := 0
 
+	// Confirmation rounds run for the CURRENT user turn (single-chat cruise).
+	// Reset alongside autoContinueAttempts on every dequeue: the cruise budget
+	// is per user turn too. attempt is passed to CruiseContinue as the 1-based
+	// index of the round about to run (1 = right after the user's own turn).
+	cruiseRounds := 0
+
 	for {
-		// Resume an abnormally terminated turn before deciding the loop is
-		// done. This must run BEFORE drainHandleTerminal, which treats Err and
-		// Empty as terminal — but only when the user has nothing queued, so an
-		// explicit message always wins over an automatic resume (otherwise the
-		// auto message would be persisted after the user's row and delay their
-		// actual request).
-		if shouldAutoContinue(cfg, result, autoContinueAttempts) {
-			autoContinueAttempts++
-			if next, ok := runAutoContinue(cfg, autoContinueAttempts, result); ok {
-				result = next
-				continue
-			}
+		// Resume an abnormally terminated turn, or run the next single-chat
+		// cruise confirmation round, before deciding the loop is done. Both
+		// must run BEFORE drainHandleTerminal, which treats Err/Empty as
+		// terminal; a resumed/continued turn restarts the iteration.
+		if next, ok := resumeBeforeTerminal(cfg, result, &autoContinueAttempts, &cruiseRounds); ok {
+			result = next
+			continue
 		}
 
 		if drainHandleTerminal(cfg, result) {
@@ -338,8 +441,11 @@ func RunDrainLoop(cfg DrainConfig, result DrainResult) {
 		// A message was successfully claimed — the DB recovered, reset the
 		// failure counter.
 		dequeueFailures = 0
-		// A real user turn is starting: give it its own auto-continue budget.
+		// A real user turn is starting: give it its own auto-continue budget and
+		// its own cruise budget (the confirmation-round count restarts, so a
+		// long conversation gets a fresh allowance per message).
 		autoContinueAttempts = 0
+		cruiseRounds = 0
 
 		// The PREVIOUS turn just finished normally and more work is waiting, so
 		// this is where an intermediate answer is reported. The loop's terminal

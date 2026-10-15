@@ -947,6 +947,12 @@ paths:
             插话（mid-turn steering）并入上一回复的，且该后端**不切分**回复
             （claude/codex）——前端据此在气泡上标注「回复已并入上一轮」。切分型后端
             （CodeBuddy）不置此位。
+
+            `cruise`：该会话的自动巡航开关（`chat_sessions.context_state` 的 `cruise`
+            键，默认 `false`）。单聊开启后，一轮回复结束不停手，改为注入「完成确认」
+            回合，直到 AI 输出 `<clawbench-goal-satisfied/>` 或撞
+            `chat.group_max_speeches` 上限才结束；群聊开启后四类「交回用户」点改为
+            确认回合。前端据此刻画会话信息栏的「巡航」开关。
     post:
       tags: [Chat]
       summary: 发送聊天消息
@@ -1469,6 +1475,13 @@ paths:
                   description: |
                     开关自动批准（hands-off）。对群会话，会同时写入群行与**每个成员行**
                     （成员的 ACP 连接按成员行 id 读取该标志，只写群行等于没生效）。
+                cruise:
+                  type: boolean
+                  description: |
+                    开关自动巡航（auto-cruise）。存 `chat_sessions.context_state` 的 `cruise` 键。
+                    单聊：一轮回复结束后不停手，改为注入「完成确认」回合，直到 AI 输出
+                    `<clawbench-goal-satisfied/>`（或撞 `chat.group_max_speeches` 上限）才结束。
+                    群聊：四类「交回用户」点改为确认回合（详见群聊设计 §15）。默认关。
                 title:
                   type: string
                 pinned:

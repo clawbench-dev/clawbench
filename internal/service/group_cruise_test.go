@@ -43,8 +43,8 @@ func createHostGroup(t *testing.T, project string, memberNames ...string) (strin
 // enableCruise turns the group's cruise switch on.
 func enableCruise(t *testing.T, groupID string) {
 	t.Helper()
-	if err := SetGroupCruise(groupID, true); err != nil {
-		t.Fatalf("SetGroupCruise(true): %v", err)
+	if err := SetSessionCruise(groupID, true); err != nil {
+		t.Fatalf("SetSessionCruise(true): %v", err)
 	}
 }
 

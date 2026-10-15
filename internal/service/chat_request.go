@@ -143,6 +143,16 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 		slog.Warn("BuildChatRequest: GetChatMessageCount failed, assuming conversation history", "session_id", sessionID, "err", err)
 	}
 
+	// Auto-cruise: when the session has the switch on, prepend the cruise
+	// addendum to the PROMPT. It rides the prompt (not the system prompt)
+	// because a CLI resume does not necessarily re-send the system prompt (see
+	// ChatRequest.ShouldInjectSystemPrompt) — the prompt is what reaches the
+	// model on every turn. Prompt is transient (the persisted user row is
+	// req.Message), so this never leaks into the user bubble or history.
+	if GetSessionCruise(sessionID) {
+		prompt = BuildCruiseSingleAddendum() + "\n\n" + prompt
+	}
+
 	return ai.ChatRequest{
 		Prompt:                 prompt,
 		SessionID:              effectiveSessionID,

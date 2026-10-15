@@ -593,6 +593,7 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 		ModelID        string `json:"modelId"`
 		Transport      string `json:"transport"`
 		AutoApprove    *bool  `json:"autoApprove"` // pointer: distinguish "not sent" from false
+		Cruise         *bool  `json:"cruise"`      // pointer: distinguish "not sent" from false (auto-cruise)
 		Title          string `json:"title"`
 		Pinned         *bool  `json:"pinned"` // pointer: distinguish "not sent" from false
 		// Tags replaces the session's full tag set when non-nil. A pointer is
@@ -622,6 +623,14 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.AutoApprove != nil {
 		applyAutoApprove(sessionID, *req.AutoApprove)
+	}
+	if req.Cruise != nil {
+		// Auto-cruise switch (single chat: keep confirming until the AI declares
+		// the goal met; group: the four hand-back points become confirmation
+		// rounds). Stored in the session's context_state; read by
+		// BuildChatRequest (single chat) and the group orchestrator.
+		//nolint:errcheck,gosec // best-effort persistence; failure is non-fatal for an idempotent update
+		service.SetSessionCruise(sessionID, *req.Cruise)
 	}
 	if title := strings.TrimSpace(req.Title); title != "" {
 		// Manual rename: lock the title so the first-message auto-title does
