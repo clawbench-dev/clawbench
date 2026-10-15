@@ -42,6 +42,20 @@ func IsCriticalStreamEvent(eventType string) bool {
 	return ok
 }
 
+// CriticalStreamEventTypes returns the set of event types whose loss is
+// user-visible. Exposed so the wire layer can assert that every one of them has
+// a payload builder — a critical event with no payload is silently dropped by
+// StreamHub.Emit, which defeats the whole point of marking it critical.
+//
+// Returns a copy: callers must not be able to mutate the registry.
+func CriticalStreamEventTypes() []string {
+	out := make([]string, 0, len(criticalStreamEvents))
+	for t := range criticalStreamEvents {
+		out = append(out, t)
+	}
+	return out
+}
+
 // criticalSendTimeout bounds how long a critical event waits for room in a full
 // channel before giving up. It is a backstop, not a pacing mechanism: the normal
 // case is that the consumer drains within microseconds.
