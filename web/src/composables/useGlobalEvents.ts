@@ -2,6 +2,7 @@ import { ref, computed } from 'vue'
 import { useReconnect } from './useReconnect'
 import { useForgeUnread } from './useForgeUnread'
 import { useAppMode } from './useAppMode'
+import { useAppForeground, onAppResume } from './useAppForeground'
 import { showBrowserNotification } from './useNotification'
 import { playNotificationSound } from './useNotificationSound'
 import { gt } from './useLocale'
@@ -759,22 +760,41 @@ export function useGlobalEvents() {
     // at all, defeating the whole purpose of the desktop shell. Hence the
     // isDesktopApp guard.
     //
-    // Design principle: the foreground ('visible') branch is self-contained —
-    // it resets reconnect state and reconnects without depending on any timer
-    // that may have been scheduled during the background ('hidden') branch.
-    // This eliminates the old race where setTimeout(reset, 100) was frozen by
+    // Design principle: the foreground branch is self-contained — it resets
+    // reconnect state and reconnects without depending on any timer that may
+    // have been scheduled during the background ('hidden') branch. This
+    // eliminates the old race where setTimeout(reset, 100) was frozen by
     // Android's pauseTimers() and fired unpredictably (or never) on resume.
+    //
+    // "Returning to foreground" must be driven by a RELIABLE signal. The
+    // background branch disables reconnect, and `disabled` is STICKY — only
+    // reset() clears it. Relying on `visibilitychange === 'visible'` alone
+    // strands the client: Android's WebView does not reliably deliver
+    // visibilitychange (the repo documents this and added an unconditional
+    // native resume hook for exactly this reason — see useAppForeground), so
+    // when the 'visible' event never arrives the socket stays dead forever
+    // (onclose and the heartbeat both gate on shouldReconnect(), which is false
+    // while disabled). The user then sees the "连接断开，正在重连…" overlay until
+    // they force-quit and relaunch the app, which re-runs init() -> connect().
+    // Both sources therefore funnel into resyncForeground().
+    function resyncForeground() {
+        // Always clear the sticky disabled flag (set by the background branch)
+        // and any stale attempt count left by backgrounded reconnect attempts
+        // the OS killed. Must run on every foreground entry.
+        reconnect.reset()
+        // Reconnect only when there is no live or in-flight socket. A healthy
+        // connection is left untouched — tearing it down would drop live
+        // stream events and re-run the whole state sync for nothing.
+        if (!ws || (ws.readyState !== WebSocket.OPEN && ws.readyState !== WebSocket.CONNECTING)) {
+            connect()
+        }
+        // Emit a custom event that other composables can listen to
+        window.dispatchEvent(new CustomEvent('clawbench-foreground'))
+    }
+
     function handleVisibilityChange() {
         if (document.visibilityState === 'visible') {
-            // Returning to foreground — self-contained state reset + reconnect.
-            // Always reset reconnect state first (it may be disabled from
-            // background or have stale attempt counts from backgrounded
-            // reconnect attempts that the OS killed).
-            reconnect.reset()
-            // Reconnect if disconnected
-            if (!connected.value) connect()
-            // Emit a custom event that other composables can listen to
-            window.dispatchEvent(new CustomEvent('clawbench-foreground'))
+            resyncForeground()
         } else {
             if (isAppMode.value && !isDesktopApp.value) {
                 // App mode: disconnect WebSocket on background.
@@ -795,16 +815,27 @@ export function useGlobalEvents() {
     }
 
     let initialized = false
+    // Unsubscribe handle for the native resume hook; cleared in destroy().
+    let removeResumeListener: (() => void) | null = null
     function init() {
         if (initialized) return
         initialized = true
+        // Ensure the native foreground bridges are installed. Idempotent — the
+        // composable installs them once per module instance.
+        useAppForeground()
         document.addEventListener('visibilitychange', handleVisibilityChange)
+        // Reliable resume signal (Android native onResume). On Android the
+        // WebView may never deliver a 'visible' visibilitychange, so without
+        // this the client could stay permanently disconnected after a resume.
+        removeResumeListener = onAppResume(resyncForeground)
         // Initial connect
         connect()
     }
 
     function destroy() {
         document.removeEventListener('visibilitychange', handleVisibilityChange)
+        removeResumeListener?.()
+        removeResumeListener = null
         disconnect()
         // ISS-192: Clear handlers and state on destroy to prevent stale closures
         // from firing after SPA hot project switch.

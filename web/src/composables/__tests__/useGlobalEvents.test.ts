@@ -59,6 +59,27 @@ vi.mock('@/composables/useAppMode', () => ({
     }),
 }))
 
+// Capture the resume listeners registered by useGlobalEvents. On Android the
+// native onResume bridge fires this unconditionally, whereas the Page
+// Visibility API (visibilitychange) is NOT reliably delivered by the WebView —
+// so the WS layer must recover from this signal, not only from visibilitychange.
+const resumeListeners: Array<() => void> = []
+vi.mock('@/composables/useAppForeground', () => ({
+    useAppForeground: () => ({ appInForeground: { value: true } }),
+    onAppResume: (cb: () => void) => {
+        resumeListeners.push(cb)
+        return () => {
+            const i = resumeListeners.indexOf(cb)
+            if (i !== -1) resumeListeners.splice(i, 1)
+        }
+    },
+}))
+
+function fireAppResume() {
+    for (const cb of [...resumeListeners]) cb()
+}
+
+
 import {
     useGlobalEvents,
     _seedLastSeenEventIdForTesting,
@@ -640,6 +661,113 @@ describe('useGlobalEvents', () => {
             // wsStatus should be 'reconnecting' (not stuck at 'disconnected'
             // with disabled=true as in the old code)
             expect(events.wsStatus.value).toBe('reconnecting')
+        })
+    })
+
+    // Reported symptom: on Android the app sometimes shows "连接断开，正在重连…"
+    // and never recovers until the app is force-quit and relaunched. The
+    // background branch (app mode) calls reconnect.disable(), which is STICKY —
+    // only reset() clears it. reset() lived exclusively in the
+    // `visibilitychange === 'visible'` branch, but Android WebView does not
+    // reliably deliver visibilitychange (the repo already documents this and
+    // added an unconditional native resume hook for exactly that reason).
+    // When the visible event never arrives, the socket stays dead forever:
+    // onclose/heartbeat all gate on shouldReconnect(), which is false while
+    // disabled. Relaunching the app re-runs init() -> connect(), which is why
+    // that "fixes" it. The WS layer must therefore also recover from the
+    // reliable native resume signal.
+    describe('app resume recovery (Android native bridge)', () => {
+        it('reconnects on app resume when visibilitychange never fires', () => {
+            appModeState.value = true
+            events.init()
+            const ws = connectAndGetWs()
+
+            // Background: disconnect + sticky reconnect.disable()
+            Object.defineProperty(document, 'visibilityState', {
+                value: 'hidden', writable: true, configurable: true,
+            })
+            document.dispatchEvent(new Event('visibilitychange'))
+            expect(ws.readyState).toBe(MockWebSocket.CLOSED)
+
+            // Simulate the dropped onclose (WebView frozen while paused).
+            ws.onclose?.(new CloseEvent('close'))
+
+            // Return to foreground: the native onResume bridge fires, but NO
+            // visibilitychange is delivered (the WebView never flipped to
+            // hidden, so there is no transition to report).
+            fireAppResume()
+
+            const newWs = getLatestWs()
+            expect(newWs).not.toBe(ws)
+            newWs.simulateOpen()
+            expect(events.wsStatus.value).toBe('connected')
+        })
+
+        it('clears the sticky reconnect-disable flag on app resume', () => {
+            // The disabled flag is what makes the failure permanent. After a
+            // resume the reconnect system must be armed again: a subsequent
+            // socket failure has to schedule a retry (wsStatus -> reconnecting)
+            // rather than sitting at 'disconnected' forever.
+            appModeState.value = true
+            events.init()
+            const ws = connectAndGetWs()
+
+            Object.defineProperty(document, 'visibilityState', {
+                value: 'hidden', writable: true, configurable: true,
+            })
+            document.dispatchEvent(new Event('visibilitychange'))
+
+            // Resume with the socket already torn down (no visibilitychange).
+            ws.onclose?.(new CloseEvent('close'))
+            fireAppResume()
+
+            const resumedWs = getLatestWs()
+            expect(resumedWs).not.toBe(ws)
+            // The resumed connection fails — reconnect must be armed.
+            resumedWs.onclose?.(new CloseEvent('close'))
+            expect(events.wsStatus.value).toBe('reconnecting')
+        })
+
+        it('does not churn the socket when already connected on resume', () => {
+            // A resume while the socket is healthy (e.g. desktop browser, or a
+            // brief background the OS did not actually kill) must not tear down
+            // and rebuild a working connection — that would drop live stream
+            // events and re-run the whole state sync for nothing.
+            events.init()
+            const ws = connectAndGetWs()
+            expect(events.wsStatus.value).toBe('connected')
+
+            fireAppResume()
+
+            expect(getLatestWs()).toBe(ws)
+            expect(ws.readyState).toBe(MockWebSocket.OPEN)
+        })
+
+        it('re-arms a socket that died while backgrounded in browser mode too', () => {
+            // Browser/desktop: visibilitychange is reliable, but the native
+            // resume signal is also a valid "we are back" cue. A socket that
+            // died in the background must be revived on resume regardless.
+            events.init()
+            const ws = connectAndGetWs()
+            ws.close() // server/network dropped it while away
+
+            fireAppResume()
+
+            const newWs = getLatestWs()
+            expect(newWs).not.toBe(ws)
+            newWs.simulateOpen()
+            expect(events.wsStatus.value).toBe('connected')
+        })
+
+        it('stops reacting to resume after destroy', () => {
+            events.init()
+            connectAndGetWs()
+            events.destroy()
+            const countAfterDestroy = mockWsInstances.length
+
+            fireAppResume()
+
+            expect(mockWsInstances.length).toBe(countAfterDestroy)
         })
     })
 
