@@ -22,6 +22,7 @@
           :text="quoteData?.text || ''"
           class="quote-bar-action"
           :label="t('common.copy')"
+          @click="onCopyAction"
         />
         <button
           class="quote-bar-action"
@@ -293,6 +294,14 @@ function onRowPointerDown() {
   emit('pin')
 }
 
+// Copy: the clipboard write is owned by CopyButton (it has the text), so this
+// only closes the bar. Same "commit and dismiss" contract as the quote action —
+// both actions finish their job and get out of the way, rather than leaving a
+// toolbar floating over text the user is done with.
+function onCopyAction() {
+  emit('close')
+}
+
 function autoResizeTextarea() {
   const el = inputRef.value
   if (!el) return
@@ -373,11 +382,26 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
 
 /* The collapsed pill sizes to its content (`max-content` above). The expanded
    input panel must NOT: it holds a textarea whose intrinsic width is huge, so
-   `max-content` would stretch it across the screen. Give the anchored expanded
-   panel a fixed, comfortable width instead. */
+   `max-content` would stretch it across the screen.
+
+   Size it to the app's established reading width — the same 600px the pinned
+   bar caps at (`.quote-question-bar { max-width: 600px }`) — and let it shrink
+   with the room actually available:
+
+     width: 600px       → the target width on a roomy screen
+     max-width: 100%    → resolves against the root's used width, which the
+                          root's INLINE max-width (from
+                          computeSelectionToolbarStyle, = viewport − 2·margin,
+                          in pre-zoom px) has already clamped. So the panel
+                          narrows with the viewport/zoom without any `vw` unit
+                          (which would not track the app's `html { zoom }`).
+
+   Without `max-width: 100%` a narrow screen would leave the root clamped while
+   the child stayed 600px and got silently clipped by the root's
+   `overflow: hidden`. */
 .quote-question-bar--anchored .quote-bar-expanded {
-  width: 320px;
-  max-width: calc(100vw - 16px);
+  width: 600px;
+  max-width: 100%;
 }
 
 /* ===== Collapsed: floating selection toolbar ===== */

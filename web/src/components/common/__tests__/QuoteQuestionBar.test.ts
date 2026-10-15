@@ -172,6 +172,15 @@ describe('QuoteQuestionBar', () => {
       expect(wrapper.find('.qq-textarea').exists()).toBe(false)
     })
 
+    it('emits close when the copy action is clicked', async () => {
+      // Both commit actions dismiss the toolbar: the user is done with the
+      // selection, so leaving it floating over the text would be in the way.
+      const wrapper = mountBar({ quoteData: QUOTE })
+      await wrapper.findAll('.quote-bar-action')[0].trigger('click')
+
+      expect(wrapper.emitted('close')).toBeTruthy()
+    })
+
     it('emits add with the typed note after expanding via comment', async () => {
       const wrapper = mountBar({ quoteData: QUOTE })
       await wrapper.findAll('.quote-bar-action')[1].trigger('click')
