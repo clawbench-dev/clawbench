@@ -69,17 +69,6 @@ func runCruiseLoop(t *testing.T, sessionID string, first DrainResult, rounds []D
 	return ran
 }
 
-// TestCruiseRunner_StrictRule_UserTurnTagDoesNotEnd verifies the strict rule:
-// the runner NEVER stops on attempt==1 (the user's own turn), even if that turn
-// carries goal-satisfied. It must run at least one confirmation round.
-func TestCruiseRunner_StrictRule_UserTurnTagDoesNotEnd(t *testing.T) {
-	setupGroupDB(t)
-	project := "/tmp/cruise-single-strict"
-	sid := cruiseTestSession(t, project)
-	require.NoError(t, SetSessionCruise(sid, true))
-	require.True(t, GetSessionCruise(sid))
-}
-
 // TestCruiseRunner_DisabledStops verifies that with the switch OFF the runner
 // refuses to continue immediately.
 func TestCruiseRunner_DisabledStops(t *testing.T) {
@@ -143,7 +132,6 @@ func TestCruiseRunner_UserTurnTagIgnoredEvenWhenSatisfied(t *testing.T) {
 	project := "/tmp/cruise-single-usertag"
 	sid := cruiseTestSession(t, project)
 	require.NoError(t, SetSessionCruise(sid, true))
-	require.True(t, IsSessionRunning(sid) || true) // claim below establishes running
 
 	// The loop must be running for the runner to proceed.
 	_, created := TryClaimSessionRun(sid)

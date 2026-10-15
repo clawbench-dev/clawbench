@@ -13,7 +13,7 @@
 import type { FileEntry } from '@/utils/fileAttachmentUtils'
 import { isQuoteEntry } from '@/utils/fileAttachmentUtils'
 import { extractSpeakableText } from '@/utils/speakableText'
-import { stripGroupProtocolTags } from '@/utils/groupRouting.ts'
+import { stripGroupProtocolTags, stripGoalSatisfiedTag } from '@/utils/groupRouting.ts'
 
 /**
  * The text a "quote this message" action should capture — the SAME text the
@@ -25,11 +25,19 @@ import { stripGroupProtocolTags } from '@/utils/groupRouting.ts'
  * member — the exact leak the feature exists to prevent. This is the injection
  * boundary, so it uses the fail-closed stripper (any bcc-like shape).
  *
- * Why NOT strip for a single chat: a single chat has no group protocol, so
- * stripping has zero security value and truncates an ordinary reply that merely
- * DISCUSSES the tag syntax (an unclosed literal `<clawbench-mention` in prose
- * dropped the whole tail — regression, message 58879). `isGroup` is the
- * session-type gate; callers pass their `isGroupSession`.
+ * Why NOT strip MENTIONS for a single chat: a single chat has no group
+ * protocol, so mention stripping has zero security value and truncates an
+ * ordinary reply that merely DISCUSSES the tag syntax (an unclosed literal
+ * `<clawbench-mention` in prose dropped the whole tail — regression, message
+ * 58879). `isGroup` is the session-type gate; callers pass their
+ * `isGroupSession`.
+ *
+ * Single chat DOES strip the auto-cruise completion signal
+ * (`<clawbench-goal-satisfied/>`): it is a self-closing, content-free protocol
+ * tag the AI is instructed to emit, never part of the reply's prose, so it must
+ * not be copied or quoted (it would ride into the quote attachment and hence
+ * the next prompt). `stripGoalSatisfiedTag` touches ONLY that tag — it never
+ * truncates mention-like prose, so 58879 cannot recur.
  *
  *   - assistant: the speakable text (skips tool/thinking noise), else the summary;
  *   - user: the message content.
@@ -44,7 +52,7 @@ export function quotableMessageText(
   const raw = role === 'user'
     ? extractSpeakableText(blocks || []) || content || ''
     : extractSpeakableText(blocks || []) || summary || ''
-  return (isGroup ? stripGroupProtocolTags(raw) : raw).trim()
+  return (isGroup ? stripGroupProtocolTags(raw) : stripGoalSatisfiedTag(raw)).trim()
 }
 
 /**

@@ -61,7 +61,7 @@
          renders as its own compact line above the bubble. Same success-colored
          pill, same permanent-per-message semantics (the tag is already-written
          content, so it stays even though the vote tally resets each round). -->
-    <div v-if="msg.role === 'assistant' && !speaker && singleChatGoalSatisfied" class="msg-goal-satisfied msg-goal-satisfied-standalone" :title="t('group.goalSatisfied')">
+    <div v-if="msg.role === 'assistant' && singleChatGoalSatisfied" class="msg-goal-satisfied msg-goal-satisfied-standalone" :title="t('group.goalSatisfied')">
       <Check :size="11" class="msg-goal-satisfied-icon" />{{ t('group.goalSatisfied') }}
     </div>
 
@@ -413,15 +413,19 @@ const groupRouting = computed(() => {
 
 /**
  * Single-chat auto-cruise badge: whether a NON-group assistant reply carries
- * the completion signal. Gated on the SAME condition the group parse uses
- * (`speaker` absent = no group member row = single chat), so the two badges can
- * never both fire or both miss. A single chat must NOT parse mentions (that
- * would re-open regression 58879, where a reply DISCUSSING the tag syntax was
- * truncated by an unclosed literal tag), so it detects the self-closing,
- * content-free signal on its own.
+ * the completion signal. Gated on BOTH discriminators:
+ *   - `!isGroupSession` is the AUTHORITATIVE session type (server-provided). It
+ *     is required on its own: a group whose roster fetch failed has `speaker`
+ *     null, so a `!speaker`-only gate would let this single-chat badge render
+ *     on a GROUP message.
+ *   - `!speaker` mirrors the group parse gate, so a stray agentId on a
+ *     single-chat row cannot double-render both badges.
+ * A single chat must NOT parse mentions (that would re-open regression 58879,
+ * where a reply DISCUSSING the tag syntax was truncated by an unclosed literal
+ * tag), so it detects the self-closing, content-free signal on its own.
  */
 const singleChatGoalSatisfied = computed(() => {
-  if (speaker.value || props.msg?.role !== 'assistant') return false
+  if (props.isGroupSession || speaker.value || props.msg?.role !== 'assistant') return false
   return hasGoalSatisfied(msgText.value || '')
 })
 

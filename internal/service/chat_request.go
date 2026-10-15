@@ -149,7 +149,14 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 	// ChatRequest.ShouldInjectSystemPrompt) — the prompt is what reaches the
 	// model on every turn. Prompt is transient (the persisted user row is
 	// req.Message), so this never leaks into the user bubble or history.
-	if GetSessionCruise(sessionID) {
+	//
+	// Slash commands are EXEMPT: ACP agents detect their commands by the leading
+	// "/" (see ai.IsACPSlashCommand / acp_conn_state.go), so prepending anything
+	// would send non-slash text and the agent would route it to the LLM instead
+	// of its CommandExecutor — the command silently does nothing. The addendum
+	// reaches the NEXT ordinary turn anyway (cruise is session-scoped), so
+	// skipping it for the command turn loses nothing.
+	if GetSessionCruise(sessionID) && !ai.IsACPSlashCommand(prompt) {
 		prompt = BuildCruiseSingleAddendum() + "\n\n" + prompt
 	}
 

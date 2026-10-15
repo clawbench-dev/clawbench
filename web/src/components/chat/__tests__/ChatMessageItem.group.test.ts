@@ -682,3 +682,19 @@ describe('ChatMessageItem single-chat auto-cruise badge', () => {
     expect(w.find('.msg-goal-satisfied').exists()).toBe(true)
   })
 })
+
+describe('ChatMessageItem single-chat badge must not leak into a group', () => {
+  // A group whose roster failed to load has NO resolvable speaker, so a
+  // `!speaker`-only gate would render the single-chat badge on a GROUP message.
+  // The authoritative `isGroupSession` flag must suppress it.
+  it('does not render the standalone badge on a group message with an unresolved speaker', () => {
+    const w = mountItem(
+      {
+        role: 'assistant', id: 70, content: '', agentId: 'member-x',
+        blocks: [{ type: 'text', text: '任务完成。<clawbench-goal-satisfied/>' }],
+      },
+      { isGroupSession: true }, // resolveSpeaker omitted → speaker resolves to null
+    )
+    expect(w.find('.msg-goal-satisfied-standalone').exists()).toBe(false)
+  })
+})
