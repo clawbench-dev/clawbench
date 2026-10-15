@@ -1938,31 +1938,54 @@ func TestParseGitStatusPorcelain_Untracked(t *testing.T) {
 }
 
 func TestParseGitStatusPorcelain_UnstagedModification(t *testing.T) {
-	// Use a multi-line input so TrimSpace doesn't strip the leading space from the " M" line.
-	// The first line "A  staged.txt" ensures TrimSpace only strips outer whitespace.
-	output := "A  staged.txt\n M modified.txt\n"
+	// The unstaged-only line starts with a space (" M"). It must be classified as
+	// unstaged even when it is the FIRST line of the output (regression: whole-output
+	// TrimSpace used to strip that leading space and misclassify it as staged).
+	output := " M modified.txt\n"
+	files := parseGitStatusPorcelain(output)
+	assert.Len(t, files, 1)
+	assert.Equal(t, "M", files[0].Type)
+	assert.False(t, files[0].Staged)
+	assert.Equal(t, "modified.txt", files[0].Path)
+}
+
+func TestParseGitStatusPorcelain_UnstagedModification_FirstLineWithOthers(t *testing.T) {
+	// Same as above but with a following line, to prove ordering doesn't matter.
+	output := " M modified.txt\nA  staged.txt\n"
 	files := parseGitStatusPorcelain(output)
 	assert.Len(t, files, 2)
-	// First file: staged add
-	assert.Equal(t, "A", files[0].Type)
-	assert.True(t, files[0].Staged)
-	// Second file: unstaged modification (space M)
-	assert.Equal(t, "M", files[1].Type)
-	assert.False(t, files[1].Staged)
+	// First file: unstaged modification (space M)
+	assert.Equal(t, "M", files[0].Type)
+	assert.False(t, files[0].Staged)
+	// Second file: staged add
+	assert.Equal(t, "A", files[1].Type)
+	assert.True(t, files[1].Staged)
 }
 
 func TestParseGitStatusPorcelain_Deleted(t *testing.T) {
-	// Use multi-line to preserve leading space in " D"
-	output := "A  staged.txt\n D deleted.txt\n"
+	// " D" as the first line must stay unstaged.
+	output := " D deleted.txt\n"
 	files := parseGitStatusPorcelain(output)
-	assert.Len(t, files, 2)
-	assert.Equal(t, "D", files[1].Type)
-	assert.False(t, files[1].Staged)
+	assert.Len(t, files, 1)
+	assert.Equal(t, "D", files[0].Type)
+	assert.False(t, files[0].Staged)
 }
 
 func TestParseGitStatusPorcelain_Empty(t *testing.T) {
 	files := parseGitStatusPorcelain("")
 	assert.Len(t, files, 0)
+}
+
+func TestParseGitStatusPorcelain_CRLF(t *testing.T) {
+	// git may emit CRLF on Windows; the trailing \r must not leak into the path.
+	output := " M modified.txt\r\n?? newfile.txt\r\n"
+	files := parseGitStatusPorcelain(output)
+	assert.Len(t, files, 2)
+	assert.Equal(t, "M", files[0].Type)
+	assert.False(t, files[0].Staged)
+	assert.Equal(t, "modified.txt", files[0].Path)
+	assert.Equal(t, "?", files[1].Type)
+	assert.Equal(t, "newfile.txt", files[1].Path)
 }
 
 func TestParseGitStatusPorcelain_QuotedPath(t *testing.T) {
