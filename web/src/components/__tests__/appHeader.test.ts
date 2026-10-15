@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { reactive, ref, nextTick } from 'vue'
 import AppHeader from '@/components/common/AppHeader.vue'
@@ -607,6 +607,97 @@ describe('AppHeader', () => {
     vi.unstubAllGlobals()
   })
 
+  it('a slow earlier response cannot overwrite a newer one (concurrent loads)', async () => {
+    // First request (mount prefetch) stays pending; second (on-open) resolves
+    // first with a newer list; then the first resolves late with an older list.
+    let resolveFirst: (v: any) => void
+    const firstJson = new Promise(r => { resolveFirst = r })
+    let call = 0
+    const fetchMock = vi.fn().mockImplementation(() => {
+      call++
+      if (call === 1) return Promise.resolve({ json: () => firstJson })
+      return Promise.resolve({
+        json: () => Promise.resolve([
+          { repoRoot: '', groupName: '', items: [{ path: '/home/user/new', kind: 'plain' }] },
+        ]),
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mountAndTrack({ homeDir: '/home/user' })
+    // Second load supersedes the pending mount prefetch.
+    await (wrapper.vm as any).loadRecentProjects()
+    try { await wrapper.vm.$nextTick() } catch {}
+    expect(wrapper.vm.recentItems.map((i: any) => i.path)).toEqual(['/home/user/new'])
+
+    // The stale first response lands afterwards and must be ignored.
+    resolveFirst!([
+      { repoRoot: '', groupName: '', items: [{ path: '/home/user/old', kind: 'plain' }] },
+    ])
+    await flushPromises()
+
+    expect(wrapper.vm.recentItems.map((i: any) => i.path)).toEqual(['/home/user/new'])
+
+    vi.unstubAllGlobals()
+  })
+
+  it('a refresh that resolves after a removal does not resurrect the removed project', async () => {
+    // The refresh is started while the path still exists, then resolves after
+    // the DELETE removed it — its stale payload still contains the path.
+    let resolveRefresh: (v: any) => void
+    const refreshJson = new Promise(r => { resolveRefresh = r })
+    const fetchMock = vi.fn().mockImplementation((_url: string, opts?: any) => {
+      if (opts?.method === 'DELETE') return Promise.resolve({ ok: true })
+      if (refreshJson) {
+        const pending = refreshJson
+        // Only the first GET is held; later calls fall through to a normal resolve.
+        return Promise.resolve({ json: () => pending })
+      }
+      return Promise.resolve({ json: () => Promise.resolve([]) })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mountAndTrack({ homeDir: '/home/user' })
+    // Seed the cache directly so we do not need a resolved prefetch first.
+    const item = { path: '/home/user/proj-a', name: 'proj-a', displayPath: 'proj-a', kind: 'plain' as const, groupKey: '', groupName: '' }
+    wrapper.vm.recentCache = [{ name: 'proj-a', path: '/home/user/proj-a', kind: 'plain', groupKey: '', groupName: '' }]
+    wrapper.vm.recentItems = [item]
+
+    const refresh = (wrapper.vm as any).loadRecentProjects()
+    await (wrapper.vm as any).removeRecent(item)
+    expect(wrapper.vm.recentItems).toEqual([])
+
+    // Stale refresh resolves with the now-deleted path.
+    resolveRefresh!([
+      { repoRoot: '', groupName: '', items: [{ path: '/home/user/proj-a', kind: 'plain' }] },
+    ])
+    await refresh
+    try { await wrapper.vm.$nextTick() } catch {}
+
+    expect(wrapper.vm.recentItems).toEqual([])
+
+    vi.unstubAllGlobals()
+  })
+
+  it('a cold-start failure keeps the cache cold so the next open retries with a spinner', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error('network error'))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mountAndTrack()
+    await flushPromises()
+    // Cold failure must NOT latch an empty "loaded" state, which would show a
+    // false "no recent projects" forever.
+    expect(wrapper.vm.recentCache).toBe(null)
+
+    // A later open retries and shows the spinner again. Checked synchronously:
+    // loadRecentProjects sets the flag before its first await.
+    ;(wrapper.vm as any).toggleDropdown()
+    expect(wrapper.vm.loadingRecent).toBe(true)
+    await flushPromises()
+
+    vi.unstubAllGlobals()
+  })
+
   // ── toggleDropdown ──
 
   it('toggleDropdown opens dropdown and loads recent projects', async () => {
@@ -699,6 +790,9 @@ describe('AppHeader', () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true })
     vi.stubGlobal('fetch', fetchMock)
     const wrapper = mountAndTrack()
+    // Let the mount-time prefetch settle before seeding items, so it cannot
+    // overwrite the fixtures under test.
+    await flushPromises()
     wrapper.vm.recentItems = [
       { path: '/home/user/project-a', name: 'project-a', displayPath: 'project-a', kind: 'plain', groupKey: '', groupName: '' },
       { path: '/home/user/project-b', name: 'project-b', displayPath: 'project-b', kind: 'plain', groupKey: '', groupName: '' },
@@ -726,6 +820,7 @@ describe('AppHeader', () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
     const wrapper = mountAndTrack()
+    await flushPromises()
     const item = { path: '/home/user/project-a', name: 'project-a', displayPath: 'project-a', kind: 'plain' as const, groupKey: '', groupName: '' }
     wrapper.vm.recentItems = [item]
 
@@ -742,6 +837,7 @@ describe('AppHeader', () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 500 })
     vi.stubGlobal('fetch', fetchMock)
     const wrapper = mountAndTrack()
+    await flushPromises()
     const item = { path: '/home/user/project-a', name: 'project-a', displayPath: 'project-a', kind: 'plain' as const, groupKey: '', groupName: '' }
     wrapper.vm.recentItems = [item]
 
@@ -757,15 +853,19 @@ describe('AppHeader', () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
     const wrapper = mountAndTrack({ projectRoot: '/home/user/project-a' })
+    await flushPromises()
     const item = { path: '/home/user/project-a', name: 'project-a', displayPath: 'project-a', kind: 'plain' as const, groupKey: '', groupName: '' }
     wrapper.vm.recentItems = [item]
 
     // The row renders no button at all, so this handler guard is the only thing
-    // between a programmatic call and a DELETE.
+    // between a programmatic call and a DELETE. The mount-time prefetch also
+    // hits this endpoint (GET), so assert specifically on the DELETE.
     await (wrapper.vm as any).removeRecent(item)
 
     expect(dialogConfirmFn).not.toHaveBeenCalled()
-    expect(fetchMock).not.toHaveBeenCalled()
+    expect(fetchMock).not.toHaveBeenCalledWith('/api/recent-projects', expect.objectContaining({
+      method: 'DELETE',
+    }))
     expect(wrapper.vm.recentItems).toEqual([item])
     vi.unstubAllGlobals()
   })
@@ -880,6 +980,145 @@ describe('AppHeader', () => {
     try { await wrapper.vm.$nextTick() } catch {}
 
     expect(wrapper.vm.loadingRecent).toBe(false)
+
+    vi.unstubAllGlobals()
+  })
+
+  // ── issue #545: the dropdown must open from cache, not block on a fetch ──
+
+  it('prefetches recent projects on mount so the first open is instant', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      json: () => Promise.resolve([
+        { repoRoot: '', groupName: '', items: [{ path: '/home/user/proj-a', kind: 'plain' }] },
+      ]),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mountAndTrack({ homeDir: '/home/user' })
+    await flushPromises()
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/recent-projects')
+    // The cache is warm before the user ever opens the dropdown.
+    expect(wrapper.vm.recentItems.map((i: any) => i.path)).toEqual(['/home/user/proj-a'])
+
+    vi.unstubAllGlobals()
+  })
+
+  it('opening the dropdown with a warm cache renders immediately and does not show the spinner', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      json: () => Promise.resolve([
+        { repoRoot: '', groupName: '', items: [{ path: '/home/user/proj-a', kind: 'plain' }] },
+      ]),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mountAndTrack({ homeDir: '/home/user' })
+    await flushPromises()
+
+    // Second fetch (the on-open refresh) never resolves, so any blocking on it
+    // would leave the panel stuck in the loading state.
+    fetchMock.mockImplementation(() => new Promise(() => {}))
+
+    await (wrapper.vm as any).toggleDropdown()
+    try { await wrapper.vm.$nextTick() } catch {}
+
+    expect(wrapper.vm.dropdownOpen).toBe(true)
+    expect(wrapper.vm.loadingRecent).toBe(false)
+    expect(wrapper.vm.recentItems.map((i: any) => i.path)).toEqual(['/home/user/proj-a'])
+
+    vi.unstubAllGlobals()
+  })
+
+  it('shows the spinner when opening with a cold cache (first open before prefetch settles)', async () => {
+    let resolveJson: (v: any) => void
+    const jsonPromise = new Promise(r => { resolveJson = r })
+    const fetchMock = vi.fn().mockResolvedValue({ json: () => jsonPromise })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mountAndTrack()
+    // Prefetch is in flight but unresolved — cache is still cold.
+    await (wrapper.vm as any).toggleDropdown()
+    try { await wrapper.vm.$nextTick() } catch {}
+
+    expect(wrapper.vm.loadingRecent).toBe(true)
+
+    resolveJson!([
+      { repoRoot: '', groupName: '', items: [{ path: '/home/user/proj-a', kind: 'plain' }] },
+    ])
+    await flushPromises()
+
+    expect(wrapper.vm.loadingRecent).toBe(false)
+    expect(wrapper.vm.recentItems.map((i: any) => i.path)).toEqual(['/home/user/proj-a'])
+
+    vi.unstubAllGlobals()
+  })
+
+  it('keeps the last good list when a background refresh fails', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      json: () => Promise.resolve([
+        { repoRoot: '', groupName: '', items: [{ path: '/home/user/proj-a', kind: 'plain' }] },
+      ]),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mountAndTrack({ homeDir: '/home/user' })
+    await flushPromises()
+
+    fetchMock.mockRejectedValue(new Error('network error'))
+    await (wrapper.vm as any).loadRecentProjects()
+    try { await wrapper.vm.$nextTick() } catch {}
+
+    // A transient failure must not wipe the cached rows (that would make the
+    // next open flash the spinner again).
+    expect(wrapper.vm.recentItems.map((i: any) => i.path)).toEqual(['/home/user/proj-a'])
+
+    vi.unstubAllGlobals()
+  })
+
+  it('recomputes display paths when homeDir arrives after the prefetch', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      json: () => Promise.resolve([
+        { repoRoot: '', groupName: '', items: [{ path: '/home/user/proj-a', kind: 'plain' }] },
+      ]),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    // homeDir unknown at mount time (the header renders before the project is
+    // known): the prefetch resolves with an absolute display path.
+    const wrapper = mountAndTrack({ homeDir: '' })
+    await flushPromises()
+    expect(wrapper.vm.recentItems[0].displayPath).toBe('/home/user/proj-a')
+
+    await wrapper.setProps({ homeDir: '/home/user' })
+    try { await wrapper.vm.$nextTick() } catch {}
+
+    expect(wrapper.vm.recentItems[0].displayPath).toBe('proj-a')
+
+    vi.unstubAllGlobals()
+  })
+
+  it('removing a project drops it from the cache so it does not reappear on reopen', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve([
+        { repoRoot: '', groupName: '', items: [{ path: '/home/user/proj-a', kind: 'plain' }] },
+      ]),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mountAndTrack({ homeDir: '/home/user' })
+    await flushPromises()
+    wrapper.vm.dropdownOpen = true
+
+    const item = wrapper.vm.recentItems[0]
+    await (wrapper.vm as any).removeRecent(item)
+
+    // Reopen: the removed path must not come back from the cache.
+    fetchMock.mockImplementation(() => new Promise(() => {}))
+    await (wrapper.vm as any).toggleDropdown()
+    try { await wrapper.vm.$nextTick() } catch {}
+
+    expect(wrapper.vm.recentItems).toEqual([])
 
     vi.unstubAllGlobals()
   })
