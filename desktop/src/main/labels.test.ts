@@ -14,6 +14,7 @@ import {
   normalizeNativeLanguage,
   resolveNativeLanguage,
   versionGateLabels,
+  certificateLabels,
 } from './labels'
 
 describe('normalizeNativeLanguage', () => {
@@ -75,6 +76,29 @@ describe('versionGateLabels', () => {
 
   it('has no hardcoded Chinese left in the English table', () => {
     const l = versionGateLabels('en')
+    for (const v of Object.values(l)) {
+      expect(v).not.toMatch(/[\u4e00-\u9fff]/)
+    }
+  })
+})
+
+describe('certificateLabels', () => {
+  it('returns Chinese wording for zh locales', () => {
+    const l = certificateLabels('zh-CN')
+    expect(l.title).toBe('SSL 证书验证失败')
+    expect(l.trust).toBe('信任并继续')
+    expect(l.cancel).toBe('取消连接')
+  })
+
+  it('returns English wording for non-Chinese locales', () => {
+    const l = certificateLabels('en')
+    expect(l.title).toBe('SSL certificate verification failed')
+    expect(l.trust).toBe('Trust and continue')
+    expect(l.cancel).toBe('Cancel connection')
+  })
+
+  it('has no hardcoded Chinese left in the English table', () => {
+    const l = certificateLabels('en')
     for (const v of Object.values(l)) {
       expect(v).not.toMatch(/[\u4e00-\u9fff]/)
     }

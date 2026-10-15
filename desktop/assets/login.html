@@ -102,37 +102,50 @@
     }
   };
   var LANG = 'en';
-  try { LANG = ClawBenchNative.getLanguage(); } catch(e) {}
-  if (!I18N[LANG]) LANG = 'en';
+  // Re-read the language from the native shell. A function (not a one-shot)
+  // because the splash overlay REUSES this document across connects — its
+  // <head> script runs once, so without a re-readable entry point the overlay
+  // would keep the language it first loaded with, diverging from the app.
+  function applyLangFromNative() {
+    try { LANG = ClawBenchNative.getLanguage(); } catch(e) { LANG = 'en'; }
+    if (!I18N[LANG]) LANG = 'en';
+  }
+  applyLangFromNative();
   function t(key) { return I18N[LANG][key] || I18N['en'][key] || key; }
   // Follow the main interface theme when available.
-  try {
-    // Must list every dark theme in web/src/utils/themeMeta.ts. A missing ID
-    // makes the page treat a dark theme as light (wrong data-theme-base, and
-    // unreadable text over the splash backdrop). Kept in sync by
-    // desktop/src/shared/theme.test.ts.
-    var DARK_IDS = ['ayu-dark','bluloco-dark','catppuccin-mocha','dark-plus','dracula','everforest-dark','github-dark','gruvbox-dark','high-contrast-dark','kanagawa','material-darker','monokai','night-owl','nord','one-dark-pro','rose-pine','solarized-dark','solarized-deep','tokyo-night','vitesse-dark'];
-    var LIGHT_IDS = ['alabaster','ayu-light','bluloco-light','catppuccin-latte','everforest-light','github-light','gruvbox-light','high-contrast-light','light-modern','light-plus','material-lighter','nord-light','one-light','quiet-light','solarized-light','vitesse-light'];
-    // Every colour variable is declared inside a [data-theme="<id>"] block, so
-    // an unrecognised value leaves them ALL undefined and the page renders with
-    // transparent inputs and buttons. This happens on a fresh install before
-    // any setTheme call, and on older builds that persisted a collapsed
-    // 'dark'/'light'. Fall back to a real ID rather than trusting the value.
-    var THEME = (ClawBenchNative.getTheme && ClawBenchNative.getTheme()) || '';
-    if (DARK_IDS.indexOf(THEME) < 0 && LIGHT_IDS.indexOf(THEME) < 0) {
-      // Keep the colour scheme the caller implied, so a light-mode user is not
-      // flipped to a dark page (and vice versa). The dark fallback is the
-      // factory theme (gruvbox-dark), matching the web app and Android.
-      THEME = (THEME === 'light') ? 'github-light' : 'gruvbox-dark';
-    }
-    document.documentElement.setAttribute('data-theme', THEME);
-    var BASE = DARK_IDS.indexOf(THEME) >= 0 ? 'dark' : 'light';
-    document.documentElement.setAttribute('data-theme-base', BASE);
-    // Sync the resolved theme back to native. Without this, a first launch (or
-    // a launch where native holds no value) leaves the store empty, so the next
-    // launch cannot follow the main interface. Android does the same.
-    if (ClawBenchNative.setTheme) ClawBenchNative.setTheme(THEME);
-  } catch(e) {}
+  // Must list every dark theme in web/src/utils/themeMeta.ts. A missing ID
+  // makes the page treat a dark theme as light (wrong data-theme-base, and
+  // unreadable text over the splash backdrop). Kept in sync by
+  // desktop/src/shared/theme.test.ts.
+  var DARK_IDS = ['ayu-dark','bluloco-dark','catppuccin-mocha','dark-plus','dracula','everforest-dark','github-dark','gruvbox-dark','high-contrast-dark','kanagawa','material-darker','monokai','night-owl','nord','one-dark-pro','rose-pine','solarized-dark','solarized-deep','tokyo-night','vitesse-dark'];
+  var LIGHT_IDS = ['alabaster','ayu-light','bluloco-light','catppuccin-latte','everforest-light','github-light','gruvbox-light','high-contrast-light','light-modern','light-plus','material-lighter','nord-light','one-light','quiet-light','solarized-light','vitesse-light'];
+  // Every colour variable is declared inside a [data-theme="<id>"] block, so
+  // an unrecognised value leaves them ALL undefined and the page renders with
+  // transparent inputs and buttons. This happens on a fresh install before
+  // any setTheme call, and on older builds that persisted a collapsed
+  // 'dark'/'light'. Fall back to a real ID rather than trusting the value.
+  //
+  // A function for the same reason as applyLangFromNative: the splash overlay
+  // is reused, so its theme must be re-appliable on every show.
+  function applyThemeFromNative() {
+    try {
+      var THEME = (ClawBenchNative.getTheme && ClawBenchNative.getTheme()) || '';
+      if (DARK_IDS.indexOf(THEME) < 0 && LIGHT_IDS.indexOf(THEME) < 0) {
+        // Keep the colour scheme the caller implied, so a light-mode user is not
+        // flipped to a dark page (and vice versa). The dark fallback is the
+        // factory theme (gruvbox-dark), matching the web app and Android.
+        THEME = (THEME === 'light') ? 'github-light' : 'gruvbox-dark';
+      }
+      document.documentElement.setAttribute('data-theme', THEME);
+      var BASE = DARK_IDS.indexOf(THEME) >= 0 ? 'dark' : 'light';
+      document.documentElement.setAttribute('data-theme-base', BASE);
+      // Sync the resolved theme back to native. Without this, a first launch (or
+      // a launch where native holds no value) leaves the store empty, so the next
+      // launch cannot follow the main interface. Android does the same.
+      if (ClawBenchNative.setTheme) ClawBenchNative.setTheme(THEME);
+    } catch(e) {}
+  }
+  applyThemeFromNative();
 </script>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -1785,6 +1798,25 @@
   window.__splashReset = function() {
     var el = document.getElementById('splash');
     if (el) el.classList.remove('is-fading');
+  };
+
+  /**
+   * Re-read the native theme and language, then repaint.
+   *
+   * The overlay page is loaded ONCE and reused for every subsequent connect,
+   * so its <head> script (which reads the theme and language exactly once) goes
+   * stale: a theme the user changed in the running app, or a language the app
+   * reported after this page first loaded, would never reach the overlay. The
+   * main process calls this on every show so the overlay follows the app.
+   *
+   * Returns the resolved theme id so the caller can repaint the view's
+   * background colour (painted before this page parses) to match.
+   */
+  window.__splashApplyNativeState = function() {
+    applyLangFromNative();
+    applyThemeFromNative();
+    applyI18n();
+    return document.documentElement.getAttribute('data-theme');
   };
 
   // ── Version-mismatch gate ───────────────────────────────────────────────

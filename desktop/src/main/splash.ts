@@ -146,6 +146,31 @@ export function createSplashController(win: BrowserWindow, opts: SplashOptions):
 
   const isAlive = () => !destroyed && !win.isDestroyed()
 
+  /**
+   * Repaint the overlay from the CURRENT native theme and language.
+   *
+   * The overlay page is loaded once and reused, so its `<head>` script — which
+   * reads the theme and language a single time — goes stale: a theme the user
+   * changed in the running app, or a language the app only reported after this
+   * page first loaded, would never reach the overlay. Measured: the app was on
+   * gruvbox-dark while the reused overlay still rendered github-dark.
+   *
+   * Also repaints the view's own background (painted before the page parses),
+   * so the pre-parse frame matches the theme the page is about to apply.
+   */
+  function refreshNativeState(): void {
+    if (!pageReady || !isAlive()) return
+    void view.webContents
+      .executeJavaScript('window.__splashApplyNativeState && window.__splashApplyNativeState()')
+      .then((themeId) => {
+        if (!isAlive()) return
+        if (typeof themeId === 'string' && themeId) {
+          view.setBackgroundColor(splashBackgroundColor(isDarkThemeId(themeId)))
+        }
+      })
+      .catch(() => { /* overlay went away mid-call */ })
+  }
+
   function syncBounds(): void {
     if (!isAlive()) return
     const [width, height] = win.getContentSize()
@@ -291,12 +316,17 @@ export function createSplashController(win: BrowserWindow, opts: SplashOptions):
         .catch((err) => record('E', TAG, `overlay failed to load: ${String(err)}`))
       return
     }
+    // The gate reuses the same document as the splash, so it too must follow
+    // the current theme/language rather than whatever the page first loaded.
+    refreshNativeState()
     applyMismatch(info)
   }
 
   // ── Overlay page lifecycle ────────────────────────────────────────────────
   view.webContents.on('did-finish-load', () => {
     pageReady = true
+    // Sync the view's pre-parse background to the theme the page just resolved.
+    refreshNativeState()
     // A gate may have been requested before the page could take commands (the
     // check races the very first load). Replay it now.
     if (pendingMismatch) {
@@ -364,6 +394,9 @@ export function createSplashController(win: BrowserWindow, opts: SplashOptions):
         void view.webContents
           .executeJavaScript('window.__splashReset && window.__splashReset()')
           .catch(() => { /* overlay went away mid-call */ })
+        // And follow the CURRENT theme/language: the reused document's <head>
+        // ran only once, so without this it keeps whatever it first loaded with.
+        refreshNativeState()
       }
       if (!pageReady) {
         // First use: load the overlay content. Subsequent shows reuse the
