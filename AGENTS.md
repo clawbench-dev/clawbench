@@ -12,7 +12,6 @@ ClawBench 是面向手机 / 平板 / 桌面的多端 AI 工作台，移动端交
 # 构建
 ./build.sh                                            # Go 二进制 + Vue 前端 + Excalidraw
 ./build.sh --windows|--linux|--linux-arm64|--darwin   # 交叉编译
-./build.sh --nofrp                                    # 排除 FRP 客户端库（规避杀软 Greyware 误报），可与平台标志组合
 go build -o clawbench ./cmd/server                    # 仅 Go 二进制
 
 # 开发
@@ -82,7 +81,6 @@ npx playwright test --config e2e/playwright.config.ts --project=chromium-coverag
 | `internal/ws/` | WebSocket 事件通道：StreamHub 会话级扇出，Manager 广播 + 重连缓冲回放；`delivery_stats.go` 记录按原因的投递丢弃计数（`GET /api/ws/delivery-stats`），关键事件在通道满时等待空位（ACP 来源除外）。遥测类事件（`system_resources`）走**非缓冲投递**路径（不写回放缓冲、队列满时丢弃而非断连），需求由客户端 `metrics_preference` 声明 |
 | `internal/ssh/` + `internal/proxy/` | SSH 隧道服务器；HTTP 反向代理 + 端口转发。反向映射仅绑 127.0.0.1 且禁绑保留端口 |
 | `internal/tunnel/` | h2 流隧道的传输无关内核（`/api/tunnel/stream` 数据面 + `/api/tunnel/control` 反向控制面）：`bind.go`（端口分配 + 白名单/保留端口）、`guard.go`（`PortGuard` 镜像 `internal/ssh` 的端口策略，保证 h2 与 SSH 同一套规则）、`claim.go`（`-R` 的单次 token 认领）、`ndjson.go`（控制流分帧）、`relay.go`（双向转发 + 半关闭）、`target.go`（目标地址解析） |
-| `internal/frp/` | FRP 内网穿透客户端（`fatedier/frp`）。拆为 `types.go` / `manager.go` / `manager_nofrp.go`（`//go:build nofrp`）：`nofrp` 变体提供同名 `Manager` 但 `Available()` 恒 false，驱动前端隐藏 FRP 设置面板。**为规避杀软 `Greyware.Win64.frp.c` 能力型误报**（该库可建反向隧道，MITRE ATT&CK S1144），`./build.sh --nofrp` 用 build tag **真正移除**该库（依赖清单编译期硬写、strings 命中数千处，无法靠"隐藏特征"糊弄）；release 另有并列的 `build-windows-nofrp` job |
 | `internal/forge/` | GitHub/GitLab 集成：平台无关的只读 `Provider` 抽象（统一 Issue/PR/Comment/Pipeline 模型）+ `github/`（go-github）/ `gitlab/`（轻量 REST client）adapter；remote URL 解析（host 与 scheme 分离解析）、per-host 令牌桶限流、事件推导引擎。**无 host 安全闸门**（内网/自建实例一律放行，风险提示在前端绑定弹窗） |
 | `internal/push/` | IM 机器人推送：`common/`（共享接口 + 会话命令）、`dingtalk/`（Stream API）、`feishu/`（Lark SDK WebSocket + 互动卡片） |
 | `internal/symbol/` | 基于 tree-sitter 的代码符号提取（纯 Go，无 CGO） |
