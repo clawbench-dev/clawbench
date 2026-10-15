@@ -97,7 +97,6 @@ public class BackgroundService extends Service {
     private static final String PREFS_NAME = "clawbench_prefs";
     private static final String KEY_SERVER_URL = "server_url";
     private static final String KEY_SSH_PASSWORD = "ssh_password";
-    private static final String KEY_FRP_REMOTE_URL = "frp_remote_url";
     private static final String KEY_FORWARDED_PORTS = "forwarded_ports";
     /** Reverse (ssh -R) forwards, kept separately so the old key's format is untouched. */
     private static final String KEY_REVERSE_FORWARDED_PORTS = "reverse_forwarded_ports";
@@ -1600,9 +1599,6 @@ public class BackgroundService extends Service {
             throw new Exception("Failed to get SSH port from server. Please check that SSH tunnel is enabled in server config.");
         }
 
-        // Check FRP status and save remote URL for connection fallback
-        fetchFRPStatus(serverUrl);
-
         // Get password from SharedPreferences (set by WebAppInterface on login)
         password = prefs.getString(KEY_SSH_PASSWORD, "");
         if (password.isEmpty()) {
@@ -2490,61 +2486,6 @@ public class BackgroundService extends Service {
         } catch (Exception e) {
             AppLog.w(TAG, "SSH: failed to fetch SSH info, will fallback to httpPort+1", e);
             return -1;
-        }
-    }
-
-    /**
-     * Fetch FRP tunnel status from /api/frp/status endpoint (unauthenticated).
-     * If FRP is enabled and running, queries /api/frp/info (authenticated) to get the remote URL.
-     * Saves the remote URL to SharedPreferences for connection fallback.
-     */
-    private void fetchFRPStatus(String serverUrl) {
-        try {
-            Uri uri = Uri.parse(serverUrl);
-            String scheme = uri.getScheme();
-            if (scheme == null) scheme = "https";
-            String host = uri.getHost();
-            int port = uri.getPort();
-            if (port < 0) port = scheme.equals("https") ? 443 : 80;
-
-            // First check status (unauthenticated)
-            String statusPath = scheme + "://" + host + ":" + port + "/api/frp/status";
-            URL statusUrl = new URL(statusPath);
-            HttpURLConnection conn = (HttpURLConnection) statusUrl.openConnection();
-            if (conn instanceof HttpsURLConnection && trustAllSSLContext != null) {
-                ((HttpsURLConnection) conn).setSSLSocketFactory(trustAllSSLContext.getSocketFactory());
-                ((HttpsURLConnection) conn).setHostnameVerifier((hostname, session) -> true);
-            }
-            conn.setRequestMethod("GET");
-            conn.setConnectTimeout(3000);
-            conn.setReadTimeout(3000);
-
-            int code = conn.getResponseCode();
-            if (code != 200) {
-                AppLog.d(TAG, "FRP: /api/frp/status returned HTTP " + code);
-                return;
-            }
-
-            BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-            StringBuilder sb = new StringBuilder();
-            String line;
-            while ((line = reader.readLine()) != null) sb.append(line);
-            reader.close();
-
-            JSONObject json = new JSONObject(sb.toString());
-            boolean enabled = json.optBoolean("enabled", false);
-            boolean running = json.optBoolean("running", false);
-
-            SharedPreferences sp = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
-            if (enabled && running) {
-                AppLog.i(TAG, "FRP: tunnel is running");
-                sp.edit().putBoolean("frp_available", true).apply();
-            } else {
-                AppLog.d(TAG, "FRP: not available (enabled=" + enabled + ", running=" + running + ")");
-                sp.edit().remove("frp_available").apply();
-            }
-        } catch (Exception e) {
-            AppLog.d(TAG, "FRP: failed to fetch status: " + e.getMessage());
         }
     }
 

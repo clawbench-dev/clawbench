@@ -646,8 +646,6 @@ flowchart TD
 | | `proxy.tunnelErrorNetwork` | 1533 / 1530 | SSH 服务器不可达 |
 | | `proxy.tunnelErrorHostKey` | 1534 / 1531 | SSH host key 变更 |
 
-
-
 **web 模式的手动指南整块是 C**（`ProxyPanelContent.vue:55-106`，由 `:62` 的 `v-if="!isAppMode && sshInfo && sshInfo.enabled"` 门控）——展示服务端生成的 `ssh -N -L …` 命令（来自 `/api/ssh/info/full` 的 `command`）、SSH 指纹、装 ssh 客户端指引。浏览器没有客户端 h2 路径。
 
 ### 12.4 动态标注设计

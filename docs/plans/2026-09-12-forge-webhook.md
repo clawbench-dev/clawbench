@@ -109,15 +109,13 @@ Webhook 要求 forge 平台能**主动访问** ClawBench 实例。当前项目�
 Webhook 要求 forge 平台能**主动访问** ClawBench 实例。当前项目的现实约束：
 
 - 无 `public_url` 配置项
-
 - `internal/proxy/` 是**出站** CORS 代理，方向相反
 
-因此有三种部署形态：
+因此有两种部署形态：
 
 | 形态 | 可行性 | 说明 |
 |---|---|---|
 | 公网域名 + 反代 | ✅ 直接可用 | 用户自行配置 nginx/caddy 转发到 ClawBench |
-
 | 仅局域网/localhost | ❌ 不可用 | **webhook 收不到请求**，只能继续纯轮询 |
 
 **设计决策**：UI 必须显式提示这一约束，并在未配置公网入口时**隐藏或禁用 webhook 配置项**，避免用户配置后困惑于「为什么没反应」。

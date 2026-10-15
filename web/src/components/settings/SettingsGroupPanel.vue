@@ -468,8 +468,8 @@ const renderList = computed((): RenderEntry[] => {
     result.push({ type: 'field', key: f.key, field: f })
   }
 
-  // Option sub-fields: use optionSubFieldsKey if specified (I1 fix)
-  const subFieldKey = cfg.optionSubFieldsKey ?? cfg.entrySelector?.key
+  // Option sub-fields: matched against the entry selector's current value
+  const subFieldKey = cfg.entrySelector?.key
   const subFieldValue = subFieldKey ? localValues[subFieldKey] : undefined
   const osf = (cfg.optionSubFields ?? []).find(o => o.when === subFieldValue)
   if (osf) {

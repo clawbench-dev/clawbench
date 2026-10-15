@@ -194,12 +194,10 @@ elif command -v go >/dev/null 2>&1; then
     elif [ -n "$BUILD_ANDROID" ]; then
         # Android/Termux Go binary: must be PIE (interpreter /system/bin/linker64).
         # GOOS=android emits PIE automatically.
-        # go:linkname to net.zoneCache, which Go >= 1.23 rejects at link time, so
-        # disable linkname checks for this target only.
         # Named clawbench-android-arm64 (not the bare "$NAME") so building the
         # APK never overwrites the host server binary in the working tree.
         BINARY_NAME="${NAME}-android-arm64${BINARY_SUFFIX}"
-        GOOS=android GOARCH=arm64 CGO_ENABLED=0 go build $GO_TAGS_ARG -ldflags "-checklinkname=0 $LDFLAGS" -o "$BINARY_NAME" ./cmd/server || { echo "ERROR: Go Android build failed" >&2; exit 1; }
+        GOOS=android GOARCH=arm64 CGO_ENABLED=0 go build $GO_TAGS_ARG -ldflags "$LDFLAGS" -o "$BINARY_NAME" ./cmd/server || { echo "ERROR: Go Android build failed" >&2; exit 1; }
         echo "  Go Android binary: ./$BINARY_NAME (GOOS=android/arm64, PIE)"
     else
         go build $GO_TAGS_ARG -ldflags "$LDFLAGS" -o "$NAME$BINARY_SUFFIX" ./cmd/server || { echo "ERROR: Go build failed" >&2; exit 1; }

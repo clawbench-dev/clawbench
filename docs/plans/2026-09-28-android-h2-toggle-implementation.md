@@ -1191,7 +1191,13 @@ git commit -m "test(android): end-to-end verification of the local h2 toggle"
 | 10 | `proxy.appRecommendation` | 1572 / 1569 | `使用 ClawBench APP 可自动建立 SSH 隧道，无需手动配置` | `使用 ClawBench APP 可自动建立隧道，无需手动配置` / `Use the ClawBench app for automatic tunnel setup — no manual configuration needed` | **A** |
 | 11 | `chat.localhost.sshDisabled` | 946 / 943 | `SSH 隧道已禁用，无法打开本地地址` | `隧道已禁用，无法打开本地地址` / `Tunnel is disabled, cannot open localhost URL` | **A** |
 
-**不动的 C 类**(SSH 错误类与手册)ts` 等断言，见设计文档 §12.8）。
+**不动的 C 类 13 处**（设计文档 §12.3.3）：`proxy.directionForwardHint`/`directionReverseHint`（`ssh -L`/`ssh -R`）、`tunnelGuideStep2/3`、`tunnelNeedSshHint`、`tunnelInstallWin/Mac/Linux`、`tunnelNoCommand`、`tunnelNoSsh`、`tunnelErrorAuth/Network/HostKey`。
+
+**依赖：** 无（可与 T15 并行）。**可并行：** 与 T15 并行；与 T14 同文件，**串行**（T14 在 T13 的通用基线上加插值）。
+
+**Step 1: 改 zh.ts**
+
+按上表逐条改值。**不要改 key 名**（改 key 会破 `ProxyPanelContent.transport.test.ts` 等断言，见设计文档 §12.8）。
 
 **Step 2: 改 en.ts**
 

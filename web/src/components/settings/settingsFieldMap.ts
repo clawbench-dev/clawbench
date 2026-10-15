@@ -148,8 +148,6 @@ export interface GroupPanelConfig {
   commonFields: ItemSpec[]
   optionSubFields?: { when: unknown; fields: ItemSpec[] }[]
   requiredFields?: string[]
-  /** Override which field drives optionSubFields matching. Defaults to entrySelector key. */
-  optionSubFieldsKey?: string
   /** Whether this panel has a connectivity test button. Can be a static boolean or a function that checks current values. */
   hasConnectivityTest?: boolean | ((values: Record<string, unknown>) => boolean)
   /** Function to map panel values to backend test categories.
