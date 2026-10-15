@@ -677,6 +677,11 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// Pending events (missed notifications for offline clients)
 	register("/api/ai/events/pending", ServePendingEvents)
 
+	// Notification-center log: a browsable history of session/task/forge
+	// events. GET lists (with project/kind/time filters + keyset paging);
+	// DELETE clears the whole log.
+	register("/api/notifications", ServeNotificationsOrClear)
+
 	// Chat quick-send (CRUD for quick-send presets stored in database)
 	register("/api/chat/quick-send", ServeChatQuickSend)
 	register("/api/chat/quick-send/", ServeChatQuickSendByID)

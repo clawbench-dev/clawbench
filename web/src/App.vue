@@ -249,6 +249,11 @@
                   <TaskTab :active="panelIsActive('tasks')" @open-file="handleTaskOpenFile" />
                 </TabPanel>
 
+                <!-- Notifications Tab (append-only event log; no badge) -->
+                <TabPanel tabId="notifications" :activeTab="leftPanelActive" :noHeader="true">
+                  <NotificationsPanelContent :active="panelIsActive('notifications')" />
+                </TabPanel>
+
                 <!-- Usage Statistics Tab -->
                 <TabPanel tabId="stats" :activeTab="leftPanelActive" :noHeader="true">
                   <StatsTabHost :active="panelIsActive('stats')" />
@@ -604,6 +609,7 @@ import AgentIcon from './components/common/AgentIcon.vue'
 import GroupAvatarStack from './components/chat/GroupAvatarStack.vue'
 import SettingsPage from './components/settings/SettingsPage.vue'
 import TaskTab from '@/components/task/TaskTab.vue'
+import NotificationsPanelContent from '@/components/notifications/NotificationsPanelContent.vue'
 import StatsTabHost from '@/components/stats/StatsTabHost.vue'
 import { useQuoteQuestion } from './composables/useQuoteQuestion.ts'
 import { setActiveTabGetter, setOpenSessionHandler, usePendingTarget, confirmTarget, cancelTarget } from './composables/useConversationTarget.ts'

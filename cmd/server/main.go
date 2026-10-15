@@ -1085,6 +1085,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 				mgr.CleanupStale()
 			}
 			service.CleanupPendingEvents()
+			service.CleanupNotifications()
 		}
 	}()
 
@@ -1150,7 +1151,11 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 				return handler.ForgeCredentialLogin(repo.Platform, repo.Host)
 			},
 		)
-		syncer := service.NewForgeSyncer(handler.NewForgeProvider, service.NewForgeCompositeSink(dispatcher, trigger))
+		// Third sink: the notification-center log. Kept separate from the
+		// dispatcher because it must record every change regardless of the
+		// per-event IM toggles (a muted event still belongs in the history).
+		recorder := service.NewForgeNotificationRecorder()
+		syncer := service.NewForgeSyncer(handler.NewForgeProvider, service.NewForgeCompositeSink(dispatcher, trigger, recorder))
 		service.StartForgePoller(syncer, limiter, func() model.Config { return model.ConfigInstance })
 	}
 

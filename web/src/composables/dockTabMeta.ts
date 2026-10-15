@@ -9,6 +9,7 @@ import {
   BarChart3,
   Settings,
   Github,
+  Bell,
 } from 'lucide-vue-next'
 import { DOCK_TABS, type DockTabId, type DockTabDescriptor } from '@/composables/dockTabs'
 
@@ -28,6 +29,7 @@ const DOCK_TAB_ICONS: Record<DockTabId, Component> = {
   history: GitBranch,
   forge: Github,
   tasks: Clock,
+  notifications: Bell,
   terminal: TerminalIcon,
   proxy: Network,
   stats: BarChart3,

@@ -26,6 +26,7 @@ export type TabId =
   | 'history'
   | 'forge'
   | 'tasks'
+  | 'notifications'
   | 'terminal'
   | 'proxy'
   | 'stats'
@@ -71,6 +72,7 @@ export const DOCK_TABS: readonly DockTabDescriptor[] = [
   { id: 'history', titleKey: 'git.history.projectHistory', primary: true },
   { id: 'forge', titleKey: 'nav.forge' },
   { id: 'tasks', titleKey: 'nav.tasks' },
+  { id: 'notifications', titleKey: 'nav.notifications' },
   { id: 'terminal', titleKey: 'terminal.title' },
   { id: 'stats', titleKey: 'nav.stats' },
   // Port mapping sits second-to-last on purpose: settings stays the final tab

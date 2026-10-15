@@ -76,51 +76,42 @@ func EmitSessionEventWSOnly(sessionID, status string, hasNewMessages bool) {
 // "cancelled" overwriting a terminal "completed".
 func emitSessionEvent(sessionID, status string, hasNewMessages bool, pushEnabled bool, wsBroadcastEnabled bool, toolNameAndInput ...string) {
 	mgr := ws.GetManager()
+
+	// The notification record must happen even with no manager to broadcast to
+	// (mirroring emitTaskEvent, where the record likewise sits above its
+	// mgr == nil early return). It does need the DB, though: the payload build
+	// reads session rows. Recording is best-effort, so without a DB we simply
+	// skip it rather than dereferencing a nil handle.
+	canRecord := pushEnabled && store.ReadDBReady()
+
+	// Nothing to do at all if we can neither record nor broadcast.
+	if mgr == nil && !canRecord {
+		return
+	}
+
+	// One event id for the record AND the broadcast/pending event, so a
+	// re-emitted terminal event is deduped by the notifications table's UNIQUE
+	// event_id (the same identity pending_events uses).
+	eventID := ws.GenerateEventID()
+	data := buildSessionEventData(sessionID, status, hasNewMessages, toolNameAndInput...)
+	responsePreviewRaw := data.ResponsePreview
+
+	// Notification-center log. Gated on pushEnabled only, so the WS-only echo
+	// path (EmitSessionEventWSOnly) does not log a second row for a completion
+	// the terminal path already recorded. Independent of the push_mode /
+	// subscription gates further down: those decide whether to PUSH, this
+	// decides whether to RECORD.
+	if canRecord {
+		RecordSessionNotification(eventID, sessionID, status, data)
+	}
+
 	if mgr == nil {
 		return
 	}
 
-	data := &ws.SessionUpdateData{
-		SessionID:      sessionID,
-		Status:         status,
-		HasNewMessages: hasNewMessages,
-	}
-
-	// Include session title and project path for push notifications
-	if title, err := GetSessionTitle(sessionID); err == nil && title != "" {
-		data.SessionTitle = title
-	}
-
-	var responsePreviewRaw string
-	if status == "completed" {
-		// Include response preview for the completion popover (full, untruncated —
-		// the frontend scrolls it). The plain-text variant stays truncated for
-		// push notifications.
-		responsePreviewRaw = getSessionResponsePreviewRaw(sessionID)
-		data.ResponsePreview = responsePreviewRaw
-		if responsePreviewRaw != "" {
-			data.ResponsePreviewPlain = truncatePreview(summarize.StripMarkdown(responsePreviewRaw))
-		}
-		// Include the last user message so clients can show it alongside the reply
-		data.LastUserMessage, data.LastUserHasFiles = GetLastUserMessageMeta(context.Background(), sessionID)
-		// Include the agent so clients can render the backend icon
-		data.AgentID = GetSessionAgentID(sessionID)
-	}
-
-	// Include toolName and toolInput for permission_pending events
-	if status == "permission_pending" && len(toolNameAndInput) > 0 {
-		data.ToolName = toolNameAndInput[0]
-		if len(toolNameAndInput) > 1 {
-			data.ToolInput = toolNameAndInput[1]
-		}
-	}
-
-	data.ProjectPath = GetSessionProjectPath(sessionID)
-
-	// Generate one event ID, use for both store and broadcast (write-ahead)
 	msg := ws.ServerMessage{
 		Type:  ws.MessageTypeEvent,
-		ID:    ws.GenerateEventID(),
+		ID:    eventID,
 		Event: "session_update",
 		Data:  data,
 	}
@@ -141,6 +132,48 @@ func emitSessionEvent(sessionID, status string, hasNewMessages bool, pushEnabled
 	}
 
 	pushSessionEvent(sessionID, status, msg, data, responsePreviewRaw)
+}
+
+// buildSessionEventData assembles the session_update payload shared by the
+// notification record and the WS broadcast. Extracted so the two cannot drift
+// and so the record can be built without a WS manager in scope.
+func buildSessionEventData(sessionID, status string, hasNewMessages bool, toolNameAndInput ...string) *ws.SessionUpdateData {
+	data := &ws.SessionUpdateData{
+		SessionID:      sessionID,
+		Status:         status,
+		HasNewMessages: hasNewMessages,
+	}
+
+	// Include session title and project path for push notifications
+	if title, err := GetSessionTitle(sessionID); err == nil && title != "" {
+		data.SessionTitle = title
+	}
+
+	if status == "completed" {
+		// Include response preview for the completion popover (full, untruncated —
+		// the frontend scrolls it). The plain-text variant stays truncated for
+		// push notifications.
+		responsePreviewRaw := getSessionResponsePreviewRaw(sessionID)
+		data.ResponsePreview = responsePreviewRaw
+		if responsePreviewRaw != "" {
+			data.ResponsePreviewPlain = truncatePreview(summarize.StripMarkdown(responsePreviewRaw))
+		}
+		// Include the last user message so clients can show it alongside the reply
+		data.LastUserMessage, data.LastUserHasFiles = GetLastUserMessageMeta(context.Background(), sessionID)
+		// Include the agent so clients can render the backend icon
+		data.AgentID = GetSessionAgentID(sessionID)
+	}
+
+	// Include toolName and toolInput for permission_pending events
+	if status == "permission_pending" && len(toolNameAndInput) > 0 {
+		data.ToolName = toolNameAndInput[0]
+		if len(toolNameAndInput) > 1 {
+			data.ToolInput = toolNameAndInput[1]
+		}
+	}
+
+	data.ProjectPath = GetSessionProjectPath(sessionID)
+	return data
 }
 
 // pushSessionEvent sends the DingTalk/Feishu push for a session event. Pass the
@@ -212,6 +245,31 @@ func pushSessionTerminal(sessionID, status string) {
 		responsePreviewRaw = getSessionResponsePreviewRaw(sessionID)
 	}
 
+	// One event id shared by the record and the pending event, so a re-emitted
+	// terminal event is deduped by the notifications table's UNIQUE event_id —
+	// the same identity pending_events uses.
+	eventID := ws.GenerateEventID()
+
+	// Notification-center log, recorded unconditionally (NOT inside the
+	// push_mode block below). This is the terminal completion path for both
+	// normal runs (markDoneAndSendFinal → EmitSessionPushNotification) and each
+	// answered turn of a drain (EmitTurnAnsweredNotification), so it is the one
+	// place that sees every terminal completion exactly once — the guarded
+	// caller guarantees it runs at most once per run.
+	{
+		data := &ws.SessionUpdateData{
+			SessionID:       sessionID,
+			Status:          status,
+			SessionTitle:    title,
+			ProjectPath:     projectPath,
+			ResponsePreview: truncatePreview(responsePreviewRaw),
+		}
+		if responsePreviewRaw != "" {
+			data.ResponsePreviewPlain = truncatePreview(summarize.StripMarkdown(responsePreviewRaw))
+		}
+		RecordSessionNotification(eventID, sessionID, status, data)
+	}
+
 	// Store pending event for Android offline replay (mirrors EmitSessionEvent's
 	// write-ahead logic). Skip when push_mode is "disabled".
 	if model.ConfigInstance.PushMode != "disabled" {
@@ -228,7 +286,7 @@ func pushSessionTerminal(sessionID, status string) {
 		}
 		msg := ws.ServerMessage{
 			Type:  ws.MessageTypeEvent,
-			ID:    ws.GenerateEventID(),
+			ID:    eventID,
 			Event: "session_update",
 			Data:  data,
 		}

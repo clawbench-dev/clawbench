@@ -72,6 +72,7 @@ export default {
     history: 'History',
     forge: 'Issues & PRs',
     tasks: 'Tasks',
+    notifications: 'Notifications',
     portForward: 'Port Mapping',
 
     refresh: 'Refresh',
@@ -1208,6 +1209,54 @@ export default {
       noteTitle: 'Private note',
       notePrompt: 'Private note to {name} (only they can see it)',
       notePlaceholder: 'Leave empty to send no private note',
+    },
+  },
+  notifications: {
+    title: 'Notifications',
+    // The log has no read/unread state — it answers "what happened", not
+    // "what is pending". These strings are the panel's whole vocabulary.
+    projectFilter: 'Project',
+    kindFilter: 'Type',
+    rangeFilter: 'Time',
+    all: 'All',
+    kind: {
+      session: 'Session',
+      task: 'Task',
+      forge: 'Repo',
+    },
+    range: {
+      today: 'Today',
+      '7d': 'Last 7 days',
+      '30d': 'Last 30 days',
+    },
+    // Shown on a row whose session/task no longer exists. Clicking it does NOT
+    // navigate (the source's own fallback would silently redirect elsewhere).
+    sourceDeleted: 'Source deleted',
+    sourceDeletedHint: 'The session or task this notification points at no longer exists.',
+    count: '{n} items',
+    loading: 'Loading…',
+    loadMore: 'Load more',
+    empty: 'No notifications',
+    emptyHint: 'Session, task and repository events will show up here.',
+    emptyFiltered: 'No notifications match the current filters',
+    clear: 'Clear all',
+    clearConfirm: 'Clear the entire notification history? This cannot be undone.',
+    cleared: 'Notification history cleared',
+    refresh: 'Refresh',
+    event: {
+      sessionCompleted: 'Session completed',
+      sessionCancelled: 'Session cancelled',
+      permissionPending: 'Approval required',
+      taskRunning: 'Task started',
+      taskCompleted: 'Task completed',
+      taskFailed: 'Task failed',
+      taskCancelled: 'Task cancelled',
+      forgeOpened: 'Opened',
+      forgeClosed: 'Closed',
+      forgeMerged: 'Merged',
+      forgeReopened: 'Reopened',
+      forgeCommented: 'Commented',
+      forgePipelineDone: 'Pipeline finished',
     },
   },
   task: {

@@ -2073,6 +2073,125 @@ paths:
                           type: boolean
                           description: 会话/任务已读时为 true；事件仍须推进游标但不弹通知
 
+  # ── Notifications ─────────────────────────────────────────────────────────
+  /api/notifications:
+    get:
+      tags: [Notifications]
+      summary: 列出通知中心的日志
+      description: |
+        通知中心是一张**只追加的事件日志**：记录会话（completed/cancelled/
+        permission_pending）、任务（running/completed/failed/cancelled）与仓库
+        （forge 六种）事件。**没有已读/未读概念**，也没有角标——它回答「发生过
+        什么」，不回答「有什么待处理」（后者由 chat/tasks/forge 三个既有角标负责）。
+
+        筛选参数均可选，缺省即不过滤——**默认范围是全局（所有项目）**，`project`
+        是收窄项而非隐含默认。`project` 传**项目路径**（与其它项目作用域端点一致）；
+        未知项目返回空列表而非错误。每行带 `sourceMissing`：其指向的会话/任务已不
+        存在时为 true（forge 行永不标记，因为条目在上游、本地无删除语义）。
+
+        分页用 keyset：把上一页最后一行的 `created_at`/`id` 回传为
+        `before_at`/`before_id`。不要用 offset——日志持续追加，offset 会在翻页时
+        重复或漏行。
+      operationId: notificationsList
+      parameters:
+        - name: project
+          in: query
+          description: 项目路径；缺省为全部项目
+          schema:
+            type: string
+        - name: kind
+          in: query
+          description: 事件类别
+          schema:
+            type: string
+            enum: [session, task, forge]
+        - name: range
+          in: query
+          description: 时间范围；未知或为空表示不限
+          schema:
+            type: string
+            enum: [today, 7d, 30d]
+        - name: before_at
+          in: query
+          description: 分页游标——上一页最后一行的 created_at
+          schema:
+            type: string
+        - name: before_id
+          in: query
+          description: 分页游标——上一页最后一行的 id
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          description: 每页条数（默认 50，上限 200）
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 通知列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: integer
+                        kind:
+                          type: string
+                          enum: [session, task, forge]
+                        eventType:
+                          type: string
+                        title:
+                          type: string
+                        body:
+                          type: string
+                        projectId:
+                          type: integer
+                        projectPath:
+                          type: string
+                        sessionId:
+                          type: string
+                        taskId:
+                          type: string
+                        executionId:
+                          type: string
+                        forgeItemKey:
+                          type: string
+                        agentId:
+                          type: string
+                        createdAt:
+                          type: string
+                        sourceMissing:
+                          type: boolean
+                          description: 源（会话/任务）已删除时为 true；点击不应跳转
+                  total:
+                    type: integer
+                    description: 当前筛选下的总条数（忽略分页）
+                  hasMore:
+                    type: boolean
+    delete:
+      tags: [Notifications]
+      summary: 清空通知日志
+      description: |
+        删除**整张日志**（不是筛选子集）：面板的「清空」是一次破坏性重置，按筛选
+        清空会让用户无法判断还剩下什么。返回删除的行数。
+      operationId: notificationsClear
+      responses:
+        "200":
+          description: 已清空
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: integer
+
   # ── Git ───────────────────────────────────────────────────────────────────
   /api/git/branch:
     get:

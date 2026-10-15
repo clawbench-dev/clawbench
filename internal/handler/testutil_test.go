@@ -386,6 +386,7 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			error_msg TEXT NOT NULL DEFAULT '',
 			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);
+	` + service.NotificationsDDL + `
 	`)
 	if err != nil {
 		t.Fatalf("failed to create tables: %v", err)
