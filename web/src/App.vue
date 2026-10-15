@@ -395,6 +395,7 @@
       <QuoteQuestionBar
         :visible="quoteQuestion.visible.value"
         :quoteData="quoteQuestion.quoteData.value"
+        :anchor="quoteQuestion.anchorRect.value"
         :composerMode="quoteQuestion.composerMode.value"
         :composerAttachment="quoteQuestion.composerAttachment.value"
         @add="quoteQuestion.addToConversation($event)"

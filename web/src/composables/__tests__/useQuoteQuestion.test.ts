@@ -195,6 +195,62 @@ describe('useQuoteQuestion', () => {
     })
   })
 
+  describe('scroll dismissal (issue #544)', () => {
+    function mountWithComposable() {
+      const TestComponent = defineComponent({
+        setup() { useQuoteQuestion(); return () => h('div') },
+      })
+      return mount(TestComponent)
+    }
+
+    it('hides the floating bar when the page scrolls', () => {
+      const wrapper = mountWithComposable()
+      const qq = useQuoteQuestion()
+      qq.showBar({ text: 'hello', filePath: '/a.ts', language: 'ts', startLine: 1, endLine: 3 })
+      vi.advanceTimersByTime(400)
+      expect(qq.visible.value).toBe(true)
+
+      // Capture-phase document listener catches scrolls on any inner container.
+      document.dispatchEvent(new Event('scroll'))
+      expect(qq.visible.value).toBe(false)
+      expect(ctx.quoteData.value).toBeNull()
+
+      wrapper.unmount()
+    })
+
+    it('keeps the bar while it is pinned (user is typing a comment)', () => {
+      const wrapper = mountWithComposable()
+      const qq = useQuoteQuestion()
+      qq.showBar({ text: 'hello', filePath: '/a.ts', language: 'ts', startLine: 1, endLine: 3 })
+      vi.advanceTimersByTime(400)
+      qq.pinBar()
+
+      document.dispatchEvent(new Event('scroll'))
+      expect(qq.visible.value).toBe(true)
+
+      wrapper.unmount()
+    })
+
+    it('ignores a scroll that originates inside the bar itself', () => {
+      const wrapper = mountWithComposable()
+      const qq = useQuoteQuestion()
+      qq.showBar({ text: 'hello', filePath: '/a.ts', language: 'ts', startLine: 1, endLine: 3 })
+      vi.advanceTimersByTime(400)
+      expect(qq.visible.value).toBe(true)
+
+      // The textarea's own scrollbar must not dismiss the bar.
+      const bar = document.createElement('div')
+      bar.className = 'quote-question-bar'
+      const inner = document.createElement('textarea')
+      bar.appendChild(inner)
+      document.body.appendChild(bar)
+      inner.dispatchEvent(new Event('scroll', { bubbles: true }))
+      expect(qq.visible.value).toBe(true)
+
+      wrapper.unmount()
+    })
+  })
+
   describe('closeSheet', () => {
     it('clears visible, pinned, and quoteData', () => {
       const qq = useQuoteQuestion()
@@ -1428,6 +1484,100 @@ describe('useQuoteQuestion', () => {
 
       // State should remain unchanged (no listener to process it)
       expect(qq.visible.value).toBe(false)
+    })
+
+    /**
+     * anchorRect drives the floating toolbar's position (issue #544). jsdom has
+     * no layout, so getClientRects() returns an empty list for a real range —
+     * we stub it to prove the composable captures the LAST line box (the point
+     * the pointer left) and clears it again on every hide path.
+     */
+    describe('anchorRect (floating toolbar position)', () => {
+      function stubRects(rects: DOMRect[]) {
+        const proto = Range.prototype as unknown as { getClientRects: () => DOMRectList }
+        // Indexable like a real DOMRectList (the composable reads
+        // `rects[rects.length - 1]`), not just array-like via `item()`.
+        const list = {
+          length: rects.length,
+          item: (i: number) => rects[i] ?? null,
+          ...Object.fromEntries(rects.map((r, i) => [i, r])),
+        }
+        vi.spyOn(proto, 'getClientRects').mockReturnValue(list as unknown as DOMRectList)
+      }
+
+      function fakeRect(top: number): DOMRect {
+        return { top, bottom: top + 20, left: 100, right: 200, width: 100, height: 20, x: 100, y: top, toJSON: () => ({}) } as DOMRect
+      }
+
+      afterEach(() => {
+        vi.restoreAllMocks()
+      })
+
+      it('captures the last line box of the selection', () => {
+        const wrapper = mountWithComposable()
+        // Two line boxes; the toolbar anchors to the LAST (bottom) one.
+        stubRects([fakeRect(100), fakeRect(140)])
+        createSelectionInContainer('markdown-body', { 'data-file-path': '/a.md' })
+
+        document.dispatchEvent(new Event('selectionchange'))
+        vi.advanceTimersByTime(150)
+
+        const qq = useQuoteQuestion()
+        expect(qq.visible.value).toBe(true)
+        expect(qq.anchorRect.value?.top).toBe(140)
+
+        wrapper.unmount()
+      })
+
+      it('is cleared when the bar is hidden', () => {
+        const wrapper = mountWithComposable()
+        stubRects([fakeRect(100)])
+        createSelectionInContainer('markdown-body', { 'data-file-path': '/a.md' })
+        document.dispatchEvent(new Event('selectionchange'))
+        vi.advanceTimersByTime(150)
+
+        const qq = useQuoteQuestion()
+        expect(qq.anchorRect.value).not.toBeNull()
+
+        qq.hideBar()
+        expect(qq.anchorRect.value).toBeNull()
+
+        wrapper.unmount()
+      })
+
+      it('is cleared by closeSheet', () => {
+        const wrapper = mountWithComposable()
+        stubRects([fakeRect(100)])
+        createSelectionInContainer('markdown-body', { 'data-file-path': '/a.md' })
+        document.dispatchEvent(new Event('selectionchange'))
+        vi.advanceTimersByTime(150)
+
+        const qq = useQuoteQuestion()
+        expect(qq.anchorRect.value).not.toBeNull()
+
+        qq.closeSheet()
+        expect(qq.anchorRect.value).toBeNull()
+
+        wrapper.unmount()
+      })
+
+      it('stays null when the selection has no laid-out boxes', () => {
+        // getClientRects() empty (e.g. a CodeMirror/terminal shadow selection
+        // that the DOM cannot measure) → no anchor, so the bar keeps its pinned
+        // top position instead of floating to a bogus spot.
+        const wrapper = mountWithComposable()
+        stubRects([])
+        createSelectionInContainer('markdown-body', { 'data-file-path': '/a.md' })
+
+        document.dispatchEvent(new Event('selectionchange'))
+        vi.advanceTimersByTime(150)
+
+        const qq = useQuoteQuestion()
+        expect(qq.visible.value).toBe(true)
+        expect(qq.anchorRect.value).toBeNull()
+
+        wrapper.unmount()
+      })
     })
   })
 })

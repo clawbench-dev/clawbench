@@ -52,6 +52,12 @@ const {
 const barVisible = ref(false)
 const barPinned = ref(false)  // When pinned, selection loss won't auto-hide the bar
 const sheetOpen = ref(false)
+// Bounding rect of the selection the bar is currently about, used to float the
+// toolbar next to the text (issue #544). Null when there is no DOM selection
+// behind the bar — entry-point composers, terminal/CodeMirror selections that
+// live outside the global selection, and the OpenAPI preview's iframe — in
+// which case the bar falls back to its pinned top position.
+const anchorRect = ref<DOMRect | null>(null)
 // Non-null while the bar was opened by an entry point rather than by a text
 // selection. In this mode the bar is useful even with no quote.
 const composerContext = ref<QuoteComposerContext | null>(null)
@@ -77,6 +83,24 @@ const composerAttachment = computed<ComposerAttachment | null>(() => {
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 let pointerReleaseTimer: ReturnType<typeof setTimeout> | null = null
 
+/**
+ * Rect the floating toolbar should attach to: the LAST line box of the
+ * selection (the point the user's pointer just left). For a multi-line
+ * selection that is the bottom line, which is where "just below the text" reads
+ * correctly. Returns null when the selection has no laid-out boxes (e.g. a
+ * collapsed range), letting the caller fall back to the pinned top position.
+ *
+ * The rect is stored RAW (zoom-scaled): conversion to pre-zoom `position:fixed`
+ * space happens in computeSelectionToolbarStyle, so both sides of that
+ * comparison stay in one space.
+ */
+function selectionAnchorRect(sel: Selection): DOMRect | null {
+  if (sel.rangeCount === 0) return null
+  const rects = sel.getRangeAt(0).getClientRects()
+  if (!rects.length) return null
+  return rects[rects.length - 1]
+}
+
 // Active pointer (mouse/touch) tracking. Browsers fire selectionchange while the
 // user is still dragging, so a debounced evaluation can run mid-drag and surface
 // the bar before the pointer is released — on desktop the bar then auto-expands
@@ -95,6 +119,7 @@ function evaluateSelection() {
     if (!barPinned.value) {
       barVisible.value = false
       setQuoteData(null)
+      anchorRect.value = null
     }
     return
   }
@@ -120,6 +145,7 @@ function evaluateSelection() {
   if (chatMsg && closestElement(sel.anchorNode, '.chat-meta-bar, button, a, .chat-file-attachment, .chat-tool-call, .chat-card-strip')) {
     if (!barPinned.value && !composerContext.value) {
       barVisible.value = false
+      anchorRect.value = null
     }
     return
   }
@@ -141,6 +167,7 @@ function evaluateSelection() {
   if (!container) {
     if (!barPinned.value && !composerContext.value) {
       barVisible.value = false
+      anchorRect.value = null
     }
     return
   }
@@ -149,9 +176,15 @@ function evaluateSelection() {
   if (!text) {
     if (!barPinned.value && !composerContext.value) {
       barVisible.value = false
+      anchorRect.value = null
     }
     return
   }
+
+  // Capture where the selection sits so the bar can float next to it. Done once
+  // here — every quotable branch below (labelled source, chat message, file)
+  // surfaces the same bar and wants the same anchor.
+  anchorRect.value = selectionAnchorRect(sel)
 
   // A labelled non-file source (an issue/PR body, a commit, a task, a CI run)
   // supplies the quote's identity. It has no meaningful file line numbers, so
@@ -271,6 +304,30 @@ function onPointerUp() {
   releasePointer()
 }
 
+/**
+ * Hide the floating bar when the page scrolls.
+ *
+ * The toolbar is `position: fixed` and anchored to the selection's on-screen
+ * rect, so once the text scrolls away the bar would sit next to unrelated
+ * content (issue #544 requires it to disappear on scroll). Skipped while the
+ * bar is pinned — clicking an action pins it (see onRowPointerDown / expand),
+ * which covers the expanded input: the user must be able to scroll the page
+ * without their half-typed comment vanishing. Scrolls originating INSIDE the
+ * bar (the textarea's own scrollbar) are ignored for the same reason.
+ *
+ * Registered in the capture phase so it sees scrolls from any scrollable
+ * ancestor (the markdown body, the chat list, …), which do not bubble.
+ */
+function onScroll(e: Event) {
+  if (!barVisible.value) return
+  if (barPinned.value || composerContext.value) return
+  const target = e.target
+  if (target instanceof Element && target.closest('.quote-question-bar')) return
+  barVisible.value = false
+  setQuoteData(null)
+  anchorRect.value = null
+}
+
 /** True while any pointer button is held (used to gate mid-drag selection UI). */
 export function isPointerPressed() {
   return pointerCount > 0
@@ -297,6 +354,8 @@ export function useQuoteQuestion() {
       document.addEventListener('pointercancel', onPointerUp)
       document.addEventListener('touchend', onPointerUp)
       document.addEventListener('touchcancel', onPointerUp)
+      // Capture phase: scrolls on inner containers do not bubble to document.
+      document.addEventListener('scroll', onScroll, true)
     }
   })
 
@@ -309,6 +368,7 @@ export function useQuoteQuestion() {
       document.removeEventListener('pointercancel', onPointerUp)
       document.removeEventListener('touchend', onPointerUp)
       document.removeEventListener('touchcancel', onPointerUp)
+      document.removeEventListener('scroll', onScroll, true)
       pointerCount = 0
       if (pointerReleaseTimer) {
         clearTimeout(pointerReleaseTimer)
@@ -324,6 +384,7 @@ export function useQuoteQuestion() {
     barPinned.value = false
     composerContext.value = null
     setQuoteData(null)
+    anchorRect.value = null
   }
 
   /**
@@ -338,8 +399,14 @@ export function useQuoteQuestion() {
     // A live selection carries over (select-then-click); otherwise start empty
     // so the full body is never quoted by default.
     const sel = window.getSelection()
-    if (!sel || sel.isCollapsed || !sel.toString().trim()) {
+    const live = sel && !sel.isCollapsed && sel.toString().trim()
+    if (!live) {
       setQuoteData(null)
+      // No selection behind the bar → keep it on the pinned top position. A
+      // stale anchor from an earlier selection must not drag it off.
+      anchorRect.value = null
+    } else {
+      anchorRect.value = selectionAnchorRect(sel)
     }
     barVisible.value = true
     barPinned.value = true
@@ -396,6 +463,7 @@ export function useQuoteQuestion() {
     setQuoteData(null)
     barVisible.value = false
     barPinned.value = false
+    anchorRect.value = null
   }
 
   /** A fresh id for a quote captured for deferred delivery. */
@@ -410,6 +478,7 @@ export function useQuoteQuestion() {
     barVisible.value = false
     barPinned.value = false
     setQuoteData(null)
+    anchorRect.value = null
   }
 
   function pinBar() {
@@ -437,6 +506,7 @@ export function useQuoteQuestion() {
     barVisible.value = false
     barPinned.value = false
     setQuoteData(null)
+    anchorRect.value = null
   }
 
   /**
@@ -444,11 +514,21 @@ export function useQuoteQuestion() {
    * 默认延迟 400ms 显示，避免双击的 pointerdown 事件触发"点击外部关闭"
    * （markdown 预览双击复制依赖此延迟）。传 { delay: 0 } 可立即显示
    * （代码模式拖选无 pointerdown 干扰）。
+   *
+   * The anchor is captured SYNCHRONOUSLY, before the delay: by the time the
+   * timeout runs the selection may already have been cleared (the double-click
+   * that triggered this collapses it), and a cleared selection has no rect to
+   * measure. Callers with no DOM selection (CodeMirror's internal selection,
+   * the OpenAPI preview's iframe) leave the anchor null and the bar stays on
+   * its pinned top position.
    */
   function showBar(data: QuoteData, opts: { delay?: number } = {}) {
+    const sel = window.getSelection()
+    const rect = sel && !sel.isCollapsed && sel.toString().trim() ? selectionAnchorRect(sel) : null
     setTimeout(() => {
       setQuoteData(data)
       barVisible.value = true
+      anchorRect.value = rect
     }, opts.delay ?? 400)
   }
 
@@ -499,6 +579,7 @@ export function useQuoteQuestion() {
     setQuoteData(null)
     barVisible.value = false
     barPinned.value = false
+    anchorRect.value = null
     if (!needsPicker) {
       addStagedQuote(quote, note)
       toast.show(gt('quoteBar.addedToChat'), { icon: '📎', type: 'success', duration: 1500 })
@@ -592,6 +673,7 @@ export function useQuoteQuestion() {
     barVisible.value = false
     barPinned.value = false
     setQuoteData(null)
+    anchorRect.value = null
 
     if (needsPicker) {
       const sel = window.getSelection()
@@ -631,6 +713,7 @@ export function useQuoteQuestion() {
   return {
     visible: barVisible,
     quoteData,
+    anchorRect,
     sheetOpen,
     composerMode,
     composerAttachment,

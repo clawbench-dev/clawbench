@@ -1934,6 +1934,11 @@ export default {
     clear: '清空',
     placeholder: '输入你的问题...',
     addToChat: '加入对话',
+    // Collapsed floating toolbar (issue #544). `comment` opens the inline
+    // input; `quoteSelection` stages the selection as a quote card. Copy reuses
+    // `common.copy`, so it has no key of its own here.
+    comment: '评论',
+    quoteSelection: '引用',
     addedToChat: '已加入对话',
     send: '发送',
     aiChat: 'AI 对话',
