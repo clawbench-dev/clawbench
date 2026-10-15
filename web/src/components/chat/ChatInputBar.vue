@@ -574,7 +574,8 @@ const placeholderIndex = ref(0)
 let placeholderTimer = null
 
 // A coarse primary pointer (touch) is exactly where the swipe-history gesture
-// is available, so its hint is shown only there.
+// is available, so its hint is shown only there. Keyboard users get the
+// ArrowUp/ArrowDown hint instead — the two gestures are mutually exclusive.
 const { isTouchPrimary } = usePlatformDetect()
 
 // The candidate hints cycle when the textarea is empty, unfocused, and not in queue/upload mode.
@@ -584,6 +585,8 @@ const placeholderHints = computed(() => {
   const hints = []
   if (isTouchPrimary.value) {
     hints.push(t('chat.input.placeholderSwipeHistory'))
+  } else {
+    hints.push(t('chat.input.placeholderArrowHistory'))
   }
   if (quickSendItems.value.length > 0) {
     hints.push(t('chat.input.placeholderQuickSend'))

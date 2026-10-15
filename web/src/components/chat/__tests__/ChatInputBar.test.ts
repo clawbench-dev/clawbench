@@ -54,6 +54,7 @@ const i18n = createI18n({
           placeholderFileRef: 'File ref',
           placeholderQuickSend: 'Quick send',
           placeholderSwipeHistory: 'Swipe history',
+          placeholderArrowHistory: 'Arrow history',
           placeholderQueue: 'Queue',
           clearInput: 'Clear',
           quickMenu: 'Quick',
@@ -3223,6 +3224,21 @@ describe('ChatInputBar', () => {
       _setPlatformForTest({ isTouchPrimary: true })
       wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
       expect(wrapper.vm.placeholderHints).toContain('Swipe history')
+      wrapper.unmount()
+    })
+
+    it('shows the arrow-key history hint in the placeholder only on desktop surfaces', async () => {
+      // Desktop: keyboard history hint present, swipe hint absent
+      _setPlatformForTest({ isTouchPrimary: false })
+      let wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      expect(wrapper.vm.placeholderHints).toContain('Arrow history')
+      expect(wrapper.vm.placeholderHints).not.toContain('Swipe history')
+      wrapper.unmount()
+      // Touch: swipe hint present, keyboard hint absent
+      _setPlatformForTest({ isTouchPrimary: true })
+      wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      expect(wrapper.vm.placeholderHints).toContain('Swipe history')
+      expect(wrapper.vm.placeholderHints).not.toContain('Arrow history')
       wrapper.unmount()
     })
 

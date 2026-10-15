@@ -478,6 +478,7 @@ export default {
       placeholderSkill: "输入 {'#'} 使用技能",
       placeholderFileRef: "输入 {'@'} 引用文件",
       placeholderSwipeHistory: '左右滑动切换历史输入',
+      placeholderArrowHistory: '↑/↓ 切换历史输入',
       send: '发送',
       enqueue: '加入队列',
       quickMenu: '快捷指令',

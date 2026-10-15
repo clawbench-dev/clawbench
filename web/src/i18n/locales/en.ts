@@ -476,6 +476,7 @@ export default {
       placeholderSkill: "Type {'#'} to use a skill",
       placeholderFileRef: "Type {'@'} to reference a file",
       placeholderSwipeHistory: 'Swipe left/right to browse history input',
+      placeholderArrowHistory: 'Press ↑/↓ to browse history input',
       send: 'Send',
       enqueue: 'Enqueue',
       quickMenu: 'Quick commands',
