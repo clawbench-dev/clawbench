@@ -80,7 +80,7 @@ sequenceDiagram
 
 ### 端点按受众拆分
 
-`/api/ssh/info` 与 `/api/ssh/info/full` 是同一份数据按调用方切分，参照 `/api/frp/status` 与 `/api/frp/info` 的既有做法：
+`/api/ssh/info` 与 `/api/ssh/info/full` 是同一份数据按调用方切分，参照内部按受众拆分的多版本接口模式（如 `/api/ssh/info` 公开版与 `/api/ssh/info/full` 完整版）：
 
 | 端点 | 鉴权 | 返回 | 调用方 |
 |---|---|---|---|
@@ -95,7 +95,7 @@ sequenceDiagram
 - **自动 host key 是安全权衡**：生产环境应该使用固定 host key 并验证指纹，但 ClawBench 的场景是个人开发工具，自动生成降低了配置门槛——用户首次连接时无法验证 host key 真实性，但对于个人使用场景可接受
 - **指数退避封锁是 IP 级别**：同一 IP 连续失败 5 次后封锁，不是全局封锁——不会因为一个攻击者而影响合法用户
 - **状态查询走 HTTP 而非事件**：SSH 服务器是常驻 goroutine，自身**不发布 WS 事件**。Web UI 通过 `GET /api/ssh/info/full`（需鉴权）定时轮询 `SSHConnectionStats{Connected, ClientCount, ActiveChannels, LastConnectedAt}`。这种轮询模型比事件推送更简单，且 SSH 状态变更频率低，轮询足够
-- **重启必须先释放 SSH 端口，否则映射永久不可用**：`build.sh --restart` 只等主端口 20000 释放就拉起新进程，而旧进程的 SSH 监听若靠一个早期注册的 `defer` 关闭，会因 defer 是 LIFO 而排在所有慢 teardown（terminal / file watcher / IM / frp）之后**最后**才跑——端口被多占数秒（随会话数增长无上界），新进程绑定差之毫秒即失败。因此 shutdown 第 0 步显式 `releaseSSHPortOnShutdown()` 关掉 SSH 监听（引用从 `handler.GetSSHServer()` 读，不用 main 局部变量——热重载换端口/开关后局部变量会指向已关闭的旧 server）。
+- **重启必须先释放 SSH 端口，否则映射永久不可用**：`build.sh --restart` 只等主端口 20000 释放就拉起新进程，而旧进程的 SSH 监听若靠一个早期注册的 `defer` 关闭，会因 defer 是 LIFO 而排在所有慢 teardown（terminal / file watcher / IM）之后**最后**才跑——端口被多占数秒（随会话数增长无上界），新进程绑定差之毫秒即失败。因此 shutdown 第 0 步显式 `releaseSSHPortOnShutdown()` 关掉 SSH 监听（引用从 `handler.GetSSHServer()` 读，不用 main 局部变量——热重载换端口/开关后局部变量会指向已关闭的旧 server）。
 - **绑定失败必须清引用，否则死引用永不重试**：启动路径若先 `SetSSHServer(ref)` 再 `ListenAndServe()`，绑定失败只记一条 ERROR 而 ref 仍非 nil，于是 `testPortForward` 拿到引用、拨号被拒、此后**永不重试**（配置未变，hot-reload 只打 "reconfigured" 就返回）。修法是失败即 `ClearSSHServer()`（compare-and-clear，防止异步失败回调把热重载刚装好的健康 server 下线），并由 `listenWithRetry()` 有界重试覆盖 SIGKILL 等不走 shutdown 的情形。重试判据用**任意绑定失败**而非 `errors.Is(err, syscall.EADDRINUSE)`——Go 在 Windows 的 `EADDRINUSE` 是发明值，永不等于真正的 `WSAEADDRINUSE`。
 
 ## 传输方式

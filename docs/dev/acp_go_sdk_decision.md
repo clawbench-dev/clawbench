@@ -131,7 +131,7 @@ SDK 的 `UnmarshalJSON` 是「按 discriminator 穷举」，每新增一个变�
 
 ## 7. 若将来 fork 的正确姿势
 
-**不要 `go mod vendor`**（会把 frp/sqlite/larksuite 等全部拖入，数十 MB）。
+**不要 `go mod vendor`**（会把 sqlite/larksuite 等全部拖入，数十 MB）。
 只拷单个包 + `replace`：
 
 ```

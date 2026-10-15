@@ -5,8 +5,7 @@
     <div v-if="showTitle && config.titleKey" class="group-panel__header">
       {{ t(config.titleKey) }}
     </div>
-    <!-- Enable toggle row. Only panels whose feature has a real on/off state
-         still have one (terminal, frp); the port-forward panel's switch was
+    <!-- Enable toggle row. The port-forward panel's switch was
          removed because the SSH listener is always on. -->
     <div v-if="config.enableKey" class="group-panel__enable-row">
       <div class="group-panel__enable-left">
@@ -95,24 +94,6 @@
         @click="handleFieldClick(entry.field)"
         @refresh="handleRagRefresh"
       />
-      <!-- FRP auto_port info injection -->
-      <template v-if="entry.type === 'field' && entry.field.key === 'frp.auto_port' && isFrpAutoPortActive">
-        <SettingsItem
-          :label="t('settings.items.frpAssignedPort')"
-          :description="t('settings.items.frpAssignedPortDesc')"
-          type="number"
-          :model-value="frpHttpPortDisplay"
-          :disabled="true"
-        />
-        <SettingsItem
-          v-if="frpSshPortDisplay"
-          :label="t('settings.items.frpAssignedSSHPort')"
-          :description="t('settings.items.frpAssignedSSHPortDesc')"
-          type="number"
-          :model-value="frpSshPortDisplay"
-          :disabled="true"
-        />
-      </template>
     </template>
 
     <!-- Tunnel status, shown while the transport controls are on screen.
@@ -247,7 +228,6 @@ import { useSettingsNavigation } from '@/composables/useSettingsNavigation'
 import { useConnectivityTest } from '@/composables/useConnectivityTest'
 import { useToast } from '@/composables/useToast'
 import { useTabDrawer } from '@/composables/useTabDrawer'
-import { useFrp } from '@/composables/useFrp'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { getNative, reconnectTunnel } from '@/utils/clawbenchNative'
 import { usePortForward } from '@/composables/usePortForward'
@@ -277,7 +257,6 @@ const { t } = useI18n()
 const toast = useToast()
 const { registerGuard, unregisterGuard } = useSettingsNavigation()
 const { testing: connectivityTesting, testResults: connectivityTestResults, runTests: runConnectivityTests, clearResults: clearConnectivityResults } = useConnectivityTest()
-const { frpState } = useFrp()
 const { status: ragStatus, refresh: refreshRagStatus } = useRagStatus()
 const dialog = useDialog()
 
@@ -628,23 +607,6 @@ function handleEditToggle(key: string, open: boolean) {
     activeKey.value = null
   }
 }
-
-// ── FRP auto_port info ──
-
-const isFrpAutoPortActive = computed(() => {
-  if (props.config.panelId !== 'frp') return false
-  return localValues['frp.auto_port'] === true && localValues['frp.enabled'] === true
-})
-
-const frpHttpPortDisplay = computed(() => {
-  const port = frpState.state === 'running' && frpState.remotePort > 0 ? frpState.remotePort : 0
-  return port
-})
-
-const frpSshPortDisplay = computed(() => {
-  const port = frpState.state === 'running' && frpState.sshRemotePort > 0 ? frpState.sshRemotePort : null
-  return port
-})
 
 // ── Tunnel transport preference (both native hosts) ──
 //

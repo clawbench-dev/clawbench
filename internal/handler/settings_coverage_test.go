@@ -685,21 +685,3 @@ func TestServeConfig_Get_PushMode(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "native", resp.PushMode)
 }
-
-// --- FRP token with *** (mask removed, now accepted) ---
-
-func TestServeConfigPatch_FRPTokenWithStars(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	model.ConfigInstance = model.Config{}
-
-	body := `{"frp":{"token":"abc***xyz"}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "abc***xyz", model.ConfigInstance.FRP.Token)
-}

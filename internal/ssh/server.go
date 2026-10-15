@@ -269,7 +269,7 @@ const (
 	// is free, but the outgoing process releases the SSH port (20001) much
 	// later: its Close is a deferred call registered early in main(), so LIFO
 	// runs it after every other teardown — the terminal manager, file watcher,
-	// IM managers and frp all close first. Measured on a real restart
+	// and IM managers all close first. Measured on a real restart
 	// (2026-10-01): "server stopped" at 11:24:15.423 but "SSH tunnel server
 	// stopped" only at 11:24:21.459 — the port was held ~6s, and the
 	// replacement's bind attempt at 11:24:20.722 lost by 737ms. That teardown

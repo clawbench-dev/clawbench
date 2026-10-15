@@ -95,7 +95,7 @@ export function usePanelSnapshot(config: GroupPanelConfig) {
     snapshot.value = snap
     Object.assign(localValues, snap)
 
-    // Init side effects (e.g., fetch FRP info)
+    // Init side effects
     config.onInit?.()
   }
 

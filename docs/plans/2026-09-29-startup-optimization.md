@@ -22,7 +22,7 @@
 | `model.RefreshAgents` | **~18.2s** | 15.896 → 34.085 |
 | `service.InitDB` | **~5.5s** | 02.813 → 14.2（含一次性项目迁移 5.9s，8 天仅 1 次） |
 | `rag.Init` | ~1.6s | 14.2 → 15.82（`LoadDictEmbed("zh")` + 第二个连接） |
-| 其余（SSH/FRP/DingTalk/terminal…） | ~2.3s | 34.09 → 36.43 |
+| 其余（SSH/DingTalk/terminal…） | ~2.3s | 34.09 → 36.43 |
 
 发现阶段串行明细（本次）：antigravity 卡满 10s 超时 → claude/codebuddy/codex 插件 ~3s → deepseek ~1s → pi ~0.9s → vecli ~0.05s → grok ~0.4s → opencode ~1.7s → qoder ~1.0s。
 

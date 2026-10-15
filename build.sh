@@ -18,7 +18,6 @@ DO_RESTART=""
 RESTART_SKIP_BUILD=""
 RESTART_PORT=""
 RESTART_DETACHED=""
-NOFRP=""
 for arg in "$@"; do
     case "$arg" in
         --windows)
@@ -48,14 +47,6 @@ for arg in "$@"; do
             ;;
         --android)
             BUILD_ANDROID=1
-            ;;
-        --nofrp)
-            # Exclude the FRP client library (github.com/fatedier/frp) from the
-            # binary. It is a dual-use reverse-proxy tool that endpoint security
-            # products flag as Greyware/riskware; a no-FRP build carries no such
-            # signature. Output filename gains a -nofrp suffix so it cannot
-            # clobber the normal build of the same platform.
-            NOFRP=1
             ;;
         --restart)
             DO_RESTART=1
@@ -105,15 +96,8 @@ LDFLAGS="-X 'clawbench/internal/version.Version=$FULL_VERSION'"
 VERSION_CODE=$(clawbench_version_code "$SCRIPT_DIR")
 echo "  Version: $FULL_VERSION (code: $VERSION_CODE, release: $IS_RELEASE)"
 
-# Build tags. `nofrp` drops the FRP client library from the binary (see
-# internal/frp/manager_nofrp.go); it is orthogonal to the platform flags above.
 BUILD_TAGS=""
 BINARY_SUFFIX=""
-if [ -n "$NOFRP" ]; then
-    BUILD_TAGS="-tags nofrp"
-    BINARY_SUFFIX="-nofrp"
-    echo "  FRP: excluded (build tag: nofrp)"
-fi
 # `-tags` is omitted entirely (not passed empty) when unset: an empty -tags
 # argument is harmless but noisy in build output.
 GO_TAGS_ARG=""
@@ -209,7 +193,7 @@ elif command -v go >/dev/null 2>&1; then
         echo "  Cross-compiled: $BINARY_NAME ($TARGET_OS/$TARGET_ARCH)"
     elif [ -n "$BUILD_ANDROID" ]; then
         # Android/Termux Go binary: must be PIE (interpreter /system/bin/linker64).
-        # GOOS=android emits PIE automatically. wlynxg/anet (via frp -> pion) uses
+        # GOOS=android emits PIE automatically.
         # go:linkname to net.zoneCache, which Go >= 1.23 rejects at link time, so
         # disable linkname checks for this target only.
         # Named clawbench-android-arm64 (not the bare "$NAME") so building the
@@ -268,7 +252,6 @@ if [[ -n "$DO_RESTART" ]]; then
         echo "  Log:  $LOG"
         echo "  Detaching restart into a new session..."
         setsid "$SCRIPT_DIR/build.sh" --restart --restart-detached --restart-skip-build \
-            ${NOFRP:+--nofrp} \
             ${RESTART_PORT:+--restart-port=$RESTART_PORT} \
             >> "$LOG" 2>&1 &
         SETSID_PID=$!
@@ -376,7 +359,6 @@ else
     echo "  ./build.sh --android        # Android APK (release)"
     echo ""
     echo "Build options (modifiers):"
-    echo "  ./build.sh --windows --nofrp   # Exclude the FRP client library (no Greyware signature)"
     echo ""
     echo "Restart options (build + restart):"
     echo "  ./build.sh --restart            # Build and restart ClawBench"

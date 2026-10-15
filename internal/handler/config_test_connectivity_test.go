@@ -135,44 +135,6 @@ func TestServeConfigTest_MethodNotAllowed(t *testing.T) {
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
 
-// ── FRP tests ────────────────────────────────────────────────
-
-func TestTestFRP_EmptyAddr(t *testing.T) {
-	result := testFRP(context.Background(), map[string]any{
-		"frp.server_addr": "",
-		"frp.server_port": float64(7000),
-	})
-	assert.False(t, result.Success)
-	assert.Contains(t, result.Message, "required")
-}
-
-func TestTestFRP_Success(t *testing.T) {
-	// Start a TCP listener
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	assert.NoError(t, err)
-	defer ln.Close()
-
-	port := ln.Addr().(*net.TCPAddr).Port
-	result := testFRP(context.Background(), map[string]any{
-		"frp.server_addr": "127.0.0.1",
-		"frp.server_port": float64(port),
-	})
-	assert.True(t, result.Success)
-	assert.Contains(t, result.Message, "Successfully connected")
-}
-
-func TestTestFRP_ConnectionRefused(t *testing.T) {
-	// Use a port that's not listening
-	result := testFRP(context.Background(), map[string]any{
-		"frp.server_addr": "127.0.0.1",
-		"frp.server_port": float64(19999),
-	})
-	assert.False(t, result.Success)
-	assert.Contains(t, result.Message, "Failed to connect")
-}
-
-// ── Summarize tests ──────────────────────────────────────────
-
 func TestTestSummarizeVoice_AnthropicSuccess(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "test-key", r.Header.Get("x-api-key"))
@@ -459,22 +421,6 @@ func TestResolveIntValue(t *testing.T) {
 }
 
 // ── ServeConfigTest integration tests ──────────────────────────
-
-func TestServeConfigTest_FRPCategory(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	defer ln.Close()
-
-	port := ln.Addr().(*net.TCPAddr).Port
-	body := fmt.Sprintf(`{"category":"frp","values":{"frp.server_addr":"127.0.0.1","frp.server_port":%d}}`, port)
-	r := httptest.NewRequest(http.MethodPost, "/api/config/test", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	ServeConfigTest(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-	var result ConnectivityTestResult
-	_ = json.NewDecoder(w.Body).Decode(&result)
-	assert.True(t, result.Success)
-}
 
 func TestServeConfigTest_TTSCategory(t *testing.T) {
 	body := `{"category":"tts","values":{"tts.engine":"unknown"}}`
@@ -1019,25 +965,6 @@ func TestTestDingTalk_ConnectionError(t *testing.T) {
 	assert.False(t, result.Success)
 	assert.Contains(t, result.Message, "Failed to connect")
 }
-
-// ── FRP additional tests ──────────────────────────────────────
-
-func TestTestFRP_DefaultPort(t *testing.T) {
-	// Start a TCP listener on port 7000 if available; otherwise skip
-	ln, err := net.Listen("tcp", "127.0.0.1:7000")
-	if err != nil {
-		t.Skip("port 7000 not available for default port test")
-	}
-	defer ln.Close()
-
-	result := testFRP(context.Background(), map[string]any{
-		"frp.server_addr": "127.0.0.1",
-		// No port — should default to 7000
-	})
-	assert.True(t, result.Success)
-}
-
-// ── Feishu tests ──────────────────────────────────────────────────
 
 func TestTestFeishu_MissingFields(t *testing.T) {
 	result := testFeishu(context.Background(), map[string]any{

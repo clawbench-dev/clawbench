@@ -96,7 +96,7 @@ npm install -g @xulongzhe/clawbench
 clawbench
 ```
 
-> 📡 **Public Access**: To access ClawBench from the public internet (commuting, traveling, etc.), see the **[Public Access Guide](docs/user-guide/PUBLIC_ACCESS.md)**  — supports IPv6 direct connection, FRP tunnel, and EasyTier decentralized networking (no VPS required).
+> 📡 **Public Access**: To access ClawBench from the public internet (commuting, traveling, etc.), see the **[Public Access Guide](docs/user-guide/PUBLIC_ACCESS.md)**  — supports IPv6 direct connection and EasyTier decentralized networking (no VPS required).
 
 ---
 

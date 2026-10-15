@@ -82,10 +82,6 @@ vi.mock('@/composables/useTabDrawer', () => ({
   }),
 }))
 
-vi.mock('@/composables/useFrp', () => ({
-  useFrp: () => ({ frpState: reactive({ enabled: false, running: false, state: 'disabled', serverAddr: '', remotePort: 0, sshRemotePort: 0, remoteUrl: '' }) }),
-}))
-
 vi.mock('@/composables/useRagStatus', () => ({
   useRagStatus: () => ({
     status: { value: { available: false, mode: 'none', has_fts_data: false, has_vec_data: false, embedder_healthy: false, total_messages: 0, indexed_messages: 0, embedded_messages: 0 } },

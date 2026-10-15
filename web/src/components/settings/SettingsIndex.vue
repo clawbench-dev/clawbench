@@ -34,7 +34,6 @@ import {
   Mic,
   Brain,
   ArrowLeftRight,
-  Globe,
   Bell,
   Shield,
   Bug,
@@ -46,7 +45,6 @@ import {
 } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import SettingsCard from './SettingsCard.vue'
-import { frpAvailable } from '@/utils/frpAvailability'
 
 defineEmits<{
   navigate: [categoryId: string]
@@ -88,7 +86,6 @@ const groupDefs = [
     items: [
       { id: 'terminal', icon: SquareTerminal },
       { id: 'portForward', icon: ArrowLeftRight },
-      { id: 'frp', icon: Globe },
       { id: 'forgeIntegration', icon: Github },
     ],
   },
@@ -112,16 +109,10 @@ const groups = computed(() =>
   groupDefs
     .map(group => ({
       ...group,
-      items: group.items
-        // The FRP row is hidden when the server was built without FRP support
-        // (`nofrp` tag): the panel behind it could only ever show a switch that
-        // does nothing. Defaults to available, so a server that predates the
-        // flag keeps its row.
-        .filter(cat => cat.id !== 'frp' || frpAvailable.value)
-        .map(cat => ({
-          ...cat,
-          label: t(`settings.categories.${cat.id}`),
-        })),
+      items: group.items.map(cat => ({
+        ...cat,
+        label: t(`settings.categories.${cat.id}`),
+      })),
     }))
     // Dropping the only item of a group would leave an empty titled card.
     .filter(group => group.items.length > 0)

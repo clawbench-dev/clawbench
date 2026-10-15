@@ -1,6 +1,6 @@
 # ClawBench 系统设计规格
 
-ClawBench 是移动端交互适配优先、桌面端完整支持的多端 AI 工作台，将多种 AI CLI 工具（CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、Kimi、Copilot、MiMo-Code、Pi、Antigravity、Grok Build、ZCode）包装为 Web 可访问的平台。Go 后端通过 shell 调用 CLI 工具并经 WebSocket 流式输出 JSON，同时支持 ACP（Agent Client Protocol）stdio 传输，提供结构化的模式切换、斜杠命令和权限管理。Vue 3 前端实时渲染流式事件。支持 SSH 隧道端口映射、FRP 公网隧道、任务系统（含 GitHub/GitLab 事件触发）、会话标签、**多智能体群聊**、零配置启动引导、聊天自动摘要、钉钉/飞书企业推送、系统资源监控、thinking 惰性加载和消息聚类分析。
+ClawBench 是移动端交互适配优先、桌面端完整支持的多端 AI 工作台，将多种 AI CLI 工具（CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、Kimi、Copilot、MiMo-Code、Pi、Antigravity、Grok Build、ZCode）包装为 Web 可访问的平台。Go 后端通过 shell 调用 CLI 工具并经 WebSocket 流式输出 JSON，同时支持 ACP（Agent Client Protocol）stdio 传输，提供结构化的模式切换、斜杠命令和权限管理。Vue 3 前端实时渲染流式事件。支持 SSH 隧道端口映射、SSH 公网隧道、任务系统（含 GitHub/GitLab 事件触发）、会话标签、**多智能体群聊**、零配置启动引导、聊天自动摘要、钉钉/飞书企业推送、系统资源监控、thinking 惰性加载和消息聚类分析。
 
 > 本目录是**系统设计规格**（面向开发者与 AI 的心智模型）。面向使用者的图文操作手册在 [`docs/user-guide/README.md`](../user-guide/README.md)。
 
@@ -54,9 +54,7 @@ ClawBench 是移动端交互适配优先、桌面端完整支持的多端 AI 工
 |------|------|
 | [认证与中间件](infra/auth-and-middleware.md) | SHA-256 密码认证、本机 AI 短时令牌（30 分钟 HMAC，地址+签名双条件）、隧道场景信任边界限制、按路由认证、API 密钥加密（`agent_api_keys` 已移除）、请求链（含 NoCache）、panic 恢复 |
 | [国际化](infra/i18n.md) | go-i18n bundle、嵌入式 YAML 翻译、X-Locale/Cookie/Accept-Language 优先级链、推送通知独立 Localizer |
-| [SSH 隧道](infra/ssh-tunnel.md) | 双传输：SSH 通道（direct-tcpip 正向 + tcpip-forward/forwarded-tcpip 反向）与 HTTP/2 流隧道（`/api/tunnel/stream` 数据面 + `/api/tunnel/control` 反向控制面，单端口 20000 多路复用，`-R` 靠控制流通知 + 单次 token 认领）、传输方式 `port_forward.transport` **已钉死为 `both`**（服务端在 `ApplyDefaults` 与 PATCH 路径均无条件归一，`ssh`/`h2` 不可达——该字段只剩 web 端健康检查门控一个消费者，两个原生客户端都不消费：Electron 写死 SSH、Android 用本地 SharedPreferences 开关 `tunnel_transport_h2_enabled`；故「服务端只准 ssh」不可执行，已移除可配置性；字段保留以免 web 读到 `undefined` 而误判 ssh-only）、半关闭与 SSH **有界近似**而非逐条等价、方向语义、反向映射仅绑 127.0.0.1 且禁绑保留端口、密码认证、自动 host key、暴力破解防护、端口白名单默认 1024-65535（ISS-186 修复）、端点按受众拆分（公开 `/api/ssh/info` 仅端口发现，`/api/ssh/info/full` 需鉴权） |
-| [FRP 隧道](infra/frp-tunnel.md) | 进程内 FRP 客户端、状态机生命周期、代理配置热重载 vs 通用配置重启、自动端口分配、WS 事件广播、双认证级别 API |
-| [Proxy 注册表](infra/proxy.md) | 方向感知（forward/reverse）、反向代理与 Host 头重写（仅正向）、服务器端口分配与保留端口、特权端口映射、健康检查（反向跳过拨号）、并行端口探测（有界并发 + 扫描错误可见）、前端端口展示、CORS 代理（Swagger UI "Try it out"） |
+| [SSH 隧道](infra/ssh-tunnel.md) | 双传输：SSH 通道（direct-tcpip 正向 + tcpip-forward/forwarded-tcpip 反向）与 HTTP/2 流隧道（`/api/tunnel/stream` 数据面 + `/api/tunnel/control` 反向控制面，单端口 20000 多路复用，`-R` 靠控制流通知 + 单次 token 认领）、传输方式 `port_forward.transport` **已钉死为 `both`**（服务端在 `ApplyDefaults` 与 PATCH 路径均无条件归一，`ssh`/`h2` 不可达——该字段只剩 web 端健康检查门控一个消费者，两个原生客户端都不消费：Electron 写死 SSH、Android 用本地 SharedPreferences 开关 `tunnel_transport_h2_enabled`；故「服务端只准 ssh」不可执行，已移除可配置性；字段保留以免 web 读到 `undefined` 而误判 ssh-only）、半关闭与 SSH **有界近似**而非逐条等价、方向语义、反向映射仅绑 127.0.0.1 且禁绑保留端口、密码认证、自动 host key、暴力破解防护、端口白名单默认 1024-65535（ISS-186 修复）、端点按受众拆分（公开 `/api/ssh/info` 仅端口发现，`/api/ssh/info/full` 需鉴权） | [Proxy 注册表](infra/proxy.md) | 方向感知（forward/reverse）、反向代理与 Host 头重写（仅正向）、服务器端口分配与保留端口、特权端口映射、健康检查（反向跳过拨号）、并行端口探测（有界并发 + 扫描错误可见）、前端端口展示、CORS 代理（Swagger UI "Try it out"） |
 | [配置与自动发现](infra/config-and-discovery.md) | 零配置启动、DB-backed Agent 存储、双传输选择、供应商注册表、Model 自动发现（启动同步加载 + 后台探测广播 `agents_updated`；含 Kimi 与 Codex 自定义模型发现函数）、ACP 运行时模型验证、**智能体生命周期管理**（会话/任务计数 + 禁用开关 + 删除守卫，会话数含活跃群成员关系、排除任务执行会话）、**「仅当前项目」作用域**（`project_id` 只拦新建入口不追溯历史；默认智能体不可被限定、项目级智能体不可为默认）、**拖拽排序**（`PUT /api/agents/reorder` + `model.SortAgentsByOrder` 唯一排序规则）、多实例 Cookie 隔离、TLS 证书自动发现、Schema 迁移（列探针 + `schema_migrations` 数据迁移台账）、项目 id 化注册表（项目路径→`project_id`，改名即一条 UPDATE）+ 项目注册表管理面（列表/详情/删除数据，锁序与缓存失效陷阱）、默认项目持久化、配置连通性测试、覆盖率门禁 |
 | [事件体系](infra/event-system.md) | ws.Manager 系统广播、StreamHub 会话扇出、断线缓冲重放、遥测非缓冲投递（`system_resources`）、投递丢弃计数（`/api/ws/delivery-stats`）与关键事件可靠投递、摘要与权限事件推送 |
 | [应用自升级](infra/self-upgrade.md) | 版本检查、安装目录可写预检、镜像 tarball URL 归一化、备份替换、进度推送、服务重启与断线轮询、容器内强制就地替换 |
@@ -98,7 +96,7 @@ ClawBench 是移动端交互适配优先、桌面端完整支持的多端 AI 工
 
 | 层 | 技术 |
 |----|------|
-| 后端 | Go 1.25+、SQLite（WAL + vec0 向量索引）、robfig/cron、gotreesitter（符号提取）、gopsutil（系统资源）、fatedier/frp（进程内 FRP 客户端）、go-i18n/v2（国际化） |
+| 后端 | Go 1.25+、SQLite（WAL + vec0 向量索引）、robfig/cron、gotreesitter（符号提取）、gopsutil（系统资源）、go-i18n/v2（国际化） |
 | 前端 | Vue 3 + TypeScript、Vite、CodeMirror（代码浏览+编辑）、xterm.js、marked + hljs（选择性语言注册）、KaTeX（字符串级渲染）、vue-draggable-plus |
 | AI 集成 | Shell-out 到 CLI 工具、ACP JSON-RPC over stdio、stream-json 解析 |
 | 实时通信 | WebSocket `/api/ai/events/ws`（统一推送：聊天 + 系统事件 + 摘要 + 推荐待审 + 权限待审 + replay_done + cluster_progress，`StreamHub` 会话级扇出）、旁注小通道（`/api/file/watch/ws`、`/api/tts/audio/ws`、`/api/stt/transcribe/ws` WS；`/api/dir/search` SSE）、SSH（端口映射） |

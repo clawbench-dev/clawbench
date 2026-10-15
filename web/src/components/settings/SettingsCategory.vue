@@ -165,7 +165,6 @@ import { THEMES } from '@/utils/themeMeta'
 import type { OptionPreview, SelectOption } from './SettingsItem.vue'
 import { filterAvailableFonts, MONO_FONT_CHOICES, UI_FONT_CHOICES, MONO_FALLBACK_CHOICES, DEFAULT_MONO_STACK, DEFAULT_UI_STACK, buildFontStack, getCustomFontChoices, type FontChoice } from '@/utils/fontConfig'
 import { loadCustomFonts } from '@/utils/customFonts'
-import { frpAvailable } from '@/utils/frpAvailability'
 
 const props = defineProps<{
   categoryId: string
@@ -299,11 +298,6 @@ const renderList = computed(() => {
       if (entry.spec.key === 'downloadDesktopApp' && !(desktopDownload.isDesktop && !!desktopDownload.currentDownloadUrl())) continue
       result.push(entry)
     } else {
-      // The FRP panel is hidden when the server was built without FRP support.
-      // The index row is hidden too, but a deep link (or a category restored
-      // from the navigation stack) can still land here, so the guard belongs on
-      // the panel as well — otherwise the user sees a switch that cannot work.
-      if (entry.config.panelId === 'frp' && !frpAvailable.value) continue
       // Panel entries always render
       result.push(entry)
     }

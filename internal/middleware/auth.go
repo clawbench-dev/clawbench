@@ -14,10 +14,6 @@ import (
 // IsLocalhost returns true if the request originates from the local machine.
 // The AI subprocesses that serve built-in slash commands always connect from
 // localhost.
-//
-// This is an address check only and is not sufficient on its own to establish
-// trust: the FRP tunnel's frpc process also dials in from 127.0.0.1. Callers
-// must pair it with a credential (see IsAITokenRequest).
 func IsLocalhost(r *http.Request) bool {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -29,10 +25,8 @@ func IsLocalhost(r *http.Request) bool {
 // IsAITokenRequest returns true if the request should skip authentication
 // because it carries a valid AI token.
 //
-// Two conditions must hold, and the address check is the weaker of the two:
-//   - IsLocalhost(r) rejects a token replayed from off-machine. It cannot
-//     distinguish the FRP tunnel's frpc process, which dials in from
-//     127.0.0.1 (internal/frp), so the signature is what actually gates FRP.
+// Two conditions must hold:
+//   - IsLocalhost(r) rejects a token replayed from off-machine.
 //   - A valid, unexpired signature over the header value. The token is signed
 //     with model.CookieToken, so rotating it (as a password change does)
 //     invalidates every in-flight token.
@@ -58,8 +52,7 @@ func sessionToken() string {
 // IsAuthenticated reports whether the request carries a valid session cookie
 // (or is an AI-token request). It mirrors the accept path of Auth so a handler
 // can grant a capability to an authenticated browser session without
-// re-implementing cookie validation — and, crucially, without being fooled by
-// the loopback address alone (the FRP tunnel also dials in from 127.0.0.1).
+// re-implementing cookie validation.
 //
 // The no-password case is treated as authenticated, matching Auth's open
 // access: with no token configured there is nothing to validate against, and

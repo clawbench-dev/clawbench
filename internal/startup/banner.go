@@ -34,12 +34,6 @@ type BannerConfig struct {
 	TaskCount       int
 	StartupDuration time.Duration
 	FrontendMode    string // "disk (.clawbench-web/)" or "embedded"
-
-	// FRP tunnel info
-	FRPEnabled    bool
-	FRPRemoteURL  string // e.g. "http://120.26.168.245:20050"
-	FRPServerAddr string // e.g. "120.26.168.245"
-	FRPRemotePort int    // e.g. 20050
 }
 
 // ---------------------------------------------------------------------------
@@ -174,18 +168,6 @@ func buildLines(cfg BannerConfig) []string {
 	if cfg.SSHEnabled {
 		sshCmd := fmt.Sprintf("ssh -p %d clawbench@%s", cfg.SSHPort, firstNonEmpty(firstIP(cfg.LocalIPs), "localhost"))
 		lines = append(lines, label("🔒 SSH:", sshCmd), "")
-	}
-
-	// --- FRP tunnel (conditional) ---
-	if cfg.FRPEnabled {
-		if cfg.FRPRemoteURL != "" {
-			lines = append(lines, label("🌐 FRP:", cfg.FRPRemoteURL))
-		} else if cfg.FRPServerAddr != "" {
-			lines = append(lines, label("🌐 FRP:", cfg.FRPServerAddr+" (waiting for port...)"))
-		} else {
-			lines = append(lines, label("🌐 FRP:", "enabled"))
-		}
-		lines = append(lines, "")
 	}
 
 	// --- Data directory ---

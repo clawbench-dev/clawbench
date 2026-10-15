@@ -43,8 +43,7 @@ func resolveUsageScope(w http.ResponseWriter, r *http.Request, rawScope string) 
 		// usage one at a time by switching projects, so the instance-wide
 		// aggregate grants no capability the session did not already have. The
 		// check is IsAuthenticated (session cookie OR local AI token), not
-		// IsLocalhost — the FRP tunnel also dials in from 127.0.0.1, so the
-		// loopback address alone proves nothing.
+		// IsLocalhost — the loopback address alone proves nothing.
 		if !middleware.IsAuthenticated(r) {
 			writeLocalizedErrorf(w, r, http.StatusForbidden, "AccessDenied")
 			return "", "", false

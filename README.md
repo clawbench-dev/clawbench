@@ -92,7 +92,7 @@ npm install -g @xulongzhe/clawbench
 clawbench
 ```
 
-> 📡 **公网访问**：如需从外网访问 ClawBench（通勤途中、出差等场景），请参阅 **[公网访问指南](docs/user-guide/PUBLIC_ACCESS.md)** ，支持 IPv6 直连、FRP 内网穿透和 EasyTier 去中心化组网（无需 VPS）三种方式。
+> 📡 **公网访问**：如需从外网访问 ClawBench（通勤途中、出差等场景），请参阅 **[公网访问指南](docs/user-guide/PUBLIC_ACCESS.md)** ，支持 IPv6 直连、EasyTier 去中心化组网（无需 VPS）等方式。
 
 ---
 

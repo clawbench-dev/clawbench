@@ -68,10 +68,6 @@ vi.mock('@/composables/useTabDrawer', () => ({
   useTabDrawer: () => ({ open: vi.fn(), effectiveOpen: ref(false), close: vi.fn() }),
 }))
 
-vi.mock('@/composables/useFrp', () => ({
-  useFrp: () => ({ frpState: reactive({ state: 'disabled', remotePort: 0, sshRemotePort: 0 }) }),
-}))
-
 vi.mock('@/composables/useRagStatus', () => ({
   useRagStatus: () => ({
     status: ref({ available: false, mode: 'none', embedder_healthy: false, total_messages: 0, indexed_messages: 0, embedded_messages: 0 }),

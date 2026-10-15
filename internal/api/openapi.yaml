@@ -60,7 +60,7 @@ tags:
     description: 应用自升级
   - name: Proxy
     description: 端口转发与 CORS 代理
-  - name: SSH/FRP
+  - name: SSH
     description: 隧道状态
   - name: Fonts
     description: 自定义字体
@@ -406,10 +406,6 @@ paths:
         含义为「轮到用户发言前，智能体之间最多发言多少次」；主持人模式与自由模式
         语义一致，只计**成员**发言（主持人的路由/汇总回合不计）。达到上限即停止
         AI 讨论并写一条系统消息。`PATCH` 时须为正整数。
-
-        `frp.available` 表示**本构建是否包含 FRP 功能**（与 `frp.enabled` 这一运行时
-        配置无关）：用 `nofrp` tag 编译的二进制不含 frp 客户端，恒为 `false`。
-        前端据此隐藏 FRP 设置面板。
       operationId: getConfig
       responses:
         "200":
@@ -4960,10 +4956,10 @@ paths:
         "200":
           description: 上游响应
 
-  # ── SSH/FRP ───────────────────────────────────────────────────────────────
+  # ── SSH ───────────────────────────────────────────────────────────────
   /api/ssh/info:
     get:
-      tags: [SSH/FRP]
+      tags: [SSH]
       summary: SSH 隧道最小信息（端口发现）
       description: |
         免鉴权：Android 原生在无 WebView Cookie 时需先发现 SSH 端口，否则回退到
@@ -4979,7 +4975,7 @@ paths:
 
   /api/ssh/info/full:
     get:
-      tags: [SSH/FRP]
+      tags: [SSH]
       summary: SSH 隧道完整信息
       description: |
         需鉴权。供 Web UI 展示隧道命令、指纹与连接统计。
@@ -4991,7 +4987,7 @@ paths:
 
   /api/tunnel/stream:
     post:
-      tags: [SSH/FRP]
+      tags: [SSH]
       summary: HTTP/2 流隧道数据面（-L 转发 / -R 认领）
       description: |
         需鉴权。HTTP/2 流隧道的**数据面**：**一条 HTTP/2 流承载一条被转发的 TCP 连接**，
@@ -5060,7 +5056,7 @@ paths:
 
   /api/tunnel/control:
     post:
-      tags: [SSH/FRP]
+      tags: [SSH]
       summary: HTTP/2 流隧道 -R 控制面
       description: |
         需鉴权。`-R`（反向）转发的**控制面**：一条**长寿命**的 duplex 流，
@@ -5121,73 +5117,6 @@ paths:
         "503":
           description: 未启用端口转发（`ProxyService == nil`），无白名单可执行。
 
-  /api/frp/info:
-    get:
-      tags: [SSH/FRP]
-      summary: FRP 完整状态
-      description: |
-        需鉴权（会暴露公网 IP）。
-
-        `available` 表示**本构建是否包含 FRP 功能**，与配置无关：用 `nofrp`
-        tag 编译的二进制不含 frp 客户端，恒为 `false`。前端据此隐藏 FRP 设置面板，
-        避免向用户展示一个永远无法生效的开关。
-      operationId: frpInfo
-      responses:
-        "200":
-          description: FRP 状态
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  enabled:
-                    type: boolean
-                  running:
-                    type: boolean
-                  state:
-                    type: string
-                    enum: [disabled, starting, running, failed, stopped]
-                  available:
-                    type: boolean
-                    description: 本构建是否包含 FRP 功能（`nofrp` 构建恒为 false）
-                  server_addr:
-                    type: string
-                  remote_port:
-                    type: integer
-                  ssh_remote_port:
-                    type: integer
-                  remote_url:
-                    type: string
-                  message:
-                    type: string
-
-  /api/frp/status:
-    get:
-      tags: [SSH/FRP]
-      summary: FRP 最小状态
-      description: 免鉴权，仅返回 enabled + running + state + available（不含地址与端口）。
-      operationId: frpStatus
-      security: []
-      responses:
-        "200":
-          description: 最小状态
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  enabled:
-                    type: boolean
-                  running:
-                    type: boolean
-                  state:
-                    type: string
-                    enum: [disabled, starting, running, failed, stopped]
-                  available:
-                    type: boolean
-                    description: 本构建是否包含 FRP 功能（`nofrp` 构建恒为 false）
-
-  # ── Fonts ─────────────────────────────────────────────────────────────────
   /api/fonts/list:
     get:
       tags: [Fonts]
@@ -5647,7 +5576,7 @@ components:
       description: |
         本机 AI 子进程使用的短时令牌，由内置斜杠命令（`/cb-task` 等）在注入提示词时签发，
         有效期 30 分钟，以 `CookieToken` 做 HMAC 签名。仅接受来自回环地址的请求：
-        地址与签名须同时成立。地址单独不再放行——FRP 隧道的 frpc 亦从 `127.0.0.1` 回拨。
+        地址与签名须同时成立。地址单独不再放行。
 
   parameters:
     Id:

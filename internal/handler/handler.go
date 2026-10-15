@@ -631,7 +631,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// CORS proxy for Swagger UI "Try it out" — forwards API requests to avoid CORS issues
 	register("/api/openapi-proxy", proxy.ServeCORSProxy)
 
-	// SSH tunnel info — split by audience, mirroring the frp pair below.
+	// SSH tunnel info — split by audience.
 	// 1. Android BackgroundService.fetchSSHPort() calls the public one from
 	//    native Java (no WebView cookies available) to discover the SSH port
 	//    before connecting. Without it, fetchSSHPort gets 401, falls back to
@@ -660,10 +660,6 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// redeems by opening /api/tunnel/stream?claim=<token>. The reserved-port /
 	// allowed-range guard mirrors the SSH reverse path.
 	register("/api/tunnel/control", TunnelControl)
-
-	// FRP tunnel status
-	register("/api/frp/info", ServeFRPInfo)           // Full status, requires auth (exposes public IP)
-	registerPublic("/api/frp/status", ServeFRPStatus) // Minimal status, no auth (only enabled+running)
 
 	// Terminal (interactive web terminal with PTY + WebSocket + xterm.js)
 	register("/api/terminal/ws", TerminalWebSocket)

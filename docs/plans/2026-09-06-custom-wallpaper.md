@@ -91,7 +91,7 @@
 1. `config.go`：Config struct 增 `Appearance AppearanceConfig` 段；`AppearanceConfig { WallpaperFile string; PanelOpacity float64 }`（YAML snake_case：`wallpaper_file` / `panel_opacity`，PATCH/GET JSON 用 camelCase `wallpaperFile`/`panelOpacity`，命名统一见 M4）
 2. `defaults.go`：`ApplyDefaults` 补 `appearance.panel_opacity: 0.85`（默认值权威在服务端），**presence-map 语义防零值覆盖**（参考 RAG/tls 先例）
 3. `settings.go` `PatchableConfigPaths` 白名单补 `appearance.wallpaperFile`、`appearance.panelOpacity`
-4. `settings.go` `validatePatchValues`：`appearance.panelOpacity` 范围校验 0.5~1.0（参考 frp.server_port 先例）；**`appearance.wallpaperFile` 非空值一律拒绝**（仅允许 `""` 表示移除；实际移除走 DELETE 端点清文件后置空，PATCH 直写非空 = 路径穿越入口，见 I3）
+4. `settings.go` `validatePatchValues`：`appearance.panelOpacity` 范围校验 0.5~1.0（参考 port_forward.port 先例）；**`appearance.wallpaperFile` 非空值一律拒绝**（仅允许 `""` 表示移除；实际移除走 DELETE 端点清文件后置空，PATCH 直写非空 = 路径穿越入口，见 I3）
 5. `settings.go` `hotReloadFields`：`appearance.panelOpacity` 列入（PATCH 后即时生效）；`wallpaperFile` 不依赖 PATCH（专用端点写）
 6. `settings.go` `configResponse`：GET /api/config 输出两 key（嵌套 `appearance` 段）
 7. `handler.go`：注册 `POST /api/theme-background`、`DELETE /api/theme-background`、`GET /api/file/theme-background` 路由

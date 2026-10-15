@@ -49,7 +49,6 @@ func TestAuth_NoPassword_PassThrough(t *testing.T) {
 // --- Auth: localhost WITHOUT a token must not bypass ---
 
 // The core of the change: a loopback address alone no longer grants access.
-// This is what closes the FRP hole, since frpc also dials in from 127.0.0.1.
 func TestAuth_LocalhostWithoutToken_Rejected(t *testing.T) {
 	withSavedToken(func() {
 		model.SessionToken = "valid-token"

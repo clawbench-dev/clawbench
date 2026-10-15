@@ -255,7 +255,7 @@ describe('SettingsPage', () => {
 
   // ─── Category routing (all via SettingsCategory now) ──
   describe('category routing', () => {
-    const panelCategoryIds = ['terminal', 'tts_engine', 'aiSummary', 'rag', 'portForward', 'frp', 'notification']
+    const panelCategoryIds = ['terminal', 'tts_engine', 'aiSummary', 'rag', 'portForward', 'notification']
     const flatCategoryIds = ['appearance', 'project', 'files', 'chat', 'agents', 'security', 'debug', 'about']
 
     it('categoryHasPanels identifies panel categories', () => {
@@ -273,7 +273,7 @@ describe('SettingsPage', () => {
     it('isPanelOnlyCategory identifies panel-only categories', () => {
       expect(isPanelOnlyCategory('terminal')).toBe(true)
       expect(isPanelOnlyCategory('tts')).toBe(false)
-      expect(isPanelOnlyCategory('frp')).toBe(true)
+      expect(isPanelOnlyCategory('terminal')).toBe(true)
     })
 
     it('isPanelOnlyCategory returns false for flat-only categories', () => {
