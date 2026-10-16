@@ -191,6 +191,8 @@ if shouldCruiseContinue(cfg, result, cruiseRounds) {
 
 ### 徽章（`ChatMessageItem.vue` + `groupRouting.ts`）
 
+> **已反转（2026-10-16）**：单聊只有一个人，完成徽章是冗余噪音，**已移除**。单聊 assistant 行不再渲染任何 `goal-satisfied` 徽章（`singleChatGoalSatisfied` 计算属性与 `.msg-goal-satisfied-standalone` 样式一并删除；`hasGoalSatisfied` 因无消费方而删除）。`stripGoalSatisfiedTag` **保留**——它仍负责把标签从正文/朗读/复制/引用中剥掉。以下为原始设计记录。
+
 单聊也要显示完成徽章。当前徽章由 `groupRouting.goalSatisfied` 驱动，而 `groupRouting` 在非群聊时返回 `empty`（`speaker.value` 为 null 且非群聊用户行 → 空）。改法：
 
 - `ChatMessageItem.vue`：单聊 assistant 行也解析 `goal-satisfied`（新增轻量 `hasGoalSatisfied(text)` 或让 `groupRouting` 在单聊 assistant 行也解析 `goalSatisfied` 字段，但**不**解析 mention）。

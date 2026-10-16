@@ -56,15 +56,6 @@
       <span class="msg-mention-summary-names">{{ mentionTargets.map((s) => s.name).join(t('common.listSeparator')) }}</span>
     </div>
 
-    <!-- Single-chat auto-cruise completion badge. In a GROUP the badge lives
-         next to the speaker name (above); single chat has no speaker row, so it
-         renders as its own compact line above the bubble. Same success-colored
-         pill, same permanent-per-message semantics (the tag is already-written
-         content, so it stays even though the vote tally resets each round). -->
-    <div v-if="msg.role === 'assistant' && singleChatGoalSatisfied" class="msg-goal-satisfied msg-goal-satisfied-standalone" :title="t('group.goalSatisfied')">
-      <Check :size="11" class="msg-goal-satisfied-icon" />{{ t('group.goalSatisfied') }}
-    </div>
-
     <!-- Message card (bubble). The meta bar deliberately lives OUTSIDE this
          element so it sits on the panel background for both roles. -->
     <div class="msg-card" :class="{ 'msg-card-host': isHostMessage }">
@@ -302,7 +293,7 @@ import { formatDuration, formatRelativeTime } from '@/utils/format.ts'
 import { escapeHtml } from '@/utils/html.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
 import { extractFileChanges } from '@/utils/chatStreamUtils.ts'
-import { parseGroupRouting, stripGroupProtocolTags, GROUP_USER_TARGET_NAME, resolveMentionDisplayName, hasGoalSatisfied, stripGoalSatisfiedTag } from '@/utils/groupRouting.ts'
+import { parseGroupRouting, stripGroupProtocolTags, GROUP_USER_TARGET_NAME, resolveMentionDisplayName, stripGoalSatisfiedTag } from '@/utils/groupRouting.ts'
 import { quotableMessageText } from '@/utils/quoteItem.ts'
 import { isShowingSummary, normalizeDisplayMode } from '@/utils/chatSessionUtils.ts'
 import { localConfig } from '@/composables/useSettingsConfig'
@@ -409,24 +400,6 @@ const groupRouting = computed(() => {
   const isUserInGroup = props.isGroupSession && props.msg?.role === 'user'
   if (!speaker.value && !isUserInGroup) return empty
   return parseGroupRouting(groupProtocolText.value || '')
-})
-
-/**
- * Single-chat auto-cruise badge: whether a NON-group assistant reply carries
- * the completion signal. Gated on BOTH discriminators:
- *   - `!isGroupSession` is the AUTHORITATIVE session type (server-provided). It
- *     is required on its own: a group whose roster fetch failed has `speaker`
- *     null, so a `!speaker`-only gate would let this single-chat badge render
- *     on a GROUP message.
- *   - `!speaker` mirrors the group parse gate, so a stray agentId on a
- *     single-chat row cannot double-render both badges.
- * A single chat must NOT parse mentions (that would re-open regression 58879,
- * where a reply DISCUSSING the tag syntax was truncated by an unclosed literal
- * tag), so it detects the self-closing, content-free signal on its own.
- */
-const singleChatGoalSatisfied = computed(() => {
-  if (props.isGroupSession || speaker.value || props.msg?.role !== 'assistant') return false
-  return hasGoalSatisfied(msgText.value || '')
 })
 
 /**
@@ -1667,14 +1640,6 @@ const copyPayload = quotableText
 }
 .msg-goal-satisfied-icon {
   flex-shrink: 0;
-}
-/* Single-chat variant: no speaker row to sit in, so it renders as its own
-   compact line above the bubble. `align-self:flex-start` keeps it from being
-   stretched full-width by the parent flex column (a bare inline-block child of
-   a column flex container is blockified). */
-.msg-goal-satisfied-standalone {
-  align-self: flex-start;
-  margin-bottom: var(--space-1);
 }
 /* The host's bubble is centered with an accent border to read as "chair". */
 .msg-card-host {

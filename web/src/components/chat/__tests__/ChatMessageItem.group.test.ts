@@ -644,57 +644,36 @@ describe('ChatMessageItem: a USER message private note (C3)', () => {
   })
 })
 
-describe('ChatMessageItem single-chat auto-cruise badge', () => {
-  it('shows the completion badge on a single-chat reply carrying the signal', () => {
+// Single chat has exactly ONE participant, so a "已完成" badge on its own reply
+// is redundant noise — the completion is already implied by the reply itself and
+// the cruise chip. The badge is GROUP-ONLY; these tests pin its absence.
+describe('ChatMessageItem single-chat auto-cruise badge (removed)', () => {
+  it('does NOT render a badge on a single-chat reply carrying the signal', () => {
     const w = mountItem({
       role: 'assistant', id: 60, content: '',
       blocks: [{ type: 'text', text: '任务已完成。<clawbench-goal-satisfied/>' }],
     })
-    const badge = w.find('.msg-goal-satisfied')
-    expect(badge.exists()).toBe(true)
-    expect(badge.text()).toContain('Done')
-    // The standalone variant sits above the bubble (no speaker row in 1:1).
-    expect(badge.classes()).toContain('msg-goal-satisfied-standalone')
-  })
-
-  it('omits the badge on a single-chat reply without the signal', () => {
-    const w = mountItem({
-      role: 'assistant', id: 61, content: '',
-      blocks: [{ type: 'text', text: '普通回复' }],
-    })
     expect(w.find('.msg-goal-satisfied').exists()).toBe(false)
+    expect(w.find('.msg-goal-satisfied-standalone').exists()).toBe(false)
   })
 
-  it('does not render the single-chat badge on a user message', () => {
+  it('does not render the badge on a user message either', () => {
     const w = mountItem({
       role: 'user', id: 62, content: '任务已完成。<clawbench-goal-satisfied/>', blocks: [],
     })
     expect(w.find('.msg-goal-satisfied').exists()).toBe(false)
   })
 
-  // Regression 58879: a single-chat reply DISCUSSING the mention syntax must not
-  // be truncated. The standalone strip only removes the completion signal.
-  it('keeps mention-tag prose intact while stripping only the signal', () => {
+  // Regression 58879 still holds: a reply that merely DISCUSSES the tag syntax
+  // must not be truncated by the (now badge-less) single-chat path. The strip
+  // guarantee lives in groupRouting.test.ts; here we only pin that no badge
+  // appears and nothing is rendered into the badge slot.
+  it('renders no badge for a reply discussing the mention syntax', () => {
     const w = mountItem({
       role: 'assistant', id: 63, content: '',
       blocks: [{ type: 'text', text: '你可以用 <clawbench-mention targets="A"> 点名 <clawbench-goal-satisfied/>' }],
     })
-    expect(w.find('.msg-goal-satisfied').exists()).toBe(true)
-  })
-})
-
-describe('ChatMessageItem single-chat badge must not leak into a group', () => {
-  // A group whose roster failed to load has NO resolvable speaker, so a
-  // `!speaker`-only gate would render the single-chat badge on a GROUP message.
-  // The authoritative `isGroupSession` flag must suppress it.
-  it('does not render the standalone badge on a group message with an unresolved speaker', () => {
-    const w = mountItem(
-      {
-        role: 'assistant', id: 70, content: '', agentId: 'member-x',
-        blocks: [{ type: 'text', text: '任务完成。<clawbench-goal-satisfied/>' }],
-      },
-      { isGroupSession: true }, // resolveSpeaker omitted → speaker resolves to null
-    )
+    expect(w.find('.msg-goal-satisfied').exists()).toBe(false)
     expect(w.find('.msg-goal-satisfied-standalone').exists()).toBe(false)
   })
 })

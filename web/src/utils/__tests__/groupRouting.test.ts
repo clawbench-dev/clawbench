@@ -8,7 +8,6 @@ import {
   buildMentionTag,
   serializeMentionCards,
   resolveMentionDisplayName,
-  hasGoalSatisfied,
   stripGoalSatisfiedTag,
   MENTION_CHIP_CLASS,
 } from '@/utils/groupRouting.ts'
@@ -415,34 +414,7 @@ describe('serializeMentionCards', () => {
   })
 })
 
-describe('hasGoalSatisfied / stripGoalSatisfiedTag (single chat)', () => {
-  it('detects the self-closing completion signal', () => {
-    expect(hasGoalSatisfied('任务完成 <clawbench-goal-satisfied/>')).toBe(true)
-    expect(hasGoalSatisfied('  <clawbench-goal-satisfied/>  ')).toBe(true)
-    expect(hasGoalSatisfied('nothing here')).toBe(false)
-  })
-
-  it('tolerates whitespace inside the tag (CJK full-width too)', () => {
-    expect(hasGoalSatisfied('<clawbench-goal-satisfied />')).toBe(true)
-    expect(hasGoalSatisfied('<clawbench-goal-satisfied\u3000/>')).toBe(true)
-  })
-
-  it('does not treat a non-self-closing or differently-named tag as the signal', () => {
-    expect(hasGoalSatisfied('<clawbench-goal-satisfied>done</clawbench-goal-satisfied>')).toBe(false)
-    expect(hasGoalSatisfied('<clawbench-group-end/>')).toBe(false)
-  })
-
-  // Parity with Go's Parse(...).GoalSatisfied: the signal is computed OUTSIDE
-  // every mention span, so a tag that appears inside a mention body (a reply
-  // merely QUOTING the syntax) does not count. Without this the UI would light
-  // the "Done" badge while the backend keeps cruising.
-  it('ignores a signal nested inside a mention span (Go parity)', () => {
-    const inside = '<clawbench-mention targets="B">done <clawbench-goal-satisfied/></clawbench-mention>'
-    expect(hasGoalSatisfied(inside)).toBe(false)
-    // ...but a signal outside the span still counts.
-    expect(hasGoalSatisfied(inside + ' <clawbench-goal-satisfied/>')).toBe(true)
-  })
-
+describe('stripGoalSatisfiedTag (single chat)', () => {
   it('strips ONLY the completion tag and leaves the prose intact', () => {
     expect(stripGoalSatisfiedTag('最终结论：已修复。<clawbench-goal-satisfied/>')).toBe('最终结论：已修复。')
     expect(stripGoalSatisfiedTag('<clawbench-goal-satisfied/> 结论')).toBe('结论')

@@ -303,27 +303,6 @@ export function stripEndTag(text: string): string {
 }
 
 /**
- * hasGoalSatisfied reports whether text carries the auto-cruise completion
- * signal `<clawbench-goal-satisfied/>`.
- *
- * It is the SINGLE-CHAT counterpart of `parseGroupRouting(...).goalSatisfied`:
- * a single chat's reply is not parsed for mention tags (that would re-open
- * regression 58879, where a reply DISCUSSING the tag syntax was truncated by an
- * unclosed literal `<clawbench-mention`), but the self-closing, content-free
- * completion signal is safe to detect on its own. Used to render the "Done"
- * badge on a single-chat reply.
- *
- * The signal is computed OUTSIDE every mention span, matching the Go side
- * (`grouprouting.Parse(...).GoalSatisfied`, which strips mention spans before
- * testing). Without this, a reply that merely QUOTES the tag inside a
- * mention-like span would light the badge in the UI while the backend (which
- * uses the span-aware rule for the same text) would not consider the goal met.
- */
-export function hasGoalSatisfied(text: string): boolean {
-  return RE_GOAL_SATISFIED_TEST.test(stripAllMentionSpans(text))
-}
-
-/**
  * stripGoalSatisfiedTag removes ONLY the auto-cruise completion signal from
  * text, leaving everything else (including any mention-like prose) untouched.
  *
