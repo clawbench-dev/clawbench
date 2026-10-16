@@ -866,6 +866,114 @@ describe('annotateFilePaths', () => {
     expect(result.detectedPaths).not.toContain('src/main.go')
   })
 
+  // ── Directory references (trailing separator) ──
+  //
+  // Replies list directories constantly, tree listings especially, and a
+  // directory is a valid navigation target. The dir branch requires >=2
+  // segments AND a trailing separator, so it can neither match single-separator
+  // prose nor truncate an extension path.
+  describe('directory references', () => {
+    it('annotates a multi-segment directory with trailing slash', () => {
+      const result = annotateFilePaths('<p>改动在 web/src/composables/ 下</p>', { projectRoot })
+      expect(result.detectedPaths).toContain('web/src/composables')
+    })
+
+    it('annotates a tree listing (the motivating case)', () => {
+      const tree = '<pre><code>05_债务工程/\n├── ppt/gen_v7/\n└── cover/cover.png</code></pre>'
+      const result = annotateFilePaths(tree, { projectRoot })
+      // The >=2-segment dir is picked up; the single-segment root is not.
+      expect(result.detectedPaths).toContain('ppt/gen_v7')
+      expect(result.detectedPaths).toContain('cover/cover.png')
+      expect(result.detectedPaths).not.toContain('05_债务工程')
+    })
+
+    it('annotates CJK directory segments', () => {
+      const result = annotateFilePaths('<p>素材在 06_亮点短片/01_AI群聊/tts/ 里</p>', { projectRoot })
+      expect(result.detectedPaths).toContain('06_亮点短片/01_AI群聊/tts')
+    })
+
+    it('does not truncate an extension path into a directory', () => {
+      // Without the REQUIRED trailing separator this would yield `cover/`.
+      const result = annotateFilePaths('<p>see cover/cover.png now</p>', { projectRoot })
+      expect(result.detectedPaths).toContain('cover/cover.png')
+      expect(result.detectedPaths).not.toContain('cover')
+    })
+
+    it('does not match single-separator prose', () => {
+      for (const prose of ['and/or', 'N/A', 'A/B', '100MB/s', 'km/h', 'TCP/IP']) {
+        const result = annotateFilePaths(`<p>${prose}</p>`, { projectRoot })
+        expect(result.detectedPaths).toHaveLength(0)
+      }
+    })
+
+    it('does not match a numeric date as a directory prefix', () => {
+      // The right-hand boundary must reject `2024/05/` inside `2024/05/12`.
+      const result = annotateFilePaths('<p>日期 2024/05/12 生效</p>', { projectRoot })
+      expect(result.detectedPaths).toHaveLength(0)
+    })
+
+    it('does not annotate single-segment directories', () => {
+      // >=2 segments required: these are exactly the ambiguous prose-shaped ones.
+      for (const dir of ['internal/', 'logs/', 'coverage/']) {
+        const result = annotateFilePaths(`<p>${dir}</p>`, { projectRoot })
+        expect(result.detectedPaths).toHaveLength(0)
+      }
+    })
+
+    it('does not annotate a trailing-slash URL', () => {
+      // Newly reachable via the dir branch: the scheme slashes put a '/' right
+      // before the match, which the URL guard rejects.
+      for (const url of [
+        'https://example.com/foo/bar/',
+        'http://localhost:20000/api/fs/raw/',
+        'https://raw.githubusercontent.com/o/r/master/docs/',
+      ]) {
+        const result = annotateFilePaths(`<p>${url}</p>`, { projectRoot })
+        expect(result.detectedPaths).toHaveLength(0)
+      }
+    })
+
+    it('does not annotate a schemeless URL as a directory', () => {
+      // No scheme, so neither shouldRejectPath nor the URL guard sees it.
+      const result = annotateFilePaths('<p>见 example.com/foo/bar/ 文档</p>', { projectRoot })
+      expect(result.detectedPaths).toHaveLength(0)
+    })
+
+    it('still annotates a first segment that merely contains a dot', () => {
+      // The domain guard must not swallow real filenames with a dot in them.
+      const result = annotateFilePaths('<p>跑 tts/compose.sh 与 build.sh</p>', { projectRoot })
+      expect(result.detectedPaths).toContain('tts/compose.sh')
+    })
+
+    it('recovers a path swallowed by a literal backslash-n escape', () => {
+      // Replies carry raw JSON/JS, so a literal `\n` before a path is common.
+      // The segment class would otherwise swallow the `n` as a directory name.
+      const result = annotateFilePaths('<p>```\\ninternal/model/modelcatalog.go\\n```</p>', { projectRoot })
+      expect(result.detectedPaths).toContain('internal/model/modelcatalog.go')
+      expect(result.detectedPaths).not.toContain('ninternal/model/modelcatalog.go')
+    })
+
+    it('does not annotate the bogus n-prefixed form after a real newline', () => {
+      const result = annotateFilePaths('<p>```\n/tmp/x/y.apk\n```</p>', { projectRoot })
+      expect(result.detectedPaths).toContain('/tmp/x/y.apk')
+    })
+
+    it('does not slice a directory out of an over-long opaque segment', () => {
+      // Segment length is bounded for backtracking, which lets the branch match
+      // a TAIL of a longer run — the left-boundary guard must reject that.
+      const opaque = 'a'.repeat(200) + '/bb/cc/'
+      const result = annotateFilePaths(`<p>${opaque}</p>`, { projectRoot })
+      expect(result.detectedPaths).toHaveLength(0)
+    })
+
+    it('does not consume the directory prefix of a real inner path', () => {
+      // The boundary must be a lookahead: a consuming match rejected afterwards
+      // would swallow the text and hide the real path inside it.
+      const result = annotateFilePaths('<p>中文/output/x.mp4</p>', { projectRoot })
+      expect(result.detectedPaths).toContain('/output/x.mp4')
+    })
+  })
+
   it('does not annotate localhost URLs in <code> elements', () => {
     const input = '<code>http://localhost:20003</code>'
     const result = annotateFilePaths(input, { projectRoot })

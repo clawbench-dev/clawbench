@@ -498,7 +498,57 @@ function extractLineInfoFromText(text: string): { path: string; lineRanges: Line
 // The trailing suffix is a single capture group holding the whole comma list
 // (see LINE_TOKEN_SRC). Each list iteration consumes a literal comma, so the
 // suffix adds no backtracking risk.
-const FILE_PATH_SRC = '(?:~?\\/[^/\\s<>"\')\\]]+(?:\\/[^/\\s<>"\')\\]]+)+\\.[a-zA-Z][a-zA-Z0-9]*|~?\\/[^/\\s<>"\')\\]]+(?:\\/[^/\\s<>"\')\\]]+)+\\/\\.[^/\\s<>"\')\\]]+|\\.\\.?\\/[^/\\s<>"\')\\]]+(?:\\/[^/\\s<>"\')\\]]+)*\\.[a-zA-Z][a-zA-Z0-9]*|[a-zA-Z0-9_-]+(?:\\/[a-zA-Z0-9_.-]+)+\\.[a-zA-Z][a-zA-Z0-9]*|[A-Za-z]:[\\\\/](?![\\\\/])[^\\\\/\\s<>"\')\\]]+(?:[\\\\/][^\\\\/\\s<>"\')\\]]+)*(?:\\.[a-zA-Z][a-zA-Z0-9]*)?)'
+//
+// The LAST alternative matches a DIRECTORY reference ending in a separator
+// (`web/src/composables/`, `05_债务工程/ppt/gen_v7/`). Replies list directories
+// this way constantly — tree listings especially — and a directory is a valid
+// navigation target (the file manager browses files and directories alike), so
+// it is annotated like any other path. Three constraints keep it from
+// swallowing prose:
+//   1. at least two segments, so single-separator prose (`A/B`, `N/A`,
+//      `and/or`, `100MB/s`) never matches;
+//   2. a REQUIRED trailing separator, so `cover/cover.png` is not truncated to
+//      `cover/` — without it every extension path would also match as a
+//      directory prefix;
+//   3. BOTH the segment length and the segment COUNT are bounded, and the
+//      right-hand boundary is a `(?!SEG)` lookahead. Bounding is what keeps
+//      the boundary check affordable: an unbounded `SEG+` (or an unbounded
+//      count of them) is quadratic on long slash-heavy runs, so a 40 KB run of
+//      `src/src/…` went from 2.5 s to 4.8 s against the file's own 1 s hang
+//      guard. With `{1,DIR_SEG_MAX}` on both, the same input is 65 ms — far
+//      below the original — and every real case is unchanged (the longest
+//      segment in a 400-message sample was 64, p99 = 35).
+//      The boundary must stay a lookahead rather than a check in the scan
+//      loop: a consuming match that is then rejected swallows the text it
+//      covered, so `中文/output/x.mp4` lost the real `output/x.mp4` (the dir
+//      branch matched `中文/output/` first, and rejecting it skipped past the
+//      inner path). A lookahead never consumes, so the scan retries and finds
+//      the inner path.
+// CJK is included in the segment class because directory names in replies are
+// routinely Chinese; the extension branches above stay ASCII-only.
+// Groups are all non-capturing so the line-suffix stays in match[1].
+const DIR_SEG_SRC = 'a-zA-Z0-9_.\\u4e00-\\u9fa5-'
+/**
+ * Bounds for the directory branch: max characters per segment, and max
+ * segments. Real values are far smaller — across a 400-message sample the
+ * longest segment was 64 chars (a hash, p99 = 35) and the deepest directory 10
+ * segments (p99 = 8) — so these cap the regex's backtracking without truncating
+ * anything real.
+ */
+const DIR_SEG_MAX = 128
+const DIR_SEG_COUNT_MAX = 16
+/** Right-hand boundary / prefix check: does the given char continue a segment? */
+const DIR_SEG_RE = new RegExp('^[' + DIR_SEG_SRC + ']')
+/**
+ * A first segment that is really a hostname (`example.com`, `raw.githubusercontent.com`).
+ * Only consulted for DIRECTORY matches (trailing separator): a schemeless URL like
+ * `example.com/foo/bar/` is otherwise indistinguishable from a relative directory
+ * path, and it is the only shape the new dir branch would newly annotate.
+ * Deliberately NOT applied to extension matches — there the first segment is often
+ * a real filename (`build.sh`), and rejecting those would lose working annotations.
+ */
+const DOMAINISH_FIRST_SEG_RE = /^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|org|net|io|dev|cn|ai|edu|gov|app)$/i
+const FILE_PATH_SRC = '(?:~?\\/[^/\\s<>"\')\\]]+(?:\\/[^/\\s<>"\')\\]]+)+\\.[a-zA-Z][a-zA-Z0-9]*|~?\\/[^/\\s<>"\')\\]]+(?:\\/[^/\\s<>"\')\\]]+)+\\/\\.[^/\\s<>"\')\\]]+|\\.\\.?\\/[^/\\s<>"\')\\]]+(?:\\/[^/\\s<>"\')\\]]+)*\\.[a-zA-Z][a-zA-Z0-9]*|[a-zA-Z0-9_-]+(?:\\/[a-zA-Z0-9_.-]+)+\\.[a-zA-Z][a-zA-Z0-9]*|[A-Za-z]:[\\\\/](?![\\\\/])[^\\\\/\\s<>"\')\\]]+(?:[\\\\/][^\\\\/\\s<>"\')\\]]+)*(?:\\.[a-zA-Z][a-zA-Z0-9]*)?|(?:\\.\\.?\\/|\\/)?[' + DIR_SEG_SRC + ']{1,' + DIR_SEG_MAX + '}(?:\\/[' + DIR_SEG_SRC + ']{1,' + DIR_SEG_MAX + '}){1,' + DIR_SEG_COUNT_MAX + '}\\/(?![' + DIR_SEG_SRC + ']))'
 const FILE_PATH_RE = new RegExp(FILE_PATH_SRC + '(?::(' + LINE_TOKEN_SRC + '))?', 'g')
 
 /**
@@ -723,12 +773,70 @@ export function annotateFilePathsIn(
             const pathStr = match[0]
             const { path: barePath, lineRanges } = extractLineInfo(pathStr, match)
             let result = resolveFilePathDual(barePath, projectRoot, homeDir, baseDir)
+            // Escape-sequence guard: a match starting immediately after a
+            // backslash is the tail of an escape sequence, not a path. Replies
+            // routinely carry raw JSON/JS string content, so a literal `\n`
+            // before a path is common — and without this the segment class
+            // swallows the `n` as a leading directory name, turning
+            // `…\n/home/user/x/` into the bogus path `n/home/user/x/`.
+            // (`\` is not in the segment class, so the match can only ever
+            // start at the letter FOLLOWING the backslash.)
+            //
+            // RESCAN rather than merely reject: the swallowed letter is part of
+            // the match text, so simply dropping the match would also drop the
+            // REAL path inside it (`\ninternal/model/x.go` matched as
+            // `ninternal/model/x.go`, taking the whole `internal/…` with it).
+            // Rewinding one character lets the scan re-find the path from its
+            // true start — the ASCII-relative case; paths whose first segment
+            // contains CJK already match from the separator and never hit this
+            // branch. The rejected span is emitted as plain text by the normal
+            // `lastIndex` bookkeeping below, which this `continue` deliberately
+            // leaves untouched.
+            if (result && match.index > 0 && text[match.index - 1] === '\\') {
+                FILE_PATH_RE.lastIndex = match.index + 1
+                continue
+            }
+            // URL guard: a match immediately preceded by '/' or ':' is the tail
+            // of a URL, not a path. `https://example.com/foo/bar/` and
+            // `https://vuejs.org/guide/intro.html` both reach the regex only
+            // AFTER the scheme slashes, so the match itself looks like a
+            // plausible path — the context is the only thing that gives it
+            // away. Without this the trailing-slash directory branch turns
+            // every `https://host/a/b/` link into a clickable chip.
+            // A lookAHEAD cannot express this (the signal is to the LEFT) and a
+            // lookBEHIND is a parse error on Safari/iPadOS < 16.4, so the check
+            // runs here in the scan loop instead.
+            if (result) {
+                const prev = match.index > 0 ? text[match.index - 1] : ''
+                if (prev === '/' || prev === ':') {
+                    result = null
+                }
+            }
+            // Schemeless-URL guard for the directory branch only: `example.com/foo/bar/`
+            // has no scheme, so neither the URL guard above nor shouldRejectPath sees it,
+            // and it is indistinguishable from a relative directory path. The branch is
+            // identified by its trailing separator, read off the bare path so a line
+            // suffix (`ppt/gen_v7/:5`) does not hide it.
+            if (result && barePath.endsWith('/')) {
+                const first = barePath.replace(/^(?:\.\.?\/|\/)/, '').split('/')[0]
+                if (DOMAINISH_FIRST_SEG_RE.test(first)) result = null
+            }
+            // Left boundary for the directory branch: bounding the segment length
+            // lets a match begin mid-segment (the tail of a run longer than
+            // DIR_SEG_MAX). A path character immediately before the match means
+            // the match is a slice of one longer opaque token, not a real path.
+            // Only reachable for runs longer than DIR_SEG_MAX (real segments are
+            // well under it), so this never affects genuine paths.
+            if (result && barePath.endsWith('/')) {
+                const before = match.index > 0 ? text[match.index - 1] : ''
+                if (before !== '' && DIR_SEG_RE.test(before)) result = null
+            }
             // Directory-prefix suppression: if match is followed by /segment, skip it
             if (result) {
                 const afterIdx = match.index + pathStr.length
                 if (afterIdx < text.length && text[afterIdx] === '/') {
                     const rest = text.slice(afterIdx + 1)
-                    if (rest.length > 0 && /^[a-zA-Z0-9_.-]/.test(rest)) {
+                    if (rest.length > 0 && DIR_SEG_RE.test(rest)) {
                         result = null
                     }
                 }
