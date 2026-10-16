@@ -493,14 +493,14 @@ async function openInput() {
 function inputToTerminal(text: string) {
   if (!text) return
   activeTab.value?.session.sendInput(text + '\r')
-  toast.show(t('terminal.inputSent'), { icon: '📋', type: 'success', duration: 1200 })
+  toast.show(t('terminal.inputSent'), { icon: 'copy', type: 'success', duration: 1200 })
 }
 
 function handleModeCycle() {
   gestures.cycleMode()
   const m = gestures.mode.value
   const label = m === 'browse' ? t('terminal.modeBrowse') : m === 'gesture' ? t('terminal.modeGesture') : t('terminal.modeSelection')
-  const icon = m === 'browse' ? '👁️' : m === 'gesture' ? '✋' : '✂️'
+  const icon = m === 'browse' ? 'eye' : m === 'gesture' ? 'hand' : 'cut'
   toast.show(label, { icon, type: 'info', duration: 1200 })
   focusTerminal()
 }
@@ -753,9 +753,9 @@ const tabManager = useTerminalTabs(getWsUrl, {
       copyText(text, () => {
         term.clearSelection()
         updateSelectionFromTerm(term)
-        toast.show(t('terminal.copied'), { icon: '✅', type: 'success' })
+        toast.show(t('terminal.copied'), { icon: 'success', type: 'success' })
       }, () => {
-        toast.show(t('terminal.copyFailed'), { icon: '⚠️', type: 'error' })
+        toast.show(t('terminal.copyFailed'), { icon: 'warning', type: 'error' })
       })
       return false
     })
@@ -764,7 +764,7 @@ const tabManager = useTerminalTabs(getWsUrl, {
     fetch(`/api/terminal/close?session=${encodeURIComponent(sessionId)}`, { method: 'POST' }).catch(() => {})
   },
   onExit: (_tabId) => {
-    toast.show(t('terminal.ptyExited'), { icon: 'ℹ️', type: 'info' })
+    toast.show(t('terminal.ptyExited'), { icon: 'info', type: 'info' })
   },
   onError: () => {
     // Error displayed via overlay
@@ -831,7 +831,7 @@ async function openCurrentDirInFileManager() {
   // back to '': navigateToDir('') opens the project root, which is the bug.
   const dir = live || activeTab.value?.cwd
   if (!dir) {
-    toast.show(t('terminal.cwdUnavailable'), { icon: '⚠️', type: 'info', duration: 2000 })
+    toast.show(t('terminal.cwdUnavailable'), { icon: 'warning', type: 'info', duration: 2000 })
     return
   }
   // The tab title comes from that same one-shot status message, so it is stale

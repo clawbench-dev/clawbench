@@ -1,9 +1,18 @@
 <template>
   <Teleport to="body">
     <Transition name="toast">
-      <div v-if="toast.visible.value" :class="['toast', `toast-${toast.type.value}`]" @click="toast.onClick.value ? (toast.onClick.value(), toast.dismiss()) : toast.dismiss()">
+      <div
+        v-if="toast.visible.value"
+        ref="rootEl"
+        :class="['toast', `toast-${toast.type.value}`]"
+        @click="handleClick"
+        @mouseenter="toast.pause()"
+        @mouseleave="toast.resume()"
+      >
         <LoadingIndicator v-if="toast.type.value === 'loading'" class="toast-spinner" size="sm" inline />
-        <span v-else-if="toast.icon.value" class="toast-icon">{{ toast.icon.value }}</span>
+        <span v-else class="toast-icon" aria-hidden="true">
+          <component :is="resolvedIcon" :size="16" />
+        </span>
         <span class="toast-text">{{ toast.message.value }}</span>
       </div>
     </Transition>
@@ -11,14 +20,34 @@
 </template>
 
 <script setup>
+import { computed, ref } from 'vue'
 import LoadingIndicator from './LoadingIndicator.vue'
+import { resolveToastIcon } from './toastIcons'
 
-defineProps({
+const props = defineProps({
     toast: {
         type: Object,
         required: true,
     },
 })
+
+const rootEl = ref(null)
+
+// The icon is part of the toast's built-in structure: a semantic key when the
+// caller supplies one, otherwise the default glyph for the toast type. Never
+// empty — see toastIcons.ts.
+const resolvedIcon = computed(() => resolveToastIcon(props.toast.icon.value, props.toast.type.value))
+
+// The toast text is selectable so it can be copied. A click that ends a text
+// selection must not also dismiss (and fire onClick) — otherwise copying the
+// message closes it mid-copy. Only a selection inside THIS toast counts; a
+// selection left elsewhere on the page must not swallow the dismissal.
+function handleClick() {
+    const sel = window.getSelection()
+    if (sel && !sel.isCollapsed && rootEl.value && sel.anchorNode && rootEl.value.contains(sel.anchorNode)) return
+    if (props.toast.onClick.value) props.toast.onClick.value()
+    props.toast.dismiss()
+}
 </script>
 
 <style>
@@ -47,7 +76,9 @@ defineProps({
     text-align: left;
     line-height: var(--line-height-snug);
     -webkit-tap-highlight-color: transparent;
-    user-select: none;
+    /* Selectable so the user can copy the message; the auto-dismiss is paused
+       while the pointer is over the toast (see @mouseenter) to leave time. */
+    user-select: text;
     transition: opacity var(--duration-fast), transform var(--duration-fast);
 }
 
@@ -109,8 +140,13 @@ defineProps({
     transform: scale(0.97);
 }
 
+/* Icon slot: the lucide glyph inherits the toast's text colour. Fixed box so
+   every toast's text starts at the same x regardless of glyph shape. */
 .toast-icon {
-    font-size: var(--font-size-2xl);
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
 }
 
 .toast-text {

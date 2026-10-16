@@ -324,14 +324,6 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	// there is no standalone validator on the load path.
 	cfg.PortForward.Transport = DefaultPortForwardTransport
 
-	// --- FRP ---
-	// FRP is disabled by default; users must explicitly enable it.
-	// Bool zero-value trap: "enabled" defaults to false (intentional — FRP
-	// requires user-provided server), so no presence-map check needed.
-	if cfg.FRP.ServerPort == 0 {
-		cfg.FRP.ServerPort = 7000
-	}
-
 	// --- TTS ---
 	if cfg.TTS.Engine == "" {
 		cfg.TTS.Engine = "edge"

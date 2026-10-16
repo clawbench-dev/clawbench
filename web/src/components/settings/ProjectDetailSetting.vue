@@ -119,7 +119,7 @@ async function load() {
     detail.value = (await resp.json()) as ProjectDetail
   } catch (err) {
     appLog.e(TAG, 'failed to load project detail', err)
-    toast.show(t('settings.items.projectLoadFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
+    toast.show(t('settings.items.projectLoadFailed'), { icon: 'warning', type: 'error', duration: 3000 })
   } finally {
     loading.value = false
   }
@@ -134,7 +134,7 @@ async function switchToProject() {
     switchTab?.('chat')
   } catch (err) {
     appLog.e(TAG, 'failed to switch project', err)
-    toast.show(t('settings.items.projectSwitchFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
+    toast.show(t('settings.items.projectSwitchFailed'), { icon: 'warning', type: 'error', duration: 3000 })
   }
 }
 
@@ -167,7 +167,7 @@ async function deleteProject() {
     )
     if (input === null) return
     if (input.trim() !== name) {
-      toast.show(t('settings.items.projectDeleteNameMismatch'), { icon: '⚠️', type: 'error', duration: 3000 })
+      toast.show(t('settings.items.projectDeleteNameMismatch'), { icon: 'warning', type: 'error', duration: 3000 })
       return
     }
   }
@@ -177,13 +177,13 @@ async function deleteProject() {
     if (!resp.ok) {
       const body = await resp.json().catch(() => ({}))
       const msg = body.error || t('settings.items.projectDeleteFailed')
-      toast.show(msg, { icon: '⚠️', type: 'error', duration: 3000 })
+      toast.show(msg, { icon: 'warning', type: 'error', duration: 3000 })
       return
     }
     emit('deleted')
   } catch (err) {
     appLog.e(TAG, 'failed to delete project', err)
-    toast.show(t('settings.items.projectDeleteFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
+    toast.show(t('settings.items.projectDeleteFailed'), { icon: 'warning', type: 'error', duration: 3000 })
   }
 }
 
@@ -270,7 +270,7 @@ watch(() => props.projectId, load)
 }
 
 .project-detail__btn--danger {
-  background: var(--danger-color, #ef4444);
+  background: var(--color-red);
   color: #fff;
 }
 

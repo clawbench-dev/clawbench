@@ -347,6 +347,7 @@ func LaunchSessionExecution(cfg LaunchConfig) {
 					Empty:          nextResult.empty,
 					AbnormalReason: nextResult.abnormalReason,
 					MsgID:          nextResult.msgID,
+					GoalSatisfied:  nextResult.goalSatisfied,
 				}
 			},
 			// Resume an abnormally terminated turn by sending a localized
@@ -370,6 +371,27 @@ func LaunchSessionExecution(cfg LaunchConfig) {
 						Empty:          res.empty,
 						AbnormalReason: res.abnormalReason,
 						MsgID:          res.msgID,
+					}
+				},
+			}),
+			// Single-chat auto-cruise: after a clean turn, keep the AI working
+			// through confirmation rounds until it declares the goal met (see
+			// cruise.go). The runner checks the session's switch itself.
+			CruiseContinue: NewCruiseRunner(CruiseRunnerConfig{
+				Ctx:         ctx,
+				SessionID:   sessionID,
+				ProjectPath: cfg.ProjectPath,
+				BackendName: cfg.BackendName,
+				RunTurn: func(prompt string) DrainResult {
+					cfg.Message = prompt
+					cfg.Files = nil
+					res := executeStreamRunShared(ctx, cfg)
+					return DrainResult{
+						CancelReason:  res.cancelReason,
+						Err:           res.err,
+						Empty:         res.empty,
+						MsgID:         res.msgID,
+						GoalSatisfied: res.goalSatisfied,
 					}
 				},
 			}),
@@ -712,6 +734,7 @@ type streamRunResultShared struct {
 	empty          bool
 	abnormalReason string
 	msgID          int64
+	goalSatisfied  bool
 }
 
 // executeStreamRunShared runs one AI backend execution.
@@ -767,5 +790,6 @@ func executeStreamRunShared(ctx context.Context, cfg LaunchConfig) streamRunResu
 		empty:          res.Empty,
 		abnormalReason: res.AbnormalReason,
 		msgID:          res.MsgID,
+		goalSatisfied:  res.GoalSatisfied,
 	}
 }

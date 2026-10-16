@@ -26,6 +26,7 @@ export type TabId =
   | 'history'
   | 'forge'
   | 'tasks'
+  | 'notifications'
   | 'terminal'
   | 'proxy'
   | 'stats'
@@ -73,10 +74,11 @@ export const DOCK_TABS: readonly DockTabDescriptor[] = [
   { id: 'tasks', titleKey: 'nav.tasks' },
   { id: 'terminal', titleKey: 'terminal.title' },
   { id: 'stats', titleKey: 'nav.stats' },
-  // Port mapping sits second-to-last on purpose: settings stays the final tab
-  // (it is the "exit" affordance at the end of the dock), while port mapping
-  // is an operational tab that belongs with the other tools above it.
   { id: 'proxy', titleKey: 'nav.portForward' },
+  // Notifications sits immediately before settings: settings stays the final
+  // tab (it is the "exit" affordance at the end of the dock), and the
+  // notification log is the last stop before leaving the tool tabs.
+  { id: 'notifications', titleKey: 'nav.notifications' },
   { id: 'settings', titleKey: 'nav.settings' },
 ]
 

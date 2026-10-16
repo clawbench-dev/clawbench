@@ -72,8 +72,9 @@ export default {
     history: 'History',
     forge: 'Issues & PRs',
     tasks: 'Tasks',
+    notifications: 'Notification Center',
     portForward: 'Port Mapping',
-    frp: 'NAT Traversal',
+
     refresh: 'Refresh',
     refreshed: 'Refreshed',
     more: 'More',
@@ -476,6 +477,7 @@ export default {
       placeholderSkill: "Type {'#'} to use a skill",
       placeholderFileRef: "Type {'@'} to reference a file",
       placeholderSwipeHistory: 'Swipe left/right to browse history input',
+      placeholderArrowHistory: 'Press ↑/↓ to browse history input',
       send: 'Send',
       enqueue: 'Enqueue',
       quickMenu: 'Quick commands',
@@ -634,6 +636,13 @@ export default {
       description: 'Automatically approve all permission requests from the agent.',
       enabled: 'Auto-Approve enabled',
       disabled: 'Auto-Approve disabled',
+    },
+    cruise: {
+      label: 'Auto-cruise',
+      active: 'Cruising',
+      hint: 'When on, finishing a reply does not hand the floor back — the AI keeps confirming and pushing forward until it declares the task complete',
+      enabled: 'Auto-cruise enabled',
+      disabled: 'Auto-cruise disabled',
     },
     plan: {
       title: 'Execution Plan',
@@ -1181,9 +1190,7 @@ export default {
     parallelHint: "When on, the members you {'@'} speak at the same time (the whole roster when you {'@'} nobody); agent-to-agent {'@'} is unaffected.",
     cruiseLabel: 'Auto-cruise',
     cruiseHintHost: 'When on, the discussion ends only once the host confirms the task is complete.',
-    cruiseHintFree: 'When on, the discussion ends only once over half the members confirm the task is complete.',
-    // Header badge shown while auto-cruise is ON for the current group.
-    cruiseActive: 'Cruising',
+    cruiseHintFree: 'When on, the discussion ends only once at least half the members confirm the task is complete.',
     goalSatisfied: 'Done',
     autoApproveHint: 'Auto-approve every member\u2019s permission requests.',
     confirm: 'Add',
@@ -1200,6 +1207,63 @@ export default {
       noteTitle: 'Private note',
       notePrompt: 'Private note to {name} (only they can see it)',
       notePlaceholder: 'Leave empty to send no private note',
+    },
+  },
+  notifications: {
+    title: 'Notification Center',
+    // The log has no read/unread state — it answers "what happened", not
+    // "what is pending". These strings are the panel's whole vocabulary.
+    projectFilter: 'Project',
+    allProjects: 'All projects',
+    kindFilter: 'Type',
+    rangeFilter: 'Time',
+    all: 'All',
+    kind: {
+      session: 'Session',
+      task: 'Task',
+      forge: 'Repo',
+    },
+    range: {
+      today: 'Today',
+      '7d': 'Last 7 days',
+      '30d': 'Last 30 days',
+    },
+    // Shown on a row whose session/task no longer exists. Clicking it does NOT
+    // navigate (the source's own fallback would silently redirect elsewhere).
+    sourceDeleted: 'Source deleted',
+    sourceDeletedHint: 'The session or task this notification points at no longer exists.',
+    // The log is global (all projects). ONLY other-project rows are named —
+    // a row with no name is one from the project you are in, and that is the
+    // signal; printing your own project on every row is noise. The
+    // "clicking switches projects" consequence lives in the tooltip.
+    externalProjectTip: 'From project "{name}" — clicking switches projects.',
+    crossProjectConfirmTitle: 'Switch project',
+    crossProjectConfirm: 'This notification is from project "{name}", not the current one. Opening it will switch to that project.',
+    crossProjectConfirmOk: 'Switch and open',
+    count: '{n} items',
+    loading: 'Loading…',
+    loadMore: 'Load more',
+    empty: 'No notifications',
+    emptyHint: 'Session, task and repository events will show up here.',
+    emptyFiltered: 'No notifications match the current filters',
+    clear: 'Clear all',
+    clearConfirm: 'Clear all notifications? This cannot be undone.',
+    cleared: 'Notifications cleared',
+    refresh: 'Refresh',
+    event: {
+      sessionCompleted: 'Session completed',
+      sessionCancelled: 'Session cancelled',
+      permissionPending: 'Approval required',
+      taskRunning: 'Task started',
+      taskCompleted: 'Task completed',
+      taskFailed: 'Task failed',
+      taskCancelled: 'Task cancelled',
+      forgeOpened: 'Opened',
+      forgeClosed: 'Closed',
+      forgeMerged: 'Merged',
+      forgeReopened: 'Reopened',
+      forgeCommented: 'Commented',
+      forgePipelineDone: 'Pipeline finished',
     },
   },
   task: {
@@ -1706,6 +1770,7 @@ export default {
       backToTerminal: 'Back to Terminal',
       backToSettings: 'Back to Settings',
       backToPortForward: 'Back to Port Mapping',
+      backToNotifications: 'Back to Notification Center',
       back: 'Back',
       parentDir: 'Up one level',
       projectRoot: 'Project root',
@@ -1937,6 +2002,16 @@ export default {
     clear: 'Clear',
     placeholder: 'Type your question...',
     addToChat: 'Add to chat',
+    // Collapsed floating toolbar (issue #544). `comment` opens the inline
+    // input; `quoteSelection` stages the selection as a quote card. Copy reuses
+    // `common.copy`, so it has no key of its own here.
+    //
+    // The KEY and the Android wire action stay `comment` while the visible
+    // wording is "Discuss": they are stable internal identifiers (the Java side
+    // sends the literal "comment"), and renaming them for a copy change would
+    // churn the protocol for no user-visible gain.
+    comment: 'Discuss',
+    quoteSelection: 'Quote',
     addedToChat: 'Added to chat',
     send: 'Send',
     aiChat: 'AI Chat',
@@ -2251,7 +2326,7 @@ export default {
       aiSummary: 'AI Summary',
       rag: 'Session Search',
       portForward: 'Port Mapping',
-      frp: 'NAT Traversal',
+
       forgeIntegration: 'GitHub/GitLab Integration',
       skills: 'Skills',
       notification: 'Push Notifications',
@@ -2834,24 +2909,6 @@ export default {
       tunnelStatusUnavailable: 'Port mapping unavailable: the SSH tunnel server is off and this transport does not support H2',
       tunnelStatusChecking: 'Checking tunnel status…',
       tunnelStatusUnknown: 'Tunnel status unknown',
-      frpEnabled: 'Enable NAT Traversal',
-      frpEnabledDesc: 'Forward service to public internet via FRP, allowing phone access outside LAN',
-      frpServerAddr: 'FRP Server Address',
-      frpServerAddrDesc: 'Your self-hosted FRP server public IP, e.g. 120.26.168.245',
-      frpServerPort: 'FRP Server Port',
-      frpServerPortDesc: 'FRP server listening port, default 7000',
-      frpToken: 'FRP Auth Token',
-      frpTokenDesc: 'Must match the token configured on the frps server',
-      frpAutoPort: 'Auto-assign Ports',
-      frpAutoPortDesc: 'Let frps automatically assign remote ports from its allowPorts range',
-      frpAssignedPort: 'Web Port',
-      frpAssignedPortDesc: 'Remote port for accessing ClawBench UI',
-      frpAssignedSSHPort: 'SSH Port',
-      frpAssignedSSHPortDesc: 'Remote port for port mapping',
-      frpRemotePort: 'Web Port',
-      frpRemotePortDesc: 'Remote port for accessing ClawBench UI',
-      frpSSHRemotePort: 'SSH Port',
-      frpSSHRemotePortDesc: 'Remote port for port mapping',
       forgeSection: 'Credentials',
       skillsSection: 'Skill Scanning',
       skillsCard: 'Cross-agent skills',
@@ -2953,8 +3010,8 @@ export default {
       feishuAppIdDesc: 'Enterprise app App ID from Feishu developer console',
       feishuAppSecret: 'App Secret',
       feishuAppSecretDesc: 'Enterprise app App Secret, masked after save',
-      frpStatusConnecting: 'Connecting...',
-      frpStatusFailed: 'Connection failed',
+
+
       logCapture: 'Debug Log Capture',
       logCaptureDesc: 'Capture client debug logs for troubleshooting',
       reconfigureServer: 'Reconfigure Server',

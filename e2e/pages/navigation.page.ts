@@ -92,6 +92,11 @@ export class NavigationPage {
     await this.switchToTab('tasks')
   }
 
+  /** Switch to Notifications tab */
+  async switchToNotifications(): Promise<void> {
+    await this.switchToTab('notifications')
+  }
+
   // --- Overflow menu (narrow dock only) ---
   //
   // In wide mode every tab is rendered inline in `.wide-dock-center` and there

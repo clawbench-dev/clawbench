@@ -72,7 +72,7 @@ export function useAcpSession(options: UseAcpSessionOptions) {
         if (resp.status === 501) {
           acpSessionsNotSupported.value = true
         } else {
-          toast.show(gt('chat.acpSession.loadFailed'), { type: 'error', icon: '⚠️' })
+          toast.show(gt('chat.acpSession.loadFailed'), { type: 'error', icon: 'warning' })
         }
         return
       }
@@ -130,7 +130,7 @@ export function useAcpSession(options: UseAcpSessionOptions) {
           msgKey = errData?.msgKey || ''
         } catch { /* ignore parse error */ }
         if (msgKey === 'ACPSessionNotFound') {
-          toast.show(gt('chat.acpSession.sessionNotFound'), { type: 'error', icon: '⚠️' })
+          toast.show(gt('chat.acpSession.sessionNotFound'), { type: 'error', icon: 'warning' })
           // The list is host-sourced (ListSessions). Don't permanently drop the
           // entry from the local cache on a possibly-transient/misclassified load
           // failure — that would permanently hide sessions that still exist on the
@@ -140,7 +140,7 @@ export function useAcpSession(options: UseAcpSessionOptions) {
           await loadAcpSessions()
           return 'not-found'
         } else {
-          toast.show(gt('chat.acpSession.loadFailed'), { type: 'error', icon: '⚠️' })
+          toast.show(gt('chat.acpSession.loadFailed'), { type: 'error', icon: 'warning' })
         }
         return null
       }
@@ -148,7 +148,7 @@ export function useAcpSession(options: UseAcpSessionOptions) {
       return data.sessionId || ''
     } catch (err: unknown) {
       appLog.e(TAG, 'acpLoadSession failed:', err)
-      toast.show(gt('chat.acpSession.loadFailed'), { type: 'error', icon: '⚠️' })
+      toast.show(gt('chat.acpSession.loadFailed'), { type: 'error', icon: 'warning' })
       return null
     } finally {
       acpResuming.value = false
@@ -176,9 +176,9 @@ export function useAcpSession(options: UseAcpSessionOptions) {
           msgKey = errData?.msgKey || ''
         } catch { /* ignore parse error */ }
         if (msgKey === 'NoAcpSession') {
-          toast.show(gt('chat.acpSession.noAcpSession'), { type: 'info', icon: '🔄' })
+          toast.show(gt('chat.acpSession.noAcpSession'), { type: 'info', icon: 'sync' })
         } else {
-          toast.show(gt('chat.acpSession.syncFailed'), { type: 'error', icon: '⚠️' })
+          toast.show(gt('chat.acpSession.syncFailed'), { type: 'error', icon: 'warning' })
         }
         return null
       }
@@ -186,7 +186,7 @@ export function useAcpSession(options: UseAcpSessionOptions) {
       return { added: typeof data.added === 'number' ? data.added : 0 }
     } catch (err: unknown) {
       appLog.e(TAG, 'acpSyncSession failed:', err)
-      toast.show(gt('chat.acpSession.syncFailed'), { type: 'error', icon: '⚠️' })
+      toast.show(gt('chat.acpSession.syncFailed'), { type: 'error', icon: 'warning' })
       return null
     }
   }

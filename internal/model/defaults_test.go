@@ -852,21 +852,6 @@ func TestApplyDefaults_LogLevel(t *testing.T) {
 	}
 }
 
-func TestApplyDefaults_FRPDefaults(t *testing.T) {
-	setupTestBinDir(t)
-
-	cfg := Config{}
-	ApplyDefaults(&cfg, nil)
-
-	if cfg.FRP.ServerPort != 7000 {
-		t.Errorf("FRP.ServerPort = %d, want 7000", cfg.FRP.ServerPort)
-	}
-	// FRP.Enabled should default to false (bool zero-value, intentional)
-	if cfg.FRP.Enabled {
-		t.Error("FRP.Enabled should default to false")
-	}
-}
-
 func TestApplyDefaults_SummarizeTTSBackendMigration(t *testing.T) {
 	setupTestBinDir(t)
 

@@ -21,11 +21,15 @@ const (
 	ttsWSWriteTimeout = 5 * time.Second
 
 	// TTS WS protocol constants (used instead of string literals
-	// to satisfy goconst; aligned with existing strError / frpKeyMessage).
+	// to satisfy goconst; aligned with existing strError).
 	ttsWSType    = "type"
 	ttsWSResult  = "result"
 	ttsWSDone    = "done"
 	ttsWSSummary = "summary"
+
+	// messageKey is the JSON field name for human-readable error messages on
+	// the TTS WebSocket protocol.
+	messageKey = "message"
 )
 
 // ttsWSStartMessage is the client's initial message to start streaming.
@@ -178,8 +182,8 @@ func ttsWSEventFromTTSEvent(event service.TTSEvent) any {
 	if event.Type == ttsWSResult {
 		if event.SynthesizeFailed {
 			return map[string]any{
-				ttsWSType:     strError,
-				frpKeyMessage: event.SynthesizeError,
+				ttsWSType:  strError,
+				messageKey: event.SynthesizeError,
 			}
 		}
 		return map[string]any{
@@ -220,5 +224,5 @@ func writeTTSAudioWSEvent(conn *websocket.Conn, v any) {
 
 // writeTTSAudioWSError sends an error text frame on the WebSocket connection.
 func writeTTSAudioWSError(conn *websocket.Conn, message string) {
-	writeTTSAudioWSEvent(conn, map[string]any{ttsWSType: strError, frpKeyMessage: message})
+	writeTTSAudioWSEvent(conn, map[string]any{ttsWSType: strError, messageKey: message})
 }

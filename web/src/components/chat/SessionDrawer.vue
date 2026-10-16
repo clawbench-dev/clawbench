@@ -13,7 +13,7 @@
         <Brain :size="13" />{{ t('chat.thinkingEffortSwitcher.title') }}
       </button>
       <button class="model-tab" :class="{ active: activeTab === 'mode' }" @click="activeTab = 'mode'">
-        <Compass :size="13" />{{ t('chat.modeSwitcher.title') }}
+        <ShieldAlert :size="13" />{{ t('chat.modeSwitcher.title') }}
       </button>
       <button class="model-tab" :class="{ active: activeTab === 'transport' }" @click="activeTab = 'transport'">
         <Cable :size="13" />{{ t('chat.transportSwitcher.title') }}
@@ -207,7 +207,7 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Star, Cpu, Brain, Compass, Cable } from 'lucide-vue-next'
+import { Star, Cpu, Brain, ShieldAlert, Cable } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
@@ -429,14 +429,14 @@ async function handleRefresh() {
       // shape as GET /api/agents), so the ACP view is not downgraded to the raw
       // CLI list and the CLI baseline is rebased for a later transport switch.
       applyRefreshedModelList(props.agentId, data.models, data.cliModels)
-      toast.show(t('chat.sessionSetting.refreshSuccess'), { icon: '✅', type: 'success', duration: 2000 })
+      toast.show(t('chat.sessionSetting.refreshSuccess'), { icon: 'success', type: 'success', duration: 2000 })
     }
   } catch (err) {
     const msgKey = err?.msgKey
     if (msgKey === 'CLINotFound') {
-      toast.show(t('chat.sessionSetting.cliNotFound'), { icon: '⚠️', type: 'error', duration: 4000 })
+      toast.show(t('chat.sessionSetting.cliNotFound'), { icon: 'warning', type: 'error', duration: 4000 })
     } else if (msgKey === 'ModelDiscoveryNotSupported') {
-      toast.show(t('chat.sessionSetting.discoveryNotSupported'), { icon: '⚠️', type: 'error', duration: 4000 })
+      toast.show(t('chat.sessionSetting.discoveryNotSupported'), { icon: 'warning', type: 'error', duration: 4000 })
     } else if (msgKey === 'ModelDiscoveryFailed') {
       // Show the backend's reason (e.g. which paths were probed) when available,
       // so users can tell an unsupported install layout from a transient failure.
@@ -445,10 +445,10 @@ async function handleRefresh() {
         detail
           ? t('chat.sessionSetting.discoveryFailedWithDetail', { detail })
           : t('chat.sessionSetting.discoveryFailed'),
-        { icon: '⚠️', type: 'error', duration: 6000 },
+        { icon: 'warning', type: 'error', duration: 6000 },
       )
     } else {
-      toast.show(t('chat.sessionSetting.refreshFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
+      toast.show(t('chat.sessionSetting.refreshFailed'), { icon: 'warning', type: 'error', duration: 3000 })
     }
   } finally {
     refreshing.value = false
@@ -463,9 +463,9 @@ async function setDefaultModel(model) {
     await patchAgentPref(props.agentId, 'preferred_model', model.id)
     updateAgentField(props.agentId, 'preferredModel', model.id)
     emit('switch-model', model)
-    toast.show(t('chat.sessionSetting.setDefaultSuccess', { name: model.name || model.id }), { icon: '⭐', type: 'success', duration: 2000 })
+    toast.show(t('chat.sessionSetting.setDefaultSuccess', { name: model.name || model.id }), { icon: 'star', type: 'success', duration: 2000 })
   } catch {
-    toast.show(t('settings.saveFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
+    toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 })
   }
 }
 
@@ -475,9 +475,9 @@ async function setDefaultThinkingEffort(level) {
     updateAgentField(props.agentId, 'preferredThinkingEffort', level)
     emit('switch-thinking-effort', level)
     const levelName = thinkingLevels.value.find(l => l.id === level)?.name || level
-    toast.show(t('chat.sessionSetting.setDefaultSuccess', { name: levelName }), { icon: '⭐', type: 'success', duration: 2000 })
+    toast.show(t('chat.sessionSetting.setDefaultSuccess', { name: levelName }), { icon: 'star', type: 'success', duration: 2000 })
   } catch {
-    toast.show(t('settings.saveFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
+    toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 })
   }
 }
 
@@ -488,7 +488,7 @@ async function setDefaultTransport(transport) {
     await applyTransportSwitch(transport)
     emit('switch-transport', transport)
     const transportName = transport === 'acp-stdio' ? t('chat.transportSwitcher.acp') : t('chat.transportSwitcher.cli')
-    toast.show(t('chat.sessionSetting.setDefaultSuccess', { name: transportName }), { icon: '⭐', type: 'success', duration: 2000 })
+    toast.show(t('chat.sessionSetting.setDefaultSuccess', { name: transportName }), { icon: 'star', type: 'success', duration: 2000 })
     // Clear preferred thinking effort if it's not valid for the new transport
     const currentPref = getAgent(props.agentId || '')?.preferredThinkingEffort || ''
     if (currentPref) {
@@ -501,7 +501,7 @@ async function setDefaultTransport(transport) {
       }
     }
   } catch {
-    toast.show(t('settings.saveFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
+    toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 })
   }
 }
 
@@ -510,9 +510,9 @@ async function setDefaultMode(mode) {
     await patchAgentPref(props.agentId, 'preferred_mode', mode.id)
     updateAgentField(props.agentId, 'preferredMode', mode.id)
     emit('switch-mode', mode)
-    toast.show(t('chat.sessionSetting.setDefaultSuccess', { name: mode.name || mode.id }), { icon: '⭐', type: 'success', duration: 2000 })
+    toast.show(t('chat.sessionSetting.setDefaultSuccess', { name: mode.name || mode.id }), { icon: 'star', type: 'success', duration: 2000 })
   } catch {
-    toast.show(t('settings.saveFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
+    toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 })
   }
 }
 
@@ -605,22 +605,22 @@ async function setAsDefault() {
       updateAgentField(props.agentId, 'preferredModel', pendingDefaultModel.value)
       const model = models.value.find(m => m.id === pendingDefaultModel.value)
       if (model) emit('switch-model', model)
-      toast.show(t('chat.sessionSetting.setDefaultSuccess', { name: model?.name || model?.id || pendingDefaultModel.value }), { icon: '⭐', type: 'success', duration: 2000 })
+      toast.show(t('chat.sessionSetting.setDefaultSuccess', { name: model?.name || model?.id || pendingDefaultModel.value }), { icon: 'star', type: 'success', duration: 2000 })
     } else if (pendingDefaultThinking.value !== null) {
       await patchAgentPref(props.agentId, 'preferred_thinking_effort', pendingDefaultThinking.value)
       updateAgentField(props.agentId, 'preferredThinkingEffort', pendingDefaultThinking.value)
       emit('switch-thinking-effort', pendingDefaultThinking.value)
       const levelName = thinkingLevels.value.find(l => l.id === pendingDefaultThinking.value)?.name || pendingDefaultThinking.value
-      toast.show(t('chat.sessionSetting.setDefaultSuccess', { name: levelName }), { icon: '⭐', type: 'success', duration: 2000 })
+      toast.show(t('chat.sessionSetting.setDefaultSuccess', { name: levelName }), { icon: 'star', type: 'success', duration: 2000 })
     } else if (pendingDefaultMode.value !== null) {
       await patchAgentPref(props.agentId, 'preferred_mode', pendingDefaultMode.value)
       updateAgentField(props.agentId, 'preferredMode', pendingDefaultMode.value)
       const mode = availableModes.value.find(m => m.id === pendingDefaultMode.value)
       if (mode) emit('switch-mode', mode)
-      toast.show(t('chat.sessionSetting.setDefaultSuccess', { name: mode?.name || mode?.id || pendingDefaultMode.value }), { icon: '⭐', type: 'success', duration: 2000 })
+      toast.show(t('chat.sessionSetting.setDefaultSuccess', { name: mode?.name || mode?.id || pendingDefaultMode.value }), { icon: 'star', type: 'success', duration: 2000 })
     }
   } catch {
-    toast.show(t('settings.saveFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
+    toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 })
   }
 }
 

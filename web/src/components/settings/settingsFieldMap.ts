@@ -148,9 +148,6 @@ export interface GroupPanelConfig {
   commonFields: ItemSpec[]
   optionSubFields?: { when: unknown; fields: ItemSpec[] }[]
   requiredFields?: string[]
-  /** Override which field drives optionSubFields matching. Defaults to entrySelector key.
-   *  Used by FRP where sub-fields are keyed by frp.auto_port, not the entry selector. */
-  optionSubFieldsKey?: string
   /** Whether this panel has a connectivity test button. Can be a static boolean or a function that checks current values. */
   hasConnectivityTest?: boolean | ((values: Record<string, unknown>) => boolean)
   /** Function to map panel values to backend test categories.
@@ -160,7 +157,7 @@ export interface GroupPanelConfig {
   getTestCategories?: (values: Record<string, unknown>) => Array<{ category: string; values: Record<string, unknown> }>
   /** Side effect: called after successful save with changed keys and current panel values */
   afterSave?: (changedKeys: string[], values?: Record<string, unknown>) => void
-  /** Side effect: called on panel mount (e.g., fetch FRP info) */
+  /** Side effect: called on panel mount */
   onInit?: () => void
   /** Whether this panel needs voice reset on engine change (TTS only) */
   needsVoiceReset?: boolean
@@ -624,41 +621,6 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       // status row reports that plus the client-side tunnel and per-port
       // liveness. Two rows answering overlapping questions is what the merge
       // removed.
-    }},
-  ],
-  frp: [
-    { type: 'panel', config: {
-      panelId: 'frp',
-      enableKey: 'frp.enabled',
-      enableLabelKey: 'settings.items.frpEnabled',
-      commonFields: [
-        { labelKey: 'settings.items.frpServerAddr', descriptionKey: 'settings.items.frpServerAddrDesc', key: 'frp.server_addr', type: 'text', source: 'server' },
-        { labelKey: 'settings.items.frpServerPort', descriptionKey: 'settings.items.frpServerPortDesc', key: 'frp.server_port', type: 'number', source: 'server' },
-        { labelKey: 'settings.items.frpToken', descriptionKey: 'settings.items.frpTokenDesc', key: 'frp.token', type: 'password', source: 'server' },
-        { labelKey: 'settings.items.frpAutoPort', descriptionKey: 'settings.items.frpAutoPortDesc', key: 'frp.auto_port', type: 'switch', source: 'server' },
-      ],
-      optionSubFields: [
-        {
-          when: false,
-          fields: [
-            { labelKey: 'settings.items.frpRemotePort', descriptionKey: 'settings.items.frpRemotePortDesc', key: 'frp.remote_port', type: 'number', source: 'server' },
-            { labelKey: 'settings.items.frpSSHRemotePort', descriptionKey: 'settings.items.frpSSHRemotePortDesc', key: 'frp.ssh_remote_port', type: 'number', source: 'server' },
-          ],
-        },
-      ],
-      requiredFields: ['frp.server_addr'],
-      optionSubFieldsKey: 'frp.auto_port',
-      hasConnectivityTest: true,
-      getTestCategories: (values) => [{ category: 'frp', values }],
-      afterSave(changedKeys) {
-        if (changedKeys.includes('frp.enabled')) {
-          import('@/composables/useFrp').then(m => m.useFrp().fetchFrpInfo()).catch(() => {})
-        }
-      },
-      onInit() {
-        import('@/composables/useFrp').then(m => m.useFrp().fetchFrpInfo()).catch(() => {})
-      },
-
     }},
   ],
 }

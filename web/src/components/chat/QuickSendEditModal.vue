@@ -93,7 +93,7 @@ async function saveItem() {
     }
 
     if (ok) {
-      toast.show(t('chat.quickSend.itemSaved'), { icon: '✅', type: 'success' })
+      toast.show(t('chat.quickSend.itemSaved'), { icon: 'success', type: 'success' })
       emit('saved')
     } else {
       formError.value = t('chat.quickSend.saveFailed')

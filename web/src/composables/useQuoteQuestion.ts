@@ -1,4 +1,4 @@
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useSessionIdentity, getSessionId, getSessionTitle } from '@/composables/useSessionIdentity.ts'
 import { useToast } from '@/composables/useToast.ts'
 import { gt } from '@/composables/useLocale'
@@ -8,6 +8,10 @@ import { useChatContext } from '@/composables/useChatContext.ts'
 import type { QuoteData } from '@/composables/useChatContext.ts'
 import { requestTarget } from '@/composables/useConversationTarget.ts'
 import type { PendingQuote } from '@/composables/useConversationTarget.ts'
+import { usePlatformDetect } from '@/composables/usePlatformDetect'
+import { appLog } from '@/utils/appLog'
+
+const TAG = 'QuoteQuestion'
 
 /**
  * Context for the "composer" flow: an entry point (e.g. the forge issue/PR
@@ -52,10 +56,58 @@ const {
 const barVisible = ref(false)
 const barPinned = ref(false)  // When pinned, selection loss won't auto-hide the bar
 const sheetOpen = ref(false)
+// Bounding rect of the selection the bar is currently about, used to float the
+// toolbar next to the text (issue #544). Null when there is no DOM selection
+// behind the bar — entry-point composers, terminal/CodeMirror selections that
+// live outside the global selection, and the OpenAPI preview's iframe — in
+// which case the bar falls back to its pinned top position.
+const anchorRect = ref<DOMRect | null>(null)
 // Non-null while the bar was opened by an entry point rather than by a text
 // selection. In this mode the bar is useful even with no quote.
 const composerContext = ref<QuoteComposerContext | null>(null)
 const composerMode = computed(() => composerContext.value !== null)
+
+/**
+ * Snapshot of the last DOM-selection quote the bar was about, used by the
+ * Android native selection menu (see handleNativeSelectionAction).
+ *
+ * The native side taps its menu item and only then calls into JS, by which time
+ * the action mode has finished and the WebView's DOM selection is gone — so
+ * `window.getSelection()` alone would come back empty. This holds the derived
+ * QuoteData from the last evaluation.
+ *
+ * Deliberately a SEPARATE ref rather than keeping `quoteData` alive with the bar
+ * hidden: `quoteData` is the live staged quote that the chat draft snapshots
+ * and restores (`liveStagedEmpty` / `snapshotAttachments` in useChatContext),
+ * so parking a hidden quote there would resurface as a phantom card after a
+ * session switch. Cleared wherever the bar is genuinely dismissed.
+ */
+const lastSelectionQuote = ref<QuoteData | null>(null)
+
+/**
+ * Bumped when something outside the component (the Android native menu) asks
+ * for the comment input to open. The component owns `expanded`, so it watches
+ * this counter and expands itself; a counter rather than a boolean so two
+ * consecutive requests both register.
+ */
+const expandRequest = ref(0)
+
+/**
+ * Whether this is the Android app shell.
+ *
+ * Read LAZILY, not at module scope: usePlatformDetect() latches its axes on
+ * first call and derives them from useAppMode(), which App.vue initializes
+ * during setup. This module's top-level code runs at IMPORT time — before that
+ * setup — so calling it here would latch `isAndroidApp = false` forever and the
+ * native-menu behaviour would silently never engage.
+ *
+ * Android draws its OWN text-selection menu, so the in-page bar is suppressed
+ * for DOM selections (see evaluateSelection) and the native menu drives the
+ * actions instead.
+ */
+function androidShell(): boolean {
+  return usePlatformDetect().isAndroidApp.value
+}
 
 /**
  * The quote target the composer is about, derived from its context.
@@ -77,6 +129,24 @@ const composerAttachment = computed<ComposerAttachment | null>(() => {
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 let pointerReleaseTimer: ReturnType<typeof setTimeout> | null = null
 
+/**
+ * Rect the floating toolbar should attach to: the LAST line box of the
+ * selection (the point the user's pointer just left). For a multi-line
+ * selection that is the bottom line, which is where "just below the text" reads
+ * correctly. Returns null when the selection has no laid-out boxes (e.g. a
+ * collapsed range), letting the caller fall back to the pinned top position.
+ *
+ * The rect is stored RAW (zoom-scaled): conversion to pre-zoom `position:fixed`
+ * space happens in computeSelectionToolbarStyle, so both sides of that
+ * comparison stay in one space.
+ */
+function selectionAnchorRect(sel: Selection): DOMRect | null {
+  if (sel.rangeCount === 0) return null
+  const rects = sel.getRangeAt(0).getClientRects()
+  if (!rects.length) return null
+  return rects[rects.length - 1]
+}
+
 // Active pointer (mouse/touch) tracking. Browsers fire selectionchange while the
 // user is still dragging, so a debounced evaluation can run mid-drag and surface
 // the bar before the pointer is released — on desktop the bar then auto-expands
@@ -95,6 +165,7 @@ function evaluateSelection() {
     if (!barPinned.value) {
       barVisible.value = false
       setQuoteData(null)
+      anchorRect.value = null
     }
     return
   }
@@ -120,38 +191,73 @@ function evaluateSelection() {
   if (chatMsg && closestElement(sel.anchorNode, '.chat-meta-bar, button, a, .chat-file-attachment, .chat-tool-call, .chat-card-strip')) {
     if (!barPinned.value && !composerContext.value) {
       barVisible.value = false
+      anchorRect.value = null
+      // A different, non-quotable selection supersedes the snapshot — without
+      // this, tapping the Android menu item here would quote the PREVIOUS
+      // selection's text.
+      lastSelectionQuote.value = null
     }
     return
   }
 
-  // Check if selection is within a code, markdown, office preview, or git diff
-  // area, or inside a chat message's content.
-  //
-  // The chat selector must be `.chat-message .msg-content-wrapper`, NOT bare
-  // `.chat-message`: the row also contains the meta bar, so the wider selector
-  // would surface the bar for selections in the timestamp/action area (the
-  // chrome guard above catches the buttons, but the wrapper is the precise
-  // content boundary).
-  //
-  // This stays a WHITELIST on purpose: "quote what I selected" is only useful
-  // where the selection is content. An allow-list keeps the bar out of settings,
-  // session lists and other chrome, where a quote would carry no meaning and the
-  // drawer could only show a generic label.
-  const container = closestElement(sel.anchorNode, '.raw-content-pre, .markdown-body, .office-preview-body, .chat-message .msg-content-wrapper, .git-diff-scroll')
+  // Only selections inside quotable content (see quotableContainer) are ours.
+  const container = quotableContainer(sel)
   if (!container) {
     if (!barPinned.value && !composerContext.value) {
       barVisible.value = false
+      anchorRect.value = null
+      lastSelectionQuote.value = null
     }
     return
   }
 
-  const text = sel.toString().trim()
-  if (!text) {
+  // Capture where the selection sits so the bar can float next to it. Done once
+  // here — every quotable branch below (labelled source, chat message, file)
+  // surfaces the same bar and wants the same anchor.
+  anchorRect.value = selectionAnchorRect(sel)
+
+  const derived = deriveQuoteData(sel, container)
+  if (!derived) {
     if (!barPinned.value && !composerContext.value) {
       barVisible.value = false
+      anchorRect.value = null
+      lastSelectionQuote.value = null
     }
     return
   }
+
+  // Remember it for the Android native selection menu: by the time that menu's
+  // item is tapped the DOM selection is already gone, so this is the only copy.
+  lastSelectionQuote.value = derived
+
+  setQuoteData(derived)
+  // Android shows its OWN selection menu (Copy / Select all / our 引用 · 评论),
+  // so the in-page floating bar would be a duplicate — and it sits UNDER that
+  // system window anyway. Keep the quote data (the native menu's action needs
+  // it) but do not surface the bar.
+  //
+  // Only THIS path is suppressed. Terminal / CodeMirror / OpenAPI-iframe
+  // selections reach the bar through showBar() and have no native menu, so they
+  // must keep it.
+  if (androidShell()) {
+    barVisible.value = false
+    return
+  }
+  barVisible.value = true
+}
+
+/**
+ * Turn a DOM selection into the QuoteData the bar (and the AI prompt) needs,
+ * or null when the selection is not quotable content.
+ *
+ * Pure derivation: it neither mutates nor reads module state, so the Android
+ * native path (handleNativeSelectionAction) can reuse it for a selection that
+ * is still live, and it is directly unit-testable. `container` is passed in
+ * rather than re-derived so the caller's whitelist decision is the only one.
+ */
+function deriveQuoteData(sel: Selection, container: HTMLElement): QuoteData | null {
+  const text = sel.toString().trim()
+  if (!text) return null
 
   // A labelled non-file source (an issue/PR body, a commit, a task, a CI run)
   // supplies the quote's identity. It has no meaningful file line numbers, so
@@ -162,7 +268,7 @@ function evaluateSelection() {
   // the jump handler nor the AI can find the origin.
   const source = getQuoteSource(container)
   if (source) {
-    setQuoteData({
+    return {
       text,
       filePath: source.label,
       language: source.language,
@@ -175,9 +281,7 @@ function evaluateSelection() {
       ...(source.sessionId ? { sessionId: source.sessionId } : {}),
       ...(source.messageId !== undefined ? { messageId: source.messageId } : {}),
       ...(source.executionId ? { executionId: source.executionId } : {}),
-    })
-    barVisible.value = true
-    return
+    }
   }
 
   // A selection inside a chat message has no file and no line numbers; it is
@@ -196,13 +300,11 @@ function evaluateSelection() {
   const msgEl = container.closest('.chat-message')
   if (msgEl) {
     const messageId = messageIdFromKey(msgEl.getAttribute('data-msg-key'))
-    setQuoteData(buildMessageQuote(
+    return buildMessageQuote(
       text,
       { id: getSessionId(), title: getSessionTitle() },
       messageId,
-    ))
-    barVisible.value = true
-    return
+    )
   }
 
   const { filePath, language } = getFileInfo(container)
@@ -211,15 +313,32 @@ function evaluateSelection() {
   // No file path means no addressable source (e.g. a git diff whose container
   // carried no file name). Tag it explicitly: leaving sourceKind unset would
   // make the client infer 'message' and the drawer would call it a chat quote.
-  setQuoteData({
+  return {
     text,
     filePath,
     language,
     startLine,
     endLine,
     ...(filePath ? {} : { sourceKind: 'selection' as const }),
-  })
-  barVisible.value = true
+  }
+}
+
+/**
+ * The container a selection is quotable in, or null.
+ *
+ * The chat selector must be `.chat-message .msg-content-wrapper`, NOT bare
+ * `.chat-message`: the row also contains the meta bar, so the wider selector
+ * would surface the bar for selections in the timestamp/action area (the
+ * chrome guard in evaluateSelection catches the buttons, but the wrapper is the
+ * precise content boundary).
+ *
+ * This stays a WHITELIST on purpose: "quote what I selected" is only useful
+ * where the selection is content. An allow-list keeps the bar out of settings,
+ * session lists and other chrome, where a quote would carry no meaning and the
+ * drawer could only show a generic label.
+ */
+function quotableContainer(sel: Selection): HTMLElement | null {
+  return closestElement(sel.anchorNode, '.raw-content-pre, .markdown-body, .office-preview-body, .chat-message .msg-content-wrapper, .git-diff-scroll')
 }
 
 function onSelectionChange() {
@@ -271,6 +390,31 @@ function onPointerUp() {
   releasePointer()
 }
 
+/**
+ * Hide the floating bar when the page scrolls.
+ *
+ * The toolbar is `position: fixed` and anchored to the selection's on-screen
+ * rect, so once the text scrolls away the bar would sit next to unrelated
+ * content (issue #544 requires it to disappear on scroll). Skipped while the
+ * bar is pinned — clicking an action pins it (see onRowPointerDown / expand),
+ * which covers the expanded input: the user must be able to scroll the page
+ * without their half-typed comment vanishing. Scrolls originating INSIDE the
+ * bar (the textarea's own scrollbar) are ignored for the same reason.
+ *
+ * Registered in the capture phase so it sees scrolls from any scrollable
+ * ancestor (the markdown body, the chat list, …), which do not bubble.
+ */
+function onScroll(e: Event) {
+  if (!barVisible.value) return
+  if (barPinned.value || composerContext.value) return
+  const target = e.target
+  if (target instanceof Element && target.closest('.quote-question-bar')) return
+  barVisible.value = false
+  setQuoteData(null)
+  anchorRect.value = null
+  lastSelectionQuote.value = null
+}
+
 /** True while any pointer button is held (used to gate mid-drag selection UI). */
 export function isPointerPressed() {
   return pointerCount > 0
@@ -297,6 +441,8 @@ export function useQuoteQuestion() {
       document.addEventListener('pointercancel', onPointerUp)
       document.addEventListener('touchend', onPointerUp)
       document.addEventListener('touchcancel', onPointerUp)
+      // Capture phase: scrolls on inner containers do not bubble to document.
+      document.addEventListener('scroll', onScroll, true)
     }
   })
 
@@ -309,12 +455,27 @@ export function useQuoteQuestion() {
       document.removeEventListener('pointercancel', onPointerUp)
       document.removeEventListener('touchend', onPointerUp)
       document.removeEventListener('touchcancel', onPointerUp)
+      document.removeEventListener('scroll', onScroll, true)
       pointerCount = 0
       if (pointerReleaseTimer) {
         clearTimeout(pointerReleaseTimer)
         pointerReleaseTimer = null
       }
     }
+  })
+
+  /**
+   * Drop the snapshot when the session changes.
+   *
+   * `lastSelectionQuote` is module-level and deliberately survives a selection
+   * collapse (the Android menu's action mode clears the selection before JS is
+   * called). But it must not survive a SESSION switch: the text belonged to the
+   * previous session's message/file, and on Android the bar never became
+   * visible so none of the dismissal paths ran. Without this, tapping 引用 right
+   * after switching would quote text from the session the user just left.
+   */
+  watch(() => sessionIdentity.currentSessionId.value, () => {
+    lastSelectionQuote.value = null
   })
 
   function closeSheet() {
@@ -324,6 +485,8 @@ export function useQuoteQuestion() {
     barPinned.value = false
     composerContext.value = null
     setQuoteData(null)
+    anchorRect.value = null
+    lastSelectionQuote.value = null
   }
 
   /**
@@ -338,8 +501,14 @@ export function useQuoteQuestion() {
     // A live selection carries over (select-then-click); otherwise start empty
     // so the full body is never quoted by default.
     const sel = window.getSelection()
-    if (!sel || sel.isCollapsed || !sel.toString().trim()) {
+    const live = sel && !sel.isCollapsed && sel.toString().trim()
+    if (!live) {
       setQuoteData(null)
+      // No selection behind the bar → keep it on the pinned top position. A
+      // stale anchor from an earlier selection must not drag it off.
+      anchorRect.value = null
+    } else {
+      anchorRect.value = selectionAnchorRect(sel)
     }
     barVisible.value = true
     barPinned.value = true
@@ -396,6 +565,8 @@ export function useQuoteQuestion() {
     setQuoteData(null)
     barVisible.value = false
     barPinned.value = false
+    anchorRect.value = null
+    lastSelectionQuote.value = null
   }
 
   /** A fresh id for a quote captured for deferred delivery. */
@@ -410,6 +581,8 @@ export function useQuoteQuestion() {
     barVisible.value = false
     barPinned.value = false
     setQuoteData(null)
+    anchorRect.value = null
+    lastSelectionQuote.value = null
   }
 
   function pinBar() {
@@ -437,6 +610,8 @@ export function useQuoteQuestion() {
     barVisible.value = false
     barPinned.value = false
     setQuoteData(null)
+    anchorRect.value = null
+    lastSelectionQuote.value = null
   }
 
   /**
@@ -444,12 +619,79 @@ export function useQuoteQuestion() {
    * 默认延迟 400ms 显示，避免双击的 pointerdown 事件触发"点击外部关闭"
    * （markdown 预览双击复制依赖此延迟）。传 { delay: 0 } 可立即显示
    * （代码模式拖选无 pointerdown 干扰）。
+   *
+   * The anchor is captured SYNCHRONOUSLY, before the delay: by the time the
+   * timeout runs the selection may already have been cleared (the double-click
+   * that triggered this collapses it), and a cleared selection has no rect to
+   * measure. Callers with no DOM selection (CodeMirror's internal selection,
+   * the OpenAPI preview's iframe) leave the anchor null and the bar stays on
+   * its pinned top position.
    */
   function showBar(data: QuoteData, opts: { delay?: number } = {}) {
+    const sel = window.getSelection()
+    const rect = sel && !sel.isCollapsed && sel.toString().trim() ? selectionAnchorRect(sel) : null
     setTimeout(() => {
       setQuoteData(data)
       barVisible.value = true
+      anchorRect.value = rect
     }, opts.delay ?? 400)
+  }
+
+  /**
+   * Handle an action tapped in the Android native text-selection menu.
+   *
+   * The native side sends only the action name — the text is read here, because
+   * this side also knows the quote's identity (file path, line range, session /
+   * message ids), which a bare string would lose.
+   *
+   * The DOM selection is usually ALREADY GONE by the time this runs: the native
+   * menu dismisses its action mode (which clears the selection) before the JS
+   * call arrives. So the live selection is only a best-effort first try, and
+   * `lastSelectionQuote` — snapshotted while the selection was still live — is
+   * the reliable source.
+   *
+   * Called via window.__clawbenchSelectionAction (installed in App.vue).
+   */
+  function handleNativeSelectionAction(action: string) {
+    if (action !== 'quote' && action !== 'comment') {
+      appLog.w(TAG, 'native selection action: unknown action', action)
+      return
+    }
+
+    // Prefer a live selection (it may still be intact), else the snapshot.
+    let data: QuoteData | null = null
+    const sel = window.getSelection()
+    if (sel && !sel.isCollapsed && sel.toString().trim()) {
+      const container = quotableContainer(sel)
+      if (container) data = deriveQuoteData(sel, container)
+    }
+    if (!data) data = lastSelectionQuote.value
+
+    if (!data) {
+      // Nothing quotable to act on — e.g. the selection was in a region the
+      // whitelist rejects, or it was cleared before we were called.
+      appLog.w(TAG, 'native selection action with no quotable selection', action)
+      return
+    }
+
+    // Adopt it as the active quote so both actions below see it. `quote` reads
+    // quoteData; `comment` renders it in the expanded bar.
+    setQuoteData(data)
+    lastSelectionQuote.value = data
+    // The native menu's action mode is already gone, so nothing else will
+    // re-evaluate and hide the bar out from under the action.
+    barPinned.value = true
+
+    if (action === 'quote') {
+      // Same commit as tapping 引用 in the in-page toolbar: stage the card and
+      // dismiss. addToConversation handles the picker / toast.
+      addToConversation('')
+      return
+    }
+
+    // comment → surface the bar and ask the component to open its input.
+    barVisible.value = true
+    expandRequest.value++
   }
 
   function addToConversation(note = '') {
@@ -499,9 +741,11 @@ export function useQuoteQuestion() {
     setQuoteData(null)
     barVisible.value = false
     barPinned.value = false
+    anchorRect.value = null
+    lastSelectionQuote.value = null
     if (!needsPicker) {
       addStagedQuote(quote, note)
-      toast.show(gt('quoteBar.addedToChat'), { icon: '📎', type: 'success', duration: 1500 })
+      toast.show(gt('quoteBar.addedToChat'), { icon: 'attach', type: 'success', duration: 1500 })
     }
   }
 
@@ -552,7 +796,7 @@ export function useQuoteQuestion() {
       // before its first await, so the cards ride along; clear after.
       clearAll()
       await sendPromise
-      toast.show(gt('quoteBar.sentToSession'), { icon: '✅', type: 'success', duration: 2000 })
+      toast.show(gt('quoteBar.sentToSession'), { icon: 'success', type: 'success', duration: 2000 })
       if (animFrom && animTo) {
         window.dispatchEvent(new CustomEvent('quote-sent', {
           detail: {
@@ -562,7 +806,7 @@ export function useQuoteQuestion() {
         }))
       }
     } catch (err: unknown) {
-      toast.show(gt('quoteBar.sendFailed', { error: (err as Error).message }), { icon: '⚠️', type: 'error' })
+      toast.show(gt('quoteBar.sendFailed', { error: (err as Error).message }), { icon: 'warning', type: 'error' })
     }
   }
 
@@ -592,6 +836,8 @@ export function useQuoteQuestion() {
     barVisible.value = false
     barPinned.value = false
     setQuoteData(null)
+    anchorRect.value = null
+    lastSelectionQuote.value = null
 
     if (needsPicker) {
       const sel = window.getSelection()
@@ -613,7 +859,7 @@ export function useQuoteQuestion() {
       // request runs.
       clearAll()
       await sendPromise
-      toast.show(gt('quoteBar.sentToSession'), { icon: '✅', type: 'success', duration: 2000 })
+      toast.show(gt('quoteBar.sentToSession'), { icon: 'success', type: 'success', duration: 2000 })
       // Dispatch animation event with pre-captured coordinates
       if (animFrom && animTo) {
         window.dispatchEvent(new CustomEvent('quote-sent', {
@@ -624,16 +870,19 @@ export function useQuoteQuestion() {
         }))
       }
     } catch (err: unknown) {
-      toast.show(gt('quoteBar.sendFailed', { error: (err as Error).message }), { icon: '⚠️', type: 'error' })
+      toast.show(gt('quoteBar.sendFailed', { error: (err as Error).message }), { icon: 'warning', type: 'error' })
     }
   }
 
   return {
     visible: barVisible,
     quoteData,
+    anchorRect,
     sheetOpen,
     composerMode,
     composerAttachment,
+    // Bumped by the Android native menu to ask the bar to open its input.
+    expandRequest,
     openSheet: () => { sheetOpen.value = true },
     closeSheet,
     openComposer,
@@ -644,5 +893,7 @@ export function useQuoteQuestion() {
     hideBar,
     addToConversation,
     sendMessage,
+    // Entry point for window.__clawbenchSelectionAction (installed in App.vue).
+    handleNativeSelectionAction,
   }
 }

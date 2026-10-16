@@ -87,8 +87,8 @@ function nativeDownloadWithProgress(id: number, path: string, name: string): voi
         if (fallback !== null) clearTimeout(fallback)
         endDownload(id)
         if (cancelled || !notify) return
-        if (ok) useToast().show(gt('upload.downloaded', { count: 1 }), { icon: '✅', type: 'success' })
-        else useToast().show(gt('upload.downloadFailed'), { icon: '❌', type: 'error' })
+        if (ok) useToast().show(gt('upload.downloaded', { count: 1 }), { icon: 'success', type: 'success' })
+        else useToast().show(gt('upload.downloadFailed'), { icon: 'error', type: 'error' })
     }
 
     window.addEventListener(DOWNLOAD_PROGRESS_EVENT, handler)
@@ -240,16 +240,16 @@ function webDownloadWithProgress(id: number, url: string, name: string): void {
         endDownload(id)
         if (cancelled) return
         if (xhr.status < 200 || xhr.status >= 300) {
-            useToast().show(gt('upload.downloadFailed'), { icon: '❌', type: 'error' })
+            useToast().show(gt('upload.downloadFailed'), { icon: 'error', type: 'error' })
             return
         }
         saveBlob(xhr.response as Blob, name)
-        useToast().show(gt('upload.downloaded', { count: 1 }), { icon: '✅', type: 'success' })
+        useToast().show(gt('upload.downloaded', { count: 1 }), { icon: 'success', type: 'success' })
     }
     xhr.onerror = () => {
         endDownload(id)
         if (cancelled) return
-        useToast().show(gt('upload.downloadFailed'), { icon: '❌', type: 'error' })
+        useToast().show(gt('upload.downloadFailed'), { icon: 'error', type: 'error' })
     }
     xhr.onabort = () => endDownload(id)
     xhr.send()

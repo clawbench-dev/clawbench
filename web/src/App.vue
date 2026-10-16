@@ -249,6 +249,11 @@
                   <TaskTab :active="panelIsActive('tasks')" @open-file="handleTaskOpenFile" />
                 </TabPanel>
 
+                <!-- Notifications Tab (append-only event log; no badge) -->
+                <TabPanel tabId="notifications" :activeTab="leftPanelActive" :noHeader="true">
+                  <NotificationsPanelContent :active="panelIsActive('notifications')" />
+                </TabPanel>
+
                 <!-- Usage Statistics Tab -->
                 <TabPanel tabId="stats" :activeTab="leftPanelActive" :noHeader="true">
                   <StatsTabHost :active="panelIsActive('stats')" />
@@ -332,6 +337,7 @@
                       :group-mode="groupMode"
                       :group-parallel-default="groupParallelDefault"
                       :group-host-member-id="groupHostMemberId"
+                      :group-cruise="groupCruise"
                       :resolve-group-speaker="resolveGroupSpeaker"
                       :resolve-group-speaker-by-name="resolveGroupSpeakerByName"
                       @open="switchTab('chat')"
@@ -339,6 +345,7 @@
                       @open-session-search="sessionSearchDrawer.open()"
                       @open-group-settings="openGroupSettings"
                       @open-agent-config="openAgentConfig"
+                      @toggle-group-cruise="onToggleGroupCruise"
                     />
                   </TabPanel>
                   <!-- The hint is centered on the CHAT column, not on
@@ -395,8 +402,10 @@
       <QuoteQuestionBar
         :visible="quoteQuestion.visible.value"
         :quoteData="quoteQuestion.quoteData.value"
+        :anchor="quoteQuestion.anchorRect.value"
         :composerMode="quoteQuestion.composerMode.value"
         :composerAttachment="quoteQuestion.composerAttachment.value"
+        :expandRequest="quoteQuestion.expandRequest.value"
         @add="quoteQuestion.addToConversation($event)"
         @send="quoteQuestion.sendMessage($event)"
         @close="quoteQuestion.closeSheet()"
@@ -603,6 +612,7 @@ import AgentIcon from './components/common/AgentIcon.vue'
 import GroupAvatarStack from './components/chat/GroupAvatarStack.vue'
 import SettingsPage from './components/settings/SettingsPage.vue'
 import TaskTab from '@/components/task/TaskTab.vue'
+import NotificationsPanelContent from '@/components/notifications/NotificationsPanelContent.vue'
 import StatsTabHost from '@/components/stats/StatsTabHost.vue'
 import { useQuoteQuestion } from './composables/useQuoteQuestion.ts'
 import { setActiveTabGetter, setOpenSessionHandler, usePendingTarget, confirmTarget, cancelTarget } from './composables/useConversationTarget.ts'
@@ -611,9 +621,10 @@ import { useTaskTab, registerSwitchTab, onTaskEvent } from '@/composables/useTas
 import { useTabDrawer, onTabSwitch, resetTabDrawerState } from '@/composables/useTabDrawer.ts'
 import { resetAgents, useAgents } from '@/composables/useAgents'
 import { useGroupMembers } from '@/composables/useGroupMembers'
+import { setGroupCruise } from '@/composables/useGroupChat'
 import { resetUsageStats } from '@/composables/useUsageStats'
 import { resetGitStats } from '@/composables/useGitCodeStats'
-import { useSessionIdentity, registerSessionDrawerRef, registerOpenSessionTabOverride, resetIdentity } from './composables/useSessionIdentity.ts'
+import { useSessionIdentity, registerSessionDrawerRef, registerOpenSessionTabOverride, resetIdentity, applyCruiseAutoApproveDefault } from './composables/useSessionIdentity.ts'
 import { useSessionSidebar } from './composables/useSessionSidebar.ts'
 import type { SessionSearchResult } from './composables/useSessionSearch'
 import { loadSessionsOnce, resetChatSessionState, switching } from './composables/useChatSession.ts'
@@ -630,6 +641,7 @@ import { requestNotificationPermission } from './composables/useNotification'
 import { useTerminalKeyboard } from './composables/useTerminalKeyboard.ts'
 import { useChatKeyboard } from './composables/useChatKeyboard.ts'
 import { useSoftKeyboard } from './composables/useSoftKeyboard.ts'
+import { useVisualViewportInset } from './composables/useVisualViewportInset.ts'
 import { usePortForward } from './composables/usePortForward.ts'
 import { useTerminalStatus } from './composables/useTerminalStatus.ts'
 import { useFileWatch } from './composables/useFileWatch.ts'
@@ -788,7 +800,7 @@ async function hotSwitchProject(newProjectPath: string, pendingSessionId?: strin
     switchingProject.value = false
     const msgKey = (err as Error & { msgKey?: string })?.msgKey
     if (msgKey === 'NotADirectory') {
-      toast.show(t('appHeader.projectPathNotFound'), { icon: '⚠️', type: 'error', duration: 3000 })
+      toast.show(t('appHeader.projectPathNotFound'), { icon: 'warning', type: 'error', duration: 3000 })
       fetch('/api/recent-projects', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
@@ -798,9 +810,9 @@ async function hotSwitchProject(newProjectPath: string, pendingSessionId?: strin
       // The project path exists in the session DB but is no longer under the
       // configured root paths — e.g. a cross-project session row pointing at a
       // project the admin has since removed from the roots.
-      toast.show(t('appHeader.projectPathNotAllowed'), { icon: '⚠️', type: 'error', duration: 3000 })
+      toast.show(t('appHeader.projectPathNotAllowed'), { icon: 'warning', type: 'error', duration: 3000 })
     } else {
-      toast.show(t('appHeader.switchProjectFailed', { error: (err as Error).message }), { icon: '⚠️', type: 'error', duration: 3000 })
+      toast.show(t('appHeader.switchProjectFailed', { error: (err as Error).message }), { icon: 'warning', type: 'error', duration: 3000 })
     }
     return
   }
@@ -1119,8 +1131,30 @@ function switchTab(tab: string, force = false) {
  * strings (Android reads them via getStringExtra; the popover's
  * CompletionItem types taskId as string).
  */
-interface OpenSessionDetail { sessionId?: string; projectPath?: string }
-interface OpenTaskDetail { taskId?: string; executionId?: string; projectPath?: string }
+interface OpenSessionDetail { sessionId?: string; projectPath?: string; fromNotificationCenter?: boolean }
+interface OpenTaskDetail { taskId?: string; executionId?: string; projectPath?: string; fromNotificationCenter?: boolean }
+
+/**
+ * Record the notification log as the jump origin, if that is where this
+ * navigation came from.
+ *
+ * The notification center is a dock tab like any other, so its rows jump from a
+ * real surface that Back must be able to return to (header back button, edge
+ * swipe, Android hardware back). Without this the jump recorded whatever tab
+ * preceded the log, and Back dropped the user on an unrelated panel.
+ *
+ * Only the same-project case arms this: a cross-project jump tears the subtree
+ * down and deliberately drops the previous project's navigation context, so a
+ * Back target pointing into the old project would be a lie. That case is
+ * covered by the confirmation dialog instead (see NotificationsPanelContent).
+ */
+function recordNotificationOrigin(detail: { fromNotificationCenter?: boolean } | undefined): void {
+  if (!detail?.fromNotificationCenter) return
+  // Pin the origin tab explicitly (same as the `{ tab: 'chat' }` jumps do)
+  // instead of letting beginExternalJump derive it from `activeTab`: the log's
+  // own row click must record the log, whatever else the layout was doing.
+  beginExternalJump('notifications', surfaceLabel('notifications'), { tab: 'notifications' })
+}
 
 /**
  * Handle clawbench-session-title-update: a session's title changed outside the
@@ -1145,7 +1179,9 @@ function handleOpenSession(e: Event) {
     return
   }
   const { sessionId, projectPath } = detail
-  if (projectPath && projectPath !== store.state.projectRoot) {
+  const crossProject = !!projectPath && projectPath !== store.state.projectRoot
+  if (!crossProject) recordNotificationOrigin(detail)
+  if (crossProject) {
     // Cross-project: hot switch without page reload
     hotSwitchProject(projectPath, sessionId).catch(() => {
       // If project switch fails, try same-project switch as fallback
@@ -1178,7 +1214,9 @@ function handleOpenTask(e: Event) {
     }
   }
 
-  if (projectPath && projectPath !== store.state.projectRoot) {
+  const crossProject = !!projectPath && projectPath !== store.state.projectRoot
+  if (!crossProject) recordNotificationOrigin(detail)
+  if (crossProject) {
     // Cross-project: hot switch without page reload (same as session navigation)
     hotSwitchProject(projectPath, null, { taskId, executionId }).catch(() => {
       // If project switch fails, try same-project switch as fallback
@@ -1205,7 +1243,12 @@ function handleOpenTask(e: Event) {
  * which is exactly what happened on Electron (the click opened the tab and
  * stopped there). Accept both.
  */
-interface OpenForgeDetail { projectPath?: string; target?: ForgeTarget; forgeTarget?: ForgeTarget }
+interface OpenForgeDetail {
+  projectPath?: string
+  target?: ForgeTarget
+  forgeTarget?: ForgeTarget
+  fromNotificationCenter?: boolean
+}
 
 /**
  * Handle clawbench-open-forge — dispatched when a forge (GitHub/GitLab) system
@@ -1240,6 +1283,7 @@ function handleOpenForge(e: Event) {
 
   if (!projectPath || projectPath === store.state.projectRoot) {
     // Same project (or the event carried no attribution): nothing to switch.
+    recordNotificationOrigin(detail)
     switchTab('forge')
     return
   }
@@ -1344,6 +1388,25 @@ const groupAutoApprove = sessionIdentity.autoApprove
 const groupAvatarStackRef = ref<InstanceType<typeof GroupAvatarStack> | null>(null)
 function openGroupSettings() {
   groupAvatarStackRef.value?.open()
+}
+
+// Toggle the current GROUP's auto-cruise switch from the session-info bar chip.
+// App owns the group PATCH and the roster refresh (the same path the group
+// settings sheet uses), so both entry points read the same server value and stay
+// in sync. On failure the roster refresh still runs, reverting the chip to the
+// persisted truth.
+async function onToggleGroupCruise(enabled: boolean) {
+  const groupId = sessionIdentity.currentSessionId.value
+  if (!groupId) return
+  try {
+    await setGroupCruise(groupId, enabled)
+    // Hard default: enabling cruise forces auto-approve on (the backend does the
+    // same for the group's member rows); mirror it into the chip immediately.
+    applyCruiseAutoApproveDefault(enabled)
+  } catch (e) {
+    appLog.w('Group', 'setGroupCruise failed', e)
+  }
+  await refreshGroupMembers(groupId)
 }
 
 /**
@@ -1879,7 +1942,7 @@ const disposeAndroidBackPress = useAndroidBackPress({
     canHandle: (reason) => canHandleBack(reason),
     navigate: (reason) => navigateBack(reason),
     requestExitConfirm,
-    showExitHint: () => toast.show(t('toast.swipeAgainToExit'), { icon: '👋', type: 'info', duration: 2000 }),
+    showExitHint: () => toast.show(t('toast.swipeAgainToExit'), { icon: 'hand', type: 'info', duration: 2000 }),
 })
 // F5 reloads the page unless the terminal (forwards F5 to the TUI) or the file
 // manager (refreshes its listing) already claimed the key. See the composable
@@ -1920,7 +1983,51 @@ const { isSoftKeyboardOpen, install: installSoftKeyboard, uninstall: uninstallSo
 onMounted(() => installSoftKeyboard())
 onUnmounted(() => uninstallSoftKeyboard())
 
+// The selection toolbar needs the keyboard's SIZE (not just whether it is open)
+// to keep itself inside the visible region: fixed offsets are measured from the
+// layout viewport, which a mobile browser does not shrink for the keyboard.
+// Installed app-wide because the bar is global.
+const { install: installVisualViewportInset, uninstall: uninstallVisualViewportInset } = useVisualViewportInset()
+onMounted(() => installVisualViewportInset())
+onUnmounted(() => uninstallVisualViewportInset())
+
+/**
+ * Install the Android native-selection-menu bridge.
+ *
+ * The native side (ClawBenchWebView → MainActivity.dispatchSelectionAction)
+ * calls `window.__clawbenchSelectionAction('quote'|'comment')` when the user
+ * taps one of our items in the system text-selection menu. This is the JS end
+ * of that contract.
+ *
+ * Mirrors the existing global-callback pattern (window.__clawbenchAppResume in
+ * useAppForeground.ts): assigned once, guarded by a module flag, never removed
+ * (App never unmounts).
+ *
+ * Returns false when the name was already taken, so the caller can log rather
+ * than silently shadow another instance.
+ */
+let quoteSelectionBridgeInstalled = false
+function installQuoteSelectionBridge(
+  qq: ReturnType<typeof useQuoteQuestion>,
+): boolean {
+  if (quoteSelectionBridgeInstalled) return false
+  const w = window as unknown as {
+    __clawbenchSelectionAction?: (action: string) => void
+  }
+  w.__clawbenchSelectionAction = (action: string) => qq.handleNativeSelectionAction(action)
+  quoteSelectionBridgeInstalled = true
+  return true
+}
+
 const quoteQuestion = useQuoteQuestion()
+// Android's own text-selection menu (see ClawBenchWebView.java) calls this when
+// the user taps 引用 / 评论. Installed here rather than inside the composable so
+// the composable stays free of window globals; guarded by a module-level flag
+// because setup can run again (HMR) and a second assignment would be harmless
+// but the flag documents that exactly one instance owns the name.
+if (!installQuoteSelectionBridge(quoteQuestion)) {
+  appLog.w('App', 'quote selection bridge already installed')
+}
 // The conversation picker decides whether to pop by asking "can the user see
 // the chat panel?". `activeTab` lives here (not in the layout module), so
 // inject a getter once rather than coupling the dispatcher to App state.
@@ -2098,9 +2205,9 @@ async function handleRenameSession() {
   if (newTitle === null || newTitle.trim() === '' || newTitle === current) return
   const ok = await sessionIdentity.renameSession(newTitle.trim())
   if (ok) {
-    toast.show(gt('chat.sessionRename.success'), { icon: '✅', type: 'success', duration: 2000 })
+    toast.show(gt('chat.sessionRename.success'), { icon: 'success', type: 'success', duration: 2000 })
   } else {
-    toast.show(gt('chat.sessionRename.failed'), { icon: '⚠️', type: 'error', duration: 3000 })
+    toast.show(gt('chat.sessionRename.failed'), { icon: 'warning', type: 'error', duration: 3000 })
   }
 }
 
@@ -2121,16 +2228,16 @@ async function handleResumeFromSearch(session: SessionSearchResult) {
     if (!resp.ok) {
       const data = await resp.json().catch(() => ({}))
       if (resp.status === 403) {
-        toast.show(gt('sessionSearch.resumeProjectMismatch'), { icon: '⚠️', type: 'error' })
+        toast.show(gt('sessionSearch.resumeProjectMismatch'), { icon: 'warning', type: 'error' })
       } else {
-        toast.show(data.error || gt('sessionSearch.resumeFailed'), { icon: '⚠️', type: 'error' })
+        toast.show(data.error || gt('sessionSearch.resumeFailed'), { icon: 'warning', type: 'error' })
       }
       return
     }
     sessionSearchDrawer.close()
     handleSessionSelect(session.session_id, session.backend)
   } catch {
-    toast.show(gt('sessionSearch.resumeFailed'), { icon: '⚠️', type: 'error' })
+    toast.show(gt('sessionSearch.resumeFailed'), { icon: 'warning', type: 'error' })
   }
 }
 
@@ -2237,7 +2344,7 @@ async function initializeApp() {
   //    loadProject sets clawbench_project cookie (needed by loadHistory).
   //    initSessionFromAPI sets session identity (needed by ChatPanelContent).
   try { await store.loadProject() } catch {
-      toast.show(t('toast.projectLoadFailed'), { icon: '⚠️', type: 'error', duration: 0, onClick: () => location.reload() }); return false
+      toast.show(t('toast.projectLoadFailed'), { icon: 'warning', type: 'error', duration: 0, onClick: () => location.reload() }); return false
   }
   await sessionIdentity.initSessionFromAPI()
 
@@ -2282,7 +2389,7 @@ async function initializeApp() {
 /** Report a fatal startup error to the user and to the client log relay. */
 function reportStartupFailure(context: string, err: unknown) {
   appLog.e(TAG, `[${context}] app initialization failed:`, err)
-  toast.show(t('toast.initFailed'), { icon: '⚠️', type: 'error', duration: 0, onClick: () => location.reload() })
+  toast.show(t('toast.initFailed'), { icon: 'warning', type: 'error', duration: 0, onClick: () => location.reload() })
 }
 
 async function handleLoginSuccess() {
@@ -2614,9 +2721,9 @@ async function handleSetAsBackground(path: string) {
         // round-trip needed (the gallery list itself is refreshed by the
         // settings panel when it opens).
         await setWallpaperFromPath(path, setSetting)
-        toast.show(t('settings.items.wallpaperSetOk'), { icon: '🖼️', type: 'success', duration: 2500 })
+        toast.show(t('settings.items.wallpaperSetOk'), { icon: 'image', type: 'success', duration: 2500 })
     } catch {
-        toast.show(t('settings.items.wallpaperUploadFailed'), { icon: '⚠️', type: 'error', duration: 4000 })
+        toast.show(t('settings.items.wallpaperUploadFailed'), { icon: 'warning', type: 'error', duration: 4000 })
     }
 }
 
@@ -2983,11 +3090,11 @@ function onChatColDrop(e: DragEvent) {
     const targets = attachDragTargets(data)
     const added = targets.filter(t => addAttachedFile(t.path, t.isDir, t.startLine, t.endLine)).length
     if (added === 0) {
-      toast.show(t('chat.attach.alreadyAttached'), { icon: '📎', type: 'info', duration: 1500 })
+      toast.show(t('chat.attach.alreadyAttached'), { icon: 'attach', type: 'info', duration: 1500 })
     } else if (targets.length > 1) {
-      toast.show(t('chat.attach.addedToChatN', { n: added }), { icon: '📎', type: 'success', duration: 1500 })
+      toast.show(t('chat.attach.addedToChatN', { n: added }), { icon: 'attach', type: 'success', duration: 1500 })
     } else {
-      toast.show(t('chat.attach.addedToChat'), { icon: '📎', type: 'success', duration: 1500 })
+      toast.show(t('chat.attach.addedToChat'), { icon: 'attach', type: 'success', duration: 1500 })
     }
     return
   }
@@ -3000,7 +3107,7 @@ function onChatColDrop(e: DragEvent) {
     e.preventDefault()
     addStagedQuote(quote)
     switchTab('chat')
-    toast.show(t('chat.attach.quotedToChat', { label: quote.filePath }), { icon: '💬', type: 'success', duration: 1800 })
+    toast.show(t('chat.attach.quotedToChat', { label: quote.filePath }), { icon: 'chat', type: 'success', duration: 1800 })
     return
   }
   // OS file drop → upload & auto-attach each file.
@@ -3495,9 +3602,9 @@ onMounted(async () => {
     } catch {
         isAuthenticated.value = false
         if (isAppMode.value) {
-            toast.show(t('toast.serverUnreachableApp'), { icon: '⚠️', type: 'error', duration: 5000 })
+            toast.show(t('toast.serverUnreachableApp'), { icon: 'warning', type: 'error', duration: 5000 })
         } else {
-            toast.show(t('toast.serverUnreachableWeb'), { icon: '⚠️', type: 'error', duration: 0, onClick: () => location.reload() })
+            toast.show(t('toast.serverUnreachableWeb'), { icon: 'warning', type: 'error', duration: 0, onClick: () => location.reload() })
         }
         // Login view stays mounted — drop the native splash so it can't cover it.
         dismissSplash()
@@ -3523,9 +3630,9 @@ onMounted(async () => {
                 } else {
                     isAuthenticated.value = false
                     if (outcome === 'auth-failed') {
-                        toast.show(t('toast.authFailed'), { icon: '⚠️', type: 'error', duration: 5000 })
+                        toast.show(t('toast.authFailed'), { icon: 'warning', type: 'error', duration: 5000 })
                     } else if (outcome === 'network-error') {
-                        toast.show(t('toast.serverUnreachableApp'), { icon: '⚠️', type: 'error', duration: 5000 })
+                        toast.show(t('toast.serverUnreachableApp'), { icon: 'warning', type: 'error', duration: 5000 })
                     }
                     // 'no-password' needs no toast: the login page IS the
                     // expected destination, not a failure.
@@ -3540,9 +3647,9 @@ onMounted(async () => {
         } else {
             isAuthenticated.value = false
             if (isAppMode.value) {
-                toast.show(t('toast.serverError'), { icon: '⚠️', type: 'error', duration: 5000 })
+                toast.show(t('toast.serverError'), { icon: 'warning', type: 'error', duration: 5000 })
             } else {
-                toast.show(t('toast.serverError'), { icon: '⚠️', type: 'error', duration: 0, onClick: () => location.reload() })
+                toast.show(t('toast.serverError'), { icon: 'warning', type: 'error', duration: 0, onClick: () => location.reload() })
             }
             dismissSplash()
             return

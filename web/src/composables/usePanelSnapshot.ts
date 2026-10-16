@@ -95,7 +95,7 @@ export function usePanelSnapshot(config: GroupPanelConfig) {
     snapshot.value = snap
     Object.assign(localValues, snap)
 
-    // Init side effects (e.g., fetch FRP info)
+    // Init side effects
     config.onInit?.()
   }
 
@@ -155,7 +155,7 @@ export function usePanelSnapshot(config: GroupPanelConfig) {
     // the user is likely toggling the enable key back on.
     if (config.enableKey && !localValues[config.enableKey]) return true
     // Determine sub-field match value
-    const subFieldKey = config.optionSubFieldsKey ?? config.entrySelector?.key
+    const subFieldKey = config.entrySelector?.key
     const subFieldValue = subFieldKey ? localValues[subFieldKey] : undefined
     const visibleKeys = getVisibleFieldKeys(subFieldValue)
     for (const key of required) {

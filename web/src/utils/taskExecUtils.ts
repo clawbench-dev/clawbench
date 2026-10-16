@@ -41,15 +41,15 @@ export async function cancelExecution(options: CancelExecutionOptions): Promise<
       action: 'cancel',
       executionId,
     })
-    toast.show(gt('task.exec.cancelled'), { icon: '✅', type: 'success' })
+    toast.show(gt('task.exec.cancelled'), { icon: 'success', type: 'success' })
     onSuccess?.()
     return true
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
     if (msg.includes('404') || msg.includes('TaskExecutionNotFound') || msg.includes('execution not found')) {
-      toast.show(gt('task.exec.alreadyFinished'), { icon: 'ℹ️', type: 'info' })
+      toast.show(gt('task.exec.alreadyFinished'), { icon: 'info', type: 'info' })
     } else {
-      toast.show(gt('task.exec.actionFailedDetail', { error: msg }), { icon: '⚠️', type: 'error' })
+      toast.show(gt('task.exec.actionFailedDetail', { error: msg }), { icon: 'warning', type: 'error' })
     }
     return false
   }

@@ -124,6 +124,8 @@
       :active="props.active"
       :isGroupSession="isGroupSession"
       :groupMembers="props.groupMembers"
+      :groupCruise="props.groupCruise"
+      :groupMode="props.groupMode"
       @send="sendMessage"
       @btw="handleBtw"
       @cancel="stream.cancelStream"
@@ -152,6 +154,7 @@
       @switch-transport="handleSwitchTransport"
       @sync-acp-session="handleSyncAcpSession"
       @open-group-settings="$emit('open-group-settings')"
+      @toggle-group-cruise="$emit('toggle-group-cruise', $event)"
     />
 
   </div>
@@ -322,8 +325,12 @@ const props = defineProps({
     groupHostMemberId: { type: String, default: '' },
     resolveGroupSpeaker: { type: Function, default: null },
     resolveGroupSpeakerByName: { type: Function, default: null },
+    /** The group's auto-cruise switch value (owned by App's useGroupMembers).
+     *  Forwarded to ChatInputBar's session-info bar chip; the toggle is emitted
+     *  back up so App owns the PATCH + roster refresh. */
+    groupCruise: { type: Boolean, default: false },
 })
-const emit = defineEmits(['open', 'message', 'task-card-click', 'open-session-search', 'open-group-settings', 'open-agent-config'])
+const emit = defineEmits(['open', 'message', 'task-card-click', 'open-session-search', 'open-group-settings', 'open-agent-config', 'toggle-group-cruise'])
 
 // ── Singletons ──
 const identity = useSessionIdentity()
@@ -477,7 +484,7 @@ async function handleSyncAcpSession() {
       await session.loadHistory(false, true, true)
       toast.show(t('chat.acpSession.synced', { count: res.added }), {
         type: res.added > 0 ? 'success' : 'info',
-        icon: '🔄',
+        icon: 'sync',
       })
     }
   } finally {
@@ -670,7 +677,7 @@ async function saveQuoteNote(note) {
         }
     } catch (err) {
         appLog.w(TAG, 'save quote note failed', err)
-        toast.show(t('quoteBar.sendFailed', { error: err?.message || String(err) }), { icon: '⚠️', type: 'error' })
+        toast.show(t('quoteBar.sendFailed', { error: err?.message || String(err) }), { icon: 'warning', type: 'error' })
     } finally {
         quoteNoteSaving.value = false
     }
@@ -1228,7 +1235,7 @@ async function handleSwitchModel(model) {
     // the next prompt. Say so rather than implying the switch already took
     // effect (this is the "remember and defer" path).
     if (res?.modelSwitchDeferred) {
-      toast.show(t('chat.modelSwitcher.deferred'), { icon: '⏳', type: 'info' })
+      toast.show(t('chat.modelSwitcher.deferred'), { icon: 'pending', type: 'info' })
     } else {
       dismissSwitchingToast()
     }
@@ -1243,7 +1250,7 @@ async function handleSwitchModel(model) {
     const msg = detail
       ? t('chat.modelSwitcher.switchFailedDetail', { detail })
       : err?.message || t('chat.modelSwitcher.switchFailed')
-    toast.show(msg, { icon: '⚠️', type: 'error' })
+    toast.show(msg, { icon: 'warning', type: 'error' })
     // The server rejected the switch outright and did not keep it, so the
     // optimistic chip would lie. Restore the previous model.
     restoreModelSelection(sid)
@@ -1455,7 +1462,7 @@ function openBtwDrawer(anchorKey) {
 async function handleBtw(question) {
   const sid = identity.currentSessionId.value
   if (!sid) {
-    toast.show(t('chat.btw.failed'), { icon: '⚠️', type: 'error' })
+    toast.show(t('chat.btw.failed'), { icon: 'warning', type: 'error' })
     return
   }
 
@@ -1491,7 +1498,7 @@ async function handleBtw(question) {
     const rec = data?.record
     if (!rec) {
       removePendingBtw(pendingId)
-      toast.show(t('chat.btw.failed'), { icon: '⚠️', type: 'error' })
+      toast.show(t('chat.btw.failed'), { icon: 'warning', type: 'error' })
       return
     }
     // A model failure still returns a record (with `error` set) so the anchor
@@ -1510,7 +1517,7 @@ async function handleBtw(question) {
     removePendingBtw(pendingId)
     appLog.w(TAG, 'btw question failed', err)
     const msg = err?.message || t('chat.btw.failed')
-    toast.show(msg, { icon: '⚠️', type: 'error' })
+    toast.show(msg, { icon: 'warning', type: 'error' })
   }
 }
 
@@ -1554,7 +1561,7 @@ async function sendMessage(text) {
      // A pending upload has no server path yet. Sending it would silently submit
      // an empty attachment and let the request complete against the next draft.
      if (pendingFiles.value.some(file => file.uploading)) {
-       toast.show(t('chat.attach.uploading'), { icon: '⚠️', type: 'info' })
+       toast.show(t('chat.attach.uploading'), { icon: 'warning', type: 'info' })
        return false
      }
 
@@ -1748,7 +1755,7 @@ async function sendMessageNow(text, filePaths, files) {
         // best-effort; if any of them throws, the error would otherwise skip
         // straight to sendMessage's catch (which restores the input text) and
         // the "发送失败" toast would never appear.
-        toast.show(t('toast.sendFailed'), { icon: '⚠️', type: 'error' })
+        toast.show(t('toast.sendFailed'), { icon: 'warning', type: 'error' })
         appLog.e(TAG, 'sendMessageNow failed', err)
         // Remove the optimistically pushed user message on failure — its POST
         // never committed, so the in-flight guard must also be released.
@@ -2068,7 +2075,7 @@ async function handleResetSession() {
         const lastUserMsg = [...messages.value].reverse().find(m => m.role === 'user')
         if (lastUserMsg?.content) await sendMessage(lastUserMsg.content)
     } catch {
-        toast.show(t('chat.contentBlocks.resetSessionFailed'), { icon: '⚠️', type: 'error' })
+        toast.show(t('chat.contentBlocks.resetSessionFailed'), { icon: 'warning', type: 'error' })
     }
 }
 
@@ -2088,12 +2095,12 @@ async function handleResumeSession({ sessionId, sessionTitle }) {
         })
         if (!resp.ok) {
             const data = await resp.json().catch(() => ({}))
-            toast.show(data.error || t('chat.contentBlocks.ragResumeFailed'), { icon: '⚠️', type: 'error' })
+            toast.show(data.error || t('chat.contentBlocks.ragResumeFailed'), { icon: 'warning', type: 'error' })
             return
         }
         await session.switchSession(sessionId)
     } catch {
-        toast.show(t('chat.contentBlocks.ragResumeFailed'), { icon: '⚠️', type: 'error' })
+        toast.show(t('chat.contentBlocks.ragResumeFailed'), { icon: 'warning', type: 'error' })
     }
 }
 
@@ -2123,7 +2130,7 @@ function handleJumpUnread(e) {
   if (e.key !== 'u' && e.key !== 'U') return
   e.preventDefault()
   swipeSession.jumpToNextUnread().then(target => {
-    if (!target) toast.show(t('chat.shortcutJumpUnread.none'), { icon: '📭', type: 'info', duration: 2500 })
+    if (!target) toast.show(t('chat.shortcutJumpUnread.none'), { icon: 'inbox', type: 'info', duration: 2500 })
   })
 }
 

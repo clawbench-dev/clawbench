@@ -295,6 +295,15 @@
 
 **`CopyButton.vue`**（`web/src/components/common/CopyButton.vue`）是全站唯一的复制按钮。**反馈是图标互换**（图标临时变成对勾）**而非文字标签**，也**不弹 toast**——对勾本身就是反馈。文字标签被刻意排除：按钮通常钉在容器边缘或定宽工具栏里，变宽的标签会挤进旁边的内容，而要保持不挤就必须预留最宽的那条翻译（中文「已复制」与日文「コピーしました」宽度差约 2×）；恒定占位则两个问题都没有。两种模式：非受控传 `text`（组件自己复制并闪一下）、受控传 `copied`（宿主掌握剪贴板写入与计时，用于状态已在父组件的场景如代码预览工具栏）。此前全仓有四套互不一致的反馈机制（图标互换 / 文字替换 / 仅 toast / 仅变色），现已统一。
 
+### Toast
+
+**图标是 toast 的内置结构，不是可选装饰**：每个 toast 都渲染一个原生（lucide）图标，**调用方不再传 emoji**。
+
+- **语义键**：`icon` 传 `ToastIconKey`（`useToast.ts` 导出），如 `attach` / `link` / `copy` / `star` / `cut` / `blocked`。键 → 字形表在 `components/common/toastIcons.ts`（**唯一**来源，composable 不 import 图标库）。
+- **类型兜底**：不传键时按 `type` 取默认（`success`→`CircleCheck` / `error`→`CircleX` / `info`→`Info`）。因此「所有提示都有图标」由渲染层保证，不依赖调用点自觉。
+- **`loading` 例外**：渲染旋转环（`LoadingIndicator`）而非静态图标——它是唯一区分「在跑」与「卡住」的通道；环与图标互斥渲染（两个信号同时出现是矛盾）。
+- **悬停暂停**：指针进入 toast 时 `pause()` 挂起自动关闭倒计时，离开时 `resume()` 用剩余时间继续（`duration: 0` 的手动型不受影响）。文案 `user-select: text` 供复制；**结束文本选择的 click 不得同时关闭 toast**（否则复制到一半就没了）。
+
 ### 角标
 
 **`.count-badge`**（`components.css:39`）两档：默认 16px 高 / `--font-size-2xs`，`.count-badge--md` 18px / `--font-size-xs`。高度来自 `line-height` 而非固定 `height`，所以塞进 spinner 等更富内容时会撑开而不是裁掉。
@@ -363,13 +372,13 @@
   - 分叉按钮另有就地 spinner（`ChatMessageItem` 的 `.is-forking`）：`forkingMessageId` 从面板透传到消息项，**按 id 匹配**（消息 id 可能是数字、标记是字符串，须 `String()` 归一化）。该按钮是 `disabled` 的，而共享 `:disabled` 规则会把它压到 `--opacity-disabled`——**spinner 本身就是「点击已生效」的反馈，压暗会抵消它的意义**，所以 scoped 规则显式恢复 `opacity:1`（scoped 的 (0,3,0) 压过共享的 (0,2,0)）。
   - `BusyBar` **刻意不做 `prefers-reduced-motion` opt-out**：扫过本身就是信息（唯一区分「在跑」与「卡死」的通道），冻结会留下一个静止的半截条＝读作「传输卡住了」，正是它要消除的歧义；也与 `TransferProgressBar` 的不确定填充、以及走 WAAPI（从不查该偏好）的 `RefreshButton`/底边彗星一致。守卫 `BusyBar.test.ts` 断言该 media query 不存在**且**动画仍在（只断言前者的话，把动画整个删掉也能过）。
 - **`prefers-reduced-motion` 必须逐处处理**（没有全局规则）。已处理的参考 `CompletionPopover.vue`、`ChatInputBar.vue`；`flashReducedMotion.css.test.ts` 守住闪烁类。
-  - ⚠️ **但「逐处处理」不是绝对的：如果动效承载了信息、不能靠别的东西替代，就不要 opt-out。** 会话行状态槽（`.session-status`）是**刻意的例外**，它**不**响应这个偏好。理由：冻结会**合并状态**——「待审批」（脉动点）与「未读」（静止点）形状尺寸完全相同，只靠脉动与色相区分，冻结后只剩色相，而 36 套主题里有 3 套 `--accent-color` 与 `--color-orange` 相同（色觉障碍读者在**任何**主题上都拿不到色相）。加回那条 media query 之前先读 `SessionList.vue` 里那段注释与 `sessionStatusSlot.css.test.ts` 的守卫。
+  - ⚠️ **但「逐处处理」不是绝对的：如果动效承载了信息、不能靠别的东西替代，就不要 opt-out。** 会话行状态槽（`.session-status`）是**刻意的例外**，它**不**响应这个偏好。理由：待审批的「脉动」是第二通道（第一通道是**形状**——盾牌 vs 圆点），冻结后形状仍能区分状态，但会丢掉「该你处理了」的强调；且 36 套主题里有 3 套 `--accent-color` 与 `--color-orange` 相同（色觉障碍读者在**任何**主题上都拿不到色相）。加回那条 media query 之前先读 `SessionList.vue` 里那段注释与 `sessionStatusSlot.css.test.ts` 的守卫。
   - **第二处刻意的例外：推荐回复采纳时的「飞入输入框」动效**（`ChatInputBar.vue` 的 `.recommendation-chip.accepted` / `recommendation-chip-fly`）。飞行**本身**就是信息（「文字被填进了这个框」），没有别的通道承载它——只剩绿色按钮的话，读作「按钮被点了」，正是这个动效要消除的歧义。曾给它加过 opt-out，后果是**所有在系统里关闭动画的用户完全看不到这个功能**（线上 Windows `reduce=true` 实测：与改动前无差异）。`ChatInputBar.test.ts` 的守卫**已反转**为断言该 opt-out 不存在（同 `sessionStatusSlot.css.test.ts` 的先例）；**不要**在未确认飞行不再承载信息的情况下「修复」回去。
   - 一致性也是原因之一：**其余加载指示器都不受该偏好影响**——`RefreshButton` 与底边彗星都走 **WAAPI**（`Element.animate`），而 WAAPI **从不查这个偏好**。所以只在这里 opt-out 会让它成为全站唯一会停的指示器，用户看到的现象就是「为什么只有这个不动」。
 - **切换会话的骨架屏**：`.skeleton-block` 是**全局**原语（`web/css/components.css`，含 `skeleton-shimmer` keyframes 与圆形变体 `.skeleton-circle`），两个不同作用域的组件共用它——`App.vue` 的聊天标题栏与 `components/chat/ChatSkeleton.vue`（消息区仿真气泡）。**几何由调用方给**（`width`/`height`/`--skeleton-radius`），原语只管填充与微光。触发条件是**共享的 `switching` ref**（`useChatSession.ts` 导出、`resetChatSessionState()` 里复位）：会话切换期间身份被 `clearSessionIdentity` 清空，标题栏以前会闪出「AI 对话」占位（该兜底文案已从 `useAgents.agentHeaderTitle` 与两个 locale 中**彻底删除**，无 agent 时返回 `''`，由 `v-else-if="currentAgentId"` 门控）。骨架屏**响应** `prefers-reduced-motion`（微光不承载信息，冻结成静态灰块即预期），与 `BusyBar` 的「不 opt-out」相反。守卫：`ChatSkeleton.test.ts`、`chatTitleSkeleton.test.ts`。
 - 非 CSS 动效：running 彗星走 WAAPI 指令 `directives/runningSweep.ts`（1500ms，`cubic-bezier(.45,.05,.55,.95)`，与文档时间轴相位锁定）。
 - **会话行底边只有一层效果**：3px 平轨道 + 38% 彗星（`--running-track` / `--running-comet` / `--running-head`）。**不要再叠第二层**——曾经是「14px 带 mask 的光晕 + 80% 扫过光带」两层，看起来像两个效果打架、且光晕把光带糊成环境光。待审批时彗星停止并变成整条琥珀呼吸（`--pending-track` / `--pending-comet`）。**被阻塞的行必须换一个不带指令的元素**：指令用 WAAPI 写 `transform`，优先级高于普通 CSS `transform`，同一元素无法靠样式停下。守卫：`runningSweepTheme.css.test.ts`。
-- **会话行状态槽（`.session-status`）用「动效」而非「颜色」区分状态**：待审批＝单点原地脉动、未读＝单点完全静止。理由是可测量的——36 套主题里有 3 套（ayu-light / gruvbox-light / gruvbox-dark）的 `--accent-color` 与 `--color-orange` **完全相同**，色相本就无法承载区分；且色觉障碍读者拿不到色相信息。两个状态都是 14px 槽内的 8px `radial-gradient` 填充（`--status-dot` / `--status-dot-pending`），**不得用 `border`**——那正是已移除的环的画法。**运行中在槽里什么都不显示**：底边彗星已经在表达「正在推进」，右侧再放一个环是同一事实说两遍（这也是槽原先唯一需要 `border` 的原因）；且槽是 `v-if` 的，无状态即不渲染元素，不占宽度（「没有东西展示时该空间不要占地方」）。因此**没有 `--running-ring` / `--running-ring-track` 这两个 token，也不得有 `.session-status.is-running` 规则或 `session-status-spin` keyframes**（守卫显式断言它们不存在）。优先级 pending > unread（`rowStatus()`）；运行中 + 有未读的行会显示未读点，因为彗星与点走两条通道。被阻塞时底部彗星停止并变为整条琥珀呼吸，且**必须换一个不带指令的元素**（`v-if`/`v-else` 两个 `<i>`）——指令用 WAAPI 写 `transform`，`transform:none` 压不过它。**槽必须与标题保持间距**：`.session-status` 自带 `margin-left: var(--space-4)`，同时 `.session-item` / `.cross-session-item` 的右内边距收到 `var(--space-4)`（其余三边仍是 `var(--space-6)`）——原先 12px 右内边距 + 无 margin 会让槽的左边缘**正好落在标题省略号边界上**（线上实测 0px），而槽与 ⋮ 之间却空着 ~10px；现在两侧各约 11px。守卫：`sessionStatusSlot.css.test.ts`。
+- **会话行状态槽（`.session-status`）用「形状」为主、「动效/颜色」为辅区分状态**：待审批＝**盾牌图标**（lucide `ShieldAlert`，原地脉动）、未读＝单点完全静止的圆点。**审批/权限相关的图标统一为盾牌**（同一盾牌还用在通知中心待审批事件芯片、聊天底栏模式芯片与群聊自动批准芯片、模式切换弹窗的 Mode 页签、权限结果芯片的 `ShieldCheck`/`ShieldX`、`PermissionApproval` 工具图标）。形状领先于色相的理由是可测量的——36 套主题里有 3 套（ayu-light / gruvbox-light / gruvbox-dark）的 `--accent-color` 与 `--color-orange` **完全相同**，色相本就无法承载区分；且色觉障碍读者拿不到色相信息。待审批盾牌用 `color: var(--status-dot-pending)` 着色（`currentColor` 描边）；未读仍是 14px 槽内的 8px `radial-gradient` 填充（`--status-dot`）；两者**都不得用 `border`**——那正是已移除的环的画法。**运行中在槽里什么都不显示**：底边彗星已经在表达「正在推进」，右侧再放一个环是同一事实说两遍（这也是槽原先唯一需要 `border` 的原因）；且槽是 `v-if` 的，无状态即不渲染元素，不占宽度（「没有东西展示时该空间不要占地方」）。因此**没有 `--running-ring` / `--running-ring-track` 这两个 token，也不得有 `.session-status.is-running` 规则或 `session-status-spin` keyframes**（守卫显式断言它们不存在）。优先级 pending > unread（`rowStatus()`）；运行中 + 有未读的行会显示未读点，因为彗星与点走两条通道。被阻塞时底部彗星停止并变为整条琥珀呼吸，且**必须换一个不带指令的元素**（`v-if`/`v-else` 两个 `<i>`）——指令用 WAAPI 写 `transform`，`transform:none` 压不过它。**槽必须与标题保持间距**：`.session-status` 自带 `margin-left: var(--space-4)`，同时 `.session-item` / `.cross-session-item` 的右内边距收到 `var(--space-4)`（其余三边仍是 `var(--space-6)`）——原先 12px 右内边距 + 无 margin 会让槽的左边缘**正好落在标题省略号边界上**（线上实测 0px），而槽与 ⋮ 之间却空着 ~10px；现在两侧各约 11px。守卫：`sessionStatusSlot.css.test.ts`。
 
 ---
 
@@ -440,23 +449,27 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 
 ### 红线 7：`scrollbar-color` / `scrollbar-width` 会让 Chromium 弃用 `::-webkit-scrollbar-*`
 
-只要给某个元素（或 `*`）设了**标准属性** `scrollbar-color` 或 `scrollbar-width`，Chromium 121+ 就**整体忽略**该元素的全部 `::-webkit-scrollbar-*` 规则——包括 `::-webkit-scrollbar-button { display: none }`。表现：自定义的 4px 细滚动条**退回 15px 原生条**，并且**上下箭头按钮复活**（实测 headed Chrome：17px 带箭头 vs 6px 无箭头）。
+只要给某个元素（或 `*`）设了**标准属性** `scrollbar-color` 或 `scrollbar-width`，Chromium 121+ 就**整体忽略**该元素的全部 `::-webkit-scrollbar-*` 规则——包括 `::-webkit-scrollbar-button { display: none }`。表现：自定义的细滚动条**退回 15px 原生条**，并且**上下箭头按钮复活**（实测 headed Chrome：17px 带箭头 vs 6px 无箭头）。
 
-`base.css` 原先把 `* { scrollbar-color: … }` 写成了无门控的全局规则，于是紧跟其上的 webkit 细条与 `-button` 规则全部失效——**箭头就是这么冒出来的**。
+原先把 `* { scrollbar-color: … }` 写成了无门控的全局规则，于是紧跟其上的 webkit 细条与 `-button` 规则全部失效——**箭头就是这么冒出来的**。
 
 正解是把标准属性**只留给没有 webkit 伪元素的引擎**（Firefox）：
 
 ```css
 @supports not selector(::-webkit-scrollbar) {
-    * { scrollbar-color: var(--scrollbar-thumb) transparent; }
+    * { scrollbar-color: var(--scrollbar-thumb, #c1c1c1) var(--scrollbar-track, transparent); }
 }
 ```
 
-`::-webkit-scrollbar-*` 规则本身保持无门控（Chromium 会走它）。**三处同源**：`web/css/base.css`、`src/utils/swaggerHtml.ts`（Swagger 预览 srcdoc）、`src/utils/exportMarkdownHtml.ts`（导出 HTML）——改一处必须三处同改，`__tests__/scrollbarNoArrowButtons.test.ts` 同时钉住。
+**唯一定义在 `web/css/scrollbar.css`**。四个消费方各自内联它——`web/css/base.css` 用 `@import`（同时覆盖 share SPA），`src/utils/swaggerHtml.ts`（Swagger 预览 srcdoc）、`src/utils/exportMarkdownHtml.ts`（导出 HTML）用 `?raw` 内联，`src/utils/htmlPreview.ts`（HTML 文件预览）用 `?raw` 注入预览文档。**为什么用文件而不是 `--scrollbar-size` token**：后三者是独立文档（iframe srcdoc / `file://` 导出 / 用户 HTML），看不到 app 的 `:root`，token 在那里是 undefined ⇒ 宽度声明整条消失 ⇒ 静默退回原生条。只有内联同一份文件才算真正收敛。每个文档自己的配色走 `--scrollbar-thumb` / `--scrollbar-track` 两个变量（**必须带 fallback**，否则在独立文档里同样失效）。
 
-**粗细全端统一为 4px**（三处同源都是字面量 `4px`，没有 token）。曾短暂按输入设备/宽屏分档（鼠标面 12px）以便更好点、也避开分割条抓取带，但**已按用户要求回退**——统一一个尺寸，跨设备观感一致；分割条那边的冲突在分割条侧解决（见 `SplitDivider.vue`）。守卫会拒绝任何重新引入的分档：出现 `--scrollbar-size` 或第二个 `12px` 宽度即失败。
+**两档宽度，按输入设备而非宿主/视口**：`(pointer: coarse)`（触屏/笔）**4px**（移动端原样），其余（鼠标/触控板）**8px**。选 `(pointer: coarse)` 是因为它是唯一能随样式表走的判据——iframe 与导出文档既无宿主信息也无可靠视口宽度，而媒体特性由浏览器在各文档内各自求值；它也是分割条触屏感应区用的同一条轴。守卫 `__tests__/scrollbarNoArrowButtons.test.ts` 拒绝任何重新引入的分档：任何一份文档重写 `::-webkit-scrollbar { width }`、出现 `--scrollbar-size`、变量缺 fallback、或少了 coarse 覆盖都会失败。
 
-> Firefox 只有 `auto | thin | none`，没有 px 控制，所以统一用 `scrollbar-width: thin` 近似 4px（放在已有的 webkit 门控里）。
+**HTML 文件预览套用同一套逻辑**：预览文档按 URL 加载（独立文档，链接不到 app 样式表），`load` 时由 `installPreviewScrollbar` 注入共享样式表。**插在 `<head>` 最前**（不是 append），因此预览文件自己写的滚动条规则（内联 / `<style>` / 外链）在源码顺序上更靠后、**优先级更高**——契约是「仅在预览文件未自定义滚动条时生效」，预览不该覆盖被预览文档自己的样式。注入是幂等的（按 `data-clawbench-scrollbar` 标记查重），两个预览面（全屏 FileViewer 与代码链接预览 `HtmlPreviewBody`）都接了 `@load`。
+
+**分割条侧的冲突解法**：拖拽分隔条的高亮**只能是那条细线本身**——host 从 1px 长到 2px（`margin: ±0.5px` 保持外footprint不变），共享的 `.resize-divider__line` 填满它并染成 `--accent-color`。**不得再画半透明/不透明色带**：色带以分隔条为轴跨到两侧窗格上，而窗格紧贴分隔条处就有滚动条，色带会把它盖住。可点击感应区（`::before`）在鼠标面为分隔条两侧各 4px（共 9px），触屏面（`pointer: coarse`）仍是各 12px。守卫 `resizeDivider.css.test.ts` 断言共享文件里**没有** `color-mix`、没有 `calc((100% - 2px) / 2)` 居中偏移，且两个消费组件的触发态规则块**不得**声明 `background`。
+
+> Firefox 只有 `auto | thin | none`，没有 px 控制，所以统一用 `scrollbar-width: thin` 近似（放在已有的 webkit 门控里）。
 
 > 验证必须在 **headed** 浏览器里看（headless 用 overlay 滚动条，量不出宽度也画不出箭头）。
 
@@ -553,7 +566,7 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 | `components/__tests__/wideDockIconSize.css.test.ts` | 宽屏 dock 图标尺寸 |
 | `assets/__tests__/themePicker.css.test.ts` | 主题选择器中性底 + 色点载体 |
 | `assets/__tests__/annotationButtons.css.test.ts` | 标注按钮全局作用域 |
-| `__tests__/scrollbarNoArrowButtons.test.ts` | `scrollbar-color` 必须关在 `@supports not selector(::-webkit-scrollbar)` 里（否则 Chromium 弃用 `::-webkit-scrollbar-*`，箭头按钮复活） |
+| `__tests__/scrollbarNoArrowButtons.test.ts` | 滚动条唯一定义在 `css/scrollbar.css`（四文档内联：应用/OpenAPI/导出/HTML 预览）、两档宽度按 `(pointer: coarse)`（移动 4px / 桌面 8px）、`scrollbar-color` 必须关在 `@supports not selector(::-webkit-scrollbar)` 里（否则 Chromium 弃用 `::-webkit-scrollbar-*`，箭头按钮复活）、任何文档不得重写宽度、变量必须带 fallback、HTML 预览注入须插在 head 最前且幂等 |
 | `__tests__/platformAxes.test.ts` | 三条平台轴保持正交：`isPC` 不得回归、共享宿主谓词不得各组件重声明、iPadOS 陷阱（Macintosh UA + `maxTouchPoints>0`）不得重开 |
 
 **写新守卫时注意两个坑**（都实际栽过）：

@@ -257,7 +257,7 @@ describe('settingsFieldMap', () => {
     const expectedCategories = [
       'appearance', 'agents', 'project', 'files', 'chat', 'debug', 'security', 'about',
       'notification',
-      'terminal', 'tts', 'tts_engine', 'aiSummary', 'rag', 'portForward', 'frp',
+      'terminal', 'tts', 'tts_engine', 'aiSummary', 'rag', 'portForward',
     ]
     for (const cat of expectedCategories) {
       expect(categoryItems[cat]).toBeDefined()
@@ -299,7 +299,7 @@ describe('settingsFieldMap', () => {
     expect(categoryHasPanels('aiSummary')).toBe(true)
     expect(categoryHasPanels('rag')).toBe(true)
     expect(categoryHasPanels('portForward')).toBe(true)
-    expect(categoryHasPanels('frp')).toBe(true)
+
     expect(categoryHasPanels('notification')).toBe(true)
     expect(categoryHasPanels('appearance')).toBe(false)
     expect(categoryHasPanels('chat')).toBe(false)
@@ -312,7 +312,7 @@ describe('settingsFieldMap', () => {
     expect(isPanelOnlyCategory('aiSummary')).toBe(true)
     expect(isPanelOnlyCategory('rag')).toBe(true)
     expect(isPanelOnlyCategory('portForward')).toBe(true)
-    expect(isPanelOnlyCategory('frp')).toBe(true)
+
     // notification has both an item (notificationSound) and a panel (push)
     expect(isPanelOnlyCategory('notification')).toBe(false)
     expect(isPanelOnlyCategory('appearance')).toBe(false)
@@ -568,28 +568,6 @@ describe('settingsFieldMap', () => {
     expect(transform!(20001)).toBe(20001)
   })
 
-  // ── FRP panel ──
-
-  it('frp panel has enableKey, optionSubFields, optionSubFieldsKey, and requiredFields', () => {
-    const panels = getCategoryPanels('frp')
-    expect(panels.length).toBe(1)
-    const cfg = panels[0]
-    expect(cfg.enableKey).toBe('frp.enabled')
-    expect(cfg.enableLabelKey).toBe('settings.items.frpEnabled')
-    expect(cfg.commonFields.length).toBe(4)
-
-    const autoPortFalseSub = cfg.optionSubFields!.find(osf => osf.when === false)
-    expect(autoPortFalseSub).toBeDefined()
-    expect(autoPortFalseSub!.fields.length).toBe(2)
-    expect(autoPortFalseSub!.fields[0].key).toBe('frp.remote_port')
-    expect(autoPortFalseSub!.fields[1].key).toBe('frp.ssh_remote_port')
-
-    expect(cfg.requiredFields).toEqual(['frp.server_addr'])
-    expect(cfg.optionSubFieldsKey).toBe('frp.auto_port')
-    expect(cfg.hasConnectivityTest).toBe(true)
-    expect(cfg.afterSave).toBeDefined()
-    expect(cfg.onInit).toBeDefined()
-  })
 
   // ── Panel server fields in field map ──
 
@@ -599,9 +577,9 @@ describe('settingsFieldMap', () => {
     expect(map['tts.engine']).toBe('settings.items.ttsEngine')
     expect(map['rag.base_url']).toBe('settings.items.ragBaseUrl')
     expect(map['port_forward.port']).toBe('settings.items.portForwardPort')
-    expect(map['frp.enabled']).toBe('settings.items.frpEnabled')
-    expect(map['frp.server_addr']).toBe('settings.items.frpServerAddr')
-    expect(map['frp.remote_port']).toBe('settings.items.frpRemotePort')
+
+
+
   })
 
   // ── Notification (push) panel ──

@@ -60,7 +60,7 @@ tags:
     description: 应用自升级
   - name: Proxy
     description: 端口转发与 CORS 代理
-  - name: SSH/FRP
+  - name: SSH
     description: 隧道状态
   - name: Fonts
     description: 自定义字体
@@ -406,10 +406,6 @@ paths:
         含义为「轮到用户发言前，智能体之间最多发言多少次」；主持人模式与自由模式
         语义一致，只计**成员**发言（主持人的路由/汇总回合不计）。达到上限即停止
         AI 讨论并写一条系统消息。`PATCH` 时须为正整数。
-
-        `frp.available` 表示**本构建是否包含 FRP 功能**（与 `frp.enabled` 这一运行时
-        配置无关）：用 `nofrp` tag 编译的二进制不含 frp 客户端，恒为 `false`。
-        前端据此隐藏 FRP 设置面板。
       operationId: getConfig
       responses:
         "200":
@@ -951,6 +947,12 @@ paths:
             插话（mid-turn steering）并入上一回复的，且该后端**不切分**回复
             （claude/codex）——前端据此在气泡上标注「回复已并入上一轮」。切分型后端
             （CodeBuddy）不置此位。
+
+            `cruise`：该会话的自动巡航开关（`chat_sessions.context_state` 的 `cruise`
+            键，默认 `false`）。单聊开启后，一轮回复结束不停手，改为注入「完成确认」
+            回合，直到 AI 输出 `<clawbench-goal-satisfied/>` 或撞
+            `chat.group_max_speeches` 上限才结束；群聊开启后四类「交回用户」点改为
+            确认回合。前端据此刻画会话信息栏的「巡航」开关。
     post:
       tags: [Chat]
       summary: 发送聊天消息
@@ -1473,6 +1475,15 @@ paths:
                   description: |
                     开关自动批准（hands-off）。对群会话，会同时写入群行与**每个成员行**
                     （成员的 ACP 连接按成员行 id 读取该标志，只写群行等于没生效）。
+                cruise:
+                  type: boolean
+                  description: |
+                    开关自动巡航（auto-cruise）。存 `chat_sessions.context_state` 的 `cruise` 键。
+                    单聊：一轮回复结束后不停手，改为注入「完成确认」回合，直到 AI 输出
+                    `<clawbench-goal-satisfied/>`（或撞 `chat.group_max_speeches` 上限）才结束。
+                    群聊：四类「交回用户」点改为确认回合（详见群聊设计 §15）。默认关。
+                    **单向硬默认**：`cruise: true` 会强制把 `autoApprove` 打开（巡航无人值守，
+                    权限确认无人应答会卡住整轮）；`cruise: false` 不动 `autoApprove`。
                 title:
                   type: string
                 pinned:
@@ -2063,6 +2074,125 @@ paths:
                         suppress_notification:
                           type: boolean
                           description: 会话/任务已读时为 true；事件仍须推进游标但不弹通知
+
+  # ── Notifications ─────────────────────────────────────────────────────────
+  /api/notifications:
+    get:
+      tags: [Notifications]
+      summary: 列出通知中心的日志
+      description: |
+        通知中心是一张**只追加的事件日志**：记录会话（completed/cancelled/
+        permission_pending）、任务（running/completed/failed/cancelled）与仓库
+        （forge 六种）事件。**没有已读/未读概念**，也没有角标——它回答「发生过
+        什么」，不回答「有什么待处理」（后者由 chat/tasks/forge 三个既有角标负责）。
+
+        筛选参数均可选，缺省即不过滤——**默认范围是全局（所有项目）**，`project`
+        是收窄项而非隐含默认。`project` 传**项目路径**（与其它项目作用域端点一致）；
+        未知项目返回空列表而非错误。每行带 `sourceMissing`：其指向的会话/任务已不
+        存在时为 true（forge 行永不标记，因为条目在上游、本地无删除语义）。
+
+        分页用 keyset：把上一页最后一行的 `created_at`/`id` 回传为
+        `before_at`/`before_id`。不要用 offset——日志持续追加，offset 会在翻页时
+        重复或漏行。
+      operationId: notificationsList
+      parameters:
+        - name: project
+          in: query
+          description: 项目路径；缺省为全部项目
+          schema:
+            type: string
+        - name: kind
+          in: query
+          description: 事件类别
+          schema:
+            type: string
+            enum: [session, task, forge]
+        - name: range
+          in: query
+          description: 时间范围；未知或为空表示不限
+          schema:
+            type: string
+            enum: [today, 7d, 30d]
+        - name: before_at
+          in: query
+          description: 分页游标——上一页最后一行的 created_at
+          schema:
+            type: string
+        - name: before_id
+          in: query
+          description: 分页游标——上一页最后一行的 id
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          description: 每页条数（默认 50，上限 200）
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 通知列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: integer
+                        kind:
+                          type: string
+                          enum: [session, task, forge]
+                        eventType:
+                          type: string
+                        title:
+                          type: string
+                        body:
+                          type: string
+                        projectId:
+                          type: integer
+                        projectPath:
+                          type: string
+                        sessionId:
+                          type: string
+                        taskId:
+                          type: string
+                        executionId:
+                          type: string
+                        forgeItemKey:
+                          type: string
+                        agentId:
+                          type: string
+                        createdAt:
+                          type: string
+                        sourceMissing:
+                          type: boolean
+                          description: 源（会话/任务）已删除时为 true；点击不应跳转
+                  total:
+                    type: integer
+                    description: 当前筛选下的总条数（忽略分页）
+                  hasMore:
+                    type: boolean
+    delete:
+      tags: [Notifications]
+      summary: 清空通知日志
+      description: |
+        删除**整张日志**（不是筛选子集）：面板的「清空」是一次破坏性重置，按筛选
+        清空会让用户无法判断还剩下什么。返回删除的行数。
+      operationId: notificationsClear
+      responses:
+        "200":
+          description: 已清空
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: integer
 
   # ── Git ───────────────────────────────────────────────────────────────────
   /api/git/branch:
@@ -4960,10 +5090,10 @@ paths:
         "200":
           description: 上游响应
 
-  # ── SSH/FRP ───────────────────────────────────────────────────────────────
+  # ── SSH ───────────────────────────────────────────────────────────────
   /api/ssh/info:
     get:
-      tags: [SSH/FRP]
+      tags: [SSH]
       summary: SSH 隧道最小信息（端口发现）
       description: |
         免鉴权：Android 原生在无 WebView Cookie 时需先发现 SSH 端口，否则回退到
@@ -4979,7 +5109,7 @@ paths:
 
   /api/ssh/info/full:
     get:
-      tags: [SSH/FRP]
+      tags: [SSH]
       summary: SSH 隧道完整信息
       description: |
         需鉴权。供 Web UI 展示隧道命令、指纹与连接统计。
@@ -4991,7 +5121,7 @@ paths:
 
   /api/tunnel/stream:
     post:
-      tags: [SSH/FRP]
+      tags: [SSH]
       summary: HTTP/2 流隧道数据面（-L 转发 / -R 认领）
       description: |
         需鉴权。HTTP/2 流隧道的**数据面**：**一条 HTTP/2 流承载一条被转发的 TCP 连接**，
@@ -5060,7 +5190,7 @@ paths:
 
   /api/tunnel/control:
     post:
-      tags: [SSH/FRP]
+      tags: [SSH]
       summary: HTTP/2 流隧道 -R 控制面
       description: |
         需鉴权。`-R`（反向）转发的**控制面**：一条**长寿命**的 duplex 流，
@@ -5121,73 +5251,6 @@ paths:
         "503":
           description: 未启用端口转发（`ProxyService == nil`），无白名单可执行。
 
-  /api/frp/info:
-    get:
-      tags: [SSH/FRP]
-      summary: FRP 完整状态
-      description: |
-        需鉴权（会暴露公网 IP）。
-
-        `available` 表示**本构建是否包含 FRP 功能**，与配置无关：用 `nofrp`
-        tag 编译的二进制不含 frp 客户端，恒为 `false`。前端据此隐藏 FRP 设置面板，
-        避免向用户展示一个永远无法生效的开关。
-      operationId: frpInfo
-      responses:
-        "200":
-          description: FRP 状态
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  enabled:
-                    type: boolean
-                  running:
-                    type: boolean
-                  state:
-                    type: string
-                    enum: [disabled, starting, running, failed, stopped]
-                  available:
-                    type: boolean
-                    description: 本构建是否包含 FRP 功能（`nofrp` 构建恒为 false）
-                  server_addr:
-                    type: string
-                  remote_port:
-                    type: integer
-                  ssh_remote_port:
-                    type: integer
-                  remote_url:
-                    type: string
-                  message:
-                    type: string
-
-  /api/frp/status:
-    get:
-      tags: [SSH/FRP]
-      summary: FRP 最小状态
-      description: 免鉴权，仅返回 enabled + running + state + available（不含地址与端口）。
-      operationId: frpStatus
-      security: []
-      responses:
-        "200":
-          description: 最小状态
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  enabled:
-                    type: boolean
-                  running:
-                    type: boolean
-                  state:
-                    type: string
-                    enum: [disabled, starting, running, failed, stopped]
-                  available:
-                    type: boolean
-                    description: 本构建是否包含 FRP 功能（`nofrp` 构建恒为 false）
-
-  # ── Fonts ─────────────────────────────────────────────────────────────────
   /api/fonts/list:
     get:
       tags: [Fonts]
@@ -5612,9 +5675,12 @@ paths:
         作用（用户不参与路由）。
         `cruise` 是自动巡航开关：开启后，循环本应交回用户时（主持人发结束标签 /
         自由模式接力枯竭 / @User / 提问）不再交回，改为触发一次「确认回合」，
-        直到参与者（主持人模式由主持人一人、自由模式由过半数活跃成员）输出
+        直到参与者（主持人模式由主持人一人、自由模式由至少半数活跃成员）输出
         `<clawbench-goal-satisfied/>` 才真正结束；`chat.group_max_speeches`
         仍作为安全上限。两者均可省略，至少提供一个；只写提供的字段。
+        **单向硬默认**：`cruise: true` 会强制把群组的 `autoApprove` 打开
+        （fan-out 到所有成员行 + 活连接；巡航无人值守，权限确认无人应答会卡住整轮）；
+        `cruise: false` 不动 `autoApprove`。
         成员发言次数上限是**全局配置**（`chat.group_max_speeches`，经
         `PATCH /api/config` 修改），不是每群设置，故不在此端点。
       operationId: groupSettingsUpdate
@@ -5647,7 +5713,7 @@ components:
       description: |
         本机 AI 子进程使用的短时令牌，由内置斜杠命令（`/cb-task` 等）在注入提示词时签发，
         有效期 30 分钟，以 `CookieToken` 做 HMAC 签名。仅接受来自回环地址的请求：
-        地址与签名须同时成立。地址单独不再放行——FRP 隧道的 frpc 亦从 `127.0.0.1` 回拨。
+        地址与签名须同时成立。地址单独不再放行。
 
   parameters:
     Id:

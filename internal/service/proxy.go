@@ -862,6 +862,43 @@ func (r *ProxyRegistry) checkAllPorts() {
 	}
 }
 
+// portDialFunc attempts a TCP connection to addr within timeout, reporting
+// whether it succeeded. Injected so tests do not touch the network.
+//
+// This exists because checkPortActive is called SYNCHRONOUSLY from RegisterPort
+// and UpdatePort, and the proxy tests register non-localhost targets
+// (192.168.1.100) to exercise host persistence. Every such call paid the full
+// 5s non-localhost budget against an unreachable address — 17 tests × 5s ≈ 95s
+// on Linux, and on Windows the OS connect can outlast even the 5s cap, pushing
+// the whole package past Go's 600s test timeout (observed on main). Substituting
+// a fake dialer keeps the tests hermetic and fast without changing what they
+// assert (host/port persistence), since none of them care whether the probe
+// actually connected.
+type portDialFunc func(addr string, timeout time.Duration) bool
+
+// dialPort is the production implementation of portDialFunc.
+func dialPort(addr string, timeout time.Duration) bool {
+	conn, err := net.DialTimeout("tcp", addr, timeout)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
+
+// portDial is the active dialer. A package var (not a field) because
+// checkPortActive is a free function called from several methods.
+var portDial portDialFunc = dialPort
+
+// SetPortDialForTest swaps the port probe's dialer and returns a restore func.
+// Tests that register non-localhost targets must use this, or they dial a
+// real (usually unreachable) address and stall the package.
+func SetPortDialForTest(fn portDialFunc) func() {
+	prev := portDial
+	portDial = fn
+	return func() { portDial = prev }
+}
+
 // checkPortActive attempts a TCP connection to determine if a port is listening.
 // Uses a longer timeout for non-localhost targets (LAN/remote hosts may have higher latency).
 func checkPortActive(port int, host string) bool {
@@ -874,12 +911,7 @@ func checkPortActive(port int, host string) bool {
 		timeout = 5 * time.Second
 	}
 	addr := net.JoinHostPort(targetHost, strconv.Itoa(port))
-	conn, err := net.DialTimeout("tcp", addr, timeout)
-	if err != nil {
-		return false
-	}
-	_ = conn.Close()
-	return true
+	return portDial(addr, timeout)
 }
 
 // parseProcNetTCP reads /proc/net/tcp on Linux to find LISTEN sockets

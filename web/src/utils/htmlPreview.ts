@@ -22,6 +22,10 @@
 
 import { isAbsolutePath } from '@/utils/path'
 import { buildLocalFileUrl } from '@/utils/download'
+// The app's own bar (css/scrollbar.css), injected into the preview document so
+// its scrollbars follow the same logic as the app. `?raw` because the preview is
+// a separate document that cannot link the app's stylesheets.
+import scrollbarCss from '../../css/scrollbar.css?raw'
 
 /**
  * Build the iframe URL for an HTML preview.
@@ -44,4 +48,52 @@ export function buildHtmlPreviewSrc(path: string, timestamp: number): string {
   if (isAbsolutePath(path)) return ''
   const base = buildLocalFileUrl(path)
   return base + (base.includes('?') ? '&' : '?') + `t=${timestamp}`
+}
+
+/** Marks the style element we inject, so a reload does not stack copies. */
+const SCROLLBAR_STYLE_ATTR = 'data-clawbench-scrollbar'
+
+/**
+ * Give the previewed document the app's scrollbar bar.
+ *
+ * The preview is a separate document loaded by URL (see buildHtmlPreviewSrc)
+ * and cannot link the app's stylesheets, so without this its scrollbars are the
+ * browser's native ones — a different bar from the app's, and carrying the ▲/▼
+ * arrow buttons the app hides. Called from the iframe's `load` handler; the
+ * frame is same-origin (the sandbox deliberately keeps `allow-same-origin`, see
+ * the file header), so its document is reachable.
+ *
+ * The sheet is inserted as the FIRST child of <head>, so any scrollbar rule the
+ * previewed document defines itself — inline, in a <style>, or in a linked
+ * stylesheet — comes later in source order and wins. That is the deliberate
+ * contract: the app's bar applies only where the document has not expressed its
+ * own preference. Appending instead would override the document's styling,
+ * which is not what a preview should do.
+ *
+ * Colours come from the sheet's fallbacks (a neutral grey thumb, transparent
+ * track): the previewed document's own theme is unknown, so the app's themed
+ * colours would be arbitrary there. The width split (4px on a coarse pointer,
+ * 8px otherwise) still follows the app, since the media feature is evaluated in
+ * this document.
+ *
+ * Returns true when the sheet is present afterwards (installed now or already
+ * there), false when the document was unreachable.
+ */
+export function installPreviewScrollbar(iframe: HTMLIFrameElement | null): boolean {
+  if (!iframe) return false
+  let doc: Document | null
+  try {
+    doc = iframe.contentDocument
+  } catch {
+    // Cross-origin (sandbox lost allow-same-origin) — nothing we can do.
+    return false
+  }
+  if (!doc || !doc.head) return false
+  if (doc.head.querySelector(`style[${SCROLLBAR_STYLE_ATTR}]`)) return true
+
+  const style = doc.createElement('style')
+  style.setAttribute(SCROLLBAR_STYLE_ATTR, '')
+  style.textContent = scrollbarCss
+  doc.head.insertBefore(style, doc.head.firstChild)
+  return true
 }

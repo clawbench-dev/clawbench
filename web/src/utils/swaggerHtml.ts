@@ -14,6 +14,10 @@
 
 import swaggerUiBundle from 'swagger-ui-dist/swagger-ui-bundle.js?raw'
 import swaggerUiCss from 'swagger-ui-dist/swagger-ui.css?raw'
+// The bar's single definition (css/scrollbar.css). Inlined rather than linked:
+// this document is an iframe srcdoc and never sees the app's stylesheets. Its
+// per-document colours come through the two CSS variables set below.
+import scrollbarCss from '../../css/scrollbar.css?raw'
 
 /** Construct the full srcdoc HTML for Swagger UI */
 export function buildSwaggerSrcdoc(specJson: string, isDark: boolean = false, scrollbarThumb: string = '#c1c1c1', scrollbarTrack: string = 'transparent'): string {
@@ -34,18 +38,11 @@ export function buildSwaggerSrcdoc(specJson: string, isDark: boolean = false, sc
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif; }
   #swagger-ui { height: 100%; overflow: auto; }
   .swagger-loading { display: flex; align-items: center; justify-content: center; height: 100vh; color: #666; }
-  ::-webkit-scrollbar { width: 4px; height: 4px; }
-  ::-webkit-scrollbar-track { background: ${scrollbarTrack}; }
-  ::-webkit-scrollbar-thumb { background: ${scrollbarThumb}; border-radius: 4px; }
-  ::-webkit-scrollbar-thumb:hover { background: #999; }
-  ::-webkit-scrollbar-button { display: none; }
-  ::-webkit-scrollbar-corner { background: transparent; }
-  /* Firefox only — Chromium 121+ drops every ::-webkit-scrollbar rule above
-     (arrows included) as soon as scrollbar-color is set. Firefox has no px
-     control, so thin approximates the 4px bar. */
-  @supports not selector(::-webkit-scrollbar) {
-    * { scrollbar-color: ${scrollbarThumb} ${scrollbarTrack}; scrollbar-width: thin; }
-  }
+  /* Scrollbar: the shared definition, with this document's palette fed in
+     through the variables it reads (see css/scrollbar.css). Swagger UI's own
+     CSS does not define these names, so there is no collision. */
+  :root { --scrollbar-thumb: ${scrollbarThumb}; --scrollbar-track: ${scrollbarTrack}; }
+  ${scrollbarCss}
   /* Hide the top bar (Swagger UI logo + URL input) — we provide the spec inline */
   .swagger-ui .topbar { display: none; }
   /* Tighten page margins so content uses more of the preview area */

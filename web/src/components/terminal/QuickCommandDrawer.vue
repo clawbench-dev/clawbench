@@ -155,10 +155,10 @@ const importer = createJsonImporter({
       : reason === 'kindMismatch'
         ? 'terminal.importKindMismatch'
         : 'terminal.importInvalidFile'
-    toast.show(t(key), { icon: '⚠️', type: 'error' })
+    toast.show(t(key), { icon: 'warning', type: 'error' })
   },
   onSummary: ({ imported, skipped }) => {
-    toast.show(t('terminal.importSuccess', { imported, skipped }), { icon: '✅', type: 'success' })
+    toast.show(t('terminal.importSuccess', { imported, skipped }), { icon: 'success', type: 'success' })
   },
 })
 
@@ -176,7 +176,7 @@ async function doDelete(id: number) {
   deleteConfirmId.value = null
   const ok = await deleteCommand(id)
   if (ok) {
-    toast.show(t('terminal.commandDeleted'), { icon: '✅', type: 'success' })
+    toast.show(t('terminal.commandDeleted'), { icon: 'success', type: 'success' })
   }
 }
 
@@ -184,7 +184,7 @@ async function onDragEnd() {
   const ids = localCommands.value.map(c => c.id)
   const ok = await reorderCommands(ids)
   if (!ok) {
-    toast.show(t('terminal.reorderFailed'), { icon: '❌', type: 'error' })
+    toast.show(t('terminal.reorderFailed'), { icon: 'error', type: 'error' })
     localCommands.value = [...commands.value] // Reset from source of truth
   }
 }

@@ -79,6 +79,7 @@ const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, 
     currentModeName: '',
     currentTransport: '',
     autoApprove: false,
+    cruise: false,
   }
   const mockToastFn = vi.fn()
   const mockIdentityFns = {
@@ -121,7 +122,7 @@ const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, 
     }
   })
   function resetAdditionalMocks() {
-    Object.keys(mockIdentity).forEach(k => { mockIdentity[k] = k === 'autoApprove' ? false : '' })
+    Object.keys(mockIdentity).forEach(k => { mockIdentity[k] = (k === 'autoApprove' || k === 'cruise') ? false : '' })
     mockToastFn.mockReset()
     mockIdentityFns.loadModelPref.mockReset()
     mockIdentityFns.loadThinkingPref.mockReset()
@@ -205,6 +206,10 @@ vi.mock('@/composables/useSessionIdentity.ts', () => ({
     autoApprove: {
       get value() { return mockIdentity.autoApprove },
       set value(v) { mockIdentity.autoApprove = v },
+    },
+    cruise: {
+      get value() { return mockIdentity.cruise },
+      set value(v) { mockIdentity.cruise = v },
     },
     availableCommands: { value: [] },
     availableModes: { value: [] },
@@ -3717,7 +3722,7 @@ describe('createSession', () => {
     expect(messages.value).toEqual([])
     expect(mockToastFn).toHaveBeenCalledWith(
       expect.any(String),
-      expect.objectContaining({ type: 'success', icon: '✨' })
+      expect.objectContaining({ type: 'success', icon: 'create' })
     )
   })
 
@@ -3780,6 +3785,124 @@ describe('createSession', () => {
     await session.createSession('agent2')
 
     // loadHistory synced autoApprove=true from the server response.
+    expect(mockIdentity.autoApprove).toBe(true)
+  })
+
+  it('restores the persisted cruise switch on loadHistory (switch away and back)', async () => {
+    // Regression: clearSessionIdentity() resets cruise to false on every switch,
+    // and loadHistory never read it back, so the chip reverted to "off" after
+    // switching away and back (the value only survived a full page reload).
+    // loadHistory must mirror the autoApprove read-back above.
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 'g1',
+        sessionTitle: 'Group',
+        // A non-empty message list so the change-detection snapshot differs from
+        // the initial empty one and the early "skip if unchanged" return does not
+        // bypass the identity sync.
+        messages: [{ id: 1, role: 'user', content: 'hi', blocks: [] }],
+        total: 1,
+        backend: 'codebuddy',
+        agentId: 'agent2',
+        sessionType: 'group',
+        cruise: true, // server persisted the cruise switch
+        running: false,
+      }),
+    })
+
+    const options = {
+      currentSessionId: ref('g1'),
+      messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
+      loading: ref(false),
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream: vi.fn(),
+      onOpen: vi.fn(),
+    }
+    lastSessionOptions = options
+    const session = useChatSession(options)
+    // Mirror the real switchSession call: (forceScrollBottom, showOverlay,
+    // skipIfUnchanged=false, immediate=true).
+    await session.loadHistory(true, true, false, true)
+
+    expect(mockIdentity.cruise).toBe(true)
+  })
+
+  it('reads back cruise/autoApprove even when the message snapshot is unchanged', async () => {
+    // Regression: the flag read-back must run BEFORE the change-detection early
+    // return. A refresh with skipIfUnchanged=true (WS reconnect, a `completed`
+    // session_update) whose message snapshot matches the previous one would
+    // otherwise return early and leave a cross-device toggle stale.
+    const sameMessages = [{ id: 1, role: 'user', content: 'hi', blocks: [] }]
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 'g1',
+        sessionTitle: 'Group',
+        messages: sameMessages,
+        total: 1,
+        backend: 'codebuddy',
+        agentId: 'agent2',
+        sessionType: 'group',
+        cruise: true,
+        autoApprove: true,
+        running: false,
+      }),
+    })
+
+    const options = {
+      currentSessionId: ref('g1'),
+      messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
+      loading: ref(false),
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream: vi.fn(),
+      onOpen: vi.fn(),
+    }
+    lastSessionOptions = options
+    const session = useChatSession(options)
+    // First load establishes the message snapshot.
+    await session.loadHistory(false, false, false)
+    // The user toggles both off elsewhere / on another device → server says off.
+    mockIdentity.cruise = false
+    mockIdentity.autoApprove = false
+    // Second load: same messages (snapshot unchanged) but flags flipped on the
+    // server. skipIfUnchanged=true is the path that must still sync the flags.
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 'g1',
+        sessionTitle: 'Group',
+        messages: sameMessages,
+        total: 1,
+        backend: 'codebuddy',
+        agentId: 'agent2',
+        sessionType: 'group',
+        cruise: true,
+        autoApprove: true,
+        running: false,
+      }),
+    })
+    await session.loadHistory(false, false, true)
+
+    expect(mockIdentity.cruise).toBe(true)
     expect(mockIdentity.autoApprove).toBe(true)
   })
 
@@ -4172,7 +4295,7 @@ describe('createSession', () => {
     // sessionLimitReached toast should be shown
     expect(mockToastFn).toHaveBeenCalledWith(
       expect.any(String),
-      expect.objectContaining({ type: 'error', icon: '⚠️' })
+      expect.objectContaining({ type: 'error', icon: 'warning' })
     )
   })
 
@@ -4465,7 +4588,7 @@ describe('archiveSession', () => {
     // Success toast shown
     expect(mockToastFn).toHaveBeenCalledWith(
       expect.any(String),
-      expect.objectContaining({ icon: '📦', type: 'success' })
+      expect.objectContaining({ icon: 'archive', type: 'success' })
     )
   })
 
@@ -4564,7 +4687,7 @@ describe('archiveSession', () => {
     // Success toast shown
     expect(mockToastFn).toHaveBeenCalledWith(
       expect.any(String),
-      expect.objectContaining({ icon: '📦', type: 'success' })
+      expect.objectContaining({ icon: 'archive', type: 'success' })
     )
     // Two fetch calls: 1) delete API 2) loadSessionsOnce (refresh global state)
     expect(globalThis.fetch).toHaveBeenCalledTimes(2)
@@ -4582,7 +4705,7 @@ describe('archiveSession', () => {
     // Error toast shown when data.ok is false
     expect(mockToastFn).toHaveBeenCalledWith(
       expect.any(String),
-      expect.objectContaining({ icon: '⚠️', type: 'error' })
+      expect.objectContaining({ icon: 'warning', type: 'error' })
     )
   })
 })

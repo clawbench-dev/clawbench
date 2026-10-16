@@ -3,10 +3,9 @@ import { ref, reactive, nextTick } from 'vue'
 import { usePanelSnapshot } from '@/composables/usePanelSnapshot'
 import type { GroupPanelConfig } from '@/components/settings/settingsFieldMap'
 
-// Mock useSettingsConfig
+// Mock useSettingsConfig.
 const mockServerConfig = ref<Record<string, unknown>>({
   terminal: { enabled: true, idle_timeout: '10m', max_sessions: 10, buffer_lines: 2000 },
-  frp: { enabled: false, server_addr: '', server_port: 7000, token: '', auto_port: true, remote_port: 0, ssh_remote_port: 0 },
 })
 const mockLocalConfig = reactive<Record<string, unknown>>({
   terminalFontSize: 12,
@@ -48,27 +47,15 @@ function createTerminalConfig(): GroupPanelConfig {
   }
 }
 
-function createFrpConfig(): GroupPanelConfig {
+function createRequiredFieldsConfig(panelId: string, enableKey: string): GroupPanelConfig {
   return {
-    panelId: 'frp',
-    enableKey: 'frp.enabled',
-    enableLabelKey: 'settings.items.frpEnabled',
+    panelId,
+    enableKey,
+    enableLabelKey: 'settings.items.someEnabled',
     commonFields: [
-      { labelKey: 'settings.items.frpServerAddr', key: 'frp.server_addr', type: 'text', source: 'server' },
-      { labelKey: 'settings.items.frpAutoPort', key: 'frp.auto_port', type: 'switch', source: 'server' },
+      { labelKey: 'settings.items.someAddr', key: `${panelId}.addr`, type: 'text', source: 'server' },
     ],
-    optionSubFields: [
-      {
-        when: false,
-        fields: [
-          { labelKey: 'settings.items.frpRemotePort', key: 'frp.remote_port', type: 'number', source: 'server' },
-        ],
-      },
-    ],
-    requiredFields: ['frp.server_addr'],
-    optionSubFieldsKey: 'frp.auto_port',
-    hasConnectivityTest: true,
-    getTestCategories: (values) => [{ category: 'frp', values }],
+    requiredFields: [`${panelId}.addr`],
   }
 }
 
@@ -109,26 +96,24 @@ describe('usePanelSnapshot', () => {
   })
 
   it('canSave returns false when required field is empty and visible', () => {
-    const config = createFrpConfig()
+    const config = createRequiredFieldsConfig('forward', 'forward.enabled')
     const { localValues, canSave, initSnapshot } = usePanelSnapshot(config)
     initSnapshot()
 
-    // Enable the panel first so required-field validation is active
-    localValues['frp.enabled'] = true
-    // frp.auto_port defaults to true, so frp.remote_port is not visible
-    // frp.server_addr is required — set it empty
-    localValues['frp.server_addr'] = ''
+    // Enable the panel first so required-field validation is active.
+    localValues['forward.enabled'] = true
+    localValues['forward.addr'] = ''
     expect(canSave.value).toBe(false)
   })
 
   it('canSave returns true when panel is disabled even with empty required fields', () => {
-    const config = createFrpConfig()
+    const config = createRequiredFieldsConfig('forward', 'forward.enabled')
     const { localValues, canSave, initSnapshot } = usePanelSnapshot(config)
     initSnapshot()
 
-    // Disable the panel — should skip required-field validation (C1 fix)
-    localValues['frp.enabled'] = false
-    localValues['frp.server_addr'] = ''
+    // Disable the panel — should skip required-field validation.
+    localValues['forward.enabled'] = false
+    localValues['forward.addr'] = ''
     expect(canSave.value).toBe(true)
   })
 
@@ -145,7 +130,7 @@ describe('usePanelSnapshot', () => {
     expect(result.needsRestart).toBe(false)
     expect(mockSetLocalConfig).toHaveBeenCalledWith('terminalFontSize', 16)
     expect(mockPatchConfig).toHaveBeenCalled()
-    // After save, snapshot should be updated
+    // After save, snapshot should be updated.
     expect(hasChanges.value).toBe(false)
   })
 
@@ -185,7 +170,7 @@ describe('usePanelSnapshot', () => {
   it('calls config.onInit on snapshot init', () => {
     const onInit = vi.fn()
     const config: GroupPanelConfig = {
-      panelId: 'frp',
+      panelId: 'forward',
       commonFields: [],
       onInit,
     }
@@ -195,19 +180,19 @@ describe('usePanelSnapshot', () => {
     expect(onInit).toHaveBeenCalled()
   })
 
-  it('re-syncs snapshot when serverConfig changes externally (C1 fix)', async () => {
+  it('re-syncs snapshot when serverConfig changes externally', async () => {
     const config = createTerminalConfig()
     const { localValues, snapshot, initSnapshot } = usePanelSnapshot(config)
     initSnapshot()
 
-    // Simulate external config change
+    // Simulate external config change.
     mockServerConfig.value = {
       ...mockServerConfig.value,
       terminal: { enabled: false, idle_timeout: '10m', max_sessions: 10, buffer_lines: 2000 },
     }
     await nextTick()
 
-    // Snapshot and localValues should be re-synced for unchanged fields
+    // Snapshot and localValues should be re-synced for unchanged fields.
     expect(snapshot.value['terminal.enabled']).toBe(false)
     expect(localValues['terminal.enabled']).toBe(false)
   })

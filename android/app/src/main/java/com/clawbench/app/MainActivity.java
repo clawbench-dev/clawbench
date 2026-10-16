@@ -692,6 +692,13 @@ public class MainActivity extends AppCompatActivity {
         // JavaScript interface for native bridge
         webView.addJavascriptInterface(new WebAppInterface(this), "ClawBenchNative");
 
+        // Add 引用 / 评论 to the WebView's own text-selection menu. A plain
+        // WebView has no API for this, so the view is a ClawBenchWebView
+        // (declared in activity_main.xml) that overrides startActionMode.
+        if (webView instanceof ClawBenchWebView) {
+            ((ClawBenchWebView) webView).setSelectionActionListener(this::dispatchSelectionAction);
+        }
+
         // Register WebView reference with BackgroundService for safe UI callbacks
         BackgroundService.updateWebViewRef(webView);
 
@@ -2284,6 +2291,40 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
+     * Dispatch a text-selection menu action to the frontend.
+     *
+     * Called when the user picks 引用 / 评论 from the WebView's own selection
+     * menu (see {@link ClawBenchWebView}). The frontend owns the actual
+     * behaviour — it decides what text the selection referred to (it keeps a
+     * snapshot, because the selection is torn down when the action mode
+     * finishes) and opens the quote bar accordingly.
+     *
+     * The selected text is deliberately NOT passed: the frontend reads it from
+     * its own DOM selection / snapshot, which already carries the richer
+     * metadata (file path, line numbers, session/message ids) that a raw
+     * string would lose. Only the action name crosses the bridge.
+     *
+     * Best-effort: no-op when the WebView isn't ready. The guard mirrors
+     * notifyFrontendAppResume — the callback is installed by the Vue app, so it
+     * may legitimately be absent (login page, early boot).
+     */
+    void dispatchSelectionAction(SelectionMenuPolicy.Action action) {
+        if (webView == null || !webViewConnected) {
+            return;
+        }
+        try {
+            // jsAction() returns a fixed literal ("quote"/"comment"), never
+            // user input, so there is nothing to escape here.
+            String js = "if (typeof window.__clawbenchSelectionAction === 'function')"
+                    + " window.__clawbenchSelectionAction('"
+                    + SelectionMenuPolicy.jsAction(action) + "')";
+            webView.evaluateJavascript(js, null);
+        } catch (Exception e) {
+            AppLog.w(TAG, "MainActivity: dispatchSelectionAction failed", e);
+        }
+    }
+
+    /**
      * Handle notification intent and re-dispatch pending navigation on resume.
      * Extracted from onResume() for testability (lifecycle methods call super which
      * requires Android framework, making them untestable in pure JUnit).
@@ -2804,7 +2845,9 @@ public class MainActivity extends AppCompatActivity {
             int index = parent.indexOfChild(crashedView);
             parent.removeView(crashedView);
             crashedView.destroy();
-            WebView newView = new WebView(this);
+            // Must be the subclass, not a plain WebView: setupWebView() wires
+            // the selection-menu listener onto it (see dispatchSelectionAction).
+            WebView newView = new ClawBenchWebView(this);
             parent.addView(newView, index);
             webView = newView;
             setupWebView();

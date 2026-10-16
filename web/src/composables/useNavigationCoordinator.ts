@@ -6,7 +6,7 @@ import { getFileType } from '@/utils/fileType'
 import { openRecentFile } from '@/composables/useRecentFiles'
 import { getFileScroll, getFileScrollEntry, setFileScroll, type FileScrollEntry } from '@/utils/fileScrollCache'
 import { gt as defaultGt } from '@/composables/useLocale'
-import { useToast } from '@/composables/useToast'
+import { useToast, type ToastIconKey } from '@/composables/useToast'
 import { PANE_LEFT, PANE_RIGHT, type ActivePane } from '@/composables/useWideScreenLayout'
 import {
   useNavigationContext,
@@ -85,7 +85,7 @@ export interface NavigationCoordinatorOptions {
     gt?: (key: string, args?: Record<string, unknown>) => string
   }
   toast?: {
-    show: (msg: string, opts?: { icon?: string; type?: 'info' | 'error' | 'success'; duration?: number }) => void
+    show: (msg: string, opts?: { icon?: ToastIconKey; type?: 'info' | 'error' | 'success'; duration?: number }) => void
   }
 }
 
@@ -144,6 +144,7 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
     if (surface === 'terminal') return t('file.nav.backToTerminal')
     if (surface === 'settings') return t('file.nav.backToSettings')
     if (surface === 'proxy') return t('file.nav.backToPortForward')
+    if (surface === 'notifications') return t('file.nav.backToNotifications')
     return t('common.back')
   }
 
@@ -260,7 +261,7 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
     }
     const ok = await store.selectFile(previousPath)
     if (!ok) {
-      toast.show(gt('file.toast.fileNotFound'), { type: 'error', icon: '⚠️', duration: 2000 })
+      toast.show(gt('file.toast.fileNotFound'), { type: 'error', icon: 'warning', duration: 2000 })
       return false
     }
     fileNav.goBack()
@@ -325,7 +326,7 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
         }
         const ok = await store.selectFile(origin.filePath)
         if (!ok) {
-          toast.show(t('file.toast.fileNotFoundReturned'), { type: 'error', icon: '⚠️', duration: 2000 })
+          toast.show(t('file.toast.fileNotFoundReturned'), { type: 'error', icon: 'warning', duration: 2000 })
           directoryReturn.clear()
           navigation.consume()
           return true
@@ -479,7 +480,7 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
         scrollTop: location?.scrollTop ?? getFileScroll(file.path) ?? 0,
         scrollEntry: location?.scrollEntry ?? getFileScrollEntry(file.path),
       }, store.state.currentDir)
-    } else if (surface === 'chat' || surface === 'task' || surface === 'tasks' || surface === 'history' || surface === 'forge' || surface === 'terminal' || surface === 'settings') {
+    } else if (surface === 'chat' || surface === 'task' || surface === 'tasks' || surface === 'history' || surface === 'forge' || surface === 'terminal' || surface === 'settings' || surface === 'notifications') {
       const normSurface: NavigationSurface = surface === 'tasks' ? 'task' : (surface as NavigationSurface)
       beginExternalJump(normSurface, surfaceLabel(normSurface), normSurface === 'chat' ? { tab: 'chat' } : {})
     }
@@ -619,7 +620,7 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
     if (ok) {
       openFileInViewer(path, { lineStart, lineEnd, lineRanges })
       if (isExternal) {
-        toast.show(gt('file.toast.externalFile'), { icon: 'ℹ️', type: 'info', duration: 2000 })
+        toast.show(gt('file.toast.externalFile'), { icon: 'info', type: 'info', duration: 2000 })
       }
     }
   }

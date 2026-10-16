@@ -26,8 +26,10 @@ vi.mock('@/composables/useGroupChat', () => ({
 // (it PATCHes the current session and the backend fans the flag out to every
 // member row). Mock it so the test can assert the delegation.
 const mockToggleAutoApprove = vi.fn()
+const mockApplyCruiseDefault = vi.fn()
 vi.mock('@/composables/useSessionIdentity', () => ({
   toggleAutoApprove: (...a: any[]) => mockToggleAutoApprove(...a),
+  applyCruiseAutoApproveDefault: (...a: any[]) => mockApplyCruiseDefault(...a),
 }))
 
 vi.mock('@/composables/useAgents', () => ({
@@ -246,6 +248,22 @@ describe('GroupSettingsSheet', () => {
       const on = mountSheet(MEMBERS, { mode: 'free', cruise: true })
       await on.find('#group-cruise').setValue(false)
       expect(mockSetCruise).toHaveBeenCalledWith('g1', false)
+    })
+
+    it('enabling cruise applies the auto-approve hard default', async () => {
+      mockApplyCruiseDefault.mockClear()
+      const w = mountSheet(MEMBERS, { mode: 'host', cruise: false })
+      await w.find('#group-cruise').setValue(true)
+      expect(mockApplyCruiseDefault).toHaveBeenCalledWith(true)
+    })
+
+    it('disabling cruise does not touch auto-approve', async () => {
+      mockApplyCruiseDefault.mockClear()
+      const w = mountSheet(MEMBERS, { mode: 'host', cruise: true })
+      await w.find('#group-cruise').setValue(false)
+      // The helper is still CALLED (with false) but must be a no-op for false;
+      // what matters is it is never called with `true` when disabling.
+      expect(mockApplyCruiseDefault).not.toHaveBeenCalledWith(true)
     })
 
     it('shows a mode-specific hint', () => {

@@ -9,6 +9,7 @@ import { markRendererLoading } from './navReady'
 import { handleShortcut } from './shortcuts'
 import { shouldFallBackToLogin, buildConnectErrorScript } from './loadFailure'
 import { createSplashController, type SplashController } from './splash'
+import { resetCertificateTrust } from './certificate'
 import {
   beginNavigation,
   checkVersionGate,
@@ -312,6 +313,11 @@ export function createMainWindow(): BrowserWindow {
   if (serverUrl) {
     // Cold start with a saved server: same gap as connecting from the login
     // page, so the overlay covers it here too.
+    // Clear any trust from a previous connection in this process. A fresh
+    // process starts empty, but the window can be recreated mid-process (macOS
+    // `activate` after the last window closed), and that navigation is a new
+    // connection the user should re-confirm.
+    resetCertificateTrust()
     showSplashFor(serverUrl)
     mainWindow.loadURL(serverUrl)
     // The version gate runs alongside the load; on a mismatch it replaces the

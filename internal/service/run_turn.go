@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/grouprouting"
+	"clawbench/internal/summarize"
 	"clawbench/internal/ws"
 )
 
@@ -143,6 +145,14 @@ type TurnResult struct {
 	// MsgID is the streaming assistant placeholder row id (0 if it could not be
 	// created).
 	MsgID int64
+
+	// GoalSatisfied is true when this turn's final output carried the
+	// auto-cruise completion signal <clawbench-goal-satisfied/>. Single-chat
+	// cruise reads it to decide whether a CONFIRMATION round ends the run
+	// (see cruise.go). It is a per-turn fact: a signal in an ordinary reply
+	// does NOT end the run — only a confirmation round's signal does — but the
+	// field itself is reported for every turn so the caller owns that policy.
+	GoalSatisfied bool
 }
 
 // activeTurn is a started-but-not-yet-finalized turn. It carries the handles a
@@ -414,6 +424,16 @@ func (at *activeTurn) runTurnFinalize() TurnResult {
 	// classifyTurnAbnormality — see auto_continue.go for the exclusions.
 	result.AbnormalReason = classifyTurnAbnormality(
 		runResult.CancelReason, runResult.ReceivedTerminal, runResult.Empty, runResult.Blocks)
+
+	// The auto-cruise completion signal, read from this turn's FINAL answer.
+	// ExtractLastAnswerFromBlocks is the same extractor the summary/preview
+	// paths use (text after the last tool call), so a tag buried in an earlier
+	// tool-call narration does not count. Only a clean turn can carry it: a
+	// cancelled/empty turn has no conclusion to confirm.
+	if result.CancelReason == "" && result.Err == "" && !result.Empty {
+		result.GoalSatisfied = grouprouting.Parse(
+			summarize.ExtractLastAnswerFromBlocks(runResult.Blocks)).GoalSatisfied
+	}
 
 	slog.Info("ai stream run done",
 		slog.String("session", at.spec.SessionID),

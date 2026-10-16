@@ -307,10 +307,7 @@ jobs:
           CGO_ENABLED: 0
         run: |
           VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
-          # GOOS=android emits a PIE binary (interpreter /system/bin/linker64).
-          # wlynxg/anet (via frp -> pion) uses go:linkname to net.zoneCache, which
-          # Go >= 1.23 rejects at link time, so disable linkname checks for this target.
-          GOOS=android GOARCH=arm64 go build -ldflags="-checklinkname=0 -s -w -X clawbench/internal/version.Version=$VERSION" -o clawbench-android-arm64 ./cmd/server
+          GOOS=android GOARCH=arm64 go build -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION" -o clawbench-android-arm64 ./cmd/server
 
       - name: Verify Android arm64 binary
         run: |
@@ -389,84 +386,6 @@ jobs:
         with:
           name: windows-package
           path: pkg-windows/clawbench/
-
-  # Same server, minus the FRP client library (github.com/fatedier/frp). That
-  # library is a dual-use reverse-proxy tool which endpoint security products
-  # flag as Greyware/riskware, so some corporate machines quarantine the normal
-  # Windows build on sight. This variant removes the capability — and therefore
-  # the signature — for users who cannot whitelist it.
-  #
-  # It is a SEPARATE asset, never a replacement: the FRP feature is unavailable
-  # here (the settings panel hides itself via /api/config's `frp.available`), so
-  # it must remain the user's explicit choice.
-  build-windows-nofrp:
-    name: Build Windows amd64 (no FRP)
-    needs: [build-frontend, build-android]
-    runs-on: windows-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: web-dist
-          path: .clawbench-web/
-
-      - name: Download APK
-        uses: actions/download-artifact@v4
-        with:
-          name: android-apk
-          path: android-apk/
-
-      - name: Copy frontend for Go embed
-        shell: pwsh
-        run: |
-          if (Test-Path internal/frontend/dist) { Remove-Item -Recurse -Force internal/frontend/dist }
-          Copy-Item -Recurse .clawbench-web internal/frontend/dist
-          New-Item -ItemType Directory -Force -Path internal/frontend/dist/assets | Out-Null
-          Copy-Item android-apk/clawbench-android.apk internal/frontend/dist/assets/
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.25'
-
-      - name: Build Windows binary (no FRP)
-        env:
-          CGO_ENABLED: 1
-        run: |
-          $VERSION = if (git describe --tags --always 2>$null) { git describe --tags --always } else { "dev" }
-          go build -tags "fts5 nofrp" -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION" -o clawbench.exe ./cmd/server
-
-      - name: Verify FRP is absent from the binary
-        shell: pwsh
-        # The whole point of this job is that the library is NOT linked. Build
-        # metadata records every dependency, so this is a direct check rather
-        # than an inference from the build tag being passed correctly.
-        run: |
-          $deps = go version -m clawbench.exe
-          if ($deps -match 'fatedier/frp') {
-            Write-Error "fatedier/frp is still linked into the no-FRP build"
-            exit 1
-          }
-          Write-Host "OK: no fatedier/frp dependency in the no-FRP binary"
-
-      - name: Package Windows (no FRP)
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path pkg-windows-nofrp/clawbench
-          Copy-Item clawbench.exe pkg-windows-nofrp/clawbench/
-          Compress-Archive -Path pkg-windows-nofrp/clawbench -DestinationPath "pkg-windows-nofrp/clawbench-windows-amd64-nofrp-$env:RELEASE_TAG.zip"
-
-      - uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: false
-          files: pkg-windows-nofrp/clawbench-windows-amd64-nofrp-${{ env.RELEASE_TAG }}.zip
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: windows-nofrp-package
-          path: pkg-windows-nofrp/clawbench/
 
   build-macos-arm64:
     name: Build macOS arm64

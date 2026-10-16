@@ -62,6 +62,47 @@ function onLayoutChange() {
   if (props.show) updatePosition()
 }
 
+/**
+ * Close when the anchor stops being laid out at all.
+ *
+ * The popup is teleported to <body>, so a parent that hides its panel with
+ * `v-show` (display:none) does NOT hide the menu — it stays floating over
+ * whatever replaced it. Reproduced: opening the notifications filter dropdown
+ * and switching tabs left the menu on screen over the new tab.
+ *
+ * The signal must distinguish "hidden" from "merely scrolled out of view":
+ *   - display:none          -> boundingClientRect is 0x0
+ *   - scrolled out of view  -> isIntersecting false, but REAL dimensions
+ * So we key off the zero size, not `isIntersecting`. Closing on a plain
+ * scroll-out would be a behaviour change for every consumer (e.g. an
+ * autocomplete whose input scrolls out of a short container), which is not
+ * what this guards.
+ */
+let visibilityObserver = null
+
+function observeAnchorVisibility() {
+  if (typeof IntersectionObserver === 'undefined') return // jsdom / old WebView
+  const el = props.targetElement
+  if (!el) return
+  visibilityObserver = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      const r = entry.boundingClientRect
+      if (r.width === 0 && r.height === 0) {
+        emit('update:show', false)
+        return
+      }
+    }
+  })
+  visibilityObserver.observe(el)
+}
+
+function unobserveAnchorVisibility() {
+  if (visibilityObserver) {
+    visibilityObserver.disconnect()
+    visibilityObserver = null
+  }
+}
+
 function bindOpenListeners() {
   // Listen for layout changes that could move the anchor
   window.addEventListener('scroll', onLayoutChange, true) // capture to catch all scrolls
@@ -73,6 +114,7 @@ function bindOpenListeners() {
     window.visualViewport.addEventListener('resize', onLayoutChange)
     window.visualViewport.addEventListener('scroll', onLayoutChange)
   }
+  observeAnchorVisibility()
   // Use setTimeout to avoid the opening click being treated as outside click
   setTimeout(() => {
     if (props.show) {
@@ -88,6 +130,7 @@ function unbindOpenListeners() {
     window.visualViewport.removeEventListener('resize', onLayoutChange)
     window.visualViewport.removeEventListener('scroll', onLayoutChange)
   }
+  unobserveAnchorVisibility()
   document.removeEventListener('click', handleClickOutside)
 }
 
@@ -117,8 +160,14 @@ watch(() => props.show, (val) => {
 // recomputed on `show` changes, scroll and resize, so without this the menu
 // stays anchored to the removed element's rect. Defer one frame for the same
 // reason schedulePosition does: let layout settle before reading geometry.
+// The visibility observer must follow the new element too, or it keeps watching
+// a detached node and never fires.
 watch(() => props.targetElement, () => {
-  if (props.show) schedulePosition()
+  if (props.show) {
+    schedulePosition()
+    unobserveAnchorVisibility()
+    observeAnchorVisibility()
+  }
 })
 
 // A parent may mount this component with `show` already true (e.g. a menu whose

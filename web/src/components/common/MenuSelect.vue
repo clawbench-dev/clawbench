@@ -16,35 +16,43 @@
   </button>
 
   <PopupMenu
-    v-model:show="show"
+    :show="show"
     :target-element="anchorRef"
     :max-width="menuWidth"
     :max-height="maxHeight"
     :menu-items-count="options.length"
+    :app-surface="appSurface"
+    @update:show="onShowUpdate"
   >
     <!-- min-width matches the trigger so the open menu lines up with the
          control it belongs to instead of shrinking to its narrowest item. -->
-    <div class="menu-select-list" :style="{ minWidth: `${menuMinWidth}px` }">
-      <button
-        v-for="opt in options"
-        :key="String(opt.value)"
-        type="button"
-        class="menu-select-item"
-        :class="{ active: opt.value === modelValue }"
-        :title="opt.label"
-        @click="choose(opt.value)"
-      >
-        <span class="menu-select-item-label">{{ opt.label }}</span>
-        <Check v-if="opt.value === modelValue" class="menu-select-item-check" :size="14" />
-      </button>
+    <div class="menu-select-list" :class="{ 'app-menu-column': appSurface }" :style="listStyle">
+      <div v-if="menuTitle" class="app-menu-title">{{ menuTitle }}</div>
+      <div :class="appSurface ? 'app-menu-scroll' : ''">
+        <slot name="options">
+          <button
+            v-for="opt in options"
+            :key="String(opt.value)"
+            type="button"
+            class="menu-select-item"
+            :class="{ active: opt.value === modelValue }"
+            :title="opt.label"
+            @click="choose(opt.value)"
+          >
+            <span class="menu-select-item-label">{{ opt.label }}</span>
+            <Check v-if="opt.value === modelValue" class="menu-select-item-check" :size="14" />
+          </button>
+        </slot>
+      </div>
     </div>
   </PopupMenu>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, onBeforeUnmount } from 'vue'
 import { Check, ChevronDown } from 'lucide-vue-next'
 import PopupMenu from '@/components/common/PopupMenu.vue'
+import { claimOpenMenu, releaseOpenMenu } from '@/utils/exclusiveMenu'
 
 export interface MenuSelectOption {
   value: string | number
@@ -62,12 +70,19 @@ const props = withDefaults(defineProps<{
   block?: boolean
   maxHeight?: number
   menuWidth?: number
+  /** Style the popup like the app-header dropdown (primary surface, pinned
+   *  header + scrollable middle). Use with an `.app-menu-column` body. */
+  appSurface?: boolean
+  /** Optional heading rendered as an `.app-menu-title` above the list. */
+  menuTitle?: string
 }>(), {
   placeholder: '',
   disabled: false,
   block: false,
   maxHeight: 320,
   menuWidth: 260,
+  appSurface: false,
+  menuTitle: '',
 })
 
 const emit = defineEmits<{
@@ -83,19 +98,67 @@ const selectedOption = computed(
   () => props.options.find(o => o.value === props.modelValue) ?? null,
 )
 
-function toggle() {
-  if (props.disabled) return
-  if (!show.value) {
-    // Measure before the popup positions itself (it reads geometry on the next
-    // animation frame), so the menu can never come out narrower than the
-    // trigger it drops out of.
-    menuMinWidth.value = anchorRef.value?.offsetWidth ?? 0
-  }
-  show.value = !show.value
+/**
+ * Inline style for the popup body.
+ *
+ * The min-width only makes sense for the plain list (where the menu should line
+ * up with its trigger). On the app-header surface the panel is a card with its
+ * own padding; it still needs a floor, otherwise it shrinks to the width of the
+ * widest row's *content* — and a stacked project row's path is clipped to a few
+ * characters ("tmp/nr…") instead of being readable. `menuWidth` is the popup's
+ * MAX width, so it doubles as a sensible target here.
+ */
+const listStyle = computed(() =>
+  props.appSurface ? { minWidth: `${props.menuWidth}px` } : { minWidth: `${menuMinWidth.value}px` },
+)
+
+/**
+ * Exclusive-open coordination.
+ *
+ * A MenuSelect popup is teleported to <body>, so it is NOT a DOM sibling of any
+ * other trigger — nothing about the markup stops a second one from opening on
+ * top of the first. Without this, clicking trigger A then trigger B left BOTH
+ * menus on screen (reproduced: two .popup-menu elements, overlapping).
+ *
+ * The slot lives in `@/utils/exclusiveMenu` (a real module) rather than here:
+ * top-level bindings in `<script setup>` are compiled INTO setup(), so a `let`
+ * in this file would be per-instance and coordinate nothing.
+ */
+const token = { close }
+
+function close() {
+  show.value = false
+  releaseOpenMenu(token)
 }
 
+function toggle() {
+  if (props.disabled) return
+  if (show.value) {
+    close()
+    return
+  }
+  // Close whoever is open first, so at most one menu is ever on screen.
+  claimOpenMenu(token)
+  // Measure before the popup positions itself (it reads geometry on the next
+  // animation frame), so the menu can never come out narrower than the
+  // trigger it drops out of.
+  menuMinWidth.value = anchorRef.value?.offsetWidth ?? 0
+  show.value = true
+}
+
+function onShowUpdate(value: boolean) {
+  if (value) show.value = true
+  else close()
+}
+
+// If this trigger is unmounted while its menu is open (tab switch, v-if), drop
+// the slot so a stale entry cannot block the next open.
+onBeforeUnmount(() => {
+  releaseOpenMenu(token)
+})
+
 function choose(value: string | number) {
-  show.value = false
+  close()
   if (value === props.modelValue) return
   emit('update:modelValue', value)
   emit('change', value)
@@ -166,6 +229,29 @@ function choose(value: string | number) {
 .menu-select-list {
   display: flex;
   flex-direction: column;
+}
+
+/* Custom rows supplied through the `options` slot (the project picker reuses the
+   app-header's global .app-menu-item look). Those global rules were written for
+   <div> rows; slot rows here are <button>s, and a button is shrink-to-fit — so
+   without this each row collapses to its own content inside a wider panel and
+   the rows do not share a left edge. Scoped here (not in the consumer) because
+   the popup is teleported to <body>: the consumer's `.notif-filters :deep(...)`
+   would never match, as .notif-filters is not an ancestor of the menu. */
+.menu-select-list :deep(.app-menu-item) {
+  width: 100%;
+  box-sizing: border-box;
+  border: none;
+  font-family: inherit;
+  text-align: left;
+}
+
+/* A <button> carries a UA background that a <div> does not. Clear it on the
+   INACTIVE rows only: a blanket `background: transparent` here would out-rank
+   the global `.app-menu-item.active` accent fill (this selector is more
+   specific), silently killing the "you are here" highlight. */
+.menu-select-list :deep(.app-menu-item:not(.active)) {
+  background: transparent;
 }
 
 .menu-select-item {

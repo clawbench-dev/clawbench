@@ -133,4 +133,9 @@
     <string name="splash_status_rendering">正在渲染…</string>
     <string name="splash_status_finishing">即将完成…</string>
     <string name="splash_status_initializing">正在初始化应用…</string>
+    <!-- Text-selection action menu (items prepended to the WebView's own
+         Copy / Select all / Share menu). Labels must match the web app's
+         quoteBar.comment / quoteBar.quoteSelection wording. -->
+    <string name="selection_action_quote">引用</string>
+    <string name="selection_action_comment">讨论</string>
 </resources>

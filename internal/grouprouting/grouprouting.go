@@ -334,6 +334,24 @@ func StripEndTag(text string) string {
 	return strings.TrimSpace(text)
 }
 
+// StripGoalSatisfied removes ONLY the auto-cruise completion signal
+// (<clawbench-goal-satisfied/>) from text, leaving everything else — including
+// any mention-like prose — untouched.
+//
+// It is the SINGLE-CHAT counterpart of StripProtocolTags. A single chat must
+// NOT go through StripProtocolTags: that also unwraps/removes mention spans,
+// which would truncate a reply that merely DISCUSSES the tag syntax (regression
+// 58879). The goal-satisfied tag is self-closing with no body, so removing it
+// loses nothing — and single-chat cruise DOES emit it, so it must be stripped at
+// every text boundary that leaves the device (summary / preview / TTS / RAG).
+// Mirrors the TS stripGoalSatisfiedTag in web/src/utils/groupRouting.ts.
+func StripGoalSatisfied(text string) string {
+	if !reGoalSatisfied.MatchString(text) {
+		return text
+	}
+	return strings.TrimSpace(reGoalSatisfied.ReplaceAllString(text, ""))
+}
+
 // StripProtocolTags removes every ClawBench protocol tag from text while keeping
 // the PUBLIC prose: public mention tags are unwrapped (their body survives),
 // private mentions are removed entirely (fail-closed — a private note must never

@@ -44,10 +44,10 @@ export function useCodeEditorSave() {
             // Suppress the fsnotify-triggered auto-refresh that our own write
             // causes; content is already synced, so it would just flash.
             markFileSaved(path)
-            show(t('file.editor.saved'), { icon: '✅', type: 'success', duration: 2000 })
+            show(t('file.editor.saved'), { icon: 'success', type: 'success', duration: 2000 })
             return true
         } catch {
-            show(t('file.editor.saveFailed'), { icon: '❌', type: 'error', duration: 2000 })
+            show(t('file.editor.saveFailed'), { icon: 'error', type: 'error', duration: 2000 })
             return false
         } finally {
             saving.value = false
@@ -68,7 +68,7 @@ export function useCodeEditorSave() {
         const name = (await dialog.prompt(t('file.prompt.fileName')))?.trim()
         if (!name) return false
         if (INVALID_NAME_CHARS.test(name) || name === '.' || name === '..') {
-            show(t('file.prompt.invalidFileName'), { icon: '❌', type: 'error', duration: 2500 })
+            show(t('file.prompt.invalidFileName'), { icon: 'error', type: 'error', duration: 2500 })
             return false
         }
 
@@ -84,7 +84,7 @@ export function useCodeEditorSave() {
             const existsData = await existsResp.json() as { results?: Record<string, string> }
             const kind = existsData.results?.[path]
             if (kind === 'file' || kind === 'dir') {
-                show(t('file.toast.fileExists'), { icon: '❌', type: 'error', duration: 2500 })
+                show(t('file.toast.fileExists'), { icon: 'error', type: 'error', duration: 2500 })
                 return false
             }
 
@@ -105,10 +105,10 @@ export function useCodeEditorSave() {
             }
             store.markSaved(path, content)
             markFileSaved(path)
-            show(t('file.editor.saved'), { icon: '✅', type: 'success', duration: 2000 })
+            show(t('file.editor.saved'), { icon: 'success', type: 'success', duration: 2000 })
             return true
         } catch {
-            show(t('file.editor.saveFailed'), { icon: '❌', type: 'error', duration: 2000 })
+            show(t('file.editor.saveFailed'), { icon: 'error', type: 'error', duration: 2000 })
             return false
         } finally {
             saving.value = false

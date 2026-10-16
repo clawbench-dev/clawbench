@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { defineComponent, h } from 'vue'
+import { defineComponent, h, nextTick } from 'vue'
 import { mount } from '@vue/test-utils'
 
 // Mock useSessionIdentity before importing the module under test.
@@ -9,13 +9,23 @@ import { mount } from '@vue/test-utils'
 // a whitelist that omits one makes the whole file fail to load.
 const mockSendMessage = vi.fn()
 const mockSessionState = vi.hoisted(() => ({ sessionId: '', sessionTitle: '' }))
-vi.mock('@/composables/useSessionIdentity', () => ({
-  useSessionIdentity: () => ({
-    sendMessage: mockSendMessage,
-  }),
-  getSessionId: () => mockSessionState.sessionId,
-  getSessionTitle: () => mockSessionState.sessionTitle,
-}))
+// A real ref, not a bare `{ value }`: the composable watches it to drop the
+// native-menu snapshot on session change, and a plain object would not be
+// reactive (the watcher would never fire).
+const mockRefs = vi.hoisted(() => ({ currentSessionId: null as unknown as { value: string } }))
+vi.mock('@/composables/useSessionIdentity', async () => {
+  const { ref } = await import('vue')
+  const currentSessionId = ref('')
+  mockRefs.currentSessionId = currentSessionId
+  return {
+    useSessionIdentity: () => ({
+      sendMessage: mockSendMessage,
+      currentSessionId,
+    }),
+    getSessionId: () => mockSessionState.sessionId,
+    getSessionTitle: () => mockSessionState.sessionTitle,
+  }
+})
 
 // Mock useToast
 const mockToastShow = vi.fn()
@@ -58,6 +68,7 @@ import { consumePendingChatInput, _resetChatInputInjectionForTesting } from '@/u
 import { useQuoteQuestion } from '../useQuoteQuestion.ts'
 import type { QuoteData } from '../useChatContext.ts'
 import { setActiveTabGetter, cancelTarget, usePendingTarget } from '../useConversationTarget.ts'
+import { _setPlatformForTest, _resetPlatformForTest } from '@/composables/usePlatformDetect'
 
 describe('useQuoteQuestion', () => {
   let ctx: ReturnType<typeof useChatContext>
@@ -78,6 +89,8 @@ describe('useQuoteQuestion', () => {
     mockSendMessage.mockReset()
     mockToastShow.mockReset()
     _resetChatInputInjectionForTesting()
+    // Reset the platform axes so an Android test cannot leak into the next one.
+    _resetPlatformForTest()
     vi.useFakeTimers()
   })
 
@@ -192,6 +205,62 @@ describe('useQuoteQuestion', () => {
       qq.hideBar()
       expect(qq.visible.value).toBe(false)
       expect(ctx.quoteData.value).toBeNull()
+    })
+  })
+
+  describe('scroll dismissal (issue #544)', () => {
+    function mountWithComposable() {
+      const TestComponent = defineComponent({
+        setup() { useQuoteQuestion(); return () => h('div') },
+      })
+      return mount(TestComponent)
+    }
+
+    it('hides the floating bar when the page scrolls', () => {
+      const wrapper = mountWithComposable()
+      const qq = useQuoteQuestion()
+      qq.showBar({ text: 'hello', filePath: '/a.ts', language: 'ts', startLine: 1, endLine: 3 })
+      vi.advanceTimersByTime(400)
+      expect(qq.visible.value).toBe(true)
+
+      // Capture-phase document listener catches scrolls on any inner container.
+      document.dispatchEvent(new Event('scroll'))
+      expect(qq.visible.value).toBe(false)
+      expect(ctx.quoteData.value).toBeNull()
+
+      wrapper.unmount()
+    })
+
+    it('keeps the bar while it is pinned (user is typing a comment)', () => {
+      const wrapper = mountWithComposable()
+      const qq = useQuoteQuestion()
+      qq.showBar({ text: 'hello', filePath: '/a.ts', language: 'ts', startLine: 1, endLine: 3 })
+      vi.advanceTimersByTime(400)
+      qq.pinBar()
+
+      document.dispatchEvent(new Event('scroll'))
+      expect(qq.visible.value).toBe(true)
+
+      wrapper.unmount()
+    })
+
+    it('ignores a scroll that originates inside the bar itself', () => {
+      const wrapper = mountWithComposable()
+      const qq = useQuoteQuestion()
+      qq.showBar({ text: 'hello', filePath: '/a.ts', language: 'ts', startLine: 1, endLine: 3 })
+      vi.advanceTimersByTime(400)
+      expect(qq.visible.value).toBe(true)
+
+      // The textarea's own scrollbar must not dismiss the bar.
+      const bar = document.createElement('div')
+      bar.className = 'quote-question-bar'
+      const inner = document.createElement('textarea')
+      bar.appendChild(inner)
+      document.body.appendChild(bar)
+      inner.dispatchEvent(new Event('scroll', { bubbles: true }))
+      expect(qq.visible.value).toBe(true)
+
+      wrapper.unmount()
     })
   })
 
@@ -1428,6 +1497,374 @@ describe('useQuoteQuestion', () => {
 
       // State should remain unchanged (no listener to process it)
       expect(qq.visible.value).toBe(false)
+    })
+
+    /**
+     * anchorRect drives the floating toolbar's position (issue #544). jsdom has
+     * no layout, so getClientRects() returns an empty list for a real range —
+     * we stub it to prove the composable captures the LAST line box (the point
+     * the pointer left) and clears it again on every hide path.
+     */
+    describe('anchorRect (floating toolbar position)', () => {
+      function stubRects(rects: DOMRect[]) {
+        const proto = Range.prototype as unknown as { getClientRects: () => DOMRectList }
+        // Indexable like a real DOMRectList (the composable reads
+        // `rects[rects.length - 1]`), not just array-like via `item()`.
+        const list = {
+          length: rects.length,
+          item: (i: number) => rects[i] ?? null,
+          ...Object.fromEntries(rects.map((r, i) => [i, r])),
+        }
+        vi.spyOn(proto, 'getClientRects').mockReturnValue(list as unknown as DOMRectList)
+      }
+
+      function fakeRect(top: number): DOMRect {
+        return { top, bottom: top + 20, left: 100, right: 200, width: 100, height: 20, x: 100, y: top, toJSON: () => ({}) } as DOMRect
+      }
+
+      afterEach(() => {
+        vi.restoreAllMocks()
+      })
+
+      it('captures the last line box of the selection', () => {
+        const wrapper = mountWithComposable()
+        // Two line boxes; the toolbar anchors to the LAST (bottom) one.
+        stubRects([fakeRect(100), fakeRect(140)])
+        createSelectionInContainer('markdown-body', { 'data-file-path': '/a.md' })
+
+        document.dispatchEvent(new Event('selectionchange'))
+        vi.advanceTimersByTime(150)
+
+        const qq = useQuoteQuestion()
+        expect(qq.visible.value).toBe(true)
+        expect(qq.anchorRect.value?.top).toBe(140)
+
+        wrapper.unmount()
+      })
+
+      it('is cleared when the bar is hidden', () => {
+        const wrapper = mountWithComposable()
+        stubRects([fakeRect(100)])
+        createSelectionInContainer('markdown-body', { 'data-file-path': '/a.md' })
+        document.dispatchEvent(new Event('selectionchange'))
+        vi.advanceTimersByTime(150)
+
+        const qq = useQuoteQuestion()
+        expect(qq.anchorRect.value).not.toBeNull()
+
+        qq.hideBar()
+        expect(qq.anchorRect.value).toBeNull()
+
+        wrapper.unmount()
+      })
+
+      it('is cleared by closeSheet', () => {
+        const wrapper = mountWithComposable()
+        stubRects([fakeRect(100)])
+        createSelectionInContainer('markdown-body', { 'data-file-path': '/a.md' })
+        document.dispatchEvent(new Event('selectionchange'))
+        vi.advanceTimersByTime(150)
+
+        const qq = useQuoteQuestion()
+        expect(qq.anchorRect.value).not.toBeNull()
+
+        qq.closeSheet()
+        expect(qq.anchorRect.value).toBeNull()
+
+        wrapper.unmount()
+      })
+
+      it('stays null when the selection has no laid-out boxes', () => {
+        // getClientRects() empty (e.g. a CodeMirror/terminal shadow selection
+        // that the DOM cannot measure) → no anchor, so the bar keeps its pinned
+        // top position instead of floating to a bogus spot.
+        const wrapper = mountWithComposable()
+        stubRects([])
+        createSelectionInContainer('markdown-body', { 'data-file-path': '/a.md' })
+
+        document.dispatchEvent(new Event('selectionchange'))
+        vi.advanceTimersByTime(150)
+
+        const qq = useQuoteQuestion()
+        expect(qq.visible.value).toBe(true)
+        expect(qq.anchorRect.value).toBeNull()
+
+        wrapper.unmount()
+      })
+    })
+  })
+
+  /**
+   * The Android native text-selection menu (ClawBenchWebView.java) calls
+   * window.__clawbenchSelectionAction('quote'|'comment'), which App.vue routes
+   * to handleNativeSelectionAction. The menu's action mode has already
+   * dismissed by then, so the DOM selection is normally GONE — the snapshot
+   * taken while it was live is the reliable source.
+   */
+  describe('handleNativeSelectionAction (Android native menu)', () => {
+    function mountWithComposable() {
+      const TestComponent = defineComponent({
+        setup() { useQuoteQuestion(); return () => h('div') },
+      })
+      return mount(TestComponent)
+    }
+
+    /** Create a quotable DOM selection in a markdown body. */
+    function selectInMarkdown() {
+      const container = document.createElement('div')
+      container.className = 'markdown-body'
+      container.setAttribute('data-file-path', '/a.md')
+      const span = document.createElement('span')
+      span.textContent = 'selected code text'
+      container.appendChild(span)
+      document.body.appendChild(container)
+
+      const range = document.createRange()
+      range.selectNodeContents(span)
+      const sel = window.getSelection()
+      sel?.removeAllRanges()
+      vi.advanceTimersByTime(0)
+      sel?.addRange(range)
+      vi.advanceTimersByTime(0)
+      return container
+    }
+
+    it('quote stages the selection as a quote card', () => {
+      const wrapper = mountWithComposable()
+      selectInMarkdown()
+      document.dispatchEvent(new Event('selectionchange'))
+      vi.advanceTimersByTime(150)
+
+      const qq = useQuoteQuestion()
+      qq.handleNativeSelectionAction('quote')
+
+      // addToConversation('') → the staged quote list gains the card.
+      expect(ctx.stagedQuotes.value).toHaveLength(1)
+      expect(ctx.stagedQuotes.value[0].text).toBe('selected code text')
+      expect(mockToastShow).toHaveBeenCalled()
+
+      wrapper.unmount()
+    })
+
+    it('comment surfaces the bar and asks it to open the input', () => {
+      const wrapper = mountWithComposable()
+      selectInMarkdown()
+      document.dispatchEvent(new Event('selectionchange'))
+      vi.advanceTimersByTime(150)
+
+      const qq = useQuoteQuestion()
+      const before = qq.expandRequest.value
+      qq.handleNativeSelectionAction('comment')
+
+      expect(qq.visible.value).toBe(true)
+      expect(qq.expandRequest.value).toBe(before + 1)
+
+      wrapper.unmount()
+    })
+
+    it('falls back to the snapshot when the selection is already gone', () => {
+      const wrapper = mountWithComposable()
+      selectInMarkdown()
+      document.dispatchEvent(new Event('selectionchange'))
+      vi.advanceTimersByTime(150)
+
+      // The native action mode finished → the WebView cleared the selection
+      // before calling into JS. This is the normal Android sequence.
+      window.getSelection()?.removeAllRanges()
+      vi.advanceTimersByTime(0)
+
+      const qq = useQuoteQuestion()
+      qq.handleNativeSelectionAction('quote')
+
+      expect(ctx.stagedQuotes.value).toHaveLength(1)
+      expect(ctx.stagedQuotes.value[0].text).toBe('selected code text')
+
+      wrapper.unmount()
+    })
+
+    it('does nothing when there is neither a selection nor a snapshot', () => {
+      const wrapper = mountWithComposable()
+      const qq = useQuoteQuestion()
+
+      qq.handleNativeSelectionAction('quote')
+
+      expect(ctx.stagedQuotes.value).toHaveLength(0)
+      expect(qq.visible.value).toBe(false)
+
+      wrapper.unmount()
+    })
+
+    it('ignores an unknown action', () => {
+      const wrapper = mountWithComposable()
+      selectInMarkdown()
+      document.dispatchEvent(new Event('selectionchange'))
+      vi.advanceTimersByTime(150)
+
+      const qq = useQuoteQuestion()
+      const before = qq.expandRequest.value
+      qq.handleNativeSelectionAction('delete-everything')
+
+      expect(ctx.stagedQuotes.value).toHaveLength(0)
+      expect(qq.expandRequest.value).toBe(before)
+
+      wrapper.unmount()
+    })
+
+    it('does not quote a stale selection from a non-quotable region', () => {
+      const wrapper = mountWithComposable()
+      // A selection in chrome (not a whitelisted container) is never captured,
+      // so the snapshot stays empty and the action is a no-op.
+      const container = document.createElement('div')
+      container.className = 'some-chrome'
+      const span = document.createElement('span')
+      span.textContent = 'not content'
+      container.appendChild(span)
+      document.body.appendChild(container)
+      const range = document.createRange()
+      range.selectNodeContents(span)
+      const sel = window.getSelection()
+      sel?.removeAllRanges()
+      vi.advanceTimersByTime(0)
+      sel?.addRange(range)
+      vi.advanceTimersByTime(0)
+      document.dispatchEvent(new Event('selectionchange'))
+      vi.advanceTimersByTime(150)
+
+      const qq = useQuoteQuestion()
+      qq.handleNativeSelectionAction('quote')
+
+      expect(ctx.stagedQuotes.value).toHaveLength(0)
+
+      wrapper.unmount()
+    })
+
+    /**
+     * The snapshot must be dropped on an explicit dismissal/commit — otherwise
+     * a later native action would quote text the user already dealt with. (It
+     * must NOT be dropped on plain selection-collapse, which is what the
+     * "falls back to the snapshot" test above covers.)
+     */
+    it('is cleared by closeSheet so a later action cannot re-quote it', () => {
+      const wrapper = mountWithComposable()
+      selectInMarkdown()
+      document.dispatchEvent(new Event('selectionchange'))
+      vi.advanceTimersByTime(150)
+
+      const qq = useQuoteQuestion()
+      qq.closeSheet()
+
+      window.getSelection()?.removeAllRanges()
+      vi.advanceTimersByTime(0)
+      qq.handleNativeSelectionAction('quote')
+
+      expect(ctx.stagedQuotes.value).toHaveLength(0)
+
+      wrapper.unmount()
+    })
+
+    /**
+     * On Android the bar never becomes visible, so none of the dismissal paths
+     * run when the user simply switches sessions — the snapshot has to be
+     * dropped by the session watcher or the next 引用 would quote the previous
+     * session's text.
+     */
+    it('is cleared when the session changes', async () => {
+      const wrapper = mountWithComposable()
+      selectInMarkdown()
+      document.dispatchEvent(new Event('selectionchange'))
+      vi.advanceTimersByTime(150)
+
+      // Switch session: the watcher on currentSessionId fires.
+      mockRefs.currentSessionId.value = 'other-session'
+      await nextTick()
+
+      const qq = useQuoteQuestion()
+      window.getSelection()?.removeAllRanges()
+      vi.advanceTimersByTime(0)
+      qq.handleNativeSelectionAction('quote')
+
+      expect(ctx.stagedQuotes.value).toHaveLength(0)
+
+      mockRefs.currentSessionId.value = ''
+      wrapper.unmount()
+    })
+  })
+
+  /**
+   * On Android the system draws its OWN selection menu, so the in-page bar
+   * would be a duplicate — and it renders UNDER that system window anyway.
+   * Only the DOM-selection path is suppressed; terminal / CodeMirror /
+   * OpenAPI-iframe selections have no native menu and must keep the bar.
+   */
+  describe('Android suppresses the in-page bar for DOM selections', () => {
+    function mountWithComposable() {
+      const TestComponent = defineComponent({
+        setup() { useQuoteQuestion(); return () => h('div') },
+      })
+      return mount(TestComponent)
+    }
+
+    function selectInMarkdown() {
+      const container = document.createElement('div')
+      container.className = 'markdown-body'
+      container.setAttribute('data-file-path', '/a.md')
+      const span = document.createElement('span')
+      span.textContent = 'selected code text'
+      container.appendChild(span)
+      document.body.appendChild(container)
+      const range = document.createRange()
+      range.selectNodeContents(span)
+      const sel = window.getSelection()
+      sel?.removeAllRanges()
+      vi.advanceTimersByTime(0)
+      sel?.addRange(range)
+      vi.advanceTimersByTime(0)
+    }
+
+    it('hides the bar but still records the quote for the native menu', () => {
+      _setPlatformForTest({ isAndroidApp: true })
+      const wrapper = mountWithComposable()
+      selectInMarkdown()
+      document.dispatchEvent(new Event('selectionchange'))
+      vi.advanceTimersByTime(150)
+
+      const qq = useQuoteQuestion()
+      expect(qq.visible.value).toBe(false)
+      // The native menu needs the data even though the bar is hidden.
+      expect(ctx.quoteData.value?.text).toBe('selected code text')
+
+      // And the native action works off it.
+      qq.handleNativeSelectionAction('quote')
+      expect(ctx.stagedQuotes.value).toHaveLength(1)
+
+      wrapper.unmount()
+    })
+
+    it('shows the bar on web (regression guard for the Android branch)', () => {
+      _setPlatformForTest({ isAndroidApp: false })
+      const wrapper = mountWithComposable()
+      selectInMarkdown()
+      document.dispatchEvent(new Event('selectionchange'))
+      vi.advanceTimersByTime(150)
+
+      expect(useQuoteQuestion().visible.value).toBe(true)
+
+      wrapper.unmount()
+    })
+
+    it('still shows the bar on Android for a programmatic showBar (terminal/CodeMirror)', () => {
+      // Terminal xterm / CodeMirror / OpenAPI iframe selections reach the bar
+      // via showBar(), not evaluateSelection — there is no native menu for
+      // them, so suppressing would remove their only entry point.
+      _setPlatformForTest({ isAndroidApp: true })
+      const wrapper = mountWithComposable()
+      const qq = useQuoteQuestion()
+      qq.showBar({ text: 'term text', filePath: '/proj', language: '', startLine: 0, endLine: 0 }, { delay: 0 })
+      vi.advanceTimersByTime(0)
+
+      expect(qq.visible.value).toBe(true)
+
+      wrapper.unmount()
     })
   })
 })

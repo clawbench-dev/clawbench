@@ -76,7 +76,7 @@ describe('handleMdImageAttachClick', () => {
     expect(actions.has).toHaveBeenCalledWith('img/x.png')
     expect(actions.add).toHaveBeenCalledWith('img/x.png')
     expect(actions.remove).not.toHaveBeenCalled()
-    expect(actions.toast).toHaveBeenCalledWith('Added to chat', { icon: '📎', type: 'success', duration: 1500 })
+    expect(actions.toast).toHaveBeenCalledWith('Added to chat', { icon: 'attach', type: 'success', duration: 1500 })
   })
 
   it('removes the file when already attached', () => {
@@ -85,7 +85,7 @@ describe('handleMdImageAttachClick', () => {
     handleMdImageAttachClick(clickOn(badge), actions)
     expect(actions.remove).toHaveBeenCalledWith('img/x.png')
     expect(actions.add).not.toHaveBeenCalled()
-    expect(actions.toast).toHaveBeenCalledWith('Removed from chat attachments', { icon: '📎', type: 'info', duration: 1500 })
+    expect(actions.toast).toHaveBeenCalledWith('Removed from chat attachments', { icon: 'attach', type: 'info', duration: 1500 })
   })
 
   it('does nothing and returns false for non-badge clicks', () => {

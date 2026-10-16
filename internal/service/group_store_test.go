@@ -426,26 +426,26 @@ func TestGroupCruiseRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGroup: %v", err)
 	}
-	if GetGroupCruise(groupID) {
+	if GetSessionCruise(groupID) {
 		t.Fatal("cruise must default to false when unset")
 	}
-	if err := SetGroupCruise(groupID, true); err != nil {
-		t.Fatalf("SetGroupCruise(true): %v", err)
+	if err := SetSessionCruise(groupID, true); err != nil {
+		t.Fatalf("SetSessionCruise(true): %v", err)
 	}
-	if !GetGroupCruise(groupID) {
+	if !GetSessionCruise(groupID) {
 		t.Fatal("cruise must read back true after being set")
 	}
 	// The two switches must not clobber each other (they share context_state).
 	if err := SetGroupParallelDefault(groupID, true); err != nil {
 		t.Fatalf("SetGroupParallelDefault(true): %v", err)
 	}
-	if !GetGroupCruise(groupID) {
+	if !GetSessionCruise(groupID) {
 		t.Fatal("setting parallelDefault must not clear cruise")
 	}
-	if err := SetGroupCruise(groupID, false); err != nil {
-		t.Fatalf("SetGroupCruise(false): %v", err)
+	if err := SetSessionCruise(groupID, false); err != nil {
+		t.Fatalf("SetSessionCruise(false): %v", err)
 	}
-	if GetGroupCruise(groupID) {
+	if GetSessionCruise(groupID) {
 		t.Fatal("cruise must read back false after being cleared")
 	}
 	if !GetGroupParallelDefault(groupID) {

@@ -59,7 +59,7 @@ func ClearSSHServer(s *ssh.Server) {
 // discover the tunnel port.
 // GET /api/ssh/info
 //
-// Deliberately public, mirroring the /api/frp/status split: Android's
+// Deliberately public: Android's
 // BackgroundService.fetchSSHPort() calls this from native Java with no cookie
 // to learn the port before it can connect. It only reports whether SSH is on
 // and which port to dial.

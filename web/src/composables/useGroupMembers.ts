@@ -26,6 +26,8 @@ export function useGroupMembers(currentSessionId: Ref<string>) {
   const parallelDefault = ref(false)
   /** Auto-cruise switch (server-authoritative, design §15). */
   const cruise = ref(false)
+  /** Generation counter for stale-response suppression in refresh(). */
+  let refreshGen = 0
   const { loadAgents } = useAgents()
 
   const hostMemberId = computed(() => members.value.find(m => m.isHost)?.id || '')
@@ -60,6 +62,13 @@ export function useGroupMembers(currentSessionId: Ref<string>) {
   }
 
   async function refresh(sessionId: string) {
+    // Stale-response guard. Switching away and back (or switching fast between
+    // two groups) starts two refreshes; the browser may deliver the OLDER one
+    // last, which would then overwrite the current session's roster/cruise with
+    // the previous session's values. Tag each request with a generation and drop
+    // any response whose generation is no longer the latest. This is the same
+    // pattern loadHistorySeq uses for chat history.
+    const gen = ++refreshGen
     if (!sessionId) {
       members.value = []
       mode.value = 'host'
@@ -72,11 +81,13 @@ export function useGroupMembers(currentSessionId: Ref<string>) {
     void loadAgents()
     try {
       const res = await listGroupMembers(sessionId)
+      if (gen !== refreshGen) return // superseded by a newer refresh
       members.value = res.members
       mode.value = res.mode
       parallelDefault.value = res.parallelDefault
       cruise.value = res.cruise
     } catch {
+      if (gen !== refreshGen) return // superseded — do not clobber the new session
       members.value = []
       mode.value = 'host'
       parallelDefault.value = false

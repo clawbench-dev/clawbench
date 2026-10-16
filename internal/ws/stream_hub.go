@@ -323,6 +323,19 @@ func StreamEventToPayload(event ai.StreamEvent) any { //nolint:gocyclo // one br
 		return payload
 	case "done", "replay_done":
 		return map[string]any{}
+	case "content_reset":
+		// A failed ACP Prompt is retried after a respawn, and the retry re-emits
+		// the whole reply. The executor clears its accumulated blocks and the DB
+		// row (session_executor's content_reset branch) so the retry's content
+		// does not stack onto the failed attempt's partial output — but the
+		// frontend has its own accumulator and can only clear it if this event
+		// actually reaches it. Without a payload here StreamEventToPayload
+		// returned nil, Emit skipped the event, and the first attempt's partial
+		// reply stayed on screen with the retry appended after it: one reply
+		// rendered as two concatenated segments, healed only by a session switch
+		// (which rebuilds the array from the DB). It carries no data — the reset
+		// is scoped by the envelope's message_id.
+		return map[string]any{}
 	}
 
 	switch event.Type {

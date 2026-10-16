@@ -95,21 +95,6 @@ vi.mock('@/composables/useTabDrawer', () => ({
   }),
 }))
 
-const mockFrpState = reactive({
-  enabled: false,
-  running: false,
-  state: 'disabled',
-  serverAddr: '',
-  remotePort: 0,
-  sshRemotePort: 0,
-  remoteUrl: '',
-})
-
-vi.mock('@/composables/useFrp', () => ({
-  useFrp: () => ({ frpState: mockFrpState }),
-}))
-
-// RAG status mock — shared reactive state accessed via module-level variable
 const _ragMockState = {
   status: { available: false, mode: 'none', has_fts_data: false, has_vec_data: false, embedder_healthy: false, total_messages: 0, indexed_messages: 0, embedded_messages: 0 },
   refresh: vi.fn().mockResolvedValue(undefined),
@@ -199,15 +184,6 @@ const i18n = createI18n({
           ttsEngineEdge: 'Edge',
           ttsEnginePiper: 'Piper',
           ttsVoice: '语音',
-          frpEnabled: '启用FRP',
-          frpAutoPort: '自动端口',
-          frpAssignedPort: '分配的HTTP端口',
-          frpAssignedPortDesc: 'FRP分配的HTTP端口',
-          frpAssignedSSHPort: '分配的SSH端口',
-          frpAssignedSSHPortDesc: 'FRP分配的SSH端口',
-          frpServerAddr: '服务器地址',
-          frpServerPort: '服务器端口',
-          frpToken: '令牌',
           portForwardEnabled: '启用端口映射',
           portForwardPort: '端口',
           pushMode: '推送模式',
@@ -309,31 +285,6 @@ function makeTtsConfig(): GroupPanelConfig {
   }
 }
 
-function makeFrpConfig(): GroupPanelConfig {
-  return {
-    panelId: 'frp',
-    enableKey: 'frp.enabled',
-    enableLabelKey: 'settings.items.frpEnabled',
-    commonFields: [
-      { labelKey: 'settings.items.frpServerAddr', key: 'frp.server_addr', type: 'text', source: 'server' },
-      { labelKey: 'settings.items.frpServerPort', key: 'frp.server_port', type: 'number', source: 'server' },
-      { labelKey: 'settings.items.frpToken', key: 'frp.token', type: 'password', source: 'server' },
-      { labelKey: 'settings.items.frpAutoPort', key: 'frp.auto_port', type: 'switch', source: 'server' },
-    ],
-    optionSubFields: [
-      {
-        when: false,
-        fields: [
-          { labelKey: 'settings.items.portForwardPort', key: 'frp.remote_port', type: 'number', source: 'server' },
-        ],
-      },
-    ],
-    optionSubFieldsKey: 'frp.auto_port',
-    hasConnectivityTest: true,
-    getTestCategories: (values) => [{ category: 'frp', values }],
-  }
-}
-
 function makeSimpleConfig(): GroupPanelConfig {
   return {
     panelId: 'simple',
@@ -419,8 +370,6 @@ describe('SettingsGroupPanel', () => {
     mockConnectivityTesting.value = false
     mockTestResults.value = []
     mockDrawerEffectiveOpen.value = false
-    // Reset frpState
-    Object.assign(mockFrpState, { enabled: false, running: false, state: 'disabled', serverAddr: '', remotePort: 0, sshRemotePort: 0, remoteUrl: '' })
     // Default getServerValueWithDefault
     mockGetServerValueWithDefault.mockReturnValue(undefined)
     // Reset RAG mocks
@@ -709,18 +658,6 @@ describe('SettingsGroupPanel', () => {
       expect(items.length).toBe(1)
     })
 
-    it('uses optionSubFieldsKey when specified instead of entrySelector key', () => {
-      localValues['frp.enabled'] = true
-      localValues['frp.auto_port'] = false
-      localValues['frp.server_addr'] = ''
-      localValues['frp.server_port'] = 7000
-      localValues['frp.token'] = ''
-      localValues['frp.remote_port'] = 8080
-      const wrapper = mountPanel(makeFrpConfig())
-      const items = wrapper.findAllComponents({ name: 'SettingsItem' })
-      // Should show frp.remote_port when frp.auto_port is false
-      expect(items.some(i => i.props('label') === '端口')).toBe(true)
-    })
   })
 
   // ─── Field value helpers ──────────────────────────────
@@ -931,18 +868,18 @@ describe('SettingsGroupPanel', () => {
       const wrapper = mountPanel(makeSimpleConfig())
       await wrapper.find('.group-panel__save-btn').trigger('click')
       await nextTick()
-      expect(mockToastShow).toHaveBeenCalledWith('已保存', expect.objectContaining({ icon: '✅', type: 'success', duration: 3000 }))
+      expect(mockToastShow).toHaveBeenCalledWith('已保存', expect.objectContaining({ icon: 'success', type: 'success', duration: 3000 }))
     })
 
     it('emits restartNeeded when save returns needsRestart with changedColdFields', async () => {
       mockHasChanges.value = true
       mockCanSave.value = true
-      mockHandleSave.mockResolvedValueOnce({ needsRestart: true, changedColdFields: ['frp.enabled'] })
+      mockHandleSave.mockResolvedValueOnce({ needsRestart: true, changedColdFields: ['some.enabled'] })
       const wrapper = mountPanel(makeSimpleConfig())
       await wrapper.find('.group-panel__save-btn').trigger('click')
       await nextTick()
       expect(wrapper.emitted('restartNeeded')).toBeTruthy()
-      expect(wrapper.emitted('restartNeeded')![0]).toEqual([['frp.enabled']])
+      expect(wrapper.emitted('restartNeeded')![0]).toEqual([['some.enabled']])
     })
 
     it('does not emit restartNeeded when no restart needed', async () => {
@@ -1116,112 +1053,6 @@ describe('SettingsGroupPanel', () => {
       await nextTick()
 
       expect(mockClearConnectivityResults).not.toHaveBeenCalled()
-    })
-  })
-
-  // ─── FRP auto_port display ──────────────────────────────
-
-  describe('FRP auto_port display', () => {
-    it('shows assigned HTTP port when frp panel has auto_port=true and frp.enabled=true', () => {
-      localValues['frp.enabled'] = true
-      localValues['frp.auto_port'] = true
-      localValues['frp.server_addr'] = ''
-      localValues['frp.server_port'] = 7000
-      localValues['frp.token'] = ''
-      Object.assign(mockFrpState, { state: 'running', remotePort: 12345, sshRemotePort: 0 })
-      const wrapper = mountPanel(makeFrpConfig())
-      // Should render extra SettingsItem for assigned port
-      const items = wrapper.findAllComponents({ name: 'SettingsItem' })
-      const portItem = items.find(i => i.props('label') === '分配的HTTP端口')
-      expect(portItem).toBeTruthy()
-      expect(portItem!.props('modelValue')).toBe(12345)
-      expect(portItem!.props('disabled')).toBe(true)
-    })
-
-    it('shows assigned SSH port when available', () => {
-      localValues['frp.enabled'] = true
-      localValues['frp.auto_port'] = true
-      localValues['frp.server_addr'] = ''
-      localValues['frp.server_port'] = 7000
-      localValues['frp.token'] = ''
-      Object.assign(mockFrpState, { state: 'running', remotePort: 12345, sshRemotePort: 22222 })
-      const wrapper = mountPanel(makeFrpConfig())
-      const items = wrapper.findAllComponents({ name: 'SettingsItem' })
-      const sshItem = items.find(i => i.props('label') === '分配的SSH端口')
-      expect(sshItem).toBeTruthy()
-      expect(sshItem!.props('modelValue')).toBe(22222)
-    })
-
-    it('does not show SSH port when sshRemotePort is 0', () => {
-      localValues['frp.enabled'] = true
-      localValues['frp.auto_port'] = true
-      localValues['frp.server_addr'] = ''
-      localValues['frp.server_port'] = 7000
-      localValues['frp.token'] = ''
-      Object.assign(mockFrpState, { state: 'running', remotePort: 12345, sshRemotePort: 0 })
-      const wrapper = mountPanel(makeFrpConfig())
-      const items = wrapper.findAllComponents({ name: 'SettingsItem' })
-      const sshItem = items.find(i => i.props('label') === '分配的SSH端口')
-      expect(sshItem).toBeFalsy()
-    })
-
-    it('does not show assigned ports when auto_port is false', () => {
-      localValues['frp.enabled'] = true
-      localValues['frp.auto_port'] = false
-      localValues['frp.server_addr'] = ''
-      localValues['frp.server_port'] = 7000
-      localValues['frp.token'] = ''
-      localValues['frp.remote_port'] = 8080
-      Object.assign(mockFrpState, { state: 'running', remotePort: 12345, sshRemotePort: 22222 })
-      const wrapper = mountPanel(makeFrpConfig())
-      const items = wrapper.findAllComponents({ name: 'SettingsItem' })
-      const portItem = items.find(i => i.props('label') === '分配的HTTP端口')
-      expect(portItem).toBeFalsy()
-    })
-
-    it('does not show assigned ports when frp.enabled is false', () => {
-      localValues['frp.enabled'] = false
-      localValues['frp.auto_port'] = true
-      localValues['frp.server_addr'] = ''
-      localValues['frp.server_port'] = 7000
-      localValues['frp.token'] = ''
-      Object.assign(mockFrpState, { state: 'running', remotePort: 12345 })
-      const wrapper = mountPanel(makeFrpConfig())
-      const items = wrapper.findAllComponents({ name: 'SettingsItem' })
-      const portItem = items.find(i => i.props('label') === '分配的HTTP端口')
-      expect(portItem).toBeFalsy()
-    })
-
-    it('shows port 0 when FRP is not running', () => {
-      localValues['frp.enabled'] = true
-      localValues['frp.auto_port'] = true
-      localValues['frp.server_addr'] = ''
-      localValues['frp.server_port'] = 7000
-      localValues['frp.token'] = ''
-      Object.assign(mockFrpState, { state: 'disabled', remotePort: 0, sshRemotePort: 0 })
-      const wrapper = mountPanel(makeFrpConfig())
-      const items = wrapper.findAllComponents({ name: 'SettingsItem' })
-      const portItem = items.find(i => i.props('label') === '分配的HTTP端口')
-      expect(portItem).toBeTruthy()
-      expect(portItem!.props('modelValue')).toBe(0)
-    })
-
-    it('does not show assigned ports for non-frp panels', () => {
-      const config: GroupPanelConfig = {
-        panelId: 'other',
-        enableKey: 'other.enabled',
-        enableLabelKey: 'settings.items.frpEnabled',
-        commonFields: [
-          { labelKey: 'settings.items.frpAutoPort', key: 'frp.auto_port', type: 'switch', source: 'server' },
-        ],
-      }
-      localValues['other.enabled'] = true
-      localValues['frp.auto_port'] = true
-      Object.assign(mockFrpState, { state: 'running', remotePort: 12345 })
-      const wrapper = mountPanel(config)
-      const items = wrapper.findAllComponents({ name: 'SettingsItem' })
-      const portItem = items.find(i => i.props('label') === '分配的HTTP端口')
-      expect(portItem).toBeFalsy()
     })
   })
 

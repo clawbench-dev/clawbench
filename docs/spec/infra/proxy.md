@@ -46,8 +46,6 @@ flowchart TD
 - **健康检查**：定期检查转发端口的可用性，不可用的端口自动标记。前端只展示可用的端口，避免用户点击后才发现服务不可达。**反向条目完全跳过拨号探测**：目标在客户端，且拨服务器自身监听端口恒为真，其 `active` 由 `SetReverseBound` 在 `tcpip-forward` 成功/释放时驱动
 - **端口自动检测**：`/api/proxy/detect` 端点扫描常用端口，发现可用的开发服务。用户不需要记住端口号。探测**并行**执行并有全局并发上限——端口多时串行探测会累加超时（单端口最坏 3s，111 个端口远超前端 10s 请求超时），请求被 abort 后 UI 静默渲染成"未检测到可转发的端口"，与"真的没有端口"完全无法区分。前端也必须捕获扫描错误并展示，不能让它变成静默的空结果
 - **CORS 代理**：`/api/openapi-proxy` 端点为 Swagger UI 的"Try it out"功能转发 API 请求，绕过浏览器 CORS 限制。仅转发 HTTP/HTTPS 请求，过滤 hop-by-hop 头部。生产环境可设置 `AllowLocalProxy=false` 阻止对私有 IP 的请求（防 SSRF），DNS 重绑定攻击在 TCP dial 阶段二次校验
-- **FRP 状态接口**：FRP 客户端由独立的 `internal/frp` 模块管理。`GET /api/frp/info` 返回包含公网地址的完整状态并要求认证；`GET /api/frp/status` 仅返回 enabled/running 等最小状态，供无需认证的本地或原生状态检查使用
-
 ### 设计要点
 
 - **Host 重写是核心价值**：没有 Host 重写，通过 SSH 隧道访问虚拟主机后端（如 `admin.example.com`）会得到 404——浏览器发送的 Host 是 `localhost:port`，后端不认识这个 Host。反向代理将 Host 改回目标地址，问题迎刃而解

@@ -177,6 +177,50 @@ func TestBuildChatRequest_NewSession(t *testing.T) {
 	}
 }
 
+// TestBuildChatRequest_CruiseAddendumInjected verifies the auto-cruise addendum
+// rides the PROMPT when the session's cruise switch is on, and is absent when it
+// is off.
+func TestBuildChatRequest_CruiseAddendumInjected(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	_, err := store.WriteExec(
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type) VALUES (?, 1, 'codebuddy', 'T', '', 'default', '', 'chat')",
+		"sess-cruise",
+	)
+	require.NoError(t, err)
+
+	// Off by default: no addendum.
+	req := BuildChatRequest("hello", "sess-cruise", "/proj", "codebuddy", "", "", "", "", "", "/proj", false)
+	assert.NotContains(t, req.Prompt, "[自动巡航模式]", "cruise off must not inject the addendum")
+
+	require.NoError(t, SetSessionCruise("sess-cruise", true))
+	req = BuildChatRequest("hello", "sess-cruise", "/proj", "codebuddy", "", "", "", "", "", "/proj", false)
+	assert.Contains(t, req.Prompt, "[自动巡航模式]", "cruise on must inject the addendum")
+	assert.Contains(t, req.Prompt, "hello", "the user's message must survive the addendum")
+}
+
+// TestBuildChatRequest_CruiseAddendumSkipsSlashCommand pins the ACP-command
+// exemption: prepending the addendum to a slash command would strip its leading
+// "/" and the agent would route it to the LLM instead of its CommandExecutor.
+func TestBuildChatRequest_CruiseAddendumSkipsSlashCommand(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	_, err := store.WriteExec(
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type) VALUES (?, 1, 'codebuddy', 'T', '', 'default', '', 'chat')",
+		"sess-cruise-slash",
+	)
+	require.NoError(t, err)
+	require.NoError(t, SetSessionCruise("sess-cruise-slash", true))
+
+	req := BuildChatRequest("/compact", "sess-cruise-slash", "/proj", "codebuddy", "", "", "", "", "", "/proj", false)
+	assert.False(t, strings.HasPrefix(req.Prompt, "\n\n[自动巡航模式]"),
+		"a slash command must keep its leading '/' (no addendum prefix): %q", req.Prompt)
+	assert.True(t, strings.HasPrefix(strings.TrimSpace(req.Prompt), "/compact"),
+		"the slash command must be the prompt's first token: %q", req.Prompt)
+}
+
 // TestBuildChatRequest_CompactedFlagConsumedOnce pins the end-to-end contract of
 // the compaction re-injection: the flag reaches the request exactly once, so the
 // system prompt is re-injected on the turn after a compaction and not again.

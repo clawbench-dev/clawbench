@@ -99,11 +99,6 @@ type GroupOrchestrator struct {
 	// "discussion limit reached" system line is written exactly once and no
 	// further member turns run.
 	capReached bool
-	// cruise is whether AUTO-CRUISE is on for this turn (design §15), read once
-	// at loop start. When true, the loop intercepts every "hand the floor back
-	// to the human" point and runs a CONFIRMATION round instead, only ending
-	// when the goal is declared satisfied (or the speech cap is hit).
-	cruise bool
 	// cruiseSatisfied is latched once a confirmation round confirms completion,
 	// so the wrap-up (summary + "cruise complete" line) is written exactly once
 	// and the loop exits.
@@ -119,6 +114,28 @@ const maxConsecutiveParseFailures = 2
 // discussion (design §6). Two: the first falls back to round-robin, the second
 // means the host is down — continuing would burn the whole round budget.
 const maxConsecutiveHostFailures = 2
+
+// cruiseOn reports whether AUTO-CRUISE is on for this session RIGHT NOW (design
+// §15).
+//
+// It reads the persisted switch on EVERY call rather than snapshotting it at
+// loop start: cruise is a live, server-authoritative setting, and a turn can
+// run for many minutes. With a start-of-turn snapshot, toggling cruise ON while
+// a turn was already running had no effect until the NEXT user message — the
+// user's "I turned cruise on but this turn didn't cruise". A read is a single
+// indexed primary-key lookup on a local SQLite row, so calling it at each
+// hand-back decision is negligible next to an LLM turn.
+//
+// The returned value is only consulted at "hand the floor back" decision
+// points; once a confirmation round is underway the loop keeps its own
+// bookkeeping (cruiseSatisfied), so toggling OFF mid-confirmation simply lets
+// the next hand-back point end the turn normally.
+func (o *GroupOrchestrator) cruiseOn() bool {
+	if o.groupID == "" {
+		return false
+	}
+	return GetSessionCruise(o.groupID)
+}
 
 // NewGroupOrchestrator builds an orchestrator for a group session.
 func NewGroupOrchestrator(groupID string) *GroupOrchestrator {
@@ -319,7 +336,6 @@ func renderGroupCommandForHost(rawMsg, projectPath, groupID string) string {
 // rounds return but before the caller can send "done", matching single chat
 // where Finalize summarizes before the terminal event.
 func (o *GroupOrchestrator) runLoop(groupCtx context.Context, groupID string) DrainResult {
-	o.cruise = GetGroupCruise(groupID)
 	var res DrainResult
 	if GetGroupMode(groupID) == GroupModeFree {
 		res = o.runFreeLoop(groupCtx, groupID)
@@ -331,7 +347,7 @@ func (o *GroupOrchestrator) runLoop(groupCtx context.Context, groupID string) Dr
 	// the "cruise complete" line instead of "your turn"; the cap keeps its own
 	// line (written by checkSpeechCap). A cancel/error keeps its own visible
 	// signal and writes neither.
-	if o.cruise {
+	if o.cruiseOn() {
 		if o.cruiseSatisfied && res.CancelReason == "" && res.Err == "" {
 			writeGroupSystemMessage(o.project, groupID, i18n.T(
 				i18n.LocalizerForLocale(model.Language), "GroupCruiseSatisfied",
@@ -625,7 +641,7 @@ func (o *GroupOrchestrator) runSpeakerGroup(
 	if !g.parallel {
 		return o.runSequentialGroup(ctx, s, g, outer, onSpoke)
 	}
-	if groupNamesUser(g) && !o.cruise {
+	if groupNamesUser(g) && !o.cruiseOn() {
 		ai := splitOffUser(g)
 		var appended []speakerGroup
 		if len(ai.turns) > 0 {
@@ -687,7 +703,7 @@ func (o *GroupOrchestrator) runSequentialGroup(
 			return DrainResult{CancelReason: cancelReasonUser}, appended, true
 		}
 		if t.member.ID == groupUserTargetID {
-			if o.cruise {
+			if o.cruiseOn() {
 				// Cruise: the floor never returns to the human, so skip the User
 				// turn and keep the AI members speaking. The confirmation round
 				// ends the turn instead.
@@ -712,7 +728,7 @@ func (o *GroupOrchestrator) runSequentialGroup(
 		// In cruise mode the floor never returns to the human, so the question is
 		// NOT a stop (the member's own prompt tells it not to ask; if it did, the
 		// card still renders but the discussion continues).
-		if r.Err == "" && r.AskedQuestion && !o.cruise {
+		if r.Err == "" && r.AskedQuestion && !o.cruiseOn() {
 			o.handUserBack(o.groupID)
 			return DrainResult{}, appended, true
 		}
@@ -890,7 +906,7 @@ func (o *GroupOrchestrator) hostFailureFallback(ctx context.Context, s groupTurn
 // human ends the round) is one named step rather than an inline loop. In cruise
 // mode the floor never returns to the human, so a question is not a stop.
 func (o *GroupOrchestrator) handbackIfQuestionAsked(results []groupMemberResult) bool {
-	if o.cruise {
+	if o.cruiseOn() {
 		return false
 	}
 	for i := range results {
@@ -900,6 +916,44 @@ func (o *GroupOrchestrator) handbackIfQuestionAsked(results []groupMemberResult)
 		}
 	}
 	return false
+}
+
+// hostRouteFailure handles a CLEAN host turn that produced no usable routing
+// (unparseable output, or a route whose targets all resolved away). Extracted
+// from runRounds' refill closure so the escalation rule is one named step.
+//
+// A single failure is tolerated with a round-robin fallback (the host fumbled
+// once). The SECOND consecutive failure means the host is not routing at all.
+//
+//   - Non-cruise: abort and finalize (decision #56) — continuing would burn the
+//     whole budget on a broken loop.
+//   - AUTO-CRUISE: escalate to a confirmation round instead of aborting. This
+//     is the most common "hand the floor back" shape in practice (the other
+//     five are listed on hostTurnOutcome): a host that considers the task done
+//     simply writes a closing paragraph with NO routing tag. Without this the
+//     turn ended via summarize+abort and the cruise NEVER entered a
+//     confirmation round — the reported "cruise is on but no confirmation
+//     happens". The confirmation round is bounded (runCruiseConfirmHost counts
+//     one member speech and its own cap check), so this cannot spin.
+func (o *GroupOrchestrator) hostRouteFailure(ctx context.Context, s groupTurnSetup, hostMemberID, hostSysPrompt string) ([]speakerGroup, bool, DrainResult) {
+	o.parseFailures++
+	if o.parseFailures >= maxConsecutiveParseFailures {
+		if o.cruiseOn() {
+			// Cruise never hands the floor back: the host's untagged closing
+			// prose is treated exactly like its <clawbench-group-end/> — a
+			// trigger for the confirmation round, not a terminal abort.
+			return o.runCruiseConfirmHost(ctx, s, hostMemberID, hostSysPrompt)
+		}
+		slog.Warn("group: aborting after consecutive parse failures",
+			"group", o.groupID, "failures", o.parseFailures)
+		o.summarize(ctx, s, hostMemberID)
+		return nil, false, DrainResult{}
+	}
+	fb, ok := o.pickFallbackMember(hostMemberID, s.members)
+	if !ok {
+		return nil, false, DrainResult{}
+	}
+	return []speakerGroup{{turns: []speakerTurn{memberTurn(fb, "", s)}}}, true, DrainResult{}
 }
 
 // runRounds is the host/member decision loop, driven by drainSpeakers: the
@@ -921,9 +975,14 @@ func (o *GroupOrchestrator) runRounds(ctx context.Context, groupID string) Drain
 	// runs through the SAME runSpeakerTurn path as a member (cursor + note
 	// bookkeeping + command injection), so only the prompt differs. In cruise
 	// mode the addendum teaches that group-end no longer ends the turn directly.
-	hostSysPrompt := BuildHostSystemPrompt(s.names[hostMemberID], activeMemberNamesExcept(s.members, hostMemberID))
-	if o.cruise {
-		hostSysPrompt += BuildCruiseHostAddendum()
+	// It is rebuilt on EVERY refill (not once) so toggling cruise mid-turn takes
+	// effect on the very next host turn — see cruiseOn().
+	hostPrompt := func() string {
+		p := BuildHostSystemPrompt(s.names[hostMemberID], activeMemberNamesExcept(s.members, hostMemberID))
+		if o.cruiseOn() {
+			p += BuildCruiseHostAddendum()
+		}
+		return p
 	}
 	refill := func(ctx context.Context) ([]speakerGroup, bool, DrainResult) {
 		if o.checkSpeechCap() {
@@ -931,6 +990,7 @@ func (o *GroupOrchestrator) runRounds(ctx context.Context, groupID string) Drain
 			// else. The summary runs once after drainSpeakers returns.
 			return nil, false, DrainResult{}
 		}
+		hostSysPrompt := hostPrompt()
 		// Host speaks and routes.
 		hostMember := GroupMember{ID: hostMemberID, Name: s.names[hostMemberID]}
 		hostRes := o.runSpeakerTurn(ctx, s, hostMember, "", hostSysPrompt)
@@ -945,35 +1005,21 @@ func (o *GroupOrchestrator) runRounds(ctx context.Context, groupID string) Drain
 		// A successful host turn clears the failure streak.
 		o.hostFailures = 0
 
-		route := grouprouting.Parse(o.lastMemberOutput(groupID, hostMemberID))
+		hostOutput := o.lastMemberOutput(groupID, hostMemberID)
+		route := grouprouting.Parse(hostOutput)
 		// Decide what a clean host turn means: in cruise mode the "hand the
 		// floor back" points trigger a confirmation round; otherwise they end
 		// the turn. Extracted to keep this refill closure's complexity down.
-		if groups, ok, res, handled := o.hostTurnOutcome(ctx, s, hostMemberID, hostSysPrompt, hostRes, route); handled {
+		if groups, ok, res, handled := o.hostTurnOutcome(ctx, s, hostMemberID, hostSysPrompt, hostOutput, hostRes, route); handled {
 			return groups, ok, res
 		}
-
 		groups := resolveSpeakerGroups(route, s.members, hostMemberID, func(m GroupMember, instruction string) speakerTurn {
 			return memberTurn(m, instruction, s)
 		})
 		if len(groups) == 0 {
-			// Parse failed or no valid speakers: fall back to round-robin.
-			//
-			// Two consecutive failures mean the host is not producing usable
-			// routing at all — continuing would burn the whole budget on a
-			// broken loop. Abort and finalize (decision #56).
-			o.parseFailures++
-			if o.parseFailures >= maxConsecutiveParseFailures {
-				slog.Warn("group: aborting after consecutive parse failures",
-					"group", groupID, "failures", o.parseFailures)
-				o.summarize(ctx, s, hostMemberID)
-				return nil, false, DrainResult{}
-			}
-			fb, ok := o.pickFallbackMember(hostMemberID, s.members)
-			if !ok {
-				return nil, false, DrainResult{}
-			}
-			return []speakerGroup{{turns: []speakerTurn{memberTurn(fb, "", s)}}}, true, DrainResult{}
+			// Parse failed or no valid speakers: fall back to round-robin, or
+			// escalate (see hostRouteFailure).
+			return o.hostRouteFailure(ctx, s, hostMemberID, hostSysPrompt)
 		}
 		// A usable routing decision resets the failure streak.
 		o.parseFailures = 0
@@ -1015,11 +1061,18 @@ func (o *GroupOrchestrator) runRounds(ctx context.Context, groupID string) Drain
 // written, so there is no separate summary turn. When goal-satisfied is
 // co-emitted with an end tag / mention, the declaration still wins: the turn is
 // confirmed, not routed. Outside cruise, question and end end the turn as before.
-func (o *GroupOrchestrator) hostTurnOutcome(ctx context.Context, s groupTurnSetup, hostMemberID, hostSysPrompt string, hostRes groupMemberResult, route grouprouting.Result) ([]speakerGroup, bool, DrainResult, bool) {
-	if o.cruise {
+func (o *GroupOrchestrator) hostTurnOutcome(ctx context.Context, s groupTurnSetup, hostMemberID, hostSysPrompt, hostOutput string, hostRes groupMemberResult, route grouprouting.Result) ([]speakerGroup, bool, DrainResult, bool) {
+	if o.cruiseOn() {
 		// goal-satisfied wins over everything else in the same turn, but it does
 		// NOT confirm directly — it enters a confirmation round.
-		if route.GoalSatisfied || hostRes.AskedQuestion || route.End || routeNamesUser(route, s.members) {
+		//
+		// hostAsksUserInProse covers the fifth hand-back shape: the host ends a
+		// routing turn with a plain-language question to the human ("要我继续吗？")
+		// instead of an AskUserQuestion card. Without it, a host that routes AND
+		// asks would keep the discussion going forever while the user waits for
+		// an answer — see hostAsksUserInProse.
+		if route.GoalSatisfied || hostRes.AskedQuestion || route.End || routeNamesUser(route, s.members) ||
+			hostAsksUserInProse(hostOutput) {
 			groups, ok, res := o.runCruiseConfirmHost(ctx, s, hostMemberID, hostSysPrompt)
 			return groups, ok, res, true
 		}
@@ -1036,6 +1089,62 @@ func (o *GroupOrchestrator) hostTurnOutcome(ctx context.Context, s groupTurnSetu
 		return nil, false, DrainResult{}, true
 	}
 	return nil, false, DrainResult{}, false
+}
+
+// hostAsksUserInProse reports whether a host turn ends by asking the HUMAN a
+// question in plain prose — the fifth "hand the floor back" shape (design §15.4
+// lists four: group-end, @User, an AskUserQuestion card, and an unsolicited
+// goal-satisfied). A host that is unsure commonly closes with "要我继续吗？" and
+// NO card; in cruise mode that must trigger a confirmation round, exactly like
+// the card does, or the turn keeps routing while the user waits for an answer.
+//
+// Detection looks ONLY at the last non-empty line, which is what makes it both
+// simple and precise:
+//
+//   - Last line only: a host routinely asks rhetorical questions mid-explanation
+//     ("为什么没挡住？") and answers them itself. Requiring the question to be the
+//     FINAL thing said separates "addressing the user" from "thinking aloud".
+//     Measured on the real group history this fires on 3/112 host turns, all
+//     genuine hand-backs; scanning EVERY line fires on 6 and picks up the host
+//     merely ECHOING the user's own question, which is not a hand-back.
+//   - No mention/code stripping is needed: a mention span ends with `>` and a
+//     code span with a backtick, so neither can be the last-line question. A
+//     question inside a routed directive is thus already excluded (verified: the
+//     rule gives identical results on all 112 real host turns with or without
+//     such stripping, so the extra machinery was removed).
+//   - Trailing markdown emphasis is trimmed so a bolded `**要我继续吗？**` counts.
+//
+// A false positive is cheap here: in cruise it merely asks the host to confirm
+// (one bounded round, which the host declines by routing on). A false negative
+// is the reported bug — the turn never confirms. So the rule errs toward firing.
+func hostAsksUserInProse(hostOutput string) bool {
+	if hostOutput == "" {
+		return false
+	}
+	for _, line := range reverseLines(hostOutput) {
+		s := strings.TrimSpace(line)
+		if s == "" {
+			continue
+		}
+		// Trim trailing markdown emphasis so `**要我继续吗？**` counts. The
+		// backtick is deliberately NOT trimmed: a line ending in inline code is
+		// not prose, so leaving the backtick in place makes the suffix test fail
+		// (the desired outcome) instead of reading code as a question.
+		s = strings.TrimRight(s, "*_~ \t")
+		return strings.HasSuffix(s, "?") || strings.HasSuffix(s, "\uff1f")
+	}
+	return false
+}
+
+// reverseLines yields a string's lines from last to first, so a caller scanning
+// for the last non-empty line does not build a slice.
+func reverseLines(s string) []string {
+	lines := strings.Split(s, "\n")
+	out := make([]string, 0, len(lines))
+	for i := len(lines) - 1; i >= 0; i-- {
+		out = append(out, lines[i])
+	}
+	return out
 }
 
 // routeNamesUser reports whether any PUBLIC route target resolves to the human
@@ -1258,7 +1367,7 @@ func (o *GroupOrchestrator) runFreeLoop(ctx context.Context, groupID string) Dra
 		return o.appendFreeTargets(outer, appended, pending, groupID, sp.member.ID, s.members, s.names)
 	}
 	res := o.drainSpeakers(ctx, s, queue, refill, onSpoke)
-	if !o.cruise {
+	if !o.cruiseOn() {
 		return res
 	}
 	// AUTO-CRUISE (design §15.6): free mode has no host, so the relay draining
@@ -1744,7 +1853,7 @@ func (o *GroupOrchestrator) freeMemberPrompt(s groupTurnSetup, m GroupMember) st
 // pieces (the relay) rather than a groupTurnSetup.
 func (o *GroupOrchestrator) freeMemberPromptFromRoster(members []GroupMember, names map[string]string, memberID string) string {
 	p := BuildFreeMemberSystemPrompt(memberRoster(members), names[memberID])
-	if o.cruise {
+	if o.cruiseOn() {
 		p += BuildCruiseFreeMemberAddendum()
 	}
 	return p

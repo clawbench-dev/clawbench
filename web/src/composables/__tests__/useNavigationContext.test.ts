@@ -253,6 +253,12 @@ describe('useNavigationContext', () => {
       expect(surfaceToTab('settings')).toBe('settings')
     })
 
+    it('映射 notifications 为 notifications', () => {
+      // The notification log is a dock tab whose rows jump to their source;
+      // without this the origin recorded the tab that preceded the log, so Back
+      // dropped the user on a panel they had never been on.
+      expect(surfaceToTab('notifications')).toBe('notifications')
+    })
     it('映射 chat 为 chat', () => {
       expect(surfaceToTab('chat')).toBe('chat')
     })

@@ -30,6 +30,9 @@ const i18n = createI18n({
         send: 'Send',
         newSession: 'New Session',
         aiChat: 'AI Chat',
+        // Collapsed toolbar labels (issue #544).
+        comment: 'Comment',
+        quoteSelection: 'Quote',
       },
     },
   },
@@ -160,16 +163,16 @@ describe('QuoteQuestionBar component', () => {
     mockWriteText.mockResolvedValue(undefined)
   })
 
-  it('renders collapsed bar when visible with quoteData', () => {
+  it('renders the floating toolbar when visible with quoteData', () => {
     const wrapper = mountBar()
     expect(wrapper.find('.quote-question-bar').exists()).toBe(true)
-    expect(wrapper.find('.quote-bar-row').exists()).toBe(true)
+    expect(wrapper.find('.quote-bar-toolbar').exists()).toBe(true)
   })
 
   it('uses one sharp-corner geometry and the chat-body type scale in the input', async () => {
     const wrapper = mountBar()
-    // 输入容器只在 expanded 状态渲染，点击折叠行展开
-    await wrapper.find('.quote-bar-row').trigger('click')
+    // 输入容器只在 expanded 状态渲染，点击折叠工具条的「评论」展开
+    await wrapper.findAll('.quote-bar-action')[1].trigger('click')
     const container = wrapper.find('.qq-input-container')
     expect(container.exists()).toBe(true)
     // textarea 与聊天输入框对齐：字号与聊天正文同 token（--font-size-md）；
@@ -206,73 +209,116 @@ describe('QuoteQuestionBar component', () => {
     expect(taRule).toContain('max-height: calc(var(--input-line-height) * 3')
   })
 
-  it('keeps every corner on the sharp scale (no rounded controls)', async () => {
+  it('keeps the EXPANDED panel on the sharp scale, and the collapsed toolbar a pill', async () => {
+    // The collapsed toolbar (issue #544) is deliberately a rounded pill floating
+    // next to the selection; the expanded input panel keeps the bar's original
+    // hard-edged language. This guard covers BOTH so neither drifts into the
+    // other's scale — the old blanket "no rounded corners anywhere" rule was
+    // narrowed, not dropped.
     const wrapper = mountBar()
-    await wrapper.find('.quote-bar-row').trigger('click')
+    await wrapper.findAll('.quote-bar-action')[1].trigger('click')
     const cssText = Array.from(document.styleSheets)
       .map((s) => {
         try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
         catch { return '' }
       })
       .join('\n')
-    // 这个浮层刻意硬朗：容器 3px、内部块 0。曾经混用 14px/6px/0/20px/50%
-    // 五套半径，任何新元素都不得再引入 --radius-md/lg/full。
-    expect(cssText).not.toContain('border-radius: 50%')
-    expect(cssText).not.toContain('border-radius: var(--radius-md)')
-    expect(cssText).not.toContain('border-radius: var(--radius-lg)')
-    expect(cssText).not.toContain('border-radius: var(--radius-full)')
-    expect(cssText).not.toContain('999px')
 
     // 取「声明块」而不是按行筛：选择器列表（.a,\n.b {）会跨行，且后面还跟着
     // scoped 的 [data-v-xxx]，所以按「含该 class 的选择器 + 其声明块」整体匹配，
     // 选择器部分允许跨行。
-    const blockOf = (sel: string) => {
+    const blockOf = (sel: string, need = 'width:') => {
       const re = new RegExp(`([^{}]*\\${sel}[^{}]*)\\{([^{}]*)\\}`, 'g')
       for (const m of cssText.matchAll(re)) {
-        if (m[2].includes('width:')) return m[2]
+        if (m[2].includes(need)) return m[2]
       }
-      throw new Error(`no sized rule found for ${sel}`)
+      throw new Error(`no matching rule found for ${sel}`)
     }
     const size = (block: string, prop: string) =>
       block.match(new RegExp(`${prop}:\\s*(\\d+px)`))?.[1]
 
-    // 三个图标按钮统一 26px 方形
-    for (const sel of ['.quote-bar-add', '.qq-add-btn']) {
+    // 展开态：输入容器尖角（不再是 20px 胶囊），两个图标按钮 26px 方形
+    const containerRule = blockOf('.qq-input-container', 'border-radius:')
+    expect(containerRule).toContain('border-radius: 0')
+    for (const sel of ['.qq-add-btn', '.qq-send-btn']) {
       const block = blockOf(sel)
       expect(size(block, 'width'), `${sel} width`).toBe('26px')
       expect(size(block, 'height'), `${sel} height`).toBe('26px')
       expect(block).toContain('border-radius: var(--radius-xs)')
     }
-    // 收起态与展开态的「添加」必须是同一个尺寸，否则同一动作会在两态间跳变
-    expect(size(blockOf('.quote-bar-add'), 'width')).toBe(size(blockOf('.qq-add-btn'), 'width'))
-    expect(size(blockOf('.quote-bar-add'), 'height')).toBe(size(blockOf('.qq-add-btn'), 'height'))
+
+    // 收起态：药丸工具条 + 每个动作药丸，与展开态的尖角刻意相反
+    const toolbarRule = blockOf('.quote-bar-toolbar', 'display:')
+    expect(toolbarRule).not.toContain('border-radius: var(--radius-xs)')
+    const actionRule = blockOf('.quote-bar-action', 'height:')
+    expect(actionRule).toContain('border-radius: var(--radius-full)')
+  })
+
+  it('caps the discuss popup at 60% of the original 600px, from one source', async () => {
+    // The expanded panel read as too wide for an inline reply box, so the target
+    // width was cut to 60% (600px → 360px). Pinned here because the value is
+    // easy to "restore" by accident when copying a width from the chat input.
+    //
+    // The number lives in ONE custom property on the root rule; both consumers
+    // (the root's max-width cap and the panel's own width) must reference it.
+    // If they ever hard-code separate values, the panel can end up wider than
+    // the root's clamp and get silently clipped by `overflow: hidden`.
+    const wrapper = mountBar()
+    await wrapper.findAll('.quote-bar-action')[1].trigger('click')
+    const cssText = Array.from(document.styleSheets)
+      .map((s) => {
+        try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
+        catch { return '' }
+      })
+      .join('\n')
+
+    // Scoped SFC styles compile to `.quote-question-bar[data-v-xxx] { … }`, and
+    // cssText flattens each rule onto one line — so match the class followed by
+    // the optional scoped attribute, not a bare `.class {`.
+    const blockOfClass = (cls: string) => {
+      const re = new RegExp(`\\${cls}(?:\\[[^\\]]*\\])?\\s*\\{([^{}]*)\\}`)
+      const m = cssText.match(re)
+      if (!m) throw new Error(`no rule found for ${cls}`)
+      return m[1]
+    }
+
+    // The declaration itself, in the root rule.
+    const rootBlock = blockOfClass('.quote-question-bar')
+    expect(rootBlock).toContain('--qq-expanded-width: 360px')
+    expect(rootBlock).toContain('max-width: var(--qq-expanded-width)')
+
+    // The panel must reference the same property rather than repeat the number.
+    const panelBlock = blockOfClass('.quote-bar-expanded')
+    expect(panelBlock).toContain('width: var(--qq-expanded-width)')
+    // A hard-coded px here is the drift this test exists to catch.
+    expect(panelBlock).not.toMatch(/(?<!max-)width:\s*\d+px/)
   })
 
   it('renders only two states: collapsed needs a quote, otherwise expanded', async () => {
-    // 有引用 + 未展开 → 收起行
+    // 有引用 + 未展开 → 浮动工具条
     const collapsed = mountBar({ quoteData: { text: 'quoted', filePath: 'a.ts' } })
     expect(collapsed.vm.showCollapsed).toBe(true)
-    expect(collapsed.find('.quote-bar-row').exists()).toBe(true)
+    expect(collapsed.find('.quote-bar-toolbar').exists()).toBe(true)
     expect(collapsed.find('.quote-bar-expanded').exists()).toBe(false)
 
-    // 无引用 → 收起行不可达（没有可预览内容），始终展开
+    // 无引用 → 收起工具条不可达（没有可操作内容），始终展开
     const noQuote = mountBar({ quoteData: null, composerMode: true })
     await noQuote.vm.$nextTick()
     await noQuote.vm.$nextTick()
     expect(noQuote.vm.showCollapsed).toBe(false)
-    expect(noQuote.find('.quote-bar-row').exists()).toBe(false)
+    expect(noQuote.find('.quote-bar-toolbar').exists()).toBe(false)
     expect(noQuote.find('.quote-bar-expanded').exists()).toBe(true)
 
     // 关键回归路径：composer 模式下 handleSend() 会把 expanded 置回 false，
     // 而此刻没有引用。若 showCollapsed 只看 !expanded，就会渲染出一个没有
-    // 引用文本、只剩「＋」按钮的空收起行（正是收敛成两态要杜绝的状态）。
+    // 选中内容的空收起工具条（正是收敛成两态要杜绝的状态）。
     noQuote.vm.inputText = 'hi'
     await noQuote.vm.$nextTick()
     noQuote.vm.handleSend()
     await noQuote.vm.$nextTick()
     expect(noQuote.vm.expanded).toBe(false)
     expect(noQuote.vm.showCollapsed).toBe(false)
-    expect(noQuote.find('.quote-bar-row').exists()).toBe(false)
+    expect(noQuote.find('.quote-bar-toolbar').exists()).toBe(false)
     expect(noQuote.find('.quote-bar-expanded').exists()).toBe(true)
   })
 
@@ -286,25 +332,22 @@ describe('QuoteQuestionBar component', () => {
     expect(wrapper.find('.quote-question-bar').exists()).toBe(false)
   })
 
-  it('displays single-line truncated quote text by default', () => {
-    const longText = 'a'.repeat(200)
-    const wrapper = mountBar({ quoteData: { text: longText } })
-    const textEl = wrapper.find('.qq-quoted-text')
-    expect(textEl.text()).toBe('a'.repeat(80) + '…')
+  it('does not preview the selected text in the collapsed toolbar', () => {
+    // issue #544: the collapsed state is an icon+label toolbar, not a quote
+    // preview. The snippet only appears once the input is expanded.
+    const wrapper = mountBar({ quoteData: { text: 'Hello world' } })
+    expect(wrapper.find('.qq-quoted-text').exists()).toBe(false)
   })
 
-  it('quote text is single-line while collapsed and full once expanded', async () => {
+  it('shows the full quote text (untruncated) once expanded', async () => {
     const longText = 'a'.repeat(200)
     const wrapper = mountBar({ quoteData: { text: longText } })
     const vm = wrapper.vm as any
-    // Collapsed → single-line truncated preview.
-    expect(vm.expanded).toBe(false)
-    expect(vm.displayQuoteText).toBe('a'.repeat(80) + '…')
-
-    // Expanding the input box also expands the quote to the full text.
     await vm.expand()
     expect(vm.expanded).toBe(true)
+    // The expanded block is the only consumer and it never truncates.
     expect(vm.displayQuoteText).toBe(longText)
+    expect(wrapper.find('.qq-quoted-text--expanded').text()).toBe(longText)
   })
 
   it('emits pin and sets expanded when collapsed bar is clicked', async () => {
@@ -423,7 +466,7 @@ describe('QuoteQuestionBar component', () => {
 
   it('does not render a clear-input (X) button', async () => {
     const wrapper = mountBar()
-    await wrapper.find('.quote-bar-row').trigger('click')
+    await wrapper.findAll('.quote-bar-action')[1].trigger('click')
     await nextTick()
     expect(wrapper.find('.qq-clear-btn').exists()).toBe(false)
     expect(wrapper.find('.qq-input-row').exists()).toBe(true)
@@ -555,67 +598,62 @@ describe('QuoteQuestionBar component', () => {
     expect(vm.expanded).toBe(true)
   })
 
-  it('renders a plus (add) button in collapsed mode', () => {
+  it('renders three labelled actions in the collapsed toolbar', () => {
     const wrapper = mountBar()
-    expect(wrapper.find('.quote-bar-add').exists()).toBe(true)
+    const actions = wrapper.findAll('.quote-bar-action')
+    expect(actions).toHaveLength(3)
     expect(wrapper.find('.quote-bar-btn').exists()).toBe(false)
+    // Labels, not bare glyphs: this toolbar is the only entry point.
+    expect(actions[1].text()).toBe('Comment')
+    expect(actions[2].text()).toBe('Quote')
   })
 
-  it('emits add when the collapsed plus button is clicked', async () => {
+  it('emits add when the collapsed quote action is clicked', async () => {
     const wrapper = mountBar()
-    await wrapper.find('.quote-bar-add').trigger('click')
+    await wrapper.findAll('.quote-bar-action')[2].trigger('click')
     expect(wrapper.emitted('add')![0]).toEqual([''])
   })
 
-  it('does not render a message icon inside the quoted snippet', () => {
-    const wrapper = mountBar()
-    const snippet = wrapper.find('.qq-quoted-snippet--inline')
-    expect(snippet.find('.lucide-message-square').exists()).toBe(false)
+  it('does not render a message icon inside the quoted snippet', async () => {
     const expanded = mountBar()
     const vm = expanded.vm as any
-    vm.expand()
+    await vm.expand()
     const expandedSnippet = expanded.find('.qq-quoted-snippet')
     expect(expandedSnippet.find('.lucide-message-square').exists()).toBe(false)
   })
 
   it('renders a copy button in both collapsed and expanded states', async () => {
+    // Collapsed: the toolbar's copy action (a labelled CopyButton).
     const collapsed = mountBar()
-    expect(collapsed.find('.quote-bar-row .qq-copy-btn').exists()).toBe(true)
+    const collapsedCopy = collapsed.findAll('.quote-bar-action')[0]
+    expect(collapsedCopy.classes()).toContain('copy-btn')
+    expect(collapsedCopy.find('.lucide-copy').exists()).toBe(true)
 
+    // Expanded: the snippet's floating copy button.
     const expanded = mountBar()
     const vm = expanded.vm as any
     await vm.expand()
     expect(expanded.find('.qq-quoted-snippet .qq-copy-btn').exists()).toBe(true)
   })
 
-  it('copies the quoted text when the copy button is clicked', async () => {
+  it('copies the quoted text when the collapsed copy action is clicked', async () => {
     const wrapper = mountBar({ quoteData: { text: 'Hello world' } })
-    const copyBtn = wrapper.find('.quote-bar-row .qq-copy-btn')
+    const copyBtn = wrapper.findAll('.quote-bar-action')[0]
     await copyBtn.trigger('click')
     expect(mockWriteText).toHaveBeenCalledWith('Hello world')
     await vi.waitFor(() => {
       expect(copyBtn.classes()).toContain('is-copied')
     })
-    // Clicking copy must not expand the collapsed bar
+    // Clicking copy must not expand the collapsed toolbar
     expect(wrapper.vm.expanded).toBe(false)
   })
 
-  it('swaps the icon to a check on copy, keeping the button the same size', async () => {
-    // Regression: the copied state used to swap the icon for a "已复制" text
-    // label. The button is pinned to `right: 2px`, so a wider label grew it
-    // LEFTWARD over the quote text — and because the text reserves a fixed
-    // 24px, the only way to keep a label clear would be to reserve the widest
-    // translation (~99px), reintroducing the dead space the bar just removed.
-    // The icon swap keeps the footprint constant.
-    //
-    // The swap itself now lives in the shared CopyButton; this asserts the bar
-    // actually renders that shared button (rather than a local re-implementation
-    // that would silently drift back to a label).
+  it('swaps the glyph to a check on copy, keeping the label', async () => {
+    // The collapsed copy action is the shared CopyButton: the glyph swaps to a
+    // Check while the "Copy" LABEL stays put, so the pill's width never jumps.
     const wrapper = mountBar({ quoteData: { text: 'Hello world' } })
-    const btn = wrapper.find('.quote-bar-row .qq-copy-btn')
+    const btn = wrapper.findAll('.quote-bar-action')[0]
 
-    // Idle: a Copy icon, no text.
-    expect(btn.text()).toBe('')
     expect(btn.find('.lucide-copy').exists()).toBe(true)
     expect(btn.classes()).toContain('copy-btn')
 
@@ -625,16 +663,16 @@ describe('QuoteQuestionBar component', () => {
     })
     await nextTick()
 
-    // Copied: a Check icon, still no text.
     expect(btn.find('.lucide-check').exists()).toBe(true)
     expect(btn.find('.lucide-copy').exists()).toBe(false)
-    expect(btn.text()).toBe('')
   })
 
-  it('keeps the copy button a fixed square so it cannot overlap the quote', () => {
+  it('keeps the expanded copy button a fixed square so it cannot overlap the quote', () => {
     // The 22px square is what the 24px reservation in the snippet is sized for.
     // If the button ever becomes auto-width again, that reservation stops
-    // covering it and the button starts covering the text.
+    // covering it and the button starts covering the text. (The collapsed
+    // toolbar's copy action is a separate labelled pill — see the sharp/pill
+    // guard above.)
     const cssText = Array.from(document.styleSheets)
       .map((s) => {
         try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
@@ -652,9 +690,9 @@ describe('QuoteQuestionBar component', () => {
     expect(btnRule).not.toContain('min-width')
   })
 
-  it('does not emit add when the copy button is clicked', async () => {
+  it('does not emit add when the copy action is clicked', async () => {
     const wrapper = mountBar()
-    await wrapper.find('.quote-bar-row .qq-copy-btn').trigger('click')
+    await wrapper.findAll('.quote-bar-action')[0].trigger('click')
     expect(wrapper.emitted('add')).toBeFalsy()
   })
 
@@ -662,7 +700,7 @@ describe('QuoteQuestionBar component', () => {
     vi.useFakeTimers()
     try {
       const wrapper = mountBar({ quoteData: { text: 'Hello world' } })
-      const btn = wrapper.find('.quote-bar-row .qq-copy-btn')
+      const btn = wrapper.findAll('.quote-bar-action')[0]
       await btn.trigger('click')
       expect(btn.classes()).toContain('is-copied')
       vi.advanceTimersByTime(1500)
@@ -687,7 +725,7 @@ describe('QuoteQuestionBar component', () => {
     expect(wrapper.emitted('pin')).toBeFalsy()
   })
 
-  it('unified: quote stays single-line collapsed on show and only expands on click', async () => {
+  it('unified: shows the toolbar on open and only expands on comment', async () => {
     const longText = 'a'.repeat(200)
     const wrapper = mountBar({ quoteData: { text: longText } })
     const vm = wrapper.vm as any
@@ -695,8 +733,9 @@ describe('QuoteQuestionBar component', () => {
     await vm.onVisibleChange(true)
     await nextTick()
 
+    // Collapsed: the toolbar, no input, nothing auto-expanded or pinned.
     expect(vm.expanded).toBe(false)
-    expect(vm.displayQuoteText).toBe('a'.repeat(80) + '…')
+    expect(wrapper.find('.quote-bar-toolbar').exists()).toBe(true)
 
     await vm.expand()
     expect(vm.expanded).toBe(true)
@@ -716,21 +755,21 @@ describe('QuoteQuestionBar component', () => {
 
   it('pins on pointerdown so selection loss on click does not hide the bar', async () => {
     const wrapper = mountBar()
-    // pointerdown on the collapsed row must pin immediately, before the click
-    // handler's expand(). This keeps the bar visible when the global selection
-    // handler re-evaluates on pointerup and sees a cleared selection.
-    await wrapper.find('.quote-bar-row').trigger('pointerdown')
+    // pointerdown on the collapsed toolbar must pin immediately, before the
+    // click handler's expand(). This keeps the bar visible when the global
+    // selection handler re-evaluates on pointerup and sees a cleared selection.
+    await wrapper.find('.quote-bar-toolbar').trigger('pointerdown')
     expect(wrapper.emitted('pin')).toBeTruthy()
   })
 
-  it('expands and focuses the input when the collapsed bar is clicked', async () => {
+  it('expands and focuses the input when the comment action is clicked', async () => {
     const wrapper = mountBar()
     const vm = wrapper.vm as any
     // Collapsed initially with no input focus.
     expect(vm.expanded).toBe(false)
 
-    // Clicking the collapsed row calls expand() → focuses input.
-    await wrapper.find('.quote-bar-row').trigger('click')
+    // The comment action calls expand() → focuses input.
+    await wrapper.findAll('.quote-bar-action')[1].trigger('click')
     await nextTick()
 
     expect(wrapper.emitted('pin')).toBeTruthy()
@@ -768,20 +807,17 @@ describe('QuoteQuestionBar component', () => {
     // stopped ~40px short of the button and read as if the bar never filled.
     // Exactly one reservation must apply in the expanded state.
     const expanded = mountBar()
-    await expanded.find('.quote-bar-row').trigger('click')
+    await expanded.findAll('.quote-bar-action')[1].trigger('click')
     await nextTick()
 
     const textEl = expanded.find('.qq-quoted-text--expanded').element as HTMLElement
     // The expanded rule must override the base padding rather than inherit it.
     expect(window.getComputedStyle(textEl).paddingRight).toBe('0px')
 
-    // Collapsed keeps its padding: there the text is `overflow:hidden` with no
-    // scrollbar, and that padding is the only thing holding it off the button.
-    // Mount a separate bar — `find` would otherwise return the expanded element
-    // first, since `.qq-quoted-text--expanded` also carries `.qq-quoted-text`.
+    // Collapsed no longer renders a snippet at all (issue #544 replaced the
+    // preview row with the icon+label toolbar), so there is no second element
+    // that could double-reserve the space.
     const collapsed = mountBar()
-    const baseEl = collapsed.find('.quote-bar-row .qq-quoted-text').element as HTMLElement
-    expect(baseEl.classList.contains('qq-quoted-text--expanded')).toBe(false)
-    expect(window.getComputedStyle(baseEl).paddingRight).toBe('24px')
+    expect(collapsed.find('.qq-quoted-text').exists()).toBe(false)
   })
 })

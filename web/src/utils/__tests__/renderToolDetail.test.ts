@@ -1728,10 +1728,10 @@ describe('PermissionApproval renderer', () => {
     expect(ok).not.toBe(no)
   })
 
-  it('uses the real lucide CircleCheck / CircleX geometry, not hand-drawn paths', () => {
-    // The user's complaint was a hand-drawn glyph that did not match the rest of
-    // the app. These paths are copied from lucide's own source; assert the exact
-    // `d` strings so a future edit cannot quietly substitute a custom drawing.
+  it('uses the real lucide ShieldCheck / ShieldX geometry, not hand-drawn paths', () => {
+    // The approval/permission surface is unified on the shield glyph; these
+    // paths are copied from lucide's own source so a future edit cannot quietly
+    // substitute a custom drawing (which is what the user complained about).
     const approved = formatToolInput(
       { options: [] }, 'PermissionApproval',
       { done: true, status: 'success', output: 'Approved' })
@@ -1739,13 +1739,15 @@ describe('PermissionApproval renderer', () => {
       { options: [] }, 'PermissionApproval',
       { done: true, status: 'error', output: 'Cancelled' })
 
-    // CircleCheck: circle + "m9 12 2 2 4-4"
-    expect(approved).toContain('<circle cx="12" cy="12" r="10"/>')
+    // Shared shield body: both states wear the same shield outline.
+    const shieldBody = 'd="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"'
+    expect(approved).toContain(shieldBody)
+    expect(denied).toContain(shieldBody)
+    // ShieldCheck: shield + "m9 12 2 2 4-4"
     expect(approved).toContain('d="m9 12 2 2 4-4"')
-    // CircleX: circle + the two crossing strokes
-    expect(denied).toContain('<circle cx="12" cy="12" r="10"/>')
-    expect(denied).toContain('d="m15 9-6 6"')
-    expect(denied).toContain('d="m9 9 6 6"')
+    // ShieldX: shield + the two crossing strokes
+    expect(denied).toContain('d="m14.5 9.5-5 5"')
+    expect(denied).toContain('d="m9.5 9.5 5 5"')
   })
 
   it('gives the auto-approved badge the same glyph as approved', () => {
@@ -2074,6 +2076,16 @@ describe('ModeSwitch renderer (EnterPlanMode / ExitPlanMode)', () => {
   it('renders mode-switch-icon', () => {
     const html = formatToolInput({ mode: 'plan' }, 'EnterPlanMode')
     expect(html).toContain('mode-switch-icon')
+  })
+
+  it('renders the unified shield glyph in the mode-switch icon, not an emoji', () => {
+    // The approval/permission surface is unified on the shield; the old 🔄 emoji
+    // (font-sized, font-coloured) is replaced by the lucide ShieldAlert SVG.
+    const html = formatToolInput({ mode: 'plan' }, 'EnterPlanMode')
+    expect(html).toContain('<svg')
+    expect(html).toContain('d="M12 8v4"')
+    expect(html).toContain('d="M12 16h.01"')
+    expect(html).not.toContain('🔄')
   })
 
   it('renders mode name when present', () => {

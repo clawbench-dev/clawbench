@@ -11,11 +11,13 @@ import { readWebFile } from '@/testUtils/readWebFile'
  * blocked on your approval" were the same pixels. The fix has two halves, and
  * each is guarded here because each can silently rot:
  *
- *   1. Two visually distinct states, separated by MOTION (pulse / still) with
- *      hue only as a secondary channel. Motion is the primary channel because
- *      neither hue is safe on its own: a theme's accent and its orange are both
- *      theme properties and are free to sit close together, and a
- *      colour-vision-deficient reader gets nothing from hue.
+ *   1. Two visually distinct states, separated by SHAPE (a shield glyph for
+ *      pending vs a plain dot for unread) with MOTION (pulse / still) and hue
+ *      as secondary channels. Shape leads because neither hue is safe on its
+ *      own: a theme's accent and its orange are both theme properties and are
+ *      free to sit close together, and a colour-vision-deficient reader gets
+ *      nothing from hue. The approval/permission surface is unified on the
+ *      shield, which is why pending is a shield and not just an amber dot.
  *   2. The comet stops while blocked. A travelling band means "progressing";
  *      showing it on a row that is waiting for the user claims progress that
  *      is not happening.
@@ -160,7 +162,7 @@ describe('session status slot', () => {
     }
   })
 
-  it('declares NO ring tokens — the slot is dots only', () => {
+  it('declares NO ring tokens — the slot is a dot and a glyph, never a ring', () => {
     // A running row shows nothing in the slot (the bottom-edge comet carries
     // that message), so the running ring was removed along with its tokens.
     // This assertion is the guard against it creeping back: a leftover
@@ -168,7 +170,8 @@ describe('session status slot', () => {
     // it would then be dead-but-tempting rather than absent.
     //
     // `--pending-ring` never existed, but is asserted too: the pending state is
-    // a fill, never a ring, and "waiting on you" must not look like a spinner.
+    // a filled shield glyph, never a ring, and "waiting on you" must not look
+    // like a spinner.
     for (const token of [
       '--running-ring',
       '--running-ring-track',
@@ -179,13 +182,13 @@ describe('session status slot', () => {
     }
   })
 
-  it('separates the two states by animation, not by hue', () => {
+  it('separates the two states by shape, with animation as a second channel', () => {
     // Measured: 3 of the 36 themes give `--accent-color` and `--color-orange`
     // the SAME value (ayu-light #ff9940, gruvbox-light #af3a03, gruvbox-dark
     // #fe8019). Both are theme properties, so this is not a bug to fix — it is
-    // the reason the design may not lean on colour. The two states are the same
-    // shape and size, so they must differ in their ANIMATION; that is asserted
-    // here on the real rules rather than on the tokens.
+    // the reason the design may not lean on colour. The two states now differ
+    // in SHAPE (shield vs dot) first, and in ANIMATION second; the pulse is
+    // still asserted here on the real rules rather than on the tokens.
     const pending = list.match(/\n\.session-status\.is-pending\s*\{[^}]*\}/)?.[0]
     const unread = list.match(/\n\.session-status\.is-unread\s*\{[^}]*\}/)?.[0]
     expect(pending, 'the pending rule should exist').toBeTruthy()
@@ -193,7 +196,7 @@ describe('session status slot', () => {
 
     expect(
       pending!.match(/animation:\s*([\w-]+)/)?.[1],
-      'pending must animate — that is the only thing separating it from unread',
+      'pending must animate — a second channel alongside the shield shape',
     ).toBe('session-status-pulse')
     expect(unread, 'unread must NOT animate').not.toMatch(/animation\s*:/)
 
@@ -297,10 +300,10 @@ describe('session status slot', () => {
     expect(hold, 'a scaling bar would read as movement').not.toMatch(/scale|translate/)
   })
 
-  it('uses motion, not just colour, to separate the states', () => {
-    // Motion is the load-bearing channel: it survives every theme and every
-    // reader. Assert each state's animation is the right SHAPE — an in-place
-    // pulse for "waiting on you", and nothing at all for unread.
+  it('uses shape and motion, not just colour, to separate the states', () => {
+    // Shape and motion are the load-bearing channels: they survive every theme
+    // and every reader. Assert the pending state pulses in place (an in-place
+    // pulse for "waiting on you") and is themed, and that unread is still.
     const pending = list.match(/\n\.session-status\.is-pending\s*\{[^}]*\}/)?.[0]
     expect(pending, '.session-status.is-pending should exist').toBeTruthy()
     expect(pending, 'pending must pulse in place').toMatch(/animation:\s*session-status-pulse/)
@@ -333,7 +336,7 @@ describe('session status slot', () => {
     for (const cls of ['is-pending', 'is-unread']) {
       const rule = list.match(new RegExp(`\\n\\.session-status\\.${cls}\\s*\\{[^}]*\\}`))?.[0]
       expect(rule, `.session-status.${cls} should exist`).toBeTruthy()
-      expect(rule, `${cls} must be a fill, never a ring`).not.toMatch(/border:/)
+      expect(rule, `${cls} must not be a ring`).not.toMatch(/border:/)
     }
   })
 
@@ -441,15 +444,11 @@ describe('session status slot', () => {
     }
   })
 
-  it('paints the state dots as dots, not as full-slot discs', () => {
-    // A solid disc at the slot's full size carries far more visual weight than
-    // a small dot, so the two read as unrelated indicators. Both dot states are
-    // therefore an 8px paint inside the 14px slot.
-    //
-    // The dot is painted by a radial-gradient INSIDE the 14px slot rather than
-    // by shrinking the element: the slot must keep its footprint, or the title
-    // would run 6px further right on unread rows than on running ones and the
-    // list's right edge would look ragged.
+  it('paints unread as a small dot and pending as a shield, never a full-slot disc', () => {
+    // Unread is a small dot painted by a radial-gradient INSIDE the 14px slot
+    // rather than by shrinking the element: the slot must keep its footprint, or
+    // the title would run 6px further right on unread rows than on pending ones
+    // and the list's right edge would look ragged.
     const unread = list.match(/\n\.session-status\.is-unread\s*\{[^}]*\}/)?.[0]
     expect(unread, '.session-status.is-unread should exist').toBeTruthy()
 
@@ -475,20 +474,39 @@ describe('session status slot', () => {
       'the unread rule must not resize the slot — size the gradient stop instead',
     ).not.toMatch(/(?:^|[;{]\s*)(width|height)\s*:/)
 
-    // The pending dot uses the same 8px paint, so the two dot states are the
-    // same size and only their motion differs.
+    // Pending is no longer a dot: it is the shield glyph (approval/permission UI
+    // is unified on the shield). It must be driven by the same theme token as a
+    // COLOUR (the glyph strokes with currentColor), not a background paint.
     const pending = list.match(/\n\.session-status\.is-pending\s*\{[^}]*\}/)?.[0]
     expect(pending, '.session-status.is-pending should exist').toBeTruthy()
-    const pendingStop = Number(pending!.match(/(\d+(?:\.\d+)?)px,\s*transparent/)?.[1])
-    expect(pendingStop, 'the pending dot should be the same size as the unread one').toBe(stop)
+    expect(pending, 'the pending state is a glyph, coloured by the theme token').toMatch(
+      /color:\s*var\(--status-dot-pending\)/,
+    )
+    expect(
+      pending,
+      'pending must not paint a full-slot background disc',
+    ).not.toMatch(/background:/)
 
-    // The dot states must be FILLS, not rings. A border here would make a
-    // "waiting" state look like a spinner — and it is also how the removed
-    // running ring was drawn, so a border anywhere is that ring creeping back.
+    // Neither state may be a ring. A border is how the removed running ring was
+    // drawn, so a border anywhere is that ring creeping back.
     for (const cls of ['is-pending', 'is-unread']) {
       const rule = list.match(new RegExp(`\\n\\.session-status\\.${cls}\\s*\\{[^}]*\\}`))?.[0]
       expect(rule, `.session-status.${cls} should exist`).toBeTruthy()
-      expect(rule, `${cls} must be a fill, not a ring`).not.toMatch(/border:/)
+      expect(rule, `${cls} must not be a ring`).not.toMatch(/border:/)
     }
+  })
+
+  it('renders the pending shield glyph from the template, not a CSS dot', () => {
+    // The shield is a real icon child in the template (ShieldAlert from
+    // lucide-vue-next) on the pending branch only. A CSS-only pending state
+    // would mean the glyph silently disappeared from the row.
+    const template = list.slice(0, list.indexOf('<style'))
+    const pendingSlot = template.match(
+      /class="session-status"[\s\S]*?<ShieldAlert v-if="[^"]*pending[^"]*"/,
+    )
+    expect(
+      pendingSlot,
+      'the pending slot must render <ShieldAlert> (approval/permission icons are unified on the shield)',
+    ).not.toBeNull()
   })
 })

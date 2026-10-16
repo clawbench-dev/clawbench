@@ -234,7 +234,7 @@ public static void setTunnelTransportH2Enabled(Context context, boolean enabled)
 
 **落点**：设置 → 端口映射 = `settingsFieldMap.ts:521-537` 的 `portForward` panel，由 `SettingsGroupPanel.vue` 渲染。
 
-**做法**：**照抄 FRP `auto_port` 的注入先例**（`SettingsGroupPanel.vue:70-88`），为 `panelId === 'portForward'` 直接渲染一个专用 switch 行。**不要**做成 `commonFields` 条目。
+**做法**：**照抄 SSH 反向端口转发的注入先例**（`SettingsGroupPanel.vue:70-88`），为 `panelId === 'portForward'` 直接渲染一个专用 switch 行。**不要**做成 `commonFields` 条目。
 
 **理由**——专用行一次性规避三处破坏：
 
@@ -373,7 +373,7 @@ flowchart TD
 | `web/src/utils/clawbenchNative.ts:84` | ❌ | 删 `setTunnelTransport?` 声明 |
 | `web/src/utils/clawbenchNative.ts:86, :92` | ♻️ | 保留两个 getter |
 | `web/src/utils/clawbenchNative.ts`（新） | ➕ | `getTunnelTransportH2Enabled?` / `setTunnelTransportH2Enabled?`（可选 `?`） |
-| `web/src/components/settings/SettingsGroupPanel.vue:70-88` | ♻️ | 照抄 FRP `auto_port` 注入先例 |
+| `web/src/components/settings/SettingsGroupPanel.vue:70-88` | ♻️ | 复用 settings 面板模板 |
 | `web/src/components/settings/SettingsGroupPanel.vue`（新） | ➕ | `panelId === 'portForward'` 专用 switch 行 + 提示 + 「立即重连」按钮；组件内 `isAppMode && !isDesktopApp` 门控；`onMounted` 异步初值；`v-if` 缺失降级 |
 | `web/src/components/settings/settingsFieldMap.ts:521-537` | ♻️ | `portForward` panel **不改** `commonFields`（专用行方案） |
 | `web/src/composables/usePortForward.ts:515-523, :63, :551, :558-559` | ♻️ | web 健康门控与展示**保持不动**（仍读服务端 `transport`） |
@@ -645,8 +645,6 @@ flowchart TD
 | SSH 错误分类 | `proxy.tunnelErrorAuth` | 1532 / 1529 | SSH 认证失败 |
 | | `proxy.tunnelErrorNetwork` | 1533 / 1530 | SSH 服务器不可达 |
 | | `proxy.tunnelErrorHostKey` | 1534 / 1531 | SSH host key 变更 |
-| FRP | `settings.items.frpAssignedSSHPort` | 2450 / 2447 | 字面就是「SSH 端口」 |
-| | `settings.items.frpSSHRemotePort` | 2454 / 2451 | 同上 |
 
 **web 模式的手动指南整块是 C**（`ProxyPanelContent.vue:55-106`，由 `:62` 的 `v-if="!isAppMode && sshInfo && sshInfo.enabled"` 门控）——展示服务端生成的 `ssh -N -L …` 命令（来自 `/api/ssh/info/full` 的 `command`）、SSH 指纹、装 ssh 客户端指引。浏览器没有客户端 h2 路径。
 

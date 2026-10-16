@@ -241,7 +241,7 @@ func BuildCruiseHostAddendum() string {
 // never returns to the human while cruising.
 func BuildCruiseFreeMemberAddendum() string {
 	var b strings.Builder
-	b.WriteString("\n\n[自动巡航模式] 本群已开启自动巡航：讨论将持续进行，直到过半成员确认任务已完成。\n")
+	b.WriteString("\n\n[自动巡航模式] 本群已开启自动巡航：讨论将持续进行，直到至少半数成员确认任务已完成。\n")
 	b.WriteString("如果你认为已经满足用户的要求，输出结束信号：<clawbench-goal-satisfied/>（可与你的发言并存）。\n")
 	b.WriteString("如果尚未完成，继续正常讨论与 @ 接力，不要输出 goal-satisfied。\n")
 	b.WriteString("巡航期间**不要向用户提问**——用户不会立即回复，所有不明确之处请通过探索、实验、思考与讨论自行决定。\n")
@@ -274,5 +274,53 @@ func BuildCruiseConfirmPrompt(freeMode bool) string {
 		b.WriteString("若确认已完成：输出 <clawbench-goal-satisfied/>，**并在同一条回复里直接写出最终结论**（汇总各成员观点与你的判断，供用户阅读，不要再提问或点名）。\n")
 		b.WriteString("若尚未完成，照常点名下一批成员（<clawbench-mention targets=\"…\">）继续推进，不要输出 goal-satisfied。\n")
 	}
+	return b.String()
+}
+
+// ── Single-chat auto-cruise prompts ──────────────────────────────────────
+//
+// Single chat has no host/relay/@User: its ONLY "hand the floor back to the
+// human" point is the reply finishing. Cruise turns that into a confirmation
+// round. These two fragments mirror the group ones but are written for a lone
+// AI (no members to route to), so they are separate builders rather than a
+// reuse of BuildCruiseHostAddendum / BuildCruiseConfirmPrompt.
+
+// BuildCruiseSingleAddendum is appended to a SINGLE-CHAT turn's prompt when the
+// session's cruise switch is on. It teaches the lone AI three things it cannot
+// infer: the conversation will not return to the user until it confirms
+// completion, it must not ask the user questions, and the completion signal is
+// <clawbench-goal-satisfied/> — emitted ONLY when the system asks (an
+// unsolicited tag does not end the run).
+//
+// It is prepended to the turn PROMPT (not the system prompt) on purpose: a CLI
+// resume does not necessarily re-send the system prompt (see
+// ChatRequest.ShouldInjectSystemPrompt), so only the prompt is guaranteed to
+// reach the model on every turn. ChatRequest.Prompt is transient — the
+// persisted user row is req.Message — so this never leaks into the bubble.
+func BuildCruiseSingleAddendum() string {
+	var b strings.Builder
+	b.WriteString("\n\n[自动巡航模式] 本会话已开启自动巡航：在你（AI）确认任务已完成之前，对话不会交回用户。\n")
+	b.WriteString("请持续自主推进用户的要求，直到确实完成，不要为了收工而过早收尾。\n")
+	b.WriteString("巡航期间不要向用户提问，也不要等待用户确认——所有不明确之处，请通过自主探索、实验与思考自行决定。\n")
+	b.WriteString("当系统向你发起「完成确认」时，若你认为已经满足用户的要求，输出结束信号 <clawbench-goal-satisfied/>，并在同一条回复里写出最终结论；若尚未完成，就继续推进尚未完成的部分，不要输出该信号。\n")
+	b.WriteString("不要主动输出 <clawbench-goal-satisfied/>——只有系统向你确认时才判断（提前输出不算数）。\n")
+	return b.String()
+}
+
+// BuildCruiseSingleConfirmPrompt is the hidden instruction injected at the start
+// of every SINGLE-CHAT confirmation round. It is NOT persisted to the chat, only
+// prepended to that round's prompt.
+//
+// It carries the SAME marker as the group confirmation prompt
+// ("[自动巡航·完成确认]") on purpose: the e2e mock (cmd/acp-mock's
+// cruiseConfirmReply) keys off that marker, so single-chat cruise reuses the
+// mock's deterministic confirmation with no mock change.
+func BuildCruiseSingleConfirmPrompt() string {
+	var b strings.Builder
+	b.WriteString("\n\n[自动巡航·完成确认] 当前没有新的用户消息，请不要向用户提问，也不要等待用户确认。\n")
+	b.WriteString("所有不明确之处，请通过自主探索、实验、思考自行决定。\n")
+	b.WriteString("请评估：当前任务是否已经满足了用户最初的要求？\n")
+	b.WriteString("若确认已完成：输出 <clawbench-goal-satisfied/>，并在同一条回复里直接写出最终结论（供用户阅读，不要再提问）。\n")
+	b.WriteString("若尚未完成：继续推进尚未完成的部分，不要输出 goal-satisfied。\n")
 	return b.String()
 }

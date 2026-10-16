@@ -44,7 +44,7 @@ export function useTaskOverview(options: UseTaskOverviewOptions) {
       }
     } catch (err: unknown) {
       const _msg = (err as { message?: string })?.message || ''
-      toast.show(_msg ? gt('task.actionFailedDetail', { error: _msg }) : gt('task.actionFailed'), { icon: '⚠️', type: 'error' })
+      toast.show(_msg ? gt('task.actionFailedDetail', { error: _msg }) : gt('task.actionFailed'), { icon: 'warning', type: 'error' })
     } finally {
       actionLoading.value = false
     }

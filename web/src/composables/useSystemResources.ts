@@ -106,7 +106,7 @@ function onMetricsEvent(event: string, data: unknown) {
 
 // Re-register on every (re)connect. A one-time module-level guard is NOT enough
 // here: useGlobalEvents.destroy() clears the shared handler array on project
-// switch / logout, and unlike frp_status there is no fallback fetch to recover
+// switch / logout, and there is no fallback fetch to recover
 // — the panel would simply freeze forever.
 //
 // immediate: true matters even though the socket is normally still closed at

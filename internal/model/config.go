@@ -145,7 +145,6 @@ type Config struct {
 	AISummary   AISummaryConfig   `yaml:"ai_summary"`   // Shared AI model configuration (TTS summary + next-step recommendation)
 	Summarize   SummarizeConfig   `yaml:"summarize"`    // Voice reading summary: only the summary-type selection (uses AISummary for "api")
 	PortForward PortForwardConfig `yaml:"port_forward"` // SSH tunnel server + port forwarding configuration
-	FRP         FRPConfig         `yaml:"frp"`          // FRP (Fast Reverse Proxy) client configuration
 	RAG         RAGConfig         `yaml:"rag"`          // RAG history memory configuration
 	Terminal    TerminalConfig    `yaml:"terminal"`     // Interactive web terminal configuration
 	DingTalk    DingTalkConfig    `yaml:"dingtalk"`     // DingTalk enterprise bot push notifications

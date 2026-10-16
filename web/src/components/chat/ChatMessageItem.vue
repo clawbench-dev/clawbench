@@ -293,7 +293,7 @@ import { formatDuration, formatRelativeTime } from '@/utils/format.ts'
 import { escapeHtml } from '@/utils/html.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
 import { extractFileChanges } from '@/utils/chatStreamUtils.ts'
-import { parseGroupRouting, stripGroupProtocolTags, GROUP_USER_TARGET_NAME, resolveMentionDisplayName } from '@/utils/groupRouting.ts'
+import { parseGroupRouting, stripGroupProtocolTags, GROUP_USER_TARGET_NAME, resolveMentionDisplayName, stripGoalSatisfiedTag } from '@/utils/groupRouting.ts'
 import { quotableMessageText } from '@/utils/quoteItem.ts'
 import { isShowingSummary, normalizeDisplayMode } from '@/utils/chatSessionUtils.ts'
 import { localConfig } from '@/composables/useSettingsConfig'
@@ -511,7 +511,16 @@ const msgText = computed(() => {
 // Only a GROUP session carries the protocol, so the strip is gated on it: a
 // single chat's reply that merely DISCUSSES the tag syntax must not be
 // truncated by a literal (unclosed) tag in its prose (regression, msg 58879).
-const speakableText = computed(() => (props.isGroupSession ? stripGroupProtocolTags(msgText.value) : msgText.value))
+//
+// Single chat still removes the auto-cruise completion signal — it is a
+// self-closing, content-free tag the AI was instructed to emit, never part of
+// the reply's prose, so stripping it loses nothing (and it must not be read
+// aloud/copied/quoted). stripGoalSatisfiedTag does ONLY that; it never touches
+// mention-like prose, so 58879 cannot recur.
+const speakableText = computed(() => {
+  if (props.isGroupSession) return stripGroupProtocolTags(msgText.value)
+  return stripGoalSatisfiedTag(msgText.value)
+})
 
 // Friendly relative timestamp shown in the meta bar for BOTH roles.
 // formatRelativeTime returns '' for missing/invalid dates (including Go zero-value

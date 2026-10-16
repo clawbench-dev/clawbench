@@ -579,10 +579,10 @@ async function doCheckout(name: string) {
             dirtyCount.value = result.untrackedCount || store.state.gitWorkingTreeChangeCount || 0
             dirtyModalOpen.value = true
         } else if (result.error) {
-            toast?.show(t('appHeader.switchBranchFailed', { error: result.errorDetail || result.error }), { icon: '⚠️', type: 'error', duration: 3000 })
+            toast?.show(t('appHeader.switchBranchFailed', { error: result.errorDetail || result.error }), { icon: 'warning', type: 'error', duration: 3000 })
         }
     } catch {
-        toast?.show(t('appHeader.switchBranchFailed', { error: t('appHeader.switchBranchNetworkError') }), { icon: '⚠️', type: 'error', duration: 3000 })
+        toast?.show(t('appHeader.switchBranchFailed', { error: t('appHeader.switchBranchNetworkError') }), { icon: 'warning', type: 'error', duration: 3000 })
     }
 }
 
@@ -604,7 +604,7 @@ async function doDirtyCheckout(mode: 'stash' | 'force') {
         await store.loadGitBranch()
         await store.loadFiles(store.state.currentDir, false, 0, true)
     } catch {
-        toast?.show(t('appHeader.switchBranchFailed', { error: t('appHeader.switchBranchNetworkError') }), { icon: '⚠️', type: 'error', duration: 3000 })
+        toast?.show(t('appHeader.switchBranchFailed', { error: t('appHeader.switchBranchNetworkError') }), { icon: 'warning', type: 'error', duration: 3000 })
     }
 }
 
@@ -762,7 +762,78 @@ interface BranchEntry {
   name: string
 }
 
+/**
+ * A recent-project entry as fetched from the backend, before the display path
+ * is resolved. Cached in this form (not as `RecentItem`) because the display
+ * path depends on `homeDir`, which arrives as a prop and can change after the
+ * fetch — keeping the raw path lets the display form be recomputed instead of
+ * going stale.
+ */
+interface CachedRecentItem {
+  name: string
+  path: string
+  kind: RepoKind
+  groupKey: string
+  groupName: string
+}
+
+/**
+ * Last successfully fetched recent-project list, kept for the lifetime of the
+ * component so the dropdown can render instantly on every open (issue #545).
+ *
+ * `null` means "never loaded": the panel then shows the loading state. An empty
+ * array is a real, loaded result ("no recent projects") and must NOT be
+ * confused with the cold state, or the panel would re-fetch on every open.
+ */
+const recentCache = ref<CachedRecentItem[] | null>(null)
+
 const recentItems = ref<RecentItem[]>([])
+
+/**
+ * Monotonic token identifying the newest in-flight `loadRecentProjects`.
+ *
+ * The mount prefetch and the on-open refresh can overlap, and a removal
+ * (`dropRecentItem`) also lands asynchronously relative to a refresh. Only the
+ * response whose token still matches the latest is allowed to commit, so an
+ * older response can neither clobber newer data nor resurrect a path that was
+ * removed while it was in flight.
+ */
+let recentRequestSeq = 0
+
+/** Resolve cached entries to render items against the current `homeDir`. */
+function materializeRecentItems(cache: CachedRecentItem[]): RecentItem[] {
+    const homeDir = props.homeDir || ''
+    return cache.map(item => ({
+        ...item,
+        displayPath: recentProjectDisplayPath(item.path, homeDir),
+    }))
+}
+
+/**
+ * Drop a path from both the rendered list and the cache.
+ *
+ * The cache is the source the next open renders from, so removing only the
+ * rendered list would let a deleted project reappear the moment the dropdown
+ * is reopened (before the background refresh lands).
+ */
+function dropRecentItem(path: string) {
+    // Invalidate any refresh already in flight: its payload predates this
+    // removal and would otherwise write the deleted path back into the cache.
+    recentRequestSeq++
+    recentItems.value = recentItems.value.filter(r => r.path !== path)
+    if (recentCache.value !== null) {
+        recentCache.value = recentCache.value.filter(r => r.path !== path)
+    }
+}
+
+// Re-derive display paths when the home directory becomes known/changes. The
+// mount-time prefetch can run before `homeDir` is populated, so without this the
+// cached rows would keep showing absolute paths after the prop arrives.
+watch(() => props.homeDir, () => {
+    if (recentCache.value !== null) {
+        recentItems.value = materializeRecentItems(recentCache.value)
+    }
+})
 
 /**
  * The recent projects as render blocks.
@@ -820,6 +891,12 @@ function toggleDropdown() {
         fileDropdownOpen.value = false
         branchDropdownOpen.value = false
         themeMenuOpen.value = false
+        // Render the cached list synchronously (if we have one) so the panel
+        // opens fully populated, then refresh in the background. Only a true
+        // cache miss shows the loading state — see loadRecentProjects.
+        if (recentCache.value !== null) {
+            recentItems.value = materializeRecentItems(recentCache.value)
+        }
         loadRecentProjects()
         dropdownOpen.value = true
         updateDropdownPosition(true)
@@ -827,15 +904,33 @@ function toggleDropdown() {
     }
 }
 
+/**
+ * Fetch the recent-project list.
+ *
+ * The panel must not be blocked on this round trip (issue #545: opening the
+ * dropdown flashed "loading" for ~1s every time). So:
+ *   - when a cache exists, the spinner is NOT shown — the cached rows stay on
+ *     screen and are silently replaced once the fresh data arrives;
+ *   - on a cold cache (first ever open, e.g. the mount prefetch has not settled
+ *     yet or failed) the spinner is shown, since there is nothing to render.
+ *
+ * Only the newest call may commit its result: the mount prefetch and the
+ * on-open refresh can overlap, and an older response landing late must not
+ * overwrite newer data (or undo a removal — see dropRecentItem).
+ */
 async function loadRecentProjects() {
-    loadingRecent.value = true
+    const seq = ++recentRequestSeq
+    if (recentCache.value === null) {
+        loadingRecent.value = true
+    }
     try {
         const resp = await fetch('/api/recent-projects')
         const groups = await resp.json()
+        if (seq !== recentRequestSeq) return // superseded by a newer request/removal
         // The backend groups by git repository and orders both groups and
         // items; flatten back to a list, carrying the grouping key per item so
         // the render blocks can rebuild the structure.
-        const items: RecentItem[] = []
+        const items: CachedRecentItem[] = []
         for (const group of groups as Array<{
             repoRoot?: string
             groupName?: string
@@ -849,23 +944,28 @@ async function loadRecentProjects() {
                 items.push({
                     name: baseName(p),
                     path: p,
-                    // Display relative to home directory for cleaner paths (shared pure
-                    // helper handles separator normalization + prefix matching).
-                    displayPath: recentProjectDisplayPath(p, props.homeDir || ''),
                     kind: (entry.kind as RecentItem['kind']) || 'plain',
                     groupKey,
                     groupName,
                 })
             }
         }
-        recentItems.value = items
+        recentCache.value = items
+        recentItems.value = materializeRecentItems(items)
     } catch {
-        recentItems.value = []
+        if (seq !== recentRequestSeq) return // superseded — leave the newer state alone
+        // Keep the last good cache on a transient failure — clearing it would
+        // make the next open flash the spinner again, which is the very
+        // regression this cache exists to prevent. A cold cache stays `null`
+        // (not `[]`) so the next open retries and shows the spinner again
+        // instead of falsely reporting "no recent projects".
     } finally {
-        loadingRecent.value = false
-        // Re-center after content settles (loading → loaded list changes width)
-        if (dropdownOpen.value) {
-            deferPosition(() => updateDropdownPosition(false))
+        if (seq === recentRequestSeq) {
+            loadingRecent.value = false
+            // Re-center after content settles (loading → loaded list changes width)
+            if (dropdownOpen.value) {
+                deferPosition(() => updateDropdownPosition(false))
+            }
         }
     }
 }
@@ -896,19 +996,19 @@ async function selectRecent(item: RecentItem) {
                 msgKey = parsed.msgKey || ''
             } catch {}
             if (msgKey === 'NotADirectory') {
-                toast?.show(t('appHeader.projectPathNotFound'), { icon: '⚠️', type: 'error', duration: 3000 })
+                toast?.show(t('appHeader.projectPathNotFound'), { icon: 'warning', type: 'error', duration: 3000 })
                 fetch('/api/recent-projects', {
                     method: 'DELETE',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ path: item.path })
                 }).catch(() => {})
-                recentItems.value = recentItems.value.filter(r => r.path !== item.path)
+                dropRecentItem(item.path)
             } else {
-                toast?.show(t('appHeader.switchProjectFailed', { error: msg }), { icon: '⚠️', type: 'error', duration: 3000 })
+                toast?.show(t('appHeader.switchProjectFailed', { error: msg }), { icon: 'warning', type: 'error', duration: 3000 })
             }
         }
     } catch {
-        toast?.show(t('appHeader.switchProjectNetworkError'), { icon: '⚠️', type: 'error', duration: 3000 })
+        toast?.show(t('appHeader.switchProjectNetworkError'), { icon: 'warning', type: 'error', duration: 3000 })
     }
 }
 
@@ -957,11 +1057,11 @@ async function removeRecent(item: RecentItem) {
             body: JSON.stringify({ path: item.path }),
         })
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
-        recentItems.value = recentItems.value.filter(r => r.path !== item.path)
-        toast?.show(t('appHeader.projectRemoved'), { icon: '✅', type: 'success', duration: 2000 })
+        dropRecentItem(item.path)
+        toast?.show(t('appHeader.projectRemoved'), { icon: 'success', type: 'success', duration: 2000 })
     } catch (error) {
         appLog.w('AppHeader', 'Failed to remove recent project', { path: item.path, error })
-        toast?.show(t('appHeader.removeProjectFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
+        toast?.show(t('appHeader.removeProjectFailed'), { icon: 'warning', type: 'error', duration: 3000 })
     }
 }
 
@@ -1044,6 +1144,10 @@ onMounted(() => {
     document.addEventListener('click', onClickOutside)
     document.addEventListener('visibilitychange', onBlinkVisibilityChange)
     startBackgroundPolling()
+    // Warm the recent-projects cache so the first open is already instant.
+    // Failures are swallowed inside loadRecentProjects (the cache stays cold
+    // and the open path falls back to the loading state).
+    void loadRecentProjects()
     motionQuery = typeof window !== 'undefined' && window.matchMedia
         ? window.matchMedia('(prefers-reduced-motion: reduce)')
         : null

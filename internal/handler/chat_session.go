@@ -593,6 +593,7 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 		ModelID        string `json:"modelId"`
 		Transport      string `json:"transport"`
 		AutoApprove    *bool  `json:"autoApprove"` // pointer: distinguish "not sent" from false
+		Cruise         *bool  `json:"cruise"`      // pointer: distinguish "not sent" from false (auto-cruise)
 		Title          string `json:"title"`
 		Pinned         *bool  `json:"pinned"` // pointer: distinguish "not sent" from false
 		// Tags replaces the session's full tag set when non-nil. A pointer is
@@ -622,6 +623,9 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.AutoApprove != nil {
 		applyAutoApprove(sessionID, *req.AutoApprove)
+	}
+	if req.Cruise != nil {
+		applySessionCruise(sessionID, *req.Cruise)
 	}
 	if title := strings.TrimSpace(req.Title); title != "" {
 		// Manual rename: lock the title so the first-message auto-title does
@@ -717,6 +721,27 @@ func applyAutoApprove(sessionID string, enabled bool) {
 	service.UpdateSessionAutoApprove(sessionID, enabled)
 	if conn := ai.GetACPConnManager().GetConn(sessionID); conn != nil {
 		conn.SetAutoApprove(enabled)
+	}
+}
+
+// applySessionCruise persists the auto-cruise switch.
+//
+// Auto-cruise (single chat: keep confirming until the AI declares the goal met;
+// group: the four hand-back points become confirmation rounds) is stored in the
+// session's context_state and read by BuildChatRequest (single chat) and the
+// group orchestrator.
+//
+// Enabling cruise FORCES auto-approve on: cruise only works unattended, and a
+// pending permission prompt would stall the loop with no human watching. The
+// link is one-directional — disabling cruise does NOT touch auto-approve, since
+// the user may still want unattended runs. The caller invokes this AFTER the
+// autoApprove block so a request carrying both {autoApprove:false, cruise:true}
+// still ends with auto-approve on.
+func applySessionCruise(sessionID string, enabled bool) {
+	//nolint:errcheck,gosec // best-effort persistence; failure is non-fatal for an idempotent update
+	service.SetSessionCruise(sessionID, enabled)
+	if enabled {
+		applyAutoApprove(sessionID, true)
 	}
 }
 

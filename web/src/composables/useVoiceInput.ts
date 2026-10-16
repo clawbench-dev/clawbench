@@ -55,7 +55,7 @@ export function useVoiceInput() {
   // fail records the error and surfaces it to the user via a toast.
   function fail(msg: string): void {
     error.value = msg
-    toast.show(msg, { icon: '⚠️', type: 'error', duration: 6000 })
+    toast.show(msg, { icon: 'warning', type: 'error', duration: 6000 })
   }
 
   const shortcutKey = () =>

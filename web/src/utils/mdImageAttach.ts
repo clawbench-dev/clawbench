@@ -1,3 +1,4 @@
+import type { ToastIconKey } from '@/composables/useToast'
 /**
  * "Attach image to chat" affordance for rendered markdown views.
  *
@@ -28,7 +29,7 @@ export interface MdImageAttachActions {
   add: (path: string) => void
   remove: (path: string) => void
   has: (path: string) => boolean
-  toast: (msg: string, opts?: { icon?: string; type?: 'success' | 'error' | 'info'; duration?: number }) => void
+  toast: (msg: string, opts?: { icon?: ToastIconKey; type?: 'success' | 'error' | 'info'; duration?: number }) => void
   /** i18n message keys resolved by the caller. */
   messages: { added: string; removed: string }
 }
@@ -65,10 +66,10 @@ export function handleMdImageAttachClick(
 
   if (actions.has(hit.path)) {
     actions.remove(hit.path)
-    actions.toast(actions.messages.removed, { icon: '📎', type: 'info', duration: 1500 })
+    actions.toast(actions.messages.removed, { icon: 'attach', type: 'info', duration: 1500 })
   } else {
     actions.add(hit.path)
-    actions.toast(actions.messages.added, { icon: '📎', type: 'success', duration: 1500 })
+    actions.toast(actions.messages.added, { icon: 'attach', type: 'success', duration: 1500 })
   }
 
   // Fly-to-chat particle from the badge center (App listens; silent when the

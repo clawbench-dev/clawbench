@@ -36,7 +36,6 @@ docs/spec/
 ├── infra/                           # 基础设施
 │   ├── auth-and-middleware.md       # 认证与中间件
 │   ├── ssh-tunnel.md               # SSH 隧道
-│   ├── frp-tunnel.md               # FRP 隧道
 │   ├── proxy.md                    # 代理注册表
 │   ├── config-and-discovery.md     # 配置与自动发现
 │   ├── event-system.md             # 事件体系

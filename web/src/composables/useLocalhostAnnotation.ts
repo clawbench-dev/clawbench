@@ -264,7 +264,7 @@ export function useLocalhostUrlClickHandler() {
         // Refuse only when neither wire can carry the forward. An h2-only
         // install has no SSH listener but still forwards, so it must open.
         if (portForwardUnavailable(sshInfo.value?.enabled, transportAllowsH2.value)) {
-            toast.show(gt('chat.localhost.sshDisabled'), { icon: 'ℹ️', type: 'info' })
+            toast.show(gt('chat.localhost.sshDisabled'), { icon: 'info', type: 'info' })
             return false
         }
         urlOpening.value = true
@@ -275,7 +275,7 @@ export function useLocalhostUrlClickHandler() {
             openPort(localPort, protocol, undefined, path)
         } catch (e) {
             appLog.e('LocalhostUrl', 'openLocalhostUrl failed: port=' + port + ', err=' + (e instanceof Error ? e.message : String(e)))
-            toast.show(gt('chat.localhost.openFailed'), { icon: '❌', type: 'error' })
+            toast.show(gt('chat.localhost.openFailed'), { icon: 'error', type: 'error' })
         } finally {
             urlOpening.value = false
             element.classList.remove('loading')

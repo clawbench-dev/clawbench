@@ -474,14 +474,14 @@ async function loadFiles(dir = '', silent = false, _depth = 0, noLoading = false
             // project root with an empty listing instead of an alarming error.
             state.currentDir = ''
             state.dirEntries = []
-            if (!silent) useToast().show(gt('file.toast.dirRemoved'), { icon: 'ℹ️', type: 'info', duration: 2000 })
+            if (!silent) useToast().show(gt('file.toast.dirRemoved'), { icon: 'info', type: 'info', duration: 2000 })
             return false
         }
         // Roll back to previous state on failure
         state.currentDir = prevDir
         state.dirEntries = prevEntries
         if (silent) throw err // let caller handle the error
-        useToast().show(gt('file.toast.dirLoadFailed'), { type: 'error', icon: '⚠️' })
+        useToast().show(gt('file.toast.dirLoadFailed'), { type: 'error', icon: 'warning' })
         return false
     } finally {
         // The latest call owns dirLoading — always clear if we're still current,
@@ -604,9 +604,9 @@ async function selectFile(path: string, isImageFile = false, isAudioFile = false
         const msgKey = (err as Error & { msgKey?: string })?.msgKey
         if (msgKey === 'FileNotFoundShort' || msgKey === 'FileNotFound') {
             // File was deleted/moved externally — inform instead of alarming.
-            useToast().show(gt('file.toast.fileRemoved'), { icon: 'ℹ️', type: 'info', duration: 2000 })
+            useToast().show(gt('file.toast.fileRemoved'), { icon: 'info', type: 'info', duration: 2000 })
         } else {
-            useToast().show((err as Error).message, { type: 'error', icon: '⚠️' })
+            useToast().show((err as Error).message, { type: 'error', icon: 'warning' })
         }
         return false
     } finally {
@@ -628,7 +628,7 @@ async function deleteFile(filePath: string): Promise<void> {
         const msgKey = (err as Error & { msgKey?: string })?.msgKey
         if (msgKey !== 'FileNotFoundShort') {
             appLog.e(TAG, '[deleteFile] API error:', err)
-            useToast().show(gt('file.toast.deleteFailed'), { type: 'error', icon: '⚠️' })
+            useToast().show(gt('file.toast.deleteFailed'), { type: 'error', icon: 'warning' })
         }
     }
     if (state.currentFile?.path === filePath) {
@@ -704,7 +704,7 @@ async function deleteFiles(paths: string[]): Promise<void> {
     })
     if (realFailures.length) {
         appLog.e(TAG, '[deleteFiles] some deletes failed:', realFailures.map(r => (r as PromiseRejectedResult).reason))
-        useToast().show(gt('file.toast.deleteFailed'), { type: 'error', icon: '⚠️' })
+        useToast().show(gt('file.toast.deleteFailed'), { type: 'error', icon: 'warning' })
     }
     if (state.currentFile && paths.includes(state.currentFile.path)) {
         closeCurrentFile()
@@ -721,7 +721,7 @@ async function renameFile(path: string, newName: string): Promise<void> {
             // File already gone — treat as success
         } else {
             const toast = useToast()
-            toast.show(gt('file.toast.renameFailed') || 'Rename failed', { icon: '❌', type: 'error', duration: 2000 })
+            toast.show(gt('file.toast.renameFailed') || 'Rename failed', { icon: 'error', type: 'error', duration: 2000 })
             throw err
         }
     }

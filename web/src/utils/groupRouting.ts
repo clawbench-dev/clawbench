@@ -303,6 +303,22 @@ export function stripEndTag(text: string): string {
 }
 
 /**
+ * stripGoalSatisfiedTag removes ONLY the auto-cruise completion signal from
+ * text, leaving everything else (including any mention-like prose) untouched.
+ *
+ * This is the single-chat strip primitive. It deliberately does NOT reuse
+ * `stripGroupProtocolTags`: that also unwraps/removes mention spans, which in a
+ * single chat would truncate a reply that merely discusses the tag syntax
+ * (regression 58879). The goal-satisfied tag is self-closing with no body, so
+ * removing it loses nothing.
+ */
+export function stripGoalSatisfiedTag(text: string): string {
+  if (!RE_GOAL_SATISFIED_TEST.test(text)) return text
+  RE_GOAL_SATISFIED.lastIndex = 0
+  return text.replace(RE_GOAL_SATISFIED, '').trim()
+}
+
+/**
  * stripGroupProtocolTags removes every ClawBench protocol tag while keeping the
  * PUBLIC prose: public mentions are unwrapped (their body survives), private
  * mentions are removed entirely (fail-closed), and the end signal is dropped.

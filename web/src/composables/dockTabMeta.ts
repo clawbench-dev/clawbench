@@ -9,6 +9,7 @@ import {
   BarChart3,
   Settings,
   Github,
+  Inbox,
 } from 'lucide-vue-next'
 import { DOCK_TABS, type DockTabId, type DockTabDescriptor } from '@/composables/dockTabs'
 
@@ -28,6 +29,10 @@ const DOCK_TAB_ICONS: Record<DockTabId, Component> = {
   history: GitBranch,
   forge: Github,
   tasks: Clock,
+  // Inbox, not Bell: this tab is a browsable, append-only log of what happened,
+  // not an alert channel. A bell would read as "something needs your attention"
+  // and imply the unread state the log deliberately does not have.
+  notifications: Inbox,
   terminal: TerminalIcon,
   proxy: Network,
   stats: BarChart3,

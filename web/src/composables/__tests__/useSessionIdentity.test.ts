@@ -75,7 +75,7 @@ vi.mock('@/utils/chatSessionUtils', () => ({
     parseMessages: vi.fn().mockReturnValue([]),
 }))
 
-import { useSessionIdentity, registerSessionActions, initSessionFromAPI, resetIdentity, clearSessionIdentity, updateModeState, updateAvailableModes, clearModeState, updateCommandState, clearCommandState, updateThinkingEffortState, updateAvailableThinkingEfforts, clearThinkingEffortState, updateUsageState, clearUsageState, clearAllUsageState, clearUsageStateById, toggleAutoApprove, getSessionId, registerSessionDrawerRef, registerOpenSessionTabOverride, reconcileRunningSessions, renameSession } from '@/composables/useSessionIdentity'
+import { useSessionIdentity, registerSessionActions, initSessionFromAPI, resetIdentity, clearSessionIdentity, updateModeState, updateAvailableModes, clearModeState, updateCommandState, clearCommandState, updateThinkingEffortState, updateAvailableThinkingEfforts, clearThinkingEffortState, updateUsageState, clearUsageState, clearAllUsageState, clearUsageStateById, toggleAutoApprove, applyCruiseAutoApproveDefault, getSessionId, registerSessionDrawerRef, registerOpenSessionTabOverride, reconcileRunningSessions, renameSession } from '@/composables/useSessionIdentity'
 import { recordRecentSession } from '@/composables/useRecentSession'
 import { store } from '@/stores/app'
 import { useChatContext } from '@/composables/useChatContext'
@@ -591,6 +591,86 @@ describe('useSessionIdentity', () => {
             })
             const identity = useSessionIdentity()
             expect(() => identity.openChatPanel()).not.toThrow()
+        })
+    })
+
+    describe('toggleCruise', () => {
+        it('flips the ref and PATCHes the session', async () => {
+            const identity = useSessionIdentity()
+            identity.currentSessionId.value = 'session-cruise'
+            identity.cruise.value = false
+
+            const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) })
+            vi.stubGlobal('fetch', fetchMock)
+
+            identity.toggleCruise(true)
+
+            expect(identity.cruise.value).toBe(true)
+            const call = fetchMock.mock.calls.find(c => String(c[0]).includes('/api/ai/session/update'))
+            expect(call, 'toggleCruise must PATCH session/update').toBeTruthy()
+            expect(JSON.parse((call![1] as RequestInit).body as string)).toEqual({
+                sessionId: 'session-cruise',
+                cruise: true,
+            })
+
+            vi.unstubAllGlobals()
+        })
+
+        it('updates the ref even without a session (no PATCH)', () => {
+            const identity = useSessionIdentity()
+            identity.currentSessionId.value = ''
+            const fetchMock = vi.fn()
+            vi.stubGlobal('fetch', fetchMock)
+
+            identity.toggleCruise(true)
+
+            expect(identity.cruise.value).toBe(true)
+            expect(fetchMock).not.toHaveBeenCalled()
+            vi.unstubAllGlobals()
+        })
+
+        it('enabling cruise forces auto-approve on', () => {
+            const identity = useSessionIdentity()
+            identity.currentSessionId.value = 'session-cruise'
+            identity.cruise.value = false
+            identity.autoApprove.value = false
+            vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) }))
+
+            identity.toggleCruise(true)
+
+            expect(identity.cruise.value).toBe(true)
+            expect(identity.autoApprove.value).toBe(true)
+            vi.unstubAllGlobals()
+        })
+
+        it('disabling cruise leaves auto-approve untouched', () => {
+            const identity = useSessionIdentity()
+            identity.currentSessionId.value = 'session-cruise'
+            identity.cruise.value = true
+            identity.autoApprove.value = true
+            vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) }))
+
+            identity.toggleCruise(false)
+
+            expect(identity.cruise.value).toBe(false)
+            expect(identity.autoApprove.value).toBe(true)
+            vi.unstubAllGlobals()
+        })
+    })
+
+    describe('applyCruiseAutoApproveDefault', () => {
+        it('forces auto-approve on when enabled', () => {
+            const identity = useSessionIdentity()
+            identity.autoApprove.value = false
+            applyCruiseAutoApproveDefault(true)
+            expect(identity.autoApprove.value).toBe(true)
+        })
+
+        it('is a no-op when disabled (one-directional)', () => {
+            const identity = useSessionIdentity()
+            identity.autoApprove.value = false
+            applyCruiseAutoApproveDefault(false)
+            expect(identity.autoApprove.value).toBe(false)
         })
     })
 

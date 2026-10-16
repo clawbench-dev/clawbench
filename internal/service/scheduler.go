@@ -735,10 +735,6 @@ func UpdateTaskStats(task *model.ScheduledTask) {
 
 // emitTaskEvent broadcasts a task_update event to connected clients.
 func emitTaskEvent(taskID, status, executionID, sessionID, projectPath, taskName string) {
-	mgr := ws.GetManager()
-	if mgr == nil {
-		return
-	}
 	data := &ws.TaskUpdateData{
 		TaskID:      taskID,
 		Status:      status,
@@ -766,9 +762,26 @@ func emitTaskEvent(taskID, status, executionID, sessionID, projectPath, taskName
 	if status == "running" && taskName != "" {
 		data.SessionTitle = taskName
 	}
+
+	// One event id shared by the record and the broadcast, so a re-emitted task
+	// event is deduped by the notifications table's UNIQUE event_id (the same
+	// identity pending_events uses).
+	eventID := ws.GenerateEventID()
+
+	// Notification-center log. Deliberately BEFORE the mgr == nil guard: the log
+	// records what happened, which does not depend on a WS manager existing.
+	// Independent of the push_mode gate below too: that decides whether to
+	// PUSH, this decides whether to RECORD. A user with push disabled still
+	// wants the task history.
+	RecordTaskNotification(eventID, taskID, status, executionID, sessionID, projectPath, taskName, data)
+
+	mgr := ws.GetManager()
+	if mgr == nil {
+		return
+	}
 	msg := ws.ServerMessage{
 		Type:  ws.MessageTypeEvent,
-		ID:    ws.GenerateEventID(),
+		ID:    eventID,
 		Event: "task_update",
 		Data:  data,
 	}
@@ -1454,7 +1467,8 @@ func maybeWarnPersistentScriptGateFailure(task *model.ScheduledTask, res ScriptR
 	if n < scriptGateFailureWarnThreshold {
 		return
 	}
-	slog.Warn("gating script keeps failing; task is running without doing anything",
+	slog.Warn(
+		"gating script keeps failing; task is running without doing anything",
 		slog.Int64("task_id", task.ID),
 		slog.String("task_name", task.Name),
 		slog.Int("consecutive_failures", n),
@@ -1521,7 +1535,8 @@ func countConsecutiveScriptGateFailures(taskID int64) int {
 func (s *Scheduler) finishScriptOnlyRun(task *model.ScheduledTask, status string) {
 	if status == "cancelled" {
 		UpdateTaskStats(task)
-		slog.Info("task run cancelled in script phase",
+		slog.Info(
+			"task run cancelled in script phase",
 			slog.Int64("task_id", task.ID),
 			slog.String("run_status", status),
 		)

@@ -1302,7 +1302,7 @@ onUpdated(restoreAskStates)
   gap: var(--space-3);
   font-size: var(--font-size-sm);
 }
-.tool-detail-body .mode-switch-icon { font-size: var(--font-size-lg); }
+.tool-detail-body .mode-switch-icon { display: inline-flex; align-items: center; font-size: var(--font-size-lg); }
 .tool-detail-body .mode-switch-mode {
   font-weight: var(--font-weight-semibold);
   color: var(--accent-color);

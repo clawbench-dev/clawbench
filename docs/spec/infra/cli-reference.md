@@ -36,7 +36,7 @@ sequenceDiagram
 ### 设计要点
 
 - **upgrade-replace 平台差异**：Unix 使用 SIGKILL 和进程组；Windows 使用 taskkill 和 OpenProcess。升级服务的跨平台复杂性隔离在子命令内部
-- **进程内 FRP 与 SSH**：不需要独立子命令，均以 Go 库形式运行在主进程内
+- **进程内 SSH**：不需要独立子命令，均以 Go 库形式运行在主进程内
 
 ## 配置路径查找
 

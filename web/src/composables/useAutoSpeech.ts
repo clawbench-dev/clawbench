@@ -167,7 +167,7 @@ if (typeof window !== 'undefined') {
   window.addEventListener('clawbench-autospeech-change', (e: Event) => {
     const val = (e as CustomEvent).detail as boolean
     enabled.value = val
-    toast.show(gt(val ? 'autoSpeech.enabled' : 'autoSpeech.disabled'), { icon: val ? '🔊' : '🔇', type: 'info', duration: 2000 })
+    toast.show(gt(val ? 'autoSpeech.enabled' : 'autoSpeech.disabled'), { icon: val ? 'sound' : 'mute', type: 'info', duration: 2000 })
   })
 }
 
@@ -182,9 +182,9 @@ export function useAutoSpeech() {
     saveState()
     if (!enabled.value) {
       stopAudio()
-      toast.show(gt('autoSpeech.disabled'), { icon: '🔇', type: 'info', duration: 2000 })
+      toast.show(gt('autoSpeech.disabled'), { icon: 'mute', type: 'info', duration: 2000 })
     } else {
-      toast.show(gt('autoSpeech.enabled'), { icon: '🔊', type: 'info', duration: 2000 })
+      toast.show(gt('autoSpeech.enabled'), { icon: 'sound', type: 'info', duration: 2000 })
     }
   }
 
@@ -288,7 +288,7 @@ export function useAutoSpeech() {
 
   function reportError(message: string) {
     lastError.value = message
-    toast.show(message, { icon: '🔊', type: 'error', duration: 5000 })
+    toast.show(message, { icon: 'blocked', type: 'error', duration: 5000 })
   }
 
   // --- Internal: play audio from a path ---
@@ -481,7 +481,7 @@ export function useAutoSpeech() {
       }
 
       if (result.summarizeFailed) {
-        toast.show(gt('autoSpeech.summaryFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
+        toast.show(gt('autoSpeech.summaryFailed'), { icon: 'warning', type: 'error', duration: 3000 })
       }
 
       if (result.summary) {

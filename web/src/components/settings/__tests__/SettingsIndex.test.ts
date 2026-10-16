@@ -1,8 +1,7 @@
-import { describe, expect, it, afterEach } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import SettingsIndex from '@/components/settings/SettingsIndex.vue'
-import { setFrpAvailable } from '@/utils/frpAvailability'
 
 const i18n = createI18n({
   legacy: false,
@@ -21,7 +20,6 @@ const i18n = createI18n({
           stt: '语音识别',
           rag: '会话搜索',
           portForward: '端口映射',
-          frp: '内网穿透',
           notification: '消息通知',
           security: '安全',
           debug: '调试',
@@ -51,7 +49,6 @@ const globalStubs = {
   'lucide-mic': true,
   'lucide-brain': true,
   'lucide-arrow-left-right': true,
-  'lucide-globe': true,
   'lucide-bell': true,
   'lucide-shield': true,
   'lucide-bug': true,
@@ -65,13 +62,11 @@ function mountIndex() {
 }
 
 describe('SettingsIndex', () => {
-  afterEach(() => setFrpAvailable(true))
-
-  it('renders 18 category rows', () => {
+  it('renders 17 category rows', () => {
     const wrapper = mountIndex()
 
     const rows = wrapper.findAll('.settings-index__row')
-    expect(rows.length).toBe(18)
+    expect(rows.length).toBe(17)
   })
 
   it('renders category labels', () => {
@@ -83,7 +78,6 @@ describe('SettingsIndex', () => {
     expect(labels).toContain('文件')
     expect(labels).toContain('聊天')
     expect(labels).toContain('端口映射')
-    expect(labels).toContain('内网穿透')
     expect(labels).toContain('安全')
     expect(labels).toContain('调试')
     expect(labels).toContain('关于')
@@ -105,8 +99,8 @@ describe('SettingsIndex', () => {
     const perCard = wrapper.findAll('.settings-card').map(card =>
       card.findAll('.settings-index__row').length,
     )
-    expect(perCard).toEqual([3, 7, 4, 2, 2])
-    expect(perCard.reduce((a, b) => a + b, 0)).toBe(18)
+    expect(perCard).toEqual([3, 7, 3, 2, 2])
+    expect(perCard.reduce((a, b) => a + b, 0)).toBe(17)
   })
 
   it('emits navigate with categoryId when row clicked', async () => {
@@ -125,7 +119,7 @@ describe('SettingsIndex', () => {
     const expectedIds = [
       'project', 'appearance', 'files',
       'chat', 'agents', 'skills', 'aiSummary', 'rag', 'tts', 'stt',
-      'terminal', 'portForward', 'frp', 'forgeIntegration',
+      'terminal', 'portForward', 'forgeIntegration',
       'notification', 'security',
       'debug', 'about',
     ]
@@ -136,46 +130,5 @@ describe('SettingsIndex', () => {
       await rows[i].trigger('click')
       expect(wrapper.emitted('navigate')![i]).toEqual([expectedIds[i]])
     }
-  })
-})
-
-// The FRP row is hidden on a `nofrp` server build — the panel behind it could
-// only ever offer a switch that does nothing. The default is available, so a
-// server that predates the flag keeps its row.
-describe('SettingsIndex — FRP availability', () => {
-  afterEach(() => setFrpAvailable(true))
-
-  it('hides the FRP row when the build has no FRP support', () => {
-    setFrpAvailable(false)
-    const wrapper = mountIndex()
-
-    const labels = wrapper.findAll('.settings-index__label').map(el => el.text())
-    expect(labels).not.toContain('内网穿透')
-    // Every other connectivity row survives — the filter must be specific.
-    expect(labels).toContain('端口映射')
-    expect(labels).toContain('终端')
-  })
-
-  it('drops the row count and keeps groups non-empty', () => {
-    setFrpAvailable(false)
-    const wrapper = mountIndex()
-
-    const rows = wrapper.findAll('.settings-index__row')
-    expect(rows.length).toBe(17)
-
-    // The connectivity card loses one item but must still render: an empty
-    // titled card would be the visible symptom of an over-eager filter.
-    const perCard = wrapper.findAll('.settings-card').map(card =>
-      card.findAll('.settings-index__row').length,
-    )
-    expect(perCard).toEqual([3, 7, 3, 2, 2])
-    expect(perCard.every(n => n > 0)).toBe(true)
-  })
-
-  it('shows the FRP row when the build supports FRP', () => {
-    setFrpAvailable(true)
-    const wrapper = mountIndex()
-    const labels = wrapper.findAll('.settings-index__label').map(el => el.text())
-    expect(labels).toContain('内网穿透')
   })
 })

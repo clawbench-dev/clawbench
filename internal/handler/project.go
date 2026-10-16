@@ -280,6 +280,18 @@ func ServeProjectSet(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo,
 			}
 		}
 
+		// Canonicalize ONCE, before anything consumes the path.
+		//
+		// The client adopts the echoed path as the active project
+		// (`store.setProject`) and compares it against paths that come from the
+		// `projects` table — which stores model.NormalizeProjectPath output.
+		// Echoing the REQUEST string verbatim made those two forms differ for
+		// any path the user pasted with a trailing slash or a "./" segment, and
+		// an exact comparison then reported the user's OWN project as a
+		// different one. Normalizing here also keeps the cookie, the DB row and
+		// the response in agreement.
+		absPath = model.NormalizeProjectPath(absPath)
+
 		info, err := os.Stat(absPath)
 		if err != nil || !info.IsDir() {
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "NotADirectory")
@@ -302,6 +314,9 @@ func ServeProjectSet(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo,
 			SameSite: http.SameSiteLaxMode,
 		})
 
+		// Canonical form already established above (see the note there) — the
+		// cookie must carry it too, since it is the per-session source of truth
+		// read back by the GET branch and by every project-scoped handler.
 		http.SetCookie(w, &http.Cookie{
 			Name:     model.ScopedCookieName("clawbench_project"),
 			Value:    url.QueryEscape(absPath),

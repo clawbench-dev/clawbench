@@ -434,7 +434,7 @@ async function handleUpdate(item: AgentItem, value: unknown) {
       try {
         await setDefaultAgent(props.agentId)
       } catch {
-        toast.show(t('settings.saveFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
+        toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 })
       }
     }
     return
@@ -460,7 +460,7 @@ async function handleUpdate(item: AgentItem, value: unknown) {
       }
     }
   } catch {
-    toast.show(t('settings.saveFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
+    toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 })
   }
 }
 
@@ -468,9 +468,9 @@ async function handleAvatarSaved(svg: string) {
   try {
     await patchAgentField(props.agentId, 'avatar', svg)
     avatarPickerOpen.value = false
-    toast.show(t('settings.items.agentAvatarSaved'), { icon: '✅', duration: 2000 })
+    toast.show(t('settings.items.agentAvatarSaved'), { icon: 'success', duration: 2000 })
   } catch {
-    toast.show(t('settings.saveFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
+    toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 })
   }
 }
 
@@ -494,7 +494,7 @@ async function handleCopyConfirmed(newName: string) {
   try {
     const newId = await duplicateAgent(props.agentId, newName)
     copying.value = false
-    toast.show(t('settings.items.agentCopied'), { icon: '✅', type: 'success', duration: 3000 })
+    toast.show(t('settings.items.agentCopied'), { icon: 'success', type: 'success', duration: 3000 })
     // Switch the panel to the freshly created agent's config page. Guard on a
     // non-empty id: an older backend that does not return the created agent
     // would otherwise navigate to `agents:` (a bogus, empty-id route).
@@ -508,7 +508,7 @@ async function handleCopyConfirmed(newName: string) {
       return
     }
     copying.value = false
-    toast.show(t('settings.items.agentCopyFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
+    toast.show(t('settings.items.agentCopyFailed'), { icon: 'warning', type: 'error', duration: 3000 })
   }
 }
 
@@ -519,7 +519,7 @@ async function handleToggleDisabled() {
   const a = agent.value
   if (!a) return
   if (a.id === defaultAgentId.value) {
-    toast.show(t('settings.items.agentCannotDisableDefault'), { icon: '⚠️', type: 'error', duration: 3000 })
+    toast.show(t('settings.items.agentCannotDisableDefault'), { icon: 'warning', type: 'error', duration: 3000 })
     return
   }
   const next = !a.disabled
@@ -527,10 +527,10 @@ async function handleToggleDisabled() {
     await patchAgentField(a.id, 'disabled', next)
     toast.show(
       next ? t('settings.items.agentDisabledToast') : t('settings.items.agentEnabledToast'),
-      { icon: '✅', type: 'success', duration: 3000 },
+      { icon: 'success', type: 'success', duration: 3000 },
     )
   } catch {
-    toast.show(t('settings.saveFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
+    toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 })
   }
 }
 
@@ -538,7 +538,7 @@ async function handleDelete() {
   const a = agent.value
   if (!a) return
   if (a.id === defaultAgentId.value) {
-    toast.show(t('settings.items.agentDeleteDefault'), { icon: '⚠️', type: 'error', duration: 3000 })
+    toast.show(t('settings.items.agentDeleteDefault'), { icon: 'warning', type: 'error', duration: 3000 })
     return
   }
   // Block locally when the agent is still in use. `sessionCount` already
@@ -552,7 +552,7 @@ async function handleDelete() {
         sessions: a.sessionCount ?? 0,
         tasks: a.taskCount ?? 0,
       }),
-      { icon: '⚠️', type: 'error', duration: 4000 },
+      { icon: 'warning', type: 'error', duration: 4000 },
     )
     return
   }
@@ -563,7 +563,7 @@ async function handleDelete() {
   if (!confirmed) return
   try {
     await deleteAgent(a.id)
-    toast.show(t('settings.items.agentDeleted'), { icon: '✅', type: 'success', duration: 3000 })
+    toast.show(t('settings.items.agentDeleted'), { icon: 'success', type: 'success', duration: 3000 })
     emit('deleted')
   } catch (err) {
     // The backend is authoritative: a 409 AgentInUse means the local counts
@@ -576,11 +576,11 @@ async function handleDelete() {
           sessions: detail?.SessionCount ?? (a.sessionCount ?? 0),
           tasks: detail?.TaskCount ?? (a.taskCount ?? 0),
         }),
-        { icon: '⚠️', type: 'error', duration: 4000 },
+        { icon: 'warning', type: 'error', duration: 4000 },
       )
       return
     }
-    toast.show(t('settings.items.agentDeleteFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
+    toast.show(t('settings.items.agentDeleteFailed'), { icon: 'warning', type: 'error', duration: 3000 })
   }
 }
 </script>

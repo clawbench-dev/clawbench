@@ -219,6 +219,21 @@ export function useChatSession(options: UseChatSessionOptions) {
       return { synced: false, keepInputDisabled: false }
     }
 
+    // ── Server-authoritative switch flags ──
+    // autoApprove / cruise are session flags, NOT message state, so they must be
+    // read back BEFORE the change-detection early return below — otherwise a
+    // refresh whose message snapshot happens to be unchanged (WS reconnect, a
+    // `completed` session_update) would leave them stale. clearSessionIdentity()
+    // resets both on every switch, and a toggle made on another device must
+    // surface here. Placed AFTER the stale-response guard so a response for a
+    // session the user just left cannot write its flags into the current one.
+    if (sessionData.autoApprove !== undefined) {
+      autoApprove.value = sessionData.autoApprove as boolean
+    }
+    if (sessionData.cruise !== undefined) {
+      cruise.value = sessionData.cruise as boolean
+    }
+
     // ── Change detection ──
     const newSnapshot = buildMessageSnapshot(rawMsgs)
     if (skipIfUnchanged && newSnapshot === lastMessageSnapshot && !isRunning) {
@@ -335,9 +350,8 @@ export function useChatSession(options: UseChatSessionOptions) {
     )
     syncTransportFromData(sessionData.transport as string)
     syncUsageFromData(sessionData.usageState as { used?: number; size?: number; cost?: number; currency?: string; inputTokens?: number; outputTokens?: number }, returnedId)
-    if (sessionData.autoApprove !== undefined) {
-      autoApprove.value = sessionData.autoApprove as boolean
-    }
+    // (autoApprove / cruise are read back earlier, before the change-detection
+    // early return — see the "Server-authoritative switch flags" block above.)
 
     // ── Available modes / thinking / commands / plan ──
     const modeState = sessionData.modeState as Record<string, unknown> | undefined
@@ -390,7 +404,7 @@ export function useChatSession(options: UseChatSessionOptions) {
 
   // ── Identity refs from singleton ──
   const identity = useSessionIdentity()
-  const { currentSessionTitle, currentBackend, currentSessionType, currentAgentId, currentModelId, currentModelName, runningSessions, runningSessionsVersion, availableCommands, autoApprove, thinkingEffortState, modeState } = identity
+  const { currentSessionTitle, currentBackend, currentSessionType, currentAgentId, currentModelId, currentModelName, runningSessions, runningSessionsVersion, availableCommands, autoApprove, cruise, thinkingEffortState, modeState } = identity
 
   // ── Agents from singleton ──
   const { agents, loadAgents, getAgentBackend, getAgentName, getAgent, syncModelFromAgent, getAgentModel, agentHeaderTitle: makeAgentTitle, supportsACP } = useAgents()
@@ -790,7 +804,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       // request DID reach the server, so the failure is actionable.
       const _msg = err instanceof Error ? err.message : ''
       if (!isTransportError(err)) {
-        toast.show(_msg ? gt('chat.session.loadHistoryFailedDetail', { error: _msg }) : gt('chat.session.loadHistoryFailed'), { icon: '⚠️', type: 'error' })
+        toast.show(_msg ? gt('chat.session.loadHistoryFailedDetail', { error: _msg }) : gt('chat.session.loadHistoryFailed'), { icon: 'warning', type: 'error' })
       }
       loadHistoryInProgress = false
       if (pendingReload) {
@@ -1054,7 +1068,7 @@ export function useChatSession(options: UseChatSessionOptions) {
     // when we already know creation will fail.
     const maxCount = store.state.sessionMaxCount
     if (maxCount > 0 && store.state.sessionCount >= maxCount) {
-      toast.show(gt('chat.session.sessionLimitReached'), { icon: '⚠️', type: 'error' })
+      toast.show(gt('chat.session.sessionLimitReached'), { icon: 'warning', type: 'error' })
       return
     }
     // Immediately clear identity and show switching overlay so the user
@@ -1130,11 +1144,11 @@ export function useChatSession(options: UseChatSessionOptions) {
       // ON even if the persisted flag is off (e.g. the guarded UPDATE failed).
       // Update session count from creation response and show toast
       if (typeof data.sessionCount === 'number') store.state.sessionCount = data.sessionCount
-      toast.show(gt('chat.session.created', { count: data.sessionCount ?? '', max: maxCount }), { icon: '✨', type: 'success', duration: 1500 })
+      toast.show(gt('chat.session.created', { count: data.sessionCount ?? '', max: maxCount }), { icon: 'create', type: 'success', duration: 1500 })
     } catch (err: unknown) {
       appLog.e(TAG, 'Failed to create session:', err)
       const _msg = err instanceof Error ? err.message : ''
-      toast.show(_msg ? gt('chat.session.createSessionFailedDetail', { error: _msg }) : gt('chat.session.createSessionFailed'), { icon: '⚠️', type: 'error' })
+      toast.show(_msg ? gt('chat.session.createSessionFailedDetail', { error: _msg }) : gt('chat.session.createSessionFailed'), { icon: 'warning', type: 'error' })
       // Reset switching/input state on failure — switchSession won't run so
       // its finally block won't fire. On success, switchSession's finally
       // handles the reset.
@@ -1185,16 +1199,16 @@ export function useChatSession(options: UseChatSessionOptions) {
         const maxCount = store.state.sessionMaxCount
         if (typeof data.sessionCount === 'number') store.state.sessionCount = data.sessionCount
         if (data.destroyed) {
-          toast.show(gt('chat.session.destroyed'), { icon: '🗑️', type: 'success', duration: 2000 })
+          toast.show(gt('chat.session.destroyed'), { icon: 'delete', type: 'success', duration: 2000 })
         } else {
-          toast.show(gt('chat.session.archived', { count: data.sessionCount ?? '', max: maxCount }), { icon: '📦', type: 'success', duration: 2000 })
+          toast.show(gt('chat.session.archived', { count: data.sessionCount ?? '', max: maxCount }), { icon: 'archive', type: 'success', duration: 2000 })
         }
       } else {
-        toast.show(gt('chat.session.archiveFailed'), { icon: '⚠️', type: 'error' })
+        toast.show(gt('chat.session.archiveFailed'), { icon: 'warning', type: 'error' })
       }
     } catch (err: unknown) {
       appLog.e(TAG, 'Failed to archive session:', err)
-      toast.show(gt('chat.session.archiveFailed'), { icon: '⚠️', type: 'error' })
+      toast.show(gt('chat.session.archiveFailed'), { icon: 'warning', type: 'error' })
     } finally {
       pendingSessionOps.value.delete(sessionId)
     }
@@ -1225,13 +1239,13 @@ export function useChatSession(options: UseChatSessionOptions) {
           await loadSessionsOnce()
         }
         if (typeof data.sessionCount === 'number') store.state.sessionCount = data.sessionCount
-        toast.show(gt('chat.session.destroyed'), { icon: '🗑️', type: 'success', duration: 2000 })
+        toast.show(gt('chat.session.destroyed'), { icon: 'delete', type: 'success', duration: 2000 })
       } else {
-        toast.show(gt('chat.session.destroyFailed'), { icon: '⚠️', type: 'error' })
+        toast.show(gt('chat.session.destroyFailed'), { icon: 'warning', type: 'error' })
       }
     } catch (err: unknown) {
       appLog.e(TAG, 'Failed to destroy session:', err)
-      toast.show(gt('chat.session.destroyFailed'), { icon: '⚠️', type: 'error' })
+      toast.show(gt('chat.session.destroyFailed'), { icon: 'warning', type: 'error' })
     } finally {
       pendingSessionOps.value.delete(sessionId)
     }
@@ -1582,15 +1596,15 @@ export function useChatSession(options: UseChatSessionOptions) {
           const errData = await resp.json().catch(() => ({}))
           const msgKey = errData.msgKey || ''
           if (resp.status === 409 || msgKey === 'SessionLimitReached') {
-            toast.show(gt('chat.session.sessionLimitReached'), { icon: '⚠️', type: 'error' })
+            toast.show(gt('chat.session.sessionLimitReached'), { icon: 'warning', type: 'error' })
           } else {
-            toast.show(errData.error || gt('chat.session.continueFailed'), { icon: '⚠️', type: 'error' })
+            toast.show(errData.error || gt('chat.session.continueFailed'), { icon: 'warning', type: 'error' })
           }
           return false
         }
         const data = await resp.json()
         if (!data.ok || !data.sessionId) {
-          toast.show(gt('chat.session.continueFailed'), { icon: '⚠️', type: 'error' })
+          toast.show(gt('chat.session.continueFailed'), { icon: 'warning', type: 'error' })
           return false
         }
         sessionId = data.sessionId
@@ -1599,7 +1613,7 @@ export function useChatSession(options: UseChatSessionOptions) {
         if (isNewlyCreated) {
           const maxCount = store.state.sessionMaxCount
           if (typeof data.sessionCount === 'number') store.state.sessionCount = data.sessionCount
-          toast.show(gt('chat.session.continued', { count: data.sessionCount ?? '', max: maxCount }), { icon: '💬', type: 'success', duration: 1500 })
+          toast.show(gt('chat.session.continued', { count: data.sessionCount ?? '', max: maxCount }), { icon: 'chat', type: 'success', duration: 1500 })
         }
       }
 
@@ -1614,7 +1628,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       return true
     } catch (err: unknown) {
       appLog.e(TAG, 'Failed to continue from execution:', err)
-      toast.show(gt('chat.session.continueFailed'), { icon: '⚠️', type: 'error' })
+      toast.show(gt('chat.session.continueFailed'), { icon: 'warning', type: 'error' })
       return false
     }
   }
@@ -1639,25 +1653,25 @@ export function useChatSession(options: UseChatSessionOptions) {
         const errData = await resp.json().catch(() => ({}))
         const msgKey = errData.msgKey || ''
         if (resp.status === 409 || msgKey === 'SessionLimitReached') {
-          toast.show(gt('chat.session.sessionLimitReached'), { icon: '⚠️', type: 'error' })
+          toast.show(gt('chat.session.sessionLimitReached'), { icon: 'warning', type: 'error' })
         } else {
-          toast.show(errData.error || gt('chat.session.forkFailed'), { icon: '⚠️', type: 'error' })
+          toast.show(errData.error || gt('chat.session.forkFailed'), { icon: 'warning', type: 'error' })
         }
         return false
       }
       const data = await resp.json()
       if (!data.ok || !data.sessionId) {
-        toast.show(gt('chat.session.forkFailed'), { icon: '⚠️', type: 'error' })
+        toast.show(gt('chat.session.forkFailed'), { icon: 'warning', type: 'error' })
         return false
       }
       const maxCount = store.state.sessionMaxCount
       if (typeof data.sessionCount === 'number') store.state.sessionCount = data.sessionCount
-      toast.show(gt('chat.session.forked', { count: data.sessionCount ?? '', max: maxCount }), { icon: '🔀', type: 'success', duration: 1500 })
+      toast.show(gt('chat.session.forked', { count: data.sessionCount ?? '', max: maxCount }), { icon: 'fork', type: 'success', duration: 1500 })
       await switchSession(data.sessionId)
       return true
     } catch (err: unknown) {
       appLog.e(TAG, 'Failed to fork session:', err)
-      toast.show(gt('chat.session.forkFailed'), { icon: '⚠️', type: 'error' })
+      toast.show(gt('chat.session.forkFailed'), { icon: 'warning', type: 'error' })
       return false
     }
   }
@@ -1680,15 +1694,15 @@ export function useChatSession(options: UseChatSessionOptions) {
         const errData = await resp.json().catch(() => ({}))
         const msgKey = errData.msgKey || ''
         if (resp.status === 400 && msgKey === 'NothingToRewind') {
-          toast.show(gt('chat.session.nothingToRewind'), { icon: 'ℹ️', type: 'info' })
+          toast.show(gt('chat.session.nothingToRewind'), { icon: 'info', type: 'info' })
         } else {
-          toast.show(errData.error || gt('chat.session.rewindFailed'), { icon: '⚠️', type: 'error' })
+          toast.show(errData.error || gt('chat.session.rewindFailed'), { icon: 'warning', type: 'error' })
         }
         return ''
       }
       const data = await resp.json()
       if (!data.ok) {
-        toast.show(gt('chat.session.rewindFailed'), { icon: '⚠️', type: 'error' })
+        toast.show(gt('chat.session.rewindFailed'), { icon: 'warning', type: 'error' })
         return ''
       }
       // Plan progress is NOT persisted: it lives only on the ACP connection
@@ -1711,11 +1725,11 @@ export function useChatSession(options: UseChatSessionOptions) {
       // The truncating edit clears unread like an explicit open would.
       markSessionRead(sessionId).catch(() => {})
       loadSessionsOnce()
-      toast.show(gt('chat.session.rewinded'), { icon: '⏪', type: 'success', duration: 1500 })
+      toast.show(gt('chat.session.rewinded'), { icon: 'rewind', type: 'success', duration: 1500 })
       return data.restoredText || ''
     } catch (err: unknown) {
       appLog.e(TAG, 'Failed to rewind session:', err)
-      toast.show(gt('chat.session.rewindFailed'), { icon: '⚠️', type: 'error' })
+      toast.show(gt('chat.session.rewindFailed'), { icon: 'warning', type: 'error' })
       return ''
     }
   }

@@ -631,7 +631,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// CORS proxy for Swagger UI "Try it out" — forwards API requests to avoid CORS issues
 	register("/api/openapi-proxy", proxy.ServeCORSProxy)
 
-	// SSH tunnel info — split by audience, mirroring the frp pair below.
+	// SSH tunnel info — split by audience.
 	// 1. Android BackgroundService.fetchSSHPort() calls the public one from
 	//    native Java (no WebView cookies available) to discover the SSH port
 	//    before connecting. Without it, fetchSSHPort gets 401, falls back to
@@ -661,10 +661,6 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// allowed-range guard mirrors the SSH reverse path.
 	register("/api/tunnel/control", TunnelControl)
 
-	// FRP tunnel status
-	register("/api/frp/info", ServeFRPInfo)           // Full status, requires auth (exposes public IP)
-	registerPublic("/api/frp/status", ServeFRPStatus) // Minimal status, no auth (only enabled+running)
-
 	// Terminal (interactive web terminal with PTY + WebSocket + xterm.js)
 	register("/api/terminal/ws", TerminalWebSocket)
 	register("/api/terminal/status", TerminalStatus)
@@ -680,6 +676,11 @@ func RegisterRoutes(mux *http.ServeMux) {
 
 	// Pending events (missed notifications for offline clients)
 	register("/api/ai/events/pending", ServePendingEvents)
+
+	// Notification-center log: a browsable history of session/task/forge
+	// events. GET lists (with project/kind/time filters + keyset paging);
+	// DELETE clears the whole log.
+	register("/api/notifications", ServeNotificationsOrClear)
 
 	// Chat quick-send (CRUD for quick-send presets stored in database)
 	register("/api/chat/quick-send", ServeChatQuickSend)

@@ -584,6 +584,52 @@ func TestStreamEventToPayload_ACPUnknownType(t *testing.T) {
 	assert.Nil(t, payload)
 }
 
+// content_reset MUST carry a wire payload. It is declared a critical event
+// (ai.criticalStreamEvents) and the frontend handles it (useChatStream's
+// `case 'content_reset'` clears the accumulated blocks of the retried attempt),
+// but a missing case here made StreamEventToPayload return nil — and Emit
+// silently drops events with a nil payload. The event therefore never reached
+// any client: after an ACP prompt failure + respawn retry, the first attempt's
+// partial reply stayed on screen and the retry's content was appended on top of
+// it, so one reply rendered as two concatenated segments until a session switch
+// rebuilt the array from the DB.
+func TestStreamEventToPayload_ContentReset(t *testing.T) {
+	payload := StreamEventToPayload(ai.StreamEvent{Type: "content_reset"})
+	require.NotNil(t, payload, "content_reset must produce a payload or Emit drops it")
+	_, ok := payload.(map[string]any)
+	assert.True(t, ok)
+}
+
+// Every event type the backend declares CRITICAL must survive the wire mapping.
+// A critical event is by definition one whose loss is user-visible, so a
+// payload builder that returns nil (making Emit skip it) silently defeats the
+// reliable-delivery guarantee those types exist to provide. This is the guard
+// that would have caught content_reset: it was listed as critical, handled by
+// the frontend, and emitted on the ACP retry path, yet had no case here.
+func TestStreamEventToPayload_EveryCriticalEventHasPayload(t *testing.T) {
+	for _, eventType := range ai.CriticalStreamEventTypes() {
+		event := ai.StreamEvent{Type: eventType}
+		// Give the data-carrying critical events their minimal struct so a
+		// missing case is not masked by a "nil data" early return.
+		switch eventType {
+		case "stream_start":
+			event.StreamStart = &ai.StreamStartData{MessageID: 1}
+		case "stream_split":
+			event.StreamSplit = &ai.StreamSplitData{MessageID: 1}
+		case "stream_finalize":
+			event.StreamFinish = &ai.StreamFinishData{MessageID: 1}
+		case "user_message":
+			event.UserMessage = &ai.UserMessageData{MessageID: 1}
+		case "queue_drain", "queue_inject", "queue_cancel":
+			event.QueueEvent = &ai.QueueEventData{SessionID: "s", QueueID: "q"}
+		case "queue_added":
+			event.QueueAdded = &ai.QueueAddedData{QueueID: "q"}
+		}
+		assert.NotNilf(t, StreamEventToPayload(event),
+			"critical event %q has no wire payload — Emit will silently drop it", eventType)
+	}
+}
+
 // --- toolUsePayload ---
 
 func TestStreamEventToPayload_ToolUseNilTool(t *testing.T) {

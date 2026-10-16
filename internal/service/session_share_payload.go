@@ -193,6 +193,11 @@ func GetSessionMessagesForSelection(sessionID string) ([]SessionMessagePreview, 
 		preview := ExtractPlainText(content)
 		if isGroup {
 			preview = grouprouting.StripProtocolTags(preview)
+		} else {
+			// Single chat: drop the auto-cruise completion signal so it does not
+			// show up as literal text in the share-selection preview. Same
+			// single-chat policy as AssistantConclusion.
+			preview = grouprouting.StripGoalSatisfied(preview)
 		}
 		items = append(items, SessionMessagePreview{
 			ID:        id,

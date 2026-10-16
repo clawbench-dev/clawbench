@@ -72,8 +72,9 @@ export default {
     history: '历史',
     forge: '议题与合并请求',
     tasks: '任务',
+    notifications: '通知中心',
     portForward: '端口映射',
-    frp: '内网穿透',
+
     refresh: '刷新',
     refreshed: '已刷新',
     more: '更多',
@@ -478,6 +479,7 @@ export default {
       placeholderSkill: "输入 {'#'} 使用技能",
       placeholderFileRef: "输入 {'@'} 引用文件",
       placeholderSwipeHistory: '左右滑动切换历史输入',
+      placeholderArrowHistory: '↑/↓ 切换历史输入',
       send: '发送',
       enqueue: '加入队列',
       quickMenu: '快捷指令',
@@ -636,6 +638,13 @@ export default {
       description: '自动批准代理的所有权限请求。',
       enabled: '自动批准已开启',
       disabled: '自动批准已关闭',
+    },
+    cruise: {
+      label: '自动巡航',
+      active: '巡航中',
+      hint: '开启后，一轮回复结束不会停手，AI 会持续确认并推进，直到它确认任务已完成',
+      enabled: '自动巡航已开启',
+      disabled: '自动巡航已关闭',
     },
     plan: {
       title: '执行计划',
@@ -1184,9 +1193,7 @@ export default {
     parallelHint: "打开后你 {'@'} 的成员同时发言（不 {'@'} 人时全体成员并发）；智能体之间的 {'@'} 不受影响。",
     cruiseLabel: '自动巡航',
     cruiseHintHost: '打开后，主持人认为任务完成才会结束（不再随时收工）。',
-    cruiseHintFree: '打开后，过半成员确认任务完成才会结束。',
-    // 当前群开启自动巡航时，聊天标题栏显示的徽章。
-    cruiseActive: '巡航中',
+    cruiseHintFree: '打开后，至少半数成员确认任务完成才会结束。',
     goalSatisfied: '已完成',
     autoApproveHint: '自动批准所有成员的权限请求。',
     confirm: '添加',
@@ -1203,6 +1210,60 @@ export default {
       noteTitle: '密送',
       notePrompt: '给 {name} 的密送内容（只有 ta 能看到）',
       notePlaceholder: '留空则不发送密送',
+    },
+  },
+  notifications: {
+    title: '通知中心',
+    // 通知日志没有已读/未读概念——它回答「发生了什么」，不回答「有什么待处理」。
+    projectFilter: '项目',
+    allProjects: '全部项目',
+    kindFilter: '类型',
+    rangeFilter: '时间',
+    all: '全部',
+    kind: {
+      session: '会话',
+      task: '任务',
+      forge: '仓库',
+    },
+    range: {
+      today: '今天',
+      '7d': '近 7 天',
+      '30d': '近 30 天',
+    },
+    // 源（会话/任务）已删除时显示。点击不跳转（源自身的降级会静默改道到别处）。
+    sourceDeleted: '源已删除',
+    sourceDeletedHint: '这条通知指向的会话或任务已不存在。',
+    // 通知日志是全局的（所有项目）。**只给「其他项目」的行标项目名**——
+    // 没有名字的行就是当前项目的，这正是判据；把当前项目也印在每一行上是噪音。
+    // 点击会整棵项目子树重建，这个后果写在 tooltip 里。
+    externalProjectTip: '来自项目「{name}」，点击将切换项目。',
+    crossProjectConfirmTitle: '切换项目',
+    crossProjectConfirm: '这条通知来自项目「{name}」，不在当前项目中。打开它会切换到该项目。',
+    crossProjectConfirmOk: '切换并打开',
+    count: '{n} 条',
+    loading: '加载中…',
+    loadMore: '加载更多',
+    empty: '暂无通知',
+    emptyHint: '会话、任务与仓库事件会显示在这里。',
+    emptyFiltered: '没有符合当前筛选的通知',
+    clear: '清空',
+    clearConfirm: '清空全部通知？此操作不可撤销。',
+    cleared: '通知已清空',
+    refresh: '刷新',
+    event: {
+      sessionCompleted: '会话已完成',
+      sessionCancelled: '会话已取消',
+      permissionPending: '待审批',
+      taskRunning: '任务已开始',
+      taskCompleted: '任务已完成',
+      taskFailed: '任务失败',
+      taskCancelled: '任务已取消',
+      forgeOpened: '已开启',
+      forgeClosed: '已关闭',
+      forgeMerged: '已合并',
+      forgeReopened: '已重新开启',
+      forgeCommented: '有新评论',
+      forgePipelineDone: '流水线已结束',
     },
   },
   task: {
@@ -1705,6 +1766,7 @@ export default {
       backToTerminal: '返回终端',
       backToSettings: '返回设置',
       backToPortForward: '返回端口映射',
+      backToNotifications: '返回通知中心',
       back: '返回',
       parentDir: '返回上一级',
       projectRoot: '项目根目录',
@@ -1934,6 +1996,16 @@ export default {
     clear: '清空',
     placeholder: '输入你的问题...',
     addToChat: '加入对话',
+    // Collapsed floating toolbar (issue #544). `comment` opens the inline
+    // input; `quoteSelection` stages the selection as a quote card. Copy reuses
+    // `common.copy`, so it has no key of its own here.
+    //
+    // The KEY and the Android wire action stay `comment` while the visible
+    // wording is 讨论: they are stable internal identifiers (the Java side sends
+    // the literal "comment"), and renaming them for a copy change would churn
+    // the protocol for no user-visible gain.
+    comment: '讨论',
+    quoteSelection: '引用',
     addedToChat: '已加入对话',
     send: '发送',
     aiChat: 'AI 对话',
@@ -2247,7 +2319,7 @@ export default {
       aiSummary: 'AI 摘要',
       rag: '会话搜索',
       portForward: '端口映射',
-      frp: '内网穿透',
+
       forgeIntegration: 'GitHub/GitLab 集成',
       skills: '技能',
       notification: '推送通知',
@@ -2830,24 +2902,6 @@ export default {
       tunnelStatusUnavailable: '端口映射不可用：SSH 隧道服务器已关闭，且当前传输方式不支持 H2',
       tunnelStatusChecking: '正在检测隧道状态…',
       tunnelStatusUnknown: '隧道状态未知',
-      frpEnabled: '启用内网穿透',
-      frpEnabledDesc: '通过 FRP 将服务转发到公网，让手机在非局域网环境下也能连接',
-      frpServerAddr: 'FRP 服务器地址',
-      frpServerAddrDesc: '用户自建的 FRP 服务器公网地址，如 120.26.168.245',
-      frpServerPort: 'FRP 服务器端口',
-      frpServerPortDesc: 'FRP 服务器监听端口，默认 7000',
-      frpToken: 'FRP 认证令牌',
-      frpTokenDesc: '与 frps 服务器配置的 token 一致',
-      frpAutoPort: '自动分配端口',
-      frpAutoPortDesc: '由 frps 从其 allowPorts 范围内自动分配远程端口',
-      frpAssignedPort: 'Web 端口',
-      frpAssignedPortDesc: '登录 ClawBench 界面的远程端口',
-      frpAssignedSSHPort: 'SSH 端口',
-      frpAssignedSSHPortDesc: '用于端口映射的远程端口',
-      frpRemotePort: 'Web 端口',
-      frpRemotePortDesc: '登录 ClawBench 界面的远程端口',
-      frpSSHRemotePort: 'SSH 端口',
-      frpSSHRemotePortDesc: '用于端口映射的远程端口',
       forgeSection: '凭据',
       skillsSection: '技能扫描',
       skillsCard: '跨智能体技能',
@@ -2949,8 +3003,8 @@ export default {
       feishuAppIdDesc: '飞书开发者后台的企业应用 App ID',
       feishuAppSecret: 'App Secret',
       feishuAppSecretDesc: '企业应用 App Secret，保存后脱敏显示',
-      frpStatusConnecting: '连接中...',
-      frpStatusFailed: '连接失败',
+
+
       logCapture: '调试日志捕获',
       logCaptureDesc: '捕获客户端调试日志用于问题排查',
       reconfigureServer: '重配服务器',

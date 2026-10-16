@@ -36,7 +36,7 @@ export async function restoreProjectWorkspace(): Promise<void> {
     }
   } else {
     try { await store.loadFiles('') } catch {
-      toast.show(gt('toast.fileListLoadFailed'), { icon: '⚠️', type: 'error', duration: 6000 })
+      toast.show(gt('toast.fileListLoadFailed'), { icon: 'warning', type: 'error', duration: 6000 })
     }
   }
 

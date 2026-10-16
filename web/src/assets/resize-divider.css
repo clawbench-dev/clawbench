@@ -8,22 +8,18 @@
  *
  * WHY THIS FILE EXISTS
  * The two consumers used to carry copy-pasted copies of these rules, and the
- * copies drifted: the "expanded" band had a rule narrowing the inner line to a
- * crisp 2px centre stripe for :active/--dragging, but the desktop-only :hover
- * state was added separately and never got that rule. Hovering on a PC then
- * left the line at `inset: 0`, so it filled the whole 12px band while the
- * accent rule recoloured it fully opaque — a solid 12px block. Touch never
- * hovers, so it looked right there. Now there is one source of truth.
+ * copies drifted: the highlighted state had a rule for `:active`/`--dragging`
+ * that the desktop-only `:hover` state was added separately and never got, so
+ * the line was recoloured without matching geometry. Now there is one source of
+ * truth.
  *
  * WHAT IS *NOT* HERE (intentionally — host geometry genuinely differs, sharing
  * it would be a lie):
  *   - resting size/placement: SplitDivider is a 1px flex item; TocDock is a 1px
  *     absolutely positioned box hanging off the dock's edge, with left/right
  *     dock variants.
- *   - how the band expands: SplitDivider offsets both sides
- *     (`margin: 0 -5.5px`); TocDock shifts the one side facing the dock edge.
- *   - the band's translucent tint, because it must win or lose against the
- *     host's own `width`/`margin` declaration in the same rule block.
+ *   - how the host grows: SplitDivider offsets both sides (`margin: 0 -0.5px`);
+ *     TocDock shifts the one side facing the dock edge.
  *   - `::before` hit-area width, `z-index`, `cursor`, and the `(pointer: coarse)`
  *     resting-width bump (TocDock has no such bump).
  *
@@ -32,42 +28,35 @@
  *     <div class="resize-divider__line" />
  *   </div>
  *
- * `aria-orientation` describes the separator LINE (matching the ARIA spec), and
- * that is what selects the axis to centre the stripe on — the host's own
- * orientation naming is inverted between the two components, so the attribute
- * is the one reliable signal. The host must also carry
- * `resize-divider--expanded` for the whole drag session: `:active` alone is not
- * enough, because `setPointerCapture` makes the browser drop it mid-swipe on
- * touch (see SplitDivider.vue).
+ * `aria-orientation` describes the separator LINE (matching the ARIA spec). The
+ * host must also carry `resize-divider--expanded` for the whole drag session:
+ * `:active` alone is not enough, because `setPointerCapture` makes the browser
+ * drop it mid-swipe on touch (see SplitDivider.vue).
  */
 
 /* The line fills its host at rest, so its thickness IS the host's: 1px for both
-   consumers (3px for SplitDivider under `pointer: coarse`). Centring a 1px line
+   consumers (3px for SplitDivider under `pointer: coarse`). Centring a line
    inside a wider box leaves an uneven gap either side that reads as stray
    padding — and a wide host paints a proportionally thick bar, which is why
    TocDock's box is 1px rather than 6px.
 
-   The resting thickness is written as an explicit `100%` rather than `inset: 0`
-   so that it can take part in a transition — `auto` (what `inset: 0` resolves
-   the thin axis to) is not an interpolatable value. See the geometry
-   transitions below for why that matters. */
+   The thin axis is written as an explicit `100%` rather than `inset: 0` so that
+   it can take part in a transition — `auto` (what `inset: 0` resolves the thin
+   axis to) is not an interpolatable value. See the transition below for why
+   that matters. */
 .resize-divider__line {
   position: absolute;
   background: var(--border-color, rgba(0, 0, 0, 0.12));
   /* Geometry transitions MUST match the host's (SplitDivider/TocDock animate
      width/height/margin over --duration-base).
 
-     Without them the line snapped back to filling its host the instant
-     `--expanded` was dropped, while the host was still ~12px and the line
-     colour was still fading out of full accent — so the release frame painted a
-     12px solid accent bar. Measured on a touch device: host=12px/line=12px on
-     the first frame after release, then it settled. The enter direction never
-     showed it because the line snaps NARROW there. */
+     Without them the line snapped to its new thickness the instant
+     `--expanded` was dropped, while the host was still animating back down and
+     the line colour was still fading out of accent — so the release frame
+     painted a bar of the wrong thickness. */
   transition: background var(--duration-base) ease,
     width var(--duration-base) ease,
-    height var(--duration-base) ease,
-    left var(--duration-base) ease,
-    top var(--duration-base) ease;
+    height var(--duration-base) ease;
 }
 /* The thin axis is explicit `100%` on both orientations so it can interpolate;
    the long axis spans the host. */
@@ -84,15 +73,16 @@
   height: 100%;
 }
 
-/* ── Expanded ─────────────────────────────────────────────────────────────
-   The host widens into a tinted band and the line stops filling it, becoming a
-   crisp centred stripe instead of a solid block. 2px rather than 1px because a
-   12px band cannot centre a 1px line on a whole pixel — (12 - 1) / 2 = 5.5,
-   (12 - 2) / 2 = 5. The thin axis is explicit (not `auto`) so it interpolates
-   against the `100%` resting value.
+/* ── Highlighted ──────────────────────────────────────────────────────────
+   The host grows from 1px to 2px and the line fills it, so the separator reads
+   as a slightly thicker accent-coloured line. There is deliberately NO tinted
+   band behind it: a band straddles the divider's edge, and the pane it laps
+   over carries a scrollbar flush against the divider — the band covered it.
 
-   Every declaration block below lists ALL its triggers in one selector list, so
-   a trigger cannot be tinted without also being narrowed. The triggers are:
+   The line keeps `100%` on its thin axis in every state (the base rule above),
+   so there is nothing to re-declare here; only the colour changes. Every
+   declaration block below lists ALL its triggers in one selector list, so a
+   trigger cannot be tinted without also being narrowed. The triggers are:
      :active                 mouse press; fires a frame before Vue applies the
                              class, so the press feedback is immediate
      .resize-divider--expanded  the whole pointer session, which is what touch
@@ -108,27 +98,9 @@
 .resize-divider--expanded .resize-divider__line {
   background: var(--accent-color, #0066cc);
 }
-.resize-divider[aria-orientation='vertical']:active .resize-divider__line,
-.resize-divider[aria-orientation='vertical'].resize-divider--expanded .resize-divider__line {
-  left: calc((100% - 2px) / 2);
-  width: 2px;
-}
-.resize-divider[aria-orientation='horizontal']:active .resize-divider__line,
-.resize-divider[aria-orientation='horizontal'].resize-divider--expanded .resize-divider__line {
-  top: calc((100% - 2px) / 2);
-  height: 2px;
-}
 
 @media (hover: hover) {
   .resize-divider:hover .resize-divider__line {
     background: var(--accent-color, #0066cc);
-  }
-  .resize-divider[aria-orientation='vertical']:hover .resize-divider__line {
-    left: calc((100% - 2px) / 2);
-    width: 2px;
-  }
-  .resize-divider[aria-orientation='horizontal']:hover .resize-divider__line {
-    top: calc((100% - 2px) / 2);
-    height: 2px;
   }
 }

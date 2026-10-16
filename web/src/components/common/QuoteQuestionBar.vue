@@ -1,19 +1,46 @@
 <template>
   <Transition name="quote-bar">
-    <div v-if="visible && (quoteData || composerMode)" ref="barRef" class="quote-question-bar">
+    <div
+      v-if="visible && (quoteData || composerMode)"
+      ref="barRef"
+      class="quote-question-bar"
+      :class="{ 'quote-question-bar--anchored': anchored }"
+      :style="barStyle"
+    >
 
-      <!-- Collapsed row: quoted snippet (single-line) + add action.
-           Clicking the quote area expands the input box and the quote together.
-           Copy button floats absolutely at the snippet's top-right.
-           Gated on showCollapsed, which requires a quote: the row exists to
-           preview one, so with no quote the bar is always expanded. -->
-      <div v-if="showCollapsed" class="quote-bar-row" @click="expand()" @pointerdown="onRowPointerDown">
-        <div class="qq-quoted-snippet qq-quoted-snippet--inline">
-          <span class="qq-quoted-text">{{ displayQuoteText }}</span>
-          <CopyButton :text="quoteData?.text || ''" class="qq-copy-btn" @click.stop />
-        </div>
-        <button class="quote-bar-add" @click.stop="handleAdd" :title="t('quoteBar.addToChat')" :aria-label="t('quoteBar.addToChat')">
-          <Plus :size="14" />
+      <!-- Collapsed: the floating selection toolbar (issue #544). It follows
+           the selected text instead of parking at the top of the page, so a
+           selection made mid-document is acted on where it sits.
+           Every action carries a LABEL, not just an icon: copy / comment /
+           quote are not self-evident from a glyph, and this toolbar is now the
+           only entry point (the collapsed quote preview is gone).
+           `pointerdown` pins before the click lands: the global selection
+           handler re-evaluates on pointerup and would otherwise hide the bar —
+           taking the button being pressed with it — out from under the click. -->
+      <div v-if="showCollapsed" class="quote-bar-toolbar" @pointerdown="onRowPointerDown">
+        <CopyButton
+          :text="quoteData?.text || ''"
+          class="quote-bar-action"
+          :label="t('common.copy')"
+          @click="onCopyAction"
+        />
+        <button
+          class="quote-bar-action"
+          @click.stop="expand()"
+          :title="t('quoteBar.comment')"
+          :aria-label="t('quoteBar.comment')"
+        >
+          <MessageSquare :size="14" />
+          <span>{{ t('quoteBar.comment') }}</span>
+        </button>
+        <button
+          class="quote-bar-action"
+          @click.stop="handleAdd"
+          :title="t('quoteBar.quoteSelection')"
+          :aria-label="t('quoteBar.quoteSelection')"
+        >
+          <Quote :size="14" />
+          <span>{{ t('quoteBar.quoteSelection') }}</span>
         </button>
       </div>
 
@@ -65,10 +92,12 @@
 </template>
 
 <script setup>
-import { Plus, Send, Link } from 'lucide-vue-next'
+import { Plus, Send, Link, MessageSquare, Quote } from 'lucide-vue-next'
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { truncateQuoteText, canSendInput } from '@/utils/quoteQuestionUtils'
+import { canSendInput } from '@/utils/quoteQuestionUtils'
+import { computeSelectionToolbarStyle } from '@/utils/selectionToolbarPosition'
+import { useVisualViewportInset } from '@/composables/useVisualViewportInset'
 import FileIcon from '@/components/common/FileIcon.vue'
 import CopyButton from '@/components/common/CopyButton.vue'
 
@@ -77,6 +106,11 @@ const { t } = useI18n()
 const props = defineProps({
   visible: Boolean,
   quoteData: Object,
+  // Rect of the text selection this bar is about, used to float the toolbar
+  // next to it (issue #544). Null when there is no DOM selection behind the
+  // bar (entry-point composers, terminal/CodeMirror selections, the OpenAPI
+  // preview's iframe) — the bar then keeps its pinned top position.
+  anchor: Object,
   // Opened from an entry point (e.g. the issue/PR detail header) rather than by
   // a text selection. The bar is then useful with no quote at all, so it skips
   // the collapsed preview and goes straight to the input.
@@ -84,6 +118,9 @@ const props = defineProps({
   // The attachment the composer will add on commit, previewed as a chip. Null in
   // the normal selection flow, which has no attachment of its own.
   composerAttachment: Object,
+  // Counter bumped by the Android native selection menu's 评论 action. The
+  // component watches it and opens the input (see the watcher below).
+  expandRequest: Number,
 })
 const emit = defineEmits(['add', 'send', 'close', 'pin', 'unpin'])
 
@@ -92,12 +129,98 @@ const inputText = ref('')
 const inputRef = ref(null)
 const barRef = ref(null)
 
-// Quote text: single-line preview while collapsed, full text once expanded.
-const displayQuoteText = computed(() => {
-  if (!props.quoteData) return ''
-  const text = props.quoteData.text || ''
-  return expanded.value ? text : truncateQuoteText(text, 80)
+// Floating position (issue #544). Measured after paint because the bar's size
+// decides how far it can sit from the viewport edges. The fallbacks cover jsdom
+// (offsetWidth is always 0) and the first frame before measurement — without
+// them the computed style would be NaN and the bar would jump on mount.
+const measuredWidth = ref(0)
+const measuredHeight = ref(0)
+const FALLBACK_BAR_WIDTH = 220
+const FALLBACK_BAR_HEIGHT = 32
+
+const anchored = computed(() => !!props.anchor)
+
+// How much of the layout viewport the soft keyboard hides. Fixed offsets are
+// measured from the LAYOUT viewport, so without this the bar would stay pinned
+// to a bottom the user cannot see once the keyboard opens (mobile browsers
+// shrink only the VISUAL viewport). Android's adjustResize shrinks the layout
+// viewport too, so the inset stays 0 there and nothing changes — correct.
+const { bottomInset, topInset, viewportVersion } = useVisualViewportInset()
+
+const barStyle = computed(() => {
+  if (!props.anchor) return {}
+  // `viewportVersion` is read purely to establish the dependency. The position
+  // math calls getZoomedViewport(), which reads window.innerHeight DIRECTLY and
+  // is therefore not reactive — so without this, the Android adjustResize case
+  // (insets stay 0 while the layout viewport shrinks) would never recompute and
+  // a `bottom`-anchored bar would keep an offset from the old, taller viewport.
+  void viewportVersion.value
+  return computeSelectionToolbarStyle(props.anchor, {
+    barWidth: measuredWidth.value || FALLBACK_BAR_WIDTH,
+    barHeight: measuredHeight.value || FALLBACK_BAR_HEIGHT,
+    bottomInset: bottomInset.value,
+    topInset: topInset.value,
+  })
 })
+
+function measureBar() {
+  const el = barRef.value
+  if (!el) return
+  measuredWidth.value = el.offsetWidth
+  measuredHeight.value = el.offsetHeight
+}
+
+// Re-measure whenever the bar appears or the anchor moves: the collapsed
+// toolbar and the expanded input have different sizes, and the flip decision
+// depends on the current height.
+//
+// The viewport insets are deliberately NOT watched here. `barStyle` is a
+// computed that reads them directly, so a keyboard opening already recomputes
+// the position (covered by the component tests).
+watch(
+  () => [props.visible, props.anchor, expanded.value],
+  async () => {
+    await nextTick()
+    measureBar()
+  },
+  { immediate: true },
+)
+
+/**
+ * Re-measure on the bar's OWN size changes.
+ *
+ * The textarea auto-grows as the user types (autoResizeTextarea), and the
+ * keyboard clamp uses `measuredHeight` to decide whether the bar fits the
+ * visible band. A stale, too-small height would let the real bar's bottom cross
+ * the visible edge — the input row dipping behind the keyboard in exactly the
+ * scenario this feature exists to prevent. A watcher cannot cover it: the growth
+ * comes from a DOM style write, not from a reactive value.
+ *
+ * No feedback loop: the only emitted styles that could resize the element are
+ * `maxWidth` (derived from the viewport, not from the measurement) and the
+ * position offsets (which do not affect size). So a resize never re-triggers a
+ * different measurement.
+ */
+let barResizeObserver = null
+
+watch(barRef, (el) => {
+  barResizeObserver?.disconnect()
+  barResizeObserver = null
+  if (!el) return
+  barResizeObserver = new ResizeObserver(() => measureBar())
+  barResizeObserver.observe(el)
+})
+
+onUnmounted(() => {
+  barResizeObserver?.disconnect()
+  barResizeObserver = null
+})
+
+// Quote text shown in the EXPANDED snippet. The collapsed toolbar no longer
+// previews the selection (issue #544 made it an icon+label toolbar), so there
+// is nothing to truncate for a single-line preview any more — the expanded
+// block is the only consumer and it always shows the full text.
+const displayQuoteText = computed(() => props.quoteData?.text || '')
 
 const canSend = computed(() => canSendInput(inputText.value))
 
@@ -105,20 +228,20 @@ const canSend = computed(() => canSendInput(inputText.value))
  * The bar has exactly two render states, and this is the one that decides
  * between them:
  *
- *   collapsed → the quote preview row (only meaningful WITH a quote)
+ *   collapsed → the floating selection toolbar (only meaningful WITH a quote)
  *   expanded  → quoted block (if any) + the input
  *
- * The collapsed row is deliberately unreachable without a quote. There is
- * nothing to preview, and the outer `v-if` already refuses to render the bar at
- * all unless there is a quote or composer mode; composer mode additionally
- * forces expanded. Naming the rule keeps a future `quoteData = null` from
- * falling through both branches and leaving an empty, bordered shell.
+ * The collapsed toolbar is deliberately unreachable without a quote: there is
+ * no selection to copy/comment/quote. The outer `v-if` already refuses to
+ * render the bar at all unless there is a quote or composer mode; composer mode
+ * additionally forces expanded. Naming the rule keeps a future `quoteData =
+ * null` from falling through both branches and leaving an empty shell.
  */
 const showCollapsed = computed(() => !expanded.value && !!props.quoteData)
 
-// Both PC and mobile show the collapsed bar on selection: it has no input, so it
-// never grabs focus and doesn't disturb the active selection. Clicking the row
-// expands it and focuses the input. Reset back to collapsed on hide.
+// Both PC and mobile show the collapsed toolbar on selection: it has no input,
+// so it never grabs focus and doesn't disturb the active selection. Choosing
+// "comment" expands it and focuses the input. Reset back to collapsed on hide.
 function onVisibleChange(val) {
   if (!val) {
     expanded.value = false
@@ -224,6 +347,14 @@ function onRowPointerDown() {
   emit('pin')
 }
 
+// Copy: the clipboard write is owned by CopyButton (it has the text), so this
+// only closes the bar. Same "commit and dismiss" contract as the quote action —
+// both actions finish their job and get out of the way, rather than leaving a
+// toolbar floating over text the user is done with.
+function onCopyAction() {
+  emit('close')
+}
+
 function autoResizeTextarea() {
   const el = inputRef.value
   if (!el) return
@@ -242,6 +373,14 @@ function autoResizeTextarea() {
 // Watch inputText changes to ensure textarea height stays in sync with content.
 watch(inputText, () => nextTick(() => autoResizeTextarea()))
 
+// The Android native selection menu asks for the comment input by bumping
+// expandRequest (it cannot reach `expanded`, which is local to this component).
+// A counter rather than a boolean so two consecutive requests both fire.
+watch(() => props.expandRequest, (n, prev) => {
+  if (n === undefined || n === (prev ?? 0)) return
+  expand()
+})
+
 function handleSend() {
   if (!canSend.value) return
   emit('send', inputText.value)
@@ -259,14 +398,24 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
 </script>
 
 <style scoped>
-/* ── Geometry: one sharp-corner language ──
-   This floating bar is deliberately hard-edged: --radius-xs (3px) on the
-   container and 0 on the blocks inside it. The point is internal consistency —
-   before this it mixed six radii (14px container, 6px button, 0 on the
-   snippet, a 20px pill input, 50% circles), so no two surfaces agreed and the
-   rounded input looked pasted onto a rounded card. Keep any new element in this
-   file on the same scale rather than reaching for --radius-md/lg/full. */
+/* ── Two geometries in one component ──
+   The EXPANDED panel keeps the bar's original hard-edged language
+   (--radius-xs container, 0 on the blocks inside it): it is a wide input
+   surface, and a rounded card there reads as pasted-on.
+
+   The COLLAPSED toolbar (issue #544) is deliberately the opposite: a compact
+   pill that floats next to the selection. That is a considered exception to the
+   sharp-corner rule, not drift — the guard in quoteQuestionBar.test.ts was
+   narrowed to the expanded panel so this pill is allowed. Keep every new
+   collapsed control on the pill scale; do not round the expanded panel. */
 .quote-question-bar {
+  /* The expanded panel's target width, in one place. Two rules need it — the
+     root's `max-width` cap and the panel's own `width` — and they must agree:
+     the panel relies on the root's clamp to shrink (`max-width: 100%`), so a
+     drift between them would either clip the panel or leave it narrower than
+     intended. 60% of the previous 600px, per review feedback that the popup
+     read as too wide for an inline reply box. */
+  --qq-expanded-width: 360px;
   position: fixed;
   top: calc(var(--header-height) + 8px + var(--header-safe-area-top));
   left: 8px;
@@ -276,60 +425,133 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
   border-radius: var(--radius-xs);
   box-shadow: var(--shadow-lg);
   z-index: var(--z-quote-bar);
-  max-width: 600px;
+  max-width: var(--qq-expanded-width);
   margin: 0 auto;
   overflow: hidden;
 }
 
-/* ===== Collapsed row ===== */
-.quote-bar-row {
+/* Anchored: the bar floats next to the selection, so it must shrink to its
+   content and drop the full-width centring of the pinned top position. The
+   inline left/top (or bottom) come from computeSelectionToolbarStyle; `right`
+   and the auto margins must be cleared or they would fight the inline `left`.
+
+   `top: auto` is load-bearing: when the bar sits ABOVE the selection the
+   computed style anchors it with `bottom` only, and without this the base
+   rule's `top` would still apply — leaving the element with both a top and a
+   bottom and stretching it down the whole viewport. An inline `top` (the
+   flipped-below case) overrides this as usual. */
+.quote-question-bar--anchored {
+  top: auto;
+  right: auto;
+  margin: 0;
+  max-width: none;
+  width: max-content;
+}
+
+/* The collapsed pill sizes to its content (`max-content` above). The expanded
+   input panel must NOT: it holds a textarea whose intrinsic width is huge, so
+   `max-content` would stretch it across the screen.
+
+   Size it to the shared target width (--qq-expanded-width, declared on the root
+   rule above) and let it shrink with the room actually available:
+
+     width: var(--qq-expanded-width) → the target width on a roomy screen
+     max-width: 100%    → resolves against the root's used width, which the
+                          root's INLINE max-width (from
+                          computeSelectionToolbarStyle, = viewport − 2·margin,
+                          in pre-zoom px) has already clamped. So the panel
+                          narrows with the viewport/zoom without any `vw` unit
+                          (which would not track the app's `html { zoom }`).
+
+   Without `max-width: 100%` a narrow screen would leave the root clamped while
+   the child stayed at the full target width and got silently clipped by the
+   root's `overflow: hidden`. */
+.quote-question-bar--anchored .quote-bar-expanded {
+  width: var(--qq-expanded-width);
+  max-width: 100%;
+}
+
+/* ===== Collapsed: floating selection toolbar ===== */
+.quote-bar-toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
-  cursor: pointer;
-  transition: background var(--duration-base);
+  padding: var(--space-2);
 }
 
-.quote-bar-row:active {
-  background: var(--bg-tertiary);
-}
-
-/* Collapsed-state add action. Square 26px to match .qq-add-btn/.qq-send-btn in
-   the expanded state and the icon buttons elsewhere in the app — the same
-   action must not change size or shape between states. */
-.quote-bar-add {
-  display: flex;
+/* One action = icon + label. The label is not optional: copy / comment / quote
+   are not readable from a glyph alone, and this toolbar is now the only entry
+   point for all three. */
+.quote-bar-action {
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
-  padding: 0;
+  gap: var(--space-3);
+  height: 28px;
+  padding: 0 var(--space-6);
   cursor: pointer;
-  transition: opacity var(--duration-base), background var(--duration-base);
   flex-shrink: 0;
+  white-space: nowrap;
+  font: inherit;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
   background: transparent;
-  color: var(--accent-color);
-  border: 1px solid color-mix(in srgb, var(--accent-color) 45%, var(--border-color));
-  border-radius: var(--radius-xs);
+  border: none;
+  border-radius: var(--radius-full);
+  transition: color var(--duration-base), background var(--duration-base);
 }
 
 @media (hover: hover) {
-  .quote-bar-add:hover {
-    background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+  .quote-bar-action:hover {
+    color: var(--text-primary);
+    background: color-mix(in srgb, var(--text-primary) 8%, transparent);
   }
 }
 
-/* Copy button — floats at the snippet's top-right, overlaying the text.
-   position:absolute keeps it out of the text flow (see .qq-quoted-snippet).
-   Fixed 22px square: the copied state swaps the icon for a Check rather than
-   swapping in a text label, so the button's footprint never changes. A label
-   would grow the button LEFTWARD (it is pinned to `right`), sliding it over the
-   quote text — and since the reservation is a fixed 24px, the only way to keep
-   a label clear would be to reserve the widest translation (~99px), which is
-   the dead space this bar just got rid of. Square corners like every other
-   control here. */
+/* The quote action is the primary one (it is the action the issue asks for),
+   so it carries the accent tint at rest. */
+.quote-bar-action:last-child {
+  color: var(--accent-color);
+}
+
+@media (hover: hover) {
+  .quote-bar-action:last-child:hover {
+    background: color-mix(in srgb, var(--accent-color) 14%, transparent);
+  }
+}
+
+/* ===== Expanded panel ===== */
+.quote-bar-expanded {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+}
+
+/* Quoted snippet block — relative so the floating copy button anchors here.
+   Square (radius 0) with a 2px accent rule on the left: the hard edge is what
+   reads as a quote in this sharp-corner language, so do not round it. */
+.qq-quoted-snippet {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  background: color-mix(in srgb, var(--accent-color) 10%, var(--bg-tertiary));
+  border-left: 2px solid var(--accent-color);
+  border-radius: 0;
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Copy button of the EXPANDED snippet — floats at its top-right, overlaying the
+   text. `position:absolute` keeps it out of the text flow (see
+   .qq-quoted-snippet). Fixed 22px square: the copied state swaps the icon for a
+   Check rather than a text label, so the footprint never changes. A label would
+   grow it LEFTWARD (it is pinned to `right`), sliding it over the quote text.
+   Square corners, like the rest of the expanded panel. (The collapsed toolbar's
+   copy action is a separate pill — see .quote-bar-action.) */
 .qq-copy-btn {
   position: absolute;
   top: 2px;
@@ -359,31 +581,6 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
    shared `.copy-btn.is-copied` rule in css/copy-button.css. Nothing to add
    here — the button keeps this bar's 22px geometry in both states. */
 
-/* ===== Expanded panel ===== */
-.quote-bar-expanded {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
-}
-
-/* Quoted snippet block — relative so the floating copy button anchors here.
-   Square (radius 0) with a 2px accent rule on the left: the hard edge is what
-   reads as a quote in this sharp-corner language, so do not round it. */
-.qq-quoted-snippet {
-  position: relative;
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-1);
-  padding: var(--space-2) var(--space-3);
-  background: color-mix(in srgb, var(--accent-color) 10%, var(--bg-tertiary));
-  border-left: 2px solid var(--accent-color);
-  border-radius: 0;
-  margin: 0;
-  flex: 1;
-  min-width: 0;
-}
-
 /* The scrollable text element must constrain itself — flex min-width on the
    parent does NOT propagate to a scrollable child (min-width only takes effect
    on the overflow element itself). Without this, a long unbreakable line (e.g.
@@ -397,16 +594,6 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
   flex: 1;
   min-width: 0;
   max-width: calc(100% - 24px);
-}
-
-/* Collapsed inline variant — single row, no flex-start. Matches the expanded
-   snippet's padding so the quote block does not resize when the bar expands. */
-.qq-quoted-snippet--inline {
-  align-items: center;
-  padding: var(--space-2) var(--space-3);
-  margin: 0;
-  border-radius: 0;
-  background: color-mix(in srgb, var(--accent-color) 10%, var(--bg-tertiary));
 }
 
 /* Quote text: single line by default; expand on click to show full content.
@@ -518,9 +705,9 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
   color: var(--text-muted);
 }
 
-/* Add + send: square 26px, matching .quote-bar-add in the collapsed state and
-   the icon buttons elsewhere in the app. A circle here would be the only
-   rounded control in an otherwise hard-edged bar. */
+/* Add + send: square 26px, matching the icon buttons elsewhere in the app.
+   Square (not round) because these live in the hard-edged EXPANDED panel — the
+   rounded pill language belongs to the collapsed toolbar only. */
 .qq-add-btn,
 .qq-send-btn {
   display: flex;
@@ -563,7 +750,12 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
   cursor: not-allowed;
 }
 
-/* ===== Transitions (对齐完成通知卡片的滑下+淡入动效) ===== */
+/* ===== Transitions =====
+   A fade with a small scale-in, not the old `translateY(-100%)` slide: that
+   read as "dropping from the header", which was true of the pinned top banner
+   but is wrong now that the bar pops up next to the selection (it would slide
+   down from above its own anchor). The scale stays subtle so the anchored bar
+   does not appear to jump into place. */
 .quote-bar-enter-active {
   transition: opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1), transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
@@ -575,6 +767,6 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
 .quote-bar-enter-from,
 .quote-bar-leave-to {
   opacity: 0;
-  transform: translateY(-100%);
+  transform: scale(0.96);
 }
 </style>

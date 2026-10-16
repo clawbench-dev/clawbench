@@ -224,7 +224,7 @@ func serveGroupMembersList(w http.ResponseWriter, r *http.Request, projectPath s
 		"members":         out,
 		respKeyMode:       service.GetGroupMode(groupID),
 		"parallelDefault": service.GetGroupParallelDefault(groupID),
-		"cruise":          service.GetGroupCruise(groupID),
+		"cruise":          service.GetSessionCruise(groupID),
 	})
 }
 
@@ -351,9 +351,17 @@ func ServeGroupSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if req.Cruise != nil {
-		if err := service.SetGroupCruise(req.GroupID, *req.Cruise); err != nil {
+		if err := service.SetSessionCruise(req.GroupID, *req.Cruise); err != nil {
 			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 			return
+		}
+		// Hard default (one-directional): enabling auto-cruise FORCES auto-approve
+		// on for the whole group — cruise runs unattended, so a pending permission
+		// prompt would stall the loop with no human watching. applyAutoApprove
+		// fans the flag out to every member row AND the live ACP connections.
+		// Disabling cruise does NOT touch auto-approve.
+		if *req.Cruise {
+			applyAutoApprove(req.GroupID, true)
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})

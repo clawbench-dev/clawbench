@@ -523,4 +523,21 @@ describe('quotableMessageText (private notes must not be quoted)', () => {
     expect(t).toContain('后面的内容必须保留')
     expect(t).toContain('clawbench-mention')
   })
+
+  // Single chat DOES strip the auto-cruise completion signal: it is a
+  // self-closing, content-free protocol tag that must not ride into a quote
+  // (and hence the next prompt) or the clipboard.
+  it('strips the auto-cruise completion tag for a single-chat session', () => {
+    const blocks = [{ type: 'text', text: '最终结论：已修复。<clawbench-goal-satisfied/>' }]
+    const t = quotableMessageText('assistant', blocks, '', '', false)
+    expect(t).not.toContain('clawbench-goal-satisfied')
+    expect(t).toBe('最终结论：已修复。')
+  })
+
+  it('keeps single-chat mention prose intact while stripping only the signal', () => {
+    const blocks = [{ type: 'text', text: '用 <clawbench-mention targets="A"> 点名 <clawbench-goal-satisfied/>' }]
+    const t = quotableMessageText('assistant', blocks, '', '', false)
+    expect(t).toContain('clawbench-mention')
+    expect(t).not.toContain('clawbench-goal-satisfied')
+  })
 })

@@ -98,3 +98,36 @@ export function versionGateLabels(locale: string): VersionGateLabels {
     fullDownloadFailed: 'Full package download failed:',
   }
 }
+
+/** Labels for the TLS certificate prompt in `certificate.ts`. */
+export interface CertificateLabels {
+  title: string
+  message: string
+  /** The affirmative button: trust the certificate and continue. */
+  trust: string
+  /** The negative button: abandon the connection. */
+  cancel: string
+}
+
+/**
+ * Resolve the certificate-prompt strings from a raw locale string.
+ *
+ * Wording mirrors Android's `conn_ssl_title` / `conn_ssl_message` /
+ * `conn_ssl_positive` / `conn_ssl_negative` so both platforms read identically.
+ */
+export function certificateLabels(locale: string): CertificateLabels {
+  if (normalizeNativeLanguage(locale) === 'zh') {
+    return {
+      title: 'SSL 证书验证失败',
+      message: '服务器使用了自签名证书，连接可能不安全。\n\n仅当您信任该服务器时才继续。',
+      trust: '信任并继续',
+      cancel: '取消连接',
+    }
+  }
+  return {
+    title: 'SSL certificate verification failed',
+    message: 'The server uses a self-signed certificate, the connection may not be secure.\n\nOnly continue if you trust this server.',
+    trust: 'Trust and continue',
+    cancel: 'Cancel connection',
+  }
+}

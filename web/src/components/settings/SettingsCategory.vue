@@ -165,7 +165,6 @@ import { THEMES } from '@/utils/themeMeta'
 import type { OptionPreview, SelectOption } from './SettingsItem.vue'
 import { filterAvailableFonts, MONO_FONT_CHOICES, UI_FONT_CHOICES, MONO_FALLBACK_CHOICES, DEFAULT_MONO_STACK, DEFAULT_UI_STACK, buildFontStack, getCustomFontChoices, type FontChoice } from '@/utils/fontConfig'
 import { loadCustomFonts } from '@/utils/customFonts'
-import { frpAvailable } from '@/utils/frpAvailability'
 
 const props = defineProps<{
   categoryId: string
@@ -232,7 +231,7 @@ async function refreshCustomFonts() {
   if (result.ok) {
     customFontTick.value++
   } else {
-    toast.show(t('settings.items.fontDirScanError'), { icon: '⚠️', type: 'error', duration: 4000 })
+    toast.show(t('settings.items.fontDirScanError'), { icon: 'warning', type: 'error', duration: 4000 })
   }
 }
 watch(() => props.categoryId, (id) => {
@@ -299,11 +298,6 @@ const renderList = computed(() => {
       if (entry.spec.key === 'downloadDesktopApp' && !(desktopDownload.isDesktop && !!desktopDownload.currentDownloadUrl())) continue
       result.push(entry)
     } else {
-      // The FRP panel is hidden when the server was built without FRP support.
-      // The index row is hidden too, but a deep link (or a category restored
-      // from the navigation stack) can still land here, so the guard belongs on
-      // the panel as well — otherwise the user sees a switch that cannot work.
-      if (entry.config.panelId === 'frp' && !frpAvailable.value) continue
       // Panel entries always render
       result.push(entry)
     }
@@ -531,7 +525,7 @@ async function handleUpdate(item: ItemSpec, value: unknown) {
       emit('restartNeeded', result.changedColdFields)
     }
   } catch {
-    toast.show(t('settings.saveFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
+    toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 })
   }
 }
 
@@ -575,7 +569,7 @@ function handleClick(item: ItemSpec) {
     // Computes the factor once from the current screen and stores it, so the
     // scale becomes a stable value the slider below can then tweak.
     const factor = autoFitUIScale()
-    toast.show(t('settings.items.uiScaleAutoFitDone', { pct: Math.round(factor * 100) }), { icon: '✅', type: 'success', duration: 2500 })
+    toast.show(t('settings.items.uiScaleAutoFitDone', { pct: Math.round(factor * 100) }), { icon: 'success', type: 'success', duration: 2500 })
   }
 }
 
@@ -599,7 +593,7 @@ async function handleRestartServer() {
 
 function handlePasswordChanged(needsRestart: boolean) {
   showPasswordDialog.value = false
-  toast.show(t('settings.passwordChanged'), { icon: '✅', type: 'success', duration: 3000 })
+  toast.show(t('settings.passwordChanged'), { icon: 'success', type: 'success', duration: 3000 })
   if (needsRestart) {
     emit('restartNeeded', ['password'])
   }
@@ -614,7 +608,7 @@ function handleEditToggle(key: string, open: boolean) {
 }
 
 function handleDiscard() {
-  toast.show(t('settings.passwordDiscarded'), { icon: 'ℹ️', type: 'info', duration: 3000 })
+  toast.show(t('settings.passwordDiscarded'), { icon: 'info', type: 'info', duration: 3000 })
 }
 </script>
 

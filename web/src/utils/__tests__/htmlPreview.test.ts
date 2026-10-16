@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildHtmlPreviewSrc } from '@/utils/htmlPreview'
+import { buildHtmlPreviewSrc, installPreviewScrollbar } from '@/utils/htmlPreview'
 
 /**
  * buildHtmlPreviewSrc is the single source of truth for how an HTML document is
@@ -26,5 +26,64 @@ describe('buildHtmlPreviewSrc', () => {
 
   it('changes the URL when the timestamp changes (cache-buster)', () => {
     expect(buildHtmlPreviewSrc('a.html', 1)).not.toBe(buildHtmlPreviewSrc('a.html', 2))
+  })
+})
+
+/**
+ * installPreviewScrollbar gives the previewed document the app's scrollbar bar.
+ * jsdom can't evaluate `::-webkit-scrollbar`, but the DOM contract can be
+ * tested for real: the sheet lands in <head>, first, exactly once.
+ */
+describe('installPreviewScrollbar', () => {
+  /** An iframe whose contentDocument is a plain document we control. */
+  function makeIframe(headHtml = '<title>t</title>'): HTMLIFrameElement {
+    const iframe = document.createElement('iframe')
+    document.body.appendChild(iframe)
+    const doc = iframe.contentDocument!
+    doc.head.innerHTML = headHtml
+    return iframe
+  }
+
+  it('injects the app bar into the preview document head', () => {
+    const iframe = makeIframe()
+    expect(installPreviewScrollbar(iframe)).toBe(true)
+    const style = iframe.contentDocument!.head.querySelector('style[data-clawbench-scrollbar]')
+    expect(style, 'the shared sheet must be injected').not.toBeNull()
+    expect(style!.textContent).toContain('::-webkit-scrollbar')
+    expect(style!.textContent).toContain('::-webkit-scrollbar-button')
+    iframe.remove()
+  })
+
+  it('inserts FIRST so the document\'s own scrollbar rules win', () => {
+    // Contract: apply the app bar only where the document has not expressed its
+    // own preference. The injected sheet must precede the document's own head
+    // content, so the latter wins by source order.
+    const iframe = makeIframe('<style>.x{}</style>')
+    installPreviewScrollbar(iframe)
+    const head = iframe.contentDocument!.head
+    expect(head.firstElementChild!.getAttribute('data-clawbench-scrollbar')).not.toBeNull()
+    // The document's own style must still be after ours.
+    const own = [...head.children].find(
+      (el) => el.tagName === 'STYLE' && !el.hasAttribute('data-clawbench-scrollbar'),
+    )
+    expect(own).toBeTruthy()
+    expect(
+      head.children[0].compareDocumentPosition(own!) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+    iframe.remove()
+  })
+
+  it('is idempotent — a reload does not stack copies', () => {
+    const iframe = makeIframe()
+    installPreviewScrollbar(iframe)
+    installPreviewScrollbar(iframe)
+    installPreviewScrollbar(iframe)
+    const styles = iframe.contentDocument!.head.querySelectorAll('style[data-clawbench-scrollbar]')
+    expect(styles).toHaveLength(1)
+    iframe.remove()
+  })
+
+  it('returns false for a missing iframe instead of throwing', () => {
+    expect(installPreviewScrollbar(null)).toBe(false)
   })
 })

@@ -773,7 +773,7 @@ setTunnelTransport."
 
 **Files:**
 - Modify: `web/src/components/settings/SettingsGroupPanel.vue`
-  - 模板：`panelId === 'portForward'` 时渲染专用 switch 行（**照抄 FRP `auto_port` 注入先例 `:70-87`**）
+  - 模板：`panelId === 'portForward'` 时渲染专用 switch 行（**照抄 SSH 反向端口转发注入先例 `:70-87`**）
   - 脚本：`import { useAppMode }` + `isAndroidApp`（照 `SettingsCategory.vue:205-210`）；`onMounted` 异步取初值（照 `SettingsCategory.vue:145-153`）；`v-if` 隐藏；`@change` 调 setter + 提示 + 「立即重连」按钮
 - Modify: `web/src/i18n/locales/zh.ts` + `web/src/i18n/locales/en.ts`（新增键）
 - Test: `web/src/components/settings/__tests__/SettingsGroupPanel.tunnelToggle.test.ts`（新建）
@@ -820,7 +820,7 @@ npx vitest run web/src/components/settings/__tests__/SettingsGroupPanel.tunnelTo
 
 **Step 3: 实现**
 
-模板（照 FRP 先例 `:70-87`，插在 `renderList` 循环内 `panelId === 'portForward'` 的分支）：
+模板（照 SSH 反向端口转发先例 `:70-87`，插在 `renderList` 循环内 `panelId === 'portForward'` 的分支）：
 
 ```vue
 <!-- 形态片段（非完整实现） -->
@@ -1191,7 +1191,7 @@ git commit -m "test(android): end-to-end verification of the local h2 toggle"
 | 10 | `proxy.appRecommendation` | 1572 / 1569 | `使用 ClawBench APP 可自动建立 SSH 隧道，无需手动配置` | `使用 ClawBench APP 可自动建立隧道，无需手动配置` / `Use the ClawBench app for automatic tunnel setup — no manual configuration needed` | **A** |
 | 11 | `chat.localhost.sshDisabled` | 946 / 943 | `SSH 隧道已禁用，无法打开本地地址` | `隧道已禁用，无法打开本地地址` / `Tunnel is disabled, cannot open localhost URL` | **A** |
 
-**不动的 C 类 15 处**（设计文档 §12.3.3）：`proxy.directionForwardHint`/`directionReverseHint`（`ssh -L`/`ssh -R`）、`tunnelGuideStep2/3`、`tunnelNeedSshHint`、`tunnelInstallWin/Mac/Linux`、`tunnelNoCommand`、`tunnelNoSsh`、`tunnelErrorAuth/Network/HostKey`、`settings.items.frpAssignedSSHPort`/`frpSSHRemotePort`。
+**不动的 C 类 13 处**（设计文档 §12.3.3）：`proxy.directionForwardHint`/`directionReverseHint`（`ssh -L`/`ssh -R`）、`tunnelGuideStep2/3`、`tunnelNeedSshHint`、`tunnelInstallWin/Mac/Linux`、`tunnelNoCommand`、`tunnelNoSsh`、`tunnelErrorAuth/Network/HostKey`。
 
 **依赖：** 无（可与 T15 并行）。**可并行：** 与 T15 并行；与 T14 同文件，**串行**（T14 在 T13 的通用基线上加插值）。
 
@@ -1235,7 +1235,7 @@ git commit -m "i18n(web): make tunnel wording transport-neutral
 
 The tunnel can be SSH or the HTTP/2 stream tunnel, so 11 user-visible strings
 that only talk about the tunnel itself no longer say SSH. SSH-specific copy
-(ssh -L/-R hints, the manual guide, SSH error classes, FRP SSH ports) is
+(ssh -L/-R hints, the manual guide, SSH error classes) is
 deliberately untouched."
 ```
 

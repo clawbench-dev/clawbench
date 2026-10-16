@@ -1176,32 +1176,39 @@ func SetGroupParallelDefault(groupID string, enabled bool) error {
 	return nil
 }
 
-// GetGroupCruise reports whether AUTO-CRUISE is enabled for the group: instead
-// of ending the turn when the loop would hand the floor back to the human, the
-// orchestrator keeps the participants working until they (or the host, in host
-// mode) declare the goal met via <clawbench-goal-satisfied/>. See the design
-// doc §15.
+// GetSessionCruise reports whether AUTO-CRUISE is enabled for the session.
 //
-// Defaults to false when unset/invalid: cruise is opt-in, so an old group (or
+// It is stored per session (a group row OR a single-chat row) in
+// context_state's `cruise` key, so ONE getter serves both:
+//   - GROUP (design §15): instead of ending the turn when the loop would hand
+//     the floor back to the human, the orchestrator keeps the participants
+//     working until they (or the host, in host mode) declare the goal met via
+//     <clawbench-goal-satisfied/>.
+//   - SINGLE CHAT: instead of ending the turn when the reply finishes, the
+//     cruise runner injects a confirmation round until the AI declares the
+//     goal met (see cruise.go).
+//
+// Defaults to false when unset/invalid: cruise is opt-in, so an old session (or
 // one whose context_state was corrupted) keeps the pre-existing behavior. The
 // key is `cruise` (not `goal`/`mode`) to avoid colliding with the existing
 // keys (`usage`/`host_member_id`/`group_mode`/`parallelDefault`/`seen_cursor`/
 // `mode`).
-func GetGroupCruise(groupID string) bool {
+func GetSessionCruise(sessionID string) bool {
 	var raw string
 	_ = store.ReadDB().QueryRow(
 		"SELECT COALESCE(json_extract(context_state, '$.cruise'), '') FROM chat_sessions WHERE id = ?",
-		groupID,
+		sessionID,
 	).Scan(&raw)
 	// SQLite's json_extract renders JSON true as 1 and false as 0; anything
 	// else (empty/absent/invalid) is the default (off).
 	return raw == "1" || raw == "true"
 }
 
-// SetGroupCruise stores the group's auto-cruise switch in its context_state
-// JSON. Stored unconditionally (both host and free mode may cruise).
-func SetGroupCruise(groupID string, enabled bool) error {
-	PatchContextStateMerge(groupID, map[string]string{"cruise": fmt.Sprintf("%t", enabled)})
+// SetSessionCruise stores the session's auto-cruise switch in its
+// context_state JSON. Stored unconditionally (both group modes and single chat
+// may cruise).
+func SetSessionCruise(sessionID string, enabled bool) error {
+	PatchContextStateMerge(sessionID, map[string]string{"cruise": fmt.Sprintf("%t", enabled)})
 	return nil
 }
 
@@ -1252,6 +1259,33 @@ func IsGroupSessionType(storedType string) bool {
 // (e.g. renaming a session) without spelling the literal.
 func IsGroupMemberSession(sessionID string) bool {
 	return GetSessionType(sessionID) == groupMemberSessionType
+}
+
+// ResolveGroupTimelineID maps a hidden member row to the group timeline it
+// belongs to, returning the input unchanged for anything that is not a member
+// row (a group timeline, an ordinary chat, or an unknown id).
+//
+// Use this wherever an id must be USER-VISIBLE. A member row is an internal
+// connection binding: it has no title, is hidden from the session list, and
+// opening it as a standalone chat shows an empty conversation. Any id that
+// leaves the backend toward the UI — a notification's deep-link target, a push
+// payload, a WS event a client will navigate on — must be the group, or the
+// user lands on a session they cannot see or use.
+func ResolveGroupTimelineID(sessionID string) string {
+	if !store.ReadDBReady() {
+		return sessionID
+	}
+	var groupID string
+	// One query covers both checks: a non-member row has no group_id (NULL/''),
+	// so it falls through to the identity return without a second round trip.
+	err := store.ReadDB().QueryRow(
+		"SELECT COALESCE(group_id, '') FROM chat_sessions WHERE id = ? AND session_type = ?",
+		sessionID, groupMemberSessionType,
+	).Scan(&groupID)
+	if err != nil || groupID == "" {
+		return sessionID
+	}
+	return groupID
 }
 
 // GetMemberCursor returns a member's seen_cursor: the group-timeline high-water

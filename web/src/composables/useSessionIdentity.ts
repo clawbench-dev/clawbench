@@ -32,6 +32,10 @@ const currentModelId = ref('')
 const currentModelName = ref('')
 const currentTransport = ref('') // 'acp-stdio' or 'cli'
 const autoApprove = ref(false)
+// Auto-cruise switch for the CURRENT session (single chat AND group). Server
+// truth lives in chat_sessions.context_state's `cruise` key; this ref mirrors it
+// for the UI. Default false (opt-in).
+const cruise = ref(false)
 const availableCommands = ref<Array<{ name: string; description: string; inputHint?: string }>>([])
 
 // ── Group-chat active speaker (decision #59) ──
@@ -202,6 +206,7 @@ export function clearSessionIdentity(upcomingSessionId?: string): void {
   currentModelName.value = ''
   currentTransport.value = ''
   autoApprove.value = false
+  cruise.value = false
   modeState.clear()
   thinkingEffortState.clear()
   availableCommands.value = []
@@ -218,6 +223,7 @@ export function resetIdentity(): void {
   currentModelName.value = ''
   currentTransport.value = ''
   autoApprove.value = false
+  cruise.value = false
   modeState.clear()
   thinkingEffortState.clear()
   availableCommands.value = []
@@ -435,6 +441,50 @@ export function toggleAutoApprove(enabled: boolean) {
       body: JSON.stringify({ sessionId: sid, autoApprove: enabled }),
     }).catch(err => {
       appLog.e(TAG, 'Failed to update autoApprove:', err)
+    })
+  }
+}
+
+/** Apply the auto-cruise → auto-approve hard default to the shared ref.
+ *
+ *  Enabling cruise FORCES auto-approve on: cruise runs unattended, so a pending
+ *  permission prompt would stall the loop with no human watching. The backend
+ *  enforces the same rule on BOTH cruise PATCHes (`/api/ai/session/update` and
+ *  `/api/group/settings`), so this is the optimistic mirror that makes the chip
+ *  update immediately; disabling cruise is a no-op here (one-directional).
+ *
+ *  Exported so the GROUP call sites (which PATCH through useGroupChat and do not
+ *  otherwise touch identity) can reuse it without useGroupChat importing this
+ *  module — that import would widen the module graph and break the many narrow
+ *  `vi.mock('@/composables/useAgents')` fixtures. */
+export function applyCruiseAutoApproveDefault(enabled: boolean) {
+  if (enabled) autoApprove.value = true
+}
+
+/** Toggle auto-cruise for the current session and persist to server.
+ *
+ *  Server-authoritative like autoApprove: the PATCH writes the session's
+ *  context_state `cruise` key and the next loadHistory reads it back, so a
+ *  failed request reverts the UI on the next refresh. Works for BOTH single
+ *  chat (confirmation rounds until the AI declares the goal met) and group
+ *  chat (the four hand-back points become confirmation rounds).
+ *
+ *  Hard default (one-directional): enabling cruise FORCES auto-approve on —
+ *  cruise runs unattended, so a pending permission prompt would stall the loop
+ *  with no human watching. The backend enforces the same rule on the cruise
+ *  PATCH; this mirrors it into the ref so the chip updates immediately.
+ *  Disabling cruise leaves auto-approve untouched. */
+export function toggleCruise(enabled: boolean) {
+  cruise.value = enabled
+  applyCruiseAutoApproveDefault(enabled)
+  const sid = currentSessionId.value
+  if (sid) {
+    fetch('/api/ai/session/update', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: sid, cruise: enabled }),
+    }).catch(err => {
+      appLog.e(TAG, 'Failed to update cruise:', err)
     })
   }
 }
@@ -660,6 +710,11 @@ export async function initSessionFromAPI() {
         // Initialize autoApprove from server state
         if (data.autoApprove !== undefined) {
           autoApprove.value = data.autoApprove
+        }
+        // Initialize the auto-cruise switch from server state (same
+        // server-authoritative contract as autoApprove).
+        if (data.cruise !== undefined) {
+          cruise.value = !!data.cruise
         }
         // Populate slash commands from chat response (cached ACP state)
         if (Array.isArray(data.commands) && data.commands.length > 0 && availableCommands.value.length === 0) {
@@ -987,6 +1042,7 @@ export function useSessionIdentity() {
     currentModeName,
     currentTransport,
     autoApprove,
+    cruise,
     availableModes,
     availableCommands,
     availableThinkingEfforts,
@@ -1035,6 +1091,7 @@ export function useSessionIdentity() {
     loadThinkingPref,
     loadModePref,
     toggleAutoApprove,
+    toggleCruise,
     renameSession,
     generateSessionTitle,
     // SelectState instances (for unified access)

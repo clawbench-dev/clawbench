@@ -24,6 +24,7 @@ import { dispatchOpenSession, getPendingNavigationJson, showTerminalNotification
 import { markRendererReady } from './navReady'
 import { clearCacheAndReload } from './session'
 import { record, recordError, startClientLog, stopClientLog } from './clientLog'
+import { resetCertificateTrust } from './certificate'
 import { applyZoomFactor } from './zoom'
 import { classifyUrl } from './urlPolicy'
 import { shouldUseFramelessWindow } from './windowChrome'
@@ -86,6 +87,10 @@ export function registerBridge(): void {
   ipcMain.handle('native:set-ssh-password', (_e, p: string) => savePassword(p))
   ipcMain.handle('native:connect-to-server', (_e, url: string, password: string) => {
     getStore().set('serverUrl', url)
+    // Forget any certificate the user trusted on the PREVIOUS connection, so
+    // this connect prompts afresh. The answer is deliberately per-connection
+    // (matching Android), not persisted.
+    resetCertificateTrust()
     // Always mirror the password into this URL's slot. An empty value must
     // CLEAR it: the login page calls this when switching to a cookie-only
     // server, and keeping the previous server's password would let the tunnel

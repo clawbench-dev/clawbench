@@ -3,7 +3,10 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
-    <WebView
+    <!-- Custom WebView subclass so the text-selection menu can carry our
+         own 引用 / 评论 items (a plain WebView has no hook for that).
+         Custom views inflated by name require the fully-qualified tag. -->
+    <com.clawbench.app.ClawBenchWebView
         android:id="@+id/webView"
         android:layout_width="match_parent"
         android:layout_height="match_parent" />

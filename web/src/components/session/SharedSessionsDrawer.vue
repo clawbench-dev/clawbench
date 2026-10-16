@@ -191,10 +191,10 @@ async function revoke(item) {
     if (!resp.ok) throw new Error(resp.statusText)
     items.value = items.value.filter(i => i.token !== item.token)
     markUnshared(item.sessionId)
-    toast.show(t('sharedSessions.revoked'), { icon: '🔗', type: 'success', duration: 2000 })
+    toast.show(t('sharedSessions.revoked'), { icon: 'link', type: 'success', duration: 2000 })
   } catch (err) {
     appLog.w(TAG, 'revoke failed', err)
-    toast.show(err instanceof Error ? err.message : String(err), { icon: '⚠️', type: 'error', duration: 3000 })
+    toast.show(err instanceof Error ? err.message : String(err), { icon: 'warning', type: 'error', duration: 3000 })
   } finally {
     revokingToken.value = ''
   }
@@ -213,10 +213,10 @@ async function clearAll() {
     if (!resp.ok) throw new Error(resp.statusText)
     items.value = []
     resetSessionShareState()
-    toast.show(t('sharedSessions.revoked'), { icon: '🔗', type: 'success', duration: 2000 })
+    toast.show(t('sharedSessions.revoked'), { icon: 'link', type: 'success', duration: 2000 })
   } catch (err) {
     appLog.w(TAG, 'clear-all failed', err)
-    toast.show(err instanceof Error ? err.message : String(err), { icon: '⚠️', type: 'error', duration: 3000 })
+    toast.show(err instanceof Error ? err.message : String(err), { icon: 'warning', type: 'error', duration: 3000 })
   } finally {
     clearing.value = false
   }

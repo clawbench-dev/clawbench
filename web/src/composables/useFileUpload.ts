@@ -145,12 +145,12 @@ export function useFileUpload() {
       // wraps it in the aggregate message exactly once.
       function notifyError(msg: string) {
         if (isDirUpload) dirUploadErrorMsgs.push(msg)
-        else toast.show(msg, { icon: '⚠️', type: 'error' })
+        else toast.show(msg, { icon: 'warning', type: 'error' })
       }
       // Chat toasts keep the "上传失败:" prefix; dir mode stores the bare reason.
       function failError(reason: string) {
         if (isDirUpload) dirUploadErrorMsgs.push(reason)
-        else toast.show(gt('upload.failed', { error: reason }), { icon: '⚠️', type: 'error' })
+        else toast.show(gt('upload.failed', { error: reason }), { icon: 'warning', type: 'error' })
       }
 
       // Pre-flight size check: prevent sending a request that will be
@@ -298,20 +298,20 @@ export function useFileUpload() {
     dirUploadCancelled.value = false
     dirUploadErrorMsgs = []
     if (cancelled) {
-      toast.show(gt('upload.cancelled'), { icon: '⏹️', type: 'info' })
+      toast.show(gt('upload.cancelled'), { icon: 'stop', type: 'info' })
       return
     }
     if (failCount === 0) {
       if (okCount > 0) {
-        toast.show(gt('upload.completed', { count: okCount }), { icon: '✅', type: 'success' })
+        toast.show(gt('upload.completed', { count: okCount }), { icon: 'success', type: 'success' })
       }
       return
     }
     const firstErr = errs[0] || gt('upload.unknownError')
     if (okCount > 0) {
-      toast.show(gt('upload.partial', { ok: okCount, failed: failCount, error: firstErr }), { icon: '⚠️', type: 'error' })
+      toast.show(gt('upload.partial', { ok: okCount, failed: failCount, error: firstErr }), { icon: 'warning', type: 'error' })
     } else {
-      toast.show(gt('upload.failed', { error: firstErr }), { icon: '⚠️', type: 'error' })
+      toast.show(gt('upload.failed', { error: firstErr }), { icon: 'warning', type: 'error' })
     }
   }
 
@@ -320,13 +320,13 @@ export function useFileUpload() {
     const currentCount = pendingFiles.value.filter(f => !f.uploading).length
     const remaining = maxFiles - currentCount
     if (remaining <= 0) {
-      toast.show(gt('upload.maxFiles', { max: maxFiles }), { icon: '⚠️', type: 'error' })
+      toast.show(gt('upload.maxFiles', { max: maxFiles }), { icon: 'warning', type: 'error' })
       return []
     }
 
     const toUpload = files.slice(0, remaining)
     if (files.length > remaining) {
-      toast.show(gt('upload.tooManyFiles', { total: files.length, remaining }), { icon: '⚠️', type: 'error' })
+      toast.show(gt('upload.tooManyFiles', { total: files.length, remaining }), { icon: 'warning', type: 'error' })
     }
 
     const maxSizeBytes = store.state.uploadMaxSizeMB * 1024 * 1024
@@ -365,7 +365,7 @@ export function useFileUpload() {
           failCount++
           dirUploadDone.value++
         } else {
-          toast.show(msg, { icon: '⚠️', type: 'error' })
+          toast.show(msg, { icon: 'warning', type: 'error' })
         }
         continue
       }
@@ -411,12 +411,12 @@ export function useFileUpload() {
     const currentCount = pendingFiles.value.filter(f => !f.uploading).length
     const remaining = maxFiles - currentCount
     if (remaining <= 0) {
-      toast.show(gt('upload.maxFiles', { max: maxFiles }), { icon: '⚠️', type: 'error' })
+      toast.show(gt('upload.maxFiles', { max: maxFiles }), { icon: 'warning', type: 'error' })
       return
     }
     const toUpload = files.slice(0, remaining)
     if (files.length > remaining) {
-      toast.show(gt('upload.tooManyFiles', { total: files.length, remaining }), { icon: '⚠️', type: 'error' })
+      toast.show(gt('upload.tooManyFiles', { total: files.length, remaining }), { icon: 'warning', type: 'error' })
     }
     const maxSizeBytes = store.state.uploadMaxSizeMB * 1024 * 1024
     // A drag/paste batch is the same "current chat batch" as the picker's: the
@@ -429,7 +429,7 @@ export function useFileUpload() {
     for (const file of toUpload) {
       if (generation !== uploadGeneration || chatUploadCancelled.value) break
       if (file.size > maxSizeBytes) {
-        toast.show(gt('upload.fileTooLarge', { name: file.name, max: store.state.uploadMaxSizeMB }), { icon: '⚠️', type: 'error' })
+        toast.show(gt('upload.fileTooLarge', { name: file.name, max: store.state.uploadMaxSizeMB }), { icon: 'warning', type: 'error' })
         continue
       }
       const uploadedPath = await uploadOneFile(file, undefined, true)
@@ -577,7 +577,7 @@ export function useFileUpload() {
   async function downloadDirAsTree(path: string) {
     const picker = (window as unknown as { showDirectoryPicker?: () => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker
     if (typeof picker !== 'function') {
-      toast.show(gt('upload.dirDownloadUnsupported'), { icon: '⚠️', type: 'error' })
+      toast.show(gt('upload.dirDownloadUnsupported'), { icon: 'warning', type: 'error' })
       return
     }
 
@@ -596,7 +596,7 @@ export function useFileUpload() {
     } catch {
       dirUploading.value = false
       dirUploadProgress.value = 0
-      toast.show(gt('upload.dirDownloadFailed'), { icon: '⚠️', type: 'error' })
+      toast.show(gt('upload.dirDownloadFailed'), { icon: 'warning', type: 'error' })
       return
     }
     const tree = files ?? []
@@ -655,9 +655,9 @@ export function useFileUpload() {
     dirUploading.value = false
     dirUploadProgress.value = 0
     if (dirUploadCancelled.value) {
-      toast.show(gt('upload.cancelled'), { icon: '⏹️', type: 'info' })
+      toast.show(gt('upload.cancelled'), { icon: 'stop', type: 'info' })
     } else if (done > 0) {
-      toast.show(gt('upload.downloaded', { count: done }), { icon: '✅', type: 'success' })
+      toast.show(gt('upload.downloaded', { count: done }), { icon: 'success', type: 'success' })
     }
     dirUploadCancelled.value = false
   }

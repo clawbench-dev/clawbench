@@ -101,9 +101,9 @@ async function handleUndo() {
     await store.selectFile(filePath, false, false, false)
     clearDiffMarkers()
     emit('close')
-    toast.show(t('git.diffView.undoSuccess'), { icon: '✅', type: 'success' })
+    toast.show(t('git.diffView.undoSuccess'), { icon: 'success', type: 'success' })
   } catch {
-    toast.show(t('git.diffView.undoFailed'), { icon: '❌', type: 'error' })
+    toast.show(t('git.diffView.undoFailed'), { icon: 'error', type: 'error' })
   } finally {
     busy.value = false
   }

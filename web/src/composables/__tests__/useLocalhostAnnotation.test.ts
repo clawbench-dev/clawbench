@@ -387,7 +387,7 @@ describe('useLocalhostAnnotation', () => {
       const event = createClickEvent(anchor)
       handleLocalhostUrlClick(event)
       await vi.waitFor(() => {
-        expect(mockToastShow).toHaveBeenCalledWith('chat.localhost.sshDisabled', { icon: 'ℹ️', type: 'info' })
+        expect(mockToastShow).toHaveBeenCalledWith('chat.localhost.sshDisabled', { icon: 'info', type: 'info' })
       })
     })
 
@@ -407,7 +407,7 @@ describe('useLocalhostAnnotation', () => {
         expect(mockEnsurePortRegistered).toHaveBeenCalledWith(5173, 'http')
       })
       expect(openSpy).not.toHaveBeenCalled()
-      expect(mockToastShow).not.toHaveBeenCalledWith('chat.localhost.sshDisabled', { icon: 'ℹ️', type: 'info' })
+      expect(mockToastShow).not.toHaveBeenCalledWith('chat.localhost.sshDisabled', { icon: 'info', type: 'info' })
       openSpy.mockRestore()
     })
 
@@ -448,7 +448,7 @@ describe('useLocalhostAnnotation', () => {
       const btn = document.createElement('button')
       const result = await openLocalhostUrl(btn, 3000, 'http')
       expect(result).toBe(false)
-      expect(mockToastShow).toHaveBeenCalledWith('chat.localhost.sshDisabled', { icon: 'ℹ️', type: 'info' })
+      expect(mockToastShow).toHaveBeenCalledWith('chat.localhost.sshDisabled', { icon: 'info', type: 'info' })
     })
 
     it('openLocalhostUrl opens on an h2-only install (SSH off, h2 allowed)', async () => {
@@ -461,7 +461,7 @@ describe('useLocalhostAnnotation', () => {
       expect(result).toBe(true)
       expect(mockEnsurePortRegistered).toHaveBeenCalledWith(3000, 'http')
       expect(mockOpenPort).toHaveBeenCalledWith(3000, 'http', undefined, undefined)
-      expect(mockToastShow).not.toHaveBeenCalledWith('chat.localhost.sshDisabled', { icon: 'ℹ️', type: 'info' })
+      expect(mockToastShow).not.toHaveBeenCalledWith('chat.localhost.sshDisabled', { icon: 'info', type: 'info' })
     })
 
     it('openLocalhostUrl shows error toast on failure', async () => {
@@ -469,7 +469,7 @@ describe('useLocalhostAnnotation', () => {
       const btn = document.createElement('button')
       const result = await openLocalhostUrl(btn, 3000, 'http')
       expect(result).toBe(true)
-      expect(mockToastShow).toHaveBeenCalledWith('chat.localhost.openFailed', { icon: '❌', type: 'error' })
+      expect(mockToastShow).toHaveBeenCalledWith('chat.localhost.openFailed', { icon: 'error', type: 'error' })
       expect(btn.classList.contains('loading')).toBe(false)
     })
 

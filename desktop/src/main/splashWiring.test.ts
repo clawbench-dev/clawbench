@@ -181,6 +181,28 @@ describe('login page supports splash mode', () => {
     expect(src).toContain('window.__splashReset && window.__splashReset()')
   })
 
+  it('re-reads the native theme/language on every show, not just the first', () => {
+    // THE bug this fixes: the overlay page is loaded ONCE and reused, so its
+    // <head> script (which reads theme + language a single time) went stale.
+    // Measured: the app was on gruvbox-dark while the reused overlay still
+    // rendered github-dark — the login page (reloaded each time) was correct.
+    const html = readRepoFile(LOGIN)
+    expect(html).toContain('window.__splashApplyNativeState = function')
+    expect(html).toContain('function applyThemeFromNative()')
+    expect(html).toContain('function applyLangFromNative()')
+    // The one-shot calls must still happen, so the very first paint is correct
+    // before the main process can call the refresh hook.
+    expect(html).toContain('applyThemeFromNative();')
+    expect(html).toContain('applyLangFromNative();')
+
+    const splash = readRepoFile('desktop/src/main/splash.ts')
+    expect(splash).toContain('function refreshNativeState()')
+    // Called from show() (reuse), showVersionMismatch() (gate reuses the page)
+    // and did-finish-load (sync the view background on first load).
+    const calls = splash.split('refreshNativeState()').length - 1
+    expect(calls, 'refreshNativeState must be defined and called from every show path').toBeGreaterThanOrEqual(3)
+  })
+
   it('wires the cancel button to the native bridge', () => {
     const src = readRepoFile(LOGIN)
     const handler = src.match(/getElementById\('splashCancel'\)[\s\S]*?\}\)/)

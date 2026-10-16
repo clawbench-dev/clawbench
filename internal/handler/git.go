@@ -878,7 +878,13 @@ type wtFileInfo struct {
 // Path extraction: skip the 2-char XY prefix, then skip any leading spaces/tabs.
 func parseGitStatusPorcelain(output string) []wtFileInfo {
 	var files []wtFileInfo
-	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+	// Split on "\n" without trimming the whole output: porcelain is a fixed-column
+	// format where an unstaged-only change starts with a space (" M path"). Trimming
+	// the whole string would strip that leading space from the first line, turning
+	// " M" into "M " and misclassifying the file as staged.
+	for _, line := range strings.Split(output, "\n") {
+		// Drop CR so CRLF output on Windows parses identically.
+		line = strings.TrimSuffix(line, "\r")
 		if len(line) < 3 {
 			continue
 		}

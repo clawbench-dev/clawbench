@@ -9,6 +9,8 @@
 
 两种模式都**默认串行**发言（后发言者能看到前者本轮内容）。若本轮的路由标签带 `mode="parallel"`（成员可自行使用，自由模式还可由用户侧的**「并发执行」开关**触发），被点名的成员则**并发发言、互不参考**——它们从同一份"群回合起始高水位"快照出发，谁都看不到同轮其他成员的输出。
 
+**自动巡航（Auto-Cruise）** 是叠加在两种模式之上的**正交开关**（不是第三种模式）：打开后循环不再「把话权交回用户」，而是持续讨论到成员确认任务已满足用户要求（见下文流程图）。
+
 ## 流程图
 
 ### 主持人模式：一轮的推进
@@ -74,6 +76,25 @@ flowchart TB
     RT -->|消息只写一份| G
 ```
 
+### 自动巡航：确认回合的裁决
+
+```mermaid
+flowchart TB
+    A[本应交回用户的动作<br/>结束标签 / 接力枯竭 / @User / 提问] --> B{cruise 开?}
+    B -->|关| H[照旧交回用户<br/>写「轮到用户发言」]
+    B -->|开| C[触发确认回合<br/>写系统行 + 隐藏注入]
+    C --> D{模式}
+    D -->|host| E[只问主持人<br/>一人拍板]
+    D -->|free| F[群发全体<br/>≥ ⌈n/2⌉ 确认]
+    E --> G{确认完成?}
+    F --> G
+    G -->|是| I[写「已确认完成，共 N 轮」<br/>host 结论在同一回复内]
+    G -->|否| J[继续正常讨论一轮<br/>接力再枯竭时再确认]
+    J --> C
+```
+
+巡航只在「何时结束」这一条上与普通循环分叉，路由方式完全不变。裁决按模式不同（host 一人拍板 / free 至少半数确认），且**每回合重置**——只统计本次确认回合内的声明，主持人在普通轮里的主动声明只显示徽章、不计票。
+
 ## 功能与设计要点
 
 ### 功能清单
@@ -95,10 +116,13 @@ flowchart TB
 - **密送（BCC）**：主持人或成员可发一条只有指定目标看得到的消息（`private` 提及），在该目标**下一次发言时**注入一次。用于"暗中给某人递话"这类场景
 - **群内附件与引用**：群消息支持文件附件、`@` 文件补全、引用卡片——与单聊逐字一致（附件在注入成员时渲染，气泡仍靠 `files` 字段渲染）
 - **人类插话**：群回合运行中发消息走**排队**（复用单聊队列）。排队条目的按钮文案为「插话」，语义是**中断本轮并发送**（= 停止当前回合、**保留队列**、该消息作为下一回合运行）——与单聊一致，**不是**「取消」（取消会清空队列）。群聊**不提供**「插入当前回复」：群回合是多轮循环，没有单一在跑回合可注入，且注入端点按会话 id 找 ACP 连接，而群成员各自用**成员行 id** 建连，群 id 下无连接、注入必然失败。实现上群回合按**群会话 id** 注册可中断回合（`RunGroupTurnDrain`），使 `POST /api/ai/queue/interrupt` 能命中；成员回合的 executor 再从**群槽位**读取中断原因，避免被打断的成员发言被盖上「已取消」徽标
+- **自动巡航（Auto-Cruise）**：一个**正交开关**（不是第三种模式），叠加在主持人/自由模式之上，只改写「何时收敛」——把循环的终止从「交回用户」改为「成员确认任务已满足用户要求」。路由方式（谁点名谁）完全不变。打开后，**四类「本应交回用户」的动作全部拦截**（主持人发结束标签、接力自然枯竭、成员 `@User`、成员提问），改为触发一次**确认回合**（隐藏注入「不要向用户提问，自主判定是否完成，完成则输出 `<clawbench-goal-satisfied/>`」+ 可见系统行「自动巡航：系统正在向成员确认任务完成情况」）。**确认是唯一入口**：主持人若在未被询问的普通轮里直接声明完成，不算数，仍触发确认轮。裁决按模式不同——**host 一人拍板** / **free 群发全体活跃成员、≥ ⌈n/2⌉ 确认**；确认通过写「自动巡航：任务已确认完成，共 N 次发言」系统行，host 的最终结论在同一条确认回复里写出（不再单独跑汇总）。未通过则继续讨论一轮、接力再次枯竭时再确认（确认↔讨论交替）。每回合重置（只统计本次确认回合内的声明，按时间线高水位 `floor` 取 `memberOutputAfter`）。`group_max_speeches` 作为安全阀保留（撞上限仍按既有路径收尾、不写完成行）。**开启巡航强制打开自动批准（单向联动，单聊/群聊同一规则）**：巡航无人值守，若成员弹出权限确认无人应答会卡住整轮；由后端在 cruise PATCH 上强制 `applyAutoApprove(true)`（群聊 fan-out 到所有成员行 + 活连接），前端 ref 同步置真；关闭巡航不动自动批准。前端在群聊输入框下方的会话信息栏里显示「自动巡航」chip（开启时高亮并显示「巡航中」，点击即可开关；与群设置抽屉里的同名开关共用同一服务端值）、在确认完成的发言者旁显示青绿「已完成」永久小标签。巡航进行中用户发消息 → 排队
 - **`/cb-*` 命令在群内生效**：命令模板注入本回合第一个发言者的 prompt（群里由主持人执行一次），结果进时间线供讨论；`/btw` 旁路问答不受影响
 
 ### 设计要点
 
+- **巡航是「正交开关」而非第三种模式**：它只接管「何时把话筒交回用户」这一个决策点，路由/并发/密送/成员管理全不受影响。因此实现上它不是一条新的循环，而是叠加在共享循环内核上的一层门控——`cruise` 关闭时四类收尾动作照旧交回用户，打开时全部改判为「触发确认回合」。**确认回合是唯一收尾入口**（`confirmCruiseDone` 只有这一个调用点），主持人在普通轮里的主动声明只显示徽章、不计票——「主持人自己说了算」正是巡航要防的过早收工
+- **每回合重置靠时间线高水位而非内存**：确认回合开始前记下时间线最大 id（`floor`），结束后只解析该回合内（`memberOutputAfter(member, floor)`）的声明。这样「上一轮的完成声明不计入本轮投票」天然成立，且零 DB 迁移（设计初稿的内存统计被替换为按 `floor` 读时间线，结果等价）
 - **成员就是一条隐藏的 `chat_sessions` 行**：成员行（`session_type='group_member'`）天然携带 `agent_id` / `transport` / `model` / `external_session_id` / `auto_approve` / `context_state`——正是"一条持久连接"所需的全部字段。于是 ACP 连接池按 session id 键控、空闲回收、resume/load 恢复、CLI `--resume` 全部**零改动**继承。唯一代价是会话列表要过滤掉成员行（用**白名单** `session_type IN ('chat','group')`，而非黑名单——新增查询漏加条件时白名单默认隐藏、黑名单默认泄漏）
 - **消息只存一份，存于群会话**：成员之间只交换**发言文本**，工具调用与深度思考不进他人上下文。所有消息落进群时间线，成员行没有 `chat_history` 记录——从根上消除"两份副本不一致"的问题。**唯一例外是 AskUserQuestion**：成员向用户提出的提问卡会被渲染成可读文本注入给其他成员（见下条），因为"某人在问用户什么"是讨论上下文，而非私有工具细节
 - **`run_turn` 的时间线解耦**：执行器里 `SessionID` 身兼两职——连接语义（用成员行 id，如写 `external_session_id`、查连接池）与时间线语义（用群会话 id，如落库、广播、摘要）。因此引入第二个字段 `TimelineSessionID`（缺省等于 `SessionID`，单聊路径行为不变），连接调用点用 `SessionID`、时间线调用点用 `effectiveTimelineSessionID()`。**`UpdateLastRead` 是例外**——它保持成员行 id，否则任一成员回合都会把**群**标记已读、群徽章永不亮
@@ -124,7 +148,7 @@ flowchart TB
 | `chat_sessions.group_id` | 成员行指向所属群（群行自身为空）；索引 `idx_sessions_group` |
 | `chat_sessions.agent_name` | **成员行的显示名（权威）**；由后端生成（首个实例用本名，重复实例取名池名，池尽回退 `本名 序号`）。非成员行留空。成员行的 `title` 留空（会话标题对成员无意义） |
 | `chat_sessions.agent_avatar` | **成员行自身的头像 SVG 快照**（前端 DiceBear 按名生成、随机风格）。**仅同一智能体的第 2+ 个实例生成**（用于区分副本）；第 1 个/唯一实例留空，回退智能体头像。非成员行留空 |
-| `chat_sessions.context_state` | 群行存 `group_mode`（`host`/`free`）、`host_member_id`、`parallelDefault`；成员行存 `seen_cursor` |
+| `chat_sessions.context_state` | 群行存 `group_mode`（`host`/`free`）、`host_member_id`、`parallelDefault`、`cruise`；成员行存 `seen_cursor` |
 | `chat_history.role='system'` | 成员增删的系统事件（`agent_id=''`，居中细条渲染，计入注入游标但不计入未读） |
 | `chat_history.agent_id` | **发言人成员行 id**（非 agent id）；前端据此解析发言人头像/名字并判定主持人发言 |
 | `group_pending_bcc` | 密送待投递队列，按目标名字键控，成功投递后删除 |
@@ -134,11 +158,11 @@ flowchart TB
 全部经 `middleware.Auth`，且为项目作用域：
 
 - `POST /api/group/create` — 建群（`hostAgentId?` + `memberAgentIds[]`，同一事务创建群与全部成员；`hostAgentId` 缺省即自由模式，须过会话上限门）
-- `GET /api/group/members?groupId=` — 列成员（含 `isHost`、`mode`、`parallelDefault`、`avatar`、`agentName`）
+- `GET /api/group/members?groupId=` — 列成员（含 `isHost`、`mode`、`parallelDefault`、`cruise`、`avatar`、`agentName`）
 - `POST /api/group/members` — 批量加成员（整批过成员数上限）
 - `POST /api/group/member-avatars` — 批量写回成员头像（`{groupId, avatars:[{memberId, avatar}]}`；每个 SVG 过 `avatarSVGLooksSafe` 安全门）
 - `DELETE /api/group/members` — 移除成员（拒绝移除主持人）
-- `PATCH /api/group/settings` — 群设置（仅 `parallelDefault`）
+- `PATCH /api/group/settings` — 群设置（`parallelDefault`、`cruise`）
 - 智能体讨论次数上限（`chat.group_max_speeches`）与用户昵称（`chat.user_nickname`）都是**全局配置**（`PATCH /api/config`），不是每群设置
 - 群消息发送**复用 `/api/ai/chat`**——`AIChat` 检测到群会话即委派编排器 `RunGroupTurn`，前端不改，不新增 `/api/group/chat` 以避免双入口
 

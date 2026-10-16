@@ -115,7 +115,7 @@ async function load() {
     projects.value = (data.projects || []) as ProjectListItem[]
   } catch (err) {
     appLog.e(TAG, 'failed to load project list', err)
-    toast.show(t('settings.items.projectListLoadFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
+    toast.show(t('settings.items.projectListLoadFailed'), { icon: 'warning', type: 'error', duration: 3000 })
   } finally {
     loading.value = false
   }
@@ -208,7 +208,7 @@ onMounted(load)
 }
 
 .projects-row__dot--ok {
-  background: var(--success-color, #22c55e);
+  background: var(--color-success);
 }
 
 .projects-row__dot--gone {

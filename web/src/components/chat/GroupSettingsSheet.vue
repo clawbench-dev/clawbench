@@ -95,10 +95,11 @@
       </div>
 
       <!-- Settings: auto-cruise. Available in BOTH modes: it changes only WHEN
-           the turn ends (host mode: the host must confirm; free mode: over half
-           the members must confirm), not who routes. The hint differs by mode so
-           the two rule sets are legible. Placed AFTER auto-approve so the
-           auto-approve row keeps its position in the switch order. -->
+           the turn ends (host mode: the host must confirm; free mode: at least
+           half the members must confirm — >= ceil(n/2)), not who routes. The
+           hint differs by mode so the two rule sets are legible. Placed AFTER
+           auto-approve so the auto-approve row keeps its position in the switch
+           order. -->
       <div class="gm-setting">
         <div class="gm-setting-text">
           <label class="gm-setting-label" for="group-cruise">{{ t('group.cruiseLabel') }}</label>
@@ -143,7 +144,7 @@ import RealAgentNameTag from '@/components/common/RealAgentNameTag.vue'
 import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
 import { getAgentAvatar } from '@/composables/useAgents'
 import { addGroupMembers, generateMemberAvatars, removeGroupMember, setGroupParallelDefault, setGroupCruise, type GroupMemberInfo } from '@/composables/useGroupChat'
-import { toggleAutoApprove } from '@/composables/useSessionIdentity'
+import { toggleAutoApprove, applyCruiseAutoApproveDefault } from '@/composables/useSessionIdentity'
 import { appLog } from '@/utils/appLog'
 import { store } from '@/stores/app.ts'
 
@@ -237,6 +238,9 @@ async function onToggleCruise(e: Event) {
   const enabled = (e.target as HTMLInputElement).checked
   try {
     await setGroupCruise(props.groupId, enabled)
+    // Hard default: enabling cruise forces auto-approve on (the backend does the
+    // same for the group's member rows); mirror it into the checkbox at once.
+    applyCruiseAutoApproveDefault(enabled)
     emit('changed')
   } catch { /* the parent's refresh reverts the checkbox to the server value */ }
 }

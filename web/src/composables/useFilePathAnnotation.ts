@@ -1191,7 +1191,7 @@ export async function openFilePath(resolvedPath: string, lineStart?: number, lin
             if (type !== 'file' && type !== 'dir') {
                 const { useToast } = await import('@/composables/useToast')
                 const { gt } = await import('@/composables/useLocale')
-                useToast().show(gt('file.toast.fileNotFound'), { type: 'error', icon: '⚠️', duration: 2000 })
+                useToast().show(gt('file.toast.fileNotFound'), { type: 'error', icon: 'warning', duration: 2000 })
                 return false
             }
             if (type === 'dir') {
@@ -1214,7 +1214,7 @@ export async function openFilePath(resolvedPath: string, lineStart?: number, lin
         window.dispatchEvent(new CustomEvent('open-file-overlay', { detail: { path: targetPath, lineStart: finalLineStart, lineEnd: finalLineEnd, lineRanges: finalLineRanges, source } }))
         if (isExternal) {
             const { useToast } = await import('@/composables/useToast')
-            useToast().show(gt('file.toast.externalFile'), { icon: 'ℹ️', type: 'info', duration: 2000 })
+            useToast().show(gt('file.toast.externalFile'), { icon: 'info', type: 'info', duration: 2000 })
         }
     }
     return ok
@@ -1277,7 +1277,7 @@ export async function revealInFileManager(resolvedPath: string, source?: Navigat
     const pathType = await fetchPathType(targetPath)
     if (pathType === 'none') {
         const { useToast } = await import('@/composables/useToast')
-        useToast().show(gt('file.toast.fileNotFound'), { type: 'error', icon: '⚠️', duration: 2000 })
+        useToast().show(gt('file.toast.fileNotFound'), { type: 'error', icon: 'warning', duration: 2000 })
         return false
     }
 
@@ -1313,7 +1313,7 @@ export async function navToFileInManager(resolvedPath: string): Promise<boolean>
     const pathType = await fetchPathType(targetPath)
     if (pathType === 'none') {
         const { useToast } = await import('@/composables/useToast')
-        useToast().show(gt('file.toast.fileNotFound'), { type: 'error', icon: '⚠️', duration: 2000 })
+        useToast().show(gt('file.toast.fileNotFound'), { type: 'error', icon: 'warning', duration: 2000 })
         return false
     }
 

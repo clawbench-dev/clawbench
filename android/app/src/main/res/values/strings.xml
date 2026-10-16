@@ -133,4 +133,9 @@
     <string name="splash_status_rendering">Rendering…</string>
     <string name="splash_status_finishing">Almost ready…</string>
     <string name="splash_status_initializing">Initializing app…</string>
+    <!-- Text-selection action menu (items prepended to the WebView's own
+         Copy / Select all / Share menu). Labels must match the web app's
+         quoteBar.comment / quoteBar.quoteSelection wording. -->
+    <string name="selection_action_quote">Quote</string>
+    <string name="selection_action_comment">Discuss</string>
 </resources>

@@ -5,8 +5,7 @@
     <div v-if="showTitle && config.titleKey" class="group-panel__header">
       {{ t(config.titleKey) }}
     </div>
-    <!-- Enable toggle row. Only panels whose feature has a real on/off state
-         still have one (terminal, frp); the port-forward panel's switch was
+    <!-- Enable toggle row. The port-forward panel's switch was
          removed because the SSH listener is always on. -->
     <div v-if="config.enableKey" class="group-panel__enable-row">
       <div class="group-panel__enable-left">
@@ -95,24 +94,6 @@
         @click="handleFieldClick(entry.field)"
         @refresh="handleRagRefresh"
       />
-      <!-- FRP auto_port info injection -->
-      <template v-if="entry.type === 'field' && entry.field.key === 'frp.auto_port' && isFrpAutoPortActive">
-        <SettingsItem
-          :label="t('settings.items.frpAssignedPort')"
-          :description="t('settings.items.frpAssignedPortDesc')"
-          type="number"
-          :model-value="frpHttpPortDisplay"
-          :disabled="true"
-        />
-        <SettingsItem
-          v-if="frpSshPortDisplay"
-          :label="t('settings.items.frpAssignedSSHPort')"
-          :description="t('settings.items.frpAssignedSSHPortDesc')"
-          type="number"
-          :model-value="frpSshPortDisplay"
-          :disabled="true"
-        />
-      </template>
     </template>
 
     <!-- Tunnel status, shown while the transport controls are on screen.
@@ -247,7 +228,6 @@ import { useSettingsNavigation } from '@/composables/useSettingsNavigation'
 import { useConnectivityTest } from '@/composables/useConnectivityTest'
 import { useToast } from '@/composables/useToast'
 import { useTabDrawer } from '@/composables/useTabDrawer'
-import { useFrp } from '@/composables/useFrp'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { getNative, reconnectTunnel } from '@/utils/clawbenchNative'
 import { usePortForward } from '@/composables/usePortForward'
@@ -277,7 +257,6 @@ const { t } = useI18n()
 const toast = useToast()
 const { registerGuard, unregisterGuard } = useSettingsNavigation()
 const { testing: connectivityTesting, testResults: connectivityTestResults, runTests: runConnectivityTests, clearResults: clearConnectivityResults } = useConnectivityTest()
-const { frpState } = useFrp()
 const { status: ragStatus, refresh: refreshRagStatus } = useRagStatus()
 const dialog = useDialog()
 
@@ -489,8 +468,8 @@ const renderList = computed((): RenderEntry[] => {
     result.push({ type: 'field', key: f.key, field: f })
   }
 
-  // Option sub-fields: use optionSubFieldsKey if specified (I1 fix)
-  const subFieldKey = cfg.optionSubFieldsKey ?? cfg.entrySelector?.key
+  // Option sub-fields: matched against the entry selector's current value
+  const subFieldKey = cfg.entrySelector?.key
   const subFieldValue = subFieldKey ? localValues[subFieldKey] : undefined
   const osf = (cfg.optionSubFields ?? []).find(o => o.when === subFieldValue)
   if (osf) {
@@ -628,23 +607,6 @@ function handleEditToggle(key: string, open: boolean) {
     activeKey.value = null
   }
 }
-
-// ── FRP auto_port info ──
-
-const isFrpAutoPortActive = computed(() => {
-  if (props.config.panelId !== 'frp') return false
-  return localValues['frp.auto_port'] === true && localValues['frp.enabled'] === true
-})
-
-const frpHttpPortDisplay = computed(() => {
-  const port = frpState.state === 'running' && frpState.remotePort > 0 ? frpState.remotePort : 0
-  return port
-})
-
-const frpSshPortDisplay = computed(() => {
-  const port = frpState.state === 'running' && frpState.sshRemotePort > 0 ? frpState.sshRemotePort : null
-  return port
-})
 
 // ── Tunnel transport preference (both native hosts) ──
 //
@@ -951,7 +913,7 @@ async function onSave() {
       if (switchingTransport) {
         // The preference may or may not have been stored; either way the tunnel
         // is not on it, so say so instead of the plain "saved" toast.
-        toast.show(t('settings.panel.transportApplyFailed'), { icon: '⚠️', type: 'error', duration: 5000 })
+        toast.show(t('settings.panel.transportApplyFailed'), { icon: 'warning', type: 'error', duration: 5000 })
       }
       return
     }
@@ -959,7 +921,7 @@ async function onSave() {
     if (switchingTransport) saving.value = false
   }
 
-  toast.show(t('settings.panel.saved'), { icon: '✅', type: 'success', duration: 3000 })
+  toast.show(t('settings.panel.saved'), { icon: 'success', type: 'success', duration: 3000 })
 }
 
 // ── Custom field actions (RAG progress) ──
@@ -1041,26 +1003,26 @@ async function handleRagRebuild(kind: RebuildKind) {
     if (status === null) {
       // Polling gave up (unmounted or runaway). Not a server failure: the
       // rebuild is still running server-side.
-      toast.show(t('settings.items.ragRebuildStillRunning'), { icon: '⏳', type: 'info', duration: 5000 })
+      toast.show(t('settings.items.ragRebuildStillRunning'), { icon: 'pending', type: 'info', duration: 5000 })
       return
     }
     if (status.status === 'done') {
-      toast.show(t(RAG_REBUILD_SUCCESS[kind]), { icon: '✅', type: 'success', duration: 5000 })
+      toast.show(t(RAG_REBUILD_SUCCESS[kind]), { icon: 'success', type: 'success', duration: 5000 })
     } else if (status.status === 'blocked') {
       // The work cannot finish (e.g. embedding service down during a vector
       // rebuild). Distinct from an error: nothing is broken, it just needs the
       // dependency back.
       toast.show(
         t('settings.items.ragRebuildBlocked', { reason: status.error || '' }),
-        { icon: '⏸️', type: 'info', duration: 8000 },
+        { icon: 'pause', type: 'info', duration: 8000 },
       )
     } else if (status.status === 'error') {
       toast.show(
         status.error || t('settings.items.ragRebuildFailed'),
-        { icon: '⚠️', type: 'error', duration: 5000 },
+        { icon: 'warning', type: 'error', duration: 5000 },
       )
     } else if (status.status === 'cancelled') {
-      toast.show(t('settings.items.ragRebuildCancelled'), { icon: '⏹️', type: 'info', duration: 3000 })
+      toast.show(t('settings.items.ragRebuildCancelled'), { icon: 'stop', type: 'info', duration: 3000 })
     }
     refreshRagStatus()
   } catch (err) {
@@ -1072,7 +1034,7 @@ async function handleRagRebuild(kind: RebuildKind) {
       : ''
     toast.show(
       serverMsg || t('settings.items.ragRebuildFailed'),
-      { icon: '⚠️', type: 'error', duration: 5000 },
+      { icon: 'warning', type: 'error', duration: 5000 },
     )
   } finally {
     ragRebuildKind.value = null

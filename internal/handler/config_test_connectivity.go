@@ -41,7 +41,7 @@ const (
 )
 
 type connectivityTestRequest struct {
-	Category string         `json:"category"` // "frp" | "summarize_voice" | "rag" | "dingtalk" | "port_forward" | "tts"
+	Category string         `json:"category"` // "summarize_voice" | "rag" | "dingtalk" | "port_forward" | "tts"
 	Values   map[string]any `json:"values"`   // Flat dot-path key-value map from the form
 }
 
@@ -69,8 +69,6 @@ func ServeConfigTest(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	switch req.Category {
-	case "frp":
-		result = testFRP(ctx, req.Values)
 	case "summarize_voice":
 		result = testSummarizeVoice(ctx, req.Values)
 	case "rag":
@@ -133,35 +131,6 @@ func resolveIntValue(values map[string]any, key string, defaultVal int) int {
 		return i
 	}
 	return defaultVal
-}
-
-// ── FRP ──────────────────────────────────────────────────────
-
-func testFRP(ctx context.Context, values map[string]any) ConnectivityTestResult {
-	addr := resolveStringValue(values, "frp.server_addr", model.ConfigInstance.FRP.ServerAddr)
-	port := resolveIntValue(values, "frp.server_port", model.ConfigInstance.FRP.ServerPort)
-
-	if addr == "" {
-		return ConnectivityTestResult{Success: false, Message: "Server address is required"}
-	}
-	if port == 0 {
-		port = 7000 // default frps port
-	}
-
-	target := fmt.Sprintf("%s:%d", addr, port)
-	d := net.Dialer{Timeout: 5 * time.Second}
-	conn, err := d.DialContext(ctx, "tcp", target)
-	if err != nil {
-		return ConnectivityTestResult{
-			Success: false,
-			Message: fmt.Sprintf("Failed to connect to %s: %v", target, err),
-		}
-	}
-	_ = conn.Close()
-	return ConnectivityTestResult{
-		Success: true,
-		Message: fmt.Sprintf("Successfully connected to %s", target),
-	}
 }
 
 // ── Summarize Voice ──────────────────────────────────────────

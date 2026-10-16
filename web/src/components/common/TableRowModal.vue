@@ -58,7 +58,7 @@ function handleValueDblClick(event) {
   copyText(text, () => {
     flashElement(valueEl, { className: 'copy-flash' })
     if (toast) {
-      toast.show(gt('common.copied'), { icon: '📋', duration: 1500 })
+      toast.show(gt('common.copied'), { icon: 'copy', duration: 1500 })
     }
   })
 }

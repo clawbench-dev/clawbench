@@ -318,7 +318,7 @@ async function revokeLink() {
     if (!resp.ok) throw new Error(resp.statusText)
     linkUrl.value = ''
     markUnshared(props.sessionId)
-    toast.show(t('sessionShare.revoked'), { icon: '🔗', type: 'success', duration: 2000 })
+    toast.show(t('sessionShare.revoked'), { icon: 'link', type: 'success', duration: 2000 })
   } catch (err) {
     errorMsg.value = err instanceof Error ? err.message : String(err)
   }

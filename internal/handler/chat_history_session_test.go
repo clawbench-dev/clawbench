@@ -503,6 +503,95 @@ func TestServeAISessionUpdate_BadMethod(t *testing.T) {
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
 
+// The auto-cruise switch rides PATCH /api/ai/session/update as an optional
+// pointer field: a cruise-only PATCH persists it to the session's context_state,
+// and a PATCH without it leaves it untouched (not sent ≠ false).
+func TestServeAISessionUpdate_CruiseToggle(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sid, err := service.CreateSession(env.ProjectDir, "claude", "Cruise", "claude", "", "default", "chat")
+	require.NoError(t, err)
+
+	// Cruise-only PATCH → persisted.
+	req := newRequest(t, http.MethodPatch, "/api/ai/session/update", map[string]any{
+		"sessionId": sid,
+		"cruise":    true,
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeAISessionUpdate, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.True(t, service.GetSessionCruise(sid), "cruise must be persisted")
+
+	// A PATCH without the field must not clear it.
+	req = newRequest(t, http.MethodPatch, "/api/ai/session/update", map[string]any{
+		"sessionId": sid,
+		"title":     "Renamed",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandler(ServeAISessionUpdate, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.True(t, service.GetSessionCruise(sid), "omitting cruise must not clear it")
+
+	// An explicit false clears it.
+	req = newRequest(t, http.MethodPatch, "/api/ai/session/update", map[string]any{
+		"sessionId": sid,
+		"cruise":    false,
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandler(ServeAISessionUpdate, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.False(t, service.GetSessionCruise(sid), "explicit false must clear cruise")
+}
+
+// Enabling single-chat cruise must FORCE auto-approve on (cruise runs
+// unattended), and disabling cruise must leave auto-approve alone.
+func TestServeAISessionUpdate_CruiseForcesAutoApprove(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sid, err := service.CreateSession(env.ProjectDir, "claude", "Cruise", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	// Start from auto-approve OFF.
+	service.UpdateSessionAutoApprove(sid, false)
+	require.False(t, service.GetSessionAutoApprove(sid))
+
+	// Enable cruise -> auto-approve must flip on.
+	req := newRequest(t, http.MethodPatch, "/api/ai/session/update", map[string]any{
+		"sessionId": sid,
+		"cruise":    true,
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeAISessionUpdate, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.True(t, service.GetSessionAutoApprove(sid),
+		"enabling cruise must force auto-approve on")
+
+	// A request carrying BOTH {autoApprove:false, cruise:true} must still end
+	// with auto-approve ON: the cruise hard default is applied last.
+	req = newRequest(t, http.MethodPatch, "/api/ai/session/update", map[string]any{
+		"sessionId":   sid,
+		"autoApprove": false,
+		"cruise":      true,
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandler(ServeAISessionUpdate, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.True(t, service.GetSessionAutoApprove(sid),
+		"cruise:true must win over a co-sent autoApprove:false")
+
+	// Disable cruise -> auto-approve must stay on (one-directional).
+	req = newRequest(t, http.MethodPatch, "/api/ai/session/update", map[string]any{
+		"sessionId": sid,
+		"cruise":    false,
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandler(ServeAISessionUpdate, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.True(t, service.GetSessionAutoApprove(sid),
+		"disabling cruise must NOT turn auto-approve off")
+}
+
 func TestServeAISessionUpdate_BodySessionIDOverridesCookie(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()

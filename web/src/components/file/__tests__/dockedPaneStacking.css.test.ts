@@ -6,17 +6,19 @@ import { resolve } from 'path'
  * Stacking contract for the docked code-preview pane.
  *
  * Regression: hovering the divider above the docked preview pane showed only
- * the UPPER half of the highlight band ("half glow"). The floating preview card
- * sets `z-index: var(--z-sheet)` (1200) so it sits above the app; docked, the
- * pane is an ordinary layout pane, but `.is-docked` reset `position`, `inset`,
- * `border`, `border-radius` and `box-shadow` — and forgot `z-index`. The split
- * divider is `z-index: 2`, and on hover/drag it expands from 1px to 12px,
- * growing ~5.5px past its own box on each side. The lower half landed inside the
+ * the UPPER half of the highlight. The floating preview card sets
+ * `z-index: var(--z-sheet)` (1200) so it sits above the app; docked, the pane is
+ * an ordinary layout pane, but `.is-docked` reset `position`, `inset`, `border`,
+ * `border-radius` and `box-shadow` — and forgot `z-index`. The split divider is
+ * `z-index: 2`, and its highlight is a 2px line centred on a 1px host, so it
+ * grows 0.5px past its own box on each side. That lower half landed inside the
  * pane's box, so at 1200 the opaque pane painted over it.
  *
- * Measured live (elementFromPoint sweep down the expanded band):
+ * Measured live at the time (elementFromPoint sweep down the then-12px band):
  *   before → rows 538..543 visible, 544..549 hit `div.code-preview-header`
  *   after  → all 13 rows hit the divider
+ * (The band is now a 2px line, so the overlap is 0.5px — still enough to clip,
+ * and the z-index contract is what prevents it.)
  *
  * jsdom has no CSS engine, so this is a source-contract check — the same
  * pattern MarkdownPreviewWideLayout.css.test.ts uses.

@@ -54,6 +54,7 @@ const i18n = createI18n({
           placeholderFileRef: 'File ref',
           placeholderQuickSend: 'Quick send',
           placeholderSwipeHistory: 'Swipe history',
+          placeholderArrowHistory: 'Arrow history',
           placeholderQueue: 'Queue',
           clearInput: 'Clear',
           quickMenu: 'Quick',
@@ -106,8 +107,20 @@ const i18n = createI18n({
           enabled: 'Auto-approve enabled',
           disabled: 'Auto-approve disabled',
         },
+        cruise: {
+          label: 'Auto-cruise',
+          active: 'Cruising',
+          hint: 'Cruise hint',
+          enabled: 'Auto-cruise enabled',
+          disabled: 'Auto-cruise disabled',
+        },
       },
       common: { copy: 'Copy', remove: 'Remove', cancel: 'Cancel' },
+      group: {
+        cruiseLabel: 'Auto-cruise',
+        cruiseHintHost: 'When on, the discussion ends only once the host confirms the task is complete.',
+        cruiseHintFree: 'When on, the discussion ends only once at least half the members confirm the task is complete.',
+      },
       tool: {
         askUser: { recommendationFill: 'Fill' },
       },
@@ -327,6 +340,8 @@ const mockAvailableModes = ref([])
 const mockSessionTransport = ref('')
 const mockAutoApprove = ref(false)
 const mockToggleAutoApprove = vi.fn()
+const mockCruise = ref(false)
+const mockToggleCruise = vi.fn()
 const mockContextUsed = ref(0)
 const mockContextSize = ref(0)
 const mockContextInputTokens = ref(0)
@@ -349,6 +364,8 @@ vi.mock('@/composables/useSessionIdentity', () => ({
     currentTransport: mockSessionTransport,
     autoApprove: mockAutoApprove,
     toggleAutoApprove: mockToggleAutoApprove,
+    cruise: mockCruise,
+    toggleCruise: mockToggleCruise,
     contextUsed: mockContextUsed,
     contextSize: mockContextSize,
     contextInputTokens: mockContextInputTokens,
@@ -507,7 +524,7 @@ const stubs = {
   Upload: true,
   MessageSquare: true,
   Cpu: true,
-  Compass: true,
+  ShieldAlert: true,
   Activity: true,
   Minimize2: true,
 }
@@ -2720,11 +2737,21 @@ describe('ChatInputBar', () => {
       wrapper.unmount()
     })
 
-    it('hides the whole session info bar in a group session', () => {
-      // Model / mode+auto-approve / context-usage are per-agent settings with no
-      // owner on a multi-agent timeline.
+    it('renders ONLY the group switches in the info bar for a group session', () => {
+      // Model / mode / context-usage are per-agent settings with no owner on a
+      // multi-agent timeline, so they stay hidden. The group-level auto-cruise
+      // and auto-approve switches DO show (a second entry point to the same
+      // switches as the group settings sheet).
       const wrapper = mountBar({ currentModelName: 'gpt-5', currentAgentId: 'agent1', isGroupSession: true })
-      expect(wrapper.find('.chat-session-info').exists()).toBe(false)
+      const bar = wrapper.find('.chat-session-info')
+      expect(bar.exists()).toBe(true)
+      // The two group switches are present.
+      expect(bar.find('.session-info-cruise').exists()).toBe(true)
+      expect(bar.find('.session-info-approve').exists()).toBe(true)
+      // The per-agent chips are absent.
+      expect(bar.find('.session-info-model').exists()).toBe(false)
+      expect(bar.find('.session-info-mode').exists()).toBe(false)
+      expect(bar.find('.session-info-usage').exists()).toBe(false)
       wrapper.unmount()
     })
   })
@@ -2890,6 +2917,80 @@ describe('ChatInputBar', () => {
       await modeChip.trigger('mouseup')
       expect(mockToggleAutoApprove).toHaveBeenCalledWith(false)
       vi.useRealTimers()
+    })
+  })
+
+  describe('auto-cruise chip', () => {
+    beforeEach(() => {
+      mockCruise.value = false
+      mockToggleCruise.mockReset()
+      mockAutoApprove.value = false
+      mockToggleAutoApprove.mockReset()
+    })
+
+    it('renders the cruise chip in the single-chat session info bar', () => {
+      const wrapper = mountBar({ currentModelName: 'gpt-4' })
+      expect(wrapper.find('.session-info-cruise').exists()).toBe(true)
+      expect(wrapper.find('.session-info-cruise').text()).toContain('Auto-cruise')
+      wrapper.unmount()
+    })
+
+    it('toggles cruise on click', async () => {
+      const wrapper = mountBar({ currentModelName: 'gpt-4' })
+      await wrapper.find('.session-info-cruise').trigger('click')
+      expect(mockToggleCruise).toHaveBeenCalledWith(true)
+      wrapper.unmount()
+    })
+
+    it('labels the chip "Cruising" and highlights it when on', () => {
+      mockCruise.value = true
+      const wrapper = mountBar({ currentModelName: 'gpt-4' })
+      const chip = wrapper.find('.session-info-cruise')
+      expect(chip.text()).toContain('Cruising')
+      expect(chip.classes()).toContain('session-info-cruise-on')
+      wrapper.unmount()
+    })
+
+    it('renders the group cruise chip and emits toggle-group-cruise on click', async () => {
+      const wrapper = mountBar({ currentModelName: 'gpt-4', isGroupSession: true, groupCruise: false })
+      const chip = wrapper.find('.session-info-cruise')
+      expect(chip.exists()).toBe(true)
+      await chip.trigger('click')
+      // The group's cruise is owned by App (PATCH + roster refresh), so the
+      // component emits the desired next value rather than calling toggleCruise.
+      expect(wrapper.emitted('toggle-group-cruise')).toBeTruthy()
+      expect(wrapper.emitted('toggle-group-cruise')![0]).toEqual([true])
+      wrapper.unmount()
+    })
+
+    it('gives the group cruise chip a mode-aware hint, not the single-chat one', () => {
+      // The group rule differs by mode (host alone vs. half the members), so the
+      // chip must NOT reuse chat.cruise.hint (single-chat wording).
+      const host = mountBar({ currentModelName: 'gpt-4', isGroupSession: true, groupMode: 'host' })
+      expect(host.find('.session-info-cruise').attributes('title')).toContain('host confirms')
+      host.unmount()
+      const free = mountBar({ currentModelName: 'gpt-4', isGroupSession: true, groupMode: 'free' })
+      expect(free.find('.session-info-cruise').attributes('title')).toContain('half the members')
+      free.unmount()
+    })
+
+    it('labels the group chip "Cruising" and highlights it when on', () => {
+      const wrapper = mountBar({ currentModelName: 'gpt-4', isGroupSession: true, groupCruise: true })
+      const chip = wrapper.find('.session-info-cruise')
+      expect(chip.text()).toContain('Cruising')
+      expect(chip.classes()).toContain('session-info-cruise-on')
+      wrapper.unmount()
+    })
+
+    it('renders the group auto-approve chip and toggles via the shared handler', async () => {
+      const wrapper = mountBar({ currentModelName: 'gpt-4', isGroupSession: true })
+      const chip = wrapper.find('.session-info-approve')
+      expect(chip.exists()).toBe(true)
+      await chip.trigger('click')
+      // Group auto-approve goes through the shared session-identity toggle
+      // (backend fans the flag out to every member row).
+      expect(mockToggleAutoApprove).toHaveBeenCalledWith(true)
+      wrapper.unmount()
     })
   })
 
@@ -3223,6 +3324,21 @@ describe('ChatInputBar', () => {
       _setPlatformForTest({ isTouchPrimary: true })
       wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
       expect(wrapper.vm.placeholderHints).toContain('Swipe history')
+      wrapper.unmount()
+    })
+
+    it('shows the arrow-key history hint in the placeholder only on desktop surfaces', async () => {
+      // Desktop: keyboard history hint present, swipe hint absent
+      _setPlatformForTest({ isTouchPrimary: false })
+      let wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      expect(wrapper.vm.placeholderHints).toContain('Arrow history')
+      expect(wrapper.vm.placeholderHints).not.toContain('Swipe history')
+      wrapper.unmount()
+      // Touch: swipe hint present, keyboard hint absent
+      _setPlatformForTest({ isTouchPrimary: true })
+      wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      expect(wrapper.vm.placeholderHints).toContain('Swipe history')
+      expect(wrapper.vm.placeholderHints).not.toContain('Arrow history')
       wrapper.unmount()
     })
 

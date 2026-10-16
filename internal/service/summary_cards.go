@@ -16,6 +16,10 @@ var scheduledTaskIDRe = regexp.MustCompile(`<scheduled-task\s+id="(\d+)"`)
 // actionable prompt bound to a live session (responding needs the session ID +
 // tool call ID), so in the read-only summary view it would only ever render a
 // button that cannot work — it is omitted entirely.
+//
+// The summary card's Done flag is always true (see extractSummaryCards): a
+// summary is a post-finalize historical digest, so a persisted ask card is
+// never awaiting an answer.
 func isSummaryCardTool(name string) bool {
 	return strings.EqualFold(name, "askuserquestion")
 }
@@ -38,11 +42,25 @@ func extractSummaryCards(blocks []model.ContentBlock) *model.SummaryCards {
 		switch b.Type {
 		case "tool_use":
 			if isSummaryCardTool(b.Name) {
+				// Done is forced TRUE, never copied from the block. An
+				// AskUserQuestion is a request for input: it produces no
+				// tool_result, so its block stays Done=false forever (ACP only
+				// flips Done on a completed/failed tool call). That flag is
+				// meaningful only while the turn is live; a summary is written
+				// on the terminal path and is a read-only historical digest, so
+				// there is by definition nothing left to await.
+				//
+				// Copying the flag leaked the pending state into the summary
+				// view, where the frontend's showAskPending() (which cannot
+				// distinguish "false" from "absent") rendered the card's
+				// spinner forever. The content path already normalizes this
+				// (parseAssistantContent forces done=true on non-live rows);
+				// this is the summary-view counterpart of that rule.
 				cards.Tools = append(cards.Tools, model.SummaryTool{
 					Name:   b.Name,
 					ID:     b.ID,
 					Input:  b.Input,
-					Done:   b.Done,
+					Done:   true,
 					Status: b.Status,
 					Output: b.Output,
 				})

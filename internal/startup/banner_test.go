@@ -532,7 +532,7 @@ func TestFormatDuration_ExactlyOneSecond(t *testing.T) {
 	}
 }
 
-// ---------- FRP banner section ----------
+// ---------- Network URL banner ----------
 
 func TestBannerMultipleIPs(t *testing.T) {
 	cfg := BannerConfig{
@@ -602,89 +602,6 @@ func TestBannerNoIPs(t *testing.T) {
 		t.Error("banner should NOT contain Network line when no IPs")
 	}
 }
-
-func TestBanner_FRPEnabledWithRemoteURL(t *testing.T) {
-	cfg := BannerConfig{
-		Version:         "v1.0.0",
-		Scheme:          "http",
-		Port:            20000,
-		DataDir:         "/tmp/.clawbench",
-		TTSEngine:       "edge",
-		FRPEnabled:      true,
-		FRPRemoteURL:    "http://120.26.168.245:20050",
-		FRPServerAddr:   "120.26.168.245",
-		FRPRemotePort:   20050,
-		TaskCount:       0,
-		StartupDuration: 100 * time.Millisecond,
-	}
-	lines := buildLines(cfg)
-	joined := strings.Join(lines, "\n")
-	if !strings.Contains(joined, "http://120.26.168.245:20050") {
-		t.Error("banner should contain FRP remote URL when provided")
-	}
-}
-
-func TestBanner_FRPEnabledWaitingForPort(t *testing.T) {
-	cfg := BannerConfig{
-		Version:         "v1.0.0",
-		Scheme:          "http",
-		Port:            20000,
-		DataDir:         "/tmp/.clawbench",
-		TTSEngine:       "edge",
-		FRPEnabled:      true,
-		FRPRemoteURL:    "",
-		FRPServerAddr:   "frp-server",
-		FRPRemotePort:   0,
-		TaskCount:       0,
-		StartupDuration: 100 * time.Millisecond,
-	}
-	lines := buildLines(cfg)
-	joined := strings.Join(lines, "\n")
-	if !strings.Contains(joined, "waiting for port") {
-		t.Error("banner should show 'waiting for port' when FRP enabled but no remote URL")
-	}
-}
-
-func TestBanner_FRPEnabledNoServerAddr(t *testing.T) {
-	cfg := BannerConfig{
-		Version:         "v1.0.0",
-		Scheme:          "http",
-		Port:            20000,
-		DataDir:         "/tmp/.clawbench",
-		TTSEngine:       "edge",
-		FRPEnabled:      true,
-		FRPRemoteURL:    "",
-		FRPServerAddr:   "",
-		FRPRemotePort:   0,
-		TaskCount:       0,
-		StartupDuration: 100 * time.Millisecond,
-	}
-	lines := buildLines(cfg)
-	joined := strings.Join(lines, "\n")
-	if !strings.Contains(joined, "enabled") {
-		t.Error("banner should show 'enabled' for FRP when no server addr or URL")
-	}
-}
-
-func TestBanner_FRPDisabled(t *testing.T) {
-	cfg := BannerConfig{
-		Version:         "v1.0.0",
-		Scheme:          "http",
-		Port:            20000,
-		DataDir:         "/tmp/.clawbench",
-		TTSEngine:       "edge",
-		FRPEnabled:      false,
-		TaskCount:       0,
-		StartupDuration: 100 * time.Millisecond,
-	}
-	lines := buildLines(cfg)
-	joined := strings.Join(lines, "\n")
-	if strings.Contains(joined, "FRP:") {
-		t.Error("banner should NOT contain FRP section when disabled")
-	}
-}
-
-// ---------- FrontendMode banner ----------
 
 func TestBanner_FrontendMode(t *testing.T) {
 	cfg := BannerConfig{

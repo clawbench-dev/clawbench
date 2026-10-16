@@ -2,6 +2,7 @@ import { app, BrowserWindow, Menu, session } from 'electron'
 import { initStore } from './store'
 import { createMainWindow, getMainWindow } from './window'
 import { registerBridge } from './bridge'
+import { registerCertificateHandler } from './certificate'
 import { handOffToPointedVersion } from './install'
 import { recordError, flushOnShutdown } from './clientLog'
 import { APP_USER_MODEL_ID } from './identity'
@@ -70,6 +71,11 @@ app.whenReady().then(() => {
   Menu.setApplicationMenu(null)
   initStore()
   registerBridge()
+  // Prompt (once per connection) when a server's TLS certificate cannot be
+  // verified, instead of failing the navigation outright. Mirrors Android's
+  // "Trust and continue" dialog; without this a self-hosted server with a
+  // self-signed certificate was unreachable from the desktop shell.
+  registerCertificateHandler()
   // The version-consistency gate runs as part of connecting (see window.ts and
   // bridge.ts), where the server URL is known. It used to run here on a 3s timer
   // as an OS dialog; that path is gone so the blocking overlay is the only

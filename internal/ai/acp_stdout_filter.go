@@ -55,6 +55,18 @@ type acpStdoutFilter struct {
 	closed bool
 	mu     sync.Mutex
 
+	// src is the underlying agent stdout. The pump is NOT started in the
+	// constructor — it is armed on the first Read (see startOnce). Starting it
+	// eagerly raced the sink installation: with an immediately-readable source
+	// the pump could drain the first line and call dispatchRawSink before
+	// SetRawSink had run, so the sink silently missed it (macOS scheduling
+	// exposed this; a strings.Reader in tests reproduces it deterministically).
+	// Deferring the start means every sink is installed before any line can be
+	// dispatched, since both callers install their sinks before the reader is
+	// consumed.
+	src       io.Reader
+	startOnce sync.Once
+
 	// cachedModels holds the models extracted from the SessionModelState extension
 	// in a session/new or session/resume response. The ACP Go SDK v0.13.5 does not
 	// include the "models" field in NewSessionResponse/ResumeSessionResponse, so we
@@ -63,8 +75,8 @@ type acpStdoutFilter struct {
 	cachedModels *ModelListState
 
 	// rawSink, when set, is handed every parsed line (see SetRawSink). Stored in
-	// an atomic.Value because it is written once after the pump starts and read
-	// on the pump goroutine.
+	// an atomic.Value because it is written once after construction and read on
+	// the pump goroutine.
 	rawSink atomic.Value // holds rawResponseSink
 
 	// notifSink, when set, is handed every `session/update` line (see
@@ -73,7 +85,8 @@ type acpStdoutFilter struct {
 }
 
 // SetRawSink installs a sink that receives every parsed line. Must be called at
-// most once per filter, before any raw call is issued.
+// most once per filter, before the filter is read from (the pump is armed on the
+// first Read, so a sink installed afterwards would miss earlier lines).
 func (f *acpStdoutFilter) SetRawSink(s rawResponseSink) {
 	f.rawSink.Store(s)
 }
@@ -103,14 +116,24 @@ func (f *acpStdoutFilter) dispatchNotificationSink(line []byte) {
 
 // newACPStdoutFilter creates a new filtered reader that fixes protocol violations.
 // The caller must call Close when done to release resources and unblock pending reads.
+//
+// The pump is armed lazily on the first Read rather than started here, so sinks
+// installed between construction and the first read (SetRawSink /
+// SetNotificationSink) are guaranteed to see every line — see the src field.
 func newACPStdoutFilter(r io.Reader) *acpStdoutFilter {
 	pr, pw := io.Pipe()
-	f := &acpStdoutFilter{
-		pr: pr,
-		pw: pw,
+	return &acpStdoutFilter{
+		pr:  pr,
+		pw:  pw,
+		src: r,
 	}
-	go f.pump(r)
-	return f
+}
+
+// start arms the pump exactly once. Called from Read; a no-op afterwards.
+func (f *acpStdoutFilter) start() {
+	f.startOnce.Do(func() {
+		go f.pump(f.src)
+	})
 }
 
 // pump reads lines from src, filters them, and writes to the pipe writer.
@@ -163,7 +186,11 @@ func (f *acpStdoutFilter) pump(src io.Reader) {
 }
 
 // Read implements io.Reader. It reads filtered JSON lines from the pipe.
+//
+// The pump is armed here (not in the constructor) so any sink installed before
+// the first read is in place before the first line is dispatched.
 func (f *acpStdoutFilter) Read(p []byte) (int, error) {
+	f.start()
 	return f.pr.Read(p)
 }
 

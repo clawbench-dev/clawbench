@@ -66,6 +66,25 @@ func TestAssistantConclusion_SingleChatKeepsLiteralTag(t *testing.T) {
 	}
 }
 
+// TestAssistantConclusion_SingleChatStripsGoalSatisfied: single-chat cruise
+// emits <clawbench-goal-satisfied/>, so the backend boundary must drop it from
+// the conclusion text — otherwise the literal tag leaks into the reading
+// summary, the push/preview body, the TTS conclusion, and the RAG chunk. The
+// group path already strips via StripProtocolTags; this pins the single-chat
+// half, which was previously unwired.
+func TestAssistantConclusion_SingleChatStripsGoalSatisfied(t *testing.T) {
+	blocks := []model.ContentBlock{
+		{Type: "text", Text: "任务已完成。<clawbench-goal-satisfied/>"},
+	}
+	got := AssistantConclusion("some-single-chat-session", blocks)
+	if strings.Contains(got, "clawbench-goal-satisfied") {
+		t.Fatalf("single-chat goal tag leaked: %q", got)
+	}
+	if !strings.Contains(got, "任务已完成") {
+		t.Fatalf("single-chat prose was truncated: %q", got)
+	}
+}
+
 // TestAssistantConclusion_UnknownSessionKeepsLiteralTag: an unknown/empty
 // session id is NOT a group, so the text is returned verbatim. This is the
 // fail-safe default — only a confirmed group timeline strips.
