@@ -177,6 +177,7 @@
           :src="htmlPreviewSrc || undefined"
           :srcdoc="htmlPreviewSrc ? undefined : file.content"
           sandbox="allow-scripts allow-same-origin"
+          @load="onHtmlPreviewLoad"
         />
         <CodeMirrorViewer
           v-else
@@ -296,7 +297,7 @@ import { useFileEditor } from '@/composables/useFileEditor.ts'
 import { useTocDockPreference } from '@/composables/useTocDockPreference.ts'
 import { exportMarkdownToHtml, imageIssueReasonKey } from '@/utils/exportMarkdownHtml.ts'
 import { downloadBlob, downloadFileByPath } from '@/utils/download.ts'
-import { buildHtmlPreviewSrc } from '@/utils/htmlPreview.ts'
+import { buildHtmlPreviewSrc, installPreviewScrollbar } from '@/utils/htmlPreview.ts'
 import { useToast } from '@/composables/useToast.ts'
 import { useCodeEditorSave } from '@/composables/useCodeEditorSave.ts'
 import { getNative } from '@/utils/clawbenchNative'
@@ -359,6 +360,13 @@ const htmlPreviewTimestamp = ref(Date.now())
 const htmlPreviewSrc = computed(() =>
     buildHtmlPreviewSrc(props.file?.path || '', htmlPreviewTimestamp.value)
 )
+
+/** Give the previewed document the app's scrollbar bar (see
+ *  installPreviewScrollbar). Runs on every load — including the srcdoc
+ *  fallback and reloads — and is idempotent. */
+function onHtmlPreviewLoad() {
+    installPreviewScrollbar(htmlPreviewRef.value)
+}
 
 // Edit mode (source text editing via CodeEditor).
 // Shared at module level so the global back gesture (App.vue) can exit edit

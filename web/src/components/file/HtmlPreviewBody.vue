@@ -20,17 +20,21 @@
          falls back to srcdoc (see buildHtmlPreviewSrc). -->
     <iframe
       v-else-if="status === 'ready'"
+      ref="iframeRef"
       class="html-preview-iframe"
       :src="htmlSrc || undefined"
       :srcdoc="htmlSrc ? undefined : htmlContent"
       sandbox="allow-scripts allow-same-origin"
       :title="filePath"
+      @load="onLoad"
     />
   </div>
 </template>
 
 <script setup lang="ts">
+import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { installPreviewScrollbar } from '@/utils/htmlPreview.ts'
 
 /**
  * Rendered-HTML sibling of CodePreviewBody / MarkdownPreviewBody.
@@ -70,6 +74,15 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+
+const iframeRef = ref<HTMLIFrameElement | null>(null)
+
+/** Give the previewed document the app's scrollbar bar (see
+ *  installPreviewScrollbar). Runs on every load — including the srcdoc
+ *  fallback and reloads — and is idempotent. */
+function onLoad() {
+  installPreviewScrollbar(iframeRef.value)
+}
 
 /** No-op target-line centering: the rendered view has no highlighted rows.
  *  Kept so the parent's bodyRef surface is identical across body components. */

@@ -1,0 +1,76 @@
+/* ==========================================================================
+   Scrollbar — the ONE definition of the bar, shared by every document that
+   paints one.
+
+   Consumers (each used to carry its own copy, and the copies drifted — a width
+   change meant editing three files plus their guards):
+     - web/css/base.css                     @import (the app; also the share SPA)
+     - web/src/utils/swaggerHtml.ts         ?raw, inlined into the OpenAPI iframe
+     - web/src/utils/exportMarkdownHtml.ts  ?raw, inlined into the export
+
+   WHY A FILE AND NOT A CSS VARIABLE: two of the consumers are standalone
+   documents — an iframe `srcdoc` and a `file://` export — that never see the
+   app's :root. A `--scrollbar-size` token would be undefined there, the width
+   declaration would drop out, and the bar would silently revert to the native
+   ~15px one (with the ▲/▼ arrow buttons). Inlining the same file is what makes
+   "one place" actually hold.
+
+   PER-DOCUMENT COLOURS come from CSS variables with fallbacks, so each consumer
+   keeps its own palette without forking the geometry:
+     --scrollbar-thumb   thumb fill
+     --scrollbar-track   track fill (defaults to transparent)
+
+   TWO WIDTHS, by input device (not by host or viewport):
+     - touch / pen (`pointer: coarse`)  → 4px, the original mobile width
+     - mouse / trackpad (`pointer: fine`) → 8px, easier to grab on desktop
+   `(pointer: coarse)` is the discriminator because it is the only one that
+   travels with the stylesheet: the OpenAPI iframe and the file:// export carry
+   no host information and no reliable viewport width, but the media feature is
+   evaluated per-document by the browser. It is also the same axis the resize
+   divider uses for its touch grab band.
+   ========================================================================== */
+
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+/* Touch / pen: the original 4px bar. A coarse pointer cannot hover, so a fat
+   bar buys nothing and only eats content width on a phone. */
+@media (pointer: coarse) {
+    ::-webkit-scrollbar {
+        width: 4px;
+        height: 4px;
+    }
+}
+::-webkit-scrollbar-track {
+    background: var(--scrollbar-track, transparent);
+}
+::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb, #c1c1c1);
+    border-radius: var(--radius-xs, 4px);
+}
+::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted, #999);
+}
+::-webkit-scrollbar-button {
+    display: none;
+}
+::-webkit-scrollbar-corner {
+    background: transparent;
+}
+
+/* Firefox only. Chromium 121+ disables ALL ::-webkit-scrollbar-* rules the
+   moment `scrollbar-color` is set — including the `-button { display: none }`
+   above — so the bar silently reverts to the native one: 15px wide and
+   carrying the ▲/▼ arrow buttons we just hid. Gating on `::-webkit-scrollbar`
+   support keeps the custom bar in Chromium, while Firefox (no webkit
+   pseudo-elements) still gets `scrollbar-color` theming.
+
+   Firefox has no px control over the bar, only `auto | thin | none`, so the
+   thickness is approximated with `thin`. */
+@supports not selector(::-webkit-scrollbar) {
+    * {
+        scrollbar-color: var(--scrollbar-thumb, #c1c1c1) var(--scrollbar-track, transparent);
+        scrollbar-width: thin;
+    }
+}

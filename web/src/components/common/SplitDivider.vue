@@ -104,14 +104,17 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-/* Divider: a single 1px line by default — no visible gap. On hover/drag it
-   expands (via negative margins so layout does NOT shift) into a grab-able
-   gap with an accent highlight.
+/* Divider: a single 1px line by default — no visible gap. On hover/drag the
+   line ITSELF turns accent and thickens to 2px: the host grows 1px → 2px (via
+   negative margins so layout does NOT shift) and the shared line rules fill it.
+   There is deliberately NO tinted band — a band straddles the divider's edge,
+   and against a pane it covered the adjacent scrollbar. Only a thin line is
+   highlighted now.
 
-   The line itself (resting thickness, the expanded 2px centre stripe, the
-   accent colour and its hover/drag triggers) lives in the shared
-   `assets/resize-divider.css` — the same file TocDock.vue consumes. Only the
-   host geometry stays here, because it differs per consumer. */
+   The line itself (resting thickness, the accent colour and its hover/drag
+   triggers) lives in the shared `assets/resize-divider.css` — the same file
+   TocDock.vue consumes. Only the host geometry stays here, because it differs
+   per consumer. */
 .split-view__divider {
   position: relative;
   flex: 0 0 auto;
@@ -119,7 +122,7 @@ onBeforeUnmount(() => {
   touch-action: none;
   -webkit-tap-highlight-color: transparent;
   z-index: 2;
-  transition: width var(--duration-base) ease, height var(--duration-base) ease, margin var(--duration-base) ease, background var(--duration-base) ease;
+  transition: width var(--duration-base) ease, height var(--duration-base) ease, margin var(--duration-base) ease;
 }
 
 /* ── Horizontal split (left | right): vertical 1px line, drag on X ── */
@@ -127,40 +130,32 @@ onBeforeUnmount(() => {
   width: var(--split-gutter, 1px);
   cursor: col-resize;
 }
-/* invisible wider hit area so hover/touch can catch the 1px line */
+/* Invisible hit area so hover/touch can catch the 1px line. ±4px (9px total):
+   enough for a mouse, narrow enough not to swallow the scrollbar that sits
+   flush against the pane edge. */
 .split-view__divider--horizontal::before {
   content: '';
   position: absolute;
   top: 0;
   bottom: 0;
-  left: -6px;
-  right: -6px;
+  left: -4px;
+  right: -4px;
 }
-/* Expanded highlight. `:active` covers mouse press; `--expanded` covers the
-   whole pointer session, which is what touch needs (see the `dragging` ref).
+/* 2px highlight. `:active` covers mouse press; `--expanded` covers the whole
+   pointer session, which is what touch needs (see the `dragging` ref).
+   `margin: 0 -0.5px` widens the 1px host symmetrically about its edge:
+   (2 - 1) / 2 = 0.5, so the outer footprint stays 1px and neither pane shifts.
    This block must stay in lockstep with the `(hover: hover)` block below —
-   both are host geometry, the line's own rules are shared.
-
-   The tint is mixed into the PANEL colour, not into `transparent`. A
-   translucent band composites with whatever sits behind it, and the pane
-   content can be accent-coloured itself: the file manager's selected row is
-   `background: var(--accent-color)` and ends exactly at the divider, so
-   12%-accent-over-accent stayed fully accent while the half hanging over the
-   white pane below was a pale tint. The band then read as a solid accent block
-   on one side only — the "solid bar that pops out at a certain position"
-   report. Mixing into `--bg-primary` makes the band opaque, so it renders
-   identically regardless of what is behind it. */
+   both are host geometry, the line's own rules are shared. */
 .split-view__divider--horizontal:active,
 .split-view__divider--horizontal.resize-divider--expanded {
-  width: 12px;
-  margin: 0 -5.5px;
-  background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, var(--bg-primary, #ffffff));
+  width: 2px;
+  margin: 0 -0.5px;
 }
 @media (hover: hover) {
   .split-view__divider--horizontal:hover {
-    width: 12px;
-    margin: 0 -5.5px;
-    background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, var(--bg-primary, #ffffff));
+    width: 2px;
+    margin: 0 -0.5px;
   }
 }
 
@@ -169,17 +164,18 @@ onBeforeUnmount(() => {
   height: var(--split-gutter, 1px);
   cursor: row-resize;
 }
+/* Invisible hit area — ±4px, same rationale as the horizontal band above. */
 .split-view__divider--vertical::before {
   content: '';
   position: absolute;
   left: 0;
   right: 0;
-  top: -6px;
-  bottom: -6px;
+  top: -4px;
+  bottom: -4px;
 }
 /* Touch: a 1px line is an unhittable target (and the negative-margin hover
-   growth is hover-only). Give touch pointers a fat invisible grab band via the
-   pseudo-element, without changing the visual 1px line. */
+   growth is hover-only). Give touch pointers a fatter invisible grab band via
+   the pseudo-element, without changing the visual 1px line. */
 @media (pointer: coarse) {
   .split-view__divider--vertical::before {
     top: -12px;
@@ -199,15 +195,13 @@ onBeforeUnmount(() => {
 }
 .split-view__divider--vertical:active,
 .split-view__divider--vertical.resize-divider--expanded {
-  height: 12px;
-  margin: -5.5px 0;
-  background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, var(--bg-primary, #ffffff));
+  height: 2px;
+  margin: -0.5px 0;
 }
 @media (hover: hover) {
   .split-view__divider--vertical:hover {
-    height: 12px;
-    margin: -5.5px 0;
-    background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, var(--bg-primary, #ffffff));
+    height: 2px;
+    margin: -0.5px 0;
   }
 }
 

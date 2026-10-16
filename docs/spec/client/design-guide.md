@@ -449,23 +449,27 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 
 ### 红线 7：`scrollbar-color` / `scrollbar-width` 会让 Chromium 弃用 `::-webkit-scrollbar-*`
 
-只要给某个元素（或 `*`）设了**标准属性** `scrollbar-color` 或 `scrollbar-width`，Chromium 121+ 就**整体忽略**该元素的全部 `::-webkit-scrollbar-*` 规则——包括 `::-webkit-scrollbar-button { display: none }`。表现：自定义的 4px 细滚动条**退回 15px 原生条**，并且**上下箭头按钮复活**（实测 headed Chrome：17px 带箭头 vs 6px 无箭头）。
+只要给某个元素（或 `*`）设了**标准属性** `scrollbar-color` 或 `scrollbar-width`，Chromium 121+ 就**整体忽略**该元素的全部 `::-webkit-scrollbar-*` 规则——包括 `::-webkit-scrollbar-button { display: none }`。表现：自定义的细滚动条**退回 15px 原生条**，并且**上下箭头按钮复活**（实测 headed Chrome：17px 带箭头 vs 6px 无箭头）。
 
-`base.css` 原先把 `* { scrollbar-color: … }` 写成了无门控的全局规则，于是紧跟其上的 webkit 细条与 `-button` 规则全部失效——**箭头就是这么冒出来的**。
+原先把 `* { scrollbar-color: … }` 写成了无门控的全局规则，于是紧跟其上的 webkit 细条与 `-button` 规则全部失效——**箭头就是这么冒出来的**。
 
 正解是把标准属性**只留给没有 webkit 伪元素的引擎**（Firefox）：
 
 ```css
 @supports not selector(::-webkit-scrollbar) {
-    * { scrollbar-color: var(--scrollbar-thumb) transparent; }
+    * { scrollbar-color: var(--scrollbar-thumb, #c1c1c1) var(--scrollbar-track, transparent); }
 }
 ```
 
-`::-webkit-scrollbar-*` 规则本身保持无门控（Chromium 会走它）。**三处同源**：`web/css/base.css`、`src/utils/swaggerHtml.ts`（Swagger 预览 srcdoc）、`src/utils/exportMarkdownHtml.ts`（导出 HTML）——改一处必须三处同改，`__tests__/scrollbarNoArrowButtons.test.ts` 同时钉住。
+**唯一定义在 `web/css/scrollbar.css`**。四个消费方各自内联它——`web/css/base.css` 用 `@import`（同时覆盖 share SPA），`src/utils/swaggerHtml.ts`（Swagger 预览 srcdoc）、`src/utils/exportMarkdownHtml.ts`（导出 HTML）用 `?raw` 内联，`src/utils/htmlPreview.ts`（HTML 文件预览）用 `?raw` 注入预览文档。**为什么用文件而不是 `--scrollbar-size` token**：后三者是独立文档（iframe srcdoc / `file://` 导出 / 用户 HTML），看不到 app 的 `:root`，token 在那里是 undefined ⇒ 宽度声明整条消失 ⇒ 静默退回原生条。只有内联同一份文件才算真正收敛。每个文档自己的配色走 `--scrollbar-thumb` / `--scrollbar-track` 两个变量（**必须带 fallback**，否则在独立文档里同样失效）。
 
-**粗细全端统一为 4px**（三处同源都是字面量 `4px`，没有 token）。曾短暂按输入设备/宽屏分档（鼠标面 12px）以便更好点、也避开分割条抓取带，但**已按用户要求回退**——统一一个尺寸，跨设备观感一致；分割条那边的冲突在分割条侧解决（见 `SplitDivider.vue`）。守卫会拒绝任何重新引入的分档：出现 `--scrollbar-size` 或第二个 `12px` 宽度即失败。
+**两档宽度，按输入设备而非宿主/视口**：`(pointer: coarse)`（触屏/笔）**4px**（移动端原样），其余（鼠标/触控板）**8px**。选 `(pointer: coarse)` 是因为它是唯一能随样式表走的判据——iframe 与导出文档既无宿主信息也无可靠视口宽度，而媒体特性由浏览器在各文档内各自求值；它也是分割条触屏感应区用的同一条轴。守卫 `__tests__/scrollbarNoArrowButtons.test.ts` 拒绝任何重新引入的分档：任何一份文档重写 `::-webkit-scrollbar { width }`、出现 `--scrollbar-size`、变量缺 fallback、或少了 coarse 覆盖都会失败。
 
-> Firefox 只有 `auto | thin | none`，没有 px 控制，所以统一用 `scrollbar-width: thin` 近似 4px（放在已有的 webkit 门控里）。
+**HTML 文件预览套用同一套逻辑**：预览文档按 URL 加载（独立文档，链接不到 app 样式表），`load` 时由 `installPreviewScrollbar` 注入共享样式表。**插在 `<head>` 最前**（不是 append），因此预览文件自己写的滚动条规则（内联 / `<style>` / 外链）在源码顺序上更靠后、**优先级更高**——契约是「仅在预览文件未自定义滚动条时生效」，预览不该覆盖被预览文档自己的样式。注入是幂等的（按 `data-clawbench-scrollbar` 标记查重），两个预览面（全屏 FileViewer 与代码链接预览 `HtmlPreviewBody`）都接了 `@load`。
+
+**分割条侧的冲突解法**：拖拽分隔条的高亮**只能是那条细线本身**——host 从 1px 长到 2px（`margin: ±0.5px` 保持外footprint不变），共享的 `.resize-divider__line` 填满它并染成 `--accent-color`。**不得再画半透明/不透明色带**：色带以分隔条为轴跨到两侧窗格上，而窗格紧贴分隔条处就有滚动条，色带会把它盖住。可点击感应区（`::before`）在鼠标面为分隔条两侧各 4px（共 9px），触屏面（`pointer: coarse`）仍是各 12px。守卫 `resizeDivider.css.test.ts` 断言共享文件里**没有** `color-mix`、没有 `calc((100% - 2px) / 2)` 居中偏移，且两个消费组件的触发态规则块**不得**声明 `background`。
+
+> Firefox 只有 `auto | thin | none`，没有 px 控制，所以统一用 `scrollbar-width: thin` 近似（放在已有的 webkit 门控里）。
 
 > 验证必须在 **headed** 浏览器里看（headless 用 overlay 滚动条，量不出宽度也画不出箭头）。
 
@@ -562,7 +566,7 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 | `components/__tests__/wideDockIconSize.css.test.ts` | 宽屏 dock 图标尺寸 |
 | `assets/__tests__/themePicker.css.test.ts` | 主题选择器中性底 + 色点载体 |
 | `assets/__tests__/annotationButtons.css.test.ts` | 标注按钮全局作用域 |
-| `__tests__/scrollbarNoArrowButtons.test.ts` | `scrollbar-color` 必须关在 `@supports not selector(::-webkit-scrollbar)` 里（否则 Chromium 弃用 `::-webkit-scrollbar-*`，箭头按钮复活） |
+| `__tests__/scrollbarNoArrowButtons.test.ts` | 滚动条唯一定义在 `css/scrollbar.css`（四文档内联：应用/OpenAPI/导出/HTML 预览）、两档宽度按 `(pointer: coarse)`（移动 4px / 桌面 8px）、`scrollbar-color` 必须关在 `@supports not selector(::-webkit-scrollbar)` 里（否则 Chromium 弃用 `::-webkit-scrollbar-*`，箭头按钮复活）、任何文档不得重写宽度、变量必须带 fallback、HTML 预览注入须插在 head 最前且幂等 |
 | `__tests__/platformAxes.test.ts` | 三条平台轴保持正交：`isPC` 不得回归、共享宿主谓词不得各组件重声明、iPadOS 陷阱（Macintosh UA + `maxTouchPoints>0`）不得重开 |
 
 **写新守卫时注意两个坑**（都实际栽过）：

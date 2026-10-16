@@ -140,24 +140,21 @@ describe('resize-divider.css — resting line', () => {
   it('transitions the line geometry, not just its colour', () => {
     // Regression: the host animates width/height/margin over --duration-base but
     // the line only transitioned `background`. On drag release the `--expanded`
-    // class is dropped, so the line snapped back to filling its host while the
-    // host was still ~12px and the line was still fading out of full accent —
-    // a 12px SOLID ACCENT bar for a frame. Measured on touch: first frame after
-    // release was host=12px/line=12px; with the transition it is 12px/2px.
+    // class is dropped, so the line snapped to its new thickness while the host
+    // was still animating back down and the colour was still fading out of
+    // accent — a wrong-thickness accent bar for a frame.
     const base = declsOf('.resize-divider__line')
     const transition = base[0].match(/transition:([^;]+)/)
     expect(transition, 'the line must declare a transition').not.toBeNull()
     const t = transition![1]
     expect(t, 'line transition must include its thin axis (width)').toContain('width')
     expect(t, 'line transition must include its thin axis (height)').toContain('height')
-    expect(t, 'line transition must include the centring offset (left)').toContain('left')
-    expect(t, 'line transition must include the centring offset (top)').toContain('top')
   })
 })
 
-describe('resize-divider.css — expanded state cannot drift between triggers', () => {
-  // The bug this file replaces: `:active`/`--dragging` narrowed the line, and
-  // `:hover` was bolted on separately with the colour but not the geometry.
+describe('resize-divider.css — highlighted state cannot drift between triggers', () => {
+  // The bug this file replaces: `:active`/`--dragging` styled the line and
+  // `:hover` was bolted on separately, so the two states could diverge.
   it('keeps the accent colour identical across :active / --expanded / :hover', () => {
     const decls = expectIdenticalDecls(
       '.resize-divider:active .resize-divider__line',
@@ -167,29 +164,27 @@ describe('resize-divider.css — expanded state cannot drift between triggers', 
     expect(decls).toBe(norm('background: var(--accent-color, #0066cc);'))
   })
 
-  it('keeps the vertical centre stripe identical across :active / --expanded / :hover', () => {
-    const decls = expectIdenticalDecls(
-      ".resize-divider[aria-orientation='vertical']:active .resize-divider__line",
-      ".resize-divider[aria-orientation='vertical'].resize-divider--expanded .resize-divider__line",
-      ".resize-divider[aria-orientation='vertical']:hover .resize-divider__line",
-    )
-    // 2px rather than 1px: a 12px band cannot centre a 1px line on a whole
-    // pixel — (12 - 1) / 2 = 5.5, (12 - 2) / 2 = 5.
-    expect(decls).toContain('calc((100% - 2px) / 2)')
-    expect(decls).toContain('width: 2px')
+  it('highlights with the line alone — no tinted band is painted', () => {
+    // The highlight used to be a 12px tinted band behind a 2px centre stripe.
+    // That band straddles the divider's edge and lapped over the scrollbar
+    // of the adjacent pane. The highlight is now the line itself: the host
+    // grows 1px → 2px and the shared line fills it, so the shared stylesheet
+    // must NOT paint any `background` on the host, nor narrow the line with a
+    // centring offset.
+    expect(cssCode).not.toMatch(/color-mix/)
+    expect(cssCode).not.toContain('calc((100% - 2px) / 2)')
+    // The line keeps filling its host in every state, so its thin axis stays
+    // `100%` — no state-specific width/height re-declaration.
+    for (const sel of [
+      '.resize-divider:active .resize-divider__line',
+      '.resize-divider--expanded .resize-divider__line',
+      '.resize-divider:hover .resize-divider__line',
+    ]) {
+      expect(declsOf(sel)[0], `${sel} must only recolour the line`).not.toMatch(/\b(width|height):/)
+    }
   })
 
-  it('keeps the horizontal centre stripe identical across :active / --expanded / :hover', () => {
-    const decls = expectIdenticalDecls(
-      ".resize-divider[aria-orientation='horizontal']:active .resize-divider__line",
-      ".resize-divider[aria-orientation='horizontal'].resize-divider--expanded .resize-divider__line",
-      ".resize-divider[aria-orientation='horizontal']:hover .resize-divider__line",
-    )
-    expect(decls).toContain('calc((100% - 2px) / 2)')
-    expect(decls).toContain('height: 2px')
-  })
-
-  it('selects the centring axis from aria-orientation', () => {
+  it('selects the line axis from aria-orientation', () => {
     // The two consumers name their own orientation inversely (SplitDivider's
     // 'horizontal' means side-by-side; TocDock's 'vertical' means a vertical
     // line), so the ARIA attribute — which always describes the separator line
@@ -234,16 +229,12 @@ describe('resize-divider.css — single source of truth', () => {
   })
 
   /**
-   * The HOST band geometry (width/offset + translucent tint) can't be shared:
-   * SplitDivider grows symmetrically around a 1px flex item with
-   * `margin: 0 -5.5px`, TocDock shifts one side of a 6px absolute box. What CAN
-   * be enforced is that each host declares it ONCE for all three triggers —
-   * `:active`, `--expanded` and `:hover`. Declaring it separately per trigger is
-   * exactly how the line rules drifted, and the next drift would look the same.
-   *
-   * The tint is dropped before comparing: a host may need it to win (or lose)
-   * against its own `width`/`margin` in the same block, so only the geometry
-   * must match.
+   * The HOST geometry can't be shared: SplitDivider grows symmetrically around a
+   * 1px flex item with `margin: 0 -0.5px`, TocDock shifts one side of a 1px
+   * absolute box. What CAN be enforced is that each host declares it ONCE for
+   * all three triggers — `:active`, `--expanded` and `:hover`. Declaring it
+   * separately per trigger is exactly how the line rules drifted, and the next
+   * drift would look the same.
    */
   function geometryOf(block: string): string {
     return norm(
@@ -273,7 +264,7 @@ describe('resize-divider.css — single source of truth', () => {
     ['src/components/common/SplitDivider.vue', 'split-view__divider--horizontal'],
     ['src/components/common/SplitDivider.vue', 'split-view__divider--vertical'],
     ['src/components/file/TocDock.vue', 'toc-dock-divider'],
-  ])('%s: %s declares its expanded band once per trigger', (rel, cls) => {
+  ])('%s: %s declares its highlight geometry once per trigger', (rel, cls) => {
     const src = readFromRepo(rel)
     const isTrigger = (s: string) =>
       s.includes(':active') || s.includes('--expanded') || s.includes(':hover')
@@ -281,8 +272,7 @@ describe('resize-divider.css — single source of truth', () => {
     // Bucket every triggering selector by (positioning variant, trigger). The
     // variant is whatever precedes the class token — for TocDock the
     // left-docked edge is a real variant that legitimately offsets the other
-    // way (`.toc-dock--left .toc-dock-divider:hover { margin-left: 3px }`), so
-    // parity is required within a variant, not across variants.
+    // way, so parity is required within a variant, not across variants.
     const buckets: Record<string, Record<string, string[]>> = {}
     for (const rule of scopedRules(src)) {
       for (const sel of rule.selectors) {
@@ -296,7 +286,7 @@ describe('resize-divider.css — single source of truth', () => {
     }
 
     const variants = Object.keys(buckets)
-    expect(variants.length, `${cls} must have expanded-band rules`).toBeGreaterThan(0)
+    expect(variants.length, `${cls} must have highlight rules`).toBeGreaterThan(0)
 
     for (const [variant, byTrigger] of Object.entries(buckets)) {
       const where = `${cls}${variant ? ` (${variant})` : ''}`
@@ -304,7 +294,7 @@ describe('resize-divider.css — single source of truth', () => {
       const seen = Object.entries(byTrigger)
       for (const [trigger, blocks] of seen) {
         for (const b of blocks) {
-          expect(b, `${where}: ${trigger} band geometry must match the other triggers`)
+          expect(b, `${where}: ${trigger} highlight geometry must match the other triggers`)
             .toBe(seen[0][1][0])
         }
       }
@@ -317,30 +307,20 @@ describe('resize-divider.css — single source of truth', () => {
   it.each([
     ['src/components/common/SplitDivider.vue', 'split-view__divider'],
     ['src/components/file/TocDock.vue', 'toc-dock-divider'],
-  ])('%s: %s mixes its band tint into an OPAQUE base', (rel, cls) => {
-    // Regression: the band used to be `color-mix(accent 12%, transparent)`.
-    // A translucent band composites with whatever is behind it, and the content
-    // it straddles can be accent-coloured itself — the file manager's selected
-    // row is `background: var(--accent-color)` and ends flush with the divider,
-    // so 12%-accent-over-accent stayed fully accent while the half over the
-    // white pane below was a pale tint. Measured live: the upper half was 8/8
-    // solid accent pixels, the lower 0/7 — a solid bar on one side only, which
-    // is the "solid hover bar pops out at a certain position" report.
-    //
-    // Mixing into `--bg-primary` makes the band opaque, so it renders the same
-    // no matter what sits behind it.
+  ])('%s: %s paints no tinted band on the host', (rel, cls) => {
+    // Regression: the highlight used to be a 12px tinted band behind a 2px
+    // centre stripe. The band straddles the divider's edge and lapped over the
+    // scrollbar of the adjacent pane, hiding it. The highlight is now the
+    // line itself (the host grows 1px → 2px, the shared line fills it), so the
+    // host must declare NO background in any trigger state — a reintroduced
+    // `color-mix(...)` band is the exact regression.
     const src = readFromRepo(rel)
     const bandRules = scopedRules(src).filter((r) =>
       r.selectors.some((s) => s.includes(cls) && (s.includes(':active') || s.includes('--expanded') || s.includes(':hover'))),
     )
+    expect(bandRules.length, `${cls} must declare highlight rules`).toBeGreaterThan(0)
     const tints = bandRules
       .flatMap((r) => [...r.decls.matchAll(/background\s*:\s*([^;]+)/g)].map((m) => m[1].trim()))
-    expect(tints.length, `${cls} must declare a band tint`).toBeGreaterThan(0)
-    for (const tint of tints) {
-      expect(tint, `${cls}: band tint must not be mixed into \`transparent\``)
-        .not.toMatch(/,\s*transparent\s*\)/)
-      expect(tint, `${cls}: band tint must mix into an opaque base`)
-        .toMatch(/var\(--bg-primary/)
-    }
+    expect(tints, `${cls}: the host must not paint a band`).toEqual([])
   })
 })
