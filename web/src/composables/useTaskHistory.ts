@@ -302,9 +302,9 @@ export function useTaskHistory(options: UseTaskHistoryOptions) {
         action: 'deleteExecution',
         executionId: String(execId),
       })
-      toast.show(gt('task.exec.executionDeleted'), { icon: '✅', type: 'success' })
+      toast.show(gt('task.exec.executionDeleted'), { icon: 'success', type: 'success' })
     } catch {
-      toast.show(gt('task.exec.actionFailed'), { icon: '❌', type: 'error' })
+      toast.show(gt('task.exec.actionFailed'), { icon: 'error', type: 'error' })
       return
     }
     await reloadExecutions()
@@ -317,9 +317,9 @@ export function useTaskHistory(options: UseTaskHistoryOptions) {
       await apiPut(`/api/tasks/${task.value.id}`, {
         action: 'deleteAllExecutions',
       })
-      toast.show(gt('task.exec.allExecutionsDeleted'), { icon: '✅', type: 'success' })
+      toast.show(gt('task.exec.allExecutionsDeleted'), { icon: 'success', type: 'success' })
     } catch {
-      toast.show(gt('task.exec.actionFailed'), { icon: '❌', type: 'error' })
+      toast.show(gt('task.exec.actionFailed'), { icon: 'error', type: 'error' })
       return
     }
     await reloadExecutions()

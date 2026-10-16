@@ -705,7 +705,7 @@ async function onFilesSelected(e: Event) {
         failed: result.errors.length,
       })
     } else {
-      toast.show(t('settings.items.wallpaperSetOk'), { icon: '🖼️', type: 'success', duration: 2500 })
+      toast.show(t('settings.items.wallpaperSetOk'), { icon: 'image', type: 'success', duration: 2500 })
     }
   } catch {
     error.value = t('settings.items.wallpaperUploadFailed')
@@ -813,7 +813,7 @@ async function onSaveBingToGallery() {
     // The new item is a fresh gallery row — reload so the local gallery list
     // (and its count/limit state) reflects it without a manual refresh.
     await reloadFromServer()
-    toast.show(t('settings.items.wallpaperBingSaved'), { icon: '💾', type: 'success', duration: 2500 })
+    toast.show(t('settings.items.wallpaperBingSaved'), { icon: 'save', type: 'success', duration: 2500 })
   } catch (e) {
     // A 400 means the gallery filled up (e.g. from another device) after this
     // button was enabled — surface the capacity hint rather than a generic error.
@@ -841,10 +841,10 @@ async function onSyncBing() {
     if (status.last_error) {
       error.value = t('settings.items.wallpaperBingFailed')
     } else if (settled) {
-      toast.show(t('settings.items.wallpaperBingSynced'), { icon: '🌅', type: 'success', duration: 2500 })
+      toast.show(t('settings.items.wallpaperBingSynced'), { icon: 'sunrise', type: 'success', duration: 2500 })
     } else {
       // Still fetching server-side; the image will appear once it lands.
-      toast.show(t('settings.items.wallpaperBingPending'), { icon: '⏳', type: 'info', duration: 3000 })
+      toast.show(t('settings.items.wallpaperBingPending'), { icon: 'pending', type: 'info', duration: 3000 })
     }
   } catch {
     error.value = t('settings.items.wallpaperBingFailed')

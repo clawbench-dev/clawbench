@@ -6,6 +6,7 @@ import { gt } from '@/composables/useLocale'
 import { updateModeState, updateCommandState, updateThinkingEffortState, currentAgentId, updateUsageState } from './useSessionIdentity'
 import { updateACPModelList, applyResolvedModelList } from './useAgents'
 import { updatePlanEntries } from './usePlanProgress'
+import type { ToastIconKey } from './useToast'
 import { updateTeamState } from './useTeamState'
 import { FILE_MODIFYING_TOOLS, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, resolveStreamingMsg, isSubagentToolName, messageText, nextClientSeq, untrackInFlightSend, type ChatMessage, type ChatMessageAction, type ContentBlock, type ContentEventData, type ThinkingEventData, type ToolUseEventData, type QueueEventData, type ErrorEventData } from '@/utils/chatStreamUtils.ts'
 import type { FileEntry } from '@/utils/fileAttachmentUtils'
@@ -32,7 +33,7 @@ export interface UseChatStreamOptions {
   isOpen: Ref<boolean>
   /** See useChatSession's option of the same name. */
   onParseAssistantContent: (content: string, opts?: { liveStreaming?: boolean }) => { blocks: ContentBlock[]; metadata?: Record<string, unknown>; cancelled?: boolean }
-  onToast: (msg: string, opts?: { icon?: string; type?: string; duration?: number; onClick?: () => void }) => void
+  onToast: (msg: string, opts?: { icon?: ToastIconKey; type?: string; duration?: number; onClick?: () => void }) => void
   onNotification: (title: string, opts?: { body?: string; onClick?: () => void }) => void
   onStreamEnd?: (reason: 'done' | 'cancelled' | 'error') => void
   /**

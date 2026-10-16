@@ -295,6 +295,15 @@
 
 **`CopyButton.vue`**（`web/src/components/common/CopyButton.vue`）是全站唯一的复制按钮。**反馈是图标互换**（图标临时变成对勾）**而非文字标签**，也**不弹 toast**——对勾本身就是反馈。文字标签被刻意排除：按钮通常钉在容器边缘或定宽工具栏里，变宽的标签会挤进旁边的内容，而要保持不挤就必须预留最宽的那条翻译（中文「已复制」与日文「コピーしました」宽度差约 2×）；恒定占位则两个问题都没有。两种模式：非受控传 `text`（组件自己复制并闪一下）、受控传 `copied`（宿主掌握剪贴板写入与计时，用于状态已在父组件的场景如代码预览工具栏）。此前全仓有四套互不一致的反馈机制（图标互换 / 文字替换 / 仅 toast / 仅变色），现已统一。
 
+### Toast
+
+**图标是 toast 的内置结构，不是可选装饰**：每个 toast 都渲染一个原生（lucide）图标，**调用方不再传 emoji**。
+
+- **语义键**：`icon` 传 `ToastIconKey`（`useToast.ts` 导出），如 `attach` / `link` / `copy` / `star` / `cut` / `blocked`。键 → 字形表在 `components/common/toastIcons.ts`（**唯一**来源，composable 不 import 图标库）。
+- **类型兜底**：不传键时按 `type` 取默认（`success`→`CircleCheck` / `error`→`CircleX` / `info`→`Info`）。因此「所有提示都有图标」由渲染层保证，不依赖调用点自觉。
+- **`loading` 例外**：渲染旋转环（`LoadingIndicator`）而非静态图标——它是唯一区分「在跑」与「卡住」的通道；环与图标互斥渲染（两个信号同时出现是矛盾）。
+- **悬停暂停**：指针进入 toast 时 `pause()` 挂起自动关闭倒计时，离开时 `resume()` 用剩余时间继续（`duration: 0` 的手动型不受影响）。文案 `user-select: text` 供复制；**结束文本选择的 click 不得同时关闭 toast**（否则复制到一半就没了）。
+
 ### 角标
 
 **`.count-badge`**（`components.css:39`）两档：默认 16px 高 / `--font-size-2xs`，`.count-badge--md` 18px / `--font-size-xs`。高度来自 `line-height` 而非固定 `height`，所以塞进 spinner 等更富内容时会撑开而不是裁掉。

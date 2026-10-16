@@ -185,7 +185,7 @@ export function useSettingsNavigation() {
         pollTimer = null
         restartingOverlay.value = false
         restarting.value = false
-        toast.show(t('settings.restartTimeout'), { icon: '⚠️', type: 'error', duration: 5000 })
+        toast.show(t('settings.restartTimeout'), { icon: 'warning', type: 'error', duration: 5000 })
         return
       }
 

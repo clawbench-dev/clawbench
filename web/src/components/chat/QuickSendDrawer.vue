@@ -158,10 +158,10 @@ const importer = createJsonImporter({
       : reason === 'kindMismatch'
         ? 'chat.quickSend.importKindMismatch'
         : 'chat.quickSend.importInvalidFile'
-    toast.show(t(key), { icon: '⚠️', type: 'error' })
+    toast.show(t(key), { icon: 'warning', type: 'error' })
   },
   onSummary: ({ imported, skipped }) => {
-    toast.show(t('chat.quickSend.importSuccess', { imported, skipped }), { icon: '✅', type: 'success' })
+    toast.show(t('chat.quickSend.importSuccess', { imported, skipped }), { icon: 'success', type: 'success' })
   },
 })
 
@@ -179,7 +179,7 @@ async function doDelete(id: number) {
   deleteConfirmId.value = null
   const ok = await deleteItem(id)
   if (ok) {
-    toast.show(t('chat.quickSend.itemDeleted'), { icon: '✅', type: 'success' })
+    toast.show(t('chat.quickSend.itemDeleted'), { icon: 'success', type: 'success' })
   }
 }
 
@@ -187,7 +187,7 @@ async function onDragEnd() {
   const ids = localItems.value.map(it => it.id)
   const ok = await reorderItems(ids)
   if (!ok) {
-    toast.show(t('chat.quickSend.reorderFailed'), { icon: '❌', type: 'error' })
+    toast.show(t('chat.quickSend.reorderFailed'), { icon: 'error', type: 'error' })
     localItems.value = [...items.value] // Reset from source of truth
   }
 }

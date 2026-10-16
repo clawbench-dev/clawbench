@@ -927,7 +927,7 @@ const handleQuoteToChat = () => {
   // adding a second attachment here would render duplicate chips in the draft.
   props.preview.close()
   switchTab('chat')
-  useToast().show(t('file.codePreview.quotedToChat'), { icon: '💬', type: 'success', duration: 1500 })
+  useToast().show(t('file.codePreview.quotedToChat'), { icon: 'chat', type: 'success', duration: 1500 })
 }
 
 const handleRevealInTree = async () => {

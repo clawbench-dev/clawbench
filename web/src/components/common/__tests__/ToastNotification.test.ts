@@ -12,44 +12,44 @@ function makeToast(overrides = {}) {
     icon: ref(''),
     onClick: ref(null),
     dismiss: vi.fn(),
+    pause: vi.fn(),
+    resume: vi.fn(),
     ...overrides,
   }
 }
 
+function mountToast(toast) {
+  return mount(ToastNotification, {
+    props: { toast },
+    global: { stubs: { Teleport: { template: '<div><slot/></div>' } } },
+  })
+}
+
 describe('ToastNotification', () => {
   it('renders message when visible', () => {
-    const toast = makeToast()
-    const wrapper = mount(ToastNotification, {
-      props: { toast },
-      global: { stubs: { Teleport: { template: '<div><slot/></div>' } } },
-    })
-    expect(wrapper.text()).toContain('Test message')
+    expect(mountToast(makeToast()).text()).toContain('Test message')
   })
 
   it('applies type class', () => {
-    const toast = makeToast({ type: ref('error') })
-    const wrapper = mount(ToastNotification, {
-      props: { toast },
-      global: { stubs: { Teleport: { template: '<div><slot/></div>' } } },
-    })
+    const wrapper = mountToast(makeToast({ type: ref('error') }))
     expect(wrapper.find('.toast').classes()).toContain('toast-error')
   })
 
-  it('renders icon when present', () => {
-    const toast = makeToast({ icon: ref('✓') })
-    const wrapper = mount(ToastNotification, {
-      props: { toast },
-      global: { stubs: { Teleport: { template: '<div><slot/></div>' } } },
-    })
-    expect(wrapper.find('.toast-icon').text()).toBe('✓')
+  // The icon is part of the toast's built-in structure: it renders for every
+  // toast, including one that names no icon, falling back to the type default.
+  it('renders an icon even when the caller names none', () => {
+    const wrapper = mountToast(makeToast({ icon: ref(''), type: ref('success') }))
+    expect(wrapper.find('.toast-icon').exists()).toBe(true)
+  })
+
+  it('renders the icon for a named key', () => {
+    const wrapper = mountToast(makeToast({ icon: ref('attach') }))
+    expect(wrapper.find('.toast-icon').exists()).toBe(true)
   })
 
   it('calls dismiss on click', async () => {
     const toast = makeToast()
-    const wrapper = mount(ToastNotification, {
-      props: { toast },
-      global: { stubs: { Teleport: { template: '<div><slot/></div>' } } },
-    })
+    const wrapper = mountToast(toast)
     await wrapper.find('.toast').trigger('click')
     expect(toast.dismiss).toHaveBeenCalled()
   })
@@ -57,45 +57,69 @@ describe('ToastNotification', () => {
   it('calls onClick and dismiss when onClick is set', async () => {
     const onClick = vi.fn()
     const toast = makeToast({ onClick: ref(onClick) })
-    const wrapper = mount(ToastNotification, {
-      props: { toast },
-      global: { stubs: { Teleport: { template: '<div><slot/></div>' } } },
-    })
+    const wrapper = mountToast(toast)
     await wrapper.find('.toast').trigger('click')
     expect(onClick).toHaveBeenCalled()
     expect(toast.dismiss).toHaveBeenCalled()
   })
 
+  it('does not dismiss when the click ends a text selection inside the toast', async () => {
+    // The text is selectable so it can be copied; releasing the mouse over the
+    // selection must not close the toast (and fire onClick) mid-copy.
+    const onClick = vi.fn()
+    const toast = makeToast({ onClick: ref(onClick) })
+    const wrapper = mountToast(toast)
+    const textEl = wrapper.find('.toast-text').element
+    const sel = vi.spyOn(window, 'getSelection').mockReturnValue({
+      isCollapsed: false,
+      anchorNode: textEl,
+    } as unknown as Selection)
+    await wrapper.find('.toast').trigger('click')
+    expect(onClick).not.toHaveBeenCalled()
+    expect(toast.dismiss).not.toHaveBeenCalled()
+    sel.mockRestore()
+  })
+
+  it('still dismisses when the selection is outside the toast', async () => {
+    // A selection left elsewhere on the page must not swallow the dismissal.
+    const toast = makeToast()
+    const wrapper = mountToast(toast)
+    const sel = vi.spyOn(window, 'getSelection').mockReturnValue({
+      isCollapsed: false,
+      anchorNode: document.body,
+    } as unknown as Selection)
+    await wrapper.find('.toast').trigger('click')
+    expect(toast.dismiss).toHaveBeenCalled()
+    sel.mockRestore()
+  })
+
   it('hides when not visible', () => {
-    const toast = makeToast({ visible: ref(false) })
-    const wrapper = mount(ToastNotification, {
-      props: { toast },
-      global: { stubs: { Teleport: { template: '<div><slot/></div>' } } },
-    })
-    expect(wrapper.find('.toast').exists()).toBe(false)
+    expect(mountToast(makeToast({ visible: ref(false) })).find('.toast').exists()).toBe(false)
+  })
+
+  // ── hover pause ──
+  it('pauses the countdown on mouseenter and resumes on mouseleave', async () => {
+    const toast = makeToast()
+    const wrapper = mountToast(toast)
+    await wrapper.find('.toast').trigger('mouseenter')
+    expect(toast.pause).toHaveBeenCalled()
+    await wrapper.find('.toast').trigger('mouseleave')
+    expect(toast.resume).toHaveBeenCalled()
   })
 
   // ── loading type ──
   it('renders a spinner instead of the icon for the loading type', () => {
-    const toast = makeToast({ type: ref('loading'), icon: ref('🔄'), message: ref('Forking session… 2s') })
-    const wrapper = mount(ToastNotification, {
-      props: { toast },
-      global: { stubs: { Teleport: { template: '<div><slot/></div>' } } },
-    })
+    const wrapper = mountToast(makeToast({ type: ref('loading'), icon: ref('sync'), message: ref('Forking session… 2s') }))
     expect(wrapper.find('.toast').classes()).toContain('toast-loading')
     expect(wrapper.find('.toast-spinner').exists()).toBe(true)
-    // The icon slot must not also render — a spinner AND an emoji reads as two
+    // The icon slot must not also render — a spinner AND a glyph reads as two
     // conflicting signals.
     expect(wrapper.find('.toast-icon').exists()).toBe(false)
     expect(wrapper.text()).toContain('Forking session… 2s')
   })
 
   it('still renders the icon for non-loading types', () => {
-    const toast = makeToast({ type: ref('info'), icon: ref('🔄') })
-    const wrapper = mount(ToastNotification, {
-      props: { toast },
-      global: { stubs: { Teleport: { template: '<div><slot/></div>' } } },
-    })
+    const wrapper = mountToast(makeToast({ type: ref('info'), icon: ref('sync') }))
     expect(wrapper.find('.toast-spinner').exists()).toBe(false)
     expect(wrapper.find('.toast-icon').exists()).toBe(true)
   })

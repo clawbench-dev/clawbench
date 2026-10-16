@@ -729,7 +729,7 @@ async function handleExportHtml() {
     // so it no longer depends on the live .markdown-body DOM being rendered.
     if (file.content == null) return
 
-    toast.show(t('file.header.exportingHtml'), { icon: '📄', type: 'info', duration: 0 })
+    toast.show(t('file.header.exportingHtml'), { icon: 'file', type: 'info', duration: 0 })
     try {
         const result = await exportMarkdownToHtml({
             content: file.content,
@@ -748,9 +748,9 @@ async function handleExportHtml() {
             const suffix = result.issues.length > MAX_DETAILS ? ` ...${t('file.header.exportHtmlMore', { n: result.issues.length - MAX_DETAILS })}` : ''
             msgs.push(`${t('file.header.exportHtmlSkippedImages', { n: result.issues.length })} ${detailText}${suffix}`)
         }
-        toast.show(msgs.join('. '), { icon: '✅', type: 'success', duration: 4000 })
+        toast.show(msgs.join('. '), { icon: 'success', type: 'success', duration: 4000 })
     } catch {
-        toast.show(t('file.header.exportHtmlFailed'), { icon: '❌', type: 'error', duration: 3000 })
+        toast.show(t('file.header.exportHtmlFailed'), { icon: 'error', type: 'error', duration: 3000 })
     }
 }
 

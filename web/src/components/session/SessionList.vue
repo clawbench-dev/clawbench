@@ -793,7 +793,7 @@ async function onDragEnd(evt) {
     await apiPut('/api/ai/sessions/reorder', { ids })
   } catch (err) {
     appLog.e('SessionList', 'Failed to persist session order:', err)
-    toast.show(t('session.reorderFailed'), { icon: '❌', type: 'error' })
+    toast.show(t('session.reorderFailed'), { icon: 'error', type: 'error' })
     // Roll back to the server's order rather than leaving the DOM diverged.
     loadSessions()
   }

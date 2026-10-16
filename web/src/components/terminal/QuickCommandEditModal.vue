@@ -113,7 +113,7 @@ async function saveCommand() {
     }
 
     if (ok) {
-      toast.show(t('terminal.commandSaved'), { type: 'success' })
+      toast.show(t('terminal.commandSaved'), { icon: 'save', type: 'success' })
       emit('saved')
     } else {
       formError.value = t('terminal.saveFailed')

@@ -214,7 +214,7 @@ async function onClear() {
   if (!await dialog.confirm(t('notifications.clearConfirm'), { dangerous: true })) return
   try {
     await clear()
-    toast.show(t('notifications.cleared'), { type: 'success' })
+    toast.show(t('notifications.cleared'), { icon: 'delete', type: 'success' })
   } catch {
     toast.show(t('common.operationFailed'), { type: 'error' })
   }

@@ -57,13 +57,13 @@ async function fillFromClipboard() {
   try {
     const clip = await readClipboardText()
     if (!clip) {
-      toast.show(t('terminal.clipboardEmpty'), { icon: '📋', type: 'info' })
+      toast.show(t('terminal.clipboardEmpty'), { icon: 'copy', type: 'info' })
       return
     }
     text.value = clip
     nextTick(() => textareaRef.value?.focus())
   } catch {
-    toast.show(t('terminal.clipboardReadFailed'), { icon: '❌', type: 'error' })
+    toast.show(t('terminal.clipboardReadFailed'), { icon: 'error', type: 'error' })
   }
 }
 

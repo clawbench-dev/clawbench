@@ -125,7 +125,7 @@ describe('handleBlockAttachClick', () => {
     expect(ret).toBe(true)
     expect(actions.add).toHaveBeenCalledWith('docs/guide.md', 10, 15)
     expect(actions.remove).not.toHaveBeenCalled()
-    expect(actions.toast).toHaveBeenCalledWith('Added to chat', { icon: '📎', type: 'success', duration: 1500 })
+    expect(actions.toast).toHaveBeenCalledWith('Added to chat', { icon: 'attach', type: 'success', duration: 1500 })
   })
 
   it('removes the exact range when already attached', () => {

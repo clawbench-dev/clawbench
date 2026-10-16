@@ -1,3 +1,4 @@
+import type { ToastIconKey } from '@/composables/useToast'
 /**
  * Touch "attach markdown source range to chat" for rendered Mermaid diagrams.
  *
@@ -34,7 +35,7 @@ export interface MermaidAttachActions {
   add: (path: string, startLine: number, endLine: number) => void
   remove: (path: string, startLine: number, endLine: number) => void
   has: (path: string, startLine: number, endLine: number) => boolean
-  toast: (msg: string, opts?: { icon?: string; type?: 'success' | 'error' | 'info'; duration?: number }) => void
+  toast: (msg: string, opts?: { icon?: ToastIconKey; type?: 'success' | 'error' | 'info'; duration?: number }) => void
   /** i18n message keys resolved by the caller. */
   messages: { added: string; removed: string }
 }
@@ -96,10 +97,10 @@ export function handleMermaidAttachClick(e: Event, actions: MermaidAttachActions
 
   if (actions.has(hit.path, hit.startLine, hit.endLine)) {
     actions.remove(hit.path, hit.startLine, hit.endLine)
-    actions.toast(actions.messages.removed, { icon: '📎', type: 'info', duration: 1500 })
+    actions.toast(actions.messages.removed, { icon: 'attach', type: 'info', duration: 1500 })
   } else {
     actions.add(hit.path, hit.startLine, hit.endLine)
-    actions.toast(actions.messages.added, { icon: '📎', type: 'success', duration: 1500 })
+    actions.toast(actions.messages.added, { icon: 'attach', type: 'success', duration: 1500 })
   }
 
   const rect = hit.container.getBoundingClientRect()

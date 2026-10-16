@@ -579,10 +579,10 @@ async function doCheckout(name: string) {
             dirtyCount.value = result.untrackedCount || store.state.gitWorkingTreeChangeCount || 0
             dirtyModalOpen.value = true
         } else if (result.error) {
-            toast?.show(t('appHeader.switchBranchFailed', { error: result.errorDetail || result.error }), { icon: '⚠️', type: 'error', duration: 3000 })
+            toast?.show(t('appHeader.switchBranchFailed', { error: result.errorDetail || result.error }), { icon: 'warning', type: 'error', duration: 3000 })
         }
     } catch {
-        toast?.show(t('appHeader.switchBranchFailed', { error: t('appHeader.switchBranchNetworkError') }), { icon: '⚠️', type: 'error', duration: 3000 })
+        toast?.show(t('appHeader.switchBranchFailed', { error: t('appHeader.switchBranchNetworkError') }), { icon: 'warning', type: 'error', duration: 3000 })
     }
 }
 
@@ -604,7 +604,7 @@ async function doDirtyCheckout(mode: 'stash' | 'force') {
         await store.loadGitBranch()
         await store.loadFiles(store.state.currentDir, false, 0, true)
     } catch {
-        toast?.show(t('appHeader.switchBranchFailed', { error: t('appHeader.switchBranchNetworkError') }), { icon: '⚠️', type: 'error', duration: 3000 })
+        toast?.show(t('appHeader.switchBranchFailed', { error: t('appHeader.switchBranchNetworkError') }), { icon: 'warning', type: 'error', duration: 3000 })
     }
 }
 
@@ -996,7 +996,7 @@ async function selectRecent(item: RecentItem) {
                 msgKey = parsed.msgKey || ''
             } catch {}
             if (msgKey === 'NotADirectory') {
-                toast?.show(t('appHeader.projectPathNotFound'), { icon: '⚠️', type: 'error', duration: 3000 })
+                toast?.show(t('appHeader.projectPathNotFound'), { icon: 'warning', type: 'error', duration: 3000 })
                 fetch('/api/recent-projects', {
                     method: 'DELETE',
                     headers: { 'Content-Type': 'application/json' },
@@ -1004,11 +1004,11 @@ async function selectRecent(item: RecentItem) {
                 }).catch(() => {})
                 dropRecentItem(item.path)
             } else {
-                toast?.show(t('appHeader.switchProjectFailed', { error: msg }), { icon: '⚠️', type: 'error', duration: 3000 })
+                toast?.show(t('appHeader.switchProjectFailed', { error: msg }), { icon: 'warning', type: 'error', duration: 3000 })
             }
         }
     } catch {
-        toast?.show(t('appHeader.switchProjectNetworkError'), { icon: '⚠️', type: 'error', duration: 3000 })
+        toast?.show(t('appHeader.switchProjectNetworkError'), { icon: 'warning', type: 'error', duration: 3000 })
     }
 }
 
@@ -1058,10 +1058,10 @@ async function removeRecent(item: RecentItem) {
         })
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
         dropRecentItem(item.path)
-        toast?.show(t('appHeader.projectRemoved'), { icon: '✅', type: 'success', duration: 2000 })
+        toast?.show(t('appHeader.projectRemoved'), { icon: 'success', type: 'success', duration: 2000 })
     } catch (error) {
         appLog.w('AppHeader', 'Failed to remove recent project', { path: item.path, error })
-        toast?.show(t('appHeader.removeProjectFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
+        toast?.show(t('appHeader.removeProjectFailed'), { icon: 'warning', type: 'error', duration: 3000 })
     }
 }
 

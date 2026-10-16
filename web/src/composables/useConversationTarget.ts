@@ -177,12 +177,12 @@ async function resolveTargetId(target: SessionTarget): Promise<string> {
 
   const maxCount = store.state.sessionMaxCount
   if (maxCount > 0 && store.state.sessionCount >= maxCount) {
-    useToast().show(gt('chat.session.sessionLimitReached'), { icon: '⚠️', type: 'error' })
+    useToast().show(gt('chat.session.sessionLimitReached'), { icon: 'warning', type: 'error' })
     return ''
   }
   const id = await identity.createSessionInBackground()
   if (!id) {
-    useToast().show(gt('chat.session.createFailed', { status: '' }), { icon: '⚠️', type: 'error' })
+    useToast().show(gt('chat.session.createFailed', { status: '' }), { icon: 'warning', type: 'error' })
     return ''
   }
   return id
@@ -232,7 +232,7 @@ export async function dispatchToTarget(target: SessionTarget, request: PendingRe
       // user had to have a session created for them.
       useToast().show(
         gt(isNew ? 'quoteBar.createdSession' : 'quoteBar.sentToSession'),
-        { icon: '✅', type: 'success', duration: 2000 },
+        { icon: 'success', type: 'success', duration: 2000 },
       )
     }
     return ok
@@ -246,7 +246,7 @@ export async function dispatchToTarget(target: SessionTarget, request: PendingRe
     // when the session opens.)
     for (const q of request.quotes) chatContext.addStagedQuote(q, q.note)
     for (const f of request.attachments) chatContext.addAttachedFile(f.path, f.isDir, f.startLine, f.endLine)
-    useToast().show(gt('quoteBar.addedToChat'), { icon: '📎', type: 'success', duration: 1500 })
+    useToast().show(gt('quoteBar.addedToChat'), { icon: 'attach', type: 'success', duration: 1500 })
     // Already on this session; "open" is a no-op, and there is nothing to
     // reveal that is not already in front of the user.
     return true
@@ -262,7 +262,7 @@ export async function dispatchToTarget(target: SessionTarget, request: PendingRe
     openTargetSession(sessionId)
     useToast().show(
       gt(isNew ? 'quoteBar.openAndCreated' : 'quoteBar.addedToChat'),
-      { icon: '📎', type: 'success', duration: 2000 },
+      { icon: 'attach', type: 'success', duration: 2000 },
     )
     return true
   }
@@ -272,7 +272,7 @@ export async function dispatchToTarget(target: SessionTarget, request: PendingRe
   // it must NOT claim the session was opened.
   useToast().show(
     gt(isNew ? 'quoteBar.createdSession' : 'quoteBar.addedToSessionDraft'),
-    { icon: '📎', type: 'success', duration: 2000 },
+    { icon: 'attach', type: 'success', duration: 2000 },
   )
   return true
 }

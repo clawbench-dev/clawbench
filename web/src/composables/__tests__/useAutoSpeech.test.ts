@@ -507,7 +507,7 @@ describe('useAutoSpeech.toggle — toast notifications', () => {
     enabled.value = true
     toggle()
     expect(enabled.value).toBe(false)
-    expect(toastShowMock).toHaveBeenCalledWith('autoSpeech.disabled', expect.objectContaining({ icon: '🔇' }))
+    expect(toastShowMock).toHaveBeenCalledWith('autoSpeech.disabled', expect.objectContaining({ icon: 'mute' }))
   })
 
   it('shows enabled toast when toggling on', () => {
@@ -516,7 +516,7 @@ describe('useAutoSpeech.toggle — toast notifications', () => {
     enabled.value = false
     toggle()
     expect(enabled.value).toBe(true)
-    expect(toastShowMock).toHaveBeenCalledWith('autoSpeech.enabled', expect.objectContaining({ icon: '🔊' }))
+    expect(toastShowMock).toHaveBeenCalledWith('autoSpeech.enabled', expect.objectContaining({ icon: 'sound' }))
   })
 })
 
@@ -529,12 +529,12 @@ describe('useAutoSpeech — autospeech-change event toast', () => {
 
   it('shows enabled toast when event detail is true', () => {
     window.dispatchEvent(new CustomEvent('clawbench-autospeech-change', { detail: true }))
-    expect(toastShowMock).toHaveBeenCalledWith('autoSpeech.enabled', expect.objectContaining({ icon: '🔊' }))
+    expect(toastShowMock).toHaveBeenCalledWith('autoSpeech.enabled', expect.objectContaining({ icon: 'sound' }))
   })
 
   it('shows disabled toast when event detail is false', () => {
     window.dispatchEvent(new CustomEvent('clawbench-autospeech-change', { detail: false }))
-    expect(toastShowMock).toHaveBeenCalledWith('autoSpeech.disabled', expect.objectContaining({ icon: '🔇' }))
+    expect(toastShowMock).toHaveBeenCalledWith('autoSpeech.disabled', expect.objectContaining({ icon: 'mute' }))
   })
 })
 

@@ -526,7 +526,7 @@ async function handleQuickAdd(port, protocol, processName) {
   try {
     await registerPort(port, processName || t('proxy.autoDetect'), protocol || 'http')
   } catch (e) {
-    toast.show(e?.message || t('proxy.addPort') + ' failed', { type: 'error', icon: '❌' })
+    toast.show(e?.message || t('proxy.addPort') + ' failed', { type: 'error', icon: 'error' })
   }
 }
 
@@ -541,7 +541,7 @@ async function handleToggleEnabled(localPort, enabled) {
   try {
     await setPortEnabled(localPort, enabled)
   } catch (e) {
-    toast.show(e?.message || t('proxy.addPort') + ' failed', { type: 'error', icon: '❌' })
+    toast.show(e?.message || t('proxy.addPort') + ' failed', { type: 'error', icon: 'error' })
   } finally {
     togglingPorts.value.delete(localPort)
     togglingPorts.value = new Set(togglingPorts.value)
@@ -566,17 +566,17 @@ async function handleRetryTunnel() {
   try {
     await checkTunnelHealth()
   } catch {
-    toast.show(t('proxy.toast.checkFailed'), { icon: '🚫', type: 'error' })
+    toast.show(t('proxy.toast.checkFailed'), { icon: 'blocked', type: 'error' })
     return
   }
   if (tunnelStatus.value === 'ok') {
-    toast.show(t('proxy.toast.tunnelRecovered', { transport: transportSuffix.value }), { icon: '🔗', type: 'success' })
+    toast.show(t('proxy.toast.tunnelRecovered', { transport: transportSuffix.value }), { icon: 'link', type: 'success' })
   } else if (tunnelStatus.value === 'degraded' && prevStatus === 'disconnected') {
-    toast.show(t('proxy.toast.tunnelConnectedNoResponse', { transport: transportSuffix.value }), { icon: 'ℹ️', type: 'info' })
+    toast.show(t('proxy.toast.tunnelConnectedNoResponse', { transport: transportSuffix.value }), { icon: 'info', type: 'info' })
   } else if (tunnelStatus.value === 'disconnected') {
-    toast.show(t('proxy.toast.tunnelStillDisconnected', { transport: transportSuffix.value }), { icon: '🚫', type: 'error' })
+    toast.show(t('proxy.toast.tunnelStillDisconnected', { transport: transportSuffix.value }), { icon: 'blocked', type: 'error' })
   } else if (tunnelStatus.value === 'degraded') {
-    toast.show(t('proxy.toast.portsStillNoResponse'), { icon: '🚫', type: 'error' })
+    toast.show(t('proxy.toast.portsStillNoResponse'), { icon: 'blocked', type: 'error' })
   }
 }
 </script>

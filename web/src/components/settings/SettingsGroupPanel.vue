@@ -913,7 +913,7 @@ async function onSave() {
       if (switchingTransport) {
         // The preference may or may not have been stored; either way the tunnel
         // is not on it, so say so instead of the plain "saved" toast.
-        toast.show(t('settings.panel.transportApplyFailed'), { icon: '⚠️', type: 'error', duration: 5000 })
+        toast.show(t('settings.panel.transportApplyFailed'), { icon: 'warning', type: 'error', duration: 5000 })
       }
       return
     }
@@ -921,7 +921,7 @@ async function onSave() {
     if (switchingTransport) saving.value = false
   }
 
-  toast.show(t('settings.panel.saved'), { icon: '✅', type: 'success', duration: 3000 })
+  toast.show(t('settings.panel.saved'), { icon: 'success', type: 'success', duration: 3000 })
 }
 
 // ── Custom field actions (RAG progress) ──
@@ -1003,26 +1003,26 @@ async function handleRagRebuild(kind: RebuildKind) {
     if (status === null) {
       // Polling gave up (unmounted or runaway). Not a server failure: the
       // rebuild is still running server-side.
-      toast.show(t('settings.items.ragRebuildStillRunning'), { icon: '⏳', type: 'info', duration: 5000 })
+      toast.show(t('settings.items.ragRebuildStillRunning'), { icon: 'pending', type: 'info', duration: 5000 })
       return
     }
     if (status.status === 'done') {
-      toast.show(t(RAG_REBUILD_SUCCESS[kind]), { icon: '✅', type: 'success', duration: 5000 })
+      toast.show(t(RAG_REBUILD_SUCCESS[kind]), { icon: 'success', type: 'success', duration: 5000 })
     } else if (status.status === 'blocked') {
       // The work cannot finish (e.g. embedding service down during a vector
       // rebuild). Distinct from an error: nothing is broken, it just needs the
       // dependency back.
       toast.show(
         t('settings.items.ragRebuildBlocked', { reason: status.error || '' }),
-        { icon: '⏸️', type: 'info', duration: 8000 },
+        { icon: 'pause', type: 'info', duration: 8000 },
       )
     } else if (status.status === 'error') {
       toast.show(
         status.error || t('settings.items.ragRebuildFailed'),
-        { icon: '⚠️', type: 'error', duration: 5000 },
+        { icon: 'warning', type: 'error', duration: 5000 },
       )
     } else if (status.status === 'cancelled') {
-      toast.show(t('settings.items.ragRebuildCancelled'), { icon: '⏹️', type: 'info', duration: 3000 })
+      toast.show(t('settings.items.ragRebuildCancelled'), { icon: 'stop', type: 'info', duration: 3000 })
     }
     refreshRagStatus()
   } catch (err) {
@@ -1034,7 +1034,7 @@ async function handleRagRebuild(kind: RebuildKind) {
       : ''
     toast.show(
       serverMsg || t('settings.items.ragRebuildFailed'),
-      { icon: '⚠️', type: 'error', duration: 5000 },
+      { icon: 'warning', type: 'error', duration: 5000 },
     )
   } finally {
     ragRebuildKind.value = null

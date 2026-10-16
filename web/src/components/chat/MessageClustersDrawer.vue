@@ -187,7 +187,7 @@ async function handleStartCompute() {
   try {
     const result = await rawStartCompute()
     if (result === 'already_running') {
-      toast.show(t('chat.messageClusters.computing'), { type: 'info' })
+      toast.show(t('chat.messageClusters.computing'), { icon: 'pending', type: 'info' })
     } else if (result === 'error') {
       toast.show(t('chat.messageClusters.error'), { type: 'error' })
     }

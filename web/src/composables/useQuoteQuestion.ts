@@ -745,7 +745,7 @@ export function useQuoteQuestion() {
     lastSelectionQuote.value = null
     if (!needsPicker) {
       addStagedQuote(quote, note)
-      toast.show(gt('quoteBar.addedToChat'), { icon: '📎', type: 'success', duration: 1500 })
+      toast.show(gt('quoteBar.addedToChat'), { icon: 'attach', type: 'success', duration: 1500 })
     }
   }
 
@@ -796,7 +796,7 @@ export function useQuoteQuestion() {
       // before its first await, so the cards ride along; clear after.
       clearAll()
       await sendPromise
-      toast.show(gt('quoteBar.sentToSession'), { icon: '✅', type: 'success', duration: 2000 })
+      toast.show(gt('quoteBar.sentToSession'), { icon: 'success', type: 'success', duration: 2000 })
       if (animFrom && animTo) {
         window.dispatchEvent(new CustomEvent('quote-sent', {
           detail: {
@@ -806,7 +806,7 @@ export function useQuoteQuestion() {
         }))
       }
     } catch (err: unknown) {
-      toast.show(gt('quoteBar.sendFailed', { error: (err as Error).message }), { icon: '⚠️', type: 'error' })
+      toast.show(gt('quoteBar.sendFailed', { error: (err as Error).message }), { icon: 'warning', type: 'error' })
     }
   }
 
@@ -859,7 +859,7 @@ export function useQuoteQuestion() {
       // request runs.
       clearAll()
       await sendPromise
-      toast.show(gt('quoteBar.sentToSession'), { icon: '✅', type: 'success', duration: 2000 })
+      toast.show(gt('quoteBar.sentToSession'), { icon: 'success', type: 'success', duration: 2000 })
       // Dispatch animation event with pre-captured coordinates
       if (animFrom && animTo) {
         window.dispatchEvent(new CustomEvent('quote-sent', {
@@ -870,7 +870,7 @@ export function useQuoteQuestion() {
         }))
       }
     } catch (err: unknown) {
-      toast.show(gt('quoteBar.sendFailed', { error: (err as Error).message }), { icon: '⚠️', type: 'error' })
+      toast.show(gt('quoteBar.sendFailed', { error: (err as Error).message }), { icon: 'warning', type: 'error' })
     }
   }
 

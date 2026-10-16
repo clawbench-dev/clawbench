@@ -800,7 +800,7 @@ async function hotSwitchProject(newProjectPath: string, pendingSessionId?: strin
     switchingProject.value = false
     const msgKey = (err as Error & { msgKey?: string })?.msgKey
     if (msgKey === 'NotADirectory') {
-      toast.show(t('appHeader.projectPathNotFound'), { icon: '⚠️', type: 'error', duration: 3000 })
+      toast.show(t('appHeader.projectPathNotFound'), { icon: 'warning', type: 'error', duration: 3000 })
       fetch('/api/recent-projects', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
@@ -810,9 +810,9 @@ async function hotSwitchProject(newProjectPath: string, pendingSessionId?: strin
       // The project path exists in the session DB but is no longer under the
       // configured root paths — e.g. a cross-project session row pointing at a
       // project the admin has since removed from the roots.
-      toast.show(t('appHeader.projectPathNotAllowed'), { icon: '⚠️', type: 'error', duration: 3000 })
+      toast.show(t('appHeader.projectPathNotAllowed'), { icon: 'warning', type: 'error', duration: 3000 })
     } else {
-      toast.show(t('appHeader.switchProjectFailed', { error: (err as Error).message }), { icon: '⚠️', type: 'error', duration: 3000 })
+      toast.show(t('appHeader.switchProjectFailed', { error: (err as Error).message }), { icon: 'warning', type: 'error', duration: 3000 })
     }
     return
   }
@@ -1910,7 +1910,7 @@ const disposeAndroidBackPress = useAndroidBackPress({
     canHandle: (reason) => canHandleBack(reason),
     navigate: (reason) => navigateBack(reason),
     requestExitConfirm,
-    showExitHint: () => toast.show(t('toast.swipeAgainToExit'), { icon: '👋', type: 'info', duration: 2000 }),
+    showExitHint: () => toast.show(t('toast.swipeAgainToExit'), { icon: 'hand', type: 'info', duration: 2000 }),
 })
 // F5 reloads the page unless the terminal (forwards F5 to the TUI) or the file
 // manager (refreshes its listing) already claimed the key. See the composable
@@ -2173,9 +2173,9 @@ async function handleRenameSession() {
   if (newTitle === null || newTitle.trim() === '' || newTitle === current) return
   const ok = await sessionIdentity.renameSession(newTitle.trim())
   if (ok) {
-    toast.show(gt('chat.sessionRename.success'), { icon: '✅', type: 'success', duration: 2000 })
+    toast.show(gt('chat.sessionRename.success'), { icon: 'success', type: 'success', duration: 2000 })
   } else {
-    toast.show(gt('chat.sessionRename.failed'), { icon: '⚠️', type: 'error', duration: 3000 })
+    toast.show(gt('chat.sessionRename.failed'), { icon: 'warning', type: 'error', duration: 3000 })
   }
 }
 
@@ -2196,16 +2196,16 @@ async function handleResumeFromSearch(session: SessionSearchResult) {
     if (!resp.ok) {
       const data = await resp.json().catch(() => ({}))
       if (resp.status === 403) {
-        toast.show(gt('sessionSearch.resumeProjectMismatch'), { icon: '⚠️', type: 'error' })
+        toast.show(gt('sessionSearch.resumeProjectMismatch'), { icon: 'warning', type: 'error' })
       } else {
-        toast.show(data.error || gt('sessionSearch.resumeFailed'), { icon: '⚠️', type: 'error' })
+        toast.show(data.error || gt('sessionSearch.resumeFailed'), { icon: 'warning', type: 'error' })
       }
       return
     }
     sessionSearchDrawer.close()
     handleSessionSelect(session.session_id, session.backend)
   } catch {
-    toast.show(gt('sessionSearch.resumeFailed'), { icon: '⚠️', type: 'error' })
+    toast.show(gt('sessionSearch.resumeFailed'), { icon: 'warning', type: 'error' })
   }
 }
 
@@ -2312,7 +2312,7 @@ async function initializeApp() {
   //    loadProject sets clawbench_project cookie (needed by loadHistory).
   //    initSessionFromAPI sets session identity (needed by ChatPanelContent).
   try { await store.loadProject() } catch {
-      toast.show(t('toast.projectLoadFailed'), { icon: '⚠️', type: 'error', duration: 0, onClick: () => location.reload() }); return false
+      toast.show(t('toast.projectLoadFailed'), { icon: 'warning', type: 'error', duration: 0, onClick: () => location.reload() }); return false
   }
   await sessionIdentity.initSessionFromAPI()
 
@@ -2357,7 +2357,7 @@ async function initializeApp() {
 /** Report a fatal startup error to the user and to the client log relay. */
 function reportStartupFailure(context: string, err: unknown) {
   appLog.e(TAG, `[${context}] app initialization failed:`, err)
-  toast.show(t('toast.initFailed'), { icon: '⚠️', type: 'error', duration: 0, onClick: () => location.reload() })
+  toast.show(t('toast.initFailed'), { icon: 'warning', type: 'error', duration: 0, onClick: () => location.reload() })
 }
 
 async function handleLoginSuccess() {
@@ -2689,9 +2689,9 @@ async function handleSetAsBackground(path: string) {
         // round-trip needed (the gallery list itself is refreshed by the
         // settings panel when it opens).
         await setWallpaperFromPath(path, setSetting)
-        toast.show(t('settings.items.wallpaperSetOk'), { icon: '🖼️', type: 'success', duration: 2500 })
+        toast.show(t('settings.items.wallpaperSetOk'), { icon: 'image', type: 'success', duration: 2500 })
     } catch {
-        toast.show(t('settings.items.wallpaperUploadFailed'), { icon: '⚠️', type: 'error', duration: 4000 })
+        toast.show(t('settings.items.wallpaperUploadFailed'), { icon: 'warning', type: 'error', duration: 4000 })
     }
 }
 
@@ -3058,11 +3058,11 @@ function onChatColDrop(e: DragEvent) {
     const targets = attachDragTargets(data)
     const added = targets.filter(t => addAttachedFile(t.path, t.isDir, t.startLine, t.endLine)).length
     if (added === 0) {
-      toast.show(t('chat.attach.alreadyAttached'), { icon: '📎', type: 'info', duration: 1500 })
+      toast.show(t('chat.attach.alreadyAttached'), { icon: 'attach', type: 'info', duration: 1500 })
     } else if (targets.length > 1) {
-      toast.show(t('chat.attach.addedToChatN', { n: added }), { icon: '📎', type: 'success', duration: 1500 })
+      toast.show(t('chat.attach.addedToChatN', { n: added }), { icon: 'attach', type: 'success', duration: 1500 })
     } else {
-      toast.show(t('chat.attach.addedToChat'), { icon: '📎', type: 'success', duration: 1500 })
+      toast.show(t('chat.attach.addedToChat'), { icon: 'attach', type: 'success', duration: 1500 })
     }
     return
   }
@@ -3075,7 +3075,7 @@ function onChatColDrop(e: DragEvent) {
     e.preventDefault()
     addStagedQuote(quote)
     switchTab('chat')
-    toast.show(t('chat.attach.quotedToChat', { label: quote.filePath }), { icon: '💬', type: 'success', duration: 1800 })
+    toast.show(t('chat.attach.quotedToChat', { label: quote.filePath }), { icon: 'chat', type: 'success', duration: 1800 })
     return
   }
   // OS file drop → upload & auto-attach each file.
@@ -3570,9 +3570,9 @@ onMounted(async () => {
     } catch {
         isAuthenticated.value = false
         if (isAppMode.value) {
-            toast.show(t('toast.serverUnreachableApp'), { icon: '⚠️', type: 'error', duration: 5000 })
+            toast.show(t('toast.serverUnreachableApp'), { icon: 'warning', type: 'error', duration: 5000 })
         } else {
-            toast.show(t('toast.serverUnreachableWeb'), { icon: '⚠️', type: 'error', duration: 0, onClick: () => location.reload() })
+            toast.show(t('toast.serverUnreachableWeb'), { icon: 'warning', type: 'error', duration: 0, onClick: () => location.reload() })
         }
         // Login view stays mounted — drop the native splash so it can't cover it.
         dismissSplash()
@@ -3598,9 +3598,9 @@ onMounted(async () => {
                 } else {
                     isAuthenticated.value = false
                     if (outcome === 'auth-failed') {
-                        toast.show(t('toast.authFailed'), { icon: '⚠️', type: 'error', duration: 5000 })
+                        toast.show(t('toast.authFailed'), { icon: 'warning', type: 'error', duration: 5000 })
                     } else if (outcome === 'network-error') {
-                        toast.show(t('toast.serverUnreachableApp'), { icon: '⚠️', type: 'error', duration: 5000 })
+                        toast.show(t('toast.serverUnreachableApp'), { icon: 'warning', type: 'error', duration: 5000 })
                     }
                     // 'no-password' needs no toast: the login page IS the
                     // expected destination, not a failure.
@@ -3615,9 +3615,9 @@ onMounted(async () => {
         } else {
             isAuthenticated.value = false
             if (isAppMode.value) {
-                toast.show(t('toast.serverError'), { icon: '⚠️', type: 'error', duration: 5000 })
+                toast.show(t('toast.serverError'), { icon: 'warning', type: 'error', duration: 5000 })
             } else {
-                toast.show(t('toast.serverError'), { icon: '⚠️', type: 'error', duration: 0, onClick: () => location.reload() })
+                toast.show(t('toast.serverError'), { icon: 'warning', type: 'error', duration: 0, onClick: () => location.reload() })
             }
             dismissSplash()
             return

@@ -231,7 +231,7 @@ async function refreshCustomFonts() {
   if (result.ok) {
     customFontTick.value++
   } else {
-    toast.show(t('settings.items.fontDirScanError'), { icon: '⚠️', type: 'error', duration: 4000 })
+    toast.show(t('settings.items.fontDirScanError'), { icon: 'warning', type: 'error', duration: 4000 })
   }
 }
 watch(() => props.categoryId, (id) => {
@@ -525,7 +525,7 @@ async function handleUpdate(item: ItemSpec, value: unknown) {
       emit('restartNeeded', result.changedColdFields)
     }
   } catch {
-    toast.show(t('settings.saveFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
+    toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 })
   }
 }
 
@@ -569,7 +569,7 @@ function handleClick(item: ItemSpec) {
     // Computes the factor once from the current screen and stores it, so the
     // scale becomes a stable value the slider below can then tweak.
     const factor = autoFitUIScale()
-    toast.show(t('settings.items.uiScaleAutoFitDone', { pct: Math.round(factor * 100) }), { icon: '✅', type: 'success', duration: 2500 })
+    toast.show(t('settings.items.uiScaleAutoFitDone', { pct: Math.round(factor * 100) }), { icon: 'success', type: 'success', duration: 2500 })
   }
 }
 
@@ -593,7 +593,7 @@ async function handleRestartServer() {
 
 function handlePasswordChanged(needsRestart: boolean) {
   showPasswordDialog.value = false
-  toast.show(t('settings.passwordChanged'), { icon: '✅', type: 'success', duration: 3000 })
+  toast.show(t('settings.passwordChanged'), { icon: 'success', type: 'success', duration: 3000 })
   if (needsRestart) {
     emit('restartNeeded', ['password'])
   }
@@ -608,7 +608,7 @@ function handleEditToggle(key: string, open: boolean) {
 }
 
 function handleDiscard() {
-  toast.show(t('settings.passwordDiscarded'), { icon: 'ℹ️', type: 'info', duration: 3000 })
+  toast.show(t('settings.passwordDiscarded'), { icon: 'info', type: 'info', duration: 3000 })
 }
 </script>
 

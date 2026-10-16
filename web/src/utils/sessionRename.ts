@@ -29,7 +29,7 @@ export function buildRenameGenerateOptions(sessionId: string) {
     onGenerate: async () => {
       const title = await generateSessionTitle(sessionId)
       if (!title) {
-        toast.show(gt('chat.sessionRename.generateFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
+        toast.show(gt('chat.sessionRename.generateFailed'), { icon: 'warning', type: 'error', duration: 3000 })
         return null
       }
       return title

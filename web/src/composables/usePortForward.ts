@@ -277,7 +277,7 @@ export function usePortForward() {
             connectingPorts.value.add(localPort)
             connectingPorts.value = new Set(connectingPorts.value)
             const toast = useToast()
-            toast.show(gt('portForward.portRebound', { requested, port: localPort }), { icon: '🔀', type: 'info' })
+            toast.show(gt('portForward.portRebound', { requested, port: localPort }), { icon: 'shuffle', type: 'info' })
           } else {
             // The server refused the new key; release the orphaned listener.
             removeNativeForward(localPort)
@@ -310,7 +310,7 @@ export function usePortForward() {
             connectingPorts.value = new Set(connectingPorts.value)
           }
           const toast = useToast()
-          toast.show(gt('portForward.portRebound', { requested, port: actual }), { icon: '🔀', type: 'info' })
+          toast.show(gt('portForward.portRebound', { requested, port: actual }), { icon: 'shuffle', type: 'info' })
         } else {
           // The server refused the new key (another mapping took the port, or
           // the row was deleted): release the orphaned listener so it is not
@@ -544,10 +544,10 @@ export function usePortForward() {
     }
     const toast = useToast()
     if (reason === 'conflict') {
-      toast.show(gt('portForward.portConflict'), { icon: '🚫', type: 'error' })
+      toast.show(gt('portForward.portConflict'), { icon: 'blocked', type: 'error' })
       return
     }
-    toast.show(gt('portForward.portUnreachable'), { icon: '🚫', type: 'error' })
+    toast.show(gt('portForward.portUnreachable'), { icon: 'blocked', type: 'error' })
   }
 
   async function registerPort(port: number, name?: string, protocol?: string, host?: string, direction?: PortDirection): Promise<number> {
@@ -1128,12 +1128,12 @@ export function usePortForward() {
       const reconnected = await nativeReconnectTunnel()
       const toast = useToast()
       if (reconnected && (await native.testPortReachable(localPort))) {
-        toast.show(gt('portForward.tunnelReconnected', { transport: transportAnnotation() }), { icon: '🔗', type: 'success' })
+        toast.show(gt('portForward.tunnelReconnected', { transport: transportAnnotation() }), { icon: 'link', type: 'success' })
         doOpen(native, localPort, protocol, hostArg, path)
         return
       }
 
-      toast.show(gt('portForward.portUnreachable'), { icon: '🚫', type: 'error' })
+      toast.show(gt('portForward.portUnreachable'), { icon: 'blocked', type: 'error' })
       return
     }
 
@@ -1157,7 +1157,7 @@ export function usePortForward() {
       // Step 1: Test if the port is already reachable
       const reachable = await native.testPortReachable(localPort)
       if (reachable) {
-        toast.show(gt('portForward.tunnelReconnected', { transport: transportAnnotation() }), { icon: '🔗', type: 'success' })
+        toast.show(gt('portForward.tunnelReconnected', { transport: transportAnnotation() }), { icon: 'link', type: 'success' })
         await loadPorts(true)
         return
       }
@@ -1168,12 +1168,12 @@ export function usePortForward() {
       if (reconnected) {
         const reachableAfter = await native.testPortReachable(localPort)
         if (reachableAfter) {
-          toast.show(gt('portForward.tunnelReconnected', { transport: transportAnnotation() }), { icon: '🔗', type: 'success' })
+          toast.show(gt('portForward.tunnelReconnected', { transport: transportAnnotation() }), { icon: 'link', type: 'success' })
         } else {
-          toast.show(gt('portForward.portUnreachable'), { icon: '🚫', type: 'error' })
+          toast.show(gt('portForward.portUnreachable'), { icon: 'blocked', type: 'error' })
         }
       } else {
-        toast.show(gt('portForward.portUnreachable'), { icon: '🚫', type: 'error' })
+        toast.show(gt('portForward.portUnreachable'), { icon: 'blocked', type: 'error' })
       }
     }
 

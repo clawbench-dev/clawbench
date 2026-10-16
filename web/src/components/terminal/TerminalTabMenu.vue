@@ -50,7 +50,7 @@ function handleCopyPath() {
   // clipboard write goes through the shared helper for the insecure-context
   // fallback the previous direct call lacked.
   copyText(props.cwd, () => {
-    toast.show(t('common.copied'), { icon: '📋', type: 'success', duration: 1500 })
+    toast.show(t('common.copied'), { icon: 'copy', type: 'success', duration: 1500 })
   })
   emit('copyPath')
 }

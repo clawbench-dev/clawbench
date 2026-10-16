@@ -197,7 +197,7 @@ async function loadBrowse() {
         browseItems.value = (data.items || []).filter(i => i.type === 'dir')
     } catch {
         browseItems.value = []
-        if (toast) toast.show(t('projectDialog.loadFailed'), { icon: '⚠️', type: 'error', duration: 5000 })
+        if (toast) toast.show(t('projectDialog.loadFailed'), { icon: 'warning', type: 'error', duration: 5000 })
     } finally {
         loading.value = false
     }

@@ -76,7 +76,7 @@ async function onDragEnd() {
   try {
     await reorderAgents(ids)
   } catch {
-    toast.show(t('settings.items.agentReorderFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
+    toast.show(t('settings.items.agentReorderFailed'), { icon: 'warning', type: 'error', duration: 3000 })
     localAgents.value = [...agentList.value]
   }
 }
@@ -85,9 +85,9 @@ async function handleRescan() {
   rescanning.value = true
   try {
     await rescanAgents()
-    toast.show(t('settings.items.agentRescanSuccess'), { icon: '✅', type: 'success', duration: 3000 })
+    toast.show(t('settings.items.agentRescanSuccess'), { icon: 'success', type: 'success', duration: 3000 })
   } catch {
-    toast.show(t('settings.items.agentRescanFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
+    toast.show(t('settings.items.agentRescanFailed'), { icon: 'warning', type: 'error', duration: 3000 })
   } finally {
     rescanning.value = false
   }

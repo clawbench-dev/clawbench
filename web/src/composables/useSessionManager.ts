@@ -145,7 +145,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
       // entry stays in the queue until its own turn drains. Joining the running
       // turn is a separate, explicit action on that entry (handlePendingAction).
     } catch {
-      toast.show(gt('session.queueFailed'), { icon: '⚠️', type: 'error' })
+      toast.show(gt('session.queueFailed'), { icon: 'warning', type: 'error' })
       // On enqueue failure, remove the optimistic queue entry we just added.
       if (queueId) {
         removeQueued(sessionId, queueId)
@@ -171,7 +171,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
       )
       removeQueued(sessionId, queueId)
     } catch {
-      toast.show(gt('session.removeFailed'), { icon: '⚠️', type: 'error' })
+      toast.show(gt('session.removeFailed'), { icon: 'warning', type: 'error' })
     }
   }
 
@@ -220,7 +220,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
           data?.msgKey === 'QueueInjectStranded'
             ? gt('chat.pending.insertStranded')
             : gt('chat.pending.actionFailed'),
-          { icon: '⚠️', type: 'error' },
+          { icon: 'warning', type: 'error' },
         )
         return false
       }
@@ -231,11 +231,11 @@ export function useSessionManager(options: UseSessionManagerOptions) {
       // something different from "the backend cannot join the turn".
       if (!resp.ok) {
         if (mode === 'insert') {
-          toast.show(gt('chat.pending.insertFailed'), { icon: '⚠️', type: 'info' })
+          toast.show(gt('chat.pending.insertFailed'), { icon: 'warning', type: 'info' })
         } else if (data?.reason === 'not_queued') {
-          toast.show(gt('chat.pending.interruptNotQueued'), { icon: '⚠️', type: 'info' })
+          toast.show(gt('chat.pending.interruptNotQueued'), { icon: 'warning', type: 'info' })
         } else {
-          toast.show(gt('chat.pending.actionFailed'), { icon: '⚠️', type: 'error' })
+          toast.show(gt('chat.pending.actionFailed'), { icon: 'warning', type: 'error' })
         }
         return false
       }
@@ -250,7 +250,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
         }
         // A 200 without `inserted` is not a documented response, but treat it
         // like the 409 decline: the message stays queued and runs on its own.
-        toast.show(gt('chat.pending.insertFailed'), { icon: '⚠️', type: 'info' })
+        toast.show(gt('chat.pending.insertFailed'), { icon: 'warning', type: 'info' })
         return false
       }
 
@@ -261,14 +261,14 @@ export function useSessionManager(options: UseSessionManagerOptions) {
         // The bubble's turn already ran (or it was cancelled): stopping the
         // current reply would achieve nothing, so the backend refused. Say so
         // rather than leaving the click with no feedback.
-        toast.show(gt('chat.pending.interruptNotQueued'), { icon: '⚠️', type: 'info' })
+        toast.show(gt('chat.pending.interruptNotQueued'), { icon: 'warning', type: 'info' })
         return false
       }
       // Nothing to interrupt (turn already ended) — the drain loop will run the
       // queue anyway, so this is not a failure worth alarming about.
       return false
     } catch {
-      toast.show(gt('chat.pending.actionFailed'), { icon: '⚠️', type: 'error' })
+      toast.show(gt('chat.pending.actionFailed'), { icon: 'warning', type: 'error' })
       return false
     }
   }
@@ -299,7 +299,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
         files?: FileEntry[]
       } | null
       if (!resp.ok || !data?.queueId) {
-        toast.show(gt('chat.pending.mergeFailed'), { icon: '⚠️', type: 'error' })
+        toast.show(gt('chat.pending.mergeFailed'), { icon: 'warning', type: 'error' })
         return ''
       }
       // The backend row is authoritative; mirror it locally so the panel shows
@@ -309,7 +309,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
       addQueued(sessionId, { queueId: data.queueId, text: data.text || '', files: data.files || [] })
       return data.queueId
     } catch {
-      toast.show(gt('chat.pending.mergeFailed'), { icon: '⚠️', type: 'error' })
+      toast.show(gt('chat.pending.mergeFailed'), { icon: 'warning', type: 'error' })
       return ''
     }
   }

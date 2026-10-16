@@ -76,10 +76,10 @@ export function handleBlockAttachClick(e: Event, actions: RangedAttachActions): 
 
   if (actions.has(hit.path, hit.startLine, hit.endLine)) {
     actions.remove(hit.path, hit.startLine, hit.endLine)
-    actions.toast(actions.messages.removed, { icon: '📎', type: 'info', duration: 1500 })
+    actions.toast(actions.messages.removed, { icon: 'attach', type: 'info', duration: 1500 })
   } else {
     actions.add(hit.path, hit.startLine, hit.endLine)
-    actions.toast(actions.messages.added, { icon: '📎', type: 'success', duration: 1500 })
+    actions.toast(actions.messages.added, { icon: 'attach', type: 'success', duration: 1500 })
   }
 
   const rect = hit.el.getBoundingClientRect()

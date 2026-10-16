@@ -3722,7 +3722,7 @@ describe('createSession', () => {
     expect(messages.value).toEqual([])
     expect(mockToastFn).toHaveBeenCalledWith(
       expect.any(String),
-      expect.objectContaining({ type: 'success', icon: '✨' })
+      expect.objectContaining({ type: 'success', icon: 'create' })
     )
   })
 
@@ -4295,7 +4295,7 @@ describe('createSession', () => {
     // sessionLimitReached toast should be shown
     expect(mockToastFn).toHaveBeenCalledWith(
       expect.any(String),
-      expect.objectContaining({ type: 'error', icon: '⚠️' })
+      expect.objectContaining({ type: 'error', icon: 'warning' })
     )
   })
 
@@ -4588,7 +4588,7 @@ describe('archiveSession', () => {
     // Success toast shown
     expect(mockToastFn).toHaveBeenCalledWith(
       expect.any(String),
-      expect.objectContaining({ icon: '📦', type: 'success' })
+      expect.objectContaining({ icon: 'archive', type: 'success' })
     )
   })
 
@@ -4687,7 +4687,7 @@ describe('archiveSession', () => {
     // Success toast shown
     expect(mockToastFn).toHaveBeenCalledWith(
       expect.any(String),
-      expect.objectContaining({ icon: '📦', type: 'success' })
+      expect.objectContaining({ icon: 'archive', type: 'success' })
     )
     // Two fetch calls: 1) delete API 2) loadSessionsOnce (refresh global state)
     expect(globalThis.fetch).toHaveBeenCalledTimes(2)
@@ -4705,7 +4705,7 @@ describe('archiveSession', () => {
     // Error toast shown when data.ok is false
     expect(mockToastFn).toHaveBeenCalledWith(
       expect.any(String),
-      expect.objectContaining({ icon: '⚠️', type: 'error' })
+      expect.objectContaining({ icon: 'warning', type: 'error' })
     )
   })
 })

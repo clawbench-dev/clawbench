@@ -727,9 +727,9 @@ async function handleInternalMoveDrop(e) {
     const allOk = await transferEntries(entries, targetDir, true)
     emit('refresh')
     if (allOk) {
-        if (toast) toast.show(t('file.toast.moved'), { icon: '✅', type: 'success', duration: 1500 })
+        if (toast) toast.show(t('file.toast.moved'), { icon: 'success', type: 'success', duration: 1500 })
     } else {
-        if (toast) toast.show(t('common.operationFailed'), { icon: '❌', type: 'error', duration: 2000 })
+        if (toast) toast.show(t('common.operationFailed'), { icon: 'error', type: 'error', duration: 2000 })
     }
 }
 
@@ -1863,7 +1863,7 @@ async function doCopy() {
     clipboard.entries = [ctxMenu.entry]
     clipboard.isCut = false
     closeCtxMenu()
-    if (toast) toast.show(t('common.copied'), { icon: '📋', type: 'success', duration: 1500 })
+    if (toast) toast.show(t('common.copied'), { icon: 'copy', type: 'success', duration: 1500 })
 }
 
 function doCopyPath() {
@@ -1872,9 +1872,9 @@ function doCopyPath() {
     closeCtxMenu()
     const absPath = absPathForEntry(entry)
     copyText(absPath, () => {
-        if (toast) toast.show(t('file.context.pathCopied'), { icon: '📋', type: 'success', duration: 1500 })
+        if (toast) toast.show(t('file.context.pathCopied'), { icon: 'copy', type: 'success', duration: 1500 })
     }, () => {
-        if (toast) toast.show(t('common.operationFailed'), { icon: '❌', type: 'error', duration: 2000 })
+        if (toast) toast.show(t('common.operationFailed'), { icon: 'error', type: 'error', duration: 2000 })
     })
 }
 
@@ -1899,7 +1899,7 @@ async function doCut() {
     clipboard.entries = [ctxMenu.entry]
     clipboard.isCut = true
     closeCtxMenu()
-    if (toast) toast.show(t('file.toast.cutDone'), { icon: '✂️', type: 'success', duration: 1500 })
+    if (toast) toast.show(t('file.toast.cutDone'), { icon: 'cut', type: 'success', duration: 1500 })
 }
 
 async function doPaste() {
@@ -1921,9 +1921,9 @@ async function doPaste() {
     emit('refresh')
     refreshSearchResults()
     if (allOk) {
-        if (toast) toast.show(clipboard.isCut ? t('file.toast.moved') : t('common.copied'), { icon: '✅', type: 'success', duration: 1500 })
+        if (toast) toast.show(clipboard.isCut ? t('file.toast.moved') : t('common.copied'), { icon: 'success', type: 'success', duration: 1500 })
     } else {
-        if (toast) toast.show(t('common.operationFailed'), { icon: '❌', type: 'error', duration: 2000 })
+        if (toast) toast.show(t('common.operationFailed'), { icon: 'error', type: 'error', duration: 2000 })
     }
 }
 
@@ -2015,13 +2015,13 @@ async function doNewFolder() {
             emit('refresh')
             // Scroll to the new folder and select it
             scrollToEntryAndSelect(joinPath(dir, name.trim()))
-            if (toast) toast.show(t('file.toast.folderCreated'), { icon: '📁', type: 'success', duration: 1500 })
+            if (toast) toast.show(t('file.toast.folderCreated'), { icon: 'folder', type: 'success', duration: 1500 })
         } else {
             const err = await resp.json()
-            if (toast) toast.show(t('file.toast.createFailedDetail', { error: err.error || '' }), { icon: '❌', type: 'error', duration: 2000 })
+            if (toast) toast.show(t('file.toast.createFailedDetail', { error: err.error || '' }), { icon: 'error', type: 'error', duration: 2000 })
         }
     } catch {
-        if (toast) toast.show(t('file.toast.createFailed'), { icon: '❌', type: 'error', duration: 2000 })
+        if (toast) toast.show(t('file.toast.createFailed'), { icon: 'error', type: 'error', duration: 2000 })
     }
 }
 
@@ -2034,7 +2034,7 @@ function doBatchCopy() {
     }).filter(Boolean)
     clipboard.entries = entries
     clipboard.isCut = false
-    if (toast) toast.show(t('file.multiSelect.allCopied', { n: entries.length }), { icon: '📋', type: 'success', duration: 1500 })
+    if (toast) toast.show(t('file.multiSelect.allCopied', { n: entries.length }), { icon: 'copy', type: 'success', duration: 1500 })
 }
 
 function doBatchCut() {
@@ -2044,7 +2044,7 @@ function doBatchCut() {
     }).filter(Boolean)
     clipboard.entries = entries
     clipboard.isCut = true
-    if (toast) toast.show(t('file.multiSelect.allCut', { n: entries.length }), { icon: '✂️', type: 'success', duration: 1500 })
+    if (toast) toast.show(t('file.multiSelect.allCut', { n: entries.length }), { icon: 'cut', type: 'success', duration: 1500 })
 }
 
 async function doBatchDelete() {
@@ -2346,11 +2346,11 @@ function doOpenAsProject() {
             resp.text().then(text => {
                 let msg = text
                 try { msg = JSON.parse(text).error || msg } catch {}
-                if (toast) toast.show(t('file.toast.switchProjectFailed', { error: msg }), { icon: '❌', type: 'error', duration: 2000 })
+                if (toast) toast.show(t('file.toast.switchProjectFailed', { error: msg }), { icon: 'error', type: 'error', duration: 2000 })
             })
         }
     }).catch(() => {
-        if (toast) toast.show(t('file.toast.switchProjectFailedShort'), { icon: '❌', type: 'error', duration: 2000 })
+        if (toast) toast.show(t('file.toast.switchProjectFailedShort'), { icon: 'error', type: 'error', duration: 2000 })
     })
 }
 
@@ -2400,7 +2400,7 @@ function doShareExternal() {
 // ── Archive download (zip) ──
 async function doArchive(paths, zipName) {
     if (!paths.length) return
-    if (toast) toast.show(t('file.toast.archiving', { n: paths.length }), { icon: '📦', type: 'info', duration: 0 })
+    if (toast) toast.show(t('file.toast.archiving', { n: paths.length }), { icon: 'archive', type: 'info', duration: 0 })
     try {
         // The archive is built and streamed on the fly, so the server sends no
         // Content-Length — the progress bar runs indeterminately while it
@@ -2410,9 +2410,9 @@ async function doArchive(paths, zipName) {
         if (!result.blob) {
             if (toast) {
                 if (result.errorDetail) {
-                    toast.show(t('file.toast.archiveFailedDetail', { error: result.errorDetail }), { icon: '❌', type: 'error', duration: 3000 })
+                    toast.show(t('file.toast.archiveFailedDetail', { error: result.errorDetail }), { icon: 'error', type: 'error', duration: 3000 })
                 } else {
-                    toast.show(t('file.toast.archiveFailed'), { icon: '❌', type: 'error', duration: 2000 })
+                    toast.show(t('file.toast.archiveFailed'), { icon: 'error', type: 'error', duration: 2000 })
                 }
             }
             return
@@ -2428,7 +2428,7 @@ async function doArchive(paths, zipName) {
                 native.downloadBlob(base64, zipName || 'archive.zip')?.catch(() => {})
             }
             reader.onerror = () => {
-                if (toast) toast.show(t('file.toast.archiveFailed'), { icon: '❌', type: 'error', duration: 2000 })
+                if (toast) toast.show(t('file.toast.archiveFailed'), { icon: 'error', type: 'error', duration: 2000 })
             }
             reader.readAsDataURL(blob)
         } else {
@@ -2442,9 +2442,9 @@ async function doArchive(paths, zipName) {
             document.body.removeChild(a)
             URL.revokeObjectURL(url)
         }
-        if (toast) toast.show(t('file.toast.archiveDone'), { icon: '✅', type: 'success', duration: 1500 })
+        if (toast) toast.show(t('file.toast.archiveDone'), { icon: 'success', type: 'success', duration: 1500 })
     } catch {
-        if (toast) toast.show(t('file.toast.archiveFailed'), { icon: '❌', type: 'error', duration: 2000 })
+        if (toast) toast.show(t('file.toast.archiveFailed'), { icon: 'error', type: 'error', duration: 2000 })
     }
 }
 
@@ -2486,7 +2486,7 @@ function doAttachToChat() {
     // visible the file goes straight into the current session's input.
     if (requestAttachmentTarget({ path, isDir })) return
     addAttachedFile(path, isDir)
-    toast.show(t('chat.attach.addedToChat'), { icon: '📎', type: 'success', duration: 1500 })
+    toast.show(t('chat.attach.addedToChat'), { icon: 'attach', type: 'success', duration: 1500 })
 
     // Fly-to-chat particle animation
     const dockChatBtn = document.querySelector('.dock-center')?.querySelector('.dock-btn')
@@ -2545,7 +2545,7 @@ async function handleKeydown(e) {
             const meta = metaForPath(selectedPath.value)
             clipboard.entries = [{ type: meta.type, name: meta.name, path: selectedPath.value }]
             clipboard.isCut = false
-            if (toast) toast.show(t('common.copied'), { icon: '📋', type: 'success', duration: 1500 })
+            if (toast) toast.show(t('common.copied'), { icon: 'copy', type: 'success', duration: 1500 })
         }
         return
     }
@@ -2562,7 +2562,7 @@ async function handleKeydown(e) {
             const meta = metaForPath(selectedPath.value)
             clipboard.entries = [{ type: meta.type, name: meta.name, path: selectedPath.value }]
             clipboard.isCut = true
-            if (toast) toast.show(t('file.toast.cutDone'), { icon: '✂️', type: 'success', duration: 1500 })
+            if (toast) toast.show(t('file.toast.cutDone'), { icon: 'cut', type: 'success', duration: 1500 })
         }
         return
     }

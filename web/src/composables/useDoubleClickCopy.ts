@@ -4,6 +4,7 @@ import { flashElement } from '@/utils/domFlash'
 import { gt } from '@/composables/useLocale'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { isExternalLink, isAnchorLink, slugifyForHeading, stripLeadingNumbering } from '@/utils/doubleClickUtils.ts'
+import type { ToastIconKey } from '@/composables/useToast'
 
 const BLOCK_SELECTORS = 'p, h1, h2, h3, h4, h5, h6, li, pre, blockquote, table, .mermaid'
 
@@ -26,7 +27,7 @@ function tryDecodeHref(href: string): string {
 }
 
 interface ToastShow {
-    show: (msg: string, opts?: { icon?: string; duration?: number }) => void
+    show: (msg: string, opts?: { icon?: ToastIconKey; duration?: number }) => void
 }
 
 export interface LinkHandler {
@@ -84,7 +85,7 @@ export function useDoubleClickCopy(options?: DoubleClickCopyOptions) {
 
             // 显示 toast 提示
             if (toast) {
-                toast.show(gt('common.copied'), { icon: '📋', duration: 1500 })
+                toast.show(gt('common.copied'), { icon: 'copy', duration: 1500 })
             }
         })
 
