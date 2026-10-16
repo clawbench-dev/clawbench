@@ -35,6 +35,15 @@ func assistantConclusionWithPolicy(isGroup bool, blocks []model.ContentBlock) st
 	text := summarize.ExtractLastAnswerFromBlocks(blocks)
 	if isGroup {
 		text = grouprouting.StripProtocolTags(text)
+	} else {
+		// Single chat: strip ONLY the auto-cruise completion signal. A single
+		// chat is not parsed for mention tags (doing so re-opened regression
+		// 58879, where a reply DISCUSSING the syntax was truncated), but the
+		// self-closing, content-free <clawbench-goal-satisfied/> is emitted by
+		// single-chat cruise and must not reach the summary / preview / TTS /
+		// RAG text. The frontend strips it for the bubble; this is the backend
+		// boundary for every text that leaves the device.
+		text = grouprouting.StripGoalSatisfied(text)
 	}
 	return text
 }

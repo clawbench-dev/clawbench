@@ -365,7 +365,7 @@
         <span class="session-info-model" @click.stop="openSettingsDrawer('model')"><ProviderIcon :model-name="currentModelName || ''" :size="11" />{{ currentModelName || t('chat.sessionInfo.default') }}</span>
         <template v-if="showModeInfo">
           <span class="session-info-divider"></span>
-          <span class="session-info-mode" :class="{ 'session-info-mode-auto': autoApprove }" @click.stop="onModeClick" v-long-press="onModeLongPress" @mousedown.stop="onModeMouseDown" @mouseup.stop="onModeMouseUp"><Compass :size="11" />{{ currentModeName }}</span>
+          <span class="session-info-mode" :class="{ 'session-info-mode-auto': autoApprove }" @click.stop="onModeClick" v-long-press="onModeLongPress" @mousedown.stop="onModeMouseDown" @mouseup.stop="onModeMouseUp"><ShieldAlert :size="11" />{{ currentModeName }}</span>
         </template>
         <!-- Auto-cruise chip (single chat). Click toggles the session's cruise
              switch: the turn no longer hands the floor back when the reply
@@ -387,9 +387,9 @@
            single-chat bar; toggling emits up (App owns the group PATCH + roster
            refresh) so the group settings sheet stays in sync. -->
       <template v-else>
-        <span class="session-info-cruise" :class="{ 'session-info-cruise-on': groupCruise }" :title="t('chat.cruise.hint')" @click.stop="onGroupCruiseClick"><Navigation :size="11" />{{ groupCruise ? t('chat.cruise.active') : t('chat.cruise.label') }}</span>
+        <span class="session-info-cruise" :class="{ 'session-info-cruise-on': groupCruise }" :title="groupCruiseHint" @click.stop="onGroupCruiseClick"><Navigation :size="11" />{{ groupCruise ? t('chat.cruise.active') : t('chat.cruise.label') }}</span>
         <span class="session-info-divider"></span>
-        <span class="session-info-approve" :class="{ 'session-info-approve-on': autoApprove }" :title="t('chat.autoApprove.title')" @click.stop="doToggleAutoApprove"><Check :size="11" />{{ t('chat.autoApprove.title') }}</span>
+        <span class="session-info-approve" :class="{ 'session-info-approve-on': autoApprove }" :title="t('chat.autoApprove.title')" @click.stop="doToggleAutoApprove"><ShieldAlert :size="11" />{{ t('chat.autoApprove.title') }}</span>
       </template>
     </div>
   </div>
@@ -399,7 +399,7 @@
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted, defineAsyncComponent } from 'vue'
 import { pendingChatInput as pendingChatInputRef, consumePendingChatInput } from '@/utils/chatInputInjection'
 import { useI18n } from 'vue-i18n'
-import { List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Zap, Compass, Activity, MessagesSquare, Minimize2, Sparkles, ArrowRightLeft, Settings, TextCursorInput, MessageSquareShare, Check, Users, Navigation } from 'lucide-vue-next'
+import { List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Zap, Activity, MessagesSquare, Minimize2, Sparkles, ArrowRightLeft, Settings, TextCursorInput, MessageSquareShare, Check, Users, Navigation, ShieldAlert } from 'lucide-vue-next'
 import { computeRecentReferencedFiles, isImeCompositionEvent } from '@/utils/chatInputUtils.ts'
 import { measureCaretVisualRows } from '@/utils/textareaVisualRows.ts'
 import { fuzzyMatch, parseAtQuery, parseHashQuery, parseSlashQuery, buildFileCandidates } from '@/utils/completionMatch.ts'
@@ -546,6 +546,11 @@ function onGroupCruiseClick() {
     type: next ? 'success' : 'info',
   })
 }
+// The group chip's tooltip is mode-aware: host mode ends when the host alone
+// confirms, free mode needs over half the members. Reusing the single-chat hint
+// (chat.cruise.hint) here would describe a rule the group does not follow.
+const groupCruiseHint = computed(() =>
+  props.groupMode === 'free' ? t('group.cruiseHintFree') : t('group.cruiseHintHost'))
 const showUsageInfo = computed(() => isACPTransport.value || contextSize.value > 0)
 const usagePct = computed(() => contextSize.value > 0 ? Math.round((contextUsed.value / contextSize.value) * 100) : 0)
 const usageColor = computed(() => {
@@ -715,6 +720,10 @@ const props = defineProps({
    *  for a group session; toggling emits `toggle-group-cruise` up to App, which
    *  PATCHes and refreshes the roster so the settings sheet stays in sync. */
   groupCruise: { type: Boolean, default: false },
+  /** The group's mode ('host' | 'free'). Drives the group cruise chip's
+   *  tooltip: host mode ends on the host's alone confirmation, free mode needs
+   *  over half the members. Only meaningful when isGroupSession is true. */
+  groupMode: { type: String, default: 'host' },
   /** Staged group member cards (@ cards) for the input's attachment strip. The
    *  cards themselves live in useChatContext so they survive a session switch
    *  alongside the file/quote drafts; this is just the render binding. */

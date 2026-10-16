@@ -109,6 +109,28 @@ func TestStripEndTag(t *testing.T) {
 	}
 }
 
+// TestStripGoalSatisfied pins the SINGLE-CHAT strip primitive: it removes only
+// the completion signal and leaves mention-like prose untouched (a single chat
+// must not be parsed for mentions — regression 58879). Mirrors the TS
+// stripGoalSatisfiedTag.
+func TestStripGoalSatisfied(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"no tag here", "no tag here"},
+		{"任务已完成。<clawbench-goal-satisfied/>", "任务已完成。"},
+		{"<clawbench-goal-satisfied/>", ""},
+		{"a <clawbench-goal-satisfied/> b", "a  b"},
+		// The end tag is NOT this primitive's job — it stays put.
+		{"done <clawbench-goal-satisfied/> <clawbench-group-end/>", "done  <clawbench-group-end/>"},
+		// Mention-like prose must survive verbatim (58879).
+		{"写 `<clawbench-mention private>` 是语法", "写 `<clawbench-mention private>` 是语法"},
+	}
+	for _, tc := range cases {
+		if got := StripGoalSatisfied(tc.in); got != tc.want {
+			t.Errorf("StripGoalSatisfied(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
 // ── Auto-cruise completion signal (goal-satisfied) ───────────────────────
 //
 // <clawbench-goal-satisfied/> is the auto-cruise completion declaration. It is

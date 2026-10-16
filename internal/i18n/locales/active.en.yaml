@@ -220,11 +220,11 @@ ACPSessionRecoveredNew: ACP session could not be restored; started a new session
 GroupYourTurn: "It's your turn to speak"
 GroupDiscussionLimitReached: "The agents reached the discussion limit"
 GroupCruiseConfirming: "Auto-cruise: checking with the members whether the task is complete"
-GroupCruiseSatisfied: "Auto-cruise: task confirmed complete after {{.Rounds}} rounds"
+GroupCruiseSatisfied: "Auto-cruise: task confirmed complete after {{.Rounds}} member speeches"
 # Single-chat auto-cruise system rows (written in the active locale, persisted).
 CruiseConfirming: "Auto-cruise: checking whether the task is complete"
 CruiseSatisfied: "Auto-cruise: task confirmed complete after {{.Rounds}} rounds"
-CruiseMaxRounds: "Auto-cruise: reached the auto-continue round limit"
+CruiseMaxRounds: "Auto-cruise: reached the confirmation-round limit"
 # Group-timeline system rows. These are WRITTEN (not rendered) in the active
 # locale: the text is persisted to chat_history and ALSO injected into every
 # member's context as "[系统] <text>" (group_inject.go), so it must be a

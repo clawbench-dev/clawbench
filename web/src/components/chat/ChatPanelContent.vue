@@ -125,6 +125,7 @@
       :isGroupSession="isGroupSession"
       :groupMembers="props.groupMembers"
       :groupCruise="props.groupCruise"
+      :groupMode="props.groupMode"
       @send="sendMessage"
       @btw="handleBtw"
       @cancel="stream.cancelStream"

@@ -116,6 +116,11 @@ const i18n = createI18n({
         },
       },
       common: { copy: 'Copy', remove: 'Remove', cancel: 'Cancel' },
+      group: {
+        cruiseLabel: 'Auto-cruise',
+        cruiseHintHost: 'When on, the discussion ends only once the host confirms the task is complete.',
+        cruiseHintFree: 'When on, the discussion ends only once at least half the members confirm the task is complete.',
+      },
       tool: {
         askUser: { recommendationFill: 'Fill' },
       },
@@ -519,7 +524,7 @@ const stubs = {
   Upload: true,
   MessageSquare: true,
   Cpu: true,
-  Compass: true,
+  ShieldAlert: true,
   Activity: true,
   Minimize2: true,
 }
@@ -2956,6 +2961,17 @@ describe('ChatInputBar', () => {
       expect(wrapper.emitted('toggle-group-cruise')).toBeTruthy()
       expect(wrapper.emitted('toggle-group-cruise')![0]).toEqual([true])
       wrapper.unmount()
+    })
+
+    it('gives the group cruise chip a mode-aware hint, not the single-chat one', () => {
+      // The group rule differs by mode (host alone vs. half the members), so the
+      // chip must NOT reuse chat.cruise.hint (single-chat wording).
+      const host = mountBar({ currentModelName: 'gpt-4', isGroupSession: true, groupMode: 'host' })
+      expect(host.find('.session-info-cruise').attributes('title')).toContain('host confirms')
+      host.unmount()
+      const free = mountBar({ currentModelName: 'gpt-4', isGroupSession: true, groupMode: 'free' })
+      expect(free.find('.session-info-cruise').attributes('title')).toContain('half the members')
+      free.unmount()
     })
 
     it('labels the group chip "Cruising" and highlights it when on', () => {

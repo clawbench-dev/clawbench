@@ -58,6 +58,12 @@ func ExtractTextFromContent(content, role, sessionType string) string {
 	text := summarize.ExtractLastAnswerFromBlocks(msg.Blocks)
 	if sessionType == store.SessionTypeGroup {
 		text = grouprouting.StripProtocolTags(text)
+	} else {
+		// Single chat: drop ONLY the auto-cruise completion signal. A single
+		// chat is not parsed for mention tags (regression 58879), but
+		// single-chat cruise emits <clawbench-goal-satisfied/> and it must not
+		// become a searchable chunk. Mirrors service.AssistantConclusion.
+		text = grouprouting.StripGoalSatisfied(text)
 	}
 	return strings.TrimSpace(text)
 }

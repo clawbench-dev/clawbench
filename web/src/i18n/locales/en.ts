@@ -1190,7 +1190,7 @@ export default {
     parallelHint: "When on, the members you {'@'} speak at the same time (the whole roster when you {'@'} nobody); agent-to-agent {'@'} is unaffected.",
     cruiseLabel: 'Auto-cruise',
     cruiseHintHost: 'When on, the discussion ends only once the host confirms the task is complete.',
-    cruiseHintFree: 'When on, the discussion ends only once over half the members confirm the task is complete.',
+    cruiseHintFree: 'When on, the discussion ends only once at least half the members confirm the task is complete.',
     goalSatisfied: 'Done',
     autoApproveHint: 'Auto-approve every member\u2019s permission requests.',
     confirm: 'Add',

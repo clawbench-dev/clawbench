@@ -157,6 +157,12 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		"GroupYourTurn",
 		"GroupDiscussionLimitReached",
 		"GroupCruiseConfirming",
+		// Single-chat cruise is rendered from the drain goroutine (same
+		// no-request class as AutoContinue), so its three keys must be pinned
+		// too or a one-sided add slips through.
+		"CruiseConfirming",
+		"CruiseSatisfied",
+		"CruiseMaxRounds",
 		"GroupCruiseSatisfied",
 		"GroupMemberJoined",
 		"GroupMemberLeft",
