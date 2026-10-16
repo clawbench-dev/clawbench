@@ -303,6 +303,216 @@ func TestCruiseHost_SilentHostBoundedByCap(t *testing.T) {
 	}
 }
 
+// A host that considers the task done simply writes a closing paragraph with NO
+// routing tag — the most common "hand the floor back" shape in practice. In
+// cruise mode this MUST trigger a confirmation round, exactly like an explicit
+// <clawbench-group-end/>. Before the fix it fell into the consecutive-parse-
+// failure abort (summarize + stop), so cruise never confirmed — the reported
+// "cruise is on but no confirmation round ever happens".
+//
+// Two untagged host turns are needed to reach the escalation: the FIRST is
+// tolerated with a round-robin fallback (that tolerance is pinned separately by
+// TestGroupOrchestrator_AbortsAfterTwoParseFailures for the non-cruise case).
+func TestCruiseHost_UntaggedClosingProseTriggersConfirmation(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/cruise-host-untagged"
+	groupID, hostID, byName := createHostGroup(t, project, "A")
+	enableCruise(t, groupID)
+
+	script := map[string][]string{
+		hostID: {
+			// Round 1: normal routing so the discussion starts.
+			`<clawbench-mention targets="A">先做</clawbench-mention>`,
+			// Round 2: untagged prose -> parse failure #1 (tolerated, fallback).
+			`都差不多了，先汇报一下进展。`,
+			// Round 3: untagged prose again -> escalation. In cruise this is a
+			// confirmation trigger, NOT an abort.
+			`这是最终结论，大家都辛苦了。`,
+			// Round 4 (confirmation round): confirm completion.
+			`确认完成。<clawbench-goal-satisfied/>`,
+		},
+		byName["A"]: {"A 做了"},
+	}
+	runner, order := newScriptedRunner(t, groupID, project, script)
+
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	res := runGroupTurnForTest(t, o, project, "做个任务", nil)
+
+	if res.CancelReason != "" || res.Err != "" {
+		t.Fatalf("expected a clean confirmed end, got %+v (order=%v)", res, *order)
+	}
+	// The confirmation round must have run (the whole point of the fix).
+	if n := countSystemLine(t, groupID, i18n.T(i18n.LocalizerForLocale(model.Language), "GroupCruiseConfirming")); n != 1 {
+		t.Fatalf("confirmation line count=%d want 1 (order=%v)", n, *order)
+	}
+	// And it must have been confirmed (the host answered goal-satisfied), which
+	// is what writes the cruise-complete line.
+	if n := countSystemLine(t, groupID, "自动巡航：任务已确认完成"); n != 1 {
+		t.Fatalf("expected a confirmed completion, count=%d order=%v", n, *order)
+	}
+	// Cruise never announces the user's turn.
+	if n := countSystemLine(t, groupID, i18n.T(i18n.LocalizerForLocale(model.Language), "GroupYourTurn")); n != 0 {
+		t.Fatalf("cruise must not announce the user's turn (count=%d)", n)
+	}
+}
+
+// The same untagged-prose escalation must NOT change non-cruise behavior: a
+// non-cruise host with two consecutive unparseable turns still aborts (decision
+// #56). This is the other half of hostRouteFailure's branch — without it the
+// cruise fix could silently make non-cruise hosts spin.
+func TestCruiseOff_UntaggedProseStillAborts(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/cruise-off-untagged"
+	groupID, hostID, byName := createHostGroup(t, project, "A")
+	// cruise NOT enabled.
+
+	hostTurns := 0
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		if turn.MemberRowID == hostID {
+			hostTurns++
+			_, _ = AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
+				`{"blocks":[{"type":"text","text":"没有标签的收尾散文。"}]}`, nil, false, "", hostID)
+			return groupMemberResult{}
+		}
+		_, _ = AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
+			`{"blocks":[{"type":"text","text":"成员发言"}]}`, nil, false, "", turn.MemberRowID)
+		return groupMemberResult{}
+	}
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	_ = runGroupTurnForTest(t, o, project, "开始", nil)
+	_ = byName
+
+	if n := countSystemLine(t, groupID, i18n.T(i18n.LocalizerForLocale(model.Language), "GroupCruiseConfirming")); n != 0 {
+		t.Fatalf("non-cruise must not confirm (count=%d)", n)
+	}
+	// 2 failures, then abort. Small margin for the final summary turn.
+	if hostTurns > 4 {
+		t.Fatalf("non-cruise must still abort after two parse failures; host ran %d turns", hostTurns)
+	}
+}
+
+// A host that routes to a member AND closes with a plain-language question to
+// the human ("要我继续吗？") is addressing the user — in cruise that must trigger
+// a confirmation round, exactly like an AskUserQuestion card would. Without it
+// the turn keeps routing while the user waits for an answer (the reported gap:
+// the host asks in prose, nobody ever confirms).
+func TestCruiseHost_ProseQuestionAfterRouteTriggersConfirmation(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/cruise-host-proseq"
+	groupID, hostID, byName := createHostGroup(t, project, "A")
+	enableCruise(t, groupID)
+
+	script := map[string][]string{
+		hostID: {
+			// Round 1: route to A, then ask the user a question in prose.
+			"先派活。\n\n<clawbench-mention targets=\"A\">先做</clawbench-mention>\n\n**要我继续推进吗？**",
+			// Round 2 (confirmation): confirm completion.
+			`确认完成。<clawbench-goal-satisfied/>`,
+		},
+		byName["A"]: {"A 做了"},
+	}
+	runner, order := newScriptedRunner(t, groupID, project, script)
+
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	res := runGroupTurnForTest(t, o, project, "做个任务", nil)
+
+	if res.CancelReason != "" || res.Err != "" {
+		t.Fatalf("expected a clean confirmed end, got %+v (order=%v)", res, *order)
+	}
+	if n := countSystemLine(t, groupID, i18n.T(i18n.LocalizerForLocale(model.Language), "GroupCruiseConfirming")); n != 1 {
+		t.Fatalf("prose question must trigger a confirmation round; count=%d (order=%v)", n, *order)
+	}
+	// Cruise never announces the user's turn.
+	if n := countSystemLine(t, groupID, i18n.T(i18n.LocalizerForLocale(model.Language), "GroupYourTurn")); n != 0 {
+		t.Fatalf("cruise must not announce the user's turn (count=%d)", n)
+	}
+}
+
+// The prose-question detector must NOT fire on a question addressed to a routed
+// MEMBER (inside a mention span). This is the isolated integration case: the
+// LAST line of the host turn is a question, but it sits inside the mention span,
+// so it is addressed to A (who will answer it) — not a hand-back. Without the
+// mention-strip step the turn would divert into a confirmation round.
+func TestCruiseHost_ProseQuestionIgnoresMemberQuestions(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/cruise-host-proseq-neg"
+	groupID, hostID, byName := createHostGroup(t, project, "A")
+	enableCruise(t, groupID)
+
+	script := map[string][]string{
+		hostID: {
+			// Round 1: the ONLY question is inside the mention span, and it is
+			// the last thing in the message.
+			"派活。\n\n<clawbench-mention targets=\"A\">这个方案行不行？</clawbench-mention>",
+			// Round 2: real end tag -> confirmation.
+			`差不多了。<clawbench-group-end/>`,
+			// Round 3 (confirmation): confirm.
+			`<clawbench-goal-satisfied/>`,
+		},
+		byName["A"]: {"A 做了"},
+	}
+	runner, order := newScriptedRunner(t, groupID, project, script)
+
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	res := runGroupTurnForTest(t, o, project, "做个任务", nil)
+
+	if res.CancelReason != "" || res.Err != "" {
+		t.Fatalf("expected a clean confirmed end, got %+v (order=%v)", res, *order)
+	}
+	// A must have spoken: the round-1 route was honored (NOT diverted into a
+	// confirmation round by the in-span question).
+	aSpoke := false
+	for _, id := range *order {
+		if id == byName["A"] {
+			aSpoke = true
+		}
+	}
+	if !aSpoke {
+		t.Fatalf("A must speak — the in-span question is not a hand-back (order=%v)", *order)
+	}
+	// Exactly ONE confirmation (the explicit end tag in round 2), not two.
+	if n := countSystemLine(t, groupID, i18n.T(i18n.LocalizerForLocale(model.Language), "GroupCruiseConfirming")); n != 1 {
+		t.Fatalf("confirmation line count=%d want 1 (only the end tag; order=%v)", n, *order)
+	}
+}
+
+// hostAsksUserInProse is the whole detection contract in one table. Each case
+// isolates ONE rule, so removing a guard turns a specific case red.
+func TestHostAsksUserInProse(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"plain prose question", "都做完了。\n\n要我继续推进吗？", true},
+		{"halfwidth question", "Done with the draft.\n\nShall I continue?", true},
+		{"bolded question", "先这样。\n\n**要我继续推进吗？**", true},
+		// The last-line rule is what makes this precise: a mid-explanation
+		// rhetorical question must NOT count, or every routing turn would divert.
+		{"question not on the last line", "为什么没挡住？\n\n我已经修好了，派 A 继续。", false},
+		// A mention span ends with `>`, so it can never be the last-line question.
+		{"question inside a mention span", `<clawbench-mention targets="A">这个方案行不行？</clawbench-mention>`, false},
+		{"question inside a mention then routed", "要我继续吗？\n\n<clawbench-mention targets=\"A\">继续做</clawbench-mention>", false},
+		// A code span ends with a backtick, so the suffix test fails as desired.
+		{"question in a code fence", "看这段：\n\n```\nls -la?\n```", false},
+		{"question in inline code", "路径是 `ls -la?` 那个。", false},
+		{"statement only", "都做完了，已派 A 收尾。", false},
+		{"empty", "", false},
+		{"whitespace only", "   \n\n  ", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := hostAsksUserInProse(tc.in); got != tc.want {
+				t.Fatalf("hostAsksUserInProse(%q)=%v want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 // A non-cruise host group must behave exactly as before (regression guard).
 func TestCruiseHost_OffEndsDirectly(t *testing.T) {
 	setupGroupDB(t)
@@ -608,5 +818,60 @@ func TestCruiseFree_CancelStops(t *testing.T) {
 	res := RunGroupTurnDrain(ctx, groupID, msgID, QueuedRow{Content: "大家聊聊"}, o.runTurn)
 	if res.CancelReason == "" && res.Err == "" {
 		t.Fatalf("expected a cancel/error, got %+v", res)
+	}
+}
+
+// Toggling cruise ON while a turn is already running must take effect on the
+// NEXT hand-back point, without waiting for a new user message. This pins the
+// live switch read (cruiseOn): with a start-of-turn snapshot, the end tag in
+// round 2 would end the turn directly and NO confirmation round would run.
+func TestCruiseHost_SwitchToggledMidTurnTakesEffect(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/cruise-host-live-toggle"
+	groupID, hostID, byName := createHostGroup(t, project, "A")
+	// cruise starts OFF.
+
+	script := map[string][]string{
+		hostID: {
+			// Round 1: route to A. The runner flips cruise ON while this turn
+			// runs (see the wrapper below).
+			`<clawbench-mention targets="A">先做</clawbench-mention>`,
+			// Round 2: end tag. Cruise is now ON, so this must trigger a
+			// confirmation round rather than ending the turn.
+			`差不多了。<clawbench-group-end/>`,
+			// Round 3 (confirmation): confirm.
+			`<clawbench-goal-satisfied/>`,
+		},
+		byName["A"]: {"A 做了"},
+	}
+	runner, order := newScriptedRunner(t, groupID, project, script)
+
+	// Flip cruise on after the host's FIRST turn (once the turn is underway).
+	hostTurns := 0
+	wrapped := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		res := runner(ctx, gid, turn)
+		if turn.MemberRowID == hostID {
+			hostTurns++
+			if hostTurns == 1 {
+				if err := SetSessionCruise(groupID, true); err != nil {
+					t.Fatalf("SetSessionCruise: %v", err)
+				}
+			}
+		}
+		return res
+	}
+
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = wrapped
+	res := runGroupTurnForTest(t, o, project, "做个任务", nil)
+
+	if res.CancelReason != "" || res.Err != "" {
+		t.Fatalf("expected a clean confirmed end, got %+v (order=%v)", res, *order)
+	}
+	if n := countSystemLine(t, groupID, i18n.T(i18n.LocalizerForLocale(model.Language), "GroupCruiseConfirming")); n != 1 {
+		t.Fatalf("mid-turn cruise toggle must take effect; confirmation count=%d want 1 (order=%v)", n, *order)
+	}
+	if n := countSystemLine(t, groupID, i18n.T(i18n.LocalizerForLocale(model.Language), "GroupYourTurn")); n != 0 {
+		t.Fatalf("cruise must not announce the user's turn (count=%d)", n)
 	}
 }
