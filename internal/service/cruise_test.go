@@ -312,6 +312,68 @@ func TestCruiseLoop_UserTurnTagDoesNotEndOnFirstAttempt(t *testing.T) {
 	assert.Equal(t, 1, ran, "the user turn's tag must not end the run — a confirmation round must still run")
 }
 
+// TestCruiseLoop_StaleWakeDoesNotRepeatSatisfiedLine is the regression for the
+// "cruise ran two rounds, the second one had no output" report.
+//
+// The drain loop re-enters its top for reasons that produce NO new turn — the
+// retire-late-work re-check after an empty queue, or a dequeue retry. Each pass
+// used to re-offer the SAME result to the cruise hook. Because the hook writes
+// its terminal "task confirmed complete" system line every time it is asked and
+// then answers "stop", a single stale wake mark made it write the line twice and
+// report "2 rounds" for one actual confirmation round.
+//
+// The wake mark is what a submit leaves behind when it claims the live runner;
+// dequeue never clears it, so the loop reaching the retire re-check with the
+// mark still set is the production shape.
+func TestCruiseLoop_StaleWakeDoesNotRepeatSatisfiedLine(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/cruise-stale-wake"
+	sid := cruiseTestSession(t, project)
+	require.NoError(t, SetSessionCruise(sid, true))
+
+	_, created := TryClaimSessionRun(sid)
+	require.True(t, created)
+	defer FinishSessionRun(sid)
+
+	// A second submit reuses the runner and sets its wake mark, but leaves no
+	// queued row — so the next empty-queue retire check will keep the loop
+	// alive and re-enter the top.
+	_, createdAgain := TryClaimSessionRun(sid)
+	require.False(t, createdAgain)
+
+	rounds := 0
+	hook := NewCruiseRunner(CruiseRunnerConfig{
+		Ctx:         context.Background(),
+		SessionID:   sid,
+		ProjectPath: project,
+		RunTurn: func(string) DrainResult {
+			rounds++
+			// The very first confirmation round declares the goal met.
+			return DrainResult{MsgID: int64(100 + rounds), GoalSatisfied: true}
+		},
+	})
+
+	RunDrainLoop(DrainConfig{
+		SessionID:            sid,
+		ProjectPath:          project,
+		CruiseContinue:       hook,
+		MarkDoneAndSendFinal: func(ai.StreamEvent) {},
+	}, DrainResult{MsgID: 1})
+
+	assert.Equal(t, 1, rounds, "exactly one confirmation round must run")
+
+	// Count EVERY satisfied line regardless of the reported round count: the
+	// duplicate this regression is about carries a DIFFERENT number ("2 rounds"
+	// after one real round), so pinning only the "1 round" wording would let the
+	// bug through. The prefix is the locale-independent part of the message.
+	prefix := i18n.T(i18n.LocalizerForLocale(model.Language), "CruiseSatisfied", map[string]any{"Rounds": 1})
+	if i := strings.Index(prefix, "1"); i > 0 {
+		prefix = prefix[:i]
+	}
+	assert.Equal(t, 1, countSystemLine(t, sid, prefix),
+		"the cruise-complete line must be written exactly once, not once per loop re-entry")
+}
+
 // TestGoalSatisfied_ParsedFromFinalAnswer verifies the parse rule runTurnFinalize
 // uses: the completion tag in the LAST answer counts, a tag buried before the
 // last tool call does not.

@@ -404,14 +404,33 @@ func RunDrainLoop(cfg DrainConfig, result DrainResult) {
 	// index of the round about to run (1 = right after the user's own turn).
 	cruiseRounds := 0
 
+	// hooksDeclined records that the CURRENT `result` has already been offered
+	// to the resume hooks and both declined.
+	//
+	// The loop must offer a given turn result to the hooks EXACTLY ONCE. Every
+	// `continue` that does not produce a fresh turn — the retire-late-work
+	// re-check, a dequeue retry — loops back to the top, and without this flag
+	// it would re-offer the same result. That is not merely wasteful: the cruise
+	// hook writes its terminal "task confirmed complete" system line every time
+	// it is asked and answers "stop", so each extra pass wrote the line again
+	// and inflated the reported round count (the reported "ran two rounds, the
+	// second one empty"). Reset whenever `result` is replaced by a fresh turn.
+	hooksDeclined := false
+
 	for {
 		// Resume an abnormally terminated turn, or run the next single-chat
 		// cruise confirmation round, before deciding the loop is done. Both
 		// must run BEFORE drainHandleTerminal, which treats Err/Empty as
 		// terminal; a resumed/continued turn restarts the iteration.
-		if next, ok := resumeBeforeTerminal(cfg, result, &autoContinueAttempts, &cruiseRounds); ok {
-			result = next
-			continue
+		if !hooksDeclined {
+			if next, ok := resumeBeforeTerminal(cfg, result, &autoContinueAttempts, &cruiseRounds); ok {
+				result = next
+				hooksDeclined = false
+				continue
+			}
+			// Both hooks declined this result — do not ask them again unless a
+			// fresh turn replaces it (see the flag's comment).
+			hooksDeclined = true
 		}
 
 		if drainHandleTerminal(cfg, result) {
@@ -446,6 +465,9 @@ func RunDrainLoop(cfg DrainConfig, result DrainResult) {
 		// long conversation gets a fresh allowance per message).
 		autoContinueAttempts = 0
 		cruiseRounds = 0
+		// The dequeued turn below REPLACES `result`, so the new result must be
+		// offered to the hooks afresh (see hooksDeclined).
+		hooksDeclined = false
 
 		// The PREVIOUS turn just finished normally and more work is waiting, so
 		// this is where an intermediate answer is reported. The loop's terminal
