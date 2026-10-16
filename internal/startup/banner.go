@@ -108,8 +108,6 @@ func padRight(s string, width int) string {
 
 // buildLines constructs the content lines (without borders).
 // Each line is a plain string; the caller pads them to equal rune-width.
-//
-//nolint:gocyclo // banner assembly is inherently multi-branch; splitting hurts readability
 func buildLines(cfg BannerConfig) []string {
 	labelW := 14 // display width for label alignment
 	label := func(prefix, text string) string {

@@ -91,8 +91,13 @@ public class ClawBenchWebView extends WebView {
      * to depend on: any future non-idempotent addition in the wrapper would
      * then duplicate menu items. Returning an already-wrapped callback
      * unchanged removes the whole class of problem.
+     *
+     * Package-private rather than private so {@code ClawBenchWebViewTest} can
+     * assert the idempotency directly: {@code startActionMode} returns null
+     * under Robolectric (no real selection controller), so the wrapper cannot
+     * be read back off the return value.
      */
-    private ActionMode.Callback wrap(ActionMode.Callback original) {
+    ActionMode.Callback wrap(ActionMode.Callback original) {
         if (original instanceof SelectionMenuWrapper) {
             return original;
         }

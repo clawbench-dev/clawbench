@@ -4,7 +4,14 @@ import { defineComponent, h, ref } from 'vue'
 import SessionSidebar from '@/components/session/SessionSidebar.vue'
 import { SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH } from '@/composables/useSessionSidebar'
 
-vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (k: string) => k, locale: { value: 'en' } }) }))
+// Partial mock: SessionSidebar pulls in BottomSheet (via the session drawer
+// chain), whose module graph reaches @/i18n's createI18n. A whitelist mock that
+// returns only `useI18n` makes createI18n undefined and the whole suite fails to
+// load, so spread the real module and override useI18n.
+vi.mock('vue-i18n', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('vue-i18n')>()),
+  useI18n: () => ({ t: (k: string) => k, locale: { value: 'en' } }),
+}))
 vi.mock('@/utils/appLog', () => ({ appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() } }))
 // SharedSessionsDrawer (imported by the sidebar) renders dates through the
 // shared formatter, which imports the real i18n instance and its createI18n —

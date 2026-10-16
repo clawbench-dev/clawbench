@@ -208,7 +208,7 @@ onMounted(load)
 }
 
 .projects-row__dot--ok {
-  background: var(--success-color, #22c55e);
+  background: var(--color-success);
 }
 
 .projects-row__dot--gone {

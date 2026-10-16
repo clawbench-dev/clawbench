@@ -72,7 +72,17 @@ class NotificationsApiError extends Error {
 
 async function notificationsFetch<T>(path: string, opts: { method?: string; signal?: AbortSignal } = {}): Promise<T> {
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), NOTIFICATIONS_TIMEOUT_MS)
+    // Track the timeout by flag rather than by inspecting the thrown error.
+    // Sniffing `err.name === 'AbortError'` is not portable: jsdom's DOMException
+    // is NOT an `Error` subclass (real browsers' is), so the check silently
+    // misses and a timeout is misreported as a network failure. A flag also
+    // avoids the race where the caller's abort and the internal timeout fire in
+    // the same tick — same reasoning as gitApi.ts's `timedOut`.
+    let timedOut = false
+    const timer = setTimeout(() => {
+        timedOut = true
+        controller.abort()
+    }, NOTIFICATIONS_TIMEOUT_MS)
     if (opts.signal?.aborted) controller.abort()
     opts.signal?.addEventListener('abort', () => controller.abort(), { once: true })
 
@@ -100,7 +110,7 @@ async function notificationsFetch<T>(path: string, opts: { method?: string; sign
         return payload as T
     } catch (err) {
         if (err instanceof NotificationsApiError) throw err
-        if (err instanceof Error && err.name === 'AbortError') {
+        if (timedOut) {
             throw new NotificationsApiError('notifications request timed out', 'NotificationsTimeout', 0)
         }
         appLog.w(TAG, 'request failed', path, err)

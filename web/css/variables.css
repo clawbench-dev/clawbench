@@ -9,6 +9,7 @@
      - Interactive bg:     --bg-hover / --bg-active
      - Text:               --text-primary / --text-secondary / --text-muted / --text-hint / --text-bold
      - Borders & scroll:   --border-color / --table-border / --scrollbar-thumb / --scrollbar-thumb-hover
+                           --scrollbar-track
      - Accent / brand:     --accent-color / --accent-hover / --brand-color
      - Links & focus:      --link-color / --focus-ring / --selection-bg
      - Status colors:      --color-green / --color-yellow / --color-red / --color-purple
@@ -49,6 +50,14 @@
     --space-8: 20px;
     --space-9: 24px;
     --space-10: 28px;
+
+    /* ── Scrollbar track fill. The thumb is themed per palette, but no theme
+       tints the track, so this lives once here as the shared default. It is
+       consumed (with this same value as a literal fallback) by
+       css/scrollbar.css, which is also inlined into standalone documents
+       (OpenAPI iframe, file:// export) that never see this :root — hence the
+       fallback there. Declared so the token is not a dangling reference. ── */
+    --scrollbar-track: transparent;
 
     /* ── Transition durations for colour / opacity / small state changes.
        Longer durations are deliberately NOT tokenized: the 0.25s+ values

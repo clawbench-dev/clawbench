@@ -417,12 +417,15 @@ describe('npm payload packages match the Go URL derivation', () => {
 
   it('publishes from a job that sets up the registry like publish-npm does', () => {
     // The repo .npmrc points at npmmirror and project config outranks
-    // NPM_CONFIG_USERCONFIG, so without removing it the job publishes to the
-    // mirror with no credentials.
+    // NPM_CONFIG_USERCONFIG, so the job must rewrite it to the public registry
+    // before publishing — otherwise it publishes to the mirror with no
+    // credentials. The mechanism is an explicit overwrite (a bare removal would
+    // leave the registry to npm's default and is not what the job does).
     const all = jobs(releaseYml())
     const job = all['publish-npm-desktop']
     expect(job, 'missing publish-npm-desktop job').toBeTruthy()
-    expect(job).toContain('rm -f .npmrc')
+    expect(job).toContain('registry=https://registry.npmjs.org/')
+    expect(job).toContain('> .npmrc')
     expect(job).toContain('NPM_CONFIG_USERCONFIG')
     expect(job).toContain('npm publish')
     // A re-run must not republish an immutable version.

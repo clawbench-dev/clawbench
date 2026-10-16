@@ -129,6 +129,54 @@ func TestIsCriticalStreamEvent(t *testing.T) {
 	}
 }
 
+// TestCriticalStreamEventTypes_MatchesIsCriticalStreamEvent pins the exported
+// enumeration against the predicate it exists to expose. The wire layer
+// (internal/ws) iterates CriticalStreamEventTypes to assert every critical event
+// has a payload builder, so if the two ever disagree the guard silently stops
+// covering the very events it was added for.
+func TestCriticalStreamEventTypes_MatchesIsCriticalStreamEvent(t *testing.T) {
+	types := CriticalStreamEventTypes()
+	require.NotEmpty(t, types, "the registry must not be empty")
+
+	for _, ev := range types {
+		assert.True(t, IsCriticalStreamEvent(ev),
+			"%s is enumerated as critical but IsCriticalStreamEvent says otherwise", ev)
+	}
+	// The enumeration must be exactly the critical set — not a subset. Every
+	// event the predicate accepts has to appear here, or a new critical event
+	// would be added without its payload being guarded.
+	for _, ev := range []string{
+		"stream_start", "done", "cancelled", "error", "content_reset",
+		"user_message", "queue_drain", "queue_cancel", "stream_split",
+		"content", "thinking", "tool_use",
+	} {
+		if IsCriticalStreamEvent(ev) {
+			assert.Contains(t, types, ev, "critical event %s is missing from the enumeration", ev)
+		} else {
+			assert.NotContains(t, types, ev, "non-critical event %s must not be enumerated", ev)
+		}
+	}
+}
+
+// TestCriticalStreamEventTypes_ReturnsCopy guards the documented contract: a
+// caller mutating the returned slice must not corrupt the shared registry.
+func TestCriticalStreamEventTypes_ReturnsCopy(t *testing.T) {
+	first := CriticalStreamEventTypes()
+	require.NotEmpty(t, first)
+
+	// Mutate every element of the first copy.
+	for i := range first {
+		first[i] = "clobbered"
+	}
+
+	second := CriticalStreamEventTypes()
+	assert.Equal(t, len(first), len(second), "the registry size must be stable")
+	for _, ev := range second {
+		assert.True(t, IsCriticalStreamEvent(ev),
+			"the registry was mutated through the returned slice: got %q", ev)
+	}
+}
+
 // TestEmitStreamEvent_DropsDeltaOnFullChannel verifies the high-frequency path
 // keeps its original non-blocking behavior: a full channel must not stall the
 // producer for a delta the user cannot perceive.

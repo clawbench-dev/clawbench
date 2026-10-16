@@ -133,7 +133,6 @@ func resolveIntValue(values map[string]any, key string, defaultVal int) int {
 	return defaultVal
 }
 
-
 // ── Summarize Voice ──────────────────────────────────────────
 
 // testSummarizeVoice verifies the shared AI summary API connectivity. It is

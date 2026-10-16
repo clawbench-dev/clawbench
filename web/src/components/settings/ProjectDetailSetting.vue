@@ -270,7 +270,7 @@ watch(() => props.projectId, load)
 }
 
 .project-detail__btn--danger {
-  background: var(--danger-color, #ef4444);
+  background: var(--color-red);
   color: #fff;
 }
 
