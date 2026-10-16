@@ -108,7 +108,7 @@ import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   Bell, BellOff, Folder, Unlink, Trash2, AlertCircle,
-  Bot, Clock, GitMerge, Check, X, AlertTriangle,
+  Bot, Clock, GitMerge, Check, X, ShieldAlert,
 } from 'lucide-vue-next'
 import MenuSelect, { type MenuSelectOption } from '@/components/common/MenuSelect.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
@@ -253,7 +253,7 @@ function eventTone(n: NotificationItem): string {
 function eventIcon(n: NotificationItem) {
   const s = n.eventType
   if (s === 'failed' || s === 'cancelled') return X
-  if (s === 'permission_pending') return AlertTriangle
+  if (s === 'permission_pending') return ShieldAlert
   if (n.kind === 'forge') return GitMerge
   return Check
 }

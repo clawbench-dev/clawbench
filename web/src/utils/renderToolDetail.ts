@@ -30,17 +30,23 @@ import { getAskState, patchAskState } from '@/utils/askQuestionState.ts'
 
 const WRAP_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M3 6h18"/><path d="M3 12h15a3 3 0 1 1 0 6h-3"/><path d="M18 15l-3 3 3 3"/><path d="M3 18h7"/></svg>'
 
-// Settled-permission result glyphs. These are the REAL lucide icons the Vue
-// components already use for the same two states (ContentBlocks/ToolDetailDrawer
-// render CheckCircle2 / XCircle at :size="14"), inlined here because this module
+// Settled-permission result glyphs. The approval/permission surface is unified
+// on the shield glyph, so these are the REAL lucide ShieldCheck / ShieldX icons
+// (the shield body with a check / cross), inlined here because this module
 // builds an HTML string and cannot render a component. Paths copied verbatim
-// from node_modules/lucide-vue-next/dist/esm/icons/circle-check.js and
-// circle-x.js — do NOT hand-draw replacements, or the two surfaces drift apart.
-const PERMISSION_OK_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>'
-const PERMISSION_DENY_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>'
+// from node_modules/lucide-vue-next/dist/esm/icons/shield-check.js and
+// shield-x.js — do NOT hand-draw replacements, or the two surfaces drift apart.
+const PERMISSION_OK_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" aria-hidden="true"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg>'
+const PERMISSION_DENY_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" aria-hidden="true"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m14.5 9.5-5 5"/><path d="m9.5 9.5 5 5"/></svg>'
 
 // Exported for reuse by ToolDetailDrawer.vue (avoid duplicating SVG constants)
 export { COPY_ICON_SVG, WRAP_ICON_SVG, PERMISSION_OK_ICON_SVG, PERMISSION_DENY_ICON_SVG }
+
+// Mode-switch body glyph. The approval/permission surface is unified on the
+// shield, so the old 🔄 emoji (whose size/colour came from the font) is replaced
+// by the same lucide ShieldAlert the rest of the permission UI uses. Path copied
+// verbatim from node_modules/lucide-vue-next/dist/esm/icons/shield-alert.js.
+const MODE_SWITCH_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" aria-hidden="true"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>'
 
 // ────────────────────────────────────────────────────────────
 // Type helpers for tool input
@@ -978,7 +984,7 @@ function renderTaskTool(input: ToolInput): string {
  */
 function renderModeSwitch(input: ToolInput): string {
   let html = '<div class="mode-switch-view">'
-  html += `<span class="mode-switch-icon">🔄</span>`
+  html += `<span class="mode-switch-icon">${MODE_SWITCH_ICON_SVG}</span>`
   const mode = str(input.mode) || str(input.mode_id)
   if (mode) {
     html += `<span class="mode-switch-mode">${escapeHtml(mode)}</span>`

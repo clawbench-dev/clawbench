@@ -13,7 +13,7 @@
         <Brain :size="13" />{{ t('chat.thinkingEffortSwitcher.title') }}
       </button>
       <button class="model-tab" :class="{ active: activeTab === 'mode' }" @click="activeTab = 'mode'">
-        <Compass :size="13" />{{ t('chat.modeSwitcher.title') }}
+        <ShieldAlert :size="13" />{{ t('chat.modeSwitcher.title') }}
       </button>
       <button class="model-tab" :class="{ active: activeTab === 'transport' }" @click="activeTab = 'transport'">
         <Cable :size="13" />{{ t('chat.transportSwitcher.title') }}
@@ -207,7 +207,7 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Star, Cpu, Brain, Compass, Cable } from 'lucide-vue-next'
+import { Star, Cpu, Brain, ShieldAlert, Cable } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'

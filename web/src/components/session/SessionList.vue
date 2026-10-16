@@ -175,7 +175,9 @@
                   :title="statusLabel(row.status)"
                   :aria-label="statusLabel(row.status)"
                   role="img"
-                ></span>
+                >
+                  <ShieldAlert v-if="row.status === 'pending'" :size="14" />
+                </span>
               </div>
               <button class="session-more-btn" :title="t('common.moreActions')" @click.stop="showMenuFromButton($event, row.session)">
                 <MoreVertical :size="15" />
@@ -240,7 +242,9 @@
                   :title="statusLabel(rowStatus(session))"
                   :aria-label="statusLabel(rowStatus(session))"
                   role="img"
-                ></span>
+                >
+                  <ShieldAlert v-if="rowStatus(session) === 'pending'" :size="14" />
+                </span>
               </div>
             </div>
           </div>
@@ -312,7 +316,7 @@
 import { ref, reactive, watch, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { VueDraggable } from 'vue-draggable-plus'
-import { Archive, ChevronDown, Pin, PinOff, PencilLine, MessageSquareShare, Tags, Trash2, MoreVertical, Split, Users, Crown, AtSign } from 'lucide-vue-next'
+import { Archive, ChevronDown, Pin, PinOff, PencilLine, MessageSquareShare, Tags, Trash2, MoreVertical, Split, Users, Crown, AtSign, ShieldAlert } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import SessionGroupHeader from '@/components/session/SessionGroupHeader.vue'
 import SessionTagDialog from '@/components/session/SessionTagDialog.vue'
@@ -1514,14 +1518,17 @@ onUnmounted(() => {
    Replaces `.session-item-badge`, which painted ONE blue dot for both "unread"
    and "pendingApproval" — so "there is a reply" and "it is blocked waiting for
    your approval" were literally the same pixels. The two states are now
-   separated by MOTION, because hue alone is not enough: a theme's accent and
-   its orange may sit close together, and a colour-vision-deficient reader gets
-   nothing from hue at all.
+   separated by SHAPE and MOTION: pending is a shield glyph (approval/permission
+   UI is unified on the shield — see icons.ts, the notification chip and the
+   chat chips), unread stays a plain dot.
 
-   So: pending pulses in place (blocked on you), unread never moves (nothing is
-   happening). See rowStatus() for why only one is ever shown, and why a
-   RUNNING row shows nothing here at all (the bottom-edge comet already carries
-   that message).
+   Shape carries the distinction on its own, which matters because hue alone is
+   not enough: a theme's accent and its orange may sit close together, and a
+   colour-vision-deficient reader gets nothing from hue at all. The pulse stays
+   as a second channel.
+
+   See rowStatus() for why only one is ever shown, and why a RUNNING row shows
+   nothing here at all (the bottom-edge comet already carries that message).
 
    A running row therefore renders no element, so the slot costs it no width.
    Sized at 14px so it stays visible without the row's meta line growing. It is
@@ -1540,13 +1547,16 @@ onUnmounted(() => {
   width: 14px;
   height: 14px;
   margin-left: var(--space-4);
-  border-radius: 50%;
   box-sizing: border-box;
 }
 
-/* Pending — one amber dot pulsing in place. */
+/* Pending — the shield glyph, pulsing in place. currentColor lets the token
+   drive the stroke, so the glyph tracks the theme exactly like the dot did. */
 .session-status.is-pending {
-  background: radial-gradient(circle, var(--status-dot-pending) 4px, transparent 4px);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--status-dot-pending);
   animation: session-status-pulse 1.6s ease-in-out infinite;
 }
 
@@ -1554,7 +1564,7 @@ onUnmounted(() => {
    what keeps a list with many unread rows calm.
 
    The dot is 8px inside the 14px slot, NOT a 14px disc: a full-slot disc
-   carries far more visual weight than the pending dot and the two would read
+   carries far more visual weight than the pending shield and the two would read
    as unrelated indicators.
 
    Drawn as a radial-gradient rather than a nested element so the slot keeps its
@@ -1562,6 +1572,7 @@ onUnmounted(() => {
    further right on unread rows than on pending ones, which shows up as a
    ragged right edge when scanning the list. */
 .session-status.is-unread {
+  border-radius: 50%;
   background: radial-gradient(circle, var(--status-dot) 4px, transparent 4px);
 }
 
@@ -1575,30 +1586,28 @@ onUnmounted(() => {
    should respect the preference (design guide). Do not "fix" it by adding the
    media query back without reading this.
 
-   Motion is not decoration here — it is a load-bearing channel, and freezing
-   collapses states:
+   Motion is not decoration here — it is a second channel on top of shape, and
+   freezing collapses part of the signal:
 
-     "pending" (pulsing dot) and "unread" (still dot) are the SAME shape and
-     size; only the pulse and the hue separate them. Freeze the pulse and
-     they differ by hue alone — and a theme's accent and its orange are free
-     to be the same value (3 of the 36 themes), so on those themes the two
-     become literally identical. A reader with a colour-vision deficiency
-     gets nothing from the hue on ANY theme.
+     "pending" (shield glyph, pulsing) and "unread" (still dot) already differ
+     in SHAPE, which is the primary channel. The pulse is a second channel: it
+     draws the eye to the row that is blocked on you. Freeze it and the shape
+     still separates the two states — but the "act now" emphasis is lost, and a
+     theme's accent and its orange are free to be the same value (3 of the 36
+     themes), so hue alone would not carry the difference for a reader with a
+     colour-vision deficiency on those themes.
 
    An earlier version did freeze them, on the reasoning that the states are
    duplicated in the row's title and aria-label; that reasoning is wrong,
    because the whole point of this slot is to be readable at a glance, without
-   reading anything. A frozen slot is a slot that says nothing.
+   reading anything. A frozen slot is a slot that says less.
 
    This also matches the rest of the app, which is the consistency the user
    asked for: every other loading indicator (RefreshButton, the bottom-edge
    comet) is driven by the Web Animations API, and WAAPI does not consult the
    preference at all. Those indicators keep spinning under reduced motion, so
    opting out only here made this the single indicator that behaved
-   differently — a bug report of "why does only this one stop?".
-
-   If the states are ever made distinguishable WITHOUT motion, this exception
-   can go away — but that has to come first, not the media query. */
+   differently — a bug report of "why does only this one stop?". */
 
 /* The sweep's keyframes now live in v-running-sweep (directives/runningSweep.ts)
    rather than here: it drives them through the Web Animations API so every

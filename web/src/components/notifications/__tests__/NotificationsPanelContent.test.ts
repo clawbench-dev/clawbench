@@ -11,7 +11,7 @@ vi.mock('lucide-vue-next', () => {
   const stub = (name: string) => ({ name, render: () => h('span', { class: `icon-${name}` }) })
   const names = [
     'Bell', 'BellOff', 'Folder', 'Unlink', 'Trash2', 'AlertCircle',
-    'Bot', 'Clock', 'GitMerge', 'Check', 'X', 'AlertTriangle',
+    'Bot', 'Clock', 'GitMerge', 'Check', 'X', 'ShieldAlert',
   ]
   return Object.fromEntries(names.map(n => [n, stub(n)]))
 })
@@ -136,6 +136,15 @@ describe('NotificationsPanelContent', () => {
     expect(w.findAll('.notif-card')).toHaveLength(2)
     expect(w.text()).toContain('First')
     expect(w.text()).toContain('Second')
+  })
+
+  it('uses the shield icon for the pending-approval event chip', () => {
+    // Approval/permission UI is unified on the shield glyph — the pending chip
+    // used to be an AlertTriangle, which read as a generic error.
+    items.value = [notif({ id: 1, eventType: 'permission_pending' })]
+    const w = mountPanel()
+    expect(w.find('.nc-meta .evt .icon-ShieldAlert').exists()).toBe(true)
+    expect(w.find('.nc-meta .evt .icon-AlertTriangle').exists()).toBe(false)
   })
 
   it('clicking a session row dispatches clawbench-open-session', async () => {

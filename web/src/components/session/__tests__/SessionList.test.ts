@@ -666,11 +666,12 @@ describe('SessionList', () => {
     expect(cls('unread')).not.toContain('is-pending')
   })
 
-  it('renders the slot as a single element with no child dots', async () => {
-    // The slot is one painted element per state, not a container of children —
-    // both dot states are a radial-gradient paint on the slot itself. A stray
-    // child element here would be invisible (nothing styles it) but would still
-    // be a bug magnet, so the shape is pinned.
+  it('renders the unread slot as a single painted element, and the pending slot as a shield', async () => {
+    // The unread state is one painted element (a radial-gradient on the slot
+    // itself), not a container of children. The pending state, by contrast, now
+    // carries the shield glyph as its only child — the approval/permission
+    // surface is unified on the shield. A stray extra child would be a bug
+    // magnet, so both shapes are pinned.
     const base = sessionsFixture()
     mockFetch.mockResolvedValue({
       ok: true,
@@ -686,11 +687,14 @@ describe('SessionList', () => {
     await wrapper.vm.loadSessions()
     await flushPromises()
 
-    for (const id of ['pend', 'unread']) {
-      const slot = wrapper.find(`[data-session-id="${id}"] .session-status`)
-      expect(slot.exists(), `${id} should have a status slot`).toBe(true)
-      expect(slot.element.children.length, `${id} must be a single painted element`).toBe(0)
-    }
+    const unread = wrapper.find('[data-session-id="unread"] .session-status')
+    expect(unread.exists(), 'unread should have a status slot').toBe(true)
+    expect(unread.element.children.length, 'unread must be a single painted element').toBe(0)
+
+    const pend = wrapper.find('[data-session-id="pend"] .session-status')
+    expect(pend.exists(), 'pending should have a status slot').toBe(true)
+    expect(pend.element.children.length, 'pending renders exactly the shield glyph').toBe(1)
+    expect(pend.find('svg').exists(), 'the pending slot must be the shield glyph').toBe(true)
   })
 
   it('ranks pending above unread, so an approval is never hidden', async () => {
