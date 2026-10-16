@@ -79,6 +79,7 @@ const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, 
     currentModeName: '',
     currentTransport: '',
     autoApprove: false,
+    cruise: false,
   }
   const mockToastFn = vi.fn()
   const mockIdentityFns = {
@@ -121,7 +122,7 @@ const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, 
     }
   })
   function resetAdditionalMocks() {
-    Object.keys(mockIdentity).forEach(k => { mockIdentity[k] = k === 'autoApprove' ? false : '' })
+    Object.keys(mockIdentity).forEach(k => { mockIdentity[k] = (k === 'autoApprove' || k === 'cruise') ? false : '' })
     mockToastFn.mockReset()
     mockIdentityFns.loadModelPref.mockReset()
     mockIdentityFns.loadThinkingPref.mockReset()
@@ -205,6 +206,10 @@ vi.mock('@/composables/useSessionIdentity.ts', () => ({
     autoApprove: {
       get value() { return mockIdentity.autoApprove },
       set value(v) { mockIdentity.autoApprove = v },
+    },
+    cruise: {
+      get value() { return mockIdentity.cruise },
+      set value(v) { mockIdentity.cruise = v },
     },
     availableCommands: { value: [] },
     availableModes: { value: [] },
@@ -3781,6 +3786,55 @@ describe('createSession', () => {
 
     // loadHistory synced autoApprove=true from the server response.
     expect(mockIdentity.autoApprove).toBe(true)
+  })
+
+  it('restores the persisted cruise switch on loadHistory (switch away and back)', async () => {
+    // Regression: clearSessionIdentity() resets cruise to false on every switch,
+    // and loadHistory never read it back, so the chip reverted to "off" after
+    // switching away and back (the value only survived a full page reload).
+    // loadHistory must mirror the autoApprove read-back above.
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 'g1',
+        sessionTitle: 'Group',
+        // A non-empty message list so the change-detection snapshot differs from
+        // the initial empty one and the early "skip if unchanged" return does not
+        // bypass the identity sync.
+        messages: [{ id: 1, role: 'user', content: 'hi', blocks: [] }],
+        total: 1,
+        backend: 'codebuddy',
+        agentId: 'agent2',
+        sessionType: 'group',
+        cruise: true, // server persisted the cruise switch
+        running: false,
+      }),
+    })
+
+    const options = {
+      currentSessionId: ref('g1'),
+      messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
+      loading: ref(false),
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream: vi.fn(),
+      onOpen: vi.fn(),
+    }
+    lastSessionOptions = options
+    const session = useChatSession(options)
+    // Mirror the real switchSession call: (forceScrollBottom, showOverlay,
+    // skipIfUnchanged=false, immediate=true).
+    await session.loadHistory(true, true, false, true)
+
+    expect(mockIdentity.cruise).toBe(true)
   })
 
   it('does not client-override autoApprove when the server reports it off', async () => {

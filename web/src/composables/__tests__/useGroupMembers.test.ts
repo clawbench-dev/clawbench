@@ -147,4 +147,34 @@ describe('useGroupMembers', () => {
     // Unknown name resolves to null.
     expect(resolveByName('Bob')).toBeNull()
   })
+
+  it('drops a stale response so a slow previous session cannot clobber the current one', async () => {
+    // Switch away to a SLOW group, then straight back to the fast one. The slow
+    // response lands LAST; without a generation guard it would overwrite the
+    // current session's cruise/mode/roster with the previous session's values
+    // ("switch away and back and the cruise state is gone").
+    const cruiseByGroup: Record<string, boolean> = { 'g-fast': true, 'g-slow': false }
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      const gid = String(url).split('groupId=')[1]
+      if (gid === 'g-slow') await new Promise(r => setTimeout(r, 50))
+      return {
+        ok: true,
+        json: async () => ({ members: [], cruise: cruiseByGroup[gid] === true }),
+      }
+    }))
+
+    const sid = ref('g-fast')
+    const { cruise } = useGroupMembers(sid)
+    await nextTick()
+    await new Promise(r => setTimeout(r, 10))
+    expect(cruise.value).toBe(true)
+
+    sid.value = 'g-slow' // switch away — slow response now in flight
+    await nextTick()
+    sid.value = 'g-fast' // switch back — fast response wins the race
+    await nextTick()
+    await new Promise(r => setTimeout(r, 100)) // let the slow response land last
+
+    expect(cruise.value).toBe(true)
+  })
 })

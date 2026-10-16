@@ -338,6 +338,14 @@ export function useChatSession(options: UseChatSessionOptions) {
     if (sessionData.autoApprove !== undefined) {
       autoApprove.value = sessionData.autoApprove as boolean
     }
+    // Restore the single-chat auto-cruise switch too. clearSessionIdentity()
+    // resets it to false on every switch, so without this read-back the chip
+    // reverts to "off" after switching away and back — the persisted value only
+    // ever came back on a full page reload (initSessionFromAPI). Mirrors
+    // autoApprove above; both are server-authoritative context_state flags.
+    if (sessionData.cruise !== undefined) {
+      cruise.value = sessionData.cruise as boolean
+    }
 
     // ── Available modes / thinking / commands / plan ──
     const modeState = sessionData.modeState as Record<string, unknown> | undefined
@@ -390,7 +398,7 @@ export function useChatSession(options: UseChatSessionOptions) {
 
   // ── Identity refs from singleton ──
   const identity = useSessionIdentity()
-  const { currentSessionTitle, currentBackend, currentSessionType, currentAgentId, currentModelId, currentModelName, runningSessions, runningSessionsVersion, availableCommands, autoApprove, thinkingEffortState, modeState } = identity
+  const { currentSessionTitle, currentBackend, currentSessionType, currentAgentId, currentModelId, currentModelName, runningSessions, runningSessionsVersion, availableCommands, autoApprove, cruise, thinkingEffortState, modeState } = identity
 
   // ── Agents from singleton ──
   const { agents, loadAgents, getAgentBackend, getAgentName, getAgent, syncModelFromAgent, getAgentModel, agentHeaderTitle: makeAgentTitle, supportsACP } = useAgents()
