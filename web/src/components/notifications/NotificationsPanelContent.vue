@@ -304,7 +304,7 @@ function formatTime(iso: string): string {
  */
 function onOpen(n: NotificationItem) {
   if (n.sourceMissing) {
-    toast.show(t('notifications.sourceDeletedHint'), { type: 'info' })
+    toast.show(t('notifications.sourceDeletedHint'), { icon: 'warning', type: 'info' })
     return
   }
   if (n.kind === 'session' && n.sessionId) {
