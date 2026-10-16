@@ -1834,3 +1834,75 @@ func TestProxyRegistry_ReversePersistenceRoundTrip(t *testing.T) {
 	assert.False(t, p.Active, "restored reverse mapping waits for the client to reconnect")
 	assert.False(t, r2.HasReverseProxy(localPort), "restored reverse mapping must not start a reverse proxy")
 }
+
+// ---------- checkPortActive dialer seam ----------
+
+// TestCheckPortActive_UsesInjectedDialer pins the seam that keeps the proxy
+// tests off the network. Without it the suite dials real (usually unreachable)
+// addresses: every non-localhost registration paid the full 5s budget, and on
+// Windows the OS connect outlasted it, timing the package out at Go's 600s
+// limit. The injected dialer must be the one actually consulted.
+func TestCheckPortActive_UsesInjectedDialer(t *testing.T) {
+	var gotAddr string
+	var gotTimeout time.Duration
+	restore := SetPortDialForTest(func(addr string, timeout time.Duration) bool {
+		gotAddr, gotTimeout = addr, timeout
+		return true
+	})
+	defer restore()
+
+	assert.True(t, checkPortActive(8080, "192.168.1.100"),
+		"the injected dialer's result must be returned")
+	assert.Equal(t, "192.168.1.100:8080", gotAddr)
+	assert.Equal(t, 5*time.Second, gotTimeout,
+		"a non-localhost target keeps its longer budget")
+}
+
+// TestCheckPortActive_LocalhostUsesShorterTimeout pins the other half: an empty
+// host is normalized to 127.0.0.1, and every loopback spelling probes with the
+// shorter local budget, since a loopback connect either succeeds at once or is
+// refused immediately.
+func TestCheckPortActive_LocalhostUsesShorterTimeout(t *testing.T) {
+	cases := []struct{ name, host, wantAddr string }{
+		// Only an EMPTY host is rewritten to 127.0.0.1; an explicit "localhost"
+		// is dialed as written (the resolver handles it).
+		{"empty host defaults to loopback", "", "127.0.0.1:3000"},
+		{"explicit loopback", "127.0.0.1", "127.0.0.1:3000"},
+		{"localhost", "localhost", "localhost:3000"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotAddr string
+			var gotTimeout time.Duration
+			restore := SetPortDialForTest(func(addr string, timeout time.Duration) bool {
+				gotAddr, gotTimeout = addr, timeout
+				return false
+			})
+			defer restore()
+
+			assert.False(t, checkPortActive(3000, tc.host))
+			assert.Equal(t, tc.wantAddr, gotAddr)
+			assert.Equal(t, 2*time.Second, gotTimeout, "loopback uses the shorter budget")
+		})
+	}
+}
+
+// TestCheckPortActive_DefaultDialerReachesRealListener is the one case that must
+// touch the network: the production dialer has to actually detect a listener.
+// It uses a real loopback listener (never a remote address), so it is fast and
+// hermetic.
+func TestCheckPortActive_DefaultDialerReachesRealListener(t *testing.T) {
+	restore := SetPortDialForTest(dialPort)
+	defer restore()
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	assert.NoError(t, err)
+	defer func() { _ = l.Close() }()
+	port := l.Addr().(*net.TCPAddr).Port
+
+	assert.True(t, checkPortActive(port, ""), "a live loopback listener must be detected")
+
+	// A port with nothing bound must report inactive rather than hang.
+	freePort := getFreePort(t)
+	assert.False(t, checkPortActive(freePort, ""), "a closed loopback port must be reported inactive")
+}
