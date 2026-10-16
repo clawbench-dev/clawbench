@@ -76,8 +76,10 @@ vi.mock('@/composables/useDialog', () => ({
 }))
 
 const mockDownloadFileByPath = vi.hoisted(() => vi.fn())
+const mockPostForBlob = vi.hoisted(() => vi.fn(async () => ({ blob: null })))
 vi.mock('@/utils/download', () => ({
   downloadFileByPath: mockDownloadFileByPath,
+  postForBlobWithProgress: mockPostForBlob,
 }))
 
 const mockCopyText = vi.hoisted(() => vi.fn((_text: string, onSuccess?: () => void) => onSuccess?.()))
@@ -188,7 +190,7 @@ vi.mock('@/composables/useCodeLinkPreview', () => {
 // tests never hit /api/dir; the returned refs are shared so a test can drive
 // the pane's loading/entries state.
 const mockDirPreviewState = vi.hoisted(() => ({
-  entries: [] as Array<{ name: string; type: string }>,
+  entries: [] as Array<{ name: string; type: string; target?: string }>,
   loading: false,
   error: false,
 }))
@@ -517,6 +519,8 @@ beforeEach(() => {
   mockDialogPrompt.mockResolvedValue('newfile.txt')
   mockDialogAlert.mockReset()
   mockDownloadFileByPath.mockReset()
+  mockPostForBlob.mockReset()
+  mockPostForBlob.mockResolvedValue({ blob: null })
   mockCopyText.mockReset()
   mockCopyText.mockImplementation((_text: string, onSuccess?: () => void) => onSuccess?.())
   mockNavigateToDir.mockReset()
@@ -526,7 +530,10 @@ beforeEach(() => {
   mockPreviewRefs.visible!.value = false
   mockPreviewRefs.mode!.value = 'transient'
   mockPreviewRefs.target!.value = null
-  mockDirPreviewState.entries = []
+  // Clear IN PLACE: the useDirPreview mock captured this array in a ref at
+  // import time, so reassigning the field would leave the ref pointing at the
+  // old array and a test's push would never reach the component.
+  mockDirPreviewState.entries.length = 0
   mockDirPreviewState.loading = false
   mockDirPreviewState.error = false
   // The settings mock is a single shared reactive object: a test that switches
@@ -712,6 +719,64 @@ describe('FileManagerContent — handleItemClick', () => {
 
     expect(wrapper.emitted('navigateDir')).toBeTruthy()
     expect(wrapper.emitted('navigateDir')![0][0]).toContain('linked')
+  })
+
+  // Regression for #549: a symlink whose target escapes the project root is
+  // entered through the RESOLVED ABSOLUTE TARGET the backend reports, not the
+  // link's own project-relative path — the latter would hit /api/dir, which
+  // refuses to follow it and answers "access denied".
+  it('enters an escaping symlink directory via its reported target', async () => {
+    mockIsTouchPrimary.value = false
+    const entries = [
+      {
+        name: 'data',
+        type: 'dir',
+        symlink: true,
+        target: '/some/other/dir',
+        modified: '2025-01-01T00:00:00Z',
+        size: 0,
+      },
+    ]
+    const wrapper = mountContent({ entries })
+
+    await wrapper.find('.dir-item').trigger('dblclick')
+
+    expect(wrapper.emitted('navigateDir')).toBeTruthy()
+    expect(wrapper.emitted('navigateDir')![0][0]).toBe('/some/other/dir')
+  })
+
+  it('lists an escaping symlink directory through its reported target', async () => {
+    mockLocalConfig.filePreviewMode = true
+    const entries = [
+      {
+        name: 'data',
+        type: 'dir',
+        symlink: true,
+        target: '/some/other/dir',
+        modified: '2025-01-01T00:00:00Z',
+        size: 0,
+      },
+    ]
+    const wrapper = mountContent({ entries })
+
+    // A single click previews the directory listing in the docked pane.
+    await wrapper.find('.dir-item').trigger('click')
+
+    const stub = wrapper.find('.dir-preview-stub')
+    expect(stub.exists()).toBe(true)
+    expect(stub.attributes('data-dir-path')).toBe('/some/other/dir')
+  })
+
+  it('enters an in-project symlink directory via its own path (no target)', async () => {
+    mockIsTouchPrimary.value = false
+    const entries = [
+      { name: 'linked', type: 'dir', symlink: true, modified: '2025-01-01T00:00:00Z', size: 0 },
+    ]
+    const wrapper = mountContent({ entries })
+
+    await wrapper.find('.dir-item').trigger('dblclick')
+
+    expect(wrapper.emitted('navigateDir')![0][0]).toBe('linked')
   })
 
   it('PC: single click only selects, does not navigate or open', async () => {
@@ -3691,6 +3756,41 @@ describe('FileManagerContent — context menu actions', () => {
     vi.unstubAllGlobals()
   })
 
+  // Regression for #549: directory-scoped actions must operate on an escaping
+  // symlink's resolved target, not the link's own project-relative path — the
+  // latter 403s on these endpoints, so the action would silently fail.
+  it('doArchiveDir archives an escaping symlink via its resolved target', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'dir', name: 'data', path: 'data', target: '/some/other/dir' }
+    await nextTick()
+    await wrapper.vm.doArchiveDir()
+    await nextTick()
+
+    expect(mockPostForBlob).toHaveBeenCalled()
+    expect(mockPostForBlob.mock.calls[0][1]).toEqual({ paths: ['/some/other/dir'] })
+  })
+
+  it('doDownloadTree lists an escaping symlink via its resolved target', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'dir', name: 'data', path: 'data', target: '/some/other/dir' }
+    await nextTick()
+    wrapper.vm.doDownloadTree()
+
+    expect(mockDownloadDirAsTree).toHaveBeenCalledWith('/some/other/dir')
+  })
+
+  it('doOpenTerminal opens at an escaping symlink\'s resolved target', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'dir', name: 'data', path: 'data', target: '/some/other/dir' }
+    await nextTick()
+    wrapper.vm.doOpenTerminal()
+
+    expect(wrapper.emitted('openTerminal')![0][0]).toBe('/some/other/dir')
+  })
+
   it('doArchive shows failure toast when the API returns !ok', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500, json: async () => ({ error: 'x' }), blob: async () => new Blob() })))
     const wrapper = mountContent()
@@ -5345,6 +5445,26 @@ describe('FileManagerContent — directory quick preview', () => {
     // duplicating it.
     expect(wrapper.emitted('navigateDir')![0]).toEqual(['src/nested'])
     expect(wrapper.find('.fm-preview-pane').exists()).toBe(false)
+  })
+
+  // Regression for #549: a child that is itself an escaping symlink must be
+  // entered through the resolved target the pane entry carries, not the joined
+  // link path (which the listing endpoint refuses).
+  it('pane open-dir enters an escaping symlink child via its target', async () => {
+    mockIsTouchPrimary.value = false
+    mockLocalConfig.filePreviewMode = true
+    // Mutate the array the mock's ref wraps (reassigning the field would not
+    // reach the ref created at mock setup).
+    mockDirPreviewState.entries.push({ name: 'data', type: 'dir', target: '/some/other/dir' })
+    const wrapper = mountContent()
+
+    await wrapper.find('.dir-item[data-path="src"]').trigger('click')
+    await nextTick()
+
+    await wrapper.findComponent(DirPreviewBodyStub).vm.$emit('open-dir', 'data')
+    await nextTick()
+
+    expect(wrapper.emitted('navigateDir')![0]).toEqual(['/some/other/dir'])
   })
 
   it('pane open-file opens the full-screen viewer for the joined path', async () => {

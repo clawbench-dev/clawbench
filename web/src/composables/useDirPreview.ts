@@ -21,6 +21,9 @@ export interface DirPreviewEntry {
   modified?: string
   symlink?: boolean
   broken?: boolean
+  /** Absolute path to enter a symlink-to-directory whose target escapes the
+   *  browsed base (see handler.DirEntry.Target). Absent otherwise. */
+  target?: string
 }
 
 export interface UseDirPreviewOptions {

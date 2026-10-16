@@ -94,6 +94,10 @@ interface DirEntry {
     supported?: boolean
     symlink?: boolean
     broken?: boolean
+    /** Absolute path to enter a symlink-to-directory whose target escapes the
+     *  project root; the link's own path is refused by the listing endpoint.
+     *  Absent for ordinary entries and for symlinks inside the project. */
+    target?: string
     /** Git would not track this entry (matched by .gitignore, or under an
      *  excluded directory). Advisory only: the entry stays fully operable, the
      *  UI just dims it. Absent outside a git repository. */

@@ -720,8 +720,10 @@ async function handleInternalMoveDrop(e) {
     dropTargetPath.value = null
     if (!srcPaths.length) return
     const target = e.target.closest('.file-item, .grid-item')
+    // Drop into the target directory — for an escaping symlink that is its
+    // resolved target (moving into the link's own path would 403).
     const targetDir = target && target.dataset.action === 'dir'
-        ? target.dataset.path
+        ? enterTargetFor(target.dataset.path)
         : currentDirPath()
     const entries = srcPaths.map(p => ({ name: p.split('/').pop(), path: p }))
     const allOk = await transferEntries(entries, targetDir, true)
@@ -1009,10 +1011,14 @@ function shouldPreviewOnClick(action, path) {
 }
 
 /** Show a directory's listing in the pane. Clears any file preview so the two
- *  bodies never fight over the same pane. */
+ *  bodies never fight over the same pane.
+ *
+ *  `dirPath` is the ROW's own path; an escaping symlink is listed through its
+ *  resolved target instead (see enterPathOf), so the pane does not re-request
+ *  the link's base-relative path and get "access denied". */
 function showDirPreview(dirPath) {
     codeLinkPreview.close()
-    dirPreviewPath.value = dirPath
+    dirPreviewPath.value = enterTargetFor(dirPath)
     previewPaneOpen.value = true
     // Opening the pane shrinks the list to the top half of the split, which can
     // push the just-clicked entry out of view — re-assert it once the split has
@@ -1030,9 +1036,14 @@ function showFilePreview(filePath, anchorEl) {
 
 /** Pane clicked a directory: navigate the main list into it and collapse the
  *  pane. The listing the pane showed has become the main list, so keeping the
- *  pane open would just duplicate it — and the two must never disagree. */
+ *  pane open would just duplicate it — and the two must never disagree.
+ *
+ *  A child that is itself an escaping symlink is entered through its resolved
+ *  target (reported on the pane entry), not the link's own path — the latter
+ *  would be refused by the listing endpoint. */
 function onDirPreviewOpenDir(name) {
-    const target = joinPath(dirPreviewPath.value || props.currentDir, name)
+    const entry = dirPreview.entries.value.find(e => e.name === name)
+    const target = entry?.target || joinPath(dirPreviewPath.value || props.currentDir, name)
     dirPreviewPath.value = ''
     emit('navigateDir', target)
 }
@@ -1548,6 +1559,7 @@ function browseToDisplay(entry) {
         modified: entry.modified,
         symlink: entry.symlink,
         broken: entry.broken,
+        target: entry.target,
         ignored: entry.ignored,
     }
 }
@@ -1595,6 +1607,21 @@ function currentDirPath() {
 
 function pathOf(entry) {
     return entry.path != null ? entry.path : joinPath(props.currentDir, entry.name)
+}
+
+/**
+ * The path to ENTER a directory through, which differs from pathOf() for a
+ * symlink-to-directory whose target escapes the browsed base.
+ *
+ * Such a link's own path resolves outside the base, so the listing endpoint
+ * refuses to follow it ("access denied"). The backend instead reports the
+ * link's resolved absolute target (`entry.target`), and the client navigates
+ * THERE — an ordinary directory served by the external-browsing endpoint.
+ * Every other entry (including symlinks that stay inside the base) is entered
+ * through its own path, so row identity and selection keep using pathOf().
+ */
+function enterPathOf(entry) {
+    return entry.target || pathOf(entry)
 }
 
 function keyOf(entry) {
@@ -1761,8 +1788,9 @@ function onLongPress(entry, e) {
     const touch = e.touches[0]
     ctxMenu.x = toFixedCSS(touch.clientX)
     ctxMenu.y = toFixedCSS(touch.clientY + 10)
-    // DirEntry from v-for has no .path — compute it via the mode-aware pathOf
-    ctxMenu.entry = { type: entry.type, name: entry.name, path: pathOf(entry) }
+    // DirEntry from v-for has no .path — compute it via the mode-aware pathOf.
+    // target is carried through for the same reason as in handleCtxMenu.
+    ctxMenu.entry = { type: entry.type, name: entry.name, path: pathOf(entry), target: entry.target }
     ctxMenu.visible = true
     nextTick(() => clampCtxMenu())
 }
@@ -1835,7 +1863,10 @@ function handleCtxMenu(e) {
     const action = item.dataset.action
     const path = item.dataset.path
     const name = item.querySelector('.file-name, .grid-name')?.textContent || ''
-    ctxMenu.entry = { type: action === 'dir' ? 'dir' : 'file', name, path }
+    // Carry the escaping-symlink target (if any) so directory-scoped actions
+    // (archive, download-tree, open-terminal, paste/move destination) operate on
+    // the resolved directory rather than the link's own unenterable path.
+    ctxMenu.entry = { type: action === 'dir' ? 'dir' : 'file', name, path, target: entryByPath(path)?.target }
     ctxMenu.visible = true
     nextTick(() => clampCtxMenu())
 }
@@ -1854,7 +1885,10 @@ function isCutItem(path) {
 
 function getDestDir(entry) {
     if (!entry) return currentDirPath()
-    if (entry.type === 'dir') return entry.path
+    // A directory destination is the directory itself — for an escaping symlink
+    // that is its resolved target, since the link's own path cannot be entered
+    // (paste/move into it would 403).
+    if (entry.type === 'dir') return enterPathOf(entry)
     const idx = entry.path.lastIndexOf('/')
     return idx > 0 ? entry.path.slice(0, idx) : ''
 }
@@ -2285,16 +2319,27 @@ function openItem(action, path) {
     if (searchHasQuery.value && action === 'dir') {
         // Opening a directory result clears the query and navigates into it.
         exitSearch()
-        emit('navigateDir', path)
+        emit('navigateDir', enterTargetFor(path))
         return
     }
     if (action === 'dir') {
-        emit('navigateDir', path)
+        emit('navigateDir', enterTargetFor(path))
     } else {
         // Files (and search-result files) preview in the viewer — the query
         // stays so the user can keep picking results.
         emit('selectFile', path)
     }
+}
+
+/**
+ * Resolve the path to enter for a directory row identified by `path`. Returns
+ * the row's escaping-symlink target when it has one (see enterPathOf), and
+ * `path` itself otherwise — including for search results, which carry no
+ * target and are entered through their own path.
+ */
+function enterTargetFor(path) {
+    const entry = entryByPath(path)
+    return entry ? enterPathOf(entry) : path
 }
 
 function formatDate(modified) {
@@ -2355,8 +2400,10 @@ function doOpenAsProject() {
 }
 
 function doOpenTerminal() {
+    // Open in the entry's directory — for an escaping symlink that is its
+    // resolved target, since the terminal resolver rejects the link's own path.
     const targetCwd = ctxMenu.entry && ctxMenu.entry.type === 'dir'
-        ? ctxMenu.entry.path
+        ? enterPathOf(ctxMenu.entry)
         : props.currentDir
     closeCtxMenu()
     emit('openTerminal', targetCwd || '')
@@ -2453,12 +2500,12 @@ function doArchiveDir() {
     const entry = ctxMenu.entry
     closeCtxMenu()
     const zipName = entry.name + '.zip'
-    doArchive([entry.path], zipName)
+    doArchive([enterPathOf(entry)], zipName)
 }
 
 function doDownloadTree() {
     if (!ctxMenu.entry || ctxMenu.entry.type !== 'dir') return
-    const path = ctxMenu.entry.path
+    const path = enterPathOf(ctxMenu.entry)
     closeCtxMenu()
     downloadDirAsTree(path)
 }
@@ -2780,8 +2827,10 @@ function syncPreviewToSelection() {
     if (!shouldPreviewOnClick(action, path)) return
     if (action === 'dir') {
         // Already listing this directory in an open pane — re-running the fetch
-        // would only discard the pane's own scroll position.
-        if (previewPaneOpen.value && dirPreviewPath.value === path) return
+        // would only discard the pane's own scroll position. Compare against the
+        // ENTER path: an escaping symlink lists its resolved target, not the
+        // link's own path.
+        if (previewPaneOpen.value && dirPreviewPath.value === enterPathOf(entry)) return
         showDirPreview(path)
         return
     }
