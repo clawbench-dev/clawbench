@@ -38,6 +38,7 @@ const (
 	migTaskExecSummaries    = "2026-09-29_migrate_task_execution_summaries"
 	migToolCallsFromContent = "2026-09-29_migrate_tool_calls_from_content"
 	migThinkingFromContent  = "2026-09-29_migrate_thinking_from_content"
+	migAskCardDone          = "2026-10-16_normalize_ask_summary_cards_done"
 )
 
 // dataMigrationNames 是上表的名字集合，供测试遍历。
@@ -46,6 +47,7 @@ var dataMigrationNames = []string{
 	migTaskExecSummaries,
 	migToolCallsFromContent,
 	migThinkingFromContent,
+	migAskCardDone,
 }
 
 // ensureSchemaMigrationsTable 幂等建台账表。必须在任何 runOnce 之前调用。
@@ -1850,6 +1852,14 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// Migrate: extract thinking text from chat_history.content into chat_thinking
 	// and rewrite content to slim format (think_id instead of text).
 	runOnce(migThinkingFromContent, MigrateThinkingFromContent)
+
+	// Migrate: force done=true on AskUserQuestion entries in already-persisted
+	// summary_cards. The flag used to be copied from a block that never receives
+	// a tool_result, so it persisted as absent/false and the summary view showed
+	// the card's spinner forever. Rows written before the writer fix are never
+	// rewritten by the summarization paths (they skip messages that already have
+	// a summary), so they must be healed here.
+	runOnce(migAskCardDone, MigrateAskSummaryCardsDone)
 
 	return nil
 }

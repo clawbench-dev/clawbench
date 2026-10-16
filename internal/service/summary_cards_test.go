@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -249,5 +250,35 @@ func TestExtractSummaryCards_ExcludesSubAgentBlocks(t *testing.T) {
 	}
 	if len(cards.Tools) != 1 || cards.Tools[0].ID != "top-ask" {
 		t.Fatalf("expected only the top-level ask card, got %+v", cards.Tools)
+	}
+}
+
+// An AskUserQuestion block never receives a tool_result (it is a request for
+// user input), so its Done flag stays false in the persisted content. The
+// summary card must NOT inherit that flag: the frontend's showAskPending()
+// cannot tell `done:false` from an absent key, so a copied false rendered the
+// card's spinner forever in the summary view.
+func TestExtractSummaryCards_AskQuestionDoneForcedTrue(t *testing.T) {
+	blocks := []model.ContentBlock{
+		{Type: "tool_use", Name: "AskUserQuestion", ID: "ask-1", Done: false, Input: map[string]any{
+			"questions": []any{map[string]any{"question": "go?", "options": []any{map[string]any{"label": "yes"}}}},
+		}},
+	}
+	cards := extractSummaryCards(blocks)
+	if len(cards.Tools) != 1 {
+		t.Fatalf("expected 1 ask card, got %+v", cards.Tools)
+	}
+	if !cards.Tools[0].Done {
+		t.Fatalf("AskUserQuestion summary card must be Done=true regardless of the block's flag: %+v", cards.Tools[0])
+	}
+	// The marshaled form must actually carry the key — `omitempty` on
+	// SummaryTool.Done drops it when false, which is the wire shape the
+	// frontend reads.
+	raw, err := json.Marshal(cards)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(raw), `"done":true`) {
+		t.Fatalf("summary card JSON must carry \"done\":true, got %s", raw)
 	}
 }
