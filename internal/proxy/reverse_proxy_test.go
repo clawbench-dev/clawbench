@@ -581,3 +581,53 @@ func TestRewriteLocation_HTTPSTarget(t *testing.T) {
 	got := rewriteLocation("https://192.168.1.1:8443/secure", targetURL, listenAddr)
 	assert.Equal(t, "http://127.0.0.1:54321/secure", got, "HTTPS target Location should be rewritten with http scheme")
 }
+
+// TestReverseProxy_StopThenRebindSamePort is the regression guard for the
+// UpdatePort race: stop the old proxy and immediately start a new one on the
+// SAME local port (exactly what ProxyRegistry.UpdatePort does when the target
+// host changes).
+//
+// http.Server.Close() returns once it stops accepting, but the kernel can still
+// hold the bound address briefly, so a bare net.Listen on the next line fails
+// with "address already in use" and the mapping silently loses its Host-rewrite
+// proxy. This was latent for a long time: UpdatePort happened to perform a ~5s
+// synchronous port probe between the stop and the start, which gave the kernel
+// enough time. Removing that probe (it was dialing a real, unreachable address)
+// exposed the race, so the rebind now retries.
+func TestReverseProxy_StopThenRebindSamePort(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	first, err := NewReverseProxy("127.0.0.1", 0, backend.Listener.Addr().String(), "http")
+	assert.NoError(t, err)
+	port := first.Port()
+	assert.NotZero(t, port, "the proxy must expose its bound port")
+	go first.Serve()
+
+	// The exact UpdatePort sequence: close, then immediately rebind the same port.
+	first.Close()
+
+	second, err := NewReverseProxy("127.0.0.1", port, backend.Listener.Addr().String(), "http")
+	assert.NoError(t, err, "rebinding the just-released port must succeed")
+	defer second.Close()
+	assert.Equal(t, port, second.Port(), "the new proxy must own the same port")
+}
+
+// TestListenWithRetry_GivesUpAfterWindow verifies the retry is bounded: an
+// address that can never be bound must fail rather than spin forever.
+func TestListenWithRetry_GivesUpAfterWindow(t *testing.T) {
+	// Shrink the window so the test does not spend the production 2s proving the
+	// retry stops; the assertion is about the bound, not the exact duration.
+	prev := bindRetryWindow
+	bindRetryWindow = 50 * time.Millisecond
+	defer func() { bindRetryWindow = prev }()
+
+	start := time.Now()
+	// A syntactically valid but unbindable address (out of range octet).
+	_, err := listenWithRetry("256.256.256.256:80")
+	assert.Error(t, err, "an un-bindable address must fail")
+	assert.Less(t, time.Since(start), time.Second,
+		"the retry must stop after its window, not hang")
+}

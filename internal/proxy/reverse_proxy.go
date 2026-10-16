@@ -9,6 +9,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // ReverseProxy is an HTTP reverse proxy that listens on a local address and
@@ -105,13 +106,64 @@ func NewReverseProxy(listenHost string, listenPort int, targetAddr string, proto
 
 	// Start listening
 	addr := fmt.Sprintf("%s:%d", listenHost, listenPort)
-	listener, err := net.Listen("tcp", addr)
+	listener, err := listenWithRetry(addr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen on %s: %w", addr, err)
 	}
 	rp.listener = listener
 
 	return rp, nil
+}
+
+// reverseProxyBindRetryWindow bounds how long a rebind waits for the previous
+// listener to be fully released.
+//
+// UpdatePort stops the old proxy and immediately starts a new one on the SAME
+// local port. http.Server.Close() returns as soon as it has stopped accepting,
+// but the kernel may still hold the bound address for a moment afterwards, so
+// the immediate rebind raced and failed with "address already in use" — the
+// new proxy was never installed and the mapping silently lost its Host-rewrite
+// (observed: TestProxyRegistry_UpdatePort_NonLocalhostToDifferentHost_RestartsReverseProxy).
+//
+// That race was previously hidden by an unrelated 5s synchronous port probe
+// inside UpdatePort; when the probe was made injectable (and tests stopped
+// dialing for real) the rebind happened immediately and the latent bug
+// surfaced. Retrying is the fix, not a longer sleep at the call site.
+//
+// Retrying on ANY bind error (rather than only address-in-use) is deliberate
+// and mirrors internal/ssh/server.go's listenWithRetry: syscall.EADDRINUSE is
+// an invented value on Windows and never matches the real WSAEADDRINUSE, so a
+// portable address-in-use check is not available. A permanently un-bindable
+// address simply fails after the window instead of immediately.
+const (
+	reverseProxyBindRetryWindow   = 2 * time.Second
+	reverseProxyBindRetryInterval = 10 * time.Millisecond
+)
+
+// bindRetryWindow is the active window. A var so the bounded-failure test can
+// shrink it instead of spending the full 2s proving the retry stops.
+var bindRetryWindow = reverseProxyBindRetryWindow
+
+// listenWithRetry binds addr, retrying while the bind keeps failing until the
+// retry window elapses.
+func listenWithRetry(addr string) (net.Listener, error) {
+	deadline := time.Now().Add(bindRetryWindow)
+	for attempt := 0; ; attempt++ {
+		ln, err := net.Listen("tcp", addr)
+		if err == nil {
+			if attempt > 0 {
+				slog.Info("reverse proxy bound after retry",
+					slog.String("addr", addr), slog.Int("attempts", attempt+1))
+			}
+			return ln, nil
+		}
+		if !time.Now().Before(deadline) {
+			return nil, err
+		}
+		slog.Warn("reverse proxy bind failed, retrying (previous listener may not have released yet)",
+			slog.String("addr", addr), slog.Int("attempt", attempt+1), slog.String("err", err.Error()))
+		time.Sleep(reverseProxyBindRetryInterval)
+	}
 }
 
 // Serve starts accepting connections. Blocks until the listener is closed.
