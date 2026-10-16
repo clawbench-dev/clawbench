@@ -522,9 +522,9 @@ function doToggleAutoApprove() {
   })
 }
 
-// Toggle the session's auto-cruise switch. Single chat only (the chip lives in
-// the session-info bar, which is hidden for groups — groups toggle cruise from
-// their own settings sheet).
+// Toggle the session's auto-cruise switch for a SINGLE chat. Group sessions
+// have their own chip (onGroupCruiseClick below) because their cruise value
+// lives in the group roster, not in session identity.
 function onCruiseClick() {
   const next = !cruise.value
   toggleCruise(next)

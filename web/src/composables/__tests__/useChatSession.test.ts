@@ -3837,6 +3837,75 @@ describe('createSession', () => {
     expect(mockIdentity.cruise).toBe(true)
   })
 
+  it('reads back cruise/autoApprove even when the message snapshot is unchanged', async () => {
+    // Regression: the flag read-back must run BEFORE the change-detection early
+    // return. A refresh with skipIfUnchanged=true (WS reconnect, a `completed`
+    // session_update) whose message snapshot matches the previous one would
+    // otherwise return early and leave a cross-device toggle stale.
+    const sameMessages = [{ id: 1, role: 'user', content: 'hi', blocks: [] }]
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 'g1',
+        sessionTitle: 'Group',
+        messages: sameMessages,
+        total: 1,
+        backend: 'codebuddy',
+        agentId: 'agent2',
+        sessionType: 'group',
+        cruise: true,
+        autoApprove: true,
+        running: false,
+      }),
+    })
+
+    const options = {
+      currentSessionId: ref('g1'),
+      messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
+      loading: ref(false),
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream: vi.fn(),
+      onOpen: vi.fn(),
+    }
+    lastSessionOptions = options
+    const session = useChatSession(options)
+    // First load establishes the message snapshot.
+    await session.loadHistory(false, false, false)
+    // The user toggles both off elsewhere / on another device → server says off.
+    mockIdentity.cruise = false
+    mockIdentity.autoApprove = false
+    // Second load: same messages (snapshot unchanged) but flags flipped on the
+    // server. skipIfUnchanged=true is the path that must still sync the flags.
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 'g1',
+        sessionTitle: 'Group',
+        messages: sameMessages,
+        total: 1,
+        backend: 'codebuddy',
+        agentId: 'agent2',
+        sessionType: 'group',
+        cruise: true,
+        autoApprove: true,
+        running: false,
+      }),
+    })
+    await session.loadHistory(false, false, true)
+
+    expect(mockIdentity.cruise).toBe(true)
+    expect(mockIdentity.autoApprove).toBe(true)
+  })
+
   it('does not client-override autoApprove when the server reports it off', async () => {
     // Guard: even if the agent config says autoApprove=true, the UI must follow
     // the server value. This is the exact divergence class the fix removes —

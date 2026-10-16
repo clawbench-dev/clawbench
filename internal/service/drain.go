@@ -424,8 +424,9 @@ func RunDrainLoop(cfg DrainConfig, result DrainResult) {
 		// terminal; a resumed/continued turn restarts the iteration.
 		if !hooksDeclined {
 			if next, ok := resumeBeforeTerminal(cfg, result, &autoContinueAttempts, &cruiseRounds); ok {
+				// A hook produced a fresh turn: it replaces `result`, so the
+				// next iteration must offer the NEW result to the hooks again.
 				result = next
-				hooksDeclined = false
 				continue
 			}
 			// Both hooks declined this result — do not ask them again unless a

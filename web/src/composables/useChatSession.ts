@@ -219,6 +219,21 @@ export function useChatSession(options: UseChatSessionOptions) {
       return { synced: false, keepInputDisabled: false }
     }
 
+    // ── Server-authoritative switch flags ──
+    // autoApprove / cruise are session flags, NOT message state, so they must be
+    // read back BEFORE the change-detection early return below — otherwise a
+    // refresh whose message snapshot happens to be unchanged (WS reconnect, a
+    // `completed` session_update) would leave them stale. clearSessionIdentity()
+    // resets both on every switch, and a toggle made on another device must
+    // surface here. Placed AFTER the stale-response guard so a response for a
+    // session the user just left cannot write its flags into the current one.
+    if (sessionData.autoApprove !== undefined) {
+      autoApprove.value = sessionData.autoApprove as boolean
+    }
+    if (sessionData.cruise !== undefined) {
+      cruise.value = sessionData.cruise as boolean
+    }
+
     // ── Change detection ──
     const newSnapshot = buildMessageSnapshot(rawMsgs)
     if (skipIfUnchanged && newSnapshot === lastMessageSnapshot && !isRunning) {
@@ -335,17 +350,8 @@ export function useChatSession(options: UseChatSessionOptions) {
     )
     syncTransportFromData(sessionData.transport as string)
     syncUsageFromData(sessionData.usageState as { used?: number; size?: number; cost?: number; currency?: string; inputTokens?: number; outputTokens?: number }, returnedId)
-    if (sessionData.autoApprove !== undefined) {
-      autoApprove.value = sessionData.autoApprove as boolean
-    }
-    // Restore the single-chat auto-cruise switch too. clearSessionIdentity()
-    // resets it to false on every switch, so without this read-back the chip
-    // reverts to "off" after switching away and back — the persisted value only
-    // ever came back on a full page reload (initSessionFromAPI). Mirrors
-    // autoApprove above; both are server-authoritative context_state flags.
-    if (sessionData.cruise !== undefined) {
-      cruise.value = sessionData.cruise as boolean
-    }
+    // (autoApprove / cruise are read back earlier, before the change-detection
+    // early return — see the "Server-authoritative switch flags" block above.)
 
     // ── Available modes / thinking / commands / plan ──
     const modeState = sessionData.modeState as Record<string, unknown> | undefined
