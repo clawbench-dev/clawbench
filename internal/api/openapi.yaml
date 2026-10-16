@@ -1482,6 +1482,8 @@ paths:
                     单聊：一轮回复结束后不停手，改为注入「完成确认」回合，直到 AI 输出
                     `<clawbench-goal-satisfied/>`（或撞 `chat.group_max_speeches` 上限）才结束。
                     群聊：四类「交回用户」点改为确认回合（详见群聊设计 §15）。默认关。
+                    **单向硬默认**：`cruise: true` 会强制把 `autoApprove` 打开（巡航无人值守，
+                    权限确认无人应答会卡住整轮）；`cruise: false` 不动 `autoApprove`。
                 title:
                   type: string
                 pinned:
@@ -5673,9 +5675,12 @@ paths:
         作用（用户不参与路由）。
         `cruise` 是自动巡航开关：开启后，循环本应交回用户时（主持人发结束标签 /
         自由模式接力枯竭 / @User / 提问）不再交回，改为触发一次「确认回合」，
-        直到参与者（主持人模式由主持人一人、自由模式由过半数活跃成员）输出
+        直到参与者（主持人模式由主持人一人、自由模式由至少半数活跃成员）输出
         `<clawbench-goal-satisfied/>` 才真正结束；`chat.group_max_speeches`
         仍作为安全上限。两者均可省略，至少提供一个；只写提供的字段。
+        **单向硬默认**：`cruise: true` 会强制把群组的 `autoApprove` 打开
+        （fan-out 到所有成员行 + 活连接；巡航无人值守，权限确认无人应答会卡住整轮）；
+        `cruise: false` 不动 `autoApprove`。
         成员发言次数上限是**全局配置**（`chat.group_max_speeches`，经
         `PATCH /api/config` 修改），不是每群设置，故不在此端点。
       operationId: groupSettingsUpdate

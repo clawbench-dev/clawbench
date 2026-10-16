@@ -631,6 +631,15 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 		// BuildChatRequest (single chat) and the group orchestrator.
 		//nolint:errcheck,gosec // best-effort persistence; failure is non-fatal for an idempotent update
 		service.SetSessionCruise(sessionID, *req.Cruise)
+		// Hard default (one-directional): enabling auto-cruise FORCES auto-approve
+		// on, because cruise only works unattended — a pending permission prompt
+		// would stall the loop with no human watching. Disabling cruise does NOT
+		// touch auto-approve (the user may still want unattended runs). Applied
+		// AFTER the autoApprove block above so a request carrying both
+		// {autoApprove:false, cruise:true} still ends with auto-approve on.
+		if *req.Cruise {
+			applyAutoApprove(sessionID, true)
+		}
 	}
 	if title := strings.TrimSpace(req.Title); title != "" {
 		// Manual rename: lock the title so the first-message auto-title does

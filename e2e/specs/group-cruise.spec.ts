@@ -38,6 +38,10 @@ test.describe.serial('AI group chat auto-cruise', () => {
       // The roster must report cruise=true.
       const members = await (await fetch(`/api/group/members?groupId=${encodeURIComponent(created.groupId)}`)).json()
       if (members.cruise !== true) return { ok: false, step: 'membersCruise', cruise: members.cruise }
+      // Hard default: enabling cruise forces auto-approve on for the group
+      // (cruise runs unattended, so a permission prompt would stall the loop).
+      const groupSession = await (await fetch(`/api/ai/chat?session_id=${encodeURIComponent(created.groupId)}`)).json()
+      if (groupSession.autoApprove !== true) return { ok: false, step: 'cruiseForcesAutoApprove', autoApprove: groupSession.autoApprove }
 
       const send = await fetch(`/api/ai/chat?session_id=${encodeURIComponent(created.groupId)}`, {
         method: 'POST',

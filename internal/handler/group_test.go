@@ -223,6 +223,36 @@ func TestServeGroupSettings_ParallelDefaultRoundTrip(t *testing.T) {
 	assert.False(t, service.GetGroupParallelDefault(groupID), "parallelDefault must round-trip false")
 }
 
+// Enabling group auto-cruise must FORCE auto-approve on (cruise runs
+// unattended), and disabling cruise must leave auto-approve alone.
+func TestServeGroupSettings_CruiseForcesAutoApprove(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	groupID, _, err := service.CreateGroup(env.ProjectDir, "g", "codebuddy", "codebuddy", "Host")
+	require.NoError(t, err)
+
+	// Start from auto-approve OFF.
+	service.SetGroupAutoApprove(groupID, false)
+	require.False(t, service.GetSessionAutoApprove(groupID))
+
+	// Enable cruise -> auto-approve must flip on.
+	req := newRequest(t, http.MethodPatch, "/api/group/settings", map[string]any{"groupId": groupID, "cruise": true})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupSettings, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.True(t, service.GetSessionAutoApprove(groupID),
+		"enabling cruise must force the group's auto-approve on")
+
+	// Disable cruise -> auto-approve must stay on (one-directional).
+	req = newRequest(t, http.MethodPatch, "/api/group/settings", map[string]any{"groupId": groupID, "cruise": false})
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandlerWithAuth(ServeGroupSettings, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.True(t, service.GetSessionAutoApprove(groupID),
+		"disabling cruise must NOT turn auto-approve off")
+}
+
 // A PATCH with NO setting is a no-op request and must be rejected: it would
 // otherwise report success while changing nothing.
 func TestServeGroupSettings_NoSettingsIsBadRequest(t *testing.T) {

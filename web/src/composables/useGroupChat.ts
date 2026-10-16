@@ -147,7 +147,13 @@ export async function setGroupParallelDefault(groupId: string, enabled: boolean)
 
 /** setGroupCruise updates the auto-cruise switch (design §15): when on, the turn
  *  keeps the participants working until they declare the goal met instead of
- *  handing the floor back to the human. */
+ *  handing the floor back to the human.
+ *
+ *  This is the pure API call. The cruise → auto-approve hard default (enabling
+ *  cruise forces auto-approve on) is applied by the CALLERS, which already hold
+ *  the session-identity ref — see `applyCruiseAutoApproveDefault`. It is NOT
+ *  applied here: importing useSessionIdentity would couple this leaf API module
+ *  to the identity singleton and break the many narrow `useAgents` mocks. */
 export async function setGroupCruise(groupId: string, enabled: boolean): Promise<void> {
   const resp = await fetch('/api/group/settings', {
     method: 'PATCH',

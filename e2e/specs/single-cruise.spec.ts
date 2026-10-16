@@ -39,6 +39,9 @@ test.describe.serial('single-chat auto-cruise', () => {
       // The GET response must report cruise=true (server-authoritative).
       const hist0 = await (await fetch(`/api/ai/chat?session_id=${encodeURIComponent(sessionId)}`)).json()
       if (hist0.cruise !== true) return { ok: false, step: 'getCruise', cruise: hist0.cruise }
+      // Hard default: enabling cruise forces auto-approve on (cruise runs
+      // unattended, so a permission prompt would stall the loop).
+      if (hist0.autoApprove !== true) return { ok: false, step: 'cruiseForcesAutoApprove', autoApprove: hist0.autoApprove }
 
       const send = await fetch(`/api/ai/chat?session_id=${encodeURIComponent(sessionId)}`, {
         method: 'POST',

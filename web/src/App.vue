@@ -624,7 +624,7 @@ import { useGroupMembers } from '@/composables/useGroupMembers'
 import { setGroupCruise } from '@/composables/useGroupChat'
 import { resetUsageStats } from '@/composables/useUsageStats'
 import { resetGitStats } from '@/composables/useGitCodeStats'
-import { useSessionIdentity, registerSessionDrawerRef, registerOpenSessionTabOverride, resetIdentity } from './composables/useSessionIdentity.ts'
+import { useSessionIdentity, registerSessionDrawerRef, registerOpenSessionTabOverride, resetIdentity, applyCruiseAutoApproveDefault } from './composables/useSessionIdentity.ts'
 import { useSessionSidebar } from './composables/useSessionSidebar.ts'
 import type { SessionSearchResult } from './composables/useSessionSearch'
 import { loadSessionsOnce, resetChatSessionState, switching } from './composables/useChatSession.ts'
@@ -1368,6 +1368,9 @@ async function onToggleGroupCruise(enabled: boolean) {
   if (!groupId) return
   try {
     await setGroupCruise(groupId, enabled)
+    // Hard default: enabling cruise forces auto-approve on (the backend does the
+    // same for the group's member rows); mirror it into the chip immediately.
+    applyCruiseAutoApproveDefault(enabled)
   } catch (e) {
     appLog.w('Group', 'setGroupCruise failed', e)
   }

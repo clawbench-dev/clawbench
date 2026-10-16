@@ -143,7 +143,7 @@ import RealAgentNameTag from '@/components/common/RealAgentNameTag.vue'
 import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
 import { getAgentAvatar } from '@/composables/useAgents'
 import { addGroupMembers, generateMemberAvatars, removeGroupMember, setGroupParallelDefault, setGroupCruise, type GroupMemberInfo } from '@/composables/useGroupChat'
-import { toggleAutoApprove } from '@/composables/useSessionIdentity'
+import { toggleAutoApprove, applyCruiseAutoApproveDefault } from '@/composables/useSessionIdentity'
 import { appLog } from '@/utils/appLog'
 import { store } from '@/stores/app.ts'
 
@@ -237,6 +237,9 @@ async function onToggleCruise(e: Event) {
   const enabled = (e.target as HTMLInputElement).checked
   try {
     await setGroupCruise(props.groupId, enabled)
+    // Hard default: enabling cruise forces auto-approve on (the backend does the
+    // same for the group's member rows); mirror it into the checkbox at once.
+    applyCruiseAutoApproveDefault(enabled)
     emit('changed')
   } catch { /* the parent's refresh reverts the checkbox to the server value */ }
 }
