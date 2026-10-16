@@ -287,6 +287,23 @@ func TestBuildCruiseFreeMemberAddendum(t *testing.T) {
 	}
 }
 
+// The free addendum states the confirmation threshold, so its wording must match
+// what countGoalSatisfied actually implements: votes*2 >= n, i.e. >= ceil(n/2).
+// That is "at least half", NOT "over half" — with n=2 a single vote confirms
+// (see TestCruiseFree_ConfirmationReachesHalf). The addendum originally said
+// "过半" and d113c8629 corrected the i18n/docs but missed this builder, so the
+// model kept being told the wrong rule. Pin both halves: the accurate phrase
+// present AND the inaccurate one absent.
+func TestBuildCruiseFreeMemberAddendum_ThresholdWording(t *testing.T) {
+	p := BuildCruiseFreeMemberAddendum()
+	if !strings.Contains(p, "至少半数") {
+		t.Fatalf("free addendum must state the threshold as 至少半数 (>= ceil(n/2)): %q", p)
+	}
+	if strings.Contains(p, "过半") {
+		t.Fatalf("free addendum must not say 过半 (over half) — that contradicts votes*2>=n: %q", p)
+	}
+}
+
 // The confirmation prompt is hidden (not persisted) and forbids asking the
 // user. The free variant forbids @-ing; the host variant invites routing when
 // not done.

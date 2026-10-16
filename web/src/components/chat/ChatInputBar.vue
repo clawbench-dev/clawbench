@@ -547,8 +547,9 @@ function onGroupCruiseClick() {
   })
 }
 // The group chip's tooltip is mode-aware: host mode ends when the host alone
-// confirms, free mode needs over half the members. Reusing the single-chat hint
-// (chat.cruise.hint) here would describe a rule the group does not follow.
+// confirms, free mode needs at least half the members (>= ceil(n/2), i.e.
+// votes*2 >= n). Reusing the single-chat hint (chat.cruise.hint) here would
+// describe a rule the group does not follow.
 const groupCruiseHint = computed(() =>
   props.groupMode === 'free' ? t('group.cruiseHintFree') : t('group.cruiseHintHost'))
 const showUsageInfo = computed(() => isACPTransport.value || contextSize.value > 0)
@@ -722,7 +723,8 @@ const props = defineProps({
   groupCruise: { type: Boolean, default: false },
   /** The group's mode ('host' | 'free'). Drives the group cruise chip's
    *  tooltip: host mode ends on the host's alone confirmation, free mode needs
-   *  over half the members. Only meaningful when isGroupSession is true. */
+   *  at least half the members (>= ceil(n/2)). Only meaningful when
+   *  isGroupSession is true. */
   groupMode: { type: String, default: 'host' },
   /** Staged group member cards (@ cards) for the input's attachment strip. The
    *  cards themselves live in useChatContext so they survive a session switch

@@ -241,7 +241,7 @@ func BuildCruiseHostAddendum() string {
 // never returns to the human while cruising.
 func BuildCruiseFreeMemberAddendum() string {
 	var b strings.Builder
-	b.WriteString("\n\n[自动巡航模式] 本群已开启自动巡航：讨论将持续进行，直到过半成员确认任务已完成。\n")
+	b.WriteString("\n\n[自动巡航模式] 本群已开启自动巡航：讨论将持续进行，直到至少半数成员确认任务已完成。\n")
 	b.WriteString("如果你认为已经满足用户的要求，输出结束信号：<clawbench-goal-satisfied/>（可与你的发言并存）。\n")
 	b.WriteString("如果尚未完成，继续正常讨论与 @ 接力，不要输出 goal-satisfied。\n")
 	b.WriteString("巡航期间**不要向用户提问**——用户不会立即回复，所有不明确之处请通过探索、实验、思考与讨论自行决定。\n")

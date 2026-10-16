@@ -95,10 +95,11 @@
       </div>
 
       <!-- Settings: auto-cruise. Available in BOTH modes: it changes only WHEN
-           the turn ends (host mode: the host must confirm; free mode: over half
-           the members must confirm), not who routes. The hint differs by mode so
-           the two rule sets are legible. Placed AFTER auto-approve so the
-           auto-approve row keeps its position in the switch order. -->
+           the turn ends (host mode: the host must confirm; free mode: at least
+           half the members must confirm — >= ceil(n/2)), not who routes. The
+           hint differs by mode so the two rule sets are legible. Placed AFTER
+           auto-approve so the auto-approve row keeps its position in the switch
+           order. -->
       <div class="gm-setting">
         <div class="gm-setting-text">
           <label class="gm-setting-label" for="group-cruise">{{ t('group.cruiseLabel') }}</label>
