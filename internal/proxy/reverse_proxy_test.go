@@ -631,3 +631,29 @@ func TestListenWithRetry_GivesUpAfterWindow(t *testing.T) {
 	assert.Less(t, time.Since(start), time.Second,
 		"the retry must stop after its window, not hang")
 }
+
+// TestListenWithRetry_SucceedsAfterFailure forces a first-attempt failure and a
+// later success, which is the path UpdatePort actually hits: the previous
+// listener holds the port for a moment, then the kernel releases it.
+//
+// Deterministic on purpose — relying on the real stop→rebind race to cover this
+// branch left it flaky (the first attempt sometimes succeeded outright, so the
+// "bound after retry" branch was never reached and diff coverage dipped).
+func TestListenWithRetry_SucceedsAfterFailure(t *testing.T) {
+	// Occupy a port, then release it shortly after the retry loop starts.
+	occupier, err := net.Listen("tcp", "127.0.0.1:0")
+	assert.NoError(t, err)
+	addr := occupier.Addr().String()
+	releaseAfter := 40 * time.Millisecond
+	go func() {
+		time.Sleep(releaseAfter)
+		_ = occupier.Close()
+	}()
+
+	ln, err := listenWithRetry(addr)
+	assert.NoError(t, err, "the retry must recover once the address is released")
+	if err == nil {
+		assert.Equal(t, addr, ln.Addr().String(), "the retry must bind the requested address")
+		_ = ln.Close()
+	}
+}
