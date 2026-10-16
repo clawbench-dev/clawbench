@@ -499,6 +499,39 @@ not json — should be dropped before the sink
 	assert.Contains(t, got[1], `"cb-1"`)
 }
 
+// TestACPStdoutFilter_SinkInstalledAfterConstructionStillSeesEveryLine is the
+// regression guard for the pump being started in the constructor.
+//
+// With an eager start, a source that is readable the instant the constructor
+// returns (a strings.Reader here; the SDK's receive goroutine in production) let
+// the pump drain the first line and call dispatchRawSink BEFORE the caller's
+// SetRawSink ran — so the sink silently missed it. That surfaced as a
+// macOS-only failure of TestACPStdoutFilter_TeesToRawSink ("should have 2
+// items, but has 1"); on Linux the goroutine simply was not scheduled in time,
+// which is why the suite looked green here.
+//
+// The sleep is the scheduling point that makes the race deterministic: with the
+// eager start it guarantees the pump wins the race. The pump is now armed on the
+// first Read, so no line can be dispatched before the sinks are installed and
+// the sleep is harmless.
+func TestACPStdoutFilter_SinkInstalledAfterConstructionStillSeesEveryLine(t *testing.T) {
+	input := `{"jsonrpc":"2.0","id":"cb-1","result":{"steered":true}}
+`
+	sink := &sinkRecorder{}
+	f := newACPStdoutFilter(strings.NewReader(input))
+	// Deliberately yield before installing the sink: the pump must not have run.
+	time.Sleep(50 * time.Millisecond)
+	f.SetRawSink(sink)
+	defer f.Close()
+
+	_, err := io.Copy(io.Discard, f)
+	require.NoError(t, err)
+
+	got := sink.captured()
+	require.Len(t, got, 1, "a sink installed before the first read must see every line")
+	assert.Contains(t, got[0], `"cb-1"`)
+}
+
 // TestACPStdoutFilter_NoSinkIsSafe verifies a filter without a sink behaves
 // exactly as before (the hook is optional).
 func TestACPStdoutFilter_NoSinkIsSafe(t *testing.T) {
