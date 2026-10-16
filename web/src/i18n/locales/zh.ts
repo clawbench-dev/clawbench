@@ -72,7 +72,7 @@ export default {
     history: '历史',
     forge: '议题与合并请求',
     tasks: '任务',
-    notifications: '通知',
+    notifications: '通知中心',
     portForward: '端口映射',
 
     refresh: '刷新',
@@ -1213,9 +1213,10 @@ export default {
     },
   },
   notifications: {
-    title: '通知',
+    title: '通知中心',
     // 通知日志没有已读/未读概念——它回答「发生了什么」，不回答「有什么待处理」。
     projectFilter: '项目',
+    allProjects: '全部项目',
     kindFilter: '类型',
     rangeFilter: '时间',
     all: '全部',
@@ -1232,6 +1233,13 @@ export default {
     // 源（会话/任务）已删除时显示。点击不跳转（源自身的降级会静默改道到别处）。
     sourceDeleted: '源已删除',
     sourceDeletedHint: '这条通知指向的会话或任务已不存在。',
+    // 通知日志是全局的（所有项目）。**只给「其他项目」的行标项目名**——
+    // 没有名字的行就是当前项目的，这正是判据；把当前项目也印在每一行上是噪音。
+    // 点击会整棵项目子树重建，这个后果写在 tooltip 里。
+    externalProjectTip: '来自项目「{name}」，点击将切换项目。',
+    crossProjectConfirmTitle: '切换项目',
+    crossProjectConfirm: '这条通知来自项目「{name}」，不在当前项目中。打开它会切换到该项目。',
+    crossProjectConfirmOk: '切换并打开',
     count: '{n} 条',
     loading: '加载中…',
     loadMore: '加载更多',
@@ -1239,8 +1247,8 @@ export default {
     emptyHint: '会话、任务与仓库事件会显示在这里。',
     emptyFiltered: '没有符合当前筛选的通知',
     clear: '清空',
-    clearConfirm: '清空全部通知历史？此操作不可撤销。',
-    cleared: '通知历史已清空',
+    clearConfirm: '清空全部通知？此操作不可撤销。',
+    cleared: '通知已清空',
     refresh: '刷新',
     event: {
       sessionCompleted: '会话已完成',
@@ -1758,6 +1766,7 @@ export default {
       backToTerminal: '返回终端',
       backToSettings: '返回设置',
       backToPortForward: '返回端口映射',
+      backToNotifications: '返回通知中心',
       back: '返回',
       parentDir: '返回上一级',
       projectRoot: '项目根目录',

@@ -5,7 +5,7 @@ import type { FileScrollEntry } from '@/utils/fileScrollCache'
 // directory in the file manager, and Back must return to the terminal. It needs
 // no SURFACE_TAB entry — surfaceToTab() already resolves it through PANEL_TABS,
 // which lists every panel tab id (terminal included).
-export type NavigationSurface = 'chat' | 'task' | 'file' | 'browse' | 'history' | 'forge' | 'terminal' | 'settings' | 'proxy'
+export type NavigationSurface = 'chat' | 'task' | 'file' | 'browse' | 'history' | 'forge' | 'terminal' | 'settings' | 'proxy' | 'notifications'
 
 export interface NavigationOrigin {
   surface: NavigationSurface
@@ -101,6 +101,11 @@ const SURFACE_TAB = new Map<NavigationSurface, string>([
   // Port mapping is a dock tab too: its header's config button jumps into
   // settings, and Back must return to the port-mapping panel.
   ['proxy', 'proxy'],
+  // The notification log is a dock tab, and opening a row jumps to that row's
+  // source. Back must return to the log — without this entry the origin
+  // recorded whatever tab preceded the jump, so the user landed somewhere they
+  // had never been.
+  ['notifications', 'notifications'],
 ])
 
 /** Tab ids that are already panel identifiers, so they map to themselves. */
@@ -114,6 +119,7 @@ const PANEL_TABS = new Set<string>([
   'proxy',
   'stats',
   'settings',
+  'notifications',
 ])
 
 /**

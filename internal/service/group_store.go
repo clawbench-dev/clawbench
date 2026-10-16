@@ -1261,6 +1261,33 @@ func IsGroupMemberSession(sessionID string) bool {
 	return GetSessionType(sessionID) == groupMemberSessionType
 }
 
+// ResolveGroupTimelineID maps a hidden member row to the group timeline it
+// belongs to, returning the input unchanged for anything that is not a member
+// row (a group timeline, an ordinary chat, or an unknown id).
+//
+// Use this wherever an id must be USER-VISIBLE. A member row is an internal
+// connection binding: it has no title, is hidden from the session list, and
+// opening it as a standalone chat shows an empty conversation. Any id that
+// leaves the backend toward the UI — a notification's deep-link target, a push
+// payload, a WS event a client will navigate on — must be the group, or the
+// user lands on a session they cannot see or use.
+func ResolveGroupTimelineID(sessionID string) string {
+	if !store.ReadDBReady() {
+		return sessionID
+	}
+	var groupID string
+	// One query covers both checks: a non-member row has no group_id (NULL/''),
+	// so it falls through to the identity return without a second round trip.
+	err := store.ReadDB().QueryRow(
+		"SELECT COALESCE(group_id, '') FROM chat_sessions WHERE id = ? AND session_type = ?",
+		sessionID, groupMemberSessionType,
+	).Scan(&groupID)
+	if err != nil || groupID == "" {
+		return sessionID
+	}
+	return groupID
+}
+
 // GetMemberCursor returns a member's seen_cursor: the group-timeline high-water
 // mark it has already been shown. 0 means "nothing seen yet".
 func GetMemberCursor(memberID string) int64 {

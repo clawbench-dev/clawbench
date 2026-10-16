@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { h, ref } from 'vue'
 import en from '@/i18n/locales/en'
@@ -10,7 +10,7 @@ import zh from '@/i18n/locales/zh'
 vi.mock('lucide-vue-next', () => {
   const stub = (name: string) => ({ name, render: () => h('span', { class: `icon-${name}` }) })
   const names = [
-    'Bell', 'BellOff', 'Folder', 'Unlink', 'Trash2', 'AlertCircle',
+    'Inbox', 'Folder', 'Unlink', 'Trash2', 'AlertCircle', 'Layers',
     'Bot', 'Clock', 'GitMerge', 'Check', 'X', 'ShieldAlert',
   ]
   return Object.fromEntries(names.map(n => [n, stub(n)]))
@@ -35,6 +35,8 @@ const mockSetRange = vi.fn()
 const mockSetProject = vi.fn()
 const mockClear = vi.fn()
 const mockToastShow = vi.fn()
+// Controllable so a test can make the cross-project confirmation be declined.
+const mockConfirm = vi.fn().mockResolvedValue(true)
 
 vi.mock('@/composables/useNotifications', () => ({
   ALL_PROJECTS: '',
@@ -56,14 +58,16 @@ vi.mock('@/composables/useToast', () => ({
 }))
 
 vi.mock('@/composables/useDialog', () => ({
-  useDialog: () => ({ confirm: vi.fn().mockResolvedValue(true) }),
+  useDialog: () => ({ confirm: mockConfirm }),
 }))
 
 vi.mock('@/components/common/MenuSelect.vue', () => ({
   default: {
     name: 'MenuSelect',
-    template: '<div class="menu-select-stub"><slot /></div>',
-    props: ['modelValue', 'options'],
+    // Render the `options` slot (the project picker supplies custom rows) so
+    // those rows are assertable; fall back to a plain marker otherwise.
+    template: '<div class="menu-select-stub"><slot name="options" /><slot /></div>',
+    props: ['modelValue', 'options', 'appSurface', 'menuTitle', 'menuWidth'],
     emits: ['update:modelValue'],
   },
 }))
@@ -77,10 +81,13 @@ vi.mock('@/components/common/LoadingIndicator.vue', () => ({
 }))
 
 vi.mock('@/stores/app', () => ({
+  // Mutable so a test can install the RAW projectRoot that POST /api/project
+  // hands back (see the "raw vs canonical" cases below).
   store: { state: { projectRoot: '/proj' } },
 }))
 
 import NotificationsPanelContent from '@/components/notifications/NotificationsPanelContent.vue'
+import { store } from '@/stores/app'
 
 const i18n = createI18n({ legacy: false, locale: 'en', messages: { en, zh } })
 
@@ -107,6 +114,10 @@ const notif = (over: Record<string, unknown> = {}) => ({
 describe('NotificationsPanelContent', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockConfirm.mockResolvedValue(true)
+    // Reset the (module-level, mutable) project root so the raw/canonical
+    // cases cannot leak into other tests.
+    store.state.projectRoot = '/proj'
     items.value = []
     total.value = 0
     hasMore.value = false
@@ -245,5 +256,165 @@ describe('NotificationsPanelContent', () => {
     hasMore.value = true
     w = mountPanel()
     expect(w.find('.load-more').exists()).toBe(true)
+  })
+
+  // ── Navigation origin + cross-project confirmation ────────────────────────
+
+  it('flags a same-project open so App.vue can record the log as the jump origin', async () => {
+    // Without this flag the jump records whatever tab preceded the log, and
+    // Back (header / edge swipe / Android) lands somewhere the user never was.
+    items.value = [notif({ sessionId: 'sess-42', projectPath: '/proj' })]
+    const w = mountPanel()
+
+    const events: CustomEvent[] = []
+    const listener = (e: Event) => events.push(e as CustomEvent)
+    window.addEventListener('clawbench-open-session', listener)
+    await w.find('.notif-card').trigger('click')
+    window.removeEventListener('clawbench-open-session', listener)
+
+    expect(events[0].detail.fromNotificationCenter).toBe(true)
+    // Same project → no confirmation.
+    expect(mockConfirm).not.toHaveBeenCalled()
+  })
+
+  it('confirms before opening a row from ANOTHER project', async () => {
+    items.value = [notif({ sessionId: 'sess-9', projectPath: '/other-proj' })]
+    const w = mountPanel()
+
+    const events: CustomEvent[] = []
+    const listener = (e: Event) => events.push(e as CustomEvent)
+    window.addEventListener('clawbench-open-session', listener)
+    await w.find('.notif-card').trigger('click')
+    await flushPromises()
+    window.removeEventListener('clawbench-open-session', listener)
+
+    expect(mockConfirm).toHaveBeenCalledTimes(1)
+    // The message must NAME the target project — "switch projects?" without
+    // saying which one is not actionable.
+    expect(String(mockConfirm.mock.calls[0][0])).toContain('other-proj')
+    expect(events).toHaveLength(1)
+    expect(events[0].detail.sessionId).toBe('sess-9')
+  })
+
+  it('declining the cross-project confirmation cancels the navigation', async () => {
+    mockConfirm.mockResolvedValue(false)
+    items.value = [notif({ sessionId: 'sess-9', projectPath: '/other-proj' })]
+    const w = mountPanel()
+
+    const events: CustomEvent[] = []
+    const listener = (e: Event) => events.push(e as CustomEvent)
+    window.addEventListener('clawbench-open-session', listener)
+    await w.find('.notif-card').trigger('click')
+    await flushPromises()
+    window.removeEventListener('clawbench-open-session', listener)
+
+    expect(events).toHaveLength(0)
+  })
+
+  it('does not confirm for a row with no project attribution', async () => {
+    // projectId 0 is the "cannot attribute" sentinel; we cannot name a target
+    // project, so there is nothing to confirm and no external claim to make.
+    items.value = [notif({ sessionId: 'sess-1', projectPath: '' })]
+    const w = mountPanel()
+
+    await w.find('.notif-card').trigger('click')
+    await flushPromises()
+
+    expect(mockConfirm).not.toHaveBeenCalled()
+    expect(w.find('.nc-proj').exists()).toBe(false)
+  })
+
+  // ── External-project distinction: the NAME is the whole marker ────────────
+
+  it('names an other-project row and spells the consequence out in the tooltip', () => {
+    items.value = [notif({ projectPath: '/other-proj' })]
+    const w = mountPanel()
+
+    const chip = w.find('.nc-proj')
+    expect(chip.exists()).toBe(true)
+    expect(chip.text()).toContain('other-proj')
+    expect(chip.attributes('title')).toContain('other-proj')
+  })
+
+  it('uses NO heavier marker than the name — no rail, no extra pill', () => {
+    // The name alone is the distinction. An earlier version added a left rail
+    // plus an "Other project" pill, which read as status/severity and
+    // outweighed the event chip that owns that role. Pin the absence on an
+    // EXTERNAL row — asserting it on a same-project row proves nothing, since
+    // both markers are already false there.
+    items.value = [notif({ projectPath: '/other-proj' })]
+    const w = mountPanel()
+
+    expect(w.find('.notif-card').classes()).not.toContain('is-external-project')
+    expect(w.find('.nc-external').exists()).toBe(false)
+    expect(w.find('.nc-proj').classes()).not.toContain('is-external')
+  })
+
+  it('shows NO project label on a same-project row', () => {
+    // The absence of a name is the signal. Repeating your own project on every
+    // row is noise, and an extra "Other project" pill made the distinction read
+    // as a status/severity — which the event chip already owns.
+    items.value = [notif({ projectPath: '/proj' })]
+    const w = mountPanel()
+
+    expect(w.find('.nc-proj').exists()).toBe(false)
+    // No heavier marker either: the card carries no external class at all.
+    expect(w.find('.notif-card').classes()).not.toContain('is-external-project')
+    expect(w.find('.nc-external').exists()).toBe(false)
+  })
+
+  // ── Raw vs canonical projectRoot ──────────────────────────────────────────
+  //
+  // `n.projectPath` comes from the projects table (canonicalized: no trailing
+  // slash, symlinks resolved). `store.projectRoot` comes from the last
+  // /api/project response, and the POST branch returns the REQUEST path
+  // verbatim. An exact `===` therefore reports the user's OWN project as
+  // external whenever those forms differ — labelling every row of the project
+  // they are currently in.
+
+  it('treats a trailing-slash projectRoot as the SAME project', () => {
+    store.state.projectRoot = '/proj/'
+    items.value = [notif({ projectPath: '/proj' })]
+    const w = mountPanel()
+
+    expect(w.find('.nc-proj').exists()).toBe(false)
+  })
+
+  it('treats a backslash-separated projectRoot as the SAME project', () => {
+    store.state.projectRoot = 'E:\\git\\app'
+    items.value = [notif({ projectPath: 'E:/git/app' })]
+    const w = mountPanel()
+
+    expect(w.find('.nc-proj').exists()).toBe(false)
+  })
+
+  it('treats a Windows drive letter with different case as the SAME project', () => {
+    store.state.projectRoot = 'e:/git/app'
+    items.value = [notif({ projectPath: 'E:/git/app' })]
+    const w = mountPanel()
+
+    expect(w.find('.nc-proj').exists()).toBe(false)
+  })
+
+  it('still marks a genuinely different project (regression guard)', () => {
+    // The canonical comparison must not become a blanket "always same".
+    store.state.projectRoot = '/proj/'
+    items.value = [notif({ projectPath: '/other' })]
+    const w = mountPanel()
+
+    expect(w.find('.nc-proj').exists()).toBe(true)
+  })
+
+  it('does NOT confirm a cross-project switch for a trailing-slash root', async () => {
+    // The confirmation must use the same canonical comparison — otherwise the
+    // user gets a "switch project?" dialog for the project they are already in.
+    store.state.projectRoot = '/proj/'
+    items.value = [notif({ sessionId: 's1', projectPath: '/proj' })]
+    const w = mountPanel()
+
+    await w.find('.notif-card').trigger('click')
+    await flushPromises()
+
+    expect(mockConfirm).not.toHaveBeenCalled()
   })
 })

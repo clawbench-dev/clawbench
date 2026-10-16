@@ -72,7 +72,7 @@ export default {
     history: 'History',
     forge: 'Issues & PRs',
     tasks: 'Tasks',
-    notifications: 'Notifications',
+    notifications: 'Notification Center',
     portForward: 'Port Mapping',
 
     refresh: 'Refresh',
@@ -1210,10 +1210,11 @@ export default {
     },
   },
   notifications: {
-    title: 'Notifications',
+    title: 'Notification Center',
     // The log has no read/unread state — it answers "what happened", not
     // "what is pending". These strings are the panel's whole vocabulary.
     projectFilter: 'Project',
+    allProjects: 'All projects',
     kindFilter: 'Type',
     rangeFilter: 'Time',
     all: 'All',
@@ -1231,6 +1232,14 @@ export default {
     // navigate (the source's own fallback would silently redirect elsewhere).
     sourceDeleted: 'Source deleted',
     sourceDeletedHint: 'The session or task this notification points at no longer exists.',
+    // The log is global (all projects). ONLY other-project rows are named —
+    // a row with no name is one from the project you are in, and that is the
+    // signal; printing your own project on every row is noise. The
+    // "clicking switches projects" consequence lives in the tooltip.
+    externalProjectTip: 'From project "{name}" — clicking switches projects.',
+    crossProjectConfirmTitle: 'Switch project',
+    crossProjectConfirm: 'This notification is from project "{name}", not the current one. Opening it will switch to that project.',
+    crossProjectConfirmOk: 'Switch and open',
     count: '{n} items',
     loading: 'Loading…',
     loadMore: 'Load more',
@@ -1238,8 +1247,8 @@ export default {
     emptyHint: 'Session, task and repository events will show up here.',
     emptyFiltered: 'No notifications match the current filters',
     clear: 'Clear all',
-    clearConfirm: 'Clear the entire notification history? This cannot be undone.',
-    cleared: 'Notification history cleared',
+    clearConfirm: 'Clear all notifications? This cannot be undone.',
+    cleared: 'Notifications cleared',
     refresh: 'Refresh',
     event: {
       sessionCompleted: 'Session completed',
@@ -1761,6 +1770,7 @@ export default {
       backToTerminal: 'Back to Terminal',
       backToSettings: 'Back to Settings',
       backToPortForward: 'Back to Port Mapping',
+      backToNotifications: 'Back to Notification Center',
       back: 'Back',
       parentDir: 'Up one level',
       projectRoot: 'Project root',

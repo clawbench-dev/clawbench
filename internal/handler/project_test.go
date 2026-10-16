@@ -141,6 +141,46 @@ func TestServeProjectSet(t *testing.T) {
 		assert.Equal(t, 1, isDefault, "posted project should be marked as default")
 	})
 
+	// The client adopts the echoed path as its active project and compares it
+	// against paths from the `projects` table (canonical). Echoing the request
+	// string verbatim made those forms differ for any pasted path with a
+	// trailing slash or a "./" segment, and the client then treated the user's
+	// OWN project as a different one.
+	t.Run("POST_EchoesCanonicalPath_NotRawRequest", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		projectPath := filepath.Join(env.WatchDir, "myproject-canon")
+		_ = os.MkdirAll(projectPath, 0o755)
+
+		for _, raw := range []string{
+			projectPath + "/", // trailing slash
+			filepath.Join(projectPath, ".", "..", filepath.Base(projectPath)), // "./.." segment
+			projectPath + "///", // repeated trailing slashes
+		} {
+			req := newRequest(t, http.MethodPost, "/api/project", map[string]string{"path": raw})
+			w := callHandler(ServeProjectSet, req)
+			assert.Equal(t, http.StatusOK, w.Code, "raw=%q", raw)
+
+			var body struct {
+				Path string `json:"path"`
+			}
+			assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+			assert.Equal(t, store.NormalizeProjectPath(projectPath), body.Path,
+				"response path must be canonical, not the raw request (%q)", raw)
+
+			// The cookie must carry the same canonical form — it is what the
+			// GET branch and every project-scoped handler read back.
+			for _, c := range w.Result().Cookies() {
+				if c.Name == model.ScopedCookieName("clawbench_project") {
+					decoded, _ := url.QueryUnescape(c.Value)
+					assert.Equal(t, store.NormalizeProjectPath(projectPath), decoded,
+						"project cookie must be canonical (%q)", raw)
+				}
+			}
+		}
+	})
+
 	t.Run("POST_PathOutsideWatchDir_Returns403", func(t *testing.T) {
 		_, teardown := setupTestEnv(t)
 		defer teardown()

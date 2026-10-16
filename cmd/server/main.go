@@ -949,13 +949,22 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// whole point of the separate predicate (decision #73).
 	ai.GetACPConnManager().SetSessionRunningChecker(service.IsSessionRunningForSweep)
 
-	// Inject permission state change callback (emits WS event on approval state change)
+	// Inject permission state change callback (emits WS event on approval state change).
+	//
+	// The id handed in is the ACP connection's clawbench session — for a group
+	// member that is the hidden MEMBER row (each member owns its own connection,
+	// decision #61). A member row has no title, is absent from the session list,
+	// and opening it shows an empty standalone agent chat, so any id leaving the
+	// backend toward the UI must be resolved to the group timeline first. This
+	// callback feeds the WS broadcast (browser/Android notification navigation),
+	// the pending-events buffer and the notification log, so resolving here fixes
+	// all three at once.
 	ai.SetPermissionStateChangeCallback(func(clawbenchSID string, pending bool, toolName string, toolInput string) {
 		status := "permission_resolved"
 		if pending {
 			status = "permission_pending"
 		}
-		service.EmitSessionEvent(clawbenchSID, status, false, toolName, toolInput)
+		service.EmitSessionEvent(service.ResolveGroupTimelineID(clawbenchSID), status, false, toolName, toolInput)
 	})
 
 	// Initialize TTS summarizer from config (deferred from earlier — needs DB for API key resolution).

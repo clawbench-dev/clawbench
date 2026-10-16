@@ -3,7 +3,7 @@
     <!-- Header: mirrors TaskListPage's .list-header (breadcrumb + icon buttons). -->
     <div class="list-header">
       <div class="notif-breadcrumb">
-        <Bell class="crumb-icon" :size="14" />
+        <Inbox class="crumb-icon" :size="14" />
         <span>{{ t('notifications.title') }}</span>
       </div>
       <RefreshButton
@@ -27,11 +27,47 @@
 
     <!-- Filters: three dropdowns on one row (project / type / time). -->
     <div class="notif-filters">
+      <!-- Project filter mirrors the app-header project menu: an app-surface
+           panel with a title, stacked two-line rows (name over path) and an
+           accent-highlighted active row. "All projects" is a single-line row
+           like the header menu's footer action. -->
       <MenuSelect
         :model-value="projectValue"
         :options="projectSelectOptions"
+        :menu-width="300"
+        app-surface
+        :menu-title="t('notifications.projectFilter')"
         @update:model-value="onProjectChange"
-      />
+      >
+        <template #options>
+          <button
+            type="button"
+            class="app-menu-item"
+            :class="{ active: projectValue === '__all__' }"
+            :title="t('notifications.allProjects')"
+            @click="onProjectChange('__all__')"
+          >
+            <Layers :size="14" class="item-icon" />
+            <span class="item-label">{{ t('notifications.allProjects') }}</span>
+          </button>
+          <div class="menu-divider"></div>
+          <button
+            v-for="item in projectMenuItems"
+            :key="item.value"
+            type="button"
+            class="app-menu-item app-menu-item--stacked"
+            :class="{ active: projectValue === item.value }"
+            :title="item.path"
+            @click="onProjectChange(item.value)"
+          >
+            <Folder :size="14" class="item-icon" />
+            <span class="item-body">
+              <span class="item-name">{{ item.name }}</span>
+              <span class="item-path">{{ item.path }}</span>
+            </span>
+          </button>
+        </template>
+      </MenuSelect>
       <MenuSelect
         :model-value="kindValue"
         :options="kindOptions"
@@ -42,7 +78,6 @@
         :options="rangeOptions"
         @update:model-value="onRangeChange"
       />
-      <div class="filter-spacer"></div>
       <span class="filter-count">{{ t('notifications.count', { n: total }) }}</span>
     </div>
 
@@ -59,7 +94,7 @@
       </div>
 
       <div v-else-if="items.length === 0" class="notif-state">
-        <BellOff :size="30" />
+        <Inbox :size="30" />
         <span>{{ isFiltered ? t('notifications.emptyFiltered') : t('notifications.empty') }}</span>
         <span v-if="!isFiltered" class="notif-state-hint">{{ t('notifications.emptyHint') }}</span>
       </div>
@@ -84,13 +119,25 @@
               <component :is="eventIcon(n)" :size="11" />
               {{ eventLabel(n) }}
             </span>
-            <span v-if="n.projectPath" class="nc-proj">
-              <Folder :size="11" />
-              {{ projectName(n.projectPath) }}
-            </span>
             <span v-if="n.sourceMissing" class="nc-gone" :title="t('notifications.sourceDeletedHint')">
               <Unlink :size="11" />
               {{ t('notifications.sourceDeleted') }}
+            </span>
+            <!-- Only OTHER projects are named, and the name is pinned to the
+                 right edge (see .nc-proj). A row from the project you are
+                 already in needs no label: the absence of a name is the
+                 signal, and repeating your own project on every row is noise.
+                 The tooltip spells out the "clicking switches projects"
+                 consequence, so the row itself stays plain.
+                 Placed AFTER the source-deleted chip so it is the rightmost
+                 element in every combination. -->
+            <span
+              v-if="isExternalProject(n)"
+              class="nc-proj"
+              :title="t('notifications.externalProjectTip', { name: projectName(n.projectPath) })"
+            >
+              <Folder :size="11" />
+              {{ projectName(n.projectPath) }}
             </span>
           </div>
         </div>
@@ -107,8 +154,8 @@
 import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
-  Bell, BellOff, Folder, Unlink, Trash2, AlertCircle,
-  Bot, Clock, GitMerge, Check, X, ShieldAlert,
+  Inbox, Folder, Unlink, Trash2, AlertCircle,
+  Bot, Clock, GitMerge, Check, X, ShieldAlert, Layers,
 } from 'lucide-vue-next'
 import MenuSelect, { type MenuSelectOption } from '@/components/common/MenuSelect.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
@@ -118,6 +165,7 @@ import { useToast } from '@/composables/useToast'
 import { useDialog } from '@/composables/useDialog'
 import { store } from '@/stores/app'
 import { formatDateTime } from '@/utils/format'
+import { normalizeSlashes, toProjectRelative } from '@/utils/path'
 import type { NotificationItem, NotificationKind, NotificationRange } from '@/utils/notificationsApi'
 
 const props = defineProps<{ active: boolean }>()
@@ -144,32 +192,31 @@ const kindValue = computed(() => filterKind.value || '__all__')
 const rangeValue = computed(() => filterRange.value || '__all__')
 const projectValue = computed(() => filterProject.value || '__all__')
 
-const projectSelectOptions = computed<MenuSelectOption[]>(() => {
-  const opts: MenuSelectOption[] = [
-    { value: '__all__', label: `${t('notifications.projectFilter')}: ${t('notifications.all')}` },
-  ]
-  // Offer the active project first (the common case), then the rest.
-  const active = activeProject.value
+/**
+ * Project rows for the dropdown: the active project first (the common case),
+ * then the registry, each de-duplicated. Carries the path separately so the row
+ * can render the app-header two-line shape (name over full path) instead of one
+ * run-on label.
+ */
+const projectMenuItems = computed<{ value: string; name: string; path: string }[]>(() => {
+  const out: { value: string; name: string; path: string }[] = []
   const seen = new Set<string>()
-  if (active) {
-    opts.push({ value: active, label: projectLabel(active) })
-    seen.add(active)
+  const push = (path: string) => {
+    if (!path || seen.has(path)) return
+    seen.add(path)
+    out.push({ value: path, name: projectName(path), path })
   }
-  for (const p of projectOptions.value) {
-    if (seen.has(p.path)) continue
-    seen.add(p.path)
-    opts.push({ value: p.path, label: projectLabel(p.path) })
-  }
-  return opts
+  push(activeProject.value)
+  for (const p of projectOptions.value) push(p.path)
+  return out
 })
 
-/** Compact project label: "name — /full/path", so same-named projects differ. */
-function projectLabel(path: string): string {
-  const norm = path.replace(/[\\/]+$/, '')
-  const idx = Math.max(norm.lastIndexOf('/'), norm.lastIndexOf('\\'))
-  const name = idx >= 0 ? norm.slice(idx + 1) || norm : norm
-  return name === norm ? name : `${name} — ${norm}`
-}
+// projectSelectOptions is what MenuSelect sees; the slot replaces the default
+// rows, but the trigger still needs a matching label for the current value.
+const projectSelectOptions = computed<MenuSelectOption[]>(() => [
+  { value: '__all__', label: `${t('notifications.projectFilter')}: ${t('notifications.all')}` },
+  ...projectMenuItems.value.map(i => ({ value: i.value, label: i.name })),
+])
 
 const kindOptions = computed<MenuSelectOption[]>(() => [
   { value: '__all__', label: `${t('notifications.kindFilter')}: ${t('notifications.all')}` },
@@ -284,6 +331,50 @@ function projectName(path: string): string {
   return parts[parts.length - 1] || path
 }
 
+/**
+ * True when the row belongs to a project other than the active one.
+ *
+ * The log is global (all projects), so most rows on a fresh install belong to
+ * somewhere else — and clicking one tears down and rebuilds the whole project
+ * subtree. The row has to say so before the click, not after. Rows with no
+ * attribution (projectId 0 sentinel, e.g. an unattributable share) are NOT
+ * marked: "external" would be a claim about a project we cannot name.
+ *
+ * The comparison MUST be canonical, not `===`. The two sides come from
+ * different producers with different normalization:
+ *   - `n.projectPath` is read from the `projects` table, which stores
+ *     `model.NormalizeProjectPath` output (filepath.Abs + EvalSymlinks +
+ *     Clean) — no trailing slash, symlinks resolved;
+ *   - `store.projectRoot` is whatever the last `/api/project` response said,
+ *     and the POST branch returns the REQUEST path un-normalized. A path the
+ *     user pasted with a trailing slash ("…/clawbench/") or a "./" segment is
+ *     stored verbatim, so `===` reports the user's OWN project as external and
+ *     labels every one of its rows.
+ * `toProjectRelative` is the repo's canonical path comparator (case-insensitive
+ * drive letters, either separator style); an empty result means "this IS the
+ * root". Fall back to a normalized comparison when the row's path is not under
+ * the root.
+ */
+function isSameProject(rowPath: string, root: string): boolean {
+  if (!rowPath || !root) return false
+  const normRow = normalizeSlashes(rowPath)
+  const normRoot = normalizeSlashes(root)
+  // Under the root (or identical) => toProjectRelative returns ''.
+  if (toProjectRelative(normRow, normRoot) === '') return true
+  // Not under the root: compare normalized forms so a trailing slash or a
+  // differing separator still matches ("…/clawbench/" vs "…/clawbench").
+  return stripTrailingSlash(normRow).toLowerCase() === stripTrailingSlash(normRoot).toLowerCase()
+}
+
+function stripTrailingSlash(p: string): string {
+  return p.replace(/\/+$/, '')
+}
+
+function isExternalProject(n: NotificationItem): boolean {
+  if (!n.projectPath) return false
+  return !isSameProject(n.projectPath, activeProject.value)
+}
+
 /** Fallback title when the row has none: the localized kind name, never the raw id. */
 function fallbackTitle(n: NotificationItem): string {
   if (n.kind === 'forge') return n.forgeItemKey || t('notifications.kind.forge')
@@ -301,23 +392,46 @@ function formatTime(iso: string): string {
  * A row whose source is gone must NOT dispatch a navigation event: a deleted
  * session's own fallback silently redirects to the newest session, which would
  * drop the user somewhere unrelated. Show a hint instead.
+ *
+ * A row from ANOTHER project is confirmed first. That jump tears the whole
+ * project subtree down and rebuilds it (hotSwitchProject), which is a much
+ * bigger action than opening a session in the project you are already in — and
+ * it is the one case that cannot offer a Back target (the switch deliberately
+ * drops the previous project's navigation context, see hotSwitchProject). The
+ * confirmation is what replaces Back there.
+ *
+ * Same-project rows carry `fromNotificationCenter` so App.vue records the log
+ * as the jump origin and Back returns here.
  */
-function onOpen(n: NotificationItem) {
+async function onOpen(n: NotificationItem) {
   if (n.sourceMissing) {
     toast.show(t('notifications.sourceDeletedHint'), { icon: 'warning', type: 'info' })
     return
   }
+  // Same canonical comparison as isExternalProject — a raw-vs-canonical path
+  // pair must not pop a "switch project?" dialog for the project you are in.
+  const crossProject = isExternalProject(n)
+  if (crossProject) {
+    const ok = await dialog.confirm(
+      t('notifications.crossProjectConfirm', { name: projectName(n.projectPath) }),
+      {
+        title: t('notifications.crossProjectConfirmTitle'),
+        confirmText: t('notifications.crossProjectConfirmOk'),
+      },
+    )
+    if (!ok) return
+  }
   if (n.kind === 'session' && n.sessionId) {
     window.dispatchEvent(new CustomEvent('clawbench-open-session', {
-      detail: { sessionId: n.sessionId, projectPath: n.projectPath },
+      detail: { sessionId: n.sessionId, projectPath: n.projectPath, fromNotificationCenter: true },
     }))
   } else if (n.kind === 'task' && n.taskId) {
     window.dispatchEvent(new CustomEvent('clawbench-open-task', {
-      detail: { taskId: n.taskId, executionId: n.executionId, projectPath: n.projectPath },
+      detail: { taskId: n.taskId, executionId: n.executionId, projectPath: n.projectPath, fromNotificationCenter: true },
     }))
   } else if (n.kind === 'forge' && n.forgeItemKey) {
     window.dispatchEvent(new CustomEvent('clawbench-open-forge', {
-      detail: { projectPath: n.projectPath, target: forgeTargetFromItemKey(n.forgeItemKey) },
+      detail: { projectPath: n.projectPath, target: forgeTargetFromItemKey(n.forgeItemKey), fromNotificationCenter: true },
     }))
   }
 }
@@ -395,7 +509,18 @@ function forgeTargetFromItemKey(key: string) {
 .header-btn:active:not(:disabled) { transform: scale(0.9); }
 .header-btn:disabled { opacity: var(--opacity-muted); cursor: not-allowed; }
 
-/* Filter row */
+/* Filter row — three dropdowns + the count.
+ *
+ * Must survive the left panel's 320px minimum width (the splitter can be
+ * dragged that narrow) and small phones. Three content-sized triggers plus gaps
+ * exceed that, so the row WRAPS instead of overflowing: with the old
+ * non-wrapping row the third dropdown was clipped and the count was pushed
+ * entirely off-screen (measured scrollWidth 355 vs clientWidth 320).
+ *
+ * Wrapping (not shrinking) is deliberate: a shrink would ellipsise the labels
+ * ("项目: 全…"), which is worse than moving the count to a second line. This is
+ * a container-relative fix — a viewport @media query would be wrong, since on
+ * wide screens the panel's width comes from the split ratio, not the viewport. */
 .notif-filters {
   display: flex;
   align-items: center;
@@ -403,9 +528,17 @@ function forgeTargetFromItemKey(key: string) {
   padding: var(--space-4) var(--space-6);
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
+  flex-wrap: wrap;
 }
-.filter-spacer { flex: 1; }
-.filter-count { font-size: var(--font-size-2xs); color: var(--text-muted); }
+/* Keep each trigger at its natural width so wrapping is chosen over ellipsis. */
+.notif-filters :deep(.menu-select) { flex-shrink: 0; }
+/* Pushed right on the dropdowns' line; wraps to its own line when they fill it. */
+.filter-count {
+  font-size: var(--font-size-2xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+  margin-left: auto;
+}
 
 /* Body */
 .notif-body {
@@ -445,6 +578,14 @@ function forgeTargetFromItemKey(key: string) {
   cursor: pointer;
   transition: all var(--duration-slow) ease;
   overflow: hidden;
+  /* .notif-body is a flex COLUMN (so the empty state can centre with flex:1),
+     which makes each card a flex item with the default flex-shrink:1. Without
+     this, a list taller than the panel gets COMPRESSED to fit — every card
+     collapsed to a ~22px sliver instead of the body scrolling. Measured with
+     31 rows: scrollHeight 938 vs clientHeight 670, card height 22 (should be
+     ~74-98). TaskListPage avoids this only because its scroll container is a
+     plain block and the flex column lives on an inner element. */
+  flex-shrink: 0;
 }
 @media (hover: hover) {
   .notif-card:hover {
@@ -496,15 +637,27 @@ function forgeTargetFromItemKey(key: string) {
   color: var(--text-muted);
   flex-wrap: wrap;
 }
+/* The project name on an OTHER-project row.
+ *
+ * Deliberately plain: no tint, no border, no badge. Naming the project IS the
+ * distinction — a row with no name is one from the project you are in, and
+ * that is the whole signal. An earlier version added an orange rail plus an
+ * "Other project" pill, which read as a status/severity and outweighed the
+ * event chip that owns that role. The name is muted like the rest of the meta
+ * row; the tooltip carries the "clicking switches projects" consequence. */
 .nc-proj {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  background: var(--bg-primary);
-  padding: 2px var(--space-4);
-  border-radius: var(--radius-xs);
-  border: 1px solid var(--border-color);
+  min-width: 0;
+  /* Pinned to the right edge of the meta row. The project is context about the
+   * ROW, not another event attribute, so it reads better as a right-aligned
+   * affordance than as one more chip in the left-hand run. `margin-left: auto`
+   * (not `justify-content`) so it works whatever else the row holds — the
+   * source-deleted chip, when present, stays next to the event chip. */
+  margin-left: auto;
 }
+.nc-proj > svg { flex-shrink: 0; }
 .nc-gone {
   display: inline-flex;
   align-items: center;
@@ -554,6 +707,9 @@ function forgeTargetFromItemKey(key: string) {
 
 .load-more {
   align-self: center;
+  /* Same flex-item trap as .notif-card: without this the button is squashed
+     when the list overflows. */
+  flex-shrink: 0;
   border: 1px solid var(--border-color);
   background: var(--bg-secondary);
   color: var(--accent-color);

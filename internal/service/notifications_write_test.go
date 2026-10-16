@@ -44,7 +44,11 @@ func notificationWriteTestDB(t *testing.T) func() {
 			title TEXT NOT NULL DEFAULT '',
 			agent_id TEXT DEFAULT '',
 			external_session_id TEXT DEFAULT '',
-			archived INTEGER NOT NULL DEFAULT 0
+			archived INTEGER NOT NULL DEFAULT 0,
+			-- Group membership: ResolveGroupTimelineID reads these to map a
+			-- hidden member row to its group timeline.
+			session_type TEXT NOT NULL DEFAULT 'chat',
+			group_id TEXT DEFAULT ''
 		);
 		CREATE TABLE IF NOT EXISTS scheduled_tasks (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -397,4 +401,110 @@ func TestEmitSessionEvent_NoDBNoManagerDoesNotPanic(t *testing.T) {
 	require.NotPanics(t, func() {
 		EmitSessionEvent("s-closed", "completed", false)
 	})
+}
+
+// ── Group member rows must not leak into the log ────────────────────────────
+
+// TestRecordSessionNotification_MemberRowLogsGroup is the regression guard for
+// the notification log pointing at a hidden group MEMBER row.
+//
+// A member's ACP connection is keyed by its MEMBER row id, so the
+// permission_pending callback (cmd/server/main.go) reaches the recorder with a
+// member id. A member row has no title and is hidden from the session list, so
+// clicking such a row opened an empty standalone agent chat instead of the
+// group. The log must always name the group timeline.
+func TestRecordSessionNotification_MemberRowLogsGroup(t *testing.T) {
+	cleanup := notificationWriteTestDB(t)
+	defer cleanup()
+
+	pid := store.ProjectIDForTest(t, "/proj")
+	_, err := store.WriteExec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, session_type) VALUES ('grp-1', ?, 'claude', 'Standup', 'group')`, pid,
+	)
+	require.NoError(t, err)
+	// The member row carries NO title (that is what makes it unusable as a
+	// navigation target) and points at its group.
+	_, err = store.WriteExec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, session_type, group_id) VALUES ('mem-1', ?, 'claude', '', 'group_member', 'grp-1')`, pid,
+	)
+	require.NoError(t, err)
+
+	ws.SetManagerForTest(nil)
+
+	EmitSessionEvent("mem-1", "permission_pending", false, "write_file", `{}`)
+
+	rows := storedNotifications(t)
+	require.Len(t, rows, 1)
+	assert.Equal(t, "grp-1", rows[0].SessionID,
+		"a member row must be logged as its group timeline, not the hidden member")
+	assert.Equal(t, "Standup", rows[0].Title, "the row should carry the group's title")
+}
+
+// TestResolveGroupTimelineID pins the mapping itself, including the identity
+// cases it must NOT rewrite.
+func TestResolveGroupTimelineID(t *testing.T) {
+	cleanup := notificationWriteTestDB(t)
+	defer cleanup()
+
+	pid := store.ProjectIDForTest(t, "/proj")
+	for _, row := range []struct{ id, typ, group string }{
+		{"grp-1", "group", ""},
+		{"mem-1", "group_member", "grp-1"},
+		{"chat-1", "chat", ""},
+	} {
+		_, err := store.WriteExec(
+			`INSERT INTO chat_sessions (id, project_id, backend, title, session_type, group_id) VALUES (?, ?, 'claude', '', ?, ?)`,
+			row.id, pid, row.typ, row.group,
+		)
+		require.NoError(t, err)
+	}
+
+	assert.Equal(t, "grp-1", ResolveGroupTimelineID("mem-1"), "member -> group")
+	assert.Equal(t, "grp-1", ResolveGroupTimelineID("grp-1"), "group is its own timeline")
+	assert.Equal(t, "chat-1", ResolveGroupTimelineID("chat-1"), "ordinary chat unchanged")
+	assert.Equal(t, "unknown", ResolveGroupTimelineID("unknown"), "unknown id unchanged")
+}
+
+// TestMarkMissingSources_RepairsLegacyMemberRows covers rows already on disk
+// from before the write-time fix: the retention window is 30 days, so a
+// write-time-only fix would leave them broken until they age out.
+func TestMarkMissingSources_RepairsLegacyMemberRows(t *testing.T) {
+	cleanup := notificationWriteTestDB(t)
+	defer cleanup()
+
+	pid := store.ProjectIDForTest(t, "/proj")
+	_, err := store.WriteExec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, session_type) VALUES ('grp-1', ?, 'claude', 'Standup', 'group')`, pid,
+	)
+	require.NoError(t, err)
+	_, err = store.WriteExec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, session_type, group_id) VALUES ('mem-1', ?, 'claude', '', 'group_member', 'grp-1')`, pid,
+	)
+	require.NoError(t, err)
+
+	// A row stored the old way: pointing straight at the member row.
+	rows := []Notification{
+		{ID: 1, Kind: NotificationKindSession, SessionID: "mem-1"},
+		{ID: 2, Kind: NotificationKindSession, SessionID: "grp-1"},
+	}
+	MarkMissingSources(rows)
+
+	assert.Equal(t, "grp-1", rows[0].SessionID, "a legacy member-row target is repaired to the group")
+	assert.False(t, rows[0].SourceMissing, "the group exists, so the repaired row is navigable")
+	assert.Equal(t, "grp-1", rows[1].SessionID, "a group row is left alone")
+}
+
+// TestMarkMissingSources_RepairFailureIsNonFatal pins the best-effort contract:
+// when the member lookup cannot run, rows keep their stored id rather than the
+// list failing or being marked missing.
+func TestMarkMissingSources_RepairFailureIsNonFatal(t *testing.T) {
+	// No chat_sessions table at all -> the repair query errors.
+	db, teardown := setupNotificationsDB(t)
+	defer teardown()
+	cleanup := store.SetDBForTest(db, db)
+	defer cleanup()
+
+	rows := []Notification{{ID: 1, Kind: NotificationKindSession, SessionID: "mem-1"}}
+	require.NotPanics(t, func() { MarkMissingSources(rows) })
+	assert.Equal(t, "mem-1", rows[0].SessionID, "unrepairable rows keep their stored id")
 }

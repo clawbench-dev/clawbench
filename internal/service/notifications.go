@@ -314,6 +314,14 @@ func CleanupNotifications() {
 // exists. One query per id-space (session, task) for the whole page, so the
 // cost is constant regardless of page size.
 //
+// It also REPAIRS rows whose session_id names a hidden group MEMBER row, by
+// rewriting it to the group timeline. Those rows were written before the
+// recorder learned to resolve member→group (a member's ACP connection is keyed
+// by the member id, so permission_pending reached the log that way), and the
+// retention window is 30 days — so the bad rows are already on disk and a
+// write-time fix alone would leave them broken until they age out. Doing it here
+// means the fix is visible immediately, and the repair is idempotent.
+//
 // The probe is keyed off Kind, NOT "whichever id is non-empty". A task
 // notification stores BOTH task_id and the scheduled session_id it ran in, and
 // that session is a normal `session_type='scheduled'` row that SessionCleanupWorker
@@ -329,6 +337,10 @@ func MarkMissingSources(rows []Notification) {
 	if len(rows) == 0 || !store.ReadDBReady() {
 		return
 	}
+	// Repair member-row targets first, so the presence probe below runs against
+	// the group id the row will actually navigate to.
+	repairGroupMemberTargets(rows)
+
 	// Only collect the ids the probe will actually consult, so a task row's
 	// session id is never even queried.
 	sessionIDs := distinctNonEmpty(rows, func(n Notification) string {
@@ -360,6 +372,68 @@ func MarkMissingSources(rows []Notification) {
 			}
 		}
 		// Forge (and any future kind): never probed.
+	}
+}
+
+// repairGroupMemberTargets rewrites session rows that point at a hidden group
+// MEMBER row so they point at the group timeline instead.
+//
+// One query for the whole page: the member ids are looked up in a single IN(...)
+// and only the rows that actually map are rewritten, so a page of ordinary
+// sessions costs one indexed lookup and no writes.
+func repairGroupMemberTargets(rows []Notification) {
+	ids := distinctNonEmpty(rows, func(n Notification) string {
+		if n.Kind != NotificationKindSession {
+			return ""
+		}
+		return n.SessionID
+	})
+	if len(ids) == 0 {
+		return
+	}
+
+	// member row id -> group timeline id, for the members present in this page.
+	groupOf := map[string]string{}
+	query := "SELECT id, COALESCE(group_id, '') FROM chat_sessions WHERE session_type = ? AND id IN (" +
+		sqlPlaceholders(len(ids)) + ")"
+	args := make([]any, 0, len(ids)+1)
+	args = append(args, groupMemberSessionType)
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	dbRows, err := store.ReadDB().Query(query, args...)
+	if err != nil {
+		// Best-effort repair: on failure the rows simply keep their stored id
+		// (the pre-fix behavior) rather than failing the whole list.
+		slog.Warn("notifications: member-row repair probe failed", "error", err)
+		return
+	}
+	defer func() { _ = dbRows.Close() }()
+	for dbRows.Next() {
+		var id, groupID string
+		if err := dbRows.Scan(&id, &groupID); err != nil {
+			slog.Warn("notifications: member-row repair scan failed", "error", err)
+			continue
+		}
+		if groupID != "" {
+			groupOf[id] = groupID
+		}
+	}
+	if err := dbRows.Err(); err != nil {
+		slog.Warn("notifications: member-row repair iteration failed", "error", err)
+	}
+
+	if len(groupOf) == 0 {
+		return
+	}
+	for i := range rows {
+		n := &rows[i]
+		if n.Kind != NotificationKindSession {
+			continue
+		}
+		if groupID, ok := groupOf[n.SessionID]; ok {
+			n.SessionID = groupID
+		}
 	}
 }
 
@@ -473,6 +547,15 @@ func RecordSessionNotification(eventID, sessionID, status string, data *ws.Sessi
 	if !store.DBReady() {
 		return
 	}
+
+	// A group MEMBER row is an internal connection binding (no title, hidden
+	// from the session list). Its ACP connection is keyed by the member id, so
+	// the permission_pending callback in cmd/server/main.go reaches this with a
+	// MEMBER id — and clicking such a row in the log opened an empty standalone
+	// "Claude" chat instead of the group. Log the group timeline, which is what
+	// the user actually sees and can navigate to.
+	sessionID = ResolveGroupTimelineID(sessionID)
+
 	projectID := int64(0)
 	if path := GetSessionProjectPath(sessionID); path != "" {
 		if id, err := store.ProjectIDForPath(path); err == nil {

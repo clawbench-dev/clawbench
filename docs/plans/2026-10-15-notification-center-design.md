@@ -175,3 +175,11 @@ CREATE INDEX IF NOT EXISTS idx_notifications_filter ON notifications(project_id,
 - **E2E 时序坑**：`chat.waitForReply` 只等**流式文本**出现（中途即返回），而通知行写在**终态完成**（实测约 19s 后）。只等文本就开面板会与写入竞态。可靠信号是停止按钮消失（`.chat-stop-btn` count 归零）。
 - **`created_at` 亚秒精度**：已按风险 6 落地（`notificationTimestamp` 固定 3 位小数 UTC），并有测试钉住同秒多条的 keyset 分页不重不漏。
 
+## 后续调整（2026-10-16）
+
+- **名称统一为「通知中心」/「Notification Center」**：初版叫「历史通知」/「Notification History」，但该词暗示"可翻阅的旧档案"，与它其实是当前状态的日志不符。`nav.notifications` 与 `notifications.title` 必须同值（一个是 dock tooltip，一个是面板标题），由 `notificationsTabIdentity.test.ts` 钉住；清空确认/清空完成两句文案同步去掉"历史"。
+- **dock 位置移到「设置」之前**：初版在 `tasks` 之后。现在 `notifications` 是离开工具页签前的最后一站，`settings` 仍是末位（dock 末尾的"出口"）。顺序是产品决策，`useWideScreenLayout.test.ts` 断言尾部两格为 `notifications, settings`，并断言渲染顺序里 `proxy < notifications < settings`——否则单改注册表回退仍能全绿。
+- **图标与名称的理由分开**：图标仍是 `Inbox`（bell 会读成"有待办"，而本页签刻意无未读概念）；名称则回到产品名而非"历史"框架。两者由同一个测试文件分别钉住。
+- **外部项目标记只留项目名**：初版是「橙色左轨 + 其他项目胶囊 + 项目名」三层叠加，读起来像状态/严重级，压过了事件 chip。现在**只有其他项目**的行显示项目名（与 meta 同色、无底色无边框），当前项目的行**什么都不显示**——「没有名字」就是判据。切项目的后果收进 tooltip。
+- **项目比较必须规范化（真 bug）**：`n.projectPath` 来自 `projects` 表（`model.NormalizeProjectPath` 规范化过：无尾斜杠、符号链接已解析），而 `store.projectRoot` 取自最近一次 `/api/project` 响应——**POST 分支原样回显请求路径**。用户粘贴带尾斜杠（`…/clawbench/`）或 `./` 的路径后，`===` 会把**当前项目判成"其他项目"**，于是自己项目的每一行都挂上项目名。两层修复：① 后端 POST 在 `os.Stat` 之前统一 `NormalizeProjectPath`（cookie、DB、响应三者同形）；② 前端改用仓库既有的规范化比较器 `toProjectRelative` + 大小写/分隔符归一（`isSameProject`），`isExternalProject` 与 `onOpen` 的跨项目确认共用它。前端这层是必须的：老服务端、以及任何其它写入 `projectRoot` 的路径都可能给出非规范形式。
+

@@ -90,8 +90,45 @@ test.describe('Notifications', () => {
     await expect(page.locator('.chat-textarea')).toBeVisible({ timeout: 10000 })
   })
 
-  test('the project filter defaults to all projects', async ({ page }) => {
-    // Scope is global by design: the notification center spans every project,
+  test('Back returns from a notification source to the log', async ({ page }) => {
+    // The jump records the LOG as its origin, so the app-wide Back (header
+    // button / edge swipe / Android hardware back — all one state machine)
+    // must land on the notification center, not on whatever tab preceded it.
+    //
+    // Send the turn FIRST, at the default viewport: resizing wide→narrow
+    // carries the wide left tab into the narrow `activeTab`, which can leave
+    // the chat pane hidden and make sendMessage() time out.
+    await sendAndWaitForNotification(page, 'notifback_' + Date.now())
+
+    // NARROW viewport on purpose: at >=960px chat is the right pane and the
+    // left panel keeps showing the log regardless of the jump, so the assertion
+    // would pass without any origin being recorded at all. Only in narrow mode
+    // are the tabs mutually exclusive and the Back target observable.
+    //
+    // 700px (not a phone width): still below the 960px wide-screen threshold,
+    // but wide enough that the bottom dock renders every tab INLINE. At 420px
+    // the notifications tab lives behind the overflow popup, which adds a
+    // second, unrelated interaction to this test.
+    await page.setViewportSize({ width: 700, height: 900 })
+
+    await nav.switchToNotifications()
+    const card = page.locator('.notif-card').first()
+    await expect(card).toBeVisible({ timeout: 15000 })
+    await card.click()
+    await expect(page.locator('.chat-textarea')).toBeVisible({ timeout: 10000 })
+    // The log is gone: we really left it.
+    await expect(page.locator('.notif-panel')).toBeHidden({ timeout: 10000 })
+
+    // Drive the same event Android's onBackPressed dispatches. The state
+    // machine reads the recorded origin synchronously and navigates.
+    await page.evaluate(() => {
+      window.dispatchEvent(new CustomEvent('clawbench-back-press', { detail: { reason: 'android' } }))
+    })
+
+    await expect(page.locator('.notif-panel')).toBeVisible({ timeout: 10000 })
+  })
+
+  test('the project filter defaults to all projects', async ({ page }) => {    // Scope is global by design: the notification center spans every project,
     // unlike the per-project forge/task panels.
     await nav.switchToNotifications()
     await expect(page.locator('.notif-panel')).toBeVisible({ timeout: 10000 })

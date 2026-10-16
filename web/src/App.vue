@@ -1131,8 +1131,30 @@ function switchTab(tab: string, force = false) {
  * strings (Android reads them via getStringExtra; the popover's
  * CompletionItem types taskId as string).
  */
-interface OpenSessionDetail { sessionId?: string; projectPath?: string }
-interface OpenTaskDetail { taskId?: string; executionId?: string; projectPath?: string }
+interface OpenSessionDetail { sessionId?: string; projectPath?: string; fromNotificationCenter?: boolean }
+interface OpenTaskDetail { taskId?: string; executionId?: string; projectPath?: string; fromNotificationCenter?: boolean }
+
+/**
+ * Record the notification log as the jump origin, if that is where this
+ * navigation came from.
+ *
+ * The notification center is a dock tab like any other, so its rows jump from a
+ * real surface that Back must be able to return to (header back button, edge
+ * swipe, Android hardware back). Without this the jump recorded whatever tab
+ * preceded the log, and Back dropped the user on an unrelated panel.
+ *
+ * Only the same-project case arms this: a cross-project jump tears the subtree
+ * down and deliberately drops the previous project's navigation context, so a
+ * Back target pointing into the old project would be a lie. That case is
+ * covered by the confirmation dialog instead (see NotificationsPanelContent).
+ */
+function recordNotificationOrigin(detail: { fromNotificationCenter?: boolean } | undefined): void {
+  if (!detail?.fromNotificationCenter) return
+  // Pin the origin tab explicitly (same as the `{ tab: 'chat' }` jumps do)
+  // instead of letting beginExternalJump derive it from `activeTab`: the log's
+  // own row click must record the log, whatever else the layout was doing.
+  beginExternalJump('notifications', surfaceLabel('notifications'), { tab: 'notifications' })
+}
 
 /**
  * Handle clawbench-session-title-update: a session's title changed outside the
@@ -1157,7 +1179,9 @@ function handleOpenSession(e: Event) {
     return
   }
   const { sessionId, projectPath } = detail
-  if (projectPath && projectPath !== store.state.projectRoot) {
+  const crossProject = !!projectPath && projectPath !== store.state.projectRoot
+  if (!crossProject) recordNotificationOrigin(detail)
+  if (crossProject) {
     // Cross-project: hot switch without page reload
     hotSwitchProject(projectPath, sessionId).catch(() => {
       // If project switch fails, try same-project switch as fallback
@@ -1190,7 +1214,9 @@ function handleOpenTask(e: Event) {
     }
   }
 
-  if (projectPath && projectPath !== store.state.projectRoot) {
+  const crossProject = !!projectPath && projectPath !== store.state.projectRoot
+  if (!crossProject) recordNotificationOrigin(detail)
+  if (crossProject) {
     // Cross-project: hot switch without page reload (same as session navigation)
     hotSwitchProject(projectPath, null, { taskId, executionId }).catch(() => {
       // If project switch fails, try same-project switch as fallback
@@ -1217,7 +1243,12 @@ function handleOpenTask(e: Event) {
  * which is exactly what happened on Electron (the click opened the tab and
  * stopped there). Accept both.
  */
-interface OpenForgeDetail { projectPath?: string; target?: ForgeTarget; forgeTarget?: ForgeTarget }
+interface OpenForgeDetail {
+  projectPath?: string
+  target?: ForgeTarget
+  forgeTarget?: ForgeTarget
+  fromNotificationCenter?: boolean
+}
 
 /**
  * Handle clawbench-open-forge — dispatched when a forge (GitHub/GitLab) system
@@ -1252,6 +1283,7 @@ function handleOpenForge(e: Event) {
 
   if (!projectPath || projectPath === store.state.projectRoot) {
     // Same project (or the event carried no attribution): nothing to switch.
+    recordNotificationOrigin(detail)
     switchTab('forge')
     return
   }
