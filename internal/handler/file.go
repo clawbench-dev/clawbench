@@ -177,13 +177,18 @@ type FileTreeEntry struct {
 // Recursively lists every file under the queried directory (relative to the
 // current project). Each file's `rel` is its path relative to the queried
 // directory so the client can reconstruct the exact tree on download.
+//
+// An ABSOLUTE path is project-external (the file manager browses those, and an
+// escaping symlink is entered through its resolved target) and is validated
+// against the configured roots instead of being joined to the project —
+// ValidatePath joins, which silently turned "/tmp/x" into "<project>/tmp/x".
 func ServeListTree(w http.ResponseWriter, r *http.Request) {
 	projectPath, ok := requireProject(w, r)
 	if !ok {
 		return
 	}
 
-	relPath := strings.TrimPrefix(r.URL.Query().Get("path"), "/")
+	rawPath := r.URL.Query().Get("path")
 	basePath, err := filepath.Abs(projectPath)
 	if err != nil {
 		slog.Error("failed to resolve project path", slog.String("path", projectPath), slog.String("err", err.Error()))
@@ -191,9 +196,19 @@ func ServeListTree(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	absPath, ok := validateAndResolvePath(w, r, basePath, relPath)
-	if !ok {
-		return
+	var absPath string
+	if filepath.IsAbs(rawPath) {
+		absPath, err = filepath.Abs(rawPath)
+		if err != nil || !isPathUnderAnyRoot(absPath) {
+			writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
+			return
+		}
+	} else {
+		relPath := strings.TrimPrefix(rawPath, "/")
+		absPath, ok = validateAndResolvePath(w, r, basePath, relPath)
+		if !ok {
+			return
+		}
 	}
 
 	var files []FileTreeEntry
@@ -1055,6 +1070,13 @@ type DirEntry struct {
 	Supported bool   `json:"supported"`
 	Symlink   bool   `json:"symlink,omitempty"`
 	Broken    bool   `json:"broken,omitempty"`
+	// Target is the absolute directory a symlink-to-directory must be entered
+	// THROUGH when the link escapes the browsed base. The link itself resolves
+	// outside the base, so /api/dir refuses to follow it; the client instead
+	// navigates to this path, which is served by the external-browsing endpoint
+	// (/api/projects). Absent for ordinary entries and for symlinks that stay
+	// inside the base — those are entered via their own (relative) path.
+	Target string `json:"target,omitempty"`
 	// Ignored marks an entry git would not track (matched by .gitignore, or
 	// sitting under an excluded directory). It is advisory only: ignored entries
 	// stay listed and fully operable, the UI just dims them.
@@ -1215,9 +1237,17 @@ func isIgnored(ign *gitignore.Matcher, parentDir, name string, isDir bool) bool 
 }
 
 // classifySymlinkEntry classifies a symlink entry by following its target.
-// Returns a "dir" entry when the target is a directory within the allowed base;
-// otherwise a non-navigable file entry (dangling or escaping targets stay
-// listed but cannot be entered). Always sets Symlink, and Broken for dangling.
+// Returns a "dir" entry when the target is a directory; otherwise a
+// non-navigable file entry (dangling targets stay listed but cannot be
+// entered). Always sets Symlink, and Broken for dangling.
+//
+// A symlink-to-directory whose target escapes the browsed base is still typed
+// "dir" and carries its resolved absolute path in Target: the base-scoped
+// listing endpoint refuses to follow such a link, but the target is an ordinary
+// directory the client may browse directly through the external-browsing
+// endpoint (/api/projects). Without Target the client would re-request the
+// symlink's own base-relative path and get "access denied". Targets outside
+// every configured root stay non-navigable, matching that endpoint's refusal.
 func classifySymlinkEntry(parentDir string, entry os.DirEntry, within func(absPath string) bool) DirEntry {
 	name := entry.Name()
 	fullPath := filepath.Join(parentDir, name)
@@ -1234,12 +1264,21 @@ func classifySymlinkEntry(parentDir string, entry os.DirEntry, within func(absPa
 		return DirEntry{Name: name, Type: "file", Symlink: true}
 	}
 
-	if target.IsDir() && within(fullPath) {
-		return DirEntry{Name: name, Type: "dir", Symlink: true, Modified: target.ModTime().Format(time.RFC3339)}
+	if target.IsDir() {
+		modified := target.ModTime().Format(time.RFC3339)
+		if within(fullPath) {
+			return DirEntry{Name: name, Type: "dir", Symlink: true, Modified: modified}
+		}
+		if resolved, resolveErr := filepath.EvalSymlinks(fullPath); resolveErr == nil && isPathUnderAnyRoot(resolved) {
+			// ToSlash matches how every other absolute path in this API is
+			// reported (e.g. ServeProjects' "path"), so the client sees one
+			// separator convention regardless of platform.
+			return DirEntry{Name: name, Type: "dir", Symlink: true, Target: filepath.ToSlash(resolved), Modified: modified}
+		}
 	}
 
-	// File symlink, or directory symlink escaping the allowed base (shown as a
-	// non-navigable file, consistent with copy/archive handling).
+	// File symlink, or directory symlink whose target is outside every root
+	// (shown as a non-navigable file, consistent with copy/archive handling).
 	entryType := "file"
 	if model.IsImageFile(name) {
 		entryType = "image"

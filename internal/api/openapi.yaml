@@ -2438,6 +2438,11 @@ paths:
         绝对目录返回同一套 DirEntry 条目结构。前端据此按路径形态选择端点
         （见 web/src/utils/dirList.ts）。
 
+        指向项目根**之外**的目录符号链接（如 `ln -s /other/dir ./data`）仍会以
+        `type=dir` 列出，并额外带 `target`（链接解析后的绝对路径）——本端点不能
+        跟随该链接（否则越界），前端应改为用 `target` 走 `/api/projects` 进入。
+        目标在所有配置根之外时不出 `target`，条目保持不可进入。
+
         条目中的 `ignored` 表示 git 不会跟踪该项（命中 .gitignore 或位于被排除目录下）。
         它只是提示：条目照常返回且可操作，前端仅做灰显。非 git 仓库时恒不出现。
       operationId: dirList
@@ -2598,6 +2603,10 @@ paths:
     get:
       tags: [Files]
       summary: 目录树（下载用）
+      description: |
+        相对路径按项目根解析；**绝对路径**为项目外目录（在配置的根路径下校验后
+        直接使用），与 `/api/dir` + `/api/projects` 的路径形态约定一致。指向项目
+        根之外的目录符号链接经其解析后的绝对路径（`DirEntry.target`）由此进入。
       operationId: fileListTree
       parameters:
         - name: path

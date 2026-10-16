@@ -1121,21 +1121,70 @@ func TestBuildDirEntries_DanglingSymlink(t *testing.T) {
 	assert.Equal(t, true, dangling["broken"], "dangling symlink should be marked broken")
 }
 
-func TestBuildDirEntries_SymlinkEscapingRoot_NotNavigable(t *testing.T) {
+// A symlink-to-directory whose target escapes the browsed base but stays under
+// a configured root must be navigable: the client cannot enter it through the
+// link's own (base-relative) path — /api/dir would refuse to follow it — so the
+// backend reports the resolved absolute target for the client to browse through
+// the external endpoint. Regression for the "access denied" bug (#549).
+func TestBuildDirEntries_SymlinkEscapingBase_ReportsTarget(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
 	// Target lives outside the project (but still within the watch dir/root).
 	_ = os.MkdirAll(filepath.Join(env.WatchDir, "outside"), 0o755)
-	createTestFile(t, env.WatchDir, "secret.txt", "secret")
+	createTestFile(t, env.WatchDir, "outside/secret.txt", "secret")
 	require.NoError(t, os.Symlink(filepath.Join(env.WatchDir, "outside"), filepath.Join(env.ProjectDir, "escape")))
 
 	byName := listDirItems(t, env.ProjectDir)
 
 	escape, ok := byName["escape"]
 	require.True(t, ok)
-	assert.Equal(t, "file", escape["type"], "symlink escaping project root should be non-navigable")
+	assert.Equal(t, "dir", escape["type"], "escaping dir symlink should be navigable")
 	assert.Equal(t, true, escape["symlink"])
+	// Target is reported slash-separated (see classifySymlinkEntry) — compare
+	// through ToSlash so the assertion holds on Windows too.
+	assert.Equal(t, filepath.ToSlash(filepath.Join(env.WatchDir, "outside")), escape["target"],
+		"escaping dir symlink should expose its resolved absolute target")
+
+	// The reported target must actually be listable through the external
+	// endpoint the client will use — otherwise the entry is navigable on paper
+	// only and the user still lands on "access denied".
+	req := newRequest(t, http.MethodGet, "/api/projects?path="+escape["target"].(string), nil)
+	w := callHandler(ServeProjects, req)
+	assertOK(t, w)
+	var listed map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &listed))
+	items, _ := listed["items"].([]interface{})
+	require.Len(t, items, 1, "target dir should be listable")
+
+	// Directory-scoped actions (archive / download-tree) go through the target
+	// too, so the same absolute path must be accepted by those endpoints. The
+	// link's OWN path is refused by them — that is exactly the "access denied"
+	// the fix routes around, and why the client must not send it.
+	reqTree := newRequest(t, http.MethodGet, "/api/file/list-tree?path="+escape["target"].(string), nil)
+	withProjectCookie(reqTree, env.ProjectDir)
+	assertOK(t, callHandler(ServeListTree, reqTree))
+}
+
+// A symlink-to-directory whose target is outside EVERY configured root stays
+// non-navigable: the external endpoint refuses those paths too, so exposing a
+// target would only turn "access denied" into a different error.
+func TestBuildDirEntries_SymlinkOutsideEveryRoot_NotNavigable(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// The parent of the watch dir is outside the only configured root.
+	outside := filepath.Join(filepath.Dir(env.WatchDir), "outside-every-root")
+	_ = os.MkdirAll(outside, 0o755)
+	require.NoError(t, os.Symlink(outside, filepath.Join(env.ProjectDir, "escape")))
+
+	byName := listDirItems(t, env.ProjectDir)
+
+	escape, ok := byName["escape"]
+	require.True(t, ok)
+	assert.Equal(t, "file", escape["type"], "target outside every root should stay non-navigable")
+	assert.Equal(t, true, escape["symlink"])
+	assert.Nil(t, escape["target"], "no target should be exposed for an unreachable directory")
 }
 
 func TestBuildDirEntries_RegularEntriesUnaffected(t *testing.T) {
@@ -2475,5 +2524,46 @@ func TestServeListTree(t *testing.T) {
 
 		w := callHandler(ServeListTree, req)
 		assertStatus(t, w, http.StatusInternalServerError)
+	})
+
+	t.Run("absolute_path_under_root_is_listed", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		// An absolute path under the configured root is project-external (the
+		// file manager browses those, and an escaping symlink is entered through
+		// its resolved target) and must be listed rather than joined to the project.
+		extDir := filepath.Join(env.WatchDir, "ext")
+		createTestFile(t, extDir, "a.txt", "a")
+
+		req := newRequest(t, http.MethodGet, "/api/file/list-tree?path="+extDir, nil)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(ServeListTree, req)
+		assertOK(t, w)
+
+		var result struct {
+			Files []struct {
+				Rel string `json:"rel"`
+			} `json:"files"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+		require.Len(t, result.Files, 1)
+		assert.Equal(t, "a.txt", result.Files[0].Rel)
+	})
+
+	t.Run("absolute_path_outside_every_root_returns_forbidden", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		// The parent of the watch dir is outside the only configured root.
+		outside := filepath.Join(filepath.Dir(env.WatchDir), "outside-every-root")
+		_ = os.MkdirAll(outside, 0o755)
+
+		req := newRequest(t, http.MethodGet, "/api/file/list-tree?path="+outside, nil)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(ServeListTree, req)
+		assertStatus(t, w, http.StatusForbidden)
 	})
 }
