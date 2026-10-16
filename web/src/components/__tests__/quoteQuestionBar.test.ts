@@ -254,6 +254,46 @@ describe('QuoteQuestionBar component', () => {
     expect(actionRule).toContain('border-radius: var(--radius-full)')
   })
 
+  it('caps the discuss popup at 60% of the original 600px, from one source', async () => {
+    // The expanded panel read as too wide for an inline reply box, so the target
+    // width was cut to 60% (600px → 360px). Pinned here because the value is
+    // easy to "restore" by accident when copying a width from the chat input.
+    //
+    // The number lives in ONE custom property on the root rule; both consumers
+    // (the root's max-width cap and the panel's own width) must reference it.
+    // If they ever hard-code separate values, the panel can end up wider than
+    // the root's clamp and get silently clipped by `overflow: hidden`.
+    const wrapper = mountBar()
+    await wrapper.findAll('.quote-bar-action')[1].trigger('click')
+    const cssText = Array.from(document.styleSheets)
+      .map((s) => {
+        try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
+        catch { return '' }
+      })
+      .join('\n')
+
+    // Scoped SFC styles compile to `.quote-question-bar[data-v-xxx] { … }`, and
+    // cssText flattens each rule onto one line — so match the class followed by
+    // the optional scoped attribute, not a bare `.class {`.
+    const blockOfClass = (cls: string) => {
+      const re = new RegExp(`\\${cls}(?:\\[[^\\]]*\\])?\\s*\\{([^{}]*)\\}`)
+      const m = cssText.match(re)
+      if (!m) throw new Error(`no rule found for ${cls}`)
+      return m[1]
+    }
+
+    // The declaration itself, in the root rule.
+    const rootBlock = blockOfClass('.quote-question-bar')
+    expect(rootBlock).toContain('--qq-expanded-width: 360px')
+    expect(rootBlock).toContain('max-width: var(--qq-expanded-width)')
+
+    // The panel must reference the same property rather than repeat the number.
+    const panelBlock = blockOfClass('.quote-bar-expanded')
+    expect(panelBlock).toContain('width: var(--qq-expanded-width)')
+    // A hard-coded px here is the drift this test exists to catch.
+    expect(panelBlock).not.toMatch(/(?<!max-)width:\s*\d+px/)
+  })
+
   it('renders only two states: collapsed needs a quote, otherwise expanded', async () => {
     // 有引用 + 未展开 → 浮动工具条
     const collapsed = mountBar({ quoteData: { text: 'quoted', filePath: 'a.ts' } })

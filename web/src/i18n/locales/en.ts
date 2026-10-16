@@ -1995,7 +1995,12 @@ export default {
     // Collapsed floating toolbar (issue #544). `comment` opens the inline
     // input; `quoteSelection` stages the selection as a quote card. Copy reuses
     // `common.copy`, so it has no key of its own here.
-    comment: 'Comment',
+    //
+    // The KEY and the Android wire action stay `comment` while the visible
+    // wording is "Discuss": they are stable internal identifiers (the Java side
+    // sends the literal "comment"), and renaming them for a copy change would
+    // churn the protocol for no user-visible gain.
+    comment: 'Discuss',
     quoteSelection: 'Quote',
     addedToChat: 'Added to chat',
     send: 'Send',

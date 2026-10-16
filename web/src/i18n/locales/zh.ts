@@ -1990,7 +1990,12 @@ export default {
     // Collapsed floating toolbar (issue #544). `comment` opens the inline
     // input; `quoteSelection` stages the selection as a quote card. Copy reuses
     // `common.copy`, so it has no key of its own here.
-    comment: '评论',
+    //
+    // The KEY and the Android wire action stay `comment` while the visible
+    // wording is 讨论: they are stable internal identifiers (the Java side sends
+    // the literal "comment"), and renaming them for a copy change would churn
+    // the protocol for no user-visible gain.
+    comment: '讨论',
     quoteSelection: '引用',
     addedToChat: '已加入对话',
     send: '发送',

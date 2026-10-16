@@ -163,4 +163,103 @@ describe('computeSelectionToolbarStyle', () => {
     expect(style.left).not.toContain('NaN')
     expect(style.bottom).not.toContain('NaN')
   })
+
+  /**
+   * Soft-keyboard handling. `position: fixed` offsets are measured from the
+   * LAYOUT viewport; on a mobile browser the keyboard shrinks only the VISUAL
+   * viewport, so a bar placed against the layout bottom ends up behind the
+   * keyboard. `bottomInset` is how much of the layout bottom is hidden.
+   *
+   * Android (adjustResize) shrinks the layout viewport itself, so it passes
+   * bottomInset 0 and must behave exactly as before — that is the first case
+   * below, and it is what keeps this change from regressing the native app.
+   */
+  describe('soft-keyboard inset', () => {
+    it('is inert when there is no keyboard (Android adjustResize)', () => {
+      // Same numbers as the "above" case above: the inset must not change it.
+      const style = computeSelectionToolbarStyle(rect(300, 320, 400, 600), {
+        barWidth: 100,
+        barHeight: 30,
+        gap: 8,
+        bottomInset: 0,
+      })
+      expect(style.bottom).toBe('508px')
+      expect(style.top).toBeUndefined()
+    })
+
+    it('keeps the bar above the selection when the keyboard does not reach it', () => {
+      // Keyboard covers the bottom 300px; the selection at y=300..320 and a
+      // 30px bar above it are well clear of the visible bottom (500).
+      const style = computeSelectionToolbarStyle(rect(300, 320, 400, 600), {
+        barWidth: 100,
+        barHeight: 30,
+        gap: 8,
+        bottomInset: 300,
+      })
+      expect(style.bottom).toBe('508px')
+    })
+
+    /**
+     * The reported bug: the selection is low on the screen, the keyboard opens,
+     * and the bar — which would sit BELOW the selection — is now behind the
+     * keyboard. It must be pulled up into the visible band.
+     */
+    it('does not place the bar below the selection when the keyboard covers it', () => {
+      // Selection at y=600..620, viewport 800, keyboard 300 → visible bottom
+      // is 500, so "below the selection" (y≈628) is behind the keyboard.
+      const style = computeSelectionToolbarStyle(rect(600, 620, 400, 600), {
+        barWidth: 100,
+        barHeight: 30,
+        gap: 8,
+        bottomInset: 300,
+      })
+      // Whatever it picks, the bar must end up inside the visible band.
+      const top = style.top !== undefined ? parseFloat(style.top) : null
+      const bottom = style.bottom !== undefined ? parseFloat(style.bottom) : null
+      const barTop = top !== null ? top : (bottom !== null ? 800 - bottom - 30 : NaN)
+      expect(barTop).toBeGreaterThanOrEqual(0)
+      expect(barTop + 30).toBeLessThanOrEqual(500)
+    })
+
+    it('pins the bar to the visible bottom when it is taller than the visible band', () => {
+      // Keyboard leaves only 150px of visible height (800 - 650); the expanded
+      // panel is 260px tall. The bottom edge must sit exactly on the visible
+      // bottom (i.e. `bottom` == the inset) so the input row stays just above
+      // the keyboard.
+      const style = computeSelectionToolbarStyle(rect(600, 620, 400, 600), {
+        barWidth: 100,
+        barHeight: 260,
+        gap: 8,
+        bottomInset: 650,
+      })
+      expect(style.bottom).toBe('650px')
+      expect(style.top).toBeUndefined()
+    })
+
+    it('honours the top inset when the page scrolled to reveal the field', () => {
+      // visualViewport scrolled down 100px: the visible band starts at 100.
+      // A selection at the very top (y=0..20) has no room above once the band
+      // starts at 100, so the bar must not be placed at a negative top.
+      const style = computeSelectionToolbarStyle(rect(0, 20, 400, 600), {
+        barWidth: 100,
+        barHeight: 30,
+        gap: 8,
+        topInset: 100,
+      })
+      const top = parseFloat(style.top ?? '0')
+      expect(top).toBeGreaterThanOrEqual(100)
+    })
+
+    it('still flips below normally when the keyboard leaves room', () => {
+      // Selection near the top, plenty of visible room below → below is used.
+      const style = computeSelectionToolbarStyle(rect(20, 40, 400, 600), {
+        barWidth: 100,
+        barHeight: 30,
+        gap: 8,
+        bottomInset: 100,
+      })
+      expect(style.top).toBe('48px')
+      expect(style.bottom).toBeUndefined()
+    })
+  })
 })

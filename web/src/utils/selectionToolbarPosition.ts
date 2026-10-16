@@ -35,6 +35,20 @@ export interface SelectionToolbarOptions {
   gap?: number
   /** Minimum distance kept from every viewport edge, pre-zoom px. */
   edgeMargin?: number
+  /**
+   * Viewport-space px hidden at the BOTTOM of the layout viewport by the
+   * on-screen keyboard (0 when there is none). The visible region is therefore
+   * `[topInset, vp.height - bottomInset]`.
+   *
+   * Needed because this module's vertical math otherwise assumes the layout
+   * viewport is fully visible. That holds on Android (`adjustResize` shrinks
+   * the layout viewport, so the keyboard is already excluded), but NOT on a
+   * mobile browser, where the keyboard shrinks only the VISUAL viewport — a bar
+   * placed against the layout bottom then sits behind the keyboard.
+   */
+  bottomInset?: number
+  /** Viewport-space px hidden at the TOP (visualViewport.offsetTop). */
+  topInset?: number
 }
 
 /**
@@ -45,17 +59,27 @@ export interface SelectionToolbarOptions {
  * above — an unconditional "above" would push the bar off-screen for a
  * selection near the top of the viewport.
  *
+ * A candidate side is only usable when BOTH of its edges fall inside the
+ * VISIBLE region (`[topInset, height - bottomInset]`). With the soft keyboard
+ * open that region is short, and frequently neither side fits; the bar is then
+ * clamped into the region rather than left hanging behind the keyboard (see
+ * `clampIntoVisible`). When the bar is taller than the region it is pinned to
+ * the region's BOTTOM, which keeps the input row — the bottom of the panel —
+ * next to the keyboard where the user is looking.
+ *
  * Horizontal: centres on the selection, then clamps into the viewport so a
  * selection at either edge cannot push the bar past it.
  *
  * Returns `position`/`left` plus exactly one of `top`/`bottom` (anchoring to
  * `bottom` when above keeps the gap correct regardless of the bar's height).
+ * Deliberately no `maxHeight`: see `clampIntoVisible` for why capping the height
+ * would oscillate against the component's own measurement.
  */
 export function computeSelectionToolbarStyle(
   rect: SelectionAnchorRect,
   opts: SelectionToolbarOptions,
 ): Record<string, string> {
-  const { barWidth, barHeight, gap = 8, edgeMargin = 8 } = opts
+  const { barWidth, barHeight, gap = 8, edgeMargin = 8, bottomInset = 0, topInset = 0 } = opts
   const vp = getZoomedViewport()
 
   // Pre-zoom viewport width; both operands below are pre-zoom, so the clamp
@@ -81,17 +105,97 @@ export function computeSelectionToolbarStyle(
   }
 
   // --- Vertical: above by default, flip below when it would not fit ---
-  // `fitsAbove` and both emitted values work entirely in pre-zoom CSS space
-  // (gap / edgeMargin are design tokens, not rect-space measurements), so the
+  // Everything below works in pre-zoom CSS space (gap / edgeMargin / the insets
+  // are design tokens or viewport measurements, not rect-space values), so the
   // visual gap stays constant under the app's `html { zoom }` setting.
   const cssTop = toFixedCSS(rect.top)
-  const fitsAbove = cssTop - edgeMargin >= barHeight + gap
+  const cssBottom = toFixedCSS(rect.bottom)
+  // Visible vertical band in pre-zoom CSS space.
+  const visTop = toFixedCSS(topInset)
+  const visBottom = toFixedCSS(vp.height) - toFixedCSS(bottomInset)
+  const visibleHeight = Math.max(0, visBottom - visTop)
+
+  // A side is usable only when the bar's RESULTING BOX lies inside the visible
+  // band. Checking "is there room above the selection" is not enough: when the
+  // keyboard covers the selection itself, the space above it is inside the
+  // visible band but the bar placed there is still behind the keyboard (the
+  // selection, and therefore the bar above it, sits below `visBottom`).
+  //
+  // The edge margin is required on both edges, which also keeps the bar clear
+  // of a browser-chrome or keyboard boundary it would otherwise touch.
+  const aboveBottom = cssTop - gap
+  const aboveTop = aboveBottom - barHeight
+  const fitsAbove = aboveTop >= visTop + edgeMargin && aboveBottom <= visBottom - edgeMargin
+
+  const belowTop = cssBottom + gap
+  const belowBottom = belowTop + barHeight
+  const fitsBelow = belowTop >= visTop + edgeMargin && belowBottom <= visBottom - edgeMargin
+
   if (fitsAbove) {
     // Anchor to the bottom edge so the gap holds whatever the bar's height is.
     style.bottom = `${toFixedCSS(vp.height - rect.top) + gap}px`
-  } else {
+    return style
+  }
+  if (fitsBelow) {
     style.top = `${toFixedCSS(rect.bottom) + gap}px`
+    return style
   }
 
+  // Neither side fits — the keyboard has left too little room beside the
+  // selection. Clamp into the visible band instead of leaving the bar behind
+  // the keyboard.
+  return clampIntoVisible(style, {
+    visTop,
+    visibleHeight,
+    barHeight,
+    gap,
+    cssTop,
+    // `bottom` is measured from the layout bottom, so the distance down to the
+    // visible bottom IS the inset (already pre-zoom here).
+    bottomToVisible: toFixedCSS(bottomInset),
+  })
+}
+
+/**
+ * Place the bar inside the visible band when it does not fit beside the
+ * selection.
+ *
+ * Two cases, both deliberately free of a height cap:
+ *
+ * - It FITS the band: sit as close to the selection as the band allows,
+ *   without crossing either visible edge.
+ * - It is TALLER than the band: pin the BOTTOM edge to the visible bottom. The
+ *   expanded panel's last child is the input row, so anchoring the bottom keeps
+ *   the textarea and its send button just above the keyboard — the part the
+ *   user is actually typing into — and lets the quoted snippet overflow above
+ *   the visible area, which is the harmless half to lose.
+ *
+ * No `maxHeight` is emitted on purpose. The component feeds its own measured
+ * `offsetHeight` back in as `barHeight`; capping the element would shrink that
+ * measurement, which could then satisfy the "fits" test and drop the cap again
+ * — an oscillation that would visibly resize the bar every frame. Growing
+ * upward from a bottom anchor avoids the feedback entirely.
+ */
+function clampIntoVisible(
+  style: Record<string, string>,
+  ctx: {
+    visTop: number
+    visibleHeight: number
+    barHeight: number
+    gap: number
+    cssTop: number
+    bottomToVisible: number
+  },
+): Record<string, string> {
+  const { visTop, visibleHeight, barHeight, gap, cssTop, bottomToVisible } = ctx
+
+  if (barHeight <= visibleHeight) {
+    const lowestTop = visTop + visibleHeight - barHeight
+    const desiredTop = Math.min(Math.max(cssTop - gap - barHeight, visTop), lowestTop)
+    style.top = `${desiredTop}px`
+    return style
+  }
+
+  style.bottom = `${bottomToVisible}px`
   return style
 }

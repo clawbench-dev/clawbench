@@ -97,6 +97,7 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { canSendInput } from '@/utils/quoteQuestionUtils'
 import { computeSelectionToolbarStyle } from '@/utils/selectionToolbarPosition'
+import { useVisualViewportInset } from '@/composables/useVisualViewportInset'
 import FileIcon from '@/components/common/FileIcon.vue'
 import CopyButton from '@/components/common/CopyButton.vue'
 
@@ -117,6 +118,9 @@ const props = defineProps({
   // The attachment the composer will add on commit, previewed as a chip. Null in
   // the normal selection flow, which has no attachment of its own.
   composerAttachment: Object,
+  // Counter bumped by the Android native selection menu's 评论 action. The
+  // component watches it and opens the input (see the watcher below).
+  expandRequest: Number,
 })
 const emit = defineEmits(['add', 'send', 'close', 'pin', 'unpin'])
 
@@ -136,11 +140,26 @@ const FALLBACK_BAR_HEIGHT = 32
 
 const anchored = computed(() => !!props.anchor)
 
+// How much of the layout viewport the soft keyboard hides. Fixed offsets are
+// measured from the LAYOUT viewport, so without this the bar would stay pinned
+// to a bottom the user cannot see once the keyboard opens (mobile browsers
+// shrink only the VISUAL viewport). Android's adjustResize shrinks the layout
+// viewport too, so the inset stays 0 there and nothing changes — correct.
+const { bottomInset, topInset, viewportVersion } = useVisualViewportInset()
+
 const barStyle = computed(() => {
   if (!props.anchor) return {}
+  // `viewportVersion` is read purely to establish the dependency. The position
+  // math calls getZoomedViewport(), which reads window.innerHeight DIRECTLY and
+  // is therefore not reactive — so without this, the Android adjustResize case
+  // (insets stay 0 while the layout viewport shrinks) would never recompute and
+  // a `bottom`-anchored bar would keep an offset from the old, taller viewport.
+  void viewportVersion.value
   return computeSelectionToolbarStyle(props.anchor, {
     barWidth: measuredWidth.value || FALLBACK_BAR_WIDTH,
     barHeight: measuredHeight.value || FALLBACK_BAR_HEIGHT,
+    bottomInset: bottomInset.value,
+    topInset: topInset.value,
   })
 })
 
@@ -154,6 +173,10 @@ function measureBar() {
 // Re-measure whenever the bar appears or the anchor moves: the collapsed
 // toolbar and the expanded input have different sizes, and the flip decision
 // depends on the current height.
+//
+// The viewport insets are deliberately NOT watched here. `barStyle` is a
+// computed that reads them directly, so a keyboard opening already recomputes
+// the position (covered by the component tests).
 watch(
   () => [props.visible, props.anchor, expanded.value],
   async () => {
@@ -162,6 +185,36 @@ watch(
   },
   { immediate: true },
 )
+
+/**
+ * Re-measure on the bar's OWN size changes.
+ *
+ * The textarea auto-grows as the user types (autoResizeTextarea), and the
+ * keyboard clamp uses `measuredHeight` to decide whether the bar fits the
+ * visible band. A stale, too-small height would let the real bar's bottom cross
+ * the visible edge — the input row dipping behind the keyboard in exactly the
+ * scenario this feature exists to prevent. A watcher cannot cover it: the growth
+ * comes from a DOM style write, not from a reactive value.
+ *
+ * No feedback loop: the only emitted styles that could resize the element are
+ * `maxWidth` (derived from the viewport, not from the measurement) and the
+ * position offsets (which do not affect size). So a resize never re-triggers a
+ * different measurement.
+ */
+let barResizeObserver = null
+
+watch(barRef, (el) => {
+  barResizeObserver?.disconnect()
+  barResizeObserver = null
+  if (!el) return
+  barResizeObserver = new ResizeObserver(() => measureBar())
+  barResizeObserver.observe(el)
+})
+
+onUnmounted(() => {
+  barResizeObserver?.disconnect()
+  barResizeObserver = null
+})
 
 // Quote text shown in the EXPANDED snippet. The collapsed toolbar no longer
 // previews the selection (issue #544 made it an icon+label toolbar), so there
@@ -320,6 +373,14 @@ function autoResizeTextarea() {
 // Watch inputText changes to ensure textarea height stays in sync with content.
 watch(inputText, () => nextTick(() => autoResizeTextarea()))
 
+// The Android native selection menu asks for the comment input by bumping
+// expandRequest (it cannot reach `expanded`, which is local to this component).
+// A counter rather than a boolean so two consecutive requests both fire.
+watch(() => props.expandRequest, (n, prev) => {
+  if (n === undefined || n === (prev ?? 0)) return
+  expand()
+})
+
 function handleSend() {
   if (!canSend.value) return
   emit('send', inputText.value)
@@ -348,6 +409,13 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
    narrowed to the expanded panel so this pill is allowed. Keep every new
    collapsed control on the pill scale; do not round the expanded panel. */
 .quote-question-bar {
+  /* The expanded panel's target width, in one place. Two rules need it — the
+     root's `max-width` cap and the panel's own `width` — and they must agree:
+     the panel relies on the root's clamp to shrink (`max-width: 100%`), so a
+     drift between them would either clip the panel or leave it narrower than
+     intended. 60% of the previous 600px, per review feedback that the popup
+     read as too wide for an inline reply box. */
+  --qq-expanded-width: 360px;
   position: fixed;
   top: calc(var(--header-height) + 8px + var(--header-safe-area-top));
   left: 8px;
@@ -357,7 +425,7 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
   border-radius: var(--radius-xs);
   box-shadow: var(--shadow-lg);
   z-index: var(--z-quote-bar);
-  max-width: 600px;
+  max-width: var(--qq-expanded-width);
   margin: 0 auto;
   overflow: hidden;
 }
@@ -384,11 +452,10 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
    input panel must NOT: it holds a textarea whose intrinsic width is huge, so
    `max-content` would stretch it across the screen.
 
-   Size it to the app's established reading width — the same 600px the pinned
-   bar caps at (`.quote-question-bar { max-width: 600px }`) — and let it shrink
-   with the room actually available:
+   Size it to the shared target width (--qq-expanded-width, declared on the root
+   rule above) and let it shrink with the room actually available:
 
-     width: 600px       → the target width on a roomy screen
+     width: var(--qq-expanded-width) → the target width on a roomy screen
      max-width: 100%    → resolves against the root's used width, which the
                           root's INLINE max-width (from
                           computeSelectionToolbarStyle, = viewport − 2·margin,
@@ -397,10 +464,10 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
                           (which would not track the app's `html { zoom }`).
 
    Without `max-width: 100%` a narrow screen would leave the root clamped while
-   the child stayed 600px and got silently clipped by the root's
-   `overflow: hidden`. */
+   the child stayed at the full target width and got silently clipped by the
+   root's `overflow: hidden`. */
 .quote-question-bar--anchored .quote-bar-expanded {
-  width: 600px;
+  width: var(--qq-expanded-width);
   max-width: 100%;
 }
 

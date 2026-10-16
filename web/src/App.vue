@@ -405,6 +405,7 @@
         :anchor="quoteQuestion.anchorRect.value"
         :composerMode="quoteQuestion.composerMode.value"
         :composerAttachment="quoteQuestion.composerAttachment.value"
+        :expandRequest="quoteQuestion.expandRequest.value"
         @add="quoteQuestion.addToConversation($event)"
         @send="quoteQuestion.sendMessage($event)"
         @close="quoteQuestion.closeSheet()"
@@ -640,6 +641,7 @@ import { requestNotificationPermission } from './composables/useNotification'
 import { useTerminalKeyboard } from './composables/useTerminalKeyboard.ts'
 import { useChatKeyboard } from './composables/useChatKeyboard.ts'
 import { useSoftKeyboard } from './composables/useSoftKeyboard.ts'
+import { useVisualViewportInset } from './composables/useVisualViewportInset.ts'
 import { usePortForward } from './composables/usePortForward.ts'
 import { useTerminalStatus } from './composables/useTerminalStatus.ts'
 import { useFileWatch } from './composables/useFileWatch.ts'
@@ -1946,7 +1948,51 @@ const { isSoftKeyboardOpen, install: installSoftKeyboard, uninstall: uninstallSo
 onMounted(() => installSoftKeyboard())
 onUnmounted(() => uninstallSoftKeyboard())
 
+// The selection toolbar needs the keyboard's SIZE (not just whether it is open)
+// to keep itself inside the visible region: fixed offsets are measured from the
+// layout viewport, which a mobile browser does not shrink for the keyboard.
+// Installed app-wide because the bar is global.
+const { install: installVisualViewportInset, uninstall: uninstallVisualViewportInset } = useVisualViewportInset()
+onMounted(() => installVisualViewportInset())
+onUnmounted(() => uninstallVisualViewportInset())
+
+/**
+ * Install the Android native-selection-menu bridge.
+ *
+ * The native side (ClawBenchWebView → MainActivity.dispatchSelectionAction)
+ * calls `window.__clawbenchSelectionAction('quote'|'comment')` when the user
+ * taps one of our items in the system text-selection menu. This is the JS end
+ * of that contract.
+ *
+ * Mirrors the existing global-callback pattern (window.__clawbenchAppResume in
+ * useAppForeground.ts): assigned once, guarded by a module flag, never removed
+ * (App never unmounts).
+ *
+ * Returns false when the name was already taken, so the caller can log rather
+ * than silently shadow another instance.
+ */
+let quoteSelectionBridgeInstalled = false
+function installQuoteSelectionBridge(
+  qq: ReturnType<typeof useQuoteQuestion>,
+): boolean {
+  if (quoteSelectionBridgeInstalled) return false
+  const w = window as unknown as {
+    __clawbenchSelectionAction?: (action: string) => void
+  }
+  w.__clawbenchSelectionAction = (action: string) => qq.handleNativeSelectionAction(action)
+  quoteSelectionBridgeInstalled = true
+  return true
+}
+
 const quoteQuestion = useQuoteQuestion()
+// Android's own text-selection menu (see ClawBenchWebView.java) calls this when
+// the user taps 引用 / 评论. Installed here rather than inside the composable so
+// the composable stays free of window globals; guarded by a module-level flag
+// because setup can run again (HMR) and a second assignment would be harmless
+// but the flag documents that exactly one instance owns the name.
+if (!installQuoteSelectionBridge(quoteQuestion)) {
+  appLog.w('App', 'quote selection bridge already installed')
+}
 // The conversation picker decides whether to pop by asking "can the user see
 // the chat panel?". `activeTab` lives here (not in the layout module), so
 // inject a getter once rather than coupling the dispatcher to App state.
