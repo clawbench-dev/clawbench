@@ -126,15 +126,25 @@ in the web frontend. These files are **not** meant to be compiled or executed.
 - 见 \n/home/xulongzhe/projects/clawbench/docs/\n 目录 — 文本形式应标注
   `/home/xulongzhe/projects/clawbench/docs/`，**不是** `n/home/…`
 
-`<code>`／围栏代码块里的字面 `\n` 同样已修（2026-10-17）：Step 2 对含反斜杠的
-内容**主动让位**给 Step 3 的扫描循环（它能在同一段文本里重新找到真路径），
-所以下面这条现在也标注正确：
+`<code>`／围栏代码块里的字面 `\n` 同样已修（2026-10-17）：Step 2 只把**列表形态**
+（`\n` 分隔出两个以上像路径的片段）让位给 Step 3 的扫描循环，单条路径仍在 Step 2
+就地处理。所以下面这条现在也标注正确：
 
 - `\n/home/xulongzhe/projects/clawbench/docs/\n` （行内代码形式）→ `/home/xulongzhe/projects/clawbench/docs/`
 
 多条目代码块（每行一个路径）应拆成**多个**标注，而不是串成一条假路径：
 
-- 见 `\n/a/x.go\n/b/y.go\n` — 应得到两条（`a/x.go`、`/b/y.go`）
+- 见 `\n/a/x.go\n/b/y.go\n` — 应得到两条（`/a/x.go`、`/b/y.go`）
+
+反斜杠**不能一刀切**：Windows 相对路径也是反斜杠，Step 3 没有相对反斜杠分支，
+所以这类仍在 Step 2 标注（若一律让位会全部丢失）：
+
+- `src\main.go` → `src/main.go`
+- `docs\README.md` → `docs/README.md`
+
+反斜杠目录名不能被当成转义尾巴裁掉（`n`/`t`/`r` 是合法的目录名）：
+
+- `E:\git\x\n` → `E:/git/x`（真路径；只有**尾随**的 `\n` 才裁）
 
 Windows 盘符路径的尾随 `\n` 应被裁掉（真路径是前缀）：
 
@@ -312,10 +322,19 @@ Windows 的 `C:\` 一直正常（`splitPath` 会保留 `C:` 段），只有 POSI
 - ftp://example.com/a/b
 - ssh://host/path
 
-`file://` 仍正常（它是真的文件引用），Windows 盘符也不会被误当协议（单字母协议）：
+`file://` 仍正常（它是真的文件引用，**大小写不敏感**），Windows 盘符也不会被误当
+协议（单字母协议）：
 
 - `file:///tmp/x/y.go` → 标注 `/tmp/x/y.go`
+- `FILE:///tmp/x/y.go` → 标注 `/tmp/x/y.go`
 - `E:/git/x/y.go` → 标注 `E:/git/x/y.go`
+
+**协议名不含点**：`main.go:10` 形状上像协议 `main.go:`，若允许点号，全应用的
+`文件:行号` 标注都会失效。因此 scheme 只接受无点形态（`ftp`/`ssh`/`ws`/`data`），
+而 `文件.扩展名:行号` 始终按路径处理：
+
+- `main.go:10` （行内代码）→ 标注 `main.go`，行号 10
+- `README.md:12` （行内代码）→ 标注 `README.md`，行号 12
 
 > 行内代码／围栏代码块里的无协议域名仍会**同时**得到链接与一个死文件 chip
 > （`<code class="chat-file-path" data-file-path="github.com/foo/bar">`）。死 chip 是

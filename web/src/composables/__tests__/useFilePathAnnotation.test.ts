@@ -931,10 +931,10 @@ describe('annotateFilePaths', () => {
 
     it('splits a multi-entry body into separate paths', () => {
       // The absolute branch used to match `/a/x.go\n/b/y.go` as ONE path
-      // spanning the escape. Each entry must come out on its own.
+      // spanning the escape. Each entry must come out on its own, keeping its
+      // absolute form.
       const result = annotateFilePaths('<p>x \\n/a/x.go\\n/b/y.go\\n y</p>', { projectRoot })
-      expect(result.detectedPaths).toContain('a/x.go')
-      expect(result.detectedPaths).toContain('/b/y.go')
+      expect(result.detectedPaths).toEqual(['/a/x.go', '/b/y.go'])
       expect(result.detectedPaths.some(p => p.includes('\\'))).toBe(false)
     })
 
@@ -953,10 +953,34 @@ describe('annotateFilePaths', () => {
 
     it('does not annotate a path built from a <code> body carrying escapes', () => {
       // Step 2 treats the whole <code> body as one path and cannot rescan, so it
-      // declines escaped content and lets Step 3 find the real path.
+      // hands list-shaped escaped content to Step 3.
       const result = annotateFilePaths('<p>see <code>\\n/home/user/docs/\\n</code></p>', { projectRoot })
       expect(result.detectedPaths).toContain('/home/user/docs/')
       expect(result.detectedPaths.some(p => p.includes('\\'))).toBe(false)
+    })
+
+    it('splits an escaped list inside <code> too', () => {
+      const result = annotateFilePaths('<p><code>\\n/a/x.go\\n/b/y.go\\n</code></p>', { projectRoot })
+      expect(result.detectedPaths).toEqual(['/a/x.go', '/b/y.go'])
+    })
+
+    it('still annotates relative Windows paths in <code>', () => {
+      // Declining on ANY backslash dropped these: Step 3 has no
+      // relative-backslash branch, so nothing else would pick them up.
+      for (const [input, expected] of [
+        ['src\\main.go', 'src/main.go'],
+        ['docs\\README.md', 'docs/README.md'],
+      ] as const) {
+        expect(annotateFilePaths(`<p><code>${input}</code></p>`, { projectRoot }).detectedPaths, input)
+          .toEqual([expected])
+      }
+    })
+
+    it('keeps a Windows directory literally named n', () => {
+      // `E:\git\x\n` is a real path ending in a directory called `n`, not a
+      // trailing `\n` escape. Trimming the tail unconditionally lost it.
+      const result = annotateFilePaths('<p>x E:\\git\\x\\n y</p>', { projectRoot })
+      expect(result.detectedPaths).toEqual(['E:/git/x'])
     })
   })
 
@@ -966,6 +990,37 @@ describe('annotateFilePaths', () => {
     // there is no preceding host character to look at.
     const result = annotateFilePaths('<p>see //cdn.example.com/a/b.png now</p>', { projectRoot })
     expect(result.detectedPaths).toHaveLength(0)
+  })
+
+  it('does not annotate a protocol-relative URL after a literal escape', () => {
+    // The escape-debris exemption must not swallow a real `//`: after `\n` the
+    // two characters before the match are `n` and `/`, which is the same
+    // signature the debris test looks for.
+    const result = annotateFilePaths('<p>x \\n//cdn.example.com/a/b.png y</p>', { projectRoot })
+    expect(result.detectedPaths).toHaveLength(0)
+  })
+
+  it('annotates <code>file.ext:line</code> (no dotted-scheme confusion)', () => {
+    // `main.go:10` looks like scheme `main.go:`. The scheme test must not accept
+    // a dot in the scheme, or every `file:line` annotation in the app is lost.
+    for (const [input, path, line] of [
+      ['main.go:10', 'main.go', 10],
+      ['README.md:12', 'README.md', 12],
+      ['config.yaml:5-8', 'config.yaml', 5],
+    ] as const) {
+      const result = annotateFilePaths(`<p>see <code>${input}</code></p>`, { projectRoot })
+      expect(result.detectedPaths, input).toEqual([path])
+      expect(result.html, input).toContain(`data-line-start="${line}"`)
+    }
+  })
+
+  it('strips file:// case-insensitively', () => {
+    // `FILE:///tmp/x` used to resolve as `FILE:/tmp/x` (a scheme-less path with
+    // a stray colon), not as the absolute path it is.
+    for (const href of ['file:///tmp/x/y.go', 'FILE:///tmp/x/y.go', 'File:///tmp/x/y.go']) {
+      expect(annotateFilePaths(`<p><a href="${href}">x</a></p>`, { projectRoot }).detectedPaths, href)
+        .toEqual(['/tmp/x/y.go'])
+    }
   })
 
   // ── Directory references (trailing separator) ──

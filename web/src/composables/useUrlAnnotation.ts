@@ -49,6 +49,18 @@ const BARE_URL_SEG_MAX = 128
 const BARE_URL_SEG_COUNT_MAX = 16
 
 /**
+ * Trailing punctuation that ends the sentence, not the URL: `See
+ * github.com/foo/bar.` must link `github.com/foo/bar`, not the period.
+ *
+ * Only ASCII `.` is in `PATH_SEG` (the other terminators already stop the match),
+ * and it is also a legal path character — `README.md`, `v1.2`. So a trailing dot
+ * is stripped only when it is NOT followed by more path text, which the regex
+ * cannot express without lookbehind (banned: see the module header). The scan
+ * below trims it and leaves it as text instead.
+ */
+const TRAILING_DOT_RE = /\.$/
+
+/**
  * `(prefix)(domain)(path…)`. The prefix is `^` or one non-path character, so a
  * match never begins mid-token; it is captured (not looked behind) and
  * re-emitted. The path group requires at least one segment — see the header.
@@ -111,7 +123,11 @@ export function annotateBareUrlsIn(doc: Document): boolean {
             const prefix = match[1]
             // match[2] is the domain only; the path lives in a non-capturing
             // group, so take the whole remainder of the match.
-            const url = match[0].slice(prefix.length)
+            let url = match[0].slice(prefix.length)
+            // A sentence-final period is not part of the URL (see
+            // TRAILING_DOT_RE). Give it back to the surrounding text.
+            const trailing = TRAILING_DOT_RE.exec(url)
+            if (trailing) url = url.slice(0, -trailing[0].length)
             const urlStart = match.index + prefix.length
             if (urlStart > last) frag.appendChild(doc.createTextNode(text.slice(last, urlStart)))
             const a = doc.createElement('a')

@@ -76,3 +76,61 @@ describe('annotateBareUrls', () => {
         expect(annotateBareUrlsIn(clean)).toBe(false)
     })
 })
+
+describe('bare URL boundaries', () => {
+    it('does not swallow a sentence-final period', () => {
+        // `.` is a legal path character (README.md, v1.2) AND the sentence
+        // terminator, so it is trimmed only when it ends the match.
+        const out = annotateBareUrls('<p>See github.com/foo/bar.</p>')
+        expect(out).toContain('href="https://github.com/foo/bar"')
+        expect(out).toContain('>github.com/foo/bar</a>.')
+    })
+
+    it('keeps a period that is part of the path', () => {
+        const out = annotateBareUrls('<p>See github.com/o/r/master/README.md</p>')
+        expect(out).toContain('href="https://github.com/o/r/master/README.md"')
+    })
+
+    it('stops at other terminators without trimming', () => {
+        for (const [input, expected] of [
+            ['See github.com/foo/bar, and more', 'href="https://github.com/foo/bar"'],
+            ['See (github.com/foo/bar)', 'href="https://github.com/foo/bar"'],
+            ['See github.com/foo/bar。', 'href="https://github.com/foo/bar"'],
+        ] as const) {
+            expect(annotateBareUrls(`<p>${input}</p>`), input).toContain(expected)
+        }
+    })
+
+    it('does not linkify host:port', () => {
+        // The path group requires a `/`, so `example.com:8080/api` cannot match
+        // — a colon is not a path separator.
+        expect(annotateBareUrls('<p>example.com:8080/api</p>')).not.toContain('<a ')
+    })
+
+    it('leaves a URL already inside an anchor alone', () => {
+        const html = '<p><a href="https://x.com">github.com/a/b</a></p>'
+        expect(annotateBareUrls(html)).toBe(html)
+    })
+
+    it('links every occurrence in one text node', () => {
+        const out = annotateBareUrls('<p>a github.com/x/y b github.com/p/q c</p>')
+        expect(out.match(/<a /g)).toHaveLength(2)
+    })
+
+    it('does not join a URL split across elements', () => {
+        // Text nodes are processed independently; `github.com/` + `<b>a/b</b>`
+        // is not one URL and must not be linkified.
+        expect(annotateBareUrls('<p>github.com/<b>a/b</b></p>')).not.toContain('<a ')
+    })
+
+    it('does not let a quote in the text escape the href attribute', () => {
+        // `textContent` + `setAttribute` are used, so markup in the source text
+        // stays text. The quote must land OUTSIDE the generated anchor.
+        const out = annotateBareUrls('<p>github.com/a/b&quot;onmouseover=&quot;x</p>')
+        const anchor = /<a [^>]*>.*?<\/a>/.exec(out)?.[0] ?? ''
+        expect(anchor).toBe(
+            '<a href="https://github.com/a/b" target="_blank" rel="noopener noreferrer">github.com/a/b</a>',
+        )
+        expect(out.endsWith('"onmouseover="x</p>')).toBe(true)
+    })
+})

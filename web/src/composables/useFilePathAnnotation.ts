@@ -126,7 +126,9 @@ export function parseFileUri(rawInput: string): ParsedFileUri {
     let raw = stripWrappingDecoration(input)
 
     // 1. Strip the file:// scheme (handles file:///path and file://host/path).
-    if (raw.startsWith('file://')) {
+    // Case-insensitive: `FILE://` is the same scheme, and the rejection test
+    // above excludes every casing of it from `isOpaqueSchemePath`.
+    if (/^file:\/\//i.test(raw)) {
         raw = raw.slice('file://'.length)
         if (!raw.startsWith('/')) {
             // file://host/… → drop the host, keep the absolute path.
@@ -255,8 +257,16 @@ function resolveAgainstProjectRoot(path: string, projectRoot: string): ResolveRe
  * `file:` is deliberately NOT matched: it is a real file reference that
  * `parseFileUri` knows how to strip, and treating it as an opaque scheme would
  * lose the path it carries.
+ *
+ * NO DOT IN THE SCHEME. RFC 3986 permits one (`com.example.app:`), but every
+ * scheme this codebase must recognise is dotless (`ftp`, `ssh`, `ws`, `data`,
+ * `javascript`), while the shape that must NOT be mistaken for one is exactly
+ * `name.ext:line` — `main.go:10`, `README.md:12`, `config.yaml:5-8`,
+ * `index.d.ts:3`. Allowing the dot silently disabled `<code>main.go:10</code>`
+ * annotations (and their `:line` targets) across the whole app. A dotted scheme
+ * is not a form this product emits; a dotted `path:line` is emitted constantly.
  */
-const URI_SCHEME_RE = /^(?!file:)[a-zA-Z][a-zA-Z0-9+.-]*:/
+const URI_SCHEME_RE = /^(?!file:)[a-zA-Z][a-zA-Z0-9+-]*:/i
 
 /** True for a Windows drive path (`E:/git/x`, `C:\Users\x`) — not a scheme. */
 function isWindowsDrivePath(path: string): boolean {
@@ -580,7 +590,7 @@ const DIR_SEG_RE = new RegExp('^[' + DIR_SEG_SRC + ']')
  * a real filename (`build.sh`), and rejecting those would lose working annotations.
  */
 const DOMAINISH_FIRST_SEG_RE = /^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|org|net|io|dev|cn|ai|edu|gov|app)$/i
-const FILE_PATH_SRC = '(?:~?\\/[^/\\s<>"\')\\]]+(?:\\/[^/\\s<>"\')\\]]+)+\\.[a-zA-Z][a-zA-Z0-9]*|~?\\/[^/\\s<>"\')\\]]+(?:\\/[^/\\s<>"\')\\]]+)+\\/\\.[^/\\s<>"\')\\]]+|\\.\\.?\\/[^/\\s<>"\')\\]]+(?:\\/[^/\\s<>"\')\\]]+)*\\.[a-zA-Z][a-zA-Z0-9]*|[a-zA-Z0-9_-]+(?:\\/[a-zA-Z0-9_.-]+)+\\.[a-zA-Z][a-zA-Z0-9]*|[A-Za-z]:[\\\\/](?![\\\\/])[^\\\\/\\s<>"\')\\]]+(?:[\\\\/][^\\\\/\\s<>"\')\\]]+)*(?:\\.[a-zA-Z][a-zA-Z0-9]*)?|(?:\\.\\.?\\/|\\/)?[' + DIR_SEG_SRC + ']{1,' + DIR_SEG_MAX + '}(?:\\/[' + DIR_SEG_SRC + ']{1,' + DIR_SEG_MAX + '}){1,' + DIR_SEG_COUNT_MAX + '}\\/(?![' + DIR_SEG_SRC + ']))'
+const FILE_PATH_SRC = '(?:~?\\/[^/\\s<>"\')\\]\\\\]+(?:\\/[^/\\s<>"\')\\]\\\\]+)+\\.[a-zA-Z][a-zA-Z0-9]*|~?\\/[^/\\s<>"\')\\]\\\\]+(?:\\/[^/\\s<>"\')\\]\\\\]+)+\\/\\.[^/\\s<>"\')\\]\\\\]+|\\.\\.?\\/[^/\\s<>"\')\\]\\\\]+(?:\\/[^/\\s<>"\')\\]\\\\]+)*\\.[a-zA-Z][a-zA-Z0-9]*|[a-zA-Z0-9_-]+(?:\\/[a-zA-Z0-9_.-]+)+\\.[a-zA-Z][a-zA-Z0-9]*|[A-Za-z]:[\\\\/](?![\\\\/])[^\\\\/\\s<>"\')\\]]+(?:[\\\\/][^\\\\/\\s<>"\')\\]]+)*(?:\\.[a-zA-Z][a-zA-Z0-9]*)?|(?:\\.\\.?\\/|\\/)?[' + DIR_SEG_SRC + ']{1,' + DIR_SEG_MAX + '}(?:\\/[' + DIR_SEG_SRC + ']{1,' + DIR_SEG_MAX + '}){1,' + DIR_SEG_COUNT_MAX + '}\\/(?![' + DIR_SEG_SRC + ']))'
 const FILE_PATH_RE = new RegExp(FILE_PATH_SRC + '(?::(' + LINE_TOKEN_SRC + '))?', 'g')
 
 /**
@@ -770,25 +780,27 @@ export function annotateFilePathsIn(
         if (code.closest('a')) continue
         if (code.classList.contains('chat-worktree-path')) continue
         const stripped = (code.textContent || '').trim()
-        // DECLINE content carrying a literal backslash and let Step 3 handle it.
+        // This step treats the whole <code> body as ONE path and cannot rescan,
+        // so it must decline LIST-shaped bodies — but only those.
         //
-        // This step treats the whole <code> body as ONE path, so it cannot
-        // rescan: replies routinely carry raw JSON/JS, where `\n` is two literal
-        // characters. `\n/home/user/docs/\n` then resolved as the bogus
-        // `/n/home/user/docs//n` — the `n` swallowed as a directory name and the
-        // stray slashes kept. Step 3 is regex-based over the text node, so its
-        // escape rescan finds the real path inside the same content
-        // (`/home/user/docs/`), and it also handles the multi-entry case
-        // (`\n/a/x.go\n/b/y.go\n`) which a whole-string resolve could never
-        // split. Declining here is therefore a strict improvement, not a loss.
+        // Replies carry raw JSON/JS, where `\n` is two literal characters and
+        // separates entries: `\n/a/x.go\n/b/y.go\n`. Resolving that as one path
+        // splices the entries together, so it goes to Step 3, whose regex scan
+        // annotates each one separately.
         //
-        // Only backslash is checked: it is the escape introducer, and no real
-        // path contains one except the Windows separator, which
-        // `E:\git\x` forms carry — those are matched by Step 3 as well (it
-        // normalizes separators), so they are covered by the same route.
-        if (stripped.includes('\\')) continue
-        if (!looksLikeFilePath(stripped)) continue
-        const { path: barePath, lineRanges } = extractLineInfoFromText(stripped)
+        // Declining on ANY backslash would be too broad: `src\main.go` and
+        // `E:\git\x\y.go` are Windows paths, not escapes, and Step 3 has no
+        // relative-backslash branch — those would stop being annotated at all.
+        // So split on the line escapes and decide by shape: two or more
+        // path-like pieces is a list; otherwise the body is a single path and
+        // the whole-string resolve below handles it (it normalizes separators).
+        const escapeParts = stripped.split(/\\[nr]/).map(p => p.trim()).filter(Boolean)
+        if (escapeParts.length > 1 && escapeParts.filter(looksLikeFilePath).length > 1) continue
+        // A single piece wrapped in escapes (`\n/home/docs/\n`) is still one
+        // path; drop the wrapping rather than letting the `n` become a segment.
+        const body = escapeParts.length === 1 && escapeParts[0] !== stripped ? escapeParts[0] : stripped
+        if (!looksLikeFilePath(body)) continue
+        const { path: barePath, lineRanges } = extractLineInfoFromText(body)
         const result = resolveFilePathDual(barePath, projectRoot, homeDir, baseDir)
         if (!result || result.primary.includes(' ') || result.primary.includes('"')) continue
         pushDetectedPaths(detectedPaths, result)
@@ -830,24 +842,26 @@ export function annotateFilePathsIn(
             let result = resolveFilePathDual(barePath, projectRoot, homeDir, baseDir)
             // Escape-sequence guard. Replies routinely carry raw JSON/JS string
             // content, so a literal `\n` (two characters, not a newline) is
-            // common, and it corrupts a match in two ways:
-            //
-            //   a) BEFORE the match — the segment class swallows the `n` as a
-            //      leading directory name, so `…\n/home/user/x/` matches as
-            //      `n/home/user/x/`.
-            //   b) INSIDE the match — the absolute-path branch's segment class
-            //      permits `\`, so `…\n/a/x.go\n/b/y.go\n` matches the whole
-            //      `/a/x.go\n/b/y.go` as ONE path spanning the escape.
+            // common. It corrupts a match from the LEFT: the segment class
+            // swallows the `n` as a leading directory name, so
+            // `…\n/home/user/x/` matches as `n/home/user/x/`.
             //
             // REJECT AND RESCAN rather than trim: rewinding one character lets
             // the scan re-find the real path from its true start, and it finds
             // each entry SEPARATELY — which is what a multi-entry body needs
-            // (two files, two chips). Trimming only the tail would leave the
-            // interior escape inside one bogus path; dropping the match outright
-            // would lose the real path it contains.
+            // (two files, two chips). Dropping the match outright would lose the
+            // real path it contains.
+            //
+            // The `pathStr.includes('\\')` half is now defensive only: the Unix
+            // segment classes exclude `\`, so a match can no longer SPAN an
+            // escape (`…\n/a/x.go\n/b/y.go\n` used to become one path). Keeping
+            // the test costs nothing and keeps the invariant if a class is ever
+            // widened again — but note that widening it also reintroduces a
+            // quadratic scan, because every rejected match is retried one
+            // character later.
             //
             // The Windows-drive branch is the one legitimate backslash carrier,
-            // so it is exempt; its own trailing `\n` is trimmed just below.
+            // so it is exempt; a trailing escape on it is trimmed just below.
             // Everything else containing a backslash is a corrupted match.
             const isWindowsMatch = /^[a-zA-Z]:[\\/]/.test(pathStr)
             if (result && !isWindowsMatch && (pathStr.includes('\\') || (match.index > 0 && text[match.index - 1] === '\\'))) {
@@ -882,6 +896,12 @@ export function annotateFilePathsIn(
             // it. That leftover is identifiable by its own prefix
             // (`\` + escape letter), which no real URL has.
             //
+            // A DOUBLED slash always wins, even when the escape signature also
+            // matches: `\n//cdn.example.com/a/b.png` has `\`,`n`,`/` before the
+            // match exactly like the debris case, but the match itself starts
+            // with the second `/` — that is a protocol-relative URL, and exempting
+            // it annotated `/cdn.example.com/a/b.png` as a file.
+            //
             // A lookAHEAD cannot express this (the signal is to the LEFT) and a
             // lookBEHIND is a parse error on Safari/iPadOS < 16.4, so the check
             // runs here in the scan loop instead.
@@ -891,7 +911,14 @@ export function annotateFilePathsIn(
                     match.index >= 3 &&
                     'ntr'.includes(text[match.index - 2]) &&
                     text[match.index - 3] === '\\'
-                if (prev === ':' || (prev === '/' && !afterEscapeDebris)) {
+                // The match itself starting with `/` while `prev` is also `/`
+                // means the source text holds `//` — protocol-relative, and the
+                // scan simply began at the second slash. Read it off the match
+                // rather than `text[match.index - 2]`: after `\n//cdn…` the two
+                // characters before the match are `n` and `/`, so a two-back
+                // test sees the escape signature and would exempt a real URL.
+                const doubledSlash = prev === '/' && text[match.index] === '/'
+                if (prev === ':' || (prev === '/' && (doubledSlash || !afterEscapeDebris))) {
                     result = null
                 }
             }
