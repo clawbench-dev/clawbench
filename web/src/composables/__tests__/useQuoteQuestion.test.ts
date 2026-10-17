@@ -43,21 +43,13 @@ vi.mock('@/composables/useLocale', () => ({
 // viewport, which the real singleton treats as wide-screen (isWideScreen=true),
 // and the wide-screen branch hides the bar on selection collapse — the opposite
 // of what these tests assert.
-//
-// This mock must ALSO provide `isChatPanelVisible`: the quote actions now route
-// through useConversationTarget, which consults it to decide whether to pop the
-// session picker. These tests all assume the chat panel is visible (so the
-// action goes straight to the current session), which the narrow layout gives
-// when activeTab is 'chat'.
+const mockLayout = vi.hoisted(() => ({ isWideScreen: false, chatCollapsed: false }))
 vi.mock('@/composables/useWideScreenLayout', () => ({
   useWideScreenLayout: () => ({
-    isWideScreen: { value: false },
-    chatCollapsed: { value: false },
+    isWideScreen: { value: mockLayout.isWideScreen },
+    chatCollapsed: { value: mockLayout.chatCollapsed },
   }),
-  isChatPanelVisible: (state: { isWideScreen: boolean; chatCollapsed: boolean; activeTab: string }) => {
-    if (!state.isWideScreen) return state.activeTab === 'chat'
-    return !state.chatCollapsed
-  },
+  isChatPanelVisible: () => true,
 }))
 
 // Keep real quoteQuestionUtils for selectionchange tests (closestElement, getLineInfo, getFileInfo)
@@ -67,7 +59,7 @@ import { useChatContext } from '../useChatContext.ts'
 import { consumePendingChatInput, _resetChatInputInjectionForTesting } from '@/utils/chatInputInjection.ts'
 import { useQuoteQuestion } from '../useQuoteQuestion.ts'
 import type { QuoteData } from '../useChatContext.ts'
-import { setActiveTabGetter, cancelTarget, usePendingTarget } from '../useConversationTarget.ts'
+import { cancelTarget, usePendingTarget } from '../useConversationTarget.ts'
 import { _setPlatformForTest, _resetPlatformForTest } from '@/composables/usePlatformDetect'
 
 describe('useQuoteQuestion', () => {
@@ -75,10 +67,6 @@ describe('useQuoteQuestion', () => {
 
   beforeEach(() => {
     ctx = useChatContext()
-    // These tests assume the chat panel is on screen, so an action goes
-    // straight to the current session instead of popping the session picker.
-    // In the app this getter is installed by App.vue at setup.
-    setActiveTabGetter(() => 'chat')
     cancelTarget()
     // Fully reset module-level singleton state via closeSheet
     const qq = useQuoteQuestion()
@@ -345,18 +333,18 @@ describe('useQuoteQuestion', () => {
       expect(mockSendMessage).not.toHaveBeenCalled()
     })
 
-    // ── Session picker gate ──
+    // ── The picker owns the destination ──
+    // A send never goes out from here: it is snapshotted for the picker, and
+    // confirmTarget performs it for whichever session the user picks.
 
-    it('holds the send for the picker (and does not send) when the chat panel is hidden', async () => {
-      setActiveTabGetter(() => 'browse')
+    it('holds the send for the picker instead of sending', async () => {
       const qq = useQuoteQuestion()
       qq.showBar({ text: 'some code', filePath: '/src/foo.ts', language: 'typescript', startLine: 10, endLine: 20 })
       vi.advanceTimersByTime(400)
 
       await qq.sendMessage('explain this')
 
-      // The send must NOT have gone to the current session — the user has not
-      // picked a destination yet.
+      // Nothing was sent — the user has not picked a destination yet.
       expect(mockSendMessage).not.toHaveBeenCalled()
       const { pickerOpen, pending } = usePendingTarget()
       expect(pickerOpen.value).toBe(true)
@@ -368,66 +356,52 @@ describe('useQuoteQuestion', () => {
       expect(qq.visible.value).toBe(false)
     })
 
-    it('sends the typed message and stages the quote as a card', async () => {
+    it('does not send even when the chat panel is on screen', async () => {
+      // The picker is unconditional — there is no "panel visible ⇒ current
+      // session" shortcut any more, so the send is still held.
+      mockLayout.isWideScreen = false
       const qq = useQuoteQuestion()
-      // ChatPanelContent reads stagedQuotes synchronously before its first
-      // await, so capture them at send time — clearAll() wipes them afterwards.
-      let atSendTime: unknown[] = []
-      mockSendMessage.mockImplementation(async () => {
-        atSendTime = [...ctx.stagedQuotes.value]
-      })
+      qq.showBar({ text: 'code', filePath: '/a.ts', language: 'ts', startLine: 1, endLine: 1 })
+      vi.advanceTimersByTime(400)
 
+      await qq.sendMessage('hi')
+
+      expect(mockSendMessage).not.toHaveBeenCalled()
+      expect(usePendingTarget().pickerOpen.value).toBe(true)
+    })
+
+    it('carries the message text and the quote together in the pending request', async () => {
+      const qq = useQuoteQuestion()
       qq.showBar({ text: 'some code', filePath: '/src/foo.ts', language: 'typescript', startLine: 10, endLine: 20 })
       vi.advanceTimersByTime(400)
 
       await qq.sendMessage('explain this')
 
-      // The quote no longer rides in the message text — it becomes a structured
-      // card (see ChatPanelContent.sendMessage, which materialises stagedQuotes
-      // into files entries). Only the user's own words are the message.
-      expect(mockSendMessage).toHaveBeenCalledWith('explain this')
-      expect(atSendTime).toHaveLength(1)
-      expect(atSendTime[0]).toMatchObject({
+      const { pending } = usePendingTarget()
+      expect(pending.value?.text).toBe('explain this')
+      expect(pending.value?.quotes).toHaveLength(1)
+      expect(pending.value?.quotes[0]).toMatchObject({
         text: 'some code', filePath: '/src/foo.ts', startLine: 10, endLine: 20,
       })
     })
 
-    it('clears all state after successful send', async () => {
+    it('dismisses the bar and clears the active quote so it cannot float above the picker', async () => {
       const qq = useQuoteQuestion()
-      mockSendMessage.mockResolvedValue(undefined)
-
       qq.showBar({ text: 'some code', filePath: '/src/bar.ts', language: 'typescript', startLine: 10, endLine: 20 })
       vi.advanceTimersByTime(400)
 
       await qq.sendMessage('explain this')
 
       expect(qq.visible.value).toBe(false)
-      expect(ctx.attachedFiles.value).toHaveLength(0)
       expect(ctx.quoteData.value).toBeNull()
+      // The payload lives in the pending request, not the live draft.
       expect(ctx.stagedQuotes.value).toHaveLength(0)
     })
 
-    it('shows error toast on send failure', async () => {
+    it('snapshots only the active selection, not previously staged quotes', async () => {
+      // A staged quote belongs to the CURRENT session's draft. The send's
+      // destination is unknown, so only the active selection rides along.
       const qq = useQuoteQuestion()
-      mockSendMessage.mockRejectedValue(new Error('network error'))
-
-      qq.showBar({ text: 'some code', filePath: '/src/baz.ts', language: 'typescript', startLine: 10, endLine: 20 })
-      vi.advanceTimersByTime(400)
-
-      await qq.sendMessage('explain this')
-
-      expect(mockToastShow).toHaveBeenCalledWith(
-        expect.stringContaining('sendFailed'),
-        expect.objectContaining({ type: 'error' }),
-      )
-    })
-
-    it('stages the active selection alongside existing staged quotes', async () => {
-      const qq = useQuoteQuestion()
-      let atSendTime: Array<{ text: string; note: string }> = []
-      mockSendMessage.mockImplementation(async () => {
-        atSendTime = ctx.stagedQuotes.value.map(q => ({ text: q.text, note: q.note }))
-      })
       ctx.addStagedQuote(
         { text: 'first()', filePath: '/first.ts', language: 'ts', startLine: 1, endLine: 2 },
         'Review this first',
@@ -436,64 +410,17 @@ describe('useQuoteQuestion', () => {
 
       await qq.sendMessage('Compare them')
 
-      expect(mockSendMessage).toHaveBeenCalledWith('Compare them')
-      // Both quotes are now cards (materialised by ChatPanelContent), not text.
-      expect(atSendTime).toHaveLength(2)
-      expect(atSendTime.map(q => q.text)).toEqual(['first()', 'second()'])
-      expect(atSendTime[0].note).toBe('Review this first')
-    })
-
-    it('deduplicates the active selection against staged quotes', async () => {
-      const qq = useQuoteQuestion()
-      let atSendTime: Array<{ text: string; note: string }> = []
-      mockSendMessage.mockImplementation(async () => {
-        atSendTime = ctx.stagedQuotes.value.map(q => ({ text: q.text, note: q.note }))
-      })
-      const quote = { text: 'same()', filePath: '/same.ts', language: 'ts', startLine: 4, endLine: 4 }
-      ctx.addStagedQuote(quote, 'Keep this note')
-      ctx.setQuoteData({ ...quote })
-
-      await qq.sendMessage('Explain')
-
-      expect(mockSendMessage).toHaveBeenCalledWith('Explain')
-      expect(atSendTime).toHaveLength(1)
-      expect(atSendTime[0].note).toBe('Keep this note')
+      const { pending } = usePendingTarget()
+      expect(pending.value?.quotes.map(q => q.text)).toEqual(['second()'])
     })
   })
 
   describe('addToConversation', () => {
-    it('stages an active quote without requiring text', () => {
+    it('opens the picker and stages nothing locally', () => {
       const qq = useQuoteQuestion()
       ctx.setQuoteData({ text: 'selected', filePath: '/a.ts', language: 'ts', startLine: 3, endLine: 4 })
 
       qq.addToConversation('')
-
-      expect(ctx.stagedQuotes.value).toHaveLength(1)
-      expect(ctx.stagedQuotes.value[0].note).toBe('')
-      expect(ctx.quoteData.value).toBeNull()
-      expect(qq.visible.value).toBe(false)
-    })
-
-    it('stores entered text as the staged quote note', () => {
-      const qq = useQuoteQuestion()
-      ctx.setQuoteData({ text: 'selected', filePath: '/a.ts', language: 'ts', startLine: 3, endLine: 4 })
-
-      qq.addToConversation('  Why is this needed?  ')
-
-      expect(ctx.stagedQuotes.value[0].note).toBe('Why is this needed?')
-    })
-
-    // ── Session picker gate ──
-    // When the chat panel is NOT visible the destination is ambiguous, so the
-    // action must hold the payload for the picker instead of dropping it into
-    // the current session.
-
-    it('opens the picker instead of staging when the chat panel is hidden', () => {
-      setActiveTabGetter(() => 'browse')
-      const qq = useQuoteQuestion()
-      ctx.setQuoteData({ text: 'selected', filePath: '/a.ts', language: 'ts', startLine: 3, endLine: 4 })
-
-      qq.addToConversation('note')
 
       // Nothing staged into the live input: the card belongs to a session the
       // user has not chosen yet.
@@ -503,21 +430,30 @@ describe('useQuoteQuestion', () => {
       expect(pending.value?.mode).toBe('add')
       expect(pending.value?.quotes).toHaveLength(1)
       expect(pending.value?.quotes[0].filePath).toBe('/a.ts')
-      expect(pending.value?.quotes[0].note).toBe('note')
+      expect(pending.value?.quotes[0].note).toBe('')
       // The bar is dismissed so it cannot float above the dialog.
       expect(qq.visible.value).toBe(false)
       expect(ctx.quoteData.value).toBeNull()
     })
 
-    it('does NOT open the picker when the chat panel is visible', () => {
-      setActiveTabGetter(() => 'chat')
+    it('stores entered text as the pending quote note', () => {
+      const qq = useQuoteQuestion()
+      ctx.setQuoteData({ text: 'selected', filePath: '/a.ts', language: 'ts', startLine: 3, endLine: 4 })
+
+      qq.addToConversation('  Why is this needed?  ')
+
+      expect(usePendingTarget().pending.value?.quotes[0].note).toBe('Why is this needed?')
+    })
+
+    it('opens the picker even with the chat panel visible', () => {
+      mockLayout.isWideScreen = false
       const qq = useQuoteQuestion()
       ctx.setQuoteData({ text: 'selected', filePath: '/a.ts', language: 'ts', startLine: 3, endLine: 4 })
 
       qq.addToConversation('')
 
-      expect(usePendingTarget().pickerOpen.value).toBe(false)
-      expect(ctx.stagedQuotes.value).toHaveLength(1)
+      expect(usePendingTarget().pickerOpen.value).toBe(true)
+      expect(ctx.stagedQuotes.value).toHaveLength(0)
     })
   })
 
@@ -581,47 +517,33 @@ describe('useQuoteQuestion', () => {
       expect(qq.composerAttachment.value).toBeNull()
     })
 
-    it('stages the quoted issue as a card before sending', async () => {
+    it('carries the whole-object issue card in the pending send', async () => {
       const qq = useQuoteQuestion()
       qq.openComposer({ url: 'https://github.com/acme/widgets/issues/7', label: 'acme/widgets#7' })
 
-      // The card must already be staged when the send runs — ChatPanelContent
-      // reads stagedQuotes synchronously before its first await, so staging any
-      // later would drop it. Afterwards the batch is cleared by the send
-      // itself, so it is only observable here.
-      let atSendTime: unknown[] = []
-      mockSendMessage.mockImplementation(async () => {
-        atSendTime = [...ctx.stagedQuotes.value]
-      })
-
       await qq.sendMessage('why is this broken?')
 
-      expect(mockSendMessage).toHaveBeenCalledWith('why is this broken?')
-      expect(atSendTime).toHaveLength(1)
-      expect(atSendTime[0]).toMatchObject({
+      const { pending } = usePendingTarget()
+      expect(pending.value?.text).toBe('why is this broken?')
+      expect(pending.value?.quotes[0]).toMatchObject({
         sourceKind: 'url', url: 'https://github.com/acme/widgets/issues/7', filePath: 'acme/widgets#7',
         // Whole-object quote: no content, the AI reads the referenced issue.
         text: '',
       })
       // A card, not a separate attachment chip.
       expect(ctx.attachedFiles.value).toHaveLength(0)
-      // Consumed by the message, not left behind for the next one.
+      // Nothing staged locally — the picker owns delivery.
       expect(ctx.stagedQuotes.value).toHaveLength(0)
     })
 
-    it('stages the quoted file as a card before sending', async () => {
+    it('carries the quoted file as a card in the pending send', async () => {
       const qq = useQuoteQuestion()
       qq.openComposer({ filePath: '/proj/src/main.ts', label: 'main.ts' })
 
-      let atSendTime: unknown[] = []
-      mockSendMessage.mockImplementation(async () => {
-        atSendTime = [...ctx.stagedQuotes.value]
-      })
-
       await qq.sendMessage('explain this')
 
-      expect(atSendTime).toHaveLength(1)
-      expect(atSendTime[0]).toMatchObject({
+      const { pending } = usePendingTarget()
+      expect(pending.value?.quotes[0]).toMatchObject({
         filePath: '/proj/src/main.ts', sourceKind: 'file', text: '',
       })
       // Not a separate file attachment.
@@ -640,30 +562,35 @@ describe('useQuoteQuestion', () => {
 
     it('sends the user input with no quote at all', async () => {
       // Regression: sendMessage used to early-return when quoteData was null,
-      // which made the no-selection path impossible.
+      // which made the no-selection path impossible. The send is now held for
+      // the picker, but the payload must still carry the typed text.
       const qq = useQuoteQuestion()
       qq.openComposer({ url: 'https://github.com/acme/widgets/issues/7', label: 'acme/widgets#7' })
 
       await qq.sendMessage('why is this broken?')
 
-      expect(mockSendMessage).toHaveBeenCalledWith('why is this broken?')
+      expect(mockSendMessage).not.toHaveBeenCalled()
+      const { pickerOpen, pending } = usePendingTarget()
+      expect(pickerOpen.value).toBe(true)
+      expect(pending.value?.mode).toBe('send')
+      expect(pending.value?.text).toBe('why is this broken?')
+      // The composer card references the URL even with no selection.
+      expect(pending.value?.quotes).toHaveLength(1)
+      expect(pending.value?.quotes[0]).toMatchObject({
+        sourceKind: 'url', url: 'https://github.com/acme/widgets/issues/7',
+      })
     })
 
-    it('sends the user input and stages the quote as a card', async () => {
+    it('carries a selected snippet as the pending quote', async () => {
       const qq = useQuoteQuestion()
-      let atSendTime: unknown[] = []
-      mockSendMessage.mockImplementation(async () => {
-        atSendTime = [...ctx.stagedQuotes.value]
-      })
       qq.openComposer({ url: 'https://github.com/acme/widgets/issues/7', label: 'acme/widgets#7' })
       ctx.setQuoteData({ text: 'build failed', filePath: 'acme/widgets#7', language: 'issue', startLine: 0, endLine: 0 })
 
       await qq.sendMessage('why?')
 
-      // The typed text is the message; the quote is a card.
-      expect(mockSendMessage).toHaveBeenCalledWith('why?')
-      expect(atSendTime).toHaveLength(1)
-      expect((atSendTime[0] as { text: string }).text).toBe('build failed')
+      const { pending } = usePendingTarget()
+      expect(pending.value?.text).toBe('why?')
+      expect(pending.value?.quotes[0].text).toBe('build failed')
     })
 
     it('does nothing when there is neither a quote nor input', async () => {
@@ -673,6 +600,7 @@ describe('useQuoteQuestion', () => {
       await qq.sendMessage('   ')
 
       expect(mockSendMessage).not.toHaveBeenCalled()
+      expect(usePendingTarget().pickerOpen.value).toBe(false)
     })
 
     it('leaves composer mode after sending', async () => {
@@ -700,71 +628,71 @@ describe('useQuoteQuestion', () => {
     })
 
     describe('add to conversation', () => {
-      it('stages the quote with the typed note instead of injecting text', () => {
-        const onAdd = vi.fn()
+      it('opens the picker with the typed note as the quote annotation', () => {
         const qq = useQuoteQuestion()
-        qq.openComposer({ url: 'https://github.com/acme/widgets/issues/7', label: 'acme/widgets#7', onAdd })
+        qq.openComposer({ url: 'https://github.com/acme/widgets/issues/7', label: 'acme/widgets#7' })
         ctx.setQuoteData({ text: 'build failed', filePath: 'acme/widgets#7', language: 'issue', startLine: 0, endLine: 0 })
 
         qq.addToConversation('please fix')
 
         // The typed text becomes the quote's ANNOTATION — one card, exactly
         // like the file browser / forge selection flow. Nothing is injected
-        // into the chat input.
+        // into the chat input, and nothing is staged locally (the picker owns
+        // the destination).
         expect(consumePendingChatInput()).toBeNull()
-        expect(ctx.stagedQuotes.value).toHaveLength(1)
-        expect(ctx.stagedQuotes.value[0].note).toBe('please fix')
-        expect(onAdd).toHaveBeenCalledTimes(1)
+        expect(ctx.stagedQuotes.value).toHaveLength(0)
+        const { pickerOpen, pending } = usePendingTarget()
+        expect(pickerOpen.value).toBe(true)
+        expect(pending.value?.quotes).toHaveLength(1)
+        expect(pending.value?.quotes[0].note).toBe('please fix')
       })
 
-      it('stages the quote with an empty note when nothing was typed', () => {
+      it('opens the picker with an empty note when nothing was typed', () => {
         const qq = useQuoteQuestion()
         qq.openComposer({ url: 'https://github.com/acme/widgets/issues/7', label: 'acme/widgets#7' })
         ctx.setQuoteData({ text: 'build failed', filePath: 'acme/widgets#7', language: 'issue', startLine: 0, endLine: 0 })
 
         qq.addToConversation('')
 
-        expect(ctx.stagedQuotes.value).toHaveLength(1)
-        expect(ctx.stagedQuotes.value[0].note).toBe('')
+        expect(usePendingTarget().pending.value?.quotes[0].note).toBe('')
         expect(consumePendingChatInput()).toBeNull()
       })
 
-      it('uses the typed text as the annotation even with no selection', () => {
+      it('builds the card even with no selection (the object itself is quoted)', () => {
         // The card always exists (it references the file/issue itself), so the
-        // typed text always has somewhere to go — it is the annotation. Nothing
-        // is injected into the chat input.
-        const onAdd = vi.fn()
+        // typed text always has somewhere to go — it is the annotation.
         const qq = useQuoteQuestion()
-        qq.openComposer({ url: 'https://github.com/acme/widgets/issues/7', label: 'acme/widgets#7', onAdd })
+        qq.openComposer({ url: 'https://github.com/acme/widgets/issues/7', label: 'acme/widgets#7' })
 
         qq.addToConversation('please fix')
 
         expect(consumePendingChatInput()).toBeNull()
-        expect(ctx.stagedQuotes.value).toHaveLength(1)
-        expect(ctx.stagedQuotes.value[0].note).toBe('please fix')
-        expect(ctx.stagedQuotes.value[0].text).toBe('')
-        expect(onAdd).toHaveBeenCalledTimes(1)
+        const { pending } = usePendingTarget()
+        expect(pending.value?.quotes).toHaveLength(1)
+        expect(pending.value?.quotes[0].note).toBe('please fix')
+        expect(pending.value?.quotes[0].text).toBe('')
       })
 
-      it('injects nothing when there is no quote and no note, but still navigates', () => {
-        const onAdd = vi.fn()
-        const qq = useQuoteQuestion()
-        qq.openComposer({ url: 'https://github.com/acme/widgets/issues/7', label: 'acme/widgets#7', onAdd })
-
-        qq.addToConversation('')
-
-        expect(consumePendingChatInput()).toBeNull()
-        expect(onAdd).toHaveBeenCalledTimes(1)
-      })
-
-      it('stages the quoted URL as a card on add', () => {
+      it('opens the picker with no quotes when there is no selection and no note', () => {
         const qq = useQuoteQuestion()
         qq.openComposer({ url: 'https://github.com/acme/widgets/issues/7', label: 'acme/widgets#7' })
 
         qq.addToConversation('')
 
-        expect(ctx.stagedQuotes.value).toHaveLength(1)
-        expect(ctx.stagedQuotes.value[0]).toMatchObject({
+        expect(consumePendingChatInput()).toBeNull()
+        // No selection → buildComposerQuote still returns the whole-object card.
+        expect(usePendingTarget().pickerOpen.value).toBe(true)
+        expect(usePendingTarget().pending.value?.quotes[0].text).toBe('')
+      })
+
+      it('builds the quoted URL as a card in the pending request', () => {
+        const qq = useQuoteQuestion()
+        qq.openComposer({ url: 'https://github.com/acme/widgets/issues/7', label: 'acme/widgets#7' })
+
+        qq.addToConversation('')
+
+        const { pending } = usePendingTarget()
+        expect(pending.value?.quotes[0]).toMatchObject({
           sourceKind: 'url', url: 'https://github.com/acme/widgets/issues/7', filePath: 'acme/widgets#7', text: '',
         })
         // A card, not a separate attachment chip.
@@ -772,14 +700,14 @@ describe('useQuoteQuestion', () => {
         expect(qq.composerAttachment.value).toBeNull()
       })
 
-      it('stages the quoted file as a card on add', () => {
+      it('builds the quoted file as a card in the pending request', () => {
         const qq = useQuoteQuestion()
         qq.openComposer({ filePath: '/proj/src/main.ts', label: 'main.ts' })
 
         qq.addToConversation('')
 
-        expect(ctx.stagedQuotes.value).toHaveLength(1)
-        expect(ctx.stagedQuotes.value[0]).toMatchObject({
+        const { pending } = usePendingTarget()
+        expect(pending.value?.quotes[0]).toMatchObject({
           filePath: '/proj/src/main.ts', sourceKind: 'file', text: '',
         })
         expect(ctx.attachedFiles.value).toHaveLength(0)
@@ -811,8 +739,9 @@ describe('useQuoteQuestion', () => {
 
       // And the commit still works afterwards.
       qq.addToConversation('explain')
-      expect(ctx.stagedQuotes.value).toHaveLength(1)
-      expect(ctx.stagedQuotes.value[0]).toMatchObject({
+      const { pickerOpen, pending } = usePendingTarget()
+      expect(pickerOpen.value).toBe(true)
+      expect(pending.value?.quotes[0]).toMatchObject({
         filePath: '/proj/src/main.ts', note: 'explain',
       })
     })
@@ -1629,7 +1558,7 @@ describe('useQuoteQuestion', () => {
       return container
     }
 
-    it('quote stages the selection as a quote card', () => {
+    it('quote hands the selection to the session picker', () => {
       const wrapper = mountWithComposable()
       selectInMarkdown()
       document.dispatchEvent(new Event('selectionchange'))
@@ -1638,10 +1567,13 @@ describe('useQuoteQuestion', () => {
       const qq = useQuoteQuestion()
       qq.handleNativeSelectionAction('quote')
 
-      // addToConversation('') → the staged quote list gains the card.
-      expect(ctx.stagedQuotes.value).toHaveLength(1)
-      expect(ctx.stagedQuotes.value[0].text).toBe('selected code text')
-      expect(mockToastShow).toHaveBeenCalled()
+      // addToConversation('') → the picker holds the card; nothing is staged
+      // locally (the destination is the user's choice).
+      const { pickerOpen, pending } = usePendingTarget()
+      expect(pickerOpen.value).toBe(true)
+      expect(pending.value?.quotes).toHaveLength(1)
+      expect(pending.value?.quotes[0].text).toBe('selected code text')
+      expect(ctx.stagedQuotes.value).toHaveLength(0)
 
       wrapper.unmount()
     })
@@ -1676,8 +1608,9 @@ describe('useQuoteQuestion', () => {
       const qq = useQuoteQuestion()
       qq.handleNativeSelectionAction('quote')
 
-      expect(ctx.stagedQuotes.value).toHaveLength(1)
-      expect(ctx.stagedQuotes.value[0].text).toBe('selected code text')
+      const { pending } = usePendingTarget()
+      expect(pending.value?.quotes).toHaveLength(1)
+      expect(pending.value?.quotes[0].text).toBe('selected code text')
 
       wrapper.unmount()
     })
@@ -1689,6 +1622,7 @@ describe('useQuoteQuestion', () => {
       qq.handleNativeSelectionAction('quote')
 
       expect(ctx.stagedQuotes.value).toHaveLength(0)
+      expect(usePendingTarget().pickerOpen.value).toBe(false)
       expect(qq.visible.value).toBe(false)
 
       wrapper.unmount()
@@ -1835,7 +1769,7 @@ describe('useQuoteQuestion', () => {
 
       // And the native action works off it.
       qq.handleNativeSelectionAction('quote')
-      expect(ctx.stagedQuotes.value).toHaveLength(1)
+      expect(usePendingTarget().pending.value?.quotes[0].text).toBe('selected code text')
 
       wrapper.unmount()
     })

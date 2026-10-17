@@ -4,7 +4,6 @@ import { useChatContext } from '@/composables/useChatContext.ts'
 import { useToast } from '@/composables/useToast.ts'
 import { gt } from '@/composables/useLocale'
 import { store } from '@/stores/app.ts'
-import { isChatPanelVisible, useWideScreenLayout } from '@/composables/useWideScreenLayout.ts'
 import { materializeQuotes } from '@/utils/quoteItem.ts'
 import type { QuoteData } from '@/composables/useChatContext.ts'
 import type { FileEntry } from '@/utils/fileAttachmentUtils'
@@ -23,14 +22,25 @@ export interface PendingQuote extends QuoteData {
 }
 
 /**
+ * A fresh id for a quote captured for deferred delivery.
+ *
+ * Lives here (next to {@link PendingQuote}) rather than in each caller: the id
+ * only has to be unique within one picker request, and every producer minting
+ * its own format is how the two would drift.
+ */
+export function mintPendingQuoteId(): string {
+  return `quote-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+/**
  * Where a quote / attachment should be delivered.
  *
- *  - `current`  — the session already on screen (the pre-existing behavior).
- *  - `session`  — a session the user picked in the picker.
+ *  - `session`  — a session the user picked in the picker. Picking the session
+ *    already on screen is just this case with the current id; the dispatcher
+ *    notices and uses the live input instead of the stored draft.
  *  - `create`   — a brand-new session, created with the DEFAULT agent.
  */
 export type SessionTarget =
-  | { kind: 'current' }
   | { kind: 'session'; id: string }
   | { kind: 'create' }
 
@@ -59,19 +69,7 @@ export interface PendingRequest {
   text: string
 }
 
-// ── Visibility gate ────────────────────────────────────────────
-
-/**
- * `activeTab` lives in App.vue (it is not part of the wide-screen layout
- * module), so App injects a getter once at setup. Keeping the getter here
- * rather than importing App state avoids a cycle and keeps this module
- * testable in isolation.
- */
-let activeTabGetter: (() => string) | null = null
-
-export function setActiveTabGetter(fn: () => string) {
-  activeTabGetter = fn
-}
+// ── Open-session handler ───────────────────────────────────────
 
 /**
  * How to actually OPEN a session: switch to it AND bring the chat panel into
@@ -85,31 +83,6 @@ export function setOpenSessionHandler(fn: (sessionId: string) => void) {
   openSession = fn
 }
 
-/**
- * Whether the user can SEE the chat panel right now.
- *
- * This is the whole trigger for the picker: if the conversation is on screen the
- * user would simply switch it to the session they want (the intuitive move), so
- * we keep the old "go straight to the current session" behavior. Only when the
- * panel is hidden — the narrow layout on another tab, or a collapsed chat
- * column on desktop — does the destination become ambiguous and the picker
- * earn its place.
- *
- * MUST go through `isChatPanelVisible`: an inline `isWideScreen || ...` is
- * always truthy in `<script setup>` because a ref does not auto-unwrap there,
- * which would silently make every session look "on screen" (the exact bug that
- * helper was written for). It also covers the desktop case the user called out —
- * the chat column can be hidden even on a wide screen.
- */
-export function canSeeChatPanel(): boolean {
-  const layout = useWideScreenLayout()
-  return isChatPanelVisible({
-    isWideScreen: layout.isWideScreen.value,
-    chatCollapsed: layout.chatCollapsed.value,
-    activeTab: activeTabGetter?.() ?? '',
-  })
-}
-
 // ── Picker state ───────────────────────────────────────────────
 
 const pickerOpen = ref(false)
@@ -118,15 +91,22 @@ const pending = ref<PendingRequest | null>(null)
 /**
  * Ask the user where the payload should go.
  *
- * Returns true when the picker was opened (the caller should NOT also perform
- * the action — it happens on confirm), false when the chat panel is visible and
- * the caller should just target the current session.
+ * ALWAYS opens the picker. Every quote/attach entry point — the chat's own
+ * "quote this message" button included — routes through here, so the same
+ * gesture behaves identically everywhere and the user can quote from one
+ * conversation into another. There is deliberately NO "the chat panel is
+ * visible, so assume the current session" shortcut: that shortcut made the
+ * destination depend on which tab happened to be open, which is exactly the
+ * inconsistency this replaced. The picker pins the current session to the top
+ * row, so "just the one I'm in" is still one tap.
+ *
+ * Returning void (not a boolean) is the point: there is no "the caller should
+ * act locally instead" outcome any more, so no call site may keep a fallback
+ * branch — a `if (requestTarget(...)) return` would silently strand the payload.
  */
-export function requestTarget(request: PendingRequest): boolean {
-  if (canSeeChatPanel()) return false
+export function requestTarget(request: PendingRequest): void {
   pending.value = request
   pickerOpen.value = true
-  return true
 }
 
 /** The request awaiting a choice, for the dialog to render against. */
@@ -140,19 +120,18 @@ export function cancelTarget() {
 }
 
 /**
- * Route an "attach this to the chat" action.
- *
- * Returns true when the picker took over — the caller must then NOT attach
- * locally (the picker will, once the user picks a destination). Returns false
- * when the chat panel is visible, so the caller keeps its existing behavior.
+ * Route an "attach this to the chat" action through the picker.
  *
  * Only the ADD direction goes through here. Removing an attachment must stay
  * immediate: asking "which conversation?" to take something away would be
  * nonsense, and the user can only remove what they can already see.
+ *
+ * A path-less entry opens nothing (there would be nothing to attach), and the
+ * caller has no local fallback left to run — the picker owns the add.
  */
-export function requestAttachmentTarget(entry: FileEntry): boolean {
-  if (!entry?.path) return false
-  return requestTarget({ mode: 'add', quotes: [], attachments: [entry], text: '' })
+export function requestAttachmentTarget(entry: FileEntry): void {
+  if (!entry?.path) return
+  requestTarget({ mode: 'add', quotes: [], attachments: [entry], text: '' })
 }
 
 // ── Dispatch ───────────────────────────────────────────────────
@@ -164,15 +143,14 @@ function newQueueId(): string {
 /**
  * Resolve the chosen target to a concrete session id.
  *
- * `current` needs no work. `create` makes a session with the default agent —
- * deliberately no agent choice, since the user is picking a destination for an
- * already-composed message, not configuring a conversation — and refreshes the
- * session list so the new row appears. Returns '' when creation failed (already
- * toasted).
+ * `session` is already concrete. `create` makes a session with the default
+ * agent — deliberately no agent choice, since the user is picking a destination
+ * for an already-composed message, not configuring a conversation — and
+ * refreshes the session list so the new row appears. Returns '' when creation
+ * failed (already toasted).
  */
 async function resolveTargetId(target: SessionTarget): Promise<string> {
   const identity = useSessionIdentity()
-  if (target.kind === 'current') return identity.currentSessionId.value
   if (target.kind === 'session') return target.id
 
   const maxCount = store.state.sessionMaxCount

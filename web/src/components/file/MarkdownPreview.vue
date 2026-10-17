@@ -242,13 +242,13 @@ const codeLinkPreview = useCodeLinkPreview({
 
 // Image attach-to-chat badge (touch devices): actions injected from the shared
 // chat-attachment singleton + toast + i18n labels.
-const { addAttachedFile, removeAttachedFileByPath, hasAttachedFile } = useChatContext()
+const { removeAttachedFileByPath, hasAttachedFile } = useChatContext()
 const { show: showToast } = useToast()
 const mdImageAttachActions: MdImageAttachActions = {
     add: (path) => {
-        // Destination ambiguous (chat panel off screen) → let the picker own it.
-        if (requestAttachmentTarget({ path, isDir: false })) return
-        addAttachedFile(path)
+        // Destination is always the user's choice (the picker), so nothing is
+        // attached locally — confirmTarget attaches for the session they pick.
+        requestAttachmentTarget({ path, isDir: false })
     },
     remove: removeAttachedFileByPath,
     has: hasAttachedFile,
@@ -262,8 +262,7 @@ const mdImageAttachActions: MdImageAttachActions = {
 // Mermaid range-reference badge: same singletons, ranged identity.
 const mermaidAttachActions: MermaidAttachActions = {
     add: (path, startLine, endLine) => {
-        if (requestAttachmentTarget({ path, isDir: false, startLine, endLine })) return
-        addAttachedFile(path, false, startLine, endLine)
+        requestAttachmentTarget({ path, isDir: false, startLine, endLine })
     },
     remove: (path, startLine, endLine) => removeAttachedFileByPath(path, startLine, endLine),
     has: (path, startLine, endLine) => hasAttachedFile(path, startLine, endLine),

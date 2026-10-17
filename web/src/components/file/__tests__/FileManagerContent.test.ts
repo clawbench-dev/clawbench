@@ -15,6 +15,7 @@ import FileManagerContent from '@/components/file/FileManagerContent.vue'
 import { cleanupDragGhost } from '@/utils/attachDrag'
 import { PANEL_KEY_PREFIX, DEFAULT_FM_PREVIEW_RATIO } from '@/utils/panelState'
 import SplitView from '@/components/common/SplitView.vue'
+import { cancelTarget, usePendingTarget } from '@/composables/useConversationTarget.ts'
 // jsdom does not implement CSS.escape (used by scrollToEntryAndSelect). Polyfill it.
 const cssGlobal = globalThis as unknown as { CSS?: { escape?: (v: string) => string } }
 if (typeof cssGlobal.CSS === 'undefined') {
@@ -3713,30 +3714,39 @@ describe('FileManagerContent — context menu actions', () => {
     expect(mockDownloadFileByPath).toHaveBeenCalledWith('test.ts', 'test.ts')
   })
 
-  it('doAttachToChat adds the file to chat', async () => {
+  it('doAttachToChat opens the session picker instead of attaching locally', async () => {
+    // The destination is always the user's choice now, so the file must NOT go
+    // straight into the current session's input — it is held by the picker and
+    // attached (by confirmTarget) once a session is chosen.
+    cancelTarget()
     const wrapper = mountContent()
     wrapper.vm.ctxMenu.visible = true
     wrapper.vm.ctxMenu.entry = { type: 'file', name: 'test.ts', path: 'test.ts' }
     await nextTick()
     await wrapper.vm.doAttachToChat()
 
-    expect(mockAddAttachedFile).toHaveBeenCalledWith('test.ts', false)
-    expect(mockToastShow).toHaveBeenCalled()
+    expect(mockAddAttachedFile).not.toHaveBeenCalled()
+    const { pickerOpen, pending } = usePendingTarget()
+    expect(pickerOpen.value).toBe(true)
+    expect(pending.value?.attachments).toEqual([{ path: 'test.ts', isDir: false }])
+    cancelTarget()
   })
 
   it('doAttachToChat is add-only (no toggle-to-remove any more)', async () => {
     // The per-file paperclip badge was removed: with an arbitrary target session
     // no single icon could represent "attached", so the context menu no longer
-    // doubles as a remove. Assert it always adds, never removes.
+    // doubles as a remove. Assert it always offers to add, never removes.
     mockHasAttachedFile.mockReturnValue(true)
+    cancelTarget()
     const wrapper = mountContent()
     wrapper.vm.ctxMenu.visible = true
     wrapper.vm.ctxMenu.entry = { type: 'file', name: 'test.ts', path: 'test.ts' }
     await nextTick()
     await wrapper.vm.doAttachToChat()
 
-    expect(mockAddAttachedFile).toHaveBeenCalledWith('test.ts', false)
+    expect(usePendingTarget().pickerOpen.value).toBe(true)
     expect(mockRemoveAttachedFileByPath).not.toHaveBeenCalled()
+    cancelTarget()
   })
 
   it('doArchiveDir archives a directory via context menu', async () => {

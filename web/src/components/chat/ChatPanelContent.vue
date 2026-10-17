@@ -281,6 +281,7 @@ import { useFileUpload } from '@/composables/useFileUpload.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import { relativizeProjectPath } from '@/utils/quoteQuestionUtils.ts'
 import { resetQuotePin } from '@/composables/useQuoteQuestion.ts'
+import { requestTarget, mintPendingQuoteId } from '@/composables/useConversationTarget.ts'
 import { fromStagedQuote, fromFileEntry, materializeQuotes, buildMessageQuote, quotableMessageText } from '@/utils/quoteItem.ts'
 import { stripGroupProtocolTags, serializeMentionCards } from '@/utils/groupRouting.ts'
 import { useQuoteDetail } from '@/composables/useQuoteDetail.ts'
@@ -526,14 +527,18 @@ async function handleFileTagClick(fileEntry) {
  *
  * The captured text is what the user reads: for an assistant reply that is
  * extractSpeakableText (which skips tool/thinking noise), for a user message its
- * content. Staging it here — rather than building a message — puts it on the
- * exact same path as a selection quote: a card in the input, clickable into the
- * detail drawer.
+ * content. It becomes a quote card on the exact same path as a selection quote,
+ * clickable into the detail drawer.
  *
  * The payload comes from buildMessageQuote, the same builder the selection path
  * uses, so both entries produce an identical kind of quote (session label, id
  * and message id included). They were built separately before and had drifted:
  * this one carried no session id at all, which made the quote unopenable.
+ *
+ * The destination goes through the SAME session picker as every other quote
+ * entry point — including from this conversation's own message list, so the
+ * user can quote a message here into a DIFFERENT conversation. Nothing is
+ * staged locally; confirmTarget does that for the session they pick.
  */
 function handleQuoteMessage(msg) {
     if (!msg) return
@@ -545,13 +550,23 @@ function handleQuoteMessage(msg) {
     if (!text) return
 
     const id = msg.id !== undefined && msg.id !== null ? Number(msg.id) : NaN
-    addStagedQuote(buildMessageQuote(
-        text,
-        { id: identity.currentSessionId.value, title: identity.currentSessionTitle.value },
-        // Optimistic/local messages have no DB id; the quote is still valid, it
-        // just cannot be addressed later (and the drawer hides the jump action).
-        Number.isFinite(id) && id > 0 ? id : undefined,
-    ), '')
+    requestTarget({
+        mode: 'add',
+        quotes: [{
+            ...buildMessageQuote(
+                text,
+                { id: identity.currentSessionId.value, title: identity.currentSessionTitle.value },
+                // Optimistic/local messages have no DB id; the quote is still
+                // valid, it just cannot be addressed later (and the drawer hides
+                // the jump action).
+                Number.isFinite(id) && id > 0 ? id : undefined,
+            ),
+            note: '',
+            id: mintPendingQuoteId(),
+        }],
+        attachments: [],
+        text: '',
+    })
 }
 
 /** Remove an attached reference entry (from AttachmentTags cards or AttachDrawer
@@ -1044,7 +1059,7 @@ const stream = useChatStream({
 })
 
 const { pendingFiles, attachedFiles, addAttachedFile, removeAttachedFile, removePendingByPath, cleanupPreviewUrls, clearPendingFiles, leaveInputDraft } = useFileUpload()
-const { stagedQuotes, addStagedQuote, removeStagedQuote, updateStagedQuoteNote, clearAll, removeAttachedFileByPath, restoreAttachments, discardAttachmentDraft, stagedMentions, addStagedMention, removeStagedMention, updateStagedMentionNote, restoreStagedCards } = useChatContext()
+const { stagedQuotes, removeStagedQuote, updateStagedQuoteNote, clearAll, removeAttachedFileByPath, restoreAttachments, discardAttachmentDraft, stagedMentions, addStagedMention, removeStagedMention, updateStagedMentionNote, restoreStagedCards } = useChatContext()
 
 const manager = useSessionManager({
   messages,
