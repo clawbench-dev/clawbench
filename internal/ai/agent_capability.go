@@ -396,6 +396,47 @@ func (r *AgentCapabilityRegistry) HasAvailableModes(agentID string) bool {
 
 // IsModeAvailable checks whether a specific mode ID exists in the agent's
 // available modes. Used to validate agent-reported mode changes.
+// IsModelAvailable reports whether the agent advertised modelID in its own
+// model list.
+//
+// Used to decide whether a stored model selection may be pushed over ACP. An
+// agent's list is authoritative for what IT can run, but it is not the full set
+// of models a session may legitimately be pinned to: Command Code with a BYOK
+// provider pins the model in ~/.commandcode/config.json, and its ACP surface
+// always advertises only the vendor's own catalog (availableModels(){return
+// catalogModels()}), so the BYOK model never appears. Pushing a catalog model
+// over that binding silently reroutes the request to the vendor gateway and
+// fails with 401 — so an unlisted selection must be left alone, not "corrected".
+//
+// A registry with no entry for the agent (capabilities not yet extracted)
+// returns false: callers must treat that as "unknown", not "unavailable".
+func (r *AgentCapabilityRegistry) IsModelAvailable(agentID, modelID string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	agentCap, ok := r.caps[agentID]
+	if !ok || agentCap == nil {
+		return false
+	}
+	for _, m := range agentCap.AvailableModels {
+		if m.ID == modelID {
+			return true
+		}
+	}
+	return false
+}
+
+// HasModelList reports whether the agent's model list has been observed.
+//
+// Distinct from IsModelAvailable's false: "the agent has not reported its list
+// yet" must not be treated as "this model is unavailable", or the first turn of
+// every session would skip its model selection.
+func (r *AgentCapabilityRegistry) HasModelList(agentID string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	agentCap, ok := r.caps[agentID]
+	return ok && agentCap != nil && len(agentCap.AvailableModels) > 0
+}
+
 func (r *AgentCapabilityRegistry) IsModeAvailable(agentID, modeID string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

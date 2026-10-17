@@ -110,6 +110,10 @@ clawbench-test
 # Agent skills (local only)
 .agents/
 
+# Command Code runtime state, created in the project directory when `cmdc` runs
+# here (it writes a taste/ dir). Same class as .agents/ — local only.
+.commandcode/
+
 # Compiled test binaries
 *.test
 .bin/
