@@ -127,7 +127,7 @@ func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 				forwardACPEvent(ch, StreamEvent{
 					Type:        "error",
 					Error:       acpAuthRequiredMessage(b.agent, authErr),
-					Reason:      ReasonRequestFailed,
+					Reason:      ReasonAuthRequired,
 					ErrorCode:   authErr.Code,
 					ErrorSource: "agent",
 				})
@@ -458,11 +458,11 @@ func acpErrorDetails(err error) (code int, httpStatus int) {
 // Ensure compile-time interface compliance
 var _ AIBackend = (*ACPBackend)(nil)
 
-// acpAuthRequiredCode is the JSON-RPC error code agents use to say "not signed
-// in". It is outside the standard -32700..-32603 range, so it is an application
-// convention rather than part of the protocol: Command Code returns it
-// (cli.mjs hn.AUTH_REQUIRED = -32000) from session/new when no account
-// credential is present.
+// acpAuthRequiredCode is ACP's AuthenticationRequired error code. It sits in
+// the -32000..-32099 range the ACP schema reserves for protocol-level errors
+// (below JSON-RPC's own -32700..-32603), and the SDK exposes it as
+// acp.NewAuthRequired. Command Code returns it from session/new when no account
+// credential is present (cli.mjs hn.AUTH_REQUIRED = -32000).
 const acpAuthRequiredCode = -32000
 
 // asACPAuthRequired returns the underlying JSON-RPC error when err reports
@@ -495,10 +495,10 @@ func acpAuthRequiredMessage(agent *model.Agent, reqErr *acp.RequestError) string
 	}
 	if command == "" {
 		// No declared login command: keep the agent's own wording, which usually
-		// names its CLI ("Run `cmd login` in a terminal first."). Parenthesised
-		// rather than colon-joined: both halves are sentences, so "retry.: Run"
-		// would be the alternative.
-		return fmt.Sprintf("%s (%s)", i18n.T(loc, "ACPAuthRequiredGeneric"), reqErr.Message)
+		// names its CLI ("Run `cmd login` in a terminal first."). Joined with a
+		// space rather than ":" or "()": both halves are already complete
+		// sentences ending in a period, so any extra separator double-punctuates.
+		return fmt.Sprintf("%s %s", i18n.T(loc, "ACPAuthRequiredGeneric"), reqErr.Message)
 	}
 	return i18n.T(loc, "ACPAuthRequired", map[string]interface{}{"Command": command})
 }

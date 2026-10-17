@@ -217,7 +217,7 @@ RAGRebuildAccepted: 重建已在后台启动
 AutoContinue: 继续
 ACPSessionRecoveredNew: ACP 会话无法恢复，已开启新会话（原有对话上下文已丢失）。
 ACPAuthRequired: '智能体尚未登录。请在终端执行一次 `{{.Command}}`，然后重试。'
-ACPAuthRequiredGeneric: '智能体尚未登录。请先在终端用它的 CLI 登录一次，然后重试。'
+ACPAuthRequiredGeneric: '智能体尚未登录：请先在终端用它的 CLI 登录一次，然后重试。'
 GroupYourTurn: 轮到用户发言
 GroupDiscussionLimitReached: 成员间讨论次数达到上限
 GroupCruiseConfirming: '自动巡航：系统正在向成员确认任务完成情况'

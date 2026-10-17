@@ -203,11 +203,11 @@ CC 的 toolCallID 形如 `call_function_2ft7niegnoyv_1`（**不含工具名**）
 ```
 enter_plan_mode   kind=switch_mode title="enter_plan_mode"   -> "enter_plan_mode"   ❌ 泄漏
 exit_plan_mode    kind=switch_mode title="exit_plan_mode"    -> "exit_plan_mode"    ❌ 泄漏
-plan_review       kind=think       title="plan_review"       -> "plan_review"       ❌ 泄漏
+plan_review       kind=think       title="plan_review"       -> "plan_review"       ❌ 泄漏（→DeepThink）
 ask_user_question kind=think       title="ask_user_question" -> "ask_user_question" ❌ 泄漏
 monitor_events    kind=execute     title="monitor_events"    -> "monitor_events"    ❌ 泄漏
 shell_tasks       kind=execute     title="shell_tasks"       -> "shell_tasks"       ❌ 泄漏
-bash_output       kind=execute     title="bash_output"       -> "bash_output"       ❌ 泄漏
+bash_output       kind=execute     title="bash_output"       -> "bash_output"       ❌ 泄漏（→Bash）
 todo_write        kind=think       title="Updating todos"    -> "DeepThink"         ❌ 误归类
 ```
 
@@ -228,18 +228,28 @@ var CommandCodeACPTitlePrefixes = map[string]string{
     // title 是单 token 原生名 ⇒ lookupByTitle 会原样透传，必须显式映射
     "enter_plan_mode":   "EnterPlanMode",
     "exit_plan_mode":    "ExitPlanMode",
-    "plan_review":       "ExitPlanMode",
     "ask_user_question": "AskUserQuestion",
     "monitor_events":    "Bash",
     "shell_tasks":       "Bash",
-    "bash_output":       "BashOutput",
+    "bash_output":       "Bash",        // 不是 BashOutput：前端无此条目（见下）
     // title 是自然语言（无冒号），kind=think 会被误判成 DeepThink
     "Updating todos":    "TodoWrite",
+    "plan_review":       "DeepThink",   // 不是 ExitPlanMode：rawInput 无 mode（见下）
 }
 ```
 
+**两个"反直觉"映射**（照字面映射反而更糟，已实测前端渲染器）：
+
+| 工具 | 字面映射 | 问题 | 实际映射 |
+|---|---|---|---|
+| `bash_output` | `BashOutput` | `web/src/utils/icons.ts` 无 `BashOutput` ⇒ 扳手图标 + 无渲染器，**比映射前（kind=execute→Bash，有终端卡片）更差** | `Bash` |
+| `plan_review` | `ExitPlanMode` | `renderModeSwitch` 读 `input.mode`/`input.mode_id` 画徽标，而 `plan_review` 的 rawInput 无 mode ⇒ **空徽标** | `DeepThink` |
+
 **核验方法**（接入时应作为回归测试保留）：用 `ai.ExtractToolNameForTest(title, kind, "commandcode", "call_function_x_1")`
-逐条断言上表每一行 + 每个"刻意省略"的行。21 个 case 全部 OK。
+逐条断言上表每一行 + 每个"刻意省略"的行。22 个 case 全部 OK。
+
+**已知遗留**：`get_diagnostics`（title `"Diagnostics"`，无冒号）解析成自身，前端同样无 `Diagnostics` 条目
+⇒ 通用扳手卡片。诚实但不好看；归入 `Read` 会误导（输出是诊断列表不是文件预览），故保留原样。
 
 #### ⚠️ 无法用 title 区分的一处：`Search`
 

@@ -17,7 +17,12 @@ package commandcode
 //	"Write: …"  → Write                     "Glob: …"   → Glob
 //	"Fetch: …"  → WebFetch                  "Agent: …"  → Agent
 //	"Monitor: …"→ Monitor                   "Command: …"→ Bash
-//	"Kill: …"   → Bash                      "Diagnostics"→ Diagnostics
+//	"Kill: …"   → Bash
+//
+// "Diagnostics" (get_diagnostics, no key so no colon) resolves to itself via the
+// single-token passthrough. That is honest but the frontend has no Diagnostics
+// icon or renderer, so it draws the generic wrench card. Left as-is rather than
+// folded into Read: the output is a diagnostics list, not a file preview.
 //
 // The entries below are the ones that DO NOT resolve. Their titles are a single
 // token with no ".", "/" or ":" (or, for todo_write, a natural-language phrase),
@@ -34,6 +39,14 @@ package commandcode
 //	"bash_output"       kind=execute     → "bash_output"       (leaks)
 //	"Updating todos"    kind=think       → "DeepThink"         (wrong bucket)
 //
+// Two entries are mapped to a *different* canonical than the obvious one, on
+// purpose — the obvious choice would render worse than the leak it replaces:
+//   - bash_output → Bash (not BashOutput): the frontend has no BashOutput entry,
+//     so it would draw a wrench with no renderer, losing the terminal card.
+//   - plan_review → DeepThink (not ExitPlanMode): ExitPlanMode's renderer reads
+//     input.mode and draws a mode badge, but plan_review's rawInput carries no
+//     mode, so the card would be blank.
+//
 // NOTE on "Search": grep and web_search BOTH use the label "Search" with
 // kind=search, so they are indistinguishable from title+kind alone. Both land on
 // Grep, which is acceptable (both are searches); mapping "Search" → WebSearch
@@ -43,13 +56,19 @@ var CommandCodeACPTitlePrefixes = map[string]string{
 	// Single-token native names that lookupByTitle would pass through verbatim.
 	"enter_plan_mode":   "EnterPlanMode",
 	"exit_plan_mode":    "ExitPlanMode",
-	"plan_review":       "ExitPlanMode",
 	"ask_user_question": "AskUserQuestion",
 	"monitor_events":    "Bash",
 	"shell_tasks":       "Bash",
-	"bash_output":       "BashOutput",
+	// bash_output is shell output: keep it on Bash so it gets the terminal
+	// renderer. The frontend has no BashOutput entry, so naming it would trade a
+	// working generic card for a wrench icon with no renderer.
+	"bash_output": "Bash",
 	// Natural-language title (no colon); kind=think would land in DeepThink.
 	"Updating todos": "TodoWrite",
+	// plan_review opens the plan-review panel and carries no mode in rawInput.
+	// ExitPlanMode renders a mode-switch badge from input.mode, which would be
+	// empty here; DeepThink has a renderer that works from arbitrary input.
+	"plan_review": "DeepThink",
 }
 
 // CommandCodeACPInputRemaps maps Command Code ACP rawInput field names to

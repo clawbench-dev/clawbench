@@ -94,9 +94,10 @@ const (
 	// commandCodeACPNotifyWait 是 prompt resolve 之后继续收集通知的窗口。
 	commandCodeACPNotifyWait = 5 * time.Second
 
-	// commandCodeACPAuthRequired 是 Command Code 未登录时返回的 JSON-RPC 错误码
-	// （cli.mjs: hn.AUTH_REQUIRED = -32000）。普通 JSON-RPC 服务器约定错误码是
-	// -32700..-32603，这个越界值本身就说明它是应用自定义错误。
+	// commandCodeACPAuthRequired 是 ACP 的 AuthenticationRequired 错误码
+	// （-32000..-32099 是 ACP 保留给协议级错误的区间；SDK 里对应
+	// acp.NewAuthRequired）。Command Code 未登录时从 session/new 返回它
+	// （cli.mjs: hn.AUTH_REQUIRED = -32000）。
 	commandCodeACPAuthRequired = float64(-32000)
 
 	// commandCodeACPNpxSpec 是未安装 cmd 时的回退 npm 包（spawn 为
@@ -118,7 +119,10 @@ func commandCodeACPCommand(t *testing.T) (string, []string) {
 		require.NotEmpty(t, parts, "COMMAND_CODE_PROBE_CMD must not be empty")
 		return parts[0], parts[1:]
 	}
-	for _, bin := range []string{"cmd", "cmdc"} {
+	// cmdc first: on Windows the bare `cmd` always resolves to the system shell,
+	// so preferring it would make the probe spawn `cmd.exe acp` and hang. This
+	// mirrors the spec's DefaultCmd choice for exactly the same reason.
+	for _, bin := range []string{"cmdc", "commandcode", "cmd"} {
 		if _, err := exec.LookPath(bin); err == nil {
 			return bin, []string{"acp"}
 		}
@@ -541,27 +545,35 @@ func requireCommandCodeBYOK(t *testing.T, p commandCodeBYOKProvider) {
 	}
 }
 
-// withCommandCodeBYOKConfig writes providers.json + config.json for the given
-// provider and restores the previous files on cleanup. This mutates the user's
-// real ~/.commandcode directory (there is no CLI flag or env override for the
-// provider config path), so the original bytes are restored verbatim.
+// withCommandCodeBYOKConfig points the agent at a throwaway HOME, writes
+// providers.json + config.json there, and copies the existing auth.json across
+// so a real login still works.
+//
+// Why a temp HOME instead of writing the real ~/.commandcode and restoring it:
+// the restore runs in t.Cleanup, which does NOT run on SIGKILL or a hard panic
+// (the probe spawns agents and has timeouts). A crashed run would then leave the
+// developer's real Command Code config pointing at a test provider — silently
+// changing which upstream their `cmd` uses. A private HOME makes the blast
+// radius the test process itself.
+//
+// COMMAND_CODE_API_KEY is set separately by the caller, so auth.json is only
+// needed when the probe runs against a real login.
 func withCommandCodeBYOKConfig(t *testing.T, p commandCodeBYOKProvider) {
 	t.Helper()
-	home, err := os.UserHomeDir()
-	require.NoError(t, err, "resolve home dir")
+	realHome, err := os.UserHomeDir()
+	require.NoError(t, err, "resolve real home dir")
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)        // unix
+	t.Setenv("USERPROFILE", home) // windows
 	dir := filepath.Join(home, ".commandcode")
 	require.NoError(t, os.MkdirAll(dir, 0o755), "create %s", dir)
 
-	restore := func(name string) {
-		path := filepath.Join(dir, name)
-		if b, err := os.ReadFile(path); err == nil {
-			t.Cleanup(func() { _ = os.WriteFile(path, b, 0o600) })
-		} else {
-			t.Cleanup(func() { _ = os.Remove(path) })
-		}
+	// Carry over the real login so a `cmd login` on this machine still applies.
+	if b, err := os.ReadFile(filepath.Join(realHome, ".commandcode", "auth.json")); err == nil {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "auth.json"), b, 0o600),
+			"copy auth.json into the isolated HOME")
 	}
-	restore("providers.json")
-	restore("config.json")
 
 	providers := map[string]any{
 		"provider": map[string]any{
@@ -592,8 +604,8 @@ func withCommandCodeBYOKConfig(t *testing.T, p commandCodeBYOKProvider) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.json"), cfgJSON, 0o600),
 		"write config.json")
 
-	t.Logf("BYOK config written: provider=%s model=%s/%s baseURL=%s (restored on cleanup)",
-		p.ID, p.ID, strings.ToLower(p.Model), p.BaseURL)
+	t.Logf("BYOK config written to isolated HOME %s: provider=%s model=%s/%s baseURL=%s",
+		home, p.ID, p.ID, strings.ToLower(p.Model), p.BaseURL)
 }
 
 // TestCommandCodeACPProbe_L0_BYOK 验证「占位 key 过闸 + BYOK provider 真实推理」这条

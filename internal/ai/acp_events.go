@@ -984,8 +984,12 @@ func mapACPError(code int, message string) StreamEvent {
 		reason = ReasonBackendExit // method not found
 	case -32603:
 		reason = ReasonBackendExit // internal error
-	case -32000:
-		reason = ReasonRequestFailed // auth required
+	case acpAuthRequiredCode:
+		// ACP reserves -32000 as AuthenticationRequired. Not retryable for the
+		// same reason ReasonAgentInitTimeout is not: retrying cannot sign the
+		// user in. (mapACPError is only reached from the event path; the
+		// connection-error path translates the message itself.)
+		reason = ReasonAuthRequired
 	case -32800:
 		reason = ReasonContextCancel // request cancelled
 	}

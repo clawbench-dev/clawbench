@@ -40,7 +40,10 @@ func init() {
 			// initialize advertises loadSession:true and implements session/load,
 			// so the explicit acp-load / acp-sync endpoints work.
 			ACPLoadSession: true,
-			InstallCmd:     "npm i -g command-code",
+			// "npm install" (not "npm i"): prepareInstallCmd only appends the
+			// mainland-China registry mirror when the command starts with that
+			// exact prefix, so the short form silently bypasses it.
+			InstallCmd: "npm install -g command-code",
 			// Sessions are gated on a signed-in account: without one,
 			// session/new answers -32000 AUTH_REQUIRED. Naming the login command
 			// here lets the AUTH_REQUIRED error render as an actionable

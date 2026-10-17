@@ -28,9 +28,14 @@ func TestCommandCodeBackendPlugin_SpecFields(t *testing.T) {
 	assert.Equal(t, "commandcode", plugin.Spec.ID)
 	assert.Equal(t, "commandcode", plugin.Spec.Backend)
 	assert.Equal(t, "Command Code", plugin.Spec.Name)
+	assert.NotEmpty(t, plugin.Spec.Specialty)
 	assert.Equal(t, "cmdc acp", plugin.Spec.AcpCommand)
-	assert.Equal(t, "npm i -g command-code", plugin.Spec.InstallCmd)
+	assert.True(t, plugin.Spec.ACPLoadSession, "initialize advertises loadSession:true")
+	assert.Equal(t, "npm install -g command-code", plugin.Spec.InstallCmd)
 	assert.Equal(t, 18, plugin.Spec.SortOrder)
+	// LoginCmd drives the AUTH_REQUIRED message. Without it the user gets the
+	// generic fallback instead of the command they actually have to run.
+	assert.Equal(t, "cmdc login", plugin.Spec.LoginCmd)
 }
 
 // DefaultCmd must never be the bare `cmd`: on Windows that name always resolves
@@ -138,11 +143,11 @@ func TestCommandCodeToolTitlesResolveCanonically(t *testing.T) {
 		// --- Covered by ToolTitlePrefixes (would otherwise leak/misbucket) ---
 		{"enter_plan_mode", "enter_plan_mode", acp.ToolKindSwitchMode, "EnterPlanMode"},
 		{"exit_plan_mode", "exit_plan_mode", acp.ToolKindSwitchMode, "ExitPlanMode"},
-		{"plan_review", "plan_review", acp.ToolKindThink, "ExitPlanMode"},
+		{"plan_review", "plan_review", acp.ToolKindThink, "DeepThink"},
 		{"ask_user_question", "ask_user_question", acp.ToolKindThink, "AskUserQuestion"},
 		{"monitor_events", "monitor_events", acp.ToolKindExecute, "Bash"},
 		{"shell_tasks", "shell_tasks", acp.ToolKindExecute, "Bash"},
-		{"bash_output", "bash_output", acp.ToolKindExecute, "BashOutput"},
+		{"bash_output", "bash_output", acp.ToolKindExecute, "Bash"},
 		{"todo_write", "Updating todos", acp.ToolKindThink, "TodoWrite"},
 
 		// --- Deliberately NOT in the table: shared tables already resolve ---
@@ -183,12 +188,12 @@ func TestCommandCodeTitlePrefixesCoverLeakingTools(t *testing.T) {
 	want := map[string]string{
 		"enter_plan_mode":   "EnterPlanMode",
 		"exit_plan_mode":    "ExitPlanMode",
-		"plan_review":       "ExitPlanMode",
 		"ask_user_question": "AskUserQuestion",
 		"monitor_events":    "Bash",
 		"shell_tasks":       "Bash",
-		"bash_output":       "BashOutput",
+		"bash_output":       "Bash",
 		"Updating todos":    "TodoWrite",
+		"plan_review":       "DeepThink",
 	}
 	assert.Equal(t, want, CommandCodeACPTitlePrefixes)
 
