@@ -52,6 +52,15 @@ vi.mock('@/composables/useWideScreenLayout', () => ({
   isChatPanelVisible: () => true,
 }))
 
+// The "搜索文件" action opens the SAME drawer a dashed (verified-missing) path
+// opens. Mock it so the assertion is on the PATH HANDED OVER — the contract with
+// the dashed-path flow — rather than on that drawer's own rendering.
+const mockOpenInertPathPicker = vi.hoisted(() => vi.fn())
+vi.mock('@/composables/useInertPathPicker.ts', () => ({
+  openInertPathPicker: mockOpenInertPathPicker,
+  deriveSearchQuery: (p: string | null | undefined) => (p ?? '').trim(),
+}))
+
 // Keep real quoteQuestionUtils for selectionchange tests (closestElement, getLineInfo, getFileInfo)
 
 // Import the real useChatContext (not mocked) — it's a singleton
@@ -76,6 +85,10 @@ describe('useQuoteQuestion', () => {
 
     mockSendMessage.mockReset()
     mockToastShow.mockReset()
+    // Reset explicitly: it is a hoisted mock, so `vi.clearAllMocks` in another
+    // suite does not necessarily cover it, and a stale call from a previous
+    // test would satisfy a `toHaveBeenCalledWith` for the wrong argument.
+    mockOpenInertPathPicker.mockClear()
     _resetChatInputInjectionForTesting()
     // Reset the platform axes so an Android test cannot leak into the next one.
     _resetPlatformForTest()
@@ -1539,12 +1552,12 @@ describe('useQuoteQuestion', () => {
     }
 
     /** Create a quotable DOM selection in a markdown body. */
-    function selectInMarkdown() {
+    function selectInMarkdown(text = 'selected code text') {
       const container = document.createElement('div')
       container.className = 'markdown-body'
       container.setAttribute('data-file-path', '/a.md')
       const span = document.createElement('span')
-      span.textContent = 'selected code text'
+      span.textContent = text
       container.appendChild(span)
       document.body.appendChild(container)
 
@@ -1624,6 +1637,132 @@ describe('useQuoteQuestion', () => {
       expect(ctx.stagedQuotes.value).toHaveLength(0)
       expect(usePendingTarget().pickerOpen.value).toBe(false)
       expect(qq.visible.value).toBe(false)
+
+      wrapper.unmount()
+    })
+
+    // ── search-file: reveal the selected text as a path ──
+
+    it('search-file opens the same drawer a dashed path opens', () => {
+      const wrapper = mountWithComposable()
+      selectInMarkdown('src/utils/foo.ts')
+      document.dispatchEvent(new Event('selectionchange'))
+      vi.advanceTimersByTime(150)
+
+      const qq = useQuoteQuestion()
+      qq.handleNativeSelectionAction('search-file')
+      expect(mockOpenInertPathPicker).toHaveBeenCalledWith({ path: 'src/utils/foo.ts' })
+
+      wrapper.unmount()
+    })
+
+    /**
+     * The point of the entry: it works on an ARBITRARY selected string, not
+     * only on text the markdown renderer happened to annotate. Nothing in this
+     * fixture carries a path annotation.
+     */
+    it('search-file works on unannotated text', () => {
+      const wrapper = mountWithComposable()
+      selectInMarkdown('not/a/real/path/but/still/selectable.txt')
+      document.dispatchEvent(new Event('selectionchange'))
+      vi.advanceTimersByTime(150)
+
+      const qq = useQuoteQuestion()
+      qq.handleNativeSelectionAction('search-file')
+      expect(mockOpenInertPathPicker)
+        .toHaveBeenCalledWith({ path: 'not/a/real/path/but/still/selectable.txt' })
+
+      wrapper.unmount()
+    })
+
+    /**
+     * search-file navigates; it must NOT fall through into the QUOTE flow.
+     *
+     * A missing `return` is only observable through the comment branch: the
+     * code after our block adopts the selection as the active quote and then
+     * bumps `expandRequest` to open the bar's comment input. (It does not reach
+     * the picker — `action === 'quote'` is false, so the quote commit is
+     * skipped.) Asserting the picker alone would therefore be a tautology that
+     * passes with or without the `return`.
+     */
+    it('search-file does not open the comment composer', () => {
+      const wrapper = mountWithComposable()
+      selectInMarkdown('src/a.ts')
+      document.dispatchEvent(new Event('selectionchange'))
+      vi.advanceTimersByTime(150)
+
+      const qq = useQuoteQuestion()
+      const before = qq.expandRequest.value
+
+      qq.handleNativeSelectionAction('search-file')
+      expect(mockOpenInertPathPicker).toHaveBeenCalled()
+
+      expect(qq.expandRequest.value,
+        'falling through would open the comment input').toBe(before)
+      expect(usePendingTarget().pickerOpen.value).toBe(false)
+      expect(ctx.stagedQuotes.value).toHaveLength(0)
+
+      wrapper.unmount()
+    })
+
+    /**
+     * A selection with prose around the path must search for the PATH, not for
+     * the first word: "see" would match hundreds of files.
+     */
+    it('search-file picks the path-like token, not the first word', () => {
+      const wrapper = mountWithComposable()
+      selectInMarkdown('see src/a.ts for details')
+      document.dispatchEvent(new Event('selectionchange'))
+      vi.advanceTimersByTime(150)
+
+      const qq = useQuoteQuestion()
+      qq.handleNativeSelectionAction('search-file')
+      expect(mockOpenInertPathPicker).toHaveBeenCalledWith({ path: 'src/a.ts' })
+
+      wrapper.unmount()
+    })
+
+    /** A bare filename is still a legitimate query when nothing looks like a path. */
+    it('search-file falls back to the only token when nothing looks like a path', () => {
+      const wrapper = mountWithComposable()
+      selectInMarkdown('config.yaml')
+      document.dispatchEvent(new Event('selectionchange'))
+      vi.advanceTimersByTime(150)
+
+      const qq = useQuoteQuestion()
+      qq.handleNativeSelectionAction('search-file')
+      expect(mockOpenInertPathPicker).toHaveBeenCalledWith({ path: 'config.yaml' })
+
+      wrapper.unmount()
+    })
+
+    /** Backticks/quotes a selection carries are stripped before searching. */
+    it('search-file strips wrapping quotes and backticks', () => {
+      const wrapper = mountWithComposable()
+      selectInMarkdown('`lib/x.ts`')
+      document.dispatchEvent(new Event('selectionchange'))
+      vi.advanceTimersByTime(150)
+
+      const qq = useQuoteQuestion()
+      qq.handleNativeSelectionAction('search-file')
+      expect(mockOpenInertPathPicker).toHaveBeenCalledWith({ path: 'lib/x.ts' })
+
+      wrapper.unmount()
+    })
+
+    it('search-file falls back to the snapshot when the selection is gone', () => {
+      const wrapper = mountWithComposable()
+      selectInMarkdown('lib/snapshot.ts')
+      document.dispatchEvent(new Event('selectionchange'))
+      vi.advanceTimersByTime(150)
+
+      // The native action mode cleared the DOM selection before calling in.
+      window.getSelection()?.removeAllRanges()
+      vi.advanceTimersByTime(0)
+
+      const qq = useQuoteQuestion()
+      qq.handleNativeSelectionAction('search-file')
+      expect(mockOpenInertPathPicker).toHaveBeenCalledWith({ path: 'lib/snapshot.ts' })
 
       wrapper.unmount()
     })

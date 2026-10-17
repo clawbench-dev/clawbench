@@ -63,7 +63,14 @@ public final class SelectionMenuPolicy {
          */
         COPY,
         QUOTE,
-        COMMENT
+        COMMENT,
+        /**
+         * Treat the selected text as a file path and reveal it in the file
+         * manager — the same action as tapping a dashed (annotated) path in
+         * rendered markdown, but for ANY string the user selects, including
+         * text the renderer did not annotate.
+         */
+        SEARCH_FILE
     }
 
     /**
@@ -81,6 +88,7 @@ public final class SelectionMenuPolicy {
     public static final int ID_COPY = 0x00010001;
     public static final int ID_QUOTE = 0x00010011;
     public static final int ID_COMMENT = 0x00010021;
+    public static final int ID_SEARCH_FILE = 0x00010031;
 
     /**
      * The items the LONG-PRESS wrapper installs, in order.
@@ -88,7 +96,7 @@ public final class SelectionMenuPolicy {
      * Copy is absent on purpose: Chromium's selection controller builds that
      * menu and already provides it (see {@link Action#COPY}).
      */
-    public static final int[] MENU_ORDER = {ID_QUOTE, ID_COMMENT};
+    public static final int[] MENU_ORDER = {ID_QUOTE, ID_COMMENT, ID_SEARCH_FILE};
 
     /**
      * The items the PROGRAMMATIC (double-tap) menu installs, in order.
@@ -96,7 +104,8 @@ public final class SelectionMenuPolicy {
      * This menu is ours from scratch — nothing else contributes to it — so it
      * has to carry Copy itself, ahead of the two quote actions.
      */
-    public static final int[] FLOATING_MENU_ORDER = {ID_COPY, ID_QUOTE, ID_COMMENT};
+    public static final int[] FLOATING_MENU_ORDER = {
+            ID_COPY, ID_QUOTE, ID_COMMENT, ID_SEARCH_FILE};
 
     /**
      * Menu order for an action — always 0, for both.
@@ -111,6 +120,7 @@ public final class SelectionMenuPolicy {
             case COPY:
             case QUOTE:
             case COMMENT:
+            case SEARCH_FILE:
                 return 0;
             default:
                 throw new IllegalArgumentException("unknown action: " + action);
@@ -126,6 +136,8 @@ public final class SelectionMenuPolicy {
                 return ID_QUOTE;
             case COMMENT:
                 return ID_COMMENT;
+            case SEARCH_FILE:
+                return ID_SEARCH_FILE;
             default:
                 throw new IllegalArgumentException("unknown action: " + action);
         }
@@ -139,7 +151,8 @@ public final class SelectionMenuPolicy {
      * system action (Copy does nothing) or double-handles one.
      */
     public static boolean isOurItem(int itemId) {
-        return itemId == ID_COPY || itemId == ID_QUOTE || itemId == ID_COMMENT;
+        return itemId == ID_COPY || itemId == ID_QUOTE
+                || itemId == ID_COMMENT || itemId == ID_SEARCH_FILE;
     }
 
     /** The action for one of our item ids, or null when the id is not ours. */
@@ -147,6 +160,7 @@ public final class SelectionMenuPolicy {
         if (itemId == ID_COPY) return Action.COPY;
         if (itemId == ID_QUOTE) return Action.QUOTE;
         if (itemId == ID_COMMENT) return Action.COMMENT;
+        if (itemId == ID_SEARCH_FILE) return Action.SEARCH_FILE;
         return null;
     }
 
@@ -159,6 +173,8 @@ public final class SelectionMenuPolicy {
                 return R.string.selection_action_quote;
             case COMMENT:
                 return R.string.selection_action_comment;
+            case SEARCH_FILE:
+                return R.string.selection_action_search_file;
             default:
                 throw new IllegalArgumentException("unknown action: " + action);
         }
@@ -235,6 +251,8 @@ public final class SelectionMenuPolicy {
                 return "quote";
             case COMMENT:
                 return "comment";
+            case SEARCH_FILE:
+                return "search-file";
             default:
                 throw new IllegalArgumentException("unknown action: " + action);
         }

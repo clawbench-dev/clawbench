@@ -7,6 +7,7 @@ import type { QuoteData } from '@/composables/useChatContext.ts'
 import { requestTarget, mintPendingQuoteId } from '@/composables/useConversationTarget.ts'
 import type { PendingQuote } from '@/composables/useConversationTarget.ts'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
+import { openInertPathPicker } from '@/composables/useInertPathPicker.ts'
 import { appLog } from '@/utils/appLog'
 
 const TAG = 'QuoteQuestion'
@@ -644,7 +645,7 @@ export function useQuoteQuestion() {
    * Called via window.__clawbenchSelectionAction (installed in App.vue).
    */
   function handleNativeSelectionAction(action: string) {
-    if (action !== 'quote' && action !== 'comment') {
+    if (action !== 'quote' && action !== 'comment' && action !== 'search-file') {
       appLog.w(TAG, 'native selection action: unknown action', action)
       return
     }
@@ -662,6 +663,19 @@ export function useQuoteQuestion() {
       // Nothing quotable to act on — e.g. the selection was in a region the
       // whitelist rejects, or it was cleared before we were called.
       appLog.w(TAG, 'native selection action with no quotable selection', action)
+      return
+    }
+
+    // "搜索文件" treats the selected TEXT as a path and opens the filename
+    // search drawer — the SAME drawer tapping a dashed (verified-missing) path
+    // opens — but available for any string, including one the renderer never
+    // annotated.
+    //
+    // It deliberately does NOT touch the quote state: no card is staged, the
+    // bar is not pinned, and the selection is not adopted as a quote. The user
+    // asked to navigate, not to quote.
+    if (action === 'search-file') {
+      openSelectionAsFile(data.text)
       return
     }
 
@@ -683,6 +697,59 @@ export function useQuoteQuestion() {
     // comment → surface the bar and ask the component to open its input.
     barVisible.value = true
     expandRequest.value++
+  }
+
+  /**
+   * Open the filename-search picker for the selected text.
+   *
+   * This is the "搜索文件" entry from the native selection menu, and it opens
+   * EXACTLY the same drawer as clicking a dashed (verified-missing) path:
+   * `InertPathPicker`. Delegating to `openInertPathPicker` is deliberate — that
+   * drawer already owns the candidate list, the line-range hand-off and the
+   * "open at line" behaviour, so re-implementing a picker here would guarantee
+   * the two entry points drift.
+   *
+   * The drawer searches by BASENAME (`deriveSearchQuery` strips the directory
+   * and any `:42` line suffix), which is what makes an arbitrary selected
+   * string work: a chat message often shows only a partial path, and the file
+   * usually lives under a different prefix.
+   */
+  function openSelectionAsFile(raw: string): void {
+    const candidate = pickPathLikeToken(raw)
+    if (!candidate) return
+    openInertPathPicker({ path: candidate })
+  }
+
+  /**
+   * Choose the most path-like token in a selection.
+   *
+   * A selection often carries surrounding prose ("see src/a.ts", "in
+   * `config.yaml`"). Taking the FIRST token would search for "see" — a word that
+   * matches hundreds of files. So prefer a token that looks like a path (a
+   * separator, an extension, or a dot-prefixed name), and fall back to the whole
+   * trimmed text only when no token looks like one (a bare filename such as
+   * "main" is still a legitimate query).
+   *
+   * Longest wins among path-like tokens: in "src/a.ts or src/b.ts" either is
+   * acceptable, but in "a and web/src/long/name.ts" the specific one is what the
+   * user pointed at.
+   */
+  function pickPathLikeToken(raw: string): string {
+    const text = raw.trim()
+    if (!text) return ''
+    // Strip wrapping punctuation a selection may carry: a leading backtick,
+    // quote, paren, bracket or brace, and a trailing one plus sentence
+    // punctuation ("see src/a.ts.").
+    const LEAD = /^[`'"([{]+/
+    const TRAIL = /[`'")},.;:\]]+$/
+    const tokens = text
+      .split(/\s+/)
+      .map(t => t.replace(LEAD, '').replace(TRAIL, ''))
+      .filter(Boolean)
+    if (tokens.length === 0) return ''
+    const pathLike = tokens.filter(t => /[/\\]/.test(t) || /\.[A-Za-z0-9]{1,10}$/.test(t))
+    if (pathLike.length === 0) return tokens[0]
+    return pathLike.reduce((a, b) => (b.length > a.length ? b : a))
   }
 
   function addToConversation(note = '') {

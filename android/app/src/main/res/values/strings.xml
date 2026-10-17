@@ -141,4 +141,5 @@
     <string name="selection_action_copy">Copy</string>
     <string name="selection_action_quote">Quote</string>
     <string name="selection_action_comment">Discuss</string>
+    <string name="selection_action_search_file">Find file</string>
 </resources>

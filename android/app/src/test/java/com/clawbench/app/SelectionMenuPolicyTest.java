@@ -44,6 +44,7 @@ public class SelectionMenuPolicyTest {
             case COPY: return "Copy";
             case QUOTE: return "Quote";
             case COMMENT: return "Comment";
+            case SEARCH_FILE: return "Find file";
             default: throw new IllegalArgumentException();
         }
     };
@@ -85,6 +86,7 @@ public class SelectionMenuPolicyTest {
         List<Integer> order = ids(menu);
         assertEquals(SelectionMenuPolicy.ID_QUOTE, (int) order.get(0));
         assertEquals(SelectionMenuPolicy.ID_COMMENT, (int) order.get(1));
+        assertEquals(SelectionMenuPolicy.ID_SEARCH_FILE, (int) order.get(2));
     }
 
     @Test
@@ -107,7 +109,7 @@ public class SelectionMenuPolicyTest {
         assertTrue(order.contains(android.R.id.cut));
         assertTrue(order.contains(android.R.id.copy));
         assertTrue(order.contains(android.R.id.selectAll));
-        assertEquals(6, menu.size()); // 4 system + our 2
+        assertEquals(7, menu.size()); // 4 system + our 3
     }
 
     /**
@@ -121,7 +123,7 @@ public class SelectionMenuPolicyTest {
         SelectionMenuPolicy.installItems(menu, LABELS);
         SelectionMenuPolicy.installItems(menu, LABELS);
 
-        assertEquals(6, menu.size());
+        assertEquals(7, menu.size()); // 4 system + our 3, installed once
         assertEquals(SelectionMenuPolicy.ID_QUOTE, (int) ids(menu).get(0));
     }
 
@@ -298,10 +300,25 @@ public class SelectionMenuPolicyTest {
 
     /** MENU_ORDER must list exactly the long-press actions, quote first. */
     @Test
-    public void menuOrderCoversBothActionsQuoteFirst() {
-        assertEquals(2, SelectionMenuPolicy.MENU_ORDER.length);
+    public void menuOrderCoversAllLongPressActionsQuoteFirst() {
+        assertEquals(3, SelectionMenuPolicy.MENU_ORDER.length);
         assertEquals(SelectionMenuPolicy.ID_QUOTE, SelectionMenuPolicy.MENU_ORDER[0]);
         assertEquals(SelectionMenuPolicy.ID_COMMENT, SelectionMenuPolicy.MENU_ORDER[1]);
+        assertEquals(SelectionMenuPolicy.ID_SEARCH_FILE, SelectionMenuPolicy.MENU_ORDER[2]);
+    }
+
+    /**
+     * "Find file" must be on the FREE-SELECTION (long-press) menu, not only on
+     * the double-tap one: the whole point is to act on an arbitrary selected
+     * string, which only the long-press flow produces.
+     */
+    @Test
+    public void longPressMenuCarriesSearchFile() {
+        Menu menu = systemMenu();
+        SelectionMenuPolicy.installItems(menu, LABELS);
+
+        assertTrue("the long-press menu must offer 搜索文件",
+                menu.findItem(SelectionMenuPolicy.ID_SEARCH_FILE) != null);
     }
 
     // ── The programmatic (double-tap) menu ──────────────────────────────────
@@ -334,10 +351,11 @@ public class SelectionMenuPolicyTest {
 
         SelectionMenuPolicy.installFloatingItems(menu, LABELS);
 
-        assertEquals(3, menu.size());
+        assertEquals(4, menu.size());
         assertEquals(SelectionMenuPolicy.ID_COPY, (int) ids(menu).get(0));
         assertEquals(SelectionMenuPolicy.ID_QUOTE, (int) ids(menu).get(1));
         assertEquals(SelectionMenuPolicy.ID_COMMENT, (int) ids(menu).get(2));
+        assertEquals(SelectionMenuPolicy.ID_SEARCH_FILE, (int) ids(menu).get(3));
         assertTrue(menu.findItem(SelectionMenuPolicy.ID_COPY) != null);
     }
 
@@ -349,16 +367,37 @@ public class SelectionMenuPolicyTest {
         SelectionMenuPolicy.installFloatingItems(menu, LABELS);
         SelectionMenuPolicy.installFloatingItems(menu, LABELS);
 
-        assertEquals(3, menu.size());
+        assertEquals(4, menu.size());
     }
 
-    /** FLOATING_MENU_ORDER must list all three actions, copy first. */
+    /** FLOATING_MENU_ORDER must list all actions, copy first. */
     @Test
     public void floatingMenuOrderCoversAllActionsCopyFirst() {
-        assertEquals(3, SelectionMenuPolicy.FLOATING_MENU_ORDER.length);
+        assertEquals(4, SelectionMenuPolicy.FLOATING_MENU_ORDER.length);
         assertEquals(SelectionMenuPolicy.ID_COPY, SelectionMenuPolicy.FLOATING_MENU_ORDER[0]);
         assertEquals(SelectionMenuPolicy.ID_QUOTE, SelectionMenuPolicy.FLOATING_MENU_ORDER[1]);
         assertEquals(SelectionMenuPolicy.ID_COMMENT, SelectionMenuPolicy.FLOATING_MENU_ORDER[2]);
+        assertEquals(SelectionMenuPolicy.ID_SEARCH_FILE,
+                SelectionMenuPolicy.FLOATING_MENU_ORDER[3]);
+    }
+
+    /**
+     * The JS action literal must be "search-file" — the web handler switches on
+     * that exact string, so a different spelling would silently do nothing.
+     */
+    @Test
+    public void searchFileMapsToTheJsLiteralTheWebAppHandles() {
+        assertEquals("search-file",
+                SelectionMenuPolicy.jsAction(SelectionMenuPolicy.Action.SEARCH_FILE));
+    }
+
+    /** 搜索文件 in Chinese, 搜索文件's English counterpart otherwise. */
+    @Test
+    public void searchFileLabelIsLocalised() {
+        String zh = RuntimeEnvironment.getApplication()
+                .createConfigurationContext(zhConfig())
+                .getString(R.string.selection_action_search_file);
+        assertEquals("搜索文件", zh);
     }
 
     /**

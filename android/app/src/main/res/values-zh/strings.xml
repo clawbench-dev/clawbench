@@ -141,4 +141,5 @@
     <string name="selection_action_copy">复制</string>
     <string name="selection_action_quote">引用</string>
     <string name="selection_action_comment">讨论</string>
+    <string name="selection_action_search_file">搜索文件</string>
 </resources>
