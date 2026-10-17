@@ -172,6 +172,8 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		"GroupHostTitle",
 		"GroupFreeTitle",
 		"ACPSessionRecoveredNew",
+		"ACPAuthRequired",
+		"ACPAuthRequiredGeneric",
 		"EventContextHeader",
 		"EventContextSeparator",
 		"EventContextYes",

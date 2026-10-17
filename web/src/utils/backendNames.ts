@@ -21,6 +21,7 @@ const backendDisplayNames: Record<string, string> = {
   grok: 'Grok',
   antigravity: 'Antigravity',
   hermes: 'Hermes Agent',
+  commandcode: 'Command Code',
   cursor: 'Cursor',
 }
 

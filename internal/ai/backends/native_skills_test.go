@@ -10,6 +10,7 @@ import (
 	_ "clawbench/internal/ai/backends/claude"
 	_ "clawbench/internal/ai/backends/codebuddy"
 	_ "clawbench/internal/ai/backends/codex"
+	_ "clawbench/internal/ai/backends/commandcode"
 	_ "clawbench/internal/ai/backends/copilot"
 	_ "clawbench/internal/ai/backends/cursor"
 	_ "clawbench/internal/ai/backends/deepseek"
@@ -37,17 +38,18 @@ import (
 // inferred from the vendor's marketing.
 var skillAwareBackends = map[string]bool{
 	// Load their own skills → ClawBench must NOT re-inject.
-	"claude":   true, // .claude/skills (claude.exe)
-	"codex":    true, // core-skills crate; .codex/skills + .agents/skills
-	"copilot":  true, // .copilot/skills + .github/skills + .agents/skills
-	"opencode": true, // .config/opencode/skill + .opencode/skills + .agents/skills
-	"mimo":     true, // OpenCode fork: .mimocode/skills + .agents/skills
-	"qoder":    true, // .qoder/skills + .agents/skills
-	"dsh":      true, // .dsh/skills + .agents/skills
-	"deepseek": true, // CodeWhale: .codewhale/skills + .agents/skills
-	"pi":       true, // ~/.pi/agent/skills + <available_skills> injection
-	"hermes":   true, // ~/.hermes/skills (hermes-acp toolset: skills_list/skill_view/skill_manage); does NOT read ~/.agents/skills by default
-	"cursor":   true, // .cursor/skills + .claude/skills + .codex/skills + .grok/skills + .agents/skills (verified with marker SKILL.md files; skills also surface as ACP slash commands)
+	"claude":      true, // .claude/skills (claude.exe)
+	"codex":       true, // core-skills crate; .codex/skills + .agents/skills
+	"copilot":     true, // .copilot/skills + .github/skills + .agents/skills
+	"opencode":    true, // .config/opencode/skill + .opencode/skills + .agents/skills
+	"mimo":        true, // OpenCode fork: .mimocode/skills + .agents/skills
+	"qoder":       true, // .qoder/skills + .agents/skills
+	"dsh":         true, // .dsh/skills + .agents/skills
+	"deepseek":    true, // CodeWhale: .codewhale/skills + .agents/skills
+	"pi":          true, // ~/.pi/agent/skills + <available_skills> injection
+	"hermes":      true, // ~/.hermes/skills (hermes-acp toolset: skills_list/skill_view/skill_manage); does NOT read ~/.agents/skills by default
+	"commandcode": true, // .commandcode/skills + .agents/skills (cli.mjs resolveSkillLoadPlan adds both at the user tier)
+	"cursor":      true, // .cursor/skills + .claude/skills + .codex/skills + .grok/skills + .agents/skills (verified with marker SKILL.md files; skills also surface as ACP slash commands)
 
 	// Do NOT load their own skills → ClawBench must inject.
 	//
@@ -119,7 +121,7 @@ func TestSharedSkillsDirDeclaredWhereReadable(t *testing.T) {
 	readsShared := map[string]bool{
 		"codex": true, "copilot": true, "opencode": true,
 		"mimo": true, "qoder": true, "dsh": true, "deepseek": true,
-		"cursor": true,
+		"cursor": true, "commandcode": true,
 	}
 	for _, p := range backends.All() {
 		if !readsShared[p.ID] {

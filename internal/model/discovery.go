@@ -22,7 +22,13 @@ type BackendSpec struct {
 	AcpCommand           string   // ACP spawn command for acp-stdio transport, e.g. "kimi --acp"; empty = no ACP support
 	ACPLoadSession       bool     // whether the ACP agent truly supports LoadSession (overrides ACP Initialize report)
 	InstallCmd           string   // npm/pip install command, e.g. "npm install -g @anthropic-ai/claude-code"; empty = not installable
-	SortOrder            int      // display/registration order for deterministic BackendRegistry ordering
+	// LoginCmd is the command the user must run once in a terminal to sign this
+	// agent in, e.g. "cmdc login". Empty = the backend does not gate sessions on
+	// a sign-in, or it advertises its own instruction. Used only to render the
+	// AUTH_REQUIRED error (JSON-RPC -32000) as actionable text instead of a raw
+	// JSON-RPC blob.
+	LoginCmd  string
+	SortOrder int // display/registration order for deterministic BackendRegistry ordering
 	// NativeSkillsDirs are this backend's own skill directories, relative to
 	// the user's home (e.g. ".codebuddy/skills"). A backend can have several:
 	// most read only their own dot-directory, but several also read the
