@@ -83,6 +83,24 @@ function mergeRel(existing: string | null): string {
 }
 
 /**
+ * Apply the external-link treatment (new tab + rel) to a single anchor.
+ *
+ * Exported so annotators that CREATE links can stamp them without duplicating
+ * the app-mode policy — notably the bare-URL annotator, whose links are built
+ * after this module's document-wide pass has already run.
+ */
+export function annotateOneExternalLink(a: Element, origin: string): void {
+    const { isAppMode } = useAppMode()
+    // Native hosts handle external links themselves and lack multi-window
+    // support — see the module header.
+    if (isAppMode.value) return
+    const href = a.getAttribute('href') || ''
+    if (!isNewTabLink(href, origin)) return
+    a.setAttribute('target', '_blank')
+    a.setAttribute('rel', mergeRel(a.getAttribute('rel')))
+}
+
+/**
  * Annotate external `<a href>` tags inside an already-parsed Document, mutating
  * it in place.
  *
@@ -111,10 +129,7 @@ export function annotateExternalLinkTargetsIn(doc: Document): boolean {
     }
 
     for (const a of doc.querySelectorAll('a[href]')) {
-        const href = a.getAttribute('href') || ''
-        if (!isNewTabLink(href, origin)) continue
-        a.setAttribute('target', '_blank')
-        a.setAttribute('rel', mergeRel(a.getAttribute('rel')))
+        annotateOneExternalLink(a, origin)
     }
     return true
 }

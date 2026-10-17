@@ -42,9 +42,9 @@ in the web frontend. These files are **not** meant to be compiled or executed.
 | 分支 | 判据 | 无扩展名的文件夹 |
 |---|---|---|
 | Step 2（行内代码） | `looksLikeFilePath`：含 `/` 即可 | **能**标注 |
-| Step 3（普通文本） | `FILE_PATH_RE`：需形如 `…/x.ext` | **不能**标注 |
+| Step 3（普通文本） | `FILE_PATH_RE`：需形如 `…/x.ext`，**或**「≥2 段 + 尾部 `/`」 | 带尾部 `/` **能**，否则不能 |
 
-所以文件夹**必须写成行内代码**才有效：
+所以文件夹**写成行内代码一定有效**：
 
 - `web/src/composables`
 - `web/src/components/chat`
@@ -55,15 +55,48 @@ in the web frontend. These files are **not** meant to be compiled or executed.
 - `web/src` — 只有两段也照样进入标注；主候选是相对本目录的
   `test/path-annotation/web/src`（不存在），靠回退候选 `web/src` 落到真实目录
 
-以下写法**不会**被标注（Step 3 的反例对照，无扩展名不匹配）：
+**文本形式现在也能标注**（2026-10-17 新增目录分支）——但**必须带尾部斜杠**且
+**至少两段**。真实回复里列目录几乎都写成这样（树形图尤其），此前完全点不动
+（下列路径均真实存在，校验后应保留标注）：
+
+- web/src/composables/
+- internal/ai/backends/
+- desktop/src/main/
+- web/src/components/chat/
+
+中文目录名同样支持（`FILE_PATH_RE` 的目录分支段字符集含 CJK；示例用本仓库
+不存在的名字，仅为展示形态——校验后会因不存在而摘除，属预期）：
+
+- 05_债务工程/ppt/gen_v7/
+
+以下写法**不会**被标注（Step 3 的反例对照，无扩展名且无尾部斜杠）：
 
 - web/src/composables
 - internal/rag
 - docs/spec
 
+**单段目录带斜杠也不标注**（「≥2 段」是硬性要求，用来挡散文）：
+
+- internal/
+- logs/
+- coverage/
+- scripts/
+
+下面这些是「单分隔符散文」的反例，**任何形式都不应标注**（不满足 ≥2 段）：
+
+- and/or
+- N/A
+- A/B
+- 100MB/s
+
+数字日期也不应被截成目录（右边界检查，`2024/05/12` 不得产出 `2024/05/`）：
+
+- 日期 2024/05/12 生效
+
 以本文件所在目录（`test/path-annotation/`）为基准的相对文件夹：
 
 - `../path-annotation` → 主候选 `test/path-annotation`，回退 `path-annotation`
+- `../path-annotation/` → 同上（尾部斜杠形式）
 - `./..` → `test`（纯 `..` 段，主/回退相同）
 - `../..` → 逸出项目根，解析为 `null`，不标注
 
@@ -72,9 +105,10 @@ in the web frontend. These files are **not** meant to be compiled or executed.
 - `/home/xulongzhe/projects/clawbench/web/src/composables` → `web/src/composables`
 - `/home/xulongzhe/projects/clawbench/internal/rag` → `internal/rag`
 
-末尾带斜杠（既有行为：斜杠不被消费，`data-file-path` 落回去掉斜杠的部分）：
+末尾带斜杠：
 
-- `web/src/composables/` → 标注 `web/src/composables`
+- `web/src/composables/` → 标注 `web/src/composables`（`data-file-path` 不含斜杠）
+- `/home/xulongzhe/projects/clawbench/web/src/composables/` → 同上
 
 名称含点号、易被误判为文件的文件夹（靠「后接 `/segment` 抑制」兜底）：
 
@@ -82,6 +116,33 @@ in the web frontend. These files are **not** meant to be compiled or executed.
   「扩展名」前缀匹配，但后面还跟着 `/gitgraph-fix`，整段被抑制，**不标注**
 - 反例对照：`/home/user/project/.worktrees` — 无后续 `/segment`，是合法文件夹，
   应标注（可导航进入）
+
+**超长段不应被切出假目录**（段长有上界 128，超长串的尾巴不得被当路径）：
+
+- 见 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bb/cc/ 这段（单个 200 字符段 > 上界 128，**不标注**）
+
+**字面 `\n`（未反转义的 JSON 字符串）不应吞掉首字母**——**仅普通文本分支**：
+
+- 见 \n/home/xulongzhe/projects/clawbench/docs/\n 目录 — 文本形式应标注
+  `/home/xulongzhe/projects/clawbench/docs/`，**不是** `n/home/…`
+
+`<code>`／围栏代码块里的字面 `\n` 同样已修（2026-10-17）：Step 2 对含反斜杠的
+内容**主动让位**给 Step 3 的扫描循环（它能在同一段文本里重新找到真路径），
+所以下面这条现在也标注正确：
+
+- `\n/home/xulongzhe/projects/clawbench/docs/\n` （行内代码形式）→ `/home/xulongzhe/projects/clawbench/docs/`
+
+多条目代码块（每行一个路径）应拆成**多个**标注，而不是串成一条假路径：
+
+- 见 `\n/a/x.go\n/b/y.go\n` — 应得到两条（`a/x.go`、`/b/y.go`）
+
+Windows 盘符路径的尾随 `\n` 应被裁掉（真路径是前缀）：
+
+- 见 `\nE:/git/x/y.go\n` — 应标注 `E:/git/x/y.go`
+
+真实的反斜杠 Windows 路径（无转义）必须原样保留：
+
+- 见 `E:\git\x\y.go` — 应标注 `E:/git/x/y.go`
 
 ### 项目外文件夹（橙色，保留，可导航进入）
 
@@ -174,6 +235,93 @@ Windows 的 `C:\` 一直正常（`splitPath` 会保留 `C:` 段），只有 POSI
 - https://example.com
 - $HOME/.bashrc
 - src/**/*.go
+
+### URL（链接化，非文件标注）
+
+外链分成两类，**带协议的由 marked 自动处理，无协议的本项目补一步**。判据实测
+（下表**故意不加反引号**——加反引号会渲染成行内代码而不是链接，Demo 要看的就是链接）：
+
+| 写法 | 谁处理 | 结果 |
+|---|---|---|
+| https://example.com/a/b/ | marked（GFM autolink） | 链接 |
+| www.example.com/a/b/ | marked | 链接 |
+| ftp://example.com/a/b | marked | 链接（非 http(s) 协议不再被误标，见下） |
+| foo@example.com | marked | 链接（mailto） |
+| github.com/foo/bar | **本项目 `annotateBareUrls`** | 链接 |
+| build.sh | 都不处理 | 纯文本 |
+
+无协议域名必须**同时满足两条**才会被链接化，这两条正是用来区分 URL 与文件名：
+
+1. **后缀在 TLD 白名单内**（`com`/`org`/`net`/`io`/`dev`/`cn`/`ai`/`app`/`sh`…）；
+2. **后面至少跟一段路径**（`/xxx`）。
+
+所以以下**不应**变成链接（它们是本仓库真实的文件名/标识符，`sh`、`app`、`com`
+既是 TLD 又是常见后缀）：
+
+- build.sh — 纯文本（无 `/`，Step 3 不标注）
+- tts/compose.sh — **文件 chip**（有 `/` + 扩展名），不是链接
+- scripts/pre-push-checks.sh — 文件 chip
+- cfg.FR — 纯文本
+- useSessionIdentity.app — 纯文本
+- internal/ai/factory_test.go — 文件 chip
+- web/src/App.vue — 文件 chip
+
+以下**应**变成链接（可点击，浏览器模式下新标签打开）：
+
+- github.com/foo/bar
+- raw.githubusercontent.com/o/r/master/README.md
+- vuejs.org/guide/intro.html
+- github.com/fatedier/frp
+
+各种容器里都应链接化。下面每一条都是**真实的**容器（不是把语法写进正文）：
+
+列表里：
+
+- 见 github.com/foo/bar 仓库
+
+引用里：
+
+> 见 github.com/foo/bar 仓库
+
+加粗：**github.com/foo/bar**
+
+括号：见 (github.com/foo/bar) 文档
+
+句末：见 github.com/foo/bar。
+
+表格里（见上方 URL 判据表最后一列）
+
+行内代码里——**这是唯一同时得到链接与死 chip 的形态**，见下方遗留说明：
+
+- `github.com/foo/bar`
+
+反例：**不应从 token 中间开始匹配**（前面是路径分隔符时不链接）：
+
+- src/github.com/foo/bar — 整体是路径 token，不链接
+
+> 邮箱形式 `user@github.com/foo/bar` 由 **marked** 把 `user@github.com` 链成
+> mailto，剩余 `/foo/bar` 是普通文本——这是 marked 的行为，不是本项目的裸域名规则：
+>
+> - user@github.com/foo/bar
+
+**非 http(s) 协议不再被误标**（2026-10-17 已修）：`<a href>` 的文件判定原先只
+跳过一个固定白名单（`https?:|//|mailto:|tel:|#`），其它协议会掉进去被当相对路径
+解析——`ftp://` 里的 `/` 被当成路径分隔，于是渲染出死 chip `ftp:/example.com/a/b`。
+现在改为「任何非 `file:` 的协议一律跳过」。以下都应**只是链接，没有死 chip**：
+
+- ftp://example.com/a/b
+- ssh://host/path
+
+`file://` 仍正常（它是真的文件引用），Windows 盘符也不会被误当协议（单字母协议）：
+
+- `file:///tmp/x/y.go` → 标注 `/tmp/x/y.go`
+- `E:/git/x/y.go` → 标注 `E:/git/x/y.go`
+
+> 行内代码／围栏代码块里的无协议域名仍会**同时**得到链接与一个死文件 chip
+> （`<code class="chat-file-path" data-file-path="github.com/foo/bar">`）。死 chip 是
+> Step 2 的 `looksLikeFilePath` 只看「含 `/`」所致，与本次两处修复无关：
+>
+> - `github.com/foo/bar` （行内代码形式）→ 链接 + 死 chip
 
 ### 带行号的路径（点击跳转并闪烁高亮对应行）
 

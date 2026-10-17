@@ -9,6 +9,7 @@ import { annotateFilePathsIn } from '@/composables/useFilePathAnnotation.ts'
 import { annotateCommitHashesIn } from '@/composables/useCommitHashAnnotation.ts'
 import { annotateWorktreePathsIn } from '@/composables/useWorktreeAnnotation.ts'
 import { annotateLocalhostUrlsIn } from '@/composables/useLocalhostAnnotation.ts'
+import { annotateBareUrlsIn } from '@/composables/useUrlAnnotation.ts'
 import { annotateExternalLinkTargetsIn } from '@/composables/useExternalLinkAnnotation.ts'
 import { store } from '@/stores/app.ts'
 import { resetHeadingIds } from '@/utils/markedConfig.ts'
@@ -343,11 +344,18 @@ export function renderMarkdown(
         html = convertAudioLinks(html, projectRoot)
         html = convertVideoLinks(html, projectRoot)
 
-        // Second shared phase: the four path/URL annotators over ONE Document.
+        // Second shared phase: the path/URL annotators over ONE Document.
         //
         // Order is preserved exactly as before: worktree BEFORE file paths, so
         // the file-path regex cannot partially match a worktree directory path.
         const annotateDoc = new DOMParser().parseFromString(html, 'text/html')
+
+        // Bare URLs FIRST: wrapping a schemeless domain in <a> both makes it
+        // clickable and takes it out of file-path detection (that annotator
+        // skips text inside <a>). Without this, `github.com/foo/bar` renders a
+        // dead `com/foo/bar` chip. Must run before annotateFilePaths, which is
+        // what would otherwise claim the tail.
+        annotateBareUrlsIn(annotateDoc)
 
         // The worktree step's own detected list is intentionally discarded —
         // the string version discarded it too. It is NOT recoverable from
