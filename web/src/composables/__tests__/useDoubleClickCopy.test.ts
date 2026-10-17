@@ -23,12 +23,14 @@ vi.mock('@/composables/useLocale', () => ({
 // Mock usePlatformDetect — default to a TOUCH surface so double-click copy
 // works (it is a touch-only gesture). The hooks flip it for desktop cases.
 const mockIsTouchPrimary = { value: true }
+const mockIsAndroidApp = { value: false }
 vi.mock('@/composables/usePlatformDetect', () => ({
-  usePlatformDetect: () => ({ isTouchPrimary: mockIsTouchPrimary }),
-  _setPlatformForTest: (v: { isTouchPrimary?: boolean }) => {
+  usePlatformDetect: () => ({ isTouchPrimary: mockIsTouchPrimary, isAndroidApp: mockIsAndroidApp }),
+  _setPlatformForTest: (v: { isTouchPrimary?: boolean; isAndroidApp?: boolean }) => {
     if (v.isTouchPrimary !== undefined) mockIsTouchPrimary.value = v.isTouchPrimary
+    if (v.isAndroidApp !== undefined) mockIsAndroidApp.value = v.isAndroidApp
   },
-  _resetPlatformForTest: () => { mockIsTouchPrimary.value = true },
+  _resetPlatformForTest: () => { mockIsTouchPrimary.value = true; mockIsAndroidApp.value = false },
 }))
 
 // Ensure CSS.escape is available in jsdom
@@ -393,6 +395,159 @@ describe('useDoubleClickCopy', () => {
       expect(onCopy).toHaveBeenCalledWith(p, 'callback text')
 
       document.body.removeChild(p)
+    })
+  })
+
+  describe('Android: double-tap opens the native selection menu', () => {
+    /** Install a fake bridge; returns the spy and a restore fn. */
+    function installBridge() {
+      const showSelectionMenu = vi.fn()
+      const win = window as unknown as { ClawBenchNative?: unknown }
+      const previous = win.ClawBenchNative
+      win.ClawBenchNative = { showSelectionMenu }
+      return {
+        showSelectionMenu,
+        restore: () => {
+          if (previous === undefined) delete win.ClawBenchNative
+          else win.ClawBenchNative = previous
+        },
+      }
+    }
+
+    function doubleTap(el: HTMLElement) {
+      const { handleDblClick } = useDoubleClickCopy()
+      const e1 = new MouseEvent('click', { bubbles: true, clientX: 30, clientY: 40 })
+      Object.defineProperty(e1, 'target', { value: el, writable: false })
+      const e2 = new MouseEvent('click', { bubbles: true, clientX: 30, clientY: 40 })
+      Object.defineProperty(e2, 'target', { value: el, writable: false })
+      handleDblClick(e1)
+      handleDblClick(e2)
+    }
+
+    it('asks the native side to show the menu instead of copying', () => {
+      vi.useRealTimers()
+      mockIsAndroidApp.value = true
+      const bridge = installBridge()
+
+      const p = document.createElement('p')
+      p.textContent = 'select me'
+      document.body.appendChild(p)
+
+      vi.mocked(copyText).mockClear()
+      doubleTap(p)
+
+      expect(bridge.showSelectionMenu).toHaveBeenCalledTimes(1)
+      const [text, left, top, right, bottom] = bridge.showSelectionMenu.mock.calls[0]
+      expect(text).toBe('select me')
+      // Coordinates are FRACTIONS of the viewport, not pixels — a raw CSS px
+      // value anchored the menu in the wrong place on a real phone (the native
+      // side read CSS px as physical px).
+      expect(left).toBeGreaterThanOrEqual(0)
+      expect(left).toBeLessThanOrEqual(1)
+      expect(top).toBeGreaterThanOrEqual(0)
+      expect(top).toBeLessThanOrEqual(1)
+      expect(right).toBeGreaterThanOrEqual(left)
+      expect(bottom).toBeGreaterThanOrEqual(top)
+      // The in-page copy must NOT also run — the native menu owns the gesture.
+      expect(copyText).not.toHaveBeenCalled()
+
+      document.body.removeChild(p)
+      bridge.restore()
+      mockIsAndroidApp.value = false
+    })
+
+    it('sends the rect as viewport fractions, not raw pixels', () => {
+      vi.useRealTimers()
+      mockIsAndroidApp.value = true
+      const bridge = installBridge()
+
+      // jsdom's default innerWidth/innerHeight (1024×768); pin them so the
+      // expected fractions are deterministic.
+      const prevW = window.innerWidth
+      const prevH = window.innerHeight
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: 400 })
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: 800 })
+
+      const p = document.createElement('p')
+      p.textContent = 'fraction check'
+      document.body.appendChild(p)
+      // The range rect is what we measure; stub it to a known box.
+      const rangeProto = Range.prototype as unknown as { getBoundingClientRect: () => DOMRect }
+      const origRect = rangeProto.getBoundingClientRect
+      rangeProto.getBoundingClientRect = () => ({
+        left: 100, top: 400, right: 200, bottom: 420,
+        x: 100, y: 400, width: 100, height: 20, toJSON: () => ({}),
+      }) as DOMRect
+
+      doubleTap(p)
+
+      const [, left, top, right, bottom] = bridge.showSelectionMenu.mock.calls[0]
+      expect(left).toBeCloseTo(100 / 400, 5)
+      expect(top).toBeCloseTo(400 / 800, 5)
+      expect(right).toBeCloseTo(200 / 400, 5)
+      expect(bottom).toBeCloseTo(420 / 800, 5)
+
+      rangeProto.getBoundingClientRect = origRect
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: prevW })
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: prevH })
+      document.body.removeChild(p)
+      bridge.restore()
+      mockIsAndroidApp.value = false
+    })
+
+    it('puts the tapped text into the DOM selection (the quote path reads it back)', () => {
+      vi.useRealTimers()
+      mockIsAndroidApp.value = true
+      const bridge = installBridge()
+
+      const p = document.createElement('p')
+      p.textContent = 'selection source'
+      document.body.appendChild(p)
+
+      doubleTap(p)
+
+      expect(window.getSelection()?.toString()).toBe('selection source')
+
+      document.body.removeChild(p)
+      bridge.restore()
+      mockIsAndroidApp.value = false
+    })
+
+    it('falls back to the in-page copy when the bridge is missing (older APK)', () => {
+      vi.useRealTimers()
+      mockIsAndroidApp.value = true
+      // No bridge installed at all.
+
+      const p = document.createElement('p')
+      p.textContent = 'legacy apk'
+      document.body.appendChild(p)
+
+      vi.mocked(copyText).mockClear()
+      doubleTap(p)
+
+      expect(copyText).toHaveBeenCalled()
+
+      document.body.removeChild(p)
+      mockIsAndroidApp.value = false
+    })
+
+    it('copies in-page on non-Android touch devices', () => {
+      vi.useRealTimers()
+      mockIsAndroidApp.value = false
+      const bridge = installBridge()
+
+      const p = document.createElement('p')
+      p.textContent = 'ios safari'
+      document.body.appendChild(p)
+
+      vi.mocked(copyText).mockClear()
+      doubleTap(p)
+
+      expect(copyText).toHaveBeenCalled()
+      expect(bridge.showSelectionMenu).not.toHaveBeenCalled()
+
+      document.body.removeChild(p)
+      bridge.restore()
     })
   })
 })

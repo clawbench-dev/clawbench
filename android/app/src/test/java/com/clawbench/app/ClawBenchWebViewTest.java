@@ -5,6 +5,7 @@ import android.graphics.Rect;
 import android.view.ActionMode;
 import android.view.Menu;
 import android.view.MenuItem;
+import android.view.MotionEvent;
 import android.view.View;
 import android.widget.PopupMenu;
 
@@ -19,6 +20,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
@@ -382,5 +384,81 @@ public class ClawBenchWebViewTest {
         assertTrue("the click is still ours, so it is still consumed",
                 wrapper.onActionItemClicked(mode, quote));
         assertTrue("the mode must still be finished", mode.finished);
+    }
+
+    // ── outside-touch dismissal of the double-tap menu ──────────────────
+
+    /**
+     * A TYPE_FLOATING ActionMode gets NO automatic outside-tap dismissal (the
+     * framework's own hook for it is @hide and off by default), so the view has
+     * to close it on a touch that reaches the WebView. A touch reaching the
+     * WebView is by definition outside the menu — the toolbar's popup is
+     * FLAG_NOT_FOCUSABLE, which WindowManager documents as also enabling
+     * FLAG_NOT_TOUCH_MODAL, so it does not swallow outside touches.
+     */
+    @Test
+    public void outsideTouchDismissesTheFloatingMenu() {
+        FakeActionMode mode = new FakeActionMode();
+        webView.setFloatingActionModeForTest(mode);
+
+        webView.dispatchTouchEvent(MotionEvent.obtain(
+                0, 0, MotionEvent.ACTION_DOWN, 10f, 10f, 0));
+
+        assertTrue("an outside ACTION_DOWN must finish the menu", mode.finished);
+        assertFalse("the menu must no longer be tracked as open",
+                webView.hasFloatingActionModeForTest());
+    }
+
+    /**
+     * The tap that closes the menu must still reach the page: swallowing it would
+     * make the first tap after opening feel dead, and would break scrolling.
+     */
+    @Test
+    public void outsideTouchIsNotConsumed() {
+        webView.setFloatingActionModeForTest(new FakeActionMode());
+
+        boolean consumed = webView.dispatchTouchEvent(MotionEvent.obtain(
+                0, 0, MotionEvent.ACTION_DOWN, 10f, 10f, 0));
+
+        // A WebView with no content returns false; what matters is that we did not
+        // short-circuit with `return true` just because we dismissed the menu.
+        assertFalse("dismissal must not consume the event", consumed);
+    }
+
+    /** A MOVE/UP alone must not close the menu (only the touch's start does). */
+    @Test
+    public void moveDoesNotDismissTheFloatingMenu() {
+        FakeActionMode mode = new FakeActionMode();
+        webView.setFloatingActionModeForTest(mode);
+
+        webView.dispatchTouchEvent(MotionEvent.obtain(
+                0, 0, MotionEvent.ACTION_MOVE, 10f, 10f, 0));
+
+        assertFalse("ACTION_MOVE must not dismiss", mode.finished);
+        assertTrue("the menu is still open", webView.hasFloatingActionModeForTest());
+    }
+
+    /** No menu open → the touch path is a plain pass-through, no NPE. */
+    @Test
+    public void dispatchTouchWithoutAMenuIsHarmless() {
+        assertFalse(webView.dismissSelectionMenu());
+        assertFalse(webView.hasFloatingActionModeForTest());
+        webView.dispatchTouchEvent(MotionEvent.obtain(
+                0, 0, MotionEvent.ACTION_DOWN, 1f, 1f, 0));
+    }
+
+    /**
+     * Dismissing twice must not finish twice: onDestroyActionMode already
+     * cleared the field, and the second call reports "nothing to close".
+     */
+    @Test
+    public void dismissIsIdempotent() {
+        FakeActionMode mode = new FakeActionMode();
+        webView.setFloatingActionModeForTest(mode);
+
+        assertTrue(webView.dismissSelectionMenu());
+        assertTrue(mode.finished);
+        assertFalse("the second dismiss must report nothing to close",
+                webView.dismissSelectionMenu());
     }
 }

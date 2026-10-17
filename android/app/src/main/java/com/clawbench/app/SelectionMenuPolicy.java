@@ -51,8 +51,17 @@ public final class SelectionMenuPolicy {
     private SelectionMenuPolicy() {
     }
 
-    /** The two actions we contribute, in the order they should appear. */
+    /** The actions we contribute, in the order they should appear. */
     public enum Action {
+        /**
+         * Copy the selection. Only ever installed on the PROGRAMMATIC
+         * (double-tap) menu — see {@link #FLOATING_MENU_ORDER}.
+         *
+         * The long-press menu must NOT carry it: that menu is Chromium's own,
+         * which already contributes Copy, and adding a second one would show
+         * the user two identical entries.
+         */
+        COPY,
         QUOTE,
         COMMENT
     }
@@ -62,23 +71,32 @@ public final class SelectionMenuPolicy {
      *
      * Kept above the framework's resource-id space (system menu items are
      * {@code R.id.*}, i.e. 0x7f……) so {@link #isOurItem} cannot mistake a
-     * system entry for ours. The two ids are deliberately NOT adjacent: a
-     * non-adjacent pair lets a test prove the classification is an exact match
-     * rather than a range check (an id in the gap must be rejected).
+     * system entry for ours. The ids are deliberately NOT adjacent: a
+     * non-adjacent set lets a test prove the classification is an exact match
+     * rather than a range check (an id in a gap must be rejected).
      *
      * Plain ints rather than {@code Menu.FIRST} so this file — and its test —
      * stay free of Android imports.
      */
-    public static final int ID_QUOTE = 0x00010001;
-    public static final int ID_COMMENT = 0x00010011;
+    public static final int ID_COPY = 0x00010001;
+    public static final int ID_QUOTE = 0x00010011;
+    public static final int ID_COMMENT = 0x00010021;
 
     /**
-     * Our items in the order the wrapper must add them.
+     * The items the LONG-PRESS wrapper installs, in order.
      *
-     * The wrapper iterates this rather than hard-coding the sequence, so
-     * "quote before comment" is stated once, here, and pinned by a test.
+     * Copy is absent on purpose: Chromium's selection controller builds that
+     * menu and already provides it (see {@link Action#COPY}).
      */
     public static final int[] MENU_ORDER = {ID_QUOTE, ID_COMMENT};
+
+    /**
+     * The items the PROGRAMMATIC (double-tap) menu installs, in order.
+     *
+     * This menu is ours from scratch — nothing else contributes to it — so it
+     * has to carry Copy itself, ahead of the two quote actions.
+     */
+    public static final int[] FLOATING_MENU_ORDER = {ID_COPY, ID_QUOTE, ID_COMMENT};
 
     /**
      * Menu order for an action — always 0, for both.
@@ -90,6 +108,7 @@ public final class SelectionMenuPolicy {
      */
     public static int orderOf(Action action) {
         switch (action) {
+            case COPY:
             case QUOTE:
             case COMMENT:
                 return 0;
@@ -101,6 +120,8 @@ public final class SelectionMenuPolicy {
     /** The menu item id for an action. */
     public static int idOf(Action action) {
         switch (action) {
+            case COPY:
+                return ID_COPY;
             case QUOTE:
                 return ID_QUOTE;
             case COMMENT:
@@ -118,11 +139,12 @@ public final class SelectionMenuPolicy {
      * system action (Copy does nothing) or double-handles one.
      */
     public static boolean isOurItem(int itemId) {
-        return itemId == ID_QUOTE || itemId == ID_COMMENT;
+        return itemId == ID_COPY || itemId == ID_QUOTE || itemId == ID_COMMENT;
     }
 
     /** The action for one of our item ids, or null when the id is not ours. */
     public static Action actionFor(int itemId) {
+        if (itemId == ID_COPY) return Action.COPY;
         if (itemId == ID_QUOTE) return Action.QUOTE;
         if (itemId == ID_COMMENT) return Action.COMMENT;
         return null;
@@ -131,6 +153,8 @@ public final class SelectionMenuPolicy {
     /** String resource id for an action's label. */
     public static int labelRes(Action action) {
         switch (action) {
+            case COPY:
+                return R.string.selection_action_copy;
             case QUOTE:
                 return R.string.selection_action_quote;
             case COMMENT:
@@ -165,8 +189,24 @@ public final class SelectionMenuPolicy {
      * a real {@code MenuBuilder}, with no resource lookup and no device.
      */
     public static void installItems(Menu menu, LabelResolver labels) {
+        install(menu, labels, MENU_ORDER);
+    }
+
+    /**
+     * Insert the items for the PROGRAMMATIC (double-tap) menu, idempotently.
+     *
+     * Separate entry point from {@link #installItems} because the two menus
+     * carry different sets: this one must include Copy (nothing else contributes
+     * to it), while the long-press menu must not (Chromium already adds one).
+     * Both share {@link #install} so the ordering/idempotency rules live once.
+     */
+    public static void installFloatingItems(Menu menu, LabelResolver labels) {
+        install(menu, labels, FLOATING_MENU_ORDER);
+    }
+
+    private static void install(Menu menu, LabelResolver labels, int[] order) {
         if (menu == null) return;
-        for (int id : MENU_ORDER) {
+        for (int id : order) {
             Action action = actionFor(id);
             if (action == null) continue;
             // Idempotent: drop any previous copy before re-adding, so a second
@@ -182,9 +222,15 @@ public final class SelectionMenuPolicy {
      *
      * Deliberately the same spelling the web app's handler switches on, so the
      * two sides cannot drift into different literals.
+     *
+     * "copy" is never sent over the bridge — the view copies natively — but it
+     * is mapped here anyway so {@link #jsAction} stays total over the enum and
+     * a future change that routes copy through JS cannot silently miss it.
      */
     public static String jsAction(Action action) {
         switch (action) {
+            case COPY:
+                return "copy";
             case QUOTE:
                 return "quote";
             case COMMENT:

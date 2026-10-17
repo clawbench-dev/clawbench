@@ -135,7 +135,10 @@
     <string name="splash_status_initializing">正在初始化应用…</string>
     <!-- Text-selection action menu (items prepended to the WebView's own
          Copy / Select all / Share menu). Labels must match the web app's
-         quoteBar.comment / quoteBar.quoteSelection wording. -->
+         quoteBar.comment / quoteBar.quoteSelection wording.
+         selection_action_copy is used ONLY by the double-tap menu: the
+         long-press menu already gets Copy from Chromium itself. -->
+    <string name="selection_action_copy">复制</string>
     <string name="selection_action_quote">引用</string>
     <string name="selection_action_comment">讨论</string>
 </resources>

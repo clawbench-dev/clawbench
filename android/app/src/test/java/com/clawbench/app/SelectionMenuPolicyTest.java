@@ -41,6 +41,7 @@ public class SelectionMenuPolicyTest {
 
     private static final SelectionMenuPolicy.LabelResolver LABELS = action -> {
         switch (action) {
+            case COPY: return "Copy";
             case QUOTE: return "Quote";
             case COMMENT: return "Comment";
             default: throw new IllegalArgumentException();
@@ -147,21 +148,27 @@ public class SelectionMenuPolicyTest {
      * pins that both actions use exactly 0.
      */
     @Test
-    public void bothActionsUseOrderZero() {
+    public void allActionsUseOrderZero() {
         assertEquals(0, SelectionMenuPolicy.orderOf(SelectionMenuPolicy.Action.QUOTE));
         assertEquals(0, SelectionMenuPolicy.orderOf(SelectionMenuPolicy.Action.COMMENT));
+        assertEquals(0, SelectionMenuPolicy.orderOf(SelectionMenuPolicy.Action.COPY));
     }
 
     @Test
     public void idsAreDistinctAndNonAdjacent() {
         assertTrue(SelectionMenuPolicy.ID_QUOTE != SelectionMenuPolicy.ID_COMMENT);
+        assertTrue(SelectionMenuPolicy.ID_COPY != SelectionMenuPolicy.ID_QUOTE);
+        assertTrue(SelectionMenuPolicy.ID_COPY != SelectionMenuPolicy.ID_COMMENT);
         // Non-adjacent on purpose: lets the tests below prove isOurItem is an
         // exact match, not a range check.
         assertTrue(Math.abs(SelectionMenuPolicy.ID_QUOTE - SelectionMenuPolicy.ID_COMMENT) > 1);
+        assertTrue(Math.abs(SelectionMenuPolicy.ID_COPY - SelectionMenuPolicy.ID_QUOTE) > 1);
     }
 
     @Test
     public void idOfMatchesTheConstants() {
+        assertEquals(SelectionMenuPolicy.ID_COPY,
+                SelectionMenuPolicy.idOf(SelectionMenuPolicy.Action.COPY));
         assertEquals(SelectionMenuPolicy.ID_QUOTE,
                 SelectionMenuPolicy.idOf(SelectionMenuPolicy.Action.QUOTE));
         assertEquals(SelectionMenuPolicy.ID_COMMENT,
@@ -176,6 +183,7 @@ public class SelectionMenuPolicyTest {
      */
     @Test
     public void ourIdsSitOutsideTheFrameworkResourceIdRange() {
+        assertTrue(SelectionMenuPolicy.ID_COPY < 0x7f000000);
         assertTrue(SelectionMenuPolicy.ID_QUOTE < 0x7f000000);
         assertTrue(SelectionMenuPolicy.ID_COMMENT < 0x7f000000);
     }
@@ -184,6 +192,7 @@ public class SelectionMenuPolicyTest {
 
     @Test
     public void ourIdsAreRecognised() {
+        assertTrue(SelectionMenuPolicy.isOurItem(SelectionMenuPolicy.ID_COPY));
         assertTrue(SelectionMenuPolicy.isOurItem(SelectionMenuPolicy.ID_QUOTE));
         assertTrue(SelectionMenuPolicy.isOurItem(SelectionMenuPolicy.ID_COMMENT));
     }
@@ -209,10 +218,14 @@ public class SelectionMenuPolicyTest {
         assertFalse(SelectionMenuPolicy.isOurItem(SelectionMenuPolicy.ID_COMMENT - 1));
         assertFalse(SelectionMenuPolicy.isOurItem(SelectionMenuPolicy.ID_QUOTE - 1));
         assertFalse(SelectionMenuPolicy.isOurItem(SelectionMenuPolicy.ID_COMMENT + 1));
+        assertFalse(SelectionMenuPolicy.isOurItem(SelectionMenuPolicy.ID_COPY + 1));
+        assertFalse(SelectionMenuPolicy.isOurItem(SelectionMenuPolicy.ID_QUOTE - 2));
     }
 
     @Test
     public void actionForMapsOurIdsBack() {
+        assertEquals(SelectionMenuPolicy.Action.COPY,
+                SelectionMenuPolicy.actionFor(SelectionMenuPolicy.ID_COPY));
         assertEquals(SelectionMenuPolicy.Action.QUOTE,
                 SelectionMenuPolicy.actionFor(SelectionMenuPolicy.ID_QUOTE));
         assertEquals(SelectionMenuPolicy.Action.COMMENT,
@@ -264,6 +277,7 @@ public class SelectionMenuPolicyTest {
      */
     @Test
     public void jsActionStringsMatchTheWebHandler() {
+        assertEquals("copy", SelectionMenuPolicy.jsAction(SelectionMenuPolicy.Action.COPY));
         assertEquals("quote", SelectionMenuPolicy.jsAction(SelectionMenuPolicy.Action.QUOTE));
         assertEquals("comment", SelectionMenuPolicy.jsAction(SelectionMenuPolicy.Action.COMMENT));
     }
@@ -282,11 +296,88 @@ public class SelectionMenuPolicyTest {
         }
     }
 
-    /** MENU_ORDER must list exactly our actions, quote first. */
+    /** MENU_ORDER must list exactly the long-press actions, quote first. */
     @Test
     public void menuOrderCoversBothActionsQuoteFirst() {
         assertEquals(2, SelectionMenuPolicy.MENU_ORDER.length);
         assertEquals(SelectionMenuPolicy.ID_QUOTE, SelectionMenuPolicy.MENU_ORDER[0]);
         assertEquals(SelectionMenuPolicy.ID_COMMENT, SelectionMenuPolicy.MENU_ORDER[1]);
+    }
+
+    // ── The programmatic (double-tap) menu ──────────────────────────────────
+
+    /**
+     * The long-press menu must NOT carry Copy: Chromium builds that menu and
+     * already contributes its own Copy, so a second one would show the user two
+     * identical entries.
+     */
+    @Test
+    public void longPressMenuDoesNotInstallCopy() {
+        Menu menu = systemMenu();
+        SelectionMenuPolicy.installItems(menu, LABELS);
+
+        assertNull("the long-press menu must leave Copy to Chromium",
+                menu.findItem(SelectionMenuPolicy.ID_COPY));
+        // The system's own Copy is still there, untouched.
+        assertTrue(menu.findItem(android.R.id.copy) != null);
+    }
+
+    /**
+     * The double-tap menu is ours alone, so it MUST carry Copy — nothing else
+     * contributes to it. It leads, ahead of quote/comment.
+     */
+    @Test
+    public void floatingMenuInstallsCopyWithAllThreeInOrder() {
+        // A bare menu: the programmatic path builds it from scratch, so there is
+        // no system Copy to rely on.
+        Menu menu = new PopupMenu(RuntimeEnvironment.getApplication(), null).getMenu();
+
+        SelectionMenuPolicy.installFloatingItems(menu, LABELS);
+
+        assertEquals(3, menu.size());
+        assertEquals(SelectionMenuPolicy.ID_COPY, (int) ids(menu).get(0));
+        assertEquals(SelectionMenuPolicy.ID_QUOTE, (int) ids(menu).get(1));
+        assertEquals(SelectionMenuPolicy.ID_COMMENT, (int) ids(menu).get(2));
+        assertTrue(menu.findItem(SelectionMenuPolicy.ID_COPY) != null);
+    }
+
+    /** installFloatingItems runs on every prepare pass; it must stay idempotent. */
+    @Test
+    public void floatingInstallIsIdempotent() {
+        Menu menu = new PopupMenu(RuntimeEnvironment.getApplication(), null).getMenu();
+        SelectionMenuPolicy.installFloatingItems(menu, LABELS);
+        SelectionMenuPolicy.installFloatingItems(menu, LABELS);
+        SelectionMenuPolicy.installFloatingItems(menu, LABELS);
+
+        assertEquals(3, menu.size());
+    }
+
+    /** FLOATING_MENU_ORDER must list all three actions, copy first. */
+    @Test
+    public void floatingMenuOrderCoversAllActionsCopyFirst() {
+        assertEquals(3, SelectionMenuPolicy.FLOATING_MENU_ORDER.length);
+        assertEquals(SelectionMenuPolicy.ID_COPY, SelectionMenuPolicy.FLOATING_MENU_ORDER[0]);
+        assertEquals(SelectionMenuPolicy.ID_QUOTE, SelectionMenuPolicy.FLOATING_MENU_ORDER[1]);
+        assertEquals(SelectionMenuPolicy.ID_COMMENT, SelectionMenuPolicy.FLOATING_MENU_ORDER[2]);
+    }
+
+    /**
+     * Copy has its own label resource — reusing quote's or comment's would show
+     * the wrong word on the double-tap menu.
+     */
+    @Test
+    public void copyHasItsOwnLabelResource() {
+        int copy = SelectionMenuPolicy.labelRes(SelectionMenuPolicy.Action.COPY);
+        assertTrue(copy != SelectionMenuPolicy.labelRes(SelectionMenuPolicy.Action.QUOTE));
+        assertTrue(copy != SelectionMenuPolicy.labelRes(SelectionMenuPolicy.Action.COMMENT));
+    }
+
+    /** The copy label is 复制 in Chinese, matching the web app's own wording. */
+    @Test
+    public void copyActionIsLabelledCopyInChinese() {
+        String zh = RuntimeEnvironment.getApplication()
+                .createConfigurationContext(zhConfig())
+                .getString(R.string.selection_action_copy);
+        assertEquals("复制", zh);
     }
 }
