@@ -18,6 +18,7 @@
 
 import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer.ts'
 import { annotateFilePaths } from '@/composables/useFilePathAnnotation.ts'
+import { annotateBareUrls } from '@/composables/useUrlAnnotation.ts'
 import { dirName, joinPath, splitPath, isAbsolutePath, normalizeSlashes } from '@/utils/path.ts'
 import { escapeHtml } from '@/utils/html.ts'
 import { isThumbExtension, buildThumbUrl, getThumbWidth, markInlineSvgs } from '@/utils/chatRenderUtils.ts'
@@ -237,7 +238,13 @@ export function buildMarkdownPreviewDom(
         return { html: annotateShareLinks(html, currentDir), detectedPaths: [] }
     }
 
-    const { html: annotatedHtml, detectedPaths } = annotateFilePaths(html, {
+    // Bare URLs BEFORE file-path annotation: wrapping a schemeless domain in
+    // <a> both makes it clickable and takes it out of file-path detection, so
+    // `github.com/foo/bar` stops rendering as a dead `com/foo/bar` chip. Same
+    // step and ordering as the chat pipeline.
+    const linked = annotateBareUrls(html)
+
+    const { html: annotatedHtml, detectedPaths } = annotateFilePaths(linked, {
         projectRoot,
         baseDir: currentDir,
         homeDir,

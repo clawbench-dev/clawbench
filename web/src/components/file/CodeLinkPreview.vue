@@ -480,12 +480,10 @@ import HeaderMarquee from '@/components/common/HeaderMarquee.vue'
 import { highlightCode } from '@/utils/globals'
 import { getFileType } from '@/utils/fileType'
 import { copyText } from '@/utils/clipboard'
-import { useToast } from '@/composables/useToast'
 import { buildLocalFileUrl, downloadFileByPath } from '@/utils/download'
 import { buildHtmlPreviewSrc } from '@/utils/htmlPreview'
 import { clampCardPosition, splitHighlightedHtml, getAppHeaderBottom, SCROLL_LOAD_STEP } from '@/utils/codeLinkPreview'
 import { toFixedCSS, useSettingsConfig, getZoomedViewport } from '@/composables/useSettingsConfig'
-import { useChatContext } from '@/composables/useChatContext'
 import { requestTarget } from '@/composables/useConversationTarget.ts'
 import { store } from '@/stores/app'
 import { navToFileInManager } from '@/composables/useFilePathAnnotation'
@@ -503,7 +501,6 @@ const props = withDefaults(defineProps<{
 
 const { t } = useI18n()
 const { localConfig, setLocalConfig } = useSettingsConfig()
-const switchTab = inject<(tab: string) => void>('switchTab', () => {})
 const activeTab = inject<Ref<string> | undefined>('activeTab', undefined)
 /** Shared full-screen image viewer, provided by App.vue (and the share SPA).
  *  Injected rather than imported so this card stays free of the Lightbox's
@@ -893,11 +890,11 @@ const handleQuoteToChat = () => {
   const startLine = sliced?.startLine ?? target.lineStart ?? 1
   const endLine = sliced?.endLine ?? target.lineEnd ?? (startLine + Math.max(0, code.split('\n').length - 1))
 
-  const { addStagedQuote } = useChatContext()
   // The card is a quote (with the code as its content), not a bare attachment
-  // chip — see the note below. Route it through the conversation picker when the
-  // chat panel is off screen, so the destination is the user's choice.
-  if (requestTarget({
+  // chip — see the note below. The destination is always the user's choice (the
+  // picker), so the card is NOT staged locally; confirmTarget stages it for the
+  // session they pick.
+  requestTarget({
     mode: 'add',
     quotes: [{
       text: code,
@@ -910,24 +907,8 @@ const handleQuoteToChat = () => {
     }],
     attachments: [],
     text: '',
-  })) {
-    props.preview.close()
-    return
-  }
-
-  addStagedQuote({
-    text: code,
-    filePath: target.filePath,
-    language: ft.lang || '',
-    startLine,
-    endLine,
   })
-  // A staged quote already carries the file path and line range. The send
-  // pipeline derives the file attachment from staged quotes when needed, so
-  // adding a second attachment here would render duplicate chips in the draft.
   props.preview.close()
-  switchTab('chat')
-  useToast().show(t('file.codePreview.quotedToChat'), { icon: 'chat', type: 'success', duration: 1500 })
 }
 
 const handleRevealInTree = async () => {

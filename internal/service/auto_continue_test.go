@@ -71,6 +71,9 @@ func TestClassifyTurnAbnormality(t *testing.T) {
 		{"panic", "", true, false, warn(ai.ReasonPanic), ""},
 		{"timeout", "", true, false, warn(ai.ReasonTimeout), ""},
 		{"agent init timeout", "", true, false, warn(ai.ReasonAgentInitTimeout), ""},
+		// A signed-out agent fails identically forever; retrying writes a
+		// spurious user+assistant row pair per attempt. Must stay non-retryable.
+		{"auth required", "", true, false, warn(ai.ReasonAuthRequired), ""},
 		{"context cancel warning", "", true, false, warn(ai.ReasonContextCancel), ""},
 		{"user cancel warning reason", "", true, false, warn(ai.ReasonUserCancel), ""},
 		{"disconnect warning reason", "", true, false, warn(ai.ReasonDisconnect), ""},

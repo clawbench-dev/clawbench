@@ -752,7 +752,10 @@ func TestMapACPError_Cancelled(t *testing.T) {
 
 func TestMapACPError_AuthRequired(t *testing.T) {
 	event := mapACPError(-32000, "auth required")
-	assert.Equal(t, ReasonRequestFailed, event.Reason)
+	// A dedicated (non-retryable) reason: auto-continue would otherwise re-prompt
+	// a signed-out agent up to 3 times, writing a user+assistant row pair each
+	// time for a failure only a human can fix.
+	assert.Equal(t, ReasonAuthRequired, event.Reason)
 }
 
 func TestMapACPError_UnknownCode(t *testing.T) {

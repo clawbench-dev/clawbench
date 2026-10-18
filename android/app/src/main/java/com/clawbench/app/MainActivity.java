@@ -2111,6 +2111,13 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     public void onBackPressed() {
+        // A double-tap selection menu is dismissible only programmatically (see
+        // ClawBenchWebView.dismissSelectionMenu), so BACK has to close it —
+        // otherwise the only way out is picking an item.
+        if (webView instanceof ClawBenchWebView
+                && ((ClawBenchWebView) webView).dismissSelectionMenu()) {
+            return;
+        }
         // If in fullscreen video mode, exit fullscreen first
         if (customView != null) {
             WebChromeClient client = webView.getWebChromeClient();
@@ -2939,6 +2946,39 @@ public class MainActivity extends AppCompatActivity {
         @JavascriptInterface
         public void dismissSplash() {
             activity.runOnUiThread(() -> activity.dismissSplash());
+        }
+
+        /**
+         * Open the native text-selection menu for a double-tap.
+         *
+         * Called by the web app's double-click handler: on Android a double-tap
+         * must behave exactly like a long-press selection (one menu carrying
+         * Copy / 引用 / 讨论), not silently copy. The frontend has already put
+         * the double-tapped text into the DOM selection — that is what the quote
+         * path reads back — and passes the same text here for Copy.
+         *
+         * The rect is expressed as FRACTIONS of the viewport (0..1), not pixels:
+         * the web layer measures in CSS px, the native layer needs physical px,
+         * and only the native side knows the ratio between them
+         * (devicePixelRatio × the app's CSS zoom). Raw CSS px put the menu near
+         * the top of the screen instead of at the tapped text.
+         *
+         * Best-effort: no-op when the WebView isn't ready, mirroring
+         * dispatchSelectionAction.
+         */
+        @JavascriptInterface
+        public void showSelectionMenu(
+                final String text,
+                final float left, final float top,
+                final float right, final float bottom) {
+            final WebView view = activity.webView;
+            if (!(view instanceof ClawBenchWebView) || !activity.webViewConnected) {
+                return;
+            }
+            // No runOnUiThread here: ClawBenchWebView.showSelectionMenu posts to
+            // the UI thread itself (it is also reachable from tests/other
+            // callers). Adding a second hop would only delay the menu.
+            ((ClawBenchWebView) view).showSelectionMenu(text, left, top, right, bottom);
         }
 
         /**

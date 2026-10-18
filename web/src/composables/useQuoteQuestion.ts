@@ -1,14 +1,13 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useSessionIdentity, getSessionId, getSessionTitle } from '@/composables/useSessionIdentity.ts'
-import { useToast } from '@/composables/useToast.ts'
-import { gt } from '@/composables/useLocale'
 import { closestElement, getLineInfo, getFileInfo, getQuoteSource, messageIdFromKey } from '@/utils/quoteQuestionUtils.ts'
 import { buildMessageQuote } from '@/utils/quoteItem.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import type { QuoteData } from '@/composables/useChatContext.ts'
-import { requestTarget } from '@/composables/useConversationTarget.ts'
+import { requestTarget, mintPendingQuoteId } from '@/composables/useConversationTarget.ts'
 import type { PendingQuote } from '@/composables/useConversationTarget.ts'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
+import { openInertPathPicker } from '@/composables/useInertPathPicker.ts'
 import { appLog } from '@/utils/appLog'
 
 const TAG = 'QuoteQuestion'
@@ -23,14 +22,15 @@ const TAG = 'QuoteQuestion'
  * - `url` + `label`  — an external address (issue/PR), attached as a URL entry;
  * - `filePath`       — a local file, attached as a file entry.
  *
- * `onAdd` lets the caller navigate (e.g. switch to the chat tab) without this
- * composable knowing about tabs.
+ * There is no `onAdd` navigation callback any more: committing always goes
+ * through the session picker, whose "add and open" button is what reveals the
+ * chat panel. A caller-side "switch to chat" would fight that choice — the user
+ * may well have picked "add and stay".
  */
 export interface QuoteComposerContext {
   url?: string
   filePath?: string
   label: string
-  onAdd?: () => void
 }
 
 /**
@@ -50,8 +50,6 @@ export interface ComposerAttachment {
 const {
   quoteData,
   setQuoteData,
-  addStagedQuote,
-  clearAll,
 } = useChatContext()
 const barVisible = ref(false)
 const barPinned = ref(false)  // When pinned, selection loss won't auto-hide the bar
@@ -429,7 +427,6 @@ export function resetQuotePin() {
 }
 
 export function useQuoteQuestion() {
-  const toast = useToast()
   const sessionIdentity = useSessionIdentity()
 
   onMounted(() => {
@@ -569,11 +566,6 @@ export function useQuoteQuestion() {
     lastSelectionQuote.value = null
   }
 
-  /** A fresh id for a quote captured for deferred delivery. */
-  function mintPendingQuoteId(): string {
-    return `quote-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-  }
-
   /** Close the composer without touching unrelated staged quotes. */
   function hideComposer() {
     if (!composerContext.value) return
@@ -653,7 +645,7 @@ export function useQuoteQuestion() {
    * Called via window.__clawbenchSelectionAction (installed in App.vue).
    */
   function handleNativeSelectionAction(action: string) {
-    if (action !== 'quote' && action !== 'comment') {
+    if (action !== 'quote' && action !== 'comment' && action !== 'search-file') {
       appLog.w(TAG, 'native selection action: unknown action', action)
       return
     }
@@ -674,6 +666,19 @@ export function useQuoteQuestion() {
       return
     }
 
+    // "搜索文件" treats the selected TEXT as a path and opens the filename
+    // search drawer — the SAME drawer tapping a dashed (verified-missing) path
+    // opens — but available for any string, including one the renderer never
+    // annotated.
+    //
+    // It deliberately does NOT touch the quote state: no card is staged, the
+    // bar is not pinned, and the selection is not adopted as a quote. The user
+    // asked to navigate, not to quote.
+    if (action === 'search-file') {
+      openSelectionAsFile(data.text)
+      return
+    }
+
     // Adopt it as the active quote so both actions below see it. `quote` reads
     // quoteData; `comment` renders it in the expanded bar.
     setQuoteData(data)
@@ -683,8 +688,8 @@ export function useQuoteQuestion() {
     barPinned.value = true
 
     if (action === 'quote') {
-      // Same commit as tapping 引用 in the in-page toolbar: stage the card and
-      // dismiss. addToConversation handles the picker / toast.
+      // Same commit as tapping 引用 in the in-page toolbar: hand the card to the
+      // session picker and dismiss the bar.
       addToConversation('')
       return
     }
@@ -694,20 +699,81 @@ export function useQuoteQuestion() {
     expandRequest.value++
   }
 
+  /**
+   * Open the filename-search picker for the selected text.
+   *
+   * This is the "搜索文件" entry from the native selection menu, and it opens
+   * EXACTLY the same drawer as clicking a dashed (verified-missing) path:
+   * `InertPathPicker`. Delegating to `openInertPathPicker` is deliberate — that
+   * drawer already owns the candidate list, the line-range hand-off and the
+   * "open at line" behaviour, so re-implementing a picker here would guarantee
+   * the two entry points drift.
+   *
+   * The drawer searches by BASENAME (`deriveSearchQuery` strips the directory
+   * and any `:42` line suffix), which is what makes an arbitrary selected
+   * string work: a chat message often shows only a partial path, and the file
+   * usually lives under a different prefix.
+   */
+  function openSelectionAsFile(raw: string): void {
+    const candidate = pickPathLikeToken(raw)
+    if (!candidate) return
+    openInertPathPicker({ path: candidate })
+  }
+
+  /**
+   * Choose the most path-like token in a selection.
+   *
+   * A selection often carries surrounding prose ("see src/a.ts", "in
+   * `config.yaml`"). Taking the FIRST token would search for "see" — a word that
+   * matches hundreds of files. So prefer a token that looks like a path (a
+   * separator, an extension, or a dot-prefixed name), and fall back to the whole
+   * trimmed text only when no token looks like one (a bare filename such as
+   * "main" is still a legitimate query).
+   *
+   * Longest wins among path-like tokens: in "src/a.ts or src/b.ts" either is
+   * acceptable, but in "a and web/src/long/name.ts" the specific one is what the
+   * user pointed at.
+   */
+  function pickPathLikeToken(raw: string): string {
+    const text = raw.trim()
+    if (!text) return ''
+    // Strip wrapping punctuation a selection may carry: a leading backtick,
+    // quote, paren, bracket or brace, and a trailing one plus sentence
+    // punctuation ("see src/a.ts.").
+    const LEAD = /^[`'"([{]+/
+    const TRAIL = /[`'")},.;:\]]+$/
+    const tokens = text
+      .split(/\s+/)
+      .map(t => t.replace(LEAD, '').replace(TRAIL, ''))
+      .filter(Boolean)
+    if (tokens.length === 0) return ''
+    const pathLike = tokens.filter(t => /[/\\]/.test(t) || /\.[A-Za-z0-9]{1,10}$/.test(t))
+    if (pathLike.length === 0) return tokens[0]
+    return pathLike.reduce((a, b) => (b.length > a.length ? b : a))
+  }
+
   function addToConversation(note = '') {
+    // Normalise the annotation once, at capture. It used to be trimmed by
+    // addStagedQuote on the way into the draft; now the pending request is the
+    // intermediate representation, so trimming has to happen here or the
+    // picker would show (and deliver) surrounding whitespace.
+    const trimmedNote = note.trim()
     if (composerContext.value) {
       const ctx = composerContext.value
       // Build the card BEFORE clearing composerContext/quoteData — the builder
       // reads both (the target from ctx, any selection from quoteData), so
       // clearing first would silently produce no card at all.
-      const quote = buildComposerQuote(ctx, note)
+      const quote = buildComposerQuote(ctx, trimmedNote)
       if (!quote) return
-      const onAdd = ctx.onAdd
 
-      // Destination is only ambiguous when the chat panel is off screen: with
-      // it visible the user would just switch it, so we keep the old behavior
-      // of dropping the card straight into the current session's input.
-      const needsPicker = requestTarget({
+      // The user committed: the target becomes a quote card whose annotation is
+      // whatever they typed. Nothing is injected into the chat input and no
+      // separate attachment chip is created — this is the same "one card"
+      // interaction as quoting a selection.
+      //
+      // Destination is always the user's choice (the picker), so the card is
+      // NOT staged locally; confirmTarget does that for the session they pick.
+      requestTarget({
         mode: 'add',
         quotes: [{ ...quote, id: mintPendingQuoteId() }],
         attachments: [],
@@ -715,14 +781,6 @@ export function useQuoteQuestion() {
       })
 
       clearComposerState()
-      // The user committed: the target becomes a quote card whose annotation is
-      // whatever they typed. Nothing is injected into the chat input and no
-      // separate attachment chip is created — this is the same "one card"
-      // interaction as quoting a selection.
-      if (!needsPicker) {
-        addStagedQuote(quote, note)
-        onAdd?.()
-      }
       return
     }
 
@@ -731,9 +789,9 @@ export function useQuoteQuestion() {
     const sel = window.getSelection()
     if (sel) sel.removeAllRanges()
 
-    const needsPicker = requestTarget({
+    requestTarget({
       mode: 'add',
-      quotes: [{ ...quote, note, id: mintPendingQuoteId() }],
+      quotes: [{ ...quote, note: trimmedNote, id: mintPendingQuoteId() }],
       attachments: [],
       text: '',
     })
@@ -743,10 +801,6 @@ export function useQuoteQuestion() {
     barPinned.value = false
     anchorRect.value = null
     lastSelectionQuote.value = null
-    if (!needsPicker) {
-      addStagedQuote(quote, note)
-      toast.show(gt('quoteBar.addedToChat'), { icon: 'attach', type: 'success', duration: 1500 })
-    }
   }
 
   /**
@@ -757,6 +811,10 @@ export function useQuoteQuestion() {
    * The typed text stays the MESSAGE (it is the user's question); the quote
    * rides along as a card. Only the "+" button folds the text into the card as
    * an annotation — "send" means send now.
+   *
+   * The destination always comes from the picker, so nothing is sent from here:
+   * the payload is snapshotted into the request and `confirmTarget` performs the
+   * send for the session the user picks.
    */
   async function sendComposerMessage(userMessage: string) {
     const input = userMessage.trim()
@@ -765,49 +823,15 @@ export function useQuoteQuestion() {
     // "+" button is the way to stage the card and keep typing.)
     if (!input) return
 
-    // Capture animation coordinates BEFORE any await — the bar's handleSend()
-    // collapses synchronously right after emit('send').
-    const sendBtn = document.querySelector('.qq-send-btn')
-    const dockChatBtn = document.querySelector('.dock-center')?.querySelector('.dock-btn')
-    const animFrom = sendBtn?.getBoundingClientRect() ?? null
-    const animTo = dockChatBtn?.getBoundingClientRect() ?? null
-
     const ctx = composerContext.value
     // Build the card BEFORE clearing anything: the builder reads both
     // composerContext (the target) and quoteData (any selection), so clearing
-    // first would silently produce no card. The registered ChatPanel handler
-    // reads stagedQuotes synchronously before its first await, so the card must
-    // be in place before the send when we take the direct path.
+    // first would silently produce no card.
     const quote = buildComposerQuote(ctx, '')
     const pendingQuotes = quote ? [{ ...quote, id: mintPendingQuoteId() }] : []
-    const needsPicker = requestTarget({ mode: 'send', quotes: pendingQuotes, attachments: [], text: input })
 
+    requestTarget({ mode: 'send', quotes: pendingQuotes, attachments: [], text: input })
     clearComposerState()
-
-    // Destination ambiguous → the payload is now held by the picker; the user's
-    // choice performs the send. Nothing goes to the current session meanwhile.
-    if (needsPicker) return
-
-    if (quote) addStagedQuote(quote)
-
-    try {
-      const sendPromise = sessionIdentity.sendMessage(input)
-      // The registered ChatPanel handler captures the quotes synchronously
-      // before its first await, so the cards ride along; clear after.
-      clearAll()
-      await sendPromise
-      toast.show(gt('quoteBar.sentToSession'), { icon: 'success', type: 'success', duration: 2000 })
-      if (animFrom && animTo) {
-        window.dispatchEvent(new CustomEvent('quote-sent', {
-          detail: {
-            from: { x: animFrom.left + animFrom.width / 2, y: animFrom.top + animFrom.height / 2 },
-            to: { x: animTo.left + animTo.width / 2, y: animTo.top + animTo.height / 2 },
-          }
-        }))
-      }
-    } catch (err: unknown) {
-      toast.show(gt('quoteBar.sendFailed', { error: (err as Error).message }), { icon: 'warning', type: 'error' })
-    }
   }
 
   async function sendMessage(userMessage: string) {
@@ -816,62 +840,22 @@ export function useQuoteQuestion() {
 
     const q = quoteData.value
 
-    // Capture animation coordinates BEFORE any await — the bar's handleSend()
-    // sets expanded=false synchronously right after emit('send'), so the
-    // .qq-send-btn element will be removed from DOM on the next tick.
-    const sendBtn = document.querySelector('.qq-send-btn')
-    const dockChatBtn = document.querySelector('.dock-center')?.querySelector('.dock-btn')
-    const animFrom = sendBtn?.getBoundingClientRect() ?? null
-    const animTo = dockChatBtn?.getBoundingClientRect() ?? null
-
-    const needsPicker = requestTarget({
+    requestTarget({
       mode: 'send',
       quotes: [{ ...q, note: '', id: mintPendingQuoteId() }],
       attachments: [],
       text: userMessage.trim(),
     })
 
-    // Keep the staged quotes for ChatPanelContent to materialise into cards.
-    // They are deliberately NOT baked into the message text any more.
+    // The bar is dismissed so it cannot float above the picker (--z-quote-bar
+    // is above the dialog). The payload lives in the pending request now.
     barVisible.value = false
     barPinned.value = false
     setQuoteData(null)
     anchorRect.value = null
     lastSelectionQuote.value = null
-
-    if (needsPicker) {
-      const sel = window.getSelection()
-      if (sel) sel.removeAllRanges()
-      return
-    }
-
-    // Reuse the staging dedupe rule so reselecting an already staged range
-    // does not include the same quote twice in an immediate send.
-    addStagedQuote(q)
-
-    // Delegate to session identity singleton — it routes to ChatPanel's
-    // sendMessage if registered, otherwise falls back to a direct API call.
-    try {
-      const sendPromise = sessionIdentity.sendMessage(userMessage.trim())
-      // The registered ChatPanel handler captures the quotes synchronously
-      // before its first await. Clear this batch now so a later response cannot
-      // wipe the next set of quotes the user starts collecting while the
-      // request runs.
-      clearAll()
-      await sendPromise
-      toast.show(gt('quoteBar.sentToSession'), { icon: 'success', type: 'success', duration: 2000 })
-      // Dispatch animation event with pre-captured coordinates
-      if (animFrom && animTo) {
-        window.dispatchEvent(new CustomEvent('quote-sent', {
-          detail: {
-            from: { x: animFrom.left + animFrom.width / 2, y: animFrom.top + animFrom.height / 2 },
-            to: { x: animTo.left + animTo.width / 2, y: animTo.top + animTo.height / 2 },
-          }
-        }))
-      }
-    } catch (err: unknown) {
-      toast.show(gt('quoteBar.sendFailed', { error: (err as Error).message }), { icon: 'warning', type: 'error' })
-    }
+    const sel = window.getSelection()
+    if (sel) sel.removeAllRanges()
   }
 
   return {

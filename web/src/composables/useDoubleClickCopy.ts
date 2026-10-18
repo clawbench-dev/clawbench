@@ -47,15 +47,20 @@ export interface DoubleClickCopyOptions {
  */
 export function useDoubleClickCopy(options?: DoubleClickCopyOptions) {
     const toast = inject<ToastShow | null>('toast', null)
-    const { isTouchPrimary } = usePlatformDetect()
+    const { isTouchPrimary, isAndroidApp } = usePlatformDetect()
     let lastTarget: EventTarget | null = null
     let lastTime = 0
     const DBLCLICK_THRESHOLD = 300 // ms，与浏览器默认双击间隔一致
 
     /**
-     * 执行复制操作
+     * Resolve the element and text a double-tap should act on, or null.
+     *
+     * Split out from {@link doCopy} because the two delivery paths need the same
+     * resolution but do different things with it: the in-page path copies it
+     * (plus flash/toast/onCopy), the Android path hands it to the native
+     * selection menu.
      */
-    function doCopy(target: EventTarget | null): boolean {
+    function resolveTarget(target: EventTarget | null): { element: HTMLElement; text: string; isLineMode: boolean } | null {
         // Try line selector first (code view), then fall back to block selectors (markdown view)
         let element: HTMLElement | null = null
         let isLineMode = false
@@ -67,7 +72,7 @@ export function useDoubleClickCopy(options?: DoubleClickCopyOptions) {
             element = (target as HTMLElement | null)?.closest<HTMLElement>(BLOCK_SELECTORS) ?? null
             isLineMode = false
         }
-        if (!element) return false
+        if (!element) return null
 
         // 行级模式：只取 .code-text 的文本（不含行号）
         let text: string
@@ -77,7 +82,51 @@ export function useDoubleClickCopy(options?: DoubleClickCopyOptions) {
         } else {
             text = element.textContent?.trim() || ''
         }
-        if (!text) return false
+        if (!text) return null
+        return { element, text, isLineMode }
+    }
+
+    /**
+     * Put the resolved element's text into the document selection and return the
+     * selection's bounding rect (CSS px), or null when it cannot be measured.
+     *
+     * Android's native menu reads the selection through the SAME snapshot the
+     * long-press path uses (`useQuoteQuestion.evaluateSelection`), so the
+     * selection has to be real DOM state — the native side only knows the text
+     * it was handed for Copy.
+     *
+     * Line mode targets `.code-text` so a code line's gutter number is not
+     * included (the in-page path strips it the same way).
+     *
+     * The rect is what anchors the floating menu. It is measured from the RANGE
+     * (not the element) so it tracks the selected text; under the app's CSS
+     * `zoom` on <html> a range rect is already in visual CSS px, the same space
+     * as `MouseEvent.clientX/clientY`.
+     */
+    function selectResolved(element: HTMLElement, isLineMode: boolean): DOMRect | null {
+        const node = isLineMode
+            ? (element.querySelector('.code-text') as HTMLElement | null) ?? element
+            : element
+        const sel = window.getSelection()
+        if (!sel) return null
+        const range = document.createRange()
+        range.selectNodeContents(node)
+        sel.removeAllRanges()
+        sel.addRange(range)
+        try {
+            return range.getBoundingClientRect()
+        } catch {
+            return null
+        }
+    }
+
+    /**
+     * 执行复制操作
+     */
+    function doCopy(target: EventTarget | null): boolean {
+        const resolved = resolveTarget(target)
+        if (!resolved) return false
+        const { element, text } = resolved
 
         copyText(text, () => {
             // 触发闪烁动画
@@ -94,6 +143,59 @@ export function useDoubleClickCopy(options?: DoubleClickCopyOptions) {
             options.onCopy(target, text)
         }
 
+        return true
+    }
+
+    /**
+     * Android delivery: select the resolved text and open the NATIVE selection
+     * menu (Copy / 引用 / 讨论) instead of copying outright.
+     *
+     * This is what makes the double-tap behave exactly like a long-press
+     * selection — one menu, one set of actions. The in-page copy + toast and the
+     * in-page floating bar are deliberately NOT used here (issue: "移动端双击
+     * 复制功能也改成弹出原生上下文菜单"). Quote/Discuss come back through
+     * `window.__clawbenchSelectionAction`, which reads the selection we just
+     * made (see useQuoteQuestion.handleNativeSelectionAction).
+     *
+     * Coordinates are sent as FRACTIONS of the viewport, not pixels. The web
+     * layer knows the size in CSS px and the native layer knows it in physical
+     * px, and the ratio between the two (devicePixelRatio × the app's CSS `zoom`
+     * on <html>) is exactly what neither side can determine alone. Passing raw
+     * CSS px made the menu land far above the text on a real phone: y=700 CSS px
+     * was read as 700 physical px, i.e. ~29% down the screen instead of ~76%.
+     * A fraction is immune to that, and to the UI-scale setting.
+     *
+     * Returns false when the bridge is missing (e.g. an older APK), so the
+     * caller can fall back to the in-page copy rather than doing nothing.
+     */
+    function openNativeSelectionMenu(target: EventTarget | null, event: MouseEvent): boolean {
+        const resolved = resolveTarget(target)
+        if (!resolved) return false
+
+        const native = (window as unknown as {
+            ClawBenchNative?: {
+                showSelectionMenu?: (
+                    text: string,
+                    left: number, top: number, right: number, bottom: number,
+                ) => void
+            }
+        }).ClawBenchNative
+        if (!native?.showSelectionMenu) return false
+
+        const rect = selectResolved(resolved.element, resolved.isLineMode)
+        const vw = window.innerWidth || 1
+        const vh = window.innerHeight || 1
+        // Fall back to the tap point when the range could not be measured.
+        const left = rect ? rect.left : event.clientX
+        const top = rect ? rect.top : event.clientY
+        const right = rect ? rect.right : event.clientX
+        const bottom = rect ? rect.bottom : event.clientY
+
+        const frac = (v: number, span: number) => Math.min(Math.max(v / span, 0), 1)
+        native.showSelectionMenu(
+            resolved.text,
+            frac(left, vw), frac(top, vh), frac(right, vw), frac(bottom, vh),
+        )
         return true
     }
 
@@ -218,6 +320,9 @@ export function useDoubleClickCopy(options?: DoubleClickCopyOptions) {
      *
      * PC 模式下禁用"双击复制段落"（markdown 预览的段落/代码行复制），
      * 但仍保留文件路径/锚点链接的处理。
+     *
+     * On Android the double-tap opens the NATIVE selection menu instead of
+     * copying (see openNativeSelectionMenu); everywhere else it copies in-page.
      */
     function handleDblClick(event: MouseEvent, onOpenFile?: LinkHandler): void {
         // 首先检查是否点击了链接
@@ -239,6 +344,13 @@ export function useDoubleClickCopy(options?: DoubleClickCopyOptions) {
             // 清除状态，防止连续触发
             lastTarget = null
             lastTime = 0
+
+            // Android: hand off to the native selection menu so a double-tap and
+            // a long-press produce the SAME menu (Copy / 引用 / 讨论). Falls back
+            // to the in-page copy when the bridge is absent (older APK).
+            if (isAndroidApp.value && openNativeSelectionMenu(target, event)) {
+                return
+            }
 
             // 执行复制
             doCopy(target)

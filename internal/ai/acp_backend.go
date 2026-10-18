@@ -116,6 +116,23 @@ func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 			// ACP connection failed — surface the error directly.
 			// Do NOT fall back to CLI backend: the user chose ACP transport
 			// and silent fallback hides real problems (e.g., NewSession timeout).
+			if authErr := asACPAuthRequired(err); authErr != nil {
+				// Some agents gate session creation on a signed-in account and
+				// answer with a non-standard JSON-RPC code (Command Code uses
+				// -32000 AUTH_REQUIRED). The raw SDK blob is unreadable and does
+				// not tell the user what to do, so translate it into the login
+				// instruction the agent's own docs give.
+				slog.Warn("acp: agent requires login",
+					"agent_id", b.agent.ID, "code", authErr.Code, "error", err)
+				forwardACPEvent(ch, StreamEvent{
+					Type:        "error",
+					Error:       acpAuthRequiredMessage(b.agent, authErr),
+					Reason:      ReasonAuthRequired,
+					ErrorCode:   authErr.Code,
+					ErrorSource: "agent",
+				})
+				return
+			}
 			slog.Error("acp: connection failed", "agent_id", b.agent.ID, "error", err)
 			forwardACPEvent(ch, StreamEvent{Type: "error", Error: fmt.Sprintf("acp: connection: %v", err), Reason: ReasonBackendExit})
 			return
@@ -440,3 +457,48 @@ func acpErrorDetails(err error) (code int, httpStatus int) {
 
 // Ensure compile-time interface compliance
 var _ AIBackend = (*ACPBackend)(nil)
+
+// acpAuthRequiredCode is ACP's AuthenticationRequired error code. It sits in
+// the -32000..-32099 range the ACP schema reserves for protocol-level errors
+// (below JSON-RPC's own -32700..-32603), and the SDK exposes it as
+// acp.NewAuthRequired. Command Code returns it from session/new when no account
+// credential is present (cli.mjs hn.AUTH_REQUIRED = -32000).
+const acpAuthRequiredCode = -32000
+
+// asACPAuthRequired returns the underlying JSON-RPC error when err reports
+// "authentication required", or nil.
+//
+// The error reaching here has been wrapped several times by the connection
+// layer ("acp: session/new: {...}"), so this uses errors.As rather than a string
+// match — the code is the only stable signal (the message text is the agent's
+// own wording and may change).
+func asACPAuthRequired(err error) *acp.RequestError {
+	var reqErr *acp.RequestError
+	if errors.As(err, &reqErr) && reqErr.Code == acpAuthRequiredCode {
+		return reqErr
+	}
+	return nil
+}
+
+// acpAuthRequiredMessage renders the user-facing login instruction for an agent
+// that refused the session because nobody is signed in.
+//
+// The command comes from the backend spec so the message names the real binary
+// (e.g. `cmdc login`). Agents that do not declare LoginCmd fall back to a
+// generic instruction plus the agent's own message, which is still far more
+// useful than the raw JSON-RPC blob.
+func acpAuthRequiredMessage(agent *model.Agent, reqErr *acp.RequestError) string {
+	loc := i18n.LocalizerForLocale(model.Language)
+	command := ""
+	if spec := model.FindSpecByBackend(agent.Backend); spec != nil {
+		command = spec.LoginCmd
+	}
+	if command == "" {
+		// No declared login command: keep the agent's own wording, which usually
+		// names its CLI ("Run `cmd login` in a terminal first."). Joined with a
+		// space rather than ":" or "()": both halves are already complete
+		// sentences ending in a period, so any extra separator double-punctuates.
+		return fmt.Sprintf("%s %s", i18n.T(loc, "ACPAuthRequiredGeneric"), reqErr.Message)
+	}
+	return i18n.T(loc, "ACPAuthRequired", map[string]interface{}{"Command": command})
+}

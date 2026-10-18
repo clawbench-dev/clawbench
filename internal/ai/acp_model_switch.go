@@ -157,6 +157,9 @@ func (c *ACPConn) applyModelSelection(ctx context.Context, acpSID, value string)
 	if value == "" {
 		return nil
 	}
+	if c.keepUnlistedModel(value) {
+		return nil
+	}
 	if method := c.modelSwitchMethodFor(); method != "" {
 		return c.applyModelViaSetModel(ctx, acpSID, method, value)
 	}
@@ -165,6 +168,44 @@ func (c *ACPConn) applyModelSelection(ctx context.Context, acpSID, value string)
 		value:    value,
 		label:    "model",
 	})
+}
+
+// keepUnlistedModel reports whether value must be left alone because it is a
+// deliberate pin the agent's advertised list cannot express.
+//
+// The agent's model list is authoritative for what it can run through ACP, but
+// it is NOT the set of values a session may legitimately be pinned to. Command
+// Code with a BYOK provider is the concrete case: the provider and model live in
+// ~/.commandcode/config.json, and availableModels() always returns the vendor
+// catalog, so "minimax/minimax-m2.7" is absent from all 92 advertised options.
+// Pushing an advertised model over that binding does not "switch models" — it
+// silently reroutes the next request to the vendor gateway, which rejects the
+// BYOK placeholder key with `POST /alpha/generate → 401`.
+//
+// The rule is therefore "never overwrite a selection the agent did not offer",
+// which is safe for every backend: a value absent from the list either came from
+// out-of-band configuration (leave it) or is stale (the next explicit user
+// selection will replace it, and that value WILL be in the list).
+//
+// Unknown list (capabilities not extracted yet) returns false so the first turn
+// still applies the stored selection — refusing there would skip the switch for
+// every backend on every new session.
+func (c *ACPConn) keepUnlistedModel(value string) bool {
+	agentID := c.AgentID()
+	if agentID == "" {
+		return false
+	}
+	reg := GetAgentCapabilityRegistry()
+	if !reg.HasModelList(agentID) {
+		return false
+	}
+	if reg.IsModelAvailable(agentID, value) {
+		return false
+	}
+	slog.Info("acp conn: keeping model not offered by the agent (out-of-band pin)",
+		"agent_id", agentID, "model", value,
+		"clawbench_sid", c.clawbenchSID)
+	return true
 }
 
 // applyModelViaSetModel sends the model switch over the raw JSON-RPC channel.
@@ -241,6 +282,13 @@ func (c *ACPConn) applyModelViaSetModel(ctx context.Context, acpSID, method, val
 // already does its own unlock, so it is called as-is.
 func (c *ACPConn) reapplyModelSelection(ctx context.Context, acpSID, value string) {
 	if value == "" || !c.alive || !c.isAliveLocked() {
+		return
+	}
+	// Same rule as applyModelSelection: a value the agent never offered is an
+	// out-of-band pin (BYOK), and replaying it over the agent's own list would
+	// reroute the next turn. Safe under c.mu — keepUnlistedModel only takes the
+	// leaf stateMu.
+	if c.keepUnlistedModel(value) {
 		return
 	}
 	method := c.modelSwitchMethodFor()

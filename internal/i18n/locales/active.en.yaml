@@ -217,6 +217,8 @@ RAGSegmenterUnavailable: "Rebuild refused: the text segmenter is unavailable. Re
 RAGRebuildAccepted: Rebuild started in the background
 AutoContinue: Continue
 ACPSessionRecoveredNew: ACP session could not be restored; started a new session (the previous conversation context was lost).
+ACPAuthRequired: 'The agent is not signed in. Run `{{.Command}}` in a terminal once, then retry.'
+ACPAuthRequiredGeneric: 'The agent is not signed in; sign in with its CLI in a terminal once, then retry.'
 GroupYourTurn: "It's your turn to speak"
 GroupDiscussionLimitReached: "The agents reached the discussion limit"
 GroupCruiseConfirming: "Auto-cruise: checking with the members whether the task is complete"

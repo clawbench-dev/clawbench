@@ -43,3 +43,7 @@
 /* ---- Cursor: dark logo — invisible on dark bg ---- */
 .mono-cursor { color: #1A1A1A; }
 [data-theme-base="dark"] .mono-cursor { color: #e6edf3; }
+
+/* ---- Command Code: dark mark — invisible on dark bg ---- */
+.mono-commandcode { color: #1A1A1A; }
+[data-theme-base="dark"] .mono-commandcode { color: #e6edf3; }

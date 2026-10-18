@@ -172,6 +172,8 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		"GroupHostTitle",
 		"GroupFreeTitle",
 		"ACPSessionRecoveredNew",
+		"ACPAuthRequired",
+		"ACPAuthRequiredGeneric",
 		"EventContextHeader",
 		"EventContextSeparator",
 		"EventContextYes",
@@ -301,6 +303,10 @@ func TestPushTemplatesKeepPlaceholders(t *testing.T) {
 		"PushMultipleSessions":         {"ID": "abc"},
 		"PushSessionNotFound":          {"ID": "abc"},
 		"PushRecentSessionUnavailable": {"Error": "boom"},
+		// Reached from the ACP connection-error path (background goroutine, no
+		// request to fall back on). A missing placeholder here would ship
+		// "Run `` in a terminal" to the user, so it is pinned with the rest.
+		"ACPAuthRequired": {"Command": "cmdc login"},
 	}
 	for key, data := range withData {
 		for _, loc := range []string{"en", "zh"} {

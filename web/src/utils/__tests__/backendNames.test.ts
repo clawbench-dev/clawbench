@@ -11,6 +11,7 @@ describe('getBackendDisplayName', () => {
     expect(getBackendDisplayName('vecli')).toBe('VeCLI')
     expect(getBackendDisplayName('hermes')).toBe('Hermes Agent')
     expect(getBackendDisplayName('cursor')).toBe('Cursor')
+    expect(getBackendDisplayName('commandcode')).toBe('Command Code')
   })
 
   it('falls back to the backend id for unknown backends', () => {

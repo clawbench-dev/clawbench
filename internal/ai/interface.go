@@ -143,6 +143,17 @@ const (
 	// agent blocked on the network. It is deliberately not retried, since the
 	// identical handshake would just time out again.
 	ReasonAgentInitTimeout = "agent_init_timeout"
+	// ReasonAuthRequired means the agent refused to start a session because
+	// nobody is signed in (ACP JSON-RPC -32000 AuthenticationRequired, e.g.
+	// Command Code's "Not authenticated. Run `cmd login`").
+	//
+	// Deliberately NOT retryable: no amount of retrying signs the user in. It is
+	// a separate reason from ReasonRequestFailed for exactly the reason
+	// ReasonAgentInitTimeout is separate — auto-continue treats request_failed as
+	// a transient backend hiccup and would otherwise re-prompt three times,
+	// writing a spurious user+assistant row pair each time for a failure that can
+	// only be fixed in a terminal.
+	ReasonAuthRequired = "auth_required"
 )
 
 // SelectOptionDef describes a single selectable option (e.g., mode, thinking effort level).

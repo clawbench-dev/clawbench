@@ -551,6 +551,45 @@ describe('external links open in a new tab (browser mode)', () => {
   })
 })
 
+describe('bare (schemeless) URLs are linked before file-path annotation', () => {
+  const pathsOf = (html: string) => {
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    return Array.from(doc.querySelectorAll('.chat-file-path')).map(el => el.getAttribute('data-file-path'))
+  }
+  const anchorsOf = (html: string) =>
+    Array.from(new DOMParser().parseFromString(html, 'text/html').querySelectorAll('a'))
+
+  it('turns a schemeless domain into a link, not a dead file chip', () => {
+    // Before this step the file-path annotator claimed the tail after the dot,
+    // rendering `com/foo/bar` — a chip that can never resolve.
+    const html = renderMarkdownHtml('见 github.com/foo/bar 仓库')
+    expect(pathsOf(html)).toEqual([])
+    const [a] = anchorsOf(html)
+    expect(a.getAttribute('href')).toBe('https://github.com/foo/bar')
+    expect(a.getAttribute('target')).toBe('_blank')
+  })
+
+  it('leaves a filename with no path alone (build.sh)', () => {
+    // `sh` is a TLD too, so the path requirement is what protects real files.
+    const html = renderMarkdownHtml('跑 build.sh 脚本')
+    expect(anchorsOf(html)).toHaveLength(0)
+  })
+
+  it('leaves real project paths alone', () => {
+    const html = renderMarkdownHtml('见 internal/ai/factory_test.go 与 tts/compose.sh')
+    expect(pathsOf(html).sort()).toEqual(['internal/ai/factory_test.go', 'tts/compose.sh'])
+  })
+
+  it('applies in the file-preview pipeline too', () => {
+    const { html, detectedPaths } = buildMarkdownPreviewDom(
+      { content: '见 github.com/foo/bar 仓库', path: 'docs/README.md', projectRoot: '/proj' },
+      { isWideScreen: true, imageTimestamp: 1 }
+    )
+    expect(detectedPaths).toEqual([])
+    expect(anchorsOf(html)[0].getAttribute('href')).toBe('https://github.com/foo/bar')
+  })
+})
+
 // --- SVG media in the file preview: inline <svg> is lifted into a figure ---
 
 describe('inline svg in file previews is lifted into a media figure', () => {

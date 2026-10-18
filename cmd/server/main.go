@@ -29,6 +29,7 @@ import (
 	_ "clawbench/internal/ai/backends/claude"
 	_ "clawbench/internal/ai/backends/codebuddy"
 	_ "clawbench/internal/ai/backends/codex"
+	_ "clawbench/internal/ai/backends/commandcode"
 	_ "clawbench/internal/ai/backends/copilot"
 	_ "clawbench/internal/ai/backends/cursor"
 	_ "clawbench/internal/ai/backends/deepseek"

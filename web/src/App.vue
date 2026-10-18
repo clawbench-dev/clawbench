@@ -413,8 +413,9 @@
         @unpin="quoteQuestion.unpinBar()"
       />
 
-      <!-- Conversation picker: shown only when the chat panel is off screen, so
-           the destination of a quote/attachment is ambiguous. -->
+      <!-- Conversation picker: the destination for every quote / attachment,
+           opened from any screen (including the chat's own message list, so a
+           message can be quoted into a different conversation). -->
       <SessionPickerDialog
         :open="sessionPickerOpen"
         @select="confirmTarget({ kind: 'session', id: $event })"
@@ -615,7 +616,7 @@ import TaskTab from '@/components/task/TaskTab.vue'
 import NotificationsPanelContent from '@/components/notifications/NotificationsPanelContent.vue'
 import StatsTabHost from '@/components/stats/StatsTabHost.vue'
 import { useQuoteQuestion } from './composables/useQuoteQuestion.ts'
-import { setActiveTabGetter, setOpenSessionHandler, usePendingTarget, confirmTarget, cancelTarget } from './composables/useConversationTarget.ts'
+import { setOpenSessionHandler, usePendingTarget, confirmTarget, cancelTarget } from './composables/useConversationTarget.ts'
 import SessionPickerDialog from './components/common/SessionPickerDialog.vue'
 import { useTaskTab, registerSwitchTab, onTaskEvent } from '@/composables/useTaskTab.ts'
 import { useTabDrawer, onTabSwitch, resetTabDrawerState } from '@/composables/useTabDrawer.ts'
@@ -2028,10 +2029,6 @@ const quoteQuestion = useQuoteQuestion()
 if (!installQuoteSelectionBridge(quoteQuestion)) {
   appLog.w('App', 'quote selection bridge already installed')
 }
-// The conversation picker decides whether to pop by asking "can the user see
-// the chat panel?". `activeTab` lives here (not in the layout module), so
-// inject a getter once rather than coupling the dispatcher to App state.
-setActiveTabGetter(() => activeTab.value)
 // "Add and open" needs to reveal the chat panel, which is a tab switch only
 // App owns — switchSession alone would change the session behind another tab.
 setOpenSessionHandler((sessionId) => {
@@ -2277,7 +2274,6 @@ function registerAppEventListeners() {
   window.addEventListener('close-file-overlay', handleOverlayClose)
   window.addEventListener('open-port-forward-settings', handleOpenPortForwardSettings)
   window.addEventListener('navigate-to-commit', handleNavigateToCommit)
-  window.addEventListener('quote-sent', playQuoteEmitAnimation)
   window.addEventListener('attach-to-chat', playQuoteEmitAnimation)
   window.addEventListener('clawbench-open-session', handleOpenSession)
   window.addEventListener('clawbench-open-task', handleOpenTask)
@@ -3006,10 +3002,10 @@ const { platform: forgePlatform, refresh: refreshForgePlatform } = useForgeBindi
 // "Quote in chat" from the issue/PR detail header. Opens the shared quote bar in
 // composer mode: the issue/PR URL is previewed as a chip in the bar and NO body
 // text is quoted by default — the user selects the part they care about, then
-// types their message. The attachment only reaches the chat input when the user
+// types their message. The attachment only reaches a chat input when the user
 // commits (send / add), so dismissing the bar leaves the input untouched.
-// The bar is global (position: fixed), so no tab switch is needed on open; the
-// add path switches to chat via onAdd.
+// The bar is global (position: fixed), so no tab switch is needed on open;
+// committing goes through the session picker, whose "add and open" reveals chat.
 function handleForgeQuote(payload: { item?: { url?: string; slug?: string; number?: number; label?: string } } | null) {
   const it = payload?.item
   if (!it) return
@@ -3018,7 +3014,6 @@ function handleForgeQuote(payload: { item?: { url?: string; slug?: string; numbe
     // A pipeline run has no issue/PR number, so its caller supplies a label
     // that names the run; otherwise `slug#number` would read like a PR number.
     label: it.label ?? `${it.slug}#${it.number}`,
-    onAdd: () => switchTab('chat'),
   })
 }
 
@@ -3031,7 +3026,6 @@ function handleFileQuoteInChat(path: string) {
   quoteQuestion.openComposer({
     filePath: path,
     label: baseName(path),
-    onAdd: () => switchTab('chat'),
   })
 }
 const { uploadAndAttach, leaveInputDraft } = useFileUpload()
@@ -3977,7 +3971,6 @@ onUnmounted(() => {
     window.removeEventListener('close-file-overlay', handleOverlayClose)
     window.removeEventListener('open-port-forward-settings', handleOpenPortForwardSettings)
     window.removeEventListener('navigate-to-commit', handleNavigateToCommit)
-    window.removeEventListener('quote-sent', playQuoteEmitAnimation)
     window.removeEventListener('attach-to-chat', playQuoteEmitAnimation)
     window.removeEventListener('clawbench-open-session', handleOpenSession)
     window.removeEventListener('clawbench-open-task', handleOpenTask)

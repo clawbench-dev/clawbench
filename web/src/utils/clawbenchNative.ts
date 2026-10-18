@@ -56,6 +56,22 @@ export interface ClawBenchNative {
   /** Dismiss the host splash overlay once the app is ready (Android and desktop). */
   dismissSplash(): void
   /**
+   * Open the native text-selection menu for a double-tap (Android only).
+   *
+   * The frontend has already made the DOM selection; `text` is the same content
+   * for the native Copy item. The rect is expressed as FRACTIONS of the viewport
+   * (0..1), not pixels: the web layer measures in CSS px while the native layer
+   * needs physical px, and only the native side knows the true ratio
+   * (devicePixelRatio × the app's CSS zoom). Sending px anchored the menu in the
+   * wrong place on real devices.
+   *
+   * Optional so an older APK (no bridge method) degrades to the in-page copy.
+   */
+  showSelectionMenu?(
+    text: string,
+    left: number, top: number, right: number, bottom: number,
+  ): void
+  /**
    * Abort a connection attempt from the host splash overlay's cancel button
    * (desktop only; absent on Android, whose splash cancels natively).
    */

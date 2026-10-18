@@ -4,12 +4,18 @@ import { createI18n } from 'vue-i18n'
 import MarkdownPreviewBody from '@/components/file/MarkdownPreviewBody.vue'
 import { ATTACH_DRAG_MIME } from '@/utils/attachDrag'
 import { useChatContext } from '@/composables/useChatContext'
+import { cancelTarget, usePendingTarget } from '@/composables/useConversationTarget.ts'
 
 const { attachedFiles, clearAll, addAttachedFile } = useChatContext()
 
 /** Seed an attached file so the toggle-off path can be exercised. */
 function addTestAttachment(path: string) {
   addAttachedFile(path)
+}
+
+/** The payload the session picker was opened with (the add destination). */
+function pendingAttachments() {
+  return usePendingTarget().pending.value?.attachments ?? []
 }
 
 const i18n = createI18n({
@@ -72,6 +78,7 @@ describe('MarkdownPreviewBody.vue', () => {
   // tests in this file or into sibling files sharing the same worker.
   afterEach(() => {
     clearAll()
+    cancelTarget()
   })
 
   it('renders the markdown HTML inside .markdown-body > .markdown-content', () => {
@@ -217,20 +224,28 @@ describe('MarkdownPreviewBody.vue', () => {
     expect(dataTransfer.setData).not.toHaveBeenCalled()
   })
 
-  it('attaches a local image when its header attach button is tapped', async () => {
+  it('opens the session picker with the local image when its attach button is tapped', async () => {
+    // The destination is always the user's choice: the badge must NOT stage the
+    // file locally, it must hand the payload to the picker instead.
     const { wrapper } = mountBody({
       renderedHtml: '<div class="image-block-wrapper"><span class="lightbox-img-wrap"><img class="lightbox-img" src="/api/fs/raw/docs/a.png?t=1" data-attach-src="docs/a.png"></span><button class="image-block-attach-btn" type="button"></button></div>',
     })
     await wrapper.find('.image-block-attach-btn').trigger('click')
-    expect(attachedFiles.value).toEqual([{ path: 'docs/a.png', isDir: false }])
+    expect(usePendingTarget().pickerOpen.value).toBe(true)
+    expect(pendingAttachments()).toEqual([{ path: 'docs/a.png', isDir: false }])
+    // Nothing attached yet — confirmTarget attaches for the picked session.
+    expect(attachedFiles.value).toEqual([])
   })
 
-  it('removes a local image from attachments when its header attach button is tapped again', async () => {
+  it('removes a local image from attachments when its attach button is tapped again', async () => {
     addTestAttachment('docs/a.png')
     const { wrapper } = mountBody({
       renderedHtml: '<div class="image-block-wrapper"><span class="lightbox-img-wrap"><img class="lightbox-img" src="/api/fs/raw/docs/a.png?t=1" data-attach-src="docs/a.png"></span><button class="image-block-attach-btn" type="button"></button></div>',
     })
     await wrapper.find('.image-block-attach-btn').trigger('click')
+    // Removal is the one immediate direction (there is nothing to route): the
+    // picker must stay closed and the attachment must be gone.
+    expect(usePendingTarget().pickerOpen.value).toBe(false)
     expect(attachedFiles.value).toEqual([])
   })
 
@@ -251,7 +266,7 @@ describe('MarkdownPreviewBody.vue', () => {
     expect(attachedFiles.value).toEqual([])
   })
 
-  it('attaches a markdown line range when a mermaid attach badge is tapped', async () => {
+  it('routes a mermaid line range through the session picker', async () => {
     addTestAttachment('docs/guide.md')
     const { wrapper } = mountBody({
       renderedHtml: '<div class="markdown-content"><div class="mermaid" data-source-line="5" data-mermaid="graph TD; A-->B"><svg></svg><span class="mermaid-attach-badge"><svg></svg></span></div></div>',
@@ -264,16 +279,23 @@ describe('MarkdownPreviewBody.vue', () => {
     const badge = body.find('.mermaid-attach-badge')
     expect(badge.exists()).toBe(true)
     await badge.trigger('click')
-    // docs/guide.md was already attached whole → adding a range keeps both.
-    const entry = attachedFiles.value.find(f => f.startLine === 5)
-    expect(entry).toEqual({ path: 'docs/guide.md', isDir: false, startLine: 5, endLine: 7 })
-    // Tapping again removes only that range.
+    // docs/guide.md is already attached whole; the new range goes to the picker
+    // (add is always routed), leaving the existing whole-file entry untouched.
+    expect(usePendingTarget().pickerOpen.value).toBe(true)
+    expect(pendingAttachments()).toEqual([
+      { path: 'docs/guide.md', isDir: false, startLine: 5, endLine: 7 },
+    ])
+    expect(attachedFiles.value).toEqual([{ path: 'docs/guide.md', isDir: false }])
+    // Tapping again re-opens the picker: the range was never attached (the add
+    // direction only stages on confirm), so there is nothing to toggle off.
+    cancelTarget()
     await badge.trigger('click')
+    expect(usePendingTarget().pickerOpen.value).toBe(true)
     expect(attachedFiles.value.some(f => f.startLine === 5)).toBe(false)
     expect(attachedFiles.value.some(f => f.path === 'docs/guide.md' && f.startLine === undefined)).toBe(true)
   })
 
-  it('attaches the authoritative range when the rendered container carries data-source-end', async () => {
+  it('stamps the authoritative range when the rendered container carries data-source-end', async () => {
     addTestAttachment('docs/guide.md')
     const { wrapper } = mountBody({
       // Real render pipeline output: the mermaid div carries the closing-fence
@@ -284,34 +306,43 @@ describe('MarkdownPreviewBody.vue', () => {
     const badge = wrapper.find('.mermaid-attach-badge')
     expect(badge.exists()).toBe(true)
     await badge.trigger('click')
-    const entry = attachedFiles.value.find(f => f.startLine === 5)
-    expect(entry).toEqual({ path: 'docs/guide.md', isDir: false, startLine: 5, endLine: 9 })
+    expect(pendingAttachments()).toEqual([
+      { path: 'docs/guide.md', isDir: false, startLine: 5, endLine: 9 },
+    ])
   })
 
-  it('attaches a code block md line range when its header attach button is tapped', async () => {
+  it('routes a code block md line range through the session picker', async () => {
     const { wrapper } = mountBody({
       renderedHtml: '<div class="markdown-content"><div class="code-block-wrapper"><div class="code-block-header"><span class="code-block-header-actions"><button class="code-block-attach-btn" data-action="attach"></button></span></div><pre data-source-line="9" data-source-end="12"><code>const a=1</code></pre></div></div>',
     })
     const btn = wrapper.find('.code-block-attach-btn')
     expect(btn.exists()).toBe(true)
     await btn.trigger('click')
-    const entry = attachedFiles.value.find(f => f.startLine === 9)
-    expect(entry).toEqual({ path: 'docs/guide.md', isDir: false, startLine: 9, endLine: 12 })
-    // Tapping again removes only that range.
+    expect(usePendingTarget().pickerOpen.value).toBe(true)
+    expect(pendingAttachments()).toEqual([
+      { path: 'docs/guide.md', isDir: false, startLine: 9, endLine: 12 },
+    ])
+    // Same as above: nothing was attached, so a second tap re-opens the picker
+    // rather than toggling a range off.
+    cancelTarget()
     await btn.trigger('click')
+    expect(usePendingTarget().pickerOpen.value).toBe(true)
     expect(attachedFiles.value.some(f => f.startLine === 9)).toBe(false)
   })
 
-  it('attaches a table md line range when its header attach button is tapped', async () => {
+  it('routes a table md line range through the session picker', async () => {
     const { wrapper } = mountBody({
       renderedHtml: '<div class="markdown-content"><div class="table-block-wrapper"><div class="table-block-header"><span class="table-block-header-actions"><button class="table-block-attach-btn" data-action="attach"></button></span></div><div class="table-wrap"><table data-source-line="15" data-source-end="18"><tr><td>1</td></tr></table></div></div></div>',
     })
     const btn = wrapper.find('.table-block-attach-btn')
     expect(btn.exists()).toBe(true)
     await btn.trigger('click')
-    const entry = attachedFiles.value.find(f => f.startLine === 15)
-    expect(entry).toEqual({ path: 'docs/guide.md', isDir: false, startLine: 15, endLine: 18 })
+    expect(pendingAttachments()).toEqual([
+      { path: 'docs/guide.md', isDir: false, startLine: 15, endLine: 18 },
+    ])
+    cancelTarget()
     await btn.trigger('click')
+    expect(usePendingTarget().pickerOpen.value).toBe(true)
     expect(attachedFiles.value.some(f => f.startLine === 15)).toBe(false)
   })
 

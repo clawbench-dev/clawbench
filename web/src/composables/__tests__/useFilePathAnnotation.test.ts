@@ -866,6 +866,271 @@ describe('annotateFilePaths', () => {
     expect(result.detectedPaths).not.toContain('src/main.go')
   })
 
+  // ── Non-file URI schemes ──
+  //
+  // The <a href> step used to skip only a fixed allow-list
+  // (`https?:|//|mailto:|tel:|#`), so any other scheme fell through and was
+  // resolved as a relative path: the `/` in `ftp://` read as a path separator
+  // and `ftp://example.com/a/b` rendered a dead `ftp:/example.com/a/b` chip
+  // (the doubled slash collapsed to one).
+  describe('non-file URI schemes', () => {
+    it('does not annotate <a href> with a non-http(s) scheme', () => {
+      for (const href of [
+        'ftp://example.com/a/b',
+        'ssh://host/path',
+        'ws://host/socket',
+        'data:text/plain,hello',
+        'javascript:alert(1)',
+      ]) {
+        const result = annotateFilePaths(`<p><a href="${href}">x</a></p>`, { projectRoot })
+        expect(result.detectedPaths, href).toHaveLength(0)
+      }
+    })
+
+    it('does not annotate a bare non-http(s) scheme in text or <code>', () => {
+      for (const token of ['ftp://example.com/a/b', 'ssh://host/path', 'data:text/plain,x']) {
+        expect(annotateFilePaths(`<p>see ${token} now</p>`, { projectRoot }).detectedPaths, token).toHaveLength(0)
+        expect(annotateFilePaths(`<p><code>${token}</code></p>`, { projectRoot }).detectedPaths, token).toHaveLength(0)
+      }
+    })
+
+    it('still annotates file:// and Windows drive paths', () => {
+      // `file:` is a real file reference (parseFileUri strips it), and a drive
+      // letter is syntactically a one-letter scheme — both must survive.
+      expect(annotateFilePaths('<p><a href="file:///tmp/x/y.go">x</a></p>', { projectRoot }).detectedPaths)
+        .toContain('/tmp/x/y.go')
+      expect(annotateFilePaths('<p><a href="file://host/tmp/x.go">x</a></p>', { projectRoot }).detectedPaths)
+        .toContain('/tmp/x.go')
+      for (const drive of ['E:/git/x/y.go', 'C:/Users/a/b.md', 'e:/git/x/y.go']) {
+        expect(annotateFilePaths(`<p><a href="${drive}">x</a></p>`, { projectRoot }).detectedPaths, drive)
+          .toContain(drive)
+      }
+    })
+  })
+
+  // ── Literal backslash escapes in raw JSON/JS text ──
+  //
+  // Replies carry un-decoded JSON/JS strings, so `\n` is routinely two literal
+  // characters rather than a newline. It corrupts a match two ways: the `n` gets
+  // swallowed as a leading directory name, or the absolute-path branch matches
+  // ACROSS the escape (its segment class permits `\`).
+  describe('literal backslash escapes', () => {
+    it('recovers a path whose first segment was swallowed by \\n', () => {
+      const result = annotateFilePaths('<p>x \\ninternal/model/x.go\\n y</p>', { projectRoot })
+      expect(result.detectedPaths).toContain('internal/model/x.go')
+      expect(result.detectedPaths).not.toContain('ninternal/model/x.go')
+    })
+
+    it('recovers an absolute directory after \\n (dir branch left-boundary)', () => {
+      // The rescan lands on `/home/user/docs/`, whose preceding `n` is the
+      // swallowed escape letter — a path char by the left-boundary test, so that
+      // guard must not undo the rescan.
+      const result = annotateFilePaths('<p>x \\n/home/user/docs/\\n y</p>', { projectRoot })
+      expect(result.detectedPaths).toContain('/home/user/docs/')
+    })
+
+    it('splits a multi-entry body into separate paths', () => {
+      // The absolute branch used to match `/a/x.go\n/b/y.go` as ONE path
+      // spanning the escape. Each entry must come out on its own, keeping its
+      // absolute form.
+      const result = annotateFilePaths('<p>x \\n/a/x.go\\n/b/y.go\\n y</p>', { projectRoot })
+      expect(result.detectedPaths).toEqual(['/a/x.go', '/b/y.go'])
+      expect(result.detectedPaths.some(p => p.includes('\\'))).toBe(false)
+    })
+
+    it('trims a trailing escape off a Windows drive path', () => {
+      // The drive branch permits backslash, so it swallowed the trailing `\n`.
+      const result = annotateFilePaths('<p>x \\nE:/git/x/y.go\\n y</p>', { projectRoot })
+      expect(result.detectedPaths).toContain('E:/git/x/y.go')
+      expect(result.detectedPaths.some(p => p.includes('\\'))).toBe(false)
+    })
+
+    it('keeps a genuine backslash Windows path intact', () => {
+      // No escape here — the separators are real and must survive.
+      const result = annotateFilePaths('<p><code>E:\\git\\x\\y.go</code></p>', { projectRoot })
+      expect(result.detectedPaths).toContain('E:/git/x/y.go')
+    })
+
+    it('does not annotate a path built from a <code> body carrying escapes', () => {
+      // Step 2 treats the whole <code> body as one path and cannot rescan, so it
+      // hands list-shaped escaped content to Step 3.
+      const result = annotateFilePaths('<p>see <code>\\n/home/user/docs/\\n</code></p>', { projectRoot })
+      expect(result.detectedPaths).toContain('/home/user/docs/')
+      expect(result.detectedPaths.some(p => p.includes('\\'))).toBe(false)
+    })
+
+    it('splits an escaped list inside <code> too', () => {
+      const result = annotateFilePaths('<p><code>\\n/a/x.go\\n/b/y.go\\n</code></p>', { projectRoot })
+      expect(result.detectedPaths).toEqual(['/a/x.go', '/b/y.go'])
+    })
+
+    it('still annotates relative Windows paths in <code>', () => {
+      // Declining on ANY backslash dropped these: Step 3 has no
+      // relative-backslash branch, so nothing else would pick them up.
+      for (const [input, expected] of [
+        ['src\\main.go', 'src/main.go'],
+        ['docs\\README.md', 'docs/README.md'],
+      ] as const) {
+        expect(annotateFilePaths(`<p><code>${input}</code></p>`, { projectRoot }).detectedPaths, input)
+          .toEqual([expected])
+      }
+    })
+
+    it('keeps a Windows directory literally named n', () => {
+      // `E:\git\x\n` is a real path ending in a directory called `n`, not a
+      // trailing `\n` escape. Trimming the tail unconditionally lost it.
+      const result = annotateFilePaths('<p>x E:\\git\\x\\n y</p>', { projectRoot })
+      expect(result.detectedPaths).toEqual(['E:/git/x'])
+    })
+  })
+
+  it('does not annotate a protocol-relative URL tail', () => {
+    // `//cdn.example.com/a/b.png` reaches the regex after the `//`, and the match
+    // starts at the second `/` — so the "preceded by /" test must fire even when
+    // there is no preceding host character to look at.
+    const result = annotateFilePaths('<p>see //cdn.example.com/a/b.png now</p>', { projectRoot })
+    expect(result.detectedPaths).toHaveLength(0)
+  })
+
+  it('does not annotate a protocol-relative URL after a literal escape', () => {
+    // The escape-debris exemption must not swallow a real `//`: after `\n` the
+    // two characters before the match are `n` and `/`, which is the same
+    // signature the debris test looks for.
+    const result = annotateFilePaths('<p>x \\n//cdn.example.com/a/b.png y</p>', { projectRoot })
+    expect(result.detectedPaths).toHaveLength(0)
+  })
+
+  it('annotates <code>file.ext:line</code> (no dotted-scheme confusion)', () => {
+    // `main.go:10` looks like scheme `main.go:`. The scheme test must not accept
+    // a dot in the scheme, or every `file:line` annotation in the app is lost.
+    for (const [input, path, line] of [
+      ['main.go:10', 'main.go', 10],
+      ['README.md:12', 'README.md', 12],
+      ['config.yaml:5-8', 'config.yaml', 5],
+    ] as const) {
+      const result = annotateFilePaths(`<p>see <code>${input}</code></p>`, { projectRoot })
+      expect(result.detectedPaths, input).toEqual([path])
+      expect(result.html, input).toContain(`data-line-start="${line}"`)
+    }
+  })
+
+  it('strips file:// case-insensitively', () => {
+    // `FILE:///tmp/x` used to resolve as `FILE:/tmp/x` (a scheme-less path with
+    // a stray colon), not as the absolute path it is.
+    for (const href of ['file:///tmp/x/y.go', 'FILE:///tmp/x/y.go', 'File:///tmp/x/y.go']) {
+      expect(annotateFilePaths(`<p><a href="${href}">x</a></p>`, { projectRoot }).detectedPaths, href)
+        .toEqual(['/tmp/x/y.go'])
+    }
+  })
+
+  // ── Directory references (trailing separator) ──
+  //
+  // Replies list directories constantly, tree listings especially, and a
+  // directory is a valid navigation target. The dir branch requires >=2
+  // segments AND a trailing separator, so it can neither match single-separator
+  // prose nor truncate an extension path.
+  describe('directory references', () => {
+    it('annotates a multi-segment directory with trailing slash', () => {
+      const result = annotateFilePaths('<p>改动在 web/src/composables/ 下</p>', { projectRoot })
+      expect(result.detectedPaths).toContain('web/src/composables')
+    })
+
+    it('annotates a tree listing (the motivating case)', () => {
+      const tree = '<pre><code>05_债务工程/\n├── ppt/gen_v7/\n└── cover/cover.png</code></pre>'
+      const result = annotateFilePaths(tree, { projectRoot })
+      // The >=2-segment dir is picked up; the single-segment root is not.
+      expect(result.detectedPaths).toContain('ppt/gen_v7')
+      expect(result.detectedPaths).toContain('cover/cover.png')
+      expect(result.detectedPaths).not.toContain('05_债务工程')
+    })
+
+    it('annotates CJK directory segments', () => {
+      const result = annotateFilePaths('<p>素材在 06_亮点短片/01_AI群聊/tts/ 里</p>', { projectRoot })
+      expect(result.detectedPaths).toContain('06_亮点短片/01_AI群聊/tts')
+    })
+
+    it('does not truncate an extension path into a directory', () => {
+      // Without the REQUIRED trailing separator this would yield `cover/`.
+      const result = annotateFilePaths('<p>see cover/cover.png now</p>', { projectRoot })
+      expect(result.detectedPaths).toContain('cover/cover.png')
+      expect(result.detectedPaths).not.toContain('cover')
+    })
+
+    it('does not match single-separator prose', () => {
+      for (const prose of ['and/or', 'N/A', 'A/B', '100MB/s', 'km/h', 'TCP/IP']) {
+        const result = annotateFilePaths(`<p>${prose}</p>`, { projectRoot })
+        expect(result.detectedPaths).toHaveLength(0)
+      }
+    })
+
+    it('does not match a numeric date as a directory prefix', () => {
+      // The right-hand boundary must reject `2024/05/` inside `2024/05/12`.
+      const result = annotateFilePaths('<p>日期 2024/05/12 生效</p>', { projectRoot })
+      expect(result.detectedPaths).toHaveLength(0)
+    })
+
+    it('does not annotate single-segment directories', () => {
+      // >=2 segments required: these are exactly the ambiguous prose-shaped ones.
+      for (const dir of ['internal/', 'logs/', 'coverage/']) {
+        const result = annotateFilePaths(`<p>${dir}</p>`, { projectRoot })
+        expect(result.detectedPaths).toHaveLength(0)
+      }
+    })
+
+    it('does not annotate a trailing-slash URL', () => {
+      // Newly reachable via the dir branch: the scheme slashes put a '/' right
+      // before the match, which the URL guard rejects.
+      for (const url of [
+        'https://example.com/foo/bar/',
+        'http://localhost:20000/api/fs/raw/',
+        'https://raw.githubusercontent.com/o/r/master/docs/',
+      ]) {
+        const result = annotateFilePaths(`<p>${url}</p>`, { projectRoot })
+        expect(result.detectedPaths).toHaveLength(0)
+      }
+    })
+
+    it('does not annotate a schemeless URL as a directory', () => {
+      // No scheme, so neither shouldRejectPath nor the URL guard sees it.
+      const result = annotateFilePaths('<p>见 example.com/foo/bar/ 文档</p>', { projectRoot })
+      expect(result.detectedPaths).toHaveLength(0)
+    })
+
+    it('still annotates a first segment that merely contains a dot', () => {
+      // The domain guard must not swallow real filenames with a dot in them.
+      const result = annotateFilePaths('<p>跑 tts/compose.sh 与 build.sh</p>', { projectRoot })
+      expect(result.detectedPaths).toContain('tts/compose.sh')
+    })
+
+    it('recovers a path swallowed by a literal backslash-n escape', () => {
+      // Replies carry raw JSON/JS, so a literal `\n` before a path is common.
+      // The segment class would otherwise swallow the `n` as a directory name.
+      const result = annotateFilePaths('<p>```\\ninternal/model/modelcatalog.go\\n```</p>', { projectRoot })
+      expect(result.detectedPaths).toContain('internal/model/modelcatalog.go')
+      expect(result.detectedPaths).not.toContain('ninternal/model/modelcatalog.go')
+    })
+
+    it('does not annotate the bogus n-prefixed form after a real newline', () => {
+      const result = annotateFilePaths('<p>```\n/tmp/x/y.apk\n```</p>', { projectRoot })
+      expect(result.detectedPaths).toContain('/tmp/x/y.apk')
+    })
+
+    it('does not slice a directory out of an over-long opaque segment', () => {
+      // Segment length is bounded for backtracking, which lets the branch match
+      // a TAIL of a longer run — the left-boundary guard must reject that.
+      const opaque = 'a'.repeat(200) + '/bb/cc/'
+      const result = annotateFilePaths(`<p>${opaque}</p>`, { projectRoot })
+      expect(result.detectedPaths).toHaveLength(0)
+    })
+
+    it('does not consume the directory prefix of a real inner path', () => {
+      // The boundary must be a lookahead: a consuming match rejected afterwards
+      // would swallow the text and hide the real path inside it.
+      const result = annotateFilePaths('<p>中文/output/x.mp4</p>', { projectRoot })
+      expect(result.detectedPaths).toContain('/output/x.mp4')
+    })
+  })
+
   it('does not annotate localhost URLs in <code> elements', () => {
     const input = '<code>http://localhost:20003</code>'
     const result = annotateFilePaths(input, { projectRoot })

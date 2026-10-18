@@ -69,8 +69,6 @@ vi.mock('@/utils/quoteItem.ts', () => ({
 }))
 
 import {
-  canSeeChatPanel,
-  setActiveTabGetter,
   setOpenSessionHandler,
   requestTarget,
   requestAttachmentTarget,
@@ -109,60 +107,37 @@ describe('useConversationTarget', () => {
     mockIdentity.createSessionInBackground.mockResolvedValue('s-new')
     mockOpenSession.mockReset()
     setOpenSessionHandler(mockOpenSession)
-    setActiveTabGetter(() => 'chat')
     cancelTarget()
   })
 
-  // ── Visibility gate ──────────────────────────────────────────
-
-  describe('canSeeChatPanel', () => {
-    it('narrow layout: visible only on the chat tab', () => {
-      mockLayout.isWideScreen = false
-      setActiveTabGetter(() => 'chat')
-      expect(canSeeChatPanel()).toBe(true)
-
-      setActiveTabGetter(() => 'browse')
-      expect(canSeeChatPanel()).toBe(false)
-    })
-
-    it('wide layout: visible unless the chat column is collapsed', () => {
-      mockLayout.isWideScreen = true
-      setActiveTabGetter(() => 'browse')
-      mockLayout.chatCollapsed = false
-      expect(canSeeChatPanel()).toBe(true)
-
-      // The case the user called out: desktop with the chat panel hidden.
-      mockLayout.chatCollapsed = true
-      expect(canSeeChatPanel()).toBe(false)
-    })
-
-    it('defaults to hidden when no activeTab getter was injected', () => {
-      mockLayout.isWideScreen = false
-      setActiveTabGetter(undefined as unknown as () => string)
-      expect(canSeeChatPanel()).toBe(false)
-    })
-  })
-
-  // ── requestTarget ────────────────────────────────────────────
+  // ── requestTarget: the picker is unconditional ───────────────
 
   describe('requestTarget', () => {
-    it('does NOT open the picker when the chat panel is visible', () => {
-      setActiveTabGetter(() => 'chat')
-      const opened = requestTarget(request())
-      expect(opened).toBe(false)
-      expect(usePendingTarget().pickerOpen.value).toBe(false)
+    /**
+     * The picker must open EVEN when the chat panel is on screen. The old
+     * behavior assumed "panel visible ⇒ current session", which is what made
+     * quoting from one conversation into another impossible and made the
+     * destination depend on which tab happened to be open.
+     */
+    it('opens the picker even when the chat panel is visible', () => {
+      mockLayout.isWideScreen = false
+      requestTarget(request())
+      expect(usePendingTarget().pickerOpen.value).toBe(true)
     })
 
-    it('opens the picker and stores the request when the panel is hidden', () => {
-      setActiveTabGetter(() => 'browse')
-      const opened = requestTarget(request({ text: 'hi' }))
-      expect(opened).toBe(true)
+    it('opens the picker on a wide screen too (no visibility shortcut)', () => {
+      mockLayout.isWideScreen = true
+      mockLayout.chatCollapsed = false
+      requestTarget(request())
       expect(usePendingTarget().pickerOpen.value).toBe(true)
+    })
+
+    it('stores the request payload', () => {
+      requestTarget(request({ text: 'hi' }))
       expect(usePendingTarget().pending.value?.text).toBe('hi')
     })
 
     it('cancelTarget clears the pending request and closes', () => {
-      setActiveTabGetter(() => 'browse')
       requestTarget(request())
       cancelTarget()
       expect(usePendingTarget().pickerOpen.value).toBe(false)
@@ -196,8 +171,10 @@ describe('useConversationTarget', () => {
       expect(entries.map(e => e.path)).toEqual(['/a.txt', '/x.ts'])
     })
 
-    it('sends to the CURRENT session id for kind=current', async () => {
-      await dispatchToTarget({ kind: 'current' }, request())
+    it('sends to the CURRENT session when the user picks the current row', async () => {
+      // Picking the row for the session already on screen is just kind=session
+      // with that id — the dispatcher routes it to the same session either way.
+      await dispatchToTarget({ kind: 'session', id: 's-current' }, request())
       expect(mockIdentity.enqueueToSession.mock.calls[0][0]).toBe('s-current')
     })
 
@@ -240,7 +217,10 @@ describe('useConversationTarget', () => {
     })
 
     it('stages into the LIVE input when the target is the current session', async () => {
-      const ok = await dispatchToTarget({ kind: 'current' }, request({
+      // The picker's top row is the current session, so this is the common
+      // "just the one I'm in" path. It must land in the live input, not the
+      // stored draft (there is nothing to restore for a session already open).
+      const ok = await dispatchToTarget({ kind: 'session', id: 's-current' }, request({
         mode: 'add',
         quotes: [{ id: 'q1', text: 't', note: 'n', filePath: '/x.ts', language: 'ts', startLine: 1, endLine: 1, sourceKind: 'file' }],
       }))
@@ -283,7 +263,7 @@ describe('useConversationTarget', () => {
     })
 
     it('does not open when the target is already the current session', async () => {
-      await dispatchToTarget({ kind: 'current' }, request({ mode: 'add', text: '', openAfter: true }))
+      await dispatchToTarget({ kind: 'session', id: 's-current' }, request({ mode: 'add', text: '', openAfter: true }))
       expect(mockOpenSession).not.toHaveBeenCalled()
     })
   })
@@ -291,15 +271,9 @@ describe('useConversationTarget', () => {
   // ── requestAttachmentTarget (the "attach to chat" buttons) ───
 
   describe('requestAttachmentTarget', () => {
-    it('does not open the picker while the chat panel is visible', () => {
-      setActiveTabGetter(() => 'chat')
-      expect(requestAttachmentTarget(ATTACH)).toBe(false)
-      expect(usePendingTarget().pickerOpen.value).toBe(false)
-    })
-
-    it('opens the picker with the attachment as an add payload when hidden', () => {
-      setActiveTabGetter(() => 'browse')
-      expect(requestAttachmentTarget(ATTACH)).toBe(true)
+    it('always opens the picker, even with the chat panel visible', () => {
+      mockLayout.isWideScreen = false
+      requestAttachmentTarget(ATTACH)
 
       const { pickerOpen, pending } = usePendingTarget()
       expect(pickerOpen.value).toBe(true)
@@ -309,14 +283,12 @@ describe('useConversationTarget', () => {
     })
 
     it('preserves a line-range reference', () => {
-      setActiveTabGetter(() => 'browse')
       requestAttachmentTarget({ path: '/a.ts', isDir: false, startLine: 5, endLine: 9 })
       expect(usePendingTarget().pending.value?.attachments[0]).toMatchObject({ startLine: 5, endLine: 9 })
     })
 
-    it('ignores an entry with no path', () => {
-      setActiveTabGetter(() => 'browse')
-      expect(requestAttachmentTarget({ path: '', isDir: false })).toBe(false)
+    it('ignores an entry with no path (nothing to attach, nothing opens)', () => {
+      requestAttachmentTarget({ path: '', isDir: false })
       expect(usePendingTarget().pickerOpen.value).toBe(false)
     })
   })
@@ -400,7 +372,6 @@ describe('useConversationTarget', () => {
 
   describe('confirmTarget', () => {
     it('dispatches the pending request and closes the picker', async () => {
-      setActiveTabGetter(() => 'browse')
       requestTarget(request({ text: 'pending text' }))
 
       await confirmTarget({ kind: 'session', id: 's-other' })
@@ -417,7 +388,6 @@ describe('useConversationTarget', () => {
     })
 
     it('uses the snapshot, so a session switch during the dialog cannot retarget it', async () => {
-      setActiveTabGetter(() => 'browse')
       requestTarget(request({ text: 'snapshotted' }))
       // The user switches sessions while the picker is open.
       mockIdentity.currentSessionId.value = 's-different'
@@ -429,7 +399,6 @@ describe('useConversationTarget', () => {
     })
 
     it('passes openAfter through to the dispatch when the caller asks for it', async () => {
-      setActiveTabGetter(() => 'browse')
       requestTarget(request({ mode: 'add', text: '' }))
 
       await confirmTarget({ kind: 'session', id: 's-other' }, { openAfter: true })
@@ -438,7 +407,6 @@ describe('useConversationTarget', () => {
     })
 
     it('a send is never turned into an open, even if openAfter slips through', async () => {
-      setActiveTabGetter(() => 'browse')
       requestTarget(request({ mode: 'send', text: 'hi' }))
 
       await confirmTarget({ kind: 'session', id: 's-other' }, { openAfter: true })

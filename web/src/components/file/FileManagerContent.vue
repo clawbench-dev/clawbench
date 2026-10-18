@@ -576,7 +576,6 @@ import { localConfig, setLocalConfig, getZoomedViewport, toFixedCSS } from '@/co
 import { useDialog } from '@/composables/useDialog.ts'
 import { useTerminalStatus } from '@/composables/useTerminalStatus.ts'
 import { useFileUpload } from '@/composables/useFileUpload.ts'
-import { useChatContext } from '@/composables/useChatContext.ts'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { setAttachDragData, setMultiAttachDragData, hasAttachDragData, buildAttachDragImage, cleanupDragGhost } from '@/utils/attachDrag'
@@ -829,7 +828,6 @@ const sharedDrawerRef = ref(null)
 function onSharedFileOpen(path) {
   emit('selectFile', path)
 }
-const { addAttachedFile } = useChatContext()
 const { terminalRuntimeEnabled } = useTerminalStatus()
 const isTerminalDisabled = computed(() => terminalRuntimeEnabled.value !== true)
 const { isWideScreen } = useWideScreenLayout()
@@ -2529,11 +2527,9 @@ function doAttachToChat() {
     // no toggle-to-remove branch here. Removal lives in the chat input's own
     // attachment strip, where the user can see which session holds it.
     //
-    // Destination is only ambiguous when the chat panel is off screen; with it
-    // visible the file goes straight into the current session's input.
-    if (requestAttachmentTarget({ path, isDir })) return
-    addAttachedFile(path, isDir)
-    toast.show(t('chat.attach.addedToChat'), { icon: 'attach', type: 'success', duration: 1500 })
+    // The destination is always the user's choice (the picker), so nothing is
+    // attached locally — confirmTarget attaches for the session they pick.
+    requestAttachmentTarget({ path, isDir })
 
     // Fly-to-chat particle animation
     const dockChatBtn = document.querySelector('.dock-center')?.querySelector('.dock-btn')

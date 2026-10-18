@@ -6,6 +6,7 @@ import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'
 import { store } from '@/stores/app'
 import type { useCodeLinkPreview } from '@/composables/useCodeLinkPreview'
 import { useChatContext } from '@/composables/useChatContext'
+import { cancelTarget, usePendingTarget } from '@/composables/useConversationTarget.ts'
 import { _setPlatformForTest, _resetPlatformForTest } from '@/composables/usePlatformDetect'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -1210,7 +1211,7 @@ describe('CodeLinkPreview.vue', () => {
     wrapper.unmount()
   })
 
-  it('triggers quoteToChat and adds a staged quote without duplicate file attachment', async () => {
+  it('routes quoteToChat through the session picker instead of staging locally', async () => {
     const switchTabMock = vi.fn()
     const preview = createMockPreviewController()
     mount(CodeLinkPreview, {
@@ -1226,12 +1227,22 @@ describe('CodeLinkPreview.vue', () => {
     quoteBtn.click()
     await nextTick()
 
+    // The card closes and hands the quote to the picker; it must NOT stage it
+    // into the live input (the destination is the user's choice) and must NOT
+    // switch tabs — the picker pins the current session to the top row.
     expect(preview.close).toHaveBeenCalled()
-    expect(switchTabMock).toHaveBeenCalledWith('chat')
+    const { pickerOpen, pending } = usePendingTarget()
+    expect(pickerOpen.value).toBe(true)
+    expect(pending.value?.quotes).toHaveLength(1)
+    expect(pending.value?.quotes[0].filePath).toBe('src/main.ts')
+    // A quote carries the path + range itself; a second attachment chip would
+    // duplicate it, so the payload must have no attachments.
+    expect(pending.value?.attachments).toEqual([])
+    expect(switchTabMock).not.toHaveBeenCalled()
     const chatContext = useChatContext()
-    expect(chatContext.stagedQuotes.value).toHaveLength(1)
-    expect(chatContext.stagedQuotes.value[0].filePath).toBe('src/main.ts')
+    expect(chatContext.stagedQuotes.value).toHaveLength(0)
     expect(chatContext.attachedFiles.value).toHaveLength(0)
+    cancelTarget()
   })
 
   it('triggers revealInTree and locates the file via the shared file-manager behavior', async () => {
@@ -1386,14 +1397,17 @@ describe('CodeLinkPreview.vue', () => {
     openFullBtn.click()
     expect(preview.openFull).toHaveBeenCalled()
 
-    // Quote to Chat (closes the sheet and switches to the chat tab)
+    // Quote to Chat closes the sheet and hands the payload to the session
+    // picker (no tab switch, no local staging — see the quoteToChat test).
     const quoteBtn = Array.from(actions.querySelectorAll('button'))
       .find(b => (b.getAttribute('title') || '') === 'Quote to chat') as HTMLButtonElement
     expect(quoteBtn).not.toBeNull()
     quoteBtn.click()
     await nextTick()
     expect(preview.close).toHaveBeenCalled()
-    expect(switchTabMock).toHaveBeenCalledWith('chat')
+    expect(usePendingTarget().pickerOpen.value).toBe(true)
+    expect(switchTabMock).not.toHaveBeenCalled()
+    cancelTarget()
 
     // Reveal in tree lives in the same row. Re-open the sheet first (quote closed it).
     preview.visible.value = true

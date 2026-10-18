@@ -140,13 +140,13 @@ let loadPending = false
 
 // Image attach-to-chat badge (touch devices). This component is a read-only
 // rendered view; the only interactive bit it owns is the badge toggle.
-const { addAttachedFile, removeAttachedFileByPath, hasAttachedFile } = useChatContext()
+const { removeAttachedFileByPath, hasAttachedFile } = useChatContext()
 const { show: showToast } = useToast()
 const mdImageAttachActions: MdImageAttachActions = {
   add: (path) => {
-    // Destination ambiguous (chat panel off screen) → let the picker own it.
-    if (requestAttachmentTarget({ path, isDir: false })) return
-    addAttachedFile(path)
+    // Destination is always the user's choice (the picker), so nothing is
+    // attached locally — confirmTarget attaches for the session they pick.
+    requestAttachmentTarget({ path, isDir: false })
   },
   remove: removeAttachedFileByPath,
   has: hasAttachedFile,
@@ -160,8 +160,7 @@ const mdImageAttachActions: MdImageAttachActions = {
 // Mermaid range-reference badge: same singletons, ranged identity.
 const mermaidAttachActions: MermaidAttachActions = {
   add: (path, startLine, endLine) => {
-    if (requestAttachmentTarget({ path, isDir: false, startLine, endLine })) return
-    addAttachedFile(path, false, startLine, endLine)
+    requestAttachmentTarget({ path, isDir: false, startLine, endLine })
   },
   remove: (path, startLine, endLine) => removeAttachedFileByPath(path, startLine, endLine),
   has: (path, startLine, endLine) => hasAttachedFile(path, startLine, endLine),
