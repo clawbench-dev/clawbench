@@ -615,6 +615,48 @@ describe('bare (schemeless) URLs are linked before file-path annotation', () => 
     expect(detectedPaths).toEqual([])
     expect(linksOf(html)[0].getAttribute('data-href')).toBe('https://github.com/foo/bar')
   })
+
+  it('a URL is EITHER a link or a file chip, never both', () => {
+    // External links render as <span class="md-external-link">, not <a>, so the
+    // file annotator's "skip anything inside <a>" rule did not cover them: a
+    // schemeless URL whose tail has an extension (`vuejs.org/guide/intro.html`)
+    // got a dead `org/guide/intro.html` chip nested INSIDE its own link.
+    for (const md of [
+      'raw.githubusercontent.com/o/r/master/README.md',
+      'vuejs.org/guide/intro.html',
+      'github.com/foo/bar',
+    ]) {
+      const html = renderMarkdownHtml(md)
+      expect(pathsOf(html), md).toEqual([])
+      expect(html, md).not.toContain('chat-file-path')
+      expect(linksOf(html), md).toHaveLength(1)
+    }
+  })
+
+  it('real paths are still chips and never links', () => {
+    for (const md of ['web/src/App.vue', 'internal/ai/factory_test.go', 'tts/compose.sh']) {
+      const html = renderMarkdownHtml(md)
+      expect(pathsOf(html), md).toHaveLength(1)
+      expect(linksOf(html), md).toHaveLength(0)
+    }
+  })
+
+  it('a URL in inline code is a link, not also a file chip', () => {
+    // Same conflict through Step 2: the <code> body looked like a path, so the
+    // chip wrapped the freshly created link.
+    for (const md of ['`github.com/foo/bar`', '`vuejs.org/guide/intro.html`']) {
+      const html = renderMarkdownHtml(md)
+      expect(pathsOf(html), md).toEqual([])
+      expect(html, md).not.toContain('chat-file-path')
+      expect(linksOf(html), md).toHaveLength(1)
+    }
+  })
+
+  it('a real path in inline code is still a chip, never a link', () => {
+    const html = renderMarkdownHtml('`src/main.go`')
+    expect(pathsOf(html)).toEqual(['src/main.go'])
+    expect(linksOf(html)).toHaveLength(0)
+  })
 })
 
 // --- SVG media in the file preview: inline <svg> is lifted into a figure ---

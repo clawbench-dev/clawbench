@@ -2,6 +2,7 @@ import { escapeHtml } from '@/utils/html.ts'
 import { gt } from '@/composables/useLocale'
 import { resolveFilePath, registerWorktreeCacheClearter } from '@/composables/useFilePathAnnotation.ts'
 import { isShareMode } from '@/share/shareMode'
+import { EXTERNAL_LINK_CLASS } from '@/utils/externalLinkNode.ts'
 
 // Register the clearWorktreeCache function to break circular dependency.
 // useFilePathAnnotation calls this instead of importing clearWorktreeCache directly.
@@ -223,6 +224,11 @@ export function annotateWorktreePathsIn(
             const parent = node.parentElement
             if (!parent) return NodeFilter.FILTER_REJECT
             if (parent.tagName === 'A' || parent.closest('a')) return NodeFilter.FILTER_REJECT
+            // External links are <span class="md-external-link">, not <a> (see
+            // externalLinkNode.ts). The pipeline runs this step BEFORE the URL
+            // annotator, so today it cannot see one — but the guard keeps a
+            // reordering from producing a link that also carries a file chip.
+            if (parent.closest('.' + EXTERNAL_LINK_CLASS)) return NodeFilter.FILTER_REJECT
             // Skip elements already annotated by step 2
             if (parent.classList.contains('chat-worktree-path')) return NodeFilter.FILTER_REJECT
             if (parent.classList.contains('chat-file-path') || parent.classList.contains('chat-commit-hash') || parent.classList.contains('chat-commit-hash-pending')) return NodeFilter.FILTER_REJECT

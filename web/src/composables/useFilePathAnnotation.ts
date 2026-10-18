@@ -13,6 +13,7 @@ import { store } from '@/stores/app.ts'
 import { gt } from '@/composables/useLocale'
 import { isShareMode } from '@/share/shareMode'
 import { clearCommitHashCache } from '@/composables/useCommitHashAnnotation.ts'
+import { EXTERNAL_LINK_CLASS } from '@/utils/externalLinkNode.ts'
 import type { NavigationSurface } from '@/composables/useNavigationContext'
 // NOTE: do NOT import clearWorktreeCache from useWorktreeAnnotation here —
 // that creates a circular dependency (useFilePathAnnotation ↔ useWorktreeAnnotation).
@@ -779,6 +780,11 @@ export function annotateFilePathsIn(
     for (const code of doc.querySelectorAll('code')) {
         if (code.closest('a')) continue
         if (code.classList.contains('chat-worktree-path')) continue
+        // Already linkified by the URL annotator (which runs first). A <code>
+        // body like `github.com/foo/bar` is a URL, not a file — without this it
+        // also got a dead `chat-file-path` chip wrapping the link, so one token
+        // was both a link and a file.
+        if (code.querySelector('.' + EXTERNAL_LINK_CLASS)) continue
         const stripped = (code.textContent || '').trim()
         // This step treats the whole <code> body as ONE path and cannot rescan,
         // so it must decline LIST-shaped bodies — but only those.
@@ -819,6 +825,13 @@ export function annotateFilePathsIn(
             const parent = node.parentElement
             if (!parent) return NodeFilter.FILTER_REJECT
             if (parent.tagName === 'A' || parent.closest('a')) return NodeFilter.FILTER_REJECT
+            // External links are <span class="md-external-link">, not <a> (see
+            // externalLinkNode.ts — an <a> breaks Android's long-press menu).
+            // Without this they were annotated a SECOND time as files: a
+            // schemeless `vuejs.org/guide/intro.html` became a link wrapping a
+            // dead `org/guide/intro.html` chip, because the tail after the dot
+            // looks like a path. One URL must resolve to exactly one thing.
+            if (parent.closest('.' + EXTERNAL_LINK_CLASS)) return NodeFilter.FILTER_REJECT
             if (parent.classList.contains('chat-file-path')) return NodeFilter.FILTER_REJECT
             if (parent.classList.contains('chat-worktree-path') || parent.closest('.chat-worktree-path')) return NodeFilter.FILTER_REJECT
             return NodeFilter.FILTER_ACCEPT
