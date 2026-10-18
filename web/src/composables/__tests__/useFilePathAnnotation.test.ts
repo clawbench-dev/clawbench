@@ -1000,6 +1000,55 @@ describe('annotateFilePaths', () => {
     expect(result.detectedPaths).toHaveLength(0)
   })
 
+  describe('the Windows-drive branch needs a left boundary', () => {
+    // A drive letter is one letter plus `:`, which is also the shape of a
+    // scheme's last letter plus its colon. Without a boundary the branch
+    // matched `p:/example.com/a/b` inside `ftp:/example.com/a/b`.
+    it('does not match a drive path inside a scheme', () => {
+      for (const input of [
+        '<p><code>ftp:/example.com/a/b</code></p>',
+        '<p>see ftp:/example.com/a/b now</p>',
+        '<p><code>ssh:/host/path</code></p>',
+      ]) {
+        expect(annotateFilePaths(input, { projectRoot }).detectedPaths, input).toHaveLength(0)
+      }
+    })
+
+    it('still annotates a real drive path at a token boundary', () => {
+      for (const [input, expected] of [
+        ['<p>E:/git/x/y.go</p>', 'E:/git/x/y.go'],
+        ['<p>see (E:/git/x/y.go) now</p>', 'E:/git/x/y.go'],
+        ['<p><code>E:/git/x/y.go</code></p>', 'E:/git/x/y.go'],
+        // A literal `\n` escape leaves a single `n` before the drive — that is
+        // not a scheme, so the path must survive.
+        ['<p>x \\nE:/git/x/y.go\\n y</p>', 'E:/git/x/y.go'],
+      ] as const) {
+        expect(annotateFilePaths(input, { projectRoot }).detectedPaths, input).toContain(expected)
+      }
+    })
+  })
+
+  it('does not annotate a bare separator as a file', () => {
+    // `<code>/</code>` is prose about a slash, not a path. It rendered a chip
+    // pointing at the filesystem root.
+    for (const input of ['<p><code>/</code></p>', '<p><code>./</code></p>', '<p><code>../</code></p>']) {
+      expect(annotateFilePaths(input, { projectRoot }).detectedPaths, input).toHaveLength(0)
+    }
+  })
+
+  it('does not annotate a file:// scheme with no path behind it', () => {
+    // `file://` and `file:///` strip to nothing; they used to be annotated as
+    // the file `file:` (Step 2 never calls parseFileUri).
+    for (const input of ['<p><code>file://</code></p>', '<p><code>file:///</code></p>', '<p><code>FILE://</code></p>']) {
+      expect(annotateFilePaths(input, { projectRoot }).detectedPaths, input).toHaveLength(0)
+    }
+  })
+
+  it('annotates a <code>file://</code> that does carry a path', () => {
+    expect(annotateFilePaths('<p><code>file:///tmp/x.go</code></p>', { projectRoot }).detectedPaths)
+      .toEqual(['/tmp/x.go'])
+  })
+
   it('annotates <code>file.ext:line</code> (no dotted-scheme confusion)', () => {
     // `main.go:10` looks like scheme `main.go:`. The scheme test must not accept
     // a dot in the scheme, or every `file:line` annotation in the app is lost.

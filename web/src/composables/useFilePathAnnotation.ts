@@ -601,6 +601,9 @@ const FILE_PATH_RE = new RegExp(FILE_PATH_SRC + '(?::(' + LINE_TOKEN_SRC + '))?'
 export function looksLikeFilePath(text: string): boolean {
     if (shouldRejectPath(text)) return false
     const bare = text.replace(LINE_SUFFIX_RE, '')
+    // A bare separator is not a path: `<code>/</code>` (prose about slashes, a
+    // shell fragment, a JSON escape) was annotated as the file "/".
+    if (bare === '/' || bare === '\\' || bare === './' || bare === '../') return false
     return /\/|\.[a-zA-Z][a-zA-Z0-9]{0,3}$/.test(bare)
 }
 
@@ -805,8 +808,23 @@ export function annotateFilePathsIn(
         // A single piece wrapped in escapes (`\n/home/docs/\n`) is still one
         // path; drop the wrapping rather than letting the `n` become a segment.
         const body = escapeParts.length === 1 && escapeParts[0] !== stripped ? escapeParts[0] : stripped
-        if (!looksLikeFilePath(body)) continue
-        const { path: barePath, lineRanges } = extractLineInfoFromText(body)
+        // Step 2 does not run `parseFileUri`, so a `file://` scheme reaches the
+        // resolver intact and becomes a bogus `file:/…` path. Strip it here the
+        // same way: `file:///p` → `/p`, `file://host/p` → `/p`, and a scheme
+        // with nothing behind it (bare `file://`, `file:///`) is not a path.
+        let afterScheme = body
+        if (/^file:\/\//i.test(body)) {
+            const rest = body.slice('file://'.length)
+            if (rest.startsWith('/')) {
+                afterScheme = rest
+            } else {
+                const slash = rest.indexOf('/')
+                afterScheme = slash === -1 ? '' : rest.slice(slash)
+            }
+        }
+        if (!afterScheme || afterScheme === '/') continue
+        if (!looksLikeFilePath(afterScheme)) continue
+        const { path: barePath, lineRanges } = extractLineInfoFromText(afterScheme)
         const result = resolveFilePathDual(barePath, projectRoot, homeDir, baseDir)
         if (!result || result.primary.includes(' ') || result.primary.includes('"')) continue
         pushDetectedPaths(detectedPaths, result)
@@ -933,6 +951,21 @@ export function annotateFilePathsIn(
                 const doubledSlash = prev === '/' && text[match.index] === '/'
                 if (prev === ':' || (prev === '/' && (doubledSlash || !afterEscapeDebris))) {
                     result = null
+                }
+                // The Windows-drive branch has no left boundary of its own: in
+                // `ftp:/example.com/a/b` it happily matches `p:/example.com/a/b`,
+                // turning a URL into a dead chip one letter in. A drive letter is
+                // only a drive letter at the start of a token, so reject when the
+                // match sits inside a longer word.
+                //
+                // A single preceding letter is NOT enough: after a literal `\n`
+                // escape the previous character is `n`, and `\nE:/git/x/y.go` is a
+                // real drive path. Require a letter run of 2+ (a scheme or path
+                // body) — or a `+`/`-`/`_`, which a scheme may contain.
+                if (result && /^[a-zA-Z]:[\\/]/.test(barePath) && match.index > 1) {
+                    if (/[a-zA-Z0-9_+-]/.test(text[match.index - 1]) && /[a-zA-Z0-9_+-]/.test(text[match.index - 2])) {
+                        result = null
+                    }
                 }
             }
             // Schemeless-URL guard for the directory branch only: `example.com/foo/bar/`
