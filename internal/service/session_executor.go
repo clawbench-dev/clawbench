@@ -191,7 +191,8 @@ func (ft *finalizeTimer) done(cancelReason string, blockCount int) {
 		return
 	}
 	attrs := make([]any, 0, 4+len(ft.phases))
-	attrs = append(attrs,
+	attrs = append(
+		attrs,
 		slog.String("session", ft.sessionID),
 		slog.String("cancel_reason", cancelReason),
 		slog.Int("blocks", blockCount),
@@ -339,6 +340,15 @@ type SessionExecutor struct {
 	// Driven exclusively by the event-loop goroutine (handleNonTerminalEvent and
 	// the ticker in RunWithChannel), so it needs no lock of its own.
 	coalescer *streamCoalescer
+
+	// steerSplit records that this turn's reply was split at a mid-turn
+	// injection. The injection could only have been made from this session's own
+	// UI, so the user is provably looking at it: Finalize must re-anchor
+	// last_read_at for the "after" half too, exactly as the split does for the
+	// "before" half. Without this the after-half's completed_at (stamped seconds
+	// later, at the end of the turn) overtakes the anchor the split wrote and
+	// flips the session back to unread while the user is still reading it.
+	steerSplit bool
 }
 
 // thinkingFlushState is the per-block incremental flush cursor. nextSeq is the
@@ -1255,6 +1265,13 @@ func (e *SessionExecutor) splitAtSteerBoundary(event ai.StreamEvent) {
 	// row it must cover. Called after the lock is released — the split holds
 	// e.mu across its DB writes, and this adds another write plus a WS
 	// broadcast that have no reason to run under it.
+	//
+	// The AFTER half is finalized much later (at the end of the turn), so its
+	// completed_at is necessarily newer than this anchor. Remember the split so
+	// Finalize re-anchors again once that stamp exists — otherwise the session
+	// flips back to unread a few seconds later, which is the same bug one row
+	// further along.
+	e.steerSplit = true
 	UpdateLastRead(e.cfg.SessionID)
 }
 
@@ -1782,6 +1799,19 @@ func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEve
 	result.Blocks = blocks
 	result.Metadata = responseMetadata
 	result.MsgID = msgID
+
+	// The reply was split at a mid-turn injection, so the user is provably
+	// looking at this session. The split re-anchored last_read_at for the
+	// "before" half, but THIS row's completed_at was only just stamped — and it
+	// is newer than that anchor. Without a second re-anchor the session flips
+	// back to unread seconds after the split, while the user is still reading.
+	//
+	// Only on a clean finalize: a cancelled turn stamps no completed_at (see
+	// FinalizeCancelledStreamingMessage), and the cancel path already owns its
+	// own anchoring rules.
+	if e.steerSplit && result.CancelReason == "" {
+		UpdateLastRead(e.cfg.SessionID)
+	}
 
 	// Stream is fully persisted — stop tracking it for graceful shutdown flushes.
 	// RunWithChannel may already have unregistered on its own exit; no-op there.

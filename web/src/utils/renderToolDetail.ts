@@ -14,6 +14,7 @@ const TAG = 'renderToolDetail'
 import { gt } from '@/composables/useLocale'
 import { store } from '@/stores/app.ts'
 import { renderMarkdown } from '@/composables/useMarkdownRenderer.ts'
+import { EXTERNAL_LINK_CLASS, isExternalHref } from '@/utils/externalLinkNode.ts'
 import { verifyFilePaths } from '@/composables/useFilePathAnnotation.ts'
 import { verifyCommitHashes } from '@/composables/useCommitHashAnnotation.ts'
 import { isShareMode } from '@/share/shareMode'
@@ -582,7 +583,12 @@ function renderWebFetch(input: ToolInput): string {
     html += `<span class="web-fetch-label">${escapeHtml(gt('tool.webFetch.url'))}</span>`
     // Determine if it looks like a URL
     const isUrl = /^https?:\/\//i.test(url)
-    if (isUrl) {
+    if (isUrl && isExternalHref(url)) {
+      // Same contract as markdown links: selectable text so Android's long-press
+      // shows the system menu, with the tap handled by externalLinkClick. Keeping
+      // an <a> here was one of the "some URLs are still links" cases.
+      html += `<span class="web-fetch-link ${EXTERNAL_LINK_CLASS}" data-href="${escapeHtml(url)}" role="link" tabindex="0">${escapeHtml(url)}</span>`
+    } else if (isUrl) {
       html += `<a class="web-fetch-link" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(url)}</a>`
     } else {
       html += `<span class="web-fetch-text">${escapeHtml(url)}</span>`
@@ -1519,8 +1525,9 @@ function annotateLocalhostInEscapedText(text: string): string {
     const parsed = parseLocalhostUrl(rawUrl)
     const protocol = parsed?.protocol || (rawUrl.startsWith('https') ? 'https' : 'http')
     const path = parsed?.path || ''
-    // In <pre> context, wrap URL in <a> and append the open button
-    const linkHtml = `<a href="${escapeHtml(rawUrl)}" target="_blank" rel="noopener">${url}</a>`
+    // Same text treatment as every other external link, plus the tunnel open
+    // button (which is what actually reaches the forwarded port in App mode).
+    const linkHtml = `<span class="${EXTERNAL_LINK_CLASS}" data-href="${escapeHtml(rawUrl)}" role="link" tabindex="0">${url}</span>`
     return `${linkHtml}${localhostOpenButtonHtml(port, protocol, rawUrl, path)}`
   })
 }

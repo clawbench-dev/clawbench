@@ -629,3 +629,193 @@ func TestServeGroupMembers_ReturnsParallelDefault(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.True(t, resp.ParallelDefault, "parallelDefault must reflect the stored value")
 }
+
+// TestServeGroupMembersCarriesContext pins the member-list additions the group
+// roster UI reads: every member carries `model` and `usage`, and a member that
+// never reported usage gets an explicit `null` (the client distinguishes that
+// from "0% used").
+func TestServeGroupMembersCarriesContext(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/group/create", map[string]any{
+		"hostAgentId":    "codebuddy",
+		"memberAgentIds": []string{"codebuddy", "claude"},
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupCreate, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var created struct {
+		GroupID      string `json:"groupId"`
+		HostMemberID string `json:"hostMemberId"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
+
+	// Give the host a reported context window and a model override.
+	service.PatchContextStateMerge(created.HostMemberID, map[string]string{
+		"usage": `{"used":50000,"size":200000}`,
+	})
+	require.NoError(t, service.UpdateSessionModel(created.HostMemberID, "gpt-4o"))
+
+	req = newRequest(t, http.MethodGet, "/api/group/members?groupId="+created.GroupID, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandlerWithAuth(ServeGroupMembers, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var listed struct {
+		Members []struct {
+			ID    string         `json:"id"`
+			Model string         `json:"model"`
+			Usage map[string]any `json:"usage"`
+		} `json:"members"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &listed))
+	require.Len(t, listed.Members, 2)
+
+	byID := map[string]struct {
+		Model string
+		Usage map[string]any
+	}{}
+	for _, m := range listed.Members {
+		byID[m.ID] = struct {
+			Model string
+			Usage map[string]any
+		}{m.Model, m.Usage}
+	}
+	host := byID[created.HostMemberID]
+	assert.Equal(t, "gpt-4o", host.Model)
+	require.NotNil(t, host.Usage)
+	assert.EqualValues(t, 50000, host.Usage["used"])
+	assert.EqualValues(t, 200000, host.Usage["size"])
+
+	// The other member reported nothing → usage must be null, not {}.
+	for id, m := range byID {
+		if id == created.HostMemberID {
+			continue
+		}
+		assert.Nil(t, m.Usage, "a member with no reported usage must serialize as null")
+	}
+}
+
+// TestServeGroupMemberCompactGuards pins the endpoint's pre-flight guards. The
+// happy path needs a live ACP agent, so only the rejections are asserted here —
+// they are what a user actually hits (group busy, wrong member, CLI transport).
+func TestServeGroupMemberCompactGuards(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/group/create", map[string]any{
+		"hostAgentId":    "codebuddy",
+		"memberAgentIds": []string{"codebuddy", "claude"},
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupCreate, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var created struct {
+		GroupID      string `json:"groupId"`
+		HostMemberID string `json:"hostMemberId"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
+
+	// Method guard.
+	req = newRequest(t, http.MethodGet, "/api/group/member-compact", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandlerWithAuth(ServeGroupMemberCompact, req)
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+
+	// Missing fields.
+	req = newRequest(t, http.MethodPost, "/api/group/member-compact", map[string]any{"groupId": created.GroupID})
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandlerWithAuth(ServeGroupMemberCompact, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	// A member id that is not part of this group.
+	req = newRequest(t, http.MethodPost, "/api/group/member-compact", map[string]any{
+		"groupId": created.GroupID, "memberId": "not-a-member",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandlerWithAuth(ServeGroupMemberCompact, req)
+	assert.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
+}
+
+// TestServeGroupMemberCompactStatusMapping pins the remaining status codes.
+// The service returns typed errors; the handler must map each to its own HTTP
+// status — collapsing them (e.g. reporting every failure as 500) would hide a
+// "the group is busy, try again" from the user and from the frontend's retry.
+func TestServeGroupMemberCompactStatusMapping(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/group/create", map[string]any{
+		"hostAgentId":    "codebuddy",
+		"memberAgentIds": []string{"codebuddy", "claude"},
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupCreate, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var created struct {
+		GroupID      string `json:"groupId"`
+		HostMemberID string `json:"hostMemberId"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
+
+	// A missing project cookie must be rejected before the service is reached.
+	req = newRequest(t, http.MethodPost, "/api/group/member-compact", map[string]any{
+		"groupId": created.GroupID, "memberId": created.HostMemberID,
+	})
+	w = callHandlerWithAuth(ServeGroupMemberCompact, req)
+	assert.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+
+	// A group turn in flight -> 409, so the client knows to queue and retry.
+	service.SetSessionRunning(created.GroupID, true, true)
+	t.Cleanup(func() { service.SetSessionRunning(created.GroupID, false, true) })
+	req = newRequest(t, http.MethodPost, "/api/group/member-compact", map[string]any{
+		"groupId": created.GroupID, "memberId": created.HostMemberID,
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandlerWithAuth(ServeGroupMemberCompact, req)
+	assert.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+}
+
+// TestServeGroupMembersList_MissingGroupID pins the query-parameter guard.
+func TestServeGroupMembersList_MissingGroupID(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/group/members", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupMembers, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+}
+
+// TestServeGroupMembersList_OtherProjectIsForbidden pins the ownership check:
+// a group id from another project must not leak its roster (agent names, model
+// ids, context usage) to a project that merely guesses the id.
+func TestServeGroupMembersList_OtherProjectIsForbidden(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/group/create", map[string]any{
+		"hostAgentId": "codebuddy",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupCreate, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var created struct {
+		GroupID string `json:"groupId"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
+
+	other := filepath.Join(filepath.Dir(env.ProjectDir), "other-project")
+	require.NoError(t, os.MkdirAll(other, 0o755))
+
+	req = newRequest(t, http.MethodGet, "/api/group/members?groupId="+created.GroupID, nil)
+	req = withProjectCookie(req, other)
+	w = callHandlerWithAuth(ServeGroupMembers, req)
+	assert.NotEqual(t, http.StatusOK, w.Code, "another project must not read this roster")
+	assert.Contains(t, []int{http.StatusForbidden, http.StatusNotFound}, w.Code, w.Body.String())
+}

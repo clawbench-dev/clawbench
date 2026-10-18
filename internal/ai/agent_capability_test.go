@@ -435,7 +435,15 @@ func TestRegistry_HasNewAvailableThinkingEfforts(t *testing.T) {
 	})
 	t.Run("AllKnown", func(t *testing.T) {
 		reg.Update("a1", &AgentCapability{AvailableThinkingEfforts: []ThinkingEffortDef{{ID: "low"}, {ID: "high"}}})
-		assert.False(t, reg.HasNewAvailableThinkingEfforts("a1", []ThinkingEffortDef{{ID: "low"}}))
+		assert.False(t, reg.HasNewAvailableThinkingEfforts("a1", []ThinkingEffortDef{{ID: "low"}, {ID: "high"}}))
+	})
+	// A strict SUBSET is a change too (issue #552): ACP agents report effort
+	// levels per model, and a narrower model's list is often a subset of the
+	// previous one. Treating it as "nothing new" kept the wider list advertised,
+	// so a level the current model cannot run looked valid. Pinned in detail by
+	// TestRegistry_HasNewAvailableThinkingEfforts_DetectsShrink.
+	t.Run("SubsetIsAChange", func(t *testing.T) {
+		assert.True(t, reg.HasNewAvailableThinkingEfforts("a1", []ThinkingEffortDef{{ID: "low"}}))
 	})
 	t.Run("OneNew", func(t *testing.T) {
 		assert.True(t, reg.HasNewAvailableThinkingEfforts("a1", []ThinkingEffortDef{{ID: "low"}, {ID: "ultra"}}))
@@ -766,4 +774,33 @@ func TestRegistry_LoadFromDB_MalformedModelsIgnored(t *testing.T) {
 	require.NotNil(t, got)
 	assert.Empty(t, got.AvailableModels, "unparseable JSON must be ignored, not fatal")
 	assert.Len(t, got.AvailableModes, 1)
+}
+
+// TestRegistry_HasNewAvailableThinkingEfforts_DetectsShrink pins that a NARROWER
+// list also counts as "new" (issue #552).
+//
+// ACP agents report effort levels per model, and a narrower model's list can be
+// a strict subset of the previous one (OpenCode: glm-5.3 offers
+// low/high/max/default, deepseek-v4-pro only high/max/default). The old check
+// asked only "does the new list contain an id we have not seen?", which is
+// false for a subset — so the registry kept advertising the wider list, a level
+// the current model cannot run looked valid, and it was pushed on every turn
+// only to be rejected with -32602.
+func TestRegistry_HasNewAvailableThinkingEfforts_DetectsShrink(t *testing.T) {
+	reg := resetGlobalRegistryForTest(t)
+	reg.UpdateThinkingEfforts("shrink", []ThinkingEffortDef{
+		{ID: "low"}, {ID: "high"}, {ID: "max"}, {ID: "default"},
+	})
+
+	assert.True(t, reg.HasNewAvailableThinkingEfforts("shrink", []ThinkingEffortDef{
+		{ID: "high"}, {ID: "max"}, {ID: "default"},
+	}), "a strict subset must be detected as a change")
+
+	assert.False(t, reg.HasNewAvailableThinkingEfforts("shrink", []ThinkingEffortDef{
+		{ID: "low"}, {ID: "high"}, {ID: "max"}, {ID: "default"},
+	}), "an identical list must not report a change")
+
+	assert.True(t, reg.HasNewAvailableThinkingEfforts("shrink", []ThinkingEffortDef{
+		{ID: "high"}, {ID: "max"}, {ID: "default"}, {ID: "minimal"},
+	}), "a different id must still be detected")
 }

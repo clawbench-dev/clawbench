@@ -2,6 +2,7 @@ import { marked, highlightCode } from '@/utils/globals.ts'
 import type { Token, Tokens } from 'marked'
 import { slugify } from '@/utils/toc.ts'
 import { escapeHtml } from '@/utils/html.ts'
+import { EXTERNAL_LINK_CLASS, cleanExternalHref, shouldRenderAsText } from '@/utils/externalLinkNode.ts'
 
 /**
  * Heading ID deduplication counter.
@@ -114,6 +115,32 @@ function annotateSourceLines(tokens: Token[], startLine: number): void {
         }
         line += countNewlines(token.raw)
     }
+}
+
+/**
+ * marked's stock <a> renderer, reproduced here so the `link` override can hand
+ * local links back to it.
+ *
+ * Calling `this.parser.parseInline` + building the tag by hand would drift from
+ * marked's own escaping (it runs href through `encodeURI` and percent-decodes),
+ * so the behaviour for file links would quietly change. This mirrors marked
+ * v18's implementation; the fallback keeps the text if the href cannot be
+ * encoded, exactly as marked does.
+ */
+function defaultLinkRender(
+    this: { parser: { parseInline(tokens: Token[]): string } },
+    token?: Tokens.Link,
+): string {
+    const body = this.parser.parseInline((token?.tokens as Token[]) || [])
+    const raw = String(token?.href ?? '')
+    let href: string
+    try {
+        href = encodeURI(raw).replace(/%25/g, '%')
+    } catch {
+        return body
+    }
+    const titleAttr = token?.title ? ` title="${escapeHtml(String(token.title))}"` : ''
+    return `<a href="${href}"${titleAttr}>${body}</a>`
 }
 
 /**
@@ -270,6 +297,47 @@ export function configureMarkedRenderer(): void {
                 const tag = token?.header ? 'th' : 'td'
                 const alignAttr = typeof token?.align === 'string' ? ` align="${token.align}"` : ''
                 return `<${tag}${alignAttr}>${content}</${tag}>\n`
+            },
+            /**
+             * Render EXTERNAL links as selectable text instead of an <a>.
+             *
+             * Why: on Android a long-press on an <a> makes WebView start its own
+             * link gesture, and the system context menu never appears — so the
+             * URL cannot be copied with the ordinary long-press flow. As plain
+             * text the characters are selectable like any other text.
+             *
+             * A tap therefore has to be handled by us, and it must not navigate
+             * immediately: a stray tap while scrolling a chat message would yank
+             * the user out to a browser. The click layer shows a confirmation
+             * with the URL first (see utils/externalLinkClick.ts).
+             *
+             * ONLY external schemes are converted. Everything else keeps the
+             * original <a>:
+             *   - `#fragment` — in-page anchors, scrolled by the heading handler
+             *   - relative paths — file links, resolved by the annotation layer
+             *   - `file:` / other schemes — also resolved locally
+             * Converting those would break file navigation, which relies on the
+             * anchor's href and on `data-file-path` added later. Media URLs are
+             * excluded too (see shouldRenderAsText) because the player
+             * converters match on `<a href>`.
+             */
+            link(...args: unknown[]): string {
+                const token = args[0] as Tokens.Link | undefined
+                const href = String(token?.href ?? '')
+                const body = this.parser.parseInline((token?.tokens as Token[]) || [])
+
+                if (!shouldRenderAsText(href)) {
+                    // Delegate to marked's own renderer for everything local.
+                    return defaultLinkRender.call(this, token)
+                }
+
+                // Emitted as a string (marked renderers return HTML); the
+                // attribute set is identical to createExternalLinkNode's, and
+                // the href is normalised the same way (see cleanExternalHref).
+                const titleAttr = token?.title ? ` title="${escapeHtml(String(token.title))}"` : ''
+                const clean = cleanExternalHref(href) ?? href
+                return `<span class="${EXTERNAL_LINK_CLASS}" data-href="${escapeHtml(clean)}"${titleAttr}`
+                    + ` role="link" tabindex="0">${body}</span>`
             },
         },
     })

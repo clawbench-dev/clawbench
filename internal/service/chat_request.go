@@ -42,7 +42,19 @@ import (
 func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, modelOverride, thinkingEffortOverride, modeOverride, transportOverride, fileDir string, hasAttachments bool) ai.ChatRequest {
 	agentID = ResolveAgentID(sessionID, agentID)
 
+	// An explicit per-request pick always describes the model being sent right
+	// now, so it carries no model binding. Only an INHERITED pick (read from
+	// context_state) remembers which model it was made under.
+	explicitThinkingEffort := thinkingEffortOverride != ""
+
 	modelOverride, transportOverride, thinkingEffortOverride, modeOverride = applySessionOverrides(sessionID, modelOverride, transportOverride, thinkingEffortOverride, modeOverride)
+
+	thinkingEffortModel := ""
+	if !explicitThinkingEffort && thinkingEffortOverride != "" {
+		if _, m, ok := UserThinkingEffortPick(sessionID); ok {
+			thinkingEffortModel = m
+		}
+	}
 
 	effectiveThinkingEffort := thinkingEffortOverride // Explicit pick > session > agent default
 	effectiveMode := modeOverride                     // Explicit pick > session > agent default
@@ -53,7 +65,7 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 	// known here.
 	isACP := resolveIsACP(agentID, transportOverride)
 
-	systemPrompt, agentModel, agentCommand, effectiveThinkingEffort, effectiveMode := resolveAgentConfig(agentID, projectPath, modelOverride, effectiveThinkingEffort, effectiveMode, isACP)
+	systemPrompt, agentModel, agentCommand, effectiveThinkingEffort, effectiveMode := resolveAgentConfig(agentID, projectPath, modelOverride, effectiveThinkingEffort, thinkingEffortModel, effectiveMode, isACP)
 
 	// Resolve effective session ID for CLI.
 	// All backends store their CLI-identifiable session ID in external_session_id:
@@ -186,12 +198,18 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 //
 // Sources differ by field:
 //   - model / transport have their own chat_sessions columns;
-//   - mode / thinking effort have NO column — the user's picks live only in
+//   - mode / thinking effort have NO column — they live in
 //     chat_sessions.context_state (written by PATCH /api/ai/session/update).
 //     Without reading context_state a drained turn would silently revert to the
 //     agent default, and for mode there is no agent-level session memory at all
 //     (agent.EffectiveModeID() returns only PreferredMode, not the session's
 //     current mode).
+//
+// Thinking effort is special (issue #552): context_state also receives the
+// value the AGENT reports for itself, which must NOT be replayed as if the user
+// chose it. Only an explicit pick (UserThinkingEffortPick) is inherited here;
+// the agent-reported value stays display-only and the per-model/global default
+// decides the next turn.
 //
 // Explicit overrides always win; this only fills the blanks.
 func applySessionOverrides(sessionID, modelOverride, transportOverride, thinkingEffortOverride, modeOverride string) (string, string, string, string) {
@@ -201,14 +219,15 @@ func applySessionOverrides(sessionID, modelOverride, transportOverride, thinking
 	if transportOverride == "" {
 		transportOverride = GetSessionTransport(sessionID)
 	}
-	if thinkingEffortOverride == "" || modeOverride == "" {
-		if cs := GetContextState(sessionID); cs != nil {
-			if thinkingEffortOverride == "" && cs.ThinkingEffort != nil {
-				thinkingEffortOverride = cs.ThinkingEffort.CurrentID
-			}
-			if modeOverride == "" && cs.Mode != nil {
-				modeOverride = cs.Mode.CurrentModeID
-			}
+	if thinkingEffortOverride == "" {
+		// The pick carries the model it was made under; resolveAgentConfig
+		// discards it when the turn runs a different model (the pick then
+		// belongs to another model and its level may not even be offered).
+		thinkingEffortOverride, _, _ = UserThinkingEffortPick(sessionID)
+	}
+	if modeOverride == "" {
+		if cs := GetContextState(sessionID); cs != nil && cs.Mode != nil {
+			modeOverride = cs.Mode.CurrentModeID
 		}
 	}
 	return modelOverride, transportOverride, thinkingEffortOverride, modeOverride
@@ -226,7 +245,13 @@ func applySessionOverrides(sessionID, modelOverride, transportOverride, thinking
 // which is a guess — sending one as session/set_config_option can select a model
 // the agent cannot run. An EXPLICIT choice (modelOverride) is always honored:
 // that is the user's intent, not a guess.
-func resolveAgentConfig(agentID, projectPath, modelOverride, thinkingEffort, mode string, isACP bool) (systemPrompt, agentModel, agentCommand, effectiveThinkingEffort, effectiveMode string) {
+//
+// thinkingEffortModel is the model the inherited effort pick was made under
+// (empty for an explicit per-request override, which is always about the model
+// being sent right now). When it names a DIFFERENT model, the pick is dropped:
+// it belongs to the previous model and its level may not even be offered by the
+// one now running (OpenCode rejects it with -32602).
+func resolveAgentConfig(agentID, projectPath, modelOverride, thinkingEffort, thinkingEffortModel, mode string, isACP bool) (systemPrompt, agentModel, agentCommand, effectiveThinkingEffort, effectiveMode string) {
 	effectiveThinkingEffort = thinkingEffort
 	effectiveMode = mode
 
@@ -259,15 +284,99 @@ func resolveAgentConfig(agentID, projectPath, modelOverride, thinkingEffort, mod
 	if agent.Command != "" {
 		agentCommand = agent.Command
 	}
-	// Fall back to agent's effective thinking effort when nothing was specified
-	if effectiveThinkingEffort == "" && agent.EffectiveThinkingEffort() != "" {
-		effectiveThinkingEffort = agent.EffectiveThinkingEffort()
+	// A pick made under a different model does not apply to this turn.
+	if effectiveThinkingEffort != "" && thinkingEffortModel != "" && thinkingEffortModel != agentModel {
+		effectiveThinkingEffort = ""
+	}
+	// Fall back to the effort remembered for THIS model (issue #552), then to
+	// the agent's model-independent default. Previously only the latter was
+	// consulted, so a user's per-model choice was forgotten on every new
+	// session and the agent's own "low" default won.
+	//
+	// The GLOBAL default is checked against the levels this agent/model is known
+	// to offer. A per-model pick is trusted as-is: it was validated when the
+	// user made it. The global one is not model-aware — a user whose Settings
+	// default is "low" (valid for glm-5.3) who switches to a model that only
+	// offers high/max/default would otherwise have "low" re-sent on EVERY turn,
+	// rejected with -32602 each time while the chip kept showing it.
+	if effectiveThinkingEffort == "" {
+		effectiveThinkingEffort = EffectiveThinkingEffortForModel(agent, agentModel, isACP)
 	}
 	// Fall back to agent's preferred mode when nothing was specified
 	if effectiveMode == "" && agent.EffectiveModeID() != "" {
 		effectiveMode = agent.EffectiveModeID()
 	}
 	return systemPrompt, agentModel, agentCommand, effectiveThinkingEffort, effectiveMode
+}
+
+// EffectiveThinkingEffortForModel resolves the effort a turn should run, for the
+// model and transport it will actually use.
+//
+// Priority (issue #552):
+//  1. the user's pick for THIS model — trusted as-is (it was validated when the
+//     user made it, against this model's levels);
+//  2. the model-independent default from Settings, but ONLY if the level is one
+//     this agent/model is known to offer;
+//  3. empty — let the agent keep its own default.
+//
+// Step 2's filter is the point of this function. The global default is not
+// model-aware: a user whose Settings default is "low" (valid for glm-5.3) who
+// switches to a model that only offers high/max/default would otherwise have
+// "low" re-sent on EVERY turn, rejected with -32602 each time while the UI kept
+// showing it — the issue's symptom, one layer down.
+//
+// An UNKNOWN level list counts as "offered": not having been told must never
+// discard the user's configured default. For ACP the list arrives at session/new
+// and is refreshed from the set_config_option response (which carries the NEW
+// model's levels), so by the time a switch has happened the list is the right
+// one.
+func EffectiveThinkingEffortForModel(agent *model.Agent, modelID string, isACP bool) string {
+	if agent == nil {
+		return ""
+	}
+	if modelID != "" {
+		if v := agent.ThinkingEffortByModel[modelID]; v != "" {
+			return v
+		}
+	}
+	global := agent.EffectiveThinkingEffort()
+	if global == "" {
+		return ""
+	}
+	if !ThinkingEffortIsOffered(agent, isACP, global) {
+		slog.Info("configured thinking effort not offered by this agent/model, letting the agent decide",
+			"agent_id", agent.ID, "model", modelID, "level", global)
+		return ""
+	}
+	return global
+}
+
+// ThinkingEffortIsOffered reports whether level is known to be runnable by this
+// agent over the given transport. An unknown list returns true.
+func ThinkingEffortIsOffered(agent *model.Agent, isACP bool, level string) bool {
+	if level == "" {
+		return false
+	}
+	if isACP {
+		if es := ai.GetAgentCapabilityRegistry().GetThinkingEffortState(agent.ID, ""); es != nil && len(es.AvailableLevels) > 0 {
+			for _, l := range es.AvailableLevels {
+				if l.ID == level {
+					return true
+				}
+			}
+			return false
+		}
+		return true
+	}
+	if len(agent.ThinkingEffortLevels) == 0 {
+		return true
+	}
+	for _, l := range agent.ThinkingEffortLevels {
+		if l == level {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveIsACP decides whether this turn goes over ACP. An explicit transport

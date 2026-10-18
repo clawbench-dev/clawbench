@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { createGroup, listGroupMembers, generateMemberAvatars, addGroupMembers, removeGroupMember, setGroupParallelDefault, setGroupCruise } from '@/composables/useGroupChat'
+import { createGroup, listGroupMembers, generateMemberAvatars, addGroupMembers, removeGroupMember, setGroupParallelDefault, setGroupCruise, compactGroupMember } from '@/composables/useGroupChat'
 
 vi.mock('@/utils/appLog', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
@@ -108,6 +108,57 @@ describe('useGroupChat API', () => {
   it('throws on a non-ok response', async () => {
     vi.stubGlobal('fetch', mockFetch(500, {}))
     await expect(createGroup('agent-a', ['agent-a'])).rejects.toThrow()
+  })
+
+  it('listGroupMembers passes member usage through verbatim', async () => {
+    // The roster must distinguish "never reported" (null) from "0% used", so a
+    // `?? {}` fallback here would silently turn one into the other.
+    const usage = { inputTokens: 1200, totalTokens: 1500, contextWindow: 200000 }
+    vi.stubGlobal('fetch', mockFetch(200, {
+      ok: true,
+      members: [
+        { id: 'm1', usage },
+        { id: 'm2', usage: null },
+        { id: 'm3' },
+      ],
+    }))
+    const { members } = await listGroupMembers('g1')
+    expect(members[0].usage).toEqual(usage)
+    expect(members[1].usage).toBeNull()
+    expect(members[2].usage).toBeUndefined()
+  })
+
+  it('compactGroupMember POSTs groupId + memberId and returns the usage', async () => {
+    const usage = { inputTokens: 900, totalTokens: 1000, contextWindow: 200000 }
+    vi.stubGlobal('fetch', mockFetch(200, { ok: true, usage }))
+    const got = await compactGroupMember('g1', 'm2')
+    expect(got).toEqual(usage)
+    const [url, opts] = (fetch as any).mock.calls[0]
+    expect(url).toBe('/api/group/member-compact')
+    expect(opts.method).toBe('POST')
+    expect(JSON.parse(opts.body)).toEqual({ groupId: 'g1', memberId: 'm2' })
+  })
+
+  it('compactGroupMember returns null when the server reports no usage', async () => {
+    // A CLI-transport member never reports usage; the caller shows "unknown"
+    // rather than a 0% bar, so the null must survive the round trip.
+    vi.stubGlobal('fetch', mockFetch(200, { ok: true, usage: null }))
+    expect(await compactGroupMember('g1', 'm2')).toBeNull()
+  })
+
+  it('compactGroupMember surfaces the server error message', async () => {
+    vi.stubGlobal('fetch', mockFetch(409, { error: 'group is running' }))
+    await expect(compactGroupMember('g1', 'm2')).rejects.toThrow('group is running')
+  })
+
+  it('compactGroupMember falls back to the status when the body is not JSON', async () => {
+    // A proxy/500 HTML page must not turn into "undefined" in the toast.
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 502,
+      json: async () => { throw new Error('not json') },
+    }))
+    await expect(compactGroupMember('g1', 'm2')).rejects.toThrow('request failed: 502')
   })
 })
 

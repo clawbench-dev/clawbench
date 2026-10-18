@@ -1,9 +1,14 @@
 import { appLog } from '@/utils/appLog'
+import type { UsageSnapshot } from '@/utils/usageDisplay'
 
 /**
  * Frontend API client for AI group chat. Mirrors the endpoints registered in
  * internal/handler/group.go.
  */
+
+/** MemberUsage is one member's own context window, same shape as the single
+ *  chat's `usageState` (both are `ai.UsageState` on the wire). */
+export type MemberUsage = UsageSnapshot
 
 export interface GroupMemberInfo {
   id: string
@@ -16,6 +21,13 @@ export interface GroupMemberInfo {
   agentName: string
   left: boolean
   isHost: boolean
+  /**
+   * 该成员**自己**的上下文用量（成员行 context_state.usage，或活连接的缓存）。
+   * null/undefined = 从未上报（CLI 传输的智能体不上报），与「已用 0%」不同。
+   */
+  usage?: MemberUsage | null
+  /** 成员行的模型覆盖；空串 = 用智能体默认模型。 */
+  model?: string
 }
 
 export interface CreateGroupResult {
@@ -62,11 +74,30 @@ export async function listGroupMembers(groupId: string): Promise<{ members: Grou
   if (!resp.ok) throw new Error(`request failed: ${resp.status}`)
   const data = await resp.json()
   return {
+    // `usage` is passed through verbatim (null included): the roster must be
+    // able to tell "never reported" from "0% used", so no `?? {}` fallback.
     members: data.members ?? [],
     mode: data.mode === 'free' ? 'free' : 'host',
     parallelDefault: data.parallelDefault === true,
     cruise: data.cruise === true,
   }
+}
+
+/** compactGroupMember asks ONE member's agent to compact its own context.
+ *  Runs outside the group timeline (no user bubble, no reply is written there).
+ *  Throws with the server's message on refusal (busy group, CLI member, …). */
+export async function compactGroupMember(groupId: string, memberId: string): Promise<MemberUsage | null> {
+  const resp = await fetch('/api/group/member-compact', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ groupId, memberId }),
+  })
+  const data = await resp.json().catch(() => ({} as Record<string, unknown>))
+  if (!resp.ok) {
+    appLog.w('Group', `compact member ${memberId} failed: ${resp.status}`)
+    throw new Error(String(data.error ?? `request failed: ${resp.status}`))
+  }
+  return (data.usage as MemberUsage | null) ?? null
 }
 
 /** addGroupMembers adds one or more agents to the group. */

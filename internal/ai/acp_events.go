@@ -47,15 +47,18 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 	if conn != nil && !conn.compactReported.Load() {
 		if meta := acpUpdateMeta(update); IsCodeBuddyCompactionMeta(meta) {
 			if tryForwardACPEvent(ch, compactDetectedEvent("acp_meta")) {
-				conn.compactReported.Store(true)
+				conn.noteCompactionReported()
 			}
 		}
 	}
 	if conn != nil && update.SessionInfoUpdate != nil &&
 		IsCodeBuddyCompactionCancelledMeta(update.SessionInfoUpdate.Meta) {
 		// Cancelled/limit-reached compaction restores the original history, so it
-		// must clear any pending report from the same attempt.
-		conn.compactReported.Store(false)
+		// must clear any pending report from the same attempt — including a
+		// usage-drop detection that has not been delivered yet. Clearing only
+		// the reported latch would leave the pending flag set, and the next
+		// usage_update would report a compaction that never happened.
+		conn.ClearCompactionState()
 	}
 
 	switch {
@@ -136,7 +139,7 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		if conn != nil && !conn.compactReported.Load() && content.Text != nil &&
 			IsClaudeCompactionText(content.Text.Text) {
 			if tryForwardACPEvent(ch, compactDetectedEvent("acp_text")) {
-				conn.compactReported.Store(true)
+				conn.noteCompactionReported()
 			}
 		}
 		if !replayed {
@@ -169,6 +172,12 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 
 	case update.ToolCall != nil:
 		tc := update.ToolCall
+		// Compaction reported as a TOOL CALL rather than a _meta flag.
+		// Verified against real agents (2026-10-18): claude-agent-acp sends
+		// title "Compact conversation" + _meta.claudeCode.toolName="compact";
+		// codex-acp sends the same title with NO _meta. Detected here (the
+		// opening frame) because that is where both agents carry the title.
+		reportCompactionToolCall(conn, ch, extractMetaToolName(tc.Meta), tc.Title)
 		// An Agent spawn frame for a team member is the only place the member
 		// name and the tool-call id co-occur; record the join so this member's
 		// later content frames can be grouped under this Agent card.
@@ -201,6 +210,13 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 
 	case update.ToolCallUpdate != nil:
 		tcu := update.ToolCallUpdate
+
+		// Retry point for the compaction tool call: if the opening frame's
+		// compact_detected could not be delivered (full channel), this frame
+		// carries the same name/title and gets another attempt. Placed before
+		// the debouncer because the debouncer's terminal path breaks out of
+		// the switch.
+		reportCompactionToolCall(conn, ch, extractMetaToolName(tcu.Meta), derefStr(tcu.Title))
 
 		// Track in-flight tool state from the status regardless of debouncing,
 		// so the stall watchdog knows whether a tool is still executing.
@@ -482,10 +498,59 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 			// previously-known context window — the "context panel shows all
 			// zeros" bug. MergeUsageState keeps sticky size/used and only
 			// applies fields the notification actually carries.
-			merged := MergeUsageState(conn.GetCachedUsageState(), usageState)
+			prev := conn.GetCachedUsageState()
+			merged := MergeUsageState(prev, usageState)
 			conn.SetCachedUsageState(merged)
+			reportCompactionUsageDrop(conn, ch, prev, usageState)
 		}
 	}
+}
+
+// reportCompactionUsageDrop emits compact_detected when the context occupancy
+// collapsed, which is the ONLY evidence some agents ever produce (OpenCode:
+// verified 2026-10-18 — no tool call, no _meta, no text notice, just
+// 20663 -> 1893).
+//
+// Delivery is retried. The comparison is against the previously CACHED snapshot
+// and the cache has already been overwritten by the time this runs, so a
+// dropped event cannot be re-derived: the next notification would compare
+// collapsed against collapsed. A pending flag carries the detection forward to
+// the next usage_update, which is the same contract the _meta and text paths
+// honor (they latch only on confirmed delivery, and the agent repeats their
+// signal).
+//
+// prev is the snapshot BEFORE this notification; incoming is the notification
+// itself (not the merged result) so the wire must carry a real window size —
+// see IsCompactionUsageDropFromWire.
+func reportCompactionUsageDrop(conn *ACPConn, ch chan<- StreamEvent, prev, incoming *UsageState) {
+	if conn == nil || conn.compactReported.Load() {
+		return
+	}
+	// A pending detection is reported regardless of the current values: the
+	// evidence was consumed when it was first seen (the cache already holds the
+	// collapsed snapshot), so re-deriving it here is impossible.
+	retrying := conn.compactDropPending.Load()
+	if !retrying && !IsCompactionUsageDropFromWire(prev, incoming) {
+		return
+	}
+	if tryForwardACPEvent(ch, compactDetectedEvent("usage_drop")) {
+		conn.noteCompactionReported()
+		if retrying {
+			// The used numbers here are the CURRENT (already collapsed) pair and
+			// say nothing about the drop — log only the fact of the retry.
+			slog.Info("acp: compaction detected (retried delivery)",
+				slog.String("source", "usage_drop"),
+				slog.String("clawbench_sid", conn.clawbenchSID))
+		} else {
+			slog.Info("acp: compaction detected",
+				slog.String("source", "usage_drop"),
+				slog.Int("used_before", prev.Used),
+				slog.Int("used_after", incoming.Used),
+				slog.String("clawbench_sid", conn.clawbenchSID))
+		}
+		return
+	}
+	conn.compactDropPending.Store(true)
 }
 
 // handleConfigOptionSelect processes a ConfigOptionSelect update for a given
@@ -1009,6 +1074,42 @@ func mapACPError(code int, message string) StreamEvent {
 // so a panic from sending to a closed channel is safe to ignore.
 func forwardACPEvent(ch chan<- StreamEvent, event StreamEvent) {
 	emitStreamEvent(ch, "acp", event)
+}
+
+// reportCompactionToolCall emits the internal compact_detected signal when a
+// tool call IS the agent compacting, and latches the connection so the same
+// compaction is reported once.
+//
+// Called from BOTH the opening tool_call and every tool_call_update, because
+// the latch is set only on confirmed delivery (tryForwardACPEvent): a drop on a
+// full channel is retried by the next frame of the same tool call.
+//
+// The retry only actually works for claude: its tool_call_update frames repeat
+// _meta.claudeCode.toolName. codex-acp sends exactly ONE update and it carries
+// neither title nor _meta (verified 2026-10-18), so there is nothing to retry
+// with — codex is covered by the usage-drop path instead (19898 -> 4891).
+func reportCompactionToolCall(conn *ACPConn, ch chan<- StreamEvent, name, title string) {
+	if conn == nil || conn.compactReported.Load() {
+		return
+	}
+	if !IsCompactionToolCall(name, title) {
+		return
+	}
+	if tryForwardACPEvent(ch, compactDetectedEvent("acp_tool")) {
+		conn.noteCompactionReported()
+		slog.Info("acp: compaction detected",
+			slog.String("source", "acp_tool"),
+			slog.String("clawbench_sid", conn.clawbenchSID))
+	}
+}
+
+// derefStr returns the pointed-to string, or "" for nil. ACP models optional
+// fields as pointers, so every caller that wants a plain string needs this.
+func derefStr(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // tryForwardACPEvent is forwardACPEvent with a delivery report: it returns true

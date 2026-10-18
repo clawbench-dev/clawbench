@@ -289,7 +289,8 @@ func TestAgentSchemaMatchesProduction(t *testing.T) {
 		"id": true, "name": true, "icon": true, "specialty": true, "backend": true,
 		"command": true, "thinking_effort": true, "thinking_effort_levels": true,
 		"preferred_mode": true, "preferred_model": true, "preferred_thinking_effort": true,
-		"custom_system_prompt": true, "avatar": true,
+		"thinking_effort_by_model": true,
+		"custom_system_prompt":     true, "avatar": true,
 		"models": true, "models_auto_detected": true, "sort_order": true,
 		"transport": true, "acp_command": true,
 		"acp_available_modes": true, "acp_available_thinking_efforts": true, "acp_available_commands": true,
@@ -1164,7 +1165,8 @@ func insertUsageSession(t *testing.T, db *sql.DB, id, agentID, sessionType strin
 	t.Helper()
 	_, err := db.Exec(
 		`INSERT INTO chat_sessions (id, agent_id, session_type, archived) VALUES (?, ?, ?, ?)`,
-		id, agentID, sessionType, archived)
+		id, agentID, sessionType, archived,
+	)
 	require.NoError(t, err)
 }
 

@@ -463,6 +463,10 @@ export default {
     overlayReconnecting: 'Connection lost, reconnecting…',
   },
   chat: {
+    externalLink: {
+      title: 'Open external link',
+      open: 'Open',
+    },
     title: 'AI Chat',
     shortcutJumpUnread: {
       none: 'No unread sessions',
@@ -576,7 +580,6 @@ export default {
         share: 'Share',
         speak: 'Speak',
         refresh: 'Refresh',
-        groupSettings: 'Group',
       },
     },
     sessionInfo: {
@@ -596,6 +599,7 @@ export default {
       cacheHitRate: 'Cache Hit Rate',
       thoughtTokens: 'Thought',
       compact: 'Compact context',
+      compacting: 'Compacting…',
       // Token detail section — all token/cost rows grouped under one header.
       tokenDetail: 'Token Detail',
       // Per-agent _meta extension rows (cache write/creation, miss, credit).
@@ -619,6 +623,7 @@ export default {
       deferred: 'Session is busy — will switch on your next message',
       switchFailed: 'Could not switch model',
       switchFailedDetail: 'Could not switch model: {detail}',
+      effortChanged: 'Thinking effort for this model is {effort}',
     },
     modeSwitcher: {
       title: 'Mode',
@@ -686,6 +691,7 @@ export default {
     thinkingEffortSwitcher: {
       title: 'Thinking',
       auto: 'Auto',
+      rejected: 'This model does not support {effort} thinking effort — reverted',
     },
     attach: {
       currentFile: 'Current file',
@@ -1172,6 +1178,7 @@ export default {
     newGroup: 'New group chat',
     title: 'Group',
     host: 'Host',
+    hostNotRemovable: 'The host is the group\u2019s only scheduler and cannot be removed',
     realAgent: 'Agent',
     // The reserved human participant name ("User") shown to the reader.
     you: 'you',
@@ -1186,6 +1193,16 @@ export default {
     settings: 'Group settings',
     members: 'Members',
     left: 'Left',
+    memberDetail: {
+      open: 'View this member\u2019s context',
+      agent: 'Agent',
+      model: 'Model',
+      noUsage: 'This member has not reported any context usage yet. Agents on the CLI transport do not report a context window.',
+      noUsageShort: 'This member has not reported context usage',
+      compactUnavailable: 'Compaction is unavailable right now: the group is mid-turn, or this member has left.',
+      compactHint: 'Compaction affects only this member\u2019s own context; nothing is written to the group timeline.',
+      compacting: 'Compacting this member\u2019s context \u2014 usually takes a few seconds\u2026',
+    },
     parallelLabel: 'Run concurrently',
     parallelHint: "When on, the members you {'@'} speak at the same time (the whole roster when you {'@'} nobody); agent-to-agent {'@'} is unaffected.",
     cruiseLabel: 'Auto-cruise',

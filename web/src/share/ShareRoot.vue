@@ -27,6 +27,15 @@
          The share SPA builds its own token-scoped download URLs, so it mounts
          the bar itself rather than relying on App.vue, which this entry does
          not use. -->
+    <!-- Confirmation dialogs. The share SPA does not use App.vue, so it must
+         mount this host itself — `useDialog()` is a module-level store with no
+         renderer of its own. Without it, `confirm()` sets `visible` and returns
+         a promise nothing ever resolves: the tap produces no dialog, no
+         navigation, and a permanently pending promise. External links in a
+         shared document go through that path (externalLinkClick.ts), so this
+         host is what makes them tappable at all. -->
+    <DialogOverlay />
+
     <DownloadProgressBar
       :visible="downloadVisible"
       :file-name="downloadFileName"
@@ -44,6 +53,7 @@ import { useI18n } from 'vue-i18n'
 import { FileX2 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import DownloadProgressBar from '@/components/common/DownloadProgressBar.vue'
+import DialogOverlay from '@/components/common/DialogOverlay.vue'
 import ShareView from './ShareView.vue'
 import SessionShareView from './SessionShareView.vue'
 import { setShareToken, shareApiUrl } from './shareMode'

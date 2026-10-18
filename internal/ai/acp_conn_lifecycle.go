@@ -555,13 +555,16 @@ func (c *ACPConn) reapplyConfigOption(ctx context.Context, acpSID, configID, val
 	reapplyStart := time.Now()
 	slog.Info("acp conn: reapplyConfigOption starting", "config_id", configID, "value", value, "clawbench_sid", c.clawbenchSID)
 	c.mu.Unlock()
-	c.setSessionConfigOption(ctx, acpSID, configID, value)
+	reapplyErr := c.setSessionConfigOption(ctx, acpSID, configID, value)
 	c.mu.Lock()
-	slog.Info("acp conn: reapplyConfigOption done", "config_id", configID, "value", value, "clawbench_sid", c.clawbenchSID, "elapsed", time.Since(reapplyStart))
-	if c.alive {
-		// Record the value even when the agent rejected it: the cached value is
-		// the one the agent is known to hold, so shouldSetConfig dedups until it
-		// actually changes.
+	slog.Info("acp conn: reapplyConfigOption done", "config_id", configID, "value", value, "clawbench_sid", c.clawbenchSID, "elapsed", time.Since(reapplyStart), "error", reapplyErr)
+	if c.alive && !isInvalidConfigValue(reapplyErr) {
+		// Record the value even when the agent rejected it for a NON-value reason
+		// (transport/timeout): the cached value is the one the agent is known to
+		// hold, so shouldSetConfig dedups until it actually changes. A value the
+		// agent explicitly refused (e.g. an effort the resumed model does not
+		// offer) is NOT recorded — otherwise the retry is suppressed forever and
+		// the session keeps reporting a level the agent never accepted (#552).
 		c.markConfigSet(configID, value)
 		slog.Info("acp conn: re-applied config after resume", "config_id", configID, "value", value, "clawbench_sid", c.clawbenchSID)
 	}
@@ -1050,7 +1053,7 @@ func (c *ACPConn) SetSessionConfigOption(ctx context.Context, configID, value st
 
 	wasUnsupported := c.IsConfigUnsupported(wireID)
 
-	c.setSessionConfigOption(ctx, acpSID, wireID, value)
+	err := c.setSessionConfigOption(ctx, acpSID, wireID, value)
 
 	nowUnsupported := c.IsConfigUnsupported(wireID)
 
@@ -1059,6 +1062,27 @@ func (c *ACPConn) SetSessionConfigOption(ctx context.Context, configID, value st
 	}
 
 	_ = wasUnsupported
+
+	// A REJECTED value must not be recorded as the session's current setting.
+	//
+	// Recording it anyway was a silent lie (issue #552): OpenCode answers
+	// "Invalid params: effort not found: low" for a level the newly selected
+	// model does not offer, and the old code still marked it set and wrote it to
+	// the cached current. GET /api/ai/chat and the WS re-emit then reported a
+	// level the agent was not using, and shouldSetConfig's dedup meant the
+	// rejected value was never retried — so the display stayed wrong for the
+	// rest of the session while the agent silently ran its own default.
+	if err != nil {
+		if isInvalidConfigValue(err) {
+			slog.Warn("acp conn: agent rejected config value, keeping its own",
+				"config_id", wireID, "value", value,
+				"clawbench_sid", c.clawbenchSID, "error", err)
+			return
+		}
+		// Any other failure (timeout, dropped peer) is also not a success, but
+		// those paths already mark the connection dead; recording the value
+		// keeps the next resume from re-sending it needlessly.
+	}
 
 	c.markConfigSet(wireID, value)
 
@@ -1072,6 +1096,23 @@ func (c *ACPConn) SetSessionConfigOption(ctx context.Context, configID, value st
 	case "model":
 		c.UpdateCachedCurrent("model", value)
 	}
+}
+
+// isInvalidConfigValue reports whether the agent rejected a config VALUE (as
+// opposed to the option itself being unknown, or the call failing for transport
+// reasons).
+//
+// OpenCode answers -32602 with "Invalid params: effort not found: low" when the
+// selected model does not offer that level. ACP has no dedicated error code for
+// this, so the wording is the only signal — kept narrow on purpose: matching
+// every -32602 would also swallow genuine protocol errors that the caller must
+// still see.
+func isInvalidConfigValue(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "not found") && strings.Contains(msg, "invalid params")
 }
 
 // resolveConfigCategory maps a caller-supplied config id (historical hardcoded
@@ -1096,8 +1137,11 @@ func (c *ACPConn) resolveConfigCategory(configID string) (category, wireID strin
 	}
 }
 
-// setSessionConfigOption sets a config option. Errors are logged but not fatal.
-func (c *ACPConn) setSessionConfigOption(ctx context.Context, acpSessionID, configID, value string) {
+// setSessionConfigOption sets a config option and returns the agent's error, if
+// any. The error is not fatal (a rejected value must not abort the turn) but the
+// caller needs it to avoid recording a rejected value as the session's current
+// setting — see SetSessionConfigOption.
+func (c *ACPConn) setSessionConfigOption(ctx context.Context, acpSessionID, configID, value string) error {
 	c.mu.Lock()
 	conn := c.conn
 	alive := c.alive && c.isAliveLocked()
@@ -1106,7 +1150,7 @@ func (c *ACPConn) setSessionConfigOption(ctx context.Context, acpSessionID, conf
 
 	if conn == nil || !alive {
 		slog.Debug("acp conn: skipping set_config_option on dead connection", "config_id", configID, "value", value)
-		return
+		return nil
 	}
 
 	// Test override: record the (resolved) wire config id without an RPC.
@@ -1114,8 +1158,9 @@ func (c *ACPConn) setSessionConfigOption(ctx context.Context, acpSessionID, conf
 		hookErr := hook(ctx, acpSessionID, configID, value)
 		if hookErr != nil {
 			slog.Warn("acp conn: set_config_option hook failed", "config_id", configID, "value", value, "error", hookErr)
+			return hookErr
 		}
-		return
+		return nil
 	}
 
 	slog.Info("acp conn: sending set_config_option", "config_id", configID, "value", value, "clawbench_sid", c.clawbenchSID, "acp_sid", acpSessionID)
@@ -1123,7 +1168,7 @@ func (c *ACPConn) setSessionConfigOption(ctx context.Context, acpSessionID, conf
 	configCtx, configCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer configCancel()
 
-	_, err := conn.SetSessionConfigOption(configCtx, acp.SetSessionConfigOptionRequest{
+	resp, err := conn.SetSessionConfigOption(configCtx, acp.SetSessionConfigOptionRequest{
 		ValueId: &acp.SetSessionConfigOptionValueId{
 			SessionId: acp.SessionId(acpSessionID),
 			ConfigId:  acp.SessionConfigId(configID),
@@ -1155,7 +1200,51 @@ func (c *ACPConn) setSessionConfigOption(ctx context.Context, acpSessionID, conf
 				"config_id", configID, "value", value,
 				"clawbench_sid", c.clawbenchSID, "acp_sid", acpSessionID)
 		}
-	} else {
-		slog.Info("acp conn: set_config_option completed", "config_id", configID, "value", value)
+		return err
+	}
+	slog.Info("acp conn: set_config_option completed", "config_id", configID, "value", value)
+	// The response carries the agent's full config state AFTER the change. That
+	// is the authoritative per-model option list: OpenCode's thought_level
+	// options depend on the selected model (glm offers low/high/max/default,
+	// deepseek only high/max/default), so a list learned from a previous model
+	// must not survive a switch. Without this, a stale wider list keeps
+	// advertising levels the current model rejects.
+	c.applyConfigOptionsFromSetResponse(resp.ConfigOptions)
+	return nil
+}
+
+// applyConfigOptionsFromSetResponse refreshes the registry's option lists from
+// a set_config_option response.
+//
+// Only the option LISTS are taken (the current value is applied by the caller
+// through its own dedup bookkeeping). Every category present is updated, so a
+// model switch that narrows the effort levels is reflected immediately.
+func (c *ACPConn) applyConfigOptionsFromSetResponse(opts []acp.SessionConfigOption) {
+	if len(opts) == 0 {
+		return
+	}
+	agentID := c.AgentID()
+	if agentID == "" {
+		return
+	}
+	reg := GetAgentCapabilityRegistry()
+	for _, opt := range opts {
+		if opt.Select == nil || opt.Select.Category == nil {
+			continue
+		}
+		sel := buildSelectStateFromACPSelect(opt.Select, string(*opt.Select.Category))
+		if sel.IsEmpty() {
+			continue
+		}
+		category := sel.Category
+		switch string(*opt.Select.Category) {
+		case string(acp.SessionConfigOptionCategoryThoughtLevel):
+			category = "thought_level"
+		case string(acp.SessionConfigOptionCategoryMode):
+			category = "mode"
+		case string(acp.SessionConfigOptionCategoryModel):
+			category = "model"
+		}
+		reg.UpdateAvailableOptions(agentID, category, sel.Available)
 	}
 }

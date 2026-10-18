@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"clawbench/internal/ai"
 	"clawbench/internal/i18n"
 	"clawbench/internal/model"
 	"clawbench/internal/store"
@@ -818,6 +819,66 @@ func ListGroupMembers(groupID string) ([]GroupMember, error) {
 		members = append(members, m)
 	}
 	return members, rows.Err()
+}
+
+// GroupMemberContext is a member row's session-level state as the member list
+// and its detail panel need it: how full that member's own context window is,
+// and which model it is running.
+type GroupMemberContext struct {
+	// Usage is the member row's persisted context_state.usage. nil means the
+	// member never reported usage (a CLI-transport agent does not report it at
+	// all), which the UI renders as "—" rather than as 0%.
+	Usage *ai.UsageState
+	// Model is the member row's model override. "" means "use the agent's
+	// default model".
+	Model string
+}
+
+// GroupMemberContexts returns the context state of every member row of a group,
+// keyed by member row id (removed members included, so the caller can decide
+// whether to show them).
+//
+// One query for the whole roster: the member sheet must not fan out a query per
+// member. Deliberately separate from ListGroupMembers, which runs on every group
+// turn and only needs identity fields — parsing every member's context_state
+// there would add work to the hot path for data that path never reads.
+//
+// A malformed context_state degrades to "no usage" for that member (logged, not
+// returned) so one bad row cannot fail the whole roster, mirroring
+// GetContextState's policy.
+func GroupMemberContexts(groupID string) (map[string]GroupMemberContext, error) {
+	out := map[string]GroupMemberContext{}
+	if groupID == "" {
+		return out, nil
+	}
+	rows, err := store.ReadDB().Query(
+		`SELECT id, COALESCE(model, ''), COALESCE(context_state, '') FROM chat_sessions
+		 WHERE group_id = ? AND session_type = ?`,
+		groupID, groupMemberSessionType,
+	)
+	if err != nil {
+		return out, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var id, model, raw string
+		if err := rows.Scan(&id, &model, &raw); err != nil {
+			return out, err
+		}
+		c := GroupMemberContext{Model: model}
+		if raw != "" {
+			var state ContextState
+			if err := json.Unmarshal([]byte(raw), &state); err != nil {
+				slog.Warn("group member contexts: unmarshal context_state failed",
+					"member", id, "err", err)
+			} else {
+				c.Usage = state.Usage
+			}
+		}
+		out[id] = c
+	}
+	return out, rows.Err()
 }
 
 // countActiveMembers returns how many members have not left the group.

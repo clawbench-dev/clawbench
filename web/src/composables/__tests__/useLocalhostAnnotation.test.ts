@@ -204,7 +204,10 @@ describe('useLocalhostAnnotation', () => {
       const result = annotateLocalhostUrls(html)
       expect(result).toContain('chat-url-open-btn')
       expect(result).toContain('data-path="/api/status"')
-      expect(result).toContain('href="http://localhost:3000/api/status"')
+      // Assert the ATTRIBUTE, not a substring: `href="…"` also matches inside
+      // `data-href="…"`, so the old form could not tell an anchor from a span.
+      expect(result).toContain('data-href="http://localhost:3000/api/status"')
+      expect(result).not.toContain('<a ')
     })
 
     it('preserves path in <a> tag annotation', () => {

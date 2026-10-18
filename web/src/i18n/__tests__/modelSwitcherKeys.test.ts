@@ -11,7 +11,7 @@ import zh from '@/i18n/locales/zh'
  * it, so parity is asserted here instead of trusted.
  */
 describe('model switcher keys', () => {
-  const KEYS = ['switching', 'deferred', 'switchFailed', 'switchFailedDetail'] as const
+  const KEYS = ['switching', 'deferred', 'switchFailed', 'switchFailedDetail', 'effortChanged'] as const
 
   it('defines every model-switcher key in both locales', () => {
     for (const key of KEYS) {
@@ -27,6 +27,13 @@ describe('model switcher keys', () => {
     // connect); losing `{detail}` degrades the toast to a generic failure.
     expect(en.chat.modelSwitcher.switchFailedDetail).toContain('{detail}')
     expect(zh.chat.modelSwitcher.switchFailedDetail).toContain('{detail}')
+  })
+
+  it('keeps the effort placeholder in the effort-change notice', () => {
+    // The notice names the level the new model will run (issue #552); without
+    // the placeholder it would say nothing actionable.
+    expect(en.chat.modelSwitcher.effortChanged).toContain('{effort}')
+    expect(zh.chat.modelSwitcher.effortChanged).toContain('{effort}')
   })
 
   it('distinguishes "switching" from "deferred" in both locales', () => {

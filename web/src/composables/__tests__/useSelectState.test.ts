@@ -175,7 +175,9 @@ describe('createSelectState', () => {
 
             state.loadPref('agent-1')
 
-            expect(mockLoadPref).toHaveBeenCalledWith('agent-1')
+            // The model id is forwarded too (undefined when not supplied): a
+            // per-model preference (thinking effort) needs it to resolve.
+            expect(mockLoadPref).toHaveBeenCalledWith('agent-1', undefined)
             expect(state.currentId.value).toBe('saved-mode')
         })
 
@@ -227,7 +229,7 @@ describe('createSelectState', () => {
             state.syncAndFallback('', [], 'agent-1')
 
             expect(state.currentId.value).toBe('saved-mode')
-            expect(mockLoadPref).toHaveBeenCalledWith('agent-1')
+            expect(mockLoadPref).toHaveBeenCalledWith('agent-1', undefined)
         })
 
         it('resolves name from available after fallback', () => {

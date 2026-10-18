@@ -465,6 +465,10 @@ export default {
     overlayReconnecting: '连接断开，正在重连…',
   },
   chat: {
+    externalLink: {
+      title: '打开外部链接',
+      open: '打开',
+    },
     title: 'AI 对话',
     sendError: '错误: {error}',
     shortcutJumpUnread: {
@@ -578,7 +582,6 @@ export default {
         share: '分享',
         speak: '朗读',
         refresh: '刷新',
-        groupSettings: '群聊',
       },
     },
     sessionInfo: {
@@ -598,6 +601,7 @@ export default {
       cacheHitRate: '缓存命中率',
       thoughtTokens: '思考',
       compact: '压缩上下文',
+      compacting: '压缩中…',
       // Token detail section — all token/cost rows grouped under one header.
       tokenDetail: 'Token 明细',
       // Per-agent _meta extension rows (cache write/creation, miss, credit).
@@ -621,6 +625,7 @@ export default {
       deferred: '会话忙碌，将在下次发送时切换',
       switchFailed: '切换模型失败',
       switchFailedDetail: '切换模型失败：{detail}',
+      effortChanged: '该模型的思考等级为 {effort}',
     },
     modeSwitcher: {
       title: '模式',
@@ -688,6 +693,7 @@ export default {
     thinkingEffortSwitcher: {
       title: '思考',
       auto: '自动',
+      rejected: '该模型不支持 {effort} 思考等级，已还原',
     },
     attach: {
       currentFile: '当前文件',
@@ -1175,6 +1181,7 @@ export default {
     newGroup: '新建群聊',
     title: '群聊',
     host: '主持人',
+    hostNotRemovable: '主持人是群的唯一调度者，不能移除',
     realAgent: '真实智能体',
     // The reserved human participant name ("User") shown to the reader.
     you: '你',
@@ -1189,6 +1196,16 @@ export default {
     settings: '群聊设置',
     members: '成员',
     left: '已离场',
+    memberDetail: {
+      open: '查看该成员的上下文',
+      agent: '智能体',
+      model: '模型',
+      noUsage: '该成员还没有上报上下文用量。使用 CLI 传输的智能体不上报上下文窗口。',
+      noUsageShort: '该成员未上报上下文用量',
+      compactUnavailable: '当前无法压缩：群聊正在执行本轮讨论，或该成员不在讨论中。',
+      compactHint: '压缩只影响该成员自己的上下文，不会写入群聊记录。',
+      compacting: '正在压缩该成员的上下文，通常需要十几秒…',
+    },
     parallelLabel: '并发执行',
     parallelHint: "打开后你 {'@'} 的成员同时发言（不 {'@'} 人时全体成员并发）；智能体之间的 {'@'} 不受影响。",
     cruiseLabel: '自动巡航',

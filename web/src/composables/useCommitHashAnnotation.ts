@@ -1,6 +1,7 @@
 import { escapeHtml } from '@/utils/html.ts'
 import { gt } from '@/composables/useLocale'
 import { isShareMode } from '@/share/shareMode'
+import { EXTERNAL_LINK_CLASS } from '@/utils/externalLinkNode.ts'
 
 /**
  * SVG icon markup for the commit-open button (git-commit icon).
@@ -151,6 +152,10 @@ export function annotateCommitHashesIn(doc: Document): string[] {
             if (!parent) return NodeFilter.FILTER_REJECT
             // Skip text inside <a> tags
             if (parent.tagName === 'A' || parent.closest('a')) return NodeFilter.FILTER_REJECT
+            // External links are <span class="md-external-link">, not <a> (see
+            // externalLinkNode.ts) — a hash-looking segment inside a URL must
+            // not become a commit chip on top of the link.
+            if (parent.closest('.' + EXTERNAL_LINK_CLASS)) return NodeFilter.FILTER_REJECT
             // Skip <code> elements already annotated by step 1
             if (parent.classList.contains('chat-commit-hash-pending')) return NodeFilter.FILTER_REJECT
             // Skip already-annotated spans

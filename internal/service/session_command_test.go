@@ -956,6 +956,11 @@ func TestBuildChatRequest_EmptyAgentID_InheritsSessionAgent(t *testing.T) {
 // user's persisted mode and thinking effort. These live only in context_state,
 // so before the fallback a drained turn silently reverted to the agent default
 // — and for mode there is no agent-level session memory to fall back to.
+//
+// The effort entry carries userPicked=true because only an EXPLICIT pick may be
+// inherited (issue #552): the same context_state slot also receives the value
+// the agent reports for itself, and replaying THAT is what pinned sessions to
+// the agent's "low" default. See the companion test below for the negative case.
 func TestBuildChatRequest_EmptyOverrides_InheritSessionModeAndEffort(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
@@ -969,7 +974,7 @@ func TestBuildChatRequest_EmptyOverrides_InheritSessionModeAndEffort(t *testing.
 	_, err := db.Exec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, context_state) VALUES (?, 1, 'claude', 'T', 'acp-agent', ?)`,
 		"sess-mode-effort",
-		`{"mode":{"currentModeId":"plan"},"thinkingEffort":{"currentId":"high"}}`,
+		`{"mode":{"currentModeId":"plan"},"thinkingEffort":{"currentId":"high","userPicked":true}}`,
 	)
 	require.NoError(t, err)
 
@@ -977,6 +982,99 @@ func TestBuildChatRequest_EmptyOverrides_InheritSessionModeAndEffort(t *testing.
 	req := BuildChatRequest("hello", "sess-mode-effort", "/proj", "claude", "acp-agent", "", "", "", "", "/proj", false)
 	assert.Equal(t, "plan", req.Mode, "drained turn must inherit the session's persisted mode")
 	assert.Equal(t, "high", req.ThinkingEffort, "drained turn must inherit the session's persisted thinking effort")
+}
+
+// TestBuildChatRequest_AgentReportedEffort_IsNotInherited pins the issue #552
+// fix: a value the AGENT reported for itself (no userPicked flag) is display
+// state, not a user choice, so a drained turn must not replay it.
+//
+// Regression shape: the agent reports "low" for the newly selected model, that
+// value lands in context_state, and every later turn re-sent it — so the user's
+// configured default never applied and the session looked permanently stuck on
+// low, even after switching models.
+func TestBuildChatRequest_AgentReportedEffort_IsNotInherited(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"acp-agent": {
+			ID: "acp-agent", Backend: "claude", Transport: "acp-stdio", AcpCommand: "claude acp",
+			PreferredThinkingEffort: "max",
+		},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	_, err := db.Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, context_state) VALUES (?, 1, 'claude', 'T', 'acp-agent', ?)`,
+		"sess-agent-reported-effort",
+		`{"thinkingEffort":{"currentId":"low"}}`,
+	)
+	require.NoError(t, err)
+
+	req := BuildChatRequest("hello", "sess-agent-reported-effort", "/proj", "claude", "acp-agent", "", "", "", "", "/proj", false)
+	assert.Equal(t, "max", req.ThinkingEffort,
+		"the agent's reported default must not be replayed as a user choice; the agent's configured default applies")
+}
+
+// TestBuildChatRequest_PerModelEffortWins pins the per-model memory: a pick
+// recorded for the model being run beats the model-independent default.
+func TestBuildChatRequest_PerModelEffortWins(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"acp-agent": {
+			ID: "acp-agent", Backend: "claude", Transport: "acp-stdio", AcpCommand: "claude acp",
+			PreferredThinkingEffort: "low",
+			ThinkingEffortByModel:   map[string]string{"glm-5.3": "max"},
+		},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	_, err := db.Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, model) VALUES (?, 1, 'claude', 'T', 'acp-agent', 'glm-5.3')`,
+		"sess-per-model-effort",
+	)
+	require.NoError(t, err)
+
+	req := BuildChatRequest("hello", "sess-per-model-effort", "/proj", "claude", "acp-agent", "", "", "", "", "/proj", false)
+	assert.Equal(t, "max", req.ThinkingEffort, "the pick remembered for this model must win over the agent default")
+
+	// A different model has no pick, so the model-independent default applies.
+	_, err = db.Exec(`UPDATE chat_sessions SET model = 'deepseek-v4-pro' WHERE id = 'sess-per-model-effort'`)
+	require.NoError(t, err)
+	req = BuildChatRequest("hello", "sess-per-model-effort", "/proj", "claude", "acp-agent", "", "", "", "", "/proj", false)
+	assert.Equal(t, "low", req.ThinkingEffort, "another model must not inherit this model's pick")
+}
+
+// TestBuildChatRequest_PickFromOtherModel_Dropped pins that a session pick made
+// under a DIFFERENT model is not replayed: the level may not even be offered by
+// the model now running (OpenCode rejects it with -32602).
+func TestBuildChatRequest_PickFromOtherModel_Dropped(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"acp-agent": {
+			ID: "acp-agent", Backend: "claude", Transport: "acp-stdio", AcpCommand: "claude acp",
+			PreferredThinkingEffort: "high",
+		},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	_, err := db.Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, model, context_state) VALUES (?, 1, 'claude', 'T', 'acp-agent', 'deepseek-v4-pro', ?)`,
+		"sess-stale-pick",
+		`{"thinkingEffort":{"currentId":"max","userPicked":true,"modelId":"glm-5.3"}}`,
+	)
+	require.NoError(t, err)
+
+	req := BuildChatRequest("hello", "sess-stale-pick", "/proj", "claude", "acp-agent", "", "", "", "", "/proj", false)
+	assert.Equal(t, "high", req.ThinkingEffort,
+		"a pick made under another model must be dropped; this model's default applies")
 }
 
 // TestBuildChatRequest_ExplicitOverrides_WinOverSession pins the priority order:
@@ -2949,9 +3047,11 @@ func TestDrainReplyFollowsItsQuestion(t *testing.T) {
 	// follows its own question with no anchor column needed.
 	var lastUserID, lastAssistantID int64
 	require.NoError(t, db.QueryRow(
-		"SELECT id FROM chat_history WHERE role='user' AND session_id=? ORDER BY id DESC LIMIT 1", sid).Scan(&lastUserID))
+		"SELECT id FROM chat_history WHERE role='user' AND session_id=? ORDER BY id DESC LIMIT 1", sid,
+	).Scan(&lastUserID))
 	require.NoError(t, db.QueryRow(
-		"SELECT id FROM chat_history WHERE role='assistant' AND session_id=? ORDER BY id DESC LIMIT 1", sid).Scan(&lastAssistantID))
+		"SELECT id FROM chat_history WHERE role='assistant' AND session_id=? ORDER BY id DESC LIMIT 1", sid,
+	).Scan(&lastAssistantID))
 	assert.Less(t, lastUserID, lastAssistantID,
 		"the drained question's row id must precede its reply's — id order is conversational order")
 }
@@ -3429,4 +3529,74 @@ func TestExecuteStreamRunShared_InjectsCommandPrompt(t *testing.T) {
 	assert.NotContains(t, backend.lastPrompt(), "[injected contract]",
 		"a non-command must not be injected")
 	assert.Contains(t, backend.lastPrompt(), "just a normal message")
+}
+
+// TestEffectiveThinkingEffortForModel_UnsupportedGlobalDefaultDropped pins the
+// last layer of issue #552: the model-INDEPENDENT default must not be replayed
+// onto a model that does not offer it.
+//
+// Failure shape without this: the user's Settings default is "low" (valid for
+// glm-5.3). They switch to deepseek-v4-pro, which only offers high/max/default.
+// Every turn then sends "low", the agent answers -32602, the ACP layer (rightly)
+// refuses to record it and the agent runs its own default — so the UI shows LOW
+// forever while the agent runs something else, and the user cannot tell why.
+func TestEffectiveThinkingEffortForModel_UnsupportedGlobalDefaultDropped(t *testing.T) {
+	agent := &model.Agent{
+		ID:                      "opencode",
+		Backend:                 "opencode",
+		ThinkingEffortLevels:    []string{"high", "max", "default"},
+		PreferredThinkingEffort: "low",
+	}
+
+	assert.Equal(t, "", EffectiveThinkingEffortForModel(agent, "deepseek-v4-pro", false),
+		"a global default the model does not offer must be dropped, not re-sent")
+
+	// The same default IS valid for a model whose list contains it.
+	agent.ThinkingEffortLevels = []string{"low", "high", "max", "default"}
+	assert.Equal(t, "low", EffectiveThinkingEffortForModel(agent, "glm-5.3", false))
+
+	// An UNKNOWN list must never discard the configured default.
+	agent.ThinkingEffortLevels = nil
+	assert.Equal(t, "low", EffectiveThinkingEffortForModel(agent, "glm-5.3", false))
+}
+
+// TestEffectiveThinkingEffortForModel_PerModelPickBeatsGlobal pins the priority
+// and that a per-model pick is trusted as-is: it was validated when the user
+// made it, and the static list may belong to another transport.
+func TestEffectiveThinkingEffortForModel_PerModelPickBeatsGlobal(t *testing.T) {
+	agent := &model.Agent{
+		ID:                      "opencode",
+		ThinkingEffortLevels:    []string{"high", "max"},
+		PreferredThinkingEffort: "high",
+		ThinkingEffortByModel:   map[string]string{"glm-5.3": "max"},
+	}
+
+	assert.Equal(t, "max", EffectiveThinkingEffortForModel(agent, "glm-5.3", false),
+		"the pick remembered for this model wins over the global default")
+	assert.Equal(t, "high", EffectiveThinkingEffortForModel(agent, "deepseek-v4-pro", false),
+		"another model falls back to the supported global default")
+}
+
+// TestEffectiveThinkingEffortForModel_ACPUsesRegistry pins that ACP turns are
+// validated against the levels the AGENT advertised, not the static CLI list
+// (which describes a different level vocabulary).
+func TestEffectiveThinkingEffortForModel_ACPUsesRegistry(t *testing.T) {
+	reg := ai.GetAgentCapabilityRegistry()
+	reg.UpdateThinkingEfforts("acp-effort-agent", []ai.ThinkingEffortDef{
+		{ID: "low"}, {ID: "high"}, {ID: "max"},
+	})
+	t.Cleanup(func() { reg.UpdateThinkingEfforts("acp-effort-agent", nil) })
+
+	agent := &model.Agent{
+		ID:                      "acp-effort-agent",
+		Transport:               "acp-stdio",
+		ThinkingEffortLevels:    []string{"minimal", "high", "max"}, // stale CLI list
+		PreferredThinkingEffort: "minimal",
+	}
+
+	assert.Equal(t, "", EffectiveThinkingEffortForModel(agent, "glm-5.3", true),
+		"the ACP list is authoritative: minimal is not offered by the agent")
+
+	agent.PreferredThinkingEffort = "max"
+	assert.Equal(t, "max", EffectiveThinkingEffortForModel(agent, "glm-5.3", true))
 }

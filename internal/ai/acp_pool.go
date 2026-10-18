@@ -1179,9 +1179,30 @@ type ACPConn struct {
 	// compact_detected signal for the current compaction. CodeBuddy stamps the
 	// compaction flag onto EVERY session update emitted while it compacts, so
 	// without this latch the service layer would be told the same compaction
-	// happened many times. Reset when the agent reports a cancelled/limit-reached
-	// compaction (the history was restored, so nothing was compacted after all).
+	// happened many times. Cleared at the start of every turn and when the
+	// agent reports a cancelled/limit-reached compaction.
 	compactReported atomic.Bool
+
+	// compactDropPending holds a compaction that was DETECTED from a usage
+	// collapse but whose compact_detected event could not be delivered (full
+	// channel).
+	//
+	// A usage-drop detection is a one-shot state transition: the collapse is
+	// compared against the previously cached snapshot, and the cache is then
+	// overwritten with the collapsed value. If the event were dropped there
+	// would be no second chance — the next comparison sees collapsed vs
+	// collapsed. So the detection is remembered here and retried on the next
+	// usage_update, where the same event can be delivered once the channel
+	// drains.
+	//
+	// INVARIANT: this flag must never outlive the compaction it describes. It is
+	// cleared by ClearCompactionState (turn start, cancelled compaction) and by
+	// every successful report on ANY path (see noteCompactionReported). Leaving
+	// it set would make the NEXT turn's first usage_update report a compaction
+	// that turn never had.
+	//
+	// atomic, no lock needed — written from the ACP notification goroutine.
+	compactDropPending atomic.Bool
 
 	// pendingSteerIDs holds the clientUserMessageIds of mid-turn injections this
 	// host issued that have not yet been observed on the wire. CodeBuddy echoes
@@ -1790,6 +1811,28 @@ func (c *ACPConn) SetCachedUsageState(state *UsageState) {
 	c.stateMu.Lock()
 	defer c.stateMu.Unlock()
 	c.cachedUsageState = state
+}
+
+// noteCompactionReported marks this turn's compaction as reported and drops any
+// pending retry.
+//
+// Every path that successfully delivers compact_detected must call this rather
+// than setting compactReported directly: a usage-drop detection may already be
+// pending when another path (tool call / _meta / text) wins the race, and
+// leaving the flag set would make the next usage_update report the SAME
+// compaction a second time.
+func (c *ACPConn) noteCompactionReported() {
+	c.compactReported.Store(true)
+	c.compactDropPending.Store(false)
+}
+
+// ClearCompactionState forgets everything known about this turn's compaction.
+// Called at the start of every turn (each compaction gets its own report) and
+// when the agent reports a cancelled/limit-reached compaction (nothing was
+// rewritten, so there is nothing to report).
+func (c *ACPConn) ClearCompactionState() {
+	c.compactReported.Store(false)
+	c.compactDropPending.Store(false)
 }
 
 // GetCachedUsageState returns the cached usage state.

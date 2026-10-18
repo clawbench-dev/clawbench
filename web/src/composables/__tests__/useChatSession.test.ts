@@ -308,6 +308,13 @@ vi.mock('@/composables/useSessionIdentity.ts', () => ({
     return changed
   }),
   updateThinkingEffortState: vi.fn(),
+  // Mirrors the real rule (issue #552) closely enough for these tests: an
+  // explicit user pick wins, otherwise the reported value is adopted. The
+  // per-model memory is covered in thinkingEffortModelScope.test.ts, which runs
+  // against the real module rather than a mock.
+  reconcileThinkingEffort: vi.fn((id: string, _levels: unknown[], _agentId: string, _modelId: string, userPicked: boolean) => {
+    if (id && (userPicked || !mockIdentity.currentThinkingEffort)) mockIdentity.currentThinkingEffort = id
+  }),
   updateAvailableThinkingEfforts: vi.fn(),
   clearThinkingEffortState: vi.fn(),
   clearSessionIdentity: vi.fn((upcomingSessionId?: string) => {

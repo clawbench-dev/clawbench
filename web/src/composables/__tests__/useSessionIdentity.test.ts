@@ -35,6 +35,7 @@ const mockGetAgent = vi.fn()
 const mockGetAgentModel = vi.fn()
 const mockSyncModelFromAgent = vi.fn().mockReturnValue({ modelId: 'default-model', modelName: 'Default Model' })
 const mockGetEffectiveThinkingEffort = vi.fn().mockReturnValue(null)
+const mockGetEffectiveThinkingEffortForModel = vi.fn().mockReturnValue('')
 const mockAgentHeaderTitle = vi.fn().mockReturnValue('🤖 Test')
 
 const mockGetAgentThinkingEffortLevels = vi.fn().mockReturnValue([])
@@ -47,6 +48,7 @@ vi.mock('@/composables/useAgents', () => ({
         getAgentModel: mockGetAgentModel,
         syncModelFromAgent: mockSyncModelFromAgent,
         getEffectiveThinkingEffort: mockGetEffectiveThinkingEffort,
+        getEffectiveThinkingEffortForModel: mockGetEffectiveThinkingEffortForModel,
         getAgentThinkingEffortLevels: mockGetAgentThinkingEffortLevels,
         agentHeaderTitle: mockAgentHeaderTitle,
         supportsACP: vi.fn().mockReturnValue(true),
@@ -909,7 +911,7 @@ describe('useSessionIdentity', () => {
             mockGetAgent.mockReturnValue({ preferredModel: null })
             mockGetAgentModel.mockReturnValue(null)
             mockSyncModelFromAgent.mockReturnValue({ modelId: 'default', modelName: 'Default' })
-            mockGetEffectiveThinkingEffort.mockReturnValue('medium')
+            mockGetEffectiveThinkingEffortForModel.mockReturnValue('medium')
 
             await initSessionFromAPI()
 
@@ -2267,13 +2269,13 @@ describe('useSessionIdentity', () => {
 
         it('loadThinkingPref returns effective thinking effort', () => {
             const identity = useSessionIdentity()
-            mockGetEffectiveThinkingEffort.mockReturnValue('high')
+            mockGetEffectiveThinkingEffortForModel.mockReturnValue('high')
             expect(identity.loadThinkingPref('agent-1')).toBe('high')
         })
 
         it('loadThinkingPref returns null when no effort configured', () => {
             const identity = useSessionIdentity()
-            mockGetEffectiveThinkingEffort.mockReturnValue(null)
+            mockGetEffectiveThinkingEffortForModel.mockReturnValue('')
             expect(identity.loadThinkingPref('agent-1')).toBeNull()
         })
     })

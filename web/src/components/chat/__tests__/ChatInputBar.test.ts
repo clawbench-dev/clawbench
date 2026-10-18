@@ -1172,9 +1172,17 @@ describe('ChatInputBar', () => {
       expect(wrapper.vm.skillMenuItems.map(i => i.key)).toEqual(['#web-search'])
     })
 
-    it('does not open for a # that is not the first token', async () => {
+    it('opens for a # that starts a token mid-message', async () => {
+      // Issue #548: the user describes the problem first, then names the skill.
       const wrapper = mountBar()
       wrapper.vm.inputText = 'use #pdf'
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.skillMenuItems.map(i => i.key)).toEqual(['#pdf'])
+    })
+
+    it('does not open for a # that does not start a token', async () => {
+      const wrapper = mountBar()
+      wrapper.vm.inputText = 'C#pdf'
       await wrapper.vm.$nextTick()
       expect(wrapper.vm.skillMenuItems).toEqual([])
     })
@@ -2991,6 +2999,30 @@ describe('ChatInputBar', () => {
       // (backend fans the flag out to every member row).
       expect(mockToggleAutoApprove).toHaveBeenCalledWith(true)
       wrapper.unmount()
+    })
+  })
+
+  describe('auto-approve highlight colour', () => {
+    // jsdom has no CSS engine, so this is a source guard.
+    //
+    // Both auto-approve highlights (the single-chat mode chip and the group
+    // chip) used to be a hard-coded #4caf50 / #388e3c green. That ignored every
+    // theme in the app and made the chip clash with the accent-coloured cruise
+    // chip next to it. They must now read the theme accent, like every other
+    // active-mode highlight.
+    it('uses the theme accent for both chips, never a fixed green', async () => {
+      const mod = await import('../ChatInputBar.vue?raw')
+      const source = String(mod.default)
+
+      for (const cls of ['session-info-mode-auto', 'session-info-approve-on']) {
+        const block = source.match(new RegExp(`\\.${cls}\\s*\\{([^}]*)\\}`))
+        expect(block, `.${cls} must have its own rule`).toBeTruthy()
+        expect(block![1]).toContain('var(--accent-color')
+      }
+
+      // Nothing in this component may reintroduce the hard-coded greens.
+      expect(source).not.toMatch(/#4caf50/i)
+      expect(source).not.toMatch(/#388e3c/i)
     })
   })
 

@@ -2,7 +2,6 @@ package handler
 
 import (
 	"strings"
-	"unicode"
 
 	"clawbench/internal/skill"
 )
@@ -21,9 +20,16 @@ import (
 // no other way to find it). The path, not the body, is injected: the model
 // reads on demand, keeping the prompt small — the same contract the system
 // prompt table uses.
+//
+// The reference may appear ANYWHERE in the message, not only at the start: the
+// user's natural writing order is "describe the problem, then name the skill",
+// and "#" is ClawBench's own protocol (unlike "/", which agents route by
+// prefix), so its trigger position is ours to define. Detection stays
+// token-based, so prose hashes ("issue #12"), mid-word hashes ("C#") and URL
+// fragments ("...#section") are unaffected.
 
-// skillInjectTemplate is the instruction injected when the user sends a
-// message beginning with "#<skill-name>".
+// skillInjectTemplate is the instruction injected for each "#<skill-name>"
+// reference found in the message.
 //
 // Placeholders: {{SKILL_NAME}}, {{SKILL_PATH}}
 const skillInjectTemplate = `[The user explicitly selected the skill "{{SKILL_NAME}}" for this request. Read its SKILL.md at the path below and follow its instructions.]
@@ -32,71 +38,100 @@ Skill: {{SKILL_NAME}}
 SKILL.md: {{SKILL_PATH}}
 `
 
-// parseSkillCommand reports whether rawMsg is an explicit skill reference and
-// returns the referenced name (without the leading "#").
+// skillRefPunct terminates a "#name" token, so a reference followed directly by
+// a comma or a full stop still resolves to the bare name.
 //
-// Syntax: the message must START with "#<name>" — the "#" is the first
-// non-whitespace character. A "#" later in the body is plain text and never
-// triggers (so "#tag" in prose, "issue #12" and the like are unaffected).
+// CJK prose has no spaces between sentences, so a reference is very often
+// followed immediately by punctuation with no separating space. Trimming only
+// the tail would leave the punctuation glued to the name and resolve nothing;
+// the name therefore ENDS at the first punctuation character, exactly like it
+// ends at whitespace.
 //
-// Exactly ONE reference is allowed: a second "#<name>" token immediately after
-// the first makes the whole message a non-command (fail-closed). Two
-// references have no defined priority, and silently picking one would inject a
-// skill the user did not intend.
+// The CJK code points are written as escapes so this file holds no CJK
+// literals. The i18n guard (internal/service/i18n_hardcoded_guard_test.go)
+// cannot tell "matched but never displayed" from user-visible text, and an
+// allowlist entry for a parser constant would weaken the guard for everyone.
 //
-// The name runs to the next whitespace and must be non-empty and free of "#".
-//
-// Leading whitespace is stripped with unicode.IsSpace, matching both
-// strings.Fields (used for the token split) and the frontend's JS `.trim()`
-// (completionMatch.ts). An ASCII-only TrimLeft would disagree with the menu on
-// exotic spaces (\v, \f, NBSP): the client would offer the entry and the server
-// would not recognize it.
-func parseSkillCommand(rawMsg string) (string, bool) {
-	trimmed := strings.TrimLeftFunc(rawMsg, unicode.IsSpace)
-	if !strings.HasPrefix(trimmed, "#") {
-		return "", false
-	}
+// Only the terminator set is shared with the frontend (completionMatch.ts
+// REF_TOKEN_END_RE): inner characters stay part of the name ("user/skill",
+// "web-search"), and a leading "#" is what makes it a reference at all.
+const skillRefPunct = ",.;:!?)]}\uFF0C\u3002\uFF1B\uFF1A\uFF01\uFF1F\uFF09\u3011\u300D\u300F"
 
-	// Fields collapses runs of whitespace, so the token split matches what the
-	// user sees regardless of tabs or multiple spaces.
-	fields := strings.Fields(trimmed)
-	if len(fields) == 0 {
-		return "", false
+// skillRefName returns the name part of a "#<name>" token, cut at the first
+// punctuation character. Returns "" when the token carries no name.
+func skillRefName(token string) string {
+	name := strings.TrimPrefix(token, "#")
+	if i := strings.IndexAny(name, skillRefPunct); i >= 0 {
+		name = name[:i]
 	}
-
-	name := strings.TrimPrefix(fields[0], "#")
-	if name == "" || strings.Contains(name, "#") {
-		return "", false
-	}
-	// A second "#..." token in the same leading run means more than one
-	// reference: refuse rather than guess.
-	if len(fields) > 1 && strings.HasPrefix(fields[1], "#") {
-		return "", false
-	}
-	return name, true
+	return name
 }
 
-// processSkillCommand renders the injection for a "#<skill-name>" message, or
-// returns rawMsg unchanged when the message is not an explicit skill reference
-// or the name resolves to no known skill.
+// skillRefCandidates returns every "#<name>" token in msg, in order.
+//
+// A reference starts a token — the beginning of the message or a whitespace
+// boundary — and its name runs to the next whitespace or punctuation.
+// `strings.Fields` is the tokenizer, so any Unicode whitespace separates
+// tokens, matching the frontend's JS `.trim()`/`\s` semantics.
+//
+// Whether a candidate actually names a skill is the caller's decision (it needs
+// the project path): an unknown name is ordinary text, and a message mixing
+// known and unknown hashes ("#pdf fix issue #12") must still run the known one.
+func skillRefCandidates(msg string) []string {
+	var names []string
+	for _, token := range strings.Fields(msg) {
+		if !strings.HasPrefix(token, "#") {
+			continue
+		}
+		name := skillRefName(token)
+		// A name may not be empty ("#" / "# ...") or contain "#" ("##",
+		// "#a#b"): neither can name a skill.
+		if name == "" || strings.Contains(name, "#") {
+			continue
+		}
+		names = append(names, name)
+	}
+	return names
+}
+
+// processSkillCommand renders the injection for every resolvable
+// "#<skill-name>" reference in rawMsg, or returns rawMsg unchanged when the
+// message has none.
 //
 // "Unchanged" is the same contract processClawbenchCommand uses: the caller
-// treats an unchanged result as "no injection". An unknown name deliberately
-// falls through to a normal message rather than erroring — the user may have
-// typed a "#" for another purpose, and the text is still worth sending.
+// treats an unchanged result as "no injection". Each resolved reference
+// contributes its own template block, in the order it appears. Unknown names
+// deliberately fall through to a normal message rather than erroring — the
+// user may have typed a "#" for another purpose, and the text is still worth
+// sending.
+//
+// A repeated reference is injected once: asking for the same skill twice adds
+// no instruction, only prompt weight.
 func processSkillCommand(rawMsg, projectPath string) string {
-	name, ok := parseSkillCommand(rawMsg)
-	if !ok {
+	var blocks []string
+	seen := make(map[string]bool)
+	for _, name := range skillRefCandidates(rawMsg) {
+		s, found := skill.Global().ResolveForProject(name, projectPath)
+		if !found {
+			continue
+		}
+		key := strings.ToLower(s.Name)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		blocks = append(blocks, renderSkillInjection(s))
+	}
+	if len(blocks) == 0 {
 		return rawMsg
 	}
-	s, found := skill.Global().ResolveForProject(name, projectPath)
-	if !found {
-		return rawMsg
-	}
+	return strings.Join(blocks, "\n")
+}
 
+// renderSkillInjection fills skillInjectTemplate for one resolved skill.
+func renderSkillInjection(s skill.Skill) string {
 	tmpl := strings.ReplaceAll(skillInjectTemplate, "{{SKILL_NAME}}", promptLine(s.Name))
-	tmpl = strings.ReplaceAll(tmpl, "{{SKILL_PATH}}", promptLine(s.Path))
-	return tmpl
+	return strings.ReplaceAll(tmpl, "{{SKILL_PATH}}", promptLine(s.Path))
 }
 
 // promptLine neutralizes a value for single-line interpolation into a prompt:

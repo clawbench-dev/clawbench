@@ -90,13 +90,15 @@ describe('skillMenuRows', () => {
   })
 
   it('drops skills whose name cannot be expressed as a # reference', () => {
-    // The backend grammar is `#<name>` with the name running to the next
-    // whitespace and rejecting "#" — so a name containing either is
-    // unreachable and must not be offered.
+    // The reference grammar is `#<name>` with the name running to the next
+    // whitespace or punctuation and rejecting "#" — so a name containing any of
+    // them is unreachable and must not be offered.
     skills.value = [
       skill({ name: 'good' }),
       skill({ name: 'my skill' }),
       skill({ name: 'a#b' }),
+      skill({ name: 'a,b' }),
+      skill({ name: 'a。b' }),
     ]
     expect(skillMenuRows().map((s) => s.name)).toEqual(['good'])
   })

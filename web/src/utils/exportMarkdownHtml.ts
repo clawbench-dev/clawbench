@@ -1223,6 +1223,26 @@ export async function exportMarkdownToHtml(options: ExportOptions): Promise<Expo
             img.removeAttribute('data-attach-src')
         }
 
+        // Restore external links to real anchors.
+        //
+        // In the app they are <span data-href> so a long-press on Android selects
+        // the text (WebView's link gesture suppresses the system context menu —
+        // see utils/externalLinkNode.ts). A standalone exported file has no such
+        // listener, so a span would render as link-coloured, underlined,
+        // NON-clickable text. The export is a static document, so the anchor is
+        // both correct and the only thing that works.
+        for (const span of Array.from(contentEl.querySelectorAll<HTMLElement>('.md-external-link'))) {
+            const href = span.getAttribute('data-href')
+            if (!href) continue
+            const a = document.createElement('a')
+            a.setAttribute('href', href)
+            a.setAttribute('target', '_blank')
+            a.setAttribute('rel', 'noopener noreferrer')
+            if (span.hasAttribute('title')) a.setAttribute('title', span.getAttribute('title') as string)
+            while (span.firstChild) a.appendChild(span.firstChild)
+            span.replaceWith(a)
+        }
+
         // 8. Serialize CSS + KaTeX fonts + base typography.
         const currentThemeId = document.documentElement.getAttribute('data-theme') || 'github-light'
         const currentThemeBase = document.documentElement.getAttribute('data-theme-base') || (isDarkTheme(currentThemeId) ? 'dark' : 'light')

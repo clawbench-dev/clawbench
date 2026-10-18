@@ -62,6 +62,41 @@
     overflow-wrap: break-word;
 }
 
+/* External links are rendered as <span class="md-external-link"> rather than
+   <a> so a long-press selects the text instead of starting WebView's link
+   gesture (which suppresses the system context menu, making the URL impossible
+   to copy on Android). They must still LOOK like links, and must stay
+   selectable — hence no `user-select: none` here.
+
+   Colour is the THEME ACCENT, matching real anchors: the two must read as the
+   same kind of thing, otherwise a document with both looks half-converted.
+   The dotted underline is what distinguishes "opens after confirming" from a
+   plain link; it is also the only affordance that survives the user-message
+   background, where the accent is deliberately lightened below. */
+.md-external-link {
+    color: var(--accent-color);
+    text-decoration: underline;
+    text-decoration-style: dotted;
+    text-underline-offset: 2px;
+    cursor: pointer;
+    word-break: break-all;
+    overflow-wrap: break-word;
+}
+
+.md-external-link:hover {
+    text-decoration-style: solid;
+}
+
+/* User messages sit on an accent-filled bubble, where the accent colour would
+   vanish. Mirror the lighter tint used for anchors there. */
+.chat-message.user .md-external-link {
+    color: #b8daff;
+}
+
+.chat-message.user .md-external-link:hover {
+    color: #9dc5f0;
+}
+
 /* User message links use lighter blue for readability on blue background */
 .chat-message.user a {
     color: #b8daff;

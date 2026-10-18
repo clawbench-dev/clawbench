@@ -7,6 +7,10 @@ CannotRemoveHost: 主持人是群的唯一调度者，不能移除
 GroupMemberLimitReached: 一个群最多 {{.MaxCount}} 个成员
 GroupNotForkable: 群聊不支持分叉
 GroupNotRewindable: 群聊不支持回溯
+GroupRunning: 群聊正在执行本轮讨论，请等结束后再试
+GroupMemberCompacting: 该成员正在压缩上下文
+GroupMemberNotFound: 该群中没有这个成员
+CompactNeedsACP: 该成员未使用 ACP 传输，没有压缩命令
 ShareSessionNoContent: 该会话暂无可分享的消息
 ShareSessionInvalidSelection: 部分选中的消息无法分享（可能仍在生成中）
 QueueIdRequired: queueId 为必填项
@@ -231,6 +235,9 @@ CruiseMaxRounds: '自动巡航：已达确认轮数上限'
 # 可读句子、绝不能是键名。切换语言不会追溯翻译历史（与决策 96b 一致）。
 GroupMemberJoined: '{{.Name}}加入了讨论'
 GroupMemberLeft: '{{.Name}} 已离场'
+GroupMemberCompactionStarted: '{{.Name}} 正在压缩上下文…'
+GroupMemberCompactionDone: '{{.Name}} 已压缩上下文（{{.Before}} → {{.After}}）'
+GroupMemberCompactionFailed: '{{.Name}} 的上下文压缩失败'
 GroupMemberUnknown: 成员
 GroupUnknownMention: '{{.Speaker}} @ 了一个不存在的成员：{{.Names}}（已忽略）'
 GroupMemberListSeparator: 、

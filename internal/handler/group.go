@@ -1,9 +1,12 @@
 package handler
 
 import (
+	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 
+	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 )
@@ -196,11 +199,27 @@ func serveGroupMembersList(w http.ResponseWriter, r *http.Request, projectPath s
 		return
 	}
 	hostMemberID := service.GetGroupHostMember(groupID)
+	// Context state (how full each member's OWN window is + its model) is a
+	// second, single query. A failure here degrades to "no usage" instead of
+	// failing the roster: identity is what the sheet needs to be usable.
+	ctxs, ctxErr := service.GroupMemberContexts(groupID)
+	if ctxErr != nil {
+		slog.Warn("group members: load member contexts failed", "group", groupID, "err", ctxErr)
+	}
 	out := make([]map[string]any, 0, len(members))
 	for _, m := range members {
 		agentName := ""
 		if a := model.GetAgent(m.AgentID); a != nil {
 			agentName = a.Name
+		}
+		c := ctxs[m.ID]
+		// A live ACP connection's cached usage is fresher than the persisted
+		// copy (the DB is written once per 500ms flush window). The connection
+		// is keyed by the member row id, because a member turn's RunConfig
+		// SessionID IS that row. After the idle sweep reclaims it the cache is
+		// gone and the DB value (still authoritative) is used.
+		if s := ai.GetACPConnManager().GetCachedStateByClawbenchSID(m.ID); s.Usage != nil {
+			c.Usage = s.Usage
 		}
 		out = append(out, map[string]any{
 			"id":        m.ID,
@@ -211,6 +230,10 @@ func serveGroupMembersList(w http.ResponseWriter, r *http.Request, projectPath s
 			"agentName": agentName,
 			"left":      m.Left,
 			"isHost":    m.ID == hostMemberID,
+			jsonModel:   c.Model,
+			// usage is null (not {}) when the member never reported any: the
+			// client distinguishes "no data" from "0% used" on exactly that.
+			jsonUsage: c.Usage,
 		})
 	}
 	// mode tells the frontend whether a host exists (host mode) or the group is
@@ -309,6 +332,68 @@ func serveGroupMembersRemove(w http.ResponseWriter, r *http.Request, projectPath
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// ServeGroupMemberCompact asks ONE group member's agent to compact its own
+// context.
+//
+//	POST /api/group/member-compact {groupId, memberId} -> {ok, usage?}
+//
+// Deliberately separate from /api/ai/chat: a group turn writes to the GROUP
+// timeline, so routing "/compact" through it would leave the command text and
+// an assistant reply in the discussion every member then reads. This endpoint
+// drives the member's agent directly and produces no timeline output at all.
+//
+// Errors: 409 GroupRunning / MemberCompacting, 404 MemberNotFound, 400 for a
+// member that does not use ACP (no slash-command channel), 500 otherwise.
+func ServeGroupMemberCompact(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
+		return
+	}
+	projectPath, ok := requireProject(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		GroupID  string `json:"groupId"`
+		MemberID string `json:"memberId"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.GroupID == "" || req.MemberID == "" {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
+		return
+	}
+	if !requireSessionOwnership(w, r, req.GroupID, projectPath) {
+		return
+	}
+	// Detach from the request context's cancellation but keep its values: a
+	// client that navigates away mid-compaction must not abort the agent's
+	// compaction half-way (the agent would keep the rewritten context and we
+	// would never persist the resulting usage).
+	usage, err := service.CompactGroupMember(context.WithoutCancel(r.Context()), req.GroupID, req.MemberID)
+	switch {
+	case err == nil:
+	case errors.Is(err, service.ErrGroupRunning):
+		writeLocalizedErrorf(w, r, http.StatusConflict, "GroupRunning")
+		return
+	case errors.Is(err, service.ErrMemberCompacting):
+		writeLocalizedErrorf(w, r, http.StatusConflict, "GroupMemberCompacting")
+		return
+	case errors.Is(err, service.ErrGroupMemberNotFound):
+		writeLocalizedErrorf(w, r, http.StatusNotFound, "GroupMemberNotFound")
+		return
+	case errors.Is(err, service.ErrCompactNeedsACP):
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "CompactNeedsACP")
+		return
+	default:
+		slog.Warn("group member compact failed", "group", req.GroupID, "member", req.MemberID, "err", err)
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "usage": usage})
 }
 
 // ServeGroupSettings reads/updates group settings (parallelDefault, cruise).

@@ -221,12 +221,20 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 
 			// DB fallback: if any state is still nil after in-memory lookups,
 			// try to restore from persisted context_state (survives server restart).
+			//
+			// Thinking effort is restored ONLY when the user picked it. The same
+			// context_state entry also receives the value the AGENT reports for
+			// itself (its per-model default, "low" for most OpenCode models);
+			// presenting that as the session's current effort is what made new
+			// sessions look stuck on low (issue #552). Dropping it here lets the
+			// client fall back to the per-model / global default, which is what
+			// the next turn will actually use.
 			if modeState == nil || thinkingEffortState == nil || usageState == nil {
 				if ctxState := service.GetContextState(sessionID); ctxState != nil {
 					if modeState == nil && ctxState.Mode != nil {
 						modeState = ctxState.Mode
 					}
-					if thinkingEffortState == nil && ctxState.ThinkingEffort != nil {
+					if thinkingEffortState == nil && ctxState.ThinkingEffort != nil && ctxState.ThinkingEffort.UserPicked {
 						thinkingEffortState = ctxState.ThinkingEffort
 					}
 					if usageState == nil && ctxState.Usage != nil {
@@ -439,7 +447,16 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 	// AFTER this one (this turn is the command, not a model call). Flagging here
 	// rather than waiting for the agent's own report also covers agents that do
 	// not announce the compaction on the wire.
-	if ai.IsCompactCommand(req.Message) {
+	//
+	// GROUP SESSIONS ARE EXCLUDED. A group's /compact is NOT implemented: the
+	// orchestrator has no compact handling, so the text is persisted on the
+	// timeline and injected to members as ordinary user speech — nothing is
+	// compacted. Flagging the group row here therefore set a flag with no
+	// consumer that could ever clear it: a group row never runs a turn, and the
+	// only reader of `compacted` (BuildChatRequest → ConsumeSessionCompacted)
+	// is reached with MEMBER row ids, never the group id. The column would stay
+	// 1 forever, silently claiming the group was compacted.
+	if ai.IsCompactCommand(req.Message) && !service.IsGroupSession(sessionID) {
 		service.MarkSessionCompacted(sessionID)
 	}
 
@@ -460,6 +477,17 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		service.UpdateSessionModel(sessionID, req.ModelID)
 	}
 
+	// NOTE: `thinkingEffort` on the send is deliberately NOT treated as a user
+	// pick (issue #552).
+	//
+	// The frontend sends the CURRENT chip value on every direct send, and that
+	// value is legitimately the agent's own per-model default when the user has
+	// configured nothing (see reconcileThinkingEffort). Persisting it here would
+	// launder the agent's "low" into a user pick — re-creating the exact bug —
+	// and would freeze the global default the moment a message was sent. The
+	// explicit pick is recorded by the PATCH the picker fires when the user
+	// actually clicks a level; this request only applies it to the turn.
+
 	// Persist transport selection for this session so subsequent loads
 	// restore the user's choice instead of the agent default.
 	// Per-session cleanup: when switching THIS session to CLI, close only
@@ -478,6 +506,20 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 
 	// Prevent concurrent sessions for the same session ID
 	runCtx, claimed := service.TryClaimSessionRun(sessionID)
+
+	// A group member compaction drives that member's ACP connection directly
+	// (POST /api/group/member-compact). If a group turn started now, the member
+	// would get a SECOND prompt on the same ACP session: the agent answers
+	// "Session is busy" (the user's message fails with an error bubble),
+	// RegisterSession overwrites the compaction's stream channel (its events are
+	// silently dropped), and promptCancel is overwritten too, leaving one prompt
+	// uncancellable. So treat "a member is compacting" exactly like "a group turn
+	// is running": give the claim back and let the enqueue block below hold the
+	// message until the compaction finishes (it wakes the queue on completion).
+	if claimed && service.IsGroupSession(sessionID) && service.GroupHasCompactingMember(sessionID) {
+		service.SetSessionRunning(sessionID, false, true)
+		claimed = false
+	}
 
 	// Group-chat delegation (decisions #45/#46/#58/#72): a message to a group is
 	// driven by the group orchestrator (host routes, members speak), NOT a
@@ -560,7 +602,15 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		// this, but a retire pass may have consumed the mark between the claim
 		// and the insert above; re-marking now that the row exists makes the
 		// guarantee unconditional rather than depending on timing.
-		service.WakeSessionRunner(sessionID)
+		//
+		// EXCEPT while a group member is compacting: the claim was deliberately
+		// released above (see the compaction gate), so there is no runner to
+		// wake — and starting one would re-create exactly the concurrent-prompt
+		// defect the gate exists to prevent. The compaction wakes the queue
+		// itself when it finishes (wakeQueuedAfterCompaction).
+		if !service.IsGroupSession(sessionID) || !service.GroupHasCompactingMember(sessionID) {
+			service.WakeSessionRunner(sessionID)
+		}
 
 		// Announce the queued message so other devices render it in the queue
 		// panel. SenderClientID lets the sending device skip its own echo.

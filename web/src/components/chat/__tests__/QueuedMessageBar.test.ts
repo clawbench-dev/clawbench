@@ -324,6 +324,42 @@ describe('QueuedMessageBar (collapsed banner action button)', () => {
 })
 
 /**
+ * Expanded rows show the COMPLETE message. The collapsed preview is deliberately
+ * clipped to one line, but expanding the panel exists precisely so the user can
+ * read what is waiting — a single clipped line there made long queued messages
+ * unreadable. jsdom has no CSS engine, so the wrapping contract is pinned at the
+ * source; the DOM side only proves the full text is in the row (it always was —
+ * the clipping was purely visual, which is why this regressed unnoticed).
+ */
+describe('QueuedMessageBar (expanded rows show the full message)', () => {
+  beforeEach(() => resetQueuesForTest())
+
+  it('wraps instead of clipping the row text', () => {
+    const src = readFileSync(resolve(__dirname, '../QueuedMessageBar.vue'), 'utf8')
+    const m = src.match(/\.queued-bar-text\s*\{([^}]*)\}/)
+    expect(m, '.queued-bar-text rule must exist').not.toBeNull()
+    const rule = m![1]
+    expect(rule, 'the row must wrap, not clip').not.toMatch(/white-space:\s*nowrap/)
+    expect(rule, 'no ellipsis clipping in the expanded list').not.toMatch(/text-overflow:\s*ellipsis/)
+    expect(rule, 'no hidden overflow (that is what cut the text off)').not.toMatch(/overflow:\s*hidden/)
+    // pre-wrap preserves the user's own line breaks; anywhere breaks long
+    // unbroken tokens (URLs, paths) so they cannot overflow the row.
+    expect(rule).toMatch(/white-space:\s*pre-wrap/)
+    expect(rule).toMatch(/overflow-wrap:\s*anywhere/)
+  })
+
+  it('renders the whole multi-line text in the row', async () => {
+    const long = '第一行\n第二行\n' + 'x'.repeat(300)
+    const wrapper = mount(QueuedMessageBar, {
+      props: { messages: [{ queueId: 'q1', text: long, files: [], createdAt: '' }], midTurnSupported: true, busy: '' },
+      global: { plugins: [i18n] },
+    })
+    await wrapper.find('.queued-bar-header').trigger('click')
+    expect(wrapper.find('.queued-bar-text').text()).toBe(long)
+  })
+})
+
+/**
  * Collapsed-header preview: the next message to be sent is shown next to the
  * count, so the queue is readable without expanding. It must track the HEAD of
  * the queue (the next one out), disappear once expanded (the list already shows

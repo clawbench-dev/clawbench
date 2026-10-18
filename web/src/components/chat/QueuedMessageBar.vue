@@ -276,13 +276,13 @@ function fileLabel(f) {
 .queued-bar-text {
   font-size: var(--font-size-sm);
   color: var(--text-primary);
-  /* Single-line (nowrap + ellipsis), so line-height sets the row height. Match
-     the plan panel's entry text (snug) instead of the 1.6 base, so the taller
-     font does not make each row disproportionately airy. */
+  /* Expanded rows show the FULL message — wrapping is the whole point of
+     expanding, so this must NOT clip like the collapsed preview does.
+     pre-wrap keeps the line breaks the user typed; anywhere lets a long
+     unbroken token (URL, path) break instead of overflowing the row. */
   line-height: var(--line-height-snug);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .queued-bar-files {

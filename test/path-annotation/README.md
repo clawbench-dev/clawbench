@@ -336,11 +336,21 @@ Windows 的 `C:\` 一直正常（`splitPath` 会保留 `C:` 段），只有 POSI
 - `main.go:10` （行内代码）→ 标注 `main.go`，行号 10
 - `README.md:12` （行内代码）→ 标注 `README.md`，行号 12
 
-> 行内代码／围栏代码块里的无协议域名仍会**同时**得到链接与一个死文件 chip
-> （`<code class="chat-file-path" data-file-path="github.com/foo/bar">`）。死 chip 是
-> Step 2 的 `looksLikeFilePath` 只看「含 `/`」所致，与本次两处修复无关：
->
-> - `github.com/foo/bar` （行内代码形式）→ 链接 + 死 chip
+**一个 URL 只会得到一种标注**（2026-10-18 已修）：外部链接渲染成
+`<span class="md-external-link">` 而不是 `<a>`（Android 长按需要），所以文件标注器
+「跳过 `<a>`」的规则没盖住它——`vuejs.org/guide/intro.html` 这类**尾巴带扩展名**的
+URL 会把自己的尾巴再标成 `org/guide/intro.html` 死 chip，嵌套在链接里面。
+现在文件/工作树/提交哈希三个标注器都跳过外部链接，Step 2 也跳过已链接化的
+`<code>`。以下都应**只是链接**（可点击，无死 chip）：
+
+- raw.githubusercontent.com/o/r/master/README.md
+- vuejs.org/guide/intro.html
+- `github.com/foo/bar` （行内代码形式）
+
+反之，真实路径始终只是 chip，绝不会变成链接：
+
+- web/src/App.vue
+- internal/ai/factory_test.go
 
 ### 带行号的路径（点击跳转并闪烁高亮对应行）
 

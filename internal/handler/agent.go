@@ -528,13 +528,26 @@ func serveAgentsDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 // serveAgentsPatch handles PATCH /api/agents — updates an agent's configurable fields.
-// isValidThinkingEffort checks if a thinking effort level is valid for an agent.
-// It checks levels based on the agent's effective transport:
+// isValidThinkingEffort checks if a thinking effort level is valid for an agent
+// in a given session. It checks levels based on the transport that session's
+// turns will actually use:
 //   - ACP mode: only ACP-reported levels from AgentCapabilityRegistry
 //   - CLI mode: only static ThinkingEffortLevels from BackendSpec
 //   - Neither has levels: allow any value (backward compatible)
-func isValidThinkingEffort(agent *model.Agent, level string) bool {
-	transport := agent.Transport
+//
+// sessionID is empty for agent-level callers (settings), where only the agent's
+// own transport is known. A session can pin the OTHER transport, so validating
+// against the agent's configured transport there would check the wrong level
+// list — e.g. a session forced to CLI on an ACP agent would be validated against
+// the agent-level ACP list, which describes levels the CLI never sees.
+func isValidThinkingEffort(agent *model.Agent, level, sessionID string) bool {
+	transport := ""
+	if sessionID != "" {
+		transport = service.GetSessionTransport(sessionID)
+	}
+	if transport == "" {
+		transport = agent.Transport
+	}
 	if transport == "" {
 		if agent.AcpCommand != "" {
 			transport = "acp-stdio"
@@ -721,7 +734,7 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 	if v, exists := patch["preferred_thinking_effort"]; exists {
 		level, _ := v.(string)
 		if level != "" {
-			found := isValidThinkingEffort(agent, level)
+			found := isValidThinkingEffort(agent, level, "")
 			if !found {
 				writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidThinkingEffort")
 				return

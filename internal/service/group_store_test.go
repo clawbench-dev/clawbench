@@ -1,14 +1,20 @@
 package service
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/store"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // setupGroupDB initializes a fresh full-schema DB for the group-store tests.
@@ -1773,4 +1779,280 @@ func TestAddGroupMembers_AllEmptySpecsNoOp(t *testing.T) {
 	if len(after) != len(before) {
 		t.Fatalf("all-empty specs must add no rows: before=%d after=%d", len(before), len(after))
 	}
+}
+
+// TestGroupMemberContexts covers the member context query that backs the group
+// member list's per-member usage chip and its detail panel:
+//   - usage/model come from the MEMBER row (a member turn's RunConfig.SessionID
+//     is that row, so its context_state is where the executor persists usage);
+//   - a removed member is included (its row still exists, archived);
+//   - a malformed context_state degrades to nil usage instead of failing the
+//     whole roster.
+func TestGroupMemberContexts(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest-ctx"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostMemberID, err := CreateGroup(project, "ctx", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	otherID, err := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	if err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+
+	// The host reports usage; the other member never did (CLI transport).
+	PatchContextStateMerge(hostMemberID, map[string]string{
+		"usage": `{"used":12000,"size":200000}`,
+	})
+	if err := UpdateSessionModel(otherID, "claude-sonnet-4"); err != nil {
+		t.Fatalf("UpdateSessionModel: %v", err)
+	}
+
+	got, err := GroupMemberContexts(groupID)
+	if err != nil {
+		t.Fatalf("GroupMemberContexts: %v", err)
+	}
+	require.Len(t, got, 2)
+
+	host := got[hostMemberID]
+	require.NotNil(t, host.Usage, "host usage must be parsed from context_state")
+	assert.Equal(t, 12000, host.Usage.Used)
+	assert.Equal(t, 200000, host.Usage.Size)
+
+	other := got[otherID]
+	assert.Nil(t, other.Usage, "a member that never reported usage must be nil, not zero-valued")
+	assert.Equal(t, "claude-sonnet-4", other.Model)
+
+	// A removed member keeps its row (archived), so its context is still
+	// returned — the frontend decides not to render it.
+	require.NoError(t, RemoveGroupMember(groupID, otherID))
+	got, err = GroupMemberContexts(groupID)
+	require.NoError(t, err)
+	require.Contains(t, got, otherID, "removed members must still resolve")
+}
+
+// TestGroupMemberContexts_MalformedJSONIsNotFatal pins the degradation policy:
+// one unreadable context_state must not take down the whole roster (the sheet
+// would then show no members at all instead of one member without a chip).
+func TestGroupMemberContexts_MalformedJSONIsNotFatal(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest-ctx-bad"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostMemberID, err := CreateGroup(project, "ctx", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	if _, err := store.WriteExec("UPDATE chat_sessions SET context_state = '{not json' WHERE id = ?", hostMemberID); err != nil {
+		t.Fatalf("corrupt context_state: %v", err)
+	}
+
+	got, err := GroupMemberContexts(groupID)
+	require.NoError(t, err, "a corrupt row must not fail the query")
+	require.Contains(t, got, hostMemberID)
+	assert.Nil(t, got[hostMemberID].Usage)
+}
+
+// TestCompactGroupMemberGuards pins the pre-flight rejections. The happy path
+// requires a live ACP agent, but the guards are what a user hits in practice and
+// they must run BEFORE any backend is created.
+func TestCompactGroupMemberGuards(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest-compact"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostMemberID, err := CreateGroup(project, "c", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	otherID, err := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	if err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+
+	// Empty ids.
+	if _, err := CompactGroupMember(context.Background(), "", hostMemberID); !errors.Is(err, ErrGroupMemberNotFound) {
+		t.Fatalf("empty group id: err=%v", err)
+	}
+	// Member of a DIFFERENT group.
+	otherGroup, _, err := CreateGroup(project, "c2", "codebuddy", "agent-host", "Host2")
+	if err != nil {
+		t.Fatalf("CreateGroup 2: %v", err)
+	}
+	if _, err := CompactGroupMember(context.Background(), otherGroup, hostMemberID); !errors.Is(err, ErrGroupMemberNotFound) {
+		t.Fatalf("cross-group member: err=%v", err)
+	}
+	// Removed member.
+	if err := RemoveGroupMember(groupID, otherID); err != nil {
+		t.Fatalf("RemoveGroupMember: %v", err)
+	}
+	if _, err := CompactGroupMember(context.Background(), groupID, otherID); !errors.Is(err, ErrGroupMemberNotFound) {
+		t.Fatalf("left member: err=%v", err)
+	}
+	// CLI transport (the test agents default to CLI) has no command channel.
+	_, err = CompactGroupMember(context.Background(), groupID, hostMemberID)
+	if !errors.Is(err, ErrCompactNeedsACP) {
+		t.Fatalf("cli member: err=%v", err)
+	}
+}
+
+// TestCompactGroupMember_RejectsWhileGroupRuns pins the ordering guard: a group
+// turn owns every member connection, so compaction must be refused rather than
+// interleaving a second prompt on one ACP session.
+func TestCompactGroupMember_RejectsWhileGroupRuns(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest-compact-busy"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostMemberID, err := CreateGroup(project, "c", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	SetSessionRunning(groupID, true, true)
+	t.Cleanup(func() { SetSessionRunning(groupID, false, true) })
+
+	if _, err := CompactGroupMember(context.Background(), groupID, hostMemberID); !errors.Is(err, ErrGroupRunning) {
+		t.Fatalf("running group: err=%v", err)
+	}
+}
+
+// TestGroupHasCompactingMember pins the gate the chat handler uses to hold a
+// send while a member compaction is in flight.
+//
+// Why it matters: a compaction drives the member's ACP connection directly. A
+// group turn starting meanwhile would send a SECOND prompt on that connection —
+// the agent answers "Session is busy" (the user's message fails), and
+// RegisterSession/promptCancel are overwritten, silently dropping the
+// compaction's events and leaving one prompt uncancellable.
+func TestGroupHasCompactingMember(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest-compacting"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostMemberID, err := CreateGroup(project, "c", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	otherGroup, _, err := CreateGroup(project, "c2", "codebuddy", "agent-host", "Host2")
+	if err != nil {
+		t.Fatalf("CreateGroup 2: %v", err)
+	}
+
+	if GroupHasCompactingMember(groupID) {
+		t.Fatal("no compaction in flight, gate must be open")
+	}
+	if IsGroupMemberCompacting(hostMemberID) {
+		t.Fatal("no compaction in flight for this member")
+	}
+
+	// Simulate an in-flight compaction (the real path needs a live ACP agent).
+	if !beginCompaction(groupID, hostMemberID) {
+		t.Fatal("beginCompaction must succeed on a free slot")
+	}
+	t.Cleanup(func() { endCompaction(hostMemberID) })
+
+	if !IsGroupMemberCompacting(hostMemberID) {
+		t.Fatal("member must report compacting")
+	}
+	if !GroupHasCompactingMember(groupID) {
+		t.Fatal("owning group must report a compacting member")
+	}
+	// Another group must stay open: the gate is per-group, not global.
+	if GroupHasCompactingMember(otherGroup) {
+		t.Fatal("an unrelated group must not be gated")
+	}
+	// A second compaction on the same member is refused.
+	if beginCompaction(groupID, hostMemberID) {
+		t.Fatal("beginCompaction must refuse a member that is already compacting")
+	}
+}
+
+// TestWakeQueuedAfterCompaction pins the no-op half of the post-compaction
+// wake: an empty queue must not claim the session (claiming it would mark the
+// group "running" with nothing to consume, and the next send would queue behind
+// a phantom run).
+//
+// The non-empty half launches a real group consumer goroutine, which races this
+// test's DB teardown; that launch path is EnsureConsumer's own contract (see
+// queue_reaper_test.go), so it is not re-tested through this seam.
+func TestWakeQueuedAfterCompaction(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest-wake"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, _, err := CreateGroup(project, "c", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+
+	wakeQueuedAfterCompaction(groupID)
+	if IsSessionRunning(groupID) {
+		t.Fatal("an empty queue must not start a runner")
+	}
+	if got := GetQueuedCount(groupID); got != 0 {
+		t.Fatalf("queued count = %d, want 0", got)
+	}
+}
+
+// TestCompactionSystemRows pins the two markers a member compaction leaves on
+// the group timeline.
+//
+// Why they exist: compaction silently rewrites what that member remembers, so
+// the discussion needs a marker explaining why its earlier detail stopped being
+// available. They go through the SAME channel as membership rows — a
+// role='system' row, rendered as a centered line and injected to members as
+// "[系统] …" — never as speech.
+func TestCompactionSystemRows(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest-compact-rows"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostMemberID, err := CreateGroup(project, "c", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+
+	before := &ai.UsageState{Used: 320000, Size: 1000000}
+	after := &ai.UsageState{Used: 30000, Size: 1000000}
+	writeCompactionSystemMessage(project, groupID, "Host", hostMemberID, "GroupMemberCompactionStarted", nil)
+	writeCompactionSystemMessage(project, groupID, "Host", hostMemberID, "GroupMemberCompactionDone",
+		map[string]any{"Before": usagePercentLabel(before), "After": usagePercentLabel(after)})
+
+	msgs, err := GetMessagesBySessionIDRaw(groupID)
+	require.NoError(t, err)
+	var systemRows []string
+	for _, m := range msgs {
+		if m.Role == "system" {
+			systemRows = append(systemRows, ExtractPlainText(m.Content))
+		}
+	}
+	require.Len(t, systemRows, 2, "compaction must leave exactly a start/finish pair")
+
+	// Both rows name the member (so a group with several members is unambiguous)
+	// and are readable sentences, not i18n keys.
+	for _, row := range systemRows {
+		assert.Contains(t, row, "Host", "the row must name the member: %q", row)
+		assert.NotContains(t, row, "GroupMemberCompaction", "a key leaked into the timeline: %q", row)
+	}
+	// The finish row reports the actual effect, which is the point of the pair.
+	assert.Contains(t, systemRows[1], "32%", systemRows[1])
+	assert.Contains(t, systemRows[1], "3%", systemRows[1])
+}
+
+// TestUsagePercentLabel pins the "unknown is not 0%" rule used by the finish row.
+func TestUsagePercentLabel(t *testing.T) {
+	assert.Equal(t, "—", usagePercentLabel(nil))
+	assert.Equal(t, "—", usagePercentLabel(&ai.UsageState{Used: 100, Size: 0}))
+	assert.Equal(t, "0%", usagePercentLabel(&ai.UsageState{Used: 0, Size: 1000}))
+	assert.Equal(t, "32%", usagePercentLabel(&ai.UsageState{Used: 320000, Size: 1000000}))
+	assert.Equal(t, "100%", usagePercentLabel(&ai.UsageState{Used: 1000, Size: 1000}))
 }

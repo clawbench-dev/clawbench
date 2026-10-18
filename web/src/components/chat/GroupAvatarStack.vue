@@ -28,6 +28,7 @@
       :mode="mode"
       :parallelDefault="parallelDefault"
       :cruise="cruise"
+      :groupRunning="groupRunning"
       @changed="$emit('changed')"
     />
   </div>
@@ -54,6 +55,8 @@ const props = defineProps<{
   parallelDefault?: boolean
   /** Auto-cruise switch value, shown in the sheet (both modes). */
   cruise?: boolean
+  /** True while the group has a turn in flight (compaction is refused then). */
+  groupRunning?: boolean
 }>()
 defineEmits<{ (e: 'changed'): void }>()
 

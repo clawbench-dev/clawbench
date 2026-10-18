@@ -131,11 +131,15 @@ describe('formatToolInput', () => {
 
   // ── WebFetch ──
   describe('WebFetch renderer', () => {
-    it('renders URL as clickable link for http URLs', () => {
+    it('renders URL as a selectable external link, not an anchor', () => {
+      // Same contract as markdown links (utils/externalLinkNode.ts): Android's
+      // long-press on an <a> suppresses the system context menu, so the URL
+      // could not be copied. The tap is handled by externalLinkClick.
       const html = formatToolInput({ url: 'https://example.com' }, 'WebFetch')
       expect(contains(html, 'web-fetch-link')).toBe(true)
-      expect(contains(html, 'href="https://example.com"')).toBe(true)
-      expect(contains(html, 'target="_blank"')).toBe(true)
+      expect(contains(html, 'md-external-link')).toBe(true)
+      expect(contains(html, 'data-href="https://example.com"')).toBe(true)
+      expect(contains(html, '<a ')).toBe(false)
     })
 
     it('renders non-URL as plain text', () => {

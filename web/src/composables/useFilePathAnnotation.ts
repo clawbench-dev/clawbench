@@ -13,6 +13,7 @@ import { store } from '@/stores/app.ts'
 import { gt } from '@/composables/useLocale'
 import { isShareMode } from '@/share/shareMode'
 import { clearCommitHashCache } from '@/composables/useCommitHashAnnotation.ts'
+import { EXTERNAL_LINK_CLASS } from '@/utils/externalLinkNode.ts'
 import type { NavigationSurface } from '@/composables/useNavigationContext'
 // NOTE: do NOT import clearWorktreeCache from useWorktreeAnnotation here —
 // that creates a circular dependency (useFilePathAnnotation ↔ useWorktreeAnnotation).
@@ -600,6 +601,9 @@ const FILE_PATH_RE = new RegExp(FILE_PATH_SRC + '(?::(' + LINE_TOKEN_SRC + '))?'
 export function looksLikeFilePath(text: string): boolean {
     if (shouldRejectPath(text)) return false
     const bare = text.replace(LINE_SUFFIX_RE, '')
+    // A bare separator is not a path: `<code>/</code>` (prose about slashes, a
+    // shell fragment, a JSON escape) was annotated as the file "/".
+    if (bare === '/' || bare === '\\' || bare === './' || bare === '../') return false
     return /\/|\.[a-zA-Z][a-zA-Z0-9]{0,3}$/.test(bare)
 }
 
@@ -779,6 +783,11 @@ export function annotateFilePathsIn(
     for (const code of doc.querySelectorAll('code')) {
         if (code.closest('a')) continue
         if (code.classList.contains('chat-worktree-path')) continue
+        // Already linkified by the URL annotator (which runs first). A <code>
+        // body like `github.com/foo/bar` is a URL, not a file — without this it
+        // also got a dead `chat-file-path` chip wrapping the link, so one token
+        // was both a link and a file.
+        if (code.querySelector('.' + EXTERNAL_LINK_CLASS)) continue
         const stripped = (code.textContent || '').trim()
         // This step treats the whole <code> body as ONE path and cannot rescan,
         // so it must decline LIST-shaped bodies — but only those.
@@ -799,8 +808,23 @@ export function annotateFilePathsIn(
         // A single piece wrapped in escapes (`\n/home/docs/\n`) is still one
         // path; drop the wrapping rather than letting the `n` become a segment.
         const body = escapeParts.length === 1 && escapeParts[0] !== stripped ? escapeParts[0] : stripped
-        if (!looksLikeFilePath(body)) continue
-        const { path: barePath, lineRanges } = extractLineInfoFromText(body)
+        // Step 2 does not run `parseFileUri`, so a `file://` scheme reaches the
+        // resolver intact and becomes a bogus `file:/…` path. Strip it here the
+        // same way: `file:///p` → `/p`, `file://host/p` → `/p`, and a scheme
+        // with nothing behind it (bare `file://`, `file:///`) is not a path.
+        let afterScheme = body
+        if (/^file:\/\//i.test(body)) {
+            const rest = body.slice('file://'.length)
+            if (rest.startsWith('/')) {
+                afterScheme = rest
+            } else {
+                const slash = rest.indexOf('/')
+                afterScheme = slash === -1 ? '' : rest.slice(slash)
+            }
+        }
+        if (!afterScheme || afterScheme === '/') continue
+        if (!looksLikeFilePath(afterScheme)) continue
+        const { path: barePath, lineRanges } = extractLineInfoFromText(afterScheme)
         const result = resolveFilePathDual(barePath, projectRoot, homeDir, baseDir)
         if (!result || result.primary.includes(' ') || result.primary.includes('"')) continue
         pushDetectedPaths(detectedPaths, result)
@@ -819,6 +843,13 @@ export function annotateFilePathsIn(
             const parent = node.parentElement
             if (!parent) return NodeFilter.FILTER_REJECT
             if (parent.tagName === 'A' || parent.closest('a')) return NodeFilter.FILTER_REJECT
+            // External links are <span class="md-external-link">, not <a> (see
+            // externalLinkNode.ts — an <a> breaks Android's long-press menu).
+            // Without this they were annotated a SECOND time as files: a
+            // schemeless `vuejs.org/guide/intro.html` became a link wrapping a
+            // dead `org/guide/intro.html` chip, because the tail after the dot
+            // looks like a path. One URL must resolve to exactly one thing.
+            if (parent.closest('.' + EXTERNAL_LINK_CLASS)) return NodeFilter.FILTER_REJECT
             if (parent.classList.contains('chat-file-path')) return NodeFilter.FILTER_REJECT
             if (parent.classList.contains('chat-worktree-path') || parent.closest('.chat-worktree-path')) return NodeFilter.FILTER_REJECT
             return NodeFilter.FILTER_ACCEPT
@@ -920,6 +951,21 @@ export function annotateFilePathsIn(
                 const doubledSlash = prev === '/' && text[match.index] === '/'
                 if (prev === ':' || (prev === '/' && (doubledSlash || !afterEscapeDebris))) {
                     result = null
+                }
+                // The Windows-drive branch has no left boundary of its own: in
+                // `ftp:/example.com/a/b` it happily matches `p:/example.com/a/b`,
+                // turning a URL into a dead chip one letter in. A drive letter is
+                // only a drive letter at the start of a token, so reject when the
+                // match sits inside a longer word.
+                //
+                // A single preceding letter is NOT enough: after a literal `\n`
+                // escape the previous character is `n`, and `\nE:/git/x/y.go` is a
+                // real drive path. Require a letter run of 2+ (a scheme or path
+                // body) — or a `+`/`-`/`_`, which a scheme may contain.
+                if (result && /^[a-zA-Z]:[\\/]/.test(barePath) && match.index > 1) {
+                    if (/[a-zA-Z0-9_+-]/.test(text[match.index - 1]) && /[a-zA-Z0-9_+-]/.test(text[match.index - 2])) {
+                        result = null
+                    }
                 }
             }
             // Schemeless-URL guard for the directory branch only: `example.com/foo/bar/`

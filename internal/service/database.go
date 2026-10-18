@@ -39,6 +39,7 @@ const (
 	migToolCallsFromContent = "2026-09-29_migrate_tool_calls_from_content"
 	migThinkingFromContent  = "2026-09-29_migrate_thinking_from_content"
 	migAskCardDone          = "2026-10-16_normalize_ask_summary_cards_done"
+	migEffortPickFlag       = "2026-10-18_mark_legacy_effort_picks"
 )
 
 // dataMigrationNames 是上表的名字集合，供测试遍历。
@@ -48,6 +49,7 @@ var dataMigrationNames = []string{
 	migToolCallsFromContent,
 	migThinkingFromContent,
 	migAskCardDone,
+	migEffortPickFlag,
 }
 
 // ensureSchemaMigrationsTable 幂等建台账表。必须在任何 runOnce 之前调用。
@@ -272,7 +274,8 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 		var cols int
 		_ = store.ReadDB().QueryRow(
-			"SELECT COUNT(*) FROM pragma_table_info(?) WHERE name IN ('project_id','project_path')", c.table).Scan(&cols)
+			"SELECT COUNT(*) FROM pragma_table_info(?) WHERE name IN ('project_id','project_path')", c.table,
+		).Scan(&cols)
 		if cols == 0 {
 			if _, err := store.WriteExec(c.ddl); err != nil {
 				return fmt.Errorf("failed to add %s.project_id column: %w", c.table, err)
@@ -299,7 +302,8 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	for _, tbl := range legacyProjectPathTables {
 		var n int
 		_ = store.ReadDB().QueryRow(
-			"SELECT COUNT(*) FROM pragma_table_info(?) WHERE name='project_path'", tbl).Scan(&n)
+			"SELECT COUNT(*) FROM pragma_table_info(?) WHERE name='project_path'", tbl,
+		).Scan(&n)
 		if n > 0 {
 			hasLegacyProjectPath = 1
 			break
@@ -1758,6 +1762,18 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Migrate: per-model thinking-effort picks (issue #552). A JSON object
+	// keyed by model id; '{}' means "no per-model pick", so the agent's
+	// model-independent default still applies. Additive and nullable-by-default,
+	// so existing agents keep their current behavior after the upgrade.
+	var hasEffortByModel int
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='thinking_effort_by_model'").Scan(&hasEffortByModel)
+	if hasEffortByModel == 0 {
+		if _, err := store.WriteExec("ALTER TABLE agents ADD COLUMN thinking_effort_by_model TEXT NOT NULL DEFAULT '{}'"); err != nil {
+			return fmt.Errorf("failed to add thinking_effort_by_model column to agents: %w", err)
+		}
+	}
+
 	// Migrate: ensure the project scope column on the quick-send /
 	// quick-command tables (project-scoped / 仅本项目 items). NULL means global;
 	// a value scopes the item to that project only.
@@ -1860,6 +1876,13 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// rewritten by the summarization paths (they skip messages that already have
 	// a summary), so they must be healed here.
 	runOnce(migAskCardDone, MigrateAskSummaryCardsDone)
+
+	// Migrate: mark already-persisted effort values as user picks. Before the
+	// per-model memory (issue #552) the same context_state slot received both
+	// explicit picks and the agent's own reported default; without this, every
+	// pre-upgrade session would be treated as "no choice" and revert to the
+	// agent's low default.
+	runOnce(migEffortPickFlag, MigrateLegacyThinkingEffortPicks)
 
 	return nil
 }
