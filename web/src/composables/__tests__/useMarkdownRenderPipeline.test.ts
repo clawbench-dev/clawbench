@@ -501,53 +501,74 @@ describe('KaTeX stretchy-delimiter svgs are not hijacked as media (issue #473)',
   })
 })
 
-describe('external links open in a new tab (browser mode)', () => {
-  // Regression: markdown links rendered as a bare `<a href>` navigated the
-  // CURRENT page, replacing the whole app UI with the target site.
-  const anchorsIn = (html: string) =>
-    Array.from(new DOMParser().parseFromString(html, 'text/html').querySelectorAll('a'))
+describe('external links render as text, not anchors', () => {
+  // Android: a long-press on an <a> starts WebView's link gesture and the
+  // system context menu never appears, so the URL cannot be copied. External
+  // URLs are therefore rendered as <span class="md-external-link"> so the text
+  // is selectable; the tap is handled by externalLinkClick.ts, which confirms
+  // before leaving the app.
+  const spansIn = (html: string) =>
+    Array.from(new DOMParser().parseFromString(html, 'text/html')
+      .querySelectorAll('.md-external-link'))
 
-  it('stamps target=_blank on external links through the full pipeline', () => {
-    // Runs the real marked + DOMPurify + annotator chain: DOMPurify strips
-    // `target` unless allow-listed, so this guards the step's ordering too.
+  it('renders an external link as a span carrying the target URL', () => {
+    // Runs the real marked + DOMPurify chain: `data-href` must survive
+    // sanitisation or the tap handler has nothing to open.
     const html = renderMarkdownHtml('see [site](https://example.com/page) now')
-    const [a] = anchorsIn(html)
-    expect(a.getAttribute('href')).toBe('https://example.com/page')
-    expect(a.getAttribute('target')).toBe('_blank')
-    expect(a.getAttribute('rel')).toContain('noopener')
+    const [span] = spansIn(html)
+    expect(span.getAttribute('data-href')).toBe('https://example.com/page')
+    expect(span.textContent).toBe('site')
+    // No anchor for this URL — that is the whole point.
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    expect(doc.querySelector('a[href="https://example.com/page"]')).toBeNull()
   })
 
-  it('annotates in streaming mode (skipEnhancements) as well', () => {
-    // Streaming skips the step-9 enhancement block; the annotation must live in
-    // the always-run phase so a link is already correct while the reply streams.
+  it('works in streaming mode (skipEnhancements) as well', () => {
+    // Streaming skips the step-9 enhancement block, so the conversion must be
+    // in the renderer itself — a link is already correct while it streams.
     const html = renderMarkdownHtml('[site](https://example.com)', { skipEnhancements: true, skipKatex: true })
-    expect(anchorsIn(html)[0].getAttribute('target')).toBe('_blank')
+    expect(spansIn(html)).toHaveLength(1)
   })
 
-  it('annotates in file-preview mode (skipEnhancements)', () => {
+  it('works in file-preview mode (skipEnhancements)', () => {
     const { html } = buildMarkdownPreviewDom(
       { content: '[site](https://example.com)', path: 'docs/README.md' },
       { isWideScreen: true, imageTimestamp: 1 }
     )
-    expect(anchorsIn(html)[0].getAttribute('target')).toBe('_blank')
+    expect(spansIn(html)).toHaveLength(1)
   })
 
-  it('leaves relative, anchor and same-origin links untouched', () => {
+  /**
+   * Local links MUST stay anchors. The file-annotation layer reads the anchor's
+   * href and stamps data-file-path on it; the heading handler scrolls `#`
+   * anchors. Converting either would break navigation, not just styling.
+   */
+  it('leaves relative, anchor, same-origin and file links as anchors', () => {
     const html = renderMarkdownHtml(
       '[doc](docs/a.md) [jump](#setup) [app](/settings) [mail](mailto:a@b.com)'
     )
-    for (const a of anchorsIn(html)) {
-      expect(a.hasAttribute('target'), a.getAttribute('href') || '').toBe(false)
-    }
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    // mailto IS external (it leaves the app) and becomes a span; the rest stay
+    // anchors. Assert per-link so a blanket "no spans" would not hide a change.
+    expect(doc.querySelector('a[href="docs/a.md"]')).not.toBeNull()
+    expect(doc.querySelector('a[href="#setup"]')).not.toBeNull()
+    expect(doc.querySelector('a[href="/settings"]')).not.toBeNull()
+    expect(doc.querySelector('.md-external-link[data-href="mailto:a@b.com"]')).not.toBeNull()
   })
 
-  it('keeps external media links as inline players, not plain links', () => {
-    // The audio/video converters run AFTER the annotator; if their regex
-    // required a bare `<a href>`, the stamped target/rel would make the link
-    // fall through and degrade the player back to a link.
+  it('keeps external media links as inline players, not plain text', () => {
+    // The audio/video converters match on `<a href>`. If a media URL were turned
+    // into a span they would silently stop matching and every player would
+    // degrade back to text.
     const html = renderMarkdownHtml('[play](https://example.com/song.mp3)')
     expect(html).toContain('<audio')
     expect(html).toContain('src="https://example.com/song.mp3"')
+  })
+
+  it('keeps an external video link as a player too', () => {
+    const html = renderMarkdownHtml('[play](https://example.com/clip.mp4)')
+    expect(html).toContain('<video')
+    expect(html).toContain('src="https://example.com/clip.mp4"')
   })
 })
 
@@ -558,21 +579,27 @@ describe('bare (schemeless) URLs are linked before file-path annotation', () => 
   }
   const anchorsOf = (html: string) =>
     Array.from(new DOMParser().parseFromString(html, 'text/html').querySelectorAll('a'))
+  const linksOf = (html: string) =>
+    Array.from(new DOMParser().parseFromString(html, 'text/html')
+      .querySelectorAll<HTMLElement>('.md-external-link'))
 
   it('turns a schemeless domain into a link, not a dead file chip', () => {
     // Before this step the file-path annotator claimed the tail after the dot,
     // rendering `com/foo/bar` — a chip that can never resolve.
     const html = renderMarkdownHtml('见 github.com/foo/bar 仓库')
     expect(pathsOf(html)).toEqual([])
-    const [a] = anchorsOf(html)
-    expect(a.getAttribute('href')).toBe('https://github.com/foo/bar')
-    expect(a.getAttribute('target')).toBe('_blank')
+    // Rendered as text (see externalLinkNode.ts), not an anchor: this is the
+    // case that stayed an <a> and made the UI look half-converted.
+    const [link] = linksOf(html)
+    expect(link.getAttribute('data-href')).toBe('https://github.com/foo/bar')
+    expect(anchorsOf(html)).toHaveLength(0)
   })
 
   it('leaves a filename with no path alone (build.sh)', () => {
     // `sh` is a TLD too, so the path requirement is what protects real files.
     const html = renderMarkdownHtml('跑 build.sh 脚本')
     expect(anchorsOf(html)).toHaveLength(0)
+    expect(linksOf(html)).toHaveLength(0)
   })
 
   it('leaves real project paths alone', () => {
@@ -586,7 +613,7 @@ describe('bare (schemeless) URLs are linked before file-path annotation', () => 
       { isWideScreen: true, imageTimestamp: 1 }
     )
     expect(detectedPaths).toEqual([])
-    expect(anchorsOf(html)[0].getAttribute('href')).toBe('https://github.com/foo/bar')
+    expect(linksOf(html)[0].getAttribute('data-href')).toBe('https://github.com/foo/bar')
   })
 })
 

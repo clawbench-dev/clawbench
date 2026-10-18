@@ -6,6 +6,7 @@ import { useToast } from '@/composables/useToast.ts'
 import { gt } from '@/composables/useLocale'
 import { portForwardUnavailable } from '@/utils/portForwardUtils.ts'
 import { appLog } from '@/utils/appLog'
+import { createExternalLinkNode, EXTERNAL_LINK_CLASS } from '@/utils/externalLinkNode.ts'
 
 /**
  * Localhost URL annotation composable.
@@ -119,13 +120,20 @@ export function annotateLocalhostUrlsIn(doc: Document): boolean {
     const { sshInfo, transportAllowsH2 } = usePortForward()
     if (portForwardUnavailable(sshInfo.value?.enabled, transportAllowsH2.value)) return false
 
-    // ── Step 1: <a href> tags with localhost hrefs → append icon button ──
+    // ── Step 1: <a href> tags with localhost hrefs → text span + icon button ──
+    // A localhost URL opens in a browser, so it is an EXTERNAL link and gets the
+    // same treatment as every other one (see externalLinkNode.ts): selectable
+    // text plus a confirmation on tap. It used to stay an <a>, which on Android
+    // suppressed the system context menu — the exact inconsistency that made
+    // some URLs copyable and others not.
     for (const a of doc.querySelectorAll('a[href]')) {
         const href = a.getAttribute('href') || ''
         const parsed = parseLocalhostUrl(href)
         if (!parsed) continue
         if (parsed.port <= 0 || parsed.port > 65535) continue
-        a.insertAdjacentHTML('afterend', localhostOpenButtonHtml(parsed.port, parsed.protocol, parsed.fullUrl, parsed.path))
+        const span = createExternalLinkNode(doc, parsed.fullUrl, a.textContent || parsed.fullUrl)
+        a.parentNode?.replaceChild(span, a)
+        span.insertAdjacentHTML('afterend', localhostOpenButtonHtml(parsed.port, parsed.protocol, parsed.fullUrl, parsed.path))
     }
 
     // ── Step 2: <code> tags whose entire content is a localhost URL ──
@@ -136,11 +144,9 @@ export function annotateLocalhostUrlsIn(doc: Document): boolean {
         const parsed = parseLocalhostUrl(stripped)
         if (!parsed) continue
         if (parsed.port <= 0 || parsed.port > 65535) continue
-        // Wrap the <code> in an <a> tag
-        const wrapper = doc.createElement('a')
-        wrapper.setAttribute('href', parsed.fullUrl)
-        wrapper.setAttribute('target', '_blank')
-        wrapper.setAttribute('rel', 'noopener')
+        // Wrap the <code> in the same text node every other external link uses,
+        // so a backticked localhost URL behaves identically to a bare one.
+        const wrapper = createExternalLinkNode(doc, parsed.fullUrl, '')
         code.parentNode!.replaceChild(wrapper, code)
         wrapper.appendChild(code)
         // Append icon button after the <a>
@@ -155,6 +161,11 @@ export function annotateLocalhostUrlsIn(doc: Document): boolean {
             if (!parent) return NodeFilter.FILTER_REJECT
             // Skip text inside <a> tags (handled in step 1, and step 2's wrappers)
             if (parent.tagName === 'A' || parent.closest('a')) return NodeFilter.FILTER_REJECT
+            // Skip text inside a link we ALREADY converted (steps 1 and 2). The
+            // span is not an <a>, so without this the walker would re-match the
+            // URL inside it and wrap it a second time — producing nested
+            // md-external-link elements and duplicate open buttons.
+            if (parent.closest(`.${EXTERNAL_LINK_CLASS}`)) return NodeFilter.FILTER_REJECT
             return NodeFilter.FILTER_ACCEPT
         }
     })
@@ -206,12 +217,7 @@ export function annotateLocalhostUrlsIn(doc: Document): boolean {
         for (const part of parts) {
             if (part.url) {
                 hasAnnotation = true
-                const a = doc.createElement('a')
-                a.setAttribute('href', part.url)
-                a.setAttribute('target', '_blank')
-                a.setAttribute('rel', 'noopener')
-                a.textContent = part.text
-                frag.appendChild(a)
+                frag.appendChild(createExternalLinkNode(doc, part.url, part.text))
                 // Open button (as HTML snippet since it contains SVG)
                 const btnContainer = doc.createElement('span')
                 btnContainer.innerHTML = localhostOpenButtonHtml(part.port, part.protocol, part.url, part.path)

@@ -240,4 +240,70 @@ describe('markedConfig', () => {
             expect(html).toContain('<blockquote data-source-line="5">')
         })
     })
+
+    /**
+     * External links are rendered as a span, not an anchor.
+     *
+     * On Android a long-press on an <a> starts WebView's link gesture and the
+     * system context menu never appears, so the URL cannot be copied. Plain
+     * text restores the normal long-press flow; the tap is handled by
+     * externalLinkClick.ts (which asks for confirmation first).
+     */
+    describe('external link rendering', () => {
+        it('renders an http link as a span carrying data-href', () => {
+            const html = marked.parse('[x](https://example.com)')
+            expect(html).toContain('class="md-external-link"')
+            expect(html).toContain('data-href="https://example.com"')
+            expect(html).not.toContain('<a href="https://example.com"')
+        })
+
+        it('converts a bare autolink too', () => {
+            const html = marked.parse('see https://example.com now')
+            expect(html).toContain('md-external-link')
+            expect(html).toContain('data-href="https://example.com"')
+        })
+
+        it('converts mailto/tel and protocol-relative URLs', () => {
+            expect(marked.parse('[m](mailto:a@b.com)')).toContain('md-external-link')
+            expect(marked.parse('[t](tel:+123)')).toContain('md-external-link')
+            expect(marked.parse('[p](//example.com/x)')).toContain('md-external-link')
+        })
+
+        /**
+         * Local links MUST stay anchors: the file-annotation layer reads the
+         * anchor's href and adds data-file-path to it, and in-page anchors are
+         * scrolled by the heading handler. Turning those into spans would break
+         * file navigation.
+         */
+        it('keeps a relative file path as an anchor', () => {
+            const html = marked.parse('[x](src/a.ts)')
+            expect(html).toContain('<a href="src/a.ts"')
+            expect(html).not.toContain('md-external-link')
+        })
+
+        it('keeps an in-page anchor as an anchor', () => {
+            const html = marked.parse('[x](#section)')
+            expect(html).toContain('<a href="#section"')
+            expect(html).not.toContain('md-external-link')
+        })
+
+        it('keeps an absolute file:// link as an anchor', () => {
+            const html = marked.parse('[x](file:///tmp/a.ts)')
+            expect(html).toContain('href="file:///tmp/a.ts"')
+            expect(html).not.toContain('md-external-link')
+        })
+
+        it('preserves the link text and title', () => {
+            const html = marked.parse('[click me](https://example.com "tip")')
+            expect(html).toContain('>click me</span>')
+            expect(html).toContain('title="tip"')
+        })
+
+        it('keeps the text when the href cannot be encoded', () => {
+            // An unpaired surrogate makes encodeURI throw; marked falls back to
+            // the plain text. The external path must not lose the label either.
+            const html = marked.parse('[label](https://example.com/\uD800)')
+            expect(html).toContain('label')
+        })
+    })
 })

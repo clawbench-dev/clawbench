@@ -29,6 +29,7 @@
  */
 
 import { annotateOneExternalLink } from '@/composables/useExternalLinkAnnotation'
+import { createExternalLinkNode, EXTERNAL_LINK_CLASS, shouldRenderAsText } from '@/utils/externalLinkNode.ts'
 
 /**
  * TLDs accepted as the domain suffix. A fixed list rather than `[a-z]{2,}`:
@@ -94,6 +95,11 @@ export function annotateBareUrlsIn(doc: Document): boolean {
             const parent = node.parentElement
             if (!parent) return NodeFilter.FILTER_REJECT
             if (parent.closest('a')) return NodeFilter.FILTER_REJECT
+            // Also skip a link we already produced: the span is not an <a>, so
+            // without this a second pass would re-linkify the URL inside it and
+            // nest another element (breaking idempotency, which the pipeline
+            // relies on — annotation runs on every streaming frame).
+            if (parent.closest(`.${EXTERNAL_LINK_CLASS}`)) return NodeFilter.FILTER_REJECT
             return NodeFilter.FILTER_ACCEPT
         },
     })
@@ -130,11 +136,21 @@ export function annotateBareUrlsIn(doc: Document): boolean {
             if (trailing) url = url.slice(0, -trailing[0].length)
             const urlStart = match.index + prefix.length
             if (urlStart > last) frag.appendChild(doc.createTextNode(text.slice(last, urlStart)))
-            const a = doc.createElement('a')
-            a.setAttribute('href', 'https://' + url)
-            a.textContent = url
-            annotateOneExternalLink(a, origin)
-            frag.appendChild(a)
+            const fullHref = 'https://' + url
+            // External URLs are rendered as selectable TEXT, not an anchor — see
+            // externalLinkNode.ts. Building an <a> here was the half-migrated
+            // case: bare domains stayed clickable-and-long-press-hostile while
+            // markdown links had already become spans.
+            if (shouldRenderAsText(fullHref)) {
+                frag.appendChild(createExternalLinkNode(doc, fullHref, url))
+            } else {
+                // Media URLs keep the anchor so the player converters match.
+                const a = doc.createElement('a')
+                a.setAttribute('href', fullHref)
+                a.textContent = url
+                annotateOneExternalLink(a, origin)
+                frag.appendChild(a)
+            }
             found = true
             last = urlStart + url.length
         }

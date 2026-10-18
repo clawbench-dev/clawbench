@@ -653,6 +653,7 @@ import { removeRecentFile, useRecentFiles } from './composables/useRecentFiles'
 import { initLocalLinkGuard } from './composables/useLocalLinkGuard'
 import { installDragClickGuard } from './utils/dragClickGuard'
 import { installInertPathClick } from './utils/inertPathClick'
+import { installExternalLinkClick } from './utils/externalLinkClick'
 import { closeInertPathPicker } from './composables/useInertPathPicker'
 import { openFilePath } from './composables/useFilePathAnnotation'
 import { parseLineRanges, flattenLineNumbers } from './utils/lineRanges.ts'
@@ -3933,6 +3934,11 @@ function handleCtrlShiftF(e: KeyboardEvent) {
      // stopImmediatePropagation, so a same-node listener still runs). Ordering
      // is asserted by inertPathClickWiring.test.ts.
      stopInertPathClick = installInertPathClick()
+     // External links are rendered as spans (see markedConfig.link), so a tap
+     // has to be handled here. Independent of the two layers above — it keys on
+     // a class, not on preventDefault — but registered after them so a drag
+     // selection is already suppressed by the time it runs.
+     stopExternalLinkClick = installExternalLinkClick()
      stopLocalLinkGuard = initLocalLinkGuard((href, anchor) => {
          const fromChat = !!anchor?.closest('.chat-panel, .chat-panel-content, .chat-message, .chat-messages')
            || (isWideScreen.value ? activePane.value === PANE_RIGHT : activeTab.value === 'chat')
@@ -3949,6 +3955,7 @@ function handleCtrlShiftF(e: KeyboardEvent) {
 let stopLocalLinkGuard: (() => void) | null = null
 let stopDragClickGuard: (() => void) | null = null
 let stopInertPathClick: (() => void) | null = null
+let stopExternalLinkClick: (() => void) | null = null
 
 onUnmounted(() => {
     stopLocalLinkGuard?.()
@@ -3957,6 +3964,8 @@ onUnmounted(() => {
     stopDragClickGuard = null
     stopInertPathClick?.()
     stopInertPathClick = null
+    stopExternalLinkClick?.()
+    stopExternalLinkClick = null
     activeLineScrollCancel?.()
     stopDockResize()
     removeTaskHandler()
