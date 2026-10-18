@@ -1172,9 +1172,17 @@ describe('ChatInputBar', () => {
       expect(wrapper.vm.skillMenuItems.map(i => i.key)).toEqual(['#web-search'])
     })
 
-    it('does not open for a # that is not the first token', async () => {
+    it('opens for a # that starts a token mid-message', async () => {
+      // Issue #548: the user describes the problem first, then names the skill.
       const wrapper = mountBar()
       wrapper.vm.inputText = 'use #pdf'
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.skillMenuItems.map(i => i.key)).toEqual(['#pdf'])
+    })
+
+    it('does not open for a # that does not start a token', async () => {
+      const wrapper = mountBar()
+      wrapper.vm.inputText = 'C#pdf'
       await wrapper.vm.$nextTick()
       expect(wrapper.vm.skillMenuItems).toEqual([])
     })

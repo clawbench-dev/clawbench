@@ -3,6 +3,8 @@
  * These are stateless utility functions with no Vue reactivity dependencies.
  */
 
+import { REF_TOKEN_END_RE } from '@/utils/completionMatch.ts'
+
 /** Reasons that indicate a severe issue (red error-level styling) */
 const SEVERE_REASONS = new Set(['disconnect', 'timeout', 'panic'])
 
@@ -278,14 +280,20 @@ export interface SkillCommandBadge {
 
 /**
  * Extract an explicit skill reference from a text block, mirroring the
- * backend's parseSkillCommand (internal/handler/skill_command.go) so the badge
+ * backend's skillRefCandidates (internal/handler/skill_command.go) so the badge
  * appears on exactly the messages that actually trigger injection.
  *
- * Rules: the "#" must be the first non-whitespace character (a "#" later in the
- * body is prose — "#tag", "issue #12"); the name runs to the next whitespace
- * and must be non-empty and free of "#"; and exactly ONE reference is allowed
- * (a second "#..." token right after the first makes the whole message a
- * non-command, fail-closed).
+ * Only a reference that STARTS the message gets the badge: the badge replaces
+ * the whole block with "badge + rest", which is only truthful when the
+ * reference is what the message begins with. References later in the text stay
+ * ordinary text (the server still injects them — the badge is a visual
+ * affordance, not the protocol).
+ *
+ * Rules: the "#" must be the first non-whitespace character; the name runs to
+ * the next whitespace or punctuation (same terminator set as the server); it
+ * must be non-empty and free of "#". Later "#" tokens are NOT a failure: the
+ * server injects every resolvable reference, so "#pdf #other …" is a valid
+ * message whose first reference is "pdf" — the rest stays visible as text.
  *
  * Note: like the slash badge, this is a VISUAL parse — it does not verify the
  * name resolves to a known skill (an unknown "#foo" is shown as a badge, and
@@ -294,13 +302,15 @@ export interface SkillCommandBadge {
 export function extractSkillCommand(text: string): SkillCommandBadge | null {
   const trimmed = text.replace(/^\s+/, '')
   if (!trimmed.startsWith('#')) return null
-  const fields = trimmed.split(/\s+/)
-  const name = fields[0].slice(1)
+  const token = trimmed.split(/\s+/)[0]
+  let name = token.slice(1)
   if (name === '' || name.includes('#')) return null
-  // A second "#..." token in the same leading run means more than one
-  // reference: refuse rather than guess (matches the backend).
-  if (fields.length > 1 && fields[1].startsWith('#')) return null
-  // Rest is everything after the first token, preserving inner whitespace.
-  const rest = trimmed.slice(fields[0].length)
+  const cut = name.search(REF_TOKEN_END_RE)
+  if (cut === 0) return null
+  if (cut > 0) name = name.slice(0, cut)
+  // Rest is everything after the name (NOT after the whole token): a trailing
+  // comma or full stop belongs to the sentence, and dropping it would render
+  // "#pdf, summarize" as "#pdf summarize".
+  const rest = trimmed.slice(1 + name.length)
   return { name, rest }
 }

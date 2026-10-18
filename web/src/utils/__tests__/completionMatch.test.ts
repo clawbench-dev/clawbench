@@ -284,10 +284,34 @@ describe('parseHashQuery', () => {
     expect(parseHashQuery('#pdf ', 5)).toBeNull()
   })
 
-  it('returns null when the hash is not the first token', () => {
-    // A "#" mid-sentence is prose (e.g. "issue #12"), which the backend does
-    // not treat as a skill reference — so the menu must not open either.
-    expect(parseHashQuery('use #pdf', 8)).toBeNull()
+  it('opens mid-sentence, where the reference starts a token', () => {
+    // The whole point of issue #548: the user describes the problem first and
+    // names the skill afterwards.
+    expect(parseHashQuery('use #pdf', 8)).toEqual({ start: 4, end: 8, query: 'pdf' })
+    expect(parseHashQuery('please summarize this #pd', 25))
+      .toEqual({ start: 22, end: 25, query: 'pd' })
+    expect(parseHashQuery('first line\n#pdf', 15)).toEqual({ start: 11, end: 15, query: 'pdf' })
+  })
+
+  it('returns null when the hash does not start a token', () => {
+    // Mid-word hashes are prose: "C#", "use#pdf", URL fragments.
+    expect(parseHashQuery('C#', 2)).toBeNull()
+    expect(parseHashQuery('use#pdf', 7)).toBeNull()
+    expect(parseHashQuery('https://x.dev/a#section', 23)).toBeNull()
+  })
+
+  it('offers "12" for an issue number (no skill matches it, so the menu stays closed)', () => {
+    // The parser cannot know which names exist; the empty candidate list is
+    // what keeps the menu shut.
+    expect(parseHashQuery('issue #12', 9)).toEqual({ start: 6, end: 9, query: '12' })
+  })
+
+  it('ends the trigger at punctuation, so "#pdf," does not query "pdf,"', () => {
+    expect(parseHashQuery('#pdf,', 5)).toBeNull()
+    expect(parseHashQuery('#pdf。', 5)).toBeNull()
+    // The same holds mid-sentence: once the reference is terminated, a later
+    // caret does not resurrect it.
+    expect(parseHashQuery('use #pdf, then', 14)).toBeNull()
   })
 
   it('allows the hash at the start even when text follows the caret', () => {
@@ -300,6 +324,11 @@ describe('parseHashQuery', () => {
 
   it('returns null when the caret sits before the hash', () => {
     expect(parseHashQuery('#pdf', 0)).toBeNull()
+  })
+
+  it('uses the LAST hash at or before the caret', () => {
+    expect(parseHashQuery('#pdf then #web', 14))
+      .toEqual({ start: 10, end: 14, query: 'web' })
   })
 })
 

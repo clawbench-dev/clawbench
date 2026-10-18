@@ -1,5 +1,6 @@
 import { ref, computed } from 'vue'
 import { appLog } from '@/utils/appLog'
+import { REF_TOKEN_END_RE } from '@/utils/completionMatch.ts'
 
 const TAG = 'SkillsState'
 
@@ -226,16 +227,17 @@ function sourceRank(kind: SkillRow['source_kind']): number {
  * same way the backend refuses to advertise them: an agent resolves a skill by
  * directory, so such an entry would do nothing when picked.
  *
- * A name containing whitespace or "#" is also dropped: the backend reference
- * grammar is `#<name>` with the name running to the next whitespace, so such a
- * name cannot be expressed — offering it would insert a reference that resolves
- * to nothing (the parser reads only the first token).
+ * A name containing whitespace, "#" or a reference terminator is also dropped:
+ * the reference grammar is `#<name>` with the name running to the next
+ * whitespace or punctuation (see `skillRefPunct` in
+ * internal/handler/skill_command.go), so such a name cannot be expressed —
+ * offering it would insert a reference that resolves to nothing.
  */
 export function skillMenuRows(): SkillRow[] {
   const best = new Map<string, SkillRow>()
   for (const s of skills.value) {
     if (s.name_mismatch) continue
-    if (/[\s#]/.test(s.name)) continue
+    if (s.name.includes('#') || REF_TOKEN_END_RE.test(s.name)) continue
     const key = s.name.trim().replace(/^\//, '').toLowerCase()
     if (!key) continue
     const cur = best.get(key)

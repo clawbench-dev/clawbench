@@ -1217,8 +1217,12 @@ const commandMenu = useCompletionMenu({
 // internal/handler/skill_command.go). The list is fetched lazily the first time
 // the trigger appears — the same pattern as the @ file sources.
 //
-// Unlike the "/" menu, this is NOT gated on ACP transport: the injection is
-// done server-side and works for CLI backends too. It is also NOT gated on the
+// Unlike the "/" menu, the trigger may sit ANYWHERE a token starts: "#" is
+// ClawBench's own protocol (the server scans the message for "#name" tokens),
+// so the user can describe the problem first and name the skill afterwards.
+//
+// Also unlike "/", this is NOT gated on ACP transport: the injection is done
+// server-side and works for CLI backends too. It is also NOT gated on the
 // skills master switch, which only governs AUTOMATIC injection.
 const skillMenuItems = computed(() => {
   // Establish the reactive dependency on the caret position.

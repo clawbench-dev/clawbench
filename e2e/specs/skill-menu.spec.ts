@@ -88,12 +88,30 @@ test.describe.serial('Skill menu', () => {
     await expect(chat.textarea).toHaveValue('#e2e-demo-skill ')
   })
 
-  test('does not open the skill menu for a # that is not the first token', async ({ page }) => {
+  test('opens the skill menu for a # that starts a token mid-message', async ({ page }) => {
+    // Issue #548: describing the problem first and naming the skill afterwards
+    // must work — "#" is ClawBench's own protocol, so the server scans tokens
+    // anywhere in the message.
     await page.goto('/')
     await expect(chat.textarea).toBeVisible({ timeout: 10000 })
 
     await chat.textarea.click()
-    await chat.textarea.fill('use #e2e')
+    await chat.textarea.fill('summarize this file #e2e')
+
+    const demo = page.locator('.completion-item--skill').filter({ hasText: 'e2e-demo-skill' })
+    await expect(demo).toBeVisible({ timeout: 5000 })
+
+    // Selecting replaces only the "#e2e" token, keeping the leading prose.
+    await demo.click()
+    await expect(chat.textarea).toHaveValue('summarize this file #e2e-demo-skill ')
+  })
+
+  test('does not open the skill menu for a # inside a word', async ({ page }) => {
+    await page.goto('/')
+    await expect(chat.textarea).toBeVisible({ timeout: 10000 })
+
+    await chat.textarea.click()
+    await chat.textarea.fill('use#e2e')
 
     await expect(page.locator('.completion-item--skill').first()).not.toBeVisible({ timeout: 1500 })
   })
