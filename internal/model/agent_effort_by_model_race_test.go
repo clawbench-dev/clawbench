@@ -33,7 +33,7 @@ func TestSetThinkingEffortForModel_ReplacesMapInsteadOfMutating(t *testing.T) {
 // UpdateAgent copies the struct under agentsMu, mutates the copy, and only then
 // publishes it. The reader keeps the previously published pointer.
 //
-// Run with -race: mutating the shared map in place (the pre-fix behaviour)
+// Run with -race: mutating the shared map in place (the pre-fix behavior)
 // makes this fail with "concurrent map read and map write", which Go cannot
 // recover from.
 func TestSetThinkingEffortForModel_ConcurrentReads(t *testing.T) {
@@ -44,14 +44,14 @@ func TestSetThinkingEffortForModel_ConcurrentReads(t *testing.T) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 500; i++ {
+		for range 500 {
 			// Same read the service/ai layers do: resolve the pointer, then read.
 			_ = readerSnapshot.ThinkingEffortForModel("glm-5.3")
 		}
 	}()
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 500; i++ {
+		for range 500 {
 			// UpdateAgent's shape: shallow copy, mutate the copy, publish.
 			updated := *published
 			updated.SetThinkingEffortForModel("glm-5.3", "low")

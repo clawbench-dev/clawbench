@@ -274,7 +274,8 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 		var cols int
 		_ = store.ReadDB().QueryRow(
-			"SELECT COUNT(*) FROM pragma_table_info(?) WHERE name IN ('project_id','project_path')", c.table).Scan(&cols)
+			"SELECT COUNT(*) FROM pragma_table_info(?) WHERE name IN ('project_id','project_path')", c.table,
+		).Scan(&cols)
 		if cols == 0 {
 			if _, err := store.WriteExec(c.ddl); err != nil {
 				return fmt.Errorf("failed to add %s.project_id column: %w", c.table, err)
@@ -301,7 +302,8 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	for _, tbl := range legacyProjectPathTables {
 		var n int
 		_ = store.ReadDB().QueryRow(
-			"SELECT COUNT(*) FROM pragma_table_info(?) WHERE name='project_path'", tbl).Scan(&n)
+			"SELECT COUNT(*) FROM pragma_table_info(?) WHERE name='project_path'", tbl,
+		).Scan(&n)
 		if n > 0 {
 			hasLegacyProjectPath = 1
 			break
@@ -1763,7 +1765,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// Migrate: per-model thinking-effort picks (issue #552). A JSON object
 	// keyed by model id; '{}' means "no per-model pick", so the agent's
 	// model-independent default still applies. Additive and nullable-by-default,
-	// so existing agents keep their current behaviour after the upgrade.
+	// so existing agents keep their current behavior after the upgrade.
 	var hasEffortByModel int
 	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='thinking_effort_by_model'").Scan(&hasEffortByModel)
 	if hasEffortByModel == 0 {

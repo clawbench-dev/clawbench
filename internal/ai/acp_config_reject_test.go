@@ -65,7 +65,7 @@ func TestSetSessionConfigOption_AcceptedValueIsRecorded(t *testing.T) {
 
 // TestSetSessionConfigOption_OtherErrorsStillRecorded documents the boundary:
 // only a VALUE rejection stops the recording. A transport failure (timeout,
-// dropped peer) keeps the old behaviour, because the value may well have been
+// dropped peer) keeps the old behavior, because the value may well have been
 // applied and re-sending it on every turn would be pure overhead.
 func TestSetSessionConfigOption_OtherErrorsStillRecorded(t *testing.T) {
 	conn := NewACPConnForTest(&model.Agent{ID: "timeout-effort", Backend: "opencode"}, "sid-timeout")

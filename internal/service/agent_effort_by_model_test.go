@@ -148,7 +148,7 @@ func TestPatchThinkingEffortForModel_CorruptValueRebuilds(t *testing.T) {
 
 // TestDuplicateAgent_CopiesThinkingEffortByModel pins that a duplicate keeps the
 // per-model picks: the copy runs the same models, so dropping the picks would
-// make it fall back to the agent's own per-model defaults — the behaviour this
+// make it fall back to the agent's own per-model defaults — the behavior this
 // feature exists to override.
 func TestDuplicateAgent_CopiesThinkingEffortByModel(t *testing.T) {
 	db := setupTestDBForAgents(t)

@@ -591,7 +591,8 @@ func TestSchema_CompletedAtMigration(t *testing.T) {
 	// unread query falls back to created_at and the reply reads as unread.
 	var completed sql.NullTime
 	require.NoError(t, store.UnsafeDBForTest().QueryRow(
-		"SELECT completed_at FROM chat_history WHERE session_id = 'legacy-at'").Scan(&completed))
+		"SELECT completed_at FROM chat_history WHERE session_id = 'legacy-at'",
+	).Scan(&completed))
 	assert.False(t, completed.Valid, "a legacy row must have completed_at NULL")
 
 	sessions, err := GetSessions("/p", "")
@@ -4472,9 +4473,11 @@ func TestSchema_ForgeItemsCommentsBaselinedMigration(t *testing.T) {
 	// row stays unbaselined so its first comment pass absorbs history silently.
 	var baselined1, baselined2 int
 	require.NoError(t, store.UnsafeDBForTest().QueryRow(
-		`SELECT comments_baselined FROM forge_items WHERE number = 1`).Scan(&baselined1))
+		`SELECT comments_baselined FROM forge_items WHERE number = 1`,
+	).Scan(&baselined1))
 	require.NoError(t, store.UnsafeDBForTest().QueryRow(
-		`SELECT comments_baselined FROM forge_items WHERE number = 2`).Scan(&baselined2))
+		`SELECT comments_baselined FROM forge_items WHERE number = 2`,
+	).Scan(&baselined2))
 	assert.Equal(t, 1, baselined1, "a row with a known comment id must be backfilled as baselined")
 	assert.Equal(t, 0, baselined2, "a row with no comment id must stay unbaselined")
 }
@@ -4529,7 +4532,8 @@ func TestSchema_ProjectForgesSchemeMigration(t *testing.T) {
 	require.NoError(t, err)
 	_, err = legacy.Exec(
 		`INSERT INTO project_forges (project_id, platform, host, owner, repo)
-		 VALUES ((SELECT id FROM projects WHERE path = ?), 'gitlab', 'gitlab.internal', 'group', 'widgets')`, projPath)
+		 VALUES ((SELECT id FROM projects WHERE path = ?), 'gitlab', 'gitlab.internal', 'group', 'widgets')`, projPath,
+	)
 	require.NoError(t, err)
 	require.NoError(t, legacy.Close())
 
@@ -4545,7 +4549,8 @@ func TestSchema_ProjectForgesSchemeMigration(t *testing.T) {
 	// would override the credential's hint on an http-only instance.
 	var scheme string
 	require.NoError(t, store.UnsafeDBForTest().QueryRow(
-		"SELECT scheme FROM project_forges WHERE project_id = (SELECT id FROM projects WHERE path = ?)", projPath).Scan(&scheme))
+		"SELECT scheme FROM project_forges WHERE project_id = (SELECT id FROM projects WHERE path = ?)", projPath,
+	).Scan(&scheme))
 	assert.Empty(t, scheme, "existing rows must backfill to unknown, not https")
 
 	// And the migrated table must be usable through the real accessors, which is
@@ -4639,7 +4644,8 @@ func TestSchema_FileSharesRootMigration_AddsColumnToLegacyTable(t *testing.T) {
 	)`)
 	require.NoError(t, err)
 	_, err = legacy.Exec(
-		"INSERT INTO file_shares (token, path, name) VALUES ('legacy', '/proj/a.md', 'a.md')")
+		"INSERT INTO file_shares (token, path, name) VALUES ('legacy', '/proj/a.md', 'a.md')",
+	)
 	require.NoError(t, err)
 	require.NoError(t, legacy.Close())
 
@@ -4654,7 +4660,8 @@ func TestSchema_FileSharesRootMigration_AddsColumnToLegacyTable(t *testing.T) {
 	// The pre-existing row survives and reads back an empty root.
 	var root string
 	require.NoError(t, store.UnsafeDBForTest().QueryRow(
-		"SELECT root FROM file_shares WHERE token = 'legacy'").Scan(&root))
+		"SELECT root FROM file_shares WHERE token = 'legacy'",
+	).Scan(&root))
 	assert.Empty(t, root)
 }
 
@@ -4695,7 +4702,8 @@ func TestSchema_ScriptColumnMigration(t *testing.T) {
 	// A legacy task row with history that must survive the migration.
 	_, err = raw.Exec(
 		`INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, run_count)
-		 VALUES (1, 'Legacy task', '0 9 * * *', 'default', 'do work', 7)`)
+		 VALUES (1, 'Legacy task', '0 9 * * *', 'default', 'do work', 7)`,
+	)
 	require.NoError(t, err)
 	raw.Close()
 
@@ -4722,7 +4730,8 @@ func TestSchema_ScriptColumnMigration(t *testing.T) {
 	// alter the columns.
 	var colsBefore int
 	require.NoError(t, store.UnsafeDBForTest().QueryRow(
-		"SELECT COUNT(*) FROM pragma_table_info('scheduled_tasks')").Scan(&colsBefore))
+		"SELECT COUNT(*) FROM pragma_table_info('scheduled_tasks')",
+	).Scan(&colsBefore))
 	require.NoError(t, InitDB())
 	require.NoError(t, InitDB())
 	columns = getTableColumns(t, store.UnsafeDBForTest(), "scheduled_tasks")
@@ -4731,11 +4740,14 @@ func TestSchema_ScriptColumnMigration(t *testing.T) {
 
 	var scriptCount, timeoutCount, colsAfter int
 	require.NoError(t, store.UnsafeDBForTest().QueryRow(
-		"SELECT COUNT(*) FROM pragma_table_info('scheduled_tasks') WHERE name='script'").Scan(&scriptCount))
+		"SELECT COUNT(*) FROM pragma_table_info('scheduled_tasks') WHERE name='script'",
+	).Scan(&scriptCount))
 	require.NoError(t, store.UnsafeDBForTest().QueryRow(
-		"SELECT COUNT(*) FROM pragma_table_info('scheduled_tasks') WHERE name='script_timeout'").Scan(&timeoutCount))
+		"SELECT COUNT(*) FROM pragma_table_info('scheduled_tasks') WHERE name='script_timeout'",
+	).Scan(&timeoutCount))
 	require.NoError(t, store.UnsafeDBForTest().QueryRow(
-		"SELECT COUNT(*) FROM pragma_table_info('scheduled_tasks')").Scan(&colsAfter))
+		"SELECT COUNT(*) FROM pragma_table_info('scheduled_tasks')",
+	).Scan(&colsAfter))
 	assert.Equal(t, 1, scriptCount, "repeated migrations must not duplicate the script column")
 	assert.Equal(t, 1, timeoutCount, "repeated migrations must not duplicate the script_timeout column")
 	assert.Equal(t, colsBefore, colsAfter, "repeated migrations must not change the column set")
@@ -4805,14 +4817,16 @@ func TestSchema_ForgeSyncStatePerTypeWatermarkMigration(t *testing.T) {
 	// The issue cursor carries the old value forward.
 	var issueWM time.Time
 	require.NoError(t, store.UnsafeDBForTest().QueryRow(
-		`SELECT issue_watermark FROM forge_sync_state WHERE owner = 'acme'`).Scan(&issueWM))
+		`SELECT issue_watermark FROM forge_sync_state WHERE owner = 'acme'`,
+	).Scan(&issueWM))
 	assert.Equal(t, "2026-09-21 14:44:53", issueWM.UTC().Format("2006-01-02 15:04:05"),
 		"the existing cursor must be preserved as the issue cursor")
 
 	// The PR cursor is deliberately left NULL — no baseline.
 	var prWM sql.NullTime
 	require.NoError(t, store.UnsafeDBForTest().QueryRow(
-		`SELECT pr_watermark FROM forge_sync_state WHERE owner = 'acme'`).Scan(&prWM))
+		`SELECT pr_watermark FROM forge_sync_state WHERE owner = 'acme'`,
+	).Scan(&prWM))
 	assert.False(t, prWM.Valid,
 		"the PR cursor must start empty so the first PR pass baselines instead of replaying")
 }
@@ -4894,6 +4908,7 @@ func TestSchema_UpgradeHalfConvertedProjectPath(t *testing.T) {
 	// The pre-existing attribution must not be clobbered by a re-run backfill.
 	var gotID int
 	require.NoError(t, store.UnsafeDBForTest().QueryRow(
-		`SELECT project_id FROM chat_metadata WHERE message_id = 1`).Scan(&gotID))
+		`SELECT project_id FROM chat_metadata WHERE message_id = 1`,
+	).Scan(&gotID))
 	assert.Equal(t, 7, gotID, "an existing project_id must be preserved, not overwritten")
 }

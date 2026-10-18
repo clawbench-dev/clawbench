@@ -1370,7 +1370,7 @@ function handleSwitchThinkingEffort(level) {
       previous,
     )
     toast.show(
-      t('chat.thinkingEffort.rejected', { effort: levelObj?.name || level }),
+      t('chat.thinkingEffortSwitcher.rejected', { effort: levelObj?.name || level }),
       { icon: 'warning', type: 'error' },
     )
   })

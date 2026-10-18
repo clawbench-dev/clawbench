@@ -48,7 +48,7 @@ func MigrateLegacyThinkingEffortPicks() bool {
 
 	var needed int
 	if err := store.ReadDB().QueryRow(
-		"SELECT COUNT(*) FROM chat_sessions WHERE "+cond,
+		"SELECT COUNT(*) FROM chat_sessions WHERE " + cond,
 	).Scan(&needed); err != nil {
 		slog.Error("thinking effort pick migration: count failed", "err", err)
 		return false

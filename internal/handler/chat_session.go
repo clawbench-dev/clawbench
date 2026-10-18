@@ -579,6 +579,24 @@ func resolveUpdateTargetSession(w http.ResponseWriter, r *http.Request, bodySess
 	return sessionID, true
 }
 
+// sessionUpdateRequest is the PATCH /api/ai/session body.
+type sessionUpdateRequest struct {
+	SessionID      string `json:"sessionId"` // explicit target; overrides query/cookie
+	ModeID         string `json:"modeId"`
+	ThinkingEffort string `json:"thinkingEffort"`
+	ModelID        string `json:"modelId"`
+	Transport      string `json:"transport"`
+	AutoApprove    *bool  `json:"autoApprove"` // pointer: distinguish "not sent" from false
+	Cruise         *bool  `json:"cruise"`      // pointer: distinguish "not sent" from false (auto-cruise)
+	Title          string `json:"title"`
+	Pinned         *bool  `json:"pinned"` // pointer: distinguish "not sent" from false
+	// Tags replaces the session's full tag set when non-nil. A pointer is
+	// required here: `"tags": []` (clear all) must be distinguishable from
+	// the field being absent (leave tags untouched), which a plain slice
+	// cannot express.
+	Tags *[]service.SessionTagRef `json:"tags"`
+}
+
 // ServeAISessionUpdate handles PATCH /api/ai/session — immediately persists
 // session-scoped settings (mode, thinkingEffort, model, transport) so they
 // survive page reload even without sending a chat message.
@@ -586,22 +604,7 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodPatch) {
 		return
 	}
-	var req struct {
-		SessionID      string `json:"sessionId"` // explicit target; overrides query/cookie
-		ModeID         string `json:"modeId"`
-		ThinkingEffort string `json:"thinkingEffort"`
-		ModelID        string `json:"modelId"`
-		Transport      string `json:"transport"`
-		AutoApprove    *bool  `json:"autoApprove"` // pointer: distinguish "not sent" from false
-		Cruise         *bool  `json:"cruise"`      // pointer: distinguish "not sent" from false (auto-cruise)
-		Title          string `json:"title"`
-		Pinned         *bool  `json:"pinned"` // pointer: distinguish "not sent" from false
-		// Tags replaces the session's full tag set when non-nil. A pointer is
-		// required here: `"tags": []` (clear all) must be distinguishable from
-		// the field being absent (leave tags untouched), which a plain slice
-		// cannot express.
-		Tags *[]service.SessionTagRef `json:"tags"`
-	}
+	var req sessionUpdateRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
@@ -609,10 +612,6 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Whether the model switch could only be deferred to the next prompt
-	// (the agent was busy). Reported in the response body so the frontend can
-	// say so instead of claiming the switch already took effect.
-	modelSwitchDeferred := false
 	// A pick sent together with a model switch belongs to the NEW model, so the
 	// per-model memory must be keyed by the requested id — the session row still
 	// holds the previous one at this point (the model is applied last).
@@ -621,6 +620,45 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 		effortModelKey = req.ModelID
 	}
 	effortAccepted := applySessionConfigSelections(sessionID, req.ModeID, req.ThinkingEffort, effortModelKey)
+	if err := req.applyNonModelFields(sessionID); err != nil {
+		model.WriteError(w, model.Internal(fmt.Errorf("failed to save session tags")))
+		return
+	}
+
+	// Model LAST: it is the only field that can hard-fail the whole request, and
+	// doing it here means a rejection leaves every other field above applied
+	// (a 422 then means "everything else saved, the model was refused"). Running
+	// it earlier would silently drop transport/autoApprove/title/pinned/tags.
+	modelSwitchDeferred := false
+	effectiveEffort := ""
+	if req.ModelID != "" {
+		deferred, effort, err := applySessionModelAndEffort(r.Context(), sessionID, req.ModelID, req.ThinkingEffort)
+		if err != nil {
+			writeModelSwitchError(w, r, err)
+			return
+		}
+		modelSwitchDeferred, effectiveEffort = deferred, effort
+	}
+	resp := map[string]interface{}{"ok": true, "modelSwitchDeferred": modelSwitchDeferred}
+	if effectiveEffort != "" {
+		resp["thinkingEffort"] = effectiveEffort
+	}
+	if !effortAccepted {
+		// The level was rejected by the agent and deliberately NOT persisted.
+		// Without this signal the client would keep showing (and re-sending) a
+		// pick the server discarded, so the chip would disagree with the agent
+		// for the rest of the session.
+		resp["thinkingEffortRejected"] = true
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// applyNonModelFields persists every session-scoped field EXCEPT the model.
+// The only failure it reports is a tag conflict: tag writes can genuinely fail
+// (e.g. a conflicting definition) and, unlike the settings below, the frontend
+// has no optimistic copy to fall back on — so it must be surfaced rather than
+// reported as a silent ok.
+func (req *sessionUpdateRequest) applyNonModelFields(sessionID string) error {
 	if req.Transport != "" {
 		//nolint:errcheck,gosec // best-effort persistence; failure is non-fatal for an idempotent update
 		service.UpdateSessionTransport(sessionID, req.Transport)
@@ -654,52 +692,34 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 		service.UpdateSessionPinned(sessionID, *req.Pinned)
 	}
 	if req.Tags != nil {
-		// Tag writes can genuinely fail (e.g. a conflicting definition), and
-		// unlike the settings above the frontend has no optimistic copy to fall
-		// back on — so surface the error instead of reporting a silent ok.
-		if err := applySessionTags(sessionID, *req.Tags); err != nil {
-			model.WriteError(w, model.Internal(fmt.Errorf("failed to save session tags")))
-			return
-		}
+		return applySessionTags(sessionID, *req.Tags)
 	}
-	// Model LAST: it is the only field that can hard-fail the whole request, and
-	// doing it here means a rejection leaves every other field above applied
-	// (a 422 then means "everything else saved, the model was refused"). Running
-	// it earlier would silently drop transport/autoApprove/title/pinned/tags.
-	effectiveEffort := ""
-	if req.ModelID != "" {
-		deferred, err := applyAndPersistSessionModel(r.Context(), sessionID, req.ModelID)
-		if err != nil {
-			writeModelSwitchError(w, r, err)
-			return
-		}
-		modelSwitchDeferred = deferred
-		// A model switch invalidates the session's effort pick: it was made for
-		// the previous model and its level may not even exist here (issue #552).
-		// Unless the request carried an explicit pick for the new model, resolve
-		// what this model will actually run so the client can show it — instead
-		// of leaving the old level on the chip while the agent silently uses a
-		// different one.
-		if req.ThinkingEffort == "" {
-			effectiveEffort = switchSessionEffortToModel(sessionID, req.ModelID, modelSwitchDeferred)
-		} else if !modelSwitchDeferred {
-			// The pick was validated and persisted before the switch, but its RPC
-			// was deliberately withheld until the agent is on the new model.
-			forwardSessionConfigOption(sessionID, "thought_level", req.ThinkingEffort)
-		}
+	return nil
+}
+
+// applySessionModelAndEffort switches the session's model and then reconciles
+// the thinking-effort pick with it. Deferred=true means the agent was busy, so
+// the switch (and any effort RPC) only takes effect on the next prompt.
+func applySessionModelAndEffort(ctx context.Context, sessionID, modelID, thinkingEffort string) (deferred bool, effectiveEffort string, err error) {
+	deferred, err = applyAndPersistSessionModel(ctx, sessionID, modelID)
+	if err != nil {
+		return false, "", err
 	}
-	resp := map[string]interface{}{"ok": true, "modelSwitchDeferred": modelSwitchDeferred}
-	if effectiveEffort != "" {
-		resp["thinkingEffort"] = effectiveEffort
+	// A model switch invalidates the session's effort pick: it was made for
+	// the previous model and its level may not even exist here (issue #552).
+	// Unless the request carried an explicit pick for the new model, resolve
+	// what this model will actually run so the client can show it — instead
+	// of leaving the old level on the chip while the agent silently uses a
+	// different one.
+	if thinkingEffort == "" {
+		return deferred, switchSessionEffortToModel(sessionID, modelID, deferred), nil
 	}
-	if !effortAccepted {
-		// The level was rejected by the agent and deliberately NOT persisted.
-		// Without this signal the client would keep showing (and re-sending) a
-		// pick the server discarded, so the chip would disagree with the agent
-		// for the rest of the session.
-		resp["thinkingEffortRejected"] = true
+	if !deferred {
+		// The pick was validated and persisted before the switch, but its RPC
+		// was deliberately withheld until the agent is on the new model.
+		forwardSessionConfigOption(sessionID, "thought_level", thinkingEffort)
 	}
-	writeJSON(w, http.StatusOK, resp)
+	return deferred, "", nil
 }
 
 // switchSessionEffortToModel re-derives the session's thinking effort after a
@@ -1012,7 +1032,7 @@ func applySessionConfigSelections(sessionID, modeID, thinkingEffort, modelKey st
 // POST /api/ai/sessions deliberately stores an empty model (the agent default
 // is not pre-filled), so the fallback is the agent's own default — the model
 // the very first turn will run. An empty key would make the pick
-// model-independent, which is precisely the behaviour this feature replaces.
+// model-independent, which is precisely the behavior this feature replaces.
 func currentEffortModelKey(sessionID string) string {
 	if m := service.GetSessionModel(sessionID); m != "" {
 		return m

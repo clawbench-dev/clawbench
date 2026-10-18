@@ -1164,7 +1164,8 @@ func GetDefaultProject() (string, error) {
 	var path string
 	err := store.ReadDB().QueryRow(
 		`SELECT p.path FROM recent_projects r JOIN projects p ON p.id = r.project_id
-		  WHERE r.is_default = 1 LIMIT 1`).Scan(&path)
+		  WHERE r.is_default = 1 LIMIT 1`,
+	).Scan(&path)
 	if err == nil {
 		// Verify directory still exists
 		if info, statErr := os.Stat(path); statErr == nil && info.IsDir() {
@@ -1631,7 +1632,8 @@ func GetSessionProjectPath(sessionID string) string {
 	err := store.ReadDB().QueryRow(
 		`SELECT COALESCE(p.path, '') FROM chat_sessions s
 		   LEFT JOIN projects p ON p.id = s.project_id
-		  WHERE s.id = ? AND s.archived = 0`, sessionID).Scan(&projectPath)
+		  WHERE s.id = ? AND s.archived = 0`, sessionID,
+	).Scan(&projectPath)
 	if err != nil {
 		return ""
 	}
@@ -1665,7 +1667,8 @@ func LookupSessionProjectPathActive(sessionID string) (string, SessionLookupOutc
 	err := store.ReadDB().QueryRow(
 		`SELECT COALESCE(p.path, '') FROM chat_sessions s
 		   LEFT JOIN projects p ON p.id = s.project_id
-		  WHERE s.id = ? AND s.archived = 0`, sessionID).Scan(&projectPath)
+		  WHERE s.id = ? AND s.archived = 0`, sessionID,
+	).Scan(&projectPath)
 	switch {
 	case err == nil:
 		return projectPath, SessionFound
@@ -1685,7 +1688,8 @@ func GetSessionProjectPathIncludeArchived(sessionID string) string {
 	err := store.ReadDB().QueryRow(
 		`SELECT COALESCE(p.path, '') FROM chat_sessions s
 		   LEFT JOIN projects p ON p.id = s.project_id
-		  WHERE s.id = ?`, sessionID).Scan(&projectPath)
+		  WHERE s.id = ?`, sessionID,
+	).Scan(&projectPath)
 	if err != nil {
 		return ""
 	}

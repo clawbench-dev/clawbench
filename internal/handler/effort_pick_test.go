@@ -12,6 +12,11 @@ import (
 	"clawbench/internal/service"
 )
 
+// testEffortAgentID is the agent id the effort-pick fixtures install. Every
+// test in this file targets the same single agent, so the helpers take it as a
+// constant instead of a parameter.
+const testEffortAgentID = "opencode"
+
 // These tests pin the user-visible contract of issue #552 on the PATCH path:
 // an explicit effort pick must (a) be stored as a USER pick so later turns can
 // replay it, and (b) be remembered per model so a new session or a switch back
@@ -23,7 +28,7 @@ import (
 // The agent is a CLI agent: static levels, model-independent. That is the right
 // shape for the picker/validation tests below. Tests that exercise the ACP
 // per-model path use setACPAgentEffortLevels instead.
-func setAgentEffortLevels(t *testing.T, agentID string, levels []string, models ...string) {
+func setAgentEffortLevels(t *testing.T, levels []string, models ...string) {
 	t.Helper()
 	agentModels := make([]model.AgentModel, len(models))
 	for i, m := range models {
@@ -31,8 +36,8 @@ func setAgentEffortLevels(t *testing.T, agentID string, levels []string, models 
 	}
 	orig := model.Agents
 	model.Agents = map[string]*model.Agent{
-		agentID: {
-			ID: agentID, Name: agentID, Backend: "opencode",
+		testEffortAgentID: {
+			ID: testEffortAgentID, Name: testEffortAgentID, Backend: "opencode",
 			ThinkingEffortLevels: levels,
 			Models:               agentModels,
 		},
@@ -42,7 +47,7 @@ func setAgentEffortLevels(t *testing.T, agentID string, levels []string, models 
 
 // setACPAgentEffortLevels installs an ACP agent. Its levels are reported per
 // model at runtime, so static ThinkingEffortLevels are left empty.
-func setACPAgentEffortLevels(t *testing.T, agentID string, models ...string) {
+func setACPAgentEffortLevels(t *testing.T, models ...string) {
 	t.Helper()
 	agentModels := make([]model.AgentModel, len(models))
 	for i, m := range models {
@@ -50,8 +55,8 @@ func setACPAgentEffortLevels(t *testing.T, agentID string, models ...string) {
 	}
 	orig := model.Agents
 	model.Agents = map[string]*model.Agent{
-		agentID: {
-			ID: agentID, Name: agentID, Backend: "opencode",
+		testEffortAgentID: {
+			ID: testEffortAgentID, Name: testEffortAgentID, Backend: "opencode",
 			Transport: "acp-stdio", AcpCommand: "opencode acp",
 			Models: agentModels,
 		},
@@ -65,7 +70,7 @@ func setACPAgentEffortLevels(t *testing.T, agentID string, models ...string) {
 func TestServeAISessionUpdate_EffortPickRememberedPerModel(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
-	setAgentEffortLevels(t, "opencode", []string{"low", "high", "max"}, "glm-5.3")
+	setAgentEffortLevels(t, []string{"low", "high", "max"}, "glm-5.3")
 
 	sid, err := service.CreateSession(env.ProjectDir, "opencode", "Effort", "opencode", "glm-5.3", "user", "chat")
 	require.NoError(t, err)
@@ -103,7 +108,7 @@ func TestServeAISessionUpdate_EffortPickRememberedPerModel(t *testing.T) {
 func TestServeAISessionUpdate_ModelSwitchInvalidatesPick(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
-	setACPAgentEffortLevels(t, "opencode", "glm-5.3", "deepseek-v4-pro")
+	setACPAgentEffortLevels(t, "glm-5.3", "deepseek-v4-pro")
 
 	sid, err := service.CreateSession(env.ProjectDir, "opencode", "Switch", "opencode", "glm-5.3", "user", "chat")
 	require.NoError(t, err)
@@ -139,7 +144,7 @@ func TestServeAISessionUpdate_ModelSwitchInvalidatesPick(t *testing.T) {
 func TestServeAISessionUpdate_ModelSwitchKeepsPickForCLI(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
-	setAgentEffortLevels(t, "opencode", []string{"low", "high", "max"}, "glm-5.3", "deepseek-v4-pro")
+	setAgentEffortLevels(t, []string{"low", "high", "max"}, "glm-5.3", "deepseek-v4-pro")
 
 	sid, err := service.CreateSession(env.ProjectDir, "opencode", "CLI switch", "opencode", "glm-5.3", "user", "chat")
 	require.NoError(t, err)
@@ -175,7 +180,7 @@ func TestServeAISessionUpdate_ModelSwitchKeepsPickForCLI(t *testing.T) {
 func TestServeAISessionUpdate_ModelSwitchRestoresRememberedPick(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
-	setACPAgentEffortLevels(t, "opencode", "glm-5.3", "deepseek-v4-pro")
+	setACPAgentEffortLevels(t, "glm-5.3", "deepseek-v4-pro")
 
 	// Remember a pick for deepseek-v4-pro by selecting it there first.
 	sid, err := service.CreateSession(env.ProjectDir, "opencode", "Restore", "opencode", "deepseek-v4-pro", "user", "chat")
@@ -220,7 +225,7 @@ func TestServeAISessionUpdate_ModelSwitchRestoresRememberedPick(t *testing.T) {
 func TestServeAISessionUpdate_EffortPickAlongsideModelSwitch(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
-	setAgentEffortLevels(t, "opencode", []string{"low", "high", "max"}, "glm-5.3", "deepseek-v4-pro")
+	setAgentEffortLevels(t, []string{"low", "high", "max"}, "glm-5.3", "deepseek-v4-pro")
 
 	sid, err := service.CreateSession(env.ProjectDir, "opencode", "Together", "opencode", "glm-5.3", "user", "chat")
 	require.NoError(t, err)
@@ -249,13 +254,13 @@ func TestServeAISessionUpdate_EffortPickAlongsideModelSwitch(t *testing.T) {
 // model switch still records the new model's effort for the next turn.
 //
 // The RPC must NOT be sent in that case (the agent is still on the previous
-// model) — that half is a wiring invariant with no observable behaviour in a
+// model) — that half is a wiring invariant with no observable behavior in a
 // test (no live ACP connection), so it is pinned separately in
 // chat_session_wiring_test.go.
 func TestSwitchSessionEffortToModel_DeferredStillPersists(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
-	setACPAgentEffortLevels(t, "opencode", "glm-5.3", "deepseek-v4-pro")
+	setACPAgentEffortLevels(t, "glm-5.3", "deepseek-v4-pro")
 
 	sid, err := service.CreateSession(env.ProjectDir, "opencode", "Deferred", "opencode", "glm-5.3", "user", "chat")
 	require.NoError(t, err)
@@ -284,7 +289,7 @@ func TestSwitchSessionEffortToModel_DeferredStillPersists(t *testing.T) {
 func TestRememberEffortForModel_RejectsUnknownLevel(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
-	setAgentEffortLevels(t, "opencode", []string{"low", "high", "max"}, "glm-5.3")
+	setAgentEffortLevels(t, []string{"low", "high", "max"}, "glm-5.3")
 
 	sid, err := service.CreateSession(env.ProjectDir, "opencode", "Invalid", "opencode", "glm-5.3", "user", "chat")
 	require.NoError(t, err)
@@ -303,7 +308,7 @@ func TestRememberEffortForModel_RejectsUnknownLevel(t *testing.T) {
 func TestRememberEffortForModel_SkipsUnchangedWrite(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
-	setAgentEffortLevels(t, "opencode", []string{"low", "high", "max"}, "glm-5.3")
+	setAgentEffortLevels(t, []string{"low", "high", "max"}, "glm-5.3")
 	model.Agents["opencode"].ThinkingEffortByModel = map[string]string{"glm-5.3": "max"}
 
 	sid, err := service.CreateSession(env.ProjectDir, "opencode", "Same", "opencode", "glm-5.3", "user", "chat")
@@ -327,7 +332,7 @@ func TestRememberEffortForModel_SkipsUnchangedWrite(t *testing.T) {
 func TestApplySessionConfigSelections_InvalidLevelNotPersisted(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
-	setAgentEffortLevels(t, "opencode", []string{"low", "high", "max"}, "glm-5.3")
+	setAgentEffortLevels(t, []string{"low", "high", "max"}, "glm-5.3")
 
 	sid, err := service.CreateSession(env.ProjectDir, "opencode", "Invalid persist", "opencode", "glm-5.3", "user", "chat")
 	require.NoError(t, err)
@@ -348,7 +353,7 @@ func TestApplySessionConfigSelections_InvalidLevelNotPersisted(t *testing.T) {
 func TestServeAISessionUpdate_RejectedEffortIsReported(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
-	setAgentEffortLevels(t, "opencode", []string{"low", "high", "max"}, "glm-5.3")
+	setAgentEffortLevels(t, []string{"low", "high", "max"}, "glm-5.3")
 
 	sid, err := service.CreateSession(env.ProjectDir, "opencode", "Rejected", "opencode", "glm-5.3", "user", "chat")
 	require.NoError(t, err)

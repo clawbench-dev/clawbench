@@ -3047,9 +3047,11 @@ func TestDrainReplyFollowsItsQuestion(t *testing.T) {
 	// follows its own question with no anchor column needed.
 	var lastUserID, lastAssistantID int64
 	require.NoError(t, db.QueryRow(
-		"SELECT id FROM chat_history WHERE role='user' AND session_id=? ORDER BY id DESC LIMIT 1", sid).Scan(&lastUserID))
+		"SELECT id FROM chat_history WHERE role='user' AND session_id=? ORDER BY id DESC LIMIT 1", sid,
+	).Scan(&lastUserID))
 	require.NoError(t, db.QueryRow(
-		"SELECT id FROM chat_history WHERE role='assistant' AND session_id=? ORDER BY id DESC LIMIT 1", sid).Scan(&lastAssistantID))
+		"SELECT id FROM chat_history WHERE role='assistant' AND session_id=? ORDER BY id DESC LIMIT 1", sid,
+	).Scan(&lastAssistantID))
 	assert.Less(t, lastUserID, lastAssistantID,
 		"the drained question's row id must precede its reply's — id order is conversational order")
 }

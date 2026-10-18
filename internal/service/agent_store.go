@@ -148,36 +148,41 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 			a.ProjectID = &id
 		}
 
-		// Parse models JSON
-		if modelsJSON != "" && modelsJSON != "[]" {
-			var models []model.AgentModel
-			if err := json.Unmarshal([]byte(modelsJSON), &models); err == nil {
-				a.Models = models
-			}
-		}
-
-		// Parse thinking effort levels JSON
-		if levelsJSON != "" && levelsJSON != "[]" {
-			var levels []string
-			if err := json.Unmarshal([]byte(levelsJSON), &levels); err == nil {
-				a.ThinkingEffortLevels = levels
-			}
-		}
-
-		// Parse the per-model effort picks (issue #552). An unreadable value is
-		// left nil rather than aborting the load: it only degrades the effort
-		// default, and refusing to start would be far worse.
-		if effortByModelJSON != "" && effortByModelJSON != "{}" && effortByModelJSON != "null" {
-			var byModel map[string]string
-			if err := json.Unmarshal([]byte(effortByModelJSON), &byModel); err == nil && len(byModel) > 0 {
-				a.ThinkingEffortByModel = byModel
-			}
-		}
+		parseAgentJSONColumns(a, modelsJSON, levelsJSON, effortByModelJSON)
 
 		agents = append(agents, a)
 	}
 
 	return agents, rows.Err()
+}
+
+// parseAgentJSONColumns decodes the three JSON-encoded agent columns into the
+// model. Unreadable values are left at their zero value rather than aborting
+// the load: they only degrade a default, and refusing to start would be worse.
+func parseAgentJSONColumns(a *model.Agent, modelsJSON, levelsJSON, effortByModelJSON string) {
+	// Parse models JSON
+	if modelsJSON != "" && modelsJSON != "[]" {
+		var models []model.AgentModel
+		if err := json.Unmarshal([]byte(modelsJSON), &models); err == nil {
+			a.Models = models
+		}
+	}
+
+	// Parse thinking effort levels JSON
+	if levelsJSON != "" && levelsJSON != "[]" {
+		var levels []string
+		if err := json.Unmarshal([]byte(levelsJSON), &levels); err == nil {
+			a.ThinkingEffortLevels = levels
+		}
+	}
+
+	// Parse the per-model effort picks (issue #552).
+	if effortByModelJSON != "" && effortByModelJSON != "{}" && effortByModelJSON != jsonNull {
+		var byModel map[string]string
+		if err := json.Unmarshal([]byte(effortByModelJSON), &byModel); err == nil && len(byModel) > 0 {
+			a.ThinkingEffortByModel = byModel
+		}
+	}
 }
 
 // SaveAgent persists an agent. Only the user's own prompt text is durable: the
@@ -449,14 +454,14 @@ type AgentPatch struct {
 	// user's effort pick for ONE model. Separate from PreferredThinkingEffort
 	// so a per-model pick never overwrites the model-independent default.
 	ThinkingEffortForModel *ThinkingEffortModelPatch
-	Transport               *string
-	Name                    *string
-	Specialty               *string
-	CustomSystemPrompt      *string
-	Avatar                  *string
-	SortOrder               *int
-	AutoApprove             *bool
-	Disabled                *bool
+	Transport              *string
+	Name                   *string
+	Specialty              *string
+	CustomSystemPrompt     *string
+	Avatar                 *string
+	SortOrder              *int
+	AutoApprove            *bool
+	Disabled               *bool
 	// ProjectID scopes the agent to that project when non-nil.
 	ProjectID *int64
 	// ClearProjectID sets project_id to NULL (global). A *int64 alone cannot
@@ -476,7 +481,39 @@ type ThinkingEffortModelPatch struct {
 // PatchAgentFields updates only the non-nil fields in the AgentPatch struct.
 // Returns nil even if the agent doesn't exist (no rows affected).
 func PatchAgentFields(id string, patch AgentPatch) error {
-	// Build dynamic SET clause
+	setClauses, args, err := buildAgentSetClauses(id, patch)
+	if err != nil {
+		return err
+	}
+
+	// The per-model effort map is a JSON object, so it cannot be expressed as a
+	// simple column assignment: read-modify-write it first, in its own
+	// transaction (the write mutex cannot be held across the UPDATE below).
+	// Failing here aborts before any other field is written, which is the
+	// stricter order: the caller sees an error and no partial edit.
+	if patch.ThinkingEffortForModel != nil {
+		if err := patchThinkingEffortForModel(id, patch.ThinkingEffortForModel); err != nil {
+			return err
+		}
+	}
+
+	if len(setClauses) == 0 {
+		return nil // nothing to update
+	}
+
+	setClauses = append(setClauses, "updated_at = CURRENT_TIMESTAMP")
+	args = append(args, id)
+
+	query := "UPDATE agents SET " + strings.Join(setClauses, ", ") + " WHERE id = ?"
+	if _, err := store.WriteExec(query, args...); err != nil {
+		return fmt.Errorf("patch agent %s: %w", id, err)
+	}
+	return nil
+}
+
+// buildAgentSetClauses translates the non-nil patch fields into column
+// assignments. Name uniqueness is checked here, before anything is written.
+func buildAgentSetClauses(id string, patch AgentPatch) ([]string, []any, error) {
 	var setClauses []string
 	var args []any
 
@@ -499,7 +536,7 @@ func PatchAgentFields(id string, patch AgentPatch) error {
 	}
 	if patch.Name != nil {
 		if err := ensureAgentNameFree(id, *patch.Name); err != nil {
-			return err
+			return nil, nil, err
 		}
 		addSet("name", *patch.Name)
 	}
@@ -525,31 +562,7 @@ func PatchAgentFields(id string, patch AgentPatch) error {
 		addSet("disabled", boolToInt(*patch.Disabled))
 	}
 	setClauses, args = applyProjectScopeSet(patch, setClauses, args)
-
-	// The per-model effort map is a JSON object, so it cannot be expressed as a
-	// simple column assignment: read-modify-write it first, in its own
-	// transaction (the write mutex cannot be held across the UPDATE below).
-	// Failing here aborts before any other field is written, which is the
-	// stricter order: the caller sees an error and no partial edit.
-	if patch.ThinkingEffortForModel != nil {
-		if err := patchThinkingEffortForModel(id, patch.ThinkingEffortForModel); err != nil {
-			return err
-		}
-	}
-
-	if len(setClauses) == 0 {
-		return nil // nothing to update
-	}
-
-	setClauses = append(setClauses, "updated_at = CURRENT_TIMESTAMP")
-	args = append(args, id)
-
-	query := "UPDATE agents SET " + strings.Join(setClauses, ", ") + " WHERE id = ?"
-	_, err := store.WriteExec(query, args...)
-	if err != nil {
-		return fmt.Errorf("patch agent %s: %w", id, err)
-	}
-	return nil
+	return setClauses, args, nil
 }
 
 // patchThinkingEffortForModel applies one per-model effort write.
@@ -578,19 +591,19 @@ func patchThinkingEffortForModel(id string, p *ThinkingEffortModelPatch) error {
 	defer func() { _ = tx.Rollback() }()
 
 	var raw string
-	if err := tx.QueryRow("SELECT COALESCE(thinking_effort_by_model, '{}') FROM agents WHERE id = ?", id).Scan(&raw); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+	if readErr := tx.QueryRowContext(context.Background(), "SELECT COALESCE(thinking_effort_by_model, '{}') FROM agents WHERE id = ?", id).Scan(&raw); readErr != nil {
+		if errors.Is(readErr, sql.ErrNoRows) {
 			return nil
 		}
-		return fmt.Errorf("patch agent %s effort by model: read: %w", id, err)
+		return fmt.Errorf("patch agent %s effort by model: read: %w", id, readErr)
 	}
 	byModel := map[string]string{}
 	if raw != "" && raw != jsonNull && raw != "{}" {
-		if err := json.Unmarshal([]byte(raw), &byModel); err != nil {
+		if unmarshalErr := json.Unmarshal([]byte(raw), &byModel); unmarshalErr != nil {
 			// A corrupt value must not permanently block the feature: the map
 			// only ever holds user picks, so rebuilding it loses at most those
 			// picks, while refusing to write would make the control dead.
-			slog.Warn("agent effort by model: stored value unreadable, rebuilding", "agent", id, "err", err)
+			slog.Warn("agent effort by model: stored value unreadable, rebuilding", "agent", id, "err", unmarshalErr)
 			byModel = map[string]string{}
 		}
 	}
@@ -603,7 +616,8 @@ func patchThinkingEffortForModel(id string, p *ThinkingEffortModelPatch) error {
 	if err != nil {
 		return fmt.Errorf("patch agent %s effort by model: marshal: %w", id, err)
 	}
-	if _, err := tx.Exec(
+	if _, err := tx.ExecContext(
+		context.Background(),
 		"UPDATE agents SET thinking_effort_by_model = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 		string(encoded), id,
 	); err != nil {
@@ -763,7 +777,7 @@ func DuplicateAgent(sourceID, newName string) (*model.Agent, error) {
 	copy(clone.ThinkingEffortLevels, source.ThinkingEffortLevels)
 	// Per-model effort picks ARE copied: they describe this backend+model pair
 	// (the models are the same for the clone), so dropping them would make the
-	// copy start from the agent's own per-model defaults — the exact behaviour
+	// copy start from the agent's own per-model defaults — the exact behavior
 	// issue #552 removes. Unlike Disabled, this is not a usability flag.
 	if len(source.ThinkingEffortByModel) > 0 {
 		clone.ThinkingEffortByModel = make(map[string]string, len(source.ThinkingEffortByModel))
