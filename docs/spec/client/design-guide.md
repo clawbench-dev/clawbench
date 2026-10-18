@@ -224,6 +224,7 @@
 - `useChatKeyboard` / `useTerminalKeyboard` 仍在，但它们只负责**内容区**不被键盘遮住（`.chat-keyboard-open` / `.terminal-keyboard-open` 的 `bottom` 收缩），与 dock 可见性是两件事。
 - **三个键盘探测都必须有 ≥120px 阈值**（`useSoftKeyboard` / `useChatKeyboard` / `useTerminalViewport` 各自持有 `KEYBOARD_MIN_HEIGHT`）。原始差值 `innerHeight - visualViewport.height - offsetTop` **不是键盘专属**：桌面端经典横向滚动条就会让它变成 ~15px，浏览器工具栏同理。一旦少了阈值，这个值会被写成 `.chat-keyboard-open { bottom: 15px }`（或 terminal 那版），**收缩 `.app-container` → 动态壁纸画布被 resize → 清空一帧 → 闪一下**。这正是「只有聊天输入框聚焦会闪、文件管理器搜索框不会」的原因——只有聊天框会调 `useChatKeyboard`。
   - 同理，`useTerminalViewport` 的 `setAdjustResize(resizeKeyboard > 0)` 也必须用同一阈值：滚动条造成的 15px 会被误判成 Android adjustResize，从而**抑制真正的键盘补偿**。
+- **浮动元素（如选区工具条）跟随键盘要按「两种视口模式」分别处理**（`useVisualViewportInset.ts`）：`position: fixed` 的偏移按**布局视口**计算，而移动浏览器弹键盘只缩**视觉视口**，故需补偿 `innerHeight - (visualViewport.offsetTop + visualViewport.height)`；但 Android WebView 走 `adjustResize`（布局视口本身缩短），此时补偿必须为 **0**——两种模式必须分开判，否则 adjustResize 下会重复补偿、浮动框被顶飞。按 `visualViewport.scale` 排除 pinch-zoom 误判。**关键陷阱：`getZoomedViewport()` 直读 `innerHeight`、不是响应式的**，adjustResize 下 inset 恒 0 致依赖它的 `computed` **永不重算**——故须额外暴露一个 `viewportVersion`（签名**必须包含布局 `innerWidth`/`innerHeight`**）并由消费方 `void` 读取以建立依赖。
 
 ### 宽屏 vs 窄屏
 
