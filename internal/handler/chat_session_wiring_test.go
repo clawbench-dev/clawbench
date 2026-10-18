@@ -1,8 +1,8 @@
 package handler
 
 import (
-	"bytes"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -24,15 +24,19 @@ import (
 func TestSwitchSessionEffortToModel_ForwardsOnlyWhenNotDeferred(t *testing.T) {
 	src, err := os.ReadFile("chat_session.go")
 	require.NoError(t, err)
+	// Normalise CRLF: on Windows the checkout has CRLF line endings, so a search
+	// for "\n}\n" never matches and the guard fails for a reason unrelated to the
+	// code it inspects.
+	text := strings.ReplaceAll(string(src), "\r\n", "\n")
 
-	start := bytes.Index(src, []byte("func switchSessionEffortToModel("))
+	start := strings.Index(text, "func switchSessionEffortToModel(")
 	require.GreaterOrEqual(t, start, 0, "switchSessionEffortToModel must exist")
 	// Bound the slice to THIS function: an unbounded [\s\S]*? match would also
 	// accept a gate that lives in some later function.
-	rest := src[start:]
-	end := bytes.Index(rest, []byte("\n}\n"))
+	rest := text[start:]
+	end := strings.Index(rest, "\n}\n")
 	require.Greater(t, end, 0, "function must have a top-level closing brace")
-	body := string(rest[:end])
+	body := rest[:end]
 
 	assert.Contains(t, body, "if !deferred {",
 		"the effort RPC must be gated on !deferred")
