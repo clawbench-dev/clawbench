@@ -953,6 +953,12 @@ paths:
             回合，直到 AI 输出 `<clawbench-goal-satisfied/>` 或撞
             `chat.group_max_speeches` 上限才结束；群聊开启后四类「交回用户」点改为
             确认回合。前端据此刻画会话信息栏的「巡航」开关。
+
+            `thinkingEffortState.userPicked`：该档位是否是**用户显式选择**的
+            （`true`）而非 agent 自己上报的当前值（字段缺席）。两者同形但语义相反：
+            agent 会在切换模型后上报该模型自己的默认档（OpenCode 多为 `low`），把它
+            当作用户选择会让会话永远停在 low。客户端只在 `userPicked=true` 时把它
+            当作权威值，否则回退到「该模型记住的偏好 > 全局默认」。见 issue #552。
     post:
       tags: [Chat]
       summary: 发送聊天消息
@@ -1514,6 +1520,10 @@ paths:
             时出现：它是新模型将要实际使用的思考等级（该模型记住的偏好 > agent 默认），
             供客户端立即更新选择器并提示用户档位已变化。缺省表示该模型没有配置偏好，
             由 agent 自己决定。
+
+            `thinkingEffortRejected=true` 表示请求里的 `thinkingEffort` 被 agent
+            拒绝（该 agent/模型不提供这一档），**未持久化**。客户端应撤销乐观更新并
+            提示用户，否则会一直显示一个下一轮不会生效的档位。
           content:
             application/json:
               schema:
@@ -1528,6 +1538,8 @@ paths:
                       连接断开），切换被推迟到下一次发送；此时选择已持久化。
                   thinkingEffort:
                     type: string
+                  thinkingEffortRejected:
+                    type: boolean
         "422":
           description: |
             `modelId` 被 agent 拒绝且重试无用（例如该 provider 未连接）。响应为

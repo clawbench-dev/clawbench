@@ -1340,6 +1340,8 @@ function restoreModelSelection(sid) {
 
 function handleSwitchThinkingEffort(level) {
   if (!level || level === identity.thinkingEffortState.currentId.value) return
+  const previous = identity.thinkingEffortState.currentId.value
+  const previousName = identity.thinkingEffortState.currentName.value
   identity.thinkingEffortState.currentId.value = level
   // Resolve and set the friendly name for display
   const levelObj = identity.thinkingEffortState.available.value.find(l => l.id === level)
@@ -1353,7 +1355,25 @@ function handleSwitchThinkingEffort(level) {
     identity.currentModelId.value,
     level,
   )
-  persistSessionUpdate({ thinkingEffort: level })
+  persistSessionUpdate({ thinkingEffort: level }).then((res) => {
+    if (!res?.thinkingEffortRejected) return
+    // The agent does not offer this level, so the server discarded it. Undo the
+    // optimistic update — otherwise the chip keeps showing a level the next
+    // turn will not run, and the local mirror would re-send it as an explicit
+    // override (which the POST path does not validate).
+    if (identity.thinkingEffortState.currentId.value !== level) return // user already moved on
+    identity.thinkingEffortState.currentId.value = previous
+    identity.thinkingEffortState.currentName.value = previousName
+    agentsComposable.setThinkingEffortForModelLocal(
+      identity.currentAgentId.value,
+      identity.currentModelId.value,
+      previous,
+    )
+    toast.show(
+      t('chat.thinkingEffort.rejected', { effort: levelObj?.name || level }),
+      { icon: 'warning', type: 'error' },
+    )
+  })
 }
 
 function handleSwitchMode(mode) {
@@ -1454,11 +1474,12 @@ function persistSessionUpdate(fields) {
   const sid = identity.currentSessionId.value
   if (!sid) return
   const url = `/api/ai/session/update?session_id=${encodeURIComponent(sid)}`
-  fetch(url, {
+  return fetch(url, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(fields),
-  }).catch(() => { /* best effort — next POST /api/ai/chat will also persist */ })
+  }).then((res) => (res.ok ? res.json().catch(() => null) : null))
+    .catch(() => null) // best effort — next POST /api/ai/chat will also persist
 }
 
 // ── /btw side question ──

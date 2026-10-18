@@ -365,18 +365,27 @@ export function updateThinkingEffortState(currentId: string, levels: Array<{ id:
  * agent default would make the chip disagree with reality in the opposite
  * direction. When there is no remembered pick, the agent's value is shown
  * as-is (it IS what the model will run).
+ *
+ * The remembered pick is only honoured when the level list says the model
+ * offers it. A global Settings default is not model-aware ("low" is valid for
+ * glm-5.3 but not for deepseek-v4-pro, which offers high/max/default), and the
+ * backend now drops such a default instead of sending it — showing it here
+ * would reintroduce exactly the mismatch this function exists to remove.
  */
 export function reconcileThinkingEffort(serverId: string, levels: Array<{ id: string; name: string }>, agentId: string, modelId: string, userPicked: boolean) {
   if (userPicked) {
     thinkingEffortState.syncAndFallback(serverId, levels, agentId, modelId)
     return
   }
-  // Clear first: syncFromData PRESERVES currentId when the incoming value is
-  // empty, which would keep the PREVIOUS model's level on the chip after a
-  // switch (the agent has not reported a level for the new model yet).
-  thinkingEffortState.clear()
+  // Clear the SELECTION only. Clearing the whole state would also drop
+  // `available`, and an update carrying just `currentId` (a supported shape)
+  // would then leave the picker with no options until the next full event.
+  thinkingEffortState.currentId.value = ''
+  thinkingEffortState.currentName.value = ''
   thinkingEffortState.updateAvailable(levels)
-  const effective = loadThinkingPrefForModel(agentId, modelId) || serverId
+  const remembered = loadThinkingPrefForModel(agentId, modelId)
+  const rememberedOffered = !remembered || levels.length === 0 || levels.some(l => l.id === remembered)
+  const effective = (rememberedOffered ? remembered : '') || serverId
   if (effective) {
     thinkingEffortState.currentId.value = effective
     thinkingEffortState.currentName.value = levels.find(l => l.id === effective)?.name || effective

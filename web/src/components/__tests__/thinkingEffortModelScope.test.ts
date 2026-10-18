@@ -126,3 +126,40 @@ describe('setThinkingEffortForModelLocal (issue #552, client-side mirror)', () =
     expect(agents.getEffectiveThinkingEffortForModel('opencode', 'glm-5.3')).toBe('max')
   })
 })
+
+describe('reconcileThinkingEffort — level-list edge cases', () => {
+  it('keeps the level list when the event carries only currentId', () => {
+    // A thinking_effort_update with just currentId is a supported shape. The
+    // previous implementation called clear(), which also wipes `available`, and
+    // updateAvailable([]) is a no-op — so the picker went EMPTY until the next
+    // full event. Only the SELECTION may be cleared here.
+    installAgent({})
+    updateThinkingEffortState('high', [{ id: 'high', name: 'High' }, { id: 'max', name: 'Max' }])
+
+    reconcileThinkingEffort('low', [], 'opencode', 'glm-5.3', false)
+
+    const { availableThinkingEfforts } = useSessionIdentity()
+    expect(availableThinkingEfforts.value.map(l => l.id)).toEqual(['high', 'max'])
+  })
+
+  it('ignores a remembered level the model does not offer', () => {
+    // The Settings default is not model-aware: "low" is valid for glm-5.3 but
+    // deepseek-v4-pro offers only high/max/default. The backend drops such a
+    // default instead of sending it, so showing it here would put the chip back
+    // out of sync with what the agent runs.
+    installAgent({}, 'low')
+    reconcileThinkingEffort('high', [{ id: 'high', name: 'High' }, { id: 'max', name: 'Max' }], 'opencode', 'deepseek-v4-pro', false)
+
+    const { currentThinkingEffort } = useSessionIdentity()
+    expect(currentThinkingEffort.value).toBe('high',
+      'an unoffered default must yield to the agent-reported value')
+  })
+
+  it('still prefers a remembered level the model does offer', () => {
+    installAgent({}, 'max')
+    reconcileThinkingEffort('low', [{ id: 'low', name: 'Low' }, { id: 'max', name: 'Max' }], 'opencode', 'glm-5.3', false)
+
+    const { currentThinkingEffort } = useSessionIdentity()
+    expect(currentThinkingEffort.value).toBe('max')
+  })
+})

@@ -3528,3 +3528,73 @@ func TestExecuteStreamRunShared_InjectsCommandPrompt(t *testing.T) {
 		"a non-command must not be injected")
 	assert.Contains(t, backend.lastPrompt(), "just a normal message")
 }
+
+// TestEffectiveThinkingEffortForModel_UnsupportedGlobalDefaultDropped pins the
+// last layer of issue #552: the model-INDEPENDENT default must not be replayed
+// onto a model that does not offer it.
+//
+// Failure shape without this: the user's Settings default is "low" (valid for
+// glm-5.3). They switch to deepseek-v4-pro, which only offers high/max/default.
+// Every turn then sends "low", the agent answers -32602, the ACP layer (rightly)
+// refuses to record it and the agent runs its own default — so the UI shows LOW
+// forever while the agent runs something else, and the user cannot tell why.
+func TestEffectiveThinkingEffortForModel_UnsupportedGlobalDefaultDropped(t *testing.T) {
+	agent := &model.Agent{
+		ID:                      "opencode",
+		Backend:                 "opencode",
+		ThinkingEffortLevels:    []string{"high", "max", "default"},
+		PreferredThinkingEffort: "low",
+	}
+
+	assert.Equal(t, "", EffectiveThinkingEffortForModel(agent, "deepseek-v4-pro", false),
+		"a global default the model does not offer must be dropped, not re-sent")
+
+	// The same default IS valid for a model whose list contains it.
+	agent.ThinkingEffortLevels = []string{"low", "high", "max", "default"}
+	assert.Equal(t, "low", EffectiveThinkingEffortForModel(agent, "glm-5.3", false))
+
+	// An UNKNOWN list must never discard the configured default.
+	agent.ThinkingEffortLevels = nil
+	assert.Equal(t, "low", EffectiveThinkingEffortForModel(agent, "glm-5.3", false))
+}
+
+// TestEffectiveThinkingEffortForModel_PerModelPickBeatsGlobal pins the priority
+// and that a per-model pick is trusted as-is: it was validated when the user
+// made it, and the static list may belong to another transport.
+func TestEffectiveThinkingEffortForModel_PerModelPickBeatsGlobal(t *testing.T) {
+	agent := &model.Agent{
+		ID:                      "opencode",
+		ThinkingEffortLevels:    []string{"high", "max"},
+		PreferredThinkingEffort: "high",
+		ThinkingEffortByModel:   map[string]string{"glm-5.3": "max"},
+	}
+
+	assert.Equal(t, "max", EffectiveThinkingEffortForModel(agent, "glm-5.3", false),
+		"the pick remembered for this model wins over the global default")
+	assert.Equal(t, "high", EffectiveThinkingEffortForModel(agent, "deepseek-v4-pro", false),
+		"another model falls back to the supported global default")
+}
+
+// TestEffectiveThinkingEffortForModel_ACPUsesRegistry pins that ACP turns are
+// validated against the levels the AGENT advertised, not the static CLI list
+// (which describes a different level vocabulary).
+func TestEffectiveThinkingEffortForModel_ACPUsesRegistry(t *testing.T) {
+	reg := ai.GetAgentCapabilityRegistry()
+	reg.UpdateThinkingEfforts("acp-effort-agent", []ai.ThinkingEffortDef{
+		{ID: "low"}, {ID: "high"}, {ID: "max"},
+	})
+	t.Cleanup(func() { reg.UpdateThinkingEfforts("acp-effort-agent", nil) })
+
+	agent := &model.Agent{
+		ID:                      "acp-effort-agent",
+		Transport:               "acp-stdio",
+		ThinkingEffortLevels:    []string{"minimal", "high", "max"}, // stale CLI list
+		PreferredThinkingEffort: "minimal",
+	}
+
+	assert.Equal(t, "", EffectiveThinkingEffortForModel(agent, "glm-5.3", true),
+		"the ACP list is authoritative: minimal is not offered by the agent")
+
+	agent.PreferredThinkingEffort = "max"
+	assert.Equal(t, "max", EffectiveThinkingEffortForModel(agent, "glm-5.3", true))
+}

@@ -292,14 +292,91 @@ func resolveAgentConfig(agentID, projectPath, modelOverride, thinkingEffort, thi
 	// the agent's model-independent default. Previously only the latter was
 	// consulted, so a user's per-model choice was forgotten on every new
 	// session and the agent's own "low" default won.
+	//
+	// The GLOBAL default is checked against the levels this agent/model is known
+	// to offer. A per-model pick is trusted as-is: it was validated when the
+	// user made it. The global one is not model-aware — a user whose Settings
+	// default is "low" (valid for glm-5.3) who switches to a model that only
+	// offers high/max/default would otherwise have "low" re-sent on EVERY turn,
+	// rejected with -32602 each time while the chip kept showing it.
 	if effectiveThinkingEffort == "" {
-		effectiveThinkingEffort = agent.ThinkingEffortForModel(agentModel)
+		effectiveThinkingEffort = EffectiveThinkingEffortForModel(agent, agentModel, isACP)
 	}
 	// Fall back to agent's preferred mode when nothing was specified
 	if effectiveMode == "" && agent.EffectiveModeID() != "" {
 		effectiveMode = agent.EffectiveModeID()
 	}
 	return systemPrompt, agentModel, agentCommand, effectiveThinkingEffort, effectiveMode
+}
+
+// EffectiveThinkingEffortForModel resolves the effort a turn should run, for the
+// model and transport it will actually use.
+//
+// Priority (issue #552):
+//  1. the user's pick for THIS model — trusted as-is (it was validated when the
+//     user made it, against this model's levels);
+//  2. the model-independent default from Settings, but ONLY if the level is one
+//     this agent/model is known to offer;
+//  3. empty — let the agent keep its own default.
+//
+// Step 2's filter is the point of this function. The global default is not
+// model-aware: a user whose Settings default is "low" (valid for glm-5.3) who
+// switches to a model that only offers high/max/default would otherwise have
+// "low" re-sent on EVERY turn, rejected with -32602 each time while the UI kept
+// showing it — the issue's symptom, one layer down.
+//
+// An UNKNOWN level list counts as "offered": not having been told must never
+// discard the user's configured default. For ACP the list arrives at session/new
+// and is refreshed from the set_config_option response (which carries the NEW
+// model's levels), so by the time a switch has happened the list is the right
+// one.
+func EffectiveThinkingEffortForModel(agent *model.Agent, modelID string, isACP bool) string {
+	if agent == nil {
+		return ""
+	}
+	if modelID != "" {
+		if v := agent.ThinkingEffortByModel[modelID]; v != "" {
+			return v
+		}
+	}
+	global := agent.EffectiveThinkingEffort()
+	if global == "" {
+		return ""
+	}
+	if !ThinkingEffortIsOffered(agent, isACP, global) {
+		slog.Info("configured thinking effort not offered by this agent/model, letting the agent decide",
+			"agent_id", agent.ID, "model", modelID, "level", global)
+		return ""
+	}
+	return global
+}
+
+// ThinkingEffortIsOffered reports whether level is known to be runnable by this
+// agent over the given transport. An unknown list returns true.
+func ThinkingEffortIsOffered(agent *model.Agent, isACP bool, level string) bool {
+	if level == "" {
+		return false
+	}
+	if isACP {
+		if es := ai.GetAgentCapabilityRegistry().GetThinkingEffortState(agent.ID, ""); es != nil && len(es.AvailableLevels) > 0 {
+			for _, l := range es.AvailableLevels {
+				if l.ID == level {
+					return true
+				}
+			}
+			return false
+		}
+		return true
+	}
+	if len(agent.ThinkingEffortLevels) == 0 {
+		return true
+	}
+	for _, l := range agent.ThinkingEffortLevels {
+		if l == level {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveIsACP decides whether this turn goes over ACP. An explicit transport

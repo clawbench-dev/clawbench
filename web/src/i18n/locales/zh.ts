@@ -465,6 +465,10 @@ export default {
     overlayReconnecting: '连接断开，正在重连…',
   },
   chat: {
+    externalLink: {
+      title: '打开外部链接',
+      open: '打开',
+    },
     title: 'AI 对话',
     sendError: '错误: {error}',
     shortcutJumpUnread: {
@@ -689,6 +693,7 @@ export default {
     thinkingEffortSwitcher: {
       title: '思考',
       auto: '自动',
+      rejected: '该模型不支持 {effort} 思考等级，已还原',
     },
     attach: {
       currentFile: '当前文件',

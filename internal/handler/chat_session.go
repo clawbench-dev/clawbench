@@ -620,7 +620,7 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 	if req.ModelID != "" {
 		effortModelKey = req.ModelID
 	}
-	applySessionConfigSelections(sessionID, req.ModeID, req.ThinkingEffort, effortModelKey)
+	effortAccepted := applySessionConfigSelections(sessionID, req.ModeID, req.ThinkingEffort, effortModelKey)
 	if req.Transport != "" {
 		//nolint:errcheck,gosec // best-effort persistence; failure is non-fatal for an idempotent update
 		service.UpdateSessionTransport(sessionID, req.Transport)
@@ -692,19 +692,32 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 	if effectiveEffort != "" {
 		resp["thinkingEffort"] = effectiveEffort
 	}
+	if !effortAccepted {
+		// The level was rejected by the agent and deliberately NOT persisted.
+		// Without this signal the client would keep showing (and re-sending) a
+		// pick the server discarded, so the chip would disagree with the agent
+		// for the rest of the session.
+		resp["thinkingEffortRejected"] = true
+	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
 // switchSessionEffortToModel re-derives the session's thinking effort after a
 // model switch and pushes it to the live agent.
 //
-// The effort is model-scoped, so the previous pick must not survive a switch:
-// OpenCode rejects a level the new model does not offer ("Invalid params:
-// effort not found: low"), and the session would otherwise keep reporting a
-// level the agent never accepted. The new value is the user's remembered pick
-// for that model, else the agent's model-independent default; empty means "let
-// the agent keep its own default" and is returned as such so the caller can
-// omit it from the response.
+// ACP backends advertise levels PER MODEL, so the previous pick must not survive
+// a switch: OpenCode rejects a level the new model does not offer ("Invalid
+// params: effort not found: low") and the session would keep reporting a level
+// the agent never accepted.
+//
+// CLI backends have STATIC levels (BackendSpec), identical for every model, so a
+// switch cannot invalidate the pick — clearing it there would silently discard
+// the user's choice and make them re-pick, which is the complaint in issue #552
+// wearing a different hat.
+//
+// The value returned is what the new model will actually run (remembered pick >
+// supported global default), or empty for "let the agent keep its own default";
+// the caller omits it from the response in that case.
 //
 // deferred=true means the agent is still running the PREVIOUS model (busy /
 // timed out): the DB is updated, but pushing the new level now would change the
@@ -714,11 +727,23 @@ func switchSessionEffortToModel(sessionID, modelID string, deferred bool) string
 	if agent == nil {
 		return ""
 	}
-	effort := agent.ThinkingEffortForModel(modelID)
+	isACP := sessionUsesACP(sessionID, agent)
+
+	if !isACP {
+		// Model-independent levels: keep the session's pick untouched. Report it
+		// so the client can keep showing it; nothing to persist or push.
+		if effort, _, ok := service.UserThinkingEffortPick(sessionID); ok {
+			return effort
+		}
+		return service.EffectiveThinkingEffortForModel(agent, modelID, false)
+	}
+
+	effort := service.EffectiveThinkingEffortForModel(agent, modelID, true)
 	if effort == "" {
-		// No user preference for this model: clear the session's stored pick so
-		// the next turn derives from the agent's own report instead of replaying
-		// the previous model's level.
+		// Nothing configured for this model (or the configured default is not
+		// offered here): clear the session's stored pick so the next turn
+		// derives from the agent's own report instead of replaying the previous
+		// model's level.
 		persistContextStateThinkingEffortChange(sessionID, "", modelID)
 		return ""
 	}
@@ -754,6 +779,16 @@ func switchSessionEffortToModel(sessionID, modelID string, deferred bool) string
 		forwardSessionConfigOption(sessionID, "thought_level", effort)
 	}
 	return effort
+}
+
+// sessionUsesACP reports whether this session's turns go over ACP. The session
+// row's transport override is authoritative; otherwise the agent's configured
+// transport decides.
+func sessionUsesACP(sessionID string, agent *model.Agent) bool {
+	if t := service.GetSessionTransport(sessionID); t != "" {
+		return t == "acp-stdio"
+	}
+	return agent != nil && agent.Transport == "acp-stdio"
 }
 
 // applySessionTags replaces a session's tag set, filing any brand-new labels
@@ -926,13 +961,20 @@ func applySessionModel(ctx context.Context, sessionID, modelID string) (deferred
 // modelKey names the model the effort pick belongs to. It is passed explicitly
 // when the same request also switches models (the session row still holds the
 // previous id at that point); empty means "the session's current model".
-func applySessionConfigSelections(sessionID, modeID, thinkingEffort, modelKey string) {
+//
+// Reports whether the effort was accepted. A rejected level is NOT persisted,
+// so the client must be told — otherwise it keeps showing (and re-sending) a
+// pick the server discarded.
+func applySessionConfigSelections(sessionID, modeID, thinkingEffort, modelKey string) (effortAccepted bool) {
 	if modeID != "" {
 		// Persist to DB context_state so it survives restarts.
 		persistContextStateModeChange(sessionID, modeID)
 		forwardSessionConfigOption(sessionID, "mode", modeID)
 	}
-	if thinkingEffort != "" {
+	if thinkingEffort == "" {
+		return true
+	}
+	{
 		modelID := modelKey
 		if modelID == "" {
 			modelID = currentEffortModelKey(sessionID)
@@ -949,7 +991,7 @@ func applySessionConfigSelections(sessionID, modeID, thinkingEffort, modelKey st
 		if !rememberEffortForModel(sessionID, modelID, thinkingEffort, modelKey == "") {
 			slog.Info("thinking effort not accepted for this agent/model, not persisting the pick",
 				"session_id", sessionID, "model", modelID, "level", thinkingEffort)
-			return
+			return false
 		}
 		persistContextStateThinkingEffortChange(sessionID, thinkingEffort, modelID)
 		// The RPC is NOT sent here when a model switch rides the same request:
@@ -961,6 +1003,7 @@ func applySessionConfigSelections(sessionID, modeID, thinkingEffort, modelKey st
 			forwardSessionConfigOption(sessionID, "thought_level", thinkingEffort)
 		}
 	}
+	return true
 }
 
 // currentEffortModelKey resolves which model a pick made right now belongs to.
@@ -1005,7 +1048,7 @@ func rememberEffortForModel(sessionID, modelID, level string, validate bool) boo
 	if agent == nil {
 		return true
 	}
-	if validate && !isValidThinkingEffort(agent, level) {
+	if validate && !isValidThinkingEffort(agent, level, sessionID) {
 		slog.Info("thinking effort pick not valid for agent, skipping per-model memory",
 			"session_id", sessionID, "agent_id", agentID, "model", modelID, "level", level)
 		return false

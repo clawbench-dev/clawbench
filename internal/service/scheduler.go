@@ -1065,7 +1065,11 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	if effectiveModel == "" {
 		effectiveModel = agent.DefaultModelID()
 	}
-	effectiveThinking := agent.ThinkingEffort
+	// Respect the user's configured effort for THIS model (issue #552), with the
+	// same priority a chat turn uses: per-model pick > supported global default >
+	// let the agent decide. Reading agent.ThinkingEffort directly would ignore
+	// both the per-model memory and PreferredThinkingEffort.
+	effectiveThinking := EffectiveThinkingEffortForModel(agent, effectiveModel, agent.Transport == transportACPStdio)
 
 	chatReq := ai.ChatRequest{
 		Prompt:             renderedPrompt,

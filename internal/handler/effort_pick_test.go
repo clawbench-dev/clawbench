@@ -19,6 +19,10 @@ import (
 
 // setAgentEffortLevels installs an agent in memory with the given advertised
 // effort levels (and model list, for the switch path).
+//
+// The agent is a CLI agent: static levels, model-independent. That is the right
+// shape for the picker/validation tests below. Tests that exercise the ACP
+// per-model path use setACPAgentEffortLevels instead.
 func setAgentEffortLevels(t *testing.T, agentID string, levels []string, models ...string) {
 	t.Helper()
 	agentModels := make([]model.AgentModel, len(models))
@@ -31,6 +35,25 @@ func setAgentEffortLevels(t *testing.T, agentID string, levels []string, models 
 			ID: agentID, Name: agentID, Backend: "opencode",
 			ThinkingEffortLevels: levels,
 			Models:               agentModels,
+		},
+	}
+	t.Cleanup(func() { model.Agents = orig })
+}
+
+// setACPAgentEffortLevels installs an ACP agent. Its levels are reported per
+// model at runtime, so static ThinkingEffortLevels are left empty.
+func setACPAgentEffortLevels(t *testing.T, agentID string, models ...string) {
+	t.Helper()
+	agentModels := make([]model.AgentModel, len(models))
+	for i, m := range models {
+		agentModels[i] = model.AgentModel{ID: m, Name: m}
+	}
+	orig := model.Agents
+	model.Agents = map[string]*model.Agent{
+		agentID: {
+			ID: agentID, Name: agentID, Backend: "opencode",
+			Transport: "acp-stdio", AcpCommand: "opencode acp",
+			Models: agentModels,
 		},
 	}
 	t.Cleanup(func() { model.Agents = orig })
@@ -68,14 +91,19 @@ func TestServeAISessionUpdate_EffortPickRememberedPerModel(t *testing.T) {
 		"a new session on this model must start from the remembered pick")
 }
 
-// TestServeAISessionUpdate_ModelSwitchInvalidatesPick pins that a switch to a
-// model with no remembered pick CLEARS the session's pick instead of carrying
-// the previous model's level over. The old level may not even be offered by the
-// new model (OpenCode answers -32602 and the session would keep displaying it).
+// TestServeAISessionUpdate_ModelSwitchInvalidatesPick pins that an ACP model
+// switch to a model with no remembered pick CLEARS the session's pick instead of
+// carrying the previous model's level over. ACP levels are per model, so the old
+// level may not even be offered by the new one (OpenCode answers -32602 and the
+// session would keep displaying it).
+//
+// CLI backends are deliberately excluded: their levels come from BackendSpec and
+// are identical for every model, so a switch cannot invalidate the pick — see
+// TestServeAISessionUpdate_ModelSwitchKeepsPickForCLI.
 func TestServeAISessionUpdate_ModelSwitchInvalidatesPick(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
-	setAgentEffortLevels(t, "opencode", []string{"low", "high", "max"}, "glm-5.3", "deepseek-v4-pro")
+	setACPAgentEffortLevels(t, "opencode", "glm-5.3", "deepseek-v4-pro")
 
 	sid, err := service.CreateSession(env.ProjectDir, "opencode", "Switch", "opencode", "glm-5.3", "user", "chat")
 	require.NoError(t, err)
@@ -98,7 +126,47 @@ func TestServeAISessionUpdate_ModelSwitchInvalidatesPick(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
 	_, _, ok := service.UserThinkingEffortPick(sid)
-	assert.False(t, ok, "the previous model's pick must not survive a model switch")
+	assert.False(t, ok, "the previous model's pick must not survive an ACP model switch")
+}
+
+// TestServeAISessionUpdate_ModelSwitchKeepsPickForCLI pins the CLI counterpart:
+// a switch must NOT discard the user's pick.
+//
+// CLI levels are a static BackendSpec list, the same for every model, so the
+// pick cannot be invalidated by a switch. Clearing it would silently drop the
+// user's choice and make them re-pick — the complaint in issue #552, for every
+// CLI backend.
+func TestServeAISessionUpdate_ModelSwitchKeepsPickForCLI(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+	setAgentEffortLevels(t, "opencode", []string{"low", "high", "max"}, "glm-5.3", "deepseek-v4-pro")
+
+	sid, err := service.CreateSession(env.ProjectDir, "opencode", "CLI switch", "opencode", "glm-5.3", "user", "chat")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPatch, "/api/ai/session/update", map[string]any{
+		"sessionId":      sid,
+		"thinkingEffort": "max",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	require.Equal(t, http.StatusOK, callHandler(ServeAISessionUpdate, req).Code)
+
+	req = newRequest(t, http.MethodPatch, "/api/ai/session/update", map[string]any{
+		"sessionId": sid,
+		"modelId":   "deepseek-v4-pro",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeAISessionUpdate, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	effort, _, ok := service.UserThinkingEffortPick(sid)
+	assert.True(t, ok, "a CLI model switch must not discard the user's pick")
+	assert.Equal(t, "max", effort)
+
+	// ...and it is reported back so the chip keeps showing it.
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Equal(t, "max", body["thinkingEffort"])
 }
 
 // TestServeAISessionUpdate_ModelSwitchRestoresRememberedPick pins the positive
@@ -107,7 +175,7 @@ func TestServeAISessionUpdate_ModelSwitchInvalidatesPick(t *testing.T) {
 func TestServeAISessionUpdate_ModelSwitchRestoresRememberedPick(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
-	setAgentEffortLevels(t, "opencode", []string{"low", "high", "max"}, "glm-5.3", "deepseek-v4-pro")
+	setACPAgentEffortLevels(t, "opencode", "glm-5.3", "deepseek-v4-pro")
 
 	// Remember a pick for deepseek-v4-pro by selecting it there first.
 	sid, err := service.CreateSession(env.ProjectDir, "opencode", "Restore", "opencode", "deepseek-v4-pro", "user", "chat")
@@ -187,7 +255,7 @@ func TestServeAISessionUpdate_EffortPickAlongsideModelSwitch(t *testing.T) {
 func TestSwitchSessionEffortToModel_DeferredStillPersists(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
-	setAgentEffortLevels(t, "opencode", []string{"low", "high", "max"}, "glm-5.3", "deepseek-v4-pro")
+	setACPAgentEffortLevels(t, "opencode", "glm-5.3", "deepseek-v4-pro")
 
 	sid, err := service.CreateSession(env.ProjectDir, "opencode", "Deferred", "opencode", "glm-5.3", "user", "chat")
 	require.NoError(t, err)
@@ -268,4 +336,36 @@ func TestApplySessionConfigSelections_InvalidLevelNotPersisted(t *testing.T) {
 
 	_, _, ok := service.UserThinkingEffortPick(sid)
 	assert.False(t, ok, "an unadvertised level must not be stored as a user pick")
+}
+
+// TestServeAISessionUpdate_RejectedEffortIsReported pins that a level the agent
+// refuses is reported to the client, not silently dropped.
+//
+// The level is deliberately NOT persisted (it would be re-sent every turn), so
+// nothing else tells the client: without this flag the chip keeps showing a
+// level the next turn will not run, and the local mirror re-sends it as an
+// explicit override on the next POST (which is not validated at all).
+func TestServeAISessionUpdate_RejectedEffortIsReported(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+	setAgentEffortLevels(t, "opencode", []string{"low", "high", "max"}, "glm-5.3")
+
+	sid, err := service.CreateSession(env.ProjectDir, "opencode", "Rejected", "opencode", "glm-5.3", "user", "chat")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPatch, "/api/ai/session/update", map[string]any{
+		"sessionId":      sid,
+		"thinkingEffort": "ultra",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeAISessionUpdate, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Equal(t, true, body["thinkingEffortRejected"],
+		"the client must be told the level was refused so it can undo the optimistic update")
+
+	_, _, ok := service.UserThinkingEffortPick(sid)
+	assert.False(t, ok, "a rejected level must not be stored")
 }

@@ -91,3 +91,48 @@ func TestMigrateLegacyThinkingEffortPicks_PreservesOtherKeys(t *testing.T) {
 	assert.Equal(t, "max", state.ThinkingEffort.CurrentID)
 	assert.True(t, state.ThinkingEffort.UserPicked)
 }
+
+// TestMigrateLegacyThinkingEffortPicks_MalformedRowDoesNotBlock pins the
+// json_valid() guard.
+//
+// json_extract on malformed JSON RAISES ("malformed JSON") instead of returning
+// NULL, so without the guard the COUNT fails, the migration reports false, and
+// runOnce retries forever — while marking ZERO rows. One corrupt row would then
+// leave every pre-upgrade session falling back to the agent's "low" default:
+// the reported bug, applied globally.
+func TestMigrateLegacyThinkingEffortPicks_MalformedRowDoesNotBlock(t *testing.T) {
+	setupEffortMigrationDB(t)
+
+	_, err := store.WriteExec(`INSERT INTO chat_sessions (id, project_id, backend, title, context_state) VALUES (?, 1, 'claude', 'T', ?)`,
+		"broken", `{"thinkingEffort": oops}`)
+	require.NoError(t, err)
+	_, err = store.WriteExec(`INSERT INTO chat_sessions (id, project_id, backend, title, context_state) VALUES (?, 1, 'claude', 'T', ?)`,
+		"valid-pick", `{"thinkingEffort":{"currentId":"max"}}`)
+	require.NoError(t, err)
+
+	require.True(t, service.MigrateLegacyThinkingEffortPicks(),
+		"a malformed row must not abort the whole migration")
+
+	effort, _, ok := service.UserThinkingEffortPick("valid-pick")
+	assert.True(t, ok, "the valid row must still be marked")
+	assert.Equal(t, "max", effort)
+}
+
+// TestMigrateLegacyThinkingEffortPicks_AgentReportedEmptyLevelsStaysUnpicked
+// pins that a legacy agent-written row with NO availableLevels is still treated
+// as agent-reported when it cannot have come from the picker.
+//
+// The picker always writes the value the user clicked, so it is never empty;
+// an empty currentId is only reachable from an agent state that reported no
+// level. Marking it would store a meaningless pick.
+func TestMigrateLegacyThinkingEffortPicks_AgentReportedEmptyLevelsStaysUnpicked(t *testing.T) {
+	setupEffortMigrationDB(t)
+
+	_, err := store.WriteExec(`INSERT INTO chat_sessions (id, project_id, backend, title, context_state) VALUES (?, 1, 'claude', 'T', ?)`,
+		"empty-id", `{"thinkingEffort":{"currentId":""}}`)
+	require.NoError(t, err)
+
+	require.True(t, service.MigrateLegacyThinkingEffortPicks())
+	_, _, ok := service.UserThinkingEffortPick("empty-id")
+	assert.False(t, ok, "an empty legacy currentId must not become a user pick")
+}

@@ -463,6 +463,10 @@ export default {
     overlayReconnecting: 'Connection lost, reconnecting…',
   },
   chat: {
+    externalLink: {
+      title: 'Open external link',
+      open: 'Open',
+    },
     title: 'AI Chat',
     shortcutJumpUnread: {
       none: 'No unread sessions',
@@ -687,6 +691,7 @@ export default {
     thinkingEffortSwitcher: {
       title: 'Thinking',
       auto: 'Auto',
+      rejected: 'This model does not support {effort} thinking effort — reverted',
     },
     attach: {
       currentFile: 'Current file',

@@ -32,9 +32,15 @@ import (
 // Implemented as one atomic UPDATE using json_set, so every other key in
 // context_state (mode / usage / cruise) is preserved byte-for-byte. Rows that
 // already carry the flag are excluded, so re-running is a no-op.
+//
+// json_valid() guards the whole statement: json_extract on malformed JSON
+// raises "malformed JSON" instead of returning NULL, which would make the COUNT
+// fail, the migration report false, and runOnce retry forever WITHOUT marking a
+// single row — so one corrupt row would leave every pre-upgrade session on the
+// agent's default (the reported bug, globally).
 func MigrateLegacyThinkingEffortPicks() bool {
 	const cond = `
-		context_state LIKE '%thinkingEffort%'
+		json_valid(context_state)
 		  AND json_extract(context_state, '$.thinkingEffort.currentId') IS NOT NULL
 		  AND json_extract(context_state, '$.thinkingEffort.currentId') != ''
 		  AND json_extract(context_state, '$.thinkingEffort.availableLevels') IS NULL
