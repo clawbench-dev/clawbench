@@ -2415,15 +2415,18 @@ defineExpose({
   color: var(--accent-color, #0066cc);
 }
 
+/* Auto-approve ON uses the theme accent, not a fixed green: a hard-coded hue
+   ignores all 36 themes (and clashes with the accent-coloured cruise chip
+   sitting next to it). */
 .session-info-mode-auto {
-  color: #4caf50;
+  color: var(--accent-color, #0066cc);
 }
 
 .session-info-mode-auto:active {
-  color: #388e3c;
+  opacity: 0.7;
 }
 
-/* Group auto-approve chip: green when ON, matching the single-chat mode chip's
+/* Group auto-approve chip: accent when ON, matching the single-chat mode chip's
    auto-approve highlight (`.session-info-mode-auto`) so the same state reads the
    same way in both bars. */
 .session-info-approve:active {
@@ -2431,11 +2434,11 @@ defineExpose({
 }
 
 .session-info-approve-on {
-  color: #4caf50;
+  color: var(--accent-color, #0066cc);
 }
 
 .session-info-approve-on:active {
-  color: #388e3c;
+  opacity: 0.7;
 }
 
 /* Auto-cruise chip: accent-colored when ON so it reads as an active mode

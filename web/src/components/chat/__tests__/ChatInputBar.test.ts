@@ -3002,6 +3002,30 @@ describe('ChatInputBar', () => {
     })
   })
 
+  describe('auto-approve highlight colour', () => {
+    // jsdom has no CSS engine, so this is a source guard.
+    //
+    // Both auto-approve highlights (the single-chat mode chip and the group
+    // chip) used to be a hard-coded #4caf50 / #388e3c green. That ignored every
+    // theme in the app and made the chip clash with the accent-coloured cruise
+    // chip next to it. They must now read the theme accent, like every other
+    // active-mode highlight.
+    it('uses the theme accent for both chips, never a fixed green', async () => {
+      const mod = await import('../ChatInputBar.vue?raw')
+      const source = String(mod.default)
+
+      for (const cls of ['session-info-mode-auto', 'session-info-approve-on']) {
+        const block = source.match(new RegExp(`\\.${cls}\\s*\\{([^}]*)\\}`))
+        expect(block, `.${cls} must have its own rule`).toBeTruthy()
+        expect(block![1]).toContain('var(--accent-color')
+      }
+
+      // Nothing in this component may reintroduce the hard-coded greens.
+      expect(source).not.toMatch(/#4caf50/i)
+      expect(source).not.toMatch(/#388e3c/i)
+    })
+  })
+
   describe('input history navigation', () => {
     const HISTORY = [
       { id: 1, role: 'user', content: 'first message' },
