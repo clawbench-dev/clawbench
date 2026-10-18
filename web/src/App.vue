@@ -306,6 +306,7 @@
                       :parallelDefault="groupParallelDefault"
                       :cruise="groupCruise"
                       :isGroup="isGroupSession"
+                      :groupRunning="sessionIdentity.runningSessions.value.has(sessionIdentity.currentSessionId.value)"
                       @changed="refreshGroupMembers(sessionIdentity.currentSessionId.value)"
                     />
                     <span v-else-if="sessionIdentity.currentAgentId.value" class="bs-header-title"><AgentIcon :backend="getAgentBackend(sessionIdentity.currentAgentId.value)" :name="getAgentName(sessionIdentity.currentAgentId.value)" :avatar="getAgentAvatar(sessionIdentity.currentAgentId.value)" size="md" />{{ sessionIdentity.agentHeaderTitle.value }}</span>

@@ -2,36 +2,60 @@ import { describe, it, expect } from 'vitest'
 import { readWebFile } from '@/testUtils/readWebFile'
 
 /**
- * Guard: the chat action bar must expose a group-settings button in group
- * sessions, and it must open the SAME sheet as clicking the header avatar
- * stack — not a second GroupSettingsSheet instance.
+ * Guard: the chat input must expose a group-settings entry in group sessions,
+ * and it must open the SAME sheet as clicking the header avatar stack — not a
+ * second GroupSettingsSheet instance.
  *
- * The header stack is the primary entry, but the action bar is where every
- * other session action lives and it is the reachable door on narrow panes. A
- * second sheet instance would mean a second roster fetch and two sheets that
- * can drift out of sync, so the button drives the header stack's `open()`.
+ * The entry used to live in the action bar (`.chat-top-actions`). It moved to
+ * the session-info bar under the input because it is a group-wide SETTING, not
+ * a session action — that bar already carries the group's other two switches
+ * (cruise / auto-approve), so the settings door belongs next to them. The test
+ * therefore pins the new location AND the absence from the old one: a leftover
+ * action-bar button would give the group two doors that can drift.
+ *
+ * The header stack is the primary entry; the info bar is the reachable door on
+ * narrow panes. A second sheet instance would mean a second roster fetch and
+ * two sheets that can drift out of sync, so the chip drives the header stack's
+ * `open()`.
  *
  * This asserts the cross-component wiring (bar emits → panel re-emits → App
  * calls the stack ref), which no single mount test covers.
  */
-describe('group settings button in the input action bar', () => {
+describe('group settings entry in the session info bar', () => {
   const BAR = 'src/components/chat/ChatInputBar.vue'
   const PANEL = 'src/components/chat/ChatPanelContent.vue'
   const APP = 'src/App.vue'
   const STACK = 'src/components/chat/GroupAvatarStack.vue'
 
-  it('renders a group-only button in the action bar', () => {
+  it('renders the entry inside the session-info bar, not the action bar', () => {
     const src = readWebFile(BAR)
-    const open = src.indexOf('<div class="chat-top-actions"')
-    expect(open, '.chat-top-actions must exist').toBeGreaterThan(-1)
-    const close = src.indexOf('recommendation-chip', open)
-    const block = src.slice(open, close)
 
-    // Group-gated and wired to a dedicated emit.
-    expect(block).toMatch(/v-if="isGroupSession"[\s\S]*?data-action="group-settings"/)
-    expect(block).toContain("$emit('open-group-settings')")
-    expect(block).toContain("t('group.settings')")
-    expect(block).toContain('<Users')
+    const infoOpen = src.indexOf('<div class="chat-session-info">')
+    expect(infoOpen, '.chat-session-info must exist').toBeGreaterThan(-1)
+    const infoClose = src.indexOf('</div>', src.indexOf('session-info-settings', infoOpen))
+    const infoBlock = src.slice(infoOpen, infoClose)
+
+    // Group-gated and wired to the dedicated emit, with the full label.
+    expect(infoBlock).toMatch(/v-else>[\s\S]*?data-action="group-settings"/)
+    expect(infoBlock).toContain("$emit('open-group-settings')")
+    expect(infoBlock).toContain("t('group.settings')")
+    expect(infoBlock).toContain('<Users')
+
+    // And the old action-bar button is gone.
+    const actionsOpen = src.indexOf('<div class="chat-top-actions"')
+    expect(actionsOpen, '.chat-top-actions must exist').toBeGreaterThan(-1)
+    const actionsBlock = src.slice(actionsOpen, src.indexOf('</div>', src.indexOf('auto-speech-btn', actionsOpen)))
+    expect(actionsBlock).not.toContain('data-action="group-settings"')
+    expect(actionsBlock).not.toContain("$emit('open-group-settings')")
+  })
+
+  it('uses the full "group settings" label rather than the abbreviated action-bar one', () => {
+    // The action bar had to abbreviate to "Group" to fit a row of icons; the
+    // info bar has room for the real name, which is what the user asked for.
+    const src = readWebFile(BAR)
+    const chip = src.slice(src.indexOf('data-action="group-settings"') - 400, src.indexOf('data-action="group-settings"') + 400)
+    expect(chip).toContain("t('group.settings')")
+    expect(chip).not.toContain('wideLabels.groupSettings')
   })
 
   it('declares the emit in defineEmits', () => {
@@ -63,14 +87,15 @@ describe('group settings button in the input action bar', () => {
     expect(stack).toMatch(/defineExpose\(\{\s*open:\s*openSheet\s*\}\)/)
   })
 
-  it('has the settings keys in both locales', () => {
+  it('has the full group.settings label in both locales', () => {
+    // The chip shows the FULL name ("群聊设置" / "Group settings"), not the
+    // abbreviated wideLabels variant the action bar used.
     for (const locale of ['zh', 'en']) {
       const src = readWebFile(`src/i18n/locales/${locale}.ts`)
-      expect(src, `group.settings missing in ${locale}`).toMatch(/^\s*settings:/m)
-      const start = src.indexOf('wideLabels: {')
-      expect(start, `wideLabels must exist in ${locale}`).toBeGreaterThan(-1)
-      const block = src.slice(start, src.indexOf('},', start))
-      expect(block, `wideLabels.groupSettings missing in ${locale}`).toMatch(/^\s*groupSettings:/m)
+      const start = src.indexOf('\n  group: {')
+      expect(start, `group namespace must exist in ${locale}`).toBeGreaterThan(-1)
+      const block = src.slice(start, src.indexOf('\n  },', start))
+      expect(block, `group.settings missing in ${locale}`).toMatch(/^\s{4}settings:/m)
     }
   })
 })

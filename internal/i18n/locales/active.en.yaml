@@ -7,6 +7,10 @@ CannotRemoveHost: The host is the group's only scheduler and cannot be removed
 GroupMemberLimitReached: A group can have at most {{.MaxCount}} members
 GroupNotForkable: A group chat cannot be forked
 GroupNotRewindable: A group chat cannot be rewound
+GroupRunning: The group is working on a turn — try again when it finishes
+GroupMemberCompacting: This member is already compacting its context
+GroupMemberNotFound: Member not found in this group
+CompactNeedsACP: This member does not use ACP transport, so it has no compact command
 ShareSessionNoContent: This conversation has no shareable messages yet
 ShareSessionInvalidSelection: Some selected messages cannot be shared (they may still be generating)
 QueueIdRequired: queueId required

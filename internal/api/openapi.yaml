@@ -5581,6 +5581,36 @@ paths:
                         agentName: {type: string}
                         left: {type: boolean}
                         isHost: {type: boolean}
+                        model:
+                          type: string
+                          description: 成员行自身的模型覆盖；空串表示用智能体默认模型
+                        usage:
+                          type: object
+                          nullable: true
+                          description: |
+                            该成员**自己**的上下文用量，形状与 `GET /api/ai/chat` 的
+                            `usageState`、`usage_update` 载荷完全一致（`ai.UsageState`）。
+                            活 ACP 连接有缓存时优先返回缓存（更实时），连接被空闲回收后
+                            回落 `context_state.usage`。`null` 表示该成员从未上报用量
+                            （CLI 传输的智能体不上报），**不等于 0%**。
+                          properties:
+                            used: {type: integer}
+                            size: {type: integer}
+                            inputTokens: {type: integer}
+                            outputTokens: {type: integer}
+                            totalTokens: {type: integer}
+                            cachedReadTokens: {type: integer}
+                            cachedWriteTokens: {type: integer}
+                            thoughtTokens: {type: integer}
+                            cost: {type: number}
+                            currency: {type: string}
+                            cacheCreationTokens: {type: integer}
+                            cacheHitTokens: {type: integer}
+                            cacheMissTokens: {type: integer}
+                            credit: {type: number}
+                            usageByCategory:
+                              type: object
+                              additionalProperties: {type: integer}
                   mode: {type: string, enum: [host, free]}
                   parallelDefault: {type: boolean}
                   cruise: {type: boolean}
@@ -5690,6 +5720,62 @@ paths:
           description: 请求非法或某个头像未通过 SVG 安全校验（含空头像）
         "401":
           $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+
+  /api/group/member-compact:
+    post:
+      tags: [Group]
+      summary: 压缩某个群成员的上下文
+      description: |
+        让**一个成员**的智能体压缩它自己的上下文（发送 ACP 斜杠命令 `/compact`）。
+
+        为什么不能走 `/api/ai/chat`：群回合写的是**群时间线**，`/compact` 会被当作
+        普通用户消息落库，并再写一条助手回复——群里每个成员随后都会把这两行读成
+        讨论内容。本端点直接驱动该成员的 ACP 连接，**不在群时间线上产生任何输出**。
+
+        守卫（按顺序）：群正在执行回合 → 409 `GroupRunning`（成员连接在本轮中忙）；
+        该成员不属于此群或已离场 → 404 `GroupMemberNotFound`；成员不是 ACP 传输 →
+        400 `CompactNeedsACP`（CLI 没有斜杠命令通道）；同一成员已在压缩 → 409
+        `GroupMemberCompacting`。
+
+        结果：成员行的 `context_state.usage` 被更新为压缩后的值，返回值 `usage` 与
+        `GET /api/group/members` 的 `usage` 同形（可能为 `null`）。
+        服务端硬上限 3 分钟。
+      operationId: groupMemberCompact
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [groupId, memberId]
+              properties:
+                groupId: {type: string}
+                memberId:
+                  type: string
+                  description: 成员行 id（`GET /api/group/members` 的 `id`，不是智能体 id）
+      responses:
+        "200":
+          description: 压缩完成
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean}
+                  usage:
+                    type: object
+                    nullable: true
+                    description: 压缩后的成员用量；`null` 表示智能体未上报
+        "400":
+          description: 参数缺失，或该成员不是 ACP 传输（`CompactNeedsACP`）
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: 该群中没有这个成员（`GroupMemberNotFound`）
+        "409":
+          description: 群正在执行回合（`GroupRunning`）或该成员正在压缩（`GroupMemberCompacting`）
         "500":
           $ref: "#/components/responses/Error"
 

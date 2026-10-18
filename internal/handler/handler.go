@@ -37,6 +37,8 @@ const (
 	jsonName     = "name"
 	jsonAgentID  = "agentId"
 	jsonBackend  = "backend"
+	jsonModel    = "model"
+	jsonUsage    = "usage"
 	jsonMaxCount = "MaxCount"
 )
 
@@ -481,6 +483,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/group/create", ServeGroupCreate)
 	register("/api/group/members", ServeGroupMembers)
 	register("/api/group/member-avatars", ServeGroupMemberAvatars)
+	register("/api/group/member-compact", ServeGroupMemberCompact)
 	register("/api/group/settings", ServeGroupSettings)
 	register("/api/ai/chat/tool-call", ServeToolCallDetail)
 	register("/api/ai/chat/thinking", ServeThinkingDetail)

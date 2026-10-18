@@ -507,6 +507,20 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 	// Prevent concurrent sessions for the same session ID
 	runCtx, claimed := service.TryClaimSessionRun(sessionID)
 
+	// A group member compaction drives that member's ACP connection directly
+	// (POST /api/group/member-compact). If a group turn started now, the member
+	// would get a SECOND prompt on the same ACP session: the agent answers
+	// "Session is busy" (the user's message fails with an error bubble),
+	// RegisterSession overwrites the compaction's stream channel (its events are
+	// silently dropped), and promptCancel is overwritten too, leaving one prompt
+	// uncancellable. So treat "a member is compacting" exactly like "a group turn
+	// is running": give the claim back and let the enqueue block below hold the
+	// message until the compaction finishes (it wakes the queue on completion).
+	if claimed && service.IsGroupSession(sessionID) && service.GroupHasCompactingMember(sessionID) {
+		service.SetSessionRunning(sessionID, false, true)
+		claimed = false
+	}
+
 	// Group-chat delegation (decisions #45/#46/#58/#72): a message to a group is
 	// driven by the group orchestrator (host routes, members speak), NOT a
 	// single-agent turn. It is handled AFTER the claim so a message arriving
@@ -588,7 +602,15 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		// this, but a retire pass may have consumed the mark between the claim
 		// and the insert above; re-marking now that the row exists makes the
 		// guarantee unconditional rather than depending on timing.
-		service.WakeSessionRunner(sessionID)
+		//
+		// EXCEPT while a group member is compacting: the claim was deliberately
+		// released above (see the compaction gate), so there is no runner to
+		// wake — and starting one would re-create exactly the concurrent-prompt
+		// defect the gate exists to prevent. The compaction wakes the queue
+		// itself when it finishes (wakeQueuedAfterCompaction).
+		if !service.IsGroupSession(sessionID) || !service.GroupHasCompactingMember(sessionID) {
+			service.WakeSessionRunner(sessionID)
+		}
 
 		// Announce the queued message so other devices render it in the queue
 		// panel. SenderClientID lets the sending device skip its own echo.

@@ -41,6 +41,16 @@ vi.mock('@/components/common/AgentIcon.vue', () => ({
 vi.mock('@/components/common/AgentSelectorDrawer.vue', () => ({
   default: { name: 'AgentSelectorDrawer', props: ['open'], template: '<div class="picker-stub" />' },
 }))
+// The member context panel is a nested sheet with its own data dependencies
+// (useGlobalEvents, the compact endpoint). Its own test file covers it; here it
+// only needs to expose its `open`/`member` props so the row wiring is assertable.
+vi.mock('../MemberContextSheet.vue', () => ({
+  default: {
+    name: 'MemberContextSheet',
+    props: ['open', 'member', 'groupId', 'groupRunning'],
+    template: '<div class="mcs-stub" :data-open="open" :data-member="member && member.id" :data-groupRunning="String(!!groupRunning)" />',
+  },
+}))
 // BottomSheet teleports to <body> and gates on everOpened; stub it with a
 // pass-through so the sheet's own content is queryable in place. The header
 // slot must be rendered too — the add-members action lives there.
@@ -109,8 +119,35 @@ describe('GroupSettingsSheet', () => {
     // The host tag carries a crown icon alongside the label.
     expect(w.find('.gm-tag--host .gm-tag-crown').exists()).toBe(true)
     expect(w.find('.gm-tag--host .lucide-crown').exists()).toBe(true)
-    // Host has no remove; left member has no remove; only Alice does.
-    expect(w.findAll('.gm-remove')).toHaveLength(1)
+    // Both LIVE members have a remove control (the host's is disabled), so the
+    // trailing column is identical on every row; the left member has none.
+    expect(w.findAll('.gm-remove')).toHaveLength(2)
+  })
+
+  it('puts the host pill with the name, not in a trailing column', () => {
+    // The pill describes WHO the member is, so it rides inside the identity
+    // group right after the name / real name. Pinned to the far right it read
+    // like a row action and broke the alignment across rows.
+    const w = mountSheet(MEMBERS)
+    const hostRow = w.findAll('.gm-row')[0]
+    expect(hostRow.find('.gm-identity .gm-tag--host').exists()).toBe(true)
+    // And the identity group comes BEFORE the usage chip / remove control.
+    const identity = hostRow.find('.gm-identity').element
+    const usage = hostRow.find('.gm-usage').element
+    const remove = hostRow.find('.gm-remove').element
+    expect(identity.compareDocumentPosition(usage) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(usage.compareDocumentPosition(remove) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('keeps the host remove button disabled and inert', async () => {
+    const w = mountSheet(MEMBERS)
+    const hostRow = w.findAll('.gm-row')[0]
+    const btn = hostRow.find('.gm-remove')
+    expect(btn.attributes('disabled')).toBeDefined()
+    expect(btn.classes()).toContain('gm-remove--disabled')
+    expect(btn.attributes('title')).toBe('group.hostNotRemovable')
+    await btn.trigger('click')
+    expect(mockRemove).not.toHaveBeenCalled()
   })
 
   it('renders each member own avatar, falling back to the agent avatar', () => {
@@ -139,7 +176,11 @@ describe('GroupSettingsSheet', () => {
 
   it('removes a member through the API and emits changed', async () => {
     const w = mountSheet(MEMBERS)
-    await w.find('.gm-remove').trigger('click')
+    // The host also renders a (disabled) remove button, so target the one that
+    // is actually enabled rather than relying on position.
+    // `attributes('disabled')` is "" (not undefined) on a disabled button, so
+    // a truthiness check would pick the HOST's inert button first.
+    await w.findAll('.gm-remove').find(b => b.attributes('disabled') === undefined)!.trigger('click')
     await flushPromises()
     expect(mockRemove).toHaveBeenCalledWith('g1', 'm2')
     expect(w.emitted('changed')).toBeTruthy()
@@ -295,6 +336,84 @@ describe('GroupSettingsSheet', () => {
       await w.find('#group-parallel').setValue(true)
       await flushPromises()
       expect(mockSetParallel).toHaveBeenCalledWith('g1', true)
+      expect(w.emitted('changed')).toBeTruthy()
+    })
+  })
+
+  describe('member context chip and detail panel', () => {
+    // Usage lives on the MEMBER row: each member has its own context window, so
+    // the roster shows one chip per member rather than a group-level number.
+    const WITH_USAGE = [
+      { id: 'm1', name: 'Host', backend: 'codebuddy', agentId: 'a1', isHost: true, usage: { used: 50000, size: 200000 } },
+      { id: 'm2', name: 'Alice', backend: 'claude', agentId: 'a2', isHost: false, usage: null },
+      { id: 'm3', name: 'Gone', backend: 'claude', agentId: 'a3', isHost: false, left: true, usage: { used: 90000, size: 100000 } },
+    ]
+
+    it('renders a bar + percentage for a member that reported usage', () => {
+      const w = mountSheet(WITH_USAGE)
+      const chip = w.findAll('.gm-usage')[0]
+      expect(chip.classes()).not.toContain('gm-usage--empty')
+      expect(chip.find('.gm-usage-bar-fill').exists()).toBe(true)
+      expect(chip.find('.gm-usage-pct').text()).toBe('25%')
+    })
+
+    it('shows an em dash (not 0%) for a member that never reported usage', () => {
+      const w = mountSheet(WITH_USAGE)
+      const chip = w.findAll('.gm-usage')[1]
+      expect(chip.classes()).toContain('gm-usage--empty')
+      expect(chip.find('.gm-usage-bar').exists()).toBe(false)
+      expect(chip.find('.gm-usage-pct').text()).toBe('—')
+    })
+
+    it('renders no chip at all for a left member', () => {
+      const w = mountSheet(WITH_USAGE)
+      // Two live members have chips; the left one does not.
+      expect(w.findAll('.gm-usage')).toHaveLength(2)
+    })
+
+    it('opens the member panel when the row is clicked', async () => {
+      const w = mountSheet(WITH_USAGE)
+      const row = w.findAll('.gm-row-main')[0]
+      expect(row.element.tagName).toBe('BUTTON')
+      await row.trigger('click')
+      const stub = w.find('.mcs-stub')
+      expect(stub.attributes('data-open')).toBe('true')
+      expect(stub.attributes('data-member')).toBe('m1')
+    })
+
+    it('does not make a left member row interactive', () => {
+      const w = mountSheet(WITH_USAGE)
+      const rows = w.findAll('.gm-row-main')
+      // Host and Alice are buttons; the left member is a plain div.
+      expect(rows[2].element.tagName).toBe('DIV')
+    })
+
+    it('keeps the remove control outside the row button (no nested buttons)', () => {
+      const w = mountSheet(WITH_USAGE)
+      const rowButton = w.findAll('.gm-row-main')[1]
+      expect(rowButton.find('.gm-remove').exists()).toBe(false)
+      // Both live members have one (the host's is disabled); the left member
+      // has none.
+      expect(w.findAll('.gm-remove')).toHaveLength(2)
+    })
+
+    it('does not open the panel when remove is clicked', async () => {
+      const w = mountSheet(WITH_USAGE)
+      await w.find('.gm-remove').trigger('click')
+      expect(w.find('.mcs-stub').attributes('data-open')).toBe('false')
+    })
+
+    it('passes the group running state down so compaction is gated', () => {
+      const w = mountSheet(WITH_USAGE, { groupRunning: true })
+      // Read the prop (not a data-attribute: Vue lowercases attribute names in
+      // templates, so `data-groupRunning` would land as `data-grouprunning`).
+      expect(w.findComponent({ name: 'MemberContextSheet' }).props('groupRunning')).toBe(true)
+    })
+
+    it('refreshes the roster after a successful compaction', async () => {
+      const w = mountSheet(WITH_USAGE)
+      await w.findAll('.gm-row-main')[0].trigger('click')
+      w.findComponent({ name: 'MemberContextSheet' }).vm.$emit('compacted', { used: 1, size: 2 })
       expect(w.emitted('changed')).toBeTruthy()
     })
   })

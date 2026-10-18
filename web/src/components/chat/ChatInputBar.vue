@@ -48,17 +48,6 @@
         <MessageSquareShare :size="14" />
         <span class="chat-action-label">{{ t('chat.actions.wideLabels.share') }}</span>
       </button>
-      <!-- Group sessions only: opens the SAME member/settings sheet as clicking
-           the header avatar stack. The header stack is the primary entry, but on
-           narrow panes the action bar is where every other session action lives,
-           so the group settings need a door here too. -->
-      <button v-if="isGroupSession" class="chat-action-btn"
-        data-action="group-settings"
-        @click="$emit('open-group-settings')"
-        :title="t('group.settings')">
-        <Users :size="14" />
-        <span class="chat-action-label">{{ t('chat.actions.wideLabels.groupSettings') }}</span>
-      </button>
       <!-- Archive sits LAST: it is the destructive/terminal action on the
            session, so it is separated from the navigation buttons. -->
       <button class="chat-action-btn chat-action-btn-archive" :class="{ disabled: !currentSessionId }"
@@ -259,91 +248,9 @@
             <Activity :size="14" />
             <span>{{ t('chat.sessionInfo.contextUsage') }}</span>
           </div>
-          <div class="usage-popup-bar">
-            <div class="usage-popup-bar-track">
-              <div class="usage-popup-bar-fill" :style="{ width: Math.min(usagePct, 100) + '%', background: usageColor }"></div>
-            </div>
-            <span class="usage-popup-pct" :style="{ color: usageColor }">{{ usagePct }}%</span>
-          </div>
-          <div class="usage-popup-row">
-            <span class="usage-popup-label">{{ t('chat.sessionInfo.used') }}</span>
-            <span class="usage-popup-value">{{ contextUsed.toLocaleString() }}</span>
-          </div>
-          <div class="usage-popup-row">
-            <span class="usage-popup-label">{{ t('chat.sessionInfo.size') }}</span>
-            <span class="usage-popup-value">{{ contextSize.toLocaleString() }}</span>
-          </div>
-          <div class="usage-popup-row">
-            <span class="usage-popup-label">{{ t('chat.sessionInfo.remaining') }}</span>
-            <span class="usage-popup-value">{{ Math.max(contextSize - contextUsed, 0).toLocaleString() }}</span>
-          </div>
-          <!-- Token detail section: every token/cost row grouped under one header.
-               used/size/remaining (matching the progress bar above) stay outside.
-               cacheHitTokens is deliberately not rendered — it duplicates
-               cachedReadTokens ("缓存读"), shown once below. -->
-          <div v-if="hasTokenDetail" class="usage-popup-section-title">{{ t('chat.sessionInfo.tokenDetail') }}</div>
-          <div v-if="contextInputTokens > 0" class="usage-popup-row">
-            <span class="usage-popup-label">{{ t('chat.sessionInfo.inputTokens') }}</span>
-            <span class="usage-popup-value">{{ contextInputTokens.toLocaleString() }}</span>
-          </div>
-          <div v-if="contextOutputTokens > 0" class="usage-popup-row">
-            <span class="usage-popup-label">{{ t('chat.sessionInfo.outputTokens') }}</span>
-            <span class="usage-popup-value">{{ contextOutputTokens.toLocaleString() }}</span>
-          </div>
-          <div v-if="contextTotalTokens > 0" class="usage-popup-row">
-            <span class="usage-popup-label">{{ t('chat.sessionInfo.totalTokens') }}</span>
-            <span class="usage-popup-value">{{ contextTotalTokens.toLocaleString() }}</span>
-          </div>
-          <div v-if="contextCachedReadTokens > 0" class="usage-popup-row">
-            <span class="usage-popup-label">{{ t('chat.sessionInfo.cachedReadTokens') }}</span>
-            <span class="usage-popup-value">{{ contextCachedReadTokens.toLocaleString() }}</span>
-          </div>
-          <div v-if="contextCacheHitTokens > 0" class="usage-popup-row">
-            <span class="usage-popup-label">{{ t('chat.sessionInfo.cacheHitTokens') }}</span>
-            <span class="usage-popup-value">{{ contextCacheHitTokens.toLocaleString() }}</span>
-          </div>
-          <div v-if="cacheHitRate !== null" class="usage-popup-row">
-            <span class="usage-popup-label">{{ t('chat.sessionInfo.cacheHitRate') }}</span>
-            <span class="usage-popup-value">{{ cacheHitRate.toFixed(1) }}%</span>
-          </div>
-          <div v-if="contextCachedWriteTokens > 0" class="usage-popup-row">
-            <span class="usage-popup-label">{{ t('chat.sessionInfo.cachedWriteTokens') }}</span>
-            <span class="usage-popup-value">{{ contextCachedWriteTokens.toLocaleString() }}</span>
-          </div>
-          <div v-if="contextCacheCreationTokens > 0" class="usage-popup-row">
-            <span class="usage-popup-label">{{ t('chat.sessionInfo.cacheCreationTokens') }}</span>
-            <span class="usage-popup-value">{{ contextCacheCreationTokens.toLocaleString() }}</span>
-          </div>
-          <div v-if="contextCacheMissTokens > 0" class="usage-popup-row">
-            <span class="usage-popup-label">{{ t('chat.sessionInfo.cacheMissTokens') }}</span>
-            <span class="usage-popup-value">{{ contextCacheMissTokens.toLocaleString() }}</span>
-          </div>
-          <div v-if="contextThoughtTokens > 0" class="usage-popup-row">
-            <span class="usage-popup-label">{{ t('chat.sessionInfo.thoughtTokens') }}</span>
-            <span class="usage-popup-value">{{ contextThoughtTokens.toLocaleString() }}</span>
-          </div>
-          <div v-if="contextCredit > 0" class="usage-popup-row">
-            <span class="usage-popup-label">{{ t('chat.sessionInfo.credit') }}</span>
-            <span class="usage-popup-value">{{ contextCredit.toFixed(4) }}</span>
-          </div>
-          <div v-if="contextCost > 0" class="usage-popup-row">
-            <span class="usage-popup-label">{{ t('chat.sessionInfo.contextCost') }}</span>
-            <span class="usage-popup-value">{{ contextCostDisplay }}</span>
-          </div>
-          <!-- Context breakdown section (CodeBuddy usageByCategory) -->
-          <template v-if="categoryRows.length">
-            <div class="usage-popup-section-title">{{ t('chat.sessionInfo.categoryBreakdown') }}</div>
-            <div v-for="row in categoryRows" :key="row.key" class="usage-popup-row">
-              <span class="usage-popup-label">{{ row.label }}</span>
-              <span class="usage-popup-value">{{ row.value.toLocaleString() }}</span>
-            </div>
-          </template>
-          <div class="usage-popup-compact">
-            <button class="usage-popup-compact-btn" @click.stop="handleCompact(); usageDrawer.close()" :title="t('chat.sessionInfo.compact')" :aria-label="t('chat.sessionInfo.compact')">
-              <Minimize2 :size="13" />
-              {{ t('chat.sessionInfo.compact') }}
-            </button>
-          </div>
+          <!-- Shared with the group member panel (MemberContextSheet) so both
+               surfaces render identical rows, colours and thresholds. -->
+          <ContextUsageDetail :usage="usageSnapshot" show-compact @compact="handleCompact(); usageDrawer.close()" />
         </div>
       </PopupMenu>
     </div>
@@ -390,6 +297,12 @@
         <span class="session-info-cruise" :class="{ 'session-info-cruise-on': groupCruise }" :title="groupCruiseHint" @click.stop="onGroupCruiseClick"><Navigation :size="11" />{{ groupCruise ? t('chat.cruise.active') : t('chat.cruise.label') }}</span>
         <span class="session-info-divider"></span>
         <span class="session-info-approve" :class="{ 'session-info-approve-on': autoApprove }" :title="t('chat.autoApprove.title')" @click.stop="doToggleAutoApprove"><ShieldAlert :size="11" />{{ t('chat.autoApprove.title') }}</span>
+        <!-- Group settings lives here rather than in the action bar: it is a
+             group-wide setting (members + concurrency + cruise), which is what
+             this bar already carries for a group. Same sheet as the header
+             avatar stack — this only emits, App drives the one instance. -->
+        <span class="session-info-divider"></span>
+        <span class="session-info-settings" data-action="group-settings" :title="t('group.settings')" @click.stop="$emit('open-group-settings')"><Users :size="11" />{{ t('group.settings') }}</span>
       </template>
     </div>
   </div>
@@ -399,7 +312,7 @@
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted, defineAsyncComponent } from 'vue'
 import { pendingChatInput as pendingChatInputRef, consumePendingChatInput } from '@/utils/chatInputInjection'
 import { useI18n } from 'vue-i18n'
-import { List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Zap, Activity, MessagesSquare, Minimize2, Sparkles, ArrowRightLeft, Settings, TextCursorInput, MessageSquareShare, Check, Users, Navigation, ShieldAlert } from 'lucide-vue-next'
+import { List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Zap, Activity, MessagesSquare, Sparkles, ArrowRightLeft, Settings, TextCursorInput, MessageSquareShare, Check, Users, Navigation, ShieldAlert } from 'lucide-vue-next'
 import { computeRecentReferencedFiles, isImeCompositionEvent } from '@/utils/chatInputUtils.ts'
 import { measureCaretVisualRows } from '@/utils/textareaVisualRows.ts'
 import { fuzzyMatch, parseAtQuery, parseHashQuery, parseSlashQuery, buildFileCandidates } from '@/utils/completionMatch.ts'
@@ -414,6 +327,8 @@ import FileIcon from '@/components/common/FileIcon.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import AttachDrawer from '@/components/chat/AttachDrawer.vue'
 import AttachmentTags from '@/components/chat/AttachmentTags.vue'
+import ContextUsageDetail from '@/components/chat/ContextUsageDetail.vue'
+import { usagePct as usagePctOf, usageColor as usageColorOf } from '@/utils/usageDisplay'
 import QuoteCard from '@/components/chat/QuoteCard.vue'
 import MentionCard from '@/components/chat/MentionCard.vue'
 import { fromStagedQuote } from '@/utils/quoteItem'
@@ -553,66 +468,29 @@ function onGroupCruiseClick() {
 const groupCruiseHint = computed(() =>
   props.groupMode === 'free' ? t('group.cruiseHintFree') : t('group.cruiseHintHost'))
 const showUsageInfo = computed(() => isACPTransport.value || contextSize.value > 0)
-const usagePct = computed(() => contextSize.value > 0 ? Math.round((contextUsed.value / contextSize.value) * 100) : 0)
-const usageColor = computed(() => {
-  const pct = usagePct.value
-  if (pct >= 95) return '#ef4444'
-  if (pct >= 90) return '#f97316'
-  if (pct >= 75) return '#eab308'
-  return '#22c55e'
-})
-// Cache hit rate = hit / (hit + miss). Shown as a percentage when at least one
-// side is known. Returns null when neither is reported (no cache stats).
-const cacheHitRate = computed(() => {
-  const hit = contextCacheHitTokens.value
-  const miss = contextCacheMissTokens.value
-  if (hit <= 0 && miss <= 0) return null
-  const total = hit + miss
-  if (total <= 0) return 0
-  return (hit / total) * 100
-})
-// True when any token/cost row inside the Token Detail section has a value.
-// The section header only renders then — otherwise the popup would show an
-// empty header between used/size/remaining and the context breakdown.
-const hasTokenDetail = computed(() =>
-  contextInputTokens.value > 0 || contextOutputTokens.value > 0 ||
-  contextTotalTokens.value > 0 || contextCachedReadTokens.value > 0 ||
-  contextCachedWriteTokens.value > 0 || contextCacheCreationTokens.value > 0 ||
-  contextCacheHitTokens.value > 0 || contextCacheMissTokens.value > 0 ||
-  contextThoughtTokens.value > 0 || contextCredit.value > 0 || contextCost.value > 0,
-)
-// Context breakdown rows from CodeBuddy usageByCategory (by value, i18n labels).
-const categoryRows = computed(() => {
-  const cat = contextUsageByCategory.value
-  if (!cat) return []
-  const labels = {
-    conversation: 'chat.sessionInfo.catConversation',
-    tools: 'chat.sessionInfo.catTools',
-    systemPrompt: 'chat.sessionInfo.catSystemPrompt',
-    skills: 'chat.sessionInfo.catSkills',
-    mcp: 'chat.sessionInfo.catMCP',
-  }
-  return Object.entries(cat)
-    .filter(([, v]) => (v ?? 0) > 0)
-    .map(([key, value]) => ({ key, value: value ?? 0, label: labels[key] ? t(labels[key]) : key }))
-})
-// Currency symbols for common ISO 4217 codes. Unknown codes fall back to the
-// bare code (e.g. "123 CNY"). When the backend reports an amount with NO
-// currency (CodeBuddy sends cost.amount == credit with an empty currency),
-// the row shows the bare number — no dollar sign, no currency code, nothing
-// fabricated on top of what the agent actually reported.
-const currencySymbols = { USD: '$', CNY: '¥', EUR: '€', GBP: '£', JPY: '¥', HKD: 'HK$', KRW: '₩', AUD: 'A$', CAD: 'C$' }
-const contextCostDisplay = computed(() => {
-  const amount = contextCost.value
-  if (amount <= 0) return ''
-  const cur = contextCurrency.value
-  // Always two decimals — sub-cent amounts round to 0.00 rather than
-  // switching to a higher-precision format.
-  const formatted = amount.toFixed(2)
-  if (!cur) return formatted
-  const sym = currencySymbols[cur] ?? ''
-  return sym ? `${sym}${formatted}` : `${formatted} ${cur}`
-})
+// The panel body lives in ContextUsageDetail (shared with the group member
+// panel). This snapshot is the only place the component's individual usage refs
+// are assembled; the display rules (thresholds, cost formatting, category
+// labels) live in utils/usageDisplay.ts.
+const usageSnapshot = computed(() => ({
+  used: contextUsed.value,
+  size: contextSize.value,
+  inputTokens: contextInputTokens.value,
+  outputTokens: contextOutputTokens.value,
+  totalTokens: contextTotalTokens.value,
+  cachedReadTokens: contextCachedReadTokens.value,
+  cachedWriteTokens: contextCachedWriteTokens.value,
+  thoughtTokens: contextThoughtTokens.value,
+  cost: contextCost.value,
+  currency: contextCurrency.value,
+  cacheCreationTokens: contextCacheCreationTokens.value,
+  cacheHitTokens: contextCacheHitTokens.value,
+  cacheMissTokens: contextCacheMissTokens.value,
+  credit: contextCredit.value,
+  usageByCategory: contextUsageByCategory.value,
+}))
+const usagePct = computed(() => usagePctOf(usageSnapshot.value))
+const usageColor = computed(() => usageColorOf(usagePct.value))
 const dialog = useDialog()
 const quickSendStore = useQuickSend()
 const { items: quickSendItems, fetchItems } = quickSendStore
@@ -2393,7 +2271,8 @@ defineExpose({
 .session-info-model,
 .session-info-mode,
 .session-info-cruise,
-.session-info-approve {
+.session-info-approve,
+.session-info-settings {
   display: inline-flex;
   align-items: center;
   gap: 3px;
@@ -2451,10 +2330,17 @@ defineExpose({
   opacity: 0.7;
 }
 
+/* Group settings entry: a plain chip like its neighbours (it opens a sheet, it
+   does not toggle anything, so no "on" state). */
+.session-info-settings:active {
+  color: var(--accent-color, #0066cc);
+}
+
 .session-info-model svg,
 .session-info-mode svg,
 .session-info-cruise svg,
 .session-info-approve svg,
+.session-info-settings svg,
 .session-info-usage svg {
   flex-shrink: 0;
 }
@@ -3395,7 +3281,7 @@ defineExpose({
 /* Unified command autocomplete menu styles moved to
    components/common/CompletionMenu.vue (shared with the @ file menu). */
 
-/* Context usage detail popup */
+/* Context usage detail popup (the body is ContextUsageDetail) */
 .usage-popup {
   padding: var(--space-4) var(--space-6);
   min-width: 180px;
@@ -3411,102 +3297,4 @@ defineExpose({
   margin-bottom: var(--space-4);
 }
 
-.usage-popup-section-title {
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-  color: var(--text-secondary);
-  margin-top: var(--space-4);
-  margin-bottom: var(--space-2);
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--border-color);
-}
-
-.usage-popup-bar {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  margin-bottom: var(--space-5);
-}
-
-.usage-popup-bar-track {
-  flex: 1;
-  height: 8px;
-  border-radius: var(--radius-xs);
-  background: color-mix(in srgb, var(--text-primary) 15%, transparent);
-  overflow: hidden;
-}
-
-.usage-popup-bar-fill {
-  height: 100%;
-  border-radius: var(--radius-xs);
-  transition: width 0.3s ease, background 0.3s ease;
-}
-
-.usage-popup-pct {
-  font-size: var(--font-size-lg);
-  font-weight: var(--font-weight-bold);
-  flex-shrink: 0;
-  min-width: 36px;
-  text-align: right;
-}
-
-.usage-popup-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 3px 0;
-  font-size: var(--font-size-sm);
-}
-
-.usage-popup-label {
-  color: var(--text-secondary, #6c757d);
-}
-
-.usage-popup-value {
-  color: var(--text-primary);
-  font-weight: var(--font-weight-medium);
-  font-variant-numeric: tabular-nums;
-}
-
-.usage-popup-compact {
-  margin-top: var(--space-5);
-  padding-top: var(--space-4);
-  border-top: 1px solid color-mix(in srgb, var(--text-primary) 12%, transparent);
-  display: flex;
-  justify-content: center;
-}
-
-.usage-popup-compact-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  background: none;
-  border: 1px solid color-mix(in srgb, var(--text-primary) 18%, transparent);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  padding:5px var(--space-6);
-  color: var(--text-secondary, #6c757d);
-  font-size: var(--font-size-sm);
-  line-height: var(--line-height-snug);
-  transition: color var(--duration-base), border-color var(--duration-base);
-  user-select: none;
-  -webkit-user-select: none;
-}
-
-.usage-popup-compact-btn:disabled {
-  cursor: not-allowed;
-  opacity: var(--opacity-disabled);
-}
-
-.usage-popup-compact-btn:active:not(:disabled) {
-  color: var(--accent-color, #0066cc);
-  border-color: var(--accent-color, #0066cc);
-}
-
-@media (hover: hover) {
-  .usage-popup-compact-btn:hover:not(:disabled) {
-    color: var(--accent-color, #0066cc);
-    border-color: var(--accent-color, #0066cc);
-  }
-}
 </style>
