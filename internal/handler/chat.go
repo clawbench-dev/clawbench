@@ -447,7 +447,16 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 	// AFTER this one (this turn is the command, not a model call). Flagging here
 	// rather than waiting for the agent's own report also covers agents that do
 	// not announce the compaction on the wire.
-	if ai.IsCompactCommand(req.Message) {
+	//
+	// GROUP SESSIONS ARE EXCLUDED. A group's /compact is NOT implemented: the
+	// orchestrator has no compact handling, so the text is persisted on the
+	// timeline and injected to members as ordinary user speech — nothing is
+	// compacted. Flagging the group row here therefore set a flag with no
+	// consumer that could ever clear it: a group row never runs a turn, and the
+	// only reader of `compacted` (BuildChatRequest → ConsumeSessionCompacted)
+	// is reached with MEMBER row ids, never the group id. The column would stay
+	// 1 forever, silently claiming the group was compacted.
+	if ai.IsCompactCommand(req.Message) && !service.IsGroupSession(sessionID) {
 		service.MarkSessionCompacted(sessionID)
 	}
 

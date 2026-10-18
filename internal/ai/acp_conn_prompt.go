@@ -69,7 +69,9 @@ func (c *ACPConn) Prompt(ctx context.Context, prompt []acp.ContentBlock, streamC
 	// Allow one compaction report for this turn. A long session can compact more
 	// than once, and each compaction needs its own re-injection on the following
 	// turn — a latch that stayed set after the first would swallow the second.
-	c.compactReported.Store(false)
+	// Clears the pending usage-drop retry too: it describes the PREVIOUS turn's
+	// compaction, which has already had its turn to be delivered.
+	c.ClearCompactionState()
 
 	if conn == nil || acpSID == "" {
 		return fmt.Errorf("acp: connection not initialized")
