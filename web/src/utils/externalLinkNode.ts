@@ -51,19 +51,45 @@ const MEDIA_EXTENSIONS = [
     '.mp4', '.mkv', '.avi', '.mov', '.webm', '.flv', '.wmv', '.m4v', '.3gp', '.m3u8',
 ]
 
-/** Schemes that leave the app. */
-const EXTERNAL_HREF_RE = /^(?:(?:f|ht)tps?:|mailto:|tel:|callto:|sms:|cid:|xmpp:|\/\/)/i
+/**
+ * Schemes that leave the app.
+ *
+ * Deliberately NARROWER than it once was: `cid:` and `xmpp:` were inherited
+ * from DOMPurify's list but mean nothing to `openExternalUrl`, and every scheme
+ * listed here widens the `data-href` sink (see below). Only schemes the OS can
+ * actually hand to a browser or dialer belong here.
+ *
+ * ## Why this list is a security boundary, not a convenience
+ *
+ * `data-href` is a plain `data-*` attribute, so DOMPurify's
+ * `ALLOWED_URI_REGEXP` does NOT apply to it — that regexp only inspects URI
+ * attributes (`href`, `src`, …). Raw HTML in an AI message is a legal markdown
+ * token, so without a check here a message could carry
+ * `<span class="md-external-link" data-href="javascript:alert(1)">`, which the
+ * click layer would hand to `openExternalUrl` → `a.click()` in browser mode.
+ * The renderer only emits spans for URLs that pass this test, and the click
+ * layer re-validates (a DOM attribute can be set by anything).
+ */
+const EXTERNAL_HREF_RE = /^(?:(?:f|ht)tps?:|mailto:|tel:|callto:|sms:|\/\/)/i
 
 /** True when `href` points outside the app (http/https/mailto/…). */
 export function isExternalHref(href: string): boolean {
     return EXTERNAL_HREF_RE.test(href.trim())
 }
 
-/** True when the URL points at a file the media converters turn into a player. */
+/**
+ * True when the URL points at a file the media converters turn into a player.
+ *
+ * Deliberately does NOT strip a query/hash: `convertAudioLinks` /
+ * `convertVideoLinks` compare the RAW href with `endsWith(ext)`, so
+ * `song.mp3?t=1` is NOT converted — a deliberate rule pinned by their tests
+ * ("handles links with query parameters"). If this function stripped the query
+ * it would classify such a URL as media, keep the `<a>`, and then no converter
+ * would match it: neither a player nor the long-press fix. The two must agree.
+ */
 export function isMediaHref(href: string): boolean {
-    // Strip query/hash so `song.mp3?t=1` still matches.
-    const path = href.trim().split(/[?#]/)[0].toLowerCase()
-    return MEDIA_EXTENSIONS.some(ext => path.endsWith(ext))
+    const lower = href.trim().toLowerCase()
+    return MEDIA_EXTENSIONS.some(ext => lower.endsWith(ext))
 }
 
 /**
@@ -74,6 +100,25 @@ export function isMediaHref(href: string): boolean {
  */
 export function shouldRenderAsText(href: string): boolean {
     return isExternalHref(href) && !isMediaHref(href)
+}
+
+/**
+ * Normalise a URL the way marked does for anchors.
+ *
+ * `encodeURI` percent-encodes non-ASCII and spaces, then `%25` is restored to
+ * `%` so an already-encoded path is not double-encoded. Kept identical to
+ * `defaultLinkRender` / marked v18 so a URL reads the same whether it ended up
+ * as an anchor or as one of our spans.
+ *
+ * Returns null when the input cannot be encoded (unpaired surrogate), matching
+ * marked's behaviour of falling back to the link text.
+ */
+export function cleanExternalHref(href: string): string | null {
+    try {
+        return encodeURI(href).replace(/%25/g, '%')
+    } catch {
+        return null
+    }
 }
 
 /**
@@ -95,7 +140,7 @@ export function createExternalLinkNode(
 ): HTMLElement {
     const span = doc.createElement('span')
     span.className = EXTERNAL_LINK_CLASS
-    span.setAttribute('data-href', href)
+    span.setAttribute('data-href', cleanExternalHref(href) ?? href)
     if (title) span.setAttribute('title', title)
     span.setAttribute('role', 'link')
     span.setAttribute('tabindex', '0')

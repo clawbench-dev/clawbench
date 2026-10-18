@@ -82,6 +82,29 @@ describe('external link rendering is uniform across every path', () => {
     expect(link.getAttribute('data-href')).toBe('https://github.com/foo/bar')
   })
 
+  /**
+   * Localhost URLs keep the tunnel "open" button — it is what reaches the
+   * forwarded port. After external links became spans, step 1 of the localhost
+   * annotator (which scanned `a[href]`) stopped matching them, silently dropping
+   * the button for every bare and `[label](…)` form; only the backticked one
+   * survived. These assert the button through the REAL pipeline, not just the
+   * annotator in isolation.
+   */
+  describe('localhost keeps its tunnel open button', () => {
+    for (const [label, markdown] of [
+      ['bare URL', 'see http://localhost:5173/x now'],
+      ['markdown link', '[dev](http://localhost:5173/y)'],
+      ['inline code', '`http://localhost:5173/z`'],
+    ] as const) {
+      it(`${label} keeps exactly one open button`, () => {
+        const html = renderMarkdownHtml(markdown)
+        expect(html.match(/chat-url-open-btn"/g) || []).toHaveLength(1)
+        expect(externalLinks(html)).toHaveLength(1)
+        expect(externalAnchors(html)).toHaveLength(0)
+      })
+    }
+  })
+
   /** Localhost URLs go through a THIRD path; all three forms must agree. */
   describe('localhost (separate annotation pass)', () => {
     const localhostCases: Array<[string, string]> = [

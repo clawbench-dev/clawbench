@@ -120,26 +120,38 @@ export function annotateLocalhostUrlsIn(doc: Document): boolean {
     const { sshInfo, transportAllowsH2 } = usePortForward()
     if (portForwardUnavailable(sshInfo.value?.enabled, transportAllowsH2.value)) return false
 
-    // ── Step 1: <a href> tags with localhost hrefs → text span + icon button ──
-    // A localhost URL opens in a browser, so it is an EXTERNAL link and gets the
-    // same treatment as every other one (see externalLinkNode.ts): selectable
-    // text plus a confirmation on tap. It used to stay an <a>, which on Android
-    // suppressed the system context menu — the exact inconsistency that made
-    // some URLs copyable and others not.
-    for (const a of doc.querySelectorAll('a[href]')) {
-        const href = a.getAttribute('href') || ''
+    // ── Step 1: localhost URLs already rendered as an <a> OR as one of our
+    //    external-link spans → append the icon button ──
+    //
+    // Both shapes must be handled. The markdown renderer now emits external
+    // URLs as spans, so a localhost URL in a message is a SPAN by the time this
+    // step runs; scanning only `a[href]` silently dropped the open button for
+    // every bare and `[label](…)` localhost URL (only the backticked form
+    // survived, via step 2). That broke the feature outright: the button is
+    // what opens the URL through the SSH/h2 tunnel instead of the system
+    // browser, where `localhost` on the device points at nothing.
+    for (const el of Array.from(doc.querySelectorAll(`a[href], .${EXTERNAL_LINK_CLASS}`))) {
+        const href = el.getAttribute(el.tagName === 'A' ? 'href' : 'data-href') || ''
         const parsed = parseLocalhostUrl(href)
         if (!parsed) continue
         if (parsed.port <= 0 || parsed.port > 65535) continue
-        const span = createExternalLinkNode(doc, parsed.fullUrl, a.textContent || parsed.fullUrl)
-        a.parentNode?.replaceChild(span, a)
-        span.insertAdjacentHTML('afterend', localhostOpenButtonHtml(parsed.port, parsed.protocol, parsed.fullUrl, parsed.path))
+        if (el.tagName === 'A') {
+            const span = createExternalLinkNode(doc, parsed.fullUrl, el.textContent || parsed.fullUrl)
+            el.parentNode?.replaceChild(span, el)
+            span.insertAdjacentHTML('afterend', localhostOpenButtonHtml(parsed.port, parsed.protocol, parsed.fullUrl, parsed.path))
+        } else if (!el.nextElementSibling?.classList.contains('chat-url-open-btn')) {
+            // Idempotent: a second pass must not append a second button.
+            el.insertAdjacentHTML('afterend', localhostOpenButtonHtml(parsed.port, parsed.protocol, parsed.fullUrl, parsed.path))
+        }
     }
 
     // ── Step 2: <code> tags whose entire content is a localhost URL ──
     // Unlike file paths, localhost URLs in backticks are meant to be clickable.
     // Wrap the <code> in <a> and append the icon button.
     for (const code of doc.querySelectorAll('code')) {
+        // Already wrapped by step 1 (or by a previous pass): wrapping again
+        // nests two spans and adds a second open button.
+        if (code.closest(`.${EXTERNAL_LINK_CLASS}`)) continue
         const stripped = (code.textContent || '').trim()
         const parsed = parseLocalhostUrl(stripped)
         if (!parsed) continue
@@ -165,6 +177,10 @@ export function annotateLocalhostUrlsIn(doc: Document): boolean {
             // span is not an <a>, so without this the walker would re-match the
             // URL inside it and wrap it a second time — producing nested
             // md-external-link elements and duplicate open buttons.
+            //
+            // Step 1 has already appended the open button for every span whose
+            // data-href parses as localhost, so there is nothing left for this
+            // walker to do inside one.
             if (parent.closest(`.${EXTERNAL_LINK_CLASS}`)) return NodeFilter.FILTER_REJECT
             return NodeFilter.FILTER_ACCEPT
         }

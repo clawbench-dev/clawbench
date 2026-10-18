@@ -1,5 +1,9 @@
 import { useDialog } from '@/composables/useDialog'
 import { openExternalUrl } from '@/utils/externalLink'
+import { isExternalHref } from '@/utils/externalLinkNode'
+import { appLog } from '@/utils/appLog'
+
+const TAG = 'ExternalLinkClick'
 import i18n from '@/i18n'
 
 const t = (key: string) => i18n.global.t(key)
@@ -58,9 +62,20 @@ export function installExternalLinkClick(): () => void {
     // Keyboard activation, since the span carries role="link" tabindex="0".
     function keyHandler(e: KeyboardEvent) {
         if (e.key !== 'Enter' && e.key !== ' ') return
+        // Holding the key would otherwise queue one dialog per repeat.
+        if (e.repeat) return
+        // Something closer already handled this key.
+        if (e.defaultPrevented) return
+
         const target = e.target as Element | null
         const span = target?.closest?.<HTMLElement>('.md-external-link')
         if (!span) return
+        // A converted span can contain a real control — the localhost "open"
+        // button, or (before the annotators learned to skip spans) a file chip
+        // and its open button. Those handle Enter/Space themselves; firing the
+        // link dialog too would open two things at once.
+        if (target?.closest?.('button, a[href], input, select, textarea, [contenteditable]')) return
+
         const href = span.getAttribute('data-href')
         if (!href) return
         e.preventDefault()
@@ -81,8 +96,18 @@ export function installExternalLinkClick(): () => void {
  * The URL is shown in full (not just the host) so the user can tell where they
  * are about to go — this is also the moment they may realise they wanted to
  * copy it instead, which is why the dialog carries the URL as plain text.
+ *
+ * `href` is RE-VALIDATED here even though the renderer only emits allowed
+ * schemes: it arrives from a DOM attribute, and `data-href` is not covered by
+ * DOMPurify's URI allowlist (that only inspects `href`/`src`). Raw HTML in an
+ * AI message could therefore plant a `javascript:` value. Validating at the
+ * sink keeps the guarantee independent of how the element got there.
  */
 async function confirmAndOpen(href: string): Promise<void> {
+    if (!isExternalHref(href)) {
+        appLog.w(TAG, 'refusing to open non-external href', href)
+        return
+    }
     const ok = await useDialog().confirm(href, {
         title: t('chat.externalLink.title'),
         confirmText: t('chat.externalLink.open'),

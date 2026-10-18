@@ -2,7 +2,7 @@ import { marked, highlightCode } from '@/utils/globals.ts'
 import type { Token, Tokens } from 'marked'
 import { slugify } from '@/utils/toc.ts'
 import { escapeHtml } from '@/utils/html.ts'
-import { EXTERNAL_LINK_CLASS, shouldRenderAsText } from '@/utils/externalLinkNode.ts'
+import { EXTERNAL_LINK_CLASS, cleanExternalHref, shouldRenderAsText } from '@/utils/externalLinkNode.ts'
 
 /**
  * Heading ID deduplication counter.
@@ -332,9 +332,11 @@ export function configureMarkedRenderer(): void {
                 }
 
                 // Emitted as a string (marked renderers return HTML); the
-                // attribute set is identical to createExternalLinkNode's.
+                // attribute set is identical to createExternalLinkNode's, and
+                // the href is normalised the same way (see cleanExternalHref).
                 const titleAttr = token?.title ? ` title="${escapeHtml(String(token.title))}"` : ''
-                return `<span class="${EXTERNAL_LINK_CLASS}" data-href="${escapeHtml(href)}"${titleAttr}`
+                const clean = cleanExternalHref(href) ?? href
+                return `<span class="${EXTERNAL_LINK_CLASS}" data-href="${escapeHtml(clean)}"${titleAttr}`
                     + ` role="link" tabindex="0">${body}</span>`
             },
         },

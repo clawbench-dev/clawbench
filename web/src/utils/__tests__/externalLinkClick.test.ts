@@ -153,6 +153,37 @@ describe('installExternalLinkClick', () => {
     await vi.waitFor(() => expect(mockConfirm).toHaveBeenCalled())
   })
 
+  /**
+   * `data-href` is NOT covered by DOMPurify's URI allowlist (that inspects
+   * `href`/`src` only), and raw HTML in an AI message is a legal markdown token.
+   * So a `javascript:` value can reach this listener — the sink must refuse it.
+   */
+  it('refuses to open a non-external scheme planted in data-href', async () => {
+    dispose = installExternalLinkClick()
+    const span = renderSpan('javascript:alert(1)')
+
+    mockConfirm.mockResolvedValue(true)
+    click(span)
+
+    // No dialog and no navigation: the value never leaves the page.
+    await new Promise((r) => setTimeout(r, 0))
+    expect(mockConfirm).not.toHaveBeenCalled()
+    expect(mockOpenExternalUrl).not.toHaveBeenCalled()
+  })
+
+  it('refuses data:, file: and other non-external schemes', async () => {
+    dispose = installExternalLinkClick()
+    mockConfirm.mockResolvedValue(true)
+
+    for (const bad of ['data:text/html,<script>alert(1)</script>', 'file:///etc/passwd', 'vbscript:x']) {
+      click(renderSpan(bad))
+    }
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(mockConfirm).not.toHaveBeenCalled()
+    expect(mockOpenExternalUrl).not.toHaveBeenCalled()
+  })
+
   it('stops listening after dispose', () => {
     const off = installExternalLinkClick()
     off()

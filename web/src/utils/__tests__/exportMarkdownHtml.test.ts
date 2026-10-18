@@ -78,6 +78,25 @@ describe('exportMarkdownToHtml', () => {
     expect(result.html).toContain('</body>')
   })
 
+  /**
+   * The export is a STATIC document — it ships no click layer, so a
+   * `<span class="md-external-link" data-href>` would render as link-coloured,
+   * underlined, non-clickable text. Every external link must be a real anchor
+   * here. (In the app the span is correct; see utils/externalLinkNode.ts.)
+   */
+  it('restores external links to real anchors', async () => {
+    const result = await exportMarkdownToHtml(opts({
+      content: 'see [site](https://example.com/a) and github.com/foo/bar',
+    }))
+    expect(result.html).toContain('<a href="https://example.com/a"')
+    expect(result.html).toContain('target="_blank"')
+    expect(result.html).toContain('rel="noopener noreferrer"')
+    expect(result.html).toContain('<a href="https://github.com/foo/bar"')
+    // No dead link spans left behind.
+    expect(result.html).not.toContain('md-external-link')
+    expect(result.html).not.toContain('data-href')
+  })
+
   it('wraps content in .markdown-body > .markdown-content like the preview', async () => {
     const result = await exportMarkdownToHtml(opts({ content: 'Hello world' }))
     expect(result.html).toContain('class="markdown-body"')
