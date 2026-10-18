@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 )
@@ -373,4 +374,95 @@ func TestServeAISessionUpdate_RejectedEffortIsReported(t *testing.T) {
 
 	_, _, ok := service.UserThinkingEffortPick(sid)
 	assert.False(t, ok, "a rejected level must not be stored")
+}
+
+// TestSwitchSessionEffortToModel_RegistryRejectsRememberedPick pins the last
+// guard on the switch path: a pick remembered for the model can still be absent
+// from what the agent advertises (OpenCode's lists differ per model), and
+// carrying it over would make every turn fail with -32602.
+func TestSwitchSessionEffortToModel_RegistryRejectsRememberedPick(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+	// A DEDICATED agent id: the capability registry has no reset API
+	// (UpdateThinkingEfforts ignores an empty list), so reusing the shared
+	// fixture id would leak these levels into every later test that reads the
+	// registry — which is exactly what broke effort_read_test.go.
+	const agentID = "opencode-registry-reject"
+	setAgentEffortLevels(t, []string{"low", "high", "max"}, "glm-5.3", "deepseek-v4-pro")
+	model.Agents[agentID] = model.Agents[testEffortAgentID]
+	model.Agents[agentID].ID = agentID
+	model.Agents[agentID].Transport = "acp-stdio"
+	model.Agents[agentID].AcpCommand = "opencode acp"
+
+	reg := ai.GetAgentCapabilityRegistry()
+	reg.UpdateThinkingEfforts(agentID, []ai.ThinkingEffortDef{{ID: "high"}, {ID: "max"}})
+
+	sid, err := service.CreateSession(env.ProjectDir, agentID, "Registry", agentID, "glm-5.3", "user", "chat")
+	require.NoError(t, err)
+
+	// The user picked "low" for deepseek-v4-pro, but the agent advertises only
+	// high/max. The pick must be cleared rather than replayed.
+	model.Agents[agentID].ThinkingEffortByModel = map[string]string{"deepseek-v4-pro": "low"}
+
+	got := switchSessionEffortToModel(sid, "deepseek-v4-pro", false)
+	assert.Equal(t, "", got, "a level the agent does not advertise must not be applied")
+
+	_, _, ok := service.UserThinkingEffortPick(sid)
+	assert.False(t, ok, "the unusable pick must be cleared so the agent's own default applies")
+}
+
+// TestSwitchSessionEffortToModel_UnknownAgentIsANoop pins the nil-agent guard:
+// a session whose agent was deleted must not panic the switch path.
+func TestSwitchSessionEffortToModel_UnknownAgentIsANoop(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+	setAgentEffortLevels(t, []string{"low", "high"}, "glm-5.3")
+
+	sid, err := service.CreateSession(env.ProjectDir, testEffortAgentID, "No agent", testEffortAgentID, "glm-5.3", "user", "chat")
+	require.NoError(t, err)
+
+	orig := model.Agents
+	model.Agents = map[string]*model.Agent{}
+	t.Cleanup(func() { model.Agents = orig })
+
+	assert.Equal(t, "", switchSessionEffortToModel(sid, "glm-5.3", false))
+}
+
+// TestSessionUsesACP_TransportOverrideWins pins the precedence: the session
+// row's transport override is authoritative over the agent's configured one
+// (a user can flip one session to CLI without touching the agent).
+func TestSessionUsesACP_TransportOverrideWins(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+	setACPAgentEffortLevels(t, "glm-5.3")
+
+	sid, err := service.CreateSession(env.ProjectDir, testEffortAgentID, "Override", testEffortAgentID, "glm-5.3", "user", "chat")
+	require.NoError(t, err)
+
+	agent := model.GetAgent(testEffortAgentID)
+	require.NotNil(t, agent)
+	assert.True(t, sessionUsesACP(sid, agent), "no override: the agent's acp-stdio transport decides")
+
+	require.NoError(t, service.UpdateSessionTransport(sid, "cli"))
+	assert.False(t, sessionUsesACP(sid, agent), "a per-session cli override must win")
+
+	require.NoError(t, service.UpdateSessionTransport(sid, "acp-stdio"))
+	assert.True(t, sessionUsesACP(sid, agent))
+}
+
+// TestRememberEffortForModel_MissingAgentIsANoop pins the deleted-agent guard.
+func TestRememberEffortForModel_MissingAgentIsANoop(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+	setAgentEffortLevels(t, []string{"low", "high"}, "glm-5.3")
+
+	sid, err := service.CreateSession(env.ProjectDir, testEffortAgentID, "Gone", testEffortAgentID, "glm-5.3", "user", "chat")
+	require.NoError(t, err)
+
+	orig := model.Agents
+	model.Agents = map[string]*model.Agent{}
+	t.Cleanup(func() { model.Agents = orig })
+
+	assert.True(t, rememberEffortForModel(sid, "glm-5.3", "max", true),
+		"a deleted agent must not block the pick")
 }

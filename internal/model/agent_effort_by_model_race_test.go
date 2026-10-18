@@ -63,3 +63,47 @@ func TestSetThinkingEffortForModel_ConcurrentReads(t *testing.T) {
 	// The reader's snapshot is frozen, not corrupted.
 	assert.Equal(t, "max", readerSnapshot.ThinkingEffortForModel("glm-5.3"))
 }
+
+// TestThinkingEffortForModel_Priority covers the resolution order and the two
+// degenerate inputs. It is the read side of issue #552: the per-model pick must
+// win over the model-independent default, and an empty model id must skip the
+// per-model lookup instead of matching the "" key.
+func TestThinkingEffortForModel_Priority(t *testing.T) {
+	agent := &Agent{
+		ThinkingEffort:          "low",  // agent default
+		PreferredThinkingEffort: "high", // user's Settings default
+		ThinkingEffortByModel:   map[string]string{"glm-5.3": "max"},
+	}
+
+	assert.Equal(t, "max", agent.ThinkingEffortForModel("glm-5.3"),
+		"the per-model pick must win over the global default")
+	assert.Equal(t, "high", agent.ThinkingEffortForModel("deepseek-v4-pro"),
+		"a model without a pick falls back to the Settings default")
+	assert.Equal(t, "high", agent.ThinkingEffortForModel(""),
+		"an empty model id must not look up the map")
+
+	// A nil map (never loaded / no picks yet) must not panic.
+	bare := &Agent{ThinkingEffort: "low"}
+	assert.Equal(t, "low", bare.ThinkingEffortForModel("glm-5.3"))
+
+	// An entry with an empty level is treated as "no pick", so a stale blank
+	// value cannot shadow the default.
+	blank := &Agent{ThinkingEffort: "low", ThinkingEffortByModel: map[string]string{"glm-5.3": ""}}
+	assert.Equal(t, "low", blank.ThinkingEffortForModel("glm-5.3"))
+}
+
+// TestSetThinkingEffortForModel_ClearsOnEmptyLevel pins the delete path: an
+// empty level removes the entry so the global default applies again, rather
+// than storing a blank override that would read as "no pick" forever.
+func TestSetThinkingEffortForModel_ClearsOnEmptyLevel(t *testing.T) {
+	agent := &Agent{ThinkingEffort: "low", ThinkingEffortByModel: map[string]string{"glm-5.3": "max"}}
+
+	agent.SetThinkingEffortForModel("glm-5.3", "")
+	assert.NotContains(t, agent.ThinkingEffortByModel, "glm-5.3")
+	assert.Equal(t, "low", agent.ThinkingEffortForModel("glm-5.3"))
+
+	// An empty model id is a no-op: it would otherwise create a "" key that
+	// every model-less lookup shares.
+	agent.SetThinkingEffortForModel("", "max")
+	assert.NotContains(t, agent.ThinkingEffortByModel, "")
+}
