@@ -3,6 +3,7 @@ import { mount, shallowMount } from '@vue/test-utils'
 import { nextTick, reactive } from 'vue'
 import { createI18n } from 'vue-i18n'
 import FileManagerContent from '@/components/file/FileManagerContent.vue'
+import { cancelTarget, usePendingTarget } from '@/composables/useConversationTarget.ts'
 
 // ── Mocks ────────────────────────────────────────────────────
 const mockAddAttachedFile = vi.fn()
@@ -201,7 +202,14 @@ beforeEach(() => {
 // ── Tests ─────────────────────────────────────────────────────
 
 describe('FileManagerContent — doAttachToChat', () => {
-  it('adds file to chat context from context menu', async () => {
+  // The attach action always routes through the session picker: the destination
+  // is the user's choice, so nothing is staged locally. `confirmTarget` (tested
+  // in useConversationTarget.test.ts) attaches for the session picked.
+  beforeEach(() => {
+    cancelTarget()
+  })
+
+  it('opens the session picker with the file from the context menu', async () => {
     const wrapper = mountContent()
 
     // Set up context menu state via component internals
@@ -211,16 +219,17 @@ describe('FileManagerContent — doAttachToChat', () => {
 
     await wrapper.vm.doAttachToChat()
 
-    expect(mockAddAttachedFile).toHaveBeenCalledWith('test.ts', false)
-    expect(mockToastShow).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({ type: 'success' }),
-    )
+    const { pickerOpen, pending } = usePendingTarget()
+    expect(pickerOpen.value).toBe(true)
+    expect(pending.value?.attachments).toEqual([{ path: 'test.ts', isDir: false }])
+    // Nothing attached locally — the picker owns the add.
+    expect(mockAddAttachedFile).not.toHaveBeenCalled()
     // Menu should close
     expect(wrapper.vm.ctxMenu.visible).toBe(false)
+    cancelTarget()
   })
 
-  it('attaches a directory with isDir=true from the context menu', async () => {
+  it('opens the picker with isDir=true for a directory entry', async () => {
     const wrapper = mountContent()
 
     wrapper.vm.ctxMenu.visible = true
@@ -230,10 +239,12 @@ describe('FileManagerContent — doAttachToChat', () => {
     await wrapper.vm.doAttachToChat()
 
     // The backend resolves directories differently, so the flag must be set.
-    expect(mockAddAttachedFile).toHaveBeenCalledWith('src', true)
+    const { pending } = usePendingTarget()
+    expect(pending.value?.attachments).toEqual([{ path: 'src', isDir: true }])
+    cancelTarget()
   })
 
-  it('is add-only: an already-attached file is added again, not removed', async () => {
+  it('is add-only: an already-attached file still offers to add, never removes', async () => {
     // The per-file paperclip badge and its toggle were removed — with an
     // arbitrary target session no single icon could represent "attached", so the
     // context menu no longer doubles as a remove.
@@ -246,12 +257,11 @@ describe('FileManagerContent — doAttachToChat', () => {
 
     await wrapper.vm.doAttachToChat()
 
-    expect(mockAddAttachedFile).toHaveBeenCalledWith('test.ts', false)
+    const { pickerOpen, pending } = usePendingTarget()
+    expect(pickerOpen.value).toBe(true)
+    expect(pending.value?.attachments).toEqual([{ path: 'test.ts', isDir: false }])
     expect(mockRemoveAttachedFileByPath).not.toHaveBeenCalled()
-    expect(mockToastShow).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({ type: 'success' }),
-    )
+    cancelTarget()
   })
 })
 

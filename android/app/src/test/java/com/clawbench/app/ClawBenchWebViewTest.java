@@ -1,5 +1,7 @@
 package com.clawbench.app;
 
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Context;
 import android.graphics.Rect;
 import android.view.ActionMode;
@@ -460,5 +462,246 @@ public class ClawBenchWebViewTest {
         assertTrue(mode.finished);
         assertFalse("the second dismiss must report nothing to close",
                 webView.dismissSelectionMenu());
+    }
+
+    // ── double-tap menu: anchor geometry ────────────────────────────────
+
+    /**
+     * The bridge hands over FRACTIONS of the viewport, because only this side
+     * knows the physical size (CSS px × devicePixelRatio × the app's CSS zoom).
+     * Interpreting them as pixels anchored the toolbar near the top of the
+     * screen instead of at the tapped word — the bug this pins.
+     */
+    @Test
+    public void anchorScalesFractionsByViewSize() {
+        Rect anchor = ClawBenchWebView.buildFloatingAnchor(0.25f, 0.5f, 0.75f, 0.75f, 400, 800);
+
+        assertEquals(100, anchor.left);
+        assertEquals(400, anchor.top);
+        assertEquals(300, anchor.right);
+        assertEquals(600, anchor.bottom);
+    }
+
+    /**
+     * A zero-area rect gives the floating toolbar nothing to sit above. The
+     * framework would then place it at an arbitrary corner, so the rect is
+     * widened to a point at the same position.
+     */
+    @Test
+    public void zeroAreaAnchorCollapsesToAPoint() {
+        Rect anchor = ClawBenchWebView.buildFloatingAnchor(0.5f, 0.5f, 0.5f, 0.5f, 400, 800);
+
+        assertEquals(200, anchor.left);
+        assertEquals(400, anchor.top);
+        assertEquals("a degenerate rect must collapse to a point, not stay inverted",
+                anchor.left, anchor.right);
+        assertEquals(anchor.top, anchor.bottom);
+    }
+
+    /**
+     * A rect with width but no height is also degenerate. Only BOTH dimensions
+     * being non-positive triggers the collapse, so this one keeps its width —
+     * pinning that the guard is the conjunction, not "either".
+     */
+    @Test
+    public void zeroHeightAnchorKeepsItsWidth() {
+        Rect anchor = ClawBenchWebView.buildFloatingAnchor(0.25f, 0.5f, 0.75f, 0.5f, 400, 800);
+
+        assertEquals(100, anchor.left);
+        assertEquals(300, anchor.right);
+        assertEquals("height collapses to the top edge", anchor.top, anchor.bottom);
+    }
+
+    // ── double-tap menu: the callback it installs ───────────────────────
+
+    /**
+     * The floating menu is built entirely by us, so it must carry Copy — unlike
+     * the long-press menu, where Chromium supplies its own.
+     */
+    @Test
+    public void floatingCallbackInstallsCopyQuoteCommentAndSearch() {
+        webView.setSelectionActionListener(action -> {
+        });
+        ActionMode.Callback2 callback = webView.newFloatingCallback(new Rect(0, 0, 1, 1));
+        Menu menu = systemMenu();
+
+        assertTrue(callback.onCreateActionMode(new FakeActionMode(), menu));
+
+        assertNotNull("Copy must be on the programmatic menu", menu.findItem(SelectionMenuPolicy.ID_COPY));
+        assertNotNull(menu.findItem(SelectionMenuPolicy.ID_QUOTE));
+        assertNotNull(menu.findItem(SelectionMenuPolicy.ID_COMMENT));
+        assertNotNull(menu.findItem(SelectionMenuPolicy.ID_SEARCH_FILE));
+    }
+
+    /** Re-preparing must not duplicate: the framework invalidates repeatedly. */
+    @Test
+    public void floatingCallbackDoesNotDuplicateItemsAcrossPreparePasses() {
+        webView.setSelectionActionListener(action -> {
+        });
+        ActionMode.Callback2 callback = webView.newFloatingCallback(new Rect(0, 0, 1, 1));
+        Menu menu = systemMenu();
+
+        callback.onCreateActionMode(new FakeActionMode(), menu);
+        callback.onPrepareActionMode(new FakeActionMode(), menu);
+        callback.onPrepareActionMode(new FakeActionMode(), menu);
+
+        List<Integer> ids = new ArrayList<>();
+        for (int i = 0; i < menu.size(); i++) {
+            ids.add(menu.getItem(i).getItemId());
+        }
+        assertEquals(1, countOf(ids, SelectionMenuPolicy.ID_COPY));
+        assertEquals(1, countOf(ids, SelectionMenuPolicy.ID_QUOTE));
+        assertEquals(1, countOf(ids, SelectionMenuPolicy.ID_COMMENT));
+        assertEquals(1, countOf(ids, SelectionMenuPolicy.ID_SEARCH_FILE));
+    }
+
+    /**
+     * Quote / Comment / Search must reach the SAME listener the long-press menu
+     * uses — that convergence is the point of having one handler.
+     */
+    @Test
+    public void floatingCallbackRoutesQuoteToTheListener() {
+        List<SelectionMenuPolicy.Action> handled = new ArrayList<>();
+        webView.setSelectionActionListener(handled::add);
+        ActionMode.Callback2 callback = webView.newFloatingCallback(new Rect(0, 0, 1, 1));
+        Menu menu = systemMenu();
+        callback.onCreateActionMode(new FakeActionMode(), menu);
+
+        FakeActionMode mode = new FakeActionMode();
+        MenuItem quote = menu.findItem(SelectionMenuPolicy.ID_QUOTE);
+        assertNotNull(quote);
+        assertTrue(callback.onActionItemClicked(mode, quote));
+
+        assertTrue("the mode must be finished before dispatching", mode.finished);
+        assertEquals(1, handled.size());
+        assertEquals(SelectionMenuPolicy.Action.QUOTE, handled.get(0));
+    }
+
+    /**
+     * Copy must NOT go over the JS bridge: the text came from JS and the
+     * clipboard is ours. Routing it to the listener would ask the frontend to
+     * copy text it already has, and leave the native clipboard untouched.
+     */
+    @Test
+    public void floatingCallbackCopiesNativelyWithoutNotifyingTheListener() {
+        List<SelectionMenuPolicy.Action> handled = new ArrayList<>();
+        webView.setSelectionActionListener(handled::add);
+        webView.setFloatingSelectionTextForTest("tapped word");
+
+        ActionMode.Callback2 callback = webView.newFloatingCallback(new Rect(0, 0, 1, 1));
+        Menu menu = systemMenu();
+        callback.onCreateActionMode(new FakeActionMode(), menu);
+
+        FakeActionMode mode = new FakeActionMode();
+        MenuItem copy = menu.findItem(SelectionMenuPolicy.ID_COPY);
+        assertNotNull(copy);
+        assertTrue(callback.onActionItemClicked(mode, copy));
+
+        assertTrue(mode.finished);
+        assertTrue("copy must not be routed to the JS bridge", handled.isEmpty());
+
+        ClipboardManager cm = (ClipboardManager) ctx.getSystemService(Context.CLIPBOARD_SERVICE);
+        assertNotNull(cm);
+        ClipData clip = cm.getPrimaryClip();
+        assertNotNull("the tapped text must reach the clipboard", clip);
+        assertEquals("tapped word", clip.getItemAt(0).coerceToText(ctx).toString());
+    }
+
+    /**
+     * An id that is not ours must be reported as unhandled so the framework can
+     * act on it — claiming it would swallow a system item's action.
+     */
+    @Test
+    public void floatingCallbackDeclinesForeignItems() {
+        webView.setSelectionActionListener(action -> {
+        });
+        ActionMode.Callback2 callback = webView.newFloatingCallback(new Rect(0, 0, 1, 1));
+        Menu menu = systemMenu();
+        callback.onCreateActionMode(new FakeActionMode(), menu);
+
+        MenuItem foreign = menu.findItem(android.R.id.copy);
+        assertNotNull(foreign);
+        assertFalse(callback.onActionItemClicked(new FakeActionMode(), foreign));
+    }
+
+    /**
+     * The toolbar is placed from onGetContentRect — dropping it (or returning a
+     * fresh empty rect) leaves the menu at the top of the window instead of over
+     * the double-tapped word.
+     */
+    @Test
+    public void floatingCallbackAnchorsTheToolbarOnTheSelection() {
+        webView.setSelectionActionListener(action -> {
+        });
+        Rect anchor = new Rect(10, 20, 30, 40);
+        ActionMode.Callback2 callback = webView.newFloatingCallback(anchor);
+
+        Rect out = new Rect();
+        callback.onGetContentRect(new FakeActionMode(), webView, out);
+
+        assertEquals(anchor, out);
+    }
+
+    /**
+     * onDestroyActionMode clears the tracked mode so the next touch is a plain
+     * pass-through — but only when it is still the mode we tracked.
+     */
+    @Test
+    public void floatingCallbackClearsTheTrackedModeOnDestroy() {
+        webView.setSelectionActionListener(action -> {
+        });
+        ActionMode.Callback2 callback = webView.newFloatingCallback(new Rect(0, 0, 1, 1));
+        FakeActionMode mode = new FakeActionMode();
+        webView.setFloatingActionModeForTest(mode);
+
+        callback.onDestroyActionMode(mode);
+
+        assertFalse("destroying the tracked mode must clear it",
+                webView.hasFloatingActionModeForTest());
+    }
+
+    /** A different mode's destruction must not clear the one we track. */
+    @Test
+    public void floatingCallbackIgnoresDestroyOfAnotherMode() {
+        webView.setSelectionActionListener(action -> {
+        });
+        ActionMode.Callback2 callback = webView.newFloatingCallback(new Rect(0, 0, 1, 1));
+        FakeActionMode tracked = new FakeActionMode();
+        webView.setFloatingActionModeForTest(tracked);
+
+        callback.onDestroyActionMode(new FakeActionMode());
+
+        assertTrue("an unrelated mode's destruction must not clear ours",
+                webView.hasFloatingActionModeForTest());
+    }
+
+    // ── double-tap menu: copy edge cases ────────────────────────────────
+
+    /** Copying with no captured text is a no-op, not an NPE or an empty clip. */
+    @Test
+    public void copyWithNoSelectionDoesNothing() {
+        ClipboardManager cm = (ClipboardManager) ctx.getSystemService(Context.CLIPBOARD_SERVICE);
+        assertNotNull(cm);
+        cm.setPrimaryClip(ClipData.newPlainText("sentinel", "untouched"));
+
+        webView.setFloatingSelectionTextForTest(null);
+        webView.copyFloatingSelectionForTest();
+
+        assertEquals("no captured text must leave the clipboard alone",
+                "untouched", cm.getPrimaryClip().getItemAt(0).coerceToText(ctx).toString());
+    }
+
+    /** An empty selection must not replace the user's clipboard with "". */
+    @Test
+    public void copyWithEmptySelectionDoesNothing() {
+        ClipboardManager cm = (ClipboardManager) ctx.getSystemService(Context.CLIPBOARD_SERVICE);
+        assertNotNull(cm);
+        cm.setPrimaryClip(ClipData.newPlainText("sentinel", "untouched"));
+
+        webView.setFloatingSelectionTextForTest("");
+        webView.copyFloatingSelectionForTest();
+
+        assertEquals("an empty selection must leave the clipboard alone",
+                "untouched", cm.getPrimaryClip().getItemAt(0).coerceToText(ctx).toString());
     }
 }

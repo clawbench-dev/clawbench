@@ -132,30 +132,53 @@ public class ClawBenchWebView extends WebView {
 
         floatingSelectionText = text;
 
-        // Fractions → this view's physical pixels. getWidth/getHeight are the
-        // WebView's own size, the same coordinate space onGetContentRect and the
-        // FloatingToolbar position in, so no density conversion is needed here —
-        // the ratio is already folded into the fraction by construction.
+        // getWidth/getHeight are the WebView's own size, the same coordinate
+        // space onGetContentRect and the FloatingToolbar position in.
         final int w = getWidth() > 0 ? getWidth() : getResources().getDisplayMetrics().widthPixels;
         final int h = getHeight() > 0 ? getHeight() : getResources().getDisplayMetrics().heightPixels;
-        final Rect anchor = new Rect(
-                Math.round(left * w),
-                Math.round(top * h),
-                Math.round(right * w),
-                Math.round(bottom * h));
-        // A zero-area rect (unmeasurable selection) gives the floating toolbar
-        // nothing to sit above; widen it to a point so it still anchors.
-        if (anchor.width() <= 0 && anchor.height() <= 0) {
-            anchor.right = anchor.left;
-            anchor.bottom = anchor.top;
-        }
+        final Rect anchor = buildFloatingAnchor(left, top, right, bottom, w, h);
 
         // `super.startActionMode` (not the overridden one) on purpose: the
         // override wraps the callback to prepend our items to CHROMIUM's menu.
         // This menu is entirely ours, so wrapping would both duplicate our items
         // and route COPY through the long-press handler — which forwards it to
         // the JS bridge instead of copying natively.
-        floatingActionMode = super.startActionMode(new ActionMode.Callback2() {
+        floatingActionMode = super.startActionMode(
+                newFloatingCallback(anchor), ActionMode.TYPE_FLOATING);
+    }
+
+    /**
+     * Fractions of the viewport → the anchor rect the floating toolbar sits above.
+     *
+     * Split out (and package-private) so the arithmetic — including the
+     * zero-area fallback — is testable without a real {@code startActionMode},
+     * which only returns a mode for a view attached to a window.
+     *
+     * A zero-area rect (unmeasurable selection) gives the floating toolbar
+     * nothing to sit above; it is widened to a point so it still anchors.
+     */
+    static Rect buildFloatingAnchor(
+            float left, float top, float right, float bottom, int viewWidth, int viewHeight) {
+        final Rect anchor = new Rect(
+                Math.round(left * viewWidth),
+                Math.round(top * viewHeight),
+                Math.round(right * viewWidth),
+                Math.round(bottom * viewHeight));
+        if (anchor.width() <= 0 && anchor.height() <= 0) {
+            anchor.right = anchor.left;
+            anchor.bottom = anchor.top;
+        }
+        return anchor;
+    }
+
+    /**
+     * The callback for the programmatic (double-tap) menu.
+     *
+     * Package-private so a test can drive every framework callback directly:
+     * a real TYPE_FLOATING mode only exists for an attached view.
+     */
+    ActionMode.Callback2 newFloatingCallback(Rect anchor) {
+        return new ActionMode.Callback2() {
             @Override
             public boolean onCreateActionMode(ActionMode mode, Menu menu) {
                 SelectionMenuPolicy.installFloatingItems(menu, ClawBenchWebView.this::labelFor);
@@ -196,7 +219,7 @@ public class ClawBenchWebView extends WebView {
                 // Positions the floating toolbar over the double-tapped text.
                 outRect.set(anchor);
             }
-        }, ActionMode.TYPE_FLOATING);
+        };
     }
 
     /** Copy the text a programmatic menu was opened for. */
@@ -283,6 +306,16 @@ public class ClawBenchWebView extends WebView {
     /** Test seam: whether a menu is currently tracked as open. */
     boolean hasFloatingActionModeForTest() {
         return floatingActionMode != null;
+    }
+
+    /** Test seam: the text a programmatic menu would copy. */
+    void setFloatingSelectionTextForTest(@Nullable String text) {
+        this.floatingSelectionText = text;
+    }
+
+    /** Test seam: run the copy path the menu item triggers. */
+    void copyFloatingSelectionForTest() {
+        copyFloatingSelection();
     }
 
     /** Resolve a label through the Activity's user-language resolver. */
