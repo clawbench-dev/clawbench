@@ -83,6 +83,20 @@ describe('click-time model switch wiring', () => {
     expect(client, 'client timeout must exceed the 35s handler budget').toBeGreaterThan(35_000)
   })
 
+  it('mirrors the pick locally when the user selects a level', () => {
+    // Issue #552: the server remembers the pick per model, but the cached agent
+    // list is what a NEW chat reads. Without this local mirror the new chat
+    // shows the agent's default and then sends it as an explicit override,
+    // defeating the remembered pick.
+    const body = fnBody('function handleSwitchThinkingEffort')
+    expect(body, 'the pick must be mirrored into the cached agent list').toMatch(
+      /setThinkingEffortForModelLocal\(/,
+    )
+    expect(body, 'it must be keyed to the current agent AND model').toMatch(
+      /identity\.currentAgentId\.value,\s*identity\.currentModelId\.value/,
+    )
+  })
+
   it('applies the resolved effort after a successful switch', () => {
     // Issue #552: the effort is model-scoped, so a switch can silently move it
     // (OpenCode reports "low" for most models). The server resolves the new

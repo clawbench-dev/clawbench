@@ -39,6 +39,7 @@ const (
 	migToolCallsFromContent = "2026-09-29_migrate_tool_calls_from_content"
 	migThinkingFromContent  = "2026-09-29_migrate_thinking_from_content"
 	migAskCardDone          = "2026-10-16_normalize_ask_summary_cards_done"
+	migEffortPickFlag       = "2026-10-18_mark_legacy_effort_picks"
 )
 
 // dataMigrationNames 是上表的名字集合，供测试遍历。
@@ -48,6 +49,7 @@ var dataMigrationNames = []string{
 	migToolCallsFromContent,
 	migThinkingFromContent,
 	migAskCardDone,
+	migEffortPickFlag,
 }
 
 // ensureSchemaMigrationsTable 幂等建台账表。必须在任何 runOnce 之前调用。
@@ -1872,6 +1874,13 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// rewritten by the summarization paths (they skip messages that already have
 	// a summary), so they must be healed here.
 	runOnce(migAskCardDone, MigrateAskSummaryCardsDone)
+
+	// Migrate: mark already-persisted effort values as user picks. Before the
+	// per-model memory (issue #552) the same context_state slot received both
+	// explicit picks and the agent's own reported default; without this, every
+	// pre-upgrade session would be treated as "no choice" and revert to the
+	// agent's low default.
+	runOnce(migEffortPickFlag, MigrateLegacyThinkingEffortPicks)
 
 	return nil
 }

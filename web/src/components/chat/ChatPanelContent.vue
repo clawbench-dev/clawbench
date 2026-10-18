@@ -1344,7 +1344,15 @@ function handleSwitchThinkingEffort(level) {
   // Resolve and set the friendly name for display
   const levelObj = identity.thinkingEffortState.available.value.find(l => l.id === level)
   identity.thinkingEffortState.currentName.value = levelObj?.name || level
-  // Persist thinking effort selection immediately so it survives page reload
+  // Persist thinking effort selection immediately so it survives page reload.
+  // The server also remembers it per model, but that write is invisible to the
+  // cached agent list — without the local mirror the next new chat would read
+  // the stale default and send it as an explicit override (issue #552).
+  agentsComposable.setThinkingEffortForModelLocal(
+    identity.currentAgentId.value,
+    identity.currentModelId.value,
+    level,
+  )
   persistSessionUpdate({ thinkingEffort: level })
 }
 

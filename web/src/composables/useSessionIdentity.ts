@@ -371,7 +371,11 @@ export function reconcileThinkingEffort(serverId: string, levels: Array<{ id: st
     thinkingEffortState.syncAndFallback(serverId, levels, agentId, modelId)
     return
   }
-  thinkingEffortState.syncFromData('', levels)
+  // Clear first: syncFromData PRESERVES currentId when the incoming value is
+  // empty, which would keep the PREVIOUS model's level on the chip after a
+  // switch (the agent has not reported a level for the new model yet).
+  thinkingEffortState.clear()
+  thinkingEffortState.updateAvailable(levels)
   const effective = loadThinkingPrefForModel(agentId, modelId) || serverId
   if (effective) {
     thinkingEffortState.currentId.value = effective

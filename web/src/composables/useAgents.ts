@@ -413,6 +413,30 @@ function hasPreferredMode(agentId: string): boolean {
     return getEffectiveModeId(agentId) !== ''
 }
 
+/**
+ * Record a per-model effort pick in the local agent cache (issue #552).
+ *
+ * The server persists the pick when the user clicks a level, but the agent list
+ * is cached (loadAgents() early-returns once loaded) and nothing pushes this
+ * field over the WS. Without this optimistic write, a new chat opened in the
+ * same SPA session reads a stale list, falls back to the agent's own default,
+ * and then SENDS that stale level as an explicit override on the next message —
+ * which beats the pick the server remembered. The bug would survive for the
+ * exact flow the issue reports.
+ */
+function setThinkingEffortForModelLocal(agentId: string, modelId: string, level: string): void {
+    if (!agentId || !modelId) return
+    const agent = agents.value.find(a => a.id === agentId)
+    if (!agent) return
+    // Replace the map instead of mutating it: the value is read by computed
+    // consumers, and a nested mutation is invisible to them unless the parent
+    // object identity changes.
+    const next = { ...(agent.thinkingEffortByModel || {}) }
+    if (level) next[modelId] = level
+    else delete next[modelId]
+    agent.thinkingEffortByModel = next
+}
+
 /** Update a single field on an agent in the reactive store (for immediate UI feedback after PATCH). */
 function updateAgentField(agentId: string, field: string, value: unknown): void {
     const agent = agents.value.find(a => a.id === agentId)
@@ -762,6 +786,7 @@ export function useAgents() {
         hasThinkingEffortLevels,
         getEffectiveThinkingEffort,
         getEffectiveThinkingEffortForModel,
+        setThinkingEffortForModelLocal,
         getEffectiveModeId,
         hasPreferredMode,
         updateAgentField,

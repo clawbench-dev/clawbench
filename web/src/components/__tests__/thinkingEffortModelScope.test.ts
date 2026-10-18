@@ -91,3 +91,38 @@ describe('reconcileThinkingEffort', () => {
     expect(currentThinkingEffortName.value).toBe('high')
   })
 })
+
+describe('setThinkingEffortForModelLocal (issue #552, client-side mirror)', () => {
+  it('makes the pick visible to a NEW session opened in the same SPA session', () => {
+    // The server remembers the pick, but the agent list is cached and nothing
+    // pushes this field over the WS. Without the local mirror, opening a new
+    // chat reads a stale list, shows the agent's default, and then SENDS that
+    // stale level as an explicit override — beating the pick the server stored.
+    installAgent({})
+    const agents = useAgents()
+
+    agents.setThinkingEffortForModelLocal('opencode', 'glm-5.3', 'max')
+
+    // This is what a new session's initSessionFromAPI resolves through.
+    expect(agents.getEffectiveThinkingEffortForModel('opencode', 'glm-5.3')).toBe('max')
+  })
+
+  it('clears the entry when the level is empty', () => {
+    installAgent({ 'glm-5.3': 'max' })
+    const agents = useAgents()
+
+    agents.setThinkingEffortForModelLocal('opencode', 'glm-5.3', '')
+
+    expect(agents.getEffectiveThinkingEffortForModel('opencode', 'glm-5.3')).toBe('')
+  })
+
+  it('does not touch other models', () => {
+    installAgent({ 'deepseek-v4-pro': 'high' })
+    const agents = useAgents()
+
+    agents.setThinkingEffortForModelLocal('opencode', 'glm-5.3', 'max')
+
+    expect(agents.getEffectiveThinkingEffortForModel('opencode', 'deepseek-v4-pro')).toBe('high')
+    expect(agents.getEffectiveThinkingEffortForModel('opencode', 'glm-5.3')).toBe('max')
+  })
+})

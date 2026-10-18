@@ -1168,7 +1168,7 @@ func (c *ACPConn) setSessionConfigOption(ctx context.Context, acpSessionID, conf
 	configCtx, configCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer configCancel()
 
-	_, err := conn.SetSessionConfigOption(configCtx, acp.SetSessionConfigOptionRequest{
+	resp, err := conn.SetSessionConfigOption(configCtx, acp.SetSessionConfigOptionRequest{
 		ValueId: &acp.SetSessionConfigOptionValueId{
 			SessionId: acp.SessionId(acpSessionID),
 			ConfigId:  acp.SessionConfigId(configID),
@@ -1203,5 +1203,48 @@ func (c *ACPConn) setSessionConfigOption(ctx context.Context, acpSessionID, conf
 		return err
 	}
 	slog.Info("acp conn: set_config_option completed", "config_id", configID, "value", value)
+	// The response carries the agent's full config state AFTER the change. That
+	// is the authoritative per-model option list: OpenCode's thought_level
+	// options depend on the selected model (glm offers low/high/max/default,
+	// deepseek only high/max/default), so a list learned from a previous model
+	// must not survive a switch. Without this, a stale wider list keeps
+	// advertising levels the current model rejects.
+	c.applyConfigOptionsFromSetResponse(resp.ConfigOptions)
 	return nil
+}
+
+// applyConfigOptionsFromSetResponse refreshes the registry's option lists from
+// a set_config_option response.
+//
+// Only the option LISTS are taken (the current value is applied by the caller
+// through its own dedup bookkeeping). Every category present is updated, so a
+// model switch that narrows the effort levels is reflected immediately.
+func (c *ACPConn) applyConfigOptionsFromSetResponse(opts []acp.SessionConfigOption) {
+	if len(opts) == 0 {
+		return
+	}
+	agentID := c.AgentID()
+	if agentID == "" {
+		return
+	}
+	reg := GetAgentCapabilityRegistry()
+	for _, opt := range opts {
+		if opt.Select == nil || opt.Select.Category == nil {
+			continue
+		}
+		sel := buildSelectStateFromACPSelect(opt.Select, string(*opt.Select.Category))
+		if sel.IsEmpty() {
+			continue
+		}
+		category := sel.Category
+		switch string(*opt.Select.Category) {
+		case string(acp.SessionConfigOptionCategoryThoughtLevel):
+			category = "thought_level"
+		case string(acp.SessionConfigOptionCategoryMode):
+			category = "mode"
+		case string(acp.SessionConfigOptionCategoryModel):
+			category = "model"
+		}
+		reg.UpdateAvailableOptions(agentID, category, sel.Available)
+	}
 }

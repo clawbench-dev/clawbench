@@ -247,3 +247,25 @@ func TestRememberEffortForModel_SkipsUnchangedWrite(t *testing.T) {
 
 	assert.Same(t, before, after, "an unchanged pick must not republish the agent")
 }
+
+// TestApplySessionConfigSelections_InvalidLevelNotPersisted pins the ordering
+// fix: validation happens BEFORE the context_state write.
+//
+// A level the agent does not advertise must not become a stored user pick. The
+// ACP layer no longer records a rejected value (so it stays retryable), which
+// means a persisted invalid pick would be re-sent on EVERY turn and returned by
+// GET as the user's choice, with nothing in the UI to explain why the level
+// never takes effect.
+func TestApplySessionConfigSelections_InvalidLevelNotPersisted(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+	setAgentEffortLevels(t, "opencode", []string{"low", "high", "max"}, "glm-5.3")
+
+	sid, err := service.CreateSession(env.ProjectDir, "opencode", "Invalid persist", "opencode", "glm-5.3", "user", "chat")
+	require.NoError(t, err)
+
+	applySessionConfigSelections(sid, "", "ultra", "")
+
+	_, _, ok := service.UserThinkingEffortPick(sid)
+	assert.False(t, ok, "an unadvertised level must not be stored as a user pick")
+}

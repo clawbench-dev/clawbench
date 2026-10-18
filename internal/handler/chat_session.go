@@ -724,9 +724,15 @@ func switchSessionEffortToModel(sessionID, modelID string, deferred bool) string
 	}
 	// A remembered pick may not exist on this model (OpenCode's lists differ per
 	// model). Applying it would be rejected on every turn, so clear the pick
-	// instead of leaving a value that can never take effect. Only possible when
-	// the agent has already advertised this model's levels; an unknown list must
-	// not discard the user's choice.
+	// instead of leaving a value that can never take effect.
+	//
+	// The registry's list is agent-level and, before this fix, was only updated
+	// when a model advertised an ID it had not seen — a narrower model's list
+	// (deepseek: high/max/default) is a SUBSET of the previous one (glm:
+	// low/high/max/default), so it was never refreshed and this check would
+	// happily accept a level the current model rejects. The registry now also
+	// tracks removals, and an UNKNOWN list (nothing advertised yet) must not
+	// discard the user's choice — the agent stays authoritative in that case.
 	if levels := ai.GetAgentCapabilityRegistry().GetThinkingEffortState(agent.ID, ""); levels != nil && len(levels.AvailableLevels) > 0 {
 		valid := false
 		for _, l := range levels.AvailableLevels {
@@ -737,7 +743,8 @@ func switchSessionEffortToModel(sessionID, modelID string, deferred bool) string
 		}
 		if !valid {
 			slog.Info("remembered effort not offered by this model, clearing it",
-				"session_id", sessionID, "agent_id", agent.ID, "model", modelID, "level", effort)
+				"session_id", sessionID, "agent_id", agent.ID, "model", modelID, "level", effort,
+				"available", len(levels.AvailableLevels))
 			persistContextStateThinkingEffortChange(sessionID, "", modelID)
 			return ""
 		}
@@ -930,11 +937,21 @@ func applySessionConfigSelections(sessionID, modeID, thinkingEffort, modelKey st
 		if modelID == "" {
 			modelID = currentEffortModelKey(sessionID)
 		}
-		persistContextStateThinkingEffortChange(sessionID, thinkingEffort, modelID)
 		// Validate only when the model is not changing in this same request: the
 		// registry still holds the previous model's level list (see
 		// rememberEffortForModel).
-		rememberEffortForModel(sessionID, modelID, thinkingEffort, modelKey == "")
+		//
+		// Validate BEFORE persisting: a level the agent does not advertise must
+		// not become a stored user pick. The ACP layer no longer records a
+		// rejected value (so it stays retryable), which means a persisted
+		// invalid pick would be re-sent on EVERY turn and shown by GET as the
+		// user's choice, with no way for them to notice.
+		if !rememberEffortForModel(sessionID, modelID, thinkingEffort, modelKey == "") {
+			slog.Info("thinking effort not accepted for this agent/model, not persisting the pick",
+				"session_id", sessionID, "model", modelID, "level", thinkingEffort)
+			return
+		}
+		persistContextStateThinkingEffortChange(sessionID, thinkingEffort, modelID)
 		// The RPC is NOT sent here when a model switch rides the same request:
 		// the agent is still on the OLD model until applyAndPersistSessionModel
 		// runs (model is applied last), so pushing the new model's level now
@@ -965,10 +982,12 @@ func currentEffortModelKey(sessionID string) string {
 }
 
 // rememberEffortForModel stores the pick on the agent, keyed by model, so new
-// sessions and future switches back to that model restore it.
+// sessions and future switches back to that model restore it. It reports
+// whether the level is acceptable, so the caller can avoid persisting a pick
+// the agent would refuse.
 //
-// Failures are logged, not surfaced: the session-scoped pick above is already
-// persisted, so the user's click still takes effect for this conversation.
+// Failures are logged, not surfaced: the caller still applies the level to this
+// turn, so a storage problem does not block the user's click.
 //
 // validate is false when the same request also switches models: the ACP
 // registry still advertises the PREVIOUS model's levels at that point (the
@@ -977,37 +996,38 @@ func currentEffortModelKey(sessionID string) string {
 // there would silently drop a legitimate pick (e.g. "low" while switching to a
 // model that supports it). The agent itself is authoritative and rejects a
 // level it cannot run, which the ACP layer now reports instead of recording.
-func rememberEffortForModel(sessionID, modelID, level string, validate bool) {
+func rememberEffortForModel(sessionID, modelID, level string, validate bool) bool {
 	if modelID == "" {
-		return
+		return true
 	}
 	agentID := service.GetSessionAgentID(sessionID)
 	agent := model.GetAgent(agentID)
 	if agent == nil {
-		return
+		return true
 	}
 	if validate && !isValidThinkingEffort(agent, level) {
 		slog.Info("thinking effort pick not valid for agent, skipping per-model memory",
 			"session_id", sessionID, "agent_id", agentID, "model", modelID, "level", level)
-		return
+		return false
 	}
 	// Already remembered: skip the write. This is the picker's click path, so it
 	// is not hot, but a no-op save would still take the process-global write
 	// mutex and republish the agent pointer for nothing.
 	if agent.ThinkingEffortByModel[modelID] == level {
-		return
+		return true
 	}
 	if err := service.PatchAgentFields(agentID, service.AgentPatch{
 		ThinkingEffortForModel: &service.ThinkingEffortModelPatch{ModelID: modelID, Level: &level},
 	}); err != nil {
 		slog.Warn("failed to remember thinking effort for model", "session_id", sessionID, "agent_id", agentID, "model", modelID, "error", err)
-		return
+		return true
 	}
 	// Publish the change to in-memory readers (copy-on-write, same as the
 	// settings PATCH path — readers hold the previous *Agent without a lock).
 	model.UpdateAgent(agentID, func(a *model.Agent) {
 		a.SetThinkingEffortForModel(modelID, level)
 	})
+	return true
 }
 
 // applyAndPersistSessionModel applies a model selection at CLICK time and

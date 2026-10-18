@@ -136,3 +136,28 @@ func TestSetSessionConfigOption_RejectedValueKeepsRetryPossible(t *testing.T) {
 	require.Len(t, attempts, 2, "the retry must reach the agent after a rejection")
 	assert.Equal(t, "low", conn.GetCurrentThinkingEffortID())
 }
+
+// TestSetConfigOptionWithCrashCheck_RejectedValueIsNotRecorded pins the SAME
+// guard on the pre-prompt path (the one every turn actually uses).
+//
+// The per-turn apply goes through setConfigOptionWithCrashCheck, not
+// SetSessionConfigOption. Recording a rejected value there would mean the
+// session reports a level the agent refused AND dedup suppresses the retry for
+// the rest of the session — the "chip says LOW, agent runs something else" bug
+// (issue #552) on the primary code path.
+func TestSetConfigOptionWithCrashCheck_RejectedValueIsNotRecorded(t *testing.T) {
+	conn := NewACPConnForTest(&model.Agent{ID: "turn-reject", Backend: "opencode"}, "sid-turn-reject")
+	conn.SetSessionMappingForTest("sid-turn-reject", "acp-sid-turn-reject")
+	conn.alive = true
+	conn.conn = newLiveConnForTest(t)
+	conn.SetConfigOptionFnForTest(func(context.Context, string, string, string) error {
+		return errors.New("Invalid params: effort not found: low")
+	})
+
+	// A rejected VALUE must not fail the turn (the agent keeps its own default).
+	require.NoError(t, conn.setConfigOptionWithCrashCheck(context.Background(), "acp-sid-turn-reject",
+		configOptionSpec{configID: "effort", value: "low", label: "thinking_effort"}))
+
+	assert.True(t, conn.shouldSetConfig("effort", "low"),
+		"a rejected value must stay retryable on the per-turn path too")
+}
