@@ -182,6 +182,13 @@ public class H2PortForwardTransportRealSocketTest {
      * The accept thread is blocked in {@code accept()}; closing the listener must
      * end it. Asserted on the specific thread instance (thread names restart at
      * {@code H2Tunnel-1} per transport, so a name count would be ambiguous).
+     *
+     * <p>The wait must be on "a thread NOT in {@code before} exists", not on
+     * "the count grew". A previous test's accept thread can still be winding
+     * down while this one starts: its exit and this one's birth cancel out, the
+     * total never grows, and the assertion times out even though the new accept
+     * loop is running. That is a property of the snapshot, not of the
+     * transport — the set difference is the actual thing being asked for.
      */
     @Test
     public void close_stopsTheAcceptThread() throws Exception {
@@ -191,9 +198,8 @@ public class H2PortForwardTransportRealSocketTest {
         transport.addLocal(port, 80, LOOPBACK);
 
         assertTrue("the accept loop must be running on its own thread",
-                waitFor(() -> tunnelThreads().size() > before.size()));
-        Set<Thread> spawned = tunnelThreads();
-        spawned.removeAll(before);
+                waitFor(() -> !newTunnelThreads(before).isEmpty()));
+        Set<Thread> spawned = newTunnelThreads(before);
         assertEquals("addLocal must spawn exactly the accept thread", 1, spawned.size());
         Thread acceptThread = spawned.iterator().next();
 
@@ -313,6 +319,19 @@ public class H2PortForwardTransportRealSocketTest {
             }
         }
         return threads;
+    }
+
+    /**
+     * Tunnel threads that were not present in {@code before}.
+     *
+     * <p>Use this instead of comparing {@code size()}: a thread from an earlier
+     * test can be exiting at the same moment a new one starts, so the total can
+     * stay flat while the new thread is very much alive.
+     */
+    private static Set<Thread> newTunnelThreads(Set<Thread> before) {
+        Set<Thread> spawned = tunnelThreads();
+        spawned.removeAll(before);
+        return spawned;
     }
 
     private static boolean waitFor(BooleanSupplier condition) throws InterruptedException {
