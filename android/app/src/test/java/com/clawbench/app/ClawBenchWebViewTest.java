@@ -17,6 +17,7 @@ import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
+import org.robolectric.shadows.ShadowLooper;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -703,5 +704,151 @@ public class ClawBenchWebViewTest {
 
         assertEquals("an empty selection must leave the clipboard alone",
                 "untouched", cm.getPrimaryClip().getItemAt(0).coerceToText(ctx).toString());
+    }
+
+    // ── double-tap entry point ──────────────────────────────────────────
+
+    /**
+     * With no listener there is nothing to handle the menu's actions, so opening
+     * one would show buttons that close it and do nothing. The entry point must
+     * bail BEFORE scheduling work.
+     */
+    @Test
+    public void showSelectionMenuIsANoOpWithoutAListener() {
+        webView.setSelectionActionListener(null);
+        webView.showSelectionMenuNowForTest("word", 0.1f, 0.1f, 0.2f, 0.2f);
+
+        assertFalse("no menu may be opened without a listener",
+                webView.hasFloatingActionModeForTest());
+    }
+
+    /**
+     * A second double-tap must supersede the first menu rather than stack a
+     * second one on top of it.
+     */
+    @Test
+    public void showSelectionMenuClosesThePreviousMenu() {
+        webView.setSelectionActionListener(action -> {
+        });
+        FakeActionMode previous = new FakeActionMode();
+        webView.setFloatingActionModeForTest(previous);
+
+        // Robolectric returns null from startActionMode (no selection
+        // controller), which is fine: what matters is that the PREVIOUS mode was
+        // finished before the new one was requested.
+        webView.showSelectionMenuNowForTest("word", 0.1f, 0.1f, 0.2f, 0.2f);
+
+        assertTrue("the superseded menu must be finished", previous.finished);
+    }
+
+    /**
+     * The programmatic entry point is reached from a @JavascriptInterface method,
+     * i.e. off the UI thread, so it must POST rather than call startActionMode
+     * inline.
+     *
+     * An unattached View queues the runnable instead of running it, which is
+     * exactly the "not inline" property being pinned: the supersede work has not
+     * happened yet at the moment showSelectionMenu returns.
+     */
+    @Test
+    public void showSelectionMenuDefersToTheUiThread() {
+        webView.setSelectionActionListener(action -> {
+        });
+        FakeActionMode previous = new FakeActionMode();
+        webView.setFloatingActionModeForTest(previous);
+
+        webView.showSelectionMenu("word", 0.1f, 0.1f, 0.2f, 0.2f);
+        assertFalse("the work must not run inline", previous.finished);
+    }
+
+    /** A null selection text must not NPE — it becomes "". */
+    @Test
+    public void showSelectionMenuAcceptsNullText() {
+        webView.setSelectionActionListener(action -> {
+        });
+
+        webView.showSelectionMenuNowForTest(null, 0.1f, 0.1f, 0.2f, 0.2f);
+        // No assertion on the mode (Robolectric yields null); reaching here
+        // without an exception is the contract.
+        assertFalse(webView.hasFloatingActionModeForTest());
+    }
+
+    // ── constructors ────────────────────────────────────────────────────
+
+    /**
+     * The view is inflated from XML by name, so the (Context, AttributeSet)
+     * constructor is the one the app actually uses. It must not throw.
+     */
+    @Test
+    public void constructsFromAttributeSet() {
+        android.util.AttributeSet attrs =
+                org.robolectric.Robolectric.buildAttributeSet().build();
+        ClawBenchWebView fromXml = new ClawBenchWebView(ctx, attrs);
+        assertNotNull(fromXml);
+    }
+
+    /** Same, with an explicit defStyleAttr (the 3-arg overload). */
+    @Test
+    public void constructsFromAttributeSetWithDefStyle() {
+        android.util.AttributeSet attrs =
+                org.robolectric.Robolectric.buildAttributeSet().build();
+        ClawBenchWebView fromXml = new ClawBenchWebView(ctx, attrs, 0);
+        assertNotNull(fromXml);
+    }
+
+    // ── label resolution ────────────────────────────────────────────────
+
+    /**
+     * Outside a MainActivity the label falls back to the plain resource string.
+     * The Robolectric application context is not a MainActivity, so this pins
+     * the fallback branch (the MainActivity branch needs the real Activity).
+     */
+    @Test
+    public void labelFallsBackToTheResourceString() {
+        String expected = ctx.getString(SelectionMenuPolicy.labelRes(SelectionMenuPolicy.Action.QUOTE));
+        String actual = webView.labelForForTest(SelectionMenuPolicy.Action.QUOTE);
+        assertEquals(expected, actual);
+    }
+
+    // ── wrapper: non-Callback2 delegate ─────────────────────────────────
+
+    /**
+     * A plain {@code ActionMode.Callback} delegate has no onGetContentRect, so
+     * the wrapper must fall back to its own super implementation instead of
+     * casting. Reaching the cast would throw ClassCastException on a device.
+     */
+    @Test
+    public void wrapperFallsBackToSuperForNonCallback2Delegate() {
+        ActionMode.Callback plain = new ActionMode.Callback() {
+            @Override
+            public boolean onCreateActionMode(ActionMode mode, Menu menu) {
+                return true;
+            }
+
+            @Override
+            public boolean onPrepareActionMode(ActionMode mode, Menu menu) {
+                return true;
+            }
+
+            @Override
+            public boolean onActionItemClicked(ActionMode mode, MenuItem item) {
+                return false;
+            }
+
+            @Override
+            public void onDestroyActionMode(ActionMode mode) {
+            }
+        };
+        ActionMode.Callback wrapper = webView.wrap(plain);
+        assertTrue(wrapper instanceof ActionMode.Callback2);
+
+        Rect rect = new Rect(1, 2, 3, 4);
+        // Callback2's default onGetContentRect calls outRect.setEmpty() — that is
+        // the framework behaviour a plain Callback delegate gets. The point of
+        // this test is that the super path is reached without a ClassCastException;
+        // the emptied rect is the observable proof it was the super, not a cast.
+        ((ActionMode.Callback2) wrapper).onGetContentRect(new FakeActionMode(), webView, rect);
+        assertTrue("the default Callback2 implementation empties the rect",
+                rect.isEmpty());
     }
 }

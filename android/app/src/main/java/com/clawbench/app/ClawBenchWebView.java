@@ -318,6 +318,24 @@ public class ClawBenchWebView extends WebView {
         copyFloatingSelection();
     }
 
+    /** Test seam: resolve a menu label without building a menu. */
+    String labelForForTest(SelectionMenuPolicy.Action action) {
+        return labelFor(action);
+    }
+
+    /**
+     * Test seam: run the UI-thread body directly.
+     *
+     * {@code showSelectionMenu} reaches it through {@code post}, but an
+     * unattached View parks the runnable in its HandlerActionQueue until it is
+     * attached — which Robolectric never does. Driving the body directly keeps
+     * the supersede/scale logic testable without a window.
+     */
+    void showSelectionMenuNowForTest(
+            @Nullable String text, float left, float top, float right, float bottom) {
+        showSelectionMenuOnUiThread(text == null ? "" : text, left, top, right, bottom);
+    }
+
     /** Resolve a label through the Activity's user-language resolver. */
     private String labelFor(SelectionMenuPolicy.Action action) {
         Context ctx = getContext();
