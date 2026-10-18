@@ -102,10 +102,24 @@ public final class SelectionMenuPolicy {
      * The items the PROGRAMMATIC (double-tap) menu installs, in order.
      *
      * This menu is ours from scratch — nothing else contributes to it — so it
-     * has to carry Copy itself, ahead of the two quote actions.
+     * has to carry Copy itself.
+     *
+     * Copy comes LAST, not first, so the two menus agree on what the user sees.
+     * On the long-press menu Chromium contributes Copy itself, and it lands in
+     * the system group (orderInCategory 3) AFTER our items (order 0):
+     *
+     * <pre>
+     *   long-press: 引用 讨论 搜索文件 | assist 剪切 复制 粘贴 分享 全选 …
+     *   double-tap: 引用 讨论 搜索文件 复制
+     * </pre>
+     *
+     * The shared prefix — the items WE add — is therefore identical on both
+     * menus, and Copy occupies the same "system action" slot at the end. Putting
+     * Copy first made the double-tap menu start with an entry the long-press
+     * menu shows fifth, which is the inconsistency this order removes.
      */
     public static final int[] FLOATING_MENU_ORDER = {
-            ID_COPY, ID_QUOTE, ID_COMMENT, ID_SEARCH_FILE};
+            ID_QUOTE, ID_COMMENT, ID_SEARCH_FILE, ID_COPY};
 
     /**
      * Menu order for an action — always 0, for both.
