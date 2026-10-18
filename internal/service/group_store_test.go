@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/store"
 
@@ -1999,4 +2000,59 @@ func TestWakeQueuedAfterCompaction(t *testing.T) {
 	if got := GetQueuedCount(groupID); got != 0 {
 		t.Fatalf("queued count = %d, want 0", got)
 	}
+}
+
+// TestCompactionSystemRows pins the two markers a member compaction leaves on
+// the group timeline.
+//
+// Why they exist: compaction silently rewrites what that member remembers, so
+// the discussion needs a marker explaining why its earlier detail stopped being
+// available. They go through the SAME channel as membership rows — a
+// role='system' row, rendered as a centered line and injected to members as
+// "[系统] …" — never as speech.
+func TestCompactionSystemRows(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest-compact-rows"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostMemberID, err := CreateGroup(project, "c", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+
+	before := &ai.UsageState{Used: 320000, Size: 1000000}
+	after := &ai.UsageState{Used: 30000, Size: 1000000}
+	writeCompactionSystemMessage(project, groupID, "Host", hostMemberID, "GroupMemberCompactionStarted", nil)
+	writeCompactionSystemMessage(project, groupID, "Host", hostMemberID, "GroupMemberCompactionDone",
+		map[string]any{"Before": usagePercentLabel(before), "After": usagePercentLabel(after)})
+
+	msgs, err := GetMessagesBySessionIDRaw(groupID)
+	require.NoError(t, err)
+	var systemRows []string
+	for _, m := range msgs {
+		if m.Role == "system" {
+			systemRows = append(systemRows, ExtractPlainText(m.Content))
+		}
+	}
+	require.Len(t, systemRows, 2, "compaction must leave exactly a start/finish pair")
+
+	// Both rows name the member (so a group with several members is unambiguous)
+	// and are readable sentences, not i18n keys.
+	for _, row := range systemRows {
+		assert.Contains(t, row, "Host", "the row must name the member: %q", row)
+		assert.NotContains(t, row, "GroupMemberCompaction", "a key leaked into the timeline: %q", row)
+	}
+	// The finish row reports the actual effect, which is the point of the pair.
+	assert.Contains(t, systemRows[1], "32%", systemRows[1])
+	assert.Contains(t, systemRows[1], "3%", systemRows[1])
+}
+
+// TestUsagePercentLabel pins the "unknown is not 0%" rule used by the finish row.
+func TestUsagePercentLabel(t *testing.T) {
+	assert.Equal(t, "—", usagePercentLabel(nil))
+	assert.Equal(t, "—", usagePercentLabel(&ai.UsageState{Used: 100, Size: 0}))
+	assert.Equal(t, "0%", usagePercentLabel(&ai.UsageState{Used: 0, Size: 1000}))
+	assert.Equal(t, "32%", usagePercentLabel(&ai.UsageState{Used: 320000, Size: 1000000}))
+	assert.Equal(t, "100%", usagePercentLabel(&ai.UsageState{Used: 1000, Size: 1000}))
 }

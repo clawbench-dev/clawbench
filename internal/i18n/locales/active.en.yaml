@@ -238,6 +238,9 @@ CruiseMaxRounds: "Auto-cruise: reached the confirmation-round limit"
 # history — matching decision 96b.
 GroupMemberJoined: '{{.Name}} joined the discussion'
 GroupMemberLeft: '{{.Name}} left'
+GroupMemberCompactionStarted: '{{.Name}} is compacting its context…'
+GroupMemberCompactionDone: '{{.Name}} compacted its context ({{.Before}} → {{.After}})'
+GroupMemberCompactionFailed: '{{.Name}} failed to compact its context'
 GroupMemberUnknown: Member
 GroupUnknownMention: '{{.Speaker}} @-mentioned a member who does not exist: {{.Names}} (ignored)'
 GroupMemberListSeparator: ', '

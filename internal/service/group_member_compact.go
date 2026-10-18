@@ -6,10 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"sync"
 	"time"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/i18n"
+	"clawbench/internal/model"
 )
 
 // group_member_compact.go lets the user compact ONE group member's context.
@@ -18,8 +21,16 @@ import (
 // (TimelineSessionID), so running "/compact" through runTurn would persist a
 // user bubble ("/compact") and an assistant reply on the group timeline, where
 // every member would then read them as ordinary discussion. Compaction is a
-// command addressed to one agent's own context — it must produce no timeline
-// output at all.
+// command addressed to one agent's own context — it must produce no
+// CONVERSATIONAL output on the timeline.
+//
+// It DOES write two role='system' rows (started / finished), because the
+// compaction silently rewrites what that member remembers: the discussion needs
+// a marker explaining why its answers may suddenly lose earlier detail. System
+// rows are the established channel for exactly this (membership changes use
+// them too) — they are rendered as a centered line, never as speech, and they
+// ARE injected to members as "[系统] …" so nobody mistakes the reset for the
+// member contradicting itself.
 //
 // So this path drives the ACP backend directly: build the member's request,
 // send "/compact", consume the events (persisting the context-state patches
@@ -136,11 +147,27 @@ func CompactGroupMember(ctx context.Context, groupID, memberID string) (*ai.Usag
 	markGroupMembersActive([]string{memberID})
 	defer clearGroupMembersActive([]string{memberID})
 
+	projectPath := GetSessionProjectPathAnyPath(groupID)
+	// Capture the window BEFORE the compaction so the finished row can report the
+	// real effect ("32% → 3%"). Without a before/after pair the marker says a
+	// reset happened but not whether it helped.
+	beforeUsage := currentMemberUsage(memberID)
+
+	// Tell the group the compaction is happening. Written BEFORE the agent round
+	// trip: that takes tens of seconds, and a silent gap is exactly what makes a
+	// later context reset look like the member losing its thread.
+	writeCompactionSystemMessage(projectPath, groupID, member.Name, member.AgentID, "GroupMemberCompactionStarted", nil)
+
 	runErr, err := runMemberCompact(ctx, groupID, memberID, agentID, transport)
 	if err != nil {
+		// Setup failed (backend create / stream start): nothing was compacted.
+		// Close the pair so the timeline does not keep claiming a compaction that
+		// never happened.
+		writeCompactionSystemMessage(projectPath, groupID, member.Name, member.AgentID, "GroupMemberCompactionFailed", nil)
 		return nil, err
 	}
 	if runErr != nil {
+		writeCompactionSystemMessage(projectPath, groupID, member.Name, member.AgentID, "GroupMemberCompactionFailed", nil)
 		return nil, runErr
 	}
 	// Flag unconditionally as well: the user asked for a compaction, and several
@@ -152,7 +179,45 @@ func CompactGroupMember(ctx context.Context, groupID, memberID string) (*ai.Usag
 	// instead of pinning it until the process exits.
 	ai.GetACPConnManager().MarkIdle(memberID)
 
-	return currentMemberUsage(memberID), nil
+	afterUsage := currentMemberUsage(memberID)
+	writeCompactionSystemMessage(projectPath, groupID, member.Name, member.AgentID, "GroupMemberCompactionDone",
+		map[string]any{
+			"Before": usagePercentLabel(beforeUsage),
+			"After":  usagePercentLabel(afterUsage),
+		})
+
+	return afterUsage, nil
+}
+
+// usagePercentLabel renders a usage snapshot as "32%", or "—" when the agent
+// never reported a window. Used in the compaction system row, where a missing
+// value must read as "unknown" rather than "0%".
+func usagePercentLabel(usage *ai.UsageState) string {
+	if usage == nil || usage.Size <= 0 {
+		return "—"
+	}
+	return fmt.Sprintf("%d%%", int(math.Round(float64(usage.Used)/float64(usage.Size)*100)))
+}
+
+// writeCompactionSystemMessage appends one role='system' row about a member's
+// context compaction to the GROUP timeline.
+//
+// Same channel as the membership rows (writeGroupSystemMessage): centered line
+// in the UI, persisted once, broadcast after commit, and injected to members as
+// "[系统] …" on their next turn. That last part is the point — the member's
+// memory really did shrink, and the discussion needs to know why its earlier
+// detail stopped being available.
+//
+// Localized at WRITE time (model.Language), matching every other group system
+// row: the text is persisted and injected, so a key would reach members as an
+// unreadable identifier.
+func writeCompactionSystemMessage(projectPath, groupID, memberName, agentID, messageID string, extra map[string]any) {
+	data := map[string]any{"Name": memberName + memberSpecialtySuffix(agentID)}
+	for k, v := range extra {
+		data[k] = v
+	}
+	writeGroupSystemMessage(projectPath, groupID,
+		i18n.T(i18n.LocalizerForLocale(model.Language), messageID, data))
 }
 
 // wakeQueuedAfterCompaction starts the consumer for messages that were queued
@@ -226,6 +291,11 @@ func endCompaction(memberID string) {
 	compactingMu.Unlock()
 }
 
+// newBackendForAgent is a seam for tests: the real call would spawn an ACP
+// subprocess, which a unit test cannot do. Production always uses the ai
+// factory (same pattern as injectMidTurn in midturn.go).
+var newBackendForAgent = ai.NewBackendForAgentWithTransport
+
 // runMemberCompact sends "/compact" to the member's agent and consumes the
 // stream. It returns a user-facing error (runErr) separately from a setup
 // failure (err) so the caller can tell "the agent refused" from "we could not
@@ -240,7 +310,7 @@ func runMemberCompact(ctx context.Context, groupID, memberID, agentID, transport
 	// would open a BRAND NEW agent session and compact an empty context.
 	applyMemberResumeOverrides(&req, GetExternalSessionID(memberID), true)
 
-	be, err := ai.NewBackendForAgentWithTransport(backend, agentID, transport)
+	be, err := newBackendForAgent(backend, agentID, transport)
 	if err != nil {
 		return nil, fmt.Errorf("create backend: %w", err)
 	}

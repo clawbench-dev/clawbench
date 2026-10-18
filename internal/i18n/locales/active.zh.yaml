@@ -235,6 +235,9 @@ CruiseMaxRounds: '自动巡航：已达确认轮数上限'
 # 可读句子、绝不能是键名。切换语言不会追溯翻译历史（与决策 96b 一致）。
 GroupMemberJoined: '{{.Name}}加入了讨论'
 GroupMemberLeft: '{{.Name}} 已离场'
+GroupMemberCompactionStarted: '{{.Name}} 正在压缩上下文…'
+GroupMemberCompactionDone: '{{.Name}} 已压缩上下文（{{.Before}} → {{.After}}）'
+GroupMemberCompactionFailed: '{{.Name}} 的上下文压缩失败'
 GroupMemberUnknown: 成员
 GroupUnknownMention: '{{.Speaker}} @ 了一个不存在的成员：{{.Names}}（已忽略）'
 GroupMemberListSeparator: 、
