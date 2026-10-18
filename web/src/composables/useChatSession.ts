@@ -8,7 +8,7 @@ import { appLog } from '@/utils/appLog'
 import { reportCancelRoundTrip } from '@/utils/cancelRoundTrip'
 
 const TAG = 'ChatSession'
-import { updateAvailableModes, updateCommandState, updateAvailableThinkingEfforts, clearUsageStateById, updateUsageState, currentAgentId as _currentAgentId, clearSessionIdentity, reconcileRunningSessions } from '@/composables/useSessionIdentity.ts'
+import { updateAvailableModes, updateCommandState, updateAvailableThinkingEfforts, clearUsageStateById, updateUsageState, currentAgentId as _currentAgentId, clearSessionIdentity, reconcileRunningSessions, reconcileThinkingEffort } from '@/composables/useSessionIdentity.ts'
 import { getRecentSession, clearRecentSession } from '@/composables/useRecentSession'
 import { clearPlanState, updatePlanEntries } from '@/composables/usePlanProgress'
 import { clearTeamState } from '@/composables/useTeamState'
@@ -343,7 +343,10 @@ export function useChatSession(options: UseChatSessionOptions) {
       }
     }
     syncModelFromData(currentAgentId.value, sessionData.modelId as string)
-    syncThinkingEffortFromData((sessionData.thinkingEffortState as Record<string, unknown>)?.currentId as string || '')
+    syncThinkingEffortFromData(
+      (sessionData.thinkingEffortState as Record<string, unknown>)?.currentId as string || '',
+      !!(sessionData.thinkingEffortState as Record<string, unknown>)?.userPicked,
+    )
     syncModeFromData(
       (sessionData.modeState as Record<string, unknown>)?.currentModeId as string || '',
       (sessionData.modeState as Record<string, unknown>)?.availableModes as Array<{id: string; name: string}> || [],
@@ -404,7 +407,7 @@ export function useChatSession(options: UseChatSessionOptions) {
 
   // ── Identity refs from singleton ──
   const identity = useSessionIdentity()
-  const { currentSessionTitle, currentBackend, currentSessionType, currentAgentId, currentModelId, currentModelName, runningSessions, runningSessionsVersion, availableCommands, autoApprove, cruise, thinkingEffortState, modeState } = identity
+  const { currentSessionTitle, currentBackend, currentSessionType, currentAgentId, currentModelId, currentModelName, runningSessions, runningSessionsVersion, availableCommands, autoApprove, cruise, modeState } = identity
 
   // ── Agents from singleton ──
   const { agents, loadAgents, getAgentBackend, getAgentName, getAgent, syncModelFromAgent, getAgentModel, agentHeaderTitle: makeAgentTitle, supportsACP } = useAgents()
@@ -443,10 +446,14 @@ export function useChatSession(options: UseChatSessionOptions) {
     }
   }
 
-  // Helper: sync thinking effort from server data
-  // Falls back to localStorage for a previously saved preference.
-  function syncThinkingEffortFromData(thinkingEffortFromServer: string) {
-    thinkingEffortState.syncAndFallback(thinkingEffortFromServer, [], currentAgentId.value)
+  // Helper: sync thinking effort from server data.
+  //
+  // `userPicked` distinguishes the user's own choice from the agent's per-model
+  // default (issue #552). Only the former is authoritative; for the latter the
+  // remembered pick for this model wins, because that is what the next turn
+  // will run (see reconcileThinkingEffort).
+  function syncThinkingEffortFromData(thinkingEffortFromServer: string, userPicked: boolean) {
+    reconcileThinkingEffort(thinkingEffortFromServer, [], currentAgentId.value, currentModelId.value, userPicked)
   }
 
   function syncModeFromData(modeIdFromServer?: string, availableModes?: Array<{id: string; name: string}>) {

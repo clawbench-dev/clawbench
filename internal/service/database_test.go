@@ -3516,6 +3516,7 @@ func TestSchema_AgentDisabledMigration_FromOldSchema(t *testing.T) {
 			preferred_mode TEXT NOT NULL DEFAULT '',
 			preferred_model TEXT NOT NULL DEFAULT '',
 			preferred_thinking_effort TEXT NOT NULL DEFAULT '',
+			thinking_effort_by_model TEXT NOT NULL DEFAULT '{}',
 			custom_system_prompt TEXT NOT NULL DEFAULT '',
 			avatar TEXT NOT NULL DEFAULT '',
 			models TEXT NOT NULL DEFAULT '[]',

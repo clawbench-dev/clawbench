@@ -1509,6 +1509,11 @@ paths:
           description: |
             已更新。`modelSwitchDeferred=true` 表示会话正忙，模型选择已写库但需等下一次
             发送时才应用（"记住但延后"）。
+
+            `thinkingEffort` 仅在请求同时切换了 `modelId` 且未显式传 `thinkingEffort`
+            时出现：它是新模型将要实际使用的思考等级（该模型记住的偏好 > agent 默认），
+            供客户端立即更新选择器并提示用户档位已变化。缺省表示该模型没有配置偏好，
+            由 agent 自己决定。
           content:
             application/json:
               schema:
@@ -1521,6 +1526,8 @@ paths:
                     description: |
                       仅当请求带 `modelId` 时可能出现。为 true 表示 agent 当前忙（或超时/
                       连接断开），切换被推迟到下一次发送；此时选择已持久化。
+                  thinkingEffort:
+                    type: string
         "422":
           description: |
             `modelId` 被 agent 拒绝且重试无用（例如该 provider 未连接）。响应为

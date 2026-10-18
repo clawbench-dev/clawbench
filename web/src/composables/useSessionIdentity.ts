@@ -28,7 +28,7 @@ const currentBackend = ref('')
 // make a group render as a single chat — fork/rewind/model chrome reappearing).
 const currentSessionType = ref('')
 export const currentAgentId = ref('')
-const currentModelId = ref('')
+export const currentModelId = ref('')
 const currentModelName = ref('')
 const currentTransport = ref('') // 'acp-stdio' or 'cli'
 const autoApprove = ref(false)
@@ -280,11 +280,27 @@ async function saveThinkingPref(agentId: string, _level: string) {
   // via the settings panel or SessionDrawer star button (which calls patchAgentPref directly).
 }
 
-function loadThinkingPref(agentId: string): string | null {
+// loadThinkingPref is the fallback used when the server has no current effort
+// for the session (see useSelectState.syncAndFallback). It resolves, in order,
+// the user's pick for the CURRENT model, then the model-independent default
+// (issue #552) — so switching back to a model restores what was chosen for it
+// instead of landing on the agent's own "low" default.
+function loadThinkingPref(agentId: string, modelId?: string): string | null {
   if (!agentId) return null
-  // Read from agent's server-side preference (preferredThinkingEffort > thinkingEffort)
-  const { getEffectiveThinkingEffort } = useAgents()
-  return getEffectiveThinkingEffort(agentId) || null
+  return loadThinkingPrefForModel(agentId, modelId || currentModelId.value)
+}
+
+/**
+ * Resolve the effort to pre-select for one agent+model pair (issue #552).
+ *
+ * Mirrors the server's model.Agent.ThinkingEffortForModel: the user's per-model
+ * pick wins, then the model-independent default. Returns null when neither is
+ * configured, leaving the agent's own reported default in place.
+ */
+export function loadThinkingPrefForModel(agentId: string, modelId: string): string | null {
+  if (!agentId) return null
+  const { getEffectiveThinkingEffortForModel } = useAgents()
+  return getEffectiveThinkingEffortForModel(agentId, modelId) || null
 }
 
 // ───────────────────────────────────────────────────────────
@@ -333,6 +349,38 @@ export function clearCommandState() {
 /** Update thinking effort state from REST API or user action (full state). */
 export function updateThinkingEffortState(currentId: string, levels: Array<{ id: string; name: string }>) {
   thinkingEffortState.update(currentId, levels)
+}
+
+/**
+ * Reconcile the effort shown for a session with what the user actually chose
+ * for the CURRENT model (issue #552).
+ *
+ * The server reports two different things in the same shape:
+ *   - a level the USER picked for this session (userPicked=true), and
+ *   - the level the AGENT reports for itself (userPicked=false) — its per-model
+ *     default, "low" for most OpenCode models.
+ *
+ * Only the first is authoritative. For the second, the user's remembered pick
+ * for this model wins, because that is what the next turn will run: showing the
+ * agent default would make the chip disagree with reality in the opposite
+ * direction. When there is no remembered pick, the agent's value is shown
+ * as-is (it IS what the model will run).
+ */
+export function reconcileThinkingEffort(serverId: string, levels: Array<{ id: string; name: string }>, agentId: string, modelId: string, userPicked: boolean) {
+  if (userPicked) {
+    thinkingEffortState.syncAndFallback(serverId, levels, agentId, modelId)
+    return
+  }
+  // Clear first: syncFromData PRESERVES currentId when the incoming value is
+  // empty, which would keep the PREVIOUS model's level on the chip after a
+  // switch (the agent has not reported a level for the new model yet).
+  thinkingEffortState.clear()
+  thinkingEffortState.updateAvailable(levels)
+  const effective = loadThinkingPrefForModel(agentId, modelId) || serverId
+  if (effective) {
+    thinkingEffortState.currentId.value = effective
+    thinkingEffortState.currentName.value = levels.find(l => l.id === effective)?.name || effective
+  }
 }
 
 /** Update available thinking effort levels without changing current selection.
@@ -698,7 +746,7 @@ export async function initSessionFromAPI() {
         }
         // Initialize thinking effort: from ACP state or agent preference
         thinkingEffortState.clear()
-        thinkingEffortState.syncAndFallback(data.thinkingEffortState?.currentId || '', data.thinkingEffortState?.availableLevels || [], data.agentId || '')
+        thinkingEffortState.syncAndFallback(data.thinkingEffortState?.currentId || '', data.thinkingEffortState?.availableLevels || [], data.agentId || '', data.modelId || '')
         // Initialize transport from agent's transport field
         if (data.transport) {
           currentTransport.value = data.transport
@@ -831,7 +879,7 @@ export function useSessionIdentity() {
           currentModelName.value = modelName
         }
         // Initialize thinking effort from agent preference
-        thinkingEffortState.loadPref(currentAgentId.value)
+        thinkingEffortState.loadPref(currentAgentId.value, currentModelId.value)
         // Auto-approve is server-authoritative: the backend persists the
         // session's auto_approve flag (initialized from the agent's configured
         // default) at creation time and returns it in the create response.

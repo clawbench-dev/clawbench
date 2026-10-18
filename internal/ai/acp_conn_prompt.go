@@ -490,10 +490,10 @@ func (c *ACPConn) setConfigOptionWithCrashCheck(ctx context.Context, acpSID stri
 	slog.Info("acp conn: set_config_option starting",
 		"config_id", cfg.configID, "label", cfg.label, "value", cfg.value,
 		"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID)
-	c.setSessionConfigOption(ctx, acpSID, cfg.configID, cfg.value)
+	setErr := c.setSessionConfigOption(ctx, acpSID, cfg.configID, cfg.value)
 	slog.Info("acp conn: set_config_option done",
 		"config_id", cfg.configID, "label", cfg.label, "value", cfg.value,
-		"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID, "elapsed", time.Since(configStart))
+		"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID, "elapsed", time.Since(configStart), "error", setErr)
 
 	if !c.IsAlive() {
 		diag := c.collectCrashDiagnostics()
@@ -504,6 +504,17 @@ func (c *ACPConn) setConfigOptionWithCrashCheck(ctx context.Context, acpSID stri
 			"ppid", diag.ParentPID, "rss_mb", diag.VMRSSKB/1024, "fds", diag.FDCount,
 			"stderr_tail", diag.StderrTail)
 		return errConfigKilledConnectionWithDiag(cfg.configID, cfg.value, diag)
+	}
+
+	// A value the agent explicitly refused must not be recorded as set: the
+	// session would report a level it never accepted, and dedup would suppress
+	// every retry (issue #552). The turn continues with whatever the agent
+	// already has, which is the only thing that is actually true.
+	if isInvalidConfigValue(setErr) {
+		slog.Warn("acp conn: agent refused config value, continuing with its own",
+			"config_id", cfg.configID, "label", cfg.label, "value", cfg.value,
+			"clawbench_sid", c.clawbenchSID, "error", setErr)
+		return nil
 	}
 
 	c.markConfigSet(cfg.configID, cfg.value)

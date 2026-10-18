@@ -1237,6 +1237,11 @@ async function handleSwitchModel(model) {
   // rebuilds its session agent and may probe the network), which without a
   // spinner reads as "the click did nothing".
   toast.show(t('chat.modelSwitcher.switching'), { type: 'loading', duration: 0 })
+  // Effort is model-scoped: capture the level in force BEFORE the switch so we
+  // can tell the user when it changes under them (issue #552). Without this the
+  // level silently moves (OpenCode reports "low" for most models) and the user
+  // only notices mid-task.
+  const effortBefore = identity.currentThinkingEffort.value
   try {
     const res = await apiPatch(
       `/api/ai/session/update?session_id=${encodeURIComponent(sid)}`,
@@ -1254,6 +1259,7 @@ async function handleSwitchModel(model) {
     } else {
       dismissSwitchingToast()
     }
+    applyEffortAfterModelSwitch(res, effortBefore)
   } catch (err) {
     // Same stale-session guard on the failure path — and the spinner must go,
     // or it hangs on screen for a switch the user has already navigated away from.
@@ -1275,6 +1281,39 @@ async function handleSwitchModel(model) {
 /** Clear the sticky "switching…" toast, leaving a result toast in place. */
 function dismissSwitchingToast() {
   if (toast.type.value === 'loading') toast.dismiss()
+}
+
+/**
+ * Reflect the effort the new model will actually run, and say so when it
+ * differs from what the user had (issue #552).
+ *
+ * The server resolves the level (remembered per-model pick > agent default) and
+ * returns it as `thinkingEffort`. ABSENT means "no preference for this model —
+ * the agent decides": the previous model's level must be cleared, because it is
+ * no longer in force (the server cleared the stored pick for exactly that
+ * reason). Keeping it would show "max" while the agent runs its own default —
+ * the same lie, mirrored.
+ *
+ * The notice matters because the change is otherwise invisible: the effort is
+ * not part of the model chip, so a switch that quietly drops "max" to "low"
+ * only surfaces when the user opens the settings drawer — often mid-task.
+ */
+function applyEffortAfterModelSwitch(res, effortBefore) {
+  const next = res?.thinkingEffort || ''
+  if (next === effortBefore) return
+  if (!next) {
+    // Unknown until the agent reports; show nothing rather than a stale level.
+    identity.thinkingEffortState.currentId.value = ''
+    identity.thinkingEffortState.currentName.value = ''
+    return
+  }
+  const levelObj = identity.thinkingEffortState.available.value.find(l => l.id === next)
+  identity.thinkingEffortState.currentId.value = next
+  identity.thinkingEffortState.currentName.value = levelObj?.name || next
+  toast.show(
+    t('chat.modelSwitcher.effortChanged', { effort: levelObj?.name || next }),
+    { icon: 'info', type: 'info', duration: 3000 },
+  )
 }
 
 /** Re-read the session's authoritative model after a rejected switch. */
@@ -1305,7 +1344,15 @@ function handleSwitchThinkingEffort(level) {
   // Resolve and set the friendly name for display
   const levelObj = identity.thinkingEffortState.available.value.find(l => l.id === level)
   identity.thinkingEffortState.currentName.value = levelObj?.name || level
-  // Persist thinking effort selection immediately so it survives page reload
+  // Persist thinking effort selection immediately so it survives page reload.
+  // The server also remembers it per model, but that write is invisible to the
+  // cached agent list — without the local mirror the next new chat would read
+  // the stale default and send it as an explicit override (issue #552).
+  agentsComposable.setThinkingEffortForModelLocal(
+    identity.currentAgentId.value,
+    identity.currentModelId.value,
+    level,
+  )
   persistSessionUpdate({ thinkingEffort: level })
 }
 

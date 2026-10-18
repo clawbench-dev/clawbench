@@ -473,8 +473,15 @@ func (r *AgentCapabilityRegistry) HasNewAvailableModes(agentID string, newModes 
 	return false
 }
 
-// HasNewAvailableThinkingEfforts returns true if the given levels contain
-// IDs not present in the registry.
+// HasNewAvailableThinkingEfforts reports whether the agent's available effort
+// levels differ from the registry's — in EITHER direction.
+//
+// A shrinking list matters as much as a growing one (issue #552): OpenCode's
+// levels are per model, and a narrower model's list can be a strict SUBSET of
+// the previous one (glm-5.3 offers low/high/max/default, deepseek-v4-pro only
+// high/max/default). Comparing "any new id?" alone would keep advertising the
+// wider list, so a level the current model cannot run would look valid and be
+// pushed on every turn, only to be rejected with -32602.
 func (r *AgentCapabilityRegistry) HasNewAvailableThinkingEfforts(agentID string, newLevels []ThinkingEffortDef) bool {
 	r.mu.RLock()
 	agentCap, ok := r.caps[agentID]
@@ -482,12 +489,15 @@ func (r *AgentCapabilityRegistry) HasNewAvailableThinkingEfforts(agentID string,
 	if !ok || agentCap == nil || len(agentCap.AvailableThinkingEfforts) == 0 {
 		return len(newLevels) > 0
 	}
-	seen := make(map[string]struct{}, len(agentCap.AvailableThinkingEfforts))
+	if len(agentCap.AvailableThinkingEfforts) != len(newLevels) {
+		return true
+	}
+	existing := make(map[string]struct{}, len(agentCap.AvailableThinkingEfforts))
 	for _, l := range agentCap.AvailableThinkingEfforts {
-		seen[l.ID] = struct{}{}
+		existing[l.ID] = struct{}{}
 	}
 	for _, l := range newLevels {
-		if _, found := seen[l.ID]; !found {
+		if _, found := existing[l.ID]; !found {
 			return true
 		}
 	}

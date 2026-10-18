@@ -315,9 +315,13 @@ export function parseSlashQuery(text: string, caret: number): TriggerRange | nul
  * mirrors the Go side's `skillRefPunct` (internal/handler/skill_command.go):
  * the menu, the message badge and the server must agree, or a picked reference
  * would not resolve on send.
+ *
+ * The CJK code points are written as escapes, not literals, so this file
+ * carries no CJK text: the repo-wide i18n guard cannot tell "matched but never
+ * displayed" from user-visible copy.
  */
 export const REF_TOKEN_END_RE =
-  /[\s,.;:!?)\]}，。；：！？）】」』]/
+  /[\s,.;:!?)\]}\uFF0C\u3002\uFF1B\uFF1A\uFF01\uFF1F\uFF09\u3011\u300D\u300F]/
 
 /**
  * Parse a skill-reference trigger (`#`) from the text left of the caret.

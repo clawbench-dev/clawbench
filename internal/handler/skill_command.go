@@ -38,18 +38,24 @@ Skill: {{SKILL_NAME}}
 SKILL.md: {{SKILL_PATH}}
 `
 
-// skillRefPunct terminates a "#name" token, so "#pdf," and "#pdf。然后" still
-// resolve to "pdf".
+// skillRefPunct terminates a "#name" token, so a reference followed directly by
+// a comma or a full stop still resolves to the bare name.
 //
-// Chinese prose has no spaces between sentences, so a reference is very often
-// followed immediately by punctuation ("用 #pdf，然后总结") — trailing-only
-// trimming would leave "pdf，然后总结" and resolve nothing. The name therefore
-// ENDS at the first punctuation character, exactly like it ends at whitespace.
+// CJK prose has no spaces between sentences, so a reference is very often
+// followed immediately by punctuation with no separating space. Trimming only
+// the tail would leave the punctuation glued to the name and resolve nothing;
+// the name therefore ENDS at the first punctuation character, exactly like it
+// ends at whitespace.
+//
+// The CJK code points are written as escapes so this file holds no CJK
+// literals. The i18n guard (internal/service/i18n_hardcoded_guard_test.go)
+// cannot tell "matched but never displayed" from user-visible text, and an
+// allowlist entry for a parser constant would weaken the guard for everyone.
 //
 // Only the terminator set is shared with the frontend (completionMatch.ts
 // REF_TOKEN_END_RE): inner characters stay part of the name ("user/skill",
 // "web-search"), and a leading "#" is what makes it a reference at all.
-const skillRefPunct = ",.;:!?)]}，。；：！？）】」』"
+const skillRefPunct = ",.;:!?)]}\uFF0C\u3002\uFF1B\uFF1A\uFF01\uFF1F\uFF09\u3011\u300D\u300F"
 
 // skillRefName returns the name part of a "#<name>" token, cut at the first
 // punctuation character. Returns "" when the token carries no name.

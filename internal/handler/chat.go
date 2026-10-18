@@ -221,12 +221,20 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 
 			// DB fallback: if any state is still nil after in-memory lookups,
 			// try to restore from persisted context_state (survives server restart).
+			//
+			// Thinking effort is restored ONLY when the user picked it. The same
+			// context_state entry also receives the value the AGENT reports for
+			// itself (its per-model default, "low" for most OpenCode models);
+			// presenting that as the session's current effort is what made new
+			// sessions look stuck on low (issue #552). Dropping it here lets the
+			// client fall back to the per-model / global default, which is what
+			// the next turn will actually use.
 			if modeState == nil || thinkingEffortState == nil || usageState == nil {
 				if ctxState := service.GetContextState(sessionID); ctxState != nil {
 					if modeState == nil && ctxState.Mode != nil {
 						modeState = ctxState.Mode
 					}
-					if thinkingEffortState == nil && ctxState.ThinkingEffort != nil {
+					if thinkingEffortState == nil && ctxState.ThinkingEffort != nil && ctxState.ThinkingEffort.UserPicked {
 						thinkingEffortState = ctxState.ThinkingEffort
 					}
 					if usageState == nil && ctxState.Usage != nil {
@@ -459,6 +467,17 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 	if req.ModelID != "" {
 		service.UpdateSessionModel(sessionID, req.ModelID)
 	}
+
+	// NOTE: `thinkingEffort` on the send is deliberately NOT treated as a user
+	// pick (issue #552).
+	//
+	// The frontend sends the CURRENT chip value on every direct send, and that
+	// value is legitimately the agent's own per-model default when the user has
+	// configured nothing (see reconcileThinkingEffort). Persisting it here would
+	// launder the agent's "low" into a user pick — re-creating the exact bug —
+	// and would freeze the global default the moment a message was sent. The
+	// explicit pick is recorded by the PATCH the picker fires when the user
+	// actually clicks a level; this request only applies it to the turn.
 
 	// Persist transport selection for this session so subsequent loads
 	// restore the user's choice instead of the agent default.

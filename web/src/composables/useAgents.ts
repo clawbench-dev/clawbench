@@ -43,6 +43,12 @@ interface AgentRecord {
   thinkingEffort?: string
   thinkingEffortLevels?: string[]
   preferredThinkingEffort?: string
+  /**
+   * Per-model effort picks (key = model id). The user's own choice for that
+   * model; it wins over `preferredThinkingEffort` when the session runs that
+   * model. Absent/empty means no per-model pick (issue #552).
+   */
+  thinkingEffortByModel?: Record<string, string>
   preferredMode?: string
   acpCommand?: string
   acpAvailableModes?: Array<{ id: string; name: string }>
@@ -375,6 +381,27 @@ function getEffectiveThinkingEffort(agentId: string): string {
     return agent?.preferredThinkingEffort || agent?.thinkingEffort || ''
 }
 
+/**
+ * Get the effort to pre-select for one agent+model pair (issue #552).
+ *
+ * Priority: the user's pick for THIS model > the model-independent default
+ * (preferredThinkingEffort > thinkingEffort). Mirrors the server's
+ * model.Agent.ThinkingEffortForModel so the chip and the first turn agree.
+ *
+ * An empty modelId (no model chosen yet) skips the per-model lookup: there is
+ * no key to match, and guessing one would pre-select a level for a model the
+ * user has not picked.
+ */
+function getEffectiveThinkingEffortForModel(agentId: string, modelId: string): string {
+    const agent = agents.value.find(a => a.id === agentId)
+    if (!agent) return ''
+    if (modelId) {
+        const perModel = agent.thinkingEffortByModel?.[modelId]
+        if (perModel) return perModel
+    }
+    return agent.preferredThinkingEffort || agent.thinkingEffort || ''
+}
+
 /** Get the effective mode ID for an agent. Priority: preferredMode > empty. */
 function getEffectiveModeId(agentId: string): string {
     const agent = agents.value.find(a => a.id === agentId)
@@ -384,6 +411,30 @@ function getEffectiveModeId(agentId: string): string {
 /** Check if an agent has a preferred mode configured. */
 function hasPreferredMode(agentId: string): boolean {
     return getEffectiveModeId(agentId) !== ''
+}
+
+/**
+ * Record a per-model effort pick in the local agent cache (issue #552).
+ *
+ * The server persists the pick when the user clicks a level, but the agent list
+ * is cached (loadAgents() early-returns once loaded) and nothing pushes this
+ * field over the WS. Without this optimistic write, a new chat opened in the
+ * same SPA session reads a stale list, falls back to the agent's own default,
+ * and then SENDS that stale level as an explicit override on the next message —
+ * which beats the pick the server remembered. The bug would survive for the
+ * exact flow the issue reports.
+ */
+function setThinkingEffortForModelLocal(agentId: string, modelId: string, level: string): void {
+    if (!agentId || !modelId) return
+    const agent = agents.value.find(a => a.id === agentId)
+    if (!agent) return
+    // Replace the map instead of mutating it: the value is read by computed
+    // consumers, and a nested mutation is invisible to them unless the parent
+    // object identity changes.
+    const next = { ...(agent.thinkingEffortByModel || {}) }
+    if (level) next[modelId] = level
+    else delete next[modelId]
+    agent.thinkingEffortByModel = next
 }
 
 /** Update a single field on an agent in the reactive store (for immediate UI feedback after PATCH). */
@@ -734,6 +785,8 @@ export function useAgents() {
         getAgentThinkingEffortLevelsIncludingACP,
         hasThinkingEffortLevels,
         getEffectiveThinkingEffort,
+        getEffectiveThinkingEffortForModel,
+        setThinkingEffortForModelLocal,
         getEffectiveModeId,
         hasPreferredMode,
         updateAgentField,

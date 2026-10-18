@@ -26,6 +26,17 @@ type Agent struct {
 	PreferredMode           string       `json:"preferredMode"`           // user's preferred ACP mode; empty = use agent's default
 	PreferredModel          string       `json:"preferredModel"`          // user's preferred model; empty = use BaseModelID()
 	PreferredThinkingEffort string       `json:"preferredThinkingEffort"` // user's preferred thinking effort; empty = use ThinkingEffort
+	// ThinkingEffortByModel remembers the effort the USER picked per model
+	// (key = the model id the agent was running at the time). Issue #552: ACP
+	// agents report their own default effort per model, and OpenCode reports
+	// "low" for most of them. Without this map every new session and every
+	// model switch silently landed on that agent default, and a user who had
+	// explicitly chosen "max" for a model had to re-pick it every time.
+	//
+	// Kept separate from PreferredThinkingEffort (the model-independent
+	// default configured in Settings) so the two can coexist: the per-model
+	// pick wins, the global default is the fallback.
+	ThinkingEffortByModel map[string]string `json:"thinkingEffortByModel,omitempty"`
 	// RuntimeSystemPrompt is the fully composed prompt (shared prefix + the
 	// user's own text). It is a RUNTIME-ONLY value: composed on every load by
 	// LoadAgentsIntoMemoryFromDB and never persisted.
@@ -147,6 +158,50 @@ func (a *Agent) EffectiveThinkingEffort() string {
 		return a.PreferredThinkingEffort
 	}
 	return a.ThinkingEffort
+}
+
+// ThinkingEffortForModel returns the effort to start a turn with for modelID.
+//
+// Priority (issue #552):
+//  1. the user's own pick for THIS model (ThinkingEffortByModel),
+//  2. the model-independent default configured in Settings
+//     (EffectiveThinkingEffort: PreferredThinkingEffort > ThinkingEffort).
+//
+// An empty modelID (no explicit choice yet — the agent picks at session/new)
+// skips the per-model lookup: the key would be "" and would match nothing
+// meaningful.
+func (a *Agent) ThinkingEffortForModel(modelID string) string {
+	if modelID != "" && a.ThinkingEffortByModel != nil {
+		if v := a.ThinkingEffortByModel[modelID]; v != "" {
+			return v
+		}
+	}
+	return a.EffectiveThinkingEffort()
+}
+
+// SetThinkingEffortForModel records a user's explicit effort pick for a model.
+// An empty level REMOVES the entry (the user cleared their choice, so the
+// global default should apply again) rather than storing a blank override.
+//
+// Copy-on-write: the map is REPLACED, never mutated in place. UpdateAgent
+// publishes a shallow copy of the Agent, so mutating the shared map header
+// would race every reader that holds the previous *Agent (they read without
+// holding agentsMu — that is their documented contract). A replaced map leaves
+// old readers with a frozen snapshot.
+func (a *Agent) SetThinkingEffortForModel(modelID, level string) {
+	if modelID == "" {
+		return
+	}
+	next := make(map[string]string, len(a.ThinkingEffortByModel)+1)
+	for k, v := range a.ThinkingEffortByModel {
+		next[k] = v
+	}
+	if level == "" {
+		delete(next, modelID)
+	} else {
+		next[modelID] = level
+	}
+	a.ThinkingEffortByModel = next
 }
 
 // EffectiveModeID returns the mode ID for new ACP sessions.

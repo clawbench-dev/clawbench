@@ -956,6 +956,11 @@ func TestBuildChatRequest_EmptyAgentID_InheritsSessionAgent(t *testing.T) {
 // user's persisted mode and thinking effort. These live only in context_state,
 // so before the fallback a drained turn silently reverted to the agent default
 // — and for mode there is no agent-level session memory to fall back to.
+//
+// The effort entry carries userPicked=true because only an EXPLICIT pick may be
+// inherited (issue #552): the same context_state slot also receives the value
+// the agent reports for itself, and replaying THAT is what pinned sessions to
+// the agent's "low" default. See the companion test below for the negative case.
 func TestBuildChatRequest_EmptyOverrides_InheritSessionModeAndEffort(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
@@ -969,7 +974,7 @@ func TestBuildChatRequest_EmptyOverrides_InheritSessionModeAndEffort(t *testing.
 	_, err := db.Exec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, context_state) VALUES (?, 1, 'claude', 'T', 'acp-agent', ?)`,
 		"sess-mode-effort",
-		`{"mode":{"currentModeId":"plan"},"thinkingEffort":{"currentId":"high"}}`,
+		`{"mode":{"currentModeId":"plan"},"thinkingEffort":{"currentId":"high","userPicked":true}}`,
 	)
 	require.NoError(t, err)
 
@@ -977,6 +982,99 @@ func TestBuildChatRequest_EmptyOverrides_InheritSessionModeAndEffort(t *testing.
 	req := BuildChatRequest("hello", "sess-mode-effort", "/proj", "claude", "acp-agent", "", "", "", "", "/proj", false)
 	assert.Equal(t, "plan", req.Mode, "drained turn must inherit the session's persisted mode")
 	assert.Equal(t, "high", req.ThinkingEffort, "drained turn must inherit the session's persisted thinking effort")
+}
+
+// TestBuildChatRequest_AgentReportedEffort_IsNotInherited pins the issue #552
+// fix: a value the AGENT reported for itself (no userPicked flag) is display
+// state, not a user choice, so a drained turn must not replay it.
+//
+// Regression shape: the agent reports "low" for the newly selected model, that
+// value lands in context_state, and every later turn re-sent it — so the user's
+// configured default never applied and the session looked permanently stuck on
+// low, even after switching models.
+func TestBuildChatRequest_AgentReportedEffort_IsNotInherited(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"acp-agent": {
+			ID: "acp-agent", Backend: "claude", Transport: "acp-stdio", AcpCommand: "claude acp",
+			PreferredThinkingEffort: "max",
+		},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	_, err := db.Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, context_state) VALUES (?, 1, 'claude', 'T', 'acp-agent', ?)`,
+		"sess-agent-reported-effort",
+		`{"thinkingEffort":{"currentId":"low"}}`,
+	)
+	require.NoError(t, err)
+
+	req := BuildChatRequest("hello", "sess-agent-reported-effort", "/proj", "claude", "acp-agent", "", "", "", "", "/proj", false)
+	assert.Equal(t, "max", req.ThinkingEffort,
+		"the agent's reported default must not be replayed as a user choice; the agent's configured default applies")
+}
+
+// TestBuildChatRequest_PerModelEffortWins pins the per-model memory: a pick
+// recorded for the model being run beats the model-independent default.
+func TestBuildChatRequest_PerModelEffortWins(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"acp-agent": {
+			ID: "acp-agent", Backend: "claude", Transport: "acp-stdio", AcpCommand: "claude acp",
+			PreferredThinkingEffort: "low",
+			ThinkingEffortByModel:   map[string]string{"glm-5.3": "max"},
+		},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	_, err := db.Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, model) VALUES (?, 1, 'claude', 'T', 'acp-agent', 'glm-5.3')`,
+		"sess-per-model-effort",
+	)
+	require.NoError(t, err)
+
+	req := BuildChatRequest("hello", "sess-per-model-effort", "/proj", "claude", "acp-agent", "", "", "", "", "/proj", false)
+	assert.Equal(t, "max", req.ThinkingEffort, "the pick remembered for this model must win over the agent default")
+
+	// A different model has no pick, so the model-independent default applies.
+	_, err = db.Exec(`UPDATE chat_sessions SET model = 'deepseek-v4-pro' WHERE id = 'sess-per-model-effort'`)
+	require.NoError(t, err)
+	req = BuildChatRequest("hello", "sess-per-model-effort", "/proj", "claude", "acp-agent", "", "", "", "", "/proj", false)
+	assert.Equal(t, "low", req.ThinkingEffort, "another model must not inherit this model's pick")
+}
+
+// TestBuildChatRequest_PickFromOtherModel_Dropped pins that a session pick made
+// under a DIFFERENT model is not replayed: the level may not even be offered by
+// the model now running (OpenCode rejects it with -32602).
+func TestBuildChatRequest_PickFromOtherModel_Dropped(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"acp-agent": {
+			ID: "acp-agent", Backend: "claude", Transport: "acp-stdio", AcpCommand: "claude acp",
+			PreferredThinkingEffort: "high",
+		},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	_, err := db.Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, model, context_state) VALUES (?, 1, 'claude', 'T', 'acp-agent', 'deepseek-v4-pro', ?)`,
+		"sess-stale-pick",
+		`{"thinkingEffort":{"currentId":"max","userPicked":true,"modelId":"glm-5.3"}}`,
+	)
+	require.NoError(t, err)
+
+	req := BuildChatRequest("hello", "sess-stale-pick", "/proj", "claude", "acp-agent", "", "", "", "", "/proj", false)
+	assert.Equal(t, "high", req.ThinkingEffort,
+		"a pick made under another model must be dropped; this model's default applies")
 }
 
 // TestBuildChatRequest_ExplicitOverrides_WinOverSession pins the priority order:
