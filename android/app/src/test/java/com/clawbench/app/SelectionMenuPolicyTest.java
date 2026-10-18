@@ -341,10 +341,10 @@ public class SelectionMenuPolicyTest {
 
     /**
      * The double-tap menu is ours alone, so it MUST carry Copy — nothing else
-     * contributes to it. It leads, ahead of quote/comment.
+     * contributes to it. Copy goes LAST so the two menus read the same way.
      */
     @Test
-    public void floatingMenuInstallsCopyWithAllThreeInOrder() {
+    public void floatingMenuInstallsAllFourInOrderCopyLast() {
         // A bare menu: the programmatic path builds it from scratch, so there is
         // no system Copy to rely on.
         Menu menu = new PopupMenu(RuntimeEnvironment.getApplication(), null).getMenu();
@@ -352,11 +352,62 @@ public class SelectionMenuPolicyTest {
         SelectionMenuPolicy.installFloatingItems(menu, LABELS);
 
         assertEquals(4, menu.size());
-        assertEquals(SelectionMenuPolicy.ID_COPY, (int) ids(menu).get(0));
-        assertEquals(SelectionMenuPolicy.ID_QUOTE, (int) ids(menu).get(1));
-        assertEquals(SelectionMenuPolicy.ID_COMMENT, (int) ids(menu).get(2));
-        assertEquals(SelectionMenuPolicy.ID_SEARCH_FILE, (int) ids(menu).get(3));
+        assertEquals(SelectionMenuPolicy.ID_QUOTE, (int) ids(menu).get(0));
+        assertEquals(SelectionMenuPolicy.ID_COMMENT, (int) ids(menu).get(1));
+        assertEquals(SelectionMenuPolicy.ID_SEARCH_FILE, (int) ids(menu).get(2));
+        assertEquals(SelectionMenuPolicy.ID_COPY, (int) ids(menu).get(3));
         assertTrue(menu.findItem(SelectionMenuPolicy.ID_COPY) != null);
+    }
+
+    /**
+     * THE CONTRACT: both menus must present our items in the SAME order.
+     *
+     * Asserted against the ACTUAL rendered menus, not the constants — the
+     * constants could agree while an install path reordered or dropped an item.
+     * The long-press menu is built with Chromium's stand-in items so the real
+     * interleaving is exercised.
+     *
+     * Copy is excluded from the comparison by TITLE: on the long-press menu the
+     * Copy the user sees is Chromium's (system id, orderInCategory 3), and ours
+     * is deliberately absent there. Everything we add must appear in the same
+     * relative order on both menus.
+     */
+    @Test
+    public void bothMenusShowOurItemsInTheSameOrder() {
+        Menu longPress = systemMenu();
+        SelectionMenuPolicy.installItems(longPress, LABELS);
+
+        Menu floating = new PopupMenu(RuntimeEnvironment.getApplication(), null).getMenu();
+        SelectionMenuPolicy.installFloatingItems(floating, LABELS);
+
+        // Read the menus' ACTUAL rendered order. Iterating a constant array here
+        // would restate the very order under test and pass no matter what the
+        // Menu does with it.
+        List<String> lpOurs = ourTitlesInRenderOrder(longPress);
+        List<String> dtOurs = ourTitlesInRenderOrder(floating);
+        // Copy is ours only on the double-tap menu; drop it so the two lists
+        // compare the items BOTH menus carry.
+        dtOurs.remove(LABELS.labelFor(SelectionMenuPolicy.Action.COPY));
+
+        assertEquals("our items must appear in the same order on both menus",
+                lpOurs, dtOurs);
+    }
+
+    /**
+     * Titles of OUR items, in the order the menu actually renders them.
+     *
+     * Walks the menu by index rather than iterating the order constants, so this
+     * observes the result of install() instead of restating its input.
+     */
+    private static List<String> ourTitlesInRenderOrder(Menu menu) {
+        List<String> present = new ArrayList<>();
+        for (int i = 0; i < menu.size(); i++) {
+            MenuItem item = menu.getItem(i);
+            if (SelectionMenuPolicy.isOurItem(item.getItemId())) {
+                present.add(item.getTitle().toString());
+            }
+        }
+        return present;
     }
 
     /** installFloatingItems runs on every prepare pass; it must stay idempotent. */
@@ -370,15 +421,15 @@ public class SelectionMenuPolicyTest {
         assertEquals(4, menu.size());
     }
 
-    /** FLOATING_MENU_ORDER must list all actions, copy first. */
+    /** FLOATING_MENU_ORDER must list all actions, copy last (see the class doc). */
     @Test
-    public void floatingMenuOrderCoversAllActionsCopyFirst() {
+    public void floatingMenuOrderCoversAllActionsCopyLast() {
         assertEquals(4, SelectionMenuPolicy.FLOATING_MENU_ORDER.length);
-        assertEquals(SelectionMenuPolicy.ID_COPY, SelectionMenuPolicy.FLOATING_MENU_ORDER[0]);
-        assertEquals(SelectionMenuPolicy.ID_QUOTE, SelectionMenuPolicy.FLOATING_MENU_ORDER[1]);
-        assertEquals(SelectionMenuPolicy.ID_COMMENT, SelectionMenuPolicy.FLOATING_MENU_ORDER[2]);
+        assertEquals(SelectionMenuPolicy.ID_QUOTE, SelectionMenuPolicy.FLOATING_MENU_ORDER[0]);
+        assertEquals(SelectionMenuPolicy.ID_COMMENT, SelectionMenuPolicy.FLOATING_MENU_ORDER[1]);
         assertEquals(SelectionMenuPolicy.ID_SEARCH_FILE,
-                SelectionMenuPolicy.FLOATING_MENU_ORDER[3]);
+                SelectionMenuPolicy.FLOATING_MENU_ORDER[2]);
+        assertEquals(SelectionMenuPolicy.ID_COPY, SelectionMenuPolicy.FLOATING_MENU_ORDER[3]);
     }
 
     /**
