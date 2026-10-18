@@ -290,11 +290,10 @@ export function parseAtQuery(text: string, caret: number): TriggerRange | null {
 /**
  * Parse a trigger that is only meaningful as the FIRST token of the message.
  *
- * Both the slash-command and skill-reference menus require this: the backend
- * routes `/xxx` purely by its leading slash and recognizes `#xxx` only at the
- * message start, so a trigger mid-text would offer entries the server then
- * treats as plain text (and would false-positive on paths such as `cd /test`
- * or prose such as "issue #4").
+ * The slash-command menu requires this: the backend routes `/xxx` purely by
+ * its leading slash (CLI and ACP agents detect commands by the message
+ * prefix), so a trigger mid-text would offer entries the server then treats as
+ * plain text — and would false-positive on paths such as `cd /test`.
  *
  * Unlike `@` (which may sit anywhere on a whitespace boundary), the trigger
  * character must be the first non-whitespace character. The query runs from the
@@ -312,13 +311,40 @@ export function parseSlashQuery(text: string, caret: number): TriggerRange | nul
 }
 
 /**
+ * A `#name` token ends at whitespace or punctuation. The punctuation set
+ * mirrors the Go side's `skillRefPunct` (internal/handler/skill_command.go):
+ * the menu, the message badge and the server must agree, or a picked reference
+ * would not resolve on send.
+ */
+export const REF_TOKEN_END_RE =
+  /[\s,.;:!?)\]}，。；：！？）】」』]/
+
+/**
  * Parse a skill-reference trigger (`#`) from the text left of the caret.
  *
- * The backend only recognizes an explicit skill reference at the very start
- * (a `#` mid-sentence is prose), so the menu opens only there.
+ * Unlike `/`, `#` is ClawBench's own protocol: the server scans the message for
+ * `#<name>` tokens, so the trigger may sit ANYWHERE on a whitespace boundary —
+ * the user can describe the problem first and name the skill afterwards.
+ *
+ * A `#` that does not start a token never triggers: `C#`, `use#pdf` and a URL
+ * fragment (`...#section`) stay prose. `issue #12` does start a token, so the
+ * query becomes `12`; no skill matches it and the (empty) candidate list keeps
+ * the menu closed.
+ *
+ * The query ends at the same characters the server uses to end the name
+ * (whitespace or punctuation). Once the caret has moved past one of them the
+ * reference is complete, so the trigger is gone — otherwise typing
+ * "#pdf, then…" would leave a stale menu hanging over the prose.
  */
 export function parseHashQuery(text: string, caret: number): TriggerRange | null {
-  return parseFirstTokenQuery(text, caret, '#')
+  const left = text.slice(0, caret)
+  const at = left.lastIndexOf('#')
+  if (at === -1) return null
+  // Must start a token: the beginning of the text or right after whitespace.
+  if (at > 0 && !/\s/.test(left[at - 1])) return null
+  const query = left.slice(at + 1)
+  if (REF_TOKEN_END_RE.test(query)) return null
+  return { start: at, end: caret, query }
 }
 
 // ── Display helpers ────────────────────────────────────────

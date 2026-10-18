@@ -3,6 +3,7 @@ package handler
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -12,61 +13,72 @@ import (
 	"clawbench/internal/skill"
 )
 
-// --- parseSkillCommand tests ---
+// --- skillRefCandidates tests ---
 
-func TestParseSkillCommand(t *testing.T) {
+func TestSkillRefCandidates(t *testing.T) {
 	tests := []struct {
-		name     string
-		msg      string
-		wantName string
-		wantOK   bool
+		name string
+		msg  string
+		want []string
 	}{
-		{"bare reference", "#pdf", "pdf", true},
-		{"reference with body", "#pdf summarize this", "pdf", true},
-		{"leading whitespace", "   #pdf do it", "pdf", true},
-		{"leading newline", "\n#pdf do it", "pdf", true},
-		{"leading tab", "\t#pdf do it", "pdf", true},
-		// Non-ASCII / exotic spaces must be stripped too, matching the
-		// frontend's JS .trim() (otherwise the menu opens and the server does
-		// not recognize the reference).
-		{"leading vertical tab", "\v#pdf do it", "pdf", true},
-		{"leading form feed", "\f#pdf do it", "pdf", true},
-		{"leading nbsp", "\u00a0#pdf do it", "pdf", true},
-		{"hyphenated name", "#web-search find it", "web-search", true},
-		{"name with slash-like chars", "#user/skill", "user/skill", true},
+		// The reference may sit anywhere, as long as it starts a token.
+		{"leading reference", "#pdf summarize this", []string{"pdf"}},
+		{"bare reference", "#pdf", []string{"pdf"}},
+		{"leading whitespace", "   #pdf do it", []string{"pdf"}},
+		{"leading newline", "\n#pdf do it", []string{"pdf"}},
+		{"leading tab", "\t#pdf do it", []string{"pdf"}},
+		{"leading vertical tab", "\v#pdf do it", []string{"pdf"}},
+		{"leading form feed", "\f#pdf do it", []string{"pdf"}},
+		{"leading nbsp", "\u00a0#pdf do it", []string{"pdf"}},
 
-		// Not a reference: the "#" is not at the start.
-		{"mid-sentence hash", "use #pdf please", "", false},
-		{"trailing hash", "summarize this #pdf", "", false},
-		{"hash after other text", "hello #pdf", "", false},
-		{"no hash at all", "just a message", "", false},
-		{"empty", "", "", false},
-		{"whitespace only", "   ", "", false},
-		{"lone hash", "#", "", false},
-		{"lone hash with space", "# something", "", false},
-		{"double hash no name", "##", "", false},
+		// Mid-message references — the whole point of the change.
+		{"mid-sentence reference", "summarize this #pdf", []string{"pdf"}},
+		{"reference after other text", "hello #pdf", []string{"pdf"}},
+		{"reference on a later line", "first line\n#pdf do it", []string{"pdf"}},
+		{"two references", "use #pdf and #web-search", []string{"pdf", "web-search"}},
+		{"duplicate references", "#pdf then #pdf again", []string{"pdf", "pdf"}},
 
-		// Exactly one reference is allowed; a second "#" token is fail-closed.
-		{"two references", "#pdf #web-search do both", "", false},
-		{"two references no body", "#a #b", "", false},
-		// A "#" later in the body (not immediately after) is prose, not a
-		// second reference, so the message is still a valid single reference.
-		{"second hash later in body", "#pdf see #123", "pdf", true},
+		// Trailing punctuation terminates the name, not part of it.
+		{"trailing comma", "use #pdf, then summarize", []string{"pdf"}},
+		{"trailing period", "use #pdf.", []string{"pdf"}},
+		{"trailing cjk punctuation", "用 #pdf。", []string{"pdf"}},
+		{"trailing fullwidth comma", "用 #pdf，然后总结", []string{"pdf"}},
+		{"trailing colon", "skill: #pdf:", []string{"pdf"}},
+		{"punctuation then more text", "#pdf,then", []string{"pdf"}},
+		{"inner punctuation kept", "#user/skill", []string{"user/skill"}},
+
+		// Not references.
+		{"no hash at all", "just a message", nil},
+		{"empty", "", nil},
+		{"whitespace only", "   ", nil},
+		{"lone hash", "#", nil},
+		{"lone hash with space", "# something", nil},
+		{"double hash no name", "##", nil},
+		{"name containing hash", "#pdf#other", nil},
+		// Mid-word hashes: the "#" does not start the token.
+		{"mid-word hash", "C#", nil},
+		{"mid-word hash after text", "use#pdf", nil},
+		{"url fragment", "see https://x.dev/a#section", nil},
+		// "issue #12" IS a candidate token ("12"), but it resolves to no skill;
+		// filtering happens in processSkillCommand.
+		{"issue number is a candidate", "issue #12 is fixed", []string{"12"}},
+
+		// Name characters.
+		{"hyphenated name", "#web-search find it", []string{"web-search"}},
+		{"name with slash", "#user/skill", []string{"user/skill"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			name, ok := parseSkillCommand(tc.msg)
-			assert.Equal(t, tc.wantOK, ok, "ok for %q", tc.msg)
-			assert.Equal(t, tc.wantName, name, "name for %q", tc.msg)
+			assert.Equal(t, tc.want, skillRefCandidates(tc.msg), "candidates for %q", tc.msg)
 		})
 	}
 }
 
 // --- processSkillCommand tests ---
 
-// setupSkillForHandler installs a skill in an isolated user dir and points the
+// setupSkillForHandler installs skills in an isolated user dir and points the
 // global registry at it.
-func setupSkillForHandler(t *testing.T, name string) {
+func setupSkillForHandler(t *testing.T, names ...string) {
 	t.Helper()
 
 	origCfg := model.ConfigInstance
@@ -91,7 +103,9 @@ func setupSkillForHandler(t *testing.T, name string) {
 	model.ConfigInstance = model.Config{Skills: model.SkillsConfig{Enabled: true, Dirs: []string{dir}}}
 	model.ReplaceAgents(nil, nil)
 
-	writeHandlerSkill(t, dir, name)
+	for _, name := range names {
+		writeHandlerSkill(t, dir, name)
+	}
 
 	skill.ResetForTest()
 	skill.Global().ScanAll()
@@ -118,6 +132,62 @@ func TestProcessSkillCommand_InjectsPath(t *testing.T) {
 	assert.NotContains(t, result, "#pdf summarize the doc")
 }
 
+// TestProcessSkillCommand_MidMessageReference is the core of issue #548: a
+// reference typed after the problem description must still inject.
+func TestProcessSkillCommand_MidMessageReference(t *testing.T) {
+	setupSkillForHandler(t, "pdf")
+
+	result := processSkillCommand("please summarize the attached file #pdf", "/project")
+	assert.Contains(t, result, filepath.Join("pdf", "SKILL.md"),
+		"a mid-message reference must inject like a leading one")
+	assert.NotContains(t, result, "please summarize the attached file #pdf")
+}
+
+// TestProcessSkillCommand_MultipleReferences pins that every resolvable
+// reference is injected (previously a second "#" token made the whole message
+// fail closed, which would break the natural "use #a and #b" phrasing).
+func TestProcessSkillCommand_MultipleReferences(t *testing.T) {
+	setupSkillForHandler(t, "pdf", "web-search")
+
+	result := processSkillCommand("use #pdf and #web-search on this", "/project")
+	assert.Contains(t, result, filepath.Join("pdf", "SKILL.md"))
+	assert.Contains(t, result, filepath.Join("web-search", "SKILL.md"))
+	assert.Equal(t, 2, strings.Count(result, "explicitly selected the skill"),
+		"one template block per distinct reference")
+}
+
+// TestProcessSkillCommand_DuplicateReferenceInjectedOnce: repeating a skill
+// adds no instruction, only prompt weight.
+func TestProcessSkillCommand_DuplicateReferenceInjectedOnce(t *testing.T) {
+	setupSkillForHandler(t, "pdf")
+
+	result := processSkillCommand("#pdf do it, and also #pdf again", "/project")
+	assert.Equal(t, 1, strings.Count(result, "explicitly selected the skill"))
+}
+
+// TestProcessSkillCommand_MixedKnownAndUnknown: an unknown hash is ordinary
+// text and must not suppress the known reference (the old fail-closed rule
+// rejected the whole message when a second "#" token appeared).
+func TestProcessSkillCommand_MixedKnownAndUnknown(t *testing.T) {
+	setupSkillForHandler(t, "pdf")
+
+	result := processSkillCommand("#pdf fix issue #12", "/project")
+	assert.Contains(t, result, filepath.Join("pdf", "SKILL.md"))
+	assert.Equal(t, 1, strings.Count(result, "explicitly selected the skill"))
+}
+
+// TestProcessSkillCommand_TrailingPunctuation pins that a reference followed
+// by punctuation still resolves — the frontend strips the same characters
+// before matching, so the menu and the server must agree.
+func TestProcessSkillCommand_TrailingPunctuation(t *testing.T) {
+	setupSkillForHandler(t, "pdf")
+
+	for _, msg := range []string{"use #pdf, thanks", "use #pdf.", "用 #pdf。", "use #pdf!"} {
+		result := processSkillCommand(msg, "/project")
+		assert.Contains(t, result, filepath.Join("pdf", "SKILL.md"), "msg %q", msg)
+	}
+}
+
 func TestProcessSkillCommand_UnknownNameUnchanged(t *testing.T) {
 	setupSkillForHandler(t, "pdf")
 
@@ -126,20 +196,18 @@ func TestProcessSkillCommand_UnknownNameUnchanged(t *testing.T) {
 		"an unknown skill name must fall through to a normal message")
 }
 
-func TestProcessSkillCommand_NonReferenceUnchanged(t *testing.T) {
+func TestProcessSkillCommand_ProseHashUnchanged(t *testing.T) {
 	setupSkillForHandler(t, "pdf")
 
-	msg := "use #pdf here"
-	assert.Equal(t, msg, processSkillCommand(msg, "/project"),
-		"a mid-sentence # is not a reference")
-}
-
-func TestProcessSkillCommand_TwoReferencesUnchanged(t *testing.T) {
-	setupSkillForHandler(t, "pdf")
-
-	msg := "#pdf #pdf do it"
-	assert.Equal(t, msg, processSkillCommand(msg, "/project"),
-		"two references are fail-closed, never a guess")
+	for _, msg := range []string{
+		"issue #12 is fixed",
+		"see https://x.dev/a#section",
+		"C# is a language",
+		"use#pdf",
+	} {
+		assert.Equal(t, msg, processSkillCommand(msg, "/project"),
+			"prose hash must not inject: %q", msg)
+	}
 }
 
 // --- processCommandInjection tests ---
@@ -158,6 +226,11 @@ func TestProcessCommandInjection_Dispatches(t *testing.T) {
 
 	// An explicit skill reference renders the skill instruction.
 	got, err = processCommandInjection("#pdf do it", "/project", "sess-1")
+	require.NoError(t, err)
+	assert.Contains(t, got, filepath.Join("pdf", "SKILL.md"))
+
+	// A mid-message reference renders too.
+	got, err = processCommandInjection("do it #pdf", "/project", "sess-1")
 	require.NoError(t, err)
 	assert.Contains(t, got, filepath.Join("pdf", "SKILL.md"))
 

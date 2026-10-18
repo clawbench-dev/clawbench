@@ -568,7 +568,9 @@ describe('extractSkillCommand', () => {
   })
 
   it('returns null when # is not the first token', () => {
-    // A "#" later in the body is prose (an issue number, a hashtag).
+    // A mid-message "#" has no badge: the badge replaces the block with
+    // "badge + rest", which is only truthful when the reference starts it.
+    // The server still injects mid-message references — this is a visual rule.
     expect(extractSkillCommand('use #pdf')).toBeNull()
     expect(extractSkillCommand('issue #12 is fixed')).toBeNull()
   })
@@ -582,9 +584,29 @@ describe('extractSkillCommand', () => {
     expect(extractSkillCommand('#pdf#other')).toBeNull()
   })
 
-  it('refuses two references (fail-closed, matches the backend)', () => {
-    expect(extractSkillCommand('#pdf #other')).toBeNull()
-    expect(extractSkillCommand('#pdf\t#other')).toBeNull()
+  it('ends the name at punctuation (same terminators as the server)', () => {
+    const comma = extractSkillCommand('#pdf, summarize it')
+    expect(comma).not.toBeNull()
+    expect(comma!.name).toBe('pdf')
+    // The comma belongs to the sentence, not to the badge: it must stay in
+    // `rest`, otherwise the rendered message silently loses punctuation.
+    expect(comma!.rest).toBe(', summarize it')
+    const cjk = extractSkillCommand('#pdf。总结')
+    expect(cjk).not.toBeNull()
+    expect(cjk!.name).toBe('pdf')
+    expect(cjk!.rest).toBe('。总结')
+    // A name that is ONLY punctuation is not a reference.
+    expect(extractSkillCommand('#,')).toBeNull()
+  })
+
+  it('does NOT refuse a second reference (the server injects both)', () => {
+    // The old rule failed closed on a second "#" token; the server now injects
+    // every resolvable reference, so "#pdf #other …" is valid — the first
+    // reference gets the badge and the rest stays visible as text.
+    const result = extractSkillCommand('#pdf #other do it')
+    expect(result).not.toBeNull()
+    expect(result!.name).toBe('pdf')
+    expect(result!.rest).toBe(' #other do it')
   })
 
   it('keeps a second NON-# token as ordinary rest text', () => {
