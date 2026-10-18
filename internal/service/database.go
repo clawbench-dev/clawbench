@@ -1758,6 +1758,18 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Migrate: per-model thinking-effort picks (issue #552). A JSON object
+	// keyed by model id; '{}' means "no per-model pick", so the agent's
+	// model-independent default still applies. Additive and nullable-by-default,
+	// so existing agents keep their current behaviour after the upgrade.
+	var hasEffortByModel int
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='thinking_effort_by_model'").Scan(&hasEffortByModel)
+	if hasEffortByModel == 0 {
+		if _, err := store.WriteExec("ALTER TABLE agents ADD COLUMN thinking_effort_by_model TEXT NOT NULL DEFAULT '{}'"); err != nil {
+			return fmt.Errorf("failed to add thinking_effort_by_model column to agents: %w", err)
+		}
+	}
+
 	// Migrate: ensure the project scope column on the quick-send /
 	// quick-command tables (project-scoped / 仅本项目 items). NULL means global;
 	// a value scopes the item to that project only.

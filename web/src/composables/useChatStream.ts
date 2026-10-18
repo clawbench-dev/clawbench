@@ -3,7 +3,7 @@ import { appLog, diagLog } from '@/utils/appLog'
 import { StreamFrameScheduler } from '@/utils/streamFrameScheduler'
 import { useGlobalEvents } from './useGlobalEvents'
 import { gt } from '@/composables/useLocale'
-import { updateModeState, updateCommandState, updateThinkingEffortState, currentAgentId, updateUsageState } from './useSessionIdentity'
+import { updateModeState, updateCommandState, updateThinkingEffortState, reconcileThinkingEffort, currentAgentId, currentModelId, updateUsageState } from './useSessionIdentity'
 import { updateACPModelList, applyResolvedModelList } from './useAgents'
 import { updatePlanEntries } from './usePlanProgress'
 import type { ToastIconKey } from './useToast'
@@ -1048,7 +1048,11 @@ export function useChatStream(options: UseChatStreamOptions) {
         if (effortData.currentId || (effortData.availableLevels as unknown[])?.length > 0) {
           const levels = ((effortData.availableLevels as Record<string, string>[]) || []).map((l) => ({ id: l.id, name: l.name || l.id }))
           const currentId = (effortData.currentId as string) || ''
-          updateThinkingEffortState(currentId, levels)
+          // A WS event always carries the AGENT's own value (its per-model
+          // default included). Adopting it verbatim would overwrite the user's
+          // remembered pick for this model and make the agent's "low" default
+          // look like the user's choice (issue #552).
+          reconcileThinkingEffort(currentId, levels, currentAgentId.value, currentModelId.value, false)
         }
         break
       }

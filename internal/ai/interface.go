@@ -300,6 +300,14 @@ type ThinkingEffortState struct {
 	ConfigID        string              `json:"configId,omitempty"`
 	CurrentID       string              `json:"currentId"`
 	AvailableLevels []ThinkingEffortDef `json:"availableLevels"`
+	// UserPicked marks CurrentID as an EXPLICIT user choice (issue #552).
+	//
+	// False means CurrentID is the value the AGENT reports for itself — its
+	// per-model default. The two must stay distinguishable: only a user pick
+	// may be replayed on later turns and persisted as the session's setting,
+	// otherwise the agent's "low" default becomes sticky and silently replaces
+	// whatever the user configured.
+	UserPicked bool `json:"userPicked,omitempty"`
 }
 
 // ConfigOptionValue represents a selectable value within a config option.

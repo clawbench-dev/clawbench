@@ -83,6 +83,33 @@ describe('click-time model switch wiring', () => {
     expect(client, 'client timeout must exceed the 35s handler budget').toBeGreaterThan(35_000)
   })
 
+  it('applies the resolved effort after a successful switch', () => {
+    // Issue #552: the effort is model-scoped, so a switch can silently move it
+    // (OpenCode reports "low" for most models). The server resolves the new
+    // level; the panel must adopt it AND tell the user, or the change is only
+    // discovered mid-task. Deleting this call leaves every other test green.
+    const body = fnBody('async function handleSwitchModel')
+    expect(body, 'the resolved effort must be applied after the switch').toMatch(
+      /applyEffortAfterModelSwitch\(res, effortBefore\)/,
+    )
+    // ...and the previous level must be captured BEFORE the request, or the
+    // comparison inside it is always "unchanged".
+    const captureIdx = body.indexOf('const effortBefore = identity.currentThinkingEffort.value')
+    const awaitIdx = body.indexOf('await apiPatch(')
+    expect(captureIdx, 'the pre-switch level must be captured').toBeGreaterThanOrEqual(0)
+    expect(captureIdx, 'it must be captured before the request resolves').toBeLessThan(awaitIdx)
+  })
+
+  it('clears the chip when the new model has no resolved level', () => {
+    // The server omits `thinkingEffort` when the model has no preference and the
+    // agent decides. Keeping the previous model's level would show a level the
+    // agent is not running — the same lie, mirrored.
+    const body = fnBody('function applyEffortAfterModelSwitch')
+    expect(body, 'an absent level must clear the chip').toMatch(
+      /currentId\.value = ''/,
+    )
+  })
+
   it('reverts to the agent default when the session has no persisted model', () => {
     // A session created via POST /api/ai/sessions deliberately has model='', so
     // the chip's pre-click value came from the agent. Without this fallback the

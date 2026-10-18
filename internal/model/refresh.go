@@ -459,6 +459,15 @@ func saveAgentToDB(db dbutil.Writer, agent *Agent) error {
 	if err != nil {
 		return err
 	}
+	// This INSERT is only used for NEW rows (auto-discovered / YAML agents), so
+	// an empty map is the correct value — there are no user picks yet.
+	effortByModelJSON, err := json.Marshal(agent.ThinkingEffortByModel)
+	if err != nil {
+		return err
+	}
+	if string(effortByModelJSON) == "null" {
+		effortByModelJSON = []byte("{}")
+	}
 
 	transport := agent.Transport
 	if transport == "" {
@@ -481,12 +490,12 @@ func saveAgentToDB(db dbutil.Writer, agent *Agent) error {
 		thinking_effort, thinking_effort_levels,
 		preferred_mode, preferred_model, preferred_thinking_effort,
 		custom_system_prompt, avatar, models, models_auto_detected, sort_order,
-		transport, acp_command, auto_approve, disabled)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		transport, acp_command, auto_approve, disabled, thinking_effort_by_model)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		agent.ID, agent.Name, agent.Specialty, agent.Backend, agent.Command,
 		agent.ThinkingEffort, string(levelsJSON), agent.PreferredMode, agent.PreferredModel, agent.PreferredThinkingEffort,
 		agent.CustomSystemPrompt, agent.Avatar, string(modelsJSON), agent.ModelsAutoDetected, agent.SortOrder,
-		transport, agent.AcpCommand, autoApprove, disabled)
+		transport, agent.AcpCommand, autoApprove, disabled, string(effortByModelJSON))
 	return err
 }
 
@@ -646,12 +655,20 @@ func ComposeSystemPrompt(customPrompt string) string {
 }
 
 // loadAgentsFromDBRows reads every agent row.
+//
+// This is the loader behind the LIVE model.Agents map (startup, rescan, async
+// model-discovery reload), so every persisted field must be read here — not
+// only in service.LoadAgentsFromDB, which has no production callers. Missing a
+// column here silently drops it on the next reload: per-model effort picks
+// (issue #552) would survive until the background discovery finished and then
+// vanish.
 func loadAgentsFromDBRows(db dbutil.Reader) ([]*Agent, error) {
 	rows, err := db.Query(`SELECT id, name, specialty, backend, command,
 		thinking_effort, thinking_effort_levels,
 		preferred_mode, preferred_model, preferred_thinking_effort,
 		custom_system_prompt, avatar, models, models_auto_detected, sort_order,
-		transport, acp_command, auto_approve, disabled, project_id
+		transport, acp_command, auto_approve, disabled, project_id,
+		thinking_effort_by_model
 		FROM agents ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -661,7 +678,7 @@ func loadAgentsFromDBRows(db dbutil.Reader) ([]*Agent, error) {
 	var agents []*Agent
 	for rows.Next() {
 		agent := &Agent{}
-		var modelsJSON, levelsJSON string
+		var modelsJSON, levelsJSON, effortByModelJSON string
 		var autoDetected, autoApprove, disabled int
 		var projectID sql.NullInt64
 
@@ -669,7 +686,8 @@ func loadAgentsFromDBRows(db dbutil.Reader) ([]*Agent, error) {
 			&agent.Backend, &agent.Command, &agent.ThinkingEffort, &levelsJSON,
 			&agent.PreferredMode, &agent.PreferredModel, &agent.PreferredThinkingEffort,
 			&agent.CustomSystemPrompt, &agent.Avatar, &modelsJSON, &autoDetected,
-			&agent.SortOrder, &agent.Transport, &agent.AcpCommand, &autoApprove, &disabled, &projectID); err != nil {
+			&agent.SortOrder, &agent.Transport, &agent.AcpCommand, &autoApprove, &disabled, &projectID,
+			&effortByModelJSON); err != nil {
 			return nil, err
 		}
 
@@ -686,6 +704,15 @@ func loadAgentsFromDBRows(db dbutil.Reader) ([]*Agent, error) {
 		}
 		if err := json.Unmarshal([]byte(levelsJSON), &agent.ThinkingEffortLevels); err != nil {
 			agent.ThinkingEffortLevels = nil
+		}
+		// Unreadable per-model picks degrade to "none" rather than failing the
+		// whole load: they only affect a default, and refusing to start (or to
+		// reload) over them would be far worse.
+		if effortByModelJSON != "" && effortByModelJSON != "{}" && effortByModelJSON != "null" {
+			var byModel map[string]string
+			if err := json.Unmarshal([]byte(effortByModelJSON), &byModel); err == nil && len(byModel) > 0 {
+				agent.ThinkingEffortByModel = byModel
+			}
 		}
 		agents = append(agents, agent)
 	}

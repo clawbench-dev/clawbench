@@ -619,6 +619,7 @@ export default {
       deferred: 'Session is busy — will switch on your next message',
       switchFailed: 'Could not switch model',
       switchFailedDetail: 'Could not switch model: {detail}',
+      effortChanged: 'Thinking effort for this model is {effort}',
     },
     modeSwitcher: {
       title: 'Mode',

@@ -5,11 +5,13 @@ import { ref } from 'vue'
  * Used to generalize mode and thinking effort handling.
  *
  * @param category - The category name (e.g., "mode", "thought_level")
- * @param loadPrefFn - Function to load persisted preference for this category
+ * @param loadPrefFn - Function to load persisted preference for this category.
+ *   Receives the current model id when the caller knows it, so a preference
+ *   that is scoped per model (thinking effort, issue #552) can be resolved.
  */
 export function createSelectState(
     category: string,
-    loadPrefFn: (agentId: string) => string | null,
+    loadPrefFn: (agentId: string, modelId?: string) => string | null,
 ) {
     const currentId = ref('')
     const currentName = ref('')
@@ -68,10 +70,11 @@ export function createSelectState(
         }
     }
 
-    /** Load persisted preference for the given agent. */
-    function loadPref(agentId: string) {
+    /** Load persisted preference for the given agent (and model, when the
+     *  preference is model-scoped). */
+    function loadPref(agentId: string, modelId?: string) {
         if (!agentId) return
-        const pref = loadPrefFn(agentId)
+        const pref = loadPrefFn(agentId, modelId)
         if (pref) {
             currentId.value = pref
         }
@@ -79,10 +82,10 @@ export function createSelectState(
 
     /** Sync from server data, then fall back to persisted preference if currentId is still empty.
      *  Resolves currentName after fallback. Used for SSE events and loadHistory/switchSession. */
-    function syncAndFallback(valueFromServer: string, availableItems: Array<{ id: string; name: string }>, agentId: string) {
+    function syncAndFallback(valueFromServer: string, availableItems: Array<{ id: string; name: string }>, agentId: string, modelId?: string) {
         syncFromData(valueFromServer, availableItems)
         if (!currentId.value) {
-            loadPref(agentId)
+            loadPref(agentId, modelId)
             if (currentId.value && !currentName.value) {
                 currentName.value = resolveName(currentId.value)
             } else if (!currentId.value) {

@@ -2294,6 +2294,20 @@ type ModeDef struct {
 type ThinkingEffortPersist struct {
 	CurrentID       string              `json:"currentId"`
 	AvailableLevels []ThinkingEffortDef `json:"availableLevels,omitempty"`
+	// UserPicked marks CurrentID as a value the USER chose rather than the one
+	// the agent reported for itself (issue #552).
+	//
+	// This distinction is the whole point: ACP agents re-report their own
+	// per-model default (OpenCode says "low" for most models) on every model
+	// switch. Treating that as a user choice pinned every new session to low,
+	// and re-sending it at prompt time made it stick. Only an explicit pick
+	// may be replayed into the agent; an agent-reported value is display-only.
+	UserPicked bool `json:"userPicked,omitempty"`
+	// ModelID is the model the pick was made under. A pick belongs to that
+	// model: after switching models it must not be replayed, or the session
+	// would silently carry model A's effort onto model B (which may not even
+	// offer it — OpenCode rejects the RPC with -32602 in that case).
+	ModelID string `json:"modelId,omitempty"`
 }
 
 // ThinkingEffortDef is a lightweight thinking effort descriptor for DB persistence.
@@ -2345,6 +2359,11 @@ func buildContextStatePatch(event ai.StreamEvent) map[string]string {
 		if event.ThinkingEffort == nil {
 			return nil
 		}
+		// UserPicked is deliberately NOT set here. An event carries whatever the
+		// AGENT reports (its per-model default included), so persisting it as a
+		// user pick is exactly the bug this field exists to prevent: the next
+		// turn would replay it as if the user had chosen it. Explicit picks go
+		// through PersistThinkingEffortPick instead.
 		effortJSON, err := json.Marshal(ThinkingEffortPersist{
 			CurrentID:       event.ThinkingEffort.CurrentID,
 			AvailableLevels: convertThinkingEffortDefsFromAI(event.ThinkingEffort.AvailableLevels),
@@ -2504,6 +2523,58 @@ func GetContextState(sessionID string) *ContextState {
 		return nil
 	}
 	return &state
+}
+
+// PersistThinkingEffortPick records an EXPLICIT user effort pick for a session.
+//
+// Only this path may mark the value as user-picked. Agent-reported values flow
+// through PersistContextStateFromEvent, which never sets the flag — otherwise
+// the agent's per-model default ("low" for most OpenCode models) would be
+// replayed on every later turn as if the user had chosen it (issue #552).
+//
+// modelID is the model the pick was made under. It is persisted so a later
+// model switch can tell "this pick belongs to another model" apart from "the
+// user chose this for the model now running".
+//
+// An empty effortID CLEARS the stored pick (used when a model switch
+// invalidates it), leaving no user choice so the per-model/global default
+// decides the next turn.
+func PersistThinkingEffortPick(sessionID, effortID, modelID string) {
+	if sessionID == "" {
+		return
+	}
+	if effortID == "" {
+		PatchContextStateMerge(sessionID, map[string]string{"thinkingEffort": "{}"})
+		return
+	}
+	payload, err := json.Marshal(ThinkingEffortPersist{
+		CurrentID:  effortID,
+		UserPicked: true,
+		ModelID:    modelID,
+	})
+	if err != nil {
+		slog.Warn("persist thinking effort pick: marshal", "sid", sessionID, "err", err)
+		return
+	}
+	PatchContextStateMerge(sessionID, map[string]string{"thinkingEffort": string(payload)})
+}
+
+// UserThinkingEffortPick returns the session's explicit effort pick and the
+// model it was made under.
+//
+// ok is false when the stored value came from the agent rather than the user,
+// or when nothing is stored at all. Callers must treat that as "no user
+// choice" and fall back to the model's remembered/default effort — NOT as "the
+// current effort", which is what made the agent's low default sticky.
+func UserThinkingEffortPick(sessionID string) (effortID, modelID string, ok bool) {
+	state := GetContextState(sessionID)
+	if state == nil || state.ThinkingEffort == nil {
+		return "", "", false
+	}
+	if !state.ThinkingEffort.UserPicked {
+		return "", "", false
+	}
+	return state.ThinkingEffort.CurrentID, state.ThinkingEffort.ModelID, state.ThinkingEffort.CurrentID != ""
 }
 
 // GetSessionInfo fetches session metadata (title, backend, agent_id, model, transport)

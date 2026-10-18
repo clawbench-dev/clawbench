@@ -43,6 +43,12 @@ interface AgentRecord {
   thinkingEffort?: string
   thinkingEffortLevels?: string[]
   preferredThinkingEffort?: string
+  /**
+   * Per-model effort picks (key = model id). The user's own choice for that
+   * model; it wins over `preferredThinkingEffort` when the session runs that
+   * model. Absent/empty means no per-model pick (issue #552).
+   */
+  thinkingEffortByModel?: Record<string, string>
   preferredMode?: string
   acpCommand?: string
   acpAvailableModes?: Array<{ id: string; name: string }>
@@ -373,6 +379,27 @@ function hasThinkingEffortLevels(agentId: string): boolean {
 function getEffectiveThinkingEffort(agentId: string): string {
     const agent = agents.value.find(a => a.id === agentId)
     return agent?.preferredThinkingEffort || agent?.thinkingEffort || ''
+}
+
+/**
+ * Get the effort to pre-select for one agent+model pair (issue #552).
+ *
+ * Priority: the user's pick for THIS model > the model-independent default
+ * (preferredThinkingEffort > thinkingEffort). Mirrors the server's
+ * model.Agent.ThinkingEffortForModel so the chip and the first turn agree.
+ *
+ * An empty modelId (no model chosen yet) skips the per-model lookup: there is
+ * no key to match, and guessing one would pre-select a level for a model the
+ * user has not picked.
+ */
+function getEffectiveThinkingEffortForModel(agentId: string, modelId: string): string {
+    const agent = agents.value.find(a => a.id === agentId)
+    if (!agent) return ''
+    if (modelId) {
+        const perModel = agent.thinkingEffortByModel?.[modelId]
+        if (perModel) return perModel
+    }
+    return agent.preferredThinkingEffort || agent.thinkingEffort || ''
 }
 
 /** Get the effective mode ID for an agent. Priority: preferredMode > empty. */
@@ -734,6 +761,7 @@ export function useAgents() {
         getAgentThinkingEffortLevelsIncludingACP,
         hasThinkingEffortLevels,
         getEffectiveThinkingEffort,
+        getEffectiveThinkingEffortForModel,
         getEffectiveModeId,
         hasPreferredMode,
         updateAgentField,
