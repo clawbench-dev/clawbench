@@ -402,7 +402,8 @@ func TestSessionExecutor_Finalize_UserCancelLeavesCompletedAtNull(t *testing.T) 
 
 	var completed sql.NullTime
 	if err := store.ReadDB().QueryRow(
-		"SELECT completed_at FROM chat_history WHERE session_id = ? AND role = 'assistant'", sid).Scan(&completed); err != nil {
+		"SELECT completed_at FROM chat_history WHERE session_id = ? AND role = 'assistant'", sid,
+	).Scan(&completed); err != nil {
 		t.Fatalf("query completed_at: %v", err)
 	}
 	if completed.Valid {
@@ -2853,7 +2854,8 @@ func TestSessionExecutor_SteerBoundary_KeepsSessionRead(t *testing.T) {
 	// BEFORE the split so the completed_at stamp the split writes would
 	// otherwise overtake it.
 	if _, err := store.WriteExec(
-		"UPDATE chat_sessions SET last_read_at = '2020-01-01 00:00:00' WHERE id = ?", sid); err != nil {
+		"UPDATE chat_sessions SET last_read_at = '2020-01-01 00:00:00' WHERE id = ?", sid,
+	); err != nil {
 		t.Fatalf("failed to set last_read_at: %v", err)
 	}
 
@@ -2911,7 +2913,8 @@ func TestSessionExecutor_SteerBoundary_KeepsSessionRead(t *testing.T) {
 func assertSessionHasNoUnread(t *testing.T, sid, when string) {
 	t.Helper()
 	var unread int
-	if err := store.ReadDB().QueryRow(`
+	if err := store.ReadDB().QueryRow(
+		`
 		SELECT COUNT(*) FROM chat_history h
 		JOIN chat_sessions s ON s.id = h.session_id
 		WHERE h.session_id = ? AND h.role = 'assistant' AND h.streaming = 0
@@ -2957,7 +2960,8 @@ func TestSessionExecutor_SteerBoundary_DegradedSplitStillReanchors(t *testing.T)
 	// Anchor last_read_at in the past so the finalize's completed_at stamp would
 	// overtake it and produce a spurious unread row.
 	if _, err := store.WriteExec(
-		"UPDATE chat_sessions SET last_read_at = '2020-01-01 00:00:00' WHERE id = ?", sid); err != nil {
+		"UPDATE chat_sessions SET last_read_at = '2020-01-01 00:00:00' WHERE id = ?", sid,
+	); err != nil {
 		t.Fatalf("failed to set last_read_at: %v", err)
 	}
 
@@ -2998,7 +3002,8 @@ func TestSessionExecutor_SteerBoundary_DegradedSplitStillReanchors(t *testing.T)
 	var queueIDs int
 	if err := store.ReadDB().QueryRow(
 		"SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND queue_id = ?",
-		sid, "pending-inject-degraded").Scan(&queueIDs); err != nil {
+		sid, "pending-inject-degraded",
+	).Scan(&queueIDs); err != nil {
 		t.Fatalf("failed to count after-half rows: %v", err)
 	}
 	if queueIDs != 0 {
@@ -3246,5 +3251,151 @@ func TestSessionExecutor_Finalize_GroupTimelineWithoutFlagStillSummarizes(t *tes
 	}
 	if _, found := GetSummary("chat_message", finalized.MsgID); !found {
 		t.Fatal("executor must summarize when SuppressSummarization is false, even on a group timeline")
+	}
+}
+
+// TestSessionExecutor_SteerBoundary_FinalizeReanchorsAfterHalf pins the SECOND
+// half of the unread fix, which the same-second timing of the test above
+// silently hides.
+//
+// The split re-anchors last_read_at when it finalizes the "before" half, but
+// the "after" half is only finalized when the TURN ends — seconds or minutes
+// later. Its completed_at is therefore strictly newer than the anchor the split
+// wrote, so the unread predicate flips the session back while the user is still
+// reading it. On CI this surfaced as TestSessionExecutor_SteerBoundary_Keeps-
+// SessionRead failing at "after the turn finalized" while passing locally,
+// because locally the split and the finalize land in the same SQLite second.
+//
+// The race is made deterministic here by pushing last_read_at back to 2020
+// between the split and Finalize: the finalize's completed_at is then
+// unambiguously newer, exactly as it is on a real multi-second turn.
+func TestSessionExecutor_SteerBoundary_FinalizeReanchorsAfterHalf(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	streamMsgID := GetStreamingMessageID(sid)
+	if streamMsgID == 0 {
+		t.Fatal("expected a streaming placeholder to exist")
+	}
+
+	if _, err := AddChatMessage("/test", "test", sid, "user", "injected question", nil, false, ""); err != nil {
+		t.Fatalf("failed to persist injected question: %v", err)
+	}
+
+	events := []ai.StreamEvent{
+		{Type: "content", Content: "before half"},
+		{Type: "steer_boundary", SteerBoundary: &ai.SteerBoundaryData{ClientUserMessageID: "pending-inject-late"}},
+		{Type: "content", Content: "after half"},
+		{Type: "done"},
+	}
+	ch := make(chan ai.StreamEvent, len(events))
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	cfg := RunConfig{
+		Mode:               ModeScheduled,
+		ProjectPath:        "/test",
+		BackendName:        "test",
+		SessionID:          sid,
+		AgentID:            "test-agent",
+		ChatRequest:        ai.ChatRequest{Prompt: "hello"},
+		StreamingMessageID: streamMsgID,
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+	result := executor.RunWithChannel(ch)
+	if !result.ReceivedTerminal {
+		t.Fatal("expected ReceivedTerminal=true")
+	}
+
+	// Wind the anchor back past every row: this is what a turn lasting more than
+	// a second looks like to the unread predicate after the split's re-anchor.
+	if _, err := store.WriteExec(
+		"UPDATE chat_sessions SET last_read_at = '2020-01-01 00:00:00' WHERE id = ?", sid,
+	); err != nil {
+		t.Fatalf("failed to rewind last_read_at: %v", err)
+	}
+
+	emptyCh := make(chan ai.StreamEvent)
+	close(emptyCh)
+	executor.Finalize(result, emptyCh)
+
+	assertSessionHasNoUnread(t, sid, "after finalizing a steer-split turn with a stale anchor")
+}
+
+// TestSessionExecutor_SteerBoundary_CancelledTurnDoesNotReanchor pins the
+// boundary of the new Finalize rule: a CANCELLED split turn stamps no
+// completed_at (see FinalizeCancelledStreamingMessage), so it must not rewrite
+// last_read_at — the cancel path owns its own anchoring and marking a cancelled
+// turn read here would hide the interrupted reply from the unread badge.
+func TestSessionExecutor_SteerBoundary_CancelledTurnDoesNotReanchor(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	streamMsgID := GetStreamingMessageID(sid)
+	if streamMsgID == 0 {
+		t.Fatal("expected a streaming placeholder to exist")
+	}
+
+	if _, err := AddChatMessage("/test", "test", sid, "user", "injected question", nil, false, ""); err != nil {
+		t.Fatalf("failed to persist injected question: %v", err)
+	}
+
+	events := []ai.StreamEvent{
+		{Type: "content", Content: "before half"},
+		{Type: "steer_boundary", SteerBoundary: &ai.SteerBoundaryData{ClientUserMessageID: "pending-inject-cancel"}},
+		{Type: "content", Content: "after half"},
+		{Type: "done"},
+	}
+	ch := make(chan ai.StreamEvent, len(events))
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	cfg := RunConfig{
+		Mode:               ModeScheduled,
+		ProjectPath:        "/test",
+		BackendName:        "test",
+		SessionID:          sid,
+		AgentID:            "test-agent",
+		ChatRequest:        ai.ChatRequest{Prompt: "hello"},
+		StreamingMessageID: streamMsgID,
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+	result := executor.RunWithChannel(ch)
+	if !result.ReceivedTerminal {
+		t.Fatal("expected ReceivedTerminal=true")
+	}
+	result.CancelReason = cancelReasonUser
+
+	const anchor = "2020-01-01 00:00:00"
+	if _, err := store.WriteExec(
+		"UPDATE chat_sessions SET last_read_at = ? WHERE id = ?", anchor, sid,
+	); err != nil {
+		t.Fatalf("failed to rewind last_read_at: %v", err)
+	}
+
+	emptyCh := make(chan ai.StreamEvent)
+	close(emptyCh)
+	executor.Finalize(result, emptyCh)
+
+	var got string
+	if err := store.ReadDB().QueryRow(
+		"SELECT COALESCE(last_read_at, '') FROM chat_sessions WHERE id = ?", sid,
+	).Scan(&got); err != nil {
+		t.Fatalf("failed to read last_read_at: %v", err)
+	}
+	if got != anchor {
+		t.Fatalf("a cancelled split turn must not re-anchor last_read_at: got %q, want %q", got, anchor)
 	}
 }
