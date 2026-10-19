@@ -95,14 +95,13 @@
       :aria-busy="anchorKeyPending(btwAnchors, '0')"
       @click="$emit('open-btw', '0')"
     >
-      <!-- The pending state must NOT resize the pill, so the visible label and
-           its footprint stay identical: only the 14px icon is swapped for an
-           equally-sized spinner, and the wait is described via title/aria
-           (which do not affect layout). -->
-      <LoadingIndicator v-if="anchorKeyPending(btwAnchors, '0')" size="sm" inline class="btw-anchor-spinner" />
-      <MessageCircleQuestion v-else :size="14" />
+      <!-- The question icon stays put while pending — it is what the pill says
+           it is. The wait is carried by a ring appended at the pill's tail (plus
+           title/aria, which do not affect layout). -->
+      <MessageCircleQuestion :size="14" />
       <span class="btw-anchor-label">{{ t('chat.btw.anchorLabel') }}</span>
       <span v-if="btwAnchors['0'].length > 1" class="btw-anchor-count">{{ btwAnchors['0'].length }}</span>
+      <LoadingIndicator v-if="anchorKeyPending(btwAnchors, '0')" size="sm" inline class="btw-anchor-spinner" />
     </button>
 
     <template v-for="(msg, i) in messages" :key="msg.id ? 'db-' + msg.id : 'local-' + i">
@@ -152,13 +151,12 @@
         :aria-busy="anchorPendingFor(msg)"
         @click="$emit('open-btw', anchorKeyFor(msg))"
       >
-        <!-- Same label and icon footprint as the resting state, so the pill does
-             not resize when a question starts or finishes; the wait is described
-             via title/aria, which do not affect layout. -->
-        <LoadingIndicator v-if="anchorPendingFor(msg)" size="sm" inline class="btw-anchor-spinner" />
-        <MessageCircleQuestion v-else :size="14" />
+        <!-- Same resting markup as the settled state: the question icon stays
+             visible, the spinner is appended at the pill's tail. -->
+        <MessageCircleQuestion :size="14" />
         <span class="btw-anchor-label">{{ t('chat.btw.anchorLabel') }}</span>
         <span v-if="anchorCountFor(msg) > 1" class="btw-anchor-count">{{ anchorCountFor(msg) }}</span>
+        <LoadingIndicator v-if="anchorPendingFor(msg)" size="sm" inline class="btw-anchor-spinner" />
       </button>
     </template>
     </div>
