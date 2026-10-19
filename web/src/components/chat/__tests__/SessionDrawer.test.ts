@@ -6,6 +6,7 @@ import { useAgents } from '@/composables/useAgents'
 import { useSessionIdentity } from '@/composables/useSessionIdentity'
 import { apiPost } from '@/utils/api'
 import { patchAgentPref } from '@/composables/useSettingsConfig'
+import { readWebFile } from '@/testUtils/readWebFile'
 
 // Shared mock for the named applyRefreshedModelList export — used by both the
 // vi.mock factory and the assertions below (the component imports it directly).
@@ -1085,6 +1086,21 @@ describe('SessionDrawer', () => {
       const detail = wrapper.findComponent({ name: 'ContextUsageDetail' })
       expect(detail.exists()).toBe(true)
       expect((detail.props('usage') as { used: number }).used).toBe(50000)
+    })
+
+    it('gives the panel body its own padding (the shared component has none)', async () => {
+      // ContextUsageDetail carries no outer padding: its single-chat host
+      // (.usage-popup) supplies it. Mounted bare in this drawer the rows would
+      // sit flush against the sheet edges, so the wrapper must pad them.
+      const wrapper = mountDrawer()
+      await wrapper.findAll('.model-tab')[4].trigger('click')
+      await nextTick()
+      const content = wrapper.find('.model-tab-content')
+      expect(content.classes()).toContain('usage-tab-content')
+
+      const src = readWebFile('src/components/chat/SessionDrawer.vue')
+      const rule = src.slice(src.indexOf('.usage-tab-content {'), src.indexOf('}', src.indexOf('.usage-tab-content {')))
+      expect(rule).toMatch(/padding:\s*var\(--space-4\) var\(--space-5\)/)
     })
 
     it('shows an empty state when the session never reported a window', async () => {

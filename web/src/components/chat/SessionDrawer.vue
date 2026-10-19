@@ -227,8 +227,11 @@
       </template>
     </div>
 
-    <!-- Context usage tab -->
-    <div v-if="activeTab === 'usage'" class="model-tab-content">
+    <!-- Context usage tab. ContextUsageDetail deliberately carries NO outer
+         padding of its own (its single-chat host, `.usage-popup`, supplies it),
+         so the padding has to come from this wrapper — otherwise the rows sit
+         flush against the sheet edges. -->
+    <div v-if="activeTab === 'usage'" class="model-tab-content usage-tab-content">
       <p v-if="!hasUsage" class="tab-empty-hint">{{ t('chat.sessionSetting.noUsage') }}</p>
       <ContextUsageDetail v-else :usage="usageSnapshot" :show-compact="canCompactHere" :compacting="compacting" @compact="onCompact" />
       <p v-if="compactError" class="usage-error">{{ compactError }}</p>
@@ -1231,8 +1234,16 @@ defineExpose({
   border-top: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
 }
 
+/* The usage panel body has no padding of its own (see the template comment).
+   Match the other tabs' horizontal rhythm — `--space-5` is what the model
+   search row and the setting rows use, so the numbers line up with them. */
+.usage-tab-content {
+  padding: var(--space-4) var(--space-5) var(--space-6);
+  overflow-y: auto;
+}
+
 .usage-error {
-  margin: var(--space-4) 14px 0;
+  margin: var(--space-4) 0 0;
   font-size: var(--font-size-sm);
   color: var(--color-red, #dc2626);
   line-height: 1.4;
