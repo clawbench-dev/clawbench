@@ -84,6 +84,14 @@ func ServeAgentSubRoutes(w http.ResponseWriter, r *http.Request) {
 	// Forwarded regardless of method so the handler can answer 405 for a wrong
 	// one — a 404 would claim the route does not exist, which is misleading for
 	// a path that does.
+	// Deep before shallow: "/self-test-deep" does not actually satisfy
+	// HasSuffix("/self-test"), but ordering the more specific route first means a
+	// future rename (e.g. "/self-test?mode=deep") cannot silently fall into the
+	// cheap handler.
+	if strings.HasSuffix(path, "/self-test-deep") {
+		ServeAgentSelfTestDeep(w, r)
+		return
+	}
 	if strings.HasSuffix(path, "/self-test") {
 		ServeAgentSelfTest(w, r)
 		return

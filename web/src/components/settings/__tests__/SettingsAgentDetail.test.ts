@@ -61,6 +61,10 @@ vi.mock('vue-i18n', async (importOriginal) => {
         'settings.items.agentSelfTestStatusFail': 'FAIL',
         'settings.items.agentSelfTestCheck.enabled': 'Enabled',
         'settings.items.agentSelfTestCheck.transport': 'Transport',
+        'settings.items.agentSelfTestDeep': 'Run a Real Turn',
+        'settings.items.agentSelfTestDeepHint': 'Costs credit',
+        'settings.items.agentSelfTestDeepReply': 'Reply: {reply}',
+        'settings.items.agentSelfTestDeepMeta': 'transport {transport} · stop {stopReason} · {ms}ms',
         'settings.saveFailed': 'Save failed',
         'settings.items.agentDelete': 'Delete',
         'settings.items.agentDeleteConfirm': `Delete ${params?.name ?? ''}?`,
@@ -79,6 +83,10 @@ vi.mock('vue-i18n', async (importOriginal) => {
         'settings.items.agentCopied': 'Agent duplicated',
         'settings.items.agentCopyFailed': 'Duplicate failed',
         'settings.items.agentCopyNameTaken': 'An agent with this name already exists',
+      }
+      if (key === 'settings.items.agentSelfTestDeepReply' && params) return `Reply: ${params.reply}`
+      if (key === 'settings.items.agentSelfTestDeepMeta' && params) {
+        return `transport ${params.transport} · stop ${params.stopReason} · ${params.ms}ms`
       }
       if (key === 'settings.items.agentSelfTestSummary' && params) {
         return `${params.passed} passed, ${params.warned} warning(s), ${params.failed} failed`
@@ -124,17 +132,21 @@ vi.mock('@/composables/useToast', () => ({
 // The self-test composable is mocked so the component test asserts the WIRING
 // (button → run(agentId) → rendered rows), not the HTTP layer.
 const mockSelfTestRun = vi.fn().mockResolvedValue(undefined)
+const mockSelfTestRunDeep = vi.fn().mockResolvedValue(undefined)
 const mockSelfTestState = {
   testing: { value: false },
   result: { value: null as unknown },
+  deepResult: { value: null as unknown },
   error: { value: '' },
 }
 vi.mock('@/composables/useAgentSelfTest', () => ({
   useAgentSelfTest: () => ({
     testing: mockSelfTestState.testing,
     result: mockSelfTestState.result,
+    deepResult: mockSelfTestState.deepResult,
     error: mockSelfTestState.error,
     run: mockSelfTestRun,
+    runDeep: mockSelfTestRunDeep,
     clear: vi.fn(),
   }),
 }))
@@ -207,6 +219,7 @@ describe('SettingsAgentDetail', () => {
     vi.clearAllMocks()
     mockSelfTestState.testing.value = false
     mockSelfTestState.result.value = null
+    mockSelfTestState.deepResult.value = null
     mockSelfTestState.error.value = ''
     mockGetAgent.mockReturnValue(baseAgent)
     mockAgentsLoaded.value = true
@@ -984,5 +997,40 @@ describe('SettingsAgentDetail', () => {
     const btn = wrapper.find('.settings-agent-detail__selftest-btn')
     expect(btn.attributes('disabled')).toBeDefined()
     expect(btn.text()).toBe('Testing…')
+  })
+
+  it('runs a real turn from the deep button', async () => {
+    const wrapper = mountDetail()
+    const buttons = wrapper.findAll('.settings-agent-detail__selftest-btn')
+    expect(buttons).toHaveLength(2)
+
+    await buttons[1].trigger('click')
+    expect(mockSelfTestRunDeep).toHaveBeenCalledWith('test-agent')
+    // The cheap run must not also fire — the two are deliberately separate.
+    expect(mockSelfTestRun).not.toHaveBeenCalled()
+  })
+
+  it('shows the model reply and turn metadata after a deep run', async () => {
+    mockSelfTestState.deepResult.value = {
+      reply: 'Hello! I am a mock ACP agent.',
+      transport: 'acp-stdio',
+      stopReason: 'end_turn',
+      durationMs: 4123,
+    }
+    const wrapper = mountDetail()
+    await wrapper.vm.$nextTick()
+
+    const deep = wrapper.find('.settings-agent-detail__selftest-deep')
+    expect(deep.exists()).toBe(true)
+    // The reply is the proof the agent actually answered, so it must be shown.
+    expect(deep.text()).toContain('Hello! I am a mock ACP agent.')
+    expect(deep.text()).toContain('acp-stdio')
+    expect(deep.text()).toContain('end_turn')
+    expect(deep.text()).toContain('4123ms')
+  })
+
+  it('hides the deep block when no deep run has happened', () => {
+    const wrapper = mountDetail()
+    expect(wrapper.find('.settings-agent-detail__selftest-deep').exists()).toBe(false)
   })
 })

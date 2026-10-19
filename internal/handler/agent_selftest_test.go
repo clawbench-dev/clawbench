@@ -9,6 +9,7 @@ import (
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
+	"clawbench/internal/store"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -327,4 +328,89 @@ func TestServeAgentSelfTest_DeletedAgentIs404(t *testing.T) {
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeAgentSubRoutes, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// --- deep self-test ---
+
+// parseSelfTestReply must read the text out of the persisted content document
+// and pull transport/stopReason from the same place, so the deep report reflects
+// what the turn DID rather than what the config said it would do.
+func TestParseSelfTestReply(t *testing.T) {
+	content := `{"blocks":[{"type":"text","text":"Hello! I am a mock ACP agent."},` +
+		`{"type":"text","text":" second"}],` +
+		`"metadata":{"transport":"acp-stdio","stopReason":"end_turn"}}`
+
+	reply, transport, stop := parseSelfTestReply(content)
+	assert.Equal(t, "Hello! I am a mock ACP agent. second", reply)
+	assert.Equal(t, "acp-stdio", transport)
+	assert.Equal(t, "end_turn", stop)
+}
+
+// A warning block is not a reply: treating its text as one would let a failed
+// turn pass the deep check.
+func TestParseSelfTestReply_IgnoresWarningBlocks(t *testing.T) {
+	content := `{"blocks":[{"type":"warning","text":"The agent did not run this request"}],` +
+		`"metadata":{"transport":"acp-stdio"}}`
+
+	reply, _, _ := parseSelfTestReply(content)
+	assert.Empty(t, reply, "a warning must never count as an assistant reply")
+}
+
+func TestParseSelfTestReply_MalformedIsEmpty(t *testing.T) {
+	reply, transport, stop := parseSelfTestReply("not json")
+	assert.Empty(t, reply)
+	assert.Empty(t, transport)
+	assert.Empty(t, stop)
+}
+
+// The deep route must refuse to spend a full turn when the cheap checks already
+// failed, and it must report WHY rather than a bare false.
+func TestServeAgentSelfTestDeep_RefusesOnStaticFailure(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+	projectDir := t.TempDir()
+
+	// An agent whose command does not exist: the static check fails on the
+	// executable probe, so no turn may be attempted.
+	require.NoError(t, service.SaveAgent(store.WriteDB(), &model.Agent{
+		ID: "deep-broken", Name: "Deep Broken",
+		Backend: model.CustomACPBackend, Transport: "acp-stdio",
+		AcpCommand: "not-installed-anywhere-deep --stdio",
+	}))
+	model.AddAgent(&model.Agent{
+		ID: "deep-broken", Name: "Deep Broken",
+		Backend: model.CustomACPBackend, Transport: "acp-stdio",
+		AcpCommand:          "not-installed-anywhere-deep --stdio",
+		RuntimeSystemPrompt: "prompt",
+	})
+	t.Cleanup(func() { model.DeleteAgent("deep-broken") })
+
+	req := newRequest(t, http.MethodPost, "/api/agents/deep-broken/self-test-deep", nil)
+	withAuthCookie(req, model.SessionToken)
+	req.AddCookie(&http.Cookie{Name: model.ScopedCookieName("clawbench_project"), Value: projectDir})
+	w := callHandler(ServeAgentSelfTestDeep, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var body struct {
+		OK     bool                 `json:"ok"`
+		Error  string               `json:"error"`
+		Static *AgentSelfTestResult `json:"static"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+
+	assert.False(t, body.OK)
+	assert.Contains(t, body.Error, "configuration checks failed")
+	require.NotNil(t, body.Static)
+	assert.Greater(t, body.Static.Failed, 0)
+}
+
+// Without a project there is nowhere to run a turn.
+func TestServeAgentSelfTestDeep_RequiresProject(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	req := newRequest(t, http.MethodPost, "/api/agents/claude/self-test-deep", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgentSelfTestDeep, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }

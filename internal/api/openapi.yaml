@@ -4164,6 +4164,16 @@ paths:
         注册表与文件系统探测（唯一的例外是 `exec.LookPath` 级别的可执行文件检查）。
         `ok` 仅在无 `fail` 时为 true；`warn` 描述「降级但可用」的状态（例如 ACP
         agent 首轮之前尚未上报模型），不影响 `ok`。agent 不存在返回 404。
+
+        `/api/agents/{id}/self-test-deep`：**深度自检**——真实发送一条消息并等待
+        回复，验证 agent 能启动、完成握手、接受 prompt 并流式返回。返回
+        `{ ok, error?, deep?, static }`，`deep` 含 `{ reply, transport, stopReason,
+        durationMs }`（transport/stopReason 取自**落库的回合元数据**，即事实而非
+        配置）。**会消耗模型额度**，故与静态自检分为两个独立路由：客户端无法通过
+        一个字段意外触发付费调用。执行前会先跑静态自检，任一项 `fail` 即直接返回
+        `ok:false` + 原因（不浪费一个完整回合的超时）。使用一次性会话，结束后
+        删除会话行、RAG 分块与 ACP 连接，不在会话列表留下痕迹。需要选择项目
+        （否则 `400 NoProjectSelected`），单次回合超时 90 秒。
       operationId: agentSubPost
       parameters:
         - $ref: "#/components/parameters/Id"

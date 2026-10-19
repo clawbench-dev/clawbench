@@ -90,4 +90,56 @@ describe('useAgentSelfTest', () => {
     expect(result.value).toBeNull()
     expect(error.value).toBe('')
   })
+
+  // ─── deep mode ─────────────────────────────────
+
+  it('posts to the deep endpoint and exposes the reply', async () => {
+    mockApiPost.mockResolvedValue({
+      ok: true,
+      deep: { reply: 'OK', transport: 'acp-stdio', stopReason: 'end_turn', durationMs: 900 },
+      static: okResult,
+    })
+    const { runDeep, deepResult, result } = useAgentSelfTest()
+
+    await runDeep('claude')
+
+    const [url, , opts] = mockApiPost.mock.calls[0]
+    expect(url).toBe('/api/agents/claude/self-test-deep')
+    // A real turn can take up to ~90s server-side, so the client timeout must
+    // exceed that or the UI would report a failure for a working agent.
+    expect((opts as { timeoutMs: number }).timeoutMs).toBeGreaterThanOrEqual(90_000)
+
+    expect(deepResult.value?.reply).toBe('OK')
+    expect(deepResult.value?.stopReason).toBe('end_turn')
+    // The static checks ride along so the UI can render both from one request.
+    expect(result.value?.ok).toBe(true)
+  })
+
+  it('reports a refusal (static checks failed) as an error with the static result', async () => {
+    mockApiPost.mockResolvedValue({
+      ok: false,
+      error: 'The configuration checks failed; fix them before running a real turn.',
+      static: { agentId: 'claude', ok: false, passed: 3, failed: 2, warned: 0, checks: [] },
+    })
+    const { runDeep, deepResult, result, error } = useAgentSelfTest()
+
+    await runDeep('claude')
+
+    expect(deepResult.value).toBeNull()
+    expect(error.value).toContain('configuration checks failed')
+    // The failing checks must still be visible, otherwise the user sees only a
+    // vague refusal with no way to act.
+    expect(result.value?.failed).toBe(2)
+  })
+
+  it('clears a previous deep result before a new shallow run', async () => {
+    mockApiPost.mockResolvedValueOnce({ ok: true, deep: { reply: 'old' } })
+    const { run, runDeep, deepResult } = useAgentSelfTest()
+    await runDeep('claude')
+    expect(deepResult.value).not.toBeNull()
+
+    mockApiPost.mockResolvedValueOnce(okResult)
+    await run('claude')
+    expect(deepResult.value).toBeNull()
+  })
 })

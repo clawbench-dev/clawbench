@@ -49,14 +49,41 @@
          real configuration and prints one row per check, so a broken setup is
          diagnosable without reading server logs. -->
     <div class="settings-agent-detail__selftest">
-      <button
-        class="fbtn settings-agent-detail__selftest-btn"
-        :disabled="selfTest.testing.value"
-        @click="handleSelfTest"
-      >
-        <Activity :size="16" class="settings-agent-detail__action-icon" />
-        <span>{{ selfTest.testing.value ? t('settings.items.agentSelfTestRunning') : t('settings.items.agentSelfTest') }}</span>
-      </button>
+      <div class="settings-agent-detail__selftest-actions">
+        <button
+          class="fbtn settings-agent-detail__selftest-btn"
+          :disabled="selfTest.testing.value"
+          @click="handleSelfTest"
+        >
+          <Activity :size="16" class="settings-agent-detail__action-icon" />
+          <span>{{ selfTest.testing.value ? t('settings.items.agentSelfTestRunning') : t('settings.items.agentSelfTest') }}</span>
+        </button>
+        <!-- Opt-in real turn. Separate button because it costs tokens: a user
+             checking configuration should not pay for a model call. -->
+        <button
+          class="fbtn settings-agent-detail__selftest-btn"
+          :disabled="selfTest.testing.value"
+          :title="t('settings.items.agentSelfTestDeepHint')"
+          @click="handleSelfTestDeep"
+        >
+          <Zap :size="16" class="settings-agent-detail__action-icon" />
+          <span>{{ t('settings.items.agentSelfTestDeep') }}</span>
+        </button>
+      </div>
+
+      <!-- Deep run outcome: the model's own words are the proof. -->
+      <div v-if="selfTest.deepResult.value" class="settings-agent-detail__selftest-deep">
+        <div class="settings-agent-detail__selftest-deep-line">
+          {{ t('settings.items.agentSelfTestDeepReply', { reply: selfTest.deepResult.value.reply ?? '' }) }}
+        </div>
+        <div class="settings-agent-detail__selftest-deep-meta">
+          {{ t('settings.items.agentSelfTestDeepMeta', {
+            transport: selfTest.deepResult.value.transport ?? '',
+            stopReason: selfTest.deepResult.value.stopReason ?? '',
+            ms: selfTest.deepResult.value.durationMs ?? 0,
+          }) }}
+        </div>
+      </div>
 
       <div v-if="selfTest.error.value" class="settings-agent-detail__selftest-error">
         {{ selfTest.error.value }}
@@ -128,7 +155,7 @@
 
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
-import { Activity, ArrowLeft, Ban, Copy, Play, Trash2, UserX } from 'lucide-vue-next'
+import { Activity, ArrowLeft, Ban, Copy, Play, Trash2, UserX, Zap } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import SettingsItem from './SettingsItem.vue'
 import SettingsCard from './SettingsCard.vue'
@@ -625,6 +652,17 @@ async function handleSelfTest() {
   await selfTest.run(id)
 }
 
+/**
+ * Run one REAL turn. Confirms the agent can actually answer, not just that its
+ * configuration is self-consistent — but it costs tokens, so it is a separate
+ * button the user has to press deliberately.
+ */
+async function handleSelfTestDeep() {
+  const id = agent.value?.id
+  if (!id) return
+  await selfTest.runDeep(id)
+}
+
 /** Short label for a check status (ok / warn / fail). */
 function selfTestStatusLabel(status: AgentSelfTestCheck['status']): string {
   switch (status) {
@@ -773,8 +811,34 @@ async function handleDelete() {
   margin-bottom: var(--space-4);
 }
 
+.settings-agent-detail__selftest-actions {
+  display: flex;
+  gap: var(--space-4);
+}
+
 .settings-agent-detail__selftest-btn {
-  width: 100%;
+  flex: 1;
+}
+
+.settings-agent-detail__selftest-deep {
+  margin-top: var(--space-4);
+  padding: var(--space-4) var(--space-6);
+  background: var(--bg-primary);
+  border-radius: var(--radius-sm);
+  border-left: 2px solid #22c55e;
+}
+
+.settings-agent-detail__selftest-deep-line {
+  font-size: var(--font-size-md);
+  color: var(--text-primary);
+  line-height: var(--line-height-snug);
+  overflow-wrap: anywhere;
+}
+
+.settings-agent-detail__selftest-deep-meta {
+  margin-top: var(--space-2);
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
 }
 
 .settings-agent-detail__selftest-error {
