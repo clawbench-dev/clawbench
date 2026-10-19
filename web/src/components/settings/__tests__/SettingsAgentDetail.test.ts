@@ -54,6 +54,13 @@ vi.mock('vue-i18n', async (importOriginal) => {
         'settings.items.agentTaskCountDesc': 'Tasks using this agent',
         'settings.items.agentTaskCount': `${params?.count ?? 0} tasks`,
         'settings.items.agentAcpCommand': 'ACP Command',
+        'settings.items.agentSelfTest': 'Run Integration Test',
+        'settings.items.agentSelfTestRunning': 'Testing…',
+        'settings.items.agentSelfTestStatusOk': 'OK',
+        'settings.items.agentSelfTestStatusWarn': 'WARN',
+        'settings.items.agentSelfTestStatusFail': 'FAIL',
+        'settings.items.agentSelfTestCheck.enabled': 'Enabled',
+        'settings.items.agentSelfTestCheck.transport': 'Transport',
         'settings.saveFailed': 'Save failed',
         'settings.items.agentDelete': 'Delete',
         'settings.items.agentDeleteConfirm': `Delete ${params?.name ?? ''}?`,
@@ -72,6 +79,9 @@ vi.mock('vue-i18n', async (importOriginal) => {
         'settings.items.agentCopied': 'Agent duplicated',
         'settings.items.agentCopyFailed': 'Duplicate failed',
         'settings.items.agentCopyNameTaken': 'An agent with this name already exists',
+      }
+      if (key === 'settings.items.agentSelfTestSummary' && params) {
+        return `${params.passed} passed, ${params.warned} warning(s), ${params.failed} failed`
       }
       if (key === 'settings.items.agentModelCount' && params) return `${params.count} models`
       if (key === 'settings.items.agentDeleteConfirm' && params) return `Delete ${params.name}?`
@@ -109,6 +119,24 @@ vi.mock('@/composables/useSettingsConfig', () => ({
 
 vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ show: mockToastShow }),
+}))
+
+// The self-test composable is mocked so the component test asserts the WIRING
+// (button → run(agentId) → rendered rows), not the HTTP layer.
+const mockSelfTestRun = vi.fn().mockResolvedValue(undefined)
+const mockSelfTestState = {
+  testing: { value: false },
+  result: { value: null as unknown },
+  error: { value: '' },
+}
+vi.mock('@/composables/useAgentSelfTest', () => ({
+  useAgentSelfTest: () => ({
+    testing: mockSelfTestState.testing,
+    result: mockSelfTestState.result,
+    error: mockSelfTestState.error,
+    run: mockSelfTestRun,
+    clear: vi.fn(),
+  }),
 }))
 
 const mockDialogConfirm = vi.fn().mockResolvedValue(false)
@@ -177,6 +205,9 @@ function mountMissingAgent() {
 describe('SettingsAgentDetail', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockSelfTestState.testing.value = false
+    mockSelfTestState.result.value = null
+    mockSelfTestState.error.value = ''
     mockGetAgent.mockReturnValue(baseAgent)
     mockAgentsLoaded.value = true
     mockDuplicateAgent.mockResolvedValue(undefined)
@@ -875,5 +906,83 @@ describe('SettingsAgentDetail', () => {
 
       expect(wrapper.emitted('navigateReplace')).toBeUndefined()
     })
+  })
+
+  // ─── Integration self-test ─────────────────────
+
+  it('runs the self-test for the agent on screen', async () => {
+    const wrapper = mountDetail()
+    await wrapper.find('.settings-agent-detail__selftest-btn').trigger('click')
+
+    expect(mockSelfTestRun).toHaveBeenCalledWith('test-agent')
+  })
+
+  it('renders one row per check with its status label', async () => {
+    mockSelfTestState.result.value = {
+      agentId: 'test-agent',
+      ok: false,
+      passed: 1,
+      warned: 1,
+      failed: 1,
+      checks: [
+        { key: 'enabled', status: 'ok' },
+        { key: 'transport', status: 'warn', detail: 'Effective transport: cli' },
+        { key: 'models', status: 'fail', detail: 'No models available' },
+      ],
+    }
+    const wrapper = mountDetail()
+    await wrapper.vm.$nextTick()
+
+    const rows = wrapper.findAll('.settings-agent-detail__selftest-check')
+    expect(rows).toHaveLength(3)
+
+    // The status label is what a user scans for, so assert it per row rather
+    // than just counting elements.
+    expect(rows[0].find('.settings-agent-detail__selftest-status').text()).toBe('OK')
+    expect(rows[1].find('.settings-agent-detail__selftest-status').text()).toBe('WARN')
+    expect(rows[2].find('.settings-agent-detail__selftest-status').text()).toBe('FAIL')
+
+    // Each row must carry its own status class: that class is what colors the
+    // label, so losing it would leave a "FAIL" that looks identical to "OK".
+    expect(rows[0].classes()).toContain('settings-agent-detail__selftest-check--ok')
+    expect(rows[1].classes()).toContain('settings-agent-detail__selftest-check--warn')
+    expect(rows[2].classes()).toContain('settings-agent-detail__selftest-check--fail')
+
+    // A failure must also be visible in the container styling, not just the text.
+    expect(wrapper.find('.settings-agent-detail__selftest-result--fail').exists()).toBe(true)
+
+    // Details explain WHY, so they must reach the DOM.
+    expect(wrapper.text()).toContain('Effective transport: cli')
+    expect(wrapper.text()).toContain('No models available')
+  })
+
+  it('does not mark a passing run as failing', async () => {
+    mockSelfTestState.result.value = {
+      agentId: 'test-agent', ok: true, passed: 2, warned: 0, failed: 0,
+      checks: [{ key: 'enabled', status: 'ok' }, { key: 'transport', status: 'ok' }],
+    }
+    const wrapper = mountDetail()
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('.settings-agent-detail__selftest-result--fail').exists()).toBe(false)
+    expect(wrapper.text()).toContain('2 passed, 0 warning(s), 0 failed')
+  })
+
+  it('shows the request error when the self-test call fails', async () => {
+    mockSelfTestState.error.value = 'Agent not found'
+    const wrapper = mountDetail()
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('.settings-agent-detail__selftest-error').text()).toBe('Agent not found')
+    expect(wrapper.find('.settings-agent-detail__selftest-result').exists()).toBe(false)
+  })
+
+  it('disables the button while a run is in flight', async () => {
+    mockSelfTestState.testing.value = true
+    const wrapper = mountDetail()
+
+    const btn = wrapper.find('.settings-agent-detail__selftest-btn')
+    expect(btn.attributes('disabled')).toBeDefined()
+    expect(btn.text()).toBe('Testing…')
   })
 })

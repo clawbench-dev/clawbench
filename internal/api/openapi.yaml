@@ -4154,6 +4154,16 @@ paths:
         `/api/agents/rescan`：重跑 agent 刷新流水线（探测 CLI → 发现模型 → 落库 →
         重载内存），返回与 GET /api/agents 相同形状、同样按当前项目过滤的
         `{ agents, defaultAgent }`（被标记「仅当前项目」的 agent 不会泄漏到其它项目）。
+
+        `/api/agents/{id}/self-test`：运行该 agent 的集成自检，返回
+        `{ agentId, ok, passed, failed, warned, checks[] }`，每个 check 形如
+        `{ key, status, detail }`（`status` 为 `ok`/`warn`/`fail`）。检查项覆盖
+        启用状态、项目范围、后端是否可识别、传输与命令是否自洽、可执行文件是否
+        存在、模型列表与首选模型、ACP 能力缓存、首选模式、系统提示与使用计数。
+        **不发提示词、不产生费用、不 spawn 进程**：全部基于已持久化状态、后端
+        注册表与文件系统探测（唯一的例外是 `exec.LookPath` 级别的可执行文件检查）。
+        `ok` 仅在无 `fail` 时为 true；`warn` 描述「降级但可用」的状态（例如 ACP
+        agent 首轮之前尚未上报模型），不影响 `ok`。agent 不存在返回 404。
       operationId: agentSubPost
       parameters:
         - $ref: "#/components/parameters/Id"
