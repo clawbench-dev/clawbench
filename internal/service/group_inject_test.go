@@ -391,9 +391,15 @@ func TestBuildMemberInjection_StripsBothTags(t *testing.T) {
 // A private note reaches ONLY its target member. It is rendered as a closing
 // paragraph after the public instruction; every other member's context must be
 // free of it — and of the raw tag.
+//
+// The bcc argument is ALREADY attributed by joinPendingBcc (each note carries
+// its own "who sent this" line), so these tests feed it through that function
+// rather than a bare string — feeding a bare string would exercise a shape
+// production never produces.
 
 func TestBuildMemberInjection_PrivateNoteOnlyToTarget(t *testing.T) {
-	got := buildInjectionText(nil, 0, "row-a", map[string]string{}, nil, nil, "公共指令", "只给A的话")
+	bcc := joinPendingBcc([]pendingBcc{{ID: 1, Content: "只给A的话", SenderRole: bccRoleHost}})
+	got := buildInjectionText(nil, 0, "row-a", map[string]string{}, nil, nil, "公共指令", bcc)
 	if !strings.Contains(got, "主持人密送给你") {
 		t.Fatalf("the target must receive its private note: %q", got)
 	}
@@ -445,16 +451,55 @@ func TestBuildMemberInjection_NoteNotInInstruction(t *testing.T) {
 	}
 }
 
-// joinPendingBcc renders the notes accumulated for one target, joined. The
-// per-target filtering now happens in the store (pendingBccForTarget), so this
-// only formats what it is given.
+// joinPendingBcc renders the notes accumulated for one target, joined and each
+// prefixed with its own attribution line. The per-target filtering happens in
+// the store (pendingBccForTarget), so this only formats what it is given.
 func TestJoinPendingBcc(t *testing.T) {
 	if got := joinPendingBcc(nil); got != "" {
 		t.Fatalf("no notes must render empty: %q", got)
 	}
-	pending := []pendingBcc{{ID: 1, Content: "给A一"}, {ID: 2, Content: "给A二"}}
-	if got := joinPendingBcc(pending); got != "给A一\n\n给A二" {
-		t.Fatalf("joined: %q", got)
+	pending := []pendingBcc{
+		{ID: 1, Content: "给A一", SenderRole: bccRoleHost},
+		{ID: 2, Content: "给A二", SenderRole: bccRoleHost},
+	}
+	want := "主持人密送给你（其他成员看不到）：给A一\n\n主持人密送给你（其他成员看不到）：给A二"
+	if got := joinPendingBcc(pending); got != want {
+		t.Fatalf("joined:\n got %q\nwant %q", got, want)
+	}
+}
+
+// Each note is attributed to its ACTUAL sender. Before the sender columns
+// existed every note rendered as "主持人密送给你", so a free-mode peer's note and
+// the user's own note were both mis-attributed to the host.
+func TestJoinPendingBcc_AttributesEachSender(t *testing.T) {
+	pending := []pendingBcc{
+		{ID: 1, Content: "主持人说的", SenderRole: bccRoleHost},
+		{ID: 2, Content: "同伴说的", SenderRole: bccRoleMember, SenderName: "Alice"},
+		{ID: 3, Content: "用户说的", SenderRole: bccRoleUser},
+	}
+	got := joinPendingBcc(pending)
+	for _, want := range []string{
+		"主持人密送给你（其他成员看不到）：主持人说的",
+		"Alice 密送给你（其他成员看不到）：同伴说的",
+		groupUserTarget() + " 密送给你（其他成员看不到）：用户说的",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q in:\n%s", want, got)
+		}
+	}
+}
+
+// A row written before the sender columns existed has an empty role. It must
+// still render with the historical host wording rather than an empty prefix —
+// an undelivered note from before the upgrade must not become "密送给你：" with
+// nobody named.
+func TestJoinPendingBcc_LegacyRowFallsBackToHost(t *testing.T) {
+	got := joinPendingBcc([]pendingBcc{{ID: 1, Content: "旧笔记"}})
+	if !strings.Contains(got, "主持人密送给你") {
+		t.Fatalf("a legacy row must fall back to the host wording: %q", got)
+	}
+	if !strings.Contains(got, "旧笔记") {
+		t.Fatalf("the content must survive: %q", got)
 	}
 }
 

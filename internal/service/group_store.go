@@ -606,17 +606,60 @@ func writeGroupSystemMessage(projectPath, groupID, text string) {
 	emitGroupSystemMessage(groupID, msgID, text)
 }
 
+// Roles recorded on a pending private note, so the delivery prompt can say who
+// it came from. Before this column existed every note was rendered as
+// "主持人密送给你", which mis-attributed a free-mode member's note AND a user's
+// note to the host.
+const (
+	bccRoleHost   = "host"
+	bccRoleMember = "member"
+	bccRoleUser   = "user"
+)
+
+// maxPendingBccPerTarget bounds the queue for one target.
+//
+// The queue only grows for a target that has not spoken since the note was
+// written, so an idle member (or a user who keeps briefing someone) could
+// otherwise grow it without bound. On overflow the OLDEST note is dropped: a
+// stale directive is less useful than the one just written, and silently
+// refusing the new note would lose the user's latest intent.
+const maxPendingBccPerTarget = 64
+
 // addPendingBcc stores a private note whose target was not named in this round,
 // so it is delivered with that target's next turn (see the group_pending_bcc
 // DDL). A no-op when the target name or content is empty.
-func addPendingBcc(groupID, targetName, content string) {
+//
+// senderRole/senderName attribute the note; they are rendered in the delivery
+// prompt (see pendingBccHeader) so a member can tell the host's briefing from a
+// peer's or the user's.
+func addPendingBcc(groupID, targetName, content, senderRole, senderName string) {
 	target := strings.TrimSpace(targetName)
 	if groupID == "" || target == "" || strings.TrimSpace(content) == "" {
 		return
 	}
+	// Overflow: drop the oldest note for this target so the queue stays bounded.
+	var count int
+	if err := store.ReadDB().QueryRow(
+		`SELECT COUNT(*) FROM group_pending_bcc WHERE group_id = ? AND target_name = ?`,
+		groupID, target,
+	).Scan(&count); err != nil {
+		slog.Warn("group: counting pending bcc failed", "group", groupID, "target", target, "err", err)
+	}
+	if count >= maxPendingBccPerTarget {
+		if _, err := store.WriteExec(
+			`DELETE FROM group_pending_bcc WHERE id = (
+				SELECT id FROM group_pending_bcc WHERE group_id = ? AND target_name = ? ORDER BY id ASC LIMIT 1
+			)`, groupID, target,
+		); err != nil {
+			slog.Warn("group: evicting oldest pending bcc failed", "group", groupID, "target", target, "err", err)
+		} else {
+			slog.Warn("group: pending bcc queue full, dropped the oldest note",
+				"group", groupID, "target", target, "limit", maxPendingBccPerTarget)
+		}
+	}
 	if _, err := store.WriteExec(
-		`INSERT INTO group_pending_bcc (group_id, target_name, content) VALUES (?, ?, ?)`,
-		groupID, target, content,
+		`INSERT INTO group_pending_bcc (group_id, target_name, content, sender_role, sender_name) VALUES (?, ?, ?, ?, ?)`,
+		groupID, target, content, senderRole, senderName,
 	); err != nil {
 		slog.Warn("group: storing pending bcc failed", "group", groupID, "target", target, "err", err)
 	}
@@ -630,7 +673,7 @@ func pendingBccForTarget(groupID, targetName string) []pendingBcc {
 		return nil
 	}
 	rows, err := store.ReadDB().Query(
-		`SELECT id, content FROM group_pending_bcc WHERE group_id = ? AND target_name = ? ORDER BY id ASC`,
+		`SELECT id, content, sender_role, sender_name FROM group_pending_bcc WHERE group_id = ? AND target_name = ? ORDER BY id ASC`,
 		groupID, target,
 	)
 	if err != nil {
@@ -641,7 +684,7 @@ func pendingBccForTarget(groupID, targetName string) []pendingBcc {
 	out := []pendingBcc{}
 	for rows.Next() {
 		var p pendingBcc
-		if err := rows.Scan(&p.ID, &p.Content); err != nil {
+		if err := rows.Scan(&p.ID, &p.Content, &p.SenderRole, &p.SenderName); err != nil {
 			slog.Warn("group: scanning pending bcc failed", "err", err)
 			continue
 		}
@@ -721,6 +764,12 @@ func RenameUserPendingBcc(oldName, newName string) {
 type pendingBcc struct {
 	ID      int64
 	Content string
+	// SenderRole is bccRoleHost / bccRoleMember / bccRoleUser; SenderName is the
+	// sender's display name (empty for the human user, whose label is localized
+	// at render time). Together they let the delivery prompt say who the note is
+	// from instead of assuming it is the host.
+	SenderRole string
+	SenderName string
 }
 
 // memberSpecialtySuffix renders a parenthesized specialty or "" — omitted

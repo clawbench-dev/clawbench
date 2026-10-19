@@ -394,6 +394,30 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Pre-migration: group_pending_bcc.sender_role / sender_name. The CREATE
+	// TABLE below is a no-op on an existing database, so an upgraded install
+	// would keep the two-column table and every INSERT naming the new columns
+	// would fail. Add them first (same shape as the chat_history block above).
+	// Existing rows keep '' for both: pendingBccHeader falls back to the old
+	// "主持人密送给你" wording for an empty role, so an undelivered note written
+	// before the upgrade still reads correctly.
+	var pendingBccExists int
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='group_pending_bcc'").Scan(&pendingBccExists)
+	if pendingBccExists > 0 {
+		for _, col := range []struct{ name, ddl string }{
+			{"sender_role", "ALTER TABLE group_pending_bcc ADD COLUMN sender_role TEXT NOT NULL DEFAULT ''"},
+			{"sender_name", "ALTER TABLE group_pending_bcc ADD COLUMN sender_name TEXT NOT NULL DEFAULT ''"},
+		} {
+			var hasCol int
+			_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('group_pending_bcc') WHERE name=?", col.name).Scan(&hasCol)
+			if hasCol == 0 {
+				if _, err := store.WriteExec(col.ddl); err != nil {
+					return fmt.Errorf("failed to add group_pending_bcc.%s: %w", col.name, err)
+				}
+			}
+		}
+	}
+
 	// Pre-migration: task_executions.session_id / status. Same story as
 	// chat_sessions.session_type above: the columns replaced the old `content`
 	// column in the same reshape, whose backfill shipped only as the one-time
@@ -466,11 +490,17 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		-- a failed/cancelled turn leaves them for the next attempt (decision
 		-- #69 semantics). target_name is the trimmed display name; the human
 		-- user is addressed by the reserved name 'User'.
+		--
+		-- sender_role / sender_name attribute the note. Without them every note
+		-- rendered as "主持人密送给你", which mis-attributed a free-mode member's
+		-- note AND the user's own note to the host.
 		CREATE TABLE IF NOT EXISTS group_pending_bcc (
 			id            INTEGER PRIMARY KEY AUTOINCREMENT,
 			group_id      TEXT NOT NULL,
 			target_name   TEXT NOT NULL,
 			content       TEXT NOT NULL,
+			sender_role   TEXT NOT NULL DEFAULT '',
+			sender_name   TEXT NOT NULL DEFAULT '',
 			created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE INDEX IF NOT EXISTS idx_group_pending_bcc ON group_pending_bcc(group_id, target_name, id);

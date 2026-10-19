@@ -209,10 +209,16 @@ func stripAskQuestionTags(text string) string {
 }
 
 // appendHostDirectives renders the host's closing instructions: the PUBLIC
-// directive (every addressed member receives it) first, then the PRIVATE note
+// directive (every addressed member receives it) first, then the PRIVATE notes
 // (this member alone) after it — the "叠加" contract. Each is omitted when
 // empty. Extracted from buildInjectionText to keep that function's branching
 // under the complexity budget.
+//
+// bcc arrives ALREADY attributed: joinPendingBcc prefixes each note with its own
+// sender line, because the sender is not always the host (a free-mode peer, or
+// the user, may be the author). Adding a blanket "主持人密送给你" header here
+// would mis-attribute those — it used to, which is exactly what this split
+// fixes.
 func appendHostDirectives(b *strings.Builder, instruction, bcc string) {
 	if instruction != "" {
 		if b.Len() > 0 {
@@ -226,9 +232,33 @@ func appendHostDirectives(b *strings.Builder, instruction, bcc string) {
 		if b.Len() > 0 {
 			b.WriteString("\n")
 		}
-		b.WriteString("主持人密送给你（其他成员看不到）：")
 		b.WriteString(bcc)
 		b.WriteString("\n")
+	}
+}
+
+// pendingBccHeader renders the "who sent this" prefix for one delivered note.
+//
+// An empty SenderRole means the row predates the sender_role column (or the
+// sender could not be resolved). Those fall back to the host wording, which is
+// what every note used to say — so an undelivered note written before the
+// upgrade still reads exactly as it did.
+//
+// It lives here, next to the other injection framing, because these strings are
+// fed to a MODEL, never rendered to a user (see the CJK allowlist in
+// i18n_hardcoded_guard_test.go).
+func pendingBccHeader(p pendingBcc) string {
+	switch p.SenderRole {
+	case bccRoleMember:
+		name := strings.TrimSpace(p.SenderName)
+		if name == "" {
+			name = "成员"
+		}
+		return name + " 密送给你（其他成员看不到）："
+	case bccRoleUser:
+		return groupUserTarget() + " 密送给你（其他成员看不到）："
+	default: // bccRoleHost, or "" for a pre-upgrade row
+		return "主持人密送给你（其他成员看不到）："
 	}
 }
 
@@ -311,17 +341,19 @@ func participantHeader(roster []ParticipantInfo) string {
 	return "参与者：" + strings.Join(rendered, "、")
 }
 
-// groupInjectionText loads a member's incremental context from the group
-// timeline. It is a thin DB wrapper over buildInjectionText used by the
-// orchestrator.
-func groupInjectionText(groupID, selfMemberRowID string, cursor int64, names map[string]string, instruction, bcc string) (string, error) {
-	msgs, err := GetMessagesBySessionIDRaw(groupID)
+// groupInjectionTextWithRoster loads a member's incremental context from the
+// group timeline and renders it. It is the single DB wrapper over
+// buildInjectionText: callers pass the roster they already hold, so the query
+// for it is not repeated per member turn.
+//
+// It reads only the rows AFTER cursor: everything at or below it is discarded
+// by buildInjectionText anyway, and a group timeline grows without bound, so
+// loading it whole made the cost of one member turn proportional to the entire
+// conversation.
+func groupInjectionTextWithRoster(groupID, selfMemberRowID string, cursor int64, names map[string]string, members []GroupMember, instruction, bcc string) (string, error) {
+	msgs, err := GetMessagesBySessionIDRawAfter(groupID, cursor)
 	if err != nil {
 		return "", fmt.Errorf("load group timeline: %w", err)
-	}
-	members, err := ListGroupMembers(groupID)
-	if err != nil {
-		return "", fmt.Errorf("load group members: %w", err)
 	}
 	leftIDs, roster := participantMetadata(members, selfMemberRowID)
 	return buildInjectionText(msgs, cursor, selfMemberRowID, names, leftIDs, roster, instruction, bcc), nil

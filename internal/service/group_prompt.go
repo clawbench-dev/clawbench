@@ -125,6 +125,7 @@ func BuildHostSystemPrompt(selfName string, members []HostMemberInfo) string {
 	b.WriteString("targets 可写多个，用逗号分隔，如 targets=\"A,B\"；targets=\"" + userTarget + "\" 即密送给用户。\n")
 	b.WriteString("密送可以发给本轮未被点名的成员：会在该成员下次被点名时送达。\n")
 	b.WriteString("公共指令（所有被点名者都能看到）照常写在不带 private 的标签里，密送可与它并存。\n")
+	b.WriteString("成员之间**不能**互发密送——需要让某人知道什么，由你转达或公开说明。\n")
 	return b.String()
 }
 
@@ -145,6 +146,13 @@ func BuildMemberSystemPrompt(members []HostMemberInfo, selfName string) string {
 	b.WriteString("  <clawbench-mention …>…</clawbench-mention>\n")
 	b.WriteString("  <clawbench-group-end/>\n")
 	b.WriteString("发言要求：紧扣话题、简洁、直接给出你的观点；不要复述或模仿主持人的指令格式。\n")
+	// The one private channel a member DOES have. Stating it explicitly keeps a
+	// member from writing private tags to peers, which the orchestrator drops
+	// silently (noteAllowed) — a silent drop the model would otherwise read as
+	// "it worked".
+	b.WriteString("若你有话只能让主持人或用户看到，用密送（给标签加 private 属性，targets 写主持人或用户）：\n")
+	b.WriteString("  <clawbench-mention targets=\"主持人名\" private>只给主持人看的话</clawbench-mention>\n")
+	b.WriteString("**不要**给其他成员发密送——成员之间不传递私密信息，会被系统丢弃。\n")
 
 	// The human user is a participant too; a member should know a person is in
 	// the room (and may be addressed as "User").
@@ -199,8 +207,13 @@ func BuildFreeMemberSystemPrompt(members []HostMemberInfo, selfName string) stri
 	// Private notes: same tag with the `private` attribute. Delivered on the
 	// target's next turn (the group_pending_bcc contract), so a note to someone
 	// not yet speaking still lands.
+	//
+	// Free mode has NO host, so every pair is allowed here (noteAllowed returns
+	// true unconditionally) — unlike the host-mode member prompt, which limits a
+	// member to the host and the user.
 	b.WriteString("可选：密送（只给个别成员看，其他成员看不到）——给标签加 private 属性：\n")
 	b.WriteString("  <clawbench-mention targets=\"成员名\" private>只有该成员能看到的内容</clawbench-mention>\n")
+	b.WriteString("本群没有主持人，你可以密送给任何成员或用户。\n")
 
 	b.WriteString(othersLine(members, selfName))
 	return b.String()

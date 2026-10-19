@@ -154,6 +154,11 @@ func deleteProjectRows(id int64) error {
 		{"DELETE FROM tts_summaries WHERE message_id IN (SELECT id FROM chat_history WHERE " + historyPredicate + ")", []any{id, id}},
 		{"DELETE FROM task_executions WHERE task_id IN (SELECT id FROM scheduled_tasks WHERE project_id = ?)", []any{id}},
 		{"DELETE FROM session_shares WHERE session_id IN (SELECT id FROM chat_sessions WHERE project_id = ?)", []any{id}},
+		// group_pending_bcc has NO project_id and no FK to chat_sessions — it is
+		// keyed by the GROUP session id. Without this the rows survive the
+		// project deletion forever (they are only cleaned by HardDeleteSession
+		// and the archived-session reaper, neither of which runs here).
+		{"DELETE FROM group_pending_bcc WHERE group_id IN (SELECT id FROM chat_sessions WHERE project_id = ?)", []any{id}},
 	}
 	for _, c := range sessionChildren {
 		if _, err := tx.ExecContext(ctx, c.query, c.args...); err != nil {

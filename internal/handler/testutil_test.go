@@ -366,6 +366,17 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			payload TEXT NOT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
+		-- DeleteProjectData cleans this table by group_id; without it here the
+		-- handler's project delete would fail with "no such table".
+		CREATE TABLE IF NOT EXISTS group_pending_bcc (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			group_id TEXT NOT NULL,
+			target_name TEXT NOT NULL,
+			content TEXT NOT NULL,
+			sender_role TEXT NOT NULL DEFAULT '',
+			sender_name TEXT NOT NULL DEFAULT '',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
 		CREATE TABLE IF NOT EXISTS message_clusters_cache (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			representative TEXT NOT NULL,

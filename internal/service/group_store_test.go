@@ -1440,13 +1440,13 @@ func TestPendingBccStore(t *testing.T) {
 	}
 	otherGroup, _, _ := CreateGroup(project, "G2", "codebuddy", "agent-host2", "Host2")
 
-	addPendingBcc(groupID, "B", "给B一")
-	addPendingBcc(groupID, "B", "给B二")
-	addPendingBcc(groupID, "C", "给C")
-	addPendingBcc(otherGroup, "B", "别的群")
+	addPendingBcc(groupID, "B", "给B一", bccRoleHost, "Host")
+	addPendingBcc(groupID, "B", "给B二", bccRoleHost, "Host")
+	addPendingBcc(groupID, "C", "给C", bccRoleHost, "Host")
+	addPendingBcc(otherGroup, "B", "别的群", bccRoleHost, "Host2")
 	// Empty target/content are ignored.
-	addPendingBcc(groupID, "", "x")
-	addPendingBcc(groupID, "B", "  ")
+	addPendingBcc(groupID, "", "x", bccRoleHost, "Host")
+	addPendingBcc(groupID, "B", "  ", bccRoleHost, "Host")
 
 	got := pendingBccForTarget(groupID, "B")
 	if len(got) != 2 || got[0].Content != "给B一" || got[1].Content != "给B二" {
@@ -1517,8 +1517,8 @@ func TestRenameUserPendingBcc(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGroup: %v", err)
 	}
-	addPendingBcc(groupID, "User", "给你的")
-	addPendingBcc(groupID, "A", "给A的")
+	addPendingBcc(groupID, "User", "给你的", bccRoleHost, "Host")
+	addPendingBcc(groupID, "A", "给A的", bccRoleHost, "Host")
 
 	RenameUserPendingBcc("User", "老板")
 
@@ -2055,4 +2055,64 @@ func TestUsagePercentLabel(t *testing.T) {
 	assert.Equal(t, "0%", usagePercentLabel(&ai.UsageState{Used: 0, Size: 1000}))
 	assert.Equal(t, "32%", usagePercentLabel(&ai.UsageState{Used: 320000, Size: 1000000}))
 	assert.Equal(t, "100%", usagePercentLabel(&ai.UsageState{Used: 1000, Size: 1000}))
+}
+
+// The per-target pending-note queue is bounded: an idle target that never
+// speaks would otherwise grow it without limit. On overflow the OLDEST note is
+// evicted (a stale directive is less useful than the one just written).
+func TestPendingBccQueueIsBounded(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-bcc-cap"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, _, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+
+	for i := 0; i < maxPendingBccPerTarget+5; i++ {
+		addPendingBcc(groupID, "B", fmt.Sprintf("note-%d", i), bccRoleHost, "Host")
+	}
+	got := pendingBccForTarget(groupID, "B")
+	if len(got) != maxPendingBccPerTarget {
+		t.Fatalf("queue must be capped at %d, got %d", maxPendingBccPerTarget, len(got))
+	}
+	// The oldest five were evicted; the newest survives.
+	if got[0].Content != "note-5" {
+		t.Fatalf("the oldest notes must be evicted, first=%q", got[0].Content)
+	}
+	last := fmt.Sprintf("note-%d", maxPendingBccPerTarget+4)
+	if got[len(got)-1].Content != last {
+		t.Fatalf("the newest note must survive, last=%q", got[len(got)-1].Content)
+	}
+}
+
+// The sender columns are recorded so the delivery prompt can attribute the
+// note. An empty role (a row written before the columns existed) is left empty
+// here and rendered as the host wording by pendingBccHeader.
+func TestPendingBccStoresSenderAttribution(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-bcc-sender"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, _, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+
+	addPendingBcc(groupID, "B", "来自A", bccRoleMember, "A")
+	addPendingBcc(groupID, "B", "来自用户", bccRoleUser, "")
+
+	got := pendingBccForTarget(groupID, "B")
+	if len(got) != 2 {
+		t.Fatalf("expected two notes, got %v", got)
+	}
+	if got[0].SenderRole != bccRoleMember || got[0].SenderName != "A" {
+		t.Fatalf("member attribution lost: %+v", got[0])
+	}
+	if got[1].SenderRole != bccRoleUser || got[1].SenderName != "" {
+		t.Fatalf("user attribution lost: %+v", got[1])
+	}
 }

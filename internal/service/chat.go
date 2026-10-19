@@ -402,6 +402,54 @@ func GetMessagesBySessionIDRaw(sessionID string) ([]model.ChatMessage, error) {
 	return messages, nil
 }
 
+// GetMessagesBySessionIDRawAfter is GetMessagesBySessionIDRaw restricted to
+// messages with id > afterID.
+//
+// It exists for the group-chat INJECTION path, which only ever consumes the
+// rows after the speaker's seen_cursor: loading the whole timeline and then
+// discarding everything <= cursor made the cost of a member turn proportional
+// to the group's ENTIRE history (each row carries a full content JSON), and a
+// single turn runs this query up to four times per speaker. The predicate is
+// index-friendly (idx_history_session_id leads with session_id, and rowid order
+// matches id order for an INTEGER PRIMARY KEY), so the difference grows with
+// the conversation instead of staying flat.
+//
+// Callers that genuinely need the whole history (fork context, share payload)
+// must keep using GetMessagesBySessionIDRaw.
+func GetMessagesBySessionIDRawAfter(sessionID string, afterID int64) ([]model.ChatMessage, error) {
+	rows, err := store.ReadDB().Query(
+		"SELECT id, role, content, files, backend, streaming, created_at, indexed, agent_id, injected FROM chat_history WHERE session_id = ? AND streaming = 0 AND id > ? ORDER BY id ASC",
+		sessionID, afterID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	messages := []model.ChatMessage{}
+	for rows.Next() {
+		var msg model.ChatMessage
+		var filesJSON sql.NullString
+		var streaming int
+		var indexed int
+		var injected int
+		if err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &streaming, &msg.CreatedAt, &indexed, &msg.AgentID, &injected); err != nil {
+			return nil, err
+		}
+		msg.Streaming = streaming != 0
+		msg.Indexed = indexed != 0
+		msg.Injected = injected != 0
+		if filesJSON.Valid && filesJSON.String != "" {
+			msg.Files = unmarshalFilesJSON(filesJSON.String)
+		}
+		msg.SessionID = sessionID
+		messages = append(messages, msg)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return messages, nil
+}
+
 // GetAssistantRawContents returns the raw (unmodified) content JSON of the
 // most recent finalized assistant messages in a session, newest first
 // (ORDER BY id DESC LIMIT previewAssistantContentLimit). Unlike

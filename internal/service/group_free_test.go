@@ -630,7 +630,7 @@ func TestRemoveGroupMember_DropsPendingNotes(t *testing.T) {
 	project := "/tmp/free-remove-note"
 	groupID, byName := createFreeGroup(t, project, "A", "B")
 
-	addPendingBcc(groupID, "B", "SECRET_FOR_B")
+	addPendingBcc(groupID, "B", "SECRET_FOR_B", bccRoleMember, "A")
 	if got := pendingBccForTarget(groupID, "B"); len(got) != 1 {
 		t.Fatalf("setup: pending note not stored, got %v", got)
 	}
@@ -662,7 +662,8 @@ func TestStoreRouteNotes_DropsNoteToLeftMemberByID(t *testing.T) {
 	}
 	byID, byNameMap := memberLookups(members)
 	route := grouprouting.Parse(`<clawbench-mention targets="` + leftID + `" private>给离场者</clawbench-mention>`)
-	storeRouteNotes(groupID, route, groupUserTargetID, byID, byNameMap)
+	storeRouteNotes(groupID, route, groupUserTargetID, byID, byNameMap,
+		NewGroupOrchestrator(groupID).notePolicy(groupUserTargetID, byID))
 
 	if got := pendingBccForTarget(groupID, "B"); len(got) != 0 {
 		t.Fatalf("a note to a left member must not be stored; got %v", got)
@@ -680,7 +681,8 @@ func TestStoreRouteNotes_StoresNoteToActiveMemberByID(t *testing.T) {
 	members, _ := ListGroupMembers(groupID)
 	byID, byNameMap := memberLookups(members)
 	route := grouprouting.Parse(`<clawbench-mention targets="` + activeID + `" private>给在场者</clawbench-mention>`)
-	storeRouteNotes(groupID, route, groupUserTargetID, byID, byNameMap)
+	storeRouteNotes(groupID, route, groupUserTargetID, byID, byNameMap,
+		NewGroupOrchestrator(groupID).notePolicy(groupUserTargetID, byID))
 
 	got := pendingBccForTarget(groupID, "B")
 	if len(got) != 1 || got[0].Content != "给在场者" {
@@ -1461,5 +1463,144 @@ func TestFreeLoop_CancelledTurnDoesNotAnnounceUserTurn(t *testing.T) {
 
 	if got := countUserTurnLines(t, groupID); got != 0 {
 		t.Fatalf("a cancelled turn must not announce the user's turn, got %d", got)
+	}
+}
+
+// ── Private-note authority policy (host mode vs free mode) ────────────────
+//
+// In a HOST-mode group two plain MEMBERS may not exchange private notes: the
+// host is the authority, so the only private channels are host↔member and
+// anything involving the user (the human outranks the chair). Free groups have
+// no authority to route through, so every pair is allowed there.
+//
+// The rule is enforced at STORE time (storeRouteNotes), so a forbidden note is
+// never written — no delivery path can resurrect it later.
+
+func TestNoteAllowed_HostModeForbidsMemberToMemberOnly(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/note-policy-host"
+	groupID, hostID, byName := createHostGroup(t, project, "A", "B")
+	o := NewGroupOrchestrator(groupID)
+
+	cases := []struct {
+		name    string
+		speaker string
+		target  string
+		want    bool
+	}{
+		{"host → member", hostID, byName["A"], true},
+		{"member → host", byName["A"], hostID, true},
+		{"member → member (the only forbidden pair)", byName["A"], byName["B"], false},
+		{"member → user", byName["A"], groupUserTargetID, true},
+		{"host → user", hostID, groupUserTargetID, true},
+		{"user → member", groupUserTargetID, byName["A"], true},
+		{"user → host", groupUserTargetID, hostID, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := o.noteAllowed(tc.speaker, tc.target); got != tc.want {
+				t.Fatalf("noteAllowed(%s, %s) = %v, want %v", tc.speaker, tc.target, got, tc.want)
+			}
+		})
+	}
+}
+
+// A free group has no host, so no pair is forbidden.
+func TestNoteAllowed_FreeModeAllowsEveryPair(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/note-policy-free"
+	groupID, byName := createFreeGroup(t, project, "A", "B")
+	o := NewGroupOrchestrator(groupID)
+
+	for _, tc := range []struct{ speaker, target string }{
+		{byName["A"], byName["B"]},
+		{byName["B"], byName["A"]},
+		{byName["A"], groupUserTargetID},
+		{groupUserTargetID, byName["A"]},
+	} {
+		if !o.noteAllowed(tc.speaker, tc.target) {
+			t.Fatalf("free mode must allow %s → %s", tc.speaker, tc.target)
+		}
+	}
+}
+
+// End to end through the STORE path: in a host-mode group a member's note to a
+// peer is dropped (never written), while the same member's note to the host is
+// stored and delivered on the host's next turn.
+func TestStoreRouteNotes_HostModeDropsMemberToMember(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/note-policy-store"
+	groupID, hostID, byName := createHostGroup(t, project, "A", "B")
+
+	members, err := ListGroupMembers(groupID)
+	if err != nil {
+		t.Fatalf("ListGroupMembers: %v", err)
+	}
+	byID, byNameMap := memberLookups(members)
+	o := NewGroupOrchestrator(groupID)
+
+	// A → B: forbidden, must not be stored.
+	toPeer := grouprouting.Parse(`<clawbench-mention targets="B" private>只给B</clawbench-mention>`)
+	storeRouteNotes(groupID, toPeer, byName["A"], byID, byNameMap, o.notePolicy(byName["A"], byID))
+	if got := pendingBccForTarget(groupID, "B"); len(got) != 0 {
+		t.Fatalf("a member→member note must be dropped in host mode, got %v", got)
+	}
+
+	// A → host: allowed, stored and attributed to A.
+	toHost := grouprouting.Parse(`<clawbench-mention targets="Host" private>只给主持人</clawbench-mention>`)
+	storeRouteNotes(groupID, toHost, byName["A"], byID, byNameMap, o.notePolicy(byName["A"], byID))
+	got := pendingBccForTarget(groupID, "Host")
+	if len(got) != 1 || got[0].Content != "只给主持人" {
+		t.Fatalf("a member→host note must be stored, got %v", got)
+	}
+	if got[0].SenderRole != bccRoleMember || got[0].SenderName != "A" {
+		t.Fatalf("the note must be attributed to A, got role=%q name=%q", got[0].SenderRole, got[0].SenderName)
+	}
+	_ = hostID
+}
+
+// The host's own notes are stamped as host-authored, so the delivery prompt
+// says "主持人密送给你" rather than the sender's display name.
+func TestStoreRouteNotes_HostNoteIsStampedAsHost(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/note-policy-hostnote"
+	groupID, hostID, byName := createHostGroup(t, project, "A")
+
+	members, _ := ListGroupMembers(groupID)
+	byID, byNameMap := memberLookups(members)
+	o := NewGroupOrchestrator(groupID)
+
+	route := grouprouting.Parse(`<clawbench-mention targets="A" private>你的词是西瓜</clawbench-mention>`)
+	storeRouteNotes(groupID, route, hostID, byID, byNameMap, o.notePolicy(hostID, byID))
+
+	got := pendingBccForTarget(groupID, "A")
+	if len(got) != 1 {
+		t.Fatalf("the host's note must be stored, got %v", got)
+	}
+	if got[0].SenderRole != bccRoleHost {
+		t.Fatalf("the host's note must carry the host role, got %q", got[0].SenderRole)
+	}
+	_ = byName
+}
+
+// A note the user writes in a HOST-mode group is exempt from the
+// "must involve the host" rule: the human is not subject to the chair.
+func TestStoreUserNotes_HostModeUserMayBriefAnyMember(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/note-policy-user"
+	groupID, _, byName := createHostGroup(t, project, "A", "B")
+
+	members, _ := ListGroupMembers(groupID)
+	byID, byNameMap := memberLookups(members)
+	o := NewGroupOrchestrator(groupID)
+	o.userMessage = `<clawbench-mention targets="` + byName["B"] + `" private>用户密送给B</clawbench-mention>`
+	o.storeUserNotes(groupID, byID, byNameMap)
+
+	got := pendingBccForTarget(groupID, "B")
+	if len(got) != 1 || got[0].Content != "用户密送给B" {
+		t.Fatalf("a user's note to a member must be stored in host mode, got %v", got)
+	}
+	if got[0].SenderRole != bccRoleUser {
+		t.Fatalf("the note must be attributed to the user, got %q", got[0].SenderRole)
 	}
 }
