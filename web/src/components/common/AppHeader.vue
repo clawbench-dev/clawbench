@@ -50,8 +50,8 @@
     </div>
 
     <!-- Usage meter capsule. Wide screens only: the header is a desktop
-         surface, and on a phone the same information is delivered by the
-         notification (the meter deliberately has no mobile UI).
+         surface, and on a phone the same numbers live at the end of the
+         system-resources popover (SystemResourcesPanel).
          Sits before the tips ticker so the ticker's flex:1 absorbs the
          remaining space instead of pushing the capsule around. -->
     <UsageMeterPopover
@@ -274,7 +274,7 @@
     </button>
 
     <!-- Server info + resources popup (both Web and APP mode) -->
-    <PopupMenu v-model:show="resourcesMenuOpen" :target-element="serverBtnRef" :max-width="320" :max-height="440" :menu-items-count="10" anchor="right">
+    <PopupMenu v-model:show="resourcesMenuOpen" :target-element="serverBtnRef" :max-width="320" :max-height="440" :menu-items-count="11" anchor="right">
       <SystemResourcesPanel ref="resourcesPanelRef" :show-logout="isAppMode" :ws-status="wsStatus" @logout="handleLogout" />
     </PopupMenu>
 
