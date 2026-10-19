@@ -545,11 +545,11 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     if (!el || typeof el.getBoundingClientRect !== 'function') return
     const rect = el.getBoundingClientRect()
     // Realistic card dimensions (compact initial estimate before DOM measurement).
-    // Media cards are wider/taller (the file IS the content), so estimate them
-    // accordingly — otherwise the placement clamp would size the card as if it
-    // were a narrow code slice and leave viewport space unused.
+    // Width is the SAME for every target type — one card width, matching the
+    // CSS base rule. Only the height estimate differs: a media card holds the
+    // file itself and grows taller, while a code slice stays compact.
     const media = isMediaTarget.value
-    const defaultWidth = media ? 960 : 720
+    const defaultWidth = 720
     const defaultHeight = media ? 420 : 260
     const cardWidth = customWidth ?? Math.min(defaultWidth, typeof window !== 'undefined' ? window.innerWidth - 24 : 700)
     const cardHeight = customHeight ?? Math.min(defaultHeight, typeof window !== 'undefined' ? Math.min(defaultHeight, window.innerHeight * 0.6) : 240)

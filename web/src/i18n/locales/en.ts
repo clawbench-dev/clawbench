@@ -1578,6 +1578,7 @@ export default {
       linesCount: '{n} lines',
       renderedView: 'Rendered preview',
       sourceView: 'Source code',
+      resizeHint: 'Drag to resize, double-click to reset',
     },
     manager: 'File Manager',
     sortByName: 'Sort by name',

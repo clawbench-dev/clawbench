@@ -1576,6 +1576,7 @@ export default {
       linesCount: '共 {n} 行',
       renderedView: '渲染预览',
       sourceView: '源码',
+      resizeHint: '拖动调整大小，双击复位',
     },
     manager: '文件管理器',
     sortByName: '按名称排序',

@@ -30,6 +30,87 @@ body.code-preview-dragging * {
   cursor: grabbing !important;
 }
 
+/* Resizing: same suppression as dragging, but the cursor stays the resize one
+   (grabbing would read as "you are moving the window", which is not what the
+   grip does). `nwse-resize` for every hit-test inside the card because the
+   only grip is the bottom-right corner. */
+body.code-preview-resizing {
+  user-select: none !important;
+  cursor: nwse-resize !important;
+}
+
+body.code-preview-resizing * {
+  cursor: nwse-resize !important;
+}
+
+/* ── Resize grip ────────────────────────────────────────────────────────────
+   Bottom-right corner of the floating card. The hit box is 18×18 so it is
+   grabbable with a mouse, but the painted marks stay small (two nested
+   strokes) so the card does not grow a visible widget in the corner of a code
+   preview.
+
+   The painted marks are inset from the corner because the card's own
+   `border-radius` + `overflow: hidden` clips anything drawn flush into the
+   rounded corner.
+
+   `z-index` above the body is required: the body scrolls to the card's right
+   and bottom edges, and its scrollbar paints over the corner. The grip covers
+   the scrollbar CORNER only, which is empty — the app's bar has no stepper
+   buttons (see css/scrollbar.css), so nothing is stolen.
+
+   Not rendered on the docked pane or the touch sheet: both are sized by their
+   own layout (the caller's split, the sheet's content). */
+.code-preview-resize-grip {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  width: 18px;
+  height: 18px;
+  cursor: nwse-resize;
+  /* Pointer events must not start a text selection or a native drag. */
+  touch-action: none;
+  user-select: none;
+}
+
+/* Two nested diagonal strokes: the conventional resize mark. Drawn with
+   borders rather than an SVG so no icon font / import is involved. 2px (not
+   1.5px) because a fractional border rounds down to 1px at DPR 1 and the mark
+   then reads as a stray hairline. */
+.code-preview-resize-grip::before,
+.code-preview-resize-grip::after {
+  content: '';
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  border-right: 2px solid var(--text-muted, #80868b);
+  border-bottom: 2px solid var(--text-muted, #80868b);
+  opacity: 0.7;
+  transition: opacity var(--duration-fast) ease;
+}
+
+.code-preview-resize-grip::before {
+  width: 9px;
+  height: 9px;
+}
+
+.code-preview-resize-grip::after {
+  width: 4px;
+  height: 4px;
+}
+
+.code-preview-resize-grip:hover::before,
+.code-preview-resize-grip:hover::after {
+  opacity: 1;
+}
+
+/* A user-sized card is a pinned box: the media floor must not force the body
+   taller than the box the user just chose (the card clips, which would cut the
+   image off with no way to scroll to it). */
+.code-link-preview-floating.is-media.is-user-sized .code-preview-content {
+  min-height: 0;
+}
+
 .code-preview-header {
   display: flex;
   align-items: center;
@@ -762,12 +843,13 @@ body.code-preview-dragging * {
   position: relative;
 }
 
-/* Media cards get more room: images/video/PDF are the content, so the card
+/* Media cards get more HEIGHT: images/video/PDF are the content, so the card
    grows toward the viewport instead of the code-tuned 65vh/480px cap. Width
-   also widens so landscape media is not letterboxed into a narrow column.
-   The inline maxHeight from cardStyle still clamps to the placement box. */
+   stays identical to the code card (min(720px, calc(100vw - 24px)) from the
+   base rule) — one card width for every target type, so opening a PNG does not
+   make the card jump wider than opening the file next to it. The inline
+   maxHeight from cardStyle still clamps to the placement box. */
 .code-link-preview-floating.is-media {
-  width: min(960px, calc(100vw - 24px));
   /* Lift the code-tuned min(65vh, 480px) cap: media IS the content, so let it
      fill the viewport. cardStyle's inline maxHeight (when set) still clamps to
      the placement box below this. */
