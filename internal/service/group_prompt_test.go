@@ -169,7 +169,7 @@ func TestBuildHostSummaryPromptOmitsBcc(t *testing.T) {
 // the chair — without this, members imitated the host's routing tag and fought
 // over the microphone (real incident: 3 members all opened with "🎙️ 主持人").
 func TestBuildMemberSystemPrompt(t *testing.T) {
-	p := BuildMemberSystemPrompt([]HostMemberInfo{{Name: "Host"}, {Name: "B"}, {Name: "C"}}, "B")
+	p := BuildMemberSystemPrompt([]HostMemberInfo{{Name: "Host"}, {Name: "B"}, {Name: "C"}}, "B", "Host")
 	if !strings.Contains(p, "参与者") {
 		t.Fatalf("member prompt must state the participant role: %q", p)
 	}
@@ -186,6 +186,38 @@ func TestBuildMemberSystemPrompt(t *testing.T) {
 	}
 	if strings.Contains(p, "可选的成员名：") {
 		t.Fatalf("member prompt must NOT carry the host's routing list: %q", p)
+	}
+}
+
+// A member's private-note instruction must name the ACTUAL host.
+//
+// Mention targets resolve by display name, so a prompt that says
+// targets="主持人名" hands the model a literal placeholder: it copies it, the
+// target resolves to no member, and the note is silently dropped. The instruction
+// therefore has to carry the host's group display name — which in production is
+// the agent's own name ("Codebuddy"), never the word "Host".
+func TestBuildMemberSystemPrompt_NamesTheHostForPrivateNotes(t *testing.T) {
+	p := BuildMemberSystemPrompt(
+		[]HostMemberInfo{{Name: "Codebuddy"}, {Name: "Alice"}}, "Alice", "Codebuddy",
+	)
+	if strings.Contains(p, "主持人名") {
+		t.Fatalf("the placeholder must be replaced by the real host name: %q", p)
+	}
+	if !strings.Contains(p, `targets="Codebuddy" private`) {
+		t.Fatalf("the note example must target the host by name: %q", p)
+	}
+}
+
+// A free group has no host, so the private-channel paragraph is omitted rather
+// than naming a non-existent chair. Free mode documents its own (unrestricted)
+// private channel in BuildFreeMemberSystemPrompt.
+func TestBuildMemberSystemPrompt_NoHostOmitsPrivateChannel(t *testing.T) {
+	p := BuildMemberSystemPrompt([]HostMemberInfo{{Name: "A"}, {Name: "B"}}, "A", "")
+	if strings.Contains(p, "只给主持人看的话") {
+		t.Fatalf("without a host the host-only channel must be omitted: %q", p)
+	}
+	if strings.Contains(p, "主持人名") {
+		t.Fatalf("no dangling placeholder: %q", p)
 	}
 }
 
@@ -210,7 +242,7 @@ func TestBuildHostSystemPrompt_IncludesUser(t *testing.T) {
 
 // A member should know a human is in the room.
 func TestBuildMemberSystemPrompt_ListsUser(t *testing.T) {
-	p := BuildMemberSystemPrompt([]HostMemberInfo{{Name: "Host"}, {Name: "B"}}, "B")
+	p := BuildMemberSystemPrompt([]HostMemberInfo{{Name: "Host"}, {Name: "B"}}, "B", "Host")
 	if !strings.Contains(p, groupUserTarget()) {
 		t.Fatalf("a member must be told the user is present: %q", p)
 	}
@@ -224,6 +256,7 @@ func TestBuildMemberSystemPrompt_StatesOwnName(t *testing.T) {
 	p := BuildMemberSystemPrompt(
 		[]HostMemberInfo{{Name: "Codebuddy"}, {Name: "Codebuddy 2"}, {Name: "Codebuddy 3"}},
 		"Codebuddy 3",
+		"Codebuddy",
 	)
 	if !strings.Contains(p, "你的群内显示名是「Codebuddy 3」") {
 		t.Fatalf("member prompt must state its own display name: %q", p)
@@ -252,7 +285,7 @@ func TestBuildHostSystemPrompt_StatesOwnName(t *testing.T) {
 // An empty self name must not produce a dangling identity sentence (the builder
 // is also called from paths that may not have a name).
 func TestSelfIdentityLine_EmptyIsOmitted(t *testing.T) {
-	p := BuildMemberSystemPrompt([]HostMemberInfo{{Name: "A"}}, "")
+	p := BuildMemberSystemPrompt([]HostMemberInfo{{Name: "A"}}, "", "A")
 	if strings.Contains(p, "你的群内显示名是") {
 		t.Fatalf("empty self name must omit the identity line: %q", p)
 	}

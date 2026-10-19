@@ -137,7 +137,15 @@ func BuildHostSystemPrompt(selfName string, members []HostMemberInfo) string {
 //
 // members is the full roster (host + members); selfName is excluded from the
 // "others" list so a member is not told it is talking to itself.
-func BuildMemberSystemPrompt(members []HostMemberInfo, selfName string) string {
+//
+// hostName is the HOST's group display name. It is required, not cosmetic: a
+// member's only allowed private channel is "to the host", and a mention target
+// is resolved by display NAME — so a prompt that says 「targets="主持人名"」 gives
+// the model a literal placeholder to copy, which resolves to no member and is
+// silently dropped. Naming the actual host is what makes the instruction
+// executable. Empty (a free group, which has no host) omits the whole
+// private-channel paragraph.
+func BuildMemberSystemPrompt(members []HostMemberInfo, selfName, hostName string) string {
 	var b strings.Builder
 	b.WriteString("\n\n[群聊成员] 你是一个多智能体群聊中的**参与者**，**不是主持人**。\n")
 	b.WriteString(selfIdentityLine(selfName))
@@ -149,10 +157,12 @@ func BuildMemberSystemPrompt(members []HostMemberInfo, selfName string) string {
 	// The one private channel a member DOES have. Stating it explicitly keeps a
 	// member from writing private tags to peers, which the orchestrator drops
 	// silently (noteAllowed) — a silent drop the model would otherwise read as
-	// "it worked".
-	b.WriteString("若你有话只能让主持人或用户看到，用密送（给标签加 private 属性，targets 写主持人或用户）：\n")
-	b.WriteString("  <clawbench-mention targets=\"主持人名\" private>只给主持人看的话</clawbench-mention>\n")
-	b.WriteString("**不要**给其他成员发密送——成员之间不传递私密信息，会被系统丢弃。\n")
+	// "it worked". The host is named concretely (see hostName above).
+	if host := strings.TrimSpace(hostName); host != "" {
+		b.WriteString("若你有话只能让主持人或用户看到，用密送（给标签加 private 属性，targets 写主持人「" + host + "」或用户「" + groupUserTarget() + "」）：\n")
+		b.WriteString("  <clawbench-mention targets=\"" + host + "\" private>只给主持人看的话</clawbench-mention>\n")
+		b.WriteString("**不要**给其他成员发密送——成员之间不传递私密信息，会被系统丢弃。\n")
+	}
 
 	// The human user is a participant too; a member should know a person is in
 	// the room (and may be addressed as "User").

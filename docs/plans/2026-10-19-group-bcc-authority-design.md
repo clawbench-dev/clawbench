@@ -77,8 +77,15 @@
 `addPendingBcc` 不限制条数。一个「在场但一直没被点名」的成员可以无限堆积密送
 （`storeRouteNotes` 已经丢掉未知/离场/自我目标，所以这是唯一的积压路径，但它是真的）。
 
-修法：`maxPendingBccPerTarget = 64`，超限时**丢弃最旧的一条**并写 warn 日志。
+修法：`maxPendingBccPerTarget = 64`，超限时**丢弃最旧的若干条**并写 warn 日志。
 选最旧而不是拒绝新的：过期的指令价值低于刚写的，而且拒绝新条目会丢失用户最新的意图。
+
+> **淘汰量必须是 `count - cap + 1`，不是恒为 1**（review 修正）。只丢一条只能在
+> 「恰好等于上限」时守住线：队列一旦**已经超限**就永远降不回来。这不是假想——上限是
+> 本次改动引入的，**升级前的老库没有任何上限**，可以直接带着几百条进入新版本；并发写入
+> 的越界同理。因此改成按差额淘汰，且 COUNT / DELETE / INSERT 三步放进**同一个写事务**
+> （`store.WriteBegin`），既保证收敛也消除「读池看到过期快照导致少淘汰」与「并发 add
+> 互相穿插」两种竞态。
 
 ### 3. 删除项目不清理 `group_pending_bcc`
 
@@ -151,10 +158,16 @@ WHERE project_id = ?)` 的删除。`TestDeleteProjectData_RemovesAllProjectScope
 **主持人模式的成员**（`BuildMemberSystemPrompt`）明确它唯一的私密出口：
 
 ```
-若你有话只能让主持人或用户看到，用密送（给标签加 private 属性，targets 写主持人或用户）：
-  <clawbench-mention targets="主持人名" private>只给主持人看的话</clawbench-mention>
+若你有话只能让主持人或用户看到，用密送（给标签加 private 属性，targets 写主持人「Codebuddy」或用户「User」）：
+  <clawbench-mention targets="Codebuddy" private>只给主持人看的话</clawbench-mention>
 不要给其他成员发密送——成员之间不传递私密信息，会被系统丢弃。
 ```
+
+> **主持人名必须具体**（review 修正）：`targets` 是按**显示名**解析的，所以占位符
+> `targets="主持人名"` 会被模型原样照抄，解析不到任何成员，密送被静默丢弃——等于这条
+> 提示词不可执行。因此 `BuildMemberSystemPrompt` 增加 `hostName` 参数，由
+> `groupTurnSetup.hostMemberID`（`prepareTurn` 每回合取一次）解析成名字注入。自由模式
+> 没有主持人，传空串即整段省略（那里由 `BuildFreeMemberSystemPrompt` 说明无限制）。
 
 **自由模式的成员**（`BuildFreeMemberSystemPrompt`）说明这里没有限制：
 
@@ -181,13 +194,18 @@ WHERE project_id = ?)` 的删除。`TestDeleteProjectData_RemovesAllProjectScope
 |---|---|
 | `TestNoteAllowed_HostModeForbidsMemberToMemberOnly` | 七种组合的真值表；唯一 false 是成员↔成员 |
 | `TestNoteAllowed_FreeModeAllowsEveryPair` | 自由模式全放行 |
-| `TestStoreRouteNotes_HostModeDropsMemberToMember` | 端到端：A→B 不落库；A→主持人落库且署名 A |
+| `TestHostLoop_MemberNotePolicyEnforcedEndToEnd` | **真实回合**：成员给同伴的密送不落库、不进入同伴注入；给主持人的落库并按成员名署名（变异：`storeSpeakerNotes` 不传 policy 即红） |
+| `TestStoreRouteNotes_HostModeDropsMemberToMember` | store 层：A→B 不落库；A→主持人落库且署名 A |
 | `TestStoreRouteNotes_HostNoteIsStampedAsHost` | 主持人的密送 role=host |
 | `TestStoreUserNotes_HostModeUserMayBriefAnyMember` | 用户→成员在主持人模式下落库，role=user |
 | `TestPendingBccQueueIsBounded` | 超 64 条丢最旧，最新保留 |
+| `TestPendingBccQueueConvergesFromOverflow` | **已超限**的队列（升级/并发越界）一次写入即收敛到 64，且按最旧优先淘汰 |
 | `TestPendingBccStoresSenderAttribution` | sender_role / sender_name 正确往返 |
 | `TestJoinPendingBcc_AttributesEachSender` | 三种 role 各自的署名文案 |
 | `TestJoinPendingBcc_LegacyRowFallsBackToHost` | 空 role 回退到历史文案 |
+| `TestBuildMemberSystemPrompt_NamesTheHostForPrivateNotes` | 成员提示词给出**真实主持人名**，不含 `主持人名` 占位符 |
+| `TestBuildMemberSystemPrompt_NoHostOmitsPrivateChannel` | 无主持人时整段省略，不留悬空占位符 |
+| `TestFreeLoop_PublicMentionNotDeliveredAsNote` | 公开 @ 不进密送通道（判据是队列为空 + 密送头形状，不是「主持人密送给你」） |
 | `TestDeleteProjectData_RemovesAllProjectScopedRows` | 补种子 + 断言，删掉新 SQL 必红（已做变异验证） |
 
 ## 文档同步

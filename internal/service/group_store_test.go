@@ -1468,14 +1468,6 @@ func TestPendingBccStore(t *testing.T) {
 	if o := pendingBccForTarget(otherGroup, "B"); len(o) != 1 {
 		t.Fatalf("another group must be untouched: %+v", o)
 	}
-	// Clear by group.
-	deletePendingBccForGroup(groupID)
-	if c := pendingBccForTarget(groupID, "C"); len(c) != 0 {
-		t.Fatalf("after clear-by-group: %+v", c)
-	}
-	if o := pendingBccForTarget(otherGroup, "B"); len(o) != 1 {
-		t.Fatalf("another group must still be untouched: %+v", o)
-	}
 }
 
 // groupUserTarget() is config-driven: it honors chat.user_nickname and falls
@@ -2071,7 +2063,7 @@ func TestPendingBccQueueIsBounded(t *testing.T) {
 		t.Fatalf("CreateGroup: %v", err)
 	}
 
-	for i := 0; i < maxPendingBccPerTarget+5; i++ {
+	for i := range maxPendingBccPerTarget + 5 {
 		addPendingBcc(groupID, "B", fmt.Sprintf("note-%d", i), bccRoleHost, "Host")
 	}
 	got := pendingBccForTarget(groupID, "B")
@@ -2085,6 +2077,56 @@ func TestPendingBccQueueIsBounded(t *testing.T) {
 	last := fmt.Sprintf("note-%d", maxPendingBccPerTarget+4)
 	if got[len(got)-1].Content != last {
 		t.Fatalf("the newest note must survive, last=%q", got[len(got)-1].Content)
+	}
+}
+
+// A queue that is ALREADY over the cap must converge on the next write, not
+// stay over it forever.
+//
+// This is the upgrade path, and it is not hypothetical: the cap was introduced
+// in the same change that added it, so an install upgrading from a build
+// without any cap can start above 64. An implementation that evicts exactly one
+// row per insert holds the line at the cap but never recovers — the queue would
+// stay at its historical high-water mark minus nothing. The test therefore seeds
+// the overflow DIRECTLY (bypassing addPendingBcc, which is the only writer that
+// enforces the cap) and asserts a single add brings it back to the cap.
+func TestPendingBccQueueConvergesFromOverflow(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-bcc-converge"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, _, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+
+	const seeded = maxPendingBccPerTarget + 40
+	for i := range seeded {
+		if _, err := store.WriteExec(
+			`INSERT INTO group_pending_bcc (group_id, target_name, content, sender_role, sender_name) VALUES (?, ?, ?, ?, ?)`,
+			groupID, "B", fmt.Sprintf("legacy-%d", i), bccRoleHost, "Host",
+		); err != nil {
+			t.Fatalf("seed legacy row: %v", err)
+		}
+	}
+	if got := pendingBccForTarget(groupID, "B"); len(got) != seeded {
+		t.Fatalf("precondition: expected %d seeded rows, got %d", seeded, len(got))
+	}
+
+	addPendingBcc(groupID, "B", "newest", bccRoleHost, "Host")
+
+	got := pendingBccForTarget(groupID, "B")
+	if len(got) != maxPendingBccPerTarget {
+		t.Fatalf("an over-cap queue must converge to %d in one add, got %d", maxPendingBccPerTarget, len(got))
+	}
+	if got[len(got)-1].Content != "newest" {
+		t.Fatalf("the new note must survive eviction, last=%q", got[len(got)-1].Content)
+	}
+	// Eviction is oldest-first: the survivors are the tail of the seeded run.
+	wantFirst := fmt.Sprintf("legacy-%d", seeded-maxPendingBccPerTarget+1)
+	if got[0].Content != wantFirst {
+		t.Fatalf("eviction must drop the OLDEST rows, first=%q want %q", got[0].Content, wantFirst)
 	}
 }
 

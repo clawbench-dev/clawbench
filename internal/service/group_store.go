@@ -620,7 +620,7 @@ const (
 //
 // The queue only grows for a target that has not spoken since the note was
 // written, so an idle member (or a user who keeps briefing someone) could
-// otherwise grow it without bound. On overflow the OLDEST note is dropped: a
+// otherwise grow it without bound. On overflow the OLDEST notes are dropped: a
 // stale directive is less useful than the one just written, and silently
 // refusing the new note would lose the user's latest intent.
 const maxPendingBccPerTarget = 64
@@ -637,31 +637,55 @@ func addPendingBcc(groupID, targetName, content, senderRole, senderName string) 
 	if groupID == "" || target == "" || strings.TrimSpace(content) == "" {
 		return
 	}
-	// Overflow: drop the oldest note for this target so the queue stays bounded.
+	// The cap is enforced in ONE write transaction, not as COUNT-then-DELETE-
+	// then-INSERT on separate connections.
+	//
+	// Two reasons it must be a transaction under the write lock:
+	//   - convergence: the eviction deletes `count - cap + 1` rows, not one.
+	//     Deleting a single row only holds the line at the cap; a queue that is
+	//     ALREADY over it — the upgrade case (the pre-cap code had no limit at
+	//     all, so an existing install can start above 64) and any overshoot —
+	//     would stay over it forever, one row being trimmed per new note.
+	//   - atomicity: a COUNT read on the read pool followed by separate writes
+	//     can interleave with a concurrent add for the same target (a parallel
+	//     group's members all finishing at once) and over/under-evict.
+	tx, err := store.WriteBegin()
+	if err != nil {
+		slog.Warn("group: storing pending bcc failed", "group", groupID, "target", target, "err", err)
+		return
+	}
+	defer store.WriteUnlock()
+	defer func() { _ = tx.Rollback() }()
+
 	var count int
-	if err := store.ReadDB().QueryRow(
+	if err := tx.QueryRow( //nolint:noctx // DB global, context not applicable (repo convention)
 		`SELECT COUNT(*) FROM group_pending_bcc WHERE group_id = ? AND target_name = ?`,
 		groupID, target,
 	).Scan(&count); err != nil {
 		slog.Warn("group: counting pending bcc failed", "group", groupID, "target", target, "err", err)
+		return
 	}
-	if count >= maxPendingBccPerTarget {
-		if _, err := store.WriteExec(
-			`DELETE FROM group_pending_bcc WHERE id = (
-				SELECT id FROM group_pending_bcc WHERE group_id = ? AND target_name = ? ORDER BY id ASC LIMIT 1
-			)`, groupID, target,
+	if evict := count - maxPendingBccPerTarget + 1; evict > 0 {
+		if _, err := tx.Exec( //nolint:noctx // DB global, context not applicable (repo convention)
+			`DELETE FROM group_pending_bcc WHERE id IN (
+				SELECT id FROM group_pending_bcc WHERE group_id = ? AND target_name = ? ORDER BY id ASC LIMIT ?
+			)`, groupID, target, evict,
 		); err != nil {
 			slog.Warn("group: evicting oldest pending bcc failed", "group", groupID, "target", target, "err", err)
-		} else {
-			slog.Warn("group: pending bcc queue full, dropped the oldest note",
-				"group", groupID, "target", target, "limit", maxPendingBccPerTarget)
+			return
 		}
+		slog.Warn("group: pending bcc queue full, dropped the oldest notes",
+			"group", groupID, "target", target, "dropped", evict, "limit", maxPendingBccPerTarget)
 	}
-	if _, err := store.WriteExec(
+	if _, err := tx.Exec( //nolint:noctx // DB global, context not applicable (repo convention)
 		`INSERT INTO group_pending_bcc (group_id, target_name, content, sender_role, sender_name) VALUES (?, ?, ?, ?, ?)`,
 		groupID, target, content, senderRole, senderName,
 	); err != nil {
 		slog.Warn("group: storing pending bcc failed", "group", groupID, "target", target, "err", err)
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		slog.Warn("group: committing pending bcc failed", "group", groupID, "target", target, "err", err)
 	}
 }
 
@@ -728,17 +752,6 @@ func deletePendingBccForTarget(groupID, targetName string) {
 		`DELETE FROM group_pending_bcc WHERE group_id = ? AND target_name = ?`, groupID, target,
 	); err != nil {
 		slog.Warn("group: clearing pending bcc for target failed", "group", groupID, "target", target, "err", err)
-	}
-}
-
-// deletePendingBccForGroup drops every stored note for a group. Used when the
-// group is archived/deleted so the table cannot grow without bound.
-func deletePendingBccForGroup(groupID string) {
-	if groupID == "" {
-		return
-	}
-	if _, err := store.WriteExec(`DELETE FROM group_pending_bcc WHERE group_id = ?`, groupID); err != nil {
-		slog.Warn("group: clearing pending bcc for group failed", "group", groupID, "err", err)
 	}
 }
 

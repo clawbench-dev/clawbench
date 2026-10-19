@@ -453,6 +453,10 @@ type groupTurnSetup struct {
 	byName    map[string]GroupMember
 	runner    groupTurnRunner
 	activeIDs []string
+	// hostMemberID is the host's member ROW id (empty in a free group). It is
+	// the same value hostMemberID() reads, captured once per turn so the
+	// per-member prompt can name the host without a DB read per speaker.
+	hostMemberID string
 }
 
 // prepareTurn loads the roster and wires the per-turn scaffolding shared by
@@ -482,12 +486,13 @@ func (o *GroupOrchestrator) prepareTurn(groupID string) (groupTurnSetup, error) 
 	// both modes (a note is a payload, orthogonal to routing — see storeUserNotes).
 	o.storeUserNotes(groupID, byID, byName)
 	return groupTurnSetup{
-		members:   members,
-		names:     memberNameMap(members),
-		byID:      byID,
-		byName:    byName,
-		runner:    runner,
-		activeIDs: activeIDs,
+		members:      members,
+		names:        memberNameMap(members),
+		byID:         byID,
+		byName:       byName,
+		runner:       runner,
+		activeIDs:    activeIDs,
+		hostMemberID: o.hostMemberID(),
 	}, nil
 }
 
@@ -1369,11 +1374,15 @@ func resolveSpeakerGroups(route grouprouting.Result, members []GroupMember, excl
 // host). A routed member and a round-robin fallback member get the SAME prompt
 // — without the system prompt a fallback member would not know it must not
 // route, which is exactly how members came to declare themselves the chair.
+//
+// The host's display name rides along: a member's only permitted private channel
+// is "to the host", and mention targets resolve by NAME, so the prompt has to
+// name the host concretely (see BuildMemberSystemPrompt).
 func memberTurn(m GroupMember, instruction string, s groupTurnSetup) speakerTurn {
 	return speakerTurn{
 		member:      m,
 		instruction: instruction,
-		sysPrompt:   BuildMemberSystemPrompt(memberRoster(s.members), s.names[m.ID]),
+		sysPrompt:   BuildMemberSystemPrompt(memberRoster(s.members), s.names[m.ID], s.names[s.hostMemberID]),
 	}
 }
 

@@ -588,11 +588,19 @@ func TestFreeLoop_PublicMentionNotDeliveredAsNote(t *testing.T) {
 	_ = runGroupTurnForTest(t, o, project, msg, nil)
 
 	// The public directive reaches B through the timeline (readable @name
-	// prose), never through the private-note channel. The private-note header
-	// (主持人密送给你) is what distinguishes the two, NOT the word 密送 — the
-	// free-mode system prompt itself documents the 密送 feature, so asserting on
-	// the bare word would always fail.
-	if strings.Contains(bPrompt, "主持人密送给你") {
+	// prose), never through the private-note channel.
+	//
+	// The discriminator is the pending-note QUEUE plus the private-note header
+	// shape, NOT the literal "主持人密送给你": since the sender-attribution
+	// change a free-mode member's note is stamped "<name> 密送给你", so asserting
+	// on the host wording alone let a regression that stored the public mention
+	// as a note pass silently (verified by mutation). The header shape
+	// "密送给你（其他成员看不到）" appears ONLY in the note channel — none of the
+	// three system prompts contains it.
+	if pending := pendingBccForTarget(groupID, "B"); len(pending) != 0 {
+		t.Fatalf("a public mention must not be queued as a private note; got %+v", pending)
+	}
+	if strings.Contains(bPrompt, "密送给你（其他成员看不到）") {
 		t.Fatalf("a public mention must not be delivered as a private note; got %q", bPrompt)
 	}
 	if !strings.Contains(bPrompt, "PUBLIC_DIRECTIVE") {
@@ -1602,5 +1610,73 @@ func TestStoreUserNotes_HostModeUserMayBriefAnyMember(t *testing.T) {
 	}
 	if got[0].SenderRole != bccRoleUser {
 		t.Fatalf("the note must be attributed to the user, got %q", got[0].SenderRole)
+	}
+}
+
+// The rule must hold through the PRODUCTION chain, not just when storeRouteNotes
+// is called directly: a host-mode member's private mention to a peer, emitted in
+// a real scripted turn, must never reach that peer's injected prompt — while the
+// same member's note to the host must be stored and delivered with the member's
+// own name on it.
+//
+// This is the wiring test the pure-function truth table cannot provide: it is
+// the only thing that fails if storeSpeakerNotes stops passing notePolicy (or
+// passes an empty one), which would leave noteAllowed correct and unused.
+func TestHostLoop_MemberNotePolicyEnforcedEndToEnd(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/note-policy-e2e"
+	groupID, hostID, byName := createHostGroup(t, project, "A", "B")
+
+	script := map[string][]string{
+		hostID: {
+			`<clawbench-mention targets="A">A 先说</clawbench-mention>`,
+			// Round 2: call on B so the peer note (if wrongly stored) would be
+			// delivered on this very turn.
+			`<clawbench-mention targets="B">B 请发言</clawbench-mention>`,
+			`讨论充分。<clawbench-group-end/> 结论。`,
+		},
+		byName["A"]: {
+			`<clawbench-mention targets="B" private>PEER_SECRET</clawbench-mention>` +
+				`<clawbench-mention targets="Host" private>UPWARD_SECRET</clawbench-mention> A 发言`,
+		},
+		byName["B"]: {"B 发言"},
+	}
+	base, _ := newScriptedRunner(t, groupID, project, script)
+	var bPrompt, hostSecondPrompt string
+	hostTurns := 0
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		switch turn.MemberRowID {
+		case byName["B"]:
+			bPrompt = turn.Prompt
+		case hostID:
+			hostTurns++
+			if hostTurns == 2 {
+				hostSecondPrompt = turn.Prompt
+			}
+		}
+		return base(ctx, gid, turn)
+	}
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	_ = runGroupTurnForTest(t, o, project, "开始", nil)
+
+	// The forbidden note must never have been written...
+	if got := pendingBccForTarget(groupID, "B"); len(got) != 0 {
+		t.Fatalf("a member→member note must not be queued in host mode, got %+v", got)
+	}
+	// ...and B must not read it, even though B spoke after A.
+	if strings.Contains(bPrompt, "PEER_SECRET") {
+		t.Fatalf("B must not receive A's peer note; got %q", bPrompt)
+	}
+
+	// The allowed direction still works, attributed to A rather than the host.
+	if got := pendingBccForTarget(groupID, "Host"); len(got) != 0 {
+		t.Fatalf("the host consumes its note on its next turn, got %+v", got)
+	}
+	if !strings.Contains(hostSecondPrompt, "UPWARD_SECRET") {
+		t.Fatalf("the host must receive A's upward note; got %q", hostSecondPrompt)
+	}
+	if !strings.Contains(hostSecondPrompt, "A 密送给你") {
+		t.Fatalf("the host's note must be attributed to A, not the chair; got %q", hostSecondPrompt)
 	}
 }
