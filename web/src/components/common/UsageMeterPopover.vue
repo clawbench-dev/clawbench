@@ -198,16 +198,18 @@ const projectionText = computed(() => {
 })
 
 // ── Chart geometry ───────────────────────────────────────────────────────────
-// x spans the cycle's days, y spans [0, max(quota, peak actual)] so the quota
-// line is always on screen.
+// x spans the WHOLE cycle, not just the elapsed days: anchoring today at the
+// right edge left no room for the projection, so the extrapolation collapsed
+// onto the "today" marker and was invisible. y spans [0, max(quota, peak)] so
+// the quota line is always on screen.
+const axisDays = computed(() => Math.max(1, props.status.periodDays ?? points.value.length))
 const yMax = computed(() => {
   const peak = points.value.reduce((m, p) => Math.max(m, p.actual, p.expected), 0)
   return Math.max(quota.value, peak, 1)
 })
 
 function xAt(index: number): number {
-  const n = Math.max(1, points.value.length - 1)
-  return 8 + (272 * index) / n
+  return 8 + (272 * index) / Math.max(1, axisDays.value - 1)
 }
 function yAt(value: number): number {
   const h = PLOT_BOTTOM - PLOT_TOP
@@ -239,11 +241,11 @@ const projection = computed(() => {
   const elapsed = Math.max(1, n - 1)
   const perDay = (last.actual - first.actual) / elapsed
   if (perDay <= 0) return null
-  const totalDays = props.status.periodDays ?? n
+  const totalDays = axisDays.value
   const remainingDays = Math.max(0, totalDays - n + 1)
   if (remainingDays <= 0) return null
   const projectedValue = Math.min(yMax.value, last.actual + perDay * remainingDays)
-  const x2 = xAt(n - 1) + (272 * remainingDays) / Math.max(1, totalDays - 1)
+  const x2 = xAt(n - 1 + remainingDays)
   if (x2 <= todayX.value) return null
   return {
     x1: todayX.value.toFixed(1),

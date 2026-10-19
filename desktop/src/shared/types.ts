@@ -12,6 +12,12 @@ export interface NotificationNav {
    */
   forge?: boolean
   /**
+   * Set for usage-meter notifications. Like forge they carry no session/task
+   * id, so without this discriminator the click handler falls through to the
+   * session channel and the click is dropped.
+   */
+  usageMeter?: boolean
+  /**
    * The forge item the click should open, so the destination is that item's
    * detail rather than just the forge tab.
    *
@@ -42,6 +48,7 @@ export const NAV_CHANNELS = [
   'clawbench-open-session',
   'clawbench-open-task',
   'clawbench-open-forge',
+  'clawbench-open-usage-meter',
 ] as const
 
 export type NavChannel = (typeof NAV_CHANNELS)[number]

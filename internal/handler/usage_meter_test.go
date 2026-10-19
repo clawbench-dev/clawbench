@@ -295,3 +295,80 @@ func TestApplyConfigPatch_UsageMeterSingleFieldChangeRearms(t *testing.T) {
 	assert.Empty(t, model.ConfigInstance.UsageMeter.NotifiedStage,
 		"changing the cycle length must re-arm notification")
 }
+
+// A rule change clears the notification state in memory; that clearing must
+// reach DISK in the same atomic write. Otherwise a restart before the new rule
+// notifies reads the old stage back and suppresses the notification for the
+// rest of the cycle (the cycle start is unchanged when only the quota changes,
+// so the stale stage looks valid).
+func TestMergeUsageMeterStateIntoPatch_CarriesClearedState(t *testing.T) {
+	prev := model.ConfigInstance.UsageMeter
+	t.Cleanup(func() { model.ConfigInstance.UsageMeter = prev })
+
+	// State already cleared, as applyConfigPatch leaves it after a rule change.
+	model.ConfigInstance.UsageMeter = model.UsageMeterConfig{
+		AnchorDate: "2026-10-05", PeriodDays: 30,
+		Metric: model.UsageMeterMetricCost, Quota: 30,
+		NotifiedCycleStart: "", NotifiedStage: "",
+	}
+
+	out := mergeUsageMeterStateIntoPatch(map[string]any{
+		"usage_meter": map[string]any{"quota": float64(30)},
+	})
+
+	um, ok := out["usage_meter"].(map[string]any)
+	require.True(t, ok)
+	stage, present := um["notified_stage"]
+	require.True(t, present, "the state field must be written even when empty")
+	assert.Equal(t, "", stage, "an empty stage must overwrite the stale on-disk value")
+	cycleStart, present := um["notified_cycle_start"]
+	require.True(t, present)
+	assert.Equal(t, "", cycleStart)
+
+	// The rule fields survive.
+	assert.InDelta(t, 30.0, um["quota"], 1e-9)
+}
+
+// The original patch must not be mutated: the caller still uses it for the
+// response's changed-field list.
+func TestMergeUsageMeterStateIntoPatch_DoesNotMutateInput(t *testing.T) {
+	prev := model.ConfigInstance.UsageMeter
+	t.Cleanup(func() { model.ConfigInstance.UsageMeter = prev })
+	model.ConfigInstance.UsageMeter = model.UsageMeterConfig{NotifiedStage: "over"}
+
+	patch := map[string]any{
+		"usage_meter": map[string]any{"quota": float64(10)},
+	}
+	_ = mergeUsageMeterStateIntoPatch(patch)
+
+	um := patch["usage_meter"].(map[string]any)
+	_, leaked := um["notified_stage"]
+	assert.False(t, leaked, "the input patch must be left untouched")
+}
+
+// Wrong-typed numeric fields must be rejected rather than skipped: skipping
+// leaves the bad value in the patch, which is written verbatim to config.yaml,
+// and the next startup fails to unmarshal and exits.
+func TestValidatePatchValues_UsageMeterRejectsWrongTypes(t *testing.T) {
+	prev := model.ConfigInstance.UsageMeter
+	t.Cleanup(func() { model.ConfigInstance.UsageMeter = prev })
+	model.ConfigInstance.UsageMeter = model.UsageMeterConfig{
+		AnchorDate: "2026-10-05", PeriodDays: 30,
+		Metric: model.UsageMeterMetricCost, Quota: 20,
+	}
+
+	for _, tc := range []struct {
+		name  string
+		patch map[string]any
+	}{
+		{"quota as string", map[string]any{"quota": "5000000"}},
+		{"period_days as string", map[string]any{"period_days": "30"}},
+		{"metric as number", map[string]any{"metric": float64(1)}},
+		{"anchor_date as number", map[string]any{"anchor_date": float64(20261005)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validatePatchValues(map[string]any{"usage_meter": tc.patch})
+			assert.Error(t, err, "a present-but-wrong-typed field must be rejected")
+		})
+	}
+}

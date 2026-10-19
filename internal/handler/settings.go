@@ -1073,7 +1073,18 @@ func serveConfigPatch(w http.ResponseWriter, r *http.Request) {
 
 	applyConfigPatch(patch)
 
-	if err := writeConfigYAML(patch); err != nil {
+	// The usage-meter rule change may have cleared the notification state in
+	// memory. Those two fields are service-owned and absent from the patch, so
+	// writeConfigYAML (which only merges keys present in the patch) would leave
+	// the OLD values on disk — and a restart before the new rule notifies would
+	// read them back, silently suppressing the notification for the rest of the
+	// cycle. Merge them into the same atomic write.
+	writePatch := patch
+	if _, ok := patch["usage_meter"].(map[string]any); ok {
+		writePatch = mergeUsageMeterStateIntoPatch(patch)
+	}
+
+	if err := writeConfigYAML(writePatch); err != nil {
 		// Rollback memory state — disk write failed
 		model.ConfigInstance = snapshot
 		// Re-apply hot-reload globals from snapshot
@@ -1374,16 +1385,37 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 	// actually run with, not against empty strings.
 	if um, ok := patch["usage_meter"].(map[string]any); ok {
 		effective := model.ConfigInstance.UsageMeter
-		if v, ok := um["anchor_date"].(string); ok {
+		// A present-but-wrong-typed value is an ERROR, not "skip this field".
+		// Skipping would leave the bad value in the patch, which writeConfigYAML
+		// writes verbatim: a string quota persists as `quota: "5000000"` and the
+		// NEXT STARTUP FAILS to unmarshal the config and exits. The frontend
+		// happens to send numbers today; the server must not depend on that.
+		if raw, present := um["anchor_date"]; present {
+			v, ok := raw.(string)
+			if !ok {
+				return fmt.Errorf("usage_meter.anchor_date must be a string")
+			}
 			effective.AnchorDate = v
 		}
-		if v, ok := um["period_days"].(float64); ok {
+		if raw, present := um["period_days"]; present {
+			v, ok := raw.(float64)
+			if !ok {
+				return fmt.Errorf("usage_meter.period_days must be a number")
+			}
 			effective.PeriodDays = int(v)
 		}
-		if v, ok := um["metric"].(string); ok {
+		if raw, present := um["metric"]; present {
+			v, ok := raw.(string)
+			if !ok {
+				return fmt.Errorf("usage_meter.metric must be a string")
+			}
 			effective.Metric = v
 		}
-		if v, ok := um["quota"].(float64); ok {
+		if raw, present := um["quota"]; present {
+			v, ok := raw.(float64)
+			if !ok {
+				return fmt.Errorf("usage_meter.quota must be a number")
+			}
 			effective.Quota = v
 		}
 		if err := validateUsageMeterRule(effective); err != nil {
@@ -2105,6 +2137,14 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		if v, ok := um["quota"].(float64); ok {
 			cfg.UsageMeter.Quota = v
 		}
+		// A metric change invalidates the quota's meaning ($20 becoming 20
+		// tokens). Clear it here, in the SAME patch, rather than leaving it to a
+		// second client request: two writes would expose a window where the new
+		// metric runs against the old quota's number, and the worker wakes
+		// within seconds of a PATCH.
+		if _, quotaInPatch := um["quota"]; !quotaInPatch && before.Metric != cfg.UsageMeter.Metric {
+			cfg.UsageMeter.Quota = 0
+		}
 		changed := before.AnchorDate != cfg.UsageMeter.AnchorDate ||
 			before.PeriodDays != cfg.UsageMeter.PeriodDays ||
 			before.Metric != cfg.UsageMeter.Metric ||
@@ -2612,4 +2652,37 @@ func joinArgs(args []string) string {
 // quotes using the '\” idiom safe for POSIX shells.
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// mergeUsageMeterStateIntoPatch returns a shallow copy of patch whose
+// usage_meter object also carries the two service-owned notification-state
+// fields from the CURRENT in-memory config.
+//
+// Needed because a rule change clears that state in memory (see
+// applyConfigPatch) while writeConfigYAML only merges the keys the patch
+// mentions — so without this the cleared state never reaches disk, and a
+// restart before the new rule notifies would resurrect the old stage and
+// suppress the notification for the rest of the cycle.
+//
+// The values are read from ConfigInstance rather than taken as arguments: at
+// this point applyConfigPatch has already applied the new rule and cleared the
+// state, so memory is the authority. Caller must hold configMutex.
+func mergeUsageMeterStateIntoPatch(patch map[string]any) map[string]any {
+	um, ok := patch["usage_meter"].(map[string]any)
+	if !ok {
+		return patch
+	}
+	merged := make(map[string]any, len(um)+2)
+	for k, v := range um {
+		merged[k] = v
+	}
+	merged["notified_cycle_start"] = model.ConfigInstance.UsageMeter.NotifiedCycleStart
+	merged["notified_stage"] = model.ConfigInstance.UsageMeter.NotifiedStage
+
+	out := make(map[string]any, len(patch))
+	for k, v := range patch {
+		out[k] = v
+	}
+	out["usage_meter"] = merged
+	return out
 }

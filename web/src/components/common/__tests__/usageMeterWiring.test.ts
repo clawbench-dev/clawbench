@@ -67,3 +67,30 @@ describe('usage meter — capsule wiring', () => {
     expect(app).toMatch(/setPendingSettingsCategory\('notification'\)/)
   })
 })
+
+describe('usage meter — notification channels', () => {
+  it('the browser/system notification path handles usage_meter_update', () => {
+    // Without this branch the event falls through to `else { return }` and
+    // desktop/Electron never raise a system notification for a usage alert —
+    // only Android and the IM channels would. The wording comes from the
+    // payload, so the branch must read data.title / data.body.
+    const src = stripComments(readWebFile('src/composables/useGlobalEvents.ts'))
+    const at = src.indexOf("event === 'usage_meter_update'")
+    expect(at).toBeGreaterThan(-1)
+
+    const body = src.slice(at, at + 600)
+    expect(body).toContain('data.title')
+    expect(body).toContain('data.body')
+    expect(body).toContain('clawbench-open-usage-meter')
+  })
+
+  it('the notification nav carries a usageMeter discriminator for the native shell', () => {
+    // The Electron shell routes clicks by nav fields; without an explicit flag
+    // it falls back to the session channel and drops the click.
+    const src = stripComments(readWebFile('src/composables/useGlobalEvents.ts'))
+    expect(src).toMatch(/usageMeter:\s*event === 'usage_meter_update'/)
+
+    const native = stripComments(readWebFile('src/utils/clawbenchNative.ts'))
+    expect(native).toMatch(/usageMeter\?:/)
+  })
+})

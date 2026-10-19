@@ -79,7 +79,13 @@ func NewUsageMeterWorkerForTest(interval, startup time.Duration, check func(cont
 	}
 }
 
-// Start begins the loop in a goroutine. Idempotent.
+// Start begins the loop in a goroutine. Idempotent while running, and safe to
+// call again after Stop.
+//
+// The channels and the once are re-created here rather than in the constructor:
+// Stop closes stopCh, so a second Start on the same instance would otherwise
+// hand the new loop an already-closed channel (and run's `defer close(doneCh)`
+// would panic on a channel closed by the previous loop).
 func (w *UsageMeterWorker) Start() {
 	w.mu.Lock()
 	if w.running {
@@ -87,23 +93,29 @@ func (w *UsageMeterWorker) Start() {
 		return
 	}
 	w.running = true
+	w.stopCh = make(chan struct{})
+	w.doneCh = make(chan struct{})
+	w.stopOnce = sync.Once{}
+	stopCh, doneCh := w.stopCh, w.doneCh
 	w.mu.Unlock()
 
-	go w.run()
+	go w.run(stopCh, doneCh)
 	slog.Info("usage meter worker started", slog.Duration("interval", w.interval))
 }
 
-// Stop signals the loop to stop and waits for it to return.
+// Stop signals the loop to stop and waits for it to return. Safe to call more
+// than once, and safe before Start.
 func (w *UsageMeterWorker) Stop() {
 	w.mu.Lock()
 	if !w.running {
 		w.mu.Unlock()
 		return
 	}
+	stopCh, doneCh, once := w.stopCh, w.doneCh, &w.stopOnce
 	w.mu.Unlock()
 
-	w.stopOnce.Do(func() { close(w.stopCh) })
-	<-w.doneCh
+	once.Do(func() { close(stopCh) })
+	<-doneCh
 
 	w.mu.Lock()
 	w.running = false
@@ -112,12 +124,14 @@ func (w *UsageMeterWorker) Stop() {
 	slog.Info("usage meter worker stopped")
 }
 
-func (w *UsageMeterWorker) run() {
-	defer close(w.doneCh)
+// run is the loop body. The channels are passed in rather than read from the
+// receiver so a Stop+Start cycle cannot race a stale channel.
+func (w *UsageMeterWorker) run(stopCh <-chan struct{}, doneCh chan struct{}) {
+	defer close(doneCh)
 
 	select {
 	case <-time.After(w.startup):
-	case <-w.stopCh:
+	case <-stopCh:
 		return
 	}
 	w.tick()
@@ -127,7 +141,7 @@ func (w *UsageMeterWorker) run() {
 
 	for {
 		select {
-		case <-w.stopCh:
+		case <-stopCh:
 			return
 		case <-w.wakeCh:
 			w.tick()

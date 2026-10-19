@@ -46,6 +46,8 @@ function channelFor(nav: NotificationNav): NavChannel {
   // sessionId/taskId branches below would never match and the click would
   // silently do nothing.
   if (nav.forge) return 'clawbench-open-forge'
+  // Usage-meter notifications are global: no session/task id to branch on.
+  if (nav.usageMeter) return 'clawbench-open-usage-meter'
   if (nav.taskId) return 'clawbench-open-task'
   return 'clawbench-open-session'
 }

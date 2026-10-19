@@ -424,7 +424,10 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       titleKey: 'settings.items.usageMeter',
       entrySelector: {
         labelKey: 'settings.items.usageMeter',
-        descriptionKey: 'settings.items.usageMeterDesc',
+        // The metric row is where the unit changes, so the "switching clears
+        // the quota" warning belongs here — it was previously written into
+        // i18n but never referenced, so users lost their quota with no notice.
+        descriptionKey: 'settings.items.usageMeterMetricDesc',
         key: 'usage_meter.metric',
         type: 'select',
         source: 'server',
@@ -442,15 +445,10 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       ],
       requiredFields: [],
       // Switching the metric changes the unit, so a stored quota would silently
-      // change meaning ($20 becoming 20 tokens). Clear it: the panel re-reads
-      // the config after the save, so the empty quota is visible immediately.
-      afterSave(changedKeys) {
-        if (changedKeys.includes('usage_meter.metric')) {
-          void import('@/composables/useSettingsConfig').then(({ useSettingsConfig }) => {
-            void useSettingsConfig().setServerValue('usage_meter.quota', 0)
-          }).catch(() => { /* quota stays until the next manual edit */ })
-        }
-      },
+      // change meaning ($20 becoming 20 tokens). The SERVER clears it in the
+      // same patch (see applyConfigPatch) — a second client-side request would
+      // open a window where the new metric runs against the old number, and the
+      // worker wakes within seconds of a PATCH. So no afterSave here.
     }},
   ],
   about: [

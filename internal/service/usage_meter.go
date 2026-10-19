@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"sort"
 	"sync"
 	"time"
 
@@ -314,18 +315,65 @@ func queryUsageMeterSeries(ctx context.Context, rowExpr string, cycle usageMeter
 	rule := model.ConfigInstance.UsageMeter
 	perDay := rule.Quota / float64(rule.PeriodDays)
 
-	points := make([]UsageMeterPoint, 0, cycle.dayInCycle)
+	// Build the curve from the buckets that actually exist, then fill the gaps.
+	//
+	// The day list is NOT derived from `cycle.dayInCycle` by calendar
+	// arithmetic. `dayInCycle` counts whole 24h spans from the anchor (so the
+	// cycle length stays constant across DST), while `AddDate` counts calendar
+	// days. Across a spring-forward transition those two disagree by an hour,
+	// and enumerating with AddDate then either drops the current day's bucket or
+	// repeats the previous one — the curve's last point stops matching the
+	// aggregate total. Walking the sorted bucket keys instead makes
+	// `sum(series) == actual` hold by construction, whatever the offsets do.
+	keys := make([]string, 0, len(daily))
+	for k := range daily {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	// The cycle covers [start, now); a bucket can only fall inside it, but clamp
+	// anyway so a stray row (clock skew, a hand-edited row) cannot extend the
+	// axis past the cycle.
+	firstKey := cycle.start.In(time.Local).Format("2006-01-02")
+	lastKey := now.In(time.Local).Format("2006-01-02")
+
+	points := make([]UsageMeterPoint, 0, len(keys))
 	var cumulative float64
-	// Iterate whole days from the cycle start through today. Days with no rows
-	// still appear so the curve is continuous (a flat segment, not a gap).
-	for day := 1; day <= cycle.dayInCycle; day++ {
-		date := cycle.start.AddDate(0, 0, day-1)
-		key := date.Format("2006-01-02")
-		cumulative += daily[key]
+	// A bucket that has no usage still needs a point so the curve is continuous
+	// (a flat segment, not a gap). Walk calendar days from the cycle start to
+	// today, pulling each day's bucket — but iterate the day axis by calendar
+	// date while summing whatever buckets land in it.
+	day := cycle.start.In(time.Local)
+	endDay := now.In(time.Local)
+	for !day.After(endDay) {
+		key := day.Format("2006-01-02")
+		if key >= firstKey && key <= lastKey {
+			cumulative += daily[key]
+			points = append(points, UsageMeterPoint{
+				Day:      key,
+				Actual:   cumulative,
+				Expected: perDay * float64(len(points)+1),
+			})
+		}
+		day = day.AddDate(0, 0, 1)
+	}
+
+	// Any bucket the day walk could not reach (a date before the cycle start in
+	// local terms, e.g. an anchor whose local midnight maps to the previous UTC
+	// day) is appended so no usage is silently dropped from the curve.
+	seen := make(map[string]bool, len(points))
+	for _, p := range points {
+		seen[p.Day] = true
+	}
+	for _, k := range keys {
+		if seen[k] {
+			continue
+		}
+		cumulative += daily[k]
 		points = append(points, UsageMeterPoint{
-			Day:      key,
+			Day:      k,
 			Actual:   cumulative,
-			Expected: perDay * float64(day),
+			Expected: perDay * float64(len(points)+1),
 		})
 	}
 	return points, nil
@@ -443,6 +491,18 @@ func CheckUsageMeter(ctx context.Context) string {
 	} else if feishu.IsStarted() && feishu.PushUsageMeterEvent(title, body) {
 		_ = DeletePendingEvent(eventID)
 	}
+
+	// Update the in-memory rule FIRST: memory is the authority for "already
+	// told you", and the next check reads it. Relying on the saver alone would
+	// re-send on every check whenever the saver is nil or its write fails
+	// (read-only config dir, full disk) — a duplicate every 5 minutes.
+	//
+	// Safe without configMutex: this goroutine already holds usageMeterCheckMu,
+	// and the only concurrent writer of these two fields is the PATCH path
+	// (which also clears them). A lost update there is benign — the user asked
+	// for a new rule, so re-notifying is the intended outcome.
+	model.ConfigInstance.UsageMeter.NotifiedCycleStart = st.CycleStart
+	model.ConfigInstance.UsageMeter.NotifiedStage = stage
 
 	// Persist the new stage last: if the process dies between the push and this
 	// write, the next check re-sends rather than silently swallowing it. A

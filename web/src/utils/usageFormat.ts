@@ -52,15 +52,3 @@ export function formatUsageMeterValue(
       return formatCompactCount(value)
   }
 }
-
-/** Unit suffix shown next to the numbers, or '' when the value carries its own. */
-export function usageMeterUnit(metric: UsageMeterMetric): string {
-  switch (metric) {
-    case 'cost':
-      return 'USD'
-    case 'credit':
-      return 'credits'
-    default:
-      return 'tokens'
-  }
-}

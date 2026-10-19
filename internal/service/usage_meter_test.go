@@ -408,8 +408,11 @@ func TestCheckUsageMeter_NotifiesOnceOnOverPlan(t *testing.T) {
 	assert.Equal(t, service.UsageMeterStageOver, rows[0].EventType)
 	assert.NotEmpty(t, rows[0].Title)
 
-	// A second check in the same cycle must stay silent.
-	assert.Equal(t, "", service.CheckUsageMeter(context.Background()))
+	// A second check in the same cycle must stay silent. Uses checkAt (which
+	// clears the throttle): calling CheckUsageMeter directly would also return
+	// "" — because of the one-second throttle, not because of stage dedup — so
+	// the assertion would pass even with dedup removed.
+	assert.Equal(t, "", checkAt(now.Add(time.Minute)))
 	rows, err = service.ListNotifications(service.NotificationFilter{Kind: service.NotificationKindUsage})
 	require.NoError(t, err)
 	assert.Len(t, rows, 1, "one notification per stage per cycle")
@@ -547,8 +550,12 @@ func TestUsageMeter_SeriesBucketsByLocalDayNotUTCDay(t *testing.T) {
 	// is 07:30 today; in UTC terms it is still yesterday.
 	utcLate := time.Date(2026, 10, 18, 23, 30, 0, 0, time.UTC)
 	localDay := utcLate.Local().Format("2006-01-02")
-	require.NotEqual(t, utcLate.Format("2006-01-02"), localDay,
-		"test premise: the UTC date and the local date must differ (needs a non-UTC TZ)")
+	if utcLate.Format("2006-01-02") == localDay {
+		// The whole point of this test is the UTC/local date divergence, which
+		// does not exist on a UTC host. Skip rather than fail: CI runners are
+		// UTC, and the timezone is an environment property, not a defect.
+		t.Skip("host timezone is UTC; the UTC/local date divergence cannot be exercised")
+	}
 
 	insertUsageSeed(t, db, usageSeed{
 		project: "/a", sessionID: "s-tz", agentID: "cb", agentName: "CB", backend: "codebuddy",
@@ -575,4 +582,45 @@ func TestUsageMeter_SeriesBucketsByLocalDayNotUTCDay(t *testing.T) {
 		}
 	}
 	assert.InDelta(t, st.Actual, st.Series[len(st.Series)-1].Actual, 1e-9)
+}
+
+// The over → full progression is the feature's second notification and has to
+// work: a user who is warned once, keeps spending, and then exhausts the quota
+// must be told. Only the initial-full and the never-downgrade paths were
+// covered, so removing the progression went undetected.
+func TestCheckUsageMeter_OverThenFullProgression(t *testing.T) {
+	now := localMidnight(time.Date(2026, 10, 19, 0, 0, 0, 0, time.Local)).Add(12 * time.Hour)
+	db := setupDB(t)
+	ensureNotificationTables(t, db)
+	ensureAgentsTable(t, db)
+
+	// Day 6 of 30, quota 30 → expected 6. Spend 10: over plan, not full.
+	insertUsageSeed(t, db, usageSeed{
+		project: "/a", sessionID: "s-prog", agentID: "cb", agentName: "CB", backend: "codebuddy",
+		model: "m", createdAt: now.Add(-1 * 24 * time.Hour).UTC().Format("2006-01-02 15:04:05"), costUSD: 10,
+	})
+
+	setUsageMeterRule(t, model.UsageMeterConfig{
+		AnchorDate: anchorOn(now, 5), PeriodDays: 30,
+		Metric: model.UsageMeterMetricCost, Quota: 30,
+	})
+	t.Cleanup(func() { service.SetUsageMeterNowForTest(nil) })
+
+	require.Equal(t, service.UsageMeterStageOver, checkAt(now))
+
+	// Spend past the quota in the same cycle.
+	insertUsageSeed(t, db, usageSeed{
+		project: "/a", sessionID: "s-prog2", agentID: "cb", agentName: "CB", backend: "codebuddy",
+		model: "m", createdAt: now.Add(-1 * time.Hour).UTC().Format("2006-01-02 15:04:05"), costUSD: 25,
+	})
+
+	assert.Equal(t, service.UsageMeterStageFull, checkAt(now.Add(time.Minute)),
+		"after an over-plan warning, exhausting the quota must produce a second notification")
+
+	rows, err := service.ListNotifications(service.NotificationFilter{Kind: service.NotificationKindUsage})
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	// Newest first.
+	assert.Equal(t, service.UsageMeterStageFull, rows[0].EventType)
+	assert.Equal(t, service.UsageMeterStageOver, rows[1].EventType)
 }

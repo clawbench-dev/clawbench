@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatCompactCount, formatUsageMeterValue, usageMeterUnit } from '@/utils/usageFormat'
+import { formatCompactCount, formatUsageMeterValue } from '@/utils/usageFormat'
 
 describe('formatCompactCount', () => {
   it('keeps small counts verbatim', () => {
@@ -39,13 +39,5 @@ describe('formatUsageMeterValue', () => {
 
   it('returns a placeholder for non-numbers', () => {
     expect(formatUsageMeterValue('cost', Number.NaN)).toBe('—')
-  })
-})
-
-describe('usageMeterUnit', () => {
-  it('names the unit for each metric', () => {
-    expect(usageMeterUnit('cost')).toBe('USD')
-    expect(usageMeterUnit('credit')).toBe('credits')
-    expect(usageMeterUnit('tokens')).toBe('tokens')
   })
 })

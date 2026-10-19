@@ -468,6 +468,15 @@ async function onOpen(n: NotificationItem) {
     toast.show(t('notifications.sourceDeletedHint'), { icon: 'warning', type: 'info' })
     return
   }
+  // Usage notifications are instance-wide: the row carries no project, and the
+  // click does not switch projects. Short-circuit BEFORE the cross-project gate
+  // so a future change that starts attributing a project to these rows cannot
+  // make it ask "switch to project X?" for an action that never switches.
+  if (n.kind === 'usage') {
+    window.dispatchEvent(new CustomEvent('clawbench-open-usage-meter'))
+    return
+  }
+
   // Same canonical comparison as isExternalProject — a raw-vs-canonical path
   // pair must not pop a "switch project?" dialog for the project you are in.
   const crossProject = isExternalProject(n)
@@ -493,11 +502,6 @@ async function onOpen(n: NotificationItem) {
     window.dispatchEvent(new CustomEvent('clawbench-open-forge', {
       detail: { projectPath: n.projectPath, target: forgeTargetFromItemKey(n.forgeItemKey), fromNotificationCenter: true },
     }))
-  } else if (n.kind === 'usage') {
-    // The meter is global — there is no project or session to jump to. Wide
-    // screens open the header popover; narrow screens have no capsule, so they
-    // land on the settings entry that configures the rule.
-    window.dispatchEvent(new CustomEvent('clawbench-open-usage-meter'))
   }
 }
 
