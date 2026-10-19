@@ -89,10 +89,11 @@
         {{ selfTest.error.value }}
       </div>
 
-      <!-- NOT an `v-else-if`: a deep run reports BOTH an error and the static
-           checks it rode along with, and the checks are the part that explains
-           the failure. Gating them on "no error" hid exactly the detail the
-           user needs at the one moment they need it. -->
+      <!-- NOT an `v-else-if`: when a real-turn run is REFUSED, the error and
+           the static checks arrive together, and the rows are the only thing
+           that says which check blocked it. (A successful turn sets no
+           `result`, so the rows never appear for the cheap/deep mix-up that
+           made the two buttons look identical.) -->
       <div
         v-if="selfTest.result.value"
         class="settings-agent-detail__selftest-result"

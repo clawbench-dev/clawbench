@@ -89,14 +89,20 @@ export function useAgentSelfTest() {
         // Generous: the backend's own turn timeout is 90s.
         { timeoutMs: 120_000 },
       )
-      // The static checks ride along, so the UI can show both without a second
-      // request — and a refusal is reported the same way as a failed run.
-      if (res.static) result.value = res.static
       if (res.ok) {
+        // Show ONLY the turn's outcome. The backend runs the static checks as a
+        // precondition (so a broken agent does not burn a 90s timeout), but the
+        // user pressed "run a real turn", not "run the integration test" —
+        // rendering the 12 check rows here made the two buttons look like they
+        // did the same thing.
         deepResult.value = res.deep ?? null
-      } else {
-        error.value = res.error ?? ''
+        return
       }
+      error.value = res.error ?? ''
+      // A refusal IS a static-check failure, and the rows are the only thing
+      // that says WHICH check blocked the run. Surface them in that case only:
+      // an empty check list (a turn that started and failed) stays hidden.
+      if (res.static && res.static.failed > 0) result.value = res.static
     } catch (err: unknown) {
       error.value = err instanceof Error ? err.message : String(err)
       appLog.e('AgentSelfTest', 'deep self-test request failed', err)

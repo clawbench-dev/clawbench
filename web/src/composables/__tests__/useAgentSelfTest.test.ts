@@ -111,8 +111,47 @@ describe('useAgentSelfTest', () => {
 
     expect(deepResult.value?.reply).toBe('OK')
     expect(deepResult.value?.stopReason).toBe('end_turn')
-    // The static checks ride along so the UI can render both from one request.
-    expect(result.value?.ok).toBe(true)
+    // The static checks ride along in the response, but a SUCCESSFUL turn must
+    // NOT surface them: pressing "run a real turn" should not print the 12
+    // configuration rows, or the two buttons look like they do the same thing.
+    expect(result.value).toBeNull()
+  })
+
+  it('surfaces the blocking checks when a real turn is refused', async () => {
+    // A refusal is a static-check failure, and the rows are the only thing that
+    // says WHICH check blocked the turn. Hiding them would leave a bare
+    // "configuration checks failed" with nothing to act on.
+    mockApiPost.mockResolvedValue({
+      ok: false,
+      error: 'The configuration checks failed; fix them before running a real turn.',
+      static: { agentId: 'claude', ok: false, passed: 1, failed: 1, warned: 0,
+        checks: [{ key: 'acp_command', status: 'fail', detail: 'Executable "nope" was not found' }] },
+    })
+    const { runDeep, deepResult, result, error } = useAgentSelfTest()
+
+    await runDeep('claude')
+
+    expect(deepResult.value).toBeNull()
+    expect(error.value).toContain('configuration checks failed')
+    expect(result.value?.failed).toBe(1)
+    expect(result.value?.checks[0].detail).toContain('nope')
+  })
+
+  it('does not surface an all-passing static report on a failed turn', async () => {
+    // A turn that started and then failed (spawn/handshake) carries the passing
+    // pre-check report. Printing it would bury the real error under 12 green
+    // rows, so only a REFUSAL (failed > 0) brings the rows back.
+    mockApiPost.mockResolvedValue({
+      ok: false,
+      error: 'the agent closed the stream without a terminal event',
+      static: okResult,
+    })
+    const { runDeep, result, error } = useAgentSelfTest()
+
+    await runDeep('claude')
+
+    expect(error.value).toContain('terminal event')
+    expect(result.value).toBeNull()
   })
 
   it('reports a refusal (static checks failed) as an error with the static result', async () => {

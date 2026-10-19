@@ -990,10 +990,11 @@ describe('SettingsAgentDetail', () => {
     expect(wrapper.find('.settings-agent-detail__selftest-result').exists()).toBe(false)
   })
 
-  it('shows the static checks alongside a deep-run error', async () => {
-    // A deep run reports the error AND the static checks it rode along with.
-    // Hiding the checks whenever an error exists would remove exactly the rows
-    // that explain WHY the turn failed (e.g. "Executable not found").
+  it('shows the blocking checks alongside a REFUSED deep run', async () => {
+    // A refusal is a static-check failure: the error says the turn did not run,
+    // and the rows say which check stopped it. Both must be on screen — but the
+    // composable only populates `result` in that case, never on a successful
+    // turn (see useAgentSelfTest: a passing turn must not print 12 green rows).
     mockSelfTestState.error.value = 'The configuration checks failed; fix them before running a real turn.'
     mockSelfTestState.result.value = {
       agentId: 'test-agent', ok: false, passed: 1, warned: 0, failed: 1,
