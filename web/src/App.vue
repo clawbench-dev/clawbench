@@ -3921,9 +3921,50 @@ function handleCtrlShiftF(e: KeyboardEvent) {
     openBrowseContentSearch()
 }
 
+/**
+ * Ctrl/Cmd+G — "go to line" in the file view (issue #547).
+ *
+ * The CodeMirror keymap cannot be the only binding: it only fires while the
+ * editor's contentDOM holds focus, and opening a file does not focus it. This
+ * document-level handler covers the initial state, and CodeMirror's own
+ * binding covers the focused case (both funnel into the same prompt).
+ *
+ * Only the file view has line numbers, so every other surface leaves the key
+ * alone — the browser's own Ctrl+G (find next) keeps working there.
+ */
+function handleCtrlG(e: KeyboardEvent) {
+    if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return
+    if (e.key.toLowerCase() !== 'g') return
+    // CodeMirror handles Mod-g itself while its contentDOM has focus and marks
+    // the event handled. That is the only reliable signal: the contentDOM is
+    // `contenteditable="true"` even in read-only mode (CodeMirror uses
+    // `EditorState.readOnly`, not the attribute), so an isContentEditable check
+    // would skip here and prompt a SECOND time.
+    if (e.defaultPrevented) return
+    const target = e.target as HTMLElement | null
+    const tag = target?.tagName
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return
+    if (target?.isContentEditable) return
+    if (target?.closest?.('.terminal-panel')) return
+    if (_dlg.state.value.visible || projectDialogOpen.value) return
+
+    // On a wide screen the file view lives in the left pane; Ctrl+G while the
+    // chat pane is the active one must not hijack the browser's find-next.
+    const viewActive = isWideScreen.value
+        ? activePane.value === PANE_LEFT && panelIsActive('view')
+        : panelIsActive('view')
+    if (!viewActive) return
+    // openGoToLine returns false for rendered previews / media (no line
+    // numbers) — leave those to the browser.
+    const opened = fileOverlayRef.value?.openGoToLine?.()
+    if (!opened) return
+    e.preventDefault()
+}
+
  onMounted(() => {
      document.addEventListener('keydown', handleCtrlF)
      document.addEventListener('keydown', handleCtrlShiftF)
+     document.addEventListener('keydown', handleCtrlG)
      // Swallow clicks that were really a drag-select (see dragClickGuard). One
      // document-level guard replaces a per-row check that only ever reached four
      // of the ~50 clickable rows containing selectable text.
@@ -3988,6 +4029,7 @@ onUnmounted(() => {
     window.removeEventListener('clawbench-session-title-update', handleSessionTitleUpdate)
     document.removeEventListener('click', handleOverflowOutsideClick)
     document.removeEventListener('keydown', handleCtrlF)
+    document.removeEventListener('keydown', handleCtrlG)
     stopFlushTimer()
 })
 </script>

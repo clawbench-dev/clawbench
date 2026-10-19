@@ -147,7 +147,13 @@ function captureScroll() {
   return fileViewerRef.value?.captureScroll?.()
 }
 
-defineExpose({ pdfScrollToPage, pdfOutline, focusSearchInput, captureScroll })
+/** Ctrl/Cmd+G — go to line. Returns false for surfaces with no line numbers
+    (rendered previews, media) so the caller can leave the key to the browser. */
+function openGoToLine() {
+  return fileViewerRef.value?.openGoToLine?.() ?? false
+}
+
+defineExpose({ pdfScrollToPage, pdfOutline, focusSearchInput, openGoToLine, captureScroll })
 
 // Intercept file-path link clicks inside the overlay content.
 // When a user clicks a .chat-file-open-btn, .chat-file-path, or .code-file-path,

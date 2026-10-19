@@ -512,6 +512,20 @@ function focusSearchInput() {
     }
 }
 
+/**
+ * Ctrl/Cmd+G — go to line (issue #547).
+ *
+ * Only CodeMirror surfaces have line numbers, so rendered previews (markdown,
+ * HTML, OpenAPI, media) return false and let the shortcut fall through to the
+ * browser instead of opening a prompt that cannot be honoured.
+ */
+function openGoToLine() {
+    if (!isCodeMirrorView.value) return false
+    // Strictly `=== true`: a missing/older child implementation must not claim
+    // the key, or App would preventDefault a shortcut nobody handled.
+    return cmEditorRef.value?.openGoToLine?.() === true
+}
+
 function handleToggleEdit() {
     if (editing.value) {
         // Exiting edit mode via the header Edit button: confirm unsaved changes
@@ -785,6 +799,7 @@ defineExpose({
     pdfOutline,
     pdfScrollToPage,
     focusSearchInput,
+    openGoToLine,
     captureScroll,
 })
 </script>

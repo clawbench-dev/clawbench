@@ -75,7 +75,8 @@ describe('codeMirrorSearchPanel', () => {
         await new Promise(r => setTimeout(r, 20))
         const q = v.state.field(searchPanelField)
         expect(q).toBe(true)
-        // Selection moves onto first match after Ctrl+G? Not required here.
+        // Selection is not expected to move just from typing: navigation is
+        // F3 / Shift+F3 (Ctrl+G is go-to-line, see CodeMirrorViewer).
         v.destroy()
     })
 

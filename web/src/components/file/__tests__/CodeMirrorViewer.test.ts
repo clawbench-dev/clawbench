@@ -41,8 +41,8 @@ vi.mock('@/composables/useFileChangeBaseline.ts', async (importOriginal) => {
 })
 vi.mock('@/stores/app.ts', () => ({ store: { state: { projectRoot: '/p', homeDir: '/home' } } }))
 vi.mock('@/composables/useQuoteQuestion.ts', () => ({ useQuoteQuestion: () => quoteMocks, isPointerPressed: quoteMocks.isPointerPressed }))
-const dialogMocks = vi.hoisted(() => ({ confirm: vi.fn() }))
-vi.mock('@/composables/useDialog.ts', () => ({ useDialog: () => ({ confirm: dialogMocks.confirm, prompt: vi.fn(), alert: vi.fn(), resolve: vi.fn(), state: ref({ visible: false }) }) }))
+const dialogMocks = vi.hoisted(() => ({ confirm: vi.fn(), prompt: vi.fn(), alert: vi.fn() }))
+vi.mock('@/composables/useDialog.ts', () => ({ useDialog: () => ({ confirm: dialogMocks.confirm, prompt: dialogMocks.prompt, alert: dialogMocks.alert, resolve: vi.fn(), state: ref({ visible: false }) }) }))
 const fetchSymbolsMock = vi.hoisted(() => vi.fn())
 vi.mock('@/composables/useCodeSymbols.ts', () => ({ fetchCodeSymbols: (...a: unknown[]) => fetchSymbolsMock(...a) }))
 
@@ -68,6 +68,8 @@ describe('CodeMirrorViewer (real CodeMirror)', () => {
     quoteMocks.showBar.mockClear()
     quoteMocks.hideBar.mockClear()
     dialogMocks.confirm.mockReset()
+    dialogMocks.prompt.mockReset()
+    dialogMocks.alert.mockReset()
     fetchSymbolsMock.mockReset()
     fetchSymbolsMock.mockResolvedValue(null)
   })
@@ -700,6 +702,167 @@ describe('CodeMirrorViewer — viewport line event (for TOC scroll-follow)', () 
     expect(detail.line).not.toBe(expectedTop)
 
     window.removeEventListener('cm-editor-viewport-line', listener)
+    wrapper.unmount()
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Ctrl/Cmd+G — go to line (issue #547). The prompt is mocked; what matters here
+// is the wiring: the shortcut must ask for a line, jump+flash the target, and
+// stay a no-op for unparseable input instead of jumping to line 1.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('CodeMirrorViewer — go to line (Ctrl+G)', () => {
+  const CONTENT = Array.from({ length: 60 }, (_, i) => `L${i + 1}`).join('\n') + '\n'
+
+  beforeEach(() => {
+    document.body.innerHTML = ''
+    quoteMocks.showBar.mockClear()
+    quoteMocks.hideBar.mockClear()
+    dialogMocks.confirm.mockReset()
+    dialogMocks.prompt.mockReset()
+    dialogMocks.alert.mockReset()
+    fetchSymbolsMock.mockReset()
+    fetchSymbolsMock.mockResolvedValue(null)
+    diffMarkers.value = []
+  })
+
+  function mountForJump() {
+    return mount(CodeMirrorViewer, {
+      props: { content: CONTENT, language: 'plaintext' },
+      global: { plugins: [i18n] },
+      attachTo: document.body,
+    })
+  }
+
+  function pressCtrlG(view: { contentDOM: HTMLElement }) {
+    view.contentDOM.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'g', ctrlKey: true, bubbles: true, cancelable: true }),
+    )
+  }
+
+  function flashedLineText(): string {
+    return document.querySelector('.cm-line.line-flash')?.textContent ?? ''
+  }
+
+  it('opens a prompt pre-filled with the current line', async () => {
+    dialogMocks.prompt.mockResolvedValue(null)
+    const wrapper = mountForJump()
+    await sleep(80)
+    pressCtrlG(wrapper.vm.getView())
+    await sleep(50)
+    expect(dialogMocks.prompt).toHaveBeenCalledTimes(1)
+    // Line 1 is where the (empty) selection sits in a freshly mounted editor.
+    expect(dialogMocks.prompt.mock.calls[0][1]).toMatchObject({ value: '1' })
+    wrapper.unmount()
+  })
+
+  it('jumps to and flashes the requested line', async () => {
+    // Line 20 (not 42): jsdom has no layout, so CodeMirror only materializes the
+    // first ~36 lines and a decoration on an unrendered line has no DOM element
+    // to flash. The target must sit inside that window for the assertion to be
+    // about the jump rather than about viewport virtualization.
+    dialogMocks.prompt.mockResolvedValue('20')
+    const wrapper = mountForJump()
+    await sleep(80)
+    pressCtrlG(wrapper.vm.getView())
+    await sleep(80)
+    expect(flashedLineText()).toBe('L20')
+    wrapper.unmount()
+  })
+
+  it('cancels a pending scroll restore before jumping', async () => {
+    // FileViewer restores a remembered scroll position on mount; if that ran
+    // after the jump it would silently undo it.
+    dialogMocks.prompt.mockResolvedValue('20')
+    const wrapper = mountForJump()
+    await sleep(80)
+    const events: string[] = []
+    const spy = (e: Event) => events.push(e.type)
+    window.addEventListener('cancel-scroll-restore', spy)
+    pressCtrlG(wrapper.vm.getView())
+    await sleep(80)
+    window.removeEventListener('cancel-scroll-restore', spy)
+    expect(events).toContain('cancel-scroll-restore')
+    wrapper.unmount()
+  })
+
+  it('warns instead of jumping when the input is unparseable', async () => {
+    dialogMocks.prompt.mockResolvedValue('not-a-line')
+    const wrapper = mountForJump()
+    await sleep(80)
+    pressCtrlG(wrapper.vm.getView())
+    await sleep(80)
+    expect(dialogMocks.alert).toHaveBeenCalledTimes(1)
+    expect(flashedLineText()).toBe('')
+    wrapper.unmount()
+  })
+
+  it('does nothing when the prompt is dismissed', async () => {
+    dialogMocks.prompt.mockResolvedValue(null)
+    const wrapper = mountForJump()
+    await sleep(80)
+    pressCtrlG(wrapper.vm.getView())
+    await sleep(80)
+    expect(dialogMocks.alert).not.toHaveBeenCalled()
+    expect(flashedLineText()).toBe('')
+    wrapper.unmount()
+  })
+
+  it('no longer binds Ctrl+G to next-match', async () => {
+    // Regression guard for the key reassignment: with a search query active,
+    // Ctrl+G must open the go-to-line prompt rather than stepping the match.
+    dialogMocks.prompt.mockResolvedValue(null)
+    const wrapper = mountForJump()
+    await sleep(80)
+    const view = wrapper.vm.getView()
+    wrapper.vm.openSearch()
+    await sleep(50)
+    pressCtrlG(view)
+    await sleep(50)
+    expect(dialogMocks.prompt).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it('still steps to the next match on F3', async () => {
+    // F3 is where match navigation moved to. Dispatch the real key (not a
+    // direct findNext call) so a dropped binding is caught: with the binding
+    // gone, preventDefault would still fire but the selection would not move.
+    const wrapper = mountForJump()
+    await sleep(80)
+    const view = wrapper.vm.getView()
+    wrapper.vm.openSearch()
+    await sleep(50)
+    // Seed a query whose first two matches are on different lines.
+    const { setSearchQuery, SearchQuery } = await import('@codemirror/search')
+    view.dispatch({ effects: setSearchQuery.of(new SearchQuery({ search: 'L' })) })
+    view.dispatch({ selection: { anchor: 0 } })
+    await sleep(30)
+    // Compare the whole range: the first match starts at offset 0, so `from`
+    // alone would look unchanged even though the selection grew onto the match.
+    const before = view.state.selection.main
+    view.contentDOM.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'F3', bubbles: true, cancelable: true }),
+    )
+    await sleep(30)
+    const after = view.state.selection.main
+    expect(after.from !== before.from || after.to !== before.to).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('opens the search panel on F3 when there is no query yet', async () => {
+    // The F3 binding preventDefaults unconditionally, so returning false would
+    // swallow the key with no visible effect. Opening the panel is the useful
+    // outcome (and what the previous Mod-g behaviour did).
+    const wrapper = mountForJump()
+    await sleep(80)
+    const view = wrapper.vm.getView()
+    const { searchPanelField } = await import('@/utils/codeMirrorSearchPanel')
+    expect(view.state.field(searchPanelField, false)).toBe(false)
+    view.contentDOM.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'F3', bubbles: true, cancelable: true }),
+    )
+    await sleep(50)
+    expect(view.state.field(searchPanelField, false)).toBe(true)
     wrapper.unmount()
   })
 })
