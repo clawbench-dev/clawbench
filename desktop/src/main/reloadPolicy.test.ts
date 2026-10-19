@@ -1,22 +1,25 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import ts from 'typescript'
-import { storagesToClear } from './reloadPolicy'
+import { performReload, storagesToClear } from './reloadPolicy'
+import type { ReloadDeps } from './reloadPolicy'
 
 /**
- * Policy table + call-site wiring for the two reload scopes (issue #559).
+ * Behaviour of the reload primitive (issue #559).
  *
- * `session.ts` itself (which storages Electron actually receives) is covered
- * behaviourally by `session.test.ts` and `bridge.test.ts`. What is left here is
- * the table and a guard that the two call sites keep asking for *different*
- * scopes.
+ * `storagesToClear()` alone would not have caught the bug: the defect was in
+ * *what the shared function passed it*. So the interesting assertions here run
+ * `performReload` against a recording fake and check the calls Electron would
+ * receive.
  *
- * The call-site guard parses the file with the TypeScript compiler instead of
- * matching text. A regex over the source was tried first and was not a guard at
- * all: a string literal or a commented-out old line containing the expected
- * text satisfied it, so "keep the old line as a comment, write the wrong scope
- * on the next line" passed. The AST sees only real call expressions.
+ * `session.ts` itself is not imported: the desktop package's dependencies are
+ * not installed in CI (the root vitest job installs only the root
+ * `node_modules`), so importing `electron` there fails to resolve and the
+ * whole suite would be reported as a load failure rather than a test failure.
+ * That is why the orchestration lives in this dependency-free module; the
+ * remaining risk — a call site wiring the wrong scope — is covered below by
+ * parsing the two files.
  */
 
 const repoRoot = resolve(__dirname, '../../..')
@@ -25,35 +28,25 @@ function readRepoFile(rel: string): string {
   return readFileSync(resolve(repoRoot, rel), 'utf8')
 }
 
-/**
- * Every argument text of every `clearCacheAndReload(...)` call in `rel`.
- *
- * Comments, string literals and dead objects are structurally invisible here,
- * which is the whole point. Non-literal arguments (an identifier, a ternary)
- * come back as their source text, so an indirection fails the equality checks
- * below loudly rather than silently passing.
- *
- * Property accesses are included because `window.ts` calls the lazily imported
- * module as `m.clearCacheAndReload(...)` (a top-level import would be a cycle).
- */
-function reloadCallArgs(rel: string): string[] {
-  const source = ts.createSourceFile(rel, readRepoFile(rel), ts.ScriptTarget.ES2022, true)
-  const args: string[] = []
-  const visit = (node: ts.Node): void => {
-    if (ts.isCallExpression(node)) {
-      const callee = node.expression
-      const name = ts.isIdentifier(callee)
-        ? callee.text
-        : ts.isPropertyAccessExpression(callee) ? callee.name.text : ''
-      if (name === 'clearCacheAndReload') {
-        args.push(node.arguments.map((a) => a.getText(source)).join(', '))
-      }
-    }
-    ts.forEachChild(node, visit)
+/** A `ReloadDeps` that records the order and arguments of every call. */
+function recordingDeps(): { deps: ReloadDeps; order: string[]; storages: () => ReloadStorageList } {
+  const order: string[] = []
+  let cleared: ReloadStorageList = null
+  return {
+    order,
+    storages: () => cleared,
+    deps: {
+      clearCache: async () => { order.push('clearCache') },
+      clearStorageData: async (options) => {
+        order.push('clearStorageData')
+        cleared = options.storages
+      },
+      reload: () => { order.push('reload') },
+    },
   }
-  visit(source)
-  return args
 }
+
+type ReloadStorageList = readonly string[] | null
 
 describe('storagesToClear', () => {
   it('keeps localStorage, indexdb and cookies for a post-upgrade reload', () => {
@@ -76,6 +69,80 @@ describe('storagesToClear', () => {
   })
 })
 
+describe('performReload', () => {
+  it('keeps this device\'s preferences when the server upgrade reloads', async () => {
+    // The whole point of #559: theme / wallpaper / fonts / panel layout live
+    // only in localStorage, and a server upgrade invalidates none of them.
+    const rec = recordingDeps()
+    await performReload(rec.deps, 'cache')
+    expect(rec.storages()).not.toBeNull()
+    expect(rec.storages()).not.toContain('localstorage')
+    expect(rec.storages()).not.toContain('indexdb')
+    expect(rec.storages()).not.toContain('cookies')
+  })
+
+  it('clears everything for the explicit hard reload', async () => {
+    // The documented Ctrl+Shift+R contract: signs out, resets preferences.
+    const rec = recordingDeps()
+    await performReload(rec.deps, 'everything')
+    expect(new Set(rec.storages())).toEqual(
+      new Set(['localstorage', 'indexdb', 'cookies', 'cachestorage', 'serviceworkers']),
+    )
+  })
+
+  it('drops the HTTP cache too, then reloads', async () => {
+    const rec = recordingDeps()
+    await performReload(rec.deps, 'cache')
+    // Order is load-bearing: reloading first would let the outgoing page write
+    // its state back into the storage this call is trying to clear.
+    expect(rec.order).toEqual(['clearCache', 'clearStorageData', 'reload'])
+  })
+
+  it('does not reload when clearing fails', async () => {
+    // A reload after a failed clear would land on a page whose storage may be
+    // half-wiped, with no indication that anything went wrong.
+    const reload = vi.fn()
+    await expect(performReload(
+      {
+        clearCache: async () => undefined,
+        clearStorageData: async () => { throw new Error('storage busy') },
+        reload,
+      },
+      'cache',
+    )).rejects.toThrow('storage busy')
+    expect(reload).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * Every argument text of every `clearCacheAndReload(...)` call in `rel`.
+ *
+ * Parsed rather than regex-matched. A text guard is not a guard here: a
+ * commented-out old line, a string literal, or a dead object carrying the
+ * expected text all satisfy it, so "keep the old line as a comment and write
+ * the wrong scope on the next line" passes (verified by mutation).
+ * Property accesses are included because `window.ts` calls the lazily imported
+ * module as `m.clearCacheAndReload(...)` (a top-level import would be a cycle).
+ */
+function reloadCallArgs(rel: string): string[] {
+  const source = ts.createSourceFile(rel, readRepoFile(rel), ts.ScriptTarget.ES2022, true)
+  const args: string[] = []
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node)) {
+      const callee = node.expression
+      const name = ts.isIdentifier(callee)
+        ? callee.text
+        : ts.isPropertyAccessExpression(callee) ? callee.name.text : ''
+      if (name === 'clearCacheAndReload') {
+        args.push(node.arguments.map((a) => a.getText(source)).join(', '))
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(source)
+  return args
+}
+
 describe('reload call sites', () => {
   it('the upgrade bridge asks for the cache-only scope, exactly once', () => {
     // `useUpgrade` calls `reloadApp` automatically after every server upgrade,
@@ -88,10 +155,12 @@ describe('reload call sites', () => {
     expect(reloadCallArgs('desktop/src/main/window.ts')).toEqual(["'everything'"])
   })
 
-  it('session.ts takes the storage list from the policy, not an inline literal', () => {
-    // An inline `storages: [...]` is exactly how the two scopes drifted apart.
+  it('session.ts delegates to the testable orchestrator', () => {
+    // Without this the two guards above would still pass while session.ts went
+    // back to clearing a hard-coded list.
     const src = readRepoFile('desktop/src/main/session.ts')
-    expect(src).toMatch(/storages:\s*storagesToClear\(scope\)/)
+    expect(src).toMatch(/performReload\(/)
     expect(src).not.toMatch(/storages:\s*\[/)
+    expect(src).not.toMatch(/clearStorageData\(\{\s*storages:\s*storagesToClear/)
   })
 })

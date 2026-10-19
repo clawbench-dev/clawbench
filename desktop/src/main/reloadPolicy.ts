@@ -19,15 +19,18 @@
  *     clearing cookies and local storage, i.e. signing out and starting from
  *     factory defaults.
  *
- * Kept as a pure module (no electron import) so the policy is unit-testable.
+ * This module has no imports on purpose. `session.ts` cannot be unit-tested in
+ * CI (the desktop package's dependencies are not installed there, so importing
+ * Electron fails to resolve), which is why the decision AND the ordering live
+ * here, taking the Electron session as an injected dependency.
  */
 
 export type ReloadScope = 'cache' | 'everything'
 
 /**
- * The subset of Electron's `Storages` this policy uses, declared locally so the
- * module stays importable without Electron. The values must stay a subset of
- * Electron's union — `tsc` enforces that at the `clearStorageData` call site.
+ * The subset of Electron's `Storages` this policy uses. The values must stay a
+ * subset of Electron's union — `tsc` enforces that at the `clearStorageData`
+ * call site.
  */
 export type ReloadStorage = 'localstorage' | 'indexdb' | 'cookies' | 'cachestorage' | 'serviceworkers'
 
@@ -45,4 +48,25 @@ export function storagesToClear(scope: ReloadScope): ReloadStorage[] {
     return ['localstorage', 'indexdb', 'cookies', 'cachestorage', 'serviceworkers']
   }
   return ['cachestorage', 'serviceworkers']
+}
+
+/** The three Electron calls a reload needs, injected so this stays testable. */
+export interface ReloadDeps {
+  clearCache(): Promise<void> | void
+  clearStorageData(options: { storages: ReloadStorage[] }): Promise<void> | void
+  reload(): void
+}
+
+/**
+ * Drop the caches the scope allows, then reload the window.
+ *
+ * The order is load-bearing: reloading first would let the outgoing page write
+ * its state straight back into the storage this call is trying to clear. It is
+ * asserted by the test, because "clear then reload" reads like an obvious
+ * detail right up until someone reorders it while tidying up.
+ */
+export async function performReload(deps: ReloadDeps, scope: ReloadScope): Promise<void> {
+  await deps.clearCache()
+  await deps.clearStorageData({ storages: storagesToClear(scope) })
+  deps.reload()
 }
