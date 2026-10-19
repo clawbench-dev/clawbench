@@ -1319,12 +1319,20 @@ function handleOpenForge(e: Event) {
  * the popover opens in place. Narrow screens have no capsule (the meter is
  * deliberately header-only), so the user lands on the settings entry that owns
  * the rule instead of tapping a notification that appears to do nothing.
+ *
+ * The origin is recorded only on narrow screens. There the jump replaces the
+ * whole tab (log -> settings), so Back must know the log is where it came from.
+ * On a wide screen the log stays in the left column and the meter opens as a
+ * popover over it — nothing was navigated away from, so arming an origin whose
+ * tab is already active would only produce a press that consumes itself with no
+ * visible effect. The popover dismisses itself through its own back handler.
  */
-function handleOpenUsageMeter() {
+function handleOpenUsageMeter(e?: Event) {
   if (isWideScreen.value) {
     requestOpenUsageMeter()
     return
   }
+  recordNotificationOrigin((e as CustomEvent<{ fromNotificationCenter?: boolean }> | undefined)?.detail)
   setPendingSettingsCategory('usageMeter')
   switchTab('settings')
 }

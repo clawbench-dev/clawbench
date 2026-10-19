@@ -128,6 +128,38 @@ test.describe('Notifications', () => {
     await expect(page.locator('.notif-panel')).toBeVisible({ timeout: 10000 })
   })
 
+  test('Back returns from the usage-meter settings page to the log', async ({ page }) => {
+    // The usage row's jump lands on the settings page (narrow) — a whole-tab
+    // navigation, so it needs the same recorded origin as session/task/forge.
+    // Without it the first Back only popped the settings nav stack and the
+    // second one exited the app: the log was unreachable.
+    //
+    // The row itself cannot be seeded through the API (notifications are
+    // written by the server on a threshold crossing), so this dispatches the
+    // exact event the panel dispatches, flag included. The panel's own dispatch
+    // is pinned by NotificationsPanelContent.test.ts.
+    await page.setViewportSize({ width: 700, height: 900 })
+    await nav.switchToNotifications()
+    await expect(page.locator('.notif-panel')).toBeVisible({ timeout: 10000 })
+
+    await page.evaluate(() => {
+      window.dispatchEvent(new CustomEvent('clawbench-open-usage-meter', {
+        detail: { fromNotificationCenter: true },
+      }))
+    })
+
+    // We really left the log, and landed on the usage rule.
+    await expect(page.locator('.settings-page')).toBeVisible({ timeout: 10000 })
+    await expect(page.locator('.notif-panel')).toBeHidden({ timeout: 10000 })
+    await expect(page.locator('.settings-breadcrumb')).toContainText(/Usage|用量/, { timeout: 10000 })
+
+    // One press returns to the log — NOT just one breadcrumb level up.
+    await page.evaluate(() => {
+      window.dispatchEvent(new CustomEvent('clawbench-back-press', { detail: { reason: 'android' } }))
+    })
+    await expect(page.locator('.notif-panel')).toBeVisible({ timeout: 10000 })
+  })
+
   test('the project filter defaults to all projects', async ({ page }) => {    // Scope is global by design: the notification center spans every project,
     // unlike the per-project forge/task panels.
     await nav.switchToNotifications()

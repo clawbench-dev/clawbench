@@ -11,7 +11,7 @@ vi.mock('lucide-vue-next', () => {
   const stub = (name: string) => ({ name, render: () => h('span', { class: `icon-${name}` }) })
   const names = [
     'Inbox', 'Folder', 'Unlink', 'Trash2', 'AlertCircle', 'Layers',
-    'Bot', 'Clock', 'GitMerge', 'Check', 'X', 'ShieldAlert',
+    'Bot', 'Clock', 'GitMerge', 'Check', 'X', 'ShieldAlert', 'Gauge',
   ]
   return Object.fromEntries(names.map(n => [n, stub(n)]))
 })
@@ -274,6 +274,34 @@ describe('NotificationsPanelContent', () => {
 
     expect(events[0].detail.fromNotificationCenter).toBe(true)
     // Same project → no confirmation.
+    expect(mockConfirm).not.toHaveBeenCalled()
+  })
+
+  it('flags a usage row so App.vue records the log as the jump origin', async () => {
+    // Usage rows used to short-circuit before the flag. On narrow screens this
+    // jump replaces the whole tab with the settings page, so without an origin
+    // the first Back only popped the settings nav stack and the second one
+    // exited the app — the log was unreachable.
+    items.value = [notif({
+      kind: 'usage',
+      eventType: 'full',
+      title: 'Usage exhausted',
+      body: 'used 20 / 20',
+      sessionId: undefined,
+      taskId: undefined,
+    })]
+    const w = mountPanel()
+
+    const events: CustomEvent[] = []
+    const listener = (e: Event) => events.push(e as CustomEvent)
+    window.addEventListener('clawbench-open-usage-meter', listener)
+    await w.find('.notif-card').trigger('click')
+    await flushPromises()
+    window.removeEventListener('clawbench-open-usage-meter', listener)
+
+    expect(events).toHaveLength(1)
+    expect(events[0].detail.fromNotificationCenter).toBe(true)
+    // Instance-wide: no project to switch to, so no confirmation either.
     expect(mockConfirm).not.toHaveBeenCalled()
   })
 

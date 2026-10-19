@@ -460,8 +460,10 @@ function fallbackTitle(n: NotificationItem): string {
  * drops the previous project's navigation context, see hotSwitchProject). The
  * confirmation is what replaces Back there.
  *
- * Same-project rows carry `fromNotificationCenter` so App.vue records the log
- * as the jump origin and Back returns here.
+ * EVERY row jump goes through `jumpTo`, which stamps `fromNotificationCenter`
+ * so App.vue records the log as the jump origin and Back returns here. That is
+ * not a per-kind courtesy: adding a row kind that navigates without it leaves
+ * the user on a page Back cannot leave (see the wiring test's per-kind guard).
  */
 async function onOpen(n: NotificationItem) {
   if (n.sourceMissing) {
@@ -472,8 +474,12 @@ async function onOpen(n: NotificationItem) {
   // click does not switch projects. Short-circuit BEFORE the cross-project gate
   // so a future change that starts attributing a project to these rows cannot
   // make it ask "switch to project X?" for an action that never switches.
+  //
+  // Narrow screens land on the settings page, so this jump needs the origin as
+  // much as the session/task/forge ones do — the press would otherwise only pop
+  // the settings nav stack and the next one exits the app.
   if (n.kind === 'usage') {
-    window.dispatchEvent(new CustomEvent('clawbench-open-usage-meter'))
+    jumpTo('clawbench-open-usage-meter', {})
     return
   }
 
@@ -490,19 +496,55 @@ async function onOpen(n: NotificationItem) {
     )
     if (!ok) return
   }
-  if (n.kind === 'session' && n.sessionId) {
-    window.dispatchEvent(new CustomEvent('clawbench-open-session', {
-      detail: { sessionId: n.sessionId, projectPath: n.projectPath, fromNotificationCenter: true },
-    }))
-  } else if (n.kind === 'task' && n.taskId) {
-    window.dispatchEvent(new CustomEvent('clawbench-open-task', {
-      detail: { taskId: n.taskId, executionId: n.executionId, projectPath: n.projectPath, fromNotificationCenter: true },
-    }))
-  } else if (n.kind === 'forge' && n.forgeItemKey) {
-    window.dispatchEvent(new CustomEvent('clawbench-open-forge', {
-      detail: { projectPath: n.projectPath, target: forgeTargetFromItemKey(n.forgeItemKey), fromNotificationCenter: true },
-    }))
+
+  switch (n.kind) {
+    case 'session':
+      if (n.sessionId) {
+        jumpTo('clawbench-open-session', {
+          sessionId: n.sessionId,
+          projectPath: n.projectPath,
+        })
+      }
+      return
+    case 'task':
+      if (n.taskId) {
+        jumpTo('clawbench-open-task', {
+          taskId: n.taskId,
+          executionId: n.executionId,
+          projectPath: n.projectPath,
+        })
+      }
+      return
+    case 'forge':
+      if (n.forgeItemKey) {
+        jumpTo('clawbench-open-forge', {
+          projectPath: n.projectPath,
+          target: forgeTargetFromItemKey(n.forgeItemKey),
+        })
+      }
+      return
+    default: {
+      // Compile-time exhaustiveness for `NotificationKind`. A new kind must be
+      // given a destination (and go through `jumpTo`, so it is returnable); the
+      // compiler rejects this file until it is.
+      const unhandled: never = n.kind
+      void unhandled
+    }
   }
+}
+
+/**
+ * Dispatch a row jump, always flagged as coming from the log.
+ *
+ * This is the ONLY place the panel may dispatch a `clawbench-open-*` event. It
+ * exists so the origin flag cannot be forgotten per kind: Back has to return to
+ * the notification center for every destination the log can open, and the flag
+ * is what tells App.vue to record that origin.
+ */
+function jumpTo(event: string, detail: Record<string, unknown>) {
+  window.dispatchEvent(new CustomEvent(event, {
+    detail: { ...detail, fromNotificationCenter: true },
+  }))
 }
 
 /**
