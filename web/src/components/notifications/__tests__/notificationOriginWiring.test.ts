@@ -125,6 +125,31 @@ describe('notification navigation origin wiring', () => {
     expect(record, 'the origin must be recorded AFTER the wide-screen early return').toBeGreaterThan(wideReturn)
   })
 
+  it('every clawbench-open-* the panel dispatches has a handler that records the origin', () => {
+    // Self-maintaining half of the guard: whatever events the panel dispatches
+    // today, each one must have a listener in App.vue, and that listener must
+    // call recordNotificationOrigin. Adding a new row kind therefore cannot ship
+    // a jump whose Back target was never armed — the failure names the event.
+    //
+    // This complements (does not replace) the per-kind assertions above: those
+    // pin the CURRENT set, this one covers whatever the set becomes.
+    const dispatched = [...new Set(
+      [...panel.matchAll(/jumpTo\('([^']+)'/g)].map((m) => m[1]),
+    )]
+    expect(dispatched.length, 'the panel must dispatch at least one jump').toBeGreaterThan(0)
+
+    for (const event of dispatched) {
+      const handler = app.match(new RegExp(`addEventListener\\('${event}', (handle\\w+)\\)`))
+      expect(handler, `App.vue must listen for ${event}`).not.toBeNull()
+
+      const handlerName = handler![1]
+      const at = app.indexOf(`function ${handlerName}`)
+      expect(at, `${handlerName} must be defined`).toBeGreaterThan(-1)
+      const body = app.slice(at, at + 1200)
+      expect(body, `${handlerName} must arm the log as its return target`).toContain('recordNotificationOrigin(')
+    }
+  })
+
   it('the panel confirms before a cross-project jump, and cancelling aborts', () => {
     // The dialog is what replaces Back for the cross-project case; without it
     // the jump would be both irreversible AND unreturnable.
