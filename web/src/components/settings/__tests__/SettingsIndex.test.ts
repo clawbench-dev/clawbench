@@ -63,11 +63,11 @@ function mountIndex() {
 }
 
 describe('SettingsIndex', () => {
-  it('renders 18 category rows', () => {
+  it('renders 19 category rows', () => {
     const wrapper = mountIndex()
 
     const rows = wrapper.findAll('.settings-index__row')
-    expect(rows.length).toBe(18)
+    expect(rows.length).toBe(19)
   })
 
   it('renders category labels', () => {
@@ -101,10 +101,11 @@ describe('SettingsIndex', () => {
     const perCard = wrapper.findAll('.settings-card').map(card =>
       card.findAll('.settings-index__row').length,
     )
-    // 通知与安全 now holds three rows: 推送通知, 用量, 安全. The usage
-    // meter sits beside push notifications rather than inside that category.
-    expect(perCard).toEqual([3, 7, 3, 3, 2])
-    expect(perCard.reduce((a, b) => a + b, 0)).toBe(18)
+    // 通知与安全 holds three rows: 推送通知, 用量, 安全. The usage meter sits
+    // beside push notifications rather than inside that category.
+    // AI 与对话 gained MCP 服务 (7 → 8).
+    expect(perCard).toEqual([3, 8, 3, 3, 2])
+    expect(perCard.reduce((a, b) => a + b, 0)).toBe(19)
   })
 
   it('emits navigate with categoryId when row clicked', async () => {
@@ -122,7 +123,7 @@ describe('SettingsIndex', () => {
 
     const expectedIds = [
       'project', 'appearance', 'files',
-      'chat', 'agents', 'skills', 'aiSummary', 'rag', 'tts', 'stt',
+      'chat', 'agents', 'skills', 'mcp', 'aiSummary', 'rag', 'tts', 'stt',
       'terminal', 'portForward', 'forgeIntegration',
       'notification', 'usageMeter', 'security',
       'debug', 'about',

@@ -1008,6 +1008,40 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 		ap.Disabled = &disabled
 	}
 
+	// MCP enablement policy. The payload is the policy object itself:
+	//   {"mode":"all"|"none"|"selected","names":["a","b"]}
+	// Only the policy is stored; the server definitions live in config.yaml.
+	//
+	// No connection teardown is needed: ACPConn compares a policy hash before
+	// each turn and reconnects with the new list, so the change lands on the
+	// next turn without interrupting one in flight.
+	if v, exists := patch["mcp_servers"]; exists {
+		raw, ok := v.(map[string]any)
+		if !ok {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
+			return
+		}
+		policy := model.MCPServerPolicy{}
+		if mode, ok := raw["mode"].(string); ok {
+			policy.Mode = model.MCPPolicyMode(mode)
+		}
+		if names, ok := raw["names"].([]any); ok {
+			for _, n := range names {
+				if s, ok := n.(string); ok {
+					policy.Names = append(policy.Names, s)
+				}
+			}
+		}
+		switch policy.Normalized().Mode {
+		case model.MCPPolicyAll, model.MCPPolicyNone, model.MCPPolicySelected:
+		default:
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
+			return
+		}
+		normalized := policy.Normalized()
+		ap.MCPServers = &normalized
+	}
+
 	// Validate and apply project_scope (仅当前项目). true binds the agent to the
 	// caller's current project; false clears the scope back to global. The
 	// default agent must stay globally visible, so scoping it is refused —
@@ -1103,6 +1137,14 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 		}
 		if ap.Disabled != nil {
 			agent.Disabled = *ap.Disabled
+		}
+		if ap.MCPServers != nil {
+			// Copy the slice too: the caller's policy object is reused after this
+			// closure, and readers of the published agent must never share
+			// backing storage with it.
+			policy := *ap.MCPServers
+			policy.Names = append([]string(nil), policy.Names...)
+			agent.MCPServers = policy
 		}
 		if ap.ClearProjectID {
 			agent.ProjectID = nil

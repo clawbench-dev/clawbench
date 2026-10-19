@@ -451,6 +451,13 @@ paths:
         含义为「轮到用户发言前，智能体之间最多发言多少次」；主持人模式与自由模式
         语义一致，只计**成员**发言（主持人的路由/汇总回合不计）。达到上限即停止
         AI 讨论并写一条系统消息。`PATCH` 时须为正整数。
+        `mcp.servers` 是全局 MCP 服务列表，供所有 ACP 传输的智能体使用（CLI
+        传输没有该参数，读各自的配置文件，因此不受影响）。`env` / `headers`
+        **明文返回**，与 `stt` / `rag` / `tts` 的 `api_key` 一致。
+
+        每个智能体能用到哪些由它自己的 `mcpServers` 策略决定（见
+        `PATCH /api/agents`），并按该智能体在 ACP `initialize` 中广告的
+        `mcpCapabilities` 过滤：stdio 是协议强制项，http / sse 未广告则不发。
       operationId: getConfig
       responses:
         "200":
@@ -482,6 +489,17 @@ paths:
         （`tts.openai.stream_mode must be one of: auto,sse,audio`）。`auto`
         按模型名决定（`tts-1` / `tts-1-hd` 走 `audio`，其余走 `sse`），
         `sse` / `audio` 强制指定。
+
+        `mcp.servers` 是**整体替换**的对象数组（与 `skills.repos` 一致）：
+        数组里没有的条目即被删除。元素校验：
+        - `name` 非空、全局唯一，只允许字母 / 数字 / `_` / `-`
+        - `transport` ∈ `stdio` / `http` / `sse`
+        - stdio 必须有 `command`，且该命令必须能在 `PATH` 中找到（保存即拒绝——
+          这是最常见的配置错误，也是唯一能在 agent 启动前拦住的）
+        - http / sse 必须有 `http(s)` URL
+
+        该键是**热更新**：连接在每一轮开始前比对策略哈希，变了就带着新列表重连，
+        因此不会出现在 `changed_cold_fields` 里，也不需要重启。
       operationId: patchConfig
       requestBody:
         required: true
@@ -4270,7 +4288,8 @@ paths:
         部分更新单个 agent（body 含 `id`）。可更新字段：
         `preferred_model`、`preferred_thinking_effort`、`preferred_mode`、
         `transport`、`acp_command`、`name`、`specialty`、`custom_system_prompt`、
-        `avatar`、`sort_order`、`auto_approve`、`disabled`、`project_scope`。
+        `avatar`、`sort_order`、`auto_approve`、`disabled`、`project_scope`、
+        `mcp_servers`。
         `avatar` 为原始 SVG 字符串；空串恢复内置图标，非空时校验大小与安全性。
         `acp_command` 为 ACP 启动命令（空格拆分、不支持引号、≤4096 字节），**仅
         `custom-acp` 可改**：非空同时把 `transport` 切到 `acp-stdio` 并重启其连接；
@@ -4282,6 +4301,13 @@ paths:
         `clawbench_project` cookie 绑定），`false` 恢复全局；未选项目返回
         `NoProjectSelected`，**默认智能体不能限定项目**（`CannotScopeDefaultAgent`）。
         已创建会话不受作用域变化影响。
+
+        `mcp_servers` 是该智能体的 MCP 启用策略对象：
+        `{"mode":"all"|"none"|"selected","names":["a","b"]}`。只存策略，服务定义
+        在 `mcp.servers`（config.yaml），因此改一次密钥对所有智能体生效。
+        省略 `mode` 等价于 `all`（全局列表为空时是 no-op，所以默认安全）。
+        **不需要断开连接**：连接在每一轮开始前比对策略哈希，变了才带着新列表重连，
+        不会打断正在进行的对话。
 
         `name` 全局唯一（决策 #50）：改名撞上其它 agent 返回 `409` +
         `AgentNameTaken`；改成群聊用户昵称返回 `409` + `AgentNameReserved`。

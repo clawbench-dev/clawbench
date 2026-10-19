@@ -123,6 +123,13 @@ vi.mock('@/composables/useAgents', async () => {
 
 vi.mock('@/composables/useSettingsConfig', () => ({
   patchAgentField: mockPatchAgentField,
+  // AgentMCPSection reads the global server list and the agent patch helper
+  // through the composable. Keep the mock total: a partial mock makes the
+  // component's setup throw, which fails EVERY test in this file.
+  useSettingsConfig: () => ({
+    getServerValue: () => [],
+    patchAgentField: mockPatchAgentField,
+  }),
 }))
 
 vi.mock('@/composables/useToast', () => ({

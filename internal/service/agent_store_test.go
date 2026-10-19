@@ -295,9 +295,13 @@ func TestAgentSchemaMatchesProduction(t *testing.T) {
 		"transport": true, "acp_command": true,
 		"acp_available_modes": true, "acp_available_thinking_efforts": true, "acp_available_commands": true,
 		"acp_available_models": true,
-		"acp_config_options":   true, "auto_approve": true, "disabled": true,
+		"acp_config_options":   true, "acp_mcp_http": true, "acp_mcp_sse": true,
+		"auto_approve": true, "disabled": true,
 		"project_id": true,
-		"created_at": true, "updated_at": true,
+		// Per-agent MCP enablement policy (JSON). The definitions live in
+		// config.yaml, not here — see model.MCPServerPolicy.
+		"mcp_servers": true,
+		"created_at":  true, "updated_at": true,
 	}
 
 	rows, err := db.Query("SELECT name FROM pragma_table_info('agents')")

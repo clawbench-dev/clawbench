@@ -120,6 +120,13 @@
         </ul>
       </div>
     </div>
+    <!-- MCP enable policy. A dedicated block rather than a SettingsItem: the
+         control is a three-way mode plus a per-server checklist, which the
+         generic row types cannot express. -->
+    <SettingsCard :title="t('settings.items.mcpAgentSection')">
+      <AgentMCPSection :agent="agent ?? null" />
+    </SettingsCard>
+
     <!-- Copy / disable / delete on the same row -->
     <div class="settings-agent-detail__actions">
       <button class="fbtn settings-agent-detail__action-btn" @click="startCopy">
@@ -163,6 +170,7 @@ import { computed, ref, onMounted } from 'vue'
 import { Activity, ArrowLeft, Ban, Copy, Play, Trash2, UserX, Zap } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import SettingsItem from './SettingsItem.vue'
+import AgentMCPSection from './AgentMCPSection.vue'
 import SettingsCard from './SettingsCard.vue'
 import CopyAgentDialog from './CopyAgentDialog.vue'
 import AgentAvatarPicker from './AgentAvatarPicker.vue'

@@ -1037,6 +1037,13 @@ type ACPConn struct {
 	// stateMu → c.mu is forbidden.
 	stateMu sync.Mutex
 
+	// mcpVersion is the MCP policy hash this connection's session was created
+	// with (see model.Config.MCPPolicyVersion). Compared on every turn: a
+	// mismatch means the config or the agent's policy changed, so the next turn
+	// reconnects with the new list. Guarded by c.mu (only touched from
+	// ensureAliveWithSession, which holds it).
+	mcpVersion string
+
 	// cached state — populated from NewSession/ResumeSession responses.
 	// Guarded by stateMu, NOT c.mu (see stateMu).
 	currentModeID           string
@@ -1615,9 +1622,12 @@ func (c *ACPConn) SyncLoadSession(ctx context.Context, cwd, acpSID string) error
 	loadCtx, loadCancel := context.WithTimeout(ctx, 60*time.Second)
 	defer loadCancel()
 	loadResp, err := c.conn.LoadSession(loadCtx, acp.LoadSessionRequest{
-		SessionId:  acp.SessionId(acpSID),
-		Cwd:        cwd,
-		McpServers: []acp.McpServer{},
+		SessionId: acp.SessionId(acpSID),
+		Cwd:       cwd,
+		// Fourth injection site (see mcpServersForSession). Held under c.mu,
+		// which is fine: the helper only touches model.GetAgent (agentsMu) and
+		// the capability registry (its own lock), never the pool.
+		McpServers: c.mcpServersForSession(),
 	})
 	if err != nil {
 		c.alive = false
@@ -1627,6 +1637,10 @@ func (c *ACPConn) SyncLoadSession(ctx context.Context, cwd, acpSID string) error
 	c.acpSID = acpSID
 	c.lastLoadSessionResp = &loadResp
 	c.lastUsed = time.Now()
+	// This path also re-establishes the session with the current servers, so it
+	// must record the version too — otherwise the next ensureAliveWithSession
+	// would see a mismatch and reconnect for nothing.
+	c.mcpVersion = c.mcpPolicyVersion()
 	slog.Info("acp conn: SyncLoadSession replay completed", "clawbench_sid", c.clawbenchSID, "acp_sid", acpSID)
 	return nil
 }

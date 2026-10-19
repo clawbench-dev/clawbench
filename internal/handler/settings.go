@@ -167,6 +167,10 @@ var hotReloadFields = map[string]bool{
 	"skills.dirs":          true,
 	"skills.refresh_hours": true,
 	"skills.repos":         true,
+	// MCP — hot: ACPConn compares a policy hash before each turn and
+	// reconnects with the new list. Reporting it as cold would tell the user to
+	// restart for a feature whose whole point is not needing one.
+	"mcp.servers": true,
 	// Usage meter — the worker re-reads the rule every tick, so a changed rule
 	// takes effect without a restart. The handler also recreates the worker so
 	// the new rule is checked immediately instead of up to one interval later.
@@ -262,6 +266,89 @@ type configResponse struct {
 	Appearance     configAppearance     `json:"appearance"`
 	Forge          configForge          `json:"forge"`
 	UsageMeter     configUsageMeter     `json:"usage_meter"`
+	MCP            configMCP            `json:"mcp"`
+}
+
+// configMCP is the global MCP server list as sent to the client.
+//
+// env / headers are returned IN PLAINTEXT, matching the STT / RAG / TTS
+// api_key fields. An MCP server usually carries several env vars, so returning
+// only key names would make "is this the value I typed?" unanswerable and turn a
+// one-character typo into a long hunt. The endpoint is authenticated and
+// config.yaml is written 0600, so the trust boundary is the same as those
+// existing fields.
+type configMCP struct {
+	Servers []configMCPServer `json:"servers"`
+}
+
+// configMCPServer mirrors model.MCPServer on the wire.
+type configMCPServer struct {
+	Name      string            `json:"name"`
+	Transport string            `json:"transport"`
+	Command   string            `json:"command,omitempty"`
+	Args      []string          `json:"args,omitempty"`
+	Env       map[string]string `json:"env,omitempty"`
+	URL       string            `json:"url,omitempty"`
+	Headers   map[string]string `json:"headers,omitempty"`
+}
+
+// buildConfigMCP renders the global list for GET /api/config.
+func buildConfigMCP(cfg model.Config) configMCP {
+	out := configMCP{Servers: make([]configMCPServer, 0, len(cfg.MCP.Servers))}
+	for _, s := range cfg.MCP.Servers {
+		out.Servers = append(out.Servers, configMCPServer{
+			Name:      s.Name,
+			Transport: s.Transport,
+			Command:   s.Command,
+			Args:      s.Args,
+			Env:       s.Env,
+			URL:       s.URL,
+			Headers:   s.Headers,
+		})
+	}
+	return out
+}
+
+// parseMCPServers converts the PATCH payload's mcp.servers array into typed
+// values. Mirrors parseSkillRepos.
+func parseMCPServers(raw []any) ([]model.MCPServer, error) {
+	out := make([]model.MCPServer, 0, len(raw))
+	for i, item := range raw {
+		m, ok := item.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("mcp.servers[%d] must be an object", i)
+		}
+		srv := model.MCPServer{}
+		srv.Name, _ = m["name"].(string)
+		srv.Transport, _ = m["transport"].(string)
+		srv.Command, _ = m["command"].(string)
+		srv.URL, _ = m["url"].(string)
+		if args, ok := m["args"].([]any); ok {
+			for _, a := range args {
+				if s, ok := a.(string); ok {
+					srv.Args = append(srv.Args, s)
+				}
+			}
+		}
+		if env, ok := m["env"].(map[string]any); ok {
+			srv.Env = make(map[string]string, len(env))
+			for k, v := range env {
+				if s, ok := v.(string); ok {
+					srv.Env[k] = s
+				}
+			}
+		}
+		if h, ok := m["headers"].(map[string]any); ok {
+			srv.Headers = make(map[string]string, len(h))
+			for k, v := range h {
+				if s, ok := v.(string); ok {
+					srv.Headers[k] = s
+				}
+			}
+		}
+		out = append(out, srv)
+	}
+	return out, nil
 }
 
 // configUsageMeter exposes the usage-meter rule.
@@ -785,6 +872,9 @@ var PatchableConfigPaths = map[string]bool{
 	"skills.dirs":                       true,
 	"skills.refresh_hours":              true,
 	"skills.repos":                      true,
+	// MCP server list — hot: connections compare a policy hash each turn, so a
+	// change takes effect on the next turn without a restart.
+	"mcp.servers": true,
 	// Usage meter rule. The two internal state fields
 	// (notified_cycle_start / notified_stage) are deliberately absent: they are
 	// service-owned bookkeeping, and letting a client write them would let it
@@ -962,6 +1052,7 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			Dir: cfg.ResolveFontsDir(),
 		},
 		Skills:     buildConfigSkills(cfg),
+		MCP:        buildConfigMCP(cfg),
 		Appearance: buildConfigAppearance(cfg),
 		Forge:      buildConfigForge(cfg),
 		UsageMeter: configUsageMeter{
@@ -1072,6 +1163,11 @@ func serveConfigPatch(w http.ResponseWriter, r *http.Request) {
 	snapshot := model.ConfigInstance
 
 	applyConfigPatch(patch)
+	// Republish the MCP snapshot: applyConfigPatch rewrites ConfigInstance in
+	// place, but internal/ai reads through an atomic pointer (it cannot take
+	// configMutex — wrong dependency direction). Without this, a PATCH would
+	// update the file and leave the running process serving the old list.
+	model.PublishMCPSnapshot(model.ConfigInstance.MCP)
 
 	// The usage-meter rule change may have cleared the notification state in
 	// memory. Those two fields are service-owned and absent from the patch, so
@@ -1087,6 +1183,7 @@ func serveConfigPatch(w http.ResponseWriter, r *http.Request) {
 	if err := writeConfigYAML(writePatch); err != nil {
 		// Rollback memory state — disk write failed
 		model.ConfigInstance = snapshot
+		model.PublishMCPSnapshot(model.ConfigInstance.MCP)
 		// Re-apply hot-reload globals from snapshot
 		applyHotReloadGlobals()
 		slog.Error("failed to write config.yaml after patch", "err", err)
@@ -1374,6 +1471,41 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 				}
 				if _, err := url.ParseRequestURI(u); err != nil {
 					return fmt.Errorf("skills.repos[%d].url must be a valid URL", i)
+				}
+			}
+		}
+	}
+
+	// MCP server list. Structural rules (name/transport/required field) live in
+	// model.ValidateMCPServers so the API layer does not duplicate them; the two
+	// checks below are handler-level because they depend on the environment or on
+	// a standard library parser.
+	if mcpPatch, ok := patch["mcp"].(map[string]any); ok {
+		if raw, ok := mcpPatch["servers"].([]any); ok {
+			servers, err := parseMCPServers(raw)
+			if err != nil {
+				return err
+			}
+			if err := model.ValidateMCPServers(servers); err != nil {
+				return err
+			}
+			for i, srv := range servers {
+				if srv.Transport != model.MCPTransportStdio {
+					// url.ParseRequestURI rejects "not a url" while allowing
+					// http/https/ws; the scheme check keeps it to the two the
+					// ACP transports actually use.
+					u, err := url.ParseRequestURI(srv.URL)
+					if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+						return fmt.Errorf("mcp.servers[%d].url must be an http(s) URL", i)
+					}
+					continue
+				}
+				// Reject a command that cannot be found. This is the most common
+				// configuration mistake and the only one we can catch before the
+				// agent tries to start it — failing here turns a silent no-op into
+				// an error at save time.
+				if _, err := exec.LookPath(srv.Command); err != nil {
+					return fmt.Errorf("mcp.servers[%d].command %q not found in PATH", i, srv.Command)
 				}
 			}
 		}
@@ -1740,6 +1872,17 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 	if fontsMap, ok := patch["fonts"].(map[string]any); ok {
 		if v, ok := fontsMap["dir"].(string); ok {
 			cfg.Fonts.Dir = v
+		}
+	}
+
+	if mcpMap, ok := patch["mcp"].(map[string]any); ok {
+		if raw, ok := mcpMap["servers"].([]any); ok {
+			// Validation already ran; a parse error here would mean the two
+			// disagree, so fall back to leaving the old list rather than
+			// writing a half-decoded one.
+			if servers, err := parseMCPServers(raw); err == nil {
+				cfg.MCP.Servers = servers
+			}
 		}
 	}
 

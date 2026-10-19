@@ -41,6 +41,7 @@ import {
   Gauge,
   Sparkles,
   Wand2,
+  Plug,
   ChevronRight,
   Github,
 } from 'lucide-vue-next'
@@ -76,6 +77,7 @@ const groupDefs = [
       { id: 'chat', icon: MessageSquare },
       { id: 'agents', icon: Bot },
       { id: 'skills', icon: Wand2 },
+      { id: 'mcp', icon: Plug },
       { id: 'aiSummary', icon: Sparkles },
       { id: 'rag', icon: Brain },
       { id: 'tts', icon: Volume2 },

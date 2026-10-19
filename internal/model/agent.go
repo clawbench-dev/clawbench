@@ -135,6 +135,18 @@ type Agent struct {
 	// filter only gates NEW entries and the settings list, so a session created
 	// while the agent was global keeps working after it is scoped.
 	ProjectID *int64 `json:"projectId,omitempty"`
+
+	// MCPServers is this agent's MCP enablement policy — which of the global
+	// servers (config.yaml `mcp.servers`) it may use.
+	//
+	// Only the POLICY lives here, never the definitions: a definition carries
+	// API keys, and storing a copy per agent would scatter them and require the
+	// user to edit N records to rotate one key.
+	//
+	// Zero value means MCPPolicyAll (see MCPServerPolicy.Normalized): an empty
+	// global list makes that a no-op, so the default is safe and adding a
+	// server does not require ticking every agent.
+	MCPServers MCPServerPolicy `json:"mcpServers"`
 }
 
 // DefaultModelID returns the default model ID for this agent.

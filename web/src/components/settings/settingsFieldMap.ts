@@ -333,6 +333,12 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.skillsRepos', key: 'skillsRepos', type: 'info', source: 'server', sectionHeader: 'settings.items.skillsRepos' } },
     { type: 'item', spec: { labelKey: 'settings.items.skillsDiscoveredSection', key: 'skillsDiscovered', type: 'info', source: 'server', sectionHeader: 'settings.items.skillsDiscoveredSection' } },
   ],
+  mcp: [
+    // Global MCP server list. The card body is a dedicated component
+    // (MCPSetting); this entry only opens the section, so it must also be
+    // listed in PLACEHOLDER_ITEMS in SettingsCategory.vue.
+    { type: 'item', spec: { labelKey: 'settings.items.mcpSection', descriptionKey: 'settings.items.mcpDesc', key: 'mcpServers', type: 'info', source: 'server', sectionHeader: 'settings.items.mcpSection' } },
+  ],
   forgeIntegration: [
     // Credentials row is a dedicated component (tokens are write-only; the
     // server never returns them, so a plain text field cannot round-trip).

@@ -533,29 +533,35 @@ func MCPPolicyVersion(agentID string) string
 
 **P0 完成即可用**：用户手动改 `config.yaml` 就能给所有智能体配上 MCP。
 
-**前置（已完成）**：§11.0 的失败行为探针已跑完，结论见 §10.4。P0 需额外包含
-「连接后校验」与「带 MCP 时建会话超时放宽到 120s」两项。
+**前置（已完成）**：§11.0 的失败行为探针已跑完，结论见 §10.4。P0 额外包含
+「保存时 LookPath 校验」与「带 MCP 时建会话超时放宽到 120s」两项；
+运行时连接后校验降级为待定（原因见 §10.4）。
 
-### P1：API + 前端（约 9 个文件）
+### P1a：API（已完成）
 
-11. `internal/handler/settings.go`：`GET` 渲染 + **两张**白名单（`hotReloadFields` `:169`、`PatchableConfigPaths` `:787`）+ 元素校验
-12. `internal/handler/agent.go`：`mcp_servers` patch
-13. `internal/handler/mcp_test.go`（新）：`POST /api/mcp/test`
-14. `internal/api/openapi.yaml`：同步**四处**（`GET/PATCH config`、`PATCH agents`、`POST mcp/test`）
-15. `web/src/components/settings/settingsFieldMap.ts`：新分类
-16. `web/src/components/settings/SettingsIndex.vue`：`groupDefs`
-17. **`web/src/components/settings/SettingsCategory.vue`**：`PLACEHOLDER_ITEMS` + 专用组件挂载
-    —— 漏了它卡片渲染不出来，仓库里已发生过（注释原话「the skills page showed a stray
-    "cross-category skills" row carrying a duplicate of the description paragraph」）
-18. `web/src/components/settings/MCPSetting.vue`（新）
-19. `web/src/components/settings/SettingsAgentDetail.vue`：新节
-20. `web/src/composables/useSettingsConfig.ts`：`patchAgentField` 放宽类型 + `fieldMap` 加映射
-21. `web/src/i18n/locales/{zh,en}.ts`
+11. ✅ `internal/handler/settings.go`：`GET` 渲染 + 两张白名单 + 元素校验
+    （含 `exec.LookPath` 与 http(s) scheme 检查）
+12. ✅ `internal/handler/agent.go`：`mcp_servers` patch
+13. ⬜ `internal/handler/mcp_test.go`（新）：`POST /api/mcp/test` —— **未做**，
+    见 §10.4 的说明（运行时探测降级为待定）
+14. ✅ `internal/api/openapi.yaml`：同步三处（`GET/PATCH config`、`PATCH agents`）
 
-> `patchAgentField` 的签名是 `string | boolean | number | null`（`useSettingsConfig.ts:619`），
-> `mcp_servers` 的载荷是对象，类型上过不去。且末尾 `fieldMap`（`:648-657`）没有
-> `mcp_servers → mcpServers` 映射，`updateAgentField` 会把值写到没人读的键上，UI 不刷新。
-> 参考 `project_scope` 的处理（直接 `loadAgents(true)` 重取）。
+### P1b：前端（已完成）
+
+15. ✅ `settingsFieldMap.ts`：`mcp` 分类
+16. ✅ `SettingsIndex.vue`：`groupDefs` 加「MCP 服务」（Plug 图标）
+17. ✅ `SettingsCategory.vue`：`PLACEHOLDER_ITEMS` + 挂载 `MCPSetting`
+18. ✅ `MCPSetting.vue`（新）：服务列表 + 增删 + 类型切换表单
+19. ✅ `AgentMCPSection.vue`（新）：三态策略 + 勾选清单 + 置灰规则
+20. ✅ `SettingsAgentDetail.vue`：新增一节
+21. ✅ `useSettingsConfig.ts`：`patchAgentField` 放宽到接受对象 + `mcp_servers` 映射
+22. ✅ `i18n/locales/{zh,en}.ts`：18 个键
+
+> 实现时发现并修掉的一个真 bug：`PATCH /api/agents` 把策略写进了 DB，但
+> `model.UpdateAgent` 的 in-memory 回调里漏了 `MCPServers` 赋值，导致接口返回 200
+> 而 `model.GetAgent` 仍读到旧策略（`TestServeAgentsPatch_MCPServersRoundTrip` 抓到）。
+> 因为 `ResolveMCPServers` 走 `GetAgent` 现读，这个漏项会让「改成禁用」在下一次
+> 重连前完全不生效。
 
 ### P2：暂不做
 
@@ -632,21 +638,63 @@ claude 的会话指纹包含 `mcpServers`，配置变化会触发它内部 sessi
 
 #### 降级策略（定稿）
 
-**采用 B（逐条剔除）**，因为实测证明 agent 本来就是这个行为，不需要我们额外实现；
-但必须补两件事把「静默」变成「可见」：
+**采用 B（逐条剔除）**，因为实测证明 agent 本来就是这个行为，不需要我们额外实现。
 
-1. **前置校验（§7.2 已有）**：`exec.LookPath` 检查 `command`，保存即拒绝。
-   这条能挡掉 F1，也就是最常见的一种错。
-2. **连接后校验（新增）**：`session/new` 成功后，对比「应注入的 server 名」
-   与「agent 实际报告的工具/服务名」。缺失的记 WARN 日志，并在会话里
-   发一条 `system_message`（前端已有该事件类型）说明「MCP 服务 X 未连上」。
-3. **超时保护（新增）**：`session/new` 的 30 秒超时
-   （`acp_conn_lifecycle.go:298`）对 F3 不够——qoder/opencode/commandcode 实测
-   要 30~80 秒。建议把**带 MCP 时的**建会话超时提到 120 秒，并在超过 10 秒时
-   打一条「MCP 服务启动较慢」的日志，便于用户归因。
+**P0 只做两条**：
+
+1. **保存时校验**（§7.2）：`exec.LookPath` 检查 `command`，不存在则拒绝保存。
+   实测的三种失败形态里，F1（命令不存在）是最常见的错，这一条就能挡住。
+2. **超时保护**：`session/new` 的 30 秒超时（`acp_conn_lifecycle.go:298`）对 F3 不够——
+   qoder/opencode/commandcode 实测要 30~80 秒。带 MCP 时把建会话超时提到 120 秒，
+   并在超过 10 秒时打一条「MCP 服务启动较慢」的日志。
+
+**降级为待定：运行时连接后校验。**
+
+初稿写的是「对比应注入的 server 名与 agent 实际报告的工具/服务名，缺失的记日志 +
+发 `system_message`」。**这个方案目前做不了**，原因：
+
+- `session/new` 的响应里**没有**工具列表，工具只能从后续事件推断；
+- 各后端暴露 MCP 工具的命名完全不一致：claude 是
+  `mcp__<server>__<tool>`、qoder 是 `<tool> (<server> MCP Server)`、
+  hermes 是 `tool_call: Xxx`（探针里都实测过）；
+- 唯一可靠的做法是「真调一次工具看有没有输出」，但那要消耗 token，
+  不能在每个新会话里做。
+
+所以 P0 不做运行时校验。代价是 F3 形态（脚本写错成死循环）仍然只能靠
+「建会话慢」这条日志间接发现。等有人真的踩到，再按实际后端补探测逻辑。
 
 **明确不做**：整体失败（策略 A）。实测没有后端这么做，强行实现需要在
 `session/new` 前后做两轮探测，成本高且会改变现有行为。
+
+### 10.4.1 群聊与定时任务的路径（实现时验证）
+
+这两个路径不在 §5 的四个注入点里，需要确认它们是否共用同一条连接池路径：
+
+- 群聊成员回合：`internal/service/group_member_request.go`
+- 定时任务：`internal/service/scheduler.go`
+
+若它们最终都走 `GetOrCreateConn` → `ensureAliveWithSession`，则 §5 的注入点
+自然覆盖，不需要额外改动。若走了别的路径（例如直接 spawn 进程），必须补注入，
+否则会出现「单聊有 MCP、群聊没有」。
+
+**已核实（2026-10-19）**：两条路径都汇入同一个入口，不需要额外注入点。
+
+```
+群聊成员: defaultRunner (group_orchestrator.go:2118)
+            → runTurn → runTurnStart (run_turn.go:271)
+              → ai.NewBackendForAgentWithTransport (run_turn.go:296)
+                → ACPBackend.ExecuteStream (acp_backend.go:63)
+                  → mgr.GetOrCreateConn → ensureAliveWithSession
+定时任务: scheduler.go:1168 → runTurnStart（同一条链）
+成员压缩: group_member_compact.go:321 → be.ExecuteStream（同一条链）
+```
+
+因此 §5 的四个注入点自动覆盖全部路径。**但有一条例外**：
+`__list_sessions__` 共享连接走 `GetOrCreateConnNoSession` → `EnsureAlive`，
+不经过 `ensureAliveWithSession`，见 §10.6。
+
+**验收判据**（仍需手动冒烟，因为这是路径问题不是代码问题）：
+群聊里某个成员调一次探针 MCP 工具能拿到标记。
 
 ### 10.5 密钥写入磁盘
 
@@ -724,6 +772,7 @@ MCP 的 env 与现有 api_key 同级，不需要额外处理。
 - [ ] 若绕过校验（直接改 config.yaml）→ 会话仍能建立，且界面提示「MCP 服务 X 未连上」
 - [ ] 配一个「永不响应」的 server → 建会话最多等 120s，超过 10s 有「MCP 启动较慢」日志
 - [ ] 一坏一好两个 server → 好的那个工具仍可用（TOLERANT）
+- [ ] 群聊：某成员调用探针 MCP 工具能拿到标记（验证 §10.4.1 的路径共用）
 
 **可观测性判据（替代「不中断」这种不可证伪的说法）**
 

@@ -102,9 +102,12 @@ CREATE TABLE IF NOT EXISTS agents (
 	acp_available_commands TEXT NOT NULL DEFAULT '[]',
 	acp_available_models TEXT NOT NULL DEFAULT '[]',
 	acp_config_options TEXT NOT NULL DEFAULT '',
+	acp_mcp_http INTEGER NOT NULL DEFAULT 0,
+	acp_mcp_sse INTEGER NOT NULL DEFAULT 0,
 	auto_approve INTEGER NOT NULL DEFAULT 0,
 	disabled INTEGER NOT NULL DEFAULT 0,
 	project_id INTEGER DEFAULT NULL,  -- NULL = global; value = project-only (see model.Agent.ProjectID)
+	mcp_servers TEXT NOT NULL DEFAULT '{"mode":"all","names":[]}',  -- per-agent MCP policy (see model.MCPServerPolicy)
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -121,7 +124,7 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 			custom_system_prompt, avatar, models, models_auto_detected,
 			sort_order,
 			transport, acp_command, auto_approve, disabled, project_id,
-			thinking_effort_by_model
+			thinking_effort_by_model, mcp_servers
 		FROM agents ORDER BY id
 	`)
 	if err != nil {
@@ -132,7 +135,7 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 	var agents []*model.Agent
 	for rows.Next() {
 		a := &model.Agent{}
-		var modelsJSON, levelsJSON, effortByModelJSON string
+		var modelsJSON, levelsJSON, effortByModelJSON, mcpServersJSON string
 		var modelsAutoDetected, autoApprove, disabled int
 		var projectID sql.NullInt64
 
@@ -143,7 +146,7 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 			&a.CustomSystemPrompt, &a.Avatar, &modelsJSON, &modelsAutoDetected,
 			&a.SortOrder,
 			&a.Transport, &a.AcpCommand, &autoApprove, &disabled, &projectID,
-			&effortByModelJSON,
+			&effortByModelJSON, &mcpServersJSON,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan agent: %w", err)
@@ -158,6 +161,14 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 		}
 
 		parseAgentJSONColumns(a, modelsJSON, levelsJSON, effortByModelJSON)
+		// Unreadable policy keeps the zero value, which Normalized() reads as
+		// "all" — the same default a fresh row gets.
+		if mcpServersJSON != "" && mcpServersJSON != jsonNull {
+			var policy model.MCPServerPolicy
+			if err := json.Unmarshal([]byte(mcpServersJSON), &policy); err == nil {
+				a.MCPServers = policy
+			}
+		}
 
 		agents = append(agents, a)
 	}
@@ -477,6 +488,9 @@ type AgentPatch struct {
 	SortOrder          *int
 	AutoApprove        *bool
 	Disabled           *bool
+	// MCPServers replaces the agent's MCP enablement policy. Stored as JSON;
+	// only the policy (mode + names), never the server definitions.
+	MCPServers *model.MCPServerPolicy
 	// ProjectID scopes the agent to that project when non-nil.
 	ProjectID *int64
 	// ClearProjectID sets project_id to NULL (global). A *int64 alone cannot
@@ -578,6 +592,19 @@ func buildAgentSetClauses(id string, patch AgentPatch) ([]string, []any, error) 
 	}
 	if patch.Disabled != nil {
 		addSet("disabled", boolToInt(*patch.Disabled))
+	}
+	if patch.MCPServers != nil {
+		// Normalize so a row never stores an empty mode (which would read back
+		// as "none" through a future code path that forgets Normalized()).
+		policy := patch.MCPServers.Normalized()
+		if policy.Names == nil {
+			policy.Names = []string{}
+		}
+		encoded, err := json.Marshal(policy)
+		if err != nil {
+			return nil, nil, fmt.Errorf("encode mcp policy: %w", err)
+		}
+		addSet("mcp_servers", string(encoded))
 	}
 	setClauses, args = applyProjectScopeSet(patch, setClauses, args)
 	return setClauses, args, nil

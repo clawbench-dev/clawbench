@@ -457,3 +457,58 @@ func TestServeACPLoadSession_ScopedAgentFromOtherProjectRejected(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, "AgentNotInProject", resp["msgKey"])
 }
+
+// TestServeAgentsPatch_MCPServersRoundTrip verifies the MCP policy round trip:
+// the payload is the policy object itself, and the change is visible through
+// model.GetAgent immediately (no connection teardown involved — ACPConn re-reads
+// the policy each turn).
+func TestServeAgentsPatch_MCPServersRoundTrip(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	body := map[string]any{
+		"id": "claude",
+		"mcp_servers": map[string]any{
+			"mode":  "selected",
+			"names": []any{"websearch", "browser"},
+		},
+	}
+	req := newRequest(t, http.MethodPatch, "/api/agents", body)
+	req = withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	got := model.GetAgent("claude").MCPServers
+	assert.Equal(t, model.MCPPolicySelected, got.Mode)
+	assert.Equal(t, []string{"websearch", "browser"}, got.Names)
+}
+
+// TestServeAgentsPatch_MCPServersOmittedModeDefaultsToAll pins the zero-value
+// semantics: an omitted mode must mean "all", never "none". Reading it as
+// "none" would silently strip MCP from the agent.
+func TestServeAgentsPatch_MCPServersOmittedModeDefaultsToAll(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	req := newRequest(t, http.MethodPatch, "/api/agents", map[string]any{
+		"id":          "claude",
+		"mcp_servers": map[string]any{},
+	})
+	req = withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	assert.Equal(t, model.MCPPolicyAll, model.GetAgent("claude").MCPServers.Normalized().Mode)
+}
+
+// TestServeAgentsPatch_MCPServersRejectsNonObject pins that a malformed payload
+// is a 400 rather than being silently ignored.
+func TestServeAgentsPatch_MCPServersRejectsNonObject(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	req := newRequest(t, http.MethodPatch, "/api/agents", map[string]any{
+		"id":          "claude",
+		"mcp_servers": "all",
+	})
+	req = withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}

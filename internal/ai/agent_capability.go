@@ -34,7 +34,14 @@ type AgentCapability struct {
 	LoadSession              *bool // AgentCapabilities.LoadSession from ACP Initialize (nil = not yet set)
 	ListSessions             *bool // SessionCapabilities.List != nil from ACP Initialize (nil = not yet set)
 	DeleteSession            *bool // SessionCapabilities.Delete != nil from ACP Initialize (nil = not yet set)
-	UpdatedAt                time.Time
+	// McpHTTP / McpSSE are AgentCapabilities.McpCapabilities from ACP
+	// Initialize. stdio is mandatory in the spec and never advertised, so it
+	// has no flag. Sending http/sse to an agent that did not advertise them is
+	// a HARD failure (codex-acp throws invalidRequest and session/new dies),
+	// so unknown means "do not send".
+	McpHTTP   *bool `json:"-"`
+	McpSSE    *bool `json:"-"`
+	UpdatedAt time.Time
 
 	// AvailableOptions stores selectable options by category for categories
 	// beyond the well-known ones (mode, thought_level, model). For well-known
@@ -61,6 +68,8 @@ func (c *AgentCapability) HasData() bool {
 		c.LoadSession != nil ||
 		c.ListSessions != nil ||
 		c.DeleteSession != nil ||
+		c.McpHTTP != nil ||
+		c.McpSSE != nil ||
 		len(c.AvailableOptions) > 0
 }
 
@@ -146,6 +155,12 @@ func (r *AgentCapabilityRegistry) merge(agentID string, src *AgentCapability) {
 	if src.DeleteSession != nil {
 		existing.DeleteSession = src.DeleteSession
 	}
+	if src.McpHTTP != nil {
+		existing.McpHTTP = src.McpHTTP
+	}
+	if src.McpSSE != nil {
+		existing.McpSSE = src.McpSSE
+	}
 	if len(src.AvailableOptions) > 0 {
 		if existing.AvailableOptions == nil {
 			existing.AvailableOptions = make(map[string][]SelectOptionDef, len(src.AvailableOptions))
@@ -197,6 +212,16 @@ func (r *AgentCapabilityRegistry) UpdateDeleteSession(agentID string, val bool) 
 	r.Update(agentID, &AgentCapability{DeleteSession: &val})
 }
 
+// UpdateMCPCapabilities updates only the advertised MCP transports.
+//
+// Called from Initialize. Unlike listSessions this is NOT carried through
+// ForceUpdateIfNeeded from the registry on every first-session — the Initialize
+// response is the authoritative source and it runs before that path, so the
+// merge (not full replace) is what preserves it.
+func (r *AgentCapabilityRegistry) UpdateMCPCapabilities(agentID string, http, sse bool) {
+	r.Update(agentID, &AgentCapability{McpHTTP: &http, McpSSE: &sse})
+}
+
 // ForceUpdate replaces all capability fields for an agent (full overwrite, not merge)
 // and persists to DB asynchronously. Used when a new agent process establishes its
 // first session — the ACP response is the authoritative source of truth.
@@ -241,7 +266,7 @@ func (r *AgentCapabilityRegistry) MarkStale(agentID string) {
 // response and calls ForceUpdate. This is the single entry point for full capability
 // refresh — called once when an ACP connection first establishes a session.
 // The update is synchronous on the registry but DB persistence is async.
-func (r *AgentCapabilityRegistry) ForceUpdateIfNeeded(agentID string, modes []ModeDef, efforts []ThinkingEffortDef, models []model.AgentModel, cmds []AvailableCommandInfo, configState *ConfigOptionState, loadSession, listSessions bool) bool {
+func (r *AgentCapabilityRegistry) ForceUpdateIfNeeded(agentID string, modes []ModeDef, efforts []ThinkingEffortDef, models []model.AgentModel, cmds []AvailableCommandInfo, configState *ConfigOptionState, loadSession, listSessions, mcpHTTP, mcpSSE bool) bool {
 	return r.ForceUpdate(agentID, &AgentCapability{
 		AvailableModes:           modes,
 		AvailableThinkingEfforts: efforts,
@@ -250,6 +275,8 @@ func (r *AgentCapabilityRegistry) ForceUpdateIfNeeded(agentID string, modes []Mo
 		ConfigOptionState:        configState,
 		LoadSession:              &loadSession,
 		ListSessions:             &listSessions,
+		McpHTTP:                  &mcpHTTP,
+		McpSSE:                   &mcpSSE,
 	})
 }
 
@@ -376,6 +403,25 @@ func (r *AgentCapabilityRegistry) GetListSessions(agentID string) bool {
 	defer r.mu.RUnlock()
 	agentCap, ok := r.caps[agentID]
 	return ok && agentCap != nil && agentCap.ListSessions != nil && *agentCap.ListSessions
+}
+
+// GetMCPCapabilities returns the agent's advertised MCP transports.
+//
+// stdio is not represented: the ACP spec makes it mandatory, so it needs no
+// flag. A false value for http/sse means "not advertised", which must be read
+// as "do not send" — those transports are optional and sending one the agent
+// does not support fails the whole session/new.
+func (r *AgentCapabilityRegistry) GetMCPCapabilities(agentID string) model.MCPCapabilities {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	agentCap, ok := r.caps[agentID]
+	if !ok || agentCap == nil {
+		return model.MCPCapabilities{}
+	}
+	return model.MCPCapabilities{
+		HTTP: agentCap.McpHTTP != nil && *agentCap.McpHTTP,
+		SSE:  agentCap.McpSSE != nil && *agentCap.McpSSE,
+	}
 }
 
 // GetDeleteSession returns whether the agent supports DeleteSession.
@@ -834,6 +880,13 @@ func (r *AgentCapabilityRegistry) saveToDB(db dbutil.Writer, agentID string, age
 	if agentCap.ListSessions != nil {
 		listSessionsVal = *agentCap.ListSessions
 	}
+	var mcpHTTPVal, mcpSSEVal bool
+	if agentCap.McpHTTP != nil {
+		mcpHTTPVal = *agentCap.McpHTTP
+	}
+	if agentCap.McpSSE != nil {
+		mcpSSEVal = *agentCap.McpSSE
+	}
 
 	_, err := db.Exec(`
 		UPDATE agents SET
@@ -844,10 +897,12 @@ func (r *AgentCapabilityRegistry) saveToDB(db dbutil.Writer, agentID string, age
 			acp_config_options = ?,
 			acp_load_session = ?,
 			acp_list_sessions = ?,
+			acp_mcp_http = ?,
+			acp_mcp_sse = ?,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?`,
 		string(modesJSON), string(effortsJSON), string(cmdsJSON), string(modelsJSON), configJSON,
-		loadSessionVal, listSessionsVal, agentID)
+		loadSessionVal, listSessionsVal, mcpHTTPVal, mcpSSEVal, agentID)
 	return err
 }
 
@@ -856,7 +911,7 @@ func (r *AgentCapabilityRegistry) LoadFromDB(db dbutil.Reader) {
 	rows, err := db.Query(`
 		SELECT id, acp_available_modes, acp_available_thinking_efforts,
 		       acp_available_commands, acp_available_models, acp_config_options,
-		       acp_load_session, acp_list_sessions
+		       acp_load_session, acp_list_sessions, acp_mcp_http, acp_mcp_sse
 		FROM agents
 		WHERE transport = 'acp-stdio'
 	`)
@@ -872,7 +927,8 @@ func (r *AgentCapabilityRegistry) LoadFromDB(db dbutil.Reader) {
 	for rows.Next() {
 		var row capabilityRow
 		if err := rows.Scan(&row.agentID, &row.modes, &row.efforts, &row.commands,
-			&row.models, &row.config, &row.loadSession, &row.listSessions); err != nil {
+			&row.models, &row.config, &row.loadSession, &row.listSessions,
+			&row.mcpHTTP, &row.mcpSSE); err != nil {
 			slog.Warn("failed to scan agent capability row", "error", err)
 			continue
 		}
@@ -903,6 +959,8 @@ type capabilityRow struct {
 	config       string
 	loadSession  bool
 	listSessions bool
+	mcpHTTP      bool
+	mcpSSE       bool
 }
 
 // toCapability decodes the JSON columns. An unparseable column is skipped rather
@@ -915,6 +973,8 @@ func (row *capabilityRow) toCapability() *AgentCapability {
 		AvailableModels:          decodeJSONSlice[model.AgentModel](row.models),
 		LoadSession:              &row.loadSession,
 		ListSessions:             &row.listSessions,
+		McpHTTP:                  &row.mcpHTTP,
+		McpSSE:                   &row.mcpSSE,
 	}
 	if row.config != "" {
 		var config ConfigOptionState

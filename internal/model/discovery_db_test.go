@@ -54,6 +54,7 @@ func setupTestDBForDiscovery(t *testing.T) *sql.DB {
 			auto_approve INTEGER NOT NULL DEFAULT 0,
 			disabled INTEGER NOT NULL DEFAULT 0,
 			project_id INTEGER DEFAULT NULL,
+			mcp_servers TEXT NOT NULL DEFAULT '{"mode":"all","names":[]}',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
@@ -971,4 +972,54 @@ func TestStartModelDiscoveryAsync_UsesInjectedLock(t *testing.T) {
 		"进入锁时不应已有 agent——否则重载发生在锁外")
 	assert.True(t, hasAgentAfterLock,
 		"重载必须在锁内完成（否则与 handler 读 Agents 竞争）")
+}
+
+// TestLoadAgentsFromDBRows_MCPServersRoundTrip pins the per-agent MCP policy
+// through saveAgentToDB → loadAgentsFromDBRows.
+//
+// This loader — not service.LoadAgentsFromDB — is the one behind the live
+// model.Agents map (see the comment on loadAgentsFromDBRows). A column that is
+// written but not read here survives until the next background reload and then
+// silently reverts, which is exactly the #552 failure mode.
+func TestLoadAgentsFromDBRows_MCPServersRoundTrip(t *testing.T) {
+	db := setupTestDBForDiscovery(t)
+
+	policy := MCPServerPolicy{Mode: MCPPolicySelected, Names: []string{"websearch", "browser"}}
+	require.NoError(t, saveAgentToDB(db, &Agent{ID: "a1", Name: "A1", Backend: "claude", MCPServers: policy}))
+
+	agents, err := loadAgentsFromDBRows(db)
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+	assert.Equal(t, MCPPolicySelected, agents[0].MCPServers.Mode)
+	assert.Equal(t, []string{"websearch", "browser"}, agents[0].MCPServers.Names)
+}
+
+// TestLoadAgentsFromDBRows_MCPServersDefaultIsAll pins the default for a row
+// written without a policy. Reading it as "none" would strip MCP from every
+// agent that existed before the column did.
+func TestLoadAgentsFromDBRows_MCPServersDefaultIsAll(t *testing.T) {
+	db := setupTestDBForDiscovery(t)
+
+	require.NoError(t, saveAgentToDB(db, &Agent{ID: "a1", Name: "A1", Backend: "claude"}))
+	agents, err := loadAgentsFromDBRows(db)
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+	assert.Equal(t, MCPPolicyAll, agents[0].MCPServers.Normalized().Mode,
+		"a fresh agent must default to 'all', not 'none'")
+}
+
+// TestLoadAgentsFromDBRows_MalformedMCPPolicyFallsBackToAll pins that a corrupt
+// policy column degrades to the default instead of aborting the load — and does
+// not become "none".
+func TestLoadAgentsFromDBRows_MalformedMCPPolicyFallsBackToAll(t *testing.T) {
+	db := setupTestDBForDiscovery(t)
+
+	_, err := db.Exec(`INSERT INTO agents (id, name, backend, mcp_servers)
+		VALUES ('a1', 'A1', 'claude', 'not json')`)
+	require.NoError(t, err)
+
+	agents, err := loadAgentsFromDBRows(db)
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+	assert.Equal(t, MCPPolicyAll, agents[0].MCPServers.Normalized().Mode)
 }

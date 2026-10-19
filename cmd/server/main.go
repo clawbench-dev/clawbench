@@ -655,6 +655,10 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// Apply all defaults (returns auto-generated password if created)
 	autoPassword := model.ApplyDefaults(&cfg, presence)
 	model.ConfigInstance = cfg
+	// Publish the MCP snapshot before any agent connection can be created:
+	// internal/ai reads the list through an atomic pointer rather than the
+	// mutable ConfigInstance (see model.PublishMCPSnapshot).
+	model.PublishMCPSnapshot(cfg.MCP)
 
 	// A fresh install derives factory appearance defaults (the Bing daily
 	// wallpaper) that exist only in memory at this point. Persist them now:

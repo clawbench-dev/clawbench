@@ -154,6 +154,11 @@ type Config struct {
 	Forge       ForgeConfig       `yaml:"forge"`        // GitHub / GitLab integration (read-only issue & PR browsing)
 	Skills      SkillsConfig      `yaml:"skills"`       // Cross-agent skill discovery (native dirs + custom dirs + git repos)
 	UsageMeter  UsageMeterConfig  `yaml:"usage_meter"`  // Periodic usage budget + over-plan notification
+	// MCP is the global MCP server list shared by every ACP agent. Agents only
+	// store a policy (all / none / selected), never the definitions — see
+	// internal/model/mcp.go. CLI backends ignore it: they have no mcpServers
+	// parameter and read their own config files.
+	MCP MCPConfig `yaml:"mcp"`
 }
 
 // UsageMeterConfig is the single global usage budget rule.

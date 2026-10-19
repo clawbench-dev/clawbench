@@ -241,11 +241,30 @@ func (c *ACPConn) ensureAliveWithSession(ctx context.Context, cwd string) (bool,
 			slog.String("requested_cwd", cwd))
 	}
 
-	// If alive and already has a session, reuse
-	if c.alive && c.isAliveLocked() && c.acpSID != "" {
+	// If alive and already has a session, reuse — unless the MCP policy changed
+	// since this session was created.
+	//
+	// MCP servers are bound at session creation (new / load / resume), so a
+	// config or per-agent policy edit cannot reach a live session. Comparing the
+	// hash HERE (between turns, c.mu held) lets the change take effect on the
+	// next turn without interrupting a running one. Killing connections on PATCH
+	// instead would abort whatever the user is watching.
+	//
+	// The version covers the policy only, NOT the agent's advertised
+	// capabilities — see model.Config.MCPPolicyVersion for why hashing the
+	// filtered list would force a reconnect on every fresh process.
+	wantMCPVersion := c.mcpPolicyVersion()
+	mcpChanged := wantMCPVersion != c.mcpVersion
+	if c.alive && c.isAliveLocked() && c.acpSID != "" && !mcpChanged {
 		slog.Debug("acp conn: reusing existing connection", "clawbench_sid", c.clawbenchSID, "acp_sid", c.acpSID)
 		c.lastUsed = time.Now()
 		return false, nil
+	}
+	if c.alive && mcpChanged {
+		slog.Info("acp conn: MCP policy changed, reconnecting before this turn",
+			"clawbench_sid", c.clawbenchSID,
+			"old_version", c.mcpVersion,
+			"new_version", wantMCPVersion)
 	}
 
 	// Snapshot cached config state before spawn
@@ -291,21 +310,43 @@ func (c *ACPConn) ensureAliveWithSession(ctx context.Context, cwd string) (bool,
 		if err := c.recoverExistingSession(ctx, cwd, acpSID, prevConfig); err != nil {
 			return false, err
 		}
+		// The session now carries the servers this version describes. Recording
+		// it here (and not before the call) keeps a failed recovery from
+		// claiming the new policy was applied.
+		c.mcpVersion = wantMCPVersion
 		return false, nil
 	}
 
 	// No prior session — create new session.
-	newSessCtx, newSessCancel := context.WithTimeout(ctx, 30*time.Second)
+	//
+	// MCP servers are injected on ALL FOUR session-establishing paths
+	// (new / load / resume / SyncLoadSession). Missing one produces the
+	// "works until the process restarts, then the tools vanish" failure.
+	mcpServers := c.mcpServersForSession()
+
+	// The deadline depends on whether MCP servers are attached. Starting them is
+	// synchronous in session/new, and a server that accepts the connection but
+	// never answers (a script with a bug that blocks on stdin) costs the agent's
+	// own MCP timeout before the call returns. Measured 2026-10-19 across the
+	// probed backends: 30-80s for that shape, against 0.1-3s normally. 30s
+	// therefore turned a slow start into a failed session.
+	newSessTimeout := 30 * time.Second
+	if len(mcpServers) > 0 {
+		newSessTimeout = 120 * time.Second
+	}
+	newSessCtx, newSessCancel := context.WithTimeout(ctx, newSessTimeout)
 	defer newSessCancel()
 
 	newSessStart := time.Now()
 	slog.Info("acp conn: calling NewSession with cwd",
 		slog.String("clawbench_sid", c.clawbenchSID),
 		slog.String("cwd", cwd),
-		slog.String("c.cwd", c.cwd))
+		slog.String("c.cwd", c.cwd),
+		"mcp_servers", len(mcpServers),
+		"timeout", newSessTimeout)
 	sessResp, err := c.conn.NewSession(newSessCtx, acp.NewSessionRequest{
 		Cwd:        cwd,
-		McpServers: []acp.McpServer{},
+		McpServers: mcpServers,
 	})
 	slog.Info("acp perf: ensureAliveWithSession.NewSession", "clawbench_sid", c.clawbenchSID, "elapsed", time.Since(newSessStart), "error", err)
 	if err != nil {
@@ -316,6 +357,7 @@ func (c *ACPConn) ensureAliveWithSession(ctx context.Context, cwd string) (bool,
 	c.acpSID = string(sessResp.SessionId)
 	c.lastNewSessionResp = &sessResp
 	c.lastUsed = time.Now()
+	c.mcpVersion = wantMCPVersion
 	slog.Info("acp conn: created new session", "clawbench_sid", c.clawbenchSID, "acp_sid", c.acpSID)
 	return true, nil
 }
@@ -438,7 +480,7 @@ func (c *ACPConn) recoverViaLoadSession(ctx context.Context, cwd, loadSID string
 		loadResp, err = c.conn.LoadSession(loadCtx, acp.LoadSessionRequest{
 			SessionId:  acp.SessionId(loadSID),
 			Cwd:        cwd,
-			McpServers: []acp.McpServer{},
+			McpServers: c.mcpServersForSession(),
 		})
 	}
 	slog.Info("acp perf: ensureAliveWithSession.LoadSession", "clawbench_sid", c.clawbenchSID, "acp_sid", loadSID, "elapsed", time.Since(loadStart), "error", err)
@@ -498,7 +540,7 @@ func (c *ACPConn) recoverViaResumeSession(ctx context.Context, cwd, acpSID strin
 		resumeResp, err = c.conn.ResumeSession(resumeCtx, acp.ResumeSessionRequest{
 			SessionId:  acp.SessionId(acpSID),
 			Cwd:        cwd,
-			McpServers: []acp.McpServer{},
+			McpServers: c.mcpServersForSession(),
 		})
 	}
 	slog.Info("acp perf: recoverViaResumeSession.ResumeSession", "clawbench_sid", c.clawbenchSID, "acp_sid", acpSID, "elapsed", time.Since(resumeStart), "error", err)
@@ -704,10 +746,17 @@ func (c *ACPConn) spawnLocked(ctx context.Context) (err error) {
 	// We read ~/.codebuddy/.mcp.json and inject it via --mcp-config so the ACP
 	// process can still load MCP tools. Only applied to the codebuddy backend
 	// since other ACP agents may not recognize this flag.
-	if cmdParts[0] == "codebuddy" {
+	//
+	// COMPATIBILITY PERIOD: this flag is only used while ClawBench has no MCP
+	// servers of its own. Once mcp.servers is non-empty the protocol field
+	// carries the configuration (probed working on codebuddy), and passing both
+	// would register the same server twice. Keeping the old path for the empty
+	// case is what stops an upgrade from silently deleting the tools of every
+	// user who configured ~/.codebuddy/.mcp.json by hand.
+	if cmdParts[0] == "codebuddy" && len(model.ConfigInstance.MCP.Servers) == 0 {
 		if mcpConfigJSON := readUserMcpConfig(); mcpConfigJSON != "" {
 			cmdArgs = append(cmdArgs, "--mcp-config", mcpConfigJSON)
-			slog.Info("acp conn: injecting user MCP config via --mcp-config (workaround for issue #270)")
+			slog.Info("acp conn: injecting user MCP config via --mcp-config (workaround for issue #270; legacy path, mcp.servers is empty)")
 		}
 	}
 
@@ -847,13 +896,22 @@ func (c *ACPConn) spawnLocked(ctx context.Context) (err error) {
 		reg := GetAgentCapabilityRegistry()
 		listSessions := initResp.AgentCapabilities.SessionCapabilities.List != nil
 		deleteSession := initResp.AgentCapabilities.SessionCapabilities.Delete != nil
+		// MCP transports. stdio is mandatory in the spec and never advertised;
+		// http/sse are optional and MUST gate what we send — codex-acp throws
+		// invalidRequest for an sse server it does not support, which fails the
+		// whole session/new rather than degrading.
+		mcpHTTP := initResp.AgentCapabilities.McpCapabilities.Http
+		mcpSSE := initResp.AgentCapabilities.McpCapabilities.Sse
 		reg.UpdateListSessions(c.agent.ID, listSessions)
 		reg.UpdateDeleteSession(c.agent.ID, deleteSession)
+		reg.UpdateMCPCapabilities(c.agent.ID, mcpHTTP, mcpSSE)
 		slog.Info("acp conn: extracted capabilities from Initialize",
 			"agent_id", c.agent.ID,
 			"loadSession", "skipped (use BackendSpec)",
 			"listSessions", listSessions,
-			"deleteSession", deleteSession)
+			"deleteSession", deleteSession,
+			"mcpHTTP", mcpHTTP,
+			"mcpSSE", mcpSSE)
 	}
 
 	// Pre-scan CodeBuddy plugin commands to work around the AvailableCommandsUpdate

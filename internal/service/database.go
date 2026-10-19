@@ -1818,6 +1818,36 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Migrate: persist the agent's advertised MCP transports alongside the other
+	// capability columns. Without these, http/sse would be re-learned from
+	// scratch on every restart and the first session after a restart would send
+	// only stdio (capability unknown) even though the agent supports more.
+	for _, col := range []string{"acp_mcp_http", "acp_mcp_sse"} {
+		var has int
+		_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name=?", col).Scan(&has)
+		if has == 0 {
+			if _, err := store.WriteExec("ALTER TABLE agents ADD COLUMN " + col + " BOOLEAN NOT NULL DEFAULT false"); err != nil {
+				return fmt.Errorf("failed to add %s column to agents: %w", col, err)
+			}
+		}
+	}
+
+	// Migrate: per-agent MCP policy. Stores only WHICH global servers the agent
+	// may use ({"mode":"all"|"none"|"selected","names":[...]}); the server
+	// definitions live in config.yaml so API keys stay in one place.
+	//
+	// Default is "all": the global list is empty on a fresh install, so "all"
+	// is a no-op until the user adds a server, and then every agent picks it up
+	// without the user ticking each one. An empty mode would be read as "none"
+	// and silently strip MCP, which is why the default spells out the mode.
+	var hasAgentMCPServers int
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='mcp_servers'").Scan(&hasAgentMCPServers)
+	if hasAgentMCPServers == 0 {
+		if _, err := store.WriteExec(`ALTER TABLE agents ADD COLUMN mcp_servers TEXT NOT NULL DEFAULT '{"mode":"all","names":[]}'`); err != nil {
+			return fmt.Errorf("failed to add mcp_servers column to agents: %w", err)
+		}
+	}
+
 	// Migrate: ensure the project scope column on the quick-send /
 	// quick-command tables (project-scoped / 仅本项目 items). NULL means global;
 	// a value scopes the item to that project only.

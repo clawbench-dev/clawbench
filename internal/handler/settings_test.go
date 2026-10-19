@@ -3267,3 +3267,112 @@ func TestServeConfigGet_PortForwardExposesTransport(t *testing.T) {
 	assert.Equal(t, "both", pf["transport"], "GET must report the pinned value, not the stored one")
 	assert.NotContains(t, pf, "host_key", "host_key must stay server-side")
 }
+
+// TestValidatePatchValues_MCPServers pins the save-time checks. The command
+// lookup is the important one: "command not found" is the most common MCP
+// configuration mistake and the only failure the probe found that can be caught
+// before an agent tries (and silently fails) to start the server.
+func TestValidatePatchValues_MCPServers(t *testing.T) {
+	valid := func(srv map[string]any) map[string]any {
+		return map[string]any{"mcp": map[string]any{"servers": []any{srv}}}
+	}
+
+	cases := []struct {
+		name    string
+		patch   map[string]any
+		wantErr string
+	}{
+		{
+			name:  "valid stdio with an existing command",
+			patch: valid(map[string]any{"name": "ok", "transport": "stdio", "command": "sh"}),
+		},
+		{
+			name:    "stdio command not in PATH",
+			patch:   valid(map[string]any{"name": "x", "transport": "stdio", "command": "clawbench-no-such-binary"}),
+			wantErr: "not found in PATH",
+		},
+		{
+			name:    "stdio without command",
+			patch:   valid(map[string]any{"name": "x", "transport": "stdio"}),
+			wantErr: "command is required",
+		},
+		{
+			name:  "valid http",
+			patch: valid(map[string]any{"name": "h", "transport": "http", "url": "https://example.com/mcp"}),
+		},
+		{
+			name:    "http with a non-http scheme",
+			patch:   valid(map[string]any{"name": "h", "transport": "http", "url": "ftp://example.com/mcp"}),
+			wantErr: "must be an http(s) URL",
+		},
+		{
+			name:    "http with a garbage url",
+			patch:   valid(map[string]any{"name": "h", "transport": "http", "url": "://bad"}),
+			wantErr: "must be an http(s) URL",
+		},
+		{
+			name:    "unknown transport",
+			patch:   valid(map[string]any{"name": "x", "transport": "carrier-pigeon", "url": "https://x"}),
+			wantErr: "transport must be one of",
+		},
+		{
+			name: "duplicate names",
+			patch: map[string]any{"mcp": map[string]any{"servers": []any{
+				map[string]any{"name": "dup", "transport": "stdio", "command": "sh"},
+				map[string]any{"name": "dup", "transport": "stdio", "command": "sh"},
+			}}},
+			wantErr: "duplicated",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validatePatchValues(tc.patch)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("expected error containing %q, got %q", tc.wantErr, err.Error())
+			}
+		})
+	}
+}
+
+// TestMCPConfigIsHotReload pins that editing the server list does NOT ask the
+// user to restart. The whole point of the feature is that it takes effect
+// without one (connections compare a policy hash before each turn), so being
+// classified as cold would be actively misleading.
+func TestMCPConfigIsHotReload(t *testing.T) {
+	if !hotReloadFields["mcp.servers"] {
+		t.Fatal("mcp.servers must be a hot-reload field")
+	}
+	if !PatchableConfigPaths["mcp.servers"] {
+		t.Fatal("mcp.servers must be patchable")
+	}
+}
+
+// TestBuildConfigMCP_ReturnsSecretsInPlaintext pins the decision to mirror the
+// STT / RAG / TTS api_key behavior: env values are returned as-is so the user
+// can verify what is stored. If this ever changes to key-only, the settings page
+// needs a matching write-only input.
+func TestBuildConfigMCP_ReturnsSecretsInPlaintext(t *testing.T) {
+	cfg := model.Config{}
+	cfg.MCP.Servers = []model.MCPServer{{
+		Name: "s", Transport: model.MCPTransportStdio, Command: "node",
+		Env: map[string]string{"API_KEY": "secret-value"},
+	}}
+
+	got := buildConfigMCP(cfg)
+	if len(got.Servers) != 1 {
+		t.Fatalf("expected 1 server, got %d", len(got.Servers))
+	}
+	if got.Servers[0].Env["API_KEY"] != "secret-value" {
+		t.Fatalf("env value must be returned in plaintext, got %q", got.Servers[0].Env["API_KEY"])
+	}
+}
