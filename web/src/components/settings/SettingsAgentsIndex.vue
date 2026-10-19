@@ -1,7 +1,14 @@
 <template>
   <div class="settings-agents-index">
+    <!-- Create a custom ACP agent (issue #557). Sits above the rescan row so
+         the two "add something" actions read together: rescan discovers
+         installed CLIs, this one adds a tool that has no built-in backend. -->
+    <div class="settings-agents-index__rescan-row" data-action="agent-create" @click="openCreate">
+      <span class="settings-agents-index__rescan-label">{{ t('settings.items.agentCreateAcp') }}</span>
+      <Plus :size="16" class="settings-agents-index__rescan-icon" />
+    </div>
     <!-- Rescan row -->
-    <div class="settings-agents-index__rescan-row refresh-spin" :class="{ 'settings-agents-index__rescan-row--disabled': rescanning, 'refresh-spin--active': rescanning }" @click="handleRescan">
+    <div class="settings-agents-index__rescan-row refresh-spin" data-action="agent-rescan" :class="{ 'settings-agents-index__rescan-row--disabled': rescanning, 'refresh-spin--active': rescanning }" @click="handleRescan">
       <span class="settings-agents-index__rescan-label">{{ rescanning ? t('settings.items.agentRescanning') : t('settings.items.agentRescan') }}</span>
       <RefreshCw :size="16" class="settings-agents-index__rescan-icon" />
     </div>
@@ -34,27 +41,83 @@
     <div v-if="agentList.length === 0" class="settings-agents-index__empty">
       {{ t('settings.items.agentNoAgents') }}
     </div>
+    <CreateAcpAgentDialog
+      :open="createOpen"
+      :error-message="createError"
+      @close="createOpen = false"
+      @confirmed="handleCreateConfirmed"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { ChevronRight, RefreshCw } from 'lucide-vue-next'
+import { ChevronRight, Plus, RefreshCw } from 'lucide-vue-next'
 import { VueDraggable } from 'vue-draggable-plus'
 import { useI18n } from 'vue-i18n'
 import { useAgents } from '@/composables/useAgents'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import { useToast } from '@/composables/useToast'
+import CreateAcpAgentDialog from './CreateAcpAgentDialog.vue'
 
-defineEmits<{
+const emit = defineEmits<{
   navigate: [categoryId: string]
 }>()
 
 const { t } = useI18n()
 const toast = useToast()
-const { agents, defaultAgentId, loadAgents, rescanAgents, reorderAgents } = useAgents()
+const { agents, defaultAgentId, loadAgents, rescanAgents, reorderAgents, createAcpAgent } = useAgents()
 
 const rescanning = ref(false)
+const createOpen = ref(false)
+// Server-side create failure (name collision, empty command) shown inside the
+// dialog, which stays open so the user can correct the input and retry.
+const createError = ref('')
+
+/** Open the create dialog with a clean slate.
+ *
+ * Clearing here (not only when a submit starts) is what keeps a stale red
+ * banner from the previous attempt off the next one — the dialog is unmounted
+ * content-wise while closed, so it would otherwise reappear over empty fields. */
+function openCreate() {
+  createError.value = ''
+  createOpen.value = true
+}
+
+async function handleCreateConfirmed({ name, command }: { name: string; command: string }) {
+  createError.value = ''
+  try {
+    const newId = await createAcpAgent(name, command)
+    createOpen.value = false
+    toast.show(t('settings.items.agentCreateAcpSuccess'), { icon: 'success', type: 'success', duration: 3000 })
+    // Land on the new agent's detail page so the user sees what was created and
+    // can add an avatar / adjust settings. Guard on a non-empty id for the same
+    // reason as the copy flow: an empty id would route to `agents:`.
+    if (newId) emit('navigate', `agents:${newId}`)
+  } catch (err) {
+    // Every 4xx here is correctable in the dialog: a taken name, a reserved
+    // name, an over-long name, an empty or over-long command. Only a genuine
+    // server failure closes it.
+    const msgKey = (err as { msgKey?: string } | null)?.msgKey
+    switch (msgKey) {
+      case 'AgentNameTaken':
+        createError.value = t('settings.items.agentCopyNameTaken')
+        return
+      case 'AgentNameReserved':
+        createError.value = t('settings.items.agentNameReserved')
+        return
+      case 'InvalidAgentName':
+        createError.value = t('settings.items.agentCreateAcpInvalidName')
+        return
+      case 'InvalidAcpCommand':
+        createError.value = t('settings.items.agentCreateAcpInvalidCommand')
+        return
+      default:
+        createOpen.value = false
+        toast.show(t('settings.items.agentCreateAcpFailed'), { icon: 'warning', type: 'error', duration: 3000 })
+    }
+  }
+}
 
 onMounted(() => {
   loadAgents(true)

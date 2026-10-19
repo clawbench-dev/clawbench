@@ -620,6 +620,7 @@ func LoadAgentsIntoMemoryFromDB(db dbutil.Reader) error {
 	for _, agent := range agents {
 		if spec := FindSpecByBackend(agent.Backend); spec != nil {
 			agent.CanRefreshModels = HasModelSource(agent.Backend)
+			agent.BackendHasSpec = true
 			if len(agent.ThinkingEffortLevels) == 0 && len(spec.ThinkingEffortLevels) > 0 {
 				agent.ThinkingEffortLevels = spec.ThinkingEffortLevels
 			}

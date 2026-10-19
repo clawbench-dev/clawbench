@@ -57,6 +57,13 @@ interface AgentRecord {
   /** Raw SVG string for a user-configured avatar; empty = built-in brand icon. */
   avatar?: string
   canRefreshModels?: boolean
+  /**
+   * Whether this agent's backend has a registry spec, i.e. whether auto-discovery
+   * owns its `acp_command` (rewritten on every rescan/startup). The settings UI
+   * uses it to decide whether the command field is editable; the server applies
+   * the same predicate when it refuses the PATCH.
+   */
+  backendHasSpec?: boolean
   supportsCLI?: boolean
   supportsMidTurn?: boolean
   autoApprove?: boolean
@@ -728,6 +735,20 @@ async function duplicateAgent(sourceId: string, newName: string): Promise<string
 }
 
 /**
+ * Create a user-defined ACP agent (issue #557) from a spawn command.
+ *
+ * Returns the created agent's id so the settings panel can navigate to its
+ * detail page, mirroring duplicateAgent. `backend` is not a parameter: the
+ * server always stamps its own custom-ACP backend ID, because borrowing a
+ * built-in one would let the discovery sync overwrite the command.
+ */
+async function createAcpAgent(name: string, acpCommand: string): Promise<string> {
+    const created = await apiPost<{ id?: string }>('/api/agents', { name, acp_command: acpCommand })
+    await loadAgents(true)
+    return created?.id ?? ''
+}
+
+/**
  * Delete an agent by ID.
  *
  * The backend refuses (409, msgKey=AgentInUse) while the agent still has
@@ -806,6 +827,7 @@ export function useAgents() {
         applyRefreshedModelList,
         populateACPStateFromCache,
         duplicateAgent,
+        createAcpAgent,
         deleteAgent,
         rescanAgents,
         reorderAgents,

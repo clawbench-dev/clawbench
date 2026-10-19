@@ -198,8 +198,9 @@ func TestProcessClawbenchCommand_AgentCarriesProjectCookie(t *testing.T) {
 }
 
 // TestProcessClawbenchCommand_AgentDocumentsCreateByClone pins the create
-// semantics: there is no create-from-scratch, so the prompt must tell the AI to
-// clone via source_id + name and to check name-uniqueness conflicts.
+// semantics: cloning is one of two shapes, and the prompt must state both the
+// source_id contract and the custom-ACP contract (issue #557), plus the
+// name-uniqueness conflicts.
 func TestProcessClawbenchCommand_AgentDocumentsCreateByClone(t *testing.T) {
 	withServerPort(t, 20000)
 
@@ -207,7 +208,9 @@ func TestProcessClawbenchCommand_AgentDocumentsCreateByClone(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Contains(t, result, "source_id", "the clone contract must be stated")
-	assert.Contains(t, result, "CLONING", "the AI must know creation is by cloning")
+	assert.Contains(t, result, "CLONE", "the AI must know cloning is a supported shape")
+	assert.Contains(t, result, "acp_command",
+		"the AI must know it can create a custom ACP agent from a command")
 	assert.Contains(t, result, "AgentNameTaken", "the name-uniqueness conflict must be stated")
 	assert.Contains(t, result, "AgentNameReserved", "the reserved-nickname conflict must be stated")
 }

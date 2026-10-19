@@ -23,6 +23,10 @@ const backendDisplayNames: Record<string, string> = {
   hermes: 'Hermes Agent',
   commandcode: 'Command Code',
   cursor: 'Cursor',
+  // User-defined ACP agents (issue #557) all share one backend id; the agent's
+  // own name is what distinguishes them, so this label is only a fallback for
+  // places that show the backend alone (share header, resume drawer).
+  'custom-acp': 'ACP',
 }
 
 /**

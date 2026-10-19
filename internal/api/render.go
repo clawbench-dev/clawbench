@@ -75,8 +75,9 @@ var commandOperations = map[Command][]struct {
 	CommandAgent: {
 		// The list endpoint is both the search/view surface (there is no
 		// dedicated search endpoint — the AI filters the list) and how the AI
-		// discovers the source_id needed to create an agent (creation is by
-		// cloning an existing one; there is no create-from-scratch).
+		// discovers the source_id needed to clone an agent. agentsCreate covers
+		// both shapes: cloning (source_id) and creating a custom ACP agent from
+		// a spawn command (name + acp_command).
 		{"agentsList", tagAgents},
 		{"agentsCreate", tagAgents},
 		{"agentsUpdate", tagAgents},

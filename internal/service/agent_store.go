@@ -31,6 +31,15 @@ var ErrAgentNameTaken = errors.New("agent name already taken")
 // matches an existing agent.
 var ErrAgentNameReserved = errors.New("agent name conflicts with the user nickname")
 
+// ErrAcpCommandRequired is returned when a custom ACP agent is created without
+// a spawn command. Without one the agent would advertise ACP transport but have
+// nothing to spawn (Agent.SupportsACP() is exactly AcpCommand != "").
+var ErrAcpCommandRequired = errors.New("acp command is required")
+
+// ErrAcpCommandTooLong is returned when the spawn command exceeds
+// MaxAcpCommandBytes.
+var ErrAcpCommandTooLong = errors.New("acp command is too long")
+
 // IsUserNickname reports whether name equals the configured group-chat user
 // nickname. Empty names never collide (callers validate non-empty separately),
 // and an unset nickname falls back to the default so the guard holds even before
@@ -455,13 +464,19 @@ type AgentPatch struct {
 	// so a per-model pick never overwrites the model-independent default.
 	ThinkingEffortForModel *ThinkingEffortModelPatch
 	Transport              *string
-	Name                   *string
-	Specialty              *string
-	CustomSystemPrompt     *string
-	Avatar                 *string
-	SortOrder              *int
-	AutoApprove            *bool
-	Disabled               *bool
+	// AcpCommand overrides the ACP spawn command. Only meaningful for
+	// transport=acp-stdio; a non-empty value is what makes SupportsACP() true,
+	// and the spawn path reads it straight from the agent (issue #557). The
+	// handler forces the transport in the same patch, so this can never leave
+	// an agent advertising ACP without a command.
+	AcpCommand         *string
+	Name               *string
+	Specialty          *string
+	CustomSystemPrompt *string
+	Avatar             *string
+	SortOrder          *int
+	AutoApprove        *bool
+	Disabled           *bool
 	// ProjectID scopes the agent to that project when non-nil.
 	ProjectID *int64
 	// ClearProjectID sets project_id to NULL (global). A *int64 alone cannot
@@ -533,6 +548,9 @@ func buildAgentSetClauses(id string, patch AgentPatch) ([]string, []any, error) 
 	}
 	if patch.Transport != nil {
 		addSet("transport", normalizeAgentTransport(*patch.Transport))
+	}
+	if patch.AcpCommand != nil {
+		addSet("acp_command", *patch.AcpCommand)
 	}
 	if patch.Name != nil {
 		if err := ensureAgentNameFree(id, *patch.Name); err != nil {
@@ -627,6 +645,20 @@ func patchThinkingEffortForModel(id string, p *ThinkingEffortModelPatch) error {
 		return fmt.Errorf("patch agent %s effort by model: commit: %w", id, err)
 	}
 	return nil
+}
+
+// nextAgentSortOrder returns one past the highest current sort_order, so a
+// newly created agent lands at the end of the list rather than at 0 (where it
+// would tie with every never-reordered agent and be ordered by its random ID).
+func nextAgentSortOrder() int {
+	var maxOrder sql.NullInt64
+	// A read failure is not worth failing the create over: 0 keeps the old
+	// behavior (the list is then ordered by (sort_order, id)).
+	_ = store.ReadDB().QueryRow("SELECT MAX(sort_order) FROM agents").Scan(&maxOrder)
+	if !maxOrder.Valid {
+		return 0
+	}
+	return int(maxOrder.Int64) + 1
 }
 
 // ReorderAgents persists a manual drag order: the i-th id in ids becomes that
@@ -802,4 +834,56 @@ func DuplicateAgent(sourceID, newName string) (*model.Agent, error) {
 	clone.RuntimeSystemPrompt = model.ComposeSystemPrompt(clone.CustomSystemPrompt)
 
 	return clone, nil
+}
+
+// MaxAcpCommandBytes bounds the stored ACP spawn command. The value reaches
+// exec after being split on whitespace, so this only guards the DB row and the
+// settings input — it is not a security boundary (any command typed here is
+// equivalent to the PTY the terminal API already grants the same user).
+const MaxAcpCommandBytes = 4096
+
+// CreateCustomACPAgent creates an agent for an ACP server that has no backend
+// registry entry (issue #557): the user supplies a name and a spawn command and
+// the agent rides the existing ACP transport unchanged.
+//
+// The backend is always model.CustomACPBackend rather than a user-supplied
+// slug, and that is load-bearing: model.RefreshAgents rewrites acp_command for
+// every row whose backend matches a registered spec (`WHERE backend = ?`), so a
+// custom agent that reused e.g. "claude" would have its command silently
+// replaced by the bundled adapter on the next rescan or startup. A backend ID
+// that appears in no registry entry is never touched by that sync.
+//
+// Everything spec-derived then degrades exactly as it already does for the
+// built-in backends that ship without ACP mapping data: no CLI transport, no
+// model discovery, and LoadSession/ListSessions reported unsupported until the
+// agent advertises them itself.
+func CreateCustomACPAgent(name, acpCommand string) (*model.Agent, error) {
+	trimmed := strings.TrimSpace(acpCommand)
+	if trimmed == "" {
+		return nil, ErrAcpCommandRequired
+	}
+	if len(trimmed) > MaxAcpCommandBytes {
+		return nil, ErrAcpCommandTooLong
+	}
+
+	agent := &model.Agent{
+		ID:         newAgentCopyID(model.CustomACPBackend),
+		Name:       name,
+		Backend:    model.CustomACPBackend,
+		Transport:  transportACPStdio,
+		AcpCommand: trimmed,
+		// Land at the end of the user's list instead of tying at 0 with every
+		// never-reordered agent (the tiebreak is the random ID, which would
+		// scatter it into the middle of the list).
+		SortOrder: nextAgentSortOrder(),
+	}
+	// A fresh agent has no custom prompt, so its runtime copy is the shared
+	// prefix only. Composing it here keeps the agent usable immediately: it goes
+	// straight into the live map and nothing recomposes it until the next load.
+	agent.RuntimeSystemPrompt = model.ComposeSystemPrompt("")
+
+	if err := SaveAgent(store.WriteDB(), agent); err != nil {
+		return nil, fmt.Errorf("save custom acp agent: %w", err)
+	}
+	return agent, nil
 }

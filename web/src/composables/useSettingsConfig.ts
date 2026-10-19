@@ -627,6 +627,14 @@ export async function patchAgentField(agentId: string, field: string, value: str
     await loadAgents(true)
     return
   }
+  // acp_command: the server also flips `transport` in the same patch (clearing
+  // the command forces CLI, setting one forces acp-stdio), so mirroring only
+  // the command locally would leave a stale transport in every consumer that
+  // reads it. Re-fetch instead.
+  if (field === 'acp_command') {
+    await loadAgents(true)
+    return
+  }
   const fieldMap: Record<string, string> = {
     preferred_model: 'preferredModel',
     preferred_thinking_effort: 'preferredThinkingEffort',

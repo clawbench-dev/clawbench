@@ -28,6 +28,14 @@ const i18n = createI18n({
           agentRescanFailed: 'Rescan failed',
           agentReorderFailed: 'Reorder failed',
           agentDragHandle: 'Drag to reorder',
+          agentCreateAcp: 'Add ACP Agent',
+          agentCreateAcpSuccess: 'ACP agent added',
+          agentCreateAcpFailed: 'Failed to add agent',
+          agentCreateAcpCommandRequired: 'The ACP command cannot be empty',
+          agentCreateAcpInvalidCommand: 'Invalid ACP command',
+          agentCreateAcpInvalidName: 'Invalid agent name',
+          agentCopyNameTaken: 'An agent with this name already exists',
+          agentNameReserved: 'This name conflicts with the group-chat user nickname',
         },
         saveFailed: 'Save failed',
       },
@@ -47,6 +55,7 @@ const mockDuplicateAgent = vi.fn()
 const mockRescanAgents = vi.fn()
 const mockSetDefaultAgent = vi.fn()
 const mockReorderAgents = vi.fn().mockResolvedValue(undefined)
+const mockCreateAcpAgent = vi.fn()
 vi.mock('@/composables/useAgents', () => ({
   useAgents: () => ({
     agents: mockAgents,
@@ -56,6 +65,7 @@ vi.mock('@/composables/useAgents', () => ({
     rescanAgents: (...args: unknown[]) => mockRescanAgents(...args),
     setDefaultAgent: (...args: unknown[]) => mockSetDefaultAgent(...args),
     reorderAgents: (...args: unknown[]) => mockReorderAgents(...args),
+    createAcpAgent: (...args: unknown[]) => mockCreateAcpAgent(...args),
   }),
 }))
 
@@ -81,7 +91,19 @@ vi.mock('@/composables/useToast', () => ({
 vi.mock('lucide-vue-next', () => ({
   ChevronRight: { name: 'ChevronRight', template: '<span class="icon-chevron" />' },
   Copy: { name: 'Copy', template: '<span class="icon-copy" />' },
+  Plus: { name: 'Plus', template: '<span class="icon-plus" />' },
   RefreshCw: { name: 'RefreshCw', template: '<span class="icon-refresh" />' },
+}))
+
+// Mock CreateAcpAgentDialog — the flow under test is the index page's
+// open/create/navigate handling, not the dialog's own form.
+vi.mock('@/components/settings/CreateAcpAgentDialog.vue', () => ({
+  default: {
+    name: 'CreateAcpAgentDialog',
+    props: ['open', 'errorMessage'],
+    emits: ['close', 'confirmed'],
+    template: '<div class="mock-create-acp-dialog" :data-open="String(open)" />',
+  },
 }))
 
 // Mock CopyAgentDialog
@@ -107,6 +129,7 @@ describe('SettingsAgentsIndex', () => {
     mockRescanAgents.mockReset()
     mockSetDefaultAgent.mockReset()
     mockReorderAgents.mockReset().mockResolvedValue(undefined)
+    mockCreateAcpAgent.mockReset()
     mockToastShow.mockReset()
     mockAgents.value = []
     mockDefaultAgentId.value = 'agent-1'
@@ -165,13 +188,13 @@ describe('SettingsAgentsIndex', () => {
 
   it('renders rescan row', () => {
     const wrapper = mountIndex()
-    expect(wrapper.find('.settings-agents-index__rescan-row').exists()).toBe(true)
+    expect(wrapper.find('[data-action="agent-rescan"]').exists()).toBe(true)
   })
 
   it('clicking rescan row calls rescanAgents', async () => {
     mockRescanAgents.mockResolvedValue(undefined)
     const wrapper = mountIndex()
-    const rescanRow = wrapper.find('.settings-agents-index__rescan-row')
+    const rescanRow = wrapper.find('[data-action="agent-rescan"]')
     await rescanRow.trigger('click')
     expect(mockRescanAgents).toHaveBeenCalled()
   })
@@ -179,7 +202,7 @@ describe('SettingsAgentsIndex', () => {
   it('rescan failure shows error toast', async () => {
     mockRescanAgents.mockRejectedValueOnce(new Error('fail'))
     const wrapper = mountIndex()
-    const rescanRow = wrapper.find('.settings-agents-index__rescan-row')
+    const rescanRow = wrapper.find('[data-action="agent-rescan"]')
     await rescanRow.trigger('click')
     await wrapper.vm.$nextTick()
 
@@ -189,7 +212,7 @@ describe('SettingsAgentsIndex', () => {
   it('rescan success shows success toast', async () => {
     mockRescanAgents.mockResolvedValueOnce(undefined)
     const wrapper = mountIndex()
-    const rescanRow = wrapper.find('.settings-agents-index__rescan-row')
+    const rescanRow = wrapper.find('[data-action="agent-rescan"]')
     await rescanRow.trigger('click')
     await wrapper.vm.$nextTick()
 
@@ -267,6 +290,94 @@ describe('SettingsAgentsIndex', () => {
     await rescanPromise
     await wrapper.vm.$nextTick()
     expect(vm.$.setupState.rescanning).toBe(false)
+  })
+
+  // --- create custom ACP agent (issue #557) ---
+
+  it('renders a create-ACP row that opens the dialog', async () => {
+    const wrapper = mountIndex()
+    const dialog = wrapper.findComponent({ name: 'CreateAcpAgentDialog' })
+    expect(dialog.props('open')).toBe(false)
+
+    await wrapper.find('[data-action="agent-create"]').trigger('click')
+    expect(wrapper.findComponent({ name: 'CreateAcpAgentDialog' }).props('open')).toBe(true)
+  })
+
+  it('creates the agent and navigates to its detail page', async () => {
+    mockCreateAcpAgent.mockResolvedValueOnce('custom-acp-abc123')
+    const wrapper = mountIndex()
+
+    await wrapper.find('[data-action="agent-create"]').trigger('click')
+    await wrapper.findComponent({ name: 'CreateAcpAgentDialog' })
+      .vm.$emit('confirmed', { name: 'Trae', command: 'trae acp' })
+    await wrapper.vm.$nextTick()
+
+    expect(mockCreateAcpAgent).toHaveBeenCalledWith('Trae', 'trae acp')
+    expect(wrapper.emitted('navigate')![0]).toEqual(['agents:custom-acp-abc123'])
+    expect(mockToastShow).toHaveBeenCalledWith('ACP agent added', expect.any(Object))
+  })
+
+  it('keeps the dialog open with an inline message on a name collision', async () => {
+    const err = Object.assign(new Error('taken'), { msgKey: 'AgentNameTaken' })
+    mockCreateAcpAgent.mockRejectedValueOnce(err)
+    const wrapper = mountIndex()
+
+    await wrapper.find('[data-action="agent-create"]').trigger('click')
+    await wrapper.findComponent({ name: 'CreateAcpAgentDialog' })
+      .vm.$emit('confirmed', { name: 'Trae', command: 'trae acp' })
+    await wrapper.vm.$nextTick()
+
+    const dialog = wrapper.findComponent({ name: 'CreateAcpAgentDialog' })
+    expect(dialog.props('open')).toBe(true)
+    expect(dialog.props('errorMessage')).toBe('An agent with this name already exists')
+    expect(wrapper.emitted('navigate')).toBeUndefined()
+  })
+
+  it('clears a previous error when the dialog is reopened', async () => {
+    const err = Object.assign(new Error('taken'), { msgKey: 'AgentNameTaken' })
+    mockCreateAcpAgent.mockRejectedValueOnce(err)
+    const wrapper = mountIndex()
+
+    await wrapper.find('[data-action="agent-create"]').trigger('click')
+    await wrapper.findComponent({ name: 'CreateAcpAgentDialog' })
+      .vm.$emit('confirmed', { name: 'Trae', command: 'trae acp' })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.findComponent({ name: 'CreateAcpAgentDialog' }).props('errorMessage')).toBeTruthy()
+
+    // Close, reopen: the stale banner must not reappear over empty fields.
+    await wrapper.findComponent({ name: 'CreateAcpAgentDialog' }).vm.$emit('close')
+    await wrapper.vm.$nextTick()
+    await wrapper.find('[data-action="agent-create"]').trigger('click')
+
+    expect(wrapper.findComponent({ name: 'CreateAcpAgentDialog' }).props('errorMessage')).toBe('')
+  })
+
+  it('keeps the dialog open with a specific message for an invalid command', async () => {
+    const err = Object.assign(new Error('bad'), { msgKey: 'InvalidAcpCommand' })
+    mockCreateAcpAgent.mockRejectedValueOnce(err)
+    const wrapper = mountIndex()
+
+    await wrapper.find('[data-action="agent-create"]').trigger('click')
+    await wrapper.findComponent({ name: 'CreateAcpAgentDialog' })
+      .vm.$emit('confirmed', { name: 'Trae', command: 'x' })
+    await wrapper.vm.$nextTick()
+
+    const dialog = wrapper.findComponent({ name: 'CreateAcpAgentDialog' })
+    expect(dialog.props('open')).toBe(true)
+    expect(dialog.props('errorMessage')).toBe('Invalid ACP command')
+  })
+
+  it('closes the dialog and toasts on an unrecoverable failure', async () => {
+    mockCreateAcpAgent.mockRejectedValueOnce(new Error('boom'))
+    const wrapper = mountIndex()
+
+    await wrapper.find('[data-action="agent-create"]').trigger('click')
+    await wrapper.findComponent({ name: 'CreateAcpAgentDialog' })
+      .vm.$emit('confirmed', { name: 'Trae', command: 'trae acp' })
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.findComponent({ name: 'CreateAcpAgentDialog' }).props('open')).toBe(false)
+    expect(mockToastShow).toHaveBeenCalledWith('Failed to add agent', expect.any(Object))
   })
 
   // --- drag-to-reorder ---
