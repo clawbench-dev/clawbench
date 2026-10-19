@@ -669,14 +669,27 @@ const lastAssistantMessageId = () => {
   return undefined
 }
 
+// Role of the last message that actually took a turn (user or assistant).
+//
+// System timeline rows are NOT turns: single-chat auto-cruise appends
+// "自动巡航：任务已确认完成，共 N 轮" AFTER the reply it confirmed, and group
+// chats append "轮到用户发言" after the host's reply. Reading the raw last
+// element therefore made a session that ended with a cruise/membership line
+// look like "the user spoke last", hiding a recommendation that had been
+// generated (and persisted) for the reply right above it.
+const lastSpeakerRole = () => {
+  const msgs = props.messages || []
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i].role === 'system') continue
+    return msgs[i].role
+  }
+  return undefined
+}
+
 const rec = useChatRecommendation({
   activeSessionId: () => props.currentSessionId || undefined,
   loading: () => props.loading,
-  isLastMessageAssistant: () => {
-    const msgs = props.messages || []
-    const last = msgs[msgs.length - 1]
-    return !!last && last.role === 'assistant'
-  },
+  isLastMessageAssistant: () => lastSpeakerRole() === 'assistant',
   lastAssistantMessageId,
   fetchRemote: async (sessionId, messageId) => {
     const data = await apiGet(`/api/chat/recommendation?session_id=${encodeURIComponent(sessionId)}&message_id=${encodeURIComponent(String(messageId))}`)
