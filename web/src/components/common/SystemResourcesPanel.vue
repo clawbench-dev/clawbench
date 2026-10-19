@@ -101,7 +101,7 @@
       <div v-if="showUsageMeter" class="resource-row usage-row">
         <div class="resource-header">
           <Gauge :size="13" class="resource-icon" :class="`usage-icon is-${meterState}`" />
-          <span class="resource-label">{{ t('usageMeter.title') }}</span>
+          <span class="resource-label">{{ t('usageMeter.label') }}</span>
           <span class="resource-value" :class="`usage-value is-${meterState}`">
             {{ meterUsed }}<span class="usage-quota"> / {{ meterQuota }}</span>
           </span>
@@ -147,10 +147,10 @@ const showUsageMeter = computed(
 )
 
 const meterUsed = computed(() =>
-    formatUsageMeterValue(meterStatus.value.metric ?? 'cost', meterStatus.value.actual ?? 0),
+    formatUsageMeterValue(meterStatus.value.metric ?? 'cost', meterStatus.value.actual ?? 0, { compact: true }),
 )
 const meterQuota = computed(() =>
-    formatUsageMeterValue(meterStatus.value.metric ?? 'cost', meterStatus.value.quota ?? 0),
+    formatUsageMeterValue(meterStatus.value.metric ?? 'cost', meterStatus.value.quota ?? 0, { compact: true }),
 )
 
 const meterBadge = computed(() => {

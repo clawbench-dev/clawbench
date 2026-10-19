@@ -26,10 +26,32 @@ export function formatCompactCount(v: number): string {
 }
 
 /**
+ * Compact value for space-constrained surfaces (header capsule, phone row):
+ * K/M/B tiers with exactly one decimal, and no trailing ".0" below the K tier.
+ *
+ * One decimal is kept on the tiers even when it is zero ("5.0M") so the
+ * capsule does not change width as the number moves.
+ */
+function formatCompactDecimal(v: number): string {
+  const abs = Math.abs(v)
+  if (abs >= 999_500_000) return `${(v / 1e9).toFixed(1)}B`
+  if (abs >= 999_950) return `${(v / 1e6).toFixed(1)}M`
+  if (abs >= 999.5) return `${(v / 1e3).toFixed(1)}K`
+  const one = v.toFixed(1)
+  return one.endsWith('.0') ? one.slice(0, -2) : one
+}
+
+/**
  * Format a meter value for the header capsule and popover.
  *
- * `compact` is for the capsule (fixed width, no layout shift); the popover uses
- * the full form so the exact amount is readable.
+ * `compact` is for the space-constrained surfaces (the header capsule and the
+ * phone row inside the system-resources popover); the popover body uses the
+ * full form so exact amounts are readable next to the comparison bars.
+ *
+ * Tokens are always compacted: an exact token count is noise at any size, and
+ * the K/M/B thresholds mirror the backend's compactCount
+ * (internal/service/usage_meter.go) so a notification and the UI never
+ * disagree about the same number.
  */
 export function formatUsageMeterValue(
   metric: UsageMeterMetric,
@@ -37,6 +59,11 @@ export function formatUsageMeterValue(
   opts: { compact?: boolean } = {},
 ): string {
   if (value == null || Number.isNaN(value)) return '—'
+  if (metric === 'tokens') return formatCompactCount(value)
+  if (opts.compact) {
+    const prefix = metric === 'cost' ? '$' : ''
+    return prefix + formatCompactDecimal(value)
+  }
   switch (metric) {
     case 'cost':
       return `$${value.toLocaleString('en-US', {
@@ -44,11 +71,7 @@ export function formatUsageMeterValue(
         maximumFractionDigits: 2,
       })}`
     case 'credit':
-      return opts.compact
-        ? formatCompactCount(value)
-        : value.toLocaleString('en-US', { maximumFractionDigits: 2 })
-    case 'tokens':
     default:
-      return formatCompactCount(value)
+      return value.toLocaleString('en-US', { maximumFractionDigits: 2 })
   }
 }

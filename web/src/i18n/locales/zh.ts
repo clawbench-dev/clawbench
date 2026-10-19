@@ -187,10 +187,10 @@ export default {
       generic: '加载失败',
     },
   },
-  // 用量提醒（usage meter）。周期 + 指标 + 额度，按时间比例算出「应花」，
+  // 用量（usage meter）。周期 + 指标 + 额度，按时间比例算出「应花」，
   // 实际超出时提醒一次，用尽再提醒一次。
   usageMeter: {
-    title: '用量提醒',
+    title: '用量',
     // Short form used inside the header capsule (next to the gauge icon).
     label: '用量',
     capsuleTitle: '查看本周期用量',
@@ -2391,7 +2391,7 @@ export default {
       forgeIntegration: 'GitHub/GitLab 集成',
       skills: '技能',
       notification: '推送通知',
-      usageMeter: '用量提醒',
+      usageMeter: '用量',
       security: '安全',
       debug: '调试',
       about: '关于',
@@ -3112,8 +3112,8 @@ export default {
       feishuAppIdDesc: '飞书开发者后台的企业应用 App ID',
       feishuAppSecret: 'App Secret',
       feishuAppSecretDesc: '企业应用 App Secret，保存后脱敏显示',
-      usageMeterSection: '用量提醒',
-      usageMeter: '用量提醒',
+      usageMeterSection: '用量',
+      usageMeter: '用量',
       usageMeterDesc: '按固定周期统计全部项目的用量。系统按时间比例算出此刻「最多该用多少」，实际超出时提醒一次，用尽再提醒一次。额度留空即关闭。',
       usageMeterAnchor: '起始日期',
       usageMeterAnchorDesc: '周期从这天的 0 点开始，按服务端本地时区计算',
@@ -3122,7 +3122,7 @@ export default {
       usageMeterMetric: '监控指标',
       usageMeterMetricDesc: '切换指标会清空额度：token、credit 与费用的量纲不同，不能互相换算',
       usageMeterQuota: '额度',
-      usageMeterQuotaDesc: '一个完整周期允许的用量，填 0 或留空即关闭用量提醒',
+      usageMeterQuotaDesc: '一个完整周期允许的用量，填 0 或留空即关闭',
       usageMeterMetricTokens: 'Token',
       usageMeterMetricCredit: 'Credit',
       usageMeterMetricCost: '费用（USD）',

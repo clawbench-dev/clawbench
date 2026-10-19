@@ -24,8 +24,8 @@
         <span v-if="state === 'full'" class="usage-cap"></span>
       </span>
       <span class="usage-text">
-        <span class="usage-used">{{ fmt(actual) }}</span>
-        <span class="usage-quota">/ {{ fmt(quota) }}</span>
+        <span class="usage-used">{{ fmtCompact(actual) }}</span>
+        <span class="usage-quota">/ {{ fmtCompact(quota) }}</span>
       </span>
     </button>
 
@@ -176,6 +176,12 @@ const points = computed(() => props.status.series ?? [])
 
 function fmt(v: number): string {
   return formatUsageMeterValue(metric.value, v, { compact: false })
+}
+
+// The capsule has a fixed width budget: K/M/B with one decimal instead of the
+// full amount. The popover body keeps the exact figure (see `fmt`).
+function fmtCompact(v: number): string {
+  return formatUsageMeterValue(metric.value, v, { compact: true })
 }
 
 const badgeText = computed(() => {

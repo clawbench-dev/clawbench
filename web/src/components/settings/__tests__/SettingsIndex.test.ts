@@ -21,7 +21,7 @@ const i18n = createI18n({
           rag: '会话搜索',
           portForward: '端口映射',
           notification: '消息通知',
-          usageMeter: '用量提醒',
+          usageMeter: '用量',
           security: '安全',
           debug: '调试',
           about: '关于',
@@ -79,7 +79,7 @@ describe('SettingsIndex', () => {
     expect(labels).toContain('文件')
     expect(labels).toContain('聊天')
     expect(labels).toContain('端口映射')
-    expect(labels).toContain('用量提醒')
+    expect(labels).toContain('用量')
     expect(labels).toContain('安全')
     expect(labels).toContain('调试')
     expect(labels).toContain('关于')
@@ -101,7 +101,7 @@ describe('SettingsIndex', () => {
     const perCard = wrapper.findAll('.settings-card').map(card =>
       card.findAll('.settings-index__row').length,
     )
-    // 通知与安全 now holds three rows: 推送通知, 用量提醒, 安全. The usage
+    // 通知与安全 now holds three rows: 推送通知, 用量, 安全. The usage
     // meter sits beside push notifications rather than inside that category.
     expect(perCard).toEqual([3, 7, 3, 3, 2])
     expect(perCard.reduce((a, b) => a + b, 0)).toBe(18)
