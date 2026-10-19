@@ -831,10 +831,25 @@ async function promptGoToLine(editor, currentLine, totalLines) {
         })
         return
     }
+    // The prompt is async; the editor can be gone by the time it resolves
+    // (project switch rebuilds the view). Nothing to jump in that case.
+    if (view.value !== editor) return
     // Same ordering as onScrollToLine: cancel a pending scroll restore before
     // moving, so FileViewer cannot override the target we just jumped to.
     window.dispatchEvent(new CustomEvent('cancel-scroll-restore'))
     scrollToLine(target)
+    // Move the caret to the target line WITHOUT scrolling it into view: the
+    // scroll position is already set by scrollToLine (centered), and letting
+    // CodeMirror scroll would snap the target to the top edge.
+    //
+    // The caret is not cosmetic here. openGoToLine derives both the pre-filled
+    // value and the base for "+N"/"-N" from `selection.main.head`, so leaving it
+    // behind makes the next Ctrl+G pre-fill the old line and makes a relative
+    // offset resolve from the wrong place.
+    editor.dispatch({
+        selection: { anchor: editor.state.doc.line(target).from },
+        scrollIntoView: false,
+    })
     // focus() uses preventScroll, so restoring the caret does not undo the jump.
     editor.focus()
 }

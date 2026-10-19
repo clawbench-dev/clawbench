@@ -808,6 +808,45 @@ describe('CodeMirrorViewer — go to line (Ctrl+G)', () => {
     wrapper.unmount()
   })
 
+  it('moves the caret to the target so the next Ctrl+G starts from there', async () => {
+    // The caret is the base for both the pre-filled value and "+N"/"-N". Leaving
+    // it behind made a second Ctrl+G pre-fill line 1 and made "+5" resolve from
+    // line 1 instead of the line just jumped to.
+    dialogMocks.prompt.mockResolvedValueOnce('20').mockResolvedValueOnce('+5')
+    const wrapper = mountForJump()
+    await sleep(80)
+    const view = wrapper.vm.getView()
+    pressCtrlG(view)
+    await sleep(80)
+    expect(view.state.doc.lineAt(view.state.selection.main.head).number).toBe(20)
+
+    pressCtrlG(view)
+    await sleep(80)
+    expect(dialogMocks.prompt.mock.calls[1][1]).toMatchObject({ value: '20' })
+    // +5 from line 20, not from line 1.
+    expect(flashedLineText()).toBe('L25')
+    wrapper.unmount()
+  })
+
+  it('does not scroll the caret into view on jump', async () => {
+    // scrollToLine centres the target; a scrollIntoView dispatch would snap it
+    // to the top edge instead. Pin the option, not just the selection effect.
+    dialogMocks.prompt.mockResolvedValue('20')
+    const wrapper = mountForJump()
+    await sleep(80)
+    const view = wrapper.vm.getView()
+    const dispatchSpy = vi.spyOn(view, 'dispatch')
+    pressCtrlG(view)
+    await sleep(80)
+    const selectionTx = dispatchSpy.mock.calls
+      .map(([tr]) => tr)
+      .find(tr => tr && typeof tr === 'object' && 'selection' in tr && tr.selection)
+    expect(selectionTx).toBeTruthy()
+    expect(selectionTx.scrollIntoView).toBe(false)
+    dispatchSpy.mockRestore()
+    wrapper.unmount()
+  })
+
   it('no longer binds Ctrl+G to next-match', async () => {
     // Regression guard for the key reassignment: with a search query active,
     // Ctrl+G must open the go-to-line prompt rather than stepping the match.
