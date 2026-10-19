@@ -160,7 +160,8 @@ func probeOneBackendForMCP(t *testing.T, ctx context.Context, b mcpProbeBackend,
 	controlSetup := startMCPProbe(t, ctx, b)
 	obs.AdvertisedHTTP, obs.AdvertisedSSE, obs.AdvertisedACP = logMCPCapabilities(t, controlSetup.extProbeSetup)
 
-	controlID, controlErr := newProbeSession(t, ctx, controlSetup.extProbeSetup, []acp.McpServer{})
+	workDir := t.TempDir()
+	controlID, controlErr := newProbeSession(t, ctx, controlSetup.extProbeSetup, workDir, []acp.McpServer{})
 	if controlErr == nil {
 		obs.ControlSawTool, _ = runMCPProbeTurn(t, ctx, controlSetup.extProbeSetup, controlID, "control")
 	} else {
@@ -174,7 +175,7 @@ func probeOneBackendForMCP(t *testing.T, ctx context.Context, b mcpProbeBackend,
 	defer probeSetup.kill()
 
 	server := probeStdioServer(nodePath, serverScript)
-	probeID, sessionErr := newProbeSession(t, ctx, probeSetup.extProbeSetup, []acp.McpServer{server})
+	probeID, sessionErr := newProbeSession(t, ctx, probeSetup.extProbeSetup, workDir, []acp.McpServer{server})
 	if sessionErr != nil {
 		t.Logf("Q2 RESULT[%s]: session/new FAILED", b.ID)
 		// A sign-in gate fires BEFORE the MCP field is ever looked at, so it
@@ -419,14 +420,21 @@ func logMCPCapabilities(t *testing.T, setup *extProbeSetup) (http, sse, acpCap b
 
 // newProbeSession opens a session on the probe connection. Returns ok=false when
 // the agent refuses (some agents allow only one session per process).
-func newProbeSession(t *testing.T, ctx context.Context, setup *extProbeSetup, servers []acp.McpServer) (string, error) {
+//
+// workDir must be a scratch directory, NOT the repo. Several agents persist
+// project-scoped state next to the session cwd: qoder wrote
+// `<cwd>/.qoder/settings.local.json` containing allow-rules for the probe MCP
+// server, and zcode created `<cwd>/.zcode/acp/sandbox.json`. Pointing cwd at
+// internal/ai/ therefore dirtied the working tree on every run. A temp dir also
+// strengthens the control group: no project-level MCP config can exist there.
+func newProbeSession(t *testing.T, ctx context.Context, setup *extProbeSetup, workDir string, servers []acp.McpServer) (string, error) {
 	t.Helper()
 
 	newCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
 
 	resp, err := setup.conn.NewSession(newCtx, acp.NewSessionRequest{
-		Cwd:        acpTestWorkDir(),
+		Cwd:        workDir,
 		McpServers: servers,
 	})
 	if err != nil {

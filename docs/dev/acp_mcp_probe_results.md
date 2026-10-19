@@ -119,6 +119,12 @@ MCP_PROBE_WARMUP_SECONDS=20 MCP_PROBE_BACKENDS=hermes go test -tags integration 
 ```
 
 探针会在 agent 的本地状态里留下会话记录（`~/.claude/projects/`、`~/.codex/sessions/` 等），
-**不会**写入任何 MCP 配置文件。hermes 会把探针 server 名缓存到
-`~/.hermes/cache/mcp_schema_cache.json`，探针用每次运行唯一的 server 名避免污染下一轮的对照组；
-清理时删掉所有以 `clawbench-probe` 开头的键即可。
+**不会**写入任何 MCP 配置文件。
+
+会话的 `cwd` 用 `t.TempDir()` 而不是仓库目录：qoder 会把项目级权限白名单写进
+`<cwd>/.qoder/settings.local.json`（内容是探针 MCP server 的 allow 规则），zcode 会建
+`<cwd>/.zcode/acp/sandbox.json` —— 早先版本指向 `internal/ai/` 时每次运行都会弄脏工作区。
+临时目录同时加强了对照组：那里不可能存在项目级 MCP 配置。
+
+hermes 会把探针 server 名缓存到 `~/.hermes/cache/mcp_schema_cache.json`，探针用每次运行
+唯一的 server 名避免污染下一轮的对照组；清理时删掉所有以 `clawbench-probe` 开头的键即可。
