@@ -33,8 +33,17 @@ vi.mock('@/i18n', () => ({
         if (key === 'time.daysAgo') return `${params?.count}d ago`
         if (key === 'time.daysFromNow') return `${params?.count}d from now`
         if (key === 'cron.weekdayNames') return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+        if (key === 'time.today') return 'Today'
+        if (key === 'time.yesterday') return 'Yesterday'
+        if (key === 'time.monthDay') return `${params?.month}/${params?.day}`
+        if (key === 'time.yearMonthDay') return `${params?.year}/${params?.month}/${params?.day}`
         return key
       },
+      // Array-typed messages (`cron.weekdayNames`) come back through `t` in
+      // this mock, which is what the REAL `t` does for a plain-JS message
+      // table. In the built app those arrays are compiled to message ASTs, so
+      // anything reading one must not assume a string[] — see formatDayLabel,
+      // which uses Intl instead.
       locale: { value: 'en' },
     },
   },
@@ -50,6 +59,10 @@ import {
   formatDateTime,
   formatDateTimeWithYear,
   stripMarkdownPreview,
+  formatClockTime,
+  formatDayLabel,
+  formatFullTimestamp,
+  startOfLocalDay,
 } from '@/utils/format.ts'
 
 describe('formatDuration', () => {
@@ -387,5 +400,97 @@ describe('statusLabel', () => {
 
   it('returns empty string for empty status', () => {
     expect(statusLabel('')).toBe('')
+  })
+})
+
+describe('formatClockTime', () => {
+  it('renders a zero-padded 24-hour clock', () => {
+    // Local constructor on purpose: the formatter reads local time, so an ISO
+    // string with a Z would make the expectation depend on the test machine's
+    // timezone.
+    expect(formatClockTime(new Date(2026, 9, 19, 9, 5))).toBe('09:05')
+    expect(formatClockTime(new Date(2026, 9, 19, 14, 32))).toBe('14:32')
+    expect(formatClockTime(new Date(2026, 9, 19, 0, 0))).toBe('00:00')
+  })
+
+  it('stays 24-hour so the gutter never needs an AM/PM suffix', () => {
+    // A 12-hour "2:32 PM" would widen the ~38px column and break the vertical
+    // scan the gutter exists for. Pin the absence of the suffix.
+    const s = formatClockTime(new Date(2026, 9, 19, 14, 32))
+    expect(s).not.toMatch(/[AP]M/i)
+    expect(s).toHaveLength(5)
+  })
+
+  it('returns empty for missing or invalid input', () => {
+    expect(formatClockTime('')).toBe('')
+    expect(formatClockTime(null)).toBe('')
+    expect(formatClockTime('not-a-date')).toBe('')
+    // Go's zero time.Time must not render as a year-1 clock.
+    expect(formatClockTime('0001-01-01T00:00:00Z')).toBe('')
+  })
+
+  it('accepts an ISO string', () => {
+    const d = new Date(2026, 9, 19, 23, 30)
+    expect(formatClockTime(d.toISOString())).toBe('23:30')
+  })
+})
+
+describe('formatDayLabel', () => {
+  const daysAgo = (n: number) => {
+    const d = new Date()
+    d.setDate(d.getDate() - n)
+    return d
+  }
+
+  it('labels today and yesterday by name', () => {
+    expect(formatDayLabel(daysAgo(0))).toBe('Today')
+    expect(formatDayLabel(daysAgo(1))).toBe('Yesterday')
+  })
+
+  it('uses the weekday for the rest of the week', () => {
+    const d = daysAgo(3)
+    const names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+    expect(formatDayLabel(d)).toBe(names[d.getDay()])
+  })
+
+  it('falls back to a date after a week', () => {
+    const d = daysAgo(10)
+    expect(formatDayLabel(d)).toBe(`${d.getMonth() + 1}/${d.getDate()}`)
+  })
+
+  it('adds the year for a previous year', () => {
+    const d = new Date(new Date().getFullYear() - 1, 2, 7, 12, 0)
+    expect(formatDayLabel(d)).toBe(`${d.getFullYear()}/3/7`)
+  })
+
+  it('does not shift the bucket across midnight', () => {
+    // 23:59 and 00:01 are different buckets — the whole grouping depends on
+    // local midnight, not on a UTC slice of the ISO string (which would put a
+    // 23:30 event in the NEXT day for UTC+8).
+    const late = new Date(2026, 9, 18, 23, 59)
+    const early = new Date(2026, 9, 19, 0, 1)
+    expect(startOfLocalDay(late)).not.toBe(startOfLocalDay(early))
+    expect(startOfLocalDay(late)).toBe(new Date(2026, 9, 18).getTime())
+  })
+
+  it('returns empty for missing or invalid input', () => {
+    expect(formatDayLabel('')).toBe('')
+    expect(formatDayLabel(null)).toBe('')
+    expect(formatDayLabel('nope')).toBe('')
+  })
+})
+
+describe('formatFullTimestamp', () => {
+  it('renders an unabbreviated local timestamp', () => {
+    expect(formatFullTimestamp(new Date(2026, 9, 19, 14, 32, 5))).toBe('2026-10-19 14:32:05')
+  })
+
+  it('zero-pads every component', () => {
+    expect(formatFullTimestamp(new Date(2026, 0, 2, 3, 4, 5))).toBe('2026-01-02 03:04:05')
+  })
+
+  it('returns empty for missing or invalid input', () => {
+    expect(formatFullTimestamp('')).toBe('')
+    expect(formatFullTimestamp('nope')).toBe('')
   })
 })

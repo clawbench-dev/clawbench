@@ -2315,6 +2315,13 @@ export default {
     hoursFromNow: '{count} hr from now',
     daysAgo: '{count} days ago',
     daysFromNow: '{count} days from now',
+    // Day headers of the grouped timeline (see formatDayLabel in
+    // utils/format.ts). Rows show only a clock, so the date is spelled out
+    // exactly once; the last week uses the weekday name instead.
+    today: 'Today',
+    yesterday: 'Yesterday',
+    monthDay: '{month}/{day}',
+    yearMonthDay: '{year}/{month}/{day}',
   },
   cron: {
     everyMinutes: 'Every {count} min',

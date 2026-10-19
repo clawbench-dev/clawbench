@@ -100,47 +100,78 @@
       </div>
 
       <template v-else>
-        <div
-          v-for="n in items"
-          :key="n.id"
-          class="notif-card"
-          :class="{ 'is-missing': n.sourceMissing }"
-          :data-notif-id="n.id"
-          @click="onOpen(n)"
+        <!-- Grouped timeline: one bucket per local calendar day, rows carry
+             only a clock. The date is spelled out exactly once, in the sticky
+             header — repeating "10-19 14:32" on every row is what made the
+             old flat list unscannable. -->
+        <section
+          v-for="group in dayGroups"
+          :key="group.key"
+          class="day-group"
+          :data-day="group.key"
         >
-          <div class="nc-header">
-            <component :is="kindIcon(n)" class="nc-icon" :size="16" />
-            <span class="nc-title">{{ n.title || fallbackTitle(n) }}</span>
-            <span class="nc-time">{{ formatTime(n.createdAt) }}</span>
+          <div class="day-head">
+            <span class="day-label">{{ group.label }}</span>
+            <span class="day-rule"></span>
+            <span class="day-count">{{ t('notifications.count', { n: group.items.length }) }}</span>
           </div>
-          <div v-if="n.body" class="nc-body">{{ n.body }}</div>
-          <div class="nc-meta">
-            <span class="evt" :class="eventTone(n)">
-              <component :is="eventIcon(n)" :size="11" />
-              {{ eventLabel(n) }}
-            </span>
-            <span v-if="n.sourceMissing" class="nc-gone" :title="t('notifications.sourceDeletedHint')">
-              <Unlink :size="11" />
-              {{ t('notifications.sourceDeleted') }}
-            </span>
-            <!-- Only OTHER projects are named, and the name is pinned to the
-                 right edge (see .nc-proj). A row from the project you are
-                 already in needs no label: the absence of a name is the
-                 signal, and repeating your own project on every row is noise.
-                 The tooltip spells out the "clicking switches projects"
-                 consequence, so the row itself stays plain.
-                 Placed AFTER the source-deleted chip so it is the rightmost
-                 element in every combination. -->
-            <span
-              v-if="isExternalProject(n)"
-              class="nc-proj"
-              :title="t('notifications.externalProjectTip', { name: projectName(n.projectPath) })"
-            >
-              <Folder :size="11" />
-              {{ projectName(n.projectPath) }}
-            </span>
+
+          <div
+            v-for="n in group.items"
+            :key="n.id"
+            class="notif-card"
+            :class="['tone-' + eventTone(n), { 'is-missing': n.sourceMissing }]"
+            :data-notif-id="n.id"
+            :title="formatFullTimestamp(n.createdAt)"
+            @click="onOpen(n)"
+          >
+            <!-- The rail + node live INSIDE the card's row wrapper so a hovered
+                 row can light up its own segment without touching neighbours. -->
+            <div class="nc-gutter">
+              <span class="nc-time">{{ formatClockTime(n.createdAt) }}</span>
+              <span class="nc-rail"><span class="nc-node">
+                <component :is="kindIcon(n)" :size="11" />
+              </span></span>
+            </div>
+
+            <div class="nc-main">
+              <div class="nc-header">
+                <span class="nc-kind"><component :is="kindIcon(n)" :size="13" /></span>
+                <span class="nc-title">{{ n.title || fallbackTitle(n) }}</span>
+                <!-- Narrow panel: the gutter is dropped and the clock returns
+                     to the header. Hidden at full width (the gutter owns it). -->
+                <span class="nc-time-inline">{{ formatClockTime(n.createdAt) }}</span>
+              </div>
+              <div v-if="n.body" class="nc-body">{{ n.body }}</div>
+              <div class="nc-meta">
+                <span class="evt" :class="eventTone(n)">
+                  <component :is="eventIcon(n)" :size="11" />
+                  {{ eventLabel(n) }}
+                </span>
+                <span v-if="n.sourceMissing" class="nc-gone" :title="t('notifications.sourceDeletedHint')">
+                  <Unlink :size="11" />
+                  {{ t('notifications.sourceDeleted') }}
+                </span>
+                <!-- Only OTHER projects are named, and the name is pinned to the
+                     right edge (see .nc-proj). A row from the project you are
+                     already in needs no label: the absence of a name is the
+                     signal, and repeating your own project on every row is noise.
+                     The tooltip spells out the "clicking switches projects"
+                     consequence, so the row itself stays plain.
+                     Placed AFTER the source-deleted chip so it is the rightmost
+                     element in every combination. -->
+                <span
+                  v-if="isExternalProject(n)"
+                  class="nc-proj"
+                  :title="t('notifications.externalProjectTip', { name: projectName(n.projectPath) })"
+                >
+                  <Folder :size="11" />
+                  {{ projectName(n.projectPath) }}
+                </span>
+              </div>
+            </div>
           </div>
-        </div>
+        </section>
 
         <button v-if="hasMore" class="load-more" :disabled="loadingMore" @click="onLoadMore">
           {{ loadingMore ? t('notifications.loading') : t('notifications.loadMore') }}
@@ -164,7 +195,7 @@ import { useNotifications, ALL_PROJECTS } from '@/composables/useNotifications'
 import { useToast } from '@/composables/useToast'
 import { useDialog } from '@/composables/useDialog'
 import { store } from '@/stores/app'
-import { formatDateTime } from '@/utils/format'
+import { formatClockTime, formatDayLabel, formatFullTimestamp, startOfLocalDay } from '@/utils/format'
 import { normalizeSlashes, toProjectRelative } from '@/utils/path'
 import type { NotificationItem, NotificationKind, NotificationRange } from '@/utils/notificationsApi'
 
@@ -217,6 +248,32 @@ const projectSelectOptions = computed<MenuSelectOption[]>(() => [
   { value: '__all__', label: `${t('notifications.projectFilter')}: ${t('notifications.all')}` },
   ...projectMenuItems.value.map(i => ({ value: i.value, label: i.name })),
 ])
+
+/**
+ * Rows bucketed by LOCAL calendar day, newest day first.
+ *
+ * The server returns the log in descending `created_at` order, so a single
+ * pass suffices — a Map would lose that order and a sort would re-derive what
+ * the query already guarantees. The key is local midnight (not a `YYYY-MM-DD`
+ * slice of the ISO string, which is UTC and would put a 23:30 event in the
+ * next day for UTC+8 users).
+ *
+ * One label per bucket, computed here rather than per row: every row in a
+ * bucket shares it, and `formatDayLabel` does a date-diff + weekday lookup.
+ */
+const dayGroups = computed(() => {
+  const groups: { key: number; label: string; items: NotificationItem[] }[] = []
+  for (const n of items.value) {
+    const key = startOfLocalDay(n.createdAt)
+    let group = groups[groups.length - 1]
+    if (!group || group.key !== key) {
+      group = { key, label: formatDayLabel(n.createdAt), items: [] }
+      groups.push(group)
+    }
+    group.items.push(n)
+  }
+  return groups
+})
 
 const kindOptions = computed<MenuSelectOption[]>(() => [
   { value: '__all__', label: `${t('notifications.kindFilter')}: ${t('notifications.all')}` },
@@ -382,10 +439,6 @@ function fallbackTitle(n: NotificationItem): string {
   return t('notifications.kind.session')
 }
 
-function formatTime(iso: string): string {
-  return iso ? formatDateTime(iso) : ''
-}
-
 /**
  * Open a notification's source.
  *
@@ -545,10 +598,17 @@ function forgeTargetFromItemKey(key: string) {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--space-4);
+  /* No top padding: the sticky day header would stick BELOW it, leaving an
+     unpainted band above through which the previous card scrolls into view.
+     The first header's own top padding provides the inset instead. */
+  padding: 0 var(--space-6) var(--space-9);
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  /* The panel can be dragged narrow (the splitter goes to 320px) and is the
+     whole screen on a phone. The narrow fallback below is CONTAINER-relative
+     on purpose: on a wide screen the panel is still narrow, so a viewport
+     @media query would answer the wrong question. */
+  container-type: inline-size;
 }
 
 .notif-state {
@@ -565,37 +625,174 @@ function forgeTargetFromItemKey(key: string) {
 .notif-state-hint { font-size: var(--font-size-sm); }
 .notif-error { color: var(--color-red); }
 
-/* Card — mirrors TaskListPage's .task-item. */
+/* ── Day bucket ──────────────────────────────────────────────────────────
+ * The date is spelled out ONCE per bucket, in a sticky header, and rows carry
+ * only a clock. That is the whole point of the grouping: a flat list repeating
+ * "10-19 14:32" on every row cannot be scanned vertically. */
+.day-group {
+  display: flex;
+  flex-direction: column;
+  /* Same flex-item trap as the cards (see .notif-card): without this a long
+     log compresses the buckets instead of scrolling the body. */
+  flex-shrink: 0;
+}
+.day-group + .day-group { margin-top: var(--space-2); }
+
+.day-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  /* The body has no top padding (see .notif-body): this header's own padding is
+     what separates it from the header bar above, and its opaque background has
+     to reach the very top of the scrollport or the row it is covering would
+     peek through as it scrolls under. */
+  padding: var(--space-4) 0 var(--space-3);
+  background: var(--bg-primary);
+}
+.day-label {
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-secondary);
+  letter-spacing: .04em;
+  white-space: nowrap;
+}
+.day-rule {
+  flex: 1;
+  height: 1px;
+  background: var(--border-color);
+}
+.day-count {
+  font-size: var(--font-size-2xs);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ── Timeline row ──────────────────────────────────────────────────────────
+ * [clock] [rail + node] [card]. The card box is `.nc-main`, NOT the row: the
+ * row also owns the gutter, and a border around the gutter would draw the
+ * clock inside the card. */
 .notif-card {
   position: relative;
+  display: grid;
+  /* gutter (auto) then card (1fr) — the gutter sizes to its content so the
+     clock column can shrink away at the narrow breakpoint. */
+  grid-template-columns: auto 1fr;
+  column-gap: 0;
+  align-items: start;
+  padding-bottom: var(--space-4);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* Gutter = clock over rail. `align-self: stretch` makes the rail run the full
+ * height of the row so consecutive rows form one continuous line. */
+.nc-gutter {
+  display: flex;
+  align-items: flex-start;
+  align-self: stretch;
+  min-height: 0;
+}
+.nc-time {
+  width: 38px;
+  flex-shrink: 0;
+  padding-top: 9px;
+  font-size: var(--font-size-2xs);
+  line-height: 1;
+  /* NOT --text-hint: at 10px on a white card that is ~2.6:1. The clock is
+     load-bearing information, so it clears the muted tier. */
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .02em;
+  text-align: right;
+  white-space: nowrap;
+}
+.nc-rail {
+  position: relative;
+  width: 26px;
+  flex-shrink: 0;
+  align-self: stretch;
+  display: flex;
+  justify-content: center;
+}
+/* Drawn per row (not once per bucket) so a hovered row can light up its own
+   segment without touching its neighbours. `bottom` reaches into the row's
+   padding so the line stays continuous across the gap. */
+.nc-rail::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: calc(-1 * var(--space-4));
+  width: 1px;
+  background: var(--border-color);
+  transition: background var(--duration-base) ease;
+}
+/* Start at the first node, stop at the last: a bucket's rail must not run off
+   into the header above or the next bucket below. */
+.day-head + .notif-card .nc-rail::before { top: 16px; }
+.day-group > .notif-card:last-child .nc-rail::before { bottom: auto; height: 16px; }
+/* A single-event day has nothing to connect — no rail at all. */
+.day-head + .notif-card:last-child .nc-rail::before { display: none; }
+
+.nc-node {
+  position: relative;
+  z-index: 1;
+  width: 20px;
+  height: 20px;
+  margin-top: 6px;
+  border-radius: var(--radius-full);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--tone);
+  background: color-mix(in srgb, var(--tone) 13%, var(--bg-primary));
+  border: 1px solid color-mix(in srgb, var(--tone) 45%, transparent);
+  transition: transform var(--duration-base) ease, box-shadow var(--duration-base) ease;
+}
+@media (hover: hover) {
+  .notif-card:hover .nc-node {
+    transform: scale(1.14);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--tone) 12%, transparent);
+  }
+  .notif-card:hover .nc-rail::before {
+    background: color-mix(in srgb, var(--tone) 40%, var(--border-color));
+  }
+}
+
+/* One variable feeds the node, the rail and the hovered card edge. The tones
+   mirror the `.evt.*` status colours below so a row reads as one colour. */
+.notif-card.tone-success { --tone: var(--color-green); }
+.notif-card.tone-danger { --tone: var(--color-red); }
+.notif-card.tone-warning { --tone: var(--color-orange); }
+.notif-card.tone-info { --tone: var(--color-info); }
+.notif-card.tone-purple { --tone: var(--color-purple); }
+
+/* ── Card ──────────────────────────────────────────────────────────────── */
+.nc-main {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-  padding: var(--space-5);
+  padding: var(--space-5) var(--space-5) var(--space-4);
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: 0;
-  cursor: pointer;
-  transition: all var(--duration-slow) ease;
-  overflow: hidden;
-  /* .notif-body is a flex COLUMN (so the empty state can centre with flex:1),
-     which makes each card a flex item with the default flex-shrink:1. Without
-     this, a list taller than the panel gets COMPRESSED to fit — every card
-     collapsed to a ~22px sliver instead of the body scrolling. Measured with
-     31 rows: scrollHeight 938 vs clientHeight 670, card height 22 (should be
-     ~74-98). TaskListPage avoids this only because its scroll container is a
-     plain block and the flex column lives on an inner element. */
-  flex-shrink: 0;
+  min-width: 0;
+  transition: background var(--duration-base) ease, border-color var(--duration-base) ease,
+    box-shadow var(--duration-base) ease;
 }
 @media (hover: hover) {
-  .notif-card:hover {
-    border-color: var(--accent-color);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  .notif-card:hover .nc-main {
+    border-color: color-mix(in srgb, var(--tone) 55%, var(--border-color));
+    background: color-mix(in srgb, var(--tone) 4%, var(--bg-secondary));
   }
 }
-.notif-card:active { background: var(--bg-tertiary); }
+.notif-card:active .nc-main { background: var(--bg-tertiary); }
 /* A row whose source is gone is still readable, just dimmed. */
-.notif-card.is-missing { opacity: var(--opacity-soft); }
+.notif-card.is-missing .nc-main { opacity: var(--opacity-soft); }
 
 .nc-header {
   display: flex;
@@ -603,21 +800,26 @@ function forgeTargetFromItemKey(key: string) {
   gap: var(--space-3);
   min-width: 0;
 }
-.nc-icon { flex-shrink: 0; color: var(--text-secondary); }
+/* The kind glyph moved to the timeline node; it comes back here only when the
+   gutter is dropped (narrow panel). */
+.nc-kind { display: none; color: var(--text-muted); flex-shrink: 0; }
 .nc-title {
-  font-size: var(--font-size-lg);
+  font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
+  line-height: 1.35;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: 1;
   min-width: 0;
 }
-.nc-time {
+/* The clock in the card header — only rendered when the gutter is dropped. */
+.nc-time-inline {
+  display: none;
   flex-shrink: 0;
   font-size: var(--font-size-2xs);
-  color: var(--text-hint);
+  color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
 .nc-body {
@@ -636,6 +838,16 @@ function forgeTargetFromItemKey(key: string) {
   font-size: var(--font-size-xs);
   color: var(--text-muted);
   flex-wrap: wrap;
+}
+
+/* Narrow panel: the clock would leave ~210px for the text at the splitter's
+   320px minimum, so the gutter collapses and the clock returns to the card
+   header. Container query, not @media — see .notif-body. */
+@container (max-width: 380px) {
+  .nc-time { display: none; }
+  .nc-rail { width: 20px; }
+  .nc-time-inline { display: inline; }
+  .nc-kind { display: inline-flex; }
 }
 /* The project name on an OTHER-project row.
  *

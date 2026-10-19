@@ -2,6 +2,15 @@
 import i18n from '@/i18n'
 
 /**
+ * BCP-47 tag for Intl. The app's locale ids are two-letter ("zh" / "en"), and
+ * `new Intl.DateTimeFormat('zh')` already resolves, but spelling the region out
+ * keeps weekday wording stable across engines.
+ */
+function localeTag(): string {
+    return i18n.global.locale.value === 'zh' ? 'zh-CN' : 'en-US'
+}
+
+/**
  * Format a date as a friendly relative time.
  *
  * This is the ONE relative-time formatter for the app — every surface (chat meta
@@ -34,6 +43,81 @@ export function formatRelativeTime(date: string | Date | null | undefined): stri
     if (hours < 24) return i18n.global.t(future ? 'time.hoursFromNow' : 'time.hoursAgo', { count: hours })
     if (days < 7) return i18n.global.t(future ? 'time.daysFromNow' : 'time.daysAgo', { count: days })
     return d.toLocaleDateString(i18n.global.locale.value === 'zh' ? 'zh-CN' : 'en-US')
+}
+
+/**
+ * Clock time for a timeline gutter: "14:32".
+ *
+ * 24-hour in BOTH locales on purpose. The gutter is ~38px wide and the stamps
+ * stack vertically, so a 12-hour "2:32 PM" would either wrap or widen the
+ * column, and the AM/PM suffix would break the vertical scan the gutter exists
+ * for. The locale-dependent part (which day this is) lives in the day header —
+ * see formatDayLabel.
+ */
+export function formatClockTime(date: string | Date | null | undefined): string {
+    if (!date) return ''
+    const d = date instanceof Date ? date : new Date(date)
+    const ms = d.getTime()
+    if (!Number.isFinite(ms) || d.getFullYear() < 2000) return ''
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+/** Local midnight for a date — the grouping key for a day bucket. */
+export function startOfLocalDay(date: string | Date): number {
+    const d = date instanceof Date ? date : new Date(date)
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+}
+
+/**
+ * Human day label for a grouped timeline: 今天 / 昨天 / 周三 / 10月12日
+ * (Today / Yesterday / Wed / 10/12).
+ *
+ * Only the header spells the day out; every row inside the bucket shows just
+ * its clock. Returns '' for missing/invalid input so callers can skip the
+ * header instead of rendering "Invalid Date".
+ */
+export function formatDayLabel(date: string | Date | null | undefined): string {
+    if (!date) return ''
+    const d = date instanceof Date ? date : new Date(date)
+    const ms = d.getTime()
+    if (!Number.isFinite(ms) || d.getFullYear() < 2000) return ''
+    // Round, not floor: a DST day is 23 or 25 hours long, so a raw division
+    // would misreport yesterday as "today" twice a year.
+    const dayDiff = Math.round((startOfLocalDay(new Date()) - startOfLocalDay(d)) / 86400000)
+    if (dayDiff <= 0) return i18n.global.t('time.today')
+    if (dayDiff === 1) return i18n.global.t('time.yesterday')
+    if (dayDiff < 7) {
+        // Intl, not the `cron.weekdayNames` message: those arrays go through
+        // @intlify/unplugin-vue-i18n at build time and are compiled into message
+        // ASTs, so `tm()` returns a node object rather than a string[] (the app
+        // shipped "周{ \"t\": 0, \"b\": … }" as a day header). Intl also gets the
+        // locale's own convention right — "周日"/"Sun" for zh/en, and the right
+        // shape for any locale added later.
+        return new Intl.DateTimeFormat(localeTag(), { weekday: 'short' }).format(d)
+    }
+    if (d.getFullYear() === new Date().getFullYear()) {
+        return i18n.global.t('time.monthDay', { month: d.getMonth() + 1, day: d.getDate() })
+    }
+    return i18n.global.t('time.yearMonthDay', {
+        year: d.getFullYear(),
+        month: d.getMonth() + 1,
+        day: d.getDate(),
+    })
+}
+
+/**
+ * Unabbreviated timestamp for a `title` tooltip: "2026-10-19 14:32:05".
+ *
+ * The visible surfaces all abbreviate (clock in the gutter, day in the
+ * header), so the exact instant has to remain reachable somewhere.
+ */
+export function formatFullTimestamp(date: string | Date | null | undefined): string {
+    if (!date) return ''
+    const d = date instanceof Date ? date : new Date(date)
+    if (!Number.isFinite(d.getTime()) || d.getFullYear() < 2000) return ''
+    const p = (n: number) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ` +
+        `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
 }
 
 /** Format a date as a localized datetime string */

@@ -2308,6 +2308,12 @@ export default {
     hoursFromNow: '{count}小时后',
     daysAgo: '{count}天前',
     daysFromNow: '{count}天后',
+    // 分组时间轴的日期标题（见 utils/format.ts 的 formatDayLabel）。行内只显示
+    // 时钟，日期只在这里出现一次；最近 7 天用星期，更早才落到具体日期。
+    today: '今天',
+    yesterday: '昨天',
+    monthDay: '{month}月{day}日',
+    yearMonthDay: '{year}年{month}月{day}日',
   },
   cron: {
     everyMinutes: '每 {count} 分钟',
