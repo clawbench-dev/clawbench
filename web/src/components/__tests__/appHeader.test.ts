@@ -1220,6 +1220,50 @@ describe('AppHeader', () => {
     expect(label?.nextElementSibling?.textContent).toBe('main.go')
   })
 
+  it('wraps every label/value pair in a shared .seg-text box', () => {
+    // The wrapper is what keeps the two text runs on one baseline (see the
+    // .seg-text comment in AppHeader.vue). As plain siblings of the icon they
+    // were centred independently, which put the 10px CJK label ~2px above the
+    // 12px Latin value in the default font stack.
+    mockState.gitBranch = 'main'
+    mountAndTrack({ currentFileName: 'main.go', recentFilesAvailable: 3 })
+    const pairs: Array<[string, string]> = [
+      ['.project-switch-btn', '.project-name'],
+      ['.branch-badge', '.branch-name'],
+      ['.current-file-badge', '.current-file-name'],
+    ]
+    for (const [segSel, valueSel] of pairs) {
+      const seg = $(segSel)
+      expect(seg, segSel).toBeTruthy()
+      const pair = seg?.querySelector('.seg-text')
+      expect(pair, segSel).toBeTruthy()
+      // Both the label and the value live inside it, in that order.
+      const label = pair?.querySelector('.seg-label')
+      const value = pair?.querySelector(valueSel)
+      expect(label, segSel).toBeTruthy()
+      expect(value, segSel).toBeTruthy()
+      expect(label?.nextElementSibling).toBe(value)
+      // The icon stays a direct child: it is optically centred on its own,
+      // not baseline-aligned with the text.
+      expect(seg?.querySelector(':scope > svg, :scope > .lucide-stub'), segSel).toBeTruthy()
+    }
+  })
+
+  it('keeps the label/value pair on a shared baseline (source guard)', () => {
+    // jsdom has no layout, so the alignment itself cannot be observed. Pin the
+    // mechanism: the wrapper must baseline-align its children. Dropping the
+    // rule silently restores the bug (the two runs would go back to being
+    // centred independently).
+    const src = readWebFile('src/components/common/AppHeader.vue')
+    const rule = src.match(/\.seg-text\s*\{[^}]*\}/)?.[0] || ''
+    expect(rule).toContain('align-items: baseline')
+    expect(rule).toContain('display: inline-flex')
+    // The wrapper owns the label↔value gap; the segments keep their own gap
+    // only for icon↔text. Both must be the same step so the pair does not read
+    // as tighter or looser than the icon spacing.
+    expect(rule).toContain('gap: var(--space-3)')
+  })
+
   it('omits the file label in the empty state (value already reads "Recent files")', () => {
     mountAndTrack({ currentFileName: '', recentFilesAvailable: 3 })
     const badge = $('.current-file-badge')

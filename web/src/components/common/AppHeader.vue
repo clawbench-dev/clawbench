@@ -15,15 +15,19 @@
       <div class="project-dropdown-wrapper" ref="dropdownRef" :class="segmentClass('project', true)">
         <button class="project-switch-btn" @click="toggleDropdown" :title="t('appHeader.switchProject')">
           <Projector :size="12" />
-          <span class="seg-label">{{ t('appHeader.labels.project') }}</span>
-          <span class="project-name">{{ projectName }}</span>
+          <span class="seg-text">
+            <span class="seg-label">{{ t('appHeader.labels.project') }}</span>
+            <span class="project-name">{{ projectName }}</span>
+          </span>
         </button>
       </div>
       <div v-if="gitBranch" class="badge-capsule-divider"></div>
       <div v-if="gitBranch" class="branch-badge" :title="gitBranch" @click="toggleBranchDropdown" :class="segmentClass('branch', true)">
         <GitBranch :size="12" class="branch-icon" />
-        <span class="seg-label">{{ t('appHeader.labels.branch') }}</span>
-        <span class="branch-name">{{ gitBranch }}</span>
+        <span class="seg-text">
+          <span class="seg-label">{{ t('appHeader.labels.branch') }}</span>
+          <span class="branch-name">{{ gitBranch }}</span>
+        </span>
       </div>
       <div v-if="currentFileName || recentFilesAvailable > 0" class="badge-capsule-divider"></div>
       <button
@@ -37,9 +41,11 @@
         <FileText :size="12" class="file-icon" />
         <!-- Label only when a real file is open: the empty state already reads
              "Recent files", so a "File" label would duplicate it. -->
-        <span v-if="currentFileName" class="seg-label">{{ t('appHeader.labels.file') }}</span>
-        <span v-if="currentFileName" class="current-file-name">{{ currentFileName }}</span>
-        <span v-else class="current-file-name no-file-name">{{ t('appHeader.noFileOpen') }}</span>
+        <span class="seg-text">
+          <span v-if="currentFileName" class="seg-label">{{ t('appHeader.labels.file') }}</span>
+          <span v-if="currentFileName" class="current-file-name">{{ currentFileName }}</span>
+          <span v-else class="current-file-name no-file-name">{{ t('appHeader.noFileOpen') }}</span>
+        </span>
       </button>
     </div>
 
@@ -1240,6 +1246,29 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     flex: 0 1 auto;
     min-width: 0;
     max-width: 220px;
+}
+
+/* Label + value pair, laid out on a shared baseline.
+
+   Why a wrapper instead of two siblings: as siblings they were each centred
+   independently inside the 24px segment, so their ink only lined up when both
+   fonts happened to share the same ascent/descent split. The label is 10px CJK
+   and the value 12px Latin, and those two font families disagree — measured
+   ink centres were off by ~2px in the default stack (label high, value low),
+   which reads as "the label isn't vertically centred".
+
+   `align-items: baseline` aligns the two text baselines directly, so the pair
+   stays correct for any font pair (CJK vs Latin, bundled vs system, any user
+   font) without measuring anything. The wrapper is then centred as one box by
+   the segment's own `align-items: center`, and the icon keeps its own optical
+   centring. `min-width: 0` + `flex: 0 1 auto` keep the value's ellipsis
+   working: the pair shrinks as a unit instead of overflowing the capsule. */
+.seg-text {
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--space-3);
+    flex: 0 1 auto;
+    min-width: 0;
 }
 
 .project-switch-btn {
