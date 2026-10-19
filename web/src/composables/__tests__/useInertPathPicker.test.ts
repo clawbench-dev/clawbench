@@ -33,6 +33,17 @@ describe('deriveSearchQuery', () => {
     expect(deriveSearchQuery('src/main.go:42,90-91')).toBe('main.go')
   })
 
+  it('drops every line-reference spelling the annotation grammar accepts', () => {
+    // These used to survive the old hand-rolled regex, so the search looked for
+    // a file literally named `main.go:L42-L48` and found nothing. The grammar is
+    // now shared with the annotation parser (TRAILING_LINE_REF_RE).
+    expect(deriveSearchQuery('src/main.go:L42-L48')).toBe('main.go')
+    expect(deriveSearchQuery('src/main.go:42-L48')).toBe('main.go')
+    expect(deriveSearchQuery('src/main.go#L42-L48')).toBe('main.go')
+    expect(deriveSearchQuery('src/main.go#L10,L20-L30')).toBe('main.go')
+    expect(deriveSearchQuery('src/main.go:90-91, 309')).toBe('main.go')
+  })
+
   it('handles Windows separators', () => {
     expect(deriveSearchQuery('web\\src\\App.vue')).toBe('App.vue')
   })

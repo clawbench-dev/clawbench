@@ -31,6 +31,18 @@ export const LINE_TOKEN_SRC =
 /** Matches a trailing `:N,N-M,…` suffix; capture group 1 is the token list. */
 export const LINE_SUFFIX_RE = new RegExp(':(' + LINE_TOKEN_SRC + ')$', 'i')
 
+/**
+ * Matches a trailing line reference in EITHER spelling — `:42-48,90` (the
+ * annotation suffix) or `#L42-L48` (the hash form used by GitHub-style links
+ * and by code spans). Capture group 1 is the token list.
+ *
+ * Same grammar as LINE_SUFFIX_RE on purpose: the per-token `L` prefix, the
+ * `N-M` range and the comma list all have to be recognized. A narrower regex
+ * leaves `main.go:L42-L48` intact, and the filename search then looks for a
+ * file literally named `main.go:L42-L48` and finds nothing.
+ */
+export const TRAILING_LINE_REF_RE = new RegExp('[:#](' + LINE_TOKEN_SRC + ')$', 'i')
+
 /** Matches a bare token list (e.g. a `#L10-L20,309` hash fragment). */
 export const LINE_FRAGMENT_RE = new RegExp('^' + LINE_TOKEN_SRC + '$', 'i')
 
