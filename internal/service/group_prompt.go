@@ -295,9 +295,11 @@ func BuildCruiseConfirmPrompt(freeMode bool) string {
 	b.WriteString("所有不明确之处，请通过自主探索、实验、思考与讨论自行决定。\n")
 	b.WriteString("请评估：当前任务是否已经满足了用户最初的要求？\n")
 	if freeMode {
+		b.WriteString("若仍存在遗留工作没有完成，不要输出 <clawbench-goal-satisfied/>。\n")
 		b.WriteString("若确认已完成，输出 <clawbench-goal-satisfied/>；否则继续推进尚未完成的部分。\n")
 		b.WriteString("本轮只做表态，不要 @ 任何人。\n")
 	} else {
+		b.WriteString("若仍存在遗留工作没有完成（未改完的代码、未跑通的验证、未处理的报错、未回答的问题等），请先继续完成它们，不要输出 <clawbench-goal-satisfied/>。\n")
 		b.WriteString("若确认已完成：输出 <clawbench-goal-satisfied/>，**并在同一条回复里直接写出最终结论**（汇总各成员观点与你的判断，供用户阅读，不要再提问或点名）。\n")
 		b.WriteString("例外：若你上一条回复已经写出了完整的最终结论，本轮只需输出 <clawbench-goal-satisfied/> 并加一句确认（如「结论同上」），**不要重复展开**。\n")
 		b.WriteString("若尚未完成，照常点名下一批成员（<clawbench-mention targets=\"…\">）继续推进，不要输出 goal-satisfied。\n")
@@ -352,6 +354,7 @@ func BuildCruiseSingleConfirmPrompt() string {
 	b.WriteString("\n\n[自动巡航·完成确认] 当前没有新的用户消息，请不要向用户提问，也不要等待用户确认。\n")
 	b.WriteString("所有不明确之处，请通过自主探索、实验、思考自行决定。\n")
 	b.WriteString("请评估：当前任务是否已经满足了用户最初的要求？\n")
+	b.WriteString("若仍存在遗留工作没有完成（未改完的代码、未跑通的验证、未处理的报错、未回答的问题等），请先继续完成它们，不要输出 <clawbench-goal-satisfied/>。\n")
 	b.WriteString("若确认已完成：输出 <clawbench-goal-satisfied/>，并在同一条回复里直接写出最终结论（供用户阅读，不要再提问）。\n")
 	b.WriteString("例外：若你上一条回复已经写出了完整的最终结论，本轮只需输出 <clawbench-goal-satisfied/> 并加一句确认（如「结论同上」），不要重复展开。\n")
 	b.WriteString("若尚未完成：继续推进尚未完成的部分，不要输出 goal-satisfied。\n")

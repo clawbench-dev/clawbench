@@ -373,6 +373,14 @@ func TestBuildCruiseConfirmPrompt(t *testing.T) {
 	if !strings.Contains(host, "不要重复展开") {
 		t.Fatalf("host confirm prompt must forbid repeating the conclusion: %q", host)
 	}
+	// Both variants must tell the model to FINISH leftover work instead of
+	// declaring the goal met: a confirmation round is the last chance to act.
+	if !strings.Contains(host, "若仍存在遗留工作没有完成") {
+		t.Fatalf("host confirm prompt must require finishing leftover work: %q", host)
+	}
+	if !strings.Contains(free, "若仍存在遗留工作没有完成") {
+		t.Fatalf("free confirm prompt must require finishing leftover work: %q", free)
+	}
 	// The free variant stays a bare vote — no conclusion (no host to write one).
 	if strings.Contains(free, "最终结论") {
 		t.Fatalf("free confirm prompt must stay a bare vote: %q", free)
@@ -422,6 +430,9 @@ func TestBuildCruiseSingleConfirmPrompt(t *testing.T) {
 	}
 	if !strings.Contains(p, "不要重复展开") {
 		t.Fatalf("single-chat confirm prompt must forbid repeating the conclusion: %q", p)
+	}
+	if !strings.Contains(p, "若仍存在遗留工作没有完成") {
+		t.Fatalf("single-chat confirm prompt must require finishing leftover work: %q", p)
 	}
 	// Single chat has no members to route to, so it must NOT invite mentions.
 	if strings.Contains(p, "<clawbench-mention") {
