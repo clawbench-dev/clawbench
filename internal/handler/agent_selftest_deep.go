@@ -75,6 +75,17 @@ func runDeepSelfTest(ctx context.Context, agent *model.Agent, projectPath string
 		_ = service.HardDeleteSession(sessionID)
 	}()
 
+	// Nobody is watching this session: the turn runs from an HTTP request the
+	// user is waiting on, and a permission prompt would block until the 90s
+	// timeout and then report a cancellation — a false failure for an agent
+	// that is perfectly healthy. Auto-approve is the same choice the scheduler
+	// makes for unattended runs, and the prompt is a fixed one-liner, so the
+	// blast radius is the same as a scheduled task.
+	if err := service.UpdateSessionAutoApprove(sessionID, true); err != nil {
+		// Non-fatal: an agent that needs no permission still passes.
+		_ = err
+	}
+
 	// No summarize/recommend: this session is deleted immediately, so any extra
 	// LLM call would be pure waste.
 	req := service.BuildChatRequest(

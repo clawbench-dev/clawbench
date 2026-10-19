@@ -53,7 +53,7 @@ Auth、System、Config、Theme、Projects、Chat、Sessions、Queue、Events、G
 | `/cb-chatsearch` | `conversationProjectsList`、`ragSearch`、`ragMessage`、`ragSession`、`ragSessionSearch` |
 | `/cb-task` | `tasksList`、`tasksCreate`、`taskGet`、`taskUpdate`、`taskDelete`、`taskExecutions`、`agentsList`、`forgeBindingGet` |
 | `/cb-usage` | `conversationProjectsList`、`usageStats` |
-| `/cb-agent` | `agentsList`、`agentsCreate`、`agentsUpdate`、`agentsDelete` |
+| `/cb-agent` | `agentsList`、`agentsCreate`、`agentsUpdate`、`agentsDelete`、`agentsSelfTest`、`agentsSelfTestDeep` |
 | `/cb-user-guide` | 无 —— 手册是本地 Markdown 文件，AI 直接读盘，不走 HTTP API |
 
 `conversationProjectsList`（`GET /api/conversation-projects`）在两个命令里都排首位：它是 AI 解析"用户点名的另一个项目"的**唯一**手段——拿到确切路径后写进项目 Cookie，搜索与用量接口本身无需为跨项目做任何改动。它列出所有有对话历史的项目（含目录已删除的，`exists=false`），以便历史仍可检索。

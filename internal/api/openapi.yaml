@@ -4181,6 +4181,38 @@ paths:
         "200":
           description: 操作结果
 
+  /api/agents/{id}/self-test:
+    post:
+      tags: [Agents]
+      summary: 智能体配置自检（不发消息、不计费）
+      description: |
+        返回 `{agentId, ok, passed, failed, warned, checks[]}`，每项
+        `{key, status, detail}`，`status` 为 `ok`/`warn`/`fail`。只读持久化状态、
+        后端注册表与文件系统，不 spawn 进程。`ok` 仅在无 `fail` 时为 true；
+        `warn` 是「降级但可用」（如 ACP agent 首轮前尚未上报模型）。
+      operationId: agentsSelfTest
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: 自检结果
+
+  /api/agents/{id}/self-test-deep:
+    post:
+      tags: [Agents]
+      summary: 智能体深度自检（真实跑一轮，计费）
+      description: |
+        真实发送一条消息并等待回复，返回 `{ok, error?, deep, static}`；`deep` 含
+        `{reply, transport, stopReason, durationMs}`，后两者取自**落库的回合元数据**。
+        **消耗模型额度**：先跑静态自检，任一 `fail` 即返回 `ok:false` 不跑回合。
+        需要项目 Cookie（否则 `400 NoProjectSelected`）；一次性会话，结束即删除。
+      operationId: agentsSelfTestDeep
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: 深度自检结果
+
   /api/agents/reorder:
     put:
       tags: [Agents]

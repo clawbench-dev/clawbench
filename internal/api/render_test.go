@@ -90,11 +90,14 @@ func TestRenderCommand_CoversExpectedOperations(t *testing.T) {
 				"DELETE /api/agents",
 			},
 			// Agent management must not drag in unrelated operations that
-			// share the Agents tag (sub-resources, backend discovery) or any
-			// task endpoint.
+			// share the Agents tag (model refresh, rescan, backend discovery)
+			// or any task endpoint. The self-test routes ARE wanted, so this
+			// list names the excluded sub-resources concretely rather than
+			// matching the "/api/agents/{id}" prefix.
 			notWant: []string{
 				"GET /api/agents/{id}",
-				"POST /api/agents/{id}",
+				"refresh-models",
+				"POST /api/agents/rescan",
 				"GET /api/backends",
 				"POST /api/tasks",
 				"DELETE /api/tasks",
@@ -164,10 +167,14 @@ func TestRenderCommand_SizeBudget(t *testing.T) {
 		// deliberate, not drift.
 		CommandTask:  9700,
 		CommandUsage: 2000,
-		// The agent command renders four operations whose PATCH/POST bodies
-		// carry long field notes (name uniqueness, avatar, disabled,
-		// project_scope) plus the same GET /api/agents ACP-model-list note.
-		CommandAgent: 4800,
+		// The agent command renders six operations: the CRUD four carry long
+		// field notes (name uniqueness, avatar, disabled, project_scope, ACP
+		// command ownership) plus the GET /api/agents ACP-model-list note, and
+		// the two self-test routes were added so "create an agent" can be
+		// verified rather than merely asserted. Descriptions are kept terse;
+		// the behavioral rules live in the prompt template, not the spec.
+		// Measured at 5708 when the self-test routes joined.
+		CommandAgent: 5900,
 	}
 	for cmd, budget := range budgets {
 		out, err := RenderCommand(cmd)

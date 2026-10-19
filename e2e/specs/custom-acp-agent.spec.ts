@@ -158,6 +158,97 @@ test.describe('custom ACP agent', () => {
     expect(r.deletedStatus).toBe(200)
   })
 
+  test('the /cb-agent workflow: create, then verify with both self-tests', async ({ page }) => {
+    // This mirrors what the /cb-agent prompt instructs the AI to do after
+    // creating an agent: run the free configuration check, then the real-turn
+    // check. It is the end-to-end proof that "create a custom ACP agent and
+    // test it" works as one flow, not just as two independent endpoints.
+    const name = `Custom ACP Verify ${Date.now()}`
+
+    const result = await page.evaluate(async (agentName) => {
+      const json = async (url: string, init?: RequestInit) => {
+        const resp = await fetch(url, init)
+        return { ok: resp.ok, status: resp.status, body: await resp.json().catch(() => ({})) }
+      }
+      const send = (method: string, url: string, body?: unknown) =>
+        json(url, {
+          method,
+          headers: { 'Content-Type': 'application/json' },
+          body: body === undefined ? undefined : JSON.stringify(body),
+        })
+
+      const list = await json('/api/agents')
+      const mock = ((list.body.agents || []) as Array<{ id: string; acpCommand?: string }>)
+        .find(a => a.id === 'acp-mock')
+      if (!mock?.acpCommand) return { step: 'read-mock', ok: false }
+      const command = mock.acpCommand
+
+      const created = await send('POST', '/api/agents', { name: agentName, acp_command: command })
+      if (!created.ok) return { step: 'create', ok: false, created }
+      const agentId = (created.body as { id: string }).id
+
+      // Step 1: configuration check (free).
+      const staticCheck = await send('POST', `/api/agents/${encodeURIComponent(agentId)}/self-test`)
+      // Step 2: real turn (costs tokens) — the route the prompt says to use
+      // when the user asked to verify.
+      const deep = await send('POST', `/api/agents/${encodeURIComponent(agentId)}/self-test-deep`)
+
+      const deleted = await send('DELETE', '/api/agents', { id: agentId })
+
+      return {
+        step: 'done',
+        ok: true,
+        agentId,
+        staticStatus: staticCheck.status,
+        staticBody: staticCheck.body,
+        deepStatus: deep.status,
+        deepBody: deep.body,
+        deletedStatus: deleted.status,
+      }
+    }, name)
+
+    expect(result.ok, JSON.stringify(result)).toBe(true)
+    const r = result as {
+      agentId: string
+      staticStatus: number
+      staticBody: {
+        ok: boolean
+        passed: number
+        failed: number
+        warned: number
+        checks: Array<{ key: string; status: string; detail?: string }>
+      }
+      deepStatus: number
+      deepBody: {
+        ok: boolean
+        error?: string
+        deep?: { reply?: string; transport?: string; stopReason?: string }
+      }
+      deletedStatus: number
+    }
+
+    // Step 1: a brand-new agent whose command exists must pass the free check.
+    // `warn` is expected here (no models reported before the first turn) and
+    // must NOT be reported as a failure — that distinction is what keeps the
+    // result meaningful instead of crying wolf on every new agent.
+    expect(r.staticStatus).toBe(200)
+    expect(r.staticBody.failed, JSON.stringify(r.staticBody.checks)).toBe(0)
+    expect(r.staticBody.ok).toBe(true)
+    const models = r.staticBody.checks.find(c => c.key === 'models')
+    expect(models?.status).toBe('warn')
+
+    // Step 2: the real turn must have gone through ACP and finished normally.
+    expect(r.deepStatus).toBe(200)
+    expect(r.deepBody.ok, JSON.stringify(r.deepBody)).toBe(true)
+    expect(r.deepBody.deep?.reply).toBeTruthy()
+    expect(r.deepBody.deep?.transport).toBe('acp-stdio')
+    expect(r.deepBody.deep?.stopReason).toBe('end_turn')
+
+    // The throwaway session must not survive, or every verification would
+    // leave a conversation in the user's list.
+    expect(r.deletedStatus).toBe(200)
+  })
+
   test('rejects an empty command and a duplicate name', async ({ page }) => {
     const result = await page.evaluate(async () => {
       const post = async (body: unknown) => {

@@ -207,6 +207,75 @@ test.describe('agent self-test', () => {
     expect(result.afterCount).toBe(result.beforeCount)
   })
 
+  test('deep mode auto-approves permissions so an unattended turn cannot hang', async ({ page }) => {
+    // The mock requests approval before writing in every mode except
+    // bypass-permissions. Nobody is watching a self-test, so without
+    // auto-approve the turn parks until the 90s timeout and then reports a
+    // cancellation — a false failure for a healthy agent.
+    //
+    // Getting the agent into a permission-requesting mode takes two steps,
+    // because preferred_mode is validated against what the agent has actually
+    // advertised: run one ordinary turn first (which populates the capability
+    // registry), then pin the mode to "code". A fresh custom agent is used so
+    // the shared acp-mock's state cannot make this pass for the wrong reason.
+    const result = await page.evaluate(async () => {
+      const json = async (url: string, init?: RequestInit) => {
+        const resp = await fetch(url, init)
+        return { ok: resp.ok, status: resp.status, body: await resp.json().catch(() => ({})) }
+      }
+      const send = (method: string, url: string, body?: unknown) =>
+        json(url, {
+          method,
+          headers: { 'Content-Type': 'application/json' },
+          body: body === undefined ? undefined : JSON.stringify(body),
+        })
+
+      const list = await json('/api/agents')
+      const mock = ((list.body.agents || []) as Array<{ id: string; acpCommand?: string }>)
+        .find(a => a.id === 'acp-mock')
+      if (!mock?.acpCommand) return { step: 'read-mock', ok: false }
+
+      const created = await send('POST', '/api/agents', {
+        name: `Perm Self Test ${Date.now()}`,
+        acp_command: mock.acpCommand,
+      })
+      if (!created.ok) return { step: 'create', ok: false, created }
+      const agentId = (created.body as { id: string }).id
+
+      try {
+        // Warm the capability registry with one ordinary turn.
+        const session = await send('POST', '/api/ai/sessions', { agentId })
+        const sessionId = session.body.sessionId || session.body.id
+        await send('POST', '/api/ai/chat', { sessionId, message: 'warm up', agentId })
+        const deadline = Date.now() + 60000
+        while (Date.now() < deadline) {
+          const history = await json(`/api/ai/chat?session_id=${encodeURIComponent(sessionId)}`)
+          const msgs = (history.body.messages || []) as Array<{ role: string; streaming?: boolean }>
+          if (msgs.some(m => m.role === 'assistant' && !m.streaming)) break
+          await new Promise(r => setTimeout(r, 300))
+        }
+        await send('DELETE', `/api/ai/session/destroy?session_id=${encodeURIComponent(sessionId)}`)
+
+        const pinned = await send('PATCH', '/api/agents', { id: agentId, preferred_mode: 'code' })
+        if (!pinned.ok) return { step: 'pin-mode', ok: false, pinned }
+
+        const resp = await send('POST', `/api/agents/${encodeURIComponent(agentId)}/self-test-deep`)
+        return { step: 'done', ok: true, status: resp.status, body: resp.body }
+      } finally {
+        await send('DELETE', '/api/agents', { id: agentId })
+      }
+    })
+
+    expect(result.ok, JSON.stringify(result)).toBe(true)
+    const r = result as {
+      status: number
+      body: { ok: boolean; error?: string; deep?: { stopReason?: string } }
+    }
+    // Without auto-approve this reports a cancellation (or times out).
+    expect(r.body.ok, JSON.stringify(r.body)).toBe(true)
+    expect(r.body.deep?.stopReason).toBe('end_turn')
+  })
+
   test('deep mode refuses to run when the static checks fail', async ({ page }) => {
     // Running a 90s turn against an agent whose command does not exist would
     // burn the whole timeout to learn what LookPath already knows.

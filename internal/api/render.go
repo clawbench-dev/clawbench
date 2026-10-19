@@ -82,6 +82,12 @@ var commandOperations = map[Command][]struct {
 		{"agentsCreate", tagAgents},
 		{"agentsUpdate", tagAgents},
 		{"agentsDelete", tagAgents},
+		// Creating an agent is only half the job: a user who says "add this
+		// tool" expects it to WORK. Both self-test routes are exposed so the AI
+		// can verify instead of asserting success. They are separate operations
+		// (not one with a flag) because the deep one costs tokens.
+		{"agentsSelfTest", tagAgents},
+		{"agentsSelfTestDeep", tagAgents},
 	},
 }
 

@@ -215,6 +215,37 @@ func TestProcessClawbenchCommand_AgentDocumentsCreateByClone(t *testing.T) {
 	assert.Contains(t, result, "AgentNameReserved", "the reserved-nickname conflict must be stated")
 }
 
+// TestProcessClawbenchCommand_AgentDocumentsVerifyStep pins the create-then-verify
+// workflow. Creating an agent is only half the job: the prompt must tell the AI
+// to run the self-test afterwards, and it must expose BOTH routes (the free
+// configuration check and the paid real-turn check) so it can report evidence
+// instead of asserting success from the create response.
+func TestProcessClawbenchCommand_AgentDocumentsVerifyStep(t *testing.T) {
+	withServerPort(t, 20000)
+
+	result, err := processClawbenchCommand("/cb-agent 添加 trae 并测试", "/project", "sess-1")
+	require.NoError(t, err)
+
+	assert.Contains(t, result, "self-test-deep", "the real-turn check must be documented")
+	assert.Contains(t, result, "POST /api/agents/{id}/self-test",
+		"the endpoint reference must include the free self-test route")
+	assert.Contains(t, result, "POST /api/agents/{id}/self-test-deep",
+		"the endpoint reference must include the deep self-test route")
+	assert.Contains(t, result, "Verifying an agent",
+		"the workflow section must exist, not just the endpoint list")
+	assert.Contains(t, result, "never spawns the agent",
+		"the AI must know the cheap check has no side effects")
+	assert.Contains(t, result, "costs tokens",
+		"the AI must know the deep check spends credit")
+	assert.Contains(t, result, "Never claim an agent \"works\"",
+		"the prompt must forbid claiming success without running a check")
+
+	// Discovery-owned operations must stay out: rescanning rewrites every
+	// built-in agent's command, which is the opposite of what this command is for.
+	assert.NotContains(t, result, "refresh-models")
+	assert.NotContains(t, result, "POST /api/agents/rescan")
+}
+
 // TestProcessClawbenchCommand_AgentDocumentsDeleteGuard pins the destructive-op
 // guardrails: deletion is refused while the agent is in use, the default agent
 // is protected, and the AI must confirm before deleting.
