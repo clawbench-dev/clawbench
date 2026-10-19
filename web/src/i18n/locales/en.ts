@@ -395,6 +395,8 @@ export default {
       actionBrowseEscape: 'Clear search / exit multi-select',
       contextBrowseView: 'File manager',
       actionBrowseView: 'List view / Grid view',
+      contextViewGoToLine: 'Code view',
+      actionViewGoToLine: 'Go to line',
       contextViewSave: 'Editor · editable',
       actionViewSave: 'Save',
       contextViewUndo: 'Editor',
@@ -1764,6 +1766,13 @@ export default {
       externalChange: 'This file was modified elsewhere. Reload it?',
       reload: 'Reload',
       keepChanges: 'Keep current content',
+      goToLine: {
+        title: 'Go to line',
+        message: 'Enter a line number (42, +7, -7 or 50%)',
+        placeholder: 'Line number',
+        confirm: 'Go',
+        invalid: 'Unrecognised line number. Use a number, optionally with a +/- or % suffix.',
+      },
       searchPanel: {
         find: 'Find',
         replace: 'Replace',

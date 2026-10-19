@@ -397,6 +397,8 @@ export default {
       actionBrowseEscape: '清空搜索 / 退出多选',
       contextBrowseView: '文件管理器',
       actionBrowseView: '列表视图 / 网格视图',
+      contextViewGoToLine: '代码视图',
+      actionViewGoToLine: '跳转到指定行',
       contextViewSave: '编辑器 · 可编辑',
       actionViewSave: '保存',
       contextViewUndo: '编辑器',
@@ -1760,6 +1762,13 @@ export default {
       externalChange: '该文件已在别处被修改。是否重新加载？',
       reload: '重新加载',
       keepChanges: '保留当前内容',
+      goToLine: {
+        title: '跳转到行',
+        message: '输入行号（支持 42、+7、-7、50%）',
+        placeholder: '行号',
+        confirm: '跳转',
+        invalid: '无法识别的行号，请输入数字（可带 +/- 或 % 后缀）',
+      },
       searchPanel: {
         find: '查找',
         replace: '替换',
