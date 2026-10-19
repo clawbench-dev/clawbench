@@ -1125,6 +1125,12 @@ type ACPConn struct {
 	// (CodeBuddy usage/trace/category). Consumed when emitting the final
 	// metadata event in emitPromptResponseUsage and cleared each Prompt.
 	metaAccum *metaExtraction
+	// metaCallSeen records which per-call usage notifications have already been
+	// summed into metaAccum (guarded by metaMu). CodeBuddy reports one usage
+	// update per model call and may re-deliver a notification; summing by
+	// messageId keeps a retry from double-billing while still counting each
+	// genuine call. Cleared with metaAccum.
+	metaCallSeen map[string]struct{}
 
 	// lastCompletedRequestID is the requestId of the most recently completed,
 	// successful turn on this connection (guarded by metaMu). It backs a
@@ -1866,6 +1872,26 @@ func (c *ACPConn) mergeMetaExtraction(ext *metaExtraction) {
 			c.turnRequestIDs[rid] = struct{}{}
 		}
 	}
+	// A per-call usage notification may be re-delivered; count each call once.
+	// The identity is recorded even when the counters are zero, so a retried
+	// call cannot contribute twice after a later informative one arrives.
+	if ext.Usage != nil && ext.Usage.Accumulate && ext.Usage.CallID != "" {
+		if c.metaCallSeen == nil {
+			c.metaCallSeen = make(map[string]struct{})
+		}
+		if _, seen := c.metaCallSeen[ext.Usage.CallID]; seen {
+			// Still merge the trace/category carried by this notification —
+			// only the token counters are a duplicate.
+			dup := *ext
+			dup.Usage = nil
+			if c.metaAccum == nil {
+				c.metaAccum = &metaExtraction{}
+			}
+			metaMergeExtraction(c.metaAccum, &dup)
+			return
+		}
+		c.metaCallSeen[ext.Usage.CallID] = struct{}{}
+	}
 	if c.metaAccum == nil {
 		c.metaAccum = &metaExtraction{}
 	}
@@ -1879,6 +1905,7 @@ func (c *ACPConn) getAndClearMetaAccum() *metaExtraction {
 	defer c.metaMu.Unlock()
 	acc := c.metaAccum
 	c.metaAccum = nil
+	c.metaCallSeen = nil
 	return acc
 }
 

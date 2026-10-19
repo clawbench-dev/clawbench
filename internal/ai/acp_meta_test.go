@@ -908,3 +908,117 @@ func TestMetaExtraction_TraceRequestID_ReturnsRequestID(t *testing.T) {
 	assert.Equal(t, "req-abc", ext.traceRequestID(),
 		"the accessor must return RequestID, not TraceID")
 }
+
+// ---------------------------------------------------------------------------
+// Per-call usage accumulation
+// ---------------------------------------------------------------------------
+
+// CodeBuddy emits ONE usage_update PER MODEL CALL within a turn, each carrying
+// only that call's counters under a shared requestId. Verified on the raw wire:
+// a 4-command turn produced prompt_tokens 38229/38328/38427/38526/38625 with a
+// single requestId and five distinct messageIds.
+//
+// Adopting the latest snapshot (the previous behavior) discarded every call but
+// the last, under-counting a real DB by 30.9x (1.19B stored vs 36.8B actual
+// across 678 sessions). The turn total must be the SUM.
+func TestMetaAccum_CodeBuddySumsPerCallUsage(t *testing.T) {
+	conn := &ACPConn{}
+	calls := []struct {
+		messageID  string
+		prompt     int
+		completion int
+		credit     float64
+	}{
+		{"msg-1", 38229, 227, 1.93},
+		{"msg-2", 38328, 58, 1.92},
+		{"msg-3", 38427, 58, 1.93},
+		{"msg-4", 38526, 58, 1.93},
+		{"msg-5", 38625, 2, 1.94},
+	}
+	for _, c := range calls {
+		ext := extractCodeBuddyMeta(map[string]any{
+			"codebuddy.ai/messageId": c.messageID,
+			"codebuddy.ai/requestId": "req-1",
+			"usage": map[string]any{
+				"prompt_tokens":     c.prompt,
+				"completion_tokens": c.completion,
+				"total_tokens":      c.prompt + c.completion,
+				"credit":            c.credit,
+			},
+		})
+		require.NotNil(t, ext)
+		conn.mergeMetaExtraction(ext)
+	}
+
+	acc := conn.getAndClearMetaAccum()
+	require.NotNil(t, acc)
+	require.NotNil(t, acc.Usage)
+	assert.Equal(t, 38229+38328+38427+38526+38625, acc.Usage.InputTokens,
+		"the turn total is the sum over every model call, not the last call")
+	assert.Equal(t, 227+58+58+58+2, acc.Usage.OutputTokens)
+	assert.InDelta(t, 1.93+1.92+1.93+1.93+1.94, acc.Usage.Credit, 1e-9)
+}
+
+// A re-delivered notification for the SAME call must not be billed twice. The
+// messageId is the dedup key; a genuinely new call (different messageId) must
+// still count.
+func TestMetaAccum_CodeBuddyDedupsByMessageID(t *testing.T) {
+	conn := &ACPConn{}
+	mk := func(msgID string, prompt int) *metaExtraction {
+		return extractCodeBuddyMeta(map[string]any{
+			"codebuddy.ai/messageId": msgID,
+			"codebuddy.ai/requestId": "req-1",
+			"usage": map[string]any{
+				"prompt_tokens":     prompt,
+				"completion_tokens": 10,
+				"total_tokens":      prompt + 10,
+			},
+		})
+	}
+
+	conn.mergeMetaExtraction(mk("msg-1", 1000))
+	conn.mergeMetaExtraction(mk("msg-1", 1000)) // retry of the same call
+	conn.mergeMetaExtraction(mk("msg-2", 2000))
+
+	acc := conn.getAndClearMetaAccum()
+	require.NotNil(t, acc)
+	require.NotNil(t, acc.Usage)
+	assert.Equal(t, 3000, acc.Usage.InputTokens,
+		"the duplicate delivery of msg-1 must not be counted twice")
+}
+
+// Agents whose counters are already a turn aggregate (Claude/Codex per-model
+// token_count) must keep the latest-snapshot semantics: summing them would
+// multiply the turn.
+func TestMetaAccum_NonAccumulatingAgentKeepsLatestSnapshot(t *testing.T) {
+	conn := &ACPConn{}
+	conn.mergeMetaExtraction(&metaExtraction{Usage: &metaTokenUsage{InputTokens: 100, Present: true}})
+	conn.mergeMetaExtraction(&metaExtraction{Usage: &metaTokenUsage{InputTokens: 250, Present: true}})
+
+	acc := conn.getAndClearMetaAccum()
+	require.NotNil(t, acc)
+	require.NotNil(t, acc.Usage)
+	assert.Equal(t, 250, acc.Usage.InputTokens,
+		"a non-accumulating counter is a turn aggregate; the latest wins")
+}
+
+// The accumulator is per turn: a new Prompt must not inherit the previous
+// turn's calls, or the totals would grow monotonically forever.
+func TestMetaAccum_ResetClearsCallDedup(t *testing.T) {
+	conn := &ACPConn{}
+	mk := func() *metaExtraction {
+		return extractCodeBuddyMeta(map[string]any{
+			"codebuddy.ai/messageId": "msg-1",
+			"usage":                  map[string]any{"prompt_tokens": 1000, "completion_tokens": 1},
+		})
+	}
+	conn.mergeMetaExtraction(mk())
+	require.Equal(t, 1000, conn.getAndClearMetaAccum().Usage.InputTokens)
+
+	// Same messageId in the NEXT turn is a new call, not a duplicate.
+	conn.mergeMetaExtraction(mk())
+	acc := conn.getAndClearMetaAccum()
+	require.NotNil(t, acc)
+	assert.Equal(t, 1000, acc.Usage.InputTokens,
+		"the dedup set must reset with the accumulator each turn")
+}

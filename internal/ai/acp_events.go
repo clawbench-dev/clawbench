@@ -476,13 +476,22 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		//
 		// Only the trace identity is dropped: the usage counters describe the
 		// context window and remain valid, so the occupancy still flows to the
-		// frontend and the accumulator.
+		// frontend.
+		//
+		// The token counters are a different matter. They are now ACCUMULATED
+		// per model call, so letting a replayed notification through would add
+		// the PREVIOUS turn's calls to this turn's total — double-billing a
+		// whole turn. A replay carries the previous turn's requestId, so
+		// isReplayedTurnMeta identifies it reliably; drop its usage block
+		// entirely and keep only the raw used/size occupancy (which is a
+		// window measurement, not a per-turn quantity).
 		if ext := extractMetaUsage(backendID, update.UsageUpdate.Meta); ext != nil {
 			if isReplayedTurnMeta(conn, backendID, update.UsageUpdate.Meta) {
-				slog.Warn("acp: dropping replayed usage_update trace identity from previous turn",
+				slog.Warn("acp: dropping replayed usage_update trace identity and token counters from previous turn",
 					slog.String("request_id", ext.traceRequestID()),
 					slog.String("clawbench_sid", conn.clawbenchSID))
 				ext.Trace = nil
+				ext.Usage = nil
 			}
 			applyMetaExtractionToUsageState(usageState, ext)
 			if conn != nil {

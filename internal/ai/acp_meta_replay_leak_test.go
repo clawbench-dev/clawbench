@@ -149,3 +149,26 @@ func TestUsageUpdate_NonCodeBuddyUnaffected(t *testing.T) {
 
 	mapACPSessionUpdate(update, ch, context.Background(), conn, nil)
 }
+
+// Token counters are ACCUMULATED per model call, so a replayed notification
+// would add the previous turn's calls to this turn's total — double-billing a
+// whole turn. The replay filter must therefore drop the usage block too, not
+// only the trace identity. The raw used/size occupancy is still forwarded
+// (covered by TestUsageUpdate_ReplayStillUpdatesContextUsage).
+func TestUsageUpdate_ReplayedTurnDoesNotAccumulateTokens(t *testing.T) {
+	ch := make(chan StreamEvent, 16)
+	conn := newACPConn(&model.Agent{ID: "cb", Backend: "codebuddy"}, "s1")
+	conn.setLastCompletedRequestID("req-turn-A")
+	conn.ResetTurnOutput()
+
+	// Previous turn's call replays at the start of the new turn.
+	mapACPSessionUpdate(codebuddyUsageUpdate("req-turn-A", "msg-turn-A", 5000), ch, context.Background(), conn, nil)
+	// The new turn's own first call.
+	mapACPSessionUpdate(codebuddyUsageUpdate("req-turn-B", "msg-turn-B", 1000), ch, context.Background(), conn, nil)
+
+	acc := conn.getAndClearMetaAccum()
+	require.NotNil(t, acc)
+	require.NotNil(t, acc.Usage, "the live turn's counters must be present")
+	assert.Equal(t, 1000, acc.Usage.InputTokens,
+		"the replayed turn's 5000 tokens must not be added to this turn")
+}
