@@ -829,7 +829,6 @@ async function handleDelete() {
   margin-top: var(--space-4);
   padding: var(--space-4) var(--space-6);
   background: var(--bg-primary);
-  border-radius: var(--radius-sm);
   border-left: 2px solid #22c55e;
 }
 
@@ -852,7 +851,6 @@ async function handleDelete() {
   font-size: var(--font-size-md);
   color: #ef4444;
   background: color-mix(in srgb, #ef4444 10%, var(--bg-primary));
-  border-radius: var(--radius-sm);
 }
 
 /* Status colors follow the settings panel's connectivity-test results
@@ -863,7 +861,6 @@ async function handleDelete() {
   margin-top: var(--space-4);
   padding: var(--space-4) var(--space-6);
   background: var(--bg-primary);
-  border-radius: var(--radius-sm);
   border-left: 2px solid #22c55e;
 }
 
