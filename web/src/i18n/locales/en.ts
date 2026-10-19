@@ -2029,8 +2029,14 @@ export default {
     // churn the protocol for no user-visible gain.
     comment: 'Discuss',
     quoteSelection: 'Quote',
+    // Secondary gesture (issue #560): a plain tap commits to the active
+    // conversation; holding the button opens the session picker for the rare
+    // cross-conversation case. The tooltip is the only place that can teach it.
+    quoteSelectionHint: 'Quote to the current chat (hold to choose another)',
+    addToChatHint: 'Add to the current chat (hold to choose another)',
     addedToChat: 'Added to chat',
     send: 'Send',
+    sendHint: 'Send to the current chat (hold to choose another)',
     aiChat: 'AI Chat',
     newSession: 'New session',
     sentToSession: 'Sent to session',

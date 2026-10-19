@@ -1,9 +1,10 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import MarkdownPreviewBody from '@/components/file/MarkdownPreviewBody.vue'
 import { ATTACH_DRAG_MIME } from '@/utils/attachDrag'
 import { useChatContext } from '@/composables/useChatContext'
+import { useSessionIdentity } from '@/composables/useSessionIdentity'
 import { cancelTarget, usePendingTarget } from '@/composables/useConversationTarget.ts'
 
 const { attachedFiles, clearAll, addAttachedFile } = useChatContext()
@@ -235,6 +236,26 @@ describe('MarkdownPreviewBody.vue', () => {
     expect(pendingAttachments()).toEqual([{ path: 'docs/a.png', isDir: false }])
     // Nothing attached yet — confirmTarget attaches for the picked session.
     expect(attachedFiles.value).toEqual([])
+  })
+
+  it('attaches the image straight to the active conversation when there is one', async () => {
+    // Issue #560: a comment on the document being read belongs to the
+    // conversation the user is working in — no dialog in between.
+    const identity = useSessionIdentity()
+    const prev = identity.currentSessionId.value
+    identity.currentSessionId.value = 's-active'
+    try {
+      const { wrapper } = mountBody({
+        renderedHtml: '<div class="image-block-wrapper"><span class="lightbox-img-wrap"><img class="lightbox-img" src="/api/fs/raw/docs/a.png?t=1" data-attach-src="docs/a.png"></span><button class="image-block-attach-btn" type="button"></button></div>',
+      })
+      await wrapper.find('.image-block-attach-btn').trigger('click')
+      await flushPromises()
+
+      expect(usePendingTarget().pickerOpen.value).toBe(false)
+      expect(attachedFiles.value).toEqual([{ path: 'docs/a.png', isDir: false }])
+    } finally {
+      identity.currentSessionId.value = prev
+    }
   })
 
   it('removes a local image from attachments when its attach button is tapped again', async () => {

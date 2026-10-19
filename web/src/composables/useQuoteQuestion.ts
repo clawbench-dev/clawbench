@@ -688,8 +688,9 @@ export function useQuoteQuestion() {
     barPinned.value = true
 
     if (action === 'quote') {
-      // Same commit as tapping 引用 in the in-page toolbar: hand the card to the
-      // session picker and dismiss the bar.
+      // Same commit as tapping 引用 in the in-page toolbar: deliver the card to
+      // the active conversation (the native menu has no "hold for another
+      // session" gesture, and the picker remains reachable from the in-page bar).
       addToConversation('')
       return
     }
@@ -752,12 +753,25 @@ export function useQuoteQuestion() {
     return pathLike.reduce((a, b) => (b.length > a.length ? b : a))
   }
 
-  function addToConversation(note = '') {
+  /**
+   * Commit the current quote (or composer target) as a card.
+   *
+   * The destination is the conversation the user is working in — a comment on
+   * what you are reading belongs there, and asking "which conversation?" on
+   * every single comment is the friction this removed (issue #560). When there
+   * is no active session at all, `requestTarget` falls back to the picker.
+   *
+   * `pickTarget` forces the picker for THIS commit. It is what the long-press /
+   * right-click entry sets: cross-session delivery is still reachable, it just
+   * stops occupying the primary path.
+   */
+  function addToConversation(note = '', opts: { pickTarget?: boolean } = {}) {
     // Normalise the annotation once, at capture. It used to be trimmed by
     // addStagedQuote on the way into the draft; now the pending request is the
     // intermediate representation, so trimming has to happen here or the
     // picker would show (and deliver) surrounding whitespace.
     const trimmedNote = note.trim()
+    const deliverOpts = opts.pickTarget ? {} : { deliverTo: 'active' as const }
     if (composerContext.value) {
       const ctx = composerContext.value
       // Build the card BEFORE clearing composerContext/quoteData — the builder
@@ -771,14 +785,14 @@ export function useQuoteQuestion() {
       // separate attachment chip is created — this is the same "one card"
       // interaction as quoting a selection.
       //
-      // Destination is always the user's choice (the picker), so the card is
-      // NOT staged locally; confirmTarget does that for the session they pick.
+      // The card is NOT staged locally: requestTarget delivers it (active
+      // session, or the session the user picks).
       requestTarget({
         mode: 'add',
         quotes: [{ ...quote, id: mintPendingQuoteId() }],
         attachments: [],
         text: '',
-      })
+      }, deliverOpts)
 
       clearComposerState()
       return
@@ -794,7 +808,7 @@ export function useQuoteQuestion() {
       quotes: [{ ...quote, note: trimmedNote, id: mintPendingQuoteId() }],
       attachments: [],
       text: '',
-    })
+    }, deliverOpts)
 
     setQuoteData(null)
     barVisible.value = false
@@ -812,11 +826,10 @@ export function useQuoteQuestion() {
    * rides along as a card. Only the "+" button folds the text into the card as
    * an annotation — "send" means send now.
    *
-   * The destination always comes from the picker, so nothing is sent from here:
-   * the payload is snapshotted into the request and `confirmTarget` performs the
-   * send for the session the user picks.
+   * The destination is the conversation the user is working in (issue #560),
+   * same as the add path; `pickTarget` (long-press) forces the picker.
    */
-  async function sendComposerMessage(userMessage: string) {
+  async function sendComposerMessage(userMessage: string, opts: { pickTarget?: boolean } = {}) {
     const input = userMessage.trim()
     // "Send" means send now, and a message needs text: the send button is
     // disabled on empty input, so this only guards a programmatic call. (The
@@ -830,12 +843,15 @@ export function useQuoteQuestion() {
     const quote = buildComposerQuote(ctx, '')
     const pendingQuotes = quote ? [{ ...quote, id: mintPendingQuoteId() }] : []
 
-    requestTarget({ mode: 'send', quotes: pendingQuotes, attachments: [], text: input })
+    requestTarget(
+      { mode: 'send', quotes: pendingQuotes, attachments: [], text: input },
+      opts.pickTarget ? {} : { deliverTo: 'active' },
+    )
     clearComposerState()
   }
 
-  async function sendMessage(userMessage: string) {
-    if (composerContext.value) return sendComposerMessage(userMessage)
+  async function sendMessage(userMessage: string, opts: { pickTarget?: boolean } = {}) {
+    if (composerContext.value) return sendComposerMessage(userMessage, opts)
     if (!quoteData.value || !userMessage.trim()) return
 
     const q = quoteData.value
@@ -845,7 +861,7 @@ export function useQuoteQuestion() {
       quotes: [{ ...q, note: '', id: mintPendingQuoteId() }],
       attachments: [],
       text: userMessage.trim(),
-    })
+    }, opts.pickTarget ? {} : { deliverTo: 'active' })
 
     // The bar is dismissed so it cannot float above the picker (--z-quote-bar
     // is above the dialog). The payload lives in the pending request now.
