@@ -407,8 +407,8 @@
         :composerMode="quoteQuestion.composerMode.value"
         :composerAttachment="quoteQuestion.composerAttachment.value"
         :expandRequest="quoteQuestion.expandRequest.value"
-        @add="quoteQuestion.addToConversation($event)"
-        @send="quoteQuestion.sendMessage($event)"
+        @add="onQuoteBarAdd"
+        @send="onQuoteBarSend"
         @close="quoteQuestion.closeSheet()"
         @pin="quoteQuestion.pinBar()"
         @unpin="quoteQuestion.unpinBar()"
@@ -2050,6 +2050,17 @@ function installQuoteSelectionBridge(
 }
 
 const quoteQuestion = useQuoteQuestion()
+
+// Quote bar commits. The bar emits `(text, { pickTarget })`; `pickTarget` is
+// set by the long-press gesture ("send this to another conversation"), so it
+// must be forwarded rather than dropped — dropping it would make every commit
+// target the active session and leave cross-session delivery unreachable.
+function onQuoteBarAdd(note: string, opts?: { pickTarget?: boolean }) {
+  quoteQuestion.addToConversation(note, opts)
+}
+function onQuoteBarSend(text: string, opts?: { pickTarget?: boolean }) {
+  quoteQuestion.sendMessage(text, opts)
+}
 // Android's own text-selection menu (see ClawBenchWebView.java) calls this when
 // the user taps 引用 / 评论. Installed here rather than inside the composable so
 // the composable stays free of window globals; guarded by a module-level flag

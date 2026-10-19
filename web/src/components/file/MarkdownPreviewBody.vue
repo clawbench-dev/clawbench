@@ -144,9 +144,10 @@ const { removeAttachedFileByPath, hasAttachedFile } = useChatContext()
 const { show: showToast } = useToast()
 const mdImageAttachActions: MdImageAttachActions = {
   add: (path) => {
-    // Destination is always the user's choice (the picker), so nothing is
-    // attached locally — confirmTarget attaches for the session they pick.
-    requestAttachmentTarget({ path, isDir: false })
+    // A comment on the document being read belongs to the conversation the user
+    // is working in (issue #560); the picker only appears when there is no
+    // active session at all.
+    requestAttachmentTarget({ path, isDir: false }, { deliverTo: 'active' })
   },
   remove: removeAttachedFileByPath,
   has: hasAttachedFile,
@@ -160,7 +161,7 @@ const mdImageAttachActions: MdImageAttachActions = {
 // Mermaid range-reference badge: same singletons, ranged identity.
 const mermaidAttachActions: MermaidAttachActions = {
   add: (path, startLine, endLine) => {
-    requestAttachmentTarget({ path, isDir: false, startLine, endLine })
+    requestAttachmentTarget({ path, isDir: false, startLine, endLine }, { deliverTo: 'active' })
   },
   remove: (path, startLine, endLine) => removeAttachedFileByPath(path, startLine, endLine),
   has: (path, startLine, endLine) => hasAttachedFile(path, startLine, endLine),

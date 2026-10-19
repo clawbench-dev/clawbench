@@ -6,6 +6,7 @@ import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'
 import { store } from '@/stores/app'
 import type { useCodeLinkPreview } from '@/composables/useCodeLinkPreview'
 import { useChatContext } from '@/composables/useChatContext'
+import { useSessionIdentity } from '@/composables/useSessionIdentity'
 import { cancelTarget, usePendingTarget } from '@/composables/useConversationTarget.ts'
 import { _setPlatformForTest, _resetPlatformForTest } from '@/composables/usePlatformDetect'
 import { readFileSync } from 'node:fs'
@@ -1211,7 +1212,45 @@ describe('CodeLinkPreview.vue', () => {
     wrapper.unmount()
   })
 
-  it('routes quoteToChat through the session picker instead of staging locally', async () => {
+  it('routes quoteToChat to the active conversation without a dialog', async () => {
+    // Issue #560: the card is opened FROM the conversation being worked in, so
+    // quoting it back into that same conversation must not ask again.
+    const identity = useSessionIdentity()
+    const prev = identity.currentSessionId.value
+    identity.currentSessionId.value = 's-active'
+    try {
+      const switchTabMock = vi.fn()
+      const preview = createMockPreviewController()
+      mount(CodeLinkPreview, {
+        props: { preview },
+        global: {
+          plugins: [i18n],
+          provide: { switchTab: switchTabMock },
+        },
+      })
+
+      const quoteBtn = document.querySelector('button[title="Quote to chat"]') as HTMLButtonElement
+      expect(quoteBtn).not.toBeNull()
+      quoteBtn.click()
+      await nextTick()
+      await flushPromises()
+
+      expect(preview.close).toHaveBeenCalled()
+      expect(usePendingTarget().pickerOpen.value).toBe(false)
+      expect(switchTabMock).not.toHaveBeenCalled()
+      const chatContext = useChatContext()
+      expect(chatContext.stagedQuotes.value).toHaveLength(1)
+      expect(chatContext.stagedQuotes.value[0].filePath).toBe('src/main.ts')
+      // A quote carries the path + range itself; a second attachment chip would
+      // duplicate it.
+      expect(chatContext.attachedFiles.value).toHaveLength(0)
+    } finally {
+      identity.currentSessionId.value = prev
+      useChatContext().clearAll()
+    }
+  })
+
+  it('falls back to the picker when no session is active', async () => {
     const switchTabMock = vi.fn()
     const preview = createMockPreviewController()
     mount(CodeLinkPreview, {
@@ -1223,20 +1262,13 @@ describe('CodeLinkPreview.vue', () => {
     })
 
     const quoteBtn = document.querySelector('button[title="Quote to chat"]') as HTMLButtonElement
-    expect(quoteBtn).not.toBeNull()
     quoteBtn.click()
     await nextTick()
 
-    // The card closes and hands the quote to the picker; it must NOT stage it
-    // into the live input (the destination is the user's choice) and must NOT
-    // switch tabs — the picker pins the current session to the top row.
-    expect(preview.close).toHaveBeenCalled()
     const { pickerOpen, pending } = usePendingTarget()
     expect(pickerOpen.value).toBe(true)
     expect(pending.value?.quotes).toHaveLength(1)
     expect(pending.value?.quotes[0].filePath).toBe('src/main.ts')
-    // A quote carries the path + range itself; a second attachment chip would
-    // duplicate it, so the payload must have no attachments.
     expect(pending.value?.attachments).toEqual([])
     expect(switchTabMock).not.toHaveBeenCalled()
     const chatContext = useChatContext()

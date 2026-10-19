@@ -910,9 +910,9 @@ const handleQuoteToChat = () => {
   const endLine = sliced?.endLine ?? target.lineEnd ?? (startLine + Math.max(0, code.split('\n').length - 1))
 
   // The card is a quote (with the code as its content), not a bare attachment
-  // chip — see the note below. The destination is always the user's choice (the
-  // picker), so the card is NOT staged locally; confirmTarget stages it for the
-  // session they pick.
+  // chip — see the note below. It goes to the conversation the user is working
+  // in (issue #560: the card is opened FROM that context, so asking again is
+  // friction); the picker appears only when there is no active session.
   requestTarget({
     mode: 'add',
     quotes: [{
@@ -926,7 +926,7 @@ const handleQuoteToChat = () => {
     }],
     attachments: [],
     text: '',
-  })
+  }, { deliverTo: 'active' })
   props.preview.close()
 }
 

@@ -89,24 +89,92 @@ const pickerOpen = ref(false)
 const pending = ref<PendingRequest | null>(null)
 
 /**
- * Ask the user where the payload should go.
+ * Options for {@link requestTarget}.
  *
- * ALWAYS opens the picker. Every quote/attach entry point — the chat's own
- * "quote this message" button included — routes through here, so the same
- * gesture behaves identically everywhere and the user can quote from one
- * conversation into another. There is deliberately NO "the chat panel is
- * visible, so assume the current session" shortcut: that shortcut made the
- * destination depend on which tab happened to be open, which is exactly the
- * inconsistency this replaced. The picker pins the current session to the top
- * row, so "just the one I'm in" is still one tap.
+ * `deliverTo: 'active'` means "this is a comment on what I am looking at, put
+ * it in the conversation I am working in" — the overwhelmingly common case
+ * (issue #560). The payload is delivered straight to the active session and no
+ * picker appears. When there is no active session at all (fresh install, or a
+ * document opened before any conversation was loaded) it falls back to the
+ * picker, which is also where "create a session" lives.
  *
- * Returning void (not a boolean) is the point: there is no "the caller should
- * act locally instead" outcome any more, so no call site may keep a fallback
- * branch — a `if (requestTarget(...)) return` would silently strand the payload.
+ * Omitting it keeps the explicit picker: entry points that are ABOUT choosing a
+ * destination (the chat message's own "quote" button, file-manager "add to
+ * session") still ask, because for those the destination is the question.
  */
-export function requestTarget(request: PendingRequest): void {
+export interface RequestTargetOptions {
+  deliverTo?: 'active'
+}
+
+/**
+ * The session a comment should land in by default.
+ *
+ * `currentSessionId` is the conversation the app is working in — it survives
+ * tab switches, so a comment made in a document still targets the chat the user
+ * left. It is empty only before the first session loads; '' then means the
+ * picker is the only way to answer (and it also offers "create a session").
+ */
+function resolveActiveSessionId(): string {
+  return useSessionIdentity().currentSessionId?.value || ''
+}
+
+/**
+ * Ask the user where the payload should go, or deliver it to the active
+ * session when the caller says that is the obvious destination.
+ *
+ * Every quote/attach entry point routes through here so the same gesture
+ * behaves identically everywhere. Two behaviours, chosen by the caller rather
+ * than by which tab happens to be open:
+ *
+ *  - default — open the picker. Used where the destination genuinely is the
+ *    question (quoting a whole message, attaching a file from the browser).
+ *  - `deliverTo: 'active'` — deliver immediately to the session the user is
+ *    already in. Used by comments (a selection on a chat message, a document,
+ *    a terminal, a forge object): the user is annotating what they are reading,
+ *    so asking "which conversation?" on every single comment is pure friction.
+ *    Cross-session delivery stays reachable from the same button via long-press,
+ *    which forces the picker.
+ *
+ * Returning void (not a boolean) is the point: the caller has no local fallback
+ * to run, so no call site may keep an `if (requestTarget(...)) return` branch —
+ * that would silently strand the payload.
+ */
+export function requestTarget(request: PendingRequest, opts: RequestTargetOptions = {}): void {
+  if (opts.deliverTo === 'active') {
+    const activeId = resolveActiveSessionId()
+    if (activeId) {
+      // Deliberately not awaited: every caller is a synchronous UI handler, and
+      // the request object is already a snapshot, so nothing can mutate under it.
+      void dispatchToTarget({ kind: 'session', id: activeId }, request).then(
+        (ok) => { if (!ok) fallBackToPicker(request) },
+        // A rejected dispatch (bridge missing, network throw) must not swallow
+        // the payload either — same fallback as a clean `false`.
+        () => fallBackToPicker(request),
+      )
+      return
+    }
+  }
+  openPicker(request)
+}
+
+/** Show the picker for an explicitly requested destination choice. */
+function openPicker(request: PendingRequest): void {
   pending.value = request
   pickerOpen.value = true
+}
+
+/**
+ * The active-session delivery failed (the chat panel is not mounted yet, so the
+ * enqueue bridge is missing; or the request threw). Dropping the card silently
+ * is exactly the "did my comment go anywhere?" confusion this feature must not
+ * introduce, so ask instead.
+ *
+ * A genuinely EMPTY request is the one exception: `dispatchToTarget` rejects it
+ * because there is nothing to deliver, and a picker over nothing would be noise.
+ */
+function fallBackToPicker(request: PendingRequest): void {
+  if (!request.text.trim() && request.quotes.length === 0 && request.attachments.length === 0) return
+  openPicker(request)
 }
 
 /** The request awaiting a choice, for the dialog to render against. */
@@ -120,18 +188,22 @@ export function cancelTarget() {
 }
 
 /**
- * Route an "attach this to the chat" action through the picker.
+ * Route an "attach this to the chat" action.
  *
  * Only the ADD direction goes through here. Removing an attachment must stay
  * immediate: asking "which conversation?" to take something away would be
  * nonsense, and the user can only remove what they can already see.
  *
- * A path-less entry opens nothing (there would be nothing to attach), and the
- * caller has no local fallback left to run — the picker owns the add.
+ * A path-less entry opens nothing (there would be nothing to attach).
+ *
+ * `opts.deliverTo` mirrors {@link requestTarget}: the markdown / mermaid badges
+ * are comments on the document being read, so they land in the active
+ * conversation; the file browser's "add to session" keeps the picker, because
+ * there the destination is what the user is choosing.
  */
-export function requestAttachmentTarget(entry: FileEntry): void {
+export function requestAttachmentTarget(entry: FileEntry, opts: RequestTargetOptions = {}): void {
   if (!entry?.path) return
-  requestTarget({ mode: 'add', quotes: [], attachments: [entry], text: '' })
+  requestTarget({ mode: 'add', quotes: [], attachments: [entry], text: '' }, opts)
 }
 
 // ── Dispatch ───────────────────────────────────────────────────

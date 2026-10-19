@@ -2068,8 +2068,13 @@ export default {
     // the protocol for no user-visible gain.
     comment: '讨论',
     quoteSelection: '引用',
+    // 次级手势（issue #560）：轻点直接进当前对话；长按才弹会话选择器，
+    // 留给少数「引用到别的会话」的场景。提示文字是唯一能教会这个手势的地方。
+    quoteSelectionHint: '引用到当前对话（长按可换个会话）',
+    addToChatHint: '加入当前对话（长按可换个会话）',
     addedToChat: '已加入对话',
     send: '发送',
+    sendHint: '发送到当前对话（长按可换个会话）',
     aiChat: 'AI 对话',
     newSession: '新会话',
     sentToSession: '已发送到会话',

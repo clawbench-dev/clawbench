@@ -106,7 +106,7 @@ describe('QuoteQuestionBar', () => {
       await wrapper.find('.qq-textarea').setValue('why is this broken?')
       await wrapper.find('.qq-send-btn').trigger('click')
 
-      expect(wrapper.emitted('send')).toEqual([['why is this broken?']])
+      expect(wrapper.emitted('send')).toEqual([['why is this broken?', { pickTarget: false }]])
     })
 
     it('emits add (not a chat-input injection) with the typed note', async () => {
@@ -117,7 +117,7 @@ describe('QuoteQuestionBar', () => {
       await wrapper.find('.qq-textarea').setValue('please explain')
       await wrapper.find('.qq-add-btn').trigger('click')
 
-      expect(wrapper.emitted('add')).toEqual([['please explain']])
+      expect(wrapper.emitted('add')).toEqual([['please explain', { pickTarget: false }]])
       expect(wrapper.emitted('send')).toBeFalsy()
     })
 
@@ -209,7 +209,7 @@ describe('QuoteQuestionBar', () => {
       const wrapper = mountBar({ quoteData: QUOTE })
       await wrapper.findAll('.quote-bar-action')[2].trigger('click')
 
-      expect(wrapper.emitted('add')).toEqual([['']])
+      expect(wrapper.emitted('add')).toEqual([['', { pickTarget: false }]])
       // Quote stages the card straight away — it must not also open the input.
       expect(wrapper.find('.qq-textarea').exists()).toBe(false)
     })
@@ -230,7 +230,7 @@ describe('QuoteQuestionBar', () => {
       await wrapper.find('.qq-textarea').setValue('please fix')
       await wrapper.find('.qq-add-btn').trigger('click')
 
-      expect(wrapper.emitted('add')).toEqual([['please fix']])
+      expect(wrapper.emitted('add')).toEqual([['please fix', { pickTarget: false }]])
     })
 
     it('pins on pointerdown so a click does not lose the selection', async () => {

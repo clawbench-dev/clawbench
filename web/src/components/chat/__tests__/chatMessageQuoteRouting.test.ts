@@ -8,12 +8,14 @@ import { join } from 'node:path'
  * `handleQuoteMessage` is a local function inside ChatPanelContent's
  * `<script setup>`, so it cannot be imported and called directly. What matters
  * is a routing DECISION, which is visible in the source: the action must go
- * through the shared session picker (`requestTarget`), exactly like every other
- * quote entry point. Staging it locally (`addStagedQuote`) is the old behavior
- * and is what made "quote from this conversation into another" impossible.
+ * through the shared quote dispatcher (`requestTarget`) — never by staging the
+ * card locally, which is what hard-wired the destination and made
+ * "quote from this conversation into another" impossible.
  *
- * These guards are deliberately narrow — they pin the routing call, not the
- * whole function — so unrelated edits to the component do not trip them.
+ * The message quote is a comment on the conversation being read, so it also
+ * declares `deliverTo: 'active'` (issue #560): the active conversation is the
+ * destination, no dialog. Pinning that here keeps a future refactor from
+ * silently reinstating the mandatory picker.
  */
 describe('chat message quote routing', () => {
   const source = readFileSync(
@@ -40,14 +42,19 @@ describe('chat message quote routing', () => {
     throw new Error(`unbalanced braces in ${name}`)
   }
 
-  it('routes the message quote through the session picker', () => {
+  it('routes the message quote through the shared dispatcher', () => {
     const body = functionBody('handleQuoteMessage')
     expect(body).toMatch(/requestTarget\s*\(/)
   })
 
+  it('delivers to the active conversation instead of always asking', () => {
+    const body = functionBody('handleQuoteMessage')
+    expect(body).toMatch(/deliverTo:\s*'active'/)
+  })
+
   it('does NOT stage the message quote straight into the current draft', () => {
-    // addStagedQuote here is the regression: it hard-wired the destination to
-    // the session on screen.
+    // Staging here would bypass the dispatcher entirely — the destination would
+    // no longer be decided in one place (and cross-session delivery would break).
     const body = functionBody('handleQuoteMessage')
     expect(body).not.toMatch(/addStagedQuote\s*\(/)
   })
