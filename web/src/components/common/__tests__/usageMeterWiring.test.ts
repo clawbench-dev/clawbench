@@ -44,12 +44,29 @@ describe('usage meter — capsule wiring', () => {
     expect(header).toMatch(/v-if="isWideScreen && usageMeter\.status\.value\.enabled"/)
   })
 
-  it('the capsule renders before the tips ticker so the ticker absorbs slack', () => {
+  it('the capsule sits between the tips ticker and the theme button', () => {
+    // Right-hand control cluster: ticker (flex:1) → capsule → theme → server.
+    // Before the ticker the capsule was pushed to the middle of the header,
+    // which read as a free-floating number rather than a header control.
     const capsule = header.indexOf('<UsageMeterPopover')
     const ticker = header.indexOf('<ShortcutTipTicker')
+    const theme = header.indexOf('class="theme-quick-toggle"')
     expect(capsule).toBeGreaterThan(-1)
     expect(ticker).toBeGreaterThan(-1)
-    expect(capsule).toBeLessThan(ticker)
+    expect(theme).toBeGreaterThan(-1)
+    expect(ticker).toBeLessThan(capsule)
+    expect(capsule).toBeLessThan(theme)
+  })
+
+  it('only one auto margin pushes the right-hand cluster', () => {
+    // Two `margin-left: auto` items split the slack and strand the capsule in
+    // the middle. The theme button owns it (it must still reach the right edge
+    // when the meter is disabled and the capsule is absent).
+    const slot = header.slice(header.indexOf('.usage-meter-slot'))
+    const slotRule = slot.slice(0, slot.indexOf('}'))
+    expect(slotRule).not.toContain('margin-left: auto')
+    const themeRule = header.slice(header.indexOf('.theme-quick-toggle {'))
+    expect(themeRule.slice(0, themeRule.indexOf('}'))).toContain('margin-left: auto')
   })
 
   it('the popover reacts to the open request (notification tap)', () => {

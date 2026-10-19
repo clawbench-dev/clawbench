@@ -49,20 +49,6 @@
       </button>
     </div>
 
-    <!-- Usage meter capsule. Wide screens only: the header is a desktop
-         surface, and on a phone the same numbers live at the end of the
-         system-resources popover (SystemResourcesPanel).
-         Sits before the tips ticker so the ticker's flex:1 absorbs the
-         remaining space instead of pushing the capsule around. -->
-    <UsageMeterPopover
-      v-if="isWideScreen && usageMeter.status.value.enabled"
-      :status="usageMeter.status.value"
-      :state="usageMeter.meterState.value"
-      :fill-percent="usageMeter.fillPercent.value"
-      :expected-percent="usageMeter.expectedPercent.value"
-      class="usage-meter-slot"
-    />
-
     <!-- Shortcut tips marquee: fills the empty middle area.
          Shown wherever there is a physical keyboard, which includes the Electron
          desktop shell — it reports isAppMode (native host) but is a desktop
@@ -77,6 +63,23 @@
       @click="shortcutTipsOpen = true"
     />
     <ShortcutTipsDialog :open="shortcutTipsOpen" @close="shortcutTipsOpen = false" />
+
+    <!-- Usage meter capsule. Wide screens only: the header is a desktop
+         surface, and on a phone the same numbers live at the end of the
+         system-resources popover (SystemResourcesPanel).
+         Sits after the tips ticker so it lands in the right-hand control
+         cluster, immediately left of the theme button. It carries the
+         margin-left:auto that used to sit on the theme button — with both set,
+         the two auto margins would split the slack and strand the capsule in
+         the middle. -->
+    <UsageMeterPopover
+      v-if="isWideScreen && usageMeter.status.value.enabled"
+      :status="usageMeter.status.value"
+      :state="usageMeter.meterState.value"
+      :fill-percent="usageMeter.fillPercent.value"
+      :expected-percent="usageMeter.expectedPercent.value"
+      class="usage-meter-slot"
+    />
 
     <AppMenuPanel :open="dropdownOpen" :panel-style="dropdownStyle" :register-panel="setProjectPanelRef">
       <div class="app-menu-title">{{ t('appHeader.projects') }}</div>
@@ -1533,6 +1536,11 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     align-items: center;
     justify-content: center;
     color: var(--accent-color);
+    /* Pushes the theme button (and everything after it) to the right edge. The
+       usage capsule sits just before it, so it inherits that alignment too.
+       Keeping the auto margin HERE rather than on the capsule matters when the
+       capsule is absent (rule disabled): the theme button must still be pushed
+       right. Two auto margins would split the slack and strand the capsule. */
     margin-left: auto;
 }
 
@@ -1565,6 +1573,14 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     margin:0 var(--space-4);
     height: 100%;
     overflow: hidden;
+}
+
+/* Usage capsule sits in the right-hand control cluster, just left of the theme
+   button. It deliberately has NO auto margin of its own: the theme button owns
+   it (see below), and a second auto margin would split the slack and leave the
+   capsule stranded mid-header. */
+.usage-meter-slot {
+    margin-right: var(--space-2);
 }
 
 @media (hover: hover) {
