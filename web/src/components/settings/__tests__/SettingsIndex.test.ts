@@ -137,3 +137,61 @@ describe('SettingsIndex', () => {
     }
   })
 })
+
+// The category label is `t('settings.categories.<id>')`, and vue-i18n renders a
+// MISSING key as the key itself — no error, no warning, no build failure. Adding
+// a category without its translation therefore ships a literal
+// "settings.categories.mcp" into the UI, which is exactly what happened.
+//
+// This guard reads the REAL locale files and the component SOURCE rather than
+// the hand-written message subset above: that subset is precisely what made the
+// bug invisible (it silently lacks skills / mcp / aiSummary / forgeIntegration).
+describe('SettingsIndex category i18n coverage', () => {
+  const localeFiles = import.meta.glob('../../../i18n/locales/*.ts', { eager: true }) as Record<
+    string,
+    Record<string, unknown>
+  >
+  const componentSource = Object.entries(
+    import.meta.glob('@/components/settings/SettingsIndex.vue', {
+      eager: true,
+      query: '?raw',
+      import: 'default',
+    }) as Record<string, string>,
+  )[0]?.[1]
+
+  /** categoryIdsFromSource extracts the ids declared in groupDefs. */
+  function categoryIdsFromSource(src: string): string[] {
+    return [...src.matchAll(/\{ id: '([^']+)', icon:/g)].map((m) => m[1])
+  }
+
+  function categoriesOf(mod: Record<string, unknown>): Record<string, unknown> {
+    // Locale files use `export default {...}`, so the message tree lives under
+    // `default` in the module namespace. Fall back to the namespace itself so
+    // this keeps working if a locale ever switches to named exports.
+    const root = ((mod.default ?? mod) as Record<string, unknown>)
+    const settings = (root.settings ?? {}) as Record<string, unknown>
+    return (settings.categories ?? {}) as Record<string, unknown>
+  }
+
+  it('declares category ids', () => {
+    expect(componentSource).toBeTruthy()
+    expect(categoryIdsFromSource(componentSource as string).length).toBeGreaterThan(10)
+  })
+
+  it('every declared category id has a non-empty label in every locale', () => {
+    const ids = categoryIdsFromSource(componentSource as string)
+    const locales = Object.entries(localeFiles)
+    expect(locales.length).toBeGreaterThanOrEqual(2)
+
+    for (const [file, mod] of locales) {
+      const cats = categoriesOf(mod)
+      expect(cats, `${file} must define settings.categories`).toBeTruthy()
+      for (const id of ids) {
+        const label = cats[id]
+        expect(label, `${file} is missing settings.categories.${id}`).toBeDefined()
+        expect(typeof label, `${file}: settings.categories.${id} must be a string`).toBe('string')
+        expect(String(label).trim(), `${file}: settings.categories.${id} must not be empty`).not.toBe('')
+      }
+    }
+  })
+})

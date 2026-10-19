@@ -2402,6 +2402,7 @@ export default {
 
       forgeIntegration: 'GitHub/GitLab Integration',
       skills: 'Skills',
+      mcp: 'MCP Servers',
       notification: 'Push Notifications',
       usageMeter: 'Usage',
       security: 'Security',

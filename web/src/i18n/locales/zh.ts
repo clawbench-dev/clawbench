@@ -2395,6 +2395,7 @@ export default {
 
       forgeIntegration: 'GitHub/GitLab 集成',
       skills: '技能',
+      mcp: 'MCP 服务',
       notification: '推送通知',
       usageMeter: '用量',
       security: '安全',
