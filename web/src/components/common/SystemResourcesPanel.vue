@@ -97,30 +97,41 @@
       </div>
       <!-- Usage meter, last. The header capsule is a desktop surface; on a
            phone this panel is the only place the same numbers appear, so it
-           sits at the tail rather than competing with machine health. -->
-      <div v-if="showUsageMeter" class="resource-row usage-row">
-        <div class="resource-header">
+           sits at the tail rather than competing with machine health.
+           The whole row is the entry point to the rule's settings: there is
+           nothing to interact with here beyond "why is it this number". -->
+      <button
+        v-if="showUsageMeter"
+        type="button"
+        class="resource-row usage-row"
+        :aria-label="t('usageMeter.adjust')"
+        :title="t('usageMeter.adjust')"
+        data-action="usage-settings"
+        @click="$emit('open-usage-settings')"
+      >
+        <span class="resource-header">
           <Gauge :size="13" class="resource-icon" :class="`usage-icon is-${meterState}`" />
           <span class="resource-label">{{ t('usageMeter.label') }}</span>
           <span class="resource-value" :class="`usage-value is-${meterState}`">
             {{ meterUsed }}<span class="usage-quota"> / {{ meterQuota }}</span>
           </span>
-        </div>
-        <div class="progress-bar usage-bar">
-          <div class="usage-fill" :class="`is-${meterState}`" :style="{ width: fillPercent + '%' }"></div>
-          <div class="usage-mark" :style="{ left: expectedPercent + '%' }"></div>
-        </div>
-        <div class="usage-meta">
+          <ChevronRight :size="12" class="usage-chevron" />
+        </span>
+        <span class="progress-bar usage-bar">
+          <span class="usage-fill" :class="`is-${meterState}`" :style="{ width: fillPercent + '%' }"></span>
+          <span class="usage-mark" :style="{ left: expectedPercent + '%' }"></span>
+        </span>
+        <span class="usage-meta">
           <span>{{ t('usageMeter.dayOfCycle', { day: meterStatus.dayInCycle, days: meterStatus.periodDays ?? 0 }) }}</span>
           <span class="usage-badge" :class="`is-${meterState}`">{{ meterBadge }}</span>
-        </div>
-      </div>
+        </span>
+      </button>
     </template>
   </div>
 </template>
 
 <script setup>
-import { Cpu, Activity, MemoryStick, Database, HardDriveDownload, HardDriveUpload, CloudDownload, CloudUpload, Server, LogOut, WifiOff, Gauge } from 'lucide-vue-next'
+import { Cpu, Activity, MemoryStick, Database, HardDriveDownload, HardDriveUpload, CloudDownload, CloudUpload, Server, LogOut, WifiOff, Gauge, ChevronRight } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -166,7 +177,7 @@ const meterBadge = computed(() => {
 
 const wsDisconnected = computed(() => props.wsStatus === 'disconnected' || props.wsStatus === 'reconnecting')
 
-defineEmits(['logout'])
+defineEmits(['logout', 'open-usage-settings'])
 
 const serverAddress = window.location.host // e.g. "192.168.1.5:20000"
 
@@ -352,8 +363,36 @@ defineExpose({ startPolling, stopPolling })
    carries a baseline tick, which is the whole point of the meter (fill against
    "where a linear spend would be"). */
 .usage-row {
-  padding-top: var(--space-4);
+  /* The row is a <button>: strip the UA chrome but keep the row's own layout.
+     text-align must be reset too — a button centres its content, which would
+     centre only the meta line while the header stayed flex-aligned. */
+  width: 100%;
+  padding: var(--space-4) 0 0;
+  border: none;
   border-top: 1px solid var(--border-color);
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .usage-row:hover .usage-chevron {
+    color: var(--text-primary);
+  }
+}
+
+.usage-row:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.usage-chevron {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: color var(--duration-base);
 }
 
 .usage-icon.is-ok { color: var(--color-green); }
@@ -369,11 +408,16 @@ defineExpose({ startPolling, stopPolling })
 }
 
 .usage-bar {
+  /* The row is a <button>, so every descendant must be a span (buttons may not
+     contain block-level flow content in HTML terms). Spans are inline by
+     default, which would collapse the 4px track. */
+  display: block;
   position: relative;
   margin-top: 3px;
 }
 
 .usage-fill {
+  display: block;
   height: 100%;
   border-radius: var(--radius-xs);
   transition: width 0.3s ease;

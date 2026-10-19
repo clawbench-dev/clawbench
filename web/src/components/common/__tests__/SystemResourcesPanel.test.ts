@@ -94,6 +94,7 @@ function mountPanel(props?: { showLogout?: boolean; wsStatus?: string }) {
         WifiOff: true,
         LoaderCircle: true,
         Gauge: true,
+        ChevronRight: true,
       },
     },
   })
@@ -312,6 +313,27 @@ describe('SystemResourcesPanel', () => {
   it('shows the cycle day counter under the meter bar', () => {
     const wrapper = mountPanel()
     expect(wrapper.find('.usage-meta').text()).toContain('usageMeter.dayOfCycle')
+  })
+
+  it('opens the rule settings when the usage row is tapped', async () => {
+    // On a phone this row is the only usage surface, so it is also the only way
+    // to reach the rule. A dead-looking row would strand the user with a number
+    // they cannot explain or change.
+    const wrapper = mountPanel()
+    const row = wrapper.find('.usage-row')
+    expect(row.element.tagName).toBe('BUTTON')
+    await row.trigger('click')
+    expect(wrapper.emitted('open-usage-settings')).toHaveLength(1)
+  })
+
+  it('keeps the machine rows non-interactive', () => {
+    // Only the usage row navigates; wrapping the whole panel would turn every
+    // metric into a button that does nothing.
+    const wrapper = mountPanel()
+    const rows = wrapper.findAll('.resource-row')
+    const buttons = rows.filter(r => r.element.tagName === 'BUTTON')
+    expect(buttons).toHaveLength(1)
+    expect(buttons[0].classes()).toContain('usage-row')
   })
 
   it('keeps the meter out of the list when the connection is down', () => {

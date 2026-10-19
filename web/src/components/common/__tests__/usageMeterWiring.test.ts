@@ -118,6 +118,27 @@ describe('usage meter capsule carries an icon and a word', () => {
   })
 })
 
+describe('usage meter — mobile entry to the rule', () => {
+  it('the phone row is the entry point to the settings category', () => {
+    // The capsule's "adjust" link is desktop-only. On a phone the resources row
+    // is the only usage surface, so it must also reach the rule — otherwise the
+    // number is unexplainable and unchangeable there.
+    expect(header).toContain('@open-usage-settings="handleOpenUsageSettings"')
+    expect(header).toMatch(/function handleOpenUsageSettings/)
+    const at = header.indexOf('function handleOpenUsageSettings')
+    const body = header.slice(at, at + 400)
+    expect(body).toContain("setPendingSettingsCategory('usageMeter')")
+    expect(body).toContain("switchTab?.('settings')")
+    // The popover is teleported to <body>; leaving it open would float it over
+    // the settings tab it just navigated to.
+    expect(body).toContain('resourcesMenuOpen.value = false')
+
+    const panel = stripComments(readWebFile('src/components/common/SystemResourcesPanel.vue'))
+    expect(panel).toContain("$emit('open-usage-settings')")
+    expect(panel).toContain("defineEmits(['logout', 'open-usage-settings'])")
+  })
+})
+
 describe('usage meter — live number updates', () => {
   it('subscribes to the tick event, not only the threshold event', () => {
     // usage_meter_update means "a threshold was crossed" — every notification

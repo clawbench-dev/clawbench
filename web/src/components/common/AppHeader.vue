@@ -275,7 +275,7 @@
 
     <!-- Server info + resources popup (both Web and APP mode) -->
     <PopupMenu v-model:show="resourcesMenuOpen" :target-element="serverBtnRef" :max-width="320" :max-height="440" :menu-items-count="11" anchor="right">
-      <SystemResourcesPanel ref="resourcesPanelRef" :show-logout="isAppMode" :ws-status="wsStatus" @logout="handleLogout" />
+      <SystemResourcesPanel ref="resourcesPanelRef" :show-logout="isAppMode" :ws-status="wsStatus" @logout="handleLogout" @open-usage-settings="handleOpenUsageSettings" />
     </PopupMenu>
 
     <!-- App-drawn window controls (frameless desktop shell, Windows/Linux).
@@ -1128,6 +1128,18 @@ const resourcesPanelRef = ref<{ startPolling?: () => void; stopPolling?: () => v
 
 function toggleResourcesMenu() {
     resourcesMenuOpen.value = !resourcesMenuOpen.value
+}
+
+/**
+ * The usage row in the resources panel is the phone's only usage surface, so it
+ * doubles as the entry to the rule's settings (the header capsule has its own
+ * "adjust" link). Close the popover first: it is teleported to <body> and would
+ * otherwise float over the settings tab it just navigated to.
+ */
+function handleOpenUsageSettings() {
+    resourcesMenuOpen.value = false
+    setPendingSettingsCategory('usageMeter')
+    switchTab?.('settings')
 }
 
 watch(resourcesMenuOpen, (open) => {
