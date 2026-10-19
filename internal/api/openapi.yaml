@@ -4182,6 +4182,13 @@ paths:
             它作为**活跃成员**参与的群聊——群聊时间线行只记录主持人，普通成员须按
             `group_member` 成员行计入）；`taskCount` = 定时任务数；`membershipCount`
             = 活跃群成员关系数（是 `sessionCount` 的子集，单列供 UI 说明其中有群聊）。
+
+            `backendHasSpec` 是**运行期派生字段**（加载时由 `FindSpecByBackend != nil`
+            算出，非持久化列）：`true` 表示该 agent 的 `acp_command` 由自动发现按
+            backend 重写，客户端**不应**把它渲染成可编辑输入（PATCH 也会以
+            `AcpCommandManagedByDiscovery` 拒绝）；`false` 表示命令由用户/文件持有
+            （用户自定义 ACP 智能体、YAML 定义的 agent），可编辑。前端与服务端守卫
+            共用这一个判据，因此不会出现「界面让改、API 拒绝」。
     post:
       tags: [Agents]
       summary: 复制 / 新建 agent
