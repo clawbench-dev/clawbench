@@ -411,8 +411,38 @@ describe('QuoteQuestionBar component', () => {
     expect(wrapper.emitted('send')![0]).toEqual(['my question', { pickTarget: false }])
   })
 
-  it('clears input and collapses after send', async () => {
+  /**
+   * Long-press targets must not be selectable.
+   *
+   * The Android WebView recognises a hold on selectable text as its OWN text
+   * selection gesture: it takes over the touch stream and fires `touchcancel`,
+   * which kills the 500ms timer before it can arm. Without `user-select: none`
+   * the "hold to pick another conversation" gesture is dead on Android — the
+   * exact platform the issue was filed from.
+   *
+   * The two other long-press consumers in the app already carry this pair
+   * (`.file-item`, the quick-send rows), which is how the omission here was
+   * found. `touch-callout` is the iOS counterpart.
+   */
+  it('disables text selection on the three long-press buttons', async () => {
+    // Collapsed toolbar first (quote action), then the expanded panel's
+    // add/send pair — they live in mutually exclusive branches.
     const wrapper = mountBar()
+    const quoteBtn = wrapper.findAll('.quote-bar-action')[2].element as HTMLElement
+    const collapsedStyles = window.getComputedStyle(quoteBtn)
+    expect(collapsedStyles.userSelect, 'quote action user-select').toBe('none')
+    expect(collapsedStyles.webkitUserSelect, 'quote action -webkit-user-select').toBe('none')
+
+    await (wrapper.vm as any).expand()
+    for (const sel of ['.qq-add-btn', '.qq-send-btn']) {
+      const el = wrapper.find(sel).element as HTMLElement
+      const styles = window.getComputedStyle(el)
+      expect(styles.userSelect, `${sel} user-select`).toBe('none')
+      expect(styles.webkitUserSelect, `${sel} -webkit-user-select`).toBe('none')
+    }
+  })
+
+  it('clears input and collapses after send', async () => {    const wrapper = mountBar()
     const vm = wrapper.vm as any
     await vm.expand()
     vm.inputText = 'test'

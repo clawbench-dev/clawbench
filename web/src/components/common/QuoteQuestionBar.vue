@@ -633,6 +633,16 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
   border: none;
   border-radius: var(--radius-full);
   transition: color var(--duration-base), background var(--duration-base);
+  /* These are controls, not selectable text — and the quote action is also a
+     long-press target ("quote into another conversation").
+     Without this the Android WebView recognises the hold as its own text
+     selection gesture, takes over the touch stream and fires touchcancel,
+     which kills our 500ms timer: the long-press would simply never work on
+     Android. `touch-callout` is the iOS counterpart. Same pair the quick-send
+     rows and the file-manager rows carry (both are long-press targets too). */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 @media (hover: hover) {
@@ -857,6 +867,11 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
   cursor: pointer;
   transition: background var(--duration-base), opacity var(--duration-base);
   flex-shrink: 0;
+  /* Long-press target (see .quote-bar-action): the WebView must not claim the
+     hold for its native selection menu. */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .qq-add-btn {
