@@ -14,12 +14,32 @@
       <div class="mcp-row-head">
         <span class="mcp-name">{{ srv.name }}</span>
         <span class="mcp-transport">{{ srv.transport }}</span>
+        <!-- Test runs the real MCP handshake (initialize + tools/list), which
+             is the only check that distinguishes a working server from one
+             that merely starts. Saving a definition does not prove it works. -->
+        <button
+          class="fbtn mcp-test-btn"
+          :disabled="testingName !== null"
+          :title="t('settings.items.mcpTestHint')"
+          @click="testServer(srv)"
+        >
+          <component :is="testingName === srv.name ? Loader2 : PlugZap" :size="13" :class="{ 'mcp-spin': testingName === srv.name }" />
+          {{ testingName === srv.name ? t('settings.items.mcpTesting') : t('settings.items.mcpTest') }}
+        </button>
         <button class="fbtn" @click="removeServer(idx)">
           <Trash2 :size="13" />
           {{ t('settings.items.mcpRemove') }}
         </button>
       </div>
       <div class="mcp-summary">{{ describe(srv) }}</div>
+      <div
+        v-if="testResults[srv.name]"
+        class="mcp-test-result"
+        :class="testResults[srv.name].success ? 'mcp-test-result--ok' : 'mcp-test-result--fail'"
+      >
+        <component :is="testResults[srv.name].success ? CheckCircle2 : AlertCircle" :size="13" />
+        <span>{{ testResults[srv.name].message }}</span>
+      </div>
     </div>
 
     <div class="mcp-add">
@@ -67,9 +87,10 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { AlertCircle, Trash2 } from 'lucide-vue-next'
+import { AlertCircle, CheckCircle2, Loader2, PlugZap, Trash2 } from 'lucide-vue-next'
 import '@/assets/modal-footer-btn.css'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
+import { useConnectivityTest } from '@/composables/useConnectivityTest'
 import { appLog } from '@/utils/appLog'
 
 interface McpServer {
@@ -84,9 +105,15 @@ interface McpServer {
 
 const { t } = useI18n()
 const { getServerValue, setServerValue } = useSettingsConfig()
+const { testResults: testResultsList, runTests } = useConnectivityTest()
 
 const saving = ref(false)
 const error = ref('')
+/** Name of the server currently being probed, or null. */
+const testingName = ref<string | null>(null)
+
+/** Per-server result, keyed by name so it survives a re-render of the row. */
+const testResults = ref<Record<string, { success: boolean; message: string }>>({})
 
 const servers = computed<McpServer[]>(() => {
   const raw = getServerValue('mcp.servers')
@@ -175,7 +202,46 @@ async function addServer() {
 }
 
 async function removeServer(idx: number) {
+  const removed = servers.value[idx]?.name
   await save(servers.value.filter((_, i) => i !== idx))
+  if (removed) delete testResults.value[removed]
+}
+
+/**
+ * Probe one server by performing the real MCP handshake.
+ *
+ * The whole current list is sent (not just the target) because the backend
+ * resolves the definition from it — that is what makes "test an unsaved edit"
+ * work: the user is deciding whether to save, so the saved definition is the
+ * wrong thing to check.
+ *
+ * A longer timeout than the other categories: a stdio server may need to start
+ * a runtime (node/python) before it answers, and a cold start on a loaded
+ * machine easily exceeds the default 15s.
+ */
+async function testServer(srv: McpServer) {
+  if (testingName.value !== null) return
+  testingName.value = srv.name
+  delete testResults.value[srv.name]
+  try {
+    await runTests([{
+      category: 'mcp',
+      values: { 'mcp.name': srv.name, 'mcp.servers': servers.value },
+    }])
+    const r = testResultsList.value[0]
+    testResults.value = {
+      ...testResults.value,
+      [srv.name]: r ?? { success: false, message: 'No result returned' },
+    }
+  } catch (err) {
+    testResults.value = {
+      ...testResults.value,
+      [srv.name]: { success: false, message: err instanceof Error ? err.message : String(err) },
+    }
+    appLog.w('MCPSetting', 'mcp test failed', err)
+  } finally {
+    testingName.value = null
+  }
 }
 
 onMounted(() => {
@@ -224,7 +290,40 @@ onMounted(() => {
   padding: 0 var(--space-2);
 }
 .mcp-row-head .fbtn {
+  /* The first button after the name/transport takes the slack, so the action
+   * pair sits flush right. */
   margin-left: auto;
+}
+/* The second button in the pair must not re-apply the auto margin. */
+.mcp-row-head .fbtn + .fbtn {
+  margin-left: 0;
+}
+.mcp-test-result {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+  word-break: break-word;
+}
+.mcp-test-result--ok {
+  color: var(--color-green);
+}
+.mcp-test-result--fail {
+  color: var(--color-red);
+}
+.mcp-spin {
+  animation: mcp-spin 1s linear infinite;
+}
+@keyframes mcp-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mcp-spin {
+    animation-duration: 3s;
+  }
 }
 .mcp-summary {
   font-size: var(--font-size-sm);

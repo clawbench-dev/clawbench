@@ -536,7 +536,22 @@ paths:
     post:
       tags: [Config]
       summary: 测试配置连通性
-      description: 例如测试 TTS/推送/模型服务连通性。
+      description: |
+        按 `category` 分派到对应的探测实现，`values` 是表单当前的扁平键值
+        （点号路径，如 `rag.base_url`），**允许是未保存的编辑**——用户点测试
+        正是为了决定要不要保存，所以测已存值会答错题。
+
+        已知类别：`summarize_voice`、`rag`、`dingtalk`、`feishu`、
+        `port_forward`、`tts`、`stt`、`mcp`。
+
+        `mcp` 类别的语义与其它不同：它测**单个**服务，服务名由
+        `values["mcp.name"]` 指定，定义取自 `values["mcp.servers"]`
+        （缺省则回落到已保存的配置）。探测执行真实的 MCP 握手
+        （`initialize` + `tools/list`），而不是只看端口能不能连——
+        「进程能启动」和「它说 MCP」是两件事，后者才是 agent 实际需要的。
+        stdio 服务失败时会把子进程的 stderr 附在消息里（启动失败的原因
+        通常只在那里）。返回 `{success, message}`，`message` 含服务自报的
+        名称/版本与工具数。
       operationId: configTest
       requestBody:
         required: true

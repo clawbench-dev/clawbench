@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"clawbench/internal/mcp"
 	"clawbench/internal/model"
 	"clawbench/internal/rag"
 	"clawbench/internal/service"
@@ -83,6 +84,8 @@ func ServeConfigTest(w http.ResponseWriter, r *http.Request) {
 		result = testTTS(ctx, req.Values)
 	case "stt":
 		result = testSTT(ctx, req.Values)
+	case "mcp":
+		result = testMCP(ctx, req.Values)
 	default:
 		result = ConnectivityTestResult{Success: false, Message: "Unknown category: " + req.Category}
 	}
@@ -799,4 +802,78 @@ func resolveKokoroPython() string {
 		return p
 	}
 	return ""
+}
+
+// testMCP probes one MCP server: it performs the real MCP handshake and lists
+// tools, which is the only way to tell a working server from one that merely
+// starts.
+//
+// The server to probe is named by "mcp.name"; the definition is taken from the
+// form's "mcp.servers" (so an unsaved edit can be tested before saving) and
+// falls back to the saved config when the form does not carry it. Probing the
+// SAVED definition when the form changed would test the wrong thing — the user
+// clicks test precisely to decide whether to save.
+func testMCP(ctx context.Context, values map[string]any) ConnectivityTestResult {
+	name := resolveStringValue(values, "mcp.name", "")
+	if name == "" {
+		return ConnectivityTestResult{Success: false, Message: "mcp.name is required"}
+	}
+
+	servers, err := mcpServersFromValues(values)
+	if err != nil {
+		return ConnectivityTestResult{Success: false, Message: err.Error()}
+	}
+
+	var target *model.MCPServer
+	for i := range servers {
+		if servers[i].Name == name {
+			target = &servers[i]
+			break
+		}
+	}
+	if target == nil {
+		// Name every available server: the user picked one that is not in the
+		// list, and "not found" alone does not say what to pick instead.
+		available := make([]string, 0, len(servers))
+		for _, s := range servers {
+			available = append(available, s.Name)
+		}
+		if len(available) == 0 {
+			return ConnectivityTestResult{Success: false, Message: "no MCP servers are configured"}
+		}
+		return ConnectivityTestResult{
+			Success: false,
+			Message: fmt.Sprintf("MCP server %q not found (available: %s)", name, strings.Join(available, ", ")),
+		}
+	}
+
+	res := mcp.Probe(ctx, *target)
+	msg := res.Message
+	if res.OK && res.ServerName != "" {
+		msg = fmt.Sprintf("%s (server: %s %s)", msg, res.ServerName, res.ServerVersion)
+	}
+	if res.OK && len(res.Tools) > 0 {
+		msg = fmt.Sprintf("%s: %s", msg, strings.Join(res.Tools, ", "))
+		if res.ToolCount > len(res.Tools) {
+			msg = fmt.Sprintf("%s … (%d total)", msg, res.ToolCount)
+		}
+	}
+	return ConnectivityTestResult{Success: res.OK, Message: msg}
+}
+
+// mcpServersFromValues extracts the server list from the form values, falling
+// back to the saved config. The form sends the whole list under "mcp.servers".
+func mcpServersFromValues(values map[string]any) ([]model.MCPServer, error) {
+	if raw, ok := values["mcp.servers"]; ok {
+		if list, ok := raw.([]any); ok {
+			return parseMCPServers(list)
+		}
+	}
+	// No list in the form: fall back to what is saved.
+	configMutex.RLock()
+	saved := model.ConfigInstance.MCP.Servers
+	configMutex.RUnlock()
+	out := make([]model.MCPServer, len(saved))
+	copy(out, saved)
+	return out, nil
 }
