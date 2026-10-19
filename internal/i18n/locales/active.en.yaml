@@ -119,6 +119,8 @@ AgentNameReserved: This name conflicts with the group-chat user nickname
 UserNicknameTaken: This nickname is already used by an agent
 InvalidUserNickname: Invalid nickname (1-32 characters, no quotes, angle brackets, commas or control characters)
 InvalidAgentName: Invalid agent name
+InvalidAcpCommand: Invalid ACP command (must be non-empty and at most 4096 bytes)
+AcpCommandManagedByDiscovery: The ACP command of a built-in backend is managed by auto-discovery and cannot be edited
 InvalidAgentSpecialty: Invalid description
 InvalidAgentAvatar: Invalid avatar image
 InvalidSystemPrompt: System prompt too long

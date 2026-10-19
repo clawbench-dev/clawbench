@@ -154,6 +154,21 @@ const isACPOnly = computed(() => {
   return a.acpCommand && !a.supportsCLI
 })
 
+// A user-defined ACP agent (issue #557). Its backend has no registry entry, so
+// `supportsCLI` is false and every capability comes from the agent at runtime —
+// the same shape as an ACP-only built-in, which is why it needs no special
+// handling beyond keeping the command field editable when it is empty.
+const isCustomAcpAgent = computed(() => agent.value?.backend === 'custom-acp')
+
+/**
+ * Whether auto-discovery owns this agent's `acp_command`.
+ *
+ * The server computes this (`backendHasSpec`, from model.FindSpecByBackend) and
+ * applies the exact same predicate in its PATCH guard, so the UI cannot offer
+ * an edit the API rejects — or hide one it would accept.
+ */
+const hasBackendSpec = computed(() => agent.value?.backendHasSpec === true)
+
 // Determine if agent supports both ACP and CLI (dual transport)
 const isDualTransport = computed(() => {
   const a = agent.value
@@ -356,11 +371,35 @@ const items = computed<AgentItem[]>(() => {
     value: t('settings.items.agentTaskCount', { count: a.taskCount ?? 0 }),
   })
 
-  if (a.acpCommand) {
+  // ACP command. Editable for any agent whose command is NOT owned by
+  // auto-discovery.
+  //
+  // For a spec-backed agent the field is read-only on purpose. Discovery owns
+  // `acp_command` there — model.RefreshAgents' syncAgentInfrastructure does
+  // `UPDATE agents SET acp_command = <spec>, transport = ... WHERE backend = ?`
+  // — so any edit a user made would be silently reverted on the next startup or
+  // "Rescan", including a deliberate clear. Offering an input that quietly
+  // undoes itself is worse than showing the effective value.
+  //
+  // Agents with no registry spec (a YAML-defined one like the E2E acp-mock, or
+  // a custom ACP agent) are not touched by that sync, and the API accepts the
+  // PATCH for them, so the field stays editable there.
+  if (a.acpCommand || isCustomAcpAgent.value) {
+    const editable = !hasBackendSpec.value
     result.push({
       key: 'acp_command',
       label: t('settings.items.agentAcpCommand'),
-      type: 'info',
+      description: t(
+        editable
+          ? 'settings.items.agentAcpCommandDesc'
+          : 'settings.items.agentAcpCommandDescBuiltin'
+      ),
+      // `note` (not `warning`): the latter only renders inside the textarea
+      // editor, and this caution must be visible before the user opens the
+      // field — the command runs with the server's privileges.
+      note: t('settings.items.agentAcpCommandWarning'),
+      type: editable ? 'text' : 'info',
+      patchField: editable ? 'acp_command' : undefined,
     })
   }
 

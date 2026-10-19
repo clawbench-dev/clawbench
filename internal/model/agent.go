@@ -74,6 +74,16 @@ type Agent struct {
 	// has model discovery capability (registered via RegisterModelSource).
 	CanRefreshModels bool `json:"canRefreshModels"`
 
+	// BackendHasSpec reports whether this agent's backend has a BackendSpec
+	// registry entry, i.e. whether auto-discovery owns its `acp_command`
+	// (RefreshAgents rewrites that column by backend on every rescan/startup).
+	//
+	// Computed at load time and echoed on the wire so the settings UI applies
+	// the same predicate as the PATCH guard: an agent with no spec (a YAML one,
+	// or a custom ACP agent) can have its command edited; a spec-backed one
+	// cannot, because the edit would silently revert.
+	BackendHasSpec bool `json:"backendHasSpec"`
+
 	// CLIModels is the pure CLI-discovered list, without any ACP merge. It is
 	// populated only in API responses, so a client can show the CLI view when the
 	// agent is switched to CLI transport without re-deriving it.

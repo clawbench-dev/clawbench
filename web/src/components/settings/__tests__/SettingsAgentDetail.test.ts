@@ -352,6 +352,72 @@ describe('SettingsAgentDetail', () => {
     expect(mockLoadAgents).toHaveBeenCalledWith(true)
   })
 
+  // ─── Editable ACP command (issue #557) ─────────
+
+  it('renders a built-in ACP command as read-only info', () => {
+    // Discovery owns this column for a spec-backed agent: model.RefreshAgents
+    // rewrites acp_command and transport from the BackendSpec on every rescan
+    // and startup, so an editable input would silently revert. Showing the
+    // effective value as info is the honest UI.
+    const wrapper = mountDetail({ acpCommand: 'claude --acp', backend: 'claude', backendHasSpec: true })
+    const item = wrapper.findAllComponents({ name: 'SettingsItem' })
+      .find((it: any) => it.props('label') === 'ACP Command')
+
+    expect(item).toBeDefined()
+    expect(item!.props('type')).toBe('info')
+    expect(item!.props('type')).not.toBe('text')
+  })
+
+  it('renders a custom agent\'s ACP command as an editable text row', () => {
+    const wrapper = mountDetail({ acpCommand: 'trae acp', backend: 'custom-acp', supportsCLI: false, backendHasSpec: false })
+    const item = wrapper.findAllComponents({ name: 'SettingsItem' })
+      .find((it: any) => it.props('label') === 'ACP Command')
+
+    expect(item).toBeDefined()
+    expect(item!.props('type')).toBe('text')
+  })
+
+  it('keeps the ACP command row for a custom agent whose command is empty', () => {
+    // A custom agent always shows the row, even before its command is set:
+    // without it there would be no way to make the agent runnable.
+    const wrapper = mountDetail({ backend: 'custom-acp', acpCommand: '', supportsCLI: false, backendHasSpec: false })
+    const item = wrapper.findAllComponents({ name: 'SettingsItem' })
+      .find((it: any) => it.props('label') === 'ACP Command')
+
+    expect(item).toBeDefined()
+    expect(item!.props('type')).toBe('text')
+  })
+
+  it('keeps a spec-less ACP agent\'s command editable (e.g. a YAML-defined agent)', () => {
+    // acp-mock-style agents have no registry entry, so discovery never rewrites
+    // their command and the API accepts the PATCH — the row must stay editable.
+    const wrapper = mountDetail({ acpCommand: 'acp-mock-bin', backend: 'acp-mock', backendHasSpec: false })
+    const item = wrapper.findAllComponents({ name: 'SettingsItem' })
+      .find((it: any) => it.props('label') === 'ACP Command')
+
+    expect(item).toBeDefined()
+    expect(item!.props('type')).toBe('text')
+  })
+
+  it('hides the ACP command row for an agent that has no command and no custom backend', () => {
+    const wrapper = mountDetail({ acpCommand: '', backend: 'claude' })
+    const item = wrapper.findAllComponents({ name: 'SettingsItem' })
+      .find((it: any) => it.props('label') === 'ACP Command')
+
+    expect(item).toBeUndefined()
+  })
+
+  it('shows the trust caution as a always-visible note', () => {
+    // The command runs with the server's privileges, so the caution must be
+    // readable BEFORE the user opens the editor — `warning` only renders inside
+    // it, which is why this asserts on `note`.
+    const wrapper = mountDetail({ acpCommand: 'x acp', backendHasSpec: true })
+    const item = wrapper.findAllComponents({ name: 'SettingsItem' })
+      .find((it: any) => it.props('label') === 'ACP Command')
+
+    expect(item!.props('note')).toBeTruthy()
+  })
+
   it('renders container div', () => {
     const wrapper = mountDetail()
     expect(wrapper.find('.settings-agent-detail').exists()).toBe(true)

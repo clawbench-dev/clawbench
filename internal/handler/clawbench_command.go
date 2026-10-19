@@ -113,9 +113,10 @@ Endpoints:
 Project scope:
 - Send the cookie "{{PROJECT_COOKIE}}={{PROJECT_PATH}}" on every request. "GET /api/agents" returns only the agents visible in this project (global agents plus agents scoped to it), and "PATCH /api/agents" uses the cookie to resolve "project_scope". Without the cookie, project-scoped agents are invisible.
 
-Creating an agent:
-- There is NO create-from-scratch: an agent is always created by CLONING an existing one. Call "GET /api/agents" first, pick the agent whose backend (the "backend" field) matches what the user wants, then POST /api/agents with "source_id" (that agent's "id") and "name" (the new agent's name). The clone inherits the source's backend, command, models and transport.
-- If the user does not name a source, ask which existing agent to base it on, or choose the default agent ("defaultAgent" in the list response) and say so.
+Creating an agent — two shapes, chosen by whether a source agent is being cloned:
+- CLONE an existing agent: call "GET /api/agents" first, pick the agent whose "backend" matches what the user wants, then POST /api/agents with "source_id" (that agent's "id") and "name". The clone inherits the source's backend, command, models and transport.
+- CUSTOM ACP agent (for a tool with no built-in backend, e.g. Trae, CodeArts): POST /api/agents with "name" and "acp_command" (the stdio command that starts its ACP server, e.g. "trae acp"). Do NOT send "source_id" and do NOT invent a "backend" — the server assigns its own. The command is split on spaces (no quoting), so it cannot carry quoted arguments.
+- If the user asks for an agent that is neither a clone of a listed agent nor backed by a command they supplied, ask which of the two they mean instead of guessing.
 - The new name is globally unique: a name already used by another agent is rejected with 409 (AgentNameTaken), and a name equal to the group-chat user nickname is rejected with 409 (AgentNameReserved). If rejected, ask the user for a different name instead of retrying the same one.
 
 Searching and viewing:
@@ -126,6 +127,7 @@ Updating an agent (PATCH /api/agents):
 - Always include "id". Only the documented fields may be changed; unknown fields are ignored.
 - Validate against the current values first (e.g. "preferred_model" must be one of the agent's "models", "preferred_mode" must be an ACP mode the agent advertises). A bad value returns 400 with a specific msgKey rather than being silently dropped.
 - "project_scope": true limits the agent to the current project, false makes it globally visible again. The default agent cannot be scoped (CannotScopeDefaultAgent), and scoping requires a selected project (NoProjectSelected).
+- "acp_command" is only accepted for a custom ACP agent (its "backend" is "custom-acp"). A built-in backend's command is owned by auto-discovery and is refused with 400 (AcpCommandManagedByDiscovery); do not try to repoint a built-in agent at another binary this way.
 
 Deleting an agent (DELETE /api/agents):
 - Deletion is destructive and only allowed when the agent is unused: if it still has sessions, tasks, or active group memberships the call returns 409 (AgentInUse) with the counts in "detail". Relay those counts to the user instead of forcing the delete.

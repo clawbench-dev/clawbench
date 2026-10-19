@@ -120,6 +120,8 @@ AgentNameReserved: 该名称与群聊用户昵称冲突
 UserNicknameTaken: 该昵称已被某个智能体使用
 InvalidUserNickname: 昵称无效（1-32 个字符，且不能包含引号、尖括号、逗号或控制字符）
 InvalidAgentName: 无效的智能体名称
+InvalidAcpCommand: ACP 启动命令无效（不能为空，且长度不超过 4096 字节）
+AcpCommandManagedByDiscovery: 内置后端的 ACP 命令由自动发现管理，不能手动修改
 InvalidAgentSpecialty: 无效的描述
 InvalidAgentAvatar: 无效的头像图片
 InvalidSystemPrompt: 系统提示过长

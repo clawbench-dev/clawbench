@@ -2579,6 +2579,284 @@ func TestAgentDuplicate_NoRaceWithConcurrentReaders(t *testing.T) {
 	wg.Wait()
 }
 
+// --- POST /api/agents without source_id: user-defined ACP agents (issue #557) ---
+
+// A create request with no source_id must produce a runnable ACP agent: the
+// stored transport is acp-stdio, the command is persisted verbatim, and the
+// agent is published into the live maps immediately (the settings panel
+// navigates straight to it).
+func TestAgentCreate_CustomACPPersistsAndPublishes(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	body := map[string]any{"name": "Trae", "acp_command": "trae acp --stdio"}
+	req := newRequest(t, http.MethodPost, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var created model.Agent
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
+
+	assert.Equal(t, "Trae", created.Name)
+	assert.Equal(t, model.CustomACPBackend, created.Backend,
+		"a custom agent must never borrow a registered backend id — the discovery sync would overwrite its command")
+	assert.Equal(t, "acp-stdio", created.Transport)
+	assert.Equal(t, "trae acp --stdio", created.AcpCommand)
+	assert.True(t, created.SupportsACP(), "a stored command is what makes the ACP transport usable")
+	assert.False(t, created.SupportsCLI, "a custom backend has no CLI factory")
+	require.NotEmpty(t, created.ID)
+
+	// Persisted, not just in memory: the row survives a reload.
+	persisted, err := service.LoadAgentsFromDB()
+	require.NoError(t, err)
+	var found *model.Agent
+	for _, a := range persisted {
+		if a.ID == created.ID {
+			found = a
+			break
+		}
+	}
+	require.NotNil(t, found, "the created agent must be in the database")
+	assert.Equal(t, "acp-stdio", found.Transport)
+	assert.Equal(t, "trae acp --stdio", found.AcpCommand)
+
+	// Published into the live map for immediate reflection (no reload needed).
+	require.NotNil(t, model.GetAgent(created.ID))
+}
+
+// An empty command must be rejected: the agent would advertise ACP with
+// nothing to spawn, and nothing else in the system repairs that state.
+func TestAgentCreate_EmptyCommandRejected(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	for _, cmd := range []string{"", "   ", "\t\n"} {
+		body := map[string]any{"name": "No Command", "acp_command": cmd}
+		req := newRequest(t, http.MethodPost, "/api/agents", body)
+		withAuthCookie(req, model.SessionToken)
+		w := callHandler(ServeAgents, req)
+
+		require.Equal(t, http.StatusBadRequest, w.Code, "command %q must be rejected", cmd)
+
+		var resp model.ErrorResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, "InvalidAcpCommand", resp.MsgKey)
+	}
+
+	agents, err := service.LoadAgentsFromDB()
+	require.NoError(t, err)
+	assert.Len(t, agents, 2, "no rejected create may be persisted")
+}
+
+// The command is trimmed before it is stored, so a stray leading/trailing space
+// cannot make the spawn path look for a binary whose name has one.
+func TestAgentCreate_CommandIsTrimmed(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	body := map[string]any{"name": "Padded", "acp_command": "  my-agent acp  "}
+	req := newRequest(t, http.MethodPost, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var created model.Agent
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
+	assert.Equal(t, "my-agent acp", created.AcpCommand)
+}
+
+// A name collision on create is a 409 with AgentNameTaken, so the dialog can
+// stay open and show the reason inline.
+func TestAgentCreate_NameTakenReturnsConflict(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	body := map[string]any{"name": "Test", "acp_command": "x acp"} // owned by codebuddy
+	req := newRequest(t, http.MethodPost, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	require.Equal(t, http.StatusConflict, w.Code)
+
+	var resp model.ErrorResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "AgentNameTaken", resp.MsgKey)
+}
+
+// PATCHing acp_command is what makes the field editable for an existing agent.
+// Setting one must also flip the transport to acp-stdio, otherwise the agent
+// holds a command it never uses.
+func TestAgentPatch_AcpCommandSetsTransportOnCustomAgent(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	custom := &model.Agent{
+		ID:         "custom-patch",
+		Name:       "Custom Patch",
+		Backend:    model.CustomACPBackend,
+		Transport:  "acp-stdio",
+		AcpCommand: "old acp",
+	}
+	require.NoError(t, service.SaveAgent(store.WriteDB(), custom))
+	model.AddAgent(custom)
+	t.Cleanup(func() { model.DeleteAgent("custom-patch") })
+
+	body := map[string]any{"id": "custom-patch", "acp_command": "new acp --stdio"}
+	req := newRequest(t, http.MethodPatch, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var updated model.Agent
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &updated))
+	assert.Equal(t, "new acp --stdio", updated.AcpCommand)
+	assert.Equal(t, "acp-stdio", updated.Transport, "a stored command must be in effect")
+
+	// The in-memory agent is the published copy, so callers reading it without
+	// the config lock see the new values too.
+	live := model.GetAgent("custom-patch")
+	require.NotNil(t, live)
+	assert.Equal(t, "new acp --stdio", live.AcpCommand)
+	assert.Equal(t, "acp-stdio", live.Transport)
+}
+
+// A built-in backend's command is owned by auto-discovery: model.RefreshAgents
+// rewrites acp_command and transport from the BackendSpec on every rescan and
+// every startup, so a user edit there would silently revert. The API must
+// refuse it rather than accept a write that cannot stick.
+func TestAgentPatch_BuiltinAcpCommandIsRefused(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	// codebuddy has a registry spec, so its command is discovery-owned.
+	body := map[string]any{"id": "codebuddy", "acp_command": "my-buddy acp"}
+	req := newRequest(t, http.MethodPatch, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+
+	var resp model.ErrorResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "AcpCommandManagedByDiscovery", resp.MsgKey)
+
+	// Nothing may have been written.
+	persisted, err := service.LoadAgentsFromDB()
+	require.NoError(t, err)
+	for _, a := range persisted {
+		if a.ID == "codebuddy" {
+			assert.NotEqual(t, "my-buddy acp", a.AcpCommand)
+		}
+	}
+}
+
+// The command already decides the transport, so a request carrying both is
+// ambiguous. Rejecting it keeps the outcome independent of branch order (the
+// alternative made {acp_command:"", transport:"acp-stdio"} silently re-adopt
+// the spec's command after having closed the connections).
+func TestAgentPatch_CommandAndTransportTogetherRejected(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	custom := &model.Agent{
+		ID:         "custom-both",
+		Name:       "Custom Both",
+		Backend:    model.CustomACPBackend,
+		Transport:  "acp-stdio",
+		AcpCommand: "thing acp",
+	}
+	require.NoError(t, service.SaveAgent(store.WriteDB(), custom))
+	model.AddAgent(custom)
+	t.Cleanup(func() { model.DeleteAgent("custom-both") })
+
+	body := map[string]any{
+		"id":          "custom-both",
+		"acp_command": "other acp",
+		"transport":   "cli",
+	}
+	req := newRequest(t, http.MethodPatch, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	// Neither field may have been applied.
+	live := model.GetAgent("custom-both")
+	require.NotNil(t, live)
+	assert.Equal(t, "thing acp", live.AcpCommand)
+	assert.Equal(t, "acp-stdio", live.Transport)
+}
+
+// Clearing the command on a custom agent must be refused: it has no CLI
+// fallback, so the agent would be left with no usable transport at all.
+func TestAgentPatch_CannotClearCommandOnCustomAgent(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	custom := &model.Agent{
+		ID:         "custom-clear",
+		Name:       "Custom Clear",
+		Backend:    model.CustomACPBackend,
+		Transport:  "acp-stdio",
+		AcpCommand: "thing acp",
+	}
+	require.NoError(t, service.SaveAgent(store.WriteDB(), custom))
+	model.AddAgent(custom)
+	t.Cleanup(func() { model.DeleteAgent("custom-clear") })
+
+	body := map[string]any{"id": "custom-clear", "acp_command": ""}
+	req := newRequest(t, http.MethodPatch, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	var resp model.ErrorResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "InvalidAcpCommand", resp.MsgKey)
+
+	// Neither the command nor the transport may have changed.
+	live := model.GetAgent("custom-clear")
+	require.NotNil(t, live)
+	assert.Equal(t, "thing acp", live.AcpCommand)
+	assert.Equal(t, "acp-stdio", live.Transport)
+}
+
+// The transport selector must be usable for an agent that has a command but no
+// registry spec (the custom-ACP case). It used to be gated on the BackendSpec,
+// which made the control dead for exactly those agents.
+func TestAgentPatch_TransportAcceptsAgentWithoutSpec(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	custom := &model.Agent{
+		ID:         "custom-1",
+		Name:       "Custom",
+		Backend:    model.CustomACPBackend,
+		Transport:  "acp-stdio",
+		AcpCommand: "thing acp",
+	}
+	require.NoError(t, service.SaveAgent(store.WriteDB(), custom))
+	model.AddAgent(custom)
+	t.Cleanup(func() { model.DeleteAgent("custom-1") })
+
+	body := map[string]any{"id": "custom-1", "transport": "acp-stdio"}
+	req := newRequest(t, http.MethodPatch, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, "acp-stdio", model.GetAgent("custom-1").Transport)
+}
+
+// An unknown/empty source_id is still a create request, so a body with neither
+// a command nor a source must be a 400 rather than a silent no-op.
+func TestAgentPost_NeitherSourceNorCommandRejected(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	body := map[string]any{"name": "Nameless"}
+	req := newRequest(t, http.MethodPost, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	var resp model.ErrorResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "InvalidAcpCommand", resp.MsgKey)
+}
+
 // Duplicating onto a name another agent already owns must be a 409 with the
 // AgentNameTaken msgKey, so the client can keep the copy dialog open and show
 // the reason inline instead of a generic failure toast.

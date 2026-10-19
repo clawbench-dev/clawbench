@@ -148,7 +148,7 @@ func ServeAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodPost {
-		serveAgentsDuplicate(w, r)
+		serveAgentsPost(w, r)
 		return
 	}
 	if r.Method == http.MethodDelete {
@@ -363,23 +363,38 @@ func serveAgentsGet(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// serveAgentsDuplicate handles POST /api/agents — duplicates an existing agent.
-// Expects: {"source_id": "claude", "name": "My Custom Claude"}
-// Returns the newly created agent.
-func serveAgentsDuplicate(w http.ResponseWriter, r *http.Request) {
+// serveAgentsPost is the POST /api/agents entry point. Two shapes share the
+// route, distinguished by `source_id`:
+//
+//	{"source_id": "...", "name": "..."}  → duplicate an existing agent
+//	{"name": "...", "acp_command": "..."} → create a custom ACP agent
+//
+// The body is decoded once here so the two paths cannot drift on validation.
+func serveAgentsPost(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		SourceID string `json:"source_id"`
-		Name     string `json:"name"`
+		SourceID   string `json:"source_id"`
+		Name       string `json:"name"`
+		AcpCommand string `json:"acp_command"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-
 	if req.SourceID == "" {
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
+		serveAgentsCreate(w, r, req.Name, req.AcpCommand)
 		return
 	}
-	if req.Name == "" || utf8.RuneCountInString(req.Name) > 64 {
+	serveAgentsDuplicate(w, r, req.SourceID, req.Name)
+}
+
+// serveAgentsCreate creates a user-defined ACP agent from a spawn command
+// (issue #557).
+//
+// The request shape is deliberately narrow. `backend` is NOT accepted from the
+// client — the service always stamps model.CustomACPBackend — because a custom
+// agent that borrowed a built-in backend ID would have its acp_command
+// overwritten by the discovery sync on the next rescan.
+func serveAgentsCreate(w http.ResponseWriter, r *http.Request, name, acpCommand string) {
+	if name == "" || utf8.RuneCountInString(name) > 64 {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidAgentName")
 		return
 	}
@@ -387,9 +402,51 @@ func serveAgentsDuplicate(w http.ResponseWriter, r *http.Request) {
 	configMutex.Lock()
 	defer configMutex.Unlock()
 
-	clone, err := service.DuplicateAgent(req.SourceID, req.Name)
+	created, err := service.CreateCustomACPAgent(name, acpCommand)
 	if err != nil {
-		slog.Error("failed to duplicate agent", "source", req.SourceID, "error", err)
+		slog.Error("failed to create custom acp agent", "name", name, "error", err)
+		switch {
+		case errors.Is(err, service.ErrAgentNameReserved):
+			writeLocalizedErrorf(w, r, http.StatusConflict, "AgentNameReserved")
+		case errors.Is(err, service.ErrAgentNameTaken):
+			writeLocalizedErrorf(w, r, http.StatusConflict, "AgentNameTaken")
+		case errors.Is(err, service.ErrAcpCommandRequired),
+			errors.Is(err, service.ErrAcpCommandTooLong):
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidAcpCommand")
+		default:
+			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+		}
+		return
+	}
+
+	// Runtime-only fields, populated BEFORE publishing — same publish-then-mutate
+	// rule as the duplicate path. A custom-acp agent has no spec, so
+	// CanRefreshModels/ThinkingEffortLevels stay at their zero values and every
+	// capability arrives from the agent itself over ACP.
+	created.SupportsCLI = model.BackendSupportsCLI(created.Backend)
+	created.SupportsMidTurn = model.BackendSupportsMidTurn(created.Backend)
+	// A custom agent's backend is deliberately absent from the registry, so
+	// discovery does not own its command and the settings UI may edit it.
+	created.BackendHasSpec = model.FindSpecByBackend(created.Backend) != nil
+
+	model.AddAgent(created)
+
+	writeJSON(w, http.StatusOK, created)
+}
+
+// serveAgentsDuplicate duplicates an existing agent into a new one.
+func serveAgentsDuplicate(w http.ResponseWriter, r *http.Request, sourceID, name string) {
+	if name == "" || utf8.RuneCountInString(name) > 64 {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidAgentName")
+		return
+	}
+
+	configMutex.Lock()
+	defer configMutex.Unlock()
+
+	clone, err := service.DuplicateAgent(sourceID, name)
+	if err != nil {
+		slog.Error("failed to duplicate agent", "source", sourceID, "error", err)
 		if errors.Is(err, service.ErrAgentNameReserved) {
 			writeLocalizedErrorf(w, r, http.StatusConflict, "AgentNameReserved")
 			return
@@ -412,6 +469,7 @@ func serveAgentsDuplicate(w http.ResponseWriter, r *http.Request) {
 	// pointers after releasing configMutex), so assigning them afterwards would
 	// be the same publish-then-mutate race this file was fixed for elsewhere.
 	if spec := model.FindSpecByBackend(clone.Backend); spec != nil {
+		clone.BackendHasSpec = true
 		if model.CanDiscoverModels(*spec) {
 			clone.CanRefreshModels = true
 		}
@@ -743,11 +801,76 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 		ap.PreferredThinkingEffort = &level
 	}
 
+	// Validate and apply acp_command. This is what makes a user-defined ACP
+	// agent runnable (issue #557): spawn reads agent.AcpCommand directly, and
+	// Agent.SupportsACP() is exactly "AcpCommand != """. The transport is kept
+	// in step here rather than left to the caller, because an agent that
+	// advertises acp-stdio without a command (or holds a command while running
+	// CLI) is a state nothing else in the system repairs.
+	//
+	// Only an agent whose backend has NO registry spec may be edited. For a
+	// spec-backed agent the discovery sync owns this column
+	// (model.syncAgentInfrastructure rewrites acp_command and transport by
+	// backend on every rescan/startup), so an edit would silently revert.
+	// Refusing it here keeps the API honest even if a client sends the field
+	// anyway. Agents without a spec (a custom ACP agent, or a YAML-defined one
+	// like the E2E acp-mock) are never touched by that sync.
+	if v, exists := patch["acp_command"]; exists {
+		if model.FindSpecByBackend(agent.Backend) != nil {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "AcpCommandManagedByDiscovery")
+			return
+		}
+		acpCommand, _ := v.(string)
+		acpCommand = strings.TrimSpace(acpCommand)
+		if len(acpCommand) > service.MaxAcpCommandBytes {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidAcpCommand")
+			return
+		}
+		ap.AcpCommand = &acpCommand
+		if acpCommand == "" {
+			// A custom ACP agent has no CLI factory behind it, so an empty
+			// command leaves it with NO usable transport at all — every turn
+			// would fail at backend creation. Refuse instead of silently
+			// bricking the agent; deleting it is the way to retire one.
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidAcpCommand")
+			return
+		}
+		newTransport := "acp-stdio"
+		ap.Transport = &newTransport
+		// A changed command invalidates every running process of this agent:
+		// they were spawned with the previous one. Keyed on the command, not on
+		// the agent-level transport — a session can carry its own acp-stdio
+		// override while the agent row says cli, and those processes hold the
+		// old command too.
+		closeACPConns = acpCommand != agent.AcpCommand
+	}
+
 	// Validate and apply transport (only for agents that support ACP)
 	if v, exists := patch["transport"]; exists {
+		// The two fields are mutually exclusive: acp_command already decides the
+		// transport (non-empty ⇒ acp-stdio), so honoring a second, independent
+		// transport value would make the outcome depend on branch order.
+		if ap.AcpCommand != nil {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
+			return
+		}
 		transport, _ := v.(string)
-		spec := model.FindSpecByBackend(agent.Backend)
-		hasACP := spec != nil && spec.AcpCommand != ""
+		// Resolve the ACP capability from the agent's OWN command first: spawn
+		// reads agent.AcpCommand, so an agent with no spec entry (a custom ACP
+		// agent) can still run ACP. Gating purely on the BackendSpec made those
+		// agents' transport unswitchable.
+		hasACP := agent.AcpCommand != ""
+		// A spec-backed agent whose command has not been synced yet (a fresh
+		// row, or a user who cleared the field) can still switch to ACP: adopt
+		// the spec's command in the same patch rather than letting the agent
+		// advertise a transport it has nothing to spawn for.
+		var adoptAcpCommand string
+		if !hasACP {
+			if spec := model.FindSpecByBackend(agent.Backend); spec != nil && spec.AcpCommand != "" {
+				adoptAcpCommand = spec.AcpCommand
+				hasACP = true
+			}
+		}
 		hasCLI := agent.SupportsCLI
 		oldTransport := agent.Transport
 		// Resolve the new value locally and let the UpdateAgent block below
@@ -759,6 +882,9 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 			newTransport = "cli"
 		case transport == "acp-stdio" && hasACP:
 			newTransport = "acp-stdio"
+			if adoptAcpCommand != "" {
+				ap.AcpCommand = &adoptAcpCommand
+			}
 		default:
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidTransport")
 			return
@@ -769,7 +895,7 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 		// a window where the in-memory agent still reports acp-stdio: a turn
 		// starting in it spawns a fresh ACP process for an agent the user just
 		// switched to CLI, and nothing re-closes it.
-		closeACPConns = oldTransport == "acp-stdio" && newTransport == "cli"
+		closeACPConns = closeACPConns || (oldTransport == "acp-stdio" && newTransport == "cli")
 	}
 
 	// Validate and apply name
@@ -935,6 +1061,9 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 		if ap.Transport != nil {
 			agent.Transport = *ap.Transport
 		}
+		if ap.AcpCommand != nil {
+			agent.AcpCommand = *ap.AcpCommand
+		}
 		if ap.Name != nil {
 			agent.Name = *ap.Name
 		}
@@ -981,7 +1110,14 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 	// race a turn into spawning a replacement.
 	if closeACPConns {
 		ai.GetACPConnManager().CloseConnsByAgentID(agentID)
-		slog.Info("closed ACP connections after transport switch to CLI", "agent", agentID)
+		// The reason matters when diagnosing a live session that stopped
+		// working: a transport switch and a command change look identical from
+		// the client side but have very different causes.
+		reason := "transport switched to CLI"
+		if ap.AcpCommand != nil {
+			reason = "acp command changed"
+		}
+		slog.Info("closed ACP connections", "agent", agentID, "reason", reason)
 	}
 
 	writeJSON(w, http.StatusOK, updated)

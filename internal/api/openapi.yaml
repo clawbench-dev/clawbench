@@ -4059,40 +4059,47 @@ paths:
       tags: [Agents]
       summary: 复制 / 新建 agent
       description: |
-        复制（body 含 `source_id` + `name`）或新建 agent。**智能体名称全局唯一**
-        （决策 #50）：`name` 与其它 agent 重名时返回 `409` + `msgKey=AgentNameTaken`
-        （复制自身同一名称两次会撞预填名，同样被拒）。`name` 等于群聊用户昵称
-        （`chat.user_nickname`）时也返回 `409` + `msgKey=AgentNameReserved`——
-        昵称是路由目标，同名会遮蔽人类用户。
+        body 两种形态，由是否带 `source_id` 区分：
+
+        - **复制**：`{source_id, name}` —— 克隆已有 agent。
+        - **新建 ACP 智能体**：`{name, acp_command}` —— 接入内置列表之外的工具，
+          复用现有 ACP 链路。命令按空格拆分（**不支持引号**），`backend` 恒为
+          `custom-acp`（不接受客户端指定），传输固定 `acp-stdio`；模型等能力由
+          该 agent 首次连接后上报，此前 `models` 为空。命令为空或超 4096 字节
+          返回 `400` + `InvalidAcpCommand`。
+
+        **名称全局唯一**（决策 #50）：重名 `409` + `AgentNameTaken`；等于群聊
+        用户昵称返回 `409` + `AgentNameReserved`。
       operationId: agentsCreate
       responses:
         "200":
           description: 新 agent
+        "400":
+          description: 名称非法（`InvalidAgentName`），或命令为空 / 过长（`InvalidAcpCommand`）
         "409":
-          description: 名称已被其它 agent 占用（`AgentNameTaken`），或等于群聊用户昵称（`AgentNameReserved`）
+          description: 名称已被占用（`AgentNameTaken`），或等于群聊用户昵称（`AgentNameReserved`）
     patch:
       tags: [Agents]
       summary: 更新 agent
       description: |
         部分更新单个 agent（body 含 `id`）。可更新字段：
         `preferred_model`、`preferred_thinking_effort`、`preferred_mode`、
-        `transport`、`name`、`specialty`、`custom_system_prompt`、`avatar`、
-        `sort_order`、`auto_approve`、`disabled`、`project_scope`。
-        `avatar` 为原始 SVG 字符串（客户端生成）；传空串表示恢复内置图标，
-        非空时校验大小上限与 SVG 安全性。
-        `disabled` 为布尔值：禁用后该 agent 不再出现在任何新建入口（新建会话 /
-        任务 / 群成员）。**默认智能体不能被禁用**，禁用默认智能体返回 `400` +
-        `msgKey=CannotDisableDefaultAgent`。
-        `project_scope` 为布尔值：`true` 表示「仅当前项目」——服务端从请求的
-        `clawbench_project` cookie 解析当前项目并把该 agent 绑定到它，此后该 agent
-        只在当前项目可见（其它项目的列表与新建入口都不显示）；`false` 表示恢复为
-        全局可见。开启时若未选择项目返回 `400` + `msgKey=NoProjectSelected`。
-        **默认智能体不能被限定到单个项目**，否则返回 `400` +
-        `msgKey=CannotScopeDefaultAgent`。已创建的会话不受作用域变化影响。
+        `transport`、`acp_command`、`name`、`specialty`、`custom_system_prompt`、
+        `avatar`、`sort_order`、`auto_approve`、`disabled`、`project_scope`。
+        `avatar` 为原始 SVG 字符串；空串恢复内置图标，非空时校验大小与安全性。
+        `acp_command` 为 ACP 启动命令（空格拆分、不支持引号、≤4096 字节），**仅
+        `custom-acp` 可改**：非空同时把 `transport` 切到 `acp-stdio` 并重启其连接；
+        空串被拒（无 CLI 回退）。内置后端的命令由自动发现维护，发送即 `400`
+        `AcpCommandManagedByDiscovery`。二者不可同请求出现。
+        `disabled` 为布尔值：禁用后不再出现在任何新建入口；**默认智能体不能
+        禁用**（`CannotDisableDefaultAgent`）。
+        `project_scope` 为布尔值：`true` 表示「仅当前项目」（按
+        `clawbench_project` cookie 绑定），`false` 恢复全局；未选项目返回
+        `NoProjectSelected`，**默认智能体不能限定项目**（`CannotScopeDefaultAgent`）。
+        已创建会话不受作用域变化影响。
 
-        `name` 全局唯一（决策 #50）：改名撞上其它 agent 时返回 `409` +
-        `msgKey=AgentNameTaken`；改回自身当前名称不是冲突。改成群聊用户昵称
-        （`chat.user_nickname`）时返回 `409` + `msgKey=AgentNameReserved`。
+        `name` 全局唯一（决策 #50）：改名撞上其它 agent 返回 `409` +
+        `AgentNameTaken`；改成群聊用户昵称返回 `409` + `AgentNameReserved`。
       operationId: agentsUpdate
       responses:
         "200":

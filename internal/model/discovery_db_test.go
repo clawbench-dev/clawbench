@@ -433,6 +433,77 @@ func TestLoadYamlAgents_MissingDirectoryIsNotAnError(t *testing.T) {
 	assert.Empty(t, LoadYamlAgents(db, t.TempDir()))
 }
 
+// A user-defined ACP agent's command must survive the discovery sync. This is
+// the entire reason CustomACPBackend exists: syncAgentInfrastructure rewrites
+// acp_command (and transport) for every row whose backend matches a registered
+// spec, so a custom agent that borrowed a built-in backend id would have its
+// user-supplied command replaced on the next rescan or startup.
+func TestCustomACPAgent_CommandSurvivesDiscoverySync(t *testing.T) {
+	db := setupTestDBForDiscovery(t)
+
+	const customCmd = "/opt/my-tool acp --stdio"
+	_, err := db.Exec(
+		`INSERT INTO agents (id, name, backend, transport, acp_command) VALUES (?, ?, ?, ?, ?)`,
+		"custom-1", "My Tool", CustomACPBackend, "acp-stdio", customCmd,
+	)
+	require.NoError(t, err)
+
+	// syncAgentInfrastructure is the function RefreshAgents runs per spec. Run
+	// it for EVERY registered spec, exactly as a real refresh would — using the
+	// same COUNT(*) query so a backend with no row is a no-op rather than an
+	// error.
+	for _, spec := range GetBackendRegistry() {
+		var count int
+		var existingAcpCommand, existingTransport string
+		require.NoError(t, db.QueryRow(
+			"SELECT COUNT(*), COALESCE(acp_command, ''), COALESCE(transport, '') FROM agents WHERE backend = ?",
+			spec.Backend,
+		).Scan(&count, &existingAcpCommand, &existingTransport))
+		if count == 0 {
+			continue
+		}
+		syncAgentInfrastructure(db, spec, existingAcpCommand, existingTransport)
+	}
+
+	var gotCmd, gotTransport string
+	require.NoError(t, db.QueryRow(
+		"SELECT acp_command, transport FROM agents WHERE id = 'custom-1'",
+	).Scan(&gotCmd, &gotTransport))
+	assert.Equal(t, customCmd, gotCmd, "the discovery sync must not touch a custom ACP agent's command")
+	assert.Equal(t, "acp-stdio", gotTransport)
+}
+
+// The counter-case: a row carrying a REGISTERED backend id IS overwritten by the
+// same sync. Pinning both directions is what makes the test above meaningful —
+// without it, a sync that silently did nothing at all would also pass.
+func TestRegisteredBackend_CommandIsOverwrittenByDiscoverySync(t *testing.T) {
+	db := setupTestDBForDiscovery(t)
+
+	spec := FindSpecByBackend("claude")
+	require.NotNil(t, spec)
+	require.NotEmpty(t, spec.AcpCommand)
+
+	_, err := db.Exec(
+		`INSERT INTO agents (id, name, backend, transport, acp_command) VALUES (?, ?, ?, ?, ?)`,
+		"claude", "Claude", "claude", "acp-stdio", "/my/own/claude --acp",
+	)
+	require.NoError(t, err)
+
+	var existingAcpCommand, existingTransport string
+	require.NoError(t, db.QueryRow(
+		"SELECT COALESCE(acp_command, ''), COALESCE(transport, '') FROM agents WHERE backend = ?",
+		spec.Backend,
+	).Scan(&existingAcpCommand, &existingTransport))
+	require.True(t, syncAgentInfrastructure(db, *spec, existingAcpCommand, existingTransport))
+
+	var gotCmd string
+	require.NoError(t, db.QueryRow(
+		"SELECT acp_command FROM agents WHERE id = 'claude'",
+	).Scan(&gotCmd))
+	assert.Equal(t, spec.AcpCommand, gotCmd,
+		"a registered backend's command is discovery-owned — this is why custom agents must not reuse one")
+}
+
 // ---------------------------------------------------------------------------
 // System prompt composition
 // ---------------------------------------------------------------------------
