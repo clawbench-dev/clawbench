@@ -89,15 +89,21 @@ export function useSessionManager(options: UseSessionManagerOptions) {
    *
    *  IMPORTANT: sessionId MUST be captured by the caller BEFORE any async
    *  boundary. */
-  async function enqueueMessage(sessionId: string, text: string, attachedFiles: FileEntry[] = [], pendingFilePaths: string[] = [], queueId?: string): Promise<boolean> {
+  async function enqueueMessage(sessionId: string, text: string, attachedFiles: FileEntry[] = [], pendingFiles: FileEntry[] = [], queueId?: string): Promise<boolean> {
     const inputText = text !== undefined ? text : ''
     // Split the REFERENCE attachments into the two backend channels: any path
     // carrying a line-range reference must travel through `files` only (the
     // backend cross-dedup would strip ranged entries whose path is also in
-    // filePaths). Pending upload paths always go through `files`.
+    // filePaths). Pending uploads always go through `files`.
+    //
+    // `pendingFiles` arrives as ENTRIES, not raw path strings: callers already
+    // hold FileEntry objects (ChatPanelContent maps the upload list). Wrapping
+    // them as `{path: p}` a second time produced `{path: {path, isDir}}`, which
+    // fails to decode server-side and 400s every enqueue that carries an
+    // attachment.
     const { filePaths } = buildSendChannels(attachedFiles)
     const allFileEntries: FileEntry[] = [
-      ...(pendingFilePaths || []).map(p => ({ path: p, isDir: false })),
+      ...pendingFiles,
       ...attachedFiles,
     ]
 
