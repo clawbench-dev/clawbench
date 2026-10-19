@@ -237,6 +237,10 @@ watch(
   flex-direction: column;
   max-height: 240px;
   overflow-y: auto;
+  /* The priority dot is the row's last flex item, so without this gutter its
+     right edge lands exactly on the scrollbar's left edge (the scrollbar is
+     painted inside the padding box). Keep the bar and the dots apart. */
+  padding-right: var(--space-3);
 }
 
 /* ── Timeline entry ── */

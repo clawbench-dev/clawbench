@@ -3,6 +3,7 @@ import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import PlanPanel from '@/components/chat/PlanPanel.vue'
 import type { PlanEntry } from '@/composables/usePlanProgress'
+import { readWebFile } from '@/testUtils/readWebFile'
 
 const i18n = createI18n({
   legacy: false,
@@ -65,6 +66,19 @@ describe('PlanPanel', () => {
   it('shows progress count on the collapsed chip too', () => {
     const wrapper = mountPanel({ collapsed: true })
     expect(wrapper.get('.plan-chip__count').text()).toBe('1/3')
+  })
+
+  it('keeps the priority dots clear of the timeline scrollbar', () => {
+    // The priority dot is the last flex item of a row, so it butts straight up
+    // against the right edge of the scroll container. The scrollbar is painted
+    // inside the padding box, so without a gutter the 8px dot visually touches
+    // the bar. Guard the gutter rather than a pixel value.
+    const src = readWebFile('src/components/chat/PlanPanel.vue')
+    const rule = /\.plan-expanded__timeline\s*\{([^}]*)\}/.exec(src)?.[1] ?? ''
+    expect(rule).toMatch(/overflow-y:\s*auto/)
+    expect(rule, 'timeline needs a right gutter for the scrollbar').toMatch(
+      /padding-right:\s*var\(--space-3\)/,
+    )
   })
 
   describe('active-entry centering', () => {
