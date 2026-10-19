@@ -41,14 +41,16 @@ vi.mock('@/components/common/AgentIcon.vue', () => ({
 vi.mock('@/components/common/AgentSelectorDrawer.vue', () => ({
   default: { name: 'AgentSelectorDrawer', props: ['open'], template: '<div class="picker-stub" />' },
 }))
-// The member context panel is a nested sheet with its own data dependencies
-// (useGlobalEvents, the compact endpoint). Its own test file covers it; here it
-// only needs to expose its `open`/`member` props so the row wiring is assertable.
-vi.mock('../MemberContextSheet.vue', () => ({
+// Clicking a member opens the shared SessionDrawer (the SAME component single
+// chat uses) addressed at that member's session row. It has its own heavy
+// dependencies (session identity, api, the compact endpoint) covered by its own
+// test file; here only the props the roster passes need to be assertable.
+vi.mock('../SessionDrawer.vue', () => ({
   default: {
-    name: 'MemberContextSheet',
-    props: ['open', 'member', 'groupId', 'groupRunning'],
-    template: '<div class="mcs-stub" :data-open="open" :data-member="member && member.id" :data-groupRunning="String(!!groupRunning)" />',
+    name: 'SessionDrawer',
+    props: ['open', 'agentId', 'initialTab', 'targetSessionId'],
+    emits: ['close', 'changed'],
+    template: '<div class="mcs-stub" :data-open="String(!!open)" :data-target="targetSessionId" :data-tab="initialTab" />',
   },
 }))
 // BottomSheet teleports to <body> and gates on everOpened; stub it with a
@@ -378,7 +380,7 @@ describe('GroupSettingsSheet', () => {
       await row.trigger('click')
       const stub = w.find('.mcs-stub')
       expect(stub.attributes('data-open')).toBe('true')
-      expect(stub.attributes('data-member')).toBe('m1')
+      expect(stub.attributes('data-target')).toBe('m1')
     })
 
     it('does not make a left member row interactive', () => {
@@ -403,17 +405,23 @@ describe('GroupSettingsSheet', () => {
       expect(w.find('.mcs-stub').attributes('data-open')).toBe('false')
     })
 
-    it('passes the group running state down so compaction is gated', () => {
-      const w = mountSheet(WITH_USAGE, { groupRunning: true })
-      // Read the prop (not a data-attribute: Vue lowercases attribute names in
-      // templates, so `data-groupRunning` would land as `data-grouprunning`).
-      expect(w.findComponent({ name: 'MemberContextSheet' }).props('groupRunning')).toBe(true)
-    })
-
-    it('refreshes the roster after a successful compaction', async () => {
+    it('opens the shared settings drawer on the member row, usage tab first', async () => {
+      // The whole point of the change: a member is a session, so clicking one
+      // opens the SAME drawer a single chat opens — addressed at the member row
+      // (which owns the agent binding and that member's own context window).
       const w = mountSheet(WITH_USAGE)
       await w.findAll('.gm-row-main')[0].trigger('click')
-      w.findComponent({ name: 'MemberContextSheet' }).vm.$emit('compacted', { used: 1, size: 2 })
+      const drawer = w.findComponent({ name: 'SessionDrawer' })
+      expect(drawer.props('open')).toBe(true)
+      expect(drawer.props('targetSessionId')).toBe('m1')
+      expect(drawer.props('agentId')).toBe('a1')
+      expect(drawer.props('initialTab')).toBe('usage')
+    })
+
+    it('refreshes the roster when the member drawer writes', async () => {
+      const w = mountSheet(WITH_USAGE)
+      await w.findAll('.gm-row-main')[0].trigger('click')
+      w.findComponent({ name: 'SessionDrawer' }).vm.$emit('changed')
       expect(w.emitted('changed')).toBeTruthy()
     })
   })

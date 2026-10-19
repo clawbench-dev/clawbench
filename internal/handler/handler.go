@@ -34,12 +34,14 @@ const jsonKeyPort = "Port"
 // emit the same key (goconst): the group member view, the agent patch, and the
 // session-limit error all repeat these names.
 const (
-	jsonName     = "name"
-	jsonAgentID  = "agentId"
-	jsonBackend  = "backend"
-	jsonModel    = "model"
-	jsonUsage    = "usage"
-	jsonMaxCount = "MaxCount"
+	jsonName        = "name"
+	jsonAgentID     = "agentId"
+	jsonBackend     = "backend"
+	jsonModel       = "model"
+	jsonUsage       = "usage"
+	jsonAutoApprove = "autoApprove"
+	jsonCruise      = "cruise"
+	jsonMaxCount    = "MaxCount"
 )
 
 // loc returns the Localizer for the current request.
@@ -459,6 +461,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/ai/queue/interrupt", QueueInterruptHandler)
 	register("/api/ai/queue/merge", QueueMergeHandler)
 	register("/api/ai/session/update", ServeAISessionUpdate)
+	register("/api/ai/session/settings", ServeSessionSettings)
 	register("/api/ai/session/generate-title", ServeGenerateSessionTitle)
 	register("/api/ai/session/tags", ServeSessionTags)
 	register("/api/ai/sessions", ServeSessions)

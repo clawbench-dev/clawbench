@@ -91,13 +91,20 @@
         </li>
       </ul>
 
-      <MemberContextSheet
+      <!-- Clicking a member opens the SAME settings drawer a single chat uses
+           (model / thinking effort / mode / transport / usage), addressed at
+           that member's session row. This is what makes the two paths
+           consistent: one component, one mental model — a member is a session.
+           `target-session-id` is the member row id, which is exactly the
+           session id that owns the agent binding and the member's own context
+           window. -->
+      <SessionDrawer
         :open="memberSheetOpen"
-        :member="selectedMember"
-        :groupId="groupId"
-        :groupRunning="groupRunning"
+        :agent-id="selectedMember?.agentId || ''"
+        :target-session-id="selectedMemberId"
+        :initial-tab="memberDrawerTab"
         @close="memberSheetOpen = false"
-        @compacted="onCompacted"
+        @changed="onMemberChanged"
       />
 
       <!-- Settings: concurrency. Free mode only: in host mode the host routes
@@ -193,7 +200,7 @@ import BottomSheet from '@/components/common/BottomSheet.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import RealAgentNameTag from '@/components/common/RealAgentNameTag.vue'
 import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
-import MemberContextSheet from '@/components/chat/MemberContextSheet.vue'
+import SessionDrawer from '@/components/chat/SessionDrawer.vue'
 import { getAgentAvatar } from '@/composables/useAgents'
 import { addGroupMembers, generateMemberAvatars, removeGroupMember, setGroupParallelDefault, setGroupCruise, type GroupMemberInfo } from '@/composables/useGroupChat'
 import { toggleAutoApprove, applyCruiseAutoApproveDefault } from '@/composables/useSessionIdentity'
@@ -253,16 +260,21 @@ function openAdd() { pickerOpen.value = true }
 // member left) is reflected without reopening the panel.
 const memberSheetOpen = ref(false)
 const selectedMemberId = ref('')
+// Always opens on the usage tab: the roster chip the user just tapped IS a
+// usage number, so that is what they came to see. Model/mode are one tap away
+// in the same drawer.
+const memberDrawerTab = ref('usage')
 const selectedMember = computed(() => props.members.find(m => m.id === selectedMemberId.value) || null)
 
 function openMember(m: GroupMemberInfo) {
   selectedMemberId.value = m.id
+  memberDrawerTab.value = 'usage'
   memberSheetOpen.value = true
 }
 
-// A compaction rewrote this member's context: refresh the roster so the row's
-// chip (and the open panel, which reads the same prop) show the new value.
-function onCompacted() {
+// A write from the member drawer (settings change or compaction) may alter what
+// the roster chip shows, so refresh it.
+function onMemberChanged() {
   emit('changed')
 }
 
@@ -304,9 +316,9 @@ function stopListeningNow() {
   stopListening = null
 }
 
-// The listener is bound to the MEMBER PANEL, not the sheet: the roster only
-// needs fresh numbers while someone is looking at them, and a group turn emits
-// these events constantly.
+// The listener is bound to the MEMBER DRAWER, not the sheet: the roster chip and
+// the drawer's usage tab only need fresh numbers while someone is looking at
+// them, and a group turn emits these events constantly.
 watch(memberSheetOpen, (open) => {
   if (open) {
     emit('changed') // fetch once on open, so the panel never shows a stale value

@@ -688,6 +688,7 @@ export default {
       setDefaultSuccess: '已将 {name} 设为默认',
       noModels: '暂无可用模型',
       notAvailable: '当前模式下不可用',
+      noUsage: '该会话还没有上报上下文用量。使用 CLI 传输的智能体不上报上下文窗口。',
       noSearchResults: '未找到匹配的模型',
     },
     thinkingEffortSwitcher: {

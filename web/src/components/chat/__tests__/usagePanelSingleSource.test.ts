@@ -14,7 +14,7 @@ import { readWebFile } from '@/testUtils/readWebFile'
 describe('context usage panel has a single implementation', () => {
   const BAR = 'src/components/chat/ChatInputBar.vue'
   const DETAIL = 'src/components/chat/ContextUsageDetail.vue'
-  const MEMBER = 'src/components/chat/MemberContextSheet.vue'
+  const MEMBER = 'src/components/chat/GroupSettingsSheet.vue'
   const UTIL = 'src/utils/usageDisplay.ts'
 
   it('ChatInputBar renders the shared component instead of its own rows', () => {
@@ -27,16 +27,21 @@ describe('context usage panel has a single implementation', () => {
     expect(src).not.toContain('usage-popup-compact-btn')
   })
 
-  it('the member panel renders the same shared component', () => {
-    expect(readWebFile(MEMBER)).toContain('<ContextUsageDetail')
+  it('the member path renders the same shared component', () => {
+    // A member is a session, so clicking one opens the SAME SessionDrawer a
+    // single chat opens (addressed at the member row) — its usage tab is the
+    // one shared implementation. MemberContextSheet was removed for exactly
+    // that reason: a second panel is what would drift.
+    expect(readWebFile('src/components/chat/SessionDrawer.vue')).toContain('<ContextUsageDetail')
+    expect(readWebFile(MEMBER)).toContain('<SessionDrawer')
   })
 
   it('both surfaces get their numbers from the shared helpers', () => {
     // Thresholds/formatting live in usageDisplay; a second copy of the colour
     // ramp would be the other way these two could disagree.
     expect(readWebFile(BAR)).toContain('@/utils/usageDisplay')
-    // The member panel delegates the chip's numbers too, via GroupSettingsSheet
-    // (the roster row owns the chip) — so assert that link, not this file.
+    // The group roster's chip gets its numbers from the same helpers via
+    // GroupSettingsSheet (the row owns the chip).
     expect(readWebFile('src/components/chat/GroupSettingsSheet.vue')).toContain('@/utils/usageDisplay')
     for (const src of [readWebFile(BAR), readWebFile(MEMBER), readWebFile(DETAIL)]) {
       expect(src).not.toContain('#ef4444')

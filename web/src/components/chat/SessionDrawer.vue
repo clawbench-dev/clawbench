@@ -18,6 +18,14 @@
       <button class="model-tab" :class="{ active: activeTab === 'transport' }" @click="activeTab = 'transport'">
         <Cable :size="13" />{{ t('chat.transportSwitcher.title') }}
       </button>
+      <!-- Context usage tab. Same body as the session-info popup (they share
+           ContextUsageDetail), but reachable from the settings drawer so the
+           usage numbers live next to the other per-session settings instead of
+           only behind a tiny bar in the info row. The info-row popup stays: it
+           is the one-tap path while reading. -->
+      <button class="model-tab" :class="{ active: activeTab === 'usage' }" @click="activeTab = 'usage'">
+        <Activity :size="13" />{{ t('chat.sessionInfo.contextUsage') }}
+      </button>
     </div>
 
     <!-- Model tab -->
@@ -41,15 +49,15 @@
         >
           <button
             class="model-item"
-            :class="{ current: m.id === currentModelId, 'is-default': m.id === defaultModelId, 'nav-active': listNav.activeIndex.value === idx }"
+            :class="{ current: m.id === effectiveModelId, 'is-default': m.id === defaultModelId, 'nav-active': listNav.activeIndex.value === idx }"
             @click="selectModel(m)"
             @contextmenu.prevent="showDefaultMenu(m)"
             @touchstart.passive="onTouchStart(m, $event)"
             @touchend="onTouchEnd"
             @touchmove.passive="onTouchMove"
           >
-            <span class="model-item-indicator" :class="{ active: m.id === currentModelId }"></span>
-            <ModelRow :name="m.name" :model-id="m.id" :active="m.id === currentModelId" />
+            <span class="model-item-indicator" :class="{ active: m.id === effectiveModelId }"></span>
+            <ModelRow :name="m.name" :model-id="m.id" :active="m.id === effectiveModelId" />
             <span v-if="m.id === defaultModelId" class="default-label">
               <span class="default-text">{{ t('chat.sessionSetting.defaultBadge') }}</span>
               <span class="default-star"><Star :size="12" fill="currentColor" /></span>
@@ -79,14 +87,14 @@
         >
           <button
             class="thinking-item"
-            :class="{ current: level.id === currentThinkingEffort, 'is-default': level.id === defaultThinkingEffort, 'nav-active': listNav.activeIndex.value === idx }"
+            :class="{ current: level.id === effectiveThinkingEffort, 'is-default': level.id === defaultThinkingEffort, 'nav-active': listNav.activeIndex.value === idx }"
             @click="selectThinkingEffort(level.id)"
             @contextmenu.prevent="showThinkingDefaultMenu(level.id)"
             @touchstart.passive="onTouchStartThinking(level.id, $event)"
             @touchend="onTouchEnd"
             @touchmove.passive="onTouchMove"
           >
-            <span class="model-item-indicator" :class="{ active: level.id === currentThinkingEffort }"></span>
+            <span class="model-item-indicator" :class="{ active: level.id === effectiveThinkingEffort }"></span>
             <span class="model-item-name">{{ level.name }}</span>
             <span v-if="level.id === defaultThinkingEffort" class="default-label">
               <span class="default-text">{{ t('chat.sessionSetting.defaultBadge') }}</span>
@@ -146,26 +154,26 @@
 
     <!-- Mode tab -->
     <div v-if="activeTab === 'mode'" class="model-tab-content">
-      <div v-if="availableModes.length === 0 || !isACP" class="tab-empty-hint">
+      <div v-if="effectiveModes.length === 0 || !isACP" class="tab-empty-hint">
         {{ t('chat.sessionSetting.notAvailable') }}
       </div>
       <template v-else>
       <div class="model-list">
         <div
-          v-for="(mode, idx) in availableModes"
+          v-for="(mode, idx) in effectiveModes"
           :key="mode.id"
           class="model-item-wrapper"
         >
           <button
             class="thinking-item"
-            :class="{ current: mode.id === currentModeId, 'is-default': mode.id === defaultModeId, 'nav-active': listNav.activeIndex.value === idx }"
+            :class="{ current: mode.id === effectiveModeId, 'is-default': mode.id === defaultModeId, 'nav-active': listNav.activeIndex.value === idx }"
             @click="selectMode(mode)"
             @contextmenu.prevent="showModeDefaultMenu(mode)"
             @touchstart.passive="onTouchStartMode(mode, $event)"
             @touchend="onTouchEnd"
             @touchmove.passive="onTouchMove"
           >
-            <span class="model-item-indicator" :class="{ active: mode.id === currentModeId }"></span>
+            <span class="model-item-indicator" :class="{ active: mode.id === effectiveModeId }"></span>
             <span class="model-item-name">{{ mode.name || mode.id }}</span>
             <span v-if="mode.id === defaultModeId" class="default-label">
               <span class="default-text">{{ t('chat.sessionSetting.defaultBadge') }}</span>
@@ -175,7 +183,7 @@
               <Star :size="12" />
             </button>
           </button>
-          <div v-if="idx < availableModes.length - 1" class="model-divider"></div>
+          <div v-if="idx < effectiveModes.length - 1" class="model-divider"></div>
         </div>
       </div>
       <!-- Auto-Approve toggle (embedded in Mode tab) -->
@@ -187,12 +195,33 @@
             <span class="auto-approve-desc">{{ t('chat.autoApprove.description') }}</span>
           </div>
           <label class="toggle-switch">
-            <input type="checkbox" :checked="autoApprove" @change="toggleAutoApprove($event.target.checked)" />
+            <input type="checkbox" :checked="effectiveAutoApprove" @change="applyAutoApprove($event.target.checked)" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <!-- Auto-cruise sits directly under auto-approve: they are the two
+             "run unattended" switches, and cruise FORCES auto-approve on
+             (one-directional), so the user sees the link where it happens.
+             The session-info chip stays as the quick toggle. -->
+        <div class="auto-approve-toggle auto-cruise-toggle">
+          <div class="auto-approve-label">
+            <span class="auto-approve-title">{{ t('chat.cruise.label') }}</span>
+            <span class="auto-approve-desc">{{ t('chat.cruise.hint') }}</span>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" :checked="effectiveCruise" @change="onCruiseToggle($event.target.checked)" />
             <span class="toggle-slider"></span>
           </label>
         </div>
       </div>
       </template>
+    </div>
+
+    <!-- Context usage tab -->
+    <div v-if="activeTab === 'usage'" class="model-tab-content">
+      <p v-if="!hasUsage" class="tab-empty-hint">{{ t('chat.sessionSetting.noUsage') }}</p>
+      <ContextUsageDetail v-else :usage="usageSnapshot" :show-compact="canCompactHere" :compacting="compacting" @compact="onCompact" />
+      <p v-if="compactError" class="usage-error">{{ compactError }}</p>
     </div>
 
     <!-- Long-press PopupMenu for "Set as Default" (kept for backward compat) -->
@@ -207,16 +236,19 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Star, Cpu, Brain, ShieldAlert, Cable } from 'lucide-vue-next'
+import { Star, Cpu, Brain, ShieldAlert, Cable, Activity } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import ModelRow from '@/components/common/ModelRow.vue'
+import ContextUsageDetail from '@/components/chat/ContextUsageDetail.vue'
+import { apiGet, apiPatch, apiPost } from '@/utils/api'
+import { appLog } from '@/utils/appLog'
+import { compactGroupMember } from '@/composables/useGroupChat'
 import { useAgents, restoreOriginalModels, resetModelViewForTransport, applyRefreshedModelList, populateACPStateFromCache, invalidateACPStateCache } from '@/composables/useAgents'
 import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
 import { useSessionIdentity, clearModeState, clearCommandState, clearThinkingEffortState } from '@/composables/useSessionIdentity'
-import { apiPost } from '@/utils/api'
 import { formatModelIdForDisplay } from '@/utils/modelDisplay'
 import { patchAgentPref } from '@/composables/useSettingsConfig'
 import { useToast } from '@/composables/useToast'
@@ -225,14 +257,135 @@ const props = defineProps({
   open: Boolean,
   agentId: String,
   initialTab: { type: String, default: 'model' },
+  /**
+   * Session whose settings this drawer edits. Empty means "the current
+   * session" — the shared session-identity refs, which is how single chat has
+   * always worked.
+   *
+   * Non-empty is the group-member path: clicking a member in the roster opens
+   * this drawer on THAT member's row. A member row is a real session (it owns
+   * the agent binding and its own context window) but it is NOT the current
+   * session, so every value must come from this prop instead of the singleton
+   * refs — otherwise the drawer would show the group's host state while
+   * claiming to describe the member.
+   */
+  targetSessionId: { type: String, default: '' },
 })
 
-const emit = defineEmits(['close', 'switch-model', 'switch-thinking-effort', 'switch-mode', 'switch-transport'])
+const emit = defineEmits(['close', 'switch-model', 'switch-thinking-effort', 'switch-mode', 'switch-transport', 'changed'])
 
 const { t } = useI18n()
 const toast = useToast()
 const { getAgentModels, getAgentThinkingEffortLevels, getAgent, updateAgentField, canRefreshModels, supportsACP, supportsCLI, getAgentTransport } = useAgents()
-const { currentModelId, currentThinkingEffort, currentModeId, currentTransport, availableThinkingEfforts, availableModes, autoApprove, toggleAutoApprove } = useSessionIdentity()
+const identity = useSessionIdentity()
+const { currentModelId, currentThinkingEffort, currentModeId, currentTransport, availableThinkingEfforts, availableModes, autoApprove, toggleAutoApprove, cruise, toggleCruise } = identity
+
+// ── Target-session state ──
+// When targetSessionId is set (group member), the drawer describes THAT session
+// and the singleton refs above describe the CURRENT one. Every read below goes
+// through these indirections so a single component serves both cases.
+const isTargeted = computed(() => !!props.targetSessionId)
+const target = ref(null) // GET /api/ai/session/settings payload
+const targetUsage = ref(null)
+const compacting = ref(false)
+const compactError = ref('')
+
+const effectiveModelId = computed(() => isTargeted.value ? (target.value?.modelId || '') : currentModelId.value)
+const effectiveModeId = computed(() => isTargeted.value ? (target.value?.modeState?.currentModeId || '') : currentModeId.value)
+const effectiveThinkingEffort = computed(() => isTargeted.value ? (target.value?.thinkingEffortState?.currentId || '') : currentThinkingEffort.value)
+const effectiveTransport = computed(() => isTargeted.value ? (target.value?.transport || '') : currentTransport.value)
+const effectiveAutoApprove = computed(() => isTargeted.value ? target.value?.autoApprove === true : autoApprove.value)
+const effectiveCruise = computed(() => isTargeted.value ? target.value?.cruise === true : cruise.value)
+const effectiveModes = computed(() => isTargeted.value ? (target.value?.modeState?.availableModes || []) : availableModes.value)
+const effectiveEfforts = computed(() => isTargeted.value ? (target.value?.thinkingEffortState?.availableLevels || []) : availableThinkingEfforts.value)
+
+/** Load the targeted session's state. No-op for the single-chat path. */
+async function loadTarget() {
+  if (!props.targetSessionId) {
+    target.value = null
+    targetUsage.value = null
+    return
+  }
+  try {
+    const data = await apiGet(`/api/ai/session/settings?session_id=${encodeURIComponent(props.targetSessionId)}`)
+    target.value = data
+    targetUsage.value = data?.usageState || null
+  } catch (err) {
+    target.value = null
+    targetUsage.value = null
+    appLog.w('SessionDrawer', 'load target session settings failed', err)
+  }
+}
+
+watch(() => [props.open, props.targetSessionId], ([open]) => {
+  if (open) loadTarget()
+}, { immediate: true })
+
+/** Usage snapshot for the usage tab (shared shape with the info-row popup). */
+const usageSnapshot = computed(() => {
+  if (isTargeted.value) return targetUsage.value
+  return {
+    used: identity.contextUsed.value,
+    size: identity.contextSize.value,
+    inputTokens: identity.contextInputTokens.value,
+    outputTokens: identity.contextOutputTokens.value,
+    totalTokens: identity.contextTotalTokens.value,
+    cachedReadTokens: identity.contextCachedReadTokens.value,
+    cachedWriteTokens: identity.contextCachedWriteTokens.value,
+    thoughtTokens: identity.contextThoughtTokens.value,
+    cost: identity.contextCost.value,
+    currency: identity.contextCurrency.value,
+    cacheCreationTokens: identity.contextCacheCreationTokens.value,
+    cacheHitTokens: identity.contextCacheHitTokens.value,
+    cacheMissTokens: identity.contextCacheMissTokens.value,
+    credit: identity.contextCredit.value,
+    usageByCategory: identity.contextUsageByCategory.value,
+  }
+})
+const hasUsage = computed(() => (usageSnapshot.value?.size ?? 0) > 0)
+// Compaction is offered for a group member (it is a group-only action) and for
+// the current single chat. A member that never reported a window has nothing to
+// compact, and a left member cannot run a turn.
+const canCompactHere = computed(() => hasUsage.value && (!isTargeted.value || !target.value?.isGroupMember ? !isTargeted.value : true))
+
+async function onCompact() {
+  if (!isTargeted.value || compacting.value) return
+  compacting.value = true
+  compactError.value = ''
+  try {
+    const usage = await compactGroupMember(target.value?.sessionId || props.targetSessionId, props.targetSessionId)
+    if (usage) targetUsage.value = usage
+    emit('changed')
+  } catch (err) {
+    compactError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    compacting.value = false
+  }
+}
+
+/** Auto-cruise toggle. Targeted sessions write through their own endpoint. */
+async function onCruiseToggle(enabled) {
+  if (!isTargeted.value) {
+    toggleCruise(enabled)
+    return
+  }
+  try {
+    await apiPatch(`/api/ai/session/settings`, {
+      sessionId: props.targetSessionId,
+      cruise: enabled,
+    })
+    // Cruise forces auto-approve on server-side (one-directional); mirror it
+    // locally so the switch next to it does not contradict the state we just
+    // read back.
+    if (target.value) {
+      target.value = { ...target.value, cruise: enabled, autoApprove: enabled ? true : target.value.autoApprove }
+    }
+    emit('changed')
+  } catch (err) {
+    appLog.w('SessionDrawer', 'toggle cruise failed', err)
+    toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 })
+  }
+}
 
 const activeTab = ref('model')
 const searchQuery = ref('')
@@ -255,7 +408,7 @@ const models = computed(() => getAgentModels(props.agentId || ''))
 // Thinking levels: ACP mode shows ACP-reported levels only; CLI mode shows static levels
 const thinkingLevels = computed(() => {
   if (isACP.value) {
-    const acpLevels = availableThinkingEfforts.value
+    const acpLevels = effectiveEfforts.value
     if (acpLevels.length > 0) return acpLevels
     return []
   }
@@ -265,8 +418,9 @@ const thinkingLevels = computed(() => {
 const canRefresh = computed(() => canRefreshModels(props.agentId || ''))
 
 const isACP = computed(() => {
-  // Prefer session-level transport, fallback to agent config
-  if (currentTransport.value) return currentTransport.value === 'acp-stdio'
+  // Prefer session-level transport, fallback to agent config. The targeted
+  // transport comes from the member row, which is authoritative for that row.
+  if (effectiveTransport.value) return effectiveTransport.value === 'acp-stdio'
   return getAgentTransport(props.agentId || '') === 'acp-stdio'
 })
 
@@ -311,13 +465,13 @@ const listNav = useListNav({
   getCount: () => {
     if (activeTab.value === 'model') return filteredModels.value.length
     if (activeTab.value === 'thinking') return thinkingLevels.value.length
-    if (activeTab.value === 'mode') return availableModes.value.length
+    if (activeTab.value === 'mode') return effectiveModes.value.length
     return 0
   },
   onConfirm: (idx) => {
     if (activeTab.value === 'model') selectModel(filteredModels.value[idx])
     else if (activeTab.value === 'thinking') selectThinkingEffort(thinkingLevels.value[idx].id)
-    else if (activeTab.value === 'mode') selectMode(availableModes.value[idx])
+    else if (activeTab.value === 'mode') selectMode(effectiveModes.value[idx])
   },
   onActiveChange: scrollActiveIntoView,
 })
@@ -346,11 +500,43 @@ watch(() => props.open, (val) => {
   }
 })
 
+// ── Write routing ──
+// A targeted session (group member) writes through its own endpoint; the
+// current session keeps using the shared identity actions, which own the
+// optimistic chips in the info bar. Both paths land on the same server code.
+async function persistTargeted(payload) {
+  await apiPatch('/api/ai/session/settings', { sessionId: props.targetSessionId, ...payload })
+  emit('changed')
+  await loadTarget()
+}
+
+function applyAutoApprove(checked) {
+  if (isTargeted.value) {
+    // toggleAutoApprove() writes the CURRENT session, which would silently
+    // change the group's setting while the drawer claims to edit the member.
+    persistTargeted({ autoApprove: checked }).catch((err) => {
+      appLog.w('SessionDrawer', 'toggle auto-approve failed', err)
+      toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 })
+    })
+    if (target.value) target.value = { ...target.value, autoApprove: checked }
+    return
+  }
+  toggleAutoApprove(checked)
+}
+
 // --- Model selection ---
 
 function selectModel(model) {
   if (longPressTriggered.value) {
     longPressTriggered.value = false
+    return
+  }
+  if (isTargeted.value) {
+    persistTargeted({ modelId: model.id }).catch((err) => {
+      appLog.w('SessionDrawer', 'switch model failed', err)
+      toast.show(err?.message || t('chat.modelSwitcher.switchFailed'), { icon: 'warning', type: 'error' })
+    })
+    emit('close')
     return
   }
   emit('switch-model', model)
@@ -364,6 +550,14 @@ function selectThinkingEffort(level) {
     longPressTriggered.value = false
     return
   }
+  if (isTargeted.value) {
+    persistTargeted({ thinkingEffort: level }).catch((err) => {
+      appLog.w('SessionDrawer', 'switch thinking effort failed', err)
+      toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 })
+    })
+    emit('close')
+    return
+  }
   emit('switch-thinking-effort', level)
   emit('close')
 }
@@ -375,6 +569,14 @@ function selectMode(mode) {
     longPressTriggered.value = false
     return
   }
+  if (isTargeted.value) {
+    persistTargeted({ modeId: mode.id }).catch((err) => {
+      appLog.w('SessionDrawer', 'switch mode failed', err)
+      toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 })
+    })
+    emit('close')
+    return
+  }
   emit('switch-mode', mode)
   emit('close')
 }
@@ -384,6 +586,15 @@ function selectMode(mode) {
 async function selectTransport(transport) {
   if (transport === 'acp-stdio' && isACP.value) return
   if (transport === 'cli' && !isACP.value) return
+
+  if (isTargeted.value) {
+    persistTargeted({ transport }).catch((err) => {
+      appLog.w('SessionDrawer', 'switch transport failed', err)
+      toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 })
+    })
+    emit('close')
+    return
+  }
 
   await applyTransportSwitch(transport)
 
@@ -615,7 +826,7 @@ async function setAsDefault() {
     } else if (pendingDefaultMode.value !== null) {
       await patchAgentPref(props.agentId, 'preferred_mode', pendingDefaultMode.value)
       updateAgentField(props.agentId, 'preferredMode', pendingDefaultMode.value)
-      const mode = availableModes.value.find(m => m.id === pendingDefaultMode.value)
+      const mode = effectiveModes.value.find(m => m.id === pendingDefaultMode.value)
       if (mode) emit('switch-mode', mode)
       toast.show(t('chat.sessionSetting.setDefaultSuccess', { name: mode?.name || mode?.id || pendingDefaultMode.value }), { icon: 'star', type: 'success', duration: 2000 })
     }
@@ -902,6 +1113,19 @@ defineExpose({
   justify-content: space-between;
   gap: var(--space-6);
   padding: var(--space-5) 14px;
+}
+
+/* Auto-cruise sits under auto-approve in the same block; a hairline keeps the
+   two "run unattended" switches readable as a pair without a second divider. */
+.auto-cruise-toggle {
+  border-top: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
+}
+
+.usage-error {
+  margin: var(--space-4) 14px 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-red, #dc2626);
+  line-height: 1.4;
 }
 
 .auto-approve-label {

@@ -1450,6 +1450,133 @@ paths:
         "200":
           description: 各项目会话概览
 
+  /api/ai/session/settings:
+    get:
+      tags: [Sessions]
+      summary: 读取单个会话的设置状态（供设置抽屉使用）
+      description: |
+        返回设置抽屉（`SessionDrawer`）需要的全部状态：模型、思考深度、模式、传输方式、
+        自动批准、自动巡航，以及上下文用量快照。
+
+        **为什么不用 `GET /api/ai/chat`**：那个端点返回消息历史（并分页），抽屉不需要；
+        更关键的是**群成员行没有自己的 `chat_history`**（成员发言全部落在群时间线），
+        历史端点描述不了它。抽屉必须能在成员行上打开（群花名册点成员），而成员行本身
+        就是一条 session，所以本端点统一按 session 寻址：单聊、群、群成员都适用。
+
+        状态组装复用 `sessionStateSnapshot`（与历史端点同一个函数），因此成员行解析
+        模式/思考深度/用量的方式与单聊完全一致。
+      operationId: sessionSettingsGet
+      parameters:
+        - name: session_id
+          in: query
+          required: true
+          schema: {type: string}
+          description: 目标会话 id；可以是单聊、群，或群成员行 id
+      responses:
+        "200":
+          description: 会话设置状态
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean}
+                  sessionId: {type: string}
+                  sessionType: {type: string, enum: [chat, group, group_member]}
+                  agentId: {type: string}
+                  backend: {type: string}
+                  modelId: {type: string}
+                  transport: {type: string, enum: [acp-stdio, cli]}
+                  autoApprove: {type: boolean}
+                  cruise: {type: boolean}
+                  modeState:
+                    type: object
+                    nullable: true
+                    description: 与 `GET /api/ai/chat` 的 `modeState` 同形
+                  thinkingEffortState:
+                    type: object
+                    nullable: true
+                    description: 与 `GET /api/ai/chat` 的 `thinkingEffortState` 同形
+                  modelListState:
+                    type: object
+                    nullable: true
+                    description: 与 `GET /api/ai/chat` 的 `modelListState` 同形（含 ACP 列表与 CLI 列表）
+                  usageState:
+                    type: object
+                    nullable: true
+                    description: 该会话**自己**的上下文用量；`null` 表示从未上报
+                  commands:
+                    type: array
+                    items: {type: object}
+                  isGroupMember: {type: boolean}
+        "400":
+          description: 缺少 session_id（`SessionIdRequired`）
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          description: 该会话属于其他项目
+        "404":
+          description: 会话不存在（`SessionNotFound`）
+        "500":
+          $ref: "#/components/responses/Error"
+    patch:
+      tags: [Sessions]
+      summary: 修改任意会话的设置（含群成员行）
+      description: |
+        与 `PATCH /api/ai/session/update` 写的是同一批字段，但**目标由请求体
+        `sessionId` 决定**，因此可以对**群成员行**生效——用户在群花名册点某个成员时，
+        抽屉编辑的正是那一行的模型/模式/思考深度。
+
+        复用同一套写入实现（模型最后应用、按模型记忆思考深度、巡航→自动批准单向硬
+        默认、deferred vs rejected 的区分），避免两条路径漂移。
+
+        **群成员行的并发守卫**：群回合进行中该成员的连接是忙的，压缩也会直接驱动它，
+        因此这两种情况下返回 409，而不是静默排队——抽屉是交互式的，用户可以稍后重试。
+      operationId: sessionSettingsUpdate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sessionId]
+              properties:
+                sessionId: {type: string}
+                modelId: {type: string}
+                thinkingEffort: {type: string}
+                modeId: {type: string}
+                transport: {type: string, enum: [acp-stdio, cli]}
+                autoApprove: {type: boolean}
+                cruise: {type: boolean}
+      responses:
+        "200":
+          description: 已应用（`modelSwitchDeferred` 表示模型切换推迟到下一轮）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean}
+                  modelSwitchDeferred: {type: boolean}
+                  effortAccepted:
+                    type: boolean
+                    description: false 表示该思考深度不被 agent 接受，未持久化
+                  thinkingEffort:
+                    type: string
+                    description: 切换模型后实际生效的思考深度；缺省表示交给 agent 自决
+        "400":
+          description: 缺少 sessionId
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          description: 该会话属于其他项目
+        "409":
+          description: 群回合进行中（`GroupRunning`）或该成员正在压缩（`GroupMemberCompacting`）
+        "422":
+          description: 模型切换被 agent 拒绝（`ModelSwitchFailed`）
+        "500":
+          $ref: "#/components/responses/Error"
+
   /api/ai/session/update:
     patch:
       tags: [Sessions]

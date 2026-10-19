@@ -248,8 +248,8 @@
             <Activity :size="14" />
             <span>{{ t('chat.sessionInfo.contextUsage') }}</span>
           </div>
-          <!-- Shared with the group member panel (MemberContextSheet) so both
-               surfaces render identical rows, colours and thresholds. -->
+          <!-- Shared with the settings drawer's usage tab so both surfaces
+               render identical rows, colours and thresholds. -->
           <ContextUsageDetail :usage="usageSnapshot" show-compact @compact="handleCompact(); usageDrawer.close()" />
         </div>
       </PopupMenu>

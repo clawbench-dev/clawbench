@@ -165,84 +165,13 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		sessionCruise := service.GetSessionCruise(sessionID)
 		running := service.IsSessionRunning(sessionID)
 
-		// Look up cached ACP mode/thinking/model list state for this session.
-		// This allows the frontend to populate mode chips immediately
-		// without waiting for WS events (which may have already been consumed).
-		// Fallback: for brand-new sessions with no pool session mapping yet,
-		// look up from AgentCapabilityRegistry so mode chips appear on first load.
-		// For CLI sessions, synthesize a read-only mode from the backend name
-		// so the mode chip is visible but non-switchable.
-		var modeState, thinkingEffortState, modelListState, planState, usageState any
-		var commands []ai.AvailableCommandInfo
-		var replayPending bool
-		if sessionID != "" && sessionTransport != "cli" {
-			if s := ai.GetACPConnManager().GetCachedStateByClawbenchSID(sessionID); s.Mode != nil || s.Effort != nil || len(s.Commands) > 0 || s.ModelList != nil || s.Plan != nil || s.Usage != nil || s.ReplayPending {
-				modeState = s.Mode
-				thinkingEffortState = s.Effort
-				commands = s.Commands
-				modelListState = s.ModelList
-				planState = s.Plan
-				usageState = s.Usage
-				replayPending = s.ReplayPending
-			} else if sessionAgentID != "" {
-				// No session-level mapping yet (new session, never sent a message).
-				// Fall back to agent-level registry so mode/thinking/command chips
-				// appear immediately without requiring the first message.
-				// Note: usageState is NOT restored from agent-level registry — it is
-				// per-session and using the agent-level cache would show another
-				// session's context usage. It is resolved from DB fallback below.
-				reg := ai.GetAgentCapabilityRegistry()
-				agentCap := reg.Get(sessionAgentID)
-				if agentCap != nil && agentCap.HasData() {
-					if ms := reg.GetModeState(sessionAgentID, ""); ms != nil {
-						modeState = ms
-					}
-					if es := reg.GetThinkingEffortState(sessionAgentID, ""); es != nil {
-						thinkingEffortState = es
-					}
-					if cmds := reg.GetCommands(sessionAgentID); len(cmds) > 0 {
-						commands = cmds
-					}
-					if ml := reg.GetModelListState(sessionAgentID, ""); ml != nil {
-						modelListState = ml
-					}
-				}
-			}
-
-			// Ship the same shape as GET /api/agents: the raw ACP list plus the
-			// CLI list and the resolved list. Without this the client would have
-			// to merge the two itself, and a consumer that only has the ACP half
-			// (this endpoint's modelListState.models) would drop the CLI models.
-			if ml, ok := modelListState.(*ai.ModelListState); ok && ml != nil && sessionAgentID != "" {
-				if enriched := ai.EnrichModelList(sessionAgentID, ml); enriched != nil {
-					modelListState = enriched
-				}
-			}
-
-			// DB fallback: if any state is still nil after in-memory lookups,
-			// try to restore from persisted context_state (survives server restart).
-			//
-			// Thinking effort is restored ONLY when the user picked it. The same
-			// context_state entry also receives the value the AGENT reports for
-			// itself (its per-model default, "low" for most OpenCode models);
-			// presenting that as the session's current effort is what made new
-			// sessions look stuck on low (issue #552). Dropping it here lets the
-			// client fall back to the per-model / global default, which is what
-			// the next turn will actually use.
-			if modeState == nil || thinkingEffortState == nil || usageState == nil {
-				if ctxState := service.GetContextState(sessionID); ctxState != nil {
-					if modeState == nil && ctxState.Mode != nil {
-						modeState = ctxState.Mode
-					}
-					if thinkingEffortState == nil && ctxState.ThinkingEffort != nil && ctxState.ThinkingEffort.UserPicked {
-						thinkingEffortState = ctxState.ThinkingEffort
-					}
-					if usageState == nil && ctxState.Usage != nil {
-						usageState = ctxState.Usage
-					}
-				}
-			}
-		}
+		// Session-scoped capability snapshot (mode / thinking effort / models /
+		// plan / usage / commands), shared with the member-context endpoint so
+		// both surfaces resolve state the same way.
+		st := sessionStateSnapshot(sessionID, sessionAgentID, sessionTransport)
+		modeState, thinkingEffortState, modelListState := st.Mode, st.Effort, st.ModelList
+		planState, usageState := st.Plan, st.Usage
+		commands, replayPending := st.Commands, st.ReplayPending
 
 		// The queue is returned separately from messages: a queued message has no
 		// chat_history row yet, so it cannot appear in `messages`. `queue` is the
@@ -830,6 +759,99 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 			// tag in the user's own turn must not stop it (see cruise.go).
 		})
 	}()
+}
+
+// sessionState holds the session-scoped capability state that both the chat
+// history response and the group member-context endpoint return.
+type sessionState struct {
+	Mode          any
+	Effort        any
+	ModelList     any
+	Plan          any
+	Usage         any
+	Commands      []ai.AvailableCommandInfo
+	ReplayPending bool
+}
+
+// sessionStateSnapshot resolves a session's cached ACP state, falling back to
+// the agent-level registry and then to the persisted context_state.
+//
+// Shared by GET /api/ai/chat and GET /api/group/member-context: a group member
+// row is a session too, and its settings drawer needs exactly this state. Two
+// copies would drift — one would learn about a new fallback source and the
+// other would keep showing a stale mode.
+func sessionStateSnapshot(sessionID, sessionAgentID, sessionTransport string) sessionState {
+	var st sessionState
+	if sessionID == "" || sessionTransport == "cli" {
+		return st
+	}
+	if s := ai.GetACPConnManager().GetCachedStateByClawbenchSID(sessionID); s.Mode != nil || s.Effort != nil || len(s.Commands) > 0 || s.ModelList != nil || s.Plan != nil || s.Usage != nil || s.ReplayPending {
+		st.Mode = s.Mode
+		st.Effort = s.Effort
+		st.Commands = s.Commands
+		st.ModelList = s.ModelList
+		st.Plan = s.Plan
+		st.Usage = s.Usage
+		st.ReplayPending = s.ReplayPending
+	} else if sessionAgentID != "" {
+		// No session-level mapping yet (new session, never sent a message).
+		// Fall back to agent-level registry so mode/thinking/command chips
+		// appear immediately without requiring the first message.
+		// Note: Usage is NOT restored from agent-level registry — it is
+		// per-session and using the agent-level cache would show another
+		// session's context usage. It is resolved from DB fallback below.
+		reg := ai.GetAgentCapabilityRegistry()
+		agentCap := reg.Get(sessionAgentID)
+		if agentCap != nil && agentCap.HasData() {
+			if ms := reg.GetModeState(sessionAgentID, ""); ms != nil {
+				st.Mode = ms
+			}
+			if es := reg.GetThinkingEffortState(sessionAgentID, ""); es != nil {
+				st.Effort = es
+			}
+			if cmds := reg.GetCommands(sessionAgentID); len(cmds) > 0 {
+				st.Commands = cmds
+			}
+			if ml := reg.GetModelListState(sessionAgentID, ""); ml != nil {
+				st.ModelList = ml
+			}
+		}
+	}
+
+	// Ship the same shape as GET /api/agents: the raw ACP list plus the
+	// CLI list and the resolved list. Without this the client would have
+	// to merge the two itself, and a consumer that only has the ACP half
+	// (modelListState.models) would drop the CLI models.
+	if ml, ok := st.ModelList.(*ai.ModelListState); ok && ml != nil && sessionAgentID != "" {
+		if enriched := ai.EnrichModelList(sessionAgentID, ml); enriched != nil {
+			st.ModelList = enriched
+		}
+	}
+
+	// DB fallback: if any state is still nil after in-memory lookups,
+	// try to restore from persisted context_state (survives server restart).
+	//
+	// Thinking effort is restored ONLY when the user picked it. The same
+	// context_state entry also receives the value the AGENT reports for
+	// itself (its per-model default, "low" for most OpenCode models);
+	// presenting that as the session's current effort is what made new
+	// sessions look stuck on low (issue #552). Dropping it here lets the
+	// client fall back to the per-model / global default, which is what
+	// the next turn will actually use.
+	if st.Mode == nil || st.Effort == nil || st.Usage == nil {
+		if ctxState := service.GetContextState(sessionID); ctxState != nil {
+			if st.Mode == nil && ctxState.Mode != nil {
+				st.Mode = ctxState.Mode
+			}
+			if st.Effort == nil && ctxState.ThinkingEffort != nil && ctxState.ThinkingEffort.UserPicked {
+				st.Effort = ctxState.ThinkingEffort
+			}
+			if st.Usage == nil && ctxState.Usage != nil {
+				st.Usage = ctxState.Usage
+			}
+		}
+	}
+	return st
 }
 
 // streamRunResult captures the outcome of a single AI stream execution.

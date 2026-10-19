@@ -56,8 +56,23 @@ vi.mock('@/composables/useSessionIdentity', () => ({
   clearCommandState: vi.fn(),
   clearThinkingEffortState: vi.fn(),
 }))
+const { mockApiGet, mockApiPatch } = vi.hoisted(() => ({
+  mockApiGet: vi.fn(),
+  mockApiPatch: vi.fn(),
+}))
 vi.mock('@/utils/api', () => ({
   apiPost: vi.fn().mockResolvedValue({ models: [] }),
+  apiGet: (...a: unknown[]) => mockApiGet(...a),
+  apiPatch: (...a: unknown[]) => mockApiPatch(...a),
+}))
+vi.mock('@/utils/appLog', () => ({
+  appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
+}))
+// The usage tab's compaction action posts to the group-member endpoint; the
+// drawer only needs to know it was called with the member row id.
+const { mockCompactMember } = vi.hoisted(() => ({ mockCompactMember: vi.fn() }))
+vi.mock('@/composables/useGroupChat', () => ({
+  compactGroupMember: (...a: unknown[]) => mockCompactMember(...a),
 }))
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (key: string) => key }),
@@ -146,6 +161,24 @@ const mockIdentity = {
   currentModeId: ref('code'),
   autoApprove: ref(false),
   toggleAutoApprove: vi.fn(),
+  cruise: ref(false),
+  toggleCruise: vi.fn(),
+  // Usage tab reads these (the single-chat path).
+  contextUsed: ref(50000),
+  contextSize: ref(200000),
+  contextInputTokens: ref(0),
+  contextOutputTokens: ref(0),
+  contextTotalTokens: ref(0),
+  contextCachedReadTokens: ref(0),
+  contextCachedWriteTokens: ref(0),
+  contextThoughtTokens: ref(0),
+  contextCost: ref(0),
+  contextCurrency: ref(''),
+  contextCacheCreationTokens: ref(0),
+  contextCacheHitTokens: ref(0),
+  contextCacheMissTokens: ref(0),
+  contextCredit: ref(0),
+  contextUsageByCategory: ref(undefined),
 }
 
 describe('SessionDrawer', () => {
@@ -153,6 +186,9 @@ describe('SessionDrawer', () => {
     vi.mocked(useAgents).mockReturnValue(mockAgents as any)
     vi.mocked(useSessionIdentity).mockReturnValue(mockIdentity as any)
     vi.mocked(apiPost).mockResolvedValue({ models: [] })
+    mockApiGet.mockReset()
+    mockApiPatch.mockReset().mockResolvedValue({ ok: true })
+    mockCompactMember.mockReset().mockResolvedValue({ used: 1000, size: 200000 })
     vi.mocked(patchAgentPref).mockResolvedValue(undefined)
   })
 
@@ -174,11 +210,11 @@ describe('SessionDrawer', () => {
     expect(wrapper.find('.bottom-sheet-overlay').exists()).toBe(true)
   })
 
-  it('renders the tab bar with four tabs', () => {
+  it('renders the tab bar with five tabs (usage added)', () => {
     const wrapper = mountDrawer()
     expect(wrapper.find('.session-setting-tabs').exists()).toBe(true)
     const tabs = wrapper.findAll('.model-tab')
-    expect(tabs.length).toBe(4)
+    expect(tabs.length).toBe(5)
   })
 
   it('renders all tab labels', () => {
@@ -188,6 +224,7 @@ describe('SessionDrawer', () => {
     expect(tabs[1].text()).toContain('chat.thinkingEffortSwitcher.title')
     expect(tabs[2].text()).toContain('chat.modeSwitcher.title')
     expect(tabs[3].text()).toContain('chat.transportSwitcher.title')
+    expect(tabs[4].text()).toContain('chat.sessionInfo.contextUsage')
   })
 
   // ── Initial state (model tab is default) ──
@@ -1034,5 +1071,176 @@ describe('SessionDrawer', () => {
     await nextTick()
     expect(wrapper.emitted('switch-transport')).toBeFalsy()
     wrapper.unmount()
+  })
+
+  // ── Context usage tab ──
+
+  describe('usage tab', () => {
+    it('renders the shared usage panel for the current session', async () => {
+      const wrapper = mountDrawer()
+      await wrapper.findAll('.model-tab')[4].trigger('click')
+      await nextTick()
+      // The panel body is ContextUsageDetail — the same component the info-row
+      // popup renders, so the two surfaces cannot drift.
+      const detail = wrapper.findComponent({ name: 'ContextUsageDetail' })
+      expect(detail.exists()).toBe(true)
+      expect((detail.props('usage') as { used: number }).used).toBe(50000)
+    })
+
+    it('shows an empty state when the session never reported a window', async () => {
+      mockIdentity.contextSize.value = 0
+      try {
+        const wrapper = mountDrawer()
+        await wrapper.findAll('.model-tab')[4].trigger('click')
+        await nextTick()
+        expect(wrapper.findComponent({ name: 'ContextUsageDetail' }).exists()).toBe(false)
+        expect(wrapper.text()).toContain('chat.sessionSetting.noUsage')
+      } finally {
+        mockIdentity.contextSize.value = 200000
+      }
+    })
+  })
+
+  // ── Auto-cruise toggle in the mode tab ──
+
+  describe('auto-cruise switch', () => {
+    it('sits in the mode tab directly under auto-approve', async () => {
+      const wrapper = mountDrawer()
+      await wrapper.findAll('.model-tab')[2].trigger('click')
+      await nextTick()
+      const toggles = wrapper.findAll('.auto-approve-toggle')
+      // auto-approve first, cruise second — the order is the point (cruise
+      // forces auto-approve on, so the link is visible where it happens).
+      expect(toggles.length).toBe(2)
+      expect(toggles[0].text()).toContain('chat.autoApprove.title')
+      expect(toggles[1].text()).toContain('chat.cruise.label')
+    })
+
+    it('reflects the session cruise value', async () => {
+      mockIdentity.cruise.value = true
+      try {
+        const wrapper = mountDrawer()
+        await wrapper.findAll('.model-tab')[2].trigger('click')
+        await nextTick()
+        const cruiseInput = wrapper.findAll('.auto-approve-toggle')[1].find('input')
+        expect((cruiseInput.element as HTMLInputElement).checked).toBe(true)
+      } finally {
+        mockIdentity.cruise.value = false
+      }
+    })
+
+    it('toggles the current session cruise through the shared action', async () => {
+      const wrapper = mountDrawer()
+      await wrapper.findAll('.model-tab')[2].trigger('click')
+      await nextTick()
+      await wrapper.findAll('.auto-approve-toggle')[1].find('input').setValue(true)
+      expect(mockIdentity.toggleCruise).toHaveBeenCalledWith(true)
+    })
+  })
+
+  // ── Targeted session (group member) ──
+  // Clicking a member in the group roster opens THIS drawer on that member's
+  // session row. Everything must come from the fetched payload — reading the
+  // singleton identity refs would show the group's host state while claiming to
+  // describe the member.
+
+  describe('targeted session (group member)', () => {
+    const targetPayload = {
+      ok: true,
+      sessionId: 'member-1',
+      sessionType: 'group_member',
+      agentId: 'claude',
+      backend: 'claude',
+      modelId: 'claude-opus-4-5',
+      transport: 'acp-stdio',
+      autoApprove: true,
+      cruise: true,
+      modeState: { currentModeId: 'ask', availableModes: [{ id: 'ask', name: 'Ask' }, { id: 'plan', name: 'Plan' }] },
+      thinkingEffortState: { currentId: 'low', availableLevels: [{ id: 'low', name: 'Low' }] },
+      usageState: { used: 9000, size: 100000 },
+      isGroupMember: true,
+    }
+
+    function mountTargeted(props = {}) {
+      mockApiGet.mockResolvedValue(targetPayload)
+      return mountDrawer({ targetSessionId: 'member-1', ...props })
+    }
+
+    it('fetches the member row state from the session-settings endpoint', async () => {
+      mountTargeted()
+      await nextTick()
+      expect(mockApiGet).toHaveBeenCalledWith('/api/ai/session/settings?session_id=member-1')
+    })
+
+    it('shows the member values, not the current session values', async () => {
+      const wrapper = mountTargeted()
+      await nextTick()
+      await nextTick()
+      // Model: payload says opus; the singleton identity says sonnet.
+      const currentModel = wrapper.findAll('.model-item.current')
+      expect(currentModel.length).toBe(1)
+      expect(currentModel[0].text()).toContain('Claude Opus 4.5')
+    })
+
+    it('renders the member usage in the usage tab', async () => {
+      const wrapper = mountTargeted()
+      await nextTick()
+      await nextTick()
+      await wrapper.findAll('.model-tab')[4].trigger('click')
+      await nextTick()
+      const detail = wrapper.findComponent({ name: 'ContextUsageDetail' })
+      expect(detail.exists()).toBe(true)
+      expect((detail.props('usage') as { used: number }).used).toBe(9000)
+    })
+
+    it('writes settings through the targeted endpoint, not the current session', async () => {
+      const wrapper = mountTargeted()
+      await nextTick()
+      await nextTick()
+      await wrapper.findAll('.model-tab')[2].trigger('click')
+      await nextTick()
+      // Mode list comes from the payload (ask/plan), and picking one writes to
+      // the member row.
+      const items = wrapper.findAll('.thinking-item')
+      await items[1].trigger('click')
+      await nextTick()
+      expect(mockApiPatch).toHaveBeenCalledWith('/api/ai/session/settings', {
+        sessionId: 'member-1',
+        modeId: 'plan',
+      })
+      // The shared identity action must NOT have been used (it writes the
+      // current session, i.e. the group).
+      expect(wrapper.emitted('switch-mode')).toBeFalsy()
+    })
+
+    it('compacts the member through the group endpoint', async () => {
+      const wrapper = mountTargeted()
+      await nextTick()
+      await nextTick()
+      await wrapper.findAll('.model-tab')[4].trigger('click')
+      await nextTick()
+      wrapper.findComponent({ name: 'ContextUsageDetail' }).vm.$emit('compact')
+      await nextTick()
+      await nextTick()
+      expect(mockCompactMember).toHaveBeenCalledWith('member-1', 'member-1')
+    })
+
+    it('toggles cruise on the member row via the targeted endpoint', async () => {
+      const wrapper = mountTargeted()
+      await nextTick()
+      await nextTick()
+      await wrapper.findAll('.model-tab')[2].trigger('click')
+      await nextTick()
+      await wrapper.findAll('.auto-approve-toggle')[1].find('input').setValue(false)
+      await nextTick()
+      expect(mockApiPatch).toHaveBeenCalledWith('/api/ai/session/settings', {
+        sessionId: 'member-1',
+        cruise: false,
+      })
+      // The current session's cruise must not be touched. (The shared action is
+      // called by other tests in this file, so assert on THIS call's absence by
+      // checking the toggle went to the targeted endpoint with the new value.)
+      expect(mockApiPatch).toHaveBeenCalledTimes(1)
+    })
   })
 })
