@@ -275,13 +275,51 @@ func probeStdioServer(nodePath, serverScript string) acp.McpServer {
 // process, and MCP startup failures only show up on stderr.
 type mcpProbeProc struct {
 	*extProbeSetup
-	cmd     *exec.Cmd
-	stderr  *lockedBuffer
-	killed  bool
-	killMux sync.Mutex
+	cmd      *exec.Cmd
+	stderr   *lockedBuffer
+	killed   bool
+	killMux  sync.Mutex
+	closeErr error
 }
 
-// kill terminates the agent process. Safe to call more than once.
+// closeSession asks the agent to release a session before the process is killed.
+//
+// Several agents hold a per-thread writer lock for the lifetime of the session
+// and release it only on a clean session/close (codex advertises
+// `sessionCapabilities.close`). SIGKILL leaves that lock behind, so the next
+// process gets "thread ... already has an active writer" — which the resume
+// probe would report as "this agent does not support resume", a false negative.
+//
+// Best-effort: agents without session/close return -32601, which is fine.
+func (p *mcpProbeProc) closeSession(ctx context.Context, sessionID string) {
+	if p == nil || p.extProbeSetup == nil || sessionID == "" {
+		return
+	}
+	closeCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	_, err := p.conn.CloseSession(closeCtx, acp.CloseSessionRequest{
+		SessionId: acp.SessionId(sessionID),
+	})
+	if err != nil && !isMethodNotFound(err) {
+		// Not fatal: the process is about to die anyway, and some agents report
+		// an unrelated error on close.
+		p.closeErr = err
+	}
+}
+
+// kill terminates the agent process TREE. Safe to call more than once.
+//
+// Killing only the adapter (cmd.Process.Kill) leaves its children alive: npx
+// wrappers, and — critically — the engine process an adapter spawns (codex-acp
+// runs a codex app-server child). A surviving engine keeps the per-thread writer
+// lock, so the NEXT process's session/resume fails with
+// `thread ... already has an active writer` and the probe would report
+// "no resume support" — a false negative caused entirely by teardown.
+//
+// Production already kills the whole group (setProcessGroup / killProcessGroup
+// in acp_process_unix.go); the probe must do the same or it measures something
+// the product never does.
 func (p *mcpProbeProc) kill() {
 	p.killMux.Lock()
 	defer p.killMux.Unlock()
@@ -290,7 +328,7 @@ func (p *mcpProbeProc) kill() {
 		return
 	}
 	p.killed = true
-	_ = p.cmd.Process.Kill()
+	killProcessGroup(p.cmd.Process)
 	_, _ = p.cmd.Process.Wait()
 }
 
@@ -325,6 +363,8 @@ func startMCPProbe(t *testing.T, ctx context.Context, b mcpProbeBackend) *mcpPro
 
 	cmd := exec.CommandContext(ctx, b.Args[0], b.Args[1:]...)
 	cmd.Env = append(os.Environ(), OrphanChildEnvVar)
+	// Own process group, so kill() can take down the whole tree (see kill).
+	setProcessGroup(cmd)
 
 	stdinPipe, err := cmd.StdinPipe()
 	require.NoError(t, err, "stdin pipe")
