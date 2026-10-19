@@ -138,12 +138,20 @@ func TestExtractClaudeMeta_Quota(t *testing.T) {
 	require.NotNil(t, ext.Usage)
 	u := ext.Usage
 	assert.True(t, u.Present)
-	assert.Equal(t, 142, u.InputTokens)
+	// inputTokens is the UNCACHED remainder in this bridge's shape
+	// (total = input+output+cacheRead+cacheWrite), so it is normalized to the
+	// full prompt: 142 + 0 + 41053.
+	assert.Equal(t, 41195, u.InputTokens)
 	assert.Equal(t, 18, u.OutputTokens)
 	assert.Equal(t, 41213, u.TotalTokens)
 	assert.Equal(t, 41053, u.CachedWriteTokens)
 	assert.Equal(t, 0, u.CachedReadTokens)
 	assert.Equal(t, 0, u.ThoughtTokens)
+	// Cache split derived from the same identity: no cache read → 0% hit rate
+	// with the whole prompt counted as a miss.
+	assert.Equal(t, 0, u.CacheHitTokens)
+	assert.Equal(t, 142, u.CacheMissTokens)
+	assert.Equal(t, 41213, u.InputTokens+u.OutputTokens, "row stays internally consistent")
 }
 
 func TestExtractClaudeMeta_ReasoningTokens(t *testing.T) {
@@ -199,12 +207,15 @@ func TestExtractClaudeMeta_ModelUsage(t *testing.T) {
 	}
 	ext := extractClaudeMeta(meta)
 	require.NotNil(t, ext)
-	// Aggregate usage extracted from token_count.
+	// Aggregate usage extracted from token_count. inputTokens excludes the
+	// cached portion, so it is normalized to 105 + 12672 = 12777.
 	require.NotNil(t, ext.Usage)
-	assert.Equal(t, 105, ext.Usage.InputTokens)
+	assert.Equal(t, 12777, ext.Usage.InputTokens)
 	assert.Equal(t, 2, ext.Usage.OutputTokens)
 	assert.Equal(t, 12779, ext.Usage.TotalTokens)
 	assert.Equal(t, 12672, ext.Usage.CachedReadTokens)
+	assert.Equal(t, 12672, ext.Usage.CacheHitTokens)
+	assert.Equal(t, 105, ext.Usage.CacheMissTokens)
 	// Model name surfaced as ResponseModelID.
 	require.NotNil(t, ext.Trace)
 	assert.Equal(t, "deepseek-v4-flash", ext.Trace.ResponseModelID)

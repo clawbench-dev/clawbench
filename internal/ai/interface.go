@@ -69,10 +69,25 @@ type Metadata struct {
 	DurationMs     int     `json:"durationMs,omitempty"` // CLI self-reported duration
 	WallMs         int     `json:"wallMs,omitempty"`     // Backend wall-clock duration (time from ExecuteStream start to finalization)
 	CostUSD        float64 `json:"costUsd,omitempty"`
-	SessionID      string  `json:"sessionId,omitempty"`
-	StopReason     string  `json:"stopReason,omitempty"`
-	IsError        bool    `json:"isError,omitempty"`
-	ErrorMessage   string  `json:"errorMessage,omitempty"`
+	// CostCumulative marks CostUSD as the session's CUMULATIVE cost rather than
+	// this turn's cost. ACP's usage_update.cost is defined as "Total cumulative
+	// cost for session", so every ACP-sourced cost sets this. The executor
+	// converts it to a per-turn delta before persisting (see
+	// service.normalizeLedgerCost), so SUM(cost_usd) over the ledger is a true
+	// total instead of N× the running sum. CLI backends that report a per-turn
+	// cost leave it false.
+	CostCumulative bool `json:"-"`
+	// CostSessionTotal is the raw cumulative cost the agent reported. It rides
+	// alongside the per-turn CostUSD so the ledger can diff the NEXT turn
+	// against it (including across a server restart, where the connection's
+	// in-memory cache is gone). Never serialized into the message JSON — the
+	// per-message view must show this turn's cost, not the session's running
+	// total.
+	CostSessionTotal float64 `json:"-"`
+	SessionID        string  `json:"sessionId,omitempty"`
+	StopReason       string  `json:"stopReason,omitempty"`
+	IsError          bool    `json:"isError,omitempty"`
+	ErrorMessage     string  `json:"errorMessage,omitempty"`
 
 	// Extended token usage — populated from per-agent _meta extensions and the
 	// (UNSTABLE) PromptResponse.Usage. Mirrors UsageState so the message-level

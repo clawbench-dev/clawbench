@@ -278,6 +278,8 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			backend TEXT DEFAULT '',
 			agent_id TEXT DEFAULT '',
 			clawbench_session_id TEXT DEFAULT '',
+			cost_session_total REAL DEFAULT 0,
+			cost_cumulative INTEGER DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE INDEX IF NOT EXISTS idx_chat_metadata_model ON chat_metadata(model);

@@ -1845,6 +1845,20 @@ func UpdateSessionAutoApprove(sessionID string, enabled bool) error {
 // chat_history so a row survives the message/session being deleted. The
 // project/backend/agent attribution is denormalized here at write time so the
 // stats query never has to join back to a possibly-deleted session.
+//
+// Three normalizations happen here so the ledger is SUM-able as-is:
+//
+//   - CUMULATIVE COST → per-turn delta. ACP's usage_update.cost is defined as
+//     the session's running total, so writing it verbatim made SUM(cost_usd)
+//     count the running total once per message (measured 2.8× on Claude).
+//     The raw total is kept in cost_session_total so the NEXT turn (even after
+//     a server restart) can diff against it.
+//   - total_tokens ≥ input+output. Parsers that omit the upstream total (or
+//     report an older snapshot) used to leave 0 here, which the stats panel
+//     then rendered as "no usage" while still counting the row in the totals.
+//   - created_at comes from the message's own completion time, NOT
+//     CURRENT_TIMESTAMP. INSERT OR REPLACE used to re-stamp every re-save, so
+//     a metadata refresh moved a month-old message into today's window.
 func SaveMetadata(messageID int64, meta *ai.Metadata) error {
 	if messageID <= 0 || meta == nil {
 		return nil
@@ -1860,22 +1874,26 @@ func SaveMetadata(messageID int64, meta *ai.Metadata) error {
 			categoryJSON = string(b)
 		}
 	}
-	// Resolve denormalized attribution from the message's own row. A missing
-	// row (ErrNoRows) is benign — the message was already deleted — and leaves
-	// the columns empty. Any other error is propagated rather than swallowed:
-	// writing a row with project_id = 0 would make it permanently invisible
-	// to every project-scoped stats query, i.e. silent under-counting.
-	var projectID int64
-	var backend, agentID, clawbenchSessionID string
-	if err := store.ReadDB().QueryRow(
-		`SELECT h.project_id, h.backend, h.session_id, COALESCE(s.agent_id, '')
-		 FROM chat_history h
-		 LEFT JOIN chat_sessions s ON s.id = h.session_id
-		 WHERE h.id = ?`, messageID,
-	).Scan(&projectID, &backend, &clawbenchSessionID, &agentID); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("resolve metadata attribution for message %d: %w", messageID, err)
+	attr, err := resolveLedgerAttribution(messageID)
+	if err != nil {
+		return err
 	}
-	_, err := store.WriteExec(
+	// Model: a request that never reported a model name (Claude/Codex often
+	// leave _meta.model empty) still knows which model actually responded.
+	// Without this fallback those rows collapse into the "(empty)" bucket in
+	// the model dimension — 27% of Claude's tokens in a production DB.
+	modelName := meta.Model
+	if modelName == "" {
+		modelName = meta.ResponseModelID
+	}
+	// total_tokens invariant: SUM over the ledger must never under-count a row
+	// that clearly consumed tokens.
+	totalTokens := meta.TotalTokens
+	if totalTokens < meta.InputTokens+meta.OutputTokens {
+		totalTokens = meta.InputTokens + meta.OutputTokens
+	}
+	costUSD, costTotal, costCumulative := normalizeLedgerCost(attr.sessionID, messageID, meta)
+	_, err = store.WriteExec(
 		`
 		INSERT OR REPLACE INTO chat_metadata
 			(message_id, mode, thinking_effort, transport, model, input_tokens, output_tokens,
@@ -1885,19 +1903,160 @@ func SaveMetadata(messageID int64, meta *ai.Metadata) error {
 			 usage_by_category, session_id,
 			 request_id, trace_id, agent_message_id, message_request_id, request_model_name,
 			 response_model_id, finish_reason, outcome, agent_phase,
-			 project_id, backend, agent_id, clawbench_session_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		messageID, meta.Mode, meta.ThinkingEffort, meta.Transport, meta.Model,
+			 project_id, backend, agent_id, clawbench_session_id,
+			 cost_session_total, cost_cumulative, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+		        COALESCE(NULLIF(?, ''), CURRENT_TIMESTAMP))`,
+		messageID, meta.Mode, meta.ThinkingEffort, meta.Transport, modelName,
 		meta.InputTokens, meta.OutputTokens, meta.DurationMs, meta.WallMs,
-		meta.CostUSD, meta.StopReason, isError, meta.ErrorMessage,
-		meta.CachedReadTokens, meta.CachedWriteTokens, meta.ThoughtTokens, meta.TotalTokens,
+		costUSD, meta.StopReason, isError, meta.ErrorMessage,
+		meta.CachedReadTokens, meta.CachedWriteTokens, meta.ThoughtTokens, totalTokens,
 		meta.CacheCreationTokens, meta.CacheHitTokens, meta.CacheMissTokens, meta.Credit,
 		categoryJSON, meta.SessionID,
 		meta.RequestID, meta.TraceID, meta.MessageID, meta.MessageRequestID, meta.RequestModelName,
 		meta.ResponseModelID, meta.FinishReason, meta.Outcome, meta.AgentPhase,
-		projectID, backend, agentID, clawbenchSessionID,
+		attr.projectID, attr.backend, attr.agentID, attr.sessionID,
+		costTotal, costCumulative, attr.occurredAt,
 	)
 	return err
+}
+
+// ledgerAttribution is the denormalized attribution resolved from the message's
+// own chat_history row at ledger-write time.
+type ledgerAttribution struct {
+	projectID int64
+	backend   string
+	agentID   string
+	sessionID string
+	// occurredAt is the message's completion time (falling back to its creation
+	// time), used as the ledger's created_at so the stats window reflects when
+	// the usage actually happened.
+	occurredAt string
+}
+
+// resolveLedgerAttribution reads the attribution columns for messageID.
+//
+// A missing chat_history row (ErrNoRows) is benign — the message was already
+// deleted — and leaves the columns empty. Any other error is propagated rather
+// than swallowed: writing a row with project_id = 0 would make it permanently
+// invisible to every project-scoped stats query, i.e. silent under-counting.
+//
+// The AGENT is resolved from chat_history.agent_id first. For a group-chat
+// member turn that column holds the member's session ROW id (see
+// AddChatMessageWithAgent), while chat_history.session_id holds the GROUP id
+// whose agent_id is the HOST. Reading the session's agent therefore credited
+// every member's consumption to the host — 25% of the tokens in a production
+// DB. Member rows are resolved one hop further to their real agent; an
+// unresolvable (deleted) member falls back to the session agent rather than
+// leaving a dangling row id that matches no agent at all.
+func resolveLedgerAttribution(messageID int64) (ledgerAttribution, error) {
+	var (
+		attr       ledgerAttribution
+		historyAgt string
+		sessionAgt string
+	)
+	err := store.ReadDB().QueryRow(
+		`SELECT h.project_id, h.backend, h.session_id, COALESCE(s.agent_id, ''), COALESCE(h.agent_id, ''),
+		        COALESCE(NULLIF(h.completed_at, ''), h.created_at)
+		 FROM chat_history h
+		 LEFT JOIN chat_sessions s ON s.id = h.session_id
+		 WHERE h.id = ?`, messageID,
+	).Scan(&attr.projectID, &attr.backend, &attr.sessionID, &sessionAgt, &historyAgt, &attr.occurredAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ledgerAttribution{}, nil
+		}
+		return ledgerAttribution{}, fmt.Errorf("resolve metadata attribution for message %d: %w", messageID, err)
+	}
+	attr.agentID = sessionAgt
+	if historyAgt == "" {
+		return attr, nil
+	}
+	// chat_history.agent_id is a member session row id for group turns and
+	// empty for single-agent turns, so a non-empty value always needs the
+	// extra hop.
+	var memberAgent string
+	if err := store.ReadDB().QueryRow(
+		"SELECT COALESCE(agent_id, '') FROM chat_sessions WHERE id = ?", historyAgt,
+	).Scan(&memberAgent); err == nil && memberAgent != "" {
+		attr.agentID = memberAgent
+	}
+	return attr, nil
+}
+
+// normalizeLedgerCost converts a reported cost into the per-turn delta the
+// ledger stores, and reports the raw session total plus whether the source was
+// cumulative.
+//
+// ACP's usage_update.cost is "Total cumulative cost for session" (acp-go-sdk
+// types_gen.go), so a verbatim write makes SUM(cost_usd) count the running
+// total once per message. CLI backends (pi, claude --output-format stream-json)
+// report a per-turn cost and are stored as-is.
+//
+// The previous session total comes from the ledger itself, not from the
+// connection's in-memory cache, so the diff stays correct across a server
+// restart or an ACP reconnect.
+//
+// The baseline is partitioned by the AGENT CONNECTION, not by the timeline
+// session. In a group chat every member has its own ACP connection and therefore
+// its own cost counter, while all their messages land on one group timeline —
+// partitioning by timeline would diff member A's total against member B's,
+// producing nonsense deltas (and occasionally billing an entire session again
+// when the counters happen to decrease). ai.Metadata.SessionID is the external
+// ACP session id, which identifies exactly one connection.
+func normalizeLedgerCost(sessionID string, messageID int64, meta *ai.Metadata) (cost, sessionTotal float64, cumulative int) {
+	if !meta.CostCumulative {
+		return meta.CostUSD, 0, 0
+	}
+	reported := meta.CostSessionTotal
+	if reported <= 0 {
+		reported = meta.CostUSD
+	}
+	var prev float64
+	// Prefer the agent connection id; fall back to the ClawBench session when
+	// the agent never reported one (CLI transports).
+	partition := meta.SessionID
+	if partition == "" {
+		partition = sessionID
+	}
+	if partition != "" {
+		// The baseline is the PREVIOUS turn's reported total, not the session
+		// maximum: an agent can restart its counter mid-session (a model switch
+		// does — measured drops from 0.47 to 0.21 coincide with
+		// claude-sonnet-4-6 → MiniMax), and a MAX baseline would then make
+		// every later turn diff against a value that can never be reached
+		// again, re-counting its whole amount.
+		//
+		// Only rows that actually recorded a cumulative value qualify: ACP
+		// interleaves cost-less turns (a naked usage_update leaves cost 0), and
+		// diffing against one of those would bill the whole running total
+		// again. The next informative turn's cumulative value already includes
+		// whatever those skipped turns consumed, so diffing against the last
+		// RECORDED total captures it exactly once.
+		//
+		// COALESCE keeps the fallback usable: rows written before the agent
+		// connection id was recorded carry an empty session_id, and matching
+		// those against the partition above would lose the baseline entirely.
+		err := store.ReadDB().QueryRow(
+			`SELECT COALESCE(cost_session_total, 0) FROM chat_metadata
+			 WHERE COALESCE(NULLIF(session_id, ''), clawbench_session_id) = ?
+			   AND message_id <> ? AND cost_cumulative = 1
+			 ORDER BY message_id DESC LIMIT 1`,
+			partition, messageID,
+		).Scan(&prev)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			slog.Warn("save metadata: read previous session cost failed",
+				slog.String("session", partition), slog.String("err", err.Error()))
+			prev = 0
+		}
+	}
+	delta := reported - prev
+	if delta < 0 {
+		// The agent restarted its counter (new session/epoch): the whole
+		// reported amount belongs to this turn.
+		delta = reported
+	}
+	return delta, reported, 1
 }
 
 // GetLatestUserModel returns the most recent model the user explicitly chose

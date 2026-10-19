@@ -154,6 +154,16 @@ func dimExpr(d UsageDim) (string, bool) {
 	return "", false
 }
 
+// usageTotalSumExpr is the aggregate expression for the "total tokens" metric.
+//
+// A row whose upstream parser reported no total (several CLI backends used to
+// drop it) would contribute 0 here, so the panel's DEFAULT metric showed the
+// backend as having no usage at all while its tokens still counted toward the
+// input/output cards. The write path now enforces total ≥ input+output, but the
+// expression keeps the aggregate honest for any row that predates that
+// invariant or was written by an older binary.
+const usageTotalSumExpr = "SUM(CASE WHEN m.total_tokens > 0 THEN m.total_tokens ELSE m.input_tokens + m.output_tokens END)"
+
 // sortExpr maps a whitelisted metric to an ORDER BY expression.
 func sortExpr(m UsageMetric) (string, bool) {
 	switch m {
@@ -162,7 +172,7 @@ func sortExpr(m UsageMetric) (string, bool) {
 	case MetricOutput:
 		return "SUM(m.output_tokens)", true
 	case MetricTotal:
-		return "SUM(m.total_tokens)", true
+		return usageTotalSumExpr, true
 	case MetricCacheHit:
 		return "SUM(m.cache_hit_tokens)", true
 	case MetricCredit:
@@ -280,7 +290,8 @@ func UsageStats(ctx context.Context, p UsageParams) (*UsageStatsResult, error) {
 		dimExprs = append(dimExprs, e)
 	}
 
-	sums := "COALESCE(SUM(m.input_tokens),0), COALESCE(SUM(m.output_tokens),0), COALESCE(SUM(m.total_tokens),0), " +
+	sums := "COALESCE(SUM(m.input_tokens),0), COALESCE(SUM(m.output_tokens),0), " +
+		"COALESCE(" + usageTotalSumExpr + ",0), " +
 		"COALESCE(SUM(m.cache_hit_tokens),0), COALESCE(SUM(m.cache_miss_tokens),0), " +
 		"COALESCE(SUM(m.credit),0), COALESCE(SUM(m.cost_usd),0), COUNT(*)"
 	// chat_metadata is a standalone ledger with denormalized project_path/

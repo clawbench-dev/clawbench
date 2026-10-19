@@ -40,6 +40,7 @@ const (
 	migThinkingFromContent  = "2026-09-29_migrate_thinking_from_content"
 	migAskCardDone          = "2026-10-16_normalize_ask_summary_cards_done"
 	migEffortPickFlag       = "2026-10-18_mark_legacy_effort_picks"
+	migUsageLedgerHeal      = "2026-10-19_heal_usage_ledger"
 )
 
 // dataMigrationNames 是上表的名字集合，供测试遍历。
@@ -50,6 +51,7 @@ var dataMigrationNames = []string{
 	migThinkingFromContent,
 	migAskCardDone,
 	migEffortPickFlag,
+	migUsageLedgerHeal,
 }
 
 // ensureSchemaMigrationsTable 幂等建台账表。必须在任何 runOnce 之前调用。
@@ -790,6 +792,13 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			backend TEXT DEFAULT '',
 			agent_id TEXT DEFAULT '',
 			clawbench_session_id TEXT DEFAULT '',
+			-- cost_session_total is the raw CUMULATIVE cost the agent reported
+			-- (ACP usage_update.cost is defined as the session running total).
+			-- cost_usd holds the per-turn DELTA so SUM(cost_usd) is a true
+			-- total; the raw value is kept so the next turn can diff against it
+			-- even after a restart.
+			cost_session_total REAL DEFAULT 0,
+			cost_cumulative INTEGER DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE INDEX IF NOT EXISTS idx_chat_metadata_model ON chat_metadata(model);
@@ -1194,6 +1203,11 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		{"finish_reason", "ALTER TABLE chat_metadata ADD COLUMN finish_reason TEXT DEFAULT ''"},
 		{"outcome", "ALTER TABLE chat_metadata ADD COLUMN outcome TEXT DEFAULT ''"},
 		{"agent_phase", "ALTER TABLE chat_metadata ADD COLUMN agent_phase TEXT DEFAULT ''"},
+		// Cumulative-cost bookkeeping: cost_usd stores a per-turn delta, these
+		// keep the raw running total the agent reported so the next turn (and
+		// the migration below) can diff against it.
+		{"cost_session_total", "ALTER TABLE chat_metadata ADD COLUMN cost_session_total REAL DEFAULT 0"},
+		{"cost_cumulative", "ALTER TABLE chat_metadata ADD COLUMN cost_cumulative INTEGER DEFAULT 0"},
 		// NOTE: project_id/backend/agent_id/clawbench_session_id (the ledger
 		// attribution columns) are added in the pre-migration block before
 		// createTables, because createTables creates an index over them.
@@ -1913,6 +1927,12 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// pre-upgrade session would be treated as "no choice" and revert to the
 	// agent's low default.
 	runOnce(migEffortPickFlag, MigrateLegacyThinkingEffortPicks)
+
+	// Migrate: heal already-written usage-ledger rows (cumulative cost, missing
+	// total_tokens, empty model, Claude/Codex cache split, group-speaker
+	// attribution, re-stamped created_at). Runs after every other migration so
+	// rows it backfills (e.g. from chat_history.content) are healed too.
+	runOnce(migUsageLedgerHeal, MigrateUsageLedger)
 
 	return nil
 }
