@@ -285,6 +285,10 @@ func BuildCruiseFreeMemberAddendum() string {
 // The host's confirm branch asks for the conclusion too: the confirmation round
 // is the ONLY wrap-up turn (there is no separate summary call after it), so if
 // the host just emitted the tag the user would be left without a conclusion.
+// It is conditional, though: when the host's own PREVIOUS reply already carried
+// the full conclusion (the common case — it wrote the wrap-up and then emitted
+// the end tag), repeating it would duplicate a long block on the timeline, so
+// the confirm round only has to emit the tag plus a one-line acknowledgement.
 func BuildCruiseConfirmPrompt(freeMode bool) string {
 	var b strings.Builder
 	b.WriteString("\n\n[自动巡航·完成确认] 当前没有新的用户消息，请不要向用户提问，也不要等待用户确认。\n")
@@ -295,6 +299,7 @@ func BuildCruiseConfirmPrompt(freeMode bool) string {
 		b.WriteString("本轮只做表态，不要 @ 任何人。\n")
 	} else {
 		b.WriteString("若确认已完成：输出 <clawbench-goal-satisfied/>，**并在同一条回复里直接写出最终结论**（汇总各成员观点与你的判断，供用户阅读，不要再提问或点名）。\n")
+		b.WriteString("例外：若你上一条回复已经写出了完整的最终结论，本轮只需输出 <clawbench-goal-satisfied/> 并加一句确认（如「结论同上」），**不要重复展开**。\n")
 		b.WriteString("若尚未完成，照常点名下一批成员（<clawbench-mention targets=\"…\">）继续推进，不要输出 goal-satisfied。\n")
 	}
 	return b.String()
@@ -338,12 +343,17 @@ func BuildCruiseSingleAddendum() string {
 // ("[自动巡航·完成确认]") on purpose: the e2e mock (cmd/acp-mock's
 // cruiseConfirmReply) keys off that marker, so single-chat cruise reuses the
 // mock's deterministic confirmation with no mock change.
+//
+// Like the host variant, the "write the conclusion" branch is conditional: the
+// common path is that the AI already wrapped up in its previous reply (that is
+// what triggers the confirmation), so restating it would duplicate the block.
 func BuildCruiseSingleConfirmPrompt() string {
 	var b strings.Builder
 	b.WriteString("\n\n[自动巡航·完成确认] 当前没有新的用户消息，请不要向用户提问，也不要等待用户确认。\n")
 	b.WriteString("所有不明确之处，请通过自主探索、实验、思考自行决定。\n")
 	b.WriteString("请评估：当前任务是否已经满足了用户最初的要求？\n")
 	b.WriteString("若确认已完成：输出 <clawbench-goal-satisfied/>，并在同一条回复里直接写出最终结论（供用户阅读，不要再提问）。\n")
+	b.WriteString("例外：若你上一条回复已经写出了完整的最终结论，本轮只需输出 <clawbench-goal-satisfied/> 并加一句确认（如「结论同上」），不要重复展开。\n")
 	b.WriteString("若尚未完成：继续推进尚未完成的部分，不要输出 goal-satisfied。\n")
 	return b.String()
 }

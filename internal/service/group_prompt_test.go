@@ -360,9 +360,18 @@ func TestBuildCruiseConfirmPrompt(t *testing.T) {
 	}
 	// The host's confirm branch must ask for the final conclusion IN THE SAME
 	// reply: there is no separate summary turn after confirmation (design §15.7),
-	// so a tag-only reply would leave the user without a wrap-up.
+	// so a tag-only reply would leave the user without a wrap-up. But it must be
+	// CONDITIONAL: a host that already wrote the conclusion in its previous reply
+	// (the usual path — wrap-up, then <clawbench-group-end/>) only acknowledges
+	// instead of repeating the whole block.
 	if !strings.Contains(host, "最终结论") {
 		t.Fatalf("host confirm prompt must ask for the conclusion in the same reply: %q", host)
+	}
+	if !strings.Contains(host, "上一条回复已经写出了完整的最终结论") {
+		t.Fatalf("host confirm prompt must skip re-stating an already-written conclusion: %q", host)
+	}
+	if !strings.Contains(host, "不要重复展开") {
+		t.Fatalf("host confirm prompt must forbid repeating the conclusion: %q", host)
 	}
 	// The free variant stays a bare vote — no conclusion (no host to write one).
 	if strings.Contains(free, "最终结论") {
@@ -405,6 +414,14 @@ func TestBuildCruiseSingleConfirmPrompt(t *testing.T) {
 	}
 	if !strings.Contains(p, "最终结论") {
 		t.Fatalf("confirm prompt must ask for the conclusion in the same reply: %q", p)
+	}
+	// ...unless the previous reply already carried it: then only acknowledge,
+	// so the same long conclusion is not rendered twice on the timeline.
+	if !strings.Contains(p, "上一条回复已经写出了完整的最终结论") {
+		t.Fatalf("single-chat confirm prompt must skip re-stating an already-written conclusion: %q", p)
+	}
+	if !strings.Contains(p, "不要重复展开") {
+		t.Fatalf("single-chat confirm prompt must forbid repeating the conclusion: %q", p)
 	}
 	// Single chat has no members to route to, so it must NOT invite mentions.
 	if strings.Contains(p, "<clawbench-mention") {
