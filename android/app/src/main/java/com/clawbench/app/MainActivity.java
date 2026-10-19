@@ -2527,8 +2527,36 @@ public class MainActivity extends AppCompatActivity {
 
         // Determine navigation type: task notification vs session notification
         boolean isTaskNotification = taskId != null || "task_update".equals(eventType);
+        boolean isUsageMeterNotification = "usage_meter".equals(eventType);
 
-        if (isTaskNotification && taskId != null) {
+        if (isUsageMeterNotification) {
+            // The usage meter is global: there is no session or task to open.
+            // Dispatch a dedicated event; the frontend opens the usage popover
+            // (wide screen) or the settings entry (narrow screen). Without this
+            // branch the intent falls through to the final `else` and the tap
+            // silently does nothing — the notification opens the app but goes
+            // nowhere, which reads as a broken notification.
+            AppLog.i(TAG, "MainActivity: handleNotificationIntent - usage meter notification, dispatching clawbench-open-usage-meter");
+            try {
+                org.json.JSONObject detail = new org.json.JSONObject();
+                pendingNavigation = detail;
+                if (webView != null) {
+                    webView.evaluateJavascript(
+                        "window.dispatchEvent(new CustomEvent('clawbench-open-usage-meter', { detail: " + detail.toString() + " }))",
+                        result -> {
+                            AppLog.i(TAG, "MainActivity: clawbench-open-usage-meter evaluateJavascript result=" + result);
+                            pendingNavigation = null;
+                        }
+                    );
+                } else {
+                    AppLog.w(TAG, "MainActivity: webView is null, cannot dispatch usage-meter event (pendingNavigation stored for cold-start)");
+                }
+            } catch (Exception e) {
+                AppLog.w(TAG, "MainActivity: failed to dispatch usage-meter event from notification", e);
+            }
+            intent.removeExtra("event_type");
+            AppLog.i(TAG, "MainActivity: cleared intent extras to prevent re-dispatch");
+        } else if (isTaskNotification && taskId != null) {
             // Task notification: navigate to task execution detail
             AppLog.i(TAG, "MainActivity: handleNotificationIntent - task notification, dispatching clawbench-open-task");
             try {

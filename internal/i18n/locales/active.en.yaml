@@ -305,3 +305,7 @@ ForgeEventViewDetail: View details
 PortForwardUnavailable: port forwarding is not available
 TunnelTargetUnreachable: tunnel target is unreachable
 TunnelReverseRequiresHTTP2: reverse forwarding requires HTTP/2; use the SSH transport on HTTP/1.1
+UsageMeterOverTitle: Usage above plan
+UsageMeterFullTitle: Usage quota exhausted
+UsageMeterOverBody: Used {{.Actual}} this cycle vs {{.Expected}} expected (quota {{.Quota}}, day {{.Day}} of {{.Days}})
+UsageMeterFullBody: The {{.Quota}} quota for this cycle is used up; actual usage {{.Actual}}

@@ -298,6 +298,15 @@ func pushSessionTerminal(sessionID, status string) {
 			_ = DeletePendingEvent(msg.ID)
 		}
 	}
+
+	// Usage meter: a completed turn is the moment new usage lands in the ledger,
+	// so this is the earliest point the over-plan threshold can be crossed.
+	// Asynchronous and best-effort: it runs an aggregate query, and a terminal
+	// notification must not wait on it. CheckUsageMeter throttles itself, so a
+	// drain that completes several turns in a row does not run one query each.
+	if status == statusCompleted {
+		go CheckUsageMeter(context.Background())
+	}
 }
 
 // markTerminalPushDone atomically claims the single terminal push slot for a session.

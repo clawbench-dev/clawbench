@@ -59,6 +59,15 @@ const (
 // IsNotifiableEvent returns true if the event is a terminal state that
 // should be persisted for offline clients.
 func IsNotifiableEvent(event string, data any) bool {
+	// The usage-meter event has no status to inspect — its data is a plain map
+	// of pre-rendered text and numbers, and every occurrence is notifiable.
+	// Short-circuited before the type switch below, which would otherwise fall
+	// through to the map branch and reject it (there is no "status" key the
+	// session/task predicates would accept... it has one, but "over"/"full" are
+	// not session statuses).
+	if event == UsageMeterEventType {
+		return true
+	}
 	var status string
 	switch d := data.(type) {
 	case *ws.SessionUpdateData:

@@ -491,6 +491,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/ai/chat/tool-call", ServeToolCallDetail)
 	register("/api/ai/chat/thinking", ServeThinkingDetail)
 	register("/api/usage/stats", ServeUsageStats)
+	register("/api/usage/meter", ServeUsageMeter)
 	register("/api/git/stats", ServeGitStats)
 	register("/api/git/cloc", ServeGitCloc)
 	register("/api/ai/permission/respond", ServePermissionRespond)

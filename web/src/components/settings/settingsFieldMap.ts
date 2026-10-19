@@ -411,6 +411,47 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
         }
       },
     }},
+    // Usage meter: a single global rule (cycle + metric + quota). It sits in the
+    // notification category because it is a notification feature first — the
+    // header capsule is a readout, not the point of it.
+    //
+    // Its own panel rather than four flat rows: the fields are meaningless in
+    // isolation (a quota without a cycle has no baseline), and the entry row
+    // shows the metric so the user can see which unit they are budgeting in
+    // without opening the panel.
+    { type: 'panel', config: {
+      panelId: 'usageMeter',
+      titleKey: 'settings.items.usageMeter',
+      entrySelector: {
+        labelKey: 'settings.items.usageMeter',
+        descriptionKey: 'settings.items.usageMeterDesc',
+        key: 'usage_meter.metric',
+        type: 'select',
+        source: 'server',
+        options: [
+          { labelKey: 'settings.items.usageMeterMetricTokens', value: 'tokens' },
+          { labelKey: 'settings.items.usageMeterMetricCredit', value: 'credit' },
+          { labelKey: 'settings.items.usageMeterMetricCost', value: 'cost' },
+        ],
+        defaultValue: 'cost',
+      },
+      commonFields: [
+        { labelKey: 'settings.items.usageMeterAnchor', descriptionKey: 'settings.items.usageMeterAnchorDesc', key: 'usage_meter.anchor_date', type: 'text', source: 'server' },
+        { labelKey: 'settings.items.usageMeterPeriod', descriptionKey: 'settings.items.usageMeterPeriodDesc', key: 'usage_meter.period_days', type: 'number', source: 'server' },
+        { labelKey: 'settings.items.usageMeterQuota', descriptionKey: 'settings.items.usageMeterQuotaDesc', key: 'usage_meter.quota', type: 'number', source: 'server' },
+      ],
+      requiredFields: [],
+      // Switching the metric changes the unit, so a stored quota would silently
+      // change meaning ($20 becoming 20 tokens). Clear it: the panel re-reads
+      // the config after the save, so the empty quota is visible immediately.
+      afterSave(changedKeys) {
+        if (changedKeys.includes('usage_meter.metric')) {
+          void import('@/composables/useSettingsConfig').then(({ useSettingsConfig }) => {
+            void useSettingsConfig().setServerValue('usage_meter.quota', 0)
+          }).catch(() => { /* quota stays until the next manual edit */ })
+        }
+      },
+    }},
   ],
   about: [
     { type: 'item', spec: { labelKey: 'settings.items.aboutServerVersion', descriptionKey: 'settings.items.aboutServerVersionDesc', key: 'serverVersion', type: 'info', source: 'server', sectionHeader: 'settings.items.aboutVersionSection' } },

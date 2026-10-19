@@ -53,6 +53,9 @@ public final class NativeNotificationPolicy {
      * Note this is NOT the same as {@link #advancesCursor}. `task_update running`
      * notifies ("task started") but is never persisted server-side, so it must
      * not move the cursor.
+     *
+     * `usage_meter_update` carries no status to gate on — the server only emits
+     * it when a threshold was actually crossed, so every occurrence notifies.
      */
     public static boolean isNotifiableEvent(String eventType, String status) {
         if ("session_update".equals(eventType)) {
@@ -60,6 +63,9 @@ public final class NativeNotificationPolicy {
         }
         if ("task_update".equals(eventType)) {
             return isNotifiableTaskStatus(status);
+        }
+        if ("usage_meter_update".equals(eventType)) {
+            return true;
         }
         return false;
     }
@@ -93,6 +99,13 @@ public final class NativeNotificationPolicy {
             return "completed".equals(status)
                     || "failed".equals(status)
                     || "cancelled".equals(status);
+        }
+        // usage_meter_update IS persisted (service.IsNotifiableEvent returns true
+        // for it unconditionally), so unlike `task_update running` it must move
+        // the cursor. Missing this branch makes every poll re-return the same
+        // crossing forever.
+        if ("usage_meter_update".equals(eventType)) {
+            return true;
         }
         return false;
     }

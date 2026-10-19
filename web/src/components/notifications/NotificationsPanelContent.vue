@@ -186,7 +186,7 @@ import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   Inbox, Folder, Unlink, Trash2, AlertCircle,
-  Bot, Clock, GitMerge, Check, X, ShieldAlert, Layers,
+  Bot, Clock, GitMerge, Check, X, ShieldAlert, Layers, Gauge,
 } from 'lucide-vue-next'
 import MenuSelect, { type MenuSelectOption } from '@/components/common/MenuSelect.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
@@ -280,6 +280,7 @@ const kindOptions = computed<MenuSelectOption[]>(() => [
   { value: 'session', label: t('notifications.kind.session') },
   { value: 'task', label: t('notifications.kind.task') },
   { value: 'forge', label: t('notifications.kind.forge') },
+  { value: 'usage', label: t('notifications.kind.usage') },
 ])
 
 const rangeOptions = computed<MenuSelectOption[]>(() => [
@@ -340,6 +341,7 @@ function kindIcon(n: NotificationItem) {
   switch (n.kind) {
     case 'task': return Clock
     case 'forge': return GitMerge
+    case 'usage': return Gauge
     default: return Bot
   }
 }
@@ -347,6 +349,7 @@ function kindIcon(n: NotificationItem) {
 /** Semantic tone for the event chip, keyed off kind + event type. */
 function eventTone(n: NotificationItem): string {
   const s = n.eventType
+  if (n.kind === 'usage') return s === 'full' ? 'danger' : 'warning'
   if (s === 'failed' || s === 'cancelled') return 'danger'
   if (s === 'permission_pending') return 'warning'
   if (n.kind === 'forge') return 'purple'
@@ -356,6 +359,7 @@ function eventTone(n: NotificationItem): string {
 
 function eventIcon(n: NotificationItem) {
   const s = n.eventType
+  if (n.kind === 'usage') return Gauge
   if (s === 'failed' || s === 'cancelled') return X
   if (s === 'permission_pending') return ShieldAlert
   if (n.kind === 'forge') return GitMerge
@@ -375,6 +379,8 @@ function eventLabel(n: NotificationItem): string {
     reopened: 'notifications.event.forgeReopened',
     commented: 'notifications.event.forgeCommented',
     pipeline_done: 'notifications.event.forgePipelineDone',
+    over: 'notifications.event.usageOver',
+    full: 'notifications.event.usageFull',
   }
   const key = map[n.eventType]
   // Fall back to the raw event type rather than an empty chip: an unknown event
@@ -436,6 +442,7 @@ function isExternalProject(n: NotificationItem): boolean {
 function fallbackTitle(n: NotificationItem): string {
   if (n.kind === 'forge') return n.forgeItemKey || t('notifications.kind.forge')
   if (n.kind === 'task') return t('notifications.kind.task')
+  if (n.kind === 'usage') return t('notifications.kind.usage')
   return t('notifications.kind.session')
 }
 
@@ -486,6 +493,11 @@ async function onOpen(n: NotificationItem) {
     window.dispatchEvent(new CustomEvent('clawbench-open-forge', {
       detail: { projectPath: n.projectPath, target: forgeTargetFromItemKey(n.forgeItemKey), fromNotificationCenter: true },
     }))
+  } else if (n.kind === 'usage') {
+    // The meter is global — there is no project or session to jump to. Wide
+    // screens open the header popover; narrow screens have no capsule, so they
+    // land on the settings entry that configures the rule.
+    window.dispatchEvent(new CustomEvent('clawbench-open-usage-meter'))
   }
 }
 

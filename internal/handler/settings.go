@@ -167,6 +167,13 @@ var hotReloadFields = map[string]bool{
 	"skills.dirs":          true,
 	"skills.refresh_hours": true,
 	"skills.repos":         true,
+	// Usage meter — the worker re-reads the rule every tick, so a changed rule
+	// takes effect without a restart. The handler also recreates the worker so
+	// the new rule is checked immediately instead of up to one interval later.
+	"usage_meter.anchor_date": true,
+	"usage_meter.period_days": true,
+	"usage_meter.metric":      true,
+	"usage_meter.quota":       true,
 }
 
 // restartGracePeriod is the delay before shutting down the server after a restart
@@ -254,6 +261,19 @@ type configResponse struct {
 	Skills         configSkills         `json:"skills"`
 	Appearance     configAppearance     `json:"appearance"`
 	Forge          configForge          `json:"forge"`
+	UsageMeter     configUsageMeter     `json:"usage_meter"`
+}
+
+// configUsageMeter exposes the usage-meter rule.
+//
+// The two internal bookkeeping fields (notified_cycle_start / notified_stage)
+// are deliberately absent: they describe the server's notification progress,
+// not user configuration, and the UI has nothing to do with them.
+type configUsageMeter struct {
+	AnchorDate string  `json:"anchor_date"`
+	PeriodDays int     `json:"period_days"`
+	Metric     string  `json:"metric"`
+	Quota      float64 `json:"quota"`
 }
 
 type configChat struct {
@@ -765,6 +785,14 @@ var PatchableConfigPaths = map[string]bool{
 	"skills.dirs":                       true,
 	"skills.refresh_hours":              true,
 	"skills.repos":                      true,
+	// Usage meter rule. The two internal state fields
+	// (notified_cycle_start / notified_stage) are deliberately absent: they are
+	// service-owned bookkeeping, and letting a client write them would let it
+	// suppress or duplicate the notification.
+	"usage_meter.anchor_date": true,
+	"usage_meter.period_days": true,
+	"usage_meter.metric":      true,
+	"usage_meter.quota":       true,
 }
 
 // validTTSEngines is the set of valid TTS engine values.
@@ -936,6 +964,12 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 		Skills:     buildConfigSkills(cfg),
 		Appearance: buildConfigAppearance(cfg),
 		Forge:      buildConfigForge(cfg),
+		UsageMeter: configUsageMeter{
+			AnchorDate: cfg.UsageMeter.AnchorDate,
+			PeriodDays: cfg.UsageMeter.PeriodDays,
+			Metric:     cfg.UsageMeter.Metric,
+			Quota:      cfg.UsageMeter.Quota,
+		},
 	}
 
 	// Conditionally populate AISummary API sub-config when a base URL is set
@@ -1175,6 +1209,38 @@ func validUserNickname(s string) bool {
 	return true
 }
 
+// validateUsageMeterRule checks a usage-meter rule that has already been merged
+// with the stored config, so a partial PATCH is validated against the values it
+// will actually run with.
+//
+// A zero quota is valid and means "disabled" — in that case the other fields may
+// be empty and are simply not used. Once a quota exists the rule must be
+// complete: the worker cannot compute a cycle without an anchor, and a metric it
+// does not know would silently count nothing.
+func validateUsageMeterRule(r model.UsageMeterConfig) error {
+	if r.Quota < 0 {
+		return fmt.Errorf("usage_meter.quota must not be negative")
+	}
+	if r.Quota == 0 {
+		return nil
+	}
+	if r.AnchorDate == "" {
+		return fmt.Errorf("usage_meter.anchor_date is required when a quota is set")
+	}
+	// Parse in local time to match how the service interprets the anchor: a
+	// date-only string at 00:00 in the server's timezone.
+	if _, err := time.ParseInLocation("2006-01-02", r.AnchorDate, time.Local); err != nil {
+		return fmt.Errorf("usage_meter.anchor_date must be YYYY-MM-DD")
+	}
+	if r.PeriodDays < 1 || r.PeriodDays > model.MaxUsageMeterPeriodDays {
+		return fmt.Errorf("usage_meter.period_days must be between 1 and %d", model.MaxUsageMeterPeriodDays)
+	}
+	if !model.IsValidUsageMeterMetric(r.Metric) {
+		return fmt.Errorf("usage_meter.metric must be one of: tokens,credit,cost")
+	}
+	return nil
+}
+
 func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo // exhaustive config validation
 	// language: only locales the bundled translation tables actually carry.
 	// An unknown value would make every background-localized string fall back
@@ -1299,6 +1365,29 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 					return fmt.Errorf("skills.repos[%d].url must be a valid URL", i)
 				}
 			}
+		}
+	}
+
+	// Usage meter. Validation is cross-field on the MERGED value (existing
+	// config overlaid with the patch), because a partial patch — e.g. only
+	// `quota` — must be validated against the anchor and metric it will
+	// actually run with, not against empty strings.
+	if um, ok := patch["usage_meter"].(map[string]any); ok {
+		effective := model.ConfigInstance.UsageMeter
+		if v, ok := um["anchor_date"].(string); ok {
+			effective.AnchorDate = v
+		}
+		if v, ok := um["period_days"].(float64); ok {
+			effective.PeriodDays = int(v)
+		}
+		if v, ok := um["metric"].(string); ok {
+			effective.Metric = v
+		}
+		if v, ok := um["quota"].(float64); ok {
+			effective.Quota = v
+		}
+		if err := validateUsageMeterRule(effective); err != nil {
+			return err
 		}
 	}
 
@@ -1989,6 +2078,40 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 			applyBool("reopened", &cfg.Forge.Notify.Reopened)
 			applyBool("commented", &cfg.Forge.Notify.Commented)
 			applyBool("pipeline", &cfg.Forge.Notify.Pipeline)
+		}
+	}
+
+	// Usage meter: the rule itself. The two internal state fields
+	// (notified_cycle_start / notified_stage) are NOT patchable — they are
+	// written by the service layer under configMutex.
+	//
+	// A rule that actually CHANGED re-arms notification: the user asked for a
+	// different budget, so the new budget deserves its own warning instead of
+	// inheriting the old one's "already told you" flag. A patch that leaves the
+	// rule identical must NOT re-arm — the settings panel sends the whole panel
+	// on every save, so an unconditional clear would re-notify the user every
+	// time they opened the panel and pressed save without changing anything.
+	if um, ok := patch["usage_meter"].(map[string]any); ok {
+		before := cfg.UsageMeter
+		if v, ok := um["anchor_date"].(string); ok {
+			cfg.UsageMeter.AnchorDate = v
+		}
+		if v, ok := um["period_days"].(float64); ok {
+			cfg.UsageMeter.PeriodDays = int(v)
+		}
+		if v, ok := um["metric"].(string); ok {
+			cfg.UsageMeter.Metric = v
+		}
+		if v, ok := um["quota"].(float64); ok {
+			cfg.UsageMeter.Quota = v
+		}
+		changed := before.AnchorDate != cfg.UsageMeter.AnchorDate ||
+			before.PeriodDays != cfg.UsageMeter.PeriodDays ||
+			before.Metric != cfg.UsageMeter.Metric ||
+			before.Quota != cfg.UsageMeter.Quota
+		if changed {
+			cfg.UsageMeter.NotifiedCycleStart = ""
+			cfg.UsageMeter.NotifiedStage = ""
 		}
 	}
 

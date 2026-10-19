@@ -334,6 +334,51 @@ paths:
         "200":
           description: 聚合结果
 
+  /api/usage/meter:
+    get:
+      tags: [System]
+      summary: 用量提醒状态
+      description: |
+        返回用量提醒规则的当前状态：周期边界、按时间比例算出的「应花」、
+        实际用量、剩余天数，以及逐日累计曲线。
+
+        **口径固定为全局**（所有项目合计），没有 `scope` 参数——额度回答的是
+        「我这个周期总共花了多少」，与当前停在哪个项目无关。
+
+        **周期定位**：从 `usage_meter.anchor_date` 起，每 `period_days` 天为一轮。
+        边界按固定 24 小时跨度计算（不是日历日期差），因此周期长度在夏令时切换日
+        也保持恒定。时区为**服务端本地时区**。
+
+        **应花（`expected`）= 额度 × 第几天 / 周期天数**，按整天向下取整：
+        周期第 1 天就有 1 天额度（不会开局误报），最后一天等于总额度。
+
+        **指标口径**：
+        - `tokens`：`total_tokens`，为 0 时回退到 `input_tokens + output_tokens`
+          （与 `/api/usage/stats` 的 `total` 一致）
+        - `credit`：`SUM(credit)`
+        - `cost`：`SUM(cost_usd)`，单位 USD。非 USD 的上报值按原值累加，不做汇率换算。
+
+        **未配置规则**（`quota <= 0`）返回 200 与 `{"enabled": false}`，不是 404：
+        功能关闭是正常状态，客户端据此隐藏胶囊。
+
+        注意 `chat_metadata.created_at` 记录的是元数据**最终写入**时刻
+        （约等于助手回复完成），因此跨周期边界的回合归入后一个周期。
+      operationId: usageMeter
+      responses:
+        "200":
+          description: |
+            用量提醒状态。字段：
+            - `enabled`：规则是否启用
+            - `metric` / `anchorDate` / `periodDays` / `quota`：规则回显
+            - `cycleStart` / `cycleEnd`：当前周期边界（RFC3339）
+            - `dayInCycle`：当前是周期第几天（1 起；0 表示起始日在未来）
+            - `actual` / `expected`：实际用量 / 按时间比例的应花
+            - `remainingDays`：今天之后还剩几天
+            - `projectedExhaustDay`：按当前速度预计第几天用尽（0 = 本周期不会用尽）
+            - `series[]`：逐日累计，每项含 `day` / `actual` / `expected`
+        "403":
+          description: 未鉴权
+
   /api/git/stats:
     get:
       tags: [System]

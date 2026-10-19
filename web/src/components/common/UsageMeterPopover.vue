@@ -1,0 +1,610 @@
+<template>
+  <div class="usage-meter-wrap">
+    <button
+      ref="btnRef"
+      type="button"
+      class="usage-pill"
+      :class="`is-${state}`"
+      :title="t('usageMeter.capsuleTitle')"
+      :aria-label="t('usageMeter.capsuleTitle')"
+      :aria-expanded="menuOpen"
+      data-action="usage-meter"
+      @click.stop="toggle"
+    >
+      <span class="usage-bar" aria-hidden="true">
+        <span class="usage-fill" :style="{ width: fillPercent + '%' }"></span>
+        <!-- Baseline tick: where a linear spend would be right now. Reading the
+             fill against this tick is the whole point of the capsule. -->
+        <span class="usage-mark" :style="{ left: expectedPercent + '%' }"></span>
+        <span v-if="state === 'full'" class="usage-cap"></span>
+      </span>
+      <span class="usage-text">
+        <span class="usage-used">{{ fmt(actual) }}</span>
+        <span class="usage-quota">/ {{ fmt(quota) }}</span>
+      </span>
+    </button>
+
+    <PopupMenu
+      v-model:show="menuOpen"
+      :target-element="btnRef"
+      :max-width="320"
+      :max-height="460"
+      :menu-items-count="14"
+      anchor="right"
+      app-surface
+      @after-leave="onAfterLeave"
+    >
+      <div class="um-pop">
+        <div class="um-head">
+          <span class="um-title">{{ t('usageMeter.title') }}</span>
+          <span class="um-badge" :class="`is-${state}`">{{ badgeText }}</span>
+        </div>
+
+        <div class="um-period">
+          {{ t('usageMeter.dayOfCycle', { day: status.dayInCycle, days: status.periodDays ?? 0 }) }}
+          <span class="um-sep">·</span>
+          <span class="um-dates">{{ dateRange }}</span>
+        </div>
+
+        <!-- Three bars on one axis so their lengths are directly comparable. -->
+        <div class="um-compare">
+          <div class="um-row">
+            <span class="um-row-name">{{ t('usageMeter.actual') }}</span>
+            <span class="um-track">
+              <span class="um-bar" :class="`is-${state}`" :style="{ width: fillPercent + '%' }"></span>
+            </span>
+            <span class="um-row-val" :class="`is-${state}`">{{ fmt(actual) }}</span>
+          </div>
+          <div class="um-row">
+            <span class="um-row-name">{{ t('usageMeter.expected') }}</span>
+            <span class="um-track">
+              <span class="um-bar is-expected" :style="{ width: expectedPercent + '%' }"></span>
+            </span>
+            <span class="um-row-val">{{ fmt(expected) }}</span>
+          </div>
+          <div class="um-row">
+            <span class="um-row-name">{{ t('usageMeter.quota') }}</span>
+            <span class="um-track">
+              <span class="um-bar is-quota"></span>
+            </span>
+            <span class="um-row-val is-muted">{{ fmt(quota) }}</span>
+          </div>
+        </div>
+
+        <!-- Cumulative curve. Hand-drawn SVG rather than ECharts: this sits on
+             the first-paint path and the chart library is a ~300KB dependency
+             loaded lazily by the stats tab. -->
+        <svg
+          v-if="points.length > 1"
+          class="um-spark"
+          viewBox="0 0 288 90"
+          preserveAspectRatio="none"
+          role="img"
+          :aria-label="t('usageMeter.trendLabel')"
+        >
+          <line x1="8" :y1="PLOT_BOTTOM" x2="280" :y2="PLOT_BOTTOM" class="um-axis" />
+          <line x1="8" :y1="PLOT_TOP" x2="280" :y2="PLOT_TOP" class="um-quota-line" />
+          <polyline :points="expectedLine" class="um-expected-line" />
+          <polyline :points="actualLine" class="um-actual-line" :class="`is-${state}`" />
+          <line
+            v-if="projection"
+            :x1="projection.x1" :y1="projection.y1" :x2="projection.x2" :y2="projection.y2"
+            class="um-projection"
+          />
+          <line :x1="todayX" :y1="PLOT_TOP" :x2="todayX" :y2="PLOT_BOTTOM" class="um-today" />
+          <circle :cx="todayX" :cy="todayY" r="2.5" class="um-today-dot" />
+        </svg>
+        <div v-if="points.length > 1" class="um-legend">
+          <span><i class="um-dot is-actual"></i>{{ t('usageMeter.legendActual') }}</span>
+          <span><i class="um-dot is-expected"></i>{{ t('usageMeter.legendExpected') }}</span>
+          <span><i class="um-dot is-today"></i>{{ t('usageMeter.legendToday') }}</span>
+        </div>
+
+        <div class="um-stats">
+          <div>
+            <div class="um-stat-label">{{ t('usageMeter.remaining') }}</div>
+            <div class="um-stat-value">{{ fmt(remaining) }}</div>
+          </div>
+          <div>
+            <div class="um-stat-label">{{ t('usageMeter.remainingDays') }}</div>
+            <div class="um-stat-value">{{ t('usageMeter.days', { n: status.remainingDays }) }}</div>
+          </div>
+          <div>
+            <div class="um-stat-label">{{ t('usageMeter.projected') }}</div>
+            <div class="um-stat-value" :class="{ 'is-over': state !== 'ok' }">
+              {{ projectionText }}
+            </div>
+          </div>
+          <div>
+            <div class="um-stat-label">{{ t('usageMeter.dailyLeft') }}</div>
+            <div class="um-stat-value">{{ fmt(dailyLeft) }}</div>
+          </div>
+        </div>
+
+        <button type="button" class="um-link" @click="openSettings">
+          {{ t('usageMeter.adjust') }}
+        </button>
+      </div>
+    </PopupMenu>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, inject, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
+import PopupMenu from '@/components/common/PopupMenu.vue'
+import { formatUsageMeterValue } from '@/utils/usageFormat'
+import { setPendingSettingsCategory } from '@/composables/useSettingsNavigation'
+import { useUsageMeter, type UsageMeterStatus } from '@/composables/useUsageMeter'
+
+const props = defineProps<{
+  status: UsageMeterStatus
+  state: 'ok' | 'over' | 'full'
+  fillPercent: number
+  expectedPercent: number
+}>()
+
+const { t } = useI18n()
+const { refresh, openRequest } = useUsageMeter()
+// Provided by App.vue — same inject AppHeader uses to reach the settings tab.
+const switchTab = inject<(tab: string) => void>('switchTab')
+
+const btnRef = ref<HTMLElement | null>(null)
+const menuOpen = ref(false)
+
+// Plot geometry. Kept in script so the template does not repeat magic numbers.
+const PLOT_TOP = 8
+const PLOT_BOTTOM = 82
+
+const metric = computed(() => props.status.metric ?? 'cost')
+const actual = computed(() => props.status.actual ?? 0)
+const expected = computed(() => props.status.expected ?? 0)
+const quota = computed(() => props.status.quota ?? 0)
+const remaining = computed(() => Math.max(0, quota.value - actual.value))
+const dailyLeft = computed(() => {
+  const days = props.status.remainingDays
+  if (days <= 0) return remaining.value
+  return remaining.value / days
+})
+const points = computed(() => props.status.series ?? [])
+
+function fmt(v: number): string {
+  return formatUsageMeterValue(metric.value, v, { compact: false })
+}
+
+const badgeText = computed(() => {
+  if (props.state === 'full') return t('usageMeter.badgeFull')
+  if (props.state === 'over') {
+    const pct = expected.value > 0 ? Math.round(((actual.value - expected.value) / expected.value) * 100) : 0
+    return t('usageMeter.badgeOver', { pct })
+  }
+  return t('usageMeter.badgeOk')
+})
+
+const dateRange = computed(() => {
+  const s = props.status.cycleStart
+  const e = props.status.cycleEnd
+  if (!s || !e) return ''
+  // Date-only: the time of day is noise for a multi-week cycle, and rendering
+  // the raw RFC3339 string would show the UTC offset the user never chose.
+  return `${s.slice(0, 10)} → ${e.slice(0, 10)}`
+})
+
+const projectionText = computed(() => {
+  const day = props.status.projectedExhaustDay
+  if (props.state === 'full') return t('usageMeter.projectedDone')
+  if (!day) return t('usageMeter.projectedNone')
+  return t('usageMeter.projectedDay', { day })
+})
+
+// ── Chart geometry ───────────────────────────────────────────────────────────
+// x spans the cycle's days, y spans [0, max(quota, peak actual)] so the quota
+// line is always on screen.
+const yMax = computed(() => {
+  const peak = points.value.reduce((m, p) => Math.max(m, p.actual, p.expected), 0)
+  return Math.max(quota.value, peak, 1)
+})
+
+function xAt(index: number): number {
+  const n = Math.max(1, points.value.length - 1)
+  return 8 + (272 * index) / n
+}
+function yAt(value: number): number {
+  const h = PLOT_BOTTOM - PLOT_TOP
+  return PLOT_BOTTOM - (value / yMax.value) * h
+}
+
+const actualLine = computed(() =>
+  points.value.map((p, i) => `${xAt(i).toFixed(1)},${yAt(p.actual).toFixed(1)}`).join(' '),
+)
+const expectedLine = computed(() =>
+  points.value.map((p, i) => `${xAt(i).toFixed(1)},${yAt(p.expected).toFixed(1)}`).join(' '),
+)
+const todayX = computed(() => xAt(Math.max(0, points.value.length - 1)))
+const todayY = computed(() => {
+  const last = points.value[points.value.length - 1]
+  return last ? yAt(last.actual) : PLOT_BOTTOM
+})
+
+/**
+ * Extrapolation from today to the cycle end at the current daily rate.
+ * Omitted when the pace is zero (a flat line adds nothing) or when the
+ * projection would run past the quota line's right edge.
+ */
+const projection = computed(() => {
+  const n = points.value.length
+  if (n < 2) return null
+  const last = points.value[n - 1]
+  const first = points.value[0]
+  const elapsed = Math.max(1, n - 1)
+  const perDay = (last.actual - first.actual) / elapsed
+  if (perDay <= 0) return null
+  const totalDays = props.status.periodDays ?? n
+  const remainingDays = Math.max(0, totalDays - n + 1)
+  if (remainingDays <= 0) return null
+  const projectedValue = Math.min(yMax.value, last.actual + perDay * remainingDays)
+  const x2 = xAt(n - 1) + (272 * remainingDays) / Math.max(1, totalDays - 1)
+  if (x2 <= todayX.value) return null
+  return {
+    x1: todayX.value.toFixed(1),
+    y1: todayY.value.toFixed(1),
+    x2: Math.min(280, x2).toFixed(1),
+    y2: yAt(projectedValue).toFixed(1),
+  }
+})
+
+// Notification tap / notification-center row: open the popover even if it is
+// already open (a second tap should not close it — the user asked to SEE it).
+watch(openRequest, (n) => {
+  if (n === 0) return
+  menuOpen.value = true
+  void refresh()
+})
+
+function toggle() {
+  menuOpen.value = !menuOpen.value
+  // Refetch on open: the WS event carries the headline numbers but not the
+  // series, and a user opening the popover wants the curve up to date.
+  if (menuOpen.value) void refresh()
+}
+
+function onAfterLeave() {
+  // no-op: kept so PopupMenu's after-leave contract has a handler if the
+  // popover ever needs transition cleanup
+}
+
+function openSettings() {
+  menuOpen.value = false
+  setPendingSettingsCategory('notification')
+  switchTab?.('settings')
+}
+</script>
+
+<style scoped>
+.usage-meter-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* ── Capsule ─────────────────────────────────────────────────────────────── */
+.usage-pill {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: 24px;
+  padding: 0 var(--space-5) 0 var(--space-4);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font: inherit;
+  flex-shrink: 0;
+  transition: background var(--duration-base), border-color var(--duration-base);
+}
+
+@media (hover: hover) {
+  .usage-pill:hover {
+    background: var(--bg-tertiary);
+    border-color: var(--text-muted);
+  }
+}
+
+.usage-pill:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.usage-pill.is-ok { --meter-color: var(--color-green); }
+.usage-pill.is-over { --meter-color: var(--color-orange); }
+.usage-pill.is-full { --meter-color: var(--color-red); }
+
+.usage-bar {
+  position: relative;
+  display: block;
+  width: 40px;
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--bg-tertiary);
+  flex-shrink: 0;
+}
+
+.usage-fill {
+  position: absolute;
+  display: block;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: var(--radius-full);
+  background: var(--meter-color);
+  transition: width 0.3s ease, background var(--duration-base);
+}
+
+/* Baseline tick. The 1px outline is painted in the header's own background so
+   the tick stays readable where it crosses the filled portion. */
+.usage-mark {
+  position: absolute;
+  display: block;
+  top: -2px;
+  bottom: -2px;
+  width: 1px;
+  background: var(--text-primary);
+  box-shadow: 0 0 0 1px var(--bg-secondary);
+  border-radius: 1px;
+}
+
+/* End cap: only rendered once the quota is spent, so "full" is distinguishable
+   from "exactly at 100% and still on plan". */
+.usage-cap {
+  position: absolute;
+  display: block;
+  right: 0;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--color-red);
+}
+
+.usage-text {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.usage-used {
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+}
+
+.usage-pill.is-over .usage-used { color: var(--color-orange); }
+.usage-pill.is-full .usage-used { color: var(--color-red); }
+
+.usage-quota {
+  color: var(--text-muted);
+}
+
+/* ── Popover ─────────────────────────────────────────────────────────────── */
+.um-pop {
+  padding: var(--space-6);
+  font-size: var(--font-size-xs);
+  color: var(--text-primary);
+}
+
+.um-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-3);
+}
+
+.um-title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+.um-badge {
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  padding: 1px var(--space-3);
+  border-radius: var(--radius-full);
+  white-space: nowrap;
+}
+
+.um-badge.is-ok {
+  background: color-mix(in srgb, var(--color-green) 16%, transparent);
+  color: var(--color-green);
+}
+.um-badge.is-over {
+  background: color-mix(in srgb, var(--color-orange) 16%, transparent);
+  color: var(--color-orange);
+}
+.um-badge.is-full {
+  background: color-mix(in srgb, var(--color-red) 16%, transparent);
+  color: var(--color-red);
+}
+
+.um-period {
+  font-size: var(--font-size-2xs);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  margin-bottom: var(--space-6);
+}
+
+.um-sep {
+  margin: 0 var(--space-2);
+}
+
+/* ── Comparison bars ─────────────────────────────────────────────────────── */
+.um-compare {
+  margin-bottom: var(--space-6);
+}
+
+.um-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: 18px;
+  font-size: var(--font-size-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.um-row + .um-row {
+  margin-top: var(--space-2);
+}
+
+.um-row-name {
+  width: 34px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.um-track {
+  display: block;
+  flex: 1;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--bg-tertiary);
+  overflow: hidden;
+}
+
+.um-bar {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-full);
+  transition: width 0.3s ease;
+}
+
+.um-bar.is-ok { background: var(--color-green); }
+.um-bar.is-over { background: var(--color-orange); }
+.um-bar.is-full { background: var(--color-red); }
+.um-bar.is-expected { background: var(--text-muted); }
+.um-bar.is-quota {
+  width: 100%;
+  background: color-mix(in srgb, var(--text-muted) 22%, transparent);
+}
+
+.um-row-val {
+  width: 56px;
+  flex-shrink: 0;
+  text-align: right;
+  font-weight: var(--font-weight-medium);
+}
+
+.um-row-val.is-over { color: var(--color-orange); }
+.um-row-val.is-full { color: var(--color-red); }
+.um-row-val.is-muted { color: var(--text-muted); }
+
+/* ── Sparkline ───────────────────────────────────────────────────────────── */
+.um-spark {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-bottom: var(--space-2);
+}
+
+.um-axis { stroke: var(--border-color); stroke-width: 1; }
+.um-quota-line { stroke: var(--color-red); stroke-width: 1; opacity: 0.35; }
+.um-expected-line {
+  fill: none;
+  stroke: var(--text-muted);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  opacity: 0.7;
+}
+.um-actual-line {
+  fill: none;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.um-actual-line.is-ok { stroke: var(--color-green); }
+.um-actual-line.is-over { stroke: var(--color-orange); }
+.um-actual-line.is-full { stroke: var(--color-red); }
+.um-projection {
+  stroke: var(--color-orange);
+  stroke-width: 1.25;
+  stroke-dasharray: 3 3;
+  opacity: 0.65;
+}
+.um-today { stroke: var(--border-color); stroke-width: 1; opacity: 0.8; }
+.um-today-dot { stroke: var(--bg-elevated); stroke-width: 1.5; }
+.um-actual-line.is-ok ~ .um-today-dot,
+.um-spark .um-today-dot { fill: var(--color-orange); }
+
+.um-legend {
+  display: flex;
+  gap: var(--space-6);
+  font-size: var(--font-size-2xs);
+  color: var(--text-muted);
+  margin-bottom: var(--space-6);
+}
+
+.um-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.um-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.um-dot.is-actual { background: var(--color-orange); }
+.um-dot.is-expected { background: var(--text-muted); }
+.um-dot.is-today { background: var(--border-color); }
+
+/* ── Stats grid ──────────────────────────────────────────────────────────── */
+.um-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4) var(--space-6);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--border-color);
+  font-size: var(--font-size-2xs);
+}
+
+.um-stat-label {
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+
+.um-stat-value {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.um-stat-value.is-over { color: var(--color-orange); }
+
+.um-link {
+  display: block;
+  width: 100%;
+  margin-top: var(--space-5);
+  padding: var(--space-4) 0 0;
+  border: none;
+  border-top: 1px solid var(--border-color);
+  background: transparent;
+  color: var(--link-color);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  text-align: left;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .um-link:hover {
+    text-decoration: underline;
+  }
+}
+</style>

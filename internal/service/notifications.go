@@ -58,6 +58,10 @@ const (
 	NotificationKindSession = "session"
 	NotificationKindTask    = "task"
 	NotificationKindForge   = "forge"
+	// NotificationKindUsage is a usage-meter threshold crossing. Unlike the
+	// other three it has no subject row to navigate to: clicking it opens the
+	// meter itself (wide screen) or the settings page (narrow screen).
+	NotificationKindUsage = "usage"
 )
 
 // notificationRetentionDays / notificationMaxRows are the two retention caps.
@@ -673,5 +677,27 @@ func RecordForgeNotification(eventID string, repo ForgeRepoRef, eventType, title
 		Body:         body,
 		ProjectID:    projectID,
 		ForgeItemKey: itemKey,
+	})
+}
+
+// RecordUsageNotification logs a usage-meter threshold crossing.
+//
+// Title and body arrive pre-rendered (see renderUsageMeterMessage) because they
+// carry numbers, which no client-side enum can produce. projectID stays 0: the
+// meter aggregates ALL projects, so attributing the row to one of them would
+// make the notification center's project filter lie.
+func RecordUsageNotification(eventID, stage, title, body string) {
+	if eventID == "" || title == "" {
+		return
+	}
+	if !store.DBReady() {
+		return
+	}
+	StoreNotification(NotificationRecord{
+		EventID:   eventID,
+		Kind:      NotificationKindUsage,
+		EventType: stage,
+		Title:     title,
+		Body:      body,
 	})
 }

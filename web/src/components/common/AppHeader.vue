@@ -49,6 +49,20 @@
       </button>
     </div>
 
+    <!-- Usage meter capsule. Wide screens only: the header is a desktop
+         surface, and on a phone the same information is delivered by the
+         notification (the meter deliberately has no mobile UI).
+         Sits before the tips ticker so the ticker's flex:1 absorbs the
+         remaining space instead of pushing the capsule around. -->
+    <UsageMeterPopover
+      v-if="isWideScreen && usageMeter.status.value.enabled"
+      :status="usageMeter.status.value"
+      :state="usageMeter.meterState.value"
+      :fill-percent="usageMeter.fillPercent.value"
+      :expected-percent="usageMeter.expectedPercent.value"
+      class="usage-meter-slot"
+    />
+
     <!-- Shortcut tips marquee: fills the empty middle area.
          Shown wherever there is a physical keyboard, which includes the Electron
          desktop shell — it reports isAppMode (native host) but is a desktop
@@ -338,6 +352,8 @@ import { useDialog } from '@/composables/useDialog.ts'
 import { apiGet, apiPost } from '@/utils/api'
 import { localConfig, setLocalConfig } from '@/composables/useSettingsConfig'
 import { useSystemResources } from '@/composables/useSystemResources'
+import { useUsageMeter } from '@/composables/useUsageMeter'
+import UsageMeterPopover from '@/components/common/UsageMeterPopover.vue'
 import { useSystemPressure } from '@/composables/useSystemPressure'
 import { useBadgeHighlight } from '@/composables/useBadgeHighlight'
 import { deferPosition, estimatePanelWidth as estimatePanelWidthFn, positionDropdown as positionDropdownPure } from '@/utils/dropdownPosition'
@@ -364,6 +380,7 @@ const {
   close: closeWindow,
 } = useWindowControls()
 const { resources, startBackgroundPolling, stopBackgroundPolling } = useSystemResources()
+const usageMeter = useUsageMeter()
 const switchTab = inject<(tab: string) => void>('switchTab')
 const { isWideScreen, leftTab, activePane } = useWideScreenLayout()
 const activeTab = inject<Ref<string>>('activeTab', ref('chat'))
@@ -1150,6 +1167,10 @@ onMounted(() => {
     document.addEventListener('click', onClickOutside)
     document.addEventListener('visibilitychange', onBlinkVisibilityChange)
     startBackgroundPolling()
+    // Usage meter: one fetch on mount, then WS-driven (see useUsageMeter).
+    // Fetched here rather than in the capsule component so the popover opens
+    // with data already present.
+    void usageMeter.refresh()
     // Warm the recent-projects cache so the first open is already instant.
     // Failures are swallowed inside loadRecentProjects (the cache stays cold
     // and the open path falls back to the loading state).

@@ -10,7 +10,7 @@ const TAG = 'NotificationsApi'
 
 export const NOTIFICATIONS_TIMEOUT_MS = 20_000
 
-export type NotificationKind = 'session' | 'task' | 'forge'
+export type NotificationKind = 'session' | 'task' | 'forge' | 'usage'
 
 /** One row of the notification log. */
 export interface NotificationItem {

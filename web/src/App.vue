@@ -672,6 +672,7 @@ import { useEdgeSwipeBack } from './composables/useEdgeSwipeBack'
 import { handleBackNavigation, canNavigateBack, requestExitConfirm, canNavigateBackOverlay, handleBackNavigationOverlay } from './composables/useBackHandler'
 import { useNavigationContext } from './composables/useNavigationContext'
 import { setPendingSettingsCategory } from './composables/useSettingsNavigation'
+import { requestOpen as requestOpenUsageMeter } from './composables/useUsageMeter'
 import { useNavigationCoordinator } from './composables/useNavigationCoordinator'
 import { useAndroidBackPress } from './composables/useAndroidBackPress'
 import { useF5Reload } from './composables/useF5Reload'
@@ -1308,6 +1309,24 @@ function handleOpenForge(e: Event) {
       clearPendingForgeTarget()
     })
     .finally(() => switchTab('forge'))
+}
+
+/**
+ * Handle clawbench-open-usage-meter — a usage-meter notification was tapped
+ * (in-app notification center row, or the Android notification).
+ *
+ * Wide screens have the header capsule, so the request is forwarded to it and
+ * the popover opens in place. Narrow screens have no capsule (the meter is
+ * deliberately header-only), so the user lands on the settings entry that owns
+ * the rule instead of tapping a notification that appears to do nothing.
+ */
+function handleOpenUsageMeter() {
+  if (isWideScreen.value) {
+    requestOpenUsageMeter()
+    return
+  }
+  setPendingSettingsCategory('notification')
+  switchTab('settings')
 }
 
 // Register browse-scoped drawers with tab-drawer binding
@@ -2280,6 +2299,7 @@ function registerAppEventListeners() {
   window.addEventListener('clawbench-open-session', handleOpenSession)
   window.addEventListener('clawbench-open-task', handleOpenTask)
   window.addEventListener('clawbench-open-forge', handleOpenForge)
+  window.addEventListener('clawbench-open-usage-meter', handleOpenUsageMeter)
   window.addEventListener('clawbench-session-title-update', handleSessionTitleUpdate)
   document.addEventListener('click', handleOverflowOutsideClick)
   window.addEventListener('clawbench-theme-change', async (e: Event) => {
@@ -4026,6 +4046,7 @@ onUnmounted(() => {
     window.removeEventListener('clawbench-open-session', handleOpenSession)
     window.removeEventListener('clawbench-open-task', handleOpenTask)
     window.removeEventListener('clawbench-open-forge', handleOpenForge)
+    window.removeEventListener('clawbench-open-usage-meter', handleOpenUsageMeter)
     window.removeEventListener('clawbench-session-title-update', handleSessionTitleUpdate)
     document.removeEventListener('click', handleOverflowOutsideClick)
     document.removeEventListener('keydown', handleCtrlF)
