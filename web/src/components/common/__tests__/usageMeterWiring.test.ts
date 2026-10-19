@@ -63,8 +63,11 @@ describe('usage meter — capsule wiring', () => {
     const app = stripComments(readWebFile('src/App.vue'))
     expect(app).toContain("addEventListener('clawbench-open-usage-meter'")
     expect(app).toMatch(/function handleOpenUsageMeter/)
-    // Narrow screens have no capsule, so the fallback must be the settings page.
-    expect(app).toMatch(/setPendingSettingsCategory\('notification'\)/)
+    // Narrow screens have no capsule, so the fallback must be the settings page —
+    // and specifically the usage-meter category, which is its own settings entry
+    // beside push notifications. Pointing at 'notification' would land the user
+    // in the push-channel category, where the rule is not configured.
+    expect(app).toMatch(/setPendingSettingsCategory\('usageMeter'\)/)
   })
 })
 

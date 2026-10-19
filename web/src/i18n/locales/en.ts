@@ -2395,6 +2395,7 @@ export default {
       forgeIntegration: 'GitHub/GitLab Integration',
       skills: 'Skills',
       notification: 'Push Notifications',
+      usageMeter: 'Usage alerts',
       security: 'Security',
       debug: 'Debug',
       about: 'About',

@@ -38,6 +38,7 @@ import {
   Shield,
   Bug,
   Info,
+  Gauge,
   Sparkles,
   Wand2,
   ChevronRight,
@@ -93,6 +94,11 @@ const groupDefs = [
     id: 'notifySecurity',
     items: [
       { id: 'notification', icon: Bell },
+      // Side by side with 推送通知, not inside it: the usage meter is a
+      // notification feature but its configuration (cycle / metric / budget)
+      // is a separate subject, and nesting it under the push-channel card made
+      // it read as one more push channel.
+      { id: 'usageMeter', icon: Gauge },
       { id: 'security', icon: Shield },
     ],
   },

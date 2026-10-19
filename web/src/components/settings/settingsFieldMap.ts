@@ -411,45 +411,49 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
         }
       },
     }},
-    // Usage meter: a single global rule (cycle + metric + quota). It sits in the
-    // notification category because it is a notification feature first — the
-    // header capsule is a readout, not the point of it.
+  ],
+  // Usage meter: its own category, side by side with 推送通知 rather than
+  // nested inside it. It is a notification FEATURE, but its configuration
+  // (cycle, metric, budget) is a distinct subject — burying it as a card
+  // under 推送通知 made it read as one more push channel.
+  usageMeter: [
+    // A single global rule (cycle + metric + quota).
     //
-    // Its own panel rather than four flat rows: the fields are meaningless in
-    // isolation (a quota without a cycle has no baseline), and the entry row
-    // shows the metric so the user can see which unit they are budgeting in
-    // without opening the panel.
-    { type: 'panel', config: {
-      panelId: 'usageMeter',
-      titleKey: 'settings.items.usageMeter',
-      entrySelector: {
-        labelKey: 'settings.items.usageMeter',
-        // The metric row is where the unit changes, so the "switching clears
-        // the quota" warning belongs here — it was previously written into
-        // i18n but never referenced, so users lost their quota with no notice.
-        descriptionKey: 'settings.items.usageMeterMetricDesc',
-        key: 'usage_meter.metric',
-        type: 'select',
-        source: 'server',
-        options: [
-          { labelKey: 'settings.items.usageMeterMetricTokens', value: 'tokens' },
-          { labelKey: 'settings.items.usageMeterMetricCredit', value: 'credit' },
-          { labelKey: 'settings.items.usageMeterMetricCost', value: 'cost' },
-        ],
-        defaultValue: 'cost',
-      },
-      commonFields: [
-        { labelKey: 'settings.items.usageMeterAnchor', descriptionKey: 'settings.items.usageMeterAnchorDesc', key: 'usage_meter.anchor_date', type: 'date', source: 'server' },
-        { labelKey: 'settings.items.usageMeterPeriod', descriptionKey: 'settings.items.usageMeterPeriodDesc', key: 'usage_meter.period_days', type: 'number', source: 'server' },
-        { labelKey: 'settings.items.usageMeterQuota', descriptionKey: 'settings.items.usageMeterQuotaDesc', key: 'usage_meter.quota', type: 'number', source: 'server' },
+    // Grouped into a panel rather than four flat rows: the fields are
+    // meaningless in isolation (a quota without a cycle has no baseline), and
+    // the entry row shows the metric so the user can see which unit they are
+    // budgeting in without opening it.
+  { type: 'panel', config: {
+    panelId: 'usageMeter',
+    titleKey: 'settings.items.usageMeter',
+    entrySelector: {
+      labelKey: 'settings.items.usageMeter',
+      // The metric row is where the unit changes, so the "switching clears
+      // the quota" warning belongs here — it was previously written into
+      // i18n but never referenced, so users lost their quota with no notice.
+      descriptionKey: 'settings.items.usageMeterMetricDesc',
+      key: 'usage_meter.metric',
+      type: 'select',
+      source: 'server',
+      options: [
+        { labelKey: 'settings.items.usageMeterMetricTokens', value: 'tokens' },
+        { labelKey: 'settings.items.usageMeterMetricCredit', value: 'credit' },
+        { labelKey: 'settings.items.usageMeterMetricCost', value: 'cost' },
       ],
-      requiredFields: [],
-      // Switching the metric changes the unit, so a stored quota would silently
-      // change meaning ($20 becoming 20 tokens). The SERVER clears it in the
-      // same patch (see applyConfigPatch) — a second client-side request would
-      // open a window where the new metric runs against the old number, and the
-      // worker wakes within seconds of a PATCH. So no afterSave here.
-    }},
+      defaultValue: 'cost',
+    },
+    commonFields: [
+      { labelKey: 'settings.items.usageMeterAnchor', descriptionKey: 'settings.items.usageMeterAnchorDesc', key: 'usage_meter.anchor_date', type: 'date', source: 'server' },
+      { labelKey: 'settings.items.usageMeterPeriod', descriptionKey: 'settings.items.usageMeterPeriodDesc', key: 'usage_meter.period_days', type: 'number', source: 'server' },
+      { labelKey: 'settings.items.usageMeterQuota', descriptionKey: 'settings.items.usageMeterQuotaDesc', key: 'usage_meter.quota', type: 'number', source: 'server' },
+    ],
+    requiredFields: [],
+    // Switching the metric changes the unit, so a stored quota would silently
+    // change meaning ($20 becoming 20 tokens). The SERVER clears it in the
+    // same patch (see applyConfigPatch) — a second client-side request would
+    // open a window where the new metric runs against the old number, and the
+    // worker wakes within seconds of a PATCH. So no afterSave here.
+  }},
   ],
   about: [
     { type: 'item', spec: { labelKey: 'settings.items.aboutServerVersion', descriptionKey: 'settings.items.aboutServerVersionDesc', key: 'serverVersion', type: 'info', source: 'server', sectionHeader: 'settings.items.aboutVersionSection' } },

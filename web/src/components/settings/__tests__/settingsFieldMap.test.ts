@@ -948,3 +948,29 @@ describe('placeholder items (section openers)', () => {
     }
   })
 })
+
+// The usage meter is its own settings category, sitting beside 推送通知 in the
+// 通知与安全 group — not a card nested inside the push-channel category. It is
+// a notification feature, but "cycle / metric / budget" is a separate subject;
+// nesting it under push made it read as one more push channel.
+describe('usage meter is a sibling of push notifications', () => {
+  it('has its own category with exactly one panel', () => {
+    const panels = getCategoryPanels('usageMeter')
+    expect(panels.length).toBe(1)
+    expect(panels[0].panelId).toBe('usageMeter')
+    // Panel-only, so the category title is not repeated inside the card.
+    expect(isPanelOnlyCategory('usageMeter')).toBe(true)
+  })
+
+  it('is no longer inside the push-notification category', () => {
+    const ids = getCategoryPanels('notification').map(p => p.panelId)
+    expect(ids).toEqual(['push'])
+  })
+
+  it('the cycle start uses the date picker, not free text', () => {
+    const cfg = getCategoryPanels('usageMeter')[0]
+    const anchor = cfg.commonFields.find(f => f.key === 'usage_meter.anchor_date')
+    expect(anchor).toBeDefined()
+    expect(anchor!.type).toBe('date')
+  })
+})

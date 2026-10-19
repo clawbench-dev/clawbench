@@ -2389,6 +2389,7 @@ export default {
       forgeIntegration: 'GitHub/GitLab 集成',
       skills: '技能',
       notification: '推送通知',
+      usageMeter: '用量提醒',
       security: '安全',
       debug: '调试',
       about: '关于',

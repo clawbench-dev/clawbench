@@ -1325,7 +1325,7 @@ function handleOpenUsageMeter() {
     requestOpenUsageMeter()
     return
   }
-  setPendingSettingsCategory('notification')
+  setPendingSettingsCategory('usageMeter')
   switchTab('settings')
 }
 

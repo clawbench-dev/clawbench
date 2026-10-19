@@ -277,7 +277,7 @@ function onAfterLeave() {
 
 function openSettings() {
   menuOpen.value = false
-  setPendingSettingsCategory('notification')
+  setPendingSettingsCategory('usageMeter')
   switchTab?.('settings')
 }
 </script>
