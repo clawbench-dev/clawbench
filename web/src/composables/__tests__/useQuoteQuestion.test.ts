@@ -1689,6 +1689,34 @@ describe('useQuoteQuestion', () => {
       wrapper.unmount()
     })
 
+    /**
+     * 引用 (native) is a single tap with no long-press of its own, so it always
+     * delivers to the active conversation — it can never reach the picker.
+     *
+     * That is a deliberate trade-off, not an oversight: 讨论 opens the in-page
+     * bar, and THAT bar's commit buttons carry the long-press. This test pins
+     * the asymmetry so a future "fix" cannot quietly make 引用 open the picker
+     * again (which would reinstate the #560 friction for the common case).
+     */
+    it('quote (native) always targets the active conversation, never the picker', async () => {
+      mockRefs.currentSessionId.value = 's-active'
+      const wrapper = mountWithComposable()
+      selectInMarkdown()
+      document.dispatchEvent(new Event('selectionchange'))
+      vi.advanceTimersByTime(150)
+
+      const qq = useQuoteQuestion()
+      qq.handleNativeSelectionAction('quote')
+      // Delivery is async (it resolves the target before dispatching).
+      await flushPromises()
+
+      expect(usePendingTarget().pickerOpen.value).toBe(false)
+      // It landed in the live draft instead.
+      expect(ctx.stagedQuotes.value).toHaveLength(1)
+      mockRefs.currentSessionId.value = ''
+      wrapper.unmount()
+    })
+
     it('falls back to the snapshot when the selection is already gone', () => {
       const wrapper = mountWithComposable()
       selectInMarkdown()

@@ -689,8 +689,16 @@ export function useQuoteQuestion() {
 
     if (action === 'quote') {
       // Same commit as tapping 引用 in the in-page toolbar: deliver the card to
-      // the active conversation (the native menu has no "hold for another
-      // session" gesture, and the picker remains reachable from the in-page bar).
+      // the active conversation.
+      //
+      // The native menu has NO long-press: this item is a single tap and there
+      // is no second gesture available on it, so cross-conversation delivery is
+      // not reachable from here. It is reachable via 讨论, which opens the
+      // in-page bar — and that bar's commit buttons DO support long-press
+      // ("send to another conversation"). Keeping 引用 one-tap for the 99% case
+      // and leaving the detour to 讨论 is the deliberate trade-off; the
+      // alternative (making 引用 open a picker) reinstates exactly the friction
+      // issue #560 removed.
       addToConversation('')
       return
     }
