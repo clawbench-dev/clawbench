@@ -446,6 +446,12 @@ func CheckUsageMeter(ctx context.Context) string {
 		notifiedStage = ""
 	}
 
+	// The capsule is a live readout: it must track usage as it lands, not only
+	// when a threshold is crossed. Broadcast the headline numbers whenever they
+	// changed since the last broadcast — this is a DATA update, not a
+	// notification, so it is not gated on push_mode and is never persisted.
+	broadcastUsageMeterNumbers(st)
+
 	stage := usageMeterStageToSend(st, notifiedStage)
 	if stage == "" {
 		return ""
@@ -605,4 +611,68 @@ func parseUsageMeterTimestamp(s string) (time.Time, error) {
 		}
 	}
 	return time.Time{}, fmt.Errorf("unrecognized timestamp %q", s)
+}
+
+// UsageMeterTickEventType is the WS event that says "the meter's numbers moved".
+//
+// Deliberately separate from UsageMeterEventType (usage_meter_update): that one
+// means "a threshold was crossed, tell the user", so every consumer raises a
+// notification for it. Reusing it here would pop a system notification after
+// every completed turn. This event only refreshes the header capsule.
+const UsageMeterTickEventType = "usage_meter_tick"
+
+// Last broadcast numbers, so a no-op check does not spam every client. Guarded
+// by usageMeterCheckMu (callers hold it), which is also what keeps the
+// broadcast ordered with respect to the threshold event.
+var usageMeterLastBroadcast struct {
+	actual, expected, quota float64
+	metric                  string
+	valid                   bool
+}
+
+// broadcastUsageMeterNumbers pushes the headline numbers to every client when
+// they differ from the last broadcast, and reports whether it did. Caller must
+// hold usageMeterCheckMu.
+//
+// The series is NOT included: it is only needed by the popover, which refetches
+// on open, and shipping it every turn would be a large frame for no benefit.
+func broadcastUsageMeterNumbers(st *UsageMeterStatus) bool {
+	if !st.Enabled {
+		return false
+	}
+	last := usageMeterLastBroadcast
+	if last.valid &&
+		last.actual == st.Actual &&
+		last.expected == st.Expected &&
+		last.quota == st.Quota &&
+		last.metric == st.Metric {
+		return false
+	}
+	// Record BEFORE looking up the manager: if no manager is wired (tests, or
+	// the window before the hub starts) the numbers still advanced, and not
+	// recording them would make every later check look like a change.
+	usageMeterLastBroadcast = struct {
+		actual, expected, quota float64
+		metric                  string
+		valid                   bool
+	}{st.Actual, st.Expected, st.Quota, st.Metric, true}
+
+	mgr := ws.GetManager()
+	if mgr == nil {
+		return true
+	}
+
+	mgr.BroadcastEvent(ws.ServerMessage{
+		Type:  ws.MessageTypeEvent,
+		Event: UsageMeterTickEventType,
+		Data: map[string]any{
+			"metric":   st.Metric,
+			"actual":   st.Actual,
+			"expected": st.Expected,
+			"quota":    st.Quota,
+			"day":      st.DayInCycle,
+			"days":     st.PeriodDays,
+		},
+	})
+	return true
 }

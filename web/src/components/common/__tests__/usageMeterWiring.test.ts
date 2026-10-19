@@ -117,3 +117,23 @@ describe('usage meter capsule carries an icon and a word', () => {
     }
   })
 })
+
+describe('usage meter — live number updates', () => {
+  it('subscribes to the tick event, not only the threshold event', () => {
+    // usage_meter_update means "a threshold was crossed" — every notification
+    // surface fires for it. Using it for plain data changes would pop a system
+    // notification after every completed turn. The capsule therefore needs its
+    // own event, or it stays stale until the 5-minute worker or a manual open.
+    const src = stripComments(readWebFile('src/composables/useUsageMeter.ts'))
+    expect(src).toContain("'usage_meter_tick'")
+    expect(src).toContain("'usage_meter_update'")
+  })
+
+  it('the backend broadcasts on change and skips an unchanged reading', () => {
+    const src = stripComments(readWebFile('../internal/service/usage_meter.go'))
+    expect(src).toContain('UsageMeterTickEventType = "usage_meter_tick"')
+    expect(src).toMatch(/func broadcastUsageMeterNumbers\(/)
+    // Called from the check path, so a completed turn reaches it.
+    expect(src).toContain('broadcastUsageMeterNumbers(st)')
+  })
+})

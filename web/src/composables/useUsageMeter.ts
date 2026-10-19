@@ -154,7 +154,11 @@ function ensureSubscribed(): void {
   void import('@/composables/useGlobalEvents')
     .then(({ useGlobalEvents }) => {
       useGlobalEvents().onEvent((event, data) => {
-        if (event !== 'usage_meter_update') return
+        if (event !== 'usage_meter_update' && event !== 'usage_meter_tick') return
+        // Both events carry the headline numbers, so the capsule moves without a
+        // round-trip. The difference is intent, not shape: `_update` means a
+        // threshold was crossed (every notification surface fires), `_tick`
+        // means the numbers moved after a turn and only this capsule cares.
         applyServerUpdate(data as Record<string, unknown> | undefined)
         // Re-sync the derived fields (day counters, projection, series) the
         // event does not carry.
