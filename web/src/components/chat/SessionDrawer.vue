@@ -5,7 +5,17 @@
       <span class="bs-header-title">{{ agentName }}</span>
     </template>
 
-    <div class="session-setting-tabs">
+    <!-- Horizontally scrollable tab strip. Five tabs no longer fit a phone
+         width, and a squeezed label is worse than a scrollable one. Touch pans
+         natively (with momentum); a mouse drags (attachDragScroll, wired below)
+         and the wheel scrolls sideways. The scrollbar is hidden — it would be
+         taller than the tab row itself on mobile. -->
+    <div
+      ref="tabStripRef"
+      class="session-setting-tabs"
+      :class="{ 'is-overflowing': tabStripOverflow }"
+      @wheel="onHorizontalWheel"
+    >
       <button class="model-tab" :class="{ active: activeTab === 'model' }" @click="activeTab = 'model'">
         <Cpu :size="13" />{{ t('chat.modelSwitcher.title') }}
       </button>
@@ -234,7 +244,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Star, Cpu, Brain, ShieldAlert, Cable, Activity } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
@@ -243,6 +253,8 @@ import RefreshButton from '@/components/common/RefreshButton.vue'
 import ModelRow from '@/components/common/ModelRow.vue'
 import ContextUsageDetail from '@/components/chat/ContextUsageDetail.vue'
 import { apiGet, apiPatch, apiPost } from '@/utils/api'
+import { attachDragScroll, canDragScroll } from '@/utils/dragScroll'
+import { onHorizontalWheel } from '@/utils/horizontalWheelScroll'
 import { appLog } from '@/utils/appLog'
 import { compactGroupMember } from '@/composables/useGroupChat'
 import { useAgents, restoreOriginalModels, resetModelViewForTransport, applyRefreshedModelList, populateACPStateFromCache, invalidateACPStateCache } from '@/composables/useAgents'
@@ -523,6 +535,73 @@ function applyAutoApprove(checked) {
   }
   toggleAutoApprove(checked)
 }
+
+// ── Tab strip scrolling ──
+// Five tabs overflow a phone width. Touch already pans natively; this adds the
+// two paths a finger cannot use: mouse drag (the scrollbar is hidden) and the
+// wheel (which would otherwise scroll the drawer body vertically).
+const tabStripRef = ref(null)
+const tabStripOverflow = ref(false)
+let stopTabDragScroll = null
+let tabResizeObserver = null
+
+/** Attach/detach drag-to-scroll to match whether the strip actually overflows. */
+function syncTabDragScroll() {
+  const el = tabStripRef.value
+  if (!el) return
+  const shouldAttach = canDragScroll('mouse', 0, el.scrollWidth, el.clientWidth)
+  tabStripOverflow.value = shouldAttach
+  if (shouldAttach && !stopTabDragScroll) {
+    stopTabDragScroll = attachDragScroll(el)
+  } else if (!shouldAttach && stopTabDragScroll) {
+    stopTabDragScroll()
+    stopTabDragScroll = null
+  }
+}
+
+/** Keep the ACTIVE tab visible: a tab reached by keyboard nav or by the
+ *  `initialTab` prop can sit off-screen at the far end of the strip. */
+function scrollActiveTabIntoView() {
+  const el = tabStripRef.value
+  if (!el) return
+  const active = el.querySelector('.model-tab.active')
+  if (!active || typeof active.scrollIntoView !== 'function') return
+  active.scrollIntoView({ behavior: 'auto', block: 'nearest', inline: 'nearest' })
+}
+
+onMounted(() => {
+  nextTick(() => {
+    syncTabDragScroll()
+    scrollActiveTabIntoView()
+  })
+  // The strip's overflow depends on its rendered width (drawer resize, phone
+  // rotation, a locale with longer labels). Re-measure instead of assuming the
+  // mount-time result holds.
+  if (typeof ResizeObserver !== 'undefined') {
+    tabResizeObserver = new ResizeObserver(() => syncTabDragScroll())
+    if (tabStripRef.value) tabResizeObserver.observe(tabStripRef.value)
+  }
+})
+
+onBeforeUnmount(() => {
+  stopTabDragScroll?.()
+  stopTabDragScroll = null
+  tabResizeObserver?.disconnect()
+  tabResizeObserver = null
+})
+
+// The drawer is a keep-alive-ish sheet: it mounts once and toggles `open`, so
+// the strip can go from hidden (zero width) to laid out on every open. Re-measure
+// when it opens, and bring the active tab back into view.
+watch(() => props.open, (open) => {
+  if (!open) return
+  nextTick(() => {
+    syncTabDragScroll()
+    scrollActiveTabIntoView()
+  })
+})
+
+watch(activeTab, () => nextTick(scrollActiveTabIntoView))
 
 // --- Model selection ---
 
@@ -864,10 +943,41 @@ defineExpose({
   gap: 0;
   border-bottom: 1px solid var(--border-color, #e5e5e5);
   flex-shrink: 0;
+  /* Five tabs overflow a phone width. Scroll sideways instead of squeezing the
+     labels: `overflow-x: auto` + `nowrap` keeps each tab at its natural width,
+     touch pans natively with momentum, and the mouse gets drag/wheel below. */
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  /* Hidden scrollbar: it is taller than the tab row on mobile, and a visible
+     bar under the labels reads as a second border. */
+  scrollbar-width: none;
+}
+
+.session-setting-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+/* Drag-to-scroll affordance, only while the strip actually overflows (the class
+   is set from a real overflow measurement, so a strip that fits stays inert). */
+.session-setting-tabs.is-overflowing {
+  cursor: grab;
+}
+
+.session-setting-tabs.is-overflowing.is-dragging {
+  cursor: grabbing;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .model-tab {
-  flex: 1;
+  /* Natural width, not `flex: 1`: equal division is what forced the labels to
+     squeeze/ellipsis once there were five. `flex-shrink: 0` keeps a tab from
+     being compressed when the strip is narrower than its content. */
+  flex: 0 0 auto;
+  flex-shrink: 0;
+  white-space: nowrap;
   display: flex;
   align-items: center;
   justify-content: center;
