@@ -526,6 +526,7 @@ export default {
       usageDesc: '查看 token 用量',
       userGuideDesc: '查阅 ClawBench 用户手册',
       agentDesc: '创建 / 管理智能体，并跑集成测试验证',
+      mcpDesc: '配置 MCP 服务，并设置每个智能体能使用哪些',
       btwDesc: '顺便问一句（用摘要模型回答，不打扰当前会话）',
     },
     btw: {

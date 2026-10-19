@@ -22,6 +22,7 @@ const (
 	ClawbenchCmdUsage      = "/cb-usage"
 	ClawbenchCmdUserGuide  = "/cb-user-guide"
 	ClawbenchCmdAgent      = "/cb-agent"
+	ClawbenchCmdMCP        = "/cb-mcp"
 )
 
 // The endpoint reference embedded in each template is rendered from the
@@ -149,6 +150,62 @@ Rules:
 - Do not invent agent fields or backends — read the current list before answering.
 `
 
+// mcpInjectTemplate is the on-demand instruction template injected when the
+// user sends a message starting with "/cb-mcp ".
+//
+// The command drives the SAME two resources the settings UI writes: the global
+// server list (config.yaml `mcp.servers`) and the per-agent enable policy
+// (`agents.mcp_servers`). Splitting them is the point of the design — a
+// definition carries secrets and is written once; the policy is per agent.
+//
+// Placeholders: {{BASE_URL}}, {{AI_TOKEN_HEADER}}, {{AI_TOKEN}}, {{PROJECT_COOKIE}}, {{PROJECT_PATH}}
+const mcpInjectTemplate = `[You have access to MCP server configuration for this request. Use the Bash tool to call the local ClawBench HTTP API with curl.]
+
+Base URL: {{BASE_URL}}
+Auth: send the header "{{AI_TOKEN_HEADER}}: {{AI_TOKEN}}" on every request. If a request returns 401 the token has expired — tell the user to re-run the command rather than retrying.
+
+Endpoints:
+{{ENDPOINTS}}
+
+Project scope:
+- The MCP server list itself is GLOBAL — it is not project-scoped, so PATCH /api/config needs no project cookie.
+- Agent endpoints ARE project-filtered: send the cookie "{{PROJECT_COOKIE}}={{PROJECT_PATH}}" on GET /api/agents and PATCH /api/agents. GET returns only the agents visible in this project (global plus project-scoped ones), and PATCH uses the cookie to resolve "project_scope". Without it, a project-scoped agent is invisible and cannot be found by name.
+
+Two separate resources — do not confuse them:
+1. The GLOBAL server list lives in config.yaml under "mcp.servers". It is ONE list shared by every agent. Edit it with PATCH /api/config; read it with GET /api/config (field "mcp.servers"). This is where a server's command, args, env and url belong.
+2. The PER-AGENT policy lives on the agent record as "mcpServers" ({mode, names}) and says WHICH global servers that agent may use. Edit it with PATCH /api/agents. Never copy a server definition into an agent.
+
+PATCH /api/config replaces "mcp.servers" WHOLESALE:
+- The array you send becomes the entire list. Servers you omit are DELETED, so always GET first, modify the array, then PATCH the full array back.
+- Sending an empty array deletes every server. Only do that when the user asks to remove all of them.
+- Each element: {name, transport, command?, args?, env?, url?, headers?}.
+  - "name" is required, unique, and may only contain letters, digits, "_" and "-". It is what the per-agent policy references, so renaming a server silently breaks every policy that names the old one — tell the user when you rename.
+  - "transport" is one of "stdio", "http", "sse".
+  - stdio requires "command" (and optional "args" as an array, "env" as an object).
+  - http / sse require "url" (http or https) and accept "headers" as an object.
+- Validation rejects: a missing/duplicate/invalid name, an unknown transport, a stdio server with no command, a command that is not found on PATH, and a non-http(s) URL. The error message names the offending index — relay it verbatim and fix that entry instead of retrying blindly.
+- env and headers are returned IN PLAINTEXT by GET. Do not print secret values back to the user unless they ask; refer to them by key name.
+
+PATCH /api/agents takes "mcp_servers" as an object: {"mode":"all"|"none"|"selected","names":["a","b"]}.
+- "all" (the default, and what an omitted mode means) enables every server in the global list.
+- "none" disables MCP for that agent.
+- "selected" enables only the servers named in "names".
+- Changing the policy does NOT need a restart and does NOT interrupt a running turn: the connection re-reads the policy before each turn and reconnects with the new list if it changed. Say "takes effect from the next message", not "restart required".
+
+Which agents can actually use MCP:
+- ACP transport only. An agent with transport "cli" has no MCP parameter and reads its own config file — the global list has no effect on it. If the user asks to enable MCP on a CLI agent, explain that and offer to switch it to ACP (PATCH transport) only if they have an ACP command for it.
+- Three backends accept the field and ignore it entirely: "dsh", "deepseek", "pi". ClawBench filters the list out for them, so enabling MCP there does nothing. Tell the user instead of silently writing a policy.
+- "codex" and "commandcode" reject the "sse" transport; the whole session fails if one is sent. Those servers are filtered out for them. Prefer "http" when the user has a choice.
+- "hermes" attaches MCP asynchronously, so the first turn after connecting may not see the tools. Mention this only if the user reports missing tools.
+
+Rules:
+- Read before writing. GET /api/config to see the current list, GET /api/agents to resolve an agent id by name. Never guess a server name or an agent id.
+- When the user names a server they already have, match it by "name" rather than adding a near-duplicate.
+- After a change, read the resource back and state concretely what is now configured (server names + transports; for an agent, its mode and the enabled names). Never claim success from the PATCH status alone.
+- Removing a server is destructive for every agent using it: confirm which server by name before deleting, and mention that agents with mode "all" lose it too.
+- Use the user's language.
+`
+
 // usageInjectTemplate is the on-demand instruction template injected when the
 // user sends a message starting with "/cb-usage ".
 // Placeholders: {{BASE_URL}}, {{AI_TOKEN_HEADER}}, {{AI_TOKEN}}, {{PROJECT_COOKIE}}, {{PROJECT_PATH}}, {{NOW}}
@@ -217,7 +274,8 @@ func IsClawbenchCommand(rawMsg string) bool {
 		matchClawbenchCommand(rawMsg, ClawbenchCmdTask) ||
 		matchClawbenchCommand(rawMsg, ClawbenchCmdUsage) ||
 		matchClawbenchCommand(rawMsg, ClawbenchCmdUserGuide) ||
-		matchClawbenchCommand(rawMsg, ClawbenchCmdAgent)
+		matchClawbenchCommand(rawMsg, ClawbenchCmdAgent) ||
+		matchClawbenchCommand(rawMsg, ClawbenchCmdMCP)
 }
 
 // clawbenchNow is the current time in the form the AI needs for RFC3339 query
@@ -313,6 +371,8 @@ func processClawbenchCommand(rawMsg, projectPath, sessionID string) (string, err
 		return renderUserGuideTemplate()
 	case matchClawbenchCommand(rawMsg, ClawbenchCmdAgent):
 		return renderAgentTemplate(projectPath)
+	case matchClawbenchCommand(rawMsg, ClawbenchCmdMCP):
+		return renderMCPTemplate(projectPath)
 	}
 	return rawMsg, nil
 }
@@ -372,6 +432,18 @@ func renderTaskTemplate(projectPath string) (string, error) {
 		return "", fmt.Errorf("render task endpoints: %w", err)
 	}
 	tmpl := strings.ReplaceAll(taskInjectTemplate, "{{ENDPOINTS}}", endpoints)
+	tmpl = strings.ReplaceAll(tmpl, "{{BASE_URL}}", clawbenchBaseURL())
+	tmpl = strings.ReplaceAll(tmpl, "{{PROJECT_COOKIE}}", clawbenchProjectCookie())
+	tmpl = strings.ReplaceAll(tmpl, "{{PROJECT_PATH}}", projectPath)
+	return applyAuthPlaceholders(tmpl), nil
+}
+
+func renderMCPTemplate(projectPath string) (string, error) {
+	endpoints, err := api.RenderCommand(api.CommandMCP)
+	if err != nil {
+		return "", fmt.Errorf("render mcp endpoints: %w", err)
+	}
+	tmpl := strings.ReplaceAll(mcpInjectTemplate, "{{ENDPOINTS}}", endpoints)
 	tmpl = strings.ReplaceAll(tmpl, "{{BASE_URL}}", clawbenchBaseURL())
 	tmpl = strings.ReplaceAll(tmpl, "{{PROJECT_COOKIE}}", clawbenchProjectCookie())
 	tmpl = strings.ReplaceAll(tmpl, "{{PROJECT_PATH}}", projectPath)

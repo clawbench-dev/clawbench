@@ -49,8 +49,10 @@ func TestToACPMcpServers_EmptySlicesNotNull(t *testing.T) {
 
 func TestToACPMcpServers_HTTPAndSSE(t *testing.T) {
 	got := toACPMcpServers([]model.MCPServer{
-		{Name: "h", Transport: model.MCPTransportHTTP, URL: "https://h/mcp",
-			Headers: map[string]string{"Authorization": "Bearer x"}},
+		{
+			Name: "h", Transport: model.MCPTransportHTTP, URL: "https://h/mcp",
+			Headers: map[string]string{"Authorization": "Bearer x"},
+		},
 		{Name: "s", Transport: model.MCPTransportSSE, URL: "https://s/sse"},
 	})
 	require.Len(t, got, 2)
@@ -75,7 +77,21 @@ func TestToACPMcpServers_UnknownTransportDropped(t *testing.T) {
 	require.Empty(t, got)
 }
 
-func TestToACPMcpServers_Empty(t *testing.T) {
-	require.Nil(t, toACPMcpServers(nil))
-	require.Nil(t, toACPMcpServers([]model.MCPServer{}))
+// TestToACPMcpServers_EmptyIsNonNilSlice pins the difference between "no
+// servers" and "null".
+//
+// The SDK field is `json:"mcpServers"` WITHOUT omitempty and every request
+// type's Validate() rejects nil with "mcpServers is required". Returning nil
+// here serializes to null and breaks session/new, load and resume for every
+// agent that has no MCP servers — i.e. the default configuration.
+func TestToACPMcpServers_EmptyIsNonNilSlice(t *testing.T) {
+	for _, in := range [][]model.MCPServer{nil, {}} {
+		got := toACPMcpServers(in)
+		require.NotNil(t, got, "must be an empty slice, not nil")
+		require.Empty(t, got)
+
+		// The real assertion: it must survive the SDK's own validation.
+		req := acp.LoadSessionRequest{Cwd: "/tmp", McpServers: got}
+		require.NoError(t, req.Validate(), "the SDK rejects a nil mcpServers list")
+	}
 }

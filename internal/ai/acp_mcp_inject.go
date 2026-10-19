@@ -46,10 +46,17 @@ func (c *ACPConn) mcpPolicyVersion() string {
 // Both slices are built sorted by name so the wire payload is deterministic —
 // tests assert on it, and map iteration order is randomized.
 func toACPMcpServers(servers []model.MCPServer) []acp.McpServer {
-	if len(servers) == 0 {
-		return nil
-	}
+	// MUST be a non-nil empty slice when there is nothing to send.
+	//
+	// The SDK's field is `json:"mcpServers"` WITHOUT omitempty, and every
+	// request type's Validate() rejects a nil slice with "mcpServers is
+	// required". Returning nil therefore serializes to null and fails
+	// session/new, load and resume — a regression that made every agent with no
+	// MCP servers unable to start a session at all.
 	out := make([]acp.McpServer, 0, len(servers))
+	if len(servers) == 0 {
+		return out
+	}
 	for _, s := range servers {
 		switch s.Transport {
 		case model.MCPTransportStdio:

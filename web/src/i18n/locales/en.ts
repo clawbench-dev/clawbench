@@ -522,6 +522,7 @@ export default {
       usageDesc: 'View token usage',
       userGuideDesc: 'Look up the ClawBench user manual',
       agentDesc: 'Create / manage agents and verify them with an integration test',
+      mcpDesc: 'Configure MCP servers and which agents may use them',
       btwDesc: 'Ask a side question (answered by the summary model, without disturbing this session)',
     },
     btw: {

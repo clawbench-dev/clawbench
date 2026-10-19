@@ -19,6 +19,9 @@ const (
 	// CommandAgent backs /cb-agent — managing agents (create by cloning,
 	// search / view, update, delete).
 	CommandAgent Command = "agent"
+	// CommandMCP backs /cb-mcp — managing the global MCP server list and the
+	// per-agent enable policy.
+	CommandMCP Command = "mcp"
 )
 
 // Spec tags referenced by commandOperations. They are named constants so the
@@ -88,6 +91,19 @@ var commandOperations = map[Command][]struct {
 		// (not one with a flag) because the deep one costs tokens.
 		{"agentsSelfTest", tagAgents},
 		{"agentsSelfTestDeep", tagAgents},
+	},
+	CommandMCP: {
+		// The config pair carries the global server list; the agent pair carries
+		// the per-agent enable policy. Both are needed: a user who says "add
+		// this MCP server for the claude agent only" has to write two resources.
+		//
+		// Nothing else from the Config tag is exposed — PATCH /api/config also
+		// accepts passwords, TTS keys and port settings, none of which an MCP
+		// command should ever reach.
+		{"getConfig", "Config"},
+		{"patchConfig", "Config"},
+		{"agentsList", tagAgents},
+		{"agentsUpdate", tagAgents},
 	},
 }
 
