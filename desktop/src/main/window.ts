@@ -150,7 +150,7 @@ function registerKeyboardShortcuts(webContents: Electron.WebContents): void {
     const claimed = handleShortcut(input, isMac, {
       // Imported lazily: session.ts imports getMainWindow() from this module,
       // so a top-level import here would be a cycle.
-      onHardReload: () => { void import('./session').then((m) => m.clearCacheAndReload()) },
+      onHardReload: () => { void import('./session').then((m) => m.clearCacheAndReload('everything')) },
       onToggleDevTools: () => {
         const wc = webContents
         if (wc.isDevToolsOpened()) wc.closeDevTools()
