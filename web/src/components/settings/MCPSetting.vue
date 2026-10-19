@@ -242,10 +242,22 @@ onMounted(() => {
   display: flex;
   gap: var(--space-3);
 }
-/* Input geometry follows the settings-panel convention (30px control height). */
+/* Input geometry follows the settings-panel convention (30px control height).
+ *
+ * Sizing must be stated per container, because `flex` means different things on
+ * each axis and the add form uses both:
+ *
+ *   .mcp-add        COLUMN  → `flex: 1` would set flex-basis: 0% on the VERTICAL
+ *                             axis and override `height`. Measured in the
+ *                             browser before this fix: computed height 30px but
+ *                             a rendered box of 17px, so the text fields were
+ *                             visibly shorter than the select next to them.
+ *   .mcp-add-grid   ROW     → `flex: 1` is exactly what makes the name field
+ *                             share the row with the fixed-width select.
+ *
+ * So: never put a bare `flex` on the shared class; set it on the row's children.
+ */
 .mcp-input {
-  flex: 1;
-  min-width: 120px;
   box-sizing: border-box;
   height: 30px;
   padding: 0 var(--space-6);
@@ -255,10 +267,22 @@ onMounted(() => {
   color: var(--text-primary);
   font-size: var(--font-size-md);
 }
+/* Row children share the width: the name field grows, the select is fixed. */
+.mcp-add-grid > .mcp-input:not(.mcp-select) {
+  flex: 1;
+  min-width: 120px;
+}
+/* Column children must keep their height and fill the width on the cross axis. */
+.mcp-add > .mcp-input {
+  align-self: stretch;
+  flex: none;
+}
 .mcp-select {
   flex: 0 0 100px;
   padding: 0 var(--space-3);
 }
+/* A textarea has no intrinsic control height: it keeps height:auto so its rows
+ * attribute decides, and must not be stretched on the vertical axis. */
 .mcp-textarea {
   height: auto;
   padding: var(--space-2) var(--space-6);

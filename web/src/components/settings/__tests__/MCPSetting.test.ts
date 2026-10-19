@@ -157,3 +157,59 @@ describe('MCPSetting', () => {
     expect(addBtn.attributes('disabled')).toBeDefined()
   })
 })
+
+// The add form mixes a ROW (.mcp-add-grid) and a COLUMN (.mcp-add) flex
+// container, and `flex` means different things on each axis. A bare
+// `flex: 1` on the shared `.mcp-input` class therefore collapses the height:
+// in the column container it becomes `flex-basis: 0%` on the VERTICAL axis,
+// which overrides `height: 30px`. Measured in a real browser before the fix:
+// computed height 30px, rendered box 17px — the text fields looked shorter
+// than the select next to them.
+//
+// jsdom performs no layout, so no rendered-geometry assertion can catch this
+// (every rect is 0). This guard pins the CSS structure instead: the shared
+// class must not set `flex`, and the two containers must size their own
+// children.
+describe('MCPSetting layout guard', () => {
+  const css = Object.entries(
+    import.meta.glob('@/components/settings/MCPSetting.vue', {
+      eager: true,
+      query: '?raw',
+      import: 'default',
+    }) as Record<string, string>,
+  )[0][1]
+
+  /** ruleBody returns the declarations of the first rule with this selector. */
+  function ruleBody(selector: string): string {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const m = css.match(new RegExp(`(?:^|\\n)${escaped}\\s*\\{([^}]*)\\}`))
+    return m ? m[1] : ''
+  }
+
+  it('does not put a bare flex on the shared .mcp-input class', () => {
+    const body = ruleBody('.mcp-input')
+    expect(body, '.mcp-input rule must exist').not.toBe('')
+    // `flex` (shorthand) or `flex-basis` on the shared class is the bug.
+    expect(/(^|[\s;])flex\s*:/.test(body), '.mcp-input must not set `flex`').toBe(false)
+    expect(/(^|[\s;])flex-basis\s*:/.test(body)).toBe(false)
+    // height is the thing being protected.
+    expect(/height\s*:\s*30px/.test(body), '.mcp-input must keep height: 30px').toBe(true)
+  })
+
+  it('sizes row children and column children separately', () => {
+    const rowChild = ruleBody('.mcp-add-grid > .mcp-input:not(.mcp-select)')
+    expect(rowChild, 'the row child rule is what makes the name field share the row').not.toBe('')
+    expect(/(^|[\s;])flex\s*:\s*1/.test(rowChild)).toBe(true)
+
+    const colChild = ruleBody('.mcp-add > .mcp-input')
+    expect(colChild, 'the column child rule keeps height by refusing to grow').not.toBe('')
+    expect(/(^|[\s;])flex\s*:\s*none/.test(colChild)).toBe(true)
+  })
+
+  it('keeps the textarea height automatic', () => {
+    // A textarea has no intrinsic control height; stretching it vertically would
+    // make `rows` meaningless and force it to fill the column.
+    const body = ruleBody('.mcp-textarea')
+    expect(/height\s*:\s*auto/.test(body)).toBe(true)
+  })
+})
