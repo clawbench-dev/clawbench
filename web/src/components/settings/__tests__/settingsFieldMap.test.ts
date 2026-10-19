@@ -648,11 +648,15 @@ describe('settingsFieldMap', () => {
 
   it('notification panel has entrySelector with push_mode, dingtalk optionSubFields, and connectivityTest', () => {
     const panels = getCategoryPanels('notification')
-    expect(panels.length).toBe(1)
-    const cfg = panels[0]
+    // Two panels now: the push-channel panel asserted here, and the usage-meter
+    // rule (a notification feature, so it lives in this category). Select by id
+    // rather than by position so adding another panel does not silently shift
+    // which one this test is describing.
+    const cfg = panels.find(p => p.panelId === 'push')
+    expect(cfg).toBeDefined()
     // The panel now carries a section title ("移动端通知") so it renders as its
     // own headed card rather than a bare card next to the flat items.
-    expect(cfg.titleKey).toBe('settings.items.mobileNotifySection')
+    expect(cfg!.titleKey).toBe('settings.items.mobileNotifySection')
     expect(cfg.entrySelector).toBeDefined()
     expect(cfg.entrySelector!.key).toBe('push_mode')
     expect(cfg.entrySelector!.type).toBe('select')

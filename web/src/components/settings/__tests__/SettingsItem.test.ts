@@ -1126,3 +1126,52 @@ describe('select option row layout', () => {
     )
   })
 })
+
+// ── date type ────────────────────────────────────────────────────────────────
+// The usage meter's cycle start is a date, not free text: a typo like
+// "2026-13-45" used to be accepted by the row and rejected only by the server.
+describe('SettingsItem — date', () => {
+  it('renders the stored date in the row', () => {
+    const w = mountItem({ type: 'date', modelValue: '2026-10-14' })
+    expect(w.find('.settings-item__value').text()).toBe('2026-10-14')
+  })
+
+  it('opens a native date input and emits the picked value', async () => {
+    const w = mountItem({ type: 'date', modelValue: '2026-10-14' })
+    await w.find('.settings-item').trigger('click')
+    await nextTick()
+
+    const input = w.find('input[type="date"]')
+    expect(input.exists()).toBe(true)
+    expect((input.element as HTMLInputElement).value).toBe('2026-10-14')
+
+    await input.setValue('2026-11-01')
+    await w.find('.settings-item__editor-confirm').trigger('click')
+
+    expect(w.emitted('update:modelValue')?.[0]).toEqual(['2026-11-01'])
+  })
+
+  it('keeps the old value when the picker is cleared', async () => {
+    // An empty native date input yields "". Emitting it would send an empty
+    // anchor_date, which the server rejects — the row would look edited but
+    // stay unchanged, with no explanation.
+    const w = mountItem({ type: 'date', modelValue: '2026-10-14' })
+    await w.find('.settings-item').trigger('click')
+    await nextTick()
+
+    const input = w.find('input[type="date"]')
+    await input.setValue('')
+    await w.find('.settings-item__editor-confirm').trigger('click')
+
+    expect(w.emitted('update:modelValue')).toBeUndefined()
+  })
+
+  it('uses the date editor, not the free-text one', async () => {
+    const w = mountItem({ type: 'date', modelValue: '2026-10-14' })
+    await w.find('.settings-item').trigger('click')
+    await nextTick()
+
+    expect(w.find('input[type="text"]').exists()).toBe(false)
+    expect(w.find('input[type="date"]').exists()).toBe(true)
+  })
+})

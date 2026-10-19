@@ -83,7 +83,7 @@ export interface ItemSpec {
   labelKey: string
   descriptionKey?: string
   key: string
-  type: 'switch' | 'select' | 'number' | 'text' | 'slider' | 'action' | 'info' | 'header' | 'password' | 'textarea'
+  type: 'switch' | 'select' | 'number' | 'text' | 'date' | 'slider' | 'action' | 'info' | 'header' | 'password' | 'textarea'
   source: 'server' | 'local'
   needsRestart?: boolean
   options?: { labelKey: string; value: unknown; modelName?: string; groupKey?: string; badgeKey?: string }[]
@@ -439,7 +439,7 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
         defaultValue: 'cost',
       },
       commonFields: [
-        { labelKey: 'settings.items.usageMeterAnchor', descriptionKey: 'settings.items.usageMeterAnchorDesc', key: 'usage_meter.anchor_date', type: 'text', source: 'server' },
+        { labelKey: 'settings.items.usageMeterAnchor', descriptionKey: 'settings.items.usageMeterAnchorDesc', key: 'usage_meter.anchor_date', type: 'date', source: 'server' },
         { labelKey: 'settings.items.usageMeterPeriod', descriptionKey: 'settings.items.usageMeterPeriodDesc', key: 'usage_meter.period_days', type: 'number', source: 'server' },
         { labelKey: 'settings.items.usageMeterQuota', descriptionKey: 'settings.items.usageMeterQuotaDesc', key: 'usage_meter.quota', type: 'number', source: 'server' },
       ],
