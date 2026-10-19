@@ -66,6 +66,12 @@ test.describe.serial('ACP Slash Commands', () => {
 
     const agentItem = page.locator('.completion-item--clawbench').filter({ hasText: '/cb-agent' })
     await expect(agentItem).toBeVisible()
+
+    // /cb-mcp must be tagged --clawbench, not rendered as an agent command:
+    // the frontend keeps an explicit name list (CLAWBENCH_COMMAND_RE), so a
+    // command added only on the backend silently shows the wrong badge.
+    const mcpItem = page.locator('.completion-item--clawbench').filter({ hasText: '/cb-mcp' })
+    await expect(mcpItem).toBeVisible()
   })
 
   test('should filter to /cb-chatsearch when typing /cb-c', async ({ page }) => {
