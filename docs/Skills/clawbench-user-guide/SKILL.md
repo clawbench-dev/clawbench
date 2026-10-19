@@ -1070,16 +1070,18 @@ sqlite3 "file:$HOME/.clawbench/ClawBench.db?mode=ro&immutable=1" \
 | 用户昵称 | 设置 → 聊天 → 群聊 → 用户昵称（`chat.user_nickname`） | 智能体在群里称呼你的名字，默认 `User`；@ 芯片显示它（不再显示「你」） |
 | 真实名标签 | `.real-agent-name-tag`（共享组件 `RealAgentNameTag`） | 昵称是自动名池名/`本名 序号` 时显示底层真实智能体名；消息头 `.msg-speaker-real`、成员行 `.gm-real-name`、补全行 `.completion-real-name` 都用它 |
 | @ 成员卡 | `.chat-attachment-tags .mention-card`（名字 `.mention-card-name`，锁 `.mention-card-lock`） | 输入框附件条 |
-| 智能体设置 | `.settings-agents-index__row` / `.settings-agents-index__rescan-row` / `.settings-agents-index__name` | 进设置 → 点「智能体」分类行；详情页 `.settings-agent-detail`（含「复制」「删除」按钮） |
+| 智能体设置 | `.settings-agents-index__row` / `.settings-agents-index__rescan-row`（**三行**，用 `[data-action=agent-create|agent-rescan|agent-selftest-all]` 区分）/ `.settings-agents-index__name` | 进设置 → 点「智能体」分类行；详情页 `.settings-agent-detail`（两组动作：`.settings-agent-detail__selftest-btn` 自检 ×2、`.settings-agent-detail__action-btn` 复制/禁用、`.settings-agent-detail__delete-btn` 删除） |
 
 ### 拍法要点
 
-1. **建群抽屉（`group-01-create`）**：点 `[data-action="create"]` → 点 `.agent-mode-tab[data-mode="group"]` 切到群聊 → 点 3 个 `.agent-option` 勾选 → 点其中一个行内的 `.agent-host-btn` 设为主持人 → 用 `.agent-stepper` 的 `+` 给同一智能体加第 2 个实例。自检：`.agent-option-check.checked` 数 = 3、`.agent-host-btn.active` = 1、`.agent-count-hint` 显示「已添加 N/12 个」、`.group-mode-hint-chip` 文本为「主持人模式」。**注意：抽屉头部没有 `.agent-header-mode`**（旧文案），模式由页脚 `.group-mode-hint-chip` 表达。
-2. **主持人时间线（`group-02-host`）**：打开群 → 在 `.chat-message` 里找**同时含 `.msg-mention-summary` 与 `.msg-speaker-host-tag`** 的那条，`sc.scrollTop = target.offsetTop - 8` 把它滚到顶部再拍。这样一屏能同时展示「皇冠主持人 + @ 汇总行 + 密送卡」。
-3. **自由时间线（`group-03-free`）**：打开自由群 → 从后往前找含 `.msg-mention-summary` 或 `.msg-bcc` 的消息滚到顶。标题栏左侧的 `.group-mode-badge` 是 `@`。
-4. **群设置抽屉**：点 `.group-avatar-stack`（Playwright `el.click()`，合成 `.click()` 对 Teleport 抽屉不可靠）→ 等 ~1.6s。**两种模式各拍一张**（主持人版显示「自动批准」，自由版显示「并发执行」+「自动批准」），这正好把两个模式的群设置差异讲清。抽屉标题是「群聊设置」。
-5. **@ 成员卡（`group-06-mention-card`）**：**必须用 Playwright 真实输入事件**——`ta.fill('@')` 打开 `.completion-item` 菜单（群会话里成员候选排最前，池名成员带 `.completion-real-name` 标签），点第 2 个候选（池名成员，如 `Alice`）加卡；**再点卡片**弹出密送批注框（`.dlg-textarea`），填入内容点「确定」→ 卡片出现锁（`.mention-card-lock` / `.is-private`）；最后 `ta.fill('问题正文')`。合成 `element.click()` / 直接设 `value` **不会**弹出该菜单（同 §八 第 10 条）。自检：`.chat-attachment-tags .mention-card` 存在且 `.mention-card-name` 非空、`.mention-card-lock` 存在、`.chat-textarea` 的 value **不含** `clawbench-mention`。
-6. **智能体设置（`group-07`/`group-08`）**：说明「智能体从哪来」用。点 `.wide-dock .dock-btn[data-tab="settings"]`（**只在 settings 标签未激活时点**，否则会把它切换关闭）→ 点 `.settings-index__row`（文本以「智能体」开头）→ 拍列表（`group-07`）；再点某行 `.settings-agents-index__row` 进详情（`group-08`）。自检：`group-07` 的 `.settings-agents-index__row` > 0 且 `.settings-agents-index__rescan-row` 存在；`group-08` 的 `.settings-agent-detail` 存在、底部三个按钮 `.settings-agent-detail__action-btn`（复制/禁用）与 `.settings-agent-detail__delete-btn`（删除）。
+0. **点会话行必须点内层 `.session-item`**：外层容器是 `[data-session-id]`，`el.click()` 打在容器上**不会切会话**（无报错，只是没反应）。写法：`document.querySelector('[data-session-id="<id>"] .session-item').click()`。同理，判断「当前打开的是哪个群」不能只看 `.chat-message` 数量——先在会话列表里确认该行有 `.active`，否则会拍成上一个群。
+
+1. **建群抽屉（`group-01-create`）**：点 `[data-action="create"]` → 点 `.agent-mode-tab[data-mode="group"]` 切到群聊 → 勾选 4 个 `.agent-option` → 点其中一个行内的 `.agent-host-btn` 设为主持人 → 用 `.agent-stepper` 的 `+` 给同一智能体加第 2 个实例。自检：`.agent-option-check.checked` 数 = 4、`.agent-host-btn.active` = 1、`.agent-count-hint` 显示「已添加 5/12 个」（**4 个智能体 + 1 个额外实例 = 5，不是 4**）、`.group-mode-hint-chip` 文本为「主持人模式」。**注意**：①抽屉头部没有 `.agent-header-mode`（旧文案），模式由页脚 `.group-mode-hint-chip` 表达；②成员名取 `.agent-option-name`（`.agent-option` 的 textContent 里还含描述与标签，用 `startsWith` 会误命中）。
+2. **主持人时间线（`group-02-host`）**：打开群 → 滚到底（历史是**倒序懒加载**，`scrollTop = scrollHeight` 反复几次才会补齐）→ 在 `.chat-message` 里按「有 `.msg-bcc` 优先、其次 `.msg-mention-summary`」打分，取**同时含 `.msg-speaker-host-tag`** 的最高分那条，`sc.scrollTop = target.offsetTop - 8`。**拍之前点开 `.msg-bcc-header` 展开密送卡**——折叠态只有一行「密送」二字，读者看不到卡里是什么；展开后气泡变高，必须**再对齐一次** `offsetTop`，否则它会被挤出视口。
+3. **自由时间线（`group-03-free`）**：打开自由群 → 同样滚到底 → 从后往前找含 `.msg-mention-summary` 或 `.msg-bcc` 的消息滚到顶。标题栏左侧的 `.group-mode-badge` 是 `@`。**图注必须按图里真实内容写**：这一条 `@` 的可能是**用户**（话权交回你），与「成员互相 @ 接力」不是一回事。
+4. **群设置抽屉**：点 `.group-avatar-stack`（Playwright `el.click()`，合成 `.click()` 对 Teleport 抽屉不可靠）→ 等 ~1.6s。**两种模式各拍一张**：主持人版有「自动批准 + 自动巡航」两项，自由版有「并发执行 + 自动批准 + 自动巡航」**三项**（`#group-parallel` 仅自由模式）。自检：`.gm-row` 数 = 成员数、每行 `.gm-usage` 有百分比（CLI 传输的成员是 `—`）。抽屉标题是「群聊设置」。
+5. **@ 成员卡（`group-06-mention-card`）**：**必须用 Playwright 真实输入事件**——`ta.fill('@')` 打开 `.completion-item` 菜单（群会话里成员候选排最前，池名成员带 `.completion-real-name` 标签），用 `page.$$('.completion-item')` 取句柄后 `items[1].click()`（在 `evaluate` 里点 DOM 不触发 Vue 的选中逻辑）；**再点卡片**弹出密送批注框（`.dlg-textarea`），填入内容点「确定」→ 卡片出现锁（`.mention-card-lock` / `.is-private`）；最后 `ta.fill('问题正文')`。合成 `element.click()` / 直接设 `value` **不会**弹出该菜单（同 §八 第 10 条）。自检：`.chat-attachment-tags .mention-card` 存在且 `.mention-card-name` 非空、`.mention-card-lock` 存在、`.chat-textarea` 的 value **不含** `clawbench-mention`。
+6. **智能体设置（`group-07`/`group-08`）**：说明「智能体从哪来」用。点 `.wide-dock .dock-btn[data-tab="settings"]`（**只在 settings 标签未激活时点**，否则会把它切换关闭）→ 点 `.settings-index__row`（文本以「智能体」开头）→ 拍列表（`group-07`）；再点某行 `.settings-agents-index__row` 进详情（`group-08`）。自检：`group-07` 顶部有**三行** `[data-action="agent-create"]` / `[data-action="agent-rescan"]` / `[data-action="agent-selftest-all"]`，且 `.settings-agents-index__row` > 0；`group-08` 的 `.settings-agent-detail` 存在，底部有**两组**按钮——`.settings-agent-detail__selftest-btn`（运行集成测试 / 跑一轮真实对话）×2、`.settings-agent-detail__action-btn`（复制/禁用）×2 与 `.settings-agent-detail__delete-btn`（删除）。**详情页要滚到底**（`.settings-page__body` 的 `scrollTop = scrollHeight`），否则自检按钮与删除按钮都在视口外。
 
 ### 群聊专属陷阱
 
@@ -1088,3 +1090,6 @@ sqlite3 "file:$HOME/.clawbench/ClawBench.db?mode=ro&immutable=1" \
 3. **群会话隐藏了单聊的模型/模式/用量控件**（`ChatInputBar.vue` 按 `isGroupSession` 隐藏）——拍群聊时底部信息行**不会**有 model/mode 选择器，这是设计而非缺陷。
 4. **`isGroupSession` 由 `session_type` 派生**，不是「名单非空」；不要靠成员数判断模式。
 5. **主持人模式里用户的 `@` 不路由**：拍自由模式的「@ 接力」素材只能从**自由群**取。
+6. **截图前要隐藏滚动悬浮球**：`.scroll-fab-group`（含 `.scroll-fab-round` 两个圆钮）是「你已滚离底部」的临时提示，浮在正文右下角，会压住文字。它不是要讲的内容——注入 `.scroll-fab-group{display:none!important}` 后再拍（与浮层抑制同理，`offsetParent` 判据同样失效，因为它是 fixed）。
+7. **密送卡是「有密送才渲染」**：`.msg-bcc` 只在解析出 `private` 提及的发言里出现。找不到就换群/换消息，不要硬等——库里 `content like '%private%'` 命中不等于**渲染得出来**（`private` 也可能只是正文里讨论这个词）。
+8. **群聊历史是倒序懒加载**：打开会话只加载最近一页，`scrollTop = 0` 反复触发才补齐。想拍「更早的某条」必须先把历史加载完再定位。
