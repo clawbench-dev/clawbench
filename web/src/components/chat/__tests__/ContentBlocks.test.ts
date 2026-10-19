@@ -170,6 +170,8 @@ const i18n = createI18n({
         retry: 'Retry',
         continue: 'Continue',
         resetSession: 'Reset session',
+        copyLoginCmd: 'Copy login command',
+        loginCmdCopied: 'Copied',
         subagentSteps: '{count} steps',
         subagentExpand: 'Expand sub-agent output',
         subagentCollapse: 'Collapse sub-agent output',
@@ -842,6 +844,53 @@ describe('ContentBlocks', () => {
         blocks: [{ type: 'warning', reason: 'stderr', text: 'stderr output' }],
       })
       expect(wrapper.find('.warning-reset-btn').exists()).toBe(false)
+    })
+
+    // `auth_required` means the agent refused because nobody is signed in.
+    // "Reset session" recycles the connection, which cannot sign anyone in, and
+    // the backend deliberately excludes this reason from the retryable set — so
+    // offering the button made the two ends contradict each other. The banner
+    // must instead offer the login command.
+    it('never offers reset for auth_required, and offers the login command', () => {
+      const wrapper = mountBlocks({
+        blocks: [{
+          type: 'error',
+          reason: 'auth_required',
+          text: 'The agent is not signed in. Run `cmdc login` in a terminal once, then retry.',
+          login_cmd: 'cmdc login',
+        }],
+      })
+      expect(wrapper.find('.warning-reset-btn').exists()).toBe(false)
+      const loginBtn = wrapper.find('.warning-login-btn')
+      expect(loginBtn.exists()).toBe(true)
+      expect(loginBtn.text()).toBe('Copy login command')
+      // The command itself must be reachable (title) — the user copies it.
+      expect(loginBtn.attributes('title')).toBe('cmdc login')
+    })
+
+    // Without a structured command (backends that do not declare LoginCmd) the
+    // banner keeps only the prose instruction: no dead button.
+    it('omits the login button when the backend declares no command', () => {
+      const wrapper = mountBlocks({
+        blocks: [{ type: 'error', reason: 'auth_required', text: 'Not signed in. Sign in with its CLI.' }],
+      })
+      expect(wrapper.find('.warning-reset-btn').exists()).toBe(false)
+      expect(wrapper.find('.warning-login-btn').exists()).toBe(false)
+    })
+
+    // The summary view strips content blocks and rebuilds banners from
+    // summaryCards.warnings, so the action has to survive that path too.
+    it('offers the login command in the summary view as well', () => {
+      const wrapper = mountBlocks({
+        blocks: [],
+        summary: 'Summary text',
+        showingSummary: true,
+        summaryCards: {
+          warnings: [{ type: 'error', reason: 'auth_required', text: 'Not signed in', login_cmd: 'cmdc login' }],
+        },
+      })
+      expect(wrapper.find('.warning-reset-btn').exists()).toBe(false)
+      expect(wrapper.find('.warning-login-btn').exists()).toBe(true)
     })
   })
 

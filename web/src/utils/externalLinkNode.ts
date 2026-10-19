@@ -39,6 +39,21 @@
 export const EXTERNAL_LINK_CLASS = 'md-external-link'
 
 /**
+ * Marks a rendered link span whose target is a localhost URL.
+ *
+ * It lives here (a leaf module) rather than beside the localhost annotator
+ * because BOTH the annotator and the global click layer need it, and the click
+ * layer must not import the annotator: that would pull in the port-forward /
+ * toast / store graph (and their cycles) into a document-level utility.
+ *
+ * The marker exists because `localhost` in the App means "a port on the
+ * SERVER", reachable only through the SSH/h2 tunnel. A generic external-link
+ * handler would send it to the system browser, where it resolves to the device
+ * itself and fails.
+ */
+export const LOCALHOST_LINK_ATTR = 'data-localhost'
+
+/**
  * Media files must keep their <a> even when the URL is external.
  *
  * `convertAudioLinks` / `convertVideoLinks` (chatRenderUtils) rewrite

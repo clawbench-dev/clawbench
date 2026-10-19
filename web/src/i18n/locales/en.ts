@@ -719,6 +719,7 @@ export default {
       title: 'Thinking',
       auto: 'Auto',
       rejected: 'This model does not support {effort} thinking effort — reverted',
+      notRemembered: '{effort} applies now, but could not be saved — it will reset after a restart',
     },
     attach: {
       currentFile: 'Current file',
@@ -992,6 +993,8 @@ export default {
       retry: 'Retry',
       continue: 'Continue',
       resetSession: 'Retry',
+      copyLoginCmd: 'Copy login command',
+      loginCmdCopied: 'Copied',
       resetSessionFailed: 'Failed to reset session',
       detailsUnavailable: 'Details unavailable',
       detailsLoadFailed: 'Failed to load details',
@@ -3129,7 +3132,6 @@ export default {
 
 
       logCapture: 'Debug Log Capture',
-
       logCaptureDesc: 'Capture client debug logs for troubleshooting',
       reconfigureServer: 'Reconfigure Server',
       reconfigureServerDesc: 'Reconfigure the server address for Android connection',

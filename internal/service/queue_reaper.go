@@ -245,6 +245,23 @@ func EnsureConsumer(sessionID string) bool {
 		return false
 	}
 
+	// A group member compaction drives that member's ACP connection directly and
+	// does NOT hold the group's runner claim, so claiming here would start a
+	// group turn that sends a second prompt on the same ACP session (the agent
+	// answers "Session is busy", the compaction's stream channel is overwritten
+	// and one prompt becomes uncancellable). Leave the row queued: the
+	// compaction's deferred wake calls back into this function unconditionally
+	// once the connection is free.
+	//
+	// This covers the recovery path, which is the other way a stranded queued
+	// message can start a group turn — without it, the reaper would re-create
+	// exactly the concurrency the chat handler's gate prevents.
+	if IsGroupSession(sessionID) && GroupHasCompactingMember(sessionID) {
+		slog.Debug("queue reaper: group member compacting, deferring",
+			slog.String("session", sessionID))
+		return false
+	}
+
 	// Claim the session, taking the execution context in the same step. If
 	// another consumer won the race, it will drain the queue and this pass has
 	// nothing to do.

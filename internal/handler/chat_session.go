@@ -612,32 +612,41 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// A pick sent together with a model switch belongs to the NEW model, so the
-	// per-model memory must be keyed by the requested id — the session row still
-	// holds the previous one at this point (the model is applied last).
-	effortModelKey := ""
-	if req.ModelID != "" {
-		effortModelKey = req.ModelID
-	}
-	effortAccepted := applySessionConfigSelections(sessionID, req.ModeID, req.ThinkingEffort, effortModelKey)
+	// Non-model fields first, so a model rejection still leaves them applied
+	// (a 422 then means "everything else saved, the model was refused"). Running
+	// the model earlier would silently drop transport/autoApprove/title/pinned.
 	if err := req.applyNonModelFields(sessionID); err != nil {
 		model.WriteError(w, model.Internal(fmt.Errorf("failed to save session tags")))
 		return
 	}
 
-	// Model LAST: it is the only field that can hard-fail the whole request, and
-	// doing it here means a rejection leaves every other field above applied
-	// (a 422 then means "everything else saved, the model was refused"). Running
-	// it earlier would silently drop transport/autoApprove/title/pinned/tags.
+	// Then the model, and only THEN the effort pick that belongs to it.
+	//
+	// The registry's level list is per model, so a pick must be validated and
+	// pushed only once the agent is actually on the model it was made for.
+	// Applying the pick before the switch (the previous order) validated against
+	// the OLD model's list — clearing legitimate picks and keeping ones that
+	// could never run — and pushed the new level at the old model.
 	modelSwitchDeferred := false
 	effectiveEffort := ""
 	if req.ModelID != "" {
-		deferred, effort, err := applySessionModelAndEffort(r.Context(), sessionID, req.ModelID, req.ThinkingEffort)
+		deferred, err := applyAndPersistSessionModel(r.Context(), sessionID, req.ModelID)
 		if err != nil {
 			writeModelSwitchError(w, r, err)
 			return
 		}
-		modelSwitchDeferred, effectiveEffort = deferred, effort
+		modelSwitchDeferred = deferred
+	}
+
+	// Validate against the live list only when the agent is really on the target
+	// model. A deferred switch leaves the registry describing the previous one.
+	effortAccepted, effortRemembered := applySessionConfigSelections(
+		sessionID, req.ModeID, req.ThinkingEffort, req.ModelID, !modelSwitchDeferred,
+	)
+	if req.ModelID != "" && req.ThinkingEffort == "" {
+		// No explicit pick: report what the new model will actually run instead
+		// of leaving the old level on the chip.
+		effectiveEffort = switchSessionEffortToModel(sessionID, req.ModelID, modelSwitchDeferred)
 	}
 	resp := map[string]interface{}{"ok": true, "modelSwitchDeferred": modelSwitchDeferred}
 	if effectiveEffort != "" {
@@ -649,6 +658,12 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 		// pick the server discarded, so the chip would disagree with the agent
 		// for the rest of the session.
 		resp["thinkingEffortRejected"] = true
+	}
+	if !effortRemembered {
+		// The level is live for this session but was NOT written to the agent:
+		// it will disappear on restart / in a new session. The client shows a
+		// non-blocking hint so the user is not left guessing later.
+		resp["thinkingEffortNotRemembered"] = true
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -697,31 +712,6 @@ func (req *sessionUpdateRequest) applyNonModelFields(sessionID string) error {
 	return nil
 }
 
-// applySessionModelAndEffort switches the session's model and then reconciles
-// the thinking-effort pick with it. Deferred=true means the agent was busy, so
-// the switch (and any effort RPC) only takes effect on the next prompt.
-func applySessionModelAndEffort(ctx context.Context, sessionID, modelID, thinkingEffort string) (deferred bool, effectiveEffort string, err error) {
-	deferred, err = applyAndPersistSessionModel(ctx, sessionID, modelID)
-	if err != nil {
-		return false, "", err
-	}
-	// A model switch invalidates the session's effort pick: it was made for
-	// the previous model and its level may not even exist here (issue #552).
-	// Unless the request carried an explicit pick for the new model, resolve
-	// what this model will actually run so the client can show it — instead
-	// of leaving the old level on the chip while the agent silently uses a
-	// different one.
-	if thinkingEffort == "" {
-		return deferred, switchSessionEffortToModel(sessionID, modelID, deferred), nil
-	}
-	if !deferred {
-		// The pick was validated and persisted before the switch, but its RPC
-		// was deliberately withheld until the agent is on the new model.
-		forwardSessionConfigOption(sessionID, "thought_level", thinkingEffort)
-	}
-	return deferred, "", nil
-}
-
 // switchSessionEffortToModel re-derives the session's thinking effort after a
 // model switch and pushes it to the live agent.
 //
@@ -767,9 +757,17 @@ func switchSessionEffortToModel(sessionID, modelID string, deferred bool) string
 		persistContextStateThinkingEffortChange(sessionID, "", modelID)
 		return ""
 	}
-	// A remembered pick may not exist on this model (OpenCode's lists differ per
-	// model). Applying it would be rejected on every turn, so clear the pick
-	// instead of leaving a value that can never take effect.
+	// The registry's level list is PER MODEL, and after a DEFERRED switch it still
+	// describes the model the agent is running right now — not the one the user
+	// just picked. Validating against it here made both directions wrong:
+	// a level only the NEW model offers was cleared (user loses the pick), and a
+	// level only the OLD model offers was kept (rejected on every later turn).
+	//
+	// So the check only runs when the switch actually happened. In the deferred
+	// case the stored pick is trusted and returned as-is; the next prompt
+	// re-applies the model and the agent stays authoritative about the level
+	// (the ACP layer reports a refusal instead of recording it, so a bad pick
+	// cannot get stuck).
 	//
 	// The registry's list is agent-level and, before this fix, was only updated
 	// when a model advertised an ID it had not seen — a narrower model's list
@@ -778,20 +776,22 @@ func switchSessionEffortToModel(sessionID, modelID string, deferred bool) string
 	// happily accept a level the current model rejects. The registry now also
 	// tracks removals, and an UNKNOWN list (nothing advertised yet) must not
 	// discard the user's choice — the agent stays authoritative in that case.
-	if levels := ai.GetAgentCapabilityRegistry().GetThinkingEffortState(agent.ID, ""); levels != nil && len(levels.AvailableLevels) > 0 {
-		valid := false
-		for _, l := range levels.AvailableLevels {
-			if l.ID == effort {
-				valid = true
-				break
+	if !deferred {
+		if levels := ai.GetAgentCapabilityRegistry().GetThinkingEffortState(agent.ID, ""); levels != nil && len(levels.AvailableLevels) > 0 {
+			valid := false
+			for _, l := range levels.AvailableLevels {
+				if l.ID == effort {
+					valid = true
+					break
+				}
 			}
-		}
-		if !valid {
-			slog.Info("remembered effort not offered by this model, clearing it",
-				"session_id", sessionID, "agent_id", agent.ID, "model", modelID, "level", effort,
-				"available", len(levels.AvailableLevels))
-			persistContextStateThinkingEffortChange(sessionID, "", modelID)
-			return ""
+			if !valid {
+				slog.Info("remembered effort not offered by this model, clearing it",
+					"session_id", sessionID, "agent_id", agent.ID, "model", modelID, "level", effort,
+					"available", len(levels.AvailableLevels))
+				persistContextStateThinkingEffortChange(sessionID, "", modelID)
+				return ""
+			}
 		}
 	}
 	persistContextStateThinkingEffortChange(sessionID, effort, modelID)
@@ -985,45 +985,46 @@ func applySessionModel(ctx context.Context, sessionID, modelID string) (deferred
 // Reports whether the effort was accepted. A rejected level is NOT persisted,
 // so the client must be told — otherwise it keeps showing (and re-sending) a
 // pick the server discarded.
-func applySessionConfigSelections(sessionID, modeID, thinkingEffort, modelKey string) (effortAccepted bool) {
+func applySessionConfigSelections(sessionID, modeID, thinkingEffort, modelKey string, validate bool) (effortAccepted, effortRemembered bool) {
 	if modeID != "" {
 		// Persist to DB context_state so it survives restarts.
 		persistContextStateModeChange(sessionID, modeID)
 		forwardSessionConfigOption(sessionID, "mode", modeID)
 	}
 	if thinkingEffort == "" {
-		return true
+		return true, true
 	}
 	{
 		modelID := modelKey
 		if modelID == "" {
 			modelID = currentEffortModelKey(sessionID)
 		}
-		// Validate only when the model is not changing in this same request: the
-		// registry still holds the previous model's level list (see
-		// rememberEffortForModel).
-		//
 		// Validate BEFORE persisting: a level the agent does not advertise must
 		// not become a stored user pick. The ACP layer no longer records a
 		// rejected value (so it stays retryable), which means a persisted
 		// invalid pick would be re-sent on EVERY turn and shown by GET as the
 		// user's choice, with no way for them to notice.
-		if !rememberEffortForModel(sessionID, modelID, thinkingEffort, modelKey == "") {
+		//
+		// `validate` is false exactly when the registry describes a model other
+		// than the one the pick belongs to: either the same request switches
+		// models (the registry still holds the previous list) or the switch was
+		// deferred because the agent was busy. Validating there is wrong in BOTH
+		// directions — a level only the new model offers gets cleared, and a
+		// level only the old model offers gets kept and rejected forever.
+		accepted, remembered := rememberEffortForModel(sessionID, modelID, thinkingEffort, validate)
+		if !accepted {
 			slog.Info("thinking effort not accepted for this agent/model, not persisting the pick",
 				"session_id", sessionID, "model", modelID, "level", thinkingEffort)
-			return false
+			return false, false
 		}
 		persistContextStateThinkingEffortChange(sessionID, thinkingEffort, modelID)
-		// The RPC is NOT sent here when a model switch rides the same request:
-		// the agent is still on the OLD model until applyAndPersistSessionModel
-		// runs (model is applied last), so pushing the new model's level now
-		// would target the wrong model — and could be rejected for a level the
-		// old model does not offer. The caller forwards it after the switch.
-		if modelKey == "" {
-			forwardSessionConfigOption(sessionID, "thought_level", thinkingEffort)
-		}
+		// Forward unconditionally: callers apply effort only when the agent is
+		// already on the model this pick belongs to (see ServeAISessionUpdate,
+		// which switches the model FIRST). Pushing a level at the previous model
+		// is what used to make a legitimate pick look like a rejection.
+		forwardSessionConfigOption(sessionID, "thought_level", thinkingEffort)
+		return true, remembered
 	}
-	return true
 }
 
 // currentEffortModelKey resolves which model a pick made right now belongs to.
@@ -1047,10 +1048,14 @@ func currentEffortModelKey(sessionID string) string {
 // rememberEffortForModel stores the pick on the agent, keyed by model, so new
 // sessions and future switches back to that model restore it. It reports
 // whether the level is acceptable, so the caller can avoid persisting a pick
-// the agent would refuse.
+// the agent would refuse, and whether the memory was actually WRITTEN.
 //
-// Failures are logged, not surfaced: the caller still applies the level to this
-// turn, so a storage problem does not block the user's click.
+// A storage failure must not block the user's click, so the in-memory copy is
+// still updated (this session and every later one on this process behave
+// correctly). But it must not be reported as success either: the pick dies with
+// the process, and the user's only symptom would be "I picked max last time,
+// why is it back to the default?" with nothing anywhere to explain it. The
+// caller turns remembered=false into a response flag the client can surface.
 //
 // validate is false when the same request also switches models: the ACP
 // registry still advertises the PREVIOUS model's levels at that point (the
@@ -1059,38 +1064,42 @@ func currentEffortModelKey(sessionID string) string {
 // there would silently drop a legitimate pick (e.g. "low" while switching to a
 // model that supports it). The agent itself is authoritative and rejects a
 // level it cannot run, which the ACP layer now reports instead of recording.
-func rememberEffortForModel(sessionID, modelID, level string, validate bool) bool {
+func rememberEffortForModel(sessionID, modelID, level string, validate bool) (accepted, remembered bool) {
 	if modelID == "" {
-		return true
+		return true, true
 	}
 	agentID := service.GetSessionAgentID(sessionID)
 	agent := model.GetAgent(agentID)
 	if agent == nil {
-		return true
+		return true, true
 	}
 	if validate && !isValidThinkingEffort(agent, level, sessionID) {
 		slog.Info("thinking effort pick not valid for agent, skipping per-model memory",
 			"session_id", sessionID, "agent_id", agentID, "model", modelID, "level", level)
-		return false
+		return false, false
 	}
 	// Already remembered: skip the write. This is the picker's click path, so it
 	// is not hot, but a no-op save would still take the process-global write
 	// mutex and republish the agent pointer for nothing.
 	if agent.ThinkingEffortByModel[modelID] == level {
-		return true
+		return true, true
 	}
+	remembered = true
 	if err := service.PatchAgentFields(agentID, service.AgentPatch{
 		ThinkingEffortForModel: &service.ThinkingEffortModelPatch{ModelID: modelID, Level: &level},
 	}); err != nil {
-		slog.Warn("failed to remember thinking effort for model", "session_id", sessionID, "agent_id", agentID, "model", modelID, "error", err)
-		return true
+		slog.Warn("failed to remember thinking effort for model (kept in memory only)",
+			"session_id", sessionID, "agent_id", agentID, "model", modelID, "error", err)
+		remembered = false
 	}
 	// Publish the change to in-memory readers (copy-on-write, same as the
 	// settings PATCH path — readers hold the previous *Agent without a lock).
+	// Runs even when the DB write failed: the user's choice must take effect for
+	// this session regardless, and the caller reports the durability gap.
 	model.UpdateAgent(agentID, func(a *model.Agent) {
 		a.SetThinkingEffortForModel(modelID, level)
 	})
-	return true
+	return true, remembered
 }
 
 // applyAndPersistSessionModel applies a model selection at CLICK time and

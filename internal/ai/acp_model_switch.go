@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+
+	"clawbench/internal/model"
 )
 
 // ModelSwitchError describes a rejected model switch, so a caller (the HTTP
@@ -174,18 +176,31 @@ func (c *ACPConn) applyModelSelection(ctx context.Context, acpSID, value string)
 // deliberate pin the agent's advertised list cannot express.
 //
 // The agent's model list is authoritative for what it can run through ACP, but
-// it is NOT the set of values a session may legitimately be pinned to. Command
-// Code with a BYOK provider is the concrete case: the provider and model live in
-// ~/.commandcode/config.json, and availableModels() always returns the vendor
-// catalog, so "minimax/minimax-m2.7" is absent from all 92 advertised options.
-// Pushing an advertised model over that binding does not "switch models" — it
-// silently reroutes the next request to the vendor gateway, which rejects the
-// BYOK placeholder key with `POST /alpha/generate → 401`.
+// it is NOT the set of values a session may legitimately be pinned to. Two
+// concrete cases, and the second is why the tier check exists:
+//
+//   - Command Code with a BYOK provider: the provider and model live in
+//     ~/.commandcode/config.json, and availableModels() always returns the
+//     vendor catalog, so "minimax/minimax-m2.7" is absent from all 92 advertised
+//     options. Pushing an advertised model over that binding does not "switch
+//     models" — it silently reroutes the next request to the vendor gateway,
+//     which rejects the BYOK placeholder key with `POST /alpha/generate → 401`.
+//
+//   - Claude (claude-agent-acp): the adapter advertises TIER ALIASES — `opus`,
+//     `sonnet`, `haiku` — while the picker and PATCH carry the CLI's concrete
+//     ids (`claude-sonnet-4-6`), because model.ResolveModels aligns an alias to
+//     its CLI skeleton entry and keeps the concrete id. The IDs therefore never
+//     match, and an ID-equality check silently disabled model switching for the
+//     whole backend (UI changed, PATCH returned OK, the next turn ran the old
+//     model). The adapter's set_config_option resolves a concrete id back to its
+//     tier (`resolveModelPreference`), so "the value's tier is advertised" is
+//     exactly the right condition for expressibility.
 //
 // The rule is therefore "never overwrite a selection the agent did not offer",
-// which is safe for every backend: a value absent from the list either came from
-// out-of-band configuration (leave it) or is stale (the next explicit user
-// selection will replace it, and that value WILL be in the list).
+// where "offer" means the value OR its tier is in the list. A value that matches
+// neither either came from out-of-band configuration (leave it) or is stale (the
+// next explicit user selection will replace it, and that value WILL be in the
+// list).
 //
 // Unknown list (capabilities not extracted yet) returns false so the first turn
 // still applies the stored selection — refusing there would skip the switch for
@@ -200,6 +215,11 @@ func (c *ACPConn) keepUnlistedModel(value string) bool {
 		return false
 	}
 	if reg.IsModelAvailable(agentID, value) {
+		return false
+	}
+	// Tier-alias advertised list: a concrete CLI id is still expressible when
+	// the agent offers its tier.
+	if tier, ok := model.TierAliasForModelID(value); ok && reg.IsModelAvailable(agentID, tier) {
 		return false
 	}
 	slog.Info("acp conn: keeping model not offered by the agent (out-of-band pin)",

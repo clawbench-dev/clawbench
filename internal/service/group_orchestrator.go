@@ -1462,6 +1462,18 @@ func (o *GroupOrchestrator) cruiseFreeRound(ctx context.Context, s groupTurnSetu
 		if res.CancelReason != "" || res.Err != "" {
 			return res
 		}
+		// The switch is live (see cruiseOn): a turn can run for many minutes and
+		// this loop is the ONLY exit for free mode once cruise starts. Without
+		// this check, turning cruise off mid-turn had no effect until the
+		// member-speech cap (default 100) stopped the relay — the user watched
+		// the group keep talking after switching it off.
+		//
+		// Returning res (not an empty DrainResult) keeps whatever the last
+		// discussion round produced, so runLoop's `cruiseOn() == false` branch
+		// announces the user's turn exactly as an un-cruised ending would.
+		if !o.cruiseOn() {
+			return res
+		}
 		if o.checkSpeechCap() {
 			return res
 		}

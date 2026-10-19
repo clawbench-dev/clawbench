@@ -1241,6 +1241,62 @@ describe('SessionDrawer', () => {
       expect(mockCompactMember).toHaveBeenCalledWith('member-1', 'member-1')
     })
 
+    // A CLI-transport member has no slash-command channel, so /compact would
+    // reach the model as prose; the server answers 400. Offering the button only
+    // produced an error AFTER the click.
+    it('does not offer compaction for a CLI-transport member', async () => {
+      mockApiGet.mockResolvedValue({ ...targetPayload, transport: 'cli' })
+      const wrapper = mountDrawer({ targetSessionId: 'member-1' })
+      await nextTick()
+      await nextTick()
+      await wrapper.findAll('.model-tab')[4].trigger('click')
+      await nextTick()
+      const detail = wrapper.findComponent({ name: 'ContextUsageDetail' })
+      expect(detail.exists()).toBe(true)
+      expect(detail.props('showCompact')).toBe(false)
+    })
+
+    it('offers compaction for an ACP member', async () => {
+      const wrapper = mountTargeted()
+      await nextTick()
+      await nextTick()
+      await wrapper.findAll('.model-tab')[4].trigger('click')
+      await nextTick()
+      expect(wrapper.findComponent({ name: 'ContextUsageDetail' }).props('showCompact')).toBe(true)
+    })
+
+    // The panel can be pointed at another member while a compaction is still in
+    // flight. Its spinner/disabled state belongs to the member it was started
+    // for — otherwise the new member looks busy and its button stays dead until
+    // the first one finishes.
+    it('does not carry a compaction spinner across members', async () => {
+      let resolveCompact!: (v: unknown) => void
+      mockCompactMember.mockReturnValue(new Promise((r) => { resolveCompact = r }))
+
+      mockApiGet.mockResolvedValue(targetPayload)
+      const wrapper = mountDrawer({ targetSessionId: 'member-1' })
+      await nextTick()
+      await nextTick()
+      await wrapper.findAll('.model-tab')[4].trigger('click')
+      await nextTick()
+      wrapper.findComponent({ name: 'ContextUsageDetail' }).vm.$emit('compact')
+      await nextTick()
+      expect(wrapper.findComponent({ name: 'ContextUsageDetail' }).props('compacting')).toBe(true)
+
+      // Point the drawer at a DIFFERENT member: it must render as idle.
+      mockApiGet.mockResolvedValue({ ...targetPayload, sessionId: 'member-2' })
+      await wrapper.setProps({ targetSessionId: 'member-2' })
+      await nextTick()
+      await nextTick()
+      expect(wrapper.findComponent({ name: 'ContextUsageDetail' }).props('compacting')).toBe(false)
+
+      // The first member's result must not touch the panel now on screen.
+      resolveCompact({ used: 100, size: 100000 })
+      await nextTick()
+      await nextTick()
+      expect(wrapper.findComponent({ name: 'ContextUsageDetail' }).props('compacting')).toBe(false)
+    })
+
     it('toggles cruise on the member row via the targeted endpoint', async () => {
       const wrapper = mountTargeted()
       await nextTick()

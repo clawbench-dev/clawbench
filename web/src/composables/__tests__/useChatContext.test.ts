@@ -639,3 +639,63 @@ describe('useChatContext', () => {
     })
   })
 })
+
+// ── Draft persistence across a reload ──
+//
+// The draft map is module-level, so it survives session/project switches but
+// NOT a page reload. That made the session picker's "add" path lie: it reported
+// "added to that session's input", and after a refresh the card was gone with no
+// trace. Drafts are now mirrored into sessionStorage (tab-scoped: a second tab
+// must not inherit another tab's half-composed attachments).
+describe('attachment draft persistence', () => {
+  const KEY = 'clawbench-attachment-drafts'
+  let pctx: ReturnType<typeof useChatContext>
+
+  beforeEach(() => {
+    sessionStorage.clear()
+    pctx = useChatContext()
+    pctx.clearAll()
+  })
+
+  it('persists a draft staged into another session', () => {
+    pctx.stageQuoteIntoDraft('persist-1', { text: 'x', filePath: '/x.ts', language: 'ts', startLine: 1, endLine: 1 }, 'n')
+    pctx.stageAttachmentIntoDraft('persist-1', { path: '/x.txt' })
+
+    const raw = sessionStorage.getItem(KEY)
+    expect(raw, 'the draft must reach storage, or a reload loses it').toBeTruthy()
+    const parsed = JSON.parse(raw!) as Record<string, { files: Array<{ path: string }>; quotes: Array<{ filePath: string }> }>
+    expect(parsed['persist-1'].files.map(f => f.path)).toEqual(['/x.txt'])
+    expect(parsed['persist-1'].quotes.map(q => q.filePath)).toEqual(['/x.ts'])
+  })
+
+  it('drops the entry from storage when the draft is discarded', () => {
+    pctx.stageAttachmentIntoDraft('persist-2', { path: '/y.txt' })
+    expect(sessionStorage.getItem(KEY)).toBeTruthy()
+
+    pctx.discardAttachmentDraft('persist-2')
+    const parsed = JSON.parse(sessionStorage.getItem(KEY) || '{}') as Record<string, unknown>
+    expect(parsed['persist-2']).toBeUndefined()
+  })
+
+  it('removes the storage key entirely once no drafts remain', () => {
+    // The store is a module singleton, so earlier tests left drafts behind.
+    // Drain them through the same API a session teardown uses, which is also the
+    // invariant under test: the LAST removal must drop the key, not leave `{}`.
+    pctx.stageAttachmentIntoDraft('persist-3', { path: '/z.txt' })
+    const stored = JSON.parse(sessionStorage.getItem(KEY) || '{}') as Record<string, unknown>
+    for (const id of Object.keys(stored)) pctx.discardAttachmentDraft(id)
+
+    expect(sessionStorage.getItem(KEY), 'an empty map must not leave an empty object behind').toBeNull()
+  })
+
+  it('survives a corrupted stored value without breaking staging', () => {
+    // A bad write from an older build (or a partial write) must not make the
+    // module throw on load: staging has to keep working in memory.
+    sessionStorage.setItem(KEY, '{not json')
+    expect(() => {
+      pctx.stageAttachmentIntoDraft('persist-4', { path: '/w.txt' })
+      pctx.restoreAttachments('persist-4')
+    }).not.toThrow()
+    expect(pctx.attachedFiles.value.map(f => f.path)).toEqual(['/w.txt'])
+  })
+})

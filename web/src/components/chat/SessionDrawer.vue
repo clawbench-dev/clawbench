@@ -304,6 +304,8 @@ const target = ref(null) // GET /api/ai/session/settings payload
 const targetUsage = ref(null)
 const compacting = ref(false)
 const compactError = ref('')
+// The target session the in-flight compaction belongs to ('' when idle).
+const compactingFor = ref('')
 
 const effectiveModelId = computed(() => isTargeted.value ? (target.value?.modelId || '') : currentModelId.value)
 const effectiveModeId = computed(() => isTargeted.value ? (target.value?.modeState?.currentModeId || '') : currentModeId.value)
@@ -316,6 +318,18 @@ const effectiveEfforts = computed(() => isTargeted.value ? (target.value?.thinki
 
 /** Load the targeted session's state. No-op for the single-chat path. */
 async function loadTarget() {
+  // A compaction belongs to the member it was started for. Opening ANOTHER
+  // member's panel while one is still running used to keep the spinner and the
+  // disabled button, so the new member looked busy when it was idle (and the
+  // button stayed dead until the first member's compaction finished).
+  //
+  // Guarded on an actual CHANGE: re-opening the SAME member's drawer during its
+  // compaction must keep the spinner, or the panel would claim it is idle while
+  // the request is still in flight.
+  if (props.targetSessionId !== compactingFor.value) {
+    compacting.value = false
+    compactError.value = ''
+  }
   if (!props.targetSessionId) {
     target.value = null
     targetUsage.value = null
@@ -361,20 +375,43 @@ const hasUsage = computed(() => (usageSnapshot.value?.size ?? 0) > 0)
 // Compaction is offered for a group member (it is a group-only action) and for
 // the current single chat. A member that never reported a window has nothing to
 // compact, and a left member cannot run a turn.
-const canCompactHere = computed(() => hasUsage.value && (!isTargeted.value || !target.value?.isGroupMember ? !isTargeted.value : true))
+//
+// A CLI-transport member must NOT offer it either: /compact is an ACP slash
+// command, and a CLI agent has no command channel — sending the text would reach
+// the model as prose. The server rejects that case with a 400, so showing the
+// button only produced an error after the click.
+const canCompactHere = computed(() => {
+  if (!hasUsage.value) return false
+  if (!isTargeted.value) return true
+  if (!target.value?.isGroupMember) return false
+  const transport = target.value?.transport || ''
+  // Empty transport means "the member row does not override the agent's", and
+  // the server resolves that from the agent; only an explicit "cli" is known to
+  // be uncompactable here.
+  return transport !== 'cli'
+})
 
 async function onCompact() {
   if (!isTargeted.value || compacting.value) return
+  // Record WHICH member is compacting: the panel can be pointed at another one
+  // while this request is still running, and the state must not leak across.
+  const sid = target.value?.sessionId || props.targetSessionId
+  compactingFor.value = props.targetSessionId
   compacting.value = true
   compactError.value = ''
   try {
-    const usage = await compactGroupMember(target.value?.sessionId || props.targetSessionId, props.targetSessionId)
+    const usage = await compactGroupMember(sid, props.targetSessionId)
     if (usage) targetUsage.value = usage
     emit('changed')
   } catch (err) {
-    compactError.value = err instanceof Error ? err.message : String(err)
+    // Only surface the error if the panel still shows this member.
+    if (props.targetSessionId === compactingFor.value) {
+      compactError.value = err instanceof Error ? err.message : String(err)
+    }
   } finally {
-    compacting.value = false
+    // Same guard: a result for a member the user has navigated away from must
+    // not clear (or set) the state of the one now on screen.
+    if (props.targetSessionId === compactingFor.value) compacting.value = false
   }
 }
 

@@ -448,12 +448,17 @@ type StreamEvent struct {
 	// the block's identity at creation time instead of having to infer it later
 	// from a DB snapshot — inference that mispaired blocks whenever the live
 	// placeholder and the DB disagreed on ordering.
-	ThinkID        string                 // thinking: stable block identity, assigned when the block opens
-	Reason         string                 // Structured reason code for i18n (e.g. "disconnect", "timeout", "parse_error")
-	ErrorCode      int                    // Structured error code (e.g. ACP JSON-RPC code -32603)
-	HTTPStatus     int                    // Upstream HTTP status when available (e.g. 500)
-	ErrorSource    string                 // "agent" | "clawbench" | "network"
-	ErrorDetail    string                 // Agent's own failure reason when the code alone is uninformative (e.g. CodeBuddy reports -32603 for every internal error); may be empty
+	ThinkID     string // thinking: stable block identity, assigned when the block opens
+	Reason      string // Structured reason code for i18n (e.g. "disconnect", "timeout", "parse_error")
+	ErrorCode   int    // Structured error code (e.g. ACP JSON-RPC code -32603)
+	HTTPStatus  int    // Upstream HTTP status when available (e.g. 500)
+	ErrorSource string // "agent" | "clawbench" | "network"
+	ErrorDetail string // Agent's own failure reason when the code alone is uninformative (e.g. CodeBuddy reports -32603 for every internal error); may be empty
+	// LoginCmd is the one-off sign-in command the user must run in a terminal
+	// (e.g. "cmdc login"). Set only on ReasonAuthRequired, so the client can
+	// offer a "copy the command" action instead of making the user retype it
+	// out of the prose message. Empty when the backend declares no LoginCmd.
+	LoginCmd       string
 	Meta           *Metadata              // Metadata (Type=metadata)
 	Error          string                 // Error message (Type=error)
 	Tool           *ToolCall              // Tool call info (Type=tool_use, Type=tool_result)

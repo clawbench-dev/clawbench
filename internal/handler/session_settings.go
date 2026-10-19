@@ -113,6 +113,29 @@ func ServeSessionSettings(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// requireMemberConfigWritable refuses a config write while the member's
+// connection is busy, writing the response itself.
+//
+// A group member's connection is busy during a group turn, and compaction drives
+// it directly. Writing config mid-turn would interleave with the running prompt
+// (the agent rejects it, or worse, applies it to the turn in flight). Refuse
+// instead of silently deferring: the drawer is interactive, so the user can
+// retry when the group is idle. Non-member sessions are always writable here.
+func requireMemberConfigWritable(w http.ResponseWriter, r *http.Request, sessionID string) bool {
+	if !service.IsGroupMemberSession(sessionID) {
+		return true
+	}
+	if parent := service.ResolveGroupTimelineID(sessionID); parent != sessionID && service.IsSessionRunning(parent) {
+		writeLocalizedErrorf(w, r, http.StatusConflict, "GroupRunning")
+		return false
+	}
+	if service.IsGroupMemberCompacting(sessionID) {
+		writeLocalizedErrorf(w, r, http.StatusConflict, "GroupMemberCompacting")
+		return false
+	}
+	return true
+}
+
 // ServeSessionSettingsUpdate applies one setting to an arbitrary session,
 // including a group MEMBER row.
 //
@@ -156,20 +179,8 @@ func ServeSessionSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// A group member's connection is busy during a group turn, and compaction
-	// drives it directly. Writing config mid-turn would interleave with the
-	// running prompt (the agent rejects it, or worse, applies it to the turn in
-	// flight). Refuse instead of silently deferring: the drawer is interactive,
-	// so the user can retry when the group is idle.
-	if service.IsGroupMemberSession(req.SessionID) {
-		if parent := service.ResolveGroupTimelineID(req.SessionID); parent != req.SessionID && service.IsSessionRunning(parent) {
-			writeLocalizedErrorf(w, r, http.StatusConflict, "GroupRunning")
-			return
-		}
-		if service.IsGroupMemberCompacting(req.SessionID) {
-			writeLocalizedErrorf(w, r, http.StatusConflict, "GroupMemberCompacting")
-			return
-		}
+	if !requireMemberConfigWritable(w, r, req.SessionID) {
+		return
 	}
 
 	up := sessionUpdateRequest{
@@ -185,24 +196,28 @@ func ServeSessionSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 	// ordering, per-model effort memory, the cruise→auto-approve hard default,
 	// and the "deferred vs rejected" distinction. Duplicating it here is how the
 	// two paths would drift.
-	effortModelKey := ""
-	if req.ModelID != "" {
-		effortModelKey = req.ModelID
-	}
-	effortAccepted := applySessionConfigSelections(req.SessionID, req.ModeID, req.ThinkingEffort, effortModelKey)
 	if err := up.applyNonModelFields(req.SessionID); err != nil {
 		writeLocalizedError(w, r, model.Internal(err))
 		return
 	}
+	// Model first, then the effort pick that belongs to it: the registry's level
+	// list is per model, so validating a pick before the switch compares it
+	// against the previous model's list (see ServeAISessionUpdate).
 	deferred := false
 	effectiveEffort := ""
 	if req.ModelID != "" {
 		var err error
-		deferred, effectiveEffort, err = applySessionModelAndEffort(r.Context(), req.SessionID, req.ModelID, req.ThinkingEffort)
+		deferred, err = applyAndPersistSessionModel(r.Context(), req.SessionID, req.ModelID)
 		if err != nil {
 			writeModelSwitchError(w, r, err)
 			return
 		}
+	}
+	effortAccepted, effortRemembered := applySessionConfigSelections(
+		req.SessionID, req.ModeID, req.ThinkingEffort, req.ModelID, !deferred,
+	)
+	if req.ModelID != "" && req.ThinkingEffort == "" {
+		effectiveEffort = switchSessionEffortToModel(req.SessionID, req.ModelID, deferred)
 	}
 	resp := map[string]any{
 		"ok":                  true,
@@ -211,6 +226,9 @@ func ServeSessionSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if effectiveEffort != "" {
 		resp["thinkingEffort"] = effectiveEffort
+	}
+	if !effortRemembered {
+		resp["thinkingEffortNotRemembered"] = true
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

@@ -4727,3 +4727,98 @@ func TestUpdateChatQuoteNote_Handler_RejectsForeignSession(t *testing.T) {
 	w := callHandler(UpdateChatQuoteNote, req)
 	assertStatus(t, w, http.StatusForbidden)
 }
+
+// Sending is "run a turn with this agent", so an EXPLICIT pick must obey the
+// same `disabled` / project-scope gates as every creation entry. Before this,
+// both switches were pure UI filters: any open session could POST a disabled or
+// another project's scoped agent id and it would run (spending money, executing
+// tools, using that agent's custom system prompt).
+func TestAIChat_ExplicitAgentGate(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "gate", "", "", "default", "chat")
+	require.NoError(t, err)
+
+	origAgents := model.Agents
+	defer func() { model.Agents = origAgents }()
+
+	otherProjectID, err := store.ProjectIDForPath("/tmp/agent-gate-other-project")
+	require.NoError(t, err)
+
+	model.Agents = map[string]*model.Agent{
+		"codebuddy": {ID: "codebuddy", Name: "CB", Backend: "codebuddy"},
+		"off":       {ID: "off", Name: "Off", Backend: "codebuddy", Disabled: true},
+		"scoped":    {ID: "scoped", Name: "Scoped", Backend: "codebuddy", ProjectID: &otherProjectID},
+	}
+
+	for _, tc := range []struct {
+		name   string
+		agent  string
+		msgKey string
+	}{
+		{"disabled agent", "off", "AgentDisabled"},
+		{"agent scoped to another project", "scoped", "AgentNotInProject"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := map[string]any{"message": "hi", "agentId": tc.agent}
+			req := newRequest(t, http.MethodPost, "/api/ai/chat?session_id="+sessionID, body)
+			withProjectCookie(req, env.ProjectDir)
+
+			w := callHandler(AIChat, req)
+			assertStatus(t, w, http.StatusBadRequest)
+			var resp map[string]any
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			assert.Equal(t, tc.msgKey, resp["msgKey"])
+
+			// Nothing may have been persisted: the turn must not have started.
+			msgs, err := service.GetChatHistory(env.ProjectDir, "codebuddy", sessionID)
+			require.NoError(t, err)
+			assert.Empty(t, msgs, "a rejected send must not write a user message")
+		})
+	}
+}
+
+// The queue endpoint is the other send path: it starts a turn as soon as the
+// session is idle, so it needs the same gate.
+func TestQueueEnqueue_ExplicitAgentGate(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "gate-q", "", "", "default", "chat")
+	require.NoError(t, err)
+
+	origAgents := model.Agents
+	defer func() { model.Agents = origAgents }()
+
+	otherProjectID, err := store.ProjectIDForPath("/tmp/agent-gate-q-other")
+	require.NoError(t, err)
+
+	model.Agents = map[string]*model.Agent{
+		"codebuddy": {ID: "codebuddy", Name: "CB", Backend: "codebuddy"},
+		"off":       {ID: "off", Name: "Off", Backend: "codebuddy", Disabled: true},
+		"scoped":    {ID: "scoped", Name: "Scoped", Backend: "codebuddy", ProjectID: &otherProjectID},
+	}
+
+	for _, tc := range []struct {
+		name   string
+		agent  string
+		msgKey string
+	}{
+		{"disabled agent", "off", "AgentDisabled"},
+		{"agent scoped to another project", "scoped", "AgentNotInProject"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := map[string]any{"message": "hi", "agentId": tc.agent}
+			req := newRequest(t, http.MethodPost, "/api/ai/queue?session_id="+sessionID, body)
+			withProjectCookie(req, env.ProjectDir)
+
+			w := callHandler(handleQueueEnqueue, req)
+			assertStatus(t, w, http.StatusBadRequest)
+			var resp map[string]any
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			assert.Equal(t, tc.msgKey, resp["msgKey"])
+			assert.Equal(t, 0, service.GetQueuedCount(sessionID), "a rejected send must not be queued")
+		})
+	}
+}

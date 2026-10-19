@@ -1,6 +1,7 @@
 package service_test
 
 import (
+	"database/sql"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -175,4 +176,22 @@ func TestDuplicateAgent_CopiesThinkingEffortByModel(t *testing.T) {
 	}
 	require.NotNil(t, found)
 	assert.Equal(t, map[string]string{"glm-5.3": "max"}, found.ThinkingEffortByModel)
+}
+
+// TestPatchThinkingEffortForModel_MissingAgentFails pins that a write against a
+// vanished agent row reports an error instead of success.
+//
+// Reporting nil told the caller the pick was remembered when nothing was
+// written: the level still applied to the live session (the in-memory agent was
+// updated), so the only symptom appeared later — a new session or a restart
+// silently fell back to the agent's own default, with nothing to explain it.
+func TestPatchThinkingEffortForModel_MissingAgentFails(t *testing.T) {
+	setupTestDBForAgents(t)
+
+	level := "max"
+	err := service.PatchAgentFields("no-such-agent", service.AgentPatch{
+		ThinkingEffortForModel: &service.ThinkingEffortModelPatch{ModelID: "glm-5.3", Level: &level},
+	})
+	require.Error(t, err, "a missing agent row must not be reported as a successful save")
+	assert.ErrorIs(t, err, sql.ErrNoRows, "the caller needs to recognize the missing-row case")
 }

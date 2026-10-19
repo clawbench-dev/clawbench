@@ -204,6 +204,10 @@ type SummaryWarning struct {
 	HTTPStatus  int    `json:"http_status,omitempty"`  // upstream HTTP status when available (e.g. 500)
 	ErrorSource string `json:"error_source,omitempty"` // "agent" | "clawbench" | "network"
 	ErrorDetail string `json:"error_detail,omitempty"` // agent's own failure reason when the code alone is uninformative (e.g. CodeBuddy reports -32603 for every internal error)
+	// LoginCmd mirrors ContentBlock.LoginCmd: the banner survives the summary
+	// view through this struct, so an auth_required banner must keep its copy
+	// action there too.
+	LoginCmd string `json:"login_cmd,omitempty"`
 }
 
 // UnmarshalJSON accepts both the current object format
@@ -371,12 +375,17 @@ type ContentBlock struct {
 	// trace in the streaming row, so a session switch lost its already-emitted
 	// prefix and the next delta opened a second, done-less block that spun
 	// forever. Only ever set on the streaming row; Finalize clears it.
-	InProgress  bool           `json:"in_progress,omitempty"`  // thinking: slim marker for a still-streaming block
-	Reason      string         `json:"reason,omitempty"`       // structured reason code for i18n (e.g. "disconnect", "timeout", "parse_error")
-	ErrorCode   int            `json:"error_code,omitempty"`   // structured error code (e.g. ACP JSON-RPC code -32603)
-	HTTPStatus  int            `json:"http_status,omitempty"`  // upstream HTTP status when available (e.g. 500)
-	ErrorSource string         `json:"error_source,omitempty"` // "agent" | "clawbench" | "network"
-	ErrorDetail string         `json:"error_detail,omitempty"` // agent's own failure reason when the code alone is uninformative (e.g. CodeBuddy reports -32603 for every internal error)
+	InProgress  bool   `json:"in_progress,omitempty"`  // thinking: slim marker for a still-streaming block
+	Reason      string `json:"reason,omitempty"`       // structured reason code for i18n (e.g. "disconnect", "timeout", "parse_error")
+	ErrorCode   int    `json:"error_code,omitempty"`   // structured error code (e.g. ACP JSON-RPC code -32603)
+	HTTPStatus  int    `json:"http_status,omitempty"`  // upstream HTTP status when available (e.g. 500)
+	ErrorSource string `json:"error_source,omitempty"` // "agent" | "clawbench" | "network"
+	ErrorDetail string `json:"error_detail,omitempty"` // agent's own failure reason when the code alone is uninformative (e.g. CodeBuddy reports -32603 for every internal error)
+	// LoginCmd is the one-off sign-in command for an auth_required failure
+	// (e.g. "cmdc login"). Carried so the banner can offer "copy the command":
+	// re-authenticating is the ONLY fix, and retyping it from localized prose is
+	// error-prone. Empty for every other reason.
+	LoginCmd    string         `json:"login_cmd,omitempty"`
 	Name        string         `json:"name,omitempty"`         // tool name (tool_use)
 	ID          string         `json:"id,omitempty"`           // tool call ID (tool_use)
 	Input       map[string]any `json:"input"`                  // tool input (tool_use) — no omitempty: must serialize {} so frontend distinguishes "no data" from "empty input"

@@ -130,6 +130,7 @@ func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 					Reason:      ReasonAuthRequired,
 					ErrorCode:   authErr.Code,
 					ErrorSource: "agent",
+					LoginCmd:    acpLoginCommand(b.agent),
 				})
 				return
 			}
@@ -489,10 +490,7 @@ func asACPAuthRequired(err error) *acp.RequestError {
 // useful than the raw JSON-RPC blob.
 func acpAuthRequiredMessage(agent *model.Agent, reqErr *acp.RequestError) string {
 	loc := i18n.LocalizerForLocale(model.Language)
-	command := ""
-	if spec := model.FindSpecByBackend(agent.Backend); spec != nil {
-		command = spec.LoginCmd
-	}
+	command := acpLoginCommand(agent)
 	if command == "" {
 		// No declared login command: keep the agent's own wording, which usually
 		// names its CLI ("Run `cmd login` in a terminal first."). Joined with a
@@ -501,4 +499,20 @@ func acpAuthRequiredMessage(agent *model.Agent, reqErr *acp.RequestError) string
 		return fmt.Sprintf("%s %s", i18n.T(loc, "ACPAuthRequiredGeneric"), reqErr.Message)
 	}
 	return i18n.T(loc, "ACPAuthRequired", map[string]interface{}{"Command": command})
+}
+
+// acpLoginCommand returns the backend's declared sign-in command, or "".
+//
+// Exported only to this package's event construction: the command is sent as a
+// STRUCTURED field alongside the message so the client can offer "copy the
+// command" instead of scraping it back out of localized prose (which breaks the
+// moment the wording changes or the locale differs).
+func acpLoginCommand(agent *model.Agent) string {
+	if agent == nil {
+		return ""
+	}
+	if spec := model.FindSpecByBackend(agent.Backend); spec != nil {
+		return spec.LoginCmd
+	}
+	return ""
 }

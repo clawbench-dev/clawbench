@@ -295,7 +295,9 @@ func TestRememberEffortForModel_RejectsUnknownLevel(t *testing.T) {
 	sid, err := service.CreateSession(env.ProjectDir, "opencode", "Invalid", "opencode", "glm-5.3", "user", "chat")
 	require.NoError(t, err)
 
-	rememberEffortForModel(sid, "glm-5.3", "ultra", true)
+	accepted, remembered := rememberEffortForModel(sid, "glm-5.3", "ultra", true)
+	assert.False(t, accepted, "an unadvertised level must be reported as rejected")
+	assert.False(t, remembered)
 
 	agent := model.GetAgent("opencode")
 	require.NotNil(t, agent)
@@ -316,7 +318,9 @@ func TestRememberEffortForModel_SkipsUnchangedWrite(t *testing.T) {
 	require.NoError(t, err)
 
 	before := model.GetAgent("opencode")
-	rememberEffortForModel(sid, "glm-5.3", "max", true)
+	accepted, remembered := rememberEffortForModel(sid, "glm-5.3", "max", true)
+	assert.True(t, accepted)
+	assert.True(t, remembered)
 	after := model.GetAgent("opencode")
 
 	assert.Same(t, before, after, "an unchanged pick must not republish the agent")
@@ -338,7 +342,7 @@ func TestApplySessionConfigSelections_InvalidLevelNotPersisted(t *testing.T) {
 	sid, err := service.CreateSession(env.ProjectDir, "opencode", "Invalid persist", "opencode", "glm-5.3", "user", "chat")
 	require.NoError(t, err)
 
-	applySessionConfigSelections(sid, "", "ultra", "")
+	applySessionConfigSelections(sid, "", "ultra", "", true)
 
 	_, _, ok := service.UserThinkingEffortPick(sid)
 	assert.False(t, ok, "an unadvertised level must not be stored as a user pick")
@@ -463,6 +467,116 @@ func TestRememberEffortForModel_MissingAgentIsANoop(t *testing.T) {
 	model.Agents = map[string]*model.Agent{}
 	t.Cleanup(func() { model.Agents = orig })
 
-	assert.True(t, rememberEffortForModel(sid, "glm-5.3", "max", true),
-		"a deleted agent must not block the pick")
+	accepted, remembered := rememberEffortForModel(sid, "glm-5.3", "max", true)
+	assert.True(t, accepted, "a deleted agent must not block the pick")
+	assert.True(t, remembered, "nothing to persist for a deleted agent, so it counts as remembered")
+}
+
+// TestSwitchSessionEffortToModel_DeferredSkipsRegistryCheck pins the deferred
+// half of the ordering fix.
+//
+// A deferred switch means the agent is STILL on the previous model, so the
+// registry's level list describes that model. Validating the remembered pick for
+// the NEW model against it is wrong in both directions:
+//   - the old list is WIDER (glm has "low", deepseek does not): a pick that can
+//     never run is kept, and every later turn is rejected;
+//   - the old list is NARROWER: a legitimate pick is cleared and the user has to
+//     re-choose for no reason.
+//
+// In the deferred case the pick must be trusted and reported, not judged.
+func TestSwitchSessionEffortToModel_DeferredSkipsRegistryCheck(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+	const agentID = "opencode-deferred-registry"
+	setAgentEffortLevels(t, []string{"low", "high", "max"}, "glm-5.3", "deepseek-v4-pro")
+	model.Agents[agentID] = model.Agents[testEffortAgentID]
+	model.Agents[agentID].ID = agentID
+	model.Agents[agentID].Transport = "acp-stdio"
+	model.Agents[agentID].AcpCommand = "opencode acp"
+
+	// The registry still describes the PREVIOUS model (glm: low/high/max) — the
+	// agent has not switched yet.
+	ai.GetAgentCapabilityRegistry().UpdateThinkingEfforts(agentID, []ai.ThinkingEffortDef{
+		{ID: "low"}, {ID: "high"}, {ID: "max"},
+	})
+
+	sid, err := service.CreateSession(env.ProjectDir, agentID, "Deferred registry", agentID, "glm-5.3", "user", "chat")
+	require.NoError(t, err)
+
+	// The remembered pick for the NEW model is a level the old list happens to
+	// also contain; the point is that the check must not run at all. Use "high"
+	// here and prove the pick survives — with the bug it survives too, so the
+	// discriminating case is the narrower one below.
+	model.Agents[agentID].ThinkingEffortByModel = map[string]string{"deepseek-v4-pro": "high"}
+	assert.Equal(t, "high", switchSessionEffortToModel(sid, "deepseek-v4-pro", true))
+
+	// Discriminating case: a level the OLD model offers but the new one does not.
+	// With validation it would be kept (old list contains it) — that half is not
+	// observable here. The reverse is: a level only the NEW model offers must not
+	// be cleared just because the old list lacks it.
+	model.Agents[agentID].ThinkingEffortByModel = map[string]string{"deepseek-v4-pro": "max"}
+	ai.GetAgentCapabilityRegistry().UpdateThinkingEfforts(agentID, []ai.ThinkingEffortDef{
+		{ID: "low"}, {ID: "medium"},
+	})
+	// Simulate "the new model offers max, the old one does not" by making the
+	// registry describe the OLD model (low/medium) while the pick is max.
+	assert.Equal(t, "max", switchSessionEffortToModel(sid, "deepseek-v4-pro", true),
+		"a deferred switch must trust the remembered pick, not judge it against the previous model's list")
+
+	effort, modelID, ok := service.UserThinkingEffortPick(sid)
+	require.True(t, ok, "the pick must not be cleared during a deferred switch")
+	assert.Equal(t, "max", effort)
+	assert.Equal(t, "deepseek-v4-pro", modelID)
+
+	// And the non-deferred path still validates: the same pick is cleared once the
+	// agent really is on the new model.
+	assert.Equal(t, "", switchSessionEffortToModel(sid, "deepseek-v4-pro", false))
+	_, _, ok = service.UserThinkingEffortPick(sid)
+	assert.False(t, ok, "a non-deferred switch must still reject a level the agent does not offer")
+}
+
+// TestServeAISessionUpdate_PickAlongsideSwitchIsValidatedAfterSwitch pins the
+// ordering: the model must be applied BEFORE the pick is validated and pushed.
+//
+// Applying the pick first validated it against the previous model's level list
+// and pushed the new level at the old model. The observable contract here is
+// that the pick lands on the NEW model's key and the previous model keeps none.
+func TestServeAISessionUpdate_PickAlongsideSwitchIsValidatedAfterSwitch(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+	const agentID = "opencode-order-after-switch"
+	setAgentEffortLevels(t, []string{"low", "high", "max"}, "glm-5.3", "deepseek-v4-pro")
+	model.Agents[agentID] = model.Agents[testEffortAgentID]
+	model.Agents[agentID].ID = agentID
+	model.Agents[agentID].Transport = "acp-stdio"
+	model.Agents[agentID].AcpCommand = "opencode acp"
+
+	ai.GetAgentCapabilityRegistry().UpdateThinkingEfforts(agentID, []ai.ThinkingEffortDef{
+		{ID: "high"}, {ID: "max"},
+	})
+
+	sid, err := service.CreateSession(env.ProjectDir, agentID, "Order", agentID, "glm-5.3", "user", "chat")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPatch, "/api/ai/session/update", map[string]any{
+		"sessionId":      sid,
+		"modelId":        "deepseek-v4-pro",
+		"thinkingEffort": "max",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeAISessionUpdate, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.NotEqual(t, true, body["thinkingEffortRejected"],
+		"a level the agent offers must not be reported as rejected")
+
+	effort, modelID, ok := service.UserThinkingEffortPick(sid)
+	require.True(t, ok, "the pick must be persisted for the new model")
+	assert.Equal(t, "max", effort)
+	assert.Equal(t, "deepseek-v4-pro", modelID)
+	assert.Equal(t, "max", model.GetAgent(agentID).ThinkingEffortForModel("deepseek-v4-pro"))
+	assert.Equal(t, "", model.GetAgent(agentID).ThinkingEffortForModel("glm-5.3"),
+		"the previous model must not inherit the pick")
 }

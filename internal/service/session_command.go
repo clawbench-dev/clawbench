@@ -582,6 +582,28 @@ func EnqueueGroupMessage(sessionID, message string, files []model.FileEntry, que
 	if err != nil {
 		return false, err
 	}
+	// A group member compaction drives that member's ACP connection directly and
+	// does NOT hold the group's session-runner claim, so the claim below would
+	// succeed and start a second prompt on the same ACP session. Queue the
+	// message and stop: the compaction's deferred wake starts the consumer once
+	// the member's connection is free.
+	//
+	// This is the SECOND group entry point (the first is POST /api/ai/chat, which
+	// has its own gate). Putting the check here — at the only function that
+	// starts a group drain from a queued row — is what makes it cover every
+	// caller: cross-session "send to this group" and the IM push paths both land
+	// here, and neither went through the chat handler.
+	if GroupHasCompactingMember(sessionID) {
+		ws.EmitToSession(sessionID, ai.StreamEvent{
+			Type: "queue_added",
+			QueueAdded: &ai.QueueAddedData{
+				QueueID: effectiveQueueID,
+				Text:    message,
+				Files:   files,
+			},
+		})
+		return false, nil
+	}
 	runCtx, created := TryClaimSessionRun(sessionID)
 	if !created {
 		// A group loop is live and has been woken; it will claim this message.

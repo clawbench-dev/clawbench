@@ -21,7 +21,8 @@
           <AlertTriangle :size="14" class="error-icon" />
           <span class="error-text">{{ getWarningText(w) }}</span>
           <span v-if="errorSourceLabel(w)" class="error-source-chip" :class="'src-' + (w.error_source || '')">{{ errorSourceLabel(w) }}</span>
-          <button v-if="isResetableReason(w.reason) && !isGroupSession" class="warning-reset-btn" @click.stop="$emit('reset-session', { reason: w.reason })">
+          <LoginCommandButton v-if="w.login_cmd" :command="w.login_cmd" />
+          <button v-else-if="isResetableReason(w.reason) && !isGroupSession" class="warning-reset-btn" @click.stop="$emit('reset-session', { reason: w.reason })">
             {{ t('chat.contentBlocks.resetSession') }}
           </button>
         </div>
@@ -30,7 +31,8 @@
           <AlertTriangle :size="14" class="error-icon" />
           <span class="error-text">{{ getWarningText(w) }}</span>
           <span v-if="errorSourceLabel(w)" class="error-source-chip" :class="'src-' + (w.error_source || '')">{{ errorSourceLabel(w) }}</span>
-          <button v-if="isResetableReason(w.reason) && !isGroupSession" class="warning-reset-btn" @click.stop="$emit('reset-session', { reason: w.reason })">
+          <LoginCommandButton v-if="w.login_cmd" :command="w.login_cmd" />
+          <button v-else-if="isResetableReason(w.reason) && !isGroupSession" class="warning-reset-btn" @click.stop="$emit('reset-session', { reason: w.reason })">
             {{ t('chat.contentBlocks.resetSession') }}
           </button>
         </div>
@@ -42,7 +44,8 @@
           <button v-if="w.reason === 'restart'" class="warning-continue-btn" @click.stop="$emit('send-message', t('chat.contentBlocks.continue'))">
             {{ t('chat.contentBlocks.continue') }}
           </button>
-          <button v-if="isResetableReason(w.reason) && !isGroupSession" class="warning-reset-btn" @click.stop="$emit('reset-session', { reason: w.reason })">
+          <LoginCommandButton v-if="w.login_cmd" :command="w.login_cmd" />
+          <button v-else-if="isResetableReason(w.reason) && !isGroupSession" class="warning-reset-btn" @click.stop="$emit('reset-session', { reason: w.reason })">
             {{ t('chat.contentBlocks.resetSession') }}
           </button>
         </div>
@@ -280,7 +283,8 @@
         <AlertTriangle :size="14" class="error-icon" />
         <span class="error-text">{{ getWarningText(block) }}</span>
         <span v-if="errorSourceLabel(block)" class="error-source-chip" :class="'src-' + (block.error_source || '')">{{ errorSourceLabel(block) }}</span>
-        <button v-if="isResetableReason(block.reason) && !isGroupSession" class="warning-reset-btn" @click.stop="$emit('reset-session', { reason: block.reason })">
+        <LoginCommandButton v-if="block.login_cmd" :command="block.login_cmd" />
+        <button v-else-if="isResetableReason(block.reason) && !isGroupSession" class="warning-reset-btn" @click.stop="$emit('reset-session', { reason: block.reason })">
           {{ t('chat.contentBlocks.resetSession') }}
         </button>
       </div>
@@ -289,7 +293,8 @@
         <AlertTriangle :size="14" class="error-icon" />
         <span class="error-text">{{ getWarningText(block) }}</span>
         <span v-if="errorSourceLabel(block)" class="error-source-chip" :class="'src-' + (block.error_source || '')">{{ errorSourceLabel(block) }}</span>
-        <button v-if="isResetableReason(block.reason) && !isGroupSession" class="warning-reset-btn" @click.stop="$emit('reset-session', { reason: block.reason })">
+        <LoginCommandButton v-if="block.login_cmd" :command="block.login_cmd" />
+        <button v-else-if="isResetableReason(block.reason) && !isGroupSession" class="warning-reset-btn" @click.stop="$emit('reset-session', { reason: block.reason })">
           {{ t('chat.contentBlocks.resetSession') }}
         </button>
       </div>
@@ -301,7 +306,8 @@
         <button v-if="block.reason === 'restart'" class="warning-continue-btn" @click.stop="$emit('send-message', t('chat.contentBlocks.continue'))">
           {{ t('chat.contentBlocks.continue') }}
         </button>
-        <button v-if="isResetableReason(block.reason) && !isGroupSession" class="warning-reset-btn" @click.stop="$emit('reset-session', { reason: block.reason })">
+        <LoginCommandButton v-if="block.login_cmd" :command="block.login_cmd" />
+        <button v-else-if="isResetableReason(block.reason) && !isGroupSession" class="warning-reset-btn" @click.stop="$emit('reset-session', { reason: block.reason })">
           {{ t('chat.contentBlocks.resetSession') }}
         </button>
       </div>
@@ -387,6 +393,7 @@ import { getToolIcon, toolDisplayName } from '@/utils/icons'
 import { teamMemberColorVar } from '@/utils/teamMemberColor'
 import { Brain, ChevronDown, ChevronUp, AlertCircle, AlertTriangle, XCircle, CheckCircle2, Bot, Wrench, Sparkles } from 'lucide-vue-next'
 import TaskChatCard from '@/components/chat/TaskChatCard.vue'
+import LoginCommandButton from '@/components/chat/LoginCommandButton.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { renderMarkdownHtml, renderMermaidInElement } from '@/composables/useMarkdownRenderer.ts'
 import { store } from '@/stores/app.ts'
@@ -510,7 +517,12 @@ function errorSourceLabel(block: any) { return getErrorSourceLabel(block, t) }
 /** Reasons that indicate a stuck/broken agent session — showing a "reset session"
  *  button lets the user recycle the agent connection and recover.
  *  User-initiated cancels (user_cancel/context_cancel) are excluded. */
-const RESETABLE_REASONS = new Set(['empty', 'agent_no_run', 'agent_init_timeout', 'auth_required', 'request_failed', 'refused', 'backend_exit', 'timeout', 'parse_error', 'panic', 'disconnect'])
+// `auth_required` is deliberately absent. The agent refused because nobody is
+// signed in; recycling the connection (what this button does) cannot sign the
+// user in, and the backend excludes it from the retryable reasons for the same
+// reason. That banner gets a "copy the login command" action instead (see
+// LoginCommandButton), driven by the structured `login_cmd` field.
+const RESETABLE_REASONS = new Set(['empty', 'agent_no_run', 'agent_init_timeout', 'request_failed', 'refused', 'backend_exit', 'timeout', 'parse_error', 'panic', 'disconnect'])
 function isResetableReason(reason: string | undefined): boolean {
   return !!reason && RESETABLE_REASONS.has(reason)
 }

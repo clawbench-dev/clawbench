@@ -1356,6 +1356,15 @@ function handleSwitchThinkingEffort(level) {
     level,
   )
   persistSessionUpdate({ thinkingEffort: level }).then((res) => {
+    if (res?.thinkingEffortNotRemembered) {
+      // Applied for this session, but the durable per-model write failed: the
+      // pick will vanish on restart / in a new session. Say so now — otherwise
+      // the user only finds out later, with nothing to explain it.
+      toast.show(
+        t('chat.thinkingEffortSwitcher.notRemembered', { effort: levelObj?.name || level }),
+        { icon: 'warning', type: 'info' },
+      )
+    }
     if (!res?.thinkingEffortRejected) return
     // The agent does not offer this level, so the server discarded it. Undo the
     // optimistic update — otherwise the chip keeps showing a level the next
@@ -1469,10 +1478,19 @@ async function handleRewindFromMessage(msg) {
 }
 
 /** Persist session-scoped settings (mode, thinkingEffort, model, transport)
- *  immediately via PATCH so they survive page reload without sending a message. */
+ *  immediately via PATCH so they survive page reload without sending a message.
+ *
+ *  ALWAYS returns a Promise, resolving to the parsed response or null. It used
+ *  to `return` undefined when there was no session, and callers chain `.then()`
+ *  on the result — so the no-session case threw a TypeError instead of being a
+ *  no-op. Returning `Promise.resolve(null)` keeps every caller total.
+ *
+ *  The response carries the server's verdicts: `thinkingEffortRejected` (the
+ *  level is not offered, nothing persisted) and `thinkingEffortNotRemembered`
+ *  (applied now, but the durable per-model write failed). */
 function persistSessionUpdate(fields) {
   const sid = identity.currentSessionId.value
-  if (!sid) return
+  if (!sid) return Promise.resolve(null)
   const url = `/api/ai/session/update?session_id=${encodeURIComponent(sid)}`
   return fetch(url, {
     method: 'PATCH',

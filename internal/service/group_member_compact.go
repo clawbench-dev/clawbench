@@ -221,18 +221,18 @@ func writeCompactionSystemMessage(projectPath, groupID, memberName, agentID, mes
 }
 
 // wakeQueuedAfterCompaction starts the consumer for messages that were queued
-// while a member was compacting. No-op when the queue is empty (the common
-// case: the user did not send anything).
+// while a member was compacting.
 //
-// EnsureConsumer claims the session and drives the SAME drain loop as a normal
-// send, so a group message is answered by the group orchestrator rather than by
-// the host alone. It is idempotent: if a runner already exists it is woken
-// instead of a second one being created.
+// It does NOT pre-check the queue: the send path queues FIRST and only then
+// releases/never takes the runner claim, so a snapshot taken here can legitimately
+// see an empty queue while a row is about to land (the two are separate
+// statements, not one transaction). With the pre-check that race left the
+// message stranded until the reaper's next sweep — up to ~30s of a queue bar
+// that does not move. EnsureConsumer already handles "nothing to run" (it
+// dequeues, finds no row and releases the claim), so the emptiness check was
+// both redundant and harmful.
 func wakeQueuedAfterCompaction(groupID string) {
 	if groupID == "" {
-		return
-	}
-	if GetQueuedCount(groupID) == 0 {
 		return
 	}
 	EnsureConsumer(groupID)
@@ -358,13 +358,44 @@ func consumeCompactEvent(memberID string, ev ai.StreamEvent) error {
 	case eventTypeError:
 		return errors.New(ev.Error)
 	case blockTypeWarning:
-		// A refusal arrives as a warning (the agent streams no content for it),
-		// so it must be surfaced or the caller would report success.
-		if ev.Reason == ai.ReasonRefused {
-			return errors.New(ev.Content)
+		// A failed compaction arrives as a WARNING, not an error (the agent
+		// streams no content for it). Only ReasonRefused used to be treated as a
+		// failure, so every other failure — request_failed, agent_no_run,
+		// backend_exit, auth_required — was reported as SUCCESS: the timeline said
+		// "compacted (32% → 32%)" and the member row was marked compacted, while
+		// the context had not changed at all. The user then believes the member
+		// shrank its context and cannot explain the later overflow.
+		//
+		// The list is an allow-list of NON-failures, so a new failure reason is
+		// surfaced by default rather than silently swallowed.
+		if !compactWarningIsBenign(ev.Reason) {
+			msg := ev.Content
+			if msg == "" {
+				msg = ev.Reason
+			}
+			return errors.New(msg)
 		}
 	}
 	return nil
+}
+
+// compactWarningIsBenign reports whether a warning can accompany a SUCCESSFUL
+// compaction.
+//
+// Only informational notices belong here. Everything else — a refused request,
+// a failed turn, an unhealthy agent, a sign-in gate — means the context was not
+// rewritten, and reporting success would tell the user their context shrank
+// when it did not.
+func compactWarningIsBenign(reason string) bool {
+	switch reason {
+	case ai.ReasonEmpty:
+		// "The model answered with nothing" — for /compact that is a legitimate
+		// outcome (the agent may report nothing at all), and the usage numbers in
+		// the completion row show whether anything actually changed.
+		return true
+	default:
+		return false
+	}
 }
 
 // currentMemberUsage returns the member's usage, preferring the live ACP cache

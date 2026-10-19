@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import {
   ensureSkillsLoaded,
+  resetSkillsCache,
   skillMenuRows,
   useSkillsState,
   type SkillRow,
@@ -58,6 +59,38 @@ describe('ensureSkillsLoaded', () => {
     await ensureSkillsLoaded()
     await ensureSkillsLoaded()
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('resetSkillsCache', () => {
+  it('makes the next ensureSkillsLoaded fetch again and drops the stale list', async () => {
+    // GET /api/skills is project-scoped (it includes <project>/.agents/skills),
+    // so a cached response from project A must not survive a switch to B.
+    const first = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ skills: [skill({ name: 'project-a-only', source_kind: 'project' })] }),
+    }))
+    vi.stubGlobal('fetch', first)
+
+    await ensureSkillsLoaded()
+    expect(skills.value.map((s) => s.name)).toEqual(['project-a-only'])
+
+    resetSkillsCache()
+    // The stale rows must disappear IMMEDIATELY, not on the next fetch: the
+    // menu renders skillMenuRows() directly, so a lingering list would still be
+    // offered (and insert an unresolvable #name) for the triggering keystroke.
+    expect(skills.value).toEqual([])
+    expect(skillMenuRows()).toEqual([])
+
+    const second = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ skills: [skill({ name: 'project-b-only', source_kind: 'project' })] }),
+    }))
+    vi.stubGlobal('fetch', second)
+
+    await ensureSkillsLoaded()
+    expect(second).toHaveBeenCalledTimes(1)
+    expect(skills.value.map((s) => s.name)).toEqual(['project-b-only'])
   })
 })
 

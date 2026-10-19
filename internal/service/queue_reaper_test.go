@@ -146,7 +146,8 @@ func TestQueueReaper_RecoversStrandedQueuedRow(t *testing.T) {
 	assert.Equal(t, 0, queuedCountInDB(t, db, "sess-stranded"), "the recovered row must be claimed")
 	var historyRows int
 	require.NoError(t, db.QueryRow(
-		"SELECT COUNT(*) FROM chat_history WHERE session_id = ?", "sess-stranded").Scan(&historyRows))
+		"SELECT COUNT(*) FROM chat_history WHERE session_id = ?", "sess-stranded",
+	).Scan(&historyRows))
 	assert.Equal(t, 1, historyRows, "the recovered row must be materialized into chat_history")
 	// The stub replaced LaunchSessionExecution, so the running flag stays set —
 	// in production the launched execution clears it when the run finishes.
@@ -490,7 +491,8 @@ func queuedCountInDB(t *testing.T, db *sql.DB, sessionID string) int {
 	t.Helper()
 	var n int
 	require.NoError(t, db.QueryRow(
-		"SELECT COUNT(*) FROM queued_messages WHERE session_id = ?", sessionID).Scan(&n))
+		"SELECT COUNT(*) FROM queued_messages WHERE session_id = ?", sessionID,
+	).Scan(&n))
 	return n
 }
 
@@ -541,4 +543,48 @@ func TestQueueReaper_GroupSessionUsesGroupDrain(t *testing.T) {
 		t.Fatal("the reaper must recover a stranded group message through the group drain loop")
 	}
 	assert.Empty(t, *singleCalls, "the reaper must not start a single-agent turn for a group session")
+}
+
+// The reaper is the OTHER way a stranded queued message can start a group turn.
+// While a member is compacting, recovering such a row would send a second prompt
+// on that member's ACP session — exactly the defect the send-path gate prevents.
+// The row must stay queued; the compaction's own wake picks it up.
+func TestQueueReaper_DefersWhileGroupMemberCompacting(t *testing.T) {
+	db := setupReaperTestDB(t)
+	cleanup := store.SetDBForTest(db, db)
+	defer cleanup()
+	cleanupAllSessionState()
+
+	insertReaperSession(t, db, "group-compacting", 0)
+	_, err := db.Exec("UPDATE chat_sessions SET session_type = 'group' WHERE id = 'group-compacting'")
+	require.NoError(t, err)
+	insertQueuedRow(t, db, "group-compacting", "q-c1", time.Minute)
+
+	require.True(t, beginCompaction("group-compacting", "member-x"))
+	t.Cleanup(func() { endCompaction("member-x") })
+
+	launched := make(chan string, 1)
+	restore := SetRunGroupDrainLoopForTest(func(_ context.Context, gid, _ string, _ int64, _ string, _ []model.FileEntry) {
+		select {
+		case launched <- gid:
+		default:
+		}
+	})
+	t.Cleanup(func() { SetRunGroupDrainLoopForTest(restore) })
+	singleCalls := stubConsumer(t)
+
+	w := &QueueReaper{grace: 30 * time.Second, interval: time.Hour, reapFn: EnsureConsumer}
+	w.reap()
+
+	select {
+	case gid := <-launched:
+		t.Fatalf("the reaper must not start a group turn while a member compacts (got %q)", gid)
+	case <-time.After(300 * time.Millisecond):
+	}
+	assert.Empty(t, *singleCalls, "and it must not fall back to a single-agent turn either")
+	// The row must survive: it is the compaction wake's work, not garbage.
+	var n int
+	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM queued_messages WHERE session_id = 'group-compacting'").Scan(&n))
+	assert.Equal(t, 1, n, "the stranded row must stay queued")
+	assert.False(t, IsSessionRunning("group-compacting"), "no claim may be left behind")
 }

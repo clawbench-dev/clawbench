@@ -4,6 +4,7 @@ import { store } from '@/stores/app.ts'
 import { apiGet, apiPost } from '@/utils/api'
 import { useForgeBinding, setForgeBindingState, resetForgeBindingState } from '@/composables/useForgeBinding'
 import { recordBaseline, getBaseline, clearAllBaselines } from '@/composables/useFileChangeBaseline.ts'
+import { useSkillsState } from '@/composables/useSkillsState'
 
 // Mock API to prevent real network calls
 vi.mock('@/utils/api', () => ({
@@ -734,5 +735,23 @@ describe('setProject resets the cached forge binding', () => {
     await store.setProject('/proj/b')
 
     expect(getBaseline('src/main.go')).toBeNull()
+  })
+
+  // GET /api/skills is scoped by the project cookie and includes
+  // `<projectPath>/.agents/skills`, so the cached list belongs to one project.
+  // Keeping it across a switch made the `#` menu offer (and insert) a skill the
+  // new project cannot resolve.
+  it('drops the cached skills list (project-scoped response)', async () => {
+    const { skills, loaded } = useSkillsState()
+    skills.value = [{ name: 'only-in-a', description: '', path: '/a/SKILL.md', source_kind: 'project', source_label: 'a' }]
+    loaded.value = true
+
+    vi.mocked(apiPost).mockResolvedValueOnce({ ok: 'ok', path: '/proj/b' } as never)
+    await store.setProject('/proj/b')
+
+    expect(skills.value).toEqual([])
+    // The flag must clear too, or the next `#` would short-circuit and never
+    // refetch — leaving an EMPTY menu instead of the new project's skills.
+    expect(loaded.value).toBe(false)
   })
 })

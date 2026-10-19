@@ -1696,6 +1696,10 @@ paths:
             `thinkingEffortRejected=true` 表示请求里的 `thinkingEffort` 被 agent
             拒绝（该 agent/模型不提供这一档），**未持久化**。客户端应撤销乐观更新并
             提示用户，否则会一直显示一个下一轮不会生效的档位。
+
+            `thinkingEffortNotRemembered=true` 表示档位本次已生效，但写库失败（agent
+            行不存在等），**重启/新会话后会丢失**。客户端应提示用户，否则只会在之后
+            莫名其妙地回到默认值。
           content:
             application/json:
               schema:
@@ -1711,6 +1715,8 @@ paths:
                   thinkingEffort:
                     type: string
                   thinkingEffortRejected:
+                    type: boolean
+                  thinkingEffortNotRemembered:
                     type: boolean
         "422":
           description: |

@@ -222,8 +222,20 @@ func IsCompactionUsageDrop(prev, next *UsageState) bool {
 	if prev == nil || next == nil {
 		return false
 	}
-	// Same window required: a different size means a different model/connection.
-	if prev.Size <= 0 || next.Size != prev.Size {
+	// A DIFFERENT window size used to be an outright rejection ("a different
+	// model/connection"). That silently disabled detection for the only agent
+	// that has no other signal: compacting can itself move the window (a
+	// summarizing model with a smaller context, or the agent re-advertising
+	// after the rewrite), and a missed compaction is permanent — the system
+	// prompt is never re-injected for the rest of the session.
+	//
+	// So a size change is not a veto but a stricter regime: the ABSOLUTE drop
+	// must also clear compactUsageMinTokens, which a mere model switch with an
+	// empty-ish context cannot fake. The accepted cost of a false positive is
+	// one extra system-prompt injection; the accepted cost of a false negative
+	// is a session that never regains its prompt.
+	sizeChanged := prev.Size > 0 && next.Size > 0 && next.Size != prev.Size
+	if prev.Size <= 0 || next.Size <= 0 {
 		return false
 	}
 	if prev.Used < compactUsageMinTokens {
@@ -245,7 +257,15 @@ func IsCompactionUsageDrop(prev, next *UsageState) bool {
 		return false
 	}
 	drop := float64(prev.Used-next.Used) / float64(prev.Used)
-	return drop >= compactUsageDropRatio
+	if drop < compactUsageDropRatio {
+		return false
+	}
+	if sizeChanged && prev.Used-next.Used < compactUsageMinTokens {
+		// A proportional collapse of a tiny context across a window change is
+		// more likely a re-advertised window than a rewrite.
+		return false
+	}
+	return true
 }
 
 // IsCompactionUsageDropFromWire is IsCompactionUsageDrop for a LIVE notification

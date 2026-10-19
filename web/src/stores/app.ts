@@ -11,6 +11,7 @@ import { useFileNavStack } from '@/composables/useFileNavStack'
 import { resetForgeBindingState } from '@/composables/useForgeBinding'
 import { clearMediaWatchState } from '@/composables/useMediaWatch.ts'
 import { clearAllBaselines } from '@/composables/useFileChangeBaseline.ts'
+import { resetSkillsCache } from '@/composables/useSkillsState'
 
 const TAG = 'Store'
 
@@ -350,6 +351,11 @@ function resetProjectState(): void {
     // setProject() directly and never remount the app subtree, so a cached
     // binding would otherwise keep labelling the new project with the old repo.
     resetForgeBindingState()
+    // The skills list is scoped by the project cookie (it includes
+    // `<projectPath>/.agents/skills`), so it belongs to the project being left
+    // behind. Dropping it here covers every switch path: worktree jumps call
+    // setProject() directly and never remount the app subtree.
+    resetSkillsCache()
     // File browser
     state.currentDir = ''
     state.dirEntries = []

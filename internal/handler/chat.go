@@ -397,6 +397,17 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 
 	// Resolve agent config early (needed for both enqueue and execution paths).
 	// Shared resolution: explicit pick → session's agent → default.
+	//
+	// An EXPLICIT pick is re-gated here: sending is "run a turn with this agent",
+	// so the same `disabled` / project-scope rules that gate every creation entry
+	// must apply. Without this, both switches were pure UI filters — a disabled
+	// agent still ran, and a project-scoped agent ran from another project's
+	// session. An empty agentId keeps the session's own agent (validated at
+	// creation; re-checking would break sessions whose agent was scoped later).
+	if msgKey := explicitAgentRejection(req.AgentID, projectPath); msgKey != "" {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, msgKey)
+		return
+	}
 	effectiveAgentID := service.ResolveAgentID(sessionID, req.AgentID)
 
 	// Persist user's model selection to session so that subsequent GET requests

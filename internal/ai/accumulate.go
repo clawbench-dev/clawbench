@@ -248,6 +248,7 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) (thinkID s
 			HTTPStatus:  event.HTTPStatus,
 			ErrorSource: event.ErrorSource,
 			ErrorDetail: event.ErrorDetail,
+			LoginCmd:    event.LoginCmd,
 		})
 	case "error":
 		*blocks = append(*blocks, model.ContentBlock{
@@ -258,6 +259,7 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) (thinkID s
 			HTTPStatus:  event.HTTPStatus,
 			ErrorSource: event.ErrorSource,
 			ErrorDetail: event.ErrorDetail,
+			LoginCmd:    event.LoginCmd,
 		})
 	}
 	return ""

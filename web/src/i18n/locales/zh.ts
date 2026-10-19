@@ -722,6 +722,7 @@ export default {
       title: '思考',
       auto: '自动',
       rejected: '该模型不支持 {effort} 思考等级，已还原',
+      notRemembered: '{effort} 本次已生效，但未能保存——重启后会恢复默认',
     },
     attach: {
       currentFile: '当前文件',
@@ -996,6 +997,8 @@ export default {
       retry: '重试',
       continue: '继续',
       resetSession: '重试',
+      copyLoginCmd: '复制登录命令',
+      loginCmdCopied: '已复制',
       resetSessionFailed: '重置会话失败',
       detailsUnavailable: '详情暂不可用',
       detailsLoadFailed: '加载失败',
@@ -3122,7 +3125,6 @@ export default {
 
 
       logCapture: '调试日志捕获',
-
       logCaptureDesc: '捕获客户端调试日志用于问题排查',
       reconfigureServer: '重配服务器',
       reconfigureServerDesc: '重新配置 Android 连接的服务器地址',

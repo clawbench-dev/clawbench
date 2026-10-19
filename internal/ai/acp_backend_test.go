@@ -95,3 +95,21 @@ func TestACPAuthRequiredMessage(t *testing.T) {
 		assert.Contains(t, msg, "msg")
 	})
 }
+
+// The command must ALSO travel as a structured field: the client renders a
+// "copy the login command" action from it, and scraping it back out of the
+// localized message would break on any wording change or non-English locale.
+func TestACPLoginCommand(t *testing.T) {
+	saved := model.GetBackendRegistry()
+	t.Cleanup(func() { model.BackendRegistry = saved })
+	model.BackendRegistry = []model.BackendSpec{
+		{ID: "cc", Backend: "cc", LoginCmd: "cmdc login"},
+		{ID: "nol", Backend: "nol"},
+	}
+
+	assert.Equal(t, "cmdc login", acpLoginCommand(&model.Agent{Backend: "cc"}))
+	assert.Empty(t, acpLoginCommand(&model.Agent{Backend: "nol"}),
+		"a backend without a declared command must not invent one")
+	assert.Empty(t, acpLoginCommand(&model.Agent{Backend: "no-such-backend"}))
+	assert.Empty(t, acpLoginCommand(nil))
+}

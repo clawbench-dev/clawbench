@@ -608,22 +608,9 @@ func patchThinkingEffortForModel(id string, p *ThinkingEffortModelPatch) error {
 	defer store.WriteUnlock()
 	defer func() { _ = tx.Rollback() }()
 
-	var raw string
-	if readErr := tx.QueryRowContext(context.Background(), "SELECT COALESCE(thinking_effort_by_model, '{}') FROM agents WHERE id = ?", id).Scan(&raw); readErr != nil {
-		if errors.Is(readErr, sql.ErrNoRows) {
-			return nil
-		}
-		return fmt.Errorf("patch agent %s effort by model: read: %w", id, readErr)
-	}
-	byModel := map[string]string{}
-	if raw != "" && raw != jsonNull && raw != "{}" {
-		if unmarshalErr := json.Unmarshal([]byte(raw), &byModel); unmarshalErr != nil {
-			// A corrupt value must not permanently block the feature: the map
-			// only ever holds user picks, so rebuilding it loses at most those
-			// picks, while refusing to write would make the control dead.
-			slog.Warn("agent effort by model: stored value unreadable, rebuilding", "agent", id, "err", unmarshalErr)
-			byModel = map[string]string{}
-		}
+	byModel, err := readEffortByModel(tx, id)
+	if err != nil {
+		return err
 	}
 	if p.Level == nil || *p.Level == "" {
 		delete(byModel, p.ModelID)
@@ -634,17 +621,52 @@ func patchThinkingEffortForModel(id string, p *ThinkingEffortModelPatch) error {
 	if err != nil {
 		return fmt.Errorf("patch agent %s effort by model: marshal: %w", id, err)
 	}
-	if _, err := tx.ExecContext(
+	res, err := tx.ExecContext(
 		context.Background(),
 		"UPDATE agents SET thinking_effort_by_model = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 		string(encoded), id,
-	); err != nil {
+	)
+	if err != nil {
 		return fmt.Errorf("patch agent %s effort by model: write: %w", id, err)
+	}
+	// The UPDATE above matches nothing when the row vanished between the read
+	// and the write; committing would then report a successful save of nothing.
+	if n, raErr := res.RowsAffected(); raErr == nil && n == 0 {
+		return fmt.Errorf("patch agent %s effort by model: %w", id, sql.ErrNoRows)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("patch agent %s effort by model: commit: %w", id, err)
 	}
 	return nil
+}
+
+// readEffortByModel loads one agent's per-model effort map for a read-modify-
+// write inside an open transaction.
+//
+// A missing agent row is returned as sql.ErrNoRows ON PURPOSE: the caller would
+// otherwise commit a successful save of nothing, telling the user their pick was
+// remembered when it was not (they would only find out after a restart).
+func readEffortByModel(tx *sql.Tx, id string) (map[string]string, error) {
+	var raw string
+	if err := tx.QueryRowContext(context.Background(),
+		"SELECT COALESCE(thinking_effort_by_model, '{}') FROM agents WHERE id = ?", id).Scan(&raw); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("patch agent %s effort by model: %w", id, sql.ErrNoRows)
+		}
+		return nil, fmt.Errorf("patch agent %s effort by model: read: %w", id, err)
+	}
+	byModel := map[string]string{}
+	if raw == "" || raw == jsonNull || raw == "{}" {
+		return byModel, nil
+	}
+	if err := json.Unmarshal([]byte(raw), &byModel); err != nil {
+		// A corrupt value must not permanently block the feature: the map only
+		// ever holds user picks, so rebuilding it loses at most those picks,
+		// while refusing to write would make the control dead.
+		slog.Warn("agent effort by model: stored value unreadable, rebuilding", "agent", id, "err", err)
+		byModel = map[string]string{}
+	}
+	return byModel, nil
 }
 
 // nextAgentSortOrder returns one past the highest current sort_order, so a

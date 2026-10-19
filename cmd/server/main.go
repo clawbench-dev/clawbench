@@ -1866,6 +1866,12 @@ func newOpenAITTSProvider(cfg model.Config) *speech.OpenAITTSProvider {
 	o.APIKey = cfg.TTS.OpenAI.APIKey
 	o.Model = cfg.TTS.OpenAI.Model
 	o.Voice = cfg.TTS.OpenAI.Voice
+	// StreamMode is the escape hatch for a compatible server whose model name
+	// does not reveal whether it streams SSE or a raw body. It must be copied
+	// here: this is the ONLY production construction point (startup and hot
+	// reload both go through it), so a missing assignment makes the setting
+	// silently inert — the provider keeps the per-model default forever.
+	o.StreamMode = cfg.TTS.OpenAI.StreamMode
 	if cfg.TTS.Speed > 0 {
 		o.Speed = cfg.TTS.Speed
 	}

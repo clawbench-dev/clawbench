@@ -987,7 +987,7 @@ export function useChatStream(options: UseChatStreamOptions) {
         // assistant, or to the last assistant when the stream already ended
         // (backend crash after done) — so the user never needs a reload to see
         // it.
-        dispatch({ type: 'ws_error', messageId: streamMsgId, text: errorData?.error || 'Unknown error', reason: errorData?.reason, errorCode: errorData?.error_code, httpStatus: errorData?.http_status, errorSource: errorData?.error_source, errorDetail: errorData?.error_detail })
+        dispatch({ type: 'ws_error', messageId: streamMsgId, text: errorData?.error || 'Unknown error', reason: errorData?.reason, errorCode: errorData?.error_code, httpStatus: errorData?.http_status, errorSource: errorData?.error_source, errorDetail: errorData?.error_detail, loginCmd: errorData?.login_cmd })
         _forceCleanupStreamingState(messages.value, { onRenderNeeded, onExtractScheduledTasks }, streamMsgId)
         loading.value = false
         onStreamEnd?.('error')
@@ -1003,8 +1003,8 @@ export function useChatStream(options: UseChatStreamOptions) {
       case 'warning': {
         if (sessionChanged()) return
         if (!resolveStreamingMsg(messages.value, streamMsgId)) { noteDroppedEvent('warning', 'no streaming placeholder'); return }
-        const warningData = payload as { text?: string; reason?: string; error_code?: number; http_status?: number; error_source?: string; error_detail?: string }
-        dispatch({ type: 'ws_warning', messageId: streamMsgId, text: warningData.text || '', reason: warningData.reason, errorCode: warningData.error_code, httpStatus: warningData.http_status, errorSource: warningData.error_source, errorDetail: warningData.error_detail })
+        const warningData = payload as { text?: string; reason?: string; error_code?: number; http_status?: number; error_source?: string; error_detail?: string; login_cmd?: string }
+        dispatch({ type: 'ws_warning', messageId: streamMsgId, text: warningData.text || '', reason: warningData.reason, errorCode: warningData.error_code, httpStatus: warningData.http_status, errorSource: warningData.error_source, errorDetail: warningData.error_detail, loginCmd: warningData.login_cmd })
         if (isOpen.value) {
           onRenderNeeded()
         }

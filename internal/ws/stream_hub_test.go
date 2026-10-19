@@ -480,6 +480,27 @@ func TestStreamEventToPayload_ErrorCarriesStructuredFields(t *testing.T) {
 	assert.Equal(t, "Bad substitution: o.gaps.join", m["error_detail"])
 }
 
+// login_cmd rides the error frame so the banner can offer "copy the command".
+// It must be OMITTED when empty: every other failure would otherwise carry a
+// dead field the client has to special-case.
+func TestStreamEventToPayload_ErrorCarriesLoginCmd(t *testing.T) {
+	payload := StreamEventToPayload(ai.StreamEvent{
+		Type:     "error",
+		Error:    "The agent is not signed in. Run `cmdc login`.",
+		Reason:   "auth_required",
+		LoginCmd: "cmdc login",
+	})
+	m, ok := payload.(map[string]any)
+	assert.True(t, ok)
+	assert.Equal(t, "cmdc login", m["login_cmd"])
+
+	plain := StreamEventToPayload(ai.StreamEvent{Type: "error", Error: "boom", Reason: "backend_exit"})
+	pm, ok := plain.(map[string]any)
+	assert.True(t, ok)
+	_, has := pm["login_cmd"]
+	assert.False(t, has, "login_cmd must be absent when the backend declares no command")
+}
+
 func TestStreamEventToPayload_WarningCarriesStructuredFields(t *testing.T) {
 	payload := StreamEventToPayload(ai.StreamEvent{
 		Type:        "warning",
