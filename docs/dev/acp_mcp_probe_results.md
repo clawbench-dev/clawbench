@@ -162,10 +162,39 @@ hermes 无法判定：它的 baseline 会话本身就时好时坏（异步挂载
   ```
 - **zcode** 后端进程在探针环境下崩溃（`zcode backend reader exited`），
   可能是 Electron 引擎在无头环境的限制，需要单独排查。
-- **多 server 并发注入**（一次传 3~5 个）与**启动失败行为**（命令不存在时是阻塞
-  `session/new` 还是静默跳过）未测。这两项影响 UI 的错误提示设计。
+- **多 server 并发注入**（一次传 3~5 个）未测。**启动失败行为已测**，见下节。
 - **CLI 传输侧完全没测**：CLI 后端没有 `mcpServers` 参数，只能改各自配置文件，
   同一个智能体在 CLI 模式下配置不生效，产品上需要说明。
+
+## 启动失败行为（`TestACP_MCPProbeFailure`）
+
+三种失败形态 + 一坏一好混合：
+
+| 后端 | 缺失命令 | 立即退出 | 永不响应 | 混合 |
+|---|---|---|---|---|
+| claude | 跳过 0.6s | 跳过 0.6s | 跳过 0.5s | TOLERANT |
+| codex | 跳过 0.2s | 跳过 0.1s | 跳过 0.1s | TOLERANT |
+| codebuddy | 跳过 0.2s | 跳过 0.2s | 跳过 0.2s | TOLERANT |
+| qoder | 跳过 2.9s | 跳过 2.6s | 跳过 32.5s | TOLERANT |
+| opencode | 跳过 0.9s | 跳过 0.8s | 跳过 30.8s | TOLERANT |
+| commandcode | 跳过 0.1s | 跳过 0.1s | 跳过 80.1s | TOLERANT |
+| hermes | 跳过 4.7s | 跳过 8.3s | 跳过 64.1s | DEGRADED |
+
+三条结论：
+
+1. **没有后端因为坏 server 让 `session/new` 失败** —— 全部静默跳过。
+   「一个写错的 command 锁死所有智能体」的担心不成立。
+2. **坏 server 不毒化同一会话的好 server** —— 6/7 TOLERANT。hermes 的
+   DEGRADED 与它已知的异步挂载不稳定一致。
+3. **「永不响应」会拖慢建会话 30~80 秒，且无任何提示**。这是这次探针发现的
+   真问题：用户看到「点发送后卡一分钟」，无法归因。需要在实现时补
+   「连接后校验 + 超时放宽 + 慢启动日志」。
+
+复现：
+
+```bash
+go test -tags integration -v -run 'TestACP_MCPProbeFailure' -timeout 1800s ./internal/ai/
+```
 
 ## 复现
 
