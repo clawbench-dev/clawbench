@@ -191,6 +191,8 @@ export default {
   // 实际超出时提醒一次，用尽再提醒一次。
   usageMeter: {
     title: '用量提醒',
+    // Short form used inside the header capsule (next to the gauge icon).
+    label: '用量',
     capsuleTitle: '查看本周期用量',
     dayOfCycle: '第 {day} / {days} 天',
     actual: '实际',

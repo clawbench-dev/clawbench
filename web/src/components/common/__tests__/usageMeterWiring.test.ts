@@ -97,3 +97,23 @@ describe('usage meter — notification channels', () => {
     expect(native).toMatch(/usageMeter\?:/)
   })
 })
+
+describe('usage meter capsule carries an icon and a word', () => {
+  it('renders a gauge icon and a short label, not just numbers', () => {
+    // A bar plus "12 / 20" does not say WHAT is measured. Sitting next to the
+    // file and project badges it read as another file counter. The recent-project
+    // rows solve this the same way: an icon followed by a word.
+    const src = stripComments(readWebFile('src/components/common/UsageMeterPopover.vue'))
+    expect(src).toMatch(/from 'lucide-vue-next'/)
+    expect(src).toContain('<Gauge')
+    expect(src).toContain('class="usage-label"')
+    expect(src).toContain("t('usageMeter.label')")
+  })
+
+  it('both locales define the short label', () => {
+    for (const loc of ['zh', 'en']) {
+      const src = readWebFile(`src/i18n/locales/${loc}.ts`)
+      expect(src).toMatch(/usageMeter:\s*\{[\s\S]*?\blabel:\s*'[^']+'/)
+    }
+  })
+})

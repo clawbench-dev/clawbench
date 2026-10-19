@@ -11,6 +11,11 @@
       data-action="usage-meter"
       @click.stop="toggle"
     >
+      <!-- Icon + word, like the recent-project rows: the bar alone does not say
+           WHAT is being measured, and a bare pair of numbers in the header is
+           ambiguous next to the file/project badges. -->
+      <Gauge :size="13" class="usage-icon" aria-hidden="true" />
+      <span class="usage-label">{{ t('usageMeter.label') }}</span>
       <span class="usage-bar" aria-hidden="true">
         <span class="usage-fill" :style="{ width: fillPercent + '%' }"></span>
         <!-- Baseline tick: where a linear spend would be right now. Reading the
@@ -131,6 +136,7 @@
 
 <script setup lang="ts">
 import { computed, inject, ref, watch } from 'vue'
+import { Gauge } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import { formatUsageMeterValue } from '@/utils/usageFormat'
@@ -368,6 +374,19 @@ function openSettings() {
   width: 2px;
   border-radius: 1px;
   background: var(--color-red);
+}
+
+.usage-icon {
+  flex-shrink: 0;
+  color: var(--meter-color, var(--text-tertiary));
+}
+
+.usage-label {
+  flex-shrink: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .usage-text {

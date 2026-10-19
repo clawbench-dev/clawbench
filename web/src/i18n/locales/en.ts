@@ -186,6 +186,8 @@ export default {
   },
   usageMeter: {
     title: 'Usage meter',
+    // Short form used inside the header capsule (next to the gauge icon).
+    label: 'Usage',
     capsuleTitle: 'View this cycle\u2019s usage',
     dayOfCycle: 'Day {day} of {days}',
     actual: 'Actual',
