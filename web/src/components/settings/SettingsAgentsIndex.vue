@@ -12,39 +12,6 @@
       <span class="settings-agents-index__rescan-label">{{ rescanning ? t('settings.items.agentRescanning') : t('settings.items.agentRescan') }}</span>
       <RefreshCw :size="16" class="settings-agents-index__rescan-icon" />
     </div>
-    <!-- Run the integration self-test for EVERY agent at once: the "is
-         everything still working?" action, as opposed to the per-agent button
-         on the detail page. Each check is state-only, so testing all of them is
-         as cheap as testing one. -->
-    <div
-      class="settings-agents-index__rescan-row"
-      data-action="agent-selftest-all"
-      :class="{ 'settings-agents-index__rescan-row--disabled': testingAll }"
-      @click="handleTestAll"
-    >
-      <span class="settings-agents-index__rescan-label">{{ testingAll ? t('settings.items.agentSelfTestAllRunning') : t('settings.items.agentSelfTestAll') }}</span>
-      <Activity :size="16" class="settings-agents-index__rescan-icon" />
-    </div>
-    <!-- Per-agent results, worst first so a failure is never below the fold. -->
-    <div v-if="testAllResults.length > 0" class="settings-agents-index__selftest" data-testid="agent-selftest-results">
-      <div class="settings-agents-index__selftest-summary">
-        {{ t('settings.items.agentSelfTestAllSummary', {
-          ok: testAllSummary.ok,
-          warn: testAllSummary.warn,
-          fail: testAllSummary.fail,
-        }) }}
-      </div>
-      <div
-        v-for="row in testAllResults"
-        :key="row.agentId"
-        class="settings-agents-index__selftest-row"
-        :class="`settings-agents-index__selftest-row--${row.level}`"
-      >
-        <span class="settings-agents-index__selftest-status">{{ testAllStatusLabel(row.level) }}</span>
-        <span class="settings-agents-index__selftest-name">{{ row.name }}</span>
-        <span class="settings-agents-index__selftest-detail">{{ row.detail }}</span>
-      </div>
-    </div>
     <VueDraggable
       v-if="localAgents.length > 0"
       v-model="localAgents"
@@ -85,15 +52,13 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { Activity, ChevronRight, Plus, RefreshCw } from 'lucide-vue-next'
+import { ChevronRight, Plus, RefreshCw } from 'lucide-vue-next'
 import { VueDraggable } from 'vue-draggable-plus'
 import { useI18n } from 'vue-i18n'
 import { useAgents } from '@/composables/useAgents'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import { useToast } from '@/composables/useToast'
-import { appLog } from '@/utils/appLog'
 import CreateAcpAgentDialog from './CreateAcpAgentDialog.vue'
-import { useAgentSelfTest, type AgentSelfTestResult } from '@/composables/useAgentSelfTest'
 
 const emit = defineEmits<{
   navigate: [categoryId: string]
@@ -104,75 +69,6 @@ const toast = useToast()
 const { agents, defaultAgentId, loadAgents, rescanAgents, reorderAgents, createAcpAgent } = useAgents()
 
 const rescanning = ref(false)
-const testingAll = ref(false)
-// One row per agent after a full run. Kept as a flat list (not a map) so the
-// template can render it in the order produced — worst first.
-interface TestAllRow {
-  agentId: string
-  name: string
-  level: 'ok' | 'warn' | 'fail'
-  detail: string
-}
-const testAllResults = ref<TestAllRow[]>([])
-
-const testAllSummary = computed(() => {
-  const counts = { ok: 0, warn: 0, fail: 0 }
-  for (const r of testAllResults.value) counts[r.level]++
-  return counts
-})
-
-/** Run the self-test for every loaded agent. */
-async function handleTestAll() {
-  if (testingAll.value) return
-  testingAll.value = true
-  testAllResults.value = []
-  try {
-    const list = [...agentList.value]
-    // Each run is a separate composable instance: the composable holds per-call
-    // state, so sharing one instance would have every call overwrite the last.
-    const rows = await Promise.all(list.map(async (a): Promise<TestAllRow> => {
-      const t0 = useAgentSelfTest()
-      await t0.run(a.id)
-      if (t0.error.value) {
-        return { agentId: a.id, name: a.name, level: 'fail', detail: t0.error.value }
-      }
-      const r: AgentSelfTestResult | null = t0.result.value
-      if (!r) {
-        return { agentId: a.id, name: a.name, level: 'fail', detail: t('settings.items.agentSelfTestNoResult') }
-      }
-      const level = r.failed > 0 ? 'fail' : r.warned > 0 ? 'warn' : 'ok'
-      const firstProblem = r.checks.find(c => c.status === 'fail') ?? r.checks.find(c => c.status === 'warn')
-      return {
-        agentId: a.id,
-        name: a.name,
-        level,
-        detail: firstProblem?.detail
-          ?? t('settings.items.agentSelfTestPassedCount', { passed: r.passed }),
-      }
-    }))
-    // Worst first: a failing agent must not be buried under passing ones.
-    const rank = { fail: 0, warn: 1, ok: 2 } as const
-    testAllResults.value = rows.sort((x, y) => rank[x.level] - rank[y.level])
-  } catch (err: unknown) {
-    appLog.e('SettingsAgentsIndex', 'test-all failed', err)
-    toast.show(t('settings.items.agentSelfTestAllFailed'), { icon: 'warning', type: 'error', duration: 3000 })
-  } finally {
-    testingAll.value = false
-  }
-}
-
-/** Label for an aggregate level (ok / warn / fail). */
-function testAllStatusLabel(level: TestAllRow['level']): string {
-  switch (level) {
-    case 'ok':
-      return t('settings.items.agentSelfTestStatusOk')
-    case 'warn':
-      return t('settings.items.agentSelfTestStatusWarn')
-    default:
-      return t('settings.items.agentSelfTestStatusFail')
-  }
-}
-
 const createOpen = ref(false)
 // Server-side create failure (name collision, empty command) shown inside the
 // dialog, which stays open so the user can correct the input and retry.
@@ -313,58 +209,6 @@ async function handleRescan() {
   opacity: var(--opacity-muted);
   cursor: not-allowed;
   pointer-events: none;
-}
-
-/* ── Test-all results ───────────────────────────────────────────────────── */
-
-.settings-agents-index__selftest {
-  padding: var(--space-4) var(--space-7);
-  background: var(--bg-primary);
-  border-bottom: 0.5px solid var(--border-color);
-}
-
-.settings-agents-index__selftest-summary {
-  font-size: var(--font-size-md);
-  color: var(--text-secondary);
-  margin-bottom: var(--space-3);
-}
-
-.settings-agents-index__selftest-row {
-  display: grid;
-  grid-template-columns: 3.5em minmax(6em, auto) 1fr;
-  gap: 0 var(--space-4);
-  font-size: var(--font-size-md);
-  line-height: var(--line-height-snug);
-  padding: var(--space-1) 0;
-}
-
-/* Status colors follow the settings panel's connectivity-test results
-   (#22c55e / #f59e0b / #ef4444); variables.css has no --color-warning token. */
-.settings-agents-index__selftest-status {
-  font-weight: 600;
-  color: var(--text-muted);
-}
-
-.settings-agents-index__selftest-row--ok .settings-agents-index__selftest-status {
-  color: #22c55e;
-}
-
-.settings-agents-index__selftest-row--warn .settings-agents-index__selftest-status {
-  color: #f59e0b;
-}
-
-.settings-agents-index__selftest-row--fail .settings-agents-index__selftest-status {
-  color: #ef4444;
-}
-
-.settings-agents-index__selftest-name {
-  color: var(--text-primary);
-}
-
-.settings-agents-index__selftest-detail {
-  color: var(--text-muted);
-  font-size: var(--font-size-sm);
-  overflow-wrap: anywhere;
 }
 
 .settings-agents-index__row {

@@ -36,18 +36,6 @@ const i18n = createI18n({
           agentCreateAcpInvalidName: 'Invalid agent name',
           agentCopyNameTaken: 'An agent with this name already exists',
           agentNameReserved: 'This name conflicts with the group-chat user nickname',
-          agentSelfTestAll: 'Test All Agents',
-          agentSelfTestAllRunning: 'Testing…',
-          agentSelfTestStatusOk: 'OK',
-          agentSelfTestStatusWarn: 'WARN',
-          agentSelfTestStatusFail: 'FAIL',
-          agentSelfTestAllFailed: 'Test run failed',
-          agentSelfTestNoResult: 'No result returned',
-          // vue-i18n interpolates these for real here (this file uses a real
-          // i18n instance, not a t() stub), so the placeholders must exist or
-          // the rendered text keeps the raw {params}.
-          agentSelfTestAllSummary: '{ok} OK, {warn} warning(s), {fail} failed',
-          agentSelfTestPassedCount: 'All {passed} checks passed',
         },
         saveFailed: 'Save failed',
       },
@@ -101,7 +89,6 @@ vi.mock('@/composables/useToast', () => ({
 
 // Mock lucide-vue-next
 vi.mock('lucide-vue-next', () => ({
-  Activity: { name: 'Activity', template: '<span class="icon-activity" />' },
   ChevronRight: { name: 'ChevronRight', template: '<span class="icon-chevron" />' },
   Copy: { name: 'Copy', template: '<span class="icon-copy" />' },
   Plus: { name: 'Plus', template: '<span class="icon-plus" />' },
@@ -110,21 +97,6 @@ vi.mock('lucide-vue-next', () => ({
 
 // Mock CreateAcpAgentDialog — the flow under test is the index page's
 // open/create/navigate handling, not the dialog's own form.
-// Test-all drives one composable instance per agent; the mock hands out a fresh
-// controllable instance each call so the test can script per-agent outcomes.
-const mockSelfTestRuns = vi.fn()
-vi.mock('@/composables/useAgentSelfTest', () => ({
-  useAgentSelfTest: () => {
-    const state = { testing: { value: false }, result: { value: null as unknown }, error: { value: '' } }
-    const run = async (id: string) => {
-      const scripted = mockSelfTestRuns(id)
-      state.result.value = scripted.result ?? null
-      state.error.value = scripted.error ?? ''
-    }
-    return { ...state, run, clear: vi.fn() }
-  },
-}))
-
 vi.mock('@/components/settings/CreateAcpAgentDialog.vue', () => ({
   default: {
     name: 'CreateAcpAgentDialog',
@@ -158,7 +130,6 @@ describe('SettingsAgentsIndex', () => {
     mockSetDefaultAgent.mockReset()
     mockReorderAgents.mockReset().mockResolvedValue(undefined)
     mockCreateAcpAgent.mockReset()
-    mockSelfTestRuns.mockReset()
     mockToastShow.mockReset()
     mockAgents.value = []
     mockDefaultAgentId.value = 'agent-1'
@@ -407,72 +378,6 @@ describe('SettingsAgentsIndex', () => {
 
     expect(wrapper.findComponent({ name: 'CreateAcpAgentDialog' }).props('open')).toBe(false)
     expect(mockToastShow).toHaveBeenCalledWith('Failed to add agent', expect.any(Object))
-  })
-
-  // --- test all agents ---
-
-  it('runs the self-test for every loaded agent and lists the outcomes worst first', async () => {
-    mockAgents.value = [
-      { id: 'agent-1', name: 'Good', backend: 'claude', specialty: '', sortOrder: 0 },
-      { id: 'agent-2', name: 'Broken', backend: 'custom-acp', specialty: '', sortOrder: 1 },
-      { id: 'agent-3', name: 'Shaky', backend: 'cursor', specialty: '', sortOrder: 2 },
-    ]
-    mockSelfTestRuns.mockImplementation((id: string) => {
-      if (id === 'agent-1') {
-        return { result: { agentId: id, ok: true, passed: 9, failed: 0, warned: 0, checks: [{ key: 'enabled', status: 'ok' }] } }
-      }
-      if (id === 'agent-2') {
-        return { result: { agentId: id, ok: false, passed: 5, failed: 2, warned: 0,
-          checks: [{ key: 'acp_command', status: 'fail', detail: 'Executable "nope" was not found' }] } }
-      }
-      return { result: { agentId: id, ok: true, passed: 8, failed: 0, warned: 1,
-        checks: [{ key: 'models', status: 'warn', detail: 'No models reported yet' }] } }
-    })
-
-    const wrapper = mountIndex()
-    await wrapper.find('[data-action="agent-selftest-all"]').trigger('click')
-    // Promise.all + reactive render need a couple of ticks.
-    await wrapper.vm.$nextTick()
-    await wrapper.vm.$nextTick()
-    await wrapper.vm.$nextTick()
-
-    expect(mockSelfTestRuns).toHaveBeenCalledTimes(3)
-
-    const rows = wrapper.findAll('.settings-agents-index__selftest-row')
-    expect(rows).toHaveLength(3)
-
-    // Worst first: the failing agent must lead, then the warning, then the pass.
-    expect(rows[0].classes()).toContain('settings-agents-index__selftest-row--fail')
-    expect(rows[0].text()).toContain('Broken')
-    expect(rows[1].classes()).toContain('settings-agents-index__selftest-row--warn')
-    expect(rows[1].text()).toContain('Shaky')
-    expect(rows[2].classes()).toContain('settings-agents-index__selftest-row--ok')
-    expect(rows[2].text()).toContain('Good')
-
-    // The first problem's detail is what the user needs to act on.
-    expect(rows[0].text()).toContain('Executable "nope" was not found')
-    expect(rows[1].text()).toContain('No models reported yet')
-
-    // Summary counts must match the rows.
-    expect(wrapper.text()).toContain('1 OK, 1 warning(s), 1 failed')
-  })
-
-  it('reports a request error for the specific agent', async () => {
-    mockAgents.value = [
-      { id: 'agent-1', name: 'Gone', backend: 'claude', specialty: '', sortOrder: 0 },
-    ]
-    mockSelfTestRuns.mockImplementation(() => ({ error: 'Agent not found' }))
-
-    const wrapper = mountIndex()
-    await wrapper.find('[data-action="agent-selftest-all"]').trigger('click')
-    await wrapper.vm.$nextTick()
-    await wrapper.vm.$nextTick()
-    await wrapper.vm.$nextTick()
-
-    const rows = wrapper.findAll('.settings-agents-index__selftest-row')
-    expect(rows).toHaveLength(1)
-    expect(rows[0].classes()).toContain('settings-agents-index__selftest-row--fail')
-    expect(rows[0].text()).toContain('Agent not found')
   })
 
   // --- drag-to-reorder ---

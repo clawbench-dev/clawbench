@@ -89,8 +89,12 @@
         {{ selfTest.error.value }}
       </div>
 
+      <!-- NOT an `v-else-if`: a deep run reports BOTH an error and the static
+           checks it rode along with, and the checks are the part that explains
+           the failure. Gating them on "no error" hid exactly the detail the
+           user needs at the one moment they need it. -->
       <div
-        v-else-if="selfTest.result.value"
+        v-if="selfTest.result.value"
         class="settings-agent-detail__selftest-result"
         :class="{ 'settings-agent-detail__selftest-result--fail': !selfTest.result.value.ok }"
       >

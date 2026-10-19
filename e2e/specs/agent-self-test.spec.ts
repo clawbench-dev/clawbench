@@ -145,30 +145,6 @@ test.describe('agent self-test', () => {
     await expect(failRows).toHaveCount(0)
   })
 
-  test('the index page tests every agent at once', async ({ page }) => {
-    await page.goto('/')
-    await page.waitForLoadState('domcontentloaded')
-
-    await page.locator('.dock-btn[data-tab="settings"]').first()
-      .click({ timeout: 15000 }).catch(async () => {
-        await page.locator('.dock-overflow-btn').click()
-        await page.locator('.dock-overflow-item').filter({ hasText: /settings|设置/i }).click()
-      })
-    await expect(page.locator('.settings-page')).toBeVisible({ timeout: 15000 })
-    await page.locator('.settings-index__row').filter({ hasText: /agent|智能体/i }).first().click()
-    await expect(page.locator('.settings-agents-index__row').first()).toBeVisible({ timeout: 10000 })
-
-    await page.locator('[data-action="agent-selftest-all"]').click()
-
-    // One row per agent must appear; the count matching the list is what proves
-    // every agent was actually tested rather than just the first.
-    const agentRows = await page.locator('.settings-agents-index__row').count()
-    await expect(page.locator('.settings-agents-index__selftest-row')).toHaveCount(agentRows, { timeout: 30000 })
-
-    // The E2E fleet (acp-mock + acp-mock-b) is healthy, so nothing may fail.
-    await expect(page.locator('.settings-agents-index__selftest-row--fail')).toHaveCount(0)
-  })
-
   test('deep mode runs a real turn and cleans up after itself', async ({ page }) => {
     // This is the check that proves the agent can actually ANSWER: the static
     // checks only prove the configuration is self-consistent. It costs tokens,

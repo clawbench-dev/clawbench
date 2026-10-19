@@ -990,6 +990,26 @@ describe('SettingsAgentDetail', () => {
     expect(wrapper.find('.settings-agent-detail__selftest-result').exists()).toBe(false)
   })
 
+  it('shows the static checks alongside a deep-run error', async () => {
+    // A deep run reports the error AND the static checks it rode along with.
+    // Hiding the checks whenever an error exists would remove exactly the rows
+    // that explain WHY the turn failed (e.g. "Executable not found").
+    mockSelfTestState.error.value = 'The configuration checks failed; fix them before running a real turn.'
+    mockSelfTestState.result.value = {
+      agentId: 'test-agent', ok: false, passed: 1, warned: 0, failed: 1,
+      checks: [{ key: 'acp_command', status: 'fail', detail: 'Executable "nope" was not found' }],
+    }
+    const wrapper = mountDetail()
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('.settings-agent-detail__selftest-error').exists()).toBe(true)
+    // Both must be on screen: the error says "it did not run", the row says why.
+    const result = wrapper.find('.settings-agent-detail__selftest-result')
+    expect(result.exists()).toBe(true)
+    expect(result.text()).toContain('Executable "nope" was not found')
+    expect(result.find('.settings-agent-detail__selftest-check--fail').exists()).toBe(true)
+  })
+
   it('disables the button while a run is in flight', async () => {
     mockSelfTestState.testing.value = true
     const wrapper = mountDetail()
