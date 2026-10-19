@@ -159,3 +159,111 @@ func TestServeSessionSettingsUpdate_GroupMemberBusy(t *testing.T) {
 	w = callHandlerWithAuth(ServeSessionSettingsUpdate, req)
 	assert.Equal(t, http.StatusConflict, w.Code, w.Body.String())
 }
+
+// TestServeSessionSettings_MemberRowCarriesAllThreeTabs pins the defect where a
+// group member's thinking / mode / context-usage tabs all rendered "not
+// available" while the same tabs worked in single chat.
+//
+// Three independent causes, all in the shared state resolver:
+//  1. the member row's transport column is EMPTY (it inherits the agent's), and
+//     the resolver treated anything not-"cli" as ACP but the CALLER echoed the
+//     empty column, so the client could not tell which protocol was in use;
+//  2. the thinking-effort restore required userPicked, which a member turn never
+//     sets — so the stored level was discarded on every read;
+//  3. usage only came from the ACP cache, which a member has no entry in.
+func TestServeSessionSettings_MemberRowCarriesAllThreeTabs(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/group/create", map[string]any{
+		"hostAgentId":    "codebuddy",
+		"memberAgentIds": []string{"codebuddy", "claude"},
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupCreate, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var created struct {
+		GroupID      string `json:"groupId"`
+		HostMemberID string `json:"hostMemberId"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
+
+	// Exactly what a real member turn persists: mode + effort (WITHOUT
+	// userPicked) + usage, all on the member row.
+	service.PatchContextStateMerge(created.HostMemberID, map[string]string{
+		"mode":           `{"currentModeId":"plan","availableModes":[{"id":"default","name":"Always Ask"},{"id":"plan","name":"Plan"}]}`,
+		"thinkingEffort": `{"currentId":"xhigh","availableLevels":[{"id":"low","name":"Low"},{"id":"xhigh","name":"XHigh"}]}`,
+		"usage":          `{"used":64269,"size":1000000}`,
+	})
+
+	req = newRequest(t, http.MethodGet, "/api/ai/session/settings?session_id="+created.HostMemberID, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandlerWithAuth(ServeSessionSettings, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var got struct {
+		ModeState *struct {
+			CurrentModeID  string `json:"currentModeId"`
+			AvailableModes []struct {
+				ID string `json:"id"`
+			} `json:"availableModes"`
+		} `json:"modeState"`
+		ThinkingEffortState *struct {
+			CurrentID       string `json:"currentId"`
+			AvailableLevels []struct {
+				ID string `json:"id"`
+			} `json:"availableLevels"`
+		} `json:"thinkingEffortState"`
+		UsageState *struct {
+			Used int `json:"used"`
+			Size int `json:"size"`
+		} `json:"usageState"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+
+	// (1) Mode tab: list + current selection.
+	require.NotNil(t, got.ModeState, "modeState must survive for a member row")
+	assert.Equal(t, "plan", got.ModeState.CurrentModeID)
+	assert.Len(t, got.ModeState.AvailableModes, 2)
+
+	// (2) Thinking tab: the stored level must be restored even though a member
+	// turn never marks it userPicked.
+	require.NotNil(t, got.ThinkingEffortState, "thinkingEffortState must be restored for a member row")
+	assert.Equal(t, "xhigh", got.ThinkingEffortState.CurrentID)
+	assert.Len(t, got.ThinkingEffortState.AvailableLevels, 2)
+
+	// (3) Usage tab: the member's own window.
+	require.NotNil(t, got.UsageState, "usageState must come from the member row")
+	assert.Equal(t, 64269, got.UsageState.Used)
+	assert.Equal(t, 1000000, got.UsageState.Size)
+}
+
+// TestServeSessionSettings_EmptyTransportDoesNotHideACPState pins the resolver's
+// treatment of an empty transport column: it must NOT be read as "cli", which
+// would return an empty snapshot and blank every ACP-only tab.
+func TestServeSessionSettings_EmptyTransportDoesNotHideACPState(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sid, err := service.CreateSession(env.ProjectDir, "codebuddy", "NoTransport", "codebuddy", "", "user", "chat")
+	require.NoError(t, err)
+	// The row's transport column stays empty, like a member row.
+	service.PatchContextStateMerge(sid, map[string]string{
+		"mode": `{"currentModeId":"plan","availableModes":[{"id":"plan","name":"Plan"}]}`,
+	})
+
+	req := newRequest(t, http.MethodGet, "/api/ai/session/settings?session_id="+sid, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeSessionSettings, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var got struct {
+		ModeState *struct {
+			CurrentModeID string `json:"currentModeId"`
+		} `json:"modeState"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	require.NotNil(t, got.ModeState, "an empty transport must not discard the persisted mode")
+	assert.Equal(t, "plan", got.ModeState.CurrentModeID)
+}

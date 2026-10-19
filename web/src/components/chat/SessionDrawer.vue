@@ -425,6 +425,20 @@ const thinkingLevels = computed(() => {
   if (isACP.value) {
     const acpLevels = effectiveEfforts.value
     if (acpLevels.length > 0) return acpLevels
+    // ACP has not reported levels for this session.
+    //
+    // Single chat keeps showing an empty tab: its chip comes from the live
+    // stream, and inventing a list the agent never advertised would offer
+    // choices the agent may reject.
+    //
+    // A TARGETED session (group member) is different: its connection may not be
+    // live at all when the drawer opens, so "no reported levels" is the normal
+    // state rather than a signal. Falling back to the agent's static levels is
+    // what makes the tab usable there instead of permanently empty — the same
+    // list the member's next turn would accept.
+    if (isTargeted.value) {
+      return getAgentThinkingEffortLevels(props.agentId || '').map(id => ({ id, name: id }))
+    }
     return []
   }
   // CLI mode: agent BackendSpec static levels

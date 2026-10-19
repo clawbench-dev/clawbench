@@ -785,6 +785,13 @@ func sessionStateSnapshot(sessionID, sessionAgentID, sessionTransport string) se
 	if sessionID == "" || sessionTransport == "cli" {
 		return st
 	}
+	// A session row can carry an EMPTY transport (a group member row never had
+	// one written: the member inherits the agent's transport, exactly as a turn
+	// does through resolveIsACP). Empty is NOT "cli" — treating it as a reason to
+	// bail out left every member's mode/thinking/usage permanently empty in the
+	// settings drawer. Only an explicit "cli" opts out; empty falls through to
+	// the agent-level lookups below, which is where the real transport is
+	// resolved.
 	if s := ai.GetACPConnManager().GetCachedStateByClawbenchSID(sessionID); s.Mode != nil || s.Effort != nil || len(s.Commands) > 0 || s.ModelList != nil || s.Plan != nil || s.Usage != nil || s.ReplayPending {
 		st.Mode = s.Mode
 		st.Effort = s.Effort
@@ -843,7 +850,17 @@ func sessionStateSnapshot(sessionID, sessionAgentID, sessionTransport string) se
 			if st.Mode == nil && ctxState.Mode != nil {
 				st.Mode = ctxState.Mode
 			}
-			if st.Effort == nil && ctxState.ThinkingEffort != nil && ctxState.ThinkingEffort.UserPicked {
+			// Restore the effort when the user picked it — OR when nothing else
+			// describes this session. The userPicked guard exists so an agent's
+			// own per-model default (OpenCode reports "low" for most models) is
+			// not presented as the user's choice (issue #552). A group MEMBER row
+			// is the case where the distinction does not apply: a member turn
+			// writes the agent's reported level and never sets userPicked, so a
+			// strict guard made the thinking tab permanently unavailable for
+			// every member. The stored level is still what that member's next
+			// turn will run, so showing it is accurate.
+			if st.Effort == nil && ctxState.ThinkingEffort != nil &&
+				(ctxState.ThinkingEffort.UserPicked || service.IsGroupMemberSession(sessionID)) {
 				st.Effort = ctxState.ThinkingEffort
 			}
 			if st.Usage == nil && ctxState.Usage != nil {

@@ -1259,4 +1259,82 @@ describe('SessionDrawer', () => {
       expect(mockApiPatch).toHaveBeenCalledTimes(1)
     })
   })
+
+  // ── Member rows must reach the same three tabs as single chat ──
+  // The reported defect: a group member's thinking / mode / usage tabs all said
+  // "not available" while the same tabs worked in single chat. The payload below
+  // is what the server now returns for a member (transport is resolved, effort is
+  // restored without userPicked).
+
+  describe('group member tabs parity with single chat', () => {
+    const memberPayload = {
+      ok: true,
+      sessionId: 'member-9',
+      sessionType: 'group_member',
+      agentId: 'claude',
+      backend: 'claude',
+      modelId: 'claude-opus-4-5',
+      transport: 'acp-stdio',
+      autoApprove: false,
+      cruise: false,
+      modeState: { currentModeId: 'plan', availableModes: [{ id: 'plan', name: 'Plan' }, { id: 'default', name: 'Ask' }] },
+      thinkingEffortState: { currentId: 'xhigh', availableLevels: [{ id: 'low', name: 'Low' }, { id: 'xhigh', name: 'XHigh' }] },
+      usageState: { used: 64269, size: 1000000 },
+      isGroupMember: true,
+    }
+
+    function mountMember() {
+      mockApiGet.mockResolvedValue(memberPayload)
+      return mountDrawer({ targetSessionId: 'member-9' })
+    }
+
+    it('renders the mode list instead of the unavailable hint', async () => {
+      const wrapper = mountMember()
+      await nextTick()
+      await nextTick()
+      await wrapper.findAll('.model-tab')[2].trigger('click')
+      await nextTick()
+      expect(wrapper.find('.tab-empty-hint').exists()).toBe(false)
+      const modes = wrapper.findAll('.thinking-item')
+      expect(modes.length).toBe(2)
+      expect(modes[0].text()).toContain('Plan')
+      // The current mode is marked from the member's own payload.
+      expect(modes[0].classes()).toContain('current')
+    })
+
+    it('renders the thinking levels instead of the unavailable hint', async () => {
+      const wrapper = mountMember()
+      await nextTick()
+      await nextTick()
+      await wrapper.findAll('.model-tab')[1].trigger('click')
+      await nextTick()
+      expect(wrapper.find('.tab-empty-hint').exists()).toBe(false)
+      const levels = wrapper.findAll('.thinking-item')
+      expect(levels.length).toBe(2)
+      expect(levels[1].text()).toContain('XHigh')
+      expect(levels[1].classes()).toContain('current')
+    })
+
+    it('renders the member usage instead of the empty state', async () => {
+      const wrapper = mountMember()
+      await nextTick()
+      await nextTick()
+      await wrapper.findAll('.model-tab')[4].trigger('click')
+      await nextTick()
+      expect(wrapper.text()).not.toContain('chat.sessionSetting.noUsage')
+      expect(wrapper.findComponent({ name: 'ContextUsageDetail' }).exists()).toBe(true)
+    })
+
+    it('shows the protocol selection from the resolved transport', async () => {
+      const wrapper = mountMember()
+      await nextTick()
+      await nextTick()
+      await wrapper.findAll('.model-tab')[3].trigger('click')
+      await nextTick()
+      // ACP row is current — an empty transport column used to leave BOTH
+      // protocol rows unselected.
+      const rows = wrapper.findAll('.thinking-item')
+      expect(rows[0].classes()).toContain('current')
+    })
+  })
 })

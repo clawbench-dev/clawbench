@@ -72,6 +72,25 @@ func ServeSessionSettings(w http.ResponseWriter, r *http.Request) {
 	if agentID == "" {
 		agentID = service.GetSessionAgentID(sessionID)
 	}
+	// Resolve the EFFECTIVE transport rather than echoing the raw column.
+	//
+	// A group member row has transport='' by design (it inherits whatever its
+	// agent uses, exactly as a turn does through resolveIsACP). Echoing the empty
+	// column made the drawer's protocol tab render no selection at all.
+	//
+	// An explicit per-session override wins; otherwise take the agent's own
+	// transport, then "has an ACP command" (the same fallback resolveIsACP uses).
+	// If neither is known the value stays EMPTY — deliberately NOT "cli": a row
+	// with no transport is not a CLI row, and claiming so would hide the ACP-only
+	// tabs. The client already treats empty as "ask the agent config".
+	if transport == "" {
+		if agent := model.GetAgent(agentID); agent != nil {
+			transport = agent.Transport
+			if transport == "" && agent.AcpCommand != "" {
+				transport = transportACP
+			}
+		}
+	}
 
 	st := sessionStateSnapshot(sessionID, agentID, transport)
 
