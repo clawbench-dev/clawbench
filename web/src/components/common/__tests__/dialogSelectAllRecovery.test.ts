@@ -33,19 +33,23 @@ describe('DialogOverlay Android select-all delete recovery', () => {
     vi.useRealTimers()
   })
 
-  function open(value: string) {
+  function open(value: string, singleLine = false) {
     const { state } = useDialog()
     state.value = {
       visible: true, type: 'prompt', title: 'T', message: 'M', value,
       placeholder: 'p', confirmText: '', cancelText: '', dangerous: false,
       extraText: '', extraPrimedText: '', onExtraAction: null,
-      generateText: '', onGenerate: null, resolve: vi.fn(),
+      generateText: '', onGenerate: null, singleLine, resolve: vi.fn(),
     } as any
     wrapper = mount(DialogOverlay, { attachTo: document.body })
   }
 
   function textarea(): HTMLTextAreaElement {
     return document.body.querySelector('.dlg-textarea') as HTMLTextAreaElement
+  }
+
+  function singleInput(): HTMLInputElement {
+    return document.body.querySelector('.dlg-input') as HTMLInputElement
   }
 
   function fireBeforeInput(ta: HTMLTextAreaElement, inputType: string, data: string | null) {
@@ -251,5 +255,25 @@ describe('DialogOverlay Android select-all delete recovery', () => {
     await nextTick(); await nextTick(); await nextTick(); await nextTick()
 
     expect(textarea()).toBe(before)
+  })
+
+  it('rebuilds the one-line input used by singleLine prompts', async () => {
+    // The same WebView InputConnection bug applies to `<input>`; the go-to-line
+    // prompt uses that element, so recovery must cover it too.
+    open('42', true)
+    await nextTick(); await nextTick()
+
+    const before = singleInput()
+    expect(before.tagName).toBe('INPUT')
+    before.focus()
+    before.select()
+
+    fireBeforeInput(before, 'insertText', '')
+    applyEdit(before, '')
+    await nextTick(); await nextTick(); await nextTick(); await nextTick()
+
+    const after = singleInput()
+    expect(after).not.toBe(before)
+    expect(document.activeElement).toBe(after)
   })
 })

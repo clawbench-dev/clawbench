@@ -822,6 +822,9 @@ async function promptGoToLine(editor, currentLine, totalLines) {
         value: String(currentLine),
         placeholder: t('file.editor.goToLine.placeholder'),
         confirmText: t('file.editor.goToLine.confirm'),
+        // A line number is a single token: the multi-line textarea would let the
+        // user insert a newline that `parseGoToLine` then rejects as invalid.
+        singleLine: true,
     })
     if (answer === null) return
     const target = parseGoToLine(answer, currentLine, totalLines)

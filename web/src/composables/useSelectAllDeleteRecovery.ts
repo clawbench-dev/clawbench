@@ -14,7 +14,7 @@ import {
  * dropped without any event reaching the page — the field is bricked until it
  * is rebuilt.
  *
- * Bind the returned handlers to the textarea and use `inputEpoch` as its `:key`:
+ * Bind the returned handlers to the field and use `inputEpoch` as its `:key`:
  * bumping the key makes Vue replace the element, which is the only way to get a
  * fresh InputConnection. Collapsing the caret and blur+focus were both tried on
  * device and both failed — they operate on the same element and reuse the dead
@@ -28,10 +28,19 @@ import {
  * Android-only: the failure is a WebView bug and the rebuild costs a focus
  * round-trip, so desktop behaviour must stay untouched.
  */
+
+/**
+ * The recovery works on any focusable text field. `HTMLInputElement` is
+ * included because the single-line prompt dialog uses `<input>`; both expose
+ * the same `value` / `selectionStart` / `selectionEnd` / `setSelectionRange`
+ * surface this relies on.
+ */
+type RecoverableField = HTMLTextAreaElement | HTMLInputElement
+
 export function useSelectAllDeleteRecovery(opts: {
-  getElement: () => HTMLTextAreaElement | null
+  getElement: () => RecoverableField | null
   /** Called after the element has been rebuilt, refocused and had its caret restored. */
-  onRebuilt?: (el: HTMLTextAreaElement) => void
+  onRebuilt?: (el: RecoverableField) => void
 }) {
   const inputEpoch = ref(0)
 

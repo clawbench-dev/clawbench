@@ -756,6 +756,18 @@ describe('CodeMirrorViewer — go to line (Ctrl+G)', () => {
     wrapper.unmount()
   })
 
+  it('asks for a one-line input, not the multi-line textarea', async () => {
+    // A line number is a single token; the shared prompt defaults to a 3-row
+    // textarea, where Enter inserts a newline that parseGoToLine rejects.
+    dialogMocks.prompt.mockResolvedValue(null)
+    const wrapper = mountForJump()
+    await sleep(80)
+    pressCtrlG(wrapper.vm.getView())
+    await sleep(50)
+    expect(dialogMocks.prompt.mock.calls[0][1]).toMatchObject({ singleLine: true })
+    wrapper.unmount()
+  })
+
   it('jumps to and flashes the requested line', async () => {
     // Line 20 (not 42): jsdom has no layout, so CodeMirror only materializes the
     // first ~36 lines and a decoration on an unrendered line has no DOM element
