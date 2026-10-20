@@ -278,6 +278,8 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			backend TEXT DEFAULT '',
 			agent_id TEXT DEFAULT '',
 			clawbench_session_id TEXT DEFAULT '',
+			cost_session_total REAL DEFAULT 0,
+			cost_cumulative INTEGER DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE INDEX IF NOT EXISTS idx_chat_metadata_model ON chat_metadata(model);
@@ -364,6 +366,17 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			backend TEXT NOT NULL DEFAULT '',
 			message_count INTEGER NOT NULL DEFAULT 0,
 			payload TEXT NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		-- DeleteProjectData cleans this table by group_id; without it here the
+		-- handler's project delete would fail with "no such table".
+		CREATE TABLE IF NOT EXISTS group_pending_bcc (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			group_id TEXT NOT NULL,
+			target_name TEXT NOT NULL,
+			content TEXT NOT NULL,
+			sender_role TEXT NOT NULL DEFAULT '',
+			sender_name TEXT NOT NULL DEFAULT '',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE TABLE IF NOT EXISTS message_clusters_cache (

@@ -535,10 +535,10 @@ async function handleFileTagClick(fileEntry) {
  * and message id included). They were built separately before and had drifted:
  * this one carried no session id at all, which made the quote unopenable.
  *
- * The destination goes through the SAME session picker as every other quote
- * entry point — including from this conversation's own message list, so the
- * user can quote a message here into a DIFFERENT conversation. Nothing is
- * staged locally; confirmTarget does that for the session they pick.
+ * The destination is the conversation the user is reading (issue #560): a
+ * comment on a message is about that conversation, so it lands in the active
+ * session without a dialog. Cross-conversation delivery stays reachable from
+ * the quote bar's long-press, which forces the picker.
  */
 function handleQuoteMessage(msg) {
     if (!msg) return
@@ -566,7 +566,7 @@ function handleQuoteMessage(msg) {
         }],
         attachments: [],
         text: '',
-    })
+    }, { deliverTo: 'active' })
 }
 
 /** Remove an attached reference entry (from AttachmentTags cards or AttachDrawer
@@ -1356,6 +1356,15 @@ function handleSwitchThinkingEffort(level) {
     level,
   )
   persistSessionUpdate({ thinkingEffort: level }).then((res) => {
+    if (res?.thinkingEffortNotRemembered) {
+      // Applied for this session, but the durable per-model write failed: the
+      // pick will vanish on restart / in a new session. Say so now — otherwise
+      // the user only finds out later, with nothing to explain it.
+      toast.show(
+        t('chat.thinkingEffortSwitcher.notRemembered', { effort: levelObj?.name || level }),
+        { icon: 'warning', type: 'info' },
+      )
+    }
     if (!res?.thinkingEffortRejected) return
     // The agent does not offer this level, so the server discarded it. Undo the
     // optimistic update — otherwise the chip keeps showing a level the next
@@ -1469,10 +1478,19 @@ async function handleRewindFromMessage(msg) {
 }
 
 /** Persist session-scoped settings (mode, thinkingEffort, model, transport)
- *  immediately via PATCH so they survive page reload without sending a message. */
+ *  immediately via PATCH so they survive page reload without sending a message.
+ *
+ *  ALWAYS returns a Promise, resolving to the parsed response or null. It used
+ *  to `return` undefined when there was no session, and callers chain `.then()`
+ *  on the result — so the no-session case threw a TypeError instead of being a
+ *  no-op. Returning `Promise.resolve(null)` keeps every caller total.
+ *
+ *  The response carries the server's verdicts: `thinkingEffortRejected` (the
+ *  level is not offered, nothing persisted) and `thinkingEffortNotRemembered`
+ *  (applied now, but the durable per-model write failed). */
 function persistSessionUpdate(fields) {
   const sid = identity.currentSessionId.value
-  if (!sid) return
+  if (!sid) return Promise.resolve(null)
   const url = `/api/ai/session/update?session_id=${encodeURIComponent(sid)}`
   return fetch(url, {
     method: 'PATCH',

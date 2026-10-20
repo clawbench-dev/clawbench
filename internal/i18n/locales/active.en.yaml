@@ -119,6 +119,8 @@ AgentNameReserved: This name conflicts with the group-chat user nickname
 UserNicknameTaken: This nickname is already used by an agent
 InvalidUserNickname: Invalid nickname (1-32 characters, no quotes, angle brackets, commas or control characters)
 InvalidAgentName: Invalid agent name
+InvalidAcpCommand: Invalid ACP command (must be non-empty and at most 4096 bytes)
+AcpCommandManagedByDiscovery: The ACP command of a built-in backend is managed by auto-discovery and cannot be edited
 InvalidAgentSpecialty: Invalid description
 InvalidAgentAvatar: Invalid avatar image
 InvalidSystemPrompt: System prompt too long
@@ -303,3 +305,7 @@ ForgeEventViewDetail: View details
 PortForwardUnavailable: port forwarding is not available
 TunnelTargetUnreachable: tunnel target is unreachable
 TunnelReverseRequiresHTTP2: reverse forwarding requires HTTP/2; use the SSH transport on HTTP/1.1
+UsageMeterOverTitle: Usage above plan
+UsageMeterFullTitle: Usage quota exhausted
+UsageMeterOverBody: Used {{.Actual}} this cycle vs {{.Expected}} expected (quota {{.Quota}}, day {{.Day}} of {{.Days}})
+UsageMeterFullBody: The {{.Quota}} quota for this cycle is used up; actual usage {{.Actual}}

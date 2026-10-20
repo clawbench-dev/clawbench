@@ -103,6 +103,20 @@ func BackendMidTurnSplitsReply(backendID string) bool {
 	return BackendMidTurnSplitsReplyFn(backendID)
 }
 
+// CustomACPBackend is the backend ID carried by user-defined ACP agents
+// (issue #557). It deliberately appears in NO registry entry:
+//
+//   - model.RefreshAgents rewrites acp_command for every row whose backend
+//     matches a registered spec, so a custom agent must not borrow a built-in
+//     ID or its spawn command would be replaced on the next rescan.
+//   - Every FindSpecByBackend consumer treats a nil spec as "no spec-derived
+//     capability", which is exactly right for an agent whose capabilities can
+//     only come from the agent itself at runtime.
+//
+// It is a single constant rather than one per agent because the per-agent
+// identity is the agent ID; the backend name only ever reaches UI labels.
+const CustomACPBackend = "custom-acp"
+
 // BackendRegistry lists all known AI backends for auto-discovery.
 // Populated lazily from backend plugins via GetBackendRegistry().
 // Direct reads should use GetBackendRegistry() to ensure initialization.

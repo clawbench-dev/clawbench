@@ -135,6 +135,10 @@ func grokMetadataFromEnd(msg *GrokStreamMessage) *Metadata {
 		if err := json.Unmarshal(msg.Usage, &u); err == nil {
 			meta.InputTokens = firstNonZero(u.InputTokens, u.InputTokensCamel)
 			meta.OutputTokens = firstNonZero(u.OutputTokens, u.OutputTokensCamel)
+			// Keep the agent's own total when present; otherwise the ledger's
+			// total>=input+output invariant fills it in. Dropping it here made
+			// every grok row show 0 under the stats panel's default metric.
+			meta.TotalTokens = firstNonZero(u.TotalTokens, u.TotalTokensCamel)
 			meta.CostUSD = firstNonZeroFloat(u.CostUSD, u.CostUSDCamel)
 		}
 	}

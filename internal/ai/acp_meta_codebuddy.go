@@ -186,6 +186,14 @@ func extractCodeBuddyMeta(meta map[string]any) *metaExtraction {
 	// OpenAI-style usage block.
 	if m, ok := meta[metaKeyCodeBuddyUsage].(map[string]any); ok {
 		ext.Usage = tokenUsageFromCodeBuddyUsage(m)
+		// CodeBuddy emits one usage_update per MODEL CALL within a turn, each
+		// carrying only that call's counters (verified on the raw wire: a
+		// 4-command turn produced prompt_tokens 38229/38328/38427/38526/38625
+		// under a single requestId). The turn total is their SUM, so the
+		// accumulator must add them rather than adopt the last one.
+		// messageId identifies the call and is the dedup key.
+		ext.Usage.Accumulate = true
+		ext.Usage.CallID = metaString(meta[metaKeyCodeBuddyMessageID])
 	}
 
 	// Context-window breakdown.

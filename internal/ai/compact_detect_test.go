@@ -378,11 +378,25 @@ func TestIsCompactionUsageDrop(t *testing.T) {
 			next: &UsageState{Used: 12000, Size: 200000},
 			want: false, // 40% — below the 60% threshold
 		},
+		// A window change no longer VETOES detection. It used to, and that
+		// silently disabled the only signal OpenCode ever produces: a compaction
+		// can itself move the window, and a missed compaction is permanent (the
+		// system prompt is never re-injected for the rest of the session). The
+		// cost of a false positive is one extra prompt injection.
+		//
+		// The stricter regime is an ABSOLUTE floor on top of the ratio, so a
+		// re-advertised window over a small context cannot fake it.
 		{
-			name: "window size changed means a different model, not a compaction",
+			name: "window changed but the absolute drop is large -> compaction",
 			prev: &UsageState{Used: 20000, Size: 200000},
 			next: &UsageState{Used: 1000, Size: 1000000},
-			want: false,
+			want: true,
+		},
+		{
+			name: "window changed with a SMALL absolute drop -> not evidence",
+			prev: &UsageState{Used: 1100, Size: 200000},
+			next: &UsageState{Used: 200, Size: 2000000},
+			want: false, // 82% ratio but only 900 tokens gone, across a size change
 		},
 		{
 			name: "tiny contexts are noise",

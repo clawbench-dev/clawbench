@@ -541,6 +541,33 @@ func splitTierAliases(acpByID map[string]AgentModel) (map[string]string, map[str
 	return aliasNames, concrete
 }
 
+// TierAliasForModelID reports the capability TIER an ID belongs to, by matching
+// a tier token anywhere in it: "claude-sonnet-4-6" → "sonnet", "opus" → "opus".
+//
+// Exported because the ACP model-switch guard needs it: when an agent advertises
+// its models as tier aliases (claude's adapter does), the picker and the PATCH
+// endpoint still carry the CLI's CONCRETE id. "Does this value appear in the
+// advertised list" is then the wrong question — the value is expressible
+// whenever its tier is. `default` is a fallback marker rather than a tier, so it
+// never matches.
+//
+// A parameterized variant ("opus[1m]") is a distinct selectable model, not a
+// tier alias, so it is excluded (same rule as aliasNameFor).
+func TierAliasForModelID(id string) (string, bool) {
+	if strings.ContainsRune(id, '[') {
+		return "", false
+	}
+	for _, token := range tokenizeModelID(id) {
+		if token == metaTierDefault {
+			continue
+		}
+		if _, ok := tierAliases[token]; ok {
+			return token, true
+		}
+	}
+	return "", false
+}
+
 // aliasForCLIModel finds the tier alias a concrete CLI model ID belongs to, by
 // looking for the alias as a token of the ID. "claude-sonnet-4-6" matches
 // "sonnet"; "claude-opus-4-5" matches "opus".

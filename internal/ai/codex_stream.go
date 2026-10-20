@@ -133,8 +133,18 @@ func (p *CodexStreamParser) handleTurnCompleted(msg *CodexStreamMessage, ch chan
 		SessionID: p.threadID,
 	}
 	if msg.Usage != nil {
-		meta.InputTokens = msg.Usage.InputTokens
+		// Codex reports cached_input_tokens OUTSIDE input_tokens: production
+		// rows satisfy total = input + output + cached_input (e.g.
+		// 148 + 49 + 19072 = 19269). Normalize to the CodeBuddy shape so
+		// "输入 Tokens" and the cache hit rate mean the same thing everywhere.
+		meta.CachedReadTokens = msg.Usage.CachedInputTokens
+		meta.InputTokens = msg.Usage.InputTokens + msg.Usage.CachedInputTokens
 		meta.OutputTokens = msg.Usage.OutputTokens
+		meta.TotalTokens = meta.InputTokens + meta.OutputTokens
+		if msg.Usage.CachedInputTokens > 0 {
+			meta.CacheHitTokens = msg.Usage.CachedInputTokens
+			meta.CacheMissTokens = msg.Usage.InputTokens
+		}
 	}
 	emitStreamEvent(ch, "codex", StreamEvent{Type: "metadata", Meta: meta})
 	emitStreamEvent(ch, "codex", StreamEvent{Type: "done"})

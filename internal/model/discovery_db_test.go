@@ -54,6 +54,7 @@ func setupTestDBForDiscovery(t *testing.T) *sql.DB {
 			auto_approve INTEGER NOT NULL DEFAULT 0,
 			disabled INTEGER NOT NULL DEFAULT 0,
 			project_id INTEGER DEFAULT NULL,
+			mcp_servers TEXT NOT NULL DEFAULT '{"mode":"all","names":[]}',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
@@ -431,6 +432,77 @@ func TestLoadYamlAgents_NeverOverwritesExisting(t *testing.T) {
 func TestLoadYamlAgents_MissingDirectoryIsNotAnError(t *testing.T) {
 	db := setupTestDBForDiscovery(t)
 	assert.Empty(t, LoadYamlAgents(db, t.TempDir()))
+}
+
+// A user-defined ACP agent's command must survive the discovery sync. This is
+// the entire reason CustomACPBackend exists: syncAgentInfrastructure rewrites
+// acp_command (and transport) for every row whose backend matches a registered
+// spec, so a custom agent that borrowed a built-in backend id would have its
+// user-supplied command replaced on the next rescan or startup.
+func TestCustomACPAgent_CommandSurvivesDiscoverySync(t *testing.T) {
+	db := setupTestDBForDiscovery(t)
+
+	const customCmd = "/opt/my-tool acp --stdio"
+	_, err := db.Exec(
+		`INSERT INTO agents (id, name, backend, transport, acp_command) VALUES (?, ?, ?, ?, ?)`,
+		"custom-1", "My Tool", CustomACPBackend, "acp-stdio", customCmd,
+	)
+	require.NoError(t, err)
+
+	// syncAgentInfrastructure is the function RefreshAgents runs per spec. Run
+	// it for EVERY registered spec, exactly as a real refresh would — using the
+	// same COUNT(*) query so a backend with no row is a no-op rather than an
+	// error.
+	for _, spec := range GetBackendRegistry() {
+		var count int
+		var existingAcpCommand, existingTransport string
+		require.NoError(t, db.QueryRow(
+			"SELECT COUNT(*), COALESCE(acp_command, ''), COALESCE(transport, '') FROM agents WHERE backend = ?",
+			spec.Backend,
+		).Scan(&count, &existingAcpCommand, &existingTransport))
+		if count == 0 {
+			continue
+		}
+		syncAgentInfrastructure(db, spec, existingAcpCommand, existingTransport)
+	}
+
+	var gotCmd, gotTransport string
+	require.NoError(t, db.QueryRow(
+		"SELECT acp_command, transport FROM agents WHERE id = 'custom-1'",
+	).Scan(&gotCmd, &gotTransport))
+	assert.Equal(t, customCmd, gotCmd, "the discovery sync must not touch a custom ACP agent's command")
+	assert.Equal(t, "acp-stdio", gotTransport)
+}
+
+// The counter-case: a row carrying a REGISTERED backend id IS overwritten by the
+// same sync. Pinning both directions is what makes the test above meaningful —
+// without it, a sync that silently did nothing at all would also pass.
+func TestRegisteredBackend_CommandIsOverwrittenByDiscoverySync(t *testing.T) {
+	db := setupTestDBForDiscovery(t)
+
+	spec := FindSpecByBackend("claude")
+	require.NotNil(t, spec)
+	require.NotEmpty(t, spec.AcpCommand)
+
+	_, err := db.Exec(
+		`INSERT INTO agents (id, name, backend, transport, acp_command) VALUES (?, ?, ?, ?, ?)`,
+		"claude", "Claude", "claude", "acp-stdio", "/my/own/claude --acp",
+	)
+	require.NoError(t, err)
+
+	var existingAcpCommand, existingTransport string
+	require.NoError(t, db.QueryRow(
+		"SELECT COALESCE(acp_command, ''), COALESCE(transport, '') FROM agents WHERE backend = ?",
+		spec.Backend,
+	).Scan(&existingAcpCommand, &existingTransport))
+	require.True(t, syncAgentInfrastructure(db, *spec, existingAcpCommand, existingTransport))
+
+	var gotCmd string
+	require.NoError(t, db.QueryRow(
+		"SELECT acp_command FROM agents WHERE id = 'claude'",
+	).Scan(&gotCmd))
+	assert.Equal(t, spec.AcpCommand, gotCmd,
+		"a registered backend's command is discovery-owned — this is why custom agents must not reuse one")
 }
 
 // ---------------------------------------------------------------------------
@@ -900,4 +972,54 @@ func TestStartModelDiscoveryAsync_UsesInjectedLock(t *testing.T) {
 		"进入锁时不应已有 agent——否则重载发生在锁外")
 	assert.True(t, hasAgentAfterLock,
 		"重载必须在锁内完成（否则与 handler 读 Agents 竞争）")
+}
+
+// TestLoadAgentsFromDBRows_MCPServersRoundTrip pins the per-agent MCP policy
+// through saveAgentToDB → loadAgentsFromDBRows.
+//
+// This loader — not service.LoadAgentsFromDB — is the one behind the live
+// model.Agents map (see the comment on loadAgentsFromDBRows). A column that is
+// written but not read here survives until the next background reload and then
+// silently reverts, which is exactly the #552 failure mode.
+func TestLoadAgentsFromDBRows_MCPServersRoundTrip(t *testing.T) {
+	db := setupTestDBForDiscovery(t)
+
+	policy := MCPServerPolicy{Mode: MCPPolicySelected, Names: []string{"websearch", "browser"}}
+	require.NoError(t, saveAgentToDB(db, &Agent{ID: "a1", Name: "A1", Backend: "claude", MCPServers: policy}))
+
+	agents, err := loadAgentsFromDBRows(db)
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+	assert.Equal(t, MCPPolicySelected, agents[0].MCPServers.Mode)
+	assert.Equal(t, []string{"websearch", "browser"}, agents[0].MCPServers.Names)
+}
+
+// TestLoadAgentsFromDBRows_MCPServersDefaultIsAll pins the default for a row
+// written without a policy. Reading it as "none" would strip MCP from every
+// agent that existed before the column did.
+func TestLoadAgentsFromDBRows_MCPServersDefaultIsAll(t *testing.T) {
+	db := setupTestDBForDiscovery(t)
+
+	require.NoError(t, saveAgentToDB(db, &Agent{ID: "a1", Name: "A1", Backend: "claude"}))
+	agents, err := loadAgentsFromDBRows(db)
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+	assert.Equal(t, MCPPolicyAll, agents[0].MCPServers.Normalized().Mode,
+		"a fresh agent must default to 'all', not 'none'")
+}
+
+// TestLoadAgentsFromDBRows_MalformedMCPPolicyFallsBackToAll pins that a corrupt
+// policy column degrades to the default instead of aborting the load — and does
+// not become "none".
+func TestLoadAgentsFromDBRows_MalformedMCPPolicyFallsBackToAll(t *testing.T) {
+	db := setupTestDBForDiscovery(t)
+
+	_, err := db.Exec(`INSERT INTO agents (id, name, backend, mcp_servers)
+		VALUES ('a1', 'A1', 'claude', 'not json')`)
+	require.NoError(t, err)
+
+	agents, err := loadAgentsFromDBRows(db)
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+	assert.Equal(t, MCPPolicyAll, agents[0].MCPServers.Normalized().Mode)
 }

@@ -188,6 +188,7 @@ afterEach(() => {
   fileNavState.canGoForward.value = false
   tocDockPrefState.tocDockSide.value = 'right'
   mockOpenSearch.mockClear()
+  mockOpenGoToLine.mockClear()
   for (const id of pendingTimers) { clearTimeout(id) }
   pendingTimers.length = 0
   for (const id of pendingIntervals) { clearInterval(id) }
@@ -198,12 +199,14 @@ afterEach(() => {
 // editing flow (which calls it to exit edit mode first) can be exercised.
 const mockHandleExit = vi.fn()
 const mockOpenSearch = vi.fn()
+const mockOpenGoToLine = vi.fn(() => true)
 const codeMirrorViewerStub = {
   name: 'CodeMirrorViewer',
   template: '<div class="cm-stub" />',
   methods: {
     handleExit: (...args: unknown[]) => mockHandleExit(...args),
     openSearch: (...args: unknown[]) => mockOpenSearch(...args),
+    openGoToLine: (...args: unknown[]) => mockOpenGoToLine(...args),
   },
 }
 
@@ -1017,6 +1020,22 @@ describe('FileViewer', () => {
       ss.focusSearchInput()
       expect(mockOpenSearch).not.toHaveBeenCalled()
       expect(wrapper.emitted('toggleSearch')).toBeFalsy()
+    })
+
+    it('openGoToLine forwards to the CodeMirror viewer for a code file', () => {
+      const wrapper = mountViewer({ file: codeFile })
+      const ss = (wrapper.vm as any).$.setupState
+      ss.openGoToLine()
+      expect(mockOpenGoToLine).toHaveBeenCalledTimes(1)
+    })
+
+    it('openGoToLine reports false for rendered markdown (no line numbers)', () => {
+      // App only preventDefaults when this returns true; otherwise the browser's
+      // own Ctrl+G (find next) must keep working on previews.
+      const wrapper = mountViewer({ file: mdFile, markdownViewMode: 'rendered' })
+      const ss = (wrapper.vm as any).$.setupState
+      expect(ss.openGoToLine()).toBe(false)
+      expect(mockOpenGoToLine).not.toHaveBeenCalled()
     })
 
     it('routes search toggle upward for HTML raw view', async () => {

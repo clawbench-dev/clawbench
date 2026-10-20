@@ -13,11 +13,15 @@ import { defineComponent, h } from 'vue'
 
 vi.mock('lucide-vue-next', async (importOriginal) => {
   // Keep the real module's named exports (ESM named exports cannot be served by
-  // a Proxy) and null out the render.
+  // a Proxy) and null out the render. MessageCircleQuestion is the exception:
+  // it is the pill's identity icon, so it renders an identifiable node the
+  // pending-state test can look for.
   const actual = await importOriginal<Record<string, unknown>>()
   const out: Record<string, unknown> = {}
   for (const key of Object.keys(actual)) {
-    out[key] = defineComponent({ name: key, render: () => null })
+    out[key] = key === 'MessageCircleQuestion'
+      ? defineComponent({ name: key, render: () => h('i', { class: 'icon-question' }) })
+      : defineComponent({ name: key, render: () => null })
   }
   return out
 })
@@ -200,25 +204,30 @@ describe('ChatMessageList — /btw anchor (mounted)', () => {
   // ── Pending state ──
   // A question asked just now is inserted optimistically, so its anchor must
   // show an in-progress state immediately rather than waiting for the server.
-  it('shows a spinner in place of the icon while a question is pending', () => {
+  it('keeps the question icon and appends a spinner at the pill tail while pending', () => {
     const wrapper = mountList({ btwAnchors: { 10: [{ id: 'btw-pending-1', anchorMessageId: 10, pending: true }] } })
     const anchor = wrapper.find('.btw-anchor')
     expect(anchor.exists()).toBe(true)
     expect(anchor.classes()).toContain('btw-anchor--pending')
-    // The icon is REPLACED by the spinner, not shown alongside it.
-    expect(anchor.find('.btw-anchor-spinner').exists()).toBe(true)
-    expect(anchor.find('svg').exists()).toBe(false)
+    // The icon is the pill's identity — it must stay visible, not be replaced.
+    expect(anchor.find('.icon-question').exists()).toBe(true)
+    const children = anchor.element.children
+    // Trailing spinner: the last child of the pill, after the label and badge.
+    const spinner = anchor.find('.btw-anchor-spinner')
+    expect(spinner.exists()).toBe(true)
+    expect(children[children.length - 1]).toBe(spinner.element)
   })
 
-  it('keeps the label and footprint identical while pending', () => {
-    // The pending state must not resize or reword the pill: it only swaps the
-    // 14px icon for a 14px spinner and solidifies the border. A different label
-    // or a mis-sized spinner would make the anchor jump when a question starts.
+  it('keeps the label and spinner size tier identical while pending', () => {
+    // The pending state must not reword the pill: it keeps the question icon and
+    // the same label, and appends a 14px spinner (the icon's size tier) at the
+    // tail. A different label or a mis-sized spinner would look like a
+    // different control.
     const resting = mountList({ btwAnchors: { 10: [{ id: 1, anchorMessageId: 10, answer: 'a' }] } })
     const pending = mountList({ btwAnchors: { 10: [{ id: 'btw-pending-1', anchorMessageId: 10, pending: true }] } })
     expect(pending.find('.btw-anchor-label').text())
       .toBe(resting.find('.btw-anchor-label').text())
-    // The spinner must use the same size tier as the icon it replaces.
+    // The spinner must use the same size tier as the icon beside it.
     const spinner = pending.find('.btw-anchor-spinner')
     expect(spinner.classes()).toContain('size-sm')
     expect(spinner.classes()).not.toContain('size-14')

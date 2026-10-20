@@ -258,7 +258,14 @@ func (c *ACPConn) applyExtractedState(ext sessionStateExtracted) {
 	spec := model.FindSpecByBackend(c.agent.Backend)
 	loadSession := spec != nil && spec.ACPLoadSession
 	listSessions := reg.GetListSessions(agentID)
-	reg.ForceUpdateIfNeeded(agentID, ext.modes, ext.efforts, ext.models, nil, ext.configState, loadSession, listSessions)
+	// MCP capabilities are carried through for the same reason as listSessions:
+	// ForceUpdate fully replaces the AgentCapability struct, so a field that is
+	// not passed here is cleared on every first-session-of-a-process. Losing it
+	// would filter http/sse servers out of the NEXT session even though the
+	// agent advertised them (observed pattern for listSessions before it was
+	// carried through).
+	mcpCaps := reg.GetMCPCapabilities(agentID)
+	reg.ForceUpdateIfNeeded(agentID, ext.modes, ext.efforts, ext.models, nil, ext.configState, loadSession, listSessions, mcpCaps.HTTP, mcpCaps.SSE)
 }
 
 // mergeWireConfigIDs merges the config-option ids the agent advertised (per

@@ -1,5 +1,6 @@
 import { reactive, readonly } from 'vue'
 import type { NavigationSurface } from '@/composables/useNavigationContext'
+import { TRAILING_LINE_REF_RE } from '@/utils/lineRanges.ts'
 
 /**
  * State for the "search for a verified-missing path by filename" picker.
@@ -61,7 +62,12 @@ export function _resetInertPathPickerForTesting(): void {
  * also exactly the part that survives a wrong prefix guess, which is the case
  * this feature exists for.
  *
- * A trailing line suffix (`foo.go:42`, `foo.go#L42`) is not part of the name.
+ * A trailing line reference is not part of the name — neither the annotation
+ * suffix (`foo.go:42`, `foo.go:42-48`, `foo.go:90-91,309`) nor the hash form
+ * (`foo.go#L42`, `foo.go#L42-L48`). The grammar is shared with the annotation
+ * parser (`TRAILING_LINE_REF_RE`), because a hand-rolled narrower pattern here
+ * silently searched for `main.go:L42-L48` and never matched anything.
+ *
  * Glob metacharacters should never reach here (glob chips are not clickable),
  * but they are stripped defensively so a stray `*` cannot poison the query.
  */
@@ -69,16 +75,17 @@ export function deriveSearchQuery(pathOrText: string | null | undefined): string
   const raw = (pathOrText ?? '').trim()
   if (!raw) return ''
 
-  // Drop a trailing `:42`, `:42-48`, `:42,90` or `#L42` line reference.
-  const withoutLine = raw.replace(/[:#]L?\d+(?:[-,]\d+)*$/i, '')
+  // Drop a trailing line reference (`:42`, `:42-48`, `:42,90`, `#L42`, …).
+  const withoutLine = raw.replace(TRAILING_LINE_REF_RE, '')
   // Strip glob metacharacters: the query is a literal filename.
   const withoutGlob = withoutLine.replace(/[*?[\]<>]/g, '')
   const segments = withoutGlob.split(/[/\\]/).filter(Boolean)
   const base = segments.length > 0 ? segments[segments.length - 1] : ''
   // A path that was only a glob (`**/` strips to `/`) leaves nothing usable as
   // a filename. Fall back to the original text so the user sees what was
-  // clicked instead of searching for a bare separator.
-  return base || raw
+  // clicked instead of searching for a bare separator — but never with a line
+  // reference in it, which could not match a filename either.
+  return base || withoutLine.trim() || raw
 }
 
 /** Open the picker for a verified-missing path. */

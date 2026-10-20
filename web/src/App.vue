@@ -407,8 +407,8 @@
         :composerMode="quoteQuestion.composerMode.value"
         :composerAttachment="quoteQuestion.composerAttachment.value"
         :expandRequest="quoteQuestion.expandRequest.value"
-        @add="quoteQuestion.addToConversation($event)"
-        @send="quoteQuestion.sendMessage($event)"
+        @add="onQuoteBarAdd"
+        @send="onQuoteBarSend"
         @close="quoteQuestion.closeSheet()"
         @pin="quoteQuestion.pinBar()"
         @unpin="quoteQuestion.unpinBar()"
@@ -672,6 +672,7 @@ import { useEdgeSwipeBack } from './composables/useEdgeSwipeBack'
 import { handleBackNavigation, canNavigateBack, requestExitConfirm, canNavigateBackOverlay, handleBackNavigationOverlay } from './composables/useBackHandler'
 import { useNavigationContext } from './composables/useNavigationContext'
 import { setPendingSettingsCategory } from './composables/useSettingsNavigation'
+import { requestOpen as requestOpenUsageMeter } from './composables/useUsageMeter'
 import { useNavigationCoordinator } from './composables/useNavigationCoordinator'
 import { useAndroidBackPress } from './composables/useAndroidBackPress'
 import { useF5Reload } from './composables/useF5Reload'
@@ -1308,6 +1309,32 @@ function handleOpenForge(e: Event) {
       clearPendingForgeTarget()
     })
     .finally(() => switchTab('forge'))
+}
+
+/**
+ * Handle clawbench-open-usage-meter — a usage-meter notification was tapped
+ * (in-app notification center row, or the Android notification).
+ *
+ * Wide screens have the header capsule, so the request is forwarded to it and
+ * the popover opens in place. Narrow screens have no capsule (the meter is
+ * deliberately header-only), so the user lands on the settings entry that owns
+ * the rule instead of tapping a notification that appears to do nothing.
+ *
+ * The origin is recorded only on narrow screens. There the jump replaces the
+ * whole tab (log -> settings), so Back must know the log is where it came from.
+ * On a wide screen the log stays in the left column and the meter opens as a
+ * popover over it — nothing was navigated away from, so arming an origin whose
+ * tab is already active would only produce a press that consumes itself with no
+ * visible effect. The popover dismisses itself through its own back handler.
+ */
+function handleOpenUsageMeter(e?: Event) {
+  if (isWideScreen.value) {
+    requestOpenUsageMeter()
+    return
+  }
+  recordNotificationOrigin((e as CustomEvent<{ fromNotificationCenter?: boolean }> | undefined)?.detail)
+  setPendingSettingsCategory('usageMeter')
+  switchTab('settings')
 }
 
 // Register browse-scoped drawers with tab-drawer binding
@@ -2023,6 +2050,17 @@ function installQuoteSelectionBridge(
 }
 
 const quoteQuestion = useQuoteQuestion()
+
+// Quote bar commits. The bar emits `(text, { pickTarget })`; `pickTarget` is
+// set by the long-press gesture ("send this to another conversation"), so it
+// must be forwarded rather than dropped — dropping it would make every commit
+// target the active session and leave cross-session delivery unreachable.
+function onQuoteBarAdd(note: string, opts?: { pickTarget?: boolean }) {
+  quoteQuestion.addToConversation(note, opts)
+}
+function onQuoteBarSend(text: string, opts?: { pickTarget?: boolean }) {
+  quoteQuestion.sendMessage(text, opts)
+}
 // Android's own text-selection menu (see ClawBenchWebView.java) calls this when
 // the user taps 引用 / 评论. Installed here rather than inside the composable so
 // the composable stays free of window globals; guarded by a module-level flag
@@ -2280,6 +2318,7 @@ function registerAppEventListeners() {
   window.addEventListener('clawbench-open-session', handleOpenSession)
   window.addEventListener('clawbench-open-task', handleOpenTask)
   window.addEventListener('clawbench-open-forge', handleOpenForge)
+  window.addEventListener('clawbench-open-usage-meter', handleOpenUsageMeter)
   window.addEventListener('clawbench-session-title-update', handleSessionTitleUpdate)
   document.addEventListener('click', handleOverflowOutsideClick)
   window.addEventListener('clawbench-theme-change', async (e: Event) => {
@@ -3921,9 +3960,50 @@ function handleCtrlShiftF(e: KeyboardEvent) {
     openBrowseContentSearch()
 }
 
+/**
+ * Ctrl/Cmd+G — "go to line" in the file view (issue #547).
+ *
+ * The CodeMirror keymap cannot be the only binding: it only fires while the
+ * editor's contentDOM holds focus, and opening a file does not focus it. This
+ * document-level handler covers the initial state, and CodeMirror's own
+ * binding covers the focused case (both funnel into the same prompt).
+ *
+ * Only the file view has line numbers, so every other surface leaves the key
+ * alone — the browser's own Ctrl+G (find next) keeps working there.
+ */
+function handleCtrlG(e: KeyboardEvent) {
+    if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return
+    if (e.key.toLowerCase() !== 'g') return
+    // CodeMirror handles Mod-g itself while its contentDOM has focus and marks
+    // the event handled. That is the only reliable signal: the contentDOM is
+    // `contenteditable="true"` even in read-only mode (CodeMirror uses
+    // `EditorState.readOnly`, not the attribute), so an isContentEditable check
+    // would skip here and prompt a SECOND time.
+    if (e.defaultPrevented) return
+    const target = e.target as HTMLElement | null
+    const tag = target?.tagName
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return
+    if (target?.isContentEditable) return
+    if (target?.closest?.('.terminal-panel')) return
+    if (_dlg.state.value.visible || projectDialogOpen.value) return
+
+    // On a wide screen the file view lives in the left pane; Ctrl+G while the
+    // chat pane is the active one must not hijack the browser's find-next.
+    const viewActive = isWideScreen.value
+        ? activePane.value === PANE_LEFT && panelIsActive('view')
+        : panelIsActive('view')
+    if (!viewActive) return
+    // openGoToLine returns false for rendered previews / media (no line
+    // numbers) — leave those to the browser.
+    const opened = fileOverlayRef.value?.openGoToLine?.()
+    if (!opened) return
+    e.preventDefault()
+}
+
  onMounted(() => {
      document.addEventListener('keydown', handleCtrlF)
      document.addEventListener('keydown', handleCtrlShiftF)
+     document.addEventListener('keydown', handleCtrlG)
      // Swallow clicks that were really a drag-select (see dragClickGuard). One
      // document-level guard replaces a per-row check that only ever reached four
      // of the ~50 clickable rows containing selectable text.
@@ -3985,9 +4065,11 @@ onUnmounted(() => {
     window.removeEventListener('clawbench-open-session', handleOpenSession)
     window.removeEventListener('clawbench-open-task', handleOpenTask)
     window.removeEventListener('clawbench-open-forge', handleOpenForge)
+    window.removeEventListener('clawbench-open-usage-meter', handleOpenUsageMeter)
     window.removeEventListener('clawbench-session-title-update', handleSessionTitleUpdate)
     document.removeEventListener('click', handleOverflowOutsideClick)
     document.removeEventListener('keydown', handleCtrlF)
+    document.removeEventListener('keydown', handleCtrlG)
     stopFlushTimer()
 })
 </script>

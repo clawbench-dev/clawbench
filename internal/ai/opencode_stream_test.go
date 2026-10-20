@@ -565,3 +565,80 @@ func TestOpenCodeStream_ParseLine_ToolUse_NewTools(t *testing.T) {
 		})
 	}
 }
+
+// step_finish.cost is the SESSION running total, not this step's cost. It must
+// be marked cumulative and preserved in cost_session_total so the ledger can
+// diff it; writing it as a per-turn cost is what over-counted Claude by 2.7x.
+func TestOpenCodeStream_ParseLine_StepFinishMarksCostCumulative(t *testing.T) {
+	line := `{"type":"step_finish","timestamp":1,"sessionID":"ses_abc","part":{"reason":"stop","tokens":{"total":100,"input":80,"output":20},"cost":0.413}}`
+	events := parseOpenCodeLine(line)
+	if len(events) != 2 {
+		t.Fatalf("expected metadata+done, got %d: %+v", len(events), events)
+	}
+	meta := events[0].Meta
+	if meta == nil {
+		t.Fatal("expected a metadata event")
+	}
+	if !meta.CostCumulative {
+		t.Error("step_finish.cost must be flagged cumulative")
+	}
+	if meta.CostSessionTotal != 0.413 {
+		t.Errorf("CostSessionTotal = %v, want 0.413", meta.CostSessionTotal)
+	}
+}
+
+// A zero cost must NOT be flagged cumulative: there is nothing to diff, and
+// flagging it would make the ledger treat a free turn as a rebase point.
+func TestOpenCodeStream_ParseLine_StepFinishZeroCostIsNotCumulative(t *testing.T) {
+	line := `{"type":"step_finish","timestamp":1,"sessionID":"ses_abc","part":{"reason":"stop","tokens":{"total":100,"input":80,"output":20},"cost":0}}`
+	events := parseOpenCodeLine(line)
+	if len(events) != 2 {
+		t.Fatalf("expected metadata+done, got %d", len(events))
+	}
+	if events[0].Meta.CostCumulative {
+		t.Error("a zero cost must not be marked cumulative")
+	}
+}
+
+// A step_finish without a token block must still finish the turn: the cost may
+// be present while usage is not (generation tools report no usage block).
+func TestOpenCodeStream_ParseLine_StepFinishWithoutTokens(t *testing.T) {
+	line := `{"type":"step_finish","timestamp":1,"sessionID":"ses_abc","part":{"reason":"stop","cost":0.5}}`
+	events := parseOpenCodeLine(line)
+	if len(events) != 2 {
+		t.Fatalf("expected metadata+done, got %d: %+v", len(events), events)
+	}
+	meta := events[0].Meta
+	if meta.InputTokens != 0 || meta.TotalTokens != 0 {
+		t.Errorf("absent tokens must stay zero, got in=%d total=%d", meta.InputTokens, meta.TotalTokens)
+	}
+	if meta.CostSessionTotal != 0.5 {
+		t.Errorf("CostSessionTotal = %v, want 0.5", meta.CostSessionTotal)
+	}
+}
+
+// The agent's reported total can be SMALLER than input+output (an older
+// CodeBuddy build did this). The parser must raise it rather than store a total
+// that contradicts its own parts.
+func TestOpenCodeStream_ParseLine_StepFinishRaisesInconsistentTotal(t *testing.T) {
+	line := `{"type":"step_finish","timestamp":1,"sessionID":"ses_abc","part":{"reason":"stop","tokens":{"total":10,"input":80,"output":20},"cost":0}}`
+	events := parseOpenCodeLine(line)
+	if len(events) != 2 {
+		t.Fatalf("expected metadata+done, got %d", len(events))
+	}
+	if got := events[0].Meta.TotalTokens; got != 100 {
+		t.Errorf("TotalTokens = %d, want input+output = 100", got)
+	}
+}
+
+// An unparseable step_finish is skipped, not fatal: one malformed line must not
+// kill the stream.
+func TestOpenCodeStream_ParseLine_StepFinishUnparseable(t *testing.T) {
+	p := &OpenCodeStreamParser{}
+	ch := make(chan StreamEvent, 8)
+	p.parseStepFinish(json.RawMessage(`not json`), ch)
+	close(ch)
+	if len(ch) != 0 {
+		t.Errorf("an unparseable part must emit nothing, got %d events", len(ch))
+	}
+}

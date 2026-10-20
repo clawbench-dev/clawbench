@@ -517,7 +517,12 @@ func (a *mockACPAgent) simulateTurn(ctx context.Context, sid string, params acp.
 
 	if err := a.conn.SessionUpdate(ctx, acp.SessionNotification{
 		SessionId: acp.SessionId(sid),
-		Update:    acp.UpdateAgentThoughtText(fmt.Sprintf("Processing user request: %s", truncate(userText, 80))),
+		// Echo BOTH ends of the user text. A message can carry an injected prefix
+		// (a /cb-* template, a skill block, a system-instruction header) with the
+		// user's own sentence at the end, so a head-only echo hides the sentence
+		// and a tail-only echo hides the injection. This thinking block is the
+		// E2E's only window into what the agent actually received.
+		Update: acp.UpdateAgentThoughtText(fmt.Sprintf("Processing user request: %s", headTail(userText, 120, 5000))),
 	}); err != nil {
 		return err
 	}
@@ -934,11 +939,17 @@ var (
 	relayTurns   = map[string]int{}
 )
 
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
+// headTail renders the first headLen and last tailLen characters of s, joined
+// by a marker. Prompts have their interesting content at both ends: the injected
+// instruction block leads, the user's own sentence trails. The tail window is
+// wide because an injected /cb-* template is a few KB long, and the part an E2E
+// asserts on (the instruction the agent was given) sits just before the user's
+// own sentence.
+func headTail(s string, headLen, tailLen int) string {
+	if len(s) <= headLen+tailLen {
 		return s
 	}
-	return s[:maxLen] + "..."
+	return s[:headLen] + " … " + s[len(s)-tailLen:]
 }
 
 func main() {

@@ -2562,6 +2562,33 @@ describe('ws_error / ws_warning structured error fields', () => {
     expect(sm.blocks[0].error_source).toBeUndefined()
     expect(sm.blocks[0].error_detail).toBeUndefined()
   })
+
+  // login_cmd is what makes an auth_required banner actionable: the button
+  // copies this exact string. Dropping it in the reducer leaves the user with
+  // prose they have to retype by hand (and no working action at all, since
+  // "reset session" is deliberately not offered for this reason).
+  it('ws_error carries the structured login command', () => {
+    let s: any[] = [{ role: 'assistant', id: 1, content: '', blocks: [], streaming: true }]
+    s = chatMessageReducer(s, {
+      type: 'ws_error',
+      text: 'The agent is not signed in. Run `cmdc login`.',
+      reason: 'auth_required',
+      loginCmd: 'cmdc login',
+    })
+    expect(s[0].blocks[0].reason).toBe('auth_required')
+    expect(s[0].blocks[0].login_cmd).toBe('cmdc login')
+  })
+
+  it('ws_warning carries the structured login command', () => {
+    let s: any[] = [{ role: 'assistant', id: 1, content: '', blocks: [], streaming: true }]
+    s = chatMessageReducer(s, {
+      type: 'ws_warning',
+      text: 'Not signed in',
+      reason: 'auth_required',
+      loginCmd: 'cmdc login',
+    })
+    expect(s[0].blocks[0].login_cmd).toBe('cmdc login')
+  })
 })
 
 // ── Conversation ordering after refresh ──

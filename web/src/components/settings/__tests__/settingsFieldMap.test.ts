@@ -648,11 +648,15 @@ describe('settingsFieldMap', () => {
 
   it('notification panel has entrySelector with push_mode, dingtalk optionSubFields, and connectivityTest', () => {
     const panels = getCategoryPanels('notification')
-    expect(panels.length).toBe(1)
-    const cfg = panels[0]
+    // Two panels now: the push-channel panel asserted here, and the usage-meter
+    // rule (a notification feature, so it lives in this category). Select by id
+    // rather than by position so adding another panel does not silently shift
+    // which one this test is describing.
+    const cfg = panels.find(p => p.panelId === 'push')
+    expect(cfg).toBeDefined()
     // The panel now carries a section title ("移动端通知") so it renders as its
     // own headed card rather than a bare card next to the flat items.
-    expect(cfg.titleKey).toBe('settings.items.mobileNotifySection')
+    expect(cfg!.titleKey).toBe('settings.items.mobileNotifySection')
     expect(cfg.entrySelector).toBeDefined()
     expect(cfg.entrySelector!.key).toBe('push_mode')
     expect(cfg.entrySelector!.type).toBe('select')
@@ -942,5 +946,31 @@ describe('placeholder items (section openers)', () => {
     for (const key of ['panelOpacity', 'skillsCard', 'skillsDirs', 'skillsRepos', 'skillsDiscovered']) {
       expect(listed).toContain(key)
     }
+  })
+})
+
+// The usage meter is its own settings category, sitting beside 推送通知 in the
+// 通知与安全 group — not a card nested inside the push-channel category. It is
+// a notification feature, but "cycle / metric / budget" is a separate subject;
+// nesting it under push made it read as one more push channel.
+describe('usage meter is a sibling of push notifications', () => {
+  it('has its own category with exactly one panel', () => {
+    const panels = getCategoryPanels('usageMeter')
+    expect(panels.length).toBe(1)
+    expect(panels[0].panelId).toBe('usageMeter')
+    // Panel-only, so the category title is not repeated inside the card.
+    expect(isPanelOnlyCategory('usageMeter')).toBe(true)
+  })
+
+  it('is no longer inside the push-notification category', () => {
+    const ids = getCategoryPanels('notification').map(p => p.panelId)
+    expect(ids).toEqual(['push'])
+  })
+
+  it('the cycle start uses the date picker, not free text', () => {
+    const cfg = getCategoryPanels('usageMeter')[0]
+    const anchor = cfg.commonFields.find(f => f.key === 'usage_meter.anchor_date')
+    expect(anchor).toBeDefined()
+    expect(anchor!.type).toBe('date')
   })
 })

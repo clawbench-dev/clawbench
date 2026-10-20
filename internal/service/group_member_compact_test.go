@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/model"
 	"clawbench/internal/store"
 
 	"github.com/stretchr/testify/assert"
@@ -211,10 +213,39 @@ func TestConsumeCompactEvent(t *testing.T) {
 		assert.Equal(t, "model unavailable", err.Error())
 	})
 
-	t.Run("other warnings are not errors", func(t *testing.T) {
+	// An empty answer is a legitimate /compact outcome (the agent may report
+	// nothing); the usage numbers in the completion row show what changed.
+	t.Run("an empty warning is not a failure", func(t *testing.T) {
 		assert.NoError(t, consumeCompactEvent(memberID, ai.StreamEvent{
 			Type: blockTypeWarning, Reason: ai.ReasonEmpty, Content: "empty",
 		}))
+	})
+
+	// Every OTHER warning reason means the context was not rewritten. Treating
+	// them as success wrote "compacted (32% → 32%)" into the timeline and marked
+	// the member compacted, so the user believed a compaction happened that never
+	// did — and could not explain the member's later context overflow.
+	for _, reason := range []string{
+		ai.ReasonRequestFailed, ai.ReasonAgentNoRun, ai.ReasonBackendExit,
+		ai.ReasonAuthRequired, ai.ReasonTimeout, ai.ReasonDisconnect,
+	} {
+		t.Run("failure warning is an error: "+reason, func(t *testing.T) {
+			err := consumeCompactEvent(memberID, ai.StreamEvent{
+				Type: blockTypeWarning, Reason: reason, Content: "upstream failed",
+			})
+			require.Error(t, err)
+			assert.Equal(t, "upstream failed", err.Error())
+		})
+	}
+
+	// A warning with no text still has to fail loudly, naming the reason rather
+	// than returning an empty error message.
+	t.Run("failure warning without text names its reason", func(t *testing.T) {
+		err := consumeCompactEvent(memberID, ai.StreamEvent{
+			Type: blockTypeWarning, Reason: ai.ReasonRequestFailed,
+		})
+		require.Error(t, err)
+		assert.Equal(t, ai.ReasonRequestFailed, err.Error())
 	})
 
 	t.Run("unrelated events are ignored", func(t *testing.T) {
@@ -445,3 +476,110 @@ var (
 	_ ai.AIBackend = (*fakeCompactBackend)(nil)
 	_ ai.AIBackend = (*blockingCompactBackend)(nil)
 )
+
+// A group message that arrives while a member is compacting must QUEUE, not
+// start a group turn.
+//
+// Compaction drives that member's ACP connection directly and does not hold the
+// group's session-runner claim, so EnqueueGroupMessage's TryClaimSessionRun
+// would succeed and the orchestrator would send a SECOND prompt on the same ACP
+// session: the agent answers "Session is busy", RegisterSession overwrites the
+// compaction's stream channel (its usage events are dropped) and promptCancel
+// is overwritten too. The chat handler has its own gate, but this is the other
+// group entry point — cross-session "send to this group" and IM pushes come
+// straight here.
+func TestEnqueueGroupMessage_QueuesWhileMemberCompacting(t *testing.T) {
+	project := "/tmp/grouptest-enqueue-compacting"
+	groupID, memberID := setupCompactableGroup(t, project)
+
+	// Take the compaction slot directly: this test is about the send path, not
+	// about driving a real agent.
+	require.True(t, beginCompaction(groupID, memberID))
+	t.Cleanup(func() { endCompaction(memberID) })
+
+	launched := make(chan string, 1)
+	restore := SetRunGroupDrainLoopForTest(func(_ context.Context, gid, _ string, _ int64, _ string, _ []model.FileEntry) {
+		select {
+		case launched <- gid:
+		default:
+		}
+	})
+	t.Cleanup(func() { SetRunGroupDrainLoopForTest(restore) })
+
+	started, err := EnqueueGroupMessage(groupID, "hello", nil, "")
+	require.NoError(t, err)
+	assert.False(t, started, "a compacting group must not start a turn")
+
+	// The message must be waiting in the queue, not dropped: the compaction's
+	// deferred wake consumes it.
+	assert.Equal(t, 1, GetQueuedCount(groupID))
+
+	select {
+	case gid := <-launched:
+		t.Fatalf("the drain loop must not start while a member compacts (got %q)", gid)
+	case <-time.After(150 * time.Millisecond):
+	}
+}
+
+// Once the compaction ends, the deferred wake must consume the queued message.
+// This is the second half of the gate: queueing without a wake would leave the
+// message stranded until the reaper's next sweep (~30s).
+func TestWakeQueuedAfterCompaction_ConsumesQueuedMessage(t *testing.T) {
+	project := "/tmp/grouptest-wake-compaction"
+	groupID, memberID := setupCompactableGroup(t, project)
+
+	launched := make(chan string, 1)
+	restore := SetRunGroupDrainLoopForTest(func(_ context.Context, gid, _ string, _ int64, _ string, _ []model.FileEntry) {
+		select {
+		case launched <- gid:
+		default:
+		}
+	})
+	t.Cleanup(func() { SetRunGroupDrainLoopForTest(restore) })
+
+	require.True(t, beginCompaction(groupID, memberID))
+	started, err := EnqueueGroupMessage(groupID, "queued during compact", nil, "")
+	require.NoError(t, err)
+	require.False(t, started)
+	require.Equal(t, 1, GetQueuedCount(groupID))
+
+	endCompaction(memberID)
+	wakeQueuedAfterCompaction(groupID)
+
+	select {
+	case gid := <-launched:
+		assert.Equal(t, groupID, gid)
+	case <-time.After(2 * time.Second):
+		t.Fatal("the post-compaction wake must start the consumer")
+	}
+}
+
+// The wake must NOT depend on the queue being non-empty at that instant. The
+// send path inserts the row and only then releases the runner claim; a wake that
+// snapshots GetQueuedCount can legitimately run between the two and see zero,
+// leaving the message stranded. EnsureConsumer already no-ops on an empty queue,
+// so the wake is unconditional and this test pins that.
+func TestWakeQueuedAfterCompaction_EmptyQueueIsHarmless(t *testing.T) {
+	project := "/tmp/grouptest-wake-empty"
+	groupID, _ := setupCompactableGroup(t, project)
+
+	launched := make(chan string, 1)
+	restore := SetRunGroupDrainLoopForTest(func(_ context.Context, gid, _ string, _ int64, _ string, _ []model.FileEntry) {
+		select {
+		case launched <- gid:
+		default:
+		}
+	})
+	t.Cleanup(func() { SetRunGroupDrainLoopForTest(restore) })
+
+	require.Equal(t, 0, GetQueuedCount(groupID))
+	wakeQueuedAfterCompaction(groupID)
+
+	select {
+	case gid := <-launched:
+		t.Fatalf("an empty queue must not start a drain loop (got %q)", gid)
+	case <-time.After(150 * time.Millisecond):
+	}
+	// And the session must not be left claimed as "running".
+	assert.False(t, IsSessionRunning(groupID), "the claim must be released when there is nothing to run")
+}

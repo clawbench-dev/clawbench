@@ -522,13 +522,31 @@ function extractLineInfo(matchStr: string, match: RegExpExecArray): { path: stri
 /**
  * Extract bare path and optional line ranges from a plain text string.
  * Used by Step 2 for <code> tag content.
+ *
+ * Two spellings carry a line target: the annotation suffix (`main.go:42-48`)
+ * and the hash form (`main.go#L42-L48`, used by GitHub-style links). Both must
+ * be stripped, because the resolved path is what every downstream consumer
+ * treats as a real filename: leaving `#L42` in it makes `/api/file/batch-exists`
+ * report `none` (no file is named `main.go#L42`), which turns a live path into
+ * an inert chip whose filename search then looks for that literal string.
  */
 function extractLineInfoFromText(text: string): { path: string; lineRanges: LineRange[] } {
     const m = text.match(LINE_SUFFIX_RE)
-    if (!m) return { path: text, lineRanges: [] }
-    const lineRanges = parseLineRanges(m[1])
-    if (lineRanges.length === 0) return { path: text, lineRanges: [] }
-    return { path: text.slice(0, text.length - m[0].length), lineRanges }
+    if (m) {
+        const lineRanges = parseLineRanges(m[1])
+        if (lineRanges.length > 0) {
+            return { path: text.slice(0, text.length - m[0].length), lineRanges }
+        }
+    }
+    const hashIdx = text.indexOf('#')
+    if (hashIdx > 0) {
+        const fragment = text.slice(hashIdx + 1)
+        if (LINE_FRAGMENT_RE.test(fragment)) {
+            const lineRanges = parseLineRanges(fragment)
+            if (lineRanges.length > 0) return { path: text.slice(0, hashIdx), lineRanges }
+        }
+    }
+    return { path: text, lineRanges: [] }
 }
 
 // ── Path detection regex & helper ───────────────────────────────────────────────

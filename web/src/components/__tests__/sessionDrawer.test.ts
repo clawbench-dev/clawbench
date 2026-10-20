@@ -536,7 +536,7 @@ describe('SessionDrawer', () => {
   it('shows empty hint in thinking tab for agents without thinking effort levels', () => {
     const wrapper = mountDrawer({ agentId: 'kimi', initialTab: 'thinking' })
     const tabs = wrapper.findAll('.model-tab')
-    expect(tabs.length).toBe(4)
+    expect(tabs.length).toBe(5) // model / thinking / mode / transport / usage
     expect(wrapper.find('.tab-empty-hint').exists()).toBe(true)
   })
 

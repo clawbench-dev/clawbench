@@ -33,7 +33,7 @@ func ServeNotificationsOrClear(w http.ResponseWriter, r *http.Request) {
 // Query parameters (all optional):
 //
 //	project  — a project PATH; resolves to its id. Absent means all projects.
-//	kind     — "session" | "task" | "forge". Absent means all kinds.
+//	kind     — "session" | "task" | "forge" | "usage". Absent means all kinds.
 //	range    — "today" | "7d" | "30d". Absent/unknown means no time lower bound.
 //	before_at / before_id — keyset cursor from the previous page's last row.
 //	limit    — page size (default 50, capped at 200).

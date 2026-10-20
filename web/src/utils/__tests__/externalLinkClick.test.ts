@@ -126,6 +126,36 @@ describe('installExternalLinkClick', () => {
     expect(mockConfirm).not.toHaveBeenCalled()
   })
 
+  // A localhost URL means "a port on the SERVER" in the App; the system
+  // browser resolves it against the DEVICE and shows a dead page. This capture
+  // layer runs before the host's own handler, so it must step aside — both for
+  // the dialog AND for stopPropagation, or the host never sees the click.
+  it('lets localhost spans through to the host handler (no dialog, no stopPropagation)', () => {
+    dispose = installExternalLinkClick()
+    const host = document.createElement('div')
+    host.innerHTML = '<span class="md-external-link" data-href="http://localhost:5173" data-localhost role="link" tabindex="0">http://localhost:5173</span>'
+    document.body.appendChild(host)
+    const span = host.querySelector<HTMLElement>('.md-external-link')!
+
+    let hostSaw = false
+    host.addEventListener('click', () => { hostSaw = true })
+
+    const ev = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0, detail: 1 })
+    span.dispatchEvent(ev)
+
+    expect(hostSaw, 'the event must reach the bubble-phase host handler').toBe(true)
+    expect(ev.defaultPrevented, 'the capture layer must not consume the click').toBe(false)
+    expect(mockConfirm, 'no external-open dialog for a tunnel URL').not.toHaveBeenCalled()
+  })
+
+  it('still opens a non-localhost span (marker is specific)', async () => {
+    dispose = installExternalLinkClick()
+    const span = renderSpan('https://example.com/x')
+    mockConfirm.mockResolvedValue(true)
+    click(span)
+    await vi.waitFor(() => expect(mockConfirm).toHaveBeenCalled())
+  })
+
   it('ignores a click already suppressed by the drag guard', () => {
     dispose = installExternalLinkClick()
     const span = renderSpan()

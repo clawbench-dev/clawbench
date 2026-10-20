@@ -202,7 +202,10 @@ export function registerBridge(): void {
     stopClientLog(w ? w.webContents : null)
     return Promise.resolve()
   })
-  ipcMain.handle('native:reload-app', () => clearCacheAndReload())
+  // Post-upgrade reload: caches only. This used to wipe local storage too,
+  // which reset every per-device preference (theme, wallpaper, fonts, panel
+  // layout) on each server upgrade — see reloadPolicy.ts / issue #559.
+  ipcMain.handle('native:reload-app', () => clearCacheAndReload('cache'))
   ipcMain.handle('native:notify', (_e, title: string, body: string, nav?: unknown) => {
     showTerminalNotification(title, body, nav as { sessionId?: string; taskId?: string; executionId?: string; projectPath?: string } | undefined)
     return Promise.resolve()

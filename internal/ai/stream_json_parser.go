@@ -169,6 +169,7 @@ func (p *StreamJSONParser) ParseLine(line string, ch chan<- StreamEvent) {
 		if msg.Stats != nil {
 			meta.InputTokens = msg.Stats.InputTokens
 			meta.OutputTokens = msg.Stats.OutputTokens
+			meta.TotalTokens = msg.Stats.TotalTokens
 			meta.DurationMs = msg.Stats.DurationMs
 		}
 		if msg.Status == "error" {

@@ -71,8 +71,6 @@ func (p *OpenCodeStreamParser) GetCapturedSessionID() string { return p.sessionI
 
 // ParseLine parses a single JSON line from OpenCode's stream-json output and sends
 // StreamEvent(s) to the provided channel.
-//
-//nolint:gocyclo // complex stream parsing logic
 func (p *OpenCodeStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 	var msg OpenCodeStreamMessage
 	if err := json.Unmarshal([]byte(line), &msg); err != nil {
@@ -121,24 +119,7 @@ func (p *OpenCodeStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 		}
 
 	case "step_finish":
-		var part OpenCodeFinishPart
-		if err := json.Unmarshal(msg.Part, &part); err != nil {
-			slog.Debug("opencode stream: skipping unparseable step_finish part", "error", err)
-			return
-		}
-		if part.Reason == "stop" {
-			meta := &Metadata{
-				SessionID:  p.sessionID,
-				StopReason: "stop",
-				CostUSD:    part.Cost,
-			}
-			if part.Tokens != nil {
-				meta.InputTokens = part.Tokens.Input
-				meta.OutputTokens = part.Tokens.Output
-			}
-			emitStreamEvent(ch, "opencode", StreamEvent{Type: "metadata", Meta: meta})
-			emitStreamEvent(ch, "opencode", StreamEvent{Type: "done"})
-		}
+		p.parseStepFinish(msg.Part, ch)
 		// reason="tool-calls" means more steps coming — no event
 
 	case "step_start":
@@ -147,4 +128,49 @@ func (p *OpenCodeStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 	default:
 		slog.Debug("opencode stream: skipping unknown message type", "type", msg.Type)
 	}
+}
+
+// parseStepFinish handles a step_finish part, emitting the turn's terminal
+// metadata + done events when the step ended the turn.
+//
+// Split out of ParseLine to keep that dispatch within the complexity budget:
+// the token/cost mapping has enough conditionals of its own.
+func (p *OpenCodeStreamParser) parseStepFinish(raw json.RawMessage, ch chan<- StreamEvent) {
+	var part OpenCodeFinishPart
+	if err := json.Unmarshal(raw, &part); err != nil {
+		slog.Debug("opencode stream: skipping unparseable step_finish part", "error", err)
+		return
+	}
+	if part.Reason != "stop" {
+		return
+	}
+	meta := &Metadata{
+		SessionID:  p.sessionID,
+		StopReason: "stop",
+		CostUSD:    part.Cost,
+	}
+	if part.Tokens != nil {
+		meta.InputTokens = part.Tokens.Input
+		meta.OutputTokens = part.Tokens.Output
+		// total is reported by the agent; keeping it lets the stats panel's
+		// default (total) metric see this backend at all. The old code dropped
+		// it, so every OpenCode row showed 0 in the "总 Tokens" column while
+		// still counting toward the totals.
+		meta.TotalTokens = part.Tokens.Total
+		meta.ThoughtTokens = part.Tokens.Reasoning
+		if meta.TotalTokens < meta.InputTokens+meta.OutputTokens {
+			meta.TotalTokens = meta.InputTokens + meta.OutputTokens
+		}
+	}
+	// step_finish.cost is the SESSION running total, not this step's cost: in a
+	// production DB the value rises monotonically across a session
+	// (0.017 → 0.413) while per-turn tokens fall (9280 → 719), which no
+	// per-turn price can produce. The ledger diffs it against the previous
+	// turn's cost_session_total.
+	if meta.CostUSD > 0 {
+		meta.CostCumulative = true
+		meta.CostSessionTotal = meta.CostUSD
+	}
+	emitStreamEvent(ch, "opencode", StreamEvent{Type: "metadata", Meta: meta})
+	emitStreamEvent(ch, "opencode", StreamEvent{Type: "done"})
 }

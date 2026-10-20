@@ -217,4 +217,29 @@ public class NativeNotificationPolicyTest {
         assertTrue(NativeNotificationPolicy.shouldNotifyLive(
                 "task_update", "failed", false, false));
     }
+
+    /**
+     * usage_meter_update is the only event whose wording comes from the server
+     * payload rather than an R.string lookup. It has no status to gate on (the
+     * server only emits it when a threshold was actually crossed), so every
+     * occurrence notifies AND advances the cursor — unlike `task_update running`,
+     * which notifies without being persisted.
+     *
+     * Missing the cursor branch is the failure that matters: every pending-events
+     * poll would re-return the same crossing forever.
+     */
+    @Test
+    public void usageMeterNotifiesAndAdvancesCursor() {
+        assertTrue(NativeNotificationPolicy.isNotifiableEvent("usage_meter_update", "over"));
+        assertTrue(NativeNotificationPolicy.isNotifiableEvent("usage_meter_update", "full"));
+        assertTrue("must advance: the server persists this event",
+                NativeNotificationPolicy.advancesCursor("usage_meter_update", "over"));
+
+        // Replay suppression still applies: a caught-up crossing from the
+        // reconnect buffer must not raise a second notification.
+        assertFalse(NativeNotificationPolicy.shouldNotifyLive(
+                "usage_meter_update", "over", true, false));
+        assertTrue(NativeNotificationPolicy.shouldNotifyLive(
+                "usage_meter_update", "over", false, false));
+    }
 }

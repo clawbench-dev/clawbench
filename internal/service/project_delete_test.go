@@ -96,6 +96,9 @@ func TestDeleteProjectData_RemovesAllProjectScopedRows(t *testing.T) {
 	exec("INSERT INTO task_executions (task_id, session_id) VALUES ((SELECT id FROM scheduled_tasks WHERE project_id = ?), 'sess-1')", id)
 	exec("INSERT INTO session_shares (token, session_id, payload) VALUES ('stok', 'sess-1', '{}')")
 	exec("INSERT INTO session_tag_links (session_id, tag_id) VALUES ('sess-1', (SELECT id FROM session_tags WHERE project_id = ?))", id)
+	// A group's undelivered private notes are keyed by the GROUP session id and
+	// carry no project_id, so nothing else in this delete reaches them.
+	exec("INSERT INTO group_pending_bcc (group_id, target_name, content) VALUES ('sess-1', 'Alice', 'note')")
 	// Rows belonging to the OTHER project, to prove isolation.
 	exec("INSERT INTO chat_history (project_id, backend, session_id, role, content) VALUES (?, 'claude', 'sess-other', 'assistant', 'keep')", otherID)
 	exec("INSERT INTO recent_projects (project_id) VALUES (?)", otherID)
@@ -124,6 +127,8 @@ func TestDeleteProjectData_RemovesAllProjectScopedRows(t *testing.T) {
 	assert.Zero(t, n, "session_shares rows must be deleted")
 	require.NoError(t, store.ReadDB().QueryRow("SELECT COUNT(*) FROM session_tag_links WHERE session_id = 'sess-1'").Scan(&n))
 	assert.Zero(t, n, "session_tag_links rows must be deleted")
+	require.NoError(t, store.ReadDB().QueryRow("SELECT COUNT(*) FROM group_pending_bcc WHERE group_id = 'sess-1'").Scan(&n))
+	assert.Zero(t, n, "a group's pending private notes must be deleted with the project")
 
 	// summaries / tts_summaries key on chat_history.id — including the
 	// mis-attributed row (project_id=0 but session in the deleted project).

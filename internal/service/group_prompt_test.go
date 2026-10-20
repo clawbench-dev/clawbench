@@ -169,7 +169,7 @@ func TestBuildHostSummaryPromptOmitsBcc(t *testing.T) {
 // the chair — without this, members imitated the host's routing tag and fought
 // over the microphone (real incident: 3 members all opened with "🎙️ 主持人").
 func TestBuildMemberSystemPrompt(t *testing.T) {
-	p := BuildMemberSystemPrompt([]HostMemberInfo{{Name: "Host"}, {Name: "B"}, {Name: "C"}}, "B")
+	p := BuildMemberSystemPrompt([]HostMemberInfo{{Name: "Host"}, {Name: "B"}, {Name: "C"}}, "B", "Host")
 	if !strings.Contains(p, "参与者") {
 		t.Fatalf("member prompt must state the participant role: %q", p)
 	}
@@ -186,6 +186,38 @@ func TestBuildMemberSystemPrompt(t *testing.T) {
 	}
 	if strings.Contains(p, "可选的成员名：") {
 		t.Fatalf("member prompt must NOT carry the host's routing list: %q", p)
+	}
+}
+
+// A member's private-note instruction must name the ACTUAL host.
+//
+// Mention targets resolve by display name, so a prompt that says
+// targets="主持人名" hands the model a literal placeholder: it copies it, the
+// target resolves to no member, and the note is silently dropped. The instruction
+// therefore has to carry the host's group display name — which in production is
+// the agent's own name ("Codebuddy"), never the word "Host".
+func TestBuildMemberSystemPrompt_NamesTheHostForPrivateNotes(t *testing.T) {
+	p := BuildMemberSystemPrompt(
+		[]HostMemberInfo{{Name: "Codebuddy"}, {Name: "Alice"}}, "Alice", "Codebuddy",
+	)
+	if strings.Contains(p, "主持人名") {
+		t.Fatalf("the placeholder must be replaced by the real host name: %q", p)
+	}
+	if !strings.Contains(p, `targets="Codebuddy" private`) {
+		t.Fatalf("the note example must target the host by name: %q", p)
+	}
+}
+
+// A free group has no host, so the private-channel paragraph is omitted rather
+// than naming a non-existent chair. Free mode documents its own (unrestricted)
+// private channel in BuildFreeMemberSystemPrompt.
+func TestBuildMemberSystemPrompt_NoHostOmitsPrivateChannel(t *testing.T) {
+	p := BuildMemberSystemPrompt([]HostMemberInfo{{Name: "A"}, {Name: "B"}}, "A", "")
+	if strings.Contains(p, "只给主持人看的话") {
+		t.Fatalf("without a host the host-only channel must be omitted: %q", p)
+	}
+	if strings.Contains(p, "主持人名") {
+		t.Fatalf("no dangling placeholder: %q", p)
 	}
 }
 
@@ -210,7 +242,7 @@ func TestBuildHostSystemPrompt_IncludesUser(t *testing.T) {
 
 // A member should know a human is in the room.
 func TestBuildMemberSystemPrompt_ListsUser(t *testing.T) {
-	p := BuildMemberSystemPrompt([]HostMemberInfo{{Name: "Host"}, {Name: "B"}}, "B")
+	p := BuildMemberSystemPrompt([]HostMemberInfo{{Name: "Host"}, {Name: "B"}}, "B", "Host")
 	if !strings.Contains(p, groupUserTarget()) {
 		t.Fatalf("a member must be told the user is present: %q", p)
 	}
@@ -224,6 +256,7 @@ func TestBuildMemberSystemPrompt_StatesOwnName(t *testing.T) {
 	p := BuildMemberSystemPrompt(
 		[]HostMemberInfo{{Name: "Codebuddy"}, {Name: "Codebuddy 2"}, {Name: "Codebuddy 3"}},
 		"Codebuddy 3",
+		"Codebuddy",
 	)
 	if !strings.Contains(p, "你的群内显示名是「Codebuddy 3」") {
 		t.Fatalf("member prompt must state its own display name: %q", p)
@@ -252,7 +285,7 @@ func TestBuildHostSystemPrompt_StatesOwnName(t *testing.T) {
 // An empty self name must not produce a dangling identity sentence (the builder
 // is also called from paths that may not have a name).
 func TestSelfIdentityLine_EmptyIsOmitted(t *testing.T) {
-	p := BuildMemberSystemPrompt([]HostMemberInfo{{Name: "A"}}, "")
+	p := BuildMemberSystemPrompt([]HostMemberInfo{{Name: "A"}}, "", "A")
 	if strings.Contains(p, "你的群内显示名是") {
 		t.Fatalf("empty self name must omit the identity line: %q", p)
 	}
@@ -327,9 +360,26 @@ func TestBuildCruiseConfirmPrompt(t *testing.T) {
 	}
 	// The host's confirm branch must ask for the final conclusion IN THE SAME
 	// reply: there is no separate summary turn after confirmation (design §15.7),
-	// so a tag-only reply would leave the user without a wrap-up.
+	// so a tag-only reply would leave the user without a wrap-up. But it must be
+	// CONDITIONAL: a host that already wrote the conclusion in its previous reply
+	// (the usual path — wrap-up, then <clawbench-group-end/>) only acknowledges
+	// instead of repeating the whole block.
 	if !strings.Contains(host, "最终结论") {
 		t.Fatalf("host confirm prompt must ask for the conclusion in the same reply: %q", host)
+	}
+	if !strings.Contains(host, "上一条回复已经写出了完整的最终结论") {
+		t.Fatalf("host confirm prompt must skip re-stating an already-written conclusion: %q", host)
+	}
+	if !strings.Contains(host, "不要重复展开") {
+		t.Fatalf("host confirm prompt must forbid repeating the conclusion: %q", host)
+	}
+	// Both variants must tell the model to FINISH leftover work instead of
+	// declaring the goal met: a confirmation round is the last chance to act.
+	if !strings.Contains(host, "若仍存在遗留工作没有完成") {
+		t.Fatalf("host confirm prompt must require finishing leftover work: %q", host)
+	}
+	if !strings.Contains(free, "若仍存在遗留工作没有完成") {
+		t.Fatalf("free confirm prompt must require finishing leftover work: %q", free)
 	}
 	// The free variant stays a bare vote — no conclusion (no host to write one).
 	if strings.Contains(free, "最终结论") {
@@ -372,6 +422,17 @@ func TestBuildCruiseSingleConfirmPrompt(t *testing.T) {
 	}
 	if !strings.Contains(p, "最终结论") {
 		t.Fatalf("confirm prompt must ask for the conclusion in the same reply: %q", p)
+	}
+	// ...unless the previous reply already carried it: then only acknowledge,
+	// so the same long conclusion is not rendered twice on the timeline.
+	if !strings.Contains(p, "上一条回复已经写出了完整的最终结论") {
+		t.Fatalf("single-chat confirm prompt must skip re-stating an already-written conclusion: %q", p)
+	}
+	if !strings.Contains(p, "不要重复展开") {
+		t.Fatalf("single-chat confirm prompt must forbid repeating the conclusion: %q", p)
+	}
+	if !strings.Contains(p, "若仍存在遗留工作没有完成") {
+		t.Fatalf("single-chat confirm prompt must require finishing leftover work: %q", p)
 	}
 	// Single chat has no members to route to, so it must NOT invite mentions.
 	if strings.Contains(p, "<clawbench-mention") {

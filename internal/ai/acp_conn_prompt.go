@@ -365,9 +365,17 @@ func (c *ACPConn) emitPromptResponseUsage(usage *acp.Usage, respMeta map[string]
 	// CodeBuddy is excluded: its usage_update.cost carries credit, not money
 	// (see costFieldCarriesCredit). The real credit is persisted separately
 	// from _meta.usage.credit below.
+	//
+	// ACP defines this field as the session's CUMULATIVE cost, so the message
+	// metadata records that fact (CostCumulative) and the ledger converts it to
+	// a per-turn delta before storing — otherwise SUM(cost_usd) over the stats
+	// window counts the running total once per message (measured: 2.8× on
+	// Claude, 2.0× on OpenCode).
 	cachedUsage := c.GetCachedUsageState()
 	if cachedUsage != nil && cachedUsage.Cost > 0 && !costFieldCarriesCredit(backendID) {
 		meta.CostUSD = cachedUsage.Cost
+		meta.CostCumulative = true
+		meta.CostSessionTotal = cachedUsage.Cost
 	}
 
 	// Persist the ACP-standard stop reason (Claude/Codex report it here, not in
@@ -376,15 +384,30 @@ func (c *ACPConn) emitPromptResponseUsage(usage *acp.Usage, respMeta map[string]
 		meta.StopReason = string(stopReason)
 	}
 	acc := c.getAndClearMetaAccum()
-	// Apply per-agent _meta extensions from the PromptResponse (Claude/Codex
-	// quota, CodeBuddy trace) and the turn-level accumulation (CodeBuddy usage
-	// from session/update notifications).
-	if ext := extractMetaUsage(backendID, respMeta); ext != nil {
-		applyMetaExtractionToMetadata(meta, ext)
-	}
+	// Apply the per-agent _meta extensions from the PromptResponse FIRST and the
+	// turn-level accumulation SECOND — but note applyTokenUsageTo only overlays
+	// non-zero fields, so ordering decides precedence for fields both carry.
+	//
+	// The PromptResponse snapshot is the authoritative END-OF-TURN value; the
+	// accumulation holds whatever the mid-turn session/update notifications
+	// reported, which for Claude/Codex can be a per-model counter with a
+	// different (cumulative) aggregation unit. Applying the accumulation last
+	// let that counter overwrite the sane end-of-turn numbers — observed as
+	// single messages claiming 2.4M/6.5M input tokens in a 200k-window session.
+	// Apply the accumulation first so the response wins on every shared field.
 	if acc != nil {
 		applyMetaExtractionToMetadata(meta, acc)
 	}
+	if ext := extractMetaUsage(backendID, respMeta); ext != nil {
+		applyMetaExtractionToMetadata(meta, ext)
+	}
+	// NOTE: a large per-turn token count is NOT an anomaly. One agentic turn
+	// issues many model calls (one per tool round), and these counters are the
+	// sum over them: a measured 6.5M-token turn in a 200k-window session came
+	// from ~30 calls of ~217k each, which is exactly the window. An earlier
+	// "implausible snapshot" guard here discarded such turns and destroyed real
+	// usage — do not reintroduce one without proving the counter is
+	// session-cumulative rather than per-turn.
 	// Record this turn's requestId as the completed-turn baseline for the
 	// replayed-chunk filter in mapACPSessionUpdate (see lastCompletedRequestID).
 	// meta.RequestID is the genuine turn requestId here because the filter has

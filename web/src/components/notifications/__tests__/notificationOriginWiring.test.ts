@@ -61,20 +61,45 @@ const app = stripComments(appRaw)
 const coordinator = stripComments(coordinatorRaw)
 
 describe('notification navigation origin wiring', () => {
-  it('the panel flags every dispatch as coming from the log', () => {
-    // One flag per dispatch site (session / task / forge). A missed one is a
-    // silently dead Back button on that row kind only.
-    const flags = panel.match(/fromNotificationCenter: true/g) ?? []
-    expect(flags.length, 'each of the three open-session/task/forge dispatches must carry the flag').toBe(3)
+  it('every jump goes through the single flagged dispatcher', () => {
+    // The panel must not dispatch `clawbench-open-*` events anywhere except
+    // `jumpTo`, which stamps `fromNotificationCenter`. A raw dispatch added for
+    // a new row kind would silently drop the origin, and Back would then land
+    // on whatever tab preceded the log (or exit the app).
+    const raw = panel.match(/dispatchEvent\(new CustomEvent\('clawbench-open-/g) ?? []
+    expect(raw, 'only jumpTo may dispatch navigation events').toHaveLength(0)
+    expect(panel).toMatch(/function jumpTo\(/)
+    expect(panel).toMatch(/fromNotificationCenter: true/)
   })
 
-  it('App.vue records the log as origin for all three event kinds', () => {
+  it('every navigating kind reaches jumpTo', () => {
+    // One call per navigating kind. Kinds are enumerated here rather than
+    // counted, so a missing destination names itself: session / task / forge /
+    // usage. (`NotificationKind` is also pinned by a `never` exhaustiveness
+    // check in the panel — this is the runtime half of that guard, catching a
+    // kind that is handled in the switch but forgets to call jumpTo.)
+    for (const event of [
+      'clawbench-open-session',
+      'clawbench-open-task',
+      'clawbench-open-forge',
+      'clawbench-open-usage-meter',
+    ]) {
+      expect(panel, `${event} must be dispatched through jumpTo`).toContain(`jumpTo('${event}'`)
+    }
+  })
+
+  it('App.vue records the log as origin for every event kind', () => {
     // The helper is the single place that arms the origin.
     expect(app).toMatch(/function recordNotificationOrigin\(/)
     expect(app).toMatch(/beginExternalJump\('notifications', surfaceLabel\('notifications'\)/)
-    // Called from each of the three handlers.
+    // Called from each handler: session / task / forge / usage-meter. The
+    // usage-meter handler is the one that used to be missed — it dispatches to
+    // the settings page on narrow screens, so without it Back could only pop
+    // the settings nav stack and then exited the app.
     const calls = app.match(/recordNotificationOrigin\(detail\)/g) ?? []
-    expect(calls.length, 'handleOpenSession / handleOpenTask / handleOpenForge must each record the origin').toBe(3)
+    expect(calls.length, 'handleOpenSession / handleOpenTask / handleOpenForge must each record the origin').toBeGreaterThanOrEqual(3)
+    expect(app).toMatch(/function handleOpenUsageMeter\(e\?: Event\)/)
+    expect(app).toMatch(/handleOpenUsageMeter[\s\S]{0,400}recordNotificationOrigin\(/)
   })
 
   it('does NOT record an origin on the cross-project path', () => {
@@ -84,6 +109,45 @@ describe('notification navigation origin wiring', () => {
     // The forge handler has no `crossProject` local — it gates on its own
     // (inverted) project check, with the recording on the same-project branch.
     expect(app).toMatch(/if \(!projectPath \|\| projectPath === store\.state\.projectRoot\) \{[^}]*recordNotificationOrigin\(detail\)/)
+  })
+
+  it('records the usage-meter origin only on the narrow path', () => {
+    // Wide screens open a popover over the still-visible log, so there is no
+    // navigation to return FROM: arming an origin whose tab is already active
+    // makes the press consume itself with no visible effect. Narrow replaces
+    // the whole tab and needs the origin.
+    const at = app.indexOf('function handleOpenUsageMeter')
+    const body = app.slice(at, at + 900)
+    const wideReturn = body.indexOf('requestOpenUsageMeter()')
+    const record = body.indexOf('recordNotificationOrigin(')
+    expect(wideReturn).toBeGreaterThan(-1)
+    expect(record).toBeGreaterThan(-1)
+    expect(record, 'the origin must be recorded AFTER the wide-screen early return').toBeGreaterThan(wideReturn)
+  })
+
+  it('every clawbench-open-* the panel dispatches has a handler that records the origin', () => {
+    // Self-maintaining half of the guard: whatever events the panel dispatches
+    // today, each one must have a listener in App.vue, and that listener must
+    // call recordNotificationOrigin. Adding a new row kind therefore cannot ship
+    // a jump whose Back target was never armed — the failure names the event.
+    //
+    // This complements (does not replace) the per-kind assertions above: those
+    // pin the CURRENT set, this one covers whatever the set becomes.
+    const dispatched = [...new Set(
+      [...panel.matchAll(/jumpTo\('([^']+)'/g)].map((m) => m[1]),
+    )]
+    expect(dispatched.length, 'the panel must dispatch at least one jump').toBeGreaterThan(0)
+
+    for (const event of dispatched) {
+      const handler = app.match(new RegExp(`addEventListener\\('${event}', (handle\\w+)\\)`))
+      expect(handler, `App.vue must listen for ${event}`).not.toBeNull()
+
+      const handlerName = handler![1]
+      const at = app.indexOf(`function ${handlerName}`)
+      expect(at, `${handlerName} must be defined`).toBeGreaterThan(-1)
+      const body = app.slice(at, at + 1200)
+      expect(body, `${handlerName} must arm the log as its return target`).toContain('recordNotificationOrigin(')
+    }
   })
 
   it('the panel confirms before a cross-project jump, and cancelling aborts', () => {

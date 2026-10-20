@@ -67,6 +67,7 @@ export const SHORTCUT_TIPS: ShortcutTipDef[] = [
   { context: 'browse', contextKey: 'appHeader.shortcutTip.contextBrowseView', keys: ['Ctrl+1', 'Ctrl+2'], actionKey: 'appHeader.shortcutTip.actionBrowseView' },
 
   // ── view（文件查看/编辑） ──
+  { context: 'view', contextKey: 'appHeader.shortcutTip.contextViewGoToLine', keys: ['Ctrl+G'], actionKey: 'appHeader.shortcutTip.actionViewGoToLine' },
   { context: 'view', contextKey: 'appHeader.shortcutTip.contextViewSave', keys: ['Ctrl+S'], actionKey: 'appHeader.shortcutTip.actionViewSave' },
   { context: 'view', contextKey: 'appHeader.shortcutTip.contextViewUndo', keys: ['Ctrl+Z', 'Ctrl+Y'], actionKey: 'appHeader.shortcutTip.actionViewUndo' },
   { context: 'view', contextKey: 'appHeader.shortcutTip.contextViewImage', keys: ['←', '→'], actionKey: 'appHeader.shortcutTip.actionViewImage' },

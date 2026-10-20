@@ -322,14 +322,8 @@ func handleQueueEnqueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate the agent override (ISS-246): an unknown agentId would otherwise
-	// silently fall back to the CLI backend and run with the wrong agent/config.
-	// Empty agentId keeps the existing default-agent behavior.
-	if req.AgentID != "" {
-		if _, _, _, _, agentOK := resolveAgentConfig(req.AgentID); !agentOK {
-			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidAgentID")
-			return
-		}
+	if !validateQueueAgentOverride(w, r, req.AgentID, projectPath) {
+		return
 	}
 
 	// Validate file paths: reject traversal outside the project and resolve to
@@ -391,6 +385,31 @@ func handleQueueEnqueue(w http.ResponseWriter, r *http.Request) {
 		"ok":      true,
 		"started": started,
 	})
+}
+
+// validateQueueAgentOverride rejects an explicit agentId that the caller may not
+// use, writing the response itself. Extracted so the enqueue handler's own
+// branch count stays readable.
+//
+// Two checks, in this order:
+//   - ISS-246: an unknown id would silently fall back to the CLI backend and run
+//     with the wrong agent/config. Empty keeps the existing default behavior.
+//   - disabled / project scope: the same rules every creation entry enforces.
+//     Queueing is a send path — it starts a turn as soon as the session is idle,
+//     so leaving it ungated made both switches bypassable from any open session.
+func validateQueueAgentOverride(w http.ResponseWriter, r *http.Request, agentID, projectPath string) bool {
+	if agentID == "" {
+		return true
+	}
+	if _, _, _, _, agentOK := resolveAgentConfig(agentID); !agentOK {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidAgentID")
+		return false
+	}
+	if msgKey := explicitAgentRejection(agentID, projectPath); msgKey != "" {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, msgKey)
+		return false
+	}
+	return true
 }
 
 // validateQueueFiles validates and resolves attached file paths for the queue

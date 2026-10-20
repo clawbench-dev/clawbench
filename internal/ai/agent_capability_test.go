@@ -237,7 +237,7 @@ func TestRegistry_ForceUpdateIfNeeded_Delegates(t *testing.T) {
 	models := []model.AgentModel{{ID: "m1"}}
 	cmds := []AvailableCommandInfo{{Name: "init"}}
 	cfg := &ConfigOptionState{ConfigID: "mode"}
-	applied := reg.ForceUpdateIfNeeded("a1", modes, efforts, models, cmds, cfg, false, false)
+	applied := reg.ForceUpdateIfNeeded("a1", modes, efforts, models, cmds, cfg, false, false, false, false)
 	assert.True(t, applied)
 
 	got := reg.Get("a1")
@@ -647,7 +647,7 @@ func TestRegistry_ForceUpdateIfNeeded_WithLoadListSession(t *testing.T) {
 	models := []model.AgentModel{{ID: "m1"}}
 	cmds := []AvailableCommandInfo{{Name: "init"}}
 	cfg := &ConfigOptionState{ConfigID: "mode"}
-	applied := reg.ForceUpdateIfNeeded("a1", modes, efforts, models, cmds, cfg, true, true)
+	applied := reg.ForceUpdateIfNeeded("a1", modes, efforts, models, cmds, cfg, true, true, false, false)
 	assert.True(t, applied)
 
 	got := reg.Get("a1")
@@ -661,7 +661,7 @@ func TestRegistry_ForceUpdateIfNeeded_WithLoadListSession(t *testing.T) {
 
 func TestRegistry_ForceUpdateIfNeeded_DefaultsFalse(t *testing.T) {
 	reg := resetGlobalRegistryForTest(t)
-	applied := reg.ForceUpdateIfNeeded("a1", nil, nil, nil, nil, nil, false, false)
+	applied := reg.ForceUpdateIfNeeded("a1", nil, nil, nil, nil, nil, false, false, false, false)
 	assert.True(t, applied)
 
 	got := reg.Get("a1")
@@ -704,6 +704,8 @@ func setupCapabilityDB(t *testing.T) *sql.DB {
 		acp_config_options TEXT NOT NULL DEFAULT '',
 		acp_load_session BOOLEAN NOT NULL DEFAULT false,
 		acp_list_sessions BOOLEAN NOT NULL DEFAULT false,
+		acp_mcp_http BOOLEAN NOT NULL DEFAULT false,
+		acp_mcp_sse BOOLEAN NOT NULL DEFAULT false,
 		updated_at DATETIME
 	)`)
 	require.NoError(t, err)
@@ -803,4 +805,61 @@ func TestRegistry_HasNewAvailableThinkingEfforts_DetectsShrink(t *testing.T) {
 	assert.True(t, reg.HasNewAvailableThinkingEfforts("shrink", []ThinkingEffortDef{
 		{ID: "high"}, {ID: "max"}, {ID: "default"}, {ID: "minimal"},
 	}), "a different id must still be detected")
+}
+
+// TestRegistry_MCPCapabilitiesSurviveForceUpdate is the regression test for the
+// full-replace semantics of ForceUpdate.
+//
+// ForceUpdate does `r.caps[agentID] = agentCap`, so a field that is not carried
+// through ForceUpdateIfNeeded is CLEARED on every first-session-of-a-process.
+// The symptom is subtle and looks like a product bug: http/sse servers work on
+// the first turn and then vanish, because the capability gate reads false.
+// listSessions already had this exact bug (see the comment at the call site).
+func TestRegistry_MCPCapabilitiesSurviveForceUpdate(t *testing.T) {
+	reg := resetGlobalRegistryForTest(t)
+
+	// Initialize reports both transports.
+	reg.UpdateMCPCapabilities("a1", true, true)
+	assert.Equal(t, model.MCPCapabilities{HTTP: true, SSE: true}, reg.GetMCPCapabilities("a1"))
+
+	// The first session of a process triggers a full replace. The call site
+	// reads the current values from the registry and passes them back, which is
+	// what this test pins.
+	caps := reg.GetMCPCapabilities("a1")
+	reg.ForceUpdateIfNeeded("a1", nil, nil, nil, nil, nil, false, false, caps.HTTP, caps.SSE)
+
+	assert.Equal(t, model.MCPCapabilities{HTTP: true, SSE: true}, reg.GetMCPCapabilities("a1"),
+		"ForceUpdate must not clear MCP capabilities — otherwise http/sse servers disappear after the first turn")
+}
+
+// TestRegistry_MCPCapabilitiesDefaultFalse pins that an agent which never
+// reported capabilities yields false/false, i.e. "send only stdio". Sending an
+// unsupported http/sse server fails the whole session/new.
+func TestRegistry_MCPCapabilitiesDefaultFalse(t *testing.T) {
+	reg := resetGlobalRegistryForTest(t)
+	assert.Equal(t, model.MCPCapabilities{}, reg.GetMCPCapabilities("never-seen"))
+}
+
+// TestRegistry_MCPCapabilitiesPersistAcrossRestart pins that the advertised
+// transports are written to and read from the agents table, so the first
+// session after a restart still knows http/sse are allowed instead of falling
+// back to stdio-only.
+func TestRegistry_MCPCapabilitiesPersistAcrossRestart(t *testing.T) {
+	db := setupCapabilityDB(t)
+	reg := resetGlobalRegistryForTest(t)
+
+	_, err := db.Exec(`INSERT INTO agents (id, transport) VALUES ('a1', 'acp-stdio')`)
+	require.NoError(t, err)
+
+	reg.UpdateMCPCapabilities("a1", true, true)
+	// persistAsync runs in a goroutine; drive the write directly so the test is
+	// deterministic.
+	require.NoError(t, reg.saveToDB(db, "a1", reg.Get("a1")))
+
+	// Simulate a restart: a fresh registry reads from the same DB.
+	fresh := resetGlobalRegistryForTest(t)
+	fresh.LoadFromDB(db)
+
+	assert.Equal(t, model.MCPCapabilities{HTTP: true, SSE: true}, fresh.GetMCPCapabilities("a1"),
+		"http/sse must survive a restart, or the first session after restart sends only stdio")
 }

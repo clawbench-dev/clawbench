@@ -73,7 +73,10 @@ describe('preload channel list stays in sync', () => {
       expect(preloadSrc).toContain(`'${channel}'`)
     }
     // And no extra channel sneaks in.
-    const declared = [...preloadSrc.matchAll(/'(clawbench-open-[a-z]+)'/g)].map((m) => m[1])
+    // The class must allow hyphens: `clawbench-open-usage-meter` is a valid
+    // channel name, and `[a-z]+` silently dropped it, making this guard pass
+    // while the preload was missing a listener.
+    const declared = [...preloadSrc.matchAll(/'(clawbench-open-[a-z-]+)'/g)].map((m) => m[1])
     expect([...new Set(declared)].sort()).toEqual([...NAV_CHANNELS].sort())
   })
 

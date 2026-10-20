@@ -1,11 +1,26 @@
 <template>
-  <BottomSheet :open="open" auto @close="handleClose">
+  <!-- `panel-class` gives this sheet a stable hook. There are TWO SessionDrawer
+       components in the app (this one, the per-session settings sheet, and
+       components/session/SessionDrawer.vue, the session LIST); the list one
+       owns `.session-drawer-sheet`, so this one must be distinguishable or a
+       test selecting the list drawer would match this one instead. -->
+  <BottomSheet :open="open" auto panel-class="session-settings-sheet" @close="handleClose">
     <template #header>
       <Cpu :size="16" class="bs-header-icon" />
       <span class="bs-header-title">{{ agentName }}</span>
     </template>
 
-    <div class="session-setting-tabs">
+    <!-- Horizontally scrollable tab strip. Five tabs no longer fit a phone
+         width, and a squeezed label is worse than a scrollable one. Touch pans
+         natively (with momentum); a mouse drags (attachDragScroll, wired below)
+         and the wheel scrolls sideways. The scrollbar is hidden — it would be
+         taller than the tab row itself on mobile. -->
+    <div
+      ref="tabStripRef"
+      class="session-setting-tabs"
+      :class="{ 'is-overflowing': tabStripOverflow }"
+      @wheel="onHorizontalWheel"
+    >
       <button class="model-tab" :class="{ active: activeTab === 'model' }" @click="activeTab = 'model'">
         <Cpu :size="13" />{{ t('chat.modelSwitcher.title') }}
       </button>
@@ -17,6 +32,14 @@
       </button>
       <button class="model-tab" :class="{ active: activeTab === 'transport' }" @click="activeTab = 'transport'">
         <Cable :size="13" />{{ t('chat.transportSwitcher.title') }}
+      </button>
+      <!-- Context usage tab. Same body as the session-info popup (they share
+           ContextUsageDetail), but reachable from the settings drawer so the
+           usage numbers live next to the other per-session settings instead of
+           only behind a tiny bar in the info row. The info-row popup stays: it
+           is the one-tap path while reading. -->
+      <button class="model-tab" :class="{ active: activeTab === 'usage' }" @click="activeTab = 'usage'">
+        <Activity :size="13" />{{ t('chat.sessionInfo.contextUsage') }}
       </button>
     </div>
 
@@ -41,15 +64,15 @@
         >
           <button
             class="model-item"
-            :class="{ current: m.id === currentModelId, 'is-default': m.id === defaultModelId, 'nav-active': listNav.activeIndex.value === idx }"
+            :class="{ current: m.id === effectiveModelId, 'is-default': m.id === defaultModelId, 'nav-active': listNav.activeIndex.value === idx }"
             @click="selectModel(m)"
             @contextmenu.prevent="showDefaultMenu(m)"
             @touchstart.passive="onTouchStart(m, $event)"
             @touchend="onTouchEnd"
             @touchmove.passive="onTouchMove"
           >
-            <span class="model-item-indicator" :class="{ active: m.id === currentModelId }"></span>
-            <ModelRow :name="m.name" :model-id="m.id" :active="m.id === currentModelId" />
+            <span class="model-item-indicator" :class="{ active: m.id === effectiveModelId }"></span>
+            <ModelRow :name="m.name" :model-id="m.id" :active="m.id === effectiveModelId" />
             <span v-if="m.id === defaultModelId" class="default-label">
               <span class="default-text">{{ t('chat.sessionSetting.defaultBadge') }}</span>
               <span class="default-star"><Star :size="12" fill="currentColor" /></span>
@@ -79,14 +102,14 @@
         >
           <button
             class="thinking-item"
-            :class="{ current: level.id === currentThinkingEffort, 'is-default': level.id === defaultThinkingEffort, 'nav-active': listNav.activeIndex.value === idx }"
+            :class="{ current: level.id === effectiveThinkingEffort, 'is-default': level.id === defaultThinkingEffort, 'nav-active': listNav.activeIndex.value === idx }"
             @click="selectThinkingEffort(level.id)"
             @contextmenu.prevent="showThinkingDefaultMenu(level.id)"
             @touchstart.passive="onTouchStartThinking(level.id, $event)"
             @touchend="onTouchEnd"
             @touchmove.passive="onTouchMove"
           >
-            <span class="model-item-indicator" :class="{ active: level.id === currentThinkingEffort }"></span>
+            <span class="model-item-indicator" :class="{ active: level.id === effectiveThinkingEffort }"></span>
             <span class="model-item-name">{{ level.name }}</span>
             <span v-if="level.id === defaultThinkingEffort" class="default-label">
               <span class="default-text">{{ t('chat.sessionSetting.defaultBadge') }}</span>
@@ -146,26 +169,26 @@
 
     <!-- Mode tab -->
     <div v-if="activeTab === 'mode'" class="model-tab-content">
-      <div v-if="availableModes.length === 0 || !isACP" class="tab-empty-hint">
+      <div v-if="effectiveModes.length === 0 || !isACP" class="tab-empty-hint">
         {{ t('chat.sessionSetting.notAvailable') }}
       </div>
       <template v-else>
       <div class="model-list">
         <div
-          v-for="(mode, idx) in availableModes"
+          v-for="(mode, idx) in effectiveModes"
           :key="mode.id"
           class="model-item-wrapper"
         >
           <button
             class="thinking-item"
-            :class="{ current: mode.id === currentModeId, 'is-default': mode.id === defaultModeId, 'nav-active': listNav.activeIndex.value === idx }"
+            :class="{ current: mode.id === effectiveModeId, 'is-default': mode.id === defaultModeId, 'nav-active': listNav.activeIndex.value === idx }"
             @click="selectMode(mode)"
             @contextmenu.prevent="showModeDefaultMenu(mode)"
             @touchstart.passive="onTouchStartMode(mode, $event)"
             @touchend="onTouchEnd"
             @touchmove.passive="onTouchMove"
           >
-            <span class="model-item-indicator" :class="{ active: mode.id === currentModeId }"></span>
+            <span class="model-item-indicator" :class="{ active: mode.id === effectiveModeId }"></span>
             <span class="model-item-name">{{ mode.name || mode.id }}</span>
             <span v-if="mode.id === defaultModeId" class="default-label">
               <span class="default-text">{{ t('chat.sessionSetting.defaultBadge') }}</span>
@@ -175,7 +198,7 @@
               <Star :size="12" />
             </button>
           </button>
-          <div v-if="idx < availableModes.length - 1" class="model-divider"></div>
+          <div v-if="idx < effectiveModes.length - 1" class="model-divider"></div>
         </div>
       </div>
       <!-- Auto-Approve toggle (embedded in Mode tab) -->
@@ -187,12 +210,36 @@
             <span class="auto-approve-desc">{{ t('chat.autoApprove.description') }}</span>
           </div>
           <label class="toggle-switch">
-            <input type="checkbox" :checked="autoApprove" @change="toggleAutoApprove($event.target.checked)" />
+            <input type="checkbox" :checked="effectiveAutoApprove" @change="applyAutoApprove($event.target.checked)" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <!-- Auto-cruise sits directly under auto-approve: they are the two
+             "run unattended" switches, and cruise FORCES auto-approve on
+             (one-directional), so the user sees the link where it happens.
+             The session-info chip stays as the quick toggle. -->
+        <div class="auto-approve-toggle auto-cruise-toggle">
+          <div class="auto-approve-label">
+            <span class="auto-approve-title">{{ t('chat.cruise.label') }}</span>
+            <span class="auto-approve-desc">{{ t('chat.cruise.hint') }}</span>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" :checked="effectiveCruise" @change="onCruiseToggle($event.target.checked)" />
             <span class="toggle-slider"></span>
           </label>
         </div>
       </div>
       </template>
+    </div>
+
+    <!-- Context usage tab. ContextUsageDetail deliberately carries NO outer
+         padding of its own (its single-chat host, `.usage-popup`, supplies it),
+         so the padding has to come from this wrapper — otherwise the rows sit
+         flush against the sheet edges. -->
+    <div v-if="activeTab === 'usage'" class="model-tab-content usage-tab-content">
+      <p v-if="!hasUsage" class="tab-empty-hint">{{ t('chat.sessionSetting.noUsage') }}</p>
+      <ContextUsageDetail v-else :usage="usageSnapshot" :show-compact="canCompactHere" :compacting="compacting" @compact="onCompact" />
+      <p v-if="compactError" class="usage-error">{{ compactError }}</p>
     </div>
 
     <!-- Long-press PopupMenu for "Set as Default" (kept for backward compat) -->
@@ -205,18 +252,23 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Star, Cpu, Brain, ShieldAlert, Cable } from 'lucide-vue-next'
+import { Star, Cpu, Brain, ShieldAlert, Cable, Activity } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import ModelRow from '@/components/common/ModelRow.vue'
+import ContextUsageDetail from '@/components/chat/ContextUsageDetail.vue'
+import { apiGet, apiPatch, apiPost } from '@/utils/api'
+import { attachDragScroll, canDragScroll } from '@/utils/dragScroll'
+import { onHorizontalWheel } from '@/utils/horizontalWheelScroll'
+import { appLog } from '@/utils/appLog'
+import { compactGroupMember } from '@/composables/useGroupChat'
 import { useAgents, restoreOriginalModels, resetModelViewForTransport, applyRefreshedModelList, populateACPStateFromCache, invalidateACPStateCache } from '@/composables/useAgents'
 import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
 import { useSessionIdentity, clearModeState, clearCommandState, clearThinkingEffortState } from '@/composables/useSessionIdentity'
-import { apiPost } from '@/utils/api'
 import { formatModelIdForDisplay } from '@/utils/modelDisplay'
 import { patchAgentPref } from '@/composables/useSettingsConfig'
 import { useToast } from '@/composables/useToast'
@@ -225,14 +277,181 @@ const props = defineProps({
   open: Boolean,
   agentId: String,
   initialTab: { type: String, default: 'model' },
+  /**
+   * Session whose settings this drawer edits. Empty means "the current
+   * session" — the shared session-identity refs, which is how single chat has
+   * always worked.
+   *
+   * Non-empty is the group-member path: clicking a member in the roster opens
+   * this drawer on THAT member's row. A member row is a real session (it owns
+   * the agent binding and its own context window) but it is NOT the current
+   * session, so every value must come from this prop instead of the singleton
+   * refs — otherwise the drawer would show the group's host state while
+   * claiming to describe the member.
+   */
+  targetSessionId: { type: String, default: '' },
 })
 
-const emit = defineEmits(['close', 'switch-model', 'switch-thinking-effort', 'switch-mode', 'switch-transport'])
+const emit = defineEmits(['close', 'switch-model', 'switch-thinking-effort', 'switch-mode', 'switch-transport', 'changed'])
 
 const { t } = useI18n()
 const toast = useToast()
 const { getAgentModels, getAgentThinkingEffortLevels, getAgent, updateAgentField, canRefreshModels, supportsACP, supportsCLI, getAgentTransport } = useAgents()
-const { currentModelId, currentThinkingEffort, currentModeId, currentTransport, availableThinkingEfforts, availableModes, autoApprove, toggleAutoApprove } = useSessionIdentity()
+const identity = useSessionIdentity()
+const { currentModelId, currentThinkingEffort, currentModeId, currentTransport, availableThinkingEfforts, availableModes, autoApprove, toggleAutoApprove, cruise, toggleCruise } = identity
+
+// ── Target-session state ──
+// When targetSessionId is set (group member), the drawer describes THAT session
+// and the singleton refs above describe the CURRENT one. Every read below goes
+// through these indirections so a single component serves both cases.
+const isTargeted = computed(() => !!props.targetSessionId)
+const target = ref(null) // GET /api/ai/session/settings payload
+const targetUsage = ref(null)
+const compacting = ref(false)
+const compactError = ref('')
+// The target session the in-flight compaction belongs to ('' when idle).
+const compactingFor = ref('')
+
+const effectiveModelId = computed(() => isTargeted.value ? (target.value?.modelId || '') : currentModelId.value)
+const effectiveModeId = computed(() => isTargeted.value ? (target.value?.modeState?.currentModeId || '') : currentModeId.value)
+const effectiveThinkingEffort = computed(() => isTargeted.value ? (target.value?.thinkingEffortState?.currentId || '') : currentThinkingEffort.value)
+const effectiveTransport = computed(() => isTargeted.value ? (target.value?.transport || '') : currentTransport.value)
+const effectiveAutoApprove = computed(() => isTargeted.value ? target.value?.autoApprove === true : autoApprove.value)
+const effectiveCruise = computed(() => isTargeted.value ? target.value?.cruise === true : cruise.value)
+const effectiveModes = computed(() => isTargeted.value ? (target.value?.modeState?.availableModes || []) : availableModes.value)
+const effectiveEfforts = computed(() => isTargeted.value ? (target.value?.thinkingEffortState?.availableLevels || []) : availableThinkingEfforts.value)
+
+/** Load the targeted session's state. No-op for the single-chat path. */
+async function loadTarget() {
+  // A compaction belongs to the member it was started for. Opening ANOTHER
+  // member's panel while one is still running used to keep the spinner and the
+  // disabled button, so the new member looked busy when it was idle (and the
+  // button stayed dead until the first member's compaction finished).
+  //
+  // Guarded on an actual CHANGE: re-opening the SAME member's drawer during its
+  // compaction must keep the spinner, or the panel would claim it is idle while
+  // the request is still in flight.
+  if (props.targetSessionId !== compactingFor.value) {
+    compacting.value = false
+    compactError.value = ''
+  }
+  if (!props.targetSessionId) {
+    target.value = null
+    targetUsage.value = null
+    return
+  }
+  try {
+    const data = await apiGet(`/api/ai/session/settings?session_id=${encodeURIComponent(props.targetSessionId)}`)
+    target.value = data
+    targetUsage.value = data?.usageState || null
+  } catch (err) {
+    target.value = null
+    targetUsage.value = null
+    appLog.w('SessionDrawer', 'load target session settings failed', err)
+  }
+}
+
+watch(() => [props.open, props.targetSessionId], ([open]) => {
+  if (open) loadTarget()
+}, { immediate: true })
+
+/** Usage snapshot for the usage tab (shared shape with the info-row popup). */
+const usageSnapshot = computed(() => {
+  if (isTargeted.value) return targetUsage.value
+  return {
+    used: identity.contextUsed.value,
+    size: identity.contextSize.value,
+    inputTokens: identity.contextInputTokens.value,
+    outputTokens: identity.contextOutputTokens.value,
+    totalTokens: identity.contextTotalTokens.value,
+    cachedReadTokens: identity.contextCachedReadTokens.value,
+    cachedWriteTokens: identity.contextCachedWriteTokens.value,
+    thoughtTokens: identity.contextThoughtTokens.value,
+    cost: identity.contextCost.value,
+    currency: identity.contextCurrency.value,
+    cacheCreationTokens: identity.contextCacheCreationTokens.value,
+    cacheHitTokens: identity.contextCacheHitTokens.value,
+    cacheMissTokens: identity.contextCacheMissTokens.value,
+    credit: identity.contextCredit.value,
+    usageByCategory: identity.contextUsageByCategory.value,
+  }
+})
+// "Carries any usage", not "has a context window": a session whose only
+// billing was a generation tool has credit with no window, and gating on size
+// alone hid the whole panel (the credit row included).
+const hasUsage = computed(() => {
+  const u = usageSnapshot.value
+  return !!u && ((u.size ?? 0) > 0 || (u.used ?? 0) > 0 || (u.credit ?? 0) > 0 ||
+    (u.inputTokens ?? 0) > 0 || (u.outputTokens ?? 0) > 0 || (u.totalTokens ?? 0) > 0)
+})
+// Compaction needs a real window to compress — credit alone is not enough.
+const hasWindow = computed(() => (usageSnapshot.value?.size ?? 0) > 0)
+// Compaction is offered for a group member (it is a group-only action) and for
+// the current single chat. A member that never reported a window has nothing to
+// compact, and a left member cannot run a turn.
+//
+// A CLI-transport member must NOT offer it either: /compact is an ACP slash
+// command, and a CLI agent has no command channel — sending the text would reach
+// the model as prose. The server rejects that case with a 400, so showing the
+// button only produced an error after the click.
+const canCompactHere = computed(() => {
+  if (!hasWindow.value) return false
+  if (!isTargeted.value) return true
+  if (!target.value?.isGroupMember) return false
+  const transport = target.value?.transport || ''
+  // Empty transport means "the member row does not override the agent's", and
+  // the server resolves that from the agent; only an explicit "cli" is known to
+  // be uncompactable here.
+  return transport !== 'cli'
+})
+
+async function onCompact() {
+  if (!isTargeted.value || compacting.value) return
+  // Record WHICH member is compacting: the panel can be pointed at another one
+  // while this request is still running, and the state must not leak across.
+  const sid = target.value?.sessionId || props.targetSessionId
+  compactingFor.value = props.targetSessionId
+  compacting.value = true
+  compactError.value = ''
+  try {
+    const usage = await compactGroupMember(sid, props.targetSessionId)
+    if (usage) targetUsage.value = usage
+    emit('changed')
+  } catch (err) {
+    // Only surface the error if the panel still shows this member.
+    if (props.targetSessionId === compactingFor.value) {
+      compactError.value = err instanceof Error ? err.message : String(err)
+    }
+  } finally {
+    // Same guard: a result for a member the user has navigated away from must
+    // not clear (or set) the state of the one now on screen.
+    if (props.targetSessionId === compactingFor.value) compacting.value = false
+  }
+}
+
+/** Auto-cruise toggle. Targeted sessions write through their own endpoint. */
+async function onCruiseToggle(enabled) {
+  if (!isTargeted.value) {
+    toggleCruise(enabled)
+    return
+  }
+  try {
+    await apiPatch(`/api/ai/session/settings`, {
+      sessionId: props.targetSessionId,
+      cruise: enabled,
+    })
+    // Cruise forces auto-approve on server-side (one-directional); mirror it
+    // locally so the switch next to it does not contradict the state we just
+    // read back.
+    if (target.value) {
+      target.value = { ...target.value, cruise: enabled, autoApprove: enabled ? true : target.value.autoApprove }
+    }
+    emit('changed')
+  } catch (err) {
+    appLog.w('SessionDrawer', 'toggle cruise failed', err)
+    toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 })
+  }
+}
 
 const activeTab = ref('model')
 const searchQuery = ref('')
@@ -255,8 +474,22 @@ const models = computed(() => getAgentModels(props.agentId || ''))
 // Thinking levels: ACP mode shows ACP-reported levels only; CLI mode shows static levels
 const thinkingLevels = computed(() => {
   if (isACP.value) {
-    const acpLevels = availableThinkingEfforts.value
+    const acpLevels = effectiveEfforts.value
     if (acpLevels.length > 0) return acpLevels
+    // ACP has not reported levels for this session.
+    //
+    // Single chat keeps showing an empty tab: its chip comes from the live
+    // stream, and inventing a list the agent never advertised would offer
+    // choices the agent may reject.
+    //
+    // A TARGETED session (group member) is different: its connection may not be
+    // live at all when the drawer opens, so "no reported levels" is the normal
+    // state rather than a signal. Falling back to the agent's static levels is
+    // what makes the tab usable there instead of permanently empty — the same
+    // list the member's next turn would accept.
+    if (isTargeted.value) {
+      return getAgentThinkingEffortLevels(props.agentId || '').map(id => ({ id, name: id }))
+    }
     return []
   }
   // CLI mode: agent BackendSpec static levels
@@ -265,8 +498,9 @@ const thinkingLevels = computed(() => {
 const canRefresh = computed(() => canRefreshModels(props.agentId || ''))
 
 const isACP = computed(() => {
-  // Prefer session-level transport, fallback to agent config
-  if (currentTransport.value) return currentTransport.value === 'acp-stdio'
+  // Prefer session-level transport, fallback to agent config. The targeted
+  // transport comes from the member row, which is authoritative for that row.
+  if (effectiveTransport.value) return effectiveTransport.value === 'acp-stdio'
   return getAgentTransport(props.agentId || '') === 'acp-stdio'
 })
 
@@ -311,13 +545,13 @@ const listNav = useListNav({
   getCount: () => {
     if (activeTab.value === 'model') return filteredModels.value.length
     if (activeTab.value === 'thinking') return thinkingLevels.value.length
-    if (activeTab.value === 'mode') return availableModes.value.length
+    if (activeTab.value === 'mode') return effectiveModes.value.length
     return 0
   },
   onConfirm: (idx) => {
     if (activeTab.value === 'model') selectModel(filteredModels.value[idx])
     else if (activeTab.value === 'thinking') selectThinkingEffort(thinkingLevels.value[idx].id)
-    else if (activeTab.value === 'mode') selectMode(availableModes.value[idx])
+    else if (activeTab.value === 'mode') selectMode(effectiveModes.value[idx])
   },
   onActiveChange: scrollActiveIntoView,
 })
@@ -346,11 +580,110 @@ watch(() => props.open, (val) => {
   }
 })
 
+// ── Write routing ──
+// A targeted session (group member) writes through its own endpoint; the
+// current session keeps using the shared identity actions, which own the
+// optimistic chips in the info bar. Both paths land on the same server code.
+async function persistTargeted(payload) {
+  await apiPatch('/api/ai/session/settings', { sessionId: props.targetSessionId, ...payload })
+  emit('changed')
+  await loadTarget()
+}
+
+function applyAutoApprove(checked) {
+  if (isTargeted.value) {
+    // toggleAutoApprove() writes the CURRENT session, which would silently
+    // change the group's setting while the drawer claims to edit the member.
+    persistTargeted({ autoApprove: checked }).catch((err) => {
+      appLog.w('SessionDrawer', 'toggle auto-approve failed', err)
+      toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 })
+    })
+    if (target.value) target.value = { ...target.value, autoApprove: checked }
+    return
+  }
+  toggleAutoApprove(checked)
+}
+
+// ── Tab strip scrolling ──
+// Five tabs overflow a phone width. Touch already pans natively; this adds the
+// two paths a finger cannot use: mouse drag (the scrollbar is hidden) and the
+// wheel (which would otherwise scroll the drawer body vertically).
+const tabStripRef = ref(null)
+const tabStripOverflow = ref(false)
+let stopTabDragScroll = null
+let tabResizeObserver = null
+
+/** Attach/detach drag-to-scroll to match whether the strip actually overflows. */
+function syncTabDragScroll() {
+  const el = tabStripRef.value
+  if (!el) return
+  const shouldAttach = canDragScroll('mouse', 0, el.scrollWidth, el.clientWidth)
+  tabStripOverflow.value = shouldAttach
+  if (shouldAttach && !stopTabDragScroll) {
+    stopTabDragScroll = attachDragScroll(el)
+  } else if (!shouldAttach && stopTabDragScroll) {
+    stopTabDragScroll()
+    stopTabDragScroll = null
+  }
+}
+
+/** Keep the ACTIVE tab visible: a tab reached by keyboard nav or by the
+ *  `initialTab` prop can sit off-screen at the far end of the strip. */
+function scrollActiveTabIntoView() {
+  const el = tabStripRef.value
+  if (!el) return
+  const active = el.querySelector('.model-tab.active')
+  if (!active || typeof active.scrollIntoView !== 'function') return
+  active.scrollIntoView({ behavior: 'auto', block: 'nearest', inline: 'nearest' })
+}
+
+onMounted(() => {
+  nextTick(() => {
+    syncTabDragScroll()
+    scrollActiveTabIntoView()
+  })
+  // The strip's overflow depends on its rendered width (drawer resize, phone
+  // rotation, a locale with longer labels). Re-measure instead of assuming the
+  // mount-time result holds.
+  if (typeof ResizeObserver !== 'undefined') {
+    tabResizeObserver = new ResizeObserver(() => syncTabDragScroll())
+    if (tabStripRef.value) tabResizeObserver.observe(tabStripRef.value)
+  }
+})
+
+onBeforeUnmount(() => {
+  stopTabDragScroll?.()
+  stopTabDragScroll = null
+  tabResizeObserver?.disconnect()
+  tabResizeObserver = null
+})
+
+// The drawer is a keep-alive-ish sheet: it mounts once and toggles `open`, so
+// the strip can go from hidden (zero width) to laid out on every open. Re-measure
+// when it opens, and bring the active tab back into view.
+watch(() => props.open, (open) => {
+  if (!open) return
+  nextTick(() => {
+    syncTabDragScroll()
+    scrollActiveTabIntoView()
+  })
+})
+
+watch(activeTab, () => nextTick(scrollActiveTabIntoView))
+
 // --- Model selection ---
 
 function selectModel(model) {
   if (longPressTriggered.value) {
     longPressTriggered.value = false
+    return
+  }
+  if (isTargeted.value) {
+    persistTargeted({ modelId: model.id }).catch((err) => {
+      appLog.w('SessionDrawer', 'switch model failed', err)
+      toast.show(err?.message || t('chat.modelSwitcher.switchFailed'), { icon: 'warning', type: 'error' })
+    })
+    emit('close')
     return
   }
   emit('switch-model', model)
@@ -364,6 +697,14 @@ function selectThinkingEffort(level) {
     longPressTriggered.value = false
     return
   }
+  if (isTargeted.value) {
+    persistTargeted({ thinkingEffort: level }).catch((err) => {
+      appLog.w('SessionDrawer', 'switch thinking effort failed', err)
+      toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 })
+    })
+    emit('close')
+    return
+  }
   emit('switch-thinking-effort', level)
   emit('close')
 }
@@ -375,6 +716,14 @@ function selectMode(mode) {
     longPressTriggered.value = false
     return
   }
+  if (isTargeted.value) {
+    persistTargeted({ modeId: mode.id }).catch((err) => {
+      appLog.w('SessionDrawer', 'switch mode failed', err)
+      toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 })
+    })
+    emit('close')
+    return
+  }
   emit('switch-mode', mode)
   emit('close')
 }
@@ -384,6 +733,15 @@ function selectMode(mode) {
 async function selectTransport(transport) {
   if (transport === 'acp-stdio' && isACP.value) return
   if (transport === 'cli' && !isACP.value) return
+
+  if (isTargeted.value) {
+    persistTargeted({ transport }).catch((err) => {
+      appLog.w('SessionDrawer', 'switch transport failed', err)
+      toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 })
+    })
+    emit('close')
+    return
+  }
 
   await applyTransportSwitch(transport)
 
@@ -615,7 +973,7 @@ async function setAsDefault() {
     } else if (pendingDefaultMode.value !== null) {
       await patchAgentPref(props.agentId, 'preferred_mode', pendingDefaultMode.value)
       updateAgentField(props.agentId, 'preferredMode', pendingDefaultMode.value)
-      const mode = availableModes.value.find(m => m.id === pendingDefaultMode.value)
+      const mode = effectiveModes.value.find(m => m.id === pendingDefaultMode.value)
       if (mode) emit('switch-mode', mode)
       toast.show(t('chat.sessionSetting.setDefaultSuccess', { name: mode?.name || mode?.id || pendingDefaultMode.value }), { icon: 'star', type: 'success', duration: 2000 })
     }
@@ -653,10 +1011,41 @@ defineExpose({
   gap: 0;
   border-bottom: 1px solid var(--border-color, #e5e5e5);
   flex-shrink: 0;
+  /* Five tabs overflow a phone width. Scroll sideways instead of squeezing the
+     labels: `overflow-x: auto` + `nowrap` keeps each tab at its natural width,
+     touch pans natively with momentum, and the mouse gets drag/wheel below. */
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  /* Hidden scrollbar: it is taller than the tab row on mobile, and a visible
+     bar under the labels reads as a second border. */
+  scrollbar-width: none;
+}
+
+.session-setting-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+/* Drag-to-scroll affordance, only while the strip actually overflows (the class
+   is set from a real overflow measurement, so a strip that fits stays inert). */
+.session-setting-tabs.is-overflowing {
+  cursor: grab;
+}
+
+.session-setting-tabs.is-overflowing.is-dragging {
+  cursor: grabbing;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .model-tab {
-  flex: 1;
+  /* Natural width, not `flex: 1`: equal division is what forced the labels to
+     squeeze/ellipsis once there were five. `flex-shrink: 0` keeps a tab from
+     being compressed when the strip is narrower than its content. */
+  flex: 0 0 auto;
+  flex-shrink: 0;
+  white-space: nowrap;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -902,6 +1291,27 @@ defineExpose({
   justify-content: space-between;
   gap: var(--space-6);
   padding: var(--space-5) 14px;
+}
+
+/* Auto-cruise sits under auto-approve in the same block; a hairline keeps the
+   two "run unattended" switches readable as a pair without a second divider. */
+.auto-cruise-toggle {
+  border-top: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
+}
+
+/* The usage panel body has no padding of its own (see the template comment).
+   Match the other tabs' horizontal rhythm — `--space-5` is what the model
+   search row and the setting rows use, so the numbers line up with them. */
+.usage-tab-content {
+  padding: var(--space-4) var(--space-5) var(--space-6);
+  overflow-y: auto;
+}
+
+.usage-error {
+  margin: var(--space-4) 0 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-red, #dc2626);
+  line-height: 1.4;
 }
 
 .auto-approve-label {

@@ -168,6 +168,25 @@ export async function rescanSkills(enabledFallback: boolean): Promise<void> {
 }
 
 /**
+ * Drop the cached list so the next `#` menu fetch re-reads it.
+ *
+ * GET /api/skills is scoped by the project cookie and includes
+ * `<projectPath>/.agents/skills`, so the response belongs to ONE project.
+ * `loaded` is a module-level flag shared by every project, hence the cache must
+ * be invalidated on project switch — otherwise the menu keeps offering the
+ * previous project's project-level skills and inserts a `#name` the new project
+ * cannot resolve.
+ *
+ * Clearing `skills` too (not just the flag) matters because the menu renders
+ * `skillMenuRows()` directly: a stale list would stay visible for the keystroke
+ * that triggers the refetch.
+ */
+export function resetSkillsCache(): void {
+  skills.value = []
+  loaded.value = false
+}
+
+/**
  * Load the discovered skills if they have not been loaded yet. This is the
  * chat input's lazy path for the `#` skill menu: the list is fetched the first
  * time the trigger appears, then reused.
@@ -264,6 +283,7 @@ export function useSkillsState() {
     dirsSaving,
     reposSaving,
     loaded,
+    resetSkillsCache,
     skillCount: computed(() => skills.value.length),
   }
 }

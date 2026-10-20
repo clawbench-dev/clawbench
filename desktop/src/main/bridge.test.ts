@@ -17,6 +17,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 const handlers = vi.hoisted(() => new Map<string, (...args: unknown[]) => unknown>())
 const onHandlers = vi.hoisted(() => new Map<string, (...args: unknown[]) => void>())
 
+/**
+ * `storages` from the most recent `clearStorageData` call. Declared here (not
+ * as a `let` below the mocks) because the factory is hoisted above the module
+ * body; a `let` would be in its temporal dead zone when the factory runs.
+ */
+const clearedStorages = vi.hoisted(() => ({ value: null as string[] | null }))
+
 const tunnelMock = vi.hoisted(() => ({
   getTransportPreference: vi.fn(() => 'both' as string),
   getActiveTransport: vi.fn(() => 'h2' as string),
@@ -39,7 +46,18 @@ vi.mock('electron', () => ({
   dialog: { showSaveDialog: async () => ({ canceled: true }) },
   Notification: class { static isSupported() { return false } },
   powerSaveBlocker: { start: () => 1, stop: () => undefined },
-  session: { defaultSession: { cookies: { get: async () => [] }, clearStorageData: async () => undefined } },
+  session: {
+    defaultSession: {
+      cookies: { get: async () => [] },
+      // Both halves of the reload primitive, so a test can invoke
+      // `native:reload-app` and observe what Electron was actually asked to
+      // erase (see the "post-upgrade reload" suite below).
+      clearCache: async () => undefined,
+      clearStorageData: async (opts?: { storages?: string[] }) => {
+        clearedStorages.value = opts?.storages ?? null
+      },
+    },
+  },
 }))
 
 vi.mock('electron-store', () => ({
@@ -156,5 +174,26 @@ describe('bridge: native notification IPC', () => {
     // Best-effort contract: an unknown subject is a no-op, never a rejection.
     await expect(invoke('native:dismiss-notification', '', 's1')).resolves.toBeUndefined()
     await expect(invoke('native:dismiss-notification', '7', '')).resolves.toBeUndefined()
+  })
+})
+
+describe('bridge: post-upgrade reload (issue #559)', () => {
+  beforeEach(() => {
+    handlers.clear()
+    onHandlers.clear()
+    vi.clearAllMocks()
+    clearedStorages.value = null
+    registerBridge()
+  })
+
+  it('keeps this device\'s preferences when the server upgrade reloads', async () => {
+    // `useUpgrade` calls `reloadApp` automatically once the new binary is up.
+    // Clearing localStorage here silently reset the theme, wallpaper, fonts and
+    // panel layout on every upgrade — all of which live only in localStorage.
+    await invoke('native:reload-app')
+    expect(clearedStorages.value).not.toBeNull()
+    expect(clearedStorages.value).not.toContain('localstorage')
+    expect(clearedStorages.value).not.toContain('indexdb')
+    expect(clearedStorages.value).not.toContain('cookies')
   })
 })

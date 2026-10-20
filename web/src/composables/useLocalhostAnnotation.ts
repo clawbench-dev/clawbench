@@ -6,7 +6,7 @@ import { useToast } from '@/composables/useToast.ts'
 import { gt } from '@/composables/useLocale'
 import { portForwardUnavailable } from '@/utils/portForwardUtils.ts'
 import { appLog } from '@/utils/appLog'
-import { createExternalLinkNode, EXTERNAL_LINK_CLASS } from '@/utils/externalLinkNode.ts'
+import { createExternalLinkNode, EXTERNAL_LINK_CLASS, LOCALHOST_LINK_ATTR } from '@/utils/externalLinkNode.ts'
 
 /**
  * Localhost URL annotation composable.
@@ -97,6 +97,23 @@ export function annotateLocalhostUrls(html: string): string {
     return doc.body.innerHTML
 }
 
+// LOCALHOST_LINK_ATTR is defined in externalLinkNode.ts (leaf module) so the
+// global click layer can consult it without importing this composable's
+// port-forward/store graph. Two consumers depend on it, and both fail visibly
+// without it:
+//  - `installExternalLinkClick` must NOT intercept the click. That layer is a
+//    document-level CAPTURE listener that stops propagation, so it would run
+//    before the host's own handler and open `http://localhost:PORT` in the
+//    SYSTEM browser — where `localhost` is the device itself, not the server.
+//  - `handleLocalhostUrlClick` uses it to recognise the span (there is no
+//    `<a href>` any more) and route the click through the tunnel.
+
+/** Tag a link span as localhost-routed. Returns the same element for chaining. */
+function markLocalhostSpan(el: HTMLElement): HTMLElement {
+    el.setAttribute(LOCALHOST_LINK_ATTR, '')
+    return el
+}
+
 /**
  * Annotate localhost URLs inside an already-parsed Document, mutating it in place.
  *
@@ -137,11 +154,17 @@ export function annotateLocalhostUrlsIn(doc: Document): boolean {
         if (parsed.port <= 0 || parsed.port > 65535) continue
         if (el.tagName === 'A') {
             const span = createExternalLinkNode(doc, parsed.fullUrl, el.textContent || parsed.fullUrl)
+            markLocalhostSpan(span)
             el.parentNode?.replaceChild(span, el)
             span.insertAdjacentHTML('afterend', localhostOpenButtonHtml(parsed.port, parsed.protocol, parsed.fullUrl, parsed.path))
-        } else if (!el.nextElementSibling?.classList.contains('chat-url-open-btn')) {
-            // Idempotent: a second pass must not append a second button.
-            el.insertAdjacentHTML('afterend', localhostOpenButtonHtml(parsed.port, parsed.protocol, parsed.fullUrl, parsed.path))
+        } else {
+            // The span may have been rendered by markedConfig (not by us), so the
+            // marker has to be applied here as well as at creation.
+            markLocalhostSpan(el as HTMLElement)
+            if (!el.nextElementSibling?.classList.contains('chat-url-open-btn')) {
+                // Idempotent: a second pass must not append a second button.
+                el.insertAdjacentHTML('afterend', localhostOpenButtonHtml(parsed.port, parsed.protocol, parsed.fullUrl, parsed.path))
+            }
         }
     }
 
@@ -159,6 +182,7 @@ export function annotateLocalhostUrlsIn(doc: Document): boolean {
         // Wrap the <code> in the same text node every other external link uses,
         // so a backticked localhost URL behaves identically to a bare one.
         const wrapper = createExternalLinkNode(doc, parsed.fullUrl, '')
+        markLocalhostSpan(wrapper)
         code.parentNode!.replaceChild(wrapper, code)
         wrapper.appendChild(code)
         // Append icon button after the <a>
@@ -233,7 +257,7 @@ export function annotateLocalhostUrlsIn(doc: Document): boolean {
         for (const part of parts) {
             if (part.url) {
                 hasAnnotation = true
-                frag.appendChild(createExternalLinkNode(doc, part.url, part.text))
+                frag.appendChild(markLocalhostSpan(createExternalLinkNode(doc, part.url, part.text)))
                 // Open button (as HTML snippet since it contains SVG)
                 const btnContainer = doc.createElement('span')
                 btnContainer.innerHTML = localhostOpenButtonHtml(part.port, part.protocol, part.url, part.path)
@@ -333,6 +357,29 @@ export function useLocalhostUrlClickHandler() {
             const path = urlBtn.getAttribute('data-path') || undefined
             if (port > 0) {
                 openLocalhostUrl(urlBtn, port, protocol, path)
+            }
+            return true
+        }
+
+        // A localhost URL renders as a link SPAN (the markdown renderer stopped
+        // emitting <a> so long-press selects text instead of starting WebView's
+        // link gesture), carrying data-href and the localhost marker. Without
+        // this branch the text of a localhost URL fell through to the generic
+        // external-link layer, which hands it to the SYSTEM browser — where
+        // `localhost` points at the device and the port-forwarded server is
+        // unreachable. The little icon button kept working, so the regression
+        // was partial and easy to miss.
+        const span = (event.target as Element).closest(`.${EXTERNAL_LINK_CLASS}[${LOCALHOST_LINK_ATTR}]`)
+        if (span) {
+            const href = span.getAttribute('data-href') || ''
+            const parsed = parseLocalhostUrl(href)
+            if (parsed) {
+                event.preventDefault()
+                event.stopPropagation()
+                // No fallback on failure: `window.open` would land on the
+                // device's own localhost (a dead page). openLocalhostUrl already
+                // shows the reason as a toast.
+                void openLocalhostUrl(span, parsed.port, parsed.protocol, parsed.path || undefined)
             }
             return true
         }

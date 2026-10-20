@@ -15,15 +15,19 @@
       <div class="project-dropdown-wrapper" ref="dropdownRef" :class="segmentClass('project', true)">
         <button class="project-switch-btn" @click="toggleDropdown" :title="t('appHeader.switchProject')">
           <Projector :size="12" />
-          <span class="seg-label">{{ t('appHeader.labels.project') }}</span>
-          <span class="project-name">{{ projectName }}</span>
+          <span class="seg-text">
+            <span class="seg-label">{{ t('appHeader.labels.project') }}</span>
+            <span class="project-name">{{ projectName }}</span>
+          </span>
         </button>
       </div>
       <div v-if="gitBranch" class="badge-capsule-divider"></div>
       <div v-if="gitBranch" class="branch-badge" :title="gitBranch" @click="toggleBranchDropdown" :class="segmentClass('branch', true)">
         <GitBranch :size="12" class="branch-icon" />
-        <span class="seg-label">{{ t('appHeader.labels.branch') }}</span>
-        <span class="branch-name">{{ gitBranch }}</span>
+        <span class="seg-text">
+          <span class="seg-label">{{ t('appHeader.labels.branch') }}</span>
+          <span class="branch-name">{{ gitBranch }}</span>
+        </span>
       </div>
       <div v-if="currentFileName || recentFilesAvailable > 0" class="badge-capsule-divider"></div>
       <button
@@ -37,9 +41,11 @@
         <FileText :size="12" class="file-icon" />
         <!-- Label only when a real file is open: the empty state already reads
              "Recent files", so a "File" label would duplicate it. -->
-        <span v-if="currentFileName" class="seg-label">{{ t('appHeader.labels.file') }}</span>
-        <span v-if="currentFileName" class="current-file-name">{{ currentFileName }}</span>
-        <span v-else class="current-file-name no-file-name">{{ t('appHeader.noFileOpen') }}</span>
+        <span class="seg-text">
+          <span v-if="currentFileName" class="seg-label">{{ t('appHeader.labels.file') }}</span>
+          <span v-if="currentFileName" class="current-file-name">{{ currentFileName }}</span>
+          <span v-else class="current-file-name no-file-name">{{ t('appHeader.noFileOpen') }}</span>
+        </span>
       </button>
     </div>
 
@@ -57,6 +63,23 @@
       @click="shortcutTipsOpen = true"
     />
     <ShortcutTipsDialog :open="shortcutTipsOpen" @close="shortcutTipsOpen = false" />
+
+    <!-- Usage meter capsule. Wide screens only: the header is a desktop
+         surface, and on a phone the same numbers live at the end of the
+         system-resources popover (SystemResourcesPanel).
+         Sits after the tips ticker so it lands in the right-hand control
+         cluster, immediately left of the theme button. It carries the
+         margin-left:auto that used to sit on the theme button — with both set,
+         the two auto margins would split the slack and strand the capsule in
+         the middle. -->
+    <UsageMeterPopover
+      v-if="isWideScreen && usageMeter.status.value.enabled"
+      :status="usageMeter.status.value"
+      :state="usageMeter.meterState.value"
+      :fill-percent="usageMeter.fillPercent.value"
+      :expected-percent="usageMeter.expectedPercent.value"
+      class="usage-meter-slot"
+    />
 
     <AppMenuPanel :open="dropdownOpen" :panel-style="dropdownStyle" :register-panel="setProjectPanelRef">
       <div class="app-menu-title">{{ t('appHeader.projects') }}</div>
@@ -254,8 +277,8 @@
     </button>
 
     <!-- Server info + resources popup (both Web and APP mode) -->
-    <PopupMenu v-model:show="resourcesMenuOpen" :target-element="serverBtnRef" :max-width="320" :max-height="440" :menu-items-count="10" anchor="right">
-      <SystemResourcesPanel ref="resourcesPanelRef" :show-logout="isAppMode" :ws-status="wsStatus" @logout="handleLogout" />
+    <PopupMenu v-model:show="resourcesMenuOpen" :target-element="serverBtnRef" :max-width="320" :max-height="440" :menu-items-count="11" anchor="right">
+      <SystemResourcesPanel ref="resourcesPanelRef" :show-logout="isAppMode" :ws-status="wsStatus" @logout="handleLogout" @open-usage-settings="handleOpenUsageSettings" />
     </PopupMenu>
 
     <!-- App-drawn window controls (frameless desktop shell, Windows/Linux).
@@ -332,6 +355,8 @@ import { useDialog } from '@/composables/useDialog.ts'
 import { apiGet, apiPost } from '@/utils/api'
 import { localConfig, setLocalConfig } from '@/composables/useSettingsConfig'
 import { useSystemResources } from '@/composables/useSystemResources'
+import { useUsageMeter } from '@/composables/useUsageMeter'
+import UsageMeterPopover from '@/components/common/UsageMeterPopover.vue'
 import { useSystemPressure } from '@/composables/useSystemPressure'
 import { useBadgeHighlight } from '@/composables/useBadgeHighlight'
 import { deferPosition, estimatePanelWidth as estimatePanelWidthFn, positionDropdown as positionDropdownPure } from '@/utils/dropdownPosition'
@@ -358,6 +383,7 @@ const {
   close: closeWindow,
 } = useWindowControls()
 const { resources, startBackgroundPolling, stopBackgroundPolling } = useSystemResources()
+const usageMeter = useUsageMeter()
 const switchTab = inject<(tab: string) => void>('switchTab')
 const { isWideScreen, leftTab, activePane } = useWideScreenLayout()
 const activeTab = inject<Ref<string>>('activeTab', ref('chat'))
@@ -1107,6 +1133,18 @@ function toggleResourcesMenu() {
     resourcesMenuOpen.value = !resourcesMenuOpen.value
 }
 
+/**
+ * The usage row in the resources panel is the phone's only usage surface, so it
+ * doubles as the entry to the rule's settings (the header capsule has its own
+ * "adjust" link). Close the popover first: it is teleported to <body> and would
+ * otherwise float over the settings tab it just navigated to.
+ */
+function handleOpenUsageSettings() {
+    resourcesMenuOpen.value = false
+    setPendingSettingsCategory('usageMeter')
+    switchTab?.('settings')
+}
+
 watch(resourcesMenuOpen, (open) => {
     if (open) {
         // Use nextTick because PopupMenu uses v-if — the panel component
@@ -1144,6 +1182,10 @@ onMounted(() => {
     document.addEventListener('click', onClickOutside)
     document.addEventListener('visibilitychange', onBlinkVisibilityChange)
     startBackgroundPolling()
+    // Usage meter: one fetch on mount, then WS-driven (see useUsageMeter).
+    // Fetched here rather than in the capsule component so the popover opens
+    // with data already present.
+    void usageMeter.refresh()
     // Warm the recent-projects cache so the first open is already instant.
     // Failures are swallowed inside loadRecentProjects (the cache stays cold
     // and the open path falls back to the loading state).
@@ -1240,6 +1282,29 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     flex: 0 1 auto;
     min-width: 0;
     max-width: 220px;
+}
+
+/* Label + value pair, laid out on a shared baseline.
+
+   Why a wrapper instead of two siblings: as siblings they were each centred
+   independently inside the 24px segment, so their ink only lined up when both
+   fonts happened to share the same ascent/descent split. The label is 10px CJK
+   and the value 12px Latin, and those two font families disagree — measured
+   ink centres were off by ~2px in the default stack (label high, value low),
+   which reads as "the label isn't vertically centred".
+
+   `align-items: baseline` aligns the two text baselines directly, so the pair
+   stays correct for any font pair (CJK vs Latin, bundled vs system, any user
+   font) without measuring anything. The wrapper is then centred as one box by
+   the segment's own `align-items: center`, and the icon keeps its own optical
+   centring. `min-width: 0` + `flex: 0 1 auto` keep the value's ellipsis
+   working: the pair shrinks as a unit instead of overflowing the capsule. */
+.seg-text {
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--space-3);
+    flex: 0 1 auto;
+    min-width: 0;
 }
 
 .project-switch-btn {
@@ -1471,6 +1536,11 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     align-items: center;
     justify-content: center;
     color: var(--accent-color);
+    /* Pushes the theme button (and everything after it) to the right edge. The
+       usage capsule sits just before it, so it inherits that alignment too.
+       Keeping the auto margin HERE rather than on the capsule matters when the
+       capsule is absent (rule disabled): the theme button must still be pushed
+       right. Two auto margins would split the slack and strand the capsule. */
     margin-left: auto;
 }
 
@@ -1503,6 +1573,14 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     margin:0 var(--space-4);
     height: 100%;
     overflow: hidden;
+}
+
+/* Usage capsule sits in the right-hand control cluster, just left of the theme
+   button. It deliberately has NO auto margin of its own: the theme button owns
+   it (see below), and a second auto margin would split the slack and leave the
+   capsule stranded mid-header. */
+.usage-meter-slot {
+    margin-right: var(--space-2);
 }
 
 @media (hover: hover) {

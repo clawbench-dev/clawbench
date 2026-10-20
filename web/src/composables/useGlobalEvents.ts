@@ -51,6 +51,15 @@ export interface ServerEvent {
         // reason as above — only the forge branch reads them.
         event?: ForgeEventIdentity
         item?: ForgeItemIdentity
+        // usage_meter_update body: the server renders the wording (it carries
+        // numbers) and ships it ready to display, so there is no status enum to
+        // translate on the client.
+        title?: string
+        body?: string
+        actual?: number
+        expected?: number
+        quota?: number
+        metric?: string
     }
 }
 
@@ -698,6 +707,17 @@ function showEventBrowserNotification(event: string, data: ServerEvent['data'], 
                 detail: { projectPath, target: forgeTarget },
             }))
         }
+    } else if (event === 'usage_meter_update') {
+        // The wording is rendered server-side (it carries numbers such as
+        // "used $9.20 vs $6.67 expected") and arrives in the payload; there is
+        // no status enum to translate here. A missing title means a malformed
+        // event, which must not produce an empty notification.
+        title = String(data.title || '')
+        alert_ = String(data.body || '')
+        if (!title) return
+        onClick = () => {
+            window.dispatchEvent(new CustomEvent('clawbench-open-usage-meter'))
+        }
     } else {
         return
     }
@@ -716,6 +736,10 @@ function showEventBrowserNotification(event: string, data: ServerEvent['data'], 
                 // shell needs an explicit discriminator — otherwise its
                 // sessionId/taskId branches both miss and the click is dropped.
                 forge: event === 'forge_event',
+                // Same reason as `forge`: a usage event has no session/task id,
+                // so the native shell needs its own discriminator or the click
+                // is silently dropped.
+                usageMeter: event === 'usage_meter_update',
                 // The item to open, so the desktop shell's click deep-links
                 // instead of only raising the tab. Spread (not referenced) so
                 // the object crosses the IPC boundary as plain data.

@@ -90,14 +90,42 @@ func TestRenderCommand_CoversExpectedOperations(t *testing.T) {
 				"DELETE /api/agents",
 			},
 			// Agent management must not drag in unrelated operations that
-			// share the Agents tag (sub-resources, backend discovery) or any
-			// task endpoint.
+			// share the Agents tag (model refresh, rescan, backend discovery)
+			// or any task endpoint. The self-test routes ARE wanted, so this
+			// list names the excluded sub-resources concretely rather than
+			// matching the "/api/agents/{id}" prefix.
 			notWant: []string{
 				"GET /api/agents/{id}",
-				"POST /api/agents/{id}",
+				"refresh-models",
+				"POST /api/agents/rescan",
 				"GET /api/backends",
 				"POST /api/tasks",
 				"DELETE /api/tasks",
+			},
+		},
+		{
+			cmd: CommandMCP,
+			want: []string{
+				// Both resources: the global list and the per-agent policy.
+				"GET /api/config",
+				"PATCH /api/config",
+				"GET /api/agents",
+				"PATCH /api/agents",
+			},
+			// The Config tag also carries passwords, TTS/RAG keys, port
+			// forwarding and the desktop-upgrade settings. An MCP command must
+			// never be able to reach any of them, and it must not be able to
+			// create or delete agents either.
+			notWant: []string{
+				"POST /api/config",
+				"POST /api/config/password",
+				"POST /api/config/test",
+				"POST /api/agents",
+				"DELETE /api/agents",
+				"POST /api/agents/rescan",
+				"refresh-models",
+				"GET /api/backends",
+				"POST /api/ai/chat",
 			},
 		},
 	}
@@ -164,10 +192,21 @@ func TestRenderCommand_SizeBudget(t *testing.T) {
 		// deliberate, not drift.
 		CommandTask:  9700,
 		CommandUsage: 2000,
-		// The agent command renders four operations whose PATCH/POST bodies
-		// carry long field notes (name uniqueness, avatar, disabled,
-		// project_scope) plus the same GET /api/agents ACP-model-list note.
-		CommandAgent: 4800,
+		// The agent command renders six operations: the CRUD four carry long
+		// field notes (name uniqueness, avatar, disabled, project_scope, ACP
+		// command ownership) plus the GET /api/agents ACP-model-list note, and
+		// the two self-test routes were added so "create an agent" can be
+		// verified rather than merely asserted. Descriptions are kept terse;
+		// the behavioral rules live in the prompt template, not the spec.
+		// Measured at 5708 when the self-test routes joined.
+		CommandAgent: 5900,
+		// The MCP command renders four operations whose descriptions carry the
+		// full config and agent contracts (mcp.servers validation rules, the
+		// whole-replacement semantics, the per-agent policy shape). Measured at
+		// 8293. The bulk is unavoidable: those descriptions ARE the contract the
+		// AI must follow, and trimming them would push the rules into the prompt
+		// template instead — same bytes, worse locality.
+		CommandMCP: 8600,
 	}
 	for cmd, budget := range budgets {
 		out, err := RenderCommand(cmd)
@@ -310,7 +349,7 @@ func TestRenderCommand_NoRepeatHintWithoutArrayParams(t *testing.T) {
 // actually exists in the spec. This is the drift guard's first half: renaming
 // an operation without updating commandOperations fails here.
 func TestOperationIDs_Resolvable(t *testing.T) {
-	for _, cmd := range []Command{CommandChatSearch, CommandTask, CommandUsage, CommandAgent} {
+	for _, cmd := range []Command{CommandChatSearch, CommandTask, CommandUsage, CommandAgent, CommandMCP} {
 		ids := OperationIDs(cmd)
 		require.NotEmptyf(t, ids, "command %q declares no operations", cmd)
 		for _, id := range ids {

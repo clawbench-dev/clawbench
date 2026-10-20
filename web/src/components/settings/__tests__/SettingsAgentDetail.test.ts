@@ -54,6 +54,17 @@ vi.mock('vue-i18n', async (importOriginal) => {
         'settings.items.agentTaskCountDesc': 'Tasks using this agent',
         'settings.items.agentTaskCount': `${params?.count ?? 0} tasks`,
         'settings.items.agentAcpCommand': 'ACP Command',
+        'settings.items.agentSelfTest': 'Run Integration Test',
+        'settings.items.agentSelfTestRunning': 'Testing…',
+        'settings.items.agentSelfTestStatusOk': 'OK',
+        'settings.items.agentSelfTestStatusWarn': 'WARN',
+        'settings.items.agentSelfTestStatusFail': 'FAIL',
+        'settings.items.agentSelfTestCheck.enabled': 'Enabled',
+        'settings.items.agentSelfTestCheck.transport': 'Transport',
+        'settings.items.agentSelfTestDeep': 'Run a Real Turn',
+        'settings.items.agentSelfTestDeepHint': 'Costs credit',
+        'settings.items.agentSelfTestDeepReply': 'Reply: {reply}',
+        'settings.items.agentSelfTestDeepMeta': 'transport {transport} · stop {stopReason} · {ms}ms',
         'settings.saveFailed': 'Save failed',
         'settings.items.agentDelete': 'Delete',
         'settings.items.agentDeleteConfirm': `Delete ${params?.name ?? ''}?`,
@@ -72,6 +83,13 @@ vi.mock('vue-i18n', async (importOriginal) => {
         'settings.items.agentCopied': 'Agent duplicated',
         'settings.items.agentCopyFailed': 'Duplicate failed',
         'settings.items.agentCopyNameTaken': 'An agent with this name already exists',
+      }
+      if (key === 'settings.items.agentSelfTestDeepReply' && params) return `Reply: ${params.reply}`
+      if (key === 'settings.items.agentSelfTestDeepMeta' && params) {
+        return `transport ${params.transport} · stop ${params.stopReason} · ${params.ms}ms`
+      }
+      if (key === 'settings.items.agentSelfTestSummary' && params) {
+        return `${params.passed} passed, ${params.warned} warning(s), ${params.failed} failed`
       }
       if (key === 'settings.items.agentModelCount' && params) return `${params.count} models`
       if (key === 'settings.items.agentDeleteConfirm' && params) return `Delete ${params.name}?`
@@ -105,10 +123,39 @@ vi.mock('@/composables/useAgents', async () => {
 
 vi.mock('@/composables/useSettingsConfig', () => ({
   patchAgentField: mockPatchAgentField,
+  // AgentMCPSection reads the global server list and the agent patch helper
+  // through the composable. Keep the mock total: a partial mock makes the
+  // component's setup throw, which fails EVERY test in this file.
+  useSettingsConfig: () => ({
+    getServerValue: () => [],
+    patchAgentField: mockPatchAgentField,
+  }),
 }))
 
 vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ show: mockToastShow }),
+}))
+
+// The self-test composable is mocked so the component test asserts the WIRING
+// (button → run(agentId) → rendered rows), not the HTTP layer.
+const mockSelfTestRun = vi.fn().mockResolvedValue(undefined)
+const mockSelfTestRunDeep = vi.fn().mockResolvedValue(undefined)
+const mockSelfTestState = {
+  testing: { value: false },
+  result: { value: null as unknown },
+  deepResult: { value: null as unknown },
+  error: { value: '' },
+}
+vi.mock('@/composables/useAgentSelfTest', () => ({
+  useAgentSelfTest: () => ({
+    testing: mockSelfTestState.testing,
+    result: mockSelfTestState.result,
+    deepResult: mockSelfTestState.deepResult,
+    error: mockSelfTestState.error,
+    run: mockSelfTestRun,
+    runDeep: mockSelfTestRunDeep,
+    clear: vi.fn(),
+  }),
 }))
 
 const mockDialogConfirm = vi.fn().mockResolvedValue(false)
@@ -177,6 +224,10 @@ function mountMissingAgent() {
 describe('SettingsAgentDetail', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockSelfTestState.testing.value = false
+    mockSelfTestState.result.value = null
+    mockSelfTestState.deepResult.value = null
+    mockSelfTestState.error.value = ''
     mockGetAgent.mockReturnValue(baseAgent)
     mockAgentsLoaded.value = true
     mockDuplicateAgent.mockResolvedValue(undefined)
@@ -350,6 +401,72 @@ describe('SettingsAgentDetail', () => {
   it('loads agents on mount', () => {
     mountDetail()
     expect(mockLoadAgents).toHaveBeenCalledWith(true)
+  })
+
+  // ─── Editable ACP command (issue #557) ─────────
+
+  it('renders a built-in ACP command as read-only info', () => {
+    // Discovery owns this column for a spec-backed agent: model.RefreshAgents
+    // rewrites acp_command and transport from the BackendSpec on every rescan
+    // and startup, so an editable input would silently revert. Showing the
+    // effective value as info is the honest UI.
+    const wrapper = mountDetail({ acpCommand: 'claude --acp', backend: 'claude', backendHasSpec: true })
+    const item = wrapper.findAllComponents({ name: 'SettingsItem' })
+      .find((it: any) => it.props('label') === 'ACP Command')
+
+    expect(item).toBeDefined()
+    expect(item!.props('type')).toBe('info')
+    expect(item!.props('type')).not.toBe('text')
+  })
+
+  it('renders a custom agent\'s ACP command as an editable text row', () => {
+    const wrapper = mountDetail({ acpCommand: 'trae acp', backend: 'custom-acp', supportsCLI: false, backendHasSpec: false })
+    const item = wrapper.findAllComponents({ name: 'SettingsItem' })
+      .find((it: any) => it.props('label') === 'ACP Command')
+
+    expect(item).toBeDefined()
+    expect(item!.props('type')).toBe('text')
+  })
+
+  it('keeps the ACP command row for a custom agent whose command is empty', () => {
+    // A custom agent always shows the row, even before its command is set:
+    // without it there would be no way to make the agent runnable.
+    const wrapper = mountDetail({ backend: 'custom-acp', acpCommand: '', supportsCLI: false, backendHasSpec: false })
+    const item = wrapper.findAllComponents({ name: 'SettingsItem' })
+      .find((it: any) => it.props('label') === 'ACP Command')
+
+    expect(item).toBeDefined()
+    expect(item!.props('type')).toBe('text')
+  })
+
+  it('keeps a spec-less ACP agent\'s command editable (e.g. a YAML-defined agent)', () => {
+    // acp-mock-style agents have no registry entry, so discovery never rewrites
+    // their command and the API accepts the PATCH — the row must stay editable.
+    const wrapper = mountDetail({ acpCommand: 'acp-mock-bin', backend: 'acp-mock', backendHasSpec: false })
+    const item = wrapper.findAllComponents({ name: 'SettingsItem' })
+      .find((it: any) => it.props('label') === 'ACP Command')
+
+    expect(item).toBeDefined()
+    expect(item!.props('type')).toBe('text')
+  })
+
+  it('hides the ACP command row for an agent that has no command and no custom backend', () => {
+    const wrapper = mountDetail({ acpCommand: '', backend: 'claude' })
+    const item = wrapper.findAllComponents({ name: 'SettingsItem' })
+      .find((it: any) => it.props('label') === 'ACP Command')
+
+    expect(item).toBeUndefined()
+  })
+
+  it('shows the trust caution as a always-visible note', () => {
+    // The command runs with the server's privileges, so the caution must be
+    // readable BEFORE the user opens the editor — `warning` only renders inside
+    // it, which is why this asserts on `note`.
+    const wrapper = mountDetail({ acpCommand: 'x acp', backendHasSpec: true })
+    const item = wrapper.findAllComponents({ name: 'SettingsItem' })
+      .find((it: any) => it.props('label') === 'ACP Command')
+
+    expect(item!.props('note')).toBeTruthy()
   })
 
   it('renders container div', () => {
@@ -809,5 +926,139 @@ describe('SettingsAgentDetail', () => {
 
       expect(wrapper.emitted('navigateReplace')).toBeUndefined()
     })
+  })
+
+  // ─── Integration self-test ─────────────────────
+
+  it('runs the self-test for the agent on screen', async () => {
+    const wrapper = mountDetail()
+    await wrapper.find('.settings-agent-detail__selftest-btn').trigger('click')
+
+    expect(mockSelfTestRun).toHaveBeenCalledWith('test-agent')
+  })
+
+  it('renders one row per check with its status label', async () => {
+    mockSelfTestState.result.value = {
+      agentId: 'test-agent',
+      ok: false,
+      passed: 1,
+      warned: 1,
+      failed: 1,
+      checks: [
+        { key: 'enabled', status: 'ok' },
+        { key: 'transport', status: 'warn', detail: 'Effective transport: cli' },
+        { key: 'models', status: 'fail', detail: 'No models available' },
+      ],
+    }
+    const wrapper = mountDetail()
+    await wrapper.vm.$nextTick()
+
+    const rows = wrapper.findAll('.settings-agent-detail__selftest-check')
+    expect(rows).toHaveLength(3)
+
+    // The status label is what a user scans for, so assert it per row rather
+    // than just counting elements.
+    expect(rows[0].find('.settings-agent-detail__selftest-status').text()).toBe('OK')
+    expect(rows[1].find('.settings-agent-detail__selftest-status').text()).toBe('WARN')
+    expect(rows[2].find('.settings-agent-detail__selftest-status').text()).toBe('FAIL')
+
+    // Each row must carry its own status class: that class is what colors the
+    // label, so losing it would leave a "FAIL" that looks identical to "OK".
+    expect(rows[0].classes()).toContain('settings-agent-detail__selftest-check--ok')
+    expect(rows[1].classes()).toContain('settings-agent-detail__selftest-check--warn')
+    expect(rows[2].classes()).toContain('settings-agent-detail__selftest-check--fail')
+
+    // A failure must also be visible in the container styling, not just the text.
+    expect(wrapper.find('.settings-agent-detail__selftest-result--fail').exists()).toBe(true)
+
+    // Details explain WHY, so they must reach the DOM.
+    expect(wrapper.text()).toContain('Effective transport: cli')
+    expect(wrapper.text()).toContain('No models available')
+  })
+
+  it('does not mark a passing run as failing', async () => {
+    mockSelfTestState.result.value = {
+      agentId: 'test-agent', ok: true, passed: 2, warned: 0, failed: 0,
+      checks: [{ key: 'enabled', status: 'ok' }, { key: 'transport', status: 'ok' }],
+    }
+    const wrapper = mountDetail()
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('.settings-agent-detail__selftest-result--fail').exists()).toBe(false)
+    expect(wrapper.text()).toContain('2 passed, 0 warning(s), 0 failed')
+  })
+
+  it('shows the request error when the self-test call fails', async () => {
+    mockSelfTestState.error.value = 'Agent not found'
+    const wrapper = mountDetail()
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('.settings-agent-detail__selftest-error').text()).toBe('Agent not found')
+    expect(wrapper.find('.settings-agent-detail__selftest-result').exists()).toBe(false)
+  })
+
+  it('shows the blocking checks alongside a REFUSED deep run', async () => {
+    // A refusal is a static-check failure: the error says the turn did not run,
+    // and the rows say which check stopped it. Both must be on screen — but the
+    // composable only populates `result` in that case, never on a successful
+    // turn (see useAgentSelfTest: a passing turn must not print 12 green rows).
+    mockSelfTestState.error.value = 'The configuration checks failed; fix them before running a real turn.'
+    mockSelfTestState.result.value = {
+      agentId: 'test-agent', ok: false, passed: 1, warned: 0, failed: 1,
+      checks: [{ key: 'acp_command', status: 'fail', detail: 'Executable "nope" was not found' }],
+    }
+    const wrapper = mountDetail()
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('.settings-agent-detail__selftest-error').exists()).toBe(true)
+    // Both must be on screen: the error says "it did not run", the row says why.
+    const result = wrapper.find('.settings-agent-detail__selftest-result')
+    expect(result.exists()).toBe(true)
+    expect(result.text()).toContain('Executable "nope" was not found')
+    expect(result.find('.settings-agent-detail__selftest-check--fail').exists()).toBe(true)
+  })
+
+  it('disables the button while a run is in flight', async () => {
+    mockSelfTestState.testing.value = true
+    const wrapper = mountDetail()
+
+    const btn = wrapper.find('.settings-agent-detail__selftest-btn')
+    expect(btn.attributes('disabled')).toBeDefined()
+    expect(btn.text()).toBe('Testing…')
+  })
+
+  it('runs a real turn from the deep button', async () => {
+    const wrapper = mountDetail()
+    const buttons = wrapper.findAll('.settings-agent-detail__selftest-btn')
+    expect(buttons).toHaveLength(2)
+
+    await buttons[1].trigger('click')
+    expect(mockSelfTestRunDeep).toHaveBeenCalledWith('test-agent')
+    // The cheap run must not also fire — the two are deliberately separate.
+    expect(mockSelfTestRun).not.toHaveBeenCalled()
+  })
+
+  it('shows the model reply and turn metadata after a deep run', async () => {
+    mockSelfTestState.deepResult.value = {
+      reply: 'Hello! I am a mock ACP agent.',
+      transport: 'acp-stdio',
+      stopReason: 'end_turn',
+      durationMs: 4123,
+    }
+    const wrapper = mountDetail()
+    await wrapper.vm.$nextTick()
+
+    const deep = wrapper.find('.settings-agent-detail__selftest-deep')
+    expect(deep.exists()).toBe(true)
+    // The reply is the proof the agent actually answered, so it must be shown.
+    expect(deep.text()).toContain('Hello! I am a mock ACP agent.')
+    expect(deep.text()).toContain('acp-stdio')
+    expect(deep.text()).toContain('end_turn')
+    expect(deep.text()).toContain('4123ms')
+  })
+
+  it('hides the deep block when no deep run has happened', () => {
+    const wrapper = mountDetail()
+    expect(wrapper.find('.settings-agent-detail__selftest-deep').exists()).toBe(false)
   })
 })

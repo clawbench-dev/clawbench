@@ -470,7 +470,7 @@ describe('useSessionManager', () => {
             } as Response)
             const mgr = useSessionManager(opts)
 
-            await mgr.enqueueMessage('session-1', 'hello', [{ path: 'attached', isDir: false }], ['pending'], 'pending-123')
+            await mgr.enqueueMessage('session-1', 'hello', [{ path: 'attached', isDir: false }], [{ path: 'pending', isDir: false }], 'pending-123')
 
             expect(fetchSpy).toHaveBeenCalledWith(
                 expect.stringContaining('/api/ai/queue?session_id=session-1'),
@@ -481,6 +481,34 @@ describe('useSessionManager', () => {
             expect(body.queueId).toBe('pending-123')
             expect(body.filePaths).toEqual(['attached'])
             expect(body.files).toEqual([{ path: 'pending', isDir: false }, { path: 'attached', isDir: false }])
+
+            fetchSpy.mockRestore()
+        })
+
+        it('forwards pending upload entries unchanged instead of re-wrapping them as paths', async () => {
+            // Regression: `pendingFiles` is an ENTRY list (callers already hold
+            // FileEntry objects). Wrapping each entry again as `{path: entry}`
+            // serialised to `{"path":{"path":…,"isDir":false}}`, which the
+            // backend cannot decode into model.FileEntry — every enqueue that
+            // carried an attachment 400'd with "发送失败/加入队列失败".
+            const opts = createMockOptions()
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+                ok: true,
+                json: () => Promise.resolve({ ok: true, started: false }),
+            } as Response)
+            const mgr = useSessionManager(opts)
+
+            await mgr.enqueueMessage(
+                'session-1', 'with attachment', [],
+                [{ path: '.clawbench/uploads/a.zip', isDir: false }],
+                'pending-attach',
+            )
+
+            const body = JSON.parse((fetchSpy.mock.calls[0] as any[])[1].body)
+            expect(body.files).toEqual([{ path: '.clawbench/uploads/a.zip', isDir: false }])
+            for (const entry of body.files) {
+                expect(typeof entry.path).toBe('string')
+            }
 
             fetchSpy.mockRestore()
         })

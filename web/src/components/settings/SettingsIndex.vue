@@ -38,8 +38,10 @@ import {
   Shield,
   Bug,
   Info,
+  Gauge,
   Sparkles,
   Wand2,
+  Plug,
   ChevronRight,
   Github,
 } from 'lucide-vue-next'
@@ -75,6 +77,7 @@ const groupDefs = [
       { id: 'chat', icon: MessageSquare },
       { id: 'agents', icon: Bot },
       { id: 'skills', icon: Wand2 },
+      { id: 'mcp', icon: Plug },
       { id: 'aiSummary', icon: Sparkles },
       { id: 'rag', icon: Brain },
       { id: 'tts', icon: Volume2 },
@@ -93,6 +96,11 @@ const groupDefs = [
     id: 'notifySecurity',
     items: [
       { id: 'notification', icon: Bell },
+      // Side by side with 推送通知, not inside it: the usage meter is a
+      // notification feature but its configuration (cycle / metric / budget)
+      // is a separate subject, and nesting it under the push-channel card made
+      // it read as one more push channel.
+      { id: 'usageMeter', icon: Gauge },
       { id: 'security', icon: Shield },
     ],
   },

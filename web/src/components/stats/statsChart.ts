@@ -2,6 +2,7 @@ import type { EChartsCoreOption } from 'echarts/core'
 import { gt } from '@/composables/useLocale'
 import type { UsageMetricId, UsageRow } from '@/composables/useUsageStats'
 import { WIDE_SCREEN_MIN_WIDTH } from '@/composables/useWideScreenLayout'
+import { formatCompactCount } from '@/utils/usageFormat'
 
 // Sentinel the backend uses for a missing group label
 // (internal/service/usage_stats.go emptyGroupLabel). Keep in sync on both
@@ -234,28 +235,8 @@ export function buildTrendOption(
 
 // ── Overview donut (input vs output) + cache-drilldown donut ──
 
-/**
- * Compact token counts: raw below 1K, K up to 1M, M up to 1B, B above — each
- * scaled tier keeps one decimal. Used for token metrics
- * (input/output/total/cacheHit…) in cards, tables, chart tooltips and donut
- * labels so all views share one format. Rounding to the nearest integer first
- * keeps boundary values honest: 999,950 → 1.0M, 999.7 → 1.0K (never "1000.0K"
- * or "1,000").
- */
-function formatTokenCount(v: number): string {
-  const n = Math.round(v)
-  // Pick the tier from the ROUNDED scaled value so near-boundary numbers can't
-  // render as "1000.0K" or "1,000": 999,950 → 1.0M, 999.7 → 1.0K,
-  // 999,500,000 → 1.0B. (999,500..999,949 keeps K, 999.5M..999.949M keeps M —
-  // both print the accurate 3-decimal value.)
-  if (n >= 999_500_000) return `${(n / 1e9).toFixed(1)}B`
-  if (n >= 999_950) return `${(n / 1e6).toFixed(1)}M`
-  if (n >= 999.5) return `${(n / 1e3).toFixed(1)}K`
-  return n.toLocaleString()
-}
-
 const labelFormatter = (name: string, value: number): string =>
-  `${name}\n${formatTokenCount(value)}`
+  `${name}\n${formatCompactCount(value)}`
 
 /**
  * Build the totals-overview donut: input vs output slices. Clicking a slice
@@ -283,7 +264,7 @@ export function buildOverviewDonut(input: number, output: number, inputLabel: st
       ? { text: gt('stats.onlyOneSide'), left: 'center', top: 4, textStyle: { color: p.textSecondary, fontSize: 11 } }
       : undefined,
     legend: { bottom: 0, textStyle: { color: p.textSecondary }, icon: 'circle', itemWidth: 8, itemHeight: 8 },
-    graphic: total > 0 ? centerTotalGraphic(p, formatTokenCount(total), gt('stats.colTotal')) : [],
+    graphic: total > 0 ? centerTotalGraphic(p, formatCompactCount(total), gt('stats.colTotal')) : [],
     series: [{
       type: 'pie',
       radius: DONUT_RADIUS,
@@ -331,7 +312,7 @@ export function buildCacheDonut(
     color: [SERIES_COLORS[2], SERIES_COLORS[5]],
     title: noData ? { text: gt('stats.noData'), left: 'center', top: 'middle', textStyle: { color: p.textSecondary, fontSize: 12 } } : undefined,
     legend: noData ? undefined : { bottom: 0, textStyle: { color: p.textSecondary }, icon: 'circle', itemWidth: 8, itemHeight: 8 },
-    graphic: noData ? [] : centerTotalGraphic(p, formatTokenCount(total), gt('stats.colInput')),
+    graphic: noData ? [] : centerTotalGraphic(p, formatCompactCount(total), gt('stats.colInput')),
     series: [{
       type: 'pie',
       radius: DONUT_RADIUS,
@@ -356,7 +337,7 @@ export function formatMetricValue(metric: UsageMetricId, v: number): string {
     default:
       // input / output / total / cacheHit — raw token counts compacted to
       // K/M tiers (unit shown on the labels, e.g. "输入 Tokens").
-      return formatTokenCount(v)
+      return formatCompactCount(v)
   }
 }
 

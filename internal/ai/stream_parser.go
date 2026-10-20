@@ -37,6 +37,10 @@ type ClaudeStreamMessageBody struct {
 type ClaudeStreamUsage struct {
 	InputTokens  int `json:"input_tokens"`
 	OutputTokens int `json:"output_tokens"`
+	// Cache counters are reported by the CLI's result event. They are NOT part
+	// of InputTokens, so the ledger normalizes total from all four.
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 }
 
 // ClaudeStreamModelUsage represents per-model token usage
@@ -314,6 +318,19 @@ func (p *StreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 		if msg.Usage != nil {
 			meta.InputTokens = msg.Usage.InputTokens
 			meta.OutputTokens = msg.Usage.OutputTokens
+			// The CLI's result usage reports cache counters OUTSIDE
+			// input_tokens (total = input + output + cacheRead + cacheWrite).
+			// Normalize to the OpenAI/CodeBuddy shape so the stats panel's
+			// "输入 Tokens" and cache hit rate mean the same thing for every
+			// backend; without it Claude's cached traffic was invisible.
+			if msg.Usage.CacheReadInputTokens > 0 || msg.Usage.CacheCreationInputTokens > 0 {
+				meta.CachedReadTokens = msg.Usage.CacheReadInputTokens
+				meta.CachedWriteTokens = msg.Usage.CacheCreationInputTokens
+				meta.CacheHitTokens = msg.Usage.CacheReadInputTokens
+				meta.CacheMissTokens = msg.Usage.InputTokens
+				meta.InputTokens += msg.Usage.CacheReadInputTokens + msg.Usage.CacheCreationInputTokens
+			}
+			meta.TotalTokens = meta.InputTokens + meta.OutputTokens
 		}
 		// Use model from stream_event message_start if available
 		if p.model != "" {

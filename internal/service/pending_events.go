@@ -59,27 +59,22 @@ const (
 // IsNotifiableEvent returns true if the event is a terminal state that
 // should be persisted for offline clients.
 func IsNotifiableEvent(event string, data any) bool {
-	var status string
-	switch d := data.(type) {
-	case *ws.SessionUpdateData:
-		status = d.Status
-	case *ws.TaskUpdateData:
-		status = d.Status
-	case ws.ChatStreamData: // value type — what StreamHub.Emit constructs
-		if d.EventType == eventTypeUserMessage {
-			return true
-		}
-		return false
-	case *ws.ChatStreamData: // pointer variant for compatibility
-		if d.EventType == eventTypeUserMessage {
-			return true
-		}
-		return false
-	case map[string]any:
-		if s, ok := d["status"].(string); ok {
-			status = s
-		}
-	default:
+	// The usage-meter event has no status to inspect — its data is a plain map
+	// of pre-rendered text and numbers, and every occurrence is notifiable.
+	// Short-circuited before the type switch below, which would otherwise fall
+	// through to the map branch and reject it (there is no "status" key the
+	// session/task predicates would accept... it has one, but "over"/"full" are
+	// not session statuses).
+	if event == UsageMeterEventType {
+		return true
+	}
+	// A user message carries no status but is always notifiable: it is what an
+	// offline client must replay to show what was asked.
+	if isUserMessageEvent(data) {
+		return true
+	}
+	status, ok := notifiableStatus(data)
+	if !ok {
 		return false
 	}
 	switch event {
@@ -89,6 +84,39 @@ func IsNotifiableEvent(event string, data any) bool {
 		return status == statusCompleted || status == statusFailed || status == statusCancelled
 	default:
 		return false
+	}
+}
+
+// isUserMessageEvent reports whether the payload is a chat-stream user message.
+func isUserMessageEvent(data any) bool {
+	switch d := data.(type) {
+	case ws.ChatStreamData: // value type — what StreamHub.Emit constructs
+		return d.EventType == eventTypeUserMessage
+	case *ws.ChatStreamData: // pointer variant for compatibility
+		return d.EventType == eventTypeUserMessage
+	default:
+		return false
+	}
+}
+
+// notifiableStatus extracts the status string the predicates above inspect.
+//
+// ok=false means the payload carries no status to judge, so the caller must
+// reject it. User messages are handled separately (see isUserMessageEvent)
+// because they are notifiable without one.
+func notifiableStatus(data any) (status string, ok bool) {
+	switch d := data.(type) {
+	case *ws.SessionUpdateData:
+		return d.Status, true
+	case *ws.TaskUpdateData:
+		return d.Status, true
+	case map[string]any:
+		if s, isStr := d["status"].(string); isStr {
+			return s, true
+		}
+		return "", false
+	default:
+		return "", false
 	}
 }
 

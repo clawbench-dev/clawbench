@@ -519,6 +519,25 @@ describe('extractSlashCommand', () => {
     expect(result!.clawbench).toBe(true)
   })
 
+  it('marks ClawBench /cb-mcp as clawbench', () => {
+    // The backend names are a closed list, mirrored here. A missing name makes
+    // the badge render as an AGENT command, which is the visible symptom of the
+    // two sides drifting apart.
+    const result = extractSlashCommand('/cb-mcp add a websearch server')
+    expect(result).not.toBeNull()
+    expect(result!.command).toBe('/cb-mcp')
+    expect(result!.rest).toBe(' add a websearch server')
+    expect(result!.clawbench).toBe(true)
+  })
+
+  it('still treats a non-listed /cb-* as an agent command', () => {
+    // The list is explicit on purpose: an agent command that happens to start
+    // with "cb-" must keep its agent badge.
+    const result = extractSlashCommand('/cb-something do it')
+    expect(result).not.toBeNull()
+    expect(result!.clawbench).toBe(false)
+  })
+
   it('does not mark a cb-prefixed agent command as clawbench', () => {
     // Only the known built-ins are ClawBench commands; a hypothetical
     // agent command named /cb-something must render as an agent badge.

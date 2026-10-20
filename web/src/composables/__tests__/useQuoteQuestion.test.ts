@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { defineComponent, h, nextTick } from 'vue'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 
 // Mock useSessionIdentity before importing the module under test.
 //
@@ -8,6 +8,11 @@ import { mount } from '@vue/test-utils'
 // accessors (getSessionId/getSessionTitle), so all three must be provided —
 // a whitelist that omits one makes the whole file fail to load.
 const mockSendMessage = vi.fn()
+// The active-session path delivers through the shared enqueue bridge. It is a
+// spy (not a bare `async () => true`) so the tests can assert the PAYLOAD — a
+// path that "did not open the picker" while dropping the card would otherwise
+// pass.
+const mockEnqueueToSession = vi.fn(async () => true)
 const mockSessionState = vi.hoisted(() => ({ sessionId: '', sessionTitle: '' }))
 // A real ref, not a bare `{ value }`: the composable watches it to drop the
 // native-menu snapshot on session change, and a plain object would not be
@@ -21,6 +26,9 @@ vi.mock('@/composables/useSessionIdentity', async () => {
     useSessionIdentity: () => ({
       sendMessage: mockSendMessage,
       currentSessionId,
+      // The active-session path delivers through the shared enqueue bridge.
+      // Without it, dispatchToTarget would throw and fall back to the picker.
+      enqueueToSession: mockEnqueueToSession,
     }),
     getSessionId: () => mockSessionState.sessionId,
     getSessionTitle: () => mockSessionState.sessionTitle,
@@ -84,7 +92,13 @@ describe('useQuoteQuestion', () => {
     ctx.clearAll()
 
     mockSendMessage.mockReset()
+    mockEnqueueToSession.mockClear()
+    mockEnqueueToSession.mockResolvedValue(true)
     mockToastShow.mockReset()
+    // Session identity is module-level in the mock: a test that switches it on
+    // must not leak the "there is an active conversation" state into the next
+    // one (several cases assert the no-session picker fallback).
+    mockRefs.currentSessionId.value = ''
     // Reset explicitly: it is a hoisted mock, so `vi.clearAllMocks` in another
     // suite does not necessarily cover it, and a stale call from a previous
     // test would satisfy a `toHaveBeenCalledWith` for the wrong argument.
@@ -429,37 +443,44 @@ describe('useQuoteQuestion', () => {
   })
 
   describe('addToConversation', () => {
-    it('opens the picker and stages nothing locally', () => {
+    it('stages into the active conversation without a dialog', async () => {
+      mockRefs.currentSessionId.value = 's-active'
       const qq = useQuoteQuestion()
       ctx.setQuoteData({ text: 'selected', filePath: '/a.ts', language: 'ts', startLine: 3, endLine: 4 })
 
       qq.addToConversation('')
+      // Delivery is async (it awaits target resolution) — let it land.
+      await flushPromises()
 
-      // Nothing staged into the live input: the card belongs to a session the
-      // user has not chosen yet.
-      expect(ctx.stagedQuotes.value).toHaveLength(0)
-      const { pickerOpen, pending } = usePendingTarget()
-      expect(pickerOpen.value).toBe(true)
-      expect(pending.value?.mode).toBe('add')
-      expect(pending.value?.quotes).toHaveLength(1)
-      expect(pending.value?.quotes[0].filePath).toBe('/a.ts')
-      expect(pending.value?.quotes[0].note).toBe('')
-      // The bar is dismissed so it cannot float above the dialog.
+      // A comment on what the user is reading lands in the conversation they
+      // are in (issue #560): one step, no picker.
+      const { pickerOpen } = usePendingTarget()
+      expect(pickerOpen.value).toBe(false)
+      expect(ctx.stagedQuotes.value).toHaveLength(1)
+      expect(ctx.stagedQuotes.value[0].filePath).toBe('/a.ts')
+      expect(ctx.stagedQuotes.value[0].note).toBe('')
+      // The bar is dismissed either way.
       expect(qq.visible.value).toBe(false)
       expect(ctx.quoteData.value).toBeNull()
+      mockRefs.currentSessionId.value = ''
     })
 
-    it('stores entered text as the pending quote note', () => {
+    it('stores entered text as the quote annotation', async () => {
+      mockRefs.currentSessionId.value = 's-active'
       const qq = useQuoteQuestion()
       ctx.setQuoteData({ text: 'selected', filePath: '/a.ts', language: 'ts', startLine: 3, endLine: 4 })
 
       qq.addToConversation('  Why is this needed?  ')
+      await flushPromises()
 
-      expect(usePendingTarget().pending.value?.quotes[0].note).toBe('Why is this needed?')
+      expect(ctx.stagedQuotes.value[0].note).toBe('Why is this needed?')
+      mockRefs.currentSessionId.value = ''
     })
 
-    it('opens the picker even with the chat panel visible', () => {
-      mockLayout.isWideScreen = false
+    it('falls back to the picker when there is no active session', () => {
+      // Fresh install / nothing loaded yet: the picker is the only way to
+      // answer "where should this go?" (it also offers "create a session").
+      mockRefs.currentSessionId.value = ''
       const qq = useQuoteQuestion()
       ctx.setQuoteData({ text: 'selected', filePath: '/a.ts', language: 'ts', startLine: 3, endLine: 4 })
 
@@ -467,6 +488,22 @@ describe('useQuoteQuestion', () => {
 
       expect(usePendingTarget().pickerOpen.value).toBe(true)
       expect(ctx.stagedQuotes.value).toHaveLength(0)
+      cancelTarget()
+    })
+
+    it('opens the picker on an explicit long-press commit', () => {
+      // The secondary gesture: cross-conversation delivery is still available,
+      // it just stops occupying the primary path.
+      mockRefs.currentSessionId.value = 's-active'
+      const qq = useQuoteQuestion()
+      ctx.setQuoteData({ text: 'selected', filePath: '/a.ts', language: 'ts', startLine: 3, endLine: 4 })
+
+      qq.addToConversation('', { pickTarget: true })
+
+      expect(usePendingTarget().pickerOpen.value).toBe(true)
+      expect(ctx.stagedQuotes.value).toHaveLength(0)
+      cancelTarget()
+      mockRefs.currentSessionId.value = ''
     })
   })
 
@@ -575,14 +612,16 @@ describe('useQuoteQuestion', () => {
 
     it('sends the user input with no quote at all', async () => {
       // Regression: sendMessage used to early-return when quoteData was null,
-      // which made the no-selection path impossible. The send is now held for
-      // the picker, but the payload must still carry the typed text.
+      // which made the no-selection path impossible. The payload must still
+      // carry the typed text.
+      //
+      // No active session here, so the picker is the fallback destination —
+      // the payload is what this test is about.
       const qq = useQuoteQuestion()
       qq.openComposer({ url: 'https://github.com/acme/widgets/issues/7', label: 'acme/widgets#7' })
 
       await qq.sendMessage('why is this broken?')
 
-      expect(mockSendMessage).not.toHaveBeenCalled()
       const { pickerOpen, pending } = usePendingTarget()
       expect(pickerOpen.value).toBe(true)
       expect(pending.value?.mode).toBe('send')
@@ -592,6 +631,28 @@ describe('useQuoteQuestion', () => {
       expect(pending.value?.quotes[0]).toMatchObject({
         sourceKind: 'url', url: 'https://github.com/acme/widgets/issues/7',
       })
+      cancelTarget()
+    })
+
+    it('sends straight to the active conversation when there is one', async () => {
+      // The comment path (issue #560): the URL card and the typed text go out
+      // to the conversation being worked in, with no dialog in between.
+      mockRefs.currentSessionId.value = 's-active'
+      const qq = useQuoteQuestion()
+      qq.openComposer({ url: 'https://github.com/acme/widgets/issues/7', label: 'acme/widgets#7' })
+
+      await qq.sendMessage('why is this broken?')
+      await flushPromises()
+
+      expect(usePendingTarget().pickerOpen.value).toBe(false)
+      expect(mockSendMessage).not.toHaveBeenCalled()
+      // The payload really went out, to the active session, with the card.
+      expect(mockEnqueueToSession).toHaveBeenCalledTimes(1)
+      const [sessionId, text, entries] = mockEnqueueToSession.mock.calls[0]
+      expect(sessionId).toBe('s-active')
+      expect(text).toBe('why is this broken?')
+      expect(entries).toEqual([expect.objectContaining({ path: 'acme/widgets#7', kind: 'quote' })])
+      mockRefs.currentSessionId.value = ''
     })
 
     it('carries a selected snippet as the pending quote', async () => {
@@ -604,6 +665,7 @@ describe('useQuoteQuestion', () => {
       const { pending } = usePendingTarget()
       expect(pending.value?.text).toBe('why?')
       expect(pending.value?.quotes[0].text).toBe('build failed')
+      cancelTarget()
     })
 
     it('does nothing when there is neither a quote nor input', async () => {
@@ -1571,7 +1633,28 @@ describe('useQuoteQuestion', () => {
       return container
     }
 
-    it('quote hands the selection to the session picker', () => {
+    it('quote delivers to the active conversation, no dialog', async () => {
+      mockRefs.currentSessionId.value = 's-active'
+      const wrapper = mountWithComposable()
+      selectInMarkdown()
+      document.dispatchEvent(new Event('selectionchange'))
+      vi.advanceTimersByTime(150)
+
+      const qq = useQuoteQuestion()
+      qq.handleNativeSelectionAction('quote')
+      await flushPromises()
+
+      // The Android menu has no "hold for another session" gesture, so the
+      // primary path (active conversation) is the only one it needs.
+      expect(usePendingTarget().pickerOpen.value).toBe(false)
+      expect(ctx.stagedQuotes.value).toHaveLength(1)
+      expect(ctx.stagedQuotes.value[0].text).toBe('selected code text')
+
+      mockRefs.currentSessionId.value = ''
+      wrapper.unmount()
+    })
+
+    it('quote falls back to the picker with no active session', () => {
       const wrapper = mountWithComposable()
       selectInMarkdown()
       document.dispatchEvent(new Event('selectionchange'))
@@ -1580,13 +1663,12 @@ describe('useQuoteQuestion', () => {
       const qq = useQuoteQuestion()
       qq.handleNativeSelectionAction('quote')
 
-      // addToConversation('') → the picker holds the card; nothing is staged
-      // locally (the destination is the user's choice).
       const { pickerOpen, pending } = usePendingTarget()
       expect(pickerOpen.value).toBe(true)
       expect(pending.value?.quotes).toHaveLength(1)
       expect(pending.value?.quotes[0].text).toBe('selected code text')
       expect(ctx.stagedQuotes.value).toHaveLength(0)
+      cancelTarget()
 
       wrapper.unmount()
     })
@@ -1604,6 +1686,34 @@ describe('useQuoteQuestion', () => {
       expect(qq.visible.value).toBe(true)
       expect(qq.expandRequest.value).toBe(before + 1)
 
+      wrapper.unmount()
+    })
+
+    /**
+     * 引用 (native) is a single tap with no long-press of its own, so it always
+     * delivers to the active conversation — it can never reach the picker.
+     *
+     * That is a deliberate trade-off, not an oversight: 讨论 opens the in-page
+     * bar, and THAT bar's commit buttons carry the long-press. This test pins
+     * the asymmetry so a future "fix" cannot quietly make 引用 open the picker
+     * again (which would reinstate the #560 friction for the common case).
+     */
+    it('quote (native) always targets the active conversation, never the picker', async () => {
+      mockRefs.currentSessionId.value = 's-active'
+      const wrapper = mountWithComposable()
+      selectInMarkdown()
+      document.dispatchEvent(new Event('selectionchange'))
+      vi.advanceTimersByTime(150)
+
+      const qq = useQuoteQuestion()
+      qq.handleNativeSelectionAction('quote')
+      // Delivery is async (it resolves the target before dispatching).
+      await flushPromises()
+
+      expect(usePendingTarget().pickerOpen.value).toBe(false)
+      // It landed in the live draft instead.
+      expect(ctx.stagedQuotes.value).toHaveLength(1)
+      mockRefs.currentSessionId.value = ''
       wrapper.unmount()
     })
 

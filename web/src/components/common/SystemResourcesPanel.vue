@@ -95,28 +95,89 @@
           <span class="resource-value">{{ formatRate(resources.network.download_rate) }}</span>
         </div>
       </div>
+      <!-- Usage meter, last. The header capsule is a desktop surface; on a
+           phone this panel is the only place the same numbers appear, so it
+           sits at the tail rather than competing with machine health.
+           The whole row is the entry point to the rule's settings: there is
+           nothing to interact with here beyond "why is it this number". -->
+      <button
+        v-if="showUsageMeter"
+        type="button"
+        class="resource-row usage-row"
+        :aria-label="t('usageMeter.adjust')"
+        :title="t('usageMeter.adjust')"
+        data-action="usage-settings"
+        @click="$emit('open-usage-settings')"
+      >
+        <span class="resource-header">
+          <Gauge :size="13" class="resource-icon" :class="`usage-icon is-${meterState}`" />
+          <span class="resource-label">{{ t('usageMeter.label') }}</span>
+          <span class="resource-value" :class="`usage-value is-${meterState}`">
+            {{ meterUsed }}<span class="usage-quota"> / {{ meterQuota }}</span>
+          </span>
+          <ChevronRight :size="12" class="usage-chevron" />
+        </span>
+        <span class="progress-bar usage-bar">
+          <span class="usage-fill" :class="`is-${meterState}`" :style="{ width: fillPercent + '%' }"></span>
+          <span class="usage-mark" :style="{ left: expectedPercent + '%' }"></span>
+        </span>
+        <span class="usage-meta">
+          <span>{{ t('usageMeter.dayOfCycle', { day: meterStatus.dayInCycle, days: meterStatus.periodDays ?? 0 }) }}</span>
+          <span class="usage-badge" :class="`is-${meterState}`">{{ meterBadge }}</span>
+        </span>
+      </button>
     </template>
   </div>
 </template>
 
 <script setup>
-import { Cpu, Activity, MemoryStick, Database, HardDriveDownload, HardDriveUpload, CloudDownload, CloudUpload, Server, LogOut, WifiOff } from 'lucide-vue-next'
+import { Cpu, Activity, MemoryStick, Database, HardDriveDownload, HardDriveUpload, CloudDownload, CloudUpload, Server, LogOut, WifiOff, Gauge, ChevronRight } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useSystemResources } from '@/composables/useSystemResources'
+import { useUsageMeter } from '@/composables/useUsageMeter'
+import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
+import { formatUsageMeterValue } from '@/utils/usageFormat'
 
 const { t } = useI18n()
 const { resources, startPolling, stopPolling } = useSystemResources()
+const { status: meterStatus, meterState, fillPercent, expectedPercent } = useUsageMeter()
+const { isWideScreen } = useWideScreenLayout()
 
 const props = defineProps({
     showLogout: { type: Boolean, default: false },
     wsStatus: { type: String, default: 'connected' },
 })
 
+// Wide screens have the header capsule, so repeating the meter here would show
+// the same numbers twice on one screen. Phones have no capsule (deliberately:
+// the header is a desktop surface), which is exactly why this row exists.
+const showUsageMeter = computed(
+    () => !isWideScreen.value && meterStatus.value.enabled,
+)
+
+const meterUsed = computed(() =>
+    formatUsageMeterValue(meterStatus.value.metric ?? 'cost', meterStatus.value.actual ?? 0, { compact: true }),
+)
+const meterQuota = computed(() =>
+    formatUsageMeterValue(meterStatus.value.metric ?? 'cost', meterStatus.value.quota ?? 0, { compact: true }),
+)
+
+const meterBadge = computed(() => {
+    if (meterState.value === 'full') return t('usageMeter.badgeFull')
+    if (meterState.value === 'over') {
+        const expected = meterStatus.value.expected ?? 0
+        const actual = meterStatus.value.actual ?? 0
+        const pct = expected > 0 ? Math.round(((actual - expected) / expected) * 100) : 0
+        return t('usageMeter.badgeOver', { pct })
+    }
+    return t('usageMeter.badgeOk')
+})
+
 const wsDisconnected = computed(() => props.wsStatus === 'disconnected' || props.wsStatus === 'reconnecting')
 
-defineEmits(['logout'])
+defineEmits(['logout', 'open-usage-settings'])
 
 const serverAddress = window.location.host // e.g. "192.168.1.5:20000"
 
@@ -295,6 +356,120 @@ defineExpose({ startPolling, stopPolling })
 
 .bar-critical {
   background: var(--color-red, #ef4444);
+}
+
+/* ── Usage meter row (last) ───────────────────────────────────────────────── */
+/* Same row rhythm as the machine metrics above; only the bar is different: it
+   carries a baseline tick, which is the whole point of the meter (fill against
+   "where a linear spend would be"). */
+.usage-row {
+  /* The row is a <button>: strip the UA chrome but keep the row's own layout.
+     text-align must be reset too — a button centres its content, which would
+     centre only the meta line while the header stayed flex-aligned. */
+  width: 100%;
+  padding: var(--space-4) 0 0;
+  border: none;
+  border-top: 1px solid var(--border-color);
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .usage-row:hover .usage-chevron {
+    color: var(--text-primary);
+  }
+}
+
+.usage-row:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.usage-chevron {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: color var(--duration-base);
+}
+
+.usage-icon.is-ok { color: var(--color-green); }
+.usage-icon.is-over { color: var(--color-orange); }
+.usage-icon.is-full { color: var(--color-red); }
+
+.usage-value.is-over { color: var(--color-orange); }
+.usage-value.is-full { color: var(--color-red); }
+
+.usage-quota {
+  color: var(--text-muted);
+  font-weight: normal;
+}
+
+.usage-bar {
+  /* The row is a <button>, so every descendant must be a span (buttons may not
+     contain block-level flow content in HTML terms). Spans are inline by
+     default, which would collapse the 4px track. */
+  display: block;
+  position: relative;
+  margin-top: 3px;
+}
+
+.usage-fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-xs);
+  transition: width 0.3s ease;
+}
+
+.usage-fill.is-ok { background: var(--color-green); }
+.usage-fill.is-over { background: var(--color-orange); }
+.usage-fill.is-full { background: var(--color-red); }
+
+/* Baseline tick: outlined in the popover surface (--bg-secondary, see
+   PopupMenu) so it stays visible where it crosses the filled portion. */
+.usage-mark {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 1px;
+  border-radius: 1px;
+  background: var(--text-primary);
+  box-shadow: 0 0 0 1px var(--bg-secondary);
+}
+
+.usage-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: 2px;
+  font-size: var(--font-size-2xs);
+  color: var(--text-muted);
+}
+
+.usage-badge {
+  flex-shrink: 0;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+}
+
+.usage-badge.is-ok {
+  background: color-mix(in srgb, var(--color-green) 16%, transparent);
+  color: var(--color-green);
+}
+
+.usage-badge.is-over {
+  background: color-mix(in srgb, var(--color-orange) 16%, transparent);
+  color: var(--color-orange);
+}
+
+.usage-badge.is-full {
+  background: color-mix(in srgb, var(--color-red) 16%, transparent);
+  color: var(--color-red);
 }
 
 .connection-status {

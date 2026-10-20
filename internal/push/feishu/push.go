@@ -193,3 +193,16 @@ func PushForgeEvent(title, content string) bool {
 	}
 	return sendToAllSubscribers(title, content)
 }
+
+// PushUsageMeterEvent sends a Feishu notification for a usage-meter threshold
+// crossing. Like PushForgeEvent, the wording is owned by the service layer;
+// this function only owns the transport and the push-mode gate.
+func PushUsageMeterEvent(title, content string) bool {
+	if !IsStarted() || db == nil {
+		return false
+	}
+	if title == "" || content == "" {
+		return false
+	}
+	return sendToAllSubscribers(title, content)
+}

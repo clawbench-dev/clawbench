@@ -181,6 +181,7 @@ UNIQUE：`(message_id)`
 | command | TEXT | NOT NULL | `''` | CLI 命令 |
 | thinking_effort | TEXT | NOT NULL | `''` | 默认思考力度 |
 | thinking_effort_levels | TEXT | NOT NULL | `'[]'` | 可选力度等级 JSON |
+| thinking_effort_by_model | TEXT | NOT NULL | `'{}'` | 按模型 id 记忆的用户思考档位选择（JSON map）。优先级：该模型的选择 > 全局默认 > agent 默认；空值表示该模型无显式选择 |
 | preferred_mode | TEXT | NOT NULL | `''` | 首选模式 |
 | preferred_model | TEXT | NOT NULL | `''` | 首选模型 |
 | preferred_thinking_effort | TEXT | NOT NULL | `''` | 首选思考力度 |
@@ -565,6 +566,7 @@ erDiagram
         TEXT command
         TEXT thinking_effort
         TEXT thinking_effort_levels
+        TEXT thinking_effort_by_model
         TEXT preferred_mode
         TEXT preferred_model
         TEXT preferred_thinking_effort

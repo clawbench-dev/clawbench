@@ -875,3 +875,70 @@ func TestCruiseHost_SwitchToggledMidTurnTakesEffect(t *testing.T) {
 		t.Fatalf("cruise must not announce the user's turn (count=%d)", n)
 	}
 }
+
+// Turning cruise OFF mid-turn must end a free-mode relay at the NEXT decision
+// point, not at the member-speech cap.
+//
+// cruiseFreeRound is the only exit for a cruising free group, and it used to
+// check nothing but the cap: the switch was read once before entering, so a
+// user who switched cruise off while the group was talking watched it keep
+// going (default cap: 100 member speeches). Host mode already re-read the
+// switch at every hand-back point — this pins the free-mode equivalent.
+func TestCruiseFree_SwitchToggledOffMidTurnStops(t *testing.T) {
+	setupGroupDB(t)
+	// High cap: without the fix the loop runs until this is exhausted, which is
+	// exactly the symptom. The test would also time out, so keep it bounded.
+	setGroupMaxSpeechesForTest(t, 100)
+	project := "/tmp/cruise-free-live-off"
+	groupID, byName := createFreeGroup(t, project, "A", "B")
+	enableCruise(t, groupID)
+
+	// Nobody ever votes, so the cruise would loop forever if the switch were
+	// ignored.
+	script := map[string][]string{
+		byName["A"]: {"A 一直说"},
+		byName["B"]: {"B 一直说"},
+	}
+	base, order := freeScriptedRunner(t, project, groupID, script)
+
+	// Flip cruise OFF once the discussion round that follows the first
+	// confirmation round is under way (member turn #5). Counting turns rather
+	// than hooking a specific member keeps the assertion independent of the
+	// confirmation round's internal ordering.
+	wrapped := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		res := base(ctx, gid, turn)
+		if len(*order) == 5 {
+			if err := SetSessionCruise(groupID, false); err != nil {
+				t.Fatalf("SetSessionCruise(false): %v", err)
+			}
+		}
+		return res
+	}
+
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = wrapped
+	res := runGroupTurnForTest(t, o, project, "大家聊聊", nil)
+
+	if res.CancelReason != "" || res.Err != "" {
+		t.Fatalf("expected a clean stop, got %+v (order=%v)", res, *order)
+	}
+	// The switch must be honored at the top of the next iteration: seed(2) +
+	// confirmation(2) + discussion(2) = 6 turns, then stop. Anything close to
+	// the cap means the check never ran.
+	if len(*order) > 10 {
+		t.Fatalf("cruise ignored the mid-turn switch-off: %d member turns (order=%v)", len(*order), *order)
+	}
+	// A cap stop writes its own line; this was a voluntary switch-off, so the
+	// cap line must be absent.
+	if n := countSystemLine(t, groupID, i18n.T(i18n.LocalizerForLocale(model.Language), "GroupDiscussionLimitReached")); n != 0 {
+		t.Fatalf("switch-off must not be reported as hitting the speech cap (count=%d)", n)
+	}
+	// runLoop's non-cruise branch announces the floor returning to the human.
+	if n := countSystemLine(t, groupID, i18n.T(i18n.LocalizerForLocale(model.Language), "GroupYourTurn")); n != 1 {
+		t.Fatalf("switch-off must hand the floor back to the user (count=%d want 1, order=%v)", n, *order)
+	}
+	// And it is NOT a confirmed completion.
+	if n := countSystemLine(t, groupID, "自动巡航：任务已确认完成"); n != 0 {
+		t.Fatalf("switch-off must not be reported as a confirmed goal (count=%d)", n)
+	}
+}

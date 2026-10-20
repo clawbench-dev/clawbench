@@ -453,10 +453,13 @@ const filteredRows = computed(() => {
 // The overview donut / cards render from the range totals regardless of row
 // grouping; "has content" = any totals present OR rows OR trend data.
 const totals = computed(() => stats.raw.value?.totals ?? null)
+// credit is part of the presence check: a range whose only usage is
+// credit-bearing CodeBuddy turns (no tokens recorded, e.g. a failed turn that
+// still billed) would otherwise render the whole overview as "no data".
 const totalsPresent = computed(() => {
   const t = totals.value
   if (!t) return false
-  return t.input > 0 || t.output > 0 || t.total > 0 || t.cacheHit > 0 || t.cacheMiss > 0 || t.costUsd > 0
+  return t.input > 0 || t.output > 0 || t.total > 0 || t.cacheHit > 0 || t.cacheMiss > 0 || t.credit > 0 || t.costUsd > 0
 })
 const hasContent = computed(() => totalsPresent.value || filteredRows.value.length > 0 || rawTrend.value.length > 0)
 

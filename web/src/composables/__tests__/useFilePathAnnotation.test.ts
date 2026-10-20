@@ -824,6 +824,35 @@ describe('annotateFilePaths', () => {
     expect(result.html).toContain('chat-file-open-btn')
   })
 
+  it('strips a hash-form line reference from a <code> body', () => {
+    // `<code>main.go#L42-L48</code>` used to keep the fragment in
+    // data-file-path, so batch-exists reported `none` (no file is named
+    // `main.go#L42-L48`) and the path became an inert chip whose filename
+    // search then looked for that literal string.
+    const input = '<p>see <code>src/main.go#L42-L48</code></p>'
+    const result = annotateFilePaths(input, { projectRoot })
+    expect(result.detectedPaths).toContain('src/main.go')
+    expect(result.html).toContain('data-file-path="src/main.go"')
+    expect(result.html).not.toContain('data-file-path="src/main.go#')
+    expect(result.html).toContain('data-line-start="42"')
+    expect(result.html).toContain('data-line-end="48"')
+  })
+
+  it('strips a hash-form multi-range from a <code> body', () => {
+    const input = '<p>see <code>src/main.go#L10,L20-L30</code></p>'
+    const result = annotateFilePaths(input, { projectRoot })
+    expect(result.html).toContain('data-file-path="src/main.go"')
+    expect(result.html).toContain('data-line-ranges="10,20-30"')
+  })
+
+  it('keeps an L-prefixed range suffix out of data-file-path for <code>', () => {
+    const input = '<p>see <code>src/main.go:L42-L48</code></p>'
+    const result = annotateFilePaths(input, { projectRoot })
+    expect(result.html).toContain('data-file-path="src/main.go"')
+    expect(result.html).toContain('data-line-start="42"')
+    expect(result.html).toContain('data-line-end="48"')
+  })
+
   it('handles HTML with only tags and no text', () => {
     const input = '<p></p>'
     const result = annotateFilePaths(input, { projectRoot })

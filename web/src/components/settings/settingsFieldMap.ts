@@ -83,7 +83,7 @@ export interface ItemSpec {
   labelKey: string
   descriptionKey?: string
   key: string
-  type: 'switch' | 'select' | 'number' | 'text' | 'slider' | 'action' | 'info' | 'header' | 'password' | 'textarea'
+  type: 'switch' | 'select' | 'number' | 'text' | 'date' | 'slider' | 'action' | 'info' | 'header' | 'password' | 'textarea'
   source: 'server' | 'local'
   needsRestart?: boolean
   options?: { labelKey: string; value: unknown; modelName?: string; groupKey?: string; badgeKey?: string }[]
@@ -333,6 +333,12 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.skillsRepos', key: 'skillsRepos', type: 'info', source: 'server', sectionHeader: 'settings.items.skillsRepos' } },
     { type: 'item', spec: { labelKey: 'settings.items.skillsDiscoveredSection', key: 'skillsDiscovered', type: 'info', source: 'server', sectionHeader: 'settings.items.skillsDiscoveredSection' } },
   ],
+  mcp: [
+    // Global MCP server list. The card body is a dedicated component
+    // (MCPSetting); this entry only opens the section, so it must also be
+    // listed in PLACEHOLDER_ITEMS in SettingsCategory.vue.
+    { type: 'item', spec: { labelKey: 'settings.items.mcpSection', descriptionKey: 'settings.items.mcpDesc', key: 'mcpServers', type: 'info', source: 'server', sectionHeader: 'settings.items.mcpSection' } },
+  ],
   forgeIntegration: [
     // Credentials row is a dedicated component (tokens are write-only; the
     // server never returns them, so a plain text field cannot round-trip).
@@ -411,6 +417,49 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
         }
       },
     }},
+  ],
+  // Usage meter: its own category, side by side with 推送通知 rather than
+  // nested inside it. It is a notification FEATURE, but its configuration
+  // (cycle, metric, budget) is a distinct subject — burying it as a card
+  // under 推送通知 made it read as one more push channel.
+  usageMeter: [
+    // A single global rule (cycle + metric + quota).
+    //
+    // Grouped into a panel rather than four flat rows: the fields are
+    // meaningless in isolation (a quota without a cycle has no baseline), and
+    // the entry row shows the metric so the user can see which unit they are
+    // budgeting in without opening it.
+  { type: 'panel', config: {
+    panelId: 'usageMeter',
+    titleKey: 'settings.items.usageMeter',
+    entrySelector: {
+      labelKey: 'settings.items.usageMeter',
+      // The metric row is where the unit changes, so the "switching clears
+      // the quota" warning belongs here — it was previously written into
+      // i18n but never referenced, so users lost their quota with no notice.
+      descriptionKey: 'settings.items.usageMeterMetricDesc',
+      key: 'usage_meter.metric',
+      type: 'select',
+      source: 'server',
+      options: [
+        { labelKey: 'settings.items.usageMeterMetricTokens', value: 'tokens' },
+        { labelKey: 'settings.items.usageMeterMetricCredit', value: 'credit' },
+        { labelKey: 'settings.items.usageMeterMetricCost', value: 'cost' },
+      ],
+      defaultValue: 'cost',
+    },
+    commonFields: [
+      { labelKey: 'settings.items.usageMeterAnchor', descriptionKey: 'settings.items.usageMeterAnchorDesc', key: 'usage_meter.anchor_date', type: 'date', source: 'server' },
+      { labelKey: 'settings.items.usageMeterPeriod', descriptionKey: 'settings.items.usageMeterPeriodDesc', key: 'usage_meter.period_days', type: 'number', source: 'server' },
+      { labelKey: 'settings.items.usageMeterQuota', descriptionKey: 'settings.items.usageMeterQuotaDesc', key: 'usage_meter.quota', type: 'number', source: 'server' },
+    ],
+    requiredFields: [],
+    // Switching the metric changes the unit, so a stored quota would silently
+    // change meaning ($20 becoming 20 tokens). The SERVER clears it in the
+    // same patch (see applyConfigPatch) — a second client-side request would
+    // open a window where the new metric runs against the old number, and the
+    // worker wakes within seconds of a PATCH. So no afterSave here.
+  }},
   ],
   about: [
     { type: 'item', spec: { labelKey: 'settings.items.aboutServerVersion', descriptionKey: 'settings.items.aboutServerVersionDesc', key: 'serverVersion', type: 'info', source: 'server', sectionHeader: 'settings.items.aboutVersionSection' } },

@@ -67,7 +67,7 @@
       <template v-else-if="type === 'password'">
         <span class="settings-item__value">{{ displayValue }}</span>
       </template>
-      <template v-else-if="type === 'select' || type === 'number' || type === 'text'">
+      <template v-else-if="type === 'select' || type === 'number' || type === 'text' || type === 'date'">
         <ProviderIcon v-if="selectedOptionModelName" :model-name="selectedOptionModelName" :size="14" />
         <span class="settings-item__value">{{ displayValue }}</span>
       </template>
@@ -116,6 +116,21 @@
           :min="min"
           :max="max"
           :step="step"
+          @input="editValue = ($event.target as HTMLInputElement).value"
+          @keydown.enter="confirmEdit"
+        />
+        <button class="fbtn fbtn-primary settings-item__editor-confirm" @click="confirmEdit">{{ t('common.ok') }}</button>
+      </div>
+    </template>
+    <!-- Date editor. Native input: the OS picker handles locale, keyboard
+         entry and mobile; a custom calendar would be a lot of code for no
+         gain. The value is YYYY-MM-DD, matching the server's anchor format. -->
+    <template v-else-if="type === 'date'">
+      <div class="settings-item__input-row">
+        <input
+          type="date"
+          class="settings-item__text-input"
+          :value="(editValue as string | null | undefined) ?? ''"
           @input="editValue = ($event.target as HTMLInputElement).value"
           @keydown.enter="confirmEdit"
         />
@@ -331,7 +346,7 @@ interface Props {
    *  Always visible in the row, unlike `warning` which only shows inside the
    *  open editor. Absent means no note. */
   note?: string
-  type: 'switch' | 'select' | 'number' | 'text' | 'slider' | 'action' | 'info' | 'header' | 'password' | 'textarea'
+  type: 'switch' | 'select' | 'number' | 'text' | 'date' | 'slider' | 'action' | 'info' | 'header' | 'password' | 'textarea'
   modelValue?: unknown
   options?: SelectOption[]
   /** Async filter applied to options each time the select picker opens
@@ -687,6 +702,12 @@ function confirmEdit() {
     if (!isNaN(num)) {
       emit('update:modelValue', num)
     }
+  } else if (props.type === 'date') {
+    // A cleared native date input yields "". Emitting it would send an empty
+    // anchor_date, which the server rejects — the row would then look edited
+    // but stay unchanged with no explanation. Keep the old value instead.
+    const v = String(editValue.value ?? '').trim()
+    if (v) emit('update:modelValue', v)
   } else {
     emit('update:modelValue', editValue.value)
   }
@@ -964,6 +985,14 @@ function confirmEdit() {
 .settings-item__number-input:focus,
 .settings-item__text-input:focus {
   border-color: var(--accent-color);
+}
+
+/* Native date inputs render their calendar glyph and dropdown with the OS
+   palette. Without color-scheme the glyph is near-black on the dark theme's
+   input background and effectively invisible. `inherit` follows the document's
+   scheme, which the theme already sets. */
+.settings-item__text-input[type='date'] {
+  color-scheme: inherit;
 }
 
 /* Password toggle button */

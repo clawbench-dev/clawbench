@@ -54,6 +54,14 @@ export interface ContentBlock {
    */
   error_detail?: string
   /**
+   * The one-off sign-in command for an `auth_required` failure (e.g.
+   * "cmdc login"). Structured rather than scraped out of the localized message
+   * so the banner can offer a working "copy the command" action — re-auth is
+   * the ONLY fix for this reason, and a "reset session" button (which recycles
+   * the connection) can never succeed.
+   */
+  login_cmd?: string
+  /**
    * Parent Agent tool-call id when this block was produced by a sub-agent
    * spawned by that Agent call; empty/undefined for top-level content. Used to
    * group a sub-agent's thinking/text/tool_use under its parent Agent card.
@@ -238,6 +246,7 @@ export interface ErrorEventData {
   http_status?: number
   error_source?: string
   error_detail?: string
+  login_cmd?: string
 }
 
 /**
@@ -308,6 +317,7 @@ export interface SummaryCards {
     http_status?: number
     error_source?: string
     error_detail?: string
+    login_cmd?: string
   }>
 }
 
@@ -697,7 +707,7 @@ export type ChatMessageAction =
   // A role='system' timeline row (group membership change) written by the
   // backend. Deduped by DB id so a duplicate delivery renders once.
   | { type: 'ws_system_message'; data: { messageId?: number; content?: string } }
-  | { type: 'ws_error'; messageId?: number; text: string; reason?: string; errorCode?: number; httpStatus?: number; errorSource?: string; errorDetail?: string }
+  | { type: 'ws_error'; messageId?: number; text: string; reason?: string; errorCode?: number; httpStatus?: number; errorSource?: string; errorDetail?: string; loginCmd?: string }
   | { type: 'stream_finalize'; messageId?: number }
   // ── WS block-level (in-place blocks mutation, same array reference) ──
   // Each carries an optional `messageId` (the backend-stamped owning row) so it
@@ -710,7 +720,7 @@ export type ChatMessageAction =
   | { type: 'ws_tool_use'; messageId?: number; data: ToolUseEventData }
   | { type: 'ws_tool_result'; messageId?: number; data: ToolUseEventData }
   | { type: 'ws_metadata'; messageId?: number; metadata: Record<string, unknown> }
-  | { type: 'ws_warning'; messageId?: number; text: string; reason?: string; errorCode?: number; httpStatus?: number; errorSource?: string; errorDetail?: string }
+  | { type: 'ws_warning'; messageId?: number; text: string; reason?: string; errorCode?: number; httpStatus?: number; errorSource?: string; errorDetail?: string; loginCmd?: string }
   // ── DB rebuild (loadHistory) ──
   // `sessionRunning` lets the rebuild distinguish a stale snapshot (fetched
   // before the backend committed the streaming row) from real convergence —
@@ -1972,6 +1982,7 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       if (action.httpStatus) errorBlock.http_status = action.httpStatus
       if (action.errorSource) errorBlock.error_source = action.errorSource
       if (action.errorDetail) errorBlock.error_detail = action.errorDetail
+      if (action.loginCmd) errorBlock.login_cmd = action.loginCmd
       // Route to the erroring stream when its id is known (concurrent streams:
       // an error must not overwrite a live sibling's bubble). Fall back to the
       // legacy single-stream / last-assistant placement otherwise.
@@ -2105,6 +2116,7 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       if (action.httpStatus) warningBlock.http_status = action.httpStatus
       if (action.errorSource) warningBlock.error_source = action.errorSource
       if (action.errorDetail) warningBlock.error_detail = action.errorDetail
+      if (action.loginCmd) warningBlock.login_cmd = action.loginCmd
       sm.blocks!.push(warningBlock)
       return state
     }

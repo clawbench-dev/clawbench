@@ -295,9 +295,13 @@ func TestAgentSchemaMatchesProduction(t *testing.T) {
 		"transport": true, "acp_command": true,
 		"acp_available_modes": true, "acp_available_thinking_efforts": true, "acp_available_commands": true,
 		"acp_available_models": true,
-		"acp_config_options":   true, "auto_approve": true, "disabled": true,
+		"acp_config_options":   true, "acp_mcp_http": true, "acp_mcp_sse": true,
+		"auto_approve": true, "disabled": true,
 		"project_id": true,
-		"created_at": true, "updated_at": true,
+		// Per-agent MCP enablement policy (JSON). The definitions live in
+		// config.yaml, not here — see model.MCPServerPolicy.
+		"mcp_servers": true,
+		"created_at":  true, "updated_at": true,
 	}
 
 	rows, err := db.Query("SELECT name FROM pragma_table_info('agents')")
@@ -1260,4 +1264,88 @@ func TestGetAllAgentUsage_GroupsByAgent(t *testing.T) {
 	// An agent with no rows is simply absent (callers treat missing as zero).
 	_, ok := m["ghost"]
 	assert.False(t, ok)
+}
+
+// --- custom ACP agent (issue #557) ---
+
+// CreateCustomACPAgent must produce a runnable ACP agent: custom backend id,
+// acp-stdio transport, the command persisted verbatim, and no CLI capability.
+func TestCreateCustomACPAgent_PersistsRunnableAgent(t *testing.T) {
+	_ = setupTestDBForAgents(t)
+
+	agent, err := service.CreateCustomACPAgent("My Tool", "  my-tool acp --stdio  ")
+	require.NoError(t, err)
+
+	require.NotEmpty(t, agent.ID)
+	assert.Equal(t, "My Tool", agent.Name)
+	assert.Equal(t, model.CustomACPBackend, agent.Backend,
+		"a custom agent must not borrow a registered backend id")
+	assert.Equal(t, "acp-stdio", agent.Transport)
+	assert.Equal(t, "my-tool acp --stdio", agent.AcpCommand, "the command is trimmed before storage")
+	assert.True(t, agent.SupportsACP())
+	assert.False(t, model.BackendSupportsCLI(agent.Backend))
+	assert.NotEmpty(t, agent.RuntimeSystemPrompt, "the shared prompt must be composed immediately")
+
+	persisted, err := service.LoadAgentsFromDB()
+	require.NoError(t, err)
+	require.Len(t, persisted, 1)
+	assert.Equal(t, "my-tool acp --stdio", persisted[0].AcpCommand)
+	assert.Equal(t, "acp-stdio", persisted[0].Transport)
+}
+
+// The command is the only thing that makes the agent usable, so an empty one
+// must be refused rather than stored as an agent that can never spawn.
+func TestCreateCustomACPAgent_RequiresCommand(t *testing.T) {
+	_ = setupTestDBForAgents(t)
+
+	for _, cmd := range []string{"", "   ", "\t\n"} {
+		_, err := service.CreateCustomACPAgent("No Command", cmd)
+		require.ErrorIs(t, err, service.ErrAcpCommandRequired, "command %q", cmd)
+	}
+
+	persisted, err := service.LoadAgentsFromDB()
+	require.NoError(t, err)
+	assert.Empty(t, persisted)
+}
+
+func TestCreateCustomACPAgent_RejectsOverlongCommand(t *testing.T) {
+	_ = setupTestDBForAgents(t)
+
+	_, err := service.CreateCustomACPAgent("Too Long", strings.Repeat("a", service.MaxAcpCommandBytes+1))
+	require.ErrorIs(t, err, service.ErrAcpCommandTooLong)
+
+	// Exactly at the limit is allowed.
+	_, err = service.CreateCustomACPAgent("At Limit", strings.Repeat("a", service.MaxAcpCommandBytes))
+	require.NoError(t, err)
+}
+
+// Each create lands after the current last row, so a new agent appears at the
+// end of the list instead of tying at 0 and being ordered by its random ID.
+func TestCreateCustomACPAgent_AppendsToEndOfList(t *testing.T) {
+	_ = setupTestDBForAgents(t)
+
+	require.NoError(t, service.SaveAgent(store.WriteDB(), &model.Agent{
+		ID: "existing", Name: "Existing", Backend: "claude", SortOrder: 7,
+	}))
+
+	first, err := service.CreateCustomACPAgent("First", "a acp")
+	require.NoError(t, err)
+	second, err := service.CreateCustomACPAgent("Second", "b acp")
+	require.NoError(t, err)
+
+	assert.Equal(t, 8, first.SortOrder)
+	assert.Equal(t, 9, second.SortOrder)
+	assert.Greater(t, second.SortOrder, first.SortOrder)
+}
+
+// Name collisions must surface as the same sentinels the handler maps to 409.
+func TestCreateCustomACPAgent_NameConflicts(t *testing.T) {
+	_ = setupTestDBForAgents(t)
+
+	require.NoError(t, service.SaveAgent(store.WriteDB(), &model.Agent{
+		ID: "taken", Name: "Taken", Backend: "claude",
+	}))
+
+	_, err := service.CreateCustomACPAgent("Taken", "x acp")
+	require.ErrorIs(t, err, service.ErrAgentNameTaken)
 }

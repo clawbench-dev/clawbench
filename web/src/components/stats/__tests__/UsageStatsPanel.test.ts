@@ -151,6 +151,18 @@ describe('UsageStatsPanel', () => {
     expect(wrapper.text()).toContain('所选时间段内暂无用量数据')
   })
 
+  it('shows the overview when the only usage is credit', async () => {
+    // A range whose CodeBuddy turns recorded credit but no tokens (a failed
+    // turn that still billed) is not "no data": the credit card must render.
+    mockApiGet.mockResolvedValue(mockResponse({
+      totals: { input: 0, output: 0, total: 0, cacheHit: 0, cacheMiss: 0, credit: 12.5, costUsd: 0, messageCnt: 1 },
+      rows: [{ key: { model: 'glm' }, input: 0, output: 0, total: 0, cacheHit: 0, cacheMiss: 0, credit: 12.5, costUsd: 0, messageCnt: 1 }],
+    }))
+    const wrapper = await mountPanel()
+    expect(wrapper.text()).not.toContain('所选时间段内暂无用量数据')
+    expect(wrapper.text()).toContain('Credit')
+  })
+
   it('rebuilds the chart option when the theme changes', async () => {
     // Charts read their palette from CSS variables at option-build time, so a
     // theme switch must recompute and re-push the option (themeTick bump).

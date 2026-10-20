@@ -40,7 +40,7 @@ import { useI18n } from 'vue-i18n'
 import { Compartment, EditorState, RangeSetBuilder } from '@codemirror/state'
 import { EditorView, lineNumbers, Decoration, gutter, GutterMarker, keymap } from '@codemirror/view'
 import { defaultKeymap, historyKeymap, history, indentWithTab, undo, redo, undoDepth, redoDepth } from '@codemirror/commands'
-import { search, highlightSelectionMatches, findNext, findPrevious } from '@codemirror/search'
+import { search, highlightSelectionMatches, findNext, findPrevious, getSearchQuery } from '@codemirror/search'
 import { searchPanel, searchPanelField, searchPanelToggle, openSearchPanelCommand } from '@/utils/codeMirrorSearchPanel'
 import { syntaxHighlighting } from '@codemirror/language'
 import { buildLangExtension, buildCompletionExtension } from '@/utils/codeEditorLang'
@@ -56,6 +56,7 @@ import { buildOverlayDecorations } from '@/utils/codeMirrorOverlay.ts'
 import { LINE_FLASH_MS, flashElement } from '@/utils/domFlash'
 import { useDialog } from '@/composables/useDialog.ts'
 import { useCodeStickyScroll } from '@/composables/useCodeStickyScroll.ts'
+import { parseGoToLine } from '@/utils/goToLine.ts'
 
 const props = defineProps({
     file: Object,
@@ -527,7 +528,13 @@ function buildAllExtensions() {
         // the key while editing. It is a no-op in read-only mode (indentMore
         // returns false), and autocomplete's Tab (choose candidate) still takes
         // precedence while the completion popup is open.
-        keymap.of([{ key: 'Mod-s', run: handleSaveShortcut, preventDefault: true }, ...defaultKeymap, ...historyKeymap, indentWithTab]),
+        keymap.of([
+            { key: 'Mod-s', run: handleSaveShortcut, preventDefault: true },
+            // Ctrl/Cmd+G — go to line (issue #547). Bound ahead of the search
+            // compartment, which no longer claims Mod-g for match-next.
+            { key: 'Mod-g', run: openGoToLine, preventDefault: true },
+            ...defaultKeymap, ...historyKeymap, indentWithTab,
+        ]),
         searchCompartment.of([
             // Search state + match highlighting from @codemirror/search.
             // `search()` also carries the built-in panel's base theme, but the
@@ -540,12 +547,18 @@ function buildAllExtensions() {
                 readonly: !props.editable,
                 phrases: searchPhrases(),
             }),
-            // Mod-f toggles the panel; Mod-g / Mod-Shift-g jump matches. The
-            // built-in searchKeymap is not used so its openSearchPanel side
-            // effect never creates the built-in panel.
+            // Mod-f toggles the panel; Mod-Shift-g jumps matches. The built-in
+            // searchKeymap is not used so its openSearchPanel side effect never
+            // creates the built-in panel.
+            //
+            // Mod-g is deliberately NOT match-next: Ctrl+G is the universal
+            // "go to line" shortcut (issue #547), bound in the editor keymap
+            // above. Match navigation stays on F3 / Shift+F3, matching what
+            // @codemirror/search itself binds.
             keymap.of([
                 { key: 'Mod-f', run: openSearchPanelCommand, preventDefault: true },
-                { key: 'Mod-g', run: () => findNextSafe(), preventDefault: true },
+                { key: 'F3', run: () => findNextSafe(), preventDefault: true },
+                { key: 'Shift-F3', run: () => findPrevSafe(), preventDefault: true },
                 { key: 'Mod-Shift-g', run: () => findPrevSafe(), preventDefault: true },
             ]),
             // Report panel open/close so the header search button highlight
@@ -756,18 +769,101 @@ function openSearch() {
 // reactive), so this is driven by an EditorView.updateListener instead — see
 // the searchCompartment below.
 
-// Mod-g / Mod-Shift-g jump to the next/previous match only when a search query
-// exists; without one, opening the panel is more useful than a silent no-op.
-function findNextSafe() {
+// F3 / Shift-F3 (and Mod-Shift-g) jump to the next/previous match. These are
+// the bindings @codemirror/search itself uses; Mod-g belongs to go-to-line.
+//
+// The bindings set preventDefault, so a command that returns false still
+// swallows the key. That makes "no query yet" a case we must handle: opening the
+// search panel is what the user wants from F3 there, and returning true keeps
+// the key from being both handled and (browser) find-next'd. If the panel is
+// already open with an empty query, openSearchPanelCommand is a no-op — focus
+// the input instead so the keypress visibly lands somewhere.
+function hasSearchQuery(editor) {
+    const query = getSearchQuery(editor.state)
+    return !!(query && query.valid && query.search)
+}
+function focusSearchInput(editor) {
+    editor.dom.querySelector('.cm-search input[name=search]')?.focus()
+}
+function navigateMatch(step) {
     const editor = view.value
     if (!editor) return false
-    if (!editor.state.doc.toString()) return false
-    return findNext(editor)
+    if (!hasSearchQuery(editor)) {
+        if (editor.state.field(searchPanelField, false)) {
+            focusSearchInput(editor)
+            return true
+        }
+        return openSearchPanelCommand(editor)
+    }
+    return step(editor)
+}
+function findNextSafe() {
+    return navigateMatch(findNext)
 }
 function findPrevSafe() {
+    return navigateMatch(findPrevious)
+}
+
+/**
+ * Ctrl/Cmd+G — "go to line" (issue #547).
+ *
+ * Mod-g used to mean "next search match". It is reassigned here because Ctrl+G
+ * is the universal go-to-line shortcut; match navigation keeps F3 / Shift+F3
+ * (what @codemirror/search itself binds) and the existing Mod-Shift-g.
+ *
+ * The prompt accepts absolute lines, ±N relative lines and percentages (see
+ * parseGoToLine). The jump reuses the same instant-scroll + flash path as TOC
+ * clicks, including the scroll-restore cancellation that keeps FileViewer's
+ * remembered position from snapping the viewport back.
+ */
+async function promptGoToLine(editor, currentLine, totalLines) {
+    const answer = await dialog.prompt(t('file.editor.goToLine.message'), {
+        title: t('file.editor.goToLine.title'),
+        value: String(currentLine),
+        placeholder: t('file.editor.goToLine.placeholder'),
+        confirmText: t('file.editor.goToLine.confirm'),
+        // A line number is a single token: the multi-line textarea would let the
+        // user insert a newline that `parseGoToLine` then rejects as invalid.
+        singleLine: true,
+    })
+    if (answer === null) return
+    const target = parseGoToLine(answer, currentLine, totalLines)
+    if (target === null) {
+        await dialog.alert(t('file.editor.goToLine.invalid'), {
+            title: t('file.editor.goToLine.title'),
+        })
+        return
+    }
+    // The prompt is async; the editor can be gone by the time it resolves
+    // (project switch rebuilds the view). Nothing to jump in that case.
+    if (view.value !== editor) return
+    // Same ordering as onScrollToLine: cancel a pending scroll restore before
+    // moving, so FileViewer cannot override the target we just jumped to.
+    window.dispatchEvent(new CustomEvent('cancel-scroll-restore'))
+    scrollToLine(target)
+    // Move the caret to the target line WITHOUT scrolling it into view: the
+    // scroll position is already set by scrollToLine (centered), and letting
+    // CodeMirror scroll would snap the target to the top edge.
+    //
+    // The caret is not cosmetic here. openGoToLine derives both the pre-filled
+    // value and the base for "+N"/"-N" from `selection.main.head`, so leaving it
+    // behind makes the next Ctrl+G pre-fill the old line and makes a relative
+    // offset resolve from the wrong place.
+    editor.dispatch({
+        selection: { anchor: editor.state.doc.line(target).from },
+        scrollIntoView: false,
+    })
+    // focus() uses preventScroll, so restoring the caret does not undo the jump.
+    editor.focus()
+}
+
+function openGoToLine() {
     const editor = view.value
     if (!editor) return false
-    return findPrevious(editor)
+    const currentLine = editor.state.doc.lineAt(editor.state.selection.main.head).number
+    const totalLines = editor.state.doc.lines
+    void promptGoToLine(editor, currentLine, totalLines)
+    return true
 }
 
 // Ctrl/Cmd+S save shortcut (Mod = Ctrl on Windows/Linux, Cmd on Mac). Mirrors
@@ -808,7 +904,11 @@ async function handleExit() {
     return false
 }
 
-defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, isDirty: () => dirty.value, openSearch })
+// openGoToLine MUST be listed here: <script setup> only exposes what
+// defineExpose names, and FileViewer calls it through the component ref. Left
+// out, the App-level Ctrl+G handler (the path taken when the editor is not yet
+// focused — i.e. right after opening a file) silently does nothing.
+defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, isDirty: () => dirty.value, openSearch, openGoToLine })
 </script>
 
 <style scoped>

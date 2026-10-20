@@ -81,6 +81,7 @@ func extractSummaryCards(blocks []model.ContentBlock) *model.SummaryCards {
 				HTTPStatus:  b.HTTPStatus,
 				ErrorSource: b.ErrorSource,
 				ErrorDetail: b.ErrorDetail,
+				LoginCmd:    b.LoginCmd,
 			})
 		}
 	}

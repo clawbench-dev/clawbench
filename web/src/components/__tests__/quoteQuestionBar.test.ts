@@ -374,7 +374,7 @@ describe('QuoteQuestionBar component', () => {
 
     vm.handleAdd()
 
-    expect(wrapper.emitted('add')![0]).toEqual([''])
+    expect(wrapper.emitted('add')![0]).toEqual(['', { pickTarget: false }])
     expect(vm.expanded).toBe(false)
   })
 
@@ -387,7 +387,7 @@ describe('QuoteQuestionBar component', () => {
 
     vm.handleAdd()
 
-    expect(wrapper.emitted('add')![0]).toEqual(['note for this quote'])
+    expect(wrapper.emitted('add')![0]).toEqual(['note for this quote', { pickTarget: false }])
     expect(vm.inputText).toBe('')
   })
 
@@ -408,11 +408,41 @@ describe('QuoteQuestionBar component', () => {
     await nextTick()
     vm.handleSend()
     expect(wrapper.emitted('send')).toBeTruthy()
-    expect(wrapper.emitted('send')![0]).toEqual(['my question'])
+    expect(wrapper.emitted('send')![0]).toEqual(['my question', { pickTarget: false }])
   })
 
-  it('clears input and collapses after send', async () => {
+  /**
+   * Long-press targets must not be selectable.
+   *
+   * The Android WebView recognises a hold on selectable text as its OWN text
+   * selection gesture: it takes over the touch stream and fires `touchcancel`,
+   * which kills the 500ms timer before it can arm. Without `user-select: none`
+   * the "hold to pick another conversation" gesture is dead on Android — the
+   * exact platform the issue was filed from.
+   *
+   * The two other long-press consumers in the app already carry this pair
+   * (`.file-item`, the quick-send rows), which is how the omission here was
+   * found. `touch-callout` is the iOS counterpart.
+   */
+  it('disables text selection on the three long-press buttons', async () => {
+    // Collapsed toolbar first (quote action), then the expanded panel's
+    // add/send pair — they live in mutually exclusive branches.
     const wrapper = mountBar()
+    const quoteBtn = wrapper.findAll('.quote-bar-action')[2].element as HTMLElement
+    const collapsedStyles = window.getComputedStyle(quoteBtn)
+    expect(collapsedStyles.userSelect, 'quote action user-select').toBe('none')
+    expect(collapsedStyles.webkitUserSelect, 'quote action -webkit-user-select').toBe('none')
+
+    await (wrapper.vm as any).expand()
+    for (const sel of ['.qq-add-btn', '.qq-send-btn']) {
+      const el = wrapper.find(sel).element as HTMLElement
+      const styles = window.getComputedStyle(el)
+      expect(styles.userSelect, `${sel} user-select`).toBe('none')
+      expect(styles.webkitUserSelect, `${sel} -webkit-user-select`).toBe('none')
+    }
+  })
+
+  it('clears input and collapses after send', async () => {    const wrapper = mountBar()
     const vm = wrapper.vm as any
     await vm.expand()
     vm.inputText = 'test'
@@ -422,6 +452,124 @@ describe('QuoteQuestionBar component', () => {
     // After send, expanded should be false and inputText empty
     expect(vm.expanded).toBe(false)
     expect(vm.inputText).toBe('')
+  })
+
+  /**
+   * The secondary gesture (issue #560): the plain tap commits to the active
+   * conversation, a HOLD asks for another one. Without this the cross-session
+   * path would be unreachable from the button.
+   *
+   * The commit is deferred past the click that follows the release, so the
+   * assertion has to drain timers (jsdom has no touch pipeline, so the mouse
+   * path is the one exercised here; both use the same handlers).
+   */
+  it('a mouse hold on add asks for a target instead of committing directly', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountBar()
+    const vm = wrapper.vm as any
+    await vm.expand()
+    vm.inputText = 'note'
+
+    vm.startHold('add')
+    vi.advanceTimersByTime(500)
+    // Nothing yet: the gesture is not over.
+    expect(wrapper.emitted('add')).toBeFalsy()
+
+    vm.endHold()
+    // The click the browser dispatches right after the release must be
+    // swallowed — otherwise the payload is delivered twice.
+    vm.onAddClick()
+    vi.runAllTimers()
+
+    expect(wrapper.emitted('add')).toEqual([['note', { pickTarget: true }]])
+    vi.useRealTimers()
+  })
+
+  it('commits once even when both touchend and mouseup arrive for one hold', async () => {
+    // Hybrid devices deliver both. The second release must not fire a second
+    // commit (which would target an already-cleared input).
+    vi.useFakeTimers()
+    const wrapper = mountBar()
+    const vm = wrapper.vm as any
+    await vm.expand()
+    vm.inputText = 'note'
+
+    vm.startHold('add')
+    vi.advanceTimersByTime(600)
+    vm.endHold()
+    vm.endHold()
+    vi.runAllTimers()
+
+    expect(wrapper.emitted('add')).toEqual([['note', { pickTarget: true }]])
+    vi.useRealTimers()
+  })
+
+  it('does not swallow the next click when the hold produced no click at all', async () => {
+    // Touch with preventDefault: no synthetic click follows the release. The
+    // latch must clear itself, or the user's NEXT tap does nothing.
+    vi.useFakeTimers()
+    const wrapper = mountBar()
+    const vm = wrapper.vm as any
+    await vm.expand()
+    vm.inputText = 'note'
+
+    vm.startHold('add')
+    vi.advanceTimersByTime(600)
+    vm.endHold({ preventDefault: vi.fn() })
+    vi.runAllTimers()
+
+    vm.inputText = 'second'
+    vm.onAddClick()
+    expect(wrapper.emitted('add')).toEqual([
+      ['note', { pickTarget: true }],
+      ['second', { pickTarget: false }],
+    ])
+    vi.useRealTimers()
+  })
+
+  it('Enter in the input sends to the active conversation, not the picker', async () => {
+    // Vue passes the KeyboardEvent as the handler's first argument. Routing the
+    // keydown straight to handleSend would put the event in `pickTarget` and
+    // open the picker on every Enter press.
+    const wrapper = mountBar()
+    const vm = wrapper.vm as any
+    await vm.expand()
+    vm.inputText = 'my question'
+    await nextTick()
+
+    await wrapper.find('.qq-textarea').trigger('keydown', { key: 'Enter' })
+
+    expect(wrapper.emitted('send')).toEqual([['my question', { pickTarget: false }]])
+  })
+
+  it('a short click on add commits to the active session (no picker)', async () => {
+    const wrapper = mountBar()
+    const vm = wrapper.vm as any
+    await vm.expand()
+    vm.inputText = 'note'
+
+    vm.onAddClick()
+
+    expect(wrapper.emitted('add')).toEqual([['note', { pickTarget: false }]])
+  })
+
+  it('cancels the hold when the pointer leaves the button', async () => {
+    // Dragging off a button is "never mind": neither the hold NOR a normal
+    // commit may fire, and the next click must still work.
+    vi.useFakeTimers()
+    const wrapper = mountBar()
+    const vm = wrapper.vm as any
+    await vm.expand()
+    vm.inputText = 'note'
+
+    vm.startHold('add')
+    vm.cancelHold()
+    vi.advanceTimersByTime(600)
+    expect(wrapper.emitted('add')).toBeFalsy()
+
+    vm.onAddClick()
+    expect(wrapper.emitted('add')).toEqual([['note', { pickTarget: false }]])
+    vi.useRealTimers()
   })
 
   it('resets expanded and input when visible becomes false', async () => {
@@ -611,7 +759,7 @@ describe('QuoteQuestionBar component', () => {
   it('emits add when the collapsed quote action is clicked', async () => {
     const wrapper = mountBar()
     await wrapper.findAll('.quote-bar-action')[2].trigger('click')
-    expect(wrapper.emitted('add')![0]).toEqual([''])
+    expect(wrapper.emitted('add')![0]).toEqual(['', { pickTarget: false }])
   })
 
   it('does not render a message icon inside the quoted snippet', async () => {

@@ -232,8 +232,19 @@ func TestCodexStream_TurnCompleted(t *testing.T) {
 	if events[0].Type != "metadata" {
 		t.Errorf("expected metadata event, got %s", events[0].Type)
 	}
-	if events[0].Meta.InputTokens != 100 {
-		t.Errorf("expected 100 input tokens, got %d", events[0].Meta.InputTokens)
+	if events[0].Meta.InputTokens != 150 {
+		// input_tokens (100) + cached_input_tokens (50): Codex reports cache
+		// OUTSIDE input, so the normalized prompt size is the sum.
+		t.Errorf("expected 150 input tokens, got %d", events[0].Meta.InputTokens)
+	}
+	if events[0].Meta.CachedReadTokens != 50 || events[0].Meta.CacheHitTokens != 50 {
+		t.Errorf("expected cache read/hit 50, got %d/%d", events[0].Meta.CachedReadTokens, events[0].Meta.CacheHitTokens)
+	}
+	if events[0].Meta.CacheMissTokens != 100 {
+		t.Errorf("expected cache miss 100 (uncached input), got %d", events[0].Meta.CacheMissTokens)
+	}
+	if events[0].Meta.TotalTokens != 350 {
+		t.Errorf("expected total 350, got %d", events[0].Meta.TotalTokens)
 	}
 	if events[0].Meta.OutputTokens != 200 {
 		t.Errorf("expected 200 output tokens, got %d", events[0].Meta.OutputTokens)

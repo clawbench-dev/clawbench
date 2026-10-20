@@ -626,6 +626,9 @@ func errorPayload(event ai.StreamEvent) any {
 	if event.ErrorDetail != "" {
 		payload["error_detail"] = event.ErrorDetail
 	}
+	if event.LoginCmd != "" {
+		payload["login_cmd"] = event.LoginCmd
+	}
 	return payload
 }
 
@@ -645,6 +648,9 @@ func warningPayload(event ai.StreamEvent) any {
 	}
 	if event.ErrorDetail != "" {
 		payload["error_detail"] = event.ErrorDetail
+	}
+	if event.LoginCmd != "" {
+		payload["login_cmd"] = event.LoginCmd
 	}
 	return payload
 }

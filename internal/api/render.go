@@ -19,6 +19,9 @@ const (
 	// CommandAgent backs /cb-agent — managing agents (create by cloning,
 	// search / view, update, delete).
 	CommandAgent Command = "agent"
+	// CommandMCP backs /cb-mcp — managing the global MCP server list and the
+	// per-agent enable policy.
+	CommandMCP Command = "mcp"
 )
 
 // Spec tags referenced by commandOperations. They are named constants so the
@@ -75,12 +78,32 @@ var commandOperations = map[Command][]struct {
 	CommandAgent: {
 		// The list endpoint is both the search/view surface (there is no
 		// dedicated search endpoint — the AI filters the list) and how the AI
-		// discovers the source_id needed to create an agent (creation is by
-		// cloning an existing one; there is no create-from-scratch).
+		// discovers the source_id needed to clone an agent. agentsCreate covers
+		// both shapes: cloning (source_id) and creating a custom ACP agent from
+		// a spawn command (name + acp_command).
 		{"agentsList", tagAgents},
 		{"agentsCreate", tagAgents},
 		{"agentsUpdate", tagAgents},
 		{"agentsDelete", tagAgents},
+		// Creating an agent is only half the job: a user who says "add this
+		// tool" expects it to WORK. Both self-test routes are exposed so the AI
+		// can verify instead of asserting success. They are separate operations
+		// (not one with a flag) because the deep one costs tokens.
+		{"agentsSelfTest", tagAgents},
+		{"agentsSelfTestDeep", tagAgents},
+	},
+	CommandMCP: {
+		// The config pair carries the global server list; the agent pair carries
+		// the per-agent enable policy. Both are needed: a user who says "add
+		// this MCP server for the claude agent only" has to write two resources.
+		//
+		// Nothing else from the Config tag is exposed — PATCH /api/config also
+		// accepts passwords, TTS keys and port settings, none of which an MCP
+		// command should ever reach.
+		{"getConfig", "Config"},
+		{"patchConfig", "Config"},
+		{"agentsList", tagAgents},
+		{"agentsUpdate", tagAgents},
 	},
 }
 

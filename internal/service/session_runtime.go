@@ -120,7 +120,7 @@ func emitSessionEvent(sessionID, status string, hasNewMessages bool, pushEnabled
 	// When pushEnabled is false (a terminal state already reported elsewhere, e.g.
 	// the goroutine pushed "completed" before CancelSession ran), neither the
 	// notifiable pending event nor a push is produced — only the live WS broadcast.
-	if model.ConfigInstance.PushMode != "disabled" && pushEnabled {
+	if model.ConfigInstance.PushMode != model.PushModeDisabled && pushEnabled {
 		StoreNotifiableEvent(msg)
 	}
 	if wsBroadcastEnabled {
@@ -272,7 +272,7 @@ func pushSessionTerminal(sessionID, status string) {
 
 	// Store pending event for Android offline replay (mirrors EmitSessionEvent's
 	// write-ahead logic). Skip when push_mode is "disabled".
-	if model.ConfigInstance.PushMode != "disabled" {
+	if model.ConfigInstance.PushMode != model.PushModeDisabled {
 		data := &ws.SessionUpdateData{
 			SessionID:       sessionID,
 			Status:          status,
@@ -297,6 +297,15 @@ func pushSessionTerminal(sessionID, status string) {
 		} else if feishu.IsStarted() && feishu.PushSessionEvent(sessionID, status, title, responsePreviewRaw, projectPath, "", "") {
 			_ = DeletePendingEvent(msg.ID)
 		}
+	}
+
+	// Usage meter: a completed turn is the moment new usage lands in the ledger,
+	// so this is the earliest point the over-plan threshold can be crossed.
+	// Asynchronous and best-effort: it runs an aggregate query, and a terminal
+	// notification must not wait on it. CheckUsageMeter throttles itself, so a
+	// drain that completes several turns in a row does not run one query each.
+	if status == statusCompleted {
+		go CheckUsageMeter(context.Background())
 	}
 }
 

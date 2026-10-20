@@ -83,6 +83,65 @@ interface AttachmentSnapshot {
 
 const attachmentDrafts = new Map<string, AttachmentSnapshot>()
 
+// ── Draft persistence ──
+//
+// The draft map is module-level, so it survives session switches and project
+// switches (the app subtree is rebuilt, the module is not). It does NOT survive
+// a page reload, and that is what made the session picker's "add" path lie: the
+// toast says "added to that session's input", but after a refresh the card was
+// gone with no trace.
+//
+// sessionStorage (not localStorage) because these are ephemeral, tab-scoped
+// staging buffers: a second tab must not inherit another tab's half-composed
+// attachment list, and the single-tab guard means there is only ever one writer.
+// Failures are swallowed — quota or a disabled storage must never break the
+// in-memory path, which is what the current session actually uses.
+const DRAFT_STORAGE_KEY = 'clawbench-attachment-drafts'
+// A quote carries its verbatim text, so a big selection can be large. Above
+// this the whole map is left in memory only rather than risking the quota (a
+// failed write would otherwise throw on EVERY subsequent edit).
+const DRAFT_STORAGE_MAX_BYTES = 512 * 1024
+
+function loadAttachmentDrafts(): void {
+  try {
+    const raw = sessionStorage.getItem(DRAFT_STORAGE_KEY)
+    if (!raw) return
+    const parsed = JSON.parse(raw) as Record<string, AttachmentSnapshot>
+    for (const [sessionId, snap] of Object.entries(parsed || {})) {
+      if (!sessionId || !snap || !Array.isArray(snap.files) || !Array.isArray(snap.quotes)) continue
+      attachmentDrafts.set(sessionId, {
+        files: snap.files,
+        quotes: snap.quotes,
+        quote: snap.quote ?? null,
+        mentions: Array.isArray(snap.mentions) ? snap.mentions : [],
+      })
+    }
+  } catch {
+    // Corrupt or unavailable storage: start with no drafts rather than failing
+    // module init (the app would otherwise not boot at all).
+  }
+}
+
+function persistAttachmentDrafts(): void {
+  try {
+    if (attachmentDrafts.size === 0) {
+      sessionStorage.removeItem(DRAFT_STORAGE_KEY)
+      return
+    }
+    const encoded = JSON.stringify(Object.fromEntries(attachmentDrafts))
+    if (encoded.length > DRAFT_STORAGE_MAX_BYTES) {
+      sessionStorage.removeItem(DRAFT_STORAGE_KEY)
+      return
+    }
+    sessionStorage.setItem(DRAFT_STORAGE_KEY, encoded)
+  } catch {
+    // Quota exceeded / storage disabled: keep the in-memory copy, which is what
+    // the current session uses. Never let bookkeeping break staging.
+  }
+}
+
+loadAttachmentDrafts()
+
 /**
  * Identity of an attached file entry. A path may carry MULTIPLE independent
  * references: a plain whole-file attach (no lines), and one or more distinct
@@ -333,6 +392,7 @@ function snapshotAttachments(sessionId: string) {
     quote: quoteData.value ? { ...quoteData.value } : null,
     mentions: stagedMentions.value.map(m => ({ ...m })),
   })
+  persistAttachmentDrafts()
 }
 
 /**
@@ -362,6 +422,7 @@ function restoreAttachments(sessionId: string, opts?: { onlyIfLiveEmpty?: boolea
 function discardAttachmentDraft(sessionId: string) {
   if (!sessionId) return
   attachmentDrafts.delete(sessionId)
+  persistAttachmentDrafts()
   // The draft is gone — a later departure from this session is not a repeat.
   if (lastDepartedSessionId === sessionId) lastDepartedSessionId = null
 }
@@ -397,7 +458,9 @@ function ensureAttachmentDraft(sessionId: string): AttachmentSnapshot {
  */
 function stageQuoteIntoDraft(sessionId: string, data: QuoteData, note = ''): StagedQuote | null {
   if (!sessionId) return null
-  return mintQuote(ensureAttachmentDraft(sessionId).quotes, data, note)
+  const staged = mintQuote(ensureAttachmentDraft(sessionId).quotes, data, note)
+  persistAttachmentDrafts()
+  return staged
 }
 
 /**
@@ -412,6 +475,7 @@ function stageAttachmentIntoDraft(sessionId: string, entry: FileEntry): boolean 
   const snap = ensureAttachmentDraft(sessionId)
   if (snap.files.some(f => sameEntry(f, entry))) return false
   snap.files.push({ ...entry })
+  persistAttachmentDrafts()
   return true
 }
 

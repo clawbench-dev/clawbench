@@ -202,8 +202,10 @@
       class="code-link-preview-floating"
       :class="{
         'is-dragging': isDraggingCard,
+        'is-resizing': isResizingCard,
         'is-media': isMediaView,
         'is-docked': docked,
+        'is-user-sized': cardW !== null || cardH !== null,
       }"
       role="dialog"
       :aria-label="t('file.codePreview.title')"
@@ -458,6 +460,23 @@
         :load-more-above="loadMoreAbove"
         :load-more-below="loadMoreBelow"
         @refresh="preview.refresh()"
+      />
+      <!-- Resize grip. Only on the floating card: the docked pane is sized by
+           the caller's split and the touch sheet by its content, so a grabber
+           there would fight a layout that already owns the box.
+
+           A corner grip rather than three edge strips on purpose — the body
+           scrolls to the card's right and bottom edges, so an edge strip would
+           sit on top of the scrollbar and steal its drags. The corner overlaps
+           only the scrollbar CORNER, which is empty (the app's bar has no
+           stepper buttons), the same trade `<textarea>`'s own resize grip
+           makes. -->
+      <span
+        v-if="!docked"
+        class="code-preview-resize-grip"
+        :title="t('file.codePreview.resizeHint')"
+        aria-hidden="true"
+        @pointerdown="onResizePointerDown"
       />
     </div>
   </Teleport>
@@ -891,9 +910,9 @@ const handleQuoteToChat = () => {
   const endLine = sliced?.endLine ?? target.lineEnd ?? (startLine + Math.max(0, code.split('\n').length - 1))
 
   // The card is a quote (with the code as its content), not a bare attachment
-  // chip — see the note below. The destination is always the user's choice (the
-  // picker), so the card is NOT staged locally; confirmTarget stages it for the
-  // session they pick.
+  // chip — see the note below. It goes to the conversation the user is working
+  // in (issue #560: the card is opened FROM that context, so asking again is
+  // friction); the picker appears only when there is no active session.
   requestTarget({
     mode: 'add',
     quotes: [{
@@ -907,7 +926,7 @@ const handleQuoteToChat = () => {
     }],
     attachments: [],
     text: '',
-  })
+  }, { deliverTo: 'active' })
   props.preview.close()
 }
 
@@ -988,6 +1007,171 @@ let dragEffectiveMinX = 0
 let dragRafId: number | null = null
 let pendingPointerX = 0
 let pendingPointerY = 0
+
+// ── User resize (drag the bottom-right corner) ─────────────────────────────
+// The card is content-sized: without an explicit size its height is whatever
+// the body happens to be (a 150px iframe, three lines of code, a long
+// document). Dragging the grip pins the box so the user decides how much room
+// the preview gets, and the body scrolls inside it from then on.
+//
+// Both axes are stored in viewport pixels (the same space as dragX/dragY and
+// getBoundingClientRect) and converted through toFixedCSS on the way into CSS,
+// so the size survives a UI-scale change like every other inline coordinate.
+//
+// `null` means "not user-sized yet" — the card keeps its content-driven size
+// and the CSS caps apply.
+const cardW = ref<number | null>(null)
+const cardH = ref<number | null>(null)
+const isResizingCard = ref(false)
+
+/** Floor for a resized card, in viewport pixels. Below this the header, the
+ *  tool row and a couple of body lines no longer fit. */
+const MIN_CARD_WIDTH = 320
+const MIN_CARD_HEIGHT = 160
+
+let resizeStartWidth = 0
+let resizeStartHeight = 0
+let resizeStartPointerX = 0
+let resizeStartPointerY = 0
+let resizePointerId: number | null = null
+let resizeTarget: HTMLElement | null = null
+let resizeRafId: number | null = null
+let pendingResizeX = 0
+let pendingResizeY = 0
+/** Timestamp of the previous grip pointerdown, for the double-click reset. */
+let lastGripDownAt = 0
+/** Whether the previous grip gesture actually resized (a tap must not reset). */
+let lastGripMoved = false
+
+/** Double-click / double-tap window on the grip, matching the platform feel. */
+const GRIP_DOUBLE_TAP_MS = 350
+
+/** Reset a user-sized card back to its content-driven size (grip dblclick). */
+const resetCardSize = () => {
+  cardW.value = null
+  cardH.value = null
+  nextTick(() => {
+    // Placement was computed against the old box; re-derive it so the card
+    // does not stay clamped to a size it no longer has.
+    syncPlacementWithCard(true)
+  })
+}
+
+const updateResizeSize = () => {
+  resizeRafId = null
+  if (!isResizingCard.value) return
+
+  const vp = typeof window !== 'undefined' ? getZoomedViewport() : { width: 1024, height: 768 }
+  const topSafe = (typeof window !== 'undefined' ? getAppHeaderBottom() : 40) + 12
+  const left = dragX.value ?? 12
+  const top = dragY.value ?? topSafe
+  // Never grow past the viewport from the card's own origin: the card is
+  // anchored top-left, so the room it has is what is left to its right/bottom.
+  const maxW = Math.max(MIN_CARD_WIDTH, vp.width - left - 12)
+  const maxH = Math.max(MIN_CARD_HEIGHT, vp.height - top - 12)
+
+  const nextW = resizeStartWidth + (pendingResizeX - resizeStartPointerX)
+  const nextH = resizeStartHeight + (pendingResizeY - resizeStartPointerY)
+  cardW.value = Math.round(Math.min(Math.max(nextW, MIN_CARD_WIDTH), maxW))
+  cardH.value = Math.round(Math.min(Math.max(nextH, MIN_CARD_HEIGHT), maxH))
+}
+
+const onResizePointerDown = (e: PointerEvent) => {
+  if (props.docked) return
+  if (e.button !== 0 && e.button !== undefined) return
+  if (!cardRef.value) return
+  // The grip sits inside the card, whose outside-click handler would otherwise
+  // close it on pointerdown. Stop the propagation and the text selection a
+  // pointer drag would otherwise start.
+  e.preventDefault()
+  e.stopPropagation()
+
+  // Double-click (or double-tap on a coarse pointer) resets the box. Handled
+  // here rather than with @dblclick because a touch device never fires it: the
+  // first tap of the pair goes through this same pointerdown path.
+  const now = Date.now()
+  if (now - lastGripDownAt < GRIP_DOUBLE_TAP_MS && !lastGripMoved) {
+    lastGripDownAt = 0
+    lastGripMoved = false
+    resetCardSize()
+    return
+  }
+  lastGripDownAt = now
+  lastGripMoved = false
+
+  hideTooltip(true)
+  // Resizing implies the user wants this card to stay put.
+  props.preview.pin()
+
+  const rect = cardRef.value.getBoundingClientRect()
+  resizeStartWidth = rect.width
+  resizeStartHeight = rect.height
+  resizeStartPointerX = e.clientX
+  resizeStartPointerY = e.clientY
+  pendingResizeX = e.clientX
+  pendingResizeY = e.clientY
+  // Anchor the card where it currently sits so the pinned size has a fixed
+  // origin; a still-anchored card would otherwise re-place itself mid-drag.
+  if (dragX.value === null) dragX.value = rect.left
+  if (dragY.value === null) dragY.value = rect.top
+
+  isResizingCard.value = true
+  resizeTarget = e.currentTarget as HTMLElement
+  resizePointerId = e.pointerId
+  try {
+    resizeTarget?.setPointerCapture?.(e.pointerId)
+  } catch {
+    // ignore
+  }
+
+  resizeTarget?.addEventListener('pointerup', onResizePointerUp, { once: true })
+  resizeTarget?.addEventListener('pointercancel', onResizePointerUp, { once: true })
+  window.addEventListener('pointermove', onResizePointerMove)
+  window.addEventListener('pointerup', onResizePointerUp, { once: true })
+  window.addEventListener('pointercancel', onResizePointerUp, { once: true })
+
+  document.body.classList.add('code-preview-resizing')
+}
+
+const onResizePointerMove = (e: PointerEvent) => {
+  if (!isResizingCard.value) return
+  // A gesture that moves is a resize, never the first half of a double-tap.
+  if (Math.abs(e.clientX - resizeStartPointerX) > 2 || Math.abs(e.clientY - resizeStartPointerY) > 2) {
+    lastGripMoved = true
+  }
+  pendingResizeX = e.clientX
+  pendingResizeY = e.clientY
+  if (resizeRafId === null) {
+    resizeRafId = requestAnimationFrame(updateResizeSize)
+  }
+}
+
+const stopResizing = (e?: PointerEvent) => {
+  if (!isResizingCard.value) return
+  isResizingCard.value = false
+  document.body.classList.remove('code-preview-resizing')
+  window.removeEventListener('pointermove', onResizePointerMove)
+  if (resizeRafId !== null) {
+    cancelAnimationFrame(resizeRafId)
+    resizeRafId = null
+  }
+
+  const target = (e?.currentTarget as HTMLElement) || resizeTarget
+  const pointerId = e?.pointerId ?? resizePointerId
+  if (target && pointerId !== null) {
+    try {
+      target?.releasePointerCapture?.(pointerId)
+    } catch {
+      // ignore
+    }
+  }
+  resizeTarget = null
+  resizePointerId = null
+}
+
+const onResizePointerUp = (e: PointerEvent) => {
+  stopResizing(e)
+}
 
 const targetFilePath = computed(() => props.preview.target.value?.filePath || '')
 
@@ -1312,16 +1496,30 @@ const cardStyle = computed(() => {
   // Docked: the pane owns position/size (flex + split ratio), so no inline
   // float styles — CSS handles it entirely.
   if (props.docked) return {}
+
+  const style: Record<string, string> = {}
+  const userSized = cardW.value !== null || cardH.value !== null
+  // A user-dragged size is authoritative on the axis it was set: the
+  // stylesheet caps (720px wide, min(65vh, 480px) / 88vh tall) are
+  // content-driven defaults, and an inline `height` alone would still be
+  // clipped by them. Only the viewport remains as a bound.
+  if (cardW.value !== null) {
+    style.width = `${toFixedCSS(cardW.value)}px`
+    style.maxWidth = 'calc(100vw - 24px)'
+  }
+  if (cardH.value !== null) {
+    style.height = `${toFixedCSS(cardH.value)}px`
+    style.maxHeight = 'calc(100vh - 24px)'
+  }
+
   if (dragX.value !== null && dragY.value !== null) {
-    const style: Record<string, string> = {
-      left: `${toFixedCSS(dragX.value)}px`,
-      top: `${toFixedCSS(dragY.value)}px`,
-    }
+    style.left = `${toFixedCSS(dragX.value)}px`
+    style.top = `${toFixedCSS(dragY.value)}px`
     // 拖拽期间锁定高度尺寸，作为整体刚体平移，彻底消除每帧 reflow 和底部粘滞拉伸感
     if (isDraggingCard.value && cachedCardHeight > 0) {
       style.height = `${toFixedCSS(cachedCardHeight)}px`
       style.maxHeight = `${toFixedCSS(cachedCardHeight)}px`
-    } else {
+    } else if (!userSized) {
       const vp = typeof window !== 'undefined' ? getZoomedViewport() : { width: 1024, height: 768 }
       const edgeMargin = 12
       const availableBelow = Math.max(120, vp.height - dragY.value - edgeMargin)
@@ -1335,11 +1533,9 @@ const cardStyle = computed(() => {
   }
   const plc = props.preview.placement.value
   if (plc) {
-    const style: Record<string, string> = {
-      left: plc.cssLeft,
-      top: plc.cssTop,
-    }
-    if (plc.maxHeight && plc.maxHeight > 0) {
+    style.left = plc.cssLeft
+    style.top = plc.cssTop
+    if (!userSized && plc.maxHeight && plc.maxHeight > 0) {
       style.maxHeight = mediaMaxHeightCss(toFixedCSS(plc.maxHeight))
     }
     return style
@@ -1347,15 +1543,13 @@ const cardStyle = computed(() => {
   const anchor = props.preview.target.value?.anchorEl
   if (anchor && typeof anchor.getBoundingClientRect === 'function') {
     const r = anchor.getBoundingClientRect()
-    return {
-      left: `${toFixedCSS(Math.max(16, r.left))}px`,
-      top: `${toFixedCSS(r.bottom + 8)}px`,
-    }
+    style.left = `${toFixedCSS(Math.max(16, r.left))}px`
+    style.top = `${toFixedCSS(r.bottom + 8)}px`
+    return style
   }
-  return {
-    left: '16px',
-    top: '60px',
-  }
+  style.left = '16px'
+  style.top = '60px'
+  return style
 })
 
 const handleCopy = () => {
@@ -1592,6 +1786,22 @@ const clampCurrentPosition = () => {
   // Docked panes are sized by the split layout, never clamped to the viewport.
   if (props.docked) return
   if (!cardRef.value) return
+
+  // A user-chosen size can go out of bounds when the viewport shrinks (window
+  // resize, UI-scale change, rotation). Clamp the SIZE first so the position
+  // clamp below measures the box the card will actually have.
+  if (cardW.value !== null || cardH.value !== null) {
+    const vp = typeof window !== 'undefined' ? getZoomedViewport() : { width: 1024, height: 768 }
+    const left = dragX.value ?? 12
+    const top = dragY.value ?? (typeof window !== 'undefined' ? getAppHeaderBottom() : 40) + 12
+    if (cardW.value !== null) {
+      cardW.value = Math.round(Math.min(cardW.value, Math.max(MIN_CARD_WIDTH, vp.width - left - 12)))
+    }
+    if (cardH.value !== null) {
+      cardH.value = Math.round(Math.min(cardH.value, Math.max(MIN_CARD_HEIGHT, vp.height - top - 12)))
+    }
+  }
+
   const cardRect = cardRef.value.getBoundingClientRect()
   if (dragX.value !== null && dragY.value !== null) {
     const clamped = clampCardPosition(dragX.value, dragY.value, cardRect.width, cardRect.height)
@@ -1615,6 +1825,11 @@ watch(
       dragX.value = null
       dragY.value = null
       stopDragging()
+      // The dragged position resets on close, so the user-chosen size does too:
+      // a preview of a different file should open at its natural size, not
+      // inherit a box chosen for the previous one.
+      cardW.value = null
+      cardH.value = null
     } else {
       if (props.preview.status.value === 'ready') {
         scrollToTargetLine()
@@ -1769,6 +1984,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   stopDragging()
+  stopResizing()
   hideTooltip(true)
   if (pathCopiedTimer) {
     clearTimeout(pathCopiedTimer)

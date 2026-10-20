@@ -6,6 +6,7 @@ import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'
 import { store } from '@/stores/app'
 import type { useCodeLinkPreview } from '@/composables/useCodeLinkPreview'
 import { useChatContext } from '@/composables/useChatContext'
+import { useSessionIdentity } from '@/composables/useSessionIdentity'
 import { cancelTarget, usePendingTarget } from '@/composables/useConversationTarget.ts'
 import { _setPlatformForTest, _resetPlatformForTest } from '@/composables/usePlatformDetect'
 import { readFileSync } from 'node:fs'
@@ -1211,7 +1212,45 @@ describe('CodeLinkPreview.vue', () => {
     wrapper.unmount()
   })
 
-  it('routes quoteToChat through the session picker instead of staging locally', async () => {
+  it('routes quoteToChat to the active conversation without a dialog', async () => {
+    // Issue #560: the card is opened FROM the conversation being worked in, so
+    // quoting it back into that same conversation must not ask again.
+    const identity = useSessionIdentity()
+    const prev = identity.currentSessionId.value
+    identity.currentSessionId.value = 's-active'
+    try {
+      const switchTabMock = vi.fn()
+      const preview = createMockPreviewController()
+      mount(CodeLinkPreview, {
+        props: { preview },
+        global: {
+          plugins: [i18n],
+          provide: { switchTab: switchTabMock },
+        },
+      })
+
+      const quoteBtn = document.querySelector('button[title="Quote to chat"]') as HTMLButtonElement
+      expect(quoteBtn).not.toBeNull()
+      quoteBtn.click()
+      await nextTick()
+      await flushPromises()
+
+      expect(preview.close).toHaveBeenCalled()
+      expect(usePendingTarget().pickerOpen.value).toBe(false)
+      expect(switchTabMock).not.toHaveBeenCalled()
+      const chatContext = useChatContext()
+      expect(chatContext.stagedQuotes.value).toHaveLength(1)
+      expect(chatContext.stagedQuotes.value[0].filePath).toBe('src/main.ts')
+      // A quote carries the path + range itself; a second attachment chip would
+      // duplicate it.
+      expect(chatContext.attachedFiles.value).toHaveLength(0)
+    } finally {
+      identity.currentSessionId.value = prev
+      useChatContext().clearAll()
+    }
+  })
+
+  it('falls back to the picker when no session is active', async () => {
     const switchTabMock = vi.fn()
     const preview = createMockPreviewController()
     mount(CodeLinkPreview, {
@@ -1223,20 +1262,13 @@ describe('CodeLinkPreview.vue', () => {
     })
 
     const quoteBtn = document.querySelector('button[title="Quote to chat"]') as HTMLButtonElement
-    expect(quoteBtn).not.toBeNull()
     quoteBtn.click()
     await nextTick()
 
-    // The card closes and hands the quote to the picker; it must NOT stage it
-    // into the live input (the destination is the user's choice) and must NOT
-    // switch tabs — the picker pins the current session to the top row.
-    expect(preview.close).toHaveBeenCalled()
     const { pickerOpen, pending } = usePendingTarget()
     expect(pickerOpen.value).toBe(true)
     expect(pending.value?.quotes).toHaveLength(1)
     expect(pending.value?.quotes[0].filePath).toBe('src/main.ts')
-    // A quote carries the path + range itself; a second attachment chip would
-    // duplicate it, so the payload must have no attachments.
     expect(pending.value?.attachments).toEqual([])
     expect(switchTabMock).not.toHaveBeenCalled()
     const chatContext = useChatContext()
@@ -3225,6 +3257,233 @@ describe('code-link-preview.css — compact floating header', () => {
     expect(name).toMatch(/white-space:\s*nowrap/)
     expect(name).toMatch(/text-overflow:\s*ellipsis/)
     expect(name).not.toMatch(/-webkit-line-clamp/)
+  })
+})
+
+describe('CodeLinkPreview.vue — user resize (floating card)', () => {
+  /** jsdom has no layout: every getBoundingClientRect is 0×0, so the resize
+   *  maths would start from a zero-size box. Pin a realistic one instead. */
+  function stubCardRect(el: HTMLElement, rect: { width: number; height: number; left?: number; top?: number }) {
+    const left = rect.left ?? 100
+    const top = rect.top ?? 100
+    el.getBoundingClientRect = () => ({
+      x: left,
+      y: top,
+      left,
+      top,
+      width: rect.width,
+      height: rect.height,
+      right: left + rect.width,
+      bottom: top + rect.height,
+      toJSON: () => ({}),
+    }) as DOMRect
+  }
+
+  it('renders the grip on the floating card and not on the docked pane', async () => {
+    const preview = createMockPreviewController()
+    const floating = mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+    await flushPromises()
+    expect(document.querySelector('.code-link-preview-floating .code-preview-resize-grip')).not.toBeNull()
+    floating.unmount()
+
+    const docked = mount(CodeLinkPreview, {
+      props: { preview: createMockPreviewController(), docked: true },
+      global: { plugins: [i18n] },
+    })
+    await flushPromises()
+    expect(docked.find('.code-preview-resize-grip').exists()).toBe(false)
+    docked.unmount()
+  })
+
+  it('grows the card from the corner drag and pins it in place', async () => {
+    const preview = createMockPreviewController()
+    const wrapper = mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+    await flushPromises()
+
+    const card = document.querySelector('.code-link-preview-floating') as HTMLElement
+    stubCardRect(card, { width: 720, height: 260 })
+    const grip = card.querySelector('.code-preview-resize-grip') as HTMLElement
+    grip.setPointerCapture = vi.fn()
+    grip.releasePointerCapture = vi.fn()
+
+    grip.dispatchEvent(new PointerEvent('pointerdown', { clientX: 800, clientY: 400, pointerId: 7, bubbles: true }))
+    // Resizing implies "keep this card around".
+    expect(preview.pin).toHaveBeenCalled()
+
+    window.dispatchEvent(new PointerEvent('pointermove', { clientX: 900, clientY: 500 }))
+    await new Promise((r) => requestAnimationFrame(r))
+    await nextTick()
+
+    expect(card.style.width).toBe('820px')
+    expect(card.style.height).toBe('360px')
+    // The user-chosen box must not be re-capped by the content-tuned defaults.
+    expect(card.style.maxHeight).toBe('calc(100vh - 24px)')
+    expect(card.classList.contains('is-user-sized')).toBe(true)
+
+    grip.dispatchEvent(new PointerEvent('pointerup', { pointerId: 7, bubbles: true }))
+    expect(grip.releasePointerCapture).toHaveBeenCalledWith(7)
+    wrapper.unmount()
+  })
+
+  it('never shrinks below the usable floor', async () => {
+    const preview = createMockPreviewController()
+    const wrapper = mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+    await flushPromises()
+
+    const card = document.querySelector('.code-link-preview-floating') as HTMLElement
+    stubCardRect(card, { width: 720, height: 300 })
+    const grip = card.querySelector('.code-preview-resize-grip') as HTMLElement
+    grip.setPointerCapture = vi.fn()
+    grip.releasePointerCapture = vi.fn()
+
+    grip.dispatchEvent(new PointerEvent('pointerdown', { clientX: 800, clientY: 400, pointerId: 8, bubbles: true }))
+    // Drag far past the top-left corner: both axes clamp to the floor.
+    window.dispatchEvent(new PointerEvent('pointermove', { clientX: 0, clientY: 0 }))
+    await new Promise((r) => requestAnimationFrame(r))
+    await nextTick()
+
+    expect(card.style.width).toBe('320px')
+    expect(card.style.height).toBe('160px')
+    grip.dispatchEvent(new PointerEvent('pointerup', { pointerId: 8, bubbles: true }))
+    wrapper.unmount()
+  })
+
+  it('resets to the content-driven size on a grip double-click', async () => {
+    const preview = createMockPreviewController()
+    const wrapper = mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+    await flushPromises()
+
+    const card = document.querySelector('.code-link-preview-floating') as HTMLElement
+    stubCardRect(card, { width: 720, height: 260 })
+    const grip = card.querySelector('.code-preview-resize-grip') as HTMLElement
+    grip.setPointerCapture = vi.fn()
+    grip.releasePointerCapture = vi.fn()
+
+    grip.dispatchEvent(new PointerEvent('pointerdown', { clientX: 800, clientY: 400, pointerId: 9, bubbles: true }))
+    window.dispatchEvent(new PointerEvent('pointermove', { clientX: 900, clientY: 500 }))
+    await new Promise((r) => requestAnimationFrame(r))
+    await nextTick()
+    expect(card.style.width).toBe('820px')
+
+    grip.dispatchEvent(new PointerEvent('pointerup', { pointerId: 9, bubbles: true }))
+
+    // Two quick taps (no movement) on the grip: the reset gesture. Written as
+    // pointerdowns rather than a `dblclick` because a touch device never fires
+    // the latter — the first tap goes through the same pointer path.
+    grip.dispatchEvent(new PointerEvent('pointerdown', { clientX: 810, clientY: 410, pointerId: 11, bubbles: true }))
+    grip.dispatchEvent(new PointerEvent('pointerup', { pointerId: 11, bubbles: true }))
+    grip.dispatchEvent(new PointerEvent('pointerdown', { clientX: 810, clientY: 410, pointerId: 12, bubbles: true }))
+    await nextTick()
+
+    expect(card.style.width).toBe('')
+    expect(card.style.height).toBe('')
+    expect(card.classList.contains('is-user-sized')).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('does not reset when the first tap of the pair was a drag', async () => {
+    // A drag followed by a quick tap must resize, not silently undo the drag:
+    // only two stationary taps form the reset gesture.
+    const preview = createMockPreviewController()
+    const wrapper = mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+    await flushPromises()
+
+    const card = document.querySelector('.code-link-preview-floating') as HTMLElement
+    stubCardRect(card, { width: 720, height: 260 })
+    const grip = card.querySelector('.code-preview-resize-grip') as HTMLElement
+    grip.setPointerCapture = vi.fn()
+    grip.releasePointerCapture = vi.fn()
+
+    grip.dispatchEvent(new PointerEvent('pointerdown', { clientX: 800, clientY: 400, pointerId: 13, bubbles: true }))
+    window.dispatchEvent(new PointerEvent('pointermove', { clientX: 900, clientY: 500 }))
+    await new Promise((r) => requestAnimationFrame(r))
+    await nextTick()
+    grip.dispatchEvent(new PointerEvent('pointerup', { pointerId: 13, bubbles: true }))
+    expect(card.style.width).toBe('820px')
+
+    // Immediately tap once — within the double-tap window, but the previous
+    // gesture moved, so this is the start of a new gesture, not a reset.
+    grip.dispatchEvent(new PointerEvent('pointerdown', { clientX: 810, clientY: 410, pointerId: 14, bubbles: true }))
+    await nextTick()
+    expect(card.style.width).toBe('820px')
+    grip.dispatchEvent(new PointerEvent('pointerup', { pointerId: 14, bubbles: true }))
+    wrapper.unmount()
+  })
+
+  it('does not close the card on the grip pointerdown', async () => {
+    // The grip lives inside the card, but its pointerdown is the one gesture
+    // that must never be read as an outside click.
+    const preview = createMockPreviewController()
+    const wrapper = mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+    await flushPromises()
+
+    const grip = document.querySelector('.code-preview-resize-grip') as HTMLElement
+    grip.setPointerCapture = vi.fn()
+    grip.dispatchEvent(new PointerEvent('pointerdown', { clientX: 500, clientY: 400, pointerId: 10, bubbles: true }))
+    grip.dispatchEvent(new PointerEvent('pointerup', { pointerId: 10, bubbles: true }))
+
+    expect(preview.close).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+})
+
+describe('code-link-preview.css — resize grip', () => {
+  const css = readFileSync(
+    resolve(__dirname, '../../../assets/code-link-preview.css'),
+    'utf8',
+  )
+  const code = css.replace(/\/\*[\s\S]*?\*\//g, '')
+
+  function declsOf(selector: string): string {
+    const m = code.match(
+      new RegExp(selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\{([^}]*)\\}'),
+    )
+    expect(m, `${selector} rule must exist`).not.toBeNull()
+    return m![1]
+  }
+
+  it('is a corner grip with the diagonal resize cursor', () => {
+    const decls = declsOf('.code-preview-resize-grip')
+    expect(decls).toMatch(/position:\s*absolute/)
+    expect(decls).toMatch(/right:\s*0/)
+    expect(decls).toMatch(/bottom:\s*0/)
+    expect(decls).toMatch(/cursor:\s*nwse-resize/)
+    // A touch drag on the grip must resize, not scroll the page.
+    expect(decls).toMatch(/touch-action:\s*none/)
+  })
+
+  it('stacks above the body so the scrollbar corner cannot swallow it', () => {
+    expect(declsOf('.code-preview-resize-grip')).toMatch(/z-index:\s*\d/)
+  })
+
+  it('switches the whole card to the resize cursor while dragging', () => {
+    expect(declsOf('body.code-preview-resizing')).toMatch(/cursor:\s*nwse-resize/)
+    expect(declsOf('body.code-preview-resizing *')).toMatch(/cursor:\s*nwse-resize/)
+  })
+
+  it('drops the media floor once the user owns the size', () => {
+    // The 220px floor exists to keep a small image readable in a content-sized
+    // card. In a user-sized box it would overflow the box the user just chose.
+    const decls = declsOf('.code-link-preview-floating.is-media.is-user-sized .code-preview-content')
+    expect(decls).toMatch(/min-height:\s*0/)
   })
 })
 

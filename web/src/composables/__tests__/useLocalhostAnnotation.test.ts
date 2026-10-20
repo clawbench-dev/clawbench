@@ -254,6 +254,34 @@ describe('useLocalhostAnnotation', () => {
       expect(result).toContain('data-port="9090"')
     })
 
+    // The marker is what tells the global external-link click layer (a CAPTURE
+    // listener that stops propagation) to step aside. Without it, clicking the
+    // TEXT of a localhost URL went to the system browser, which resolves
+    // `localhost` against the device and shows a dead page.
+    it('marks annotated links with data-localhost', () => {
+      mockIsAppMode.value = true
+      mockSshInfo.value = { enabled: true }
+
+      for (const html of [
+        '<p>Visit http://localhost:3000</p>',
+        '<a href="http://localhost:5173">link</a>',
+        '<code>http://localhost:8080</code>',
+      ]) {
+        const result = annotateLocalhostUrls(html)
+        expect(result, html).toContain('data-localhost')
+        expect(result, html).toContain('md-external-link')
+      }
+    })
+
+    // A non-localhost URL must NOT get the marker: it belongs to the generic
+    // external-link dialog, and marking it would silently disable that.
+    it('does not mark non-localhost links', () => {
+      mockIsAppMode.value = true
+      mockSshInfo.value = { enabled: true }
+      const result = annotateLocalhostUrls('<p>https://example.com/x</p>')
+      expect(result).not.toContain('data-localhost')
+    })
+
     it('handles null sshInfo (not yet loaded) as enabled', () => {
       mockIsAppMode.value = true
       mockSshInfo.value = null
@@ -340,6 +368,40 @@ describe('useLocalhostAnnotation', () => {
       expect(result).toBe(true)
       expect(event.preventDefault).toHaveBeenCalled()
       // Should not call openLocalhostUrl with port <= 0
+      expect(mockEnsurePortRegistered).not.toHaveBeenCalled()
+    })
+
+    // The text of a localhost URL is a SPAN now (no <a href>), so the click
+    // handler has to recognise the span shape — the icon button alone is not
+    // the primary affordance and users tap the URL text.
+    it('handles click on a localhost link span', async () => {
+      const span = document.createElement('span')
+      span.className = 'md-external-link'
+      span.setAttribute('data-href', 'http://localhost:5173/dashboard')
+      span.setAttribute('data-localhost', '')
+      span.textContent = 'http://localhost:5173/dashboard'
+      document.body.appendChild(span)
+      const event = createClickEvent(span)
+
+      const result = handleLocalhostUrlClick(event)
+      expect(result).toBe(true)
+      expect(event.preventDefault).toHaveBeenCalled()
+      expect(event.stopPropagation).toHaveBeenCalled()
+      await vi.waitFor(() => {
+        expect(mockEnsurePortRegistered).toHaveBeenCalledWith(5173, 'http')
+      })
+      // openPort receives the LOCAL forwarded port (the mock maps 5173 -> 3000).
+      expect(mockOpenPort).toHaveBeenCalledWith(3000, 'http', undefined, '/dashboard')
+      document.body.removeChild(span)
+    })
+
+    // A plain external span must NOT be captured by the localhost handler.
+    it('ignores a non-localhost link span', () => {
+      const span = document.createElement('span')
+      span.className = 'md-external-link'
+      span.setAttribute('data-href', 'https://example.com/x')
+      const event = createClickEvent(span)
+      expect(handleLocalhostUrlClick(event)).toBe(false)
       expect(mockEnsurePortRegistered).not.toHaveBeenCalled()
     })
 

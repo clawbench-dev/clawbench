@@ -42,8 +42,39 @@ type metaTokenUsage struct {
 	CacheHitTokens      int
 	CacheMissTokens     int
 	Credit              float64
+	// CallID identifies the model call this usage describes, when the agent
+	// reports one (CodeBuddy: codebuddy.ai/messageId). It is the dedup key for
+	// Accumulate: one turn makes many calls, and a re-delivered notification
+	// for the same call must not be counted twice.
+	CallID string
+	// Accumulate marks these counters as ONE MODEL CALL's usage rather than an
+	// already-aggregated turn total. The turn accumulator then sums successive
+	// calls instead of adopting the latest (see metaMergeExtraction).
+	Accumulate bool
 	// Present reports whether any token/cost field was found at all.
 	Present bool
+}
+
+// addFrom sums a sibling call's counters into u. Used by the turn accumulator
+// for agents that report per-call usage (see Accumulate).
+func (u *metaTokenUsage) addFrom(o *metaTokenUsage) {
+	if u == nil || o == nil {
+		return
+	}
+	u.InputTokens += o.InputTokens
+	u.OutputTokens += o.OutputTokens
+	u.TotalTokens += o.TotalTokens
+	u.CachedReadTokens += o.CachedReadTokens
+	u.CachedWriteTokens += o.CachedWriteTokens
+	u.ThoughtTokens += o.ThoughtTokens
+	u.CacheCreationTokens += o.CacheCreationTokens
+	u.CacheHitTokens += o.CacheHitTokens
+	u.CacheMissTokens += o.CacheMissTokens
+	u.Credit += o.Credit
+	// The aggregate no longer describes a single call, so the dedup key and
+	// the per-call marker must not survive onto the summed value.
+	u.CallID = ""
+	u.Accumulate = false
 }
 
 // metaTrace is the canonical trace/identity detail extracted from a _meta payload.
@@ -211,22 +242,41 @@ func metaMergeTrace(dst *metaTrace, src *metaTrace) {
 
 // metaMergeExtraction merges src into dst (the turn-level accumulator).
 //
-// Token/cache/credit usage adopts the LATEST informative snapshot wholesale.
-// ACP agents (CodeBuddy in particular) re-report the complete current usage on
-// each informative session/update notification, so the most recent one is
-// authoritative. Per-field max-stitching was removed: it combined counters
-// taken at different moments into one internally inconsistent row (e.g. a
-// cacheMiss from an early tool call with input from a later one, or a Claude
-// per-model total dwarfing the request) — which corrupted chat_metadata usage
-// stats. A cost-only "naked" notification (all token counters zero) never
-// replaces the adopted snapshot.
+// Token/cache/credit usage is ACCUMULATED PER MODEL CALL, not replaced.
+//
+// A single agentic turn issues one model call per tool round, and CodeBuddy
+// emits one usage_update per call, each reporting only THAT call's counters
+// (verified against the raw wire: 5 calls in one 4-command turn produced
+// prompt_tokens 38229/38328/38427/38526/38625). Adopting the latest snapshot
+// therefore discarded every call but the last — measured 30.9× under-count on
+// a real DB (1.19B stored vs 36.8B actual across 678 sessions).
+//
+// The calls of one turn share `codebuddy.ai/requestId` and differ by
+// `codebuddy.ai/messageId`, so the messageId is the dedup key: a re-delivered
+// notification for the same call must not be counted twice, while a genuinely
+// new call must. Agents that do not report a per-call identity (Claude/Codex
+// per-model counters, OpenCode) keep the previous latest-snapshot semantics —
+// their counter is already an aggregate for the turn.
+//
+// Per-field max-stitching is still wrong for the non-accumulating agents: it
+// combined counters taken at different moments into one internally
+// inconsistent row (e.g. a cacheMiss from an early tool call with input from a
+// later one) — which corrupted chat_metadata usage stats.
 func metaMergeExtraction(dst *metaExtraction, src *metaExtraction) {
 	if src == nil || dst == nil {
 		return
 	}
 	if src.Usage != nil && src.Usage.hasTokenCounters() {
-		cp := *src.Usage
-		dst.Usage = &cp
+		if src.Usage.Accumulate {
+			if dst.Usage == nil {
+				dst.Usage = &metaTokenUsage{}
+			}
+			dst.Usage.addFrom(src.Usage)
+			dst.Usage.Present = true
+		} else {
+			cp := *src.Usage
+			dst.Usage = &cp
+		}
 	}
 	if src.Trace != nil && src.Trace.HasData() {
 		if dst.Trace == nil {

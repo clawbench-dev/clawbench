@@ -485,17 +485,30 @@ func saveAgentToDB(db dbutil.Writer, agent *Agent) error {
 	if agent.Disabled {
 		disabled = 1
 	}
+	// Normalize the policy before persisting so a row never stores an empty
+	// mode (which Normalized() would have to guess at). An empty list is the
+	// correct value for a brand-new agent: there is no user choice yet.
+	mcpPolicy := agent.MCPServers.Normalized()
+	if mcpPolicy.Names == nil {
+		mcpPolicy.Names = []string{}
+	}
+	mcpServersJSON, err := json.Marshal(mcpPolicy)
+	if err != nil {
+		return err
+	}
 
 	_, err = db.Exec(`INSERT INTO agents (id, name, specialty, backend, command,
 		thinking_effort, thinking_effort_levels,
 		preferred_mode, preferred_model, preferred_thinking_effort,
 		custom_system_prompt, avatar, models, models_auto_detected, sort_order,
-		transport, acp_command, auto_approve, disabled, thinking_effort_by_model)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		transport, acp_command, auto_approve, disabled, thinking_effort_by_model,
+		mcp_servers)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		agent.ID, agent.Name, agent.Specialty, agent.Backend, agent.Command,
 		agent.ThinkingEffort, string(levelsJSON), agent.PreferredMode, agent.PreferredModel, agent.PreferredThinkingEffort,
 		agent.CustomSystemPrompt, agent.Avatar, string(modelsJSON), agent.ModelsAutoDetected, agent.SortOrder,
-		transport, agent.AcpCommand, autoApprove, disabled, string(effortByModelJSON))
+		transport, agent.AcpCommand, autoApprove, disabled, string(effortByModelJSON),
+		string(mcpServersJSON))
 	return err
 }
 
@@ -620,6 +633,7 @@ func LoadAgentsIntoMemoryFromDB(db dbutil.Reader) error {
 	for _, agent := range agents {
 		if spec := FindSpecByBackend(agent.Backend); spec != nil {
 			agent.CanRefreshModels = HasModelSource(agent.Backend)
+			agent.BackendHasSpec = true
 			if len(agent.ThinkingEffortLevels) == 0 && len(spec.ThinkingEffortLevels) > 0 {
 				agent.ThinkingEffortLevels = spec.ThinkingEffortLevels
 			}
@@ -668,7 +682,7 @@ func loadAgentsFromDBRows(db dbutil.Reader) ([]*Agent, error) {
 		preferred_mode, preferred_model, preferred_thinking_effort,
 		custom_system_prompt, avatar, models, models_auto_detected, sort_order,
 		transport, acp_command, auto_approve, disabled, project_id,
-		thinking_effort_by_model
+		thinking_effort_by_model, mcp_servers
 		FROM agents ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -678,7 +692,7 @@ func loadAgentsFromDBRows(db dbutil.Reader) ([]*Agent, error) {
 	var agents []*Agent
 	for rows.Next() {
 		agent := &Agent{}
-		var modelsJSON, levelsJSON, effortByModelJSON string
+		var modelsJSON, levelsJSON, effortByModelJSON, mcpServersJSON string
 		var autoDetected, autoApprove, disabled int
 		var projectID sql.NullInt64
 
@@ -687,7 +701,7 @@ func loadAgentsFromDBRows(db dbutil.Reader) ([]*Agent, error) {
 			&agent.PreferredMode, &agent.PreferredModel, &agent.PreferredThinkingEffort,
 			&agent.CustomSystemPrompt, &agent.Avatar, &modelsJSON, &autoDetected,
 			&agent.SortOrder, &agent.Transport, &agent.AcpCommand, &autoApprove, &disabled, &projectID,
-			&effortByModelJSON); err != nil {
+			&effortByModelJSON, &mcpServersJSON); err != nil {
 			return nil, err
 		}
 
@@ -704,6 +718,15 @@ func loadAgentsFromDBRows(db dbutil.Reader) ([]*Agent, error) {
 		}
 		if err := json.Unmarshal([]byte(levelsJSON), &agent.ThinkingEffortLevels); err != nil {
 			agent.ThinkingEffortLevels = nil
+		}
+		// Unreadable MCP policy degrades to the zero value, which Normalized()
+		// reads as "all". Leaving it empty would be read as "none" and strip
+		// MCP from the agent — the exact silent failure this column exists to
+		// avoid.
+		if mcpServersJSON != "" && mcpServersJSON != "null" {
+			if err := json.Unmarshal([]byte(mcpServersJSON), &agent.MCPServers); err != nil {
+				agent.MCPServers = MCPServerPolicy{}
+			}
 		}
 		// Unreadable per-model picks degrade to "none" rather than failing the
 		// whole load: they only affect a default, and refusing to start (or to

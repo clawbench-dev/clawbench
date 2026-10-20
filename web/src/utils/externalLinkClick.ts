@@ -1,6 +1,6 @@
 import { useDialog } from '@/composables/useDialog'
 import { openExternalUrl } from '@/utils/externalLink'
-import { isExternalHref } from '@/utils/externalLinkNode'
+import { isExternalHref, LOCALHOST_LINK_ATTR } from '@/utils/externalLinkNode'
 import { appLog } from '@/utils/appLog'
 
 const TAG = 'ExternalLinkClick'
@@ -51,6 +51,17 @@ export function installExternalLinkClick(): () => void {
         const span = target?.closest?.<HTMLElement>('.md-external-link')
         if (!span) return
 
+        // Localhost URLs are NOT opened externally. In the App they point at a
+        // port on the SERVER, reachable only through the SSH/h2 tunnel; handing
+        // them to the system browser lands on the device's own localhost (a
+        // dead page). The localhost annotator marks them and the host's own
+        // bubble-phase handler opens them in the sandboxed browser — so this
+        // capture layer must let the event through untouched.
+        //
+        // Returning (not stopPropagation) is the whole point: capture runs
+        // first, so intercepting here would make the host handler unreachable.
+        if (span.hasAttribute(LOCALHOST_LINK_ATTR)) return
+
         const href = span.getAttribute('data-href')
         if (!href) return
 
@@ -75,6 +86,11 @@ export function installExternalLinkClick(): () => void {
         // and its open button. Those handle Enter/Space themselves; firing the
         // link dialog too would open two things at once.
         if (target?.closest?.('button, a[href], input, select, textarea, [contenteditable]')) return
+
+        // Same rule as the click handler: a localhost URL belongs to the
+        // tunnel, not the system browser. The host's own keydown path handles
+        // it (or nothing happens — far better than a dead page).
+        if (span.hasAttribute(LOCALHOST_LINK_ATTR)) return
 
         const href = span.getAttribute('data-href')
         if (!href) return

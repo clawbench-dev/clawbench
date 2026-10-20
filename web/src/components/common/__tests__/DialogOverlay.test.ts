@@ -53,6 +53,7 @@ function setDialogState(overrides: Partial<{
   dangerous: boolean
   generateText: string
   onGenerate: (() => Promise<string | null>) | null
+  singleLine: boolean
   resolve: ((v: string | boolean | null) => void) | null
 }> = {}) {
   const { state } = useDialog()
@@ -68,6 +69,7 @@ function setDialogState(overrides: Partial<{
     dangerous: false,
     generateText: '',
     onGenerate: null,
+    singleLine: false,
     resolve: vi.fn(),
     ...overrides,
   }
@@ -124,6 +126,7 @@ describe('DialogOverlay', () => {
       dangerous: false,
       generateText: '',
       onGenerate: null,
+      singleLine: false,
       resolve: null,
     }
 
@@ -269,6 +272,46 @@ describe('DialogOverlay', () => {
     await nextTick()
 
     expect(resolveFn).toHaveBeenCalledWith(null)
+  })
+
+  it('prompt dialog: renders a textarea by default', async () => {
+    setDialogState({ type: 'prompt', message: 'Enter:', value: 'a\nb' })
+
+    wrapper = mountDialog()
+    await nextTick()
+    await nextTick()
+
+    // Multi-line values (notes, descriptions) must keep the wrapping textarea.
+    expect($('textarea.dlg-input')).toBeTruthy()
+    expect($('input.dlg-input')).toBeNull()
+  })
+
+  it('prompt dialog: singleLine renders a one-line input instead of a textarea', async () => {
+    setDialogState({ type: 'prompt', message: 'Line:', value: '42', singleLine: true })
+
+    wrapper = mountDialog()
+    await nextTick()
+    await nextTick()
+
+    const input = $('input.dlg-input') as HTMLInputElement | null
+    expect(input).toBeTruthy()
+    expect(input?.tagName).toBe('INPUT')
+    expect($('textarea.dlg-input')).toBeNull()
+    expect(input?.value).toBe('42')
+  })
+
+  it('prompt dialog: singleLine confirms on Enter', async () => {
+    const resolveFn = vi.fn()
+    setDialogState({ type: 'prompt', message: 'Line:', value: '42', singleLine: true, resolve: resolveFn })
+
+    wrapper = mountDialog()
+    await nextTick()
+    await nextTick()
+
+    $('input.dlg-input')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await nextTick()
+
+    expect(resolveFn).toHaveBeenCalledWith('42')
   })
 
   // ── Auto-generate button ──
@@ -479,6 +522,7 @@ describe('DialogOverlay', () => {
       dangerous: false,
       generateText: '',
       onGenerate: null,
+      singleLine: false,
       resolve: null,
     }
 
@@ -497,6 +541,7 @@ describe('DialogOverlay', () => {
       dangerous: false,
       generateText: '',
       onGenerate: null,
+      singleLine: false,
       resolve: vi.fn(),
     }
     await nextTick()

@@ -188,6 +188,8 @@ CREATE TABLE IF NOT EXISTS chat_metadata (
 	backend TEXT DEFAULT '',
 	agent_id TEXT DEFAULT '',
 	clawbench_session_id TEXT DEFAULT '',
+	cost_session_total REAL DEFAULT 0,
+	cost_cumulative INTEGER DEFAULT 0,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS chat_tool_calls (

@@ -45,6 +45,88 @@
         />
       </template>
     </SettingsCard>
+    <!-- Integration self-test. Runs the backend's checks against this agent's
+         real configuration and prints one row per check, so a broken setup is
+         diagnosable without reading server logs. -->
+    <div class="settings-agent-detail__selftest">
+      <div class="settings-agent-detail__selftest-actions">
+        <button
+          class="fbtn settings-agent-detail__selftest-btn"
+          :disabled="selfTest.testing.value"
+          @click="handleSelfTest"
+        >
+          <Activity :size="16" class="settings-agent-detail__action-icon" />
+          <span>{{ selfTest.testing.value ? t('settings.items.agentSelfTestRunning') : t('settings.items.agentSelfTest') }}</span>
+        </button>
+        <!-- Opt-in real turn. Separate button because it costs tokens: a user
+             checking configuration should not pay for a model call. -->
+        <button
+          class="fbtn settings-agent-detail__selftest-btn"
+          :disabled="selfTest.testing.value"
+          :title="t('settings.items.agentSelfTestDeepHint')"
+          @click="handleSelfTestDeep"
+        >
+          <Zap :size="16" class="settings-agent-detail__action-icon" />
+          <span>{{ t('settings.items.agentSelfTestDeep') }}</span>
+        </button>
+      </div>
+
+      <!-- Deep run outcome: the model's own words are the proof. -->
+      <div v-if="selfTest.deepResult.value" class="settings-agent-detail__selftest-deep">
+        <div class="settings-agent-detail__selftest-deep-line">
+          {{ t('settings.items.agentSelfTestDeepReply', { reply: selfTest.deepResult.value.reply ?? '' }) }}
+        </div>
+        <div class="settings-agent-detail__selftest-deep-meta">
+          {{ t('settings.items.agentSelfTestDeepMeta', {
+            transport: selfTest.deepResult.value.transport ?? '',
+            stopReason: selfTest.deepResult.value.stopReason ?? '',
+            ms: selfTest.deepResult.value.durationMs ?? 0,
+          }) }}
+        </div>
+      </div>
+
+      <div v-if="selfTest.error.value" class="settings-agent-detail__selftest-error">
+        {{ selfTest.error.value }}
+      </div>
+
+      <!-- NOT an `v-else-if`: when a real-turn run is REFUSED, the error and
+           the static checks arrive together, and the rows are the only thing
+           that says which check blocked it. (A successful turn sets no
+           `result`, so the rows never appear for the cheap/deep mix-up that
+           made the two buttons look identical.) -->
+      <div
+        v-if="selfTest.result.value"
+        class="settings-agent-detail__selftest-result"
+        :class="{ 'settings-agent-detail__selftest-result--fail': !selfTest.result.value.ok }"
+      >
+        <div class="settings-agent-detail__selftest-summary">
+          {{ t('settings.items.agentSelfTestSummary', {
+            passed: selfTest.result.value.passed,
+            warned: selfTest.result.value.warned,
+            failed: selfTest.result.value.failed,
+          }) }}
+        </div>
+        <ul class="settings-agent-detail__selftest-list">
+          <li
+            v-for="check in selfTest.result.value.checks"
+            :key="check.key"
+            class="settings-agent-detail__selftest-check"
+            :class="`settings-agent-detail__selftest-check--${check.status}`"
+          >
+            <span class="settings-agent-detail__selftest-status">{{ selfTestStatusLabel(check.status) }}</span>
+            <span class="settings-agent-detail__selftest-key">{{ t(`settings.items.agentSelfTestCheck.${check.key}`) }}</span>
+            <span v-if="check.detail" class="settings-agent-detail__selftest-detail">{{ check.detail }}</span>
+          </li>
+        </ul>
+      </div>
+    </div>
+    <!-- MCP enable policy. A dedicated block rather than a SettingsItem: the
+         control is a three-way mode plus a per-server checklist, which the
+         generic row types cannot express. -->
+    <SettingsCard :title="t('settings.items.mcpAgentSection')">
+      <AgentMCPSection :agent="agent ?? null" />
+    </SettingsCard>
+
     <!-- Copy / disable / delete on the same row -->
     <div class="settings-agent-detail__actions">
       <button class="fbtn settings-agent-detail__action-btn" @click="startCopy">
@@ -85,9 +167,10 @@
 
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
-import { ArrowLeft, Ban, Copy, Play, Trash2, UserX } from 'lucide-vue-next'
+import { Activity, ArrowLeft, Ban, Copy, Play, Trash2, UserX, Zap } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import SettingsItem from './SettingsItem.vue'
+import AgentMCPSection from './AgentMCPSection.vue'
 import SettingsCard from './SettingsCard.vue'
 import CopyAgentDialog from './CopyAgentDialog.vue'
 import AgentAvatarPicker from './AgentAvatarPicker.vue'
@@ -96,6 +179,7 @@ import { useAgents, populateACPStateFromCache } from '@/composables/useAgents'
 import { patchAgentField } from '@/composables/useSettingsConfig'
 import { useToast } from '@/composables/useToast'
 import { useDialog } from '@/composables/useDialog'
+import { useAgentSelfTest, type AgentSelfTestCheck } from '@/composables/useAgentSelfTest'
 import '@/assets/modal-footer-btn.css'
 
 const props = defineProps<{
@@ -118,6 +202,7 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const toast = useToast()
 const dialog = useDialog()
+const selfTest = useAgentSelfTest()
 const { loadAgents, getAgent, agentsLoaded, updateAgentField, deleteAgent, duplicateAgent, defaultAgentId, setDefaultAgent, getAgentThinkingEffortLevelsIncludingACP } = useAgents()
 const activeKey = ref<string | null>(null)
 const copying = ref(false)
@@ -153,6 +238,21 @@ const isACPOnly = computed(() => {
   if (!a) return false
   return a.acpCommand && !a.supportsCLI
 })
+
+// A user-defined ACP agent (issue #557). Its backend has no registry entry, so
+// `supportsCLI` is false and every capability comes from the agent at runtime —
+// the same shape as an ACP-only built-in, which is why it needs no special
+// handling beyond keeping the command field editable when it is empty.
+const isCustomAcpAgent = computed(() => agent.value?.backend === 'custom-acp')
+
+/**
+ * Whether auto-discovery owns this agent's `acp_command`.
+ *
+ * The server computes this (`backendHasSpec`, from model.FindSpecByBackend) and
+ * applies the exact same predicate in its PATCH guard, so the UI cannot offer
+ * an edit the API rejects — or hide one it would accept.
+ */
+const hasBackendSpec = computed(() => agent.value?.backendHasSpec === true)
 
 // Determine if agent supports both ACP and CLI (dual transport)
 const isDualTransport = computed(() => {
@@ -356,11 +456,35 @@ const items = computed<AgentItem[]>(() => {
     value: t('settings.items.agentTaskCount', { count: a.taskCount ?? 0 }),
   })
 
-  if (a.acpCommand) {
+  // ACP command. Editable for any agent whose command is NOT owned by
+  // auto-discovery.
+  //
+  // For a spec-backed agent the field is read-only on purpose. Discovery owns
+  // `acp_command` there — model.RefreshAgents' syncAgentInfrastructure does
+  // `UPDATE agents SET acp_command = <spec>, transport = ... WHERE backend = ?`
+  // — so any edit a user made would be silently reverted on the next startup or
+  // "Rescan", including a deliberate clear. Offering an input that quietly
+  // undoes itself is worse than showing the effective value.
+  //
+  // Agents with no registry spec (a YAML-defined one like the E2E acp-mock, or
+  // a custom ACP agent) are not touched by that sync, and the API accepts the
+  // PATCH for them, so the field stays editable there.
+  if (a.acpCommand || isCustomAcpAgent.value) {
+    const editable = !hasBackendSpec.value
     result.push({
       key: 'acp_command',
       label: t('settings.items.agentAcpCommand'),
-      type: 'info',
+      description: t(
+        editable
+          ? 'settings.items.agentAcpCommandDesc'
+          : 'settings.items.agentAcpCommandDescBuiltin'
+      ),
+      // `note` (not `warning`): the latter only renders inside the textarea
+      // editor, and this caution must be visible before the user opens the
+      // field — the command runs with the server's privileges.
+      note: t('settings.items.agentAcpCommandWarning'),
+      type: editable ? 'text' : 'info',
+      patchField: editable ? 'acp_command' : undefined,
     })
   }
 
@@ -534,6 +658,36 @@ async function handleToggleDisabled() {
   }
 }
 
+/** Run the integration self-test for the agent currently on screen. */
+async function handleSelfTest() {
+  const id = agent.value?.id
+  if (!id) return
+  await selfTest.run(id)
+}
+
+/**
+ * Run one REAL turn. Confirms the agent can actually answer, not just that its
+ * configuration is self-consistent — but it costs tokens, so it is a separate
+ * button the user has to press deliberately.
+ */
+async function handleSelfTestDeep() {
+  const id = agent.value?.id
+  if (!id) return
+  await selfTest.runDeep(id)
+}
+
+/** Short label for a check status (ok / warn / fail). */
+function selfTestStatusLabel(status: AgentSelfTestCheck['status']): string {
+  switch (status) {
+    case 'ok':
+      return t('settings.items.agentSelfTestStatusOk')
+    case 'warn':
+      return t('settings.items.agentSelfTestStatusWarn')
+    default:
+      return t('settings.items.agentSelfTestStatusFail')
+  }
+}
+
 async function handleDelete() {
   const a = agent.value
   if (!a) return
@@ -663,4 +817,116 @@ async function handleDelete() {
 .settings-agent-detail__delete-icon {
   flex-shrink: 0;
 }
+
+/* ── Integration self-test ──────────────────────────────────────────────── */
+
+.settings-agent-detail__selftest {
+  margin-bottom: var(--space-4);
+}
+
+.settings-agent-detail__selftest-actions {
+  display: flex;
+  gap: var(--space-4);
+}
+
+.settings-agent-detail__selftest-btn {
+  flex: 1;
+}
+
+.settings-agent-detail__selftest-deep {
+  margin-top: var(--space-4);
+  padding: var(--space-4) var(--space-6);
+  background: var(--bg-primary);
+  border-left: 2px solid #22c55e;
+}
+
+.settings-agent-detail__selftest-deep-line {
+  font-size: var(--font-size-md);
+  color: var(--text-primary);
+  line-height: var(--line-height-snug);
+  overflow-wrap: anywhere;
+}
+
+.settings-agent-detail__selftest-deep-meta {
+  margin-top: var(--space-2);
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+}
+
+.settings-agent-detail__selftest-error {
+  margin-top: var(--space-4);
+  padding: var(--space-4) var(--space-6);
+  font-size: var(--font-size-md);
+  color: #ef4444;
+  background: color-mix(in srgb, #ef4444 10%, var(--bg-primary));
+}
+
+/* Status colors follow the settings panel's connectivity-test results
+   (SettingsGroupPanel: #22c55e / #f59e0b / #ef4444) rather than introducing new
+   tokens — there is no --color-warning in variables.css, and a var() with a
+   fallback silently resolves to nothing when the token is absent. */
+.settings-agent-detail__selftest-result {
+  margin-top: var(--space-4);
+  padding: var(--space-4) var(--space-6);
+  background: var(--bg-primary);
+  border-left: 2px solid #22c55e;
+}
+
+/* A failing run is the case the user must not miss, so it changes the rail. */
+.settings-agent-detail__selftest-result--fail {
+  border-left-color: #ef4444;
+}
+
+.settings-agent-detail__selftest-summary {
+  font-size: var(--font-size-md);
+  color: var(--text-secondary);
+  margin-bottom: var(--space-3);
+}
+
+.settings-agent-detail__selftest-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.settings-agent-detail__selftest-check {
+  display: grid;
+  grid-template-columns: 3.5em 1fr;
+  gap: 0 var(--space-4);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-snug);
+}
+
+.settings-agent-detail__selftest-status {
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.settings-agent-detail__selftest-check--ok .settings-agent-detail__selftest-status {
+  color: #22c55e;
+}
+
+.settings-agent-detail__selftest-check--warn .settings-agent-detail__selftest-status {
+  color: #f59e0b;
+}
+
+.settings-agent-detail__selftest-check--fail .settings-agent-detail__selftest-status {
+  color: #ef4444;
+}
+
+.settings-agent-detail__selftest-key {
+  color: var(--text-primary);
+}
+
+/* Detail spans the full row: it explains WHY a check failed, and wrapping it
+   under the status column made long paths unreadable. */
+.settings-agent-detail__selftest-detail {
+  grid-column: 2;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
 </style>

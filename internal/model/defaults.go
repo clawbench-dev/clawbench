@@ -531,6 +531,25 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 		}
 	}
 
+	// --- Usage meter ---
+	// Only normalize the shape of an ALREADY-CONFIGURED rule. There is
+	// deliberately no default rule: an unconfigured install must stay silent
+	// (a synthesized "30 days / $20" would fire a false alarm on every fresh
+	// install, and the number would be wrong for essentially everyone).
+	//
+	// Quota <= 0 is the off switch and is left untouched.
+	if cfg.UsageMeter.Quota > 0 {
+		if cfg.UsageMeter.PeriodDays <= 0 {
+			cfg.UsageMeter.PeriodDays = 30
+		}
+		if cfg.UsageMeter.PeriodDays > MaxUsageMeterPeriodDays {
+			cfg.UsageMeter.PeriodDays = MaxUsageMeterPeriodDays
+		}
+		if cfg.UsageMeter.Metric == "" {
+			cfg.UsageMeter.Metric = UsageMeterMetricCost
+		}
+	}
+
 	return autoPassword
 }
 

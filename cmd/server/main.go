@@ -655,6 +655,10 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// Apply all defaults (returns auto-generated password if created)
 	autoPassword := model.ApplyDefaults(&cfg, presence)
 	model.ConfigInstance = cfg
+	// Publish the MCP snapshot before any agent connection can be created:
+	// internal/ai reads the list through an atomic pointer rather than the
+	// mutable ConfigInstance (see model.PublishMCPSnapshot).
+	model.PublishMCPSnapshot(cfg.MCP)
 
 	// A fresh install derives factory appearance defaults (the Bing daily
 	// wallpaper) that exist only in memory at this point. Persist them now:
@@ -1004,6 +1008,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	}
 	defer rag.Shutdown()
 	defer service.StopSessionCleanupWorker()
+	defer service.StopUsageMeterWorker()
 	defer service.StopQueueReaper()
 	defer service.StopForgePoller()
 	defer service.StopBingWallpaperWorker()
@@ -1123,6 +1128,11 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// sessions directly through internal/rag (no callback indirection): the
 	// service↔rag import cycle that once required injection is gone.
 	service.StartSessionCleanupWorker(cfg)
+
+	// Start the usage-meter worker. Its tick is a no-op while no quota is
+	// configured; it exists so a rule that is already past its baseline at
+	// startup (or one crossed by a non-interactive turn) still notifies.
+	service.StartUsageMeterWorker()
 
 	// Start the queue reaper: a safety net that recovers user messages left
 	// stranded at queued=1 by a lost consumer handoff (stale running flag,
@@ -1369,6 +1379,10 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	service.SetPersistBingStateFn(handler.PersistBingWallpaperState)
 	handler.SetTriggerBingSyncFunc(service.TriggerBingSync)
 	service.StartBingWallpaperWorker()
+
+	// Usage meter notification state lives in config.yaml, which the handler
+	// owns (configMutex + atomic YAML write); the service only computes.
+	service.SetUsageMeterStateSaver(handler.PersistUsageMeterState)
 
 	// Wire up the user-message command renderer for GROUP host prompts. The
 	// templates live in the handler package (OpenAPI-rendered), and the group
@@ -1669,6 +1683,12 @@ func hotReloadReconfigure(port int) {
 	// --- Session cleanup: reconfigure archive retention worker ---
 	service.ReconfigureSessionCleanup(cfg)
 
+	// --- Usage meter: recreate the worker so a changed rule is evaluated now ---
+	// The worker itself is unconditional (its tick no-ops when no quota is set);
+	// recreating it resets the startup delay so the new rule is checked in
+	// seconds rather than after a full interval.
+	service.ReconfigureUsageMeterWorker()
+
 	// --- DingTalk: reconfigure or toggle enabled ---
 	hotReloadDingTalk(cfg)
 	hotReloadFeishu(cfg)
@@ -1850,6 +1870,12 @@ func newOpenAITTSProvider(cfg model.Config) *speech.OpenAITTSProvider {
 	o.APIKey = cfg.TTS.OpenAI.APIKey
 	o.Model = cfg.TTS.OpenAI.Model
 	o.Voice = cfg.TTS.OpenAI.Voice
+	// StreamMode is the escape hatch for a compatible server whose model name
+	// does not reveal whether it streams SSE or a raw body. It must be copied
+	// here: this is the ONLY production construction point (startup and hot
+	// reload both go through it), so a missing assignment makes the setting
+	// silently inert — the provider keeps the per-model default forever.
+	o.StreamMode = cfg.TTS.OpenAI.StreamMode
 	if cfg.TTS.Speed > 0 {
 		o.Speed = cfg.TTS.Speed
 	}

@@ -1037,6 +1037,13 @@ type ACPConn struct {
 	// stateMu → c.mu is forbidden.
 	stateMu sync.Mutex
 
+	// mcpVersion is the MCP policy hash this connection's session was created
+	// with (see model.Config.MCPPolicyVersion). Compared on every turn: a
+	// mismatch means the config or the agent's policy changed, so the next turn
+	// reconnects with the new list. Guarded by c.mu (only touched from
+	// ensureAliveWithSession, which holds it).
+	mcpVersion string
+
 	// cached state — populated from NewSession/ResumeSession responses.
 	// Guarded by stateMu, NOT c.mu (see stateMu).
 	currentModeID           string
@@ -1125,6 +1132,12 @@ type ACPConn struct {
 	// (CodeBuddy usage/trace/category). Consumed when emitting the final
 	// metadata event in emitPromptResponseUsage and cleared each Prompt.
 	metaAccum *metaExtraction
+	// metaCallSeen records which per-call usage notifications have already been
+	// summed into metaAccum (guarded by metaMu). CodeBuddy reports one usage
+	// update per model call and may re-deliver a notification; summing by
+	// messageId keeps a retry from double-billing while still counting each
+	// genuine call. Cleared with metaAccum.
+	metaCallSeen map[string]struct{}
 
 	// lastCompletedRequestID is the requestId of the most recently completed,
 	// successful turn on this connection (guarded by metaMu). It backs a
@@ -1609,9 +1622,12 @@ func (c *ACPConn) SyncLoadSession(ctx context.Context, cwd, acpSID string) error
 	loadCtx, loadCancel := context.WithTimeout(ctx, 60*time.Second)
 	defer loadCancel()
 	loadResp, err := c.conn.LoadSession(loadCtx, acp.LoadSessionRequest{
-		SessionId:  acp.SessionId(acpSID),
-		Cwd:        cwd,
-		McpServers: []acp.McpServer{},
+		SessionId: acp.SessionId(acpSID),
+		Cwd:       cwd,
+		// Fourth injection site (see mcpServersForSession). Held under c.mu,
+		// which is fine: the helper only touches model.GetAgent (agentsMu) and
+		// the capability registry (its own lock), never the pool.
+		McpServers: c.mcpServersForSession(),
 	})
 	if err != nil {
 		c.alive = false
@@ -1621,6 +1637,10 @@ func (c *ACPConn) SyncLoadSession(ctx context.Context, cwd, acpSID string) error
 	c.acpSID = acpSID
 	c.lastLoadSessionResp = &loadResp
 	c.lastUsed = time.Now()
+	// This path also re-establishes the session with the current servers, so it
+	// must record the version too — otherwise the next ensureAliveWithSession
+	// would see a mismatch and reconnect for nothing.
+	c.mcpVersion = c.mcpPolicyVersion()
 	slog.Info("acp conn: SyncLoadSession replay completed", "clawbench_sid", c.clawbenchSID, "acp_sid", acpSID)
 	return nil
 }
@@ -1866,6 +1886,26 @@ func (c *ACPConn) mergeMetaExtraction(ext *metaExtraction) {
 			c.turnRequestIDs[rid] = struct{}{}
 		}
 	}
+	// A per-call usage notification may be re-delivered; count each call once.
+	// The identity is recorded even when the counters are zero, so a retried
+	// call cannot contribute twice after a later informative one arrives.
+	if ext.Usage != nil && ext.Usage.Accumulate && ext.Usage.CallID != "" {
+		if c.metaCallSeen == nil {
+			c.metaCallSeen = make(map[string]struct{})
+		}
+		if _, seen := c.metaCallSeen[ext.Usage.CallID]; seen {
+			// Still merge the trace/category carried by this notification —
+			// only the token counters are a duplicate.
+			dup := *ext
+			dup.Usage = nil
+			if c.metaAccum == nil {
+				c.metaAccum = &metaExtraction{}
+			}
+			metaMergeExtraction(c.metaAccum, &dup)
+			return
+		}
+		c.metaCallSeen[ext.Usage.CallID] = struct{}{}
+	}
 	if c.metaAccum == nil {
 		c.metaAccum = &metaExtraction{}
 	}
@@ -1879,6 +1919,7 @@ func (c *ACPConn) getAndClearMetaAccum() *metaExtraction {
 	defer c.metaMu.Unlock()
 	acc := c.metaAccum
 	c.metaAccum = nil
+	c.metaCallSeen = nil
 	return acc
 }
 

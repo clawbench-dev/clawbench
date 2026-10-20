@@ -11,7 +11,7 @@ vi.mock('lucide-vue-next', () => {
   const stub = (name: string) => ({ name, render: () => h('span', { class: `icon-${name}` }) })
   const names = [
     'Inbox', 'Folder', 'Unlink', 'Trash2', 'AlertCircle', 'Layers',
-    'Bot', 'Clock', 'GitMerge', 'Check', 'X', 'ShieldAlert',
+    'Bot', 'Clock', 'GitMerge', 'Check', 'X', 'ShieldAlert', 'Gauge',
   ]
   return Object.fromEntries(names.map(n => [n, stub(n)]))
 })
@@ -277,6 +277,34 @@ describe('NotificationsPanelContent', () => {
     expect(mockConfirm).not.toHaveBeenCalled()
   })
 
+  it('flags a usage row so App.vue records the log as the jump origin', async () => {
+    // Usage rows used to short-circuit before the flag. On narrow screens this
+    // jump replaces the whole tab with the settings page, so without an origin
+    // the first Back only popped the settings nav stack and the second one
+    // exited the app — the log was unreachable.
+    items.value = [notif({
+      kind: 'usage',
+      eventType: 'full',
+      title: 'Usage exhausted',
+      body: 'used 20 / 20',
+      sessionId: undefined,
+      taskId: undefined,
+    })]
+    const w = mountPanel()
+
+    const events: CustomEvent[] = []
+    const listener = (e: Event) => events.push(e as CustomEvent)
+    window.addEventListener('clawbench-open-usage-meter', listener)
+    await w.find('.notif-card').trigger('click')
+    await flushPromises()
+    window.removeEventListener('clawbench-open-usage-meter', listener)
+
+    expect(events).toHaveLength(1)
+    expect(events[0].detail.fromNotificationCenter).toBe(true)
+    // Instance-wide: no project to switch to, so no confirmation either.
+    expect(mockConfirm).not.toHaveBeenCalled()
+  })
+
   it('confirms before opening a row from ANOTHER project', async () => {
     items.value = [notif({ sessionId: 'sess-9', projectPath: '/other-proj' })]
     const w = mountPanel()
@@ -403,6 +431,115 @@ describe('NotificationsPanelContent', () => {
     const w = mountPanel()
 
     expect(w.find('.nc-proj').exists()).toBe(true)
+  })
+
+  // ── Timeline grouping ─────────────────────────────────────────────────────
+  //
+  // The log used to be a flat list repeating "10-15 12:00" on every row. It is
+  // now bucketed by local calendar day with the date spelled out once in a
+  // sticky header, and each row carrying only a clock. These pin the grouping
+  // key (local midnight, NOT a UTC slice of the ISO string) and the split of
+  // information between header and row.
+
+  /** Local-time ISO for a Date, so the fixture is timezone-independent. */
+  const localIso = (y: number, mo: number, d: number, h: number, mi: number) =>
+    new Date(y, mo, d, h, mi).toISOString()
+
+  it('buckets rows by local calendar day, newest bucket first', () => {
+    const today = new Date()
+    const yesterday = new Date()
+    yesterday.setDate(yesterday.getDate() - 1)
+    items.value = [
+      notif({ id: 1, createdAt: localIso(today.getFullYear(), today.getMonth(), today.getDate(), 9, 0) }),
+      notif({ id: 2, createdAt: localIso(today.getFullYear(), today.getMonth(), today.getDate(), 8, 0) }),
+      notif({
+        id: 3,
+        createdAt: localIso(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 22, 0),
+      }),
+    ]
+    const w = mountPanel()
+
+    const groups = w.findAll('.day-group')
+    expect(groups).toHaveLength(2)
+    expect(groups[0].findAll('.notif-card')).toHaveLength(2)
+    expect(groups[1].findAll('.notif-card')).toHaveLength(1)
+    expect(groups[0].find('.day-label').text()).toBe('Today')
+    expect(groups[1].find('.day-label').text()).toBe('Yesterday')
+  })
+
+  it('keeps a late-evening row in its own day (local midnight, not a UTC slice)', () => {
+    // A `createdAt.slice(0, 10)` grouping would put 23:30 local in the next
+    // day for any UTC+ timezone, which is the whole reason the key is computed
+    // from local midnight.
+    const d = new Date()
+    d.setHours(23, 30, 0, 0)
+    const next = new Date(d)
+    next.setDate(next.getDate() + 1)
+    next.setHours(0, 30, 0, 0)
+    items.value = [
+      notif({ id: 1, createdAt: d.toISOString() }),
+      notif({ id: 2, createdAt: next.toISOString() }),
+    ]
+    const w = mountPanel()
+
+    expect(w.findAll('.day-group')).toHaveLength(2)
+    expect(w.findAll('.day-group')[0].findAll('.notif-card')).toHaveLength(1)
+  })
+
+  it('shows a clock in the gutter and no date on the row', () => {
+    items.value = [notif({ id: 1, createdAt: localIso(2026, 9, 15, 14, 32) })]
+    const w = mountPanel()
+
+    expect(w.find('.nc-time').text()).toBe('14:32')
+    // The date belongs to the bucket header only.
+    expect(w.find('.nc-header').text()).not.toContain('2026')
+  })
+
+  it('carries the full timestamp in a title for the abbreviated clock', () => {
+    // Every visible surface abbreviates, so the exact instant must stay
+    // reachable somewhere.
+    items.value = [notif({ id: 1, createdAt: localIso(2026, 9, 15, 14, 32) })]
+    const w = mountPanel()
+
+    expect(w.find('.notif-card').attributes('title')).toBe('2026-10-15 14:32:00')
+  })
+
+  it('labels each bucket with its own row count', () => {
+    const today = new Date()
+    items.value = [
+      notif({ id: 1, createdAt: localIso(today.getFullYear(), today.getMonth(), today.getDate(), 9, 0) }),
+      notif({ id: 2, createdAt: localIso(today.getFullYear(), today.getMonth(), today.getDate(), 8, 0) }),
+    ]
+    const w = mountPanel()
+
+    expect(w.find('.day-head .day-count').text()).toBe('2 items')
+  })
+
+  it('gives each row a tone class derived from its event', () => {
+    // The tone drives the node colour, the rail highlight and the hovered card
+    // edge from one variable; without the class the node has no --tone and
+    // falls back to `currentColor` (invisible against the card).
+    items.value = [
+      notif({ id: 1, eventType: 'failed' }),
+      notif({ id: 2, eventType: 'permission_pending' }),
+      notif({ id: 3, eventType: 'completed' }),
+      notif({ id: 4, kind: 'forge', eventType: 'merged' }),
+      notif({ id: 5, kind: 'task', eventType: 'running' }),
+    ]
+    const w = mountPanel()
+
+    const tones = w.findAll('.notif-card').map(c => c.classes().find(x => x.startsWith('tone-')))
+    expect(tones).toEqual(['tone-danger', 'tone-warning', 'tone-success', 'tone-purple', 'tone-info'])
+  })
+
+  it('keeps the kind glyph in the timeline node, not the card header', () => {
+    // The node carries the source type; the header glyph is the narrow-panel
+    // fallback and is hidden by CSS at full width.
+    items.value = [notif({ id: 1, kind: 'task', eventType: 'completed' })]
+    const w = mountPanel()
+
+    expect(w.find('.nc-node .icon-Clock').exists()).toBe(true)
+    expect(w.find('.nc-kind .icon-Clock').exists()).toBe(true)
   })
 
   it('does NOT confirm a cross-project switch for a trailing-slash root', async () => {

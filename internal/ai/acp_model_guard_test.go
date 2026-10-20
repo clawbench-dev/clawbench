@@ -75,6 +75,51 @@ func TestKeepUnlistedModel(t *testing.T) {
 		conn := &ACPConn{}
 		assert.False(t, conn.keepUnlistedModel("x"))
 	})
+
+	// claude-agent-acp advertises TIER ALIASES (opus / sonnet / haiku) while the
+	// picker and PATCH carry the CLI's concrete ids. Comparing raw IDs made every
+	// concrete id look "unlisted", so applyModelSelection returned early and the
+	// switch was silently disabled: chip changed, PATCH returned OK, next turn
+	// ran the old model. The adapter resolves a concrete id back to its tier, so
+	// "the tier is advertised" is the correct expressibility test.
+	t.Run("applies a concrete id whose tier the agent advertises", func(t *testing.T) {
+		id := testAgentID(t)
+		GetAgentCapabilityRegistry().UpdateModels(id, []model.AgentModel{
+			{ID: "opus", Name: "Opus 4.6"},
+			{ID: "sonnet", Name: "Sonnet 4.6"},
+			{ID: "haiku", Name: "Haiku 4.5"},
+		})
+
+		conn := newGuardConn(id)
+		assert.False(t, conn.keepUnlistedModel("claude-sonnet-4-6"),
+			"the concrete CLI id is expressible because its tier is advertised")
+		assert.False(t, conn.keepUnlistedModel("claude-opus-4-5"))
+		assert.False(t, conn.keepUnlistedModel("haiku"))
+	})
+
+	// The tier fallback must not turn the guard into a no-op: a value whose tier
+	// is NOT advertised is still an out-of-band pin.
+	t.Run("still keeps a value whose tier is not advertised", func(t *testing.T) {
+		id := testAgentID(t)
+		GetAgentCapabilityRegistry().UpdateModels(id, []model.AgentModel{{ID: "sonnet"}})
+
+		conn := newGuardConn(id)
+		assert.True(t, conn.keepUnlistedModel("minimax/minimax-m2.7"),
+			"no advertised tier matches, so this is still an out-of-band pin")
+		assert.True(t, conn.keepUnlistedModel("claude-opus-4-5"),
+			"opus is not in the list; its concrete id must not sneak through")
+	})
+
+	// A parameterized variant is a distinct selectable model, not a tier: it must
+	// not be waved through by the tier fallback.
+	t.Run("a parameterized variant is not covered by its tier", func(t *testing.T) {
+		id := testAgentID(t)
+		GetAgentCapabilityRegistry().UpdateModels(id, []model.AgentModel{{ID: "opus"}})
+
+		conn := newGuardConn(id)
+		assert.True(t, conn.keepUnlistedModel("opus[1m]"),
+			"opus[1m] is its own model; the bare opus entry does not represent it")
+	})
 }
 
 // TestApplyModelSelectionSkipsUnlistedModel pins the WIRING, not just the

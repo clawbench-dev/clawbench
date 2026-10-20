@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { mount } from '@vue/test-utils'
 import SystemResourcesPanel from '../../common/SystemResourcesPanel.vue'
 
@@ -26,7 +26,53 @@ vi.mock('@/composables/useSystemResources', () => ({
   }),
 }))
 
-vi.mock('vue-i18n', () => ({
+// Narrow viewport by default: the usage row only renders where there is no
+// header capsule.
+const mockIsWideScreen = ref(false)
+
+vi.mock('@/composables/useWideScreenLayout', () => ({
+  useWideScreenLayout: () => ({
+    isWideScreen: mockIsWideScreen,
+    leftTab: ref('chat'),
+    activePane: ref('chat'),
+  }),
+}))
+
+const mockMeterStatus = ref({
+  enabled: true,
+  metric: 'cost',
+  dayInCycle: 5,
+  periodDays: 30,
+  quota: 20,
+  actual: 9.5,
+  expected: 10,
+  remainingDays: 25,
+  projectedExhaustDay: 0,
+})
+
+vi.mock('@/composables/useUsageMeter', () => ({
+  useUsageMeter: () => ({
+    status: mockMeterStatus,
+    meterState: computed(() => {
+      const s = mockMeterStatus.value
+      if (!s.enabled) return 'ok'
+      if (s.quota > 0 && s.actual >= s.quota) return 'full'
+      if (s.actual > s.expected) return 'over'
+      return 'ok'
+    }),
+    fillPercent: computed(() => {
+      const s = mockMeterStatus.value
+      return s.quota > 0 ? Math.min(100, (s.actual / s.quota) * 100) : 0
+    }),
+    expectedPercent: computed(() => {
+      const s = mockMeterStatus.value
+      return s.quota > 0 ? Math.min(100, (s.expected / s.quota) * 100) : 0
+    }),
+  }),
+}))
+
+vi.mock('vue-i18n', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('vue-i18n')>()),
   useI18n: () => ({ t: (key: string) => key }),
 }))
 
@@ -47,6 +93,8 @@ function mountPanel(props?: { showLogout?: boolean; wsStatus?: string }) {
         LogOut: true,
         WifiOff: true,
         LoaderCircle: true,
+        Gauge: true,
+        ChevronRight: true,
       },
     },
   })
@@ -56,6 +104,18 @@ describe('SystemResourcesPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockResources.value = { ...mockData }
+    mockIsWideScreen.value = false
+    mockMeterStatus.value = {
+      enabled: true,
+      metric: 'cost',
+      dayInCycle: 5,
+      periodDays: 30,
+      quota: 20,
+      actual: 9.5,
+      expected: 10,
+      remainingDays: 25,
+      projectedExhaustDay: 0,
+    }
   })
 
   it('renders load average section', () => {
@@ -209,5 +269,75 @@ describe('SystemResourcesPanel', () => {
     const wrapper = mountPanel({ wsStatus: 'disconnected' })
     expect(wrapper.find('.server-info-header').exists()).toBe(true)
     expect(wrapper.find('.server-info-address').exists()).toBe(true)
+  })
+
+  // ── Usage meter (appended last, phones only) ──
+
+  it('renders the usage meter as the last row on narrow screens', () => {
+    const wrapper = mountPanel()
+    const rows = wrapper.findAll('.resource-row')
+    const last = rows[rows.length - 1]
+    expect(last.classes()).toContain('usage-row')
+    expect(last.text()).toContain('usageMeter.label')
+    // Compact: one decimal at most, no trailing ".0" (space is the point).
+    expect(last.text()).toContain('$9.5')
+    expect(last.text()).toContain('$20')
+  })
+
+  it('hides the usage meter on wide screens where the header capsule shows it', () => {
+    mockIsWideScreen.value = true
+    const wrapper = mountPanel()
+    expect(wrapper.find('.usage-row').exists()).toBe(false)
+  })
+
+  it('hides the usage meter when the rule is disabled', () => {
+    mockMeterStatus.value = { ...mockMeterStatus.value, enabled: false }
+    const wrapper = mountPanel()
+    expect(wrapper.find('.usage-row').exists()).toBe(false)
+  })
+
+  it('marks the meter as over plan when actual exceeds the baseline', () => {
+    mockMeterStatus.value = { ...mockMeterStatus.value, actual: 12, expected: 10 }
+    const wrapper = mountPanel()
+    expect(wrapper.find('.usage-fill').classes()).toContain('is-over')
+    expect(wrapper.find('.usage-badge').text()).toContain('usageMeter.badgeOver')
+  })
+
+  it('marks the meter as full once the quota is spent', () => {
+    mockMeterStatus.value = { ...mockMeterStatus.value, actual: 20 }
+    const wrapper = mountPanel()
+    expect(wrapper.find('.usage-fill').classes()).toContain('is-full')
+    expect(wrapper.find('.usage-badge').text()).toContain('usageMeter.badgeFull')
+  })
+
+  it('shows the cycle day counter under the meter bar', () => {
+    const wrapper = mountPanel()
+    expect(wrapper.find('.usage-meta').text()).toContain('usageMeter.dayOfCycle')
+  })
+
+  it('opens the rule settings when the usage row is tapped', async () => {
+    // On a phone this row is the only usage surface, so it is also the only way
+    // to reach the rule. A dead-looking row would strand the user with a number
+    // they cannot explain or change.
+    const wrapper = mountPanel()
+    const row = wrapper.find('.usage-row')
+    expect(row.element.tagName).toBe('BUTTON')
+    await row.trigger('click')
+    expect(wrapper.emitted('open-usage-settings')).toHaveLength(1)
+  })
+
+  it('keeps the machine rows non-interactive', () => {
+    // Only the usage row navigates; wrapping the whole panel would turn every
+    // metric into a button that does nothing.
+    const wrapper = mountPanel()
+    const rows = wrapper.findAll('.resource-row')
+    const buttons = rows.filter(r => r.element.tagName === 'BUTTON')
+    expect(buttons).toHaveLength(1)
+    expect(buttons[0].classes()).toContain('usage-row')
+  })
+
+  it('keeps the meter out of the list when the connection is down', () => {
+    const wrapper = mountPanel({ wsStatus: 'disconnected' })
+    expect(wrapper.find('.usage-row').exists()).toBe(false)
   })
 })

@@ -81,7 +81,7 @@ describe('useAgents', () => {
     syncModelFromAgent, getAgentThinkingEffortLevels, hasThinkingEffortLevels,
     updateAgentField, canRefreshModels, getEffectiveThinkingEffort,
     agentCanResume, supportsACP, supportsCLI, supportsDualTransport, getAgentTransport,
-    setDefaultAgent, duplicateAgent, deleteAgent, rescanAgents, reorderAgents, hasPreferredMode, applyRefreshedModelList, selectableAgents } = useAgents()
+    setDefaultAgent, duplicateAgent, createAcpAgent, deleteAgent, rescanAgents, reorderAgents, hasPreferredMode, applyRefreshedModelList, selectableAgents } = useAgents()
 
   // Register mock identity updaters — normally done by useSessionIdentity at
   // module evaluation time, but that module is mocked so we wire manually.
@@ -1449,6 +1449,40 @@ describe('useAgents', () => {
       mockApiPost.mockResolvedValue({})
       const id = await duplicateAgent('claude', 'Claude Copy')
       expect(id).toBe('')
+    })
+  })
+
+  // --- createAcpAgent (issue #557) ---
+
+  describe('createAcpAgent', () => {
+    beforeEach(() => {
+      mockApiPost.mockReset().mockResolvedValue({})
+    })
+
+    it('posts name and acp_command and reloads agents', async () => {
+      await createAcpAgent('Trae', 'trae acp')
+      expect(mockApiPost).toHaveBeenCalledWith('/api/agents', {
+        name: 'Trae',
+        acp_command: 'trae acp',
+      })
+    })
+
+    it('never sends a backend — the server owns that id', async () => {
+      // A client-supplied backend could name a registered backend, whose
+      // acp_command the discovery sync would then overwrite.
+      await createAcpAgent('Trae', 'trae acp')
+      const payload = mockApiPost.mock.calls[0][1] as Record<string, unknown>
+      expect(payload).not.toHaveProperty('backend')
+    })
+
+    it('returns the created agent id', async () => {
+      mockApiPost.mockResolvedValue({ id: 'custom-acp-abc123' })
+      expect(await createAcpAgent('Trae', 'trae acp')).toBe('custom-acp-abc123')
+    })
+
+    it('returns an empty string when the response carries no id', async () => {
+      mockApiPost.mockResolvedValue({})
+      expect(await createAcpAgent('Trae', 'trae acp')).toBe('')
     })
   })
 

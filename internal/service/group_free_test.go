@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -588,11 +589,19 @@ func TestFreeLoop_PublicMentionNotDeliveredAsNote(t *testing.T) {
 	_ = runGroupTurnForTest(t, o, project, msg, nil)
 
 	// The public directive reaches B through the timeline (readable @name
-	// prose), never through the private-note channel. The private-note header
-	// (主持人密送给你) is what distinguishes the two, NOT the word 密送 — the
-	// free-mode system prompt itself documents the 密送 feature, so asserting on
-	// the bare word would always fail.
-	if strings.Contains(bPrompt, "主持人密送给你") {
+	// prose), never through the private-note channel.
+	//
+	// The discriminator is the pending-note QUEUE plus the private-note header
+	// shape, NOT the literal "主持人密送给你": since the sender-attribution
+	// change a free-mode member's note is stamped "<name> 密送给你", so asserting
+	// on the host wording alone let a regression that stored the public mention
+	// as a note pass silently (verified by mutation). The header shape
+	// "密送给你（其他成员看不到）" appears ONLY in the note channel — none of the
+	// three system prompts contains it.
+	if pending := pendingBccForTarget(groupID, "B"); len(pending) != 0 {
+		t.Fatalf("a public mention must not be queued as a private note; got %+v", pending)
+	}
+	if strings.Contains(bPrompt, "密送给你（其他成员看不到）") {
 		t.Fatalf("a public mention must not be delivered as a private note; got %q", bPrompt)
 	}
 	if !strings.Contains(bPrompt, "PUBLIC_DIRECTIVE") {
@@ -630,7 +639,7 @@ func TestRemoveGroupMember_DropsPendingNotes(t *testing.T) {
 	project := "/tmp/free-remove-note"
 	groupID, byName := createFreeGroup(t, project, "A", "B")
 
-	addPendingBcc(groupID, "B", "SECRET_FOR_B")
+	addPendingBcc(groupID, "B", "SECRET_FOR_B", bccRoleMember, "A")
 	if got := pendingBccForTarget(groupID, "B"); len(got) != 1 {
 		t.Fatalf("setup: pending note not stored, got %v", got)
 	}
@@ -662,7 +671,8 @@ func TestStoreRouteNotes_DropsNoteToLeftMemberByID(t *testing.T) {
 	}
 	byID, byNameMap := memberLookups(members)
 	route := grouprouting.Parse(`<clawbench-mention targets="` + leftID + `" private>给离场者</clawbench-mention>`)
-	storeRouteNotes(groupID, route, groupUserTargetID, byID, byNameMap)
+	storeRouteNotes(groupID, route, groupUserTargetID, byID, byNameMap,
+		NewGroupOrchestrator(groupID).notePolicy(groupUserTargetID, byID))
 
 	if got := pendingBccForTarget(groupID, "B"); len(got) != 0 {
 		t.Fatalf("a note to a left member must not be stored; got %v", got)
@@ -680,7 +690,8 @@ func TestStoreRouteNotes_StoresNoteToActiveMemberByID(t *testing.T) {
 	members, _ := ListGroupMembers(groupID)
 	byID, byNameMap := memberLookups(members)
 	route := grouprouting.Parse(`<clawbench-mention targets="` + activeID + `" private>给在场者</clawbench-mention>`)
-	storeRouteNotes(groupID, route, groupUserTargetID, byID, byNameMap)
+	storeRouteNotes(groupID, route, groupUserTargetID, byID, byNameMap,
+		NewGroupOrchestrator(groupID).notePolicy(groupUserTargetID, byID))
 
 	got := pendingBccForTarget(groupID, "B")
 	if len(got) != 1 || got[0].Content != "给在场者" {
@@ -1461,5 +1472,274 @@ func TestFreeLoop_CancelledTurnDoesNotAnnounceUserTurn(t *testing.T) {
 
 	if got := countUserTurnLines(t, groupID); got != 0 {
 		t.Fatalf("a cancelled turn must not announce the user's turn, got %d", got)
+	}
+}
+
+// ── Private-note authority policy (host mode vs free mode) ────────────────
+//
+// In a HOST-mode group two plain MEMBERS may not exchange private notes: the
+// host is the authority, so the only private channels are host↔member and
+// anything involving the user (the human outranks the chair). Free groups have
+// no authority to route through, so every pair is allowed there.
+//
+// The rule is enforced at STORE time (storeRouteNotes), so a forbidden note is
+// never written — no delivery path can resurrect it later.
+
+func TestNoteAllowed_HostModeForbidsMemberToMemberOnly(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/note-policy-host"
+	groupID, hostID, byName := createHostGroup(t, project, "A", "B")
+	o := NewGroupOrchestrator(groupID)
+
+	cases := []struct {
+		name    string
+		speaker string
+		target  string
+		want    bool
+	}{
+		{"host → member", hostID, byName["A"], true},
+		{"member → host", byName["A"], hostID, true},
+		{"member → member (the only forbidden pair)", byName["A"], byName["B"], false},
+		{"member → user", byName["A"], groupUserTargetID, true},
+		{"host → user", hostID, groupUserTargetID, true},
+		{"user → member", groupUserTargetID, byName["A"], true},
+		{"user → host", groupUserTargetID, hostID, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := o.noteAllowed(tc.speaker, tc.target); got != tc.want {
+				t.Fatalf("noteAllowed(%s, %s) = %v, want %v", tc.speaker, tc.target, got, tc.want)
+			}
+		})
+	}
+}
+
+// A free group has no host, so no pair is forbidden.
+func TestNoteAllowed_FreeModeAllowsEveryPair(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/note-policy-free"
+	groupID, byName := createFreeGroup(t, project, "A", "B")
+	o := NewGroupOrchestrator(groupID)
+
+	for _, tc := range []struct{ speaker, target string }{
+		{byName["A"], byName["B"]},
+		{byName["B"], byName["A"]},
+		{byName["A"], groupUserTargetID},
+		{groupUserTargetID, byName["A"]},
+	} {
+		if !o.noteAllowed(tc.speaker, tc.target) {
+			t.Fatalf("free mode must allow %s → %s", tc.speaker, tc.target)
+		}
+	}
+}
+
+// End to end through the STORE path: in a host-mode group a member's note to a
+// peer is dropped (never written), while the same member's note to the host is
+// stored and delivered on the host's next turn.
+func TestStoreRouteNotes_HostModeDropsMemberToMember(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/note-policy-store"
+	groupID, hostID, byName := createHostGroup(t, project, "A", "B")
+
+	members, err := ListGroupMembers(groupID)
+	if err != nil {
+		t.Fatalf("ListGroupMembers: %v", err)
+	}
+	byID, byNameMap := memberLookups(members)
+	o := NewGroupOrchestrator(groupID)
+
+	// A → B: forbidden, must not be stored.
+	toPeer := grouprouting.Parse(`<clawbench-mention targets="B" private>只给B</clawbench-mention>`)
+	storeRouteNotes(groupID, toPeer, byName["A"], byID, byNameMap, o.notePolicy(byName["A"], byID))
+	if got := pendingBccForTarget(groupID, "B"); len(got) != 0 {
+		t.Fatalf("a member→member note must be dropped in host mode, got %v", got)
+	}
+
+	// A → host: allowed, stored and attributed to A.
+	toHost := grouprouting.Parse(`<clawbench-mention targets="Host" private>只给主持人</clawbench-mention>`)
+	storeRouteNotes(groupID, toHost, byName["A"], byID, byNameMap, o.notePolicy(byName["A"], byID))
+	got := pendingBccForTarget(groupID, "Host")
+	if len(got) != 1 || got[0].Content != "只给主持人" {
+		t.Fatalf("a member→host note must be stored, got %v", got)
+	}
+	if got[0].SenderRole != bccRoleMember || got[0].SenderName != "A" {
+		t.Fatalf("the note must be attributed to A, got role=%q name=%q", got[0].SenderRole, got[0].SenderName)
+	}
+	_ = hostID
+}
+
+// The host's own notes are stamped as host-authored, so the delivery prompt
+// says "主持人密送给你" rather than the sender's display name.
+func TestStoreRouteNotes_HostNoteIsStampedAsHost(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/note-policy-hostnote"
+	groupID, hostID, byName := createHostGroup(t, project, "A")
+
+	members, _ := ListGroupMembers(groupID)
+	byID, byNameMap := memberLookups(members)
+	o := NewGroupOrchestrator(groupID)
+
+	route := grouprouting.Parse(`<clawbench-mention targets="A" private>你的词是西瓜</clawbench-mention>`)
+	storeRouteNotes(groupID, route, hostID, byID, byNameMap, o.notePolicy(hostID, byID))
+
+	got := pendingBccForTarget(groupID, "A")
+	if len(got) != 1 {
+		t.Fatalf("the host's note must be stored, got %v", got)
+	}
+	if got[0].SenderRole != bccRoleHost {
+		t.Fatalf("the host's note must carry the host role, got %q", got[0].SenderRole)
+	}
+	_ = byName
+}
+
+// A note the user writes in a HOST-mode group is exempt from the
+// "must involve the host" rule: the human is not subject to the chair.
+func TestStoreUserNotes_HostModeUserMayBriefAnyMember(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/note-policy-user"
+	groupID, _, byName := createHostGroup(t, project, "A", "B")
+
+	members, _ := ListGroupMembers(groupID)
+	byID, byNameMap := memberLookups(members)
+	o := NewGroupOrchestrator(groupID)
+	o.userMessage = `<clawbench-mention targets="` + byName["B"] + `" private>用户密送给B</clawbench-mention>`
+	o.storeUserNotes(groupID, byID, byNameMap)
+
+	got := pendingBccForTarget(groupID, "B")
+	if len(got) != 1 || got[0].Content != "用户密送给B" {
+		t.Fatalf("a user's note to a member must be stored in host mode, got %v", got)
+	}
+	if got[0].SenderRole != bccRoleUser {
+		t.Fatalf("the note must be attributed to the user, got %q", got[0].SenderRole)
+	}
+}
+
+// The rule must hold through the PRODUCTION chain, not just when storeRouteNotes
+// is called directly: a host-mode member's private mention to a peer, emitted in
+// a real scripted turn, must never reach that peer's injected prompt — while the
+// same member's note to the host must be stored and delivered with the member's
+// own name on it.
+//
+// This is the wiring test the pure-function truth table cannot provide: it is
+// the only thing that fails if storeSpeakerNotes stops passing notePolicy (or
+// passes an empty one), which would leave noteAllowed correct and unused.
+func TestHostLoop_MemberNotePolicyEnforcedEndToEnd(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/note-policy-e2e"
+	groupID, hostID, byName := createHostGroup(t, project, "A", "B")
+
+	script := map[string][]string{
+		hostID: {
+			`<clawbench-mention targets="A">A 先说</clawbench-mention>`,
+			// Round 2: call on B so the peer note (if wrongly stored) would be
+			// delivered on this very turn.
+			`<clawbench-mention targets="B">B 请发言</clawbench-mention>`,
+			`讨论充分。<clawbench-group-end/> 结论。`,
+		},
+		byName["A"]: {
+			`<clawbench-mention targets="B" private>PEER_SECRET</clawbench-mention>` +
+				`<clawbench-mention targets="Host" private>UPWARD_SECRET</clawbench-mention> A 发言`,
+		},
+		byName["B"]: {"B 发言"},
+	}
+	base, _ := newScriptedRunner(t, groupID, project, script)
+	var bPrompt, hostSecondPrompt string
+	hostTurns := 0
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		switch turn.MemberRowID {
+		case byName["B"]:
+			bPrompt = turn.Prompt
+		case hostID:
+			hostTurns++
+			if hostTurns == 2 {
+				hostSecondPrompt = turn.Prompt
+			}
+		}
+		return base(ctx, gid, turn)
+	}
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	_ = runGroupTurnForTest(t, o, project, "开始", nil)
+
+	// The forbidden note must never have been written...
+	if got := pendingBccForTarget(groupID, "B"); len(got) != 0 {
+		t.Fatalf("a member→member note must not be queued in host mode, got %+v", got)
+	}
+	// ...and B must not read it, even though B spoke after A.
+	if strings.Contains(bPrompt, "PEER_SECRET") {
+		t.Fatalf("B must not receive A's peer note; got %q", bPrompt)
+	}
+
+	// The allowed direction still works, attributed to A rather than the host.
+	if got := pendingBccForTarget(groupID, "Host"); len(got) != 0 {
+		t.Fatalf("the host consumes its note on its next turn, got %+v", got)
+	}
+	if !strings.Contains(hostSecondPrompt, "UPWARD_SECRET") {
+		t.Fatalf("the host must receive A's upward note; got %q", hostSecondPrompt)
+	}
+	if !strings.Contains(hostSecondPrompt, "A 密送给你") {
+		t.Fatalf("the host's note must be attributed to A, not the chair; got %q", hostSecondPrompt)
+	}
+}
+
+// The per-target pending-note queue is bounded, and the eviction CONVERGES: a
+// queue already over the cap (an install upgraded from the pre-cap code, which
+// had no limit at all) is trimmed back to the cap by the next add, rather than
+// shrinking by one row per new note and staying over it forever.
+func TestAddPendingBcc_EvictsDownToTheCap(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/free-bcc-cap"
+	groupID, _ := createFreeGroup(t, project, "A", "B")
+
+	for range maxPendingBccPerTarget + 2 {
+		addPendingBcc(groupID, "B", "note", bccRoleMember, "A")
+	}
+	if got := len(pendingBccForTarget(groupID, "B")); got != maxPendingBccPerTarget {
+		t.Fatalf("queue length = %d, want the cap %d", got, maxPendingBccPerTarget)
+	}
+
+	// A different target has its own independent budget.
+	addPendingBcc(groupID, "C", "other", bccRoleMember, "A")
+	if got := len(pendingBccForTarget(groupID, "C")); got != 1 {
+		t.Fatalf("per-target budget leaked across targets: got %d, want 1", got)
+	}
+}
+
+// The oldest notes are the ones dropped: the newest note is what the member is
+// about to read, so evicting it would lose the message that triggered the add.
+func TestAddPendingBcc_EvictsOldestFirst(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/free-bcc-order"
+	groupID, _ := createFreeGroup(t, project, "A", "B")
+
+	for i := range maxPendingBccPerTarget + 1 {
+		addPendingBcc(groupID, "B", fmt.Sprintf("note-%02d", i), bccRoleMember, "A")
+	}
+
+	pending := pendingBccForTarget(groupID, "B")
+	if len(pending) != maxPendingBccPerTarget {
+		t.Fatalf("queue length = %d, want %d", len(pending), maxPendingBccPerTarget)
+	}
+	if pending[0].Content != "note-01" {
+		t.Fatalf("oldest note = %q, want note-01 (the very first is evicted)", pending[0].Content)
+	}
+	if want := fmt.Sprintf("note-%02d", maxPendingBccPerTarget); pending[len(pending)-1].Content != want {
+		t.Fatalf("newest note = %q, want %q (must survive)", pending[len(pending)-1].Content, want)
+	}
+}
+
+// Empty inputs are no-ops rather than rows with a blank target, which no member
+// could ever claim and which would occupy the budget forever.
+func TestAddPendingBcc_IgnoresEmptyInputs(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/free-bcc-empty"
+	groupID, _ := createFreeGroup(t, project, "A", "B")
+
+	addPendingBcc("", "B", "content", bccRoleMember, "A")
+	addPendingBcc(groupID, "   ", "content", bccRoleMember, "A")
+	addPendingBcc(groupID, "B", "   ", bccRoleMember, "A")
+
+	if got := pendingBccForTarget(groupID, "B"); len(got) != 0 {
+		t.Fatalf("empty inputs must not be stored; got %v", got)
 	}
 }

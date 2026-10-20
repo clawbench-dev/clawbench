@@ -14,7 +14,7 @@ const invoke = (channel: string, ...args: unknown[]) => ipcRenderer.invoke(chann
 // preload cannot require() local files ("module not found"). Importing it
 // would throw at preload load time and take down the ENTIRE ClawBenchNative
 // bridge, not just notifications. `notification.test.ts` guards the copy.
-const NAV_CHANNELS = ['clawbench-open-session', 'clawbench-open-task', 'clawbench-open-forge']
+const NAV_CHANNELS = ['clawbench-open-session', 'clawbench-open-task', 'clawbench-open-forge', 'clawbench-open-usage-meter']
 
 for (const channel of NAV_CHANNELS) {
   ipcRenderer.on(channel, (_e, detail: unknown) => {

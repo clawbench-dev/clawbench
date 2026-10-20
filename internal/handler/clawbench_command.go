@@ -22,6 +22,7 @@ const (
 	ClawbenchCmdUsage      = "/cb-usage"
 	ClawbenchCmdUserGuide  = "/cb-user-guide"
 	ClawbenchCmdAgent      = "/cb-agent"
+	ClawbenchCmdMCP        = "/cb-mcp"
 )
 
 // The endpoint reference embedded in each template is rendered from the
@@ -113,10 +114,20 @@ Endpoints:
 Project scope:
 - Send the cookie "{{PROJECT_COOKIE}}={{PROJECT_PATH}}" on every request. "GET /api/agents" returns only the agents visible in this project (global agents plus agents scoped to it), and "PATCH /api/agents" uses the cookie to resolve "project_scope". Without the cookie, project-scoped agents are invisible.
 
-Creating an agent:
-- There is NO create-from-scratch: an agent is always created by CLONING an existing one. Call "GET /api/agents" first, pick the agent whose backend (the "backend" field) matches what the user wants, then POST /api/agents with "source_id" (that agent's "id") and "name" (the new agent's name). The clone inherits the source's backend, command, models and transport.
-- If the user does not name a source, ask which existing agent to base it on, or choose the default agent ("defaultAgent" in the list response) and say so.
+Creating an agent — two shapes, chosen by whether a source agent is being cloned:
+- CLONE an existing agent: call "GET /api/agents" first, pick the agent whose "backend" matches what the user wants, then POST /api/agents with "source_id" (that agent's "id") and "name". The clone inherits the source's backend, command, models and transport.
+- CUSTOM ACP agent (for a tool with no built-in backend, e.g. Trae, CodeArts): POST /api/agents with "name" and "acp_command" (the stdio command that starts its ACP server, e.g. "trae acp"). Do NOT send "source_id" and do NOT invent a "backend" — the server assigns its own. The command is split on spaces (no quoting), so it cannot carry quoted arguments.
+- If the user asks for an agent that is neither a clone of a listed agent nor backed by a command they supplied, ask which of the two they mean instead of guessing.
 - The new name is globally unique: a name already used by another agent is rejected with 409 (AgentNameTaken), and a name equal to the group-chat user nickname is rejected with 409 (AgentNameReserved). If rejected, ask the user for a different name instead of retrying the same one.
+- If the user has no command in mind, do not invent one. Ask for the exact command that starts the tool's ACP server (their docs name it), and say it must speak ACP over stdio.
+
+Verifying an agent — ALWAYS do this after creating or changing one:
+- To test an agent that already exists, resolve its id from "GET /api/agents" (match by name) and run the same two steps. When several agents share a name, list them and say which id you picked.
+- Step 1 (free, no tokens): POST /api/agents/{id}/self-test. It returns {ok, passed, warned, failed, checks[{key,status,detail}]} and inspects only configuration and the filesystem — it never spawns the agent. Treat 'fail' as a blocker: report the failing check's 'detail' verbatim (it names the exact command, backend or model id), fix what you can with PATCH, and re-run. 'warn' is NOT a failure — for a brand-new ACP agent, "models: none reported yet" and "no ACP handshake recorded yet" are expected until the first turn.
+- Step 2 (costs tokens, one short message): POST /api/agents/{id}/self-test-deep. It runs ONE real turn and returns {ok, error?, deep{reply, transport, stopReason, durationMs}, static}. Run it whenever the user asked you to create-and-verify, or said "test it"; if they only asked to create the agent, run step 1 and offer step 2. It refuses on its own when step 1 has failures, so never call it first.
+- Both calls are plain POSTs with an empty body; the deep one can take up to ~90 seconds, so give curl a generous --max-time (e.g. 120) rather than the default short timeout.
+- Report the outcome concretely: for step 1 the counts plus each non-ok check; for step 2 the model's reply, the transport actually used and the stop reason. Never claim an agent "works" from the create call alone — a created agent that cannot spawn looks identical to a working one until a check runs.
+- If step 2 fails, relay 'error' (it states the concrete reason, e.g. executable missing, handshake failure, no content). For a command problem, PATCH "acp_command" on the custom agent and re-run both steps; do not delete and recreate the agent just to fix a command.
 
 Searching and viewing:
 - There is no search endpoint. Call "GET /api/agents" and filter the returned list yourself by the user's criteria (name, specialty, backend, disabled, usage counts). Each agent also carries "sessionCount" / "taskCount" / "membershipCount" and the default agent id is in "defaultAgent".
@@ -126,6 +137,7 @@ Updating an agent (PATCH /api/agents):
 - Always include "id". Only the documented fields may be changed; unknown fields are ignored.
 - Validate against the current values first (e.g. "preferred_model" must be one of the agent's "models", "preferred_mode" must be an ACP mode the agent advertises). A bad value returns 400 with a specific msgKey rather than being silently dropped.
 - "project_scope": true limits the agent to the current project, false makes it globally visible again. The default agent cannot be scoped (CannotScopeDefaultAgent), and scoping requires a selected project (NoProjectSelected).
+- "acp_command" is only accepted for a custom ACP agent (its "backend" is "custom-acp"). A built-in backend's command is owned by auto-discovery and is refused with 400 (AcpCommandManagedByDiscovery); do not try to repoint a built-in agent at another binary this way.
 
 Deleting an agent (DELETE /api/agents):
 - Deletion is destructive and only allowed when the agent is unused: if it still has sessions, tasks, or active group memberships the call returns 409 (AgentInUse) with the counts in "detail". Relay those counts to the user instead of forcing the delete.
@@ -136,6 +148,62 @@ Rules:
 - Use the user's language when relaying names, specialties and results.
 - Report the concrete id returned by create/update so the user can act on it.
 - Do not invent agent fields or backends — read the current list before answering.
+`
+
+// mcpInjectTemplate is the on-demand instruction template injected when the
+// user sends a message starting with "/cb-mcp ".
+//
+// The command drives the SAME two resources the settings UI writes: the global
+// server list (config.yaml `mcp.servers`) and the per-agent enable policy
+// (`agents.mcp_servers`). Splitting them is the point of the design — a
+// definition carries secrets and is written once; the policy is per agent.
+//
+// Placeholders: {{BASE_URL}}, {{AI_TOKEN_HEADER}}, {{AI_TOKEN}}, {{PROJECT_COOKIE}}, {{PROJECT_PATH}}
+const mcpInjectTemplate = `[You have access to MCP server configuration for this request. Use the Bash tool to call the local ClawBench HTTP API with curl.]
+
+Base URL: {{BASE_URL}}
+Auth: send the header "{{AI_TOKEN_HEADER}}: {{AI_TOKEN}}" on every request. If a request returns 401 the token has expired — tell the user to re-run the command rather than retrying.
+
+Endpoints:
+{{ENDPOINTS}}
+
+Project scope:
+- The MCP server list itself is GLOBAL — it is not project-scoped, so PATCH /api/config needs no project cookie.
+- Agent endpoints ARE project-filtered: send the cookie "{{PROJECT_COOKIE}}={{PROJECT_PATH}}" on GET /api/agents and PATCH /api/agents. GET returns only the agents visible in this project (global plus project-scoped ones), and PATCH uses the cookie to resolve "project_scope". Without it, a project-scoped agent is invisible and cannot be found by name.
+
+Two separate resources — do not confuse them:
+1. The GLOBAL server list lives in config.yaml under "mcp.servers". It is ONE list shared by every agent. Edit it with PATCH /api/config; read it with GET /api/config (field "mcp.servers"). This is where a server's command, args, env and url belong.
+2. The PER-AGENT policy lives on the agent record as "mcpServers" ({mode, names}) and says WHICH global servers that agent may use. Edit it with PATCH /api/agents. Never copy a server definition into an agent.
+
+PATCH /api/config replaces "mcp.servers" WHOLESALE:
+- The array you send becomes the entire list. Servers you omit are DELETED, so always GET first, modify the array, then PATCH the full array back.
+- Sending an empty array deletes every server. Only do that when the user asks to remove all of them.
+- Each element: {name, transport, command?, args?, env?, url?, headers?}.
+  - "name" is required, unique, and may only contain letters, digits, "_" and "-". It is what the per-agent policy references, so renaming a server silently breaks every policy that names the old one — tell the user when you rename.
+  - "transport" is one of "stdio", "http", "sse".
+  - stdio requires "command" (and optional "args" as an array, "env" as an object).
+  - http / sse require "url" (http or https) and accept "headers" as an object.
+- Validation rejects: a missing/duplicate/invalid name, an unknown transport, a stdio server with no command, a command that is not found on PATH, and a non-http(s) URL. The error message names the offending index — relay it verbatim and fix that entry instead of retrying blindly.
+- env and headers are returned IN PLAINTEXT by GET. Do not print secret values back to the user unless they ask; refer to them by key name.
+
+PATCH /api/agents takes "mcp_servers" as an object: {"mode":"all"|"none"|"selected","names":["a","b"]}.
+- "all" (the default, and what an omitted mode means) enables every server in the global list.
+- "none" disables MCP for that agent.
+- "selected" enables only the servers named in "names".
+- Changing the policy does NOT need a restart and does NOT interrupt a running turn: the connection re-reads the policy before each turn and reconnects with the new list if it changed. Say "takes effect from the next message", not "restart required".
+
+Which agents can actually use MCP:
+- ACP transport only. An agent with transport "cli" has no MCP parameter and reads its own config file — the global list has no effect on it. If the user asks to enable MCP on a CLI agent, explain that and offer to switch it to ACP (PATCH transport) only if they have an ACP command for it.
+- Three backends accept the field and ignore it entirely: "dsh", "deepseek", "pi". ClawBench filters the list out for them, so enabling MCP there does nothing. Tell the user instead of silently writing a policy.
+- "codex" and "commandcode" reject the "sse" transport; the whole session fails if one is sent. Those servers are filtered out for them. Prefer "http" when the user has a choice.
+- "hermes" attaches MCP asynchronously, so the first turn after connecting may not see the tools. Mention this only if the user reports missing tools.
+
+Rules:
+- Read before writing. GET /api/config to see the current list, GET /api/agents to resolve an agent id by name. Never guess a server name or an agent id.
+- When the user names a server they already have, match it by "name" rather than adding a near-duplicate.
+- After a change, read the resource back and state concretely what is now configured (server names + transports; for an agent, its mode and the enabled names). Never claim success from the PATCH status alone.
+- Removing a server is destructive for every agent using it: confirm which server by name before deleting, and mention that agents with mode "all" lose it too.
+- Use the user's language.
 `
 
 // usageInjectTemplate is the on-demand instruction template injected when the
@@ -206,7 +274,8 @@ func IsClawbenchCommand(rawMsg string) bool {
 		matchClawbenchCommand(rawMsg, ClawbenchCmdTask) ||
 		matchClawbenchCommand(rawMsg, ClawbenchCmdUsage) ||
 		matchClawbenchCommand(rawMsg, ClawbenchCmdUserGuide) ||
-		matchClawbenchCommand(rawMsg, ClawbenchCmdAgent)
+		matchClawbenchCommand(rawMsg, ClawbenchCmdAgent) ||
+		matchClawbenchCommand(rawMsg, ClawbenchCmdMCP)
 }
 
 // clawbenchNow is the current time in the form the AI needs for RFC3339 query
@@ -302,6 +371,8 @@ func processClawbenchCommand(rawMsg, projectPath, sessionID string) (string, err
 		return renderUserGuideTemplate()
 	case matchClawbenchCommand(rawMsg, ClawbenchCmdAgent):
 		return renderAgentTemplate(projectPath)
+	case matchClawbenchCommand(rawMsg, ClawbenchCmdMCP):
+		return renderMCPTemplate(projectPath)
 	}
 	return rawMsg, nil
 }
@@ -361,6 +432,18 @@ func renderTaskTemplate(projectPath string) (string, error) {
 		return "", fmt.Errorf("render task endpoints: %w", err)
 	}
 	tmpl := strings.ReplaceAll(taskInjectTemplate, "{{ENDPOINTS}}", endpoints)
+	tmpl = strings.ReplaceAll(tmpl, "{{BASE_URL}}", clawbenchBaseURL())
+	tmpl = strings.ReplaceAll(tmpl, "{{PROJECT_COOKIE}}", clawbenchProjectCookie())
+	tmpl = strings.ReplaceAll(tmpl, "{{PROJECT_PATH}}", projectPath)
+	return applyAuthPlaceholders(tmpl), nil
+}
+
+func renderMCPTemplate(projectPath string) (string, error) {
+	endpoints, err := api.RenderCommand(api.CommandMCP)
+	if err != nil {
+		return "", fmt.Errorf("render mcp endpoints: %w", err)
+	}
+	tmpl := strings.ReplaceAll(mcpInjectTemplate, "{{ENDPOINTS}}", endpoints)
 	tmpl = strings.ReplaceAll(tmpl, "{{BASE_URL}}", clawbenchBaseURL())
 	tmpl = strings.ReplaceAll(tmpl, "{{PROJECT_COOKIE}}", clawbenchProjectCookie())
 	tmpl = strings.ReplaceAll(tmpl, "{{PROJECT_PATH}}", projectPath)

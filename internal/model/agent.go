@@ -74,6 +74,16 @@ type Agent struct {
 	// has model discovery capability (registered via RegisterModelSource).
 	CanRefreshModels bool `json:"canRefreshModels"`
 
+	// BackendHasSpec reports whether this agent's backend has a BackendSpec
+	// registry entry, i.e. whether auto-discovery owns its `acp_command`
+	// (RefreshAgents rewrites that column by backend on every rescan/startup).
+	//
+	// Computed at load time and echoed on the wire so the settings UI applies
+	// the same predicate as the PATCH guard: an agent with no spec (a YAML one,
+	// or a custom ACP agent) can have its command edited; a spec-backed one
+	// cannot, because the edit would silently revert.
+	BackendHasSpec bool `json:"backendHasSpec"`
+
 	// CLIModels is the pure CLI-discovered list, without any ACP merge. It is
 	// populated only in API responses, so a client can show the CLI view when the
 	// agent is switched to CLI transport without re-deriving it.
@@ -125,6 +135,18 @@ type Agent struct {
 	// filter only gates NEW entries and the settings list, so a session created
 	// while the agent was global keeps working after it is scoped.
 	ProjectID *int64 `json:"projectId,omitempty"`
+
+	// MCPServers is this agent's MCP enablement policy — which of the global
+	// servers (config.yaml `mcp.servers`) it may use.
+	//
+	// Only the POLICY lives here, never the definitions: a definition carries
+	// API keys, and storing a copy per agent would scatter them and require the
+	// user to edit N records to rotate one key.
+	//
+	// Zero value means MCPPolicyAll (see MCPServerPolicy.Normalized): an empty
+	// global list makes that a no-op, so the default is safe and adding a
+	// server does not require ticking every agent.
+	MCPServers MCPServerPolicy `json:"mcpServers"`
 }
 
 // DefaultModelID returns the default model ID for this agent.

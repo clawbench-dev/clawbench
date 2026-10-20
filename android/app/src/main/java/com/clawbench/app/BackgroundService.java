@@ -3573,6 +3573,18 @@ public class BackgroundService extends Service {
                     return;
                 }
 
+            } else if ("usage_meter_update".equals(eventType)) {
+                // Wording comes from the server: it carries numbers ("used
+                // $9.20 vs $6.67 expected") and is rendered with the user's
+                // language at write time. Duplicating the template here would
+                // mean keeping two number formatters in sync.
+                title = data.optString("title", "");
+                alert = data.optString("body", "");
+                if (title.isEmpty()) {
+                    AppLog.i(TAG, "NativeWS: usage_meter_update without title, skipping");
+                    return;
+                }
+
             } else {
                 AppLog.i(TAG, "NativeWS: postEventNotification - unhandled eventType=" + eventType + ", skipping");
                 return;
@@ -3589,6 +3601,9 @@ public class BackgroundService extends Service {
                 if (!taskId.isEmpty()) intent.putExtra("task_id", taskId);
                 if (!executionId.isEmpty()) intent.putExtra("execution_id", executionId);
                 if (!sessionId.isEmpty()) intent.putExtra("session_id", sessionId);
+            } else if ("usage_meter_update".equals(eventType)) {
+                // Global event: no session/task to deep-link to.
+                intent.putExtra("event_type", "usage_meter");
             } else {
                 intent.putExtra("event_type", "permission_pending".equals(status) ? "permission_pending" : "session_update");
                 if (!sessionId.isEmpty()) intent.putExtra("session_id", sessionId);
@@ -3968,6 +3983,17 @@ public class BackgroundService extends Service {
                 } else {
                     return;
                 }
+            } else if ("usage_meter_update".equals(eventType)) {
+                // Unlike session/task events, the wording is NOT looked up from
+                // R.string: the server renders it (it carries numbers such as
+                // "used $9.20 vs $6.67 expected") and ships it in the payload.
+                // Translating here would require duplicating the whole sentence
+                // template and its number formatting in Java.
+                title = data.optString("title", "");
+                alert = data.optString("body", "");
+                if (title.isEmpty()) {
+                    return;
+                }
             } else {
                 return;
             }
@@ -3981,6 +4007,11 @@ public class BackgroundService extends Service {
                 if (!taskId.isEmpty()) intent.putExtra("task_id", taskId);
                 if (!executionId.isEmpty()) intent.putExtra("execution_id", executionId);
                 if (!sessionId.isEmpty()) intent.putExtra("session_id", sessionId);
+            } else if ("usage_meter_update".equals(eventType)) {
+                // No session/task to deep-link to: the meter is global. The
+                // frontend opens the usage popover (wide) or the settings entry
+                // (narrow) for this event_type.
+                intent.putExtra("event_type", "usage_meter");
             } else {
                 intent.putExtra("event_type", "permission_pending".equals(status) ? "permission_pending" : "session_update");
                 if (!sessionId.isEmpty()) intent.putExtra("session_id", sessionId);

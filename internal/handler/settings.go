@@ -167,6 +167,17 @@ var hotReloadFields = map[string]bool{
 	"skills.dirs":          true,
 	"skills.refresh_hours": true,
 	"skills.repos":         true,
+	// MCP — hot: ACPConn compares a policy hash before each turn and
+	// reconnects with the new list. Reporting it as cold would tell the user to
+	// restart for a feature whose whole point is not needing one.
+	"mcp.servers": true,
+	// Usage meter — the worker re-reads the rule every tick, so a changed rule
+	// takes effect without a restart. The handler also recreates the worker so
+	// the new rule is checked immediately instead of up to one interval later.
+	"usage_meter.anchor_date": true,
+	"usage_meter.period_days": true,
+	"usage_meter.metric":      true,
+	"usage_meter.quota":       true,
 }
 
 // restartGracePeriod is the delay before shutting down the server after a restart
@@ -254,6 +265,102 @@ type configResponse struct {
 	Skills         configSkills         `json:"skills"`
 	Appearance     configAppearance     `json:"appearance"`
 	Forge          configForge          `json:"forge"`
+	UsageMeter     configUsageMeter     `json:"usage_meter"`
+	MCP            configMCP            `json:"mcp"`
+}
+
+// configMCP is the global MCP server list as sent to the client.
+//
+// env / headers are returned IN PLAINTEXT, matching the STT / RAG / TTS
+// api_key fields. An MCP server usually carries several env vars, so returning
+// only key names would make "is this the value I typed?" unanswerable and turn a
+// one-character typo into a long hunt. The endpoint is authenticated and
+// config.yaml is written 0600, so the trust boundary is the same as those
+// existing fields.
+type configMCP struct {
+	Servers []configMCPServer `json:"servers"`
+}
+
+// configMCPServer mirrors model.MCPServer on the wire.
+type configMCPServer struct {
+	Name      string            `json:"name"`
+	Transport string            `json:"transport"`
+	Command   string            `json:"command,omitempty"`
+	Args      []string          `json:"args,omitempty"`
+	Env       map[string]string `json:"env,omitempty"`
+	URL       string            `json:"url,omitempty"`
+	Headers   map[string]string `json:"headers,omitempty"`
+}
+
+// buildConfigMCP renders the global list for GET /api/config.
+func buildConfigMCP(cfg model.Config) configMCP {
+	out := configMCP{Servers: make([]configMCPServer, 0, len(cfg.MCP.Servers))}
+	for _, s := range cfg.MCP.Servers {
+		out.Servers = append(out.Servers, configMCPServer{
+			Name:      s.Name,
+			Transport: s.Transport,
+			Command:   s.Command,
+			Args:      s.Args,
+			Env:       s.Env,
+			URL:       s.URL,
+			Headers:   s.Headers,
+		})
+	}
+	return out
+}
+
+// parseMCPServers converts the PATCH payload's mcp.servers array into typed
+// values. Mirrors parseSkillRepos.
+func parseMCPServers(raw []any) ([]model.MCPServer, error) {
+	out := make([]model.MCPServer, 0, len(raw))
+	for i, item := range raw {
+		m, ok := item.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("mcp.servers[%d] must be an object", i)
+		}
+		srv := model.MCPServer{}
+		srv.Name, _ = m["name"].(string)
+		srv.Transport, _ = m["transport"].(string)
+		srv.Command, _ = m["command"].(string)
+		srv.URL, _ = m["url"].(string)
+		if args, ok := m["args"].([]any); ok {
+			for _, a := range args {
+				if s, ok := a.(string); ok {
+					srv.Args = append(srv.Args, s)
+				}
+			}
+		}
+		if env, ok := m["env"].(map[string]any); ok {
+			srv.Env = make(map[string]string, len(env))
+			for k, v := range env {
+				if s, ok := v.(string); ok {
+					srv.Env[k] = s
+				}
+			}
+		}
+		if h, ok := m["headers"].(map[string]any); ok {
+			srv.Headers = make(map[string]string, len(h))
+			for k, v := range h {
+				if s, ok := v.(string); ok {
+					srv.Headers[k] = s
+				}
+			}
+		}
+		out = append(out, srv)
+	}
+	return out, nil
+}
+
+// configUsageMeter exposes the usage-meter rule.
+//
+// The two internal bookkeeping fields (notified_cycle_start / notified_stage)
+// are deliberately absent: they describe the server's notification progress,
+// not user configuration, and the UI has nothing to do with them.
+type configUsageMeter struct {
+	AnchorDate string  `json:"anchor_date"`
+	PeriodDays int     `json:"period_days"`
+	Metric     string  `json:"metric"`
+	Quota      float64 `json:"quota"`
 }
 
 type configChat struct {
@@ -765,6 +872,17 @@ var PatchableConfigPaths = map[string]bool{
 	"skills.dirs":                       true,
 	"skills.refresh_hours":              true,
 	"skills.repos":                      true,
+	// MCP server list — hot: connections compare a policy hash each turn, so a
+	// change takes effect on the next turn without a restart.
+	"mcp.servers": true,
+	// Usage meter rule. The two internal state fields
+	// (notified_cycle_start / notified_stage) are deliberately absent: they are
+	// service-owned bookkeeping, and letting a client write them would let it
+	// suppress or duplicate the notification.
+	"usage_meter.anchor_date": true,
+	"usage_meter.period_days": true,
+	"usage_meter.metric":      true,
+	"usage_meter.quota":       true,
 }
 
 // validTTSEngines is the set of valid TTS engine values.
@@ -934,8 +1052,15 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			Dir: cfg.ResolveFontsDir(),
 		},
 		Skills:     buildConfigSkills(cfg),
+		MCP:        buildConfigMCP(cfg),
 		Appearance: buildConfigAppearance(cfg),
 		Forge:      buildConfigForge(cfg),
+		UsageMeter: configUsageMeter{
+			AnchorDate: cfg.UsageMeter.AnchorDate,
+			PeriodDays: cfg.UsageMeter.PeriodDays,
+			Metric:     cfg.UsageMeter.Metric,
+			Quota:      cfg.UsageMeter.Quota,
+		},
 	}
 
 	// Conditionally populate AISummary API sub-config when a base URL is set
@@ -1038,10 +1163,27 @@ func serveConfigPatch(w http.ResponseWriter, r *http.Request) {
 	snapshot := model.ConfigInstance
 
 	applyConfigPatch(patch)
+	// Republish the MCP snapshot: applyConfigPatch rewrites ConfigInstance in
+	// place, but internal/ai reads through an atomic pointer (it cannot take
+	// configMutex — wrong dependency direction). Without this, a PATCH would
+	// update the file and leave the running process serving the old list.
+	model.PublishMCPSnapshot(model.ConfigInstance.MCP)
 
-	if err := writeConfigYAML(patch); err != nil {
+	// The usage-meter rule change may have cleared the notification state in
+	// memory. Those two fields are service-owned and absent from the patch, so
+	// writeConfigYAML (which only merges keys present in the patch) would leave
+	// the OLD values on disk — and a restart before the new rule notifies would
+	// read them back, silently suppressing the notification for the rest of the
+	// cycle. Merge them into the same atomic write.
+	writePatch := patch
+	if _, ok := patch["usage_meter"].(map[string]any); ok {
+		writePatch = mergeUsageMeterStateIntoPatch(patch)
+	}
+
+	if err := writeConfigYAML(writePatch); err != nil {
 		// Rollback memory state — disk write failed
 		model.ConfigInstance = snapshot
+		model.PublishMCPSnapshot(model.ConfigInstance.MCP)
 		// Re-apply hot-reload globals from snapshot
 		applyHotReloadGlobals()
 		slog.Error("failed to write config.yaml after patch", "err", err)
@@ -1175,6 +1317,38 @@ func validUserNickname(s string) bool {
 	return true
 }
 
+// validateUsageMeterRule checks a usage-meter rule that has already been merged
+// with the stored config, so a partial PATCH is validated against the values it
+// will actually run with.
+//
+// A zero quota is valid and means "disabled" — in that case the other fields may
+// be empty and are simply not used. Once a quota exists the rule must be
+// complete: the worker cannot compute a cycle without an anchor, and a metric it
+// does not know would silently count nothing.
+func validateUsageMeterRule(r model.UsageMeterConfig) error {
+	if r.Quota < 0 {
+		return fmt.Errorf("usage_meter.quota must not be negative")
+	}
+	if r.Quota == 0 {
+		return nil
+	}
+	if r.AnchorDate == "" {
+		return fmt.Errorf("usage_meter.anchor_date is required when a quota is set")
+	}
+	// Parse in local time to match how the service interprets the anchor: a
+	// date-only string at 00:00 in the server's timezone.
+	if _, err := time.ParseInLocation("2006-01-02", r.AnchorDate, time.Local); err != nil {
+		return fmt.Errorf("usage_meter.anchor_date must be YYYY-MM-DD")
+	}
+	if r.PeriodDays < 1 || r.PeriodDays > model.MaxUsageMeterPeriodDays {
+		return fmt.Errorf("usage_meter.period_days must be between 1 and %d", model.MaxUsageMeterPeriodDays)
+	}
+	if !model.IsValidUsageMeterMetric(r.Metric) {
+		return fmt.Errorf("usage_meter.metric must be one of: tokens,credit,cost")
+	}
+	return nil
+}
+
 func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo // exhaustive config validation
 	// language: only locales the bundled translation tables actually carry.
 	// An unknown value would make every background-localized string fall back
@@ -1299,6 +1473,85 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 					return fmt.Errorf("skills.repos[%d].url must be a valid URL", i)
 				}
 			}
+		}
+	}
+
+	// MCP server list. Structural rules (name/transport/required field) live in
+	// model.ValidateMCPServers so the API layer does not duplicate them; the two
+	// checks below are handler-level because they depend on the environment or on
+	// a standard library parser.
+	if mcpPatch, ok := patch["mcp"].(map[string]any); ok {
+		if raw, ok := mcpPatch["servers"].([]any); ok {
+			servers, err := parseMCPServers(raw)
+			if err != nil {
+				return err
+			}
+			if err := model.ValidateMCPServers(servers); err != nil {
+				return err
+			}
+			for i, srv := range servers {
+				if srv.Transport != model.MCPTransportStdio {
+					// url.ParseRequestURI rejects "not a url" while allowing
+					// http/https/ws; the scheme check keeps it to the two the
+					// ACP transports actually use.
+					u, err := url.ParseRequestURI(srv.URL)
+					if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+						return fmt.Errorf("mcp.servers[%d].url must be an http(s) URL", i)
+					}
+					continue
+				}
+				// Reject a command that cannot be found. This is the most common
+				// configuration mistake and the only one we can catch before the
+				// agent tries to start it — failing here turns a silent no-op into
+				// an error at save time.
+				if _, err := exec.LookPath(srv.Command); err != nil {
+					return fmt.Errorf("mcp.servers[%d].command %q not found in PATH", i, srv.Command)
+				}
+			}
+		}
+	}
+
+	// Usage meter. Validation is cross-field on the MERGED value (existing
+	// config overlaid with the patch), because a partial patch — e.g. only
+	// `quota` — must be validated against the anchor and metric it will
+	// actually run with, not against empty strings.
+	if um, ok := patch["usage_meter"].(map[string]any); ok {
+		effective := model.ConfigInstance.UsageMeter
+		// A present-but-wrong-typed value is an ERROR, not "skip this field".
+		// Skipping would leave the bad value in the patch, which writeConfigYAML
+		// writes verbatim: a string quota persists as `quota: "5000000"` and the
+		// NEXT STARTUP FAILS to unmarshal the config and exits. The frontend
+		// happens to send numbers today; the server must not depend on that.
+		if raw, present := um["anchor_date"]; present {
+			v, ok := raw.(string)
+			if !ok {
+				return fmt.Errorf("usage_meter.anchor_date must be a string")
+			}
+			effective.AnchorDate = v
+		}
+		if raw, present := um["period_days"]; present {
+			v, ok := raw.(float64)
+			if !ok {
+				return fmt.Errorf("usage_meter.period_days must be a number")
+			}
+			effective.PeriodDays = int(v)
+		}
+		if raw, present := um["metric"]; present {
+			v, ok := raw.(string)
+			if !ok {
+				return fmt.Errorf("usage_meter.metric must be a string")
+			}
+			effective.Metric = v
+		}
+		if raw, present := um["quota"]; present {
+			v, ok := raw.(float64)
+			if !ok {
+				return fmt.Errorf("usage_meter.quota must be a number")
+			}
+			effective.Quota = v
+		}
+		if err := validateUsageMeterRule(effective); err != nil {
+			return err
 		}
 	}
 
@@ -1619,6 +1872,17 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 	if fontsMap, ok := patch["fonts"].(map[string]any); ok {
 		if v, ok := fontsMap["dir"].(string); ok {
 			cfg.Fonts.Dir = v
+		}
+	}
+
+	if mcpMap, ok := patch["mcp"].(map[string]any); ok {
+		if raw, ok := mcpMap["servers"].([]any); ok {
+			// Validation already ran; a parse error here would mean the two
+			// disagree, so fall back to leaving the old list rather than
+			// writing a half-decoded one.
+			if servers, err := parseMCPServers(raw); err == nil {
+				cfg.MCP.Servers = servers
+			}
 		}
 	}
 
@@ -1989,6 +2253,48 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 			applyBool("reopened", &cfg.Forge.Notify.Reopened)
 			applyBool("commented", &cfg.Forge.Notify.Commented)
 			applyBool("pipeline", &cfg.Forge.Notify.Pipeline)
+		}
+	}
+
+	// Usage meter: the rule itself. The two internal state fields
+	// (notified_cycle_start / notified_stage) are NOT patchable — they are
+	// written by the service layer under configMutex.
+	//
+	// A rule that actually CHANGED re-arms notification: the user asked for a
+	// different budget, so the new budget deserves its own warning instead of
+	// inheriting the old one's "already told you" flag. A patch that leaves the
+	// rule identical must NOT re-arm — the settings panel sends the whole panel
+	// on every save, so an unconditional clear would re-notify the user every
+	// time they opened the panel and pressed save without changing anything.
+	if um, ok := patch["usage_meter"].(map[string]any); ok {
+		before := cfg.UsageMeter
+		if v, ok := um["anchor_date"].(string); ok {
+			cfg.UsageMeter.AnchorDate = v
+		}
+		if v, ok := um["period_days"].(float64); ok {
+			cfg.UsageMeter.PeriodDays = int(v)
+		}
+		if v, ok := um["metric"].(string); ok {
+			cfg.UsageMeter.Metric = v
+		}
+		if v, ok := um["quota"].(float64); ok {
+			cfg.UsageMeter.Quota = v
+		}
+		// A metric change invalidates the quota's meaning ($20 becoming 20
+		// tokens). Clear it here, in the SAME patch, rather than leaving it to a
+		// second client request: two writes would expose a window where the new
+		// metric runs against the old quota's number, and the worker wakes
+		// within seconds of a PATCH.
+		if _, quotaInPatch := um["quota"]; !quotaInPatch && before.Metric != cfg.UsageMeter.Metric {
+			cfg.UsageMeter.Quota = 0
+		}
+		changed := before.AnchorDate != cfg.UsageMeter.AnchorDate ||
+			before.PeriodDays != cfg.UsageMeter.PeriodDays ||
+			before.Metric != cfg.UsageMeter.Metric ||
+			before.Quota != cfg.UsageMeter.Quota
+		if changed {
+			cfg.UsageMeter.NotifiedCycleStart = ""
+			cfg.UsageMeter.NotifiedStage = ""
 		}
 	}
 
@@ -2489,4 +2795,37 @@ func joinArgs(args []string) string {
 // quotes using the '\” idiom safe for POSIX shells.
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// mergeUsageMeterStateIntoPatch returns a shallow copy of patch whose
+// usage_meter object also carries the two service-owned notification-state
+// fields from the CURRENT in-memory config.
+//
+// Needed because a rule change clears that state in memory (see
+// applyConfigPatch) while writeConfigYAML only merges the keys the patch
+// mentions — so without this the cleared state never reaches disk, and a
+// restart before the new rule notifies would resurrect the old stage and
+// suppress the notification for the rest of the cycle.
+//
+// The values are read from ConfigInstance rather than taken as arguments: at
+// this point applyConfigPatch has already applied the new rule and cleared the
+// state, so memory is the authority. Caller must hold configMutex.
+func mergeUsageMeterStateIntoPatch(patch map[string]any) map[string]any {
+	um, ok := patch["usage_meter"].(map[string]any)
+	if !ok {
+		return patch
+	}
+	merged := make(map[string]any, len(um)+2)
+	for k, v := range um {
+		merged[k] = v
+	}
+	merged["notified_cycle_start"] = model.ConfigInstance.UsageMeter.NotifiedCycleStart
+	merged["notified_stage"] = model.ConfigInstance.UsageMeter.NotifiedStage
+
+	out := make(map[string]any, len(patch))
+	for k, v := range patch {
+		out[k] = v
+	}
+	out["usage_meter"] = merged
+	return out
 }

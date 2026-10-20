@@ -23,6 +23,13 @@ interface DialogState {
   // generate (e.g. the summary model is not configured).
   generateText: string
   onGenerate: (() => Promise<string | null>) | null
+  /**
+   * Render the prompt as a one-line text field instead of the default 3-row
+   * textarea. For values that are never multi-line (a line number, a name),
+   * the textarea adds a resize-free box the height of three lines and invites
+   * a newline the caller would have to strip.
+   */
+  singleLine: boolean
   resolve: ((v: string | boolean | null) => void) | null
 }
 
@@ -41,6 +48,7 @@ const state = ref<DialogState>({
   onExtraAction: null,
   generateText: '',
   onGenerate: null,
+  singleLine: false,
   resolve: null,
 })
 
@@ -56,6 +64,7 @@ function open(type: DialogState['type'], message: string, opts: {
   onExtraAction?: () => void
   generateText?: string
   onGenerate?: () => Promise<string | null>
+  singleLine?: boolean
 } = {}): Promise<string | boolean | null> {
   return new Promise(resolve => {
     // Resolve the previous dialog as cancelled before replacing it,
@@ -85,6 +94,7 @@ function open(type: DialogState['type'], message: string, opts: {
       onExtraAction: opts.onExtraAction ?? null,
       generateText: opts.generateText || '',
       onGenerate: opts.onGenerate ?? null,
+      singleLine: opts.singleLine ?? false,
       resolve,
     }
   })
@@ -94,7 +104,7 @@ function confirm(message: string, opts?: Parameters<typeof open>[2]): Promise<bo
   return open('confirm', message, opts) as Promise<boolean>
 }
 
-function prompt(message: string, opts?: { value?: string; placeholder?: string; title?: string; confirmText?: string; cancelText?: string; dangerous?: boolean; generateText?: string; onGenerate?: () => Promise<string | null> }): Promise<string | null> {
+function prompt(message: string, opts?: { value?: string; placeholder?: string; title?: string; confirmText?: string; cancelText?: string; dangerous?: boolean; generateText?: string; onGenerate?: () => Promise<string | null>; singleLine?: boolean }): Promise<string | null> {
   return open('prompt', message, opts) as Promise<string | null>
 }
 

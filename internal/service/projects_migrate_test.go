@@ -2,6 +2,8 @@ package service
 
 import (
 	"database/sql"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -810,6 +812,14 @@ func TestLegacyProjectPathIndexes_AreAllRecreated(t *testing.T) {
 	created := make(map[string]string) // index name -> file it was found in
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
+			// A directory can vanish between being listed and being read: the
+			// Playwright runners recreate and clear test-results/ and
+			// playwright-report/ on every run, and a concurrent test run in the
+			// same checkout does the same. That is not a schema problem, so skip
+			// the vanished entry instead of failing the scan.
+			if errors.Is(walkErr, fs.ErrNotExist) {
+				return nil
+			}
 			return walkErr
 		}
 		if d.IsDir() {

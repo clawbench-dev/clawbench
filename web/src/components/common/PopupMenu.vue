@@ -8,9 +8,23 @@
   </Teleport>
 </template>
 
+<script>
+// Module scope (not `<script setup>`, which runs once PER INSTANCE): a counter
+// declared in the setup block would reset for every menu and hand them all the
+// same id, making the registered handler ids indistinguishable in logs.
+let _menuSeq = 0
+function nextMenuSeq() {
+  return ++_menuSeq
+}
+</script>
+
 <script setup>
 import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { computeMenuStyle } from '@/utils/popupMenuPosition'
+import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
+
+/** Disambiguates several menus that may be open at once (nested pickers). */
+const instanceSeq = nextMenuSeq()
 
 const props = defineProps({
   show: Boolean,
@@ -182,8 +196,44 @@ onMounted(() => {
   }
 })
 
+// Back (Android hardware button, predictive back, web edge swipe) closes the
+// menu. Without this the press fell through to whatever was behind it — for the
+// usage-meter popover that meant the press was consumed by a page-level handler
+// and the popover stayed on screen, i.e. the only way out was tapping elsewhere.
+//
+// Same tier as the dialogs (`PRIORITY_OVERLAY + 1`) rather than a tier above:
+// equal priorities are resolved by registration order, and every one of these
+// surfaces registers when it OPENS — so the tie-break reproduces open order,
+// which is also paint order (`--z-popover` 9999 > `--z-modal` 3000). Hard-coding
+// a higher number would instead let a menu that was already open outrank a
+// dialog raised on top of it.
+const BACK_PRIORITY = PRIORITY_OVERLAY + 1
+let unregisterBack = null
+
+function registerBackHandlerForMenu() {
+  if (unregisterBack) return
+  unregisterBack = registerBackHandler({
+    id: `popup-menu-${instanceSeq}`,
+    canGoBack: () => props.show,
+    goBack: () => emit('update:show', false),
+    priority: BACK_PRIORITY,
+  })
+}
+
+function unregisterBackHandlerForMenu() {
+  if (!unregisterBack) return
+  unregisterBack()
+  unregisterBack = null
+}
+
+watch(() => props.show, (val) => {
+  if (val) registerBackHandlerForMenu()
+  else unregisterBackHandlerForMenu()
+}, { immediate: true })
+
 // Cleanup on unmount
 onBeforeUnmount(() => {
+  unregisterBackHandlerForMenu()
   unbindOpenListeners()
 })
 </script>

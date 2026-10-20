@@ -34,12 +34,14 @@ const jsonKeyPort = "Port"
 // emit the same key (goconst): the group member view, the agent patch, and the
 // session-limit error all repeat these names.
 const (
-	jsonName     = "name"
-	jsonAgentID  = "agentId"
-	jsonBackend  = "backend"
-	jsonModel    = "model"
-	jsonUsage    = "usage"
-	jsonMaxCount = "MaxCount"
+	jsonName        = "name"
+	jsonAgentID     = "agentId"
+	jsonBackend     = "backend"
+	jsonModel       = "model"
+	jsonUsage       = "usage"
+	jsonAutoApprove = "autoApprove"
+	jsonCruise      = "cruise"
+	jsonMaxCount    = "MaxCount"
 )
 
 // loc returns the Localizer for the current request.
@@ -322,6 +324,40 @@ func agentVisibleInProject(agent *model.Agent, projectPath string) bool {
 	return *agent.ProjectID == projectID
 }
 
+// explicitAgentRejection reports why an EXPLICIT agent choice may not be used in
+// projectPath, or "" when it is allowed.
+//
+// The send paths (POST /api/ai/chat and POST /api/ai/queue) resolve an agent on
+// every message, so without this check the two switches enforced on every
+// creation entry — `disabled` and the project scope — were bypassable by
+// sending into an already-open session: a disabled agent still ran (and cost
+// money / executed tools), and a "only in this project" agent ran in another
+// project (its custom system prompt included).
+//
+// Only an explicit choice is checked. An empty agentID means "keep the session's
+// agent", which was validated when the session was created; re-checking it here
+// would break sessions whose agent was scoped afterwards (the visibility rule
+// deliberately gates NEW entries only, see agentVisibleInProject).
+//
+// Returns a msgKey the caller renders with writeLocalizedErrorf.
+func explicitAgentRejection(agentID, projectPath string) string {
+	if agentID == "" {
+		return ""
+	}
+	agent := model.GetAgent(agentID)
+	if agent == nil {
+		// Unknown id: the caller's own existence check reports InvalidAgentID.
+		return ""
+	}
+	if agent.Disabled {
+		return "AgentDisabled"
+	}
+	if !agentVisibleInProject(agent, projectPath) {
+		return "AgentNotInProject"
+	}
+	return ""
+}
+
 // resolveDefaultAgentForProject returns the default agent to use when a caller
 // creates a NEW session without an explicit agent choice, scoped to
 // projectPath.
@@ -459,6 +495,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/ai/queue/interrupt", QueueInterruptHandler)
 	register("/api/ai/queue/merge", QueueMergeHandler)
 	register("/api/ai/session/update", ServeAISessionUpdate)
+	register("/api/ai/session/settings", ServeSessionSettings)
 	register("/api/ai/session/generate-title", ServeGenerateSessionTitle)
 	register("/api/ai/session/tags", ServeSessionTags)
 	register("/api/ai/sessions", ServeSessions)
@@ -488,6 +525,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/ai/chat/tool-call", ServeToolCallDetail)
 	register("/api/ai/chat/thinking", ServeThinkingDetail)
 	register("/api/usage/stats", ServeUsageStats)
+	register("/api/usage/meter", ServeUsageMeter)
 	register("/api/git/stats", ServeGitStats)
 	register("/api/git/cloc", ServeGitCloc)
 	register("/api/ai/permission/respond", ServePermissionRespond)

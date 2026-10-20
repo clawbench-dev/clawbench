@@ -137,6 +137,60 @@ func (o *GroupOrchestrator) cruiseOn() bool {
 	return GetSessionCruise(o.groupID)
 }
 
+// hostMemberID returns the group's host member row id (empty for a free group).
+//
+// It reads the persisted pointer on EVERY call for the same reason cruiseOn
+// does: the host is immutable after creation, but caching it on the struct
+// would make every test that builds a group and then inspects the orchestrator
+// depend on construction order. A read is one indexed primary-key lookup.
+//
+// An EMPTY result is the single fact that distinguishes the two modes: free
+// groups have no host and therefore allow member-to-member private notes, while
+// a host-mode group forbids them (see noteAllowed).
+func (o *GroupOrchestrator) hostMemberID() string {
+	if o.groupID == "" {
+		return ""
+	}
+	return GetGroupHostMember(o.groupID)
+}
+
+// noteAllowed reports whether a private note (密送) from speakerID to targetID
+// may be stored, given the group's mode.
+//
+// The rule: in a HOST-mode group, two PLAIN MEMBERS may not exchange private
+// notes. Every other pair is allowed.
+//
+//	host  ↔ member   allowed — the chair briefs one participant, and a member
+//	                  reports something to the chair, without the others seeing
+//	                  it. This is the two-way private channel the host's
+//	                  authority is built on.
+//	member ↔ member  DROPPED — collusion the chair cannot see. The whole point
+//	                  of host mode is that the chair owns routing and the shared
+//	                  record; a side channel between two participants would let
+//	                  them coordinate off the record.
+//	member → user    allowed — the user outranks the host, so reporting to the
+//	                  human privately is not "going behind the chair's back".
+//	user  → anyone   allowed — the human is not subject to the chair.
+//
+// A free group has no host, so every pair is allowed: the private note is the
+// only side channel that mode has, and removing it would leave the mode with
+// none.
+//
+// Enforced at STORE time (storeRouteNotes), not at delivery time: a dropped
+// note is never written, so no later delivery path can resurrect it.
+func (o *GroupOrchestrator) noteAllowed(speakerID, targetID string) bool {
+	hostID := o.hostMemberID()
+	if hostID == "" {
+		return true // free group: no authority to route through
+	}
+	// The user is never "a plain member": exempt on both sides.
+	if speakerID == groupUserTargetID || targetID == groupUserTargetID {
+		return true
+	}
+	// Allowed when either endpoint is the host.
+	return speakerID == hostID || targetID == hostID
+}
+
 // NewGroupOrchestrator builds an orchestrator for a group session.
 func NewGroupOrchestrator(groupID string) *GroupOrchestrator {
 	return &GroupOrchestrator{
@@ -399,6 +453,10 @@ type groupTurnSetup struct {
 	byName    map[string]GroupMember
 	runner    groupTurnRunner
 	activeIDs []string
+	// hostMemberID is the host's member ROW id (empty in a free group). It is
+	// the same value hostMemberID() reads, captured once per turn so the
+	// per-member prompt can name the host without a DB read per speaker.
+	hostMemberID string
 }
 
 // prepareTurn loads the roster and wires the per-turn scaffolding shared by
@@ -428,12 +486,13 @@ func (o *GroupOrchestrator) prepareTurn(groupID string) (groupTurnSetup, error) 
 	// both modes (a note is a payload, orthogonal to routing — see storeUserNotes).
 	o.storeUserNotes(groupID, byID, byName)
 	return groupTurnSetup{
-		members:   members,
-		names:     memberNameMap(members),
-		byID:      byID,
-		byName:    byName,
-		runner:    runner,
-		activeIDs: activeIDs,
+		members:      members,
+		names:        memberNameMap(members),
+		byID:         byID,
+		byName:       byName,
+		runner:       runner,
+		activeIDs:    activeIDs,
+		hostMemberID: o.hostMemberID(),
 	}, nil
 }
 
@@ -516,7 +575,7 @@ func (o *GroupOrchestrator) snapshotTurn(s groupTurnSetup, t speakerTurn, highWa
 	pending := pendingBccForTarget(o.groupID, s.names[t.member.ID])
 	bcc := joinPendingBcc(pending)
 	cursor := GetMemberCursor(t.member.ID)
-	prompt := groupInjectionTextOrEmpty(o.groupID, t.member.ID, cursor, s.names, t.instruction, bcc) + t.sysPrompt
+	prompt := groupInjectionTextOrEmpty(o.groupID, t.member.ID, cursor, s.names, s.members, t.instruction, bcc) + t.sysPrompt
 	if !o.firstTurnDone {
 		o.firstTurnDone = true
 		if o.commandInjection != "" {
@@ -1315,11 +1374,15 @@ func resolveSpeakerGroups(route grouprouting.Result, members []GroupMember, excl
 // host). A routed member and a round-robin fallback member get the SAME prompt
 // — without the system prompt a fallback member would not know it must not
 // route, which is exactly how members came to declare themselves the chair.
+//
+// The host's display name rides along: a member's only permitted private channel
+// is "to the host", and mention targets resolve by NAME, so the prompt has to
+// name the host concretely (see BuildMemberSystemPrompt).
 func memberTurn(m GroupMember, instruction string, s groupTurnSetup) speakerTurn {
 	return speakerTurn{
 		member:      m,
 		instruction: instruction,
-		sysPrompt:   BuildMemberSystemPrompt(memberRoster(s.members), s.names[m.ID]),
+		sysPrompt:   BuildMemberSystemPrompt(memberRoster(s.members), s.names[m.ID], s.names[s.hostMemberID]),
 	}
 }
 
@@ -1397,6 +1460,18 @@ func (o *GroupOrchestrator) runFreeLoop(ctx context.Context, groupID string) Dra
 func (o *GroupOrchestrator) cruiseFreeRound(ctx context.Context, s groupTurnSetup, res DrainResult, onSpoke func(context.Context, speakerTurn, []speakerGroup, []speakerGroup, []speakerTurn) []speakerGroup) DrainResult {
 	for {
 		if res.CancelReason != "" || res.Err != "" {
+			return res
+		}
+		// The switch is live (see cruiseOn): a turn can run for many minutes and
+		// this loop is the ONLY exit for free mode once cruise starts. Without
+		// this check, turning cruise off mid-turn had no effect until the
+		// member-speech cap (default 100) stopped the relay — the user watched
+		// the group keep talking after switching it off.
+		//
+		// Returning res (not an empty DrainResult) keeps whatever the last
+		// discussion round produced, so runLoop's `cruiseOn() == false` branch
+		// announces the user's turn exactly as an un-cruised ending would.
+		if !o.cruiseOn() {
 			return res
 		}
 		if o.checkSpeechCap() {
@@ -1650,21 +1725,52 @@ func (o *GroupOrchestrator) pickFallbackMember(hostMemberID string, members []Gr
 // so each note is delivered on its target's next turn (the group_pending_bcc
 // contract). It re-parses the speaker's own output (the orchestrator does not
 // carry a pre-parsed route) and delegates validation/storage to storeRouteNotes.
-// Called by runSpeakerTurn for EVERY speaker — host and member, both modes — so
-// the note path is identical everywhere.
+// Called for EVERY speaker — host and member, both modes — so the note path is
+// identical everywhere; the MODE-dependent part (who may write to whom) lives
+// in noteAllowed, applied by storeRouteNotes.
 func (o *GroupOrchestrator) storeSpeakerNotes(groupID, speakerID string, byID, byName map[string]GroupMember) {
 	output := o.lastMemberOutput(groupID, speakerID)
 	if output == "" {
 		return
 	}
-	storeRouteNotes(groupID, grouprouting.Parse(output), speakerID, byID, byName)
+	storeRouteNotes(groupID, grouprouting.Parse(output), speakerID, byID, byName, o.notePolicy(speakerID, byID))
+}
+
+// notePolicy returns the (role, name) pair to stamp on notes written by
+// speakerID, plus the admission check for a resolved target.
+func (o *GroupOrchestrator) notePolicy(speakerID string, byID map[string]GroupMember) notePolicy {
+	hostID := o.hostMemberID()
+	role := bccRoleMember
+	name := byID[speakerID].Name
+	switch {
+	case speakerID == groupUserTargetID:
+		role, name = bccRoleUser, ""
+	case hostID != "" && speakerID == hostID:
+		role = bccRoleHost
+	}
+	return notePolicy{
+		role: role,
+		name: name,
+		// A free group has no authority to route through, so every pair is
+		// allowed; a host-mode group requires the note to involve the host.
+		allow: func(targetID string) bool { return o.noteAllowed(speakerID, targetID) },
+	}
+}
+
+// notePolicy is the mode-dependent half of note storage: who is writing (for
+// attribution) and whether a given target may receive it.
+type notePolicy struct {
+	role  string
+	name  string
+	allow func(targetID string) bool
 }
 
 // storeRouteNotes persists a parsed route's private notes, validating each
 // target against the roster: an unknown or left target is dropped (it could
 // never be delivered — storing it would be silent loss plus unbounded growth of
-// group_pending_bcc), and a self-directed note is dropped (it would be
-// delivered on the speaker's own next turn).
+// group_pending_bcc), a self-directed note is dropped (it would be delivered on
+// the speaker's own next turn), and a note the group's MODE forbids is dropped
+// (see noteAllowed — in a host-mode group every note must involve the host).
 //
 // The target is resolved by ROW ID first, then by display name (lookupMember).
 // A USER's note carries a member ROW ID (the frontend writes ids), while an
@@ -1672,7 +1778,7 @@ func (o *GroupOrchestrator) storeSpeakerNotes(groupID, speakerID string, byID, b
 // user note as "unknown target". The note is keyed by the RESOLVED member name,
 // which is exactly what the delivery lookup (pendingBccForTarget(names[t.ID]))
 // uses.
-func storeRouteNotes(groupID string, route grouprouting.Result, speakerID string, byID, byName map[string]GroupMember) {
+func storeRouteNotes(groupID string, route grouprouting.Result, speakerID string, byID, byName map[string]GroupMember, pol notePolicy) {
 	for _, e := range route.Bcc {
 		for _, target := range e.Targets {
 			m, ok := lookupMember(target, byID, byName)
@@ -1686,7 +1792,14 @@ func storeRouteNotes(groupID string, route grouprouting.Result, speakerID string
 			if m.Left && m.ID != groupUserTargetID {
 				continue
 			}
-			addPendingBcc(groupID, m.Name, e.Content)
+			// Mode policy: in a host-mode group a private note must involve the
+			// host. Enforced at STORE time so no later delivery path can undo it.
+			if pol.allow != nil && !pol.allow(m.ID) {
+				slog.Info("group: dropping private note forbidden by group mode",
+					"group", groupID, "speaker", speakerID, "target", m.Name)
+				continue
+			}
+			addPendingBcc(groupID, m.Name, e.Content, pol.role, pol.name)
 		}
 	}
 }
@@ -1703,12 +1816,15 @@ func storeRouteNotes(groupID string, route grouprouting.Result, speakerID string
 //
 // Honored in BOTH modes: routing (@) is a host-mode no-op (decision #47), but a
 // private note is a payload, orthogonal to who routes the discussion — the user
-// can privately brief a member regardless of mode.
+// can privately brief a member regardless of mode. The user is also exempt from
+// the host-mode "must involve the host" rule (noteAllowed): the human is not
+// subject to the chair's authority, so they may brief any member directly.
 func (o *GroupOrchestrator) storeUserNotes(groupID string, byID, byName map[string]GroupMember) {
 	if o.userMessage == "" {
 		return
 	}
-	storeRouteNotes(groupID, grouprouting.Parse(o.userMessage), groupUserTargetID, byID, byName)
+	storeRouteNotes(groupID, grouprouting.Parse(o.userMessage), groupUserTargetID, byID, byName,
+		o.notePolicy(groupUserTargetID, byName))
 }
 
 // freeInitialGroups is the free-mode seed (see runFreeLoop); it lives next to
@@ -2132,10 +2248,12 @@ func activeMembers(members []GroupMember) []GroupMember {
 }
 
 // groupInjectionTextOrEmpty is the injectable seam over groupInjectionText used
-// by the orchestrator. bcc is the host's private note for THIS member (already
-// filtered by name); pass "" when there is none.
-func groupInjectionTextOrEmpty(groupID, self string, cursor int64, names map[string]string, instruction, bcc string) string {
-	text, err := groupInjectionText(groupID, self, cursor, names, instruction, bcc)
+// by the orchestrator. bcc is the private note(s) for THIS member (already
+// filtered by name and attributed by joinPendingBcc); pass "" when there is
+// none. members is the roster prepareTurn already loaded, so this path does not
+// query it again.
+func groupInjectionTextOrEmpty(groupID, self string, cursor int64, names map[string]string, members []GroupMember, instruction, bcc string) string {
+	text, err := groupInjectionTextWithRoster(groupID, self, cursor, names, members, instruction, bcc)
 	if err != nil {
 		slog.Warn("group: injection load failed", "group", groupID, "err", err)
 		return ""
@@ -2148,13 +2266,18 @@ func groupInjectionTextOrEmpty(groupID, self string, cursor int64, names map[str
 // are none. Notes reach here through group_pending_bcc (see addPendingBcc), so
 // a note from an earlier round — or one addressed to a member this round did
 // not name — is delivered with the member's next turn.
+//
+// Each note carries its own attribution line (see pendingBccHeader in
+// group_inject.go): a member can receive notes from the host, a peer (free mode
+// only), or the user, and telling them apart matters — "the chair told me this"
+// is different information from "a peer told me this".
 func joinPendingBcc(pending []pendingBcc) string {
 	if len(pending) == 0 {
 		return ""
 	}
 	parts := make([]string, 0, len(pending))
 	for _, p := range pending {
-		parts = append(parts, p.Content)
+		parts = append(parts, pendingBccHeader(p)+p.Content)
 	}
 	return strings.Join(parts, "\n\n")
 }

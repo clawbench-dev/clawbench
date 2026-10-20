@@ -198,8 +198,9 @@ func TestProcessClawbenchCommand_AgentCarriesProjectCookie(t *testing.T) {
 }
 
 // TestProcessClawbenchCommand_AgentDocumentsCreateByClone pins the create
-// semantics: there is no create-from-scratch, so the prompt must tell the AI to
-// clone via source_id + name and to check name-uniqueness conflicts.
+// semantics: cloning is one of two shapes, and the prompt must state both the
+// source_id contract and the custom-ACP contract (issue #557), plus the
+// name-uniqueness conflicts.
 func TestProcessClawbenchCommand_AgentDocumentsCreateByClone(t *testing.T) {
 	withServerPort(t, 20000)
 
@@ -207,9 +208,42 @@ func TestProcessClawbenchCommand_AgentDocumentsCreateByClone(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Contains(t, result, "source_id", "the clone contract must be stated")
-	assert.Contains(t, result, "CLONING", "the AI must know creation is by cloning")
+	assert.Contains(t, result, "CLONE", "the AI must know cloning is a supported shape")
+	assert.Contains(t, result, "acp_command",
+		"the AI must know it can create a custom ACP agent from a command")
 	assert.Contains(t, result, "AgentNameTaken", "the name-uniqueness conflict must be stated")
 	assert.Contains(t, result, "AgentNameReserved", "the reserved-nickname conflict must be stated")
+}
+
+// TestProcessClawbenchCommand_AgentDocumentsVerifyStep pins the create-then-verify
+// workflow. Creating an agent is only half the job: the prompt must tell the AI
+// to run the self-test afterwards, and it must expose BOTH routes (the free
+// configuration check and the paid real-turn check) so it can report evidence
+// instead of asserting success from the create response.
+func TestProcessClawbenchCommand_AgentDocumentsVerifyStep(t *testing.T) {
+	withServerPort(t, 20000)
+
+	result, err := processClawbenchCommand("/cb-agent 添加 trae 并测试", "/project", "sess-1")
+	require.NoError(t, err)
+
+	assert.Contains(t, result, "self-test-deep", "the real-turn check must be documented")
+	assert.Contains(t, result, "POST /api/agents/{id}/self-test",
+		"the endpoint reference must include the free self-test route")
+	assert.Contains(t, result, "POST /api/agents/{id}/self-test-deep",
+		"the endpoint reference must include the deep self-test route")
+	assert.Contains(t, result, "Verifying an agent",
+		"the workflow section must exist, not just the endpoint list")
+	assert.Contains(t, result, "never spawns the agent",
+		"the AI must know the cheap check has no side effects")
+	assert.Contains(t, result, "costs tokens",
+		"the AI must know the deep check spends credit")
+	assert.Contains(t, result, "Never claim an agent \"works\"",
+		"the prompt must forbid claiming success without running a check")
+
+	// Discovery-owned operations must stay out: rescanning rewrites every
+	// built-in agent's command, which is the opposite of what this command is for.
+	assert.NotContains(t, result, "refresh-models")
+	assert.NotContains(t, result, "POST /api/agents/rescan")
 }
 
 // TestProcessClawbenchCommand_AgentDocumentsDeleteGuard pins the destructive-op
@@ -364,12 +398,14 @@ func TestIsClawbenchCommand(t *testing.T) {
 	assert.True(t, IsClawbenchCommand("/cb-task do thing"))
 	assert.True(t, IsClawbenchCommand("/cb-user-guide archive"))
 	assert.True(t, IsClawbenchCommand("/cb-agent list"))
+	assert.True(t, IsClawbenchCommand("/cb-mcp add a server"))
 	// Bare commands (no trailing space) are what the frontend sends after
 	// trimming — they must still be recognized so they are not misrouted to
 	// the ACP slash-command path (regression).
 	assert.True(t, IsClawbenchCommand("/cb-chatsearch"))
 	assert.True(t, IsClawbenchCommand("/cb-task"))
 	assert.True(t, IsClawbenchCommand("/cb-agent"))
+	assert.True(t, IsClawbenchCommand("/cb-mcp"))
 	assert.False(t, IsClawbenchCommand("/compact"))
 	assert.False(t, IsClawbenchCommand("/cb-chatsearchx query")) // no space after command
 	assert.False(t, IsClawbenchCommand("hello"))
@@ -402,6 +438,7 @@ func TestProcessClawbenchCommand_PlaceholderReplacement(t *testing.T) {
 		{"/cb-chatsearch auth bug", nil},
 		{"/cb-task daily report", allowedForTask},
 		{"/cb-agent create a reviewer", nil},
+		{"/cb-mcp add a server", nil},
 	}
 	for _, tc := range tests {
 		result, err := processClawbenchCommand(tc.msg, "/my/project", "sess-abc")
@@ -904,4 +941,55 @@ func TestMainWiresGroupCommandRenderer(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(src), "service.SetRenderGroupCommandFn(handler.RenderCommandInjection)",
 		"main.go must wire the group command renderer into the service layer")
+}
+
+// TestProcessClawbenchCommand_MCPInjects pins the /cb-mcp contract.
+//
+// The command drives two DIFFERENT resources (the global list in config.yaml and
+// the per-agent policy), and getting that wrong is the failure mode that
+// matters: writing a server definition onto an agent would scatter its secrets
+// across records, and patching the global list without reading it first deletes
+// every other server.
+func TestProcessClawbenchCommand_MCPInjects(t *testing.T) {
+	withServerPort(t, 20000)
+
+	result, err := processClawbenchCommand("/cb-mcp add a server", "/project", "sess-mcp")
+	require.NoError(t, err)
+
+	// Both resources are exposed, with the correct verbs.
+	assert.Contains(t, result, "GET /api/config")
+	assert.Contains(t, result, "PATCH /api/config")
+	assert.Contains(t, result, "PATCH /api/agents")
+	assert.Contains(t, result, "clawbench_project=/project")
+	assert.Contains(t, result, "http://localhost:20000")
+
+	// The three rules whose absence causes real damage.
+	assert.Contains(t, result, "WHOLESALE",
+		"the AI must know PATCH replaces the whole array, or it will delete servers")
+	assert.Contains(t, result, "Never copy a server definition into an agent",
+		"definitions carry secrets and must live only in the global list")
+	assert.Contains(t, result, "does NOT need a restart",
+		"the policy is hot-reloaded; telling the user to restart would be wrong")
+
+	// It must NOT be able to touch credentials or destructive agent operations.
+	assert.NotContains(t, result, "POST /api/config/password")
+	assert.NotContains(t, result, "DELETE /api/agents")
+
+	// Returns only the template, like every other command.
+	assert.NotContains(t, result, "/cb-mcp add a server")
+}
+
+// TestProcessClawbenchCommand_MCPDocumentsBackendLimits pins that the command
+// tells the AI which backends silently ignore MCP. Without this the AI writes a
+// policy, reports success, and the user's tools never appear.
+func TestProcessClawbenchCommand_MCPDocumentsBackendLimits(t *testing.T) {
+	withServerPort(t, 20000)
+	result, err := processClawbenchCommand("/cb-mcp enable for all agents", "/p", "s")
+	require.NoError(t, err)
+
+	for _, backend := range []string{"dsh", "deepseek", "pi"} {
+		assert.Containsf(t, result, backend, "backend %q ignores MCP and must be named", backend)
+	}
+	assert.Contains(t, result, "sse", "the sse transport restriction must be stated")
+	assert.Contains(t, result, "cli", "CLI transport is unaffected and must be stated")
 }

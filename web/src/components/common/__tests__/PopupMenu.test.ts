@@ -1,6 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import PopupMenu from '../PopupMenu.vue'
+import {
+  _resetHandlers,
+  canNavigateBack,
+  handleBackNavigation,
+  registerBackHandler,
+  PRIORITY_OVERLAY,
+} from '@/composables/useBackHandler'
 
 // Track computeMenuStyle options so tests can assert scrollable behavior.
 // hoisted: vi.mock is hoisted above imports, so the fn must be created here.
@@ -174,5 +182,66 @@ describe('PopupMenu', () => {
     expect(computeMenuStyle).not.toHaveBeenCalled()
     vi.useRealTimers()
     wrapper.unmount()
+  })
+})
+
+describe('PopupMenu — back press', () => {
+  // The menu is teleported and paints above the modal band, so it is the
+  // topmost surface whenever open. Without a registration the press fell
+  // through to whatever was behind it: the usage-meter popover stayed on screen
+  // and the press navigated the page underneath.
+  it('closes on a back press instead of letting it through', async () => {
+    _resetHandlers()
+    const wrapper = mount(PopupMenu, {
+      props: { show: true },
+      slots: { default: '<div>Item</div>' },
+      global: { stubs: { Teleport: { template: '<div><slot/></div>' } } },
+    })
+    await nextTick()
+
+    expect(canNavigateBack()).toBe(true)
+    expect(handleBackNavigation()).toBe(true)
+    expect(wrapper.emitted('update:show')?.at(-1)).toEqual([false])
+
+    wrapper.unmount()
+    _resetHandlers()
+  })
+
+  it('stops consuming back once closed', async () => {
+    _resetHandlers()
+    const wrapper = mount(PopupMenu, {
+      props: { show: true },
+      slots: { default: '<div>Item</div>' },
+      global: { stubs: { Teleport: { template: '<div><slot/></div>' } } },
+    })
+    await nextTick()
+    await wrapper.setProps({ show: false })
+    await nextTick()
+
+    // A closed menu must not swallow the press — otherwise Back is dead on the
+    // page behind it.
+    expect(canNavigateBack()).toBe(false)
+    expect(handleBackNavigation()).toBe(false)
+
+    wrapper.unmount()
+    _resetHandlers()
+  })
+
+  it('wins over a drawer and a dialog opened beneath it', async () => {
+    _resetHandlers()
+    // A dialog registers at PRIORITY_OVERLAY + 1; the menu paints above it.
+    registerBackHandler({ id: 'underlying-dialog', canGoBack: () => true, goBack: () => {}, priority: PRIORITY_OVERLAY + 1 })
+    const wrapper = mount(PopupMenu, {
+      props: { show: true },
+      slots: { default: '<div>Item</div>' },
+      global: { stubs: { Teleport: { template: '<div><slot/></div>' } } },
+    })
+    await nextTick()
+
+    expect(handleBackNavigation()).toBe(true)
+    expect(wrapper.emitted('update:show')?.at(-1)).toEqual([false])
+
+    wrapper.unmount()
+    _resetHandlers()
   })
 })

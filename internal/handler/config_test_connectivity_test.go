@@ -8,8 +8,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1054,4 +1057,238 @@ func TestServeConfigTest_FeishuCategory(t *testing.T) {
 	var result ConnectivityTestResult
 	_ = json.NewDecoder(w.Body).Decode(&result)
 	assert.False(t, result.Success)
+}
+
+// ── MCP ──────────────────────────────────────────────────────────────────
+
+// TestServeConfigTest_MCPProbesFormValues pins that the probe uses the SERVER
+// DEFINITION IN THE FORM, not the saved one.
+//
+// The user clicks "test" to decide whether to save. Probing the saved
+// definition would report the OLD server's health — a green result for a
+// configuration that was never saved, or a red one for an edit that already
+// fixed the problem.
+func TestServeConfigTest_MCPProbesFormValues(t *testing.T) {
+	script := writeMCPScript(t)
+
+	body, err := json.Marshal(map[string]any{
+		"category": "mcp",
+		"values": map[string]any{
+			"mcp.name": "form-srv",
+			"mcp.servers": []any{
+				map[string]any{
+					"name": "form-srv", "transport": "stdio", "command": script,
+					// The fixture reports this identity, so the assertions below
+					// prove the SERVER'S answer reached the user.
+					"env": map[string]any{
+						"MCP_PROBE_SERVER_NAME":    "form-srv",
+						"MCP_PROBE_SERVER_VERSION": "1.2",
+						"MCP_PROBE_TOOLS":          "tool_a,tool_b",
+					},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/config/test", strings.NewReader(string(body)))
+	ServeConfigTest(w, r)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var result ConnectivityTestResult
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.True(t, result.Success, result.Message)
+	assert.Contains(t, result.Message, "2 tool(s)")
+	assert.Contains(t, result.Message, "form-srv")
+	assert.Contains(t, result.Message, "tool_a")
+}
+
+// TestServeConfigTest_MCPUnknownNameListsAlternatives asserts a wrong name is
+// reported with the names that DO exist: "not found" alone leaves the user
+// guessing at a typo.
+func TestServeConfigTest_MCPUnknownNameListsAlternatives(t *testing.T) {
+	body, err := json.Marshal(map[string]any{
+		"category": "mcp",
+		"values": map[string]any{
+			"mcp.name": "typo",
+			"mcp.servers": []any{
+				map[string]any{"name": "alpha", "transport": "stdio", "command": "sh"},
+				map[string]any{"name": "beta", "transport": "stdio", "command": "sh"},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/config/test", strings.NewReader(string(body)))
+	ServeConfigTest(w, r)
+
+	var result ConnectivityTestResult
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.False(t, result.Success)
+	assert.Contains(t, result.Message, "alpha")
+	assert.Contains(t, result.Message, "beta")
+}
+
+// TestServeConfigTest_MCPRequiresName asserts the target server must be named:
+// probing "whichever server" would report one server's health for another.
+func TestServeConfigTest_MCPRequiresName(t *testing.T) {
+	body := `{"category":"mcp","values":{"mcp.servers":[]}}`
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/config/test", strings.NewReader(body))
+	ServeConfigTest(w, r)
+
+	var result ConnectivityTestResult
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.False(t, result.Success)
+	assert.Contains(t, result.Message, "mcp.name")
+}
+
+// TestServeConfigTest_MCPNoServers asserts an empty configuration says so
+// rather than reporting a generic failure.
+func TestServeConfigTest_MCPNoServers(t *testing.T) {
+	body := `{"category":"mcp","values":{"mcp.name":"x","mcp.servers":[]}}`
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/config/test", strings.NewReader(body))
+	ServeConfigTest(w, r)
+
+	var result ConnectivityTestResult
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.False(t, result.Success)
+	assert.Contains(t, result.Message, "no MCP servers")
+}
+
+// TestServeConfigTest_MCPBrokenCommandFails asserts a real failure is reported
+// as a failure — the whole point of the button.
+func TestServeConfigTest_MCPBrokenCommandFails(t *testing.T) {
+	body := `{"category":"mcp","values":{"mcp.name":"broken","mcp.servers":[{"name":"broken","transport":"stdio","command":"clawbench-no-such-binary"}]}}`
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/config/test", strings.NewReader(body))
+	ServeConfigTest(w, r)
+
+	var result ConnectivityTestResult
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.False(t, result.Success)
+	assert.Contains(t, result.Message, "not found in PATH")
+}
+
+// writeMCPScript returns the path of a real MCP server binary that answers
+// initialize and lists two tools.
+//
+// It is COMPILED from testdata/mcpserver rather than written as a shell script:
+// a `#!/bin/sh` fixture cannot run on Windows ("%1 is not a valid Win32
+// application"), which made TestServeConfigTest_MCPProbesFormValues fail there
+// with a message about the script rather than about the probe.
+//
+// The binary is built once per package run; the test server is stateless, so
+// every caller can share it.
+var (
+	mcpFixtureOnce sync.Once
+	mcpFixturePath string
+	mcpFixtureErr  error
+)
+
+func writeMCPScript(t *testing.T) string {
+	t.Helper()
+	mcpFixtureOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "handler-mcp-fixture-")
+		if err != nil {
+			mcpFixtureErr = err
+			return
+		}
+		name := "mcp-server"
+		if runtime.GOOS == "windows" {
+			name += ".exe"
+		}
+		out := filepath.Join(dir, name)
+
+		cmd := exec.Command("go", "build", "-o", out, "./testdata/mcpserver")
+		cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
+		if buildOut, buildErr := cmd.CombinedOutput(); buildErr != nil {
+			mcpFixtureErr = fmt.Errorf("build MCP fixture: %w\n%s", buildErr, buildOut)
+			return
+		}
+		// Some filesystems do not leave the output executable; exec.LookPath
+		// then reports "not found in PATH" for a file that exists.
+		if err := os.Chmod(out, 0o755); err != nil {
+			mcpFixtureErr = err
+			return
+		}
+		mcpFixturePath = out
+	})
+	require.NoError(t, mcpFixtureErr, "the MCP fixture server must build")
+	return mcpFixturePath
+}
+
+// ── MCP connectivity test ────────────────────────────────────────────────────
+
+// testMCP names every available server when the requested one is missing: "not
+// found" alone does not tell the user what they can pick instead.
+func TestTestMCP_UnknownNameListsAvailable(t *testing.T) {
+	values := map[string]any{
+		"mcp.name": "ghost",
+		"mcp.servers": []any{
+			map[string]any{"name": "alpha", "transport": "stdio", "command": "node"},
+			map[string]any{"name": "beta", "transport": "http", "url": "https://b"},
+		},
+	}
+
+	res := testMCP(context.Background(), values)
+	assert.False(t, res.Success)
+	assert.Contains(t, res.Message, "ghost")
+	assert.Contains(t, res.Message, "alpha")
+	assert.Contains(t, res.Message, "beta")
+}
+
+// With no servers at all the message must say so rather than printing an empty
+// "available:" list.
+func TestTestMCP_NoServersConfigured(t *testing.T) {
+	prev := model.ConfigInstance.MCP
+	model.ConfigInstance.MCP = model.MCPConfig{}
+	t.Cleanup(func() { model.ConfigInstance.MCP = prev })
+
+	res := testMCP(context.Background(), map[string]any{"mcp.name": "ghost"})
+	assert.False(t, res.Success)
+	assert.Contains(t, res.Message, "no MCP servers are configured")
+}
+
+// A missing name is rejected before any probe runs: there is nothing to test.
+func TestTestMCP_RequiresName(t *testing.T) {
+	res := testMCP(context.Background(), map[string]any{})
+	assert.False(t, res.Success)
+	assert.Contains(t, res.Message, "mcp.name is required")
+}
+
+// A malformed servers payload is reported as such instead of being silently
+// ignored (which would probe the saved config and test the wrong thing).
+func TestTestMCP_MalformedServersPayload(t *testing.T) {
+	values := map[string]any{
+		"mcp.name":    "alpha",
+		"mcp.servers": []any{"not-an-object"},
+	}
+	res := testMCP(context.Background(), values)
+	assert.False(t, res.Success)
+	assert.Contains(t, res.Message, "must be an object")
+}
+
+// The form's definition is what gets probed, not the saved one: the user clicks
+// test precisely to decide whether to save the edit.
+func TestMCPServersFromValues_PrefersFormOverSaved(t *testing.T) {
+	prev := model.ConfigInstance.MCP
+	model.ConfigInstance.MCP = model.MCPConfig{Servers: []model.MCPServer{{Name: "saved"}}}
+	t.Cleanup(func() { model.ConfigInstance.MCP = prev })
+
+	got, err := mcpServersFromValues(map[string]any{
+		"mcp.servers": []any{map[string]any{"name": "from-form", "transport": "stdio", "command": "x"}},
+	})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "from-form", got[0].Name)
+
+	// No list in the form → fall back to the saved config.
+	got, err = mcpServersFromValues(map[string]any{})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "saved", got[0].Name)
 }

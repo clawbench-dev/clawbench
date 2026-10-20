@@ -11,8 +11,23 @@
             <span>{{ dlg.state.value.title }}</span>
           </div>
           <div class="dlg-msg">{{ dlg.state.value.message }}</div>
+          <!-- One-line prompt (`singleLine`): a plain <input> for values that
+               are never multi-line (a line number, a name). The textarea below
+               stays the default because most prompts are free text (notes,
+               descriptions) where wrapping is the point. -->
+          <input
+            v-if="dlg.state.value.type === 'prompt' && dlg.state.value.singleLine"
+            :key="inputEpoch"
+            ref="inputRef"
+            v-model="inputVal"
+            class="dlg-input"
+            :placeholder="dlg.state.value.placeholder"
+            @keydown.enter.prevent="handleConfirm"
+            @beforeinput="onBeforeInput"
+            @input="onInput"
+          />
           <textarea
-            v-if="dlg.state.value.type === 'prompt'"
+            v-else-if="dlg.state.value.type === 'prompt'"
             :key="inputEpoch"
             ref="inputRef"
             v-model="inputVal"
@@ -71,7 +86,7 @@ import { appLog } from '@/utils/appLog'
 const { t } = useI18n()
 const dlg = useDialog()
 const inputVal = ref('')
-const inputRef = ref<HTMLTextAreaElement | null>(null)
+const inputRef = ref<HTMLTextAreaElement | HTMLInputElement | null>(null)
 const overlayRef = ref<HTMLElement | null>(null)
 const extraPrimed = ref(false)
 const generating = ref(false)

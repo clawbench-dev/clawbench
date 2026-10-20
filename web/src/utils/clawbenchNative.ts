@@ -287,6 +287,12 @@ export interface NotificationNav {
    */
   forge?: boolean
   /**
+   * Set for usage-meter notifications. Like forge they carry no session/task
+   * id, so without this discriminator the native shell's sessionId/taskId
+   * branches both miss and the click is silently dropped.
+   */
+  usageMeter?: boolean
+  /**
    * The forge item to open, so the click deep-links to the item rather than
    * only raising the tab. Carries the opaque read key because a pipeline's
    * number is always 0 (its identity is the run id).

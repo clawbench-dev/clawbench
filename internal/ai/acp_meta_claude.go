@@ -26,6 +26,25 @@ const (
 
 // tokenUsageFromClaudeTokenCount builds a metaTokenUsage from a Claude/Codex
 // _meta.quota.token_count map (shared aggregate and per-model breakdown shape).
+//
+// Both bridges report the cache counters OUTSIDE inputTokens: their totals
+// satisfy total = input + output + cachedRead + cachedWrite (verified on every
+// Claude and Codex row in a production DB). CodeBuddy, by contrast, reports
+// OpenAI-style prompt_tokens that ALREADY include the cached portion.
+//
+// Left as-is, that makes the "输入 Tokens" column and the cache hit rate
+// incomparable across backends: Claude's input would be only the uncached
+// remainder, and the hit-rate denominator (hit+miss) would have no miss side at
+// all — the panel showed a 98.3% hit rate that described CodeBuddy alone. So
+// normalize to the CodeBuddy shape here:
+//
+//	InputTokens  = input + cachedRead + cachedWrite   (full prompt)
+//	CacheHit     = cachedRead
+//	CacheMiss    = input
+//
+// TotalTokens is unchanged (it already equals the normalized input + output).
+// The identity is checked before applying, so an agent that reports cache
+// INSIDE input (or omits the counters) is left alone rather than double-counted.
 func tokenUsageFromClaudeTokenCount(tc map[string]any) *metaTokenUsage {
 	u := &metaTokenUsage{
 		InputTokens:       metaInt(tc["inputTokens"]),
@@ -34,6 +53,15 @@ func tokenUsageFromClaudeTokenCount(tc map[string]any) *metaTokenUsage {
 		CachedReadTokens:  metaInt(tc["cachedInputTokens"]),
 		CachedWriteTokens: metaInt(tc["cachedWriteTokens"]),
 		ThoughtTokens:     metaInt(tc["reasoningOutputTokens"]),
+	}
+	// Cache split + input normalization, only when the counters are internally
+	// consistent. A total of 0 means the agent reported no aggregate snapshot
+	// (per-model fallback), and an identity mismatch means the counters use a
+	// different convention — both leave the raw values untouched.
+	if u.TotalTokens > 0 && u.TotalTokens == u.InputTokens+u.OutputTokens+u.CachedReadTokens+u.CachedWriteTokens {
+		u.CacheHitTokens = u.CachedReadTokens
+		u.CacheMissTokens = u.InputTokens
+		u.InputTokens += u.CachedReadTokens + u.CachedWriteTokens
 	}
 	if u.InputTokens != 0 || u.OutputTokens != 0 || u.TotalTokens != 0 ||
 		u.CachedReadTokens != 0 || u.CachedWriteTokens != 0 || u.ThoughtTokens != 0 {

@@ -54,6 +54,12 @@
           v-if="card.title === t('settings.items.forgeSection')"
           :description="t('settings.items.forgeCredentialsDesc')"
         />
+        <!-- Global MCP server list. One definition shared by every ACP agent;
+             the per-agent enable policy lives on the agent page. -->
+        <MCPSetting
+          v-if="card.title === t('settings.items.mcpSection')"
+          :description="t('settings.items.mcpDesc')"
+        />
         <!-- Cross-agent skill discovery: directory + git repo lists with
              write-only tokens, plus the live discovered-skill listing. -->
         <SkillsSetting
@@ -137,6 +143,7 @@ import SettingsAboutBrand from './SettingsAboutBrand.vue'
 import WallpaperSetting from './WallpaperSetting.vue'
 import ForgeCredentialsRow from './ForgeCredentialsRow.vue'
 import SkillsSetting from './SkillsSetting.vue'
+import MCPSetting from './MCPSetting.vue'
 import SkillsDirsSetting from './SkillsDirsSetting.vue'
 import SkillsReposSetting from './SkillsReposSetting.vue'
 import SkillsDiscoveredSetting from './SkillsDiscoveredSetting.vue'
@@ -339,7 +346,7 @@ const cards = computed<RenderCard[]>(() => {
         //   - panelOpacity   → rendered inside WallpaperSetting
         //   - skillsCard     → supplies the description, rendered by SkillsSetting
         //   - skillsDiscovered → rendered by SkillsDiscoveredSetting
-        const PLACEHOLDER_ITEMS = new Set(['panelOpacity', 'skillsCard', 'skillsDirs', 'skillsRepos', 'skillsDiscovered', 'allProjectsList'])
+        const PLACEHOLDER_ITEMS = new Set(['panelOpacity', 'skillsCard', 'skillsDirs', 'skillsRepos', 'skillsDiscovered', 'allProjectsList', 'mcpServers'])
         if (!PLACEHOLDER_ITEMS.has(entry.spec.key)) {
           cur.items.push(entry.spec)
         }

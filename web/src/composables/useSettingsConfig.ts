@@ -616,7 +616,13 @@ export async function patchAgentPref(agentId: string, field: 'preferred_model' |
  * Supports: name, specialty, custom_system_prompt, sort_order,
  * plus the original preferred_model/preferred_thinking_effort/transport.
  */
-export async function patchAgentField(agentId: string, field: string, value: string | boolean | number | null): Promise<void> {
+export async function patchAgentField(
+  agentId: string,
+  field: string,
+  // Objects are allowed for structured fields (mcp_servers carries the policy
+  // object). Everything else stays scalar, which is what the call sites rely on.
+  value: string | boolean | number | null | Record<string, unknown>,
+): Promise<void> {
   await apiPatch('/api/agents', { id: agentId, [field]: value })
   const { updateAgentField, loadAgents } = useAgents()
   // project_scope: the server derives the numeric projectId from the request
@@ -624,6 +630,21 @@ export async function patchAgentField(agentId: string, field: string, value: str
   // list instead so projectId (and thus the switch's checked state) is
   // authoritative.
   if (field === 'project_scope') {
+    await loadAgents(true)
+    return
+  }
+  // acp_command: the server also flips `transport` in the same patch (clearing
+  // the command forces CLI, setting one forces acp-stdio), so mirroring only
+  // the command locally would leave a stale transport in every consumer that
+  // reads it. Re-fetch instead.
+  if (field === 'acp_command') {
+    await loadAgents(true)
+    return
+  }
+  // mcp_servers: the server normalizes the policy (an omitted mode becomes
+  // "all"), so mirroring the raw payload could leave the UI showing a mode the
+  // server did not store. Re-fetch to stay authoritative.
+  if (field === 'mcp_servers') {
     await loadAgents(true)
     return
   }
@@ -637,6 +658,7 @@ export async function patchAgentField(agentId: string, field: string, value: str
     sort_order: 'sortOrder',
     auto_approve: 'autoApprove',
     disabled: 'disabled',
+    mcp_servers: 'mcpServers',
     // name, specialty map to themselves
   }
   updateAgentField(agentId, fieldMap[field] || field, value)

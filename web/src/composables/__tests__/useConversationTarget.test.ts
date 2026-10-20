@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { ref } from 'vue'
+import { flushPromises } from '@vue/test-utils'
 import type { FileEntry } from '@/utils/fileAttachmentUtils'
 
 // ── Mocks ──────────────────────────────────────────────────────
@@ -84,6 +85,12 @@ const mockOpenSession = vi.fn()
 
 const ATTACH: FileEntry = { path: '/a.txt', isDir: false }
 
+/** A minimal pending quote, for the cases that only care about delivery. */
+const QUOTE = {
+  id: 'q1', text: 't', note: 'n', filePath: '/x.ts',
+  language: 'ts', startLine: 1, endLine: 1, sourceKind: 'file' as const,
+}
+
 function request(overrides: Partial<PendingRequest> = {}): PendingRequest {
   return {
     mode: 'send',
@@ -110,26 +117,71 @@ describe('useConversationTarget', () => {
     cancelTarget()
   })
 
-  // ── requestTarget: the picker is unconditional ───────────────
+  // ── requestTarget: picker by default, active session on request ──
 
   describe('requestTarget', () => {
     /**
-     * The picker must open EVEN when the chat panel is on screen. The old
-     * behavior assumed "panel visible ⇒ current session", which is what made
-     * quoting from one conversation into another impossible and made the
-     * destination depend on which tab happened to be open.
+     * The DEFAULT is still the picker. Entry points that are ABOUT choosing a
+     * destination (quoting a whole chat message, attaching a file from the
+     * browser) must keep asking — that is the only way "quote into another
+     * conversation" stays reachable.
      */
-    it('opens the picker even when the chat panel is visible', () => {
+    it('opens the picker when the caller does not ask for the active session', () => {
       mockLayout.isWideScreen = false
       requestTarget(request())
       expect(usePendingTarget().pickerOpen.value).toBe(true)
     })
 
-    it('opens the picker on a wide screen too (no visibility shortcut)', () => {
+    it('opens the picker on a wide screen too', () => {
       mockLayout.isWideScreen = true
       mockLayout.chatCollapsed = false
       requestTarget(request())
       expect(usePendingTarget().pickerOpen.value).toBe(true)
+    })
+
+    /**
+     * Comments pass `deliverTo: 'active'`: the user is annotating what they are
+     * reading, so the conversation they are in is the destination. No dialog.
+     */
+    it('delivers straight to the active session with deliverTo: active', async () => {
+      mockIdentity.currentSessionId.value = 's-current'
+
+      requestTarget(request({ mode: 'add', text: '', quotes: [QUOTE] }), { deliverTo: 'active' })
+      // Dispatch is kicked off synchronously (not awaited by the caller).
+      await Promise.resolve()
+
+      expect(usePendingTarget().pickerOpen.value).toBe(false)
+      expect(mockIdentity.enqueueToSession).not.toHaveBeenCalled()
+      expect(mockChatContext.addStagedQuote).toHaveBeenCalledWith(expect.objectContaining({ id: 'q1' }), 'n')
+    })
+
+    it('falls back to the picker when there is no active session', () => {
+      mockIdentity.currentSessionId.value = ''
+      requestTarget(request(), { deliverTo: 'active' })
+      expect(usePendingTarget().pickerOpen.value).toBe(true)
+    })
+
+    it('falls back to the picker when the active-session delivery fails', async () => {
+      // The chat panel may not be mounted yet (enqueue bridge missing) or the
+      // request may throw. Losing the card silently is the one outcome that
+      // must not happen, so the user is asked where it should go instead.
+      mockIdentity.currentSessionId.value = 's-current'
+      mockIdentity.enqueueToSession.mockResolvedValue(false)
+
+      requestTarget(request({ mode: 'send', text: 'hi' }), { deliverTo: 'active' })
+      await flushPromises()
+
+      expect(usePendingTarget().pickerOpen.value).toBe(true)
+      expect(usePendingTarget().pending.value?.text).toBe('hi')
+    })
+
+    it('does not open a picker over an empty payload', async () => {
+      // Nothing to deliver: `dispatchToTarget` rejects it, and a dialog over an
+      // empty request would be pure noise.
+      mockIdentity.currentSessionId.value = 's-current'
+      requestTarget(request({ mode: 'send', text: '   ' }), { deliverTo: 'active' })
+      await flushPromises()
+      expect(usePendingTarget().pickerOpen.value).toBe(false)
     })
 
     it('stores the request payload', () => {
@@ -271,7 +323,7 @@ describe('useConversationTarget', () => {
   // ── requestAttachmentTarget (the "attach to chat" buttons) ───
 
   describe('requestAttachmentTarget', () => {
-    it('always opens the picker, even with the chat panel visible', () => {
+    it('opens the picker (the file browser is where the destination IS the question)', () => {
       mockLayout.isWideScreen = false
       requestAttachmentTarget(ATTACH)
 
@@ -280,6 +332,17 @@ describe('useConversationTarget', () => {
       expect(pending.value?.mode).toBe('add')
       expect(pending.value?.attachments).toEqual([ATTACH])
       expect(pending.value?.quotes).toHaveLength(0)
+    })
+
+    it('delivers to the active session when the caller says so (markdown badges)', async () => {
+      // A comment on a document is about the conversation being worked in, so
+      // the badge path does not ask. Same fallback rule as requestTarget.
+      mockIdentity.currentSessionId.value = 's-current'
+      requestAttachmentTarget(ATTACH, { deliverTo: 'active' })
+      await Promise.resolve()
+
+      expect(usePendingTarget().pickerOpen.value).toBe(false)
+      expect(mockChatContext.addAttachedFile).toHaveBeenCalledWith('/a.txt', false, undefined, undefined)
     })
 
     it('preserves a line-range reference', () => {

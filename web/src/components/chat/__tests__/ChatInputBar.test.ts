@@ -3817,6 +3817,48 @@ describe('ChatInputBar', () => {
     wrapper.unmount()
   })
 
+  // System timeline rows are not turns. Single-chat auto-cruise appends
+  // "自动巡航：任务已确认完成，共 N 轮" AFTER the reply it confirmed, and group
+  // chats append "轮到用户发言" after the host's reply. Treating the raw last
+  // element as "who spoke last" made those sessions hide a recommendation that
+  // had been generated for the reply right above the line.
+  it('still shows the recommendation when a system line trails the reply', async () => {
+    const wrapper = mountBar({
+      currentSessionId: 's1',
+      messages: [
+        { role: 'user', id: 1000, content: 'do it' },
+        { role: 'assistant', id: 1001, content: 'done' },
+        { role: 'system', id: 1002, content: '自动巡航：任务已确认完成，共 1 轮' },
+      ],
+    })
+    await wrapper.vm.$nextTick()
+    dispatchRecommendation('提交这些修改')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.recommendation).toBe('提交这些修改')
+    expect(wrapper.vm.showRecommendationChip).toBe(true)
+    expect(wrapper.vm.showRecommendationBanner).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('hides the recommendation when a user message trails the reply', async () => {
+    // The other half of the same gate: a real user turn after the reply means
+    // the recommendation is no longer the next step, so it must stay hidden.
+    const wrapper = mountBar({
+      currentSessionId: 's1',
+      messages: [
+        { role: 'assistant', id: 1001, content: 'done' },
+        { role: 'user', id: 1002, content: 'next question' },
+      ],
+    })
+    await wrapper.vm.$nextTick()
+    dispatchRecommendation('提交这些修改')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.recommendation).toBe('提交这些修改')
+    expect(wrapper.vm.showRecommendationChip).toBe(false)
+    expect(wrapper.vm.showRecommendationBanner).toBe(false)
+    wrapper.unmount()
+  })
+
   it('ignores a recommendation belonging to a different session', async () => {
     const wrapper = mountBar({ currentSessionId: 's1', messages: ASSISTANT_LAST_MSG })
     await wrapper.vm.$nextTick()

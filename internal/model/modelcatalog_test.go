@@ -903,3 +903,30 @@ func TestResolveModels_NamelessAliasIsSkipped(t *testing.T) {
 		assert.NotEmpty(t, m.Name, "no entry may render with a blank label")
 	}
 }
+
+// TierAliasForModelID is what lets the ACP model-switch guard accept a concrete
+// CLI id when the agent advertises only tier aliases (claude-agent-acp). It must
+// stay narrow: only real tiers match, and a parameterized variant is its own
+// model.
+func TestTierAliasForModelID(t *testing.T) {
+	for _, tc := range []struct {
+		id   string
+		want string
+		ok   bool
+	}{
+		{"claude-sonnet-4-6", "sonnet", true},
+		{"claude-opus-4-5", "opus", true},
+		{"haiku", "haiku", true},
+		{"Opus", "opus", true},
+		{"opusplan", "", false}, // a single token, not a tier name
+		{"default", "", false},  // fallback marker, not a selectable tier
+		{"opus[1m]", "", false}, // parameterized variant is a distinct model
+		{"gpt-5", "", false},
+		{"", "", false},
+	} {
+		got, ok := TierAliasForModelID(tc.id)
+		if got != tc.want || ok != tc.ok {
+			t.Errorf("TierAliasForModelID(%q) = (%q,%v), want (%q,%v)", tc.id, got, ok, tc.want, tc.ok)
+		}
+	}
+}

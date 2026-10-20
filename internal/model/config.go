@@ -36,6 +36,11 @@ func ParseSHA256Hash(password string) string {
 // carries no context-window sizes.
 const DefaultForkContextBudget = 100000
 
+// PushModeDisabled is the push_mode value that turns every outbound
+// notification channel off. The notification-center row is unaffected: it is
+// an in-app log, not a push.
+const PushModeDisabled = "disabled"
+
 // DefaultLanguage is the UI language used before the frontend reports one.
 // It matches the frontend's fallbackLocale so a fresh server localizes
 // background strings the same way the UI would.
@@ -153,6 +158,51 @@ type Config struct {
 	FileSearch  FileSearchConfig  `yaml:"file_search"`  // File search configuration
 	Forge       ForgeConfig       `yaml:"forge"`        // GitHub / GitLab integration (read-only issue & PR browsing)
 	Skills      SkillsConfig      `yaml:"skills"`       // Cross-agent skill discovery (native dirs + custom dirs + git repos)
+	UsageMeter  UsageMeterConfig  `yaml:"usage_meter"`  // Periodic usage budget + over-plan notification
+	// MCP is the global MCP server list shared by every ACP agent. Agents only
+	// store a policy (all / none / selected), never the definitions — see
+	// internal/model/mcp.go. CLI backends ignore it: they have no mcpServers
+	// parameter and read their own config files.
+	MCP MCPConfig `yaml:"mcp"`
+}
+
+// UsageMeterConfig is the single global usage budget rule.
+//
+// Deliberately ONE rule, not a list: the header shows exactly one capsule, and
+// the notification has to name which rule fired. A user who wants both a
+// short-horizon and a long-horizon budget has to pick one. Widening this to a
+// list later is a backward-compatible YAML change (an old single object reads
+// as a one-element list).
+//
+// The quota doubles as the on/off switch: Quota <= 0 disables the feature
+// entirely (no worker query, no header capsule, no notification). A separate
+// enable flag would admit a contradictory "enabled but no quota" state.
+type UsageMeterConfig struct {
+	// AnchorDate is the cycle start date as "YYYY-MM-DD", interpreted at 00:00
+	// in the SERVER's local timezone (same convention as cron expressions).
+	AnchorDate string `yaml:"anchor_date"`
+	// PeriodDays is the cycle length in days. Cycle boundaries are computed as
+	// fixed 24h spans from the anchor rather than calendar-date differences, so
+	// the cycle length stays constant across DST transitions.
+	PeriodDays int `yaml:"period_days"`
+	// Metric selects what is counted: "tokens" | "credit" | "cost".
+	Metric string `yaml:"metric"`
+	// Quota is the budget for one full cycle, in the metric's own unit
+	// (tokens / credit / USD). 0 disables the feature.
+	Quota float64 `yaml:"quota"`
+
+	// NotifiedCycleStart is the cycle start (RFC3339) the last notification
+	// belonged to. A new cycle start means the cycle rolled over, which
+	// re-arms notification without any cleanup task.
+	NotifiedCycleStart string `yaml:"notified_cycle_start"`
+	// NotifiedStage records how far notification has progressed within the
+	// current cycle: "" → "over" → "full". Monotonic; never goes backwards.
+	//
+	// Both fields are internal state, not user settings: they are hidden from
+	// the settings page and never accepted from PATCH /api/config (see
+	// PatchableConfigPaths). They are written by the service layer under
+	// configMutex.
+	NotifiedStage string `yaml:"notified_stage"`
 }
 
 // ForgeConfig holds the GitHub/GitLab integration settings.

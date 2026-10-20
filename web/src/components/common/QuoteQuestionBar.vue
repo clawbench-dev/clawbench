@@ -35,8 +35,14 @@
         </button>
         <button
           class="quote-bar-action"
-          @click.stop="handleAdd"
-          :title="t('quoteBar.quoteSelection')"
+          @click.stop="onAddClick"
+          @touchstart.passive="startHold('add')"
+          @touchend="endHold"
+          @touchcancel="cancelHold"
+          @mousedown.stop="startHold('add')"
+          @mouseup.stop="endHold"
+          @mouseleave="cancelHold"
+          :title="t('quoteBar.quoteSelectionHint')"
           :aria-label="t('quoteBar.quoteSelection')"
         >
           <Quote :size="14" />
@@ -74,13 +80,35 @@
               class="qq-textarea"
               rows="1"
               :placeholder="t('quoteBar.placeholder')"
-              @keydown.enter.exact.prevent="handleSend"
+              @keydown.enter.exact.prevent="onEnterKey"
               @input="autoResizeTextarea"
             />
-            <button class="qq-add-btn" @click="handleAdd" :title="t('quoteBar.addToChat')" :aria-label="t('quoteBar.addToChat')">
+            <button
+              class="qq-add-btn"
+              @click="onAddClick"
+              @touchstart.passive="startHold('add')"
+              @touchend="endHold"
+              @touchcancel="cancelHold"
+              @mousedown.stop="startHold('add')"
+              @mouseup.stop="endHold"
+              @mouseleave="cancelHold"
+              :title="t('quoteBar.addToChatHint')"
+              :aria-label="t('quoteBar.addToChat')"
+            >
               <Plus :size="13" />
             </button>
-            <button class="qq-send-btn" :class="{ disabled: !canSend }" @click="handleSend" :title="t('quoteBar.send')">
+            <button
+              class="qq-send-btn"
+              :class="{ disabled: !canSend }"
+              @click="onSendClick"
+              @touchstart.passive="startHold('send')"
+              @touchend="endHold"
+              @touchcancel="cancelHold"
+              @mousedown.stop="startHold('send')"
+              @mouseup.stop="endHold"
+              @mouseleave="cancelHold"
+              :title="t('quoteBar.sendHint')"
+            >
               <Send :size="13" />
             </button>
           </div>
@@ -381,17 +409,123 @@ watch(() => props.expandRequest, (n, prev) => {
   expand()
 })
 
-function handleSend() {
+function handleSend(pickTarget = false) {
   if (!canSend.value) return
-  emit('send', inputText.value)
+  emit('send', inputText.value, { pickTarget })
   expanded.value = false
   inputText.value = ''
 }
 
-function handleAdd() {
-  emit('add', inputText.value)
+function handleAdd(pickTarget = false) {
+  emit('add', inputText.value, { pickTarget })
   expanded.value = false
   inputText.value = ''
+}
+
+/**
+ * Enter in the input = "send to the active conversation".
+ *
+ * It MUST go through a wrapper, not `handleSend` directly: Vue passes the
+ * KeyboardEvent as the first argument, which would land in `pickTarget` and
+ * make every Enter press open the session picker — the exact friction this
+ * feature removes.
+ */
+function onEnterKey() {
+  handleSend(false)
+}
+
+// Long-press (touch) / press-and-hold (mouse) on the commit buttons = "send
+// this to a DIFFERENT conversation". The plain tap is the primary path and
+// commits straight to the active session (issue #560); cross-session delivery
+// is the rare case, so it moved to a secondary gesture instead of a mandatory
+// dialog.
+//
+// Three details keep one gesture from turning into two actions:
+//  - the commit happens on RELEASE, not when the timer fires, so the pressed
+//    button is still mounted while the gesture is in flight;
+//  - the commit is then deferred by a task, so the click that follows the
+//    release is dispatched (and swallowed) before the bar collapses;
+//  - a short suppression window ignores the compatibility mouse events a hybrid
+//    device synthesizes after a touch.
+const HOLD_MS = 500
+/** Window in which the tail events of a completed hold are ignored. */
+const HOLD_TAIL_MS = 1000
+let holdTimer = null
+/** Set when the hold threshold was reached; cleared by the release. */
+let holdArmed = false
+/** One-shot: swallow the click that belongs to a completed hold. */
+let suppressNextClick = false
+/** Compatibility mouse events before this timestamp belong to a touch hold. */
+let holdSuppressedUntil = 0
+/** Which commit the current hold will fire: the add card or the send. */
+let holdAction = 'add'
+
+/** Pointer down: start counting. Nothing is emitted yet. */
+function startHold(action) {
+  // A compatibility mousedown right after a touch hold must not re-arm.
+  if (Date.now() < holdSuppressedUntil) return
+  holdAction = action
+  holdArmed = false
+  if (holdTimer) clearTimeout(holdTimer)
+  holdTimer = setTimeout(() => {
+    holdTimer = null
+    holdArmed = true
+  }, HOLD_MS)
+}
+
+/** Pointer up: a short tap does nothing here (the click handles it); a hold commits. */
+function endHold(e) {
+  if (holdTimer) {
+    // Released before the threshold: an ordinary tap, whose click does the work.
+    clearTimeout(holdTimer)
+    holdTimer = null
+    holdArmed = false
+    return
+  }
+  if (!holdArmed) return
+  // Consume the arm FIRST: a hybrid device can deliver touchend and mouseup for
+  // the same gesture, and only the first may commit.
+  holdArmed = false
+  const action = holdAction
+  suppressNextClick = true
+  holdSuppressedUntil = Date.now() + HOLD_TAIL_MS
+  // Cancel the synthetic click where we can (touch). The deferred commit below
+  // is the second line of defence: it runs AFTER any click the browser still
+  // dispatches, so the click hits a live button (and is swallowed) instead of
+  // whatever the collapsed bar renders underneath.
+  e?.preventDefault?.()
+  setTimeout(() => {
+    if (action === 'add') handleAdd(true)
+    else handleSend(true)
+    // A click that never arrived (the touch cancel worked) must not leave the
+    // latch armed for the NEXT interaction. Both timers are queued in order, so
+    // this runs after the commit above and after any click from the release.
+    setTimeout(() => { suppressNextClick = false }, 0)
+  }, 0)
+}
+
+// Pointer left the button mid-hold: cancel, so the next click is a normal
+// commit rather than being swallowed as "the release of a hold".
+function cancelHold() {
+  if (holdTimer) clearTimeout(holdTimer)
+  holdTimer = null
+  holdArmed = false
+}
+
+function onAddClick() {
+  if (suppressNextClick) {
+    suppressNextClick = false
+    return
+  }
+  handleAdd(false)
+}
+
+function onSendClick() {
+  if (suppressNextClick) {
+    suppressNextClick = false
+    return
+  }
+  handleSend(false)
 }
 
 defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChange, inputRef, inputText })
@@ -499,6 +633,16 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
   border: none;
   border-radius: var(--radius-full);
   transition: color var(--duration-base), background var(--duration-base);
+  /* These are controls, not selectable text — and the quote action is also a
+     long-press target ("quote into another conversation").
+     Without this the Android WebView recognises the hold as its own text
+     selection gesture, takes over the touch stream and fires touchcancel,
+     which kills our 500ms timer: the long-press would simply never work on
+     Android. `touch-callout` is the iOS counterpart. Same pair the quick-send
+     rows and the file-manager rows carry (both are long-press targets too). */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 @media (hover: hover) {
@@ -723,6 +867,11 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
   cursor: pointer;
   transition: background var(--duration-base), opacity var(--duration-base);
   flex-shrink: 0;
+  /* Long-press target (see .quote-bar-action): the WebView must not claim the
+     hold for its native selection menu. */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .qq-add-btn {

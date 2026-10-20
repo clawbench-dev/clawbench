@@ -1730,6 +1730,17 @@ func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEve
 	e.injectSessionMetadata(responseMetadata)
 	donePost()
 
+	// Rewrite a cumulative cost into this turn's delta BEFORE the content JSON is
+	// built, so the message-detail modal and the ledger agree. ACP reports the
+	// session's running total, and leaving it in the embedded metadata made the
+	// per-message view show "this reply cost $3.36" when that was the session's
+	// total so far. The computation is the same one SaveMetadata runs below, and
+	// it is idempotent (the baseline excludes this message id).
+	if cost, total, cumulative := normalizeLedgerCost(e.cfg.SessionID, e.cfg.StreamingMessageID, responseMetadata); cumulative == 1 {
+		responseMetadata.CostUSD = cost
+		responseMetadata.CostSessionTotal = total
+	}
+
 	doneBuild := ft.phase("build_content_json")
 	content, blocks := e.buildContentJSON(blocks, result, responseMetadata)
 	doneBuild()

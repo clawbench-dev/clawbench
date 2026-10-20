@@ -124,6 +124,30 @@ describe('click-time model switch wiring', () => {
     )
   })
 
+  // `persistSessionUpdate` is chained with .then() by its callers, so it must
+  // ALWAYS return a promise. Returning undefined when there is no session threw
+  // a TypeError instead of being a no-op — the pick's optimistic state was left
+  // un-reconciled and the error surfaced in the console only.
+  it('persistSessionUpdate is total: no session still yields a promise', () => {
+    const body = fnBody('function persistSessionUpdate')
+    expect(body, 'the no-session path must return a resolved promise').toMatch(
+      /if \(!sid\) return Promise\.resolve\(null\)/,
+    )
+    expect(body, 'the no-session path must not return bare').not.toMatch(/if \(!sid\) return\s*\n/)
+  })
+
+  // A durable-write failure must be visible: the level applies now but dies on
+  // restart. Without the flag the user only notices later, with no explanation.
+  it('surfaces a pick that could not be remembered', () => {
+    const body = fnBody('function handleSwitchThinkingEffort')
+    expect(body, 'the not-remembered flag must be handled').toMatch(
+      /thinkingEffortNotRemembered/,
+    )
+    expect(body, 'and explained to the user').toMatch(
+      /thinkingEffortSwitcher\.notRemembered/,
+    )
+  })
+
   it('reverts to the agent default when the session has no persisted model', () => {
     // A session created via POST /api/ai/sessions deliberately has model='', so
     // the chip's pre-click value came from the agent. Without this fallback the
