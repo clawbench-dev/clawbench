@@ -189,6 +189,7 @@ UNIQUE：`(message_id)`
 | avatar | TEXT | NOT NULL | `''` | 用户自选的 DiceBear 头像 SVG（空＝用内置图标）；写入前经 `avatarSVGLooksSafe` 校验 |
 | disabled | INTEGER | NOT NULL | `0` | 已禁用：从所有**新建**入口（新建会话/任务/群成员）隐藏，服务端兜底拒绝；已有会话/任务不受影响 |
 | project_id | INTEGER | | `NULL` | 项目作用域：`NULL`=全局可见；值=仅在该 `projects.id` 项目可见（设置列表 + 所有新建入口）。只拦新建，不追溯已有会话/任务 |
+| mcp_servers | TEXT | NOT NULL | `'{"mode":"all","names":[]}'` | 该智能体的 MCP 启用策略 JSON（`{mode, names}`）。**只存策略不存定义**——定义在 `config.yaml` 的 `mcp.servers`，密钥只存一处。零值/解析失败按 `all` 处理，不按 `none`（否则一次坏行会让该智能体的 MCP 全部消失） |
 | models | TEXT | NOT NULL | `'[]'` | 可用模型列表 JSON |
 | models_auto_detected | INTEGER | NOT NULL | `0` | 自动检测模型标记 |
 | sort_order | INTEGER | NOT NULL | `0` | 排序顺序 |
