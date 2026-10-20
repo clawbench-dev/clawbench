@@ -24,6 +24,7 @@ import { createSingleTabGuard } from './composables/useSingleTab.ts'
 import SingleTabBlocked from './components/common/SingleTabBlocked.vue'
 import { installLocalMediaFallback } from './utils/localMediaFallback.ts'
 import { installMediaFullscreenGuard } from './utils/mediaFullscreenGuard.ts'
+import { installChunkLoadRecovery } from './utils/chunkLoadRecovery.ts'
 
 configureMarkedRenderer()
 
@@ -42,6 +43,14 @@ installLocalMediaFallback()
 // swallowing every pointer event (the UI looks closed but is unclickable).
 // Exit fullscreen on that error. Document-level capture listener, installed once.
 installMediaFullscreenGuard()
+
+// A page left open across a rebuild references chunk hashes that no longer
+// exist, so every later lazy import 404s. Without this hook those failures are
+// silent for components built with a bare `defineAsyncComponent` (Vue keeps
+// rendering the loading component forever) — the pane spins until the user
+// restarts the app. Installed before the app mounts so no lazy import can miss
+// it; see utils/chunkLoadRecovery.ts.
+installChunkLoadRecovery()
 
 // ── Single-tab gate ─────────────────────────────────────────────────────────
 // Only one tab may run the app. The server keys a client's WebSocket
