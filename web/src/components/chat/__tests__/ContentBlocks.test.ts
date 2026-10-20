@@ -2700,6 +2700,94 @@ describe('static block cache scope', () => {
   })
 })
 
+// ── Ask card survives a cache hit ──
+//
+// The user-visible failure: a turn finishes, its question card is missing, and
+// it appears only after toggling to the summary view or switching sessions.
+//
+// `blockAskQuestions` is the ONLY source the text-mode ask card reads, and it is
+// filled exclusively by `renderTextBlock` (the shared side table lives in
+// useChatRender). `syncSessionState` deletes every entry on each loadHistory —
+// which is exactly what the terminal `done` handler triggers — so the table is
+// empty when the rebuilt array renders. On that render the block's HTML comes
+// from `StaticBlockCache` (the same text was rendered a moment earlier), and a
+// cache hit returns BEFORE renderTextBlock runs, so the table is never refilled
+// and the card stays missing. Session switches "fix" it only because switching
+// changes `listKey` → remount → cache cleared upstream by other inputs.
+//
+// The card must therefore be derivable from the block itself, not from a side
+// table that another path can clear.
+describe('text-mode ask card after the side table is cleared', () => {
+  const TAG_TEXT = '前言\n<clawbench-ask-question>\n**Approach**\nWhich?\n- A — Fast\n- B — Safe\n</clawbench-ask-question>'
+
+  it('renders the card when blockAskQuestions is empty but the text carries a tag', async () => {
+    // A real pipeline for the ask text (so the cached HTML is the tag-stripped
+    // body), and an empty side table — the state loadHistory leaves behind.
+    const renderTextBlock = vi.fn((text: string) =>
+      text.includes('<clawbench-ask-question') ? '<p>前言</p>' : `<p>${text}</p>`)
+    mountBlocks({
+      blocks: [{ type: 'text', text: TAG_TEXT }],
+      blockAskQuestions: {},
+      renderTextBlock,
+      formatToolInput: () => '<div class="ask-question-view"><div class="ask-question-item"></div></div>',
+    })
+    await nextTick()
+    await flushPromises()
+
+    expect(wrapper_card_count()).toBe(1)
+  })
+
+  it('still renders the card when the HTML comes from a warm static cache', async () => {
+    const { StaticBlockCache } = await import('@/utils/streamPerf.ts')
+    const cache = markRaw(new StaticBlockCache())
+    // Warm the cache exactly as the previous render did: same msgId, same
+    // index, same text, same scope.
+    cache.set('msg-1', 0, TAG_TEXT, '<p>前言</p>', false, `${store.state.projectRoot}\u0000en`)
+
+    mountBlocks({
+      blocks: [{ type: 'text', text: TAG_TEXT }],
+      blockAskQuestions: {},
+      staticBlockCache: cache,
+      // Only the block itself must come from the cache. The empty summary slot
+      // (template line 10) also calls this with '' — not the subject here.
+      renderTextBlock: (text: string) => {
+        if (text === '') return ''
+        throw new Error('cache hit must not re-render')
+      },
+      formatToolInput: () => '<div class="ask-question-view"><div class="ask-question-item"></div></div>',
+    })
+    await nextTick()
+    await flushPromises()
+
+    expect(wrapper_card_count()).toBe(1)
+  })
+
+  it('does not surface a card mid-stream (payload may still be half written)', async () => {
+    // The streaming render path is pure markdown by design: the tag stays
+    // visible as text until the turn settles, and the backend converts it at
+    // Finalize. Rendering a card from a partial payload would show a card whose
+    // questions change underneath the user.
+    mountBlocks({
+      blocks: [{ type: 'text', text: TAG_TEXT }],
+      blockAskQuestions: {},
+      streaming: true,
+      active: true,
+      renderTextBlock: () => '',
+      formatToolInput: () => '<div class="ask-question-view"></div>',
+    })
+    await nextTick()
+    await flushPromises()
+
+    expect(wrapper_card_count()).toBe(0)
+  })
+
+  function wrapper_card_count(): number {
+    // The card is the unified inline card carrying the ask tool name.
+    return mountedWrappers.filter((w) => w.exists())
+      .reduce((n, w) => n + w.findAll('.tool-detail.chat-inline-card[data-tool-name="AskUserQuestion"]').length, 0)
+  }
+})
+
 // ── Path verification survives a cache hit ──
 //
 // `data-path-type` is applied ONLY by verifyFilePaths mutating the live DOM —

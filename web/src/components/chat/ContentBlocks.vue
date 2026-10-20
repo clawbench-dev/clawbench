@@ -327,23 +327,24 @@
         />
       </template>
       <!-- Ask question card (from <clawbench-ask-question> tag in text) — must come before generic text block.
-           detectAskQuestionInText triggers renderTextBlock which fills blockAskQuestions;
-           the card UI only renders when blockAskQuestions[key] has data. -->
-      <template v-else-if="block.type === 'text' && (blockAskQuestions[blockTaskKey(bi)] || detectAskQuestionInText(block))">
+           The card renders whenever the block's own text parses into questions,
+           so it does not depend on the blockAskQuestions side table (which
+           loadHistory clears and a static-cache hit never refills). -->
+      <template v-else-if="block.type === 'text' && (textAskQuestions(bi, block).length > 0 || detectAskQuestionInText(block))">
         <!-- Surrounding text (with ask-question tag stripped) -->
         <div v-if="getBlockHtml(bi, block)" v-html="getBlockHtml(bi, block)"></div>
-        <template v-if="blockAskQuestions[blockTaskKey(bi)] && !isSuppressedAskCard(bi)">
+        <template v-if="textAskQuestions(bi, block).length > 0 && !isSuppressedAskCard(bi)">
           <div class="tool-detail chat-inline-card done" data-category="ask" data-tool-name="AskUserQuestion" @click="handleToolDetailClick" @input="handleToolDetailInput">
             <div class="chat-card-strip" @click.stop="$emit('toggle-tool', key(bi))">
               <component :is="getToolIcon('AskUserQuestion').icon" :size="12" class="tool-icon" />
               <span class="tool-name">{{ t('tool.askUser.name') }}</span>
-              <span class="tool-summary">{{ askQuestionSummary(blockAskQuestions[blockTaskKey(bi)]) }}</span>
+              <span class="tool-summary">{{ askQuestionSummary({ questions: textAskQuestions(bi, block) }) }}</span>
               <CheckCircle2 :size="14" color="#f59e0b" class="tool-warn" />
             </div>
             <div class="chat-card-body">
               <!-- Merged card: one body holding every question in the message. -->
               <div v-if="isMergedAskAnchor(bi)" v-html="formatToolInput({ questions: mergedAskQuestions }, 'AskUserQuestion', { askKey: mergedAskKey(bi) })"></div>
-              <div v-else v-html="formatToolInput(blockAskQuestions[blockTaskKey(bi)], 'AskUserQuestion', { askKey: askKeyForTextBlock(bi) })"></div>
+              <div v-else v-html="formatToolInput({ questions: textAskQuestions(bi, block) }, 'AskUserQuestion', { askKey: askKeyForTextBlock(bi) })"></div>
             </div>
           </div>
         </template>
@@ -389,6 +390,8 @@ import { useI18n } from 'vue-i18n'
 import i18n from '@/i18n'
 import { handleToolAction, shouldAutoExpandTool, updateAskSubmitState, classifyAskQuestionsInput, restoreAskStatesInContainer, handleAskSupplementaryInput } from '@/utils/renderToolDetail.ts'
 import { askCardKey } from '@/utils/askQuestionState.ts'
+import { detectAskQuestion } from '@/utils/streamPerf.ts'
+import { askItemsToInputMap } from '@/utils/askQuestion.ts'
 import { getToolIcon, toolDisplayName } from '@/utils/icons'
 import { teamMemberColorVar } from '@/utils/teamMemberColor'
 import { Brain, ChevronDown, ChevronUp, AlertCircle, AlertTriangle, XCircle, CheckCircle2, Bot, Wrench, Sparkles } from 'lucide-vue-next'
@@ -715,11 +718,67 @@ function blockTaskKey(bi: number) {
 
 // Quick check if block text contains the tag — used in v-else-if condition
 // to enter the clawbench-ask-question branch (which triggers renderTextBlock to fill blockAskQuestions).
-// The actual card UI is gated by blockAskQuestions[key] being truthy, so false positives
-// from this simple check are harmless — they just trigger a renderTextBlock call that
-// won't populate blockAskQuestions if the content isn't a real structured question.
+// The actual card UI is gated by the parsed questions being non-empty, so false
+// positives from this simple check are harmless — they just trigger a
+// renderTextBlock call that won't produce a card for non-question content.
 function detectAskQuestionInText(block: any) {
   return block.text && block.text.includes('<clawbench-ask-question')
+}
+
+/**
+ * Questions a TEXT block carries, parsed from the block's own text.
+ *
+ * `blockAskQuestions` (the shared side table in useChatRender) is filled by
+ * renderTextBlock and is therefore only populated when the full pipeline ran
+ * for this block. Two things break that:
+ *
+ *  - `syncSessionState` deletes every entry on each loadHistory — which the
+ *    terminal `done` handler triggers immediately after a turn.
+ *  - A `StaticBlockCache` hit returns the rendered HTML BEFORE renderTextBlock
+ *    runs, so the table is never refilled for that block.
+ *
+ * A LIVE finalized bubble keeps the raw `<clawbench-ask-question>` tag in its
+ * text: the backend only converts the tag into an AskUserQuestion tool block at
+ * Finalize, and the converted blocks are never re-sent over the WS stream. (A
+ * row loaded from the DB is already converted, which is why switching sessions
+ * "fixed" the missing card — that path renders a tool block and needs no side
+ * table.) So after the post-done loadHistory the live bubble had a tag, no side
+ * table entry and a warm HTML cache: no card at all, until a session switch
+ * replaced the live object with the converted DB row.
+ *
+ * Parsing from the text makes the card a function of the block itself, so no
+ * side table can invalidate it. Memoized by text (a message can re-render
+ * hundreds of times while streaming) and skipped while streaming, where a
+ * half-written payload must not surface a card.
+ */
+const textAskCache = new Map<string, Array<Record<string, unknown>>>()
+const TEXT_ASK_CACHE_MAX = 200
+function parseAskQuestionsFromText(text: unknown): Array<Record<string, unknown>> {
+  if (props.streaming) return []
+  if (typeof text !== 'string' || !text.includes('<clawbench-ask-question')) return []
+  const cached = textAskCache.get(text)
+  if (cached) return cached
+  const result = detectAskQuestion(text)
+  const questions = result.items.length > 0
+    ? extractAskQuestions(askItemsToInputMap(result.items))
+    : []
+  if (textAskCache.size >= TEXT_ASK_CACHE_MAX) textAskCache.clear()
+  textAskCache.set(text, questions)
+  return questions
+}
+
+/**
+ * Questions a TEXT block renders as a card, from either source: the shared
+ * side table (when the full pipeline has run for this block) or the block's own
+ * text. Template-facing — a single call site keeps the two sources in sync.
+ */
+function textAskQuestions(bi: number, block: any): Array<Record<string, unknown>> {
+  const parsed = props.blockAskQuestions[blockTaskKey(bi)]
+  if (parsed && Array.isArray(parsed.questions)) {
+    const questions = extractAskQuestions(parsed)
+    if (questions.length > 0) return questions
+  }
+  return parseAskQuestionsFromText(block?.text)
 }
 
 // ── Multi ask-card merging ──
@@ -738,8 +797,7 @@ function askQuestionsOfBlock(bi: number, block: any): Array<Record<string, unkno
     return extractAskQuestions(block.input)
   }
   if (block?.type === 'text') {
-    const parsed = props.blockAskQuestions[blockTaskKey(bi)]
-    if (parsed && Array.isArray(parsed.questions)) return extractAskQuestions(parsed)
+    return textAskQuestions(bi, block)
   }
   return []
 }
