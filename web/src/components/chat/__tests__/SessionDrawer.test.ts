@@ -1103,8 +1103,9 @@ describe('SessionDrawer', () => {
       expect(rule).toMatch(/padding:\s*var\(--space-4\) var\(--space-5\)/)
     })
 
-    it('shows an empty state when the session never reported a window', async () => {
+    it('shows an empty state when the session never reported any usage', async () => {
       mockIdentity.contextSize.value = 0
+      mockIdentity.contextUsed.value = 0
       try {
         const wrapper = mountDrawer()
         await wrapper.findAll('.model-tab')[4].trigger('click')
@@ -1113,6 +1114,29 @@ describe('SessionDrawer', () => {
         expect(wrapper.text()).toContain('chat.sessionSetting.noUsage')
       } finally {
         mockIdentity.contextSize.value = 200000
+        mockIdentity.contextUsed.value = 50000
+      }
+    })
+
+    // A generation-tool billing has credit with no context window. The panel
+    // must still open so that row is visible, but compaction needs a window and
+    // must stay hidden.
+    it('shows the panel for credit-only usage, without the compact action', async () => {
+      mockIdentity.contextSize.value = 0
+      mockIdentity.contextUsed.value = 0
+      mockIdentity.contextCredit.value = 12.5
+      try {
+        const wrapper = mountDrawer()
+        await wrapper.findAll('.model-tab')[4].trigger('click')
+        await nextTick()
+        const detail = wrapper.findComponent({ name: 'ContextUsageDetail' })
+        expect(detail.exists()).toBe(true)
+        expect(wrapper.text()).not.toContain('chat.sessionSetting.noUsage')
+        expect(detail.props('showCompact')).toBe(false)
+      } finally {
+        mockIdentity.contextSize.value = 200000
+        mockIdentity.contextUsed.value = 50000
+        mockIdentity.contextCredit.value = 0
       }
     })
   })

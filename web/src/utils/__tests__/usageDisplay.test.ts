@@ -50,8 +50,26 @@ describe('usageColor', () => {
 })
 
 describe('cacheHitRate', () => {
-  it('computes hit / (hit + miss)', () => {
+  it('computes hit / (hit + miss) when no full-prompt input is known', () => {
     expect(cacheHitRate({ cacheHitTokens: 326400, cacheMissTokens: 2984 })).toBeCloseTo(99.09, 1)
+  })
+
+  // The agent's own definition is cacheRead / FULL PROMPT: prompt_tokens
+  // already includes both the cached and the cache-write portion. Dividing by
+  // (hit + miss) alone drops the write side and reports a HIGHER rate than the
+  // agent does for the same numbers.
+  it('divides by the full prompt when inputTokens covers the split', () => {
+    // hit 800, miss 100, write 100 → prompt = 1000.
+    const usage = { cacheHitTokens: 800, cacheMissTokens: 100, inputTokens: 1000 }
+    expect(cacheHitRate(usage)).toBeCloseTo(80, 5)
+    // The old (hit+miss) formula would have said 88.9% here.
+    expect(cacheHitRate({ cacheHitTokens: 800, cacheMissTokens: 100 })).toBeCloseTo(88.89, 1)
+  })
+
+  it('ignores an input that does not cover the split', () => {
+    // A per-call input with turn-level cache counters: using it would divide by
+    // a number smaller than the split and exceed 100%.
+    expect(cacheHitRate({ cacheHitTokens: 900, cacheMissTokens: 300, inputTokens: 500 })).toBeCloseTo(75, 5)
   })
 
   it('is null when neither side is reported (row hidden, not shown as 0%)', () => {

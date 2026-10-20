@@ -371,7 +371,16 @@ const usageSnapshot = computed(() => {
     usageByCategory: identity.contextUsageByCategory.value,
   }
 })
-const hasUsage = computed(() => (usageSnapshot.value?.size ?? 0) > 0)
+// "Carries any usage", not "has a context window": a session whose only
+// billing was a generation tool has credit with no window, and gating on size
+// alone hid the whole panel (the credit row included).
+const hasUsage = computed(() => {
+  const u = usageSnapshot.value
+  return !!u && ((u.size ?? 0) > 0 || (u.used ?? 0) > 0 || (u.credit ?? 0) > 0 ||
+    (u.inputTokens ?? 0) > 0 || (u.outputTokens ?? 0) > 0 || (u.totalTokens ?? 0) > 0)
+})
+// Compaction needs a real window to compress — credit alone is not enough.
+const hasWindow = computed(() => (usageSnapshot.value?.size ?? 0) > 0)
 // Compaction is offered for a group member (it is a group-only action) and for
 // the current single chat. A member that never reported a window has nothing to
 // compact, and a left member cannot run a turn.
@@ -381,7 +390,7 @@ const hasUsage = computed(() => (usageSnapshot.value?.size ?? 0) > 0)
 // the model as prose. The server rejects that case with a 400, so showing the
 // button only produced an error after the click.
 const canCompactHere = computed(() => {
-  if (!hasUsage.value) return false
+  if (!hasWindow.value) return false
   if (!isTargeted.value) return true
   if (!target.value?.isGroupMember) return false
   const transport = target.value?.transport || ''

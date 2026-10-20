@@ -199,9 +199,36 @@ describe('UsageStatsPanel', () => {
     expect(cardText).toContain('输入 Tokens')
     expect(cardText).toContain('总 Tokens')
     expect(cardText).toContain('费用 (USD)')
+    // hit 80 / FULL prompt 100 — NOT hit/(hit+miss), which would also read
+    // 80.0% here by coincidence; the denominator case below pins the difference.
     expect(cardText).toContain('80.0%') // cache hit rate
     expect(cardText).not.toContain('输出 Tokens') // zero → hidden
     expect(cardText).not.toContain('Credit') // zero → hidden
+  })
+
+  it('computes the overview hit rate over the full prompt, not hit+miss', async () => {
+    // hit 800, miss 100, write 100 → prompt = 1000. The agent's own formula
+    // (cacheRead / prompt) gives 80%; dividing by hit+miss alone would give
+    // 88.9% and overstate every CodeBuddy range.
+    mockApiGet.mockResolvedValue(mockResponse({
+      totals: { input: 1000, output: 0, total: 1000, cacheHit: 800, cacheMiss: 100, credit: 0, costUsd: 0, messageCnt: 1 },
+      rows: [{ key: { model: 'glm' }, input: 1000, output: 0, total: 1000, cacheHit: 800, cacheMiss: 100, credit: 0, costUsd: 0, messageCnt: 1 }],
+    }))
+    const wrapper = await mountPanel()
+    const cardText = wrapper.findAll('.stats-total').map(c => c.text()).join(' | ')
+    expect(cardText).toContain('80.0%')
+    expect(cardText).not.toContain('88.9%')
+  })
+
+  it('falls back to hit+miss when the range input does not cover the split', async () => {
+    // Pre-migration rows: input only counts the uncached remainder.
+    mockApiGet.mockResolvedValue(mockResponse({
+      totals: { input: 100, output: 0, total: 100, cacheHit: 300, cacheMiss: 100, credit: 0, costUsd: 0, messageCnt: 1 },
+      rows: [{ key: { model: 'glm' }, input: 100, output: 0, total: 100, cacheHit: 300, cacheMiss: 100, credit: 0, costUsd: 0, messageCnt: 1 }],
+    }))
+    const wrapper = await mountPanel()
+    const cardText = wrapper.findAll('.stats-total').map(c => c.text()).join(' | ')
+    expect(cardText).toContain('75.0%') // 300 / (300 + 100)
   })
 
   it('renders a data table with dim columns and selected metric columns', async () => {

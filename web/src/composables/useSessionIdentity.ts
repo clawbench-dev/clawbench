@@ -430,16 +430,34 @@ export function updateUsageState(used: number, size: number, cost?: number, curr
   const key = sessionId || currentSessionId.value
   if (!key) return
   const prev = usageStateCache.get(key)
+  const isDefined = (x: number | undefined): x is number => x !== undefined && x !== null
+
+  // Window fields are PARTIAL updates, exactly like the server's
+  // MergeUsageState: a cost-only notification (CodeBuddy generation tools and
+  // team-member turns) carries used=0/size=0 and must not wipe a known window.
+  //
+  //   size — sticky. A known non-zero window is a session invariant (set by
+  //          the model); a non-zero change (model switch) is accepted.
+  //   used — when size > 0 the notification carries the authoritative window,
+  //          so its used is trusted outright (including a genuine 0 after a
+  //          compaction). Without a window, a positive used still applies;
+  //          a naked 0 keeps the previous value.
+  const nextSize = size > 0 ? size : (prev?.size ?? 0)
+  const nextUsed = size > 0
+    ? used
+    : (used > 0 ? used : (prev?.used ?? 0))
+
   // A used-count drop marks a NEW TURN (CodeBuddy opens each turn with a
   // usage_update whose used resets low/zero). Extension detail is turn-scoped:
   // carrying last turn's cache/category into a fresh turn would show stale
   // data. Reset the extension baseline whenever used falls back noticeably.
-  const newTurn = !!prev && used < prev.used * 0.5
+  // Judged on the MERGED used — a cost-only frame's own used=0 is not a turn
+  // boundary.
+  const newTurn = !!prev && nextUsed < prev.used * 0.5
   const baseline = newTurn ? undefined : prev
   const hasMeaningfulCategory = !!usageByCategory && Object.values(usageByCategory).some(v => v > 0)
-  const isDefined = (x: number | undefined): x is number => x !== undefined && x !== null
   usageStateCache.set(key, {
-    used, size,
+    used: nextUsed, size: nextSize,
     // Token totals are only carried by the notifications that report usage
     // (turn-final emitPromptResponseUsage / usage_update with usage block).
     // Mid-stream partial notifications omit them — preserve the previous value
@@ -459,6 +477,11 @@ export function updateUsageState(used: number, size: number, cost?: number, curr
     cacheCreationTokens: isDefined(cacheCreationTokens) ? cacheCreationTokens : (baseline?.cacheCreationTokens ?? 0),
     cacheHitTokens: isDefined(cacheHitTokens) ? cacheHitTokens : (baseline?.cacheHitTokens ?? 0),
     cacheMissTokens: isDefined(cacheMissTokens) ? cacheMissTokens : (baseline?.cacheMissTokens ?? 0),
+    // Credit is the TURN-CUMULATIVE total: the backend forwards the running
+    // sum of every model call plus the cost-only generation / team-member
+    // stages, and clears its accumulator at the start of each prompt. Frames
+    // arrive in order on one connection, so a straight assignment keeps the
+    // displayed figure equal to what the ledger stores for this turn.
     credit: isDefined(credit) ? credit : (baseline?.credit ?? 0),
     usageByCategory: hasMeaningfulCategory ? usageByCategory : baseline?.usageByCategory,
   })
@@ -796,9 +819,28 @@ export async function initSessionFromAPI() {
             updateAvailableThinkingEfforts(levels)
           }
         }
-        // Initialize usage state from server cached data
-        if (data.usageState && data.usageState.size > 0) {
-          updateUsageState(data.usageState.used ?? 0, data.usageState.size, data.usageState.cost, data.usageState.currency, data.sessionId)
+        // Initialize usage state from server cached data.
+        //
+        // Every field is forwarded, not just the window: the persisted
+        // context_state.usage also carries the turn-cumulative credit and the
+        // cache/category detail, and dropping them here made the panel show 0
+        // credit after a reload until the next usage_update arrived. The gate
+        // is "carries anything", not "size > 0", for the same reason — a
+        // session whose only billing was a generation tool has credit with no
+        // window.
+        if (data.usageState) {
+          const u = data.usageState
+          const hasAny = (u.size ?? 0) > 0 || (u.used ?? 0) > 0 || (u.credit ?? 0) > 0 ||
+            (u.inputTokens ?? 0) > 0 || (u.outputTokens ?? 0) > 0 || (u.totalTokens ?? 0) > 0
+          if (hasAny) {
+            updateUsageState(
+              u.used ?? 0, u.size ?? 0, u.cost, u.currency, data.sessionId,
+              u.inputTokens, u.outputTokens, u.totalTokens,
+              u.cachedReadTokens, u.cachedWriteTokens, u.thoughtTokens,
+              u.cacheCreationTokens, u.cacheHitTokens, u.cacheMissTokens,
+              u.credit, u.usageByCategory,
+            )
+          }
         }
       }
     }

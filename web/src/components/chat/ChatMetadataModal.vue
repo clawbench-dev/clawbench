@@ -256,14 +256,21 @@ function catLabel(key) {
   return i18nKey ? t(i18nKey) : key
 }
 
-// Cache hit rate = hit / (hit + miss). Null when neither side is reported.
+// Cache hit rate, same formula as the context panel and the stats page:
+// hit / FULL PROMPT, because inputTokens already includes the cached and the
+// cache-write portions. Dividing by (hit + miss) would omit the write side and
+// report a higher rate than the agent itself does. Null when nothing is
+// reported; falls back to hit+miss for a row whose input does not cover the
+// split.
 const metadataCacheHitRate = computed(() => {
   const hit = Number(props.data?.cacheHitTokens) || 0
   const miss = Number(props.data?.cacheMissTokens) || 0
   if (hit <= 0 && miss <= 0) return null
-  const total = hit + miss
-  if (total <= 0) return 0
-  return (hit / total) * 100
+  const split = hit + miss
+  const input = Number(props.data?.inputTokens) || 0
+  const denominator = input > 0 && input >= split ? input : split
+  if (denominator <= 0) return 0
+  return (hit / denominator) * 100
 })
 
 /**
