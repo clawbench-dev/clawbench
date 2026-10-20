@@ -22,19 +22,31 @@
         <template v-else>
           <div class="cloc-totals">
             <div class="stats-total">
-              <span class="stats-total-label">{{ t('gitStats.clocColCode') }}</span>
+              <span class="stats-total-label">
+                <Code2 :size="14" class="stats-total-icon" aria-hidden="true" />
+                <span class="stats-total-label-text">{{ t('gitStats.clocColCode') }}</span>
+              </span>
               <span class="stats-total-value">{{ formatLineCount(clocTotal.code) }}</span>
             </div>
             <div class="stats-total">
-              <span class="stats-total-label">{{ t('gitStats.clocColComment') }}</span>
+              <span class="stats-total-label">
+                <MessageSquare :size="14" class="stats-total-icon" aria-hidden="true" />
+                <span class="stats-total-label-text">{{ t('gitStats.clocColComment') }}</span>
+              </span>
               <span class="stats-total-value">{{ formatLineCount(clocTotal.comment) }}</span>
             </div>
             <div class="stats-total">
-              <span class="stats-total-label">{{ t('gitStats.clocColBlank') }}</span>
+              <span class="stats-total-label">
+                <Space :size="14" class="stats-total-icon" aria-hidden="true" />
+                <span class="stats-total-label-text">{{ t('gitStats.clocColBlank') }}</span>
+              </span>
               <span class="stats-total-value">{{ formatLineCount(clocTotal.blank) }}</span>
             </div>
             <div class="stats-total">
-              <span class="stats-total-label">{{ t('gitStats.clocColFiles') }}</span>
+              <span class="stats-total-label">
+                <FileStack :size="14" class="stats-total-icon" aria-hidden="true" />
+                <span class="stats-total-label-text">{{ t('gitStats.clocColFiles') }}</span>
+              </span>
               <span class="stats-total-value">{{ clocTotal.files.toLocaleString() }}</span>
             </div>
           </div>
@@ -104,7 +116,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Files, FileCode2 } from 'lucide-vue-next'
+import { Files, FileCode2, Code2, MessageSquare, Space, FileStack } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import UsageChart from '@/components/stats/UsageChart.vue'
 import { useGitCodeStats } from '@/composables/useGitCodeStats'
@@ -282,11 +294,23 @@ onMounted(() => {
   min-width: 0;
 }
 .stats-total-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
+}
+.stats-total-label-text {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
+}
+.stats-total-icon {
+  flex-shrink: 0;
+  color: var(--text-muted);
 }
 .stats-total-value {
   font-size: var(--font-size-2xl);
