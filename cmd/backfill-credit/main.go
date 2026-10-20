@@ -64,6 +64,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io/fs"
@@ -97,35 +98,40 @@ type turnTotals struct {
 }
 
 func main() {
-	dbPath := flag.String("db", "", "path to ClawBench.db (required)")
-	logsRoot := flag.String("logs", "", "root of CodeBuddy project transcripts (e.g. ~/.codebuddy/projects)")
-	apply := flag.Bool("apply", false, "write the backfill (default: dry-run)")
-	flag.Parse()
+	if err := runCLI(os.Args[1:]); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// runCLI parses flags and performs the backfill. main only translates the error
+// into an exit code, so every branch below is reachable from a unit test.
+func runCLI(args []string) error {
+	fs := flag.NewFlagSet("backfill-credit", flag.ContinueOnError)
+	dbPath := fs.String("db", "", "path to ClawBench.db (required)")
+	logsRoot := fs.String("logs", "", "root of CodeBuddy project transcripts (e.g. ~/.codebuddy/projects)")
+	apply := fs.Bool("apply", false, "write the backfill (default: dry-run)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 
 	if *dbPath == "" || *logsRoot == "" {
-		log.Fatal("both -db and -logs are required")
+		return errors.New("both -db and -logs are required")
 	}
 
-	turns, err := readTranscripts(*logsRoot)
-	if err != nil {
-		log.Fatalf("read transcripts: %v", err)
-	}
+	turns := readTranscripts(*logsRoot)
 	// Fail loud rather than reporting a clean zero-row run: the whole tool is
 	// scoped to CodeBuddy, and an empty transcript set almost always means the
 	// -logs path points somewhere else (a different agent's directory, or a
 	// typo). See the SCOPE note at the top of this file.
 	if len(turns) == 0 {
-		log.Fatalf("no CodeBuddy usage found under %s — this tool only reads "+
+		return fmt.Errorf("no CodeBuddy usage found under %s — this tool only reads "+
 			"CodeBuddy transcripts (expects <project>/<session>.jsonl with "+
 			"providerData.rawUsage)", *logsRoot)
 	}
 	fmt.Printf("transcripts: %d requestIds, %d model calls\n", len(turns), countCalls(turns))
 
-	// run() owns the DB handle so its deferred Close actually runs; main only
-	// translates the error into an exit code.
-	if err := run(*dbPath, turns, *apply); err != nil {
-		log.Fatal(err)
-	}
+	// run() owns the DB handle so its deferred Close actually runs.
+	return run(*dbPath, turns, *apply)
 }
 
 // run performs the plan/apply cycle. It is separate from main so the deferred
@@ -167,10 +173,15 @@ func run(dbPath string, turns map[string]*turnTotals, apply bool) error {
 //
 // With those two rules this reproduces the agent's numbers to within 0.01%
 // (deepseek 35,175,059,528 vs 35,142,148,950; glm/auto exact).
-func readTranscripts(root string) (map[string]*turnTotals, error) {
+//
+// It never fails: every walk or per-file error is logged and skipped, because a
+// single unreadable transcript must not abort a repair of the other thousands.
+// The consequence is surfaced downstream — a skipped file's requests end up in
+// the "request_id not in log" bucket of the report.
+func readTranscripts(root string) map[string]*turnTotals {
 	turns := make(map[string]*turnTotals)
 
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			// A permission error on one transcript must not abort the whole
 			// backfill; the affected rows simply stay unmatched (and are
@@ -192,7 +203,7 @@ func readTranscripts(root string) (map[string]*turnTotals, error) {
 		}
 		return nil
 	})
-	return turns, err
+	return turns
 }
 
 // isSubagentTranscript reports whether path is a sub-agent transcript.
@@ -495,13 +506,19 @@ func applyPlan(plan []backfillRow) error {
 	if err != nil {
 		return err
 	}
+	// WriteBegin leaves the process-global write mutex HELD: the caller owns it
+	// for the whole transaction and must release it. Omitting this leaked the
+	// lock — harmless for the one-shot CLI (it exits next) but it wedges every
+	// later writer, which is what the unit tests hit as a hang.
+	defer store.WriteUnlock()
 	defer func() { _ = tx.Rollback() }()
 
 	for _, r := range plan {
 		// total_tokens keeps the ledger invariant (>= input+output) that the
 		// stats query relies on for its default metric.
 		total := r.NewInput + r.NewOutput
-		if _, err := tx.Exec(`
+		if _, err := tx.Exec(
+			`
 			UPDATE chat_metadata
 			SET input_tokens = ?, output_tokens = ?, total_tokens = ?,
 			    credit = ?, cache_hit_tokens = ?, cache_miss_tokens = ?
