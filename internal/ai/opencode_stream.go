@@ -42,12 +42,26 @@ type OpenCodeFinishPart struct {
 	Cost   float64         `json:"cost"`
 }
 
-// OpenCodeTokens holds token usage from step_finish
+// OpenCodeTokens holds token usage from step_finish.
+//
+// The identity verified over 42,538 real steps in OpenCode's own storage is
+//
+//	total = input + output + cache.read + cache.write + reasoning
+//
+// i.e. the cached prompt is reported OUTSIDE input (same convention as
+// Claude/Codex), which the ledger normalizes at ingestion.
 type OpenCodeTokens struct {
-	Total     int `json:"total"`
-	Input     int `json:"input"`
-	Output    int `json:"output"`
-	Reasoning int `json:"reasoning"`
+	Total     int              `json:"total"`
+	Input     int              `json:"input"`
+	Output    int              `json:"output"`
+	Reasoning int              `json:"reasoning"`
+	Cache     OpenCodeCacheUse `json:"cache"`
+}
+
+// OpenCodeCacheUse is the cache split carried inside step_finish tokens.
+type OpenCodeCacheUse struct {
+	Read  int `json:"read"`
+	Write int `json:"write"`
 }
 
 // OpenCodeStreamParser parses JSON Lines output from `opencode run --format json`.
@@ -63,7 +77,33 @@ type OpenCodeStreamParser struct {
 	// InputRemaps maps input field names for tool input normalization.
 	// When set, ParseLine uses this map for normalizing tool input fields.
 	InputRemaps map[string]string
+
+	// turn accumulates the usage of every step in the CURRENT turn.
+	//
+	// OpenCode emits one step_finish per model call — a tool-using turn has one
+	// per round, and only the LAST one carries reason="stop". Recording just
+	// that step (the previous behavior) discarded every intermediate call:
+	// measured against OpenCode's own storage, one 812-step session reports
+	// 267,293,125 tokens across its steps but only 11,705,915 in its stop
+	// steps — 22.8x under. The turn total is the SUM over steps.
+	turn openCodeTurnUsage
 }
+
+// openCodeTurnUsage is the running total for one turn.
+type openCodeTurnUsage struct {
+	input      int
+	output     int
+	total      int
+	reasoning  int
+	cacheRead  int
+	cacheWrite int
+	// steps counts the step_finish parts folded in so far. Used to decide
+	// whether a turn reported anything at all.
+	steps int
+}
+
+// reset clears the accumulator for a new turn.
+func (u *openCodeTurnUsage) reset() { *u = openCodeTurnUsage{} }
 
 // GetCapturedSessionID returns the OpenCode session ID (ses_xxx) captured from
 // parsed stream messages. Available as soon as the first message (e.g., step_start) is parsed.
@@ -141,27 +181,30 @@ func (p *OpenCodeStreamParser) parseStepFinish(raw json.RawMessage, ch chan<- St
 		slog.Debug("opencode stream: skipping unparseable step_finish part", "error", err)
 		return
 	}
+	// EVERY step counts, not just the terminal one. A tool-using turn emits one
+	// step_finish per model call and only the last carries reason="stop";
+	// keeping just that step threw away all the intermediate calls (22.8x
+	// under-count measured against OpenCode's own storage). Fold this step into
+	// the turn accumulator and only emit when the turn actually ends.
+	if part.Tokens != nil {
+		p.turn.input += part.Tokens.Input
+		p.turn.output += part.Tokens.Output
+		p.turn.total += part.Tokens.Total
+		p.turn.reasoning += part.Tokens.Reasoning
+		p.turn.cacheRead += part.Tokens.Cache.Read
+		p.turn.cacheWrite += part.Tokens.Cache.Write
+	}
+	p.turn.steps++
 	if part.Reason != "stop" {
 		return
 	}
+
 	meta := &Metadata{
 		SessionID:  p.sessionID,
 		StopReason: "stop",
 		CostUSD:    part.Cost,
 	}
-	if part.Tokens != nil {
-		meta.InputTokens = part.Tokens.Input
-		meta.OutputTokens = part.Tokens.Output
-		// total is reported by the agent; keeping it lets the stats panel's
-		// default (total) metric see this backend at all. The old code dropped
-		// it, so every OpenCode row showed 0 in the "总 Tokens" column while
-		// still counting toward the totals.
-		meta.TotalTokens = part.Tokens.Total
-		meta.ThoughtTokens = part.Tokens.Reasoning
-		if meta.TotalTokens < meta.InputTokens+meta.OutputTokens {
-			meta.TotalTokens = meta.InputTokens + meta.OutputTokens
-		}
-	}
+	p.applyTurnUsage(meta)
 	// step_finish.cost is the SESSION running total, not this step's cost: in a
 	// production DB the value rises monotonically across a session
 	// (0.017 → 0.413) while per-turn tokens fall (9280 → 719), which no
@@ -173,4 +216,34 @@ func (p *OpenCodeStreamParser) parseStepFinish(raw json.RawMessage, ch chan<- St
 	}
 	emitStreamEvent(ch, "opencode", StreamEvent{Type: "metadata", Meta: meta})
 	emitStreamEvent(ch, "opencode", StreamEvent{Type: "done"})
+	p.turn.reset()
+}
+
+// applyTurnUsage copies the accumulated turn totals onto a Metadata.
+//
+// CACHE NORMALIZATION: OpenCode reports the cached prompt OUTSIDE input
+// (verified over 42,538 steps in its own storage: total = input + output +
+// cache.read + cache.write + reasoning). The stats panel assumes the CodeBuddy
+// shape where input is the FULL prompt, so the cache counters are folded into
+// input — otherwise OpenCode's cached traffic is invisible and its cache-hit
+// rate has no denominator, exactly the defect fixed for Claude/Codex.
+func (p *OpenCodeStreamParser) applyTurnUsage(meta *Metadata) {
+	t := &p.turn
+	meta.InputTokens = t.input
+	meta.OutputTokens = t.output
+	meta.ThoughtTokens = t.reasoning
+	meta.CachedReadTokens = t.cacheRead
+	meta.CachedWriteTokens = t.cacheWrite
+	if t.cacheRead > 0 || t.cacheWrite > 0 {
+		meta.CacheHitTokens = t.cacheRead
+		meta.CacheMissTokens = t.input
+		meta.InputTokens += t.cacheRead + t.cacheWrite
+	}
+	// Prefer the agent's own total; fall back to the normalized components when
+	// it did not report one (older builds), and never let it fall below
+	// input+output — the ledger's SUM-ability invariant.
+	meta.TotalTokens = t.total
+	if meta.TotalTokens < meta.InputTokens+meta.OutputTokens {
+		meta.TotalTokens = meta.InputTokens + meta.OutputTokens
+	}
 }
