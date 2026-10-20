@@ -68,7 +68,18 @@ const PROBE_PX = 100
  * MUST be called while `el` is laid out (not `display: none`) — a display:none
  * element has no parent chain worth cloning into.
  */
-export function measureFixedContainingBlock(el: HTMLElement): FixedContainingBlock {
+export function measureFixedContainingBlock(el: HTMLElement): FixedContainingBlock | null {
+  // A box that is not laid out yet (mid-Transition, or still `display: none`)
+  // reports zeros for every rect, and the probe would then "measure" a
+  // containing block of (0,0,0,0) — which the caller feeds straight back into
+  // the offsets, placing the menu off-screen. Refuse instead: the caller's
+  // `getClientRects().length > 0` gate cannot catch this, because a box in its
+  // enter-transition DOES have client rects while still measuring 0x0.
+  // Measured: the first open of the `#` completion menu landed at
+  // `bottom: -596.6px` (off-screen), the second open was correct.
+  const own = el.getBoundingClientRect()
+  if (own.width === 0 && own.height === 0) return null
+
   const probe = el.cloneNode(false) as HTMLElement
   // Same containing block (the clone lives in the same parent), but invisible
   // and out of hit-testing. `visibility` rather than `display:none` because a
@@ -76,6 +87,16 @@ export function measureFixedContainingBlock(el: HTMLElement): FixedContainingBlo
   probe.style.visibility = 'hidden'
   probe.style.pointerEvents = 'none'
   probe.style.margin = '0'
+  // `transform: none` is NOT enough on its own: the menu is wrapped in a
+  // <Transition> whose `*-enter-active` class declares a `transform` TRANSITION,
+  // and during that transition the element is its own containing block for
+  // `position: fixed` descendants — including this clone, which inherited the
+  // same class list. The probe then measured the menu's own box (380x59) as the
+  // containing block instead of the viewport, so `right`/`bottom` came out
+  // hundreds of px short and the menu landed off-screen. Dropping the transition
+  // classes is what makes the probe measure the real block.
+  probe.style.transition = 'none'
+  probe.className = ''
   probe.style.transform = 'none'
   probe.removeAttribute('id')
   el.parentElement?.appendChild(probe)
@@ -99,8 +120,17 @@ export function measureFixedContainingBlock(el: HTMLElement): FixedContainingBlo
     // `left` and `right` set is over-constrained when it also carries an
     // explicit width, and the cascade then ignores `right` entirely — the far
     // edge comes back as `left + width` instead of the block's edge.
+    //
+    // `max-width`/`max-height` must go too, and that is not obvious: the clone
+    // carries the real menu's `max-width: 380px`, so with `left:0; right:0` the
+    // box stretches only to 380px and the measured "far edge" is 380 instead of
+    // the viewport's 1280. Feeding that back made `cb.right` 900px too small, so
+    // every menu was placed ~600px BELOW the viewport (measured `bottom:
+    // -596.6px` on the `#` completion menu — its rows were unreachable).
     probe.style.width = ''
     probe.style.height = ''
+    probe.style.maxWidth = ''
+    probe.style.maxHeight = ''
     probe.style.left = '0px'
     probe.style.top = '0px'
     probe.style.right = '0px'
@@ -155,6 +185,14 @@ export function placeFixedAt(el: HTMLElement, left: number, top: number): void {
   el.style.right = ''
   el.style.bottom = ''
   const cb = measureFixedContainingBlock(el)
+  if (!cb) {
+    // Not laid out (display:none, or a 0x0 box): there is no containing block to
+    // invert, so write the viewport coordinates straight through. The caller
+    // repositions on the next layout change anyway.
+    el.style.left = `${left}px`
+    el.style.top = `${top}px`
+    return
+  }
   el.style.left = `${toFixedLeft(left, cb)}px`
   el.style.top = `${toFixedTop(top, cb)}px`
 }

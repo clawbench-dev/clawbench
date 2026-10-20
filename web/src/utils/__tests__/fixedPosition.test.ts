@@ -43,19 +43,44 @@ function makeEl(opts: {
     // origin; `right/bottom` position it from the block's far edges.
     const hasRight = el.style.right !== '' && el.style.right != null
     const hasBottom = el.style.bottom !== '' && el.style.bottom != null
+    const hasLeft = el.style.left !== '' && el.style.left != null
+    const hasTop = el.style.top !== '' && el.style.top != null
+
+    // CSS: with BOTH `left` and `right` set the box is stretched between them
+    // (then clamped by max-width). With only one of the pair it keeps its own
+    // size. Modelling this is what makes the max-width regression observable.
+    const maxW = parseFloat(el.style.maxWidth || '') || Infinity
+    const maxH = parseFloat(el.style.maxHeight || '') || Infinity
+
+    let width = boxWidth
+    if (hasLeft && hasRight) {
+      const stretch = cbWidth - (parseFloat(el.style.left) || 0) - (parseFloat(el.style.right) || 0)
+      width = Math.max(0, Math.min(stretch, maxW))
+    } else {
+      width = Math.min(width, maxW)
+    }
+
+    let height = boxHeight
+    if (hasTop && hasBottom) {
+      const stretch = cbHeight - (parseFloat(el.style.top) || 0) - (parseFloat(el.style.bottom) || 0)
+      height = Math.max(0, Math.min(stretch, maxH))
+    } else {
+      height = Math.min(height, maxH)
+    }
+
     const left = hasRight
-      ? originLeft + cbWidth - (parseFloat(el.style.right) || 0) * scale - boxWidth * scale
+      ? originLeft + cbWidth - (parseFloat(el.style.right) || 0) * scale - width * scale
       : originLeft + (parseFloat(el.style.left) || 0) * scale
     const top = hasBottom
-      ? originTop + cbHeight - (parseFloat(el.style.bottom) || 0) * scale - boxHeight * scale
+      ? originTop + cbHeight - (parseFloat(el.style.bottom) || 0) * scale - height * scale
       : originTop + (parseFloat(el.style.top) || 0) * scale
     return {
       top,
-      bottom: top + boxHeight * scale,
+      bottom: top + height * scale,
       left,
-      right: left + boxWidth * scale,
-      width: boxWidth * scale,
-      height: boxHeight * scale,
+      right: left + width * scale,
+      width: width * scale,
+      height: height * scale,
       x: left,
       y: top,
       toJSON: () => ({}),
@@ -121,6 +146,19 @@ describe('measureFixedContainingBlock', () => {
     measureFixedContainingBlock(el)
     expect(el.style.left).toBe('17px')
     expect(el.style.top).toBe('23px')
+  })
+
+  it('does not leave the live element offsets changed after measuring', () => {
+    // The probe runs on a clone; a regression that writes to the real element
+    // would show up here as a moved box (and as an unclickable menu in a browser).
+    const el = makeEl({})
+    el.style.left = '90px'
+    el.style.bottom = '62.4px'
+    const before = el.getBoundingClientRect()
+    measureFixedContainingBlock(el)
+    const after = el.getBoundingClientRect()
+    expect(after.left).toBe(before.left)
+    expect(after.top).toBe(before.top)
   })
 })
 

@@ -79,10 +79,14 @@ function updatePosition() {
   // `getClientRects().length` — not `offsetParent` — is the check that works
   // here: a fixed element's `offsetParent` is null even when it IS laid out.
   const el = menuEl.value
-  const containingBlock = el && el.getClientRects().length > 0
+  // `undefined` when the menu is not laid out yet — `computeMenuStyle` then uses
+  // the zoom-only conversion, which is correct whenever no ancestor establishes
+  // a containing block. Measuring a 0x0 box would instead report a bogus block
+  // and place the menu off-screen (first-open symptom).
+  const containingBlock = (el && el.getClientRects().length > 0
     ? measureFixedContainingBlock(el)
-    : undefined
-  menuStyle.value = computeMenuStyle(rect, {
+    : null) ?? undefined
+  const measured = computeMenuStyle(rect, {
     maxWidth: props.maxWidth,
     maxHeight: props.maxHeight,
     edgeMargin: props.edgeMargin,
@@ -91,6 +95,49 @@ function updatePosition() {
     scrollable: !props.appSurface,
     containingBlock,
   })
+  // Sanity gate: a measured containing block must place the menu INSIDE the
+  // viewport. If it does not, the measurement is wrong (a transformed ancestor,
+  // a mid-Transition box, a 0x0 clone) and the zoom-only conversion is the
+  // better answer — it is exact whenever nothing transforms, which covers the
+  // overwhelming majority of menus. Without this gate a bad measurement put the
+  // `#` completion menu 600px BELOW the viewport, where no row could be clicked.
+  if (containingBlock && !menuFitsViewport(measured)) {
+    menuStyle.value = computeMenuStyle(rect, {
+      maxWidth: props.maxWidth,
+      maxHeight: props.maxHeight,
+      edgeMargin: props.edgeMargin,
+      menuItemsCount: props.menuItemsCount,
+      anchor: props.anchor,
+      scrollable: !props.appSurface,
+    })
+    return
+  }
+  menuStyle.value = measured
+}
+
+/** Does the computed style keep the menu on screen? */
+function menuFitsViewport(style) {
+  const vh = window.innerHeight
+  const vw = window.innerWidth
+  const num = (v) => (v == null ? NaN : parseFloat(v))
+  if (style.top != null) {
+    const t = num(style.top)
+    if (!Number.isFinite(t) || t > vh) return false
+  }
+  if (style.bottom != null) {
+    const b = num(style.bottom)
+    // A negative `bottom` means the box sits below the containing block's edge.
+    if (!Number.isFinite(b) || b < 0) return false
+  }
+  if (style.left != null) {
+    const l = num(style.left)
+    if (!Number.isFinite(l) || l > vw) return false
+  }
+  if (style.right != null) {
+    const r = num(style.right)
+    if (!Number.isFinite(r) || r < 0) return false
+  }
+  return true
 }
 
 // Close on outside click
