@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -585,13 +586,37 @@ func TestReadTranscripts_MissingRootIsTolerated(t *testing.T) {
 	}
 }
 
+func TestReadTranscripts_IgnoresDirectoryNamedLikeTranscript(t *testing.T) {
+	// Only regular files are transcripts. A directory whose name ends in .jsonl
+	// is skipped by the walker's IsDir short-circuit, and the rest of the tree is
+	// still counted.
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "proj", "broken.jsonl"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	writeFile(t, root, "proj/ok.jsonl", usageLine("rid-ok", 10, 1, 0)+"\n")
+
+	turns := readTranscripts(root)
+	if turns["rid-ok"] == nil {
+		t.Errorf("the readable transcript must still be counted: %+v", turns)
+	}
+	if len(turns) != 1 {
+		t.Errorf("want exactly 1 request, got %d", len(turns))
+	}
+}
+
 func TestReadTranscripts_SkipsUnreadableTranscript(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root ignores file permissions, so the open cannot be made to fail")
+	// A transcript that cannot be OPENED must be skipped, not abort the walk:
+	// the other thousands of files still have to be repaired.
+	//
+	// Windows (and root) ignore mode bits, so the failure can only be provoked
+	// where permissions are enforced. The rest of the behavior — "one bad file
+	// does not abort the walk" — is what the assertion pins, and it is exercised
+	// on Linux CI.
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("mode bits are not enforced here")
 	}
 	root := t.TempDir()
-	// A transcript the process cannot read exercises the per-file warning path:
-	// the walk succeeds, one file is skipped, the rest are still counted.
 	broken := writeFile(t, root, "proj/broken.jsonl", usageLine("rid-broken", 10, 1, 0)+"\n")
 	if err := os.Chmod(broken, 0o000); err != nil {
 		t.Fatalf("chmod: %v", err)
@@ -603,11 +628,11 @@ func TestReadTranscripts_SkipsUnreadableTranscript(t *testing.T) {
 	if turns["rid-ok"] == nil {
 		t.Errorf("the readable transcript must still be counted: %+v", turns)
 	}
-	if len(turns) != 1 {
-		t.Errorf("want exactly 1 request, got %d", len(turns))
-	}
 	if turns["rid-broken"] != nil {
 		t.Error("the unreadable transcript must be skipped")
+	}
+	if len(turns) != 1 {
+		t.Errorf("want exactly 1 request, got %d", len(turns))
 	}
 }
 
