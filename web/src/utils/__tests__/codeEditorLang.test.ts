@@ -59,6 +59,29 @@ describe('buildLangExtension', () => {
     expect(await buildLangExtension('julia')).toBeTruthy()
   })
 
+  it('tokenises nix (no upstream grammar exists, so this is a hand-written simpleMode)', async () => {
+    const { EditorState } = await import('@codemirror/state')
+    const { syntaxTree } = await import('@codemirror/language')
+    const doc = [
+      '{ pkgs ? import <nixpkgs> { } }:',
+      'let',
+      '  version = "1.4.2";',
+      "  desc = ''",
+      '    ${version}',
+      "  '';",
+      'in pkgs.stdenv.mkDerivation { inherit version; }',
+    ].join('\n')
+    const ext = await LANG_EXT.nix()
+    const state = EditorState.create({ doc, extensions: [ext] })
+    const kinds = new Set<string>()
+    syntaxTree(state).iterate({ enter: (n) => { if (n.name !== 'Document') kinds.add(n.name) } })
+    // Keywords (let/in/inherit), strings (both quote styles) and interpolation
+    // must all be tokenised — a mode that only caught one category would still
+    // colour the file, so assert the spread rather than a token count.
+    expect(kinds.size).toBeGreaterThanOrEqual(3)
+    expect([...kinds]).toEqual(expect.arrayContaining(['keyword', 'string']))
+  })
+
   it('returns a truthy extension for graphql without pulling in the graphql runtime', async () => {
     // cm6-graphql would drag in the full `graphql` package (~6.5MB unpacked);
     // this is a hand-written simpleMode, so the check is that it parses at all.

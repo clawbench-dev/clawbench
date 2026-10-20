@@ -45,6 +45,12 @@ const maxResponseBytes = 8 << 20
 // be hundreds of entries; the UI only shows a summary.
 const maxToolsListed = 20
 
+// probeWaitDelay bounds how long cmd.Wait may block on pipes still held open by
+// a process we could not kill (a detached daemon, a setsid child). It is a
+// safety net only — the normal path is the process-group kill in reap, which
+// takes effect immediately.
+const probeWaitDelay = 2 * time.Second
+
 // Result is the outcome of a probe. It is a value, not an error, because every
 // failure mode is something the user needs to read (which server, what went
 // wrong) rather than an internal error to log.
@@ -170,6 +176,20 @@ func probeStdio(ctx context.Context, srv model.MCPServer) Result {
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
+	// Own process group, so the reap below can kill the whole tree. A launcher
+	// (uvx, npx, pipx) starts an interpreter as a CHILD and that child inherits
+	// our pipes: killing only the launcher leaves it holding stdout/stderr open,
+	// and cmd.Wait then blocks on the pipe copy goroutines forever. Observed
+	// with `uvx mcp-server-time`: the handshake and tools/list both succeeded,
+	// yet the probe never returned and the UI timed out after 15s.
+	setProbeProcessGroup(cmd)
+	// Belt and braces for the timeout path: CommandContext kills the leader, and
+	// WaitDelay then bounds how long Wait may block on pipes still held open by
+	// anything that outlived it (a grandchild, a detached daemon). Wait returns
+	// exec.ErrWaitDelay in that case, which the reap ignores — the probe result
+	// was already decided by then.
+	cmd.WaitDelay = probeWaitDelay
+
 	if startErr := cmd.Start(); startErr != nil {
 		return Result{Message: fmt.Sprintf("cannot start %q: %v", srv.Command, startErr)}
 	}
@@ -192,7 +212,10 @@ func probeStdio(ctx context.Context, srv model.MCPServer) Result {
 			return
 		}
 		reaped = true
-		_ = cmd.Process.Kill()
+		killProbeProcessGroup(cmd.Process)
+		// ErrWaitDelay means the pipe-holding grandchildren outlived WaitDelay
+		// and Wait closed the pipes itself. The probe outcome is already known,
+		// so that is not a failure to report.
 		_ = cmd.Wait()
 	}
 	defer reap()

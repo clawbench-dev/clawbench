@@ -11,7 +11,7 @@ export function useConnectivityTest() {
   const testing = ref(false)
   const testResults = ref<ConnectivityTestResult[]>([])
 
-  async function runTests(tests: Array<{ category: string; values: Record<string, unknown> }>): Promise<void> {
+  async function runTests(tests: Array<{ category: string; values: Record<string, unknown>; timeoutMs?: number }>): Promise<void> {
     testing.value = true
     testResults.value = []
     try {
@@ -20,7 +20,7 @@ export function useConnectivityTest() {
           apiPost<ConnectivityTestResult>('/api/config/test', {
             category: t.category,
             values: t.values,
-          }, { timeoutMs: 15_000 })
+          }, { timeoutMs: t.timeoutMs ?? 15_000 })
         )
       )
       testResults.value = results.map(r => {
