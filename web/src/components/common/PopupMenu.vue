@@ -65,9 +65,16 @@ function updatePosition() {
   // coordinates straight into `top`/`left` then lands the menu tens of pixels
   // off — measured 60px below the anchor inside a will-change ancestor.
   //
-  // `measureFixedContainingBlock` needs the menu laid out, so read it only when
-  // the element is actually rendered; otherwise fall back to the zoom-only
-  // conversion (still correct for the common untransformed case).
+  // `measureFixedContainingBlock` probes with a CLONE of this element (see
+  // fixedPosition.ts), so the live menu is never moved while it runs — an
+  // earlier version wrote the probe offsets onto the real element, and the
+  // browser painted the menu in its containing block's corner between the
+  // write and the restore (Playwright: "element is not stable", then
+  // "outside of the viewport" once it settled there).
+  //
+  // It needs the menu laid out, so read it only when the element is actually
+  // rendered; otherwise fall back to the zoom-only conversion (still correct
+  // for the common untransformed case).
   //
   // `getClientRects().length` — not `offsetParent` — is the check that works
   // here: a fixed element's `offsetParent` is null even when it IS laid out.

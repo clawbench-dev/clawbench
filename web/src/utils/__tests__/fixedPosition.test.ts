@@ -34,8 +34,11 @@ function makeEl(opts: {
   const cbWidth = opts.cbWidth ?? 700
   const cbHeight = opts.cbHeight ?? 600
 
-  const el = document.createElement('div')
-  el.getBoundingClientRect = () => {
+  // The measurement probes a CLONE of the element (see fixedPosition.ts), so
+  // the simulated geometry has to be installed on every node of this family —
+  // `cloneNode` does not copy an own-property override.
+  const installRect = (el: HTMLElement) => {
+    el.getBoundingClientRect = () => {
     // Mirrors CSS: `left/top` position the box from the containing block's
     // origin; `right/bottom` position it from the block's far edges.
     const hasRight = el.style.right !== '' && el.style.right != null
@@ -57,7 +60,20 @@ function makeEl(opts: {
       y: top,
       toJSON: () => ({}),
     } as DOMRect
+    }
   }
+
+  const el = document.createElement('div')
+  installRect(el)
+  // The clone must keep measuring the same simulated block: it is appended to
+  // the same parent and reuses the identical geometry function.
+  const nativeClone = el.cloneNode.bind(el)
+  el.cloneNode = ((deep?: boolean) => {
+    const copy = nativeClone(deep) as HTMLElement
+    installRect(copy)
+    copy.cloneNode = el.cloneNode
+    return copy
+  }) as typeof el.cloneNode
   return el
 }
 

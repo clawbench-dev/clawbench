@@ -47,57 +47,77 @@ const PROBE_PX = 100
 /**
  * Measure the containing block a fixed element resolves against: its origin
  * (from `left/top: 0`), its far edges (from `right/bottom: 0`), and the
- * CSS-px→rect-px scale. Restores the element's previous inline offsets.
+ * CSS-px→rect-px scale.
  *
- * The far edges are probed separately rather than derived from the element's
- * own width: `width` is the ELEMENT's box, not the containing block's, so
- * `origin + width` is only right by accident (it is wrong the moment the
- * containing block is a transformed ancestor narrower than the viewport).
+ * MEASURED WITH A CLONE, never by touching the live element.
  *
- * MUST be called while the element is laid out (not `display: none`) — a
- * display:none element reports a 0x0 rect and the probe silently yields
- * origin (0,0), scale 1.
+ * The probe has to write CSS offsets and read back where the box lands, so the
+ * first implementation wrote them onto the real element and restored them
+ * afterwards. That is unobservable in principle but not in practice: the browser
+ * paints between the writes and the restore, so the menu was seen jumping to its
+ * containing block's corners. Playwright refuses to click a moving element
+ * ("element is not stable") and, on the very first open — where there is no
+ * previous offset to restore — the element simply STAYED in the corner and
+ * every click missed it ("element is outside of the viewport"). Both symptoms
+ * were reproduced on the `#` completion menu.
+ *
+ * A clone costs one extra element and removes the whole class: the probe box is
+ * `position: fixed` inside the same parent, so it inherits the identical
+ * containing block, transform and zoom, and the live element is never touched.
+ *
+ * MUST be called while `el` is laid out (not `display: none`) — a display:none
+ * element has no parent chain worth cloning into.
  */
 export function measureFixedContainingBlock(el: HTMLElement): FixedContainingBlock {
-  const prev = {
-    left: el.style.left,
-    top: el.style.top,
-    right: el.style.right,
-    bottom: el.style.bottom,
-  }
+  const probe = el.cloneNode(false) as HTMLElement
+  // Same containing block (the clone lives in the same parent), but invisible
+  // and out of hit-testing. `visibility` rather than `display:none` because a
+  // display:none box has no rect to measure.
+  probe.style.visibility = 'hidden'
+  probe.style.pointerEvents = 'none'
+  probe.style.margin = '0'
+  probe.style.transform = 'none'
+  probe.removeAttribute('id')
+  el.parentElement?.appendChild(probe)
+  try {
+    // 1. Origin: where does (0,0) land?
+    probe.style.left = '0px'
+    probe.style.top = '0px'
+    probe.style.right = ''
+    probe.style.bottom = ''
+    const atZero = probe.getBoundingClientRect()
 
-  // 1. Origin: where does (0,0) land?
-  el.style.right = ''
-  el.style.bottom = ''
-  el.style.left = '0px'
-  el.style.top = '0px'
-  const atZero = el.getBoundingClientRect()
+    // 2. Scale: how far does a known offset move it?
+    probe.style.left = `${PROBE_PX}px`
+    probe.style.top = `${PROBE_PX}px`
+    const atProbe = probe.getBoundingClientRect()
 
-  // 2. Scale: how far does a known offset move it?
-  el.style.left = `${PROBE_PX}px`
-  el.style.top = `${PROBE_PX}px`
-  const atProbe = el.getBoundingClientRect()
+    // 3. Far edges: pin BOTH pairs to 0 so the box stretches to the containing
+    // block's own extent, and read where its far edge lands.
+    //
+    // `width`/`height` must be cleared for this step: a fixed box with both
+    // `left` and `right` set is over-constrained when it also carries an
+    // explicit width, and the cascade then ignores `right` entirely — the far
+    // edge comes back as `left + width` instead of the block's edge.
+    probe.style.width = ''
+    probe.style.height = ''
+    probe.style.left = '0px'
+    probe.style.top = '0px'
+    probe.style.right = '0px'
+    probe.style.bottom = '0px'
+    const atFar = probe.getBoundingClientRect()
 
-  // 3. Far edges: where does the element's right/bottom edge land at right:0?
-  el.style.left = ''
-  el.style.top = ''
-  el.style.right = '0px'
-  el.style.bottom = '0px'
-  const atFar = el.getBoundingClientRect()
-
-  el.style.left = prev.left
-  el.style.top = prev.top
-  el.style.right = prev.right
-  el.style.bottom = prev.bottom
-
-  // `|| 1` covers the degenerate case where the element has no box at all.
-  return {
-    left: atZero.left,
-    top: atZero.top,
-    right: atFar.right,
-    bottom: atFar.bottom,
-    scaleX: (atProbe.left - atZero.left) / PROBE_PX || 1,
-    scaleY: (atProbe.top - atZero.top) / PROBE_PX || 1,
+    // `|| 1` covers the degenerate case where the box has no extent at all.
+    return {
+      left: atZero.left,
+      top: atZero.top,
+      right: atFar.right,
+      bottom: atFar.bottom,
+      scaleX: (atProbe.left - atZero.left) / PROBE_PX || 1,
+      scaleY: (atProbe.top - atZero.top) / PROBE_PX || 1,
+    }
+  } finally {
+    probe.remove()
   }
 }
 
