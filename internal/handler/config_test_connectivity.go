@@ -41,6 +41,15 @@ const (
 	strReqError = "error"
 )
 
+// mcpProbeTimeout is the budget for one MCP connectivity test.
+//
+// Longer than the 15s used by the other categories because the probe performs
+// a real handshake: a stdio server started through a launcher (npx / uvx /
+// pipx) may have to download its package on the first run, which alone can take
+// tens of seconds. The client's own timeout must stay above this (the settings
+// page passes 60s for the mcp category).
+const mcpProbeTimeout = 45 * time.Second
+
 type connectivityTestRequest struct {
 	Category string         `json:"category"` // "summarize_voice" | "rag" | "dingtalk" | "port_forward" | "tts"
 	Values   map[string]any `json:"values"`   // Flat dot-path key-value map from the form
@@ -66,7 +75,15 @@ func ServeConfigTest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var result ConnectivityTestResult
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	// MCP needs a longer budget than the other categories: a stdio server is
+	// usually started by a launcher (npx / uvx / pipx) that may have to fetch
+	// its package on first use, and the probe waits for a real handshake plus
+	// tools/list. The generic 15s expired before a cold `npx -y` finished.
+	timeout := 15 * time.Second
+	if req.Category == "mcp" {
+		timeout = mcpProbeTimeout
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
 	switch req.Category {

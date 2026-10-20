@@ -104,7 +104,7 @@ interface McpServer {
 }
 
 const { t } = useI18n()
-const { getServerValue, setServerValue } = useSettingsConfig()
+const { getServerValue, setServerValue, loadConfig } = useSettingsConfig()
 const { testResults: testResultsList, runTests } = useConnectivityTest()
 
 const saving = ref(false)
@@ -216,8 +216,11 @@ async function removeServer(idx: number) {
  * wrong thing to check.
  *
  * A longer timeout than the other categories: a stdio server may need to start
- * a runtime (node/python) before it answers, and a cold start on a loaded
- * machine easily exceeds the default 15s.
+ * a runtime (node/python) before it answers, and a launcher like `npx -y` or
+ * `uvx` may download the package on the first run — a cold start on a loaded
+ * machine easily exceeds the default 15s. It must stay above the server's own
+ * MCP probe budget (45s) so the server's specific error message wins the race
+ * instead of a generic client-side timeout.
  */
 async function testServer(srv: McpServer) {
   if (testingName.value !== null) return
@@ -227,6 +230,7 @@ async function testServer(srv: McpServer) {
     await runTests([{
       category: 'mcp',
       values: { 'mcp.name': srv.name, 'mcp.servers': servers.value },
+      timeoutMs: 60_000,
     }])
     const r = testResultsList.value[0]
     testResults.value = {
@@ -245,8 +249,16 @@ async function testServer(srv: McpServer) {
 }
 
 onMounted(() => {
-  // The list comes from GET /api/config, already loaded by the settings page.
-  // Nothing to fetch here; this hook exists so a future lazy load has a home.
+  // Refetch on every entry into this page.
+  //
+  // The list is served from the shared serverConfig snapshot, which is loaded
+  // once at app startup and on settings-tab activation. Neither fires when the
+  // user drills into this category while already inside Settings, so a server
+  // added in the meantime (another device, the AI editing config.yaml, a CLI)
+  // stayed invisible until a full page reload. This component is remounted each
+  // time the category is opened, which is exactly the moment the list must be
+  // current.
+  void loadConfig()
 })
 </script>
 
