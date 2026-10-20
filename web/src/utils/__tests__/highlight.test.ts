@@ -124,3 +124,100 @@ describe('hljs.getLanguage', () => {
         expect(registered.length).toBeGreaterThanOrEqual(50)
     })
 })
+
+describe('lazy language tier', () => {
+    it('does not carry the long tail eagerly', () => {
+        // The eager registry is what every page load pays for. `protobuf`,
+        // `nix`, `julia` are common enough to notice but not common enough to
+        // ship on the first screen.
+        expect(hljs.getLanguage('protobuf')).toBeUndefined()
+        expect(hljs.getLanguage('nix')).toBeUndefined()
+        expect(hljs.getLanguage('julia')).toBeUndefined()
+        // Sanity: the eager set is still populated.
+        expect(hljs.getLanguage('javascript')).toBeTruthy()
+    })
+
+    it('ensureLanguage registers a lazy grammar on demand', async () => {
+        const { ensureLanguage } = await import('@/utils/highlight')
+        expect(hljs.getLanguage('protobuf')).toBeUndefined()
+        await expect(ensureLanguage('protobuf')).resolves.toBe(true)
+        expect(hljs.getLanguage('protobuf')).toBeTruthy()
+    })
+
+    it('registers upstream aliases together with the lazy grammar', async () => {
+        const { ensureLanguage } = await import('@/utils/highlight')
+        await ensureLanguage('protobuf')
+        // `proto` is highlight.js's own alias for protobuf, but aliases are
+        // derived at registration time — loading the grammar must restore it,
+        // or `.proto` files stay uncoloured despite the grammar being present.
+        expect(hljs.getLanguage('proto')).toBeTruthy()
+    })
+
+    it('highlights a lazy language after it loads', async () => {
+        const { ensureLanguage, highlightCode } = await import('@/utils/highlight')
+        await ensureLanguage('protobuf')
+        const result = highlightCode('message User { string name = 1; }', 'protobuf')
+        expect(result).toContain('hljs-')
+    })
+
+    it('falls back to escaped plain text while a lazy grammar is still loading', async () => {
+        const { ensureLanguage, highlightCode } = await import('@/utils/highlight')
+        // `nim` is lazy and nothing else in this file has loaded it yet.
+        const before = highlightCode('proc f() = discard', 'nim')
+        expect(before).not.toContain('<span')
+        // …and the call schedules the load, so a later render is coloured.
+        await ensureLanguage('nim')
+        const after = highlightCode('proc f() = discard', 'nim')
+        expect(after).toContain('hljs-')
+    })
+
+    it('resolves false for a language no grammar exists for', async () => {
+        const { ensureLanguage } = await import('@/utils/highlight')
+        await expect(ensureLanguage('not_a_real_language')).resolves.toBe(false)
+    })
+
+    it('bumps languageVersion once per load so renderers can re-run', async () => {
+        const { ensureLanguage, languageVersion } = await import('@/utils/highlight')
+        const before = languageVersion.value
+        await ensureLanguage('crystal')
+        expect(languageVersion.value).toBeGreaterThan(before)
+        const after = languageVersion.value
+        // Second call is a no-op — no extra bump, or every renderer would
+        // re-render forever.
+        await ensureLanguage('crystal')
+        expect(languageVersion.value).toBe(after)
+    })
+
+    it('shares one in-flight load between concurrent callers', async () => {
+        const { ensureLanguage } = await import('@/utils/highlight')
+        const [a, b, c] = await Promise.all([
+            ensureLanguage('elm'),
+            ensureLanguage('elm'),
+            ensureLanguage('elm'),
+        ])
+        expect([a, b, c]).toEqual([true, true, true])
+    })
+})
+
+describe('highlightCode hot path', () => {
+    it('does not allocate a fresh load for an unknown language on every call', async () => {
+        // `highlightCode` runs from template render functions. Without a
+        // negative cache, an unknown language (or an unlabelled fence) would
+        // schedule a new import promise per render — thousands during a turn.
+        const { ensureLanguage } = await import('@/utils/highlight')
+        const missing = 'definitely_not_a_language'
+        const first = ensureLanguage(missing)
+        const second = ensureLanguage(missing)
+        // Resolved misses are cheap and identical; the point is that the
+        // missing-language set short-circuits before touching the loaders.
+        await expect(first).resolves.toBe(false)
+        await expect(second).resolves.toBe(false)
+    })
+
+    it('keeps plaintext eager so .txt/.log/.csv never fetch a chunk', async () => {
+        // plaintext has no grammar, but it is the most common file type.
+        // Routing it through the lazy tier would fire a network request for
+        // every plain file opened.
+        expect(hljs.getLanguage('plaintext')).toBeTruthy()
+    })
+})

@@ -181,3 +181,132 @@ describe('isThumbableExt', () => {
     expect(isThumbableExt('photo.Jpg')).toBe(true)
   })
 })
+
+describe('extended language coverage', () => {
+  it('detects protobuf', () => {
+    expect(getFileType('user.proto').lang).toBe('protobuf')
+  })
+
+  it('detects languages that were previously unmapped', () => {
+    const cases: Array<[string, string]> = [
+      ['main.dart', 'dart'],
+      ['app.ex', 'elixir'],
+      ['app.exs', 'elixir'],
+      ['app.erl', 'erlang'],
+      ['Main.hs', 'haskell'],
+      ['core.clj', 'clojure'],
+      ['lib.ml', 'ocaml'],
+      ['lib.fs', 'fsharp'],
+      ['build.groovy', 'groovy'],
+      ['shader.glsl', 'glsl'],
+      ['CMakeLists.txt', 'cmake'],
+      ['build.gradle', 'gradle'],
+      ['flake.nix', 'nix'],
+      ['main.nim', 'nim'],
+      ['main.cr', 'crystal'],
+      ['main.jl', 'julia'],
+      ['Main.elm', 'elm'],
+      ['main.scm', 'scheme'],
+      ['main.tcl', 'tcl'],
+      ['main.f90', 'fortran'],
+      ['app.coffee', 'coffeescript'],
+      ['api.http', 'http'],
+      ['login.feature', 'gherkin'],
+      ['svc.thrift', 'thrift'],
+      ['schema.capnp', 'capnproto'],
+      ['main.d', 'd'],
+      ['main.vala', 'vala'],
+      ['Main.hx', 'haxe'],
+      ['init.lisp', 'lisp'],
+      ['app.styl', 'stylus'],
+      ['page.twig', 'twig'],
+      ['view.erb', 'erb'],
+      ['main.adb', 'ada'],
+      ['run.applescript', 'applescript'],
+      ['hotkey.ahk', 'autohotkey'],
+      ['prog.cob', 'cobol'],
+      ['db.zone', 'dns'],
+      ['part.gcode', 'gcode'],
+      ['part.scad', 'openscad'],
+      ['sketch.pde', 'processing'],
+      ['ui.qml', 'qml'],
+      ['main.re', 'reasonml'],
+      ['main.sml', 'sml'],
+      ['mission.sqf', 'sqf'],
+      ['model.stan', 'stan'],
+      ['analysis.do', 'stata'],
+      ['doc.textile', 'textile'],
+      ['Main.vb', 'vbnet'],
+      ['api.webidl', 'webidl'],
+      ['main.wren', 'wren'],
+      ['q.xq', 'xquery'],
+      ['x.zep', 'zephir'],
+      ['fn.pgsql', 'pgsql'],
+      ['q.rq', 'sparql'],
+      ['ont.ttl', 'turtle'],
+    ]
+    const wrong = cases.filter(([file, lang]) => getFileType(file).lang !== lang)
+    expect(wrong).toEqual([])
+  })
+
+  it('resolves ambiguous extensions by the mainstream reading', () => {
+    // `.m` is Objective-C here, not MATLAB; `.v` is Verilog, not Coq;
+    // `.cls` is LaTeX, not Apex/VB.
+    expect(getFileType('view.m').lang).toBe('objectivec')
+    expect(getFileType('view.mm').lang).toBe('objectivec')
+    expect(getFileType('counter.v').lang).toBe('verilog')
+    expect(getFileType('paper.cls').lang).toBe('latex')
+    expect(getFileType('build.sbt').lang).toBe('plaintext')
+  })
+
+  it('keeps the languages that previously shared an entry distinct', () => {
+    // `.scss` and `.sass` are different syntaxes and now different languages,
+    // so the editor can pick the indented grammar for `.sass`.
+    expect(getFileType('a.scss').lang).toBe('scss')
+    expect(getFileType('a.sass').lang).toBe('sass')
+    // `.svelte` is HTML-shaped; `.vue` keeps its own grammar.
+    expect(getFileType('A.svelte').lang).toBe('xml')
+    expect(getFileType('A.vue').lang).toBe('vue')
+  })
+
+  it('never assigns the same extension to two different languages', async () => {
+    // getFileType returns the FIRST match, so a duplicate would silently
+    // shadow the later entry — the file would open with the wrong grammar and
+    // nothing would fail. Probing through getFileType cannot detect this (it
+    // always returns the winner), so read the table itself.
+    const { readFileSync } = await import('node:fs')
+    const { resolve } = await import('node:path')
+    const src = readFileSync(resolve(__dirname, '../fileType.ts'), 'utf-8')
+
+    const owner = new Map<string, string>()
+    const clashes: string[] = []
+    // Each entry is `{ exts: [...], lang: '...'` on one line.
+    const entryRe = /\{\s*exts:\s*\[([^\]]*)\],\s*lang:\s*'([^']+)'/g
+    for (const m of src.matchAll(entryRe)) {
+      const exts = [...m[1].matchAll(/'([^']+)'/g)].map((e) => e[1])
+      const lang = m[2]
+      for (const ext of exts) {
+        const prev = owner.get(ext)
+        if (prev !== undefined && prev !== lang) clashes.push(`${ext}: ${prev} vs ${lang}`)
+        owner.set(ext, lang)
+      }
+    }
+    expect(clashes).toEqual([])
+    // Guard the guard: a regex that silently stopped matching would make the
+    // assertion above vacuously true.
+    expect(owner.size).toBeGreaterThan(300)
+  })
+})
+
+describe('notebook files', () => {
+  it('keeps .ipynb plaintext so cell-source diffs are not mis-highlighted', () => {
+    // `.ipynb` is a JSON container, but every renderer that shows its contents
+    // (NotebookEdit's cell diff) displays CELL SOURCE. Mapping the file to
+    // `json` or `python` makes the diff renderer colour tokens inside the cell
+    // code, which corrupted `z = 3` into `z = <span class="hljs-number">3</span>`
+    // and broke the NotebookEdit renderer contract.
+    const ft = getFileType('nb.ipynb')
+    expect(ft.lang).toBe('plaintext')
+    expect(ft.label).toBe('IPYNB')
+  })
+})
