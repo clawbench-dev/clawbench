@@ -335,8 +335,10 @@ import { fromStagedQuote } from '@/utils/quoteItem'
 import { onHorizontalWheel } from '@/utils/horizontalWheelScroll'
 import { attachDragScroll, canDragScroll } from '@/utils/dragScroll'
 import { useTabDrawer } from '@/composables/useTabDrawer'
-import AsyncComponentLoader from '@/components/common/AsyncComponentLoader.vue'
-const QuickSendDrawer = defineAsyncComponent({ loader: () => import('@/components/chat/QuickSendDrawer.vue'), loadingComponent: AsyncComponentLoader })
+import { buildAsyncComponentOptions } from '@/composables/useAsyncComponent'
+const QuickSendDrawer = defineAsyncComponent(
+  buildAsyncComponentOptions({ loader: () => import('@/components/chat/QuickSendDrawer.vue') }),
+)
 import SessionDrawer from '@/components/chat/SessionDrawer.vue'
 import { createStopButtonMachine } from '@/utils/stopButtonMachine.ts'
 import { useDialog } from '@/composables/useDialog.ts'

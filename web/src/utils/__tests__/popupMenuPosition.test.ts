@@ -326,3 +326,80 @@ describe('computeMenuStyle', () => {
     })
   })
 })
+
+describe('computeMenuStyle with a measured containing block', () => {
+  // The regression: `position: fixed` is NOT viewport-anchored when an ancestor
+  // establishes a containing block — `.chat-message` does so via
+  // `will-change: transform` in app mode. Feeding viewport coordinates straight
+  // into top/left then renders the menu ~60px away from its anchor.
+  const cb = { left: 120, top: 60, right: 820, bottom: 660, scaleX: 1, scaleY: 1 }
+
+  it('offsets top by the containing block origin (below-anchor case)', () => {
+    // Anchor at viewport y 71..90 → menu should start at 94 in VIEWPORT space.
+    const rect = mockRect({ top: 71, bottom: 90, left: 300, right: 360 })
+    const style = computeMenuStyle(rect, {
+      viewportWidth: 760,
+      viewportHeight: 700,
+      anchor: 'right',
+      containingBlock: cb,
+    })
+    // CSS value is relative to the containing block: 94 - 60 = 34.
+    expect(style.top).toBe('34px')
+    expect(style.bottom).toBeUndefined()
+  })
+
+  it('offsets bottom by the containing block extent (above-anchor case)', () => {
+    // cb spans y 60..660. Anchor top at 600 → menu bottom at 596 in viewport.
+    const rect = mockRect({ top: 600, bottom: 640, left: 300, right: 360 })
+    const style = computeMenuStyle(rect, {
+      viewportWidth: 760,
+      viewportHeight: 700,
+      anchor: 'right',
+      containingBlock: cb,
+    })
+    // bottom = (cb.top + cb.height) - 596 = 660 - 596 = 64.
+    expect(style.bottom).toBe('64px')
+    expect(style.top).toBeUndefined()
+  })
+
+  it('offsets right by the containing block extent', () => {
+    // cb spans x 120..820. Anchor right edge at 800 → menu right edge at 800.
+    const rect = mockRect({ top: 100, bottom: 140, left: 700, right: 800 })
+    const style = computeMenuStyle(rect, {
+      viewportWidth: 900,
+      viewportHeight: 700,
+      anchor: 'right',
+      containingBlock: cb,
+    })
+    // right = (120 + 700) - 800 = 20.
+    expect(style.right).toBe('20px')
+  })
+
+  it('offsets left by the containing block origin', () => {
+    const rect = mockRect({ top: 100, bottom: 140, left: 200, right: 260 })
+    const style = computeMenuStyle(rect, {
+      viewportWidth: 900,
+      viewportHeight: 700,
+      anchor: 'left',
+      containingBlock: cb,
+    })
+    // left = 200 - 120 = 80.
+    expect(style.left).toBe('80px')
+  })
+
+  it('applies the measured scale to offsets and maxHeight', () => {
+    const scaled = { left: 0, top: 0, right: 500, bottom: 500, scaleX: 2, scaleY: 2 }
+    const rect = mockRect({ top: 100, bottom: 140, left: 100, right: 160 })
+    const style = computeMenuStyle(rect, {
+      viewportWidth: 500,
+      viewportHeight: 500,
+      anchor: 'left',
+      containingBlock: scaled,
+    })
+    // CSS value must be half the viewport delta: 144 / 2 = 72.
+    expect(style.top).toBe('72px')
+    // maxHeight is clamped in CSS px too, so it must not exceed the CSS-space
+    // space below the anchor (500 - 144 - 6 = 350 → /2 = 175).
+    expect(style.maxHeight).toContain('175px')
+  })
+})

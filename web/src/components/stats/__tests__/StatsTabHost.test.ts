@@ -2,6 +2,8 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { shallowMount, flushPromises } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { nextTick } from 'vue'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 const mockApiGet = vi.fn()
 vi.mock('@/utils/api', () => ({
@@ -163,5 +165,36 @@ describe('StatsTabHost', () => {
     await wrapper.find('.refresh-stub').trigger('click')
     await flushPromises()
     expect(countGit()).toBeGreaterThan(gitBefore)
+  })
+})
+
+describe('StatsTabHost lazy panels', () => {
+  /**
+   * The three panels used to be built with a bare `defineAsyncComponent`
+   * carrying only a `loadingComponent`. When the chunk 404s — the normal case
+   * for an app left open across a rebuild, whose old hashed filenames are gone
+   * — Vue renders the loading component FOREVER (it has no errorComponent), so
+   * the stats tab spun until the app was restarted. These are source
+   * assertions because the failure only exists in a real chunk-loading
+   * environment: jsdom resolves the imports statically.
+   */
+  function readHost(): string {
+    for (const base of [process.cwd(), join(process.cwd(), 'web')]) {
+      try {
+        return readFileSync(join(base, 'src/components/stats/StatsTabHost.vue'), 'utf8')
+      } catch {
+        // try the next candidate root
+      }
+    }
+    throw new Error('StatsTabHost.vue not found from cwd: ' + process.cwd())
+  }
+
+  it('builds every panel through buildAsyncComponentOptions (error UI + stale reload)', () => {
+    const src = readHost()
+    const loaders = src.match(/loader: \(\) => import\('@\/components\/stats\/[A-Za-z]+\.vue'\)/g) ?? []
+    expect(loaders).toHaveLength(3)
+    // Each loader must be wrapped, not handed straight to defineAsyncComponent.
+    expect((src.match(/buildAsyncComponentOptions\(\{/g) ?? [])).toHaveLength(3)
+    expect(src).not.toMatch(/defineAsyncComponent\(\{\s*loader:/)
   })
 })

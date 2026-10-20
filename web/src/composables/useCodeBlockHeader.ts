@@ -1,5 +1,6 @@
 import { copyText } from '@/utils/clipboard.ts'
 import { COPY_ICON_SVG, copyWithFlash } from '@/utils/copyButton.ts'
+import { placeFixedAt } from '@/utils/fixedPosition.ts'
 import { gt } from '@/composables/useLocale'
 import { ATTACH_BADGE_SVG } from '@/utils/attachSvg'
 import { isShareMode } from '@/share/shareMode'
@@ -506,6 +507,9 @@ export function handleTableBlockClick(event: MouseEvent): boolean {
         const menu = btn.nextElementSibling as HTMLElement | null
         const isOpen = menu && menu.classList.contains('is-open')
         setTableMenuOpen(btn, menu, !isOpen)
+        // Place it only when opening — a closing menu keeps its stale
+        // coordinates harmlessly (it is display:none).
+        if (!isOpen && menu) positionTableMenu(btn, menu)
         return true
     }
 
@@ -576,6 +580,85 @@ function setTableMenuOpen(trigger: HTMLElement | null, menu: HTMLElement | null,
     }
     if (trigger) {
         trigger.setAttribute('aria-expanded', open ? 'true' : 'false')
+    }
+    syncTableMenuRepositionListener()
+}
+
+/**
+ * Place an open copy menu under its trigger.
+ *
+ * The menu is `position: fixed` (see css/code-block-header.css) because both
+ * `.table-block-wrapper` and the chat bubble clip overflow: an absolutely
+ * positioned menu was cut off below a 1–2 row table, hiding its third item
+ * (Copy TSV) entirely.
+ *
+ * `placeFixedAt` does the measuring (see utils/fixedPosition.ts for why a fixed
+ * element's CSS offsets are NOT viewport offsets here). This function only
+ * decides WHERE in viewport space the menu belongs: right-aligned to the
+ * trigger, below it, flipped above when it would spill past the bottom edge,
+ * and clamped into the viewport.
+ */
+export function positionTableMenu(trigger: HTMLElement, menu: HTMLElement): void {
+    // Measure while laid out: display is already 'block' (setTableMenuOpen ran).
+    const width = menu.offsetWidth
+    const height = menu.offsetHeight
+    const triggerRect = trigger.getBoundingClientRect()
+
+    const margin = 8
+    const gap = 4
+    const viewportWidth = window.innerWidth
+    const viewportHeight = window.innerHeight
+
+    // Right-align to the trigger, then keep it on screen.
+    let left = triggerRect.right - width
+    left = Math.min(left, viewportWidth - width - margin)
+    left = Math.max(margin, left)
+
+    // Prefer below the trigger; flip above when there is no room.
+    let top = triggerRect.bottom + gap
+    if (top + height > viewportHeight - margin) {
+        const above = triggerRect.top - gap - height
+        // Only flip when the flipped position actually fits; otherwise keep it
+        // below and let the clamp below keep it on screen.
+        if (above >= margin) top = above
+    }
+    top = Math.max(margin, Math.min(top, viewportHeight - height - margin))
+
+    placeFixedAt(menu, left, top)
+}
+
+// ── Keep an open menu glued to its trigger ──────────────────────────────────
+// A fixed menu does not travel with the content it belongs to, so any scroll
+// (the chat list, a preview pane) would leave it floating over unrelated
+// content. Reposition on scroll/resize; close once the trigger itself has
+// scrolled out of view, where "glued to the trigger" stops being meaningful.
+// Bound only while a menu is open.
+
+let _menuRepositionBound = false
+
+function onTableMenuViewportChange(): void {
+    const menu = document.querySelector<HTMLElement>('.table-block-copy-menu.is-open')
+    if (!menu) return
+    const trigger = menu.previousElementSibling as HTMLElement | null
+    if (!trigger) return
+    const rect = trigger.getBoundingClientRect()
+    if (rect.bottom < 0 || rect.top > window.innerHeight) {
+        closeAllTableBlockMenus()
+        return
+    }
+    positionTableMenu(trigger, menu)
+}
+
+function syncTableMenuRepositionListener(): void {
+    const anyOpen = !!document.querySelector('.table-block-copy-menu.is-open')
+    if (anyOpen && !_menuRepositionBound) {
+        window.addEventListener('scroll', onTableMenuViewportChange, true)
+        window.addEventListener('resize', onTableMenuViewportChange)
+        _menuRepositionBound = true
+    } else if (!anyOpen && _menuRepositionBound) {
+        window.removeEventListener('scroll', onTableMenuViewportChange, true)
+        window.removeEventListener('resize', onTableMenuViewportChange)
+        _menuRepositionBound = false
     }
 }
 

@@ -1,7 +1,7 @@
 <template>
   <Teleport to="body">
     <Transition name="menu-fade" @after-leave="emit('after-leave')">
-      <div v-if="show" class="popup-menu" :class="{ 'popup-menu--app': appSurface }" role="menu" :style="menuStyle" @click.stop="emit('update:show', false)" @keydown.escape="emit('update:show', false)">
+      <div v-if="show" ref="menuEl" class="popup-menu" :class="{ 'popup-menu--app': appSurface }" role="menu" :style="menuStyle" @click.stop="emit('update:show', false)" @keydown.escape="emit('update:show', false)">
         <slot />
       </div>
     </Transition>
@@ -21,6 +21,7 @@ function nextMenuSeq() {
 <script setup>
 import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { computeMenuStyle } from '@/utils/popupMenuPosition'
+import { measureFixedContainingBlock } from '@/utils/fixedPosition'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
 
 /** Disambiguates several menus that may be open at once (nested pickers). */
@@ -49,18 +50,93 @@ const emit = defineEmits(['update:show', 'after-leave'])
 // (scroll, resize) that Vue's computed cannot track.
 const menuStyle = ref({})
 
+/** The rendered menu element; measured to find its containing block. */
+const menuEl = ref(null)
+
 /** Recalculate position from current anchor geometry. */
 function updatePosition() {
   if (!props.targetElement) { menuStyle.value = {}; return }
   const rect = props.targetElement.getBoundingClientRect()
-  menuStyle.value = computeMenuStyle(rect, {
+  // Measure the menu's ACTUAL containing block before computing offsets.
+  //
+  // `position: fixed` does not mean "viewport-anchored": an ancestor with a
+  // transform / `will-change: transform` (`.chat-message` in app mode) becomes
+  // the containing block, and CSS `zoom` scales the offsets. Feeding viewport
+  // coordinates straight into `top`/`left` then lands the menu tens of pixels
+  // off — measured 60px below the anchor inside a will-change ancestor.
+  //
+  // `measureFixedContainingBlock` probes with a CLONE of this element (see
+  // fixedPosition.ts), so the live menu is never moved while it runs — an
+  // earlier version wrote the probe offsets onto the real element, and the
+  // browser painted the menu in its containing block's corner between the
+  // write and the restore (Playwright: "element is not stable", then
+  // "outside of the viewport" once it settled there).
+  //
+  // It needs the menu laid out, so read it only when the element is actually
+  // rendered; otherwise fall back to the zoom-only conversion (still correct
+  // for the common untransformed case).
+  //
+  // `getClientRects().length` — not `offsetParent` — is the check that works
+  // here: a fixed element's `offsetParent` is null even when it IS laid out.
+  const el = menuEl.value
+  // `undefined` when the menu is not laid out yet — `computeMenuStyle` then uses
+  // the zoom-only conversion, which is correct whenever no ancestor establishes
+  // a containing block. Measuring a 0x0 box would instead report a bogus block
+  // and place the menu off-screen (first-open symptom).
+  const containingBlock = (el && el.getClientRects().length > 0
+    ? measureFixedContainingBlock(el)
+    : null) ?? undefined
+  const measured = computeMenuStyle(rect, {
     maxWidth: props.maxWidth,
     maxHeight: props.maxHeight,
     edgeMargin: props.edgeMargin,
     menuItemsCount: props.menuItemsCount,
     anchor: props.anchor,
     scrollable: !props.appSurface,
+    containingBlock,
   })
+  // Sanity gate: a measured containing block must place the menu INSIDE the
+  // viewport. If it does not, the measurement is wrong (a transformed ancestor,
+  // a mid-Transition box, a 0x0 clone) and the zoom-only conversion is the
+  // better answer — it is exact whenever nothing transforms, which covers the
+  // overwhelming majority of menus. Without this gate a bad measurement put the
+  // `#` completion menu 600px BELOW the viewport, where no row could be clicked.
+  if (containingBlock && !menuFitsViewport(measured)) {
+    menuStyle.value = computeMenuStyle(rect, {
+      maxWidth: props.maxWidth,
+      maxHeight: props.maxHeight,
+      edgeMargin: props.edgeMargin,
+      menuItemsCount: props.menuItemsCount,
+      anchor: props.anchor,
+      scrollable: !props.appSurface,
+    })
+    return
+  }
+  menuStyle.value = measured
+}
+
+/**
+ * Does the computed style keep the menu on screen?
+ *
+ * `top`/`bottom` are measured from the containing block's near/far edge, so a
+ * value is only plausible when it is within the viewport's own extent. Both
+ * directions have been observed wrong in production:
+ *   - `bottom: -596.6px` — a containing block measured too small (the `#` menu,
+ *     placed BELOW the viewport);
+ *   - `bottom: 962.4px` with a 720px viewport — measured too large, which puts
+ *     the box ABOVE the viewport (the `@` member menu in a group session).
+ * Checking one sign only catches the first, so the check is "inside [0, extent]".
+ */
+function menuFitsViewport(style) {
+  const vh = window.innerHeight
+  const vw = window.innerWidth
+  const num = (v) => (v == null ? NaN : parseFloat(v))
+  const within = (v, extent) => Number.isFinite(v) && v >= 0 && v <= extent
+  if (style.top != null && !within(num(style.top), vh)) return false
+  if (style.bottom != null && !within(num(style.bottom), vh)) return false
+  if (style.left != null && !within(num(style.left), vw)) return false
+  if (style.right != null && !within(num(style.right), vw)) return false
+  return true
 }
 
 // Close on outside click

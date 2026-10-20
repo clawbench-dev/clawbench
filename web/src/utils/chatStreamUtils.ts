@@ -406,6 +406,12 @@ export function forceCleanupStreamingState(
   if (streamingMsg) {
     const hasContent = streamingMsg.content || (streamingMsg.blocks && streamingMsg.blocks.length > 0)
     delete streamingMsg.streaming
+    // Mark the bubble as finalized BY THIS CLIENT. The terminal handlers
+    // (done/error/cancelled) call this and only THEN loadHistory, so the
+    // snapshot that follows describes the SAME turn whose full output this
+    // object already holds. rebuildFromDb uses the flag to tell that apart
+    // from a stale pre-disconnect prefix (which must yield to the DB row).
+    streamingMsg._finalizedLocally = true
     // Mark all unfinished tool_use blocks as done so spinner stops.
     // Exception: PermissionApproval blocks require user interaction —
     // marking them done without a real result makes the card appear
@@ -1380,7 +1386,22 @@ function mergeStreamBlocks(dbBlocks: ContentBlock[], liveBlocks: ContentBlock[])
 export function rebuildFromDb(state: ChatMessage[], dbMessages: ChatMessage[], sessionRunning = false): ChatMessage[] {
   // The live streaming placeholder (at most one) — the object whose identity
   // must be preserved so the streamed content already rendered keeps its DOM.
+  //
+  // A bubble that this client finalized moments ago (`_finalizedLocally`) counts
+  // too. The terminal handlers call forceCleanupStreamingState — which deletes
+  // `streaming` — and only THEN loadHistory, so by the time this runs the
+  // just-completed reply no longer looks "live" and the lookup below missed it.
+  // The placeholder was then dropped as "not in the DB" and the snapshot's row
+  // took its place, which for a summary-stripped row means `blocks: []`: the
+  // bubble collapsed to the summary for a frame and the lazy-original refetch
+  // restored it, i.e. the two-step collapse/expand users see as a duplicated
+  // duration/time line under the action bar. The flag is cleared by the merge
+  // below so it never survives past this rebuild.
+  // A currently-streaming bubble always wins over a locally-finalized one: when
+  // a new turn has already started, the finalized bubble from the previous turn
+  // must not be mistaken for the live placeholder.
   const live = state.find((m) => m.role === 'assistant' && m.streaming)
+    ?? state.find((m) => m.role === 'assistant' && m._finalizedLocally === true)
 
   // Index DB rows by id.
   const dbById = new Map<string, ChatMessage>()
@@ -1526,7 +1547,20 @@ export function rebuildFromDb(state: ChatMessage[], dbMessages: ChatMessage[], s
       // stripped `{"blocks":[]}` JSON) straight back in.
       const dbBlocksEmpty = !Array.isArray(db.blocks) || db.blocks.length === 0
       const liveIsEmpty = (live.blocks ?? []).length === 0 && messageText(live) === ''
-      if (db.streaming !== true && dbBlocksEmpty && db.summary) {
+      // A bubble this client finalized moments ago already holds the COMPLETE
+      // turn, so an empty DB row carries no information the client lacks — the
+      // backend's synchronous Finalize summarized the row and replaced its
+      // content with {"blocks":[]}. Clearing here would collapse the bubble to
+      // the summary for a frame (measured 126px → 66px, meta bar 275 → 214) and
+      // the lazy-original refetch would restore it: the collapse/expand flicker.
+      //
+      // This is the mirror image of the resume case above, where the client
+      // holds only a stale prefix and the DB row is the complete copy. The
+      // `_finalizedLocally` flag is what tells them apart — it is set by
+      // forceCleanupStreamingState, i.e. only for a turn THIS client watched to
+      // completion.
+      const locallyComplete = live._finalizedLocally === true && !liveIsEmpty
+      if (db.streaming !== true && dbBlocksEmpty && db.summary && !locallyComplete) {
         live.blocks = []
         live.content = ''
       } else if (liveIsEmpty) {
@@ -1560,6 +1594,9 @@ export function rebuildFromDb(state: ChatMessage[], dbMessages: ChatMessage[], s
         // both directions correctly without needing that flag.
         live.blocks = mergeStreamBlocks(db.blocks, live.blocks)
       }
+      // The flag describes ONE rebuild: the next loadHistory must judge the
+      // bubble by what it holds then, not by the turn it once finished.
+      delete live._finalizedLocally
       merged.push(live)
       continue
     }

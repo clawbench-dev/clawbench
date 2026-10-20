@@ -17,10 +17,21 @@
 //     climbs 73k → 31.0M while its window is 200k, inflating totals (43x over
 //     for glm-5.1).
 //
+//  3. MISSING COST-ONLY CREDIT (rows written by this tool before 2026-10-20):
+//     a turn is not billed only per model call. Team members and generation
+//     tools bill through separate `credit-usage` history items that carry no
+//     usage block at all; the live ACP path folds them into the per-request
+//     running total, but the first version of this repair summed only
+//     rawUsage.credit. Measured on a production DB: 148 of 149 team-billed
+//     turns were short by 9% of the credit total, while the one turn written by
+//     the live path was correct — the same turn counted two different ways.
+//     Both are now summed (deduped by the agent's own stageId).
+//
 // The ONLY source of truth for a turn's true usage is CodeBuddy's own
 // transcript: one JSONL line per model call, each carrying that call's
-// rawUsage. This command reads them, groups by conversationRequestId, sums the
-// calls, and rewrites the matching ledger row.
+// rawUsage, plus one `credit-usage` line per cost-only billing stage. This
+// command reads them, groups by conversationRequestId, sums the calls and the
+// stages, and rewrites the matching ledger row.
 //
 // # WHAT IT WILL NOT TOUCH
 //
@@ -35,8 +46,9 @@
 //
 // It reads CodeBuddy's own session transcripts (~/.codebuddy/projects/<proj>/
 // <session>.jsonl), whose providerData.rawUsage carries prompt_tokens /
-// completion_tokens / credit PER MODEL CALL. Three things make it
-// CodeBuddy-specific and unsafe to point at another backend:
+// completion_tokens / credit PER MODEL CALL, and whose `credit-usage` records
+// carry the cost-only billings (Team members, generation tools). Three things
+// make it CodeBuddy-specific and unsafe to point at another backend:
 //
 //  1. THE DATA SOURCE IS AGENT-PRIVATE. Every backend stores its transcripts
 //     elsewhere and in its own shape (Claude under ~/.claude, OpenCode in its
@@ -88,6 +100,12 @@ type transcriptUsage struct {
 }
 
 // turnTotals is the sum over every model call belonging to one requestId.
+//
+// Credit is NOT only the per-call sum: a turn also bills paths that carry no
+// usage block at all (Team members, generation tools). CodeBuddy records those
+// as separate `credit-usage` history items whose providerData has a stageId, and
+// the live ACP path folds them into the same per-request running total
+// (_meta["codebuddy.ai/requestCredits"]). See creditStages.
 type turnTotals struct {
 	Calls        int
 	InputTokens  int64
@@ -95,6 +113,24 @@ type turnTotals struct {
 	CacheHit     int64
 	CacheMiss    int64
 	Credit       float64
+	// creditStages holds the cost-only billings of this request, keyed by
+	// stageId so a re-read of the same history item cannot bill twice (the
+	// agent dedups on exactly this id). Their sum is added to Credit.
+	creditStages map[string]float64
+}
+
+// stageCredit returns the summed cost-only billing of this turn.
+func (t *turnTotals) stageCredit() float64 {
+	var sum float64
+	for _, v := range t.creditStages {
+		sum += v
+	}
+	return sum
+}
+
+// totalCredit is the turn's whole bill: model calls plus cost-only stages.
+func (t *turnTotals) totalCredit() float64 {
+	return t.Credit + t.stageCredit()
 }
 
 func main() {
@@ -229,7 +265,7 @@ func readOneTranscript(path string, turns map[string]*turnTotals) error {
 	// result embedded in the record), so raise the ceiling substantially.
 	sc.Buffer(make([]byte, 0, 256*1024), 32*1024*1024)
 
-	calls, forked, err := scanTranscript(sc)
+	calls, stages, forked, err := scanTranscript(sc)
 	if err != nil {
 		return err
 	}
@@ -251,6 +287,17 @@ func readOneTranscript(path string, turns map[string]*turnTotals) error {
 		t.CacheMiss += c.u.CacheMiss
 		t.Credit += c.u.Credit
 	}
+	for _, s := range stages {
+		t := turns[s.rid]
+		if t == nil {
+			t = &turnTotals{}
+			turns[s.rid] = t
+		}
+		if t.creditStages == nil {
+			t.creditStages = make(map[string]float64)
+		}
+		t.creditStages[s.stageID] = s.credit
+	}
 	return nil
 }
 
@@ -260,12 +307,30 @@ type transcriptCall struct {
 	u   transcriptUsage
 }
 
-// scanTranscript reads every model call from one file.
+// transcriptStage is one cost-only billing (Team member, generation tool).
+//
+// These are NOT model calls: they carry a credit amount and no token counters,
+// and the agent stores them as their own history item of type "credit-usage".
+// The live ACP path bills them through usage_update.cost and folds them into
+// _meta["codebuddy.ai/requestCredits"], so a repair that only sums rawUsage
+// under-reports every turn that used a Team member — measured on a production
+// DB as 148 of 149 such turns missing 9% of the total.
+//
+// stageID is the agent's own dedup key (it refuses to publish the same stage
+// twice), so it is used here for the same purpose.
+type transcriptStage struct {
+	rid     string
+	stageID string
+	credit  float64
+}
+
+// scanTranscript reads every model call and every cost-only billing from one
+// file.
 //
 // The whole file is buffered before anything is returned because a
 // forked-compaction session must be skipped ENTIRELY, and that flag lives on a
 // session-meta line the agent may write anywhere (in practice at the end).
-func scanTranscript(sc *bufio.Scanner) (calls []transcriptCall, forked bool, err error) {
+func scanTranscript(sc *bufio.Scanner) (calls []transcriptCall, stages []transcriptStage, forked bool, err error) {
 	for sc.Scan() {
 		line := sc.Bytes()
 		if len(line) == 0 {
@@ -275,11 +340,52 @@ func scanTranscript(sc *bufio.Scanner) (calls []transcriptCall, forked bool, err
 			forked = true
 			continue
 		}
+		if s, ok := parseCreditStage(line); ok {
+			stages = append(stages, s)
+			continue
+		}
 		if c, ok := parseTranscriptCall(line); ok {
 			calls = append(calls, c)
 		}
 	}
-	return calls, forked, sc.Err()
+	return calls, stages, forked, sc.Err()
+}
+
+// parseCreditStage extracts one cost-only billing from a transcript line.
+//
+// Only records of type "credit-usage" qualify. Their providerData is
+// {conversationRequestId, credit, source, stageId, messageId} — no rawUsage, so
+// parseTranscriptCall rejects them and the amount would otherwise be dropped.
+// A record with no stageId is rejected rather than counted: without the dedup
+// key a re-read of the same history item would bill it again.
+func parseCreditStage(line []byte) (transcriptStage, bool) {
+	var rec struct {
+		Type         string `json:"type"`
+		ProviderData struct {
+			ConversationRequestID string  `json:"conversationRequestId"`
+			RequestID             string  `json:"requestId"`
+			Credit                float64 `json:"credit"`
+			StageID               string  `json:"stageId"`
+		} `json:"providerData"`
+	}
+	if err := json.Unmarshal(line, &rec); err != nil {
+		return transcriptStage{}, false
+	}
+	if rec.Type != "credit-usage" {
+		return transcriptStage{}, false
+	}
+	rid := rec.ProviderData.ConversationRequestID
+	if rid == "" {
+		rid = rec.ProviderData.RequestID
+	}
+	if rid == "" || rec.ProviderData.StageID == "" || rec.ProviderData.Credit <= 0 {
+		return transcriptStage{}, false
+	}
+	return transcriptStage{
+		rid:     rid,
+		stageID: rec.ProviderData.StageID,
+		credit:  rec.ProviderData.Credit,
+	}, true
 }
 
 // isForkedCompactionSession reports whether this line is the session-meta
@@ -361,6 +467,9 @@ type backfillRow struct {
 	NewInput, NewOutput       int64
 	NewCacheHit, NewCacheMiss int64
 	NewCredit                 float64
+	// StageCredit is the cost-only part of NewCredit (Team members, generation
+	// tools). Reported separately so a repair's size is attributable.
+	StageCredit float64
 }
 
 // planStats separates "repaired" from "could not be repaired" so a partial
@@ -419,7 +528,8 @@ func buildPlan(turns map[string]*turnTotals) ([]backfillRow, planStats, error) {
 		r.NewOutput = t.OutputTokens
 		r.NewCacheHit = t.CacheHit
 		r.NewCacheMiss = t.CacheMiss
-		r.NewCredit = t.Credit
+		r.NewCredit = t.totalCredit()
+		r.StageCredit = t.stageCredit()
 
 		// A row is "unchanged" when the transcript agrees with the ledger.
 		// Input is the discriminator: credit is derived from it, so a match

@@ -253,11 +253,15 @@
     background: var(--bg-tertiary);
 }
 
-/* ─── Copy dropdown menu ─── */
+/* ─── Copy dropdown menu ───
+   `position: fixed`, NOT absolute: the menu is taller than a 1–2 row table, and
+   both `.table-block-wrapper` and the chat bubble (`.msg-card`) clip overflow —
+   an absolutely-positioned menu had its third item (Copy TSV) cut off on short
+   tables. Fixed escapes the clip chain; the opening click positions it against
+   the trigger (see positionTableMenu in useCodeBlockHeader.ts). No top/right
+   here — the inline style is authoritative. */
 .table-block-copy-menu {
-    position: absolute;
-    top: calc(100% + 4px);
-    right: 0;
+    position: fixed;
     z-index: 100;
     min-width: 140px;
     padding: var(--space-2) 0;

@@ -17,9 +17,24 @@
  *   - window.innerWidth/innerHeight are NOT scaled by zoom
  *   - position:fixed CSS values are in pre-zoom layout space
  *   - Conversion: fixedCSS = viewportCoord / zoom (via toFixedCSS)
+ *
+ * That conversion is only correct when the viewport really is the menu's
+ * containing block. When an ancestor establishes one for fixed descendants
+ * (`.chat-message` does, via `will-change: transform` in app mode), both the
+ * origin and the scale differ — callers pass a `containingBlock` measured by
+ * `measureFixedContainingBlock` (utils/fixedPosition.ts) and every coordinate
+ * is converted through it instead.
  */
 
 import { getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
+import {
+  toFixedLeft,
+  toFixedTop,
+  toFixedRight,
+  toFixedBottom,
+  containingBlockWidthCss,
+  type FixedContainingBlock,
+} from '@/utils/fixedPosition'
 
 /**
  * Compute the CSS style object for a popup menu's fixed position.
@@ -45,6 +60,18 @@ export function computeMenuStyle(
      * Default: true
      */
     scrollable?: boolean
+    /**
+     * The element's ACTUAL containing block, from
+     * `measureFixedContainingBlock` (utils/fixedPosition.ts).
+     *
+     * Omitting it falls back to the CSS-zoom assumption (`toFixedCSS`), which
+     * is wrong whenever an ancestor establishes a containing block for fixed
+     * descendants — `.chat-message` does so via `will-change: transform` in app
+     * mode, and the menu then lands tens of pixels away from its anchor.
+     * PopupMenu always passes it; the fallback exists for pure-function tests
+     * and callers that have no element to measure.
+     */
+    containingBlock?: FixedContainingBlock
   } = {}
 ): Record<string, string> {
   const defaultVp = typeof window !== 'undefined' ? getZoomedViewport() : { width: 1024, height: 768 }
@@ -56,9 +83,22 @@ export function computeMenuStyle(
     viewportHeight = defaultVp.height,
     anchor = 'auto',
     scrollable = true,
+    containingBlock,
   } = opts
 
   const gap = 4
+
+  // Viewport coordinate → CSS value. With a measured containing block the
+  // conversion also accounts for a transformed ancestor (which shifts the
+  // origin) and for the real scale; without one, fall back to CSS zoom.
+  const toCssX = (v: number) => containingBlock ? toFixedLeft(v, containingBlock) : toFixedCSS(v)
+  const toCssY = (v: number) => containingBlock ? toFixedTop(v, containingBlock) : toFixedCSS(v)
+  const toCssRight = (v: number) => containingBlock ? toFixedRight(v, containingBlock) : toFixedCSS(viewportWidth - v)
+  const toCssBottom = (v: number) => containingBlock ? toFixedBottom(v, containingBlock) : toFixedCSS(viewportHeight - v)
+  /** CSS px available across the viewport (a CSS-px quantity, like maxWidth). */
+  const cssViewportWidth = containingBlock
+    ? containingBlockWidthCss(containingBlock)
+    : toFixedCSS(viewportWidth)
 
   // --- Effective width: never let the menu overflow the viewport ---
   // maxWidth is a CSS (pre-zoom) value, so compare it against the viewport
@@ -66,7 +106,6 @@ export function computeMenuStyle(
   // under CSS zoom, the requested maxWidth can exceed the space between the
   // two edge margins; shrink it so left/right clamping alone cannot push the
   // menu past the screen edge.
-  const cssViewportWidth = toFixedCSS(viewportWidth)
   const availableWidth = Math.max(0, cssViewportWidth - edgeMargin * 2)
   const effectiveMaxWidth = Math.min(maxWidth, availableWidth)
 
@@ -91,19 +130,19 @@ export function computeMenuStyle(
   }
 
   const horizontal = alignRight
-    ? computeRight(rect, effectiveMaxWidth, edgeMargin, viewportWidth)
-    : computeLeft(rect, effectiveMaxWidth, edgeMargin, viewportWidth)
+    ? computeRight(rect, effectiveMaxWidth, edgeMargin, cssViewportWidth, toCssRight)
+    : computeLeft(rect, effectiveMaxWidth, edgeMargin, toCssX, cssViewportWidth)
 
   if (goBelow) {
     // Menu appears BELOW the anchor
-    const top = toFixedCSS(rect.bottom + gap)
+    const top = toCssY(rect.bottom + gap)
     const availableBelow = viewportHeight - (rect.bottom + gap) - edgeMargin
     const style: Record<string, string> = {
       position: 'fixed',
       top: `${top}px`,
       ...horizontal,
       maxWidth: `${effectiveMaxWidth}px`,
-      maxHeight: `min(${maxHeight}px, ${toFixedCSS(availableBelow)}px)`,
+      maxHeight: `min(${maxHeight}px, ${availableBelow / (containingBlock?.scaleY || 1)}px)`,
     }
     // When the menu doesn't scroll itself the caller handles overflow
     // internally (pinned header/footer + scrollable middle).
@@ -112,14 +151,14 @@ export function computeMenuStyle(
   }
 
   // Menu appears ABOVE the anchor (preferred)
-  const bottom = toFixedCSS(viewportHeight - rect.top + gap)
+  const bottom = toCssBottom(rect.top - gap)
   const availableAbove = rect.top - gap - edgeMargin
   const style: Record<string, string> = {
     position: 'fixed',
     bottom: `${bottom}px`,
     ...horizontal,
     maxWidth: `${effectiveMaxWidth}px`,
-    maxHeight: `min(${maxHeight}px, ${toFixedCSS(availableAbove)}px)`,
+    maxHeight: `min(${maxHeight}px, ${availableAbove / (containingBlock?.scaleY || 1)}px)`,
   }
   if (scrollable) style.overflowY = 'auto'
   return style
@@ -130,11 +169,14 @@ function computeRight(
   rect: DOMRect,
   maxWidth: number,
   edgeMargin: number,
-  viewportWidth: number,
+  cssViewportWidth: number,
+  toCssRightDist: (viewportRight: number) => number,
 ): Record<string, string> {
-  let right = toFixedCSS(viewportWidth - rect.right)
-  if (right + maxWidth + edgeMargin > toFixedCSS(viewportWidth)) {
-    right = toFixedCSS(viewportWidth) - maxWidth - edgeMargin
+  // `right` is a CSS-px distance from the containing block's right edge, which
+  // is why it is compared against the CSS-px viewport width (not the rect one).
+  let right = toCssRightDist(rect.right)
+  if (right + maxWidth + edgeMargin > cssViewportWidth) {
+    right = cssViewportWidth - maxWidth - edgeMargin
   }
   right = Math.max(edgeMargin, right)
   return { right: `${right}px` }
@@ -145,11 +187,12 @@ function computeLeft(
   rect: DOMRect,
   maxWidth: number,
   edgeMargin: number,
-  viewportWidth: number,
+  toCssX: (viewportLeft: number) => number,
+  cssViewportWidth: number,
 ): Record<string, string> {
-  let left = toFixedCSS(rect.left)
-  if (left + maxWidth + edgeMargin > toFixedCSS(viewportWidth)) {
-    left = toFixedCSS(viewportWidth) - maxWidth - edgeMargin
+  let left = toCssX(rect.left)
+  if (left + maxWidth + edgeMargin > cssViewportWidth) {
+    left = cssViewportWidth - maxWidth - edgeMargin
   }
   left = Math.max(edgeMargin, left)
   return { left: `${left}px` }

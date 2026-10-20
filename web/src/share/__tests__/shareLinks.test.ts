@@ -219,6 +219,10 @@ describe('annotateShareLinksIn — non-anchor elements', () => {
 })
 
 describe('shareLinks — integration through the markdown pipeline', () => {
+  // Dynamic-imports the whole markdown pipeline (marked + renderer config) on
+  // first use, then builds a DOM. Cold that is several seconds; the 5s default
+  // left no headroom under the full suite's parallel load, so this test timed
+  // out and its file's coverage vanished from the profile.
   it('annotates a relative link end-to-end via buildMarkdownPreviewDom', async () => {
     const { buildMarkdownPreviewDom } = await import('@/composables/useMarkdownRenderPipeline')
     const { configureMarkedRenderer } = await import('@/utils/markedConfig')
@@ -238,5 +242,5 @@ describe('shareLinks — integration through the markdown pipeline', () => {
     } finally {
       setShareToken(null)
     }
-  })
+  }, 20_000)
 })

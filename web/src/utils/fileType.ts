@@ -115,6 +115,11 @@ const FILE_TYPES: FileType[] = [
     { exts: ['.rq'], lang: 'sparql', label: 'SPARQL', color: '#0c4597', isMarkdown: false },
     { exts: ['.dtd'], lang: 'dtd', label: 'DTD', color: '#8b8b8b', isMarkdown: false },
     { exts: ['.zone'], lang: 'dns', label: 'DNS', color: '#8b8b8b', isMarkdown: false },
+    // Terraform / HCL: highlight.js has no HCL grammar, so these fall back to
+    // plain text. They are still listed so the file gets the TF label and the
+    // correct colour instead of being treated as an unknown type.
+    { exts: ['.tf', '.tfvars'], lang: 'plaintext', label: 'TF', color: '#7b42bc', isMarkdown: false },
+    { exts: ['.hcl'], lang: 'plaintext', label: 'HCL', color: '#844fba', isMarkdown: false },
     { exts: ['.v', '.sv', '.svh', '.vh'], lang: 'verilog', label: 'Verilog', color: '#b2b7f8', isMarkdown: false },
     { exts: ['.vhd', '.vhdl'], lang: 'vhdl', label: 'VHDL', color: '#adb2cb', isMarkdown: false },
     { exts: ['.glsl', '.vert', '.frag', '.geom', '.tesc', '.tese', '.comp'], lang: 'glsl', label: 'GLSL', color: '#5686a5', isMarkdown: false },

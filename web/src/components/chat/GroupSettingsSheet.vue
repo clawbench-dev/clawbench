@@ -319,8 +319,11 @@ function stopListeningNow() {
 // The listener is bound to the MEMBER DRAWER, not the sheet: the roster chip and
 // the drawer's usage tab only need fresh numbers while someone is looking at
 // them, and a group turn emits these events constantly.
-watch(memberSheetOpen, (open) => {
-  if (open) {
+watch(memberSheetOpen, (isOpen) => {
+  // The parameter is the watcher's NEW VALUE. Naming it `open` shadowed the
+  // component's `open` ref (declared above), which is indistinguishable from a
+  // genuine "forgot .value" bug — the bare-ref guard flags exactly that shape.
+  if (isOpen) {
     emit('changed') // fetch once on open, so the panel never shows a stale value
     startListening()
   } else {

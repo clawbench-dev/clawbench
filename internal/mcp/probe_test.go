@@ -79,6 +79,58 @@ func TestProbe_StdioNonMCPProcess(t *testing.T) {
 	assert.False(t, res.OK, "a process that never answers initialize must fail")
 }
 
+// A stdio server whose launcher spawns a child that inherits the pipes must
+// still return promptly.
+//
+// This is the `uvx mcp-server-time` shape: uvx starts the real server as a
+// child, both inherit our stdout/stderr. Killing only the launcher leaves the
+// child holding the pipes, so cmd.Wait blocks on the copy goroutines forever —
+// the handshake and tools/list had already succeeded, yet the HTTP test
+// endpoint never answered and the UI reported a timeout. The probe must reap
+// the whole process group instead.
+func TestProbe_StdioLauncherWithPipeHoldingChildReturns(t *testing.T) {
+	srv := helperServer(t, "spawn")
+
+	// Generous relative to probeWaitDelay (2s) but far below the child's 60s
+	// sleep: without the group kill this hangs for the full minute.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	done := make(chan Result, 1)
+	go func() { done <- Probe(ctx, srv) }()
+
+	select {
+	case res := <-done:
+		require.True(t, res.OK, "probe must succeed, got: %s", res.Message)
+		assert.Equal(t, 2, res.ToolCount)
+	case <-time.After(15 * time.Second):
+		t.Fatal("probe did not return — the pipe-holding grandchild kept cmd.Wait blocked")
+	}
+}
+
+// A launcher whose child inherits the pipes must also unblock on TIMEOUT.
+//
+// Here the server never answers, so the probe is parked in readResponse when
+// the deadline fires. Killing only the leader would leave the child holding
+// stdout open, the pending read would never see EOF, and the probe would
+// outlive its own context — the exact shape of "test runs forever".
+func TestProbe_StdioTimeoutWithPipeHoldingChildReturns(t *testing.T) {
+	srv := helperServer(t, "spawnsilent")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+
+	done := make(chan Result, 1)
+	go func() { done <- Probe(ctx, srv) }()
+
+	select {
+	case res := <-done:
+		assert.False(t, res.OK, "a server that never answers must not probe OK")
+	case <-time.After(10 * time.Second):
+		t.Fatal("probe outlived its context — the pipe-holding grandchild kept the read blocked")
+	}
+}
+
 // TestProbe_StdioZeroTools asserts zero tools is still a successful handshake
 // but says so plainly: the agent would have nothing to call.
 func TestProbe_StdioZeroTools(t *testing.T) {

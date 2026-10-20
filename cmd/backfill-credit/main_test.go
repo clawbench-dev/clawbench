@@ -222,6 +222,180 @@ func TestReadOneTranscript_MissingFile(t *testing.T) {
 	}
 }
 
+// creditStageLine builds one cost-only billing record (Team member or
+// generation tool): credit and stageId, no rawUsage.
+func creditStageLine(rid, stageID string, credit float64) string {
+	return `{"type":"credit-usage","providerData":{"conversationRequestId":"` + rid +
+		`","credit":` + strconv.FormatFloat(credit, 'f', -1, 64) +
+		`,"source":"team_member","stageId":"` + stageID + `","messageId":"msg-1"}}`
+}
+
+// A turn that used a Team member is billed twice in the transcript: once per
+// model call (rawUsage.credit) and once per member stage (a `credit-usage`
+// record with no rawUsage at all). Summing only the model calls under-reported
+// every such turn — 148 of 149 on a production DB, 9% of the credit total.
+//
+// This test pins the WHOLE amount, so an implementation that ignores
+// credit-usage records fails on the exact number rather than by a tolerance.
+func TestReadOneTranscript_CountsCostOnlyBillings(t *testing.T) {
+	root := t.TempDir()
+	path := writeFile(t, root, "ses.jsonl", strings.Join([]string{
+		usageLine("rid-a", 1000, 10, 50),
+		creditStageLine("rid-a", "team:stage-1", 12.5),
+		creditStageLine("rid-a", "team:stage-2", 7.5),
+		// A different turn's stage must not leak into rid-a.
+		creditStageLine("rid-b", "team:stage-3", 3),
+	}, "\n")+"\n")
+
+	turns := map[string]*turnTotals{}
+	if err := readOneTranscript(path, turns); err != nil {
+		t.Fatalf("readOneTranscript: %v", err)
+	}
+	if got := turns["rid-a"].totalCredit(); diffFloat(got, 70) > 0.001 {
+		t.Errorf("rid-a totalCredit = %v, want 70 (50 model + 20 stages)", got)
+	}
+	if got := turns["rid-a"].stageCredit(); diffFloat(got, 20) > 0.001 {
+		t.Errorf("rid-a stageCredit = %v, want 20", got)
+	}
+	if got := turns["rid-b"].totalCredit(); diffFloat(got, 3) > 0.001 {
+		t.Errorf("rid-b totalCredit = %v, want 3", got)
+	}
+	// Cost-only records are not model calls and must not inflate the count.
+	if got := countCalls(turns); got != 1 {
+		t.Errorf("countCalls = %d, want 1", got)
+	}
+}
+
+// The agent dedups stage billings by stageId, so a repeated record (a re-read
+// of the same history item) must not bill twice.
+func TestReadOneTranscript_DedupsStageBillings(t *testing.T) {
+	root := t.TempDir()
+	path := writeFile(t, root, "ses.jsonl", strings.Join([]string{
+		usageLine("rid-a", 1000, 10, 50),
+		creditStageLine("rid-a", "team:same-stage", 12.5),
+		creditStageLine("rid-a", "team:same-stage", 12.5),
+	}, "\n")+"\n")
+
+	turns := map[string]*turnTotals{}
+	if err := readOneTranscript(path, turns); err != nil {
+		t.Fatalf("readOneTranscript: %v", err)
+	}
+	if got := turns["rid-a"].totalCredit(); diffFloat(got, 62.5) > 0.001 {
+		t.Errorf("totalCredit = %v, want 62.5 (stage billed once)", got)
+	}
+}
+
+func TestParseCreditStage(t *testing.T) {
+	tests := []struct {
+		name   string
+		line   string
+		wantOK bool
+		wantCr float64
+	}{
+		{
+			name:   "a team member stage is a billing",
+			line:   `{"type":"credit-usage","providerData":{"conversationRequestId":"rid","credit":2.5,"stageId":"team:x"}}`,
+			wantOK: true,
+			wantCr: 2.5,
+		},
+		{
+			name:   "falls back to requestId",
+			line:   `{"type":"credit-usage","providerData":{"requestId":"rid","credit":1,"stageId":"team:y"}}`,
+			wantOK: true,
+			wantCr: 1,
+		},
+		{
+			name:   "a model call is not a stage",
+			line:   `{"type":"message","providerData":{"conversationRequestId":"rid","credit":2.5,"stageId":"team:x"}}`,
+			wantOK: false,
+		},
+		{
+			// Without the agent's dedup key a re-read would bill it again.
+			name:   "no stageId is rejected",
+			line:   `{"type":"credit-usage","providerData":{"conversationRequestId":"rid","credit":2.5}}`,
+			wantOK: false,
+		},
+		{
+			name:   "no requestId is rejected",
+			line:   `{"type":"credit-usage","providerData":{"credit":2.5,"stageId":"team:x"}}`,
+			wantOK: false,
+		},
+		{
+			name:   "non-positive credit is rejected",
+			line:   `{"type":"credit-usage","providerData":{"conversationRequestId":"rid","credit":0,"stageId":"team:x"}}`,
+			wantOK: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := parseCreditStage([]byte(tt.line))
+			if ok != tt.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, tt.wantOK)
+			}
+			if ok && diffFloat(got.credit, tt.wantCr) > 0.001 {
+				t.Errorf("credit = %v, want %v", got.credit, tt.wantCr)
+			}
+		})
+	}
+}
+
+// A ledger row written by the fixed tool already includes the stage billings,
+// so a second run must report it as unchanged rather than re-adding them.
+func TestBuildPlan_StageCreditIsPartOfTheComparison(t *testing.T) {
+	openTestDB(t)
+
+	turns := map[string]*turnTotals{
+		"rid": {
+			Calls: 1, InputTokens: 100, OutputTokens: 10, Credit: 50,
+			creditStages: map[string]float64{"team:x": 20},
+		},
+	}
+	// Already repaired: credit carries both halves.
+	insertRow(t, 1, "codebuddy", "rid", 100, 10, 70)
+
+	plan, stats, err := buildPlan(turns)
+	if err != nil {
+		t.Fatalf("buildPlan: %v", err)
+	}
+	if len(plan) != 0 {
+		t.Fatalf("want no repair for an already-correct row, got %+v", plan)
+	}
+	if stats.Unchanged != 1 {
+		t.Errorf("Unchanged = %d, want 1", stats.Unchanged)
+	}
+}
+
+// ...and a row that recorded only the model-call half must be repaired by
+// exactly the stage amount.
+func TestBuildPlan_RepairsRowMissingStageCredit(t *testing.T) {
+	openTestDB(t)
+
+	turns := map[string]*turnTotals{
+		"rid": {
+			Calls: 1, InputTokens: 100, OutputTokens: 10, Credit: 50,
+			creditStages: map[string]float64{"team:x": 20},
+		},
+	}
+	insertRow(t, 1, "codebuddy", "rid", 100, 10, 50) // stage half missing
+
+	plan, stats, err := buildPlan(turns)
+	if err != nil {
+		t.Fatalf("buildPlan: %v", err)
+	}
+	if len(plan) != 1 {
+		t.Fatalf("want 1 repair, got %d", len(plan))
+	}
+	if diffFloat(plan[0].NewCredit, 70) > 0.001 {
+		t.Errorf("NewCredit = %v, want 70", plan[0].NewCredit)
+	}
+	if diffFloat(plan[0].StageCredit, 20) > 0.001 {
+		t.Errorf("StageCredit = %v, want 20", plan[0].StageCredit)
+	}
+	if diffFloat(stats.IncreaseCredit, 20) > 0.001 {
+		t.Errorf("IncreaseCredit = %v, want 20", stats.IncreaseCredit)
+	}
+}
+
 func TestScanTranscript_LongLine(t *testing.T) {
 	// Transcripts embed tool results; the scanner buffer must be raised past the
 	// 64KiB default or the line is silently truncated into an unparseable record.
@@ -230,12 +404,15 @@ func TestScanTranscript_LongLine(t *testing.T) {
 	sc := bufio.NewScanner(strings.NewReader(line + "\n"))
 	sc.Buffer(make([]byte, 0, 256*1024), 32*1024*1024)
 
-	calls, forked, err := scanTranscript(sc)
+	calls, stages, forked, err := scanTranscript(sc)
 	if err != nil {
 		t.Fatalf("scanTranscript: %v", err)
 	}
 	if forked {
 		t.Error("not a forked session")
+	}
+	if len(stages) != 0 {
+		t.Errorf("no cost-only billings expected, got %+v", stages)
 	}
 	if len(calls) != 1 || calls[0].rid != "rid-long" {
 		t.Fatalf("want one call for rid-long, got %+v", calls)

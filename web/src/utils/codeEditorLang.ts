@@ -28,6 +28,62 @@ const stream = (load: () => Promise<unknown>): LangFactory => () =>
     load().then((parser) => StreamLanguage.define(parser as never))
 
 /**
+ * Nix has no CodeMirror 6 grammar anywhere (neither Lezer nor legacy-modes).
+ * The language is small enough that a `simpleMode` state machine covers what
+ * actually shows up in a `.nix` file: keywords, strings (including `''…''`
+ * indented strings), paths, numbers and comments.
+ */
+const nixMode = stream(async () => {
+    const { simpleMode } = await import('@codemirror/legacy-modes/mode/simple-mode')
+    return simpleMode({
+        start: [
+            { regex: /#[^\n]*/, token: 'comment' },
+            { regex: /\/\*/, token: 'comment', next: 'blockComment' },
+            // Indented string: '' … '' (Nix-specific, before the plain quote rule).
+            { regex: /''/, token: 'string', next: 'indentedString' },
+            { regex: /"/, token: 'string', next: 'string' },
+            {
+                regex: /\b(assert|else|if|in|inherit|let|or|rec|then|with)\b/,
+                token: 'keyword',
+            },
+            { regex: /\b(true|false|null)\b/, token: 'atom' },
+            { regex: /\b(builtins|import|abort|baseNameOf|derivation|dirOf|fetchTarball|map|placeholder|removeAttrs|scopedImport|throw|toString)\b/, token: 'builtin' },
+            { regex: /\$\{/, token: 'meta', next: 'interpolation' },
+            // Paths: ./x, ../x, /x, ~/x, <nixpkgs>
+            { regex: /(?:\.{0,2}\/|~\/|<)[^\s;(){}[\]]*/, token: 'string.special' },
+            { regex: /\b\d+(?:\.\d+)?\b/, token: 'number' },
+            { regex: /[A-Za-z_][A-Za-z0-9_'-]*/, token: 'variableName' },
+            { regex: /[{}()[\];:,=@.+\-*/<>!?]/, token: 'operator' },
+            { regex: /\s+/, token: null },
+        ],
+        string: [
+            { regex: /[^"\\$]+/, token: 'string' },
+            { regex: /\\./, token: 'string.special' },
+            { regex: /\$\{/, token: 'meta', next: 'interpolation' },
+            { regex: /"/, token: 'string', next: 'start' },
+        ],
+        indentedString: [
+            { regex: /[^'$]+/, token: 'string' },
+            { regex: /\$\{/, token: 'meta', next: 'interpolation' },
+            { regex: /''/, token: 'string', next: 'start' },
+            { regex: /'/, token: 'string' },
+        ],
+        interpolation: [
+            { regex: /\{/, token: 'meta', next: 'interpolation' },
+            // `pop: true` returns to the previous state — `next: 'pop'` is not a
+            // state name and makes simpleMode throw "Undefined state pop".
+            { regex: /\}/, token: 'meta', pop: true },
+            { regex: /[^{}]+/, token: 'variableName' },
+        ],
+        blockComment: [
+            { regex: /[^*]+/, token: 'comment' },
+            { regex: /\*\//, token: 'comment', next: 'start' },
+            { regex: /\*/, token: 'comment' },
+        ],
+    })
+})
+
+/**
  * GraphQL has no official Lezer grammar, and the only community package
  * (`cm6-graphql`) drags in the full `graphql` runtime (~6.5MB unpacked) just
  * for highlighting. A `simpleMode` state machine covers the syntax that
@@ -108,6 +164,7 @@ export const LANG_EXT: Record<string, LangFactory> = {
 
     // ── Legacy stream modes (no Lezer grammar exists) ────────────────────────
     graphql: graphqlMode,
+    nix: nixMode,
     dockerfile: stream(() => import('@codemirror/legacy-modes/mode/dockerfile').then(m => m.dockerFile)),
     nginx: stream(() => import('@codemirror/legacy-modes/mode/nginx').then(m => m.nginx)),
     powershell: stream(() => import('@codemirror/legacy-modes/mode/powershell').then(m => m.powerShell)),
