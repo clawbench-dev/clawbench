@@ -1,14 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 
 const mockGetServerValue = vi.fn()
 const mockSetServerValue = vi.fn().mockResolvedValue({ needsRestart: false, changedColdFields: [], warnings: [] })
+const mockLoadConfig = vi.fn().mockResolvedValue(undefined)
 
 vi.mock('@/composables/useSettingsConfig', () => ({
   useSettingsConfig: () => ({
     getServerValue: mockGetServerValue,
     setServerValue: mockSetServerValue,
+    loadConfig: mockLoadConfig,
   }),
 }))
 
@@ -78,6 +80,16 @@ describe('MCPSetting', () => {
     const wrapper = mountSetting([])
     expect(wrapper.text()).toContain('还没有配置')
     expect(wrapper.findAll('.mcp-row')).toHaveLength(0)
+  })
+
+  // The list is read from the shared serverConfig snapshot. Without a refetch
+  // here, a server added while Settings was already open (another device, the
+  // AI editing config.yaml, a CLI) stayed invisible until a full page reload —
+  // reported as "I open MCP services and it is not listed; refreshing fixes it".
+  it('refetches the config on mount so an externally added server appears', async () => {
+    mountSetting([])
+    await flushPromises()
+    expect(mockLoadConfig).toHaveBeenCalledTimes(1)
   })
 
   it('lists each configured server with its transport', () => {
@@ -270,6 +282,10 @@ describe('MCPSetting test button', () => {
     expect(arg[0].category).toBe('mcp')
     expect(arg[0].values['mcp.name']).toBe('alpha')
     expect(arg[0].values['mcp.servers']).toHaveLength(2)
+    // A launcher such as `npx -y` / `uvx` may download its package on the first
+    // run, so the default 15s is not enough — and it must stay above the
+    // server's own 45s MCP budget so the server's specific error wins.
+    expect(arg[0].timeoutMs).toBe(60_000)
   })
 
   it('renders a success message with the tool count', async () => {

@@ -13,6 +13,14 @@
 //	silent     stay alive, never speak MCP
 //	die        print to stderr and exit 1
 //	diequiet   exit 1 without printing anything
+//	spawn      answer normally, but first start a CHILD that inherits
+//	           stdout/stderr and sleeps far longer than the probe. This is the
+//	           launcher shape (uvx/npx/pipx): killing the leader alone leaves
+//	           the child holding the pipes open, so cmd.Wait blocks forever
+//	spawnsilent  "spawn" plus "silent": the timeout path, where the pending
+//	           read would never see EOF if only the leader were killed
+//	holdpipes  the child spawned by "spawn": inherit the pipes, say nothing,
+//	           sleep.
 package main
 
 import (
@@ -20,6 +28,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
+	"time"
 )
 
 func main() {
@@ -33,18 +43,30 @@ func run(mode string) int {
 		return 1
 	case "diequiet":
 		return 1
+	case "holdpipes":
+		// Deliberately never exits: the probe must not wait for it.
+		time.Sleep(60 * time.Second)
+		return 0
+	}
+
+	if mode == "spawn" || mode == "spawnsilent" {
+		spawnPipeHoldingChild()
 	}
 
 	reader := bufio.NewReader(os.Stdin)
 	writer := bufio.NewWriter(os.Stdout)
 	defer func() { _ = writer.Flush() }()
 
+	// spawnsilent answers nothing at all, so the probe is still blocked reading
+	// stdout when its deadline fires.
+	silent := mode == "silent" || mode == "spawnsilent"
+
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			return 0
 		}
-		if mode == "silent" {
+		if silent {
 			// Starts, stays alive, but never speaks MCP.
 			fmt.Fprintln(writer, "not json at all")
 			_ = writer.Flush()
@@ -79,5 +101,25 @@ func run(mode string) int {
 			}
 		}
 		_ = writer.Flush()
+	}
+}
+
+// spawnPipeHoldingChild starts a copy of this binary in "holdpipes" mode with
+// stdout/stderr inherited from us, exactly like a launcher's interpreter child.
+//
+// It is left unreaped on purpose: it must still be alive (and holding the
+// pipes) when the probe finishes, otherwise the test proves nothing.
+func spawnPipeHoldingChild() {
+	self, err := os.Executable()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cannot resolve own path:", err)
+		return
+	}
+	child := exec.Command(self)
+	child.Env = append(os.Environ(), "MCP_PROBE_TEST_HELPER=holdpipes")
+	child.Stdout = os.Stdout
+	child.Stderr = os.Stderr
+	if err := child.Start(); err != nil {
+		fmt.Fprintln(os.Stderr, "cannot start pipe-holding child:", err)
 	}
 }
