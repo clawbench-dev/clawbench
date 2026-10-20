@@ -627,6 +627,85 @@ describe('useTaskHistory', () => {
     })
   })
 
+  describe('markAllRead', () => {
+    it('calls apiPut with the read action and no executionId', async () => {
+      const { history } = createHistory()
+      mockApiPut.mockResolvedValue({})
+
+      await history.markAllRead()
+
+      expect(mockApiPut).toHaveBeenCalledWith('/api/tasks/task-1', { action: 'read' })
+    })
+
+    // The button lives in the header of a paginated list, so flipping the flags
+    // in place is the whole point: reloading would collapse a scrolled-deep
+    // list back to the first page.
+    it('clears isUnread in place without reloading the list', async () => {
+      const { history } = createHistory()
+      mockApiGet.mockResolvedValue({
+        executions: [
+          { id: 'e1', content: 'a', createdAt: '2026-01-01', status: 'completed', isUnread: true },
+          { id: 'e2', content: 'b', createdAt: '2026-01-01', status: 'failed', isUnread: true },
+        ],
+        hasMore: true,
+      })
+      mockApiPut.mockResolvedValue({})
+
+      await history.loadExecutions()
+      mockApiGet.mockClear()
+
+      await history.markAllRead()
+
+      expect(history.executions.value.map(e => e.isUnread)).toEqual([false, false])
+      expect(history.hasMore.value).toBe(true)
+      expect(mockApiGet).not.toHaveBeenCalled()
+    })
+
+    // A skip is never unread on the server (scanExecutionRow excludes it), so
+    // the local mirror must leave it alone rather than claim it was read.
+    it('leaves skipped executions untouched', async () => {
+      const { history } = createHistory()
+      mockApiGet.mockResolvedValue({
+        executions: [{ id: 'e1', content: '', createdAt: '2026-01-01', status: 'skipped', isUnread: false }],
+        hasMore: false,
+      })
+      mockApiPut.mockResolvedValue({})
+
+      await history.loadExecutions()
+      await history.markAllRead()
+
+      expect(history.executions.value[0].isUnread).toBe(false)
+    })
+
+    it('refreshes the task list so the per-task badge clears', async () => {
+      const { history } = createHistory()
+      mockApiPut.mockResolvedValue({})
+      mockLoadTasks.mockClear()
+
+      await history.markAllRead()
+
+      expect(mockLoadTasks).toHaveBeenCalled()
+    })
+
+    it('reports failure and keeps unread flags when the request fails', async () => {
+      const { history } = createHistory()
+      mockApiGet.mockResolvedValue({
+        executions: [{ id: 'e1', content: 'a', createdAt: '2026-01-01', status: 'completed', isUnread: true }],
+        hasMore: false,
+      })
+      mockApiPut.mockResolvedValue({})
+      await history.loadExecutions()
+
+      mockApiPut.mockRejectedValue(new Error('boom'))
+      mockLoadTasks.mockClear()
+      await history.markAllRead()
+
+      expect(history.executions.value[0].isUnread).toBe(true)
+      expect(mockToastShow).toHaveBeenCalledWith('task.exec.actionFailed', expect.objectContaining({ type: 'error' }))
+      expect(mockLoadTasks).not.toHaveBeenCalled()
+    })
+  })
+
   describe('openDetail — ISS-015: locallyReadIds', () => {
     it('marks execution as locally read', async () => {
       const { history } = createHistory()

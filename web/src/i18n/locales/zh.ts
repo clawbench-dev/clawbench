@@ -1549,6 +1549,7 @@ export default {
       confirmDeleteAll: '确定清除所有执行记录？此操作不可撤销。',
       allExecutionsDeleted: '执行记录已清除',
       clearAll: '清除全部',
+      markAllRead: '全部已读',
       completed: '执行完毕',
       tabOriginal: '原文',
       tabSummary: '摘要',

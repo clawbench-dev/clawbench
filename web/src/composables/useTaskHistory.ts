@@ -51,7 +51,7 @@ export function useTaskHistory(options: UseTaskHistoryOptions) {
   const { task } = options
   const toast = useToast()
   const dialog = useDialog()
-  const { openExecDetail } = useTaskTab()
+  const { openExecDetail, loadTasks } = useTaskTab()
 
   const chatRender = useChatRender({ messages: ref([]), theme: ref('light'), currentSessionId: ref('') })
 
@@ -325,6 +325,35 @@ export function useTaskHistory(options: UseTaskHistoryOptions) {
     await reloadExecutions()
   }
 
+  /**
+   * Mark every finished execution of this task as read (the backend's
+   * "mark all read": `action: "read"` with no executionId writes read_at on
+   * each non-running row).
+   *
+   * The flag is flipped locally instead of reloading: reloadExecutions() only
+   * refetches the first page, so a user who scrolled deep would have the list
+   * collapse to 10 rows just for marking things read. The mirror of the
+   * backend's rule is deliberate — `skipped` is excluded because a
+   * content-free skip is never counted as unread in the first place
+   * (see scanExecutionRow in internal/handler/scheduler.go).
+   */
+  async function markAllRead(): Promise<void> {
+    if (!task.value?.id) return
+    try {
+      await apiPut(`/api/tasks/${task.value.id}`, { action: 'read' })
+    } catch {
+      toast.show(gt('task.exec.actionFailed'), { icon: 'error', type: 'error' })
+      return
+    }
+    for (const exec of executions.value) {
+      if (exec.status !== 'running' && exec.status !== 'skipped') exec.isUnread = false
+    }
+    // The task list's per-task badge comes from its own fetch, not from this
+    // list, so refresh it — otherwise the list view keeps the old count until
+    // the next unrelated reload.
+    await loadTasks()
+  }
+
   async function markExecRead(execId: string): Promise<void> {
     if (!task.value?.id || !execId) return
     try {
@@ -387,6 +416,7 @@ export function useTaskHistory(options: UseTaskHistoryOptions) {
     cancelExecution,
     deleteExecution,
     deleteAllExecutions,
+    markAllRead,
     markExecRead,
     openDetail,
     isUnreadDisplay,

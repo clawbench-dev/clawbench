@@ -8,6 +8,10 @@ import TaskDetailPage from '../TaskDetailPage.vue'
 // tab's exposed hasAnyRunning into its Terminate condition, to cover the
 // script phase which runningCount excludes.
 const historyRunning = vi.hoisted(() => ({ value: false }))
+// Header action cluster state: "Mark all read" is gated on hasUnread, "Clear
+// all" on hasExecutions. Both are exposed by the history tab.
+const historyHasUnread = vi.hoisted(() => ({ value: false }))
+const historyHasExecutions = vi.hoisted(() => ({ value: false }))
 
 // ── Mocks ──
 vi.mock('vue-i18n', () => ({
@@ -28,6 +32,7 @@ vi.mock('lucide-vue-next', () => {
     Square: stub('Square'),
     Zap: stub('Zap'),
     Trash2: stub('Trash2'),
+    CheckCheck: stub('CheckCheck'),
   }
 })
 
@@ -66,7 +71,13 @@ vi.mock('@/components/task/TaskHistoryTab.vue', async () => {
     default: {
       name: 'TaskHistoryTab',
       setup(_props: unknown, { expose }: { expose: (v: unknown) => void }) {
-        expose({ hasAnyRunning: computed(() => historyRunning.value) })
+        expose({
+          hasAnyRunning: computed(() => historyRunning.value),
+          hasUnread: computed(() => historyHasUnread.value),
+          hasExecutions: computed(() => historyHasExecutions.value),
+          markAllRead: vi.fn(),
+          deleteAllExecutions: vi.fn(),
+        })
         return () => null
       },
     },
@@ -138,6 +149,63 @@ describe('TaskDetailPage manual-run button', () => {
     const labels = actionLabels(mountWith({ status: 'completed' }))
     expect(labels).not.toContain('task.run')
     expect(labels).toEqual(['common.edit', 'task.delete'])
+  })
+})
+
+describe('TaskDetailPage history header actions', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    historyRunning.value = false
+    historyHasUnread.value = false
+    historyHasExecutions.value = false
+  })
+
+  /** Text of the buttons in the execution-history section header. */
+  function headerLabels(wrapper: ReturnType<typeof mount>): string[] {
+    return wrapper.findAll('.history-section-actions button').map(b => b.text())
+  }
+
+  /** The "mark all read" button in the history section header. */
+  function markReadBtn(wrapper: ReturnType<typeof mount>) {
+    return wrapper.find('.history-section-actions .mark-read-btn')
+  }
+
+  // Disabled rather than hidden: the pair shares a row, so removing it after a
+  // click would shift "Clear all" sideways under the user's cursor.
+  it('disables "mark all read" when nothing is unread', async () => {
+    historyHasExecutions.value = true
+    historyHasUnread.value = false
+    const wrapper = mountWith()
+    await nextTick()
+
+    expect(markReadBtn(wrapper).exists()).toBe(true)
+    expect(markReadBtn(wrapper).attributes('disabled')).toBeDefined()
+  })
+
+  it('enables "mark all read" once an execution is unread', async () => {
+    historyHasExecutions.value = true
+    historyHasUnread.value = true
+    const wrapper = mountWith()
+    await nextTick()
+
+    expect(markReadBtn(wrapper).attributes('disabled')).toBeUndefined()
+  })
+
+  // An empty history has nothing to mark or clear, so neither action appears.
+  it('offers no history actions at all when the list is empty', async () => {
+    historyHasExecutions.value = false
+    historyHasUnread.value = false
+    const wrapper = mountWith()
+    await nextTick()
+    expect(headerLabels(wrapper)).toEqual([])
+  })
+
+  it('keeps "clear all" as the destructive action next to it', async () => {
+    historyHasExecutions.value = true
+    historyHasUnread.value = true
+    const wrapper = mountWith()
+    await nextTick()
+    expect(headerLabels(wrapper)).toEqual(['task.exec.markAllRead', 'task.exec.clearAll'])
   })
 })
 
