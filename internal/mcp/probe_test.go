@@ -503,3 +503,66 @@ done
 	assert.Equal(t, "half-stdio", res.ServerName, "the handshake succeeded, so report who answered")
 	assert.Contains(t, res.Message, "tools/list")
 }
+
+// A server that dies immediately must ALWAYS report its stderr. This is a
+// regression guard for a race: reading the stderr buffer while the child was
+// still exiting returned an empty string on some runs (observed on macOS CI),
+// which removed the only explanation the user gets. Repeating the probe makes
+// the race far more likely to surface than a single shot does.
+func TestProbe_StdioReportsStderr_Repeatedly(t *testing.T) {
+	script := writeScript(t, "broken.sh", `#!/bin/sh
+echo "fatal: MCP_TOKEN is not set" >&2
+exit 1
+`)
+
+	for i := range 20 {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		res := Probe(ctx, model.MCPServer{
+			Name: "broken", Transport: model.MCPTransportStdio, Command: script,
+		})
+		cancel()
+
+		if res.OK {
+			t.Fatalf("iteration %d: a broken server must not probe OK", i)
+		}
+		if !strings.Contains(res.Message, "MCP_TOKEN is not set") {
+			t.Fatalf("iteration %d: stderr missing from %q", i, res.Message)
+		}
+	}
+}
+
+// The reap-before-read ordering cannot be pinned behaviorally on Linux: the
+// child's stderr copy usually finishes before the probe returns, so removing the
+// explicit reap still passes here while failing on macOS CI (where it did). Pin
+// it structurally instead — every withStderr call in probeStdio must be
+// preceded by a reap, or the buffer can still be racing the copy goroutine.
+func TestProbeStdio_ReapsBeforeReadingStderr(t *testing.T) {
+	src, err := os.ReadFile("probe.go")
+	require.NoError(t, err)
+
+	body := string(src)
+	start := strings.Index(body, "func probeStdio(")
+	require.GreaterOrEqual(t, start, 0, "probeStdio not found — has it been renamed?")
+	end := strings.Index(body[start:], "\n// ── ")
+	require.Greater(t, end, 0, "could not delimit probeStdio")
+	fn := body[start : start+end]
+
+	// EVERY withStderr(...) must be immediately preceded by its own reap() —
+	// "some reap happened earlier" is not enough: the failure path that matters
+	// is the FIRST one, and an earlier reap on a different branch does not stop
+	// the buffer from racing on this one.
+	uses := 0
+	for i := range len(fn) {
+		if !strings.HasPrefix(fn[i:], "withStderr(") {
+			continue
+		}
+		uses++
+		// Look back a short window (the call is a few lines below its reap).
+		windowStart := max(0, i-200)
+		if !strings.Contains(fn[windowStart:i], "reap()") {
+			t.Fatalf("withStderr at offset %d has no reap() immediately before it — "+
+				"the stderr buffer can still be racing the copy goroutine", i)
+		}
+	}
+	require.GreaterOrEqual(t, uses, 3, "expected at least three withStderr call sites")
+}

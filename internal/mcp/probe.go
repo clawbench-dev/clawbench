@@ -175,10 +175,24 @@ func probeStdio(ctx context.Context, srv model.MCPServer) Result {
 	}
 	// Always reap. Kill is harmless after a clean exit and guarantees no
 	// orphaned child if an early return skipped the graceful path.
-	defer func() {
+	//
+	// The Wait is what makes the stderr buffer SAFE TO READ: os/exec copies the
+	// child's stderr from its own goroutine, and Wait is documented to complete
+	// only after that copy finishes. Reading the buffer while the child is
+	// exiting (the common case for a server that dies on startup) raced that
+	// goroutine and intermittently produced an EMPTY stderr — the one piece of
+	// information the user needs. The defer therefore stops the process first,
+	// then waits, and only then lets the caller read the buffer.
+	reaped := false
+	reap := func() {
+		if reaped {
+			return
+		}
+		reaped = true
 		_ = cmd.Process.Kill()
 		_, _ = cmd.Process.Wait()
-	}()
+	}
+	defer reap()
 
 	reader := bufio.NewReader(stdout)
 	call := func(req rpcRequest) (*rpcResponse, error) {
@@ -194,6 +208,8 @@ func probeStdio(ctx context.Context, srv model.MCPServer) Result {
 
 	init, initResp, err := doInitialize(call)
 	if err != nil {
+		// Reap before reading stderr (see the reap comment above).
+		reap()
 		return Result{Message: withStderr(err.Error(), &stderr)}
 	}
 	// The spec requires the client to confirm with `notifications/initialized`
@@ -202,11 +218,13 @@ func probeStdio(ctx context.Context, srv model.MCPServer) Result {
 	if _, writeErr := stdin.Write(append(mustJSON(rpcRequest{
 		JSONRPC: jsonrpcVersion, Method: "notifications/initialized",
 	}), '\n')); writeErr != nil {
+		reap()
 		return Result{Message: withStderr(fmt.Sprintf("send initialized: %v", writeErr), &stderr)}
 	}
 
 	tools, err := doToolsList(call)
 	if err != nil {
+		reap()
 		return Result{
 			Message:         withStderr(err.Error(), &stderr),
 			ServerName:      init.ServerInfo.Name,
