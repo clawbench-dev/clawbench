@@ -2079,6 +2079,10 @@ export default {
     // 展开态顶部的目标会话行：「发送到 <会话名>」
     sendTo: '发送到',
     changeTarget: '更换会话',
+    // Joins the two halves of the target chip's accessible name. Chinese uses
+    // the full-width comma; English needs a comma AND a space, so the separator
+    // cannot be a bare "," in the template.
+    targetSeparator: '，',
     aiChat: 'AI 对话',
     newSession: '新会话',
     sentToSession: '已发送到会话',

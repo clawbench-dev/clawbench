@@ -2084,6 +2084,7 @@ export default {
     // Destination row in the expanded bar: "Send to <session>".
     sendTo: 'To',
     changeTarget: 'Change destination',
+    targetSeparator: ', ',
     aiChat: 'AI Chat',
     newSession: 'New session',
     sentToSession: 'Sent to session',

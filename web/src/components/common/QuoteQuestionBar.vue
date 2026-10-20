@@ -63,7 +63,7 @@
           class="qq-target"
           type="button"
           :title="t('quoteBar.changeTarget')"
-          :aria-label="`${t('quoteBar.sendTo')} ${targetLabel}，${t('quoteBar.changeTarget')}`"
+          :aria-label="`${t('quoteBar.sendTo')} ${targetLabel}${t('quoteBar.targetSeparator')}${t('quoteBar.changeTarget')}`"
           @click.stop="onChangeTarget"
         >
           <AgentIcon
