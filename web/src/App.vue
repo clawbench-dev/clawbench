@@ -586,12 +586,11 @@ import { baseName, dirName } from '@/utils/path.ts'
 import GitHistoryContent from './components/git/GitHistoryContent.vue'
 import ProxyPanelContent from './components/proxy/ProxyPanelContent.vue'
 import ForgePanelContent from './components/forge/ForgePanelContent.vue'
-import AsyncComponentLoader from './components/common/AsyncComponentLoader.vue'
 import AnimatedWallpaper from './components/AnimatedWallpaper.vue'
-const TerminalPanelContent = defineAsyncComponent({
-  loader: () => import('./components/terminal/TerminalPanelContent.vue'),
-  loadingComponent: AsyncComponentLoader,
-})
+import { buildAsyncComponentOptions } from '@/composables/useAsyncComponent'
+const TerminalPanelContent = defineAsyncComponent(
+  buildAsyncComponentOptions({ loader: () => import('./components/terminal/TerminalPanelContent.vue') }),
+)
 import ProjectDialog from './components/ProjectDialog.vue'
 import LoginView from './components/LoginView.vue'
 import WelcomeOverlay from './components/WelcomeOverlay.vue'

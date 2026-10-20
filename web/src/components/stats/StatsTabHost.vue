@@ -43,8 +43,8 @@ import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { defineAsyncComponent } from 'vue'
 import { Coins, Files, GitCommitHorizontal } from 'lucide-vue-next'
-import AsyncComponentLoader from '@/components/common/AsyncComponentLoader.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
+import { buildAsyncComponentOptions } from '@/composables/useAsyncComponent'
 import { useUsageStats } from '@/composables/useUsageStats'
 import { useGitCodeStats } from '@/composables/useGitCodeStats'
 
@@ -57,18 +57,22 @@ const { t } = useI18n()
 // Lazy-load the child panels so the echarts bundle only arrives when the
 // stats tab is first opened (keeps the App.vue initial-chunk behaviour that
 // used to lazy-load UsageStatsPanel on its own).
-const UsageStatsPanel = defineAsyncComponent({
-  loader: () => import('@/components/stats/UsageStatsPanel.vue'),
-  loadingComponent: AsyncComponentLoader,
-})
-const ClocStatsPanel = defineAsyncComponent({
-  loader: () => import('@/components/stats/ClocStatsPanel.vue'),
-  loadingComponent: AsyncComponentLoader,
-})
-const GitCodeStatsPanel = defineAsyncComponent({
-  loader: () => import('@/components/stats/GitCodeStatsPanel.vue'),
-  loadingComponent: AsyncComponentLoader,
-})
+//
+// These MUST go through buildAsyncComponentOptions, not a bare
+// defineAsyncComponent: the panels are the one place where a failed chunk
+// fetch left a permanently spinning pane. Vue renders `loadingComponent`
+// forever once the loader rejects and no `errorComponent` is supplied, so an
+// app left open across a rebuild (its old hashed chunks now 404) could never
+// open the stats tab again — restarting the app was the only way out.
+const UsageStatsPanel = defineAsyncComponent(
+  buildAsyncComponentOptions({ loader: () => import('@/components/stats/UsageStatsPanel.vue') }),
+)
+const ClocStatsPanel = defineAsyncComponent(
+  buildAsyncComponentOptions({ loader: () => import('@/components/stats/ClocStatsPanel.vue') }),
+)
+const GitCodeStatsPanel = defineAsyncComponent(
+  buildAsyncComponentOptions({ loader: () => import('@/components/stats/GitCodeStatsPanel.vue') }),
+)
 
 type StatsSection = 'usage' | 'cloc' | 'git'
 // Each tab carries its own glyph, following the forge tab bar. The icons name
