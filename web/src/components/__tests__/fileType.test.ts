@@ -70,8 +70,17 @@ describe('getFileType', () => {
   })
 
   it('returns plaintext for files with no extension', () => {
-    const ft = getFileType('Makefile')
+    // Deliberately an arbitrary extension-less name: `Makefile`/`Dockerfile`
+    // are recognized by BARE NAME (see the exact-name table), so using one here
+    // would assert the opposite of what the table does.
+    const ft = getFileType('LICENSE')
     expect(ft.lang).toBe('plaintext')
+  })
+
+  it('detects extension-less names that have their own language', () => {
+    expect(getFileType('Makefile').lang).toBe('makefile')
+    expect(getFileType('Dockerfile').lang).toBe('dockerfile')
+    expect(getFileType('CMakeLists.txt').lang).toBe('cmake')
   })
 
   it('detects Dockerfile by extension', () => {
