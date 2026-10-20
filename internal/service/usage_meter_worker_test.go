@@ -112,3 +112,59 @@ func TestUsageMeterWorker_WakeIsNonBlocking(t *testing.T) {
 		w.Wake() // second wake is dropped, not blocked
 	})
 }
+
+// StartUsageMeterWorker installs the global worker once: a second call must
+// reuse it rather than spawn a second loop (two loops would double the checks
+// and could emit two notifications for the same crossing).
+func TestStartUsageMeterWorker_IsIdempotent(t *testing.T) {
+	prev := model.ConfigInstance.UsageMeter
+	model.ConfigInstance.UsageMeter = model.UsageMeterConfig{Quota: 0} // tick is a no-op
+	t.Cleanup(func() {
+		service.StopUsageMeterWorker()
+		model.ConfigInstance.UsageMeter = prev
+	})
+
+	assert.NotPanics(t, func() {
+		service.StartUsageMeterWorker()
+		service.StartUsageMeterWorker()
+	})
+}
+
+// StopUsageMeterWorker must tolerate being called when no worker was started,
+// and must clear the handle so a later Start creates a fresh one (Stop closes
+// stopCh, so reusing the instance would hand the new loop a closed channel).
+func TestStopUsageMeterWorker_SafeWithoutStartAndAllowsRestart(t *testing.T) {
+	prev := model.ConfigInstance.UsageMeter
+	model.ConfigInstance.UsageMeter = model.UsageMeterConfig{Quota: 0}
+	t.Cleanup(func() { model.ConfigInstance.UsageMeter = prev })
+
+	assert.NotPanics(t, func() { service.StopUsageMeterWorker() }, "Stop with no worker must be a no-op")
+	assert.NotPanics(t, func() { service.StopUsageMeterWorker() }, "a second Stop must also be a no-op")
+
+	service.StartUsageMeterWorker()
+	service.StopUsageMeterWorker()
+	assert.NotPanics(t, func() {
+		service.StartUsageMeterWorker() // fresh instance after Stop
+		service.StopUsageMeterWorker()
+	})
+}
+
+// ReconfigureUsageMeterWorker must start the worker if it is not running and
+// then wake it, so a rule configured on a fresh install is evaluated within
+// seconds rather than after the first full interval.
+//
+// It must NOT run the check inline: the caller holds configMutex, and the check
+// needs that same mutex to persist its state — doing it inline would deadlock.
+func TestReconfigureUsageMeterWorker_StartsAndWakes(t *testing.T) {
+	prev := model.ConfigInstance.UsageMeter
+	model.ConfigInstance.UsageMeter = model.UsageMeterConfig{Quota: 0}
+	t.Cleanup(func() {
+		service.StopUsageMeterWorker()
+		model.ConfigInstance.UsageMeter = prev
+	})
+
+	assert.NotPanics(t, func() {
+		service.ReconfigureUsageMeterWorker()
+		service.ReconfigureUsageMeterWorker() // second call must not block either
+	})
+}

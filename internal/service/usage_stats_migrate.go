@@ -100,11 +100,25 @@ func cumulativeWalk(values []float64) []float64 {
 func groupBySession(sessions []string, values []float64) []float64 {
 	out := make([]float64, len(values))
 	start := 0
+	// Iterate over the shorter of the two: a value with no session cannot be
+	// attributed, and a session with no value has nothing to reconstruct. The
+	// index is bounded explicitly so the slice access below is provably safe.
 	for i := 1; i <= len(sessions); i++ {
-		if i == len(sessions) || sessions[i] != sessions[start] {
-			copy(out[start:i], cumulativeWalk(values[start:i]))
-			start = i
+		// Bounds-check before indexing rather than relying on the loop
+		// condition: gosec cannot see that i < len(sessions) whenever the
+		// right-hand operand is evaluated, and an explicit guard documents it.
+		sameRun := false
+		if i < len(sessions) {
+			sameRun = sessions[i] == sessions[start]
 		}
+		if sameRun {
+			continue
+		}
+		end := min(i, len(values))
+		if start < end {
+			copy(out[start:end], cumulativeWalk(values[start:end]))
+		}
+		start = end
 	}
 	return out
 }

@@ -146,21 +146,11 @@ func (r *AgentCapabilityRegistry) merge(agentID string, src *AgentCapability) {
 	if src.ConfigOptionState != nil {
 		existing.ConfigOptionState = src.ConfigOptionState
 	}
-	if src.LoadSession != nil {
-		existing.LoadSession = src.LoadSession
-	}
-	if src.ListSessions != nil {
-		existing.ListSessions = src.ListSessions
-	}
-	if src.DeleteSession != nil {
-		existing.DeleteSession = src.DeleteSession
-	}
-	if src.McpHTTP != nil {
-		existing.McpHTTP = src.McpHTTP
-	}
-	if src.McpSSE != nil {
-		existing.McpSSE = src.McpSSE
-	}
+	overlayBool(&existing.LoadSession, src.LoadSession)
+	overlayBool(&existing.ListSessions, src.ListSessions)
+	overlayBool(&existing.DeleteSession, src.DeleteSession)
+	overlayBool(&existing.McpHTTP, src.McpHTTP)
+	overlayBool(&existing.McpSSE, src.McpSSE)
 	if len(src.AvailableOptions) > 0 {
 		if existing.AvailableOptions == nil {
 			existing.AvailableOptions = make(map[string][]SelectOptionDef, len(src.AvailableOptions))
@@ -170,6 +160,16 @@ func (r *AgentCapabilityRegistry) merge(agentID string, src *AgentCapability) {
 		}
 	}
 	existing.UpdatedAt = time.Now()
+}
+
+// overlayBool copies src over *dst when src was actually reported.
+//
+// The tri-state is the point: nil means "the agent did not tell us", which must
+// not erase a previously known value, while an explicit false is a real answer.
+func overlayBool(dst **bool, src *bool) {
+	if src != nil {
+		*dst = src
+	}
 }
 
 // UpdateModes updates only the available modes for an agent.

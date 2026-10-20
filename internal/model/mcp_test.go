@@ -60,8 +60,10 @@ func TestResolveMCPServers_PolicyModes(t *testing.T) {
 	})
 
 	t.Run("selected returns only the named ones", func(t *testing.T) {
-		withMCPTestState(t, servers, &Agent{ID: "ag", Backend: "claude",
-			MCPServers: MCPServerPolicy{Mode: MCPPolicySelected, Names: []string{"b"}}})
+		withMCPTestState(t, servers, &Agent{
+			ID: "ag", Backend: "claude",
+			MCPServers: MCPServerPolicy{Mode: MCPPolicySelected, Names: []string{"b"}},
+		})
 		got := ResolveMCPServers("ag", caps)
 		require.Len(t, got, 1)
 		require.Equal(t, "b", got[0].Name)
@@ -112,16 +114,20 @@ func TestResolveMCPServers_UnsupportedBackends(t *testing.T) {
 	servers := []MCPServer{{Name: "a", Transport: MCPTransportStdio, Command: "node"}}
 	for _, backend := range []string{"dsh", "deepseek", "pi"} {
 		t.Run(backend, func(t *testing.T) {
-			withMCPTestState(t, servers, &Agent{ID: "ag", Backend: backend,
-				MCPServers: MCPServerPolicy{Mode: MCPPolicyAll}})
+			withMCPTestState(t, servers, &Agent{
+				ID: "ag", Backend: backend,
+				MCPServers: MCPServerPolicy{Mode: MCPPolicyAll},
+			})
 			require.Empty(t, ResolveMCPServers("ag", MCPCapabilities{HTTP: true, SSE: true}))
 			require.Empty(t, MCPPolicyVersion("ag"))
 		})
 	}
 
 	t.Run("supported backend is not filtered", func(t *testing.T) {
-		withMCPTestState(t, servers, &Agent{ID: "ag", Backend: "claude",
-			MCPServers: MCPServerPolicy{Mode: MCPPolicyAll}})
+		withMCPTestState(t, servers, &Agent{
+			ID: "ag", Backend: "claude",
+			MCPServers: MCPServerPolicy{Mode: MCPPolicyAll},
+		})
 		require.Len(t, ResolveMCPServers("ag", MCPCapabilities{}), 1)
 	})
 }
@@ -141,7 +147,7 @@ func TestMCPPolicyVersion_Stable(t *testing.T) {
 
 	first := MCPPolicyVersion("ag")
 	require.NotEmpty(t, first)
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		require.Equal(t, first, MCPPolicyVersion("ag"), "version must be deterministic")
 	}
 }
@@ -244,4 +250,85 @@ func TestBackendSupportsMCP(t *testing.T) {
 	// Unknown backends default to supported: the list only records measured
 	// negatives, and a new backend should be probed rather than disabled.
 	require.True(t, BackendSupportsMCP("some-future-agent"))
+}
+
+// TestResolveMCPServers_TransportGate pins the capability filter, including the
+// unknown-transport case: forwarding something the agent will reject fails the
+// whole session/new, so an unrecognized transport is dropped rather than passed
+// through. Validation rejects unknown transports at save time, so this only
+// fires for a hand-edited config.yaml — which is exactly when a hard failure
+// would be hardest to diagnose.
+func TestResolveMCPServers_TransportGate(t *testing.T) {
+	servers := []MCPServer{
+		{Name: "s", Transport: MCPTransportStdio, Command: "node"},
+		{Name: "h", Transport: MCPTransportHTTP, URL: "https://h"},
+		{Name: "e", Transport: MCPTransportSSE, URL: "https://e"},
+		{Name: "u", Transport: "carrier-pigeon", Command: "coo"},
+	}
+	withMCPTestState(t, servers, &Agent{ID: "ag", Backend: "claude", MCPServers: MCPServerPolicy{Mode: MCPPolicyAll}})
+
+	names := func(caps MCPCapabilities) []string {
+		servers := ResolveMCPServers("ag", caps)
+		out := make([]string, 0, len(servers))
+		for _, s := range servers {
+			out = append(out, s.Name)
+		}
+		return out
+	}
+
+	require.Equal(t, []string{"s"}, names(MCPCapabilities{}),
+		"without advertised transports only the mandatory stdio may pass")
+	require.Equal(t, []string{"s", "h"}, names(MCPCapabilities{HTTP: true}))
+	require.Equal(t, []string{"s", "e"}, names(MCPCapabilities{SSE: true}))
+	require.Equal(t, []string{"s", "h", "e"}, names(MCPCapabilities{HTTP: true, SSE: true}))
+}
+
+// TestResolveMCPServers_SelectedHonoursCapabilities pins that the policy filter
+// and the capability filter compose: naming an http server is not enough if the
+// agent never advertised http.
+func TestResolveMCPServers_SelectedHonoursCapabilities(t *testing.T) {
+	servers := []MCPServer{
+		{Name: "s", Transport: MCPTransportStdio, Command: "node"},
+		{Name: "h", Transport: MCPTransportHTTP, URL: "https://h"},
+	}
+	withMCPTestState(t, servers, &Agent{
+		ID: "ag", Backend: "claude",
+		MCPServers: MCPServerPolicy{Mode: MCPPolicySelected, Names: []string{"h"}},
+	})
+
+	require.Empty(t, ResolveMCPServers("ag", MCPCapabilities{}))
+	got := ResolveMCPServers("ag", MCPCapabilities{HTTP: true})
+	require.Len(t, got, 1)
+	require.Equal(t, "h", got[0].Name)
+}
+
+// TestMCPPolicyVersion_SelectedIsOrderIndependent pins that a selected policy
+// compares by membership, not by the order the user ticked the boxes — the hash
+// drives "did the policy change, should we reconnect", so a reordering must not
+// force one.
+func TestMCPPolicyVersion_SelectedIsOrderIndependent(t *testing.T) {
+	servers := []MCPServer{
+		{Name: "a", Transport: MCPTransportStdio, Command: "node"},
+		{Name: "b", Transport: MCPTransportStdio, Command: "node"},
+	}
+	agent := &Agent{
+		ID: "ag", Backend: "claude",
+		MCPServers: MCPServerPolicy{Mode: MCPPolicySelected, Names: []string{"a", "b"}},
+	}
+	withMCPTestState(t, servers, agent)
+	v1 := MCPPolicyVersion("ag")
+
+	agent.MCPServers.Names = []string{"b", "a"}
+	require.Equal(t, v1, MCPPolicyVersion("ag"))
+}
+
+// TestMCPPolicyVersion_UnsupportedBackend pins the backend gate: a CLI-only
+// backend never receives servers, so it must have no version at all — otherwise
+// every turn would look like a policy change and force a pointless reconnect.
+func TestMCPPolicyVersion_UnsupportedBackend(t *testing.T) {
+	withMCPTestState(t, []MCPServer{{Name: "a", Transport: MCPTransportStdio, Command: "node"}},
+		&Agent{ID: "ag", Backend: "dsh", MCPServers: MCPServerPolicy{Mode: MCPPolicyAll}})
+	require.Empty(t, MCPPolicyVersion("ag"))
+
+	require.Empty(t, MCPPolicyVersion("missing"), "unknown agent → no version")
 }

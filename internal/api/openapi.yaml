@@ -4281,10 +4281,9 @@ paths:
 
         - **复制**：`{source_id, name}` —— 克隆已有 agent。
         - **新建 ACP 智能体**：`{name, acp_command}` —— 接入内置列表之外的工具，
-          复用现有 ACP 链路。命令按空格拆分（**不支持引号**），`backend` 恒为
-          `custom-acp`（不接受客户端指定），传输固定 `acp-stdio`；模型等能力由
-          该 agent 首次连接后上报，此前 `models` 为空。命令为空或超 4096 字节
-          返回 `400` + `InvalidAcpCommand`。
+          复用现有 ACP 链路。命令按空格拆分（**不支持引号**、≤4096 字节），
+          `backend` 恒为 `custom-acp`（不接受客户端指定），传输固定 `acp-stdio`；
+          模型等能力由该 agent 首次连接后上报，此前 `models` 为空。
 
         **名称全局唯一**（决策 #50）：重名 `409` + `AgentNameTaken`；等于群聊
         用户昵称返回 `409` + `AgentNameReserved`。
@@ -4317,12 +4316,9 @@ paths:
         `NoProjectSelected`，**默认智能体不能限定项目**（`CannotScopeDefaultAgent`）。
         已创建会话不受作用域变化影响。
 
-        `mcp_servers` 是该智能体的 MCP 启用策略对象：
-        `{"mode":"all"|"none"|"selected","names":["a","b"]}`。只存策略，服务定义
-        在 `mcp.servers`（config.yaml），因此改一次密钥对所有智能体生效。
-        省略 `mode` 等价于 `all`（全局列表为空时是 no-op，所以默认安全）。
-        **不需要断开连接**：连接在每一轮开始前比对策略哈希，变了才带着新列表重连，
-        不会打断正在进行的对话。
+        `mcp_servers` 是 MCP 启用策略
+        `{"mode":"all"|"none"|"selected","names":["a"]}`：只存策略（定义在
+        `mcp.servers`），省略 `mode` 即 `all`，下一轮生效。
 
         `name` 全局唯一（决策 #50）：改名撞上其它 agent 返回 `409` +
         `AgentNameTaken`；改成群聊用户昵称返回 `409` + `AgentNameReserved`。

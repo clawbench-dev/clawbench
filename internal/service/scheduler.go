@@ -787,7 +787,7 @@ func emitTaskEvent(taskID, status, executionID, sessionID, projectPath, taskName
 	}
 	// Write-ahead: persist before broadcast so event log has no gaps
 	// Skip when push_mode is "disabled" — no notifications desired
-	if model.ConfigInstance.PushMode != "disabled" {
+	if model.ConfigInstance.PushMode != model.PushModeDisabled {
 		StoreNotifiableEvent(msg)
 	}
 	mgr.BroadcastEvent(msg)

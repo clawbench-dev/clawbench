@@ -534,6 +534,26 @@ func TestStreamEventToPayload_WarningOmitsEmptyDetail(t *testing.T) {
 	assert.False(t, hasDetail, "error_detail should be omitted when empty")
 }
 
+// A warning that tells the user to log in must carry the command to run, or the
+// banner has nothing actionable to show.
+func TestStreamEventToPayload_WarningCarriesLoginCommand(t *testing.T) {
+	payload := StreamEventToPayload(ai.StreamEvent{
+		Type:     "warning",
+		Content:  "Not authenticated",
+		Reason:   "auth_required",
+		LoginCmd: "claude login",
+	})
+	m, ok := payload.(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "claude login", m["login_cmd"])
+
+	// Absent when the backend declares no command: an empty string would render
+	// as a dangling "run: ".
+	plain := StreamEventToPayload(ai.StreamEvent{Type: "warning", Content: "x"}).(map[string]any)
+	_, has := plain["login_cmd"]
+	assert.False(t, has)
+}
+
 // --- acpStatePayload ---
 
 func TestStreamEventToPayload_ModeUpdate(t *testing.T) {

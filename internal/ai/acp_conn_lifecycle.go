@@ -255,17 +255,12 @@ func (c *ACPConn) ensureAliveWithSession(ctx context.Context, cwd string) (bool,
 	// filtered list would force a reconnect on every fresh process.
 	wantMCPVersion := c.mcpPolicyVersion()
 	mcpChanged := wantMCPVersion != c.mcpVersion
-	if c.alive && c.isAliveLocked() && c.acpSID != "" && !mcpChanged {
+	if c.canReuseLocked() && !mcpChanged {
 		slog.Debug("acp conn: reusing existing connection", "clawbench_sid", c.clawbenchSID, "acp_sid", c.acpSID)
 		c.lastUsed = time.Now()
 		return false, nil
 	}
-	if c.alive && mcpChanged {
-		slog.Info("acp conn: MCP policy changed, reconnecting before this turn",
-			"clawbench_sid", c.clawbenchSID,
-			"old_version", c.mcpVersion,
-			"new_version", wantMCPVersion)
-	}
+	c.logMCPReconnectLocked(mcpChanged, wantMCPVersion)
 
 	// Snapshot cached config state before spawn
 	prevConfig := c.snapshotCachedConfig()
@@ -324,17 +319,7 @@ func (c *ACPConn) ensureAliveWithSession(ctx context.Context, cwd string) (bool,
 	// "works until the process restarts, then the tools vanish" failure.
 	mcpServers := c.mcpServersForSession()
 
-	// The deadline depends on whether MCP servers are attached. Starting them is
-	// synchronous in session/new, and a server that accepts the connection but
-	// never answers (a script with a bug that blocks on stdin) costs the agent's
-	// own MCP timeout before the call returns. Measured 2026-10-19 across the
-	// probed backends: 30-80s for that shape, against 0.1-3s normally. 30s
-	// therefore turned a slow start into a failed session.
-	newSessTimeout := 30 * time.Second
-	if len(mcpServers) > 0 {
-		newSessTimeout = 120 * time.Second
-	}
-	newSessCtx, newSessCancel := context.WithTimeout(ctx, newSessTimeout)
+	newSessCtx, newSessCancel := context.WithTimeout(ctx, newSessionTimeout(len(mcpServers)))
 	defer newSessCancel()
 
 	newSessStart := time.Now()
@@ -343,7 +328,7 @@ func (c *ACPConn) ensureAliveWithSession(ctx context.Context, cwd string) (bool,
 		slog.String("cwd", cwd),
 		slog.String("c.cwd", c.cwd),
 		"mcp_servers", len(mcpServers),
-		"timeout", newSessTimeout)
+		"timeout", newSessionTimeout(len(mcpServers)))
 	sessResp, err := c.conn.NewSession(newSessCtx, acp.NewSessionRequest{
 		Cwd:        cwd,
 		McpServers: mcpServers,
@@ -367,6 +352,38 @@ func (c *ACPConn) ensureAliveWithSession(ctx context.Context, cwd string) (bool,
 func isMethodNotFound(err error) bool {
 	var reqErr *acp.RequestError
 	return errors.As(err, &reqErr) && reqErr.Code == -32601
+}
+
+// canReuseLocked reports whether the live process can serve the next turn as-is.
+// Caller holds c.mu.
+func (c *ACPConn) canReuseLocked() bool {
+	return c.alive && c.isAliveLocked() && c.acpSID != ""
+}
+
+// logMCPReconnectLocked records why a live connection is being replaced.
+func (c *ACPConn) logMCPReconnectLocked(mcpChanged bool, wantVersion string) {
+	if !c.alive || !mcpChanged {
+		return
+	}
+	slog.Info("acp conn: MCP policy changed, reconnecting before this turn",
+		"clawbench_sid", c.clawbenchSID,
+		"old_version", c.mcpVersion,
+		"new_version", wantVersion)
+}
+
+// newSessionTimeout is the deadline for session/new.
+//
+// It depends on whether MCP servers are attached: starting them is synchronous
+// in session/new, and a server that accepts the connection but never answers (a
+// script with a bug that blocks on stdin) costs the agent's own MCP timeout
+// before the call returns. Measured 2026-10-19 across the probed backends:
+// 30-80s for that shape, against 0.1-3s normally — so 30s turned a slow start
+// into a failed session.
+func newSessionTimeout(mcpServers int) time.Duration {
+	if mcpServers > 0 {
+		return 120 * time.Second
+	}
+	return 30 * time.Second
 }
 
 // recoverExistingSession re-attaches to a prior session after the agent process

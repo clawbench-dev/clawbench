@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -1678,5 +1679,67 @@ func TestHostLoop_MemberNotePolicyEnforcedEndToEnd(t *testing.T) {
 	}
 	if !strings.Contains(hostSecondPrompt, "A 密送给你") {
 		t.Fatalf("the host's note must be attributed to A, not the chair; got %q", hostSecondPrompt)
+	}
+}
+
+// The per-target pending-note queue is bounded, and the eviction CONVERGES: a
+// queue already over the cap (an install upgraded from the pre-cap code, which
+// had no limit at all) is trimmed back to the cap by the next add, rather than
+// shrinking by one row per new note and staying over it forever.
+func TestAddPendingBcc_EvictsDownToTheCap(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/free-bcc-cap"
+	groupID, _ := createFreeGroup(t, project, "A", "B")
+
+	for range maxPendingBccPerTarget + 2 {
+		addPendingBcc(groupID, "B", "note", bccRoleMember, "A")
+	}
+	if got := len(pendingBccForTarget(groupID, "B")); got != maxPendingBccPerTarget {
+		t.Fatalf("queue length = %d, want the cap %d", got, maxPendingBccPerTarget)
+	}
+
+	// A different target has its own independent budget.
+	addPendingBcc(groupID, "C", "other", bccRoleMember, "A")
+	if got := len(pendingBccForTarget(groupID, "C")); got != 1 {
+		t.Fatalf("per-target budget leaked across targets: got %d, want 1", got)
+	}
+}
+
+// The oldest notes are the ones dropped: the newest note is what the member is
+// about to read, so evicting it would lose the message that triggered the add.
+func TestAddPendingBcc_EvictsOldestFirst(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/free-bcc-order"
+	groupID, _ := createFreeGroup(t, project, "A", "B")
+
+	for i := range maxPendingBccPerTarget + 1 {
+		addPendingBcc(groupID, "B", fmt.Sprintf("note-%02d", i), bccRoleMember, "A")
+	}
+
+	pending := pendingBccForTarget(groupID, "B")
+	if len(pending) != maxPendingBccPerTarget {
+		t.Fatalf("queue length = %d, want %d", len(pending), maxPendingBccPerTarget)
+	}
+	if pending[0].Content != "note-01" {
+		t.Fatalf("oldest note = %q, want note-01 (the very first is evicted)", pending[0].Content)
+	}
+	if want := fmt.Sprintf("note-%02d", maxPendingBccPerTarget); pending[len(pending)-1].Content != want {
+		t.Fatalf("newest note = %q, want %q (must survive)", pending[len(pending)-1].Content, want)
+	}
+}
+
+// Empty inputs are no-ops rather than rows with a blank target, which no member
+// could ever claim and which would occupy the budget forever.
+func TestAddPendingBcc_IgnoresEmptyInputs(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/free-bcc-empty"
+	groupID, _ := createFreeGroup(t, project, "A", "B")
+
+	addPendingBcc("", "B", "content", bccRoleMember, "A")
+	addPendingBcc(groupID, "   ", "content", bccRoleMember, "A")
+	addPendingBcc(groupID, "B", "   ", bccRoleMember, "A")
+
+	if got := pendingBccForTarget(groupID, "B"); len(got) != 0 {
+		t.Fatalf("empty inputs must not be stored; got %v", got)
 	}
 }

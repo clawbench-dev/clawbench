@@ -551,38 +551,19 @@ func buildAgentSetClauses(id string, patch AgentPatch) ([]string, []any, error) 
 		args = append(args, value)
 	}
 
-	if patch.PreferredMode != nil {
-		addSet("preferred_mode", *patch.PreferredMode)
-	}
-	if patch.PreferredModel != nil {
-		addSet("preferred_model", *patch.PreferredModel)
-	}
-	if patch.PreferredThinkingEffort != nil {
-		addSet("preferred_thinking_effort", *patch.PreferredThinkingEffort)
+	for _, f := range plainStringAgentFields(patch) {
+		if f.value != nil {
+			addSet(f.column, *f.value)
+		}
 	}
 	if patch.Transport != nil {
 		addSet("transport", normalizeAgentTransport(*patch.Transport))
-	}
-	if patch.AcpCommand != nil {
-		addSet("acp_command", *patch.AcpCommand)
 	}
 	if patch.Name != nil {
 		if err := ensureAgentNameFree(id, *patch.Name); err != nil {
 			return nil, nil, err
 		}
 		addSet("name", *patch.Name)
-	}
-	if patch.Specialty != nil {
-		addSet("specialty", *patch.Specialty)
-	}
-	if patch.CustomSystemPrompt != nil {
-		// Only the user's own text is stored; the composed prompt is built at
-		// read time. Writing it here would freeze the shared prompt into the row.
-		addSet("custom_system_prompt", *patch.CustomSystemPrompt)
-	}
-	if patch.Avatar != nil {
-		// Raw SVG string (not a data URI); "" clears it back to the built-in icon.
-		addSet("avatar", *patch.Avatar)
 	}
 	if patch.SortOrder != nil {
 		addSet("sort_order", *patch.SortOrder)
@@ -594,20 +575,55 @@ func buildAgentSetClauses(id string, patch AgentPatch) ([]string, []any, error) 
 		addSet("disabled", boolToInt(*patch.Disabled))
 	}
 	if patch.MCPServers != nil {
-		// Normalize so a row never stores an empty mode (which would read back
-		// as "none" through a future code path that forgets Normalized()).
-		policy := patch.MCPServers.Normalized()
-		if policy.Names == nil {
-			policy.Names = []string{}
-		}
-		encoded, err := json.Marshal(policy)
+		encoded, err := encodeMCPPolicy(*patch.MCPServers)
 		if err != nil {
-			return nil, nil, fmt.Errorf("encode mcp policy: %w", err)
+			return nil, nil, err
 		}
-		addSet("mcp_servers", string(encoded))
+		addSet("mcp_servers", encoded)
 	}
 	setClauses, args = applyProjectScopeSet(patch, setClauses, args)
 	return setClauses, args, nil
+}
+
+// agentStringField is one column that is written verbatim from the patch.
+type agentStringField struct {
+	column string
+	value  *string
+}
+
+// plainStringAgentFields lists the patch fields that need no transformation
+// beyond "nil means leave alone". Order is the historical write order; it only
+// affects the generated SQL text, not the outcome.
+func plainStringAgentFields(patch AgentPatch) []agentStringField {
+	return []agentStringField{
+		{"preferred_mode", patch.PreferredMode},
+		{"preferred_model", patch.PreferredModel},
+		{"preferred_thinking_effort", patch.PreferredThinkingEffort},
+		{"acp_command", patch.AcpCommand},
+		{"specialty", patch.Specialty},
+		// Only the user's own text is stored; the composed prompt is built at
+		// read time. Writing it here would freeze the shared prompt into the row.
+		{"custom_system_prompt", patch.CustomSystemPrompt},
+		// Raw SVG string (not a data URI); "" clears it back to the built-in icon.
+		{"avatar", patch.Avatar},
+	}
+}
+
+// encodeMCPPolicy renders a per-agent MCP policy for storage.
+//
+// Normalized so a row never stores an empty mode (which would read back as
+// "none" through a future code path that forgets Normalized()), and Names is
+// forced non-nil so the stored JSON always carries the field.
+func encodeMCPPolicy(policy model.MCPServerPolicy) (string, error) {
+	policy = policy.Normalized()
+	if policy.Names == nil {
+		policy.Names = []string{}
+	}
+	encoded, err := json.Marshal(policy)
+	if err != nil {
+		return "", fmt.Errorf("encode mcp policy: %w", err)
+	}
+	return string(encoded), nil
 }
 
 // patchThinkingEffortForModel applies one per-model effort write.

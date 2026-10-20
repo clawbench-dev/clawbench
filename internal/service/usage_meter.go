@@ -222,16 +222,11 @@ func ComputeUsageMeter(ctx context.Context, now time.Time) (*UsageMeterStatus, e
 	}
 
 	rowExpr, _ := usageMeterRowExpr(rule.Metric)
-	startArg := cycle.start.UTC().Format("2006-01-02 15:04:05")
-	endArg := now.UTC().Format("2006-01-02 15:04:05")
-
-	if err := store.ReadDB().QueryRowContext(ctx,
-		"SELECT COALESCE(SUM("+rowExpr+"), 0) FROM chat_metadata m "+
-			"WHERE m.created_at >= ? AND m.created_at < ?",
-		startArg, endArg,
-	).Scan(&st.Actual); err != nil {
-		return nil, fmt.Errorf("usage meter total: %w", err)
+	actual, err := sumUsageInCycle(ctx, rowExpr, cycle, now)
+	if err != nil {
+		return nil, err
 	}
+	st.Actual = actual
 
 	series, err := queryUsageMeterSeries(ctx, rowExpr, cycle, now)
 	if err != nil {
@@ -239,30 +234,55 @@ func ComputeUsageMeter(ctx context.Context, now time.Time) (*UsageMeterStatus, e
 	}
 	st.Series = series
 
-	// Rate-based projection: how many days of the cycle the remaining quota
-	// lasts at the pace observed so far. Measured against elapsed time rather
-	// than whole days so day 1 does not divide by one day of usage that has
-	// only been accumulating for an hour.
-	elapsedHours := now.Sub(cycle.start).Hours()
-	if st.Actual > 0 && elapsedHours > 0 {
-		ratePerDay := st.Actual / (elapsedHours / 24)
-		if ratePerDay > 0 {
-			daysToExhaust := rule.Quota / ratePerDay
-			if daysToExhaust <= float64(rule.PeriodDays) {
-				day := int(math.Ceil(daysToExhaust))
-				if day < cycle.dayInCycle {
-					// Already past the quota: the "projected" day is today.
-					day = cycle.dayInCycle
-				}
-				if day > rule.PeriodDays {
-					day = rule.PeriodDays
-				}
-				st.ProjectedExhaustDay = day
-			}
-		}
-	}
+	st.ProjectedExhaustDay = projectExhaustDay(st.Actual, rule, cycle, now)
 
 	return st, nil
+}
+
+// sumUsageInCycle totals one metric over the cycle window.
+func sumUsageInCycle(ctx context.Context, rowExpr string, cycle usageMeterCycle, now time.Time) (float64, error) {
+	var actual float64
+	err := store.ReadDB().QueryRowContext(ctx,
+		"SELECT COALESCE(SUM("+rowExpr+"), 0) FROM chat_metadata m "+
+			"WHERE m.created_at >= ? AND m.created_at < ?",
+		cycle.start.UTC().Format("2006-01-02 15:04:05"),
+		now.UTC().Format("2006-01-02 15:04:05"),
+	).Scan(&actual)
+	if err != nil {
+		return 0, fmt.Errorf("usage meter total: %w", err)
+	}
+	return actual, nil
+}
+
+// projectExhaustDay estimates which day of the cycle the quota runs out on.
+//
+// Rate-based: how many days of the cycle the remaining quota lasts at the pace
+// observed so far. Measured against elapsed time rather than whole days so day
+// 1 does not divide by one day of usage that has only been accumulating for an
+// hour. Returns 0 when no projection is possible or the quota outlasts the
+// cycle.
+func projectExhaustDay(actual float64, rule model.UsageMeterConfig, cycle usageMeterCycle, now time.Time) int {
+	elapsedHours := now.Sub(cycle.start).Hours()
+	if actual <= 0 || elapsedHours <= 0 {
+		return 0
+	}
+	ratePerDay := actual / (elapsedHours / 24)
+	if ratePerDay <= 0 {
+		return 0
+	}
+	daysToExhaust := rule.Quota / ratePerDay
+	if daysToExhaust > float64(rule.PeriodDays) {
+		return 0
+	}
+	day := int(math.Ceil(daysToExhaust))
+	if day < cycle.dayInCycle {
+		// Already past the quota: the "projected" day is today.
+		day = cycle.dayInCycle
+	}
+	if day > rule.PeriodDays {
+		day = rule.PeriodDays
+	}
+	return day
 }
 
 // queryUsageMeterSeries returns the cumulative actual-vs-expected curve for the
@@ -465,28 +485,8 @@ func CheckUsageMeter(ctx context.Context) string {
 	// WS broadcast + pending-event write-ahead. Gated on push_mode like the
 	// other notification paths: "disabled" means the user turned notifications
 	// off entirely, and the notification-center row above is unaffected.
-	if model.ConfigInstance.PushMode != "disabled" {
-		payload := map[string]any{
-			"status": stage,
-			"title":  title,
-			"body":   body,
-			// The numbers travel with the event so a client can render the
-			// capsule without a follow-up request.
-			"metric":   st.Metric,
-			"actual":   st.Actual,
-			"expected": st.Expected,
-			"quota":    st.Quota,
-		}
-		msg := ws.ServerMessage{
-			Type:  ws.MessageTypeEvent,
-			ID:    eventID,
-			Event: UsageMeterEventType,
-			Data:  payload,
-		}
-		StoreNotifiableEvent(msg)
-		if mgr := ws.GetManager(); mgr != nil {
-			mgr.BroadcastEvent(msg)
-		}
+	if model.ConfigInstance.PushMode != model.PushModeDisabled {
+		broadcastUsageMeterStage(eventID, stage, title, body, st)
 	}
 
 	// IM channels. PushForgeEvent-style: transport only, wording comes from here.
@@ -521,6 +521,32 @@ func CheckUsageMeter(ctx context.Context) string {
 	return stage
 }
 
+// broadcastUsageMeterStage pushes the crossing to connected clients and to the
+// pending-event log.
+func broadcastUsageMeterStage(eventID, stage, title, body string, st *UsageMeterStatus) {
+	payload := map[string]any{
+		"status": stage,
+		"title":  title,
+		"body":   body,
+		// The numbers travel with the event so a client can render the
+		// capsule without a follow-up request.
+		"metric":   st.Metric,
+		"actual":   st.Actual,
+		"expected": st.Expected,
+		"quota":    st.Quota,
+	}
+	msg := ws.ServerMessage{
+		Type:  ws.MessageTypeEvent,
+		ID:    eventID,
+		Event: UsageMeterEventType,
+		Data:  payload,
+	}
+	StoreNotifiableEvent(msg)
+	if mgr := ws.GetManager(); mgr != nil {
+		mgr.BroadcastEvent(msg)
+	}
+}
+
 // renderUsageMeterMessage localizes the notification text at write time.
 //
 // Stored as rendered text (not an i18n key) on purpose: a notification records
@@ -547,7 +573,7 @@ func renderUsageMeterMessage(stage string, st *UsageMeterStatus) (string, string
 
 // usageMeterUnitSuffix returns the display unit for a metric. Cost is always
 // reported in USD: chat_metadata stores a single cost column and no currency, so
-// a non-USD amount is summed as-is and labelled as such rather than converted.
+// a non-USD amount is summed as-is and labeled as such rather than converted.
 func usageMeterUnitSuffix(metric string) string {
 	switch metric {
 	case model.UsageMeterMetricTokens:

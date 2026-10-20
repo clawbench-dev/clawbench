@@ -414,3 +414,193 @@ func TestServeAgentSelfTestDeep_RequiresProject(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
+
+// The deep route's request guards: wrong method, a malformed agent id, and an
+// unknown agent. Each is answered before any static check runs, so a client
+// mistake never costs a turn.
+func TestServeAgentSelfTestDeep_Guards(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+	projectDir := t.TempDir()
+
+	withProject := func(req *http.Request) *http.Request {
+		req.AddCookie(&http.Cookie{Name: model.ScopedCookieName("clawbench_project"), Value: projectDir})
+		return req
+	}
+
+	t.Run("wrong method", func(t *testing.T) {
+		req := withProject(newRequest(t, http.MethodGet, "/api/agents/claude/self-test-deep", nil))
+		withAuthCookie(req, model.SessionToken)
+		w := callHandler(ServeAgentSelfTestDeep, req)
+		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+	})
+
+	t.Run("invalid agent id", func(t *testing.T) {
+		req := withProject(newRequest(t, http.MethodPost, "/api/agents/../etc/self-test-deep", nil))
+		withAuthCookie(req, model.SessionToken)
+		w := callHandler(ServeAgentSelfTestDeep, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("unknown agent", func(t *testing.T) {
+		req := withProject(newRequest(t, http.MethodPost, "/api/agents/does-not-exist/self-test-deep", nil))
+		withAuthCookie(req, model.SessionToken)
+		w := callHandler(ServeAgentSelfTestDeep, req)
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+}
+
+// A deep run that cannot even create its throwaway session must fail cleanly:
+// the error is reported in the response and nothing is left behind. The
+// session-creation failure is forced by pointing the project at a path the
+// registry cannot resolve.
+func TestRunDeepSelfTest_ReportsSessionCreationFailure(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	agent := model.GetAgent("claude")
+	require.NotNil(t, agent)
+
+	// A project path outside any registered root: CreateSession cannot resolve
+	// it to a project id.
+	res, err := runDeepSelfTest(context.Background(), agent, "/definitely/not/a/registered/project")
+	require.Error(t, err)
+	assert.Empty(t, res.Reply)
+	assert.Empty(t, res.SessionID, "no session may be reported when none was created")
+}
+
+// TestServeAgentSelfTest_Guards pins the request guards of the static route:
+// wrong method, a malformed agent id, and an unknown agent.
+func TestServeAgentSelfTest_Guards(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	t.Run("wrong method", func(t *testing.T) {
+		req := newRequest(t, http.MethodGet, "/api/agents/claude/self-test", nil)
+		withAuthCookie(req, model.SessionToken)
+		w := callHandler(ServeAgentSelfTest, req)
+		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+	})
+
+	t.Run("invalid agent id", func(t *testing.T) {
+		req := newRequest(t, http.MethodPost, "/api/agents/../etc/self-test", nil)
+		withAuthCookie(req, model.SessionToken)
+		w := callHandler(ServeAgentSelfTest, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("unknown agent", func(t *testing.T) {
+		req := newRequest(t, http.MethodPost, "/api/agents/nope/self-test", nil)
+		withAuthCookie(req, model.SessionToken)
+		w := callHandler(ServeAgentSelfTest, req)
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+}
+
+// effectiveTransport must prefer an explicit override, then "has an ACP
+// command", then CLI — the same order resolveIsACP uses.
+func TestEffectiveTransport(t *testing.T) {
+	assert.Equal(t, "acp-stdio", effectiveTransport(&model.Agent{Transport: "acp-stdio", AcpCommand: "x"}),
+		"an explicit transport wins")
+	assert.Equal(t, "acp-stdio", effectiveTransport(&model.Agent{AcpCommand: "x"}),
+		"an ACP command implies ACP")
+	assert.Equal(t, "cli", effectiveTransport(&model.Agent{Command: "claude"}),
+		"neither → CLI")
+}
+
+// checkAcpState must WARN (not fail) before the first handshake: capabilities
+// only exist after a connection, so their absence says nothing about health.
+func TestCheckAcpState_NoHandshakeIsWarning(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+	agent := model.GetAgent("claude")
+	require.NotNil(t, agent)
+
+	run := &selfTestRun{res: AgentSelfTestResult{AgentID: agent.ID}}
+	checkAcpState(run, agent, transportCLI)
+	assert.Empty(t, run.res.Checks, "a CLI agent has no ACP state to report")
+
+	run = &selfTestRun{res: AgentSelfTestResult{AgentID: agent.ID}}
+	checkAcpState(run, agent, transportACP)
+	assert.Equal(t, 0, run.res.Failed, "a missing handshake must not fail the agent")
+	require.Len(t, run.res.Checks, 1)
+	assert.Equal(t, selfTestWarn, run.res.Checks[0].Status)
+	assert.Equal(t, 1, run.res.Warned)
+}
+
+// checkPreferredMode flags a mode the agent no longer advertises — the case that
+// makes a session fail on its first turn with a config-option error.
+func TestCheckPreferredMode_FlagsVanishedMode(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+	agent := model.GetAgent("claude")
+	require.NotNil(t, agent)
+	agent.PreferredMode = "plan"
+	t.Cleanup(func() { agent.PreferredMode = "" })
+
+	reg := ai.GetAgentCapabilityRegistry()
+	reg.UpdateModes(agent.ID, []ai.ModeDef{{ID: "code", Name: "Code"}})
+	t.Cleanup(func() { reg.UpdateModes(agent.ID, nil) })
+
+	run := &selfTestRun{res: AgentSelfTestResult{AgentID: agent.ID}}
+	checkPreferredMode(run, agent, transportACP)
+	require.Len(t, run.res.Checks, 1)
+	assert.Equal(t, selfTestWarn, run.res.Checks[0].Status,
+		"a preferred mode the agent dropped is a warning, not a failure")
+
+	// A mode that IS still advertised passes.
+	agent.PreferredMode = "code"
+	run = &selfTestRun{res: AgentSelfTestResult{AgentID: agent.ID}}
+	checkPreferredMode(run, agent, transportACP)
+	require.Len(t, run.res.Checks, 1)
+	assert.Equal(t, selfTestOK, run.res.Checks[0].Status)
+}
+
+// An agent with no system prompt runs with no instructions at all: that is a
+// warning (the turn still works, it is just unguided).
+func TestCheckSystemPrompt_WarnsWhenEmpty(t *testing.T) {
+	run := &selfTestRun{res: AgentSelfTestResult{AgentID: "a"}}
+	checkSystemPrompt(run, &model.Agent{ID: "a", RuntimeSystemPrompt: "  "})
+	require.Len(t, run.res.Checks, 1)
+	assert.Equal(t, selfTestWarn, run.res.Checks[0].Status)
+
+	run = &selfTestRun{res: AgentSelfTestResult{AgentID: "a"}}
+	checkSystemPrompt(run, &model.Agent{ID: "a", RuntimeSystemPrompt: "be nice"})
+	require.Len(t, run.res.Checks, 1)
+	assert.Equal(t, selfTestOK, run.res.Checks[0].Status)
+}
+
+// probeCommand's three outcomes: no command configured, an already-cancelled
+// request (which must not report green), and a missing executable.
+func TestProbeCommand(t *testing.T) {
+	ctx := context.Background()
+
+	got := probeCommand(ctx, "k", "   ")
+	assert.Equal(t, selfTestFail, got.Status)
+	assert.Contains(t, got.Detail, "No command configured")
+
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	got = probeCommand(cancelled, "k", "go")
+	assert.Equal(t, selfTestFail, got.Status,
+		"an abandoned test must not report a green result")
+	assert.Contains(t, got.Detail, "cancelled")
+
+	got = probeCommand(ctx, "k", "definitely-not-installed-anywhere")
+	assert.Equal(t, selfTestFail, got.Status)
+	assert.Contains(t, got.Detail, "was not found")
+
+	got = probeCommand(ctx, "k", "go")
+	assert.Equal(t, selfTestOK, got.Status)
+}
+
+// agentHasModel also accepts models the ACP runtime reported, which the CLI
+// discovery does not know about: the self-test must not contradict the
+// preferred-model guard, which accepts them too.
+func TestAgentHasModel(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+	agent := &model.Agent{ID: "a", Models: []model.AgentModel{{ID: "m1"}}}
+	assert.True(t, agentHasModel(agent, "m1"))
+	assert.False(t, agentHasModel(agent, "m2"))
+
+	// Registered by the ACP runtime instead of the static list.
+	reg := ai.GetAgentCapabilityRegistry()
+	reg.UpdateModels("a", []model.AgentModel{{ID: "acp-only"}})
+	t.Cleanup(func() { reg.UpdateModels("a", nil) })
+	assert.True(t, agentHasModel(agent, "acp-only"))
+}

@@ -1,5 +1,10 @@
 <template>
-  <BottomSheet :open="open" auto @close="handleClose">
+  <!-- `panel-class` gives this sheet a stable hook. There are TWO SessionDrawer
+       components in the app (this one, the per-session settings sheet, and
+       components/session/SessionDrawer.vue, the session LIST); the list one
+       owns `.session-drawer-sheet`, so this one must be distinguishable or a
+       test selecting the list drawer would match this one instead. -->
+  <BottomSheet :open="open" auto panel-class="session-settings-sheet" @close="handleClose">
     <template #header>
       <Cpu :size="16" class="bs-header-icon" />
       <span class="bs-header-title">{{ agentName }}</span>

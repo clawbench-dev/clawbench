@@ -48,12 +48,22 @@ test.describe.serial('group member context panel', () => {
       await expect(page.locator('.gm-usage').nth(i)).toContainText('—')
     }
 
-    // Clicking the row opens the nested member panel above the roster.
+    // Clicking the row opens the member's settings sheet (the shared
+    // SessionDrawer) ABOVE the roster, on its usage tab.
+    //
+    // `.session-settings-sheet` is the panel hook on the per-session settings
+    // drawer. It must NOT be `.session-drawer-sheet`: that class belongs to
+    // components/session/SessionDrawer.vue — the session LIST — and matching it
+    // here would silently select the wrong sheet.
     await rows.first().click()
-    const memberSheet = page.locator('.member-context-sheet')
+    const memberSheet = page.locator('.bs-panel.session-settings-sheet')
     await expect(memberSheet).toBeVisible({ timeout: 10000 })
-    // No usage reported ⇒ the shared panel is not rendered; the empty state is.
-    await expect(memberSheet.locator('.mcs-empty')).toBeVisible()
+    // Opens on the usage tab, because the chip the user just tapped IS a usage
+    // number. The tab's own label is the i18n `chat.sessionInfo.contextUsage`
+    // ("Context" / "上下文") — not the word "usage".
+    await expect(memberSheet.locator('.model-tab.active')).toHaveText(/context|上下文/i)
+    // acp-mock reports no usage ⇒ the empty state, never a 0% bar.
+    await expect(memberSheet.locator('.usage-tab-content .tab-empty-hint')).toBeVisible()
     // The roster is still open behind it (nested, not a replacement).
     await expect(page.locator('.gm-list')).toBeVisible()
 

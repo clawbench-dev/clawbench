@@ -273,15 +273,10 @@ func stableServersJSON(servers []MCPServer) string {
 	// encoding/json sorts map keys, which is exactly the determinism we need.
 	stable := make([]stableServer, 0, len(servers))
 	for _, s := range servers {
-		stable = append(stable, stableServer{
-			Name:      s.Name,
-			Transport: s.Transport,
-			Command:   s.Command,
-			Args:      s.Args,
-			Env:       s.Env,
-			URL:       s.URL,
-			Headers:   s.Headers,
-		})
+		// The two structs are field-for-field identical apart from tags; a
+		// conversion is the single place that mapping is expressed, so a new
+		// field cannot be added to one side and silently dropped from the hash.
+		stable = append(stable, stableServer(s))
 	}
 	b, err := json.Marshal(stable)
 	if err != nil {

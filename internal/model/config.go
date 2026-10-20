@@ -36,6 +36,11 @@ func ParseSHA256Hash(password string) string {
 // carries no context-window sizes.
 const DefaultForkContextBudget = 100000
 
+// PushModeDisabled is the push_mode value that turns every outbound
+// notification channel off. The notification-center row is unaffected: it is
+// an in-app log, not a push.
+const PushModeDisabled = "disabled"
+
 // DefaultLanguage is the UI language used before the frontend reports one.
 // It matches the frontend's fallbackLocale so a fresh server localizes
 // background strings the same way the UI would.
