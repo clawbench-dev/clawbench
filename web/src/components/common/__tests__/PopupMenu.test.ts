@@ -19,6 +19,15 @@ vi.mock('@/utils/popupMenuPosition', () => ({
   computeMenuStyle,
 }))
 
+// The containing-block probe is exercised by its own unit tests; here it only
+// needs to be controllable so the fallback path can be driven.
+const { measureFixedContainingBlock } = vi.hoisted(() => ({
+  measureFixedContainingBlock: vi.fn(() => null),
+}))
+vi.mock('@/utils/fixedPosition', () => ({
+  measureFixedContainingBlock,
+}))
+
 describe('PopupMenu', () => {
   beforeEach(() => {
     computeMenuStyle.mockClear()
@@ -183,6 +192,52 @@ describe('PopupMenu', () => {
     vi.useRealTimers()
     wrapper.unmount()
   })
+
+  it('discards a measured containing block that would put the menu off screen', async () => {
+    // The probe can return a bogus block (a transformed ancestor mid-Transition,
+    // a box measured before layout). Trusting it placed the `#` completion menu
+    // 600px BELOW the viewport, where no row could be clicked. The gate must
+    // recompute with the zoom-only path instead.
+    //
+    // jsdom reports no client rects, so the measurement branch is only reached
+    // when the element claims to be laid out.
+    vi.spyOn(Element.prototype, 'getClientRects').mockReturnValue({ length: 1, item: () => null })
+    vi.useFakeTimers()
+    measureFixedContainingBlock.mockReturnValue({ left: 0, top: 0, right: 380, bottom: 59, scaleX: 1, scaleY: 1 })
+    // First call: the off-screen result. Second call (fallback): a sane one.
+    computeMenuStyle
+      .mockReturnValueOnce({ position: 'fixed', bottom: '-596.6px', left: '90px' })
+      .mockReturnValueOnce({ position: 'fixed', bottom: '62.4px', left: '90px' })
+
+    mount(PopupMenu, {
+      props: { show: true, targetElement: { getBoundingClientRect: () => ({ top: 600, bottom: 660, left: 10, right: 200 }) } },
+      slots: { default: '<div>Item</div>' },
+      global: { stubs: { Teleport: { template: '<div><slot/></div>' } } },
+    })
+    await vi.advanceTimersByTimeAsync(16)
+
+    expect(computeMenuStyle).toHaveBeenCalledTimes(2)
+    // The fallback call omits `containingBlock` entirely.
+    expect(computeMenuStyle.mock.calls[1][1].containingBlock).toBeUndefined()
+    vi.useRealTimers()
+  })
+
+  it('keeps the measured containing block when it lands on screen', async () => {
+    vi.spyOn(Element.prototype, 'getClientRects').mockReturnValue({ length: 1, item: () => null })
+    vi.useFakeTimers()
+    measureFixedContainingBlock.mockReturnValue({ left: 0, top: 0, right: 1280, bottom: 720, scaleX: 1, scaleY: 1 })
+    computeMenuStyle.mockReturnValue({ position: 'fixed', bottom: '62.4px', left: '90px' })
+
+    mount(PopupMenu, {
+      props: { show: true, targetElement: { getBoundingClientRect: () => ({ top: 600, bottom: 660, left: 10, right: 200 }) } },
+      slots: { default: '<div>Item</div>' },
+      global: { stubs: { Teleport: { template: '<div><slot/></div>' } } },
+    })
+    await vi.advanceTimersByTimeAsync(16)
+
+    expect(computeMenuStyle).toHaveBeenCalledTimes(1)
+    expect(computeMenuStyle.mock.calls[0][1].containingBlock).toBeTruthy()
+    vi.useRealTimers()
 })
 
 describe('PopupMenu — back press', () => {
@@ -244,4 +299,6 @@ describe('PopupMenu — back press', () => {
     wrapper.unmount()
     _resetHandlers()
   })
+  })
+
 })
