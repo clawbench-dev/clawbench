@@ -480,7 +480,14 @@ export function useChatSession(options: UseChatSessionOptions) {
   // Clearing on missing data would discard valid SSE-cached values, causing
   // the context progress bar to disappear when switching back to a running session.
   function syncUsageFromData(usageStateData?: { used?: number; size?: number; cost?: number; currency?: string; inputTokens?: number; outputTokens?: number; totalTokens?: number; cachedReadTokens?: number; cachedWriteTokens?: number; thoughtTokens?: number; cacheCreationTokens?: number; cacheHitTokens?: number; cacheMissTokens?: number; credit?: number; usageByCategory?: Record<string, number> }, sessionId?: string) {
-    if (usageStateData && (usageStateData.size ?? 0) > 0) {
+    if (!usageStateData) return
+    // "Carries anything", not "size > 0": a session whose only billing was a
+    // generation tool has credit with no context window, and dropping the whole
+    // snapshot here left the panel showing 0 until the next usage_update.
+    const hasAny = (usageStateData.size ?? 0) > 0 || (usageStateData.used ?? 0) > 0 ||
+      (usageStateData.credit ?? 0) > 0 || (usageStateData.inputTokens ?? 0) > 0 ||
+      (usageStateData.outputTokens ?? 0) > 0 || (usageStateData.totalTokens ?? 0) > 0
+    if (hasAny) {
       updateUsageState(usageStateData.used ?? 0, usageStateData.size ?? 0, usageStateData.cost, usageStateData.currency, sessionId, usageStateData.inputTokens, usageStateData.outputTokens, usageStateData.totalTokens, usageStateData.cachedReadTokens, usageStateData.cachedWriteTokens, usageStateData.thoughtTokens, usageStateData.cacheCreationTokens, usageStateData.cacheHitTokens, usageStateData.cacheMissTokens, usageStateData.credit, usageStateData.usageByCategory)
     }
   }

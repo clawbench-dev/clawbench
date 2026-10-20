@@ -56,18 +56,35 @@ export function usageColor(pct: number): string {
 }
 
 /**
- * Cache hit rate = hit / (hit + miss), as a percentage.
+ * Cache hit rate as a percentage, matching the agent's own accounting.
  *
- * Returns null when neither side is reported — the row is hidden entirely
- * rather than showing a fabricated 0%.
+ * CodeBuddy (and the WebUI stats page) define the denominator as the FULL
+ * prompt — `cacheReadInputTokens / inputTokens` — because its prompt_tokens
+ * already include the cached portion AND the cache-write portion. Dividing by
+ * (hit + miss) alone drops the write side from the denominator and reports a
+ * systematically HIGHER hit rate than the agent does; on a mixed DB the two
+ * figures differ by several points.
+ *
+ * `inputTokens` is the normalized full prompt for every backend (Claude/Codex
+ * are rewritten to the same shape at ingestion, see
+ * tokenUsageFromClaudeTokenCount), so it is the preferred denominator. It is
+ * only trusted when it actually covers the split — a snapshot carrying a
+ * per-call input with turn-level cache counters would otherwise divide by too
+ * small a number. Falling back to hit+miss keeps older/partial snapshots
+ * renderable rather than hiding the row.
+ *
+ * Returns null when nothing is reported — the row is hidden entirely rather
+ * than showing a fabricated 0%.
  */
-export function cacheHitRate(usage: Pick<UsageSnapshot, 'cacheHitTokens' | 'cacheMissTokens'> | null | undefined): number | null {
+export function cacheHitRate(usage: Pick<UsageSnapshot, 'cacheHitTokens' | 'cacheMissTokens' | 'inputTokens'> | null | undefined): number | null {
   const hit = usage?.cacheHitTokens ?? 0
   const miss = usage?.cacheMissTokens ?? 0
+  const input = usage?.inputTokens ?? 0
   if (hit <= 0 && miss <= 0) return null
-  const total = hit + miss
-  if (total <= 0) return 0
-  return (hit / total) * 100
+  const split = hit + miss
+  const denominator = input > 0 && input >= split ? input : split
+  if (denominator <= 0) return 0
+  return (hit / denominator) * 100
 }
 
 /**

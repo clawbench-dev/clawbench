@@ -1111,9 +1111,12 @@ export function useChatStream(options: UseChatStreamOptions) {
       case 'usage_update': {
         if (sessionChanged()) return
         const usageData = payload as { size?: number; used?: number; cost?: number; currency?: string; inputTokens?: number; outputTokens?: number; totalTokens?: number; cachedReadTokens?: number; cachedWriteTokens?: number; thoughtTokens?: number; cacheCreationTokens?: number; cacheHitTokens?: number; cacheMissTokens?: number; credit?: number; usageByCategory?: Record<string, number> }
-        if ((usageData.size ?? 0) > 0) {
-          updateUsageState(usageData.used ?? 0, usageData.size!, usageData.cost, usageData.currency, sessionId, usageData.inputTokens, usageData.outputTokens, usageData.totalTokens, usageData.cachedReadTokens, usageData.cachedWriteTokens, usageData.thoughtTokens, usageData.cacheCreationTokens, usageData.cacheHitTokens, usageData.cacheMissTokens, usageData.credit, usageData.usageByCategory)
-        }
+        // No size gate: credit-only notifications (CodeBuddy generation tools
+        // and team-member turns) carry used=0/size=0 and would otherwise be
+        // dropped, losing the billing entirely. updateUsageState keeps the
+        // previous window sticky when size is absent, mirroring the server's
+        // MergeUsageState, so the ring never regresses.
+        updateUsageState(usageData.used ?? 0, usageData.size ?? 0, usageData.cost, usageData.currency, sessionId, usageData.inputTokens, usageData.outputTokens, usageData.totalTokens, usageData.cachedReadTokens, usageData.cachedWriteTokens, usageData.thoughtTokens, usageData.cacheCreationTokens, usageData.cacheHitTokens, usageData.cacheMissTokens, usageData.credit, usageData.usageByCategory)
         break
       }
 

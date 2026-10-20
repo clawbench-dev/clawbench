@@ -473,10 +473,18 @@ const overviewCachePresent = computed(() => {
   const t0 = totals.value
   return !!t0 && t0.cacheHit + t0.cacheMiss > 0
 })
+// Denominator = the FULL prompt (input), matching the agent's own accounting
+// (`cacheReadInputTokens / inputTokens`). `input` already includes both the
+// cached and the cache-write portions, so dividing by (hit + miss) alone would
+// omit the write side and report a systematically higher rate. Fall back to
+// hit+miss when a range's input does not cover its split (older rows).
 const overviewHitRateText = computed(() => {
   const t0 = totals.value
-  if (!t0 || t0.cacheHit + t0.cacheMiss <= 0) return '—'
-  return `${((t0.cacheHit / (t0.cacheHit + t0.cacheMiss)) * 100).toFixed(1)}%`
+  if (!t0) return '—'
+  const split = t0.cacheHit + t0.cacheMiss
+  if (split <= 0) return '—'
+  const denominator = t0.input >= split ? t0.input : split
+  return `${((t0.cacheHit / denominator) * 100).toFixed(1)}%`
 })
 
 const overviewDonutOption = computed(() => {

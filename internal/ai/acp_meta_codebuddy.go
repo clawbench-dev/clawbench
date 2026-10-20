@@ -32,29 +32,32 @@ import (
 // monetary cost.
 //
 // CodeBuddy repurposes the standard `cost` field: it ships the turn's credit
-// consumption as cost.amount with an empty currency (the genuine credit is
-// separately available as _meta.usage.credit). Persisting it as
+// consumption as cost.amount with an empty currency. Persisting it as
 // chat_metadata.cost_usd would inflate the cost stats with a unit-less credit
-// number, so the ACP cost/currency is discarded at ingestion for this backend.
+// number, so it is never treated as money. It is still real billing, though:
+// the cost-only paths (generation tools, team-member turns) carry no usage
+// block, so that amount is captured as metaExtraction.CostCredit.
 // Every other agent reports a real monetary cost (e.g. Claude's USD).
 func costFieldCarriesCredit(backend string) bool {
 	return backend == "codebuddy"
 }
 
 const (
-	metaKeyCodeBuddyUsage        = "usage"
-	metaKeyCodeBuddyByCategory   = "codebuddy.ai/usageByCategory"
-	metaKeyCodeBuddyRequestID    = "codebuddy.ai/requestId"
-	metaKeyCodeBuddyTraceID      = "codebuddy.ai/traceId"
-	metaKeyCodeBuddyTraceParent  = "codebuddy.ai/traceparent"
-	metaKeyCodeBuddyMessageID    = "codebuddy.ai/messageId"
-	metaKeyCodeBuddyMsgRequestID = "codebuddy.ai/messageRequestId"
-	metaKeyCodeBuddyReqModelID   = "codebuddy.ai/requestModelId"
-	metaKeyCodeBuddyReqModelName = "codebuddy.ai/requestModelName"
-	metaKeyCodeBuddyRespModelID  = "codebuddy.ai/responseModelId"
-	metaKeyCodeBuddyFinishReason = "codebuddy.ai/finishReason"
-	metaKeyCodeBuddyOutcome      = "codebuddy.ai/outcome"
-	metaKeyCodeBuddyAgentPhase   = "codebuddy.ai/agentPhase"
+	metaKeyCodeBuddyUsage      = "usage"
+	metaKeyCodeBuddyByCategory = "codebuddy.ai/usageByCategory"
+	//nolint:gosec // G101: a _meta key name, not a credential
+	metaKeyCodeBuddyRequestCredits = "codebuddy.ai/requestCredits"
+	metaKeyCodeBuddyRequestID      = "codebuddy.ai/requestId"
+	metaKeyCodeBuddyTraceID        = "codebuddy.ai/traceId"
+	metaKeyCodeBuddyTraceParent    = "codebuddy.ai/traceparent"
+	metaKeyCodeBuddyMessageID      = "codebuddy.ai/messageId"
+	metaKeyCodeBuddyMsgRequestID   = "codebuddy.ai/messageRequestId"
+	metaKeyCodeBuddyReqModelID     = "codebuddy.ai/requestModelId"
+	metaKeyCodeBuddyReqModelName   = "codebuddy.ai/requestModelName"
+	metaKeyCodeBuddyRespModelID    = "codebuddy.ai/responseModelId"
+	metaKeyCodeBuddyFinishReason   = "codebuddy.ai/finishReason"
+	metaKeyCodeBuddyOutcome        = "codebuddy.ai/outcome"
+	metaKeyCodeBuddyAgentPhase     = "codebuddy.ai/agentPhase"
 	// metaKeyCodeBuddyErrorMessage carries the refusal payload on a
 	// stopReason=refusal PromptResponse: a JSON-encoded
 	// {code,message,data} blob whose data.details holds the real cause.
@@ -210,6 +213,13 @@ func extractCodeBuddyMeta(meta map[string]any) *metaExtraction {
 		ext.Category = cat
 	}
 
+	// Per-request credit totals. CodeBuddy accumulates the credit of a whole
+	// REQUEST (which may span several model calls) server-side and re-reports
+	// the running total on every notification, so a throttled or dropped frame
+	// does not lose credit. It is also the only credit source on the cost-only
+	// paths (generation tools, team-member turns) which carry no usage block.
+	ext.RequestCredits = codeBuddyRequestCredits(meta[metaKeyCodeBuddyRequestCredits])
+
 	// Trace/identity namespace.
 	t := &metaTrace{
 		RequestID:        metaString(meta[metaKeyCodeBuddyRequestID]),
@@ -239,4 +249,31 @@ func extractCodeBuddyMeta(meta map[string]any) *metaExtraction {
 		return nil
 	}
 	return ext
+}
+
+// codeBuddyRequestCredits parses _meta["codebuddy.ai/requestCredits"], the
+// agent's own per-request running credit totals.
+//
+// Non-positive entries are dropped: an absent entry means the same thing to
+// creditTotal(), and this also keeps a malformed value from being recorded as a
+// real 0 alongside a valid sibling. Returns nil when nothing usable remains so
+// HasData() does not report an empty extraction.
+func codeBuddyRequestCredits(v any) map[string]float64 {
+	m, ok := v.(map[string]any)
+	if !ok || len(m) == 0 {
+		return nil
+	}
+	credits := make(map[string]float64, len(m))
+	for rid, raw := range m {
+		if rid == "" {
+			continue
+		}
+		if c := metaFloat(raw); c > 0 {
+			credits[rid] = c
+		}
+	}
+	if len(credits) == 0 {
+		return nil
+	}
+	return credits
 }

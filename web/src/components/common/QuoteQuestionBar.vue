@@ -52,6 +52,36 @@
 
       <!-- Expanded: quoted snippet (full, when there is one) + input. -->
       <div v-else class="quote-bar-expanded">
+        <!-- Destination row (issue #560 follow-up): WHICH conversation this
+             comment will land in, shown before the content so it reads as the
+             addressee of the message ("To: …", then the body).
+
+             One line, click to change: opening the picker here only RECORDS a
+             destination (intent `choose`) — it must not commit anything, since
+             the user is still composing. -->
+        <button
+          class="qq-target"
+          type="button"
+          :title="t('quoteBar.changeTarget')"
+          :aria-label="`${t('quoteBar.sendTo')} ${targetLabel}${t('quoteBar.targetSeparator')}${t('quoteBar.changeTarget')}`"
+          @click.stop="onChangeTarget"
+        >
+          <AgentIcon
+            v-if="targetAgentId"
+            :backend="targetBackend"
+            :name="targetAgentName"
+            :avatar="targetAgentAvatar"
+            size="sm"
+            class="qq-target-icon"
+          />
+          <span v-else class="qq-target-icon qq-target-icon--empty" aria-hidden="true">
+            <Plus :size="9" />
+          </span>
+          <span class="qq-target-label">{{ t('quoteBar.sendTo') }}</span>
+          <span class="qq-target-name" :class="{ 'qq-target-name--empty': !targetLabel }">{{ targetLabel }}</span>
+          <ChevronRight :size="12" class="qq-target-chevron" />
+        </button>
+
         <!-- Quoted snippet — fully shown when expanded. Absent when the user has
              not selected anything yet (composer mode): the bar then asks for a
              message directly. -->
@@ -120,16 +150,54 @@
 </template>
 
 <script setup>
-import { Plus, Send, Link, MessageSquare, Quote } from 'lucide-vue-next'
+import { Plus, Send, Link, MessageSquare, Quote, ChevronRight } from 'lucide-vue-next'
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { canSendInput } from '@/utils/quoteQuestionUtils'
 import { computeSelectionToolbarStyle } from '@/utils/selectionToolbarPosition'
 import { useVisualViewportInset } from '@/composables/useVisualViewportInset'
+import { useSessionIdentity } from '@/composables/useSessionIdentity'
+import { useAgents } from '@/composables/useAgents'
+import { useChosenTarget, chooseTarget, clearChosenTarget } from '@/composables/useConversationTarget'
 import FileIcon from '@/components/common/FileIcon.vue'
 import CopyButton from '@/components/common/CopyButton.vue'
+import AgentIcon from '@/components/common/AgentIcon.vue'
 
 const { t } = useI18n()
+
+// ── Destination row ────────────────────────────────────────────
+// The bar shows WHICH conversation the comment will land in, so "send" is never
+// a guess. Default = the active session (the common case, zero clicks); picking
+// another one is a single click on the row.
+const identity = useSessionIdentity()
+const { getAgentBackend, getAgentName, getAgentAvatar } = useAgents()
+const chosenTarget = useChosenTarget()
+
+const targetLabel = computed(() => {
+  const picked = chosenTarget.value
+  if (picked) return picked.title || t('session.unnamed')
+  const id = identity.currentSessionId.value
+  if (!id) return t('quoteBar.chooseSession')
+  return identity.currentSessionTitle.value || t('session.unnamed')
+})
+
+/**
+ * Agent of the destination, for the row's icon.
+ *
+ * When a target was picked, the picker recorded its agent. Otherwise this is
+ * the active session's agent, which the identity store already tracks.
+ */
+const targetAgentId = computed(() => {
+  const picked = chosenTarget.value
+  return picked ? picked.agentId : identity.currentAgentId.value || ''
+})
+const targetBackend = computed(() => getAgentBackend(targetAgentId.value))
+const targetAgentName = computed(() => getAgentName(targetAgentId.value))
+const targetAgentAvatar = computed(() => getAgentAvatar(targetAgentId.value))
+
+function onChangeTarget() {
+  chooseTarget()
+}
 
 const props = defineProps({
   visible: Boolean,
@@ -274,6 +342,9 @@ function onVisibleChange(val) {
   if (!val) {
     expanded.value = false
     inputText.value = ''
+    // A destination picked for THIS comment must not silently redirect the
+    // next one: the row is a per-composition choice, not a sticky setting.
+    clearChosenTarget()
   }
 }
 
@@ -671,6 +742,88 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
   gap: var(--space-2);
   padding: var(--space-3) var(--space-4);
 }
+
+/* ── Destination row ("To: <session>") ──
+   Sits at the TOP of the expanded panel and is separated by a rule, so it reads
+   as the addressee of the whole block (like a mail composer's To: line) rather
+   than as another item between the quote and the input.
+
+   22px tall, one line, no background at rest: this is a label the user can
+   change, not a button competing with 发送. The chevron is the only "this is
+   clickable" cue, which is why it never shrinks — a long session name
+   ellipsises instead of pushing it out. */
+.qq-target {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: 22px;
+  padding: 0 0 var(--space-2);
+  margin: 0;
+  border: none;
+  border-bottom: 1px solid var(--border-color);
+  border-radius: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text-muted);
+  transition: color var(--duration-base);
+  /* A long-press here must not summon the WebView's selection menu (same
+     reason as the commit buttons below). */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.qq-target:hover { color: var(--text-secondary); }
+.qq-target:active { opacity: var(--opacity-hover); }
+
+/* The agent icon is an <img>/<svg>/initial span from AgentIcon; at `sm` it is
+   14px, which matches the row's 11px text block. */
+.qq-target-icon {
+  flex-shrink: 0;
+}
+
+/* No agent to show (no active session yet): a small dashed square with a plus,
+   matching the icon's footprint so the row does not jump when a session loads. */
+.qq-target-icon--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border: 1px dashed color-mix(in srgb, var(--text-muted) 60%, transparent);
+  border-radius: 3px;
+  color: var(--text-muted);
+}
+
+.qq-target-label {
+  flex-shrink: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+.qq-target-name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* No session yet: the name is an instruction ("选择会话…"), not a title. */
+.qq-target-name--empty { color: var(--text-muted); }
+
+.qq-target-chevron {
+  flex-shrink: 0;
+  opacity: 0.55;
+  transition: opacity var(--duration-base);
+}
+
+.qq-target:hover .qq-target-chevron { opacity: 0.9; }
 
 /* Quoted snippet block — relative so the floating copy button anchors here.
    Square (radius 0) with a 2px accent rule on the left: the hard edge is what

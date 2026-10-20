@@ -1022,3 +1022,147 @@ func TestMetaAccum_ResetClearsCallDedup(t *testing.T) {
 	assert.Equal(t, 1000, acc.Usage.InputTokens,
 		"the dedup set must reset with the accumulator each turn")
 }
+
+// ---------------------------------------------------------------------------
+// Credit — three sources, one cumulative figure
+// ---------------------------------------------------------------------------
+
+// The agent's own per-request running total is parsed from
+// _meta["codebuddy.ai/requestCredits"] and is preferred over the per-call sum
+// because it self-heals: a dropped notification's amount is already folded
+// into the next total.
+func TestExtractCodeBuddyMeta_RequestCredits(t *testing.T) {
+	ext := extractCodeBuddyMeta(map[string]any{
+		"codebuddy.ai/requestCredits": map[string]any{"req-1": 3.85},
+	})
+	require.NotNil(t, ext)
+	assert.Equal(t, map[string]float64{"req-1": 3.85}, ext.RequestCredits)
+	assert.Equal(t, 3.85, ext.creditTotal())
+
+	// Junk entries are dropped rather than counted as zero.
+	ext = extractCodeBuddyMeta(map[string]any{
+		"codebuddy.ai/requestCredits": map[string]any{"": 9.0, "req-2": "nope", "req-3": 1.5},
+	})
+	require.NotNil(t, ext)
+	assert.Equal(t, map[string]float64{"req-3": 1.5}, ext.RequestCredits)
+}
+
+// The cost-only paths (generation tools, team-member turns) carry credit with
+// NO usage block. Before this, costFieldCarriesCredit discarded the amount and
+// the billing vanished entirely.
+func TestMapACPSessionUpdate_CostOnlyCreditIsCaptured(t *testing.T) {
+	ch := make(chan StreamEvent, 10)
+	conn := &ACPConn{agent: &model.Agent{ID: "cb", Backend: "codebuddy"}}
+
+	// Exactly the shape a generation-tool billing arrives in: used=0, size=0,
+	// cost carries the credit, and _meta has no usage block.
+	mapACPSessionUpdate(acp.SessionUpdate{
+		UsageUpdate: &acp.SessionUsageUpdate{
+			Used: 0, Size: 0,
+			Cost: &acp.Cost{Amount: 12.5},
+			Meta: map[string]any{"codebuddy.ai/requestId": "req-gen"},
+		},
+	}, ch, context.Background(), conn, nil)
+
+	var evt *StreamEvent
+	select {
+	case e := <-ch:
+		evt = &e
+	default:
+		t.Fatal("expected usage_update event")
+	}
+	require.NotNil(t, evt.Usage)
+	assert.Equal(t, 0.0, evt.Usage.Cost, "credit must never be persisted as money")
+	assert.Equal(t, 12.5, evt.Usage.Credit, "a cost-only billing still consumes credit")
+}
+
+// A replayed usage_update from the previous turn must not re-bill its credit.
+func TestMapACPSessionUpdate_ReplayedFrameDropsCredit(t *testing.T) {
+	ch := make(chan StreamEvent, 10)
+	conn := &ACPConn{agent: &model.Agent{ID: "cb", Backend: "codebuddy"}}
+	// The previous turn used req-old; it is now part of the completed baseline.
+	conn.setLastCompletedRequestID("req-old")
+
+	mapACPSessionUpdate(acp.SessionUpdate{
+		UsageUpdate: &acp.SessionUsageUpdate{
+			Used: 0, Size: 0,
+			Cost: &acp.Cost{Amount: 99.0},
+			Meta: map[string]any{
+				"codebuddy.ai/requestId":      "req-old",
+				"codebuddy.ai/requestCredits": map[string]any{"req-old": 99.0},
+			},
+		},
+	}, ch, context.Background(), conn, nil)
+
+	var evt *StreamEvent
+	select {
+	case e := <-ch:
+		evt = &e
+	default:
+		t.Fatal("expected usage_update event")
+	}
+	require.NotNil(t, evt.Usage)
+	assert.Equal(t, 0.0, evt.Usage.Credit, "the previous turn's credit must not be billed twice")
+}
+
+// The forwarded credit is the TURN CUMULATIVE figure, not the current frame's
+// own amount — otherwise the session panel shows the last model call's credit
+// (jumping every few hundred ms) while the ledger stores the turn sum.
+func TestMapACPSessionUpdate_CreditIsTurnCumulative(t *testing.T) {
+	ch := make(chan StreamEvent, 10)
+	conn := &ACPConn{agent: &model.Agent{ID: "cb", Backend: "codebuddy"}}
+
+	frame := func(msgID string, credit float64) {
+		mapACPSessionUpdate(acp.SessionUpdate{
+			UsageUpdate: &acp.SessionUsageUpdate{
+				Used: 30000, Size: 200000,
+				Meta: map[string]any{
+					"codebuddy.ai/requestId": "req-1",
+					"codebuddy.ai/messageId": msgID,
+					"usage":                  map[string]any{"prompt_tokens": 30000, "completion_tokens": 5, "credit": credit},
+				},
+			},
+		}, ch, context.Background(), conn, nil)
+	}
+	frame("msg-1", 1.25)
+	frame("msg-2", 1.5)
+
+	// Drain both forwarded events; each carries the running total as of that
+	// frame, so the LAST one must read 2.75 rather than 1.5.
+	var last *StreamEvent
+	for len(ch) > 0 {
+		e := <-ch
+		last = &e
+	}
+	require.NotNil(t, last)
+	require.NotNil(t, last.Usage)
+	assert.InDelta(t, 2.75, last.Usage.Credit, 1e-9,
+		"forwarded credit must be the turn total, not the current call's amount")
+}
+
+// requestCredits are cumulative on the agent side, so merge takes the max per
+// requestId. Summing would double-bill every re-report.
+func TestMetaMergeExtraction_RequestCreditsMaxPerRequest(t *testing.T) {
+	var acc metaExtraction
+	metaMergeExtraction(&acc, &metaExtraction{RequestCredits: map[string]float64{"req-1": 3.0}})
+	metaMergeExtraction(&acc, &metaExtraction{RequestCredits: map[string]float64{"req-1": 3.85}})
+	// An out-of-order (stale) frame must not regress the total.
+	metaMergeExtraction(&acc, &metaExtraction{RequestCredits: map[string]float64{"req-1": 3.2}})
+	assert.Equal(t, map[string]float64{"req-1": 3.85}, acc.RequestCredits)
+
+	// A second request accumulates on top of the first.
+	metaMergeExtraction(&acc, &metaExtraction{RequestCredits: map[string]float64{"req-2": 1.0}})
+	assert.InDelta(t, 4.85, acc.creditTotal(), 1e-9)
+}
+
+// The per-request total already includes the per-call credits, so the two must
+// never be added together — the largest single source wins.
+func TestMetaExtraction_CreditTotalNeverSumsSources(t *testing.T) {
+	ext := &metaExtraction{
+		Usage:          &metaTokenUsage{Credit: 1.5},
+		CostCredit:     2.0,
+		RequestCredits: map[string]float64{"req-1": 3.85},
+	}
+	assert.InDelta(t, 3.85, ext.creditTotal(), 1e-9,
+		"requestCredits covers the same billings; it must not be added to them")
+}

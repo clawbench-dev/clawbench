@@ -372,6 +372,7 @@ static isInternalStreamingUpdate(u) { ... }
 
 ```
 codebuddy.ai/usageByCategory   codebuddy.ai/requestId
+codebuddy.ai/requestCredits
 codebuddy.ai/traceId           codebuddy.ai/traceparent
 codebuddy.ai/messageId         codebuddy.ai/messageRequestId
 codebuddy.ai/requestModelId    codebuddy.ai/requestModelName
@@ -393,7 +394,7 @@ codebuddy.ai/outcome           codebuddy.ai/agentPhase
 | `ToolCallStatus` 枚举 | `pending\|in_progress\|completed\|failed` | `tool_call_update.status` 额外含 `running` |
 | `agentCapabilities` | 规范字段集 | 额外 `delegateToolsSupport` / `mainAgentSupport` / `multitaskSupport` / `processDefaults` |
 | `sessionCapabilities` | 用 capability 声明 list/delete/fork/resume | **完全不广告**，但无条件实现 |
-| `usage_update.cost` | 货币金额 | 塞入 credit 数值（`currency` 为空）；ClawBench 已在 `costFieldCarriesCredit` 中丢弃 |
+| `usage_update.cost` | 货币金额 | 塞入 credit 数值（`currency` 为空）。ClawBench 不当作美元（`costFieldCarriesCredit`），但**会**把它记为额度消耗——生成工具与 Team 成员这两条计费路径**只**走 cost、`_meta` 里没有 usage 块 |
 | `clientCapabilities._meta` | 可自由使用 | 用了**两个命名空间**：`codebuddy.ai` 与 `workbuddy.desktop` |
 | `clientInfo.name` | 仅标识 | 用作功能门控（`"codebuddy-web-ui"` 解锁 mcpUi*） |
 | 扩展方法应回 `Method not found` | ✅ | agent 侧合规；但 `question`/`delegateTool` 被拒后返回的是 `{outcome: "cancelled"}` 而非 JSON-RPC error |

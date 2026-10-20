@@ -452,13 +452,20 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 			Used: update.UsageUpdate.Used,
 			Size: update.UsageUpdate.Size,
 		}
-		// Discard the ACP cost for agents that repurpose the field: CodeBuddy
-		// ships its credit consumption as cost.amount (empty currency), so
-		// persisting it would corrupt the cost stats. See
+		// Agents that repurpose the cost field (CodeBuddy) are still BILLING —
+		// the amount is credit, not money. Never let it reach Cost (which feeds
+		// chat_metadata.cost_usd), but do not throw it away either: it is the
+		// only credit signal on the cost-only paths (generation tools, team
+		// member turns), which carry no usage block. See
 		// costFieldCarriesCredit.
-		if update.UsageUpdate.Cost != nil && !costFieldCarriesCredit(backendID) {
-			usageState.Cost = update.UsageUpdate.Cost.Amount
-			usageState.Currency = update.UsageUpdate.Cost.Currency
+		reusedCostAsCredit := false
+		if update.UsageUpdate.Cost != nil {
+			if costFieldCarriesCredit(backendID) {
+				reusedCostAsCredit = update.UsageUpdate.Cost.Amount > 0
+			} else {
+				usageState.Cost = update.UsageUpdate.Cost.Amount
+				usageState.Currency = update.UsageUpdate.Cost.Currency
+			}
 		}
 		// Per-agent _meta extensions on the usage_update (CodeBuddy packs the
 		// OpenAI-style token usage + usageByCategory here). Merge them into the
@@ -484,19 +491,43 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		// whole turn. A replay carries the previous turn's requestId, so
 		// isReplayedTurnMeta identifies it reliably; drop its usage block
 		// entirely and keep only the raw used/size occupancy (which is a
-		// window measurement, not a per-turn quantity).
-		if ext := extractMetaUsage(backendID, update.UsageUpdate.Meta); ext != nil {
+		// window measurement, not a per-turn quantity). Credit goes with it for
+		// the same reason: the previous turn's per-request total must not be
+		// billed again.
+		ext := extractMetaUsage(backendID, update.UsageUpdate.Meta)
+		if reusedCostAsCredit {
+			if ext == nil {
+				ext = &metaExtraction{}
+			}
+			if update.UsageUpdate.Cost.Amount > ext.CostCredit {
+				ext.CostCredit = update.UsageUpdate.Cost.Amount
+			}
+		}
+		if ext != nil {
 			if isReplayedTurnMeta(conn, backendID, update.UsageUpdate.Meta) {
 				slog.Warn("acp: dropping replayed usage_update trace identity and token counters from previous turn",
 					slog.String("request_id", ext.traceRequestID()),
 					slog.String("clawbench_sid", conn.clawbenchSID))
 				ext.Trace = nil
 				ext.Usage = nil
+				ext.RequestCredits = nil
+				ext.CostCredit = 0
 			}
 			applyMetaExtractionToUsageState(usageState, ext)
 			if conn != nil {
 				conn.mergeMetaExtraction(ext)
 			}
+		}
+		// Report the TURN-CUMULATIVE credit, not this frame's increment.
+		//
+		// Credit arrives piecemeal: one usage block per model call, plus
+		// cost-only frames for generation tools and team members. Forwarding
+		// each frame's own figure makes the session panel show the last CALL's
+		// credit (it jumps up and down every few hundred ms) while the ledger
+		// stores the turn SUM — the UI and the stats page then disagree about
+		// the same turn. The accumulator already holds the running total.
+		if conn != nil {
+			usageState.Credit = conn.peekMetaAccumCredit()
 		}
 		forwardACPEvent(ch, StreamEvent{Type: "usage_update", Usage: usageState})
 		if conn != nil {

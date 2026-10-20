@@ -89,6 +89,48 @@ const pickerOpen = ref(false)
 const pending = ref<PendingRequest | null>(null)
 
 /**
+ * Why the picker is open.
+ *
+ *  - `deliver` — the classic flow: a payload is already snapshotted in
+ *    {@link pending} and confirming DELIVERS it to the chosen session.
+ *  - `choose`  — the user is only picking a destination ahead of time (the
+ *    quote bar's "发送到 <session>" row). Nothing is pending; confirming just
+ *    records the choice in {@link chosenTarget} and the bar keeps composing.
+ *
+ * These must not be conflated: a `choose` confirm that ran the delivery path
+ * would send an empty payload, and a `deliver` confirm that only recorded a
+ * choice would silently drop the card.
+ */
+const pickerIntent = ref<'deliver' | 'choose'>('deliver')
+
+/** A destination picked ahead of time, shown in the quote bar. */
+export interface TargetChoice {
+  id: string
+  /** Display name; '' means the session has no title yet (render a fallback). */
+  title: string
+  /** The session's agent, so the row can show the same icon the picker does. */
+  agentId: string
+}
+
+/**
+ * The destination the user picked from the quote bar's "发送到" row.
+ *
+ * Scoped to ONE composition: the bar clears it when it closes, so a choice made
+ * for one comment cannot silently redirect the next one.
+ */
+const chosenTarget = ref<TargetChoice | null>(null)
+
+/** Read the picked destination (null = "use the active session"). */
+export function useChosenTarget() {
+  return chosenTarget
+}
+
+/** Forget the picked destination (bar closed / committed). */
+export function clearChosenTarget(): void {
+  chosenTarget.value = null
+}
+
+/**
  * Options for {@link requestTarget}.
  *
  * `deliverTo: 'active'` means "this is a comment on what I am looking at, put
@@ -141,7 +183,11 @@ function resolveActiveSessionId(): string {
  */
 export function requestTarget(request: PendingRequest, opts: RequestTargetOptions = {}): void {
   if (opts.deliverTo === 'active') {
-    const activeId = resolveActiveSessionId()
+    // A destination picked in the bar wins over the active session: the user
+    // explicitly said "not this one" and the row still shows that choice, so
+    // delivering to the active session would contradict what is on screen.
+    const chosen = chosenTarget.value
+    const activeId = chosen?.id || resolveActiveSessionId()
     if (activeId) {
       // Deliberately not awaited: every caller is a synchronous UI handler, and
       // the request object is already a snapshot, so nothing can mutate under it.
@@ -159,8 +205,32 @@ export function requestTarget(request: PendingRequest, opts: RequestTargetOption
 
 /** Show the picker for an explicitly requested destination choice. */
 function openPicker(request: PendingRequest): void {
+  pickerIntent.value = 'deliver'
   pending.value = request
   pickerOpen.value = true
+}
+
+/**
+ * Open the picker purely to CHOOSE a destination — no payload, nothing to
+ * deliver on confirm. Used by the quote bar's "发送到" row.
+ *
+ * The bar stays open behind the sheet (it is the thing being configured), so
+ * this must not dismiss anything.
+ */
+export function chooseTarget(): void {
+  pickerIntent.value = 'choose'
+  pending.value = null
+  pickerOpen.value = true
+}
+
+/** Which kind of picker session is in progress (see {@link pickerIntent}). */
+export function usePickerIntent() {
+  return pickerIntent
+}
+
+/** Record a destination chosen ahead of time (the `choose` confirm path). */
+export function setChosenTarget(choice: TargetChoice): void {
+  chosenTarget.value = choice
 }
 
 /**
@@ -185,6 +255,7 @@ export function usePendingTarget() {
 export function cancelTarget() {
   pickerOpen.value = false
   pending.value = null
+  pickerIntent.value = 'deliver'
 }
 
 /**
@@ -332,12 +403,58 @@ export async function dispatchToTarget(target: SessionTarget, request: PendingRe
  * A no-op when nothing is pending (e.g. a stray event after cancel).
  *
  * `opts.openAfter` comes from the picker's "add and open" button.
+ *
+ * In the `choose` intent there is no payload: the pick is recorded for the quote
+ * bar and the user keeps composing. `openAfter` is meaningless there — the bar
+ * is still on screen, so jumping to the session would abandon the draft.
  */
 export async function confirmTarget(target: SessionTarget, opts: { openAfter?: boolean } = {}): Promise<void> {
+  if (pickerIntent.value === 'choose') {
+    pickerOpen.value = false
+    pickerIntent.value = 'deliver'
+    // `create` cannot be previewed in the bar (it has no id/title until it
+    // exists), so the row is a no-op there rather than a lie. The bar's own
+    // empty-state row opens the picker where "create" IS meaningful — via the
+    // normal delivery path, which creates and then sends.
+    if (target.kind === 'session') {
+      const identity = useSessionIdentity()
+      const meta = metaFor(target.id)
+      setChosenTarget({
+        id: target.id,
+        title: target.id === identity.currentSessionId.value
+          ? identity.currentSessionTitle.value
+          : meta.title,
+        agentId: target.id === identity.currentSessionId.value
+          ? identity.currentAgentId.value
+          : meta.agentId,
+      })
+    }
+    return
+  }
+
   const request = pending.value
   pickerOpen.value = false
   pending.value = null
   if (!request) return
   if (opts.openAfter) request.openAfter = true
   await dispatchToTarget(target, request)
+}
+
+/**
+ * Title + agent of a session the picker listed, for the bar's "发送到" row.
+ *
+ * The picker already fetched the list; the row only needs those two fields, so
+ * the lookup is registered by the dialog instead of issuing a second request
+ * from the bar.
+ */
+let metaLookup: ((sessionId: string) => { title: string; agentId: string }) | null = null
+
+export function setTargetMetaLookup(
+  fn: ((sessionId: string) => { title: string; agentId: string }) | null,
+): void {
+  metaLookup = fn
+}
+
+function metaFor(sessionId: string): { title: string; agentId: string } {
+  return metaLookup ? metaLookup(sessionId) : { title: '', agentId: '' }
 }

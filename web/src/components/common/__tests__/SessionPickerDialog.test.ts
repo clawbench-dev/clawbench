@@ -2,7 +2,12 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { ref } from 'vue'
 
-vi.mock('vue-i18n', () => ({
+// Partial mock, not a hand-rolled stub: the dialog now imports
+// useConversationTarget, which reaches @/i18n (a real createI18n call at module
+// scope). A whitelist mock that omits createI18n makes that import throw and the
+// whole suite loads zero tests.
+vi.mock('vue-i18n', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('vue-i18n')>()),
   useI18n: () => ({ t: (key: string) => key }),
 }))
 
@@ -69,8 +74,31 @@ vi.mock('@/components/common/LoadingIndicator.vue', () => ({
   default: { name: 'LoadingIndicator', template: '<div class="loading-stub" />' },
 }))
 
+/**
+ * Capture the lookup the dialog registers.
+ *
+ * The dialog is the only holder of the fetched session list, so it hands
+ * title/agent to the quote bar through this callback instead of the bar
+ * re-fetching. Wrapped (not replaced) so the rest of the module keeps working.
+ */
+const holders2 = vi.hoisted(() => ({
+  lookup: null as null | ((id: string) => { title: string; agentId: string }),
+}))
+vi.mock('@/composables/useConversationTarget.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/composables/useConversationTarget.ts')>()
+  return {
+    ...actual,
+    setTargetMetaLookup: (fn: ((id: string) => { title: string; agentId: string }) | null) => {
+      holders2.lookup = fn
+      actual.setTargetMetaLookup(fn)
+    },
+  }
+})
+
 import SessionPickerDialog from '@/components/common/SessionPickerDialog.vue'
 import { readWebFile } from '@/testUtils/readWebFile'
+
+const lookup = () => holders2.lookup
 
 const SESSIONS = [
   { id: 's-1', title: 'First session', agentId: 'a-codebuddy' },
@@ -474,5 +502,29 @@ describe('SessionPickerDialog', () => {
     await flushPromises()
 
     expect(wrapper.findAll('.sp-row-running').length).toBe(1)
+  })
+
+  /**
+   * The quote bar's "发送到" row shows a name and an agent icon for the session
+   * the user picked. That data must come from THIS list — the bar fetching
+   * `/api/ai/sessions` again would duplicate a request for data already here.
+   */
+  it('exposes the loaded title/agent to the quote bar lookup', async () => {
+    mountPicker()
+    await flushPromises()
+
+    expect(lookup()!('s-2')).toEqual({ title: 'Second session', agentId: 'a-claude' })
+    // Unknown id ⇒ empty, so the bar renders its unnamed fallback instead of
+    // showing a stale name from a previous pick.
+    expect(lookup()!('s-nope')).toEqual({ title: '', agentId: '' })
+  })
+
+  it('unregisters the lookup when unmounted', async () => {
+    const wrapper = mountPicker()
+    await flushPromises()
+    expect(lookup()).not.toBeNull()
+
+    wrapper.unmount()
+    expect(lookup()).toBeNull()
   })
 })

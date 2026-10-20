@@ -545,6 +545,48 @@ describe('updateUsageState', () => {
     // Clean up
     clearUsageState()
   })
+
+  // Cost-only notifications (CodeBuddy generation tools / team-member turns)
+  // carry used=0/size=0. They must not wipe a known window, and their credit
+  // must still land — otherwise the billing is invisible.
+  it('keeps a known window when a cost-only frame arrives', () => {
+    const { currentSessionId, contextUsed, contextSize, contextCredit } = useSessionIdentity()
+    currentSessionId.value = 'test-session'
+    updateUsageState(30000, 200000)
+    expect(contextSize.value).toBe(200000)
+
+    updateUsageState(0, 0, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, 12.5)
+    expect(contextUsed.value).toBe(30000)
+    expect(contextSize.value).toBe(200000)
+    expect(contextCredit.value).toBe(12.5)
+    // Clean up
+    clearUsageState()
+  })
+
+  // A size-bearing frame is authoritative: a genuine 0 used (post-compaction)
+  // must be applied, not treated as a naked notification.
+  it('trusts used from a frame that carries a window', () => {
+    const { currentSessionId, contextUsed } = useSessionIdentity()
+    currentSessionId.value = 'test-session'
+    updateUsageState(30000, 200000)
+    updateUsageState(0, 200000)
+    expect(contextUsed.value).toBe(0)
+    // Clean up
+    clearUsageState()
+  })
+
+  // Credit is the turn-cumulative figure forwarded by the backend, so a later
+  // frame replaces it wholesale rather than accumulating locally.
+  it('replaces credit with the forwarded turn total', () => {
+    const { currentSessionId, contextCredit } = useSessionIdentity()
+    currentSessionId.value = 'test-session'
+    updateUsageState(30000, 200000, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, 1.25)
+    expect(contextCredit.value).toBe(1.25)
+    updateUsageState(30000, 200000, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, 2.75)
+    expect(contextCredit.value).toBe(2.75)
+    // Clean up
+    clearUsageState()
+  })
 })
 
 describe('clearUsageState', () => {

@@ -1936,6 +1936,24 @@ func (c *ACPConn) peekMetaAccumUsage() (input, output, total int) {
 	return u.InputTokens, u.OutputTokens, u.TotalTokens
 }
 
+// peekMetaAccumCredit returns the turn-cumulative credit consumed so far,
+// without clearing the accumulator.
+//
+// The live usage_update payload reports this instead of the current frame's own
+// figure so the session panel and the ledger (which stores the turn SUM) agree.
+// Reading the accumulator rather than summing the frame's credit is also what
+// makes the cost-only paths (generation tools, team-member turns) visible: they
+// carry credit but no usage block, and their amount is folded in by
+// mergeMetaExtraction before this is read.
+func (c *ACPConn) peekMetaAccumCredit() float64 {
+	c.metaMu.Lock()
+	defer c.metaMu.Unlock()
+	if c.metaAccum == nil {
+		return 0
+	}
+	return c.metaAccum.creditTotal()
+}
+
 // getLastCompletedRequestID returns the canonical (first-seen) requestId of the
 // most recently completed successful turn, or "" when no turn has completed yet
 // on this connection (first prompt, or a freshly respawned connection). Safe to

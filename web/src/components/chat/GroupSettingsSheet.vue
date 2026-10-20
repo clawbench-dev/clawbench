@@ -360,7 +360,14 @@ async function remove(m: GroupMemberInfo) {
   } catch { /* ignore */ }
 }
 
-/** A member's reported usage, or null when it never reported any. */
+/** A member's reported usage, or null when it never reported any.
+ *
+ * Deliberately gated on SIZE, not on "any field": this chip renders a window
+ * PERCENTAGE, and a member that only has credit (a generation-tool billing)
+ * would otherwise show a 0% bar — claiming a measurement that does not exist.
+ * The credit itself is visible in the member detail panel, which gates on
+ * "carries anything".
+ */
 function usageOf(m: GroupMemberInfo) {
   const u = m.usage
   return u && (u.size ?? 0) > 0 ? u : null

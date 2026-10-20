@@ -112,12 +112,59 @@ type metaExtraction struct {
 	Usage    *metaTokenUsage
 	Trace    *metaTrace
 	Category *metaCategoryUsage
+	// RequestCredits is the agent's own per-request running credit total
+	// (CodeBuddy: _meta["codebuddy.ai/requestCredits"] = {requestId: credit}).
+	//
+	// This is the AUTHORITATIVE billing number: the agent accumulates it
+	// server-side and re-reports the total on every notification, so a dropped
+	// or throttled frame does not lose credit the way summing per-call deltas
+	// does. It also covers the billings that carry NO usage block at all
+	// (generation tools, team-member turns), which arrive as a cost-only
+	// usage_update.
+	RequestCredits map[string]float64
+	// CostCredit is the credit carried by THIS notification's ACP-standard
+	// cost field. CodeBuddy repurposes cost.amount to mean credit (see
+	// costFieldCarriesCredit) and emits it on the cost-only paths, so it is
+	// the last-resort source when neither RequestCredits nor a usage block is
+	// present on the frame.
+	CostCredit float64
 }
 
 // HasData reports whether any field was extracted.
 func (e *metaExtraction) HasData() bool {
 	return e != nil && ((e.Usage != nil && e.Usage.Present) || (e.Trace != nil && e.Trace.HasData()) ||
-		(e.Category != nil && e.Category.Present))
+		(e.Category != nil && e.Category.Present) || len(e.RequestCredits) > 0 || e.CostCredit > 0)
+}
+
+// creditTotal returns the best available credit figure for this extraction.
+//
+// Three independent measurements of the same quantity can be present:
+//
+//   - CostCredit — this frame's cost field (one billing stage),
+//   - the sum of per-call usage credits,
+//   - the agent's running per-request totals.
+//
+// They are not additive: the per-request total already includes every call and
+// every cost-only stage billed under that request. The largest of the three is
+// therefore the most complete figure — and because each one is itself
+// monotonic, max-merge keeps a re-delivered or out-of-order frame from
+// regressing the value.
+func (e *metaExtraction) creditTotal() float64 {
+	if e == nil {
+		return 0
+	}
+	best := e.CostCredit
+	if e.Usage != nil && e.Usage.Credit > best {
+		best = e.Usage.Credit
+	}
+	var byRequest float64
+	for _, v := range e.RequestCredits {
+		byRequest += v
+	}
+	if byRequest > best {
+		best = byRequest
+	}
+	return best
 }
 
 // traceRequestID returns the trace requestId carried by this extraction, or ""
@@ -291,6 +338,34 @@ func metaMergeExtraction(dst *metaExtraction, src *metaExtraction) {
 	if src.Category != nil && src.Category.Present && len(src.Category.Categories) > 0 {
 		dst.Category = &metaCategoryUsage{Present: true, Categories: src.Category.Categories}
 	}
+	// Per-request credit totals are CUMULATIVE on the agent side (it re-reports
+	// the running total for that requestId on every notification), so merge by
+	// taking the max per requestId: a re-delivered or out-of-order frame must
+	// never regress the total, and summing would double-bill every re-report.
+	// This block is independent of the usage block above because the cost-only
+	// paths (generation tools, team members) carry requestCredits with no
+	// usage counters at all.
+	metaMergeCredit(dst, src)
+}
+
+// metaMergeCredit folds src's credit sources into dst. See metaMergeExtraction.
+func metaMergeCredit(dst, src *metaExtraction) {
+	if len(src.RequestCredits) > 0 {
+		if dst.RequestCredits == nil {
+			dst.RequestCredits = make(map[string]float64, len(src.RequestCredits))
+		}
+		for rid, v := range src.RequestCredits {
+			if v > dst.RequestCredits[rid] {
+				dst.RequestCredits[rid] = v
+			}
+		}
+	}
+	// The cost-only credit is also cumulative within a turn (each stage reports
+	// its own running amount for the same request), so max-merge it for the
+	// same reason.
+	if src.CostCredit > dst.CostCredit {
+		dst.CostCredit = src.CostCredit
+	}
 }
 
 // setIntIfNonZero overlays v onto *dst only when v != 0. Keeping the
@@ -320,8 +395,9 @@ func applyMetaExtractionToUsageState(state *UsageState, ext *metaExtraction) {
 		applyTokenUsageTo(&state.InputTokens, &state.OutputTokens, &state.TotalTokens,
 			&state.CachedReadTokens, &state.CachedWriteTokens, &state.ThoughtTokens,
 			&state.CacheCreationTokens, &state.CacheHitTokens, &state.CacheMissTokens,
-			&state.Credit, u)
+			u)
 	}
+	applyCreditTo(&state.Credit, ext)
 	if cat := ext.Category; cat != nil && cat.Present {
 		state.UsageByCategory = cat.Categories
 	}
@@ -337,8 +413,9 @@ func applyMetaExtractionToMetadata(meta *Metadata, ext *metaExtraction) {
 		applyTokenUsageTo(&meta.InputTokens, &meta.OutputTokens, &meta.TotalTokens,
 			&meta.CachedReadTokens, &meta.CachedWriteTokens, &meta.ThoughtTokens,
 			&meta.CacheCreationTokens, &meta.CacheHitTokens, &meta.CacheMissTokens,
-			&meta.Credit, u)
+			u)
 	}
+	applyCreditTo(&meta.Credit, ext)
 	if cat := ext.Category; cat != nil && cat.Present {
 		meta.UsageByCategory = cat.Categories
 	}
@@ -347,11 +424,38 @@ func applyMetaExtractionToMetadata(meta *Metadata, ext *metaExtraction) {
 	}
 }
 
+// applyCreditTo overlays the extraction's credit figure onto *dst.
+//
+// The value comes from creditTotal(), not from Usage.Credit alone: the
+// per-request running total is the authoritative billing number and is the
+// ONLY figure available on the cost-only paths (generation tools, team-member
+// turns), which carry no usage block at all. Using Usage.Credit there would
+// leave every such billing at 0.
+//
+// MAX, not overwrite. Credit is cumulative within a turn (the accumulator sums
+// every model call and every cost-only stage), so an overlay carrying a smaller
+// figure is a per-call value that must not pull the running total back down —
+// which is exactly what happened while this was a plain non-zero assignment:
+// the session panel showed the LAST CALL's credit while the ledger stored the
+// turn SUM. The accumulator is cleared at the start of each prompt, so max
+// never leaks across turns.
+func applyCreditTo(dst *float64, ext *metaExtraction) {
+	if dst == nil {
+		return
+	}
+	if v := ext.creditTotal(); v > *dst {
+		*dst = v
+	}
+}
+
 // applyTokenUsageTo overlays the non-zero token/cost fields of u onto the ten
 // destination pointers. The callees share field layout across UsageState and
 // Metadata, so one helper keeps both apply paths identical.
+//
+// Credit is deliberately NOT handled here: it has a second source outside the
+// usage block (see applyCreditTo).
 func applyTokenUsageTo(input, output, total, cachedRead, cachedWrite, thought,
-	cacheCreation, cacheHit, cacheMiss *int, credit *float64, u *metaTokenUsage,
+	cacheCreation, cacheHit, cacheMiss *int, u *metaTokenUsage,
 ) {
 	setIntIfNonZero(input, u.InputTokens)
 	setIntIfNonZero(output, u.OutputTokens)
@@ -362,7 +466,6 @@ func applyTokenUsageTo(input, output, total, cachedRead, cachedWrite, thought,
 	setIntIfNonZero(cacheCreation, u.CacheCreationTokens)
 	setIntIfNonZero(cacheHit, u.CacheHitTokens)
 	setIntIfNonZero(cacheMiss, u.CacheMissTokens)
-	setFloatIfNonZero(credit, u.Credit)
 }
 
 // applyTraceToMetadata overlays the non-empty trace/identity fields of tr

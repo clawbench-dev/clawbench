@@ -2533,7 +2533,11 @@ describe('useChatStream', () => {
         )
       })
 
-      it('should skip when size is 0', async () => {
+      // Credit-only frames (CodeBuddy generation tools and team-member turns)
+      // carry used=0/size=0. Dropping them here would lose the billing
+      // entirely; the window is protected one layer down by updateUsageState,
+      // which keeps a known size when the incoming one is 0.
+      it('forwards a cost-only frame (size 0) so its credit is not lost', async () => {
         const { updateUsageState } = await import('@/composables/useSessionIdentity')
         ;(updateUsageState as any).mockClear()
 
@@ -2541,9 +2545,13 @@ describe('useChatStream', () => {
         const { connectStream } = useChatStream(options)
         connectStream('test-session-1')
 
-        simulateWsEvent('usage_update', { size: 0, used: 0 })
+        simulateWsEvent('usage_update', { size: 0, used: 0, credit: 12.5 })
 
-        expect(updateUsageState).not.toHaveBeenCalled()
+        expect(updateUsageState).toHaveBeenCalledWith(
+          0, 0, undefined, undefined, 'test-session-1',
+          undefined, undefined, undefined, undefined, undefined, undefined,
+          undefined, undefined, undefined, 12.5, undefined,
+        )
       })
     })
   })
