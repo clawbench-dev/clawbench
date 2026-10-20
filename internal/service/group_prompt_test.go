@@ -74,6 +74,45 @@ func TestBuildHostSystemPrompt_NoOtherMembers(t *testing.T) {
 	}
 }
 
+// TestBuildHostSystemPrompt_DelegatesWork pins the host's role boundary. The
+// single "控场，而不是代替成员回答问题" sentence was too weak to be actionable:
+// on task-shaped discussions the host did the work itself and only notified the
+// members afterwards. The prompt must therefore (a) say what the host owns,
+// (b) say the hands-on work goes to members and explicitly forbid doing it
+// first, and (c) carve out the exceptions where the host MUST act (host-only
+// group, user explicitly asking the host, e.g. /cb-*).
+//
+// The exception clause is not decoration: the host is a full member with tools
+// and /cb-* is executed by the host (design decision #79), so a blanket ban
+// would break both paths.
+func TestBuildHostSystemPrompt_DelegatesWork(t *testing.T) {
+	p := BuildHostSystemPrompt("Host", []HostMemberInfo{{Name: "A"}, {Name: "B"}})
+	if !strings.Contains(p, "交给合适的成员去做") {
+		t.Fatalf("host prompt must delegate hands-on work to members: %q", p)
+	}
+	// The actual failure shape was "finish it yourself, then tell them", so the
+	// prompt has to forbid that ordering specifically.
+	if !strings.Contains(p, "不要自己先做完再通知他们") {
+		t.Fatalf("host prompt must forbid doing the work before delegating: %q", p)
+	}
+	if !strings.Contains(p, "拆解任务") {
+		t.Fatalf("host prompt must state what the host DOES own: %q", p)
+	}
+	if !strings.Contains(p, "例外") || !strings.Contains(p, "/cb-*") {
+		t.Fatalf("host prompt must carve out the exceptions (host-only group, /cb-*): %q", p)
+	}
+
+	// Host-only group: nobody to delegate to, so the host must still be told to
+	// answer directly — the exception clause above must not contradict this.
+	solo := BuildHostSystemPrompt("Host", nil)
+	if !strings.Contains(solo, "直接回答用户即可") {
+		t.Fatalf("host-only prompt must still tell the host to answer directly: %q", solo)
+	}
+	if !strings.Contains(solo, "没有其他成员") {
+		t.Fatalf("host-only prompt must state there are no other members: %q", solo)
+	}
+}
+
 // TestBuildHostSystemPrompt_ParallelDecisionRule: the host must be given an
 // explicit rule for WHEN to pick parallel, not just the syntax. Without it the
 // model defaults to sequential and rarely uses parallel (the reported defect:
@@ -380,6 +419,16 @@ func TestBuildCruiseConfirmPrompt(t *testing.T) {
 	}
 	if !strings.Contains(free, "若仍存在遗留工作没有完成") {
 		t.Fatalf("free confirm prompt must require finishing leftover work: %q", free)
+	}
+	// The HOST must delegate the leftover work, not do it itself — the old
+	// wording ("请先继续完成它们") directly contradicted the host's role boundary
+	// and is the reason the host kept finishing tasks on its own. The free
+	// variant is different: it has no host, so every member acts.
+	if !strings.Contains(host, "点名合适的成员去完成") {
+		t.Fatalf("host confirm prompt must delegate leftover work to members: %q", host)
+	}
+	if strings.Contains(host, "请先继续完成它们") {
+		t.Fatalf("host confirm prompt must not tell the host to finish the work itself: %q", host)
 	}
 	// The free variant stays a bare vote — no conclusion (no host to write one).
 	if strings.Contains(free, "最终结论") {

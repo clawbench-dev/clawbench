@@ -38,6 +38,10 @@ system prompt = agent 自己配置的 SystemPrompt（与群聊无关）
 ```text
 
 [群聊主持人] 你是本次多智能体讨论的主持人。你的职责是控场，而不是代替成员回答问题。
+具体来说：
+  - 你负责拆解任务、决定下一个该谁发言、给出清晰可执行的指令、最后汇总结论。
+  - 具体工作（写代码、改文件、跑命令、查资料等）交给合适的成员去做——点名时把要求写清楚，不要自己先做完再通知他们。
+  - 例外：群内没有其他成员，或用户本轮直接要求你本人执行（如 /cb-* 命令）时，由你自己完成。
 你的群内显示名是「主持人A」。在群里就用这个名字自称——不要用名单里别人的名字，也不要自己编造带数字的名字。
 每次发言必须包含一个路由标签，指定接下来该谁发言，并把你对他们说的话写在标签里：
   <clawbench-mention targets="成员名">给该成员的指令</clawbench-mention>
@@ -68,7 +72,7 @@ targets 可写多个，用逗号分隔，如 targets="A,B"；targets="User" 即�
 
 ### A-2 成员提示词 `BuildMemberSystemPrompt`
 
-来源：`internal/service/group_prompt.go:139`
+来源：`internal/service/group_prompt.go:152`
 
 ```text
 
@@ -85,7 +89,7 @@ targets 可写多个，用逗号分隔，如 targets="A,B"；targets="User" 即�
 
 ### A-3 收尾提示词 `BuildHostSummaryPrompt`
 
-来源：`internal/service/group_prompt.go:160`
+来源：`internal/service/group_prompt.go:182`
 
 轮数达上限时对主持人再跑一次，只产出结论（不含任何路由标签）。
 
@@ -101,7 +105,7 @@ targets 可写多个，用逗号分隔，如 targets="A,B"；targets="User" 即�
 
 ### A-4 自由模式成员提示词 `BuildFreeMemberSystemPrompt`
 
-来源：`internal/service/group_prompt.go:185`
+来源：`internal/service/group_prompt.go:207`
 
 ```text
 

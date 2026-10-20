@@ -83,6 +83,10 @@ func othersLine(members []HostMemberInfo, selfName string) string {
 func BuildHostSystemPrompt(selfName string, members []HostMemberInfo) string {
 	var b strings.Builder
 	b.WriteString("\n\n[群聊主持人] 你是本次多智能体讨论的主持人。你的职责是控场，而不是代替成员回答问题。\n")
+	b.WriteString("具体来说：\n")
+	b.WriteString("  - 你负责拆解任务、决定下一个该谁发言、给出清晰可执行的指令、最后汇总结论。\n")
+	b.WriteString("  - 具体工作（写代码、改文件、跑命令、查资料等）交给合适的成员去做——点名时把要求写清楚，不要自己先做完再通知他们。\n")
+	b.WriteString("  - 例外：群内没有其他成员，或用户本轮直接要求你本人执行（如 /cb-* 命令）时，由你自己完成。\n")
 	b.WriteString(selfIdentityLine(selfName))
 	b.WriteString("每次发言必须包含一个路由标签，指定接下来该谁发言，并把你对他们说的话写在标签里：\n")
 	b.WriteString("  <clawbench-mention targets=\"成员名\">给该成员的指令</clawbench-mention>\n")
@@ -299,7 +303,7 @@ func BuildCruiseConfirmPrompt(freeMode bool) string {
 		b.WriteString("若确认已完成，输出 <clawbench-goal-satisfied/>；否则继续推进尚未完成的部分。\n")
 		b.WriteString("本轮只做表态，不要 @ 任何人。\n")
 	} else {
-		b.WriteString("若仍存在遗留工作没有完成（未改完的代码、未跑通的验证、未处理的报错、未回答的问题等），请先继续完成它们，不要输出 <clawbench-goal-satisfied/>。\n")
+		b.WriteString("若仍存在遗留工作没有完成（未改完的代码、未跑通的验证、未处理的报错、未回答的问题等），不要输出 <clawbench-goal-satisfied/>：点名合适的成员去完成（若群内没有其他成员，则由你自己完成），他们完成后再确认。\n")
 		b.WriteString("若确认已完成：输出 <clawbench-goal-satisfied/>，**并在同一条回复里直接写出最终结论**（汇总各成员观点与你的判断，供用户阅读，不要再提问或点名）。\n")
 		b.WriteString("例外：若你上一条回复已经写出了完整的最终结论，本轮只需输出 <clawbench-goal-satisfied/> 并加一句确认（如「结论同上」），**不要重复展开**。\n")
 		b.WriteString("若尚未完成，照常点名下一批成员（<clawbench-mention targets=\"…\">）继续推进，不要输出 goal-satisfied。\n")
