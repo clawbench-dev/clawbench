@@ -222,6 +222,29 @@ describe('PopupMenu', () => {
     vi.useRealTimers()
   })
 
+  it('also rejects a measurement that would put the menu ABOVE the viewport', async () => {
+    // The mirror of the case above: a containing block measured TOO LARGE gives
+    // a huge positive `bottom` (measured 962.4px on a 720px viewport), which
+    // parks the `@` member menu above the top edge. A one-sign check misses it.
+    vi.spyOn(Element.prototype, 'getClientRects').mockReturnValue({ length: 1, item: () => null })
+    vi.useFakeTimers()
+    measureFixedContainingBlock.mockReturnValue({ left: 0, top: 0, right: 1280, bottom: 1700, scaleX: 1, scaleY: 1 })
+    computeMenuStyle
+      .mockReturnValueOnce({ position: 'fixed', bottom: '962.391px', left: '90px' })
+      .mockReturnValueOnce({ position: 'fixed', bottom: '62.4px', left: '90px' })
+
+    mount(PopupMenu, {
+      props: { show: true, targetElement: { getBoundingClientRect: () => ({ top: 600, bottom: 660, left: 10, right: 200 }) } },
+      slots: { default: '<div>Item</div>' },
+      global: { stubs: { Teleport: { template: '<div><slot/></div>' } } },
+    })
+    await vi.advanceTimersByTimeAsync(16)
+
+    expect(computeMenuStyle).toHaveBeenCalledTimes(2)
+    expect(computeMenuStyle.mock.calls[1][1].containingBlock).toBeUndefined()
+    vi.useRealTimers()
+  })
+
   it('keeps the measured containing block when it lands on screen', async () => {
     vi.spyOn(Element.prototype, 'getClientRects').mockReturnValue({ length: 1, item: () => null })
     vi.useFakeTimers()

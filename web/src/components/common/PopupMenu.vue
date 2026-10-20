@@ -115,28 +115,27 @@ function updatePosition() {
   menuStyle.value = measured
 }
 
-/** Does the computed style keep the menu on screen? */
+/**
+ * Does the computed style keep the menu on screen?
+ *
+ * `top`/`bottom` are measured from the containing block's near/far edge, so a
+ * value is only plausible when it is within the viewport's own extent. Both
+ * directions have been observed wrong in production:
+ *   - `bottom: -596.6px` — a containing block measured too small (the `#` menu,
+ *     placed BELOW the viewport);
+ *   - `bottom: 962.4px` with a 720px viewport — measured too large, which puts
+ *     the box ABOVE the viewport (the `@` member menu in a group session).
+ * Checking one sign only catches the first, so the check is "inside [0, extent]".
+ */
 function menuFitsViewport(style) {
   const vh = window.innerHeight
   const vw = window.innerWidth
   const num = (v) => (v == null ? NaN : parseFloat(v))
-  if (style.top != null) {
-    const t = num(style.top)
-    if (!Number.isFinite(t) || t > vh) return false
-  }
-  if (style.bottom != null) {
-    const b = num(style.bottom)
-    // A negative `bottom` means the box sits below the containing block's edge.
-    if (!Number.isFinite(b) || b < 0) return false
-  }
-  if (style.left != null) {
-    const l = num(style.left)
-    if (!Number.isFinite(l) || l > vw) return false
-  }
-  if (style.right != null) {
-    const r = num(style.right)
-    if (!Number.isFinite(r) || r < 0) return false
-  }
+  const within = (v, extent) => Number.isFinite(v) && v >= 0 && v <= extent
+  if (style.top != null && !within(num(style.top), vh)) return false
+  if (style.bottom != null && !within(num(style.bottom), vh)) return false
+  if (style.left != null && !within(num(style.left), vw)) return false
+  if (style.right != null && !within(num(style.right), vw)) return false
   return true
 }
 
