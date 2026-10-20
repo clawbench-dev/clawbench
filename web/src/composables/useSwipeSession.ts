@@ -7,6 +7,27 @@ export interface UseSwipeSessionOptions {
   switchSession: (sessionId: string) => Promise<void>
 }
 
+/**
+ * Circular navigation over the session list in its *rendered* order
+ * (pinned DESC, sort_order ASC, created_at DESC — see service.GetSessions).
+ *
+ * "Next" is the next row down (index + 1) and "prev" the row above
+ * (index - 1), so pressing → / swiping right always walks the list the same
+ * way the eye does. A current index of -1 means the active session is not in
+ * the fetched list (just archived, or created after the cache was filled);
+ * it is treated as "before the first row", so next lands on the first row and
+ * prev on the last.
+ */
+export function getNextSessionIndex(currentIndex: number, total: number): number {
+  if (total <= 1) return currentIndex
+  return currentIndex < total - 1 ? currentIndex + 1 : 0
+}
+
+export function getPrevSessionIndex(currentIndex: number, total: number): number {
+  if (total <= 1) return currentIndex
+  return currentIndex > 0 ? currentIndex - 1 : total - 1
+}
+
 export function useSwipeSession(options: UseSwipeSessionOptions) {
   const { currentSessionId, switchSession } = options
 
@@ -65,15 +86,21 @@ export function useSwipeSession(options: UseSwipeSessionOptions) {
     }, 1500)
   }
 
+  // "Next" always means the next row down the session list, and "prev" the row
+  // above it — the same order the list itself is rendered in. Both the swipe
+  // gesture and the desktop Ctrl+←/→ shortcut use this mapping, so moving one
+  // step down the list is always the same physical action: swipe right / press
+  // →. Before this, "next" walked *up* the list, so from the first session
+  // pressing → wrapped around to the oldest one instead of the second.
   async function swipeToNext() {
     const sessions = await fetchSessions()
     if (sessions.length <= 1) return
     const idx = sessions.findIndex(s => s.id === currentSessionId.value)
-    // Next = index - 1 because sessions are ordered by updated_at DESC
-    // swiping left (next) goes to a more recent session
-    const nextIdx = idx > 0 ? idx - 1 : sessions.length - 1
+    const nextIdx = getNextSessionIndex(idx, sessions.length)
     if (nextIdx === idx) return
-    showIndicator(sessions[nextIdx].title, 'left')
+    // The indicator animates in the direction the content travelled, so moving
+    // forward (right) slides in from the left.
+    showIndicator(sessions[nextIdx].title, 'right')
     await switchSession(sessions[nextIdx].id)
     sessionIndex.value = nextIdx
   }
@@ -82,19 +109,17 @@ export function useSwipeSession(options: UseSwipeSessionOptions) {
     const sessions = await fetchSessions()
     if (sessions.length <= 1) return
     const idx = sessions.findIndex(s => s.id === currentSessionId.value)
-    // Prev = index + 1 because sessions are ordered by updated_at DESC
-    // swiping right (prev) goes to an older session
-    const prevIdx = idx < sessions.length - 1 ? idx + 1 : 0
+    const prevIdx = getPrevSessionIndex(idx, sessions.length)
     if (prevIdx === idx) return
-    showIndicator(sessions[prevIdx].title, 'right')
+    showIndicator(sessions[prevIdx].title, 'left')
     await switchSession(sessions[prevIdx].id)
     sessionIndex.value = prevIdx
   }
 
   /**
-   * Jump to the next unread session after the current one (wrapping around the
-   * DESC-ordered list). Returns the target session's title, or null when there
-   * are no unread sessions left. Does NOT show the swipe indicator.
+   * Jump to the next unread session after the current one (walking down the
+   * list and wrapping around). Returns the target session's title, or null
+   * when there are no unread sessions left. Does NOT show the swipe indicator.
    */
   async function jumpToNextUnread(): Promise<string | null> {
     const sessions = await fetchSessions()
@@ -165,11 +190,11 @@ export function useSwipeSession(options: UseSwipeSessionOptions) {
     if (Math.abs(deltaX) < SWIPE_THRESHOLD) return
 
     if (deltaX < 0) {
-      // Swipe left → next session
-      swipeToNext()
-    } else {
-      // Swipe right → previous session
+      // Swipe left → previous session (up the list)
       swipeToPrev()
+    } else {
+      // Swipe right → next session (down the list)
+      swipeToNext()
     }
   }
 
