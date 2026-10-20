@@ -1,5 +1,8 @@
 import { describe, expect, it, vi, afterEach } from 'vitest'
-import { annotateCodeBlockHeaders, annotateTableBlockHeaders, handleCodeBlockClick, handleTableBlockClick, closeAllTableBlockMenus } from '@/composables/useCodeBlockHeader.ts'
+import { annotateCodeBlockHeaders, annotateTableBlockHeaders, handleCodeBlockClick, handleTableBlockClick, closeAllTableBlockMenus, positionTableMenu } from '@/composables/useCodeBlockHeader.ts'
+// Source of the menu's positioning rule — jsdom cannot reproduce overflow
+// clipping, so the escape-from-clip-chain assertion has to read the CSS.
+import tableHeaderCss from '../../../css/code-block-header.css?raw'
 
 // Mock clipboard
 const { copyText } = vi.hoisted(() => ({ copyText: vi.fn() }))
@@ -487,5 +490,201 @@ describe('closeAllTableBlockMenus', () => {
 
     a.btn.remove(); a.menu.remove()
     b.btn.remove(); b.menu.remove()
+  })
+})
+
+describe('table copy menu positioning', () => {
+  // jsdom has no layout engine: every rect is 0x0 and offsetWidth/Height are 0.
+  // These tests therefore drive `positionTableMenu` with a simulated containing
+  // block (origin + scale) so the arithmetic is exercised for real.
+  //
+  // The regression being pinned: the menu used to be `position: absolute`
+  // inside `.table-block-wrapper`, which is `overflow: hidden` — on a 1-2 row
+  // table the menu is TALLER than the table, so its third item (Copy TSV) was
+  // clipped away and unclickable.
+  function stubGeometry(opts: {
+    trigger: { top: number; bottom: number; left: number; right: number }
+    menuWidth: number
+    menuHeight: number
+    originLeft?: number
+    originTop?: number
+    scale?: number
+  }) {
+    const originLeft = opts.originLeft ?? 0
+    const originTop = opts.originTop ?? 0
+    const scale = opts.scale ?? 1
+
+    const btn = document.createElement('button')
+    btn.className = 'table-block-copy-btn'
+    btn.getBoundingClientRect = () => ({
+      top: opts.trigger.top, bottom: opts.trigger.bottom,
+      left: opts.trigger.left, right: opts.trigger.right,
+      width: opts.trigger.right - opts.trigger.left,
+      height: opts.trigger.bottom - opts.trigger.top,
+      x: opts.trigger.left, y: opts.trigger.top, toJSON: () => ({}),
+    }) as DOMRect
+
+    const menu = document.createElement('div')
+    menu.className = 'table-block-copy-menu'
+    Object.defineProperty(menu, 'offsetWidth', { configurable: true, get: () => opts.menuWidth })
+    Object.defineProperty(menu, 'offsetHeight', { configurable: true, get: () => opts.menuHeight })
+    // Simulate a containing block at (originLeft, originTop) scaled by `scale`:
+    // a fixed child's rect = origin + CSS offset * scale.
+    menu.getBoundingClientRect = () => {
+      const left = originLeft + (parseFloat(menu.style.left) || 0) * scale
+      const top = originTop + (parseFloat(menu.style.top) || 0) * scale
+      return {
+        top, bottom: top + opts.menuHeight * scale,
+        left, right: left + opts.menuWidth * scale,
+        width: opts.menuWidth * scale, height: opts.menuHeight * scale,
+        x: left, y: top, toJSON: () => ({}),
+      } as DOMRect
+    }
+    return { btn, menu }
+  }
+
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
+  it('places the menu directly below the trigger, right-aligned', () => {
+    const { btn, menu } = stubGeometry({
+      trigger: { top: 100, bottom: 124, left: 300, right: 340 },
+      menuWidth: 140,
+      menuHeight: 92,
+    })
+    positionTableMenu(btn, menu)
+    expect(menu.style.top).toBe('128px')   // bottom + 4 gap
+    expect(menu.style.left).toBe('200px')  // right-aligned: 340 - 140
+  })
+
+  it('keeps the menu fully inside the viewport at the right edge', () => {
+    const { btn, menu } = stubGeometry({
+      trigger: { top: 100, bottom: 124, left: window.innerWidth - 40, right: window.innerWidth - 4 },
+      menuWidth: 140,
+      menuHeight: 92,
+    })
+    positionTableMenu(btn, menu)
+    const left = parseFloat(menu.style.left)
+    expect(left + 140).toBeLessThanOrEqual(window.innerWidth - 8)
+    expect(left).toBeGreaterThanOrEqual(8)
+  })
+
+  it('flips above the trigger when there is no room below', () => {
+    const { btn, menu } = stubGeometry({
+      trigger: { top: window.innerHeight - 30, bottom: window.innerHeight - 6, left: 100, right: 140 },
+      menuWidth: 140,
+      menuHeight: 92,
+    })
+    positionTableMenu(btn, menu)
+    const top = parseFloat(menu.style.top)
+    expect(top).toBe(window.innerHeight - 30 - 4 - 92)
+    expect(top + 92).toBeLessThanOrEqual(window.innerHeight - 8)
+  })
+
+  it('prefers staying below when flipping would land off the top edge', () => {
+    // A viewport shorter than trigger + menu: flipping puts the menu above the
+    // viewport entirely, so staying below (clamped) keeps it readable.
+    const originalHeight = window.innerHeight
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 200 })
+    try {
+      const { btn, menu } = stubGeometry({
+        trigger: { top: 10, bottom: 190, left: 100, right: 140 },
+        menuWidth: 140,
+        menuHeight: 92,
+      })
+      positionTableMenu(btn, menu)
+      const top = parseFloat(menu.style.top)
+      // Clamped into the viewport, not thrown to the very top by the flip.
+      expect(top).toBe(200 - 92 - 8)
+    } finally {
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: originalHeight })
+    }
+  })
+
+  it('compensates for a transformed/scaled containing block', () => {
+    // Android app mode: .chat-message has will-change:transform, and the UI
+    // scale applies CSS zoom — so `top: 0` is NOT the viewport top and CSS px
+    // are not rect px. A naive implementation lands the menu at the wrong
+    // place (or off-screen) here.
+    const { btn, menu } = stubGeometry({
+      trigger: { top: 300, bottom: 324, left: 500, right: 540 },
+      menuWidth: 140,
+      menuHeight: 92,
+      originLeft: 60,
+      originTop: 40,
+      scale: 1.5,
+    })
+    positionTableMenu(btn, menu)
+    // Rect-space target: below the trigger, right-aligned to it.
+    const rect = menu.getBoundingClientRect()
+    expect(Math.round(rect.top)).toBe(328)
+    expect(Math.round(rect.left)).toBe(400)
+  })
+
+  it('opens positioned, and repositions on scroll while open', () => {
+    const wrapper = document.createElement('div')
+    wrapper.className = 'table-block-wrapper'
+    const { btn, menu } = stubGeometry({
+      trigger: { top: 100, bottom: 124, left: 300, right: 340 },
+      menuWidth: 140,
+      menuHeight: 92,
+    })
+    btn.setAttribute('data-action', 'open-copy-menu')
+    wrapper.appendChild(btn)
+    wrapper.appendChild(menu)
+    document.body.appendChild(wrapper)
+
+    expect(handleTableBlockClick({ target: btn, preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as MouseEvent)).toBe(true)
+    expect(menu.classList.contains('is-open')).toBe(true)
+    expect(menu.style.top).toBe('128px')
+
+    // The trigger scrolls up; the menu must follow instead of floating away.
+    const moved = stubGeometry({
+      trigger: { top: 40, bottom: 64, left: 300, right: 340 },
+      menuWidth: 140,
+      menuHeight: 92,
+    })
+    btn.getBoundingClientRect = moved.btn.getBoundingClientRect
+    window.dispatchEvent(new Event('scroll'))
+    expect(menu.style.top).toBe('68px')
+
+    wrapper.remove()
+  })
+
+  it('closes the menu once its trigger has scrolled out of view', () => {
+    const wrapper = document.createElement('div')
+    wrapper.className = 'table-block-wrapper'
+    const { btn, menu } = stubGeometry({
+      trigger: { top: 100, bottom: 124, left: 300, right: 340 },
+      menuWidth: 140,
+      menuHeight: 92,
+    })
+    btn.setAttribute('data-action', 'open-copy-menu')
+    wrapper.appendChild(btn)
+    wrapper.appendChild(menu)
+    document.body.appendChild(wrapper)
+
+    handleTableBlockClick({ target: btn, preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as MouseEvent)
+    expect(menu.classList.contains('is-open')).toBe(true)
+
+    btn.getBoundingClientRect = stubGeometry({
+      trigger: { top: -200, bottom: -176, left: 300, right: 340 },
+      menuWidth: 140,
+      menuHeight: 92,
+    }).btn.getBoundingClientRect
+    window.dispatchEvent(new Event('scroll'))
+    expect(menu.classList.contains('is-open')).toBe(false)
+
+    wrapper.remove()
+  })
+
+  it('menu CSS is fixed-positioned so the block wrapper cannot clip it', () => {
+    // Source guard: jsdom cannot reproduce overflow clipping, so the one thing
+    // that must hold is that the menu escapes the clip chain at all.
+    const rule = tableHeaderCss.match(/\.table-block-copy-menu\s*\{([^}]*)\}/)
+    expect(rule).not.toBeNull()
+    expect(rule![1]).toMatch(/position:\s*fixed/)
+    expect(rule![1]).not.toMatch(/position:\s*absolute/)
   })
 })

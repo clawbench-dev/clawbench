@@ -612,6 +612,52 @@ function buildCodeBlockJs(locale: string): string {
             if (trigger) trigger.setAttribute('aria-expanded', 'false');
         }
     }
+
+    // The menu is position:fixed (css/code-block-header.css) so a short table's
+    // overflow:hidden cannot clip its third item. Fixed coordinates must be
+    // MEASURED, not assumed: CSS zoom on <html> or a transformed ancestor moves
+    // the containing-block origin AND scales the offsets, so probe both.
+    function positionTableMenu(trigger, menu) {
+        var width = menu.offsetWidth;
+        var height = menu.offsetHeight;
+        var triggerRect = trigger.getBoundingClientRect();
+        var PROBE = 100;
+        menu.style.left = '0px'; menu.style.top = '0px';
+        var atZero = menu.getBoundingClientRect();
+        menu.style.left = PROBE + 'px'; menu.style.top = PROBE + 'px';
+        var atProbe = menu.getBoundingClientRect();
+        var scaleX = (atProbe.left - atZero.left) / PROBE || 1;
+        var scaleY = (atProbe.top - atZero.top) / PROBE || 1;
+        var margin = 8, gap = 4;
+        var vw = window.innerWidth, vh = window.innerHeight;
+        var left = triggerRect.right - width;
+        left = Math.min(left, vw - width - margin);
+        left = Math.max(margin, left);
+        var top = triggerRect.bottom + gap;
+        if (top + height > vh - margin) {
+            var above = triggerRect.top - gap - height;
+            if (above >= margin) top = above;
+        }
+        top = Math.max(margin, Math.min(top, vh - height - margin));
+        menu.style.left = ((left - atZero.left) / scaleX) + 'px';
+        menu.style.top = ((top - atZero.top) / scaleY) + 'px';
+    }
+
+    window.addEventListener('scroll', function() {
+        var menu = document.querySelector('.table-block-copy-menu.is-open');
+        if (!menu) return;
+        var trigger = menu.previousElementSibling;
+        if (!trigger) return;
+        var rect = trigger.getBoundingClientRect();
+        if (rect.bottom < 0 || rect.top > window.innerHeight) { closeAllTableMenus(); return; }
+        positionTableMenu(trigger, menu);
+    }, true);
+    window.addEventListener('resize', function() {
+        var menu = document.querySelector('.table-block-copy-menu.is-open');
+        var trigger = menu && menu.previousElementSibling;
+        if (trigger) positionTableMenu(trigger, menu);
+    });
+
     document.addEventListener('click', function(e) {
         // Close table copy menus when clicking outside
         if (!e.target.closest('.table-block-copy-menu') && !e.target.closest('.table-block-copy-btn')) {
@@ -663,6 +709,7 @@ function buildCodeBlockJs(locale: string): string {
                         menu.classList.add('is-open');
                         menu.style.display = 'block';
                         tableBtn.setAttribute('aria-expanded', 'true');
+                        positionTableMenu(tableBtn, menu);
                     }
                 }
             } else if (action === 'copy-md' || action === 'copy-html' || action === 'copy-tsv') {

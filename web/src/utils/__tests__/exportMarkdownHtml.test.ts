@@ -157,6 +157,17 @@ describe('exportMarkdownToHtml', () => {
     expect(result.html).toContain('language-js')
   })
 
+  it('positions the table copy menu in the exported document too', async () => {
+    // The exported .html reuses css/code-block-header.css, whose menu is
+    // position:fixed. Without the matching placement JS the menu would open at
+    // the viewport origin. Assert BOTH halves exist so the pair cannot drift.
+    const md = '| a | b |\n| --- | --- |\n| 1 | 2 |'
+    const result = await exportMarkdownToHtml(opts({ content: md }))
+    expect(result.html).toContain('table-block-copy-menu')
+    expect(result.html).toContain('function positionTableMenu')
+    expect(result.html).toContain('positionTableMenu(tableBtn, menu)')
+  })
+
   it('includes code block interaction JS', async () => {
     const result = await exportMarkdownToHtml(opts({ content: 'x' }))
     expect(result.html).toContain('code-block-copy-btn')

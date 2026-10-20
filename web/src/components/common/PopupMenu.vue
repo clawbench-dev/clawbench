@@ -1,7 +1,7 @@
 <template>
   <Teleport to="body">
     <Transition name="menu-fade" @after-leave="emit('after-leave')">
-      <div v-if="show" class="popup-menu" :class="{ 'popup-menu--app': appSurface }" role="menu" :style="menuStyle" @click.stop="emit('update:show', false)" @keydown.escape="emit('update:show', false)">
+      <div v-if="show" ref="menuEl" class="popup-menu" :class="{ 'popup-menu--app': appSurface }" role="menu" :style="menuStyle" @click.stop="emit('update:show', false)" @keydown.escape="emit('update:show', false)">
         <slot />
       </div>
     </Transition>
@@ -21,6 +21,7 @@ function nextMenuSeq() {
 <script setup>
 import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { computeMenuStyle } from '@/utils/popupMenuPosition'
+import { measureFixedContainingBlock } from '@/utils/fixedPosition'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
 
 /** Disambiguates several menus that may be open at once (nested pickers). */
@@ -49,10 +50,31 @@ const emit = defineEmits(['update:show', 'after-leave'])
 // (scroll, resize) that Vue's computed cannot track.
 const menuStyle = ref({})
 
+/** The rendered menu element; measured to find its containing block. */
+const menuEl = ref(null)
+
 /** Recalculate position from current anchor geometry. */
 function updatePosition() {
   if (!props.targetElement) { menuStyle.value = {}; return }
   const rect = props.targetElement.getBoundingClientRect()
+  // Measure the menu's ACTUAL containing block before computing offsets.
+  //
+  // `position: fixed` does not mean "viewport-anchored": an ancestor with a
+  // transform / `will-change: transform` (`.chat-message` in app mode) becomes
+  // the containing block, and CSS `zoom` scales the offsets. Feeding viewport
+  // coordinates straight into `top`/`left` then lands the menu tens of pixels
+  // off — measured 60px below the anchor inside a will-change ancestor.
+  //
+  // `measureFixedContainingBlock` needs the menu laid out, so read it only when
+  // the element is actually rendered; otherwise fall back to the zoom-only
+  // conversion (still correct for the common untransformed case).
+  //
+  // `getClientRects().length` — not `offsetParent` — is the check that works
+  // here: a fixed element's `offsetParent` is null even when it IS laid out.
+  const el = menuEl.value
+  const containingBlock = el && el.getClientRects().length > 0
+    ? measureFixedContainingBlock(el)
+    : undefined
   menuStyle.value = computeMenuStyle(rect, {
     maxWidth: props.maxWidth,
     maxHeight: props.maxHeight,
@@ -60,6 +82,7 @@ function updatePosition() {
     menuItemsCount: props.menuItemsCount,
     anchor: props.anchor,
     scrollable: !props.appSurface,
+    containingBlock,
   })
 }
 
