@@ -565,4 +565,13 @@ func TestProbeStdio_ReapsBeforeReadingStderr(t *testing.T) {
 		}
 	}
 	require.GreaterOrEqual(t, uses, 3, "expected at least three withStderr call sites")
+
+	// The reap must use cmd.Wait, not cmd.Process.Wait. Only cmd.Wait waits for
+	// the goroutine that copies the child's stderr into the buffer; Process.Wait
+	// waits for the OS process alone, so the buffer can still be empty when it
+	// is read. That distinction cannot be tested behaviorally on Linux (the copy
+	// almost always wins the race here) but failed on CI, so pin it in source.
+	require.NotContains(t, fn, "cmd.Process.Wait()",
+		"use cmd.Wait(): Process.Wait does not wait for the stderr copy goroutine")
+	require.Contains(t, fn, "cmd.Wait()", "the reap must wait for the stderr copy")
 }

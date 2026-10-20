@@ -176,13 +176,16 @@ func probeStdio(ctx context.Context, srv model.MCPServer) Result {
 	// Always reap. Kill is harmless after a clean exit and guarantees no
 	// orphaned child if an early return skipped the graceful path.
 	//
-	// The Wait is what makes the stderr buffer SAFE TO READ: os/exec copies the
-	// child's stderr from its own goroutine, and Wait is documented to complete
-	// only after that copy finishes. Reading the buffer while the child is
-	// exiting (the common case for a server that dies on startup) raced that
-	// goroutine and intermittently produced an EMPTY stderr — the one piece of
-	// information the user needs. The defer therefore stops the process first,
-	// then waits, and only then lets the caller read the buffer.
+	// cmd.Wait (NOT cmd.Process.Wait) is what makes the stderr buffer safe to
+	// read: os/exec copies the child's stderr into that buffer from its own
+	// goroutine, and only cmd.Wait waits for that copy to finish. Using
+	// Process.Wait waits for the OS process alone, so the buffer could still be
+	// empty at the instant we read it — which is exactly the "connection closed
+	// with no explanation" the user then sees. Reproduced on CI (iteration 8 of
+	// TestProbe_StdioReportsStderr_Repeatedly).
+	//
+	// Once Wait has run the process cannot be waited on again, so the guard is
+	// required: both the failure paths and the deferred cleanup call this.
 	reaped := false
 	reap := func() {
 		if reaped {
@@ -190,7 +193,7 @@ func probeStdio(ctx context.Context, srv model.MCPServer) Result {
 		}
 		reaped = true
 		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
+		_ = cmd.Wait()
 	}
 	defer reap()
 
