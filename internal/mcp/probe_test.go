@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -20,44 +19,13 @@ import (
 	"clawbench/internal/model"
 )
 
-// writeScript drops an executable script into a temp dir and returns its path.
-// Using a real child process (rather than a fake transport) is the point: the
-// stdio path is the one whose framing, stderr capture and process reaping can
-// actually break.
-func writeScript(t *testing.T, name, body string) string {
-	t.Helper()
-	dir := t.TempDir()
-	p := filepath.Join(dir, name)
-	require.NoError(t, os.WriteFile(p, []byte(body), 0o755))
-	return p
-}
-
-// stdioServer is a minimal MCP server: it answers initialize and tools/list on
-// newline-delimited JSON-RPC and ignores notifications.
-const stdioServer = `#!/bin/sh
-while IFS= read -r line; do
-  case "$line" in
-    *'"initialize"'*)
-      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","serverInfo":{"name":"probe-test","version":"9.9"}}}'
-      ;;
-    *'"tools/list"'*)
-      printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"alpha"},{"name":"beta"}]}}'
-      ;;
-  esac
-done
-`
-
 func TestProbe_StdioSucceeds(t *testing.T) {
-	script := writeScript(t, "server.sh", stdioServer)
+	srv := helperServer(t, "server")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	res := Probe(ctx, model.MCPServer{
-		Name:      "probe-test",
-		Transport: model.MCPTransportStdio,
-		Command:   script,
-	})
+	res := Probe(ctx, srv)
 
 	require.True(t, res.OK, "probe must succeed, got: %s", res.Message)
 	assert.Equal(t, "probe-test", res.ServerName)
@@ -73,17 +41,12 @@ func TestProbe_StdioSucceeds(t *testing.T) {
 // server that dies on startup usually explains itself on stderr, and without
 // capturing it the user sees only "connection closed".
 func TestProbe_StdioReportsStderr(t *testing.T) {
-	script := writeScript(t, "broken.sh", `#!/bin/sh
-echo "fatal: MCP_TOKEN is not set" >&2
-exit 1
-`)
+	srv := helperServer(t, "die")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	res := Probe(ctx, model.MCPServer{
-		Name: "broken", Transport: model.MCPTransportStdio, Command: script,
-	})
+	res := Probe(ctx, srv)
 
 	assert.False(t, res.OK)
 	assert.Contains(t, res.Message, "MCP_TOKEN is not set",
@@ -108,39 +71,22 @@ func TestProbe_StdioCommandNotFound(t *testing.T) {
 // MCP is rejected. This is the failure mode a socket-level check would miss.
 func TestProbe_StdioNonMCPProcess(t *testing.T) {
 	// Reads input and says nothing useful, then exits.
-	script := writeScript(t, "silent.sh", `#!/bin/sh
-while IFS= read -r line; do
-  printf '%s\n' 'not json at all'
-done
-`)
+	srv := helperServer(t, "silent")
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	res := Probe(ctx, model.MCPServer{
-		Name: "silent", Transport: model.MCPTransportStdio, Command: script,
-	})
+	res := Probe(ctx, srv)
 	assert.False(t, res.OK, "a process that never answers initialize must fail")
 }
 
 // TestProbe_StdioZeroTools asserts zero tools is still a successful handshake
 // but says so plainly: the agent would have nothing to call.
 func TestProbe_StdioZeroTools(t *testing.T) {
-	script := writeScript(t, "notools.sh", `#!/bin/sh
-while IFS= read -r line; do
-  case "$line" in
-    *'"initialize"'*)
-      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","serverInfo":{"name":"bare","version":"1"}}}'
-      ;;
-    *'"tools/list"'*)
-      printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"tools":[]}}'
-      ;;
-  esac
-done
-`)
+	srv := helperServer(t, "notools")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	res := Probe(ctx, model.MCPServer{Name: "bare", Transport: model.MCPTransportStdio, Command: script})
+	res := Probe(ctx, srv)
 	require.True(t, res.OK)
 	assert.Equal(t, 0, res.ToolCount)
 	assert.Contains(t, res.Message, "0 tools")
@@ -482,25 +428,14 @@ func TestReadResponse_ClosedBeforeReply(t *testing.T) {
 // its identity: the connection worked, so naming the server helps the user tell
 // "wrong server" apart from "server is broken".
 func TestProbe_StdioToolsListFailsKeepsIdentity(t *testing.T) {
-	script := writeScript(t, "half.sh", `#!/bin/sh
-while IFS= read -r line; do
-  case "$line" in
-    *'"initialize"'*)
-      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","serverInfo":{"name":"half-stdio","version":"1"}}}'
-      ;;
-    *'"tools/list"'*)
-      printf '%s\n' '{"jsonrpc":"2.0","id":2,"error":{"code":-32603,"message":"tools/list unavailable"}}'
-      ;;
-  esac
-done
-`)
+	srv := helperServer(t, "half")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	res := Probe(ctx, model.MCPServer{Name: "half", Transport: model.MCPTransportStdio, Command: script})
+	res := Probe(ctx, srv)
 	assert.False(t, res.OK)
-	assert.Equal(t, "half-stdio", res.ServerName, "the handshake succeeded, so report who answered")
+	assert.Equal(t, "probe-test", res.ServerName, "the handshake succeeded, so report who answered")
 	assert.Contains(t, res.Message, "tools/list")
 }
 
@@ -510,16 +445,11 @@ done
 // which removed the only explanation the user gets. Repeating the probe makes
 // the race far more likely to surface than a single shot does.
 func TestProbe_StdioReportsStderr_Repeatedly(t *testing.T) {
-	script := writeScript(t, "broken.sh", `#!/bin/sh
-echo "fatal: MCP_TOKEN is not set" >&2
-exit 1
-`)
+	srv := helperServer(t, "die")
 
 	for i := range 20 {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		res := Probe(ctx, model.MCPServer{
-			Name: "broken", Transport: model.MCPTransportStdio, Command: script,
-		})
+		res := Probe(ctx, srv)
 		cancel()
 
 		if res.OK {

@@ -8,8 +8,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1066,25 +1069,23 @@ func TestServeConfigTest_FeishuCategory(t *testing.T) {
 // configuration that was never saved, or a red one for an edit that already
 // fixed the problem.
 func TestServeConfigTest_MCPProbesFormValues(t *testing.T) {
-	script := writeMCPScript(t, `#!/bin/sh
-while IFS= read -r line; do
-  case "$line" in
-    *'"initialize"'*)
-      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","serverInfo":{"name":"form-srv","version":"1.2"}}}'
-      ;;
-    *'"tools/list"'*)
-      printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"tool_a"},{"name":"tool_b"}]}}'
-      ;;
-  esac
-done
-`)
+	script := writeMCPScript(t)
 
 	body, err := json.Marshal(map[string]any{
 		"category": "mcp",
 		"values": map[string]any{
 			"mcp.name": "form-srv",
 			"mcp.servers": []any{
-				map[string]any{"name": "form-srv", "transport": "stdio", "command": script},
+				map[string]any{
+					"name": "form-srv", "transport": "stdio", "command": script,
+					// The fixture reports this identity, so the assertions below
+					// prove the SERVER'S answer reached the user.
+					"env": map[string]any{
+						"MCP_PROBE_SERVER_NAME":    "form-srv",
+						"MCP_PROBE_SERVER_VERSION": "1.2",
+						"MCP_PROBE_TOOLS":          "tool_a,tool_b",
+					},
+				},
 			},
 		},
 	})
@@ -1172,12 +1173,52 @@ func TestServeConfigTest_MCPBrokenCommandFails(t *testing.T) {
 	assert.Contains(t, result.Message, "not found in PATH")
 }
 
-// writeMCPScript drops an executable test server into a temp dir.
-func writeMCPScript(t *testing.T, body string) string {
+// writeMCPScript returns the path of a real MCP server binary that answers
+// initialize and lists two tools.
+//
+// It is COMPILED from testdata/mcpserver rather than written as a shell script:
+// a `#!/bin/sh` fixture cannot run on Windows ("%1 is not a valid Win32
+// application"), which made TestServeConfigTest_MCPProbesFormValues fail there
+// with a message about the script rather than about the probe.
+//
+// The binary is built once per package run; the test server is stateless, so
+// every caller can share it.
+var (
+	mcpFixtureOnce sync.Once
+	mcpFixturePath string
+	mcpFixtureErr  error
+)
+
+func writeMCPScript(t *testing.T) string {
 	t.Helper()
-	p := filepath.Join(t.TempDir(), "mcp-server.sh")
-	require.NoError(t, os.WriteFile(p, []byte(body), 0o755))
-	return p
+	mcpFixtureOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "handler-mcp-fixture-")
+		if err != nil {
+			mcpFixtureErr = err
+			return
+		}
+		name := "mcp-server"
+		if runtime.GOOS == "windows" {
+			name += ".exe"
+		}
+		out := filepath.Join(dir, name)
+
+		cmd := exec.Command("go", "build", "-o", out, "./testdata/mcpserver")
+		cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
+		if buildOut, buildErr := cmd.CombinedOutput(); buildErr != nil {
+			mcpFixtureErr = fmt.Errorf("build MCP fixture: %w\n%s", buildErr, buildOut)
+			return
+		}
+		// Some filesystems do not leave the output executable; exec.LookPath
+		// then reports "not found in PATH" for a file that exists.
+		if err := os.Chmod(out, 0o755); err != nil {
+			mcpFixtureErr = err
+			return
+		}
+		mcpFixturePath = out
+	})
+	require.NoError(t, mcpFixtureErr, "the MCP fixture server must build")
+	return mcpFixturePath
 }
 
 // ── MCP connectivity test ────────────────────────────────────────────────────
