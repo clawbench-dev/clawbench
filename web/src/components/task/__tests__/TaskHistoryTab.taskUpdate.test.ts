@@ -52,6 +52,7 @@ vi.mock('@/composables/useTaskHistory.ts', async () => {
       cancelExecution: vi.fn(),
       deleteExecution: vi.fn(),
       deleteAllExecutions: vi.fn(),
+      markAllRead: vi.fn(),
       openDetail: vi.fn(),
       isUnreadDisplay: () => false,
       onTaskChange: vi.fn(),

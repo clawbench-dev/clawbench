@@ -15,6 +15,14 @@
  */
 export function joinPath(dir: string, name: string): string {
     if (isAbsolutePath(dir)) {
+        // A UNC dir keeps its "//server/share" prefix intact: the generic
+        // collapse below would turn "//nas/media" into "/nas/media", silently
+        // converting a share into a POSIX-style path.
+        const unc = uncShareRoot(dir)
+        if (unc) {
+            const rest = normalizeSlashes(dir).slice(unc.length).replace(/^\/+|\/+$/g, '')
+            return rest ? `${unc}/${rest}/${name}` : `${unc}/${name}`
+        }
         // Normalize separators so the result matches the DOM data-path
         // convention (the backend returns forward slashes), collapse redundant
         // slashes, and drop a trailing slash — but keep the root's own "/":
@@ -42,11 +50,47 @@ export function baseName(path: string): string {
     return path
 }
 
+/**
+ * True for a Windows UNC share path — `\\server\share` or `//server/share`.
+ *
+ * Both spellings occur: the backend returns `filepath.ToSlash` output
+ * (`//server/share`), while a user typing a path writes backslashes. The device
+ * namespaces `\\.\` and `\\?\` are NOT share paths — they address devices, and
+ * the backend rejects them, so they must not be treated as absolute here either
+ * (doing so would offer a folder the picker can never open).
+ *
+ * A bare `\\server` is not a share: it is the network neighbourhood, which the
+ * backend refuses to list.
+ */
+export function isUNCPath(path: string): boolean {
+    const match = /^[\\/]{2}([^\\/]+)[\\/]/.exec(path)
+    if (!match) return false
+    const server = match[1]
+    return server !== '.' && server !== '?' && server !== '..'
+}
+
+/**
+ * Share root of a UNC path, normalized to the backend's form (`//server/share`).
+ * Returns null for anything that is not a UNC share path.
+ *
+ * Used to keep the share prefix intact through joins/dirname/breadcrumbs — it
+ * plays the role a drive root plays for `C:\` paths.
+ */
+export function uncShareRoot(path: string): string | null {
+    const match = /^[\\/]{2}([^\\/]+)[\\/]+([^\\/]+)/.exec(path)
+    if (!match) return null
+    const [, server, share] = match
+    if (server === '.' || server === '?' || server === '..') return null
+    if (share === '.' || share === '..') return null
+    return `//${server}/${share}`
+}
+
 // Detect Windows absolute paths: drive-letter roots (C:\ or C:/) and UNC
-// paths (\\server\share). Unix absolute paths (leading "/") are matched
-// separately by callers via startsWith('/').
+// share paths (\\server\share, or the //server/share form the backend emits).
+// Unix absolute paths (leading "/") are matched separately by callers via
+// startsWith('/').
 export function isWindowsAbsolutePath(path: string): boolean {
-    return /^[A-Za-z]:[/\\]/.test(path) || path.startsWith('\\\\')
+    return /^[A-Za-z]:[/\\]/.test(path) || isUNCPath(path)
 }
 
 /**
@@ -96,6 +140,16 @@ export function toProjectRelative(path: string, root: string): string {
 
 // Get the parent directory of a path
 export function dirName(path: string): string {
+    // A UNC share root is its own top: `\\server\share` has no parent this app
+    // can browse (the network neighbourhood is not listable), so it is
+    // self-referential exactly like "/" and "C:\". Without this the join below
+    // would produce "/server" — a POSIX path that silently escapes the share.
+    // The input's own separator style is preserved so callers comparing
+    // `dirName(dir) !== dir` see identity rather than a reformatted path.
+    const unc = uncShareRoot(path)
+    if (unc && normalizeSlashes(path).replace(/\/+$/, '').toLowerCase() === unc.toLowerCase()) {
+        return path.replace(/[\\/]+$/, '') || unc
+    }
     const parts = splitPath(path)
     parts.pop()
     if (parts.length === 0) return ''
@@ -137,10 +191,16 @@ export function toRelativePath(absPath: string, basePath: string): string {
  * via toProjectRelative / sameFilePath.
  */
 export function normalizeForCompare(path: string): string {
-    return normalizeSlashes(path)
+    // A UNC path's leading "//" is its root marker, not a duplicated slash:
+    // collapsing it would turn `//nas/share/x` into `/nas/share/x` and make a
+    // share path compare equal to a POSIX path.
+    const unc = uncShareRoot(path)
+    const rest = unc ? normalizeSlashes(path).slice(unc.length) : normalizeSlashes(path)
+    const normalized = rest
         .replace(/^\.\/+/, '') // strip one leading "./" segment
         .replace(/\/+/g, '/') // collapse duplicate slashes
         .replace(/\/+$/, '') // strip trailing slash
+    return unc ? unc + normalized : normalized
 }
 
 /**

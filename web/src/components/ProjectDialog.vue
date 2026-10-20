@@ -75,7 +75,7 @@ import FileIcon from './common/FileIcon.vue'
 import JumpDirDialog from './file/JumpDirDialog.vue'
 import { useDialog } from '@/composables/useDialog.ts'
 import { store } from '@/stores/app.ts'
-import { isWindowsAbsolutePath } from '@/utils/path'
+import { isWindowsAbsolutePath, isUNCPath } from '@/utils/path'
 
 const { t } = useI18n()
 const dialog = useDialog()
@@ -146,6 +146,11 @@ function onBreadcrumbNavigate(path) {
   if (!path) {
     // Navigate to root
     browseNavigate('')
+  } else if (isUNCPath(path)) {
+    // UNC path from breadcrumb — passed through unchanged. The backend accepts
+    // either separator (filepath.IsAbs handles both), and the breadcrumb keeps
+    // whichever form the listing used, so rewriting it would be lossy.
+    browseNavigate(path)
   } else if (isWindowsAbsolutePath(path)) {
     // Windows path from breadcrumb — normalize forward slashes to backslashes
     browseNavigate(path.replace(/\//g, '\\'))

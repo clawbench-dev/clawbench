@@ -2205,7 +2205,9 @@ async function handleResumeSession({ sessionId, sessionTitle }) {
     }
 }
 
-// Desktop: Ctrl+Left/Right to switch sessions (always enabled, independent of swipeSession toggle)
+// Desktop: Ctrl+Left/Right to switch sessions (always enabled, independent of
+// swipeSession toggle). The mapping is "→ = next row down the session list,
+// ← = previous row", matching the swipe gesture and the list's own order.
 function handleCtrlArrowSessionSwitch(e) {
   if (!props.keyboardActive) return
   const tag = e.target?.tagName

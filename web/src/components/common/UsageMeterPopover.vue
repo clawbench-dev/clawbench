@@ -231,9 +231,22 @@ function yAt(value: number): number {
 const actualLine = computed(() =>
   points.value.map((p, i) => `${xAt(i).toFixed(1)},${yAt(p.actual).toFixed(1)}`).join(' '),
 )
-const expectedLine = computed(() =>
-  points.value.map((p, i) => `${xAt(i).toFixed(1)},${yAt(p.expected).toFixed(1)}`).join(' '),
-)
+// The baseline is a property of the WHOLE cycle, so it is drawn all the way to
+// the cycle end even though the actual curve stops at today. Deriving it from
+// the series instead made the dashed line stop at today too, which read as a
+// second measurement that had run out rather than as the plan being compared
+// against. Same per-day slope the server uses for `point.expected`
+// (quota / periodDays, counted from day 1), so the two agree where they overlap.
+const expectedLine = computed(() => {
+  const days = axisDays.value
+  if (quota.value <= 0) return ''
+  const perDay = quota.value / days
+  const coords: string[] = []
+  for (let i = 0; i < days; i++) {
+    coords.push(`${xAt(i).toFixed(1)},${yAt(perDay * (i + 1)).toFixed(1)}`)
+  }
+  return coords.join(' ')
+})
 const todayX = computed(() => xAt(Math.max(0, points.value.length - 1)))
 const todayY = computed(() => {
   const last = points.value[points.value.length - 1]

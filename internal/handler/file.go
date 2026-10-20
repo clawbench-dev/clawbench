@@ -807,9 +807,13 @@ func ServeProjects(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo //
 
 	items := buildDirEntries(absPath, entries, isPathUnderAnyRoot, gitignore.ForDir(absPath))
 
-	// Compute parent — stop at root level (no parent above root/drives)
+	// Compute parent — stop at root level (no parent above root/drives).
+	// A UNC share root counts as root level even when it is not in RootPaths
+	// (the share list is a cached snapshot, and a share can be typed in). The
+	// share is the volume boundary: filepath.Dir would otherwise return the
+	// share itself, and the client would offer a parent it is already at.
 	var parent *string
-	isAtRoot := false
+	isAtRoot := platform.IsWindows() && platform.IsUNCShareRoot(absPath)
 	for _, root := range model.RootPaths {
 		cleanRoot := filepath.Clean(root)
 		if filepath.Clean(absPath) == cleanRoot {

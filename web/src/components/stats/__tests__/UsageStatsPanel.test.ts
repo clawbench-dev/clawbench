@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { shallowMount, flushPromises } from '@vue/test-utils'
+import { shallowMount, mount, flushPromises } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { nextTick } from 'vue'
 
@@ -204,6 +204,38 @@ describe('UsageStatsPanel', () => {
     expect(cardText).toContain('80.0%') // cache hit rate
     expect(cardText).not.toContain('输出 Tokens') // zero → hidden
     expect(cardText).not.toContain('Credit') // zero → hidden
+  })
+
+  it('gives every overview card its own icon', async () => {
+    mockApiGet.mockResolvedValue(mockResponse({
+      totals: { input: 100, output: 50, total: 150, cacheHit: 80, cacheMiss: 20, credit: 3, costUsd: 0.05, messageCnt: 1 },
+      rows: [{ key: { model: 'glm' }, input: 100, output: 50, total: 150, cacheHit: 80, cacheMiss: 20, credit: 3, costUsd: 0.05, messageCnt: 1 }],
+    }))
+    // Full mount (not shallow): the cards render `<component :is>` lucide
+    // icons, which shallowMount replaces with indistinguishable stubs.
+    const wrapper = mount(UsageStatsPanel, {
+      props: { active: true },
+      global: {
+        plugins: [makeI18n()],
+        stubs: { UsageChart: { template: '<div class="usage-chart-stub" />' }, LoadingIndicator: true },
+      },
+    })
+    await nextTick()
+    await flushPromises()
+    await nextTick()
+
+    const cards = wrapper.findAll('.stats-total')
+    expect(cards.length).toBe(7) // total/input/output/cacheHit/credit/cost + hit rate
+    const icons = cards.map(c => c.find('.stats-total-icon'))
+    expect(icons.every(i => i.exists())).toBe(true)
+    // Distinct glyph per card — no two metrics share the same icon.
+    const glyphs = icons.map(i => i.classes().find(cls => cls.startsWith('lucide-') && cls.endsWith('-icon')))
+    expect(glyphs.every(Boolean)).toBe(true)
+    expect(new Set(glyphs).size).toBe(glyphs.length)
+    // Decorative: the icon is aria-hidden and kept out of the label text.
+    expect(icons[0].attributes('aria-hidden')).toBe('true')
+    expect(cards[0].find('.stats-total-label-text').text()).toBe('总 Tokens')
+    wrapper.unmount()
   })
 
   it('computes the overview hit rate over the full prompt, not hit+miss', async () => {

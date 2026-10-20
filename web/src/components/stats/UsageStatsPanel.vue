@@ -53,13 +53,19 @@
           </div>
           <div class="stats-totals">
             <div v-for="card in visibleTotals" :key="card.metric" class="stats-total">
-              <span class="stats-total-label">{{ t(metricLabelKey(card.metric)) }}</span>
+              <span class="stats-total-label">
+                <component :is="metricIcon(card.metric)" :size="14" class="stats-total-icon" aria-hidden="true" />
+                <span class="stats-total-label-text">{{ t(metricLabelKey(card.metric)) }}</span>
+              </span>
               <span class="stats-total-value">{{ formatMetricCardValue(card.metric, card.value) }}</span>
             </div>
             <!-- Cache hit rate is an overview-only derived metric (it is not an
                  additive column) — shown here whenever the range has cache data. -->
             <div v-if="overviewCachePresent" class="stats-total">
-              <span class="stats-total-label">{{ t('stats.colHitRate') }}</span>
+              <span class="stats-total-label">
+                <Percent :size="14" class="stats-total-icon" aria-hidden="true" />
+                <span class="stats-total-label-text">{{ t('stats.colHitRate') }}</span>
+              </span>
               <span class="stats-total-value">{{ overviewHitRateText }}</span>
             </div>
           </div>
@@ -207,9 +213,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { BarChart3, Clock, SlidersHorizontal, Gauge, Table, ChartPie } from 'lucide-vue-next'
+import { BarChart3, Clock, SlidersHorizontal, Gauge, Table, ChartPie, Sigma, ArrowDownToLine, ArrowUpFromLine, Database, Coins, CircleDollarSign, Percent } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import UsageChart from '@/components/stats/UsageChart.vue'
 import {
@@ -335,6 +341,22 @@ function metricLabelKey(m: UsageMetricId): string {
     case 'credit': return 'stats.colCredit'
     case 'cost': return 'stats.colCost'
   }
+}
+
+// Overview-card icons: each metric gets a shape that reads on its own (total =
+// aggregate, input/output = direction of the token flow, cache = stored data,
+// credit = coin, cost = currency). Shape over hue, since several themes share
+// the same accent colour.
+const METRIC_ICONS: Record<UsageMetricId, Component> = {
+  total: Sigma,
+  input: ArrowDownToLine,
+  output: ArrowUpFromLine,
+  cacheHit: Database,
+  credit: Coins,
+  cost: CircleDollarSign,
+}
+function metricIcon(m: UsageMetricId): Component {
+  return METRIC_ICONS[m]
 }
 
 // --- Range ---
@@ -738,11 +760,23 @@ onMounted(() => {
   min-width: 0;
 }
 .stats-total-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
+}
+.stats-total-label-text {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
+}
+.stats-total-icon {
+  flex-shrink: 0;
+  color: var(--text-muted);
 }
 .stats-total-value {
   font-size: var(--font-size-2xl);

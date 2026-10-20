@@ -97,6 +97,7 @@ playwright-report/
 coverage/e2e/
 stdout.log
 /acp-mock
+/backfill-credit
 clawbench-new
 clawbench-test
 

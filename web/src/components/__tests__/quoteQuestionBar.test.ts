@@ -240,12 +240,11 @@ describe('QuoteQuestionBar component', () => {
     expect(taRule).toContain('max-height: calc(var(--input-line-height) * 3')
   })
 
-  it('keeps the EXPANDED panel on the sharp scale, and the collapsed toolbar a pill', async () => {
-    // The collapsed toolbar (issue #544) is deliberately a rounded pill floating
-    // next to the selection; the expanded input panel keeps the bar's original
-    // hard-edged language. This guard covers BOTH so neither drifts into the
-    // other's scale — the old blanket "no rounded corners anywhere" rule was
-    // narrowed, not dropped.
+  it('keeps BOTH the expanded panel and the collapsed toolbar on the sharp scale', async () => {
+    // The collapsed toolbar (issue #544) was originally a rounded pill floating
+    // next to the selection. In practice the pill buttons read as pasted-on
+    // against the bar's square frame, so both states now share one geometry.
+    // This guard covers BOTH so neither drifts into a rounded language again.
     const wrapper = mountBar()
     await wrapper.findAll('.quote-bar-action')[1].trigger('click')
     const cssText = Array.from(document.styleSheets)
@@ -278,11 +277,15 @@ describe('QuoteQuestionBar component', () => {
       expect(block).toContain('border-radius: var(--radius-xs)')
     }
 
-    // 收起态：药丸工具条 + 每个动作药丸，与展开态的尖角刻意相反
+    // 收起态：与展开态同一套尖角语言（工具条本身尖角，动作按钮 --radius-xs）
     const toolbarRule = blockOf('.quote-bar-toolbar', 'display:')
-    expect(toolbarRule).not.toContain('border-radius: var(--radius-xs)')
+    expect(toolbarRule).not.toContain('border-radius: var(--radius-full)')
     const actionRule = blockOf('.quote-bar-action', 'height:')
-    expect(actionRule).toContain('border-radius: var(--radius-full)')
+    expect(actionRule).toContain('border-radius: var(--radius-xs)')
+    expect(actionRule).not.toContain('border-radius: var(--radius-full)')
+
+    // 引用动作不再带强调色（三个动作是同级的，单个彩色标签读起来像选中态）
+    expect(cssText).not.toContain('.quote-bar-action:last-child')
   })
 
   it('caps the discuss popup at 60% of the original 600px, from one source', async () => {

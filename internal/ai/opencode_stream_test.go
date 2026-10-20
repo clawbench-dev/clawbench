@@ -166,13 +166,97 @@ func TestOpenCodeStream_ParseLine_StepFinishStop(t *testing.T) {
 	}
 }
 
+// A non-terminal step emits nothing by itself (the turn has not ended), but its
+// usage MUST be accumulated — that is the whole fix. Emitting nothing while
+// also discarding the counters was the defect.
 func TestOpenCodeStream_ParseLine_StepFinishToolCalls(t *testing.T) {
 	line := `{"type":"step_finish","timestamp":1,"sessionID":"ses_abc","part":{"reason":"tool-calls","tokens":{"total":36715,"input":326,"output":77},"cost":0}}`
 	events := parseOpenCodeLine(line)
 
 	if len(events) != 0 {
 		t.Fatalf("expected 0 events for tool-calls step_finish, got %d: %+v", len(events), events)
-		return
+	}
+}
+
+// Every step of a tool-using turn contributes to the turn total. Only the
+// terminal "stop" step emits, and it must report the SUM over all steps.
+//
+// Measured against OpenCode's own storage: one 812-step session reports
+// 267,293,125 tokens across its steps but only 11,705,915 in its stop steps —
+// recording the stop step alone under-counted 22.8x.
+func TestOpenCodeStream_MultiStepAccumulatesUsage(t *testing.T) {
+	lines := []string{
+		`{"type":"step_finish","timestamp":1,"sessionID":"ses_acc","part":{"reason":"tool-calls","tokens":{"total":1000,"input":100,"output":10,"cache":{"read":800,"write":90}},"cost":0}}`,
+		`{"type":"step_finish","timestamp":2,"sessionID":"ses_acc","part":{"reason":"tool-calls","tokens":{"total":2000,"input":200,"output":20,"cache":{"read":1700,"write":80}},"cost":0}}`,
+		`{"type":"step_finish","timestamp":3,"sessionID":"ses_acc","part":{"reason":"stop","tokens":{"total":3000,"input":300,"output":30,"cache":{"read":2600,"write":70}},"cost":0.25}}`,
+	}
+
+	ch := make(chan StreamEvent, 32)
+	parser := &OpenCodeStreamParser{}
+	for _, line := range lines {
+		parser.ParseLine(line, ch)
+	}
+	close(ch)
+
+	var events []StreamEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+	// Only the terminal step emits (metadata + done).
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events (metadata + done), got %d: %+v", len(events), events)
+	}
+	meta := events[0].Meta
+	if meta == nil {
+		t.Fatal("expected metadata")
+	}
+	// total = 1000 + 2000 + 3000 (the agent's own per-step totals, summed)
+	if meta.TotalTokens != 6000 {
+		t.Errorf("total must be the SUM over steps: want 6000, got %d", meta.TotalTokens)
+	}
+	// input is normalized to the FULL prompt: raw input + cache read + write
+	// (100+200+300) + (800+1700+2600) + (90+80+70)
+	if want := 600 + 5100 + 240; meta.InputTokens != want {
+		t.Errorf("input must fold in the cache split: want %d, got %d", want, meta.InputTokens)
+	}
+	if meta.OutputTokens != 60 {
+		t.Errorf("output must be the SUM over steps: want 60, got %d", meta.OutputTokens)
+	}
+	if meta.CacheHitTokens != 5100 {
+		t.Errorf("cache hit must be the summed cache.read: want 5100, got %d", meta.CacheHitTokens)
+	}
+	if meta.CacheMissTokens != 600 {
+		t.Errorf("cache miss must be the summed raw input: want 600, got %d", meta.CacheMissTokens)
+	}
+	// The accumulator must be reset for the next turn.
+	if parser.turn.steps != 0 || parser.turn.total != 0 {
+		t.Errorf("accumulator must reset after the turn: %+v", parser.turn)
+	}
+}
+
+// Two consecutive turns must not leak usage into each other.
+func TestOpenCodeStream_TurnsDoNotLeak(t *testing.T) {
+	ch := make(chan StreamEvent, 32)
+	parser := &OpenCodeStreamParser{}
+
+	parser.ParseLine(`{"type":"step_finish","timestamp":1,"part":{"reason":"stop","tokens":{"total":500,"input":400,"output":100},"cost":0}}`, ch)
+	parser.ParseLine(`{"type":"step_finish","timestamp":2,"part":{"reason":"stop","tokens":{"total":700,"input":600,"output":100},"cost":0}}`, ch)
+	close(ch)
+
+	var metas []*Metadata
+	for ev := range ch {
+		if ev.Type == "metadata" && ev.Meta != nil {
+			metas = append(metas, ev.Meta)
+		}
+	}
+	if len(metas) != 2 {
+		t.Fatalf("expected 2 metadata events, got %d", len(metas))
+	}
+	if metas[0].TotalTokens != 500 {
+		t.Errorf("turn 1 total: want 500, got %d", metas[0].TotalTokens)
+	}
+	if metas[1].TotalTokens != 700 {
+		t.Errorf("turn 2 total must NOT include turn 1: want 700, got %d", metas[1].TotalTokens)
 	}
 }
 

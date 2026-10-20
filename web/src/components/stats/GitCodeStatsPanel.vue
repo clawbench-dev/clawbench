@@ -63,7 +63,10 @@
             </div>
             <div class="git-totals">
               <div v-for="card in visibleTotals" :key="card.metric" class="stats-total">
-                <span class="stats-total-label">{{ t(gitMetricLabelKey(card.metric)) }}</span>
+                <span class="stats-total-label">
+                  <component :is="gitMetricIcon(card.metric)" :size="14" class="stats-total-icon" aria-hidden="true" />
+                  <span class="stats-total-label-text">{{ t(gitMetricLabelKey(card.metric)) }}</span>
+                </span>
                 <span class="stats-total-value" :class="metricValueClass(card.metric, card.value)">
                   {{ card.metric === 'net' ? formatNetDelta(card.value) : formatMetricCard(card.metric, card.value) }}
                 </span>
@@ -162,9 +165,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Clock, Gauge, Table, ChartLine, GitBranch, Code2 } from 'lucide-vue-next'
+import { Clock, Gauge, Table, ChartLine, GitBranch, Code2, Plus, Minus, Scale, GitCommitHorizontal } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import UsageChart from '@/components/stats/UsageChart.vue'
 import { useGitCodeStats } from '@/composables/useGitCodeStats'
@@ -264,6 +267,18 @@ function gitMetricLabelKey(m: string): string {
     case 'net': return 'gitStats.colNet'
     default: return 'gitStats.colCommits'
   }
+}
+
+// Overview-card icons: additions/deletions read as plus/minus, net as a balance
+// scale, commits as the commit node.
+const GIT_METRIC_ICONS: Record<string, Component> = {
+  added: Plus,
+  deleted: Minus,
+  net: Scale,
+  commitCnt: GitCommitHorizontal,
+}
+function gitMetricIcon(m: string): Component {
+  return GIT_METRIC_ICONS[m] ?? GitCommitHorizontal
 }
 
 function formatMetricCard(metric: string, value: number): string {
@@ -470,11 +485,23 @@ onMounted(() => {
   min-width: 0;
 }
 .stats-total-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
+}
+.stats-total-label-text {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
+}
+.stats-total-icon {
+  flex-shrink: 0;
+  color: var(--text-muted);
 }
 .stats-total-value {
   font-size: var(--font-size-2xl);

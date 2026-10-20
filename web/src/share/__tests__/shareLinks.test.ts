@@ -38,6 +38,25 @@ describe('resolveShareTarget', () => {
   it('preserves the root for a depth-1 base', () => {
     expect(resolveShareTarget('/', 'a.md')).toBe('/a.md')
   })
+
+  // ── UNC shares ──
+  // The share root carries its own leading "//". Dropping it would produce
+  // "/nas/media/…" — an ordinary POSIX path, i.e. a different file entirely.
+  it('keeps the UNC share prefix', () => {
+    expect(resolveShareTarget('//nas/media/docs', 'guide.md')).toBe('//nas/media/docs/guide.md')
+    expect(resolveShareTarget('//nas/media/docs', './guide.md')).toBe('//nas/media/docs/guide.md')
+  })
+
+  it('does not climb out of a UNC share', () => {
+    // Popping "media" would yield "//nas/x" — a DIFFERENT share on the same
+    // server, not the share's parent (which is not listable).
+    expect(resolveShareTarget('//nas/media', '../../x.md')).toBe('//nas/media/x.md')
+    expect(resolveShareTarget('//nas/media/docs', '../../../etc/passwd')).toBe('//nas/media/etc/passwd')
+  })
+
+  it('resolves normally inside a UNC share', () => {
+    expect(resolveShareTarget('//nas/media/docs', '../images/a.png')).toBe('//nas/media/images/a.png')
+  })
 })
 
 describe('shareDeepLink', () => {

@@ -603,16 +603,14 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
 </script>
 
 <style scoped>
-/* ── Two geometries in one component ──
-   The EXPANDED panel keeps the bar's original hard-edged language
-   (--radius-xs container, 0 on the blocks inside it): it is a wide input
-   surface, and a rounded card there reads as pasted-on.
-
-   The COLLAPSED toolbar (issue #544) is deliberately the opposite: a compact
-   pill that floats next to the selection. That is a considered exception to the
-   sharp-corner rule, not drift — the guard in quoteQuestionBar.test.ts was
-   narrowed to the expanded panel so this pill is allowed. Keep every new
-   collapsed control on the pill scale; do not round the expanded panel. */
+/* ── One geometry in this component ──
+   Both states use the bar's hard-edged language: the container is
+   --radius-xs and the controls inside it are on that same scale. The
+   COLLAPSED toolbar (issue #544) used to be a pill on the theory that a
+   compact floating surface wants a round shape; in practice the pill buttons
+   read as pasted-on next to the bar's square frame, so they now share the
+   expanded panel's geometry. The guard in quoteQuestionBar.test.ts pins the
+   sharp scale for both. */
 .quote-question-bar {
   /* The expanded panel's target width, in one place. Two rules need it — the
      root's `max-width` cap and the panel's own `width` — and they must agree:
@@ -702,7 +700,9 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
   color: var(--text-secondary);
   background: transparent;
   border: none;
-  border-radius: var(--radius-full);
+  /* Square-ish, matching the bar's frame and the expanded panel's buttons —
+     a pill here read as a different surface pasted onto the toolbar. */
+  border-radius: var(--radius-xs);
   transition: color var(--duration-base), background var(--duration-base);
   /* These are controls, not selectable text — and the quote action is also a
      long-press target ("quote into another conversation").
@@ -723,17 +723,10 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
   }
 }
 
-/* The quote action is the primary one (it is the action the issue asks for),
-   so it carries the accent tint at rest. */
-.quote-bar-action:last-child {
-  color: var(--accent-color);
-}
-
-@media (hover: hover) {
-  .quote-bar-action:last-child:hover {
-    background: color-mix(in srgb, var(--accent-color) 14%, transparent);
-  }
-}
+/* No action is tinted at rest. The quote action used to carry the accent
+   colour to mark it as primary, but on a toolbar where every item is a peer
+   (copy / comment / quote) the lone coloured label read as a selected state
+   rather than a hierarchy cue. Hover already communicates interactivity. */
 
 /* ===== Expanded panel ===== */
 .quote-bar-expanded {

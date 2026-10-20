@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { shallowMount, flushPromises } from '@vue/test-utils'
+import { shallowMount, mount, flushPromises } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { nextTick } from 'vue'
 
@@ -114,6 +114,32 @@ describe('ClocStatsPanel', () => {
     // Total row values.
     const rows = wrapper.findAll('.stats-table tbody tr')
     expect(rows.length).toBe(4) // 3 languages + total
+  })
+
+  it('gives every totals card its own icon', async () => {
+    // Full mount: the cards render lucide icons directly, which shallowMount
+    // turns into indistinguishable stubs.
+    const wrapper = mount(ClocStatsPanel, {
+      props: { active: true },
+      global: {
+        plugins: [makeI18n()],
+        stubs: { UsageChart: { template: '<div class="usage-chart-stub" />' }, LoadingIndicator: true },
+      },
+    })
+    await nextTick()
+    await flushPromises()
+    await nextTick()
+
+    const cards = wrapper.findAll('.stats-total')
+    expect(cards.length).toBe(4) // code / comment / blank / files
+    const icons = cards.map(c => c.find('.stats-total-icon'))
+    expect(icons.every(i => i.exists())).toBe(true)
+    const glyphs = icons.map(i => i.classes().find(cls => cls.startsWith('lucide-') && cls.endsWith('-icon')))
+    expect(glyphs.every(Boolean)).toBe(true)
+    expect(new Set(glyphs).size).toBe(glyphs.length)
+    expect(icons[0].attributes('aria-hidden')).toBe('true')
+    expect(cards[0].find('.stats-total-label-text').text()).toBe('代码行')
+    wrapper.unmount()
   })
 
   it('sorts by code desc by default', async () => {

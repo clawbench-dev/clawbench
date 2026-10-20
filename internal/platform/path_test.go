@@ -406,3 +406,92 @@ func TestClaudeProjectDir(t *testing.T) {
 		t.Errorf("ClaudeProjectDir() = %q, too short", dir)
 	}
 }
+
+// TestUNCShareRoot pins the parsing of UNC share paths. The frontend sends
+// forward slashes (it normalizes separators for DOM attributes) while the OS
+// hands us backslashes, so both spellings must produce the same root.
+func TestUNCShareRoot(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		wantRoot string
+		wantOK   bool
+	}{
+		{"backslash share", `\\nas\media`, `\\nas\media`, true},
+		{"backslash share with subdir", `\\nas\media\photos`, `\\nas\media`, true},
+		{"forward slash share", `//nas/media`, `\\nas\media`, true},
+		{"forward slash with subdir", `//nas/media/photos`, `\\nas\media`, true},
+		{"mixed separators", `\\nas/media\photos`, `\\nas\media`, true},
+		{"trailing separator", `\\nas\media\`, `\\nas\media`, true},
+		{"bare server is not a share", `\\nas`, "", false},
+		{"bare server with trailing sep", `\\nas\`, "", false},
+		{"device namespace dot", `\\.\C:`, "", false},
+		{"device namespace question", `\\?\C:\x`, "", false},
+		{"dot-dot server", `\\..\share`, "", false},
+		{"dot-dot share", `\\nas\..`, "", false},
+		{"posix absolute", "/home/user", "", false},
+		{"drive letter", `C:\Users`, "", false},
+		{"relative", `nas\media`, "", false},
+		{"empty", "", "", false},
+		{"single char", `\`, "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root, ok := UNCShareRoot(tt.input)
+			if ok != tt.wantOK {
+				t.Fatalf("UNCShareRoot(%q) ok = %v, want %v", tt.input, ok, tt.wantOK)
+			}
+			if root != tt.wantRoot {
+				t.Errorf("UNCShareRoot(%q) = %q, want %q", tt.input, root, tt.wantRoot)
+			}
+		})
+	}
+}
+
+// TestIsUNCShareRoot distinguishes "is a share root" from "is under a share".
+// The distinction is what decides whether the picker offers a parent: the
+// network neighborhood above \\server\share cannot be listed, so a share root
+// must behave like "/" and "C:\" (self-referential, no parent).
+func TestIsUNCShareRoot(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		{"share root", `\\nas\media`, true},
+		{"share root with trailing sep", `\\nas\media\`, true},
+		{"share root forward slashes", `//nas/media`, true},
+		{"share root forward with trailing", `//nas/media/`, true},
+		{"case-insensitive comparison", `\\NAS\Media`, true},
+		{"below the share", `\\nas\media\photos`, false},
+		{"drive root", `C:\`, false},
+		{"posix root", "/", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsUNCShareRoot(tt.input); got != tt.want {
+				t.Errorf("IsUNCShareRoot(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestIsPathUnderAnyRoot_UNCSharePath documents that a UNC path is accepted on
+// Windows even though it belongs to no drive root. The gate is Windows-only:
+// on POSIX "//etc/passwd" is an ordinary absolute path, and honoring the UNC
+// form there would let it slip past a narrower root.
+func TestIsPathUnderAnyRoot_UNCSharePath(t *testing.T) {
+	roots := []string{`C:\`}
+	got := IsPathUnderAnyRoot(`\\nas\media\photos`, roots)
+	if runtime.GOOS == "windows" {
+		if !got {
+			t.Error("expected a UNC share path to be accepted on Windows")
+		}
+		return
+	}
+	if got {
+		t.Error("expected a UNC-looking path to be rejected on non-Windows")
+	}
+}

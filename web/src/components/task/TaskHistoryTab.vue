@@ -122,6 +122,7 @@ const {
   cancelExecution,
   deleteExecution,
   deleteAllExecutions,
+  markAllRead,
   openDetail,
   isUnreadDisplay,
   onTaskChange,
@@ -330,6 +331,12 @@ onUnmounted(() => {
 // hasExecutions is a computed ref so the parent's v-if stays reactive.
 const hasExecutions = computed(() => allExecutions.value.length > 0)
 
+// Whether any execution still shows an unread dot — gates the header's
+// "Mark all read" button, the same way hasExecutions gates "Clear all".
+const hasUnread = computed(() =>
+  allExecutions.value.some(exec => !isRunning(exec) && isUnreadDisplay(exec)),
+)
+
 // Whether ANY execution is running — AI phase OR the pre-AI gating script.
 // The parent's action bar keys its Terminate button on this rather than the
 // task list's `runningCount`, which counts only the AI phase (deliberately, so
@@ -347,7 +354,9 @@ async function reload() {
 
 defineExpose({
   deleteAllExecutions,
+  markAllRead,
   hasExecutions,
+  hasUnread,
   hasAnyRunning,
   reload,
 })

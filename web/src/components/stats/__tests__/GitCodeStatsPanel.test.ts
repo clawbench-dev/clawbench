@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { shallowMount, flushPromises } from '@vue/test-utils'
+import { shallowMount, mount, flushPromises } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { nextTick } from 'vue'
 
@@ -157,6 +157,37 @@ describe('GitCodeStatsPanel', () => {
     expect(text).toContain('12')
     const netCard = wrapper.findAll('.stats-total').find(c => c.text().includes('净增行数'))
     expect(netCard!.find('.git-val-pos').exists()).toBe(true)
+  })
+
+  it('gives every totals card its own icon', async () => {
+    mockApiGet.mockResolvedValue(mockResponse({
+      totals: { added: 2500, deleted: 300, net: 2200, commitCnt: 12 },
+      rows: [],
+    }))
+    // Full mount: the cards render `<component :is>` lucide icons, which
+    // shallowMount turns into indistinguishable stubs.
+    const wrapper = mount(GitCodeStatsPanel, {
+      props: { active: true },
+      global: {
+        plugins: [makeI18n()],
+        stubs: { UsageChart: { template: '<div class="usage-chart-stub" />' }, LoadingIndicator: true },
+      },
+    })
+    await nextTick()
+    await flushPromises()
+    await nextTick()
+
+    const cards = wrapper.findAll('.stats-total')
+    expect(cards.length).toBe(4)
+    const icons = cards.map(c => c.find('.stats-total-icon'))
+    expect(icons.every(i => i.exists())).toBe(true)
+    const glyphs = icons.map(i => i.classes().find(cls => cls.startsWith('lucide-') && cls.endsWith('-icon')))
+    expect(glyphs.every(Boolean)).toBe(true)
+    expect(new Set(glyphs).size).toBe(glyphs.length)
+    expect(icons[0].attributes('aria-hidden')).toBe('true')
+    // Icon is decorative and must not leak into the label text.
+    expect(cards[0].find('.stats-total-label-text').text()).toBe('新增行数')
+    wrapper.unmount()
   })
 
   it('renders a per-author table with commit counts', async () => {

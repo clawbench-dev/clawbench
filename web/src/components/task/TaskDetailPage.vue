@@ -12,10 +12,19 @@
         <div class="history-section-title">
           <History :size="14" />
           <span>{{ t('task.exec.title') }}</span>
-          <button v-if="historyTabRef?.hasExecutions" class="clear-all-btn" @click="onClearAll" :title="t('task.exec.clearAll')">
-            <Trash2 :size="12" />
-            <span>{{ t('task.exec.clearAll') }}</span>
-          </button>
+          <div class="history-section-actions">
+            <!-- Disabled rather than hidden when nothing is unread: the pair
+                 shares one row, so hiding it would shift "Clear all" sideways
+                 the moment the user clicks it. -->
+            <button v-if="historyTabRef?.hasExecutions" class="clear-all-btn mark-read-btn" :disabled="!historyTabRef?.hasUnread" @click="onMarkAllRead" :title="t('task.exec.markAllRead')">
+              <CheckCheck :size="12" />
+              <span>{{ t('task.exec.markAllRead') }}</span>
+            </button>
+            <button v-if="historyTabRef?.hasExecutions" class="clear-all-btn" @click="onClearAll" :title="t('task.exec.clearAll')">
+              <Trash2 :size="12" />
+              <span>{{ t('task.exec.clearAll') }}</span>
+            </button>
+          </div>
         </div>
         <TaskHistoryTab ref="historyTabRef" :task="task" :scroll-root="scrollRef" />
       </div>
@@ -90,7 +99,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { History, Pencil, Pause, Power, Square, Zap, Trash2 } from 'lucide-vue-next'
+import { History, Pencil, Pause, Power, Square, Zap, Trash2, CheckCheck } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import TaskBreadcrumb from '@/components/task/TaskBreadcrumb.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
@@ -146,6 +155,10 @@ const isTaskRunning = computed(() =>
 
 function onClearAll() {
   historyTabRef.value?.deleteAllExecutions()
+}
+
+function onMarkAllRead() {
+  historyTabRef.value?.markAllRead()
 }
 
 async function onRefresh() {
@@ -243,8 +256,17 @@ async function onRefresh() {
   flex-shrink: 0;
 }
 
-.clear-all-btn {
+/* Header action cluster: "mark all read" sits left of "clear all", both
+   right-aligned against the section title. The margin lives on the cluster
+   (not the buttons) so the pair stays together. */
+.history-section-actions {
   margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.clear-all-btn {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
@@ -259,10 +281,26 @@ async function onRefresh() {
   transition: all var(--duration-slow);
 }
 
+.clear-all-btn:disabled {
+  opacity: var(--opacity-muted);
+  cursor: not-allowed;
+}
+
 @media (hover: hover) {
-  .clear-all-btn:hover {
+  .clear-all-btn:not(:disabled):hover {
     color: #ef4444;
     background: rgba(239, 68, 68, 0.06);
+  }
+}
+
+/* Mark-all-read is not destructive, so it must not borrow Clear all's red
+   hover — that colour is the signal for "this removes data". The selector
+   repeats both classes to match `.clear-all-btn:not(:disabled):hover`'s
+   specificity; at equal specificity the later rule wins. */
+@media (hover: hover) {
+  .clear-all-btn.mark-read-btn:not(:disabled):hover {
+    color: var(--accent-color, #0066cc);
+    background: color-mix(in srgb, var(--accent-color, #0066cc) 8%, transparent);
   }
 }
 

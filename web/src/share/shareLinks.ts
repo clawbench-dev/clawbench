@@ -22,7 +22,7 @@
  *   a link to a directory simply fails to load and is reported in place.
  */
 
-import { isAbsolutePath, isWindowsAbsolutePath, splitPath } from '@/utils/path.ts'
+import { isAbsolutePath, isWindowsAbsolutePath, splitPath, uncShareRoot } from '@/utils/path.ts'
 import { isAnchorLink, isExternalLink } from '@/utils/doubleClickUtils.ts'
 import { parseFileUri } from '@/composables/useFilePathAnnotation.ts'
 import { getShareToken } from '@/share/shareMode'
@@ -53,17 +53,25 @@ function isNonFileHref(href: string): boolean {
  */
 export function resolveShareTarget(baseDir: string, rel: string): string {
   const absolute = isAbsolutePath(baseDir)
+  // A UNC share's first two segments (server, share) are its volume: ".." must
+  // never pop them, or `//nas/media/../x` would resolve to `//nas/x` — a
+  // DIFFERENT share on the same server rather than the share's parent (which
+  // is not listable anyway).
+  const floor = uncShareRoot(baseDir) ? 2 : 0
   const out: string[] = []
   for (const part of splitPath(baseDir + '/' + rel)) {
     if (part === '' || part === '.') continue
     if (part === '..') {
-      if (out.length > 0) out.pop()
+      if (out.length > floor) out.pop()
       continue
     }
     out.push(part)
   }
   if (out.length === 0) return ''
   const joined = out.join('/')
+  // The share root carries its own leading separators; the POSIX branch below
+  // would turn "//nas/media" into the ordinary absolute path "/nas/media".
+  if (uncShareRoot(baseDir)) return '//' + joined
   // A Windows drive ("E:") must stay the first segment, not gain a leading "/".
   if (isWindowsAbsolutePath(joined + '/')) return joined
   return absolute ? '/' + joined : joined
