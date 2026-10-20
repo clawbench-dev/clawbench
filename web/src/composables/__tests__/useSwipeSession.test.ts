@@ -1,12 +1,17 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { reactive, ref } from 'vue'
+import { readWebFile } from '@/testUtils/readWebFile'
 
 // Full-suite scheduling: this test exercises a swipe gesture watcher that
 // dispatches a debounced session switch. Finishes quickly in isolation but
 // can flake under the coverage-gate's full-suite run. Bump this file's
 // timeout only.
 vi.setConfig({ testTimeout: 30_000 })
-import { useSwipeSession } from '@/composables/useSwipeSession'
+import {
+  useSwipeSession,
+  getNextSessionIndex,
+  getPrevSessionIndex,
+} from '@/composables/useSwipeSession'
 
 // ── swipeSession disabled guard ──
 // Tests that the composable's touch handlers respect the swipeSession local setting.
@@ -31,6 +36,17 @@ globalThis.setInterval = ((fn: TimerHandler, ms?: number, ...args: any[]) => {
   return id
 }) as typeof setInterval
 
+function createTouchEvent(type: 'touchstart' | 'touchend', clientX: number, clientY: number): TouchEvent {
+  const touch = { clientX, clientY } as Touch
+  const event = {
+    touches: type === 'touchstart' ? [touch] : [],
+    changedTouches: type === 'touchend' ? [touch] : [],
+    target: document.createElement('div'),
+    currentTarget: document.createElement('div'),
+  } as unknown as TouchEvent
+  return event
+}
+
 describe('useSwipeSession disabled guard', () => {
   let localConfig: Record<string, any>
   let useSwipeSession: typeof import('@/composables/useSwipeSession')['useSwipeSession']
@@ -53,17 +69,6 @@ describe('useSwipeSession disabled guard', () => {
     pendingIntervals.length = 0
     localStorage.clear()
   })
-
-  function createTouchEvent(type: 'touchstart' | 'touchend', clientX: number, clientY: number): TouchEvent {
-    const touch = { clientX, clientY } as Touch
-    const event = {
-      touches: type === 'touchstart' ? [touch] : [],
-      changedTouches: type === 'touchend' ? [touch] : [],
-      target: document.createElement('div'),
-      currentTarget: document.createElement('div'),
-    } as unknown as TouchEvent
-    return event
-  }
 
   it('does not trigger session switch when swipeSession is false (default)', async () => {
     // Default is false
@@ -108,7 +113,7 @@ describe('useSwipeSession disabled guard', () => {
         switchSession,
       })
 
-      // Simulate a left swipe (next session)
+      // Simulate a left swipe (previous session)
       const startEvent = createTouchEvent('touchstart', 200, 100)
       onTouchStart(startEvent)
 
@@ -133,6 +138,108 @@ describe('useSwipeSession disabled guard', () => {
   })
 })
 
+// ── gesture → list direction (#562) ──
+// The session list is rendered top-down, so "next" must mean the next row
+// (index + 1) for both the swipe gesture and the Ctrl+←/→ shortcut. Before the
+// fix "next" walked up the list, which made → on the first session jump to the
+// oldest one.
+
+describe('swipe direction matches list order', () => {
+  const SESSIONS = [
+    { id: 's1', title: 'S1' },
+    { id: 's2', title: 'S2' },
+    { id: 's3', title: 'S3' },
+  ]
+
+  let localConfig: Record<string, any>
+  let fetchSpy: ReturnType<typeof vi.spyOn>
+
+  beforeEach(async () => {
+    vi.resetModules()
+    localStorage.clear()
+    const configMod = await import('@/composables/useSettingsConfig')
+    localConfig = configMod.localConfig
+    localConfig.swipeSession = true
+    fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ sessions: SESSIONS }),
+    } as Response)
+  })
+
+  afterEach(() => {
+    fetchSpy?.mockRestore()
+    // showIndicator() arms a 1.5s hide timer; clear it (and any interval) or
+    // the leak detector reports a hanging handle.
+    for (const id of pendingTimers) { clearTimeout(id) }
+    pendingTimers.length = 0
+    for (const id of pendingIntervals) { clearInterval(id) }
+    pendingIntervals.length = 0
+    localStorage.clear()
+  })
+
+  async function swipe(currentId: string, fromX: number, toX: number) {
+    const mod = await import('@/composables/useSwipeSession')
+    const switchSession = vi.fn().mockResolvedValue(undefined)
+    const api = mod.useSwipeSession({ currentSessionId: ref(currentId), switchSession })
+    api.onTouchStart(createTouchEvent('touchstart', fromX, 100))
+    api.onTouchEnd(createTouchEvent('touchend', toX, 100))
+    await vi.waitFor(() => { expect(switchSession).toHaveBeenCalled() }, { timeout: 20_000 })
+    return { switchSession, indicatorDirection: api.indicatorDirection }
+  }
+
+  it('swipe right goes to the next row down', async () => {
+    const { switchSession, indicatorDirection } = await swipe('s1', 50, 200)
+    expect(switchSession).toHaveBeenCalledWith('s2')
+    expect(indicatorDirection.value).toBe('right')
+  })
+
+  it('swipe left goes to the previous row up', async () => {
+    const { switchSession, indicatorDirection } = await swipe('s3', 200, 50)
+    expect(switchSession).toHaveBeenCalledWith('s2')
+    expect(indicatorDirection.value).toBe('left')
+  })
+
+  it('swipe right on the last session wraps to the first', async () => {
+    const { switchSession } = await swipe('s3', 50, 200)
+    expect(switchSession).toHaveBeenCalledWith('s1')
+  })
+
+  it('swipe left on the first session wraps to the last row', async () => {
+    const { switchSession } = await swipe('s1', 200, 50)
+    expect(switchSession).toHaveBeenCalledWith('s3')
+  })
+})
+
+describe('desktop Ctrl+arrow mapping', () => {
+  const PANEL = readWebFile('src/components/chat/ChatPanelContent.vue')
+  const start = PANEL.indexOf('function handleCtrlArrowSessionSwitch')
+  const end = PANEL.indexOf('\n}\n', start)
+  const body = PANEL.slice(start, end)
+
+  /** Body of the `if (e.key === '<key>') { ... }` branch. */
+  function arrowBranch(key: 'ArrowLeft' | 'ArrowRight'): string {
+    const at = body.indexOf(`e.key === '${key}'`)
+    expect(at, `missing ${key} branch`).toBeGreaterThanOrEqual(0)
+    const open = body.indexOf('{', at)
+    const close = body.indexOf('}', open)
+    expect(open, `${key} branch should be a block`).toBeGreaterThan(at)
+    expect(close, `${key} branch should close`).toBeGreaterThan(open)
+    return body.slice(open, close)
+  }
+
+  it('Ctrl+ArrowRight advances to the next session', () => {
+    expect(start).toBeGreaterThanOrEqual(0)
+    expect(arrowBranch('ArrowRight')).toMatch(/swipeToNext\(\)/)
+    expect(arrowBranch('ArrowRight')).not.toMatch(/swipeToPrev\(\)/)
+  })
+
+  it('Ctrl+ArrowLeft goes back to the previous session', () => {
+    expect(start).toBeGreaterThanOrEqual(0)
+    expect(arrowBranch('ArrowLeft')).toMatch(/swipeToPrev\(\)/)
+    expect(arrowBranch('ArrowLeft')).not.toMatch(/swipeToNext\(\)/)
+  })
+})
+
 /**
  * Pure swipe classification logic — extracted for testability.
  * Mirrors the logic in useSwipeSession.onTouchEnd.
@@ -150,21 +257,6 @@ export function classifySwipe(
     if (Math.abs(deltaX) < threshold) return null
     if (deltaX < 0) return 'left'
     return 'right'
-}
-
-/**
- * Circular session index navigation (DESC-ordered sessions).
- * - Next (swipe left) = index - 1 (more recent)
- * - Prev (swipe right) = index + 1 (older)
- */
-export function getNextSessionIndex(currentIndex: number, total: number): number {
-    if (total <= 1) return currentIndex
-    return currentIndex > 0 ? currentIndex - 1 : total - 1
-}
-
-export function getPrevSessionIndex(currentIndex: number, total: number): number {
-    if (total <= 1) return currentIndex
-    return currentIndex < total - 1 ? currentIndex + 1 : 0
 }
 
 // ── classifySwipe ──
@@ -237,12 +329,12 @@ describe('classifySwipe', () => {
 // ── getNextSessionIndex / getPrevSessionIndex ──
 
 describe('getNextSessionIndex', () => {
-    it('returns index-1 for non-zero index', () => {
-        expect(getNextSessionIndex(2, 5)).toBe(1)
+    it('returns index+1 for non-last index', () => {
+        expect(getNextSessionIndex(2, 5)).toBe(3)
     })
 
-    it('wraps to last index when at 0', () => {
-        expect(getNextSessionIndex(0, 5)).toBe(4)
+    it('wraps to index 0 when at the last index', () => {
+        expect(getNextSessionIndex(4, 5)).toBe(0)
     })
 
     it('returns current index when only one session', () => {
@@ -253,26 +345,39 @@ describe('getNextSessionIndex', () => {
         expect(getNextSessionIndex(0, 0)).toBe(0)
     })
 
-    it('handles being at last index (no wrap needed since DESC)', () => {
-        expect(getNextSessionIndex(4, 5)).toBe(3)
+    it('advances from the first session instead of wrapping to the last', () => {
+        // Regression for #562: pressing → on the first session must reach the
+        // second one, not the oldest one at the bottom of the list.
+        expect(getNextSessionIndex(0, 5)).toBe(1)
+    })
+
+    it('lands on the first row when the current session is not in the list', () => {
+        // The active session can be missing from the fetched list (just
+        // archived, or created after the 3s cache was filled). -1 is treated as
+        // "before the first row" so next lands on row 0.
+        expect(getNextSessionIndex(-1, 5)).toBe(0)
     })
 })
 
 describe('getPrevSessionIndex', () => {
-    it('returns index+1 for non-last index', () => {
-        expect(getPrevSessionIndex(2, 5)).toBe(3)
+    it('returns index-1 for non-zero index', () => {
+        expect(getPrevSessionIndex(2, 5)).toBe(1)
     })
 
-    it('wraps to 0 when at last index', () => {
-        expect(getPrevSessionIndex(4, 5)).toBe(0)
+    it('wraps to the last index when at 0', () => {
+        expect(getPrevSessionIndex(0, 5)).toBe(4)
     })
 
     it('returns current index when only one session', () => {
         expect(getPrevSessionIndex(0, 1)).toBe(0)
     })
 
-    it('handles being at index 0 (goes to 1)', () => {
-        expect(getPrevSessionIndex(0, 5)).toBe(1)
+    it('handles being at the last index (goes to the previous row)', () => {
+        expect(getPrevSessionIndex(4, 5)).toBe(3)
+    })
+
+    it('lands on the last row when the current session is not in the list', () => {
+        expect(getPrevSessionIndex(-1, 5)).toBe(4)
     })
 })
 
