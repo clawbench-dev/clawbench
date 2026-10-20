@@ -1171,6 +1171,62 @@ describe('duplicate message root causes (regression)', () => {
     expect(reply.streaming).toBeFalsy()
   })
 
+  it('keeps the JUST-FINISHED live blocks when the DB row is summary-stripped (no collapse flicker)', () => {
+    // The `done` handler finalizes the bubble FIRST (forceCleanupStreamingState
+    // deletes `streaming`) and only then calls loadHistory. By that point the
+    // backend has already run summarization synchronously inside Finalize, so
+    // the snapshot's row is summary-stripped (`blocks: []`) even though this
+    // client holds the COMPLETE reply it just received.
+    //
+    // rebuildFromDb located the live placeholder via `m.streaming`, which is now
+    // gone → the placeholder fell through to "drop everything not in the DB" and
+    // the stripped row took its place. The bubble collapsed to just the summary
+    // for a frame (measured: message 126px → 66px, meta bar top 275 → 214), then
+    // the lazy-original refetch restored it — the two-step flicker users see as a
+    // duplicated duration/time line under the action bar.
+    //
+    // Distinguishing this from the resume case above: there the client holds a
+    // STALE PREFIX from before a disconnect and the DB is the only complete
+    // copy. Here the live object is the complete copy and the DB row is empty.
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      {
+        role: 'assistant', id: 46, content: '', parentQueueId: '1', streaming: true,
+        blocks: [
+          { type: 'thinking', text: 'reasoning', done: true },
+          { type: 'tool_use', id: 'tu-1', name: 'Read', done: true },
+          { type: 'text', text: 'The complete reply' },
+        ],
+      },
+    ]
+    // Go through the REAL terminal path: the done handler finalizes the bubble
+    // (which deletes `streaming`) and only then calls loadHistory.
+    forceCleanupStreamingState(messages as any, { onRenderNeeded: () => {} })
+    expect((messages[1] as any).streaming).toBeUndefined()
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      {
+        role: 'assistant', id: 46,
+        content: '{"blocks":[]}',
+        blocks: [],
+        summary: 'A summary of the whole reply',
+      },
+    ]
+
+    const merged = rebuildFromDb(messages, dbMsgs as any, false)
+    const reply = merged.find((m: any) => m.role === 'assistant')!
+
+    // The complete reply this client just rendered must survive: dropping it is
+    // what makes the bubble collapse and then pop back.
+    const text = (reply.blocks || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('')
+    expect(text).toBe('The complete reply')
+    expect((reply.blocks || []).some((b: any) => b.type === 'thinking')).toBe(true)
+    expect((reply.blocks || []).some((b: any) => b.type === 'tool_use')).toBe(true)
+    // The summary still arrives so the toggle works without another round-trip.
+    expect(reply.summary).toBe('A summary of the whole reply')
+    expect(reply.streaming).toBeFalsy()
+  })
+
   it('does NOT clear a live prefix when the DB row has real blocks (stripped-clear must not overreach)', () => {
     // Guard for the branch above: clearing is only correct when the DB row is
     // genuinely empty. If the row has content, the merge must still run and
