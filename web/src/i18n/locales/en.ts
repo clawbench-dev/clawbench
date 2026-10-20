@@ -2081,6 +2081,9 @@ export default {
     addedToChat: 'Added to chat',
     send: 'Send',
     sendHint: 'Send to the current chat (hold to choose another)',
+    // Destination row in the expanded bar: "Send to <session>".
+    sendTo: 'To',
+    changeTarget: 'Change destination',
     aiChat: 'AI Chat',
     newSession: 'New session',
     sentToSession: 'Sent to session',

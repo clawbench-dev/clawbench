@@ -4,6 +4,19 @@ import { nextTick } from 'vue'
 import { createI18n } from 'vue-i18n'
 import { truncateQuoteText, canSendInput } from '@/utils/quoteQuestionUtils'
 import QuoteQuestionBar from '@/components/common/QuoteQuestionBar.vue'
+import { useSessionIdentity } from '@/composables/useSessionIdentity'
+import {
+  cancelTarget,
+  usePendingTarget,
+  usePickerIntent,
+  useChosenTarget,
+  setChosenTarget,
+  clearChosenTarget,
+} from '@/composables/useConversationTarget'
+
+// The bar reads the ACTIVE session for its "发送到" row. A real ref (not a bare
+// object) so the computed re-evaluates when a test switches it.
+const identity = useSessionIdentity()
 
 // Mock navigator.clipboard for the copy button tests.
 const mockWriteText = vi.fn()
@@ -33,6 +46,13 @@ const i18n = createI18n({
         // Collapsed toolbar labels (issue #544).
         comment: 'Comment',
         quoteSelection: 'Quote',
+        // Destination row in the expanded panel.
+        sendTo: '发送到',
+        changeTarget: 'Change destination',
+        chooseSession: '选择会话',
+      },
+      session: {
+        unnamed: '未命名会话',
       },
     },
   },
@@ -131,6 +151,10 @@ describe('canSendInput (pure function)', () => {
 
 describe('QuoteQuestionBar component', () => {
   const mounted: ReturnType<typeof mount>[] = []
+  // Baseline identity for the destination row; `afterEach` restores it.
+  identity.currentSessionId.value = 's-current'
+  identity.currentSessionTitle.value = 'My active session'
+
   function mountBar(props = {}) {
     const wrapper = mount(QuoteQuestionBar, {
       props: {
@@ -161,6 +185,13 @@ describe('QuoteQuestionBar component', () => {
     while (mounted.length) mounted.pop()?.unmount()
     mockWriteText.mockReset()
     mockWriteText.mockResolvedValue(undefined)
+    // Module-level state shared with the real composable: reset it or one test's
+    // picked destination / open picker leaks into the next.
+    clearChosenTarget()
+    cancelTarget()
+    identity.currentSessionId.value = 's-current'
+    identity.currentSessionTitle.value = 'My active session'
+    identity.currentAgentId.value = ''
   })
 
   it('renders the floating toolbar when visible with quoteData', () => {
@@ -409,6 +440,81 @@ describe('QuoteQuestionBar component', () => {
     vm.handleSend()
     expect(wrapper.emitted('send')).toBeTruthy()
     expect(wrapper.emitted('send')![0]).toEqual(['my question', { pickTarget: false }])
+  })
+
+  // ── Destination row ("To: <session>") ──
+
+  describe('destination row', () => {
+    it('shows the active session name in the expanded panel', async () => {
+      const wrapper = mountBar({ quoteData: { text: 'x' } })
+      await (wrapper.vm as any).expand()
+
+      const row = wrapper.find('.qq-target')
+      expect(row.exists()).toBe(true)
+      expect(row.text()).toContain('发送到')
+      expect(row.text()).toContain('My active session')
+    })
+
+    it('sits ABOVE the quoted snippet (it is the addressee, not a body item)', async () => {
+      const wrapper = mountBar({ quoteData: { text: 'x' } })
+      await (wrapper.vm as any).expand()
+
+      const panel = wrapper.find('.quote-bar-expanded').element
+      const kids = Array.from(panel.children)
+      const rowIdx = kids.findIndex(el => el.classList.contains('qq-target'))
+      const snippetIdx = kids.findIndex(el => el.classList.contains('qq-quoted-snippet'))
+      expect(rowIdx).toBeGreaterThanOrEqual(0)
+      expect(snippetIdx).toBeGreaterThanOrEqual(0)
+      expect(rowIdx).toBeLessThan(snippetIdx)
+    })
+
+    it('opens the picker in `choose` mode when clicked, without committing', async () => {
+      const wrapper = mountBar({ quoteData: { text: 'x' } })
+      await (wrapper.vm as any).expand()
+
+      await wrapper.find('.qq-target').trigger('click')
+
+      const { pickerOpen, pending } = usePendingTarget()
+      expect(pickerOpen.value).toBe(true)
+      expect(pending.value).toBeNull()
+      expect(usePickerIntent().value).toBe('choose')
+      // Nothing was emitted: the user is still composing.
+      expect(wrapper.emitted('add')).toBeFalsy()
+      expect(wrapper.emitted('send')).toBeFalsy()
+      cancelTarget()
+    })
+
+    it('shows the picked session after choosing another one', async () => {
+      const wrapper = mountBar({ quoteData: { text: 'x' } })
+      await (wrapper.vm as any).expand()
+
+      setChosenTarget({ id: 's-other', title: 'Another chat', agentId: 'a2' })
+      await nextTick()
+
+      expect(wrapper.find('.qq-target').text()).toContain('Another chat')
+      clearChosenTarget()
+    })
+
+    it('falls back to the picker hint when there is no active session', async () => {
+      identity.currentSessionId.value = ''
+      const wrapper = mountBar({ quoteData: { text: 'x' } })
+      await (wrapper.vm as any).expand()
+
+      expect(wrapper.find('.qq-target').text()).toContain('选择会话')
+      identity.currentSessionId.value = 's-current'
+    })
+
+    it('drops the picked destination when the bar closes', async () => {
+      // A destination chosen for one comment must not redirect the next one.
+      const wrapper = mountBar({ quoteData: { text: 'x' } })
+      await (wrapper.vm as any).expand()
+      setChosenTarget({ id: 's-other', title: 'Another chat', agentId: 'a2' })
+      await nextTick()
+
+      await wrapper.setProps({ visible: false })
+
+      expect(useChosenTarget().value).toBeNull()
+    })
   })
 
   /**

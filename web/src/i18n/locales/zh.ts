@@ -2076,6 +2076,9 @@ export default {
     addedToChat: '已加入对话',
     send: '发送',
     sendHint: '发送到当前对话（长按可换个会话）',
+    // 展开态顶部的目标会话行：「发送到 <会话名>」
+    sendTo: '发送到',
+    changeTarget: '更换会话',
     aiChat: 'AI 对话',
     newSession: '新会话',
     sentToSession: '已发送到会话',

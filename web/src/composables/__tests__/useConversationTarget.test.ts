@@ -41,6 +41,10 @@ vi.mock('@/stores/app.ts', () => ({ store: { state: mockState } }))
 const { mockIdentity } = vi.hoisted(() => ({
   mockIdentity: {
     currentSessionId: { value: '' },
+    // Read by confirmTarget's `choose` path to describe the CURRENT session
+    // without going through the picker's (possibly stale) list.
+    currentSessionTitle: { value: '' },
+    currentAgentId: { value: '' },
     enqueueToSession: vi.fn(),
     createSessionInBackground: vi.fn(),
     switchSession: vi.fn(),
@@ -77,6 +81,12 @@ import {
   cancelTarget,
   dispatchToTarget,
   confirmTarget,
+  chooseTarget,
+  usePickerIntent,
+  useChosenTarget,
+  clearChosenTarget,
+  setChosenTarget,
+  setTargetMetaLookup,
   type PendingRequest,
 } from '@/composables/useConversationTarget.ts'
 
@@ -110,11 +120,98 @@ describe('useConversationTarget', () => {
     mockState.sessionCount = 0
     mockState.sessionListVersion = 0
     mockIdentity.currentSessionId.value = 's-current'
+    mockIdentity.currentSessionTitle.value = ''
+    mockIdentity.currentAgentId.value = ''
     mockIdentity.enqueueToSession.mockResolvedValue(true)
     mockIdentity.createSessionInBackground.mockResolvedValue('s-new')
     mockOpenSession.mockReset()
     setOpenSessionHandler(mockOpenSession)
+    clearChosenTarget()
     cancelTarget()
+  })
+
+  // ── Choosing a destination ahead of time (the bar's "To:" row) ──
+
+  describe('chooseTarget / chosenTarget', () => {
+    it('opens the picker in `choose` mode with no pending payload', () => {
+      chooseTarget()
+
+      const { pickerOpen, pending } = usePendingTarget()
+      expect(pickerOpen.value).toBe(true)
+      expect(pending.value).toBeNull()
+      expect(usePickerIntent().value).toBe('choose')
+    })
+
+    it('records the pick WITHOUT delivering anything', async () => {
+      // The whole point: the user is still composing, so confirming a
+      // destination must not send an empty payload anywhere.
+      setTargetMetaLookup(() => ({ title: 'Other chat', agentId: 'a2' }))
+      chooseTarget()
+
+      await confirmTarget({ kind: 'session', id: 's-other' })
+
+      expect(useChosenTarget().value).toEqual({ id: 's-other', title: 'Other chat', agentId: 'a2' })
+      expect(mockIdentity.enqueueToSession).not.toHaveBeenCalled()
+      expect(usePendingTarget().pickerOpen.value).toBe(false)
+      setTargetMetaLookup(null)
+    })
+
+    it('uses the live identity title for the CURRENT session', async () => {
+      // The picker's list may be stale for the session on screen; identity is
+      // authoritative there.
+      mockIdentity.currentSessionId.value = 's-current'
+      mockIdentity.currentSessionTitle.value = 'Live title'
+      mockIdentity.currentAgentId.value = 'a-live'
+      chooseTarget()
+
+      await confirmTarget({ kind: 'session', id: 's-current' })
+
+      expect(useChosenTarget().value).toEqual({
+        id: 's-current', title: 'Live title', agentId: 'a-live',
+      })
+    })
+
+    it('leaves the choice untouched for `create` (nothing to preview yet)', async () => {
+      chooseTarget()
+      await confirmTarget({ kind: 'create' })
+      expect(useChosenTarget().value).toBeNull()
+    })
+
+    it('a chosen target wins over the active session on delivery', async () => {
+      // The row still shows the picked conversation, so delivering to the
+      // active session would contradict what is on screen.
+      mockIdentity.currentSessionId.value = 's-active'
+      setChosenTarget({ id: 's-picked', title: 'Picked', agentId: 'a1' })
+
+      requestTarget(request({ mode: 'send', text: 'hi' }), { deliverTo: 'active' })
+      await flushPromises()
+
+      expect(mockIdentity.enqueueToSession).toHaveBeenCalledTimes(1)
+      expect(mockIdentity.enqueueToSession.mock.calls[0][0]).toBe('s-picked')
+    })
+
+    it('falls back to the active session when nothing was chosen', async () => {
+      mockIdentity.currentSessionId.value = 's-active'
+      requestTarget(request({ mode: 'send', text: 'hi' }), { deliverTo: 'active' })
+      await flushPromises()
+      expect(mockIdentity.enqueueToSession.mock.calls[0][0]).toBe('s-active')
+    })
+
+    it('cancelTarget does not leave the picker stuck in `choose` mode', () => {
+      // A cancelled choose would otherwise make the NEXT deliver-confirm only
+      // record a destination and silently drop the card.
+      chooseTarget()
+      cancelTarget()
+      expect(usePickerIntent().value).toBe('deliver')
+    })
+
+    it('confirmTarget in `deliver` mode still delivers after a choose was cancelled', async () => {
+      chooseTarget()
+      cancelTarget()
+      requestTarget(request({ mode: 'send', text: 'hi' }))
+      await confirmTarget({ kind: 'session', id: 's-other' })
+      expect(mockIdentity.enqueueToSession).toHaveBeenCalledTimes(1)
+    })
   })
 
   // ── requestTarget: picker by default, active session on request ──

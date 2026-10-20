@@ -92,7 +92,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { MessageSquare, Plus, ArrowRight } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
@@ -102,6 +102,7 @@ import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
 import { useAgents } from '@/composables/useAgents'
 import { useSessionIdentity, runningSessions } from '@/composables/useSessionIdentity.ts'
+import { setTargetMetaLookup } from '@/composables/useConversationTarget.ts'
 import { coalescedJson } from '@/utils/inflightGet.ts'
 import { appLog } from '@/utils/appLog'
 
@@ -192,6 +193,20 @@ async function loadSessions() {
 
 // Reset the highlight whenever the list is (re)loaded.
 watch(sessions, () => listNav.reset())
+
+/**
+ * Expose the already-fetched title/agent to the quote bar's "发送到" row.
+ *
+ * The dialog owns the only copy of the session list on this path; having the
+ * bar fetch `/api/ai/sessions` again just to render one name would duplicate a
+ * request for data that is already in memory. Registered while the dialog is
+ * alive, cleared on unmount so a stale closure cannot answer after teardown.
+ */
+setTargetMetaLookup((sessionId) => {
+  const hit = sessions.value.find(s => s.id === sessionId)
+  return { title: hit?.title || '', agentId: hit?.agentId || '' }
+})
+onUnmounted(() => setTargetMetaLookup(null))
 
 watch(() => props.open, (val) => {
   if (val) void loadSessions()
