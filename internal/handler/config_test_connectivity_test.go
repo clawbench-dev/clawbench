@@ -1179,3 +1179,75 @@ func writeMCPScript(t *testing.T, body string) string {
 	require.NoError(t, os.WriteFile(p, []byte(body), 0o755))
 	return p
 }
+
+// ── MCP connectivity test ────────────────────────────────────────────────────
+
+// testMCP names every available server when the requested one is missing: "not
+// found" alone does not tell the user what they can pick instead.
+func TestTestMCP_UnknownNameListsAvailable(t *testing.T) {
+	values := map[string]any{
+		"mcp.name": "ghost",
+		"mcp.servers": []any{
+			map[string]any{"name": "alpha", "transport": "stdio", "command": "node"},
+			map[string]any{"name": "beta", "transport": "http", "url": "https://b"},
+		},
+	}
+
+	res := testMCP(context.Background(), values)
+	assert.False(t, res.Success)
+	assert.Contains(t, res.Message, "ghost")
+	assert.Contains(t, res.Message, "alpha")
+	assert.Contains(t, res.Message, "beta")
+}
+
+// With no servers at all the message must say so rather than printing an empty
+// "available:" list.
+func TestTestMCP_NoServersConfigured(t *testing.T) {
+	prev := model.ConfigInstance.MCP
+	model.ConfigInstance.MCP = model.MCPConfig{}
+	t.Cleanup(func() { model.ConfigInstance.MCP = prev })
+
+	res := testMCP(context.Background(), map[string]any{"mcp.name": "ghost"})
+	assert.False(t, res.Success)
+	assert.Contains(t, res.Message, "no MCP servers are configured")
+}
+
+// A missing name is rejected before any probe runs: there is nothing to test.
+func TestTestMCP_RequiresName(t *testing.T) {
+	res := testMCP(context.Background(), map[string]any{})
+	assert.False(t, res.Success)
+	assert.Contains(t, res.Message, "mcp.name is required")
+}
+
+// A malformed servers payload is reported as such instead of being silently
+// ignored (which would probe the saved config and test the wrong thing).
+func TestTestMCP_MalformedServersPayload(t *testing.T) {
+	values := map[string]any{
+		"mcp.name":    "alpha",
+		"mcp.servers": []any{"not-an-object"},
+	}
+	res := testMCP(context.Background(), values)
+	assert.False(t, res.Success)
+	assert.Contains(t, res.Message, "must be an object")
+}
+
+// The form's definition is what gets probed, not the saved one: the user clicks
+// test precisely to decide whether to save the edit.
+func TestMCPServersFromValues_PrefersFormOverSaved(t *testing.T) {
+	prev := model.ConfigInstance.MCP
+	model.ConfigInstance.MCP = model.MCPConfig{Servers: []model.MCPServer{{Name: "saved"}}}
+	t.Cleanup(func() { model.ConfigInstance.MCP = prev })
+
+	got, err := mcpServersFromValues(map[string]any{
+		"mcp.servers": []any{map[string]any{"name": "from-form", "transport": "stdio", "command": "x"}},
+	})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "from-form", got[0].Name)
+
+	// No list in the form → fall back to the saved config.
+	got, err = mcpServersFromValues(map[string]any{})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "saved", got[0].Name)
+}

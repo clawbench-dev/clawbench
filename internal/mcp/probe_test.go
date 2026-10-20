@@ -1,6 +1,8 @@
 package mcp
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -263,4 +266,240 @@ func TestProbe_UnknownTransport(t *testing.T) {
 func decodeBody(r *http.Request, v any) error {
 	defer r.Body.Close()
 	return json.NewDecoder(r.Body).Decode(v)
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+// firstSSEData extracts the payload of the first `data:` line. A server may
+// prefix the stream with event/id/retry lines, so the scan cannot assume the
+// payload is the first line.
+func TestFirstSSEData(t *testing.T) {
+	assert.Nil(t, firstSSEData(nil), "no lines → no payload")
+	assert.Nil(t, firstSSEData([]byte("event: message\nretry: 100\n")))
+	assert.Equal(t, `{"a":1}`,
+		string(firstSSEData([]byte("event: message\ndata: {\"a\":1}\ndata: {\"b\":2}\n"))),
+		"only the FIRST data line is the response")
+	assert.Equal(t, `{"a":1}`, string(firstSSEData([]byte("data:   {\"a\":1}   \n"))),
+		"surrounding whitespace is trimmed")
+}
+
+// snippet keeps an error message on one line and bounded: a server's HTML error
+// page or a multi-line traceback must not blow up the banner.
+func TestSnippet(t *testing.T) {
+	assert.Equal(t, "one two three", snippet([]byte("one\n\ttwo   three")))
+	assert.Empty(t, snippet(nil))
+
+	long := strings.Repeat("x", 500)
+	got := snippet([]byte(long))
+	assert.Len(t, []rune(got), 201, "200 characters plus the ellipsis")
+	assert.True(t, strings.HasSuffix(got, "…"))
+}
+
+// withStderr appends the child's stderr — the only place a stdio server explains
+// a startup failure — and leaves the message untouched when it captured nothing.
+func TestWithStderr(t *testing.T) {
+	assert.Equal(t, "boom", withStderr("boom", &bytes.Buffer{}))
+
+	var buf bytes.Buffer
+	buf.WriteString("  missing API_KEY\n")
+	got := withStderr("boom", &buf)
+	assert.Contains(t, got, "boom")
+	assert.Contains(t, got, "server stderr")
+	assert.Contains(t, got, "missing API_KEY")
+	assert.NotContains(t, got, "\n", "the appended stderr must stay on one line")
+}
+
+// Zero tools is a VALID server (it may expose only resources or prompts) but
+// almost always a misconfiguration, so the message must say so rather than
+// claiming a plain success.
+func TestToolsMessage(t *testing.T) {
+	assert.Contains(t, toolsMessage(0), "0 tools")
+	assert.Contains(t, toolsMessage(3), "3 tool(s)")
+}
+
+// The tool list is capped so a server exposing hundreds of tools cannot bloat
+// the settings response.
+func TestTruncateTools(t *testing.T) {
+	small := []string{"a", "b"}
+	assert.Equal(t, small, truncateTools(small), "a short list is returned as-is")
+
+	many := make([]string, maxToolsListed+5)
+	for i := range many {
+		many[i] = fmt.Sprintf("t%d", i)
+	}
+	assert.Len(t, truncateTools(many), maxToolsListed)
+}
+
+func TestEnvPairs(t *testing.T) {
+	assert.Nil(t, envPairs(nil))
+	assert.Nil(t, envPairs(map[string]string{}))
+	assert.Equal(t, []string{"K=v"}, envPairs(map[string]string{"K": "v"}))
+}
+
+func TestRPCError_Message(t *testing.T) {
+	err := &rpcError{Code: -32601, Message: "method not found"}
+	assert.Equal(t, "method not found (code -32601)", err.Error())
+}
+
+// ── Failure paths ────────────────────────────────────────────────────────────
+
+// An empty body from a server that answers 200 must be named as such: it is the
+// signature of a streamable-HTTP endpoint that expects a different Accept.
+func TestProbe_HTTPEmptyBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	res := Probe(ctx, model.MCPServer{Name: "empty", Transport: model.MCPTransportHTTP, URL: srv.URL})
+	assert.False(t, res.OK)
+	assert.Contains(t, res.Message, "empty response body")
+}
+
+// A JSON-RPC error reply must be reported as the server's own message, not as
+// a parse failure: the code and message are what the user needs to fix it.
+func TestProbe_HTTPRPCError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"initialize not supported"}}`)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	res := Probe(ctx, model.MCPServer{Name: "rpc-err", Transport: model.MCPTransportHTTP, URL: srv.URL})
+	assert.False(t, res.OK)
+	assert.Contains(t, res.Message, "initialize not supported")
+	assert.Contains(t, res.Message, "-32601")
+}
+
+// A tools/list failure still reports the server's identity: the handshake
+// succeeded, so telling the user which server answered is useful.
+func TestProbe_HTTPToolsListFailsKeepsIdentity(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Method string `json:"method"`
+		}
+		_ = decodeBody(r, &req)
+		w.Header().Set("Content-Type", "application/json")
+		if req.Method == "initialize" {
+			fmt.Fprint(w, `{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","serverInfo":{"name":"half","version":"1"}}}`)
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, "tools exploded")
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	res := Probe(ctx, model.MCPServer{Name: "half", Transport: model.MCPTransportHTTP, URL: srv.URL})
+	assert.False(t, res.OK)
+	assert.Equal(t, "half", res.ServerName, "the handshake did succeed, so report who answered")
+	assert.Contains(t, res.Message, "500")
+	assert.Contains(t, res.Message, "tools exploded")
+}
+
+// Headers are forwarded: a server behind an auth gateway needs them, and a
+// silent drop would look like a server-side rejection.
+func TestProbe_HTTPForwardsHeaders(t *testing.T) {
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		var req struct {
+			ID     int    `json:"id"`
+			Method string `json:"method"`
+		}
+		_ = decodeBody(r, &req)
+		w.Header().Set("Content-Type", "application/json")
+		switch req.Method {
+		case "initialize":
+			fmt.Fprint(w, `{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","serverInfo":{"name":"auth-srv","version":"1"}}}`)
+		case "tools/list":
+			fmt.Fprint(w, `{"jsonrpc":"2.0","id":2,"result":{"tools":[]}}`)
+		default:
+			w.WriteHeader(http.StatusAccepted)
+		}
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	res := Probe(ctx, model.MCPServer{
+		Name: "auth-srv", Transport: model.MCPTransportHTTP, URL: srv.URL,
+		Headers: map[string]string{"Authorization": "Bearer tok"},
+	})
+	require.True(t, res.OK, res.Message)
+	assert.Equal(t, "Bearer tok", gotAuth)
+	assert.Contains(t, res.Message, "0 tools", "a server with no tools is valid but flagged")
+}
+
+// tryParseResponse must ignore anything that is not OUR reply: notifications,
+// server-initiated requests, blank lines, malformed JSON, and replies to another
+// id. Mistaking one for the answer would read the wrong result.
+func TestTryParseResponse(t *testing.T) {
+	assert.Nil(t, tryParseResponse([]byte("   \n"), 1), "blank")
+	assert.Nil(t, tryParseResponse([]byte("not json"), 1))
+	assert.Nil(t, tryParseResponse([]byte(`{"jsonrpc":"2.0","method":"x"}`), 1),
+		"a notification has no id")
+	assert.Nil(t, tryParseResponse([]byte(`{"jsonrpc":"2.0","id":2,"method":"x","result":{}}`), 1),
+		"a server-initiated request has a method")
+	assert.Nil(t, tryParseResponse([]byte(`{"jsonrpc":"2.0","id":9,"result":{}}`), 1),
+		"a reply to another id")
+
+	got := tryParseResponse([]byte(`{"jsonrpc":"2.0","id":1,"result":{"ok":true}}`), 1)
+	require.NotNil(t, got)
+	assert.Equal(t, 1, got.ID)
+	assert.Nil(t, got.Error)
+}
+
+// A reply without a trailing newline is still a reply: some servers close the
+// stream right after the last message.
+func TestReadResponse_LastLineWithoutNewline(t *testing.T) {
+	r := bufio.NewReader(strings.NewReader(`{"jsonrpc":"2.0","id":1,"result":{}}`))
+	resp, err := readResponse(r, 1, &bytes.Buffer{})
+	require.NoError(t, err)
+	assert.Equal(t, 1, resp.ID)
+}
+
+// A server that closes without replying must say so, and name the cause rather
+// than reporting a generic parse failure.
+func TestReadResponse_ClosedBeforeReply(t *testing.T) {
+	r := bufio.NewReader(strings.NewReader(`{"jsonrpc":"2.0","method":"noise"}` + "\n"))
+	_, err := readResponse(r, 7, &bytes.Buffer{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "closed the connection before replying")
+}
+
+// A stdio server that completes the handshake but fails tools/list still reports
+// its identity: the connection worked, so naming the server helps the user tell
+// "wrong server" apart from "server is broken".
+func TestProbe_StdioToolsListFailsKeepsIdentity(t *testing.T) {
+	script := writeScript(t, "half.sh", `#!/bin/sh
+while IFS= read -r line; do
+  case "$line" in
+    *'"initialize"'*)
+      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","serverInfo":{"name":"half-stdio","version":"1"}}}'
+      ;;
+    *'"tools/list"'*)
+      printf '%s\n' '{"jsonrpc":"2.0","id":2,"error":{"code":-32603,"message":"tools/list unavailable"}}'
+      ;;
+  esac
+done
+`)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	res := Probe(ctx, model.MCPServer{Name: "half", Transport: model.MCPTransportStdio, Command: script})
+	assert.False(t, res.OK)
+	assert.Equal(t, "half-stdio", res.ServerName, "the handshake succeeded, so report who answered")
+	assert.Contains(t, res.Message, "tools/list")
 }

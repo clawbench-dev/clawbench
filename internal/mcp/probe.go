@@ -32,6 +32,11 @@ import (
 // down, so sending a recent one is safe; sending nothing is not.
 const protocolVersion = "2024-11-05"
 
+// jsonrpcVersion is the only JSON-RPC version this probe speaks. It is a
+// constant because every request must agree: a server rejects a mismatched
+// version outright, and a typo at one call site would look like a server bug.
+const jsonrpcVersion = "2.0"
+
 // maxResponseBytes bounds a single JSON-RPC reply. A server that streams an
 // unbounded body must not be able to exhaust memory here.
 const maxResponseBytes = 8 << 20
@@ -122,11 +127,12 @@ func Probe(ctx context.Context, srv model.MCPServer) Result {
 	case model.MCPTransportStdio:
 		r := probeStdio(ctx, srv)
 		return finish(r)
-	case model.MCPTransportHTTP:
-		r := probeHTTP(ctx, srv, false)
-		return finish(r)
-	case model.MCPTransportSSE:
-		r := probeHTTP(ctx, srv, true)
+	case model.MCPTransportHTTP, model.MCPTransportSSE:
+		// The two share one implementation: the probe is a one-shot request and
+		// does not consume the streaming half of the SSE transport, so the only
+		// difference is which Accept header the server tolerates — and the
+		// request advertises both.
+		r := probeHTTP(ctx, srv)
 		return finish(r)
 	default:
 		// ValidateMCPServers already rejected this, so reaching here means the
@@ -151,21 +157,21 @@ func probeStdio(ctx context.Context, srv model.MCPServer) Result {
 	// is replaced instead of extended.
 	cmd.Env = append(os.Environ(), envPairs(srv.Env)...)
 
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return Result{Message: fmt.Sprintf("cannot open stdin: %v", err)}
+	stdin, pipeErr := cmd.StdinPipe()
+	if pipeErr != nil {
+		return Result{Message: fmt.Sprintf("cannot open stdin: %v", pipeErr)}
 	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return Result{Message: fmt.Sprintf("cannot open stdout: %v", err)}
+	stdout, pipeErr := cmd.StdoutPipe()
+	if pipeErr != nil {
+		return Result{Message: fmt.Sprintf("cannot open stdout: %v", pipeErr)}
 	}
 	// Capture stderr: a server that dies on startup explains itself there, and
 	// without this the user sees only "connection closed".
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
-	if err := cmd.Start(); err != nil {
-		return Result{Message: fmt.Sprintf("cannot start %q: %v", srv.Command, err)}
+	if startErr := cmd.Start(); startErr != nil {
+		return Result{Message: fmt.Sprintf("cannot start %q: %v", srv.Command, startErr)}
 	}
 	// Always reap. Kill is harmless after a clean exit and guarantees no
 	// orphaned child if an early return skipped the graceful path.
@@ -176,12 +182,12 @@ func probeStdio(ctx context.Context, srv model.MCPServer) Result {
 
 	reader := bufio.NewReader(stdout)
 	call := func(req rpcRequest) (*rpcResponse, error) {
-		line, err := json.Marshal(req)
-		if err != nil {
-			return nil, err
+		line, marshalErr := json.Marshal(req)
+		if marshalErr != nil {
+			return nil, marshalErr
 		}
-		if _, err := stdin.Write(append(line, '\n')); err != nil {
-			return nil, fmt.Errorf("write request: %w", err)
+		if _, writeErr := stdin.Write(append(line, '\n')); writeErr != nil {
+			return nil, fmt.Errorf("write request: %w", writeErr)
 		}
 		return readResponse(reader, req.ID, &stderr)
 	}
@@ -193,10 +199,10 @@ func probeStdio(ctx context.Context, srv model.MCPServer) Result {
 	// The spec requires the client to confirm with `notifications/initialized`
 	// before any other request. A notification carries no id, so there is no
 	// reply to wait for.
-	if _, err := stdin.Write(append(mustJSON(rpcRequest{
-		JSONRPC: "2.0", Method: "notifications/initialized",
-	}), '\n')); err != nil {
-		return Result{Message: withStderr(fmt.Sprintf("send initialized: %v", err), &stderr)}
+	if _, writeErr := stdin.Write(append(mustJSON(rpcRequest{
+		JSONRPC: jsonrpcVersion, Method: "notifications/initialized",
+	}), '\n')); writeErr != nil {
+		return Result{Message: withStderr(fmt.Sprintf("send initialized: %v", writeErr), &stderr)}
 	}
 
 	tools, err := doToolsList(call)
@@ -272,10 +278,10 @@ func tryParseResponse(line []byte, id int) *rpcResponse {
 
 // ── http / sse ───────────────────────────────────────────────────────────
 
-// probeHTTP posts JSON-RPC to the URL. `sse` is accepted because the endpoint
-// name is the same shape; the transport difference only matters for streaming
-// notifications, which a one-shot probe does not consume.
-func probeHTTP(ctx context.Context, srv model.MCPServer, sse bool) Result {
+// probeHTTP posts JSON-RPC to the URL. Used for both the http and sse
+// transports: the difference only matters for streaming notifications, which a
+// one-shot probe does not consume.
+func probeHTTP(ctx context.Context, srv model.MCPServer) Result {
 	client := &http.Client{Timeout: 20 * time.Second}
 
 	post := func(req rpcRequest) (*rpcResponse, error) {
@@ -297,7 +303,7 @@ func probeHTTP(ctx context.Context, srv model.MCPServer, sse bool) Result {
 		if err != nil {
 			return nil, fmt.Errorf("request failed: %w", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 		if err != nil {
@@ -335,7 +341,7 @@ func probeHTTP(ctx context.Context, srv model.MCPServer, sse bool) Result {
 
 	// Best effort: the initialized notification. Some servers ignore it on
 	// streamable HTTP; a failure here is not fatal, so the error is dropped.
-	_, _ = post(rpcRequest{JSONRPC: "2.0", ID: 99, Method: "notifications/initialized"})
+	_, _ = post(rpcRequest{JSONRPC: jsonrpcVersion, ID: 99, Method: "notifications/initialized"})
 
 	tools, err := doToolsList(post)
 	if err != nil {
@@ -371,10 +377,10 @@ func firstSSEData(raw []byte) []byte {
 // snippet shortens a body for an error message and strips newlines so it stays
 // on one line in the UI.
 func snippet(b []byte) string {
-	const max = 200
+	const maxSnippetLen = 200
 	s := strings.Join(strings.Fields(string(b)), " ")
-	if len(s) > max {
-		return s[:max] + "…"
+	if len(s) > maxSnippetLen {
+		return s[:maxSnippetLen] + "…"
 	}
 	return s
 }
@@ -399,7 +405,7 @@ type rpcCall func(rpcRequest) (*rpcResponse, error)
 // plus the protocol version the server agreed to.
 func doInitialize(call rpcCall) (*initializeResult, string, error) {
 	resp, err := call(rpcRequest{
-		JSONRPC: "2.0",
+		JSONRPC: jsonrpcVersion,
 		ID:      1,
 		Method:  "initialize",
 		Params: map[string]any{
@@ -430,7 +436,7 @@ func doInitialize(call rpcCall) (*initializeResult, string, error) {
 // doToolsList asks for the tool list, which is the second half of what an agent
 // does on connect. A server that handshakes but cannot list tools is not usable.
 func doToolsList(call rpcCall) ([]string, error) {
-	resp, err := call(rpcRequest{JSONRPC: "2.0", ID: 2, Method: "tools/list"})
+	resp, err := call(rpcRequest{JSONRPC: jsonrpcVersion, ID: 2, Method: "tools/list"})
 	if err != nil {
 		return nil, fmt.Errorf("tools/list failed: %w", err)
 	}

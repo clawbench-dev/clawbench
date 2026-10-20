@@ -2,6 +2,8 @@ package service
 
 import (
 	"database/sql"
+	"encoding/json"
+	"errors"
 	"strconv"
 	"testing"
 	"time"
@@ -396,4 +398,113 @@ func TestHealLedgerTimestamps_RestoresCompletionTime(t *testing.T) {
 		"a cancelled turn re-stamped a month late falls back to the turn start, got %v", got(4))
 	assert.True(t, got(5).Equal(time.Date(2026, 1, 10, 9, 30, 0, 0, time.UTC)),
 		"a normal cancelled turn is untouched, got %v", got(5))
+}
+
+// ── Pure helpers ─────────────────────────────────────────────────────────────
+
+// groupBySession walks each partition independently, so a group chat's members
+// (each with their own cumulative counter) never diff against each other.
+func TestGroupBySession_PartitionsIndependently(t *testing.T) {
+	sessions := []string{"a", "a", "a", "b", "b", "c"}
+	totals := []float64{1, 3, 6, 10, 10, 5}
+
+	got := groupBySession(sessions, totals)
+	assert.Equal(t, []float64{1, 2, 3, 10, 0, 5}, got,
+		"each partition restarts its own cumulative walk")
+}
+
+// A counter that resets mid-session must not produce a negative delta: on a
+// decrease the new value is itself the delta (the agent restarted its counter,
+// so everything it now reports happened after the reset). A negative value would
+// silently subtract from the user's spend.
+func TestGroupBySession_RebasesOnCounterReset(t *testing.T) {
+	got := groupBySession([]string{"a", "a", "a"}, []float64{5, 2, 4})
+	assert.Equal(t, []float64{5, 2, 2}, got,
+		"a decrease rebases onto the new total rather than going negative")
+}
+
+func TestGroupBySession_EmptyAndSingle(t *testing.T) {
+	assert.Empty(t, groupBySession(nil, nil))
+	assert.Equal(t, []float64{7}, groupBySession([]string{"a"}, []float64{7}))
+}
+
+// contentWithTurnCost rewrites the embedded metadata and strips the ledger-only
+// fields; anything it cannot parse is passed through untouched, because the
+// ledger — not the message body — is authoritative for the statistics.
+func TestContentWithTurnCost(t *testing.T) {
+	t.Run("rewrites cost and strips ledger fields", func(t *testing.T) {
+		in := `{"blocks":[],"metadata":{"costUsd":99,"costCumulative":true,"costSessionTotal":42,"model":"m"}}`
+		out, changed := contentWithTurnCost(in, 1.5)
+		require.True(t, changed)
+
+		var doc map[string]any
+		require.NoError(t, json.Unmarshal([]byte(out), &doc))
+		meta := doc["metadata"].(map[string]any)
+		assert.InDelta(t, 1.5, meta["costUsd"], 1e-9)
+		assert.Equal(t, "m", meta["model"], "other metadata must survive")
+		_, hasCum := meta["costCumulative"]
+		assert.False(t, hasCum, "costCumulative is ledger bookkeeping, not display data")
+		_, hasTotal := meta["costSessionTotal"]
+		assert.False(t, hasTotal)
+	})
+
+	t.Run("unparseable content is untouched", func(t *testing.T) {
+		out, changed := contentWithTurnCost("not json", 1)
+		assert.False(t, changed)
+		assert.Equal(t, "not json", out)
+	})
+
+	t.Run("no metadata is untouched", func(t *testing.T) {
+		in := `{"blocks":[{"type":"text","text":"hi"}]}`
+		out, changed := contentWithTurnCost(in, 1)
+		assert.False(t, changed)
+		assert.Equal(t, in, out)
+	})
+
+	t.Run("non-object metadata is untouched", func(t *testing.T) {
+		in := `{"metadata":"oops"}`
+		out, changed := contentWithTurnCost(in, 1)
+		assert.False(t, changed)
+		assert.Equal(t, in, out)
+	})
+}
+
+// rewriteContentCost tolerates a message row that no longer exists: the ledger
+// row is what the migration is about, and a missing content row must not abort
+// the whole run.
+func TestRewriteContentCost_MissingMessageIsNotAnError(t *testing.T) {
+	db := setupLedgerHealDB(t)
+	_ = db
+
+	tx, err := store.WriteBegin()
+	require.NoError(t, err)
+	defer store.WriteUnlock()
+	defer func() { _ = tx.Rollback() }()
+
+	require.NoError(t, rewriteContentCost(tx, 999999, 1.25),
+		"a missing chat_history row must be skipped, not fatal")
+}
+
+// applyLedgerUpdates rolls the whole batch back when one row fails, so a partial
+// migration can never leave half the ledger rebased.
+func TestApplyLedgerUpdates_RollsBackOnError(t *testing.T) {
+	db := setupLedgerHealDB(t)
+	_, err := db.Exec(`INSERT INTO chat_history (id, session_id, role, content, backend) VALUES (1, 's', 'assistant', '{}', 'claude')`)
+	require.NoError(t, err)
+
+	calls := 0
+	err = applyLedgerUpdates(3, func(tx *sql.Tx, i int) error {
+		calls++
+		if i == 2 {
+			return errors.New("boom")
+		}
+		_, execErr := tx.Exec(`UPDATE chat_history SET content = 'x' WHERE id = 1`)
+		return execErr
+	})
+	require.Error(t, err)
+	assert.Equal(t, 3, calls)
+
+	var content string
+	require.NoError(t, db.QueryRow(`SELECT content FROM chat_history WHERE id = 1`).Scan(&content))
+	assert.Equal(t, "{}", content, "the earlier update must have been rolled back")
 }

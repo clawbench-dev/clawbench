@@ -101,7 +101,7 @@ func TestMCPProbeBackendTable(t *testing.T) {
 func readBackendSources(t *testing.T) string {
 	t.Helper()
 
-	root := filepath.Join("backends")
+	root := "backends"
 	var sb strings.Builder
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {

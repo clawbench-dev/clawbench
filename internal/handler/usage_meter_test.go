@@ -372,3 +372,106 @@ func TestValidatePatchValues_UsageMeterRejectsWrongTypes(t *testing.T) {
 		})
 	}
 }
+
+// ── Endpoint auth + persistence ──────────────────────────────────────────────
+
+// The meter reports instance-wide spend, so an unauthenticated caller must not
+// read it — the same gate the stats panel's scope=all uses.
+//
+// setupTestEnv deliberately runs with no password configured (open access), so
+// the token has to be installed here for the check to have anything to compare.
+func TestServeUsageMeter_RequiresAuth(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+	setMeterRuleForTest(t, model.UsageMeterConfig{Quota: 20})
+
+	origToken, origCookie := model.SessionToken, model.CookieToken
+	model.SessionToken = "secret-token"
+	model.CookieToken = "secret-token"
+	t.Cleanup(func() {
+		model.SessionToken = origToken
+		model.CookieToken = origCookie
+	})
+
+	w := callHandler(ServeUsageMeter, newRequest(t, http.MethodGet, "/api/usage/meter", nil))
+	assert.Equal(t, http.StatusForbidden, w.Code,
+		"an unauthenticated request must not read instance-wide spend")
+
+	authed := withAuthCookie(newRequest(t, http.MethodGet, "/api/usage/meter", nil), "secret-token")
+	w = callHandler(ServeUsageMeter, authed)
+	assert.Equal(t, http.StatusOK, w.Code, "an authenticated request must still work")
+}
+
+// PersistUsageMeterState writes ONLY the two bookkeeping fields, from what is
+// currently in memory. A PATCH may have changed the quota while the aggregate
+// query was running; writing a captured snapshot back would silently undo the
+// user's edit.
+func TestPersistUsageMeterState_WritesOnlyBookkeeping(t *testing.T) {
+	_, teardown := setupPersistTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance.UsageMeter = model.UsageMeterConfig{
+		AnchorDate: "2026-10-05", PeriodDays: 30,
+		Metric: model.UsageMeterMetricCost, Quota: 42,
+	}
+
+	require.NoError(t, PersistUsageMeterState("2026-10-05T00:00:00+08:00", service.UsageMeterStageOver))
+
+	assert.Equal(t, "2026-10-05T00:00:00+08:00", model.ConfigInstance.UsageMeter.NotifiedCycleStart)
+	assert.Equal(t, service.UsageMeterStageOver, model.ConfigInstance.UsageMeter.NotifiedStage)
+	assert.InDelta(t, 42.0, model.ConfigInstance.UsageMeter.Quota, 1e-9,
+		"the rule itself must not be touched by a state write")
+}
+
+// A failed aggregate must surface as an error response, not as a zeroed
+// "everything is fine" body — a silent 200 would show an empty capsule and hide
+// the fact that the numbers are unknown.
+func TestServeUsageMeter_ComputeErrorIsReported(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	now := time.Now()
+	setMeterRuleForTest(t, model.UsageMeterConfig{
+		AnchorDate: now.AddDate(0, 0, -5).Format("2006-01-02"), PeriodDays: 30,
+		Metric: model.UsageMeterMetricCost, Quota: 30,
+	})
+
+	// Drop the ledger table the aggregate reads: the query fails, and the
+	// handler must translate that into a non-2xx rather than a zero total.
+	_, err := store.UnsafeDBForTest().Exec(`DROP TABLE chat_metadata`)
+	require.NoError(t, err)
+
+	req := withProjectCookie(newRequest(t, http.MethodGet, "/api/usage/meter", nil), t.TempDir())
+	w := callHandler(ServeUsageMeter, req)
+	assert.NotEqual(t, http.StatusOK, w.Code,
+		"a failed aggregate must not be reported as a healthy zero total")
+}
+
+// A persistence failure must be reported AND must roll the in-memory rule back:
+// leaving the cleared state in memory while the file still holds the old stage
+// makes the next process start suppress a notification the user never saw.
+func TestPersistUsageMeterState_RollsBackOnWriteFailure(t *testing.T) {
+	_, teardown := setupPersistTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance.UsageMeter = model.UsageMeterConfig{
+		AnchorDate: "2026-10-05", PeriodDays: 30,
+		Metric: model.UsageMeterMetricCost, Quota: 42,
+		NotifiedCycleStart: "2026-09-05T00:00:00+08:00",
+		NotifiedStage:      service.UsageMeterStageOver,
+	}
+
+	// Make the write fail deterministically (permissions are not enforced when
+	// the tests run as root): point DataDir at a regular FILE, so the MkdirAll
+	// of <data-dir>/config cannot succeed.
+	blocker := filepath.Join(t.TempDir(), "not-a-dir")
+	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o644))
+	origDataDir := model.DataDir
+	model.DataDir = blocker
+	t.Cleanup(func() { model.DataDir = origDataDir })
+
+	err := PersistUsageMeterState("2026-10-05T00:00:00+08:00", service.UsageMeterStageFull)
+	require.Error(t, err)
+	assert.Equal(t, service.UsageMeterStageOver, model.ConfigInstance.UsageMeter.NotifiedStage,
+		"the in-memory state must be rolled back when the write fails")
+}

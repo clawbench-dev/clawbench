@@ -95,3 +95,16 @@ func TestToACPMcpServers_EmptyIsNonNilSlice(t *testing.T) {
 		require.NoError(t, req.Validate(), "the SDK rejects a nil mcpServers list")
 	}
 }
+
+// A connection without an agent (or with an unidentified one) must resolve to
+// "no servers" and "no version" rather than panicking on a nil agent or
+// hashing an empty id.
+func TestACPMcpServersForSession_NilAgent(t *testing.T) {
+	conn := &ACPConn{}
+	require.Nil(t, conn.mcpServersForSession())
+	require.Empty(t, conn.mcpPolicyVersion())
+
+	conn.agent = &model.Agent{}
+	require.Nil(t, conn.mcpServersForSession())
+	require.Empty(t, conn.mcpPolicyVersion())
+}

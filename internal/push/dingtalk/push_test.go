@@ -581,3 +581,60 @@ func TestPushForgeEvent_NoSubscribers(t *testing.T) {
 		t.Error("expected false with no subscribers")
 	}
 }
+
+// TestPushUsageMeterEvent_Gates covers the four early exits of the usage-meter
+// transport: not started, nil DB, empty title, empty body. The function owns no
+// wording (the service layer renders it), so these gates are the whole of its
+// local logic.
+func TestPushUsageMeterEvent_Gates(t *testing.T) {
+	origMgr := GetManager()
+	SetManager(nil)
+	if PushUsageMeterEvent("Title", "Body") {
+		t.Error("expected false when the manager is not started")
+	}
+	SetManager(origMgr)
+
+	origDB := db
+	defer func() { db = origDB }()
+
+	db = nil
+	mgr := NewManager(&model.DingTalkConfig{AppKey: "k", AppSecret: "s"})
+	mgr.started = true
+	SetManager(mgr)
+	defer SetManager(origMgr)
+	if PushUsageMeterEvent("Title", "Body") {
+		t.Error("expected false with a nil DB")
+	}
+
+	db = &mockDB{subscribers: []common.SubscriberInfo{{UserID: "u"}}}
+	if PushUsageMeterEvent("", "Body") {
+		t.Error("expected false for an empty title")
+	}
+	if PushUsageMeterEvent("Title", "") {
+		t.Error("expected false for an empty body")
+	}
+}
+
+// TestPushUsageMeterEvent_NoSubscribers covers the delegation when the gates
+// pass but nobody is subscribed.
+func TestPushUsageMeterEvent_NoSubscribers(t *testing.T) {
+	defer setupPushMode("dingtalk")()
+
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDB{subscribers: []common.SubscriberInfo{}}
+
+	origChecker := clientChecker
+	defer func() { clientChecker = origChecker }()
+	RegisterClientChecker(&mockClientChecker{hasConnected: false})
+
+	mgr := NewManager(&model.DingTalkConfig{AppKey: "k", AppSecret: "s"})
+	mgr.started = true
+	origMgr := GetManager()
+	SetManager(mgr)
+	defer SetManager(origMgr)
+
+	if PushUsageMeterEvent("Title", "Body") {
+		t.Error("expected false with no subscribers")
+	}
+}

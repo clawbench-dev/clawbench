@@ -1327,3 +1327,55 @@ func TestIsValidPortForwardTransport(t *testing.T) {
 		}
 	}
 }
+
+// TestApplyDefaultsUsageMeter pins the rule normalization: an unconfigured
+// meter (quota <= 0) must stay untouched, and a configured one gets the shape
+// defaults but never a different quota.
+//
+// There is deliberately NO default rule: a synthesized "30 days / $20" would
+// fire a false alarm on every fresh install. The clamp exists because a cycle
+// longer than the stats query's own range cap could not be aggregated at all.
+func TestApplyDefaultsUsageMeter(t *testing.T) {
+	setupTestBinDir(t)
+
+	t.Run("unconfigured stays off", func(t *testing.T) {
+		cfg := Config{}
+		ApplyDefaults(&cfg, nil)
+		if cfg.UsageMeter.Quota != 0 || cfg.UsageMeter.PeriodDays != 0 || cfg.UsageMeter.Metric != "" {
+			t.Errorf("an unconfigured meter must not be synthesized, got %+v", cfg.UsageMeter)
+		}
+	})
+
+	t.Run("zero period defaults to 30 days and cost metric", func(t *testing.T) {
+		cfg := Config{}
+		cfg.UsageMeter = UsageMeterConfig{Quota: 20}
+		ApplyDefaults(&cfg, nil)
+		if cfg.UsageMeter.PeriodDays != 30 {
+			t.Errorf("PeriodDays = %d, want 30", cfg.UsageMeter.PeriodDays)
+		}
+		if cfg.UsageMeter.Metric != UsageMeterMetricCost {
+			t.Errorf("Metric = %q, want %q", cfg.UsageMeter.Metric, UsageMeterMetricCost)
+		}
+		if cfg.UsageMeter.Quota != 20 {
+			t.Errorf("Quota = %v, want 20 (the rule itself must not be rewritten)", cfg.UsageMeter.Quota)
+		}
+	})
+
+	t.Run("period is clamped to the aggregate cap", func(t *testing.T) {
+		cfg := Config{}
+		cfg.UsageMeter = UsageMeterConfig{Quota: 20, PeriodDays: MaxUsageMeterPeriodDays + 100}
+		ApplyDefaults(&cfg, nil)
+		if cfg.UsageMeter.PeriodDays != MaxUsageMeterPeriodDays {
+			t.Errorf("PeriodDays = %d, want clamp to %d", cfg.UsageMeter.PeriodDays, MaxUsageMeterPeriodDays)
+		}
+	})
+
+	t.Run("explicit metric and period survive", func(t *testing.T) {
+		cfg := Config{}
+		cfg.UsageMeter = UsageMeterConfig{Quota: 5, PeriodDays: 7, Metric: UsageMeterMetricTokens}
+		ApplyDefaults(&cfg, nil)
+		if cfg.UsageMeter.PeriodDays != 7 || cfg.UsageMeter.Metric != UsageMeterMetricTokens {
+			t.Errorf("explicit values rewritten: %+v", cfg.UsageMeter)
+		}
+	})
+}

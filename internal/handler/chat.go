@@ -858,7 +858,12 @@ func sessionStateSnapshot(sessionID, sessionAgentID, sessionTransport string) se
 	// the next turn will actually use.
 	if st.Mode == nil || st.Effort == nil || st.Usage == nil {
 		if ctxState := service.GetContextState(sessionID); ctxState != nil {
-			if st.Mode == nil && ctxState.Mode != nil {
+			// The per-session record wins over the agent-level registry for the
+			// parts it covers. The registry is keyed by AGENT and shared by every
+			// session of that agent, so it knows which options exist but not
+			// which one this session is on; preferring it left the drawer with a
+			// list and no selection even though the session had one persisted.
+			if ctxState.Mode != nil {
 				st.Mode = ctxState.Mode
 			}
 			// Restore the effort when the user picked it — OR when nothing else
@@ -870,7 +875,7 @@ func sessionStateSnapshot(sessionID, sessionAgentID, sessionTransport string) se
 			// strict guard made the thinking tab permanently unavailable for
 			// every member. The stored level is still what that member's next
 			// turn will run, so showing it is accurate.
-			if st.Effort == nil && ctxState.ThinkingEffort != nil &&
+			if ctxState.ThinkingEffort != nil &&
 				(ctxState.ThinkingEffort.UserPicked || service.IsGroupMemberSession(sessionID)) {
 				st.Effort = ctxState.ThinkingEffort
 			}

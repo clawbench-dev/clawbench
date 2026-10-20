@@ -201,10 +201,14 @@ func TestUsageMeter_SumsAllProjects(t *testing.T) {
 
 	// Two projects, both inside the current cycle.
 	for _, seed := range []usageSeed{
-		{project: "/a", sessionID: "s-a", agentID: "cb", agentName: "CB", backend: "codebuddy",
-			model: "m", createdAt: now.Add(-48 * time.Hour).UTC().Format("2006-01-02 15:04:05"), costUSD: 1.5},
-		{project: "/b", sessionID: "s-b", agentID: "cb", agentName: "CB", backend: "codebuddy",
-			model: "m", createdAt: now.Add(-24 * time.Hour).UTC().Format("2006-01-02 15:04:05"), costUSD: 2.5},
+		{
+			project: "/a", sessionID: "s-a", agentID: "cb", agentName: "CB", backend: "codebuddy",
+			model: "m", createdAt: now.Add(-48 * time.Hour).UTC().Format("2006-01-02 15:04:05"), costUSD: 1.5,
+		},
+		{
+			project: "/b", sessionID: "s-b", agentID: "cb", agentName: "CB", backend: "codebuddy",
+			model: "m", createdAt: now.Add(-24 * time.Hour).UTC().Format("2006-01-02 15:04:05"), costUSD: 2.5,
+		},
 	} {
 		insertUsageSeed(t, db, seed)
 	}
@@ -623,4 +627,122 @@ func TestCheckUsageMeter_OverThenFullProgression(t *testing.T) {
 	// Newest first.
 	assert.Equal(t, service.UsageMeterStageFull, rows[0].EventType)
 	assert.Equal(t, service.UsageMeterStageOver, rows[1].EventType)
+}
+
+// ── Rule validation branches ─────────────────────────────────────────────────
+
+// A malformed rule is reported as DISABLED, not as an error: the caller is a
+// header badge, and a 500 there would be noise on every poll. The PATCH
+// validator rejects such rules, so this only happens for a hand-edited
+// config.yaml — which must degrade quietly rather than break the header.
+func TestComputeUsageMeter_MalformedRuleIsDisabledNotAnError(t *testing.T) {
+	now := localMidnight(time.Date(2026, 10, 19, 0, 0, 0, 0, time.Local)).Add(12 * time.Hour)
+	setupDB(t)
+
+	for _, tc := range []struct {
+		name string
+		rule model.UsageMeterConfig
+	}{
+		{"unknown metric", model.UsageMeterConfig{Quota: 10, PeriodDays: 30, Metric: "usd", AnchorDate: anchorOn(now, 5)}},
+		{"zero period", model.UsageMeterConfig{Quota: 10, PeriodDays: 0, Metric: model.UsageMeterMetricCost, AnchorDate: anchorOn(now, 5)}},
+		{"malformed anchor", model.UsageMeterConfig{Quota: 10, PeriodDays: 30, Metric: model.UsageMeterMetricCost, AnchorDate: "10/05/2026"}},
+		{"zero quota", model.UsageMeterConfig{Quota: 0, PeriodDays: 30, Metric: model.UsageMeterMetricCost, AnchorDate: anchorOn(now, 5)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setUsageMeterRule(t, tc.rule)
+			st, err := service.ComputeUsageMeter(context.Background(), now)
+			require.NoError(t, err, "a malformed rule must not surface as an error")
+			require.NotNil(t, st)
+			assert.False(t, st.Enabled)
+		})
+	}
+}
+
+// An anchor in the FUTURE means the cycle has not started: nothing has been
+// counted, and there is no budget to compare against yet. Reporting a
+// day-in-cycle of 0 (rather than a negative one) is what keeps the projection
+// and the "over plan" predicate quiet until the cycle actually begins.
+func TestComputeUsageMeter_FutureAnchorReportsDayZero(t *testing.T) {
+	now := localMidnight(time.Date(2026, 10, 19, 0, 0, 0, 0, time.Local)).Add(12 * time.Hour)
+	db := setupDB(t)
+	ensureAgentsTable(t, db)
+
+	insertUsageSeed(t, db, usageSeed{
+		project: "/a", sessionID: "s-f", agentID: "cb", agentName: "CB", backend: "codebuddy",
+		model: "m", createdAt: now.Add(-24 * time.Hour).UTC().Format("2006-01-02 15:04:05"), costUSD: 5,
+	})
+	setUsageMeterRule(t, model.UsageMeterConfig{
+		AnchorDate: anchorOn(now, -10), PeriodDays: 30,
+		Metric: model.UsageMeterMetricCost, Quota: 30,
+	})
+
+	st, err := service.ComputeUsageMeter(context.Background(), now)
+	require.NoError(t, err)
+	assert.True(t, st.Enabled, "a future anchor is a valid rule, just an empty cycle")
+	assert.Zero(t, st.DayInCycle)
+	assert.Zero(t, st.Expected)
+	assert.Zero(t, st.ProjectedExhaustDay, "no projection before the cycle starts")
+}
+
+// No usage in the cycle must not project an exhaustion day: the rate is
+// undefined, and a divide-by-zero guess would show "runs out today" on a fresh
+// cycle.
+func TestComputeUsageMeter_NoUsageProjectsNothing(t *testing.T) {
+	now := localMidnight(time.Date(2026, 10, 19, 0, 0, 0, 0, time.Local)).Add(12 * time.Hour)
+	db := setupDB(t)
+	ensureAgentsTable(t, db)
+
+	setUsageMeterRule(t, model.UsageMeterConfig{
+		AnchorDate: anchorOn(now, 5), PeriodDays: 30,
+		Metric: model.UsageMeterMetricCost, Quota: 30,
+	})
+
+	st, err := service.ComputeUsageMeter(context.Background(), now)
+	require.NoError(t, err)
+	assert.Zero(t, st.Actual)
+	assert.Zero(t, st.ProjectedExhaustDay)
+}
+
+// A pace that outlasts the cycle projects nothing: "it will not run out this
+// cycle" is the absence of a projection, not day 30.
+func TestComputeUsageMeter_SlowPaceProjectsNothing(t *testing.T) {
+	now := localMidnight(time.Date(2026, 10, 19, 0, 0, 0, 0, time.Local)).Add(12 * time.Hour)
+	db := setupDB(t)
+	ensureAgentsTable(t, db)
+
+	// Day 6 of 30, quota 30, spent 1 → 0.2/day → 150 days to burn the quota.
+	insertUsageSeed(t, db, usageSeed{
+		project: "/a", sessionID: "s-slow", agentID: "cb", agentName: "CB", backend: "codebuddy",
+		model: "m", createdAt: now.Add(-24 * time.Hour).UTC().Format("2006-01-02 15:04:05"), costUSD: 1,
+	})
+	setUsageMeterRule(t, model.UsageMeterConfig{
+		AnchorDate: anchorOn(now, 5), PeriodDays: 30,
+		Metric: model.UsageMeterMetricCost, Quota: 30,
+	})
+
+	st, err := service.ComputeUsageMeter(context.Background(), now)
+	require.NoError(t, err)
+	assert.Zero(t, st.ProjectedExhaustDay, "a quota that outlasts the cycle must not project a day")
+}
+
+// Already past the quota: the "projected" day is today, never a past day.
+func TestComputeUsageMeter_PastQuotaProjectsToday(t *testing.T) {
+	now := localMidnight(time.Date(2026, 10, 19, 0, 0, 0, 0, time.Local)).Add(12 * time.Hour)
+	db := setupDB(t)
+	ensureAgentsTable(t, db)
+
+	insertUsageSeed(t, db, usageSeed{
+		project: "/a", sessionID: "s-over", agentID: "cb", agentName: "CB", backend: "codebuddy",
+		model: "m", createdAt: now.Add(-24 * time.Hour).UTC().Format("2006-01-02 15:04:05"), costUSD: 90,
+	})
+	setUsageMeterRule(t, model.UsageMeterConfig{
+		AnchorDate: anchorOn(now, 5), PeriodDays: 30,
+		Metric: model.UsageMeterMetricCost, Quota: 30,
+	})
+
+	st, err := service.ComputeUsageMeter(context.Background(), now)
+	require.NoError(t, err)
+	require.Greater(t, st.DayInCycle, 0)
+	assert.Equal(t, st.DayInCycle, st.ProjectedExhaustDay,
+		"past the quota the projection is today, not a day already gone")
 }
