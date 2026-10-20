@@ -71,6 +71,7 @@ import { store } from '@/stores/app.ts'
 import { dirName } from '@/utils/path.ts'
 import { flashElement } from '@/utils/domFlash'
 import { buildMarkdownPreviewDom } from '@/composables/useMarkdownRenderPipeline.ts'
+import { languageVersion } from '@/utils/highlight'
 import { stampSvgFigures } from '@/utils/svgMediaFit.ts'
 import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
 import TableRowModal from '@/components/common/TableRowModal.vue'
@@ -495,6 +496,15 @@ watch(() => props.file?.content, (content) => {
     if (!f || f.error) return
     doRender(f)
 }, { immediate: true })
+
+// A fenced code block whose grammar lives in the lazy tier renders as plain
+// text on the first pass. Re-render once the grammar lands so the block gets
+// coloured; `languageVersion` bumps at most once per language per session.
+watch(languageVersion, () => {
+    const f = props.file
+    if (!f || f.error || !f.content) return
+    doRender(f)
+})
 
 watch(() => props.viewMode, async (mode) => {
     if (mode !== 'rendered') return

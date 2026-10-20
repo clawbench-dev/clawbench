@@ -497,6 +497,7 @@ import UnsupportedFileBody from '@/components/file/UnsupportedFileBody.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
 import HeaderMarquee from '@/components/common/HeaderMarquee.vue'
 import { highlightCode } from '@/utils/globals'
+import { languageVersion } from '@/utils/highlight'
 import { getFileType } from '@/utils/fileType'
 import { copyText } from '@/utils/clipboard'
 import { buildLocalFileUrl, downloadFileByPath } from '@/utils/download'
@@ -648,6 +649,9 @@ watch(
     props.preview.slicedCode.value?.code,
     props.preview.target.value?.filePath,
     isRenderedView.value,
+    // A fenced block whose grammar is in the lazy tier renders uncoloured on
+    // the first pass; re-render when that grammar lands.
+    languageVersion.value,
   ],
   async () => {
     // Leaving the rendered view (closed, switched target, toggled to source)
@@ -664,7 +668,10 @@ watch(
     const filePath = props.preview.target.value?.filePath || ''
     const code = props.preview.slicedCode.value?.code
     if (!filePath || code === undefined) return
-    const sliceKey = `${filePath}::${code.length}::${code.slice(0, 120)}`
+    // The grammar version is part of the key: without it the slice guard below
+    // would short-circuit the re-render that a freshly loaded grammar triggers,
+    // leaving the block permanently uncoloured.
+    const sliceKey = `${filePath}::${code.length}::${code.slice(0, 120)}::${languageVersion.value}`
     if (sliceKey === renderedSliceKey) return
     renderedSliceKey = sliceKey
     try {
@@ -1387,6 +1394,9 @@ export interface FormattedCodeLine {
 const codeLines = computed<FormattedCodeLine[]>(() => {
   const sliced = props.preview.slicedCode.value
   if (!sliced?.code) return []
+  // Re-run when a lazily-loaded grammar lands: the first pass rendered plain
+  // text (the chunk was still in flight) and would otherwise stay uncoloured.
+  void languageVersion.value
   const filePath = props.preview.target.value?.filePath || ''
   const lang = getFileType(filePath).lang || 'plaintext'
   const fullHtml = highlightCode(sliced.code, lang)

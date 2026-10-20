@@ -10,6 +10,7 @@ import { appLog } from '@/utils/appLog.ts'
 import { createTaskBlockStore } from '@/utils/taskBlockStore.ts'
 import { isShareMode } from '@/share/shareMode'
 import { renderMentionChips } from '@/utils/groupRouting.ts'
+import { languageVersion } from '@/utils/highlight'
 import {
   extractScheduledTaskIds,
   stripScheduledTaskTags,
@@ -114,6 +115,15 @@ export function useChatRender(options: {
   // (code-block syntax colours, table chrome). Theme is a rendering input, so
   // unlike session switches this genuinely invalidates every cached entry.
   watch(theme, () => {
+    staticBlockCache.clear()
+    updateRenderedContents(true)
+  })
+
+  // A lazily-loaded syntax grammar just arrived: blocks rendered before it did
+  // are cached as plain text, so drop the cache and re-render. Grammars load at
+  // most once per session, and the cache is rebuilt lazily, so this is a
+  // one-shot cost rather than a per-message re-render loop.
+  watch(languageVersion, () => {
     staticBlockCache.clear()
     updateRenderedContents(true)
   })
