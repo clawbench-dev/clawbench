@@ -397,13 +397,13 @@ function openSettings() {
 
 .usage-icon {
   flex-shrink: 0;
-  color: var(--meter-color, var(--text-tertiary));
+  color: var(--meter-color, var(--text-hint));
 }
 
 .usage-label {
   flex-shrink: 0;
   font-size: var(--font-size-xs);
-  color: var(--text-tertiary);
+  color: var(--text-hint);
   line-height: 1;
   white-space: nowrap;
 }

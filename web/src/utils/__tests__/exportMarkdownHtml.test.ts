@@ -424,6 +424,13 @@ describe('exportMarkdownToHtml', () => {
     // The endpoint rejects >50 paths with 400 TooManyPaths. Un-chunked, that one
     // 400 made EVERY local image keep its /api/fs/raw src (broken in the
     // standalone export). Each chunk must be fetched and applied independently.
+    //
+    // The markdown itself is the cost here: 120 image blocks go through the
+    // whole marked + rewrite pipeline and measured ~4.2s, i.e. 84% of the 5s
+    // default. Under the full suite's parallel load that tips over and the file
+    // reports a timeout — which then drops every one of its 47 tests from the
+    // coverage profile. A per-test timeout keeps the assertion (still 120
+    // images, still 3 chunks) without racing the scheduler.
     const calls: string[][] = []
     mockFetch.mockImplementation((_url: string, init: RequestInit) => {
       const body = JSON.parse(String(init.body)) as { paths: string[] }
@@ -443,7 +450,7 @@ describe('exportMarkdownToHtml', () => {
     // Every image was actually inlined.
     expect(result.html).not.toContain('/api/fs/raw/img0.png')
     expect(result.html).toContain('data:image/png;base64,x')
-  })
+  }, 20_000)
 
   it('counts skipped images when server skips paths', async () => {
     mockFetch.mockResolvedValue({ ok: true, json: async () => ({ results: {} }) })

@@ -913,7 +913,10 @@ describe('WallpaperSetting', () => {
 
       const uploadBtn = wrapper.findAll('button').find(b => b.text() === 'Upload images')!
       expect(uploadBtn.attributes('disabled')).toBeDefined()
-    })
+      // Mounting the 50-tile gallery measured ~7.4s — over the 5s default even
+      // when run alone. The assertion needs the full-size gallery (that is the
+      // condition under test), so the timeout is what gives.
+    }, 20_000)
   })
 
   describe('display options', () => {
@@ -1203,7 +1206,7 @@ describe('WallpaperSetting', () => {
       await nextTick()
 
       expect(getAnimatedStyleParams('xmb').lam).toBe(150)
-    })
+    }, 20_000)
   })
 
     it('toggles edge fade through setLocalConfig', async () => {
