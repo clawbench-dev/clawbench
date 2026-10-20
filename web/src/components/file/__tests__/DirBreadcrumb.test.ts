@@ -275,6 +275,56 @@ describe('DirBreadcrumb', () => {
       expect(crumbs[1].text()).toBe('C:\\')
     })
   })
+
+  // ── UNC shares ──
+  // A share plays the role a drive plays: "//nas/media" is one root crumb, not
+  // two segments ("nas", "media"). Without that, clicking "media" would
+  // navigate to "/nas/media" — a POSIX path, not the share.
+  describe('UNC share paths', () => {
+    it('renders the share as a single root crumb', () => {
+      const wrapper = mountPicker({ path: '//nas/media/photos' })
+      const crumbs = wrapper.findAll('.crumb')
+      // crumbs[0] = Home, crumbs[1] = "//nas/media", crumbs[2] = "photos"
+      expect(crumbs.length).toBe(3)
+      expect(crumbs[1].text()).toBe('//nas/media')
+      expect(crumbs[2].text()).toBe('photos')
+    })
+
+    it('navigates to the share root, not a POSIX path', async () => {
+      const wrapper = mountPicker({ path: '//nas/media/photos' })
+      await wrapper.findAll('.crumb')[1].trigger('click')
+      const emitted = wrapper.emitted('navigate')
+      expect(emitted![emitted!.length - 1][0]).toBe('//nas/media')
+    })
+
+    it('keeps the backslash spelling when that is what arrived', () => {
+      const wrapper = mountPicker({ path: '\\\\nas\\media\\photos' })
+      const crumbs = wrapper.findAll('.crumb')
+      expect(crumbs[1].text()).toBe('//nas/media')
+      expect(crumbs[2].text()).toBe('photos')
+    })
+
+    it('uses the share root as the filesystem root crumb', async () => {
+      const wrapper = mountBreadcrumb({ path: '//nas/media/photos' })
+      const fsRoot = wrapper.find('.crumb-fs-root')
+      expect(fsRoot.exists()).toBe(true)
+      await fsRoot.trigger('click')
+      expect(wrapper.emitted('navigate')![0][0]).toBe('//nas/media')
+    })
+
+    it('marks the share root as current and does not navigate', async () => {
+      const wrapper = mountBreadcrumb({ path: '//nas/media' })
+      const fsRoot = wrapper.find('.crumb-fs-root')
+      expect(fsRoot.classes()).toContain('current')
+      await fsRoot.trigger('click')
+      expect(wrapper.emitted('navigate')).toBeUndefined()
+    })
+
+    it('does not treat a share child as the share root', () => {
+      const wrapper = mountBreadcrumb({ path: '//nas/media/photos' })
+      expect(wrapper.find('.crumb-fs-root').classes()).not.toContain('current')
+    })
+  })
 })
 
 describe('DirBreadcrumb — drag to attach', () => {

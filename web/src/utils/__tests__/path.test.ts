@@ -79,6 +79,24 @@ describe('dirName', () => {
   it('keeps returning empty for a depth-1 relative path', () => {
     expect(dirName('src')).toBe('')
   })
+
+  // ── UNC shares ──
+  // A share root is its own top, like "/" and "C:\": the network neighbourhood
+  // above it cannot be listed. Without this the rejoin below yields "/server",
+  // a POSIX path that silently escapes the share.
+  it('treats a UNC share root as its own top', () => {
+    expect(dirName('//nas/media')).toBe('//nas/media')
+    expect(dirName('\\\\nas\\media')).toBe('\\\\nas\\media')
+  })
+
+  it('walks up inside a UNC share without losing the share', () => {
+    expect(dirName('//nas/media/photos')).toBe('//nas/media')
+    expect(dirName('//nas/media/photos/2024')).toBe('//nas/media/photos')
+  })
+
+  it('returns the share root when walking up from its only child', () => {
+    expect(dirName('//nas/media/photos')).toBe('//nas/media')
+  })
 })
 
 describe('isWindowsAbsolutePath', () => {
@@ -97,6 +115,23 @@ describe('isWindowsAbsolutePath', () => {
 
   it('detects UNC paths', () => {
     expect(isWindowsAbsolutePath('\\\\server\\share\\a.go')).toBe(true)
+  })
+
+  // The backend returns filepath.ToSlash output, so the frontend sees
+  // "//server/share" — that spelling must be recognized too, or every UNC
+  // directory would be read as a project-relative path.
+  it('detects UNC paths in the backend forward-slash form', () => {
+    expect(isWindowsAbsolutePath('//server/share/a.go')).toBe(true)
+    expect(isWindowsAbsolutePath('//server/share')).toBe(true)
+  })
+
+  it('rejects the device namespaces and a bare server', () => {
+    // \\.\ and \\?\ address devices, not shares; the backend refuses them, so
+    // treating them as absolute would offer a folder the picker cannot open.
+    expect(isWindowsAbsolutePath('\\\\.\\C:')).toBe(false)
+    expect(isWindowsAbsolutePath('\\\\?\\C:\\x')).toBe(false)
+    // A bare server is the network neighbourhood, which cannot be listed.
+    expect(isWindowsAbsolutePath('\\\\server')).toBe(false)
   })
 
   it('does not match relative paths or bare drive letters', () => {
@@ -135,6 +170,10 @@ describe('isAbsolutePath', () => {
 
   it('matches UNC paths', () => {
     expect(isAbsolutePath('\\\\server\\share\\a.go')).toBe(true)
+  })
+
+  it('matches UNC paths in the backend forward-slash form', () => {
+    expect(isAbsolutePath('//server/share/a.go')).toBe(true)
   })
 
   it('does not match relative paths', () => {
@@ -246,6 +285,23 @@ describe('joinPath', () => {
 
   it('normalizes backslashes in an absolute dir', () => {
     expect(joinPath('C:\\Users\\dev', 'file.ts')).toBe('C:/Users/dev/file.ts')
+  })
+
+  // ── UNC shares ──
+  // A UNC path's leading "//" is its root marker, not a duplicated slash. The
+  // generic absolute branch collapses it, which would turn a share into a
+  // POSIX path ("//nas/media" → "/nas/media") and lose the share entirely.
+  it('keeps the UNC share prefix when joining', () => {
+    expect(joinPath('//nas/media', 'file.ts')).toBe('//nas/media/file.ts')
+    expect(joinPath('//nas/media/photos', 'file.ts')).toBe('//nas/media/photos/file.ts')
+  })
+
+  it('keeps the UNC share prefix for backslash input', () => {
+    expect(joinPath('\\\\nas\\media', 'file.ts')).toBe('//nas/media/file.ts')
+  })
+
+  it('does not double the separator when joining at a UNC share root', () => {
+    expect(joinPath('//nas/media/', 'file.ts')).toBe('//nas/media/file.ts')
   })
 })
 

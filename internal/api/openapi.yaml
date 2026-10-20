@@ -720,8 +720,14 @@ paths:
       description: |
         列出任意目录，用于项目选择与**项目外目录浏览**：`path` 可为绝对路径
         （在配置的根路径下校验）或相对路径（按第一个根路径解析）。空/`/`
-        时列出根层级（Windows 为盘符列表）。条目结构与 `/api/dir` 的
-        DirEntry 一致，故文件管理器浏览项目外目录时复用同一套渲染与操作。
+        时列出根层级（Windows 为盘符列表，随后是未映射盘符的 SMB 共享
+        `\\server\share`）。条目结构与 `/api/dir` 的 DirEntry 一致，故文件
+        管理器浏览项目外目录时复用同一套渲染与操作。
+
+        Windows 上 UNC 共享路径（`\\server\share\...`，正反斜杠均可）视为
+        独立根：共享不属于任何盘符，因此无需先映射盘符即可选择与浏览。共享
+        根本身没有上级（网络邻居不可枚举），此时 `parent` 为 `null`。设备
+        命名空间（`\\.\`、`\\?\`）与裸服务器名（`\\server`）不接受。
       operationId: projectsList
       parameters:
         - name: path

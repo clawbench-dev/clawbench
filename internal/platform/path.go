@@ -75,7 +75,9 @@ func ExpandTilde(path string) string {
 
 // ListRootPaths returns the filesystem root paths accessible to this application.
 // On Linux/macOS: returns ["/"].
-// On Windows: returns list of available drive roots (e.g. ["C:\\", "D:\\"]).
+// On Windows: returns available drive roots (e.g. ["C:\\", "D:\\"]) followed by
+// the UNC roots of remembered network shares (e.g. `\\nas\media`), so the
+// project picker can offer SMB shares that were never mapped to a drive letter.
 // The result is cached after the first call.
 func ListRootPaths() []string {
 	if cachedRootPaths != nil {
@@ -83,6 +85,7 @@ func ListRootPaths() []string {
 	}
 	if IsWindows() {
 		cachedRootPaths = listWindowsDrives()
+		cachedRootPaths = append(cachedRootPaths, listWindowsNetworkShares()...)
 	} else {
 		cachedRootPaths = []string{"/"}
 	}
@@ -93,15 +96,91 @@ var cachedRootPaths []string
 
 // IsPathUnderAnyRoot checks whether absPath is under at least one of the
 // given root paths. On Unix this is effectively "is it an absolute path";
-// on Windows it ensures the path is under an available drive.
+// on Windows it ensures the path is under an available drive — or is a UNC
+// share path, which belongs to no drive and is therefore its own root.
 // Both absPath and each root must be absolute paths.
 func IsPathUnderAnyRoot(absPath string, roots []string) bool {
+	// A UNC path belongs to no drive, so no drive-letter root can ever contain
+	// it. Accepting share paths is what lets a user select \\server\share (and
+	// browse inside it) without mapping a drive letter first. The share is the
+	// volume boundary on Windows: ".." cannot climb above it, and the device
+	// namespaces (\\.\, \\?) are rejected by UNCShareRoot.
+	//
+	// Windows-only on purpose: on POSIX "//server/share" is an ordinary
+	// absolute path (the kernel collapses leading slashes), so honoring it
+	// unconditionally would let "//etc/passwd" bypass a narrower root.
+	if IsWindows() {
+		if _, ok := UNCShareRoot(absPath); ok {
+			return true
+		}
+	}
 	for _, root := range roots {
 		if isPathUnderRoot(absPath, root) {
 			return true
 		}
 	}
 	return false
+}
+
+// UNCShareRoot reports the share root (`\\server\share`) of a Windows UNC path
+// and whether the path is a UNC share path at all.
+//
+// Accepted: `\\server\share`, `//server/share/docs`, mixed separators — the
+// frontend sends forward slashes (it normalizes them for DOM attributes) while
+// the OS hands us backslashes.
+//
+// Rejected: a bare `\\server` (the network neighborhood, which os.ReadDir
+// cannot list), and the device namespaces `\\.\` / `\\?\` — those address
+// devices rather than shares and would otherwise slip through every root check.
+//
+// Deliberately pure string parsing (no filepath.VolumeName) so it behaves the
+// same in tests on every platform; the OS-specific reachability is decided by
+// the caller.
+func UNCShareRoot(p string) (string, bool) {
+	if len(p) < 2 || !isPathSep(p[0]) || !isPathSep(p[1]) {
+		return "", false
+	}
+	parts := strings.FieldsFunc(p[2:], func(r rune) bool { return r == '/' || r == '\\' })
+	if len(parts) < 2 {
+		return "", false
+	}
+	server, share := parts[0], parts[1]
+	if server == "." || server == "?" || server == ".." {
+		return "", false
+	}
+	if share == "." || share == ".." {
+		return "", false
+	}
+	return `\\` + server + `\` + share, true
+}
+
+// IsUNCShareRoot reports whether p IS a UNC share root (`\\server\share`), not
+// merely a path under one. Such a path is its own top level: the network
+// neighborhood above it cannot be listed, so there is no parent to offer.
+//
+// Case-insensitive (share names are), and separator-agnostic, so the two
+// spellings the frontend and the OS use compare equal.
+func IsUNCShareRoot(p string) bool {
+	share, ok := UNCShareRoot(p)
+	if !ok {
+		return false
+	}
+	return strings.EqualFold(canonicalUNC(p), canonicalUNC(share))
+}
+
+// canonicalUNC strips trailing separators and unifies separator style, so two
+// spellings of the same share compare equal.
+func canonicalUNC(p string) string {
+	p = trimTrailingSeps(p)
+	return strings.NewReplacer("/", `\`).Replace(p)
+}
+
+func trimTrailingSeps(p string) string {
+	return strings.TrimRight(p, `/\`)
+}
+
+func isPathSep(c byte) bool {
+	return c == '/' || c == '\\'
 }
 
 // isPathUnderRoot checks that absPath is under root by resolving symlinks

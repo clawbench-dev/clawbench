@@ -49,7 +49,7 @@
 import { computed } from 'vue'
 import { Home, HardDrive } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
-import { splitPath, normalizeSlashes, isAbsolutePath } from '@/utils/path.ts'
+import { splitPath, normalizeSlashes, isAbsolutePath, uncShareRoot } from '@/utils/path.ts'
 import { store } from '@/stores/app.ts'
 import { setAttachDragData, buildAttachDragImage, cleanupDragGhost } from '@/utils/attachDrag.ts'
 import CopyButton from '@/components/common/CopyButton.vue'
@@ -71,9 +71,16 @@ const { isWideScreen } = useWideScreenLayout()
 /** Browsing a directory outside the project (only meaningful when scoped). */
 const isExternalBrowse = computed(() => props.projectScoped && isAbsolutePath(props.path))
 
-/** Filesystem root of the browsed absolute path: "/" on POSIX, "C:/" on Windows. */
+/**
+ * Filesystem root of the browsed absolute path: "/" on POSIX, "C:/" on Windows,
+ * and the share root ("//nas/media") for a UNC path — a share is its own top,
+ * just like a drive, because the network neighbourhood above it is not
+ * listable.
+ */
 const fsRootPath = computed(() => {
   const norm = normalizeSlashes(props.path)
+  const unc = uncShareRoot(norm)
+  if (unc) return unc
   const drive = norm.match(/^([A-Za-z]:)\//)
   return drive ? `${drive[1]}/` : '/'
 })
@@ -129,6 +136,11 @@ function reconstructPath(segments) {
   if (/^[A-Za-z]:\\$/.test(segments[0])) {
     return segments[0] + segments.slice(1).join('\\')
   }
+  // UNC: the first segment is the whole share root ("//nas/media"), which
+  // already carries its own leading separators.
+  if (segments[0].startsWith('//')) {
+    return segments.join('/')
+  }
   // Join with "/" (relative path, no leading slash)
   return segments.join('/')
 }
@@ -140,6 +152,14 @@ const parts = computed(() => {
   // so it displays as a single root crumb, not a broken segment
   if (segments.length > 0 && /^[A-Za-z]:$/.test(segments[0])) {
     segments[0] = segments[0] + '\\'
+  }
+  // A UNC share ("//nas/media/docs") is one root crumb plus the rest, exactly
+  // like "C:\" — otherwise it renders as "nas / media / docs" and clicking
+  // "media" would navigate to the POSIX path "/nas/media".
+  const unc = uncShareRoot(props.path)
+  if (unc) {
+    const rest = normalizeSlashes(props.path).slice(unc.length).replace(/^\/+|\/+$/g, '')
+    return [unc, ...(rest ? rest.split('/') : [])]
   }
   return segments
 })
@@ -174,6 +194,8 @@ function crumbPath(segments) {
   // Windows: reconstructPath already restored the "C:\" root, so `joined` is
   // absolute as-is (prepending "/" would produce "/C:\Users").
   if (/^[A-Za-z]:[\\/]/.test(joined)) return joined
+  // UNC: same reasoning — the share root already carries its "//server/share".
+  if (joined.startsWith('//')) return joined
   return isAbsolutePath(props.path) ? '/' + joined.replace(/^\/+/, '') : joined
 }
 
