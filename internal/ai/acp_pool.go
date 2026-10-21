@@ -330,8 +330,6 @@ func (m *ACPConnManager) GracefulStopAll(grace time.Duration) {
 	m.mu.Unlock()
 }
 
-// cancelPrompt cancels the in-flight prompt (if any) via the ACP protocol,
-// giving the agent a chance to emit a terminal notification before we kill
 // idleSweep periodically closes connections that have been idle for longer
 // than idleConnTimeout. This prevents stale agent processes from consuming
 // resources indefinitely after sessions complete without explicit deletion.
@@ -541,36 +539,6 @@ func (m *ACPConnManager) GetOrCreateConn(ctx context.Context, agent *model.Agent
 		return nil, false, err
 	}
 	return conn, isNew, nil
-}
-
-// seedModeFromDB seeds the connection's current mode from the session's
-// persisted context_state, so a respawn has something to re-apply.
-//
-// The value is kept even when the registry has no mode list yet (first ever
-// connection for this agent): not knowing the options must not discard the
-// user's choice, and an agent that rejects it answers -32602, which the config
-// path already treats as "keep the agent's own". A value the registry DOES
-// list the agent as not offering is dropped — re-sending it would fail on every
-// resume.
-func (c *ACPConn) seedModeFromDB(agent *model.Agent) {
-	if c == nil || agent == nil {
-		return
-	}
-	modeID := getSessionModeID(c.clawbenchSID)
-	if modeID == "" {
-		return
-	}
-	reg := GetAgentCapabilityRegistry()
-	if reg.HasAvailableModes(agent.ID) && !reg.IsModeAvailable(agent.ID, modeID) {
-		slog.Warn("acp conn: persisted mode is no longer offered by the agent, ignoring",
-			"clawbench_sid", c.clawbenchSID, "mode_id", modeID, "agent", agent.ID)
-		return
-	}
-	c.stateMu.Lock()
-	c.currentModeID = modeID
-	c.stateMu.Unlock()
-	slog.Info("acp conn: pre-populated mode from DB for resume re-apply",
-		"clawbench_sid", c.clawbenchSID, "mode_id", modeID)
 }
 
 // GetOrCreateConnForLoad creates an ACPConn for a LoadSession operation.
@@ -1261,6 +1229,36 @@ type ACPConn struct {
 	// guarded by metaMu (same lock as lastCompletedRequestID; both are touched
 	// from the notification goroutine and from the steer caller).
 	pendingSteerIDs map[string]struct{}
+}
+
+// seedModeFromDB seeds the connection's current mode from the session's
+// persisted context_state, so a respawn has something to re-apply.
+//
+// The value is kept even when the registry has no mode list yet (first ever
+// connection for this agent): not knowing the options must not discard the
+// user's choice, and an agent that rejects it answers -32602, which the config
+// path already treats as "keep the agent's own". A value the registry DOES
+// list the agent as not offering is dropped — re-sending it would fail on every
+// resume.
+func (c *ACPConn) seedModeFromDB(agent *model.Agent) {
+	if c == nil || agent == nil {
+		return
+	}
+	modeID := getSessionModeID(c.clawbenchSID)
+	if modeID == "" {
+		return
+	}
+	reg := GetAgentCapabilityRegistry()
+	if reg.HasAvailableModes(agent.ID) && !reg.IsModeAvailable(agent.ID, modeID) {
+		slog.Warn("acp conn: persisted mode is no longer offered by the agent, ignoring",
+			"clawbench_sid", c.clawbenchSID, "mode_id", modeID, "agent", agent.ID)
+		return
+	}
+	c.stateMu.Lock()
+	c.currentModeID = modeID
+	c.stateMu.Unlock()
+	slog.Info("acp conn: pre-populated mode from DB for resume re-apply",
+		"clawbench_sid", c.clawbenchSID, "mode_id", modeID)
 }
 
 // cancelPrompt cancels the in-flight prompt (if any) via the ACP protocol,

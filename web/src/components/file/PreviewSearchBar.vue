@@ -111,18 +111,17 @@ const marks = ref<HTMLElement[]>([])
  * call (not cached) because the iframe reloads — a cached body would point at a
  * detached document after any content change.
  */
-function searchRoot(): ParentNode | null {
-    if (props.iframe) {
-        let doc: Document | null = null
-        try {
-            doc = props.iframe.contentDocument
-        } catch {
-            // Cross-origin (sandbox lost allow-same-origin) — not searchable.
-            return null
-        }
-        return doc?.body ?? doc?.documentElement ?? null
+function searchRoot(): Element | null {
+    if (!props.iframe) {
+        return props.container ?? document.querySelector('.markdown-body')
     }
-    return props.container ?? document.querySelector('.markdown-body')
+    try {
+        const doc = props.iframe.contentDocument
+        return doc?.body ?? doc?.documentElement ?? null
+    } catch {
+        // Cross-origin (sandbox lost allow-same-origin) — not searchable.
+        return null
+    }
 }
 
 watch(() => props.open, async (val) => {
