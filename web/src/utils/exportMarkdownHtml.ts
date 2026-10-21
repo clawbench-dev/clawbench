@@ -1241,7 +1241,13 @@ function buildInlineZoomJs(): string {
         var box = cell ? cell.getBoundingClientRect() : frame;
         var bw = box.width || frame.width;
         var bh = box.height || frame.height;
-        return { w: bw * s.scale, h: bh * s.scale };
+        // Scale on the ARTWORK's ratio, not the frame's: an <svg> keeps
+        // preserveAspectRatio (meet), so a box whose ratio differs letterboxes
+        // the content — the element grows but the drawing does not.
+        var n = naturalSize(s);
+        if (!(n.w > 0 && n.h > 0)) return { w: bw * s.scale, h: bh * s.scale };
+        var fit = Math.min(bw / n.w, bh / n.h);
+        return { w: n.w * fit * s.scale, h: n.h * fit * s.scale };
     }
 
     function clamp(s) {
@@ -1267,6 +1273,12 @@ function buildInlineZoomJs(): string {
         s.media.style.height = z.h + 'px';
         s.media.style.maxWidth = 'none';
         s.media.style.maxHeight = 'none';
+        // Mermaid writes width="100%" as an ATTRIBUTE; it pins the width while
+        // the height grows, so the diagram stretches instead of zooming.
+        if (s.media.tagName.toLowerCase() === 'svg') {
+            if (s.savedW === undefined) s.savedW = s.media.getAttribute('width');
+            s.media.removeAttribute('width');
+        }
         // The resting CSS centres with translate(-50%,-50%); the pan offset is
         // added on top so the media stays on the frame's centre axis.
         s.media.style.transform = 'translate(calc(-50% + ' + s.tx + 'px), calc(-50% + ' + s.ty + 'px))';
@@ -1281,6 +1293,10 @@ function buildInlineZoomJs(): string {
         m.style.height = '';
         m.style.maxWidth = '';
         m.style.maxHeight = '';
+        if (m.tagName.toLowerCase() === 'svg' && active.savedW !== undefined) {
+            if (active.savedW === null) m.removeAttribute('width');
+            else m.setAttribute('width', active.savedW);
+        }
         active.fig.classList.remove('is-zooming');
         active = null;
     }

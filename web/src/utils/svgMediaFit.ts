@@ -131,6 +131,14 @@ export function stampSvgFigure(wrapper: Element): boolean {
     if (ar === null || !Number.isFinite(ar) || ar <= 0) return false
     ;(wrapper as HTMLElement).style.setProperty(SVG_AR_PROP, String(ar))
     wrapper.classList.add(SVG_FIT_CLASS)
+    // The content cell uses the ratio to size its resting frame
+    // (`aspect-ratio: var(--media-ar, auto)` in media-block.css). Written here,
+    // at stamp time, because the media's intrinsic size is only known now — the
+    // cell is otherwise empty (its media is absolutely positioned), so without
+    // a ratio it would collapse to its `min-height` fallback until the reader
+    // happened to hover the figure.
+    const cell = media.parentElement
+    if (cell) cell.style.setProperty('--media-ar', `${ar} / 1`)
     return true
 }
 

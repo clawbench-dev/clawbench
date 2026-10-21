@@ -42,9 +42,18 @@
 /** Marker class on a figure while it is the active zoom target. */
 export const ZOOM_ACTIVE_CLASS = 'is-zooming'
 
-/** Scale bounds. `FIT` is the resting state (no transform). */
+/**
+ * Scale bounds. `MIN_SCALE` is the resting state (the frame exactly filled).
+ *
+ * There is no upper bound: a diagram is vector art, so zooming further costs
+ * nothing in quality and the user is the best judge of how far they need to go.
+ * A hard cap made the gesture feel broken ("放大到全宽就无法再放大") because it
+ * was hit right after the artwork filled the frame — the point where a reader
+ * most wants to keep going. The only limit is `MAX_SAFE_SCALE`, a guard against
+ * numeric runaway from a stray event storm, far beyond any usable zoom.
+ */
 export const MIN_SCALE = 1
-export const MAX_SCALE = 8
+export const MAX_SAFE_SCALE = 64
 /** Multiplier per wheel notch. */
 const WHEEL_STEP = 1.15
 /** Pointer travel (px) before a press becomes a pan rather than a click. */
@@ -58,6 +67,8 @@ interface ZoomState {
     scale: number
     tx: number
     ty: number
+    /** The svg's original `width` attribute, restored on deactivate. */
+    savedSvgWidth?: string | null
 }
 
 /** Only one figure can be zoomed at a time. */
@@ -116,14 +127,22 @@ function figureFrom(target: EventTarget | null): HTMLElement | null {
  */
 function deactivate(): void {
     if (!active) return
-    const { figure, media } = active
+    const { figure, media, savedSvgWidth } = active
     media.style.transform = ''
     media.style.transformOrigin = ''
     media.style.width = ''
     media.style.height = ''
     media.style.maxWidth = ''
     media.style.maxHeight = ''
+    if (media.tagName.toLowerCase() === 'svg' && savedSvgWidth !== undefined) {
+        if (savedSvgWidth === null) media.removeAttribute('width')
+        else media.setAttribute('width', savedSvgWidth)
+    }
+    // The resting aspect-ratio stays: it describes the artwork, not the zoom,
+    // and dropping it would make the frame collapse for one frame on exit.
     figure.classList.remove(ZOOM_ACTIVE_CLASS)
+    // Restore the resting ratio so the frame hugs the artwork again.
+    applyRestingAspect(figure)
     active = null
 }
 
@@ -173,7 +192,23 @@ function scaledSize(state: ZoomState): { w: number; h: number } {
     const box = cell ? cell.getBoundingClientRect() : frame
     const baseW = box.width || frame.width
     const baseH = box.height || frame.height
-    return { w: baseW * state.scale, h: baseH * state.scale }
+    // The element must be scaled on ITS OWN ratio, not the frame's. An `<svg>`
+    // keeps `preserveAspectRatio` (`meet`), so a box whose ratio differs from
+    // the viewBox gets its content letterboxed inside it — the element grows
+    // but the artwork does not, which is exactly the "stops at full width"
+    // symptom. Deriving the box from the artwork's ratio keeps box and artwork
+    // in lockstep at every scale.
+    const nat = naturalSize(state)
+    if (!(nat.w > 0 && nat.h > 0)) {
+        return { w: baseW * state.scale, h: baseH * state.scale }
+    }
+    // At scale 1 the artwork exactly covers the frame on its limiting axis
+    // (contain). Growing from there keeps the same relationship.
+    const fitScale = Math.min(baseW / nat.w, baseH / nat.h)
+    return {
+        w: nat.w * fitScale * state.scale,
+        h: nat.h * fitScale * state.scale,
+    }
 }
 
 /**
@@ -217,6 +252,19 @@ function apply(state: ZoomState): void {
     state.media.style.height = `${h}px`
     state.media.style.maxWidth = 'none'
     state.media.style.maxHeight = 'none'
+    // Mermaid writes `width="100%"` as an ATTRIBUTE on the <svg>. A
+    // presentation attribute loses to a stylesheet rule but is re-applied when
+    // the inline style is cleared, and it kept the width pinned at the column
+    // while the height grew — the diagram stretched instead of zooming. Drop
+    // it while zooming; `deactivate` restores it.
+    if (state.media.tagName.toLowerCase() === 'svg') {
+        // `undefined` = not saved yet; `null` = the attribute was absent, which
+        // is a real state to restore to.
+        if (state.savedSvgWidth === undefined) {
+            state.savedSvgWidth = state.media.getAttribute('width')
+        }
+        state.media.removeAttribute('width')
+    }
     // The resting CSS centres the media with `translate(-50%, -50%)`; the pan
     // offset is added on top of that rather than replacing it, so the media
     // stays centred on the frame's centre axis while panning.
@@ -232,6 +280,11 @@ function activate(figure: HTMLElement): ZoomState | null {
 
     active = { figure, media, scale: MIN_SCALE, tx: 0, ty: 0 }
     figure.classList.add(ZOOM_ACTIVE_CLASS)
+    // Drop the resting ratio so the CSS can switch the frame to the fixed
+    // 60dvh viewport. The ratio lives in an inline custom property, which no
+    // stylesheet rule can outrank — clearing it here is the only way to let the
+    // active-state `height: 60dvh` take effect.
+    media.parentElement?.style.removeProperty('--media-ar')
     media.style.transformOrigin = 'center center'
     apply(active)
     return active
@@ -283,7 +336,7 @@ function onWheel(e: WheelEvent): void {
     // Horizontal-only notches (deltaY === 0) are not a zoom gesture.
     if (e.deltaY === 0) return
 
-    const next = Math.min(MAX_SCALE, Math.max(MIN_SCALE, state.scale * (e.deltaY > 0 ? 1 / WHEEL_STEP : WHEEL_STEP)))
+    const next = Math.min(MAX_SAFE_SCALE, Math.max(MIN_SCALE, state.scale * (e.deltaY > 0 ? 1 / WHEEL_STEP : WHEEL_STEP)))
 
     // Zooming back out to fit scale ends the gesture in this same notch: the
     // figure returns to its resting size and the page takes over again. Leaving
@@ -366,6 +419,39 @@ function onPointerOver(e: PointerEvent): void {
     const figure = figureFrom(e.target)
     if (!figure) return
     ensureFocusable(figure)
+    applyRestingAspect(figure)
+}
+
+/**
+ * Give the frame the artwork's own ratio while at rest, so a wide-and-flat
+ * diagram gets a short frame instead of being padded into a 60dvh box.
+ *
+ * Written on hover rather than on activation: the CSS uses it as the frame's
+ * `aspect-ratio`, and writing it at click time would make the frame snap from
+ * one height to another at the exact moment the user starts interacting.
+ * Hovering is early enough to be invisible and late enough that the media has
+ * been laid out (its intrinsic size is readable).
+ *
+ * The ratio is applied to the CELL, not the media: the media is absolutely
+ * positioned (it must be able to overflow while zoomed), so it cannot drive the
+ * cell's height. `max-height: 60dvh` in CSS still caps a tall diagram.
+ */
+function applyRestingAspect(figure: HTMLElement): void {
+    // Never while zoomed: the active state wants the fixed 60dvh viewport, and
+    // a ratio written here would outrank its `height`. `pointerover` fires on
+    // the click that activates the figure, so without this guard the ratio came
+    // straight back and the active frame stayed artwork-shaped.
+    if (figure.classList.contains(ZOOM_ACTIVE_CLASS)) return
+    const media = zoomableMedia(figure)
+    const cell = media?.parentElement
+    if (!media || !cell) return
+    if (cell.style.getPropertyValue('--media-ar')) return // idempotent
+    const nat = naturalSize({ figure, media, scale: MIN_SCALE, tx: 0, ty: 0 })
+    if (!(nat.w > 0 && nat.h > 0)) return
+    // A custom property, not `aspect-ratio` directly: the stylesheet owns the
+    // property so the active-state rule can switch it back to `auto` without
+    // fighting an inline declaration.
+    cell.style.setProperty('--media-ar', `${nat.w} / ${nat.h}`)
 }
 
 /**
@@ -535,7 +621,7 @@ function onKeyDown(e: KeyboardEvent): void {
     if (!target) return
 
     if (zoomIn || zoomOut) {
-        const next = Math.min(MAX_SCALE, Math.max(MIN_SCALE, target.scale * (zoomIn ? WHEEL_STEP : 1 / WHEEL_STEP)))
+        const next = Math.min(MAX_SAFE_SCALE, Math.max(MIN_SCALE, target.scale * (zoomIn ? WHEEL_STEP : 1 / WHEEL_STEP)))
         if (next === target.scale) return
         // Keyboard zoom anchors on the frame centre — there is no cursor.
         const frame = figure.getBoundingClientRect()

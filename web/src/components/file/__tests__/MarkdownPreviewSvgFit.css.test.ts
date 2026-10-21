@@ -123,6 +123,41 @@ describe('svg media layout (media-block.css contract)', () => {
     expect(activeRule![1]).not.toMatch(/(^|[\s;])border\s*:/)
   })
 
+  it('hugs the artwork height at rest and switches to 60dvh when active', () => {
+    // A wide-and-flat diagram must not be padded into a 60dvh box: at rest the
+    // frame takes the artwork's own ratio (written as `--media-ar` by
+    // svgMediaFit.ts) and is only capped by max-height. Activation switches to
+    // a fixed 60dvh viewport so panning has a stable frame.
+    expect(cellRule).toBeTruthy()
+    const rest = cellRule![1]
+    expect(rest).toContain('aspect-ratio: var(--media-ar, auto)')
+    expect(rest).toContain('max-height: 60dvh')
+    // A fixed height at rest is the bug this replaced.
+    expect(rest.replace(/\/\*[\s\S]*?\*\//g, '')).not.toMatch(/^\s*height:\s*60dvh/m)
+
+    // The active rule must mirror the resting `:has()` in its selector:
+    // `:has()` contributes its argument's specificity, so a plain
+    // `.is-zooming > .mermaid` (0-3-0) loses to the resting
+    // `:has(> .mermaid > svg)` (0-3-1) and the frame stays artwork-shaped.
+    const active = css.match(
+      /\.image-block-wrapper\.is-zooming:has\(> \.mermaid > svg\) > \.mermaid\s*\{([\s\S]*?)\}/,
+    )
+    expect(active, 'active rule must match the resting :has() specificity').toBeTruthy()
+    expect(active![1]).toContain('height: 60dvh')
+    expect(active![1]).toContain('aspect-ratio: auto')
+  })
+
+  it('does not cap the zoom scale at the fit width', () => {
+    // "放大到全宽就无法再放大": the ceiling used to be 8x, reached almost
+    // immediately after the artwork filled the frame.
+    const src = readWebFile('src/utils/inlineZoom.ts')
+    expect(src).not.toMatch(/MAX_SCALE\s*=\s*\d/)
+    // A runaway guard only, far past any usable zoom.
+    expect(src).toMatch(/MAX_SAFE_SCALE\s*=\s*\d+/)
+    const cap = Number(src.match(/MAX_SAFE_SCALE\s*=\s*(\d+)/)![1])
+    expect(cap).toBeGreaterThanOrEqual(32)
+  })
+
   it('reveals the reset button only in the active state', () => {
     // Hidden by the base rule (also covers touch, where inline zoom never
     // installs) and shown only while `.is-zooming`.

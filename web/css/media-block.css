@@ -191,10 +191,15 @@
      An inline declaration outranks any stylesheet rule, so overriding it to
      let the diagram grow to the column needs `!important` — this is the one
      place in this file where that is required rather than sloppy.
-   `max-height` on the cell is not used: the height cap comes from the figure's
-   ratio-driven width (height = width ÷ ratio ≤ 60dvh), which keeps the diagram
-   undistorted instead of clipping it. */
-.image-block-wrapper.svg-fit > .mermaid > svg {
+
+   **The `!important` must NOT apply in the active zoom state.** `inlineZoom.ts`
+   writes the zoomed size as inline `width`/`height` and clears `max-width` to
+   `none`; an `!important` stylesheet cap beats that inline `none`, which pinned
+   the media at the column width and made the diagram stop growing exactly when
+   it reached full width (the reported "放大到全宽就无法再放大"). The
+   `:not(.is-zooming)` guard hands control back to the inline styles while
+   zoomed. */
+.image-block-wrapper.svg-fit:not(.is-zooming) > .mermaid > svg {
     width: 100%;
     height: auto;
     max-width: 100% !important;
@@ -248,20 +253,66 @@
     .image-block-wrapper:has(> .lightbox-img-wrap > img) > .lightbox-img-wrap,
     .image-block-wrapper:has(> .lightbox-svg-wrap > svg.lightbox-svg) > .lightbox-svg-wrap,
     .image-block-wrapper:has(> .mermaid > svg) > .mermaid {
-        /* The fixed viewport. 60dvh keeps a tall diagram from dominating the
-           page; the media is contain-fitted inside it.
+        /* RESTING: the frame is as tall as the artwork needs at full width,
+           capped at 60dvh.
+
+           A fixed `height: 60dvh` was wrong for a wide-and-flat diagram (a
+           1076×300 flowchart): the frame stayed 60dvh tall while the artwork
+           occupied a third of it, leaving a big empty band above and below.
+           `height: auto` + `aspect-ratio` (set from the artwork's own ratio by
+           `svgMediaFit.ts` / `inlineZoom.ts`) makes the frame hug the artwork.
+           The `max-height: 60dvh` only engages for a TALL diagram, which is
+           exactly the case where the cap is wanted.
+
+           ACTIVE (`.is-zooming`): the frame becomes the fixed 60dvh viewport so
+           the zoomed artwork has a stable window to pan inside.
 
            `position: relative` + an absolutely positioned media (below) rather
            than flex centring: a flex item larger than the container overflows
            symmetrically and the browser then sizes it from the container's
            cross axis, which made a zoomed SVG grow to 1138px and sit at
-           top:-313 — outside the clipped cell, i.e. invisible. Absolute
-           positioning with `inset: 0` + `margin: auto` centres a box that may
-           be larger than the frame, which is exactly the zoomed state. */
-        height: 60dvh;
+           top:-313 — outside the clipped cell, i.e. invisible. */
         position: relative;
+        /* The frame hugs the artwork while at rest: `--media-ar` is set by
+           `inlineZoom.ts` from the media's intrinsic ratio, so a wide-and-flat
+           diagram gets a short frame. `max-height` still caps a tall one.
+
+           `min-height` is the fallback for the window before the ratio is
+           written (the media is absolutely positioned, so it cannot give the
+           cell any height on its own — without this the frame would collapse to
+           0px for the first frames). It is a small, harmless height rather than
+           60dvh: the ratio takes over as soon as it lands. */
+        aspect-ratio: var(--media-ar, auto);
+        height: auto;
+        min-height: 2rem;
+        max-height: 60dvh;
         overflow: hidden;
         cursor: zoom-in;
+    }
+
+    /* Active: a fixed 60dvh viewport, so panning has a stable frame and a tall
+       diagram does not push the rest of the document around while zoomed.
+       `aspect-ratio: auto` cancels the resting ratio — a non-auto ratio
+       outranks `height`, which would keep a flat diagram's frame short in the
+       active state too. */
+    /* The selectors mirror the resting ones INCLUDING `:has()`.
+       `:has()` contributes the specificity of its argument, so the resting rule
+       (`.image-block-wrapper:has(> .mermaid > svg) > .mermaid`) is 0-3-1 while a
+       plain `.image-block-wrapper.is-zooming > .mermaid` is only 0-3-0 — the
+       resting `height: auto` won and the active frame stayed artwork-shaped
+       (measured 30px instead of 60dvh). Matching the `:has()` keeps them tied at
+       0-4-1 vs 0-3-1 and lets this rule win on source order. */
+    .image-block-wrapper.is-zooming:has(> .lightbox-img-wrap > img) > .lightbox-img-wrap,
+    .image-block-wrapper.is-zooming:has(> .lightbox-svg-wrap > svg.lightbox-svg) > .lightbox-svg-wrap,
+    .image-block-wrapper.is-zooming:has(> .mermaid > svg) > .mermaid {
+        /* The resting ratio lives in an inline custom property, which no
+           stylesheet rule can outrank — `inlineZoom.ts` clears it on activate
+           and restores it on exit. This `auto` is the fallback for the frame
+           while that property is absent. */
+        aspect-ratio: auto;
+        height: 60dvh;
+        min-height: 60dvh;
+        max-height: 60dvh;
     }
 
     .image-block-wrapper:has(> .lightbox-img-wrap > img) > .lightbox-img-wrap > img,

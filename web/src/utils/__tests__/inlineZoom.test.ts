@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
-  MAX_SCALE,
+  MAX_SAFE_SCALE,
   MIN_SCALE,
   activeZoomScale,
   installInlineZoom,
@@ -202,16 +202,21 @@ describe('inlineZoom — wheel behaviour', () => {
     expect(img.style.transform).not.toContain('scale(')
   })
 
-  it('clamps to MAX_SCALE instead of growing without bound', () => {
+  it('keeps zooming past full width (no ceiling at the fit size)', () => {
+    // A hard cap made the gesture feel broken: it was hit right after the
+    // artwork filled the frame — exactly where a reader wants to keep going.
+    // 20 notches is ~16x, well beyond the old 8x ceiling.
     const figure = mountFigure()
     const img = figure.querySelector('img')!
-    stubSize(img, 300, 200)
+    stubIntrinsic(figure, 300, 200, 300, 200)
     stubRect(figure, 0, 0, 300, 200)
 
     click(img)
-    for (let i = 0; i < 40; i++) wheel(img, -120, 150, 100)
+    for (let i = 0; i < 20; i++) wheel(img, -120, 150, 100)
 
-    expect(activeZoomScale()).toBe(MAX_SCALE)
+    expect(activeZoomScale()).toBeGreaterThan(8)
+    // Only a runaway guard remains, far past any usable zoom.
+    expect(activeZoomScale()).toBeLessThanOrEqual(MAX_SAFE_SCALE)
   })
 
   it('drops the zoom and keeps the notch when zooming out at fit scale', () => {
@@ -594,21 +599,42 @@ describe('inlineZoom — layout contract', () => {
     expect(svg.style.transform).not.toContain('scale(')
   })
 
-  it('uses the VIEWPORT box as the zoom base, so a small diagram fills the frame', () => {
-    // The resting rule makes the media element exactly the viewport size and
-    // letterboxes the artwork inside it (`object-fit: contain`). If the base
-    // were the artwork's contain-fit size instead, a diagram smaller than the
-    // column would stay small at scale 1 — the reported bug.
+  it('scales on the ARTWORK ratio so the content fills the frame at rest', () => {
+    // A small diagram must be blown UP to the frame, not left at its intrinsic
+    // size (the "默认大小应该占满全宽" bug). At scale 1 the box is the contain-fit
+    // of the artwork, so the element covers the frame on its limiting axis.
     const figure = mountFigure('mermaid')
     const svg = figure.querySelector('svg')!
-    // A small intrinsic size inside a much larger frame.
+    // 100x50 artwork in a 600x400 frame: limited by width => 600x300.
     stubIntrinsic(figure, 100, 50, 600, 400)
     stubRect(figure, 0, 0, 600, 400)
     click(svg)
 
-    // At scale 1 the element must equal the frame, not the intrinsic size.
     expect(parseFloat(svg.style.width)).toBe(600)
-    expect(parseFloat(svg.style.height)).toBe(400)
+    expect(parseFloat(svg.style.height)).toBe(300)
+  })
+
+  it('grows the box on the artwork ratio while zooming', () => {
+    // If the box ratio drifts from the artwork ratio, an <svg> keeps
+    // `preserveAspectRatio: meet` and letterboxes the content — the element
+    // grows but the drawing does not, which reads as "stuck at full width".
+    const figure = mountFigure('mermaid')
+    const svg = figure.querySelector('svg')!
+    stubIntrinsic(figure, 100, 50, 600, 400)
+    stubRect(figure, 0, 0, 600, 400)
+    click(svg)
+    const w1 = parseFloat(svg.style.width)
+    const h1 = parseFloat(svg.style.height)
+
+    wheel(svg, -120, 300, 200)
+    const w2 = parseFloat(svg.style.width)
+    const h2 = parseFloat(svg.style.height)
+
+    expect(w2).toBeGreaterThan(w1)
+    expect(h2).toBeGreaterThan(h1)
+    // Same ratio before and after: box and artwork stay in lockstep.
+    expect(w2 / h2).toBeCloseTo(w1 / h1, 3)
+    expect(w1 / h1).toBeCloseTo(100 / 50, 3)
   })
 
   it('restores the resting layout exactly on exit', () => {
