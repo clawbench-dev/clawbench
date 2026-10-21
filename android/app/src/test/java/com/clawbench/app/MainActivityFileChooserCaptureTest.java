@@ -1,6 +1,7 @@
 package com.clawbench.app;
 
 import android.content.Intent;
+import android.provider.MediaStore;
 import android.webkit.WebChromeClient;
 
 import org.junit.Test;
@@ -13,26 +14,30 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * Unit tests for the capture= handling in MainActivity's file chooser.
+ * Unit tests for the per-entry routing of MainActivity's file chooser.
  *
- * Regression: the 拍照 button (<input capture="environment">) and the 照片
- * button (<input accept="image/*">) both opened the SAME three-way sheet
- * (相机 / 照片和视频 / 更多), because onShowFileChooser ignored the capture
- * hint and unconditionally wrapped every request in Intent.createChooser with
- * the camera appended as an EXTRA_INITIAL_INTENT. A dedicated camera entry is
- * pointless if it cannot skip that sheet.
+ * Regression: onShowFileChooser ignored what the <input> actually asked for and
+ * wrapped every request in Intent.createChooser with the camera appended as an
+ * EXTRA_INITIAL_INTENT. All three entries in the attach drawer — 拍照
+ * (capture="environment"), 照片 (accept="image/*") and 上传文件 — therefore
+ * opened the SAME "相机 / 照片和视频 / 更多" sheet, so the dedicated entries were
+ * indistinguishable from each other.
  *
- * The fix has two halves, both covered here:
- *   1. isCaptureRequested() reads FileChooserParams.isCaptureEnabled()
- *   2. buildLaunchIntent() launches the camera alone when capture was asked
+ * The fix routes each entry straight to its own app:
+ *   1. isCaptureRequested() / isImageOnlyRequest() classify the request
+ *   2. buildPickerIntent() returns the camera (null → caller builds it), the
+ *      photo picker / gallery, or the WebView-built file intent
  *
- * Runs under Robolectric: Intent.createChooser() is a stub returning null on
- * the plain android.jar, so the chooser assertions would be vacuously broken
- * without a real implementation.
+ * Runs under Robolectric because MediaStore.getPickImagesMaxLimit() is a real
+ * method call, not an inlined constant, and the plain android.jar stub would
+ * throw on it.
  */
 @RunWith(RobolectricTestRunner.class)
-@Config(sdk = 28)
+@Config(sdk = 34)
 public class MainActivityFileChooserCaptureTest {
+
+    private static final int MODE_OPEN = WebChromeClient.FileChooserParams.MODE_OPEN;
+    private static final int MODE_MULTI = WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE;
 
     // =====================================================
     // isCaptureRequested: reads the params flag
@@ -51,7 +56,7 @@ public class MainActivityFileChooserCaptureTest {
         WebChromeClient.FileChooserParams params = mock(WebChromeClient.FileChooserParams.class);
         when(params.isCaptureEnabled()).thenReturn(false);
 
-        assertFalse("a plain accept=\"image/*\" input must keep the chooser",
+        assertFalse("a plain accept=\"image/*\" input must not be treated as a capture request",
                 MainActivity.isCaptureRequested(params));
     }
 
@@ -65,7 +70,7 @@ public class MainActivityFileChooserCaptureTest {
     @Test
     public void isCaptureRequested_falseWhenOemAccessorThrows() {
         // OEM WebViews have been observed throwing from this accessor. The
-        // picker must still open (as a normal file chooser), not die.
+        // picker must still open, not die.
         WebChromeClient.FileChooserParams params = mock(WebChromeClient.FileChooserParams.class);
         when(params.isCaptureEnabled()).thenThrow(new RuntimeException("oem webview"));
 
@@ -73,48 +78,153 @@ public class MainActivityFileChooserCaptureTest {
     }
 
     // =====================================================
-    // buildLaunchIntent: the actual launched intent
+    // isImageOnlyRequest: distinguishes 照片 from 上传文件
     // =====================================================
 
     @Test
-    public void buildLaunchIntent_captureOnly_launchesCameraDirectly() {
-        Intent picker = new Intent(Intent.ACTION_GET_CONTENT);
-        Intent camera = new Intent("android.media.action.IMAGE_CAPTURE");
+    public void isImageOnlyRequest_trueForImageMimeType() {
+        WebChromeClient.FileChooserParams params = mock(WebChromeClient.FileChooserParams.class);
+        when(params.getAcceptTypes()).thenReturn(new String[]{ "image/*" });
 
-        Intent launched = MainActivity.buildLaunchIntent(picker, camera, true, "choose");
-
-        // Must be the camera itself — NOT a chooser wrapping it. This is the
-        // assertion that fails on the old code (which always chose).
-        assertSame("capture must bypass the chooser entirely", camera, launched);
-        assertNull("a direct camera launch carries no EXTRA_INITIAL_INTENTS",
-                launched.getParcelableArrayExtra(Intent.EXTRA_INITIAL_INTENTS));
+        assertTrue(MainActivity.isImageOnlyRequest(params));
     }
 
     @Test
-    public void buildLaunchIntent_notCapture_wrapsInChooserWithCamera() {
-        Intent picker = new Intent(Intent.ACTION_GET_CONTENT);
-        Intent camera = new Intent("android.media.action.IMAGE_CAPTURE");
+    public void isImageOnlyRequest_trueForConcreteImageTypes() {
+        WebChromeClient.FileChooserParams params = mock(WebChromeClient.FileChooserParams.class);
+        when(params.getAcceptTypes()).thenReturn(new String[]{ "image/png", "image/jpeg" });
 
-        Intent launched = MainActivity.buildLaunchIntent(picker, camera, false, "choose");
-
-        assertNotNull(launched);
-        assertEquals(Intent.ACTION_CHOOSER, launched.getAction());
-        Intent[] initial = (Intent[]) launched.getParcelableArrayExtra(Intent.EXTRA_INITIAL_INTENTS);
-        assertNotNull("the camera stays reachable as an initial intent", initial);
-        assertEquals(1, initial.length);
-        assertSame(camera, initial[0]);
+        assertTrue(MainActivity.isImageOnlyRequest(params));
     }
 
     @Test
-    public void buildLaunchIntent_noCamera_launchesPickerAsIs() {
-        // CAMERA permission denied, or no camera app installed: degrade to the
-        // plain file picker instead of launching an intent nobody can handle.
-        // Checked with captureOnly=true as well, because that is the path where
-        // launching the camera unconditionally would throw
-        // ActivityNotFoundException and lose the callback.
-        Intent picker = new Intent(Intent.ACTION_GET_CONTENT);
+    public void isImageOnlyRequest_trueForExtensionList() {
+        // Some OEM WebViews hand back extensions instead of MIME types.
+        WebChromeClient.FileChooserParams params = mock(WebChromeClient.FileChooserParams.class);
+        when(params.getAcceptTypes()).thenReturn(new String[]{ ".jpg", ".png", ".heic" });
 
-        assertSame(picker, MainActivity.buildLaunchIntent(picker, null, false, "choose"));
-        assertSame(picker, MainActivity.buildLaunchIntent(picker, null, true, "choose"));
+        assertTrue(MainActivity.isImageOnlyRequest(params));
+    }
+
+    @Test
+    public void isImageOnlyRequest_falseForMixedTypes() {
+        WebChromeClient.FileChooserParams params = mock(WebChromeClient.FileChooserParams.class);
+        when(params.getAcceptTypes()).thenReturn(new String[]{ "image/*", "application/pdf" });
+
+        assertFalse("a mixed accept list must keep the file manager",
+                MainActivity.isImageOnlyRequest(params));
+    }
+
+    @Test
+    public void isImageOnlyRequest_falseForEmptyAccept() {
+        // No accept attribute means "any file" — the 上传文件 entry. Treating
+        // this as images-only would hide every non-image from the user.
+        WebChromeClient.FileChooserParams params = mock(WebChromeClient.FileChooserParams.class);
+        when(params.getAcceptTypes()).thenReturn(new String[0]);
+
+        assertFalse(MainActivity.isImageOnlyRequest(params));
+    }
+
+    @Test
+    public void isImageOnlyRequest_falseForNullAccept() {
+        WebChromeClient.FileChooserParams params = mock(WebChromeClient.FileChooserParams.class);
+        when(params.getAcceptTypes()).thenReturn(null);
+
+        assertFalse(MainActivity.isImageOnlyRequest(params));
+    }
+
+    @Test
+    public void isImageOnlyRequest_falseWhenAccessorThrows() {
+        WebChromeClient.FileChooserParams params = mock(WebChromeClient.FileChooserParams.class);
+        when(params.getAcceptTypes()).thenThrow(new RuntimeException("oem webview"));
+
+        assertFalse(MainActivity.isImageOnlyRequest(params));
+    }
+
+    // =====================================================
+    // buildPickerIntent: the routing table
+    // =====================================================
+
+    @Test
+    public void buildPickerIntent_capture_returnsNullSoCallerBuildsCamera() {
+        Intent fileIntent = new Intent(Intent.ACTION_GET_CONTENT);
+
+        assertNull("capture is handled by the caller (needs FileProvider + Activity)",
+                MainActivity.buildPickerIntent(true, false, MODE_OPEN, true, fileIntent));
+    }
+
+    @Test
+    public void buildPickerIntent_imagesOnly_opensPhotoPickerOnApi33() {
+        Intent fileIntent = new Intent(Intent.ACTION_GET_CONTENT);
+
+        Intent picked = MainActivity.buildPickerIntent(false, true, MODE_OPEN, true, fileIntent);
+
+        assertNotNull(picked);
+        assertEquals("the 照片 entry must reach the photo picker, not a chooser",
+                MediaStore.ACTION_PICK_IMAGES, picked.getAction());
+        assertNull("no chooser wrapper", picked.getParcelableArrayExtra(Intent.EXTRA_INITIAL_INTENTS));
+    }
+
+    @Test
+    public void buildPickerIntent_imagesOnlyMultiple_carriesMaxLimit() {
+        Intent fileIntent = new Intent(Intent.ACTION_GET_CONTENT);
+
+        Intent picked = MainActivity.buildPickerIntent(false, true, MODE_MULTI, true, fileIntent);
+
+        assertEquals(MediaStore.ACTION_PICK_IMAGES, picked.getAction());
+        // Multi-select must be requested explicitly; without it the picker
+        // returns a single image even though the input said `multiple`.
+        assertTrue(picked.hasExtra(MediaStore.EXTRA_PICK_IMAGES_MAX));
+    }
+
+    @Test
+    public void buildPickerIntent_imagesOnlySingle_doesNotSetMaxLimit() {
+        Intent fileIntent = new Intent(Intent.ACTION_GET_CONTENT);
+
+        Intent picked = MainActivity.buildPickerIntent(false, true, MODE_OPEN, true, fileIntent);
+
+        assertFalse("a single-select request must not set EXTRA_PICK_IMAGES_MAX",
+                picked.hasExtra(MediaStore.EXTRA_PICK_IMAGES_MAX));
+    }
+
+    @Test
+    public void buildPickerIntent_imagesOnly_fallsBackToGalleryBeforeApi33() {
+        // ACTION_PICK_IMAGES is API 33; older devices must use the OEM gallery
+        // instead of launching an activity that does not exist.
+        Intent fileIntent = new Intent(Intent.ACTION_GET_CONTENT);
+
+        Intent picked = MainActivity.buildPickerIntent(false, true, MODE_OPEN, false, fileIntent);
+
+        assertEquals(Intent.ACTION_PICK, picked.getAction());
+        assertEquals("image/*", picked.getType());
+    }
+
+    @Test
+    public void buildPickerIntent_files_launchesWebViewIntentDirectly() {
+        // The 上传文件 entry: WebView already encoded the input's accept list
+        // and multiple flag. Launching it bare is what opens the system file
+        // manager directly.
+        Intent fileIntent = new Intent(Intent.ACTION_GET_CONTENT).setType("*/*");
+
+        Intent picked = MainActivity.buildPickerIntent(false, false, MODE_OPEN, true, fileIntent);
+
+        assertSame(fileIntent, picked);
+        assertNull("no chooser wrapper — that was the bug", picked.getParcelableArrayExtra(Intent.EXTRA_INITIAL_INTENTS));
+    }
+
+    @Test
+    public void buildPickerIntent_allEntriesReachDifferentApps() {
+        // The whole point: three entries, three distinct targets. This is the
+        // assertion that fails if any two entries collapse back into one.
+        Intent fileIntent = new Intent(Intent.ACTION_GET_CONTENT).setType("*/*");
+
+        Intent camera = MainActivity.buildPickerIntent(true, false, MODE_OPEN, true, fileIntent);
+        Intent photos = MainActivity.buildPickerIntent(false, true, MODE_OPEN, true, fileIntent);
+        Intent files = MainActivity.buildPickerIntent(false, false, MODE_OPEN, true, fileIntent);
+
+        assertNull("拍照 → caller-built camera intent", camera);
+        assertEquals(MediaStore.ACTION_PICK_IMAGES, photos.getAction());
+        assertSame(fileIntent, files);
+        assertNotEquals(photos.getAction(), files.getAction());
     }
 }
