@@ -20,7 +20,14 @@ func launchSentinel() (*exec.Cmd, error) {
 	// survive a package manager replacing the package mid-run. os.Executable()
 	// would point at the retired-and-deleted package directory, and all five
 	// exec retries would fail, leaving the service down.
-	exe, err := service.ResolveSelfBinary()
+	//
+	// ResolveRestartBinary (not ResolveSelfBinary) because when the package
+	// manager has ALSO deleted the recorded path — the npm reinstall case that
+	// retired the directory to `@scope/.<name>-<random>` — the only surviving
+	// route is the manager's own shim on PATH. Restarting through it is correct:
+	// it resolves to the build that is installed now, which is exactly the one
+	// the user asked for. An in-place upgrade must keep using ResolveSelfBinary.
+	exe, err := service.ResolveRestartBinary()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get executable path: %w", err)
 	}

@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -810,8 +811,9 @@ func TestServeConfigRestart_Success(t *testing.T) {
 	defer teardown()
 
 	restartCh := make(chan struct{}, 1)
-	SetRestartFunc(func() {
+	SetRestartFunc(func() error {
 		restartCh <- struct{}{}
+		return nil
 	})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/config/restart", http.NoBody)
@@ -830,6 +832,37 @@ func TestServeConfigRestart_Success(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("restart function was not called within timeout")
 	}
+}
+
+// TestServeConfigRestart_FailureIsReported is the regression test for the
+// "clicked restart, page reloaded, still the old server" report.
+//
+// The handler used to answer 200 "restarting" unconditionally from a
+// goroutine, so a restart that never started (the running binary's path was
+// gone after an npm reinstall) looked identical to a successful one: the client
+// polled, the still-alive old process answered, and the page reloaded onto the
+// same build. A failure must now surface as 500 so the UI can say so.
+func TestServeConfigRestart_FailureIsReported(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origRestartFunc := restartFunc
+	restartFunc = func() error {
+		return errors.New("running binary is not accessible at /nope/clawbench")
+	}
+	defer func() { restartFunc = origRestartFunc }()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/config/restart", http.NoBody)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfigRestart, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "RestartFailed", resp["msgKey"])
+	// The reason must reach the user — "restart failed" alone is not actionable.
+	assert.Contains(t, fmt.Sprint(resp["detail"]), "/nope/clawbench")
 }
 
 func TestServeConfigRestart_MethodNotAllowed(t *testing.T) {
@@ -1588,19 +1621,19 @@ func TestServeConfig_Patch_MossNanoEngineWithModelDirInPatch(t *testing.T) {
 	assert.Equal(t, "moss-nano", model.ConfigInstance.TTS.Engine)
 }
 
-// --- ServeConfigRestart with nil restartFunc ---
+// --- ServeConfigRestart with a wired restartFunc ---
 
 func TestServeConfigRestart_NilRestartFunc(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
-	// Set restartFunc to a function that signals when it's called.
-	// This avoids DATA RACE: the goroutine inside ServeConfigRestart reads
-	// restartFunc, and we must not concurrently write it back.
+	// The handler now calls restartFunc synchronously, so no goroutine can read
+	// it concurrently and a plain save/restore is race-free.
 	origRestartFunc := restartFunc
 	restartCalled := make(chan struct{})
-	restartFunc = func() {
+	restartFunc = func() error {
 		close(restartCalled)
+		return nil
 	}
 	defer func() { restartFunc = origRestartFunc }()
 
@@ -1614,13 +1647,11 @@ func TestServeConfigRestart_NilRestartFunc(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, "restarting", resp["status"])
 
-	// Wait for the goroutine to actually execute restartFunc
-	// (restartGracePeriod = 200ms delay, then calls restartFunc)
 	select {
 	case <-restartCalled:
-		// Success — goroutine finished reading restartFunc and called it
-	case <-time.After(2 * time.Second):
-		t.Fatal("restartFunc was not called within expected time")
+		// Success — restartFunc ran before the response was written
+	default:
+		t.Fatal("restartFunc was not called before the response")
 	}
 }
 
@@ -2030,6 +2061,9 @@ func TestServeConfigPassword_WithAutoPasswordFile(t *testing.T) {
 
 // --- ServeConfigRestart: nil restartFunc ---
 
+// A server that never wired up the restart function cannot restart. Answering
+// 200 "restarting" here was the same lie as the failed-launch case: the client
+// would poll and reload onto the unchanged process.
 func TestServeConfigRestart_NilRestartFuncWarn(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
@@ -2042,13 +2076,11 @@ func TestServeConfigRestart_NilRestartFuncWarn(t *testing.T) {
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeConfigRestart, req)
 
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 
 	var resp map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, "restarting", resp["status"])
-
-	time.Sleep(restartGracePeriod + 100*time.Millisecond)
+	assert.Equal(t, "RestartUnavailable", resp["msgKey"])
 }
 
 // --- ServeConfigPassword: RemoteAddr without port ---
@@ -2718,11 +2750,22 @@ func TestJoinArgs_SettingsSingleArg(t *testing.T) {
 func TestTriggerRestart(t *testing.T) {
 	called := false
 	origRestartFunc := restartFunc
-	restartFunc = func() { called = true }
+	restartFunc = func() error { called = true; return nil }
 	defer func() { restartFunc = origRestartFunc }()
 
 	TriggerRestart()
 	assert.True(t, called, "TriggerRestart should call the configured restartFunc")
+}
+
+// TriggerRestart is fire-and-forget: the upgrade path calls it after doing its
+// own work and has no user-facing channel, so a failing restart must not panic
+// or leak an unhandled error.
+func TestTriggerRestart_IgnoresError(t *testing.T) {
+	origRestartFunc := restartFunc
+	restartFunc = func() error { return errors.New("boom") }
+	defer func() { restartFunc = origRestartFunc }()
+
+	assert.NotPanics(t, TriggerRestart)
 }
 
 func TestTriggerRestart_NilFunc(t *testing.T) {

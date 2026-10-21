@@ -287,6 +287,115 @@ func TestResolveSelfBinary_ErrorsWhenExecutableFails(t *testing.T) {
 	require.Error(t, err)
 }
 
+// --- ResolveRestartBinary ---
+
+// TestResolveRestartBinary_PrefersRunningBinary: when the running binary is
+// still reachable, that is what must be re-exec'd — restarting through some
+// other copy on PATH could load a different build than the one in use.
+func TestResolveRestartBinary_PrefersRunningBinary(t *testing.T) {
+	dir := withTempDataDir(t)
+
+	live := filepath.Join(dir, "live", "clawbench")
+	require.NoError(t, os.MkdirAll(filepath.Dir(live), 0o755))
+	require.NoError(t, os.WriteFile(live, []byte("binary"), 0o755))
+	require.NoError(t, WriteSelfPath(live))
+
+	origLook := lookPath
+	t.Cleanup(func() { lookPath = origLook })
+	lookPath = func(string) (string, error) {
+		t.Fatal("PATH must not be consulted while the running binary is usable")
+		return "", nil
+	}
+
+	got, err := ResolveRestartBinary()
+	require.NoError(t, err)
+	assert.Equal(t, live, got)
+}
+
+// TestResolveRestartBinary_FallsBackToPATH is the regression test for the
+// restart that silently did nothing on a real npm install.
+//
+// Both normal candidates were dead: the recorded self-path pointed at the
+// package directory npm retired to `@scope/.<name>-<random>` and then deleted,
+// and os.Executable() reported the same deleted path. Restart aborted before
+// the sentinel existed, the process kept running, and the UI (which always got
+// a 200) reloaded onto the old build. The package manager's shim on PATH is
+// the one path that survives a reinstall.
+func TestResolveRestartBinary_FallsBackToPATH(t *testing.T) {
+	dir := withTempDataDir(t)
+
+	// Recorded path: retired by npm and gone.
+	require.NoError(t, WriteSelfPath(filepath.Join(dir, ".clawbench-uNNXtzOw", "bin", "clawbench")))
+
+	origExe := upgradeExecutable
+	t.Cleanup(func() { upgradeExecutable = origExe })
+	upgradeExecutable = func() (string, error) {
+		return filepath.Join(dir, ".clawbench-uNNXtzOw", "bin", "clawbench"), nil
+	}
+
+	// The shim the package manager keeps current across reinstalls.
+	shimDir := filepath.Join(dir, "usr-local-bin")
+	require.NoError(t, os.MkdirAll(shimDir, 0o755))
+	shim := filepath.Join(shimDir, "clawbench")
+	require.NoError(t, os.WriteFile(shim, []byte("#!/bin/sh\n"), 0o755))
+
+	origLook := lookPath
+	t.Cleanup(func() { lookPath = origLook })
+	lookPath = func(name string) (string, error) {
+		assert.Equal(t, restartBinaryName, name)
+		return shim, nil
+	}
+
+	got, err := ResolveRestartBinary()
+	require.NoError(t, err)
+	assert.Equal(t, shim, got)
+}
+
+// TestResolveRestartBinary_MakesRelativePATHPathAbsolute: PATH entries may be
+// relative, but the sentinel runs under its own shell, so a relative path
+// would resolve against the wrong directory (or none).
+func TestResolveRestartBinary_MakesRelativePATHPathAbsolute(t *testing.T) {
+	dir := withTempDataDir(t)
+	require.NoError(t, WriteSelfPath(filepath.Join(dir, "gone", "clawbench")))
+
+	origExe := upgradeExecutable
+	t.Cleanup(func() { upgradeExecutable = origExe })
+	upgradeExecutable = func() (string, error) {
+		return filepath.Join(dir, "gone", "clawbench"), nil
+	}
+
+	origLook := lookPath
+	t.Cleanup(func() { lookPath = origLook })
+	lookPath = func(string) (string, error) { return "bin/clawbench", nil }
+
+	got, err := ResolveRestartBinary()
+	require.NoError(t, err)
+	assert.True(t, filepath.IsAbs(got), "sentinel needs an absolute path, got %q", got)
+}
+
+// TestResolveRestartBinary_ReportsEveryCandidateTried: the original failure
+// was invisible partly because the message was a bare stat error. When nothing
+// works the error must name both dead ends.
+func TestResolveRestartBinary_ReportsEveryCandidateTried(t *testing.T) {
+	dir := withTempDataDir(t)
+	require.NoError(t, WriteSelfPath(filepath.Join(dir, "gone", "clawbench")))
+
+	origExe := upgradeExecutable
+	t.Cleanup(func() { upgradeExecutable = origExe })
+	upgradeExecutable = func() (string, error) {
+		return filepath.Join(dir, "gone", "clawbench"), nil
+	}
+
+	origLook := lookPath
+	t.Cleanup(func() { lookPath = origLook })
+	lookPath = func(string) (string, error) { return "", fmt.Errorf("executable file not found in $PATH") }
+
+	_, err := ResolveRestartBinary()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not accessible", "must include the running-binary failure")
+	assert.Contains(t, err.Error(), "PATH", "must say the PATH fallback was tried too")
+}
+
 // TestResolveSelfBinary_EmptyExecutableErrors covers a hook returning ("", nil),
 // which must not be mistaken for a usable path.
 func TestResolveSelfBinary_EmptyExecutableErrors(t *testing.T) {

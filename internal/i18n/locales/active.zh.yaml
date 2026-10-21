@@ -304,3 +304,5 @@ UsageMeterOverTitle: 用量超出计划
 UsageMeterFullTitle: 用量已用尽
 UsageMeterOverBody: 本周期已用 {{.Actual}}，应花 {{.Expected}}（额度 {{.Quota}}，第 {{.Day}} / {{.Days}} 天）
 UsageMeterFullBody: 本周期额度 {{.Quota}} 已用尽，实际用量 {{.Actual}}
+RestartFailed: 重启失败：{{.Error}}
+RestartUnavailable: 重启功能未初始化，无法重启服务端

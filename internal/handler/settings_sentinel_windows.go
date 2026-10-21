@@ -12,9 +12,10 @@ import (
 )
 
 func launchSentinel() (*exec.Cmd, error) {
-	// See settings_sentinel_unix.go: the recorded self-path survives a package
-	// manager replacing the package while the service runs.
-	exe, err := service.ResolveSelfBinary()
+	// See settings_sentinel_unix.go: ResolveRestartBinary falls back to the
+	// command on PATH when the recorded path was deleted by a package manager
+	// reinstall, which is the only surviving route in that case.
+	exe, err := service.ResolveRestartBinary()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get executable path: %w", err)
 	}

@@ -568,14 +568,51 @@ paths:
         "200":
           description: 测试结果
 
+  /api/server/instance:
+    get:
+      tags: [Config]
+      summary: 当前进程实例标识
+      description: |
+        `instance_id` 每个进程唯一，用于判断服务端是否真的重启过。设置页在
+        「重启服务端」后轮询此端点：只有拿到**不同的** `instance_id` 才说明
+        换进程了。仅比对版本号不够——不升级的重启版本不变；也不能只看是否
+        200——旧进程在 `srv.Shutdown` 之前会一直正常应答。
+      operationId: serverInstance
+      responses:
+        "200":
+          description: 实例信息
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  instance_id:
+                    type: string
+                    description: 本进程唯一的实例标识
+                  started_at:
+                    type: string
+                    format: date-time
+                  version:
+                    type: string
+
   /api/config/restart:
     post:
       tags: [Config]
       summary: 重启服务
+      description: |
+        同步发起重启：成功返回 200 后进程即将关闭（响应先于 listener 关闭送出）。
+        若重启无法发起（例如运行中的二进制路径已失效、npm 重装后旧包目录被删），
+        返回 500 并在 `error` 中给出原因——此时服务仍在运行，**不会**重启。
       operationId: configRestart
       responses:
         "200":
           description: 已触发重启
+        "500":
+          description: 重启失败，服务保持运行（`msgKey` 为 `RestartFailed` / `RestartUnavailable`）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   # ── Theme ─────────────────────────────────────────────────────────────────
   /api/theme/local/upload:

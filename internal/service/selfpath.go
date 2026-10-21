@@ -104,6 +104,10 @@ func shouldShortCircuit(diskVersion, targetVersion string) bool {
 //
 // A candidate is only accepted if it still exists, so a stale record degrades
 // to the next candidate rather than producing an inscrutable ENOENT later.
+//
+// Callers that REPLACE the binary (self-upgrade) must use this function: they
+// have to write to the exact file that is currently executing. Restart callers
+// must use ResolveRestartBinary instead.
 func ResolveSelfBinary() (string, error) {
 	recorded := ReadSelfPath()
 	if recorded != "" {
@@ -126,4 +130,60 @@ func ResolveSelfBinary() (string, error) {
 		return "", fmt.Errorf("running binary is not accessible at %s: %w", exe, statErr)
 	}
 	return exe, nil
+}
+
+// restartBinaryName is the command name looked up on PATH as a last resort.
+const restartBinaryName = "clawbench"
+
+// lookPath resolves a command name on PATH. A package-level var so tests can
+// stub it without depending on the host's PATH.
+var lookPath = exec.LookPath
+
+// ResolveRestartBinary returns a path that can be re-exec'd to bring the
+// service back after this process exits.
+//
+// It differs from ResolveSelfBinary in what it accepts, not in what it
+// prefers:
+//
+//  1. ResolveSelfBinary() — the exact binary that is running. Still the best
+//     choice when it exists.
+//  2. The `clawbench` command on PATH. This is the escape hatch for the case
+//     that broke real restarts: the process was started from an npm-managed
+//     path, npm then reinstalled the package (retiring the old directory to
+//     `@scope/.<name>-<random>` and deleting it), and BOTH candidates above
+//     now point at deleted paths. The package manager's own shim
+//     (`/usr/local/bin/clawbench`) is stable across reinstalls and resolves to
+//     whatever build is installed *now* — which is also the build the user
+//     just installed, so restarting through it loads the new version.
+//
+// Replacing the binary in place must NOT use this: an upgrade has to write the
+// file that is currently mapped by the process, and re-resolving through PATH
+// could target a different install.
+//
+// The returned error lists every candidate that was tried, because "restart
+// failed" with no reason is what made the original failure invisible.
+func ResolveRestartBinary() (string, error) {
+	self, selfErr := ResolveSelfBinary()
+	if selfErr == nil {
+		return self, nil
+	}
+
+	if fromPath, err := lookPath(restartBinaryName); err == nil {
+		// PATH entries may be relative; the sentinel runs in its own shell with
+		// an inherited CWD, so pin the absolute path now.
+		abs := fromPath
+		if !filepath.IsAbs(abs) {
+			if resolved, absErr := filepath.Abs(abs); absErr == nil {
+				abs = resolved
+			}
+		}
+		slog.Warn("restart: running binary is gone, falling back to the one on PATH",
+			"running_binary_error", selfErr.Error(), "path", abs)
+		return abs, nil
+	}
+
+	return "", fmt.Errorf(
+		"cannot locate a clawbench binary to restart: %w; and %q is not on PATH",
+		selfErr, restartBinaryName,
+	)
 }

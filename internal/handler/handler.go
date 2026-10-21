@@ -471,6 +471,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/ws/delivery-stats", ServeWSDeliveryStats)
 	register("/api/roots", ServeRoots)
 	register("/api/config", ServeConfig)
+	register("/api/server/instance", ServeServerInstance)
 	register("/api/config/test", ServeConfigTest)
 	register("/api/config/restart", ServeConfigRestart)
 	register("/api/config/password", ServeConfigPassword)

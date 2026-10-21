@@ -415,16 +415,6 @@ func makeRestartFunc(shutdown func()) func() error {
 	}
 }
 
-// restartFuncAdapter adapts an error-returning restart function to the
-// fire-and-forget signature the settings handler expects, logging failures.
-func restartFuncAdapter(f func() error) func() {
-	return func() {
-		if err := f(); err != nil {
-			slog.Error("restart failed", "error", err)
-		}
-	}
-}
-
 // Main-listener bind retry. The outgoing process holds the main port until
 // shutdown step 4 (srv.Shutdown), which runs AFTER the stream-finalize grace
 // (5s, plus the HTTP drain and ACP grace that follow). A replacement launched
@@ -1359,7 +1349,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// Wire up the restart function for POST /api/config/restart
 	// The sentinel process approach: launch a watcher that starts a new process
 	// after this one exits, then trigger graceful shutdown.
-	handler.SetRestartFunc(restartFuncAdapter(makeRestartFunc(selfSignalInterrupt)))
+	handler.SetRestartFunc(makeRestartFunc(selfSignalInterrupt))
 
 	// Wire up the upgrade service functions
 	// upgradeShutdownFunc: just graceful shutdown, no sentinel.

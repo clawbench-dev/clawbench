@@ -6,6 +6,19 @@ import { useToast } from '@/composables/useToast'
 const MAX_POLL_ATTEMPTS = 60 // 2 minutes at 2s interval
 const POLL_INTERVAL_MS = 2000
 
+/**
+ * How many consecutive polls may keep seeing the SAME instance id before we
+ * conclude the restart never happened.
+ *
+ * A real restart always produces a gap: shutdown step 4 (`srv.Shutdown`) closes
+ * the listener before the replacement can bind, so the old process cannot keep
+ * answering — in the worst case it serves for the stream-finalize grace (~5s)
+ * and then the listener is gone. 15 polls (30s) is comfortably past that, and
+ * still well under the overall timeout so the user gets the actionable message
+ * ("the server did not restart") rather than a generic "did not come back".
+ */
+const STALE_INSTANCE_LIMIT = 15
+
 // ── Module-level guard registry ──
 // Must be module-level (not per-instance) so that SettingsGroupPanel and
 // SettingsPage share the same Map regardless of which component calls
@@ -174,29 +187,60 @@ export function useSettingsNavigation() {
     restartDialogVisible.value = true
   }
 
-  function pollUntilServerUp() {
+  /**
+   * Poll until the server answers from a DIFFERENT process, then reload.
+   *
+   * `beforeId` is the instance id observed before the restart was requested.
+   * Requiring it to change is what makes this reliable:
+   *
+   *  - The outgoing process keeps serving normally until `srv.Shutdown` (after
+   *    the stream-finalize grace), so a poll firing 2s after the request hits
+   *    the OLD process. Accepting any 200 therefore reloaded the page onto the
+   *    same build and looked like "the restart did nothing".
+   *  - The version string cannot be the identity: restarting without upgrading
+   *    legitimately keeps the version.
+   *
+   * If the id never changes we report a failure instead of reloading.
+   */
+  function pollUntilServerUp(beforeId: string | null) {
     restartingOverlay.value = true
     let attempts = 0
+    let staleInstancePolls = 0
 
     pollTimer = setInterval(async () => {
       attempts++
       if (attempts >= MAX_POLL_ATTEMPTS) {
-        clearInterval(pollTimer!)
-        pollTimer = null
-        restartingOverlay.value = false
-        restarting.value = false
+        finishPolling()
         toast.show(t('settings.restartTimeout'), { icon: 'warning', type: 'error', duration: 5000 })
         return
       }
 
       try {
-        const resp = await fetch('/api/agents', { method: 'GET' })
-        if (resp.ok) {
-          clearInterval(pollTimer!)
-          pollTimer = null
-          restartingOverlay.value = false
-          restarting.value = false
+        const resp = await fetch('/api/server/instance', { method: 'GET' })
+        if (!resp.ok) return
+        const data = await resp.json().catch(() => null) as { instance_id?: string } | null
+        const id = data?.instance_id ?? ''
+
+        // No baseline (the pre-restart probe failed): fall back to accepting
+        // the first successful answer, as before. The instance id is still
+        // better than nothing — a successful restart almost always changes it.
+        if (!beforeId) {
+          finishPolling()
           window.location.reload()
+          return
+        }
+
+        if (id && id !== beforeId) {
+          finishPolling()
+          window.location.reload()
+          return
+        }
+
+        // Same process still answering.
+        staleInstancePolls++
+        if (staleInstancePolls >= STALE_INSTANCE_LIMIT) {
+          finishPolling()
+          toast.show(t('settings.restartNotApplied'), { icon: 'warning', type: 'error', duration: 8000 })
         }
       } catch {
         // Server not up yet, keep polling
@@ -204,16 +248,51 @@ export function useSettingsNavigation() {
     }, POLL_INTERVAL_MS)
   }
 
+  function finishPolling() {
+    if (pollTimer) {
+      clearInterval(pollTimer)
+      pollTimer = null
+    }
+    restartingOverlay.value = false
+    restarting.value = false
+  }
+
+  /** Read the current process identity, or null when it cannot be read. */
+  async function fetchInstanceId(): Promise<string | null> {
+    try {
+      const resp = await fetch('/api/server/instance', { method: 'GET' })
+      if (!resp.ok) return null
+      const data = await resp.json() as { instance_id?: string }
+      return data.instance_id ?? null
+    } catch {
+      return null
+    }
+  }
+
   async function handleRestart() {
     restartDialogVisible.value = false
     restarting.value = true
+
+    // Snapshot the identity BEFORE asking, so a later poll can prove the
+    // process actually changed. Taken here (not at poll time) because the
+    // request itself may be served by the process that is about to die.
+    const beforeId = await fetchInstanceId()
+
     try {
       await restartServer()
       needsRestart.value = false
-      // Server is shutting down — start polling until it comes back
-      pollUntilServerUp()
-    } catch {
-      restarting.value = false
+      // Server is shutting down — start polling until a NEW process answers
+      pollUntilServerUp(beforeId)
+    } catch (err) {
+      // The server refused (or could not start) the restart: it is still
+      // running the old build. Say so instead of silently leaving the user to
+      // discover it on the next reload.
+      finishPolling()
+      const detail = err instanceof Error ? err.message : ''
+      toast.show(
+        detail ? t('settings.restartFailedDetail', { error: detail }) : t('settings.restartFailed'),
+        { icon: 'warning', type: 'error', duration: 8000 },
+      )
     }
   }
 
