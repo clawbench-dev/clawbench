@@ -22,6 +22,13 @@ vi.mock('@/utils/appLog', () => ({
 // Mock CSS import (mermaid.css is imported by mermaid.ts but not needed in tests)
 vi.mock('@/assets/mermaid.css', () => ({}))
 
+// Spy on the figure sizer: the ORDER of (svg injection → stamp) is the whole
+// point of the fix, so the test observes the DOM state at call time.
+const mockStampSvgFigure = vi.fn()
+vi.mock('@/utils/svgMediaFit.ts', () => ({
+    stampSvgFigure: (figure: Element) => mockStampSvgFigure(figure),
+}))
+
 // Import module under test — note: _initialized is module-level state
 // that persists across tests. Tests are designed to work with this constraint.
 import { initMermaid, renderMermaidInElement, reRenderMermaid } from '../mermaid.ts'
@@ -34,6 +41,7 @@ describe('mermaid', () => {
     beforeEach(() => {
         mockInitialize.mockReset()
         mockRender.mockReset()
+        mockStampSvgFigure.mockReset().mockReturnValue(true)
         vi.mocked(appLog.i).mockReset()
         vi.mocked(appLog.w).mockReset()
     })
@@ -137,6 +145,36 @@ describe('mermaid', () => {
             expect(rendered?.parentElement?.querySelector('.image-block-view-btn')).not.toBeNull()
             expect(rendered?.parentElement?.querySelector('.image-block-attach-btn')).toBeNull()
             expect(rendered?.dataset.mermaid).toBe('graph TD; A-->B')
+        })
+
+        it('sizes the figure in the same task as the SVG injection', async () => {
+            // The stylesheet falls back to `width: calc(60dvh * var(--svg-ar, 1))`
+            // until `stampSvgFigure` writes the media's pixel width. Leaving the
+            // stamp to the caller meant the diagram was painted at 60dvh wide
+            // FIRST (measured 540px for every diagram) and then animated to its
+            // real width — a visible grow for a wide diagram, a shrink for a
+            // narrow one. The stamp must therefore happen right after the
+            // injection, not after the caller's `Promise.all`.
+            const stamped: { hasSvg: boolean }[] = []
+            mockStampSvgFigure.mockImplementation((figure: Element) => {
+                stamped.push({ hasSvg: figure.querySelector('.mermaid > svg') !== null })
+                return true
+            })
+            mockRender.mockResolvedValue({ svg: '<svg viewBox="0 0 1076 539"></svg>' })
+
+            const el = document.createElement('div')
+            const pre = document.createElement('pre')
+            pre.className = 'mermaid'
+            pre.textContent = 'graph TD; A-->B'
+            el.appendChild(pre)
+
+            await renderMermaidInElement(el)
+
+            // Called once, and the SVG was ALREADY in the DOM at that moment —
+            // that is what makes the stamp land in the same task as the
+            // injection instead of a later frame.
+            expect(stamped).toHaveLength(1)
+            expect(stamped[0].hasSvg, 'stamp must run AFTER the svg is injected').toBe(true)
         })
 
         it('should show loading spinner before rendering completes', async () => {
