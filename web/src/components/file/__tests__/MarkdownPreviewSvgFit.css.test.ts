@@ -194,6 +194,23 @@ describe('svg media layout (media-block.css contract)', () => {
     }
   })
 
+  it('neutralises the zoom viewport inside table cells', () => {
+    // Table cells opt out of inline zoom in JS (`zoomableMedia`), but the CSS
+    // must hold too: a stray `.is-zooming` would otherwise give the cell a
+    // 60dvh frame and out-of-flow media, making the whole row jump.
+    const table = css.replace(/\/\*[\s\S]*?\*\//g, '')
+    expect(table).toMatch(
+      /\.table-row-value \.image-block-wrapper\.is-zooming[^{]*\{[^}]*width:\s*fit-content/,
+    )
+    expect(table).toMatch(
+      /\.table-row-value \.image-block-wrapper\.is-zooming[^{]*\{[^}]*outline:\s*none/,
+    )
+    // The media must stay in flow with no transform (i.e. not a pan viewport).
+    expect(table).toMatch(
+      /\.table-row-value \.image-block-wrapper\.is-zooming > \.mermaid > svg[^{]*\{[^}]*position:\s*static/,
+    )
+  })
+
   it('reveals the reset button only in the active state', () => {
     // Hidden by the base rule (also covers touch, where inline zoom never
     // installs) and shown only while `.is-zooming`.

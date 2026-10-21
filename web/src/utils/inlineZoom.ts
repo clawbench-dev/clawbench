@@ -119,6 +119,11 @@ const CONTENT_MEDIA_SELECTOR =
 /** Resolve the zoomable media of a figure, or null. */
 export function zoomableMedia(figure: Element | null): HTMLElement | null {
     if (!figure) return null
+    // Table cells opt out. A figure inside `.table-row-value` is a thumbnail in
+    // a grid of cells: zooming it would make the whole row jump, and the cell
+    // has no spare room to pan into. The lightbox button is still there for a
+    // proper look, so nothing is lost.
+    if (figure.closest('.table-row-value')) return null
     const media = figure.querySelector<HTMLElement>(CONTENT_MEDIA_SELECTOR)
     if (!media) return null
     // The toolbar's own icon SVGs live inside `.image-block-header`, never in a
@@ -567,6 +572,12 @@ function onClick(e: MouseEvent): void {
 function onFocusIn(e: FocusEvent): void {
     const target = e.target
     if (!(target instanceof Element)) return
+    // The figure's own toolbar buttons (lightbox / reset / attach) focus before
+    // their click fires. Activating here would make the figure enter the zoom
+    // state for one frame and then hand over to the lightbox — the reported
+    // "点击打开灯箱按钮经常先触发聚焦". Tabbing INTO the figure still activates,
+    // because the figure itself is the focus target then, not a button.
+    if (target.closest('.image-block-header')) return
     const figure = target.closest<HTMLElement>('.image-block-wrapper')
     if (!figure || !zoomableMedia(figure)) return
     ensureFocusable(figure)

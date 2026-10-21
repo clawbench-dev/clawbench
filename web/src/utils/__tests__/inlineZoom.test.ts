@@ -765,4 +765,65 @@ describe('zoomableMedia', () => {
   it('returns null for null input', () => {
     expect(zoomableMedia(null)).toBeNull()
   })
+
+  it('opts out inside a table cell', () => {
+    // A figure in `.table-row-value` is a thumbnail in a grid of cells: zooming
+    // it would grow the whole row and the cell has nowhere to pan. The lightbox
+    // button remains, so nothing is lost.
+    const cell = document.createElement('td')
+    cell.className = 'table-row-value'
+    document.body.appendChild(cell)
+    const figure = mountFigure('mermaid')
+    cell.appendChild(figure)
+    expect(zoomableMedia(figure)).toBeNull()
+  })
+
+  it('still zooms the same figure once it is outside the table', () => {
+    // Guards against the opt-out leaking to every figure.
+    const cell = document.createElement('td')
+    cell.className = 'table-row-value'
+    document.body.appendChild(cell)
+    const figure = mountFigure('mermaid')
+    cell.appendChild(figure)
+    expect(zoomableMedia(figure)).toBeNull()
+
+    document.body.appendChild(figure)
+    expect(zoomableMedia(figure)?.tagName).toBe('svg')
+  })
+})
+
+describe('inlineZoom — toolbar focus', () => {
+  afterEach(() => { uninstallInlineZoom(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
+
+  it('does not activate when a toolbar button takes focus', () => {
+    // The lightbox button receives focus BEFORE its click fires. Activating on
+    // that focus made the figure flash into the zoom state and then hand over to
+    // the lightbox — the reported "点击打开灯箱按钮经常先触发聚焦".
+    withPointerDevice(true)
+    installInlineZoom()
+    const figure = mountFigure()
+    stubIntrinsic(figure, 300, 200, 300, 200)
+    stubRect(figure, 0, 0, 300, 200)
+    const button = figure.querySelector('.image-block-view-btn') as HTMLElement
+    button.setAttribute('tabindex', '0')
+
+    button.focus()
+
+    expect(isZoomActive()).toBe(false)
+    expect(figure.classList.contains('is-zooming')).toBe(false)
+  })
+
+  it('still activates when the figure itself takes focus', () => {
+    // Tabbing into the figure must keep working — only the toolbar is excluded.
+    withPointerDevice(true)
+    installInlineZoom()
+    const figure = mountFigure()
+    stubIntrinsic(figure, 300, 200, 300, 200)
+    stubRect(figure, 0, 0, 300, 200)
+    figure.setAttribute('tabindex', '0')
+
+    figure.focus()
+
+    expect(isZoomActive()).toBe(true)
+  })
 })

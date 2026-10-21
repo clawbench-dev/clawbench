@@ -609,7 +609,12 @@
 }
 
 /* ─── Table row modal: cell figures are header-stripped (tableRowExpand)
-       before entering the modal; flatten them to plain thumbnails. ───────── */
+       before entering the modal; flatten them to plain thumbnails.
+
+   Table cells opt OUT of inline zoom entirely (`zoomableMedia` rejects
+   `.table-row-value`). These rules make that a CSS guarantee as well, so the
+   cell cannot grow even if `.is-zooming` is ever applied by another path:
+   a zoomed cell would push the whole row taller and the grid would jump. ── */
 .table-row-value .image-block-wrapper {
     width: 100%;
     margin: 0;
@@ -619,4 +624,37 @@
     display: inline-block;
     text-align: left;
     line-height: normal;
+}
+
+/* Neutralise the zoom viewport for table cells: no 60dvh frame, no
+   out-of-flow media, no zoom ring. Specificity beats the `@media` block's
+   `.image-block-wrapper.is-zooming:has(...)` rules (0-4-1) by adding the same
+   `:has()` plus the `.table-row-value` ancestor. */
+.table-row-value .image-block-wrapper.is-zooming,
+.table-row-value .image-block-wrapper.is-zooming:has(> .lightbox-img-wrap > img),
+.table-row-value .image-block-wrapper.is-zooming:has(> .lightbox-svg-wrap > svg.lightbox-svg),
+.table-row-value .image-block-wrapper.is-zooming:has(> .mermaid > svg) {
+    /* `fit-content`, NOT `100%`: the zoom rules widen the frame to the column,
+       and in a table cell that would make the cell jump even though the artwork
+       did not change size. */
+    width: fit-content;
+    max-width: 100%;
+    outline: none;
+}
+
+.table-row-value .image-block-wrapper.is-zooming:has(> .lightbox-img-wrap > img) > .lightbox-img-wrap,
+.table-row-value .image-block-wrapper.is-zooming:has(> .lightbox-svg-wrap > svg.lightbox-svg) > .lightbox-svg-wrap,
+.table-row-value .image-block-wrapper.is-zooming:has(> .mermaid > svg) > .mermaid {
+    height: auto;
+    min-height: 0;
+    max-height: 200px;
+}
+
+.table-row-value .image-block-wrapper.is-zooming > .lightbox-img-wrap > img,
+.table-row-value .image-block-wrapper.is-zooming > .lightbox-svg-wrap > svg.lightbox-svg,
+.table-row-value .image-block-wrapper.is-zooming > .mermaid > svg {
+    position: static;
+    transform: none;
+    max-width: 100%;
+    max-height: 200px;
 }
