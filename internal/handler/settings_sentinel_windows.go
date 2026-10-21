@@ -21,9 +21,14 @@ func launchSentinel() (*exec.Cmd, error) {
 	}
 	args := os.Args[1:]
 
+	// cmd.exe does NOT honour single quotes — `cmd /c 'C:\x\clawbench.exe'`
+	// fails with "is not recognized". The POSIX shellQuote used by the Unix
+	// sentinel therefore cannot be reused here. Windows paths never contain a
+	// double quote, so plain double-quoting is sufficient and does not need
+	// cmd's own ^-escaping.
 	sentinelScript := fmt.Sprintf(
-		"timeout /t 2 /nobreak >nul & %s %s",
-		shellQuote(exe), joinArgs(args),
+		`timeout /t 2 /nobreak >nul & "%s" %s`,
+		exe, joinArgs(args),
 	)
 	cmd := exec.Command("cmd", "/c", sentinelScript)
 

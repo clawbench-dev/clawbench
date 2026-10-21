@@ -19,6 +19,12 @@ const POLL_INTERVAL_MS = 2000
  */
 const STALE_INSTANCE_LIMIT = 15
 
+/**
+ * Upper bound on the pre-restart identity probe. Short: it runs with the
+ * dialog already closed, and its only job is to give the poller a baseline.
+ */
+const INSTANCE_PROBE_TIMEOUT_MS = 3000
+
 // ── Module-level guard registry ──
 // Must be module-level (not per-instance) so that SettingsGroupPanel and
 // SettingsPage share the same Map regardless of which component calls
@@ -217,13 +223,25 @@ export function useSettingsNavigation() {
 
       try {
         const resp = await fetch('/api/server/instance', { method: 'GET' })
-        if (!resp.ok) return
+        if (!resp.ok) {
+          // The endpoint itself is missing (404 from an older server that the
+          // new frontend is talking to, e.g. disk-mode frontend + stale embed).
+          // There is no identity to compare, so we cannot prove the process
+          // changed — reloading here is exactly the original bug. Report it
+          // instead of pretending the restart worked.
+          if (!beforeId) {
+            finishPolling()
+            toast.show(t('settings.restartNotApplied'), { icon: 'warning', type: 'error', duration: 8000 })
+          }
+          return
+        }
         const data = await resp.json().catch(() => null) as { instance_id?: string } | null
         const id = data?.instance_id ?? ''
 
-        // No baseline (the pre-restart probe failed): fall back to accepting
-        // the first successful answer, as before. The instance id is still
-        // better than nothing — a successful restart almost always changes it.
+        // No baseline (the pre-restart probe failed or timed out): fall back to
+        // accepting the first successful answer, as before. Weaker, but the
+        // probe only fails when the server was already unreachable — in which
+        // case reaching it again means it did come back.
         if (!beforeId) {
           finishPolling()
           window.location.reload()
@@ -257,10 +275,20 @@ export function useSettingsNavigation() {
     restarting.value = false
   }
 
-  /** Read the current process identity, or null when it cannot be read. */
+  /**
+   * Read the current process identity, or null when it cannot be read.
+   *
+   * Bounded: the caller awaits this with the dialog already closed and the
+   * restart button disabled, so a server that accepts the connection but never
+   * answers would leave the UI stuck with no way out. A timeout is treated as
+   * "no baseline", which the poller already handles.
+   */
   async function fetchInstanceId(): Promise<string | null> {
     try {
-      const resp = await fetch('/api/server/instance', { method: 'GET' })
+      const resp = await fetch('/api/server/instance', {
+        method: 'GET',
+        signal: AbortSignal.timeout(INSTANCE_PROBE_TIMEOUT_MS),
+      })
       if (!resp.ok) return null
       const data = await resp.json() as { instance_id?: string }
       return data.instance_id ?? null
@@ -288,9 +316,15 @@ export function useSettingsNavigation() {
       // running the old build. Say so instead of silently leaving the user to
       // discover it on the next reload.
       finishPolling()
-      const detail = err instanceof Error ? err.message : ''
+      // The message from apiPost is ALREADY localized and already carries the
+      // "restart failed" prefix (the handler returns the localized text in
+      // `error`, e.g. "重启失败：running binary is not accessible …"). Wrapping
+      // it in restartFailedDetail again produced
+      // "重启失败：重启失败：…" — so use it verbatim, and only synthesize a
+      // message when there is none.
+      const detail = err instanceof Error ? err.message.trim() : ''
       toast.show(
-        detail ? t('settings.restartFailedDetail', { error: detail }) : t('settings.restartFailed'),
+        detail || t('settings.restartFailed'),
         { icon: 'warning', type: 'error', duration: 8000 },
       )
     }

@@ -2,11 +2,13 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -160,15 +162,27 @@ var lookPath = exec.LookPath
 // file that is currently mapped by the process, and re-resolving through PATH
 // could target a different install.
 //
+// Every candidate is verified to be an executable regular file BEFORE it is
+// returned. That check has to happen here rather than in the sentinel: the
+// sentinel's `exec` replaces the shell, so a failed exec kills it before it
+// can retry or report anything, and the user would see a restart that appeared
+// to be accepted but never brought the service back. Failing here turns it
+// into a 500 the UI can show.
+//
 // The returned error lists every candidate that was tried, because "restart
 // failed" with no reason is what made the original failure invisible.
 func ResolveRestartBinary() (string, error) {
 	self, selfErr := ResolveSelfBinary()
 	if selfErr == nil {
-		return self, nil
+		execErr := checkExecutable(self)
+		if execErr == nil {
+			return self, nil
+		}
+		selfErr = execErr
 	}
 
-	if fromPath, err := lookPath(restartBinaryName); err == nil {
+	fromPath, pathErr := lookPath(restartBinaryName)
+	if pathErr == nil {
 		// PATH entries may be relative; the sentinel runs in its own shell with
 		// an inherited CWD, so pin the absolute path now.
 		abs := fromPath
@@ -177,13 +191,42 @@ func ResolveRestartBinary() (string, error) {
 				abs = resolved
 			}
 		}
-		slog.Warn("restart: running binary is gone, falling back to the one on PATH",
-			"running_binary_error", selfErr.Error(), "path", abs)
-		return abs, nil
+		execErr := checkExecutable(abs)
+		if execErr == nil {
+			slog.Warn("restart: running binary is gone, falling back to the one on PATH",
+				"running_binary_error", selfErr.Error(), "path", abs)
+			return abs, nil
+		}
+		pathErr = execErr
 	}
 
+	// Both candidates failed; report both. errors.Join keeps BOTH wrapped, so
+	// a caller doing errors.Is/As can inspect either one — a single %w plus a
+	// %v would silently drop the second.
 	return "", fmt.Errorf(
-		"cannot locate a clawbench binary to restart: %w; and %q is not on PATH",
-		selfErr, restartBinaryName,
+		"cannot locate an executable clawbench binary to restart: %w",
+		errors.Join(selfErr, fmt.Errorf("%q on PATH: %w", restartBinaryName, pathErr)),
 	)
+}
+
+// checkExecutable reports whether path is a regular file that can plausibly be
+// executed. It is a cheap pre-flight, not a guarantee: it cannot detect a wrong
+// architecture or a missing interpreter, but those are far rarer than the
+// deleted-file case and they still surface on the sentinel's stderr.
+//
+// The execute-bit test is skipped on Windows: Go synthesizes 0666 for writable
+// regular files there and never sets the 0o111 bits, so applying the POSIX rule
+// would reject every valid binary. Windows decides executability by extension.
+func checkExecutable(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("%s: is a directory", path)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0 {
+		return fmt.Errorf("%s: not executable (mode %v)", path, info.Mode().Perm())
+	}
+	return nil
 }

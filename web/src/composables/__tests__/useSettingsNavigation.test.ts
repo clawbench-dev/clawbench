@@ -350,8 +350,24 @@ describe('useSettingsNavigation', () => {
 
             expect(nav.restarting.value).toBe(false)
             expect(nav.needsRestart.value).toBe(true)
+            // Shown VERBATIM: apiPost's message is already localized and
+            // already says "restart failed", so re-wrapping it produced
+            // "重启失败：重启失败：…".
             expect(mockToastShow).toHaveBeenCalledWith(
-                'settings.restartFailedDetail',
+                'running binary is not accessible',
+                expect.objectContaining({ type: 'error' }),
+            )
+        })
+
+        it('falls back to a generic message when the error carries no text', async () => {
+            mockRestartServer.mockRejectedValue(new Error(''))
+            stubInstance('inst-a')
+
+            const nav = useSettingsNavigation()
+            await nav.handleRestart()
+
+            expect(mockToastShow).toHaveBeenCalledWith(
+                'settings.restartFailed',
                 expect.objectContaining({ type: 'error' }),
             )
         })

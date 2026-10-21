@@ -1547,7 +1547,15 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	)
 
 	go func() {
-		<-ctx.Done()
+		// Two shutdown sources: OS signals (Ctrl+C, systemd, SIGTERM) and an
+		// in-process request (the settings panel's restart button). The latter
+		// has to be a channel rather than a self-delivered signal because on
+		// Windows Go cannot send a non-Kill signal to a process — not even to
+		// itself — so the previous implementation silently did nothing there.
+		select {
+		case <-ctx.Done():
+		case <-shutdownRequests:
+		}
 		slog.Info("received shutdown signal, draining connections...")
 
 		// 0. Release the SSH tunnel port FIRST.

@@ -196,8 +196,11 @@ func SetRestartFunc(f func() error) {
 }
 
 // TriggerRestart invokes the configured restart function, discarding the error.
-// Used by the upgrade service to trigger graceful shutdown after replacement:
-// it has already done its own work and has no user-facing channel here.
+//
+// Exported for callers that only need "make it restart" and have no channel to
+// report a failure on. Note the upgrade path does NOT use it: it calls its own
+// upgradeRestartFunc (see internal/service/upgrade.go) because it must also
+// replace the binary first.
 func TriggerRestart() {
 	if restartFunc != nil {
 		_ = restartFunc()

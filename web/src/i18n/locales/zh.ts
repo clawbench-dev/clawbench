@@ -3319,7 +3319,6 @@ export default {
     restartLater: '稍后',
     restartTimeout: '服务器未在预期时间内恢复，请手动刷新页面',
     restartFailed: '重启失败，服务端仍在运行旧版本',
-    restartFailedDetail: '重启失败：{error}',
     restartNotApplied: '服务端没有重启（仍在运行原来的进程），请检查服务端日志',
     saveFailed: '保存失败',
     passwordDiscarded: '密码输入已丢弃',

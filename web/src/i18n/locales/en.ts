@@ -3323,7 +3323,6 @@ export default {
     restartLater: 'Later',
     restartTimeout: 'Server did not come back in time. Please refresh the page manually.',
     restartFailed: 'Restart failed — the server is still running the old build',
-    restartFailedDetail: 'Restart failed: {error}',
     restartNotApplied: 'The server did not restart (the original process is still running). Check the server log.',
     saveFailed: 'Save failed',
     passwordDiscarded: 'Password input discarded',

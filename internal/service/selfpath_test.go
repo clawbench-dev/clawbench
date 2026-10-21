@@ -364,13 +364,58 @@ func TestResolveRestartBinary_MakesRelativePATHPathAbsolute(t *testing.T) {
 		return filepath.Join(dir, "gone", "clawbench"), nil
 	}
 
+	// The candidate must exist AND be executable, or the pre-flight check
+	// rejects it before the absolute-path conversion is ever observable.
+	relDir := filepath.Join(dir, "rel-bin")
+	require.NoError(t, os.MkdirAll(relDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(relDir, "clawbench"), []byte("#!/bin/sh\n"), 0o755))
+	relPath, err := filepath.Rel(mustGetwd(t), filepath.Join(relDir, "clawbench"))
+	require.NoError(t, err)
+	require.False(t, filepath.IsAbs(relPath), "test setup needs a relative path")
+
 	origLook := lookPath
 	t.Cleanup(func() { lookPath = origLook })
-	lookPath = func(string) (string, error) { return "bin/clawbench", nil }
+	lookPath = func(string) (string, error) { return relPath, nil }
 
 	got, err := ResolveRestartBinary()
 	require.NoError(t, err)
 	assert.True(t, filepath.IsAbs(got), "sentinel needs an absolute path, got %q", got)
+	assert.Equal(t, filepath.Join(relDir, "clawbench"), got)
+}
+
+// TestResolveRestartBinary_RejectsNonExecutable: the sentinel's `exec` replaces
+// the shell, so a target that cannot be executed kills it before it can retry
+// or report. The check must happen here, where it becomes a 500 the UI shows.
+func TestResolveRestartBinary_RejectsNonExecutable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no execute bits; executability is decided by extension")
+	}
+	dir := withTempDataDir(t)
+
+	// The running binary exists but is not executable.
+	notExec := filepath.Join(dir, "live", "clawbench")
+	require.NoError(t, os.MkdirAll(filepath.Dir(notExec), 0o755))
+	require.NoError(t, os.WriteFile(notExec, []byte("binary"), 0o644))
+	require.NoError(t, WriteSelfPath(notExec))
+
+	origExe := upgradeExecutable
+	t.Cleanup(func() { upgradeExecutable = origExe })
+	upgradeExecutable = func() (string, error) { return notExec, nil }
+
+	origLook := lookPath
+	t.Cleanup(func() { lookPath = origLook })
+	lookPath = func(string) (string, error) { return "", fmt.Errorf("not found") }
+
+	_, err := ResolveRestartBinary()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not executable")
+}
+
+func mustGetwd(t *testing.T) string {
+	t.Helper()
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+	return wd
 }
 
 // TestResolveRestartBinary_ReportsEveryCandidateTried: the original failure

@@ -1623,16 +1623,21 @@ func TestServeConfig_Patch_MossNanoEngineWithModelDirInPatch(t *testing.T) {
 
 // --- ServeConfigRestart with a wired restartFunc ---
 
-func TestServeConfigRestart_NilRestartFunc(t *testing.T) {
+// TestServeConfigRestart_RunsSynchronously pins the ordering the failure
+// reporting depends on: the restart must be attempted BEFORE the response is
+// written, so a failure can be turned into a 500 instead of a 200 that lies.
+// (TestServeConfigRestart_FailureIsReported is the semantic guard — an async
+// implementation would deterministically return 200 there.)
+func TestServeConfigRestart_RunsSynchronously(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
-	// The handler now calls restartFunc synchronously, so no goroutine can read
-	// it concurrently and a plain save/restore is race-free.
+	// The handler calls restartFunc synchronously, so no goroutine can read it
+	// concurrently and a plain save/restore is race-free.
 	origRestartFunc := restartFunc
-	restartCalled := make(chan struct{})
+	var calledBeforeResponse bool
 	restartFunc = func() error {
-		close(restartCalled)
+		calledBeforeResponse = true
 		return nil
 	}
 	defer func() { restartFunc = origRestartFunc }()
@@ -1647,12 +1652,8 @@ func TestServeConfigRestart_NilRestartFunc(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, "restarting", resp["status"])
 
-	select {
-	case <-restartCalled:
-		// Success — restartFunc ran before the response was written
-	default:
-		t.Fatal("restartFunc was not called before the response")
-	}
+	assert.True(t, calledBeforeResponse,
+		"restartFunc must have run before the response was written")
 }
 
 // --- validatePatchFields nested forbidden field ---
