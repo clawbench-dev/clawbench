@@ -50,6 +50,26 @@ function stubSize(el: Element, w: number, h: number): void {
   Object.defineProperty(el, 'offsetHeight', { value: h, configurable: true })
 }
 
+/**
+ * jsdom has no layout, so the module's contain-fit maths (which reads the
+ * intrinsic size and the cell box) would divide by zero. Give the media its
+ * intrinsic size and the cell a real box.
+ */
+function stubIntrinsic(figure: HTMLElement, natW: number, natH: number, cellW = 300, cellH = 200): void {
+  const media = figure.querySelector('img, svg') as HTMLElement
+  if (media.tagName === 'IMG') {
+    Object.defineProperty(media, 'naturalWidth', { value: natW, configurable: true })
+    Object.defineProperty(media, 'naturalHeight', { value: natH, configurable: true })
+  } else {
+    Object.defineProperty(media, 'viewBox', {
+      value: { baseVal: { width: natW, height: natH } },
+      configurable: true,
+    })
+  }
+  const cell = media.parentElement!
+  stubRect(cell, 0, 0, cellW, cellH)
+}
+
 /** jsdom returns a zero rect for every element; give the figure a real box. */
 function stubRect(el: Element, left: number, top: number, width: number, height: number): void {
   vi.spyOn(el, 'getBoundingClientRect').mockReturnValue({
@@ -174,7 +194,12 @@ describe('inlineZoom — wheel behaviour', () => {
 
     expect(e.defaultPrevented).toBe(true)
     expect(activeZoomScale()).toBeGreaterThan(MIN_SCALE)
-    expect(img.style.transform).toContain('scale(')
+    // Zoom is LAYOUT sizing, not `transform: scale()`: a transform rasterises
+    // the media once and stretches the pixels, so a diagram zoomed 4x turns
+    // blurry. The inline width/height must be what grows.
+    expect(img.style.width).not.toBe('')
+    expect(img.style.height).not.toBe('')
+    expect(img.style.transform).not.toContain('scale(')
   })
 
   it('clamps to MAX_SCALE instead of growing without bound', () => {
@@ -215,18 +240,33 @@ describe('inlineZoom — wheel behaviour', () => {
 
   it('zooms around the cursor, not the centre', () => {
     // Anchoring on the pointer is what makes "zoom into that node" feel direct.
-    // Zooming at the far right must push the content left (negative tx).
-    const figure = mountFigure()
-    const img = figure.querySelector('img')!
-    stubSize(img, 300, 200)
-    stubRect(figure, 0, 0, 300, 200)
-    click(img)
+    // Zooming at the far right must shift the media left relative to zooming at
+    // the centre — otherwise the anchor is ignored.
+    const mk = () => {
+      const figure = mountFigure()
+      const img = figure.querySelector('img')!
+      stubIntrinsic(figure, 300, 200, 300, 200)
+      stubRect(figure, 0, 0, 300, 200)
+      click(img)
+      return img
+    }
+    const txOf = (el: HTMLElement) => {
+      const m = el.style.transform.match(/calc\(-50% \+ (-?[\d.]+)px\)/)
+      return m ? parseFloat(m[1]) : NaN
+    }
 
-    wheel(img, -120, 300, 100)
+    const atCentre = mk()
+    wheel(atCentre, -120, 150, 100)
+    const centreTx = txOf(atCentre)
 
-    const match = img.style.transform.match(/translate\((-?[\d.]+)px/)
-    expect(match).toBeTruthy()
-    expect(parseFloat(match![1])).toBeLessThan(0)
+    const atRight = mk()
+    wheel(atRight, -120, 290, 100)
+    const rightTx = txOf(atRight)
+
+    expect(Number.isNaN(centreTx)).toBe(false)
+    expect(Number.isNaN(rightTx)).toBe(false)
+    // Zooming near the right edge pulls the content left relative to centre.
+    expect(rightTx).toBeLessThan(centreTx)
   })
 })
 
@@ -254,7 +294,7 @@ describe('inlineZoom — panning', () => {
   it('pans while zoomed, clamping so the media cannot leave the frame', () => {
     const figure = mountFigure()
     const img = figure.querySelector('img')!
-    stubSize(img, 300, 200)
+    stubIntrinsic(figure, 300, 200, 300, 200)
     stubRect(figure, 0, 0, 300, 200)
     click(img)
 
@@ -266,11 +306,12 @@ describe('inlineZoom — panning', () => {
     expect(figure.classList.contains('is-panning')).toBe(true)
     expect(img.style.transform).not.toBe(before)
 
-    // A huge drag is clamped to the overflow, not applied verbatim.
+    // A huge drag is clamped to the overflow, not applied verbatim. The media
+    // must never be draggable out of the frame.
     pointer('pointermove', img, 99999, 99999)
-    const tx = parseFloat(img.style.transform.match(/translate\((-?[\d.]+)px/)![1])
-    const scaledW = 300 * activeZoomScale()
-    const maxX = (scaledW - 300) / 2
+    const tx = parseFloat(img.style.transform.match(/calc\(-50% \+ (-?[\d.]+)px\)/)![1])
+    const scaledW = parseFloat(img.style.width)
+    const maxX = Math.max(0, (scaledW - 300) / 2)
     expect(Math.abs(tx)).toBeLessThanOrEqual(maxX + 0.5)
   })
 
@@ -307,14 +348,42 @@ describe('inlineZoom — activation lifecycle', () => {
     wheel(img, -120, 150, 100)
     expect(isZoomActive()).toBe(true)
 
+    // `relatedTarget: null` means the pointer went somewhere outside the
+    // figure (another element or out of the window).
     const out = new PointerEvent('pointerout', {
-      bubbles: true, pointerType: 'mouse', clientX: 400, clientY: 400,
+      bubbles: true, pointerType: 'mouse', clientX: 400, clientY: 400, relatedTarget: null,
     })
     img.dispatchEvent(out)
 
     expect(isZoomActive()).toBe(false)
     expect(figure.classList.contains('is-zooming')).toBe(false)
     expect(img.style.transform).toBe('')
+  })
+
+  it('keeps the zoom when a finished pan leaves the pointer inside the figure', () => {
+    // A drag delivers `pointerup` (ending the pan) and then `pointerout` with a
+    // `relatedTarget` outside the figure, even though the pointer is still
+    // geometrically inside it. Treating that as "left the figure" would undo
+    // the pan the user just made.
+    const figure = mountFigure()
+    const img = figure.querySelector('img')!
+    stubIntrinsic(figure, 300, 200, 300, 200)
+    stubRect(figure, 0, 0, 300, 200)
+    click(img)
+    wheel(img, -120, 150, 100)
+
+    pointer('pointerdown', img, 100, 100)
+    pointer('pointermove', img, 160, 140)
+    pointer('pointerup', img, 160, 140)
+
+    // Pointer is at (160,140) — inside the 300x200 figure at (0,0).
+    const out = new PointerEvent('pointerout', {
+      bubbles: true, pointerType: 'mouse', clientX: 160, clientY: 140, relatedTarget: null,
+    })
+    img.dispatchEvent(out)
+
+    expect(isZoomActive()).toBe(true)
+    expect(figure.classList.contains('is-zooming')).toBe(true)
   })
 
   it('does not hijack wheel events over the floating toolbar', () => {
@@ -420,7 +489,7 @@ describe('inlineZoom — layout reset', () => {
   it('returns the active figure to fit scale and centres it', () => {
     const figure = mountFigure()
     const img = figure.querySelector('img')!
-    stubSize(img, 300, 200)
+    stubIntrinsic(figure, 300, 200, 300, 200)
     stubRect(figure, 0, 0, 300, 200)
     click(img)
 
@@ -432,8 +501,9 @@ describe('inlineZoom — layout reset', () => {
     resetBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
 
     expect(activeZoomScale()).toBe(MIN_SCALE)
-    expect(img.style.transform).toContain('translate(0px, 0px)')
-    expect(img.style.transform).toContain('scale(1)')
+    expect(img.style.transform).toContain('calc(-50% + 0px)')
+    // At scale 1 the layout size equals the contain-fit size.
+    expect(parseFloat(img.style.width)).toBeCloseTo(300, 0)
     // The zoom stays engaged so the user can immediately zoom again.
     expect(figure.classList.contains('is-zooming')).toBe(true)
   })
@@ -466,6 +536,25 @@ describe('inlineZoom — keyboard', () => {
     expect(img.style.transform).toBe('')
   })
 
+  it('exits on Escape even when focus is on the document body', () => {
+    // The user clicks the media to enter (the media is not focusable by
+    // default), so the keydown target is usually <body> — not the figure.
+    // Keying Escape off the event target would make it a no-op exactly when the
+    // user needs it.
+    const figure = mountFigure()
+    const img = figure.querySelector('img')!
+    stubIntrinsic(figure, 300, 200, 300, 200)
+    stubRect(figure, 0, 0, 300, 200)
+    click(img)
+    expect(isZoomActive()).toBe(true)
+
+    const e = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+    document.body.dispatchEvent(e)
+
+    expect(e.defaultPrevented).toBe(true)
+    expect(isZoomActive()).toBe(false)
+  })
+
   it('lets Escape through when nothing is zoomed', () => {
     // Escape may belong to an enclosing overlay (lightbox, drawer); swallowing
     // it here would make those unclosable.
@@ -474,6 +563,89 @@ describe('inlineZoom — keyboard', () => {
     figure.dispatchEvent(e)
 
     expect(e.defaultPrevented).toBe(false)
+  })
+})
+
+describe('inlineZoom — layout contract', () => {
+  beforeEach(() => {
+    document.body.innerHTML = ''
+    withPointerDevice(true)
+    installInlineZoom()
+  })
+  afterEach(() => { uninstallInlineZoom(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
+
+  it('scales by layout size, never by transform (keeps vector art sharp)', () => {
+    // `transform: scale()` rasterises once at the layout size and stretches the
+    // pixels, so a diagram zoomed 4x is blurry — the exact complaint this
+    // feature exists to fix. The inline width/height must carry the zoom.
+    const figure = mountFigure('mermaid')
+    const svg = figure.querySelector('svg')!
+    stubIntrinsic(figure, 300, 1000, 300, 400)
+    stubRect(figure, 0, 0, 300, 400)
+    click(svg)
+
+    wheel(svg, -120, 150, 200)
+    wheel(svg, -120, 150, 200)
+
+    const scale = activeZoomScale()
+    expect(scale).toBeGreaterThan(1.3)
+    // Layout size grew by the scale factor on top of the contain-fit size.
+    expect(parseFloat(svg.style.width)).toBeGreaterThan(100)
+    expect(svg.style.transform).not.toContain('scale(')
+  })
+
+  it('restores the resting layout exactly on exit', () => {
+    // "布局恢复原状" — every inline size the zoom wrote must be cleared, or the
+    // media would stay at a stale pixel size after leaving the active state.
+    const figure = mountFigure()
+    const img = figure.querySelector('img')!
+    stubIntrinsic(figure, 300, 200, 300, 200)
+    stubRect(figure, 0, 0, 300, 200)
+
+    click(img)
+    wheel(img, -120, 150, 100)
+    wheel(img, -120, 150, 100)
+    expect(img.style.width).not.toBe('')
+
+    click(document.body)
+
+    expect(isZoomActive()).toBe(false)
+    expect(img.style.width).toBe('')
+    expect(img.style.height).toBe('')
+    expect(img.style.maxWidth).toBe('')
+    expect(img.style.maxHeight).toBe('')
+    expect(img.style.transform).toBe('')
+    expect(figure.classList.contains('is-zooming')).toBe(false)
+  })
+
+  it('marks the active figure with the state class so CSS can ring it', () => {
+    const figure = mountFigure()
+    const img = figure.querySelector('img')!
+    stubIntrinsic(figure, 300, 200, 300, 200)
+    stubRect(figure, 0, 0, 300, 200)
+
+    expect(figure.classList.contains('is-zooming')).toBe(false)
+    click(img)
+    expect(figure.classList.contains('is-zooming')).toBe(true)
+  })
+
+  it('never lets a pan move the media out of the frame on an axis that fits', () => {
+    // A diagram narrower than the frame cannot move horizontally at all —
+    // otherwise it could be dragged off-screen leaving an empty box.
+    const figure = mountFigure('mermaid')
+    const svg = figure.querySelector('svg')!
+    // Tall and narrow: fits horizontally, overflows vertically once zoomed.
+    stubIntrinsic(figure, 100, 1000, 300, 200)
+    stubRect(figure, 0, 0, 300, 200)
+    click(svg)
+    wheel(svg, -120, 150, 100)
+
+    pointer('pointerdown', svg, 150, 100)
+    pointer('pointermove', svg, 9999, 100)
+
+    const m = svg.style.transform.match(/calc\(-50% \+ (-?[\d.]+)px\)/)
+    const tx = m ? parseFloat(m[1]) : NaN
+    expect(tx).toBe(0)
   })
 })
 

@@ -146,26 +146,29 @@
     height: auto;
 }
 
-/* ─── SVG media: fill the reading column, capped at 60dvh ────────────────
+/* ─── SVG media: always the full reading column ───────────────────────────
    A figure is `width: fit-content` by default, so an SVG renders at its
    intrinsic size and leaves the column mostly empty. SVG media (an `<img>`
    pointing at a .svg, a bare inline `<svg>`, or a Mermaid diagram — see the
-   dedicated block below) instead GROWS to fill the column while never
-   exceeding 60dvh — the cap raster images already carry
-   (markdown-common.css). Width is driven by the media's aspect ratio so the
-   ratio is preserved:
+   dedicated block below) instead takes the WHOLE column, and the artwork is
+   contain-fitted and centred inside it (see the inline-zoom block below,
+   which owns the frame height and the centring).
 
-       width = min(100%, 60dvh × aspect-ratio)  →  height ≤ 60dvh, ratio kept
+   Sizing the figure by the artwork's ratio
+   (`width: min(100%, 60dvh × aspect-ratio)`) was tried and is wrong for this
+   UI: a portrait diagram then shrinks the frame to a narrow strip, so the
+   column is mostly empty AND the empty space cannot be used for zooming. The
+   frame must be the viewport, not the artwork.
 
-   CSS cannot read an element's aspect ratio, so `svgMediaFit.ts` derives it
-   and stamps the `.svg-fit` marker class + `--svg-ar` custom property onto the
-   figure. A figure that is never stamped keeps the previous shrink-only
-   behavior, so raster images and unknown media are untouched. Chat is
-   untouched too: the chat pipeline never stamps, and its own
+   `.svg-fit` is still stamped by `svgMediaFit.ts` (it marks "this figure's
+   media has a known intrinsic size"), but it no longer drives width. A figure
+   that is never stamped keeps the previous shrink-only behavior, so raster
+   images and unknown media are untouched. Chat is untouched too: the chat
+   pipeline never stamps, and its own
    `.chat-message .image-block-wrapper { max-width: 200px }` below still
    clamps the thumbnail. */
 .image-block-wrapper.svg-fit {
-    width: min(100%, calc(60dvh * var(--svg-ar, 1)));
+    width: 100%;
 }
 
 .image-block-wrapper.svg-fit > .lightbox-img-wrap > img,
@@ -198,32 +201,38 @@
 }
 
 /* ─── Inline zoom viewport (pointer devices only) ─────────────────────────
-   At rest a figure is sized by the ratio formula above: it fits inside the
-   60dvh budget, so a portrait diagram ends up small. `inlineZoom.ts` turns the
-   figure itself into a fixed-size viewport — hovering (or keyboard focus)
-   activates it, the wheel zooms around the cursor, and dragging pans.
+   The figure is ALWAYS the full width of the reading column, and the media is
+   contain-fitted and centred inside it. Two consequences, both intended:
+
+   - The frame never changes size between states, so entering or leaving the
+     zoom does not reflow the document under the pointer.
+   - A portrait diagram is centred with equal empty space on both sides rather
+     than shrinking the figure to its own width. That empty space is what the
+     zoom uses: the media grows into it, still centred on the same axis.
+
+   States
+   ------
+   - **Resting** — media contain-fitted, `cursor: zoom-in`, no chrome. A click
+     enters the active state (`inlineZoom.ts` adds `.is-zooming`).
+   - **Active** — a visible ring marks the figure as the zoom target, the reset
+     button appears, the cursor becomes a grab handle, and the wheel/drag
+     gestures belong to the media. Clicking outside or Escape returns to
+     resting, which restores the layout exactly (all inline sizes are cleared).
+
+   Zoom is applied by writing WIDTH/HEIGHT on the media, never by
+   `transform: scale()`: a transform rasterises the element once at its layout
+   size and stretches the pixels, so a diagram zoomed 4x would look blurry —
+   defeating the point. Layout sizing makes the browser re-rasterise, so vector
+   art stays sharp. Only the pan uses `translate`.
 
    The opt-in is STRUCTURAL (`:has(> …)`), not a marker class the pipelines must
    remember to stamp: every surface that renders a figure (chat, file preview,
    share SPA, HTML export) gets the same behaviour without touching its
    pipeline. Touch devices are excluded by the media query, matching
-   `inlineZoom.ts`, which never installs its listeners there.
-
-   Two invariants:
-   - **The frame must not resize.** The figure keeps its resting size and the
-     media is transformed inside it with `overflow: hidden`. Growing the frame
-     on hover would reflow the document under the pointer and make the page
-     jump while reading.
-   - **Zoom is clipped to the cell, not the figure.** The floating toolbar is
-     absolutely positioned inside the figure, so clipping at the figure level
-     would still be fine — but clipping at the cell keeps the toolbar's hover
-     area stable.
-
-   `will-change` is set on the active figure only: keeping it on every figure
-   promotes hundreds of layers on a long document. */
+   `inlineZoom.ts`, which never installs its listeners there. */
 .image-block-wrapper .image-block-reset-btn {
     /* Touch devices never get inline zoom, and the button is only useful while
-       zoomed — hidden by default, revealed by the rule inside the query. */
+       active — hidden by default, revealed by the rule inside the query. */
     display: none;
 }
 
@@ -231,24 +240,66 @@
     .image-block-wrapper:has(> .lightbox-img-wrap > img),
     .image-block-wrapper:has(> .lightbox-svg-wrap > svg.lightbox-svg),
     .image-block-wrapper:has(> .mermaid > svg) {
-        /* The media is clipped to the frame while transformed. */
+        /* Always the full column: the frame is the viewport, not the artwork. */
+        width: 100%;
         overflow: hidden;
     }
 
     .image-block-wrapper:has(> .lightbox-img-wrap > img) > .lightbox-img-wrap,
     .image-block-wrapper:has(> .lightbox-svg-wrap > svg.lightbox-svg) > .lightbox-svg-wrap,
     .image-block-wrapper:has(> .mermaid > svg) > .mermaid {
-        /* A fixed 60dvh viewport: the media at fit scale is fully visible, and
-           zooming happens INSIDE this box. */
-        max-height: 60dvh;
+        /* The fixed viewport. 60dvh keeps a tall diagram from dominating the
+           page; the media is contain-fitted inside it.
+
+           `position: relative` + an absolutely positioned media (below) rather
+           than flex centring: a flex item larger than the container overflows
+           symmetrically and the browser then sizes it from the container's
+           cross axis, which made a zoomed SVG grow to 1138px and sit at
+           top:-313 — outside the clipped cell, i.e. invisible. Absolute
+           positioning with `inset: 0` + `margin: auto` centres a box that may
+           be larger than the frame, which is exactly the zoomed state. */
+        height: 60dvh;
+        position: relative;
         overflow: hidden;
-        /* Click to enter the zoom state (inlineZoom.ts). */
         cursor: zoom-in;
     }
 
-    /* Cursor must be set on the CELL: it carries `cursor: zoom-in` at a higher
-       specificity (0-2-1) than a bare `.is-zooming` (0-2-0), so putting grab on
-       the figure alone would never win. */
+    .image-block-wrapper:has(> .lightbox-img-wrap > img) > .lightbox-img-wrap > img,
+    .image-block-wrapper:has(> .lightbox-svg-wrap > svg.lightbox-svg) > .lightbox-svg-wrap > svg.lightbox-svg,
+    .image-block-wrapper:has(> .mermaid > svg) > .mermaid > svg {
+        /* Contain at rest: centred, ratio intact. `inlineZoom.ts` overwrites
+           width/height/transform while zooming and clears all of it on exit, so
+           this rule alone defines the resting layout. */
+        position: absolute;
+        /* Centre via top/left 50% + translate(-50%,-50%) rather than
+           `inset: 0; margin: auto`: inset pins all four edges, which forces the
+           box to the container size instead of letting it keep its own. The
+           percentage translate resolves against the element's own box, so it
+           stays centred whether the media is smaller (resting) or larger
+           (zoomed) than the frame. */
+        top: 50%;
+        left: 50%;
+        max-width: 100%;
+        max-height: 100%;
+        width: auto;
+        height: auto;
+        object-fit: contain;
+        transform: translate(-50%, -50%);
+        transform-origin: center center;
+        /* A short ease on size reads as a deliberate transition rather than a
+           jump; it is disabled while zooming/panning so the media tracks the
+           pointer. */
+        transition: width var(--duration-fast) ease-out, height var(--duration-fast) ease-out;
+    }
+
+    /* ── Active state ────────────────────────────────────────────────────── */
+    .image-block-wrapper.is-zooming {
+        /* A ring is the only chrome that reads at a glance without shifting
+           layout (outline never takes part in layout). */
+        outline: 2px solid var(--accent-color, #4a9eff);
+        outline-offset: 2px;
+    }
+
     .image-block-wrapper.is-zooming > .lightbox-img-wrap,
     .image-block-wrapper.is-zooming > .lightbox-svg-wrap,
     .image-block-wrapper.is-zooming > .mermaid {
@@ -261,21 +312,11 @@
         cursor: grabbing;
     }
 
-    .image-block-wrapper > .lightbox-img-wrap > img,
-    .image-block-wrapper > .lightbox-svg-wrap > svg.lightbox-svg,
-    .image-block-wrapper > .mermaid > svg {
-        /* `transform` on the media is what inlineZoom.ts drives. The transition
-           is short enough to feel direct but long enough to avoid stepping. */
-        transition: transform var(--duration-fast) ease-out;
-        transform-origin: center center;
-    }
-
     .image-block-wrapper.is-zooming > .lightbox-img-wrap > img,
     .image-block-wrapper.is-zooming > .lightbox-svg-wrap > svg.lightbox-svg,
     .image-block-wrapper.is-zooming > .mermaid > svg {
-        /* No easing while dragging/zooming — the transform tracks the pointer. */
+        /* No easing while zooming/panning — the size must track the pointer. */
         transition: none;
-        will-change: transform;
     }
 
     .image-block-wrapper.is-zooming .image-block-reset-btn {

@@ -106,27 +106,93 @@ function figureFrom(target: EventTarget | null): HTMLElement | null {
     return zoomableMedia(figure) ? figure : null
 }
 
-/** Reset transform + state on the active figure and drop its marker class. */
+/**
+ * Restore the media to its resting layout size and drop the active marker.
+ *
+ * Every inline style the zoom wrote is cleared here, because the resting size
+ * is whatever CSS says (contain-fit inside the frame) — the module must not
+ * leave a single pixel of its own sizing behind, or "layout back to normal"
+ * would be a lie after the first zoom.
+ */
 function deactivate(): void {
     if (!active) return
     const { figure, media } = active
     media.style.transform = ''
     media.style.transformOrigin = ''
+    media.style.width = ''
+    media.style.height = ''
+    media.style.maxWidth = ''
+    media.style.maxHeight = ''
     figure.classList.remove(ZOOM_ACTIVE_CLASS)
     active = null
 }
 
-/** Clamp a pan offset so the media always covers its frame. */
+/**
+ * Natural (unzoomed) size of the media, used as the base for the zoom.
+ *
+ * Read from the element's intrinsic dimensions rather than `offsetWidth`,
+ * because the resting size is the contain-fitted one — multiplying that by the
+ * scale would compound the fit shrink and never reach 1:1 with the artwork.
+ */
+function naturalSize(state: ZoomState): { w: number; h: number } {
+    const media = state.media
+    if (media.tagName === 'IMG') {
+        const img = media as HTMLImageElement
+        if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+            return { w: img.naturalWidth, h: img.naturalHeight }
+        }
+    }
+    // SVG (inline or mermaid): the viewBox is the authored coordinate space.
+    const svg = media as unknown as SVGSVGElement
+    const vb = svg.viewBox?.baseVal
+    if (vb && vb.width > 0 && vb.height > 0) return { w: vb.width, h: vb.height }
+    const r = media.getBoundingClientRect()
+    return { w: r.width, h: r.height }
+}
+
+/**
+ * Size of the media at the current scale, in layout pixels.
+ *
+ * The media is scaled by writing WIDTH/HEIGHT, not by `transform: scale()`.
+ * A CSS transform rasterises the element once at its layout size and then
+ * stretches those pixels, so an SVG zoomed 4x looks blurry — the whole point of
+ * zooming a diagram is to READ it. Setting the layout size makes the browser
+ * re-rasterise at the new size, so text and strokes stay sharp at any scale.
+ * (Panning still uses `translate`, which never resamples.)
+ *
+ * `base` is the size the media occupies at scale 1, i.e. its contain-fit size
+ * inside the frame.
+ */
+function scaledSize(state: ZoomState): { w: number; h: number; baseW: number; baseH: number } {
+    const frame = state.figure.getBoundingClientRect()
+    const cell = state.media.parentElement
+    const box = cell ? cell.getBoundingClientRect() : frame
+    const availW = box.width || frame.width
+    const availH = box.height || frame.height
+    const nat = naturalSize(state)
+    // Contain fit: the largest size that fits the frame with the ratio intact.
+    const fit = nat.w > 0 && nat.h > 0 ? Math.min(availW / nat.w, availH / nat.h) : 1
+    return {
+        w: nat.w * fit * state.scale,
+        h: nat.h * fit * state.scale,
+        baseW: nat.w * fit,
+        baseH: nat.h * fit,
+    }
+}
+
+/**
+ * Clamp a pan offset so the media cannot be dragged out of the viewport.
+ *
+ * The media must always cover the frame on an axis once it is larger than the
+ * frame there; when it is smaller (a wide diagram at low zoom), it stays
+ * centred on that axis and cannot move at all. Without this the reader could
+ * fling the diagram off-screen and be left staring at an empty box.
+ */
 function clampPan(state: ZoomState, tx: number, ty: number): { tx: number; ty: number } {
     const frame = state.figure.getBoundingClientRect()
-    // Size of the media at fit scale (transform does not affect layout size).
-    const baseW = state.media.offsetWidth || state.media.getBoundingClientRect().width
-    const baseH = state.media.offsetHeight || state.media.getBoundingClientRect().height
-    const scaledW = baseW * state.scale
-    const scaledH = baseH * state.scale
-    // Allowed travel is half the overflow on each axis; zero when it fits.
-    const maxX = Math.max(0, (scaledW - frame.width) / 2)
-    const maxY = Math.max(0, (scaledH - frame.height) / 2)
+    const { w, h } = scaledSize(state)
+    const maxX = Math.max(0, (w - frame.width) / 2)
+    const maxY = Math.max(0, (h - frame.height) / 2)
     return {
         tx: Math.min(maxX, Math.max(-maxX, tx)),
         ty: Math.min(maxY, Math.max(-maxY, ty)),
@@ -138,7 +204,16 @@ function apply(state: ZoomState): void {
     const { tx, ty } = clampPan(state, state.tx, state.ty)
     state.tx = tx
     state.ty = ty
-    state.media.style.transform = `translate(${tx}px, ${ty}px) scale(${state.scale})`
+    const { w, h } = scaledSize(state)
+    // Layout size (sharp) + translate (no resampling).
+    state.media.style.width = `${w}px`
+    state.media.style.height = `${h}px`
+    state.media.style.maxWidth = 'none'
+    state.media.style.maxHeight = 'none'
+    // The resting CSS centres the media with `translate(-50%, -50%)`; the pan
+    // offset is added on top of that rather than replacing it, so the media
+    // stays centred on the frame's centre axis while panning.
+    state.media.style.transform = `translate(calc(-50% + ${tx}px), calc(-50% + ${ty}px))`
 }
 
 /** Begin zooming a figure at fit scale, centred. */
@@ -336,16 +411,27 @@ function onPointerLeave(e: PointerEvent): void {
     if (!active || e.pointerType === 'touch') return
     if (panning) return
 
-    // Where is the pointer now? `pointerout` fires when moving from the media
-    // onto the figure's own toolbar too — and `figureFrom` deliberately rejects
-    // toolbar targets, so asking it would read "left the figure" and hide the
-    // reset button just as the pointer arrives on it. `relatedTarget` is the
-    // authoritative answer: still inside the same figure means keep the zoom.
+    // `pointerout` fires when moving from the media onto the figure's own
+    // toolbar too — and `figureFrom` deliberately rejects toolbar targets, so
+    // asking it would read "left the figure" and hide the reset button just as
+    // the pointer arrives on it. `relatedTarget` is the authoritative answer
+    // when the browser provides one.
     const next = e.relatedTarget
     if (next instanceof Node && active.figure.contains(next)) return
-    if (next === null && active.figure.contains(document.activeElement)) return
 
-    // Leaving the figure entirely (or into nothing): drop the zoom.
+    // `relatedTarget === null` is ambiguous: it means "left to a non-node" OR
+    // "released outside the window mid-drag". A geometry check disambiguates —
+    // if the pointer is still inside the figure's box, the zoom stays. This
+    // also covers a drag released just outside: the user was mid-gesture, and
+    // dropping the zoom there would undo their pan.
+    if (e.clientX || e.clientY) {
+        const box = active.figure.getBoundingClientRect()
+        const inside = e.clientX >= box.left && e.clientX <= box.right
+            && e.clientY >= box.top && e.clientY <= box.bottom
+        if (inside) return
+    }
+
+    // Leaving the figure entirely: drop the zoom.
     deactivate()
 }
 
@@ -408,6 +494,16 @@ function onFocusOut(e: FocusEvent): void {
 }
 
 function onKeyDown(e: KeyboardEvent): void {
+    // Escape must work regardless of where focus sits: once the user is in the
+    // active state the document body usually has focus (they clicked the media,
+    // which is not focusable by default), so keying off `figureFrom(e.target)`
+    // alone would make Escape a no-op exactly when it is needed.
+    if (e.key === 'Escape' && active) {
+        e.preventDefault()
+        deactivate()
+        return
+    }
+
     const figure = figureFrom(e.target)
     if (!figure) return
 
@@ -422,17 +518,11 @@ function onKeyDown(e: KeyboardEvent): void {
     }
     const panDir = panKeys[e.key]
 
-    if (!zoomIn && !zoomOut && !panDir && e.key !== 'Escape') return
-    // At fit scale with nothing to zoom out of, let the key through (Escape
-    // still closes any outer overlay the user may mean).
+    if (!zoomIn && !zoomOut && !panDir) return
+    // At fit scale with nothing to zoom out of, let the key through.
     if (!state && !zoomIn) return
 
     e.preventDefault()
-
-    if (e.key === 'Escape') {
-        deactivate()
-        return
-    }
 
     const target = state ?? activate(figure)
     if (!target) return

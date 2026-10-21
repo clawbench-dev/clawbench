@@ -549,11 +549,12 @@ describe('exportMarkdownToHtml', () => {
     expect(result.html).toContain('--svg-ar: 4')
   })
 
-  it('carries the svg-fit CSS rules into the standalone export', async () => {
-    // The sizing lives in media-block.css, which the hit-detection serializer
+  it('carries the svg-fit layout rules into the standalone export', async () => {
+    // The layout lives in media-block.css, which the hit-detection serializer
     // copies only for rules that match the exported DOM. A document with SVG
-    // media must therefore bring the ratio-driven width rule along — otherwise
-    // the export would show the media at its intrinsic size.
+    // media must therefore bring the full-width frame and the contain-centring
+    // along — otherwise the export would show the media at its intrinsic size
+    // in a fit-content box.
     //
     // jsdom starts with NO stylesheets (the app links its CSS from index.html,
     // which the test never loads), so the real media-block.css is injected here
@@ -567,17 +568,21 @@ describe('exportMarkdownToHtml', () => {
         opts({ content: '<svg viewBox="0 0 400 100"><rect width="400" height="100"></rect></svg>' }),
       )
       expect(result.html).toContain('.image-block-wrapper.svg-fit')
-      expect(result.html).toContain('min(100%, calc(60dvh * var(--svg-ar, 1)))')
+      // Full-column frame (not the abandoned ratio formula).
+      expect(result.html).toContain('width: 100%')
+      expect(result.html).not.toContain('var(--svg-ar')
+      // Contain-centring inside the fixed viewport.
+      expect(result.html).toContain('object-fit: contain')
+      expect(result.html).toContain('translate(-50%, -50%)')
     } finally {
       style.remove()
     }
   })
 
-  it('sizes mermaid diagrams like other SVG media, overriding the inline max-width', async () => {
+  it('sizes mermaid diagrams like other SVG media', async () => {
     // Mermaid emits `style="max-width: Npx"` inline (its natural size). The
-    // exported document must (a) stamp the figure with its aspect ratio and
-    // (b) carry the !important stylesheet override — without it a wide
-    // flowchart stays squashed at its natural width in the standalone file.
+    // exported document must stamp the figure and carry the layout rules, so a
+    // wide flowchart fills the column instead of staying at its natural width.
     const css = readWebFile('css/media-block.css')
     const style = document.createElement('style')
     style.textContent = css
@@ -587,8 +592,9 @@ describe('exportMarkdownToHtml', () => {
         opts({ content: '```mermaid\ngraph LR; A-->B\n```' }),
       )
       expect(result.html).toContain('image-block-wrapper svg-fit')
-      expect(result.html).toContain('--svg-ar:')
-      expect(result.html).toContain('max-width: 100% !important')
+      expect(result.html).not.toContain('var(--svg-ar')
+      // The mermaid svg is a flex/absolute child of the cell in the export too.
+      expect(result.html).toContain('object-fit: contain')
     } finally {
       style.remove()
     }

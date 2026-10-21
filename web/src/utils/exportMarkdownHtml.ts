@@ -1218,25 +1218,62 @@ function buildInlineZoomJs(): string {
         return mediaOf(fig) ? fig : null;
     }
 
+    // Natural (unzoomed) size of the media — the base the zoom multiplies.
+    function naturalSize(s) {
+        var m = s.media;
+        if (m.tagName === 'IMG' && m.naturalWidth > 0) {
+            return { w: m.naturalWidth, h: m.naturalHeight };
+        }
+        var vb = m.viewBox && m.viewBox.baseVal;
+        if (vb && vb.width > 0) return { w: vb.width, h: vb.height };
+        var r = m.getBoundingClientRect();
+        return { w: r.width, h: r.height };
+    }
+
+    // Size at the current scale, in LAYOUT pixels. Writing width/height (not
+    // transform: scale) makes the browser re-rasterise, so a zoomed diagram
+    // stays sharp instead of being a stretched bitmap.
+    function scaledSize(s) {
+        var frame = s.fig.getBoundingClientRect();
+        var cell = s.media.parentElement;
+        var box = cell ? cell.getBoundingClientRect() : frame;
+        var aw = box.width || frame.width;
+        var ah = box.height || frame.height;
+        var n = naturalSize(s);
+        var fit = (n.w > 0 && n.h > 0) ? Math.min(aw / n.w, ah / n.h) : 1;
+        return { w: n.w * fit * s.scale, h: n.h * fit * s.scale };
+    }
+
     function clamp(s) {
         var frame = s.fig.getBoundingClientRect();
-        var baseW = s.media.offsetWidth || s.media.getBoundingClientRect().width;
-        var baseH = s.media.offsetHeight || s.media.getBoundingClientRect().height;
-        var maxX = Math.max(0, (baseW * s.scale - frame.width) / 2);
-        var maxY = Math.max(0, (baseH * s.scale - frame.height) / 2);
+        var z = scaledSize(s);
+        var maxX = Math.max(0, (z.w - frame.width) / 2);
+        var maxY = Math.max(0, (z.h - frame.height) / 2);
         s.tx = Math.min(maxX, Math.max(-maxX, s.tx));
         s.ty = Math.min(maxY, Math.max(-maxY, s.ty));
     }
 
     function apply(s) {
         clamp(s);
-        s.media.style.transform = 'translate(' + s.tx + 'px,' + s.ty + 'px) scale(' + s.scale + ')';
+        var z = scaledSize(s);
+        s.media.style.width = z.w + 'px';
+        s.media.style.height = z.h + 'px';
+        s.media.style.maxWidth = 'none';
+        s.media.style.maxHeight = 'none';
+        // The resting CSS centres with translate(-50%,-50%); the pan offset is
+        // added on top so the media stays on the frame's centre axis.
+        s.media.style.transform = 'translate(calc(-50% + ' + s.tx + 'px), calc(-50% + ' + s.ty + 'px))';
     }
 
     function deactivate() {
         if (!active) return;
-        active.media.style.transform = '';
-        active.media.style.transformOrigin = '';
+        var m = active.media;
+        m.style.transform = '';
+        m.style.transformOrigin = '';
+        m.style.width = '';
+        m.style.height = '';
+        m.style.maxWidth = '';
+        m.style.maxHeight = '';
         active.fig.classList.remove('is-zooming');
         active = null;
     }
@@ -1321,9 +1358,25 @@ function buildInlineZoomJs(): string {
         // figFrom rejects toolbar targets, so asking it here would read "left
         // the figure" when the pointer merely moved onto the figure's own reset
         // button — and hide that button from under the cursor. relatedTarget is
-        // the authoritative answer: still inside the same figure => keep.
+        // the authoritative answer when the browser provides one.
         var next = e.relatedTarget;
         if (next && active.fig.contains(next)) return;
+        // relatedTarget === null is ambiguous ("left to a non-node" vs "released
+        // outside mid-drag"). If the pointer is still geometrically inside the
+        // figure, keep the zoom.
+        if (e.clientX || e.clientY) {
+            var box = active.fig.getBoundingClientRect();
+            if (e.clientX >= box.left && e.clientX <= box.right
+                && e.clientY >= box.top && e.clientY <= box.bottom) return;
+        }
+        deactivate();
+    });
+
+    // Escape leaves the zoom, from wherever focus happens to be (the media is
+    // not focusable, so the target is usually <body>).
+    document.addEventListener('keydown', function(e) {
+        if (e.key !== 'Escape' || !active) return;
+        e.preventDefault();
         deactivate();
     });
 
