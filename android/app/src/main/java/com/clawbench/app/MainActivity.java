@@ -172,7 +172,12 @@ public class MainActivity extends AppCompatActivity {
     // File chooser state for WebView <input type="file"> support
     private ValueCallback<Uri[]> filePathCallback;
     private Uri cameraImageUri; // URI for camera capture image
-    private Intent pendingFileChooserIntent; // Stored chooser intent while waiting for camera permission
+    private Intent pendingFileChooserIntent; // Stored intent while waiting for camera permission
+    // True when the <input> that triggered the picker carried `capture`. Such an
+    // input must open the camera directly: wrapping it in a chooser would show
+    // the same "camera / photos / more" sheet as every other input, which makes
+    // a dedicated 拍照 button indistinguishable from 照片.
+    private boolean pendingCaptureEnabled;
 
     // Camera permission launcher — requests CAMERA runtime permission before
     // launching the camera intent. On many OEM ROMs (Xiaomi, Huawei, etc.),
@@ -766,6 +771,7 @@ public class MainActivity extends AppCompatActivity {
 
                 // Store the chooser intent for use after permission check
                 pendingFileChooserIntent = chooserIntent;
+                pendingCaptureEnabled = isCaptureRequested(fileChooserParams);
 
                 // Request CAMERA runtime permission before offering the camera option.
                 // Many OEM ROMs (Xiaomi, Huawei, Samsung) require this permission to be
@@ -1129,13 +1135,58 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
+     * Whether the <input> that opened the picker asked for the camera.
+     *
+     * WebView surfaces `capture` through FileChooserParams.isCaptureEnabled()
+     * (there is no mode bit for it). The helper takes the params so the OEM
+     * WebViews that throw from the accessor degrade to "no capture" instead of
+     * killing the picker.
+     */
+    static boolean isCaptureRequested(WebChromeClient.FileChooserParams params) {
+        try {
+            return params != null && params.isCaptureEnabled();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * Picks the intent actually launched for a camera-capable request.
+     *
+     * Three cases, and the distinction is the whole point of this method:
+     *   - capture requested (拍照 button) → the camera alone, no chooser
+     *   - camera available but not requested (照片 / 上传文件) → chooser with
+     *     the camera offered as an initial intent
+     *   - no camera → the plain file picker
+     *
+     * Split out as a pure function so the branch is unit-testable: the caller
+     * needs a live Activity (getPackageManager / FileProvider) to build the
+     * camera intent in the first place.
+     */
+    static Intent buildLaunchIntent(Intent chooserIntent, Intent cameraIntent,
+                                    boolean captureOnly, CharSequence chooserTitle) {
+        if (cameraIntent == null) return chooserIntent;
+        if (captureOnly) return cameraIntent;
+        Intent chooser = Intent.createChooser(chooserIntent, chooserTitle);
+        chooser.putExtra(Intent.EXTRA_INITIAL_INTENTS, new Intent[]{ cameraIntent });
+        return chooser;
+    }
+
+    /**
      * Launch file chooser with camera option included.
      * Called after CAMERA runtime permission is confirmed.
+     *
+     * When the <input> carried `capture`, the camera is the ONLY option: the
+     * page already asked for it explicitly (the 拍照 button), and wrapping it in
+     * a chooser would show the same sheet as the plain 照片 entry. The file
+     * picker is still offered for inputs without `capture`.
      */
     private void launchFileChooserWithCamera() {
         if (filePathCallback == null) return;
         Intent chooserIntent = pendingFileChooserIntent;
         pendingFileChooserIntent = null;
+        boolean captureOnly = pendingCaptureEnabled;
+        pendingCaptureEnabled = false;
 
         // Build camera intent with FileProvider URI
         Intent cameraIntent = null;
@@ -1164,13 +1215,8 @@ public class MainActivity extends AppCompatActivity {
         }
 
         try {
-            if (cameraIntent != null) {
-                // Show chooser with both file picker and camera options
-                chooserIntent = Intent.createChooser(chooserIntent,
-                        userLangString(R.string.conn_file_picker_title));
-                chooserIntent.putExtra(Intent.EXTRA_INITIAL_INTENTS, new Intent[]{ cameraIntent });
-            }
-            fileChooserLauncher.launch(chooserIntent);
+            fileChooserLauncher.launch(buildLaunchIntent(chooserIntent, cameraIntent,
+                    captureOnly, userLangString(R.string.conn_file_picker_title)));
         } catch (Exception e) {
             AppLog.e(TAG, "File chooser failed to launch", e);
             filePathCallback = null;
@@ -1184,6 +1230,9 @@ public class MainActivity extends AppCompatActivity {
         if (filePathCallback == null) return;
         Intent chooserIntent = pendingFileChooserIntent;
         pendingFileChooserIntent = null;
+        // Drop the capture flag too: it belongs to this request, and a stale
+        // true would make the NEXT picker open the camera unexpectedly.
+        pendingCaptureEnabled = false;
 
         try {
             fileChooserLauncher.launch(chooserIntent);
