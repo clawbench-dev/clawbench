@@ -538,15 +538,15 @@ describe('exportMarkdownToHtml', () => {
     expect(result.html).toContain('<h1')
   })
 
-  it('stamps inline svg figures with the ratio-driven fill-width sizing', async () => {
-    // An inline <svg> block must be lifted into a figure and marked `.svg-fit`
-    // with its aspect ratio, so the exported document sizes it exactly like the
-    // in-app preview. The ratio is derived from the viewBox (no image load).
+  it('stamps inline svg figures with the fill-width marker', async () => {
+    // An inline <svg> block must be lifted into a figure and marked `.svg-fit`,
+    // so the exported document sizes it exactly like the in-app preview. No
+    // ratio is stamped: the fill-width rule needs none (issue #570).
     const result = await exportMarkdownToHtml(
       opts({ content: '<svg viewBox="0 0 400 100"><rect width="400" height="100"></rect></svg>' }),
     )
     expect(result.html).toContain('image-block-wrapper svg-fit')
-    expect(result.html).toContain('--svg-ar: 4')
+    expect(result.html).not.toContain('--svg-ar')
   })
 
   it('carries the svg-fit CSS rules into the standalone export', async () => {
@@ -567,7 +567,11 @@ describe('exportMarkdownToHtml', () => {
         opts({ content: '<svg viewBox="0 0 400 100"><rect width="400" height="100"></rect></svg>' }),
       )
       expect(result.html).toContain('.image-block-wrapper.svg-fit')
-      expect(result.html).toContain('min(100%, calc(60dvh * var(--svg-ar, 1)))')
+      expect(result.html).toContain('width: 100%')
+      expect(result.html).toContain('max-height: 60dvh')
+      // Regression guard for issue #570 — the ratio-derived width must not
+      // come back, it shrank portrait diagrams to a fraction of their size.
+      expect(result.html).not.toContain('--svg-ar')
     } finally {
       style.remove()
     }
@@ -587,8 +591,8 @@ describe('exportMarkdownToHtml', () => {
         opts({ content: '```mermaid\ngraph LR; A-->B\n```' }),
       )
       expect(result.html).toContain('image-block-wrapper svg-fit')
-      expect(result.html).toContain('--svg-ar:')
       expect(result.html).toContain('max-width: 100% !important')
+      expect(result.html).toContain('max-height: 60dvh')
     } finally {
       style.remove()
     }

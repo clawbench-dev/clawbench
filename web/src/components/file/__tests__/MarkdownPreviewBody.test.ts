@@ -390,31 +390,34 @@ describe('MarkdownPreviewBody.vue', () => {
       const figure = wrapper.find('.image-block-wrapper')
       const img = wrapper.find('img.lightbox-img')
 
-      // Not yet decoded → no ratio, so the figure keeps its previous sizing.
+      // Not yet decoded → intrinsic size unknown, so the figure is not opted
+      // into fill-width sizing yet (it would size against a 0x0 box).
       expect(figure.classes()).not.toContain('svg-fit')
 
       injectNaturalSize(img.element, 400, 100)
       await img.trigger('load')
 
       expect(figure.classes()).toContain('svg-fit')
-      expect((figure.element as HTMLElement).style.getPropertyValue('--svg-ar')).toBe('4')
     })
 
-    it('re-stamps with the corrected ratio when a later load reveals a new size', async () => {
+    it('stays stamped when a later load reveals a new intrinsic size', async () => {
       const { wrapper } = mountBody({ renderedHtml: SVG_FIGURE })
       const img = wrapper.find('img.lightbox-img')
       const figure = wrapper.find('.image-block-wrapper')
 
       injectNaturalSize(img.element, 400, 100)
       await img.trigger('load')
-      expect((figure.element as HTMLElement).style.getPropertyValue('--svg-ar')).toBe('4')
+      expect(figure.classes()).toContain('svg-fit')
 
       // A responsive SVG reports a different intrinsic size after a resize /
-      // reload; the stamp must overwrite rather than keep the stale ratio.
+      // reload. CSS preserves the ratio on its own (width:100%; height:auto),
+      // so a second pass is a no-op on the class attribute. Asserted against
+      // the raw attribute — `classList` can never contain a duplicate, so a
+      // classList-based check could not distinguish "idempotent" from "ran
+      // twice and appended twice".
       injectNaturalSize(img.element, 100, 400)
       await img.trigger('load')
-      expect((figure.element as HTMLElement).style.getPropertyValue('--svg-ar')).toBe('0.25')
-      expect(figure.classes()).toContain('svg-fit')
+      expect((figure.element as HTMLElement).getAttribute('class')).toBe('image-block-wrapper svg-fit')
     })
 
     it('leaves a raster image figure unsized on load', async () => {
