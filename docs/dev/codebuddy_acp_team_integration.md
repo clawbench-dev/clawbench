@@ -255,8 +255,8 @@ type TeamMember struct {
 ┌─────────────────────────────────────────────┐
 │ Team · clawbench-probe  [自动团队]  2 active ⌄ │   ← 标题行可点折叠
 ├─────────────────────────────────────────────┤
-│ ● probe-alpha  general-purpose  running  Bash×2  85.2k │   ← 名字用 members[].color 着色
-│ ✓ probe-beta   completed  —  85.2k                    │
+│ ◠ probe-alpha  🔧2  85.2k │   ← 状态在最左（running 是共享加载环），名字用 members[].color 着色
+│ ✓ probe-beta   85.2k      │
 └─────────────────────────────────────────────┘
 ```
 
@@ -264,7 +264,7 @@ type TeamMember struct {
 
 ```
 ┌─────────────────────────────────────┐
-│ ● probe-alpha 正在运行        1/2  ⌃ │
+│ 👥 probe-alpha 正在运行       1/2  ⌃ │   ← 团队图标（有成员在跑时脉动）
 └─────────────────────────────────────┘
 ```
 
@@ -272,16 +272,28 @@ type TeamMember struct {
 
 ```
 ┌─────────────────────────────────────┐
-│ ● clawbench-probe · 已结束    0/2  ⌃ │
+│ 👥 clawbench-probe · 已结束   0/2  ⌃ │
 └─────────────────────────────────────┘
 ```
 
 - **名字着色**：wire 的 `members[].color`（`blue`/`green`/…）映射到主题色，与官方 TUI 一致。
-- **状态点复用会话行状态槽语义**（design-guide §动效）：`running` 脉动点、
-  `completed` 静止 ✓、`failed` 红 ✗、`killed`/`terminated` 灰 —。
-  **不新增环**——「正在推进」已由脉动点表达，同一事实不说两遍。
-- **右侧计量**：`toolCallCount` + `tokenUsage.inputTokens + outputTokens`（缩写 `85.2k`）。
-- **`agentType`** 在名字后以次要色内联显示（有则显示）。
+- **收起态最左侧是团队图标**（lucide `Users`，14px），不再用裸状态点：光看图标就知道
+  这是一支队。有成员在跑时图标脉动（同一动效通道），空闲/结束时静止为中性色。
+- **成员行状态用图标，不用点也不用文字**（形状领先于色相——36 套主题里 3 套 accent 与
+  orange 相同，色相本就不承载区分）：`running` = **全站共享加载环 `.li-spinner`**
+  （12px，只设 `--li-size` / `--li-color`，不重声明形状）、`completed` = `CircleCheck`、
+  `failed` = `CircleX`、`killed`/`terminated` = `CircleSlash`、`pending` = `CircleDashed`。
+  旋转不设 `prefers-reduced-motion` opt-out（动效是唯一通道时冻结会让 running 与 pending
+  无法区分）。文字仅作为 `aria-label` 提供给读屏。**不得用 lucide 的 `LoaderCircle`**——
+  那会成为全站第二个加载指示器实现（形状/速度会漂移），`TeamPanel.test.ts` 钉住。
+- **右侧计量**：`toolCallCount` 渲染为**扳手图标 + 数字**（`🔧2`，无单位词——图标已经说了
+  是工具调用）；`tokenUsage.inputTokens + outputTokens` 缩写 `85.2k`。
+- **成员行是网格不是 flex**（`grid-template-columns: 12px minmax(0,1fr) 3.5em 6ch`）：
+  两个数字列必须**在所有行落在同一个 x 上**。用 flex 时它们按内容定宽，没有工具调用的
+  成员会把左边的单元格一起拉走，整列看起来参差不齐。因此**工具单元格恒渲染**（计数为 0
+  时留空），数字列右对齐（数值列对齐的是个位）。
+- **`agentType`** 不进成员行——自动队里几乎全是 `general-purpose`，行内重复无信息量却挤掉
+  名字宽度；只保留在 tooltip（行内若有则隐藏）。
 - **tooltip**（原生 `title`，空则完全不设）：`description` + `agentType` +
   token 明细（`in/out`）+ `lastContextWindow`。
 - **`isAutoTeam:true`** 在展开标题行显示「自动团队」标签（自动队回合结束即拆，提示用户）。

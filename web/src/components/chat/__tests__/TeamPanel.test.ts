@@ -15,7 +15,6 @@ const i18n = createI18n({
           active: '{count} active',
           ended: 'ended',
           autoTeam: 'auto team',
-          tools: 'tools',
           tokens: 'tokens',
           contextWindow: 'context',
           agentType: 'type',
@@ -67,6 +66,38 @@ describe('TeamPanel', () => {
     expect(wrapper.get('.team-chip__count').text()).toBe('1/2')
   })
 
+  // ── Chip leading glyph: a team icon, not a bare status dot ──
+
+  it('leads the collapsed chip with the team glyph', async () => {
+    updateTeamState(snapshot())
+    const wrapper = mountPanel()
+    await wrapper.vm.$nextTick()
+    const icon = wrapper.get('.team-chip__icon')
+    expect(icon.element.tagName.toLowerCase()).toBe('svg')
+    // The dot is gone — the glyph carries the same "this is a team" meaning.
+    expect(wrapper.find('.team-chip__dot').exists()).toBe(false)
+  })
+
+  it('pulses the chip glyph while a member is working', async () => {
+    updateTeamState(snapshot())
+    const wrapper = mountPanel()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.get('.team-chip__icon').classes()).toContain('team-chip__icon--running')
+  })
+
+  it('keeps the chip glyph static once no member is working', async () => {
+    updateTeamState(
+      snapshot({
+        type: 'team_idle',
+        hasLiveMembers: false,
+        members: [{ name: 'probe-alpha', status: 'completed', lifecycle: 'terminated' }],
+      }),
+    )
+    const wrapper = mountPanel()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.get('.team-chip__icon').classes()).not.toContain('team-chip__icon--running')
+  })
+
   it('expands to a roster with one row per member', async () => {
     updateTeamState(snapshot())
     const wrapper = mountPanel()
@@ -75,8 +106,8 @@ describe('TeamPanel', () => {
     const rows = wrapper.findAll('.team-member')
     expect(rows).toHaveLength(2)
     expect(rows[0].get('.team-member__name').text()).toBe('probe-alpha')
-    expect(rows[0].get('.team-member__status').text()).toBe('running')
-    expect(rows[1].get('.team-member__status').text()).toBe('completed')
+    expect(rows[0].get('.team-member__status-icon').attributes('data-status')).toBe('running')
+    expect(rows[1].get('.team-member__status-icon').attributes('data-status')).toBe('completed')
   })
 
   it('marks a terminated member row', async () => {
@@ -89,14 +120,64 @@ describe('TeamPanel', () => {
     expect(rows[1].classes()).toContain('team-member--terminated')
   })
 
-  it('renders the running dot with the pulsing class', async () => {
+  it('renders the status as an icon, not a dot or a word', async () => {
     updateTeamState(snapshot())
     const wrapper = mountPanel()
     await wrapper.vm.$nextTick()
     await wrapper.get('.team-chip').trigger('click')
-    const dots = wrapper.findAll('.team-member__dot')
-    expect(dots[0].classes()).toContain('team-member__dot--running')
-    expect(dots[1].classes()).toContain('team-member__dot--completed')
+    const icons = wrapper.findAll('.team-member__status-icon')
+    expect(icons).toHaveLength(2)
+    expect(icons[0].classes()).toContain('team-member__status-icon--running')
+    expect(icons[1].classes()).toContain('team-member__status-icon--completed')
+    // Non-running statuses are lucide glyphs.
+    expect(icons[1].element.tagName.toLowerCase()).toBe('svg')
+    // The bare dot and the inline status word are both gone.
+    expect(wrapper.find('.team-member__dot').exists()).toBe(false)
+    expect(wrapper.find('.team-member__status').exists()).toBe(false)
+    // The word still reaches assistive tech via the accessible name.
+    expect(icons[0].attributes('aria-label')).toBe('running')
+  })
+
+  it('draws the running state with the app-wide loading ring', async () => {
+    // There is exactly one loading indicator in this codebase
+    // (css/components.css `.li-spinner`). A rotating lucide icon here would be a
+    // second implementation that drifts in shape/speed.
+    updateTeamState(snapshot())
+    const wrapper = mountPanel()
+    await wrapper.vm.$nextTick()
+    await wrapper.get('.team-chip').trigger('click')
+    const running = wrapper.get('.team-member__status-icon--running')
+    expect(running.classes()).toContain('li-spinner')
+    // The ring owns its shape; this site may only size/tint it.
+    expect(running.element.tagName.toLowerCase()).toBe('span')
+    expect(running.find('svg').exists()).toBe(false)
+  })
+
+  it('gives every status kind a distinct glyph shape', async () => {
+    // Colour cannot carry the distinction alone (3/36 themes make accent and
+    // orange identical), so each kind must differ in shape. Comparing the SVG
+    // bodies is what proves it — class names alone would pass even if all five
+    // rendered the same circle.
+    const kinds = ['running', 'completed', 'failed', 'killed', 'pending'] as const
+    const shapes = new Set<string>()
+    for (const status of kinds) {
+      // clearTeamState also re-collapses the chip, so each iteration starts from
+      // the same collapsed state (the composable is module-level).
+      clearTeamState()
+      updateTeamState({
+        type: 'member_status_change',
+        teamName: 't',
+        members: [{ name: `m-${status}`, status }],
+      })
+      const wrapper = mountPanel()
+      await wrapper.vm.$nextTick()
+      await wrapper.get('.team-chip').trigger('click')
+      // Compare the SVG BODY only: the outer HTML carries the per-kind class
+      // name, so it would differ even if all five rendered the same glyph.
+      const el = wrapper.get('.team-member__status-icon').element
+      shapes.add(`${el.tagName}|${el.innerHTML}`)
+    }
+    expect(shapes.size).toBe(kinds.length)
   })
 
   it('marks a killed member as terminated', async () => {
@@ -108,7 +189,7 @@ describe('TeamPanel', () => {
     const wrapper = mountPanel()
     await wrapper.vm.$nextTick()
     await wrapper.get('.team-chip').trigger('click')
-    expect(wrapper.get('.team-member__dot').classes()).toContain('team-member__dot--terminated')
+    expect(wrapper.get('.team-member__status-icon').attributes('data-status')).toBe('terminated')
   })
 
   it('formats token totals compactly', async () => {
@@ -118,6 +199,63 @@ describe('TeamPanel', () => {
     await wrapper.get('.team-chip').trigger('click')
     // (56763 + 229) / 1000 = 57.0k
     expect(wrapper.findAll('.team-member__tokens')[0].text()).toBe('57.0k')
+  })
+
+  // ── Tool count: wrench glyph + number, no word ──
+
+  it('renders the tool count as a wrench glyph plus the number', async () => {
+    updateTeamState(snapshot())
+    const wrapper = mountPanel()
+    await wrapper.vm.$nextTick()
+    await wrapper.get('.team-chip').trigger('click')
+    const cell = wrapper.findAll('.team-member__tools')[0]
+    expect(cell.element.tagName.toLowerCase()).toBe('span')
+    expect(cell.find('svg').exists()).toBe(true)
+    // No unit word: the glyph already says "tool calls".
+    expect(cell.text()).toBe('2')
+  })
+
+  it('keeps an empty tool cell so the column does not collapse', async () => {
+    // The cell must still exist (and occupy its grid track) when a member has
+    // no tool calls; dropping the element is what shifted every cell to its
+    // left and made the numbers ragged.
+    updateTeamState({
+      type: 'member_status_change',
+      teamName: 't',
+      members: [{ name: 'idle-member', status: 'running', toolCallCount: 0 }],
+    })
+    const wrapper = mountPanel()
+    await wrapper.vm.$nextTick()
+    await wrapper.get('.team-chip').trigger('click')
+    const cell = wrapper.get('.team-member__tools')
+    expect(cell.exists()).toBe(true)
+    expect(cell.text()).toBe('')
+    expect(cell.find('svg').exists()).toBe(false)
+  })
+
+  it('gives every member row the same four column slots', async () => {
+    // Column alignment is a structure property: with a fixed grid template the
+    // tool count and token total land on the same x in every row, regardless of
+    // whether that member has tool calls or tokens. Asserting the child count
+    // per row catches a reintroduced v-if on a cell.
+    updateTeamState({
+      type: 'member_status_change',
+      teamName: 't',
+      members: [
+        { name: 'has-both', status: 'running', toolCallCount: 7, tokenUsage: { inputTokens: 900, outputTokens: 100 } },
+        { name: 'has-none', status: 'pending' },
+      ],
+    })
+    const wrapper = mountPanel()
+    await wrapper.vm.$nextTick()
+    await wrapper.get('.team-chip').trigger('click')
+    const rows = wrapper.findAll('.team-member')
+    expect(rows).toHaveLength(2)
+    for (const row of rows) {
+      expect(row.element.children).toHaveLength(4)
+      expect(row.find('.team-member__tools').exists()).toBe(true)
+      expect(row.find('.team-member__tokens').exists()).toBe(true)
+    }
   })
 
   it('collapses again when the expanded header is clicked', async () => {
@@ -203,9 +341,12 @@ describe('TeamPanel', () => {
     expect(wrapper.find('.team-expanded__auto').exists()).toBe(false)
   })
 
-  // ── Member metadata: agentType inline + tooltip ──
+  // ── Member metadata: agentType is tooltip-only ──
 
-  it('shows the agent type inline when present', async () => {
+  it('never renders the agent type inline, only in the tooltip', async () => {
+    // Nearly every auto-team member is `general-purpose`, so the inline column
+    // carried no information while eating the width the name needs. It must
+    // stay out of the row and remain reachable via the tooltip.
     updateTeamState(
       snapshot({
         members: [{ name: 'probe-alpha', status: 'running', agentType: 'general-purpose' }],
@@ -214,7 +355,9 @@ describe('TeamPanel', () => {
     const wrapper = mountPanel()
     await wrapper.vm.$nextTick()
     await wrapper.get('.team-chip').trigger('click')
-    expect(wrapper.get('.team-member__agent-type').text()).toBe('general-purpose')
+    expect(wrapper.find('.team-member__agent-type').exists()).toBe(false)
+    expect(wrapper.get('.team-member').text()).not.toContain('general-purpose')
+    expect(wrapper.get('.team-member').attributes('title')).toContain('type: general-purpose')
   })
 
   it('builds the member tooltip from description, type, tokens and context', async () => {

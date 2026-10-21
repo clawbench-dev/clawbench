@@ -692,7 +692,6 @@ export default {
       active: '{count} active',
       ended: 'ended',
       autoTeam: 'auto team',
-      tools: 'tools',
       tokens: 'tokens',
       contextWindow: 'context',
       agentType: 'type',

@@ -696,7 +696,6 @@ export default {
       active: '{count} 个进行中',
       ended: '已结束',
       autoTeam: '自动团队',
-      tools: '次工具',
       tokens: 'tokens',
       contextWindow: '上下文',
       agentType: '类型',
