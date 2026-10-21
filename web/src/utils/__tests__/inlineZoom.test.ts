@@ -343,7 +343,11 @@ describe('inlineZoom — activation lifecycle', () => {
   })
   afterEach(() => { uninstallInlineZoom(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
-  it('drops the zoom when the pointer leaves the figure', () => {
+  it('KEEPS the zoom when the pointer leaves the figure', () => {
+    // Leaving is an explicit act: click outside or Escape. Moving the mouse off
+    // the figure — to read something beside it, to reach a menu, or just to
+    // move the hand — must not drop the zoom, or the state would be impossible
+    // to hold while actually using it.
     const figure = mountFigure()
     const img = figure.querySelector('img')!
     stubSize(img, 300, 200)
@@ -352,24 +356,19 @@ describe('inlineZoom — activation lifecycle', () => {
 
     wheel(img, -120, 150, 100)
     expect(isZoomActive()).toBe(true)
+    const zoomed = img.style.width
 
-    // `relatedTarget: null` means the pointer went somewhere outside the
-    // figure (another element or out of the window).
     const out = new PointerEvent('pointerout', {
       bubbles: true, pointerType: 'mouse', clientX: 400, clientY: 400, relatedTarget: null,
     })
     img.dispatchEvent(out)
 
-    expect(isZoomActive()).toBe(false)
-    expect(figure.classList.contains('is-zooming')).toBe(false)
-    expect(img.style.transform).toBe('')
+    expect(isZoomActive()).toBe(true)
+    expect(figure.classList.contains('is-zooming')).toBe(true)
+    expect(img.style.width).toBe(zoomed)
   })
 
-  it('keeps the zoom when a finished pan leaves the pointer inside the figure', () => {
-    // A drag delivers `pointerup` (ending the pan) and then `pointerout` with a
-    // `relatedTarget` outside the figure, even though the pointer is still
-    // geometrically inside it. Treating that as "left the figure" would undo
-    // the pan the user just made.
+  it('keeps the zoom when the pointer leaves after a pan too', () => {
     const figure = mountFigure()
     const img = figure.querySelector('img')!
     stubIntrinsic(figure, 300, 200, 300, 200)
@@ -381,9 +380,8 @@ describe('inlineZoom — activation lifecycle', () => {
     pointer('pointermove', img, 160, 140)
     pointer('pointerup', img, 160, 140)
 
-    // Pointer is at (160,140) — inside the 300x200 figure at (0,0).
     const out = new PointerEvent('pointerout', {
-      bubbles: true, pointerType: 'mouse', clientX: 160, clientY: 140, relatedTarget: null,
+      bubbles: true, pointerType: 'mouse', clientX: 5000, clientY: 5000, relatedTarget: null,
     })
     img.dispatchEvent(out)
 

@@ -1376,25 +1376,6 @@ function buildInlineZoomJs(): string {
     document.addEventListener('pointerup', endPan);
     document.addEventListener('pointercancel', endPan);
 
-    document.addEventListener('pointerout', function(e) {
-        if (!active || e.pointerType === 'touch' || panning) return;
-        // figFrom rejects toolbar targets, so asking it here would read "left
-        // the figure" when the pointer merely moved onto the figure's own reset
-        // button — and hide that button from under the cursor. relatedTarget is
-        // the authoritative answer when the browser provides one.
-        var next = e.relatedTarget;
-        if (next && active.fig.contains(next)) return;
-        // relatedTarget === null is ambiguous ("left to a non-node" vs "released
-        // outside mid-drag"). If the pointer is still geometrically inside the
-        // figure, keep the zoom.
-        if (e.clientX || e.clientY) {
-            var box = active.fig.getBoundingClientRect();
-            if (e.clientX >= box.left && e.clientX <= box.right
-                && e.clientY >= box.top && e.clientY <= box.bottom) return;
-        }
-        deactivate();
-    });
-
     // Escape leaves the zoom, from wherever focus happens to be (the media is
     // not focusable, so the target is usually <body>).
     document.addEventListener('keydown', function(e) {

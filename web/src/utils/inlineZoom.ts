@@ -23,6 +23,12 @@
  *   figure hit max scale. Requiring an explicit click gives the wheel an
  *   unambiguous owner — while a figure is NOT zoomed, every wheel event belongs
  *   to the page, no matter which direction it goes.
+ * - **The pointer leaving the figure does NOT end the zoom.** Only an explicit
+ *   act does. Moving the mouse off — to read a paragraph beside the diagram, to
+ *   reach a toolbar, or simply to reposition the hand — must not throw away the
+ *   zoom and pan the reader just set up. `pointerout` is deliberately not
+ *   listened to; the exit paths are the outside click, Escape, and clicking a
+ *   different figure.
  * - **Wheel zooms around the cursor while zoomed.** Anchoring on the pointer
  *   (not the centre) is what makes "zoom into that node" feel direct.
  * - **Drag pans while zoomed.** Panning is clamped so the media cannot be
@@ -490,42 +496,13 @@ function onPointerUp(): void {
 /**
  * Safety net for a pan that never got its `pointerup`: releasing the button
  * outside the window (or the window losing focus mid-drag) would otherwise
- * leave `panning` set forever, so the media keeps following the cursor and
- * `onPointerLeave` early-returns instead of ending the zoom — a permanently
- * stuck figure. Both signals are cheap and cover different platforms.
+ * leave `panning` set forever, so the media keeps following the cursor and the
+ * figure can never be dragged again.
  */
 function endStrandedPan(): void {
     if (!panning) return
     panning.state.figure.classList.remove('is-panning')
     panning = null
-}
-
-function onPointerLeave(e: PointerEvent): void {
-    if (!active || e.pointerType === 'touch') return
-    if (panning) return
-
-    // `pointerout` fires when moving from the media onto the figure's own
-    // toolbar too — and `figureFrom` deliberately rejects toolbar targets, so
-    // asking it would read "left the figure" and hide the reset button just as
-    // the pointer arrives on it. `relatedTarget` is the authoritative answer
-    // when the browser provides one.
-    const next = e.relatedTarget
-    if (next instanceof Node && active.figure.contains(next)) return
-
-    // `relatedTarget === null` is ambiguous: it means "left to a non-node" OR
-    // "released outside the window mid-drag". A geometry check disambiguates —
-    // if the pointer is still inside the figure's box, the zoom stays. This
-    // also covers a drag released just outside: the user was mid-gesture, and
-    // dropping the zoom there would undo their pan.
-    if (e.clientX || e.clientY) {
-        const box = active.figure.getBoundingClientRect()
-        const inside = e.clientX >= box.left && e.clientX <= box.right
-            && e.clientY >= box.top && e.clientY <= box.bottom
-        if (inside) return
-    }
-
-    // Leaving the figure entirely: drop the zoom.
-    deactivate()
 }
 
 /**
@@ -657,7 +634,6 @@ export function installInlineZoom(): () => void {
     document.addEventListener('pointermove', onPointerMove)
     document.addEventListener('pointerup', onPointerUp)
     document.addEventListener('pointercancel', onPointerUp)
-    document.addEventListener('pointerout', onPointerLeave)
     document.addEventListener('click', onClick)
     document.addEventListener('keydown', onKeyDown)
     // `pointerover` bubbles (unlike `pointerenter`), so one listener covers
@@ -675,7 +651,6 @@ export function installInlineZoom(): () => void {
         document.removeEventListener('pointermove', onPointerMove)
         document.removeEventListener('pointerup', onPointerUp)
         document.removeEventListener('pointercancel', onPointerUp)
-        document.removeEventListener('pointerout', onPointerLeave)
         document.removeEventListener('click', onClick)
         document.removeEventListener('keydown', onKeyDown)
         document.removeEventListener('pointerover', onPointerOver)
