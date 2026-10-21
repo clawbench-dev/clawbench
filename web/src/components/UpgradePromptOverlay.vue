@@ -163,9 +163,19 @@ watch(visible, (v) => {
   text-decoration: underline;
 }
 
+/* Three buttons share one row only while that row can actually hold them.
+   Root cause of the squeeze: a CJK string's min-content width is ONE
+   character, so a flex item's default `min-width: auto` never protected these
+   labels — `flex-shrink: 1` happily shrank each button down to a single-glyph
+   column (measured at 320px: "立即升级" rendered as a 4-line vertical stack,
+   the other two broke in half). `white-space: nowrap` raises each button's
+   floor to its full label, which is what stops the shrink; `flex-wrap` then
+   hands any leftover overflow a second row instead of spilling out of the
+   panel. */
 .up-footer {
   padding: var(--space-4) var(--space-7) 14px;
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-4);
 }
 
@@ -178,6 +188,7 @@ watch(visible, (v) => {
   color: #fff;
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
+  white-space: nowrap;
   cursor: pointer;
   transition: opacity var(--duration-slow);
 }
@@ -194,6 +205,7 @@ watch(visible, (v) => {
   color: var(--text-secondary);
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-medium);
+  white-space: nowrap;
   cursor: pointer;
   transition: all var(--duration-slow);
 }
@@ -212,7 +224,24 @@ watch(visible, (v) => {
   background: var(--bg-tertiary);
   color: var(--text-muted);
   font-size: var(--font-size-md);
+  white-space: nowrap;
   cursor: pointer;
+}
+
+/* Narrow panels: the primary action owns the first row, the two dismissals
+   share the second. Same shape as WelcomeOverlay's footer (确定 full width,
+   then 重新扫描 / 不再提示 side by side), so the two first-run dialogs read
+   alike. Deliberately last: these overrides carry the same specificity as the
+   base button rules above, so only source order makes them win. */
+@media (max-width: 400px) {
+  .up-upgrade {
+    flex: 1 1 100%;
+  }
+
+  .up-skip,
+  .up-later {
+    flex: 1 1 0;
+  }
 }
 
 .up-fade-enter-active { transition: opacity var(--duration-slow) ease; }
