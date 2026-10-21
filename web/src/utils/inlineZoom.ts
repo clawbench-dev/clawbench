@@ -425,8 +425,17 @@ function onWheel(e: WheelEvent): void {
 
 let panning: { state: ZoomState; startX: number; startY: number; baseTx: number; baseTy: number; moved: boolean } | null = null
 
+/**
+ * Whether a pointer button is currently held down.
+ *
+ * Used to tell "focus because the user pressed" (which may become a drag) from
+ * "focus because the user tabbed here" (which should activate).
+ */
+let pointerPressed = false
+
 function onPointerDown(e: PointerEvent): void {
     if (e.pointerType === 'touch' || e.button !== 0) return
+    pointerPressed = true
     const figure = figureFrom(e.target)
     if (!figure) return
     const state = active?.figure === figure ? active : null
@@ -516,6 +525,7 @@ function onClickEnter(e: MouseEvent): void {
 }
 
 function onPointerUp(): void {
+    pointerPressed = false
     if (!panning) return
     panning.state.figure.classList.remove('is-panning')
     panning = null
@@ -582,6 +592,13 @@ function onFocusIn(e: FocusEvent): void {
     // "点击打开灯箱按钮经常先触发聚焦". Tabbing INTO the figure still activates,
     // because the figure itself is the focus target then, not a button.
     if (target.closest('.image-block-header')) return
+    // A PRESS moves focus to the figure (it carries `tabindex`), so pressing to
+    // START A DRAG focuses it before the browser knows a drag began. Activating
+    // here turned every drag-out into a zoom: the figure jumped to its 60dvh
+    // viewport under the pointer, which read as "拖不出去". Pointer-driven focus
+    // is therefore deferred to the click; only keyboard focus activates now.
+    // `onClickEnter` still covers the pointer path, so nothing is lost.
+    if (pointerPressed) return
     const figure = target.closest<HTMLElement>('.image-block-wrapper')
     if (!figure || !zoomableMedia(figure)) return
     ensureFocusable(figure)
@@ -667,6 +684,10 @@ export function installInlineZoom(): () => void {
     document.addEventListener('pointerdown', onPointerDown)
     document.addEventListener('pointermove', onPointerMove)
     document.addEventListener('pointerup', onPointerUp)
+    // An HTML5 drag swallows the `pointerup`, so the flag would stay set and the
+    // next keyboard focus would be ignored. Clear it on the drag lifecycle too.
+    document.addEventListener('dragend', onPointerUp, true)
+    document.addEventListener('drop', onPointerUp, true)
     // A resized window changes the 60dvh frame, so the zoomed media's box must
     // be recomputed from the new frame — otherwise a zoomed diagram keeps its
     // old pixel size and no longer fills (or overflows) the frame as intended.
@@ -688,6 +709,8 @@ export function installInlineZoom(): () => void {
         document.removeEventListener('pointerdown', onPointerDown)
         document.removeEventListener('pointermove', onPointerMove)
         document.removeEventListener('pointerup', onPointerUp)
+        document.removeEventListener('dragend', onPointerUp, true)
+        document.removeEventListener('drop', onPointerUp, true)
         window.removeEventListener('resize', onViewportResize)
         document.removeEventListener('pointercancel', onPointerUp)
         document.removeEventListener('click', onClick)
@@ -706,6 +729,10 @@ export function installInlineZoom(): () => void {
 /** Tear down the listeners (tests / HMR). */
 export function uninstallInlineZoom(): void {
     if (removeListeners) removeListeners()
+    // Reset the module-level press state too: leaving it set would make the next
+    // install ignore keyboard activation until some pointer interaction cleared
+    // it. Also the reason the tests must not leak it between cases.
+    pointerPressed = false
 }
 
 /** Test hook: current zoom scale of the active figure (0 when none). */

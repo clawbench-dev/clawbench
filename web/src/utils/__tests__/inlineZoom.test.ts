@@ -835,4 +835,59 @@ describe('inlineZoom — toolbar focus', () => {
 
     expect(isZoomActive()).toBe(true)
   })
+
+  it('does not activate from focus caused by a pointer press', () => {
+    // Pressing an image to DRAG it moves focus to the figure (it carries
+    // `tabindex`), and the browser only knows a drag began afterwards. If that
+    // focus activated the zoom, the figure jumped to its 60dvh viewport under
+    // the pointer — which read as "图片拖不到聊天区".
+    withPointerDevice(true)
+    installInlineZoom()
+    const figure = mountFigure()
+    const img = figure.querySelector('img')!
+    stubIntrinsic(figure, 300, 200, 300, 200)
+    stubRect(figure, 0, 0, 300, 200)
+    figure.setAttribute('tabindex', '0')
+
+    pointer('pointerdown', img, 100, 100)
+    figure.focus()
+
+    expect(isZoomActive()).toBe(false)
+    expect(figure.classList.contains('is-zooming')).toBe(false)
+  })
+
+  it('re-arms focus activation after the press ends', () => {
+    // The drag lifecycle must clear the pressed flag, or keyboard activation
+    // would stay dead for the rest of the session.
+    withPointerDevice(true)
+    installInlineZoom()
+    const figure = mountFigure()
+    const img = figure.querySelector('img')!
+    stubIntrinsic(figure, 300, 200, 300, 200)
+    stubRect(figure, 0, 0, 300, 200)
+    figure.setAttribute('tabindex', '0')
+
+    pointer('pointerdown', img, 100, 100)
+    pointer('pointerup', img, 100, 100)
+    figure.focus()
+
+    expect(isZoomActive()).toBe(true)
+  })
+
+  it('re-arms focus activation after a drag ends', () => {
+    // An HTML5 drag swallows `pointerup`, so `dragend` must clear the flag.
+    withPointerDevice(true)
+    installInlineZoom()
+    const figure = mountFigure()
+    const img = figure.querySelector('img')!
+    stubIntrinsic(figure, 300, 200, 300, 200)
+    stubRect(figure, 0, 0, 300, 200)
+    figure.setAttribute('tabindex', '0')
+
+    pointer('pointerdown', img, 100, 100)
+    img.dispatchEvent(new Event('dragend', { bubbles: true }))
+    figure.focus()
+
+    expect(isZoomActive()).toBe(true)
+  })
 })
