@@ -1340,10 +1340,10 @@ function buildInlineZoomJs(): string {
 
         var next = Math.min(MAX, Math.max(MIN, s.scale * (e.deltaY > 0 ? 1 / STEP : STEP)));
 
-        // Zooming back out to fit ends the gesture in this same notch.
-        if (e.deltaY > 0 && next <= MIN) { e.preventDefault(); deactivate(); return; }
-
-        if (next === s.scale) return;
+        // Zooming out bottoms out at fit scale and STOPS there; it does not
+        // leave the active state (the ring / reset button would vanish mid
+        // gesture and the next notch would scroll the page instead).
+        if (next === s.scale) { e.preventDefault(); return; }
         e.preventDefault();
         zoomAt(s, next, e.clientX, e.clientY);
     }, { passive: false });

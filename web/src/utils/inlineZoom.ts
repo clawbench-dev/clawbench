@@ -344,18 +344,14 @@ function onWheel(e: WheelEvent): void {
 
     const next = Math.min(MAX_SAFE_SCALE, Math.max(MIN_SCALE, state.scale * (e.deltaY > 0 ? 1 / WHEEL_STEP : WHEEL_STEP)))
 
-    // Zooming back out to fit scale ends the gesture in this same notch: the
-    // figure returns to its resting size and the page takes over again. Leaving
-    // the zoom engaged at 1x would show a grab cursor over an unzoomed figure
-    // and cost the user one extra notch to escape.
-    if (e.deltaY > 0 && next <= MIN_SCALE) {
-        e.preventDefault()
-        deactivate()
-        return
-    }
-
+    // Zooming out stops AT fit scale; it does not leave the active state.
+    // Leaving on the way out was wrong twice over: the ring and the reset
+    // button vanished the moment the reader scrolled back to 1x, and the very
+    // next notch went to the page instead of the figure — so the gesture they
+    // were still making silently turned into a document scroll. Exiting is the
+    // explicit act (outside click / Escape), never a side effect of scale.
     if (next === state.scale) {
-        // Already at the bound: swallow the notch rather than letting the page
+        // Already at a bound: swallow the notch rather than letting the page
         // scroll out from under a figure the user is actively zooming.
         e.preventDefault()
         return

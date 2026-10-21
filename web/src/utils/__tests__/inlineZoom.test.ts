@@ -219,28 +219,34 @@ describe('inlineZoom — wheel behaviour', () => {
     expect(activeZoomScale()).toBeLessThanOrEqual(MAX_SAFE_SCALE)
   })
 
-  it('drops the zoom and keeps the notch when zooming out at fit scale', () => {
-    // The gesture has to end somewhere: swallowing the notch avoids a page jump
-    // mid-zoom, and the next notch scrolls normally.
+  it('stays in the active state when zoomed back out to fit', () => {
+    // Zooming out bottoms out at fit scale and STOPS there. Leaving the active
+    // state on the way out was wrong twice: the ring and reset button vanished
+    // as soon as the reader scrolled back to 1x, and the next notch went to the
+    // page instead of the figure — their ongoing gesture silently became a
+    // document scroll. Exiting is explicit (outside click / Escape).
     const figure = mountFigure()
     const img = figure.querySelector('img')!
-    stubSize(img, 300, 200)
+    stubIntrinsic(figure, 300, 200, 300, 200)
     stubRect(figure, 0, 0, 300, 200)
     click(img)
 
     wheel(img, -120, 150, 100)
+    expect(activeZoomScale()).toBeGreaterThan(MIN_SCALE)
+
+    // Scroll back out until the floor.
+    for (let i = 0; i < 6; i++) {
+      const e = new WheelEvent('wheel', { deltaY: 120, bubbles: true, cancelable: true, clientX: 150, clientY: 100 })
+      img.dispatchEvent(e)
+      // The gesture always belongs to the figure while it is active.
+      expect(e.defaultPrevented).toBe(true)
+    }
+
+    expect(activeZoomScale()).toBe(MIN_SCALE)
     expect(isZoomActive()).toBe(true)
-
-    const out = new WheelEvent('wheel', { deltaY: 120, bubbles: true, cancelable: true })
-    img.dispatchEvent(out)
-    expect(out.defaultPrevented).toBe(true)
-    expect(isZoomActive()).toBe(false)
-    expect(img.style.transform).toBe('')
-
-    // The next notch is a plain page scroll.
-    const after = new WheelEvent('wheel', { deltaY: 120, bubbles: true, cancelable: true })
-    img.dispatchEvent(after)
-    expect(after.defaultPrevented).toBe(false)
+    expect(figure.classList.contains('is-zooming')).toBe(true)
+    // Back at the contain-fit size, still ready to zoom in again.
+    expect(parseFloat(img.style.width)).toBeCloseTo(300, 0)
   })
 
   it('zooms around the cursor, not the centre', () => {
