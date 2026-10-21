@@ -126,6 +126,27 @@ public class MainActivityFileChooserCaptureTest {
     }
 
     @Test
+    public void isImageOnlyRequest_falseForBlankAcceptString() {
+        // What WebView ACTUALLY returns for an input with no accept attribute:
+        // a one-element array holding an empty string, not an empty array. The
+        // loop skipped the blank entry and then returned true, so 上传文件 was
+        // classified as images-only and opened the photo picker.
+        WebChromeClient.FileChooserParams params = mock(WebChromeClient.FileChooserParams.class);
+        when(params.getAcceptTypes()).thenReturn(new String[]{ "" });
+
+        assertFalse(MainActivity.isImageOnlyRequest(params));
+    }
+
+    @Test
+    public void isImageOnlyRequest_falseForWhitespaceAcceptString() {
+        // Same vacuous-truth trap with whitespace instead of an empty string.
+        WebChromeClient.FileChooserParams params = mock(WebChromeClient.FileChooserParams.class);
+        when(params.getAcceptTypes()).thenReturn(new String[]{ "   " });
+
+        assertFalse(MainActivity.isImageOnlyRequest(params));
+    }
+
+    @Test
     public void isImageOnlyRequest_falseForNullAccept() {
         WebChromeClient.FileChooserParams params = mock(WebChromeClient.FileChooserParams.class);
         when(params.getAcceptTypes()).thenReturn(null);

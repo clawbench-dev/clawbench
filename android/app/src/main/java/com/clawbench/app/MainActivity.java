@@ -1164,26 +1164,33 @@ public class MainActivity extends AppCompatActivity {
      *
      * WebView normalises the accept list into MIME types, so the check is
      * "there is at least one accept type and every one of them is an image/*".
-     * An empty list means "any file" and must NOT be treated as images-only.
+     *
+     * The "at least one" half is load-bearing, not defensive: WebView hands
+     * back an array containing a single EMPTY string for an input with no
+     * accept attribute. Skipping empty entries and then returning true made
+     * that vacuous — the 上传文件 entry (no accept) was classified as
+     * images-only and opened the photo picker instead of the file manager.
      */
     static boolean isImageOnlyRequest(WebChromeClient.FileChooserParams params) {
         try {
             if (params == null) return false;
             String[] accepts = params.getAcceptTypes();
             if (accepts == null || accepts.length == 0) return false;
+            boolean sawAny = false;
             for (String accept : accepts) {
                 if (accept == null) continue;
                 // Some OEMs hand back ".jpg,.png" style extensions instead of
                 // MIME types; those are still image-only requests.
                 String trimmed = accept.trim().toLowerCase(Locale.ROOT);
                 if (trimmed.isEmpty()) continue;
+                sawAny = true;
                 if (trimmed.startsWith(".")) {
                     if (!trimmed.matches("\\.(jpe?g|png|gif|webp|bmp|heic|heif|avif)")) return false;
                     continue;
                 }
                 if (!trimmed.startsWith("image/")) return false;
             }
-            return true;
+            return sawAny;
         } catch (Exception e) {
             return false;
         }
