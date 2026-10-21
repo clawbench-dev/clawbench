@@ -77,6 +77,17 @@ interface ZoomState {
     savedSvgWidth?: string | null
     /** The author's inline `max-width` (mermaid writes one), restored on exit. */
     savedMaxWidth?: string
+    /**
+     * The media's width BEFORE the zoom touched it. Restored verbatim on exit.
+     *
+     * Re-deriving it on exit is not equivalent: by then the inline sizes have
+     * been cleared and `svgMediaFit.ts`'s natural-width hints may be gone, so
+     * the fallback chain can read a percentage (`width="100%"` →
+     * `parseFloat` → 100) and shrink the diagram to 100px. Caching the exact
+     * value makes the exit idempotent — enter/leave any number of times lands
+     * on the same layout.
+     */
+    restingWidth?: string
 }
 
 /** Only one figure can be zoomed at a time. */
@@ -135,7 +146,7 @@ function figureFrom(target: EventTarget | null): HTMLElement | null {
  */
 function deactivate(): void {
     if (!active) return
-    const { figure, media, savedSvgWidth, savedMaxWidth } = active
+    const { figure, media, savedSvgWidth, savedMaxWidth, restingWidth } = active
     media.style.transform = ''
     media.style.transformOrigin = ''
     media.style.width = ''
@@ -146,17 +157,14 @@ function deactivate(): void {
         if (savedSvgWidth === null) media.removeAttribute('width')
         else media.setAttribute('width', savedSvgWidth)
     }
-    // Put the author's own sizing back BEFORE deriving the resting width, which
-    // reads it.
+    // Put the author's own sizing back before anything else reads it.
     media.style.maxWidth = savedMaxWidth ?? ''
+    // Restore the exact pre-zoom width rather than recomputing it — see
+    // `restingWidth` for why recomputation is not equivalent.
+    media.style.width = restingWidth ?? ''
     // The resting aspect-ratio stays: it describes the artwork, not the zoom,
     // and dropping it would make the frame collapse for one frame on exit.
     figure.classList.remove(ZOOM_ACTIVE_CLASS)
-    // Re-apply the resting width: the zoom wrote an inline width/height that was
-    // just cleared, and the CSS fallback (`60dvh * ratio`) is only a rough
-    // stand-in — without this the frame would stay at the active size until the
-    // next render.
-    applyRestingWidth(figure)
     active = null
 }
 
@@ -301,6 +309,8 @@ function activate(figure: HTMLElement): ZoomState | null {
         // mermaid states the diagram's natural size as an inline max-width; the
         // zoom overwrites it, and the resting layout needs it back on exit.
         savedMaxWidth: media.style.maxWidth,
+        // Captured now, while the resting layout is still intact.
+        restingWidth: media.style.width,
     }
     figure.classList.add(ZOOM_ACTIVE_CLASS)
     media.style.transformOrigin = 'center center'
@@ -436,33 +446,6 @@ function onPointerOver(e: PointerEvent): void {
 }
 
 
-/**
- * Restore the media's resting width after the zoom cleared its inline sizes.
- *
- * The resting width is not a CSS constant — it is the artwork's own size,
- * clamped to the column — so it has to be re-derived here. `svgMediaFit.ts`
- * computes the same value when it stamps the figure; duplicating the few lines
- * keeps these two modules independent (importing it would be a cycle).
- */
-function applyRestingWidth(figure: HTMLElement): void {
-    const media = zoomableMedia(figure)
-    const column = figure.parentElement
-    if (!media || !column) return
-    const avail = column.getBoundingClientRect().width
-    if (!(avail > 0)) return
-    const nat = naturalSize({ figure, media, scale: MIN_SCALE, tx: 0, ty: 0 })
-    if (!(nat.w > 0 && nat.h > 0)) return
-    const ar = nat.w / nat.h
-    // The author's intended display width, when the markup states one.
-    const stated = parseFloat(media.style.maxWidth) || parseFloat(media.getAttribute('width') ?? '') || nat.w
-    const heightBudget = window.innerHeight * 0.6
-    const width = Math.min(stated, avail, heightBudget * ar)
-    if (!(width > 0)) return
-    media.style.width = `${Math.round(width * 100) / 100}px`
-    media.style.height = ''
-    media.style.maxWidth = ''
-    media.style.maxHeight = ''
-}
 
 /**
  * Click to enter the zoom state; click anywhere else to leave it.

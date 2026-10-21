@@ -342,6 +342,17 @@ describe('resting media width (svgMediaFit)', () => {
     expect(parseFloat(svg.style.width)).toBeLessThanOrEqual(800)
   })
 
+  it('ignores a percentage width attribute instead of reading it as pixels', () => {
+    // mermaid writes `width="100%"`. `parseFloat('100%')` is 100, so treating
+    // the attribute as a pixel count shrank the diagram to a 100px sliver.
+    const { wrapper, svg } = mkSvg(1600, 70)
+    svg.setAttribute('width', '100%')
+    stampSvgFigure(wrapper)
+    expect(parseFloat(svg.style.width)).not.toBe(100)
+    // Falls through to the viewBox width, clamped to the column.
+    expect(parseFloat(svg.style.width)).toBe(800)
+  })
+
   it('writes a resolved pixel width, never a percentage', () => {
     // A percentage would be relative to the shrink-to-fit figure, which is sized
     // by this element — the cycle that collapses everything to 300px.

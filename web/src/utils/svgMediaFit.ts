@@ -181,14 +181,32 @@ function applyMediaWidth(wrapper: HTMLElement, media: HTMLElement, ar: number): 
  */
 
 function intrinsicWidth(media: HTMLElement, ar: number): number {
-    const inlineMax = parseFloat(media.style.maxWidth)
-    if (Number.isFinite(inlineMax) && inlineMax > 0) return inlineMax
-    const attrW = parseFloat(media.getAttribute('width') ?? '')
-    if (Number.isFinite(attrW) && attrW > 0) return attrW
+    // `parsePx` (not `parseFloat`) on purpose: mermaid writes `width="100%"` on
+    // the svg, and `parseFloat('100%')` is 100 — a percentage read as a pixel
+    // count silently shrank diagrams to 100px. Only a px value counts.
+    const inlineMax = parsePx(media.style.maxWidth)
+    if (inlineMax !== null) return inlineMax
+    const attrW = parsePx(media.getAttribute('width'))
+    if (attrW !== null) return attrW
     const vb = (media as unknown as SVGSVGElement).viewBox?.baseVal
     if (vb && vb.width > 0) return vb.width
     // Last resort: derive from the height budget so a ratio is still honoured.
     return window.innerHeight * 0.6 * ar
+}
+
+/**
+ * Parse a CSS length that must be an absolute pixel value.
+ *
+ * Returns null for percentages, `auto`, `none`, and anything else that is not a
+ * plain `Npx`. A percentage here is not just wrong — it is actively harmful:
+ * `parseFloat` would turn `100%` into 100 and shrink the diagram to a sliver.
+ */
+function parsePx(value: string | null | undefined): number | null {
+    if (!value) return null
+    const m = /^\s*([\d.]+)px\s*$/.exec(value)
+    if (!m) return null
+    const n = Number(m[1])
+    return Number.isFinite(n) && n > 0 ? n : null
 }
 
 /**

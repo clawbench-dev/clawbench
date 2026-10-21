@@ -641,6 +641,47 @@ describe('inlineZoom — layout contract', () => {
     expect(w1 / h1).toBeCloseTo(100 / 50, 3)
   })
 
+  it('survives repeated enter/exit without shrinking the media', () => {
+    // "退出缩放后有概率变成很小的图": the exit path used to RE-DERIVE the resting
+    // width instead of restoring it. By then the inline sizes are cleared, so
+    // the fallback chain read the svg's `width="100%"` attribute and
+    // `parseFloat('100%')` returned 100 — the diagram collapsed to 100px on
+    // every second round trip. Restoring the captured value makes it idempotent.
+    const figure = mountFigure('mermaid')
+    const svg = figure.querySelector('svg')!
+    stubIntrinsic(figure, 300, 200, 600, 400)
+    stubRect(figure, 0, 0, 600, 400)
+    svg.setAttribute('width', '100%')
+    // What `svgMediaFit` would have written at rest.
+    svg.style.width = '300px'
+
+    for (let round = 0; round < 4; round++) {
+      click(svg)
+      expect(isZoomActive()).toBe(true)
+      wheel(svg, -120, 300, 200)
+      click(document.body)
+      expect(isZoomActive()).toBe(false)
+      // Exact pre-zoom width, every time.
+      expect(svg.style.width).toBe('300px')
+    }
+  })
+
+  it('never derives a width from a percentage attribute', () => {
+    // A percentage read as a pixel count is how a diagram becomes a sliver.
+    const figure = mountFigure('mermaid')
+    const svg = figure.querySelector('svg')!
+    stubIntrinsic(figure, 300, 200, 600, 400)
+    stubRect(figure, 0, 0, 600, 400)
+    svg.setAttribute('width', '100%')
+
+    click(svg)
+    click(document.body)
+
+    // Whatever it lands on, it must not be the 100 that `parseFloat('100%')`
+    // would produce.
+    expect(svg.style.width).not.toBe('100px')
+  })
+
   it('restores the resting layout exactly on exit', () => {
     // "布局恢复原状" — every inline size the zoom wrote must be cleared, or the
     // media would stay at a stale pixel size after leaving the active state.
