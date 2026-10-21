@@ -298,6 +298,42 @@ describe('forceCleanupStreamingState', () => {
     expect(onRenderNeeded).toHaveBeenCalledWith(true)
   })
 
+  it('marks the bubble as locally complete by default (terminal-event paths)', () => {
+    const messages: any[] = [
+      { role: 'assistant', content: '', blocks: [{ type: 'text', text: 'done' }], streaming: true },
+    ]
+    forceCleanupStreamingState(messages, { onRenderNeeded: vi.fn() })
+    expect(messages[0]._finalizedLocally).toBe(true)
+  })
+
+  it('does NOT claim completeness when the terminal event never arrived', () => {
+    // The safety net / reconnect-cleanup paths run precisely because this
+    // client was unsubscribed when the turn finished, so its bubble holds a
+    // stale prefix. Claiming completeness made rebuildFromDb keep that prefix
+    // instead of the DB row; for a summarized row (content stripped to
+    // `{"blocks":[]}`) the non-empty prefix then suppressed BOTH the summary
+    // and the lazy-original fetch — the reply rendered cut off at a tool call.
+    const messages: any[] = [
+      { role: 'assistant', content: '', blocks: [{ type: 'text', text: 'partial' }], streaming: true },
+    ]
+    forceCleanupStreamingState(
+      messages, { onRenderNeeded: vi.fn() }, undefined, { holdsCompleteTurn: false },
+    )
+    expect(messages[0]._finalizedLocally).toBeUndefined()
+  })
+
+  it('clears a stale completeness flag when the turn is not complete', () => {
+    // A bubble can carry the flag from an earlier rebuild in the same turn;
+    // leaving it set would re-assert a claim this call just refuted.
+    const messages: any[] = [
+      { role: 'assistant', content: '', blocks: [{ type: 'text', text: 'partial' }], streaming: true, _finalizedLocally: true },
+    ]
+    forceCleanupStreamingState(
+      messages, { onRenderNeeded: vi.fn() }, undefined, { holdsCompleteTurn: false },
+    )
+    expect(messages[0]._finalizedLocally).toBeUndefined()
+  })
+
   it('does not modify non-streaming messages', () => {
     const messages = [
       { role: 'user', content: 'hello' },
@@ -3911,6 +3947,56 @@ describe('rebuildFromDb: live placeholder matching without an adopted id', () =>
     expect(merged.some((m: any) => m === live)).toBe(false)
     expect(merged).toHaveLength(1)
     expect(merged[0].id).toBe(53240)
+  })
+})
+
+// A turn whose terminal event never reached this client (dropped by the hub
+// with reason=no_subscribers because the client was unsubscribed when it
+// finished) leaves the bubble holding a stale prefix — typically cut at the
+// last tool call. The DB row is the complete copy. When that row was also
+// summarized (content replaced by `{"blocks":[]}`), keeping the prefix
+// suppressed BOTH the summary and the lazy-original fetch, so the reply
+// rendered truncated until a session switch rebuilt the array from the DB.
+describe('rebuildFromDb: an incomplete live prefix yields to the DB row', () => {
+  const truncatedLive = () => ({
+    role: 'assistant',
+    id: 64071,
+    content: '',
+    blocks: [
+      { type: 'text', text: 'partial' },
+      { type: 'tool_use', name: 'Bash', id: 'c1', done: true },
+    ],
+    createdAt: '2026-10-21T07:32:55Z',
+  })
+
+  it('drops the truncated prefix when it is not marked locally complete', () => {
+    // What the safety net / reconnect cleanup now produces: streaming cleared
+    // but NO _finalizedLocally claim.
+    const live = truncatedLive()
+    const merged = rebuildFromDb([live] as any, [{
+      role: 'assistant', id: 64071, content: '', blocks: [], streaming: false,
+      summary: 'the full conclusion', createdAt: '2026-10-21T07:32:55Z',
+    }] as any, false)
+
+    expect(merged).toHaveLength(1)
+    expect(merged[0]).not.toBe(live)
+    // Empty blocks + a summary is exactly the state that renders the summary
+    // and triggers the lazy original fetch.
+    expect(merged[0].blocks).toEqual([])
+    expect(merged[0].summary).toBe('the full conclusion')
+  })
+
+  it('still keeps a locally-complete bubble (the terminal-event path)', () => {
+    // Mirror case: the client watched the turn end, so its object holds the
+    // whole reply and the summary-stripped row carries no extra information.
+    const live = { ...truncatedLive(), _finalizedLocally: true }
+    const merged = rebuildFromDb([live] as any, [{
+      role: 'assistant', id: 64071, content: '', blocks: [], streaming: false,
+      summary: 'x', createdAt: '2026-10-21T07:32:55Z',
+    }] as any, false)
+
+    expect(merged[0]).toBe(live)
+    expect((merged[0].blocks || []).length).toBe(2)
   })
 })
 

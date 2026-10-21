@@ -1091,6 +1091,10 @@ describe('onSessionEvent', () => {
     expect(loading.value).toBe(false)
     expect(onDisconnectStream).toHaveBeenCalled()
     expect(mockForceCleanupStreamingState).toHaveBeenCalled()
+    // We are here because the terminal stream event never arrived, so the
+    // bubble must NOT claim to hold the complete turn — otherwise the reload
+    // below keeps its stale prefix instead of the DB row.
+    expect(mockForceCleanupStreamingState.mock.calls[0][3]).toEqual({ holdsCompleteTurn: false })
   })
 
   it('resets loading to false when session is cancelled while loading=true (safety net)', () => {
@@ -1121,6 +1125,7 @@ describe('onSessionEvent', () => {
     expect(loading.value).toBe(false)
     expect(onDisconnectStream).toHaveBeenCalled()
     expect(mockForceCleanupStreamingState).toHaveBeenCalled()
+    expect(mockForceCleanupStreamingState.mock.calls[0][3]).toEqual({ holdsCompleteTurn: false })
   })
 
   it('calls loadHistory after safety net cleanup to refresh messages from DB', async () => {
@@ -4862,6 +4867,12 @@ describe('handleWsReconnect', () => {
 
     expect(onDisconnectStream).toHaveBeenCalled()
     expect(mockForceCleanupStreamingState).toHaveBeenCalled()
+    // This branch exists because the run finished while we were NOT
+    // subscribed, so the bubble holds a stale prefix. Claiming completeness
+    // made rebuildFromDb keep it, and for a summarized (stripped) row that
+    // suppressed both the summary and the lazy fetch — the reply rendered cut
+    // off at a tool call until a session switch rebuilt it.
+    expect(mockForceCleanupStreamingState.mock.calls[0][3]).toEqual({ holdsCompleteTurn: false })
     expect(loading.value).toBe(false)
 
     vi.restoreAllMocks()

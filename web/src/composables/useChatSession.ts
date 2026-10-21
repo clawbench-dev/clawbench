@@ -1360,7 +1360,20 @@ export function useChatSession(options: UseChatSessionOptions) {
           }
         }
         onDisconnectStream()
-        forceCleanupStreamingState(messages.value as ChatMessage[], { onRenderNeeded: (f) => onRenderUpdate(f ?? true), onExtractScheduledTasks })
+        // holdsCompleteTurn: false — we are here because the terminal stream
+        // event never reached this client (it is dropped with
+        // reason=no_subscribers whenever the client was unsubscribed while the
+        // turn ended), so the bubble holds a stale prefix, not the whole reply.
+        // Claiming completeness made rebuildFromDb keep that prefix and, for a
+        // summarized row (content replaced by `{"blocks":[]}`), suppressed both
+        // the summary and the lazy-original fetch — the reply rendered cut off
+        // at a tool call until a session switch rebuilt it from the DB.
+        forceCleanupStreamingState(
+          messages.value as ChatMessage[],
+          { onRenderNeeded: (f) => onRenderUpdate(f ?? true), onExtractScheduledTasks },
+          undefined,
+          { holdsCompleteTurn: false },
+        )
         loading.value = false
         // Reload from DB to get the final message state. The backend clears
         // in-memory running state before emitting terminal WS events, so a
@@ -1557,7 +1570,16 @@ export function useChatSession(options: UseChatSessionOptions) {
       // events, so the history just loaded is the final state.
       appLog.w(TAG, `${source}: session ${sid} no longer running — cleaning up stuck loading state`)
       onDisconnectStream()
-      forceCleanupStreamingState(messages.value as ChatMessage[], { onRenderNeeded: (f) => onRenderUpdate(f ?? true), onExtractScheduledTasks })
+      // holdsCompleteTurn: false — this branch exists because the run finished
+      // while this client was NOT subscribed, so the bubble holds a stale
+      // prefix cut at the last event that happened to arrive. Let rebuildFromDb
+      // yield to the DB row (see forceCleanupStreamingState's option docs).
+      forceCleanupStreamingState(
+        messages.value as ChatMessage[],
+        { onRenderNeeded: (f) => onRenderUpdate(f ?? true), onExtractScheduledTasks },
+        undefined,
+        { holdsCompleteTurn: false },
+      )
       loading.value = false
     } else {
       // Session idle — reload history to reflect changes that occurred while
