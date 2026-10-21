@@ -4,18 +4,31 @@
       <div class="ad-header">
         <Paperclip :size="16" class="bs-header-icon" />
         <span class="bs-header-title">{{ t('chat.attach.drawerTitle') }}</span>
+        <!-- Desktop only: the original header button. Kept for browsers and
+             Electron, where the photo/camera entries have nothing to offer. -->
+        <button
+          v-if="!isMobileLayout"
+          type="button"
+          class="ad-header-upload-btn"
+          :title="t('chat.attach.uploadFile')"
+          @click.stop="handleUploadClick"
+        >
+          <Upload :size="16" />
+          <span class="ad-upload-label">{{ t('chat.attach.uploadFile') }}</span>
+        </button>
       </div>
     </template>
 
-    <!-- Source actions. These live in the body (not the header) because the
-         header is a single 36px line shared with the title, and on a phone the
-         three entries would either wrap or shrink below a usable touch target.
-         A full-width strip also fixes the discoverability problem that made
-         mobile users report "there is no way to upload here": the header action
-         was easy to miss and sat right next to the drawer's close affordance.
-         Each button gets its own hidden input so the system picker opens in the
-         right mode — a plain file picker, the photo library, or the camera. -->
-    <div class="ad-source-bar">
+    <!-- Source actions — MOBILE ONLY. The header is a single 36px line shared
+         with the title, so on a phone the three entries would wrap or shrink
+         below a usable touch target; a full-width strip also fixes the
+         discoverability problem that made mobile users report "there is no way
+         to upload here". On desktop (browser or Electron) the original header
+         button is used instead: there is no camera or photo library to reach
+         from a mouse, and the strip only took vertical space away from the
+         file list. Each button gets its own hidden input so the system picker
+         opens in the right mode — file picker, photo library, or camera. -->
+    <div v-if="isMobileLayout" class="ad-source-bar">
       <button type="button" class="ad-source-btn" @click.stop="handleCameraClick">
         <Camera :size="18" />
         <span class="ad-source-label">{{ t('chat.attach.takePhoto') }}</span>
@@ -24,7 +37,7 @@
         <ImageIcon :size="18" />
         <span class="ad-source-label">{{ t('chat.attach.pickImage') }}</span>
       </button>
-      <button type="button" class="ad-source-btn ad-upload-btn" @click.stop="handleUploadClick">
+      <button type="button" class="ad-source-btn" @click.stop="handleUploadClick">
         <Upload :size="18" />
         <span class="ad-source-label ad-upload-label">{{ t('chat.attach.uploadFile') }}</span>
       </button>
@@ -238,6 +251,7 @@ import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useI18n } from 'vue-i18n'
 import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast'
+import { usePlatformDetect, isMobileOSUA } from '@/composables/usePlatformDetect'
 import { useShareIn } from '@/composables/useShareIn'
 import { useUploadRecent } from '@/composables/useUploadRecent'
 import { useFileUpload } from '@/composables/useFileUpload'
@@ -278,6 +292,17 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const dialog = useDialog()
 const toast = useToast()
+// Which attachment entries to show. "Mobile" here means the phone/tablet
+// platforms — Android, iOS, and iPadOS in desktop mode — not the INPUT axis:
+// a touchscreen laptop reports a coarse pointer in tablet mode but is still a
+// PC, and its file picker has no camera or photo library behind it. The host
+// axis is not the test either: Electron on a touch laptop stays desktop, and
+// a browser on a phone is still mobile.
+const { isAndroidApp } = usePlatformDetect()
+// computed, not `isMobileOSUA || isAndroidApp`: the latter returns the ref
+// object when the UA test is false, and a ref is always truthy — every desktop
+// browser would have been shown the mobile strip.
+const isMobileLayout = computed(() => isMobileOSUA || isAndroidApp.value)
 const { recentShares, fetchRecentShares, deleteRecentShare, clearRecentShares } = useShareIn()
 const { recentUploads, fetchRecentUploads, deleteRecentUpload, clearRecentUploads } = useUploadRecent()
 
@@ -618,9 +643,35 @@ defineExpose({ activeTab, handleFileDrop })
   gap: var(--space-4);
   width: 100%;
 }
-/* Source actions strip — the three ways to add a file that is not already in
-   the project. Full width and above the tab bar so it reads as the primary
-   action rather than as header chrome (see the template comment).
+
+/* Desktop header upload button — the pre-mobile-entry design, restored for
+   browsers and Electron. Text + icon, accent coloured, pushed to the right of
+   the title. */
+.ad-header-upload-btn {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-2);
+  height: 28px;
+  border: none;
+  background: none;
+  color: var(--accent-color);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+  transition: opacity var(--duration-fast);
+}
+.ad-header-upload-btn:active {
+  opacity: var(--opacity-muted);
+}
+.ad-upload-label {
+  line-height: 1;
+}
+
+/* Source actions strip — MOBILE ONLY (see the template comment): the three
+   ways to add a file that is not already in the project. Full width and above
+   the tab bar so it reads as the primary action rather than as header chrome.
 
    Equal thirds rather than content-sized: the labels are short and of similar
    length in both languages, so thirds give every entry the same touch target

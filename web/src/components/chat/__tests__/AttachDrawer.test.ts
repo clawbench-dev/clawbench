@@ -129,6 +129,19 @@ vi.mock('@/utils/format', () => ({
   formatRelativeTime: (_date: string) => 'just now',
 }))
 
+// Mobile detection drives which upload entry is rendered: the three-entry strip
+// (camera / photo / file) on phones and tablets, the original single header
+// button on desktop browsers and Electron. Mutable so each test picks a host;
+// `isMobileOSUA` is a module-level constant, so it is mocked alongside.
+const mockIsAndroidApp = ref(false)
+let mockIsMobileOSUA = false
+vi.mock('@/composables/usePlatformDetect', () => ({
+  usePlatformDetect: () => ({ isAndroidApp: mockIsAndroidApp }),
+  get isMobileOSUA() {
+    return mockIsMobileOSUA
+  },
+}))
+
 import AttachDrawer from '../AttachDrawer.vue'
 
 const i18n = createI18n({
@@ -196,6 +209,10 @@ describe('AttachDrawer', () => {
     mockCancelChatUpload.mockReset()
     mockCancelChatUpload.mockReturnValue([])
     sharedChatUploadCancelled.value = false
+    // Default to desktop: that is the majority case and the one whose layout
+    // the original header button belongs to. Mobile tests opt in explicitly.
+    mockIsAndroidApp.value = false
+    mockIsMobileOSUA = false
   })
 
   it('renders drawer when open=true', () => {
@@ -340,7 +357,8 @@ describe('AttachDrawer', () => {
     expect(getRawState(wrapper).currentDirDisplayName.value).toBe('/')
   })
 
-  it('renders the three source entries (camera, photo, file)', () => {
+  it('renders the three source entries (camera, photo, file) on mobile', () => {
+    mockIsMobileOSUA = true
     const wrapper = mountDrawer()
     const buttons = wrapper.findAll('.ad-source-btn')
     expect(buttons).toHaveLength(3)
@@ -350,7 +368,46 @@ describe('AttachDrawer', () => {
     expect(labels).toEqual(['Camera', 'Photo', 'Upload file'])
   })
 
+  it('hides the source strip on desktop and keeps the original header button', () => {
+    // Regression: the mobile strip was shown everywhere, so desktop browsers
+    // and Electron lost the header upload button and gained a camera entry
+    // that has nothing to open. Each host must get its own layout.
+    const wrapper = mountDrawer()
+    expect(wrapper.find('.ad-source-bar').exists()).toBe(false)
+    expect(wrapper.findAll('.ad-source-btn')).toHaveLength(0)
+    const headerBtn = wrapper.find('.ad-header-upload-btn')
+    expect(headerBtn.exists()).toBe(true)
+    expect(headerBtn.text()).toContain('Upload file')
+  })
+
+  it('mobile strip replaces the header button instead of doubling it', () => {
+    mockIsMobileOSUA = true
+    const wrapper = mountDrawer()
+    expect(wrapper.find('.ad-source-bar').exists()).toBe(true)
+    expect(wrapper.find('.ad-header-upload-btn').exists()).toBe(false)
+  })
+
+  it('treats the Android app as mobile even without a mobile UA', () => {
+    // The WebView's UA is the device's; the host axis is what makes this
+    // unambiguous when a tablet reports a desktop-looking string.
+    mockIsAndroidApp.value = true
+    const wrapper = mountDrawer()
+    expect(wrapper.find('.ad-source-bar').exists()).toBe(true)
+  })
+
+  it('desktop header button opens the plain file input', async () => {
+    const wrapper = mountDrawer()
+    const state = getRawState(wrapper)
+    const fakeInput = { value: 'old', click: vi.fn() }
+    state.fileInputRef.value = fakeInput
+    await wrapper.find('.ad-header-upload-btn').trigger('click')
+    await nextTick()
+    expect(fakeInput.click).toHaveBeenCalledTimes(1)
+    expect(state.filePickerOpen.value).toBe(true)
+  })
+
   it('gives each source entry its own picker mode (accept / capture)', () => {
+    mockIsMobileOSUA = true
     const wrapper = mountDrawer()
     // One shared input cannot serve all three: `accept` and `capture` are read
     // by the OS when the picker opens, so mutating them right before click() is
@@ -367,6 +424,7 @@ describe('AttachDrawer', () => {
   })
 
   it('camera entry is single-shot, the other two allow multiple', () => {
+    mockIsMobileOSUA = true
     const wrapper = mountDrawer()
     // A camera capture produces exactly one image; leaving `multiple` on would
     // make some pickers show a multi-select UI for a single shot.
