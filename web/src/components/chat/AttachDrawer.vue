@@ -106,6 +106,17 @@
 
       <!-- Recently shared -->
       <template v-if="activeTab === 'shares'">
+        <!-- Clear-all bar. Above the rows and only when there is something to
+             clear: an always-visible destructive action on an empty list is a
+             trap. The list is capped at 20, so this clears the whole directory
+             rather than the visible rows. -->
+        <div v-if="recentShares?.length" class="ad-clear-bar">
+          <span class="ad-clear-hint">{{ t('chat.attach.clearSharesHint', { n: recentShares.length }) }}</span>
+          <button class="ad-clear-btn" :disabled="clearing === 'shares'" @click.stop="handleClearShares">
+            <Trash2 :size="12" />
+            <span>{{ t('chat.attach.clearAll') }}</span>
+          </button>
+        </div>
         <LoadingIndicator v-if="loading" size="md" />
         <div v-else-if="!recentShares?.length" class="ad-empty">{{ t('chat.attach.emptyShares') }}</div>
         <button
@@ -162,6 +173,15 @@
             <span class="ad-file-meta">{{ f.path ? dirName(f.path) + ' · ' : '' + formatFileSize(f.size) }}</span>
           </div>
         </button>
+        <!-- Clear-all bar. Sits above the completed rows (the in-flight batch has
+             its own terminate action) and clears the whole directory. -->
+        <div v-if="recentUploads?.length" class="ad-clear-bar">
+          <span class="ad-clear-hint">{{ t('chat.attach.clearUploadsHint', { n: recentUploads.length }) }}</span>
+          <button class="ad-clear-btn" :disabled="clearing === 'uploads'" @click.stop="handleClearUploads">
+            <Trash2 :size="12" />
+            <span>{{ t('chat.attach.clearAll') }}</span>
+          </button>
+        </div>
         <!-- Completed uploads from server -->
         <LoadingIndicator v-if="loading && !recentUploads?.length && uploadingFiles.length === 0" size="md" />
         <div v-else-if="!recentUploads?.length && uploadingFiles.length === 0" class="ad-empty">{{ t('chat.attach.emptyUploads') }}</div>
@@ -217,6 +237,7 @@ import AttachmentTags from '@/components/chat/AttachmentTags.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useI18n } from 'vue-i18n'
 import { useDialog } from '@/composables/useDialog'
+import { useToast } from '@/composables/useToast'
 import { useShareIn } from '@/composables/useShareIn'
 import { useUploadRecent } from '@/composables/useUploadRecent'
 import { useFileUpload } from '@/composables/useFileUpload'
@@ -256,8 +277,9 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const dialog = useDialog()
-const { recentShares, fetchRecentShares, deleteRecentShare } = useShareIn()
-const { recentUploads, fetchRecentUploads, deleteRecentUpload } = useUploadRecent()
+const toast = useToast()
+const { recentShares, fetchRecentShares, deleteRecentShare, clearRecentShares } = useShareIn()
+const { recentUploads, fetchRecentUploads, deleteRecentUpload, clearRecentUploads } = useUploadRecent()
 
 // ── Upload logic (now lives inside the drawer) ──
 const { pendingFiles, attachedFiles, handleFileSelect, handleFileDrop, cancelChatUpload, chatUploadCancelled } = useFileUpload()
@@ -427,6 +449,93 @@ async function handleDeleteUpload(item: { path: string; name?: string }) {
   await deleteRecentUpload(item.path)
 }
 
+// Which tab's clear-all is in flight. A single ref rather than two booleans:
+// only one tab is visible at a time, so this doubles as the button's disabled
+// state and prevents a double-tap from firing two sweeps.
+const clearing = ref<'shares' | 'uploads' | null>(null)
+
+/**
+ * Clear the whole recent-shares directory.
+ *
+ * Confirms first — this deletes every file in .clawbench/share-in/, including
+ * any the user did not scroll to. Any share currently attached to the composer
+ * is detached, otherwise the footer would keep pointing at a deleted file.
+ */
+async function handleClearShares() {
+  if (clearing.value) return
+  // Claimed BEFORE the confirm await: a double-tap would otherwise pass the
+  // guard twice, because `clearing` is only observed after the dialog resolves.
+  clearing.value = 'shares'
+  try {
+    const confirmed = await dialog.confirm(t('chat.attach.clearSharesConfirm'), {
+      dangerous: true,
+      confirmText: t('common.delete'),
+    })
+    if (!confirmed) return
+
+    // Detach every attached file that lives in this directory, not just the
+    // ones in the visible list: the sweep removes the whole directory.
+    for (const f of [...(props.attachedFiles ?? [])]) {
+      if (isInRecentDir(f.path, 'share-in')) emit('remove-attached', { path: f.path })
+    }
+    const result = await clearRecentShares()
+    reportClearResult(result, 'chat.attach.clearSharesDone', 'chat.attach.clearSharesFailed')
+  } finally {
+    clearing.value = null
+  }
+}
+
+/** Clear the whole recent-uploads directory. See handleClearShares. */
+async function handleClearUploads() {
+  if (clearing.value) return
+  clearing.value = 'uploads' // see handleClearShares — claimed before the await
+  try {
+    const confirmed = await dialog.confirm(t('chat.attach.clearUploadsConfirm'), {
+      dangerous: true,
+      confirmText: t('common.delete'),
+    })
+    if (!confirmed) return
+
+    for (const f of [...(props.attachedFiles ?? [])]) {
+      if (isInRecentDir(f.path, 'uploads')) emit('remove-attached', { path: f.path })
+    }
+    const result = await clearRecentUploads()
+    reportClearResult(result, 'chat.attach.clearUploadsDone', 'chat.attach.clearUploadsFailed')
+  } finally {
+    clearing.value = null
+  }
+}
+
+/** Whether a project-relative path lives directly in .clawbench/<subDir>/. */
+function isInRecentDir(path: string, subDir: string): boolean {
+  const normalized = path.replace(/\\/g, '/')
+  const prefix = `.clawbench/${subDir}/`
+  if (!normalized.startsWith(prefix)) return false
+  // Only flat entries: the sweep skips subdirectories, so detaching a nested
+  // file would remove an attachment the sweep left intact.
+  return !normalized.slice(prefix.length).includes('/')
+}
+
+/**
+ * Report the outcome of a clear. A partial sweep must not read as success —
+ * the user would assume the tab is empty when files are still on disk.
+ */
+function reportClearResult(
+  result: { deleted: number; failed: number } | null,
+  doneKey: string,
+  failedKey: string,
+) {
+  if (!result) {
+    toast.show(t(failedKey), { icon: 'warning', type: 'error' })
+    return
+  }
+  if (result.failed > 0) {
+    toast.show(t('chat.attach.clearPartial', { deleted: result.deleted, failed: result.failed }),
+      { icon: 'warning', type: 'error', duration: 3000 })
+    return
+  }
+  toast.show(t(doneKey, { n: result.deleted }), { icon: 'delete', type: 'success', duration: 2000 })
+}
 
 // Effective current dir: always show something (even at project root)
 const effectiveCurrentDir = computed(() => props.currentDir || '.')
@@ -805,6 +914,57 @@ defineExpose({ activeTab, handleFileDrop })
 }
 @media (hover: hover) {
   .ad-terminate-btn:hover {
+    background: color-mix(in srgb, var(--color-red) 12%, transparent);
+    border-color: color-mix(in srgb, var(--color-red) 40%, transparent);
+  }
+}
+
+/* ── Clear-all bar ──
+   Same shape as .ad-upload-banner (a full-width strip above the rows) so the
+   two destructive affordances in this drawer look like the same kind of thing.
+   The hint is muted and ellipsised: on a narrow phone the count is the part
+   that matters, the label is not. */
+.ad-clear-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) 14px;
+  border-bottom: 1px solid var(--border-color);
+}
+.ad-clear-hint {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ad-clear-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 24px;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full);
+  background: none;
+  color: var(--color-red);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  transition: background var(--duration-fast), border-color var(--duration-fast);
+}
+.ad-clear-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.ad-clear-btn:active:not(:disabled) {
+  background: color-mix(in srgb, var(--color-red) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-red) 40%, transparent);
+}
+@media (hover: hover) {
+  .ad-clear-btn:hover:not(:disabled) {
     background: color-mix(in srgb, var(--color-red) 12%, transparent);
     border-color: color-mix(in srgb, var(--color-red) 40%, transparent);
   }

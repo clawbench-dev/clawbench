@@ -50,6 +50,38 @@ async function deleteRecentUpload(path: string) {
   return false
 }
 
+/**
+ * Empty the whole uploads directory.
+ *
+ * Distinct from calling deleteRecentUpload per row: the list is capped at 20,
+ * so per-row deletion would leave anything older behind and the tab would look
+ * cleared only until the next fetch. Returns the server's counts so the caller
+ * can report a partial sweep instead of claiming success.
+ */
+async function clearRecentUploads(): Promise<{ deleted: number; failed: number } | null> {
+  try {
+    const res = await fetch('/api/upload/recent', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ all: true }),
+    })
+    if (res.ok) {
+      const data = await res.json().catch(() => null)
+      // Same reasoning as the single delete: only {ok:true} proves the server
+      // understood `all`. An older server ignores the unknown field and answers
+      // 400 MissingPath, which must not be reported as a successful clear.
+      if (data && data.ok === true) {
+        recentUploads.value = []
+        return { deleted: Number(data.deleted) || 0, failed: Number(data.failed) || 0 }
+      }
+    }
+    appLog.w('UploadRecent', 'Failed to clear recent uploads', res.status)
+  } catch (e) {
+    appLog.w('UploadRecent', 'Failed to clear recent uploads', e)
+  }
+  return null
+}
+
 export function useUploadRecent() {
-  return { recentUploads, fetchRecentUploads, deleteRecentUpload }
+  return { recentUploads, fetchRecentUploads, deleteRecentUpload, clearRecentUploads }
 }

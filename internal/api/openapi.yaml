@@ -5655,8 +5655,12 @@ paths:
           description: 最近上传记录
     delete:
       tags: [Upload]
-      summary: 删除一条最近上传记录
-      description: 按请求体 `{path}` 删除单条记录（不是清空全部；清空需逐条调用）。
+      summary: 删除最近上传记录（单条或清空整个目录）
+      description: |
+        - `{path}`：删除单条文件。
+        - `{all:true}`：清空 `.clawbench/uploads/` 整个目录（只删普通文件，
+          子目录保留）。无法删除的文件计入 `failed`，不影响其余文件。
+        注意：清空会连旧消息仍在引用的附件一起删除。
       operationId: uploadRecentClear
       requestBody:
         required: true
@@ -5667,9 +5671,12 @@ paths:
               properties:
                 path:
                   type: string
+                all:
+                  type: boolean
+                  description: 清空整个 uploads 目录；与 `path` 互斥，优先。
       responses:
         "200":
-          description: 结果
+          description: 结果（清空模式返回 `{ok, deleted, failed}`）
 
   /api/share-in/recent:
     get:
@@ -5681,8 +5688,11 @@ paths:
           description: 记录
     delete:
       tags: [Upload]
-      summary: 删除一条最近接收记录
-      description: 按请求体 `{path}` 删除单条记录（不是清空全部）。
+      summary: 删除最近接收记录（单条或清空整个目录）
+      description: |
+        - `{path}`：删除单条文件。
+        - `{all:true}`：清空 `.clawbench/share-in/` 整个目录（只删普通文件，
+          子目录保留）。无法删除的文件计入 `failed`，不影响其余文件。
       operationId: shareInRecentClear
       requestBody:
         required: true
@@ -5693,9 +5703,12 @@ paths:
               properties:
                 path:
                   type: string
+                all:
+                  type: boolean
+                  description: 清空整个 share-in 目录；与 `path` 互斥，优先。
       responses:
         "200":
-          description: 结果
+          description: 结果（清空模式返回 `{ok, deleted, failed}`）
 
   # ── ClientLogs ────────────────────────────────────────────────────────────
   /api/client-log:

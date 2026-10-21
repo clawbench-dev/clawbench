@@ -134,3 +134,67 @@ describe('useUploadRecent', () => {
     expect(result).toBe(false)
   })
 })
+
+describe('useUploadRecent clearRecentUploads', () => {
+  let { recentUploads, clearRecentUploads } = useUploadRecent()
+
+  beforeEach(() => {
+    recentUploads.value = []
+    vi.restoreAllMocks()
+  })
+
+  it('sends {all:true} and empties the list', async () => {
+    recentUploads.value = [{ name: 'a.png', path: '.clawbench/uploads/a.png', size: 1, modTime: '' }]
+    const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ ok: true, deleted: 4, failed: 0 }),
+    } as Response)
+
+    const result = await clearRecentUploads()
+
+    // `all` is what tells the server to sweep the directory rather than one
+    // file; sending `path` here would delete nothing.
+    expect(spy).toHaveBeenCalledWith('/api/upload/recent', expect.objectContaining({
+      method: 'DELETE',
+      body: JSON.stringify({ all: true }),
+    }))
+    expect(result).toEqual({ deleted: 4, failed: 0 })
+    expect(recentUploads.value).toEqual([])
+  })
+
+  it('surfaces the server failure count', async () => {
+    const { clearRecentUploads: clear } = useUploadRecent()
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ ok: true, deleted: 2, failed: 1 }),
+    } as Response)
+
+    expect(await clear()).toEqual({ deleted: 2, failed: 1 })
+  })
+
+  it('keeps the list and returns null when the server answers an old-format body', async () => {
+    // An older server ignores `all`, answers 400 (or 200 + an array). Treating
+    // that as success would hide files that are still on disk.
+    recentUploads.value = [{ name: 'a.png', path: '.clawbench/uploads/a.png', size: 1, modTime: '' }]
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve([{ name: 'a.png', path: '.clawbench/uploads/a.png' }]),
+    } as Response)
+
+    expect(await clearRecentUploads()).toBeNull()
+    expect(recentUploads.value).toHaveLength(1)
+  })
+
+  it('keeps the list and returns null on a non-ok response', async () => {
+    recentUploads.value = [{ name: 'a.png', path: '.clawbench/uploads/a.png', size: 1, modTime: '' }]
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: false, status: 400 } as Response)
+
+    expect(await clearRecentUploads()).toBeNull()
+    expect(recentUploads.value).toHaveLength(1)
+  })
+
+  it('returns null on a network error instead of throwing', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('Network error'))
+    expect(await clearRecentUploads()).toBeNull()
+  })
+})

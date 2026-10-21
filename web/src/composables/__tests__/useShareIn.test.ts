@@ -104,3 +104,57 @@ describe('useShareIn', () => {
     expect(recentShares.value.length).toBe(1)
   })
 })
+
+describe('useShareIn clearRecentShares', () => {
+  const files = [{ name: 'a.txt', path: '.clawbench/share-in/a.txt', size: 1, modTime: '' }]
+
+  beforeEach(() => {
+    mockFetch.mockReset()
+  })
+
+  it('sends {all:true}, empties the list, and returns the counts', async () => {
+    mockFetch.mockResolvedValue({ ok: true, json: async () => ({ ok: true, deleted: 3, failed: 0 }) })
+
+    const { useShareIn } = await import('@/composables/useShareIn.ts')
+    const { recentShares, clearRecentShares } = useShareIn()
+    recentShares.value = [...files]
+
+    const result = await clearRecentShares()
+
+    expect(mockFetch).toHaveBeenCalledWith('/api/share-in/recent', expect.objectContaining({
+      method: 'DELETE',
+      body: JSON.stringify({ all: true }),
+    }))
+    expect(result).toEqual({ deleted: 3, failed: 0 })
+    expect(recentShares.value).toEqual([])
+  })
+
+  it('surfaces a partial sweep', async () => {
+    mockFetch.mockResolvedValue({ ok: true, json: async () => ({ ok: true, deleted: 1, failed: 2 }) })
+
+    const { useShareIn } = await import('@/composables/useShareIn.ts')
+    const { clearRecentShares } = useShareIn()
+
+    expect(await clearRecentShares()).toEqual({ deleted: 1, failed: 2 })
+  })
+
+  it('keeps the list and returns null when the server does not confirm', async () => {
+    mockFetch.mockResolvedValue({ ok: true, json: async () => files })
+
+    const { useShareIn } = await import('@/composables/useShareIn.ts')
+    const { recentShares, clearRecentShares } = useShareIn()
+    recentShares.value = [...files]
+
+    expect(await clearRecentShares()).toBeNull()
+    expect(recentShares.value).toHaveLength(1)
+  })
+
+  it('returns null on a network error', async () => {
+    mockFetch.mockRejectedValue(new TypeError('Network error'))
+
+    const { useShareIn } = await import('@/composables/useShareIn.ts')
+    const { clearRecentShares } = useShareIn()
+
+    expect(await clearRecentShares()).toBeNull()
+  })
+})
