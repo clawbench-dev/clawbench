@@ -345,6 +345,24 @@ func (fw *FileWatcher) settleClientTimersLocked(clientID string) {
 	}
 }
 
+// isPathAtOrUnder reports whether p is dir itself or a path inside it.
+//
+// The separator is appended only when dir does not already end with one: a
+// watched directory can be a filesystem root ("/" on POSIX, `D:\` on Windows),
+// and the naive `dir + Separator` form then yields "//" or `D:\\`, which no
+// child ever starts with — so a project browsed at a drive root would never
+// receive a dir_change refresh.
+func isPathAtOrUnder(p, dir string) bool {
+	if p == dir {
+		return true
+	}
+	prefix := dir
+	if !strings.HasSuffix(prefix, string(filepath.Separator)) {
+		prefix += string(filepath.Separator)
+	}
+	return strings.HasPrefix(p, prefix)
+}
+
 // pendingEventStillWatchedLocked reports whether a pending event's target is
 // still one this client watches, given its current (already updated) target.
 // Must be called with fw.mu held.
@@ -362,8 +380,7 @@ func (fw *FileWatcher) pendingEventStillWatchedLocked(client *watchClient, we Wa
 		if client.dirPath == "" {
 			return false
 		}
-		return we.Path == client.dirPath ||
-			strings.HasPrefix(we.Path, client.dirPath+string(filepath.Separator))
+		return isPathAtOrUnder(we.Path, client.dirPath)
 	default:
 		return false
 	}
@@ -449,7 +466,7 @@ func (fw *FileWatcher) handleFsEvent(event fsnotify.Event) { //nolint:gocyclo //
 			if absPath == client.dirPath {
 				// Direct event on the directory (e.g., Rename of the dir itself)
 				dirMatch = event.Has(fsnotify.Create) || event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename)
-			} else if strings.HasPrefix(absPath, client.dirPath+string(filepath.Separator)) {
+			} else if isPathAtOrUnder(absPath, client.dirPath) {
 				// Child event — file created/removed/renamed inside the directory
 				dirMatch = event.Has(fsnotify.Create) || event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename)
 			}

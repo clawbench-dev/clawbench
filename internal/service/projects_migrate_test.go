@@ -1218,3 +1218,37 @@ func TestRenameProject_OldPathGetsAFreshID(t *testing.T) {
 // The recreation sites are NOT all in database.go: project_forges and the RAG
 // store own their own schema, so this scans the whole module rather than one
 // file. A rename or relocation of a CREATE INDEX is therefore caught too.
+
+// A project registered AT a filesystem root must claim the files below it.
+//
+// The prefix used to be built as `path + Separator` unconditionally, so a root
+// project (`/`, or `D:\` on Windows) produced "//" and no file was ever
+// attributed to it — every session/file in such a project resolved to the 0
+// sentinel instead of the project. The Windows shape is what surfaced it: a
+// project opened at a drive root lost all of its attribution.
+func TestLongestProjectPrefix_RootProject(t *testing.T) {
+	sep := string(filepath.Separator)
+	projects := []projectPathEntry{{id: 7, path: sep}}
+
+	if got := longestProjectPrefix(projects, sep); got != 7 {
+		t.Errorf("root project must claim itself: got %d, want 7", got)
+	}
+	if got := longestProjectPrefix(projects, filepath.Join(sep, "7-Zip", "a.txt")); got != 7 {
+		t.Errorf("root project must claim a child: got %d, want 7", got)
+	}
+}
+
+// The separator boundary must still hold: a sibling sharing a name prefix is a
+// different project.
+func TestLongestProjectPrefix_SiblingPrefix(t *testing.T) {
+	sep := string(filepath.Separator)
+	base := filepath.Join(sep, "home", "u", "proj")
+	projects := []projectPathEntry{{id: 1, path: base}, {id: 2, path: base + "-other"}}
+
+	if got := longestProjectPrefix(projects, filepath.Join(base, "a.go")); got != 1 {
+		t.Errorf("file under proj: got %d, want 1", got)
+	}
+	if got := longestProjectPrefix(projects, filepath.Join(base+"-other", "a.go")); got != 2 {
+		t.Errorf("file under proj-other: got %d, want 2", got)
+	}
+}

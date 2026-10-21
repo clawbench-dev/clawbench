@@ -3,6 +3,7 @@ package model_test
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"clawbench/internal/model"
@@ -335,4 +336,60 @@ func TestNormalizeProjectPath_NonExistentFallsBackToClean(t *testing.T) {
 	got := model.NormalizeProjectPath(missing)
 	assert.True(t, filepath.IsAbs(got))
 	assert.Equal(t, filepath.Clean(missing), got)
+}
+
+// A project whose root IS a filesystem root ("/" on POSIX, `D:\` on Windows)
+// must still resolve its own children.
+//
+// The comparison used to build the prefix as `evalBase + Separator`
+// unconditionally, which for a root base yields "//" — no child can ever start
+// with that, so EVERY path inside such a project was reported as a traversal
+// attempt. On Windows that surfaced as 403 for every directory in a project
+// opened at a drive root (the file manager could not list anything).
+func TestValidatePath_BaseIsFilesystemRoot(t *testing.T) {
+	root := "/"
+	if runtime.GOOS == "windows" {
+		root = filepath.VolumeName(os.Getenv("SystemDrive")) + `\`
+		if root == `\` {
+			root = `C:\`
+		}
+	}
+	if _, err := os.Stat(root); err != nil {
+		t.Skipf("filesystem root %q is not reachable: %v", root, err)
+	}
+
+	// A child that certainly exists on every platform's root.
+	var rel string
+	if runtime.GOOS == "windows" {
+		rel = "Windows"
+	} else {
+		rel = "tmp"
+	}
+	ensureDir(t, filepath.Join(root, rel))
+
+	path, valid := model.ValidatePath(root, rel)
+	assert.True(t, valid, "a child of the filesystem root must be inside it")
+	assert.Equal(t, filepath.Join(root, rel), path)
+
+	// Note: traversal is deliberately NOT asserted here. A project rooted at the
+	// filesystem root has no wider boundary to escape — filepath.Join("/", "..")
+	// is "/" — so "inside the root" is the only meaningful answer. Traversal
+	// refusal for ordinary bases is covered by TestValidatePath_PathTraversal.
+}
+
+// IsPathUnderBase must not be fooled by a base that merely shares a prefix.
+func TestIsPathUnderBase_SiblingPrefix(t *testing.T) {
+	sep := string(filepath.Separator)
+	base := sep + "a" + sep + "proj"
+
+	assert.True(t, model.IsPathUnderBase(base, base))
+	assert.True(t, model.IsPathUnderBase(base+sep+"x"+sep+"y", base))
+	assert.False(t, model.IsPathUnderBase(base+"-other"+sep+"y", base))
+}
+
+// The root base itself is the case the old separator concatenation broke.
+func TestIsPathUnderBase_RootBase(t *testing.T) {
+	sep := string(filepath.Separator)
+	assert.True(t, model.IsPathUnderBase(sep+"tmp", sep))
+	assert.True(t, model.IsPathUnderBase(sep, sep))
 }

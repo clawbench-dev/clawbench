@@ -32,6 +32,28 @@ func NormalizeProjectPath(p string) string {
 	return p
 }
 
+// IsPathUnderBase reports whether evalPath is base itself or lives inside it.
+//
+// Both arguments must already be absolute and symlink-resolved. The separator is
+// appended to the base ONLY when it does not already end with one: a filesystem
+// root is itself a separator ("/" on POSIX, `D:\` on Windows), so the naive
+// `base + Separator` form produced "//" or `D:\\` and every child of a
+// root-based project compared as a miss. That made a project whose root IS a
+// drive unusable — the file manager answered 403 for every directory in it.
+//
+// Callers must pass the resolved (EvalSymlinks) form of both paths; a lexical
+// comparison here would let a symlink escape the base.
+func IsPathUnderBase(evalPath, evalBase string) bool {
+	if evalPath == evalBase {
+		return true
+	}
+	prefix := evalBase
+	if !strings.HasSuffix(prefix, string(filepath.Separator)) {
+		prefix += string(filepath.Separator)
+	}
+	return strings.HasPrefix(evalPath, prefix)
+}
+
 // ValidatePath validates that a relative path stays within the base directory boundary.
 // It resolves symlinks on both sides before comparing, preventing symlink traversal attacks.
 // Returns the lexical absolute path (for OS operations) and whether it's valid.
@@ -63,7 +85,7 @@ func ValidatePath(basePath, relPath string) (string, bool) {
 		}
 	}
 
-	valid := strings.HasPrefix(evalPath, evalBase+string(filepath.Separator)) || evalPath == evalBase
+	valid := IsPathUnderBase(evalPath, evalBase)
 	return absPath, valid
 }
 

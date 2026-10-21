@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 
 	"clawbench/internal/frontend"
 	i18npkg "clawbench/internal/i18n"
@@ -278,7 +277,7 @@ func isPathUnderBase(absPath, basePath string) bool {
 			return false
 		}
 	}
-	return strings.HasPrefix(evalPath, evalBase+string(filepath.Separator)) || evalPath == evalBase
+	return model.IsPathUnderBase(evalPath, evalBase)
 }
 
 // resolveAgentConfig resolves agent configuration from model.Agents.
