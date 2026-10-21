@@ -249,6 +249,15 @@ afterEach(() => {
   }
 })
 
+/**
+ * Command badges are a USER-message affordance. The default mount leaves
+ * `role` empty, so badge tests must opt in explicitly — an assistant reply
+ * that merely starts with a path ("/tmp 已 100% 满…") must stay plain text.
+ */
+function mountUserBlocks(props: Record<string, unknown> = {}) {
+  return mountBlocks({ role: 'user', ...props })
+}
+
 describe('ContentBlocks', () => {
   // ── Text blocks ──
 
@@ -262,7 +271,7 @@ describe('ContentBlocks', () => {
     })
 
     it('renders ClawBench badge for text starting with /cb-chatsearch', () => {
-      const wrapper = mountBlocks({
+      const wrapper = mountUserBlocks({
         blocks: [{ type: 'text', text: '/cb-chatsearch how to do X' }],
       })
       const badge = wrapper.find('.slash-command-badge')
@@ -272,7 +281,7 @@ describe('ContentBlocks', () => {
     })
 
     it('renders ClawBench badge for text starting with /cb-task', () => {
-      const wrapper = mountBlocks({
+      const wrapper = mountUserBlocks({
         blocks: [{ type: 'text', text: '/cb-task run tests' }],
       })
       const badge = wrapper.find('.slash-command-badge')
@@ -281,7 +290,7 @@ describe('ContentBlocks', () => {
     })
 
     it('renders agent slash command badge for text starting with /', () => {
-      const wrapper = mountBlocks({
+      const wrapper = mountUserBlocks({
         blocks: [{ type: 'text', text: '/commit fix bug' }],
       })
       const badge = wrapper.find('.slash-command-badge')
@@ -291,7 +300,7 @@ describe('ContentBlocks', () => {
     })
 
     it('renders a skill badge for text starting with #name', () => {
-      const wrapper = mountBlocks({
+      const wrapper = mountUserBlocks({
         blocks: [{ type: 'text', text: '#pdf summarize this' }],
       })
       const badge = wrapper.find('.skill-command-badge')
@@ -313,14 +322,14 @@ describe('ContentBlocks', () => {
         ['#pdf do it', 'lucide-sparkles'],
       ]
       for (const [text, iconClass] of cases) {
-        const wrapper = mountBlocks({ blocks: [{ type: 'text', text }] })
+        const wrapper = mountUserBlocks({ blocks: [{ type: 'text', text }] })
         const icon = wrapper.find(`.slash-command-badge .command-badge-icon.${iconClass}`)
         expect(icon.exists(), `${iconClass} missing for "${text}"`).toBe(true)
       }
     })
 
     it('renders a bare skill badge with no rest text', () => {
-      const wrapper = mountBlocks({
+      const wrapper = mountUserBlocks({
         blocks: [{ type: 'text', text: '#pdf' }],
       })
       expect(wrapper.find('.skill-command-badge').text()).toBe('#pdf')
@@ -328,18 +337,48 @@ describe('ContentBlocks', () => {
     })
 
     it('does not badge a # that is not the first token', () => {
-      const wrapper = mountBlocks({
+      const wrapper = mountUserBlocks({
         blocks: [{ type: 'text', text: 'see issue #12' }],
       })
       expect(wrapper.find('.skill-command-badge').exists()).toBe(false)
     })
 
     it('renders a slash badge, not a skill badge, for /cb-* commands', () => {
-      const wrapper = mountBlocks({
+      const wrapper = mountUserBlocks({
         blocks: [{ type: 'text', text: '/cb-task run tests' }],
       })
       expect(wrapper.find('.skill-command-badge').exists()).toBe(false)
       expect(wrapper.find('.slash-command-badge').exists()).toBe(true)
+    })
+
+    it('does not badge an assistant reply that merely starts with a path', () => {
+      // Reported case: an assistant message reading "/tmp 已 100% 满，只有 844MB…"
+      // was rendered as a "/tmp" command chip plus a bare rest line, losing the
+      // Markdown. The badge is a user-message affordance.
+      const wrapper = mountBlocks({
+        role: 'assistant',
+        blocks: [{ type: 'text', text: '/tmp 已 100% 满，只有 844MB。' }],
+      })
+      expect(wrapper.find('.slash-command-badge').exists()).toBe(false)
+      expect(wrapper.find('.at-command-rest').exists()).toBe(false)
+      // Falls through to the ordinary markdown path.
+      expect(wrapper.find('.content-blocks').text()).toContain('/tmp 已 100% 满')
+    })
+
+    it('does not badge an assistant reply starting with #', () => {
+      const wrapper = mountBlocks({
+        role: 'assistant',
+        blocks: [{ type: 'text', text: '#1 修复完成' }],
+      })
+      expect(wrapper.find('.skill-command-badge').exists()).toBe(false)
+      expect(wrapper.find('.content-blocks').text()).toContain('#1 修复完成')
+    })
+
+    it('does not badge a text block with no role (e.g. share/system rows)', () => {
+      const wrapper = mountBlocks({
+        blocks: [{ type: 'text', text: '/commit fix bug' }],
+      })
+      expect(wrapper.find('.slash-command-badge').exists()).toBe(false)
     })
   })
 

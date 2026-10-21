@@ -254,6 +254,7 @@
                 :static-block-cache="props.staticBlockCache"
                 :active="props.active"
                 :read-only="props.readOnly"
+                :role="props.role"
                 @toggle-tool="$emit('toggle-tool', $event)"
                 @show-tool-detail="forwardSubagentToolDetail"
                 @task-card-click="$emit('task-card-click', $event)"
@@ -353,8 +354,13 @@
       <!-- Text block with slash command badge (agent /command or ClawBench /cb-* command).
            The leading icon is what tells the kinds apart (Bot = agent command,
            Wrench = ClawBench built-in) — colour alone was too subtle, and a
-           solid fill reads as heavy/ugly inside the user bubble. -->
-      <template v-else-if="block.type === 'text' && extractSlashCommand(block.text || '')">
+           solid fill reads as heavy/ugly inside the user bubble.
+
+           USER MESSAGES ONLY: the badge means "this is what the user sent as a
+           command". An assistant reply starting with "/tmp 已 100% 满…" (a
+           sentence beginning with a path) or "#1 …" would otherwise lose its
+           Markdown rendering and show a bogus "/tmp" / "#1" command chip. -->
+      <template v-else-if="block.type === 'text' && isUserMessage && extractSlashCommand(block.text || '')">
         <span class="slash-command-badge" :class="{ 'clawbench-command-badge': extractSlashCommand(block.text)!.clawbench }">
           <component :is="extractSlashCommand(block.text)!.clawbench ? Wrench : Bot" :size="12" class="command-badge-icon" />
           {{ extractSlashCommand(block.text)!.command }}
@@ -362,8 +368,10 @@
         <span v-if="extractSlashCommand(block.text)!.rest.trim()" class="at-command-rest">{{ extractSlashCommand(block.text)!.rest.trim() }}</span>
       </template>
       <!-- Text block with an explicit "#skill" reference badge. Same shape as the
-           slash badge; the Sparkles icon distinguishes it. -->
-      <template v-else-if="block.type === 'text' && extractSkillCommand(block.text || '')">
+           slash badge; the Sparkles icon distinguishes it. User messages only —
+           same reason as the slash badge (a reply starting with "#1" or "## 结论"
+           is prose, not a skill reference). -->
+      <template v-else-if="block.type === 'text' && isUserMessage && extractSkillCommand(block.text || '')">
         <span class="slash-command-badge skill-command-badge">
           <Sparkles :size="12" class="command-badge-icon" />
           {{ '#' + extractSkillCommand(block.text)!.name }}
@@ -639,9 +647,19 @@ const props = defineProps({
   // The group orchestrator owns member lifecycle. Hides the reset button only;
   // the "continue" button (a plain message into the group) stays.
   isGroupSession: { type: Boolean, default: false },
+  // Message role ('user' | 'assistant' | ...). Only user messages get the
+  // slash / #skill command badges: those badges replace the whole text block
+  // with "chip + rest", which is only truthful for a message the user actually
+  // sent as a command. Assistant prose frequently STARTS with a path or a
+  // numbered item ("/tmp 已 100% 满…", "#1 …", "## 结论"), and batching it as a
+  // command also loses its Markdown rendering.
+  role: { type: String, default: '' },
 })
 
 const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'task-card-click', 'send-message', 'render-flush', 'resume-session', 'reset-session'])
+
+/** Command badges are a user-message affordance only (see the `role` prop). */
+const isUserMessage = computed(() => props.role === 'user')
 
 const elapsedSeconds = ref(0)
 let elapsedTimer: ReturnType<typeof setInterval> | null = null
