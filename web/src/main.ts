@@ -24,6 +24,7 @@ import { createSingleTabGuard } from './composables/useSingleTab.ts'
 import SingleTabBlocked from './components/common/SingleTabBlocked.vue'
 import { installLocalMediaFallback } from './utils/localMediaFallback.ts'
 import { installMediaFullscreenGuard } from './utils/mediaFullscreenGuard.ts'
+import { installInlineZoom } from './utils/inlineZoom.ts'
 import { installChunkLoadRecovery } from './utils/chunkLoadRecovery.ts'
 
 configureMarkedRenderer()
@@ -43,6 +44,7 @@ installLocalMediaFallback()
 // swallowing every pointer event (the UI looks closed but is unclickable).
 // Exit fullscreen on that error. Document-level capture listener, installed once.
 installMediaFullscreenGuard()
+installInlineZoom()
 
 // A page left open across a rebuild references chunk hashes that no longer
 // exist, so every later lazy import 404s. Without this hook those failures are

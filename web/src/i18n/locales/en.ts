@@ -52,6 +52,7 @@ export default {
   imageBlock: {
     view: 'View image',
     openFile: 'Open file',
+    resetZoom: 'Reset zoom',
   },
   tableBlock: {
     label: 'Table',
