@@ -313,10 +313,19 @@ describe('useSettingsNavigation', () => {
     // ── handleRestart ──
 
     describe('handleRestart', () => {
+        /** Stub fetch: /api/server/instance answers `id`; any other call fails. */
+        function stubInstance(id: string) {
+            return vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL) => {
+                if (String(input).includes('/api/server/instance')) {
+                    return { ok: true, json: async () => ({ instance_id: id }) } as Response
+                }
+                throw new Error('not up')
+            })
+        }
+
         it('hides dialog, sets restarting, calls restartServer', async () => {
             mockRestartServer.mockResolvedValue(undefined)
-            // Mock fetch for the polling phase (make it fail immediately for quick test)
-            vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('not up'))
+            stubInstance('inst-a')
 
             const nav = useSettingsNavigation()
             nav.restartDialogVisible.value = true
@@ -328,8 +337,11 @@ describe('useSettingsNavigation', () => {
             expect(mockRestartServer).toHaveBeenCalled()
         })
 
-        it('sets restarting to false when restartServer throws', async () => {
-            mockRestartServer.mockRejectedValue(new Error('restart failed'))
+        it('reports the server error when the restart is refused', async () => {
+            // Regression: a refused restart used to be swallowed, leaving the
+            // user believing it was underway.
+            mockRestartServer.mockRejectedValue(new Error('running binary is not accessible'))
+            stubInstance('inst-a')
 
             const nav = useSettingsNavigation()
             nav.needsRestart.value = true
@@ -337,12 +349,61 @@ describe('useSettingsNavigation', () => {
             await nav.handleRestart()
 
             expect(nav.restarting.value).toBe(false)
+            expect(nav.needsRestart.value).toBe(true)
+            // Shown VERBATIM: apiPost's message is already localized and
+            // already says "restart failed", so re-wrapping it produced
+            // "重启失败：重启失败：…".
+            expect(mockToastShow).toHaveBeenCalledWith(
+                'running binary is not accessible',
+                expect.objectContaining({ type: 'error' }),
+            )
+        })
+
+        it('falls back to a generic message when the error carries no text', async () => {
+            mockRestartServer.mockRejectedValue(new Error(''))
+            stubInstance('inst-a')
+
+            const nav = useSettingsNavigation()
+            await nav.handleRestart()
+
+            expect(mockToastShow).toHaveBeenCalledWith(
+                'settings.restartFailed',
+                expect.objectContaining({ type: 'error' }),
+            )
+        })
+
+        it('does not start polling when the restart is refused', async () => {
+            mockRestartServer.mockRejectedValue(new Error('boom'))
+            stubInstance('inst-a')
+
+            const nav = useSettingsNavigation()
+            await nav.handleRestart()
+
+            // A poll would keep the overlay up and eventually reload the page
+            // onto the unchanged process.
+            expect(restartingOverlay.value).toBe(false)
+            await vi.advanceTimersByTimeAsync(4000)
+            expect(mockToastShow).not.toHaveBeenCalledWith(
+                'settings.restartTimeout',
+                expect.anything(),
+            )
         })
     })
 
     // ── pollUntilServerUp ──
 
-    describe('pollUntilServerUp timeout', () => {
+    describe('pollUntilServerUp', () => {
+        /** Stub fetch so /api/server/instance returns `id` once `up` is true. */
+        function stubInstanceSequence(ids: Array<string | null>) {
+            let i = 0
+            return vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL) => {
+                if (!String(input).includes('/api/server/instance')) throw new Error('not up')
+                const id = ids[Math.min(i++, ids.length - 1)]
+                if (id === null) throw new Error('Connection refused')
+                return { ok: true, json: async () => ({ instance_id: id }) } as Response
+            })
+        }
+
         it('shows error toast when polling times out', async () => {
             mockRestartServer.mockResolvedValue(undefined)
 
@@ -368,20 +429,13 @@ describe('useSettingsNavigation', () => {
             expect(restarting.value).toBe(false)
         })
 
-        it('clears overlay and reloading when server comes back', async () => {
+        it('reloads once a DIFFERENT instance answers', async () => {
             mockRestartServer.mockResolvedValue(undefined)
 
-            // Mock fetch to succeed on the 3rd attempt
-            let fetchCount = 0
-            vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
-                fetchCount++
-                if (fetchCount >= 3) {
-                    return { ok: true } as Response
-                }
-                throw new Error('Connection refused')
-            })
+            // Pre-restart probe → inst-a; then the server goes down for two
+            // polls and comes back as inst-b.
+            stubInstanceSequence(['inst-a', null, null, 'inst-b'])
 
-            // Mock window.location.reload
             const reloadMock = vi.fn()
             Object.defineProperty(window, 'location', {
                 value: { reload: reloadMock },
@@ -392,13 +446,69 @@ describe('useSettingsNavigation', () => {
 
             await handleRestart()
 
-            // Advance through polls
             for (let i = 0; i < 5; i++) {
                 await vi.advanceTimersByTimeAsync(2000)
             }
 
-            // Should have reloaded, not shown error toast
             expect(mockToastShow).not.toHaveBeenCalled()
+            expect(reloadMock).toHaveBeenCalled()
+            expect(restartingOverlay.value).toBe(false)
+        })
+
+        it('does NOT reload while the SAME instance keeps answering', async () => {
+            // The reported bug: the outgoing process still answers until
+            // srv.Shutdown, so an early poll sees 200 from the old process and
+            // the page reloaded onto the same build.
+            mockRestartServer.mockResolvedValue(undefined)
+            stubInstanceSequence(['inst-a']) // always the same id
+
+            const reloadMock = vi.fn()
+            Object.defineProperty(window, 'location', {
+                value: { reload: reloadMock },
+                writable: true,
+            })
+
+            const { handleRestart, restartingOverlay, restarting } = useSettingsNavigation()
+
+            await handleRestart()
+
+            // Long enough to exceed STALE_INSTANCE_LIMIT polls.
+            for (let i = 0; i < 17; i++) {
+                await vi.advanceTimersByTimeAsync(2000)
+            }
+
+            expect(reloadMock).not.toHaveBeenCalled()
+            expect(mockToastShow).toHaveBeenCalledWith(
+                'settings.restartNotApplied',
+                expect.objectContaining({ type: 'error' }),
+            )
+            expect(restartingOverlay.value).toBe(false)
+            expect(restarting.value).toBe(false)
+        })
+
+        it('falls back to accepting the first 200 when no baseline was read', async () => {
+            // The pre-restart probe failed (server briefly unreachable): we
+            // cannot compare ids, so accept the first successful answer rather
+            // than hanging until the timeout.
+            mockRestartServer.mockResolvedValue(undefined)
+            let instanceCalls = 0
+            vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL) => {
+                if (!String(input).includes('/api/server/instance')) throw new Error('not up')
+                instanceCalls++
+                if (instanceCalls === 1) throw new Error('probe failed') // baseline
+                return { ok: true, json: async () => ({ instance_id: 'inst-b' }) } as Response
+            })
+
+            const reloadMock = vi.fn()
+            Object.defineProperty(window, 'location', {
+                value: { reload: reloadMock },
+                writable: true,
+            })
+
+            const { handleRestart } = useSettingsNavigation()
+            await handleRestart()
+
+            await vi.advanceTimersByTimeAsync(2000)
             expect(reloadMock).toHaveBeenCalled()
         })
     })

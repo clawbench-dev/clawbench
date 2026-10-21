@@ -14,6 +14,7 @@ import (
 	"clawbench/internal/grouprouting"
 	"clawbench/internal/i18n"
 	"clawbench/internal/model"
+	"clawbench/internal/store"
 	"clawbench/internal/ws"
 )
 
@@ -411,9 +412,49 @@ func (o *GroupOrchestrator) runLoop(groupCtx context.Context, groupID string) Dr
 	} else {
 		o.announceUserTurn(groupID, res)
 	}
+	// Whatever ended the turn — the host's end signal, a natural relay drain, a
+	// confirmed cruise, the speech cap — a CLEAN end with an empty queue means
+	// the floor is now with the human. That is the one thing the group badge
+	// reports (see unreadCountSubquery), so it is recorded here, once, instead of
+	// inside each ending branch: the cruise/cap paths write different system
+	// lines but hand back the same turn.
+	//
+	// Three exclusions, each a different kind of "nothing to hand back":
+	//
+	//   - cancelled/errored: the user must read the failure first, and a visible
+	//     cancel/error is already on the timeline (same rule as announceUserTurn);
+	//   - a non-empty queue: this is one message of a multi-message drain, and the
+	//     floor is not back until the LAST one runs;
+	//   - ZERO member speeches: a clean turn in which nobody spoke is not a turn
+	//     the user owes anything on. runFreeLoop returns an empty result when the
+	//     roster is empty (every member left, or none is active), and lighting the
+	//     badge there would tell the user to speak in a group that cannot answer.
+	//     The speech cap is not an exclusion — a capped turn did speak, and the
+	//     floor does go back.
+	if res.CancelReason == "" && res.Err == "" &&
+		GetQueuedCount(groupID) == 0 && o.memberSpeeches > 0 {
+		markGroupUserTurn(groupID)
+	}
 	finalizeGroupOrphans(groupID)
 	triggerChatSummarization(context.Background(), groupID)
 	return res
+}
+
+// markGroupUserTurn records that the group's floor has just been handed back to
+// the human: the group is now waiting on them. It is the single SET of
+// chat_sessions.awaiting_user_at, and the only thing the group unread badge
+// looks at (see unreadCountSubquery) — one finished turn = one thing the user
+// owes the group, no matter how many members spoke during it. UpdateLastRead
+// clears it.
+//
+// Best-effort: a failed write leaves the badge dark, which is the harmless
+// direction — the next finished turn sets it again.
+func markGroupUserTurn(groupID string) {
+	if _, err := store.WriteExec(
+		"UPDATE chat_sessions SET awaiting_user_at = CURRENT_TIMESTAMP WHERE id = ?", groupID,
+	); err != nil {
+		slog.Warn("group: marking awaiting user failed", "group", groupID, "err", err)
+	}
 }
 
 // announceUserTurn writes the "轮到用户发言" system line when a group turn
@@ -432,6 +473,10 @@ func (o *GroupOrchestrator) runLoop(groupCtx context.Context, groupID string) Dr
 // A cancelled or errored turn also returns the floor, but with a visible
 // cancel/error already on the timeline, so it is not "your turn" — the user
 // must read the failure first.
+//
+// The unread flag (markGroupUserTurn) is NOT set here: it is set once in runLoop
+// for every clean ending, including the cruise/cap paths that write a different
+// line instead of this one.
 func (o *GroupOrchestrator) announceUserTurn(groupID string, res DrainResult) {
 	if res.CancelReason != "" || res.Err != "" {
 		return
@@ -1120,18 +1165,37 @@ func (o *GroupOrchestrator) runRounds(ctx context.Context, groupID string) Drain
 // written, so there is no separate summary turn. When goal-satisfied is
 // co-emitted with an end tag / mention, the declaration still wins: the turn is
 // confirmed, not routed. Outside cruise, question and end end the turn as before.
+//
+// PRECEDENCE (a real work assignment outranks "addressing the user"): a host
+// routinely does BOTH in one turn — routes members AND closes with a question
+// to the human (an AskUserQuestion card, or plain prose like "先做哪一集？").
+// Letting the question win diverted the whole turn into a confirmation round and
+// SILENTLY DISCARDED the route: the named members never spoke, and the user saw
+// "@了两拨人，一个都没动，反过来问我问题". So when the route resolves to at
+// least one dispatchable member, the turn is routed and the question is merely
+// DISPLAYED (the card still renders; the user can answer it whenever). Only a
+// turn with NO work to hand out falls through to the question hand-back shapes —
+// which keeps them from being a spin risk: a question with no route triggers one
+// bounded confirmation round, exactly as before.
 func (o *GroupOrchestrator) hostTurnOutcome(ctx context.Context, s groupTurnSetup, hostMemberID, hostSysPrompt, hostOutput string, hostRes groupMemberResult, route grouprouting.Result) ([]speakerGroup, bool, DrainResult, bool) {
 	if o.cruiseOn() {
-		// goal-satisfied wins over everything else in the same turn, but it does
-		// NOT confirm directly — it enters a confirmation round.
-		//
-		// hostAsksUserInProse covers the fifth hand-back shape: the host ends a
-		// routing turn with a plain-language question to the human ("要我继续吗？")
-		// instead of an AskUserQuestion card. Without it, a host that routes AND
-		// asks would keep the discussion going forever while the user waits for
-		// an answer — see hostAsksUserInProse.
-		if route.GoalSatisfied || hostRes.AskedQuestion || route.End || routeNamesUser(route, s.members) ||
-			hostAsksUserInProse(hostOutput) {
+		// goal-satisfied and the explicit end tag win over everything else in the
+		// same turn, but neither confirms directly — they enter a confirmation
+		// round.
+		if route.GoalSatisfied || route.End {
+			groups, ok, res := o.runCruiseConfirmHost(ctx, s, hostMemberID, hostSysPrompt)
+			return groups, ok, res, true
+		}
+		// A usable route means there IS work to hand out: dispatch it, and let
+		// the question (card or prose) / @User be display-only. See PRECEDENCE
+		// above — returning handled=false hands control to the normal routing
+		// path, which drops any user turn itself (resolveCruiseSpeakerGroups).
+		if routeHasDispatchableMembers(route, s.members, hostMemberID) {
+			return nil, false, DrainResult{}, false
+		}
+		// Nothing to dispatch: the remaining hand-back shapes (a question card,
+		// a plain-prose question, an @User-only route) trigger the confirmation.
+		if hostRes.AskedQuestion || routeNamesUser(route, s.members) || hostAsksUserInProse(hostOutput) {
 			groups, ok, res := o.runCruiseConfirmHost(ctx, s, hostMemberID, hostSysPrompt)
 			return groups, ok, res, true
 		}
@@ -1176,6 +1240,10 @@ func (o *GroupOrchestrator) hostTurnOutcome(ctx context.Context, s groupTurnSetu
 // A false positive is cheap here: in cruise it merely asks the host to confirm
 // (one bounded round, which the host declines by routing on). A false negative
 // is the reported bug — the turn never confirms. So the rule errs toward firing.
+//
+// Note it is consulted ONLY when the turn has no dispatchable route (see
+// hostTurnOutcome): a host that asks AND routes is doing its job, so the question
+// must not override the work it just handed out.
 func hostAsksUserInProse(hostOutput string) bool {
 	if hostOutput == "" {
 		return false
@@ -1220,6 +1288,38 @@ func routeNamesUser(route grouprouting.Result, members []GroupMember) bool {
 			if m, ok := lookupMember(tgt, byID, byName); ok && m.ID == groupUserTargetID {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// routeHasDispatchableMembers reports whether the route names at least ONE
+// member that can actually be dispatched: it resolves to a group member, it is
+// not the host itself (a host cannot name itself) and not the human user (cruise
+// never hands the floor back). It is the precedence test in hostTurnOutcome: a
+// host that routes AND asks the user a question has work to hand out, so the
+// route must win over the question.
+//
+// The filter mirrors resolveCruiseSpeakerGroups EXACTLY (resolve → not host → not
+// user → not left). That matters: if this said "dispatchable" for something the
+// resolver then drops, the turn would skip the confirmation round AND produce no
+// speakers, which is the spin the confirmation exists to prevent. Keeping the
+// two in step is what makes "route wins" safe.
+func routeHasDispatchableMembers(route grouprouting.Result, members []GroupMember, excludeID string) bool {
+	if !route.Found {
+		return false
+	}
+	byID, byName := memberLookups(members)
+	for _, gr := range route.Groups {
+		for _, tgt := range gr.Members {
+			m, ok := lookupMember(tgt, byID, byName)
+			if !ok || m.ID == excludeID || m.ID == groupUserTargetID {
+				continue
+			}
+			if m.Left {
+				continue
+			}
+			return true
 		}
 	}
 	return false
@@ -2373,8 +2473,10 @@ var emitGroupSystemMessage = func(groupID string, msgID int64, text string) {
 
 // RunGroupDrainLoop drives a group turn for `first` (an already-materialized
 // user message) and then drains any queued messages through the SAME loop
-// single chat uses, so queueing semantics, the terminal event and the push
-// contract are identical (decisions #45/#58/#72).
+// single chat uses, so queueing semantics and the terminal event are identical
+// (decisions #45/#58). The push contract deliberately DIFFERS from single chat:
+// a group notifies once per RUN, not once per queued message (see the
+// OnTurnAnswered note below).
 //
 // The drain loop — not the orchestrator — owns the terminal event: the group
 // turn returns a DrainResult and RunDrainLoop sends "done" exactly once when
@@ -2419,17 +2521,25 @@ func RunGroupDrainLoop(runCtx context.Context, groupID, projectPath string, firs
 		ExecuteRunWithMessage: func(msgID int64, row QueuedRow) DrainResult {
 			return runGroupTurnDrainFn(runCtx, groupID, msgID, row, nil)
 		},
-		// Each intermediate answer in a multi-message group drain is its own
-		// completed turn: notify now, not once at the very end (decision #72).
-		OnTurnAnswered: func() {
-			EmitTurnAnsweredNotification(groupID)
-		},
+		// NO OnTurnAnswered hook. Decision #72 gave each intermediate answer its
+		// own push, because a group's N queued user messages used to produce a
+		// single notification. That was the wrong unit: what the user is owed is
+		// a TURN, not an answer. A group turn runs many members and can take
+		// minutes, so notifying per queued message still fires while the
+		// discussion is mid-flight — and the notification it sends is a
+		// "completed" for a session the user is about to be asked to speak in.
+		//
+		// A group now notifies exactly once per run, from MarkDoneAndSendFinal's
+		// terminal `done` — which by construction fires only after the loop has
+		// exhausted the queue and the floor is back with the user. The unread
+		// badge follows the same rule (awaiting_user_at, see unreadCountSubquery),
+		// so notification and badge agree instead of counting member speeches.
 		MarkDoneAndSendFinal: markDoneAndSendFinal,
 	}, first)
 }
 
 // runGroupTurnDrainFn is the injectable indirection over RunGroupTurnDrain so
-// tests can drive RunGroupDrainLoop (and its push contract, decision #72)
+// tests can drive RunGroupDrainLoop (and its once-per-run push contract)
 // without running a real orchestrator/backend.
 //
 // NOTE: replacing this wholesale bypasses the production orchestration path, so

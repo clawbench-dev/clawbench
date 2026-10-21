@@ -414,7 +414,8 @@ func validateQueueAgentOverride(w http.ResponseWriter, r *http.Request, agentID,
 
 // validateQueueFiles validates and resolves attached file paths for the queue
 // endpoint, mirroring the POST /api/ai/chat handler's checks: every path must
-// stay within the project (path traversal → 403) and exist (missing → 404).
+// stay within the configured roots (path traversal → 403) and exist (missing →
+// 404). Paths may be project-relative or absolute (see resolveAttachmentPath).
 // Returns the validated file entries (absolute paths, isDir from os.Stat) and
 // ok=false when an error response has been written.
 func validateQueueFiles(w http.ResponseWriter, r *http.Request, projectPath string, filePaths []string, fileEntries []model.FileEntry) ([]model.FileEntry, bool) {
@@ -423,7 +424,7 @@ func validateQueueFiles(w http.ResponseWriter, r *http.Request, projectPath stri
 	// filePaths (legacy raw paths) → validated entries.
 	validated := make([]model.FileEntry, 0, len(filePaths)+len(fileEntries))
 	for _, fp := range filePaths {
-		fAbsPath, ok := validateAndResolvePath(w, r, basePath, fp)
+		fAbsPath, ok := resolveAttachmentPath(w, r, basePath, fp)
 		if !ok {
 			return nil, false
 		}
@@ -455,7 +456,7 @@ func validateQueueFiles(w http.ResponseWriter, r *http.Request, projectPath stri
 			validated = append(validated, entry)
 			continue
 		}
-		fAbsPath, ok := validateAndResolvePath(w, r, basePath, fEntry.Path)
+		fAbsPath, ok := resolveAttachmentPath(w, r, basePath, fEntry.Path)
 		if !ok {
 			return nil, false
 		}

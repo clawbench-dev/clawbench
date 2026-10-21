@@ -4822,3 +4822,140 @@ func TestQueueEnqueue_ExplicitAgentGate(t *testing.T) {
 		})
 	}
 }
+
+// TestAIChat_PersistsModeOnSend verifies that a mode sent with the message is
+// written to the session's context_state, not just applied to that one turn.
+//
+// Mode is the only session setting with no column of its own — it lives in
+// context_state — so this request is the last chance to record it when the
+// picker's PATCH did not land. Without the write, turn 1 runs req.ModeID (an
+// explicit override) while every later turn of the same run rebuilds the
+// request from context_state and inherits the PREVIOUS mode; auto-cruise makes
+// that visible by turning one message into many turns.
+func TestAIChat_PersistsModeOnSend(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "mode persists", "", "", "default", "chat")
+	require.NoError(t, err)
+	// Make the send take the enqueue path so the assertion does not depend on
+	// starting a real AI backend.
+	service.TrySetSessionRunning(sessionID)
+	defer func() {
+		service.SetSessionRunning(sessionID, false)
+		service.ClearQueuedMessages(sessionID)
+	}()
+
+	require.Empty(t, service.GetSessionModeID(sessionID), "a fresh session has no persisted mode")
+
+	body := map[string]any{
+		"message": "do the thing",
+		"modeId":  "bypassPermissions",
+	}
+	req := newRequest(t, http.MethodPost, "/api/ai/chat?session_id="+sessionID, body)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(AIChat, req)
+	assertOK(t, w)
+
+	assert.Equal(t, "bypassPermissions", service.GetSessionModeID(sessionID),
+		"the mode carried by the send must survive as the session's mode")
+}
+
+// TestAIChat_ModeSendKeepsAvailableModes verifies the mode write does not erase
+// the available-modes list a mode_update already persisted. The write is a
+// partial json_set on currentModeId for exactly this reason: a whole-object
+// replacement would drop availableModes and leave the picker empty.
+func TestAIChat_ModeSendKeepsAvailableModes(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "mode merge", "", "", "default", "chat")
+	require.NoError(t, err)
+	service.TrySetSessionRunning(sessionID)
+	defer func() {
+		service.SetSessionRunning(sessionID, false)
+		service.ClearQueuedMessages(sessionID)
+	}()
+
+	// Simulate a mode_update that already landed (what the agent reports).
+	service.PatchContextStateMerge(sessionID, map[string]string{
+		"mode": `{"currentModeId":"default","availableModes":[{"id":"default","name":"Always Ask"},{"id":"bypassPermissions","name":"Bypass"}]}`,
+	})
+
+	body := map[string]any{"message": "go", "modeId": "bypassPermissions"}
+	req := newRequest(t, http.MethodPost, "/api/ai/chat?session_id="+sessionID, body)
+	withProjectCookie(req, env.ProjectDir)
+	assertOK(t, callHandler(AIChat, req))
+
+	state := service.GetContextState(sessionID)
+	require.NotNil(t, state)
+	require.NotNil(t, state.Mode)
+	assert.Equal(t, "bypassPermissions", state.Mode.CurrentModeID)
+	assert.Len(t, state.Mode.AvailableModes, 2, "the send must not wipe the advertised mode list")
+}
+
+// TestModeStateHasNoSelection covers the shape test that gates the DB fallback.
+//
+// GetCachedStateByClawbenchSID builds Mode from the AGENT-level registry, so a
+// connection with no session-level mode yields a full option list and an EMPTY
+// currentModeId. That is non-nil, so a plain nil check skipped the context_state
+// fallback and left the chip blank even though the session's mode was persisted.
+func TestModeStateHasNoSelection(t *testing.T) {
+	modes := []ai.ModeDef{{ID: "default", Name: "Always Ask"}, {ID: "bypassPermissions", Name: "Bypass"}}
+
+	assert.True(t, modeStateHasNoSelection(&ai.ModeState{AvailableModes: modes}),
+		"a list with no selection must be treated as unset")
+	assert.True(t, modeStateHasNoSelection(ai.ModeState{AvailableModes: modes}),
+		"the value form must behave the same as the pointer form")
+	assert.True(t, modeStateHasNoSelection(&service.ModeStatePersist{AvailableModes: []service.ModeDef{{ID: "default"}}}),
+		"the persisted form must behave the same")
+
+	assert.False(t, modeStateHasNoSelection(&ai.ModeState{CurrentModeID: "bypassPermissions", AvailableModes: modes}),
+		"a real selection must not trigger the fallback")
+	assert.False(t, modeStateHasNoSelection(nil), "nil is handled by the caller's nil check, not here")
+	assert.False(t, modeStateHasNoSelection("unexpected"), "an unknown type must not claim to be unset")
+}
+
+// TestSessionStateSnapshot_FallsBackWhenCachedModeHasNoSelection reproduces the
+// blank-chip case end to end: the connection's cached mode carries the option
+// list but no selection, and context_state holds the real one.
+func TestSessionStateSnapshot_FallsBackWhenCachedModeHasNoSelection(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "snapshot fallback", "", "", "default", "chat")
+	require.NoError(t, err)
+
+	// Persisted: the user's real choice, with the list the agent reported.
+	service.PatchContextStateMerge(sessionID, map[string]string{
+		"mode": `{"currentModeId":"bypassPermissions","availableModes":[{"id":"default","name":"Always Ask"},{"id":"bypassPermissions","name":"Bypass"}]}`,
+	})
+
+	// Cached connection: same list, NO selection (a fresh conn for this session).
+	//
+	// Effort and usage are filled in deliberately. They are what the OUTER gate
+	// of the DB fallback tests, so leaving them nil would make the fallback run
+	// for the wrong reason and the test would pass with the bug still present.
+	agent := &model.Agent{ID: "snapshot-fallback", Backend: "acp-stdio", AcpCommand: "echo"}
+	conn := ai.NewACPConnForTest(agent, sessionID)
+	ai.GetAgentCapabilityRegistry().UpdateModes(agent.ID, []ai.ModeDef{
+		{ID: "default", Name: "Always Ask"},
+		{ID: "bypassPermissions", Name: "Bypass"},
+	})
+	conn.SetCachedThinkingEffortState(&ai.ThinkingEffortState{
+		CurrentID:       "high",
+		AvailableLevels: []ai.ThinkingEffortDef{{ID: "high", Name: "High"}},
+	})
+	conn.SetCachedUsageState(&ai.UsageState{Used: 100, Size: 200000})
+	ai.GetACPConnManager().SetConnForTest(sessionID, conn)
+	defer ai.GetACPConnManager().CloseConn(sessionID)
+	defer ai.GetAgentCapabilityRegistry().UpdateModes(agent.ID, nil)
+
+	st := sessionStateSnapshot(sessionID, agent.ID, "acp-stdio")
+
+	mode, ok := st.Mode.(*service.ModeStatePersist)
+	require.True(t, ok, "the snapshot must fall back to the persisted mode, got %T", st.Mode)
+	assert.Equal(t, "bypassPermissions", mode.CurrentModeID,
+		"a cached list with no selection must not hide the persisted choice")
+}

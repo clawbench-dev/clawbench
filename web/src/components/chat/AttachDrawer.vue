@@ -4,12 +4,44 @@
       <div class="ad-header">
         <Paperclip :size="16" class="bs-header-icon" />
         <span class="bs-header-title">{{ t('chat.attach.drawerTitle') }}</span>
-        <button class="ad-upload-btn" @click.stop="handleUploadClick" :title="t('chat.attach.uploadFile')">
+        <!-- Desktop only: the original header button. Kept for browsers and
+             Electron, where the photo/camera entries have nothing to offer. -->
+        <button
+          v-if="!isMobileLayout"
+          type="button"
+          class="ad-header-upload-btn"
+          :title="t('chat.attach.uploadFile')"
+          @click.stop="handleUploadClick"
+        >
           <Upload :size="16" />
           <span class="ad-upload-label">{{ t('chat.attach.uploadFile') }}</span>
         </button>
       </div>
     </template>
+
+    <!-- Source actions — MOBILE ONLY. The header is a single 36px line shared
+         with the title, so on a phone the three entries would wrap or shrink
+         below a usable touch target; a full-width strip also fixes the
+         discoverability problem that made mobile users report "there is no way
+         to upload here". On desktop (browser or Electron) the original header
+         button is used instead: there is no camera or photo library to reach
+         from a mouse, and the strip only took vertical space away from the
+         file list. Each button gets its own hidden input so the system picker
+         opens in the right mode — file picker, photo library, or camera. -->
+    <div v-if="isMobileLayout" class="ad-source-bar">
+      <button type="button" class="ad-source-btn" @click.stop="handleCameraClick">
+        <Camera :size="18" />
+        <span class="ad-source-label">{{ t('chat.attach.takePhoto') }}</span>
+      </button>
+      <button type="button" class="ad-source-btn" @click.stop="handlePhotoClick">
+        <ImageIcon :size="18" />
+        <span class="ad-source-label">{{ t('chat.attach.pickImage') }}</span>
+      </button>
+      <button type="button" class="ad-source-btn" @click.stop="handleUploadClick">
+        <Upload :size="18" />
+        <span class="ad-source-label ad-upload-label">{{ t('chat.attach.uploadFile') }}</span>
+      </button>
+    </div>
 
     <!-- Tab bar (horizontal scroll) -->
     <div class="ad-tab-bar">
@@ -87,6 +119,17 @@
 
       <!-- Recently shared -->
       <template v-if="activeTab === 'shares'">
+        <!-- Clear-all bar. Above the rows and only when there is something to
+             clear: an always-visible destructive action on an empty list is a
+             trap. The list is capped at 20, so this clears the whole directory
+             rather than the visible rows. -->
+        <div v-if="recentShares?.length" class="ad-clear-bar">
+          <span class="ad-clear-hint">{{ t('chat.attach.clearSharesHint', { n: recentShares.length }) }}</span>
+          <button class="ad-clear-btn" :disabled="clearing === 'shares'" @click.stop="handleClearShares">
+            <Trash2 :size="12" />
+            <span>{{ t('chat.attach.clearAll') }}</span>
+          </button>
+        </div>
         <LoadingIndicator v-if="loading" size="md" />
         <div v-else-if="!recentShares?.length" class="ad-empty">{{ t('chat.attach.emptyShares') }}</div>
         <button
@@ -143,6 +186,15 @@
             <span class="ad-file-meta">{{ f.path ? dirName(f.path) + ' · ' : '' + formatFileSize(f.size) }}</span>
           </div>
         </button>
+        <!-- Clear-all bar. Sits above the completed rows (the in-flight batch has
+             its own terminate action) and clears the whole directory. -->
+        <div v-if="recentUploads?.length" class="ad-clear-bar">
+          <span class="ad-clear-hint">{{ t('chat.attach.clearUploadsHint', { n: recentUploads.length }) }}</span>
+          <button class="ad-clear-btn" :disabled="clearing === 'uploads'" @click.stop="handleClearUploads">
+            <Trash2 :size="12" />
+            <span>{{ t('chat.attach.clearAll') }}</span>
+          </button>
+        </div>
         <!-- Completed uploads from server -->
         <LoadingIndicator v-if="loading && !recentUploads?.length && uploadingFiles.length === 0" size="md" />
         <div v-else-if="!recentUploads?.length && uploadingFiles.length === 0" class="ad-empty">{{ t('chat.attach.emptyUploads') }}</div>
@@ -172,14 +224,25 @@
       <AttachmentTags :files="attachedFiles" @file-click="emit('file-open', $event)" @remove="emit('remove-attached', $event)" />
     </template>
 
-    <!-- Hidden file input (owned by drawer) -->
+    <!-- Hidden file inputs (owned by drawer).
+         Three separate inputs, not one with a mutated `accept`, because
+         `accept`/`capture` are read by the OS when the picker opens and some
+         WebViews (notably Android's) snapshot the attributes of the element
+         they were bound to — mutating them right before click() is unreliable.
+
+         `capture="environment"` makes the camera open directly instead of a
+         picker with a "Camera" entry. It is an advisory hint: on a desktop
+         browser (no rear camera) it degrades to a normal image picker, so the
+         photo entry stays usable there. -->
     <input type="file" ref="fileInputRef" @change="onFileSelect" @blur="onFileInputBlur" style="display:none" multiple />
+    <input type="file" ref="photoInputRef" accept="image/*" @change="onFileSelect" @blur="onFileInputBlur" style="display:none" multiple />
+    <input type="file" ref="cameraInputRef" accept="image/*" capture="environment" @change="onFileSelect" @blur="onFileInputBlur" style="display:none" />
   </BottomSheet>
 </template>
 
 <script setup lang="ts">
 import { ref, watch, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import { Paperclip, Upload, Check, ExternalLink, Trash2, Square } from 'lucide-vue-next'
+import { Paperclip, Upload, Check, ExternalLink, Trash2, Square, Camera, Image as ImageIcon } from 'lucide-vue-next'
 import { buildPathThumbUrl } from '@/utils/fileIcon'
 import FileIcon from '@/components/common/FileIcon.vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
@@ -187,6 +250,8 @@ import AttachmentTags from '@/components/chat/AttachmentTags.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useI18n } from 'vue-i18n'
 import { useDialog } from '@/composables/useDialog'
+import { useToast } from '@/composables/useToast'
+import { usePlatformDetect, isMobileOSUA } from '@/composables/usePlatformDetect'
 import { useShareIn } from '@/composables/useShareIn'
 import { useUploadRecent } from '@/composables/useUploadRecent'
 import { useFileUpload } from '@/composables/useFileUpload'
@@ -226,14 +291,30 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const dialog = useDialog()
-const { recentShares, fetchRecentShares, deleteRecentShare } = useShareIn()
-const { recentUploads, fetchRecentUploads, deleteRecentUpload } = useUploadRecent()
+const toast = useToast()
+// Which attachment entries to show. "Mobile" here means the phone/tablet
+// platforms — Android, iOS, and iPadOS in desktop mode — not the INPUT axis:
+// a touchscreen laptop reports a coarse pointer in tablet mode but is still a
+// PC, and its file picker has no camera or photo library behind it. The host
+// axis is not the test either: Electron on a touch laptop stays desktop, and
+// a browser on a phone is still mobile.
+const { isAndroidApp } = usePlatformDetect()
+// computed, not `isMobileOSUA || isAndroidApp`: the latter returns the ref
+// object when the UA test is false, and a ref is always truthy — every desktop
+// browser would have been shown the mobile strip.
+const isMobileLayout = computed(() => isMobileOSUA || isAndroidApp.value)
+const { recentShares, fetchRecentShares, deleteRecentShare, clearRecentShares } = useShareIn()
+const { recentUploads, fetchRecentUploads, deleteRecentUpload, clearRecentUploads } = useUploadRecent()
 
 // ── Upload logic (now lives inside the drawer) ──
 const { pendingFiles, attachedFiles, handleFileSelect, handleFileDrop, cancelChatUpload, chatUploadCancelled } = useFileUpload()
 
 const activeTab = ref('current')
 const fileInputRef = ref<HTMLInputElement | null>(null)
+// Image-only and camera inputs. Kept separate from fileInputRef so each entry
+// opens the system picker in the mode its button promises (see the template).
+const photoInputRef = ref<HTMLInputElement | null>(null)
+const cameraInputRef = ref<HTMLInputElement | null>(null)
 const filePickerOpen = ref(false)
 const loading = ref(false)
 
@@ -268,16 +349,38 @@ function getFileName(path: string) {
   return path ? baseName(path) : ''
 }
 
+/**
+ * Open the system picker for one of the three hidden inputs.
+ *
+ * Shared by all entries so they cannot drift on the two things that actually
+ * matter: clearing `value` (without it, re-picking the same file fires no
+ * `change` event) and setting `filePickerOpen` BEFORE the click, which is what
+ * installs the drawer's closeGuard while the OS picker owns the screen.
+ *
+ * The click is deferred to nextTick so BottomSheet's closeGuard watch runs
+ * first and blocks all close attempts. Without this, Android's native file
+ * chooser launch can trigger a close event that closes the drawer before
+ * closeGuard takes effect.
+ */
+function openPicker(input: HTMLInputElement | null) {
+  if (!input) return
+  input.value = ''
+  filePickerOpen.value = true
+  nextTick(() => { input.click() })
+}
+
 function handleUploadClick() {
-  if (fileInputRef.value) {
-    fileInputRef.value.value = ''
-    filePickerOpen.value = true
-    // Defer click to nextTick so BottomSheet's closeGuard watch
-    // runs first and blocks all close attempts. Without this,
-    // Android's native file chooser launch can trigger a close event
-    // that closes the drawer before closeGuard takes effect.
-    nextTick(() => { fileInputRef.value?.click() })
-  }
+  openPicker(fileInputRef.value)
+}
+
+/** Photo library entry (accept="image/*"). */
+function handlePhotoClick() {
+  openPicker(photoInputRef.value)
+}
+
+/** Camera entry (capture="environment"). */
+function handleCameraClick() {
+  openPicker(cameraInputRef.value)
 }
 
 async function onFileSelect(e: Event) {
@@ -371,6 +474,93 @@ async function handleDeleteUpload(item: { path: string; name?: string }) {
   await deleteRecentUpload(item.path)
 }
 
+// Which tab's clear-all is in flight. A single ref rather than two booleans:
+// only one tab is visible at a time, so this doubles as the button's disabled
+// state and prevents a double-tap from firing two sweeps.
+const clearing = ref<'shares' | 'uploads' | null>(null)
+
+/**
+ * Clear the whole recent-shares directory.
+ *
+ * Confirms first — this deletes every file in .clawbench/share-in/, including
+ * any the user did not scroll to. Any share currently attached to the composer
+ * is detached, otherwise the footer would keep pointing at a deleted file.
+ */
+async function handleClearShares() {
+  if (clearing.value) return
+  // Claimed BEFORE the confirm await: a double-tap would otherwise pass the
+  // guard twice, because `clearing` is only observed after the dialog resolves.
+  clearing.value = 'shares'
+  try {
+    const confirmed = await dialog.confirm(t('chat.attach.clearSharesConfirm'), {
+      dangerous: true,
+      confirmText: t('common.delete'),
+    })
+    if (!confirmed) return
+
+    // Detach every attached file that lives in this directory, not just the
+    // ones in the visible list: the sweep removes the whole directory.
+    for (const f of [...(props.attachedFiles ?? [])]) {
+      if (isInRecentDir(f.path, 'share-in')) emit('remove-attached', { path: f.path })
+    }
+    const result = await clearRecentShares()
+    reportClearResult(result, 'chat.attach.clearSharesDone', 'chat.attach.clearSharesFailed')
+  } finally {
+    clearing.value = null
+  }
+}
+
+/** Clear the whole recent-uploads directory. See handleClearShares. */
+async function handleClearUploads() {
+  if (clearing.value) return
+  clearing.value = 'uploads' // see handleClearShares — claimed before the await
+  try {
+    const confirmed = await dialog.confirm(t('chat.attach.clearUploadsConfirm'), {
+      dangerous: true,
+      confirmText: t('common.delete'),
+    })
+    if (!confirmed) return
+
+    for (const f of [...(props.attachedFiles ?? [])]) {
+      if (isInRecentDir(f.path, 'uploads')) emit('remove-attached', { path: f.path })
+    }
+    const result = await clearRecentUploads()
+    reportClearResult(result, 'chat.attach.clearUploadsDone', 'chat.attach.clearUploadsFailed')
+  } finally {
+    clearing.value = null
+  }
+}
+
+/** Whether a project-relative path lives directly in .clawbench/<subDir>/. */
+function isInRecentDir(path: string, subDir: string): boolean {
+  const normalized = path.replace(/\\/g, '/')
+  const prefix = `.clawbench/${subDir}/`
+  if (!normalized.startsWith(prefix)) return false
+  // Only flat entries: the sweep skips subdirectories, so detaching a nested
+  // file would remove an attachment the sweep left intact.
+  return !normalized.slice(prefix.length).includes('/')
+}
+
+/**
+ * Report the outcome of a clear. A partial sweep must not read as success —
+ * the user would assume the tab is empty when files are still on disk.
+ */
+function reportClearResult(
+  result: { deleted: number; failed: number } | null,
+  doneKey: string,
+  failedKey: string,
+) {
+  if (!result) {
+    toast.show(t(failedKey), { icon: 'warning', type: 'error' })
+    return
+  }
+  if (result.failed > 0) {
+    toast.show(t('chat.attach.clearPartial', { deleted: result.deleted, failed: result.failed }),
+      { icon: 'warning', type: 'error', duration: 3000 })
+    return
+  }
+  toast.show(t(doneKey, { n: result.deleted }), { icon: 'delete', type: 'success', duration: 2000 })
+}
 
 // Effective current dir: always show something (even at project root)
 const effectiveCurrentDir = computed(() => props.currentDir || '.')
@@ -453,7 +643,11 @@ defineExpose({ activeTab, handleFileDrop })
   gap: var(--space-4);
   width: 100%;
 }
-.ad-upload-btn {
+
+/* Desktop header upload button — the pre-mobile-entry design, restored for
+   browsers and Electron. Text + icon, accent coloured, pushed to the right of
+   the title. */
+.ad-header-upload-btn {
   margin-left: auto;
   display: flex;
   align-items: center;
@@ -468,11 +662,64 @@ defineExpose({ activeTab, handleFileDrop })
   white-space: nowrap;
   transition: opacity var(--duration-fast);
 }
+.ad-header-upload-btn:active {
+  opacity: var(--opacity-muted);
+}
 .ad-upload-label {
   line-height: 1;
 }
-.ad-upload-btn:active {
-  opacity: var(--opacity-muted);
+
+/* Source actions strip — MOBILE ONLY (see the template comment): the three
+   ways to add a file that is not already in the project. Full width and above
+   the tab bar so it reads as the primary action rather than as header chrome.
+
+   Equal thirds rather than content-sized: the labels are short and of similar
+   length in both languages, so thirds give every entry the same touch target
+   and keep the strip from reflowing when the locale changes. 44px is the
+   minimum comfortable touch height; the row is the drawer's first interactive
+   element, so it must not be the smallest. */
+.ad-source-bar {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-6);
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+.ad-source-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-2);
+  min-height: 44px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+  color: var(--accent-color);
+  cursor: pointer;
+  font-size: var(--font-size-xs);
+  transition: background var(--duration-fast), border-color var(--duration-fast);
+}
+.ad-source-btn:active {
+  background: var(--bg-tertiary);
+  border-color: var(--accent-color);
+}
+@media (hover: hover) {
+  .ad-source-btn:hover {
+    background: var(--bg-tertiary);
+    border-color: var(--accent-color);
+  }
+}
+.ad-source-label {
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 /* Tab bar */
@@ -718,6 +965,57 @@ defineExpose({ activeTab, handleFileDrop })
 }
 @media (hover: hover) {
   .ad-terminate-btn:hover {
+    background: color-mix(in srgb, var(--color-red) 12%, transparent);
+    border-color: color-mix(in srgb, var(--color-red) 40%, transparent);
+  }
+}
+
+/* ── Clear-all bar ──
+   Same shape as .ad-upload-banner (a full-width strip above the rows) so the
+   two destructive affordances in this drawer look like the same kind of thing.
+   The hint is muted and ellipsised: on a narrow phone the count is the part
+   that matters, the label is not. */
+.ad-clear-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) 14px;
+  border-bottom: 1px solid var(--border-color);
+}
+.ad-clear-hint {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ad-clear-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 24px;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full);
+  background: none;
+  color: var(--color-red);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  transition: background var(--duration-fast), border-color var(--duration-fast);
+}
+.ad-clear-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.ad-clear-btn:active:not(:disabled) {
+  background: color-mix(in srgb, var(--color-red) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-red) 40%, transparent);
+}
+@media (hover: hover) {
+  .ad-clear-btn:hover:not(:disabled) {
     background: color-mix(in srgb, var(--color-red) 12%, transparent);
     border-color: color-mix(in srgb, var(--color-red) 40%, transparent);
   }

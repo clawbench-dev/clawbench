@@ -119,6 +119,76 @@
            AFTER their parent (the parent id is known when they are emitted), so
            this branch never flips mid-stream for a live block. -->
       <template v-if="isChildBlock(block)"></template>
+      <!-- Member fallback group: this block's parent Agent card is not in this
+           message, so the member's output groups under a synthetic header at
+           its first block instead of interleaving with the lead's. -->
+      <div v-else-if="memberGroupNameForAnchor(block)" class="subagent-group member-group" :class="{ 'subagent-group-open': isMemberGroupOpen(memberGroupNameForAnchor(block)) }" :style="memberGroupAccentStyle(memberGroupNameForAnchor(block))">
+        <div :ref="(el) => setMemberPillRef(memberGroupKey(memberGroupNameForAnchor(block)), el)" class="chat-tool-call" :class="{ done: !memberGroupStreaming(memberGroupNameForAnchor(block)), 'chat-tool-call-group': true, 'chat-tool-call-group-open': isMemberGroupOpen(memberGroupNameForAnchor(block)) }" data-category="agent" :data-member-name="memberGroupNameForAnchor(block)" @click.stop="toggleMemberGroup(memberGroupNameForAnchor(block))">
+          <Users :size="12" class="tool-icon" />
+          <span class="tool-name">{{ memberGroupNameForAnchor(block) }}</span>
+          <span v-if="memberFallbackStepCount(memberGroupNameForAnchor(block)) > 0" class="subagent-group-count">{{ t('chat.contentBlocks.subagentSteps', { count: memberFallbackStepCount(memberGroupNameForAnchor(block)) }) }}</span>
+          <LoadingIndicator v-if="memberGroupStreaming(memberGroupNameForAnchor(block))" class="tool-spinner" size="sm" inline />
+          <CheckCircle2 v-else :size="14" color="#22c55e" class="tool-check" />
+          <button
+            type="button"
+            class="subagent-group-toggle"
+            :aria-expanded="isMemberGroupOpen(memberGroupNameForAnchor(block))"
+            :aria-label="isMemberGroupOpen(memberGroupNameForAnchor(block)) ? t('chat.contentBlocks.subagentCollapse') : t('chat.contentBlocks.subagentExpand')"
+            :title="isMemberGroupOpen(memberGroupNameForAnchor(block)) ? t('chat.contentBlocks.subagentCollapse') : t('chat.contentBlocks.subagentExpand')"
+            @click.stop="toggleMemberGroup(memberGroupNameForAnchor(block))"
+          >
+            <ChevronUp v-if="isMemberGroupOpen(memberGroupNameForAnchor(block))" :size="12" />
+            <ChevronDown v-else :size="12" />
+          </button>
+        </div>
+        <div class="subagent-group-body-wrapper" :class="{ 'subagent-group-body-open': isMemberGroupOpen(memberGroupNameForAnchor(block)), 'subagent-group-body-nostransition': collapsingMemberGroups[memberGroupKey(memberGroupNameForAnchor(block))] }">
+          <div class="subagent-group-body">
+            <ContentBlocks
+              v-if="isMemberGroupMounted(memberGroupNameForAnchor(block))"
+              :blocks="memberFallbackBlocks[memberGroupNameForAnchor(block)] || []"
+              :root-blocks="rootBlocksResolved"
+              :nested="true"
+              :msg-id="props.msgId"
+              :msg-index="props.msgIndex"
+              :session-id="props.sessionId"
+              :expanded-tools="props.expandedTools"
+              :block-tasks="props.blockTasks"
+              :block-ask-questions="props.blockAskQuestions"
+              :streaming="props.streaming"
+              :started-at="props.startedAt"
+              :cancelled="props.cancelled"
+              :render-text-block="props.renderTextBlock"
+              :format-tool-input="props.formatToolInput"
+              :tool-call-summary="props.toolCallSummary"
+              :truncate="props.truncate"
+              :get-agent-backend="props.getAgentBackend"
+              :get-agent-name="props.getAgentName"
+              :get-agent-avatar="props.getAgentAvatar"
+              :static-block-cache="props.staticBlockCache"
+              :active="props.active"
+              :read-only="props.readOnly"
+              :role="props.role"
+              @toggle-tool="$emit('toggle-tool', $event)"
+              @show-tool-detail="forwardSubagentToolDetail"
+              @task-card-click="$emit('task-card-click', $event)"
+              @send-message="(text, cardKey) => $emit('send-message', text, cardKey)"
+              @render-flush="$emit('render-flush')"
+              @resume-session="$emit('resume-session', $event)"
+              @reset-session="$emit('reset-session', $event)"
+            />
+            <button
+              v-if="isMemberGroupOpen(memberGroupNameForAnchor(block))"
+              type="button"
+              class="subagent-group-footer"
+              @click.stop="toggleMemberGroup(memberGroupNameForAnchor(block))"
+            >
+              <ChevronUp :size="12" />
+              <span>{{ t('chat.contentBlocks.subagentCollapse') }}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+      <template v-else-if="isMemberGroupChild(block)"></template>
       <!-- Thinking block: streaming or expanded shows inline content, collapsed shows clickable chip -->
       <div v-else-if="block.type === 'thinking'"
         :ref="(el) => setThinkingRef(stableBlockKey(bi, block), el)"
@@ -254,6 +324,7 @@
                 :static-block-cache="props.staticBlockCache"
                 :active="props.active"
                 :read-only="props.readOnly"
+                :role="props.role"
                 @toggle-tool="$emit('toggle-tool', $event)"
                 @show-tool-detail="forwardSubagentToolDetail"
                 @task-card-click="$emit('task-card-click', $event)"
@@ -353,8 +424,13 @@
       <!-- Text block with slash command badge (agent /command or ClawBench /cb-* command).
            The leading icon is what tells the kinds apart (Bot = agent command,
            Wrench = ClawBench built-in) — colour alone was too subtle, and a
-           solid fill reads as heavy/ugly inside the user bubble. -->
-      <template v-else-if="block.type === 'text' && extractSlashCommand(block.text || '')">
+           solid fill reads as heavy/ugly inside the user bubble.
+
+           USER MESSAGES ONLY: the badge means "this is what the user sent as a
+           command". An assistant reply starting with "/tmp 已 100% 满…" (a
+           sentence beginning with a path) or "#1 …" would otherwise lose its
+           Markdown rendering and show a bogus "/tmp" / "#1" command chip. -->
+      <template v-else-if="block.type === 'text' && isUserMessage && extractSlashCommand(block.text || '')">
         <span class="slash-command-badge" :class="{ 'clawbench-command-badge': extractSlashCommand(block.text)!.clawbench }">
           <component :is="extractSlashCommand(block.text)!.clawbench ? Wrench : Bot" :size="12" class="command-badge-icon" />
           {{ extractSlashCommand(block.text)!.command }}
@@ -362,8 +438,10 @@
         <span v-if="extractSlashCommand(block.text)!.rest.trim()" class="at-command-rest">{{ extractSlashCommand(block.text)!.rest.trim() }}</span>
       </template>
       <!-- Text block with an explicit "#skill" reference badge. Same shape as the
-           slash badge; the Sparkles icon distinguishes it. -->
-      <template v-else-if="block.type === 'text' && extractSkillCommand(block.text || '')">
+           slash badge; the Sparkles icon distinguishes it. User messages only —
+           same reason as the slash badge (a reply starting with "#1" or "## 结论"
+           is prose, not a skill reference). -->
+      <template v-else-if="block.type === 'text' && isUserMessage && extractSkillCommand(block.text || '')">
         <span class="slash-command-badge skill-command-badge">
           <Sparkles :size="12" class="command-badge-icon" />
           {{ '#' + extractSkillCommand(block.text)!.name }}
@@ -394,7 +472,7 @@ import { detectAskQuestion } from '@/utils/streamPerf.ts'
 import { askItemsToInputMap } from '@/utils/askQuestion.ts'
 import { getToolIcon, toolDisplayName } from '@/utils/icons'
 import { teamMemberColorVar } from '@/utils/teamMemberColor'
-import { Brain, ChevronDown, ChevronUp, AlertCircle, AlertTriangle, XCircle, CheckCircle2, Bot, Wrench, Sparkles } from 'lucide-vue-next'
+import { Brain, ChevronDown, ChevronUp, AlertCircle, AlertTriangle, XCircle, CheckCircle2, Bot, Wrench, Sparkles, Users } from 'lucide-vue-next'
 import TaskChatCard from '@/components/chat/TaskChatCard.vue'
 import LoginCommandButton from '@/components/chat/LoginCommandButton.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
@@ -639,9 +717,19 @@ const props = defineProps({
   // The group orchestrator owns member lifecycle. Hides the reset button only;
   // the "continue" button (a plain message into the group) stays.
   isGroupSession: { type: Boolean, default: false },
+  // Message role ('user' | 'assistant' | ...). Only user messages get the
+  // slash / #skill command badges: those badges replace the whole text block
+  // with "chip + rest", which is only truthful for a message the user actually
+  // sent as a command. Assistant prose frequently STARTS with a path or a
+  // numbered item ("/tmp 已 100% 满…", "#1 …", "## 结论"), and batching it as a
+  // command also loses its Markdown rendering.
+  role: { type: String, default: '' },
 })
 
 const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'task-card-click', 'send-message', 'render-flush', 'resume-session', 'reset-session'])
+
+/** Command badges are a user-message affordance only (see the `role` prop). */
+const isUserMessage = computed(() => props.role === 'user')
 
 const elapsedSeconds = ref(0)
 let elapsedTimer: ReturnType<typeof setInterval> | null = null
@@ -990,6 +1078,160 @@ function childBlocksOf(agentToolId: string | undefined): any[] {
   return childBlocksByParent.value[agentToolId] || []
 }
 
+// ── Agent Team member grouping (fallback) ──
+// Agent Team members normally reach the frontend with a backfilled
+// `parent_tool_call_id` (backend joins member name → spawning Agent card), so
+// they group under that Agent card like any sub-agent.
+//
+// That join is only valid WITHIN the message that contains the Agent card:
+//   - the Agent card lives in the message that spawned it; a later message
+//     (same live connection, or after "continue") carries member content whose
+//     parent id points at a block in an EARLIER message, which this component
+//     never sees (each message renders its own ContentBlocks instance), and
+//   - a respawned connection loses the in-memory member → tool-call map
+//     entirely, so member frames arrive with no parent at all.
+// In both cases every member's output would render flat in one interleaved
+// stream, indistinguishable from the lead's.
+//
+// The fallback: member content whose parent is NOT resolvable in this message
+// groups by MEMBER NAME instead, into one synthetic group per member. Member
+// name is the wire's own attribution key (`_meta["codebuddy.ai/memberEvent"]`)
+// and survives both failures. Resolvable member content keeps using the real
+// Agent card, so a healthy message is unchanged.
+
+/** True when this block is member content whose real parent is not rendered in
+ *  this message — i.e. it belongs to a member fallback group.
+ *
+ *  Top-level instances only. A nested instance renders ONE group's children,
+ *  where the parent link is intentionally absent from the local array (the
+ *  hosting Agent card lives in the parent instance), so re-evaluating the
+ *  fallback there would either recurse forever (member group body) or steal
+ *  sub-agent children into a bogus member group. */
+function needsMemberFallback(block: any): boolean {
+  if (props.nested) return false
+  const name = block?.member_name
+  if (!name) return false
+  const pid = block?.parent_tool_call_id
+  return !pid || !currentBlockIds.value.has(pid)
+}
+
+/** Member name of the fallback group a block belongs to ('' when none). */
+function memberGroupNameOf(block: any): string {
+  return needsMemberFallback(block) ? String(block.member_name) : ''
+}
+
+/** Blocks belonging to a member's fallback group, in stream order. Scoped to
+ *  THIS instance's array so a nested instance renders only its own subset —
+ *  the group then replaces exactly the blocks the flat loop would have shown. */
+const memberFallbackBlocks = computed(() => {
+  const map: Record<string, any[]> = {}
+  for (const b of props.blocks) {
+    const name = memberGroupNameOf(b)
+    if (!name) continue
+    if (!map[name]) map[name] = []
+    map[name].push(b)
+  }
+  return map
+})
+
+/** Member color for a fallback group header (from any of its blocks). */
+function memberFallbackColor(name: string): string | undefined {
+  const blocks = memberFallbackBlocks.value[name]
+  if (!blocks) return undefined
+  for (const b of blocks) {
+    if (b?.member_color) return b.member_color
+  }
+  return undefined
+}
+
+/** Number of tool calls in a member's fallback group. */
+function memberFallbackStepCount(name: string): number {
+  const blocks = memberFallbackBlocks.value[name]
+  if (!blocks) return 0
+  return blocks.filter((b) => b.type === 'tool_use').length
+}
+
+/** Expand key for a member fallback group (stable across reloads: keyed by
+ *  message + member name, not by block position). */
+function memberGroupKey(name: string): string {
+  return `member-group-${props.msgId ?? props.msgIndex ?? 0}-${name}`
+}
+
+function isMemberGroupOpen(name: string): boolean {
+  return !!props.expandedTools[memberGroupKey(name)]
+}
+
+/** Accent style for a member fallback group header. */
+function memberGroupAccentStyle(name: string): Record<string, string> | undefined {
+  const color = memberFallbackColor(name)
+  if (!color) return undefined
+  return { '--subagent-accent': teamMemberColorVar(color) }
+}
+
+// Pill elements by group key, so collapsing can anchor the pill to the top of
+// the scroll viewport (same treatment as sub-agent groups).
+const memberPillEls = new Map<string, HTMLElement>()
+function setMemberPillRef(key: string, el: any) {
+  if (el) memberPillEls.set(key, el as HTMLElement)
+  else memberPillEls.delete(key)
+}
+
+/**
+ * Toggle a member fallback group. Mirrors toggleSubagentGroup: collapsing
+ * shrinks a potentially huge group, so the pill is anchored to the top of the
+ * scroll container and restored after the DOM updates.
+ */
+function toggleMemberGroup(name: string) {
+  const key = memberGroupKey(name)
+  const wasOpen = isMemberGroupOpen(name)
+  if (!wasOpen) {
+    emit('toggle-tool', key)
+    return
+  }
+  const pill = memberPillEls.get(key)
+  const scroller = pill?.closest('.chat-messages') as HTMLElement | null
+  if (!pill || !scroller) {
+    emit('toggle-tool', key)
+    return
+  }
+  const pillTopInContent = scroller.scrollTop + (pill.getBoundingClientRect().top - scroller.getBoundingClientRect().top)
+  collapsingMemberGroups[key] = true
+  emit('toggle-tool', key)
+  nextTick(() => {
+    const maxScroll = scroller.scrollHeight - scroller.clientHeight
+    const target = Math.max(0, Math.min(pillTopInContent, maxScroll))
+    if (Math.abs(target - scroller.scrollTop) > 1) {
+      scroller.scrollTop = target
+    }
+    requestAnimationFrame(() => { delete collapsingMemberGroups[key] })
+  })
+}
+
+/** Groups whose recursive body has been mounted at least once. */
+const mountedMemberGroups = reactive<Record<string, boolean>>({})
+
+/** Groups mid-collapse (transition disabled so the anchor can be measured). */
+const collapsingMemberGroups = reactive<Record<string, boolean>>({})
+
+function isMemberGroupMounted(name: string): boolean {
+  const k = memberGroupKey(name)
+  if (isMemberGroupOpen(name)) mountedMemberGroups[k] = true
+  return !!mountedMemberGroups[k]
+}
+
+/** Whether the member's fallback group is still producing output (drives the
+ *  header spinner). A member is "running" while any of its tool calls is
+ *  unfinished; a group with no tool calls yet counts as running while the
+ *  message streams. */
+function memberGroupStreaming(name: string): boolean {
+  if (!props.streaming) return false
+  const blocks = memberFallbackBlocks.value[name]
+  if (!blocks) return false
+  const tools = blocks.filter((b) => b.type === 'tool_use')
+  if (tools.length === 0) return true
+  return tools.some((b) => !b.done)
+}
+
 /** Ids of blocks present in the CURRENT blocks array (not the root). A block is
  *  skipped in this iteration iff its parent is rendered in this same array —
  *  i.e. the parent hosts a group right here. In a nested instance the array is
@@ -1011,6 +1253,35 @@ function isChildBlock(block: any): boolean {
   const pid = block?.parent_tool_call_id
   if (!pid) return false
   return currentBlockIds.value.has(pid)
+}
+
+/** True when this block belongs to a member fallback group AND is not that
+ *  group's anchor — i.e. it is rendered inside the group body, so the flat loop
+ *  must skip it. */
+function isMemberGroupChild(block: any): boolean {
+  const name = memberGroupNameOf(block)
+  if (!name) return false
+  return memberFallbackAnchor.value[name] !== block
+}
+
+/** The block that hosts each member fallback group: the member's FIRST block in
+ *  this message. Rendering the group there keeps the member's output at the
+ *  point in the conversation where it actually arrived. */
+const memberFallbackAnchor = computed(() => {
+  const map: Record<string, any> = {}
+  for (const b of props.blocks) {
+    const name = memberGroupNameOf(b)
+    if (!name || map[name]) continue
+    map[name] = b
+  }
+  return map
+})
+
+/** Whether this block is the anchor (header pill) of a member fallback group. */
+function memberGroupNameForAnchor(block: any): string {
+  const name = memberGroupNameOf(block)
+  if (!name) return ''
+  return memberFallbackAnchor.value[name] === block ? name : ''
 }
 
 /** Expand key for a sub-agent group: reuses the Agent block's stable key. */

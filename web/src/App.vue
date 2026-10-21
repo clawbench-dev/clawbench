@@ -146,6 +146,7 @@
                       :pdf-outline="pdfOutline"
                       :can-navigate-back="canNavigateBackInView"
                       :back-label="viewBackLabel"
+                      :chat-quote="true"
                       @delete="handleDelete($event)"
                       @show-details="detailsDrawer.open()"
                       @open-git-history="openFileHistory"
@@ -168,6 +169,7 @@
                       @share-link="openShareLinkDialog"
                       @quote-in-chat="handleFileQuoteInChat"
                       @set-as-background="handleSetAsBackground"
+                      @open-search="openFileSearch"
                     />
                     <div v-else class="view-panel-empty" :class="recentFileEntries.length ? 'has-recent' : 'no-recent'">
                       <template v-if="recentFileEntries.length">
@@ -619,6 +621,7 @@ import { useQuoteQuestion } from './composables/useQuoteQuestion.ts'
 import { setOpenSessionHandler, usePendingTarget, confirmTarget, cancelTarget } from './composables/useConversationTarget.ts'
 import SessionPickerDialog from './components/common/SessionPickerDialog.vue'
 import { useTaskTab, registerSwitchTab, onTaskEvent } from '@/composables/useTaskTab.ts'
+import { setPendingMessageNavigation } from '@/composables/useMessageNavigation.ts'
 import { useTabDrawer, onTabSwitch, resetTabDrawerState } from '@/composables/useTabDrawer.ts'
 import { resetAgents, useAgents } from '@/composables/useAgents'
 import { useGroupMembers } from '@/composables/useGroupMembers'
@@ -690,10 +693,12 @@ import { openPendingSessionWhenReady } from './composables/usePendingSessionOpen
 import { guardStartupWithSplash } from './composables/useStartupGuard.ts'
 import { setPendingCommitNavigation } from './composables/useCommitNavigation.ts'
 import { getFileType } from './utils/fileType.ts'
+import { isAppSearchField, refocusSearchField } from './utils/appSearchField'
 import { fileSupportsToc } from './utils/tocSupport.ts'
 import { formatBadgeCount } from './utils/format.ts'
 import { portForwardUnavailable } from './utils/portForwardUtils.ts'
 import { useChatContext } from './composables/useChatContext.ts'
+import { consumeShareTargetResult, stageShareTargetResult } from './utils/shareTarget.ts'
 import { useForgeUnread } from './composables/useForgeUnread.ts'
 import { useForgeBinding, forgeDockIconKind } from './composables/useForgeBinding.ts'
 import { setPendingForgeTarget, clearPendingForgeTarget, forgeTargetFromDetail } from './composables/useForgeNavigation.ts'
@@ -1134,7 +1139,7 @@ function switchTab(tab: string, force = false) {
  * strings (Android reads them via getStringExtra; the popover's
  * CompletionItem types taskId as string).
  */
-interface OpenSessionDetail { sessionId?: string; projectPath?: string; fromNotificationCenter?: boolean }
+interface OpenSessionDetail { sessionId?: string; projectPath?: string; messageId?: number; fromNotificationCenter?: boolean }
 interface OpenTaskDetail { taskId?: string; executionId?: string; projectPath?: string; fromNotificationCenter?: boolean }
 
 /**
@@ -1181,7 +1186,12 @@ function handleOpenSession(e: Event) {
     appLog.w(TAG, 'clawbench-open-session: no sessionId in detail, ignoring')
     return
   }
-  const { sessionId, projectPath } = detail
+  const { sessionId, projectPath, messageId } = detail
+  // Park the message target BEFORE switching: the chat panel consumes it once
+  // the target session's messages are on screen (it may still have to load, and
+  // may live in another project). Same mechanism the quote jump uses, so the
+  // scroll + highlight behave identically.
+  if (messageId) setPendingMessageNavigation(sessionId, messageId)
   const crossProject = !!projectPath && projectPath !== store.state.projectRoot
   if (!crossProject) recordNotificationOrigin(detail)
   if (crossProject) {
@@ -2419,7 +2429,33 @@ async function initializeApp() {
   // only flips after this function resolves, so the dock/file manager do not
   // exist here. `currentFile` is already populated by the restore above.
   applyProjectPanel(store.state.projectRoot)
+
+  // Web Share Target: an installed PWA receives shared files as a POST to
+  // /share-target, which stores them and redirects here with the paths. Runs
+  // after the project cookie is set (that is what the upload was written into)
+  // and before isAuthenticated flips, so the composer mounts with the cards
+  // already staged instead of flashing an empty input first.
+  applyShareTargetAttachments()
+
   return true
+}
+
+/**
+ * Stage the files a Web Share Target POST left behind.
+ *
+ * The share gesture happens in another app, so the user lands here with no
+ * visible action of their own — a silent success would be indistinguishable
+ * from "the share did nothing". A toast states what happened in both
+ * directions; the attachments themselves are visible in the composer.
+ *
+ * The decision table lives in utils/shareTarget (stageShareTargetResult) so it
+ * can be tested without mounting App.vue.
+ */
+function applyShareTargetAttachments() {
+  const result = consumeShareTargetResult()
+  if (!result) return
+  const { toastKey, toastParams, variant } = stageShareTargetResult(result, (path) => addAttachedFile(path, false))
+  toast.show(t(toastKey, toastParams), { icon: variant.icon, type: variant.type, duration: variant.duration })
 }
 
 /** Report a fatal startup error to the user and to the client log relay. */
@@ -2528,13 +2564,24 @@ const isCodeMirrorFileView = computed(() => {
     }
     return true
 })
-// Rendered markdown/HTML preview (not CodeMirror): has an inline search bar
+// Rendered markdown preview (not CodeMirror): has an inline search bar
 // instead of the SearchDrawer bottom sheet.
 const isMarkdownRenderedView = computed(() => {
     const f = currentFile.value
     if (!f || typeof f.content !== 'string') return false
     const ft = getFileType(f.name || '')
     return ft.isMarkdown && markdownViewMode.value === 'rendered'
+})
+// Rendered HTML preview: also an inline-search surface, but its bar searches
+// the preview iframe's own document (see PreviewSearchBar's `iframe` prop)
+// rather than the app's. Without this branch Ctrl+F fell through to the
+// SearchDrawer, which scans the file SOURCE and cannot highlight anything in
+// the rendered iframe.
+const isHtmlRenderedView = computed(() => {
+    const f = currentFile.value
+    if (!f || typeof f.content !== 'string') return false
+    const ft = getFileType(f.name || '')
+    return ft.isHtml && markdownViewMode.value === 'rendered'
 })
 const { entries: recentFileEntries } = useRecentFiles()
 const recentFilesCount = computed(() => recentFileEntries.value.length)
@@ -2586,12 +2633,12 @@ watch(() => currentFile.value, (file, prevFile) => {
 // CodeMirror panel starts closed, so a previously-active search state would
 // otherwise leave the header button stuck highlighted.
 watch(
-  () => [isCodeMirrorFileView.value, isMarkdownRenderedView.value, markdownViewMode.value],
-  ([cmNow, mdNow, _mode], [cmBefore, mdBefore, modeBefore]) => {
+  () => [isCodeMirrorFileView.value, isMarkdownRenderedView.value, isHtmlRenderedView.value, markdownViewMode.value],
+  ([cmNow, mdNow, htmlNow, _mode], [cmBefore, mdBefore, htmlBefore, modeBefore]) => {
     // Ignore the initial run and same-view transitions (e.g. raw->edit of the
     // same CodeMirror view keeps its panel state).
     if (modeBefore === undefined) return
-    if (cmNow === cmBefore && mdNow === mdBefore) return
+    if (cmNow === cmBefore && mdNow === mdBefore && htmlNow === htmlBefore) return
     viewSearchActive.value = false
     searchDrawer.close()
   },
@@ -3717,7 +3764,10 @@ onMounted(async () => {
 
     // Handle pending navigation from push notification deep link
     // (cross-project reload or cold start via native bridge)
-    const processPendingSessionNav = (navSessionId: string) => {
+    const processPendingSessionNav = (navSessionId: string, navMessageId?: number) => {
+      // Park the message target first: the session still has to load, and the
+      // chat panel consumes the request once its messages are on screen.
+      if (navMessageId) setPendingMessageNavigation(navSessionId, navMessageId)
       // Wait for sessions to load before switching (max 3 seconds)
       let attempts = 0
       const checkReady = () => {
@@ -3756,7 +3806,7 @@ onMounted(async () => {
         if (nav.taskId) {
           processPendingTaskNav(nav.taskId, nav.executionId)
         } else if (nav.sessionId) {
-          processPendingSessionNav(nav.sessionId)
+          processPendingSessionNav(nav.sessionId, nav.messageId)
         }
       } catch {} // for cold-start pending navigation
     }
@@ -3771,7 +3821,7 @@ onMounted(async () => {
             const nav = await getNative()?.getPendingNavigation?.()
             if (nav) {
               const parsed = JSON.parse(nav)
-              const { sessionId, taskId, executionId, projectPath, forge } = parsed
+              const { sessionId, taskId, executionId, projectPath, forge, messageId } = parsed
               // Same resolver as the live-click handler: the native shell names
               // this field `forgeTarget`, and routing both entry points through
               // one function is what keeps them from drifting apart.
@@ -3813,11 +3863,12 @@ onMounted(async () => {
                 // Session notification navigation
                 // Navigation data found — stop polling
                 pollCleared = true
+                if (messageId) setPendingMessageNavigation(sessionId, messageId)
                 if (projectPath && projectPath !== store.state.projectRoot) {
                   // Need to switch project first — use hot switch instead of reload
                   hotSwitchProject(projectPath, sessionId)
                 } else {
-                  processPendingSessionNav(sessionId)
+                  processPendingSessionNav(sessionId, messageId)
                 }
               }
             }
@@ -3867,7 +3918,7 @@ function openFileViewSearchDrawer() {
 // search button via viewSearchActive without opening the SearchDrawer; the
 // SearchDrawer bottom sheet is only used as a fallback.
 function openFileSearch() {
-  if (isCodeMirrorFileView.value || isMarkdownRenderedView.value) {
+  if (isCodeMirrorFileView.value || isMarkdownRenderedView.value || isHtmlRenderedView.value) {
     viewSearchActive.value = true
     fileOverlayRef.value?.focusSearchInput()
   } else {
@@ -3883,10 +3934,11 @@ function closeViewSearch() {
 // markdown preview inline bar) open/closed.
 function toggleViewSearch() {
   if (viewSearchActive.value) {
-    // Close: focusSearchInput() toggles the CodeMirror panel closed (its
-    // searchChange event also clears viewSearchActive); the markdown bar is
-    // closed by clearing the state.
-    fileOverlayRef.value?.focusSearchInput()
+    // Close. The CodeMirror panel has its own close command — focusing it is
+    // idempotent by design (a repeat Ctrl+F must refocus, not dismiss), so it
+    // cannot double as the close half. The markdown bar is closed by clearing
+    // the state.
+    fileOverlayRef.value?.closeSearchInput()
     closeViewSearch()
   } else {
     openFileSearch()
@@ -3894,18 +3946,28 @@ function toggleViewSearch() {
 }
 function handleCtrlF(e: KeyboardEvent) {
     if (!(e.ctrlKey || e.metaKey) || e.key !== 'f') return
-    // Skip when focus is in input/textarea/contenteditable/terminal
     const target = e.target as HTMLElement | null
-    const tag = target?.tagName
-    if (tag === 'INPUT' || tag === 'TEXTAREA') return
-    if (target?.isContentEditable) return
+    // Modal / project dialog and the terminal own the key outright — check them
+    // BEFORE the find-box branch below, or a search field inside a dialog would
+    // be hijacked by the app's own routing.
+    if (_dlg.state.value.visible || projectDialogOpen.value) return
     // Optional call, not just optional chain: a keydown dispatched on
     // `document` has an EventTarget (not an Element) as its target, and
     // EventTarget has no `closest`. Same guard as the sibling copies in
     // ChatMessageList/ChatPanelContent.
     if (target?.closest?.('.terminal-panel')) return
-    // Skip when modal dialog or project dialog is open
-    if (_dlg.state.value.visible || projectDialogOpen.value) return
+    // Ctrl+F while one of our own find boxes has focus: keep the keystroke in
+    // the app. Falling through to the INPUT bail-out below would let the
+    // browser's native find bar open on top of ours.
+    if (isAppSearchField(target)) {
+        e.preventDefault()
+        refocusSearchField(target)
+        return
+    }
+    // Skip when focus is in input/textarea/contenteditable
+    const tag = target?.tagName
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return
+    if (target?.isContentEditable) return
 
     if (isWideScreen.value) {
         // Focus-aware: route Ctrl+F to the pane the user is working in

@@ -28,6 +28,8 @@
  */
 
 /** Marker class consumed by media-block.css to opt a figure into fill-width. */
+import { setRefitHook } from './inlineZoom'
+
 export const SVG_FIT_CLASS = 'svg-fit'
 
 /** Custom property carrying the media aspect ratio (width ÷ height). */
@@ -131,7 +133,100 @@ export function stampSvgFigure(wrapper: Element): boolean {
     if (ar === null || !Number.isFinite(ar) || ar <= 0) return false
     ;(wrapper as HTMLElement).style.setProperty(SVG_AR_PROP, String(ar))
     wrapper.classList.add(SVG_FIT_CLASS)
+    applyMediaWidth(wrapper as HTMLElement, media as HTMLElement, ar)
     return true
+}
+
+/**
+ * Write the media's pixel width from its ratio, clamped to the column.
+ *
+ * The width MUST be a resolved pixel value, not a percentage. The figure is
+ * shrink-to-fit around this element, and the element's `max-width: 100%` would
+ * be relative to the figure — so the two would depend on each other. The
+ * browser breaks that cycle by falling back to the default 300px
+ * replaced-element width, which squashed every wide diagram to 300px.
+ *
+ * Resolving it here removes the cycle: the script knows the ratio and can
+ * measure the available column width, so it writes a number the layout can
+ * use directly. `100%` of the parent's content box is the column.
+ */
+function applyMediaWidth(wrapper: HTMLElement, media: HTMLElement, ar: number): void {
+    const column = wrapper.parentElement
+    if (!column) return
+    const avail = column.getBoundingClientRect().width
+    if (!(avail > 0)) return
+
+    // The frame takes the artwork's ACTUAL width at rest, never the column's:
+    // a small diagram sits in a small frame instead of a full-column box of
+    // empty space. Only two things may shrink it:
+    //  - the column width, so a wide diagram does not overflow, and
+    //  - the 60dvh height budget, so a tall one is not cut off.
+    // Nothing may GROW it — enlarging is what the active (zoomed) state is for.
+    //
+    // The height budget is NOT a bug, and removing it does not widen a portrait
+    // diagram. #570 reported a 302x1182 flowchart as an unreadable sliver and
+    // the obvious fix — drop `heightBudget * ar` here — was tried twice
+    // (bfc27b288 removed the same formula from CSS, 965ac2ef1 put it back in
+    // JS). It cannot work: `media-block.css` caps the media at
+    // `max-height: 60dvh` with `object-fit: contain`, so once the HEIGHT is
+    // pinned the width of a 1:3.9 artwork is forced to 60dvh * 0.255. Measured
+    // in Chromium against the real stylesheet (900px viewport, 800px column):
+    //
+    //   with the budget (this code):  figure 138px, drawing 138px, gutters 0
+    //   without the budget:           figure 302px, drawing 138px, gutters 82px
+    //
+    // Identical artwork; the only difference is 82px of empty frame on each
+    // side — exactly the "578px empty box" the same issue complained about.
+    // A portrait diagram is narrow at rest BY CONSTRUCTION; reading it is what
+    // click-to-zoom is for. `svgMediaFit.test.ts` ("portrait diagram resting
+    // width") pins this so it is not "fixed" a third time.
+    const intrinsic = intrinsicWidth(media, ar)
+    if (!(intrinsic > 0)) return
+    const heightBudget = window.innerHeight * 0.6
+    const width = Math.min(intrinsic, avail, heightBudget * ar)
+    if (!(width > 0)) return
+    media.style.width = `${Math.round(width * 100) / 100}px`
+    // Height follows the width through the ratio, so no separate value is
+    // written; `height: auto` in CSS derives it from the viewBox.
+}
+
+/**
+ * The artwork's own width, before any fitting.
+ *
+ * `viewBox` is the authored coordinate space, but an svg may also carry
+ * `width`/`height` attributes or an inline `style="max-width: Npx"` (mermaid
+ * does both) that state its intended display size. The inline max-width is the
+ * best signal for "how big did the author mean this to be", so it wins when
+ * present; otherwise the viewBox width is used.
+ */
+
+function intrinsicWidth(media: HTMLElement, ar: number): number {
+    // `parsePx` (not `parseFloat`) on purpose: mermaid writes `width="100%"` on
+    // the svg, and `parseFloat('100%')` is 100 — a percentage read as a pixel
+    // count silently shrank diagrams to 100px. Only a px value counts.
+    const inlineMax = parsePx(media.style.maxWidth)
+    if (inlineMax !== null) return inlineMax
+    const attrW = parsePx(media.getAttribute('width'))
+    if (attrW !== null) return attrW
+    const vb = (media as unknown as SVGSVGElement).viewBox?.baseVal
+    if (vb && vb.width > 0) return vb.width
+    // Last resort: derive from the height budget so a ratio is still honoured.
+    return window.innerHeight * 0.6 * ar
+}
+
+/**
+ * Parse a CSS length that must be an absolute pixel value.
+ *
+ * Returns null for percentages, `auto`, `none`, and anything else that is not a
+ * plain `Npx`. A percentage here is not just wrong — it is actively harmful:
+ * `parseFloat` would turn `100%` into 100 and shrink the diagram to a sliver.
+ */
+function parsePx(value: string | null | undefined): number | null {
+    if (!value) return null
+    const m = /^\s*([\d.]+)px\s*$/.exec(value)
+    if (!m) return null
+    const n = Number(m[1])
+    return Number.isFinite(n) && n > 0 ? n : null
 }
 
 /**
@@ -167,3 +262,105 @@ export async function stampSvgFiguresAsync(root: ParentNode | null): Promise<voi
     if (pending.length > 0) await Promise.all(pending)
     stampSvgFigures(root)
 }
+
+/**
+ * Re-size every stamped SVG figure when the space available to it changes.
+ *
+ * `applyMediaWidth` writes a resolved pixel width, which is what breaks the
+ * figure↔media cycle — but a pixel value is frozen at the moment it was
+ * written. Without this, resizing the window (or collapsing a side panel) left
+ * every diagram at its old width: too wide (overflowing) when the column shrank,
+ * and wasting the new space when it grew.
+ *
+ * Two signals, because they answer different questions:
+ *  - `ResizeObserver` on each figure's parent: the COLUMN changed. This is the
+ *    one that catches side-panel toggles, which do not resize the window.
+ *  - `resize` on the window: the VIEWPORT HEIGHT changed, which moves the 60dvh
+ *    budget and therefore the width of a height-limited diagram. The column's
+ *    own width may not change at all in that case, so the observer alone would
+ *    miss it.
+ *
+ * Re-entrancy is handled by suppressing the observer while we write: writing a
+ * width changes the figure's size, which would otherwise fire the observer
+ * again and loop.
+ */
+export function installSvgMediaAutoFit(): () => void {
+    if (typeof window === 'undefined' || typeof ResizeObserver !== 'function') {
+        return () => {}
+    }
+    let writing = false
+    let frame = 0
+
+    const refitAll = () => {
+        if (writing) return
+        writing = true
+        try {
+            for (const wrapper of Array.from(document.querySelectorAll('.image-block-wrapper'))) {
+                refitFigure(wrapper as HTMLElement)
+            }
+        } finally {
+            writing = false
+        }
+    }
+
+    // Coalesce bursts (a window drag fires resize on every frame) into one pass
+    // per animation frame.
+    const scheduleRefit = () => {
+        if (frame) return
+        frame = requestAnimationFrame(() => {
+            frame = 0
+            refitAll()
+        })
+    }
+
+    const observer = new ResizeObserver(scheduleRefit)
+    const observed = new WeakSet<Element>()
+    const observeAll = () => {
+        for (const wrapper of Array.from(document.querySelectorAll('.image-block-wrapper'))) {
+            const column = wrapper.parentElement
+            if (column && !observed.has(column)) {
+                observed.add(column)
+                observer.observe(column)
+            }
+        }
+    }
+
+    // New figures are added by every render, so re-scan on mutations rather than
+    // only once at install time.
+    const mutation = new MutationObserver(() => {
+        observeAll()
+        scheduleRefit()
+    })
+    mutation.observe(document.body, { childList: true, subtree: true })
+
+    observeAll()
+    window.addEventListener('resize', scheduleRefit)
+
+    return () => {
+        observer.disconnect()
+        mutation.disconnect()
+        window.removeEventListener('resize', scheduleRefit)
+        if (frame) cancelAnimationFrame(frame)
+    }
+}
+
+/**
+ * Re-measure one figure. No-op for anything `stampSvgFigure` never sized.
+ *
+ * Also registered with `inlineZoom` as its exit hook, so leaving the zoom
+ * recomputes the resting width against the CURRENT column instead of restoring
+ * a value captured before the column changed.
+ */
+export function refitFigure(wrapper: HTMLElement): void {
+    if (!wrapper.classList.contains(SVG_FIT_CLASS)) return
+    // While zoomed the media's size is owned by `inlineZoom`, which recomputes
+    // from the frame on every step; writing here would fight it.
+    if (wrapper.classList.contains('is-zooming')) return
+    const media = wrapper.querySelector(CONTENT_MEDIA_SELECTOR)
+    if (!media) return
+    const ar = svgMediaAspectRatio(media)
+    if (ar === null || !Number.isFinite(ar) || ar <= 0) return
+    applyMediaWidth(wrapper, media as HTMLElement, ar)
+}
+
+setRefitHook(refitFigure)

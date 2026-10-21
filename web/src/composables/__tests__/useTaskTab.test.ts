@@ -554,6 +554,25 @@ describe('useTaskTab', () => {
       )
     })
 
+    it('carries a task nav so a native-shell click has somewhere to go', async () => {
+      // Regression: the notification shipped only an `onClick`, which the
+      // Electron main process never runs — it delivers a nav payload to the
+      // renderer instead. With no nav the click raised the window and did
+      // nothing else, so the user could not tell it had worked at all.
+      const { loadTasks } = useTaskTab()
+
+      mockTasksResponse([makeTask({ runningCount: 1 })])
+      await loadTasks()
+
+      mockTasksResponse([makeTask({ runningCount: 0, runCount: 1 })])
+      await loadTasks()
+
+      const opts = mockShowBrowserNotification.mock.calls[0][1]
+      expect(opts.nav).toEqual({ taskId: '1' })
+      // The in-page path (plain browser) still needs the tab switch.
+      expect(typeof opts.onClick).toBe('function')
+    })
+
     // ── push_mode must NOT gate the system notification ──
     //
     // The decision belongs to the local `desktopNotification` setting (checked

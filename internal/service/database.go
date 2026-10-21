@@ -480,6 +480,13 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			group_id TEXT DEFAULT '',
 			archived INTEGER NOT NULL DEFAULT 0,
 			last_read_at DATETIME,
+			-- awaiting_user_at marks a GROUP session whose last finished turn
+			-- handed the floor back to the human and that the user has not read
+			-- yet. It is a FLAG, not a watermark: set when the turn ends, cleared
+			-- by UpdateLastRead. Group unread is therefore "is the group waiting
+			-- on me" (0 or 1), never a count of member speeches — see
+			-- unreadCountSubquery. Always NULL for non-group sessions.
+			awaiting_user_at DATETIME,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(backend, id)
@@ -1422,6 +1429,21 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// no-op on every subsequent startup.
 	if err := rebuildSessionOrderIndexIfNeeded(); err != nil {
 		return err
+	}
+
+	// Migrate: add awaiting_user_at column — the group "the floor is with you"
+	// flag (see the DDL comment).
+	//
+	// Additive and nullable, so existing rows need no backfill: a group with no
+	// recorded hand-back simply never lights the badge, which is the safe
+	// direction (a stale unread badge is worse than a missing one, and the next
+	// finished turn sets it).
+	var hasAwaitingUserAt int
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='awaiting_user_at'").Scan(&hasAwaitingUserAt)
+	if hasAwaitingUserAt == 0 {
+		if _, err := store.WriteExec("ALTER TABLE chat_sessions ADD COLUMN awaiting_user_at DATETIME"); err != nil {
+			return fmt.Errorf("failed to add awaiting_user_at column: %w", err)
+		}
 	}
 
 	// Migrate: create session tag registry + session↔tag links.

@@ -80,6 +80,82 @@ const SCROLLBAR_STYLE_ATTR = 'data-clawbench-scrollbar'
  * there), false when the document was unreachable.
  */
 export function installPreviewScrollbar(iframe: HTMLIFrameElement | null): boolean {
+  return installPreviewStyle(iframe, SCROLLBAR_STYLE_ATTR, scrollbarCss)
+}
+
+/** Marks the search-highlight style element we inject into a preview document. */
+const SEARCH_STYLE_ATTR = 'data-clawbench-search'
+
+/**
+ * Search-match highlight colours for the previewed document.
+ *
+ * Mirrors PreviewSearchBar's `.markdown-body mark.md-search-match` rules
+ * (search-bar.css) so a find in an HTML preview looks exactly like a find in a
+ * rendered markdown preview. The mark classes are shared via documentSearch.ts;
+ * only the stylesheet lives here, because a preview document cannot link the
+ * app's CSS — so the accent is resolved from the host and inlined.
+ *
+ * The active-match flash needs its own copy of the keyframes: `line-flash`
+ * lives in the HOST document (assets/code-viewer.css) and does not apply
+ * inside the frame. The name is prefixed so a previewed document that happens
+ * to define `line-flash` itself cannot collide with ours.
+ */
+function searchHighlightCss(accent: string): string {
+  return `
+mark.md-search-match {
+  background: color-mix(in srgb, ${accent} 28%, transparent);
+  color: inherit;
+  padding: 0;
+}
+mark.md-search-match-active {
+  background: color-mix(in srgb, ${accent} 55%, transparent);
+}
+@keyframes clawbench-search-flash {
+  0%, 100% { background: transparent; }
+  14%      { background: color-mix(in srgb, ${accent} 40%, transparent); }
+  45%      { background: color-mix(in srgb, ${accent} 18%, transparent); }
+}
+mark.md-search-match.search-match-flash {
+  animation: clawbench-search-flash 0.7s ease-out 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  mark.md-search-match.search-match-flash { animation: none !important; }
+}
+`
+}
+
+/** The app's accent, for the preview document's search highlights. */
+function hostAccentColor(): string {
+  const v = getComputedStyle(document.documentElement).getPropertyValue('--accent-color').trim()
+  return v || '#4a90d9'
+}
+
+/**
+ * Give the previewed document the search-match highlight styles.
+ *
+ * Appended (not inserted first, unlike the scrollbar sheet): these rules only
+ * ever target our own `mark.md-search-match*` elements, which the document
+ * itself never produces, so there is nothing to defer to — and appending keeps
+ * them last, i.e. they cannot be overridden by a broad `mark { }` rule the
+ * previewed document happens to declare.
+ *
+ * Idempotent, so it can run on every iframe load. `accent` is a parameter for
+ * tests; production reads it from the host theme.
+ */
+export function installPreviewSearchStyles(
+  iframe: HTMLIFrameElement | null,
+  accent: string = hostAccentColor(),
+): boolean {
+  return installPreviewStyle(iframe, SEARCH_STYLE_ATTR, searchHighlightCss(accent), false)
+}
+
+/** Shared injector for the preview document's app-supplied stylesheets. */
+function installPreviewStyle(
+  iframe: HTMLIFrameElement | null,
+  attr: string,
+  css: string,
+  first = true,
+): boolean {
   if (!iframe) return false
   let doc: Document | null
   try {
@@ -89,11 +165,12 @@ export function installPreviewScrollbar(iframe: HTMLIFrameElement | null): boole
     return false
   }
   if (!doc || !doc.head) return false
-  if (doc.head.querySelector(`style[${SCROLLBAR_STYLE_ATTR}]`)) return true
+  if (doc.head.querySelector(`style[${attr}]`)) return true
 
   const style = doc.createElement('style')
-  style.setAttribute(SCROLLBAR_STYLE_ATTR, '')
-  style.textContent = scrollbarCss
-  doc.head.insertBefore(style, doc.head.firstChild)
+  style.setAttribute(attr, '')
+  style.textContent = css
+  if (first) doc.head.insertBefore(style, doc.head.firstChild)
+  else doc.head.appendChild(style)
   return true
 }

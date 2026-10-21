@@ -31,6 +31,8 @@ import { LongPressDirective } from '../directives/longPress'
 import { configureMarkedRenderer } from '../utils/markedConfig'
 import { installLocalMediaFallback } from '../utils/localMediaFallback'
 import { installMediaFullscreenGuard } from '../utils/mediaFullscreenGuard'
+import { installInlineZoom } from '../utils/inlineZoom'
+import { installSvgMediaAutoFit } from '../utils/svgMediaFit'
 import { installExternalLinkClick } from '../utils/externalLinkClick'
 
 configureMarkedRenderer()
@@ -44,6 +46,8 @@ installLocalMediaFallback()
 // The share SPA renders the same VideoPreview, so a fullscreen video whose file
 // disappears would otherwise leave the page unclickable (see the guard's docs).
 installMediaFullscreenGuard()
+installInlineZoom()
+installSvgMediaAutoFit()
 
 // External links are rendered as <span class="md-external-link"> by the shared
 // markdown renderer, so this SPA needs the tap handler too — otherwise a URL in

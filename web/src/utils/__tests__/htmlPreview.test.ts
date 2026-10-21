@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildHtmlPreviewSrc, installPreviewScrollbar } from '@/utils/htmlPreview'
+import { buildHtmlPreviewSrc, installPreviewScrollbar, installPreviewSearchStyles } from '@/utils/htmlPreview'
 
 /**
  * buildHtmlPreviewSrc is the single source of truth for how an HTML document is
@@ -85,5 +85,64 @@ describe('installPreviewScrollbar', () => {
 
   it('returns false for a missing iframe instead of throwing', () => {
     expect(installPreviewScrollbar(null)).toBe(false)
+  })
+})
+
+/**
+ * installPreviewSearchStyles gives the previewed document the match-highlight
+ * colours. The mark classes come from documentSearch.ts; without this sheet a
+ * find inside an HTML preview would wrap matches in invisible <mark>s.
+ */
+describe('installPreviewSearchStyles', () => {
+  function makeIframe(headHtml = '<title>t</title>'): HTMLIFrameElement {
+    const iframe = document.createElement('iframe')
+    document.body.appendChild(iframe)
+    iframe.contentDocument!.head.innerHTML = headHtml
+    return iframe
+  }
+
+  it('injects the highlight sheet into the preview document', () => {
+    const iframe = makeIframe()
+    expect(installPreviewSearchStyles(iframe, '#ff0000')).toBe(true)
+    const style = iframe.contentDocument!.head.querySelector('style[data-clawbench-search]')
+    expect(style).not.toBeNull()
+    // Both classes the engine applies must be styled.
+    expect(style!.textContent).toContain('mark.md-search-match')
+    expect(style!.textContent).toContain('mark.md-search-match-active')
+    // The accent is inlined (the preview document cannot read the host's vars).
+    expect(style!.textContent).toContain('#ff0000')
+    // The active-match flash must be defined IN the frame: `line-flash` lives in
+    // the host document and does not apply here.
+    expect(style!.textContent).toContain('@keyframes clawbench-search-flash')
+    expect(style!.textContent).toMatch(/\.search-match-flash\s*{[\s\S]*?animation: clawbench-search-flash/)
+    // Reduced motion drops the blink (the static tint still marks the match).
+    expect(style!.textContent).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?animation: none !important/)
+    iframe.remove()
+  })
+
+  it('is idempotent — a reload does not stack copies', () => {
+    const iframe = makeIframe()
+    installPreviewSearchStyles(iframe, '#ff0000')
+    installPreviewSearchStyles(iframe, '#ff0000')
+    expect(iframe.contentDocument!.head.querySelectorAll('style[data-clawbench-search]')).toHaveLength(1)
+    iframe.remove()
+  })
+
+  it('appends (so a broad mark rule in the document still loses to ours)', () => {
+    const iframe = makeIframe('<style>mark{}</style>')
+    installPreviewSearchStyles(iframe, '#ff0000')
+    const head = iframe.contentDocument!.head
+    const ours = head.querySelector('style[data-clawbench-search]')!
+    const own = [...head.children].find(
+      (el) => el.tagName === 'STYLE' && !el.hasAttribute('data-clawbench-search'),
+    )!
+    expect(
+      own.compareDocumentPosition(ours) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+    iframe.remove()
+  })
+
+  it('returns false for a missing iframe', () => {
+    expect(installPreviewSearchStyles(null)).toBe(false)
   })
 })

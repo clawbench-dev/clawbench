@@ -855,15 +855,17 @@ const session = useChatSession({
 })
 
 // onTurnBoundary: a producer turn just ended for the current session, which
-// means that turn's reply just finalized and stamped its completed_at. The
-// unread query compares COALESCE(completed_at, created_at) > last_read_at, so
-// the reply now counts as unread until the session is re-anchored. Two sources:
+// means that turn's reply just finalized and stamped its completed_at. For a
+// normal session the unread query compares COALESCE(completed_at, created_at) >
+// last_read_at, so the reply now counts as unread until the session is
+// re-anchored. Two sources:
 //   - queue_drain: a queued message started its own turn (the PREVIOUS turn's
 //     reply finalized);
-//   - stream_finalize: one GROUP member turn finalized — a group run finalizes
-//     one member at a time, so without this the session row lights up mid-run
-//     even though the user is watching (the terminal `done` re-anchors only at
-//     the very end).
+//   - stream_finalize: one GROUP member turn finalized. A group's badge is NOT
+//     derived from member messages (it is the single "waiting on you" flag set
+//     when the whole turn ends), so this does not affect the badge — it still
+//     fires so the read watermark keeps up with the reply the user is watching,
+//     which the group's own completion path then relies on.
 //
 // The backend cannot fix this itself: a queued message may come from another
 // device or an IM push, so "a turn boundary happened" is not evidence that
@@ -1356,6 +1358,10 @@ function handleSwitchThinkingEffort(level) {
     level,
   )
   persistSessionUpdate({ thinkingEffort: level }).then((res) => {
+    if (res?.saveFailed) {
+      toast.show(t('chat.thinkingEffortSwitcher.saveFailed', { effort: levelObj?.name || level }), { icon: 'warning', type: 'error' })
+      return
+    }
     if (res?.thinkingEffortNotRemembered) {
       // Applied for this session, but the durable per-model write failed: the
       // pick will vanish on restart / in a new session. Say so now — otherwise
@@ -1387,16 +1393,33 @@ function handleSwitchThinkingEffort(level) {
 
 function handleSwitchMode(mode) {
   if (!mode?.id || mode.id === identity.modeState.currentId.value) return
+  const previous = identity.modeState.currentId.value
+  const previousName = identity.modeState.currentName.value
   identity.modeState.currentId.value = mode.id
   identity.modeState.currentName.value = mode.name || mode.id
-  // Persist mode selection immediately so it survives page reload
-  persistSessionUpdate({ modeId: mode.id })
+  // Persist mode selection immediately so it survives page reload.
+  //
+  // Mode has no column of its own (it lives in context_state), so this PATCH is
+  // the only write that makes the choice survive a reload — and the chip above
+  // was already moved optimistically. If the write did not land, put the chip
+  // back instead of leaving it showing a mode the session will not run.
+  persistSessionUpdate({ modeId: mode.id }).then((res) => {
+    if (!res?.saveFailed) return
+    if (identity.modeState.currentId.value !== mode.id) return // user already moved on
+    identity.modeState.currentId.value = previous
+    identity.modeState.currentName.value = previousName
+    toast.show(t('chat.modeSwitcher.saveFailed', { mode: mode.name || mode.id }), { icon: 'warning', type: 'error' })
+  })
 }
 
 function handleSwitchTransport(transport) {
   identity.currentTransport.value = transport
   // Persist transport selection immediately so it survives page reload
-  persistSessionUpdate({ transport })
+  persistSessionUpdate({ transport }).then((res) => {
+    if (res?.saveFailed) {
+      toast.show(t('chat.transportSwitcher.saveFailed'), { icon: 'warning', type: 'error' })
+    }
+  })
   // When switching from ACP to CLI for this session, clear ACP-specific state.
   if (transport === 'cli') {
     identity.clearModeState()
@@ -1485,6 +1508,13 @@ async function handleRewindFromMessage(msg) {
  *  on the result — so the no-session case threw a TypeError instead of being a
  *  no-op. Returning `Promise.resolve(null)` keeps every caller total.
  *
+ *  A failed request resolves to `{ saveFailed: true }` rather than null. The
+ *  optimistic UI update has already happened by then, so swallowing the error
+ *  left the chip showing a value the server never recorded: after a restart (or
+ *  once the ACP connection is recycled and the session state is re-read) the
+ *  setting silently reverted, with nothing to explain it. Callers that need to
+ *  undo their optimistic change check this flag.
+ *
  *  The response carries the server's verdicts: `thinkingEffortRejected` (the
  *  level is not offered, nothing persisted) and `thinkingEffortNotRemembered`
  *  (applied now, but the durable per-model write failed). */
@@ -1496,8 +1526,8 @@ function persistSessionUpdate(fields) {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(fields),
-  }).then((res) => (res.ok ? res.json().catch(() => null) : null))
-    .catch(() => null) // best effort — next POST /api/ai/chat will also persist
+  }).then((res) => (res.ok ? res.json().catch(() => ({})) : { saveFailed: true }))
+    .catch(() => ({ saveFailed: true }))
 }
 
 // ── /btw side question ──

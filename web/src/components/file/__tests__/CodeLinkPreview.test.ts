@@ -1536,6 +1536,73 @@ describe('CodeLinkPreview.vue', () => {
     expect(document.querySelector('.code-preview-search-bar')).toBeNull()
   })
 
+  it('Ctrl+F refocuses the open search box instead of closing it', async () => {
+    const preview = createMockPreviewController({
+      slicedCode: ref({
+        code: 'const apple = 1\nconst banana = 2',
+        startLine: 1,
+        endLine: 2,
+        totalLines: 2,
+        highlightStart: 1,
+        highlightEnd: 1,
+        lineOutOfRange: false,
+        renderTruncated: false,
+      }),
+    })
+
+    mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', ctrlKey: true }))
+    await vi.waitFor(() => {
+      expect(document.querySelector('.code-preview-search-input')).not.toBeNull()
+    })
+    const input = document.querySelector('.code-preview-search-input') as HTMLInputElement
+
+    // Move focus out of the bar, then press Ctrl+F again.
+    input.blur()
+    expect(document.activeElement).not.toBe(input)
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', ctrlKey: true }))
+
+    // The bar must survive the repeat press AND take focus back.
+    await vi.waitFor(() => expect(document.activeElement).toBe(input))
+    expect(document.querySelector('.code-preview-search-input')).toBe(input)
+  })
+
+  it('does not open its own bar when App already handled the key', async () => {
+    // App listens on `document` and the card on `window`, so both see the same
+    // keypress (document bubbles first). When App routed it to the active
+    // pane's search UI it called preventDefault — the card must not then also
+    // open its inline bar, or one press opens two search UIs.
+    const preview = createMockPreviewController({
+      slicedCode: ref({
+        code: 'const apple = 1\nconst banana = 2',
+        startLine: 1,
+        endLine: 2,
+        totalLines: 2,
+        highlightStart: 1,
+        highlightEnd: 1,
+        lineOutOfRange: false,
+        renderTruncated: false,
+      }),
+    })
+
+    mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+
+    const handled = new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, cancelable: true })
+    handled.preventDefault()
+    window.dispatchEvent(handled)
+    await nextTick()
+
+    expect(document.querySelector('.code-preview-search-input')).toBeNull()
+  })
+
   it('automatically closes preview when activeTab switches away (mobile or unpinned)', async () => {
     const activeTab = ref('view')
     const closeSpy = vi.fn()

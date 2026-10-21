@@ -272,11 +272,13 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 	// cwd means it can't find the existing session, producing "No conversation found" errors.
 	fileDir := basePath
 
-	// Validate all attached file paths are within project
+	// Validate all attached file paths. A path may arrive project-relative (a
+	// fresh attach) or absolute (anything re-sending a persisted attachment —
+	// see resolveAttachmentPath); both are contained-checked before use.
 	validatedFilePaths := make([]string, 0, len(allFilePaths))
 	validatedDirPaths := make([]string, 0, len(allFilePaths))
 	for _, fp := range allFilePaths {
-		fAbsPath, ok := validateAndResolvePath(w, r, basePath, fp)
+		fAbsPath, ok := resolveAttachmentPath(w, r, basePath, fp)
 		if !ok {
 			return
 		}
@@ -310,7 +312,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 			validatedFileEntries = append(validatedFileEntries, entry)
 			continue
 		}
-		fAbsPath, ok := validateAndResolvePath(w, r, basePath, fEntry.Path)
+		fAbsPath, ok := resolveAttachmentPath(w, r, basePath, fEntry.Path)
 		if !ok {
 			return
 		}
@@ -415,6 +417,25 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 	// user's choice after stream completion instead of resetting to agent default.
 	if req.ModelID != "" {
 		service.UpdateSessionModel(sessionID, req.ModelID)
+	}
+
+	// Persist the mode the turn is ABOUT to run with, for the same reason.
+	//
+	// Mode has no column of its own — it lives only in context_state (see
+	// applySessionOverrides) — and the PATCH the picker fires is best-effort on
+	// the client. When that PATCH did not land, this request is the only place
+	// the choice can be recorded, and NOT recording it is what made a run
+	// silently fall back: turn 1 runs req.ModeID (explicit override), while
+	// every later turn of the same run — auto-cruise confirmation rounds,
+	// queued messages, the drain loop — rebuilds the request with an empty
+	// override and inherits context_state, which still holds the previous mode.
+	// The agent then re-reports its own default and the chip follows it.
+	//
+	// Unlike thinkingEffort, this does not launder an agent default into a user
+	// pick: mode has no userPicked distinction, and a mode_update from the agent
+	// is already persisted the same way (buildContextStatePatch).
+	if req.ModeID != "" {
+		persistContextStateModeChange(sessionID, req.ModeID)
 	}
 
 	// NOTE: `thinkingEffort` on the send is deliberately NOT treated as a user
@@ -856,14 +877,26 @@ func sessionStateSnapshot(sessionID, sessionAgentID, sessionTransport string) se
 	// sessions look stuck on low (issue #552). Dropping it here lets the
 	// client fall back to the per-model / global default, which is what
 	// the next turn will actually use.
-	if st.Mode == nil || st.Effort == nil || st.Usage == nil {
+	//
+	// Mode needs the "has no selection" test, not just nil: GetCachedStateBy
+	// ClawbenchSID builds Mode from the agent-level list whenever the registry
+	// knows the options, so Mode is non-nil with an EMPTY currentModeId on a
+	// connection whose session-level mode was never set (a fresh conn, or one
+	// seeded before the mode was persisted). Treating that as "already known"
+	// skipped the fallback and left the chip blank until the next send, even
+	// though context_state held the choice.
+	if st.Mode == nil || modeStateHasNoSelection(st.Mode) || st.Effort == nil || st.Usage == nil {
 		if ctxState := service.GetContextState(sessionID); ctxState != nil {
 			// The per-session record wins over the agent-level registry for the
 			// parts it covers. The registry is keyed by AGENT and shared by every
 			// session of that agent, so it knows which options exist but not
 			// which one this session is on; preferring it left the drawer with a
 			// list and no selection even though the session had one persisted.
-			if ctxState.Mode != nil {
+			//
+			// A stored mode with no currentModeId is no better than what we
+			// already have, so it only replaces an ABSENT mode — otherwise the
+			// fallback could turn a populated list into an empty selection.
+			if ctxState.Mode != nil && (ctxState.Mode.CurrentModeID != "" || st.Mode == nil) {
 				st.Mode = ctxState.Mode
 			}
 			// Restore the effort when the user picked it — OR when nothing else
@@ -885,6 +918,28 @@ func sessionStateSnapshot(sessionID, sessionAgentID, sessionTransport string) se
 		}
 	}
 	return st
+}
+
+// modeStateHasNoSelection reports whether a resolved mode state carries a list
+// of options but no selected one.
+//
+// That shape is normal and not a bug: GetCachedStateByClawbenchSID builds Mode
+// from the AGENT-level registry, which knows which modes exist but not which
+// one a given session is on. Its currentModeId is only filled in when the
+// connection has one, so a fresh connection yields a list with an empty
+// selection. Callers use this to decide whether the persisted context_state
+// still has something to contribute.
+func modeStateHasNoSelection(mode any) bool {
+	switch m := mode.(type) {
+	case *ai.ModeState:
+		return m != nil && m.CurrentModeID == ""
+	case ai.ModeState:
+		return m.CurrentModeID == ""
+	case *service.ModeStatePersist:
+		return m != nil && m.CurrentModeID == ""
+	default:
+		return false
+	}
 }
 
 // streamRunResult captures the outcome of a single AI stream execution.
@@ -972,7 +1027,10 @@ func buildChatRequestFromQueue(qMsg model.QueuedMessage, sessionID, projectPath,
 	if len(qMsg.FilePaths) > 0 {
 		basePath, _ := filepath.Abs(projectPath)
 		for _, fp := range qMsg.FilePaths {
-			absPath, ok := model.ValidatePath(basePath, fp)
+			// Rows are stored with their RESOLVED absolute path, so a drained
+			// message must accept the absolute form too — ValidatePath would
+			// re-root it and the Stat below would fail.
+			absPath, ok := resolveAttachmentPathQuiet(basePath, fp)
 			if !ok {
 				filePaths = append(filePaths, fp)
 				continue

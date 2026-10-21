@@ -4,6 +4,7 @@ import { appLog } from '@/utils/appLog'
 import { isDarkTheme } from './themeMeta'
 import { isShareMode } from '@/share/shareMode'
 import { armMermaidFigure } from '@/utils/mediaBlockFactory.ts'
+import { stampSvgFigure } from '@/utils/svgMediaFit.ts'
 
 // Import shared mermaid CSS (loading spinner, error, retry button styles)
 import '@/assets/mermaid.css'
@@ -253,6 +254,22 @@ export async function renderMermaidInElement(
                 // Uniform bordered figure: header view button always; attach
                 // button only inside a file-preview markdown body.
                 armMermaidFigureForContext(container)
+                // Size the figure in the SAME task as the SVG injection.
+                //
+                // Until `stampSvgFigure` writes the media's pixel width, the
+                // stylesheet falls back to `width: calc(60dvh * var(--svg-ar, 1))`
+                // — i.e. EVERY diagram is painted 60dvh wide regardless of its
+                // own ratio, then snaps to its real width on the next pass. For
+                // a wide diagram that is a visible grow (540 → 880 measured); for
+                // a narrow one, a visible shrink. Stamping here removes the
+                // intermediate frame entirely instead of relying on the caller
+                // (which only runs after `Promise.all` below, i.e. after the
+                // SLOWEST diagram in the batch).
+                //
+                // The wrapper is the direct parent after arming; `stampSvgFigure`
+                // is idempotent and a no-op for a container it cannot measure.
+                const wrapper = container.closest('.image-block-wrapper')
+                if (wrapper) stampSvgFigure(wrapper)
             } catch (err: unknown) {
                 // Mermaid v11 inserts an error SVG + wrapper div into the DOM
                 // with the render id before throwing — remove them so they don't

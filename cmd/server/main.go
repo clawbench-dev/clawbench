@@ -415,16 +415,6 @@ func makeRestartFunc(shutdown func()) func() error {
 	}
 }
 
-// restartFuncAdapter adapts an error-returning restart function to the
-// fire-and-forget signature the settings handler expects, logging failures.
-func restartFuncAdapter(f func() error) func() {
-	return func() {
-		if err := f(); err != nil {
-			slog.Error("restart failed", "error", err)
-		}
-	}
-}
-
 // Main-listener bind retry. The outgoing process holds the main port until
 // shutdown step 4 (srv.Shutdown), which runs AFTER the stream-finalize grace
 // (5s, plus the HTTP drain and ACP grace that follow). A replacement launched
@@ -944,6 +934,12 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// Inject auto-approve getter for ACP permission auto-approval
 	ai.SetAutoApproveGetter(service.GetSessionAutoApprove)
 
+	// Inject session mode getter so a respawned ACP connection starts from the
+	// mode the session last ran instead of no mode at all (a fresh conn's
+	// snapshotCachedConfig is empty, which makes reapplyConfigAfterResume skip
+	// the mode RPC and leaves the agent on its own default).
+	ai.SetSessionModeIDGetter(service.GetSessionModeID)
+
 	// Inject session running checker for ACP idle sweep (avoids import cycle).
 	//
 	// IsSessionRunningForSweep, NOT IsSessionRunning: a group member's connection
@@ -1008,6 +1004,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	}
 	defer rag.Shutdown()
 	defer service.StopSessionCleanupWorker()
+	defer service.StopUploadCleanupWorker()
 	defer service.StopUsageMeterWorker()
 	defer service.StopQueueReaper()
 	defer service.StopForgePoller()
@@ -1128,6 +1125,11 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// sessions directly through internal/rag (no callback indirection): the
 	// service↔rag import cycle that once required injection is gone.
 	service.StartSessionCleanupWorker(cfg)
+
+	// Start upload retention cleanup. Off by default: it deletes files, so it
+	// only runs when the user opted in. Even then it never touches a file a
+	// message still references.
+	service.StartUploadCleanupWorker(cfg)
 
 	// Start the usage-meter worker. Its tick is a no-op while no quota is
 	// configured; it exists so a rule that is already past its baseline at
@@ -1353,7 +1355,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// Wire up the restart function for POST /api/config/restart
 	// The sentinel process approach: launch a watcher that starts a new process
 	// after this one exits, then trigger graceful shutdown.
-	handler.SetRestartFunc(restartFuncAdapter(makeRestartFunc(selfSignalInterrupt)))
+	handler.SetRestartFunc(makeRestartFunc(selfSignalInterrupt))
 
 	// Wire up the upgrade service functions
 	// upgradeShutdownFunc: just graceful shutdown, no sentinel.
@@ -1551,7 +1553,15 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	)
 
 	go func() {
-		<-ctx.Done()
+		// Two shutdown sources: OS signals (Ctrl+C, systemd, SIGTERM) and an
+		// in-process request (the settings panel's restart button). The latter
+		// has to be a channel rather than a self-delivered signal because on
+		// Windows Go cannot send a non-Kill signal to a process — not even to
+		// itself — so the previous implementation silently did nothing there.
+		select {
+		case <-ctx.Done():
+		case <-shutdownRequests:
+		}
 		slog.Info("received shutdown signal, draining connections...")
 
 		// 0. Release the SSH tunnel port FIRST.
@@ -1682,6 +1692,9 @@ func hotReloadReconfigure(port int) {
 
 	// --- Session cleanup: reconfigure archive retention worker ---
 	service.ReconfigureSessionCleanup(cfg)
+
+	// --- Upload cleanup: apply a changed retention policy without a restart ---
+	service.ReconfigureUploadCleanup(cfg)
 
 	// --- Usage meter: recreate the worker so a changed rule is evaluated now ---
 	// The worker itself is unconditional (its tick no-ops when no quota is set);

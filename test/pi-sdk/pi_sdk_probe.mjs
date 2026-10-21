@@ -949,23 +949,49 @@ async function runResources() {
   });
 
   await point('compaction', {
-    // Compaction refuses trivially small sessions ("Nothing to compact"). The cut
-    // point search walks backwards accumulating message sizes until it reaches
-    // keepRecentTokens (20000 by default), so the session must hold more than
-    // that much message content — a few short turns are not enough.
-    timeoutMs: 300_000,
+    // Compaction refuses trivially small sessions ("Nothing to compact"): the cut
+    // point search walks backwards accumulating estimated message size (chars/4)
+    // until it reaches keepRecentTokens (20000 by default), so the session must
+    // hold more than that much message content.
+    //
+    // That volume is manufactured with sendCustomMessage({triggerTurn:false}),
+    // which appends a `custom` entry straight to the session — no model call, no
+    // generation. The previous implementation instead made the model echo 14.4KB
+    // of filler six times, which cost ~22k output tokens (~300s) purely to build
+    // the input for a 2s compaction; it reliably timed out and told us nothing
+    // about the SDK. Two real turns are kept so compaction still runs over actual
+    // user/assistant messages, not only synthetic entries.
+    timeoutMs: 180_000,
     run: async () =>
       withSession({ cwd: WORKDIR, sessionManager: SessionManager.inMemory() }, async (session) => {
-        const filler = 'The quick brown fox jumps over the lazy dog and then runs away quickly. '.repeat(200);
+        for (let i = 0; i < 2; i++) {
+          await session.prompt(`Reply with exactly OK${i} and nothing else.`);
+        }
+        // 6 x ~10k estimated tokens ≈ 60k, comfortably over keepRecentTokens.
+        const filler = 'The quick brown fox jumps over the lazy dog and then runs away quickly. '.repeat(555);
         for (let i = 0; i < 6; i++) {
-          await session.prompt(
-            `Repeat the following text verbatim, nothing else. Begin your reply with PART${i}:\n\n${filler}`,
+          await session.sendCustomMessage(
+            { customType: 'probe-filler', content: `PART${i}: ${filler}`, display: false },
+            { triggerTurn: false },
           );
         }
         const result = await session.compact();
         assert(result && typeof result.summary === 'string' && result.summary.length > 0,
           `compact returned no summary: ${JSON.stringify(result)}`);
-        return { summaryChars: result.summary.length, tokensBefore: result.tokensBefore, estimatedTokensAfter: result.estimatedTokensAfter };
+        // Assert the run actually exercised a real compaction rather than a no-op
+        // that happened to return an empty-ish summary: the cut point must have
+        // landed beyond the retention window, and the context must have shrunk.
+        assert(result.tokensBefore > 20000,
+          `tokensBefore=${result.tokensBefore} did not exceed keepRecentTokens, so nothing was compacted`);
+        assert(result.estimatedTokensAfter < result.tokensBefore,
+          `context did not shrink: ${result.tokensBefore} -> ${result.estimatedTokensAfter}`);
+        assert(typeof result.firstKeptEntryId === 'string' && result.firstKeptEntryId.length > 0,
+          'compaction reported no firstKeptEntryId');
+        return {
+          summaryChars: result.summary.length,
+          tokensBefore: result.tokensBefore,
+          estimatedTokensAfter: result.estimatedTokensAfter,
+        };
       }),
   });
 }

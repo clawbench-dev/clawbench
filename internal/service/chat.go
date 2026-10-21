@@ -459,21 +459,47 @@ func GetMessagesBySessionIDRawAfter(sessionID string, afterID int64) ([]model.Ch
 // bandwidth. Callers that need the real content blocks — e.g. push notification
 // previews — must use this function.
 func GetAssistantRawContents(sessionID string) ([]string, error) {
+	rows, err := GetAssistantRawContentsWithIDs(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	contents := make([]string, len(rows))
+	for i, r := range rows {
+		contents[i] = r.Content
+	}
+	return contents, nil
+}
+
+// AssistantRawContent pairs one finalized assistant message's chat_history id
+// with its raw (unmodified) content JSON.
+//
+// The id is what makes a notification deep-link land on the message the preview
+// was taken from: the preview walks newest-first past messages that yield no
+// text, so "the newest assistant row" is not necessarily the row the user was
+// told about.
+type AssistantRawContent struct {
+	ID      int64
+	Content string
+}
+
+// GetAssistantRawContentsWithIDs is GetAssistantRawContents plus each row's id,
+// same ordering (newest first) and same limit.
+func GetAssistantRawContentsWithIDs(sessionID string) ([]AssistantRawContent, error) {
 	rows, err := store.ReadDB().Query(
-		"SELECT content FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 0 ORDER BY id DESC LIMIT ?",
+		"SELECT id, content FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 0 ORDER BY id DESC LIMIT ?",
 		sessionID, previewAssistantContentLimit,
 	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var contents []string
+	var contents []AssistantRawContent
 	for rows.Next() {
-		var content string
-		if err := rows.Scan(&content); err != nil {
+		var row AssistantRawContent
+		if err := rows.Scan(&row.ID, &row.Content); err != nil {
 			return nil, err
 		}
-		contents = append(contents, content)
+		contents = append(contents, row)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -1271,6 +1297,15 @@ func generateSessionID() string {
 // GetOverviewSessions so all three agree on what "unread" means — if they
 // drifted, the badge and the list would disagree about the same session.
 //
+// GROUP sessions take a different branch, and that is the whole point of the
+// CASE: in a group every member speech is its own assistant row, so counting
+// rows made the badge light up (and climb) after every single member — during a
+// discussion the user is watching, they would see the session flip unread
+// between speakers. What the user actually owes a group is ONE thing: a turn.
+// So a group is unread exactly when its last finished turn handed the floor
+// back and the user has not read it since (awaiting_user_at), and the count is
+// 0 or 1 — never a message tally.
+//
 // It is a correlated scalar subquery, NOT a grouped LEFT JOIN. The join form
 // materialized every assistant message in the project (archived sessions
 // included) into a temp B-tree and then grouped it, only to join a handful of
@@ -1295,12 +1330,15 @@ func generateSessionID() string {
 //
 // COUNT never returns NULL, so no COALESCE is needed (the old LEFT JOIN did
 // need one, because a missed join yields NULL).
-const unreadCountSubquery = `(SELECT COUNT(*) FROM chat_history h
-			WHERE h.session_id = s.id
-			  AND h.project_id = s.project_id
-			  AND h.role = 'assistant' AND h.streaming = 0
-			  AND (s.last_read_at IS NULL OR COALESCE(h.completed_at, h.created_at) > s.last_read_at)
-		) AS unread_count`
+const unreadCountSubquery = `CASE
+			WHEN s.session_type = '` + store.SessionTypeGroup + `' THEN
+				CASE WHEN s.awaiting_user_at IS NOT NULL THEN 1 ELSE 0 END
+			ELSE (SELECT COUNT(*) FROM chat_history h
+				WHERE h.session_id = s.id
+				  AND h.project_id = s.project_id
+				  AND h.role = 'assistant' AND h.streaming = 0
+				  AND (s.last_read_at IS NULL OR COALESCE(h.completed_at, h.created_at) > s.last_read_at)
+			) END AS unread_count`
 
 // sessionsQueryBase is the prefix of GetSessions' query, up to (not including)
 // the backend filter and ORDER BY. Package-level so the query-plan test can
@@ -1647,6 +1685,19 @@ func UpdateLastRead(sessionID string) {
 	// happens is excluded (streaming = 0), so it will legitimately register as
 	// unread once it lands. That is intended — the frontend re-marks the session
 	// read on the completion event when the user is actually looking at it.
+	//
+	// awaiting_user_at is cleared in the SAME statement, and that is not a
+	// style choice. The two writes must be atomic against markGroupUserTurn:
+	// a group turn can finish while the user is opening the group, and if the
+	// clear ran as a second statement, the order could be
+	// "SET flag" → "SET flag = NULL", silently swallowing the turn's hand-back.
+	// Nothing would re-raise it (the turn is over), so the badge would be lost
+	// for good. One statement means a finishing turn either wins (flag set
+	// after the read → badge lit) or loses (flag cleared after → the user was
+	// reading at that instant), and both are correct.
+	//
+	// Clearing unconditionally is harmless for non-group rows, where the column
+	// is always NULL.
 	store.WriteExec(`
 		UPDATE chat_sessions
 		SET last_read_at = MAX(
@@ -1656,7 +1707,8 @@ func UpdateLastRead(sessionID string) {
 				 WHERE session_id = ? AND role = 'assistant' AND streaming = 0),
 				CURRENT_TIMESTAMP
 			)
-		)
+		),
+		awaiting_user_at = NULL
 		WHERE id = ?`, sessionID, sessionID)
 	// Broadcast a status change so connected clients (e.g. the Android floating
 	// window) can refresh their unread counts. WS-only: no push notification and
@@ -2662,6 +2714,15 @@ func PatchContextStateMerge(sessionID string, patches map[string]string) {
 	if rawUsage, ok := patches["usage"]; ok {
 		patches = mergeUsagePatchIntoDB(sessionID, patches, rawUsage)
 	}
+	// mode is also written from two places with different shapes: a mode_update
+	// event carries the full snapshot (currentModeId + availableModes), while a
+	// user pick carries only currentModeId. json_set replaces the whole '$.mode'
+	// object, so the pick would otherwise erase the advertised list and leave
+	// the picker empty until the next session/new. Merge the stored list in when
+	// the incoming patch does not describe one.
+	if rawMode, ok := patches["mode"]; ok {
+		patches = mergeModePatchIntoDB(sessionID, patches, rawMode)
+	}
 	// Build json_set chain: json_set(context_state, '$.mode', json('...'), '$.usage', json('...'))
 	// Start from '{}' if column is empty, so json_set works on a valid JSON object.
 	query := "UPDATE chat_sessions SET context_state = json_set(CASE WHEN context_state = '' OR context_state IS NULL THEN '{}' ELSE context_state END"
@@ -2721,6 +2782,58 @@ func mergeUsagePatchIntoDB(sessionID string, patches map[string]string, rawUsage
 	return patches
 }
 
+// mergeModePatchIntoDB keeps the stored availableModes when the incoming mode
+// patch carries only a currentModeId.
+//
+// Why: context_state.mode is written by two producers with different shapes —
+// buildContextStatePatch (a mode_update event, full snapshot) and
+// persistContextStateModeChange (a user pick, currentModeId only). PatchContext
+// StateMerge sets '$.mode' wholesale, so a pick silently dropped the list and
+// the mode picker rendered empty until the agent reported again. The picker
+// then looked like it had reverted, because the chip had a value the list could
+// not resolve.
+//
+// The stored list is only reused when the incoming patch has none: a real
+// snapshot always wins, so an agent that narrows its mode list still takes
+// effect.
+func mergeModePatchIntoDB(sessionID string, patches map[string]string, rawMode string) map[string]string {
+	var incoming ModeStatePersist
+	if err := json.Unmarshal([]byte(rawMode), &incoming); err != nil {
+		slog.Warn("mergeModePatch: unmarshal incoming mode failed", "err", err, "sid", sessionID)
+		return patches
+	}
+	if incoming.CurrentModeID == "" || len(incoming.AvailableModes) > 0 {
+		return patches
+	}
+	var stored ModeStatePersist
+	storedRaw := ""
+	if err := store.ReadDB().QueryRow("SELECT json_extract(context_state, '$.mode') FROM chat_sessions WHERE id = ?", sessionID).Scan(&storedRaw); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return patches
+		}
+		slog.Warn("mergeModePatch: read stored mode failed", "err", err, "sid", sessionID)
+		return patches
+	}
+	if storedRaw == "" || storedRaw == jsonNull {
+		return patches
+	}
+	if err := json.Unmarshal([]byte(storedRaw), &stored); err != nil {
+		slog.Warn("mergeModePatch: unmarshal stored mode failed", "err", err, "sid", sessionID)
+		return patches
+	}
+	if len(stored.AvailableModes) == 0 {
+		return patches
+	}
+	incoming.AvailableModes = stored.AvailableModes
+	mergedJSON, err := json.Marshal(incoming)
+	if err != nil {
+		slog.Warn("mergeModePatch: marshal merged mode failed", "err", err, "sid", sessionID)
+		return patches
+	}
+	patches["mode"] = string(mergedJSON)
+	return patches
+}
+
 // GetContextState reads and parses the context_state JSON for a session.
 // Returns nil if the column is empty or parsing fails.
 func GetContextState(sessionID string) *ContextState {
@@ -2734,6 +2847,21 @@ func GetContextState(sessionID string) *ContextState {
 		return nil
 	}
 	return &state
+}
+
+// GetSessionModeID returns the mode a session last ran, or "" when none was
+// ever persisted.
+//
+// Used by the ACP spawn path to seed a fresh connection's current mode: without
+// it, a respawned connection has no mode, so reapplyConfigAfterResume has
+// nothing to re-apply and the agent silently keeps its own default (Always Ask)
+// until something else sets a mode. Same priority every other path uses —
+// session value beats agent default.
+func GetSessionModeID(sessionID string) string {
+	if cs := GetContextState(sessionID); cs != nil && cs.Mode != nil {
+		return cs.Mode.CurrentModeID
+	}
+	return ""
 }
 
 // PersistThinkingEffortPick records an EXPLICIT user effort pick for a session.

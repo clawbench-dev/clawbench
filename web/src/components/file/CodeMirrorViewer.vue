@@ -41,7 +41,7 @@ import { Compartment, EditorState, RangeSetBuilder } from '@codemirror/state'
 import { EditorView, lineNumbers, Decoration, gutter, GutterMarker, keymap } from '@codemirror/view'
 import { defaultKeymap, historyKeymap, history, indentWithTab, undo, redo, undoDepth, redoDepth } from '@codemirror/commands'
 import { search, highlightSelectionMatches, findNext, findPrevious, getSearchQuery } from '@codemirror/search'
-import { searchPanel, searchPanelField, searchPanelToggle, openSearchPanelCommand } from '@/utils/codeMirrorSearchPanel'
+import { searchPanel, searchPanelField, openSearchPanelCommand, closeSearchPanelCommand } from '@/utils/codeMirrorSearchPanel'
 import { syntaxHighlighting } from '@codemirror/language'
 import { buildLangExtension, buildCompletionExtension } from '@/utils/codeEditorLang'
 import { codeHighlightStyle } from '@/utils/codeHighlightStyle'
@@ -414,6 +414,8 @@ function scrollToLine(line, lineEnd, lineRanges) {
 
 let pendingScrollRequestId = null
 let pendingScrollRAF = null
+/** Deferred focus for the search panel (see openSearch/cancelSearchFocusFrame). */
+let searchFocusFrame = null
 
 // ─── Viewport-line events (drives TOC scroll-follow in code view) ────────────
 // CodeMirror virtualizes its DOM — only visible lines exist as elements — so an
@@ -547,16 +549,19 @@ function buildAllExtensions() {
                 readonly: !props.editable,
                 phrases: searchPhrases(),
             }),
-            // Mod-f toggles the panel; Mod-Shift-g jumps matches. The built-in
-            // searchKeymap is not used so its openSearchPanel side effect never
-            // creates the built-in panel.
+            // Mod-f opens and focuses the panel (it does NOT toggle — see
+            // openSearch); Mod-Shift-g jumps matches. The built-in searchKeymap
+            // is not used so its openSearchPanel side effect never creates the
+            // built-in panel.
             //
             // Mod-g is deliberately NOT match-next: Ctrl+G is the universal
             // "go to line" shortcut (issue #547), bound in the editor keymap
             // above. Match navigation stays on F3 / Shift+F3, matching what
             // @codemirror/search itself binds.
             keymap.of([
-                { key: 'Mod-f', run: openSearchPanelCommand, preventDefault: true },
+                // Same open-and-focus behaviour as the App-level Ctrl+F route:
+                // a repeat press while the panel is open must refocus, not close.
+                { key: 'Mod-f', run: () => { openSearch(); return true }, preventDefault: true },
                 { key: 'F3', run: () => findNextSafe(), preventDefault: true },
                 { key: 'Shift-F3', run: () => findPrevSafe(), preventDefault: true },
                 { key: 'Mod-Shift-g', run: () => findPrevSafe(), preventDefault: true },
@@ -647,6 +652,7 @@ onUnmounted(() => {
     detachViewportLineDispatch()
     if (pendingScrollRAF) cancelAnimationFrame(pendingScrollRAF)
     pendingScrollRAF = null
+    cancelSearchFocusFrame()
     pendingScrollRequestId = null
     if (flashTimer) clearTimeout(flashTimer)
     if (selDebounceTimer) clearTimeout(selDebounceTimer)
@@ -748,19 +754,47 @@ function handleRedo() {
     if (view.value) redo(view.value)
 }
 
-// Open the custom search panel programmatically (used by the toolbar search
-// button and the global Ctrl+F routing). The search extension is always
-// mounted, so this works in both browse and edit mode.
+// Open the custom search panel and put the caret in its input (used by the
+// toolbar search button and the global Ctrl+F routing). The search extension is
+// always mounted, so this works in both browse and edit mode.
+//
+// Idempotent on purpose: Ctrl+F with the panel already open must REFOCUS the
+// input (the user may have clicked back into the code), never close it — a
+// toggle here made a second Ctrl+F silently dismiss the bar.
 function openSearch() {
     const editor = view.value
-    if (editor) {
-        if (editor.state.field(searchPanelField, false)) {
-            // Toggle closed on repeat.
-            editor.dispatch({ effects: searchPanelToggle.of(false) })
-        } else {
-            openSearchPanelCommand(editor)
-        }
+    if (!editor) return
+    if (!editor.state.field(searchPanelField, false)) {
+        openSearchPanelCommand(editor)
     }
+    // The panel is display:none until the plugin's update() runs, which happens
+    // synchronously inside dispatch(); the next frame covers the rAF-based
+    // focus/select that SearchBar itself schedules when `open` flips.
+    focusSearchInput(editor)
+    cancelSearchFocusFrame()
+    searchFocusFrame = requestAnimationFrame(() => {
+        searchFocusFrame = null
+        // Only if the panel is still open: the user may have dismissed it (or
+        // clicked into the code) in the intervening frame, and yanking focus
+        // back into a closed bar would be a new bug.
+        if (view.value && view.value.state.field(searchPanelField, false)) {
+            focusSearchInput(view.value)
+        }
+    })
+}
+
+function cancelSearchFocusFrame() {
+    if (searchFocusFrame !== null) {
+        cancelAnimationFrame(searchFocusFrame)
+        searchFocusFrame = null
+    }
+}
+
+// Close the panel and clear its query (toolbar toggle, Escape).
+function closeSearch() {
+    cancelSearchFocusFrame()
+    const editor = view.value
+    if (editor) closeSearchPanelCommand(editor)
 }
 
 // Report the search panel open/close state so the header search button can
@@ -908,7 +942,7 @@ async function handleExit() {
 // defineExpose names, and FileViewer calls it through the component ref. Left
 // out, the App-level Ctrl+G handler (the path taken when the editor is not yet
 // focused — i.e. right after opening a file) silently does nothing.
-defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, isDirty: () => dirty.value, openSearch, openGoToLine })
+defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, isDirty: () => dirty.value, openSearch, closeSearch, openGoToLine })
 </script>
 
 <style scoped>

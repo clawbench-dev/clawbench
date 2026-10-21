@@ -1344,6 +1344,18 @@ describe('ChatMessageItem — sessionId reaches ContentBlocks', () => {
     // camelCase, matching the neighbouring props in this file.
     expect(region).toMatch(/:sessionId="sessionId"/)
   })
+
+  it('passes the message role down to ContentBlocks', async () => {
+    // Command badges (slash / #skill) are gated on role inside ContentBlocks.
+    // Without this prop the gate is always false and the badges vanish; with it
+    // dropped for assistant messages, prose like "/tmp 已 100% 满" renders as a
+    // bogus command chip.
+    const src = await source()
+    const start = src.indexOf('<ContentBlocks')
+    expect(start).toBeGreaterThan(-1)
+    const region = src.slice(start, src.indexOf('>', src.indexOf(':staticBlockCache', start)))
+    expect(region).toMatch(/:role="msg\.role"/)
+  })
 })
 
 /**

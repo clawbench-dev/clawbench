@@ -163,14 +163,34 @@ watch(visible, (v) => {
   text-decoration: underline;
 }
 
+/* The footer is a COLUMN: primary action full width, the two dismissals side by
+   side beneath it. Same shape as WelcomeOverlay's footer (确定 full width, then
+   重新扫描 / 不再提示), so the two first-run dialogs read alike.
+   
+   Why not one row with wrapping: the panel is at most 380px wide, so the footer
+   has 348px of content box, and the three labels cannot share it in every
+   locale. English needs ~470px ("Upgrade now" + "Skip this version" + "Remind me
+   later" at 14px, plus padding and gaps), Chinese ~230px. A wrapping row
+   therefore laid out DIFFERENTLY per language — one row in Chinese, two in
+   English — and, worse, an earlier `@media (max-width: 400px)` override keyed
+   the two-row layout to the VIEWPORT, which never fires on desktop: English on a
+   1280px screen still got a squeezed two-row footer while Chinese got one row.
+   
+   A fixed column is language- and viewport-independent, which is the property
+   that actually matters here. `flex-wrap` is kept so an unusually long locale
+   wraps its own row instead of overflowing the panel. */
 .up-footer {
   padding: var(--space-4) var(--space-7) 14px;
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-4);
 }
 
+/* Full width, so the primary action never competes with the labels beside it.
+   `white-space: nowrap` still applies: a CJK string's min-content width is one
+   character, so without it a narrow panel would stack the label vertically. */
 .up-upgrade {
-  flex: 1;
+  flex: 1 1 100%;
   padding: var(--space-4) var(--space-7);
   border: none;
   border-radius: var(--radius-sm);
@@ -178,6 +198,7 @@ watch(visible, (v) => {
   color: #fff;
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
+  white-space: nowrap;
   cursor: pointer;
   transition: opacity var(--duration-slow);
 }
@@ -186,7 +207,14 @@ watch(visible, (v) => {
   .up-upgrade:hover { opacity: var(--opacity-hover); }
 }
 
+/* The dismissals share the second row. `flex-basis: 0` with `min-width: 0` lets
+   them divide the width evenly; without the explicit `min-width` a long label
+   sets the flex item's automatic minimum to its full text width and the even
+   split collapses. `flex-wrap` on the footer still moves one down if a locale's
+   pair genuinely cannot fit. */
 .up-skip {
+  flex: 1 1 0;
+  min-width: 0;
   padding: var(--space-4) var(--space-6);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
@@ -194,6 +222,7 @@ watch(visible, (v) => {
   color: var(--text-secondary);
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-medium);
+  white-space: nowrap;
   cursor: pointer;
   transition: all var(--duration-slow);
 }
@@ -206,12 +235,15 @@ watch(visible, (v) => {
 }
 
 .up-later {
+  flex: 1 1 0;
+  min-width: 0;
   padding: var(--space-4) var(--space-6);
   border: none;
   border-radius: var(--radius-sm);
   background: var(--bg-tertiary);
   color: var(--text-muted);
   font-size: var(--font-size-md);
+  white-space: nowrap;
   cursor: pointer;
 }
 

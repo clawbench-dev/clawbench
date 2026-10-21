@@ -963,7 +963,9 @@ type projectPathEntry struct {
 // ancestor of filePath, or 0 when no project contains it.
 //
 // The separator boundary matters: /home/u/proj must not match a file under
-// /home/u/proj-other.
+// /home/u/proj-other. A project registered AT a filesystem root (`/`, `D:\`)
+// already ends with a separator, so it is compared as-is — appending another
+// would build "//" and no file would ever be attributed to it.
 func longestProjectPrefix(projects []projectPathEntry, filePath string) int64 {
 	var bestID int64
 	var bestLen int
@@ -971,8 +973,14 @@ func longestProjectPrefix(projects []projectPathEntry, filePath string) int64 {
 		if p.path == "" {
 			continue
 		}
-		if filePath != p.path && !strings.HasPrefix(filePath, p.path+string(filepath.Separator)) {
-			continue
+		if filePath != p.path {
+			prefix := p.path
+			if !strings.HasSuffix(prefix, string(filepath.Separator)) {
+				prefix += string(filepath.Separator)
+			}
+			if !strings.HasPrefix(filePath, prefix) {
+				continue
+			}
 		}
 		if len(p.path) > bestLen {
 			bestLen = len(p.path)

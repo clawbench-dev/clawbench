@@ -90,6 +90,7 @@
         :active="active"
         :readOnly="readOnly"
         :isGroupSession="isGroupSession"
+        :role="msg.role"
         @toggle-tool="$emit('toggle-tool', $event)"
         @show-tool-detail="$emit('show-tool-detail', $event)"
         @task-card-click="$emit('task-card-click', $event)"

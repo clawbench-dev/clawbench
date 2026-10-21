@@ -365,7 +365,26 @@ export function useChatStream(options: UseChatStreamOptions) {
     if (existingStreaming && !options?.reuseExistingStreaming) {
       const stale = messageHasContent(existingStreaming)
       if (stale) {
-        _forceCleanupStreamingState(messages.value, { onRenderNeeded, onExtractScheduledTasks })
+        // holdsCompleteTurn: false — the whole reason a leftover bubble is still
+        // streaming is that its terminal event never reached this client. What
+        // it holds is a prefix cut at whatever arrived last, NOT the finished
+        // turn, so it must not claim completeness: `rebuildFromDb` would then
+        // keep the prefix instead of the authoritative DB row (and, when the
+        // row was summarized, the non-empty prefix suppressed both the summary
+        // and the lazy-original fetch — the reply rendered truncated at a tool
+        // call until a session switch rebuilt the array).
+        //
+        // This is the THIRD site with this invariant, alongside the safety net
+        // in useChatSession and runReload's "no longer running" branch. All
+        // three are "the terminal event was missed" paths and all three must
+        // pass false; the terminal handlers (done/error/cancelled) keep the
+        // default true.
+        _forceCleanupStreamingState(
+          messages.value,
+          { onRenderNeeded, onExtractScheduledTasks },
+          undefined,
+          { holdsCompleteTurn: false },
+        )
       }
     }
 

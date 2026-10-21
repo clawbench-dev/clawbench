@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -277,8 +278,16 @@ func deleteRecentFile(w http.ResponseWriter, r *http.Request, subDir string) {
 
 	var req struct {
 		Path string `json:"path"`
+		// All clears the whole scoped directory instead of one file. It is a
+		// separate flag rather than "empty path means all" so a client that
+		// forgets the field can never wipe the directory by accident.
+		All bool `json:"all"`
 	}
 	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.All {
+		clearRecentDir(w, projectPath, subDir)
 		return
 	}
 	if req.Path == "" {
@@ -332,6 +341,67 @@ func deleteRecentFile(w http.ResponseWriter, r *http.Request, subDir string) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// JSON field names for the clear-all response, shared by both endpoints.
+const (
+	fieldDeleted = "deleted"
+	fieldFailed  = "failed"
+)
+
+// clearRecentDir empties .clawbench/<subDir> entirely.
+//
+// Scope is the directory itself, so the traversal concerns that apply to a
+// caller-supplied path do not arise: the target is computed here from the
+// project root and the fixed subDir. Sub-directories are left alone — a
+// directory upload can hold a whole tree the user still expects, and nothing
+// in this UI ever created one under uploads/ or share-in/.
+//
+// A file that cannot be removed (permissions, in use) is counted and reported
+// rather than aborting the sweep: the user asked to clear the list, and
+// stopping at the first failure would leave it looking half-cleared with no
+// indication why.
+func clearRecentDir(w http.ResponseWriter, projectPath, subDir string) {
+	dir := filepath.Join(projectPath, ".clawbench", subDir)
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Nothing to clear is success, not an error: the UI may hold a stale
+			// list from before the directory was removed.
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true, fieldDeleted: 0, fieldFailed: 0})
+			return
+		}
+		model.WriteError(w, model.Internal(fmt.Errorf("read %s: %w", subDir, err)))
+		return
+	}
+
+	deleted, failed := 0, 0
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		target := filepath.Join(dir, entry.Name())
+		// Re-check containment: ReadDir cannot return a path outside dir, but
+		// this is the same guard the single-file delete uses, and a symlinked
+		// entry must never be followed out of the directory.
+		if !isPathUnderBase(target, dir) {
+			failed++
+			continue
+		}
+		if rmErr := os.Remove(target); rmErr != nil {
+			if os.IsNotExist(rmErr) {
+				continue
+			}
+			slog.Warn("clear recent dir: failed to remove file",
+				slog.String("path", target), slog.String("err", rmErr.Error()))
+			failed++
+			continue
+		}
+		deleted++
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, fieldDeleted: deleted, fieldFailed: failed})
 }
 
 // ShareInRecent handles GET /api/share-in/recent (list) and

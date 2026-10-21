@@ -50,6 +50,31 @@ async function deleteRecentShare(path: string) {
   return false
 }
 
+/**
+ * Empty the whole share-in directory. See clearRecentUploads for why this is a
+ * separate call rather than a loop over deleteRecentShare.
+ */
+async function clearRecentShares(): Promise<{ deleted: number; failed: number } | null> {
+  try {
+    const res = await fetch('/api/share-in/recent', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ all: true }),
+    })
+    if (res.ok) {
+      const data = await res.json().catch(() => null)
+      if (data && data.ok === true) {
+        recentShares.value = []
+        return { deleted: Number(data.deleted) || 0, failed: Number(data.failed) || 0 }
+      }
+    }
+    appLog.w('ShareIn', 'Failed to clear recent shares', res.status)
+  } catch (e) {
+    appLog.w('ShareIn', 'Failed to clear recent shares', e)
+  }
+  return null
+}
+
 export function useShareIn() {
-  return { recentShares, fetchRecentShares, deleteRecentShare }
+  return { recentShares, fetchRecentShares, deleteRecentShare, clearRecentShares }
 }

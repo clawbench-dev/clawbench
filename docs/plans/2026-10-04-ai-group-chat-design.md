@@ -122,7 +122,7 @@
 | 41 | 成员描述注入（三处） | 成员的专业描述（`Agent.Specialty`）注入 **①主持人提示词**、**②系统事件**、**③成员自己的注入上下文**（见 §5.2） |
 | 42 | 主持人被移除 | **拒绝**：`RemoveGroupMember` 遇 `memberID == host_member_id` 直接报错（决策 #53 修订：**不可转移**，故无"先转移"路径） |
 | 43 | 系统事件的消息归属 | `role='system'`，**`agent_id=''`**（非成员发言）；前端按系统事件样式渲染（居中细条，非气泡） |
-| 44 | 系统事件是否进游标 | **计入**（`id > cursor` 即注入）——成员/主持人都要知道谁进出了；但**不计入未读数**（未读只数 `role='assistant'`，无需改） |
+| 44 | 系统事件是否进游标 | **计入**（`id > cursor` 即注入）——成员/主持人都要知道谁进出了；但**不计入未读数**（未读不看消息行，见下条） |
 | 45 | 群回合运行中人类发消息 | **排队**（复用单聊语义）：群委派移到 `TryClaimSessionRun` **之后**，忙碌时入队；群回合复用现有 `RunDrainLoop`（把群回合当一次 turn） |
 | 46 | 排队条目的操作按钮 | 群聊**只给「中断并发送」**（文案「插话」）：停止当前回合、保留队列、该消息作为下一回合运行；**「加入本轮」不提供**（群回合是多轮循环，无单一在跑回合可注入）。**实现**：群回合按**群会话 id** 注册可中断回合（`RunGroupTurnDrain` 内 `RegisterSessionTurnCancel(groupID, …)`），并把中断信号回译为 `cancelReasonInterrupt`，否则端点 `CurrentTurnID(groupID)` 恒 `idle`、按钮点了没反应。前端 `resolveMidTurnSupported` 对群会话恒返回 interrupt |
 | 47 | 人类 @ 成员 | **v1 不做**。人类一律排队，想指定发言人时由**主持人**下一轮自行决定；不引入第二套路由入口 |
@@ -236,7 +236,9 @@
 
 - `backend`：**NOT NULL**，用主持人成员的后端填充（约定值）。
 - `agent_id`：填主持人成员对应的 agent id（便于列表展示）。
-- 其余列（`title` / `pinned` / `sort_order` / `archived` / `last_read_at` / `context_state`）照常使用——**未读、摘要、归档、置顶全部复用现有机制**。
+- 其余列（`title` / `pinned` / `sort_order` / `archived` / `last_read_at` / `context_state`）照常使用——**摘要、归档、置顶全部复用现有机制**。
+
+**未读不复用单聊的机制**（2026-10-21 改）：单聊按 `chat_history` 里 `role='assistant'` 的行数计数，而群里每个成员的发言都是这样一行，照搬会让角标在讨论进行中随每句话往上跳。群未读改为 `chat_sessions.awaiting_user_at` **标记**——整轮干净结束、队列为空、且本轮确有成员发言时置位，`UpdateLastRead` 清空，因此恒为 0/1（"群在等我"）。通知同口径：群每 run 只推一次终态，不再按排队消息逐条推（原决策 #72 已废）。
 
 ### 4.2 成员会话
 
@@ -389,7 +391,7 @@ Claude（代码编写与推理）、CodeBuddy（全栈开发助手）、Grok（x
   - **影响面（实现时必须一次改全）**：生产 DDL 1 处 + 重建迁移 1 段 + **约 20 个测试夹具**手写了同一句 CHECK（`chat_test.go:32`、`handler/testutil_test.go`、`session_runtime_test.go:1370` 等）——漏改任一个该测试即失败。
   - **不得用 `role='assistant'` 冒充**：`role='assistant'` 被大量语义占用（未读数 `unreadCountSubquery`、`SessionHasAssistant`、auto-title、resume 判定、`pending_events`），冒充会让系统事件被算成"一条 AI 回复"。
 - **内容**：如 `Claude（代码编写与推理）加入了讨论`、`Claude 已离场`（描述来自决策 #41）。
-- **注入（决策 #44）**：系统事件**计入游标**（`id > cursor` 即注入），成员/主持人都能看到"谁进谁出"；但**不计入未读数**（未读只数 `role='assistant'`，天然不受影响）。
+- **注入（决策 #44）**：系统事件**计入游标**（`id > cursor` 即注入），成员/主持人都能看到"谁进谁出"；但**不计入未读数**（群未读只看 `awaiting_user_at` 标记，与消息行无关，天然不受影响）。
 - **渲染（决策 #43）**：前端按系统事件样式渲染——**居中细条**（非气泡、无头像），与主持人/成员气泡区分。
 
 ### 5.5 抢占
@@ -510,7 +512,7 @@ Claude（代码编写与推理）、CodeBuddy（全栈开发助手）、Grok（x
 - `run_turn` 的 `TimelineSessionID`：断言"连接用成员、落库/广播用群"，且缺省时行为不变（向后兼容）。
 - **主持人提示词（决策 #39/#41）**：`BuildHostSystemPrompt` 断言成员渲染为 `名字（描述）`、离场者带"（已离场）"、缺描述时省略括号。
 - **注入上下文（决策 #39/#41）**：`buildInjectionText` 断言离场成员名后带"（已离场）"、头部含"参与者：名字（描述）"清单。
-- **系统事件（决策 #40/#43/#44）**：增删成员各写一条 `role='system'` 行（`agent_id=''`）；断言该行**计入注入**（`id > cursor` 时出现）且**不计入未读**（`role='assistant'` 过滤天然排除）。
+- **系统事件（决策 #40/#43/#44）**：增删成员各写一条 `role='system'` 行（`agent_id=''`）；断言该行**计入注入**（`id > cursor` 时出现）且**不计入未读**（群未读只看 `awaiting_user_at`，天然排除）。
 - **拒绝移除主持人（决策 #42）**：`RemoveGroupMember(hostMemberID)` 返回错误、主持人行 `archived` 仍为 0。
 
 ### 9.2 单元测试（前端）
@@ -849,7 +851,7 @@ G1 body 要求改 `AIChat`（`handler/chat.go:30`），但 Files/commit 无此�
 `chat_history.role` 有 `CHECK(role IN ('user','assistant'))`（`database.go:308`）。加 `role='system'` **SQLite 不能改 CHECK**，只能整表重建（先例：`rebuildChatMetadataWithoutFK`、`migrateChatThinkingSeq`）。
 - **影响面（一次改全，漏一处即失败）**：生产 DDL 1 处 + 重建迁移 1 段 + **约 20 个测试夹具**手写同一句 CHECK（`chat_test.go:32`、`handler/testutil_test.go`、`session_runtime_test.go:1370`、`database_test.go:61/2123/2510/3367/3724`、`drain_test.go:51`、`scheduler_test.go:26`、`scheduler_executor_test.go:28`、`scheduler_script_phase_test.go:31`、`summary_test.go:258`、`session_cleanup_test.go:351`、`chat_metadata_ledger_migrate_test.go:50`、`thinking_migrate_test.go:48`、`session_command_test.go:66` 等）。
 - **不得用 `role='assistant'` 冒充**：该角色被大量语义占用——未读数 `unreadCountSubquery`（`chat.go:1199`）、`SessionHasAssistant`（`chat.go:2497`）、auto-title、resume 判定、`pending_events.go:381`、`thinking_migrate.go:23/54`、`database.go:1927/1997/2318/2346`。冒充会让系统事件被算成"一条 AI 回复"。
-- **好消息**：未读天然只数 `role='assistant'`，故系统事件**不计入未读**无需额外改动（决策 #44）；但它**计入游标**（`id > cursor` 即注入），成员/主持人都能看到成员变动。
+- **好消息**：群未读只看 `awaiting_user_at` 标记（不数消息行），故系统事件**不计入未读**无需额外改动（决策 #44）；但它**计入游标**（`id > cursor` 即注入），成员/主持人都能看到成员变动。
 
 ## 12.7 增补：排队、生命周期与降级（2026-10-06，决策 #45–#59）
 

@@ -310,6 +310,10 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.filePreviewMode', descriptionKey: 'settings.items.filePreviewModeDesc', key: 'filePreviewMode', type: 'switch', source: 'local', sectionHeader: 'settings.items.fileDisplaySection' } },
     { type: 'item', spec: { labelKey: 'settings.items.uploadMaxSize', descriptionKey: 'settings.items.uploadMaxSizeDesc', key: 'upload.max_size_mb', type: 'number', source: 'server', sectionHeader: 'settings.items.uploadSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.uploadMaxFiles', descriptionKey: 'settings.items.uploadMaxFilesDesc', key: 'upload.max_files', type: 'number', source: 'server', sectionHeader: 'settings.items.uploadSection' } },
+    // Retention deletes files, so it is a switch plus a day count rather than a
+    // single number: 0 days would otherwise be indistinguishable from "off".
+    { type: 'item', spec: { labelKey: 'settings.items.uploadRetentionEnabled', descriptionKey: 'settings.items.uploadRetentionEnabledDesc', key: 'upload.retention_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.uploadSection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.uploadRetentionDays', descriptionKey: 'settings.items.uploadRetentionDaysDesc', key: 'upload.retention_days', type: 'number', source: 'server', min: 1, disableUnless: { key: 'upload.retention_enabled', value: true }, sectionHeader: 'settings.items.uploadSection' } },
   ],
   debug: [
     { type: 'item', spec: { labelKey: 'settings.items.logCapture', descriptionKey: 'settings.items.logCaptureDesc', key: 'logCapture', type: 'switch', source: 'local', sectionHeader: 'settings.items.debugSection' } },

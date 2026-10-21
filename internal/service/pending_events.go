@@ -385,10 +385,12 @@ func anyToString(v any) string {
 // lookupReadSessions returns the set of session ids that have been read.
 //
 // "Read" reuses the exact comparison the unread badge uses
-// (unreadCountSubquery in chat.go): a session is read when last_read_at is set
-// and no finalized assistant message landed after it. Keeping the two in sync
-// matters — if this gate disagreed with the badge, a session could show as read
-// while still notifying, or vice versa.
+// (unreadCountSubquery in chat.go), including the group branch: a session is
+// read when last_read_at is set and nothing is pending — for a group that
+// "nothing" means it is not waiting on the user (awaiting_user_at), not that
+// every member's message has been seen. Keeping the two in sync matters — if
+// this gate disagreed with the badge, a session could show as read while still
+// notifying, or vice versa.
 func lookupReadSessions(sessionIDs []string) map[string]bool {
 	read := make(map[string]bool, len(sessionIDs))
 	if len(sessionIDs) == 0 || !store.ReadDBReady() {
@@ -402,13 +404,18 @@ func lookupReadSessions(sessionIDs []string) map[string]bool {
 		`SELECT s.id FROM chat_sessions s
 		 WHERE s.id IN (`+sqlPlaceholders(len(sessionIDs))+`)
 		   AND s.last_read_at IS NOT NULL
-		   AND NOT EXISTS (
-		     SELECT 1 FROM chat_history h
-		     WHERE h.session_id = s.id
-		       AND h.project_id = s.project_id
-		       AND h.role = 'assistant'
-		       AND h.streaming = 0
-		       AND COALESCE(h.completed_at, h.created_at) > s.last_read_at
+		   AND (
+		     CASE WHEN s.session_type = '`+store.SessionTypeGroup+`'
+		          THEN s.awaiting_user_at IS NULL
+		          ELSE NOT EXISTS (
+		            SELECT 1 FROM chat_history h
+		            WHERE h.session_id = s.id
+		              AND h.project_id = s.project_id
+		              AND h.role = 'assistant'
+		              AND h.streaming = 0
+		              AND COALESCE(h.completed_at, h.created_at) > s.last_read_at
+		          )
+		     END
 		   )`,
 		args...,
 	)

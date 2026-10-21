@@ -549,11 +549,12 @@ describe('exportMarkdownToHtml', () => {
     expect(result.html).toContain('--svg-ar: 4')
   })
 
-  it('carries the svg-fit CSS rules into the standalone export', async () => {
-    // The sizing lives in media-block.css, which the hit-detection serializer
+  it('carries the svg-fit layout rules into the standalone export', async () => {
+    // The layout lives in media-block.css, which the hit-detection serializer
     // copies only for rules that match the exported DOM. A document with SVG
-    // media must therefore bring the ratio-driven width rule along — otherwise
-    // the export would show the media at its intrinsic size.
+    // media must therefore bring the full-width frame and the contain-centring
+    // along — otherwise the export would show the media at its intrinsic size
+    // in a fit-content box.
     //
     // jsdom starts with NO stylesheets (the app links its CSS from index.html,
     // which the test never loads), so the real media-block.css is injected here
@@ -567,17 +568,20 @@ describe('exportMarkdownToHtml', () => {
         opts({ content: '<svg viewBox="0 0 400 100"><rect width="400" height="100"></rect></svg>' }),
       )
       expect(result.html).toContain('.image-block-wrapper.svg-fit')
-      expect(result.html).toContain('min(100%, calc(60dvh * var(--svg-ar, 1)))')
+      // The media is sized from its own ratio (never a percentage of the
+      // shrink-to-fit frame, which would be a cycle).
+      expect(result.html).toContain('var(--svg-ar')
+      // mermaid's inline natural-size cap must be overridden.
+      expect(result.html).toContain('max-width: none !important')
     } finally {
       style.remove()
     }
   })
 
-  it('sizes mermaid diagrams like other SVG media, overriding the inline max-width', async () => {
+  it('sizes mermaid diagrams like other SVG media', async () => {
     // Mermaid emits `style="max-width: Npx"` inline (its natural size). The
-    // exported document must (a) stamp the figure with its aspect ratio and
-    // (b) carry the !important stylesheet override — without it a wide
-    // flowchart stays squashed at its natural width in the standalone file.
+    // exported document must stamp the figure and carry the layout rules, so a
+    // wide flowchart fills the column instead of staying at its natural width.
     const css = readWebFile('css/media-block.css')
     const style = document.createElement('style')
     style.textContent = css
@@ -587,10 +591,52 @@ describe('exportMarkdownToHtml', () => {
         opts({ content: '```mermaid\ngraph LR; A-->B\n```' }),
       )
       expect(result.html).toContain('image-block-wrapper svg-fit')
-      expect(result.html).toContain('--svg-ar:')
-      expect(result.html).toContain('max-width: 100% !important')
+      // Same ratio-derived sizing as the in-app preview.
+      expect(result.html).toContain('var(--svg-ar')
     } finally {
       style.remove()
     }
+  })
+  it('ships the inline zoom script and its styles', async () => {
+    // The exported document must behave like the in-app preview: hovering a
+    // diagram zooms it in place. The script is hand-mirrored from
+    // `inlineZoom.ts` (the export has no bundler), so this pins that it is
+    // actually injected — and that the state classes it toggles have styles,
+    // otherwise the script would run against an unstyled document.
+    const css = readWebFile('css/media-block.css')
+    const style = document.createElement('style')
+    style.textContent = css
+    document.head.appendChild(style)
+    try {
+      const result = await exportMarkdownToHtml(
+        opts({ content: '```mermaid\ngraph TD; A-->B\n```' }),
+      )
+
+      // The pointer-device gate, matching the module's own contract.
+      expect(result.html).toContain("(hover: hover) and (pointer: fine)")
+      // Wheel zoom + pan + reset wiring.
+      expect(result.html).toContain('.image-block-reset-btn')
+      expect(result.html).toContain('is-zooming')
+      // The styles the script toggles must be present too. Asserting only the
+      // BASE `display: none` is not enough — it matches the resting state, so it
+      // passes even when every `.is-zooming` rule was dropped and the reset
+      // button could never appear. The reveal rule is the real contract.
+      expect(result.html).toContain('.image-block-wrapper')
+      expect(result.html).toContain('display: none')
+      expect(result.html).toContain('.image-block-wrapper.is-zooming')
+      expect(result.html).toMatch(/\.is-zooming \.image-block-reset-btn[\s\S]*?display:\s*inline-flex/)
+      // Pan/zoom cursors and the no-easing state, all of which live in the same
+      // media block and were dropped together.
+      expect(result.html).toContain('is-panning')
+    } finally {
+      style.remove()
+    }
+  })
+
+  it('does not enable inline zoom on touch in the exported document', async () => {
+    // Same rule as the app: touch keeps page scrolling and uses the lightbox.
+    // The gate returns early, so nothing below it can install.
+    const result = await exportMarkdownToHtml(opts({ content: '```mermaid\ngraph TD; A-->B\n```' }))
+    expect(result.html).toContain("if (!mq || !mq.matches) return;")
   })
 })

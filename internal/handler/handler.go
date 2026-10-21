@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 
 	"clawbench/internal/frontend"
 	i18npkg "clawbench/internal/i18n"
@@ -215,6 +214,55 @@ func validateAndResolvePath(w http.ResponseWriter, r *http.Request, basePath, re
 	return absPath, true
 }
 
+// resolveAttachmentPath resolves a chat attachment path, which may arrive
+// either project-relative (a freshly attached item) or ABSOLUTE.
+//
+// The absolute form is not an edge case: attachments are persisted with their
+// resolved absolute path (see AIChat's validatedFileEntries), so anything that
+// re-sends a previously attached item — the "最近引用" list, a restored
+// attachment draft, a queued message — hands back exactly what the DB holds.
+// Passing that through model.ValidatePath is wrong by construction: it joins
+// the argument onto the base path, so "/proj/root" + "/proj/root/sub" becomes
+// "/proj/root/proj/root/sub" and the os.Stat that follows 404s — which the
+// client renders as the generic "发送失败，请重试".
+//
+// Absolute paths are therefore validated against the configured roots
+// (isPathUnderAnyRoot) instead of being re-rooted.
+//
+// NOTE what that guarantee actually is: "under a configured root", NOT "inside
+// the project". On Unix the root list is ["/"] (platform.ListRootPaths), so for
+// an absolute path this check passes for anything that exists — the same rule
+// /api/fs/list already applies, and the reason it must: the file manager
+// browses the whole machine and its "attach to chat" action hands over whatever
+// absolute path the user picked. Confining attachments to the project here
+// would break that action, so the permissiveness is deliberate.
+//
+// What is NOT permitted is escaping through the RELATIVE form: those still go
+// through model.ValidatePath, which resolves symlinks on both sides and rejects
+// anything climbing out of the project root.
+func resolveAttachmentPath(w http.ResponseWriter, r *http.Request, basePath, path string) (string, bool) {
+	absPath, ok := resolveAttachmentPathQuiet(basePath, path)
+	if !ok {
+		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
+		return "", false
+	}
+	return absPath, true
+}
+
+// resolveAttachmentPathQuiet is {@link resolveAttachmentPath} without the HTTP
+// error write, for callers that build a prompt outside a request (the queue
+// drain loop) and fall back to the raw path instead of failing the turn.
+func resolveAttachmentPathQuiet(basePath, path string) (string, bool) {
+	if filepath.IsAbs(path) {
+		absPath, err := filepath.Abs(path)
+		if err != nil || !isPathUnderAnyRoot(absPath) {
+			return "", false
+		}
+		return absPath, true
+	}
+	return model.ValidatePath(basePath, path)
+}
+
 // resolveAbsPath resolves a path string to an absolute path under any root path.
 // Absolute paths are validated directly; relative paths are resolved against
 // the project path from cookie then validated. This unifies path handling for
@@ -278,7 +326,7 @@ func isPathUnderBase(absPath, basePath string) bool {
 			return false
 		}
 	}
-	return strings.HasPrefix(evalPath, evalBase+string(filepath.Separator)) || evalPath == evalBase
+	return model.IsPathUnderBase(evalPath, evalBase)
 }
 
 // resolveAgentConfig resolves agent configuration from model.Agents.
@@ -471,6 +519,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/ws/delivery-stats", ServeWSDeliveryStats)
 	register("/api/roots", ServeRoots)
 	register("/api/config", ServeConfig)
+	register("/api/server/instance", ServeServerInstance)
 	register("/api/config/test", ServeConfigTest)
 	register("/api/config/restart", ServeConfigRestart)
 	register("/api/config/password", ServeConfigPassword)
@@ -532,6 +581,18 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/upload/file", UploadFile)
 	register("/api/upload/recent", UploadRecent)
 	register("/api/share-in/recent", ShareInRecent)
+	// Web Share Target for the installed PWA: the browser POSTs a multipart
+	// form here when the user shares files from another app. Authenticated on
+	// purpose — an unauthenticated share must not write into a project — but
+	// wrapped so a rejected request lands on the login page instead of a JSON
+	// body (the browser NAVIGATED here, so it renders whatever we return).
+	//
+	// Registered OUTSIDE middleware.Auth so the rejection can be a redirect:
+	// Auth writes a JSON 401, which the browser would render as a bare error
+	// body (it navigated here from the OS share sheet). The handler re-checks
+	// authentication itself and bounces to the app, where the login form lives.
+	registerRoute(mux, "/share-target", ShareTarget)
+	routeTable = append(routeTable, Route{Pattern: "/share-target", Authenticated: true})
 
 	// GitHub / GitLab integration (read-only issue & PR browsing).
 	register("/api/forge/credentials", ServeForgeCredentials)

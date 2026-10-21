@@ -153,8 +153,9 @@ func buildSessionEventData(sessionID, status string, hasNewMessages bool, toolNa
 		// Include response preview for the completion popover (full, untruncated —
 		// the frontend scrolls it). The plain-text variant stays truncated for
 		// push notifications.
-		responsePreviewRaw := getSessionResponsePreviewRaw(sessionID)
+		responsePreviewRaw, messageID := getSessionResponsePreviewRawWithMessageID(sessionID)
 		data.ResponsePreview = responsePreviewRaw
+		data.MessageID = messageID
 		if responsePreviewRaw != "" {
 			data.ResponsePreviewPlain = truncatePreview(summarize.StripMarkdown(responsePreviewRaw))
 		}
@@ -216,6 +217,12 @@ func EmitSessionPushNotification(sessionID, status string) bool {
 // after the last one — instead of once per answer. Each intermediate answer is
 // its own completed turn and deserves its own push.
 //
+// SINGLE CHAT ONLY. Do not wire this into a group run: a group turn runs many
+// members and can take minutes, so per-message pushes fire while the discussion
+// is still in flight, and what the user is owed there is a TURN, not an answer.
+// Groups notify exactly once per run from the terminal `done` (see
+// RunGroupDrainLoop's OnTurnAnswered note). This was tried and reverted.
+//
 // Deliberately NOT the guarded path: the terminal guard permits exactly one push
 // per run, so calling it here would let the FIRST turn consume the slot and
 // silence the real terminal push, losing the last answer's notification. The
@@ -241,8 +248,9 @@ func pushSessionTerminal(sessionID, status string) {
 	}
 	projectPath := GetSessionProjectPath(sessionID)
 	var responsePreviewRaw string
+	var messageID int64
 	if status == statusCompleted {
-		responsePreviewRaw = getSessionResponsePreviewRaw(sessionID)
+		responsePreviewRaw, messageID = getSessionResponsePreviewRawWithMessageID(sessionID)
 	}
 
 	// One event id shared by the record and the pending event, so a re-emitted
@@ -263,6 +271,7 @@ func pushSessionTerminal(sessionID, status string) {
 			SessionTitle:    title,
 			ProjectPath:     projectPath,
 			ResponsePreview: truncatePreview(responsePreviewRaw),
+			MessageID:       messageID,
 		}
 		if responsePreviewRaw != "" {
 			data.ResponsePreviewPlain = truncatePreview(summarize.StripMarkdown(responsePreviewRaw))
@@ -280,6 +289,7 @@ func pushSessionTerminal(sessionID, status string) {
 			SessionTitle:    title,
 			ProjectPath:     projectPath,
 			ResponsePreview: truncatePreview(responsePreviewRaw),
+			MessageID:       messageID,
 		}
 		if responsePreviewRaw != "" {
 			data.ResponsePreviewPlain = truncatePreview(summarize.StripMarkdown(responsePreviewRaw))
@@ -329,6 +339,18 @@ func getSessionResponsePreview(sessionID string) string {
 // getSessionResponsePreviewRaw returns the un-truncated preview text.// Used when both Markdown and plain-text previews are needed, so that
 // StripMarkdown operates on the full text before each variant is truncated.
 func getSessionResponsePreviewRaw(sessionID string) string {
+	preview, _ := getSessionResponsePreviewRawWithMessageID(sessionID)
+	return preview
+}
+
+// getSessionResponsePreviewRawWithMessageID returns the preview AND the
+// chat_history id of the message it was taken from (0 when nothing qualified).
+//
+// The id is what lets a notification click land on the message the user was
+// told about instead of merely the bottom of the session: the walk below skips
+// messages that yield no text, so "the newest assistant row" is not necessarily
+// the row the preview describes.
+func getSessionResponsePreviewRawWithMessageID(sessionID string) (string, int64) {
 	// Read raw assistant contents directly from chat_history. GetMessagesBySessionID
 	// cannot be used here: enrichMessagesWithSummaries strips heavy content from
 	// summarized non-streaming assistant messages (summarizeContentForView replaces
@@ -336,23 +358,23 @@ func getSessionResponsePreviewRaw(sessionID string) string {
 	// a reading summary exists for the last message.
 	// Contents are newest-first; walk forward to find the most recent message
 	// that yields a preview.
-	contents, err := GetAssistantRawContents(sessionID)
+	contents, err := GetAssistantRawContentsWithIDs(sessionID)
 	if err != nil {
 		slog.Debug("session_event: failed to get messages for preview", "session_id", sessionID, "error", err)
-		return ""
+		return "", 0
 	}
-	for _, raw := range contents {
+	for _, row := range contents {
 		var content struct {
 			Blocks []model.ContentBlock `json:"blocks"`
 		}
-		if err := json.Unmarshal([]byte(raw), &content); err != nil {
+		if err := json.Unmarshal([]byte(row.Content), &content); err != nil {
 			continue
 		}
 		if preview := extractPreviewFromBlocksRaw(sessionID, content.Blocks); preview != "" {
-			return preview
+			return preview, row.ID
 		}
 	}
-	return ""
+	return "", 0
 }
 
 // extractPreviewFromBlocksRaw returns the un-truncated preview from content blocks.

@@ -399,7 +399,28 @@ export function forceCleanupStreamingState(
   // wrong bubble). Absent ⇒ the FIRST streaming message (legacy behavior), so a
   // caller looping "clean up every streaming bubble" always makes progress.
   targetMessageId?: number,
+  options?: {
+    /**
+     * Whether THIS client holds the turn's COMPLETE output.
+     *
+     * Default true — correct for the terminal stream handlers (done / error /
+     * cancelled), which run when the terminal event reached this client.
+     *
+     * MUST be false on the "recover from a missed terminal event" paths: the
+     * safety net in useChatSession and runReload's "no longer running" branch.
+     * Those run precisely because the client was NOT subscribed while the turn
+     * finished, so the bubble holds a stale prefix cut at whatever arrived
+     * last — and claiming completeness makes rebuildFromDb keep that prefix
+     * instead of the authoritative DB row. When the row was summarized (its
+     * content replaced by `{"blocks":[]}`), the non-empty stale prefix then
+     * suppressed BOTH the summary and the lazy-original fetch, so the reply
+     * rendered truncated at a tool call until a session switch rebuilt the
+     * array from the DB.
+     */
+    holdsCompleteTurn?: boolean
+  },
 ): ChatMessage | undefined {
+  const holdsCompleteTurn = options?.holdsCompleteTurn !== false
   const streamingMsg = targetMessageId
     ? resolveStreamingMsg(messages, targetMessageId)
     : messages.find((m) => m.role === 'assistant' && m.streaming)
@@ -411,7 +432,8 @@ export function forceCleanupStreamingState(
     // snapshot that follows describes the SAME turn whose full output this
     // object already holds. rebuildFromDb uses the flag to tell that apart
     // from a stale pre-disconnect prefix (which must yield to the DB row).
-    streamingMsg._finalizedLocally = true
+    if (holdsCompleteTurn) streamingMsg._finalizedLocally = true
+    else delete streamingMsg._finalizedLocally
     // Mark all unfinished tool_use blocks as done so spinner stops.
     // Exception: PermissionApproval blocks require user interaction —
     // marking them done without a real result makes the card appear
@@ -1511,6 +1533,27 @@ export function rebuildFromDb(state: ChatMessage[], dbMessages: ChatMessage[], s
       if (db.summaryCards) live.summaryCards = db.summaryCards
       if (db.metadata && !live.metadata) live.metadata = db.metadata
       if (db.files) live.files = db.files
+      // The cancelled badge is DB-only state on this path. The terminal
+      // `cancelled` stream event carries no flag (its payload is just
+      // `{reason:"cancelled"}`), and it is routinely NOT delivered: the client
+      // unsubscribes while cancelling (session_update is broadcast to everyone,
+      // the stream event only to subscribers), so the hub drops it with
+      // reason=no_subscribers. The row's `cancelled:true` is then the ONLY
+      // record — and this branch keeps the LIVE object, so without adopting it
+      // here the badge showed up only after a refresh or a session switch
+      // rebuilt the array from the DB. A still-streaming row is never
+      // cancelled (the turn is running), so it must not stamp one.
+      if (db.cancelled === true && db.streaming !== true) live.cancelled = true
+      // The cancelled badge is DB-only state on this path. The terminal
+      // `cancelled` stream event carries no flag (its payload is just
+      // `{reason:"cancelled"}`), and it is routinely NOT delivered: the client
+      // unsubscribes while cancelling (session_update is broadcast to everyone,
+      // the stream event only to subscribers), so the hub drops it with
+      // reason=no_subscribers. The row's `cancelled:true` is then the ONLY
+      // record — and this branch keeps the LIVE object, so without adopting it
+      // here the badge showed up only after a refresh or a session switch
+      // rebuilt the array from the DB. A still-streaming row is never
+      // cancelled (the turn is running), so it must not stamp one.
       // Speaker attribution (group chats): the DB row's agent_id is authoritative.
       // The placeholder frequently has none — the subscribe-time recovery
       // re-emits stream_start WITHOUT a speaker (EmitStreamStartEvent carries

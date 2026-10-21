@@ -330,8 +330,6 @@ func (m *ACPConnManager) GracefulStopAll(grace time.Duration) {
 	m.mu.Unlock()
 }
 
-// cancelPrompt cancels the in-flight prompt (if any) via the ACP protocol,
-// giving the agent a chance to emit a terminal notification before we kill
 // idleSweep periodically closes connections that have been idle for longer
 // than idleConnTimeout. This prevents stale agent processes from consuming
 // resources indefinitely after sessions complete without explicit deletion.
@@ -531,6 +529,7 @@ func (m *ACPConnManager) GetOrCreateConn(ctx context.Context, agent *model.Agent
 			slog.Info("acp conn: pre-populated acpSID from DB for ResumeSession",
 				"clawbench_sid", clawbenchSID, "acp_sid", extID)
 		}
+		conn.seedModeFromDB(agent)
 		m.conns[clawbenchSID] = conn
 	}
 	m.mu.Unlock()
@@ -551,6 +550,7 @@ func (m *ACPConnManager) GetOrCreateConnForLoad(ctx context.Context, agent *mode
 	conn, ok := m.conns[clawbenchSID]
 	if !ok {
 		conn = newACPConn(agent, clawbenchSID)
+		conn.seedModeFromDB(agent)
 		m.conns[clawbenchSID] = conn
 	}
 	m.mu.Unlock()
@@ -1061,6 +1061,11 @@ type ACPConn struct {
 	// map is what lets the mapper backfill ParentToolCallID and reuse the
 	// existing sub-agent grouping. Guarded by stateMu.
 	memberToolCallIDs map[string]string
+	// seenChunkKeys holds the identities of model-output chunks already
+	// delivered this turn, so a duplicate delivery (CodeBuddy retries a member
+	// update whose send raced its timeout — see acp_dup_chunk.go) is dropped
+	// instead of being appended twice. Guarded by stateMu.
+	seenChunkKeys map[string]struct{}
 
 	// currentSelections is a generalized map for tracking the current
 	// selection of any category (mode, thought_level, model, etc.).
@@ -1229,6 +1234,36 @@ type ACPConn struct {
 	// guarded by metaMu (same lock as lastCompletedRequestID; both are touched
 	// from the notification goroutine and from the steer caller).
 	pendingSteerIDs map[string]struct{}
+}
+
+// seedModeFromDB seeds the connection's current mode from the session's
+// persisted context_state, so a respawn has something to re-apply.
+//
+// The value is kept even when the registry has no mode list yet (first ever
+// connection for this agent): not knowing the options must not discard the
+// user's choice, and an agent that rejects it answers -32602, which the config
+// path already treats as "keep the agent's own". A value the registry DOES
+// list the agent as not offering is dropped — re-sending it would fail on every
+// resume.
+func (c *ACPConn) seedModeFromDB(agent *model.Agent) {
+	if c == nil || agent == nil {
+		return
+	}
+	modeID := getSessionModeID(c.clawbenchSID)
+	if modeID == "" {
+		return
+	}
+	reg := GetAgentCapabilityRegistry()
+	if reg.HasAvailableModes(agent.ID) && !reg.IsModeAvailable(agent.ID, modeID) {
+		slog.Warn("acp conn: persisted mode is no longer offered by the agent, ignoring",
+			"clawbench_sid", c.clawbenchSID, "mode_id", modeID, "agent", agent.ID)
+		return
+	}
+	c.stateMu.Lock()
+	c.currentModeID = modeID
+	c.stateMu.Unlock()
+	slog.Info("acp conn: pre-populated mode from DB for resume re-apply",
+		"clawbench_sid", c.clawbenchSID, "mode_id", modeID)
 }
 
 // cancelPrompt cancels the in-flight prompt (if any) via the ACP protocol,

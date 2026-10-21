@@ -309,3 +309,5 @@ UsageMeterOverTitle: Usage above plan
 UsageMeterFullTitle: Usage quota exhausted
 UsageMeterOverBody: Used {{.Actual}} this cycle vs {{.Expected}} expected (quota {{.Quota}}, day {{.Day}} of {{.Days}})
 UsageMeterFullBody: The {{.Quota}} quota for this cycle is used up; actual usage {{.Actual}}
+RestartFailed: "Restart failed: {{.Error}}"
+RestartUnavailable: Restart is not wired up on this server, cannot restart

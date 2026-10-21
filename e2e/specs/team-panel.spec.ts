@@ -62,6 +62,13 @@ test.describe('Agent Team Panel', () => {
     await expect(page.locator('.team-chip__count')).toHaveText('1/2')
   })
 
+  test('collapsed chip leads with the team glyph', async ({ page }) => {
+    await injectTeam(page, sampleTeam)
+    await expect(page.locator('.team-chip__icon')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('.team-chip__icon')).toHaveClass(/team-chip__icon--running/)
+    await expect(page.locator('.team-chip__dot')).toHaveCount(0)
+  })
+
   test('clicking the chip expands to one row per member', async ({ page }) => {
     await injectTeam(page, sampleTeam)
     await expect(page.locator('.team-chip')).toBeVisible({ timeout: 5000 })
@@ -71,8 +78,8 @@ test.describe('Agent Team Panel', () => {
     const rows = page.locator('.team-member')
     await expect(rows).toHaveCount(2)
     await expect(rows.nth(0).locator('.team-member__name')).toHaveText('probe-alpha')
-    await expect(rows.nth(0).locator('.team-member__status')).toHaveText('running')
-    await expect(rows.nth(1).locator('.team-member__status')).toHaveText('completed')
+    await expect(rows.nth(0).locator('.team-member__status-icon')).toHaveAttribute('data-status', 'running')
+    await expect(rows.nth(1).locator('.team-member__status-icon')).toHaveAttribute('data-status', 'completed')
   })
 
   test('running member pulses, terminated member is dimmed', async ({ page }) => {
@@ -80,10 +87,73 @@ test.describe('Agent Team Panel', () => {
     await expect(page.locator('.team-chip')).toBeVisible({ timeout: 5000 })
     await page.locator('.team-chip').click()
 
-    const dots = page.locator('.team-member__dot')
-    await expect(dots.nth(0)).toHaveClass(/team-member__dot--running/)
-    await expect(dots.nth(1)).toHaveClass(/team-member__dot--completed/)
+    const icons = page.locator('.team-member__status-icon')
+    await expect(icons.nth(0)).toHaveClass(/team-member__status-icon--running/)
+    await expect(icons.nth(1)).toHaveClass(/team-member__status-icon--completed/)
     await expect(page.locator('.team-member').nth(1)).toHaveClass(/team-member--terminated/)
+    // Status is a glyph now, not a dot and not a word.
+    await expect(page.locator('.team-member__dot')).toHaveCount(0)
+    await expect(page.locator('.team-member__status')).toHaveCount(0)
+  })
+
+  test('running member uses the shared loading ring', async ({ page }) => {
+    // One spinner for the whole app: the ring is declared globally and must be
+    // what the roster draws, at the row's 12px size.
+    await injectTeam(page, sampleTeam)
+    await expect(page.locator('.team-chip')).toBeVisible({ timeout: 5000 })
+    await page.locator('.team-chip').click()
+
+    const ring = page.locator('.team-member__status-icon--running')
+    await expect(ring).toHaveClass(/li-spinner/)
+    await expect(ring.locator('svg')).toHaveCount(0)
+    // Layout size, NOT getBoundingClientRect/boundingBox: the ring is rotating,
+    // so its axis-aligned bounding box swings between 12px and 12*√2 ≈ 17px
+    // depending on the animation phase — measuring it is inherently flaky.
+    const size = await ring.evaluate(el => [el.offsetWidth, el.offsetHeight])
+    expect(size).toEqual([12, 12])
+    // It is actually animating (a static ring would read as "stuck").
+    const name = await ring.evaluate(el => getComputedStyle(el).animationName)
+    expect(name).toBe('li-spin')
+  })
+
+  test('tool count renders as a wrench glyph plus the number', async ({ page }) => {
+    await injectTeam(page, sampleTeam)
+    await expect(page.locator('.team-chip')).toBeVisible({ timeout: 5000 })
+    await page.locator('.team-chip').click()
+
+    const cell = page.locator('.team-member__tools').first()
+    await expect(cell.locator('svg')).toBeVisible()
+    await expect(cell).toHaveText('2')
+  })
+
+  test('the tool count and token columns line up across rows', async ({ page }) => {
+    // Geometry, not markup: the ragged look came from rows whose trailing cells
+    // were content-sized, so a member without tool calls pulled its neighbours
+    // left. Compare the actual painted x of both columns.
+    await injectTeam(page, {
+      type: 'member_status_change',
+      teamName: 'clawbench-probe',
+      hasLiveMembers: true,
+      members: [
+        { name: 'a-many-tools', status: 'running', toolCallCount: 42, tokenUsage: { inputTokens: 123456, outputTokens: 7890 } },
+        { name: 'b-no-tools', status: 'pending' },
+        { name: 'c-one-tool', status: 'completed', toolCallCount: 1, tokenUsage: { inputTokens: 12, outputTokens: 3 } },
+      ],
+    })
+    await expect(page.locator('.team-chip')).toBeVisible({ timeout: 5000 })
+    await page.locator('.team-chip').click()
+    await expect(page.locator('.team-member')).toHaveCount(3)
+
+    const boxes = await page.locator('.team-member__tools').evaluateAll(
+      els => els.map(el => Math.round(el.getBoundingClientRect().left)),
+    )
+    expect(boxes).toHaveLength(3)
+    expect(new Set(boxes).size).toBe(1)
+
+    const tokenBoxes = await page.locator('.team-member__tokens').evaluateAll(
+      els => els.map(el => Math.round(el.getBoundingClientRect().right)),
+    )
+    expect(new Set(tokenBoxes).size).toBe(1)
   })
 
   test('panel disappears when the team is deleted', async ({ page }) => {
@@ -127,7 +197,7 @@ test.describe('Agent Team Panel', () => {
     await expect(page.locator('.team-expanded__auto')).toHaveText('auto team')
   })
 
-  test('shows member agent type and a metadata tooltip', async ({ page }) => {
+  test('keeps the member agent type out of the row and in the tooltip', async ({ page }) => {
     await injectTeam(page, {
       type: 'member_status_change',
       teamName: 'clawbench-probe',
@@ -144,7 +214,8 @@ test.describe('Agent Team Panel', () => {
     })
     await expect(page.locator('.team-chip')).toBeVisible({ timeout: 5000 })
     await page.locator('.team-chip').click()
-    await expect(page.locator('.team-member__agent-type')).toHaveText('general-purpose')
+    await expect(page.locator('.team-member')).toBeVisible()
+    await expect(page.locator('.team-member__agent-type')).toHaveCount(0)
     const title = await page.locator('.team-member').first().getAttribute('title')
     expect(title).toContain('runs the probe')
     expect(title).toContain('type: general-purpose')

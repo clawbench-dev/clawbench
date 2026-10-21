@@ -191,8 +191,11 @@ watch(
   () => props.open,
   (val) => {
     if (val) {
-      // Wait a tick so v-show makes the input visible/focusable.
+      // Wait a tick so v-show makes the input visible/focusable. The open state
+      // is re-checked inside the callback: closing within that frame (Escape,
+      // the ✕ button) must not have focus yanked back into a hidden bar.
       requestAnimationFrame(() => {
+        if (!props.open) return
         inputRef.value?.focus()
         inputRef.value?.select()
       })

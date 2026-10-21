@@ -451,6 +451,63 @@ func TestSchema_TitleSourceBackfill(t *testing.T) {
 	assert.Equal(t, "placeholder", got["s-ph"])
 }
 
+// TestSchema_AwaitingUserAtMigration verifies the group "waiting on you" flag
+// is added to a database created BEFORE the column existed, that re-running
+// InitDB is a no-op, and that pre-existing groups come out NULL.
+//
+// The pre-existing database has to be simulated by actually DROPPING the column:
+// asserting on a fresh InitDB only proves the CREATE TABLE DDL mentions it. The
+// ALTER branch would then never run, so deleting the migration (or breaking its
+// pragma guard) would keep this green while every real upgrade silently lost the
+// column — and since `unreadCountSubquery` and `lookupReadSessions` both select
+// it, that is not a missing badge but `no such column` on every session list,
+// overview and floating-window refresh. Verified by mutation: with the ALTER
+// disabled, only this shape of test fails.
+//
+// NULL is the load-bearing default: an old group must start with NO unread
+// badge. Backfilling a timestamp would light every historical group at once.
+func TestSchema_AwaitingUserAtMigration(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	restoreDB := store.SnapshotDBForTest()
+	defer restoreDB()
+
+	// Phase 1: build the current schema, seed a group, then drop the column to
+	// simulate a database from before this migration.
+	require.NoError(t, InitDB())
+	store.Close()
+
+	raw, err := sql.Open("sqlite", filepath.Join(model.DataDir, "ClawBench.db"))
+	require.NoError(t, err)
+	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, session_type) VALUES ('old-group', 1, 'codebuddy', 'G', 'group')")
+	require.NoError(t, err)
+	_, err = raw.Exec("ALTER TABLE chat_sessions DROP COLUMN awaiting_user_at")
+	require.NoError(t, err)
+	raw.Close()
+
+	// Phase 2: InitDB re-adds it.
+	require.NoError(t, InitDB())
+	defer store.Close()
+
+	assert.Contains(t, getTableColumns(t, store.UnsafeDBForTest(), "chat_sessions"), "awaiting_user_at",
+		"the migration must re-add the column to a pre-existing database")
+
+	var isNull int
+	require.NoError(t, store.UnsafeDBForTest().QueryRow(
+		"SELECT awaiting_user_at IS NULL FROM chat_sessions WHERE id = 'old-group'",
+	).Scan(&isNull))
+	assert.Equal(t, 1, isNull,
+		"a pre-existing group must come out NULL — backfilling would light every old group's badge")
+
+	// Idempotent: the pragma guard must skip the ALTER instead of erroring.
+	require.NoError(t, InitDB())
+}
+
 // TestSchema_SortOrderMigration verifies chat_sessions.sort_order is added to a
 // database created before the column existed (#492), that the migration is
 // idempotent, and that it leaves pre-existing rows at the default 0 — so the

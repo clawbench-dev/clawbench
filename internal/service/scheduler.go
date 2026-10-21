@@ -744,13 +744,15 @@ func emitTaskEvent(taskID, status, executionID, sessionID, projectPath, taskName
 	}
 	// For completed/failed/cancelled tasks, include session title (task name) and response preview
 	var responsePreviewRaw string
+	var messageID int64
 	if status == "completed" || status == "cancelled" || status == "failed" {
 		if taskName != "" {
 			data.SessionTitle = taskName
 		}
 		if sessionID != "" {
-			responsePreviewRaw = getSessionResponsePreviewRaw(sessionID)
+			responsePreviewRaw, messageID = getSessionResponsePreviewRawWithMessageID(sessionID)
 			data.ResponsePreview = responsePreviewRaw
+			data.MessageID = messageID
 			if responsePreviewRaw != "" {
 				data.ResponsePreviewPlain = truncatePreview(summarize.StripMarkdown(responsePreviewRaw))
 			}

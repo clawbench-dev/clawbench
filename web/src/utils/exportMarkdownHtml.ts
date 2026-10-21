@@ -264,6 +264,11 @@ function selectorReferencesContent(selector: string): boolean {
         '.chat-audio-player', '.chat-audio-wrapper', '.chat-video-player',
         '.chat-video-wrapper', '.code-line', '.line-num', '.code-text',
         '.code-block-pre', '.toc-', '.export-lightbox',
+        // Inline zoom: the figure's own classes are generic, but the state
+        // markers only ever appear on a zoomed figure, and the toolbar buttons
+        // are named after it. Without these the exported document would ship
+        // the zoom SCRIPT but none of its styles.
+        '.image-block-wrapper', '.image-block-',
     ]
     return contentTokens.some(tok => selector.includes(tok))
 }
@@ -384,12 +389,20 @@ function serializeCss(container: HTMLElement, themeId: string): string {
                     rules.push(rule.cssText)
                 }
             } else if (rule instanceof CSSMediaRule) {
-                // Include media rules that contain content-hitting rules
+                // Include media rules that contain content-hitting rules.
                 const innerRules: string[] = []
                 for (const inner of Array.from(rule.cssRules)) {
                     if (inner instanceof CSSStyleRule) {
                         const sel = inner.selectorText
-                        if (selectorHits(sel) || sel.includes('.hljs')) {
+                        // Same two-tier test as the top-level branch: `selectorHits`
+                        // cannot match a STATE selector (`.is-zooming` is only ever
+                        // set at runtime, so nothing in the static export carries
+                        // it), and the token fallback is what keeps those rules. The
+                        // media branch used to lack the fallback, which silently
+                        // dropped every `.is-zooming` rule — the exported document
+                        // then shipped the zoom script but no styles for the states
+                        // it toggles (invisible reset button, animated zoom steps).
+                        if (selectorHits(sel) || sel.includes('.hljs') || selectorReferencesContent(sel)) {
                             let text = inner.cssText
                             text = text.replace(/\[data-hljs-theme=["']?light["']?\]/g, '[data-theme-base="light"]')
                             text = text.replace(/\[data-hljs-theme=["']?dark["']?\]/g, '[data-theme-base="dark"]')
@@ -1166,6 +1179,252 @@ function buildLightboxJs(): string {
 })();`
 }
 
+/**
+ * Inline zoom/pan for the exported document — the standalone mirror of
+ * `inlineZoom.ts`.
+ *
+ * Kept in sync by hand with the module: the export is a single self-contained
+ * HTML file with no bundler, so it cannot import the app's TypeScript. The
+ * behaviour it reproduces is deliberately the narrow part of the contract —
+ * pointer devices only, wheel zooms around the cursor, drag pans, reset button
+ * returns to fit, Escape leaves the zoom. Touch is not handled here either, for
+ * the same reason: a pinch would fight page scrolling.
+ *
+ * Because it is a hand-copied mirror it DRIFTS, and it has: the wheel rule, the
+ * scale cap and the table-cell exclusion all lagged the app at once. Every one
+ * of those is now pinned by a test in exportMarkdownHtml.test.ts that executes
+ * this script against a real DOM (see "exported inline zoom"), so a future
+ * divergence fails instead of shipping.
+ */
+export function buildInlineZoomJs(): string {
+    return `
+(function() {
+    // Same gate as the app: precise pointer that can hover. Touch never gets
+    // inline zoom (the lightbox stays the touch path).
+    var mq = window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)');
+    if (!mq || !mq.matches) return;
+
+    // MAX mirrors inlineZoom's MAX_SAFE_SCALE. A low cap made the gesture feel
+    // broken ("放大到全宽就无法再放大") right after the artwork filled the frame,
+    // which is the point a reader most wants to keep going. This is only a
+    // guard against numeric runaway from a stray event storm.
+    var MIN = 1, MAX = 64, STEP = 1.15, DRAG = 3;
+    var active = null;   // { fig, media, scale, tx, ty }
+    var panning = null;
+
+    function mediaOf(fig) {
+        if (!fig) return null;
+        return fig.querySelector(':scope > .lightbox-img-wrap > img')
+            || fig.querySelector(':scope > .lightbox-svg-wrap > svg.lightbox-svg')
+            || fig.querySelector(':scope > .mermaid > svg');
+    }
+
+    function figFrom(target) {
+        if (!target || !target.closest) return null;
+        var fig = target.closest('.image-block-wrapper');
+        if (!fig) return null;
+        // Never hijack the floating toolbar.
+        if (target.closest('.image-block-header')) return null;
+        // Table cells opt out, exactly as in the app: a figure inside a cell is
+        // a thumbnail in a grid, and zooming it grows the whole row. Checked
+        // structurally (td/th) rather than by a marker class — the markdown
+        // renderer emits no such class.
+        if (fig.closest('td, th')) return null;
+        return mediaOf(fig) ? fig : null;
+    }
+
+    // Natural (unzoomed) size of the media — the base the zoom multiplies.
+    function naturalSize(s) {
+        var m = s.media;
+        if (m.tagName === 'IMG' && m.naturalWidth > 0) {
+            return { w: m.naturalWidth, h: m.naturalHeight };
+        }
+        var vb = m.viewBox && m.viewBox.baseVal;
+        if (vb && vb.width > 0) return { w: vb.width, h: vb.height };
+        var r = m.getBoundingClientRect();
+        return { w: r.width, h: r.height };
+    }
+
+    // Size at the current scale, in LAYOUT pixels. At rest the element is the
+    // viewport box and the artwork is letterboxed inside it by object-fit:
+    // contain (img) / preserveAspectRatio (svg) — so a diagram smaller than the
+    // column still fills it. Writing width/height (not transform: scale) makes
+    // the browser re-rasterise, keeping it sharp.
+    function scaledSize(s) {
+        var frame = s.fig.getBoundingClientRect();
+        var cell = s.media.parentElement;
+        var box = cell ? cell.getBoundingClientRect() : frame;
+        var bw = box.width || frame.width;
+        var bh = box.height || frame.height;
+        // Scale on the ARTWORK's ratio, not the frame's: an <svg> keeps
+        // preserveAspectRatio (meet), so a box whose ratio differs letterboxes
+        // the content — the element grows but the drawing does not.
+        var n = naturalSize(s);
+        if (!(n.w > 0 && n.h > 0)) return { w: bw * s.scale, h: bh * s.scale };
+        var fit = Math.min(bw / n.w, bh / n.h);
+        return { w: n.w * fit * s.scale, h: n.h * fit * s.scale };
+    }
+
+    function clamp(s) {
+        var frame = s.fig.getBoundingClientRect();
+        var z = scaledSize(s);
+        // The box may be larger than the artwork inside it (letterboxing), so
+        // the travel limit comes from the ARTWORK's rendered size.
+        var n = naturalSize(s);
+        var ratio = (n.w > 0 && n.h > 0) ? n.w / n.h : 1;
+        var boxRatio = z.h > 0 ? z.w / z.h : ratio;
+        var artW = ratio > boxRatio ? z.w : z.h * ratio;
+        var artH = ratio > boxRatio ? z.w / ratio : z.h;
+        var maxX = Math.max(0, (artW - frame.width) / 2);
+        var maxY = Math.max(0, (artH - frame.height) / 2);
+        s.tx = Math.min(maxX, Math.max(-maxX, s.tx));
+        s.ty = Math.min(maxY, Math.max(-maxY, s.ty));
+    }
+
+    function apply(s) {
+        clamp(s);
+        var z = scaledSize(s);
+        s.media.style.width = z.w + 'px';
+        s.media.style.height = z.h + 'px';
+        s.media.style.maxWidth = 'none';
+        s.media.style.maxHeight = 'none';
+        // Mermaid writes width="100%" as an ATTRIBUTE; it pins the width while
+        // the height grows, so the diagram stretches instead of zooming.
+        if (s.media.tagName.toLowerCase() === 'svg') {
+            if (s.savedW === undefined) s.savedW = s.media.getAttribute('width');
+            s.media.removeAttribute('width');
+        }
+        // The resting CSS centres with translate(-50%,-50%); the pan offset is
+        // added on top so the media stays on the frame's centre axis.
+        s.media.style.transform = 'translate(calc(-50% + ' + s.tx + 'px), calc(-50% + ' + s.ty + 'px))';
+    }
+
+    function deactivate() {
+        if (!active) return;
+        var m = active.media;
+        m.style.transform = '';
+        m.style.transformOrigin = '';
+        m.style.width = '';
+        m.style.height = '';
+        m.style.maxWidth = '';
+        m.style.maxHeight = '';
+        if (m.tagName.toLowerCase() === 'svg' && active.savedW !== undefined) {
+            if (active.savedW === null) m.removeAttribute('width');
+            else m.setAttribute('width', active.savedW);
+        }
+        active.fig.classList.remove('is-zooming');
+        active = null;
+    }
+
+    function activate(fig) {
+        var media = mediaOf(fig);
+        if (!media) return null;
+        deactivate();
+        active = { fig: fig, media: media, scale: MIN, tx: 0, ty: 0 };
+        fig.classList.add('is-zooming');
+        media.style.transformOrigin = 'center center';
+        apply(active);
+        return active;
+    }
+
+    function zoomAt(s, next, cx, cy) {
+        var frame = s.fig.getBoundingClientRect();
+        var dx = cx - (frame.left + frame.width / 2);
+        var dy = cy - (frame.top + frame.height / 2);
+        var r = next / s.scale;
+        s.tx = dx - (dx - s.tx) * r;
+        s.ty = dy - (dy - s.ty) * r;
+        s.scale = next;
+        apply(s);
+    }
+
+    document.addEventListener('wheel', function(e) {
+        var fig = figFrom(e.target);
+        if (!fig) return;
+        var s = active && active.fig === fig ? active : null;
+
+        // At rest EVERY notch — up or down, any delta — belongs to the page.
+        // This is the whole point of click-to-enter: scrolling a document with
+        // the pointer drifting over a diagram must never zoom it. An earlier
+        // version let an upward notch activate the zoom, which trapped the
+        // reader scrolling back up; the app-side module already fixed this and
+        // this mirror has to agree with it.
+        if (!s) return;
+        // Horizontal-only notches are not a zoom gesture.
+        if (e.deltaY === 0) return;
+
+        var next = Math.min(MAX, Math.max(MIN, s.scale * (e.deltaY > 0 ? 1 / STEP : STEP)));
+
+        // Zooming out bottoms out at fit scale and STOPS there; it does not
+        // leave the active state (the ring / reset button would vanish mid
+        // gesture and the next notch would scroll the page instead).
+        if (next === s.scale) { e.preventDefault(); return; }
+        e.preventDefault();
+        zoomAt(s, next, e.clientX, e.clientY);
+    }, { passive: false });
+
+    document.addEventListener('pointerdown', function(e) {
+        if (e.pointerType === 'touch' || e.button !== 0) return;
+        var fig = figFrom(e.target);
+        if (!fig || !active || active.fig !== fig || active.scale <= MIN) return;
+        e.preventDefault();
+        panning = { s: active, x: e.clientX, y: e.clientY, bx: active.tx, by: active.ty, moved: false };
+    });
+
+    document.addEventListener('pointermove', function(e) {
+        if (!panning) return;
+        var dx = e.clientX - panning.x, dy = e.clientY - panning.y;
+        if (!panning.moved && Math.abs(dx) < DRAG && Math.abs(dy) < DRAG) return;
+        panning.moved = true;
+        e.preventDefault();
+        panning.s.tx = panning.bx + dx;
+        panning.s.ty = panning.by + dy;
+        apply(panning.s);
+        panning.s.fig.classList.add('is-panning');
+    });
+
+    function endPan() {
+        if (!panning) return;
+        panning.s.fig.classList.remove('is-panning');
+        panning = null;
+    }
+    document.addEventListener('pointerup', endPan);
+    document.addEventListener('pointercancel', endPan);
+
+    // Escape leaves the zoom, from wherever focus happens to be (the media is
+    // not focusable, so the target is usually <body>).
+    document.addEventListener('keydown', function(e) {
+        if (e.key !== 'Escape' || !active) return;
+        e.preventDefault();
+        deactivate();
+    });
+
+    document.addEventListener('click', function(e) {
+        if (!e.target || !e.target.closest) return;
+
+        var reset = e.target.closest('.image-block-reset-btn');
+        if (reset) {
+            e.preventDefault();
+            if (!active) return;
+            active.scale = MIN; active.tx = 0; active.ty = 0;
+            apply(active);
+            return;
+        }
+
+        // The toolbar's own buttons keep their handlers.
+        if (e.target.closest('.image-block-header')) return;
+
+        // Click a figure to enter the zoom state; click anywhere else to leave.
+        var fig = figFrom(e.target);
+        if (fig) {
+            if (!active || active.fig !== fig) activate(fig);
+            return;
+        }
+        deactivate();
+    });
+})();`
+}
+
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
 /** Escape a string for safe use inside a RegExp. */
@@ -1313,6 +1572,7 @@ export async function exportMarkdownToHtml(options: ExportOptions): Promise<Expo
         // 10. Build interaction JS.
         const codeBlockJs = buildCodeBlockJs(locale)
         const lightboxJs = buildLightboxJs()
+        const inlineZoomJs = buildInlineZoomJs()
 
         const title = escapeHtml(fileName.replace(/\.md$/i, ''))
         const bodyContent = bodyEl.outerHTML
@@ -1385,6 +1645,7 @@ ${viewCloseHtml}
 ${tocJs}
 ${codeBlockJs}
 ${lightboxJs}
+${inlineZoomJs}
 </script>
 </body>
 </html>`

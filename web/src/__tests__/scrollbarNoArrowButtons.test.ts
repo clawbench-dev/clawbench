@@ -209,10 +209,17 @@ describe('the HTML preview adopts the app bar', () => {
     // expressed its own preference. Inserting first (not appending) means any
     // rule the document defines — inline, <style>, or linked — comes later in
     // source order and overrides ours.
+    //
+    // Both installers share one helper (installPreviewStyle), so the assertion
+    // has to be about the ARGUMENT the scrollbar installer passes, not about a
+    // bare `doc.head.appendChild` in this file: the helper legitimately appends
+    // for the search sheet, which is meant to win. Pinning the whole file
+    // against appendChild would forbid that legitimate branch; pinning the call
+    // site is what actually says "the scrollbar sheet goes first".
     const src = readWebFile('src/utils/htmlPreview.ts')
-    expect(src, 'must insert as the first head child, never append').not.toMatch(
-      /doc\.head\.appendChild/,
-    )
+    const call = src.match(/installPreviewStyle\([^)]*\)/)
+    expect(call, 'installPreviewScrollbar must delegate to the shared helper').not.toBeNull()
+    expect(call![0], 'the scrollbar sheet must keep the default first=true').not.toMatch(/\bfalse\b/)
   })
 
   it('is wired into both preview surfaces and is idempotent', () => {
@@ -223,9 +230,10 @@ describe('the HTML preview adopts the app bar', () => {
       expect(src, `${rel} must call installPreviewScrollbar`).toContain('installPreviewScrollbar(')
       expect(src, `${rel} must bind it to the iframe load event`).toMatch(/@load="on[A-Za-z]*Load"/)
     }
-    // A reload must not stack copies of the sheet.
+    // A reload must not stack copies of the sheet. The attribute is a parameter
+    // of the shared helper now, so the guard follows it there.
     expect(readWebFile('src/utils/htmlPreview.ts')).toMatch(
-      /querySelector\(`style\[\$\{SCROLLBAR_STYLE_ATTR\}\]`\)/,
+      /querySelector\(`style\[\$\{attr\}\]`\)/,
     )
   })
 })

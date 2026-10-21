@@ -1340,8 +1340,40 @@ export function useChatSession(options: UseChatSessionOptions) {
         // must also close out a pending cancel measurement (whichever of the
         // two paths arrives first reports it; the second is a no-op).
         reportCancelRoundTrip(`session_update:${data.status}`)
+        // Stamp the badge BEFORE cleanup. This session_update is the
+        // authoritative "the run was cancelled" signal, and it is the ONLY one
+        // this client is guaranteed to receive: the stream-level `cancelled`
+        // event goes only to session subscribers, and the client unsubscribes
+        // while cancelling, so the hub drops it (reason=no_subscribers). The DB
+        // row carries `cancelled:true`, but the reload below can be served
+        // BEFORE the executor's finalize writes it (CancelSession returns
+        // immediately; finalize runs in the run goroutine), and no later event
+        // will trigger another reload — the terminal push was already claimed
+        // by CancelSession, so no `completed` broadcast follows either. Without
+        // this the badge appeared only after a manual refresh / session switch.
+        // EVERY streaming bubble, mirroring the backend's
+        // finalizeOrphanedStreamingMessages, which stamps `cancelled` on every
+        // streaming=1 row of the session (a group turn can have several open).
+        if (data.status === 'cancelled') {
+          for (const m of messages.value) {
+            if (m.role === 'assistant' && m.streaming) m.cancelled = true
+          }
+        }
         onDisconnectStream()
-        forceCleanupStreamingState(messages.value as ChatMessage[], { onRenderNeeded: (f) => onRenderUpdate(f ?? true), onExtractScheduledTasks })
+        // holdsCompleteTurn: false — we are here because the terminal stream
+        // event never reached this client (it is dropped with
+        // reason=no_subscribers whenever the client was unsubscribed while the
+        // turn ended), so the bubble holds a stale prefix, not the whole reply.
+        // Claiming completeness made rebuildFromDb keep that prefix and, for a
+        // summarized row (content replaced by `{"blocks":[]}`), suppressed both
+        // the summary and the lazy-original fetch — the reply rendered cut off
+        // at a tool call until a session switch rebuilt it from the DB.
+        forceCleanupStreamingState(
+          messages.value as ChatMessage[],
+          { onRenderNeeded: (f) => onRenderUpdate(f ?? true), onExtractScheduledTasks },
+          undefined,
+          { holdsCompleteTurn: false },
+        )
         loading.value = false
         // Reload from DB to get the final message state. The backend clears
         // in-memory running state before emitting terminal WS events, so a
@@ -1538,7 +1570,16 @@ export function useChatSession(options: UseChatSessionOptions) {
       // events, so the history just loaded is the final state.
       appLog.w(TAG, `${source}: session ${sid} no longer running — cleaning up stuck loading state`)
       onDisconnectStream()
-      forceCleanupStreamingState(messages.value as ChatMessage[], { onRenderNeeded: (f) => onRenderUpdate(f ?? true), onExtractScheduledTasks })
+      // holdsCompleteTurn: false — this branch exists because the run finished
+      // while this client was NOT subscribed, so the bubble holds a stale
+      // prefix cut at the last event that happened to arrive. Let rebuildFromDb
+      // yield to the DB row (see forceCleanupStreamingState's option docs).
+      forceCleanupStreamingState(
+        messages.value as ChatMessage[],
+        { onRenderNeeded: (f) => onRenderUpdate(f ?? true), onExtractScheduledTasks },
+        undefined,
+        { holdsCompleteTurn: false },
+      )
       loading.value = false
     } else {
       // Session idle — reload history to reflect changes that occurred while

@@ -568,14 +568,51 @@ paths:
         "200":
           description: 测试结果
 
+  /api/server/instance:
+    get:
+      tags: [Config]
+      summary: 当前进程实例标识
+      description: |
+        `instance_id` 每个进程唯一，用于判断服务端是否真的重启过。设置页在
+        「重启服务端」后轮询此端点：只有拿到**不同的** `instance_id` 才说明
+        换进程了。仅比对版本号不够——不升级的重启版本不变；也不能只看是否
+        200——旧进程在 `srv.Shutdown` 之前会一直正常应答。
+      operationId: serverInstance
+      responses:
+        "200":
+          description: 实例信息
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  instance_id:
+                    type: string
+                    description: 本进程唯一的实例标识
+                  started_at:
+                    type: string
+                    format: date-time
+                  version:
+                    type: string
+
   /api/config/restart:
     post:
       tags: [Config]
       summary: 重启服务
+      description: |
+        同步发起重启：成功返回 200 后进程即将关闭（响应先于 listener 关闭送出）。
+        若重启无法发起（例如运行中的二进制路径已失效、npm 重装后旧包目录被删），
+        返回 500 并在 `error` 中给出原因——此时服务仍在运行，**不会**重启。
       operationId: configRestart
       responses:
         "200":
           description: 已触发重启
+        "500":
+          description: 重启失败，服务保持运行（`msgKey` 为 `RestartFailed` / `RestartUnavailable`）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   # ── Theme ─────────────────────────────────────────────────────────────────
   /api/theme/local/upload:
@@ -5616,6 +5653,35 @@ paths:
         "200":
           description: 上传结果
 
+  /share-target:
+    post:
+      tags: [Upload]
+      summary: PWA 分享目标（系统分享到 ClawBench）
+      description: |
+        已安装 PWA 的 Web Share Target 端点。系统「分享」操作会向此地址 POST
+        multipart/form-data，文件写入当前项目 `.clawbench/uploads/`，随后以 303
+        重定向回应用并把已保存路径放在 `share_target` 查询参数中。
+
+        需要登录：未认证的分享不得写入项目。未选择项目或没有文件时同样重定向回应用。
+      operationId: shareTarget
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                files:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+      responses:
+        "303":
+          description: 重定向回应用（`/?share_target=<JSON 路径数组>` 或失败原因）
+
   /api/upload/recent:
     get:
       tags: [Upload]
@@ -5626,8 +5692,12 @@ paths:
           description: 最近上传记录
     delete:
       tags: [Upload]
-      summary: 删除一条最近上传记录
-      description: 按请求体 `{path}` 删除单条记录（不是清空全部；清空需逐条调用）。
+      summary: 删除最近上传记录（单条或清空整个目录）
+      description: |
+        - `{path}`：删除单条文件。
+        - `{all:true}`：清空 `.clawbench/uploads/` 整个目录（只删普通文件，
+          子目录保留）。无法删除的文件计入 `failed`，不影响其余文件。
+        注意：清空会连旧消息仍在引用的附件一起删除。
       operationId: uploadRecentClear
       requestBody:
         required: true
@@ -5638,9 +5708,12 @@ paths:
               properties:
                 path:
                   type: string
+                all:
+                  type: boolean
+                  description: 清空整个 uploads 目录；与 `path` 互斥，优先。
       responses:
         "200":
-          description: 结果
+          description: 结果（清空模式返回 `{ok, deleted, failed}`）
 
   /api/share-in/recent:
     get:
@@ -5652,8 +5725,11 @@ paths:
           description: 记录
     delete:
       tags: [Upload]
-      summary: 删除一条最近接收记录
-      description: 按请求体 `{path}` 删除单条记录（不是清空全部）。
+      summary: 删除最近接收记录（单条或清空整个目录）
+      description: |
+        - `{path}`：删除单条文件。
+        - `{all:true}`：清空 `.clawbench/share-in/` 整个目录（只删普通文件，
+          子目录保留）。无法删除的文件计入 `failed`，不影响其余文件。
       operationId: shareInRecentClear
       requestBody:
         required: true
@@ -5664,9 +5740,12 @@ paths:
               properties:
                 path:
                   type: string
+                all:
+                  type: boolean
+                  description: 清空整个 share-in 目录；与 `path` 互斥，优先。
       responses:
         "200":
-          description: 结果
+          description: 结果（清空模式返回 `{ok, deleted, failed}`）
 
   # ── ClientLogs ────────────────────────────────────────────────────────────
   /api/client-log:

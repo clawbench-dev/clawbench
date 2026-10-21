@@ -80,6 +80,8 @@ var hotReloadFields = map[string]bool{
 	"recent_projects.max_count":         true,
 	"upload.max_size_mb":                true,
 	"upload.max_files":                  true,
+	"upload.retention_enabled":          true,
+	"upload.retention_days":             true,
 	"tts.max_cache_files":               true,
 	"tts.voice":                         true,
 	"tts.speed":                         true,
@@ -180,25 +182,30 @@ var hotReloadFields = map[string]bool{
 	"usage_meter.quota":       true,
 }
 
-// restartGracePeriod is the delay before shutting down the server after a restart
-// request, giving the HTTP response time to reach the client.
-const restartGracePeriod = 200 * time.Millisecond
-
 // restartFunc is the function called to trigger a server restart.
 // Set by main.go via SetRestartFunc(). Defaults to a no-op for tests.
-var restartFunc func()
+//
+// It returns an error when the restart could not be set in motion at all (e.g.
+// no usable path to the running binary), in which case the process keeps
+// running and the caller must report the failure. A nil error means the
+// shutdown has been triggered (or a supervisor will bring the process back).
+var restartFunc func() error
 
 // SetRestartFunc sets the function called to trigger a server restart.
 // main.go calls this to wire up the actual shutdown+sentinel logic.
-func SetRestartFunc(f func()) {
+func SetRestartFunc(f func() error) {
 	restartFunc = f
 }
 
-// TriggerRestart invokes the configured restart function.
-// Used by the upgrade service to trigger graceful shutdown after replacement.
+// TriggerRestart invokes the configured restart function, discarding the error.
+//
+// Exported for callers that only need "make it restart" and have no channel to
+// report a failure on. Note the upgrade path does NOT use it: it calls its own
+// upgradeRestartFunc (see internal/service/upgrade.go) because it must also
+// replace the binary first.
 func TriggerRestart() {
 	if restartFunc != nil {
-		restartFunc()
+		_ = restartFunc()
 	}
 }
 
@@ -388,8 +395,10 @@ type configRecentProjects struct {
 }
 
 type configUpload struct {
-	MaxSizeMB int `json:"max_size_mb"`
-	MaxFiles  int `json:"max_files"`
+	MaxSizeMB        int  `json:"max_size_mb"`
+	MaxFiles         int  `json:"max_files"`
+	RetentionEnabled bool `json:"retention_enabled"`
+	RetentionDays    int  `json:"retention_days"`
 }
 
 type configTerminal struct {
@@ -796,6 +805,8 @@ var PatchableConfigPaths = map[string]bool{
 	"recent_projects.max_count":         true,
 	"upload.max_size_mb":                true,
 	"upload.max_files":                  true,
+	"upload.retention_enabled":          true,
+	"upload.retention_days":             true,
 	"terminal.enabled":                  true,
 	"terminal.idle_timeout":             true,
 	"terminal.max_sessions":             true,
@@ -967,8 +978,10 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			MaxCount: cfg.RecentProjects.MaxCount,
 		},
 		Upload: configUpload{
-			MaxSizeMB: cfg.Upload.MaxSizeMB,
-			MaxFiles:  cfg.Upload.MaxFiles,
+			MaxSizeMB:        cfg.Upload.MaxSizeMB,
+			MaxFiles:         cfg.Upload.MaxFiles,
+			RetentionEnabled: cfg.Upload.RetentionEnabled,
+			RetentionDays:    cfg.Upload.RetentionDays,
 		},
 		Terminal: configTerminal{
 			Enabled:     cfg.Terminal.Enabled,
@@ -1770,6 +1783,13 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		if v, ok := upload["max_files"].(float64); ok && v < 0 {
 			return fmt.Errorf("upload.max_files must be non-negative")
 		}
+		if v, ok := upload["retention_days"].(float64); ok && v < 1 {
+			// 0 cannot mean "keep forever" here: ApplyDefaults rewrites any
+			// non-positive value to 30 on the next startup, so accepting 0 would
+			// silently turn "keep forever" into "delete after 30 days".
+			// Disabling retention is what "keep forever" is expressed with.
+			return fmt.Errorf("upload.retention_days must be at least 1")
+		}
 	}
 
 	// RAG numeric fields. batch_size is load-bearing: it becomes the SQL LIMIT
@@ -1984,6 +2004,12 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		}
 		if v, ok := upload["max_files"].(float64); ok {
 			cfg.Upload.MaxFiles = int(v)
+		}
+		if v, ok := upload["retention_enabled"].(bool); ok {
+			cfg.Upload.RetentionEnabled = v
+		}
+		if v, ok := upload["retention_days"].(float64); ok {
+			cfg.Upload.RetentionDays = int(v)
 		}
 	}
 
@@ -2660,20 +2686,35 @@ func ServeConfigPassword(w http.ResponseWriter, r *http.Request) { //nolint:gocy
 }
 
 // ServeConfigRestart handles POST /api/config/restart — triggers server restart.
+//
+// The restart is set in motion SYNCHRONOUSLY and a failure is reported as 500.
+// It used to be fired from a goroutine after a 200ms delay and always answered
+// 200 "restarting": when the sentinel could not be launched (the running
+// binary's path was gone, e.g. after an npm reinstall retired the package
+// directory) the client was told the restart was underway, reloaded itself,
+// and landed back on the very same process with no indication anything failed.
+// Only the server log knew.
+//
+// Answering after the call is safe on the success path: the restart only
+// signals shutdown, and srv.Shutdown drains in-flight requests, so this
+// response is delivered before the listener closes.
 func ServeConfigRestart(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
 
-	go func() {
-		time.Sleep(restartGracePeriod)
+	if restartFunc == nil {
+		slog.Warn("restart function not set, cannot restart server")
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "RestartUnavailable")
+		return
+	}
 
-		if restartFunc != nil {
-			restartFunc()
-		} else {
-			slog.Warn("restart function not set, cannot restart server")
-		}
-	}()
+	if err := restartFunc(); err != nil {
+		slog.Error("restart failed", "error", err)
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "RestartFailed",
+			map[string]any{"Error": err.Error()})
+		return
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		jsonKeyStatus: "restarting",

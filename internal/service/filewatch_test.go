@@ -1472,3 +1472,30 @@ func TestFileWatcher_RealEventSurvivesInWindowRetarget(t *testing.T) {
 	}
 	assert.True(t, found, "file_change must survive an in-window re-target, got %+v", events)
 }
+
+// A directory watch whose target is a filesystem root must still match the
+// entries below it.
+//
+// The child test used to be `dir + Separator`, which for a root target yields
+// "//" (or `D:\\` on Windows) — no child path starts with that, so a project
+// browsed at a drive root never received a dir_change and the file manager
+// silently stopped refreshing.
+func TestIsPathAtOrUnder_RootDir(t *testing.T) {
+	sep := string(filepath.Separator)
+	root := sep
+
+	assert.True(t, isPathAtOrUnder(root, root), "a root dir matches itself")
+	assert.True(t, isPathAtOrUnder(filepath.Join(root, "7-Zip", "a.txt"), root),
+		"a root dir must match a child")
+}
+
+// The separator boundary must still hold for ordinary directories.
+func TestIsPathAtOrUnder_SiblingPrefix(t *testing.T) {
+	sep := string(filepath.Separator)
+	dir := filepath.Join(sep, "a", "proj")
+
+	assert.True(t, isPathAtOrUnder(dir, dir))
+	assert.True(t, isPathAtOrUnder(filepath.Join(dir, "sub", "f.go"), dir))
+	assert.False(t, isPathAtOrUnder(filepath.Join(dir+"-other", "f.go"), dir),
+		"a sibling sharing a name prefix is not inside the directory")
+}

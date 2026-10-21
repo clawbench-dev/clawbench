@@ -165,6 +165,34 @@ vi.mock('@/utils/download.ts', () => ({
   downloadBlob: vi.fn(),
 }))
 
+// The quote bridge lives on the iframe's own document. Mock it so the test can
+// count attach/dispose calls; `resolveIframeWindow` stays faithful (it just
+// returns the live contentWindow, which jsdom provides).
+//
+// NOTE the `.ts` suffix: FileViewer.vue imports this module as
+// '@/utils/iframeSelectionQuote.ts', and vi.mock matches the specifier string
+// exactly — without the suffix the real module loads and the counters stay 0.
+const bridgeCalls = vi.hoisted(() => ({
+  attach: 0,
+  dispose: 0,
+}))
+
+vi.mock('@/utils/iframeSelectionQuote.ts', () => ({
+  resolveIframeWindow: async (liveIframe: () => HTMLIFrameElement | null) => {
+    for (let i = 0; i < 8; i++) {
+      const win = liveIframe()?.contentWindow
+      if (win) return win
+      await Promise.resolve()
+    }
+    return null
+  },
+  installIframeSearchShortcut: () => () => {},
+  attachIframeSelectionQuoteBridge: () => {
+    bridgeCalls.attach++
+    return () => { bridgeCalls.dispose++ }
+  },
+}))
+
 // ── Timer leak prevention ───────────────────────────────────
 const pendingTimers: ReturnType<typeof setTimeout>[] = []
 const _origSetTimeout = setTimeout
@@ -189,6 +217,7 @@ afterEach(() => {
   tocDockPrefState.tocDockSide.value = 'right'
   mockOpenSearch.mockClear()
   mockOpenGoToLine.mockClear()
+  mockHtmlSearchFocus.mockClear()
   for (const id of pendingTimers) { clearTimeout(id) }
   pendingTimers.length = 0
   for (const id of pendingIntervals) { clearInterval(id) }
@@ -199,6 +228,7 @@ afterEach(() => {
 // editing flow (which calls it to exit edit mode first) can be exercised.
 const mockHandleExit = vi.fn()
 const mockOpenSearch = vi.fn()
+const mockHtmlSearchFocus = vi.fn()
 const mockOpenGoToLine = vi.fn(() => true)
 const codeMirrorViewerStub = {
   name: 'CodeMirrorViewer',
@@ -219,6 +249,13 @@ const stubs = {
   VideoPreview: true,
   OfficePreview: true,
   MarkdownPreview: true,
+  PreviewSearchBar: {
+    name: 'PreviewSearchBar',
+    props: ['open', 'iframe'],
+    emits: ['close'],
+    template: '<div class="preview-search-bar-stub" />',
+    methods: { focus: () => mockHtmlSearchFocus() },
+  },
   CodeMirrorViewer: codeMirrorViewerStub,
   DiffDrawer: true,
   TocDock: {
@@ -230,7 +267,7 @@ const stubs = {
 }
 
 describe('FileViewer', () => {
-  function mountViewer(props = {}) {
+  function mountViewer(props = {}, opts: { attachTo?: HTMLElement } = {}) {
     return mount(FileViewer, {
       props: {
         file: { name: 'main.ts', path: 'main.ts', content: 'const x = 1' },
@@ -240,6 +277,9 @@ describe('FileViewer', () => {
         externalLoading: false,
         ...props,
       },
+      // An iframe that is not in the document has `contentWindow === null`, so
+      // anything resolving the preview window needs a real attachment.
+      ...(opts.attachTo ? { attachTo: opts.attachTo } : {}),
       global: {
         plugins: [i18n],
         stubs,
@@ -1051,6 +1091,122 @@ describe('FileViewer', () => {
       ss.handleToggleSearch()
       expect(mockOpenSearch).not.toHaveBeenCalled()
       expect(wrapper.emitted('toggleSearch')).toBeTruthy()
+    })
+
+    it('renders the inline find bar for the rendered HTML preview, pointed at the iframe', async () => {
+      const htmlFile = {
+        name: 'page.html', path: '/tmp/page.html', content: '<h1>hi</h1>',
+        isMarkdown: false, isHtml: true, isOpenapi: false,
+        isImage: false, isAudio: false, isVideo: false, isPdf: false, isOffice: false,
+        isBinary: false, tooLarge: false,
+      }
+      const wrapper = mountViewer({ file: htmlFile, markdownViewMode: 'rendered', searchOpen: true })
+      await nextTick()
+      const bar = wrapper.findComponent({ name: 'PreviewSearchBar' })
+      expect(bar.exists()).toBe(true)
+      // The bar must search the previewed DOCUMENT, not the host one — that is
+      // the whole reason it takes an iframe.
+      expect((bar.props('iframe') as HTMLIFrameElement | null)?.tagName).toBe('IFRAME')
+      expect(bar.props('open')).toBe(true)
+      wrapper.unmount()
+    })
+
+    it('focusSearchInput focuses the HTML preview find bar (not the SearchDrawer)', async () => {
+      const htmlFile = {
+        name: 'page.html', path: '/tmp/page.html', content: '<h1>hi</h1>',
+        isMarkdown: false, isHtml: true, isOpenapi: false,
+        isImage: false, isAudio: false, isVideo: false, isPdf: false, isOffice: false,
+        isBinary: false, tooLarge: false,
+      }
+      const wrapper = mountViewer({ file: htmlFile, markdownViewMode: 'rendered' })
+      await nextTick()
+      const ss = (wrapper.vm as any).$.setupState
+      ss.focusSearchInput()
+      expect(mockHtmlSearchFocus).toHaveBeenCalledTimes(1)
+      expect(mockOpenSearch).not.toHaveBeenCalled()
+      wrapper.unmount()
+    })
+
+    it('emits closeSearch from the HTML preview find bar', async () => {
+      const htmlFile = {
+        name: 'page.html', path: '/tmp/page.html', content: '<h1>hi</h1>',
+        isMarkdown: false, isHtml: true, isOpenapi: false,
+        isImage: false, isAudio: false, isVideo: false, isPdf: false, isOffice: false,
+        isBinary: false, tooLarge: false,
+      }
+      const wrapper = mountViewer({ file: htmlFile, markdownViewMode: 'rendered', searchOpen: true })
+      await nextTick()
+      await wrapper.findComponent({ name: 'PreviewSearchBar' }).vm.$emit('close')
+      expect(wrapper.emitted('closeSearch')).toBeTruthy()
+      wrapper.unmount()
+    })
+
+    // ── Quote bridge re-attach on reload ──────────────────────────────
+    //
+    // An fsnotify refresh or an AI edit bumps `htmlPreviewTimestamp`, which
+    // re-navigates the iframe to the same file. In Chromium that keeps the SAME
+    // contentWindow and swaps only `contentDocument` (measured), so a dedupe on
+    // the window leaves the old listeners on a destroyed document and skips the
+    // new one: selecting text in the preview silently stops producing a quote
+    // bar. These tests drive the load event twice and assert the bridge is
+    // rebuilt, which is the only way to see that.
+
+    const htmlFile = () => ({
+      name: 'page.html', path: '/tmp/page.html', content: '<h1>hi</h1>',
+      isMarkdown: false, isHtml: true, isOpenapi: false,
+      isImage: false, isAudio: false, isVideo: false, isPdf: false, isOffice: false,
+      isBinary: false, tooLarge: false,
+    })
+
+    it('re-attaches the quote bridge on a SECOND load of the same iframe', async () => {
+      bridgeCalls.attach = 0
+      bridgeCalls.dispose = 0
+      const host = document.createElement('div')
+      document.body.appendChild(host)
+      const wrapper = mountViewer(
+        { file: htmlFile(), markdownViewMode: 'rendered', chatQuote: true },
+        { attachTo: host },
+      )
+      await nextTick()
+
+      const iframe = wrapper.find('iframe.html-preview-iframe')
+      expect(iframe.exists()).toBe(true)
+
+      // The mount itself fires a load in jsdom, so record the baseline rather
+      // than assuming a count: what matters is that a SECOND load rebuilds.
+      await iframe.trigger('load')
+      await flushPromises()
+      const afterFirst = bridgeCalls.attach
+      expect(afterFirst).toBeGreaterThanOrEqual(1)
+
+      // The same element, the same contentWindow — a reload of the same file.
+      await iframe.trigger('load')
+      await flushPromises()
+
+      // Rebuilt, not skipped: the old listeners died with the old document.
+      expect(bridgeCalls.attach).toBe(afterFirst + 1)
+      // And the previous bridge was disposed, so listeners do not accumulate.
+      expect(bridgeCalls.dispose).toBeGreaterThanOrEqual(afterFirst)
+      wrapper.unmount()
+      host.remove()
+    })
+
+    it('does not attach the bridge when chatQuote is off', async () => {
+      // The share SPA renders no chat, so the bridge (and its quote bar) must
+      // stay off there.
+      bridgeCalls.attach = 0
+      const host = document.createElement('div')
+      document.body.appendChild(host)
+      const wrapper = mountViewer(
+        { file: htmlFile(), markdownViewMode: 'rendered', chatQuote: false },
+        { attachTo: host },
+      )
+      await nextTick()
+      await wrapper.find('iframe.html-preview-iframe').trigger('load')
+      await flushPromises()
+      expect(bridgeCalls.attach).toBe(0)
+      wrapper.unmount()
+      host.remove()
     })
 
     it('opens CodeMirror search for OpenAPI raw view', async () => {
