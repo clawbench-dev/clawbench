@@ -316,7 +316,23 @@
         max-height: 60dvh;
     }
 
-    .image-block-wrapper:has(> .lightbox-img-wrap > img) > .lightbox-img-wrap > img,
+    /* Raster <img>: its own intrinsic size IS the width. `width: auto` lets the
+       replaced element use it directly, so the shrink-to-fit figure hugs the
+       picture. Only the column and the 60dvh budget may shrink it — nothing may
+       grow it (growing is the active state's job). The `--svg-ar` rule below
+       must NOT apply here: an <img> has no stamped ratio, so it would resolve
+       to `60dvh * 1` and force every photo to a fixed 492px-wide box. */
+    .image-block-wrapper:has(> .lightbox-img-wrap > img) > .lightbox-img-wrap > img {
+        display: block;
+        width: auto;
+        height: auto;
+        max-width: 100%;
+        max-height: 60dvh;
+        object-fit: contain;
+        transform-origin: center center;
+        transition: width var(--duration-fast) ease-out, height var(--duration-fast) ease-out;
+    }
+
     .image-block-wrapper:has(> .lightbox-svg-wrap > svg.lightbox-svg) > .lightbox-svg-wrap > svg.lightbox-svg,
     .image-block-wrapper:has(> .mermaid > svg) > .mermaid > svg {
         /* RESTING: normal flow, sized by the artwork itself.
@@ -436,8 +452,18 @@
     position: relative;
 }
 
-/* ─── Chat message: keep media thumbnailed inside the bubble ────────────── */
-.chat-message .image-block-wrapper {
+/* ─── Chat message: keep media thumbnailed inside the bubble ──────────────
+   These rules must mirror the inline-zoom block's `:has()` selectors INCLUDING
+   the pseudo-class. `:has()` contributes its ARGUMENT's specificity, so the
+   generic `.image-block-wrapper:has(> .mermaid > svg)` is 0-2-1 while a plain
+   `.chat-message .image-block-wrapper` is only 0-2-0 — the generic rule's
+   `max-width: 100%` won, and every diagram inside a bubble grew to the whole
+   column (measured 540px in a 600px bubble; the cap below never applied).
+   Prefixing the same `:has()` selectors restores the 0-3-1 vs 0-2-1 order. */
+.chat-message .image-block-wrapper,
+.chat-message .image-block-wrapper:has(> .lightbox-img-wrap > img),
+.chat-message .image-block-wrapper:has(> .lightbox-svg-wrap > svg.lightbox-svg),
+.chat-message .image-block-wrapper:has(> .mermaid > svg) {
     max-width: 200px;
 }
 
@@ -446,8 +472,15 @@
     overflow: hidden;
 }
 
-.chat-message .image-block-wrapper > .mermaid svg {
-    max-width: 100%;
+/* The media itself is clamped to a PIXEL cap, not a percentage. The generic
+   rule sizes it with `width: calc(60dvh * var(--svg-ar, 1))` and clears
+   `max-width` with `!important`, so the cap has to be `!important` too (both
+   declarations are important; the more specific selector wins). A percentage
+   would reintroduce the svg↔cell dependency cycle the generic rule documents. */
+.chat-message .image-block-wrapper:has(> .lightbox-img-wrap > img) > .lightbox-img-wrap > img,
+.chat-message .image-block-wrapper:has(> .lightbox-svg-wrap > svg.lightbox-svg) > .lightbox-svg-wrap > svg.lightbox-svg,
+.chat-message .image-block-wrapper:has(> .mermaid > svg) > .mermaid > svg {
+    max-width: 200px !important;
     max-height: 184px;
 }
 

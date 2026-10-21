@@ -42,8 +42,10 @@ describe('svg media layout (media-block.css contract)', () => {
   )
 
   /** The rule that sizes and centres the media itself. */
+  /** The rule that sizes SVG media (inline svg and mermaid). Raster <img> has
+   *  its own rule now — it has no `--svg-ar` to size from. */
   const mediaRule = css.match(
-    /\.image-block-wrapper:has\(> \.lightbox-img-wrap > img\) > \.lightbox-img-wrap > img,[\s\S]*?\{([\s\S]*?)\}/,
+    /\.image-block-wrapper:has\(> \.lightbox-svg-wrap > svg\.lightbox-svg\) > \.lightbox-svg-wrap > svg\.lightbox-svg,[\s\S]*?\{([\s\S]*?)\}/,
   )
 
   it('makes the figure the full reading column, not the artwork width', () => {
@@ -162,6 +164,22 @@ describe('svg media layout (media-block.css contract)', () => {
     expect(cap).toBeGreaterThanOrEqual(32)
   })
 
+  it('sizes a raster <img> from its own intrinsic width, not the svg ratio', () => {
+    // An <img> has no stamped `--svg-ar`, so the svg rule's
+    // `calc(60dvh * var(--svg-ar, 1))` would resolve to `60dvh * 1` and put
+    // every photo in a fixed 492px-wide box — while the shrink-to-fit figure
+    // stretched to the column around it. The img needs its own `width: auto`.
+    const imgRule = css.match(
+      /\.image-block-wrapper:has\(> \.lightbox-img-wrap > img\) > \.lightbox-img-wrap > img\s*\{([\s\S]*?)\}/,
+    )
+    expect(imgRule).toBeTruthy()
+    const decl = imgRule![1].replace(/\/\*[\s\S]*?\*\//g, '')
+    expect(decl).toContain('width: auto')
+    expect(decl).toContain('max-width: 100%')
+    expect(decl).toContain('max-height: 60dvh')
+    expect(decl).not.toContain('--svg-ar')
+  })
+
   it('reveals the reset button only in the active state', () => {
     // Hidden by the base rule (also covers touch, where inline zoom never
     // installs) and shown only while `.is-zooming`.
@@ -189,6 +207,44 @@ describe('svg media layout (media-block.css contract)', () => {
     expect(css).toMatch(/\.chat-message \.image-block-wrapper\s*\{[\s\S]*?max-width:\s*200px/)
     expect(css).toMatch(
       /\.chat-message \.image-block-wrapper \.lightbox-svg-wrap svg\.lightbox-svg\s*\{[\s\S]*?max-width:\s*200px/,
+    )
+  })
+
+  it('the chat cap outranks the generic :has() rule', () => {
+    // Regression: the generic inline-zoom block sets
+    //   `.image-block-wrapper:has(> .mermaid > svg) { max-width: 100% }`
+    // which is 0-2-1, while the plain `.chat-message .image-block-wrapper`
+    // cap is only 0-2-0 — the generic rule won and every diagram inside a
+    // bubble grew to the full column (measured 540px in a 600px bubble).
+    // A mere "the chat rule exists" assertion cannot catch that, so this pins
+    // the chat selectors to the SAME `:has()` shape.
+    //
+    // Comments are stripped first: the file's own doc comments quote the old
+    // `.chat-message .image-block-wrapper { max-width: 200px }` shape, and a
+    // naive match found that instead of the real rule.
+    const declarations = css.replace(/\/\*[\s\S]*?\*\//g, '')
+    const chatCap = declarations.match(/\.chat-message \.image-block-wrapper[^{]*\{[^}]*max-width:\s*200px/)
+    expect(chatCap, 'chat cap rule must exist').toBeTruthy()
+    const selectors = chatCap![0].split('{')[0]
+    expect(selectors, 'chat cap must include the mermaid :has() variant').toMatch(
+      /\.chat-message \.image-block-wrapper:has\(> \.mermaid > svg\)/,
+    )
+    expect(selectors, 'chat cap must include the img :has() variant').toMatch(
+      /\.chat-message \.image-block-wrapper:has\(> \.lightbox-img-wrap > img\)/,
+    )
+  })
+
+  it('the chat media cap overrides the generic ratio width', () => {
+    // The generic rule clears max-width with `!important` (to beat mermaid's
+    // inline `max-width: Npx`), so a non-important chat cap would simply lose
+    // and the svg would still be as wide as the ratio allows.
+    const rule = css.match(
+      /\.chat-message \.image-block-wrapper:has\(> \.mermaid > svg\) > \.mermaid > svg\s*\{([\s\S]*?)\}/,
+    )
+    expect(rule, 'chat media cap rule must exist').toBeTruthy()
+    const body = rule![1].replace(/\/\*[\s\S]*?\*\//g, '')
+    expect(body, 'must be !important to beat the generic max-width: none').toMatch(
+      /max-width:\s*200px\s*!important/,
     )
   })
 })
