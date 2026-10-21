@@ -370,7 +370,13 @@ func TestResolveRestartBinary_MakesRelativePATHPathAbsolute(t *testing.T) {
 	require.NoError(t, os.MkdirAll(relDir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(relDir, "clawbench"), []byte("#!/bin/sh\n"), 0o755))
 	relPath, err := filepath.Rel(mustGetwd(t), filepath.Join(relDir, "clawbench"))
-	require.NoError(t, err)
+	if err != nil {
+		// Windows: TEMP can be on a different drive than the checkout, and
+		// filepath.Rel cannot express a relative path across volumes. The
+		// conversion this test pins is only observable when a relative path is
+		// expressible at all, so skip rather than weaken the assertion.
+		t.Skipf("cannot express the fixture path relative to the working directory: %v", err)
+	}
 	require.False(t, filepath.IsAbs(relPath), "test setup needs a relative path")
 
 	origLook := lookPath

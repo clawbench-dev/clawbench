@@ -9,6 +9,7 @@ import (
 
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
+	"clawbench/internal/platform"
 	"clawbench/internal/service"
 
 	"github.com/stretchr/testify/assert"
@@ -126,8 +127,12 @@ func TestAIChat_AbsoluteAttachmentOutsideProject_AcceptedUnderAnyRoot(t *testing
 		name  string
 		roots []string
 	}{
-		// Production semantics on Unix: the app browses the whole machine.
-		{"production roots", []string{"/"}},
+		// Production semantics: the app browses the whole machine. "/" is the
+		// Unix root; on Windows the production list is the drive list, and a
+		// temp file lives on whichever drive TEMP is on — so the literal "/"
+		// would describe a root that does not exist there and the assertion
+		// would fail for the wrong reason.
+		{"production roots", platform.ListRootPaths()},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			origRoots := model.RootPaths

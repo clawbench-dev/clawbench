@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -498,6 +499,9 @@ func TestListProjectsForUploadCleanup_EmptyRegistry(t *testing.T) {
 // A permission error reading the uploads directory must surface as an error
 // (so cleanup skips the project) rather than being swallowed as "empty".
 func TestCleanupProjectUploads_UnreadableDirReturnsError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod 0o000 does not make a directory unreadable on Windows (mode bits are not enforced)")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores directory permissions")
 	}

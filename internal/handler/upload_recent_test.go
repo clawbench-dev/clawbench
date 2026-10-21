@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -202,6 +203,9 @@ func TestClearAll_NoProjectCookie(t *testing.T) {
 // silently answering ok would tell the user the list is empty when files are
 // still there.
 func TestClearAll_UnreadableDirectoryIsAnError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod 0o000 does not make a directory unreadable on Windows (mode bits are not enforced)")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores directory permissions")
 	}
@@ -220,6 +224,9 @@ func TestClearAll_UnreadableDirectoryIsAnError(t *testing.T) {
 // One undeletable file must not abort the sweep; it is counted instead so the
 // UI can say "cleared N, M failed" rather than looking half-cleared.
 func TestClearAll_CountsUndeletableFilesAndContinues(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod 0o000 does not make a directory unreadable on Windows (mode bits are not enforced)")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores file permissions")
 	}

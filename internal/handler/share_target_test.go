@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -398,6 +399,9 @@ func TestShareTarget_InvalidMultipartRedirectsWithReason(t *testing.T) {
 // If the uploads directory cannot be created there is nowhere to write, and the
 // user must be told rather than getting a silent no-op.
 func TestShareTarget_UnwritableProjectRedirectsWithSaveReason(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod 0o000 does not make a directory unreadable on Windows (mode bits are not enforced)")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores directory permissions")
 	}
