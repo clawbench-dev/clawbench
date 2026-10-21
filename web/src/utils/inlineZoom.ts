@@ -159,9 +159,17 @@ function deactivate(): void {
     }
     // Put the author's own sizing back before anything else reads it.
     media.style.maxWidth = savedMaxWidth ?? ''
-    // Restore the exact pre-zoom width rather than recomputing it — see
-    // `restingWidth` for why recomputation is not equivalent.
+    // Start from the captured width, then let `svgMediaFit` re-measure.
+    //
+    // Restoring alone is not enough: the cached value was measured against the
+    // column width AT ACTIVATION, and the column may have changed since (window
+    // resize, side panel toggled). Leaving it would put the diagram back at a
+    // stale size — measured 662px wide in a 662px column that had just been
+    // 1062px, so the artwork ended up 32px tall. `refit` recomputes from the
+    // CURRENT column and 60dvh budget; it is a no-op when the module is not
+    // loaded (e.g. the standalone exporter).
     media.style.width = restingWidth ?? ''
+    refitHook?.(figure)
     // The resting aspect-ratio stays: it describes the artwork, not the zoom,
     // and dropping it would make the frame collapse for one frame on exit.
     figure.classList.remove(ZOOM_ACTIVE_CLASS)
@@ -348,6 +356,30 @@ function zoomAt(state: ZoomState, nextScale: number, clientX: number, clientY: n
     state.ty = cy - (cy - state.ty) * ratio
     state.scale = nextScale
     apply(state)
+}
+
+/**
+ * Registered by `svgMediaFit` so the resting layout can be re-measured on exit
+ * without importing it (that would be a cycle: it imports nothing from here,
+ * but both are leaf-ish utilities used by the same render pipelines).
+ */
+let refitHook: ((figure: HTMLElement) => void) | null = null
+
+/** Let `svgMediaFit` supply the re-measure implementation. */
+export function setRefitHook(fn: (figure: HTMLElement) => void): void {
+    refitHook = fn
+}
+
+/**
+ * Re-apply the active zoom after the viewport changed.
+ *
+ * The frame is a `60dvh` box, so a resize moves the base size that `apply`
+ * derives from it. Panning offsets are left alone: they are in the same pixel
+ * space and clamping in `apply` keeps them inside the new frame.
+ */
+function onViewportResize(): void {
+    if (!active) return
+    apply(active)
 }
 
 function onWheel(e: WheelEvent): void {
@@ -620,6 +652,10 @@ export function installInlineZoom(): () => void {
     document.addEventListener('pointerdown', onPointerDown)
     document.addEventListener('pointermove', onPointerMove)
     document.addEventListener('pointerup', onPointerUp)
+    // A resized window changes the 60dvh frame, so the zoomed media's box must
+    // be recomputed from the new frame — otherwise a zoomed diagram keeps its
+    // old pixel size and no longer fills (or overflows) the frame as intended.
+    window.addEventListener('resize', onViewportResize)
     document.addEventListener('pointercancel', onPointerUp)
     document.addEventListener('click', onClick)
     document.addEventListener('keydown', onKeyDown)
@@ -637,6 +673,7 @@ export function installInlineZoom(): () => void {
         document.removeEventListener('pointerdown', onPointerDown)
         document.removeEventListener('pointermove', onPointerMove)
         document.removeEventListener('pointerup', onPointerUp)
+        window.removeEventListener('resize', onViewportResize)
         document.removeEventListener('pointercancel', onPointerUp)
         document.removeEventListener('click', onClick)
         document.removeEventListener('keydown', onKeyDown)

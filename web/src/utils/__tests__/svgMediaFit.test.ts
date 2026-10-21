@@ -1,9 +1,10 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   SVG_FIT_CLASS,
   SVG_AR_PROP,
   isSvgImageSrc,
   svgMediaAspectRatio,
+  refitFigure,
   stampSvgFigure,
   stampSvgFigures,
   stampSvgFiguresAsync,
@@ -360,5 +361,68 @@ describe('resting media width (svgMediaFit)', () => {
     stampSvgFigure(wrapper)
     expect(svg.style.width).toMatch(/^[\d.]+px$/)
     expect(svg.style.width).not.toContain('%')
+  })
+})
+
+describe('responsive refit (svgMediaFit)', () => {
+  const mk = (vbW: number, vbH: number) => {
+    const wrapper = document.createElement('div')
+    wrapper.className = 'image-block-wrapper svg-fit'
+    const cell = document.createElement('div')
+    cell.className = 'mermaid'
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    svg.setAttribute('viewBox', `0 0 ${vbW} ${vbH}`)
+    cell.appendChild(svg)
+    wrapper.appendChild(cell)
+    const column = document.createElement('div')
+    column.appendChild(wrapper)
+    document.body.appendChild(column)
+    let colW = 800
+    Object.defineProperty(column, 'getBoundingClientRect', {
+      value: () => ({ width: colW, height: 0, top: 0, left: 0, right: colW, bottom: 0, x: 0, y: 0, toJSON() {} }),
+      configurable: true,
+    })
+    return { wrapper, svg, setColumnWidth: (w: number) => { colW = w } }
+  }
+
+  afterEach(() => { document.body.innerHTML = ''; vi.restoreAllMocks() })
+
+  it('re-measures against the CURRENT column on refit', () => {
+    // The width is written as a resolved pixel value (that is what breaks the
+    // figure↔media cycle), so it is frozen at the moment it was written. Without
+    // a refit, collapsing a side panel left the diagram at its old width.
+    const { wrapper, svg, setColumnWidth } = mk(1600, 70)
+    stampSvgFigure(wrapper)
+    expect(parseFloat(svg.style.width)).toBe(800)
+
+    setColumnWidth(500)
+    refitFigure(wrapper)
+    expect(parseFloat(svg.style.width)).toBe(500)
+
+    setColumnWidth(1200)
+    refitFigure(wrapper)
+    expect(parseFloat(svg.style.width)).toBe(1200)
+  })
+
+  it('does not fight the zoom while a figure is active', () => {
+    // `inlineZoom` owns the media size while zoomed; writing here would
+    // overwrite the zoomed size on every mutation tick.
+    const { wrapper, svg, setColumnWidth } = mk(1600, 70)
+    stampSvgFigure(wrapper)
+    wrapper.classList.add('is-zooming')
+    svg.style.width = '3000px'
+
+    setColumnWidth(400)
+    refitFigure(wrapper)
+
+    expect(svg.style.width).toBe('3000px')
+  })
+
+  it('ignores figures that were never stamped', () => {
+    const { wrapper, svg } = mk(1600, 70)
+    wrapper.classList.remove('svg-fit')
+    svg.style.width = '123px'
+    refitFigure(wrapper)
+    expect(svg.style.width).toBe('123px')
   })
 })

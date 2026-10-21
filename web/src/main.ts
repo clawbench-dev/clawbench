@@ -25,6 +25,7 @@ import SingleTabBlocked from './components/common/SingleTabBlocked.vue'
 import { installLocalMediaFallback } from './utils/localMediaFallback.ts'
 import { installMediaFullscreenGuard } from './utils/mediaFullscreenGuard.ts'
 import { installInlineZoom } from './utils/inlineZoom.ts'
+import { installSvgMediaAutoFit } from './utils/svgMediaFit.ts'
 import { installChunkLoadRecovery } from './utils/chunkLoadRecovery.ts'
 
 configureMarkedRenderer()
@@ -45,6 +46,10 @@ installLocalMediaFallback()
 // Exit fullscreen on that error. Document-level capture listener, installed once.
 installMediaFullscreenGuard()
 installInlineZoom()
+// Diagram widths are written as resolved pixels (that is what breaks the
+// figure↔media sizing cycle), so they have to be re-measured when the space
+// available changes — window resize, or a side panel collapsing.
+installSvgMediaAutoFit()
 
 // A page left open across a rebuild references chunk hashes that no longer
 // exist, so every later lazy import 404s. Without this hook those failures are

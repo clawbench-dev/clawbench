@@ -28,6 +28,8 @@
  */
 
 /** Marker class consumed by media-block.css to opt a figure into fill-width. */
+import { setRefitHook } from './inlineZoom'
+
 export const SVG_FIT_CLASS = 'svg-fit'
 
 /** Custom property carrying the media aspect ratio (width ÷ height). */
@@ -242,3 +244,105 @@ export async function stampSvgFiguresAsync(root: ParentNode | null): Promise<voi
     if (pending.length > 0) await Promise.all(pending)
     stampSvgFigures(root)
 }
+
+/**
+ * Re-size every stamped SVG figure when the space available to it changes.
+ *
+ * `applyMediaWidth` writes a resolved pixel width, which is what breaks the
+ * figure↔media cycle — but a pixel value is frozen at the moment it was
+ * written. Without this, resizing the window (or collapsing a side panel) left
+ * every diagram at its old width: too wide (overflowing) when the column shrank,
+ * and wasting the new space when it grew.
+ *
+ * Two signals, because they answer different questions:
+ *  - `ResizeObserver` on each figure's parent: the COLUMN changed. This is the
+ *    one that catches side-panel toggles, which do not resize the window.
+ *  - `resize` on the window: the VIEWPORT HEIGHT changed, which moves the 60dvh
+ *    budget and therefore the width of a height-limited diagram. The column's
+ *    own width may not change at all in that case, so the observer alone would
+ *    miss it.
+ *
+ * Re-entrancy is handled by suppressing the observer while we write: writing a
+ * width changes the figure's size, which would otherwise fire the observer
+ * again and loop.
+ */
+export function installSvgMediaAutoFit(): () => void {
+    if (typeof window === 'undefined' || typeof ResizeObserver !== 'function') {
+        return () => {}
+    }
+    let writing = false
+    let frame = 0
+
+    const refitAll = () => {
+        if (writing) return
+        writing = true
+        try {
+            for (const wrapper of Array.from(document.querySelectorAll('.image-block-wrapper'))) {
+                refitFigure(wrapper as HTMLElement)
+            }
+        } finally {
+            writing = false
+        }
+    }
+
+    // Coalesce bursts (a window drag fires resize on every frame) into one pass
+    // per animation frame.
+    const scheduleRefit = () => {
+        if (frame) return
+        frame = requestAnimationFrame(() => {
+            frame = 0
+            refitAll()
+        })
+    }
+
+    const observer = new ResizeObserver(scheduleRefit)
+    const observed = new WeakSet<Element>()
+    const observeAll = () => {
+        for (const wrapper of Array.from(document.querySelectorAll('.image-block-wrapper'))) {
+            const column = wrapper.parentElement
+            if (column && !observed.has(column)) {
+                observed.add(column)
+                observer.observe(column)
+            }
+        }
+    }
+
+    // New figures are added by every render, so re-scan on mutations rather than
+    // only once at install time.
+    const mutation = new MutationObserver(() => {
+        observeAll()
+        scheduleRefit()
+    })
+    mutation.observe(document.body, { childList: true, subtree: true })
+
+    observeAll()
+    window.addEventListener('resize', scheduleRefit)
+
+    return () => {
+        observer.disconnect()
+        mutation.disconnect()
+        window.removeEventListener('resize', scheduleRefit)
+        if (frame) cancelAnimationFrame(frame)
+    }
+}
+
+/**
+ * Re-measure one figure. No-op for anything `stampSvgFigure` never sized.
+ *
+ * Also registered with `inlineZoom` as its exit hook, so leaving the zoom
+ * recomputes the resting width against the CURRENT column instead of restoring
+ * a value captured before the column changed.
+ */
+export function refitFigure(wrapper: HTMLElement): void {
+    if (!wrapper.classList.contains(SVG_FIT_CLASS)) return
+    // While zoomed the media's size is owned by `inlineZoom`, which recomputes
+    // from the frame on every step; writing here would fight it.
+    if (wrapper.classList.contains('is-zooming')) return
+    const media = wrapper.querySelector(CONTENT_MEDIA_SELECTOR)
+    if (!media) return
+    const ar = svgMediaAspectRatio(media)
+    if (ar === null || !Number.isFinite(ar) || ar <= 0) return
+    applyMediaWidth(wrapper, media as HTMLElement, ar)
+}
+
+setRefitHook(refitFigure)
