@@ -538,15 +538,15 @@ describe('exportMarkdownToHtml', () => {
     expect(result.html).toContain('<h1')
   })
 
-  it('stamps inline svg figures with the fill-width marker', async () => {
-    // An inline <svg> block must be lifted into a figure and marked `.svg-fit`,
-    // so the exported document sizes it exactly like the in-app preview. No
-    // ratio is stamped: the fill-width rule needs none (issue #570).
+  it('stamps inline svg figures with the ratio-driven fill-width sizing', async () => {
+    // An inline <svg> block must be lifted into a figure and marked `.svg-fit`
+    // with its aspect ratio, so the exported document sizes it exactly like the
+    // in-app preview. The ratio is derived from the viewBox (no image load).
     const result = await exportMarkdownToHtml(
       opts({ content: '<svg viewBox="0 0 400 100"><rect width="400" height="100"></rect></svg>' }),
     )
     expect(result.html).toContain('image-block-wrapper svg-fit')
-    expect(result.html).not.toContain('--svg-ar')
+    expect(result.html).toContain('--svg-ar: 4')
   })
 
   it('carries the svg-fit CSS rules into the standalone export', async () => {
@@ -567,11 +567,7 @@ describe('exportMarkdownToHtml', () => {
         opts({ content: '<svg viewBox="0 0 400 100"><rect width="400" height="100"></rect></svg>' }),
       )
       expect(result.html).toContain('.image-block-wrapper.svg-fit')
-      expect(result.html).toContain('width: 100%')
-      expect(result.html).toContain('max-height: 60dvh')
-      // Regression guard for issue #570 — the ratio-derived width must not
-      // come back, it shrank portrait diagrams to a fraction of their size.
-      expect(result.html).not.toContain('--svg-ar')
+      expect(result.html).toContain('min(100%, calc(60dvh * var(--svg-ar, 1)))')
     } finally {
       style.remove()
     }
@@ -591,10 +587,52 @@ describe('exportMarkdownToHtml', () => {
         opts({ content: '```mermaid\ngraph LR; A-->B\n```' }),
       )
       expect(result.html).toContain('image-block-wrapper svg-fit')
+      expect(result.html).toContain('--svg-ar:')
       expect(result.html).toContain('max-width: 100% !important')
-      expect(result.html).toContain('max-height: 60dvh')
     } finally {
       style.remove()
     }
+  })
+  it('ships the inline zoom script and its styles', async () => {
+    // The exported document must behave like the in-app preview: hovering a
+    // diagram zooms it in place. The script is hand-mirrored from
+    // `inlineZoom.ts` (the export has no bundler), so this pins that it is
+    // actually injected — and that the state classes it toggles have styles,
+    // otherwise the script would run against an unstyled document.
+    const css = readWebFile('css/media-block.css')
+    const style = document.createElement('style')
+    style.textContent = css
+    document.head.appendChild(style)
+    try {
+      const result = await exportMarkdownToHtml(
+        opts({ content: '```mermaid\ngraph TD; A-->B\n```' }),
+      )
+
+      // The pointer-device gate, matching the module's own contract.
+      expect(result.html).toContain("(hover: hover) and (pointer: fine)")
+      // Wheel zoom + pan + reset wiring.
+      expect(result.html).toContain('.image-block-reset-btn')
+      expect(result.html).toContain('is-zooming')
+      // The styles the script toggles must be present too. Asserting only the
+      // BASE `display: none` is not enough — it matches the resting state, so it
+      // passes even when every `.is-zooming` rule was dropped and the reset
+      // button could never appear. The reveal rule is the real contract.
+      expect(result.html).toContain('.image-block-wrapper')
+      expect(result.html).toContain('display: none')
+      expect(result.html).toContain('.image-block-wrapper.is-zooming')
+      expect(result.html).toMatch(/\.is-zooming \.image-block-reset-btn[\s\S]*?display:\s*inline-flex/)
+      // Pan/zoom cursors and the no-easing state, all of which live in the same
+      // media block and were dropped together.
+      expect(result.html).toContain('is-panning')
+    } finally {
+      style.remove()
+    }
+  })
+
+  it('does not enable inline zoom on touch in the exported document', async () => {
+    // Same rule as the app: touch keeps page scrolling and uses the lightbox.
+    // The gate returns early, so nothing below it can install.
+    const result = await exportMarkdownToHtml(opts({ content: '```mermaid\ngraph TD; A-->B\n```' }))
+    expect(result.html).toContain("if (!mq || !mq.matches) return;")
   })
 })

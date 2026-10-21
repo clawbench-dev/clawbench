@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   SVG_FIT_CLASS,
+  SVG_AR_PROP,
   isSvgImageSrc,
   svgMediaAspectRatio,
   stampSvgFigure,
@@ -142,27 +143,18 @@ describe('svgMediaAspectRatio — <img>', () => {
 })
 
 describe('stampSvgFigure', () => {
-  it('stamps the marker class on an inline-svg figure', () => {
+  it('stamps the marker class and ratio on an inline-svg figure', () => {
     const w = figure(svgWrap('<svg class="lightbox-svg" viewBox="0 0 400 100"></svg>'))
     expect(stampSvgFigure(w)).toBe(true)
     expect(w.classList.contains(SVG_FIT_CLASS)).toBe(true)
+    expect(w.style.getPropertyValue(SVG_AR_PROP)).toBe('4')
   })
 
   it('stamps an SVG-file image figure once the image has decoded', () => {
     const w = figure(imgWrap('/api/fs/raw/docs/chart.svg?t=1'))
     withNaturalSize(w.querySelector('img')!, 100, 400)
     expect(stampSvgFigure(w)).toBe(true)
-    expect(w.classList.contains(SVG_FIT_CLASS)).toBe(true)
-  })
-
-  it('stamps a portrait SVG, which is what the old ratio width broke', () => {
-    // Issue #570: `width = min(100%, 60dvh × ratio)` shrank a portrait diagram
-    // to a fraction of its authored width. Stamping must not depend on the
-    // media being landscape, and no ratio value is passed to CSS any more.
-    const w = figure(svgWrap('<svg class="lightbox-svg" viewBox="0 0 302 1182"></svg>'))
-    expect(stampSvgFigure(w)).toBe(true)
-    expect(w.classList.contains(SVG_FIT_CLASS)).toBe(true)
-    expect(w.getAttribute('style')).toBeNull()
+    expect(w.style.getPropertyValue(SVG_AR_PROP)).toBe('0.25')
   })
 
   it('leaves a raster image figure untouched', () => {
@@ -181,12 +173,13 @@ describe('stampSvgFigure', () => {
     const w = figure('<div class="mermaid"><svg viewBox="0 0 1008.125 70"></svg></div>')
     expect(stampSvgFigure(w)).toBe(true)
     expect(w.classList.contains(SVG_FIT_CLASS)).toBe(true)
+    expect(w.style.getPropertyValue(SVG_AR_PROP)).toBe(String(1008.125 / 70))
   })
 
   it('stamps a mermaid figure whose svg carries width/height attributes', () => {
     const w = figure('<div class="mermaid"><svg width="400" height="100" viewBox="0 0 400 100"></svg></div>')
     expect(stampSvgFigure(w)).toBe(true)
-    expect(w.classList.contains(SVG_FIT_CLASS)).toBe(true)
+    expect(w.style.getPropertyValue(SVG_AR_PROP)).toBe('4')
   })
 
   it('ignores the toolbar icon svg inside the header', () => {
@@ -209,13 +202,16 @@ describe('stampSvgFigure', () => {
     expect(w.classList.contains(SVG_FIT_CLASS)).toBe(false)
   })
 
-  it('is idempotent (a second pass does not duplicate the marker class)', () => {
+  it('is idempotent and re-stamps when the ratio changes', () => {
     const w = figure(svgWrap('<svg class="lightbox-svg" viewBox="0 0 400 100"></svg>'))
     stampSvgFigure(w)
     stampSvgFigure(w)
-    // A later pass with a corrected ratio is still a no-op on the markup.
-    w.querySelector('svg')!.setAttribute('viewBox', '0 0 100 400')
+    expect(w.style.getPropertyValue(SVG_AR_PROP)).toBe('4')
+    // A later pass with a corrected ratio overwrites rather than duplicating.
+    const svg = w.querySelector('svg')!
+    svg.setAttribute('viewBox', '0 0 100 400')
     stampSvgFigure(w)
+    expect(w.style.getPropertyValue(SVG_AR_PROP)).toBe('0.25')
     expect(w.className).toBe('image-block-wrapper svg-fit')
   })
 })
@@ -258,6 +254,7 @@ describe('stampSvgFiguresAsync', () => {
     await stampSvgFiguresAsync(w.parentElement)
     expect(decoded).toBe(true)
     expect(w.classList.contains(SVG_FIT_CLASS)).toBe(true)
+    expect(w.style.getPropertyValue(SVG_AR_PROP)).toBe('4')
   })
 
   it('does not await decode for an already-sized SVG image', async () => {
@@ -272,7 +269,7 @@ describe('stampSvgFiguresAsync', () => {
 
     await stampSvgFiguresAsync(w.parentElement)
     expect(decodeCalls).toBe(0)
-    expect(w.classList.contains(SVG_FIT_CLASS)).toBe(true)
+    expect(w.style.getPropertyValue(SVG_AR_PROP)).toBe('2')
   })
 
   it('does not await decode for a raster image', async () => {

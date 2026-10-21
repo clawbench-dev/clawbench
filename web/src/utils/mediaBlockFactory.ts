@@ -35,6 +35,15 @@ import { FILE_OPEN_ICON_SVG } from '@/composables/useFilePathAnnotation'
 export const IMAGE_VIEW_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>'
 
 /**
+ * Feather "minimize-2"/reset glyph for the inline-zoom layout-reset button:
+ * two arrows pointing inward, i.e. "back to fit".
+ */
+export const IMAGE_RESET_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14h6v6"/><path d="M20 10h-6V4"/><path d="M14 10l7-7"/><path d="M3 21l7-7"/></svg>'
+
+/** Marker class on the reset button (delegated click handler keys off it). */
+export const IMAGE_RESET_BTN_CLASS = 'image-block-reset-btn'
+
+/**
  * Ensure the raster `<img>` carries the `lightbox-img` marker (no duplicates),
  * so the Lightbox collector and PC drag keep working.
  */
@@ -146,6 +155,19 @@ export function annotateMediaBlocksIn(doc: Document): void {
             viewBtn.innerHTML = IMAGE_VIEW_ICON_SVG
             actions.appendChild(viewBtn)
 
+            // Layout reset: returns the inline-zoomed figure to fit-scale. Hidden
+            // by CSS until the figure is actually zoomed (`.is-zooming`), so it
+            // never adds chrome to a resting figure.
+            const resetBtn = doc.createElement('button')
+            resetBtn.type = 'button'
+            resetBtn.className = IMAGE_RESET_BTN_CLASS
+            resetBtn.dataset.action = 'reset-zoom'
+            const resetLabel = gt('imageBlock.resetZoom')
+            resetBtn.title = resetLabel
+            resetBtn.setAttribute('aria-label', resetLabel)
+            resetBtn.innerHTML = IMAGE_RESET_ICON_SVG
+            actions.appendChild(resetBtn)
+
             if (isLocal && !shareMode) {
                 actions.appendChild(makeHeaderButton(doc, 'image-block-attach-btn', 'attach', 'chat.attach.attachImageToChat', ATTACH_BADGE_SVG))
                 actions.appendChild(makeHeaderButton(doc, 'image-block-open-btn', 'open', 'imageBlock.openFile', FILE_OPEN_ICON_SVG))
@@ -246,6 +268,17 @@ export function armMermaidFigure(container: HTMLElement, opts: { attach: boolean
     viewBtn.setAttribute('aria-label', viewLabel)
     viewBtn.innerHTML = IMAGE_VIEW_ICON_SVG
     actions.appendChild(viewBtn)
+
+    // Layout reset for the inline zoom (see annotateMediaBlocksIn).
+    const resetBtn = document.createElement('button')
+    resetBtn.type = 'button'
+    resetBtn.className = IMAGE_RESET_BTN_CLASS
+    resetBtn.dataset.action = 'reset-zoom'
+    const resetLabel = gt('imageBlock.resetZoom')
+    resetBtn.title = resetLabel
+    resetBtn.setAttribute('aria-label', resetLabel)
+    resetBtn.innerHTML = IMAGE_RESET_ICON_SVG
+    actions.appendChild(resetBtn)
 
     if (opts.attach) {
         const attachBtn = document.createElement('button')

@@ -264,6 +264,11 @@ function selectorReferencesContent(selector: string): boolean {
         '.chat-audio-player', '.chat-audio-wrapper', '.chat-video-player',
         '.chat-video-wrapper', '.code-line', '.line-num', '.code-text',
         '.code-block-pre', '.toc-', '.export-lightbox',
+        // Inline zoom: the figure's own classes are generic, but the state
+        // markers only ever appear on a zoomed figure, and the toolbar buttons
+        // are named after it. Without these the exported document would ship
+        // the zoom SCRIPT but none of its styles.
+        '.image-block-wrapper', '.image-block-',
     ]
     return contentTokens.some(tok => selector.includes(tok))
 }
@@ -384,12 +389,20 @@ function serializeCss(container: HTMLElement, themeId: string): string {
                     rules.push(rule.cssText)
                 }
             } else if (rule instanceof CSSMediaRule) {
-                // Include media rules that contain content-hitting rules
+                // Include media rules that contain content-hitting rules.
                 const innerRules: string[] = []
                 for (const inner of Array.from(rule.cssRules)) {
                     if (inner instanceof CSSStyleRule) {
                         const sel = inner.selectorText
-                        if (selectorHits(sel) || sel.includes('.hljs')) {
+                        // Same two-tier test as the top-level branch: `selectorHits`
+                        // cannot match a STATE selector (`.is-zooming` is only ever
+                        // set at runtime, so nothing in the static export carries
+                        // it), and the token fallback is what keeps those rules. The
+                        // media branch used to lack the fallback, which silently
+                        // dropped every `.is-zooming` rule — the exported document
+                        // then shipped the zoom script but no styles for the states
+                        // it toggles (invisible reset button, animated zoom steps).
+                        if (selectorHits(sel) || sel.includes('.hljs') || selectorReferencesContent(sel)) {
                             let text = inner.cssText
                             text = text.replace(/\[data-hljs-theme=["']?light["']?\]/g, '[data-theme-base="light"]')
                             text = text.replace(/\[data-hljs-theme=["']?dark["']?\]/g, '[data-theme-base="dark"]')
@@ -1166,6 +1179,180 @@ function buildLightboxJs(): string {
 })();`
 }
 
+/**
+ * Inline zoom/pan for the exported document — the standalone mirror of
+ * `inlineZoom.ts`.
+ *
+ * Kept in sync by hand with the module: the export is a single self-contained
+ * HTML file with no bundler, so it cannot import the app's TypeScript. The
+ * behaviour it reproduces is deliberately the narrow part of the contract —
+ * pointer devices only, wheel zooms around the cursor, drag pans, reset button
+ * returns to fit, Escape leaves the zoom. Touch is not handled here either, for
+ * the same reason: a pinch would fight page scrolling.
+ */
+function buildInlineZoomJs(): string {
+    return `
+(function() {
+    // Same gate as the app: precise pointer that can hover. Touch never gets
+    // inline zoom (the lightbox stays the touch path).
+    var mq = window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)');
+    if (!mq || !mq.matches) return;
+
+    var MIN = 1, MAX = 8, STEP = 1.15, DRAG = 3;
+    var active = null;   // { fig, media, scale, tx, ty }
+    var panning = null;
+
+    function mediaOf(fig) {
+        if (!fig) return null;
+        return fig.querySelector(':scope > .lightbox-img-wrap > img')
+            || fig.querySelector(':scope > .lightbox-svg-wrap > svg.lightbox-svg')
+            || fig.querySelector(':scope > .mermaid > svg');
+    }
+
+    function figFrom(target) {
+        if (!target || !target.closest) return null;
+        var fig = target.closest('.image-block-wrapper');
+        if (!fig) return null;
+        // Never hijack the floating toolbar.
+        if (target.closest('.image-block-header')) return null;
+        return mediaOf(fig) ? fig : null;
+    }
+
+    function clamp(s) {
+        var frame = s.fig.getBoundingClientRect();
+        var baseW = s.media.offsetWidth || s.media.getBoundingClientRect().width;
+        var baseH = s.media.offsetHeight || s.media.getBoundingClientRect().height;
+        var maxX = Math.max(0, (baseW * s.scale - frame.width) / 2);
+        var maxY = Math.max(0, (baseH * s.scale - frame.height) / 2);
+        s.tx = Math.min(maxX, Math.max(-maxX, s.tx));
+        s.ty = Math.min(maxY, Math.max(-maxY, s.ty));
+    }
+
+    function apply(s) {
+        clamp(s);
+        s.media.style.transform = 'translate(' + s.tx + 'px,' + s.ty + 'px) scale(' + s.scale + ')';
+    }
+
+    function deactivate() {
+        if (!active) return;
+        active.media.style.transform = '';
+        active.media.style.transformOrigin = '';
+        active.fig.classList.remove('is-zooming');
+        active = null;
+    }
+
+    function activate(fig) {
+        var media = mediaOf(fig);
+        if (!media) return null;
+        deactivate();
+        active = { fig: fig, media: media, scale: MIN, tx: 0, ty: 0 };
+        fig.classList.add('is-zooming');
+        media.style.transformOrigin = 'center center';
+        apply(active);
+        return active;
+    }
+
+    function zoomAt(s, next, cx, cy) {
+        var frame = s.fig.getBoundingClientRect();
+        var dx = cx - (frame.left + frame.width / 2);
+        var dy = cy - (frame.top + frame.height / 2);
+        var r = next / s.scale;
+        s.tx = dx - (dx - s.tx) * r;
+        s.ty = dy - (dy - s.ty) * r;
+        s.scale = next;
+        apply(s);
+    }
+
+    document.addEventListener('wheel', function(e) {
+        var fig = figFrom(e.target);
+        if (!fig) return;
+        var s = active && active.fig === fig ? active : null;
+
+        // At rest, a downward notch belongs to the page — scrolling past a
+        // diagram must never be trapped.
+        if (!s) {
+            if (e.deltaY > 0) return;
+            e.preventDefault();
+            var started = activate(fig);
+            if (started) zoomAt(started, MIN * STEP, e.clientX, e.clientY);
+            return;
+        }
+
+        var next = Math.min(MAX, Math.max(MIN, s.scale * (e.deltaY > 0 ? 1 / STEP : STEP)));
+
+        // Zooming back out to fit ends the gesture in this same notch.
+        if (e.deltaY > 0 && next <= MIN) { e.preventDefault(); deactivate(); return; }
+
+        if (next === s.scale) return;
+        e.preventDefault();
+        zoomAt(s, next, e.clientX, e.clientY);
+    }, { passive: false });
+
+    document.addEventListener('pointerdown', function(e) {
+        if (e.pointerType === 'touch' || e.button !== 0) return;
+        var fig = figFrom(e.target);
+        if (!fig || !active || active.fig !== fig || active.scale <= MIN) return;
+        e.preventDefault();
+        panning = { s: active, x: e.clientX, y: e.clientY, bx: active.tx, by: active.ty, moved: false };
+    });
+
+    document.addEventListener('pointermove', function(e) {
+        if (!panning) return;
+        var dx = e.clientX - panning.x, dy = e.clientY - panning.y;
+        if (!panning.moved && Math.abs(dx) < DRAG && Math.abs(dy) < DRAG) return;
+        panning.moved = true;
+        e.preventDefault();
+        panning.s.tx = panning.bx + dx;
+        panning.s.ty = panning.by + dy;
+        apply(panning.s);
+        panning.s.fig.classList.add('is-panning');
+    });
+
+    function endPan() {
+        if (!panning) return;
+        panning.s.fig.classList.remove('is-panning');
+        panning = null;
+    }
+    document.addEventListener('pointerup', endPan);
+    document.addEventListener('pointercancel', endPan);
+
+    document.addEventListener('pointerout', function(e) {
+        if (!active || e.pointerType === 'touch' || panning) return;
+        // figFrom rejects toolbar targets, so asking it here would read "left
+        // the figure" when the pointer merely moved onto the figure's own reset
+        // button — and hide that button from under the cursor. relatedTarget is
+        // the authoritative answer: still inside the same figure => keep.
+        var next = e.relatedTarget;
+        if (next && active.fig.contains(next)) return;
+        deactivate();
+    });
+
+    document.addEventListener('click', function(e) {
+        if (!e.target || !e.target.closest) return;
+
+        var reset = e.target.closest('.image-block-reset-btn');
+        if (reset) {
+            e.preventDefault();
+            if (!active) return;
+            active.scale = MIN; active.tx = 0; active.ty = 0;
+            apply(active);
+            return;
+        }
+
+        // The toolbar's own buttons keep their handlers.
+        if (e.target.closest('.image-block-header')) return;
+
+        // Click a figure to enter the zoom state; click anywhere else to leave.
+        var fig = figFrom(e.target);
+        if (fig) {
+            if (!active || active.fig !== fig) activate(fig);
+            return;
+        }
+        deactivate();
+    });
+})();`
+}
+
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
 /** Escape a string for safe use inside a RegExp. */
@@ -1246,9 +1433,9 @@ export async function exportMarkdownToHtml(options: ExportOptions): Promise<Expo
         // 5b. Proportional fill-width sizing for SVG media. Must run AFTER
         //     inlining: an SVG file's intrinsic size is only known once the
         //     (now self-contained) image has decoded, so the async pass waits
-        //     for that before stamping the `.svg-fit` marker. Inline <svg>
-        //     resolves synchronously. The exported markup therefore carries the
-        //     same marker the in-app preview computes.
+        //     for that before stamping the ratio. Inline <svg> resolves
+        //     synchronously. The exported markup therefore carries the same
+        //     `.svg-fit` marker + `--svg-ar` the in-app preview computes.
         await stampSvgFiguresAsync(contentEl)
 
         // 6. Replace failed Mermaid blocks with static errors.
@@ -1313,6 +1500,7 @@ export async function exportMarkdownToHtml(options: ExportOptions): Promise<Expo
         // 10. Build interaction JS.
         const codeBlockJs = buildCodeBlockJs(locale)
         const lightboxJs = buildLightboxJs()
+        const inlineZoomJs = buildInlineZoomJs()
 
         const title = escapeHtml(fileName.replace(/\.md$/i, ''))
         const bodyContent = bodyEl.outerHTML
@@ -1385,6 +1573,7 @@ ${viewCloseHtml}
 ${tocJs}
 ${codeBlockJs}
 ${lightboxJs}
+${inlineZoomJs}
 </script>
 </body>
 </html>`

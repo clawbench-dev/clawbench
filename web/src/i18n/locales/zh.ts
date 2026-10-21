@@ -52,6 +52,7 @@ export default {
   imageBlock: {
     view: '放大查看',
     openFile: '打开文件',
+    resetZoom: '重置缩放',
   },
   tableBlock: {
     label: '表格',
