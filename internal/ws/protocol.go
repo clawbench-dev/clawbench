@@ -50,6 +50,12 @@ type SessionUpdateData struct {
 	ProjectPath          string `json:"project_path,omitempty"`
 	ToolName             string `json:"tool_name,omitempty"`  // tool name requesting approval (permission_pending only)
 	ToolInput            string `json:"tool_input,omitempty"` // tool input JSON for approval details (permission_pending only)
+	// MessageID is the chat_history id of the assistant message the
+	// ResponsePreview was taken from (completed only; 0 when none qualified).
+	// A notification click deep-links to this exact message rather than only
+	// opening the session at its bottom — the preview walk skips messages with
+	// no text, so "the newest assistant row" is not always the one described.
+	MessageID int64 `json:"message_id,omitempty"`
 }
 
 // SessionTitleUpdateData is the data payload for "session_title_update" events.
@@ -76,6 +82,10 @@ type TaskUpdateData struct {
 	ResponsePreviewPlain string `json:"response_preview_plain,omitempty"` // Markdown-stripped preview (for Android/browser notifications)
 	LastUserMessage      string `json:"last_user_message,omitempty"`      // plain-text preview of the most recent user message (completed only)
 	LastUserHasFiles     bool   `json:"last_user_has_files,omitempty"`    // whether that user message carried file attachments (completed only)
+	// MessageID is the chat_history id of the assistant message the
+	// ResponsePreview was taken from (terminal statuses only; 0 when none
+	// qualified). Same deep-link purpose as SessionUpdateData.MessageID.
+	MessageID int64 `json:"message_id,omitempty"`
 }
 
 // ChatStreamData wraps a chat streaming event for WS delivery.

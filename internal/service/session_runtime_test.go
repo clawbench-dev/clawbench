@@ -1084,6 +1084,53 @@ func TestGetSessionResponsePreviewRaw_SkipsInvalidAndEmptyBlocks(t *testing.T) {
 	assert.Equal(t, "真实回答", raw)
 }
 
+// TestGetSessionResponsePreviewRawWithMessageID_PointsAtThePreviewedRow pins the
+// id half of the preview: the deep link must land on the message the preview was
+// taken from, which is NOT the newest assistant row whenever that row yields no
+// text. Returning the newest id would open the session on a message the
+// notification never described.
+func TestGetSessionResponsePreviewRawWithMessageID_PointsAtThePreviewedRow(t *testing.T) {
+	db, teardown := setupTestDBForChatSummary(t)
+	defer teardown()
+
+	goodContent, _ := json.Marshal(map[string]any{"blocks": []model.ContentBlock{
+		{Type: "text", Text: "真实回答"},
+	}})
+	insertTestMessage(t, db, "session-msgid-1", "user", "问题")
+	insertTestMessage(t, db, "session-msgid-1", "assistant", string(goodContent))
+
+	var answerID int64
+	require.NoError(t, db.QueryRow(
+		"SELECT id FROM chat_history WHERE session_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1",
+		"session-msgid-1",
+	).Scan(&answerID))
+
+	// Newer rows that carry no preview text: both must be skipped, and neither
+	// may become the reported id.
+	insertTestMessage(t, db, "session-msgid-1", "assistant", "纯文本不是JSON")
+	emptyBlocks, _ := json.Marshal(map[string]any{"blocks": []model.ContentBlock{}})
+	insertTestMessage(t, db, "session-msgid-1", "assistant", string(emptyBlocks))
+
+	raw, id := getSessionResponsePreviewRawWithMessageID("session-msgid-1")
+	assert.Equal(t, "真实回答", raw)
+	assert.Equal(t, answerID, id)
+}
+
+// TestGetSessionResponsePreviewRawWithMessageID_NoTextYieldsZeroID covers the
+// "nothing qualified" case: no text means no deep link, and id 0 is the signal
+// the renderer must not try to scroll anywhere.
+func TestGetSessionResponsePreviewRawWithMessageID_NoTextYieldsZeroID(t *testing.T) {
+	db, teardown := setupTestDBForChatSummary(t)
+	defer teardown()
+
+	emptyBlocks, _ := json.Marshal(map[string]any{"blocks": []model.ContentBlock{}})
+	insertTestMessage(t, db, "session-msgid-empty", "assistant", string(emptyBlocks))
+
+	raw, id := getSessionResponsePreviewRawWithMessageID("session-msgid-empty")
+	assert.Empty(t, raw)
+	assert.Zero(t, id)
+}
+
 // --- emitSessionEvent with response preview ---
 
 func TestEmitSessionEvent_CompletedWithPreview(t *testing.T) {

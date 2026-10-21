@@ -1352,6 +1352,42 @@ describe('useGlobalEvents', () => {
             expect(opts.nav.sessionId).toBe('s1')
         })
 
+        it('carries the previewed message id so the click lands on that message', () => {
+            // The server's preview walk skips text-less messages, so the newest
+            // assistant row is not always the one the body describes. Without
+            // this id the click opens the session at its bottom and the user has
+            // to hunt for the answer they were notified about.
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            const ws = connectAndGetWs()
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'session_update',
+                data: { session_id: 's1', status: 'completed', message_id: 4242 },
+            })
+
+            expect(mockShowBrowserNotification.mock.calls[0][1].nav.messageId).toBe(4242)
+        })
+
+        it('carries the message id on task notifications too', () => {
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            const ws = connectAndGetWs()
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'task_update',
+                data: { task_id: '7', execution_id: 'e1', status: 'completed', message_id: 99 },
+            })
+
+            const nav = mockShowBrowserNotification.mock.calls[0][1].nav
+            expect(nav.taskId).toBe('7')
+            expect(nav.messageId).toBe(99)
+        })
+
         it('does not notify when the event identity is missing', () => {
             vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
             vi.spyOn(document, 'hasFocus').mockReturnValue(false)

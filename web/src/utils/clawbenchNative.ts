@@ -281,6 +281,14 @@ export interface NotificationNav {
   executionId?: string
   projectPath?: string
   /**
+   * The chat_history id of the assistant message this notification is about.
+   *
+   * The session opens either way; this makes it scroll to that message and
+   * highlight it. The server's preview walk skips messages that yield no text,
+   * so the newest assistant row is not always the one the body describes.
+   */
+  messageId?: number
+  /**
    * Set for forge (GitHub/GitLab) change notifications. They carry no
    * session/task id — only `projectPath` — so the native shell needs this
    * explicit discriminator to route the click to the forge tab.

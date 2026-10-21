@@ -619,6 +619,7 @@ import { useQuoteQuestion } from './composables/useQuoteQuestion.ts'
 import { setOpenSessionHandler, usePendingTarget, confirmTarget, cancelTarget } from './composables/useConversationTarget.ts'
 import SessionPickerDialog from './components/common/SessionPickerDialog.vue'
 import { useTaskTab, registerSwitchTab, onTaskEvent } from '@/composables/useTaskTab.ts'
+import { setPendingMessageNavigation } from '@/composables/useMessageNavigation.ts'
 import { useTabDrawer, onTabSwitch, resetTabDrawerState } from '@/composables/useTabDrawer.ts'
 import { resetAgents, useAgents } from '@/composables/useAgents'
 import { useGroupMembers } from '@/composables/useGroupMembers'
@@ -1134,7 +1135,7 @@ function switchTab(tab: string, force = false) {
  * strings (Android reads them via getStringExtra; the popover's
  * CompletionItem types taskId as string).
  */
-interface OpenSessionDetail { sessionId?: string; projectPath?: string; fromNotificationCenter?: boolean }
+interface OpenSessionDetail { sessionId?: string; projectPath?: string; messageId?: number; fromNotificationCenter?: boolean }
 interface OpenTaskDetail { taskId?: string; executionId?: string; projectPath?: string; fromNotificationCenter?: boolean }
 
 /**
@@ -1181,7 +1182,12 @@ function handleOpenSession(e: Event) {
     appLog.w(TAG, 'clawbench-open-session: no sessionId in detail, ignoring')
     return
   }
-  const { sessionId, projectPath } = detail
+  const { sessionId, projectPath, messageId } = detail
+  // Park the message target BEFORE switching: the chat panel consumes it once
+  // the target session's messages are on screen (it may still have to load, and
+  // may live in another project). Same mechanism the quote jump uses, so the
+  // scroll + highlight behave identically.
+  if (messageId) setPendingMessageNavigation(sessionId, messageId)
   const crossProject = !!projectPath && projectPath !== store.state.projectRoot
   if (!crossProject) recordNotificationOrigin(detail)
   if (crossProject) {
@@ -3717,7 +3723,10 @@ onMounted(async () => {
 
     // Handle pending navigation from push notification deep link
     // (cross-project reload or cold start via native bridge)
-    const processPendingSessionNav = (navSessionId: string) => {
+    const processPendingSessionNav = (navSessionId: string, navMessageId?: number) => {
+      // Park the message target first: the session still has to load, and the
+      // chat panel consumes the request once its messages are on screen.
+      if (navMessageId) setPendingMessageNavigation(navSessionId, navMessageId)
       // Wait for sessions to load before switching (max 3 seconds)
       let attempts = 0
       const checkReady = () => {
@@ -3756,7 +3765,7 @@ onMounted(async () => {
         if (nav.taskId) {
           processPendingTaskNav(nav.taskId, nav.executionId)
         } else if (nav.sessionId) {
-          processPendingSessionNav(nav.sessionId)
+          processPendingSessionNav(nav.sessionId, nav.messageId)
         }
       } catch {} // for cold-start pending navigation
     }
@@ -3771,7 +3780,7 @@ onMounted(async () => {
             const nav = await getNative()?.getPendingNavigation?.()
             if (nav) {
               const parsed = JSON.parse(nav)
-              const { sessionId, taskId, executionId, projectPath, forge } = parsed
+              const { sessionId, taskId, executionId, projectPath, forge, messageId } = parsed
               // Same resolver as the live-click handler: the native shell names
               // this field `forgeTarget`, and routing both entry points through
               // one function is what keeps them from drifting apart.
@@ -3813,11 +3822,12 @@ onMounted(async () => {
                 // Session notification navigation
                 // Navigation data found — stop polling
                 pollCleared = true
+                if (messageId) setPendingMessageNavigation(sessionId, messageId)
                 if (projectPath && projectPath !== store.state.projectRoot) {
                   // Need to switch project first — use hot switch instead of reload
                   hotSwitchProject(projectPath, sessionId)
                 } else {
-                  processPendingSessionNav(sessionId)
+                  processPendingSessionNav(sessionId, messageId)
                 }
               }
             }

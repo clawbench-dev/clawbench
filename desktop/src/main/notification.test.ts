@@ -13,7 +13,7 @@ const h = vi.hoisted(() => {
     closeMock: vi.fn(),
     sent: [] as Array<{ channel: string; nav: unknown }>,
     winState: { minimized: false, visible: true, loading: false, focused: false, destroyed: false },
-    calls: { restore: 0, show: 0, focus: 0 },
+    calls: { restore: 0, show: 0, focus: 0, recreate: 0 },
     windowAvailable: true,
   }
 })
@@ -48,6 +48,14 @@ vi.mock('./window', () => ({
         focus: () => { h.calls.focus++ },
       }
     : null),
+  // The click handler reopens the window when macOS left the process alive with
+  // no window (window-all-closed does not quit on darwin). Recreating it sets
+  // the window back and clears the renderer-ready flag, mirroring window.ts.
+  createMainWindow: () => {
+    h.calls.recreate++
+    h.windowAvailable = true
+    resetRendererReady()
+  },
 }))
 
 import {
@@ -127,6 +135,7 @@ describe('showTerminalNotification', () => {
     h.calls.restore = 0
     h.calls.show = 0
     h.calls.focus = 0
+    h.calls.recreate = 0
     resetRendererReady()
     _resetActiveNotificationsForTesting()
   })
@@ -263,13 +272,21 @@ describe('showTerminalNotification', () => {
     expect(getPendingNavigationJson()).toBeNull()
   })
 
-  it('does nothing when there is no window', () => {
+  it('reopens the window and defers the navigation when there is no window', () => {
+    // macOS: window-all-closed does not quit the app, so a notification can
+    // outlive its window. The click used to do nothing at all — the payload was
+    // dropped before the pendingNavigation stash, and nothing reopened the
+    // window. Both halves matter: recreate AND keep the target.
     markRendererReady()
     h.windowAvailable = false
     showTerminalNotification('done', 'body', { sessionId: 's1' })
 
     expect(() => clickLatest()).not.toThrow()
+    expect(h.calls.recreate).toBe(1)
     expect(h.sent).toHaveLength(0)
+    const pending = getPendingNavigationJson()
+    expect(pending).not.toBeNull()
+    expect(JSON.parse(pending!)).toEqual({ sessionId: 's1' })
   })
 
   it('does not throw for a notification with no navigation payload', () => {

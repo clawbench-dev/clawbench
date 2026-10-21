@@ -459,21 +459,47 @@ func GetMessagesBySessionIDRawAfter(sessionID string, afterID int64) ([]model.Ch
 // bandwidth. Callers that need the real content blocks — e.g. push notification
 // previews — must use this function.
 func GetAssistantRawContents(sessionID string) ([]string, error) {
+	rows, err := GetAssistantRawContentsWithIDs(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	contents := make([]string, len(rows))
+	for i, r := range rows {
+		contents[i] = r.Content
+	}
+	return contents, nil
+}
+
+// AssistantRawContent pairs one finalized assistant message's chat_history id
+// with its raw (unmodified) content JSON.
+//
+// The id is what makes a notification deep-link land on the message the preview
+// was taken from: the preview walks newest-first past messages that yield no
+// text, so "the newest assistant row" is not necessarily the row the user was
+// told about.
+type AssistantRawContent struct {
+	ID      int64
+	Content string
+}
+
+// GetAssistantRawContentsWithIDs is GetAssistantRawContents plus each row's id,
+// same ordering (newest first) and same limit.
+func GetAssistantRawContentsWithIDs(sessionID string) ([]AssistantRawContent, error) {
 	rows, err := store.ReadDB().Query(
-		"SELECT content FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 0 ORDER BY id DESC LIMIT ?",
+		"SELECT id, content FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 0 ORDER BY id DESC LIMIT ?",
 		sessionID, previewAssistantContentLimit,
 	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var contents []string
+	var contents []AssistantRawContent
 	for rows.Next() {
-		var content string
-		if err := rows.Scan(&content); err != nil {
+		var row AssistantRawContent
+		if err := rows.Scan(&row.ID, &row.Content); err != nil {
 			return nil, err
 		}
-		contents = append(contents, content)
+		contents = append(contents, row)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

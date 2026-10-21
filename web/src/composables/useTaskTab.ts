@@ -90,6 +90,13 @@ function onTaskCompleted(task: TaskItem) {
             onClick: () => {
                 if (switchTabCallback) switchTabCallback('tasks')
             },
+            // The native shells (Electron, Android) do not run `onClick` — they
+            // deliver a nav payload to the renderer instead. Without this the
+            // desktop click did nothing at all: the main process raised the
+            // window, the payload had no task id, and the renderer had no event
+            // to handle. `taskId` also opens the task's own detail rather than
+            // only raising the tasks tab.
+            nav: { taskId: String(task.id) },
         })
     } catch {
         // Non-critical

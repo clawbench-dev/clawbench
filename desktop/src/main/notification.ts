@@ -1,5 +1,5 @@
 import { Notification } from 'electron'
-import { getMainWindow } from './window'
+import { createMainWindow, getMainWindow } from './window'
 import { isRendererReady } from './navReady'
 import type { NavChannel, NotificationNav } from '../shared/types'
 
@@ -55,7 +55,17 @@ function channelFor(nav: NotificationNav): NavChannel {
 /** Deliver a navigation to the renderer, or defer it until the renderer is ready. */
 function sendNavToRenderer(channel: NavChannel, nav: NotificationNav): void {
   const w = getMainWindow()
-  if (!w) return
+  if (!w) {
+    // macOS keeps the process alive after the last window closes
+    // (window-all-closed does not quit on darwin), so a notification can
+    // outlive the window it belongs to. Stash the navigation and reopen the
+    // window: createMainWindow loads the server URL fresh, the renderer then
+    // picks the target up via getPendingNavigation(). Without this the click
+    // did nothing at all — the notification was the only thing left on screen.
+    pendingNavigation = JSON.stringify(nav)
+    createMainWindow()
+    return
+  }
   if (!isRendererReady()) {
     // Cold start / mid-reload: stash it. The renderer picks it up via
     // getPendingNavigation() once it mounts.

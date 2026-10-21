@@ -37,6 +37,10 @@ export interface ServerEvent {
         last_user_message?: string // plain-text preview of the most recent user message (completed only)
         last_user_has_files?: boolean // whether that user message carried attachments (completed only)
         agent_id?: string // agent that ran the session/execution (completed only)
+        // chat_history id of the assistant message the preview was taken from.
+        // Lets a notification click scroll to that message, not just the
+        // session bottom (terminal statuses only; absent when none qualified).
+        message_id?: number
         tool_name?: string
         project_path?: string
         // chat_stream events (e.g. user_message) carry a ChatStreamData body:
@@ -598,6 +602,11 @@ function showEventBrowserNotification(event: string, data: ServerEvent['data'], 
     let title: string
     let alert_: string
     let onClick: (() => void) | undefined
+    // The assistant message the notification is about, when the server could
+    // identify it. Lets the click land on that message instead of the bottom of
+    // the session — the preview walk skips text-less messages, so the newest
+    // assistant row is not always the one the body describes.
+    let messageId: number | undefined
     // The forge item this event is about, when it is a forge event with a
     // usable identity. Hoisted out of the branch so the notification payload
     // below (built after the branch) can carry it to the native shell.
@@ -625,6 +634,7 @@ function showEventBrowserNotification(event: string, data: ServerEvent['data'], 
         // Click: navigate to the session
         const sessionId = data.session_id
         const projectPath = data.project_path
+        messageId = data.message_id
         if (sessionId) {
             onClick = () => {
                 window.dispatchEvent(new CustomEvent('clawbench-open-session', {
@@ -657,6 +667,7 @@ function showEventBrowserNotification(event: string, data: ServerEvent['data'], 
         const taskId = data.task_id
         const executionId = data.execution_id
         const projectPath = data.project_path
+        messageId = data.message_id
         if (taskId) {
             onClick = () => {
                 window.dispatchEvent(new CustomEvent('clawbench-open-task', {
@@ -732,6 +743,9 @@ function showEventBrowserNotification(event: string, data: ServerEvent['data'], 
                 taskId: data.task_id,
                 executionId: data.execution_id,
                 projectPath: data.project_path,
+                // The assistant message this notification is about, so the
+                // click can scroll to it rather than just opening the session.
+                messageId,
                 // Forge notifications carry no session/task id, so the native
                 // shell needs an explicit discriminator — otherwise its
                 // sessionId/taskId branches both miss and the click is dropped.
