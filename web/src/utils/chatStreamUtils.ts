@@ -1511,6 +1511,27 @@ export function rebuildFromDb(state: ChatMessage[], dbMessages: ChatMessage[], s
       if (db.summaryCards) live.summaryCards = db.summaryCards
       if (db.metadata && !live.metadata) live.metadata = db.metadata
       if (db.files) live.files = db.files
+      // The cancelled badge is DB-only state on this path. The terminal
+      // `cancelled` stream event carries no flag (its payload is just
+      // `{reason:"cancelled"}`), and it is routinely NOT delivered: the client
+      // unsubscribes while cancelling (session_update is broadcast to everyone,
+      // the stream event only to subscribers), so the hub drops it with
+      // reason=no_subscribers. The row's `cancelled:true` is then the ONLY
+      // record — and this branch keeps the LIVE object, so without adopting it
+      // here the badge showed up only after a refresh or a session switch
+      // rebuilt the array from the DB. A still-streaming row is never
+      // cancelled (the turn is running), so it must not stamp one.
+      if (db.cancelled === true && db.streaming !== true) live.cancelled = true
+      // The cancelled badge is DB-only state on this path. The terminal
+      // `cancelled` stream event carries no flag (its payload is just
+      // `{reason:"cancelled"}`), and it is routinely NOT delivered: the client
+      // unsubscribes while cancelling (session_update is broadcast to everyone,
+      // the stream event only to subscribers), so the hub drops it with
+      // reason=no_subscribers. The row's `cancelled:true` is then the ONLY
+      // record — and this branch keeps the LIVE object, so without adopting it
+      // here the badge showed up only after a refresh or a session switch
+      // rebuilt the array from the DB. A still-streaming row is never
+      // cancelled (the turn is running), so it must not stamp one.
       // Speaker attribution (group chats): the DB row's agent_id is authoritative.
       // The placeholder frequently has none — the subscribe-time recovery
       // re-emits stream_start WITHOUT a speaker (EmitStreamStartEvent carries

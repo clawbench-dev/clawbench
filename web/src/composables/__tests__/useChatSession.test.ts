@@ -1194,6 +1194,82 @@ describe('onSessionEvent', () => {
     expect(mockForceCleanupStreamingState).not.toHaveBeenCalled()
   })
 
+  it('stamps the cancelled badge on the live bubble when the run is cancelled', () => {
+    // The stream-level `cancelled` event reaches only session subscribers, and
+    // this client unsubscribes while cancelling — so the hub drops it. This
+    // session_update is the last signal the client sees, and the reload it
+    // triggers may race the executor's finalize (which is what writes
+    // `cancelled:true` into the row). Without stamping here the badge appeared
+    // only after a manual refresh / session switch.
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ sessionId: 'current-s1', messages: [], total: 0, running: false }),
+    })
+    const loading = ref(true)
+    const messages = ref<any[]>([
+      { role: 'assistant', id: 64004, content: '', blocks: [{ type: 'text', text: 'partial' }], streaming: true },
+    ])
+    const options: any = {
+      currentSessionId: ref('current-s1'),
+      messages,
+      dispatch: (action: any) => { messages.value = chatMessageReducer(messages.value, action) },
+      loading,
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream: vi.fn(),
+      onOpen: vi.fn(),
+    }
+    lastSessionOptions = options
+    const session = useChatSession(options)
+
+    session.onSessionEvent({ session_id: 'current-s1', status: 'cancelled' })
+
+    expect(messages.value[0].cancelled).toBe(true)
+  })
+
+  it('does not stamp the cancelled badge on completion', () => {
+    // `completed` is the mirror case: stamping here would put a "cancelled"
+    // mark on a reply that finished normally.
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ sessionId: 'current-s1', messages: [], total: 0, running: false }),
+    })
+    const loading = ref(true)
+    const messages = ref<any[]>([
+      { role: 'assistant', id: 64005, content: '', blocks: [{ type: 'text', text: 'done' }], streaming: true },
+    ])
+    const options: any = {
+      currentSessionId: ref('current-s1'),
+      messages,
+      dispatch: (action: any) => { messages.value = chatMessageReducer(messages.value, action) },
+      loading,
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream: vi.fn(),
+      onOpen: vi.fn(),
+    }
+    lastSessionOptions = options
+    const session = useChatSession(options)
+
+    session.onSessionEvent({ session_id: 'current-s1', status: 'completed' })
+
+    expect(messages.value[0].cancelled).toBeUndefined()
+  })
+
   it('does NOT trigger safety net for permission_pending status', () => {
     const loading = ref(true)
     const onDisconnectStream = vi.fn()

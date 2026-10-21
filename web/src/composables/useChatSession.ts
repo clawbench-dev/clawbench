@@ -1340,6 +1340,25 @@ export function useChatSession(options: UseChatSessionOptions) {
         // must also close out a pending cancel measurement (whichever of the
         // two paths arrives first reports it; the second is a no-op).
         reportCancelRoundTrip(`session_update:${data.status}`)
+        // Stamp the badge BEFORE cleanup. This session_update is the
+        // authoritative "the run was cancelled" signal, and it is the ONLY one
+        // this client is guaranteed to receive: the stream-level `cancelled`
+        // event goes only to session subscribers, and the client unsubscribes
+        // while cancelling, so the hub drops it (reason=no_subscribers). The DB
+        // row carries `cancelled:true`, but the reload below can be served
+        // BEFORE the executor's finalize writes it (CancelSession returns
+        // immediately; finalize runs in the run goroutine), and no later event
+        // will trigger another reload — the terminal push was already claimed
+        // by CancelSession, so no `completed` broadcast follows either. Without
+        // this the badge appeared only after a manual refresh / session switch.
+        // EVERY streaming bubble, mirroring the backend's
+        // finalizeOrphanedStreamingMessages, which stamps `cancelled` on every
+        // streaming=1 row of the session (a group turn can have several open).
+        if (data.status === 'cancelled') {
+          for (const m of messages.value) {
+            if (m.role === 'assistant' && m.streaming) m.cancelled = true
+          }
+        }
         onDisconnectStream()
         forceCleanupStreamingState(messages.value as ChatMessage[], { onRenderNeeded: (f) => onRenderUpdate(f ?? true), onExtractScheduledTasks })
         loading.value = false

@@ -3914,6 +3914,57 @@ describe('rebuildFromDb: live placeholder matching without an adopted id', () =>
   })
 })
 
+// The cancelled badge is persisted only in the DB row (`cancelled:true`); the
+// terminal stream event carries no flag and is routinely dropped by the hub
+// (the client unsubscribes while cancelling, so `cancelled` has no subscriber).
+// rebuildFromDb keeps the LIVE placeholder object for the just-finished row, so
+// unless it adopts the flag the badge appears only after a refresh / session
+// switch rebuilds the array from the DB.
+describe('rebuildFromDb: adopts the cancelled flag from the DB row', () => {
+  const liveRow = () => ({
+    role: 'assistant',
+    id: 64004,
+    content: '',
+    blocks: [{ type: 'text', text: 'partial answer' }],
+    createdAt: '2026-10-21T03:41:10Z',
+    // Finalized by forceCleanupStreamingState before the reload — the terminal
+    // stream event never arrived, so no `cancelled` flag was set locally.
+    _finalizedLocally: true,
+  })
+  const dbRow = (extra: Record<string, unknown> = {}) => ({
+    role: 'assistant',
+    id: 64004,
+    content: '',
+    blocks: [{ type: 'text', text: 'partial answer' }],
+    streaming: false,
+    createdAt: '2026-10-21T03:41:10Z',
+    ...extra,
+  })
+
+  it('stamps cancelled on the preserved live bubble', () => {
+    const live = liveRow()
+    const merged = rebuildFromDb([live] as any, [dbRow({ cancelled: true })] as any, false)
+    expect(merged).toHaveLength(1)
+    // Same object preserved (stable v-for key) AND the badge now visible.
+    expect(merged[0]).toBe(live)
+    expect(merged[0].cancelled).toBe(true)
+  })
+
+  it('does not stamp cancelled when the DB row has no flag', () => {
+    const live = liveRow()
+    const merged = rebuildFromDb([live] as any, [dbRow()] as any, false)
+    expect(merged[0].cancelled).toBeUndefined()
+  })
+
+  it('does not stamp cancelled from a still-streaming row', () => {
+    // A running turn cannot be cancelled; a stale flag on a streaming row must
+    // not surface a badge over a live reply.
+    const live = { ...liveRow(), streaming: true }
+    const merged = rebuildFromDb([live] as any, [dbRow({ streaming: true, cancelled: true })] as any, true)
+    expect(merged[0].cancelled).toBeUndefined()
+  })
+})
+
 // Group chat: each member turn is a SEPARATE assistant message. The backend
 // emits stream_start (with the member's row id) then stream_finalize at the end
 // of THAT member's turn. Regression for the reported "other agents don't stream
