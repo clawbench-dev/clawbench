@@ -249,6 +249,15 @@ func BuildFreeMemberSystemPrompt(members []HostMemberInfo, selfName string) stri
 // confirmation round), so the host is told to wait to be asked. Without this
 // addendum the host keeps emitting group-end expecting to stop, and the
 // confirmation would look like an error to it.
+//
+// It ALSO forbids asking the user (an AskUserQuestion card or a plain-prose
+// question). Every other cruising prompt says so — the free member addendum, the
+// single-chat addendum and the confirmation prompt — and the HOST was the one
+// omission: cruise is unattended, so a host question is a question nobody
+// answers. The orchestrator additionally treats a route as outranking a question
+// (see hostTurnOutcome), but the prompt is what stops the question being asked at
+// all: a card that renders invites the user to wait for an answer that the turn
+// has already moved past.
 func BuildCruiseHostAddendum() string {
 	var b strings.Builder
 	b.WriteString("\n\n[自动巡航模式] 本群已开启自动巡航：讨论将持续进行，直到你（主持人）确认任务已完成。\n")
@@ -257,6 +266,8 @@ func BuildCruiseHostAddendum() string {
 	b.WriteString("  - 若你认为已经满足用户的要求，输出结束信号：<clawbench-goal-satisfied/>，**并在同一条回复里写出最终结论**（供用户阅读，不要再点名）。\n")
 	b.WriteString("  - 若尚未完成，就照常点名（<clawbench-mention targets=\"…\">）继续推进，不要输出 goal-satisfied。\n")
 	b.WriteString("不要主动输出 <clawbench-goal-satisfied/>——只有系统向你确认时才判断；提前输出不会结束讨论，只会再触发一次确认。\n")
+	b.WriteString("巡航期间**不要向用户提问**——不要输出 <clawbench-ask-question>，也不要用大白话问「要不要继续」「先做哪个」之类的选择；用户不会立即回复，所有不明确之处请自己按最合理的方案定下来并在结论里说明你选了什么、为什么。\n")
+	b.WriteString("点名成员和写结论是你的本职：能派活就先派活，派完在正文里说明你替用户做了什么决定即可。\n")
 	b.WriteString("请持续组织成员推进工作，直到确实完成，不要为了收工而过早确认。\n")
 	return b.String()
 }

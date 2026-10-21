@@ -6,6 +6,7 @@ import (
 	"sync"
 	"testing"
 
+	"clawbench/internal/grouprouting"
 	"clawbench/internal/i18n"
 	"clawbench/internal/model"
 	"clawbench/internal/store"
@@ -394,11 +395,14 @@ func TestCruiseOff_UntaggedProseStillAborts(t *testing.T) {
 }
 
 // A host that routes to a member AND closes with a plain-language question to
-// the human ("要我继续吗？") is addressing the user — in cruise that must trigger
-// a confirmation round, exactly like an AskUserQuestion card would. Without it
-// the turn keeps routing while the user waits for an answer (the reported gap:
-// the host asks in prose, nobody ever confirms).
-func TestCruiseHost_ProseQuestionAfterRouteTriggersConfirmation(t *testing.T) {
+// the human ("要我继续推进吗？") has WORK TO HAND OUT, so the route wins: the
+// named member speaks and the question is display-only.
+//
+// This is the reported bug in its prose form. Before the fix the question won,
+// the turn was diverted into a confirmation round, and resolveSpeakerGroups was
+// never reached — the named member silently never spoke while the host asked the
+// user a question that cruise is supposed to make unnecessary.
+func TestCruiseHost_ProseQuestionAfterRouteStillDispatches(t *testing.T) {
 	setupGroupDB(t)
 	project := "/tmp/cruise-host-proseq"
 	groupID, hostID, byName := createHostGroup(t, project, "A")
@@ -408,7 +412,9 @@ func TestCruiseHost_ProseQuestionAfterRouteTriggersConfirmation(t *testing.T) {
 		hostID: {
 			// Round 1: route to A, then ask the user a question in prose.
 			"先派活。\n\n<clawbench-mention targets=\"A\">先做</clawbench-mention>\n\n**要我继续推进吗？**",
-			// Round 2 (confirmation): confirm completion.
+			// Round 2: declare done -> confirmation round.
+			`好了。<clawbench-goal-satisfied/>`,
+			// Round 3 (confirmation): confirm.
 			`确认完成。<clawbench-goal-satisfied/>`,
 		},
 		byName["A"]: {"A 做了"},
@@ -422,12 +428,172 @@ func TestCruiseHost_ProseQuestionAfterRouteTriggersConfirmation(t *testing.T) {
 	if res.CancelReason != "" || res.Err != "" {
 		t.Fatalf("expected a clean confirmed end, got %+v (order=%v)", res, *order)
 	}
+	// The route must have been dispatched: A speaks BEFORE any confirmation.
+	aSpoke := false
+	for _, id := range *order {
+		if id == byName["A"] {
+			aSpoke = true
+			break
+		}
+	}
+	if !aSpoke {
+		t.Fatalf("A must speak — a route outranks the co-emitted question (order=%v)", *order)
+	}
+	// Exactly ONE confirmation: round 2's goal-satisfied. Round 1's question
+	// must NOT have produced one (that would mean the route was discarded).
 	if n := countSystemLine(t, groupID, i18n.T(i18n.LocalizerForLocale(model.Language), "GroupCruiseConfirming")); n != 1 {
-		t.Fatalf("prose question must trigger a confirmation round; count=%d (order=%v)", n, *order)
+		t.Fatalf("confirmation line count=%d want 1 (route must not confirm; order=%v)", n, *order)
 	}
 	// Cruise never announces the user's turn.
 	if n := countSystemLine(t, groupID, i18n.T(i18n.LocalizerForLocale(model.Language), "GroupYourTurn")); n != 0 {
 		t.Fatalf("cruise must not announce the user's turn (count=%d)", n)
+	}
+}
+
+// A prose question with NOTHING to dispatch is still a hand-back: the host has
+// no work to hand out, so the question must trigger a confirmation round
+// instead of leaving the turn to spin. This is the other half of the precedence
+// rule — dropping the question trigger entirely would hang the turn here.
+func TestCruiseHost_ProseQuestionWithoutRouteTriggersConfirmation(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/cruise-host-proseq-noroute"
+	groupID, hostID, byName := createHostGroup(t, project, "A")
+	enableCruise(t, groupID)
+
+	script := map[string][]string{
+		hostID: {
+			// Round 1: route to A so the discussion starts.
+			`<clawbench-mention targets="A">先做</clawbench-mention>`,
+			// Round 2: no route, just a question to the human -> confirmation.
+			`我做完了。\n\n要我继续推进吗？`,
+			// Round 3 (confirmation): confirm.
+			`<clawbench-goal-satisfied/>`,
+		},
+		byName["A"]: {"A 做了"},
+	}
+	runner, order := newScriptedRunner(t, groupID, project, script)
+
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	res := runGroupTurnForTest(t, o, project, "做个任务", nil)
+
+	if res.CancelReason != "" || res.Err != "" {
+		t.Fatalf("expected a clean confirmed end, got %+v (order=%v)", res, *order)
+	}
+	if n := countSystemLine(t, groupID, i18n.T(i18n.LocalizerForLocale(model.Language), "GroupCruiseConfirming")); n != 1 {
+		t.Fatalf("a question with no route must trigger a confirmation round; count=%d (order=%v)", n, *order)
+	}
+}
+
+// THE reported bug: the host routes to two members AND emits an AskUserQuestion
+// card in the same turn. The card must not swallow the route — both members
+// speak, and the question is merely displayed.
+//
+// This is the exact timeline that was reported: "@ 了两拨人，一个都没动，反过来问我
+// 问题". The card is persisted as the converted tool_use block, so memberAskedQuestion
+// detects it — the route must still win.
+func TestCruiseHost_AskQuestionCardAfterRouteStillDispatches(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/cruise-host-askcard"
+	groupID, hostID, byName := createHostGroup(t, project, "A", "B")
+	enableCruise(t, groupID)
+
+	// Round 1: route to A and B in parallel AND ask the user a question.
+	round1 := "先派活。\n\n<clawbench-mention targets=\"A,B\" mode=\"parallel\">各自出方案</clawbench-mention>\n\n另外问一下用户。" +
+		"\n<clawbench-ask-question>\n**首发集**\n先做哪一集？\n- EP01\n- EP02\n</clawbench-ask-question>"
+	texts := map[string][]string{
+		hostID:      {round1, `好了。<clawbench-goal-satisfied/>`, `<clawbench-goal-satisfied/>`},
+		byName["A"]: {"A 出了方案"},
+		byName["B"]: {"B 出了方案"},
+	}
+	counts := map[string]int{}
+	var order []string
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		order = append(order, turn.MemberRowID)
+		seq := texts[turn.MemberRowID]
+		i := counts[turn.MemberRowID]
+		text := "(no script)"
+		if i < len(seq) {
+			text = seq[i]
+		}
+		counts[turn.MemberRowID]++
+		content := `{"blocks":[{"type":"text","text":` + jsonQuote(text) + `}]}`
+		if strings.Contains(text, "<clawbench-ask-question>") {
+			// Persist the CONVERTED form, which is what memberAskedQuestion reads.
+			content = askQuestionBlocks(text)
+		}
+		if _, err := AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
+			content, nil, false, "", turn.MemberRowID); err != nil {
+			return groupMemberResult{Err: err.Error()}
+		}
+		return groupMemberResult{}
+	}
+
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	res := runGroupTurnForTest(t, o, project, "做个任务", nil)
+
+	if res.CancelReason != "" || res.Err != "" {
+		t.Fatalf("expected a clean confirmed end, got %+v (order=%v)", res, order)
+	}
+	// BOTH named members must have spoken. This is the bug: they never did.
+	spoke := map[string]bool{}
+	for _, id := range order {
+		spoke[id] = true
+	}
+	if !spoke[byName["A"]] || !spoke[byName["B"]] {
+		t.Fatalf("both routed members must speak despite the question card; spoke=%v (order=%v)", spoke, order)
+	}
+	// Exactly one confirmation (the later goal-satisfied), not one from round 1.
+	if n := countSystemLine(t, groupID, i18n.T(i18n.LocalizerForLocale(model.Language), "GroupCruiseConfirming")); n != 1 {
+		t.Fatalf("confirmation line count=%d want 1 (the card must not divert round 1; order=%v)", n, order)
+	}
+	if n := countSystemLine(t, groupID, i18n.T(i18n.LocalizerForLocale(model.Language), "GroupYourTurn")); n != 0 {
+		t.Fatalf("cruise must not announce the user's turn (count=%d)", n)
+	}
+}
+
+// routeHasDispatchableMembers is the precedence test's whole contract in one
+// table: it must agree with resolveCruiseSpeakerGroups EXACTLY. A member it calls
+// dispatchable that the resolver then drops would skip the confirmation round
+// and produce no speakers — the spin the confirmation exists to prevent.
+func TestRouteHasDispatchableMembers(t *testing.T) {
+	members := []GroupMember{
+		{ID: "m1", Name: "A"},
+		{ID: "m2", Name: "B", Left: true},
+		{ID: groupUserTargetID, Name: "User"},
+	}
+	cases := []struct {
+		name string
+		out  string
+		want bool
+	}{
+		{"no route", "没有标签", false},
+		{"live member", `<clawbench-mention targets="A">做</clawbench-mention>`, true},
+		{"left member only", `<clawbench-mention targets="B">做</clawbench-mention>`, false},
+		{"user only", `<clawbench-mention targets="User">你来定</clawbench-mention>`, false},
+		{"unknown name only", `<clawbench-mention targets="Nope">做</clawbench-mention>`, false},
+		{"host only", `<clawbench-mention targets="Host">我自己来</clawbench-mention>`, false},
+		{"mixed user and member", `<clawbench-mention targets="User,A">都来</clawbench-mention>`, true},
+		{"private note only", `<clawbench-mention targets="A" private>悄悄说</clawbench-mention>`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			route := grouprouting.Parse(tc.out)
+			got := routeHasDispatchableMembers(route, members, "host-id")
+			if got != tc.want {
+				t.Fatalf("routeHasDispatchableMembers(%q)=%v want %v", tc.out, got, tc.want)
+			}
+			// Agreement with the resolver: a "true" must yield at least one turn.
+			if got {
+				groups := resolveCruiseSpeakerGroups(route, members, "host-id", func(m GroupMember, instruction string) speakerTurn {
+					return speakerTurn{member: m}
+				})
+				if len(groups) == 0 {
+					t.Fatalf("disagreement: dispatchable=true but resolver yielded no groups (%q)", tc.out)
+				}
+			}
+		})
 	}
 }
 
@@ -510,6 +676,41 @@ func TestHostAsksUserInProse(t *testing.T) {
 				t.Fatalf("hostAsksUserInProse(%q)=%v want %v", tc.in, got, tc.want)
 			}
 		})
+	}
+}
+
+// Non-cruise is UNCHANGED: a host question is how the host addresses the human,
+// so it hands the floor back — it must NOT be diverted by the cruise precedence
+// rule (that rule exists only inside the cruiseOn() branch).
+//
+// This pins the boundary the cruise fix must not cross: outside cruise, asking
+// the user is the host's normal way of talking to them, and the named member
+// speaking first does not make the question go away — the turn still ends with
+// the floor back at the user.
+func TestCruiseOff_HostQuestionHandsFloorBack(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/cruise-off-question"
+	groupID, hostID, byName := createHostGroup(t, project, "A")
+	// cruise NOT enabled.
+
+	script := map[string][]string{
+		hostID: {
+			`<clawbench-mention targets="A">先做</clawbench-mention>`,
+			`我做完了一版。\n\n要我继续吗？`,
+		},
+		byName["A"]: {"A 做了"},
+	}
+	runner, order := newScriptedRunner(t, groupID, project, script)
+
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	_ = runGroupTurnForTest(t, o, project, "做个任务", nil)
+
+	if n := countUserTurnLines(t, groupID); n != 1 {
+		t.Fatalf("non-cruise host question must hand the floor back exactly once, count=%d (order=%v)", n, *order)
+	}
+	if n := countSystemLine(t, groupID, i18n.T(i18n.LocalizerForLocale(model.Language), "GroupCruiseConfirming")); n != 0 {
+		t.Fatalf("non-cruise must never write a cruise confirmation line, count=%d", n)
 	}
 }
 

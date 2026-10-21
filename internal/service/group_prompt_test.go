@@ -345,6 +345,16 @@ func TestBuildCruiseHostAddendum(t *testing.T) {
 	if !strings.Contains(p, "<clawbench-group-end/>") || !strings.Contains(p, "不再直接结束") {
 		t.Fatalf("addendum must state group-end no longer ends directly: %q", p)
 	}
+	// The HOST was the one cruising prompt that forgot to forbid asking the user
+	// (free member / single chat / confirmation all say it). Cruise is
+	// unattended, so a host question is a question nobody answers — the reported
+	// "@ 了两拨人，反过来问我问题" timeline.
+	if !strings.Contains(p, "不要向用户提问") {
+		t.Fatalf("host addendum must forbid asking the user: %q", p)
+	}
+	if !strings.Contains(p, "<clawbench-ask-question>") {
+		t.Fatalf("host addendum must name the ask-question card as forbidden: %q", p)
+	}
 }
 
 // A free member must learn the completion declaration and must be told not to

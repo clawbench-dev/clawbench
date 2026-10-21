@@ -1120,18 +1120,37 @@ func (o *GroupOrchestrator) runRounds(ctx context.Context, groupID string) Drain
 // written, so there is no separate summary turn. When goal-satisfied is
 // co-emitted with an end tag / mention, the declaration still wins: the turn is
 // confirmed, not routed. Outside cruise, question and end end the turn as before.
+//
+// PRECEDENCE (a real work assignment outranks "addressing the user"): a host
+// routinely does BOTH in one turn — routes members AND closes with a question
+// to the human (an AskUserQuestion card, or plain prose like "先做哪一集？").
+// Letting the question win diverted the whole turn into a confirmation round and
+// SILENTLY DISCARDED the route: the named members never spoke, and the user saw
+// "@了两拨人，一个都没动，反过来问我问题". So when the route resolves to at
+// least one dispatchable member, the turn is routed and the question is merely
+// DISPLAYED (the card still renders; the user can answer it whenever). Only a
+// turn with NO work to hand out falls through to the question hand-back shapes —
+// which keeps them from being a spin risk: a question with no route triggers one
+// bounded confirmation round, exactly as before.
 func (o *GroupOrchestrator) hostTurnOutcome(ctx context.Context, s groupTurnSetup, hostMemberID, hostSysPrompt, hostOutput string, hostRes groupMemberResult, route grouprouting.Result) ([]speakerGroup, bool, DrainResult, bool) {
 	if o.cruiseOn() {
-		// goal-satisfied wins over everything else in the same turn, but it does
-		// NOT confirm directly — it enters a confirmation round.
-		//
-		// hostAsksUserInProse covers the fifth hand-back shape: the host ends a
-		// routing turn with a plain-language question to the human ("要我继续吗？")
-		// instead of an AskUserQuestion card. Without it, a host that routes AND
-		// asks would keep the discussion going forever while the user waits for
-		// an answer — see hostAsksUserInProse.
-		if route.GoalSatisfied || hostRes.AskedQuestion || route.End || routeNamesUser(route, s.members) ||
-			hostAsksUserInProse(hostOutput) {
+		// goal-satisfied and the explicit end tag win over everything else in the
+		// same turn, but neither confirms directly — they enter a confirmation
+		// round.
+		if route.GoalSatisfied || route.End {
+			groups, ok, res := o.runCruiseConfirmHost(ctx, s, hostMemberID, hostSysPrompt)
+			return groups, ok, res, true
+		}
+		// A usable route means there IS work to hand out: dispatch it, and let
+		// the question (card or prose) / @User be display-only. See PRECEDENCE
+		// above — returning handled=false hands control to the normal routing
+		// path, which drops any user turn itself (resolveCruiseSpeakerGroups).
+		if routeHasDispatchableMembers(route, s.members, hostMemberID) {
+			return nil, false, DrainResult{}, false
+		}
+		// Nothing to dispatch: the remaining hand-back shapes (a question card,
+		// a plain-prose question, an @User-only route) trigger the confirmation.
+		if hostRes.AskedQuestion || routeNamesUser(route, s.members) || hostAsksUserInProse(hostOutput) {
 			groups, ok, res := o.runCruiseConfirmHost(ctx, s, hostMemberID, hostSysPrompt)
 			return groups, ok, res, true
 		}
@@ -1176,6 +1195,10 @@ func (o *GroupOrchestrator) hostTurnOutcome(ctx context.Context, s groupTurnSetu
 // A false positive is cheap here: in cruise it merely asks the host to confirm
 // (one bounded round, which the host declines by routing on). A false negative
 // is the reported bug — the turn never confirms. So the rule errs toward firing.
+//
+// Note it is consulted ONLY when the turn has no dispatchable route (see
+// hostTurnOutcome): a host that asks AND routes is doing its job, so the question
+// must not override the work it just handed out.
 func hostAsksUserInProse(hostOutput string) bool {
 	if hostOutput == "" {
 		return false
@@ -1220,6 +1243,38 @@ func routeNamesUser(route grouprouting.Result, members []GroupMember) bool {
 			if m, ok := lookupMember(tgt, byID, byName); ok && m.ID == groupUserTargetID {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// routeHasDispatchableMembers reports whether the route names at least ONE
+// member that can actually be dispatched: it resolves to a group member, it is
+// not the host itself (a host cannot name itself) and not the human user (cruise
+// never hands the floor back). It is the precedence test in hostTurnOutcome: a
+// host that routes AND asks the user a question has work to hand out, so the
+// route must win over the question.
+//
+// The filter mirrors resolveCruiseSpeakerGroups EXACTLY (resolve → not host → not
+// user → not left). That matters: if this said "dispatchable" for something the
+// resolver then drops, the turn would skip the confirmation round AND produce no
+// speakers, which is the spin the confirmation exists to prevent. Keeping the
+// two in step is what makes "route wins" safe.
+func routeHasDispatchableMembers(route grouprouting.Result, members []GroupMember, excludeID string) bool {
+	if !route.Found {
+		return false
+	}
+	byID, byName := memberLookups(members)
+	for _, gr := range route.Groups {
+		for _, tgt := range gr.Members {
+			m, ok := lookupMember(tgt, byID, byName)
+			if !ok || m.ID == excludeID || m.ID == groupUserTargetID {
+				continue
+			}
+			if m.Left {
+				continue
+			}
+			return true
 		}
 	}
 	return false
