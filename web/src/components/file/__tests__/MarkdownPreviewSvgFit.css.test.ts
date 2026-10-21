@@ -180,6 +180,20 @@ describe('svg media layout (media-block.css contract)', () => {
     expect(decl).not.toContain('--svg-ar')
   })
 
+  it('lifts the chat thumbnail cap while zoomed', () => {
+    // A bubble caps media at 200px. Left unscoped, that cap survives activation
+    // and the "zoom" happens inside a 200px box — the diagram stays tiny however
+    // far it is zoomed (reported: 聊天界面点击聚焦后没有全宽).
+    const chatRules = css.match(/^\s*\.chat-message[^{]*\{[^}]*\}/gm) || []
+    expect(chatRules.length).toBeGreaterThan(0)
+    for (const rule of chatRules) {
+      if (!/max-(width|height):\s*200px/.test(rule)) continue
+      // Every size cap must be rest-only.
+      expect(rule, `chat cap must be scoped to :not(.is-zooming):\n${rule}`)
+        .toContain(':not(.is-zooming)')
+    }
+  })
+
   it('reveals the reset button only in the active state', () => {
     // Hidden by the base rule (also covers touch, where inline zoom never
     // installs) and shown only while `.is-zooming`.
@@ -204,9 +218,13 @@ describe('svg media layout (media-block.css contract)', () => {
     // Chat never stamps .svg-fit, and the 200px cap must stay for images and
     // bare inline SVGs so a change to the figure rules cannot blow the bubble
     // out.
-    expect(css).toMatch(/\.chat-message \.image-block-wrapper\s*\{[\s\S]*?max-width:\s*200px/)
+    // The cap is rest-only (`:not(.is-zooming)`) so activation can span the
+    // bubble; the selectors below therefore include the pseudo-class.
     expect(css).toMatch(
-      /\.chat-message \.image-block-wrapper \.lightbox-svg-wrap svg\.lightbox-svg\s*\{[\s\S]*?max-width:\s*200px/,
+      /\.chat-message \.image-block-wrapper:not\(\.is-zooming\)[^{]*\{[\s\S]*?max-width:\s*200px/,
+    )
+    expect(css).toMatch(
+      /\.chat-message \.image-block-wrapper:not\(\.is-zooming\) \.lightbox-svg-wrap svg\.lightbox-svg\s*\{[\s\S]*?max-width:\s*200px/,
     )
   })
 
@@ -223,14 +241,16 @@ describe('svg media layout (media-block.css contract)', () => {
     // `.chat-message .image-block-wrapper { max-width: 200px }` shape, and a
     // naive match found that instead of the real rule.
     const declarations = css.replace(/\/\*[\s\S]*?\*\//g, '')
-    const chatCap = declarations.match(/\.chat-message \.image-block-wrapper[^{]*\{[^}]*max-width:\s*200px/)
+    const chatCap = declarations.match(
+      /\.chat-message \.image-block-wrapper:not\(\.is-zooming\)[^{]*\{[^}]*max-width:\s*200px/,
+    )
     expect(chatCap, 'chat cap rule must exist').toBeTruthy()
     const selectors = chatCap![0].split('{')[0]
     expect(selectors, 'chat cap must include the mermaid :has() variant').toMatch(
-      /\.chat-message \.image-block-wrapper:has\(> \.mermaid > svg\)/,
+      /\.chat-message \.image-block-wrapper:not\(\.is-zooming\):has\(> \.mermaid > svg\)/,
     )
     expect(selectors, 'chat cap must include the img :has() variant').toMatch(
-      /\.chat-message \.image-block-wrapper:has\(> \.lightbox-img-wrap > img\)/,
+      /\.chat-message \.image-block-wrapper:not\(\.is-zooming\):has\(> \.lightbox-img-wrap > img\)/,
     )
   })
 
@@ -239,7 +259,7 @@ describe('svg media layout (media-block.css contract)', () => {
     // inline `max-width: Npx`), so a non-important chat cap would simply lose
     // and the svg would still be as wide as the ratio allows.
     const rule = css.match(
-      /\.chat-message \.image-block-wrapper:has\(> \.mermaid > svg\) > \.mermaid > svg\s*\{([\s\S]*?)\}/,
+      /\.chat-message \.image-block-wrapper:not\(\.is-zooming\):has\(> \.mermaid > svg\) > \.mermaid > svg\s*\{([\s\S]*?)\}/,
     )
     expect(rule, 'chat media cap rule must exist').toBeTruthy()
     const body = rule![1].replace(/\/\*[\s\S]*?\*\//g, '')

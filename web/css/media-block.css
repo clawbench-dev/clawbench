@@ -460,14 +460,18 @@
    `max-width: 100%` won, and every diagram inside a bubble grew to the whole
    column (measured 540px in a 600px bubble; the cap below never applied).
    Prefixing the same `:has()` selectors restores the 0-3-1 vs 0-2-1 order. */
-.chat-message .image-block-wrapper,
-.chat-message .image-block-wrapper:has(> .lightbox-img-wrap > img),
-.chat-message .image-block-wrapper:has(> .lightbox-svg-wrap > svg.lightbox-svg),
-.chat-message .image-block-wrapper:has(> .mermaid > svg) {
+/* The thumbnail cap applies ONLY while the figure is at rest. Once the reader
+   clicks it, the figure becomes the zoom viewport and must span the bubble —
+   otherwise the "zoom" happens inside a 200px box and the diagram stays tiny
+   no matter how far it is zoomed (reported: 聊天界面点击聚焦后没有全宽). */
+.chat-message .image-block-wrapper:not(.is-zooming),
+.chat-message .image-block-wrapper:not(.is-zooming):has(> .lightbox-img-wrap > img),
+.chat-message .image-block-wrapper:not(.is-zooming):has(> .lightbox-svg-wrap > svg.lightbox-svg),
+.chat-message .image-block-wrapper:not(.is-zooming):has(> .mermaid > svg) {
     max-width: 200px;
 }
 
-.chat-message .image-block-wrapper > .mermaid {
+.chat-message .image-block-wrapper:not(.is-zooming) > .mermaid {
     max-height: 200px;
     overflow: hidden;
 }
@@ -477,14 +481,16 @@
    `max-width` with `!important`, so the cap has to be `!important` too (both
    declarations are important; the more specific selector wins). A percentage
    would reintroduce the svg↔cell dependency cycle the generic rule documents. */
-.chat-message .image-block-wrapper:has(> .lightbox-img-wrap > img) > .lightbox-img-wrap > img,
-.chat-message .image-block-wrapper:has(> .lightbox-svg-wrap > svg.lightbox-svg) > .lightbox-svg-wrap > svg.lightbox-svg,
-.chat-message .image-block-wrapper:has(> .mermaid > svg) > .mermaid > svg {
+/* Same rest-only scoping: while zoomed the media's size belongs to
+   `inlineZoom`, and an `!important` cap here would pin it to 200px. */
+.chat-message .image-block-wrapper:not(.is-zooming):has(> .lightbox-img-wrap > img) > .lightbox-img-wrap > img,
+.chat-message .image-block-wrapper:not(.is-zooming):has(> .lightbox-svg-wrap > svg.lightbox-svg) > .lightbox-svg-wrap > svg.lightbox-svg,
+.chat-message .image-block-wrapper:not(.is-zooming):has(> .mermaid > svg) > .mermaid > svg {
     max-width: 200px !important;
     max-height: 184px;
 }
 
-.chat-message .image-block-wrapper .lightbox-svg-wrap svg.lightbox-svg {
+.chat-message .image-block-wrapper:not(.is-zooming) .lightbox-svg-wrap svg.lightbox-svg {
     max-width: 200px;
     max-height: 200px;
 }
