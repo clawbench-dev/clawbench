@@ -349,7 +349,8 @@ describe('MarkdownPreview — svg file sizing on media load', () => {
         const wrapper = await mountWithSvgFile()
         const figure = wrapper.find('.image-block-wrapper')
         expect(figure.exists()).toBe(true)
-        // Not yet decoded → no ratio, so the figure keeps its previous sizing.
+        // Not yet decoded → intrinsic size unknown, so the figure is not opted
+        // into fill-width sizing yet (it would size against a 0x0 box).
         expect(figure.classes()).not.toContain('svg-fit')
 
         const img = wrapper.find('img.lightbox-img')
@@ -357,7 +358,6 @@ describe('MarkdownPreview — svg file sizing on media load', () => {
         await img.trigger('load')
 
         expect(figure.classes()).toContain('svg-fit')
-        expect((figure.element as HTMLElement).style.getPropertyValue('--svg-ar')).toBe('4')
     })
 
     it('leaves a raster image figure unsized on load', async () => {

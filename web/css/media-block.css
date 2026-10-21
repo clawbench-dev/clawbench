@@ -140,26 +140,29 @@
     height: auto;
 }
 
-/* ─── SVG media: fill the reading column, capped at 60dvh ────────────────
+/* ─── SVG media: fill the reading column, scroll when too tall ────────────
    A figure is `width: fit-content` by default, so an SVG renders at its
    intrinsic size and leaves the column mostly empty. SVG media (an `<img>`
    pointing at a .svg, a bare inline `<svg>`, or a Mermaid diagram — see the
-   dedicated block below) instead GROWS to fill the column while never
-   exceeding 60dvh — the cap raster images already carry
-   (markdown-common.css). Width is driven by the media's aspect ratio so the
-   ratio is preserved:
+   dedicated block below) instead GROWS to fill the column.
 
-       width = min(100%, 60dvh × aspect-ratio)  →  height ≤ 60dvh, ratio kept
+   The 60dvh cap is a HEIGHT cap, not a width formula. It used to drive the
+   width instead:
 
-   CSS cannot read an element's aspect ratio, so `svgMediaFit.ts` derives it
-   and stamps the `.svg-fit` marker class + `--svg-ar` custom property onto the
-   figure. A figure that is never stamped keeps the previous shrink-only
-   behavior, so raster images and unknown media are untouched. Chat is
-   untouched too: the chat pipeline never stamps, and its own
-   `.chat-message .image-block-wrapper { max-width: 200px }` below still
-   clamps the thumbnail. */
+       width = min(100%, 60dvh × aspect-ratio)      ← wrong for portrait media
+
+   which is right for a landscape diagram (its height at full width is under
+   the cap anyway) but catastrophic for a tall one: a 302×1182 flowchart has
+   ratio 0.255, so 60dvh × 0.255 ≈ 110px — the diagram was rendered at 1/8 of
+   the column and 1/3 of the size Mermaid laid it out at, leaving the text
+   unreadable and the right side empty (issue #570). A height budget must
+   never shrink vector art below the size it was designed at.
+
+   Filling the column keeps the ratio because the media is `width: 100%` +
+   `height: auto`; when the result is taller than 60dvh the content cell
+   scrolls vertically rather than clipping the diagram. */
 .image-block-wrapper.svg-fit {
-    width: min(100%, calc(60dvh * var(--svg-ar, 1)));
+    width: 100%;
 }
 
 .image-block-wrapper.svg-fit > .lightbox-img-wrap > img,
@@ -168,23 +171,44 @@
     height: auto;
 }
 
+/* The generic markdown image rule (markdown-common.css) caps every `<img>` at
+   `max-height: 60dvh` with `object-fit: contain`. On a filled-width SVG file
+   that clamps the BOX while `contain` letterboxes the PAINTED content inside
+   it: a 302×1182 SVG became an 880×492 box painting a 302×492 picture —
+   unreadable, and surrounded by 578px of empty frame. `max-height: none` lets
+   the media reach its true ratio-driven height; the content CELL's
+   `max-height` + `overflow-y` below is what caps it. Inline `<svg>` has no
+   such competing rule but the declaration is harmless there.
+
+   Note this ties on specificity (0-3-1) with `.chat-message.assistant
+   img.chat-img`, so it only wins because media-block.css loads after
+   markdown-common.css — `MarkdownPreviewSvgFit.css.test.ts` pins that order.
+   Chat never stamps `.svg-fit` today, so the 200px chat thumbnail cap is not
+   affected; if chat ever stamps, this rule would release it and the chat cap
+   would need to be re-stated. */
+.image-block-wrapper.svg-fit > .lightbox-img-wrap > img,
+.image-block-wrapper.svg-fit > .lightbox-svg-wrap > svg.lightbox-svg {
+    max-height: none;
+}
+
+/* Tall media: cap the CONTENT CELL (not the figure) so the 1px frame and the
+   floating toolbar stay put while the diagram scrolls inside it. */
+.image-block-wrapper.svg-fit > .lightbox-img-wrap,
+.image-block-wrapper.svg-fit > .lightbox-svg-wrap,
+.image-block-wrapper.svg-fit > .mermaid {
+    max-height: 60dvh;
+    overflow-y: auto;
+}
+
 /* Mermaid diagrams join the same treatment: they are SVG media too, but they
    render through their own path (mermaid.ts → armMermaidFigure) as
    `.image-block-wrapper > .mermaid > svg` with no `lightbox-svg` marker.
 
-   Two rules are load-bearing here:
-   - The figure's ratio-driven width is DEFINITE (from --svg-ar), which is what
-     lets the diagram's `width="100%"` resolve. Without it the fit-content
-     figure and the child's percentage form a cycle, so the browser falls back
-     to the 300px default replaced-element width and a wide flowchart is
-     squashed (measured 1008px → 300px).
-   - Mermaid writes its natural size as an INLINE `style="max-width: Npx"`.
-     An inline declaration outranks any stylesheet rule, so overriding it to
-     let the diagram grow to the column needs `!important` — this is the one
-     place in this file where that is required rather than sloppy.
-   `max-height` on the cell is not used: the height cap comes from the figure's
-   ratio-driven width (height = width ÷ ratio ≤ 60dvh), which keeps the diagram
-   undistorted instead of clipping it. */
+   Mermaid writes its natural size as an INLINE `style="max-width: Npx"`. An
+   inline declaration outranks any stylesheet rule, so letting the diagram
+   grow to the column needs `!important` — this is the one place in this file
+   where that is required rather than sloppy. The svg's own `width="100%"`
+   resolves against the figure, which is now a definite full-column width. */
 .image-block-wrapper.svg-fit > .mermaid > svg {
     width: 100%;
     height: auto;
@@ -218,14 +242,46 @@
     max-width: 200px;
 }
 
+/* Mermaid is the exception: a diagram is not a photo thumbnail. Capping its
+   box at 200px let the height cap drive the WIDTH (a 302×1182 flowchart came
+   out 47px wide — 1/6 of its natural size), which is unreadable. It fills the
+   bubble and scrolls vertically, matching the file preview (issue #570). The
+   inline `max-width: Npx` mermaid writes needs the same `!important` override
+   as the file-preview rule above. Raster images and inline SVGs keep the
+   200px thumbnail cap.
+
+   The USER row is `align-items: flex-end`, so its `.msg-card` is shrink-to-fit:
+   a child's `width: 100%` there is a percentage against an indefinite width and
+   resolves to the media's intrinsic size (measured 300px vs the assistant's
+   760px). `align-self: stretch` makes the card fill the row first, so the
+   diagram grows in both roles.
+
+   The descendant combinator is deliberate: the figure is NOT a direct child of
+   `.msg-card` — the real tree is
+   `.msg-card > .msg-content-wrapper > .content-blocks > div > .image-block-wrapper`,
+   so `:has(> .image-block-wrapper > .mermaid)` never matches. */
+.chat-message .image-block-wrapper:has(> .mermaid) {
+    max-width: 100%;
+    width: 100%;
+}
+
+.chat-message.user .msg-card:has(.image-block-wrapper > .mermaid) {
+    align-self: stretch;
+}
+
+/* A chat bubble is inside a scrolling conversation, so its diagram gets a
+   smaller height budget than a dedicated preview pane: 60dvh there would make
+   most of the message list a nested scroller and swallow swipe gestures meant
+   to scroll the conversation. 45dvh keeps a tall diagram legible while leaving
+   the surrounding messages reachable. */
 .chat-message .image-block-wrapper > .mermaid {
-    max-height: 200px;
-    overflow: hidden;
+    max-height: 45dvh;
+    overflow-y: auto;
 }
 
 .chat-message .image-block-wrapper > .mermaid svg {
-    max-width: 100%;
-    max-height: 184px;
+    max-width: 100% !important;
+    height: auto;
 }
 
 .chat-message .image-block-wrapper .lightbox-svg-wrap svg.lightbox-svg {

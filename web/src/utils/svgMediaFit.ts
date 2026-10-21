@@ -9,29 +9,23 @@
  * media-block factory. By default a figure is `width: fit-content`, so an SVG
  * renders at its intrinsic size and leaves the reading column mostly empty.
  *
- * This module makes SVG figures GROW to fill the column while never exceeding
- * a height cap (60dvh, the same cap raster images already carry). Because a
- * plain `width:100%; max-height:60dvh` on a replaced element would STRETCH the
- * media (the browser clamps the height without shrinking the width), the
- * figure's width is instead driven by the media's aspect ratio:
+ * This module makes SVG figures GROW to fill the column. The height cap
+ * (60dvh, the same one raster images already carry) is applied to the content
+ * CELL as `max-height` + `overflow-y: auto`, so a tall diagram scrolls inside
+ * its frame instead of being squeezed.
  *
- *   width = min(100%, 60dvh × aspect-ratio)   →   height ≤ 60dvh, ratio kept
- *
- * The ratio is derived here (not in CSS, which cannot read it) and handed to
- * the stylesheet as the `--svg-ar` custom property plus the `.svg-fit` marker
- * class. A figure that never gets stamped keeps the previous shrink-only
- * behavior, so unknown / non-SVG media is unaffected.
+ * The cell is stamped with the `.svg-fit` marker class, which is what opts a
+ * figure into that sizing. A figure that never gets stamped keeps the previous
+ * shrink-only behavior, so unknown / non-SVG media is unaffected.
  *
  * Sizing is only ever applied to figures in the FILE-PREVIEW family (file
  * preview, code-link card, share SPA, HTML export). The chat pipeline never
- * stamps, so chat bubble thumbnails keep their own caps.
+ * stamps, so chat bubble thumbnails keep their own caps — except Mermaid,
+ * which media-block.css opts into the same fill-width treatment by structure.
  */
 
 /** Marker class consumed by media-block.css to opt a figure into fill-width. */
 export const SVG_FIT_CLASS = 'svg-fit'
-
-/** Custom property carrying the media aspect ratio (width ÷ height). */
-export const SVG_AR_PROP = '--svg-ar'
 
 /**
  * `.svg` file reference, wherever it appears in a URL: a plain path (`a.svg`),
@@ -120,16 +114,20 @@ const CONTENT_MEDIA_SELECTOR =
     ':scope > .mermaid > svg'
 
 /**
- * Stamp one `.image-block-wrapper` with its media's aspect ratio. Returns true
- * when the figure is now (or already was) sized; false when the media is not
- * SVG or its ratio is not yet known.
+ * Stamp one `.image-block-wrapper` as fill-width SVG media. Returns true when
+ * the figure is now (or already was) sized; false when the media is not SVG or
+ * its intrinsic size is not known yet.
+ *
+ * The ratio is used only as the readiness check: a figure must not be opted in
+ * before the media's intrinsic size is known, or the very first layout would
+ * size it against a 0×0 box. CSS preserves the ratio on its own through
+ * `width: 100%; height: auto`, so no ratio value needs to cross the boundary.
  */
 export function stampSvgFigure(wrapper: Element): boolean {
     const media = wrapper.querySelector(CONTENT_MEDIA_SELECTOR)
     if (!media) return false
     const ar = svgMediaAspectRatio(media)
     if (ar === null || !Number.isFinite(ar) || ar <= 0) return false
-    ;(wrapper as HTMLElement).style.setProperty(SVG_AR_PROP, String(ar))
     wrapper.classList.add(SVG_FIT_CLASS)
     return true
 }
