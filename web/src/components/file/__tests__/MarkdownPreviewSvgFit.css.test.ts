@@ -165,6 +165,19 @@ describe('svg media layout (media-block.css contract)', () => {
     expect(css).toMatch(/\.image-block-wrapper\.is-zooming \.image-block-reset-btn\s*\{[\s\S]*?display:\s*inline-flex/)
   })
 
+  it('draws the figure and its toolbar with square corners', () => {
+    // The figure is a media region, not a rounded card. `overflow: hidden` means
+    // a radius on the frame would also round the artwork's own corners.
+    const shell = css.match(/^\.image-block-wrapper\s*\{([\s\S]*?)\}/m)
+    expect(shell).toBeTruthy()
+    expect(shell![1]).toContain('border-radius: 0')
+    expect(shell![1]).not.toContain('--radius-sm')
+
+    const toolbar = css.match(/^\.image-block-header\s*\{([\s\S]*?)\}/m)
+    expect(toolbar).toBeTruthy()
+    expect(toolbar![1]).toContain('border-radius: 0')
+  })
+
   it('keeps the chat bubble thumbnail cap for non-diagram media', () => {
     // Chat never stamps .svg-fit, and the 200px cap must stay for images and
     // bare inline SVGs so a change to the figure rules cannot blow the bubble

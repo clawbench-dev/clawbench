@@ -32,7 +32,10 @@
     width: fit-content;
     max-width: 100%;
     border: 1px solid var(--border-color);
-    border-radius: var(--radius-sm);
+    /* Square corners: the figure reads as a media region, not a rounded card.
+       The frame also clips its media (`overflow: hidden`), so a radius here
+       would round the artwork's own corners too. */
+    border-radius: 0;
     overflow: hidden;
     line-height: 0;
 }
@@ -50,7 +53,8 @@
     align-items: center;
     justify-content: flex-end;
     padding: var(--space-1);
-    border-radius: var(--radius-sm);
+    /* Square, matching the figure frame it floats over. */
+    border-radius: 0;
     background: rgba(0, 0, 0, 0.45);
     backdrop-filter: blur(2px);
     -webkit-backdrop-filter: blur(2px);
@@ -78,7 +82,7 @@
     width: 22px;
     height: 22px;
     border: none;
-    border-radius: var(--radius-xs);
+    border-radius: 0;
     background: transparent;
     color: rgba(255, 255, 255, 0.85);
     cursor: pointer;
