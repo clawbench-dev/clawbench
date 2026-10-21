@@ -364,6 +364,122 @@ describe('resting media width (svgMediaFit)', () => {
   })
 })
 
+/**
+ * Portrait diagrams at rest.
+ *
+ * #570 reported a 302x1182 flowchart rendered as an unreadable sliver and the
+ * obvious-looking fix is to drop the height budget from
+ * `applyMediaWidth`'s `Math.min(intrinsic, avail, heightBudget * ar)`.
+ *
+ * That fix does NOT work, and the reason is geometry rather than code:
+ * `media-block.css` caps the media at `max-height: 60dvh` with
+ * `object-fit: contain`. Once the height is pinned, a 1:3.9 artwork's width is
+ * forced — 60dvh * 0.255. Measured in Chromium against the real stylesheet
+ * (viewport 900px, 800px column):
+ *
+ *   width from the budget (current): figure 138px, drawing 138px, gutters 0
+ *   width from the column  (dropped): figure 302px, drawing 138px, gutters 82px
+ *
+ * The drawing is IDENTICAL; dropping the budget only adds 82px of empty frame
+ * on each side — the "578px empty box" symptom the same issue complained about.
+ * So the budget is load-bearing and these assertions pin it, to stop the next
+ * reader from "fixing" it a third time.
+ */
+describe('portrait diagram resting width (height budget is intentional)', () => {
+  /** 302x1182 is the flowchart from #570 — the case the whole debate is about. */
+  const PORTRAIT_W = 302
+  const PORTRAIT_H = 1182
+
+  const mkPortrait = () => {
+    const wrapper = document.createElement('div')
+    wrapper.className = 'image-block-wrapper'
+    const cell = document.createElement('div')
+    cell.className = 'mermaid'
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    svg.setAttribute('viewBox', `0 0 ${PORTRAIT_W} ${PORTRAIT_H}`)
+    cell.appendChild(svg)
+    wrapper.appendChild(cell)
+    const column = document.createElement('div')
+    column.appendChild(wrapper)
+    document.body.appendChild(column)
+    Object.defineProperty(column, 'getBoundingClientRect', {
+      value: () => ({ width: 800, height: 0, top: 0, left: 0, right: 800, bottom: 0, x: 0, y: 0, toJSON() {} }),
+      configurable: true,
+    })
+    return { wrapper, svg, column }
+  }
+
+  const originalInnerHeight = window.innerHeight
+  afterEach(() => {
+    document.body.innerHTML = ''
+    Object.defineProperty(window, 'innerHeight', { value: originalInnerHeight, configurable: true })
+  })
+
+  function setViewportHeight(h: number) {
+    Object.defineProperty(window, 'innerHeight', { value: h, configurable: true })
+  }
+
+  it('sizes a tall diagram from the height budget, not the column', () => {
+    // 900px viewport -> 60dvh = 540px -> 540 * (302/1182) = 138px.
+    setViewportHeight(900)
+    const { wrapper, svg } = mkPortrait()
+    stampSvgFigure(wrapper)
+
+    expect(parseFloat(svg.style.width)).toBeCloseTo(138, 0)
+    // The column is 800px; taking it would leave ~82px of empty frame per side
+    // while the artwork stayed exactly the same size.
+    expect(parseFloat(svg.style.width)).toBeLessThan(800)
+  })
+
+  it('scales the resting width with the viewport, because the height cap drives it', () => {
+    // This is the property that makes the budget necessary: the cap is on
+    // HEIGHT, so the width must track it. If someone removes the budget both
+    // viewports would produce the same 302px, which is what the assertions
+    // below distinguish.
+    setViewportHeight(600)
+    const a = mkPortrait()
+    stampSvgFigure(a.wrapper)
+    const short = parseFloat(a.svg.style.width)
+    document.body.innerHTML = ''
+
+    setViewportHeight(1080)
+    const b = mkPortrait()
+    stampSvgFigure(b.wrapper)
+    const tall = parseFloat(b.svg.style.width)
+
+    expect(short).toBeLessThan(tall)
+    // 600 * 0.6 * ar and 1080 * 0.6 * ar.
+    expect(short).toBeCloseTo(600 * 0.6 * (PORTRAIT_W / PORTRAIT_H), 0)
+    expect(tall).toBeCloseTo(1080 * 0.6 * (PORTRAIT_W / PORTRAIT_H), 0)
+  })
+
+  it('never exceeds the column for a tall diagram on a very tall viewport', () => {
+    // At some point the budget-derived width would outgrow the column; the
+    // column clamp still wins, so a portrait diagram can never overflow.
+    setViewportHeight(4000)
+    const { wrapper, svg } = mkPortrait()
+    stampSvgFigure(wrapper)
+    expect(parseFloat(svg.style.width)).toBeLessThanOrEqual(800)
+  })
+
+  it('keeps the frame hugging the media (no empty gutters at rest)', () => {
+    // The reason the budget matters: at rest the figure is shrink-to-fit around
+    // the media's resolved width, so the frame and the artwork have the SAME
+    // width and there are no empty bands. jsdom cannot lay this out, so the
+    // contract asserted here is the input to it — the svg carries a definite
+    // pixel width equal to the budget-derived value, and the CSS that makes the
+    // frame hug it is pinned by MarkdownPreviewSvgFit.css.test.ts.
+    setViewportHeight(900)
+    const { wrapper, svg } = mkPortrait()
+    stampSvgFigure(wrapper)
+
+    const written = parseFloat(svg.style.width)
+    const budgetWidth = 900 * 0.6 * (PORTRAIT_W / PORTRAIT_H)
+    // Within a pixel of the budget: no extra width for the frame to pad out.
+    expect(Math.abs(written - budgetWidth)).toBeLessThan(1)
+  })
+})
+
 describe('responsive refit (svgMediaFit)', () => {
   const mk = (vbW: number, vbH: number) => {
     const wrapper = document.createElement('div')

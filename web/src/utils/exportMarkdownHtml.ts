@@ -1189,8 +1189,14 @@ function buildLightboxJs(): string {
  * pointer devices only, wheel zooms around the cursor, drag pans, reset button
  * returns to fit, Escape leaves the zoom. Touch is not handled here either, for
  * the same reason: a pinch would fight page scrolling.
+ *
+ * Because it is a hand-copied mirror it DRIFTS, and it has: the wheel rule, the
+ * scale cap and the table-cell exclusion all lagged the app at once. Every one
+ * of those is now pinned by a test in exportMarkdownHtml.test.ts that executes
+ * this script against a real DOM (see "exported inline zoom"), so a future
+ * divergence fails instead of shipping.
  */
-function buildInlineZoomJs(): string {
+export function buildInlineZoomJs(): string {
     return `
 (function() {
     // Same gate as the app: precise pointer that can hover. Touch never gets
@@ -1198,7 +1204,11 @@ function buildInlineZoomJs(): string {
     var mq = window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)');
     if (!mq || !mq.matches) return;
 
-    var MIN = 1, MAX = 8, STEP = 1.15, DRAG = 3;
+    // MAX mirrors inlineZoom's MAX_SAFE_SCALE. A low cap made the gesture feel
+    // broken ("放大到全宽就无法再放大") right after the artwork filled the frame,
+    // which is the point a reader most wants to keep going. This is only a
+    // guard against numeric runaway from a stray event storm.
+    var MIN = 1, MAX = 64, STEP = 1.15, DRAG = 3;
     var active = null;   // { fig, media, scale, tx, ty }
     var panning = null;
 
@@ -1215,6 +1225,11 @@ function buildInlineZoomJs(): string {
         if (!fig) return null;
         // Never hijack the floating toolbar.
         if (target.closest('.image-block-header')) return null;
+        // Table cells opt out, exactly as in the app: a figure inside a cell is
+        // a thumbnail in a grid, and zooming it grows the whole row. Checked
+        // structurally (td/th) rather than by a marker class — the markdown
+        // renderer emits no such class.
+        if (fig.closest('td, th')) return null;
         return mediaOf(fig) ? fig : null;
     }
 
@@ -1328,15 +1343,15 @@ function buildInlineZoomJs(): string {
         if (!fig) return;
         var s = active && active.fig === fig ? active : null;
 
-        // At rest, a downward notch belongs to the page — scrolling past a
-        // diagram must never be trapped.
-        if (!s) {
-            if (e.deltaY > 0) return;
-            e.preventDefault();
-            var started = activate(fig);
-            if (started) zoomAt(started, MIN * STEP, e.clientX, e.clientY);
-            return;
-        }
+        // At rest EVERY notch — up or down, any delta — belongs to the page.
+        // This is the whole point of click-to-enter: scrolling a document with
+        // the pointer drifting over a diagram must never zoom it. An earlier
+        // version let an upward notch activate the zoom, which trapped the
+        // reader scrolling back up; the app-side module already fixed this and
+        // this mirror has to agree with it.
+        if (!s) return;
+        // Horizontal-only notches are not a zoom gesture.
+        if (e.deltaY === 0) return;
 
         var next = Math.min(MAX, Math.max(MIN, s.scale * (e.deltaY > 0 ? 1 / STEP : STEP)));
 

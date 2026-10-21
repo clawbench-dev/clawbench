@@ -163,15 +163,22 @@ watch(visible, (v) => {
   text-decoration: underline;
 }
 
-/* Three buttons share one row only while that row can actually hold them.
-   Root cause of the squeeze: a CJK string's min-content width is ONE
-   character, so a flex item's default `min-width: auto` never protected these
-   labels — `flex-shrink: 1` happily shrank each button down to a single-glyph
-   column (measured at 320px: "立即升级" rendered as a 4-line vertical stack,
-   the other two broke in half). `white-space: nowrap` raises each button's
-   floor to its full label, which is what stops the shrink; `flex-wrap` then
-   hands any leftover overflow a second row instead of spilling out of the
-   panel. */
+/* The footer is a COLUMN: primary action full width, the two dismissals side by
+   side beneath it. Same shape as WelcomeOverlay's footer (确定 full width, then
+   重新扫描 / 不再提示), so the two first-run dialogs read alike.
+   
+   Why not one row with wrapping: the panel is at most 380px wide, so the footer
+   has 348px of content box, and the three labels cannot share it in every
+   locale. English needs ~470px ("Upgrade now" + "Skip this version" + "Remind me
+   later" at 14px, plus padding and gaps), Chinese ~230px. A wrapping row
+   therefore laid out DIFFERENTLY per language — one row in Chinese, two in
+   English — and, worse, an earlier `@media (max-width: 400px)` override keyed
+   the two-row layout to the VIEWPORT, which never fires on desktop: English on a
+   1280px screen still got a squeezed two-row footer while Chinese got one row.
+   
+   A fixed column is language- and viewport-independent, which is the property
+   that actually matters here. `flex-wrap` is kept so an unusually long locale
+   wraps its own row instead of overflowing the panel. */
 .up-footer {
   padding: var(--space-4) var(--space-7) 14px;
   display: flex;
@@ -179,8 +186,11 @@ watch(visible, (v) => {
   gap: var(--space-4);
 }
 
+/* Full width, so the primary action never competes with the labels beside it.
+   `white-space: nowrap` still applies: a CJK string's min-content width is one
+   character, so without it a narrow panel would stack the label vertically. */
 .up-upgrade {
-  flex: 1;
+  flex: 1 1 100%;
   padding: var(--space-4) var(--space-7);
   border: none;
   border-radius: var(--radius-sm);
@@ -197,7 +207,14 @@ watch(visible, (v) => {
   .up-upgrade:hover { opacity: var(--opacity-hover); }
 }
 
+/* The dismissals share the second row. `flex-basis: 0` with `min-width: 0` lets
+   them divide the width evenly; without the explicit `min-width` a long label
+   sets the flex item's automatic minimum to its full text width and the even
+   split collapses. `flex-wrap` on the footer still moves one down if a locale's
+   pair genuinely cannot fit. */
 .up-skip {
+  flex: 1 1 0;
+  min-width: 0;
   padding: var(--space-4) var(--space-6);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
@@ -218,6 +235,8 @@ watch(visible, (v) => {
 }
 
 .up-later {
+  flex: 1 1 0;
+  min-width: 0;
   padding: var(--space-4) var(--space-6);
   border: none;
   border-radius: var(--radius-sm);
@@ -226,22 +245,6 @@ watch(visible, (v) => {
   font-size: var(--font-size-md);
   white-space: nowrap;
   cursor: pointer;
-}
-
-/* Narrow panels: the primary action owns the first row, the two dismissals
-   share the second. Same shape as WelcomeOverlay's footer (确定 full width,
-   then 重新扫描 / 不再提示 side by side), so the two first-run dialogs read
-   alike. Deliberately last: these overrides carry the same specificity as the
-   base button rules above, so only source order makes them win. */
-@media (max-width: 400px) {
-  .up-upgrade {
-    flex: 1 1 100%;
-  }
-
-  .up-skip,
-  .up-later {
-    flex: 1 1 0;
-  }
 }
 
 .up-fade-enter-active { transition: opacity var(--duration-slow) ease; }

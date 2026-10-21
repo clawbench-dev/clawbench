@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -323,16 +324,43 @@ func TestGroupUnread_SilentTurnDoesNotRaiseBadge(t *testing.T) {
 // that never touch those are left alone on purpose — adding a column to an
 // unrelated minimal fixture would imply it belongs to that subsystem.
 //
-// This is a source guard, not a runtime one: the failure it prevents only
-// appears when someone LATER adds a query call to one of those files, and a
-// runtime test cannot anticipate that.
+// chatSessionsSchemaRe matches a chat_sessions CREATE TABLE in either form.
+//
+// Both forms occur in this package's fixtures: most write
+// `CREATE TABLE IF NOT EXISTS chat_sessions`, but session_compacted_test.go and
+// usage_stats_migrate_test.go write a bare `CREATE TABLE chat_sessions`. An
+// earlier version of the guard keyed on the IF NOT EXISTS spelling only, so
+// those two files were invisible to it — the guard would have stayed green if
+// someone added an unread query to either one, which is exactly the regression
+// it exists to catch.
+var chatSessionsSchemaRe = regexp.MustCompile(`CREATE TABLE (?:IF NOT EXISTS )?chat_sessions\b`)
+
+// unreadQueries are the only call sites that SELECT awaiting_user_at.
+var unreadQueries = []string{"GetSessions(", "GetOverviewSessions(", "UpdateLastRead(", "lookupReadSessions("}
+
+// needsAwaitingUserAtColumn reports whether a test file both declares a
+// chat_sessions schema and calls a query that selects awaiting_user_at.
+//
+// Split out from the test so the detection itself can be exercised with
+// synthetic sources: a source guard that silently stops matching is
+// indistinguishable from a clean codebase, and this one already had that bug.
+func needsAwaitingUserAtColumn(text string) bool {
+	if !chatSessionsSchemaRe.MatchString(text) {
+		return false
+	}
+	for _, q := range unreadQueries {
+		if strings.Contains(text, q) {
+			return true
+		}
+	}
+	return false
+}
+
 func TestGroupUnread_TestSchemasDeclareAwaitingUserAt(t *testing.T) {
 	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatalf("read package dir: %v", err)
 	}
-	const marker = "CREATE TABLE IF NOT EXISTS chat_sessions"
-	queries := []string{"GetSessions(", "GetOverviewSessions(", "UpdateLastRead(", "lookupReadSessions("}
 
 	checked := 0
 	for _, e := range entries {
@@ -345,17 +373,7 @@ func TestGroupUnread_TestSchemasDeclareAwaitingUserAt(t *testing.T) {
 			t.Fatalf("read %s: %v", name, err)
 		}
 		text := string(src)
-		if !strings.Contains(text, marker) {
-			continue
-		}
-		usesUnreadQuery := false
-		for _, q := range queries {
-			if strings.Contains(text, q) {
-				usesUnreadQuery = true
-				break
-			}
-		}
-		if !usesUnreadQuery {
+		if !needsAwaitingUserAtColumn(text) {
 			continue
 		}
 		checked++
@@ -367,5 +385,34 @@ func TestGroupUnread_TestSchemasDeclareAwaitingUserAt(t *testing.T) {
 	}
 	if checked == 0 {
 		t.Fatal("no test schema matched — the guard's detection is broken, not the schemas")
+	}
+}
+
+// The detector must see BOTH schema spellings. Without this, a fixture written
+// the bare way is silently exempt and the guard above passes on an empty set of
+// interesting files.
+func TestGroupUnread_SchemaDetectionCoversBothSpellings(t *testing.T) {
+	const withIfNotExists = "CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT);"
+	const bare = "CREATE TABLE chat_sessions (id TEXT);"
+	const withQuery = "GetSessions(ctx, 0)"
+
+	for _, tc := range []struct {
+		name string
+		src  string
+		want bool
+	}{
+		{"if-not-exists + query", withIfNotExists + withQuery, true},
+		{"bare + query", bare + withQuery, true},
+		{"if-not-exists, no query", withIfNotExists, false},
+		{"bare, no query", bare, false},
+		{"query but no chat_sessions schema", withQuery, false},
+		// A differently-named table must not be mistaken for chat_sessions.
+		{"other table", "CREATE TABLE chat_sessions_archive (id TEXT);" + withQuery, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := needsAwaitingUserAtColumn(tc.src); got != tc.want {
+				t.Fatalf("needsAwaitingUserAtColumn = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

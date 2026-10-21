@@ -178,11 +178,19 @@ function deactivate(): void {
     // CURRENT column and 60dvh budget; it is a no-op when the module is not
     // loaded (e.g. the standalone exporter).
     media.style.width = restingWidth ?? ''
-    refitHook?.(figure)
+    // Drop the active marker BEFORE refitting. `refitFigure` bails out while
+    // `is-zooming` is set (the zoom owns the media's size then), so calling it
+    // first made this line dead: the diagram kept the stale `restingWidth`
+    // above, which is exactly the size the refit exists to replace. The class
+    // also has to go first for the measurement to see the resting layout —
+    // `applyMediaWidth` reads the column width, and the zoomed figure is a
+    // fixed-viewport box rather than the column.
+    //
     // The resting aspect-ratio stays: it describes the artwork, not the zoom,
     // and dropping it would make the frame collapse for one frame on exit.
     figure.classList.remove(ZOOM_ACTIVE_CLASS)
     active = null
+    refitHook?.(figure)
 }
 
 /**

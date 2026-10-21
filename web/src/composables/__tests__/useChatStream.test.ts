@@ -431,6 +431,35 @@ describe('useChatStream', () => {
       expect(texts).toContain('fresh reply')
       expect(texts.some((t: string) => t.includes('stale reply') && t.includes('fresh reply'))).toBe(false)
     })
+
+    it('does NOT claim the stale bubble holds a complete turn', () => {
+      // A leftover streaming bubble exists precisely because its terminal event
+      // never reached this client, so what it holds is a prefix cut at whatever
+      // arrived last — not the finished turn. Claiming completeness makes
+      // rebuildFromDb keep that prefix instead of the authoritative DB row, and
+      // when the row was summarized the non-empty prefix then suppressed both
+      // the summary and the lazy-original fetch: the reply rendered truncated at
+      // a tool call until a session switch rebuilt the array.
+      //
+      // The safety net in useChatSession and runReload's "no longer running"
+      // branch already pass false; this was the third site with the same
+      // invariant and the only one still using the default.
+      const forceCleanup = vi.mocked(forceCleanupStreamingState)
+      forceCleanup.mockClear()
+
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      options.messages.value.push(
+        { role: 'user', id: 1, content: 'question', blocks: [{ type: 'text', text: 'question' }] },
+        { role: 'assistant', id: 100, content: '', blocks: [{ type: 'text', text: 'stale reply' }], streaming: true },
+      )
+
+      connectStream('test-session-1')
+
+      expect(forceCleanup).toHaveBeenCalled()
+      const args = forceCleanup.mock.calls[0]
+      expect(args[3]).toEqual({ holdsCompleteTurn: false })
+    })
   })
 
   describe('disconnectStream', () => {

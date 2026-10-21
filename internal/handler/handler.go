@@ -227,8 +227,19 @@ func validateAndResolvePath(w http.ResponseWriter, r *http.Request, basePath, re
 // client renders as the generic "发送失败，请重试".
 //
 // Absolute paths are therefore validated against the configured roots
-// (isPathUnderAnyRoot) instead of being re-rooted, which keeps the traversal
-// guarantee: anything outside every root is still a 403.
+// (isPathUnderAnyRoot) instead of being re-rooted.
+//
+// NOTE what that guarantee actually is: "under a configured root", NOT "inside
+// the project". On Unix the root list is ["/"] (platform.ListRootPaths), so for
+// an absolute path this check passes for anything that exists — the same rule
+// /api/fs/list already applies, and the reason it must: the file manager
+// browses the whole machine and its "attach to chat" action hands over whatever
+// absolute path the user picked. Confining attachments to the project here
+// would break that action, so the permissiveness is deliberate.
+//
+// What is NOT permitted is escaping through the RELATIVE form: those still go
+// through model.ValidatePath, which resolves symlinks on both sides and rejects
+// anything climbing out of the project root.
 func resolveAttachmentPath(w http.ResponseWriter, r *http.Request, basePath, path string) (string, bool) {
 	absPath, ok := resolveAttachmentPathQuiet(basePath, path)
 	if !ok {

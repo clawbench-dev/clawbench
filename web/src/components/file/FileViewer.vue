@@ -373,7 +373,6 @@ const htmlPreviewTimestamp = ref(Date.now())
 const quoteQuestion = useQuoteQuestion()
 /** Selection→quote bridge for the previewed HTML document (null when detached). */
 let disposeHtmlQuoteBridgeFn = null
-let htmlQuoteBridgeWin = null
 /** Path of the document the bridge was attached to, for bar dismissal. */
 let htmlQuoteBridgePath = ''
 /** Ctrl+F forwarder installed inside the previewed document. */
@@ -431,10 +430,24 @@ async function attachHtmlQuoteBridge() {
     if (!props.chatQuote) return
     const win = await resolveIframeWindow(() => htmlPreviewRef.value)
     if (!win) return
-    // Several load events can fire for one document; re-attaching would churn
-    // the listeners. A real reload is a different contentWindow, which disposes
-    // the old bridge first.
-    if (htmlQuoteBridgeWin === win) return
+    // ALWAYS dispose and re-attach — never dedupe on the window.
+    //
+    // An earlier version returned early when `htmlQuoteBridgeWin === win`, on
+    // the assumption that "a real reload is a different contentWindow". That
+    // assumption is wrong: after an iframe navigates, Chromium hands back the
+    // SAME WindowProxy and only `contentDocument` is replaced (measured: same
+    // window, different document). So the guard did the opposite of what it
+    // claimed — the old listeners were left attached to a destroyed document,
+    // the fresh document was skipped because the window compared equal, and
+    // selecting text in the preview stopped producing a quote bar at all, with
+    // no error. A reload here is the MAIN path: an fsnotify refresh or an AI
+    // edit bumps `htmlPreviewTimestamp` and re-navigates the iframe.
+    //
+    // Re-attaching is cheap and safe: `disposeHtmlQuoteBridge` only removes
+    // listeners and deliberately leaves the quote bar alone, so a user halfway
+    // through typing a comment on the same file keeps their text. The search
+    // shortcut right above already re-attaches unconditionally for the same
+    // reason.
     disposeHtmlQuoteBridge()
     htmlQuoteBridgePath = props.file?.path || ''
     disposeHtmlQuoteBridgeFn = attachIframeSelectionQuoteBridge({
@@ -443,7 +456,6 @@ async function attachHtmlQuoteBridge() {
         show: (data) => quoteQuestion.showBar(data, { delay: 0 }),
         hide: () => quoteQuestion.hideBar(),
     })
-    htmlQuoteBridgeWin = win
 }
 
 /**
@@ -459,7 +471,6 @@ function disposeHtmlQuoteBridge() {
         disposeHtmlQuoteBridgeFn()
         disposeHtmlQuoteBridgeFn = null
     }
-    htmlQuoteBridgeWin = null
 }
 
 /**

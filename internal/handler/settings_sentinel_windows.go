@@ -19,17 +19,15 @@ func launchSentinel() (*exec.Cmd, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get executable path: %w", err)
 	}
-	args := os.Args[1:]
-
 	// cmd.exe does NOT honour single quotes — `cmd /c 'C:\x\clawbench.exe'`
 	// fails with "is not recognized". The POSIX shellQuote used by the Unix
-	// sentinel therefore cannot be reused here. Windows paths never contain a
-	// double quote, so plain double-quoting is sufficient and does not need
-	// cmd's own ^-escaping.
-	sentinelScript := fmt.Sprintf(
-		`timeout /t 2 /nobreak >nul & "%s" %s`,
-		exe, joinArgs(args),
-	)
+	// sentinel therefore cannot be reused here: quoting the ARGS with it (the
+	// original bug) did not fail loudly, it delivered `'--port'` as a literal
+	// token so every flag comparison in cmd/server/main.go missed and the new
+	// process came up on the default port and default data directory.
+	// buildWindowsSentinelScript applies the CommandLineToArgvW rules instead;
+	// see settings_winarg.go for why they live outside the build tag.
+	sentinelScript := buildWindowsSentinelScript(exe, os.Args[1:])
 	cmd := exec.Command("cmd", "/c", sentinelScript)
 
 	cmd.Stdout = os.Stdout

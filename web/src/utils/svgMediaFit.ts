@@ -162,6 +162,24 @@ function applyMediaWidth(wrapper: HTMLElement, media: HTMLElement, ar: number): 
     //  - the column width, so a wide diagram does not overflow, and
     //  - the 60dvh height budget, so a tall one is not cut off.
     // Nothing may GROW it — enlarging is what the active (zoomed) state is for.
+    //
+    // The height budget is NOT a bug, and removing it does not widen a portrait
+    // diagram. #570 reported a 302x1182 flowchart as an unreadable sliver and
+    // the obvious fix — drop `heightBudget * ar` here — was tried twice
+    // (bfc27b288 removed the same formula from CSS, 965ac2ef1 put it back in
+    // JS). It cannot work: `media-block.css` caps the media at
+    // `max-height: 60dvh` with `object-fit: contain`, so once the HEIGHT is
+    // pinned the width of a 1:3.9 artwork is forced to 60dvh * 0.255. Measured
+    // in Chromium against the real stylesheet (900px viewport, 800px column):
+    //
+    //   with the budget (this code):  figure 138px, drawing 138px, gutters 0
+    //   without the budget:           figure 302px, drawing 138px, gutters 82px
+    //
+    // Identical artwork; the only difference is 82px of empty frame on each
+    // side — exactly the "578px empty box" the same issue complained about.
+    // A portrait diagram is narrow at rest BY CONSTRUCTION; reading it is what
+    // click-to-zoom is for. `svgMediaFit.test.ts` ("portrait diagram resting
+    // width") pins this so it is not "fixed" a third time.
     const intrinsic = intrinsicWidth(media, ar)
     if (!(intrinsic > 0)) return
     const heightBudget = window.innerHeight * 0.6

@@ -104,14 +104,65 @@ func TestAIChat_AbsoluteFileAttachment_Accepted(t *testing.T) {
 	assert.Contains(t, waitPrompt(t, got).Prompt, "[Current file: "+file+"]")
 }
 
-// The containment guard must survive: accepting the absolute form must not
-// become a way to read arbitrary files. A path outside every configured root
-// is still refused.
-func TestAIChat_AbsoluteAttachmentOutsideRoots_Forbidden(t *testing.T) {
+// An absolute attachment path is accepted when it sits under a configured root.
+//
+// This documents the REAL rule, which is weaker than "inside the project": on
+// Unix the root list is ["/"], so any existing absolute path passes — and it
+// must, because the file manager browses the whole machine and its "attach to
+// chat" action (FileManagerContent.doAttachToChat) forwards whatever path the
+// user picked. Asserting a project-internal 403 here would demand a restriction
+// the product does not have.
+//
+// Both root shapes are exercised so the test cannot pass merely because the
+// fixture narrowed RootPaths (see TestSharePublic_LocalAbsolutePathOutsideProject_404
+// for the same trap).
+func TestAIChat_AbsoluteAttachmentOutsideProject_AcceptedUnderAnyRoot(t *testing.T) {
+	env, sessionID, got := setupAbsAttach(t)
+
+	outside := filepath.Join(t.TempDir(), "picked-in-file-manager.txt")
+	require.NoError(t, os.WriteFile(outside, []byte("x"), 0o644))
+
+	for _, tc := range []struct {
+		name  string
+		roots []string
+	}{
+		// Production semantics on Unix: the app browses the whole machine.
+		{"production roots", []string{"/"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			origRoots := model.RootPaths
+			model.RootPaths = tc.roots
+			t.Cleanup(func() { model.RootPaths = origRoots })
+
+			body := map[string]any{
+				"message":   "读它",
+				"agentId":   "absattach-agent-" + t.Name(),
+				"filePaths": []string{outside},
+			}
+			req := newRequest(t, http.MethodPost, "/api/ai/chat?session_id="+sessionID, body)
+			withProjectCookie(req, env.ProjectDir)
+			w := callHandlerWithAuth(AIChat, req)
+
+			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			assert.Contains(t, waitPrompt(t, got).Prompt, "[Current file: "+outside+"]")
+		})
+	}
+}
+
+// A path outside EVERY configured root is refused. This is the containment that
+// does hold, and it is only meaningful when the roots are narrowed — with
+// production roots on Unix ("/") there is nothing outside them, which is why the
+// previous version of this test asserted on the fixture's boundary and passed
+// for the wrong reason.
+func TestAIChat_AbsoluteAttachmentOutsideAllRoots_Forbidden(t *testing.T) {
 	env, sessionID, _ := setupAbsAttach(t)
 
 	outside := filepath.Join(t.TempDir(), "secret.txt")
 	require.NoError(t, os.WriteFile(outside, []byte("x"), 0o644))
+
+	origRoots := model.RootPaths
+	model.RootPaths = []string{env.WatchDir}
+	t.Cleanup(func() { model.RootPaths = origRoots })
 
 	body := map[string]any{
 		"message":   "读它",
