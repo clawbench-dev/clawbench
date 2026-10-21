@@ -255,13 +255,12 @@ func TestApplyDefaultsPartialConfig(t *testing.T) {
 	cfg := Config{
 		Port:     3000,
 		Password: "my-secret",
-		Upload: struct {
-			MaxSizeMB int `yaml:"max_size_mb"`
-			MaxFiles  int `yaml:"max_files"`
-		}{
-			MaxSizeMB: 50,
-		},
 	}
+	// Assign through the field rather than mirroring the anonymous struct
+	// literal: a literal has to be kept in sync by hand and breaks compilation
+	// every time the Upload config gains a field, which is unrelated to what
+	// this test is about.
+	cfg.Upload.MaxSizeMB = 50
 
 	autoPassword := ApplyDefaults(&cfg, map[string]bool{"port": true, "password": true, "upload": true, "upload.max_size_mb": true})
 
@@ -1378,4 +1377,36 @@ func TestApplyDefaultsUsageMeter(t *testing.T) {
 			t.Errorf("explicit values rewritten: %+v", cfg.UsageMeter)
 		}
 	})
+}
+
+// Upload retention is destructive, so its defaults must be inert: an install
+// that has never configured it must never delete a file.
+func TestApplyDefaults_UploadRetentionIsInertByDefault(t *testing.T) {
+	setupTestBinDir(t)
+
+	cfg := Config{}
+	ApplyDefaults(&cfg, nil)
+
+	if cfg.Upload.RetentionEnabled {
+		t.Error("RetentionEnabled defaulted to true; deletion must be opt-in")
+	}
+	// A non-zero default is deliberate: "enabled + 0 days" would mean keep
+	// forever, so flipping the switch would appear to do nothing.
+	if cfg.Upload.RetentionDays != 30 {
+		t.Errorf("RetentionDays = %d, want 30", cfg.Upload.RetentionDays)
+	}
+}
+
+func TestApplyDefaults_UploadRetentionClampsNonPositiveDays(t *testing.T) {
+	setupTestBinDir(t)
+
+	for _, in := range []int{-5, 0} {
+		cfg := Config{}
+		cfg.Upload.RetentionDays = in
+		ApplyDefaults(&cfg, nil)
+
+		if cfg.Upload.RetentionDays != 30 {
+			t.Errorf("RetentionDays(%d) = %d, want 30", in, cfg.Upload.RetentionDays)
+		}
+	}
 }

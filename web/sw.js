@@ -29,7 +29,7 @@
 // Bump on every behavioural change. The browser compares the script
 // byte-for-byte, so any edit here already triggers an update; this constant
 // exists to make the intent explicit and to give the log line something to say.
-const SW_VERSION = 'clawbench-sw-2';
+const SW_VERSION = 'clawbench-sw-3';
 
 /**
  * Paths that must never be served by the worker.
@@ -42,6 +42,9 @@ const SW_VERSION = 'clawbench-sw-2';
  *               the cookie/403 incident happened.
  *   - /login    auth entry point.
  *   - /share/*  token-scoped public pages; must always be fresh.
+ *   - /share-target  Web Share Target POST from the OS share sheet. Its
+ *               multipart body must reach the server untouched (see the
+ *               fetch-handler note about WebKit dropping re-fetched bodies).
  *   - /sw.js    the worker script itself, so an update check is never answered
  *               by a running worker.
  *   - /manifest.json, /assets/*, /, /index.html  the installable app shell.
@@ -52,6 +55,7 @@ const NETWORK_ONLY_PATHS = [
   '/api/*',
   '/login',
   '/share/*',
+  '/share-target',
   '/sw.js',
   '/manifest.json',
   '/assets/*',

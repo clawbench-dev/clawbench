@@ -80,6 +80,8 @@ var hotReloadFields = map[string]bool{
 	"recent_projects.max_count":         true,
 	"upload.max_size_mb":                true,
 	"upload.max_files":                  true,
+	"upload.retention_enabled":          true,
+	"upload.retention_days":             true,
 	"tts.max_cache_files":               true,
 	"tts.voice":                         true,
 	"tts.speed":                         true,
@@ -393,8 +395,10 @@ type configRecentProjects struct {
 }
 
 type configUpload struct {
-	MaxSizeMB int `json:"max_size_mb"`
-	MaxFiles  int `json:"max_files"`
+	MaxSizeMB        int  `json:"max_size_mb"`
+	MaxFiles         int  `json:"max_files"`
+	RetentionEnabled bool `json:"retention_enabled"`
+	RetentionDays    int  `json:"retention_days"`
 }
 
 type configTerminal struct {
@@ -801,6 +805,8 @@ var PatchableConfigPaths = map[string]bool{
 	"recent_projects.max_count":         true,
 	"upload.max_size_mb":                true,
 	"upload.max_files":                  true,
+	"upload.retention_enabled":          true,
+	"upload.retention_days":             true,
 	"terminal.enabled":                  true,
 	"terminal.idle_timeout":             true,
 	"terminal.max_sessions":             true,
@@ -972,8 +978,10 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			MaxCount: cfg.RecentProjects.MaxCount,
 		},
 		Upload: configUpload{
-			MaxSizeMB: cfg.Upload.MaxSizeMB,
-			MaxFiles:  cfg.Upload.MaxFiles,
+			MaxSizeMB:        cfg.Upload.MaxSizeMB,
+			MaxFiles:         cfg.Upload.MaxFiles,
+			RetentionEnabled: cfg.Upload.RetentionEnabled,
+			RetentionDays:    cfg.Upload.RetentionDays,
 		},
 		Terminal: configTerminal{
 			Enabled:     cfg.Terminal.Enabled,
@@ -1775,6 +1783,13 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		if v, ok := upload["max_files"].(float64); ok && v < 0 {
 			return fmt.Errorf("upload.max_files must be non-negative")
 		}
+		if v, ok := upload["retention_days"].(float64); ok && v < 1 {
+			// 0 cannot mean "keep forever" here: ApplyDefaults rewrites any
+			// non-positive value to 30 on the next startup, so accepting 0 would
+			// silently turn "keep forever" into "delete after 30 days".
+			// Disabling retention is what "keep forever" is expressed with.
+			return fmt.Errorf("upload.retention_days must be at least 1")
+		}
 	}
 
 	// RAG numeric fields. batch_size is load-bearing: it becomes the SQL LIMIT
@@ -1989,6 +2004,12 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		}
 		if v, ok := upload["max_files"].(float64); ok {
 			cfg.Upload.MaxFiles = int(v)
+		}
+		if v, ok := upload["retention_enabled"].(bool); ok {
+			cfg.Upload.RetentionEnabled = v
+		}
+		if v, ok := upload["retention_days"].(float64); ok {
+			cfg.Upload.RetentionDays = int(v)
 		}
 	}
 

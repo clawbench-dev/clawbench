@@ -132,3 +132,31 @@ describe('manifest reaches the build root', () => {
     expect(viteConfig).toMatch(/PWA_ROOT_FILES\s*=\s*\[[^\]]*'sw\.js'/)
   })
 })
+
+describe('Web Share Target stays off the worker path', () => {
+  it('routes /share-target through the network', () => {
+    // The OS share sheet POSTs a multipart body here. Letting the worker
+    // re-issue that request is the exact WebKit bug documented in the fetch
+    // handler (a re-fetched multipart POST arrives with Content-Length: 0), so
+    // it must be network-routed like /api/*.
+    expect(swCode).toContain("'/share-target'")
+  })
+
+  it('manifest declares a share_target the handler can serve', () => {
+    const manifest = JSON.parse(readWebFile('../assets/manifest.json'))
+    expect(manifest.share_target).toBeDefined()
+    expect(manifest.share_target.action).toBe('/share-target')
+    // A GET share_target cannot carry files at all; POST is what the handler
+    // and the manifest both require.
+    expect(manifest.share_target.method).toBe('POST')
+    expect(manifest.share_target.enctype).toBe('multipart/form-data')
+    // The handler reads this field name.
+    expect(manifest.share_target.params.files[0].name).toBe('files')
+  })
+
+  it('the fetch handler still refuses to re-issue non-GET requests', () => {
+    // The share POST is protected by this guard, not by the router table:
+    // Safari has no Static Routing API, so it always reaches the fetch handler.
+    expect(swCode).toContain("event.request.method !== 'GET'")
+  })
+})

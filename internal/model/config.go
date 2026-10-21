@@ -85,6 +85,17 @@ type Config struct {
 	Upload     struct {
 		MaxSizeMB int `yaml:"max_size_mb"` // Maximum file upload size in MB (default: 100)
 		MaxFiles  int `yaml:"max_files"`   // Maximum number of files per upload (default: 20)
+		// RetentionEnabled enables periodic deletion of upload files that no
+		// message references any more (default: false). Attachments are
+		// temporary by nature but nothing used to remove them, so the directory
+		// grew without bound.
+		RetentionEnabled bool `yaml:"retention_enabled"`
+		// RetentionDays is how long an UNREFERENCED upload is kept before
+		// deletion (default: 30). Files still named by a message are never
+		// deleted regardless of age. Values below 1 are rejected by the API and
+		// clamped to the default on load; "keep forever" is expressed by
+		// RetentionEnabled=false, not by 0.
+		RetentionDays int `yaml:"retention_days"`
 	} `yaml:"upload"`
 	Chat struct {
 		InitialMessages          int  `yaml:"initial_messages"`           // Number of messages to load initially (default: 20)

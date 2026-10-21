@@ -3420,3 +3420,70 @@ func TestBuildConfigMCP_ReturnsSecretsInPlaintext(t *testing.T) {
 		t.Fatalf("env value must be returned in plaintext, got %q", got.Servers[0].Env["API_KEY"])
 	}
 }
+
+func TestServeConfig_Patch_UploadRetention(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	model.ConfigInstance = cfg
+
+	body := `{"upload":{"retention_enabled":true,"retention_days":30}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	// The fields are hot-reload: the worker is recreated from the new config,
+	// so a restart is not required.
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.False(t, resp["needs_restart"].(bool))
+
+	assert.True(t, model.ConfigInstance.Upload.RetentionEnabled)
+	assert.Equal(t, 30, model.ConfigInstance.Upload.RetentionDays)
+}
+
+func TestServeConfig_Patch_UploadRetentionRejectsNonPositiveDays(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+
+	body := `{"upload":{"retention_days":0}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "upload.retention_days must be at least 1")
+}
+
+// The GET response must carry the retention fields, or the settings UI would
+// render them as unset and overwrite the user's choice on the next save.
+func TestServeConfig_Get_ExposesUploadRetention(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	cfg.Upload.RetentionEnabled = true
+	cfg.Upload.RetentionDays = 7
+	model.ConfigInstance = cfg
+
+	req := httptest.NewRequest(http.MethodGet, "/api/config", http.NoBody)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp struct {
+		Upload struct {
+			RetentionEnabled bool `json:"retention_enabled"`
+			RetentionDays    int  `json:"retention_days"`
+		} `json:"upload"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.True(t, resp.Upload.RetentionEnabled)
+	assert.Equal(t, 7, resp.Upload.RetentionDays)
+}

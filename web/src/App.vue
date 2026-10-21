@@ -695,6 +695,7 @@ import { fileSupportsToc } from './utils/tocSupport.ts'
 import { formatBadgeCount } from './utils/format.ts'
 import { portForwardUnavailable } from './utils/portForwardUtils.ts'
 import { useChatContext } from './composables/useChatContext.ts'
+import { consumeShareTargetResult, stageShareTargetResult } from './utils/shareTarget.ts'
 import { useForgeUnread } from './composables/useForgeUnread.ts'
 import { useForgeBinding, forgeDockIconKind } from './composables/useForgeBinding.ts'
 import { setPendingForgeTarget, clearPendingForgeTarget, forgeTargetFromDetail } from './composables/useForgeNavigation.ts'
@@ -2425,7 +2426,33 @@ async function initializeApp() {
   // only flips after this function resolves, so the dock/file manager do not
   // exist here. `currentFile` is already populated by the restore above.
   applyProjectPanel(store.state.projectRoot)
+
+  // Web Share Target: an installed PWA receives shared files as a POST to
+  // /share-target, which stores them and redirects here with the paths. Runs
+  // after the project cookie is set (that is what the upload was written into)
+  // and before isAuthenticated flips, so the composer mounts with the cards
+  // already staged instead of flashing an empty input first.
+  applyShareTargetAttachments()
+
   return true
+}
+
+/**
+ * Stage the files a Web Share Target POST left behind.
+ *
+ * The share gesture happens in another app, so the user lands here with no
+ * visible action of their own — a silent success would be indistinguishable
+ * from "the share did nothing". A toast states what happened in both
+ * directions; the attachments themselves are visible in the composer.
+ *
+ * The decision table lives in utils/shareTarget (stageShareTargetResult) so it
+ * can be tested without mounting App.vue.
+ */
+function applyShareTargetAttachments() {
+  const result = consumeShareTargetResult()
+  if (!result) return
+  const { toastKey, toastParams, variant } = stageShareTargetResult(result, (path) => addAttachedFile(path, false))
+  toast.show(t(toastKey, toastParams), { icon: variant.icon, type: variant.type, duration: variant.duration })
 }
 
 /** Report a fatal startup error to the user and to the client log relay. */

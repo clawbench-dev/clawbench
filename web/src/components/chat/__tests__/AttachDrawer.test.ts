@@ -17,6 +17,8 @@ vi.mock('lucide-vue-next', () => ({
   ExternalLink: { name: 'ExternalLink', render: () => h('span', { class: 'icon-external-link' }) },
   Trash2: { name: 'Trash2', render: () => h('span', { class: 'icon-trash2' }) },
   Square: { name: 'Square', render: () => h('span', { class: 'icon-square' }) },
+  Camera: { name: 'Camera', render: () => h('span', { class: 'icon-camera' }) },
+  Image: { name: 'Image', render: () => h('span', { class: 'icon-image' }) },
   Loader2: { name: 'Loader2', render: () => h('span', { class: 'icon-loader2' }) },
   LoaderCircle: { name: 'LoaderCircle', render: () => h('span', { class: 'icon-loader-circle' }) },
   X: { name: 'X', render: () => h('span', { class: 'icon-x' }) },
@@ -40,10 +42,19 @@ const mockFetchRecentShares = vi.fn()
 const mockFetchRecentUploads = vi.fn()
 const mockDeleteRecentShare = vi.fn()
 const mockDeleteRecentUpload = vi.fn()
+const mockClearRecentShares = vi.fn()
+const mockClearRecentUploads = vi.fn()
 const mockDialogConfirm = vi.fn()
+const mockToastShow = vi.fn()
 const mockHandleFileSelect = vi.fn()
 const mockCancelChatUpload = vi.fn()
 const sharedChatUploadCancelled = ref(false)
+
+// The real useToast starts an auto-dismiss timer and shares module state, which
+// would leak across tests. Only `show` is needed here.
+vi.mock('@/composables/useToast', () => ({
+  useToast: () => ({ show: mockToastShow }),
+}))
 
 vi.mock('@/composables/useDialog.ts', () => ({
   useDialog: () => ({
@@ -60,6 +71,7 @@ vi.mock('@/composables/useShareIn', () => ({
     recentShares: sharedRecentShares,
     fetchRecentShares: mockFetchRecentShares,
     deleteRecentShare: mockDeleteRecentShare,
+    clearRecentShares: mockClearRecentShares,
   }),
 }))
 
@@ -68,6 +80,7 @@ vi.mock('@/composables/useUploadRecent', () => ({
     recentUploads: sharedRecentUploads,
     fetchRecentUploads: mockFetchRecentUploads,
     deleteRecentUpload: mockDeleteRecentUpload,
+    clearRecentUploads: mockClearRecentUploads,
   }),
 }))
 
@@ -127,6 +140,8 @@ const i18n = createI18n({
         attach: {
           drawerTitle: 'Attach Files',
           uploadFile: 'Upload file',
+          pickImage: 'Photo',
+          takePhoto: 'Camera',
           currentTab: 'Current',
           recentReferences: 'References',
           recentShares: 'Shares',
@@ -138,9 +153,20 @@ const i18n = createI18n({
           emptyShares: 'No shared files',
           emptyUploads: 'No uploaded files',
           uploading: 'Uploading...',
+          deleteRecent: 'Delete this file',
+          clearAll: 'Clear',
+          clearSharesHint: '{n} recent share(s)',
+          clearSharesConfirm: 'Clear all recent shares?',
+          clearSharesDone: 'Cleared {n} recent share file(s)',
+          clearSharesFailed: 'Failed to clear recent shares',
+          clearUploadsHint: '{n} recent upload(s)',
+          clearUploadsConfirm: 'Clear all recent uploads?',
+          clearUploadsDone: 'Cleared {n} recent upload file(s)',
+          clearUploadsFailed: 'Failed to clear recent uploads',
+          clearPartial: 'Deleted {deleted}; {failed} failed',
         },
       },
-      common: { remove: 'Remove' },
+      common: { remove: 'Remove', delete: 'Delete' },
     },
   },
 })
@@ -161,7 +187,10 @@ describe('AttachDrawer', () => {
   beforeEach(() => {
     mockDeleteRecentShare.mockClear()
     mockDeleteRecentUpload.mockClear()
+    mockClearRecentShares.mockClear()
+    mockClearRecentUploads.mockClear()
     mockDialogConfirm.mockClear()
+    mockToastShow.mockClear()
     mockHandleFileSelect.mockReset()
     mockHandleFileSelect.mockResolvedValue([])
     mockCancelChatUpload.mockReset()
@@ -311,9 +340,38 @@ describe('AttachDrawer', () => {
     expect(getRawState(wrapper).currentDirDisplayName.value).toBe('/')
   })
 
-  it('has upload button that opens file picker', () => {
+  it('renders the three source entries (camera, photo, file)', () => {
     const wrapper = mountDrawer()
-    expect(wrapper.find('.ad-upload-btn').exists()).toBe(true)
+    const buttons = wrapper.findAll('.ad-source-btn')
+    expect(buttons).toHaveLength(3)
+    // The labels are what tell them apart, so assert the rendered text. A
+    // missing i18n key would render the raw key here, which also fails.
+    const labels = buttons.map((b) => b.find('.ad-source-label').text())
+    expect(labels).toEqual(['Camera', 'Photo', 'Upload file'])
+  })
+
+  it('gives each source entry its own picker mode (accept / capture)', () => {
+    const wrapper = mountDrawer()
+    // One shared input cannot serve all three: `accept` and `capture` are read
+    // by the OS when the picker opens, so mutating them right before click() is
+    // unreliable on Android WebView.
+    const photo = wrapper.find('input[type="file"][accept="image/*"]:not([capture])')
+    const camera = wrapper.find('input[type="file"][capture="environment"]')
+    const plain = wrapper.findAll('input[type="file"]').filter(
+      (i) => !i.attributes('accept') && !i.attributes('capture'),
+    )
+    expect(photo.exists()).toBe(true)
+    expect(camera.exists()).toBe(true)
+    expect(camera.attributes('accept')).toBe('image/*')
+    expect(plain).toHaveLength(1)
+  })
+
+  it('camera entry is single-shot, the other two allow multiple', () => {
+    const wrapper = mountDrawer()
+    // A camera capture produces exactly one image; leaving `multiple` on would
+    // make some pickers show a multi-select UI for a single shot.
+    expect(wrapper.find('input[capture="environment"]').attributes('multiple')).toBeUndefined()
+    expect(wrapper.find('input[accept="image/*"]:not([capture])').attributes('multiple')).toBeDefined()
   })
 
   it('handleUploadClick resets file input value and sets filePickerOpen', async () => {
@@ -325,6 +383,46 @@ describe('AttachDrawer', () => {
     state.handleUploadClick()
     expect(fakeInput.value).toBe('')
     expect(state.filePickerOpen.value).toBe(true)
+  })
+
+  it('photo and camera entries open their own input, not the file input', async () => {
+    const wrapper = mountDrawer()
+    const state = getRawState(wrapper)
+    const fileInput = { value: 'a', click: vi.fn() }
+    const photoInput = { value: 'b', click: vi.fn() }
+    const cameraInput = { value: 'c', click: vi.fn() }
+
+    state.fileInputRef.value = fileInput
+    state.photoInputRef.value = photoInput
+    state.handlePhotoClick()
+    // click() is deferred one tick so the drawer's closeGuard installs first.
+    await nextTick()
+    expect(photoInput.value).toBe('')
+    expect(photoInput.click).toHaveBeenCalledTimes(1)
+    expect(fileInput.click).not.toHaveBeenCalled()
+
+    // Re-assign after the render: awaiting nextTick re-binds the template refs
+    // to the real DOM inputs, so the fake set above no longer stands.
+    state.fileInputRef.value = fileInput
+    state.cameraInputRef.value = cameraInput
+    state.handleCameraClick()
+    await nextTick()
+    expect(cameraInput.value).toBe('')
+    expect(cameraInput.click).toHaveBeenCalledTimes(1)
+    expect(fileInput.click).not.toHaveBeenCalled()
+    expect(photoInput.click).toHaveBeenCalledTimes(1)
+  })
+
+  it('photo/camera entries are no-ops when their input is absent', () => {
+    const wrapper = mountDrawer()
+    const state = getRawState(wrapper)
+    state.photoInputRef.value = null
+    state.cameraInputRef.value = null
+    // Must not throw, and must not claim a picker is open (that would install
+    // the closeGuard and leave the drawer permanently unclosable).
+    expect(() => state.handlePhotoClick()).not.toThrow()
+    expect(() => state.handleCameraClick()).not.toThrow()
+    expect(state.filePickerOpen.value).toBe(false)
   })
 
   it('onFileSelect resets filePickerOpen and switches to uploads tab on success', async () => {
@@ -851,5 +949,185 @@ describe('AttachDrawer selected-badge CSS', () => {
     const decls = declsOf('.ad-icon-wrap .ad-thumb')
     expect(decls).toMatch(/object-fit\s*:\s*cover/)
     expect(decls).toMatch(/border-radius\s*:\s*var\(--radius-sm\)/)
+  })
+})
+
+describe('AttachDrawer clear-all (最近上传 / 最近分享 顶部一键清空)', () => {
+  // This is a top-level describe, so it does not inherit the one above. Without
+  // its own reset the mocks accumulate across cases and the assertions below
+  // would read call counts from a previous test.
+  beforeEach(() => {
+    mockClearRecentShares.mockReset()
+    mockClearRecentUploads.mockReset()
+    mockDialogConfirm.mockReset()
+    mockToastShow.mockReset()
+    sharedRecentShares.value = []
+    sharedRecentUploads.value = []
+  })
+
+  it('renders a clear button in the shares tab only when there are shares', async () => {
+    sharedRecentShares.value = []
+    const wrapper = mountDrawer()
+    const state = getRawState(wrapper)
+    state.activeTab.value = 'shares'
+    await nextTick()
+    // An always-visible destructive action on an empty list is a trap.
+    expect(wrapper.find('.ad-clear-btn').exists()).toBe(false)
+
+    sharedRecentShares.value = [{ name: 'a.txt', path: '.clawbench/share-in/a.txt', size: 1, modTime: '' }]
+    await nextTick()
+    expect(wrapper.find('.ad-clear-btn').exists()).toBe(true)
+    expect(wrapper.find('.ad-clear-hint').text()).toContain('1')
+  })
+
+  it('renders a clear button in the uploads tab only when there are uploads', async () => {
+    sharedRecentUploads.value = []
+    sharedRecentShares.value = []
+    const wrapper = mountDrawer()
+    const state = getRawState(wrapper)
+    state.activeTab.value = 'uploads'
+    await nextTick()
+    expect(wrapper.find('.ad-clear-btn').exists()).toBe(false)
+
+    sharedRecentUploads.value = [{ name: 'a.png', path: '.clawbench/uploads/a.png', size: 1, modTime: '' }]
+    await nextTick()
+    expect(wrapper.find('.ad-clear-btn').exists()).toBe(true)
+  })
+
+  it('does not show the shares clear bar on other tabs', async () => {
+    sharedRecentShares.value = [{ name: 'a.txt', path: '.clawbench/share-in/a.txt', size: 1, modTime: '' }]
+    const wrapper = mountDrawer()
+    const state = getRawState(wrapper)
+    state.activeTab.value = 'current'
+    await nextTick()
+    expect(wrapper.find('.ad-clear-btn').exists()).toBe(false)
+  })
+
+  it('handleClearShares confirms, clears, and reports the count', async () => {
+    mockDialogConfirm.mockResolvedValue(true)
+    mockClearRecentShares.mockResolvedValue({ deleted: 3, failed: 0 })
+    const wrapper = mountDrawer()
+    const state = getRawState(wrapper)
+
+    await state.handleClearShares()
+
+    expect(mockDialogConfirm).toHaveBeenCalledTimes(1)
+    expect(mockClearRecentShares).toHaveBeenCalledTimes(1)
+    expect(mockToastShow).toHaveBeenCalledTimes(1)
+    expect(mockToastShow.mock.calls[0][0]).toContain('3')
+    expect(mockToastShow.mock.calls[0][1]).toMatchObject({ type: 'success' })
+  })
+
+  it('handleClearUploads confirms, clears, and reports the count', async () => {
+    mockDialogConfirm.mockResolvedValue(true)
+    mockClearRecentUploads.mockResolvedValue({ deleted: 5, failed: 0 })
+    const wrapper = mountDrawer()
+    const state = getRawState(wrapper)
+
+    await state.handleClearUploads()
+
+    expect(mockClearRecentUploads).toHaveBeenCalledTimes(1)
+    expect(mockToastShow.mock.calls[0][0]).toContain('5')
+  })
+
+  it('does nothing when the user cancels the confirmation', async () => {
+    mockDialogConfirm.mockResolvedValue(false)
+    const wrapper = mountDrawer()
+    const state = getRawState(wrapper)
+
+    await state.handleClearShares()
+    await state.handleClearUploads()
+
+    expect(mockClearRecentShares).not.toHaveBeenCalled()
+    expect(mockClearRecentUploads).not.toHaveBeenCalled()
+    expect(mockToastShow).not.toHaveBeenCalled()
+  })
+
+  it('detaches every attached file inside the cleared directory', async () => {
+    mockDialogConfirm.mockResolvedValue(true)
+    mockClearRecentUploads.mockResolvedValue({ deleted: 2, failed: 0 })
+    const wrapper = mountDrawer({
+      attachedFiles: [
+        { path: '.clawbench/uploads/a.png' },
+        { path: '.clawbench/uploads/b.png' },
+        // Outside the cleared directory — must survive.
+        { path: 'src/main.go' },
+      ],
+    })
+    const state = getRawState(wrapper)
+
+    await state.handleClearUploads()
+
+    const removed = wrapper.emitted('remove-attached') as any[]
+    expect(removed.map(e => e[0].path)).toEqual([
+      '.clawbench/uploads/a.png',
+      '.clawbench/uploads/b.png',
+    ])
+  })
+
+  it('does not detach a nested file the sweep leaves on disk', async () => {
+    // clearRecentDir skips subdirectories, so detaching a nested attachment
+    // would drop a card whose file still exists.
+    mockDialogConfirm.mockResolvedValue(true)
+    mockClearRecentUploads.mockResolvedValue({ deleted: 0, failed: 0 })
+    const wrapper = mountDrawer({
+      attachedFiles: [{ path: '.clawbench/uploads/batch/a.png' }],
+    })
+    const state = getRawState(wrapper)
+
+    await state.handleClearUploads()
+
+    expect(wrapper.emitted('remove-attached')).toBeFalsy()
+  })
+
+  it('reports a partial sweep instead of claiming success', async () => {
+    mockDialogConfirm.mockResolvedValue(true)
+    mockClearRecentShares.mockResolvedValue({ deleted: 2, failed: 1 })
+    const wrapper = mountDrawer()
+    const state = getRawState(wrapper)
+
+    await state.handleClearShares()
+
+    expect(mockToastShow.mock.calls[0][0]).toContain('2')
+    expect(mockToastShow.mock.calls[0][0]).toContain('1')
+    expect(mockToastShow.mock.calls[0][1]).toMatchObject({ type: 'error' })
+  })
+
+  it('reports a failure when the request did not succeed', async () => {
+    mockDialogConfirm.mockResolvedValue(true)
+    mockClearRecentUploads.mockResolvedValue(null)
+    const wrapper = mountDrawer()
+    const state = getRawState(wrapper)
+
+    await state.handleClearUploads()
+
+    expect(mockToastShow).toHaveBeenCalledTimes(1)
+    expect(mockToastShow.mock.calls[0][1]).toMatchObject({ type: 'error' })
+  })
+
+  it('ignores a second tap while a sweep is in flight', async () => {
+    mockDialogConfirm.mockResolvedValue(true)
+    let resolveClear: (v: any) => void = () => {}
+    mockClearRecentUploads.mockReturnValue(new Promise((r) => { resolveClear = r }))
+    const wrapper = mountDrawer()
+    const state = getRawState(wrapper)
+
+    const first = state.handleClearUploads()
+    await state.handleClearUploads() // must be a no-op
+    resolveClear({ deleted: 1, failed: 0 })
+    await first
+
+    expect(mockClearRecentUploads).toHaveBeenCalledTimes(1)
+    expect(mockDialogConfirm).toHaveBeenCalledTimes(1)
+  })
+
+  it('re-enables the button after the sweep finishes', async () => {
+    mockDialogConfirm.mockResolvedValue(true)
+    mockClearRecentUploads.mockResolvedValue({ deleted: 0, failed: 0 })
+    const wrapper = mountDrawer()
+    const state = getRawState(wrapper)
+
+    await state.handleClearUploads()
+    expect(state.clearing.value).toBeNull()
   })
 })

@@ -552,6 +552,8 @@ const serverDefaults: Record<string, unknown> = {
   'recent_projects.max_count': 10,
   'upload.max_size_mb': 100,
   'upload.max_files': 20,
+  'upload.retention_enabled': false,
+  'upload.retention_days': 30,
   'terminal.enabled': true,
   'terminal.idle_timeout': '10m',
   'terminal.max_sessions': 10,

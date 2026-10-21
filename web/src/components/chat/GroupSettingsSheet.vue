@@ -663,10 +663,12 @@ defineExpose({ open: openSheet })
 }
 
 /* ── Header: add-members action ──
-   Mirrors AttachDrawer's header (`.ad-header` / `.ad-upload-btn`): a full-width
-   flex row, the title on the left and a plain icon + text button pushed to the
-   right by margin-left:auto. No pill/background — the accent-coloured text is
-   the whole affordance, same as the attachment drawer's upload action. */
+   A full-width flex row, the title on the left and a plain icon + text button
+   pushed to the right by margin-left:auto. No pill/background — the
+   accent-coloured text is the whole affordance.
+   (AttachDrawer used to be the model for this, but its upload action moved out
+   of the header into a full-width `.ad-source-bar`, so do not copy that
+   component any more.) */
 .gm-header {
   display: flex;
   align-items: center;
