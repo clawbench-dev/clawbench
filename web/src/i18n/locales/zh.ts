@@ -661,6 +661,7 @@ export default {
     modeSwitcher: {
       title: '模式',
       cliHint: 'CLI 模式不支持切换，如需切换请先改为 ACP 模式',
+      saveFailed: '模式未能保存，已还原为之前的模式',
     },
     transportSwitcher: {
       title: '协议',
@@ -668,6 +669,7 @@ export default {
       acpDesc: '结构化协议通信，支持模式切换与权限管理',
       cli: 'CLI 模式',
       cliDesc: '命令行文本交互，兼容性更好',
+      saveFailed: '协议未能保存，刷新后会恢复原值',
     },
     autoApprove: {
       title: '自动批准',
@@ -727,6 +729,7 @@ export default {
       auto: '自动',
       rejected: '该模型不支持 {effort} 思考等级，已还原',
       notRemembered: '{effort} 本次已生效，但未能保存——重启后会恢复默认',
+      saveFailed: '思考等级未能保存，刷新后会恢复默认',
     },
     attach: {
       currentFile: '当前文件',

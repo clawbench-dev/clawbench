@@ -4822,3 +4822,75 @@ func TestQueueEnqueue_ExplicitAgentGate(t *testing.T) {
 		})
 	}
 }
+
+// TestAIChat_PersistsModeOnSend verifies that a mode sent with the message is
+// written to the session's context_state, not just applied to that one turn.
+//
+// Mode is the only session setting with no column of its own — it lives in
+// context_state — so this request is the last chance to record it when the
+// picker's PATCH did not land. Without the write, turn 1 runs req.ModeID (an
+// explicit override) while every later turn of the same run rebuilds the
+// request from context_state and inherits the PREVIOUS mode; auto-cruise makes
+// that visible by turning one message into many turns.
+func TestAIChat_PersistsModeOnSend(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "mode persists", "", "", "default", "chat")
+	require.NoError(t, err)
+	// Make the send take the enqueue path so the assertion does not depend on
+	// starting a real AI backend.
+	service.TrySetSessionRunning(sessionID)
+	defer func() {
+		service.SetSessionRunning(sessionID, false)
+		service.ClearQueuedMessages(sessionID)
+	}()
+
+	require.Empty(t, service.GetSessionModeID(sessionID), "a fresh session has no persisted mode")
+
+	body := map[string]any{
+		"message": "do the thing",
+		"modeId":  "bypassPermissions",
+	}
+	req := newRequest(t, http.MethodPost, "/api/ai/chat?session_id="+sessionID, body)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(AIChat, req)
+	assertOK(t, w)
+
+	assert.Equal(t, "bypassPermissions", service.GetSessionModeID(sessionID),
+		"the mode carried by the send must survive as the session's mode")
+}
+
+// TestAIChat_ModeSendKeepsAvailableModes verifies the mode write does not erase
+// the available-modes list a mode_update already persisted. The write is a
+// partial json_set on currentModeId for exactly this reason: a whole-object
+// replacement would drop availableModes and leave the picker empty.
+func TestAIChat_ModeSendKeepsAvailableModes(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "mode merge", "", "", "default", "chat")
+	require.NoError(t, err)
+	service.TrySetSessionRunning(sessionID)
+	defer func() {
+		service.SetSessionRunning(sessionID, false)
+		service.ClearQueuedMessages(sessionID)
+	}()
+
+	// Simulate a mode_update that already landed (what the agent reports).
+	service.PatchContextStateMerge(sessionID, map[string]string{
+		"mode": `{"currentModeId":"default","availableModes":[{"id":"default","name":"Always Ask"},{"id":"bypassPermissions","name":"Bypass"}]}`,
+	})
+
+	body := map[string]any{"message": "go", "modeId": "bypassPermissions"}
+	req := newRequest(t, http.MethodPost, "/api/ai/chat?session_id="+sessionID, body)
+	withProjectCookie(req, env.ProjectDir)
+	assertOK(t, callHandler(AIChat, req))
+
+	state := service.GetContextState(sessionID)
+	require.NotNil(t, state)
+	require.NotNil(t, state.Mode)
+	assert.Equal(t, "bypassPermissions", state.Mode.CurrentModeID)
+	assert.Len(t, state.Mode.AvailableModes, 2, "the send must not wipe the advertised mode list")
+}

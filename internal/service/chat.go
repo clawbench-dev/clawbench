@@ -2688,6 +2688,15 @@ func PatchContextStateMerge(sessionID string, patches map[string]string) {
 	if rawUsage, ok := patches["usage"]; ok {
 		patches = mergeUsagePatchIntoDB(sessionID, patches, rawUsage)
 	}
+	// mode is also written from two places with different shapes: a mode_update
+	// event carries the full snapshot (currentModeId + availableModes), while a
+	// user pick carries only currentModeId. json_set replaces the whole '$.mode'
+	// object, so the pick would otherwise erase the advertised list and leave
+	// the picker empty until the next session/new. Merge the stored list in when
+	// the incoming patch does not describe one.
+	if rawMode, ok := patches["mode"]; ok {
+		patches = mergeModePatchIntoDB(sessionID, patches, rawMode)
+	}
 	// Build json_set chain: json_set(context_state, '$.mode', json('...'), '$.usage', json('...'))
 	// Start from '{}' if column is empty, so json_set works on a valid JSON object.
 	query := "UPDATE chat_sessions SET context_state = json_set(CASE WHEN context_state = '' OR context_state IS NULL THEN '{}' ELSE context_state END"
@@ -2747,6 +2756,58 @@ func mergeUsagePatchIntoDB(sessionID string, patches map[string]string, rawUsage
 	return patches
 }
 
+// mergeModePatchIntoDB keeps the stored availableModes when the incoming mode
+// patch carries only a currentModeId.
+//
+// Why: context_state.mode is written by two producers with different shapes —
+// buildContextStatePatch (a mode_update event, full snapshot) and
+// persistContextStateModeChange (a user pick, currentModeId only). PatchContext
+// StateMerge sets '$.mode' wholesale, so a pick silently dropped the list and
+// the mode picker rendered empty until the agent reported again. The picker
+// then looked like it had reverted, because the chip had a value the list could
+// not resolve.
+//
+// The stored list is only reused when the incoming patch has none: a real
+// snapshot always wins, so an agent that narrows its mode list still takes
+// effect.
+func mergeModePatchIntoDB(sessionID string, patches map[string]string, rawMode string) map[string]string {
+	var incoming ModeStatePersist
+	if err := json.Unmarshal([]byte(rawMode), &incoming); err != nil {
+		slog.Warn("mergeModePatch: unmarshal incoming mode failed", "err", err, "sid", sessionID)
+		return patches
+	}
+	if incoming.CurrentModeID == "" || len(incoming.AvailableModes) > 0 {
+		return patches
+	}
+	var stored ModeStatePersist
+	storedRaw := ""
+	if err := store.ReadDB().QueryRow("SELECT json_extract(context_state, '$.mode') FROM chat_sessions WHERE id = ?", sessionID).Scan(&storedRaw); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return patches
+		}
+		slog.Warn("mergeModePatch: read stored mode failed", "err", err, "sid", sessionID)
+		return patches
+	}
+	if storedRaw == "" || storedRaw == jsonNull {
+		return patches
+	}
+	if err := json.Unmarshal([]byte(storedRaw), &stored); err != nil {
+		slog.Warn("mergeModePatch: unmarshal stored mode failed", "err", err, "sid", sessionID)
+		return patches
+	}
+	if len(stored.AvailableModes) == 0 {
+		return patches
+	}
+	incoming.AvailableModes = stored.AvailableModes
+	mergedJSON, err := json.Marshal(incoming)
+	if err != nil {
+		slog.Warn("mergeModePatch: marshal merged mode failed", "err", err, "sid", sessionID)
+		return patches
+	}
+	patches["mode"] = string(mergedJSON)
+	return patches
+}
+
 // GetContextState reads and parses the context_state JSON for a session.
 // Returns nil if the column is empty or parsing fails.
 func GetContextState(sessionID string) *ContextState {
@@ -2760,6 +2821,21 @@ func GetContextState(sessionID string) *ContextState {
 		return nil
 	}
 	return &state
+}
+
+// GetSessionModeID returns the mode a session last ran, or "" when none was
+// ever persisted.
+//
+// Used by the ACP spawn path to seed a fresh connection's current mode: without
+// it, a respawned connection has no mode, so reapplyConfigAfterResume has
+// nothing to re-apply and the agent silently keeps its own default (Always Ask)
+// until something else sets a mode. Same priority every other path uses —
+// session value beats agent default.
+func GetSessionModeID(sessionID string) string {
+	if cs := GetContextState(sessionID); cs != nil && cs.Mode != nil {
+		return cs.Mode.CurrentModeID
+	}
+	return ""
 }
 
 // PersistThinkingEffortPick records an EXPLICIT user effort pick for a session.

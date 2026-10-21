@@ -657,6 +657,7 @@ export default {
     modeSwitcher: {
       title: 'Mode',
       cliHint: 'CLI mode does not support switching. Switch to ACP mode first.',
+      saveFailed: "Couldn't save the mode — reverted to the previous one",
     },
     transportSwitcher: {
       title: 'Protocol',
@@ -664,6 +665,7 @@ export default {
       acpDesc: 'Structured protocol communication with mode switching and permission management',
       cli: 'CLI Mode',
       cliDesc: 'Command-line text interaction with better compatibility',
+      saveFailed: "Couldn't save the protocol — it will revert on refresh",
     },
     autoApprove: {
       title: 'Auto-Approve',
@@ -723,6 +725,7 @@ export default {
       auto: 'Auto',
       rejected: 'This model does not support {effort} thinking effort — reverted',
       notRemembered: '{effort} applies now, but could not be saved — it will reset after a restart',
+      saveFailed: "Couldn't save the thinking effort — it will reset on refresh",
     },
     attach: {
       currentFile: 'Current file',

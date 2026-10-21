@@ -417,6 +417,25 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		service.UpdateSessionModel(sessionID, req.ModelID)
 	}
 
+	// Persist the mode the turn is ABOUT to run with, for the same reason.
+	//
+	// Mode has no column of its own — it lives only in context_state (see
+	// applySessionOverrides) — and the PATCH the picker fires is best-effort on
+	// the client. When that PATCH did not land, this request is the only place
+	// the choice can be recorded, and NOT recording it is what made a run
+	// silently fall back: turn 1 runs req.ModeID (explicit override), while
+	// every later turn of the same run — auto-cruise confirmation rounds,
+	// queued messages, the drain loop — rebuilds the request with an empty
+	// override and inherits context_state, which still holds the previous mode.
+	// The agent then re-reports its own default and the chip follows it.
+	//
+	// Unlike thinkingEffort, this does not launder an agent default into a user
+	// pick: mode has no userPicked distinction, and a mode_update from the agent
+	// is already persisted the same way (buildContextStatePatch).
+	if req.ModeID != "" {
+		persistContextStateModeChange(sessionID, req.ModeID)
+	}
+
 	// NOTE: `thinkingEffort` on the send is deliberately NOT treated as a user
 	// pick (issue #552).
 	//

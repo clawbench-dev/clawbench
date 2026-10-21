@@ -531,6 +531,7 @@ func (m *ACPConnManager) GetOrCreateConn(ctx context.Context, agent *model.Agent
 			slog.Info("acp conn: pre-populated acpSID from DB for ResumeSession",
 				"clawbench_sid", clawbenchSID, "acp_sid", extID)
 		}
+		conn.seedModeFromDB(agent)
 		m.conns[clawbenchSID] = conn
 	}
 	m.mu.Unlock()
@@ -542,6 +543,36 @@ func (m *ACPConnManager) GetOrCreateConn(ctx context.Context, agent *model.Agent
 	return conn, isNew, nil
 }
 
+// seedModeFromDB seeds the connection's current mode from the session's
+// persisted context_state, so a respawn has something to re-apply.
+//
+// The value is kept even when the registry has no mode list yet (first ever
+// connection for this agent): not knowing the options must not discard the
+// user's choice, and an agent that rejects it answers -32602, which the config
+// path already treats as "keep the agent's own". A value the registry DOES
+// list the agent as not offering is dropped — re-sending it would fail on every
+// resume.
+func (c *ACPConn) seedModeFromDB(agent *model.Agent) {
+	if c == nil || agent == nil {
+		return
+	}
+	modeID := getSessionModeID(c.clawbenchSID)
+	if modeID == "" {
+		return
+	}
+	reg := GetAgentCapabilityRegistry()
+	if reg.HasAvailableModes(agent.ID) && !reg.IsModeAvailable(agent.ID, modeID) {
+		slog.Warn("acp conn: persisted mode is no longer offered by the agent, ignoring",
+			"clawbench_sid", c.clawbenchSID, "mode_id", modeID, "agent", agent.ID)
+		return
+	}
+	c.stateMu.Lock()
+	c.currentModeID = modeID
+	c.stateMu.Unlock()
+	slog.Info("acp conn: pre-populated mode from DB for resume re-apply",
+		"clawbench_sid", c.clawbenchSID, "mode_id", modeID)
+}
+
 // GetOrCreateConnForLoad creates an ACPConn for a LoadSession operation.
 // Unlike GetOrCreateConn, this sets loadTargetSID so that ensureAliveWithSession
 // calls LoadSession instead of NewSession/ResumeSession.
@@ -551,6 +582,7 @@ func (m *ACPConnManager) GetOrCreateConnForLoad(ctx context.Context, agent *mode
 	conn, ok := m.conns[clawbenchSID]
 	if !ok {
 		conn = newACPConn(agent, clawbenchSID)
+		conn.seedModeFromDB(agent)
 		m.conns[clawbenchSID] = conn
 	}
 	m.mu.Unlock()

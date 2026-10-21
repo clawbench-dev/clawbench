@@ -1438,3 +1438,59 @@ func TestSpawnLockedInitTimeoutHelper(t *testing.T) {
 	}
 	time.Sleep(30 * time.Second)
 }
+
+// --- ACPConn.seedModeFromDB ---
+
+// A fresh connection has no current mode, so snapshotCachedConfig captures ""
+// and reapplyConfigAfterResume skips the mode RPC (it returns early on an empty
+// value). The agent then keeps whatever it had — its own default — while the
+// persisted choice still says otherwise, and the UI follows the agent's
+// mode_update. Seeding from context_state is what gives the re-apply something
+// to re-apply.
+func TestSeedModeFromDB_SeedsPersistedMode(t *testing.T) {
+	SetSessionModeIDGetter(func(string) string { return "bypassPermissions" })
+	t.Cleanup(func() { SetSessionModeIDGetter(func(string) string { return "" }) })
+
+	agent := &model.Agent{ID: "seed-mode-ok", Backend: "acp-stdio", AcpCommand: "echo"}
+	conn := newACPConn(agent, "seed-mode-ok")
+	conn.seedModeFromDB(agent)
+
+	assert.Equal(t, "bypassPermissions", conn.GetCurrentModeID())
+}
+
+// No persisted mode (a brand-new session) must leave the connection untouched:
+// the agent's own default is the correct starting point, and seeding "" would
+// be indistinguishable from "cleared".
+func TestSeedModeFromDB_NoPersistedModeIsNoop(t *testing.T) {
+	SetSessionModeIDGetter(func(string) string { return "" })
+	t.Cleanup(func() { SetSessionModeIDGetter(func(string) string { return "" }) })
+
+	agent := &model.Agent{ID: "seed-mode-empty", Backend: "acp-stdio", AcpCommand: "echo"}
+	conn := newACPConn(agent, "seed-mode-empty")
+	conn.SetCurrentModeID("")
+	conn.seedModeFromDB(agent)
+
+	assert.Empty(t, conn.GetCurrentModeID())
+}
+
+// A value the agent's advertised list no longer contains must be dropped —
+// re-sending it on every resume would fail with -32602 forever. The list only
+// gates the seed once it is known: before the first handshake there is nothing
+// to validate against, and discarding the user's choice on "unknown" would
+// defeat the whole point.
+func TestSeedModeFromDB_DropsModeTheAgentNoLongerOffers(t *testing.T) {
+	SetSessionModeIDGetter(func(string) string { return "bypassPermissions" })
+	t.Cleanup(func() { SetSessionModeIDGetter(func(string) string { return "" }) })
+
+	agent := &model.Agent{ID: "seed-mode-stale", Backend: "acp-stdio", AcpCommand: "echo"}
+	GetAgentCapabilityRegistry().UpdateModes(agent.ID, []ModeDef{
+		{ID: "default", Name: "Always Ask"},
+		{ID: "plan", Name: "Plan"},
+	})
+	t.Cleanup(func() { GetAgentCapabilityRegistry().UpdateModes(agent.ID, nil) })
+
+	conn := newACPConn(agent, "seed-mode-stale")
+	conn.seedModeFromDB(agent)
+
+	assert.Empty(t, conn.GetCurrentModeID(), "a mode the agent does not offer must not be re-sent")
+}

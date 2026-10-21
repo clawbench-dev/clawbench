@@ -944,6 +944,12 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// Inject auto-approve getter for ACP permission auto-approval
 	ai.SetAutoApproveGetter(service.GetSessionAutoApprove)
 
+	// Inject session mode getter so a respawned ACP connection starts from the
+	// mode the session last ran instead of no mode at all (a fresh conn's
+	// snapshotCachedConfig is empty, which makes reapplyConfigAfterResume skip
+	// the mode RPC and leaves the agent on its own default).
+	ai.SetSessionModeIDGetter(service.GetSessionModeID)
+
 	// Inject session running checker for ACP idle sweep (avoids import cycle).
 	//
 	// IsSessionRunningForSweep, NOT IsSessionRunning: a group member's connection
