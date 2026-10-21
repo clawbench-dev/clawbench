@@ -200,16 +200,48 @@ public class MainActivityFileChooserCaptureTest {
     }
 
     @Test
-    public void buildPickerIntent_files_launchesWebViewIntentDirectly() {
-        // The 上传文件 entry: WebView already encoded the input's accept list
-        // and multiple flag. Launching it bare is what opens the system file
-        // manager directly.
+    public void buildPickerIntent_files_opensDocumentUiDirectly() {
+        // The 上传文件 entry. The WebView intent is ACTION_GET_CONTENT, which the
+        // system routes through an app-chooser when several apps can return
+        // content — that is why the button still showed the old sheet on some
+        // devices. ACTION_OPEN_DOCUMENT is handled by the system document UI,
+        // so it opens the file manager directly.
         Intent fileIntent = new Intent(Intent.ACTION_GET_CONTENT).setType("*/*");
 
         Intent picked = MainActivity.buildPickerIntent(false, false, MODE_OPEN, true, fileIntent);
 
-        assertSame(fileIntent, picked);
-        assertNull("no chooser wrapper — that was the bug", picked.getParcelableArrayExtra(Intent.EXTRA_INITIAL_INTENTS));
+        assertEquals(Intent.ACTION_OPEN_DOCUMENT, picked.getAction());
+        assertTrue(picked.hasCategory(Intent.CATEGORY_OPENABLE));
+        assertEquals("*/*", picked.getType());
+        assertNull("no chooser wrapper — that was the bug",
+                picked.getParcelableArrayExtra(Intent.EXTRA_INITIAL_INTENTS));
+    }
+
+    @Test
+    public void buildPickerIntent_files_preservesAcceptAndMultiple() {
+        // Rebuilding the intent must not silently drop what the <input> asked
+        // for: a multiple file input still has to allow selecting several files,
+        // and a narrowed accept list must survive as EXTRA_MIME_TYPES.
+        Intent fileIntent = new Intent(Intent.ACTION_GET_CONTENT).setType("application/pdf");
+        fileIntent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{ "application/pdf" });
+
+        Intent picked = MainActivity.buildPickerIntent(false, false, MODE_MULTI, true, fileIntent);
+
+        assertEquals("application/pdf", picked.getType());
+        assertArrayEquals(new String[]{ "application/pdf" },
+                picked.getStringArrayExtra(Intent.EXTRA_MIME_TYPES));
+        assertTrue(picked.getBooleanExtra(Intent.EXTRA_ALLOW_MULTIPLE, false));
+    }
+
+    @Test
+    public void buildPickerIntent_files_fallsBackToAnyType() {
+        // WebView can hand back an intent with no type at all. An untyped
+        // OPEN_DOCUMENT shows nothing, so it must degrade to */*.
+        Intent fileIntent = new Intent(Intent.ACTION_GET_CONTENT);
+
+        Intent picked = MainActivity.buildPickerIntent(false, false, MODE_OPEN, true, fileIntent);
+
+        assertEquals("*/*", picked.getType());
     }
 
     @Test
@@ -224,7 +256,7 @@ public class MainActivityFileChooserCaptureTest {
 
         assertNull("拍照 → caller-built camera intent", camera);
         assertEquals(MediaStore.ACTION_PICK_IMAGES, photos.getAction());
-        assertSame(fileIntent, files);
+        assertEquals(Intent.ACTION_OPEN_DOCUMENT, files.getAction());
         assertNotEquals(photos.getAction(), files.getAction());
     }
 }

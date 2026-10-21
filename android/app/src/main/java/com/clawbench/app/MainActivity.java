@@ -1198,8 +1198,7 @@ public class MainActivity extends AppCompatActivity {
      *   - capture          → the camera (built by the caller; needs a live
      *                        Activity for the FileProvider URI)
      *   - images-only      → the system photo picker, or the gallery on old APIs
-     *   - everything else  → the WebView-built file intent (it already carries
-     *                        the input's accept list and multiple flag)
+     *   - everything else  → ACTION_OPEN_DOCUMENT (the system file manager)
      *
      * `photoPickerAvailable` is injected rather than read from Build.VERSION so
      * the routing table stays testable: MediaStore.ACTION_PICK_IMAGES is API 33
@@ -1228,10 +1227,29 @@ public class MainActivity extends AppCompatActivity {
             return gallery;
         }
 
-        // File manager: WebView already built this from the input's accept and
-        // multiple attributes. Launching it bare (no chooser) is what opens the
-        // system file manager directly.
-        return fileIntent;
+        // File manager. NOT the WebView intent: that one is ACTION_GET_CONTENT,
+        // which the system routes through an app-chooser whenever more than one
+        // app can return content (Files, Mi File Manager, Drive, …). On those
+        // devices the 上传文件 button still opened the same "open with" sheet as
+        // before. ACTION_OPEN_DOCUMENT is handled by the system document UI, so
+        // it opens the file manager directly, and its URI grant also survives
+        // the activity — which matters because the upload copies bytes later.
+        Intent files = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        files.addCategory(Intent.CATEGORY_OPENABLE);
+        String type = fileIntent != null ? fileIntent.getType() : null;
+        files.setType(type == null || type.isEmpty() ? "*/*" : type);
+        // The WebView intent carries the input's accept list as EXTRA_MIME_TYPES
+        // when accept names several concrete types.
+        if (fileIntent != null) {
+            String[] mimeTypes = fileIntent.getStringArrayExtra(Intent.EXTRA_MIME_TYPES);
+            if (mimeTypes != null && mimeTypes.length > 0) {
+                files.putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes);
+            }
+        }
+        if (mode == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE) {
+            files.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        }
+        return files;
     }
 
     /**

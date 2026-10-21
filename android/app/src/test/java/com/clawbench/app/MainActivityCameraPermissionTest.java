@@ -161,11 +161,11 @@ public class MainActivityCameraPermissionTest {
     // =====================================================
 
     @Test
-    public void launchFileChooserWithoutCamera_launchesPendingIntent() throws Exception {
+    public void launchFileChooserWithoutCamera_launchesRebuiltPickerIntent() throws Exception {
         ValueCallback<Uri[]> mockCallback = mock(ValueCallback.class);
         setField(activity, "filePathCallback", mockCallback);
 
-        Intent pendingIntent = new Intent(Intent.ACTION_GET_CONTENT);
+        Intent pendingIntent = new Intent(Intent.ACTION_GET_CONTENT).setType("*/*");
         setField(activity, "pendingFileChooserIntent", pendingIntent);
 
         var mockLauncher = mock(androidx.activity.result.ActivityResultLauncher.class);
@@ -173,8 +173,16 @@ public class MainActivityCameraPermissionTest {
 
         invokeMethod(activity, "launchFileChooserWithoutCamera");
 
-        // Should launch the pending intent (without camera option)
-        verify(mockLauncher).launch(pendingIntent);
+        // The pending intent is the WebView's ACTION_GET_CONTENT, which the
+        // system may route through an app-chooser. What gets launched must be a
+        // rebuilt intent, not that one. This class runs on plain JUnit (Intent
+        // is a stub returning null), so only identity is assertable here — the
+        // exact action is pinned in MainActivityFileChooserCaptureTest, which
+        // runs under Robolectric.
+        var captor = org.mockito.ArgumentCaptor.forClass(Intent.class);
+        verify(mockLauncher).launch(captor.capture());
+        assertNotNull(captor.getValue());
+        assertNotSame("must not launch the raw WebView intent", pendingIntent, captor.getValue());
     }
 
     // =====================================================
