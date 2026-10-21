@@ -1061,6 +1061,11 @@ type ACPConn struct {
 	// map is what lets the mapper backfill ParentToolCallID and reuse the
 	// existing sub-agent grouping. Guarded by stateMu.
 	memberToolCallIDs map[string]string
+	// seenChunkKeys holds the identities of model-output chunks already
+	// delivered this turn, so a duplicate delivery (CodeBuddy retries a member
+	// update whose send raced its timeout — see acp_dup_chunk.go) is dropped
+	// instead of being appended twice. Guarded by stateMu.
+	seenChunkKeys map[string]struct{}
 
 	// currentSelections is a generalized map for tracking the current
 	// selection of any category (mode, thought_level, model, etc.).

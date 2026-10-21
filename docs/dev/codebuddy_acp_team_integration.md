@@ -408,11 +408,43 @@ type TeamMember struct {
 - 回放信号：`internal/ai/acp_client.go`（`replayEndSeen`/`ReplayEndSeen`/`ResetReplayEnd`）、
   `acp_conn_lifecycle.go`（replay 开始重置）、`internal/handler/session_sync.go`
   （`waitForReplaySettled` 优先用 end 标记）。
+- 中断/重连兜底（§5.1）：`web/src/components/chat/ContentBlocks.vue`
+  （`needsMemberFallback`/`memberGroupNameForAnchor`/`memberFallbackBlocks`）、
+  `internal/ai/acp_dup_chunk.go`（帧级重复内容去重）+ `acp_events.go` 两处接入 +
+  `acp_conn_prompt.go` 每回合清空。
 
 **回归红线**：改动不得影响非团队会话 —— `session_info_update` 分支对无 `teamUpdate`
 的更新（title/updatedAt）必须保持原有行为（已由 `TestMapACPSessionUpdate_SessionInfoNoTeamNoEvent`
 与 `TestBridgeTeamUpdate_NoopWithoutKey` 钉住）；子代理（非团队）内容仍走 `parentToolCallId`
 （`memberParentOrParent` 优先显式 parent）。
+
+### 5.1 中断/重连后的归组与重复内容（2026-10-21 生产缺陷）
+
+**症状**：团队运行中途中断再继续，之后的成员输出不再分组，所有成员内容混进 lead 的流里；
+同批消息里成员文本还出现逐 delta 重复（`已已把报告把报告发给发给 team team-le-leadad…`）。
+
+**归组失效**（两条独立路径，均已实测）：
+
+| 路径 | 现场证据（`chat_history`） | 机制 |
+|---|---|---|
+| Agent 卡片在上一条消息 | msg 64287：156 个带 parent 的块，**0 个** parent 能在本消息解析 | 每条消息渲染自己的 `ContentBlocks`，父 id 指向更早消息 |
+| 进程被杀后 resume | msg 64205/64277：1500/799 个成员块，**0 个**带 parent | `memberToolCallIDs` 是连接内存态，新进程没有；LoadSession 回放走 `MapACPSessionUpdateForTest`（`conn=nil`）不重建 |
+
+**修法（前端兜底，方案「只做兜底分组」）**：`parent_tool_call_id` 在本消息内解析不到的
+成员内容，改按**成员名**归入各自的合成分组（锚在该成员本消息的第一个块上）。父 id 可解析
+时仍走原有 Agent 卡片分组，健康消息渲染不变；**嵌套实例一律不参与兜底**
+（`needsMemberFallback` 首行 `if (props.nested) return false`）—— 否则成员组体会无限递归、
+子代理组体会把普通子代理内容抢进假分组。
+
+**内容重复**：上游 `AcpTeamBridge.sendSessionUpdateBounded` 把发送与超时赛跑，超时抛错后
+`sendSessionUpdateWithRetries` 重试最多 3 次 —— 一次「超时后才落地」的发送因此被重发，
+同一 update 对象（同一 `_meta`）到达 2–3 次。实测 multiplicity 恰为 2 与 3。
+
+修法：`internal/ai/acp_dup_chunk.go` 在帧级按
+`sessionId + sessionUpdate + messageId + timestamp + member + text` 去重（与 CodeBuddy 内部
+`chunkPublicationKey` 同构），**`messageId` 与 `timestamp` 缺一不去重**（上游同款规则：
+只凭文本会把模型合法重复的同一个 token 也丢掉）。集合每回合 `Prompt` 起点清空，上限
+`maxDupChunkKeys` 溢出时清空（只会放行旧重复，不会丢新内容）。**仅对 codebuddy 生效**。
 
 ---
 

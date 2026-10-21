@@ -66,6 +66,9 @@ func (c *ACPConn) Prompt(ctx context.Context, prompt []acp.ContentBlock, streamC
 	// Reset the per-turn model-output counter: a turn that ends with
 	// stopReason=end_turn but zero output events never ran the model.
 	c.ResetTurnOutput()
+	// Clear the duplicate-chunk identity set: it describes one turn's
+	// deliveries (see acp_dup_chunk.go).
+	c.resetChunkDedup()
 	// Allow one compaction report for this turn. A long session can compact more
 	// than once, and each compaction needs its own re-injection on the following
 	// turn — a latch that stayed set after the first would swallow the second.
