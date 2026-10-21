@@ -27,7 +27,7 @@ const i18n = createI18n({
   },
 })
 
-import MarkdownSearchBar from '../MarkdownSearchBar.vue'
+import PreviewSearchBar from '../PreviewSearchBar.vue'
 
 // jsdom's Element.prototype.scrollIntoView throws for options-object calls
 // ("Not implemented: scrollIntoView"), which aborts jumpTo's try/catch and
@@ -36,7 +36,7 @@ import MarkdownSearchBar from '../MarkdownSearchBar.vue'
 Element.prototype.scrollIntoView = () => {}
 
 function mountBar(props = {}) {
-  return mount(MarkdownSearchBar, {
+  return mount(PreviewSearchBar, {
     props: { open: false, ...props },
     global: { plugins: [i18n] },
     attachTo: document.body,
@@ -53,7 +53,7 @@ function seedMarkdownBody(html: string) {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
-describe('MarkdownSearchBar', () => {
+describe('PreviewSearchBar', () => {
   beforeEach(() => {
     document.body.innerHTML = ''
     document.querySelectorAll('.markdown-body').forEach((el) => el.remove())
@@ -217,5 +217,85 @@ describe('MarkdownSearchBar', () => {
     // The sibling container's text stays untouched (no mark wrappers split it).
     expect(other.textContent).toContain('alpha sibling')
     wrapper.unmount()
+  })
+
+  describe('iframe mode (rendered HTML preview)', () => {
+    /**
+     * The previewed HTML lives in a SEPARATE document: its text nodes are
+     * unreachable from the host TreeWalker and a host Range cannot wrap them.
+     * These cases drive a real same-origin iframe so the document ownership is
+     * exercised, not simulated.
+     */
+    function seedIframe(html: string): HTMLIFrameElement {
+      const iframe = document.createElement('iframe')
+      document.body.appendChild(iframe)
+      iframe.contentDocument!.body.innerHTML = html
+      return iframe
+    }
+
+    it('finds and wraps matches inside the iframe document', async () => {
+      const iframe = seedIframe('<p>alpha one</p><p>alpha two</p>')
+      const wrapper = mountBar({ open: true, iframe })
+      await sleep(20)
+      const input = wrapper.find('input')
+      input.element.value = 'alpha'
+      input.trigger('input')
+      await sleep(20)
+
+      expect(wrapper.find('.cm-search-match-info').text()).toBe('1/2')
+      // The marks must live in the IFRAME document, not the host one.
+      expect(iframe.contentDocument!.querySelectorAll('mark.md-search-match')).toHaveLength(2)
+      expect(document.querySelectorAll('mark.md-search-match')).toHaveLength(0)
+      wrapper.unmount()
+    })
+
+    it('ignores host-document content when an iframe is given', async () => {
+      seedMarkdownBody('<p>alpha host</p>')
+      const iframe = seedIframe('<p>nothing here</p>')
+      const wrapper = mountBar({ open: true, iframe })
+      await sleep(20)
+      const input = wrapper.find('input')
+      input.element.value = 'alpha'
+      input.trigger('input')
+      await sleep(20)
+
+      expect(wrapper.find('.cm-search-match-info').text()).toBe('0/0')
+      expect(document.querySelectorAll('mark.md-search-match')).toHaveLength(0)
+      wrapper.unmount()
+    })
+
+    it('does not highlight inside the preview document script/style blocks', async () => {
+      const iframe = seedIframe('<style>.alpha{}</style><script>var alpha=1</script><p>alpha</p>')
+      const wrapper = mountBar({ open: true, iframe })
+      await sleep(20)
+      const input = wrapper.find('input')
+      input.element.value = 'alpha'
+      input.trigger('input')
+      await sleep(20)
+
+      // One content match only — wrapping inside <style>/<script> would inject
+      // markup into the document's own CSS/JS.
+      expect(wrapper.find('.cm-search-match-info').text()).toBe('1/1')
+      expect(iframe.contentDocument!.querySelector('style mark')).toBeNull()
+      expect(iframe.contentDocument!.querySelector('script mark')).toBeNull()
+      wrapper.unmount()
+    })
+
+    it('unwraps the iframe marks on close, restoring the original text', async () => {
+      const iframe = seedIframe('<p>clawbench</p>')
+      const wrapper = mountBar({ open: true, iframe })
+      await sleep(20)
+      const input = wrapper.find('input')
+      input.element.value = 'claw'
+      input.trigger('input')
+      await sleep(20)
+      expect(iframe.contentDocument!.querySelectorAll('mark.md-search-match')).toHaveLength(1)
+
+      input.trigger('keydown', { key: 'Escape' })
+      await sleep(20)
+      expect(iframe.contentDocument!.querySelectorAll('mark.md-search-match')).toHaveLength(0)
+      expect(iframe.contentDocument!.body.textContent).toBe('clawbench')
+      wrapper.unmount()
+    })
   })
 })

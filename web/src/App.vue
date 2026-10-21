@@ -146,6 +146,7 @@
                       :pdf-outline="pdfOutline"
                       :can-navigate-back="canNavigateBackInView"
                       :back-label="viewBackLabel"
+                      :chat-quote="true"
                       @delete="handleDelete($event)"
                       @show-details="detailsDrawer.open()"
                       @open-git-history="openFileHistory"
@@ -168,6 +169,7 @@
                       @share-link="openShareLinkDialog"
                       @quote-in-chat="handleFileQuoteInChat"
                       @set-as-background="handleSetAsBackground"
+                      @open-search="openFileSearch"
                     />
                     <div v-else class="view-panel-empty" :class="recentFileEntries.length ? 'has-recent' : 'no-recent'">
                       <template v-if="recentFileEntries.length">
@@ -2562,13 +2564,24 @@ const isCodeMirrorFileView = computed(() => {
     }
     return true
 })
-// Rendered markdown/HTML preview (not CodeMirror): has an inline search bar
+// Rendered markdown preview (not CodeMirror): has an inline search bar
 // instead of the SearchDrawer bottom sheet.
 const isMarkdownRenderedView = computed(() => {
     const f = currentFile.value
     if (!f || typeof f.content !== 'string') return false
     const ft = getFileType(f.name || '')
     return ft.isMarkdown && markdownViewMode.value === 'rendered'
+})
+// Rendered HTML preview: also an inline-search surface, but its bar searches
+// the preview iframe's own document (see PreviewSearchBar's `iframe` prop)
+// rather than the app's. Without this branch Ctrl+F fell through to the
+// SearchDrawer, which scans the file SOURCE and cannot highlight anything in
+// the rendered iframe.
+const isHtmlRenderedView = computed(() => {
+    const f = currentFile.value
+    if (!f || typeof f.content !== 'string') return false
+    const ft = getFileType(f.name || '')
+    return ft.isHtml && markdownViewMode.value === 'rendered'
 })
 const { entries: recentFileEntries } = useRecentFiles()
 const recentFilesCount = computed(() => recentFileEntries.value.length)
@@ -2620,12 +2633,12 @@ watch(() => currentFile.value, (file, prevFile) => {
 // CodeMirror panel starts closed, so a previously-active search state would
 // otherwise leave the header button stuck highlighted.
 watch(
-  () => [isCodeMirrorFileView.value, isMarkdownRenderedView.value, markdownViewMode.value],
-  ([cmNow, mdNow, _mode], [cmBefore, mdBefore, modeBefore]) => {
+  () => [isCodeMirrorFileView.value, isMarkdownRenderedView.value, isHtmlRenderedView.value, markdownViewMode.value],
+  ([cmNow, mdNow, htmlNow, _mode], [cmBefore, mdBefore, htmlBefore, modeBefore]) => {
     // Ignore the initial run and same-view transitions (e.g. raw->edit of the
     // same CodeMirror view keeps its panel state).
     if (modeBefore === undefined) return
-    if (cmNow === cmBefore && mdNow === mdBefore) return
+    if (cmNow === cmBefore && mdNow === mdBefore && htmlNow === htmlBefore) return
     viewSearchActive.value = false
     searchDrawer.close()
   },
@@ -3905,7 +3918,7 @@ function openFileViewSearchDrawer() {
 // search button via viewSearchActive without opening the SearchDrawer; the
 // SearchDrawer bottom sheet is only used as a fallback.
 function openFileSearch() {
-  if (isCodeMirrorFileView.value || isMarkdownRenderedView.value) {
+  if (isCodeMirrorFileView.value || isMarkdownRenderedView.value || isHtmlRenderedView.value) {
     viewSearchActive.value = true
     fileOverlayRef.value?.focusSearchInput()
   } else {

@@ -189,6 +189,7 @@ afterEach(() => {
   tocDockPrefState.tocDockSide.value = 'right'
   mockOpenSearch.mockClear()
   mockOpenGoToLine.mockClear()
+  mockHtmlSearchFocus.mockClear()
   for (const id of pendingTimers) { clearTimeout(id) }
   pendingTimers.length = 0
   for (const id of pendingIntervals) { clearInterval(id) }
@@ -199,6 +200,7 @@ afterEach(() => {
 // editing flow (which calls it to exit edit mode first) can be exercised.
 const mockHandleExit = vi.fn()
 const mockOpenSearch = vi.fn()
+const mockHtmlSearchFocus = vi.fn()
 const mockOpenGoToLine = vi.fn(() => true)
 const codeMirrorViewerStub = {
   name: 'CodeMirrorViewer',
@@ -219,6 +221,13 @@ const stubs = {
   VideoPreview: true,
   OfficePreview: true,
   MarkdownPreview: true,
+  PreviewSearchBar: {
+    name: 'PreviewSearchBar',
+    props: ['open', 'iframe'],
+    emits: ['close'],
+    template: '<div class="preview-search-bar-stub" />',
+    methods: { focus: () => mockHtmlSearchFocus() },
+  },
   CodeMirrorViewer: codeMirrorViewerStub,
   DiffDrawer: true,
   TocDock: {
@@ -1051,6 +1060,54 @@ describe('FileViewer', () => {
       ss.handleToggleSearch()
       expect(mockOpenSearch).not.toHaveBeenCalled()
       expect(wrapper.emitted('toggleSearch')).toBeTruthy()
+    })
+
+    it('renders the inline find bar for the rendered HTML preview, pointed at the iframe', async () => {
+      const htmlFile = {
+        name: 'page.html', path: '/tmp/page.html', content: '<h1>hi</h1>',
+        isMarkdown: false, isHtml: true, isOpenapi: false,
+        isImage: false, isAudio: false, isVideo: false, isPdf: false, isOffice: false,
+        isBinary: false, tooLarge: false,
+      }
+      const wrapper = mountViewer({ file: htmlFile, markdownViewMode: 'rendered', searchOpen: true })
+      await nextTick()
+      const bar = wrapper.findComponent({ name: 'PreviewSearchBar' })
+      expect(bar.exists()).toBe(true)
+      // The bar must search the previewed DOCUMENT, not the host one — that is
+      // the whole reason it takes an iframe.
+      expect((bar.props('iframe') as HTMLIFrameElement | null)?.tagName).toBe('IFRAME')
+      expect(bar.props('open')).toBe(true)
+      wrapper.unmount()
+    })
+
+    it('focusSearchInput focuses the HTML preview find bar (not the SearchDrawer)', async () => {
+      const htmlFile = {
+        name: 'page.html', path: '/tmp/page.html', content: '<h1>hi</h1>',
+        isMarkdown: false, isHtml: true, isOpenapi: false,
+        isImage: false, isAudio: false, isVideo: false, isPdf: false, isOffice: false,
+        isBinary: false, tooLarge: false,
+      }
+      const wrapper = mountViewer({ file: htmlFile, markdownViewMode: 'rendered' })
+      await nextTick()
+      const ss = (wrapper.vm as any).$.setupState
+      ss.focusSearchInput()
+      expect(mockHtmlSearchFocus).toHaveBeenCalledTimes(1)
+      expect(mockOpenSearch).not.toHaveBeenCalled()
+      wrapper.unmount()
+    })
+
+    it('emits closeSearch from the HTML preview find bar', async () => {
+      const htmlFile = {
+        name: 'page.html', path: '/tmp/page.html', content: '<h1>hi</h1>',
+        isMarkdown: false, isHtml: true, isOpenapi: false,
+        isImage: false, isAudio: false, isVideo: false, isPdf: false, isOffice: false,
+        isBinary: false, tooLarge: false,
+      }
+      const wrapper = mountViewer({ file: htmlFile, markdownViewMode: 'rendered', searchOpen: true })
+      await nextTick()
+      await wrapper.findComponent({ name: 'PreviewSearchBar' }).vm.$emit('close')
+      expect(wrapper.emitted('closeSearch')).toBeTruthy()
+      wrapper.unmount()
     })
 
     it('opens CodeMirror search for OpenAPI raw view', async () => {

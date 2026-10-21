@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { attachOpenApiQuoteBridge } from '../openapiQuote.ts'
-import type { OpenApiBridgeWindow } from '../openapiQuote.ts'
+import { attachIframeSelectionQuoteBridge, installIframeSearchShortcut } from '../iframeSelectionQuote.ts'
+import type { IframeBridgeWindow } from '../iframeSelectionQuote.ts'
 import type { QuoteData } from '@/composables/useChatContext.ts'
 
 // ── Fake iframe window ──
-// attachOpenApiQuoteBridge takes a structurally-typed window-like object, so
+// attachIframeSelectionQuoteBridge takes a structurally-typed window-like object, so
 // tests drive it with a lightweight fake (no real iframe / srcdoc navigation,
 // which jsdom does not run). Listeners registered on the fake doc are stored
 // by type so tests can fire them.
@@ -44,26 +44,26 @@ class FakeSelection {
 }
 
 function createFakeWin(opts: { selection?: FakeSelection | null; doc?: FakeDoc } = {}): {
-  win: OpenApiBridgeWindow
+  win: IframeBridgeWindow
   doc: FakeDoc
   getSelectionMock: ReturnType<typeof vi.fn>
 } {
   const doc = opts.doc ?? new FakeDoc()
   const selection = opts.selection === undefined ? new FakeSelection('selected text') : opts.selection
   const getSelectionMock = vi.fn(() => selection)
-  const win: OpenApiBridgeWindow = {
+  const win: IframeBridgeWindow = {
     getSelection: getSelectionMock,
     document: doc,
   }
   return { win, doc, getSelectionMock }
 }
 
-function makeBridge(overrides: Partial<Parameters<typeof attachOpenApiQuoteBridge>[0]> = {}) {
+function makeBridge(overrides: Partial<Parameters<typeof attachIframeSelectionQuoteBridge>[0]> = {}) {
   const show = vi.fn()
   const hide = vi.fn()
   const filePath = vi.fn(() => '/specs/api.yaml')
   const { win, doc, getSelectionMock } = createFakeWin()
-  const dispose = attachOpenApiQuoteBridge({
+  const dispose = attachIframeSelectionQuoteBridge({
     win,
     filePath,
     show,
@@ -73,7 +73,7 @@ function makeBridge(overrides: Partial<Parameters<typeof attachOpenApiQuoteBridg
   return { win, doc, getSelectionMock, show, hide, filePath, dispose }
 }
 
-describe('attachOpenApiQuoteBridge', () => {
+describe('attachIframeSelectionQuoteBridge', () => {
   beforeEach(() => {
     vi.useFakeTimers()
   })
@@ -259,5 +259,74 @@ describe('attachOpenApiQuoteBridge', () => {
       endLine: 0,
     })
     dispose()
+  })
+})
+
+/**
+ * Ctrl+F inside a preview iframe.
+ *
+ * A keydown in the frame's document never reaches the host, so App.vue's global
+ * handler is blind to it: the user clicks into the previewed page, presses
+ * Ctrl+F, and gets the browser's own find bar over the app. The forwarder must
+ * claim the chord and ask the host to open its inline find bar.
+ */
+describe('installIframeSearchShortcut', () => {
+  function makeWin() {
+    const listeners = new Map<string, EventListener[]>()
+    const win = {
+      addEventListener: (type: string, fn: EventListener) => {
+        listeners.set(type, [...(listeners.get(type) ?? []), fn])
+      },
+      removeEventListener: (type: string, fn: EventListener) => {
+        listeners.set(type, (listeners.get(type) ?? []).filter((l) => l !== fn))
+      },
+    }
+    function press(init: KeyboardEventInit) {
+      const e = new KeyboardEvent('keydown', { cancelable: true, ...init })
+      for (const l of listeners.get('keydown') ?? []) l(e)
+      return e
+    }
+    return { win: win as unknown as Window, press, listenerCount: () => (listeners.get('keydown') ?? []).length }
+  }
+
+  it('claims Ctrl+F / Cmd+F and triggers the host callback', () => {
+    const { win, press } = makeWin()
+    const onTrigger = vi.fn()
+    installIframeSearchShortcut(win, onTrigger)
+
+    const e = press({ key: 'f', ctrlKey: true })
+    expect(onTrigger).toHaveBeenCalledTimes(1)
+    // Without preventDefault the browser's own find bar opens on top of ours.
+    expect(e.defaultPrevented).toBe(true)
+
+    press({ key: 'f', metaKey: true })
+    expect(onTrigger).toHaveBeenCalledTimes(2)
+  })
+
+  it('leaves Shift/Alt variants and other keys to the browser', () => {
+    const { win, press } = makeWin()
+    const onTrigger = vi.fn()
+    installIframeSearchShortcut(win, onTrigger)
+
+    // Ctrl+Shift+F is "search in files" — App.vue's own guard excludes it too.
+    const shift = press({ key: 'F', ctrlKey: true, shiftKey: true })
+    expect(onTrigger).not.toHaveBeenCalled()
+    expect(shift.defaultPrevented).toBe(false)
+
+    press({ key: 'f', ctrlKey: true, altKey: true })
+    press({ key: 'g', ctrlKey: true })
+    press({ key: 'f' })
+    expect(onTrigger).not.toHaveBeenCalled()
+  })
+
+  it('stops forwarding after dispose', () => {
+    const { win, press, listenerCount } = makeWin()
+    const onTrigger = vi.fn()
+    const dispose = installIframeSearchShortcut(win, onTrigger)
+    dispose()
+    expect(listenerCount()).toBe(0)
+
+    press({ key: 'f', ctrlKey: true })
+    expect(onTrigger).not.toHaveBeenCalled()
   })
 })

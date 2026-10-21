@@ -19,6 +19,7 @@
             :docked="docked"
             :can-navigate-back="canNavigateBack"
             :back-label="backLabel"
+            :chat-quote="chatQuote"
             @delete="emit('delete', $event)"
             @show-details="emit('showDetails')"
             @open-git-history="emit('openGitHistory')"
@@ -39,6 +40,7 @@
             @share-link="emit('shareLink')"
             @set-as-background="(path) => emit('setAsBackground', path)"
             @quote-in-chat="(path) => emit('quoteInChat', path)"
+            @open-search="emit('openSearch')"
             @jump="(line, anchorId) => emit('jump', line, anchorId)"
             @jump-page="emit('jumpPage', $event)"
           />
@@ -109,6 +111,8 @@ const props = defineProps({
   pdfOutline: Object,
   canNavigateBack: Boolean,
   backLabel: String,
+  /** Enable the selection→quote bridge in the rendered HTML preview. */
+  chatQuote: { type: Boolean, default: false },
 })
 
 /** Wide-screen inline TOC dock vs narrow-screen bottom drawer. */
@@ -122,6 +126,7 @@ const emit = defineEmits([
   'setAsBackground',
   'captureScroll',
   'quoteInChat',
+  'openSearch',
 ])
 
 const contentRef = ref(null)

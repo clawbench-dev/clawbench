@@ -170,15 +170,26 @@
 
       <!-- HTML file -->
       <template v-else-if="isHtml">
-        <iframe
-          v-if="markdownViewMode === 'rendered'"
-          ref="htmlPreviewRef"
-          class="html-preview-iframe"
-          :src="htmlPreviewSrc || undefined"
-          :srcdoc="htmlPreviewSrc ? undefined : file.content"
-          sandbox="allow-scripts allow-same-origin"
-          @load="onHtmlPreviewLoad"
-        />
+        <div v-if="markdownViewMode === 'rendered'" class="html-preview-pane">
+          <iframe
+            ref="htmlPreviewRef"
+            class="html-preview-iframe"
+            :src="htmlPreviewSrc || undefined"
+            :srcdoc="htmlPreviewSrc ? undefined : file.content"
+            sandbox="allow-scripts allow-same-origin"
+            @load="onHtmlPreviewLoad"
+          />
+          <!-- Inline find bar for the previewed document. The iframe owns its
+               text nodes, so the bar is told which document to search (see
+               PreviewSearchBar's `iframe` prop) — the host TreeWalker cannot
+               reach them and a host Range cannot wrap them. -->
+          <PreviewSearchBar
+            ref="htmlSearchBarRef"
+            :open="!!searchOpen"
+            :iframe="htmlPreviewRef"
+            @close="emit('closeSearch')"
+          />
+        </div>
         <CodeMirrorViewer
           v-else
           ref="cmEditorRef"
@@ -281,6 +292,7 @@ import { buildAsyncComponentOptions } from '@/composables/useAsyncComponent.ts'
 const OfficePreview = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('@/components/media/OfficePreview.vue') }))
 const ExcalidrawViewer = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('./ExcalidrawViewer.vue') }))
 import MarkdownPreview from './MarkdownPreview.vue'
+import PreviewSearchBar from './PreviewSearchBar.vue'
 const CodeMirrorViewer = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('./CodeMirrorViewer.vue') }))
 const OpenApiPreview = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('./OpenApiPreview.vue') }))
 import DiffDrawer from './DiffDrawer.vue'
@@ -297,7 +309,9 @@ import { useFileEditor } from '@/composables/useFileEditor.ts'
 import { useTocDockPreference } from '@/composables/useTocDockPreference.ts'
 import { exportMarkdownToHtml, imageIssueReasonKey } from '@/utils/exportMarkdownHtml.ts'
 import { downloadBlob, downloadFileByPath } from '@/utils/download.ts'
-import { buildHtmlPreviewSrc, installPreviewScrollbar } from '@/utils/htmlPreview.ts'
+import { buildHtmlPreviewSrc, installPreviewScrollbar, installPreviewSearchStyles } from '@/utils/htmlPreview.ts'
+import { attachIframeSelectionQuoteBridge, installIframeSearchShortcut, resolveIframeWindow } from '@/utils/iframeSelectionQuote.ts'
+import { useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
 import { useToast } from '@/composables/useToast.ts'
 import { useCodeEditorSave } from '@/composables/useCodeEditorSave.ts'
 import { getNative } from '@/utils/clawbenchNative'
@@ -321,8 +335,12 @@ const props = defineProps({
     docked: { type: Boolean, default: false },
     canNavigateBack: Boolean,
     backLabel: String,
+    /** Whether selecting text in the rendered HTML preview surfaces the quote
+     *  bar. The main app enables it; the share SPA (no session/chat) keeps it
+     *  off — the same gate OpenApiPreview uses. */
+    chatQuote: { type: Boolean, default: false },
 })
-const emit = defineEmits(['delete', 'showDetails', 'openGitHistory', 'toggleToc', 'closeToc', 'toggleSearch', 'closeSearch', 'searchChange', 'toggleView', 'refresh', 'openFile', 'overlayClose', 'closeUntitled', 'navigateBack', 'navigateForward', 'shareExternal', 'shareLink', 'jump', 'jumpPage', 'setAsBackground', 'captureScroll', 'quoteInChat'])
+const emit = defineEmits(['delete', 'showDetails', 'openGitHistory', 'toggleToc', 'closeToc', 'toggleSearch', 'closeSearch', 'searchChange', 'toggleView', 'refresh', 'openFile', 'overlayClose', 'closeUntitled', 'navigateBack', 'navigateForward', 'shareExternal', 'shareLink', 'jump', 'jumpPage', 'setAsBackground', 'captureScroll', 'quoteInChat', 'openSearch'])
 
 const fileNav = useFileNavStack()
 const fileType = computed(() => props.file ? getFileType(props.file.name) : null)
@@ -348,8 +366,18 @@ const contentRef = ref(null)
 const pdfPreviewRef = ref(null)
 const officePreviewRef = ref(null)
 const htmlPreviewRef = ref(null)
+/** Inline find bar for the HTML preview's own document. */
+const htmlSearchBarRef = ref(null)
 /** Cache-buster for the HTML preview iframe (see htmlPreviewSrc). */
 const htmlPreviewTimestamp = ref(Date.now())
+const quoteQuestion = useQuoteQuestion()
+/** Selection→quote bridge for the previewed HTML document (null when detached). */
+let disposeHtmlQuoteBridgeFn = null
+let htmlQuoteBridgeWin = null
+/** Path of the document the bridge was attached to, for bar dismissal. */
+let htmlQuoteBridgePath = ''
+/** Ctrl+F forwarder installed inside the previewed document. */
+let disposeHtmlSearchShortcut = null
 
 // HTML preview loads the document through /api/fs/raw/ rather than inlining it
 // via srcdoc, so the browser resolves the document's own relative references
@@ -361,11 +389,94 @@ const htmlPreviewSrc = computed(() =>
     buildHtmlPreviewSrc(props.file?.path || '', htmlPreviewTimestamp.value)
 )
 
-/** Give the previewed document the app's scrollbar bar (see
- *  installPreviewScrollbar). Runs on every load — including the srcdoc
- *  fallback and reloads — and is idempotent. */
+/** Give the previewed document the app's scrollbar bar and search-match
+ *  highlight styles (see installPreviewScrollbar / installPreviewSearchStyles).
+ *  Runs on every load — including the srcdoc fallback and reloads — and both
+ *  helpers are idempotent. Also (re)attaches the selection→quote bridge: a
+ *  reload is a NEW document, so the previous bridge's listeners are gone. */
 function onHtmlPreviewLoad() {
     installPreviewScrollbar(htmlPreviewRef.value)
+    installPreviewSearchStyles(htmlPreviewRef.value)
+    void attachHtmlQuoteBridge()
+    attachHtmlSearchShortcut()
+}
+
+/**
+ * Make Ctrl+F work while focus is inside the previewed document.
+ *
+ * Keydowns in the frame never reach the host, so App.vue's global handler is
+ * blind to them: the user clicks into the preview, presses Ctrl+F, and gets the
+ * browser's own find bar instead of ours. The listener lives in the frame and
+ * asks the app to open the inline find bar (which searches that same document).
+ */
+function attachHtmlSearchShortcut() {
+    disposeHtmlSearchShortcut?.()
+    disposeHtmlSearchShortcut = null
+    const win = htmlPreviewRef.value?.contentWindow
+    if (!win) return
+    disposeHtmlSearchShortcut = installIframeSearchShortcut(win, () => emit('openSearch'))
+}
+
+/**
+ * Bridge text selections inside the previewed HTML document to the shared quote
+ * bar.
+ *
+ * The iframe is a separate document: its `selectionchange` never reaches the
+ * host, and its pointer events do not bubble here, so the global
+ * useQuoteQuestion handler is blind to it. The same factory the OpenAPI preview
+ * uses re-creates the pipeline inside that document (see
+ * attachIframeSelectionQuoteBridge).
+ */
+async function attachHtmlQuoteBridge() {
+    if (!props.chatQuote) return
+    const win = await resolveIframeWindow(() => htmlPreviewRef.value)
+    if (!win) return
+    // Several load events can fire for one document; re-attaching would churn
+    // the listeners. A real reload is a different contentWindow, which disposes
+    // the old bridge first.
+    if (htmlQuoteBridgeWin === win) return
+    disposeHtmlQuoteBridge()
+    htmlQuoteBridgePath = props.file?.path || ''
+    disposeHtmlQuoteBridgeFn = attachIframeSelectionQuoteBridge({
+        win,
+        filePath: () => props.file?.path || '',
+        show: (data) => quoteQuestion.showBar(data, { delay: 0 }),
+        hide: () => quoteQuestion.hideBar(),
+    })
+    htmlQuoteBridgeWin = win
+}
+
+/**
+ * Tear down the bridge (listeners only).
+ *
+ * Deliberately does NOT touch the quote bar: a re-attach happens whenever the
+ * previewed document reloads — including an fsnotify refresh of the SAME file —
+ * and the user may be halfway through typing a comment. Only the paths that
+ * leave the document for good (see detachHtmlQuoteBridge) dismiss the bar.
+ */
+function disposeHtmlQuoteBridge() {
+    if (disposeHtmlQuoteBridgeFn) {
+        disposeHtmlQuoteBridgeFn()
+        disposeHtmlQuoteBridgeFn = null
+    }
+    htmlQuoteBridgeWin = null
+}
+
+/**
+ * Tear down the bridge AND dismiss a quote bar whose text came from it.
+ *
+ * Once the iframe (or the file) is gone the quoted text cannot be reopened, so
+ * leaving the bar up would offer to send something the user can no longer see.
+ * The check is by file path rather than unconditional — a bar opened from
+ * somewhere else (a chat selection) must survive a file switch.
+ */
+function detachHtmlQuoteBridge() {
+    disposeHtmlQuoteBridge()
+    const staged = quoteQuestion.quoteData.value
+    if (htmlQuoteBridgePath && staged?.filePath === htmlQuoteBridgePath) {
+        quoteQuestion.hideBar()
+    }
+    htmlQuoteBridgePath = ''
 }
 
 // Edit mode (source text editing via CodeEditor).
@@ -504,11 +615,15 @@ function handleToggleSearch() {
 function focusSearchInput() {
     // Focus (not toggle) the active search UI. CodeMirror views open the
     // editor's own search panel; the rendered markdown preview focuses its
-    // inline search bar (opened via the searchOpen prop).
+    // inline search bar (opened via the searchOpen prop); the rendered HTML
+    // preview focuses its own inline bar, which searches the preview iframe's
+    // document.
     if (isCodeMirrorView.value) {
         cmEditorRef.value?.openSearch?.()
     } else if (!editing.value && props.markdownViewMode === 'rendered' && isMarkdown.value) {
         mdPreviewRef.value?.focusSearchInput?.()
+    } else if (!editing.value && props.markdownViewMode === 'rendered' && isHtml.value) {
+        htmlSearchBarRef.value?.focus?.()
     }
 }
 
@@ -692,6 +807,11 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
     scrollRestore.dispose()
+    // The bridge lives in the previewed document; leaving it attached would
+    // keep listeners alive on a document nothing can see.
+    detachHtmlQuoteBridge()
+    disposeHtmlSearchShortcut?.()
+    disposeHtmlSearchShortcut = null
 })
 
 // Save/restore scroll position when switching files. The watcher keeps the
@@ -700,6 +820,12 @@ onBeforeUnmount(() => {
 // ordering: save the outgoing file → reset edit mode → schedule a restore.
 watch(() => props.file, (f, oldF) => {
     scrollRestore.onFileWillChange()
+    // The previewed document belongs to the outgoing file; its bridge must not
+    // outlive it (switching to a non-HTML file unmounts the iframe without a
+    // load event to re-attach through).
+    detachHtmlQuoteBridge()
+    disposeHtmlSearchShortcut?.()
+    disposeHtmlSearchShortcut = null
 
     // An unsaved Untitled buffer opens directly in edit mode — there is no
     // read-only form of a file that does not exist yet. Set here rather than by
@@ -741,7 +867,15 @@ watch(() => props.file?.content, (content) => {
 // Runs as a pre-flush watcher: the pane being left is still mounted, so we
 // capture its anchor before the new pane swaps in.
 watch(() => props.markdownViewMode, (newMode, oldMode) => {
-    if (newMode === oldMode || !isMarkdown.value || !props.file?.content) return
+    if (newMode === oldMode) return
+    // Toggling to source unmounts the HTML preview iframe without a load event,
+    // so the bridge into its document has to be dropped here.
+    if (isHtml.value) {
+        detachHtmlQuoteBridge()
+        disposeHtmlSearchShortcut?.()
+        disposeHtmlSearchShortcut = null
+    }
+    if (!isMarkdown.value || !props.file?.content) return
     const oldEl = scrollRestore.scrollElFor(oldMode, editing.value)
     const saved = scrollRestore.captureScroll(oldEl)
     if (saved) scrollRestore.restoreAfterContainerSwitch(saved)
@@ -933,6 +1067,14 @@ defineExpose({
     max-width: 90%;
     line-height: var(--line-height-snug);
     align-self: center;
+}
+
+.html-preview-pane {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+    min-width: 0;
 }
 
 .html-preview-iframe {

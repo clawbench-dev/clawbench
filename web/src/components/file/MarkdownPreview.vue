@@ -40,7 +40,7 @@
   <!-- Inline search bar (bottom of the preview), replacing the SearchDrawer
        bottom sheet for rendered markdown. Its open state is driven by the
        searchDrawer state via props; closing is reported upward. -->
-  <MarkdownSearchBar ref="searchBarRef" :open="!!searchOpen" :container="bodyRef" @close="emit('closeSearch')" />
+  <PreviewSearchBar ref="searchBarRef" :open="!!searchOpen" :container="bodyRef" @close="emit('closeSearch')" />
 
   <!-- Markdown code-link click preview -->
   <CodeLinkPreview
@@ -75,7 +75,7 @@ import { languageVersion } from '@/utils/highlight'
 import { stampSvgFigures } from '@/utils/svgMediaFit.ts'
 import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
 import TableRowModal from '@/components/common/TableRowModal.vue'
-import MarkdownSearchBar from '@/components/file/MarkdownSearchBar.vue'
+import PreviewSearchBar from '@/components/file/PreviewSearchBar.vue'
 import FileChangeNav from '@/components/file/FileChangeNav.vue'
 import { useChangeNav } from '@/composables/useChangeNav.ts'
 import { clearBaseline } from '@/composables/useFileChangeBaseline.ts'
@@ -106,7 +106,7 @@ const emit = defineEmits(['closeSearch', 'captureScroll'])
 
 const renderedHtml = ref('')
 const bodyRef = ref<HTMLElement | null>(null)
-const searchBarRef = ref<InstanceType<typeof MarkdownSearchBar> | null>(null)
+const searchBarRef = ref<InstanceType<typeof PreviewSearchBar> | null>(null)
 const imageTimestamp = ref(Date.now())
 let currentRenderId = 0
 

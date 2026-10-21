@@ -142,7 +142,7 @@ describe('MarkdownPreview path clicks', () => {
         plugins: [i18n],
         stubs: {
           TableRowModal: true,
-          MarkdownSearchBar: true,
+          PreviewSearchBar: true,
           CodeLinkPreview: true,
         },
       },
@@ -166,7 +166,7 @@ describe('MarkdownPreview path clicks', () => {
         plugins: [i18n],
         stubs: {
           TableRowModal: true,
-          MarkdownSearchBar: true,
+          PreviewSearchBar: true,
           CodeLinkPreview: true,
         },
       },
@@ -204,7 +204,7 @@ describe('MarkdownPreview path clicks', () => {
         plugins: [i18n],
         stubs: {
           TableRowModal: true,
-          MarkdownSearchBar: true,
+          PreviewSearchBar: true,
           CodeLinkPreview: true,
         },
       },
@@ -241,7 +241,7 @@ describe('MarkdownPreview path clicks', () => {
       },
       global: {
         plugins: [i18n],
-        stubs: { TableRowModal: true, MarkdownSearchBar: true, CodeLinkPreview: true },
+        stubs: { TableRowModal: true, PreviewSearchBar: true, CodeLinkPreview: true },
       },
     })
 
@@ -285,7 +285,7 @@ describe('MarkdownPreview — change navigation wiring', () => {
       props: { file: { path: '/project/README.md', content: '# Title' }, viewMode: 'rendered', ...props },
       global: {
         plugins: [i18n],
-        stubs: { TableRowModal: true, MarkdownSearchBar: true, CodeLinkPreview: true },
+        stubs: { TableRowModal: true, PreviewSearchBar: true, CodeLinkPreview: true },
       },
       // Attach so the rail elements are `isConnected` — flashElement() no-ops on
       // detached elements (it assumes they are about to be removed).

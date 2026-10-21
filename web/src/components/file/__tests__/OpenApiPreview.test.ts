@@ -24,8 +24,11 @@ const quoteState = vi.hoisted(() => {
   return { showBar, hideBar }
 })
 
-vi.mock('@/utils/openapiQuote.ts', () => ({
-  attachOpenApiQuoteBridge: bridgeState.attach,
+vi.mock('@/utils/iframeSelectionQuote.ts', () => ({
+  attachIframeSelectionQuoteBridge: bridgeState.attach,
+  // Real implementation: the component resolves the iframe window through it,
+  // and the contract under test is "attach to the live iframe's window".
+  resolveIframeWindow: async (live: () => HTMLIFrameElement | null) => live()?.contentWindow ?? null,
 }))
 
 vi.mock('@/utils/swaggerHtml.ts', () => ({

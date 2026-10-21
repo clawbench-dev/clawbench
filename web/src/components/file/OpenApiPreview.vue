@@ -19,7 +19,7 @@ import { ref, computed, watch, inject, onBeforeUnmount } from 'vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { buildSwaggerSrcdoc } from '@/utils/swaggerHtml.ts'
 import { isDarkTheme } from '@/utils/themeMeta'
-import { attachOpenApiQuoteBridge } from '@/utils/openapiQuote.ts'
+import { attachIframeSelectionQuoteBridge, resolveIframeWindow } from '@/utils/iframeSelectionQuote.ts'
 import { useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
 
 const props = defineProps({
@@ -87,46 +87,28 @@ watch(() => [props.file?.content, props.file?.specJson], () => {
   loading.value = true
 })
 
-// Attach the quote bridge to the iframe's content window. Browsers expose
-// contentWindow as soon as "load" fires, but jsdom can dispatch the load event
-// before it finishes attaching the browsing context — and may even replace the
-// iframe element mid-navigation (a captured event target can go stale). Re-query
-// the live iframe each microtask turn until a contentWindow appears; the bounded
-// microtask loop is deterministic and leak-free in tests, and real browsers
-// attach on the first check.
-const BRIDGE_ATTACH_MICROTURNS = 8
-
-function microtaskSleep(n) {
-  let p = Promise.resolve()
-  for (let i = 0; i < n; i++) p = p.then(() => {})
-  return p
-}
-
+// Attach the quote bridge to the iframe's content window (shared with the HTML
+// preview's bridge; see resolveIframeWindow for the attach-retry contract).
 function liveOpenApiIframe() {
   return iframeRef.value || document.querySelector('.openapi-iframe')
 }
 
 async function attachBridgeToIframe() {
-  for (let i = 0; i <= BRIDGE_ATTACH_MICROTURNS; i++) {
-    const win = liveOpenApiIframe()?.contentWindow
-    if (win) {
-      // Multiple load events for the same document must not churn the bridge
-      // (dispose+re-attach would tear down and rebuild selection listeners
-      // pointlessly). A real spec reload navigates to a new document — a
-      // different contentWindow — so dispose there and attach afresh.
-      if (bridgeWin === win) return
-      disposeQuoteBridge()
-      disposeBridge = attachOpenApiQuoteBridge({
-        win,
-        filePath: () => props.file?.path || '',
-        show: (data) => quoteQuestion.showBar(data, { delay: 0 }),
-        hide: () => quoteQuestion.hideBar(),
-      })
-      bridgeWin = win
-      return
-    }
-    if (i < BRIDGE_ATTACH_MICROTURNS) await microtaskSleep(1)
-  }
+  const win = await resolveIframeWindow(liveOpenApiIframe)
+  if (!win) return
+  // Multiple load events for the same document must not churn the bridge
+  // (dispose+re-attach would tear down and rebuild selection listeners
+  // pointlessly). A real spec reload navigates to a new document — a
+  // different contentWindow — so dispose there and attach afresh.
+  if (bridgeWin === win) return
+  disposeQuoteBridge()
+  disposeBridge = attachIframeSelectionQuoteBridge({
+    win,
+    filePath: () => props.file?.path || '',
+    show: (data) => quoteQuestion.showBar(data, { delay: 0 }),
+    hide: () => quoteQuestion.hideBar(),
+  })
+  bridgeWin = win
 }
 
 function onIframeLoad() {

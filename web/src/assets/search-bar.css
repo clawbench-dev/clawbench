@@ -3,7 +3,8 @@
  *
  * Single source of truth for the search bar used by BOTH search UIs:
  *   - CodeMirror search panel (codeMirrorSearchPanel.ts → SearchBar.vue)
- *   - Markdown preview search bar (MarkdownSearchBar.vue → SearchBar.vue)
+ *   - Rendered-preview search bar (PreviewSearchBar.vue → SearchBar.vue;
+ *     markdown body and the HTML preview iframe's own document)
  *
  * Both render the same SearchBar component (same `.cm-search` structure):
  *     .search-input-wrap (input + inline VS Code-style option icons)
@@ -251,7 +252,7 @@
    - CodeMirror panel (decorations added by codeMirrorSearchPanel.ts:
      .cm-searchMatch on every match, .cm-searchMatch-selected + flash on the
      active one)
-   - Markdown preview (MarkdownSearchBar.vue: every match wrapped in a
+   - Rendered preview (PreviewSearchBar.vue: every match wrapped in a
      <mark class="md-search-match">, the active one additionally gets the
      .search-match-flash class to blink)
    The flash animation reuses the canonical `line-flash` keyframes from
