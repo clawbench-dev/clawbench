@@ -37,8 +37,48 @@ export class NavigationPage {
     return this.tabBtn(tab)
   }
 
+  /**
+   * Wait for the dock to finish laying out, then return the tab button.
+   *
+   * `setViewportSize` resolves when the resize has been *applied*, not when the
+   * page has reflowed and the dock's overflow recomputation has settled. In that
+   * window the buttons are already in the DOM but still zero-width (measured:
+   * `.dock-center` width 0, all 11 buttons `getBoundingClientRect().width === 0`)
+   * while the overflow button is momentarily rendered. `filter({ visible: true })`
+   * treats a zero-size element as invisible, so the locator matches NOTHING —
+   * and the subsequent `toBeVisible` then waits forever on a locator that can
+   * never resolve, because by the time the button does have a size the filter has
+   * already been re-evaluated against the transient state.
+   *
+   * Measured on WebKit: the transient lasts one frame after a wide→narrow resize,
+   * so a spec that resizes and clicks immediately failed 1-in-4 runs while an
+   * identical spec that happened to wait passed. That is a race in the test, not
+   * a product defect (a real user never clicks within the same frame).
+   *
+   * Waiting on the dock's settled width — not a fixed timeout — is the condition
+   * that is true exactly when the transient is over, so it cannot flake.
+   */
+  private async waitForDockSettled(): Promise<void> {
+    // Either shape counts: exactly one of the two docks is displayed at a time,
+    // so "some dock has a non-zero width" is the settled condition in both.
+    await expect
+      .poll(
+        () =>
+          this.page.evaluate(() => {
+            const docks = Array.from(document.querySelectorAll('.bottom-dock, .wide-dock'))
+            return docks.some((d) => (d as HTMLElement).getBoundingClientRect().width > 0)
+          }),
+        { timeout: 10000, message: 'the dock should settle to a laid-out width' },
+      )
+      .toBe(true)
+  }
+
   /** Wait for the dock to render (either shape) and return a tab button. */
   private async readyTabBtn(tab: string): Promise<Locator> {
+    // Settle BEFORE resolving the locator: `filter({ visible: true })` latches
+    // onto whatever is visible at evaluation time, so resolving it mid-reflow
+    // is what produced the unresolvable locator described above.
+    await this.waitForDockSettled()
     const btn = this.tabBtn(tab)
     await expect(btn).toBeVisible({ timeout: 10000 })
     return btn
