@@ -1051,8 +1051,10 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 			project_id INTEGER NOT NULL,
 			backend TEXT NOT NULL DEFAULT 'claude',
 			title TEXT NOT NULL DEFAULT '',
+			session_type TEXT NOT NULL DEFAULT 'chat',
 			archived INTEGER NOT NULL DEFAULT 0,
-			last_read_at DATETIME
+			last_read_at DATETIME,
+			awaiting_user_at DATETIME
 		);
 		CREATE TABLE IF NOT EXISTS chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,

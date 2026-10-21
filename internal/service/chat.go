@@ -1297,6 +1297,15 @@ func generateSessionID() string {
 // GetOverviewSessions so all three agree on what "unread" means — if they
 // drifted, the badge and the list would disagree about the same session.
 //
+// GROUP sessions take a different branch, and that is the whole point of the
+// CASE: in a group every member speech is its own assistant row, so counting
+// rows made the badge light up (and climb) after every single member — during a
+// discussion the user is watching, they would see the session flip unread
+// between speakers. What the user actually owes a group is ONE thing: a turn.
+// So a group is unread exactly when its last finished turn handed the floor
+// back and the user has not read it since (awaiting_user_at), and the count is
+// 0 or 1 — never a message tally.
+//
 // It is a correlated scalar subquery, NOT a grouped LEFT JOIN. The join form
 // materialized every assistant message in the project (archived sessions
 // included) into a temp B-tree and then grouped it, only to join a handful of
@@ -1321,12 +1330,15 @@ func generateSessionID() string {
 //
 // COUNT never returns NULL, so no COALESCE is needed (the old LEFT JOIN did
 // need one, because a missed join yields NULL).
-const unreadCountSubquery = `(SELECT COUNT(*) FROM chat_history h
-			WHERE h.session_id = s.id
-			  AND h.project_id = s.project_id
-			  AND h.role = 'assistant' AND h.streaming = 0
-			  AND (s.last_read_at IS NULL OR COALESCE(h.completed_at, h.created_at) > s.last_read_at)
-		) AS unread_count`
+const unreadCountSubquery = `CASE
+			WHEN s.session_type = '` + store.SessionTypeGroup + `' THEN
+				CASE WHEN s.awaiting_user_at IS NOT NULL THEN 1 ELSE 0 END
+			ELSE (SELECT COUNT(*) FROM chat_history h
+				WHERE h.session_id = s.id
+				  AND h.project_id = s.project_id
+				  AND h.role = 'assistant' AND h.streaming = 0
+				  AND (s.last_read_at IS NULL OR COALESCE(h.completed_at, h.created_at) > s.last_read_at)
+			) END AS unread_count`
 
 // sessionsQueryBase is the prefix of GetSessions' query, up to (not including)
 // the backend filter and ORDER BY. Package-level so the query-plan test can
@@ -1684,6 +1696,14 @@ func UpdateLastRead(sessionID string) {
 			)
 		)
 		WHERE id = ?`, sessionID, sessionID)
+	// Clear the group "waiting on you" flag in its OWN statement, deliberately
+	// not folded into the UPDATE above: for a GROUP that flag IS the badge (see
+	// unreadCountSubquery), so reading must clear it, but the read timestamp is
+	// the far more load-bearing of the two — a single statement would make
+	// last_read_at fail whenever the flag column is unavailable, turning a
+	// degraded schema into "the badge never clears". Best-effort and harmless for
+	// non-group rows, where the column is always NULL.
+	store.WriteExec("UPDATE chat_sessions SET awaiting_user_at = NULL WHERE id = ?", sessionID)
 	// Broadcast a status change so connected clients (e.g. the Android floating
 	// window) can refresh their unread counts. WS-only: no push notification and
 	// no pending event — reading a session must not create a notification.

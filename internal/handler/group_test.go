@@ -385,11 +385,12 @@ func TestServeSessionsOverview_GroupRowCarriesMemberPreview(t *testing.T) {
 	require.NoError(t, err)
 
 	// Make the group unread so the overview (running/pending/unread only)
-	// includes it: an assistant message newer than last_read_at.
+	// includes it. A group's unread is the single "waiting on you" flag — NOT a
+	// count of member messages — so the fixture sets that flag. Inserting an
+	// assistant row would no longer make a group unread (see
+	// service.unreadCountSubquery).
 	_, err = store.UnsafeDBForTest().Exec(
-		`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming)
-		 VALUES (?, 'assistant', 'unread', ?, 'codebuddy', 0)`,
-		store.ProjectIDForTest(t, env.ProjectDir), groupID,
+		"UPDATE chat_sessions SET awaiting_user_at = CURRENT_TIMESTAMP WHERE id = ?", groupID,
 	)
 	require.NoError(t, err)
 

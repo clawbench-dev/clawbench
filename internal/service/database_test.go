@@ -451,6 +451,47 @@ func TestSchema_TitleSourceBackfill(t *testing.T) {
 	assert.Equal(t, "placeholder", got["s-ph"])
 }
 
+// TestSchema_AwaitingUserAtColumnExists verifies the additive migration that
+// adds the group "waiting on you" flag, and that re-running InitDB is a no-op.
+//
+// It also pins the column's NULL default: a pre-existing group must start with
+// NO unread badge rather than a phantom one, so the ALTER must not backfill a
+// timestamp. A stale badge on every old group after an upgrade is exactly the
+// regression a non-null default would cause.
+func TestSchema_AwaitingUserAtColumnExists(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	restoreDB := store.SnapshotDBForTest()
+	defer restoreDB()
+
+	require.NoError(t, InitDB())
+	// Re-run against the same data dir: the pragma_table_info guard must skip
+	// the ALTER instead of erroring.
+	require.NoError(t, InitDB())
+	defer store.Close()
+
+	columns := getTableColumns(t, store.UnsafeDBForTest(), "chat_sessions")
+	assert.Contains(t, columns, "awaiting_user_at",
+		"chat_sessions should have the awaiting_user_at column")
+
+	// A row inserted without the column must read back NULL, not a zero time.
+	if _, err := store.UnsafeDBForTest().Exec(
+		"INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('s-awaiting', 1, 'claude', 't')",
+	); err != nil {
+		t.Fatalf("insert session: %v", err)
+	}
+	var isNull int
+	require.NoError(t, store.UnsafeDBForTest().QueryRow(
+		"SELECT awaiting_user_at IS NULL FROM chat_sessions WHERE id = 's-awaiting'",
+	).Scan(&isNull))
+	assert.Equal(t, 1, isNull, "a new row must start with no pending user turn")
+}
+
 // TestSchema_SortOrderMigration verifies chat_sessions.sort_order is added to a
 // database created before the column existed (#492), that the migration is
 // idempotent, and that it leaves pre-existing rows at the default 0 — so the

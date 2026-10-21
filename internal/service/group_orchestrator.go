@@ -14,6 +14,7 @@ import (
 	"clawbench/internal/grouprouting"
 	"clawbench/internal/i18n"
 	"clawbench/internal/model"
+	"clawbench/internal/store"
 	"clawbench/internal/ws"
 )
 
@@ -411,9 +412,39 @@ func (o *GroupOrchestrator) runLoop(groupCtx context.Context, groupID string) Dr
 	} else {
 		o.announceUserTurn(groupID, res)
 	}
+	// Whatever ended the turn — the host's end signal, a natural relay drain, a
+	// confirmed cruise, the speech cap — a CLEAN end with an empty queue means
+	// the floor is now with the human. That is the one thing the group badge
+	// reports (see unreadCountSubquery), so it is recorded here, once, instead of
+	// inside each ending branch: the cruise/cap paths write different system
+	// lines but hand back the same turn.
+	//
+	// A cancelled or errored turn is excluded for the same reason announceUserTurn
+	// excludes it: the user must read the failure first, and a visible
+	// cancel/error is already on the timeline.
+	if res.CancelReason == "" && res.Err == "" && GetQueuedCount(groupID) == 0 {
+		markGroupUserTurn(groupID)
+	}
 	finalizeGroupOrphans(groupID)
 	triggerChatSummarization(context.Background(), groupID)
 	return res
+}
+
+// markGroupUserTurn records that the group's floor has just been handed back to
+// the human: the group is now waiting on them. It is the single SET of
+// chat_sessions.awaiting_user_at, and the only thing the group unread badge
+// looks at (see unreadCountSubquery) — one finished turn = one thing the user
+// owes the group, no matter how many members spoke during it. UpdateLastRead
+// clears it.
+//
+// Best-effort: a failed write leaves the badge dark, which is the harmless
+// direction — the next finished turn sets it again.
+func markGroupUserTurn(groupID string) {
+	if _, err := store.WriteExec(
+		"UPDATE chat_sessions SET awaiting_user_at = CURRENT_TIMESTAMP WHERE id = ?", groupID,
+	); err != nil {
+		slog.Warn("group: marking awaiting user failed", "group", groupID, "err", err)
+	}
 }
 
 // announceUserTurn writes the "轮到用户发言" system line when a group turn
@@ -432,6 +463,10 @@ func (o *GroupOrchestrator) runLoop(groupCtx context.Context, groupID string) Dr
 // A cancelled or errored turn also returns the floor, but with a visible
 // cancel/error already on the timeline, so it is not "your turn" — the user
 // must read the failure first.
+//
+// The unread flag (markGroupUserTurn) is NOT set here: it is set once in runLoop
+// for every clean ending, including the cruise/cap paths that write a different
+// line instead of this one.
 func (o *GroupOrchestrator) announceUserTurn(groupID string, res DrainResult) {
 	if res.CancelReason != "" || res.Err != "" {
 		return
@@ -2428,8 +2463,10 @@ var emitGroupSystemMessage = func(groupID string, msgID int64, text string) {
 
 // RunGroupDrainLoop drives a group turn for `first` (an already-materialized
 // user message) and then drains any queued messages through the SAME loop
-// single chat uses, so queueing semantics, the terminal event and the push
-// contract are identical (decisions #45/#58/#72).
+// single chat uses, so queueing semantics and the terminal event are identical
+// (decisions #45/#58). The push contract deliberately DIFFERS from single chat:
+// a group notifies once per RUN, not once per queued message (see the
+// OnTurnAnswered note below).
 //
 // The drain loop — not the orchestrator — owns the terminal event: the group
 // turn returns a DrainResult and RunDrainLoop sends "done" exactly once when
@@ -2474,17 +2511,25 @@ func RunGroupDrainLoop(runCtx context.Context, groupID, projectPath string, firs
 		ExecuteRunWithMessage: func(msgID int64, row QueuedRow) DrainResult {
 			return runGroupTurnDrainFn(runCtx, groupID, msgID, row, nil)
 		},
-		// Each intermediate answer in a multi-message group drain is its own
-		// completed turn: notify now, not once at the very end (decision #72).
-		OnTurnAnswered: func() {
-			EmitTurnAnsweredNotification(groupID)
-		},
+		// NO OnTurnAnswered hook. Decision #72 gave each intermediate answer its
+		// own push, because a group's N queued user messages used to produce a
+		// single notification. That was the wrong unit: what the user is owed is
+		// a TURN, not an answer. A group turn runs many members and can take
+		// minutes, so notifying per queued message still fires while the
+		// discussion is mid-flight — and the notification it sends is a
+		// "completed" for a session the user is about to be asked to speak in.
+		//
+		// A group now notifies exactly once per run, from MarkDoneAndSendFinal's
+		// terminal `done` — which by construction fires only after the loop has
+		// exhausted the queue and the floor is back with the user. The unread
+		// badge follows the same rule (awaiting_user_at, see unreadCountSubquery),
+		// so notification and badge agree instead of counting member speeches.
 		MarkDoneAndSendFinal: markDoneAndSendFinal,
 	}, first)
 }
 
 // runGroupTurnDrainFn is the injectable indirection over RunGroupTurnDrain so
-// tests can drive RunGroupDrainLoop (and its push contract, decision #72)
+// tests can drive RunGroupDrainLoop (and its once-per-run push contract)
 // without running a real orchestrator/backend.
 //
 // NOTE: replacing this wholesale bypasses the production orchestration path, so

@@ -134,6 +134,7 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			last_read_at DATETIME,
+			awaiting_user_at DATETIME,
 			UNIQUE(backend, id)
 		);
 		CREATE TABLE IF NOT EXISTS recent_projects (

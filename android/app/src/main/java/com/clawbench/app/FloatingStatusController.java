@@ -634,8 +634,10 @@ public class FloatingStatusController {
         // are still running in the tracked set.
         trackSessionState(eventType, status,
                 "task_update".equals(eventType) ? taskId : sessionId);
-        // A completed turn always produced assistant output, which the backend
-        // counts as unread (messages newer than last_read_at). The live
+        // A completed turn is by definition something the user has not read yet:
+        // for a normal session the backend counts replies newer than
+        // last_read_at, and for a group it sets the single "waiting on you" flag
+        // (a group's badge is NOT a per-member message count). The live
         // "completed" broadcast carries has_new_messages=false, so keying off
         // that flag alone would hide the window on every completion — record
         // the session as unread here instead. A cancellation is different: it

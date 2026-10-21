@@ -161,23 +161,26 @@ func TestRunGroupDrainLoop_InstallsPanicBarrier(t *testing.T) {
 	}
 }
 
-// Decision #72: a drained group run notifies once per answered turn — N
-// messages produce exactly N completion pushes (N-1 intermediate via the
-// unguarded helper, plus the terminal one via EmitSessionPushNotification's
-// once-per-run guard). This had implementation but no verification (review W6):
-// every existing group test replaced RunGroupDrainLoop wholesale, so its
-// markDoneAndSendFinal never actually ran.
+// A group run notifies once per RUN, not once per queued message.
+//
+// This replaces decision #72's "once per answered turn" contract. #72 counted
+// answers, but an answer is not what the user owes a group — a TURN is. A group
+// turn runs many members and can last minutes, so a per-message push still fired
+// mid-discussion, and the queued messages behind the first produced extra
+// "completed" pushes for a session that had not yet handed the floor back.
+// Every notification now comes from the terminal `done`, which fires only once
+// the queue is exhausted and the floor is back with the user.
 //
 // pushSessionTerminal writes one pending_event per push (for offline replay), so
 // counting pending_events counts the pushes.
-func TestRunGroupDrainLoop_NotifiesOncePerTurn(t *testing.T) {
+func TestRunGroupDrainLoop_NotifiesOncePerRun(t *testing.T) {
 	cases := []struct {
 		name   string
 		queued []string
 		wantN  int
 	}{
-		{"single message (first only) pushes once", nil, 1},
-		{"first + 2 queued pushes 3 times", []string{"q1", "q2"}, 3},
+		{"single message pushes once", nil, 1},
+		{"first + 2 queued still pushes once", []string{"q1", "q2"}, 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -36,7 +36,7 @@ sequenceDiagram
         编排器->>成员C: 发言
     end
     编排器->>时间线: 结束/达上限 → 主持人汇总
-    编排器-->>用户: 推送完成通知（复用单聊）
+    编排器-->>用户: 整轮结束 → 推送一次完成通知（复用单聊）
 ```
 
 ### 自由模式：@ 接力
@@ -163,6 +163,7 @@ flowchart TB
 | `chat_sessions.agent_avatar` | **成员行自身的头像 SVG 快照**（前端 DiceBear 按名生成、随机风格）。**仅同一智能体的第 2+ 个实例生成**（用于区分副本）；第 1 个/唯一实例留空，回退智能体头像。非成员行留空 |
 | `chat_sessions.context_state` | 群行存 `group_mode`（`host`/`free`）、`host_member_id`、`parallelDefault`、`cruise`；成员行存 `seen_cursor` **与 `usage`**（该成员自己的上下文占用，花名册与详情面板的数据源） |
 | `chat_history.role='system'` | 成员增删的系统事件（`agent_id=''`，居中细条渲染，计入注入游标但不计入未读） |
+| `chat_sessions.awaiting_user_at` | **群的「在等我」标记**：最后一轮结束、发言权交回用户时置位，`UpdateLastRead` 清空。群未读因此是 **0/1**，不按成员发言条数累加 —— 讨论进行中不会每说一句就亮一次。通知同样只在整轮结束时推一次（不再逐条排队消息各推一次） |
 | `chat_history.agent_id` | **发言人成员行 id**（非 agent id）；前端据此解析发言人头像/名字并判定主持人发言 |
 | `group_pending_bcc` | 密送待投递队列，按目标名字键控，成功投递后删除。`sender_role`（`host`/`member`/`user`，空=升级前旧行）+ `sender_name` 供投递时署名。**每个目标上限 64 条**，超限按差额丢最旧（已超限的队列一次写入即收敛回上限） |
 

@@ -25,6 +25,7 @@ RAG：同一数据库文件，独立连接池
 | agent_avatar | TEXT | NOT NULL | `''` | **群成员行自身的头像 SVG 快照**（前端 DiceBear 按成员名生成）。仅同一智能体的第 2+ 个实例写入（用于区分副本）；第 1 个/唯一实例留空，回退智能体头像 |
 | deleted | INTEGER | NOT NULL | `0` | 软删除标记 |
 | last_read_at | DATETIME | | — | 最后阅读时间 |
+| awaiting_user_at | DATETIME | | — | **群会话专用**：最后一轮已结束、发言权已交回用户且用户尚未读。**是标记不是水位线** —— 交回时置位、`UpdateLastRead` 清空；群未读因此是 0/1（"群在等我"），不按成员发言条数累加（见 `unreadCountSubquery`）。非群会话恒为 NULL |
 | created_at | DATETIME | | CURRENT_TIMESTAMP | 创建时间 |
 | updated_at | DATETIME | | CURRENT_TIMESTAMP | 更新时间 |
 | source_session_id | TEXT | | `NULL` | 派生来源。三种写入方共用：分叉/任务续接写源会话 ID，ACP 载入写标记串 `acp:{acpSessionId}`（非会话 ID，消费时须跳过该前缀） |
@@ -385,6 +386,7 @@ erDiagram
         TEXT agent_avatar
         INTEGER deleted
         DATETIME last_read_at
+        DATETIME awaiting_user_at
         DATETIME created_at
         DATETIME updated_at
         TEXT source_session_id

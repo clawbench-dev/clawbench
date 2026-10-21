@@ -855,15 +855,17 @@ const session = useChatSession({
 })
 
 // onTurnBoundary: a producer turn just ended for the current session, which
-// means that turn's reply just finalized and stamped its completed_at. The
-// unread query compares COALESCE(completed_at, created_at) > last_read_at, so
-// the reply now counts as unread until the session is re-anchored. Two sources:
+// means that turn's reply just finalized and stamped its completed_at. For a
+// normal session the unread query compares COALESCE(completed_at, created_at) >
+// last_read_at, so the reply now counts as unread until the session is
+// re-anchored. Two sources:
 //   - queue_drain: a queued message started its own turn (the PREVIOUS turn's
 //     reply finalized);
-//   - stream_finalize: one GROUP member turn finalized — a group run finalizes
-//     one member at a time, so without this the session row lights up mid-run
-//     even though the user is watching (the terminal `done` re-anchors only at
-//     the very end).
+//   - stream_finalize: one GROUP member turn finalized. A group's badge is NOT
+//     derived from member messages (it is the single "waiting on you" flag set
+//     when the whole turn ends), so this does not affect the badge — it still
+//     fires so the read watermark keeps up with the reply the user is watching,
+//     which the group's own completion path then relies on.
 //
 // The backend cannot fix this itself: a queued message may come from another
 // device or an IM push, so "a turn boundary happened" is not evidence that
