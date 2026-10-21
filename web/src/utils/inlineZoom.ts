@@ -151,7 +151,7 @@ function naturalSize(state: ZoomState): { w: number; h: number } {
 }
 
 /**
- * Size of the media at the current scale, in layout pixels.
+ * Size of the media element at the current scale, in layout pixels.
  *
  * The media is scaled by writing WIDTH/HEIGHT, not by `transform: scale()`.
  * A CSS transform rasterises the element once at its layout size and then
@@ -160,24 +160,20 @@ function naturalSize(state: ZoomState): { w: number; h: number } {
  * re-rasterise at the new size, so text and strokes stay sharp at any scale.
  * (Panning still uses `translate`, which never resamples.)
  *
- * `base` is the size the media occupies at scale 1, i.e. its contain-fit size
- * inside the frame.
+ * At rest (scale 1) the element is exactly the VIEWPORT box: the artwork is
+ * letterboxed inside it by `object-fit: contain` (img) or the SVG's default
+ * `preserveAspectRatio` (inline svg). The box is what grows when zooming, so
+ * the visible artwork grows by the same factor on whichever axis is the
+ * limiting one — the letterbox margins shrink to nothing first, which is
+ * exactly the empty space the zoom is meant to reclaim.
  */
-function scaledSize(state: ZoomState): { w: number; h: number; baseW: number; baseH: number } {
+function scaledSize(state: ZoomState): { w: number; h: number } {
     const frame = state.figure.getBoundingClientRect()
     const cell = state.media.parentElement
     const box = cell ? cell.getBoundingClientRect() : frame
-    const availW = box.width || frame.width
-    const availH = box.height || frame.height
-    const nat = naturalSize(state)
-    // Contain fit: the largest size that fits the frame with the ratio intact.
-    const fit = nat.w > 0 && nat.h > 0 ? Math.min(availW / nat.w, availH / nat.h) : 1
-    return {
-        w: nat.w * fit * state.scale,
-        h: nat.h * fit * state.scale,
-        baseW: nat.w * fit,
-        baseH: nat.h * fit,
-    }
+    const baseW = box.width || frame.width
+    const baseH = box.height || frame.height
+    return { w: baseW * state.scale, h: baseH * state.scale }
 }
 
 /**
@@ -191,8 +187,17 @@ function scaledSize(state: ZoomState): { w: number; h: number; baseW: number; ba
 function clampPan(state: ZoomState, tx: number, ty: number): { tx: number; ty: number } {
     const frame = state.figure.getBoundingClientRect()
     const { w, h } = scaledSize(state)
-    const maxX = Math.max(0, (w - frame.width) / 2)
-    const maxY = Math.max(0, (h - frame.height) / 2)
+    // The box may be larger than the artwork inside it (letterboxing), so the
+    // travel limit is derived from the ARTWORK's rendered size: it may move
+    // until its edge meets the frame edge, and no further.
+    const nat = naturalSize(state)
+    const ratio = nat.w > 0 && nat.h > 0 ? nat.w / nat.h : 1
+    // Rendered artwork size inside the scaled box, preserving the ratio.
+    const boxRatio = h > 0 ? w / h : ratio
+    const artW = ratio > boxRatio ? w : h * ratio
+    const artH = ratio > boxRatio ? w / ratio : h
+    const maxX = Math.max(0, (artW - frame.width) / 2)
+    const maxY = Math.max(0, (artH - frame.height) / 2)
     return {
         tx: Math.min(maxX, Math.max(-maxX, tx)),
         ty: Math.min(maxY, Math.max(-maxY, ty)),
@@ -205,7 +210,9 @@ function apply(state: ZoomState): void {
     state.tx = tx
     state.ty = ty
     const { w, h } = scaledSize(state)
-    // Layout size (sharp) + translate (no resampling).
+    // Layout size (sharp) + translate (no resampling). The element keeps
+    // `object-fit: contain` from the stylesheet, so the artwork is letterboxed
+    // inside this box at every scale.
     state.media.style.width = `${w}px`
     state.media.style.height = `${h}px`
     state.media.style.maxWidth = 'none'

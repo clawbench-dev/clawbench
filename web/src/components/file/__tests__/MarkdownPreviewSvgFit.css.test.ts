@@ -64,22 +64,30 @@ describe('svg media layout (media-block.css contract)', () => {
     expect(cellRule![1]).toContain('position: relative')
   })
 
-  it('contain-fits and CENTRES the media inside the viewport', () => {
+  it('FILLS the viewport and contain-fits the artwork inside it', () => {
     expect(mediaRule).toBeTruthy()
     const rule = mediaRule![1]
-    expect(rule).toContain('max-width: 100%')
-    expect(rule).toContain('max-height: 100%')
+    // The element must be the viewport size. `width: auto` + `max-width: 100%`
+    // only ever shrank (contain does not scale a small image UP), so a diagram
+    // whose intrinsic size was smaller than the column sat in the middle of an
+    // empty frame — the reported bug ("默认大小应该占满全宽").
+    expect(rule).toContain('width: 100%')
+    expect(rule).toContain('height: 100%')
     expect(rule).toContain('object-fit: contain')
-    // Centring: `inset: 0` + `margin: auto` forces the box to the container
-    // size instead of keeping the media's own, so the percentage-translate form
-    // is the one that works for a box both smaller (resting) and larger
-    // (zoomed) than the frame.
+    // Centring: the percentage translate resolves against the element's own
+    // box, so it works for a box both smaller (resting) and larger (zoomed)
+    // than the frame.
     expect(rule).toContain('top: 50%')
     expect(rule).toContain('left: 50%')
     expect(rule).toContain('translate(-50%, -50%)')
-    // `inset: 0` would pin all four edges and force the box to the container
-    // size. The assertion ignores the explanatory comment above the rule.
-    expect(rule.replace(/\/\*[\s\S]*?\*\//g, '')).not.toContain('inset: 0')
+    const declarations = rule.replace(/\/\*[\s\S]*?\*\//g, '')
+    // `inset: 0` would pin all four edges (that part is fine) but the earlier
+    // form paired it with `margin: auto`, which forced the box to the container
+    // size and broke the ratio. The explicit 100% + translate form is the
+    // contract.
+    expect(declarations).not.toContain('inset: 0')
+    // The old shrink-only sizing must not come back.
+    expect(declarations).not.toMatch(/^\s*width:\s*auto/m)
   })
 
   it('never applies the ratio-driven width anywhere in the sheet', () => {

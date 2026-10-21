@@ -1230,25 +1230,32 @@ function buildInlineZoomJs(): string {
         return { w: r.width, h: r.height };
     }
 
-    // Size at the current scale, in LAYOUT pixels. Writing width/height (not
-    // transform: scale) makes the browser re-rasterise, so a zoomed diagram
-    // stays sharp instead of being a stretched bitmap.
+    // Size at the current scale, in LAYOUT pixels. At rest the element is the
+    // viewport box and the artwork is letterboxed inside it by object-fit:
+    // contain (img) / preserveAspectRatio (svg) — so a diagram smaller than the
+    // column still fills it. Writing width/height (not transform: scale) makes
+    // the browser re-rasterise, keeping it sharp.
     function scaledSize(s) {
         var frame = s.fig.getBoundingClientRect();
         var cell = s.media.parentElement;
         var box = cell ? cell.getBoundingClientRect() : frame;
-        var aw = box.width || frame.width;
-        var ah = box.height || frame.height;
-        var n = naturalSize(s);
-        var fit = (n.w > 0 && n.h > 0) ? Math.min(aw / n.w, ah / n.h) : 1;
-        return { w: n.w * fit * s.scale, h: n.h * fit * s.scale };
+        var bw = box.width || frame.width;
+        var bh = box.height || frame.height;
+        return { w: bw * s.scale, h: bh * s.scale };
     }
 
     function clamp(s) {
         var frame = s.fig.getBoundingClientRect();
         var z = scaledSize(s);
-        var maxX = Math.max(0, (z.w - frame.width) / 2);
-        var maxY = Math.max(0, (z.h - frame.height) / 2);
+        // The box may be larger than the artwork inside it (letterboxing), so
+        // the travel limit comes from the ARTWORK's rendered size.
+        var n = naturalSize(s);
+        var ratio = (n.w > 0 && n.h > 0) ? n.w / n.h : 1;
+        var boxRatio = z.h > 0 ? z.w / z.h : ratio;
+        var artW = ratio > boxRatio ? z.w : z.h * ratio;
+        var artH = ratio > boxRatio ? z.w / ratio : z.h;
+        var maxX = Math.max(0, (artW - frame.width) / 2);
+        var maxY = Math.max(0, (artH - frame.height) / 2);
         s.tx = Math.min(maxX, Math.max(-maxX, s.tx));
         s.ty = Math.min(maxY, Math.max(-maxY, s.ty));
     }

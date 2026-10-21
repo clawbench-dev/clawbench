@@ -594,6 +594,23 @@ describe('inlineZoom — layout contract', () => {
     expect(svg.style.transform).not.toContain('scale(')
   })
 
+  it('uses the VIEWPORT box as the zoom base, so a small diagram fills the frame', () => {
+    // The resting rule makes the media element exactly the viewport size and
+    // letterboxes the artwork inside it (`object-fit: contain`). If the base
+    // were the artwork's contain-fit size instead, a diagram smaller than the
+    // column would stay small at scale 1 — the reported bug.
+    const figure = mountFigure('mermaid')
+    const svg = figure.querySelector('svg')!
+    // A small intrinsic size inside a much larger frame.
+    stubIntrinsic(figure, 100, 50, 600, 400)
+    stubRect(figure, 0, 0, 600, 400)
+    click(svg)
+
+    // At scale 1 the element must equal the frame, not the intrinsic size.
+    expect(parseFloat(svg.style.width)).toBe(600)
+    expect(parseFloat(svg.style.height)).toBe(400)
+  })
+
   it('restores the resting layout exactly on exit', () => {
     // "布局恢复原状" — every inline size the zoom wrote must be cleared, or the
     // media would stay at a stale pixel size after leaving the active state.
