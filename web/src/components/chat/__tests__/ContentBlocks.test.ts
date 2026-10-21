@@ -2243,6 +2243,224 @@ describe('ContentBlocks — sub-agent grouping', () => {
   })
 })
 
+// ── Agent Team member fallback grouping ──
+//
+// Team members normally carry a backfilled parent_tool_call_id pointing at the
+// Agent card that spawned them, so they group under that card. Two situations
+// break that link, and in both the member content used to interleave into the
+// lead's flat stream (all members' output mixed together):
+//   1. the Agent card is in an EARLIER message (interrupt + continue, or any
+//      follow-up turn on the same live connection), and
+//   2. a respawned connection lost the member → tool-call map, so member frames
+//      arrive with no parent at all.
+// The fallback groups by member NAME in those cases only. These tests pin both
+// halves: the fallback fires when the parent is unresolvable, and it does NOT
+// fire when the parent is present (a healthy message must be unchanged).
+describe('ContentBlocks — Agent Team member fallback grouping', () => {
+  it('groups parentless member content by member name instead of flattening it', () => {
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'text', text: 'lead says hi' },
+        { type: 'text', text: 'alpha one', member_name: 'alpha' },
+        { type: 'tool_use', name: 'Read', id: 't1', done: true, input: {}, member_name: 'alpha' },
+        { type: 'text', text: 'beta one', member_name: 'beta' },
+        { type: 'tool_use', name: 'Bash', id: 't2', done: true, input: {}, member_name: 'beta' },
+      ],
+    })
+    // One synthetic group per member, not one shared flat stream.
+    const groups = wrapper.findAll('.member-group')
+    expect(groups).toHaveLength(2)
+    // The member name lives on the header pill (the attribute is what the
+    // fallback keys on), and the pill is the group's anchor block.
+    expect(groups[0].find('.chat-tool-call').attributes('data-member-name')).toBe('alpha')
+    expect(groups[1].find('.chat-tool-call').attributes('data-member-name')).toBe('beta')
+    // The header pill carries the member name so the two groups are tellable apart.
+    expect(groups[0].find('.chat-tool-call .tool-name').text()).toBe('alpha')
+    expect(groups[1].find('.chat-tool-call .tool-name').text()).toBe('beta')
+    // The lead's own text stays outside every member group.
+    expect(wrapper.html()).toContain('lead says hi')
+  })
+
+  it('groups member content whose parent lives in an earlier message (unresolvable here)', () => {
+    // Reproduces the production shape: the Agent card (call_agent) is in a
+    // PREVIOUS message, so this message's blocks reference an id it does not
+    // contain. Each message renders its own ContentBlocks instance, so the id
+    // is never resolvable here.
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'thinking', text: 'alpha thinking', parent_tool_call_id: 'call_agent', member_name: 'alpha' },
+        { type: 'tool_use', name: 'Bash', id: 't1', done: true, input: {}, parent_tool_call_id: 'call_agent', member_name: 'alpha' },
+        { type: 'thinking', text: 'beta thinking', parent_tool_call_id: 'call_agent2', member_name: 'beta' },
+      ],
+    })
+    expect(wrapper.findAll('.member-group')).toHaveLength(2)
+    expect(wrapper.html()).not.toContain('alpha thinking')
+  })
+
+  it('leaves member content that resolves to a real Agent card in this message alone', () => {
+    // Healthy message: the Agent card is present, so the existing sub-agent
+    // grouping applies and the fallback must not add a second group.
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'tool_use', name: 'Agent', id: 'call_agent', done: true, input: {} },
+        { type: 'thinking', text: 'alpha thinking', parent_tool_call_id: 'call_agent', member_name: 'alpha' },
+      ],
+      expandedTools: { 'subagent-call_agent': true },
+    })
+    expect(wrapper.findAll('.member-group')).toHaveLength(0)
+    expect(wrapper.find('.subagent-group').exists()).toBe(true)
+    expect(wrapper.html()).toContain('alpha thinking')
+  })
+
+  it('does not group non-member orphans (ordinary sub-agent content with a missing parent)', () => {
+    // The fallback is keyed on member_name. A plain orphan (no member) must keep
+    // its existing flat fallback, not disappear into a synthetic group.
+    const wrapper = mountBlocks({
+      blocks: [{ type: 'text', text: 'orphan child content', parent_tool_call_id: 'call_missing' }],
+    })
+    expect(wrapper.findAll('.member-group')).toHaveLength(0)
+    expect(wrapper.html()).toContain('orphan child content')
+  })
+
+  it('mounts a member group body on open and shows its tool calls', () => {
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'text', text: 'alpha one', member_name: 'alpha' },
+        { type: 'tool_use', name: 'Read', id: 't1', done: true, input: {}, member_name: 'alpha' },
+      ],
+      expandedTools: { 'member-group-msg-1-alpha': true },
+    })
+    const group = wrapper.find('.member-group')
+    expect(group.classes()).toContain('subagent-group-open')
+    // The body holds a nested ContentBlocks instance with the member's own blocks.
+    expect(group.find('.subagent-group-body .content-blocks-nested').exists()).toBe(true)
+  })
+
+  it('does not re-group inside a member group body (no unbounded recursion)', () => {
+    // The body's blocks still carry member_name with an unresolvable parent, so
+    // without the insideMemberGroup guard the nested instance would try to group
+    // them again — forever.
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'text', text: 'alpha one', member_name: 'alpha' },
+        { type: 'tool_use', name: 'Read', id: 't1', done: true, input: {}, member_name: 'alpha' },
+      ],
+      expandedTools: { 'member-group-msg-1-alpha': true },
+    })
+    expect(wrapper.findAll('.member-group')).toHaveLength(1)
+  })
+
+  it('emits the member group key on toggle so the group can open', async () => {
+    const wrapper = mountBlocks({
+      blocks: [{ type: 'text', text: 'alpha one', member_name: 'alpha' }],
+    })
+    await wrapper.find('.member-group .subagent-group-toggle').trigger('click')
+    const events = wrapper.emitted('toggle-tool')
+    expect(events![0][0]).toBe('member-group-msg-1-alpha')
+  })
+
+  it('counts only the member\'s own tool calls in the step count', () => {
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'text', text: 'lead text' },
+        { type: 'tool_use', name: 'Read', id: 'lead-t', done: true, input: {} },
+        { type: 'text', text: 'alpha one', member_name: 'alpha' },
+        { type: 'tool_use', name: 'Read', id: 't1', done: true, input: {}, member_name: 'alpha' },
+        { type: 'tool_use', name: 'Bash', id: 't2', done: true, input: {}, member_name: 'alpha' },
+      ],
+    })
+    const group = wrapper.find('.member-group')
+    // Two of alpha's own tool calls — the lead's Read is not counted.
+    expect(group.find('.subagent-group-count').text()).toBe('2 steps')
+  })
+
+  it('shows the spinner while the member is still producing output', () => {
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'text', text: 'alpha one', member_name: 'alpha' },
+        { type: 'tool_use', name: 'Read', id: 't1', done: false, input: {}, member_name: 'alpha' },
+      ],
+      streaming: true,
+    })
+    const pill = wrapper.find('.member-group .chat-tool-call')
+    expect(pill.classes()).not.toContain('done')
+    expect(pill.find('.tool-spinner').exists()).toBe(true)
+  })
+
+  it('shows the done check once the member\'s tool calls finish', () => {
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'text', text: 'alpha one', member_name: 'alpha' },
+        { type: 'tool_use', name: 'Read', id: 't1', done: true, input: {}, member_name: 'alpha' },
+      ],
+      streaming: true,
+    })
+    const pill = wrapper.find('.member-group .chat-tool-call')
+    expect(pill.classes()).toContain('done')
+    expect(pill.find('.tool-spinner').exists()).toBe(false)
+  })
+
+  it('is not marked running once the message stops streaming', () => {
+    // A settled message has no live output, so even a group with no tool calls
+    // (plain text only) must not keep spinning.
+    const wrapper = mountBlocks({
+      blocks: [{ type: 'text', text: 'alpha one', member_name: 'alpha' }],
+      streaming: false,
+    })
+    expect(wrapper.find('.member-group .chat-tool-call').classes()).toContain('done')
+  })
+
+  it('paints the group with the member colour', () => {
+    const wrapper = mountBlocks({
+      blocks: [{ type: 'text', text: 'alpha one', member_name: 'alpha', member_color: 'blue' }],
+    })
+    const group = wrapper.find('.member-group')
+    // blue maps through teamMemberColorVar, so the accent is the info token.
+    expect(group.attributes('style')).toContain('--subagent-accent')
+    expect(group.attributes('style')).toContain('--color-info')
+  })
+
+  it('uses the same tool-pill accent as an Agent card', () => {
+    // The synthetic header is a tool pill in shape, so it must also take the
+    // agent category accent rather than falling back to the muted default.
+    const wrapper = mountBlocks({
+      blocks: [{ type: 'text', text: 'alpha one', member_name: 'alpha' }],
+    })
+    expect(wrapper.find('.member-group .chat-tool-call').attributes('data-category')).toBe('agent')
+  })
+
+  it('collapses to the group key when the footer is used', async () => {
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'text', text: 'alpha one', member_name: 'alpha' },
+        { type: 'tool_use', name: 'Read', id: 't1', done: true, input: {}, member_name: 'alpha' },
+      ],
+      expandedTools: { 'member-group-msg-1-alpha': true },
+    })
+    // The footer reuses the sub-agent footer class (same styling contract).
+    const footer = wrapper.find('.member-group .subagent-group-footer')
+    expect(footer.exists()).toBe(true)
+    await footer.trigger('click')
+    const events = wrapper.emitted('toggle-tool')
+    expect(events![0][0]).toBe('member-group-msg-1-alpha')
+  })
+
+  it('keys the group by member name so two messages do not share one expansion', () => {
+    const first = mountBlocks({
+      blocks: [{ type: 'text', text: 'alpha one', member_name: 'alpha' }],
+      msgId: 'msg-1',
+      expandedTools: { 'member-group-msg-1-alpha': true },
+    })
+    const second = mountBlocks({
+      blocks: [{ type: 'text', text: 'alpha two', member_name: 'alpha' }],
+      msgId: 'msg-2',
+    })
+    expect(first.find('.member-group').classes()).toContain('subagent-group-open')
+    // Same member, different message → its own key, so it stays collapsed.
+    expect(second.find('.member-group').classes()).not.toContain('subagent-group-open')
+  })
+})
+
 // ── Ask-card identity (data-ask-key) ──
 //
 // Every ask card must carry an askKey. Without it the card body — rendered
