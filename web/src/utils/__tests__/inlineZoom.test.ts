@@ -767,11 +767,21 @@ describe('zoomableMedia', () => {
   })
 
   it('opts out inside a table cell', () => {
-    // A figure in `.table-row-value` is a thumbnail in a grid of cells: zooming
-    // it would grow the whole row and the cell has nowhere to pan. The lightbox
-    // button remains, so nothing is lost.
+    // A figure in a table cell is a thumbnail in a grid: zooming it would grow
+    // the whole row and the cell has nowhere to pan. The lightbox button
+    // remains, so nothing is lost.
+    //
+    // Keyed on the CELL, not a marker class: rendered markdown tables carry no
+    // class, so a `.table-row-value` check left every real table zoomable.
     const cell = document.createElement('td')
-    cell.className = 'table-row-value'
+    document.body.appendChild(cell)
+    const figure = mountFigure('mermaid')
+    cell.appendChild(figure)
+    expect(zoomableMedia(figure)).toBeNull()
+  })
+
+  it('opts out inside a `th` too', () => {
+    const cell = document.createElement('th')
     document.body.appendChild(cell)
     const figure = mountFigure('mermaid')
     cell.appendChild(figure)
@@ -781,7 +791,6 @@ describe('zoomableMedia', () => {
   it('still zooms the same figure once it is outside the table', () => {
     // Guards against the opt-out leaking to every figure.
     const cell = document.createElement('td')
-    cell.className = 'table-row-value'
     document.body.appendChild(cell)
     const figure = mountFigure('mermaid')
     cell.appendChild(figure)

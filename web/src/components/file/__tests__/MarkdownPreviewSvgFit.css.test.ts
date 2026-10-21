@@ -198,16 +198,22 @@ describe('svg media layout (media-block.css contract)', () => {
     // Table cells opt out of inline zoom in JS (`zoomableMedia`), but the CSS
     // must hold too: a stray `.is-zooming` would otherwise give the cell a
     // 60dvh frame and out-of-flow media, making the whole row jump.
+    //
+    // Keyed on the CELL (`td`/`th`) — rendered markdown tables carry no marker
+    // class, so keying on `.table-row-value` (a `TableRowModal`-only class) left
+    // every real table zoomable.
     const table = css.replace(/\/\*[\s\S]*?\*\//g, '')
-    expect(table).toMatch(
-      /\.table-row-value \.image-block-wrapper\.is-zooming[^{]*\{[^}]*width:\s*fit-content/,
-    )
-    expect(table).toMatch(
-      /\.table-row-value \.image-block-wrapper\.is-zooming[^{]*\{[^}]*outline:\s*none/,
-    )
+    expect(table).toMatch(/td \.image-block-wrapper\.is-zooming[^{]*\{[^}]*width:\s*fit-content/)
+    expect(table).toMatch(/th \.image-block-wrapper\.is-zooming[^{]*\{[^}]*width:\s*fit-content/)
+    expect(table).toMatch(/td \.image-block-wrapper\.is-zooming[^{]*\{[^}]*outline:\s*none/)
     // The media must stay in flow with no transform (i.e. not a pan viewport).
     expect(table).toMatch(
-      /\.table-row-value \.image-block-wrapper\.is-zooming > \.mermaid > svg[^{]*\{[^}]*position:\s*static/,
+      /td \.image-block-wrapper\.is-zooming > \.mermaid > svg[^{]*\{[^}]*position:\s*static/,
+    )
+    // And the height budget must be restored, not shrunk to a thumbnail: an
+    // active 60dvh frame would still resize the artwork inside the cell.
+    expect(table).toMatch(
+      /td \.image-block-wrapper\.is-zooming > \.mermaid > svg[^{]*\{[^}]*max-height:\s*60dvh/,
     )
   })
 

@@ -119,11 +119,15 @@ const CONTENT_MEDIA_SELECTOR =
 /** Resolve the zoomable media of a figure, or null. */
 export function zoomableMedia(figure: Element | null): HTMLElement | null {
     if (!figure) return null
-    // Table cells opt out. A figure inside `.table-row-value` is a thumbnail in
-    // a grid of cells: zooming it would make the whole row jump, and the cell
-    // has no spare room to pan into. The lightbox button is still there for a
-    // proper look, so nothing is lost.
-    if (figure.closest('.table-row-value')) return null
+    // Table cells opt out. A figure inside a table cell is a thumbnail in a grid:
+    // zooming it grows the whole row and the cell has no spare room to pan into.
+    // The lightbox button is still there for a proper look, so nothing is lost.
+    //
+    // Checked structurally (`td`/`th`), not by a marker class: markdown tables
+    // produced by the renderer carry no such class — `.table-row-value` exists
+    // only in `TableRowModal.vue`, so keying off it left every rendered table
+    // zoomable (reported: 表格中的图片还是会变大).
+    if (figure.closest('td, th')) return null
     const media = figure.querySelector<HTMLElement>(CONTENT_MEDIA_SELECTOR)
     if (!media) return null
     // The toolbar's own icon SVGs live inside `.image-block-header`, never in a

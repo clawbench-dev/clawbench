@@ -626,14 +626,20 @@
     line-height: normal;
 }
 
-/* Neutralise the zoom viewport for table cells: no 60dvh frame, no
-   out-of-flow media, no zoom ring. Specificity beats the `@media` block's
-   `.image-block-wrapper.is-zooming:has(...)` rules (0-4-1) by adding the same
-   `:has()` plus the `.table-row-value` ancestor. */
-.table-row-value .image-block-wrapper.is-zooming,
-.table-row-value .image-block-wrapper.is-zooming:has(> .lightbox-img-wrap > img),
-.table-row-value .image-block-wrapper.is-zooming:has(> .lightbox-svg-wrap > svg.lightbox-svg),
-.table-row-value .image-block-wrapper.is-zooming:has(> .mermaid > svg) {
+/* Neutralise the zoom viewport inside table cells: no 60dvh frame, no
+   out-of-flow media, no zoom ring. Keyed on the CELL (`td`/`th`) rather than a
+   marker class — rendered markdown tables carry no class of their own, and
+   `.table-row-value` only exists inside `TableRowModal.vue`.
+   Specificity beats the `@media` block's `.image-block-wrapper.is-zooming:has(...)`
+   rules (0-4-1) by adding the same `:has()` plus the cell ancestor. */
+td .image-block-wrapper.is-zooming,
+th .image-block-wrapper.is-zooming,
+td .image-block-wrapper.is-zooming:has(> .lightbox-img-wrap > img),
+td .image-block-wrapper.is-zooming:has(> .lightbox-svg-wrap > svg.lightbox-svg),
+td .image-block-wrapper.is-zooming:has(> .mermaid > svg),
+th .image-block-wrapper.is-zooming:has(> .lightbox-img-wrap > img),
+th .image-block-wrapper.is-zooming:has(> .lightbox-svg-wrap > svg.lightbox-svg),
+th .image-block-wrapper.is-zooming:has(> .mermaid > svg) {
     /* `fit-content`, NOT `100%`: the zoom rules widen the frame to the column,
        and in a table cell that would make the cell jump even though the artwork
        did not change size. */
@@ -642,19 +648,29 @@
     outline: none;
 }
 
-.table-row-value .image-block-wrapper.is-zooming:has(> .lightbox-img-wrap > img) > .lightbox-img-wrap,
-.table-row-value .image-block-wrapper.is-zooming:has(> .lightbox-svg-wrap > svg.lightbox-svg) > .lightbox-svg-wrap,
-.table-row-value .image-block-wrapper.is-zooming:has(> .mermaid > svg) > .mermaid {
+/* Restore the RESTING cell/height budget. The active rules shrink these to a
+   fixed `60dvh` frame; inside a table cell that both changes the artwork's size
+   and makes the row jump, so every active value is mapped back to the resting
+   one (`height: auto` + the same `60dvh` cap). */
+td .image-block-wrapper.is-zooming:has(> .lightbox-img-wrap > img) > .lightbox-img-wrap,
+td .image-block-wrapper.is-zooming:has(> .lightbox-svg-wrap > svg.lightbox-svg) > .lightbox-svg-wrap,
+td .image-block-wrapper.is-zooming:has(> .mermaid > svg) > .mermaid,
+th .image-block-wrapper.is-zooming:has(> .lightbox-img-wrap > img) > .lightbox-img-wrap,
+th .image-block-wrapper.is-zooming:has(> .lightbox-svg-wrap > svg.lightbox-svg) > .lightbox-svg-wrap,
+th .image-block-wrapper.is-zooming:has(> .mermaid > svg) > .mermaid {
     height: auto;
     min-height: 0;
-    max-height: 200px;
+    max-height: 60dvh;
 }
 
-.table-row-value .image-block-wrapper.is-zooming > .lightbox-img-wrap > img,
-.table-row-value .image-block-wrapper.is-zooming > .lightbox-svg-wrap > svg.lightbox-svg,
-.table-row-value .image-block-wrapper.is-zooming > .mermaid > svg {
+td .image-block-wrapper.is-zooming > .lightbox-img-wrap > img,
+td .image-block-wrapper.is-zooming > .lightbox-svg-wrap > svg.lightbox-svg,
+td .image-block-wrapper.is-zooming > .mermaid > svg,
+th .image-block-wrapper.is-zooming > .lightbox-img-wrap > img,
+th .image-block-wrapper.is-zooming > .lightbox-svg-wrap > svg.lightbox-svg,
+th .image-block-wrapper.is-zooming > .mermaid > svg {
     position: static;
     transform: none;
     max-width: 100%;
-    max-height: 200px;
+    max-height: 60dvh;
 }
