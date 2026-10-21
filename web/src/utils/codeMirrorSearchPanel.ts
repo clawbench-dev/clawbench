@@ -48,6 +48,24 @@ export function openSearchPanelCommand(view: EditorView): boolean {
     return true
 }
 
+/**
+ * Close the panel and clear the query.
+ *
+ * The query must be cleared (not just hidden): search state survives a panel
+ * toggle, so a stale query would otherwise resurface when the panel reopens.
+ * Clearing it here also makes the highlight (which would otherwise be gated off
+ * anyway) come back fresh on the next search.
+ */
+export function closeSearchPanelCommand(view: EditorView): boolean {
+    view.dispatch({
+        effects: [
+            searchPanelToggle.of(false),
+            setSearchQuery.of(new SearchQuery({ search: '' })),
+        ],
+    })
+    return true
+}
+
 export interface SearchPanelPhrases {
     find: string
     replace: string
@@ -256,17 +274,9 @@ export function searchPanel(spec: SearchPanelSpec) {
                 }
 
                 private close() {
-                    // Clear the query too (not just hide the panel): the search
-                    // state survives a panel toggle, so a stale query would
-                    // otherwise resurface when the panel reopens. Clearing it
-                    // here also makes the highlight (which would otherwise be
-                    // gated off anyway) come back fresh on the next search.
-                    this.view.dispatch({
-                        effects: [
-                            searchPanelToggle.of(false),
-                            setSearchQuery.of(new SearchQuery({ search: '' })),
-                        ],
-                    })
+                    // The shared close command clears the query too — see its
+                    // doc comment for why hiding alone is not enough.
+                    closeSearchPanelCommand(this.view)
                 }
 
                 update(update: ViewUpdate) {

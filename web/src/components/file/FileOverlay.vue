@@ -143,6 +143,11 @@ function focusSearchInput() {
   searchDrawerRef.value?.focusSearchInput?.()
 }
 
+/** Dismiss the active search UI (toolbar toggle's close half). */
+function closeSearchInput() {
+  fileViewerRef.value?.closeSearchInput?.()
+}
+
 function captureScroll() {
   return fileViewerRef.value?.captureScroll?.()
 }
@@ -153,7 +158,7 @@ function openGoToLine() {
   return fileViewerRef.value?.openGoToLine?.() ?? false
 }
 
-defineExpose({ pdfScrollToPage, pdfOutline, focusSearchInput, openGoToLine, captureScroll })
+defineExpose({ pdfScrollToPage, pdfOutline, focusSearchInput, closeSearchInput, openGoToLine, captureScroll })
 
 // Intercept file-path link clicks inside the overlay content.
 // When a user clicks a .chat-file-open-btn, .chat-file-path, or .code-file-path,

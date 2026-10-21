@@ -779,23 +779,33 @@ const activeMatchIndex = ref(0)
 const searchInputRef = ref<HTMLInputElement | null>(null)
 const sheetSearchInputRef = ref<HTMLInputElement | null>(null)
 
-const toggleSearch = () => {
+/**
+ * Open the search bar and focus its input. Idempotent: a repeat Ctrl+F while
+ * the bar is already open must REFOCUS it (the user may have clicked back into
+ * the body), never dismiss it.
+ */
+const openSearch = () => {
   // Search only makes sense when a text body is showing. Guarding here (rather
   // than only at the button) also covers the Ctrl+F shortcut, which is handled
   // on window and would otherwise open a dead search bar over a directory
   // listing or a media file — neither has searchable lines.
   if (!showTextTools.value) return
-  isSearchOpen.value = !isSearchOpen.value
-  if (isSearchOpen.value) {
-    nextTick(() => {
-      const el = props.preview.mode.value === 'sheet' ? sheetSearchInputRef.value : searchInputRef.value
-      el?.focus()
-      el?.select()
-    })
-  } else {
-    searchQuery.value = ''
-    activeMatchIndex.value = 0
-  }
+  isSearchOpen.value = true
+  focusSearchField()
+}
+
+/** Toolbar button: open when closed, dismiss when already open. */
+const toggleSearch = () => {
+  if (isSearchOpen.value) closeSearch()
+  else openSearch()
+}
+
+const focusSearchField = () => {
+  nextTick(() => {
+    const el = props.preview.mode.value === 'sheet' ? sheetSearchInputRef.value : searchInputRef.value
+    el?.focus()
+    el?.select()
+  })
 }
 
 const closeSearch = () => {
@@ -1961,8 +1971,14 @@ const onKeyDown = (e: KeyboardEvent) => {
     // focus rather than holding a ref into its template.
     floatingToolbarRef.value?.focusFirstAction?.()
   } else if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
+    // App's handler runs on `document`, which bubbles before this `window`
+    // listener, so it has already routed the key to the active pane's search
+    // UI and called preventDefault. Acting again here opened BOTH the card's
+    // inline bar and that drawer on one press — and because openSearch is now
+    // idempotent, that doubled state no longer clears on a second press.
+    if (e.defaultPrevented) return
     e.preventDefault()
-    toggleSearch()
+    openSearch()
   }
 }
 

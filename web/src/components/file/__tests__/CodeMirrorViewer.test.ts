@@ -357,8 +357,9 @@ describe('CodeMirrorViewer (real CodeMirror)', () => {
     view.dispatch({ selection: { anchor: 0, head: 5 } })
     await sleep(700) // debounce 200ms + showBar 400ms — must not fire
     expect(quoteMocks.showBar).not.toHaveBeenCalled()
-    // Closing the panel restores normal quote behavior (openSearch toggles).
-    wrapper.vm.openSearch()
+    // Closing the panel restores normal quote behavior (openSearch no longer
+    // toggles, so close explicitly).
+    wrapper.vm.closeSearch()
     await sleep(50)
     view.dispatch({ selection: { anchor: 0, head: 5 } })
     await sleep(700)
@@ -549,6 +550,74 @@ describe('CodeMirrorViewer (real CodeMirror)', () => {
     wrapper.vm.openSearch()
     await sleep(50)
     expect(document.querySelector('.cm-viewer .cm-search')).not.toBeNull()
+  })
+
+  it('openSearch() refocuses the input instead of closing an already-open panel', async () => {
+    // A second Ctrl+F while the bar is open used to TOGGLE it shut, so the
+    // "press Ctrl+F again" gesture silently dismissed the search UI.
+    const wrapper = mountViewer({ editable: true, language: 'javascript', content: 'const alpha = 1\n' })
+    await vi.waitFor(() => expect(document.querySelector('.cm-viewer .cm-search')).not.toBeNull())
+    wrapper.vm.openSearch()
+    await vi.waitFor(() => {
+      expect(document.querySelector('.cm-viewer .cm-search input[name=search]')).not.toBeNull()
+    })
+    const input = document.querySelector<HTMLInputElement>('.cm-viewer .cm-search input[name=search]')!
+
+    // Move focus out of the bar (as clicking back into the code does).
+    wrapper.vm.getView().focus()
+    expect(document.activeElement).not.toBe(input)
+
+    wrapper.vm.openSearch()
+    // Still open, and focus is back in the field.
+    await vi.waitFor(() => expect(document.activeElement).toBe(input))
+    expect(document.querySelector('.cm-viewer .cm-search')).not.toBeNull()
+  })
+
+  it('closeSearch() dismisses the panel and clears the query', async () => {
+    const wrapper = mountViewer({ editable: true, language: 'javascript', content: 'const alpha = 1\n' })
+    await vi.waitFor(() => expect(document.querySelector('.cm-viewer .cm-search')).not.toBeNull())
+    wrapper.vm.openSearch()
+    await vi.waitFor(() => {
+      expect(document.querySelector('.cm-viewer .cm-search input[name=search]')).not.toBeNull()
+    })
+    const input = document.querySelector<HTMLInputElement>('.cm-viewer .cm-search input[name=search]')!
+    input.value = 'alpha'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await vi.waitFor(() => expect(document.querySelectorAll('.cm-searchMatch').length).toBeGreaterThan(0))
+
+    wrapper.vm.closeSearch()
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLElement>('.cm-viewer .cm-panels')!.style.display).toBe('none'),
+    )
+
+    // Reopening starts from an empty query, not the stale one.
+    wrapper.vm.openSearch()
+    await vi.waitFor(() =>
+      expect(
+        document.querySelector<HTMLInputElement>('.cm-viewer .cm-search input[name=search]')!.value,
+      ).toBe(''),
+    )
+  })
+
+  it('does not steal focus back if the panel was dismissed before the deferred frame', async () => {
+    // openSearch schedules a second focus pass one frame later. If the user
+    // closes the bar within that frame, the callback must not yank focus into a
+    // panel that is gone.
+    const wrapper = mountViewer({ editable: true, language: 'javascript', content: 'const alpha = 1\n' })
+    await vi.waitFor(() => expect(document.querySelector('.cm-viewer .cm-search')).not.toBeNull())
+    wrapper.vm.openSearch()
+    wrapper.vm.closeSearch()
+    // Blur explicitly: openSearch focuses synchronously, so without this the
+    // assertion below would pass even if the deferred callback DID re-focus.
+    const input = document.querySelector<HTMLInputElement>('.cm-search input[name=search]')!
+    input.blur()
+    expect(document.activeElement).not.toBe(input)
+
+    // Let any pending frame run.
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
+    expect(document.querySelector<HTMLElement>('.cm-viewer .cm-panels')!.style.display).toBe('none')
+    expect(document.activeElement).not.toBe(input)
+    wrapper.unmount()
   })
 
   it('localizes the search panel text according to the app locale', async () => {

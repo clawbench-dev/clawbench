@@ -513,6 +513,18 @@ function focusSearchInput() {
 }
 
 /**
+ * Dismiss the active search UI. The mirror of focusSearchInput, and the only
+ * way to close the CodeMirror panel from outside: focusing it is idempotent
+ * (a repeat Ctrl+F must not close the bar), so the toolbar toggle cannot use
+ * it as a close.
+ */
+function closeSearchInput() {
+    if (isCodeMirrorView.value) {
+        cmEditorRef.value?.closeSearch?.()
+    }
+}
+
+/**
  * Ctrl/Cmd+G — go to line (issue #547).
  *
  * Only CodeMirror surfaces have line numbers, so rendered previews (markdown,
@@ -799,6 +811,7 @@ defineExpose({
     pdfOutline,
     pdfScrollToPage,
     focusSearchInput,
+    closeSearchInput,
     openGoToLine,
     captureScroll,
 })

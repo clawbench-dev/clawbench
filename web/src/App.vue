@@ -691,6 +691,7 @@ import { openPendingSessionWhenReady } from './composables/usePendingSessionOpen
 import { guardStartupWithSplash } from './composables/useStartupGuard.ts'
 import { setPendingCommitNavigation } from './composables/useCommitNavigation.ts'
 import { getFileType } from './utils/fileType.ts'
+import { isAppSearchField, refocusSearchField } from './utils/appSearchField'
 import { fileSupportsToc } from './utils/tocSupport.ts'
 import { formatBadgeCount } from './utils/format.ts'
 import { portForwardUnavailable } from './utils/portForwardUtils.ts'
@@ -3920,10 +3921,11 @@ function closeViewSearch() {
 // markdown preview inline bar) open/closed.
 function toggleViewSearch() {
   if (viewSearchActive.value) {
-    // Close: focusSearchInput() toggles the CodeMirror panel closed (its
-    // searchChange event also clears viewSearchActive); the markdown bar is
-    // closed by clearing the state.
-    fileOverlayRef.value?.focusSearchInput()
+    // Close. The CodeMirror panel has its own close command — focusing it is
+    // idempotent by design (a repeat Ctrl+F must refocus, not dismiss), so it
+    // cannot double as the close half. The markdown bar is closed by clearing
+    // the state.
+    fileOverlayRef.value?.closeSearchInput()
     closeViewSearch()
   } else {
     openFileSearch()
@@ -3931,18 +3933,28 @@ function toggleViewSearch() {
 }
 function handleCtrlF(e: KeyboardEvent) {
     if (!(e.ctrlKey || e.metaKey) || e.key !== 'f') return
-    // Skip when focus is in input/textarea/contenteditable/terminal
     const target = e.target as HTMLElement | null
-    const tag = target?.tagName
-    if (tag === 'INPUT' || tag === 'TEXTAREA') return
-    if (target?.isContentEditable) return
+    // Modal / project dialog and the terminal own the key outright — check them
+    // BEFORE the find-box branch below, or a search field inside a dialog would
+    // be hijacked by the app's own routing.
+    if (_dlg.state.value.visible || projectDialogOpen.value) return
     // Optional call, not just optional chain: a keydown dispatched on
     // `document` has an EventTarget (not an Element) as its target, and
     // EventTarget has no `closest`. Same guard as the sibling copies in
     // ChatMessageList/ChatPanelContent.
     if (target?.closest?.('.terminal-panel')) return
-    // Skip when modal dialog or project dialog is open
-    if (_dlg.state.value.visible || projectDialogOpen.value) return
+    // Ctrl+F while one of our own find boxes has focus: keep the keystroke in
+    // the app. Falling through to the INPUT bail-out below would let the
+    // browser's native find bar open on top of ours.
+    if (isAppSearchField(target)) {
+        e.preventDefault()
+        refocusSearchField(target)
+        return
+    }
+    // Skip when focus is in input/textarea/contenteditable
+    const tag = target?.tagName
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return
+    if (target?.isContentEditable) return
 
     if (isWideScreen.value) {
         // Focus-aware: route Ctrl+F to the pane the user is working in
