@@ -568,12 +568,11 @@ describe('exportMarkdownToHtml', () => {
         opts({ content: '<svg viewBox="0 0 400 100"><rect width="400" height="100"></rect></svg>' }),
       )
       expect(result.html).toContain('.image-block-wrapper.svg-fit')
-      // Full-column frame (not the abandoned ratio formula).
-      expect(result.html).toContain('width: 100%')
-      expect(result.html).not.toContain('var(--svg-ar')
-      // Contain-centring inside the fixed viewport.
-      expect(result.html).toContain('object-fit: contain')
-      expect(result.html).toContain('translate(-50%, -50%)')
+      // The media is sized from its own ratio (never a percentage of the
+      // shrink-to-fit frame, which would be a cycle).
+      expect(result.html).toContain('var(--svg-ar')
+      // mermaid's inline natural-size cap must be overridden.
+      expect(result.html).toContain('max-width: none !important')
     } finally {
       style.remove()
     }
@@ -592,9 +591,8 @@ describe('exportMarkdownToHtml', () => {
         opts({ content: '```mermaid\ngraph LR; A-->B\n```' }),
       )
       expect(result.html).toContain('image-block-wrapper svg-fit')
-      expect(result.html).not.toContain('var(--svg-ar')
-      // The mermaid svg is a flex/absolute child of the cell in the export too.
-      expect(result.html).toContain('object-fit: contain')
+      // Same ratio-derived sizing as the in-app preview.
+      expect(result.html).toContain('var(--svg-ar')
     } finally {
       style.remove()
     }

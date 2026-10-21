@@ -131,15 +131,64 @@ export function stampSvgFigure(wrapper: Element): boolean {
     if (ar === null || !Number.isFinite(ar) || ar <= 0) return false
     ;(wrapper as HTMLElement).style.setProperty(SVG_AR_PROP, String(ar))
     wrapper.classList.add(SVG_FIT_CLASS)
-    // The content cell uses the ratio to size its resting frame
-    // (`aspect-ratio: var(--media-ar, auto)` in media-block.css). Written here,
-    // at stamp time, because the media's intrinsic size is only known now — the
-    // cell is otherwise empty (its media is absolutely positioned), so without
-    // a ratio it would collapse to its `min-height` fallback until the reader
-    // happened to hover the figure.
-    const cell = media.parentElement
-    if (cell) cell.style.setProperty('--media-ar', `${ar} / 1`)
+    applyMediaWidth(wrapper as HTMLElement, media as HTMLElement, ar)
     return true
+}
+
+/**
+ * Write the media's pixel width from its ratio, clamped to the column.
+ *
+ * The width MUST be a resolved pixel value, not a percentage. The figure is
+ * shrink-to-fit around this element, and the element's `max-width: 100%` would
+ * be relative to the figure — so the two would depend on each other. The
+ * browser breaks that cycle by falling back to the default 300px
+ * replaced-element width, which squashed every wide diagram to 300px.
+ *
+ * Resolving it here removes the cycle: the script knows the ratio and can
+ * measure the available column width, so it writes a number the layout can
+ * use directly. `100%` of the parent's content box is the column.
+ */
+function applyMediaWidth(wrapper: HTMLElement, media: HTMLElement, ar: number): void {
+    const column = wrapper.parentElement
+    if (!column) return
+    const avail = column.getBoundingClientRect().width
+    if (!(avail > 0)) return
+
+    // The frame takes the artwork's ACTUAL width at rest, never the column's:
+    // a small diagram sits in a small frame instead of a full-column box of
+    // empty space. Only two things may shrink it:
+    //  - the column width, so a wide diagram does not overflow, and
+    //  - the 60dvh height budget, so a tall one is not cut off.
+    // Nothing may GROW it — enlarging is what the active (zoomed) state is for.
+    const intrinsic = intrinsicWidth(media, ar)
+    if (!(intrinsic > 0)) return
+    const heightBudget = window.innerHeight * 0.6
+    const width = Math.min(intrinsic, avail, heightBudget * ar)
+    if (!(width > 0)) return
+    media.style.width = `${Math.round(width * 100) / 100}px`
+    // Height follows the width through the ratio, so no separate value is
+    // written; `height: auto` in CSS derives it from the viewBox.
+}
+
+/**
+ * The artwork's own width, before any fitting.
+ *
+ * `viewBox` is the authored coordinate space, but an svg may also carry
+ * `width`/`height` attributes or an inline `style="max-width: Npx"` (mermaid
+ * does both) that state its intended display size. The inline max-width is the
+ * best signal for "how big did the author mean this to be", so it wins when
+ * present; otherwise the viewBox width is used.
+ */
+
+function intrinsicWidth(media: HTMLElement, ar: number): number {
+    const inlineMax = parseFloat(media.style.maxWidth)
+    if (Number.isFinite(inlineMax) && inlineMax > 0) return inlineMax
+    const attrW = parseFloat(media.getAttribute('width') ?? '')
+    if (Number.isFinite(attrW) && attrW > 0) return attrW
+    const vb = (media as unknown as SVGSVGElement).viewBox?.baseVal
+    if (vb && vb.width > 0) return vb.width
+    // Last resort: derive from the height budget so a ratio is still honoured.
+    return window.innerHeight * 0.6 * ar
 }
 
 /**

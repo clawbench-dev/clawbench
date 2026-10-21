@@ -171,8 +171,12 @@
    pipeline never stamps, and its own
    `.chat-message .image-block-wrapper { max-width: 200px }` below still
    clamps the thumbnail. */
+/* The frame's width is owned by the inline-zoom block below: it hugs the
+   artwork at rest and spans the column while zoomed. A `width: 100%` here would
+   outrank that rule (0-2-0 vs 0-1-1) and force every diagram into a
+   full-column box. */
 .image-block-wrapper.svg-fit {
-    width: 100%;
+    max-width: 100%;
 }
 
 .image-block-wrapper.svg-fit > .lightbox-img-wrap > img,
@@ -181,33 +185,6 @@
     height: auto;
 }
 
-/* Mermaid diagrams join the same treatment: they are SVG media too, but they
-   render through their own path (mermaid.ts → armMermaidFigure) as
-   `.image-block-wrapper > .mermaid > svg` with no `lightbox-svg` marker.
-
-   Two rules are load-bearing here:
-   - The figure's ratio-driven width is DEFINITE (from --svg-ar), which is what
-     lets the diagram's `width="100%"` resolve. Without it the fit-content
-     figure and the child's percentage form a cycle, so the browser falls back
-     to the 300px default replaced-element width and a wide flowchart is
-     squashed (measured 1008px → 300px).
-   - Mermaid writes its natural size as an INLINE `style="max-width: Npx"`.
-     An inline declaration outranks any stylesheet rule, so overriding it to
-     let the diagram grow to the column needs `!important` — this is the one
-     place in this file where that is required rather than sloppy.
-
-   **The `!important` must NOT apply in the active zoom state.** `inlineZoom.ts`
-   writes the zoomed size as inline `width`/`height` and clears `max-width` to
-   `none`; an `!important` stylesheet cap beats that inline `none`, which pinned
-   the media at the column width and made the diagram stop growing exactly when
-   it reached full width (the reported "放大到全宽就无法再放大"). The
-   `:not(.is-zooming)` guard hands control back to the inline styles while
-   zoomed. */
-.image-block-wrapper.svg-fit:not(.is-zooming) > .mermaid > svg {
-    width: 100%;
-    height: auto;
-    max-width: 100% !important;
-}
 
 /* ─── Inline zoom viewport (pointer devices only) ─────────────────────────
    The figure is ALWAYS the full width of the reading column, and the media is
@@ -249,9 +226,30 @@
     .image-block-wrapper:has(> .lightbox-img-wrap > img),
     .image-block-wrapper:has(> .lightbox-svg-wrap > svg.lightbox-svg),
     .image-block-wrapper:has(> .mermaid > svg) {
-        /* Always the full column: the frame is the viewport, not the artwork. */
-        width: 100%;
+        /* RESTING: the frame hugs the artwork, so a small diagram does not sit
+           in a full-column box of empty space.
+
+           `fit-content` alone forms a cycle with the media's `max-width: 100%`:
+           the cell's width would depend on the svg, whose percentage would then
+           depend on the cell — the browser breaks the cycle by falling back to
+           the default 300px replaced-element width, which squashed every wide
+           diagram to 300px. `stretch` gives the svg a definite width to resolve
+           against, and `fit-content` still shrinks the frame when the artwork is
+           narrower than the column.
+
+           ACTIVE: the frame becomes the full-column viewport — zooming needs
+           somewhere to pan to, and a frame that grew with the artwork would
+           push the document around while dragging. */
+        width: fit-content;
+        min-width: 0;
+        max-width: 100%;
         overflow: hidden;
+    }
+
+    .image-block-wrapper.is-zooming:has(> .lightbox-img-wrap > img),
+    .image-block-wrapper.is-zooming:has(> .lightbox-svg-wrap > svg.lightbox-svg),
+    .image-block-wrapper.is-zooming:has(> .mermaid > svg) {
+        width: 100%;
     }
 
     .image-block-wrapper:has(> .lightbox-img-wrap > img) > .lightbox-img-wrap,
@@ -277,18 +275,17 @@
            cross axis, which made a zoomed SVG grow to 1138px and sit at
            top:-313 — outside the clipped cell, i.e. invisible. */
         position: relative;
-        /* The frame hugs the artwork while at rest: `--media-ar` is set by
-           `inlineZoom.ts` from the media's intrinsic ratio, so a wide-and-flat
-           diagram gets a short frame. `max-height` still caps a tall one.
+        /* RESTING: the cell fills the figure, and the figure is shrink-to-fit
+           around the media's ratio-derived width. The cell must NOT size itself
+           from the svg (`width: max-content` and friends): the svg's own
+           `max-width: 100%` is relative to the cell, so the two would depend on
+           each other and the browser would fall back to the 300px default
+           replaced-element width (measured: a 1156px diagram rendered at 300px).
 
-           `min-height` is the fallback for the window before the ratio is
-           written (the media is absolutely positioned, so it cannot give the
-           cell any height on its own — without this the frame would collapse to
-           0px for the first frames). It is a small, harmless height rather than
-           60dvh: the ratio takes over as soon as it lands. */
-        aspect-ratio: var(--media-ar, auto);
+           `width: 100%` here is safe — it resolves against the figure, which is
+           sized by the svg's definite `calc(60dvh * var(--svg-ar))` width. */
+        width: 100%;
         height: auto;
-        min-height: 2rem;
         max-height: 60dvh;
         overflow: hidden;
         cursor: zoom-in;
@@ -322,32 +319,50 @@
     .image-block-wrapper:has(> .lightbox-img-wrap > img) > .lightbox-img-wrap > img,
     .image-block-wrapper:has(> .lightbox-svg-wrap > svg.lightbox-svg) > .lightbox-svg-wrap > svg.lightbox-svg,
     .image-block-wrapper:has(> .mermaid > svg) > .mermaid > svg {
-        /* FILL the viewport, then letterbox the artwork inside it.
+        /* RESTING: normal flow, sized by the artwork itself.
 
-           `width: auto` + `max-width: 100%` was the previous rule and it only
-           ever SHRANK: `contain` does not scale a small image up, so a diagram
-           whose intrinsic size is 400px sat at 400px in an 880px frame with
-           empty space all around (issue: "默认大小应该占满全宽"). Sizing the
-           element to the viewport and letting the artwork fit inside gives
-           "as large as possible without cropping", in both directions.
+           The media must NOT be absolutely positioned at rest: an out-of-flow
+           child gives the cell no width, so the figure would have to be forced
+           to `width: 100%` and every diagram would sit in a full-column box
+           regardless of how small it is.
 
-           - `<img>`: `object-fit: contain` does the letterboxing.
-           - inline `<svg>`: the default `preserveAspectRatio="xMidYMid meet"`
-             does the same for the viewBox, so no attribute is needed.
+           The width CANNOT be a percentage either. `width: 100%` /
+           `max-width: 100%` on the svg would make it depend on the cell, which
+           depends on the svg — the browser breaks that cycle with the default
+           300px replaced-element width, so every diagram collapsed to 300px
+           (measured 1156px artwork → 300px). `--svg-ar` (stamped by
+           `svgMediaFit.ts`) gives the svg a width derived from its OWN ratio
+           and the 60dvh height budget, which is definite and cycle-free; the
+           figure's `max-width: 100%` then clamps it to the column.
 
-           `inlineZoom.ts` overwrites width/height/transform while zooming and
-           clears all of it on exit, so this rule alone defines the resting
-           layout. The pan uses `translate(-50%,-50%)` as the centring anchor;
-           the percentage resolves against the element's own box. */
-        position: absolute;
-        top: 50%;
-        left: 50%;
-        width: 100%;
-        height: 100%;
-        max-width: none;
-        max-height: none;
+           ACTIVE (`.is-zooming`, rule below): out of flow at 100%/100%, because
+           a zoomed artwork is larger than the frame and must overflow it
+           without changing the frame's size. */
+        display: block;
+        /* The svg sizes ITSELF from its own ratio; `svgMediaFit.ts` writes the
+           resolved pixel width inline, already clamped to both the column width
+           and the 60dvh height budget.
+
+           No `max-width: 100%` here on purpose. It would be relative to the
+           cell, and the cell is sized by this element — the two would depend on
+           each other, so the browser would break the cycle with the default
+           300px replaced-element width (measured: a 1156px diagram at 300px).
+           The script's inline width is definite, so the frame can be
+           shrink-to-fit around it without any cycle.
+
+           `--svg-ar` is the pre-script fallback: it produces the same width
+           from the ratio alone, also cycle-free.
+
+           `max-width: none !important` overrides the `max-width: Npx` mermaid
+           writes INLINE on the svg (its natural size). An inline declaration
+           outranks any stylesheet rule, so `!important` is the only way to let
+           the diagram grow to the frame — and it must not be a percentage, or
+           the svg↔cell cycle returns. */
+        width: calc(60dvh * var(--svg-ar, 1));
+        height: auto;
+        max-width: none !important;
+        max-height: 60dvh;
         object-fit: contain;
-        transform: translate(-50%, -50%);
         transform-origin: center center;
         /* A short ease on size reads as a deliberate transition rather than a
            jump; it is disabled while zooming/panning so the media tracks the
@@ -378,6 +393,18 @@
     .image-block-wrapper.is-zooming > .lightbox-img-wrap > img,
     .image-block-wrapper.is-zooming > .lightbox-svg-wrap > svg.lightbox-svg,
     .image-block-wrapper.is-zooming > .mermaid > svg {
+        /* Out of flow while zoomed: the artwork is larger than the frame and
+           must overflow it without resizing it. Centred by the percentage
+           translate, which resolves against the element's own box, so it holds
+           for a box both smaller and larger than the frame. `inlineZoom.ts`
+           overwrites width/height/transform on every step and clears all of it
+           on exit, returning to the in-flow resting rule above. */
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        max-width: none;
+        max-height: none;
+        transform: translate(-50%, -50%);
         /* No easing while zooming/panning — the size must track the pointer. */
         transition: none;
     }

@@ -75,6 +75,8 @@ interface ZoomState {
     ty: number
     /** The svg's original `width` attribute, restored on deactivate. */
     savedSvgWidth?: string | null
+    /** The author's inline `max-width` (mermaid writes one), restored on exit. */
+    savedMaxWidth?: string
 }
 
 /** Only one figure can be zoomed at a time. */
@@ -133,7 +135,7 @@ function figureFrom(target: EventTarget | null): HTMLElement | null {
  */
 function deactivate(): void {
     if (!active) return
-    const { figure, media, savedSvgWidth } = active
+    const { figure, media, savedSvgWidth, savedMaxWidth } = active
     media.style.transform = ''
     media.style.transformOrigin = ''
     media.style.width = ''
@@ -144,11 +146,17 @@ function deactivate(): void {
         if (savedSvgWidth === null) media.removeAttribute('width')
         else media.setAttribute('width', savedSvgWidth)
     }
+    // Put the author's own sizing back BEFORE deriving the resting width, which
+    // reads it.
+    media.style.maxWidth = savedMaxWidth ?? ''
     // The resting aspect-ratio stays: it describes the artwork, not the zoom,
     // and dropping it would make the frame collapse for one frame on exit.
     figure.classList.remove(ZOOM_ACTIVE_CLASS)
-    // Restore the resting ratio so the frame hugs the artwork again.
-    applyRestingAspect(figure)
+    // Re-apply the resting width: the zoom wrote an inline width/height that was
+    // just cleared, and the CSS fallback (`60dvh * ratio`) is only a rough
+    // stand-in — without this the frame would stay at the active size until the
+    // next render.
+    applyRestingWidth(figure)
     active = null
 }
 
@@ -284,13 +292,17 @@ function activate(figure: HTMLElement): ZoomState | null {
     if (active?.figure === figure) return active
     deactivate()
 
-    active = { figure, media, scale: MIN_SCALE, tx: 0, ty: 0 }
+    active = {
+        figure,
+        media,
+        scale: MIN_SCALE,
+        tx: 0,
+        ty: 0,
+        // mermaid states the diagram's natural size as an inline max-width; the
+        // zoom overwrites it, and the resting layout needs it back on exit.
+        savedMaxWidth: media.style.maxWidth,
+    }
     figure.classList.add(ZOOM_ACTIVE_CLASS)
-    // Drop the resting ratio so the CSS can switch the frame to the fixed
-    // 60dvh viewport. The ratio lives in an inline custom property, which no
-    // stylesheet rule can outrank — clearing it here is the only way to let the
-    // active-state `height: 60dvh` take effect.
-    media.parentElement?.style.removeProperty('--media-ar')
     media.style.transformOrigin = 'center center'
     apply(active)
     return active
@@ -421,39 +433,35 @@ function onPointerOver(e: PointerEvent): void {
     const figure = figureFrom(e.target)
     if (!figure) return
     ensureFocusable(figure)
-    applyRestingAspect(figure)
 }
 
+
 /**
- * Give the frame the artwork's own ratio while at rest, so a wide-and-flat
- * diagram gets a short frame instead of being padded into a 60dvh box.
+ * Restore the media's resting width after the zoom cleared its inline sizes.
  *
- * Written on hover rather than on activation: the CSS uses it as the frame's
- * `aspect-ratio`, and writing it at click time would make the frame snap from
- * one height to another at the exact moment the user starts interacting.
- * Hovering is early enough to be invisible and late enough that the media has
- * been laid out (its intrinsic size is readable).
- *
- * The ratio is applied to the CELL, not the media: the media is absolutely
- * positioned (it must be able to overflow while zoomed), so it cannot drive the
- * cell's height. `max-height: 60dvh` in CSS still caps a tall diagram.
+ * The resting width is not a CSS constant — it is the artwork's own size,
+ * clamped to the column — so it has to be re-derived here. `svgMediaFit.ts`
+ * computes the same value when it stamps the figure; duplicating the few lines
+ * keeps these two modules independent (importing it would be a cycle).
  */
-function applyRestingAspect(figure: HTMLElement): void {
-    // Never while zoomed: the active state wants the fixed 60dvh viewport, and
-    // a ratio written here would outrank its `height`. `pointerover` fires on
-    // the click that activates the figure, so without this guard the ratio came
-    // straight back and the active frame stayed artwork-shaped.
-    if (figure.classList.contains(ZOOM_ACTIVE_CLASS)) return
+function applyRestingWidth(figure: HTMLElement): void {
     const media = zoomableMedia(figure)
-    const cell = media?.parentElement
-    if (!media || !cell) return
-    if (cell.style.getPropertyValue('--media-ar')) return // idempotent
+    const column = figure.parentElement
+    if (!media || !column) return
+    const avail = column.getBoundingClientRect().width
+    if (!(avail > 0)) return
     const nat = naturalSize({ figure, media, scale: MIN_SCALE, tx: 0, ty: 0 })
     if (!(nat.w > 0 && nat.h > 0)) return
-    // A custom property, not `aspect-ratio` directly: the stylesheet owns the
-    // property so the active-state rule can switch it back to `auto` without
-    // fighting an inline declaration.
-    cell.style.setProperty('--media-ar', `${nat.w} / ${nat.h}`)
+    const ar = nat.w / nat.h
+    // The author's intended display width, when the markup states one.
+    const stated = parseFloat(media.style.maxWidth) || parseFloat(media.getAttribute('width') ?? '') || nat.w
+    const heightBudget = window.innerHeight * 0.6
+    const width = Math.min(stated, avail, heightBudget * ar)
+    if (!(width > 0)) return
+    media.style.width = `${Math.round(width * 100) / 100}px`
+    media.style.height = ''
+    media.style.maxWidth = ''
+    media.style.maxHeight = ''
 }
 
 /**

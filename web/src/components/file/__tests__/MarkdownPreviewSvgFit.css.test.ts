@@ -64,40 +64,47 @@ describe('svg media layout (media-block.css contract)', () => {
     expect(cellRule![1]).toContain('position: relative')
   })
 
-  it('FILLS the viewport and contain-fits the artwork inside it', () => {
+  it('sizes the frame to the artwork at rest, and the viewport when active', () => {
+    // Resting: the frame hugs the artwork. The media stays in NORMAL FLOW so it
+    // can give the cell a width — an absolutely positioned child cannot, which
+    // is why the frame used to be forced to `width: 100%` for every diagram
+    // regardless of size.
+    // The selector is the LAST in a comma-separated list, so anchor on the
+    // opening brace rather than the line start.
+    const figureRule = css.match(/\.image-block-wrapper:has\(> \.mermaid > svg\)\s*\{([\s\S]*?)\}/)
+    expect(figureRule).toBeTruthy()
+    expect(figureRule![1]).toContain('width: fit-content')
+    expect(figureRule![1]).toContain('max-width: 100%')
+
+    // Active: full column, so there is somewhere to pan to.
+    expect(css).toMatch(/\.image-block-wrapper\.is-zooming:has\(> \.mermaid > svg\)\s*\{[\s\S]*?width:\s*100%/)
+
+    // Resting media: in flow, shrink-to-fit, capped.
     expect(mediaRule).toBeTruthy()
-    const rule = mediaRule![1]
-    // The element must be the viewport size. `width: auto` + `max-width: 100%`
-    // only ever shrank (contain does not scale a small image UP), so a diagram
-    // whose intrinsic size was smaller than the column sat in the middle of an
-    // empty frame — the reported bug ("默认大小应该占满全宽").
-    expect(rule).toContain('width: 100%')
-    expect(rule).toContain('height: 100%')
-    expect(rule).toContain('object-fit: contain')
-    // Centring: the percentage translate resolves against the element's own
-    // box, so it works for a box both smaller (resting) and larger (zoomed)
-    // than the frame.
-    expect(rule).toContain('top: 50%')
-    expect(rule).toContain('left: 50%')
-    expect(rule).toContain('translate(-50%, -50%)')
-    const declarations = rule.replace(/\/\*[\s\S]*?\*\//g, '')
-    // `inset: 0` would pin all four edges (that part is fine) but the earlier
-    // form paired it with `margin: auto`, which forced the box to the container
-    // size and broke the ratio. The explicit 100% + translate form is the
-    // contract.
-    expect(declarations).not.toContain('inset: 0')
-    // The old shrink-only sizing must not come back.
-    expect(declarations).not.toMatch(/^\s*width:\s*auto/m)
+    const rest = mediaRule![1]
+    expect(rest).toContain('max-width: 100%')
+    expect(rest).toContain('max-height: 60dvh')
+    expect(rest.replace(/\/\*[\s\S]*?\*\//g, '')).not.toContain('position: absolute')
+
+    // Active media: out of flow, so a zoomed artwork overflows without resizing
+    // the frame.
+    expect(css).toMatch(
+      /\.image-block-wrapper\.is-zooming > \.mermaid > svg\s*\{[\s\S]*?position:\s*absolute/,
+    )
   })
 
-  it('never applies the ratio-driven width anywhere in the sheet', () => {
-    // Regression guard for design A. A plain `width: 100%` elsewhere (e.g. the
-    // table row modal's thumbnails) is unrelated and allowed.
-    // Comments legitimately mention the abandoned formula; only real
-    // declarations matter.
+  it('sizes the media from the ratio, never from a percentage of the cell', () => {
+    // The figure is shrink-to-fit, so any percentage width/max-width on the
+    // media would be relative to the figure — which is itself sized by the
+    // media. The browser breaks that cycle with the default 300px
+    // replaced-element width, which squashed a 1156px diagram to 300px.
+    //
+    // The width must therefore be derived from the artwork's own ratio
+    // (`--svg-ar`) or written as a resolved pixel value by `svgMediaFit.ts`.
     const declarations = css.replace(/\/\*[\s\S]*?\*\//g, '')
-    expect(declarations).not.toContain('60dvh * var(--svg-ar')
-    expect(declarations).not.toContain('--svg-ar')
+    expect(declarations).toContain('60dvh * var(--svg-ar')
+    // mermaid states its natural size inline; only !important can override it.
+    expect(declarations).toContain('max-width: none !important')
   })
 
   it('zooms with layout size, never with transform: scale()', () => {
@@ -123,28 +130,25 @@ describe('svg media layout (media-block.css contract)', () => {
     expect(activeRule![1]).not.toMatch(/(^|[\s;])border\s*:/)
   })
 
-  it('hugs the artwork height at rest and switches to 60dvh when active', () => {
-    // A wide-and-flat diagram must not be padded into a 60dvh box: at rest the
-    // frame takes the artwork's own ratio (written as `--media-ar` by
-    // svgMediaFit.ts) and is only capped by max-height. Activation switches to
-    // a fixed 60dvh viewport so panning has a stable frame.
+  it('caps a tall diagram at 60dvh at rest and fixes the frame when active', () => {
+    // At rest the cell height comes from the in-flow artwork, capped by
+    // max-height; a wide-and-flat diagram therefore gets a short frame instead
+    // of being padded into a 60dvh box.
     expect(cellRule).toBeTruthy()
     const rest = cellRule![1]
-    expect(rest).toContain('aspect-ratio: var(--media-ar, auto)')
+    expect(rest).toContain('height: auto')
     expect(rest).toContain('max-height: 60dvh')
-    // A fixed height at rest is the bug this replaced.
     expect(rest.replace(/\/\*[\s\S]*?\*\//g, '')).not.toMatch(/^\s*height:\s*60dvh/m)
 
-    // The active rule must mirror the resting `:has()` in its selector:
-    // `:has()` contributes its argument's specificity, so a plain
-    // `.is-zooming > .mermaid` (0-3-0) loses to the resting
-    // `:has(> .mermaid > svg)` (0-3-1) and the frame stays artwork-shaped.
+    // Active: a fixed 60dvh viewport so panning has a stable frame.
+    // The selector must mirror the resting `:has()`: `:has()` contributes its
+    // argument's specificity, so a plain `.is-zooming > .mermaid` (0-3-0) loses
+    // to the resting `:has(> .mermaid > svg)` (0-3-1).
     const active = css.match(
       /\.image-block-wrapper\.is-zooming:has\(> \.mermaid > svg\) > \.mermaid\s*\{([\s\S]*?)\}/,
     )
     expect(active, 'active rule must match the resting :has() specificity').toBeTruthy()
     expect(active![1]).toContain('height: 60dvh')
-    expect(active![1]).toContain('aspect-ratio: auto')
   })
 
   it('does not cap the zoom scale at the fit width', () => {

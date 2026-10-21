@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import {
   SVG_FIT_CLASS,
   SVG_AR_PROP,
@@ -301,5 +301,53 @@ describe('stampSvgFiguresAsync', () => {
 
   it('resolves for a null root', async () => {
     await expect(stampSvgFiguresAsync(null)).resolves.toBeUndefined()
+  })
+})
+
+describe('resting media width (svgMediaFit)', () => {
+  const mkSvg = (vbW: number, vbH: number, inlineMax?: number) => {
+    const wrapper = document.createElement('div')
+    wrapper.className = 'image-block-wrapper'
+    const cell = document.createElement('div')
+    cell.className = 'mermaid'
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    svg.setAttribute('viewBox', `0 0 ${vbW} ${vbH}`)
+    if (inlineMax) svg.style.maxWidth = `${inlineMax}px`
+    cell.appendChild(svg)
+    wrapper.appendChild(cell)
+    const column = document.createElement('div')
+    column.appendChild(wrapper)
+    document.body.appendChild(column)
+    // jsdom has no layout; give the column a width the module can measure.
+    Object.defineProperty(column, 'getBoundingClientRect', {
+      value: () => ({ width: 800, height: 0, top: 0, left: 0, right: 800, bottom: 0, x: 0, y: 0, toJSON() {} }),
+      configurable: true,
+    })
+    return { wrapper, svg, column }
+  }
+
+  afterEach(() => { document.body.innerHTML = '' })
+
+  it('keeps a small diagram at its stated size instead of stretching it', () => {
+    // "没有聚焦的时候容器宽度以元素实际宽度为准" — a 250px diagram must not be
+    // blown up to the 800px column at rest; growing is the active state's job.
+    const { wrapper, svg } = mkSvg(250, 70, 250)
+    stampSvgFigure(wrapper)
+    expect(parseFloat(svg.style.width)).toBe(250)
+  })
+
+  it('shrinks a diagram wider than the column down to the column', () => {
+    const { wrapper, svg } = mkSvg(1600, 70, 1600)
+    stampSvgFigure(wrapper)
+    expect(parseFloat(svg.style.width)).toBeLessThanOrEqual(800)
+  })
+
+  it('writes a resolved pixel width, never a percentage', () => {
+    // A percentage would be relative to the shrink-to-fit figure, which is sized
+    // by this element — the cycle that collapses everything to 300px.
+    const { wrapper, svg } = mkSvg(1600, 70, 1600)
+    stampSvgFigure(wrapper)
+    expect(svg.style.width).toMatch(/^[\d.]+px$/)
+    expect(svg.style.width).not.toContain('%')
   })
 })
