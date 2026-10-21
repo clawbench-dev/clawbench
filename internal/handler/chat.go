@@ -875,14 +875,26 @@ func sessionStateSnapshot(sessionID, sessionAgentID, sessionTransport string) se
 	// sessions look stuck on low (issue #552). Dropping it here lets the
 	// client fall back to the per-model / global default, which is what
 	// the next turn will actually use.
-	if st.Mode == nil || st.Effort == nil || st.Usage == nil {
+	//
+	// Mode needs the "has no selection" test, not just nil: GetCachedStateBy
+	// ClawbenchSID builds Mode from the agent-level list whenever the registry
+	// knows the options, so Mode is non-nil with an EMPTY currentModeId on a
+	// connection whose session-level mode was never set (a fresh conn, or one
+	// seeded before the mode was persisted). Treating that as "already known"
+	// skipped the fallback and left the chip blank until the next send, even
+	// though context_state held the choice.
+	if st.Mode == nil || modeStateHasNoSelection(st.Mode) || st.Effort == nil || st.Usage == nil {
 		if ctxState := service.GetContextState(sessionID); ctxState != nil {
 			// The per-session record wins over the agent-level registry for the
 			// parts it covers. The registry is keyed by AGENT and shared by every
 			// session of that agent, so it knows which options exist but not
 			// which one this session is on; preferring it left the drawer with a
 			// list and no selection even though the session had one persisted.
-			if ctxState.Mode != nil {
+			//
+			// A stored mode with no currentModeId is no better than what we
+			// already have, so it only replaces an ABSENT mode — otherwise the
+			// fallback could turn a populated list into an empty selection.
+			if ctxState.Mode != nil && (ctxState.Mode.CurrentModeID != "" || st.Mode == nil) {
 				st.Mode = ctxState.Mode
 			}
 			// Restore the effort when the user picked it — OR when nothing else
@@ -904,6 +916,28 @@ func sessionStateSnapshot(sessionID, sessionAgentID, sessionTransport string) se
 		}
 	}
 	return st
+}
+
+// modeStateHasNoSelection reports whether a resolved mode state carries a list
+// of options but no selected one.
+//
+// That shape is normal and not a bug: GetCachedStateByClawbenchSID builds Mode
+// from the AGENT-level registry, which knows which modes exist but not which
+// one a given session is on. Its currentModeId is only filled in when the
+// connection has one, so a fresh connection yields a list with an empty
+// selection. Callers use this to decide whether the persisted context_state
+// still has something to contribute.
+func modeStateHasNoSelection(mode any) bool {
+	switch m := mode.(type) {
+	case *ai.ModeState:
+		return m != nil && m.CurrentModeID == ""
+	case ai.ModeState:
+		return m.CurrentModeID == ""
+	case *service.ModeStatePersist:
+		return m != nil && m.CurrentModeID == ""
+	default:
+		return false
+	}
 }
 
 // streamRunResult captures the outcome of a single AI stream execution.
