@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 	archived INTEGER NOT NULL DEFAULT 0,
 	context_state TEXT DEFAULT '',
 	last_read_at DATETIME,
+	awaiting_user_at DATETIME,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	UNIQUE(backend, id)

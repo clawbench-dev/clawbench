@@ -451,14 +451,22 @@ func TestSchema_TitleSourceBackfill(t *testing.T) {
 	assert.Equal(t, "placeholder", got["s-ph"])
 }
 
-// TestSchema_AwaitingUserAtColumnExists verifies the additive migration that
-// adds the group "waiting on you" flag, and that re-running InitDB is a no-op.
+// TestSchema_AwaitingUserAtMigration verifies the group "waiting on you" flag
+// is added to a database created BEFORE the column existed, that re-running
+// InitDB is a no-op, and that pre-existing groups come out NULL.
 //
-// It also pins the column's NULL default: a pre-existing group must start with
-// NO unread badge rather than a phantom one, so the ALTER must not backfill a
-// timestamp. A stale badge on every old group after an upgrade is exactly the
-// regression a non-null default would cause.
-func TestSchema_AwaitingUserAtColumnExists(t *testing.T) {
+// The pre-existing database has to be simulated by actually DROPPING the column:
+// asserting on a fresh InitDB only proves the CREATE TABLE DDL mentions it. The
+// ALTER branch would then never run, so deleting the migration (or breaking its
+// pragma guard) would keep this green while every real upgrade silently lost the
+// column — and since `unreadCountSubquery` and `lookupReadSessions` both select
+// it, that is not a missing badge but `no such column` on every session list,
+// overview and floating-window refresh. Verified by mutation: with the ALTER
+// disabled, only this shape of test fails.
+//
+// NULL is the load-bearing default: an old group must start with NO unread
+// badge. Backfilling a timestamp would light every historical group at once.
+func TestSchema_AwaitingUserAtMigration(t *testing.T) {
 	tmpDir := t.TempDir()
 	origBinDir := model.BinDir
 	origDataDir := model.DataDir
@@ -469,27 +477,35 @@ func TestSchema_AwaitingUserAtColumnExists(t *testing.T) {
 	restoreDB := store.SnapshotDBForTest()
 	defer restoreDB()
 
+	// Phase 1: build the current schema, seed a group, then drop the column to
+	// simulate a database from before this migration.
 	require.NoError(t, InitDB())
-	// Re-run against the same data dir: the pragma_table_info guard must skip
-	// the ALTER instead of erroring.
+	store.Close()
+
+	raw, err := sql.Open("sqlite", filepath.Join(model.DataDir, "ClawBench.db"))
+	require.NoError(t, err)
+	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, session_type) VALUES ('old-group', 1, 'codebuddy', 'G', 'group')")
+	require.NoError(t, err)
+	_, err = raw.Exec("ALTER TABLE chat_sessions DROP COLUMN awaiting_user_at")
+	require.NoError(t, err)
+	raw.Close()
+
+	// Phase 2: InitDB re-adds it.
 	require.NoError(t, InitDB())
 	defer store.Close()
 
-	columns := getTableColumns(t, store.UnsafeDBForTest(), "chat_sessions")
-	assert.Contains(t, columns, "awaiting_user_at",
-		"chat_sessions should have the awaiting_user_at column")
+	assert.Contains(t, getTableColumns(t, store.UnsafeDBForTest(), "chat_sessions"), "awaiting_user_at",
+		"the migration must re-add the column to a pre-existing database")
 
-	// A row inserted without the column must read back NULL, not a zero time.
-	if _, err := store.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('s-awaiting', 1, 'claude', 't')",
-	); err != nil {
-		t.Fatalf("insert session: %v", err)
-	}
 	var isNull int
 	require.NoError(t, store.UnsafeDBForTest().QueryRow(
-		"SELECT awaiting_user_at IS NULL FROM chat_sessions WHERE id = 's-awaiting'",
+		"SELECT awaiting_user_at IS NULL FROM chat_sessions WHERE id = 'old-group'",
 	).Scan(&isNull))
-	assert.Equal(t, 1, isNull, "a new row must start with no pending user turn")
+	assert.Equal(t, 1, isNull,
+		"a pre-existing group must come out NULL — backfilling would light every old group's badge")
+
+	// Idempotent: the pragma guard must skip the ALTER instead of erroring.
+	require.NoError(t, InitDB())
 }
 
 // TestSchema_SortOrderMigration verifies chat_sessions.sort_order is added to a

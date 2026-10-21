@@ -1685,6 +1685,19 @@ func UpdateLastRead(sessionID string) {
 	// happens is excluded (streaming = 0), so it will legitimately register as
 	// unread once it lands. That is intended — the frontend re-marks the session
 	// read on the completion event when the user is actually looking at it.
+	//
+	// awaiting_user_at is cleared in the SAME statement, and that is not a
+	// style choice. The two writes must be atomic against markGroupUserTurn:
+	// a group turn can finish while the user is opening the group, and if the
+	// clear ran as a second statement, the order could be
+	// "SET flag" → "SET flag = NULL", silently swallowing the turn's hand-back.
+	// Nothing would re-raise it (the turn is over), so the badge would be lost
+	// for good. One statement means a finishing turn either wins (flag set
+	// after the read → badge lit) or loses (flag cleared after → the user was
+	// reading at that instant), and both are correct.
+	//
+	// Clearing unconditionally is harmless for non-group rows, where the column
+	// is always NULL.
 	store.WriteExec(`
 		UPDATE chat_sessions
 		SET last_read_at = MAX(
@@ -1694,16 +1707,9 @@ func UpdateLastRead(sessionID string) {
 				 WHERE session_id = ? AND role = 'assistant' AND streaming = 0),
 				CURRENT_TIMESTAMP
 			)
-		)
+		),
+		awaiting_user_at = NULL
 		WHERE id = ?`, sessionID, sessionID)
-	// Clear the group "waiting on you" flag in its OWN statement, deliberately
-	// not folded into the UPDATE above: for a GROUP that flag IS the badge (see
-	// unreadCountSubquery), so reading must clear it, but the read timestamp is
-	// the far more load-bearing of the two — a single statement would make
-	// last_read_at fail whenever the flag column is unavailable, turning a
-	// degraded schema into "the badge never clears". Best-effort and harmless for
-	// non-group rows, where the column is always NULL.
-	store.WriteExec("UPDATE chat_sessions SET awaiting_user_at = NULL WHERE id = ?", sessionID)
 	// Broadcast a status change so connected clients (e.g. the Android floating
 	// window) can refresh their unread counts. WS-only: no push notification and
 	// no pending event — reading a session must not create a notification.

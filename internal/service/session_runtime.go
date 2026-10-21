@@ -217,6 +217,12 @@ func EmitSessionPushNotification(sessionID, status string) bool {
 // after the last one — instead of once per answer. Each intermediate answer is
 // its own completed turn and deserves its own push.
 //
+// SINGLE CHAT ONLY. Do not wire this into a group run: a group turn runs many
+// members and can take minutes, so per-message pushes fire while the discussion
+// is still in flight, and what the user is owed there is a TURN, not an answer.
+// Groups notify exactly once per run from the terminal `done` (see
+// RunGroupDrainLoop's OnTurnAnswered note). This was tried and reverted.
+//
 // Deliberately NOT the guarded path: the terminal guard permits exactly one push
 // per run, so calling it here would let the FIRST turn consume the slot and
 // silence the real terminal push, losing the last answer's notification. The

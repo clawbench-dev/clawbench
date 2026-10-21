@@ -419,10 +419,20 @@ func (o *GroupOrchestrator) runLoop(groupCtx context.Context, groupID string) Dr
 	// inside each ending branch: the cruise/cap paths write different system
 	// lines but hand back the same turn.
 	//
-	// A cancelled or errored turn is excluded for the same reason announceUserTurn
-	// excludes it: the user must read the failure first, and a visible
-	// cancel/error is already on the timeline.
-	if res.CancelReason == "" && res.Err == "" && GetQueuedCount(groupID) == 0 {
+	// Three exclusions, each a different kind of "nothing to hand back":
+	//
+	//   - cancelled/errored: the user must read the failure first, and a visible
+	//     cancel/error is already on the timeline (same rule as announceUserTurn);
+	//   - a non-empty queue: this is one message of a multi-message drain, and the
+	//     floor is not back until the LAST one runs;
+	//   - ZERO member speeches: a clean turn in which nobody spoke is not a turn
+	//     the user owes anything on. runFreeLoop returns an empty result when the
+	//     roster is empty (every member left, or none is active), and lighting the
+	//     badge there would tell the user to speak in a group that cannot answer.
+	//     The speech cap is not an exclusion — a capped turn did speak, and the
+	//     floor does go back.
+	if res.CancelReason == "" && res.Err == "" &&
+		GetQueuedCount(groupID) == 0 && o.memberSpeeches > 0 {
 		markGroupUserTurn(groupID)
 	}
 	finalizeGroupOrphans(groupID)
