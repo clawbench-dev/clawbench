@@ -112,7 +112,10 @@ test.describe('Chat', () => {
       const drawer = page.locator('.bs-panel').filter({ has: page.locator('.ad-header') })
       await expect(drawer).toBeVisible({ timeout: 10000 })
 
-      await drawer.locator('input[type="file"]').setInputFiles(testFilePath)
+      // The drawer owns three file inputs (camera / photo / file), so target
+      // the generic one explicitly — a bare `input[type="file"]` matches all
+      // three and trips Playwright's strict mode.
+      await drawer.locator('input[type="file"]:not([accept])').setInputFiles(testFilePath)
 
       // The drawer footer reuses AttachmentTags, so the attached file shows up
       // as a `.chat-file-attachment` chip inside the drawer. The server de-dupes

@@ -5616,6 +5616,35 @@ paths:
         "200":
           description: 上传结果
 
+  /share-target:
+    post:
+      tags: [Upload]
+      summary: PWA 分享目标（系统分享到 ClawBench）
+      description: |
+        已安装 PWA 的 Web Share Target 端点。系统「分享」操作会向此地址 POST
+        multipart/form-data，文件写入当前项目 `.clawbench/uploads/`，随后以 303
+        重定向回应用并把已保存路径放在 `share_target` 查询参数中。
+
+        需要登录：未认证的分享不得写入项目。未选择项目或没有文件时同样重定向回应用。
+      operationId: shareTarget
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                files:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+      responses:
+        "303":
+          description: 重定向回应用（`/?share_target=<JSON 路径数组>` 或失败原因）
+
   /api/upload/recent:
     get:
       tags: [Upload]

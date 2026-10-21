@@ -1014,6 +1014,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	}
 	defer rag.Shutdown()
 	defer service.StopSessionCleanupWorker()
+	defer service.StopUploadCleanupWorker()
 	defer service.StopUsageMeterWorker()
 	defer service.StopQueueReaper()
 	defer service.StopForgePoller()
@@ -1134,6 +1135,11 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// sessions directly through internal/rag (no callback indirection): the
 	// service↔rag import cycle that once required injection is gone.
 	service.StartSessionCleanupWorker(cfg)
+
+	// Start upload retention cleanup. Off by default: it deletes files, so it
+	// only runs when the user opted in. Even then it never touches a file a
+	// message still references.
+	service.StartUploadCleanupWorker(cfg)
 
 	// Start the usage-meter worker. Its tick is a no-op while no quota is
 	// configured; it exists so a rule that is already past its baseline at
@@ -1688,6 +1694,9 @@ func hotReloadReconfigure(port int) {
 
 	// --- Session cleanup: reconfigure archive retention worker ---
 	service.ReconfigureSessionCleanup(cfg)
+
+	// --- Upload cleanup: apply a changed retention policy without a restart ---
+	service.ReconfigureUploadCleanup(cfg)
 
 	// --- Usage meter: recreate the worker so a changed rule is evaluated now ---
 	// The worker itself is unconditional (its tick no-ops when no quota is set);

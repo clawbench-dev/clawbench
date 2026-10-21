@@ -161,6 +161,17 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if cfg.Upload.MaxFiles <= 0 {
 		cfg.Upload.MaxFiles = 20
 	}
+	// Upload retention defaults to OFF: deleting a user's files is destructive
+	// and irreversible, so it must be an explicit opt-in rather than something
+	// a fresh install does on its own.
+	//
+	// The day count defaults to 30 even while disabled, so turning the switch on
+	// has an effect immediately. Leaving it at 0 would make "enabled + 0 days"
+	// mean "keep forever" — the user flips the switch, the UI says cleanup is
+	// on, and the worker silently no-ops.
+	if cfg.Upload.RetentionDays <= 0 {
+		cfg.Upload.RetentionDays = 30
+	}
 
 	// --- Chat ---
 	if cfg.Chat.InitialMessages <= 0 {

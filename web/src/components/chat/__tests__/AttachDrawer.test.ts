@@ -17,6 +17,8 @@ vi.mock('lucide-vue-next', () => ({
   ExternalLink: { name: 'ExternalLink', render: () => h('span', { class: 'icon-external-link' }) },
   Trash2: { name: 'Trash2', render: () => h('span', { class: 'icon-trash2' }) },
   Square: { name: 'Square', render: () => h('span', { class: 'icon-square' }) },
+  Camera: { name: 'Camera', render: () => h('span', { class: 'icon-camera' }) },
+  Image: { name: 'Image', render: () => h('span', { class: 'icon-image' }) },
   Loader2: { name: 'Loader2', render: () => h('span', { class: 'icon-loader2' }) },
   LoaderCircle: { name: 'LoaderCircle', render: () => h('span', { class: 'icon-loader-circle' }) },
   X: { name: 'X', render: () => h('span', { class: 'icon-x' }) },
@@ -127,6 +129,8 @@ const i18n = createI18n({
         attach: {
           drawerTitle: 'Attach Files',
           uploadFile: 'Upload file',
+          pickImage: 'Photo',
+          takePhoto: 'Camera',
           currentTab: 'Current',
           recentReferences: 'References',
           recentShares: 'Shares',
@@ -311,9 +315,38 @@ describe('AttachDrawer', () => {
     expect(getRawState(wrapper).currentDirDisplayName.value).toBe('/')
   })
 
-  it('has upload button that opens file picker', () => {
+  it('renders the three source entries (camera, photo, file)', () => {
     const wrapper = mountDrawer()
-    expect(wrapper.find('.ad-upload-btn').exists()).toBe(true)
+    const buttons = wrapper.findAll('.ad-source-btn')
+    expect(buttons).toHaveLength(3)
+    // The labels are what tell them apart, so assert the rendered text. A
+    // missing i18n key would render the raw key here, which also fails.
+    const labels = buttons.map((b) => b.find('.ad-source-label').text())
+    expect(labels).toEqual(['Camera', 'Photo', 'Upload file'])
+  })
+
+  it('gives each source entry its own picker mode (accept / capture)', () => {
+    const wrapper = mountDrawer()
+    // One shared input cannot serve all three: `accept` and `capture` are read
+    // by the OS when the picker opens, so mutating them right before click() is
+    // unreliable on Android WebView.
+    const photo = wrapper.find('input[type="file"][accept="image/*"]:not([capture])')
+    const camera = wrapper.find('input[type="file"][capture="environment"]')
+    const plain = wrapper.findAll('input[type="file"]').filter(
+      (i) => !i.attributes('accept') && !i.attributes('capture'),
+    )
+    expect(photo.exists()).toBe(true)
+    expect(camera.exists()).toBe(true)
+    expect(camera.attributes('accept')).toBe('image/*')
+    expect(plain).toHaveLength(1)
+  })
+
+  it('camera entry is single-shot, the other two allow multiple', () => {
+    const wrapper = mountDrawer()
+    // A camera capture produces exactly one image; leaving `multiple` on would
+    // make some pickers show a multi-select UI for a single shot.
+    expect(wrapper.find('input[capture="environment"]').attributes('multiple')).toBeUndefined()
+    expect(wrapper.find('input[accept="image/*"]:not([capture])').attributes('multiple')).toBeDefined()
   })
 
   it('handleUploadClick resets file input value and sets filePickerOpen', async () => {
@@ -325,6 +358,46 @@ describe('AttachDrawer', () => {
     state.handleUploadClick()
     expect(fakeInput.value).toBe('')
     expect(state.filePickerOpen.value).toBe(true)
+  })
+
+  it('photo and camera entries open their own input, not the file input', async () => {
+    const wrapper = mountDrawer()
+    const state = getRawState(wrapper)
+    const fileInput = { value: 'a', click: vi.fn() }
+    const photoInput = { value: 'b', click: vi.fn() }
+    const cameraInput = { value: 'c', click: vi.fn() }
+
+    state.fileInputRef.value = fileInput
+    state.photoInputRef.value = photoInput
+    state.handlePhotoClick()
+    // click() is deferred one tick so the drawer's closeGuard installs first.
+    await nextTick()
+    expect(photoInput.value).toBe('')
+    expect(photoInput.click).toHaveBeenCalledTimes(1)
+    expect(fileInput.click).not.toHaveBeenCalled()
+
+    // Re-assign after the render: awaiting nextTick re-binds the template refs
+    // to the real DOM inputs, so the fake set above no longer stands.
+    state.fileInputRef.value = fileInput
+    state.cameraInputRef.value = cameraInput
+    state.handleCameraClick()
+    await nextTick()
+    expect(cameraInput.value).toBe('')
+    expect(cameraInput.click).toHaveBeenCalledTimes(1)
+    expect(fileInput.click).not.toHaveBeenCalled()
+    expect(photoInput.click).toHaveBeenCalledTimes(1)
+  })
+
+  it('photo/camera entries are no-ops when their input is absent', () => {
+    const wrapper = mountDrawer()
+    const state = getRawState(wrapper)
+    state.photoInputRef.value = null
+    state.cameraInputRef.value = null
+    // Must not throw, and must not claim a picker is open (that would install
+    // the closeGuard and leave the drawer permanently unclosable).
+    expect(() => state.handlePhotoClick()).not.toThrow()
+    expect(() => state.handleCameraClick()).not.toThrow()
+    expect(state.filePickerOpen.value).toBe(false)
   })
 
   it('onFileSelect resets filePickerOpen and switches to uploads tab on success', async () => {

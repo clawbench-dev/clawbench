@@ -532,6 +532,18 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/upload/file", UploadFile)
 	register("/api/upload/recent", UploadRecent)
 	register("/api/share-in/recent", ShareInRecent)
+	// Web Share Target for the installed PWA: the browser POSTs a multipart
+	// form here when the user shares files from another app. Authenticated on
+	// purpose — an unauthenticated share must not write into a project — but
+	// wrapped so a rejected request lands on the login page instead of a JSON
+	// body (the browser NAVIGATED here, so it renders whatever we return).
+	//
+	// Registered OUTSIDE middleware.Auth so the rejection can be a redirect:
+	// Auth writes a JSON 401, which the browser would render as a bare error
+	// body (it navigated here from the OS share sheet). The handler re-checks
+	// authentication itself and bounces to the app, where the login form lives.
+	registerRoute(mux, "/share-target", ShareTarget)
+	routeTable = append(routeTable, Route{Pattern: "/share-target", Authenticated: true})
 
 	// GitHub / GitLab integration (read-only issue & PR browsing).
 	register("/api/forge/credentials", ServeForgeCredentials)
