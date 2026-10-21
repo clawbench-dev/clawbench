@@ -264,7 +264,7 @@ UNIQUE：`(message_id)`
 | auto_approve | INTEGER | NOT NULL | `0` | 自动批准 |
 | disabled | INTEGER | NOT NULL | `0` | 已禁用：从所有**新建**入口（新建会话/任务/群成员）隐藏，服务端兜底拒绝；已有会话/任务不受影响 |
 | project_id | INTEGER | | `NULL` | 项目作用域：`NULL`=全局可见；值=仅在该 `projects.id` 项目可见（设置列表 + 所有新建入口）。只拦新建，不追溯已有会话/任务 |
-| mcp_servers | TEXT | NOT NULL | `'{"mode":"all","names":[]}'` | 每 agent 的 MCP 策略（`model.MCPServerPolicy`）。空值语义等同 `mode=all` |
+| mcp_servers | TEXT | NOT NULL | `'{"mode":"all","names":[]}'` | 每 agent 的 MCP 策略（`model.MCPServerPolicy`，`{mode, names}`）。**只存策略不存定义**——定义在 `config.yaml` 的 `mcp.servers`，密钥只存一处。零值/解析失败按 `all` 处理，不按 `none`（否则一次坏行会让该智能体的 MCP 全部消失） |
 | created_at | DATETIME | | CURRENT_TIMESTAMP | 创建时间 |
 | updated_at | DATETIME | | CURRENT_TIMESTAMP | 更新时间 |
 | acp_load_session | BOOLEAN | NOT NULL | `false` | 支持加载会话 |
