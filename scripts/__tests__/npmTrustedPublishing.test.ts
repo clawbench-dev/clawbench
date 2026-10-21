@@ -184,34 +184,34 @@ describe('release.yml — npm publishing uses OIDC trusted publishing', () => {
   })
 })
 
-describe('npm package manifests declare the publishing repository', () => {
-  /**
-   * Every publishable package.json.
-   *
-   * Two shapes coexist under npm/: `main/` and the payload/`platforms` groups
-   * (`<group>/<name>/`). Check each entry for a manifest before descending, so
-   * a leaf package is not skipped just because it has no sub-packages.
-   */
-  function findManifests(): string[] {
-    const out: string[] = []
-    const npmDir = repoPath('npm')
-    const consider = (dir: string) => {
-      const p = resolve(dir, 'package.json')
-      if (existsSync(p)) out.push(p)
-    }
-    for (const group of readdirSync(npmDir, { withFileTypes: true })) {
-      if (!group.isDirectory()) continue
-      const groupDir = resolve(npmDir, group.name)
-      consider(groupDir)
-      for (const entry of readdirSync(groupDir, { withFileTypes: true })) {
-        if (entry.isDirectory()) consider(resolve(groupDir, entry.name))
-      }
-    }
-    return out.sort()
+/**
+ * Every publishable package.json.
+ *
+ * Two shapes coexist under npm/: `main/` and the payload/`platforms` groups
+ * (`<group>/<name>/`). Check each entry for a manifest before descending, so
+ * a leaf package is not skipped just because it has no sub-packages.
+ */
+function findManifests(): string[] {
+  const out: string[] = []
+  const npmDir = repoPath('npm')
+  const consider = (dir: string) => {
+    const p = resolve(dir, 'package.json')
+    if (existsSync(p)) out.push(p)
   }
+  for (const group of readdirSync(npmDir, { withFileTypes: true })) {
+    if (!group.isDirectory()) continue
+    const groupDir = resolve(npmDir, group.name)
+    consider(groupDir)
+    for (const entry of readdirSync(groupDir, { withFileTypes: true })) {
+      if (entry.isDirectory()) consider(resolve(groupDir, entry.name))
+    }
+  }
+  return out.sort()
+}
 
-  const manifests = findManifests()
+const manifests = findManifests()
 
+describe('npm package manifests declare the publishing repository', () => {
   it('finds every published package', () => {
     // 7 server packages + 3 desktop payloads. A count that silently dropped
     // would make the per-file assertions below vacuous.
@@ -227,5 +227,35 @@ describe('npm package manifests declare the publishing repository', () => {
       `${pkg.name} is missing repository.url — provenance verification ` +
         `requires it to match ${REPO_SLUG}`
     ).toBe(`git+https://github.com/${REPO_SLUG}.git`)
+  })
+})
+
+/**
+ * Every published package must ship a README.
+ *
+ * npm derives the package page's readme from a `README.md` sitting next to
+ * `package.json` (it is packed unconditionally, `files` cannot exclude it).
+ * Nothing in this repo ever created one, so every published package — the
+ * launcher users land on from `npm install -g` included — rendered an empty
+ * page with no description of the project and no link back to it.
+ *
+ * Asserted here rather than by inspecting `npm pack` output because packing is
+ * slow and needs a registry-free environment; the presence of the file next to
+ * each manifest is the whole invariant.
+ */
+describe('npm packages ship a README', () => {
+  it.each(manifests)('%s has a non-empty README.md', (manifestPath) => {
+    const readme = resolve(manifestPath, '..', 'README.md')
+    expect(existsSync(readme), `${readme} is missing — the npm page would be blank`).toBe(true)
+    expect(readFileSync(readme, 'utf8').trim().length).toBeGreaterThan(200)
+  })
+
+  it('the launcher README links back to the project and documents the command', () => {
+    const readme = readFileSync(resolve(repoPath('npm/main'), 'README.md'), 'utf8')
+    // The two things a visitor to the npm page needs: where the project lives,
+    // and how to start it.
+    expect(readme).toContain(`https://github.com/${REPO_SLUG}`)
+    expect(readme).toContain('npm install -g @xulongzhe/clawbench')
+    expect(readme).toContain('clawbench --port')
   })
 })
