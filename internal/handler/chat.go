@@ -272,11 +272,13 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 	// cwd means it can't find the existing session, producing "No conversation found" errors.
 	fileDir := basePath
 
-	// Validate all attached file paths are within project
+	// Validate all attached file paths. A path may arrive project-relative (a
+	// fresh attach) or absolute (anything re-sending a persisted attachment —
+	// see resolveAttachmentPath); both are contained-checked before use.
 	validatedFilePaths := make([]string, 0, len(allFilePaths))
 	validatedDirPaths := make([]string, 0, len(allFilePaths))
 	for _, fp := range allFilePaths {
-		fAbsPath, ok := validateAndResolvePath(w, r, basePath, fp)
+		fAbsPath, ok := resolveAttachmentPath(w, r, basePath, fp)
 		if !ok {
 			return
 		}
@@ -310,7 +312,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 			validatedFileEntries = append(validatedFileEntries, entry)
 			continue
 		}
-		fAbsPath, ok := validateAndResolvePath(w, r, basePath, fEntry.Path)
+		fAbsPath, ok := resolveAttachmentPath(w, r, basePath, fEntry.Path)
 		if !ok {
 			return
 		}
@@ -1025,7 +1027,10 @@ func buildChatRequestFromQueue(qMsg model.QueuedMessage, sessionID, projectPath,
 	if len(qMsg.FilePaths) > 0 {
 		basePath, _ := filepath.Abs(projectPath)
 		for _, fp := range qMsg.FilePaths {
-			absPath, ok := model.ValidatePath(basePath, fp)
+			// Rows are stored with their RESOLVED absolute path, so a drained
+			// message must accept the absolute form too — ValidatePath would
+			// re-root it and the Stat below would fail.
+			absPath, ok := resolveAttachmentPathQuiet(basePath, fp)
 			if !ok {
 				filePaths = append(filePaths, fp)
 				continue
