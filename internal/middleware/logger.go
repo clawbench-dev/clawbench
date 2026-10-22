@@ -40,6 +40,21 @@ func (rw *ResponseWriter) Unwrap() http.ResponseWriter {
 	return rw.ResponseWriter
 }
 
+// shareManagementSegments are the fixed first segments under /api/share/ that
+// are AUTHENTICATED management routes, not capability tokens:
+//
+//	/api/share/session          create / query / revoke one conversation share
+//	/api/share/session/list     list / clear this project's shares
+//	/api/share/list             list / clear this project's file shares
+//
+// They must be logged verbatim. Treating them as tokens would mask the very
+// endpoints an operator most needs to tell apart (create vs revoke vs clear-all),
+// and it cannot leak anything: they are not credentials.
+var shareManagementSegments = map[string]bool{
+	"session": true,
+	"list":    true,
+}
+
 // redactPathToken masks the capability token in a share URL path.
 //
 // Share links are capability URLs: the token in the path IS the credential, so a
@@ -50,25 +65,35 @@ func (rw *ResponseWriter) Unwrap() http.ResponseWriter {
 // use it.
 //
 // Covers both the page (/share/{token}) and the data endpoints
-// (/api/share/{token}/...). Returns the path unchanged when it is not a share
-// route.
+// (/api/share/{token}/...), while leaving the management routes intact. Returns
+// the path unchanged when it is not a token-bearing share route.
 func redactPathToken(path string) string {
-	for _, prefix := range []string{"/api/share/", "/share/"} {
-		rest, ok := strings.CutPrefix(path, prefix)
-		if !ok {
-			continue
+	// /api/share/... is the only prefix that mixes tokens and fixed routes.
+	if rest, ok := strings.CutPrefix(path, "/api/share/"); ok {
+		first, tail, hasTail := strings.Cut(rest, "/")
+		if first == "" || shareManagementSegments[first] {
+			return path
 		}
+		return "/api/share/" + maskToken(first) + tailSuffix(tail, hasTail)
+	}
+
+	if rest, ok := strings.CutPrefix(path, "/share/"); ok {
 		token, tail, hasTail := strings.Cut(rest, "/")
 		if token == "" {
 			return path
 		}
-		masked := maskToken(token)
-		if !hasTail {
-			return prefix + masked
-		}
-		return prefix + masked + "/" + tail
+		return "/share/" + maskToken(token) + tailSuffix(tail, hasTail)
 	}
+
 	return path
+}
+
+// tailSuffix re-attaches the remainder of a path after the masked segment.
+func tailSuffix(tail string, hasTail bool) string {
+	if !hasTail {
+		return ""
+	}
+	return "/" + tail
 }
 
 // maskToken keeps a short prefix so related log lines can still be grouped,

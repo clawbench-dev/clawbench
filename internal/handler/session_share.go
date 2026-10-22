@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"runtime"
 	"strings"
+	"time"
 
 	"clawbench/internal/model"
 	"clawbench/internal/service"
@@ -31,20 +32,44 @@ import (
 // An assembly is several queries plus up to 16 MiB of JSON, and the read pool is
 // only two connections (store/db.go). The public endpoint is unauthenticated and
 // unthrottled, so one hot link pasted into a group chat would otherwise starve
-// every other reader in the process. Past the ceiling callers get 503 rather
-// than queueing without bound.
+// every other reader in the process.
 var sessionShareMaxConcurrent = min(4, runtime.NumCPU())
 
 var sessionShareSem = make(chan struct{}, sessionShareMaxConcurrent)
 
-// acquireSessionShareSlot blocks until a slot is free or the client goes away.
-// Returns false when the request was cancelled while waiting.
-func acquireSessionShareSlot(ctx context.Context) bool {
+// sessionShareQueueTimeout bounds how long a request may WAIT for a slot before
+// giving up with 503. Queueing without a bound is not a limiter: a hot link would
+// pile up goroutines (each holding a request and its buffers) until the process
+// runs out of memory, which is worse than refusing service.
+//
+// A var so tests can shrink it instead of sleeping for the production value.
+var sessionShareQueueTimeout = 10 * time.Second
+
+// acquireSessionShareSlot waits for a slot, the client to go away, or the queue
+// timeout. Returns false with a reason the caller maps to a response.
+func acquireSessionShareSlot(ctx context.Context) (ok bool, timedOut bool) {
+	if sessionShareQueueTimeout <= 0 {
+		// Synchronous fast path: never wait, so a saturated endpoint answers
+		// immediately instead of holding the connection.
+		select {
+		case sessionShareSem <- struct{}{}:
+			return true, false
+		case <-ctx.Done():
+			return false, false
+		default:
+			return false, true
+		}
+	}
+
+	timer := time.NewTimer(sessionShareQueueTimeout)
+	defer timer.Stop()
 	select {
 	case sessionShareSem <- struct{}{}:
-		return true
+		return true, false
 	case <-ctx.Done():
-		return false
+		return false, false
+	case <-timer.C:
+		return false, true
 	}
 }
 
@@ -484,13 +509,31 @@ func serveShareSessionPayload(w http.ResponseWriter, r *http.Request, token stri
 		return
 	}
 
-	if !acquireSessionShareSlot(r.Context()) {
+	acquired, timedOut := acquireSessionShareSlot(r.Context())
+	if !acquired {
+		if timedOut {
+			// Saturated: refuse rather than queue without bound. Retry-After tells
+			// a well-behaved client how long to wait; an assembly is bounded by
+			// the same window.
+			w.Header().Set("Retry-After", "5")
+			writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "ServiceBusy")
+			return
+		}
 		// The client went away while queued; nothing to write.
 		return
 	}
 	defer releaseSessionShareSlot()
 
-	createdAt, _ := parseShareTime(share.CreatedAt)
+	// createdAt goes into the payload verbatim, so an unparseable value must not
+	// be papered over silently. Falling back to time.Now() would make the payload
+	// differ on every request and defeat the ETag (no 304 ever), so a corrupt row
+	// keeps the deterministic zero time and says so in the log — the reader sees
+	// an odd date, but the caching contract still holds.
+	createdAt, ok := parseShareTime(share.CreatedAt)
+	if !ok {
+		slog.Warn("share: unparseable created_at, payload will carry the zero time",
+			"session", share.SessionID, "raw", share.CreatedAt)
+	}
 	body, _, err := service.BuildSessionSharePayload(share.SessionID, share.MessageIDs, createdAt)
 	switch {
 	case errors.Is(err, service.ErrSessionShareNothingToShow),

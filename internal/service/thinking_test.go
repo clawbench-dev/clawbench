@@ -159,7 +159,7 @@ func TestAppendThinkingSegment_GetThinkingConcat(t *testing.T) {
 	})
 }
 
-func TestGetThinkingBySessionAll(t *testing.T) {
+func TestGetThinkingByMessageIDs(t *testing.T) {
 	dbDir := t.TempDir()
 	if err := initTestDB(dbDir); err != nil {
 		t.Fatalf("initTestDB: %v", err)
@@ -179,26 +179,26 @@ func TestGetThinkingBySessionAll(t *testing.T) {
 	}
 	msgID, _ := res.LastInsertId()
 
-	t.Run("returns empty for session with no thinking", func(t *testing.T) {
-		records, err := GetThinkingBySessionAll(sessionID)
+	t.Run("returns empty for a message with no thinking", func(t *testing.T) {
+		records, err := GetThinkingByMessageIDs([]int64{msgID})
 		if err != nil {
-			t.Fatalf("GetThinkingBySessionAll: %v", err)
+			t.Fatalf("GetThinkingByMessageIDs: %v", err)
 		}
 		if len(records) != 0 {
 			t.Errorf("expected 0 records, got %d", len(records))
 		}
 	})
 
-	t.Run("returns all thinking records for session", func(t *testing.T) {
+	t.Run("returns every think_id of the requested message", func(t *testing.T) {
 		if err := UpsertThinking(msgID, sessionID, "th_001", "first thought"); err != nil {
 			t.Fatalf("UpsertThinking: %v", err)
 		}
 		if err := UpsertThinking(msgID, sessionID, "th_002", "second thought"); err != nil {
 			t.Fatalf("UpsertThinking: %v", err)
 		}
-		records, err := GetThinkingBySessionAll(sessionID)
+		records, err := GetThinkingByMessageIDs([]int64{msgID})
 		if err != nil {
-			t.Fatalf("GetThinkingBySessionAll: %v", err)
+			t.Fatalf("GetThinkingByMessageIDs: %v", err)
 		}
 		if len(records) != 2 {
 			t.Fatalf("expected 2 records, got %d", len(records))
@@ -209,6 +209,34 @@ func TestGetThinkingBySessionAll(t *testing.T) {
 		}
 		if got["th_001"] != "first thought" || got["th_002"] != "second thought" {
 			t.Errorf("mismatch: %+v", got)
+		}
+	})
+
+	// The whole point of the message-scoped query: another message's thinking
+	// must never come back, or a share would leak reasoning the user did not
+	// select.
+	t.Run("excludes other messages", func(t *testing.T) {
+		res2, err := store.UnsafeDBForTest().Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
+			"/test", "assistant", `{"blocks":[]}`, sessionID, "test")
+		if err != nil {
+			t.Fatalf("insert second message: %v", err)
+		}
+		otherID, _ := res2.LastInsertId()
+		if err := UpsertThinking(otherID, sessionID, "th_other", "unselected reasoning"); err != nil {
+			t.Fatalf("UpsertThinking: %v", err)
+		}
+
+		records, err := GetThinkingByMessageIDs([]int64{msgID})
+		if err != nil {
+			t.Fatalf("GetThinkingByMessageIDs: %v", err)
+		}
+		for _, r := range records {
+			if r.MessageID != msgID {
+				t.Errorf("record for message %d leaked into a query for %d", r.MessageID, msgID)
+			}
+			if r.Text == "unselected reasoning" {
+				t.Errorf("unselected thinking leaked")
+			}
 		}
 	})
 }

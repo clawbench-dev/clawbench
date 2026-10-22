@@ -183,7 +183,7 @@
              the message. Assistant-only, and hidden while streaming since there
              is no settled content to toggle yet. -->
         <template v-if="msg.role === 'assistant'">
-          <span v-if="canUseLocalActions && !msg.streaming" ref="toggleWrapRef" class="chat-summary-anchor">
+          <span v-if="canUseLocalActions && !msg.streaming && canToggleSummary" ref="toggleWrapRef" class="chat-summary-anchor">
             <SummaryToggle v-if="!msg._summarizing" mode="button" :showing-summary="showSummary" i18n-prefix="chat.message" @toggle="handleToggleSummary" />
             <LoadingIndicator v-else size="sm" inline />
           </span>
@@ -404,6 +404,18 @@ const canOpenAgentConfig = computed(() => !props.readOnly && !!speaker.value?.ag
 // gate (quote needs a composer, speak needs the TTS endpoints, fork/rewind need
 // a live session).
 const canUseLocalActions = computed(() => !props.readOnly || props.allowLocalActions)
+
+// Whether the summary toggle can do anything.
+//
+// In the interactive app a message with no summary still gets a button: clicking
+// it GENERATES one (ChatPanelContent.handleToggleSummary). A read-only host has
+// no such path — SessionShareView's handler returns immediately when
+// msg.summary is empty — so showing the button there would be a control that
+// looks live and does nothing, the same defect this change set fixes elsewhere.
+const canToggleSummary = computed(() => {
+  if (!props.readOnly) return true
+  return props.msg?.summary != null && props.msg.summary !== ''
+})
 
 // Group-chat mention parsing. In BOTH modes an agent's speech may carry
 // <clawbench-mention> tags: host mode's routing, free mode's @-relay. A USER

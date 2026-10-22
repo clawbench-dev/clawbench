@@ -1391,6 +1391,27 @@ describe('ChatMessageItem — readOnly + allowLocalActions (share page)', () => 
     expect(cb.props('showingSummary')).toBe(false)
   })
 
+  // A read-only host has no "generate a summary" path — SessionShareView's
+  // toggle handler returns immediately when summary is empty — so the button
+  // must not be rendered at all. Otherwise it is the same defect as the other
+  // dead controls this change set fixes: visible, identical to the app's, inert.
+  it('hides the summary toggle when the message has no summary', () => {
+    const wrapper = createWrapper({
+      msg: { id: 'l4', role: 'assistant', content: 'answer', blocks: [{ type: 'text', text: 'answer' }] },
+      readOnly: true,
+      allowLocalActions: true,
+    })
+    expect(wrapper.find('.chat-summary-anchor').exists()).toBe(false)
+  })
+
+  // …but the interactive app DOES offer it there: clicking generates one.
+  it('keeps the summary toggle without a summary in normal chat', () => {
+    const wrapper = createWrapper({
+      msg: { id: 'l5', role: 'assistant', content: 'answer', blocks: [{ type: 'text', text: 'answer' }] },
+    })
+    expect(wrapper.find('.chat-summary-anchor').exists()).toBe(true)
+  })
+
   // Never blank: a summary-only message has no original content to show.
   //
   // The reader's global mode is forced to 'original' here, because that is the

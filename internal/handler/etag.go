@@ -40,7 +40,11 @@ func etagMatches(ifNoneMatch, etag string) bool {
 	}
 	for _, part := range strings.Split(value, ",") {
 		candidate := strings.TrimSpace(part)
-		candidate = strings.TrimPrefix(candidate, "W/")
+		// RFC 9110 allows optional whitespace between the W/ prefix and the
+		// quoted validator ("W/ \"abc\""), and some proxies emit it. Trimming
+		// after stripping the prefix (not only before) keeps those matching
+		// instead of costing a 304.
+		candidate = strings.TrimSpace(strings.TrimPrefix(candidate, "W/"))
 		if candidate == etag {
 			return true
 		}

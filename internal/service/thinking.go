@@ -346,8 +346,14 @@ func groupThinkingRows(chunks []thinkingChunk) []ThinkingRecord {
 
 // GetThinkingBySessionAll retrieves all thinking records for a session.
 // Each distinct (think_id, message_id) pair is returned once with its chunks
-// concatenated in seq order. Used by BuildForkContext to batch-fetch thinking
-// text without N+1 queries.
+// concatenated in seq order.
+//
+// Kept as the session-scoped counterpart to GetThinkingByMessageIDs (which the
+// share assembly uses). Production callers are gone — fork deliberately excludes
+// thinking (fork_context.go, decision #9) — but the flush/cancel tests assert on
+// it, and a session-wide read is the natural shape for "show me everything this
+// conversation reasoned about". Delete it together with those tests if it is
+// still unused later.
 func GetThinkingBySessionAll(sessionID string) ([]ThinkingRecord, error) {
 	rows, err := store.ReadDB().QueryContext(context.Background(), `
 		SELECT message_id, think_id, seq, text, session_id

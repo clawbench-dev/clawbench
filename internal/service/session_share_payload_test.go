@@ -804,7 +804,10 @@ func TestSessionSharePayload_SessionMetadataAndVersion(t *testing.T) {
 
 	out := decodePayload(t, raw)
 	assert.EqualValues(t, 1, out["version"])
-	assert.NotEmpty(t, out["createdAt"])
+	// Must be the caller's timestamp, not merely "non-empty": the zero time
+	// serializes to "0001-01-01T00:00:00Z", which satisfied NotEmpty and let a
+	// broken parseShareTime ship a year-1 createdAt for every share.
+	assert.Equal(t, testShareCreatedAt.Format(time.RFC3339), out["createdAt"])
 
 	session := out["session"].(map[string]any)
 	assert.Equal(t, "Fix the login bug", session["title"])

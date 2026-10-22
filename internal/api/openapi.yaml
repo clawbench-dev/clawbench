@@ -3653,6 +3653,10 @@ paths:
           description: |
             `{token}/session` 专用：`If-None-Match` 与当前 `ETag` 匹配，内容未变。
             无响应体，仍带 `ETag`。
+        "503":
+          description: |
+            `{token}/session` 专用：装配并发已达上限且排队超过服务端窗口。
+            带 `Retry-After`（秒）。token 无效时仍是 404，不会因为负载变成 503。
         "404":
           $ref: "#/components/responses/Error"
 

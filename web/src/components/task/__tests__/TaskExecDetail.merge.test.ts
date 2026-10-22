@@ -247,3 +247,24 @@ describe('mergeStreamingWithHistory', () => {
     expect(result.blocks.map((b: any) => b.id)).toEqual(['t1', 't2'])
   })
 })
+
+/**
+ * TaskExecDetail is a read-only host: it renders a finished (or running) task's
+ * message but binds neither `@reset-session` nor `@send-message`. The
+ * warning-block buttons in ContentBlocks are gated on `!readOnly`, so without
+ * this prop they render and do nothing — the same "visible but inert" defect the
+ * share page had.
+ *
+ * Source-level because the assertion is about the props passed to a child
+ * component, and the whole component needs a live task + WS to mount.
+ */
+describe('TaskExecDetail passes readOnly to ChatMessageItem', () => {
+  it('sets :read-only on the ChatMessageItem it renders', async () => {
+    const mod = await import('@/components/task/TaskExecDetail.vue?raw')
+    const src = typeof mod.default === 'string' ? mod.default : ''
+    expect(src).toContain('<ChatMessageItem')
+    const start = src.indexOf('<ChatMessageItem')
+    const region = src.slice(start, src.indexOf('/>', start))
+    expect(region).toContain(':read-only="true"')
+  })
+})

@@ -24,6 +24,10 @@ func TestETagMatches(t *testing.T) {
 		{"empty header", "", false},
 		{"exact", etag, true},
 		{"weak prefix", `W/` + etag, true},
+		// RFC 9110 allows optional whitespace between W/ and the quoted value,
+		// and some proxies emit it. Missing this only costs a 304, but it is a
+		// one-line fix so there is no reason to keep failing it.
+		{"weak prefix with space", `W/ ` + etag, true},
 		{"list containing it", `"other", ` + etag, true},
 		{"list with whitespace", `"other" ,  ` + etag + ` `, true},
 		{"weak entry in a list", `W/"other", W/` + etag, true},

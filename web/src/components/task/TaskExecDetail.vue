@@ -64,6 +64,7 @@
         :blockTasks="{}"
         :blockAskQuestions="{}"
         hideSessionActions
+        :read-only="true"
         @toggle-tool="toggleTool"
         @show-tool-detail="handleShowToolDetail"
         @show-metadata="showMetadata"

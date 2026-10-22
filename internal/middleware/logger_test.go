@@ -140,6 +140,24 @@ func TestRedactPathToken(t *testing.T) {
 			want: "/api/share/",
 		},
 		{
+			// The management routes are authenticated and carry NO token. Masking
+			// them would erase the one thing the log is for: telling create,
+			// revoke and clear-all apart.
+			name: "management: session share create/query/revoke",
+			path: "/api/share/session",
+			want: "/api/share/session",
+		},
+		{
+			name: "management: session share list",
+			path: "/api/share/session/list",
+			want: "/api/share/session/list",
+		},
+		{
+			name: "management: file share list",
+			path: "/api/share/list",
+			want: "/api/share/list",
+		},
+		{
 			name: "prefix with no token and a tail",
 			path: "/api/share//session",
 			want: "/api/share//session",

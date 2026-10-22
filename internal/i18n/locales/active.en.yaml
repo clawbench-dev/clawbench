@@ -1,6 +1,7 @@
 SessionNotRunning: Session is not running
 SessionStreamNotFound: Session stream not found
 SessionStreamBusy: Session stream is being viewed on another device
+ServiceBusy: The server is busy assembling shared conversations, please retry shortly
 SessionLimitReached: Session limit reached ({{.MaxCount}}), please archive old sessions
 SessionIdRequired: session_id required
 CannotRemoveHost: The host is the group's only scheduler and cannot be removed
