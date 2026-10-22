@@ -58,17 +58,35 @@ export class NavigationPage {
    * Waiting on the dock's settled width — not a fixed timeout — is the condition
    * that is true exactly when the transient is over, so it cannot flake.
    */
-  private async waitForDockSettled(): Promise<void> {
-    // Either shape counts: exactly one of the two docks is displayed at a time,
-    // so "some dock has a non-zero width" is the settled condition in both.
+  /**
+   * Wait for the dock shape to match the current viewport.
+   *
+   * `setViewportSize` resolves when the resize has been *applied*, not when the
+   * page has reflowed and `isWideScreen` has been recomputed. In that window the
+   * wide dock is still the displayed one, so `filter({ visible: true })` latches
+   * onto ITS button; a moment later `v-show` hides that dock and the click fails
+   * with "element is not visible" — measured on WebKit in CI, 1-in-4 runs, for
+   * both `notifications.spec.ts` and `team-panel.spec.ts`.
+   *
+   * The precise settled condition is "the dock the layout SHOULD be showing is
+   * the one actually rendered": compare the live viewport width against the
+   * app's own wide-screen threshold (960, see useWideScreenLayout.ts) and
+   * require exactly that shape to be displayed.
+   */
+  async waitForLayoutSettled(): Promise<void> {
     await expect
       .poll(
         () =>
           this.page.evaluate(() => {
-            const docks = Array.from(document.querySelectorAll('.bottom-dock, .wide-dock'))
-            return docks.some((d) => (d as HTMLElement).getBoundingClientRect().width > 0)
+            const wide = document.querySelector('.wide-dock') as HTMLElement | null
+            const narrow = document.querySelector('.bottom-dock-wrapper') as HTMLElement | null
+            if (!wide || !narrow) return false
+            const shown = (el: HTMLElement) =>
+              getComputedStyle(el).display !== 'none' && el.getBoundingClientRect().width > 0
+            const wantWide = window.innerWidth >= 960
+            return wantWide ? shown(wide) && !shown(narrow) : shown(narrow) && !shown(wide)
           }),
-        { timeout: 10000, message: 'the dock should settle to a laid-out width' },
+        { timeout: 10000, message: 'the dock matching the viewport should be the one rendered' },
       )
       .toBe(true)
   }
@@ -78,7 +96,7 @@ export class NavigationPage {
     // Settle BEFORE resolving the locator: `filter({ visible: true })` latches
     // onto whatever is visible at evaluation time, so resolving it mid-reflow
     // is what produced the unresolvable locator described above.
-    await this.waitForDockSettled()
+    await this.waitForLayoutSettled()
     const btn = this.tabBtn(tab)
     await expect(btn).toBeVisible({ timeout: 10000 })
     return btn

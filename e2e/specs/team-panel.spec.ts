@@ -1,4 +1,5 @@
 import { test, expect } from '../fixtures'
+import { NavigationPage } from '../pages/navigation.page'
 
 /**
  * E2E tests for the Agent Team roster panel (CodeBuddy Agent Teams).
@@ -233,8 +234,11 @@ test.describe('Agent Team Panel', () => {
     await page.setViewportSize({ width: 360, height: 780 })
     // On a narrow screen the app is a drawer layout: the chat panel is only
     // mounted while its tab is active, so the roster cannot be asserted before
-    // switching to it.
-    await page.locator('.dock-btn[data-tab="chat"]').filter({ visible: true }).first().click()
+    // switching to it. Go through the page object: a bare
+    // `.filter({ visible: true })` latches onto the WIDE dock's chat toggle,
+    // which `v-show` hides one frame later, and the click then times out on
+    // "element is not visible" (measured on WebKit in CI).
+    await new NavigationPage(page).switchToChat()
     await injectTeam(page, {
       type: 'member_status_change',
       teamName: 'clawbench-probe',
