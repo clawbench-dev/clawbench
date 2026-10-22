@@ -278,7 +278,7 @@
         <div
           v-long-press="(e) => onLongPress(entry, e)"
           class="file-item"
-          :draggable="isWideScreen && !searchHasQuery"
+          :draggable="isWideScreen"
           @dragstart="onItemDragStart(entry, $event)"
           :class="{
             'dir-item': entry.type === 'dir',
@@ -349,7 +349,7 @@
       <div v-for="entry in displayEntries" :key="keyOf(entry)"
         v-long-press="(e) => onLongPress(entry, e)"
         class="grid-item"
-        :draggable="isWideScreen && !searchHasQuery"
+        :draggable="isWideScreen"
         @dragstart="onItemDragStart(entry, $event)"
         :class="{
           'grid-dir': entry.type === 'dir',
@@ -738,10 +738,13 @@ async function handleInternalMoveDrop(e) {
  * or moved onto another directory in the file manager. */
 function onItemDragStart(entry, e) {
     if (!isWideScreen.value) return
-    if (searchHasQuery.value) return // moving search results around the dir tree is ambiguous
     const path = pathOf(entry)
     const paths = collectDraggedPaths(entry, path)
-    dragSourcePaths.value = paths
+    // Moving search results around the directory tree is ambiguous (the listing
+    // no longer represents the current directory), so an internal MOVE drag is
+    // only armed in browse mode. Attaching to chat stays available either way —
+    // a search hit carries its own project-relative path.
+    dragSourcePaths.value = searchHasQuery.value ? null : paths
     const isDir = entry.type === 'dir'
     if (paths.length > 1) {
         // Multi-selection: carry the whole set so dropping on the chat column
@@ -757,7 +760,9 @@ function onItemDragStart(entry, e) {
     } else {
         setAttachDragData(e.dataTransfer, path, isDir)
     }
-    e.dataTransfer.effectAllowed = 'move'
+    // A search hit can only be attached to chat (copy); browse rows can also be
+    // moved into another directory, which is what the move cursor advertises.
+    e.dataTransfer.effectAllowed = searchHasQuery.value ? 'copy' : 'move'
     // Build a DOM ghost element off-screen for reliable snapshot in Chrome.
     // The ghost must stay in the DOM until dragend — cleanupDragGhost() handles that.
     const ghost = buildAttachDragImage(
@@ -1649,10 +1654,13 @@ function entryByPath(path) {
  */
 function metaForPath(path) {
     const name = path.split('/').pop() || ''
-    const browse = props.entries?.find(e => e.name === name)
-    if (browse) return { type: browse.type, name }
+    // Exact path match wins: a search hit carries the authoritative type for
+    // that path, while the browse lookup below only matches by NAME and would
+    // pick the same-named entry of the browsed directory instead.
     const hit = search.state.results.find(r => r.path === path)
     if (hit) return { type: hit.type === 'dir' ? 'dir' : 'file', name }
+    const browse = props.entries?.find(e => e.name === name)
+    if (browse) return { type: browse.type, name }
     return { type: 'file', name }
 }
 
