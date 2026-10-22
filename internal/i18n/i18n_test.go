@@ -224,6 +224,39 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 	}
 }
 
+// The anchor accepts a date OR a date with a time of day, and the rejection copy
+// is the only thing a user sees when the value is refused. It used to name only
+// YYYY-MM-DD, so a user who typed "2026-10-05 14:30" (space separator, rejected)
+// was told to supply a date — following that advice would silently drop the time
+// they were trying to set.
+func TestUsageMeterAnchorRejectionNamesBothAcceptedShapes(t *testing.T) {
+	en := func(key string) string {
+		r := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+		r.Header.Set("X-Locale", "en")
+		return T(Localizer(r), key)
+	}
+	zh := func(key string) string {
+		r := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+		r.Header.Set("X-Locale", "zh")
+		return T(Localizer(r), key)
+	}
+
+	for _, key := range []string{"UsageMeterAnchorInvalid", "UsageMeterAnchorNotString"} {
+		// Both shapes must be visible: the date-only form AND the one with a time.
+		assert.Contains(t, en(key), "YYYY-MM-DD", "%s must name the date form", key)
+		assert.Contains(t, en(key), "HH:MM", "%s must also name the time form", key)
+		assert.Contains(t, zh(key), "YYYY-MM-DD", "%s must name the date form", key)
+		assert.Contains(t, zh(key), "HH:MM", "%s must also name the time form", key)
+	}
+
+	// The field is called "start time" now that it carries a clock, matching the
+	// settings row's own label; "start date" would contradict the input.
+	assert.Contains(t, en("UsageMeterAnchorRequired"), "start time")
+	assert.Contains(t, zh("UsageMeterAnchorRequired"), "起始时间")
+	assert.NotContains(t, en("UsageMeterAnchorInvalid"), "start date")
+	assert.NotContains(t, zh("UsageMeterAnchorInvalid"), "起始日期")
+}
+
 func TestT_NewSessionN(t *testing.T) {
 	enR := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 	enR.Header.Set("X-Locale", "en")

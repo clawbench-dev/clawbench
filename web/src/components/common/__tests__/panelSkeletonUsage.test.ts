@@ -35,6 +35,7 @@ function readSource(relPath: string): string {
 const PANELS: Array<[file: string, why: string]> = [
   ['web/src/components/file/FileManagerContent.vue', 'file listing (list + grid)'],
   ['web/src/components/file/FileViewer.vue', 'file preview'],
+  ['web/src/components/file/FileOverlay.vue', 'file overlay loading mask'],
   ['web/src/components/file/DirPreviewBody.vue', 'directory preview'],
   ['web/src/components/file/ContentSearchDialog.vue', 'content search results'],
   ['web/src/components/file/InertPathPicker.vue', 'inert path results'],
@@ -162,5 +163,39 @@ describe('panel first-load placeholder', () => {
       'PanelSkeleton must use the global .skeleton-block, not fork its fill/shimmer',
     ).not.toMatch(/^\.skeleton-block\s*\{/m)
     expect(bare).not.toContain('@keyframes skeleton-shimmer')
+  })
+})
+
+/**
+ * A grid-variant skeleton inside a CSS grid container must span every track.
+ *
+ * `PanelSkeleton`'s root is `width: 100%`, which as a GRID ITEM resolves against
+ * one track — in `.file-grid` that is a single 90px column, and the skeleton's
+ * own inner grid then lays its tiles out one per row. Measured in Chromium with
+ * the real `.file-grid` rules at a 541px pane: 99×1388px, 12 rows of 1 tile,
+ * i.e. a grey column and a fake scrollbar instead of a loading state. The
+ * `grid-column: 1 / -1` rule is what makes it 525×369 / 3 rows of 5.
+ *
+ * jsdom has no layout, so this pins the RULE rather than the geometry: the
+ * selector must exist and must span all tracks.
+ */
+describe('grid-variant skeleton in a grid container', () => {
+  it('spans every track in the file grid', () => {
+    const src = readSource('web/src/components/file/FileManagerContent.vue')
+    const scoped = src.slice(src.indexOf('<style scoped>'), src.lastIndexOf('</style>'))
+    const bare = scoped.replace(/\/\*[\s\S]*?\*\//g, '')
+    const rule = bare.match(/\.file-grid\s*>\s*\.panel-skeleton\s*\{([^}]*)\}/)
+    expect(rule, '.file-grid > .panel-skeleton must exist; without it the grid skeleton collapses to one 90px track').toBeTruthy()
+    expect(rule![1]).toMatch(/grid-column:\s*1\s*\/\s*-1/)
+  })
+
+  it('uses the grid variant only where the container is a grid', () => {
+    // The failure mode is specific to a grid container: a flex container gives
+    // `width:100%` the full content width. Assert the file that uses
+    // variant="grid" also owns the `.file-grid` display:grid rule, so the two
+    // cannot drift apart into different components.
+    const src = readSource('web/src/components/file/FileManagerContent.vue')
+    expect(src).toContain('variant="grid"')
+    expect(src).toMatch(/\.file-grid\s*\{[^}]*display:\s*grid/)
   })
 })

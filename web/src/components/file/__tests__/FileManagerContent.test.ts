@@ -5915,3 +5915,89 @@ describe('FileManagerContent — content search dialog', () => {
     expect(mockOpenFilePath).not.toHaveBeenCalled()
   })
 })
+
+/**
+ * Dragging a search hit must not attach paths that the results listing no longer
+ * shows.
+ *
+ * The multi-selection survives a query change on purpose (only exiting
+ * multi-select clears it), so a set built in browse mode is still populated when
+ * the results layer takes over. Dragging then handed the whole set to the chat
+ * payload — including rows the user can no longer see, and could not have meant
+ * to attach from this listing.
+ */
+describe('FileManagerContent — dragging search hits', () => {
+  /** The attach payload a dragstart wrote, or null. */
+  function attachPayload(dt: { store: Map<string, string> }): { path: string; entries?: Array<{ path: string }> } | null {
+    const raw = dt.store.get('application/x-clawbench-attach')
+    return raw ? JSON.parse(raw) : null
+  }
+
+  function fakeDataTransfer() {
+    const store = new Map<string, string>()
+    return {
+      store,
+      setData: (k: string, v: string) => { store.set(k, v) },
+      getData: (k: string) => store.get(k) ?? '',
+      effectAllowed: '',
+      setDragImage: () => {},
+    }
+  }
+
+  it('attaches only the hits the results listing shows', async () => {
+    const wrapper = mountContent()
+    // Browse-mode selection: `src` is a directory in the normal listing.
+    wrapper.vm.multiSelectState.active = true
+    wrapper.vm.multiSelectState.selected.add('src')
+    wrapper.vm.multiSelectState.selected.add('readme.md')
+
+    // A query replaces the listing with two hits; `src` is NOT among them.
+    searchState.query = 'test'
+    searchState.results = [
+      { name: 'test.ts', path: 'test.ts', type: 'file', matchedIndices: [] },
+      { name: 'test2.ts', path: 'test2.ts', type: 'file', matchedIndices: [] },
+    ]
+    await nextTick()
+
+    // The user ctrl+clicks a hit, then drags it.
+    wrapper.vm.multiSelectState.selected.add('test.ts')
+    wrapper.vm.multiSelectState.selected.add('test2.ts')
+
+    const dt = fakeDataTransfer()
+    const row = wrapper.findAll('.file-item').find(el => el.attributes('data-path') === 'test.ts')
+    expect(row, 'the hit must be rendered').toBeTruthy()
+    await row!.trigger('dragstart', { dataTransfer: dt })
+
+    const payload = attachPayload(dt)
+    expect(payload).not.toBeNull()
+    const paths = (payload!.entries ?? [{ path: payload!.path }]).map(e => e.path).sort()
+    // `src` / `readme.md` are stale browse-mode leftovers: they are not in the
+    // results, so attaching them would be invisible to the user.
+    expect(paths).toEqual(['test.ts', 'test2.ts'])
+    wrapper.unmount()
+  })
+
+  it('still attaches the whole selection in browse mode', async () => {
+    // The filter is search-specific. Browse mode keeps the raw set — a selected
+    // row may legitimately outlive the current listing (a directory switch).
+    const wrapper = mountContent()
+    wrapper.vm.multiSelectState.active = true
+    wrapper.vm.multiSelectState.selected.add('src')
+    wrapper.vm.multiSelectState.selected.add('readme.md')
+
+    const dt = fakeDataTransfer()
+    const row = wrapper.findAll('.file-item').find(el => el.attributes('data-path') === 'readme.md')
+    expect(row).toBeTruthy()
+    await row!.trigger('dragstart', { dataTransfer: dt })
+
+    const payload = attachPayload(dt)
+    const paths = (payload!.entries ?? [{ path: payload!.path }]).map(e => e.path).sort()
+    expect(paths).toEqual(['readme.md', 'src'])
+    wrapper.unmount()
+  })
+
+  afterEach(() => {
+    searchState.query = ''
+    searchState.results = []
+  })
+})

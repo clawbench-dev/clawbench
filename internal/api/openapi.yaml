@@ -362,10 +362,12 @@ paths:
         - `credit`：`SUM(credit)`
         - `cost`：`SUM(cost_usd)`，单位 USD。非 USD 的上报值按原值累加，不做汇率换算。
 
-        **未配置规则**（`quota <= 0`）返回 200 与 `{"enabled": false}`，不是 404：
+        **未配置规则**（`quota <= 0`）返回 200 与 `enabled: false`，不是 404：
         「没有预算」是正常状态而非错误，且此时没有任何可报的数字——
-        周期、应花、剩余、预测全部由额度派生。客户端据此渲染**占位入口**
-        （提示用户去设置用量提醒），而不是一个数值全为零的空胶囊。
+        周期、应花、剩余、预测全部由额度派生，所以除 `enabled` 外的数值字段
+        全为 0，`metric` / `periodDays` / `cycleStart` / `cycleEnd` / `series`
+        一律不返回。客户端据此渲染**占位入口**（提示用户去设置用量提醒），
+        而不是一个数值全为零的空胶囊。
 
         注意 `chat_metadata.created_at` 记录的是元数据**最终写入**时刻
         （约等于助手回复完成），因此跨周期边界的回合归入后一个周期。
@@ -374,18 +376,23 @@ paths:
         "200":
           description: |
             用量提醒状态。字段：
-            - `enabled`：是否配置了规则（`quota > 0`）。**不是「是否有内容可显示」**——
-              未配置时仍返回用量，客户端须据此字段决定是否渲染比例相关部分
+            - `enabled`：是否配置了规则（`quota > 0`）。它决定**响应里有没有
+              用量数字**，不只是「要不要画比例」
             - `metric` / `anchorDate` / `periodDays` / `quota`：规则回显
-              （未配置时 `metric=cost`、`periodDays=30`，其余为空/0）
-            - `cycleStart` / `cycleEnd`：当前周期边界（RFC3339）；
-              未配置时是最近 30 天窗口的边界
-            - `dayInCycle`：当前是周期第几天（1 起；0 表示起始日在未来）
+              （`enabled=false` 时这四项**不返回**）
+            - `cycleStart` / `cycleEnd`：当前周期边界（RFC3339）
+              （`enabled=false` 时**不返回**：没有周期）
+            - `dayInCycle`：当前是周期第几天（1 起；0 表示起始日在未来或未配置）
             - `actual` / `expected`：实际用量 / 按时间比例的应花
+              （`enabled=false` 时两者均为 0）
             - `remainingDays`：今天之后还剩几天（未配置时为 0）
             - `projectedExhaustDay`：按当前速度预计第几天用尽（0 = 本周期不会用尽或未配置规则）
             - `series[]`：逐日累计，每项含 `day` / `actual` / `expected`
-              （未配置时 `expected` 全为 0）
+              （`enabled=false` 时**不返回**）
+
+            `enabled=false` 的响应体恰为六个键：
+            `enabled` / `dayInCycle` / `actual` / `expected` / `remainingDays` /
+            `projectedExhaustDay`，后五个全为 0。没有可报的用量，也没有窗口。
         "403":
           description: 未鉴权
 
@@ -510,20 +517,6 @@ paths:
 
         该键是**热更新**：连接在每一轮开始前比对策略哈希，变了就带着新列表重连，
         因此不会出现在 `changed_cold_fields` 里，也不需要重启。
-
-        **错误响应形态**：值被拒绝时统一返回 400。响应体有两种：
-
-        - 具体错误（推荐客户端处理）：`msgKey` 为稳定标识、`error` 为按
-          `X-Locale` / cookie / `Accept-Language` 本地化后的文案、`detail.field`
-          为出错的配置路径（如 `usage_meter.period_days`）。`usage_meter.*`
-          的校验错误全部走这一形态：
-          `UsageMeterQuotaNegative` / `UsageMeterQuotaNotNumber` /
-          `UsageMeterAnchorRequired` / `UsageMeterAnchorInvalid` /
-          `UsageMeterAnchorNotString` / `UsageMeterPeriodRange`
-          （带 `detail.Max`）/ `UsageMeterPeriodNotNumber` /
-          `UsageMeterMetricInvalid` / `UsageMeterMetricNotString`。
-        - 其余尚未逐个建键的校验错误仍是 `error: "invalid_value"` + 英文
-          `message`（无 `msgKey`）。
       operationId: patchConfig
       requestBody:
         required: true
@@ -550,7 +543,24 @@ paths:
                     items:
                       type: string
         "400":
-          $ref: "#/components/responses/Error"
+          description: |
+            值被拒绝时统一返回 400。响应体有两种：
+
+            - 具体错误（推荐客户端处理）：`msgKey` 为稳定标识、`error` 为按
+              `X-Locale` / cookie / `Accept-Language` 本地化后的文案、`detail.field`
+              为出错的配置路径（如 `usage_meter.period_days`）。`usage_meter.*`
+              的校验错误全部走这一形态：
+              `UsageMeterQuotaNegative` / `UsageMeterQuotaNotNumber` /
+              `UsageMeterAnchorRequired` / `UsageMeterAnchorInvalid` /
+              `UsageMeterAnchorNotString` / `UsageMeterPeriodRange`
+              （带 `detail.Max`）/ `UsageMeterPeriodNotNumber` /
+              `UsageMeterMetricInvalid` / `UsageMeterMetricNotString`。
+            - 其余尚未逐个建键的校验错误仍是 `error: "invalid_value"` + 英文
+              `message`（无 `msgKey`）。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: |
             `chat.user_nickname` 与现有智能体同名（`msgKey=UserNicknameTaken`）。
@@ -6268,7 +6278,8 @@ components:
       name: X-ClawBench-AI-Token
       description: |
         本机 AI 子进程使用的短时令牌，由内置斜杠命令（`/cb-task` 等）在注入提示词时签发，
-        有效期 12 小时，以 `CookieToken` 做 HMAC 签名。仅接受来自回环地址的请求：
+        有效期 12 小时，用**进程内随机生成的签名密钥**做 HMAC（不落盘、不复用 `CookieToken`，
+        故服务端重启后所有在飞令牌立即失效）。仅接受来自回环地址的请求：
         地址与签名须同时成立。地址单独不再放行。
 
   parameters:

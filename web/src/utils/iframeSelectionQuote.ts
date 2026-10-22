@@ -1,4 +1,5 @@
 import type { QuoteData } from '@/composables/useChatContext.ts'
+import { unionRectOfRects } from '@/utils/selectionAnchor.ts'
 
 /**
  * Selection → quote bridge for a sandboxed preview iframe.
@@ -103,24 +104,29 @@ export function mapIframeRectToHost(
 }
 
 /**
- * The selection's last line box, in HOST viewport coordinates, or null.
+ * The selection's bounding box, in HOST viewport coordinates, or null.
  *
- * The LAST rect is used for the same reason as the host path: for a multi-line
- * selection it is the bottom line — where the pointer just left — so "just
- * below the text" reads correctly.
+ * The geometry comes from `unionRectOfRects` — the SAME rule the host document
+ * path uses — and only the coordinate mapping is iframe-specific. That matters
+ * for a multi-line selection: anchoring on the last line box puts the bar (which
+ * prefers to sit ABOVE its anchor) over the lines the user just selected, which
+ * is the defect issue #572 fixed on the host path. Keeping a second copy of the
+ * rule here is what let the two drift apart; see utils/selectionAnchor.ts.
  */
 export function iframeSelectionAnchor(win: IframeBridgeWindow, sel: Selection): DOMRect | null {
   if (sel.rangeCount === 0) return null
   const rects = sel.getRangeAt(0).getClientRects()
   if (!rects.length) return null
-  const last = rects[rects.length - 1]
+  const union = unionRectOfRects(rects)
+  if (!union) return null
   const frame = win.frameElement as HTMLElement | null | undefined
   if (!frame || typeof frame.getBoundingClientRect !== 'function') return null
   const frameRect = frame.getBoundingClientRect()
-  const mapped = mapIframeRectToHost(last, frameRect, {
-    width: win.innerWidth ?? 0,
-    height: win.innerHeight ?? 0,
-  })
+  const mapped = mapIframeRectToHost(
+    { top: union.top, left: union.left, width: union.right - union.left, height: union.bottom - union.top },
+    frameRect,
+    { width: win.innerWidth ?? 0, height: win.innerHeight ?? 0 },
+  )
   return new DOMRect(mapped.left, mapped.top, mapped.width, mapped.height)
 }
 

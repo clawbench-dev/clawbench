@@ -1691,6 +1691,28 @@ describe('useQuoteQuestion', () => {
         expect(qq.visible.value).toBe(false)
         expect(ctx.quoteData.value).toBeNull()
       })
+
+      it('cancels a pending showBar when a new drag starts', () => {
+        // issue #572: a show queued before the user starts dragging would fire
+        // with the button still down, surfacing the PREVIOUS selection's bar
+        // over text that is currently being selected. Dismissal paths already
+        // cancel it; a press is not a dismissal, so it must cancel explicitly.
+        guardWrapper = mountWithComposable()
+        const qq = useQuoteQuestion()
+        qq.showBar({ text: 'stale', filePath: '/stale.md', language: '', startLine: 1, endLine: 1 })
+
+        // A new drag begins well inside the 400ms window.
+        document.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, buttons: 1, bubbles: true }))
+        document.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, buttons: 1, bubbles: true }))
+        vi.advanceTimersByTime(450)
+
+        // Neither the bar nor its payload may appear mid-drag.
+        expect(isPointerPressed()).toBe(true)
+        expect(qq.visible.value).toBe(false)
+        expect(ctx.quoteData.value).toBeNull()
+
+        document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true }))
+      })
     })
 
     it('removes listener when component unmounts (listenerCount goes to 0)', () => {
@@ -1954,7 +1976,13 @@ describe('useQuoteQuestion', () => {
        * page, so the in-page bar would be a duplicate. The quote must still be
        * recorded — that menu's action reads it back after the selection is gone.
        */
-      it('suppressBar records the quote but keeps the bar hidden', () => {
+      it('suppressBar keeps the quote OUT of the composer and the bar hidden', () => {
+        // `quoteData` is what the composer renders as a quote card. On Android
+        // the bar is suppressed because the OS draws its own menu, so nothing on
+        // screen would explain a card appearing — writing quoteData here left a
+        // stray card above the input for a selection the user never quoted.
+        // The snapshot the native menu reads back is `lastSelectionQuote`, which
+        // the next case covers behaviourally.
         const wrapper = mountWithComposable()
         const qq = useQuoteQuestion()
 
@@ -1963,7 +1991,7 @@ describe('useQuoteQuestion', () => {
         vi.advanceTimersByTime(0)
 
         expect(qq.visible.value).toBe(false)
-        expect(qq.quoteData.value?.text).toBe('android iframe')
+        expect(qq.quoteData.value, 'a suppressed bar must not stage a composer card').toBeNull()
 
         wrapper.unmount()
       })

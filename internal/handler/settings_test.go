@@ -1401,6 +1401,37 @@ func TestServeConfig_Patch_UsageMeterLocalizedTextDiffersByField(t *testing.T) {
 	assert.NotEqual(t, enQuota, zhQuota, "the message must follow the request locale")
 }
 
+// A user who wants a start time naturally writes "2026-10-05 14:30" (a space,
+// as in every log line). That value is rejected, and the copy they get back must
+// show the accepted shape WITH a time — otherwise the advice is "use YYYY-MM-DD",
+// and following it silently drops the time they were trying to set.
+func TestServeConfig_Patch_AnchorRejectionShowsTheTimeForm(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	for _, locale := range []string{"en", "zh"} {
+		t.Run(locale, func(t *testing.T) {
+			model.ConfigInstance = model.Config{}
+			req := httptest.NewRequest(http.MethodPatch, "/api/config",
+				strings.NewReader(`{"usage_meter":{"quota":10,"anchor_date":"2026-10-05 14:30","period_days":30,"metric":"cost"}}`))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-Locale", locale)
+			withAuthCookie(req, model.SessionToken)
+			w := callHandler(ServeConfig, req)
+
+			require.Equal(t, http.StatusBadRequest, w.Code)
+			var resp map[string]any
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			assert.Equal(t, "UsageMeterAnchorInvalid", resp["msgKey"])
+
+			msg, _ := resp["error"].(string)
+			assert.Contains(t, msg, "YYYY-MM-DD", "the date form must still be named")
+			assert.Contains(t, msg, "HH:MM",
+				"a rejected anchor must show the accepted form that carries a time; got %q", msg)
+		})
+	}
+}
+
 func TestServeConfig_Patch_TTSFormatInvalid(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()

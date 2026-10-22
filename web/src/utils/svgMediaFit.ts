@@ -362,23 +362,35 @@ export function installSvgMediaAutoFit(): () => void {
     }
 
     // New figures are added by every render, so re-scan on mutations rather than
-    // only once at install time. Only the ADDED wrappers need a first measure —
-    // re-measuring the untouched ones is pure cost.
+    // only once at install time.
+    //
+    // The trigger is not "a wrapper was added": a mermaid re-render REPLACES the
+    // contents of the existing `.mermaid` container (`container.innerHTML =
+    // result.svg` in mermaid.ts, on every theme/font change), so the added nodes
+    // are a fresh `<svg>` / `.lightbox-*` wrap and no `.image-block-wrapper`
+    // appears at all. Keying on the wrapper alone missed exactly that case — the
+    // diagram kept the inline px width computed for the OLD theme/font until the
+    // next window resize. Resolve the nearest enclosing figure instead, so any
+    // change to a figure's media re-measures it.
     const mutation = new MutationObserver((records) => {
         observeAll()
-        const added = new Set<Element>()
+        const touched = new Set<Element>()
+        const noteFigure = (node: Element) => {
+            const figure = node.closest('.image-block-wrapper')
+            if (figure) touched.add(figure)
+        }
         for (const record of records) {
             for (const node of Array.from(record.addedNodes)) {
                 if (!(node instanceof Element)) continue
-                if (node.matches('.image-block-wrapper')) added.add(node)
-                for (const nested of Array.from(node.querySelectorAll('.image-block-wrapper'))) {
-                    added.add(nested)
+                noteFigure(node)
+                for (const nested of Array.from(node.querySelectorAll(CONTENT_MEDIA_SELECTOR))) {
+                    noteFigure(nested)
                 }
             }
         }
-        // No figure was added (the common case: text streaming into an existing
-        // node) — nothing to re-measure.
-        if (added.size > 0) schedule({ touched: added })
+        // No figure content changed (the common case: text streaming into an
+        // existing paragraph) — nothing to re-measure.
+        if (touched.size > 0) schedule({ touched })
     })
     mutation.observe(document.body, { childList: true, subtree: true })
 

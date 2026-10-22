@@ -6905,12 +6905,21 @@ describe('forkSession', () => {
   // A forked group's members are new rows whose avatars are generated AFTER the
   // session switch. The roster fetched on entry therefore predates them, and
   // without a second refresh the fallback icons stick until the user switches
-  // away and back (the reported symptom). This pins the refresh call.
+  // away and back (the reported symptom). This pins the refresh call AND its
+  // ORDERING: generation must be awaited, not merely started.
   it('refreshes the group roster after generating fork avatars', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({ ok: true, sessionId: 'forked-g9', sessionCount: 3, targetKind: 'group' }),
     })
+    // Hold generation open so "refresh happened too early" is observable. The
+    // default mock resolves immediately, which made the ordering untestable:
+    // `void generateMemberAvatars(...)` also passed, because by the time the
+    // assertion ran the promise had already settled.
+    let resolveGen!: () => void
+    mockGroupChatFns.generateMemberAvatars.mockReturnValueOnce(
+      new Promise<void>((r) => { resolveGen = r }),
+    )
 
     const session = createSession()
     mockState.currentSessionId = 'source-g9'
@@ -6919,10 +6928,17 @@ describe('forkSession', () => {
       hostAgentId: 'claude',
       memberAgentIds: ['claude', 'claude'],
     })
-    // Avatar generation is fire-and-forget; let its promise chain settle.
+
+    // Generation STARTED but has not finished: the roster must not be reloaded
+    // yet — it would read the same avatar-less rows and the fix would be a
+    // no-op. A non-awaited call refreshes right here, so this assertion is what
+    // distinguishes the two implementations.
     await vi.waitFor(() => expect(mockGroupChatFns.generateMemberAvatars).toHaveBeenCalledWith('forked-g9'))
-    // Diagnostic: which id does the composable's own ref hold at this point?
-    expect(mockIdentityFns.refreshGroupRoster).toHaveBeenCalledWith('forked-g9')
+    expect(mockIdentityFns.refreshGroupRoster).not.toHaveBeenCalled()
+
+    // Let generation complete; only now may the roster be reloaded.
+    resolveGen()
+    await vi.waitFor(() => expect(mockIdentityFns.refreshGroupRoster).toHaveBeenCalledWith('forked-g9'))
   })
 
   // The refresh must not fire for a session the user already left: it would

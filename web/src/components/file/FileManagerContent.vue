@@ -713,10 +713,29 @@ function onDragEnd() {
     cleanupDragGhost()
 }
 
-/** Resolve the set of paths being dragged: a full multi-selection if the dragged item is selected. */
+/**
+ * Resolve the set of paths being dragged: a full multi-selection if the dragged
+ * item is selected.
+ *
+ * In SEARCH mode the multi-selection is NOT usable as-is. It is only cleared by
+ * exiting multi-select, and the query watcher deliberately keeps it (see
+ * `watch(() => search.state.query)`) — so a set built in browse mode survives
+ * into the results listing, where those paths are no longer shown. Dragging a
+ * hit then attached the invisible leftovers too.
+ *
+ * Browse mode keeps the raw set on purpose: a path can outlive the current
+ * listing (the row is still the user's selection) and the payload builder
+ * resolves its type through `metaForPath`, not the listing.
+ */
 function collectDraggedPaths(entry, path) {
     if (multiSelect.active && multiSelect.selected.has(path)) {
-        return [...multiSelect.selected]
+        const all = [...multiSelect.selected]
+        if (!searchHasQuery.value) return all
+        // Only paths the results listing actually shows. If the dragged row is
+        // not among them (a stale selection), fall back to it alone.
+        const visible = new Set(displayEntries.value.map(en => pathOf(en)))
+        const picked = all.filter(p => visible.has(p))
+        if (picked.includes(path)) return picked
     }
     return [path]
 }
@@ -3439,6 +3458,15 @@ function scrollSelectedIntoView(path) {
     grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
     gap: var(--space-4);
     align-content: start;
+}
+
+/* The skeleton is a grid ITEM here, so `width: 100%` on its root (PanelSkeleton)
+   resolves against a single 90px track, and its own inner grid then lays the
+   tiles out one per row — a 99px-wide grey column 1388px tall, i.e. a fake
+   scrollbar instead of a loading state. Span every track so the inner grid gets
+   the real content width. */
+.file-grid > .panel-skeleton {
+    grid-column: 1 / -1;
 }
 
 .grid-item {

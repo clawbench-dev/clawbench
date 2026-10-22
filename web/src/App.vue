@@ -1728,7 +1728,7 @@ async function restoreProjectWorkspace() {
   return restoreProjectWorkspaceImpl()
 }
 
-const { isAppMode } = useAppMode()
+const { isAppMode, isDesktopApp } = useAppMode()
 const { syncToNative, sshInfo, loadSSHInfo, transportAllowsH2 } = usePortForward()
 const { terminalRuntimeEnabled, platformSupported, loadTerminalStatus } = useTerminalStatus()
 // Port forwarding is unusable only when NEITHER wire can carry it: the SSH
@@ -2415,8 +2415,14 @@ function registerAppEventListeners() {
   // the page's own 5s poll only asks an absent service to reconnect
   // ("reconnectTunnelAsync: BackgroundService not running", forever).
   // Resuming is exactly the moment the restriction is lifted, so re-sync here.
+  //
+  // Android ONLY. `isAppMode` is `isNativeApp()`, which the Electron preload
+  // also reports as true — but the desktop shell's window is merely minimized,
+  // the process never stopped, and its tunnel is still up. Running the full
+  // sync there re-probes every forwarded port (serial `testPortReachable`, up to
+  // 500ms each) on every window focus, which is the opposite of the intent.
   onAppResume(() => {
-    if (!isAppMode.value) return
+    if (!isAppMode.value || isDesktopApp.value) return
     syncToNative().catch(() => {})
   })
 

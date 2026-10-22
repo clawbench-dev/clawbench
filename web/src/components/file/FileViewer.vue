@@ -313,7 +313,7 @@ import { exportMarkdownToHtml, imageIssueReasonKey } from '@/utils/exportMarkdow
 import { downloadBlob, downloadFileByPath } from '@/utils/download.ts'
 import { buildHtmlPreviewSrc, installPreviewScrollbar, installPreviewSearchStyles } from '@/utils/htmlPreview.ts'
 import { attachIframeSelectionQuoteBridge, installIframeSearchShortcut, resolveIframeWindow } from '@/utils/iframeSelectionQuote.ts'
-import { isNativeSelectionShell, useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
+import { makeIframeQuoteShowHandler, useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
 import { useToast } from '@/composables/useToast.ts'
 import { useCodeEditorSave } from '@/composables/useCodeEditorSave.ts'
 import { getNative } from '@/utils/clawbenchNative'
@@ -455,19 +455,13 @@ async function attachHtmlQuoteBridge() {
     disposeHtmlQuoteBridgeFn = attachIframeSelectionQuoteBridge({
         win,
         filePath: () => props.file?.path || '',
-        // `anchor` arrives in HOST viewport coordinates (the bridge maps the
-        // frame's own rects), so the bar floats next to the selected text
-        // instead of falling back to the pinned top position.
-        //
-        // On Android the system's own selection menu is the visible affordance
-        // for a selection in the previewed page; an in-page bar on top of it
-        // would be a duplicate, so only the quote is recorded (the native
-        // menu's action reads it back through lastSelectionQuote).
-        show: (data, anchor) => quoteQuestion.showBar(data, {
-            delay: 0,
-            anchor,
-            suppressBar: isNativeSelectionShell(),
-        }),
+        // Shared with the other two iframe hosts (inline quick preview, OpenAPI
+        // docs): it maps the frame's anchor into host coordinates, shows the bar
+        // immediately (the bridge already debounced), and suppresses the in-page
+        // bar on Android where the system selection menu is the affordance.
+        // Hand-written copies drifted — one of them silently dropped `anchor`,
+        // which is exactly the "menu pops up at the top" defect.
+        show: makeIframeQuoteShowHandler(quoteQuestion.showBar),
         hide: () => quoteQuestion.hideBar(),
     })
 }

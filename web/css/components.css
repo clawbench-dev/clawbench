@@ -1006,22 +1006,28 @@
    rule only owns the fill and the shimmer. `--skeleton-radius` lets a caller
    opt into a pill shape without redeclaring the whole rule.
 
-   `--skeleton-fill` / `--skeleton-sheen` exist for the two places whose
-   backdrop is not the theme's: the PDF viewer and the lightbox both paint on
-   always-dark chrome, where the theme-derived grey is invisible. Overriding
-   those two variables keeps the shimmer definition in one place — a caller
-   that instead restated `background-image` would fork it. */
+   `--skeleton-fill` / `--skeleton-sheen` exist for the places whose backdrop is
+   not the theme's: the PDF viewer and the lightbox both paint on always-dark
+   chrome, where the theme-derived grey is invisible. Overriding those two
+   variables keeps the shimmer definition in one place — a caller that instead
+   restated `background-image` would fork it.
+
+   The variables are deliberately NOT declared here, only consumed with a
+   fallback. A custom property resolves on the element that declares it, so
+   declaring them on `.skeleton-block` made every ancestor override a no-op:
+   `.pdf-loading-skeleton` set `--skeleton-fill` on the skeleton root and the
+   blocks below it still painted `--bg-tertiary` (measured in Chromium: dark
+   theme, `rgb(33,38,45)` instead of `rgba(255,255,255,.18)`), which is the
+   exact invisibility that override was added to fix. */
 .skeleton-block {
   --skeleton-radius: var(--radius-sm);
-  --skeleton-fill: var(--bg-tertiary, #e9ecef);
-  --skeleton-sheen: color-mix(in srgb, var(--bg-primary, #fff) 60%, transparent);
   display: block;
   border-radius: var(--skeleton-radius);
-  background-color: var(--skeleton-fill);
+  background-color: var(--skeleton-fill, var(--bg-tertiary, #e9ecef));
   background-image: linear-gradient(
     90deg,
     transparent 0%,
-    var(--skeleton-sheen) 50%,
+    var(--skeleton-sheen, color-mix(in srgb, var(--bg-primary, #fff) 60%, transparent)) 50%,
     transparent 100%
   );
   background-repeat: no-repeat;

@@ -109,32 +109,6 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 		resume = forkResume
 	}
 
-	// Background written by a fork that COPIED NO ROWS (any fork whose source is
-	// a group, or whose target is a group). Those rows cannot be copied: a group
-	// timeline stores member ROW ids in agent_id, and member rows carry no
-	// history at all — so the source is materialized as text on the target row
-	// instead and read here.
-	//
-	// The gate is "this session has not yet produced a successful turn". It must
-	// NOT be an assistant-count check: a failed turn writes an assistant WARNING
-	// row (persistTurnWarning), so counting would expire the background after one
-	// failure. The counterpart is ClearForkContext, called after a clean turn —
-	// that write is what actually marks the background as consumed.
-	if forkContext == "" {
-		if pending, ok := storedForkBackground(sessionID); ok {
-			forkContext = pending
-			slog.Info("fork session: injecting stored background history",
-				slog.String("session", sessionID),
-				slog.String("backend", backendName),
-				slog.String("agent", agentID),
-				slog.Bool("is_acp", isACP),
-				slog.Int("chars", len([]rune(pending))))
-			if isACP {
-				resume = false
-			}
-		}
-	}
-
 	// Inject media handling rules only when the user message carries attachments.
 	// These rules are omitted for text-only messages to save tokens.
 	if hasAttachments {

@@ -2108,7 +2108,22 @@ export function revertAskSubmission(key: string): void {
   }
 }
 
-export function updateAskSubmitState(view: Element) {
+/**
+ * Whether an ask card can be submitted at all: every question answered, OR a
+ * note typed in the supplementary field.
+ *
+ * One predicate, because two paths gate the same action: the Submit button's
+ * `disabled` and the Ctrl/Cmd+Enter shortcut. They were written separately and
+ * disagreed — the button demanded EVERY question, the shortcut accepted any one
+ * — so a multi-question card could be submitted half-answered from the
+ * keyboard, and `submitAskView` then marked it terminal, permanently locking the
+ * remaining questions. The user got no error: the card just said "Submitted".
+ *
+ * A card with no questions (a malformed/empty card renders no actions row at
+ * all) counts as answered, matching the historical button state; `submitAskView`
+ * still refuses to send when there is no answer and no note.
+ */
+function askViewReady(view: Element): boolean {
   const items = view.querySelectorAll('.ask-question-item')
   let allAnswered = true
   for (const item of items) {
@@ -2117,14 +2132,19 @@ export function updateAskSubmitState(view: Element) {
       break
     }
   }
+  if (allAnswered) return true
+  const supplementaryInput = askSupplementaryField(view)
+  return !!supplementaryInput?.value?.trim()
+}
+
+export function updateAskSubmitState(view: Element) {
   const supplementaryInput = askSupplementaryField(view)
   // Re-fit here too: this runs on every note input and on every restore, which
   // are the two moments the textarea's content can change behind a fixed height.
   fitAskSupplementaryInput(supplementaryInput)
-  const hasSupplementary = !!supplementaryInput?.value?.trim()
   const submitBtn = view.querySelector('.ask-question-submit') as HTMLButtonElement | null
   if (submitBtn) {
-    submitBtn.disabled = !allAnswered && !hasSupplementary
+    submitBtn.disabled = !askViewReady(view)
   }
 }
 
@@ -2261,10 +2281,16 @@ function focusAskView(view: Element): void {
  * re-render, which is the bug the store exists to prevent.
  *
  * Returns true when the card is now terminal (just answered, or answered
- * earlier); false when there is nothing to send (no option, no note).
+ * earlier); false when it is not answerable (a question left unanswered with no
+ * note) or there is nothing to send.
+ *
+ * The readiness gate is `askViewReady` — the SAME predicate that sets the Submit
+ * button's `disabled`. Without it the keyboard path accepted a partially
+ * answered card, submitted it, and locked the remaining questions for good.
  */
 function submitAskView(view: Element, emit: (type: string, payload?: unknown, detail?: unknown) => void): boolean {
   if (view.classList.contains('ask-submitted')) return true
+  if (!askViewReady(view)) return false
 
   const answers: string[] = []
   const items = view.querySelectorAll('.ask-question-item')
@@ -2334,8 +2360,10 @@ function submitAskView(view: Element, emit: (type: string, payload?: unknown, de
  * keystroke actually happened inside one.
  *
  * Returns true when the keystroke belonged to a card — the host must treat it as
- * consumed. A card with nothing selected is still consumed: the disabled Submit
- * button is the feedback, and silently rewriting the note would be worse.
+ * consumed. A card that is not answerable yet (a question left unanswered, no
+ * note) is still consumed: the disabled Submit button is the feedback, and
+ * silently rewriting the note would be worse. That is why `preventDefault` runs
+ * before the readiness check in `submitAskView`.
  */
 export function handleAskSubmitShortcut(event: KeyboardEvent, emit: (type: string, payload?: unknown, detail?: unknown) => void): boolean {
   if (!(event.ctrlKey || event.metaKey) || event.shiftKey || event.altKey) return false

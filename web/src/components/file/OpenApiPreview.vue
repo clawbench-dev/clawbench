@@ -20,7 +20,7 @@ import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import { buildSwaggerSrcdoc } from '@/utils/swaggerHtml.ts'
 import { isDarkTheme } from '@/utils/themeMeta'
 import { attachIframeSelectionQuoteBridge, resolveIframeWindow } from '@/utils/iframeSelectionQuote.ts'
-import { useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
+import { makeIframeQuoteShowHandler, useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
 
 const props = defineProps({
   file: Object,
@@ -107,7 +107,11 @@ async function attachBridgeToIframe() {
   disposeBridge = attachIframeSelectionQuoteBridge({
     win,
     filePath: () => props.file?.path || '',
-    show: (data) => quoteQuestion.showBar(data, { delay: 0 }),
+    // Shared with the HTML previews. It was the one host still hand-rolling
+    // this callback, and it silently dropped `anchor` — so the bar fell back to
+    // its pinned top position (the reported "menu pops up at the top") — and
+    // `suppressBar`, so Android got both the system menu and the in-page bar.
+    show: makeIframeQuoteShowHandler(quoteQuestion.showBar),
     hide: () => quoteQuestion.hideBar(),
   })
   bridgeWin = win

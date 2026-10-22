@@ -6,6 +6,7 @@ import {
   mapIframeRectToHost,
 } from '../iframeSelectionQuote.ts'
 import type { IframeBridgeWindow } from '../iframeSelectionQuote.ts'
+import { unionRectOfRects } from '../selectionAnchor.ts'
 import type { QuoteData } from '@/composables/useChatContext.ts'
 
 // ── Fake iframe window ──
@@ -503,9 +504,11 @@ describe('iframeSelectionAnchor', () => {
     }
   }
 
-  it('maps the LAST line box into host coordinates', () => {
-    // The last rect is the bottom line of a multi-line selection — the point the
-    // pointer just left, which is where "just below the text" reads correctly.
+  it('maps the UNION of the line boxes into host coordinates', () => {
+    // A multi-line selection must anchor on the whole selection, not the bottom
+    // line. The bar prefers to sit ABOVE its anchor, so a bottom-line anchor put
+    // it over the lines the user had just selected — issue #572, which was fixed
+    // on the host path while this iframe copy kept the last box.
     const rect = iframeSelectionAnchor(
       fakeWin(),
       selectionWithRects([
@@ -514,8 +517,52 @@ describe('iframeSelectionAnchor', () => {
       ]),
     )
     expect(rect).not.toBeNull()
-    expect(rect!.top).toBe(160)
+    // Union spans both lines: top 10 (first line), height 18+12+18 = 48.
+    expect(rect!.top).toBe(130)
     expect(rect!.left).toBe(320)
+    expect(rect!.height).toBe(48)
+    // Explicitly NOT the last box (top 40 → 160 in host space).
+    expect(rect!.top).not.toBe(160)
+  })
+
+  it('drops a zero-width caret box from the union', () => {
+    // A range can end on a caret at the start of the following line: full line
+    // height, no width. Letting it in would stretch the box a line down and pull
+    // `left` across to column 0.
+    const rect = iframeSelectionAnchor(
+      fakeWin(),
+      selectionWithRects([
+        { top: 10, left: 20, width: 200, height: 18 },
+        { top: 28, left: 0, width: 0, height: 18 },
+      ]),
+    )
+    expect(rect).not.toBeNull()
+    expect(rect!.top).toBe(130)
+    expect(rect!.left).toBe(320)
+    expect(rect!.height).toBe(18)
+  })
+
+  it('produces the same geometry as the host path for the same boxes', () => {
+    // The two paths are mirrors of one rule; this is the assertion that stops
+    // them drifting again (the host path got the union, this one did not).
+    const boxes = [
+      { top: 10, left: 20, width: 200, height: 18 },
+      { top: 40, left: 20, width: 120, height: 18 },
+      { top: 58, left: 0, width: 0, height: 18 },
+    ]
+    const u = unionRectOfRects(boxes)!
+    const frameRect = { left: 300, top: 120, width: 800, height: 600 }
+    const host = mapIframeRectToHost(
+      { top: u.top, left: u.left, width: u.right - u.left, height: u.bottom - u.top },
+      frameRect,
+      { width: 800, height: 600 },
+    )
+    const iframe = iframeSelectionAnchor(fakeWin(), selectionWithRects(boxes))
+    expect(iframe).not.toBeNull()
+    expect(iframe!.top).toBe(host.top)
+    expect(iframe!.left).toBe(host.left)
+    expect(iframe!.width).toBe(host.width)
+    expect(iframe!.height).toBe(host.height)
   })
 
   it('returns null when the frame element is unavailable (no layout to map)', () => {

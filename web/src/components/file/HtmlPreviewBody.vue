@@ -109,24 +109,19 @@ const iframeRef = ref<HTMLIFrameElement | null>(null)
  */
 type QuoteBar = Awaited<ReturnType<typeof loadQuoteQuestion>>
 let quoteQuestion: QuoteBar | null = null
-/** Native-shell check, loaded with the quote bar (same module graph). */
-let nativeSelectionShell: (() => boolean) | null = null
+/**
+ * Shared `show` factory, loaded with the quote bar (same module graph).
+ *
+ * Deferred like the bar itself: importing the composable eagerly is what this
+ * module avoids (see above). Until it loads there is no bridge either, so the
+ * `null` fallback can never swallow a selection.
+ */
+let makeShowHandler: typeof import('@/composables/useQuoteQuestion.ts')['makeIframeQuoteShowHandler'] | null = null
 
 async function loadQuoteQuestion() {
   const mod = await import('@/composables/useQuoteQuestion.ts')
-  nativeSelectionShell = mod.isNativeSelectionShell
+  makeShowHandler = mod.makeIframeQuoteShowHandler
   return mod.useQuoteQuestion()
-}
-
-/**
- * Whether the host draws its own selection menu (Android).
- *
- * Deferred like the quote bar itself: importing the composable eagerly is what
- * this module avoids. Until it loads there is no bridge either, so the fallback
- * (false) can never suppress a bar that would otherwise have shown.
- */
-function isNativeSelectionShell(): boolean {
-  return nativeSelectionShell?.() ?? false
 }
 
 async function getQuoteQuestion(): Promise<QuoteBar> {
@@ -168,20 +163,16 @@ async function attachQuoteBridge() {
   const win = await resolveIframeWindow(() => iframeRef.value)
   if (!win) return
   const bar = await getQuoteQuestion()
+  // The factory is loaded alongside the bar (same dynamic import), so it is
+  // always available here.
+  if (!makeShowHandler) return
   disposeQuoteBridge = attachIframeSelectionQuoteBridge({
     win,
     filePath: () => props.filePath,
-    // `anchor` is already in HOST viewport coordinates (the bridge maps the
-    // frame's own rects), so the bar floats next to the selected text.
-    //
-    // On Android the system's selection menu is the visible affordance for a
-    // selection in the previewed page, so the in-page bar is suppressed —
-    // only the quote is recorded for that menu's action to pick up.
-    show: (data, anchor) => bar.showBar(data, {
-      delay: 0,
-      anchor,
-      suppressBar: isNativeSelectionShell(),
-    }),
+    // Shared with the full-screen HTML preview and the OpenAPI docs: maps the
+    // frame's anchor into host coordinates, shows immediately, and suppresses
+    // the in-page bar on Android (the system menu is the affordance there).
+    show: makeShowHandler(bar.showBar),
     hide: () => bar.hideBar(),
   })
 }

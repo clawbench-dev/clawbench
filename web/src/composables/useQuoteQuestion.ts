@@ -8,6 +8,7 @@ import { requestTarget, mintPendingQuoteId } from '@/composables/useConversation
 import type { PendingQuote } from '@/composables/useConversationTarget.ts'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { openInertPathPicker } from '@/composables/useInertPathPicker.ts'
+import { unionRectOfRects } from '@/utils/selectionAnchor.ts'
 import { appLog } from '@/utils/appLog'
 
 const TAG = 'QuoteQuestion'
@@ -137,20 +138,10 @@ let showTimer: ReturnType<typeof setTimeout> | null = null
  * Rect the floating toolbar should attach to: the BOUNDING BOX of the whole
  * selection (issue #572).
  *
- * It used to be the LAST line box, on the theory that it is "the point the
- * pointer just left". It is not: `Range.getClientRects()` returns boxes in
- * DOCUMENT order, so the last one is the bottom line no matter which direction
- * the user dragged. The bar prefers to sit ABOVE its anchor, so for any
- * multi-line selection it was placed directly on top of the lines above the
- * bottom one — i.e. over the text the user had just selected, which is exactly
- * the "toolbar fights the selection" flicker in the report.
- *
- * The union is what makes the placement direction-independent: "above" then
- * means above the WHOLE selection, and "below" means below all of it.
- *
- * Fully empty boxes are dropped: a range can end on a zero-size caret box at
- * the start of the following line, and letting it into the union would stretch
- * the box sideways across the whole column.
+ * The rule itself lives in `utils/selectionAnchor.ts` because a preview iframe
+ * needs the SAME rule over its own (differently-origined) rects; two copies is
+ * exactly how the host path got the union while the iframe path kept the last
+ * box. See that module for why the union is required.
  *
  * Returns null when the selection has no laid-out boxes (e.g. a collapsed
  * range), letting the caller fall back to the pinned top position.
@@ -163,27 +154,9 @@ function selectionAnchorRect(sel: Selection): DOMRect | null {
   if (sel.rangeCount === 0) return null
   const rects = sel.getRangeAt(0).getClientRects()
   if (!rects.length) return null
-
-  let top = Infinity
-  let left = Infinity
-  let bottom = -Infinity
-  let right = -Infinity
-  for (let i = 0; i < rects.length; i++) {
-    const r = rects[i]
-    // A zero-WIDTH box is a caret, not selected text: the browser emits one
-    // where a range ends at a line boundary, and its height is a full line. It
-    // contributes no width, but its edges would still stretch the union a line
-    // down (and its `left` across to column 0), so drop it entirely.
-    if (r.width === 0) continue
-    if (r.top < top) top = r.top
-    if (r.left < left) left = r.left
-    if (r.bottom > bottom) bottom = r.bottom
-    if (r.right > right) right = r.right
-  }
-  // Every box was a caret (a collapsed-looking range): fall back to the raw
-  // last box so the caller still gets a usable anchor rather than null.
-  if (top === Infinity) return rects[rects.length - 1]
-  return new DOMRect(left, top, right - left, bottom - top)
+  const u = unionRectOfRects(rects)
+  if (!u) return null
+  return new DOMRect(u.left, u.top, u.right - u.left, u.bottom - u.top)
 }
 
 // Active pointer (mouse/touch) tracking. Browsers fire selectionchange while the
@@ -428,6 +401,13 @@ function onSelectionChange() {
 }
 
 function onPointerDown() {
+  // A press supersedes any show still waiting out its delay. `showBar` can be
+  // called with the default 400ms delay (double-click-to-quote paths); if the
+  // user starts a new drag inside that window the timer would fire with the
+  // button down, surfacing the PREVIOUS selection's bar mid-drag — the very
+  // defect issue #572 is about. The dismissal paths already cancel it; a press
+  // is the one non-dismissal that must too.
+  cancelPendingShow()
   pointerCount++
   lastPointerActivity = Date.now()
   if (guardStartedAt === 0) guardStartedAt = lastPointerActivity
@@ -616,6 +596,40 @@ export function resetQuotePin() {
 /** True when the host draws its own selection menu (Android shell). */
 export function isNativeSelectionShell(): boolean {
   return androidShell()
+}
+
+/** The `showBar` shape the iframe bridge helper needs (structural — no import cycle). */
+type ShowBarFn = (
+  data: QuoteData,
+  opts?: { delay?: number; anchor?: DOMRect | null; suppressBar?: boolean },
+) => void
+
+/**
+ * Build the `show` callback a preview iframe's quote bridge needs.
+ *
+ * Every iframe host (the full-screen HTML preview, the inline quick preview, the
+ * OpenAPI/Swagger docs) needs the SAME three decisions, and each is easy to
+ * forget in a copy:
+ *
+ *   - pass the mapped `anchor` through, or the bar falls back to its pinned top
+ *     position, far from the text the user just selected;
+ *   - `delay: 0`, because the bridge's own debounce has already coalesced the
+ *     selection;
+ *   - `suppressBar` on Android, where the system's selection menu is the visible
+ *     affordance and an in-page bar on top of it would be a duplicate (the quote
+ *     is still recorded for that menu's action to read back).
+ *
+ * They were three hand-written copies and one of them (OpenApiPreview) silently
+ * missed `anchor` and `suppressBar` — the reported "menu pops up at the top"
+ * defect survived there. Callers now share this factory, so a fourth host
+ * cannot drift.
+ */
+export function makeIframeQuoteShowHandler(showBar: ShowBarFn): (data: QuoteData, anchor: DOMRect | null) => void {
+  return (data, anchor) => showBar(data, {
+    delay: 0,
+    anchor,
+    suppressBar: isNativeSelectionShell(),
+  })
 }
 
 export function useQuoteQuestion() {
@@ -849,8 +863,19 @@ export function useQuoteQuestion() {
     if (showTimer) clearTimeout(showTimer)
     showTimer = setTimeout(() => {
       showTimer = null
+      if (suppress) {
+        // The bar is hidden because the OS draws its own menu, so NOTHING on
+        // screen would explain a quote card appearing in the composer. Writing
+        // `quoteData` here did exactly that: on Android, merely selecting text
+        // inside a preview (then dismissing the system menu) left a stray quote
+        // card above the input. The snapshot in `lastSelectionQuote` is enough —
+        // `handleNativeSelectionAction` writes `quoteData` itself when the user
+        // actually picks an action from that menu.
+        anchorRect.value = rect
+        return
+      }
       setQuoteData(data)
-      if (!suppress) barVisible.value = true
+      barVisible.value = true
       anchorRect.value = rect
     }, opts.delay ?? 400)
   }

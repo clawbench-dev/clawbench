@@ -710,3 +710,89 @@ describe('installSvgMediaAutoFit — scope of a refit pass', () => {
     expect(fig.measured.length).toBe(0)
   })
 })
+
+/**
+ * A mermaid re-render must re-measure the figure.
+ *
+ * mermaid.ts re-renders by replacing the CONTENTS of the existing `.mermaid`
+ * container (`container.innerHTML = result.svg`) on every theme / font change.
+ * The `.image-block-wrapper` is untouched, so a mutation handler that keys on
+ * "a wrapper was added" sees nothing to do — and the diagram keeps the inline px
+ * width computed for the OLD theme/font until the next window resize.
+ */
+describe('installSvgMediaAutoFit — figure content replaced in place', () => {
+  function mkMermaidFigure(colW = 800) {
+    const wrapper = document.createElement('div')
+    wrapper.className = 'image-block-wrapper svg-fit'
+    const cell = document.createElement('div')
+    cell.className = 'mermaid'
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    svg.setAttribute('viewBox', '0 0 1600 70')
+    cell.appendChild(svg)
+    wrapper.appendChild(cell)
+    const column = document.createElement('div')
+    column.appendChild(wrapper)
+    document.body.appendChild(column)
+    const measured: number[] = []
+    Object.defineProperty(column, 'getBoundingClientRect', {
+      value: () => {
+        measured.push(1)
+        return { width: colW, height: 0, top: 0, left: 0, right: colW, bottom: 0, x: 0, y: 0, toJSON() {} }
+      },
+      configurable: true,
+    })
+    return { wrapper, cell, measured }
+  }
+
+  function captureFrames() {
+    const callbacks: FrameRequestCallback[] = []
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+      callbacks.push(cb)
+      return callbacks.length
+    })
+    return () => {
+      for (const cb of callbacks.splice(0)) cb(0)
+    }
+  }
+
+  const settle = () => new Promise((r) => setTimeout(r, 0))
+
+  afterEach(() => {
+    document.body.innerHTML = ''
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  it('re-measures when a mermaid re-render replaces the svg inside the same wrapper', async () => {
+    vi.stubGlobal('ResizeObserver', class {
+      observe() {}
+      disconnect() {}
+    })
+    const runFrames = captureFrames()
+
+    const fig = mkMermaidFigure()
+    stampSvgFigure(fig.wrapper)
+
+    const stop = installSvgMediaAutoFit()
+    await settle()
+    runFrames()
+    fig.measured.length = 0
+
+    // Exactly what mermaid.ts does on a theme change: the container stays, its
+    // children are swapped for a freshly rendered svg.
+    const fresh = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    fresh.setAttribute('viewBox', '0 0 1600 70')
+    fig.cell.innerHTML = ''
+    fig.cell.appendChild(fresh)
+
+    await settle()
+    runFrames()
+
+    expect(
+      fig.measured.length,
+      'a re-rendered diagram must be re-measured; otherwise it keeps the old theme/font width',
+    ).toBeGreaterThan(0)
+
+    stop()
+  })
+})

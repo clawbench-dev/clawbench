@@ -53,6 +53,23 @@ describe('port-forward resync on app resume', () => {
     expect(handlerBody).toContain('isAppMode')
   })
 
+  it('excludes the desktop shell from the Android resume resync', () => {
+    // `isAppMode` is `isNativeApp()`, which the Electron preload also reports as
+    // true. The desktop window is only minimized — the process never stopped and
+    // its tunnel is still up — so running the full sync on every focus re-probes
+    // every forwarded port (serial `testPortReachable`, up to 500ms each) for
+    // nothing. AGENTS.md states this policy explicitly: desktop and Android are
+    // both "native" to the bridge but their power strategies are opposites, and
+    // the gate must be written `isAppMode && !isDesktopApp`.
+    const body = listenerRegistrationBody()
+    const start = body.indexOf('onAppResume(')
+    const handlerBody = body.slice(start).slice(0, body.slice(start).indexOf('})'))
+    expect(handlerBody, 'the resume sync must skip the desktop shell').toContain('isDesktopApp')
+    expect(app, 'isDesktopApp must come from useAppMode').toMatch(
+      /const \{[^}]*isDesktopApp[^}]*\} = useAppMode\(\)/,
+    )
+  })
+
   it('imports onAppResume from useAppForeground', () => {
     expect(app).toContain("import { onAppResume } from './composables/useAppForeground.ts'")
   })

@@ -4659,6 +4659,107 @@ describe('AskUserQuestion Ctrl/Cmd+Enter submit', () => {
     expect(ev.defaultPrevented).toBe(false)
     container.remove()
   })
+
+  /**
+   * Readiness parity between the button and the shortcut.
+   *
+   * The Submit button is disabled until EVERY question is answered (or a note is
+   * typed); the keyboard path used to accept "at least one answer". A card with
+   * several questions could therefore be submitted half-answered from the
+   * keyboard, and `submitAskView` marked it terminal — locking the remaining
+   * questions for good, with "Submitted" as the only feedback.
+   */
+  describe('partially answered multi-question card', () => {
+    /** Two questions, the FIRST one answered, note field empty. */
+    function createTwoQuestionCard(key: string): {
+      container: HTMLDivElement
+      view: HTMLElement
+      input: HTMLTextAreaElement
+      submit: HTMLButtonElement
+      emit: any
+    } {
+      const emit = vi.fn() as any
+      const container = document.createElement('div')
+      container.innerHTML = `
+        <div class="ask-question-view" data-ask-key="${key}" tabindex="-1">
+          <div class="ask-question-item" data-multi="false">
+            <div class="ask-question-options">
+              <div class="ask-question-option selected" data-qi="0" data-oi="0" data-label="Q1-A"></div>
+            </div>
+          </div>
+          <div class="ask-question-item" data-multi="false">
+            <div class="ask-question-options">
+              <div class="ask-question-option" data-qi="1" data-oi="0" data-label="Q2-A"></div>
+            </div>
+          </div>
+          <div class="ask-question-supplementary"><textarea class="ask-supplementary-input" rows="1"></textarea></div>
+          <div class="ask-question-actions">
+            <button class="ask-question-recommend">Recommend</button>
+            <button class="ask-question-submit" disabled>Submit</button>
+          </div>
+        </div>
+      `
+      document.body.appendChild(container)
+      const view = container.querySelector('.ask-question-view') as HTMLElement
+      const input = view.querySelector('.ask-supplementary-input') as HTMLTextAreaElement
+      const submit = view.querySelector('.ask-question-submit') as HTMLButtonElement
+      container.addEventListener('keydown', (e) => handleAskSubmitShortcut(e as KeyboardEvent, emit))
+      updateAskSubmitState(view)
+      return { container, view, input, submit, emit }
+    }
+
+    it('does not submit, and leaves the card answerable', () => {
+      const { container, view, input, submit, emit } = createTwoQuestionCard('sess-1|tool:half')
+
+      // The button and the shortcut must agree on readiness BEFORE the keystroke.
+      expect(submit.disabled, 'the button refuses a half-answered card').toBe(true)
+
+      const ev = pressChord(input, { key: 'Enter', ctrlKey: true })
+
+      expect(emit, 'no half-answer may be sent').not.toHaveBeenCalled()
+      expect(view.classList.contains('ask-submitted'), 'the card must stay answerable').toBe(false)
+      expect(submit.disabled, 'the button must stay disabled').toBe(true)
+      expect(getAskState('sess-1|tool:half'), 'nothing may be persisted as submitted').toBeUndefined()
+      // Still consumed: the disabled button is the feedback, and letting the key
+      // through would just insert a newline into the note.
+      expect(ev.defaultPrevented).toBe(true)
+      container.remove()
+    })
+
+    it('submits normally once the last question is answered', () => {
+      // The other half of the contract: the gate must not be permanently stuck.
+      const { container, view, input, submit, emit } = createTwoQuestionCard('sess-1|tool:half')
+
+      pressChord(input, { key: 'Enter', ctrlKey: true })
+      expect(emit).not.toHaveBeenCalled()
+
+      const second = view.querySelectorAll('.ask-question-item')[1]
+        .querySelector('.ask-question-option') as HTMLElement
+      second.classList.add('selected')
+      updateAskSubmitState(view)
+      expect(submit.disabled).toBe(false)
+
+      pressChord(input, { key: 'Enter', ctrlKey: true })
+
+      expect(emit).toHaveBeenCalledTimes(1)
+      expect(emit).toHaveBeenCalledWith('send-message', '- Q1-A\n\n- Q2-A', 'sess-1|tool:half')
+      expect(view.classList.contains('ask-submitted')).toBe(true)
+      container.remove()
+    })
+
+    it('a note alone still unlocks the card (the note IS the answer)', () => {
+      // The button has always allowed "no option picked, but a note typed"; the
+      // shared predicate must keep that.
+      const { container, input, submit, emit } = createTwoQuestionCard('sess-1|tool:note')
+      input.value = 'none of the above'
+      updateAskSubmitState(container.querySelector('.ask-question-view') as Element)
+      expect(submit.disabled).toBe(false)
+
+      pressChord(input, { key: 'Enter', ctrlKey: true })
+      expect(emit).toHaveBeenCalledTimes(1)
+      container.remove()
+    })
+  })
 })
 
 // ── The chord hint lives in the actions row, outside the button ──

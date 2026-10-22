@@ -3,10 +3,12 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -27,6 +29,11 @@ func setMeterRuleForTest(t *testing.T, rule model.UsageMeterConfig) {
 	t.Cleanup(func() { model.ConfigInstance.UsageMeter = prev })
 }
 
+// A disabled rule must answer with EXACTLY the six keys the client can use, and
+// none of the quota-derived ones. The OpenAPI description used to promise
+// "unconfigured still reports spend over a 30-day window" — the opposite of what
+// the handler returns — so the field set is pinned here rather than left to a
+// prose document nothing validates.
 func TestServeUsageMeter_DisabledRuleReturns200(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
@@ -35,11 +42,41 @@ func TestServeUsageMeter_DisabledRuleReturns200(t *testing.T) {
 	w := callHandler(ServeUsageMeter, newRequest(t, http.MethodGet, "/api/usage/meter", nil))
 	require.Equal(t, http.StatusOK, w.Code, "a disabled rule is a state, not an error")
 
-	var body struct {
-		Enabled bool `json:"enabled"`
+	// The body is read once and decoded twice (key set + values): a second
+	// decodeRespJSON on the same reader would hit EOF.
+	rawBody, err := io.ReadAll(w.Body)
+	require.NoError(t, err)
+
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(rawBody, &raw))
+
+	// Exact set, both directions: a missing key would break the client's
+	// zero-initialised readout, and an extra one (metric / periodDays /
+	// cycleStart / series) would tell it there is a window to render.
+	got := make([]string, 0, len(raw))
+	for k := range raw {
+		got = append(got, k)
 	}
-	decodeRespJSON(t, w.Body, &body)
+	sort.Strings(got)
+	assert.Equal(t, []string{
+		"actual", "dayInCycle", "enabled", "expected", "projectedExhaustDay", "remainingDays",
+	}, got, "a disabled rule must report no metric, no window and no series")
+
+	var body struct {
+		Enabled             bool    `json:"enabled"`
+		DayInCycle          int     `json:"dayInCycle"`
+		Actual              float64 `json:"actual"`
+		Expected            float64 `json:"expected"`
+		RemainingDays       int     `json:"remainingDays"`
+		ProjectedExhaustDay int     `json:"projectedExhaustDay"`
+	}
+	require.NoError(t, json.Unmarshal(rawBody, &body))
 	assert.False(t, body.Enabled)
+	assert.Zero(t, body.DayInCycle)
+	assert.Zero(t, body.Actual)
+	assert.Zero(t, body.Expected)
+	assert.Zero(t, body.RemainingDays)
+	assert.Zero(t, body.ProjectedExhaustDay)
 }
 
 func TestServeUsageMeter_EnabledRuleReportsCycleAndTotals(t *testing.T) {
