@@ -197,7 +197,7 @@ test.describe('Agent Team Panel', () => {
     await expect(page.locator('.team-expanded__auto')).toHaveText('auto team')
   })
 
-  test('keeps the member agent type out of the row and in the tooltip', async ({ page }) => {
+  test('shows the member agent type inline when the row has room', async ({ page }) => {
     await injectTeam(page, {
       type: 'member_status_change',
       teamName: 'clawbench-probe',
@@ -215,11 +215,47 @@ test.describe('Agent Team Panel', () => {
     await expect(page.locator('.team-chip')).toBeVisible({ timeout: 5000 })
     await page.locator('.team-chip').click()
     await expect(page.locator('.team-member')).toBeVisible()
-    await expect(page.locator('.team-member__agent-type')).toHaveCount(0)
+    // A wide viewport has room, so the type is visible inline.
+    await expect(page.locator('.team-member__agent-type')).toBeVisible()
+    await expect(page.locator('.team-member__agent-type')).toHaveText('general-purpose')
+    // The tooltip keeps carrying it too, which is what remains on a narrow panel.
     const title = await page.locator('.team-member').first().getAttribute('title')
     expect(title).toContain('runs the probe')
     expect(title).toContain('type: general-purpose')
     expect(title).toContain('tokens: 100 in / 20 out')
     expect(title).toContain('context: 200000')
+  })
+
+  test('hides the agent type before the member name when the panel is narrow', async ({ page }) => {
+    // The name is the only thing distinguishing two rows; the type is metadata
+    // that is identical across an auto-team. So on a narrow panel the TYPE must
+    // go and the NAME must stay.
+    await page.setViewportSize({ width: 360, height: 780 })
+    // On a narrow screen the app is a drawer layout: the chat panel is only
+    // mounted while its tab is active, so the roster cannot be asserted before
+    // switching to it.
+    await page.locator('.dock-btn[data-tab="chat"]').filter({ visible: true }).first().click()
+    await injectTeam(page, {
+      type: 'member_status_change',
+      teamName: 'clawbench-probe',
+      hasLiveMembers: true,
+      members: [
+        { name: 'probe-alpha', status: 'running', agentType: 'general-purpose' },
+        { name: 'probe-beta', status: 'completed', agentType: 'specialised-reviewer' },
+      ],
+    })
+    await expect(page.locator('.team-chip')).toBeVisible({ timeout: 5000 })
+    await page.locator('.team-chip').click()
+    await expect(page.locator('.team-member').first()).toBeVisible()
+
+    // Type hidden by the container query. It stays in the DOM (CSS, not v-if),
+    // so the assertion is on VISIBILITY — that is also what the user sees.
+    await expect(page.locator('.team-member__agent-type').first()).toBeHidden()
+    const name = page.locator('.team-member__name').first()
+    await expect(name).toBeVisible()
+    await expect(name).toHaveText('probe-alpha')
+    // The name keeps real width — it must not be the thing that collapsed.
+    const box = await name.boundingBox()
+    expect(box!.width).toBeGreaterThan(20)
   })
 })

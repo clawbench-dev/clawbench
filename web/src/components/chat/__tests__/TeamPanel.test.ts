@@ -421,10 +421,10 @@ describe('TeamPanel', () => {
 
   // ── Member metadata: agentType is tooltip-only ──
 
-  it('never renders the agent type inline, only in the tooltip', async () => {
-    // Nearly every auto-team member is `general-purpose`, so the inline column
-    // carried no information while eating the width the name needs. It must
-    // stay out of the row and remain reachable via the tooltip.
+  it('renders the agent type inline when the row has room', async () => {
+    // The type is real information (a team can mix general-purpose and
+    // specialised members), so it belongs in the row. It is HIDDEN on narrow
+    // panels only — see the priority test below.
     updateTeamState(
       snapshot({
         members: [{ name: 'probe-alpha', status: 'running', agentType: 'general-purpose' }],
@@ -433,8 +433,20 @@ describe('TeamPanel', () => {
     const wrapper = mountPanel()
     await wrapper.vm.$nextTick()
     await wrapper.get('.team-chip').trigger('click')
-    expect(wrapper.find('.team-member__agent-type').exists()).toBe(false)
-    expect(wrapper.get('.team-member').text()).not.toContain('general-purpose')
+    expect(wrapper.get('.team-member__agent-type').text()).toBe('general-purpose')
+  })
+
+  it('keeps the type reachable in the tooltip as well', async () => {
+    // The inline type disappears on a narrow panel, so the tooltip must keep
+    // carrying it — that is the only remaining path to the information.
+    updateTeamState(
+      snapshot({
+        members: [{ name: 'probe-alpha', status: 'running', agentType: 'general-purpose' }],
+      }),
+    )
+    const wrapper = mountPanel()
+    await wrapper.vm.$nextTick()
+    await wrapper.get('.team-chip').trigger('click')
     expect(wrapper.get('.team-member').attributes('title')).toContain('type: general-purpose')
   })
 
