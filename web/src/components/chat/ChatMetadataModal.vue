@@ -335,21 +335,21 @@ function copyValue(value, event) {
 /* `.modal-body` is already the scroll container (flex:1 + overflow-y:auto);
    adding a second one here would nest scrollbars. */
 .md-content {
-    padding: var(--space-6);
+    padding: var(--space-4);
     display: flex;
     flex-direction: column;
-    gap: var(--space-5);
+    gap: var(--space-4);
 }
 
 /* ── Error banner ── */
 .md-error {
     display: flex;
     align-items: flex-start;
-    gap: var(--space-4);
-    padding: var(--space-5) var(--space-6);
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
     border-radius: var(--radius-md);
     border: 1px solid color-mix(in srgb, var(--color-red) 35%, transparent);
-    background: color-mix(in srgb, var(--color-red) 12%, var(--bg-secondary));
+    background: color-mix(in srgb, var(--color-red) 10%, transparent);
 }
 
 .md-error-icon {
@@ -378,24 +378,33 @@ function copyValue(value, event) {
     line-height: 1.5;
 }
 
-/* ── Section card ──
-   Fill is derived from --text-primary mixed into --bg-secondary rather than a
-   fixed step like --bg-tertiary: 15 of the 36 themes have secondary↔tertiary
-   contrast below 1.12 (ayu-dark is 1.062), where a fixed step would make the
-   card disappear. See design-guide 红线 4. */
+/* ── Group ──
+   Groups are SEPARATORS, not containers: no border, no fill, no radius. The
+   modal body is already the one surface; a tinted box inside it would be a
+   card inside a card, which costs a full border+padding ring on every group
+   for no information. The heading's trailing rule is the only decoration —
+   it carries the grouping without drawing a box around the content. */
 .md-section {
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-md);
-    background: color-mix(in srgb, var(--text-primary) 3%, var(--bg-secondary));
-    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
 }
 
 .md-section-head {
     display: flex;
     align-items: center;
-    gap: var(--space-3);
-    padding: var(--space-4) var(--space-6);
-    border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 8%, transparent);
+    gap: var(--space-2);
+    padding: var(--space-1) 0;
+}
+
+/* Rule fills whatever the title leaves, so the heading reads as a section
+   break rather than a floating label. */
+.md-section-head::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    margin-left: var(--space-2);
+    background: color-mix(in srgb, var(--text-primary) 12%, transparent);
 }
 
 .md-section-icon {
@@ -410,12 +419,15 @@ function copyValue(value, event) {
     letter-spacing: 0.02em;
 }
 
-/* ── Metric tiles ── */
+/* ── Metric tiles ──
+   Flat: no box either. The monospace, larger figure is what sets these apart
+   from ordinary rows; a background would make them the third nested surface
+   on the screen. */
 .md-tiles {
     display: flex;
     flex-wrap: wrap;
-    gap: var(--space-4);
-    padding: var(--space-5) var(--space-6);
+    gap: var(--space-5);
+    padding: var(--space-1) 0 var(--space-2);
 }
 
 .md-tile {
@@ -423,10 +435,7 @@ function copyValue(value, event) {
     min-width: 84px;
     display: flex;
     flex-direction: column;
-    gap: var(--space-1);
-    padding: var(--space-4) var(--space-5);
-    border-radius: var(--radius-sm);
-    background: color-mix(in srgb, var(--text-primary) 5%, var(--bg-secondary));
+    gap: 2px;
 }
 
 .md-tile-label {
@@ -447,12 +456,13 @@ function copyValue(value, event) {
     display: grid;
     grid-template-columns: minmax(76px, 34%) 1fr;
     align-items: start;
-    gap: var(--space-5);
-    padding: var(--space-4) var(--space-6);
-}
-
-.md-row + .md-row {
-    border-top: 1px solid color-mix(in srgb, var(--text-primary) 6%, transparent);
+    gap: var(--space-4);
+    /* Negative inline margin + matching padding: the row's hover fill reaches
+       slightly past the text (so it reads as a row, not a text highlight)
+       without shifting the label/value columns. */
+    margin: 0 calc(-1 * var(--space-2));
+    padding: 2px var(--space-2);
+    border-radius: var(--radius-xs);
 }
 
 /* Long ids/files get the label on its own line — squeezing a 60-char path into
