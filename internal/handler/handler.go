@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"clawbench/internal/frontend"
 	i18npkg "clawbench/internal/i18n"
@@ -253,14 +254,49 @@ func resolveAttachmentPath(w http.ResponseWriter, r *http.Request, basePath, pat
 // error write, for callers that build a prompt outside a request (the queue
 // drain loop) and fall back to the raw path instead of failing the turn.
 func resolveAttachmentPathQuiet(basePath, path string) (string, bool) {
-	if filepath.IsAbs(path) {
-		absPath, err := filepath.Abs(path)
-		if err != nil || !isPathUnderAnyRoot(absPath) {
+	if absPath, ok := asAbsolutePath(basePath, path); ok {
+		if !isPathUnderAnyRoot(absPath) {
 			return "", false
 		}
 		return absPath, true
 	}
 	return model.ValidatePath(basePath, path)
+}
+
+// asAbsolutePath reports whether path denotes an absolute location, returning
+// its absolute form. The second result is false when path is relative.
+//
+// filepath.IsAbs alone is not enough on Windows: it requires a volume name, so
+// a POSIX-style "/proj/sub" — which the frontend can hand back after normalizing
+// separators — reads as RELATIVE there. That fell through to model.ValidatePath,
+// which joins it onto the base path ("C:\proj" + "/proj/sub"), so the original
+// 404 this whole change fixes came back on Windows only.
+//
+// A leading separator therefore counts as absolute on Windows too, and the
+// volume is taken from basePath (the project drive) because a bare "/x" carries
+// none. On POSIX nothing changes: IsAbs already accepts "/x".
+func asAbsolutePath(basePath, path string) (string, bool) {
+	if filepath.IsAbs(path) {
+		absPath, err := filepath.Abs(path)
+		if err != nil {
+			return "", false
+		}
+		return absPath, true
+	}
+	if !platform.IsWindows() || !strings.HasPrefix(path, "/") {
+		return "", false
+	}
+	// Volume-qualify the POSIX-style path so the containment check and the
+	// os.Stat that follows see a real Windows path.
+	volume := filepath.VolumeName(basePath)
+	if volume == "" {
+		return "", false
+	}
+	absPath, err := filepath.Abs(volume + path)
+	if err != nil {
+		return "", false
+	}
+	return absPath, true
 }
 
 // resolveAbsPath resolves a path string to an absolute path under any root path.

@@ -180,6 +180,37 @@ describe('TeamPanel', () => {
     expect(shapes.size).toBe(kinds.length)
   })
 
+  it('maps each status kind to the glyph that MEANS that status', async () => {
+    // The distinctness test above only proves the five differ from each other —
+    // it passes if `completed` and `failed` are swapped, which would show a
+    // checkmark for a failure. Pin the semantic mapping itself: lucide renders
+    // a stable `lucide-<name>` class on each icon, which is the glyph's
+    // identity without depending on its internal path data.
+    const expected: Array<[string, string]> = [
+      ['completed', 'lucide-circle-check'],
+      ['failed', 'lucide-circle-x'],
+      ['killed', 'lucide-circle-slash'],
+      ['pending', 'lucide-circle-dashed'],
+    ]
+    for (const [status, iconClass] of expected) {
+      clearTeamState()
+      updateTeamState({
+        type: 'member_status_change',
+        teamName: 't',
+        members: [{ name: `m-${status}`, status }],
+      })
+      const wrapper = mountPanel()
+      await wrapper.vm.$nextTick()
+      await wrapper.get('.team-chip').trigger('click')
+
+      const icon = wrapper.get('.team-member__status-icon')
+      expect(icon.classes(), `${status} must render ${iconClass}`).toContain(iconClass)
+      // The row must also agree with the icon: a member shown as failed must
+      // not be styled as completed.
+      expect(icon.attributes('data-status')).toBe(status === 'killed' ? 'terminated' : status)
+    }
+  })
+
   it('marks a killed member as terminated', async () => {
     updateTeamState({
       type: 'member_status_change',

@@ -32,9 +32,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onBeforeUnmount, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { installPreviewScrollbar } from '@/utils/htmlPreview.ts'
+import { installPreviewScrollbar, installPreviewSearchStyles } from '@/utils/htmlPreview.ts'
+import {
+  attachIframeSelectionQuoteBridge,
+  installIframeSearchShortcut,
+  resolveIframeWindow,
+} from '@/utils/iframeSelectionQuote.ts'
 
 /**
  * Rendered-HTML sibling of CodePreviewBody / MarkdownPreviewBody.
@@ -57,7 +62,7 @@ import { installPreviewScrollbar } from '@/utils/htmlPreview.ts'
 
 export type HtmlBodyStatus = 'idle' | 'loading' | 'ready' | 'error'
 
-defineProps<{
+const props = defineProps<{
   status: HtmlBodyStatus
   errorMessageText: string
   errorCode: string | null
@@ -67,6 +72,19 @@ defineProps<{
   htmlContent: string
   /** Previewed file path — used as the iframe title for accessibility. */
   filePath: string
+  /**
+   * Forward Ctrl/Cmd+F pressed inside the previewed document to the host.
+   *
+   * Omitted when the surface has no find bar of its own. The full-screen viewer
+   * passes its handler; the quick-preview card does too (it owns a search bar).
+   */
+  onOpenSearch?: () => void
+  /**
+   * Enable selection → quote-bar for text selected inside the previewed
+   * document. Off by default so surfaces without a chat target do not arm a
+   * quote bar nothing can receive.
+   */
+  chatQuote?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -77,12 +95,81 @@ const { t } = useI18n()
 
 const iframeRef = ref<HTMLIFrameElement | null>(null)
 
-/** Give the previewed document the app's scrollbar bar (see
- *  installPreviewScrollbar). Runs on every load — including the srcdoc
- *  fallback and reloads — and is idempotent. */
-function onLoad() {
-  installPreviewScrollbar(iframeRef.value)
+/**
+ * Quote bar handle, loaded on first use.
+ *
+ * `useQuoteQuestion` transitively imports `useChatContext`, and the quick-preview
+ * card sits on a module graph that several suites `vi.mock('@/composables/
+ * useChatContext')` with a module-level `const` factory. A static import here
+ * pulled that module into their graph BEFORE the const was initialized, so the
+ * hoisted `vi.mock` factory dereferenced it and the whole suite failed to load
+ * ("Cannot access 'mockAddAttachedFile' before initialization"). Deferring the
+ * import keeps the card's default path free of that dependency — the quote
+ * bridge is opt-in via `chatQuote` anyway.
+ */
+type QuoteBar = Awaited<ReturnType<typeof loadQuoteQuestion>>
+let quoteQuestion: QuoteBar | null = null
+
+async function loadQuoteQuestion() {
+  const { useQuoteQuestion } = await import('@/composables/useQuoteQuestion.ts')
+  return useQuoteQuestion()
 }
+
+async function getQuoteQuestion(): Promise<QuoteBar> {
+  if (!quoteQuestion) quoteQuestion = await loadQuoteQuestion()
+  return quoteQuestion
+}
+
+let disposeSearchShortcut: (() => void) | null = null
+let disposeQuoteBridge: (() => void) | null = null
+
+/**
+ * Give the previewed document the app's scrollbar bar, the search-match
+ * highlight styles, and the two in-document hooks that cannot live on the host:
+ * the Ctrl+F shortcut and the selection→quote bridge.
+ *
+ * Runs on every load — including the srcdoc fallback and reloads. A reload is a
+ * NEW document, so both hooks must be re-attached unconditionally: the previous
+ * listeners died with the old document. (`dispose` only removes listeners and
+ * deliberately leaves the quote bar alone, so a user mid-comment keeps their
+ * text.)
+ */
+function onLoad() {
+  const iframe = iframeRef.value
+  installPreviewScrollbar(iframe)
+  installPreviewSearchStyles(iframe)
+
+  disposeSearchShortcut?.()
+  disposeSearchShortcut = null
+  if (props.onOpenSearch && iframe?.contentWindow) {
+    disposeSearchShortcut = installIframeSearchShortcut(iframe.contentWindow, props.onOpenSearch)
+  }
+
+  disposeQuoteBridge?.()
+  disposeQuoteBridge = null
+  if (props.chatQuote) void attachQuoteBridge()
+}
+
+async function attachQuoteBridge() {
+  const win = await resolveIframeWindow(() => iframeRef.value)
+  if (!win) return
+  const bar = await getQuoteQuestion()
+  disposeQuoteBridge = attachIframeSelectionQuoteBridge({
+    win,
+    filePath: () => props.filePath,
+    show: (data) => bar.showBar(data, { delay: 0 }),
+    hide: () => bar.hideBar(),
+  })
+}
+
+function disposeAll() {
+  disposeSearchShortcut?.()
+  disposeSearchShortcut = null
+  disposeQuoteBridge?.()
+  disposeQuoteBridge = null
+}
+
+onBeforeUnmount(disposeAll)
 
 /** No-op target-line centering: the rendered view has no highlighted rows.
  *  Kept so the parent's bodyRef surface is identical across body components. */

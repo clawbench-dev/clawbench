@@ -8,6 +8,7 @@ import {
   stampSvgFigure,
   stampSvgFigures,
   stampSvgFiguresAsync,
+  installSvgMediaAutoFit,
 } from '@/utils/svgMediaFit'
 
 /** Build a detached figure the way the media-block factory does. */
@@ -540,5 +541,172 @@ describe('responsive refit (svgMediaFit)', () => {
     svg.style.width = '123px'
     refitFigure(wrapper)
     expect(svg.style.width).toBe('123px')
+  })
+})
+
+/**
+ * `installSvgMediaAutoFit` wires the two signals that keep a stamped figure's
+ * frozen pixel width correct: a ResizeObserver on each column, and a
+ * MutationObserver for newly rendered figures.
+ *
+ * The defect these cases pin: the mutation path used to re-measure EVERY figure
+ * in the document on every mutation. The chat transcript replaces innerHTML on
+ * each streaming frame, so a session with a dozen diagrams paid a full-document
+ * forced synchronous layout per frame — while only the newly added figure
+ * actually needed a first measurement.
+ */
+describe('installSvgMediaAutoFit — scope of a refit pass', () => {
+  /**
+   * A stamped figure whose column records each measurement.
+   *
+   * refitFigure measures the COLUMN (the figure's parent), so the probe has to
+   * sit there — a probe on the wrapper would never fire.
+   */
+  function mkFigure(vbW: number, vbH: number, colW = 800) {
+    const wrapper = document.createElement('div')
+    wrapper.className = 'image-block-wrapper svg-fit'
+    const cell = document.createElement('div')
+    cell.className = 'mermaid'
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    svg.setAttribute('viewBox', `0 0 ${vbW} ${vbH}`)
+    cell.appendChild(svg)
+    wrapper.appendChild(cell)
+    const column = document.createElement('div')
+    column.appendChild(wrapper)
+    document.body.appendChild(column)
+    const measured: number[] = []
+    Object.defineProperty(column, 'getBoundingClientRect', {
+      value: () => {
+        measured.push(1)
+        return { width: colW, height: 0, top: 0, left: 0, right: colW, bottom: 0, x: 0, y: 0, toJSON() {} }
+      },
+      configurable: true,
+    })
+    return { wrapper, svg, column, measured }
+  }
+
+  /**
+   * Capture rAF callbacks instead of running them, so a test can decide when a
+   * coalesced pass executes. Returns a function that drains them.
+   */
+  function captureFrames() {
+    const callbacks: FrameRequestCallback[] = []
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+      callbacks.push(cb)
+      return callbacks.length
+    })
+    return () => {
+      const queued = callbacks.splice(0)
+      for (const cb of queued) cb(0)
+    }
+  }
+
+  /** MutationObserver delivers as a microtask; give it a turn. */
+  const settle = () => new Promise((r) => setTimeout(r, 0))
+
+  afterEach(() => {
+    document.body.innerHTML = ''
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  function stubResizeObserver() {
+    vi.stubGlobal('ResizeObserver', class {
+      observe() {}
+      disconnect() {}
+    })
+  }
+
+  it('re-measures only the figures a mutation added', async () => {
+    stubResizeObserver()
+    const runFrames = captureFrames()
+
+    const existing = mkFigure(1600, 70)
+    stampSvgFigure(existing.wrapper)
+
+    const stop = installSvgMediaAutoFit()
+    await settle()
+    runFrames()
+    existing.measured.length = 0
+
+    // A streaming render appends a NEW figure; the old one is untouched.
+    const fresh = mkFigure(400, 70)
+    stampSvgFigure(fresh.wrapper)
+    await settle()
+    runFrames()
+
+    expect(existing.measured.length, 'the untouched figure must not be re-measured').toBe(0)
+    expect(fresh.measured.length, 'the added figure must be measured').toBeGreaterThan(0)
+
+    stop()
+  })
+
+  it('re-measures every figure on a viewport resize', async () => {
+    stubResizeObserver()
+    const runFrames = captureFrames()
+
+    const a = mkFigure(1600, 70)
+    const b = mkFigure(1600, 70)
+    stampSvgFigure(a.wrapper)
+    stampSvgFigure(b.wrapper)
+
+    const stop = installSvgMediaAutoFit()
+    await settle()
+    runFrames()
+    a.measured.length = 0
+    b.measured.length = 0
+
+    // The 60dvh height budget changes with the viewport, so every figure needs
+    // a new width — not just the ones the observer happened to name.
+    window.dispatchEvent(new Event('resize'))
+    runFrames()
+
+    expect(a.measured.length).toBeGreaterThan(0)
+    expect(b.measured.length).toBeGreaterThan(0)
+
+    stop()
+  })
+
+  it('does nothing on a mutation that adds no figure', async () => {
+    stubResizeObserver()
+    const runFrames = captureFrames()
+
+    const existing = mkFigure(1600, 70)
+    stampSvgFigure(existing.wrapper)
+
+    const stop = installSvgMediaAutoFit()
+    await settle()
+    runFrames()
+    existing.measured.length = 0
+
+    // The common streaming case: text is appended into an existing node.
+    const para = document.createElement('p')
+    para.textContent = 'streaming text'
+    document.body.appendChild(para)
+    await settle()
+    runFrames()
+
+    expect(existing.measured.length, 'a text-only mutation must not trigger a refit').toBe(0)
+
+    stop()
+  })
+
+  it('stops observing after teardown', async () => {
+    stubResizeObserver()
+    const runFrames = captureFrames()
+
+    const fig = mkFigure(1600, 70)
+    stampSvgFigure(fig.wrapper)
+
+    const stop = installSvgMediaAutoFit()
+    await settle()
+    runFrames()
+    fig.measured.length = 0
+    stop()
+
+    window.dispatchEvent(new Event('resize'))
+    runFrames()
+
+    expect(fig.measured.length).toBe(0)
   })
 })

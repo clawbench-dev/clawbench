@@ -91,8 +91,18 @@ describe('HTML preview find bar wiring', () => {
     // The listener lives on the frame's window: leaving it attached keeps a
     // handler alive on a document nothing can see. There are three teardown
     // paths (unmount, file switch, rendered→source) and all must drop it.
-    const teardowns = viewer.split('disposeHtmlSearchShortcut?.()').length - 1
-    expect(teardowns).toBeGreaterThanOrEqual(3)
+    //
+    // Counting occurrences of the identifier is not enough: the name also
+    // appears in a declaration, in the attach path (which disposes before
+    // re-attaching) and in comments, so the count reaches the threshold even
+    // with a teardown site deleted. Anchor on the PAIR — every teardown also
+    // calls `detachHtmlQuoteBridge()` for the same document — and strip
+    // comments first so prose cannot satisfy the guard.
+    const code = viewer.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+    const paired = code.match(
+      /detachHtmlQuoteBridge\(\)\s*\n\s*disposeHtmlSearchShortcut\?\.\(\)\s*\n\s*disposeHtmlSearchShortcut = null/g,
+    ) ?? []
+    expect(paired.length, 'every teardown must drop both the quote bridge and the shortcut').toBeGreaterThanOrEqual(3)
   })
 
   it('keeps the quote bar when the SAME document merely reloads', () => {
