@@ -122,6 +122,8 @@ const i18n = createI18n({
         cruiseHintFree: 'When on, the discussion ends only once at least half the members confirm the task is complete.',
         parallelLabel: 'Run concurrently',
         parallelHint: "When on, the members you {'@'} speak at the same time.",
+        parallelEnabled: 'Concurrent execution enabled',
+        parallelDisabled: 'Concurrent execution disabled',
       },
       tool: {
         askUser: { recommendationFill: 'Fill' },
@@ -136,7 +138,7 @@ vi.mock('@/composables/useAppMode.ts', () => ({
 }))
 
 vi.mock('@/composables/useToast.ts', () => ({
-  useToast: () => ({ show: vi.fn() }),
+  useToast: () => ({ show: mockToastShow }),
 }))
 
 const mockAttachedFilesValue = { value: [] }
@@ -315,6 +317,11 @@ const mockCaretVisualRows = vi.hoisted(() => vi.fn((): { caretRow: number; total
 vi.mock('@/utils/textareaVisualRows.ts', () => ({
   measureCaretVisualRows: mockCaretVisualRows,
 }))
+
+// Toast feedback is asserted for the group switches (cruise / concurrency):
+// both are optimistic — the chip emits and App PATCHes — so the only thing the
+// component itself can prove is that it told the user what it just requested.
+const mockToastShow = vi.hoisted(() => vi.fn())
 
 vi.mock('@/utils/fileIcon.ts', () => ({
   getFileIcon: () => 'FileText',
@@ -3033,6 +3040,27 @@ describe('ChatInputBar', () => {
       const on = mountBar({ currentModelName: 'gpt-4', isGroupSession: true, groupMode: 'free', groupParallelDefault: true })
       await on.find('.session-info-parallel').trigger('click')
       expect(on.emitted('toggle-group-parallel')![0]).toEqual([false])
+      on.unmount()
+    })
+
+    it('shows an enabling / disabling toast, matching the direction of the click', async () => {
+      // Both directions are asserted: a single direction would pass even if the
+      // handler hard-coded one message (e.g. always "enabled").
+      mockToastShow.mockReset()
+
+      const off = mountBar({ currentModelName: 'gpt-4', isGroupSession: true, groupMode: 'free', groupParallelDefault: false })
+      await off.find('.session-info-parallel').trigger('click')
+      expect(mockToastShow).toHaveBeenCalledTimes(1)
+      expect(mockToastShow.mock.calls[0][0]).toBe('Concurrent execution enabled')
+      expect(mockToastShow.mock.calls[0][1]).toMatchObject({ type: 'success' })
+      off.unmount()
+
+      mockToastShow.mockReset()
+      const on = mountBar({ currentModelName: 'gpt-4', isGroupSession: true, groupMode: 'free', groupParallelDefault: true })
+      await on.find('.session-info-parallel').trigger('click')
+      expect(mockToastShow).toHaveBeenCalledTimes(1)
+      expect(mockToastShow.mock.calls[0][0]).toBe('Concurrent execution disabled')
+      expect(mockToastShow.mock.calls[0][1]).toMatchObject({ type: 'info' })
       on.unmount()
     })
 

@@ -486,7 +486,15 @@ const groupCruiseHint = computed(() =>
 // refreshes the roster, which is what keeps this chip and the group settings
 // sheet's switch in sync (both read the same server value).
 function onGroupParallelClick() {
-  emit('toggle-group-parallel', !props.groupParallelDefault)
+  const next = !props.groupParallelDefault
+  emit('toggle-group-parallel', next)
+  // Same feedback contract as the cruise chip next to it: the click is
+  // optimistic (App PATCHes and the roster refresh is authoritative), so the
+  // toast confirms what was requested, not what the server has stored yet.
+  toast.show(next ? t('group.parallelEnabled') : t('group.parallelDisabled'), {
+    icon: next ? 'success' : 'stop',
+    type: next ? 'success' : 'info',
+  })
 }
 const showUsageInfo = computed(() => isACPTransport.value || contextSize.value > 0)
 // The panel body lives in ContextUsageDetail (shared with the group member
