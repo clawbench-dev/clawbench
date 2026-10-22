@@ -25,7 +25,11 @@ vi.mock('@/utils/fileManager', async (importOriginal) => {
 })
 
 const FileIconStub = { name: 'FileIcon', props: ['path', 'isDir', 'size'], template: '<i class="file-icon" />' }
-const LoadingStub = { name: 'LoadingIndicator', template: '<i class="loading" />' }
+const SkeletonStub = {
+  name: 'PanelSkeleton',
+  props: ['variant', 'rows', 'leading', 'meta', 'label'],
+  template: '<i class="panel-skeleton" />',
+}
 
 function mountBody(props: Record<string, unknown> = {}) {
   return mount(DirPreviewBody, {
@@ -40,7 +44,7 @@ function mountBody(props: Record<string, unknown> = {}) {
     global: {
       stubs: {
         FileIcon: FileIconStub,
-        LoadingIndicator: LoadingStub,
+        PanelSkeleton: SkeletonStub,
       },
     },
   })
@@ -110,12 +114,12 @@ describe('DirPreviewBody', () => {
     expect(wrapper.find('.dir-preview-error').exists()).toBe(true)
   })
 
-  it('shows a spinner only while loading with nothing to show yet', () => {
+  it('shows a placeholder only while loading with nothing to show yet', () => {
     const withEntries = mountBody({ loading: true, entries: [{ name: 'a.ts', type: 'file' }] })
-    expect(withEntries.find('.loading').exists()).toBe(false)
+    expect(withEntries.find('.panel-skeleton').exists()).toBe(false)
 
     const withoutEntries = mountBody({ loading: true, entries: [] })
-    expect(withoutEntries.find('.loading').exists()).toBe(true)
+    expect(withoutEntries.find('.panel-skeleton').exists()).toBe(true)
   })
 
   it('emits closed from the toolbar close button', async () => {

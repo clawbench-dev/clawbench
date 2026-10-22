@@ -30,8 +30,8 @@
       </div>
     </div>
 
-    <div v-if="detail.loading.value" class="forge-loading">
-      <LoadingIndicator size="md" :label="t('forge.loading')" />
+    <div v-if="detail.loading.value" class="forge-loading forge-loading--skeleton">
+      <PanelSkeleton variant="text" :rows="10" :label="t('forge.loading')" />
     </div>
 
     <div v-else-if="detail.error.value" class="forge-error-card">
@@ -163,7 +163,7 @@ import {
   ChevronLeft, ChevronRight, ExternalLink, MessageSquare, AlertCircle, ListChecks,
   GitPullRequest,
 } from 'lucide-vue-next'
-import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import { useForgePipelineDetail } from '@/composables/useForge'
 import { formatDuration } from '@/utils/format'
 import type { ForgePipelineRun, ForgePipelinePullRequest } from '@/utils/forgeApi'

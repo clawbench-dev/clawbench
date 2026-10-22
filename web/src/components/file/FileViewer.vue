@@ -42,9 +42,11 @@
     <!-- Content row: file content + (wide-screen) inline TOC dock -->
     <div class="file-viewer-body" :data-toc-side="tocDockSide">
       <div class="file-viewer-content" ref="contentRef">
-        <!-- Loading (suppressed when external loading mask is active to avoid double flash) -->
+        <!-- Loading (suppressed when external loading mask is active to avoid double flash).
+             A preview has no rows to preserve, so the placeholder previews the
+             text shape instead of centring a spinner in an empty pane. -->
         <div v-if="loading && !externalLoading" class="loading">
-          <LoadingIndicator size="md" />
+          <PanelSkeleton class="file-viewer-skeleton" variant="text" :rows="10" :label="t('common.loading')" />
         </div>
 
       <!-- Error -->
@@ -283,7 +285,7 @@ import { useI18n } from 'vue-i18n'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { Download, Code2, AlertTriangle, Share2 } from 'lucide-vue-next'
 import UnsupportedFileBody from './UnsupportedFileBody.vue'
-import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import ImagePreview from '@/components/media/ImagePreview.vue'
 import PdfPreview from '@/components/media/PdfPreview.vue'
 import AudioPreview from '@/components/media/AudioPreview.vue'
@@ -1074,6 +1076,12 @@ defineExpose({
     align-items: center;
     justify-content: center;
     padding: 40px;
+}
+
+/* The placeholder owns its own width: the wrapper centres, but a text skeleton
+   squeezed to its content would not line up with the real paragraph. */
+.file-viewer-skeleton {
+    width: 100%;
 }
 
 

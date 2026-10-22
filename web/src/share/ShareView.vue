@@ -54,8 +54,8 @@
         ref="contentRef"
       >
         <!-- Loading -->
-        <div v-if="loading" class="share-center-hint">
-          <LoadingIndicator size="md" />
+        <div v-if="loading" class="share-center-hint share-center-hint--skeleton">
+          <PanelSkeleton variant="text" :rows="10" :label="t('common.loading')" />
         </div>
 
         <!-- Error / invalid link -->
@@ -223,7 +223,7 @@
 import { computed, onMounted, onBeforeUnmount, ref, defineAsyncComponent, provide, readonly, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Download, Eye, FileX2, List, ArrowLeft } from 'lucide-vue-next'
-import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
 import Lightbox from '@/components/media/Lightbox.vue'
 import PdfPreview from '@/components/media/PdfPreview.vue'
@@ -676,6 +676,13 @@ onBeforeUnmount(() => {
   height: 100%;
   padding: 32px;
   text-align: center;
+}
+
+/* Placeholder fills the reading column and left-aligns like the real body. */
+.share-center-hint--skeleton {
+  align-items: stretch;
+  justify-content: flex-start;
+  text-align: left;
 }
 
 .share-error-state {

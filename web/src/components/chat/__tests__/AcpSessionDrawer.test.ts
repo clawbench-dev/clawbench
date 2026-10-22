@@ -330,15 +330,17 @@ describe('AcpSessionDrawer', () => {
   })
 
   describe('loading indicator', () => {
-    it('shows a spinner icon while initial loading with no sessions', async () => {
+    it('shows a placeholder while initial loading with no sessions', async () => {
       mockLoading.value = true
       mockSessions.value = []
 
       const wrapper = mountDrawer()
       await nextTick()
 
-      expect(wrapper.find('.acp-session-empty .li-spinner').exists()).toBe(true)
-      expect(wrapper.text()).toContain('chat.acpSession.loading')
+      // First load previews the session rows; the loading text still reaches
+      // assistive tech through the skeleton's live region.
+      expect(wrapper.find('.acp-session-skeleton .panel-skeleton').exists()).toBe(true)
+      expect(wrapper.find('[role="status"]').text()).toContain('chat.acpSession.loading')
     })
 
     it('does not show the initial-loading spinner once sessions have loaded', async () => {

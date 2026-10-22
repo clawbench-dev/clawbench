@@ -6,7 +6,8 @@
     @close="handleClose"
   >
     <div class="avatar-picker__body">
-      <LoadingIndicator v-if="loading" :label="t('settings.items.agentAvatarLoading')" />
+      <!-- The body is a tile grid; preview tiles rather than a centred ring. -->
+      <PanelSkeleton v-if="loading" class="avatar-picker__skeleton" variant="grid" :rows="8" :label="t('settings.items.agentAvatarLoading')" />
 
       <div v-else-if="loadError" class="avatar-picker__error">
         <span>{{ t('settings.items.agentAvatarLoadFailed') }}</span>
@@ -71,7 +72,7 @@
 import { ref, shallowRef, computed, watch, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ModalDialog from '@/components/common/ModalDialog.vue'
-import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
 import { loadAvatarKit, AVATAR_STYLES, type AvatarStyle, type AvatarKit } from '@/utils/lazyAvatar'
 import { svgToDataUri } from '@/utils/svgDataUri'
@@ -202,6 +203,12 @@ onBeforeUnmount(() => {
   flex-direction: column;
   padding: var(--space-5) var(--space-7) var(--space-3);
   min-height: 120px;
+}
+
+/* The placeholder grid carries its own inset; strip the body's so the tiles
+   land where the real ones will. */
+.avatar-picker__skeleton {
+  margin: calc(var(--space-4) * -1) calc(var(--space-4) * -1);
 }
 
 .avatar-picker__seed-row {

@@ -1,6 +1,6 @@
 <template>
-  <div v-if="loading" class="git-diff-loading">
-    <LoadingIndicator size="md" />
+  <div v-if="loading" class="git-diff-loading git-diff-loading--skeleton">
+    <PanelSkeleton variant="text" :rows="12" :label="t('common.loading')" />
   </div>
   <div v-else-if="empty" class="git-diff-empty">{{ t('git.diffView.noChanges') }}</div>
   <!-- `data-quote-source` labels text selected inside the diff so the quote bar
@@ -28,7 +28,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import { openFilePath } from '@/composables/useFilePathAnnotation.ts'
 const { t } = useI18n()
 
@@ -108,6 +108,13 @@ function onDiffClick(event: MouseEvent) {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* Diff lines fill the pane; a centred block would be a narrow column. */
+.git-diff-loading--skeleton {
+  align-items: stretch;
+  justify-content: flex-start;
+  min-width: 0;
 }
 
 .git-diff-empty {

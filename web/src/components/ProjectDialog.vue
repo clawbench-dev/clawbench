@@ -28,7 +28,7 @@
 
     <!-- Content -->
     <div class="dialog-content">
-      <LoadingIndicator v-if="loading" size="md" :label="t('common.loading')" />
+      <PanelSkeleton v-if="loading" variant="list" :rows="8" :meta="true" :label="t('common.loading')" />
       <div v-else-if="displayItems.length === 0" class="dialog-empty">{{ searchQuery ? t('projectDialog.noMatchDirs') : t('projectDialog.emptyDir') }}</div>
       <div
         v-else
@@ -67,7 +67,7 @@ import { Folder, FolderPlus, Eye, EyeOff, Pencil, Trash2, LocateFixed } from 'lu
 import { ref, computed, watch, inject, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ModalDialog from './common/ModalDialog.vue'
-import LoadingIndicator from './common/LoadingIndicator.vue'
+import PanelSkeleton from './common/PanelSkeleton.vue'
 import SearchInput from './common/SearchInput.vue'
 import RefreshButton from './common/RefreshButton.vue'
 import DirBreadcrumb from './file/DirBreadcrumb.vue'

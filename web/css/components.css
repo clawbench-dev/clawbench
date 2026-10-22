@@ -368,6 +368,16 @@
     justify-content: center;
 }
 
+/* First-load placeholder fills the list area and aligns with the real rows;
+   centring a skeleton shrinks it to its content and floats a narrow column.
+   Global for the same reason as .forge-loading: four forge views share it. */
+.forge-loading--skeleton {
+    align-items: stretch;
+    justify-content: flex-start;
+    min-width: 0;
+    padding: var(--space-4) 0;
+}
+
 /* ── Error card ── */
 .forge-error-card {
     margin: var(--space-6);
@@ -994,16 +1004,24 @@
 
    Geometry is supplied by the caller (`width`/`height`/`border-radius`); this
    rule only owns the fill and the shimmer. `--skeleton-radius` lets a caller
-   opt into a pill shape without redeclaring the whole rule. */
+   opt into a pill shape without redeclaring the whole rule.
+
+   `--skeleton-fill` / `--skeleton-sheen` exist for the two places whose
+   backdrop is not the theme's: the PDF viewer and the lightbox both paint on
+   always-dark chrome, where the theme-derived grey is invisible. Overriding
+   those two variables keeps the shimmer definition in one place — a caller
+   that instead restated `background-image` would fork it. */
 .skeleton-block {
   --skeleton-radius: var(--radius-sm);
+  --skeleton-fill: var(--bg-tertiary, #e9ecef);
+  --skeleton-sheen: color-mix(in srgb, var(--bg-primary, #fff) 60%, transparent);
   display: block;
   border-radius: var(--skeleton-radius);
-  background-color: var(--bg-tertiary, #e9ecef);
+  background-color: var(--skeleton-fill);
   background-image: linear-gradient(
     90deg,
     transparent 0%,
-    color-mix(in srgb, var(--bg-primary, #fff) 60%, transparent) 50%,
+    var(--skeleton-sheen) 50%,
     transparent 100%
   );
   background-repeat: no-repeat;

@@ -4,7 +4,7 @@
       <SearchInput v-model="searchQuery" :placeholder="t('toc.searchPlaceholder')" @enter="listNav.confirm" @down="listNav.down" @up="listNav.up" @dblclick="clearSearch" />
     </div>
     <div class="toc-list" ref="listRef">
-      <LoadingIndicator v-if="loading" :label="t('toc.loading')" size="md" />
+      <PanelSkeleton v-if="loading" variant="list" :rows="10" :meta="false" :label="t('toc.loading')" />
       <div v-else-if="filteredToc.length === 0" class="toc-empty">{{ searchQuery ? t('toc.noMatch') : t('toc.noHeadings') }}</div>
       <a
         v-for="(item, idx) in filteredToc"
@@ -33,7 +33,7 @@ import { Braces, Box, Boxes, FileCode2, SquareAsterisk, ListOrdered, Variable, H
 import { ref, watch, nextTick, onBeforeUnmount, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import SearchInput from '@/components/common/SearchInput.vue'
-import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
 import { extractToc, slugify } from '@/utils/toc.ts'

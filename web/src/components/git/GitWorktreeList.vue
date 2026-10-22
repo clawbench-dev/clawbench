@@ -9,8 +9,8 @@
       <ChevronRight v-else :size="16" class="section-chevron" />
     </div>
     <div v-if="hideHeader || !collapsed" class="section-body">
-      <div v-if="loading" class="section-loading">
-        <LoadingIndicator size="sm" inline />
+      <div v-if="loading" class="section-skeleton">
+        <PanelSkeleton variant="list" :rows="3" :meta="true" :label="t('common.loading')" />
       </div>
       <div v-else-if="error" class="section-error">
         <span>{{ t('git.manage.loadError') }}</span>
@@ -34,7 +34,7 @@
 import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronDown, ChevronRight } from 'lucide-vue-next'
-import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import GitWorktreeCard from './GitWorktreeCard.vue'
 
 const { t } = useI18n()
@@ -124,10 +124,8 @@ function toggleCollapse() {
   flex-shrink: 0;
 }
 
-.section-loading {
-  display: flex;
-  justify-content: center;
-  padding: var(--space-7) 0;
+.section-skeleton {
+  padding: var(--space-2) 0;
 }
 
 .section-error {

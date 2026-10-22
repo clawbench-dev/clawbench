@@ -14,10 +14,10 @@
 
     <!-- ── Project pane: one list, with derived sessions folded into groups ── -->
     <div v-show="activeTab === 'project'" ref="listRef" class="session-list-pane">
-      <!-- Only show the full-screen spinner on first load / when the list is empty.
+      <!-- Only show the full-screen skeleton on first load / when the list is empty.
            On background refreshes the existing list stays visible so it can be
            swapped seamlessly to the new data (see loadSessions). -->
-      <LoadingIndicator v-if="loading && sessions.length === 0" size="md" :label="t('common.loading')" />
+      <PanelSkeleton v-if="loading && sessions.length === 0" class="session-list-skeleton" variant="list" :rows="10" :meta="false" :label="t('common.loading')" />
       <div v-else-if="sessions.length === 0" class="session-empty">{{ t('session.noSessions') }}</div>
       <template v-else>
         <!-- Order is the backend's: pinned DESC first (a fixed block at the top),
@@ -190,7 +190,7 @@
 
     <!-- ── Cross-project pane: active sessions in OTHER projects ── -->
     <div v-show="activeTab === 'cross'" class="session-list-pane session-list-pane--cross">
-      <LoadingIndicator v-if="crossLoading && !crossLoaded" size="md" :label="t('common.loading')" />
+      <PanelSkeleton v-if="crossLoading && !crossLoaded" class="session-list-skeleton" variant="list" :rows="8" :meta="false" :label="t('common.loading')" />
       <div v-else-if="crossGroups.length === 0" class="session-empty">{{ t('session.crossEmpty') }}</div>
       <template v-else>
         <div v-for="group in crossGroups" :key="group.name" class="cross-group">
@@ -317,7 +317,7 @@ import { ref, reactive, watch, computed, nextTick, onMounted, onUnmounted } from
 import { useI18n } from 'vue-i18n'
 import { VueDraggable } from 'vue-draggable-plus'
 import { Archive, ChevronDown, Pin, PinOff, PencilLine, MessageSquareShare, Tags, Trash2, MoreVertical, Split, Users, Crown, AtSign, ShieldAlert } from 'lucide-vue-next'
-import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import SessionGroupHeader from '@/components/session/SessionGroupHeader.vue'
 import SessionTagDialog from '@/components/session/SessionTagDialog.vue'
 import SessionShareDialog from '@/components/session/SessionShareDialog.vue'
@@ -1230,6 +1230,12 @@ onUnmounted(() => {
   justify-content: center;
   color: var(--text-muted, #999);
   font-size: var(--font-size-md);
+}
+
+/* First-load placeholder: rows line up with the real .session-row geometry
+   (44px min height) instead of a centred spinner in an empty pane. */
+.session-list-skeleton {
+  padding: var(--space-2) var(--space-3);
 }
 
 .session-item {

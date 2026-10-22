@@ -1,7 +1,16 @@
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { createI18n } from 'vue-i18n'
 import FileOverlay from '../FileOverlay.vue'
 import { _resetForTest as _resetWideForTest } from '@/composables/useWideScreenLayout'
+
+// FileOverlay now renders the panel skeleton for its loading mask, which reads
+// a translated label — so the component needs a real i18n instance.
+const i18n = createI18n({
+  legacy: false,
+  locale: 'en',
+  messages: { en: { common: { loading: 'Loading' } } },
+})
 
 // FileViewer stub forwards the inline TOC dock props/events so tests can
 // verify FileOverlay passes them through.
@@ -41,7 +50,7 @@ describe('FileOverlay', () => {
     setViewportWidth(800)
     const wrapper = mount(FileOverlay, {
       props: { overlayOpen: true, currentFile: { path: 'test.txt' } },
-      global: { stubs },
+      global: { stubs, plugins: [i18n] },
     })
     expect(wrapper.find('.file-overlay').exists()).toBe(true)
   })
@@ -50,7 +59,7 @@ describe('FileOverlay', () => {
     setViewportWidth(800)
     const wrapper = mount(FileOverlay, {
       props: { overlayOpen: false },
-      global: { stubs },
+      global: { stubs, plugins: [i18n] },
     })
     expect(wrapper.find('.file-overlay').exists()).toBe(false)
   })
@@ -59,7 +68,7 @@ describe('FileOverlay', () => {
     setViewportWidth(800)
     const wrapper = mount(FileOverlay, {
       props: { overlayOpen: true, currentFile: {} },
-      global: { stubs },
+      global: { stubs, plugins: [i18n] },
     })
     expect(typeof wrapper.vm.pdfScrollToPage).toBe('function')
     expect(typeof wrapper.vm.focusSearchInput).toBe('function')
@@ -71,7 +80,7 @@ describe('FileOverlay — TOC dock vs drawer', () => {
     setViewportWidth(800)
     const wrapper = mount(FileOverlay, {
       props: { overlayOpen: true, currentFile: { path: 'a.md' }, tocOpen: true },
-      global: { stubs },
+      global: { stubs, plugins: [i18n] },
     })
     expect(wrapper.findComponent({ name: 'TocDrawer' }).exists()).toBe(true)
     // Narrow screen: FileViewer receives docked=false so it won't render TocDock.
@@ -83,7 +92,7 @@ describe('FileOverlay — TOC dock vs drawer', () => {
     setViewportWidth(1400)
     const wrapper = mount(FileOverlay, {
       props: { overlayOpen: true, currentFile: { path: 'a.md' }, tocOpen: true, tocFile: { name: 'a.md' }, pdfOutline: [] },
-      global: { stubs },
+      global: { stubs, plugins: [i18n] },
     })
     const viewer = wrapper.findComponent({ name: 'FileViewer' })
     expect(viewer.props('docked')).toBe(true)
@@ -96,7 +105,7 @@ describe('FileOverlay — TOC dock vs drawer', () => {
     setViewportWidth(1400)
     const wrapper = mount(FileOverlay, {
       props: { overlayOpen: true, currentFile: { path: 'a.md' }, tocOpen: true },
-      global: { stubs },
+      global: { stubs, plugins: [i18n] },
     })
     await wrapper.find('.viewer-close-toc-stub').trigger('click')
     expect(wrapper.emitted('closeToc')).toBeTruthy()
@@ -107,7 +116,7 @@ describe('FileOverlay — TOC dock vs drawer', () => {
     setViewportWidth(1400)
     const wrapper = mount(FileOverlay, {
       props: { overlayOpen: true, currentFile: { path: 'a.md' }, tocOpen: true },
-      global: { stubs },
+      global: { stubs, plugins: [i18n] },
     })
     const viewer = wrapper.findComponent({ name: 'FileViewer' })
     viewer.vm.$emit('jump', 12)

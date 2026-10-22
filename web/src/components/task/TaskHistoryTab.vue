@@ -1,8 +1,7 @@
 <template>
   <div ref="listRef" class="task-history-tab">
-    <div v-if="loading && allExecutions.length === 0" class="history-empty">
-      <LoadingIndicator size="sm" inline />
-      <span>{{ t('common.loading') }}</span>
+    <div v-if="loading && allExecutions.length === 0" class="history-skeleton">
+      <PanelSkeleton variant="list" :rows="8" :meta="true" :label="t('common.loading')" />
     </div>
     <div v-else-if="allExecutions.length === 0" class="history-empty">
       <History class="empty-icon" :size="32" />
@@ -90,6 +89,7 @@ import { useGlobalEvents } from '@/composables/useGlobalEvents.ts'
 import { eventSourceLabel } from '@/utils/forgeEventLabels'
 import { formatDuration, formatDateTime } from '@/utils/format.ts'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 
 const props = defineProps({
   task: Object,
@@ -378,6 +378,10 @@ defineExpose({
   padding: 24px 0;
   color: var(--text-muted, #999);
   font-size: var(--font-size-lg);
+}
+
+.history-skeleton {
+  padding: var(--space-2) 0;
 }
 
 .empty-icon {

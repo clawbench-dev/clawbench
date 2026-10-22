@@ -130,7 +130,7 @@
             <span>{{ t('chat.attach.clearAll') }}</span>
           </button>
         </div>
-        <LoadingIndicator v-if="loading" size="md" />
+        <PanelSkeleton v-if="loading" variant="list" :rows="6" :meta="false" :label="t('common.loading')" />
         <div v-else-if="!recentShares?.length" class="ad-empty">{{ t('chat.attach.emptyShares') }}</div>
         <button
           v-for="item in recentShares" :key="item.path"
@@ -196,7 +196,7 @@
           </button>
         </div>
         <!-- Completed uploads from server -->
-        <LoadingIndicator v-if="loading && !recentUploads?.length && uploadingFiles.length === 0" size="md" />
+        <PanelSkeleton v-if="loading && !recentUploads?.length && uploadingFiles.length === 0" variant="list" :rows="6" :meta="false" :label="t('common.loading')" />
         <div v-else-if="!recentUploads?.length && uploadingFiles.length === 0" class="ad-empty">{{ t('chat.attach.emptyUploads') }}</div>
         <button
           v-for="item in recentUploads" :key="item.path"
@@ -248,6 +248,7 @@ import FileIcon from '@/components/common/FileIcon.vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import AttachmentTags from '@/components/chat/AttachmentTags.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import { useI18n } from 'vue-i18n'
 import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast'

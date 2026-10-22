@@ -90,9 +90,9 @@ describe('GitWorktreeList', () => {
     expect(wrapper.find('.section-empty').text()).toBe('No worktrees')
   })
 
-  it('shows loading spinner when loading is true', () => {
+  it('shows a placeholder when loading is true', () => {
     const wrapper = mountList({ loading: true })
-    expect(wrapper.find('.section-loading').exists()).toBe(true)
+    expect(wrapper.find('.section-skeleton').exists()).toBe(true)
     expect(wrapper.find('.section-empty').exists()).toBe(false)
   })
 

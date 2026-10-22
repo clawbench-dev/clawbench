@@ -39,6 +39,12 @@ vi.mock('@/utils/themeMeta', () => ({
   isDarkTheme: () => false,
 }))
 
+// The loading placeholder announces itself through a translated label, so the
+// component needs an i18n instance.
+vi.mock('vue-i18n', () => ({
+  useI18n: () => ({ t: (k: string) => k }),
+}))
+
 vi.mock('@/composables/useQuoteQuestion.ts', () => ({
   useQuoteQuestion: () => ({
     showBar: quoteState.showBar,

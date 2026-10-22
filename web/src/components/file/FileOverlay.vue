@@ -44,9 +44,12 @@
             @jump="(line, anchorId) => emit('jump', line, anchorId)"
             @jump-page="emit('jumpPage', $event)"
           />
-          <!-- File loading mask — same style as chat session-switch -->
+          <!-- File loading mask — masks the previous file's content while the
+               new one arrives, so the placeholder also has to be opaque. -->
           <Transition name="loading-fade">
-            <LoadingIndicator v-if="fileLoading" overlay size="md" />
+            <div v-if="fileLoading" class="file-loading-mask">
+              <PanelSkeleton variant="text" :rows="10" :label="t('common.loading')" />
+            </div>
           </Transition>
         </div>
 
@@ -86,7 +89,8 @@
 
 <script setup>
 import { ref, computed } from 'vue'
-import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import { useI18n } from 'vue-i18n'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import FileViewer from '@/components/file/FileViewer.vue'
 import TocDrawer from '@/components/TocDrawer.vue'
 import SearchDrawer from '@/components/common/SearchDrawer.vue'
@@ -95,6 +99,7 @@ import { getWideScreenState } from '@/composables/useWideScreenLayout'
 import { readLineTargetFromEl } from '@/composables/useFilePathAnnotation.ts'
 
 const { isWideScreen } = getWideScreenState()
+const { t } = useI18n()
 
 const props = defineProps({
   overlayOpen: Boolean,
@@ -233,6 +238,17 @@ function handleContentClick(event) {
   display: flex;
   flex-direction: column;
   position: relative;
+}
+
+/* Opaque mask: the previous file's content is still mounted underneath, so a
+   transparent placeholder would show two documents at once. */
+.file-loading-mask {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  background: var(--bg-primary, #fff);
+  padding: var(--space-6);
+  overflow: hidden;
 }
 </style>
 

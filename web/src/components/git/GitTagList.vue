@@ -1,7 +1,7 @@
 <template>
   <div class="git-tag-list">
-    <div v-if="loading" class="section-loading">
-      <LoadingIndicator size="sm" inline />
+    <div v-if="loading" class="section-skeleton">
+      <PanelSkeleton variant="list" :rows="4" :meta="true" :label="t('common.loading')" />
     </div>
     <div v-else-if="error" class="section-error">
       <span>{{ t('git.manage.loadError') }}</span>
@@ -41,7 +41,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Tag, Trash2 } from 'lucide-vue-next'
-import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 
 const { t } = useI18n()
 
@@ -83,10 +83,8 @@ function shortDate(dateStr: string) {
   -webkit-overflow-scrolling: touch;
 }
 
-.section-loading {
-  display: flex;
-  justify-content: center;
-  padding: 24px 0;
+.section-skeleton {
+  padding: var(--space-2) 0;
 }
 
 .section-error {

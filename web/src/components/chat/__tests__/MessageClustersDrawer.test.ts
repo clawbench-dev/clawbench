@@ -171,7 +171,10 @@ describe('MessageClustersDrawer', () => {
   it('renders loading state', () => {
     mockLoading.value = true
     const wrapper = mountDrawer()
-    expect(wrapper.find('.loading-indicator .li-spinner').exists()).toBe(true)
+    // First load previews the cluster rows; the ring only remains for in-place
+    // actions, not for filling an empty drawer.
+    expect(wrapper.find('.panel-skeleton').exists()).toBe(true)
+    expect(wrapper.find('.li-spinner').exists()).toBe(false)
   })
 
   it('renders cached results with clusters and header reanalyze button', () => {

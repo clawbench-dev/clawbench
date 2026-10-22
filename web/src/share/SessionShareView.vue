@@ -37,8 +37,8 @@
 
     <div class="share-body">
       <div class="share-content session-share-content" ref="contentRef">
-        <div v-if="loading" class="share-center-hint">
-          <LoadingIndicator size="md" />
+        <div v-if="loading" class="share-center-hint share-center-hint--skeleton">
+          <PanelSkeleton variant="text" :rows="10" :label="t('common.loading')" />
         </div>
 
         <div v-else-if="error" class="share-error-state">
@@ -201,7 +201,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, watch } f
 import { useI18n } from 'vue-i18n'
 import { Download, FileX2, List, X } from 'lucide-vue-next'
 import AgentIcon from '@/components/common/AgentIcon.vue'
-import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import ChatMessageItem from '@/components/chat/ChatMessageItem.vue'
 import MessageIndexRow from '@/components/chat/MessageIndexRow.vue'
 import AvatarStack, { type StackMember } from '@/components/common/AvatarStack.vue'
@@ -856,6 +856,13 @@ onBeforeUnmount(() => {
   padding: 32px;
   color: var(--text-muted, #656d76);
   text-align: center;
+}
+
+/* Placeholder fills the reading column and left-aligns like the real body. */
+.share-center-hint--skeleton {
+  align-items: stretch;
+  justify-content: flex-start;
+  text-align: left;
 }
 
 .share-error-title {

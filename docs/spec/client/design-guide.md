@@ -381,6 +381,16 @@
 - **数据统计的骨架屏**：`components/stats/StatsSkeleton.vue` 复用同一个 `.skeleton-block` 原语，按面板形状给出「总览卡 → 表格行 → 图表」三段（各段由 `cards`/`table-rows`/`chart` 按需关闭）。它**不复用** `.stats-card-panel`——那个类已经在 usage/cloc/git 三个 scoped 块里各有一份，再加第四份只会让漂移更难收；改用自带的 `.stats-skeleton-section`，几何刻意与真卡一致。可见块全部 `aria-hidden`，加载文案由唯一的 `role="status"` 承载（否则读屏用户在加载期间听到的是空白）。行宽是**固定循环**而非随机：微光已经在表达「加载中」，随机宽度会在重渲染时跳动、读作内容先到再变。
   - **触发要延迟一拍**（`composables/useDelayedFlag.ts`，默认 120ms）：统计查询是本地 SQLite 聚合，常在几十毫秒内返回，每次点周期都闪一次灰块比等待本身更扎眼；延迟后只有真正慢的加载才显示骨架屏。源标志变 false 时**立即**清除，不留尾随骨架屏。
   - **骨架屏必须替换掉旧数字**，不能覆盖在旧数字上：用户抱怨的「静默卡住」正是「控件已变、数字没变、也没有任何加载信号」——保留上一周期的数值等于把旧数据冒充新数据。
+- **面板首屏骨架屏（`components/common/PanelSkeleton.vue`）**：所有 dock 面板的**首次加载**都用它，不再用居中圆环。圆环只说「在等」，不说「要来的长什么样」，而且会让整个面板塌成一个字形。三种形状 `variant`：
+  - `list`（默认）——行 = `[leading 图标块] 主文本 + 副文本 [meta 块]`，`leading`/`meta` 可关。用于文件列表、会话列表、Git 提交、Forge 列表、任务、通知、代理端口、选择器。
+  - `grid`——方形缩略图 + 标题，几何对齐 `.file-grid`（`minmax(90px,1fr)`）。用于文件网格与搜索结果网格。
+  - `text`——段落行。用于文件预览、diff、分享页正文、OpenAPI 文档。
+  - **行宽是固定循环**，与 `ChatSkeleton`/`StatsSkeleton` 同一理由：微光已在表达「加载中」，随机宽度会在重渲染时跳动。
+  - **可见块全部 `aria-hidden`**，加载文案由唯一的 `role="status"` 承载。`label` 传现有 i18n 键（`common.loading` / `forge.loading` / …），不要新造文案。
+  - **必须铺满容器并左对齐**：`.git-history-loading` / `.forge-loading` / `.task-loading` 等旧容器是 `align-items:center`，直接把骨架塞进去会缩成中间一条窄柱。做法是加 `--skeleton` 修饰类（`align-items:stretch; justify-content:flex-start`），或给骨架一个自带宽度的类。
+  - **只替换首屏，不替换三种「有内容在场」的加载**：①已有数据的刷新遮罩（文件管理器切目录时的 `dirLoading && displayEntries.length > 0`，旧行必须留在原地）②「加载更多」页脚 ③按钮内联 spinner / 进行中动作（如消息索引的 `jumping`）。这三类继续用 `LoadingIndicator`。
+  - 守卫：`PanelSkeleton.test.ts`（形状 / a11y / 固定宽度）与 `panelSkeletonUsage.test.ts`（51 个面板必须渲染骨架；除白名单外的面板级 `LoadingIndicator` 一律失败；`.skeleton-block` 必须留在全局表）。
+  - **深色背景上的骨架**：原语的两个颜色是变量 `--skeleton-fill` / `--skeleton-sheen`。PDF 预览与灯箱的底色是写死的深色，主题派生的灰块在那里几乎不可见——覆盖这两个变量即可，**不要**在调用处重述 `background-image`（那会把微光定义复制一份，两边必然漂移）。
 - 非 CSS 动效：running 彗星走 WAAPI 指令 `directives/runningSweep.ts`（1500ms，`cubic-bezier(.45,.05,.55,.95)`，与文档时间轴相位锁定）。
 - **会话行底边只有一层效果**：3px 平轨道 + 38% 彗星（`--running-track` / `--running-comet` / `--running-head`）。**不要再叠第二层**——曾经是「14px 带 mask 的光晕 + 80% 扫过光带」两层，看起来像两个效果打架、且光晕把光带糊成环境光。待审批时彗星停止并变成整条琥珀呼吸（`--pending-track` / `--pending-comet`）。**被阻塞的行必须换一个不带指令的元素**：指令用 WAAPI 写 `transform`，优先级高于普通 CSS `transform`，同一元素无法靠样式停下。守卫：`runningSweepTheme.css.test.ts`。
 - **会话行状态槽（`.session-status`）用「形状」为主、「动效/颜色」为辅区分状态**：待审批＝**盾牌图标**（lucide `ShieldAlert`，原地脉动）、未读＝单点完全静止的圆点。**审批/权限相关的图标统一为盾牌**（同一盾牌还用在通知中心待审批事件芯片、聊天底栏模式芯片与群聊自动批准芯片、模式切换弹窗的 Mode 页签、权限结果芯片的 `ShieldCheck`/`ShieldX`、`PermissionApproval` 工具图标）。形状领先于色相的理由是可测量的——36 套主题里有 3 套（ayu-light / gruvbox-light / gruvbox-dark）的 `--accent-color` 与 `--color-orange` **完全相同**，色相本就无法承载区分；且色觉障碍读者拿不到色相信息。待审批盾牌用 `color: var(--status-dot-pending)` 着色（`currentColor` 描边）；未读仍是 14px 槽内的 8px `radial-gradient` 填充（`--status-dot`）；两者**都不得用 `border`**——那正是已移除的环的画法。**运行中在槽里什么都不显示**：底边彗星已经在表达「正在推进」，右侧再放一个环是同一事实说两遍（这也是槽原先唯一需要 `border` 的原因）；且槽是 `v-if` 的，无状态即不渲染元素，不占宽度（「没有东西展示时该空间不要占地方」）。因此**没有 `--running-ring` / `--running-ring-track` 这两个 token，也不得有 `.session-status.is-running` 规则或 `session-status-spin` keyframes**（守卫显式断言它们不存在）。优先级 pending > unread（`rowStatus()`）；运行中 + 有未读的行会显示未读点，因为彗星与点走两条通道。被阻塞时底部彗星停止并变为整条琥珀呼吸，且**必须换一个不带指令的元素**（`v-if`/`v-else` 两个 `<i>`）——指令用 WAAPI 写 `transform`，`transform:none` 压不过它。**槽必须与标题保持间距**：`.session-status` 自带 `margin-left: var(--space-4)`，同时 `.session-item` / `.cross-session-item` 的右内边距收到 `var(--space-4)`（其余三边仍是 `var(--space-6)`）——原先 12px 右内边距 + 无 margin 会让槽的左边缘**正好落在标题省略号边界上**（线上实测 0px），而槽与 ⋮ 之间却空着 ~10px；现在两侧各约 11px。守卫：`sessionStatusSlot.css.test.ts`。
@@ -556,6 +566,8 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 | `components/common/__tests__/BusyBar.test.ts` | 长动作进度条存在且动画在、**无** reduced-motion opt-out（扫过即信息）、不吞指针事件 |
 | `components/common/__tests__/sharedRingUnification.test.ts` | 加载环全局唯一、调用方不得重述形状、**全仓只有一个 `--li-border` 比例**（走查源码）、覆盖类必须带祖先 |
 | `components/common/__tests__/spinnerUnification.test.ts` | 迁移到 LoadingIndicator 的 6 处保留各自 `--li-color`、不再自带 animation/keyframes、`size` 用档位而非数字 |
+| `components/common/__tests__/PanelSkeleton.test.ts` | 骨架屏三种形状、`leading`/`meta` 可关、可见块 `aria-hidden` + 唯一 `role=status`、行宽固定循环 |
+| `components/common/__tests__/panelSkeletonUsage.test.ts` | 51 个面板首屏必须渲染 `PanelSkeleton`；白名单外的面板级 `LoadingIndicator` 失败；`.skeleton-block` 必须留在全局表且组件内不得重述 |
 | `components/chat/__tests__/chatPanelBusyWiring.test.ts` | `startBusy` 认领制（不抢占）、各自只释放自己的 kind、BusyBar 已挂载、卸载清 ticker |
 | `components/file/__tests__/dockedPaneStacking.css.test.ts` | 停靠预览窗格层级 |
 | `components/forge/__tests__/forgeDetailChrome.css.test.ts` | forge 面板 chrome 全局 |

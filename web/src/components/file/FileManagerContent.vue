@@ -263,12 +263,17 @@
       @dragend="onDragEnd"
     >
       <template v-if="searchHasQuery">
-        <LoadingIndicator v-if="search.state.searching && search.state.results.length === 0" size="md" :label="t('file.search.searching')" />
+        <PanelSkeleton v-if="search.state.searching && search.state.results.length === 0" variant="list" :rows="8" :meta="false" :label="t('file.search.searching')" />
         <div v-else-if="search.state.results.length === 0 && !search.state.searching" class="empty-state fs-search-empty">
           <FileX :size="56" class="fs-search-empty-icon" />
           <p class="fs-search-empty-text">{{ t('file.search.noResults') }}</p>
         </div>
       </template>
+      <!-- First load of a directory: preview the row shape instead of covering
+           an empty panel with a spinner. A refresh that already has rows on
+           screen keeps the overlay below (the old rows must stay put, and
+           swapping them for grey blocks would read as a navigation). -->
+      <PanelSkeleton v-else-if="dirLoading && displayEntries.length === 0" variant="list" :rows="8" :meta="true" :label="t('common.loading')" />
       <div v-else-if="filteredEntries.length === 0 && !dirLoading" class="empty-state">
         <FileIcon path="" :is-dir="true" :size="48" />
         <p>{{ currentDir ? t('file.emptyDir') : t('file.noFiles') }}</p>
@@ -335,12 +340,13 @@
       @dragend="onDragEnd"
     >
       <template v-if="searchHasQuery">
-        <LoadingIndicator v-if="search.state.searching && search.state.results.length === 0" size="md" :label="t('file.search.searching')" />
+        <PanelSkeleton v-if="search.state.searching && search.state.results.length === 0" variant="grid" :rows="12" :label="t('file.search.searching')" />
         <div v-else-if="search.state.results.length === 0 && !search.state.searching" class="empty-state fs-search-empty">
           <FileX :size="56" class="fs-search-empty-icon" />
           <p class="fs-search-empty-text">{{ t('file.search.noResults') }}</p>
         </div>
       </template>
+      <PanelSkeleton v-else-if="dirLoading && displayEntries.length === 0" variant="grid" :rows="12" :label="t('common.loading')" />
       <div v-else-if="filteredEntries.length === 0 && !dirLoading" class="empty-state">
         <FileIcon path="" :is-dir="true" :size="48" />
         <p>{{ currentDir ? t('file.emptyDir') : t('file.noFiles') }}</p>
@@ -388,7 +394,9 @@
       </div>
     </Transition>
     <Transition name="loading-fade">
-      <LoadingIndicator v-if="dirLoading" overlay size="md" />
+      <!-- Only for refreshes of an already-populated listing; the first load of
+           a directory is previewed in place by the skeleton above. -->
+      <LoadingIndicator v-if="dirLoading && displayEntries.length > 0" overlay size="md" />
     </Transition>
     <div v-if="searchHasQuery && search.state.truncated" class="fs-truncated">
       {{ t('file.search.truncated') }}
@@ -552,6 +560,7 @@
 
 <script setup>
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import { ref, computed, reactive, inject, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { isRefreshing } from '@/composables/useFileRefresh'
