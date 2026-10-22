@@ -258,4 +258,66 @@ test.describe('Agent Team Panel', () => {
     const box = await name.boundingBox()
     expect(box!.width).toBeGreaterThan(20)
   })
+
+  test('member detail sheet is wide and renders the role as Markdown', async ({ page }) => {
+    // The sheet carries the member's full instructions, which are long-form
+    // Markdown. Two things must hold in a REAL browser (jsdom has no layout and
+    // no Markdown pipeline): the card is wider than the 624px default, and the
+    // text renders as Markdown rather than a literal dump.
+    const role = [
+      '你是 ClawBench 仓库的代码审查员。',
+      '',
+      '## 任务',
+      '审查媒体缩放相关的改动：`web/src/utils/inlineZoom.ts:181`',
+      '',
+      '| 严重度 | 位置 | 问题 |',
+      '|---|---|---|',
+      '| P1 | `inlineZoom.ts:181` | refitHook 早于 is-zooming 移除 |',
+      '',
+      '```go',
+      'func main() { fmt.Println("hi") }',
+      '```',
+    ].join('\n')
+
+    await injectTeam(page, {
+      type: 'member_status_change',
+      teamName: 'clawbench-review',
+      hasLiveMembers: true,
+      members: [{
+        name: 'review-media',
+        agentType: 'general-purpose',
+        color: 'blue',
+        status: 'completed',
+        description: role,
+        toolCallCount: 17,
+        tokenUsage: { inputTokens: 136675, outputTokens: 253 },
+      }],
+    })
+    await expect(page.locator('.team-chip')).toBeVisible({ timeout: 5000 })
+    await page.locator('.team-chip').click()
+    await page.locator('[data-action="team-member-detail"]').first().click()
+    await expect(page.locator('.team-member-detail__name')).toBeVisible()
+
+    const card = await page.evaluate(() => {
+      const panel = document.querySelector('.bs-panel') as HTMLElement
+      const md = document.querySelector('.team-member-detail__markdown') as HTMLElement
+      return {
+        panelWidth: Math.round(panel.getBoundingClientRect().width),
+        h2: md.querySelectorAll('h2').length,
+        table: md.querySelectorAll('table').length,
+        pre: md.querySelectorAll('pre').length,
+        // A plain-text dump would leave the raw '## ' in the rendered text.
+        literalHeading: (md.textContent || '').includes('## 任务'),
+        pathChips: md.querySelectorAll('.chat-file-path').length,
+      }
+    })
+
+    // Wider than modal-card.css's 624px default — that is what "wider" means.
+    expect(card.panelWidth).toBeGreaterThan(624)
+    expect(card.h2).toBe(1)
+    expect(card.table).toBe(1)
+    expect(card.pre).toBe(1)
+    expect(card.literalHeading).toBe(false)
+    expect(card.pathChips).toBeGreaterThan(0)
+  })
 })

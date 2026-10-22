@@ -712,16 +712,12 @@ export default {
       },
       detail: {
         open: 'View details for {name}',
-        prompt: 'Full prompt',
-        output: 'Result',
         description: 'Role',
         activity: 'Activity',
         lifecycle: 'Lifecycle',
         toolCalls: 'Tool calls',
         taskId: 'Task ID',
         sessionId: 'Session ID',
-        loadingPrompt: 'Loading prompt…',
-        noPrompt: 'This member has no prompt to show',
       },
     },
     sessionSetting: {

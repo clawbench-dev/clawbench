@@ -47,16 +47,12 @@ const i18n = createI18n({
           },
           detail: {
             open: 'View details for {name}',
-            prompt: 'Full prompt',
-            output: 'Result',
             description: 'Role',
             activity: 'Activity',
             lifecycle: 'Lifecycle',
             toolCalls: 'Tool calls',
             taskId: 'Task ID',
             sessionId: 'Session ID',
-            loadingPrompt: 'Loading prompt…',
-            noPrompt: 'no prompt',
           },
         },
       },
@@ -64,20 +60,8 @@ const i18n = createI18n({
   },
 })
 
-// The detail sheet resolves the member's Agent card through an injected lookup
-// (ChatPanelContent owns the messages array). Tests supply one per case.
-let _lookup: ((name: string) => { toolId: string; msgId: string | number } | null) | null = null
-function provide(over: { teamMemberCardLookup?: typeof _lookup }) {
-  _lookup = over.teamMemberCardLookup ?? null
-}
-
 function mountPanel() {
-  return mount(TeamPanel, {
-    global: {
-      plugins: [i18n],
-      provide: { teamMemberCardLookup: (n: string) => _lookup?.(n) ?? null },
-    },
-  })
+  return mount(TeamPanel, { global: { plugins: [i18n] } })
 }
 
 function snapshot(over: Partial<TeamState> = {}): TeamState {
@@ -96,7 +80,6 @@ function snapshot(over: Partial<TeamState> = {}): TeamState {
 describe('TeamPanel', () => {
   beforeEach(() => {
     clearTeamState()
-    _lookup = null
     vi.unstubAllGlobals()
   })
 
@@ -506,47 +489,67 @@ describe('TeamPanel — member detail', () => {
     expect(wrapper.get('.team-member-detail__name').text()).toBe('probe-alpha')
   })
 
-  it('renders the member prompt as Markdown, not escaped text', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        input: JSON.stringify({ name: 'probe-alpha', prompt: '# Heading\n\n- one\n- two\n\n`src/main.go`' }),
-      }),
-    })
-    vi.stubGlobal('fetch', fetchMock)
-    provide({ teamMemberCardLookup: () => ({ toolId: 'call_a', msgId: 7 }) })
-
-    updateTeamState(snapshot())
-    const wrapper = mountPanel()
-    await wrapper.vm.$nextTick()
-    await wrapper.get('[data-action="team-member-detail"]').trigger('click')
-    await flushPromises()
-
-    const prompt = wrapper.get('.team-member-detail__prompt')
-    // Markdown structure survived — a <pre> dump would contain the literal '#'.
-    expect(prompt.find('h1').exists()).toBe(true)
-    expect(prompt.findAll('li').length).toBe(2)
-    expect(prompt.text()).not.toContain('# Heading')
-    // The path was annotated (chip class is applied by the annotator).
-    expect(prompt.html()).toContain('src/main.go')
-    expect(fetchMock).toHaveBeenCalledWith(
-      '/api/ai/chat/tool-call?tool_id=call_a&message_id=7',
-    )
-  })
-
-  it('shows a notice instead of fetching when no Agent card is found', async () => {
+  it('renders the roster description as Markdown, with no request at all', async () => {
+    // The roster's `description` IS the member's full instructions (verified
+    // byte-for-byte against the spawn prompt by an integration probe), so the
+    // sheet must render it directly — fetching the prompt again returned the
+    // same text, and came back EMPTY after an interruption.
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
-    provide({ teamMemberCardLookup: () => null })
-
-    updateTeamState(snapshot())
+    updateTeamState(
+      snapshot({
+        members: [{
+          name: 'probe-alpha',
+          status: 'running',
+          description: '# Heading\n\n- one\n- two\n\n`src/main.go`',
+        }],
+      }),
+    )
     const wrapper = mountPanel()
     await wrapper.vm.$nextTick()
     await wrapper.get('[data-action="team-member-detail"]').trigger('click')
     await flushPromises()
 
-    expect(fetchMock).not.toHaveBeenCalled()
-    expect(wrapper.text()).toContain('no prompt')
+    const body = wrapper.get('.team-member-detail__markdown')
+    // Markdown structure survived — a plain-text dump would show the literal '#'.
+    expect(body.find('h1').exists()).toBe(true)
+    expect(body.findAll('li').length).toBe(2)
+    expect(body.text()).not.toContain('# Heading')
+    // The path was annotated.
+    expect(body.html()).toContain('src/main.go')
+    // No tool-call endpoint call: the text came from the roster snapshot.
+    // (Path verification legitimately calls /api/file/batch-exists, so the
+    // assertion is scoped to the endpoint that was removed.)
+    const calledUrls = fetchMock.mock.calls.map((c) => String(c[0]))
+    expect(calledUrls.some((u) => u.includes('/api/ai/chat/tool-call'))).toBe(false)
+  })
+
+  it('shows nothing for the role section when the member has no description', async () => {
+    updateTeamState(
+      snapshot({ members: [{ name: 'bare', status: 'running' }] }),
+    )
+    const wrapper = mountPanel()
+    await wrapper.vm.$nextTick()
+    await wrapper.get('[data-action="team-member-detail"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.team-member-detail__markdown').exists()).toBe(false)
+  })
+
+  it('does not repeat the description in the facts grid', async () => {
+    // The description is the Markdown body; a fact row would show it twice.
+    updateTeamState(
+      snapshot({
+        members: [{ name: 'probe-alpha', status: 'running', description: 'UNIQUE-ROLE-TEXT' }],
+      }),
+    )
+    const wrapper = mountPanel()
+    await wrapper.vm.$nextTick()
+    await wrapper.get('[data-action="team-member-detail"]').trigger('click')
+    await flushPromises()
+
+    const facts = wrapper.get('.team-member-detail__facts').text()
+    expect(facts).not.toContain('UNIQUE-ROLE-TEXT')
+    expect(wrapper.get('.team-member-detail__markdown').text()).toContain('UNIQUE-ROLE-TEXT')
   })
 
   it('lists the wire facts the roster cannot fit', async () => {
@@ -571,24 +574,23 @@ describe('TeamPanel — member detail', () => {
 // never sees its path chips. The drawer must route them itself, through the
 // same resolver, or a path in a member's prompt is dead text.
 describe('TeamMemberDetail — path chips', () => {
-  it('opens the file when a path chip inside the prompt is clicked', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ input: JSON.stringify({ prompt: 'see `src/main.go`' }) }),
-    })
+  it('opens the file when a path chip inside the role text is clicked', async () => {
+    const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
-    provide({ teamMemberCardLookup: () => ({ toolId: 'call_a', msgId: 9 }) })
-
-    updateTeamState(snapshot())
+    updateTeamState(
+      snapshot({
+        members: [{ name: 'probe-alpha', status: 'running', description: 'see `src/main.go`' }],
+      }),
+    )
     const wrapper = mountPanel()
     await wrapper.vm.$nextTick()
     await wrapper.get('[data-action="team-member-detail"]').trigger('click')
     await flushPromises()
 
-    // The prompt rendered a path chip plus its open button. Clicking the
+    // The role text rendered a path chip plus its open button. Clicking the
     // BUTTON is the chat's own contract for FILE paths (directory paths open by
     // clicking the chip text) — the drawer mirrors it exactly.
-    const btn = wrapper.get('.team-member-detail__prompt .chat-file-open-btn')
+    const btn = wrapper.get('.team-member-detail__markdown .chat-file-open-btn')
     fetchMock.mockClear()
     await btn.trigger('click')
     await flushPromises()

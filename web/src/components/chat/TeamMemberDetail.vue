@@ -18,25 +18,13 @@
         </template>
       </dl>
 
-      <!-- Prompt: the member's full instructions. Rendered as Markdown (not a
-           <pre> dump) so headings/lists/code in the prompt read as intended,
-           with file paths annotated exactly like chat content. -->
-      <div v-if="promptHtml" class="team-member-detail__section">
-        <div class="team-member-detail__section-title">{{ t('chat.team.detail.prompt') }}</div>
-        <div ref="promptRef" class="team-member-detail__prompt agent-call-prompt" v-html="promptHtml"></div>
-      </div>
-      <div v-else-if="promptState === 'loading'" class="team-member-detail__section team-member-detail__muted">
-        <span class="li-spinner" />
-        <span>{{ t('chat.team.detail.loadingPrompt') }}</span>
-      </div>
-      <div v-else-if="promptState === 'empty'" class="team-member-detail__section team-member-detail__muted">
-        {{ t('chat.team.detail.noPrompt') }}
-      </div>
-
-      <!-- Result: the member's final answer, when one was recorded. -->
-      <div v-if="outputHtml" class="team-member-detail__section">
-        <div class="team-member-detail__section-title">{{ t('chat.team.detail.output') }}</div>
-        <div ref="outputRef" class="team-member-detail__prompt agent-call-prompt" v-html="outputHtml"></div>
+      <!-- Role / instructions.
+           This is the roster's `description` rendered as Markdown — see
+           `roleHtml` for why it is the description and not a separately
+           fetched prompt. -->
+      <div v-if="roleHtml" class="team-member-detail__section">
+        <div class="team-member-detail__section-title">{{ t('chat.team.detail.description') }}</div>
+        <div ref="roleRef" class="team-member-detail__markdown agent-call-prompt" v-html="roleHtml"></div>
       </div>
     </div>
   </BottomSheet>
@@ -50,19 +38,11 @@ import { renderMarkdown } from '@/composables/useMarkdownRenderer.ts'
 import { verifyFilePaths, readLineTargetFromEl, useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { verifyCommitHashes } from '@/composables/useCommitHashAnnotation.ts'
 import { teamMemberColorVar } from '@/utils/teamMemberColor'
-import { appLog } from '@/utils/appLog'
 import type { TeamMember } from '@/composables/useTeamState'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
   member: { type: Object as () => TeamMember | null, default: null },
-  /** Tool-call id of the Agent card that spawned this member. When known, the
-   *  full spawn input (prompt, description) is fetched from the tool-call
-   *  endpoint — the in-memory block is a slim one with no input. */
-  toolId: { type: String, default: '' },
-  /** Message that owns the Agent card, required by the tool-call endpoint. */
-  msgId: { type: [String, Number], default: '' },
-  sessionId: { type: String, default: '' },
 })
 
 defineEmits(['close'])
@@ -70,12 +50,7 @@ defineEmits(['close'])
 const { t } = useI18n()
 const { openFilePath } = useFilePathAnnotation()
 const bodyRef = ref<HTMLElement | null>(null)
-const promptRef = ref<HTMLElement | null>(null)
-const outputRef = ref<HTMLElement | null>(null)
-
-const promptState = ref<'idle' | 'loading' | 'empty' | 'ready'>('idle')
-const promptHtml = ref('')
-const outputHtml = ref('')
+const roleRef = ref<HTMLElement | null>(null)
 
 const accentColor = computed(() => teamMemberColorVar(props.member?.color))
 
@@ -97,14 +72,41 @@ const statusLabel = computed(() =>
   statusKind.value ? t(`chat.team.status.${statusKind.value}`) : '',
 )
 
+/**
+ * The member's instructions, rendered as Markdown.
+ *
+ * This is the roster's `description` — NOT a separately fetched prompt. That
+ * choice is deliberate and was verified against a real `codebuddy --acp`
+ * process (internal/ai/codebuddy_team_description_probe_integration_test.go):
+ * the roster's `description` is byte-for-byte the spawn frame's `prompt`
+ * (measured: both 196 bytes, `description == prompt` true), so fetching the
+ * prompt from `chat_tool_calls` returned the exact same text.
+ *
+ * Worse, the fetch was also fragile: after an interruption/reconnect the Agent
+ * card's slim block has no `input`, and the member's `sessionId` may no longer
+ * resolve, so the prompt silently came back empty while `description` kept
+ * working — the sheet would go blank exactly when the user was recovering from
+ * a dropped session.
+ *
+ * `description` is what the roster always carries, so the sheet now renders it
+ * directly: no request, no loading state, and nothing to lose on reconnect.
+ */
+const roleHtml = computed(() => {
+  const text = props.member?.description
+  if (!text) return ''
+  return renderAnnotated(text)
+})
+
 /** Facts grid: only fields the wire actually reported. An empty value is
- *  omitted rather than rendered as a blank row. */
+ *  omitted rather than rendered as a blank row.
+ *
+ *  `description` is NOT a fact row — it is the Markdown body below, which would
+ *  otherwise be shown twice. */
 const facts = computed(() => {
   const m = props.member
   if (!m) return []
   const out: Array<{ label: string; value: string }> = []
   if (m.agentType) out.push({ label: t('chat.team.agentType'), value: m.agentType })
-  if (m.description) out.push({ label: t('chat.team.detail.description'), value: m.description })
   if (m.activity) out.push({ label: t('chat.team.detail.activity'), value: m.activity })
   if (m.lifecycle) out.push({ label: t('chat.team.detail.lifecycle'), value: m.lifecycle })
   if (typeof m.toolCallCount === 'number') {
@@ -131,99 +133,43 @@ const facts = computed(() => {
  *
  * `renderMarkdown` returns the detected paths instead of annotating inline
  * (annotation needs an existence check against the server), so the caller owns
- * the verify step. Doing it here — scoped to this drawer's own element — means
- * a path in a member's prompt behaves exactly like one in a chat message:
+ * the verify step. Doing it here — scoped to this sheet's own element — means
+ * a path in a member's instructions behaves exactly like one in a chat message:
  * clickable chip, correct icon, line-range support.
  */
 function renderAnnotated(text: string): string {
   const { html, detectedPaths, detectedSHAs } = renderMarkdown(text, { sanitize: true, wrapTables: false })
   if (detectedPaths.length > 0 || detectedSHAs.length > 0) {
-    nextTick(() => {
-      const el = promptRef.value || outputRef.value || bodyRef.value
-      if (!el) return
-      if (detectedPaths.length > 0) void verifyFilePaths([...new Set(detectedPaths)], el)
-      if (detectedSHAs.length > 0) void verifyCommitHashes([...new Set(detectedSHAs)], el)
-    })
+    nextTick(() => annotate())
   }
   return html
 }
 
-/**
- * Load the member's full prompt.
- *
- * The chat block for an Agent card is a SLIM one — its `input` is empty on a
- * DB-loaded message, so the prompt only exists in the `chat_tool_calls` row.
- * The endpoint is the same one the tool-detail drawer uses, so a member's
- * prompt and its Agent card show identical content.
- */
-async function loadPrompt() {
-  const m = props.member
-  if (!m) return
-  promptHtml.value = ''
-  outputHtml.value = ''
-
-  if (!props.toolId || !props.msgId) {
-    // No Agent card to read from. The wire's own `description` is the only
-    // prompt-ish text available, and it is already shown in the facts grid.
-    promptState.value = 'empty'
-    return
-  }
-
-  promptState.value = 'loading'
-  try {
-    let url = `/api/ai/chat/tool-call?tool_id=${encodeURIComponent(props.toolId)}&message_id=${encodeURIComponent(String(props.msgId))}`
-    if (props.sessionId) url += `&session_id=${encodeURIComponent(props.sessionId)}`
-    const resp = await fetch(url)
-    if (!resp.ok) {
-      promptState.value = 'empty'
-      return
-    }
-    const data = await resp.json()
-    const rawInput = data.input
-    const input = typeof rawInput === 'string' ? JSON.parse(rawInput) : rawInput
-    const prompt = typeof input?.prompt === 'string' ? input.prompt : ''
-    if (prompt) {
-      promptHtml.value = renderAnnotated(prompt)
-      promptState.value = 'ready'
-    } else {
-      promptState.value = 'empty'
-    }
-    if (typeof data.output === 'string' && data.output.trim() !== '') {
-      outputHtml.value = renderAnnotated(data.output)
-    }
-  } catch (e) {
-    appLog.w('TeamMemberDetail', 'failed to load member prompt:', e)
-    promptState.value = 'empty'
-  }
+/** Verify the path/commit chips currently in the body. */
+function annotate() {
+  const el = bodyRef.value
+  if (!el) return
+  const paths = [...el.querySelectorAll('.chat-file-path[data-file-path]:not([data-path-type])')]
+    .map((n) => n.getAttribute('data-file-path'))
+    .filter((p): p is string => !!p)
+  const shas = [...el.querySelectorAll('.chat-commit-hash-pending[data-commit-sha]')]
+    .map((n) => n.getAttribute('data-commit-sha'))
+    .filter((s): s is string => !!s)
+  if (paths.length > 0) void verifyFilePaths([...new Set(paths)], el)
+  if (shas.length > 0) void verifyCommitHashes([...new Set(shas)], el)
 }
 
-// Reload whenever the drawer opens on a (possibly different) member. Watching
-// `open` rather than the member alone matters: the same member can be re-opened
-// after a reconnect, and the cached HTML would otherwise be reused forever.
-watch(
-  () => [props.open, props.toolId, props.msgId] as const,
-  ([open]) => { if (open) void loadPrompt() },
-  { immediate: true },
-)
-
-// File-path chips are plain spans until verified, and verification is an async
-// server round-trip; re-run it if the drawer is re-opened without a refetch.
-watch(promptHtml, () => {
-  nextTick(() => {
-    if (!bodyRef.value) return
-    const paths = [...bodyRef.value.querySelectorAll('.chat-file-path[data-file-path]:not([data-path-type])')]
-      .map((el) => el.getAttribute('data-file-path'))
-      .filter((p): p is string => !!p)
-    if (paths.length > 0) void verifyFilePaths([...new Set(paths)], bodyRef.value)
-  })
-})
+// Re-verify on every re-render of the Markdown body. The HTML is written with
+// v-html, so the chips exist as plain spans until verification marks them —
+// and a re-open (or a member switch) rebuilds them from scratch.
+watch(roleHtml, () => nextTick(annotate), { immediate: true })
 
 function handleBodyClick(e: MouseEvent) {
   // File-path chips inside v-html are normally wired by ChatMessageList's
   // delegated click handler, which never sees clicks inside this teleported
   // sheet. Route them through the SAME resolver + opener so a path in a
-  // member's prompt behaves identically to one in a chat message (including
-  // `:line` ranges and directory chips).
+  // member's instructions behaves identically to one in a chat message
+  // (including `:line` ranges and directory chips).
   const el = (e.target as HTMLElement)?.closest(
     '.chat-file-open-btn, .chat-file-path[data-path-type="dir"]',
   ) as HTMLElement | null
@@ -331,7 +277,7 @@ function handleBodyClick(e: MouseEvent) {
  *
  * `:deep()` is required: the HTML comes from v-html, whose elements carry no
  * scoped attribute (design-guide 红线 1). */
-.team-member-detail__prompt {
+.team-member-detail__markdown {
   padding: var(--space-3) var(--space-4);
   background: var(--bg-tertiary);
   border-radius: var(--radius-xs);
@@ -343,29 +289,29 @@ function handleBodyClick(e: MouseEvent) {
   overflow-wrap: break-word;
 }
 
-.team-member-detail__prompt :deep(p:first-child) { margin-top: 0; }
-.team-member-detail__prompt :deep(p:last-child) { margin-bottom: 0; }
-.team-member-detail__prompt :deep(p) { margin: 0 0 var(--space-2); }
+.team-member-detail__markdown :deep(p:first-child) { margin-top: 0; }
+.team-member-detail__markdown :deep(p:last-child) { margin-bottom: 0; }
+.team-member-detail__markdown :deep(p) { margin: 0 0 var(--space-2); }
 
-.team-member-detail__prompt :deep(h1),
-.team-member-detail__prompt :deep(h2),
-.team-member-detail__prompt :deep(h3),
-.team-member-detail__prompt :deep(h4) {
+.team-member-detail__markdown :deep(h1),
+.team-member-detail__markdown :deep(h2),
+.team-member-detail__markdown :deep(h3),
+.team-member-detail__markdown :deep(h4) {
   margin: var(--space-4) 0 var(--space-2);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
 }
 
-.team-member-detail__prompt :deep(ul),
-.team-member-detail__prompt :deep(ol) {
+.team-member-detail__markdown :deep(ul),
+.team-member-detail__markdown :deep(ol) {
   margin: var(--space-2) 0;
   padding-left: var(--space-8);
 }
 
-.team-member-detail__prompt :deep(li) { margin: var(--space-1) 0; }
+.team-member-detail__markdown :deep(li) { margin: var(--space-1) 0; }
 
-.team-member-detail__prompt :deep(code) {
+.team-member-detail__markdown :deep(code) {
   padding: 1px var(--space-2);
   font-family: var(--font-mono);
   font-size: var(--font-size-2xs);
@@ -373,7 +319,7 @@ function handleBodyClick(e: MouseEvent) {
   border-radius: var(--radius-xs);
 }
 
-.team-member-detail__prompt :deep(pre) {
+.team-member-detail__markdown :deep(pre) {
   margin: var(--space-2) 0;
   padding: var(--space-3) var(--space-4);
   overflow-x: auto;
@@ -381,18 +327,18 @@ function handleBodyClick(e: MouseEvent) {
   border-radius: var(--radius-xs);
 }
 
-.team-member-detail__prompt :deep(pre code) {
+.team-member-detail__markdown :deep(pre code) {
   padding: 0;
   background: none;
   font-size: var(--font-size-xs);
 }
 
-.team-member-detail__prompt :deep(strong) {
+.team-member-detail__markdown :deep(strong) {
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
 }
 
-.team-member-detail__prompt :deep(blockquote) {
+.team-member-detail__markdown :deep(blockquote) {
   margin: var(--space-2) 0;
   padding-left: var(--space-3);
   border-left: 3px solid var(--border-color);
@@ -400,36 +346,40 @@ function handleBodyClick(e: MouseEvent) {
 }
 
 /* Tables scroll inside the sheet instead of widening it. */
-.team-member-detail__prompt :deep(table) {
+.team-member-detail__markdown :deep(table) {
   display: block;
   overflow-x: auto;
   margin: var(--space-2) 0;
   border-collapse: collapse;
 }
 
-.team-member-detail__prompt :deep(th),
-.team-member-detail__prompt :deep(td) {
+.team-member-detail__markdown :deep(th),
+.team-member-detail__markdown :deep(td) {
   padding: var(--space-1) var(--space-3);
   border: 1px solid var(--border-color);
   text-align: left;
 }
 
-.team-member-detail__prompt :deep(hr) {
+.team-member-detail__markdown :deep(hr) {
   margin: var(--space-3) 0;
   border: none;
   border-top: 1px solid var(--border-color);
 }
 
-.team-member-detail__prompt :deep(img) {
+.team-member-detail__markdown :deep(img) {
   max-width: 100%;
   height: auto;
 }
+</style>
 
-.team-member-detail__muted {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  font-size: var(--font-size-sm);
-  color: var(--text-muted);
+<style>
+/* Wide-screen: the member sheet carries the member's full instructions, which
+   are long-form Markdown (headings, lists, tables, code fences). The default
+   624px card wraps those badly. Mirrors .tool-detail-sheet / .session-search-sheet.
+   Only takes effect in BottomSheet's wide-screen card mode (the narrow-mode
+   bottom sheet ignores --modal-max-width).
+   Non-scoped because the class is bound inside BottomSheet's own template. */
+.team-member-sheet {
+  --modal-max-width: 900px;
 }
 </style>

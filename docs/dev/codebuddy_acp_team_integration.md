@@ -344,6 +344,34 @@ type TeamMember struct {
 >   更新分支现补上空值填充（块一旦归属某成员就不再改写，防止交错帧互相覆盖）。
 >   真机探针见 `codebuddy_team_spawn_meta_probe_integration_test.go`。
 
+### 4.2b 成员详情弹窗（`TeamMemberDetail.vue`）
+
+点击成员行打开，展示 roster 能提供的全部字段 + 该成员的**完整指令**。
+
+**指令取 `description`，不要去拉 `prompt`。** 这一点反直觉，实测钉住：
+
+| 事实 | 实测值 | 探针 |
+|------|--------|------|
+| roster `description` 长度 | 196 字节 | `codebuddy_team_description_probe_integration_test.go` |
+| spawn 帧 `prompt` 长度 | 196 字节 | 同上 |
+| `description == prompt` | **true**（逐字节相同） | 同上 |
+
+即 roster 的 `description` **就是**完整提示词，不是摘要。所以原先"从
+`chat_tool_calls` 拉 prompt"是纯冗余，而且**更脆**：中断/重连后 Agent 卡的
+slim 块没有 `input`，`sessionId` 也可能不再可解析 ⇒ prompt 静默变空，弹窗在用户
+最需要它的时候（刚从断线中恢复）变成空白。`description` 始终在 roster 里，所以
+弹窗现在直接渲染它：无请求、无 loading 态、重连不会丢。
+
+**不要把它再塞回事实网格**——它就是下方那段 Markdown 正文，两边都放会重复显示。
+
+**宽度**：`--modal-max-width: 900px`，写在**非 scoped** 样式块里（`BottomSheet`
+渲染在 `<Teleport to="body">` 内，组件的 scope 属性到不了那里，scoped 规则永远
+匹配不到 → 静默失效）。默认 624px 卡放长 Markdown 会挤成一团。
+
+守卫：`teamMemberDetailSheet.css.test.ts`（宽屏非 scoped + 不再拉 prompt，含变异
+验证）、`TeamPanel.test.ts`（description 直渲 Markdown + 不重复进事实网格）、
+`e2e/specs/team-panel.spec.ts`（真实浏览器：面板 >624px、H2/表格/代码块、路径 chip）。
+
 ### 4.3 权限卡成员徽标
 
 成员审批卡（现有 `PermissionApproval`）在标题旁加一枚成员徽标：

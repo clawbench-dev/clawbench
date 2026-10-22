@@ -79,25 +79,17 @@
       </div>
     </div>
 
-    <TeamMemberDetail
-      :open="detailOpen"
-      :member="detailMember"
-      :tool-id="detailTarget.toolId"
-      :msg-id="detailTarget.msgId"
-      :session-id="sessionId"
-      @close="closeMemberDetail"
-    />
+    <TeamMemberDetail :open="detailOpen" :member="detailMember" @close="closeMemberDetail" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, inject, ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronDown, ChevronUp, CircleCheck, CircleDashed, CircleSlash, CircleX, Users, Wrench } from 'lucide-vue-next'
 import { useTeamState, type TeamMember } from '@/composables/useTeamState'
 import { teamMemberColorVar } from '@/utils/teamMemberColor'
 import TeamMemberDetail from './TeamMemberDetail.vue'
-import { getSessionId } from '@/composables/useSessionIdentity'
 
 const { t } = useI18n()
 const { teamCollapsed, hasTeam, teamName, members, activeCount, completedCount, isAutoTeam, isEnded, toggleTeamCollapse } =
@@ -193,28 +185,17 @@ function memberTooltip(m: TeamMember): string {
 
 // ── Member detail ──
 //
-// Clicking a member opens a sheet with everything the wire reports about it
-// plus the member's FULL prompt. The prompt is not in the roster payload
-// (teamUpdate only carries `description`), and the chat block for the Agent
-// card is a slim one whose `input` is empty — the prompt lives in the
-// `chat_tool_calls` row. So the drawer needs the Agent card's tool id + message
-// id, which is what findMemberAgentCard resolves from the live message list.
+// Clicking a member opens a sheet with everything the wire reports about it.
+// It needs NO extra lookup: the roster already carries the member's full
+// instructions in `description` (verified byte-for-byte against the spawn
+// frame's `prompt` — see TeamMemberDetail's roleHtml comment), so the sheet
+// renders straight from the snapshot it was handed.
 
 const detailOpen = ref(false)
 const detailMember = ref<TeamMember | null>(null)
-const detailTarget = ref<{ toolId: string; msgId: string | number }>({ toolId: '', msgId: '' })
-const sessionId = computed(() => getSessionId() || '')
-
-// Provided by ChatPanelContent, which owns the messages array. Absent in
-// shallow mounts (and in the share page), where the sheet still opens but has
-// no Agent card to read a prompt from — it then shows the roster facts only.
-const memberCardLookup = inject<
-  ((name: string) => { toolId: string; msgId: string | number } | null) | null
->('teamMemberCardLookup', null)
 
 function openMemberDetail(m: TeamMember) {
   detailMember.value = m
-  detailTarget.value = memberCardLookup?.(m.name) ?? { toolId: '', msgId: '' }
   detailOpen.value = true
 }
 
