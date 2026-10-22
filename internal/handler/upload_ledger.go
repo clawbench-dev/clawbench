@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"clawbench/internal/middleware"
 	"clawbench/internal/model"
 )
 
@@ -33,20 +34,52 @@ import (
 const uploadLedgerRelPath = ".clawbench/upload-log.json"
 
 // uploadLedgerMaxEntries bounds the ledger. It is deliberately much larger than
-// the 20 rows the tab renders: entries whose file has since been deleted or
-// moved are dropped on read, so a small cap would let dead entries crowd out
-// live ones.
+// the 20 rows the tab renders: entries are pruned lazily (a file that was
+// renamed or deleted is dropped the next time the ledger is written), so a small
+// cap would let not-yet-pruned entries crowd out live ones.
 const uploadLedgerMaxEntries = 200
+
+// uploadLedgerRetention is how long an entry is kept after its upload.
+//
+// It is a RETENTION, not a capacity, and the two answer different questions:
+// the cap bounds the file, the retention bounds how far back the tab can reach.
+// A project that uploads a hundred files a week hits the cap long before 30 days
+// and a quiet one hits the retention long before the cap; both are needed.
+//
+// The clock is the UPLOAD time, not the file's mtime: editing a file must not
+// keep resurrecting it in a list of "things I uploaded recently". Entries
+// written before this field existed have no timestamp and are kept (they are
+// pruned by the existence check instead) — dropping them on upgrade would empty
+// the tab for every existing user.
+const uploadLedgerRetention = 30 * 24 * time.Hour
 
 // uploadLedgerMu serializes the read-modify-write of the ledger. Uploads run
 // concurrently (a multi-file picker posts one request per file) and a lost
 // update would silently drop an entry the user just created.
 var uploadLedgerMu sync.Mutex
 
-// uploadLedgerEntry is one recorded upload. Order is not stored: the tab sorts
-// by the file's own modification time, like the uploads-directory rows do.
+// uploadLedgerEntry is one recorded upload.
+//
+// UploadedAt is what the retention is measured against, so it is load-bearing
+// (not debugging metadata). It is the time of the UPLOAD, so moving or editing
+// the file does not extend its life. Order is not stored: the tab sorts by the
+// file's own modification time, like the uploads-directory rows do.
 type uploadLedgerEntry struct {
-	Path string `json:"path"`
+	Path       string `json:"path"`
+	UploadedAt string `json:"uploadedAt,omitempty"`
+}
+
+// uploadTime parses the entry's timestamp. ok=false means the entry predates
+// the field (or is corrupt) and must not be aged out.
+func (e uploadLedgerEntry) uploadTime() (time.Time, bool) {
+	if e.UploadedAt == "" {
+		return time.Time{}, false
+	}
+	parsed, err := time.Parse(time.RFC3339, e.UploadedAt)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return parsed, true
 }
 
 func uploadLedgerFile(projectPath string) string {
@@ -150,22 +183,80 @@ func recordUploadedFile(projectPath, relPath string) {
 	uploadLedgerMu.Lock()
 	defer uploadLedgerMu.Unlock()
 
+	now := time.Now().UTC()
 	prev := readUploadLedger(projectPath)
 	next := make([]uploadLedgerEntry, 0, len(prev)+1)
-	next = append(next, uploadLedgerEntry{Path: rel})
+	next = append(next, uploadLedgerEntry{Path: rel, UploadedAt: now.Format(time.RFC3339)})
 	for _, e := range prev {
 		if e.Path == rel {
 			continue // re-upload: move to the front instead of duplicating
 		}
 		next = append(next, e)
 	}
-	if len(next) > uploadLedgerMaxEntries {
-		next = next[:uploadLedgerMaxEntries]
-	}
+	// Pruning on write is free: the lock is already held, the file is already
+	// being rewritten, and it is the only place a stale entry can be noticed
+	// without a background worker.
+	next = pruneUploadLedger(projectPath, next, now, rel)
 	if err := writeUploadLedger(projectPath, next); err != nil {
 		slog.Warn("upload ledger: record failed",
 			slog.String("project", projectPath), slog.String("path", rel), slog.String("err", err.Error()))
 	}
+}
+
+// pruneUploadLedger drops entries that can no longer be shown, then applies the
+// capacity cap. Two independent reasons to drop an entry:
+//
+//   - The file is gone (renamed, moved out of the project, deleted by the user
+//     or by another tool). The list already skips such rows on read, so keeping
+//     the record only wastes capacity — and after enough renames the whole
+//     ledger would consist of entries that render as nothing.
+//   - The upload is older than uploadLedgerRetention.
+//
+// Entries without a timestamp predate the field and are kept: aging them out
+// would empty the tab for every existing user on upgrade, and the existence
+// check already removes the ones whose files are gone.
+//
+// keepPath is the entry that was just recorded. It is exempt from BOTH rules:
+// the caller has already written the file, but a stat that races a slow or
+// eventually-consistent filesystem must not throw away the row for the upload
+// the user is watching.
+func pruneUploadLedger(projectPath string, entries []uploadLedgerEntry, now time.Time, keepPath string) []uploadLedgerEntry {
+	cutoff := now.Add(-uploadLedgerRetention)
+	kept := entries[:0]
+	for _, e := range entries {
+		if e.Path == keepPath {
+			kept = append(kept, e)
+			continue
+		}
+		if uploadedAt, ok := e.uploadTime(); ok && uploadedAt.Before(cutoff) {
+			continue
+		}
+		rel, ok := sanitizeLedgerPath(e.Path)
+		if !ok {
+			continue
+		}
+		info, err := os.Stat(filepath.Join(projectPath, filepath.FromSlash(rel)))
+		if err != nil {
+			// Only "this file is not there" justifies dropping the record. A
+			// permission error, an I/O error, or an unmounted volume (EACCES /
+			// EIO / ESTALE) also surfaces as an error, and treating those as
+			// "gone" would wipe the whole list the first time the user uploads
+			// while the project's volume is offline — then leave the tab empty
+			// forever after it comes back.
+			if !os.IsNotExist(err) {
+				kept = append(kept, e)
+			}
+			continue
+		}
+		if info.IsDir() {
+			continue
+		}
+		kept = append(kept, e)
+	}
+	if len(kept) > uploadLedgerMaxEntries {
+		kept = kept[:uploadLedgerMaxEntries]
+	}
+	return kept
 }
 
 // forgetUploadedFile removes relPath from the ledger.
@@ -212,9 +303,9 @@ func forgetUploadedFile(projectPath, relPath string) (found bool, err error) {
 // untouched (see forgetUploadedFile for why).
 //
 // The returned count is the number of rows the user could actually see — entries
-// whose file still exists — not the number of records. The ledger keeps dead
-// entries on purpose (a file on an unmounted volume should come back), so
-// counting records would claim "cleared 180 files" for a list showing three.
+// whose file still exists — not the number of records. An entry whose file is
+// gone is invisible in the tab, so counting records would claim "cleared 180
+// files" for a list showing three.
 //
 // `remaining` is what is still listed when the write fails, so the caller can
 // report how many rows survived instead of a bare "1 failed" that says nothing
@@ -269,9 +360,9 @@ func listLedgerUploads(projectPath string) []recentFile {
 		abs := filepath.Join(projectPath, filepath.FromSlash(rel))
 		info, err := os.Stat(abs)
 		if err != nil || info.IsDir() {
-			// Deleted or moved outside the app: skip it. The entry stays in the
-			// ledger so a file that is merely offline (unmounted volume) comes
-			// back rather than being forgotten.
+			// Renamed, moved out of the project, or deleted: the row would point
+			// at nothing, so it is not rendered. The record itself is dropped by
+			// pruneUploadLedger on the next write — reading never writes.
 			continue
 		}
 		out = append(out, recentFile{
@@ -379,4 +470,164 @@ func deleteLedgerEntry(w http.ResponseWriter, r *http.Request, projectPath, reqP
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	return true
+}
+
+// forgetLedgerPath drops every recorded entry at or beneath absPath. Used after
+// a delete, where the file no longer exists.
+//
+// A directory delete removes everything beneath it, so entries under that prefix
+// go too. Best-effort: the list would skip them on read anyway (their files are
+// gone), so a failure only means the record lingers until the next write prunes
+// it.
+func forgetLedgerPath(projectPath, absPath string) {
+	rel, ok := projectRelPath(projectPath, absPath)
+	if !ok {
+		return
+	}
+	rel, ok = sanitizeLedgerPath(rel)
+	if !ok {
+		return
+	}
+
+	uploadLedgerMu.Lock()
+	defer uploadLedgerMu.Unlock()
+
+	prev := readUploadLedger(projectPath)
+	next := make([]uploadLedgerEntry, 0, len(prev))
+	changed := false
+	prefix := rel + "/"
+	for _, e := range prev {
+		if e.Path == rel || strings.HasPrefix(e.Path, prefix) {
+			changed = true
+			continue
+		}
+		next = append(next, e)
+	}
+	if !changed {
+		return
+	}
+	if err := writeUploadLedger(projectPath, next); err != nil {
+		slog.Warn("upload ledger: forget after delete failed",
+			slog.String("project", projectPath), slog.String("path", rel), slog.String("err", err.Error()))
+	}
+}
+
+// projectPathForRequest returns the project root for the current request, if one
+// is selected.
+//
+// The ledger hooks live in the generic file operations (rename/move/delete),
+// which are NOT project-scoped: the file manager browses the whole machine and
+// those endpoints accept absolute paths anywhere under a root. So "no project
+// cookie" is a normal state there, not an error — it simply means there is no
+// ledger to update, because the ledger is per project.
+func projectPathForRequest(r *http.Request) (string, bool) {
+	projectPath := middleware.GetProjectFromCookie(r)
+	if projectPath == "" {
+		return "", false
+	}
+	return projectPath, true
+}
+
+// moveLedgerEntry rewrites a recorded upload when its file is renamed or moved,
+// so the row keeps pointing at the file instead of silently vanishing.
+//
+// Why this is needed at all: the ledger stores a PATH, and rename/move change
+// it. Without this the tab would lose a row the moment the user tidies up the
+// project — the same complaint as #573 (uploaded something, cannot find it in
+// the list), just triggered by a different action. The file is still the file
+// the user uploaded, so the entry (and its upload time, which the retention is
+// measured against) travels with it.
+//
+// A directory rename/move moves everything beneath it, so entries under the old
+// prefix are rewritten too. `isDir` is decided by the caller from the stat it
+// already performed; a file only ever matches its exact path.
+//
+// Best-effort like recordUploadedFile: failing to rewrite must not fail a rename
+// that already succeeded on disk. A missed rewrite is self-healing — the entry
+// then points at a missing file and is pruned on the next write.
+func moveLedgerEntry(projectPath, oldAbs, newAbs string, isDir bool) {
+	oldRel, ok := projectRelPath(projectPath, oldAbs)
+	if !ok {
+		return
+	}
+	newRel, ok := projectRelPath(projectPath, newAbs)
+	if !ok {
+		return
+	}
+	oldRel, ok = sanitizeLedgerPath(oldRel)
+	if !ok {
+		return
+	}
+	newRel, ok = sanitizeLedgerPath(newRel)
+	if !ok {
+		return
+	}
+	if oldRel == newRel {
+		return
+	}
+
+	uploadLedgerMu.Lock()
+	defer uploadLedgerMu.Unlock()
+
+	prev := readUploadLedger(projectPath)
+	next := make([]uploadLedgerEntry, 0, len(prev))
+	changed := false
+	for _, e := range prev {
+		moved, didMove := remapLedgerPath(e.Path, oldRel, newRel, isDir)
+		if !didMove {
+			next = append(next, e)
+			continue
+		}
+		changed = true
+		e.Path = moved
+		next = append(next, e)
+	}
+	if !changed {
+		return
+	}
+	// Rename has no "destination exists" guard (unlike move, which answers 409),
+	// so on Unix a rename onto an existing name silently replaces the target —
+	// and the ledger would then hold the same path twice: two identical rows,
+	// plus a duplicate Vue key. Collapse them, keeping the FIRST occurrence,
+	// which is the moved entry carrying the upload time of the content that now
+	// lives at that path.
+	next = dedupeLedgerPaths(next)
+	if err := writeUploadLedger(projectPath, next); err != nil {
+		slog.Warn("upload ledger: move failed",
+			slog.String("project", projectPath),
+			slog.String("from", oldRel), slog.String("to", newRel),
+			slog.String("err", err.Error()))
+	}
+}
+
+// dedupeLedgerPaths keeps the first entry for each path, preserving order.
+func dedupeLedgerPaths(entries []uploadLedgerEntry) []uploadLedgerEntry {
+	seen := make(map[string]struct{}, len(entries))
+	out := entries[:0]
+	for _, e := range entries {
+		if _, dup := seen[e.Path]; dup {
+			continue
+		}
+		seen[e.Path] = struct{}{}
+		out = append(out, e)
+	}
+	return out
+}
+
+// remapLedgerPath rewrites one entry's path for a rename/move of oldRel→newRel.
+// didMove=false means the entry is unrelated and must be kept as is.
+func remapLedgerPath(entryPath, oldRel, newRel string, isDir bool) (string, bool) {
+	if !isDir {
+		if entryPath != oldRel {
+			return entryPath, false
+		}
+		return newRel, true
+	}
+	// A directory: the entry is either the directory itself (not recorded — only
+	// files are) or a file beneath it.
+	prefix := oldRel + "/"
+	if !strings.HasPrefix(entryPath, prefix) {
+		return entryPath, false
+	}
+	return newRel + "/" + strings.TrimPrefix(entryPath, prefix), true
 }

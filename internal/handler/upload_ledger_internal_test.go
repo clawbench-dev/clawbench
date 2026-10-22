@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -82,22 +83,50 @@ func TestRecordUploadedFile_RejectsUnstorablePaths(t *testing.T) {
 	assert.Empty(t, readUploadLedger(env.ProjectDir), "none of these may be recorded")
 }
 
+// The cap must still bound the file when every entry is live: pruning removes
+// dead entries, but a project that genuinely uploaded more than the cap keeps
+// only the newest ones.
 func TestRecordUploadedFile_CapsAtMaxEntries(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	// Seed one past the cap so the trim branch is exercised.
+	// Every seeded entry needs a real file, otherwise pruning would drop it for
+	// being gone and the cap would never be reached.
 	seed := make([]uploadLedgerEntry, 0, uploadLedgerMaxEntries+1)
 	for i := 0; i <= uploadLedgerMaxEntries; i++ {
-		seed = append(seed, uploadLedgerEntry{Path: filepath.ToSlash(filepath.Join("f", ledgerTestIndex(i)+".png"))})
+		rel := filepath.ToSlash(filepath.Join("f", ledgerTestIndex(i)+".png"))
+		createTestFile(t, env.ProjectDir, rel, "x")
+		seed = append(seed, uploadLedgerEntry{Path: rel, UploadedAt: time.Now().UTC().Format(time.RFC3339)})
 	}
 	require.NoError(t, writeUploadLedger(env.ProjectDir, seed))
 
 	recordUploadedFile(env.ProjectDir, "newest.png")
+	createTestFile(t, env.ProjectDir, "newest.png", "x")
 
 	entries := readUploadLedger(env.ProjectDir)
 	require.Len(t, entries, uploadLedgerMaxEntries)
 	assert.Equal(t, "newest.png", entries[0].Path)
+}
+
+// Pruning must drop entries whose file is gone — that is what stops a project
+// full of renamed files from filling the ledger with rows that render as
+// nothing.
+func TestRecordUploadedFile_PrunesEntriesWhoseFileIsGone(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Seed both records first, then materialize only one file: the other is a
+	// record whose file is gone (renamed, moved away, deleted externally).
+	require.NoError(t, writeUploadLedger(env.ProjectDir, []uploadLedgerEntry{
+		{Path: "deleted.png", UploadedAt: time.Now().UTC().Format(time.RFC3339)},
+		{Path: "alive.png", UploadedAt: time.Now().UTC().Format(time.RFC3339)},
+	}))
+	createTestFile(t, env.ProjectDir, "alive.png", "x")
+
+	recordUploadedFile(env.ProjectDir, "newest.png")
+	createTestFile(t, env.ProjectDir, "newest.png", "x")
+
+	assert.Equal(t, []string{"newest.png", "alive.png"}, ledgerPaths(t, env.ProjectDir))
 }
 
 func TestListRecentUploads_TrimsToLimit(t *testing.T) {
