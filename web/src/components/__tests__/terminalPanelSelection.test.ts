@@ -141,7 +141,16 @@ describe('TerminalPanel xterm selection defaults', () => {
     expect(updateFn).toContain('quoteQuestion.pinBar()')
     // The bar is shown immediately (delay 0): the settle debounce already
     // coalesces a touch drag, and a 400ms delay would make it feel broken.
-    expect(updateFn).toContain('{ delay: 0 }')
+    expect(updateFn).toContain('delay: 0')
+    // The ANCHOR must be supplied at this call site. `showBar`'s own fallback
+    // reads the host document's selection, which is always collapsed inside
+    // xterm — so leaving it out pins the bar to the top of the page, far from
+    // the selected output (the reported defect). A behavioural test of the
+    // composable cannot catch a missing anchor here.
+    expect(updateFn).toContain('anchor: terminalAnchor(term)')
+    expect(updateFn).toContain('term.getSelectionPosition()')
+    expect(updateFn).toContain('.xterm-screen')
+    expect(source).toContain("import { terminalSelectionAnchor } from '@/utils/terminalSelectionAnchor'")
   })
 
   it('closes the quote bar when the terminal selection goes away', () => {
