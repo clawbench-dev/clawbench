@@ -71,3 +71,38 @@ describe('TeamMemberDetail — role text comes from the roster', () => {
     expect(SRC).toMatch(/:deep\(/)
   })
 })
+
+describe('TeamMemberDetail — section title alignment', () => {
+  // The role section title used to start at the sheet's inline padding (2px)
+  // while the fact-grid labels above it sit 8px further in (the grid's own
+  // padding), so the title read as glued to the border. The Markdown body is
+  // deliberately flush — long instructions want the full width — which is why
+  // the TITLE needs its own indent rather than the body getting one.
+  it('indents the section title to the LABEL TEXT, not to the grid box', () => {
+    // Measured in Chromium: the grid BOX starts at 8px (its own padding) but the
+    // label TEXT starts at 16px, because the body contributes --space-1 and the
+    // grid contributes --space-4. Indenting the title by the grid padding alone
+    // left it 7.5px left of the labels — the "off by one step" look. The title
+    // therefore takes both steps, and must use `margin-inline`: padding on a
+    // block-level element stays inside its box, so the text shifts but the box
+    // (and its measured left edge) does not.
+    const src = readWebFile('src/components/chat/TeamMemberDetail.vue')
+
+    const title = /\.team-member-detail__section-title\s*\{([^}]*)\}/.exec(src)
+    expect(title, '.team-member-detail__section-title must exist').not.toBeNull()
+    expect(title![1]).toMatch(/padding-inline:\s*var\(--space-4\)/)
+
+    const facts = /\.team-member-detail__facts\s*\{([^}]*)\}/.exec(src)
+    expect(facts).not.toBeNull()
+    expect(facts![1]).toMatch(/padding:\s*var\(--space-4\)/)
+  })
+
+  it('leaves the Markdown body flush, so long instructions keep the width', () => {
+    const src = readWebFile('src/components/chat/TeamMemberDetail.vue')
+    const md = /\.team-member-detail__markdown\s*\{([^}]*)\}/.exec(src)
+    expect(md).not.toBeNull()
+    // Its padding is the card's own inset; there must be no extra inline indent
+    // that would narrow the text column.
+    expect(md![1]).not.toMatch(/padding-inline|margin-inline/)
+  })
+})

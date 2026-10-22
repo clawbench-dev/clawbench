@@ -258,6 +258,21 @@ function handleBodyClick(e: MouseEvent) {
 }
 
 .team-member-detail__section-title {
+  /* Indent to the fact grid's LABEL column, not to the grid's box.
+   *
+   * The target is the label TEXT column, measured in Chromium on this build:
+   * both land on 227.3px, i.e. body padding (--space-1) + grid padding
+   * (--space-4) + the glyph's left bearing. Before this the title started at
+   * the sheet edge and read as glued to the border.
+   *
+   * `padding-inline` is correct here even though it does not move the element's
+   * BOX: the title has no background or border, so the only thing the user sees
+   * is where the glyphs start. (Measuring the box instead of the text range
+   * makes this look wrong when it is not — a trap worth remembering.)
+   *
+   * The Markdown body below stays flush on purpose: long instructions want the
+   * full width, which is exactly why the TITLE needs its own indent. */
+  padding-inline: var(--space-4);
   margin-bottom: var(--space-3);
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);

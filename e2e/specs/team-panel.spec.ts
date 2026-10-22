@@ -320,4 +320,55 @@ test.describe('Agent Team Panel', () => {
     expect(card.literalHeading).toBe(false)
     expect(card.pathChips).toBeGreaterThan(0)
   })
+
+  test('the role section title lines up with the fact labels above it', async ({ page }) => {
+    // The title used to start at the sheet edge (2px) while the fact labels sit
+    // 16px in, so it read as glued to the border. Alignment is a GLYPH position,
+    // not a box position: a block element's padding does not move its box, so
+    // this must be measured with a text Range — getBoundingClientRect on the
+    // element reports the box and would say they differ when they do not.
+    await injectTeam(page, {
+      type: 'member_status_change',
+      teamName: 'clawbench-review',
+      hasLiveMembers: true,
+      members: [{
+        name: 'review-media',
+        agentType: 'general-purpose',
+        color: 'blue',
+        status: 'completed',
+        description: '## 任务\n正文内容',
+        toolCallCount: 3,
+      }],
+    })
+    await expect(page.locator('.team-chip')).toBeVisible({ timeout: 5000 })
+    await page.locator('.team-chip').click()
+    await page.locator('[data-action="team-member-detail"]').first().click()
+    await expect(page.locator('.team-member-detail__name')).toBeVisible()
+
+    const pos = await page.evaluate(() => {
+      const textLeft = (el: Element) => {
+        const range = document.createRange()
+        range.selectNodeContents(el)
+        return range.getBoundingClientRect().left
+      }
+      const label = document.querySelector('.team-member-detail__fact-label')!
+      const title = document.querySelector('.team-member-detail__section-title')!
+      const body = document.querySelector('.team-member-detail__body')!
+      const md = document.querySelector('.team-member-detail__markdown')!
+      return {
+        labelLeft: textLeft(label),
+        titleLeft: textLeft(title),
+        bodyLeft: body.getBoundingClientRect().left,
+        mdLeft: md.getBoundingClientRect().left,
+      }
+    })
+
+    // Same glyph column as the labels above.
+    expect(Math.abs(pos.titleLeft - pos.labelLeft)).toBeLessThanOrEqual(1)
+    // No longer hugging the edge: the title sits ~9px in (body padding 2px +
+    // grid padding 8px, minus the glyph's own left bearing), versus 2px before.
+    expect(pos.titleLeft - pos.bodyLeft).toBeGreaterThan(6)
+    // The Markdown body stays flush — long instructions want the width.
+    expect(pos.mdLeft - pos.bodyLeft).toBeLessThan(pos.titleLeft - pos.bodyLeft)
+  })
 })
