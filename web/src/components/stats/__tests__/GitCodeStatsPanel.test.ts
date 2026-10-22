@@ -49,6 +49,14 @@ const zhMessages = {
     colNet: '净增行数',
     colCommits: '提交数',
     allAuthors: '全部作者',
+    efficiencyTitle: '生产效率',
+    efficiencyHint: '每净增 1K 行代码的消耗（当前净增 {net} 行）',
+    effTokens: 'Token / 1K 行',
+    effCredit: 'Credit / 1K 行',
+    effCost: '费用 / 1K 行',
+    effNoNet: '当前区间净增行数为 0 或为负，无法计算每千行消耗',
+    effNoUsage: '当前区间没有用量记录，无法计算每千行消耗',
+    effLoadFailed: '用量数据加载失败',
     notGitRepo: '当前项目不是 Git 仓库，无法统计代码量',
     noData: '所选时间段内暂无代码提交',
     loadFailed: '代码统计加载失败',
@@ -82,7 +90,30 @@ function mockResponse(partial: Record<string, unknown>) {
   }
 }
 
+/** Usage totals returned for the efficiency group's /api/usage/stats call. */
+const EMPTY_USAGE = { totals: { total: 0, credit: 0, costUsd: 0 }, rows: [] }
+
+/**
+ * Route the two requests the panel issues: the git stats payload and the
+ * usage totals used for the per-1K ratios. Both are keyed off the URL so a
+ * test that only cares about git data does not accidentally feed the git
+ * payload to the usage endpoint (which would silently disable the ratios).
+ */
+function routeMock(gitResp: unknown, usageResp: unknown = EMPTY_USAGE) {
+  mockApiGet.mockImplementation((url: string) =>
+    Promise.resolve(String(url).startsWith('/api/usage/stats') ? usageResp : gitResp))
+}
+
 const chartOptions: unknown[] = []
+
+/** Poll until `cond` holds — the skeleton gate is time-based by design. */
+async function waitFor(cond: () => boolean, timeoutMs = 3000): Promise<void> {
+  const start = Date.now()
+  while (!cond()) {
+    if (Date.now() - start > timeoutMs) throw new Error('waitFor timed out')
+    await new Promise(r => setTimeout(r, 20))
+  }
+}
 
 async function mountPanel() {
   chartOptions.length = 0
@@ -91,7 +122,7 @@ async function mountPanel() {
     global: {
       plugins: [makeI18n()],
       stubs: {
-        LoadingIndicator: { template: '<span class="loading-stub" />' },
+        StatsSkeleton: { name: 'StatsSkeleton', template: '<div class="skeleton-stub" />' },
         UsageChart: {
           template: '<div class="usage-chart-stub" />',
           props: ['option'],
@@ -115,7 +146,7 @@ describe('GitCodeStatsPanel', () => {
   beforeEach(async () => {
     vi.clearAllMocks()
     resetGitStats()
-    mockApiGet.mockResolvedValue(mockResponse({ rows: [] }))
+    routeMock(mockResponse({ rows: [] }))
     const stats = useGitCodeStats()
     await stats.loadGitStats()
     await flushPromises()
@@ -123,25 +154,25 @@ describe('GitCodeStatsPanel', () => {
   })
 
   it('fetches on mount when active', async () => {
-    mockApiGet.mockResolvedValue(mockResponse({ rows: [] }))
+    routeMock(mockResponse({ rows: [] }))
     await mountPanel()
     expect(mockApiGet).toHaveBeenCalled()
   })
 
   it('shows the not-a-git-repo hint when isGit is false', async () => {
-    mockApiGet.mockResolvedValue({ isGit: false, rows: [], trend: [] })
+    routeMock({ isGit: false, rows: [], trend: [] })
     const wrapper = await mountPanel()
     expect(wrapper.text()).toContain('当前项目不是 Git 仓库')
   })
 
   it('shows noData when in a git repo but no commits in range', async () => {
-    mockApiGet.mockResolvedValue(mockResponse({ rows: [] }))
+    routeMock(mockResponse({ rows: [] }))
     const wrapper = await mountPanel()
     expect(wrapper.text()).toContain('所选时间段内暂无代码提交')
   })
 
   it('renders totals cards with M/K formatting and colored net', async () => {
-    mockApiGet.mockResolvedValue(mockResponse({
+    routeMock(mockResponse({
       totals: { added: 2500, deleted: 300, net: 2200, commitCnt: 12 },
       rows: [],
     }))
@@ -160,7 +191,7 @@ describe('GitCodeStatsPanel', () => {
   })
 
   it('gives every totals card its own icon', async () => {
-    mockApiGet.mockResolvedValue(mockResponse({
+    routeMock(mockResponse({
       totals: { added: 2500, deleted: 300, net: 2200, commitCnt: 12 },
       rows: [],
     }))
@@ -191,7 +222,7 @@ describe('GitCodeStatsPanel', () => {
   })
 
   it('renders a per-author table with commit counts', async () => {
-    mockApiGet.mockResolvedValue(mockResponse({
+    routeMock(mockResponse({
       totals: { added: 10, deleted: 2, net: 8, commitCnt: 3 },
       rows: [
         { author: 'A', added: 6, deleted: 1, net: 5, commitCnt: 2 },
@@ -206,7 +237,7 @@ describe('GitCodeStatsPanel', () => {
   })
 
   it('sorts the per-author table by each column', async () => {
-    mockApiGet.mockResolvedValue(mockResponse({
+    routeMock(mockResponse({
       totals: { added: 30, deleted: 5, net: 25, commitCnt: 3 },
       rows: [
         { author: 'A', added: 6, deleted: 1, net: 5, commitCnt: 2 },
@@ -243,7 +274,7 @@ describe('GitCodeStatsPanel', () => {
   })
 
   it('renders the trend chart from per-day rows folded across authors', async () => {
-    mockApiGet.mockResolvedValue(mockResponse({
+    routeMock(mockResponse({
       totals: { added: 10, deleted: 2, net: 8, commitCnt: 2 },
       rows: [{ author: 'A', added: 10, deleted: 2, net: 8, commitCnt: 2 }],
       trend: [
@@ -264,7 +295,7 @@ describe('GitCodeStatsPanel', () => {
   })
 
   it('lets the trend chart be scoped to selected authors (multi-select)', async () => {
-    mockApiGet.mockResolvedValue(mockResponse({
+    routeMock(mockResponse({
       totals: { added: 30, deleted: 5, net: 25, commitCnt: 3 },
       rows: [
         { author: 'Ann', added: 20, deleted: 3, net: 17, commitCnt: 2 },
@@ -326,5 +357,98 @@ describe('GitCodeStatsPanel', () => {
     mockApiGet.mockRejectedValue({ message: 'git 统计失败', status: 500 })
     const wrapper = await mountPanel()
     expect(wrapper.text()).toContain('git 统计失败')
+  })
+
+  // --- Skeleton on range switch ---
+
+  it('shows a skeleton instead of stale numbers while a new range loads', async () => {
+    routeMock(mockResponse({ totals: { added: 2500, deleted: 300, net: 2200, commitCnt: 12 }, rows: [] }))
+    const wrapper = await mountPanel()
+    expect(wrapper.text()).toContain('+2.2K')
+    expect(wrapper.find('.skeleton-stub').exists()).toBe(false)
+
+    // Stall both requests of the next refresh (git stats + usage totals). Each
+    // call gets its own resolver, so both must be settled — releasing only the
+    // last one leaves the other promise pending and leaks into the next test.
+    const pending: ((v: unknown) => void)[] = []
+    mockApiGet.mockImplementation(() => new Promise(r => { pending.push(r as (v: unknown) => void) }))
+    const stats = useGitCodeStats()
+    stats.setRange({ rangeKey: '7d' })
+    await nextTick()
+
+    // A fast local query must not flash: the previous numbers stay briefly.
+    expect(wrapper.find('.skeleton-stub').exists()).toBe(false)
+    expect(wrapper.text()).toContain('+2.2K')
+
+    await waitFor(() => wrapper.find('.skeleton-stub').exists())
+    // Once the skeleton is up the old range's numbers are gone — leaving them
+    // under the new chip is what read as a frozen panel.
+    expect(wrapper.text()).not.toContain('+2.2K')
+    expect(wrapper.text()).not.toContain('提交数')
+
+    // Settle the pending requests so the module-level composable state is not
+    // left mid-flight for the next test.
+    expect(pending.length).toBeGreaterThan(0)
+    for (const release of pending) release(mockResponse({ rows: [] }))
+    await flushPromises()
+  })
+
+  // --- Efficiency group (spend per 1K net added lines) ---
+
+  it('renders per-1K tokens / credit / cost from the same-window usage totals', async () => {
+    routeMock(
+      mockResponse({ totals: { added: 2500, deleted: 500, net: 2000, commitCnt: 4 }, rows: [] }),
+      { totals: { total: 1_000_000, credit: 200, costUsd: 4 }, rows: [] },
+    )
+    const wrapper = await mountPanel()
+    const text = wrapper.text()
+
+    expect(text).toContain('生产效率')
+    // 2000 net lines = 2 units → 500K tokens, 100 credit, $2.00 per unit.
+    expect(text).toContain('500.0K')
+    expect(text).toContain('100')
+    expect(text).toContain('$2.00')
+    // The hint names the denominator so the ratio is never read as absolute spend.
+    expect(text).toContain('当前净增 +2.0K 行')
+  })
+
+  it('asks the usage endpoint for the same window as the git stats', async () => {
+    routeMock(
+      mockResponse({ totals: { added: 1000, deleted: 0, net: 1000, commitCnt: 1 }, rows: [] }),
+      { totals: { total: 1000, credit: 1, costUsd: 1 }, rows: [] },
+    )
+    await mountPanel()
+
+    const urls = mockApiGet.mock.calls.map(c => String(c[0]))
+    const gitURL = urls.find(u => u.startsWith('/api/git/stats'))!
+    const usageURL = urls.find(u => u.startsWith('/api/usage/stats'))!
+    expect(gitURL).toBeTruthy()
+    expect(usageURL).toBeTruthy()
+
+    const gitParams = new URLSearchParams(gitURL.split('?')[1])
+    const usageParams = new URLSearchParams(usageURL.split('?')[1])
+    expect(usageParams.get('start')).toBe(gitParams.get('start'))
+    expect(usageParams.get('end')).toBe(gitParams.get('end'))
+    expect(usageParams.get('scope')).toBe('project')
+  })
+
+  it('explains a non-positive net instead of rendering a bogus ratio', async () => {
+    routeMock(
+      mockResponse({ totals: { added: 100, deleted: 400, net: -300, commitCnt: 2 }, rows: [] }),
+      { totals: { total: 500_000, credit: 50, costUsd: 1 }, rows: [] },
+    )
+    const wrapper = await mountPanel()
+    const text = wrapper.text()
+    expect(text).toContain('净增行数为 0 或为负')
+    // No ratio cards at all — a negative denominator must not produce numbers.
+    expect(text).not.toContain('Token / 1K 行')
+  })
+
+  it('explains an empty usage window instead of claiming zero spend', async () => {
+    routeMock(mockResponse({ totals: { added: 2000, deleted: 0, net: 2000, commitCnt: 1 }, rows: [] }))
+    const wrapper = await mountPanel()
+    const text = wrapper.text()
+    expect(text).toContain('没有用量记录')
+    expect(text).not.toContain('Token / 1K 行')
   })
 })

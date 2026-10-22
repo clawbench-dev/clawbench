@@ -35,11 +35,22 @@
       <!-- Error banner -->
       <div v-if="error" class="stats-error">{{ errorText }}</div>
 
-      <!-- First load spinner (raw not populated yet) -->
-      <div v-else-if="!rawLoaded" class="stats-loading">
-        <LoadingIndicator size="sm" inline />
-        <span>{{ t('common.loading') }}</span>
-      </div>
+      <!-- First load / range switch: skeleton instead of a lone spinner. The
+           range chips above stay live (that is what the user just changed), so
+           the placeholder must sit exactly where the numbers will appear —
+           otherwise the panel reads as frozen while the query runs.
+
+           `!rawLoaded` is kept alongside the delayed flag: during the first
+           load there is a window (before the delay elapses) where neither is
+           true, and falling through to the not-a-repo branch would tell the
+           user their project isn't a git repository before we have looked. -->
+      <StatsSkeleton
+        v-else-if="showSkeleton || !rawLoaded"
+        :cards="4"
+        :table-rows="5"
+        :chart="true"
+        :label="t('common.loading')"
+      />
 
       <!-- Not a git repository -->
       <div v-else-if="!isGit" class="stats-empty">
@@ -72,6 +83,44 @@
                 </span>
               </div>
             </div>
+          </section>
+
+          <!-- Efficiency group: spend per 1K net added lines over the same
+               window. Deliberately inside the delta tab (not the usage tab):
+               the denominator is the code change measured above, so the two
+               halves of the ratio are read side by side. -->
+          <section class="stats-card-panel">
+            <div class="stats-card-title">
+              <Zap :size="13" class="stats-card-title-icon" />
+              <span>{{ t('gitStats.efficiencyTitle') }}</span>
+            </div>
+            <p v-if="efficiency" class="git-eff-hint">
+              {{ t('gitStats.efficiencyHint', { net: formatNetDelta(totalsNet) }) }}
+            </p>
+            <div v-if="efficiency" class="git-totals">
+              <div class="stats-total">
+                <span class="stats-total-label">
+                  <Sigma :size="14" class="stats-total-icon" aria-hidden="true" />
+                  <span class="stats-total-label-text">{{ t('gitStats.effTokens') }}</span>
+                </span>
+                <span class="stats-total-value">{{ formatPerKTokens(efficiency.tokens) }}</span>
+              </div>
+              <div class="stats-total">
+                <span class="stats-total-label">
+                  <Coins :size="14" class="stats-total-icon" aria-hidden="true" />
+                  <span class="stats-total-label-text">{{ t('gitStats.effCredit') }}</span>
+                </span>
+                <span class="stats-total-value">{{ formatPerKCredit(efficiency.credit) }}</span>
+              </div>
+              <div class="stats-total">
+                <span class="stats-total-label">
+                  <CircleDollarSign :size="14" class="stats-total-icon" aria-hidden="true" />
+                  <span class="stats-total-label-text">{{ t('gitStats.effCost') }}</span>
+                </span>
+                <span class="stats-total-value">{{ formatPerKCost(efficiency.costUsd) }}</span>
+              </div>
+            </div>
+            <p v-else class="git-eff-hint git-eff-hint-muted">{{ efficiencyUnavailableText }}</p>
           </section>
 
           <!-- Per-author detail table -->
@@ -167,12 +216,20 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Clock, Gauge, Table, ChartLine, GitBranch, Code2, Plus, Minus, Scale, GitCommitHorizontal } from 'lucide-vue-next'
-import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import { Clock, Gauge, Table, ChartLine, GitBranch, Code2, Plus, Minus, Scale, GitCommitHorizontal, Zap, Sigma, Coins, CircleDollarSign } from 'lucide-vue-next'
+import StatsSkeleton from '@/components/stats/StatsSkeleton.vue'
+import { useDelayedFlag } from '@/composables/useDelayedFlag'
 import UsageChart from '@/components/stats/UsageChart.vue'
 import { useGitCodeStats } from '@/composables/useGitCodeStats'
 import type { UsageRangeKey } from '@/composables/useUsageStats'
-import { formatLineCount, formatNetDelta } from '@/components/stats/gitStatsFormat'
+import {
+  formatLineCount,
+  formatNetDelta,
+  efficiencyPerK,
+  formatPerKTokens,
+  formatPerKCredit,
+  formatPerKCost,
+} from '@/components/stats/gitStatsFormat'
 import { buildGitTrendOption } from '@/components/stats/gitStatsChart'
 import { store } from '@/stores/app'
 
@@ -183,7 +240,7 @@ const props = defineProps<{
 const { t } = useI18n()
 const stats = useGitCodeStats()
 const range = stats.range
-const { raw, error, visibleTotals, tableRows, trend } = stats
+const { raw, loading, error, visibleTotals, tableRows, trend, usageTotals, usageLoading, usageError } = stats
 
 const rangePresets: { key: UsageRangeKey; labelKey: string }[] = [
   { key: '24h', labelKey: 'gitStats.range24h' },
@@ -228,11 +285,39 @@ function clearAuthors() {
   selectedAuthors.value = []
 }
 
+// Skeleton gate: see useDelayedFlag. `loading` covers both the very first load
+// and a range switch (raw is deliberately not cleared on switch, so the panel
+// would otherwise keep the previous range's numbers under the new chips).
+const showSkeleton = useDelayedFlag(loading)
+
 const isGit = computed(() => raw.value?.isGit === true)
 const rawLoaded = computed(() => raw.value !== null)
 const totalsPresent = computed(() => {
   const t0 = raw.value?.totals
   return !!t0 && (t0.added > 0 || t0.deleted > 0 || t0.commitCnt > 0 || t0.net !== 0)
+})
+
+// --- Efficiency group ---
+const totalsNet = computed(() => raw.value?.totals?.net ?? 0)
+
+/** Spend per 1K net added lines; null when the ratio is undefined. */
+const efficiency = computed(() => efficiencyPerK(totalsNet.value, usageTotals.value))
+
+/**
+ * Why the ratio is missing. The two causes are genuinely different (one is a
+ * property of the code change, the other of the usage query), so they must not
+ * collapse into a generic "no data" — a user with a net-negative week should
+ * not be told to check their usage data.
+ */
+const efficiencyUnavailableText = computed(() => {
+  if (usageLoading.value) return t('common.loading')
+  if (usageError.value) {
+    return usageError.value.message || (usageError.value.status
+      ? `${t('gitStats.effLoadFailed')} (${usageError.value.status})`
+      : t('gitStats.effLoadFailed'))
+  }
+  if (totalsNet.value <= 0) return t('gitStats.effNoNet')
+  return t('gitStats.effNoUsage')
 })
 
 const sortedRows = computed(() => {
@@ -517,6 +602,17 @@ onMounted(() => {
   color: var(--color-red, #ef4444) !important;
 }
 
+/* ── Efficiency group ── */
+.git-eff-hint {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+.git-eff-hint-muted {
+  color: var(--text-muted);
+}
+
 /* ── Error / loading / empty ── */
 .stats-error {
   padding:9px var(--space-6);
@@ -526,7 +622,6 @@ onMounted(() => {
   color: var(--color-red, #ef4444);
   font-size: var(--font-size-md);
 }
-.stats-loading,
 .stats-empty {
   display: flex;
   flex-direction: column;
