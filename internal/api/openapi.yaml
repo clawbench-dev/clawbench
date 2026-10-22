@@ -500,6 +500,20 @@ paths:
 
         该键是**热更新**：连接在每一轮开始前比对策略哈希，变了就带着新列表重连，
         因此不会出现在 `changed_cold_fields` 里，也不需要重启。
+
+        **错误响应形态**：值被拒绝时统一返回 400。响应体有两种：
+
+        - 具体错误（推荐客户端处理）：`msgKey` 为稳定标识、`error` 为按
+          `X-Locale` / cookie / `Accept-Language` 本地化后的文案、`detail.field`
+          为出错的配置路径（如 `usage_meter.period_days`）。`usage_meter.*`
+          的校验错误全部走这一形态：
+          `UsageMeterQuotaNegative` / `UsageMeterQuotaNotNumber` /
+          `UsageMeterAnchorRequired` / `UsageMeterAnchorInvalid` /
+          `UsageMeterAnchorNotString` / `UsageMeterPeriodRange`
+          （带 `detail.Max`）/ `UsageMeterPeriodNotNumber` /
+          `UsageMeterMetricInvalid` / `UsageMeterMetricNotString`。
+        - 其余尚未逐个建键的校验错误仍是 `error: "invalid_value"` + 英文
+          `message`（无 `msgKey`）。
       operationId: patchConfig
       requestBody:
         required: true

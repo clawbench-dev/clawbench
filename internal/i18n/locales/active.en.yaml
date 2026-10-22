@@ -310,5 +310,18 @@ UsageMeterOverTitle: Usage above plan
 UsageMeterFullTitle: Usage quota exhausted
 UsageMeterOverBody: Used {{.Actual}} this cycle vs {{.Expected}} expected (quota {{.Quota}}, day {{.Day}} of {{.Days}})
 UsageMeterFullBody: The {{.Quota}} quota for this cycle is used up; actual usage {{.Actual}}
+# Config PATCH rejections for the usage-meter rule. One key per field so the
+# settings panel can name what is wrong instead of the old generic
+# "invalid_value" (which never reached the user — the API helper only surfaces
+# the `error` field). The field path travels separately in `detail.field`.
+UsageMeterQuotaNegative: The quota cannot be negative
+UsageMeterQuotaNotNumber: The quota must be a number
+UsageMeterAnchorRequired: A start date is required when a quota is set
+UsageMeterAnchorInvalid: The start date must be a valid date in YYYY-MM-DD form
+UsageMeterAnchorNotString: The start date must be text in YYYY-MM-DD form
+UsageMeterPeriodRange: The cycle length must be between 1 and {{.Max}} days
+UsageMeterPeriodNotNumber: The cycle length must be a number
+UsageMeterMetricInvalid: "The metric must be one of: tokens, credit, cost"
+UsageMeterMetricNotString: "The metric must be one of: tokens, credit, cost"
 RestartFailed: "Restart failed: {{.Error}}"
 RestartUnavailable: Restart is not wired up on this server, cannot restart

@@ -1162,6 +1162,16 @@ func serveConfigPatch(w http.ResponseWriter, r *http.Request) {
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidUserNickname")
 			return
 		}
+		// A rejected config value names the offending field in the user's
+		// language. The generic `invalid_value` body this replaces was
+		// unactionable: the API helper surfaces only `error`, so the user saw
+		// "invalid_value" and could not tell which of the four usage-meter
+		// fields was wrong, let alone what the rule is.
+		var valueErr *configValueError
+		if errors.As(err, &valueErr) {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, valueErr.MsgKey, valueErr.templateData())
+			return
+		}
 		writeJSON(w, http.StatusBadRequest, map[string]any{
 			"error":   "invalid_value",
 			"message": err.Error(),
@@ -1291,6 +1301,38 @@ var errUserNicknameTaken = errors.New("user nickname is already used by an agent
 // rather than echoing the raw English message.
 var errInvalidUserNickname = errors.New("invalid user nickname")
 
+// configValueError is a config PATCH failure tied to one specific field.
+//
+// serveConfigPatch renders it through i18n, so the settings panel says WHICH
+// value is wrong, in the user's language. Without it every rejected value
+// collapsed into the generic `invalid_value` body — that body's `error` field is
+// all the API helper keeps, so the specific reason (English-only, in `message`)
+// never reached the user.
+type configValueError struct {
+	// MsgKey is the message id in internal/i18n/locales.
+	MsgKey string
+	// Field is the config path that failed, e.g. "usage_meter.period_days".
+	Field string
+	// Data supplies the template variables the message references.
+	Data map[string]any
+}
+
+func (e *configValueError) Error() string {
+	return fmt.Sprintf("%s: %s", e.Field, e.MsgKey)
+}
+
+// templateData merges the field path into the message variables, so every
+// rejected value carries a machine-readable `detail.field` next to its
+// localized text.
+func (e *configValueError) templateData() map[string]any {
+	out := make(map[string]any, len(e.Data)+1)
+	for k, v := range e.Data {
+		out[k] = v
+	}
+	out["field"] = e.Field
+	return out
+}
+
 // normalizeUserNicknameInPatch trims the nickname IN PLACE, before validation,
 // storage and the YAML write. The nickname is a routing target and the parser
 // trims each target, so a value like "  User  " would key the byName map
@@ -1340,24 +1382,28 @@ func validUserNickname(s string) bool {
 // does not know would silently count nothing.
 func validateUsageMeterRule(r model.UsageMeterConfig) error {
 	if r.Quota < 0 {
-		return fmt.Errorf("usage_meter.quota must not be negative")
+		return &configValueError{MsgKey: "UsageMeterQuotaNegative", Field: "usage_meter.quota"}
 	}
 	if r.Quota == 0 {
 		return nil
 	}
 	if r.AnchorDate == "" {
-		return fmt.Errorf("usage_meter.anchor_date is required when a quota is set")
+		return &configValueError{MsgKey: "UsageMeterAnchorRequired", Field: "usage_meter.anchor_date"}
 	}
 	// Parse in local time to match how the service interprets the anchor: a
 	// date-only string at 00:00 in the server's timezone.
 	if _, err := time.ParseInLocation("2006-01-02", r.AnchorDate, time.Local); err != nil {
-		return fmt.Errorf("usage_meter.anchor_date must be YYYY-MM-DD")
+		return &configValueError{MsgKey: "UsageMeterAnchorInvalid", Field: "usage_meter.anchor_date"}
 	}
 	if r.PeriodDays < 1 || r.PeriodDays > model.MaxUsageMeterPeriodDays {
-		return fmt.Errorf("usage_meter.period_days must be between 1 and %d", model.MaxUsageMeterPeriodDays)
+		return &configValueError{
+			MsgKey: "UsageMeterPeriodRange",
+			Field:  "usage_meter.period_days",
+			Data:   map[string]any{"Max": model.MaxUsageMeterPeriodDays},
+		}
 	}
 	if !model.IsValidUsageMeterMetric(r.Metric) {
-		return fmt.Errorf("usage_meter.metric must be one of: tokens,credit,cost")
+		return &configValueError{MsgKey: "UsageMeterMetricInvalid", Field: "usage_meter.metric"}
 	}
 	return nil
 }
@@ -1538,28 +1584,28 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		if raw, present := um["anchor_date"]; present {
 			v, ok := raw.(string)
 			if !ok {
-				return fmt.Errorf("usage_meter.anchor_date must be a string")
+				return &configValueError{MsgKey: "UsageMeterAnchorNotString", Field: "usage_meter.anchor_date"}
 			}
 			effective.AnchorDate = v
 		}
 		if raw, present := um["period_days"]; present {
 			v, ok := raw.(float64)
 			if !ok {
-				return fmt.Errorf("usage_meter.period_days must be a number")
+				return &configValueError{MsgKey: "UsageMeterPeriodNotNumber", Field: "usage_meter.period_days"}
 			}
 			effective.PeriodDays = int(v)
 		}
 		if raw, present := um["metric"]; present {
 			v, ok := raw.(string)
 			if !ok {
-				return fmt.Errorf("usage_meter.metric must be a string")
+				return &configValueError{MsgKey: "UsageMeterMetricNotString", Field: "usage_meter.metric"}
 			}
 			effective.Metric = v
 		}
 		if raw, present := um["quota"]; present {
 			v, ok := raw.(float64)
 			if !ok {
-				return fmt.Errorf("usage_meter.quota must be a number")
+				return &configValueError{MsgKey: "UsageMeterQuotaNotNumber", Field: "usage_meter.quota"}
 			}
 			effective.Quota = v
 		}

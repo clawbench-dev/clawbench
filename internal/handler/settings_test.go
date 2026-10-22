@@ -1300,6 +1300,107 @@ func TestServeConfig_Patch_SessionMaxCount_IsHotField(t *testing.T) {
 
 // --- validatePatchValues additional coverage ---
 
+// A rejected usage-meter value must name the field and be translated. The old
+// body was a generic `error: "invalid_value"` with an English `message`; the
+// frontend API helper surfaces only `error`, so every one of the four fields
+// looked identical to the user and said nothing about what was wrong.
+func TestServeConfig_Patch_UsageMeterInvalidIsSpecificAndLocalized(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cases := []struct {
+		name      string
+		body      string
+		wantKey   string
+		wantField string
+	}{
+		{
+			name:      "period over the cap",
+			body:      `{"usage_meter":{"quota":10,"anchor_date":"2026-10-05","period_days":999,"metric":"cost"}}`,
+			wantKey:   "UsageMeterPeriodRange",
+			wantField: "usage_meter.period_days",
+		},
+		{
+			name:      "negative quota",
+			body:      `{"usage_meter":{"quota":-1}}`,
+			wantKey:   "UsageMeterQuotaNegative",
+			wantField: "usage_meter.quota",
+		},
+		{
+			name:      "quota without an anchor",
+			body:      `{"usage_meter":{"quota":10,"period_days":30,"metric":"cost"}}`,
+			wantKey:   "UsageMeterAnchorRequired",
+			wantField: "usage_meter.anchor_date",
+		},
+		{
+			name:      "unknown metric",
+			body:      `{"usage_meter":{"quota":10,"anchor_date":"2026-10-05","period_days":30,"metric":"usd"}}`,
+			wantKey:   "UsageMeterMetricInvalid",
+			wantField: "usage_meter.metric",
+		},
+		{
+			name:      "quota sent as a string",
+			body:      `{"usage_meter":{"quota":"5000000"}}`,
+			wantKey:   "UsageMeterQuotaNotNumber",
+			wantField: "usage_meter.quota",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			model.ConfigInstance = model.Config{}
+
+			req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-Locale", "en")
+			withAuthCookie(req, model.SessionToken)
+			w := callHandler(ServeConfig, req)
+
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+
+			var resp map[string]any
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			assert.Equal(t, tc.wantKey, resp["msgKey"],
+				"the response must name the specific failing rule, not a generic code")
+			assert.NotEqual(t, "invalid_value", resp["error"],
+				"a usage-meter failure must not collapse into the generic error code")
+			assert.NotEmpty(t, resp["error"], "the localized text goes in `error`")
+
+			detail, ok := resp["detail"].(map[string]any)
+			require.True(t, ok, "detail must carry the offending field path")
+			assert.Equal(t, tc.wantField, detail["field"])
+		})
+	}
+}
+
+// The localized text is what the panel shows, so it has to differ per field —
+// a single shared string would bring back the original "which field?" problem.
+func TestServeConfig_Patch_UsageMeterLocalizedTextDiffersByField(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	textFor := func(locale, body string) string {
+		model.ConfigInstance = model.Config{}
+		req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Locale", locale)
+		withAuthCookie(req, model.SessionToken)
+		w := callHandler(ServeConfig, req)
+		var resp map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		return resp["error"].(string)
+	}
+
+	zhQuota := textFor("zh", `{"usage_meter":{"quota":-1}}`)
+	zhPeriod := textFor("zh", `{"usage_meter":{"quota":10,"anchor_date":"2026-10-05","period_days":999,"metric":"cost"}}`)
+	assert.NotEqual(t, zhQuota, zhPeriod, "different fields must not share one message")
+	assert.NotContains(t, zhQuota, "{{", "placeholders must be rendered")
+	assert.Contains(t, zhPeriod, "366", "the period message must state the actual cap")
+
+	enQuota := textFor("en", `{"usage_meter":{"quota":-1}}`)
+	assert.NotEqual(t, enQuota, zhQuota, "the message must follow the request locale")
+}
+
 func TestServeConfig_Patch_TTSFormatInvalid(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()

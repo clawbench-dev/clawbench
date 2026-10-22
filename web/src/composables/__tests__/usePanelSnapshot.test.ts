@@ -147,6 +147,25 @@ describe('usePanelSnapshot', () => {
     expect(hasFailedSave.value).toBe(true)
   })
 
+  // The server now localizes config-validation failures and puts the sentence in
+  // `error`, which the API helper turns into `err.message`. The panel must show
+  // THAT sentence — it is the only place the user learns which field is wrong
+  // and why. Falling back to the generic "save failed" copy would silently
+  // throw the explanation away, which is exactly the defect this replaced.
+  it('handleSave surfaces the server\'s specific validation message verbatim', async () => {
+    const localized = '周期长度必须在 1 到 366 天之间'
+    mockPatchConfig.mockRejectedValueOnce(new Error(localized))
+    const config = createTerminalConfig()
+    const { localValues, serverError, initSnapshot, handleSave } = usePanelSnapshot(config)
+    initSnapshot()
+
+    localValues['terminal.idle_timeout'] = '5m'
+    await handleSave()
+
+    expect(serverError.value).toBe(localized)
+    expect(serverError.value).not.toBe('settings.saveFailed')
+  })
+
   it('calls config.afterSave with changed keys', async () => {
     const afterSave = vi.fn()
     const config: GroupPanelConfig = {

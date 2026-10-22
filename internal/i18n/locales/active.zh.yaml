@@ -305,5 +305,17 @@ UsageMeterOverTitle: 用量超出计划
 UsageMeterFullTitle: 用量已用尽
 UsageMeterOverBody: 本周期已用 {{.Actual}}，应花 {{.Expected}}（额度 {{.Quota}}，第 {{.Day}} / {{.Days}} 天）
 UsageMeterFullBody: 本周期额度 {{.Quota}} 已用尽，实际用量 {{.Actual}}
+# 用量规则 PATCH 校验失败文案。按字段各一条，取代原先笼统的 invalid_value
+# （该值根本到不了用户——前端 API 封装只透出 error 字段）。字段路径另在
+# detail.field 中下发。
+UsageMeterQuotaNegative: 额度不能为负数
+UsageMeterQuotaNotNumber: 额度必须是数字
+UsageMeterAnchorRequired: 设置额度时必须填写起始日期
+UsageMeterAnchorInvalid: 起始日期必须是 YYYY-MM-DD 格式的有效日期
+UsageMeterAnchorNotString: 起始日期必须是 YYYY-MM-DD 格式的文本
+UsageMeterPeriodRange: 周期长度必须在 1 到 {{.Max}} 天之间
+UsageMeterPeriodNotNumber: 周期长度必须是数字
+UsageMeterMetricInvalid: 统计口径必须是 tokens、credit 或 cost 之一
+UsageMeterMetricNotString: 统计口径必须是 tokens、credit 或 cost 之一
 RestartFailed: 重启失败：{{.Error}}
 RestartUnavailable: 重启功能未初始化，无法重启服务端
