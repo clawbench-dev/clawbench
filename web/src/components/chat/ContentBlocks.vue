@@ -256,7 +256,14 @@
         </div>
         <template v-else>
           <div :ref="(el) => setSubagentPillRef(subagentGroupKey(bi, block), el)" class="chat-tool-call" :class="{ done: block.done, 'chat-tool-call-group': hasSubagentGroup(block), 'chat-tool-call-group-open': hasSubagentGroup(block) && isSubagentGroupOpen(bi, block) }" :data-category="getToolIcon(block.name).category" :style="memberAccentStyle(block)" @click.stop="handleToolClick(block, key(bi), absIdx(bi))">
-            <component :is="getToolIcon(block.name).icon" :size="12" class="tool-icon" />
+            <!-- A team member's card wears the team glyph, exactly like the
+                 member fallback group header below. Two paths render the same
+                 member, so they must look identical: before this, the card
+                 showed the generic Agent/Bot icon while the post-interruption
+                 group showed Users, and the same member changed face depending
+                 on whether its parent card was still resolvable. -->
+            <Users v-if="isAgentCardWithMembers(block)" :size="12" class="tool-icon" />
+            <component v-else :is="getToolIcon(block.name).icon" :size="12" class="tool-icon" />
             <span class="tool-name">{{ isAgentCardWithMembers(block) ? agentPillTitle(block) : toolDisplayName(block.name, block.input, block.display_name) }}</span>
             <span v-if="toolCallSummary(block)" class="tool-summary">{{ toolCallSummary(block) }}</span>
             <!-- Sub-agent: step count + expand/collapse toggle live IN the pill,
@@ -297,7 +304,12 @@
              callout/pill, tool pills) as top-level content. The recursive
              subtree is mounted lazily on first open: a never-opened group (e.g.
              a collapsed 4558-block sub-agent) pays no component/index cost. -->
-        <div v-if="hasSubagentGroup(block)" class="subagent-group" :class="{ 'subagent-group-open': isSubagentGroupOpen(bi, block) }">
+        <!-- The accent is set on the GROUP, not only on the pill: the expanded
+             body is a child of this element, so a pill-only custom property
+             never reaches it and the body keeps .subagent-group's default
+             pink. The member fallback group below sets it here for exactly that
+             reason — both paths must paint the same member the same colour. -->
+        <div v-if="hasSubagentGroup(block)" class="subagent-group" :class="{ 'subagent-group-open': isSubagentGroupOpen(bi, block) }" :style="memberAccentStyle(block)">
           <div class="subagent-group-body-wrapper" :class="{ 'subagent-group-body-open': isSubagentGroupOpen(bi, block), 'subagent-group-body-nostransition': collapsingSubagentGroups[subagentGroupKey(bi, block)] }">
             <div class="subagent-group-body">
               <ContentBlocks
@@ -678,7 +690,14 @@ function isAgentCardWithMembers(block: any): boolean {
   if (block?.type !== 'tool_use') return false
   const name = String(block?.name || '').toLowerCase()
   if (name !== 'agent' && name !== 'task') return false
-  return !!block?.member_name || childBlocksOf(block?.id).some((c) => c?.member_name)
+  // Any member evidence counts: the card's own attribution, a child's, or a
+  // colour. Colour alone is enough because it is written by the same member
+  // frames — and requiring the NAME would leave a card that has only the colour
+  // with the generic Agent glyph and no accent.
+  return (
+    !!block?.member_name ||
+    childBlocksOf(block?.id).some((c) => c?.member_name || c?.member_color)
+  )
 }
 
 /**
@@ -1464,9 +1483,32 @@ function hasSubagentGroup(block: any): boolean {
  * in the roster; a block without attribution keeps the default accent.
  */
 function memberAccentStyle(block: any): Record<string, string> | undefined {
-  const color = block?.member_color
+  const color = memberColorOf(block)
   if (!color) return undefined
   return { '--subagent-accent': teamMemberColorVar(color) }
+}
+
+/**
+ * The member colour for an Agent card.
+ *
+ * The card's own `member_color` is the primary source, but persisted history
+ * routinely has it EMPTY while its CHILDREN carry it (verified on real rows:
+ * every Agent card had member_color null, while the member's own blocks had
+ * green/yellow/red/…). Without the fallback the card loses its accent on every
+ * reload, which is exactly the "pre-interruption members have no colour" bug —
+ * the live stream attributed the colour to the card, but the reload did not.
+ *
+ * Children are the same source the fallback group header uses
+ * (memberFallbackColor), so both paths agree by construction.
+ */
+function memberColorOf(block: any): string | undefined {
+  if (block?.member_color) return String(block.member_color)
+  const id = block?.id
+  if (!id) return undefined
+  for (const child of childBlocksOf(String(id))) {
+    if (child?.member_color) return String(child.member_color)
+  }
+  return undefined
 }
 
 /** Forward a child block's tool-detail event with its real root index. */

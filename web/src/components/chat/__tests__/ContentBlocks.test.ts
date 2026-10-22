@@ -2467,6 +2467,101 @@ describe('ContentBlocks — Agent Team member fallback grouping', () => {
 // so titling the Agent card with the subagent TYPE renders a column of
 // identical "General-purpose" cards that say nothing about who did the work.
 // The member name is the authoritative attribution and must win.
+describe('ContentBlocks — member presentation is identical before and after an interruption', () => {
+  // Two code paths render the SAME team member:
+  //   A. the Agent card that spawned it (parent link still resolvable) — this is
+  //      what the user sees BEFORE an interruption;
+  //   B. the member fallback group (parent card gone from the message) — what
+  //      they see AFTER one.
+  // Both must look the same: same glyph, same accent colour. They did not —
+  // A used the generic Agent/Bot icon and, on reload, no accent at all, because
+  // the persisted card has member_color null while its children carry it.
+  const memberBlocks = () => [
+    { type: 'tool_use', name: 'Agent', id: 'call_a', done: true, input: { subagent_type: 'general-purpose' }, display_name: 'general-purpose' },
+    { type: 'text', text: 'alpha report', parent_tool_call_id: 'call_a', member_name: 'android-reviewer', member_color: 'green' },
+  ]
+
+  it('gives the Agent card the team glyph, not the generic Agent icon', () => {
+    const wrapper = mountBlocks({ blocks: memberBlocks() })
+    const pill = wrapper.find('.chat-tool-call-group')
+    // A team member card must render the Users glyph, the same one the member
+    // fallback header uses — NOT whatever getToolIcon('Agent') yields.
+    expect(pill.find('svg.lucide-users').exists()).toBe(true)
+  })
+
+  it('gives the Agent card the member colour from its children', () => {
+    // The card itself has no member_color (that is how history is persisted),
+    // so the accent must be derived from a child — otherwise the card is
+    // colourless on every reload while the fallback group is coloured.
+    const wrapper = mountBlocks({ blocks: memberBlocks() })
+    const pill = wrapper.find('.chat-tool-call-group')
+    expect(pill.attributes('style')).toContain('--subagent-accent')
+  })
+
+  it('renders both paths with the SAME accent and the SAME glyph', () => {
+    // The whole point: a member must look the same whether its Agent card is
+    // still resolvable (pre-interruption) or gone (post-interruption). Compare
+    // the resolved values, not just "an accent exists".
+    const cardWrapper = mountBlocks({
+      blocks: memberBlocks(),
+      expandedTools: { 'subagent-call_a': true },
+    })
+    // The accent lives on the group element, which is where the expanded body
+    // reads it from (a pill-only property would leave the body default-pink).
+    const cardGroup = cardWrapper.find('.subagent-group')
+    // The glyph lives on the pill, which is a SIBLING of the group element.
+    const cardPill = cardWrapper.find('.chat-tool-call-group')
+
+    const groupWrapper = mountBlocks({
+      blocks: [
+        { type: 'text', text: 'alpha report', member_name: 'android-reviewer', member_color: 'green' },
+        { type: 'tool_use', name: 'Bash', id: 't1', done: true, input: {}, member_name: 'android-reviewer', member_color: 'green' },
+      ],
+      expandedTools: { 'member-group-msg-1-android-reviewer': true },
+    })
+    const groupAccentEl = groupWrapper.find('.member-group')
+    const groupPill = groupWrapper.find('.member-group .chat-tool-call')
+
+    const pick = (style: string) => /--subagent-accent:\s*([^;]+)/.exec(style)?.[1]?.trim()
+    expect(pick(cardGroup.attributes('style') || '')).toBeTruthy()
+    expect(pick(cardGroup.attributes('style') || '')).toBe(pick(groupAccentEl.attributes('style') || ''))
+    expect(cardPill.find('svg.lucide-users').exists()).toBe(true)
+    expect(groupPill.find('svg.lucide-users').exists()).toBe(true)
+  })
+
+  it('paints the EXPANDED body with the member colour, not the default pink', () => {
+    // .subagent-group declares its own `--subagent-accent: #ec4899`. A custom
+    // property set only on the pill does NOT cascade into the expanded body
+    // (it is a sibling/child of the group, not of the pill), so the body kept
+    // the default pink while the pill was green. The accent must be set on the
+    // group element itself — which is what the fallback group already does.
+    const wrapper = mountBlocks({
+      blocks: memberBlocks(),
+      expandedTools: { 'subagent-call_a': true },
+    })
+    const group = wrapper.find('.subagent-group')
+    expect(group.exists()).toBe(true)
+    expect(group.attributes('style') || '').toContain('--subagent-accent')
+  })
+
+  it('still uses the normal Agent icon for a non-team sub-agent', () => {
+    // Guard against over-reach: an ordinary sub-agent has no member evidence,
+    // so it keeps whatever getToolIcon returns and gets no accent. The mock maps
+    // Agent to a plain string component name (Vue renders those as an element
+    // rather than an <svg>), so "the real icon was used" is asserted as "no
+    // Users glyph was forced in".
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'tool_use', name: 'Agent', id: 'call_p', done: true, input: { subagent_type: 'explore' } },
+        { type: 'text', text: 'child answer', parent_tool_call_id: 'call_p' },
+      ],
+    })
+    const pill = wrapper.find('.chat-tool-call-group')
+    expect(pill.attributes('style') || '').not.toContain('--subagent-accent')
+    expect(pill.find('svg.lucide-users').exists()).toBe(false)
+  })
+})
+
 describe('ContentBlocks — Agent card member titles', () => {
   it('titles an Agent card with the member name instead of the subagent type', () => {
     const wrapper = mountBlocks({
