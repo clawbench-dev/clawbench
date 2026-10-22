@@ -6244,7 +6244,7 @@ components:
       name: X-ClawBench-AI-Token
       description: |
         本机 AI 子进程使用的短时令牌，由内置斜杠命令（`/cb-task` 等）在注入提示词时签发，
-        有效期 30 分钟，以 `CookieToken` 做 HMAC 签名。仅接受来自回环地址的请求：
+        有效期 12 小时，以 `CookieToken` 做 HMAC 签名。仅接受来自回环地址的请求：
         地址与签名须同时成立。地址单独不再放行。
 
   parameters:
