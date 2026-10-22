@@ -189,7 +189,9 @@ export default {
     title: 'Usage',
     // Short form used inside the header capsule (next to the gauge icon).
     label: 'Usage',
-    capsuleTitle: 'View this cycle\u2019s usage',
+    // Neutral wording: without a rule there is no cycle, so "this cycle's
+    // usage" would be wrong on the same button.
+    capsuleTitle: 'View usage',
     dayOfCycle: 'Day {day} of {days}',
     actual: 'Actual',
     expected: 'Planned',
@@ -206,6 +208,11 @@ export default {
     badgeOver: '{pct}% over plan',
     badgeFull: 'Exhausted',
     adjust: 'Adjust quota and cycle →',
+    // Shown instead of `adjust` when no rule exists: there is no quota to
+    // adjust, so the call to action is to create one.
+    setBudget: 'Set a quota and cycle →',
+    totalSpent: 'Total for this period',
+    windowSince: 'since {date}',
     trendLabel: 'Cumulative usage against the linear plan',
     legendActual: 'Actual',
     legendExpected: 'Linear plan',

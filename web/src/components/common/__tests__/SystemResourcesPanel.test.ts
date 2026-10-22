@@ -53,9 +53,12 @@ const mockMeterStatus = ref({
 vi.mock('@/composables/useUsageMeter', () => ({
   useUsageMeter: () => ({
     status: mockMeterStatus,
+    // Mirrors the real composable: no rule is its own state ('off'), not 'ok'.
+    // 'ok' claims "you are on plan", which is a statement about a quota the
+    // user never set.
     meterState: computed(() => {
       const s = mockMeterStatus.value
-      if (!s.enabled) return 'ok'
+      if (!s.enabled) return 'off'
       if (s.quota > 0 && s.actual >= s.quota) return 'full'
       if (s.actual > s.expected) return 'over'
       return 'ok'
@@ -68,6 +71,8 @@ vi.mock('@/composables/useUsageMeter', () => ({
       const s = mockMeterStatus.value
       return s.quota > 0 ? Math.min(100, (s.expected / s.quota) * 100) : 0
     }),
+    // The row renders once the first fetch lands, with or without a rule.
+    hasData: computed(() => true),
   }),
 }))
 
@@ -290,10 +295,38 @@ describe('SystemResourcesPanel', () => {
     expect(wrapper.find('.usage-row').exists()).toBe(false)
   })
 
-  it('hides the usage meter when the rule is disabled', () => {
-    mockMeterStatus.value = { ...mockMeterStatus.value, enabled: false }
+  // The row is no longer hidden when no rule is configured: the user asked for
+  // the spend to stay visible, minus the ratio. Hiding the whole row would take
+  // the number away too.
+  it('keeps the usage row visible when no rule is configured', () => {
+    mockMeterStatus.value = { ...mockMeterStatus.value, enabled: false, quota: 0, actual: 8.5 }
     const wrapper = mountPanel()
-    expect(wrapper.find('.usage-row').exists()).toBe(false)
+    expect(wrapper.find('.usage-row').exists()).toBe(true)
+    expect(wrapper.find('.usage-row').text()).toContain('8.5')
+  })
+
+  it('drops the bar, quota denominator, day counter and badge without a rule', () => {
+    mockMeterStatus.value = { ...mockMeterStatus.value, enabled: false, quota: 0, actual: 8.5 }
+    const wrapper = mountPanel()
+
+    // An empty track plus "/ 0" would read as "your budget is zero".
+    expect(wrapper.find('.usage-bar').exists()).toBe(false)
+    expect(wrapper.find('.usage-quota').exists()).toBe(false)
+    // "day 0 of 30" would be a lie: there is no cycle.
+    expect(wrapper.find('.usage-badge').exists()).toBe(false)
+    expect(wrapper.find('.usage-row').text()).not.toContain('usageMeter.dayOfCycle')
+  })
+
+  it('labels the window instead of a cycle when there is no rule', () => {
+    mockMeterStatus.value = {
+      ...mockMeterStatus.value,
+      enabled: false,
+      quota: 0,
+      actual: 8.5,
+      cycleStart: '2026-09-22T00:00:00+08:00',
+    }
+    const wrapper = mountPanel()
+    expect(wrapper.find('.usage-row').text()).toContain('usageMeter.windowSince')
   })
 
   it('marks the meter as over plan when actual exceeds the baseline', () => {

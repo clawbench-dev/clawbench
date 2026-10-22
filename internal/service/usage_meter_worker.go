@@ -50,6 +50,13 @@ const (
 	defaultUsageMeterStartup = 10 * time.Second
 )
 
+// defaultUsageMeterCheck is the production entry point, named once so the
+// production constructor and the test constructor cannot drift apart.
+//
+// It must be the worker variant: the plain CheckUsageMeter skips the unmetered
+// refresh, so an unconfigured user's spend total would never update.
+var defaultUsageMeterCheck = CheckUsageMeterForWorker
+
 // NewUsageMeterWorker builds a worker with the production timings.
 func NewUsageMeterWorker() *UsageMeterWorker {
 	return &UsageMeterWorker{
@@ -58,7 +65,7 @@ func NewUsageMeterWorker() *UsageMeterWorker {
 		stopCh:   make(chan struct{}),
 		doneCh:   make(chan struct{}),
 		wakeCh:   make(chan struct{}, 1),
-		checkFn:  CheckUsageMeter,
+		checkFn:  defaultUsageMeterCheck,
 	}
 }
 
@@ -67,7 +74,7 @@ func NewUsageMeterWorker() *UsageMeterWorker {
 // because the tests live in the external service_test package.
 func NewUsageMeterWorkerForTest(interval, startup time.Duration, check func(context.Context) string) *UsageMeterWorker {
 	if check == nil {
-		check = CheckUsageMeter
+		check = defaultUsageMeterCheck
 	}
 	return &UsageMeterWorker{
 		interval: interval,
@@ -152,9 +159,11 @@ func (w *UsageMeterWorker) run(stopCh <-chan struct{}, doneCh chan struct{}) {
 }
 
 func (w *UsageMeterWorker) tick() {
-	// Cheap pre-check: with the feature off (the default) this avoids the
-	// aggregate query entirely on every tick.
-	if !usageMeterNeedsCheck() {
+	// Cheap pre-check. With a rule, every tick runs the cycle aggregate (the
+	// capsule must track usage as it lands). Without one there is no
+	// notification to send and the only work is refreshing the spend total,
+	// which is a 30-day scan — so it is throttled far harder than the tick.
+	if !usageMeterNeedsCheck() && !usageMeterNeedsUnmeteredRefresh(time.Now()) {
 		return
 	}
 	// A background context with a timeout: a wedged aggregate query must not
@@ -225,4 +234,16 @@ func (w *UsageMeterWorker) Wake() {
 	case w.wakeCh <- struct{}{}:
 	default:
 	}
+}
+
+// RunCheckOnceForTest invokes the worker's configured check synchronously and
+// reports whether the call produced a broadcast.
+//
+// Exists so the wiring can be verified: every other worker test injects its own
+// checkFn, which proves the loop runs but says nothing about WHICH production
+// function NewUsageMeterWorker installed.
+func (w *UsageMeterWorker) RunCheckOnceForTest(ctx context.Context) bool {
+	ResetUsageMeterBroadcastForTest()
+	w.checkFn(ctx)
+	return UsageMeterHasBroadcastForTest()
 }

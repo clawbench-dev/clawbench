@@ -151,4 +151,92 @@ describe('useUsageMeter', () => {
 
     expect(meter.openRequest.value).toBe(before + 1)
   })
+
+  // ── No rule configured ────────────────────────────────────────────────────
+  // A user without a budget still gets their spend reported; what disappears is
+  // the ratio. `enabled` is what says "a rule exists", so every derived ratio
+  // must be inert when it is false — otherwise `actual > expected` (expected is
+  // 0) reports every user with any spend as "over plan".
+
+  it('exposes actual usage even with no rule configured', async () => {
+    const mod = await load()
+    const meter = mod.useUsageMeter()
+    mockedGet.mockResolvedValueOnce({
+      enabled: false,
+      metric: 'cost',
+      periodDays: 30,
+      dayInCycle: 0,
+      actual: 12.5,
+      expected: 0,
+      remainingDays: 0,
+      projectedExhaustDay: 0,
+      cycleStart: '2026-09-22T00:00:00+08:00',
+      cycleEnd: '2026-10-22T00:00:00+08:00',
+    })
+    await meter.refresh()
+
+    expect(meter.status.value.actual).toBe(12.5)
+    expect(meter.status.value.enabled).toBe(false)
+    // The capsule must still render.
+    expect(meter.hasData.value).toBe(true)
+  })
+
+  it('reports the off state rather than "on plan" when there is no rule', async () => {
+    const mod = await load()
+    const meter = mod.useUsageMeter()
+    mockedGet.mockResolvedValueOnce({
+      enabled: false,
+      metric: 'cost',
+      periodDays: 30,
+      dayInCycle: 0,
+      actual: 12.5,
+      expected: 0,
+      remainingDays: 0,
+      projectedExhaustDay: 0,
+    })
+    await meter.refresh()
+
+    // 'ok' would claim "you are within budget" — a judgement about a quota the
+    // user never set.
+    expect(meter.meterState.value).toBe('off')
+    expect(meter.isOverPlan.value).toBe(false)
+    expect(meter.isQuotaExhausted.value).toBe(false)
+  })
+
+  it('does not report over-plan from a zero baseline', async () => {
+    const mod = await load()
+    const meter = mod.useUsageMeter()
+    // Any spend exceeds an absent baseline; without the `enabled` guard this
+    // would be 'over' with a nonsensical percentage.
+    mockedGet.mockResolvedValueOnce({
+      enabled: false,
+      metric: 'cost',
+      periodDays: 30,
+      dayInCycle: 0,
+      actual: 999,
+      expected: 0,
+      remainingDays: 0,
+      projectedExhaustDay: 0,
+    })
+    await meter.refresh()
+
+    expect(meter.isOverPlan.value).toBe(false)
+    expect(meter.meterState.value).toBe('off')
+    // And no fill: a percentage of a zero quota is undefined, not 100%.
+    expect(meter.fillPercent.value).toBe(0)
+    expect(meter.expectedPercent.value).toBe(0)
+  })
+
+  it('hasData stays false until the first successful fetch', async () => {
+    const mod = await load()
+    const meter = mod.useUsageMeter()
+    // Before any fetch the capsule must not flash for users who turn out to
+    // have nothing to show.
+    expect(meter.hasData.value).toBe(false)
+
+    mockedGet.mockResolvedValueOnce({ ...ENABLED })
+    await meter.refresh()
+
+    expect(meter.hasData.value).toBe(true)
+  })
 })

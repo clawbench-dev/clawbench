@@ -396,6 +396,120 @@ func TestUsageMeter_DisabledWhenQuotaZero(t *testing.T) {
 	assert.False(t, st.Enabled)
 }
 
+// ── No rule configured: still report the spend ───────────────────────────────
+// "No budget" must not mean "no numbers". A user who never configured a quota
+// still wants to see what they have spent; what must disappear is the ratio
+// (expected, quota, projection, remaining days), all of which are statements
+// about a budget that does not exist.
+
+func TestUsageMeter_NoRuleStillReportsActualUsage(t *testing.T) {
+	now := localMidnight(time.Date(2026, 10, 19, 0, 0, 0, 0, time.Local)).Add(12 * time.Hour)
+	db := setupDB(t)
+	ensureAgentsTable(t, db)
+
+	insertUsageSeed(t, db, usageSeed{
+		project: "/a", sessionID: "s-free", agentID: "cb", agentName: "CB", backend: "codebuddy",
+		model: "m", createdAt: now.Add(-2 * 24 * time.Hour).UTC().Format("2006-01-02 15:04:05"), costUSD: 7.5,
+	})
+
+	setUsageMeterRule(t, model.UsageMeterConfig{Quota: 0})
+
+	st, err := service.ComputeUsageMeter(context.Background(), now)
+	require.NoError(t, err)
+
+	assert.False(t, st.Enabled, "no rule means Enabled stays false")
+	assert.InDelta(t, 7.5, st.Actual, 1e-9, "the spend must still be reported")
+
+	// Everything derived from a quota must be inert. Expected is what the
+	// consumers use to decide "over plan"; a non-zero value here would make
+	// every unconfigured user look over budget.
+	assert.Zero(t, st.Quota)
+	assert.Zero(t, st.Expected)
+	assert.Zero(t, st.ProjectedExhaustDay)
+	assert.Zero(t, st.DayInCycle, "there is no cycle, so no day counter")
+	assert.Zero(t, st.RemainingDays)
+}
+
+// The default window matches the stats panel's 30-day preset so the two
+// surfaces agree when a user compares them.
+func TestUsageMeter_NoRuleUsesThirtyDayWindow(t *testing.T) {
+	now := localMidnight(time.Date(2026, 10, 19, 0, 0, 0, 0, time.Local)).Add(12 * time.Hour)
+	db := setupDB(t)
+	ensureAgentsTable(t, db)
+
+	// Inside the window.
+	insertUsageSeed(t, db, usageSeed{
+		project: "/a", sessionID: "s-in", agentID: "cb", agentName: "CB", backend: "codebuddy",
+		model: "m", createdAt: now.AddDate(0, 0, -10).UTC().Format("2006-01-02 15:04:05"), costUSD: 3,
+	})
+	// Outside it (31 days back): must not be counted.
+	insertUsageSeed(t, db, usageSeed{
+		project: "/a", sessionID: "s-out", agentID: "cb", agentName: "CB", backend: "codebuddy",
+		model: "m", createdAt: now.AddDate(0, 0, -31).UTC().Format("2006-01-02 15:04:05"), costUSD: 100,
+	})
+
+	setUsageMeterRule(t, model.UsageMeterConfig{Quota: 0})
+
+	st, err := service.ComputeUsageMeter(context.Background(), now)
+	require.NoError(t, err)
+
+	assert.InDelta(t, 3.0, st.Actual, 1e-9,
+		"only usage inside the trailing 30 days counts")
+	assert.Equal(t, 30, st.PeriodDays)
+	assert.NotEmpty(t, st.CycleStart, "the window bounds are reported so the UI can label it")
+	assert.NotEmpty(t, st.CycleEnd)
+	assert.Equal(t, service.DefaultUsageMeterMetric, st.Metric,
+		"an unconfigured meter still needs a unit to format the number in")
+}
+
+// A broken rule is a reason to hide the ratio, not a reason to hide the spend.
+func TestUsageMeter_BrokenRuleFallsBackToUnmeteredUsage(t *testing.T) {
+	now := localMidnight(time.Date(2026, 10, 19, 0, 0, 0, 0, time.Local)).Add(12 * time.Hour)
+	db := setupDB(t)
+	ensureAgentsTable(t, db)
+
+	insertUsageSeed(t, db, usageSeed{
+		project: "/a", sessionID: "s-broken", agentID: "cb", agentName: "CB", backend: "codebuddy",
+		model: "m", createdAt: now.AddDate(0, 0, -1).UTC().Format("2006-01-02 15:04:05"), costUSD: 4,
+	})
+
+	setUsageMeterRule(t, model.UsageMeterConfig{
+		Quota: 10, PeriodDays: 30, Metric: model.UsageMeterMetricCost, AnchorDate: "not-a-date",
+	})
+
+	st, err := service.ComputeUsageMeter(context.Background(), now)
+	require.NoError(t, err)
+	assert.False(t, st.Enabled)
+	assert.InDelta(t, 4.0, st.Actual, 1e-9, "a broken rule must not hide the spend")
+	assert.Zero(t, st.Expected, "but no ratio is derived from it")
+}
+
+// The series is still useful without a quota ("how did I get here"), and its
+// per-day `expected` must stay at zero so the consumers do not draw a baseline.
+func TestUsageMeter_NoRuleSeriesHasNoBaseline(t *testing.T) {
+	now := localMidnight(time.Date(2026, 10, 19, 0, 0, 0, 0, time.Local)).Add(12 * time.Hour)
+	db := setupDB(t)
+	ensureAgentsTable(t, db)
+
+	insertUsageSeed(t, db, usageSeed{
+		project: "/a", sessionID: "s-curve", agentID: "cb", agentName: "CB", backend: "codebuddy",
+		model: "m", createdAt: now.AddDate(0, 0, -3).UTC().Format("2006-01-02 15:04:05"), costUSD: 2,
+	})
+
+	setUsageMeterRule(t, model.UsageMeterConfig{Quota: 0})
+
+	st, err := service.ComputeUsageMeter(context.Background(), now)
+	require.NoError(t, err)
+	require.NotEmpty(t, st.Series)
+
+	for _, p := range st.Series {
+		assert.Zero(t, p.Expected,
+			"no quota means no per-day baseline on %s", p.Day)
+	}
+	// The curve must still add up to the aggregate.
+	assert.InDelta(t, st.Actual, st.Series[len(st.Series)-1].Actual, 1e-9)
+}
+
 // A hand-edited config.yaml can carry a rule the PATCH validator would reject.
 // The meter reports itself disabled rather than erroring: it feeds a header
 // badge, and a 500 there would be noise.
@@ -807,4 +921,43 @@ func TestComputeUsageMeter_PastQuotaProjectsToday(t *testing.T) {
 	require.Greater(t, st.DayInCycle, 0)
 	assert.Equal(t, st.DayInCycle, st.ProjectedExhaustDay,
 		"past the quota the projection is today, not a day already gone")
+}
+
+// ── Worker wiring ────────────────────────────────────────────────────────────
+
+// The worker must be wired to the unmetered-aware entry point, not the plain
+// one. Every other worker test injects a checkFn, so a mutation pointing
+// NewUsageMeterWorker at CheckUsageMeter would leave them all green.
+//
+// Distinguishable only with a DB present: the worker variant broadcasts the
+// spend for an unconfigured rule, the plain one never does.
+func TestNewUsageMeterWorker_DefaultCheckIsTheWorkerVariant(t *testing.T) {
+	now := localMidnight(time.Date(2026, 10, 19, 0, 0, 0, 0, time.Local)).Add(12 * time.Hour)
+	db := setupDB(t)
+	ensureAgentsTable(t, db)
+	insertUsageSeed(t, db, usageSeed{
+		project: "/a", sessionID: "s-wire", agentID: "cb", agentName: "CB", backend: "codebuddy",
+		model: "m", createdAt: now.AddDate(0, 0, -1).UTC().Format("2006-01-02 15:04:05"), costUSD: 3,
+	})
+	setUsageMeterRule(t, model.UsageMeterConfig{Quota: 0})
+	service.ResetUsageMeterBroadcastForTest()
+
+	// Precondition: the two entry points really do differ in this setup.
+	service.CheckUsageMeterForWorker(context.Background())
+	require.True(t, service.UsageMeterHasBroadcastForTest(),
+		"precondition: the worker entry point broadcasts an unmetered spend")
+
+	service.ResetUsageMeterBroadcastForTest()
+	service.CheckUsageMeter(context.Background())
+	require.False(t, service.UsageMeterHasBroadcastForTest(),
+		"precondition: the plain entry point must not broadcast")
+
+	// And the worker is wired to the former. Go cannot compare functions, so the
+	// check is behavioral: drive the worker's own checkFn.
+	service.ResetUsageMeterBroadcastForTest()
+	w := service.NewUsageMeterWorkerForTest(time.Hour, 0, nil)
+	require.NotNil(t, w)
+	require.True(t, w.RunCheckOnceForTest(context.Background()))
+	require.True(t, service.UsageMeterHasBroadcastForTest(),
+		"NewUsageMeterWorker must wire CheckUsageMeterForWorker")
 }

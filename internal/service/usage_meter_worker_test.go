@@ -11,12 +11,17 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// The worker's tick must short-circuit when no quota is configured, so the
-// default (feature off) install costs nothing but a config read per interval.
-func TestUsageMeterWorker_SkipsCheckWhenDisabled(t *testing.T) {
+// With no quota the worker must not run the check on EVERY tick: the only work
+// left is refreshing the spend total, which is a 30-day aggregate and is
+// throttled to once an hour. The first tick still runs (the capsule shows a
+// number even without a budget), so "never runs" is the wrong invariant — the
+// one that matters is "does not run once per tick".
+func TestUsageMeterWorker_ThrottlesUnmeteredRefresh(t *testing.T) {
 	prev := model.ConfigInstance.UsageMeter
 	model.ConfigInstance.UsageMeter = model.UsageMeterConfig{Quota: 0}
 	t.Cleanup(func() { model.ConfigInstance.UsageMeter = prev })
+	service.ResetUsageMeterUnmeteredThrottleForTest()
+	t.Cleanup(service.ResetUsageMeterUnmeteredThrottleForTest)
 
 	var calls atomic.Int32
 	w := service.NewUsageMeterWorkerForTest(10*time.Millisecond, 0, func(context.Context) string {
@@ -24,10 +29,12 @@ func TestUsageMeterWorker_SkipsCheckWhenDisabled(t *testing.T) {
 		return ""
 	})
 	w.Start()
-	time.Sleep(60 * time.Millisecond)
+	time.Sleep(80 * time.Millisecond)
 	w.Stop()
 
-	assert.Zero(t, calls.Load(), "a disabled rule must not run the aggregate query")
+	// ~8 ticks at 10ms, but the hourly throttle admits exactly one.
+	assert.Equal(t, int32(1), calls.Load(),
+		"an unconfigured meter must refresh its spend total once, not once per tick")
 }
 
 // With a quota configured the tick must actually call the check.

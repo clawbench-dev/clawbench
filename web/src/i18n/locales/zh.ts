@@ -194,7 +194,9 @@ export default {
     title: '用量',
     // Short form used inside the header capsule (next to the gauge icon).
     label: '用量',
-    capsuleTitle: '查看本周期用量',
+    // Neutral wording: without a rule there is no cycle, so "this cycle's
+    // usage" would be wrong on the same button.
+    capsuleTitle: '查看用量',
     dayOfCycle: '第 {day} / {days} 天',
     actual: '实际',
     expected: '应花',
@@ -211,6 +213,11 @@ export default {
     badgeOver: '超出计划 {pct}%',
     badgeFull: '已用尽',
     adjust: '调整额度与周期 →',
+    // Shown instead of `adjust` when no rule exists: there is no quota to
+    // adjust, so the call to action is to create one.
+    setBudget: '设置额度与周期 →',
+    totalSpent: '这段时间的总用量',
+    windowSince: '{date} 起',
     trendLabel: '累计用量与匀速基准对比',
     legendActual: '实际累计',
     legendExpected: '匀速基准',

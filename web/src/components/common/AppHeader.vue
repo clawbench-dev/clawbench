@@ -73,7 +73,7 @@
          the two auto margins would split the slack and strand the capsule in
          the middle. -->
     <UsageMeterPopover
-      v-if="isWideScreen && usageMeter.status.value.enabled"
+      v-if="isWideScreen && usageMeter.hasData.value"
       :status="usageMeter.status.value"
       :state="usageMeter.meterState.value"
       :fill-percent="usageMeter.fillPercent.value"

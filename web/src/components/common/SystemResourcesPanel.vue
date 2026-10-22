@@ -113,17 +113,23 @@
           <Gauge :size="13" class="resource-icon" :class="`usage-icon is-${meterState}`" />
           <span class="resource-label">{{ t('usageMeter.label') }}</span>
           <span class="resource-value" :class="`usage-value is-${meterState}`">
-            {{ meterUsed }}<span class="usage-quota"> / {{ meterQuota }}</span>
+            {{ meterUsed }}<span v-if="hasQuota" class="usage-quota"> / {{ meterQuota }}</span>
           </span>
           <ChevronRight :size="12" class="usage-chevron" />
         </span>
-        <span class="progress-bar usage-bar">
+        <!-- Bar and meta line are ratio-derived: without a quota there is no
+             fill, no baseline tick and no "day N of M". Only the amount stays,
+             so the row reads as a spend total rather than an empty gauge. -->
+        <span v-if="hasQuota" class="progress-bar usage-bar">
           <span class="usage-fill" :class="`is-${meterState}`" :style="{ width: fillPercent + '%' }"></span>
           <span class="usage-mark" :style="{ left: expectedPercent + '%' }"></span>
         </span>
-        <span class="usage-meta">
+        <span v-if="hasQuota" class="usage-meta">
           <span>{{ t('usageMeter.dayOfCycle', { day: meterStatus.dayInCycle, days: meterStatus.periodDays ?? 0 }) }}</span>
           <span class="usage-badge" :class="`is-${meterState}`">{{ meterBadge }}</span>
+        </span>
+        <span v-else class="usage-meta">
+          <span>{{ usageWindowLabel }}</span>
         </span>
       </button>
     </template>
@@ -142,7 +148,7 @@ import { formatUsageMeterValue } from '@/utils/usageFormat'
 
 const { t } = useI18n()
 const { resources, startPolling, stopPolling } = useSystemResources()
-const { status: meterStatus, meterState, fillPercent, expectedPercent } = useUsageMeter()
+const { status: meterStatus, meterState, fillPercent, expectedPercent, hasData } = useUsageMeter()
 const { isWideScreen } = useWideScreenLayout()
 
 const props = defineProps({
@@ -153,9 +159,24 @@ const props = defineProps({
 // Wide screens have the header capsule, so repeating the meter here would show
 // the same numbers twice on one screen. Phones have no capsule (deliberately:
 // the header is a desktop surface), which is exactly why this row exists.
+//
+// Gated on `hasData`, not on `enabled`: a user without a budget still gets
+// their spend reported (just without the ratio parts).
 const showUsageMeter = computed(
-    () => !isWideScreen.value && meterStatus.value.enabled,
+    () => !isWideScreen.value && hasData.value,
 )
+
+/** Whether a rule exists. Everything ratio-derived hangs off this. */
+const hasQuota = computed(
+    () => meterStatus.value.enabled && (meterStatus.value.quota ?? 0) > 0,
+)
+
+/** The window the number covers when there is no rule to define a cycle. */
+const usageWindowLabel = computed(() => {
+    const start = meterStatus.value.cycleStart
+    if (!start) return ''
+    return t('usageMeter.windowSince', { date: start.slice(0, 10) })
+})
 
 const meterUsed = computed(() =>
     formatUsageMeterValue(meterStatus.value.metric ?? 'cost', meterStatus.value.actual ?? 0, { compact: true }),
