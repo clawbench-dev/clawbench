@@ -1,5 +1,5 @@
 <template>
-  <ModalDialog :open="open" :title="t('sessionShare.title')" :z-index="2500" :max-width="560" @close="$emit('close')">
+  <ModalDialog :open="open" :title="t('sessionShare.title')" :z-index="2500" @close="$emit('close')">
     <div class="session-share-dialog-body">
       <template v-if="loading">
         <div class="session-share-dialog-hint">{{ t('common.loading') }}</div>

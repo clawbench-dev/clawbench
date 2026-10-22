@@ -37,15 +37,19 @@ describe('ModalDialog', () => {
     expect(wrapper.find('.modal-overlay').exists()).toBe(false)
   })
 
-  it('applies maxWidth style', async () => {
+  it('does not accept a per-call-site width — every dialog shares one cap', async () => {
+    // Width lives in modal-card.css (`.modal-dialog { --modal-max-width: 900px }`)
+    // so it can never drift per dialog. Passing the old `maxWidth` prop must be
+    // inert rather than silently re-introducing an inline override.
     const wrapper = mount(ModalDialog, {
-      props: { open: true, maxWidth: 600 },
+      props: { open: true, maxWidth: 600 } as never,
       slots: { default: 'Body' },
       global: { stubs: { Teleport: { template: '<div><slot/></div>' } } },
     })
     await flushPromises()
     const dialog = wrapper.find('.modal-dialog')
-    expect(dialog.attributes('style')).toContain('780px')
+    expect(dialog.attributes('style')).toBeUndefined()
+    expect(dialog.attributes('style') ?? '').not.toContain('max-width')
   })
 
   it('exposes close method', async () => {
