@@ -1074,6 +1074,12 @@ export default {
     },
     metadata: {
       title: 'Message Details',
+      sectionOverview: 'Overview',
+      sectionTokens: 'Token Usage',
+      sectionRuntime: 'Runtime',
+      sectionCache: 'Cache & Credit',
+      sectionTrace: 'Request Trace',
+      sectionIndex: 'Search Index',
       messageId: 'Message ID:',
       time: 'Time:',
       relatedFile: 'Related file:',

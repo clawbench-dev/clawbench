@@ -1,223 +1,81 @@
 <template>
   <ModalDialog :open="show" :zIndex="2500" @close="$emit('close')">
     <template #header>
-      <Info :size="16" class="modal-header-icon" />
+      <FileText :size="16" class="modal-header-icon" />
       <span class="modal-title">{{ t('chat.metadata.title') }}</span>
     </template>
-    <div class="metadata-content">
-      <div v-if="messageId" class="metadata-item metadata-copyable" @click="copyValue(String(messageId), $event)">
-        <span class="metadata-label">{{ t('chat.metadata.messageId') }}</span>
-        <div class="metadata-value-wrap">
-          <span class="metadata-value metadata-session-id metadata-value-copyable">{{ messageId }}</span>
-          <CopyButton
-            :text="String(messageId)"
-            :size="13"
-            title-key="chat.metadata.copy"
-            class="metadata-copy-btn"
-            @click.stop
-          />
+    <div class="md-content">
+      <!-- Errors are the one thing that must not be buried at the bottom of a
+           grouped list: the user opened the modal *because* the turn failed. -->
+      <div v-if="data && data.isError" class="md-error">
+        <TriangleAlert :size="15" class="md-error-icon" />
+        <div class="md-error-body">
+          <span class="md-error-label">{{ t('chat.metadata.error') }}</span>
+          <span class="md-error-text">{{ data.errorMessage || t('chat.metadata.unknownError') }}</span>
         </div>
       </div>
-      <div v-if="createdAt" class="metadata-item">
-        <span class="metadata-label">{{ t('chat.metadata.time') }}</span>
-        <span class="metadata-value">{{ formatDetailTime(createdAt) }} <span class="metadata-relative-time">{{ formatRelativeTime(createdAt) }}</span></span>
-      </div>
-      <div v-if="relatedFile" class="metadata-item">
-        <span class="metadata-label">{{ t('chat.metadata.relatedFile') }}</span>
-        <span class="metadata-value metadata-value-copyable" @click="copyValue(relatedFile, $event)">{{ relatedFile }}</span>
-      </div>
-      <div v-if="backend" class="metadata-item">
-        <span class="metadata-label">{{ t('chat.metadata.backend') }}</span>
-        <span class="metadata-value">{{ backend }}</span>
-      </div>
-      <div v-if="data.transport" class="metadata-item">
-        <span class="metadata-label">{{ t('chat.metadata.transport') }}</span>
-        <span class="metadata-value">{{ data.transport === 'cli' ? 'CLI' : 'ACP' }}</span>
-      </div>
-      <div v-if="data.mode" class="metadata-item">
-        <span class="metadata-label">{{ t('chat.metadata.mode') }}</span>
-        <span class="metadata-value">{{ data.mode }}</span>
-      </div>
-      <div v-if="data.thinkingEffort" class="metadata-item">
-        <span class="metadata-label">{{ t('chat.metadata.thinkingEffort') }}</span>
-        <span class="metadata-value">{{ data.thinkingEffort }}</span>
-      </div>
-      <div v-if="data.model" class="metadata-item">
-        <span class="metadata-label">{{ t('chat.metadata.model') }}</span>
-        <span class="metadata-value">{{ data.model }}</span>
-      </div>
-      <div v-if="data.requestModelName" class="metadata-item">
-        <span class="metadata-label">{{ t('chat.metadata.requestModelName') }}</span>
-        <span class="metadata-value">{{ data.requestModelName }}</span>
-      </div>
-      <div v-if="data.messageRequestId" class="metadata-item metadata-copyable" @click="copyValue(data.messageRequestId, $event)">
-        <span class="metadata-label">{{ t('chat.metadata.messageRequestId') }}</span>
-        <div class="metadata-value-wrap">
-          <span class="metadata-value metadata-session-id metadata-value-copyable">{{ data.messageRequestId }}</span>
-          <CopyButton
-            :text="data.messageRequestId"
-            :size="13"
-            title-key="chat.metadata.copy"
-            class="metadata-copy-btn"
-            @click.stop
-          />
+
+      <section v-for="section in sections" :key="section.id" class="md-section">
+        <div class="md-section-head">
+          <component :is="section.icon" :size="13" class="md-section-icon" />
+          <span class="md-section-title">{{ t(section.titleKey) }}</span>
         </div>
-      </div>
-      <div v-if="data.inputTokens" class="metadata-item">
-        <span class="metadata-label">{{ t('chat.metadata.inputTokens') }}</span>
-        <span class="metadata-value">{{ data.inputTokens.toLocaleString() }}</span>
-      </div>
-      <div v-if="data.outputTokens" class="metadata-item">
-        <span class="metadata-label">{{ t('chat.metadata.outputTokens') }}</span>
-        <span class="metadata-value">{{ data.outputTokens.toLocaleString() }}</span>
-      </div>
-      <div v-if="data.totalTokens" class="metadata-item">
-        <span class="metadata-label">{{ t('chat.metadata.totalTokens') }}</span>
-        <span class="metadata-value">{{ data.totalTokens.toLocaleString() }}</span>
-      </div>
-      <div v-if="data.cachedReadTokens" class="metadata-item">
-        <span class="metadata-label">{{ t('chat.metadata.cachedReadTokens') }}</span>
-        <span class="metadata-value">{{ data.cachedReadTokens.toLocaleString() }}</span>
-      </div>
-      <div v-if="data.cacheHitTokens" class="metadata-item">
-        <span class="metadata-label">{{ t('chat.metadata.cacheHitTokens') }}</span>
-        <span class="metadata-value">{{ data.cacheHitTokens.toLocaleString() }}</span>
-      </div>
-      <div v-if="data.cachedWriteTokens" class="metadata-item">
-        <span class="metadata-label">{{ t('chat.metadata.cachedWriteTokens') }}</span>
-        <span class="metadata-value">{{ data.cachedWriteTokens.toLocaleString() }}</span>
-      </div>
-      <div v-if="data.cacheCreationTokens" class="metadata-item">
-        <span class="metadata-label">{{ t('chat.metadata.cacheCreationTokens') }}</span>
-        <span class="metadata-value">{{ data.cacheCreationTokens.toLocaleString() }}</span>
-      </div>
-      <div v-if="data.cacheMissTokens" class="metadata-item">
-        <span class="metadata-label">{{ t('chat.metadata.cacheMissTokens') }}</span>
-        <span class="metadata-value">{{ data.cacheMissTokens.toLocaleString() }}</span>
-      </div>
-      <div v-if="metadataCacheHitRate !== null" class="metadata-item">
-        <span class="metadata-label">{{ t('chat.metadata.cacheHitRate') }}</span>
-        <span class="metadata-value">{{ metadataCacheHitRate.toFixed(1) }}%</span>
-      </div>
-      <div v-if="data.credit" class="metadata-item">
-        <span class="metadata-label">{{ t('chat.metadata.credit') }}</span>
-        <span class="metadata-value">{{ Number(data.credit).toFixed(4) }}</span>
-      </div>
-      <div v-if="data.thoughtTokens" class="metadata-item">
-        <span class="metadata-label">{{ t('chat.metadata.thoughtTokens') }}</span>
-        <span class="metadata-value">{{ data.thoughtTokens.toLocaleString() }}</span>
-      </div>
-      <div v-if="data.usageByCategory && Object.keys(data.usageByCategory).length" class="metadata-item">
-        <span class="metadata-label">{{ t('chat.metadata.usageByCategory') }}</span>
-        <span class="metadata-value">
-          <span v-for="(val, key) in data.usageByCategory" :key="key" class="metadata-cat-chip">
-            {{ catLabel(key) }}: {{ val.toLocaleString() }}
-          </span>
-        </span>
-      </div>
-      <div v-if="data.requestId" class="metadata-item metadata-copyable" @click="copyValue(data.requestId, $event)">
-        <span class="metadata-label">{{ t('chat.metadata.requestId') }}</span>
-        <div class="metadata-value-wrap">
-          <span class="metadata-value metadata-session-id metadata-value-copyable">{{ data.requestId }}</span>
-          <CopyButton
-            :text="data.requestId"
-            :size="13"
-            title-key="chat.metadata.copy"
-            class="metadata-copy-btn"
-            @click.stop
-          />
+
+        <!-- Token counts get tile treatment: they are the numbers people
+             actually read, and three short labels in a row scan far faster
+             than three more "label: value" lines. -->
+        <div v-if="section.tiles.length" class="md-tiles">
+          <div v-for="tile in section.tiles" :key="tile.key" class="md-tile">
+            <span class="md-tile-label">{{ tile.label }}</span>
+            <span class="md-tile-value">{{ tile.value }}</span>
+          </div>
         </div>
-      </div>
-      <div v-if="data.traceId" class="metadata-item metadata-copyable" @click="copyValue(data.traceId, $event)">
-        <span class="metadata-label">{{ t('chat.metadata.traceId') }}</span>
-        <div class="metadata-value-wrap">
-          <span class="metadata-value metadata-session-id metadata-value-copyable">{{ data.traceId }}</span>
-          <CopyButton
-            :text="data.traceId"
-            :size="13"
-            title-key="chat.metadata.copy"
-            class="metadata-copy-btn"
-            @click.stop
-          />
+
+        <div v-if="section.rows.length" class="md-rows">
+          <div
+            v-for="row in section.rows"
+            :key="row.key"
+            class="md-row"
+            :class="{ 'md-row--copy': row.copy, 'md-row--stacked': row.stacked }"
+            @click="handleRowClick(row, $event)"
+          >
+            <span class="md-label">{{ row.label }}</span>
+            <div class="md-value-box">
+              <template v-if="row.chips">
+                <span v-for="chip in row.chips" :key="chip.key" class="md-chip">{{ chip.text }}</span>
+              </template>
+              <template v-else>
+                <span
+                  class="md-value"
+                  :class="{
+                    'md-mono': row.mono,
+                    'md-value--copyable': row.copy,
+                    'md-value--error': row.tone === 'error',
+                    'md-value--ok': row.tone === 'ok',
+                    'md-value--muted': row.tone === 'muted',
+                  }"
+                >{{ row.value }}</span>
+                <span v-if="row.hint" class="md-hint">{{ row.hint }}</span>
+              </template>
+              <CopyButton
+                v-if="row.copy"
+                :text="row.value"
+                :size="13"
+                title-key="chat.metadata.copy"
+                class="md-copy-btn"
+                @click.stop
+              />
+            </div>
+          </div>
         </div>
-      </div>
-      <div v-if="data.responseModelId" class="metadata-item">
-        <span class="metadata-label">{{ t('chat.metadata.responseModelId') }}</span>
-        <span class="metadata-value">{{ data.responseModelId }}</span>
-      </div>
-      <div v-if="data.finishReason" class="metadata-item">
-        <span class="metadata-label">{{ t('chat.metadata.finishReason') }}</span>
-        <span class="metadata-value">{{ data.finishReason }}</span>
-      </div>
-      <div v-if="data.outcome" class="metadata-item">
-        <span class="metadata-label">{{ t('chat.metadata.outcome') }}</span>
-        <span class="metadata-value">{{ data.outcome }}</span>
-      </div>
-      <div v-if="data.agentPhase" class="metadata-item">
-        <span class="metadata-label">{{ t('chat.metadata.agentPhase') }}</span>
-        <span class="metadata-value">{{ data.agentPhase }}</span>
-      </div>
-      <div v-if="data.wallMs" class="metadata-item">
-        <span class="metadata-label">{{ t('chat.metadata.wallDuration') }}</span>
-        <span class="metadata-value">{{ formatDuration(data.wallMs) }}</span>
-      </div>
-      <div v-if="data.durationMs" class="metadata-item">
-        <span class="metadata-label">{{ t('chat.metadata.duration') }}</span>
-        <span class="metadata-value">{{ formatDuration(data.durationMs) }}</span>
-      </div>
-      <div v-if="data.costUsd" class="metadata-item">
-        <span class="metadata-label">{{ t('chat.metadata.cost') }}</span>
-        <span class="metadata-value">${{ data.costUsd.toFixed(2) }}</span>
-      </div>
-      <div v-if="sessionId" class="metadata-item metadata-copyable" @click="copyValue(sessionId, $event)">
-        <span class="metadata-label">{{ t('chat.metadata.sessionId') }}</span>
-        <div class="metadata-value-wrap">
-          <span class="metadata-value metadata-session-id metadata-value-copyable">{{ sessionId }}</span>
-          <CopyButton
-            :text="sessionId"
-            :size="13"
-            title-key="chat.metadata.copy"
-            class="metadata-copy-btn"
-            @click.stop
-          />
-        </div>
-      </div>
-      <div v-if="data.sessionId && data.sessionId !== sessionId" class="metadata-item metadata-copyable" @click="copyValue(data.sessionId, $event)">
-        <span class="metadata-label">{{ t('chat.metadata.externalSessionId') }}</span>
-        <div class="metadata-value-wrap">
-          <span class="metadata-value metadata-session-id metadata-value-copyable">{{ data.sessionId }}</span>
-          <CopyButton
-            :text="data.sessionId"
-            :size="13"
-            title-key="chat.metadata.copy"
-            class="metadata-copy-btn"
-            @click.stop
-          />
-        </div>
-      </div>
-      <div class="metadata-item">
-        <span class="metadata-label">{{ t('chat.metadata.ftsIndexed') }}</span>
-        <span class="metadata-value" :class="ftsIndexed ? 'metadata-indexed-yes' : 'metadata-indexed-no'">{{ ftsIndexed ? t('chat.metadata.indexedYes') : t('chat.metadata.indexedNo') }}</span>
-      </div>
-      <div class="metadata-item">
-        <span class="metadata-label">{{ t('chat.metadata.vecIndexed') }}</span>
-        <span class="metadata-value" :class="vecIndexed ? 'metadata-indexed-yes' : 'metadata-indexed-no'">{{ vecIndexed ? t('chat.metadata.indexedYes') : t('chat.metadata.indexedNo') }}</span>
-      </div>
-      <div v-if="data.stopReason" class="metadata-item">
-        <span class="metadata-label">{{ t('chat.metadata.stopReason') }}</span>
-        <span class="metadata-value">{{ data.stopReason }}</span>
-      </div>
-      <div v-if="data.isError" class="metadata-item">
-        <span class="metadata-label">{{ t('chat.metadata.error') }}</span>
-        <span class="metadata-value metadata-error">{{ data.errorMessage || t('chat.metadata.unknownError') }}</span>
-      </div>
+      </section>
     </div>
   </ModalDialog>
 </template>
 
 <script setup>
 import { computed } from 'vue'
-import { Info } from 'lucide-vue-next'
+import { FileText, TriangleAlert, Layers, ChartPie, Timer, Database, Fingerprint, Search } from 'lucide-vue-next'
 import CopyButton from '@/components/common/CopyButton.vue'
 import { copyText } from '@/utils/clipboard'
 import { useI18n } from 'vue-i18n'
@@ -240,7 +98,6 @@ const props = defineProps({
 })
 
 defineEmits(['close'])
-
 
 // Map a usageByCategory key (CodeBuddy codebuddy.ai/usageByCategory) to a
 // localized label. Unknown future keys fall back to the raw key.
@@ -273,6 +130,188 @@ const metadataCacheHitRate = computed(() => {
   return (hit / denominator) * 100
 })
 
+/** `1,234` for counts. Every token figure in this modal is a count. */
+function count(value) {
+  return Number(value).toLocaleString()
+}
+
+/**
+ * The modal's whole layout is derived here rather than hand-written in the
+ * template, so "which section does this field belong to" is a single
+ * ordered list instead of 30 scattered `v-if` blocks.
+ *
+ * Ordering contract (the reason this file was reworked): sections that EVERY
+ * backend populates come first — overview, token usage, runtime — and the
+ * agent-specific extras (CodeBuddy's cache/credit split, trace identity)
+ * follow. A section whose rows are all absent is dropped entirely, so a plain
+ * CLI backend renders a short, clean modal instead of a wall of empty labels.
+ */
+const sections = computed(() => {
+  const d = props.data || {}
+  const out = []
+
+  // ── 1. Overview — what/when, then how. Reported by every backend. ──
+  const overview = []
+  if (props.createdAt) {
+    overview.push({
+      key: 'time',
+      label: t('chat.metadata.time'),
+      value: props.formatDetailTime ? props.formatDetailTime(props.createdAt) : props.createdAt,
+      hint: formatRelativeTime(props.createdAt),
+    })
+  }
+  if (props.messageId) {
+    overview.push({ key: 'messageId', label: t('chat.metadata.messageId'), value: String(props.messageId), mono: true, copy: true })
+  }
+  if (props.sessionId) {
+    overview.push({ key: 'sessionId', label: t('chat.metadata.sessionId'), value: props.sessionId, mono: true, copy: true })
+  }
+  if (d.sessionId && d.sessionId !== props.sessionId) {
+    overview.push({ key: 'externalSessionId', label: t('chat.metadata.externalSessionId'), value: d.sessionId, mono: true, copy: true })
+  }
+  if (props.backend) {
+    overview.push({ key: 'backend', label: t('chat.metadata.backend'), value: props.backend })
+  }
+  if (d.transport) {
+    overview.push({ key: 'transport', label: t('chat.metadata.transport'), value: d.transport === 'cli' ? 'CLI' : 'ACP' })
+  }
+  if (d.model) {
+    overview.push({ key: 'model', label: t('chat.metadata.model'), value: d.model })
+  }
+  if (d.requestModelName) {
+    overview.push({ key: 'requestModelName', label: t('chat.metadata.requestModelName'), value: d.requestModelName })
+  }
+  if (d.mode) {
+    overview.push({ key: 'mode', label: t('chat.metadata.mode'), value: d.mode })
+  }
+  if (d.thinkingEffort) {
+    overview.push({ key: 'thinkingEffort', label: t('chat.metadata.thinkingEffort'), value: d.thinkingEffort })
+  }
+  if (props.relatedFile) {
+    overview.push({ key: 'relatedFile', label: t('chat.metadata.relatedFile'), value: props.relatedFile, copy: true, stacked: true })
+  }
+  out.push({ id: 'overview', titleKey: 'chat.metadata.sectionOverview', icon: Layers, tiles: [], rows: overview })
+
+  // ── 2. Token usage — input/output/total exist for every backend. ──
+  const tiles = []
+  if (d.inputTokens) tiles.push({ key: 'input', label: t('chat.metadata.inputTokens'), value: count(d.inputTokens) })
+  if (d.outputTokens) tiles.push({ key: 'output', label: t('chat.metadata.outputTokens'), value: count(d.outputTokens) })
+  if (d.totalTokens) tiles.push({ key: 'total', label: t('chat.metadata.totalTokens'), value: count(d.totalTokens) })
+  const tokenRows = []
+  if (d.thoughtTokens) {
+    tokenRows.push({ key: 'thoughtTokens', label: t('chat.metadata.thoughtTokens'), value: count(d.thoughtTokens) })
+  }
+  if (d.cachedReadTokens) {
+    tokenRows.push({ key: 'cachedReadTokens', label: t('chat.metadata.cachedReadTokens'), value: count(d.cachedReadTokens) })
+  }
+  if (d.cachedWriteTokens) {
+    tokenRows.push({ key: 'cachedWriteTokens', label: t('chat.metadata.cachedWriteTokens'), value: count(d.cachedWriteTokens) })
+  }
+  out.push({ id: 'tokens', titleKey: 'chat.metadata.sectionTokens', icon: ChartPie, tiles, rows: tokenRows })
+
+  // ── 3. Runtime — how long the turn took and how it ended. ──
+  const runtime = []
+  if (d.wallMs) {
+    runtime.push({ key: 'wallDuration', label: t('chat.metadata.wallDuration'), value: formatDuration(d.wallMs) })
+  }
+  if (d.durationMs) {
+    runtime.push({ key: 'duration', label: t('chat.metadata.duration'), value: formatDuration(d.durationMs) })
+  }
+  if (d.costUsd) {
+    runtime.push({ key: 'cost', label: t('chat.metadata.cost'), value: `$${d.costUsd.toFixed(2)}` })
+  }
+  if (d.finishReason) {
+    runtime.push({ key: 'finishReason', label: t('chat.metadata.finishReason'), value: d.finishReason })
+  }
+  if (d.stopReason) {
+    runtime.push({ key: 'stopReason', label: t('chat.metadata.stopReason'), value: d.stopReason })
+  }
+  if (d.outcome) {
+    runtime.push({ key: 'outcome', label: t('chat.metadata.outcome'), value: d.outcome })
+  }
+  if (d.agentPhase) {
+    runtime.push({ key: 'agentPhase', label: t('chat.metadata.agentPhase'), value: d.agentPhase })
+  }
+  out.push({ id: 'runtime', titleKey: 'chat.metadata.sectionRuntime', icon: Timer, tiles: [], rows: runtime })
+
+  // ── 4. Cache & credit — CodeBuddy-only `_meta.usage` extras. ──
+  const cache = []
+  if (d.cacheHitTokens) {
+    cache.push({ key: 'cacheHitTokens', label: t('chat.metadata.cacheHitTokens'), value: count(d.cacheHitTokens) })
+  }
+  if (d.cacheMissTokens) {
+    cache.push({ key: 'cacheMissTokens', label: t('chat.metadata.cacheMissTokens'), value: count(d.cacheMissTokens) })
+  }
+  if (d.cacheCreationTokens) {
+    cache.push({ key: 'cacheCreationTokens', label: t('chat.metadata.cacheCreationTokens'), value: count(d.cacheCreationTokens) })
+  }
+  if (metadataCacheHitRate.value !== null) {
+    cache.push({ key: 'cacheHitRate', label: t('chat.metadata.cacheHitRate'), value: `${metadataCacheHitRate.value.toFixed(1)}%` })
+  }
+  if (d.credit) {
+    cache.push({ key: 'credit', label: t('chat.metadata.credit'), value: Number(d.credit).toFixed(4) })
+  }
+  if (d.usageByCategory && Object.keys(d.usageByCategory).length) {
+    cache.push({
+      key: 'usageByCategory',
+      label: t('chat.metadata.usageByCategory'),
+      value: '',
+      chips: Object.entries(d.usageByCategory).map(([key, val]) => ({
+        key,
+        text: `${catLabel(key)}: ${Number(val).toLocaleString()}`,
+      })),
+      stacked: true,
+    })
+  }
+  out.push({ id: 'cache', titleKey: 'chat.metadata.sectionCache', icon: Database, tiles: [], rows: cache })
+
+  // ── 5. Trace & identity — per-agent `_meta` extensions. ──
+  const trace = []
+  if (d.requestId) {
+    trace.push({ key: 'requestId', label: t('chat.metadata.requestId'), value: d.requestId, mono: true, copy: true })
+  }
+  if (d.traceId) {
+    trace.push({ key: 'traceId', label: t('chat.metadata.traceId'), value: d.traceId, mono: true, copy: true })
+  }
+  if (d.messageRequestId) {
+    trace.push({ key: 'messageRequestId', label: t('chat.metadata.messageRequestId'), value: d.messageRequestId, mono: true, copy: true })
+  }
+  if (d.responseModelId) {
+    trace.push({ key: 'responseModelId', label: t('chat.metadata.responseModelId'), value: d.responseModelId })
+  }
+  out.push({ id: 'trace', titleKey: 'chat.metadata.sectionTrace', icon: Fingerprint, tiles: [], rows: trace })
+
+  // ── 6. Index status — always rendered: "is this message searchable" is a
+  //       diagnostic answer that a missing row would make ambiguous. ──
+  out.push({
+    id: 'index',
+    titleKey: 'chat.metadata.sectionIndex',
+    icon: Search,
+    tiles: [],
+    rows: [
+      {
+        key: 'ftsIndexed',
+        label: t('chat.metadata.ftsIndexed'),
+        value: props.ftsIndexed ? t('chat.metadata.indexedYes') : t('chat.metadata.indexedNo'),
+        tone: props.ftsIndexed ? 'ok' : 'muted',
+      },
+      {
+        key: 'vecIndexed',
+        label: t('chat.metadata.vecIndexed'),
+        value: props.vecIndexed ? t('chat.metadata.indexedYes') : t('chat.metadata.indexedNo'),
+        tone: props.vecIndexed ? 'ok' : 'muted',
+      },
+    ],
+  })
+
+  return out.filter(s => s.tiles.length || s.rows.length)
+})
+
+function handleRowClick(row, event) {
+  if (!row.copy) return
+  copyValue(row.value, event)
+}
+
 /**
  * Copy one metadata value from a CLICKABLE TEXT value (the row / the value
  * itself). The dedicated copy button next to it handles its own state via
@@ -293,122 +332,234 @@ function copyValue(value, event) {
 </script>
 
 <style scoped>
-.metadata-content {
-    padding: var(--space-6) 14px;
-    overflow-y: auto;
-    flex: 1;
+/* `.modal-body` is already the scroll container (flex:1 + overflow-y:auto);
+   adding a second one here would nest scrollbars. */
+.md-content {
+    padding: var(--space-6);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-5);
 }
 
-.metadata-item {
+/* ── Error banner ── */
+.md-error {
     display: flex;
     align-items: flex-start;
-    gap: var(--space-6);
-    padding: var(--space-5) 0;
-    border-bottom: 1px solid var(--border-color);
+    gap: var(--space-4);
+    padding: var(--space-5) var(--space-6);
+    border-radius: var(--radius-md);
+    border: 1px solid color-mix(in srgb, var(--color-red) 35%, transparent);
+    background: color-mix(in srgb, var(--color-red) 12%, var(--bg-secondary));
 }
 
-.metadata-item:last-child {
-    border-bottom: none;
-}
-
-.metadata-label {
-    font-size: var(--font-size-md);
-    font-weight: var(--font-weight-medium);
-    color: var(--text-secondary);
-    min-width: 90px;
+.md-error-icon {
     flex-shrink: 0;
+    margin-top: 1px;
+    color: var(--color-red);
 }
 
-.metadata-value {
+.md-error-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    min-width: 0;
+}
+
+.md-error-label {
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+    color: var(--color-red);
+}
+
+.md-error-text {
     font-size: var(--font-size-md);
     color: var(--text-primary);
     word-break: break-all;
+    line-height: 1.5;
 }
 
-.metadata-relative-time {
-    font-size: var(--font-size-sm);
-    color: var(--text-muted, #9ca3af);
-    margin-left: var(--space-3);
+/* ── Section card ──
+   Fill is derived from --text-primary mixed into --bg-secondary rather than a
+   fixed step like --bg-tertiary: 15 of the 36 themes have secondary↔tertiary
+   contrast below 1.12 (ayu-dark is 1.062), where a fixed step would make the
+   card disappear. See design-guide 红线 4. */
+.md-section {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--text-primary) 3%, var(--bg-secondary));
+    overflow: hidden;
 }
 
-.metadata-session-id {
-    font-family: var(--font-mono);
-    font-size: var(--font-size-sm);
-    background: var(--bg-tertiary);
-    padding: var(--space-1) var(--space-3);
-    border-radius: var(--radius-xs);
-}
-
-.metadata-value-wrap {
-    flex: 1;
+.md-section-head {
     display: flex;
     align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-4) var(--space-6);
+    border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+
+.md-section-icon {
+    flex-shrink: 0;
+    color: var(--accent-color);
+}
+
+.md-section-title {
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+    letter-spacing: 0.02em;
+}
+
+/* ── Metric tiles ── */
+.md-tiles {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-4);
+    padding: var(--space-5) var(--space-6);
+}
+
+.md-tile {
+    flex: 1 1 84px;
+    min-width: 84px;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    padding: var(--space-4) var(--space-5);
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--text-primary) 5%, var(--bg-secondary));
+}
+
+.md-tile-label {
+    font-size: var(--font-size-xs);
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.md-tile-value {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: var(--font-size-xl);
+    color: var(--text-primary);
+}
+
+/* ── Rows ── */
+.md-row {
+    display: grid;
+    grid-template-columns: minmax(76px, 34%) 1fr;
+    align-items: start;
+    gap: var(--space-5);
+    padding: var(--space-4) var(--space-6);
+}
+
+.md-row + .md-row {
+    border-top: 1px solid color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+/* Long ids/files get the label on its own line — squeezing a 60-char path into
+   a 1fr column next to a 34% label leaves ~3 characters per line. */
+.md-row--stacked {
+    grid-template-columns: 1fr;
+    gap: var(--space-2);
+}
+
+.md-label {
+    font-size: var(--font-size-sm);
+    color: var(--text-muted);
+    line-height: 1.5;
+}
+
+.md-value-box {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
     gap: var(--space-3);
     min-width: 0;
 }
 
-.metadata-value-copyable {
+.md-value {
+    font-size: var(--font-size-md);
+    color: var(--text-primary);
+    line-height: 1.5;
+    word-break: break-all;
+}
+
+.md-mono {
+    font-family: var(--font-mono);
+    font-size: var(--font-size-sm);
+}
+
+.md-hint {
+    font-size: var(--font-size-xs);
+    color: var(--text-hint);
+}
+
+.md-value--ok {
+    color: var(--color-green);
+}
+
+.md-value--muted {
+    color: var(--text-muted);
+}
+
+.md-value--error {
+    color: var(--color-red);
+}
+
+.md-value--copyable {
     cursor: pointer;
 }
 
-.metadata-copyable {
+.md-row--copy {
+    cursor: pointer;
     user-select: none;
 }
 
 @media (hover: hover) {
-  .metadata-copyable:hover {
-    background: var(--bg-tertiary, #f5f5f5);
+  .md-row--copy:hover {
+    background: color-mix(in srgb, var(--text-primary) 5%, transparent);
   }
 
-  .metadata-value-copyable:hover {
-    color: var(--accent-color, #4a90d9);
+  .md-row--copy:hover .md-value--copyable {
+    color: var(--accent-color);
   }
 }
 
-.metadata-value-copyable.copied {
-    color: #22c55e;
+.md-row--copy.copied .md-value--copyable,
+.md-row--copy .md-value--copyable.copied {
+    color: var(--color-green);
 }
 
-.metadata-error {
-    color: #ef4444;
-    word-break: break-all;
-}
-
-.metadata-copy-btn {
+.md-copy-btn {
     flex-shrink: 0;
+    align-self: center;
     display: flex;
     align-items: center;
     background: none;
     border: none;
     cursor: pointer;
-    color: var(--text-muted, #999);
+    color: var(--text-hint);
     padding: var(--space-1);
     border-radius: var(--radius-xs);
     transition: color var(--duration-base), background var(--duration-base);
 }
 
 @media (hover: hover) {
-  .metadata-copy-btn:hover {
-    color: var(--accent-color, #4a90d9);
-    background: var(--bg-tertiary, #f0f0f0);
+  .md-copy-btn:hover {
+    color: var(--accent-color);
+    background: color-mix(in srgb, var(--text-primary) 8%, transparent);
   }
 }
 
-.metadata-indexed-yes {
-    color: #22c55e;
-}
-
-.metadata-indexed-no {
-    color: var(--text-muted, #999);
-}
-
-.metadata-cat-chip {
+.md-chip {
     display: inline-block;
-    background: var(--bg-tertiary, #f0f0f0);
+    padding: 1px var(--space-4);
     border-radius: var(--radius-xs);
-    padding:1px var(--space-3);
-    margin-right: var(--space-3);
-    margin-bottom: var(--space-1);
+    /* 10% (not the 6–7% used for row separators): the chip has to read as a
+       distinct object inside an already-tinted section card, and at 7% it
+       dissolved into the card in the darker themes. */
+    background: color-mix(in srgb, var(--text-primary) 10%, var(--bg-secondary));
     font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    white-space: nowrap;
 }
 </style>

@@ -1079,6 +1079,12 @@ export default {
     },
     metadata: {
       title: '消息详情',
+      sectionOverview: '概览',
+      sectionTokens: 'Token 用量',
+      sectionRuntime: '运行信息',
+      sectionCache: '缓存与额度',
+      sectionTrace: '请求追踪',
+      sectionIndex: '检索索引',
       messageId: '消息ID:',
       time: '时间:',
       relatedFile: '关联文件:',
