@@ -1,11 +1,13 @@
 SessionNotRunning: Session is not running
 SessionStreamNotFound: Session stream not found
 SessionStreamBusy: Session stream is being viewed on another device
+ServiceBusy: The server is busy assembling shared conversations, please retry shortly
 SessionLimitReached: Session limit reached ({{.MaxCount}}), please archive old sessions
 SessionIdRequired: session_id required
 CannotRemoveHost: The host is the group's only scheduler and cannot be removed
 GroupMemberLimitReached: A group can have at most {{.MaxCount}} members
-GroupNotForkable: A group chat cannot be forked
+ForkContextInjectedChat: The history of "{{.Title}}" was injected into this session as background
+ForkContextInjectedGroup: The history of "{{.Title}}" was injected into this group as background; each member receives it on their first turn
 GroupNotRewindable: A group chat cannot be rewound
 GroupRunning: The group is working on a turn — try again when it finishes
 GroupMemberCompacting: This member is already compacting its context
@@ -309,5 +311,18 @@ UsageMeterOverTitle: Usage above plan
 UsageMeterFullTitle: Usage quota exhausted
 UsageMeterOverBody: Used {{.Actual}} this cycle vs {{.Expected}} expected (quota {{.Quota}}, day {{.Day}} of {{.Days}})
 UsageMeterFullBody: The {{.Quota}} quota for this cycle is used up; actual usage {{.Actual}}
+# Config PATCH rejections for the usage-meter rule. One key per field so the
+# settings panel can name what is wrong instead of the old generic
+# "invalid_value" (which never reached the user — the API helper only surfaces
+# the `error` field). The field path travels separately in `detail.field`.
+UsageMeterQuotaNegative: The quota cannot be negative
+UsageMeterQuotaNotNumber: The quota must be a number
+UsageMeterAnchorRequired: A start time is required when a quota is set
+UsageMeterAnchorInvalid: "The start time must be a valid date (YYYY-MM-DD) or date and time (YYYY-MM-DDTHH:MM[:SS])"
+UsageMeterAnchorNotString: "The start time must be text in YYYY-MM-DD or YYYY-MM-DDTHH:MM[:SS] form"
+UsageMeterPeriodRange: The cycle length must be between 1 and {{.Max}} days
+UsageMeterPeriodNotNumber: The cycle length must be a number
+UsageMeterMetricInvalid: "The metric must be one of: tokens, credit, cost"
+UsageMeterMetricNotString: "The metric must be one of: tokens, credit, cost"
 RestartFailed: "Restart failed: {{.Error}}"
 RestartUnavailable: Restart is not wired up on this server, cannot restart

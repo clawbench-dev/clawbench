@@ -20,10 +20,17 @@ const (
 	// AITokenTTL bounds how long a signed token stays valid. It is deliberately
 	// a fixed constant rather than a config field: the token only needs to
 	// survive from prompt injection until the AI issues its first curl, which is
-	// seconds. 30 minutes matches defaultACPStallTimeout /
-	// defaultStreamIdleTimeout (internal/ai), so a token cannot expire in the
-	// middle of a long-running turn.
-	AITokenTTL = 30 * time.Minute
+	// seconds. 12 hours is generous headroom for a turn that keeps calling the
+	// local API long after the prompt was built (scheduled/auto-cruise runs),
+	// and stays far below any human-scale credential lifetime.
+	//
+	// It is no longer tied to defaultACPStallTimeout / defaultStreamIdleTimeout
+	// (internal/ai, 30 minutes): those bound how long a turn may go silent, not
+	// how long a token must live, so a longer TTL cannot outlive a turn's own
+	// timeout semantics — it only widens the window a leaked token is usable.
+	// The process-scoped signing key still caps the real exposure at one process
+	// lifetime, since a restart invalidates every outstanding token.
+	AITokenTTL = 12 * time.Hour
 )
 
 // aiTokenSeparator splits the encoded expiry from the encoded signature.
@@ -91,8 +98,8 @@ func VerifyAIToken(token string, now time.Time) bool {
 	}
 	// Upper bound as well as lower. The TTL is a property of SignAIToken, so
 	// without this check a holder of the signing key could mint a token valid
-	// for years and the "30 minute" limit would be decorative. Clamping here
-	// means even a leaked key yields at most one TTL of access.
+	// for years and the TTL limit would be decorative. Clamping here means even
+	// a leaked key yields at most one TTL of access.
 	if exp > now.Add(AITokenTTL).Unix() {
 		return false
 	}

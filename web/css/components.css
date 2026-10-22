@@ -368,6 +368,16 @@
     justify-content: center;
 }
 
+/* First-load placeholder fills the list area and aligns with the real rows;
+   centring a skeleton shrinks it to its content and floats a narrow column.
+   Global for the same reason as .forge-loading: four forge views share it. */
+.forge-loading--skeleton {
+    align-items: stretch;
+    justify-content: flex-start;
+    min-width: 0;
+    padding: var(--space-4) 0;
+}
+
 /* ── Error card ── */
 .forge-error-card {
     margin: var(--space-6);
@@ -994,16 +1004,30 @@
 
    Geometry is supplied by the caller (`width`/`height`/`border-radius`); this
    rule only owns the fill and the shimmer. `--skeleton-radius` lets a caller
-   opt into a pill shape without redeclaring the whole rule. */
+   opt into a pill shape without redeclaring the whole rule.
+
+   `--skeleton-fill` / `--skeleton-sheen` exist for the places whose backdrop is
+   not the theme's: the PDF viewer and the lightbox both paint on always-dark
+   chrome, where the theme-derived grey is invisible. Overriding those two
+   variables keeps the shimmer definition in one place — a caller that instead
+   restated `background-image` would fork it.
+
+   The variables are deliberately NOT declared here, only consumed with a
+   fallback. A custom property resolves on the element that declares it, so
+   declaring them on `.skeleton-block` made every ancestor override a no-op:
+   `.pdf-loading-skeleton` set `--skeleton-fill` on the skeleton root and the
+   blocks below it still painted `--bg-tertiary` (measured in Chromium: dark
+   theme, `rgb(33,38,45)` instead of `rgba(255,255,255,.18)`), which is the
+   exact invisibility that override was added to fix. */
 .skeleton-block {
   --skeleton-radius: var(--radius-sm);
   display: block;
   border-radius: var(--skeleton-radius);
-  background-color: var(--bg-tertiary, #e9ecef);
+  background-color: var(--skeleton-fill, var(--bg-tertiary, #e9ecef));
   background-image: linear-gradient(
     90deg,
     transparent 0%,
-    color-mix(in srgb, var(--bg-primary, #fff) 60%, transparent) 50%,
+    var(--skeleton-sheen, color-mix(in srgb, var(--bg-primary, #fff) 60%, transparent)) 50%,
     transparent 100%
   );
   background-repeat: no-repeat;
@@ -1121,4 +1145,71 @@
 
 .ask-question-option.selected .ask-option-indicator--checkbox::after {
     opacity: 1;
+}
+
+/* ==========================================================================
+   AskUserQuestion submit shortcut hint ("Ctrl+Enter" / "Cmd+Enter").
+
+   Emitted by renderToolDetail.ts as a SIBLING of the buttons, i.e. through
+   `v-html` — so it can never match a scoped rule (design-guide red line 1).
+   Global here, like the indicator above.
+
+   Placement: the actions row is right-aligned, so the hint takes the free space
+   on the LEFT (`margin-right: auto`) instead of sitting inside the Submit
+   button. It describes a keyboard gesture for the whole card, not a second
+   label on one button — inside the button it read as part of the label and
+   competed with it.
+
+   Form: PLAIN muted text, deliberately not a bordered keycap. The keycap box
+   made it look like a clickable control, and the chord glyphs it used to hold
+   (⌃↵) were abstract enough to be unreadable. Muted so it stays subordinate to
+   the two buttons it sits beside.
+
+   Hidden on touch-primary pointers — there is no physical keyboard to press,
+   and the hint would only add noise on a phone.
+   ========================================================================== */
+
+.ask-submit-kbd {
+    margin-right: auto;
+    align-self: center;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-normal);
+    white-space: nowrap;
+}
+
+@media (pointer: coarse) {
+    .ask-submit-kbd {
+        display: none;
+    }
+}
+
+/* Once answered, the row only reports the outcome ("Submitted") — a chord hint
+   there would point at an action that no longer exists. */
+.ask-question-view.ask-submitted .ask-submit-kbd {
+    display: none;
+}
+
+/* ==========================================================================
+   AskUserQuestion card focus ring.
+
+   The card carries `tabindex="-1"` so it can receive focus programmatically —
+   that is what makes Ctrl/Cmd+Enter work right after a mouse pick on an option
+   (the options are plain <div>s, so the click left focus on <body> and the
+   keydown never reached the card). See focusAskView in renderToolDetail.ts.
+
+   `:focus-visible` and not `:focus`: the focus here is a side effect of a mouse
+   click, and a UA ring appearing around the whole card on every option click
+   would look like a rendering glitch. Keyboard users still get the ring.
+   ========================================================================== */
+
+.ask-question-view:focus {
+    outline: none;
+}
+
+.ask-question-view:focus-visible {
+    outline: 2px solid var(--accent-color);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
 }

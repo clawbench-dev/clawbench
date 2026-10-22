@@ -1,5 +1,24 @@
 <template>
-  <div class="usage-meter-wrap">
+  <!-- Placeholder: no rule configured.
+       A bare "设置用量提醒" entry instead of a gauge with no numbers. Showing
+       the capsule in its empty form would raise the question "why is it empty",
+       and the popover behind it would have nothing to say — every figure in it
+       is derived from a quota. A single tappable hint answers both: there is
+       nothing here yet, and here is where to create it. -->
+  <button
+    v-if="!status.enabled"
+    type="button"
+    class="usage-pill is-off usage-pill--placeholder"
+    :title="t('usageMeter.setupHint')"
+    :aria-label="t('usageMeter.setupHint')"
+    data-action="usage-meter-setup"
+    @click.stop="openSettings"
+  >
+    <Gauge :size="13" class="usage-icon" aria-hidden="true" />
+    <span class="usage-label">{{ t('usageMeter.setupHint') }}</span>
+  </button>
+
+  <div v-else class="usage-meter-wrap">
     <button
       ref="btnRef"
       type="button"
@@ -145,7 +164,10 @@ import { useUsageMeter, type UsageMeterStatus } from '@/composables/useUsageMete
 
 const props = defineProps<{
   status: UsageMeterStatus
-  state: 'ok' | 'over' | 'full'
+  // 'off' never reaches the popover body: the placeholder branch renders
+  // instead. It stays in the union because the caller passes meterState
+  // directly, and narrowing it there would need a cast for no benefit.
+  state: 'ok' | 'over' | 'full' | 'off'
   fillPercent: number
   expectedPercent: number
 }>()
@@ -213,7 +235,8 @@ const projectionText = computed(() => {
 // x spans the WHOLE cycle, not just the elapsed days: anchoring today at the
 // right edge left no room for the projection, so the extrapolation collapsed
 // onto the "today" marker and was invisible. y spans [0, max(quota, peak)] so
-// the quota line is always on screen.
+// the quota line is always on screen — and with no quota it spans the peak
+// alone, so the curve is not squashed flat against an axis whose top is 0.
 const axisDays = computed(() => Math.max(1, props.status.periodDays ?? points.value.length))
 const yMax = computed(() => {
   const peak = points.value.reduce((m, p) => Math.max(m, p.actual, p.expected), 0)
@@ -260,6 +283,8 @@ const todayY = computed(() => {
  */
 const projection = computed(() => {
   const n = points.value.length
+  // The projection predicts the day the QUOTA runs out; with no quota there is
+  // no such day, so the dashed extrapolation would be a line to nowhere.
   if (n < 2) return null
   const last = points.value[n - 1]
   const first = points.value[0]
@@ -347,6 +372,21 @@ function openSettings() {
 .usage-pill.is-ok { --meter-color: var(--color-green); }
 .usage-pill.is-over { --meter-color: var(--color-orange); }
 .usage-pill.is-full { --meter-color: var(--color-red); }
+/* No rule: the accent is muted rather than green. Green would claim "you are
+   within budget", which is a judgement this state has no basis for. */
+.usage-pill.is-off { --meter-color: var(--text-muted); }
+
+/* Placeholder entry. Dashed rather than solid: the pill is not a readout yet,
+   it is a slot waiting to be filled, and the border says so before the label is
+   read. Muted text keeps it from competing with real header controls. */
+.usage-pill--placeholder {
+  border-style: dashed;
+  color: var(--text-muted);
+}
+
+.usage-pill--placeholder .usage-label {
+  color: var(--text-muted);
+}
 
 .usage-bar {
   position: relative;

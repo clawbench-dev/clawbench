@@ -307,11 +307,14 @@ describe('ContentSearchDialog', () => {
     expect(wrapper.find('.cs-empty-icon').exists()).toBe(false)
   })
 
-  it('shows a spinner while searching with no results yet', async () => {
+  it('shows a placeholder while searching with no results yet', async () => {
     searchState.query = 'needle'
     searchState.searching = true
     const wrapper = await mountDialog()
-    expect(wrapper.find('.loading-indicator').exists()).toBe(true)
+    // The stop button must stay reachable: it is the whole reason this state
+    // exists (a large tree can take a while before the first hit).
+    expect(wrapper.find('.cs-loading-skeleton').exists()).toBe(true)
+    expect(wrapper.find('.cs-stop-btn').exists()).toBe(true)
   })
 
   it('shows the empty state when the search finished with no hits', async () => {

@@ -11,7 +11,7 @@
         <CheckCircle2 v-else :size="14" color="#22c55e" class="tool-detail-status" />
       </div>
     </template>
-    <div class="tool-detail-body" ref="bodyRef" @click="handleBodyClick" @input="handleBodyInput" @mousedown="onTableMouseDown" @touchstart.passive="onTableTouchStart">
+    <div class="tool-detail-body" ref="bodyRef" @click="handleBodyClick" @input="handleBodyInput" @keydown="handleBodyKeydown" @mousedown="onTableMouseDown" @touchstart.passive="onTableTouchStart">
       <div v-html="toolInputHtml"></div>
       <!-- Tool output section -->
       <div v-if="toolOutputHtml" class="tool-output-section tool-content-wrap word-wrap">
@@ -46,7 +46,7 @@ import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import TableRowModal from '@/components/common/TableRowModal.vue'
 import { getToolIcon } from '@/utils/icons'
 import { formatDuration } from '@/utils/format.ts'
-import { handleToolAction, handleToolContentHeaderClick, COPY_ICON_SVG, WRAP_ICON_SVG, updateAskSubmitState, restoreAskStatesInContainer, handleAskSupplementaryInput } from '@/utils/renderToolDetail.ts'
+import { handleToolAction, handleToolContentHeaderClick, COPY_ICON_SVG, WRAP_ICON_SVG, updateAskSubmitState, restoreAskStatesInContainer, handleAskSupplementaryInput, handleAskSubmitShortcut } from '@/utils/renderToolDetail.ts'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
 import { store } from '@/stores/app.ts'
 import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
@@ -140,6 +140,15 @@ function handleBodyInput(event) {
   if (handleAskSupplementaryInput(event)) return
   const askView = event.target.closest('.ask-question-view')
   if (askView) updateAskSubmitState(askView)
+}
+
+/**
+ * Ctrl/Cmd+Enter submits the ask card the keystroke happened in. Scoped to the
+ * card (not "the open drawer") so it stays correct when the chat list shows the
+ * same card behind the sheet.
+ */
+function handleBodyKeydown(event) {
+  handleAskSubmitShortcut(event, emit)
 }
 
 // The ask-card body is rebuilt from an HTML string whenever toolInputHtml

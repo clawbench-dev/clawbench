@@ -1175,3 +1175,105 @@ describe('SettingsItem — date', () => {
     expect(w.find('input[type="date"]').exists()).toBe(true)
   })
 })
+
+// ── datetime type ────────────────────────────────────────────────────────────
+// The usage meter's cycle start accepts an optional time of day, so the cycle
+// can roll over at an arbitrary instant instead of local midnight.
+describe('SettingsItem — datetime', () => {
+  it('opens a date input AND a time input', async () => {
+    const w = mountItem({ type: 'datetime', modelValue: '2026-10-14' })
+    await w.find('.settings-item').trigger('click')
+    await nextTick()
+
+    expect(w.find('input[type="date"]').exists()).toBe(true)
+    expect(w.find('input[type="time"]').exists()).toBe(true)
+    // Still never a free-text box: the value must come from native pickers.
+    expect(w.find('input[type="text"]').exists()).toBe(false)
+  })
+
+  it('prefills the time input from a stored date-time value', async () => {
+    const w = mountItem({ type: 'datetime', modelValue: '2026-10-14T09:30:00' })
+    await w.find('.settings-item').trigger('click')
+    await nextTick()
+
+    const date = w.find('input[type="date"]').element as HTMLInputElement
+    const time = w.find('input[type="time"]').element as HTMLInputElement
+    expect(date.value).toBe('2026-10-14')
+    expect(time.value).toBe('09:30:00')
+  })
+
+  it('leaves the time input empty for a date-only value', async () => {
+    const w = mountItem({ type: 'datetime', modelValue: '2026-10-14' })
+    await w.find('.settings-item').trigger('click')
+    await nextTick()
+
+    expect((w.find('input[type="time"]').element as HTMLInputElement).value).toBe('')
+  })
+
+  it('emits date + time when both are set', async () => {
+    const w = mountItem({ type: 'datetime', modelValue: '2026-10-14' })
+    await w.find('.settings-item').trigger('click')
+    await nextTick()
+
+    await w.find('input[type="date"]').setValue('2026-11-01')
+    await w.find('input[type="time"]').setValue('14:30:00')
+    await w.find('.settings-item__editor-confirm').trigger('click')
+
+    expect(w.emitted('update:modelValue')?.[0]).toEqual(['2026-11-01T14:30:00'])
+  })
+
+  // A "HH:MM" time (what a time input yields without a step) must be padded to
+  // seconds: the server has exactly one shape to parse, and an unpadded value
+  // would be rejected.
+  it('pads a minutes-precision time to seconds', async () => {
+    const w = mountItem({ type: 'datetime', modelValue: '2026-10-14' })
+    await w.find('.settings-item').trigger('click')
+    await nextTick()
+
+    await w.find('input[type="date"]').setValue('2026-11-01')
+    await w.find('input[type="time"]').setValue('14:30')
+    await w.find('.settings-item__editor-confirm').trigger('click')
+
+    expect(w.emitted('update:modelValue')?.[0]).toEqual(['2026-11-01T14:30:00'])
+  })
+
+  // Midnight is the same instant as date-only, and the short form keeps
+  // config.yaml readable — so an untouched (or explicitly cleared) time must
+  // collapse back to the date.
+  it('collapses a midnight time to the date-only form', async () => {
+    const w = mountItem({ type: 'datetime', modelValue: '2026-10-14T00:00:00' })
+    await w.find('.settings-item').trigger('click')
+    await nextTick()
+
+    await w.find('input[type="date"]').setValue('2026-11-01')
+    await w.find('.settings-item__editor-confirm').trigger('click')
+
+    expect(w.emitted('update:modelValue')?.[0]).toEqual(['2026-11-01'])
+  })
+
+  // Same empty-guard as the date editor: clearing the date half must not emit
+  // an empty anchor, which the server rejects (the row would look edited but
+  // stay unchanged with no explanation).
+  it('keeps the old value when the date half is cleared', async () => {
+    const w = mountItem({ type: 'datetime', modelValue: '2026-10-14T09:30:00' })
+    await w.find('.settings-item').trigger('click')
+    await nextTick()
+
+    await w.find('input[type="date"]').setValue('')
+    await w.find('.settings-item__editor-confirm').trigger('click')
+
+    expect(w.emitted('update:modelValue')).toBeUndefined()
+  })
+
+  // Changing only the time must keep the date: the two inputs are independent.
+  it('keeps the date when only the time is edited', async () => {
+    const w = mountItem({ type: 'datetime', modelValue: '2026-10-14' })
+    await w.find('.settings-item').trigger('click')
+    await nextTick()
+
+    await w.find('input[type="time"]').setValue('08:00:00')
+    await w.find('.settings-item__editor-confirm').trigger('click')
+
+    expect(w.emitted('update:modelValue')?.[0]).toEqual(['2026-10-14T08:00:00'])
+  })
+})

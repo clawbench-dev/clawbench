@@ -44,8 +44,8 @@
       </button>
     </div>
     <div class="drilldown-body" ref="bodyRef">
-      <div v-if="loading" class="git-history-loading">
-        <LoadingIndicator size="md" />
+      <div v-if="loading" class="git-history-loading git-history-loading--skeleton">
+        <PanelSkeleton variant="list" :rows="10" :meta="true" :label="t('common.loading')" />
       </div>
       <div v-else-if="error" class="git-history-error">{{ error }}</div>
       <div v-else-if="!isGit" class="git-history-empty">
@@ -131,6 +131,7 @@ import { useI18n } from 'vue-i18n'
 import GitGraph from './GitGraph.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
@@ -475,6 +476,14 @@ defineExpose({ observeList, unobserveList, commitSearch })
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* A skeleton must fill the body and align with the real rows; centring it
+   would shrink it to its content and float a narrow column in the middle. */
+.git-history-loading--skeleton {
+  align-items: stretch;
+  justify-content: flex-start;
+  min-width: 0;
 }
 
 .git-history-error,

@@ -148,6 +148,8 @@
         :html-src="htmlPreviewSrc"
         :html-content="htmlPreviewContent"
         :file-path="targetFilePath"
+        :on-open-search="openSearch"
+        :chat-quote="true"
         @refresh="preview.refresh()"
       />
       <MarkdownPreviewBody
@@ -424,6 +426,8 @@
         :html-src="htmlPreviewSrc"
         :html-content="htmlPreviewContent"
         :file-path="targetFilePath"
+        :on-open-search="openSearch"
+        :chat-quote="true"
         @refresh="preview.refresh()"
       />
       <MarkdownPreviewBody

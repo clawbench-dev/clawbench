@@ -42,9 +42,11 @@
     <!-- Content row: file content + (wide-screen) inline TOC dock -->
     <div class="file-viewer-body" :data-toc-side="tocDockSide">
       <div class="file-viewer-content" ref="contentRef">
-        <!-- Loading (suppressed when external loading mask is active to avoid double flash) -->
+        <!-- Loading (suppressed when external loading mask is active to avoid double flash).
+             A preview has no rows to preserve, so the placeholder previews the
+             text shape instead of centring a spinner in an empty pane. -->
         <div v-if="loading && !externalLoading" class="loading">
-          <LoadingIndicator size="md" />
+          <PanelSkeleton class="file-viewer-skeleton" variant="text" :rows="10" :label="t('common.loading')" />
         </div>
 
       <!-- Error -->
@@ -283,7 +285,7 @@ import { useI18n } from 'vue-i18n'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { Download, Code2, AlertTriangle, Share2 } from 'lucide-vue-next'
 import UnsupportedFileBody from './UnsupportedFileBody.vue'
-import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import ImagePreview from '@/components/media/ImagePreview.vue'
 import PdfPreview from '@/components/media/PdfPreview.vue'
 import AudioPreview from '@/components/media/AudioPreview.vue'
@@ -311,7 +313,7 @@ import { exportMarkdownToHtml, imageIssueReasonKey } from '@/utils/exportMarkdow
 import { downloadBlob, downloadFileByPath } from '@/utils/download.ts'
 import { buildHtmlPreviewSrc, installPreviewScrollbar, installPreviewSearchStyles } from '@/utils/htmlPreview.ts'
 import { attachIframeSelectionQuoteBridge, installIframeSearchShortcut, resolveIframeWindow } from '@/utils/iframeSelectionQuote.ts'
-import { useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
+import { makeIframeQuoteShowHandler, useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
 import { useToast } from '@/composables/useToast.ts'
 import { useCodeEditorSave } from '@/composables/useCodeEditorSave.ts'
 import { getNative } from '@/utils/clawbenchNative'
@@ -453,7 +455,13 @@ async function attachHtmlQuoteBridge() {
     disposeHtmlQuoteBridgeFn = attachIframeSelectionQuoteBridge({
         win,
         filePath: () => props.file?.path || '',
-        show: (data) => quoteQuestion.showBar(data, { delay: 0 }),
+        // Shared with the other two iframe hosts (inline quick preview, OpenAPI
+        // docs): it maps the frame's anchor into host coordinates, shows the bar
+        // immediately (the bridge already debounced), and suppresses the in-page
+        // bar on Android where the system selection menu is the affordance.
+        // Hand-written copies drifted — one of them silently dropped `anchor`,
+        // which is exactly the "menu pops up at the top" defect.
+        show: makeIframeQuoteShowHandler(quoteQuestion.showBar),
         hide: () => quoteQuestion.hideBar(),
     })
 }
@@ -1062,6 +1070,12 @@ defineExpose({
     align-items: center;
     justify-content: center;
     padding: 40px;
+}
+
+/* The placeholder owns its own width: the wrapper centres, but a text skeleton
+   squeezed to its content would not line up with the real paragraph. */
+.file-viewer-skeleton {
+    width: 100%;
 }
 
 

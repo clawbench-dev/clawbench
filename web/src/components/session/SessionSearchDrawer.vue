@@ -179,7 +179,7 @@
       </div>
 
       <div class="session-search-content">
-        <LoadingIndicator v-if="searchState.loading" size="md" :label="t('sessionSearch.searching')" />
+        <PanelSkeleton v-if="searchState.loading" variant="list" :rows="8" :meta="true" :label="t('sessionSearch.searching')" />
         <div v-else-if="searchState.error" class="session-search-error">{{ searchState.error }}</div>
         <div v-else-if="searchState.results.length === 0" class="session-search-empty">{{ t('sessionSearch.noResults') }}</div>
         <div v-else class="session-search-results" ref="resultsRef">
@@ -227,7 +227,7 @@
       </div>
 
       <!-- Chunk list (scrollable via .bs-body) -->
-      <LoadingIndicator v-if="lazyLoading" size="md" :label="t('sessionSearch.loadingPreview')" />
+      <PanelSkeleton v-if="lazyLoading" variant="text" :rows="10" :label="t('sessionSearch.loadingPreview')" />
       <div v-else-if="detailChunks.length === 0" class="detail-empty">{{ t('sessionSearch.noPreview') }}</div>
       <div v-for="chunk in detailChunks" :key="chunk.chunk_id" class="detail-chunk">
         <div class="detail-chunk-role" :class="'role-' + chunk.role">
@@ -269,6 +269,7 @@ import { useI18n } from 'vue-i18n'
 import { Search, ChevronLeft, ChevronDown, Check, User, Bot, RotateCcw, Import, MessageSquare, Trash2, Crown, AtSign } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import GroupMemberStack from '@/components/session/GroupMemberStack.vue'

@@ -7,7 +7,6 @@
     :open="open"
     :title="t('settings.items.agentCopyTitle')"
     :z-index="2500"
-    :max-width="380"
     @close="handleClose"
   >
     <div class="copy-agent-dialog__body">

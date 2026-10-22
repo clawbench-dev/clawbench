@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -15,18 +14,17 @@ import (
 	"clawbench/internal/model"
 )
 
-// Session share snapshot building.
+// Session share payload assembly.
 //
-// The snapshot is the whole contract between the authenticated creator and the
-// anonymous viewer: once written, nothing else is read from the database. It
-// therefore has to be self-sufficient, which drives two decisions that are easy
-// to get wrong:
+// The JSON is assembled on EVERY public request from the live tables; nothing
+// about the conversation is stored in session_shares beyond the selected message
+// ids. Two consequences drive the design:
 //
-//  1. Full tool input/output and thinking text are INLINED. chat_history.content
+//  1. Full tool input/output and thinking text must be INLINED. chat_history.content
 //     stores tool_use blocks with input/output stripped (model.ContentBlock.
 //     MarshalJSON) and thinking blocks with only a think_id; the real payload
 //     lives in chat_tool_calls / chat_thinking. A naive re-marshal of
-//     model.ContentBlock would silently produce a snapshot full of empty tool
+//     model.ContentBlock would silently produce a page full of empty tool
 //     cards, so this file works on map[string]any and never round-trips through
 //     ContentBlock.
 //
@@ -34,18 +32,24 @@ import (
 //     share page can offer the same summary/original toggle as the app without
 //     a second request.
 //
+// Because the assembly is live, it must be DETERMINISTIC: two requests for an
+// unchanged conversation have to produce byte-identical output, or the ETag the
+// handler derives from it never matches and every request pays full cost. That
+// is why createdAt is the share row's timestamp rather than time.Now().
+//
 // Execution plan (chat_sessions.context_state / ACP cached state) is deliberately
 // NOT included: it is transient, never persisted per-message, and has no
 // representation in ContentBlock.
 
 const (
 	// sessionSharePayloadVersion is bumped when the payload shape changes in a
-	// way the viewer must know about.
+	// way the viewer must know about. Unlike the snapshot era, a bump now
+	// changes every live link at once (there is no per-row stored shape).
 	sessionSharePayloadVersion = 1
 
-	// maxSessionSharePayloadBytes caps the stored snapshot. Tool outputs dominate
-	// the size, so over the cap the longest outputs are trimmed first (see
-	// trimPayloadToCap) rather than failing the share outright.
+	// maxSessionSharePayloadBytes caps the assembled payload. Tool outputs
+	// dominate the size, so over the cap the longest outputs are trimmed first
+	// (see trimPayloadToCap) rather than failing the request outright.
 	maxSessionSharePayloadBytes = 16 << 20 // 16 MiB
 
 	// sessionShareOutputTrimFloor is the size below which a tool output is never
@@ -68,24 +72,35 @@ const (
 // streaming). The handler maps it to a 400 with a specific message.
 var ErrSessionShareEmptySelection = errors.New("session share selection is empty")
 
-// ErrSessionShareUnknownMessage is returned when the request names a message id
-// that is not a finalized message of the session (unknown, streaming, or
-// belonging to a different session). Rejecting rather than silently dropping
-// keeps the frozen snapshot faithful to what the user saw selected.
+// ErrSessionShareUnknownMessage is returned when the CREATION request names a
+// message id that is not a finalized message of the session (unknown, streaming,
+// or belonging to a different session). Rejecting rather than silently dropping
+// keeps the share faithful to what the user saw selected. The read path does not
+// use this: a message deleted after the share was created is skipped instead.
 var ErrSessionShareUnknownMessage = errors.New("session share selection names an unknown message")
 
-// SessionSharePayload is the frozen snapshot stored in session_shares.payload.
+// ErrSessionShareSessionGone is returned when a share's session row no longer
+// exists. The handler maps it to 404: from the reader's side it is
+// indistinguishable from a revoked link.
+var ErrSessionShareSessionGone = errors.New("session share: session no longer exists")
+
+// ErrSessionShareNothingToShow is returned when every message the share selected
+// has since been deleted (rewind, hard delete). The handler maps it to 404 — the
+// link has no content left, which is the same outcome as revocation.
+var ErrSessionShareNothingToShow = errors.New("session share: every shared message was deleted")
+
+// SessionSharePayload is the JSON assembled for one public request.
 type SessionSharePayload struct {
 	Version   int                   `json:"version"`
 	CreatedAt time.Time             `json:"createdAt"`
 	Session   SessionShareSession   `json:"session"`
 	Messages  []SessionShareMessage `json:"messages"`
 	// SessionAgent + Speakers let the public viewer render the real speaker icon
-	// per message. The identities always carry the avatar: the snapshot is
-	// frozen by the authenticated owner and the public viewer has no other way
-	// to resolve a speaker's avatar (it cannot call /api/agents), so the avatars
-	// ARE embedded in the snapshot. Speakers is keyed by member row id and
-	// present only for group sessions.
+	// per message. The identities always carry the avatar: the viewer has no
+	// other way to resolve a speaker's avatar (it cannot call /api/agents), so
+	// the avatars ARE embedded in the payload, resolved on every request from
+	// the live agent registry. Speakers is keyed by member row id and present
+	// only for group sessions.
 	SessionAgent *SpeakerIdentity           `json:"sessionAgent,omitempty"`
 	Speakers     map[string]SpeakerIdentity `json:"speakers,omitempty"`
 	// GroupMembers is the group's ACTIVE roster, in roster order, with the host
@@ -93,10 +108,9 @@ type SessionSharePayload struct {
 	// same overlapping avatar stack the in-app group header shows. Speakers
 	// cannot serve this: it is a map (JSON-marshaled with UUID-sorted keys, so
 	// the order is random) that also includes LEFT members, and it carries no
-	// isHost flag. Each preview carries the member's own avatar snapshot
-	// (agent_avatar, frozen into the payload like Speakers), so the viewer draws
-	// the same discs without a DiceBear runtime; a member with no snapshot falls
-	// back to the per-backend brand icon.
+	// isHost flag. Each preview carries the member's own avatar (agent_avatar),
+	// so the viewer draws the same discs without a DiceBear runtime; a member
+	// with no avatar falls back to the per-backend brand icon.
 	GroupMembers []model.GroupMemberPreview `json:"groupMembers,omitempty"`
 }
 
@@ -114,11 +128,17 @@ type SessionShareSession struct {
 	// render their private notes (bcc) card — a group's timeline otherwise
 	// cannot tell which speaker is the chair.
 	HostMemberID string `json:"hostMemberId,omitempty"`
-	// UserNickname is the reserved display name of the human user in this
-	// group (chat.user_nickname at snapshot time, default "User"). Frozen so
-	// the anonymous viewer can render @-mention chips for the user without
-	// reading the authenticated /api/config.
+	// UserNickname is the reserved display name of the human user in this group
+	// (chat.user_nickname), read live so the viewer can render @-mention chips
+	// for the user without reading the authenticated /api/config.
 	UserNickname string `json:"userNickname,omitempty"`
+	// SessionType is the chat_sessions.session_type value ("chat" / "group" /
+	// "group_member"). The viewer needs an EXPLICIT signal: the roster is not
+	// one — GroupMembersForGroups returns only ACTIVE members, so a group whose
+	// members all left would look like a single-agent session, and the reader
+	// would then see the raw <clawbench-mention> routing tags instead of
+	// resolved @-chips.
+	SessionType string `json:"sessionType,omitempty"`
 }
 
 // SessionShareMessage mirrors model.ChatMessage's JSON shape so the viewer can
@@ -211,64 +231,113 @@ func GetSessionMessagesForSelection(sessionID string) ([]SessionMessagePreview, 
 	return items, rows.Err()
 }
 
-// BuildSessionSharePayload freezes a session into a snapshot JSON string.
+// ResolveSessionShareSelection validates a client's message selection against
+// the session's finalized messages and returns the RESOLVED id list: non-empty,
+// chronological, de-duplicated.
 //
-// messageIDs selects which messages to include; an empty slice means "every
-// finalized message". Only finalized messages (streaming = 0) are shareable: a
-// half-written reply would freeze mid-sentence. Selecting a non-finalized or
-// unknown id is an error rather than a silent drop.
-//
-// projectRoot and homeDir are used to relativize absolute paths in the payload.
-// Returns the payload and the number of messages included.
-func BuildSessionSharePayload(sessionID string, messageIDs []int64, projectRoot, homeDir string) (string, int, error) {
-	info := GetSessionFullInfo(sessionID)
-	if info == nil {
-		return "", 0, fmt.Errorf("session %s not found", sessionID)
+// Strict on purpose — this is the CREATION path. An id that names no finalized
+// message is an error (the share must match what the user believed they
+// selected). An empty selection means "every finalized message", which is
+// resolved here into the explicit list so the stored share cannot grow later.
+func ResolveSessionShareSelection(sessionID string, messageIDs []int64) ([]int64, error) {
+	finalized, err := GetFinalizedMessageIDs(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if len(finalized) == 0 {
+		return nil, ErrSessionShareEmptySelection
+	}
+	if len(messageIDs) == 0 {
+		return finalized, nil
 	}
 
-	// GetMessagesBySessionIDRaw already filters to finalized messages and keeps
-	// content un-stripped (unlike the paged reader, which replaces summarized
-	// content with an empty blocks array).
-	messages, err := GetMessagesBySessionIDRaw(sessionID)
+	known := make(map[int64]struct{}, len(finalized))
+	for _, id := range finalized {
+		known[id] = struct{}{}
+	}
+	seen := make(map[int64]struct{}, len(messageIDs))
+	selected := make([]int64, 0, len(messageIDs))
+	for _, id := range messageIDs {
+		if _, ok := known[id]; !ok {
+			return nil, fmt.Errorf("%w: message %d", ErrSessionShareUnknownMessage, id)
+		}
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		selected = append(selected, id)
+	}
+	sort.Slice(selected, func(i, j int) bool { return selected[i] < selected[j] })
+	return selected, nil
+}
+
+// BuildSessionSharePayload assembles the public JSON for one request.
+//
+// messageIDs is the stored selection. Ids that no longer resolve (rewound or
+// hard-deleted) are SKIPPED rather than failing the request: a link keeps
+// working after the conversation is trimmed, it just shows less. When nothing
+// survives, ErrSessionShareNothingToShow is returned (the handler 404s).
+//
+// createdAt is the share row's timestamp, NOT time.Now(): the assembled bytes
+// have to be stable across requests or the ETag derived from them never matches.
+//
+// NOTE: paths are NOT rewritten. The old sanitizer replaced the project root with
+// "./" and the home directory with "~/", but it could only ever be cosmetic —
+// a tool call's output routinely carries absolute paths, credentials and file
+// contents the string replacement never looked at (a single `Read` of a .env
+// leaks more than the whole path rewrite ever hid). Rewriting some of them made
+// the page look sanitized while it was not, so the transcript is now served
+// verbatim and the reader is trusted with what the creator chose to share.
+func BuildSessionSharePayload(sessionID string, messageIDs []int64, createdAt time.Time) (string, int, error) {
+	// Archived sessions must still resolve: archiving keeps every message, and a
+	// share deliberately outlives it.
+	info := GetSessionFullInfoAny(sessionID)
+	if info == nil {
+		return "", 0, ErrSessionShareSessionGone
+	}
+
+	// Loads only the selected rows (chunked), so sharing three messages of a
+	// 300-message conversation does not read 297 unused content blobs.
+	messages, err := GetMessagesByIDsInSession(sessionID, messageIDs)
 	if err != nil {
 		return "", 0, fmt.Errorf("load session messages: %w", err)
 	}
 	if len(messages) == 0 {
-		return "", 0, ErrSessionShareEmptySelection
+		return "", 0, ErrSessionShareNothingToShow
 	}
 
-	messages, err = selectShareMessages(messages, messageIDs)
+	selectedIDs := messageIDsOf(messages)
+	toolCalls, err := loadToolCallsByMessage(selectedIDs)
 	if err != nil {
 		return "", 0, err
 	}
-
-	toolCalls, err := loadToolCallsByMessage(sessionID)
+	thinking, err := loadThinkingByMessage(selectedIDs)
 	if err != nil {
 		return "", 0, err
 	}
-	thinking, err := loadThinkingByMessage(sessionID)
-	if err != nil {
-		return "", 0, err
-	}
-	summaries, cards, err := loadSummariesForMessages(messageIDsOf(messages))
+	summaries, cards, err := loadSummariesForMessages(selectedIDs)
 	if err != nil {
 		return "", 0, err
 	}
 
-	// The snapshot is frozen at share-creation time by the authenticated owner,
-	// and the public viewer has no other way to resolve a speaker's custom
-	// avatar (it cannot call /api/agents). Every identity carries the avatar so
-	// the shared thread renders the same icons the app shows.
-	sessionAgent, speakers := ResolveSessionSpeakers(sessionID)
+	// The viewer has no other way to resolve a speaker's custom avatar (it cannot
+	// call /api/agents), so every identity carries it. resolveSessionSpeakersWithInfo
+	// is used instead of the exported wrapper because it must accept an ARCHIVED
+	// session — see GetSessionFullInfoAny.
+	sessionAgent, speakers := resolveSessionSpeakersWithInfo(info, sessionID)
 
 	// The viewer's topbar renders the same avatar stack the in-app group header
-	// shows, so freeze the ACTIVE roster in roster order with the host flagged.
-	// GroupMembersForGroups is the exact source the session list uses; it already
-	// excludes left members and orders by created_at/rowid. Best-effort: a
-	// failure must not fail the share (the topbar then falls back to the single
+	// shows: the ACTIVE roster in roster order with the host flagged.
+	// GroupMembersForGroups is the exact source the session list uses. Best-effort:
+	// a failure must not fail the share (the topbar then falls back to the single
 	// session-agent icon).
+	//
+	// Read once and reused for SessionType: the payload must report the type even
+	// when the roster comes back empty (every member left), so the viewer cannot
+	// use "roster is non-empty" as the group signal.
+	sessionType := GetSessionType(sessionID)
 	var groupMembers []model.GroupMemberPreview
-	if GetSessionType(sessionID) == groupSessionType {
+	if sessionType == groupSessionType {
 		if byGroup, gmErr := GroupMembersForGroups([]string{sessionID}); gmErr == nil {
 			groupMembers = byGroup[sessionID]
 		}
@@ -276,7 +345,7 @@ func BuildSessionSharePayload(sessionID string, messageIDs []int64, projectRoot,
 
 	out := SessionSharePayload{
 		Version:   sessionSharePayloadVersion,
-		CreatedAt: time.Now().UTC(),
+		CreatedAt: createdAt.UTC(),
 		Session: SessionShareSession{
 			Title:        info.Title,
 			Backend:      info.Backend,
@@ -284,6 +353,7 @@ func BuildSessionSharePayload(sessionID string, messageIDs []int64, projectRoot,
 			Model:        info.Model,
 			HostMemberID: GetGroupHostMember(sessionID),
 			UserNickname: groupUserTarget(),
+			SessionType:  sessionType,
 		},
 		Messages:     make([]SessionShareMessage, 0, len(messages)),
 		SessionAgent: sessionAgent,
@@ -292,7 +362,7 @@ func BuildSessionSharePayload(sessionID string, messageIDs []int64, projectRoot,
 	}
 	for i := range messages {
 		out.Messages = append(out.Messages,
-			buildShareMessage(messages[i], toolCalls, thinking, summaries, cards, projectRoot, homeDir))
+			buildShareMessage(messages[i], toolCalls, thinking, summaries, cards))
 	}
 
 	raw, err := json.Marshal(out)
@@ -303,42 +373,15 @@ func BuildSessionSharePayload(sessionID string, messageIDs []int64, projectRoot,
 	return string(raw), len(out.Messages), nil
 }
 
-// selectShareMessages narrows the session's finalized messages to the client's
-// selection, restoring chronological order regardless of the order sent. An
-// empty selection means "every message". An id matching no finalized message is
-// an error rather than a silent drop, so the frozen snapshot always matches what
-// the user believed they selected.
-func selectShareMessages(messages []model.ChatMessage, messageIDs []int64) ([]model.ChatMessage, error) {
-	if len(messageIDs) == 0 {
-		return messages, nil
-	}
-	byID := make(map[int64]model.ChatMessage, len(messages))
-	for _, m := range messages {
-		byID[m.ID] = m
-	}
-	selected := make([]model.ChatMessage, 0, len(messageIDs))
-	for _, id := range messageIDs {
-		m, ok := byID[id]
-		if !ok {
-			return nil, fmt.Errorf("%w: message %d", ErrSessionShareUnknownMessage, id)
-		}
-		selected = append(selected, m)
-	}
-	// Restore chronological order regardless of the order the client sent.
-	sort.Slice(selected, func(i, j int) bool { return selected[i].ID < selected[j].ID })
-	return selected, nil
-}
-
-// buildShareMessage freezes one message: its content is rewritten with the full
-// tool/thinking payload inlined and its attachments relativized. An assistant
-// turn additionally carries its reading summary and cards.
+// buildShareMessage prepares one message: its content is rewritten with the full
+// tool/thinking payload inlined. An assistant turn additionally carries its
+// reading summary and cards.
 func buildShareMessage(
 	msg model.ChatMessage,
 	toolCalls map[toolCallKey]ToolCallRecord,
 	thinking map[thinkingKey]string,
 	summaries map[int64]string,
 	cards map[int64]*model.SummaryCards,
-	projectRoot, homeDir string,
 ) SessionShareMessage {
 	// Assistant content is a JSON wrapper; rewrite it with the full payload
 	// inlined. User content may be plain text or the same wrapper, so it goes
@@ -346,26 +389,21 @@ func buildShareMessage(
 	item := SessionShareMessage{
 		ID:        msg.ID,
 		Role:      msg.Role,
-		Content:   inlineMessageContent(msg, toolCalls, thinking, projectRoot, homeDir),
+		Content:   inlineMessageContent(msg, toolCalls, thinking),
 		AgentID:   msg.AgentID,
 		CreatedAt: msg.CreatedAt,
 	}
 	if len(msg.Files) > 0 {
-		item.Files = sanitizeFileEntries(msg.Files, projectRoot, homeDir)
+		item.Files = msg.Files
 	}
 	if msg.Role != roleAssistant {
 		return item
 	}
 	if s, ok := summaries[msg.ID]; ok {
-		// The reading summary routinely names the files the agent touched
-		// ("I edited /home/u/proj/secret.ts"), so it must go through the same
-		// path sanitizer as the rest of the snapshot. Storing it verbatim was
-		// the largest absolute-path leak in the payload.
-		v := sanitizeShareString(s, projectRoot, homeDir)
-		item.Summary = &v
+		item.Summary = &s
 	}
 	if c, ok := cards[msg.ID]; ok {
-		item.SummaryCards = sanitizeSummaryCards(c, projectRoot, homeDir)
+		item.SummaryCards = prepareSummaryCards(c)
 	}
 	return item
 }
@@ -394,9 +432,10 @@ type thinkingKey struct {
 	thinkID   string
 }
 
-// loadToolCallsByMessage returns the session's tool calls keyed by message+tool.
-func loadToolCallsByMessage(sessionID string) (map[toolCallKey]ToolCallRecord, error) {
-	records, err := GetToolCallsBySession(sessionID)
+// loadToolCallsByMessage returns the tool calls of the given messages, keyed by
+// message+tool.
+func loadToolCallsByMessage(messageIDs []int64) (map[toolCallKey]ToolCallRecord, error) {
+	records, err := GetToolCallsByMessageIDs(messageIDs)
 	if err != nil {
 		return nil, fmt.Errorf("load session tool calls: %w", err)
 	}
@@ -407,10 +446,10 @@ func loadToolCallsByMessage(sessionID string) (map[toolCallKey]ToolCallRecord, e
 	return out, nil
 }
 
-// loadThinkingByMessage returns the session's thinking text keyed by
-// message+think_id. GetThinkingBySessionAll already concatenates seq chunks.
-func loadThinkingByMessage(sessionID string) (map[thinkingKey]string, error) {
-	records, err := GetThinkingBySessionAll(sessionID)
+// loadThinkingByMessage returns the thinking text of the given messages, keyed
+// by message+think_id. GetThinkingByMessageIDs already concatenates seq chunks.
+func loadThinkingByMessage(messageIDs []int64) (map[thinkingKey]string, error) {
+	records, err := GetThinkingByMessageIDs(messageIDs)
 	if err != nil {
 		return nil, fmt.Errorf("load session thinking: %w", err)
 	}
@@ -425,7 +464,7 @@ func loadThinkingByMessage(sessionID string) (map[thinkingKey]string, error) {
 //
 // Deliberately NOT enrichMessagesWithSummaries: that helper strips the message
 // content (summarizeContentForView) and fires an async backfill goroutine, both
-// of which are wrong here — the snapshot needs the full content AND the summary
+// of which are wrong here — the payload needs the full content AND the summary
 // side by side, and a share request must not trigger background work.
 func loadSummariesForMessages(messageIDs []int64) (map[int64]string, map[int64]*model.SummaryCards, error) {
 	summaries := map[int64]string{}
@@ -471,33 +510,36 @@ func loadSummariesForMessages(messageIDs []int64) (map[int64]string, map[int64]*
 	return summaries, cards, rows.Err()
 }
 
-// inlineMessageContent rewrites a message's stored content so the snapshot is
+// inlineMessageContent rewrites a message's stored content so the payload is
 // self-contained: tool_use blocks regain their input/output and thinking blocks
 // regain their text.
 //
 // Works on map[string]any on purpose. Round-tripping through model.ContentBlock
 // would re-apply the slimming MarshalJSON and drop exactly the fields being
 // restored here.
-func inlineMessageContent(msg model.ChatMessage, toolCalls map[toolCallKey]ToolCallRecord, thinking map[thinkingKey]string, projectRoot, homeDir string) string {
+//
+// Content is passed through VERBATIM otherwise — see the note on
+// BuildSessionSharePayload for why paths are no longer rewritten.
+func inlineMessageContent(msg model.ChatMessage, toolCalls map[toolCallKey]ToolCallRecord, thinking map[thinkingKey]string) string {
 	trimmed := strings.TrimSpace(msg.Content)
 	if !strings.HasPrefix(trimmed, "{") {
-		// Plain-text user message (or unparseable content) — sanitize and keep.
-		return sanitizeShareString(msg.Content, projectRoot, homeDir)
+		// Plain-text user message (or unparseable content) — keep as-is.
+		return msg.Content
 	}
 
 	var wrapper map[string]any
 	if err := json.Unmarshal([]byte(trimmed), &wrapper); err != nil {
-		return sanitizeShareString(msg.Content, projectRoot, homeDir)
+		return msg.Content
 	}
 
 	blocksRaw, ok := wrapper["blocks"]
 	if !ok {
-		return sanitizeShareString(msg.Content, projectRoot, homeDir)
+		return msg.Content
 	}
 	blocks, ok := blocksRaw.([]any)
 	if !ok {
 		// {"blocks":null} and friends: leave the wrapper as-is.
-		return sanitizeShareString(msg.Content, projectRoot, homeDir)
+		return msg.Content
 	}
 
 	for _, b := range blocks {
@@ -505,84 +547,53 @@ func inlineMessageContent(msg model.ChatMessage, toolCalls map[toolCallKey]ToolC
 		if !ok {
 			continue
 		}
-		sanitizeShareBlock(block, msg.ID, toolCalls, thinking, projectRoot, homeDir)
-	}
-
-	// metadata is kept (the viewer's metadata modal reads model/token/cost from
-	// it) but sanitized: it can carry request ids and provider URLs.
-	if meta, ok := wrapper["metadata"]; ok {
-		wrapper["metadata"] = sanitizeShareValue(meta, projectRoot, homeDir)
+		inlineShareBlock(block, msg.ID, toolCalls, thinking)
 	}
 
 	out, err := json.Marshal(wrapper)
 	if err != nil {
-		return sanitizeShareString(msg.Content, projectRoot, homeDir)
+		return msg.Content
 	}
 	return string(out)
 }
 
-// sanitizeShareBlock sanitizes one content block in place, restoring the heavy
-// fields the storage layer stripped (tool input/output, thinking text) from the
-// side tables and relativizing every path it carries.
-func sanitizeShareBlock(
+// inlineShareBlock restores one content block's heavy fields (tool input/output,
+// thinking text) from the side tables, in place.
+func inlineShareBlock(
 	block map[string]any,
 	messageID int64,
 	toolCalls map[toolCallKey]ToolCallRecord,
 	thinking map[thinkingKey]string,
-	projectRoot, homeDir string,
 ) {
-	// A slim tool_use block carries a TOP-LEVEL file_path (see
-	// model.SlimBlock.FilePath), separate from the copy inside `input`. It is
-	// sanitized here because the switch below only touches the fields it
-	// explicitly names, and a path left in this slot would ship the creator's
-	// absolute directory layout into a public snapshot.
-	if fp, ok := block["file_path"].(string); ok && fp != "" {
-		block["file_path"] = relativizeSharePath(fp, projectRoot, homeDir)
-	}
 	switch block["type"] {
 	case eventTypeToolUse:
-		sanitizeToolUseBlock(block, messageID, toolCalls, projectRoot, homeDir)
+		inlineToolUseBlock(block, messageID, toolCalls)
 	case blockTypeThinking:
 		thinkID, _ := block["think_id"].(string)
 		if thinkID == "" {
 			return
 		}
 		if text, found := thinking[thinkingKey{messageID: messageID, thinkID: thinkID}]; found {
-			block["text"] = sanitizeShareString(text, projectRoot, homeDir)
-		}
-	case contentKeyText, blockTypeWarning, eventTypeError:
-		if s, ok := block["text"].(string); ok {
-			block["text"] = sanitizeShareString(s, projectRoot, homeDir)
+			block["text"] = text
 		}
 	}
 }
 
-// sanitizeToolUseBlock restores a tool_use block's heavy payload from the side
+// inlineToolUseBlock restores a tool_use block's heavy payload from the side
 // table. The stored block already carries name/status/done/summary; the side
 // table is authoritative for input/output and for status, which the block may
 // not have received if the tool finished after the message was persisted.
-func sanitizeToolUseBlock(
+//
+// Blocks WITHOUT a side-table row keep whatever they already carry: the
+// interactive tools (AskUserQuestion / PermissionApproval) are stored with their
+// `input` inline (model.ContentBlock.MarshalJSON) and never get a
+// chat_tool_calls row, so returning early on !found would drop the card's
+// arguments entirely.
+func inlineToolUseBlock(
 	block map[string]any,
 	messageID int64,
 	toolCalls map[toolCallKey]ToolCallRecord,
-	projectRoot, homeDir string,
 ) {
-	// Sanitize whatever input/output the block already carries BEFORE the
-	// side-table lookup, because not every tool_use block has a side-table row.
-	//
-	// model.ContentBlock.MarshalJSON keeps `input` INLINE for the interactive
-	// tools (AskUserQuestion / PermissionApproval) so their cards can render
-	// immediately, and ConvertAskQuestionBlocks creates them with no
-	// chat_tool_calls row at all. Returning early on !found therefore shipped
-	// those inline inputs — which carry tool arguments such as a shell command
-	// or a file path — into the public snapshot untouched.
-	if raw, ok := block["input"]; ok && raw != nil {
-		block["input"] = sanitizeShareValue(deepCopyJSONValue(raw), projectRoot, homeDir)
-	}
-	if out, ok := block["output"].(string); ok && out != "" {
-		block["output"] = sanitizeShareString(out, projectRoot, homeDir)
-	}
-
 	toolID, _ := block["id"].(string)
 	if toolID == "" {
 		return
@@ -594,11 +605,11 @@ func sanitizeToolUseBlock(
 	if len(rec.Input) > 0 {
 		var input any
 		if json.Unmarshal(rec.Input, &input) == nil {
-			block["input"] = sanitizeShareValue(input, projectRoot, homeDir)
+			block["input"] = input
 		}
 	}
 	if rec.Output != "" {
-		block["output"] = sanitizeShareString(rec.Output, projectRoot, homeDir)
+		block["output"] = rec.Output
 	}
 	if rec.Status != "" {
 		block["status"] = rec.Status
@@ -608,198 +619,23 @@ func sanitizeToolUseBlock(
 		block["duration_ms"] = rec.DurationMs
 	}
 	if rec.Summary != "" {
-		block["summary"] = sanitizeShareString(rec.Summary, projectRoot, homeDir)
+		block["summary"] = rec.Summary
 	}
 }
 
-// sanitizeSummaryCards prepares summary cards for the snapshot.
+// prepareSummaryCards prepares summary cards for the payload.
 //
 // TaskIDs are dropped: scheduled-task cards are out of scope for the share page
 // (the viewer cannot reach /api/tasks, and a task card would render as a
 // permanent "loading" skeleton). Everything else the summary view needs —
-// tools, warnings, ask-questions, file changes — is kept, with paths relativized.
-func sanitizeSummaryCards(cards *model.SummaryCards, projectRoot, homeDir string) *model.SummaryCards {
+// tools, warnings, ask-questions, file changes — is kept verbatim.
+func prepareSummaryCards(cards *model.SummaryCards) *model.SummaryCards {
 	if cards == nil {
 		return nil
 	}
 	out := *cards
 	out.TaskIDs = nil
-	// Every sub-object is deep-copied before mutation: `out := *cards` is a
-	// shallow copy, so writing through a shared slice/map would mutate the
-	// caller's cards (which belong to the live session) as a side effect.
-	if len(cards.Tools) > 0 {
-		tools := make([]model.SummaryTool, len(cards.Tools))
-		for i, tool := range cards.Tools {
-			// Deep-copy the input map before sanitizing: it is shared with the
-			// live session's cards, and mutating it in place would rewrite the
-			// running conversation's data as a side effect of sharing.
-			if len(tool.Input) > 0 {
-				if sanitized, ok := sanitizeShareValue(deepCopyJSONMap(tool.Input), projectRoot, homeDir).(map[string]any); ok {
-					tool.Input = sanitized
-				}
-			}
-			tool.Output = sanitizeShareString(tool.Output, projectRoot, homeDir)
-			tools[i] = tool
-		}
-		out.Tools = tools
-	}
-	if len(cards.AskQuestions) > 0 {
-		questions := make([]model.AskQuestionCard, len(cards.AskQuestions))
-		for i, q := range cards.AskQuestions {
-			q.Header = sanitizeShareString(q.Header, projectRoot, homeDir)
-			q.Question = sanitizeShareString(q.Question, projectRoot, homeDir)
-			options := make([]model.AskQuestionOption, len(q.Options))
-			for j, opt := range q.Options {
-				opt.Label = sanitizeShareString(opt.Label, projectRoot, homeDir)
-				opt.Description = sanitizeShareString(opt.Description, projectRoot, homeDir)
-				options[j] = opt
-			}
-			q.Options = options
-			questions[i] = q
-		}
-		out.AskQuestions = questions
-	}
-	if len(cards.CreatedFiles) > 0 {
-		out.CreatedFiles = sanitizeFileChanges(cards.CreatedFiles, projectRoot, homeDir)
-	}
-	if len(cards.ModifiedFiles) > 0 {
-		out.ModifiedFiles = sanitizeFileChanges(cards.ModifiedFiles, projectRoot, homeDir)
-	}
-	if len(cards.Warnings) > 0 {
-		warnings := make([]model.SummaryWarning, len(cards.Warnings))
-		for i, w := range cards.Warnings {
-			w.Text = sanitizeShareString(w.Text, projectRoot, homeDir)
-			warnings[i] = w
-		}
-		out.Warnings = warnings
-	}
 	return &out
-}
-
-// sanitizeFileChanges relativizes the paths of a created/modified file list.
-// ToolIDs are kept: the viewer uses them to key the diff drawer, and they are
-// opaque ids with no path content.
-func sanitizeFileChanges(changes model.SummaryFileChanges, projectRoot, homeDir string) model.SummaryFileChanges {
-	out := make(model.SummaryFileChanges, len(changes))
-	for i, c := range changes {
-		c.Path = relativizeSharePath(c.Path, projectRoot, homeDir)
-		out[i] = c
-	}
-	return out
-}
-
-// sanitizeFileEntries relativizes attachment paths.
-func sanitizeFileEntries(entries []model.FileEntry, projectRoot, homeDir string) []model.FileEntry {
-	out := make([]model.FileEntry, 0, len(entries))
-	for _, e := range entries {
-		if e.IsURL() {
-			out = append(out, e) // external URL: nothing local to leak
-			continue
-		}
-		e.Path = relativizeSharePath(e.Path, projectRoot, homeDir)
-		out = append(out, e)
-	}
-	return out
-}
-
-// deepCopyJSONMap returns a recursive copy of a decoded-JSON map, so
-// sanitizeShareValue (which mutates in place) can be applied to a summary
-// card's input without rewriting the live session's data.
-func deepCopyJSONMap(m map[string]any) map[string]any {
-	out := make(map[string]any, len(m))
-	for k, v := range m {
-		out[k] = deepCopyJSONValue(v)
-	}
-	return out
-}
-
-// deepCopyJSONValue recursively copies decoded-JSON slices and maps; scalars are
-// returned as-is (they are immutable).
-func deepCopyJSONValue(v any) any {
-	switch t := v.(type) {
-	case map[string]any:
-		return deepCopyJSONMap(t)
-	case []any:
-		out := make([]any, len(t))
-		for i := range t {
-			out[i] = deepCopyJSONValue(t[i])
-		}
-		return out
-	default:
-		return v
-	}
-}
-
-// sanitizeShareValue walks a decoded JSON value and sanitizes every string leaf.
-func sanitizeShareValue(v any, projectRoot, homeDir string) any {
-	switch t := v.(type) {
-	case string:
-		return sanitizeShareString(t, projectRoot, homeDir)
-	case []any:
-		for i := range t {
-			t[i] = sanitizeShareValue(t[i], projectRoot, homeDir)
-		}
-		return t
-	case map[string]any:
-		for k := range t {
-			t[k] = sanitizeShareValue(t[k], projectRoot, homeDir)
-		}
-		return t
-	default:
-		return v
-	}
-}
-
-// sanitizeShareString replaces absolute paths in free text with relative ones.
-//
-// Best-effort by design: the goal is to stop the snapshot from disclosing the
-// creator's directory layout, not to guarantee no path-shaped string survives.
-// A path under neither projectRoot nor homeDir has nothing to be relativized
-// against and is left alone.
-func sanitizeShareString(s, projectRoot, homeDir string) string {
-	if s == "" {
-		return s
-	}
-	if projectRoot != "" {
-		root := strings.TrimRight(projectRoot, `/\`)
-		if root != "" {
-			// Replace both separator spellings so a Windows path stored with
-			// forward slashes is still caught.
-			s = strings.ReplaceAll(s, root+`\`, `.\`)
-			s = strings.ReplaceAll(s, root+`/`, "./")
-		}
-	}
-	if homeDir != "" {
-		home := strings.TrimRight(homeDir, `/\`)
-		if home != "" {
-			s = strings.ReplaceAll(s, home+`\`, `~\`)
-			s = strings.ReplaceAll(s, home+`/`, "~/")
-		}
-	}
-	return s
-}
-
-// relativizeSharePath turns an absolute path into a project-relative one, or
-// reduces it to its base name when it lies outside the project. Used for
-// structured path fields (attachments, file-change lists) where a partial
-// string replacement would be wrong.
-func relativizeSharePath(p, projectRoot, homeDir string) string {
-	if p == "" {
-		return p
-	}
-	if projectRoot != "" {
-		if rel, err := filepath.Rel(projectRoot, p); err == nil &&
-			rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return filepath.ToSlash(rel)
-		}
-	}
-	if homeDir != "" {
-		if rel, err := filepath.Rel(homeDir, p); err == nil &&
-			rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return "~/" + filepath.ToSlash(rel)
-		}
-	}
-	return filepath.Base(p)
 }
 
 // trimPayloadToCap reduces an over-cap payload by shortening the longest tool
@@ -835,7 +671,7 @@ func trimPayloadToCap(raw []byte, payload *SessionSharePayload) []byte {
 	for _, c := range candidates {
 		next, ok := trimCandidateToFit(raw, payload, c)
 		if !ok {
-			return raw // re-marshaling failed: keep the last good snapshot
+			return raw // re-marshaling failed: keep the last good payload
 		}
 		if raw = next; len(raw) <= maxSessionSharePayloadBytes {
 			break
@@ -851,7 +687,7 @@ func trimPayloadToCap(raw []byte, payload *SessionSharePayload) []byte {
 // only reaches the stored payload once it is written back into
 // payload.Messages[msgIndex].Content. Skipping the write-back made the trimmer
 // a no-op — it re-marshaled the original strings and returned an over-cap
-// snapshot, while truncated=true was discarded along with the mutation.
+// payload, while truncated=true was discarded along with the mutation.
 type trimCandidate struct {
 	msgIndex int
 	wrapper  map[string]any
@@ -896,7 +732,7 @@ func collectTrimCandidates(payload *SessionSharePayload) []trimCandidate {
 // Reaching the floor stops trimming THIS candidate but must not stop the outer
 // loop: the remaining (shorter) outputs are still trimmable and may be what
 // brings the payload under the cap. ok=false means a re-marshal failed, so the
-// caller must keep its last good snapshot rather than storing a truncated one.
+// caller must keep its last good payload rather than serving a truncated one.
 func trimCandidateToFit(raw []byte, payload *SessionSharePayload, c trimCandidate) ([]byte, bool) {
 	// Bound the loop independently of the size check: the cut must strictly
 	// shrink the output for the loop to be guaranteed to terminate, and a

@@ -53,9 +53,12 @@ const mockMeterStatus = ref({
 vi.mock('@/composables/useUsageMeter', () => ({
   useUsageMeter: () => ({
     status: mockMeterStatus,
+    // Mirrors the real composable: no rule is its own state ('off'), not 'ok'.
+    // 'ok' claims "you are on plan", which is a statement about a quota the
+    // user never set.
     meterState: computed(() => {
       const s = mockMeterStatus.value
-      if (!s.enabled) return 'ok'
+      if (!s.enabled) return 'off'
       if (s.quota > 0 && s.actual >= s.quota) return 'full'
       if (s.actual > s.expected) return 'over'
       return 'ok'
@@ -68,6 +71,8 @@ vi.mock('@/composables/useUsageMeter', () => ({
       const s = mockMeterStatus.value
       return s.quota > 0 ? Math.min(100, (s.expected / s.quota) * 100) : 0
     }),
+    // The row renders once the first fetch lands, with or without a rule.
+    hasData: computed(() => true),
   }),
 }))
 
@@ -290,10 +295,34 @@ describe('SystemResourcesPanel', () => {
     expect(wrapper.find('.usage-row').exists()).toBe(false)
   })
 
-  it('hides the usage meter when the rule is disabled', () => {
-    mockMeterStatus.value = { ...mockMeterStatus.value, enabled: false }
+  // With no rule the row still renders, but as a placeholder: it names the
+  // feature and the action instead of showing an empty gauge. Hiding it would
+  // leave a phone user with no discoverable path to the feature.
+  it('renders a placeholder row when no rule is configured', () => {
+    mockMeterStatus.value = { ...mockMeterStatus.value, enabled: false, quota: 0, actual: 0 }
     const wrapper = mountPanel()
-    expect(wrapper.find('.usage-row').exists()).toBe(false)
+
+    expect(wrapper.find('.usage-row').exists()).toBe(true)
+    expect(wrapper.find('.usage-row--placeholder').exists()).toBe(true)
+    expect(wrapper.find('.usage-row').text()).toContain('usageMeter.setupHint')
+  })
+
+  it('shows no numbers, bar or badge in the placeholder row', () => {
+    mockMeterStatus.value = { ...mockMeterStatus.value, enabled: false, quota: 0, actual: 0 }
+    const wrapper = mountPanel()
+
+    expect(wrapper.find('.usage-bar').exists()).toBe(false)
+    expect(wrapper.find('.usage-quota').exists()).toBe(false)
+    expect(wrapper.find('.usage-badge').exists()).toBe(false)
+    expect(wrapper.find('.usage-value').exists()).toBe(false)
+  })
+
+  it('still opens the usage settings from the placeholder row', async () => {
+    mockMeterStatus.value = { ...mockMeterStatus.value, enabled: false, quota: 0 }
+    const wrapper = mountPanel()
+    await wrapper.find('.usage-row').trigger('click')
+
+    expect(wrapper.emitted('open-usage-settings')).toBeTruthy()
   })
 
   it('marks the meter as over plan when actual exceeds the baseline', () => {

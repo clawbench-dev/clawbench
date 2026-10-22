@@ -349,6 +349,10 @@ paths:
         边界按固定 24 小时跨度计算（不是日历日期差），因此周期长度在夏令时切换日
         也保持恒定。时区为**服务端本地时区**。
 
+        `anchor_date` 接受两种形态：`YYYY-MM-DD`（等价于当天 00:00）与
+        `YYYY-MM-DDTHH:MM[:SS]`（精确到时分秒）。**不接受时区后缀**——它是
+        服务端本地时区的墙钟读数，允许偏移会让周期边界随服务端 TZ 漂移。
+
         **应花（`expected`）= 额度 × 第几天 / 周期天数**，按整天向下取整：
         周期第 1 天就有 1 天额度（不会开局误报），最后一天等于总额度。
 
@@ -358,8 +362,12 @@ paths:
         - `credit`：`SUM(credit)`
         - `cost`：`SUM(cost_usd)`，单位 USD。非 USD 的上报值按原值累加，不做汇率换算。
 
-        **未配置规则**（`quota <= 0`）返回 200 与 `{"enabled": false}`，不是 404：
-        功能关闭是正常状态，客户端据此隐藏胶囊。
+        **未配置规则**（`quota <= 0`）返回 200 与 `enabled: false`，不是 404：
+        「没有预算」是正常状态而非错误，且此时没有任何可报的数字——
+        周期、应花、剩余、预测全部由额度派生，所以除 `enabled` 外的数值字段
+        全为 0，`metric` / `periodDays` / `cycleStart` / `cycleEnd` / `series`
+        一律不返回。客户端据此渲染**占位入口**（提示用户去设置用量提醒），
+        而不是一个数值全为零的空胶囊。
 
         注意 `chat_metadata.created_at` 记录的是元数据**最终写入**时刻
         （约等于助手回复完成），因此跨周期边界的回合归入后一个周期。
@@ -368,14 +376,23 @@ paths:
         "200":
           description: |
             用量提醒状态。字段：
-            - `enabled`：规则是否启用
+            - `enabled`：是否配置了规则（`quota > 0`）。它决定**响应里有没有
+              用量数字**，不只是「要不要画比例」
             - `metric` / `anchorDate` / `periodDays` / `quota`：规则回显
+              （`enabled=false` 时这四项**不返回**）
             - `cycleStart` / `cycleEnd`：当前周期边界（RFC3339）
-            - `dayInCycle`：当前是周期第几天（1 起；0 表示起始日在未来）
+              （`enabled=false` 时**不返回**：没有周期）
+            - `dayInCycle`：当前是周期第几天（1 起；0 表示起始日在未来或未配置）
             - `actual` / `expected`：实际用量 / 按时间比例的应花
-            - `remainingDays`：今天之后还剩几天
-            - `projectedExhaustDay`：按当前速度预计第几天用尽（0 = 本周期不会用尽）
+              （`enabled=false` 时两者均为 0）
+            - `remainingDays`：今天之后还剩几天（未配置时为 0）
+            - `projectedExhaustDay`：按当前速度预计第几天用尽（0 = 本周期不会用尽或未配置规则）
             - `series[]`：逐日累计，每项含 `day` / `actual` / `expected`
+              （`enabled=false` 时**不返回**）
+
+            `enabled=false` 的响应体恰为六个键：
+            `enabled` / `dayInCycle` / `actual` / `expected` / `remainingDays` /
+            `projectedExhaustDay`，后五个全为 0。没有可报的用量，也没有窗口。
         "403":
           description: 未鉴权
 
@@ -526,7 +543,24 @@ paths:
                     items:
                       type: string
         "400":
-          $ref: "#/components/responses/Error"
+          description: |
+            值被拒绝时统一返回 400。响应体有两种：
+
+            - 具体错误（推荐客户端处理）：`msgKey` 为稳定标识、`error` 为按
+              `X-Locale` / cookie / `Accept-Language` 本地化后的文案、`detail.field`
+              为出错的配置路径（如 `usage_meter.period_days`）。`usage_meter.*`
+              的校验错误全部走这一形态：
+              `UsageMeterQuotaNegative` / `UsageMeterQuotaNotNumber` /
+              `UsageMeterAnchorRequired` / `UsageMeterAnchorInvalid` /
+              `UsageMeterAnchorNotString` / `UsageMeterPeriodRange`
+              （带 `detail.Max`）/ `UsageMeterPeriodNotNumber` /
+              `UsageMeterMetricInvalid` / `UsageMeterMetricNotString`。
+            - 其余尚未逐个建键的校验错误仍是 `error: "invalid_value"` + 英文
+              `message`（无 `msgKey`）。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: |
             `chat.user_nickname` 与现有智能体同名（`msgKey=UserNicknameTaken`）。
@@ -1983,14 +2017,27 @@ paths:
   /api/ai/session/fork:
     post:
       tags: [Sessions]
-      summary: 分叉会话
+      summary: 分叉会话（可落到单聊或群聊）
       description: |
         请求体字段均可选；缺省时回退到查询参数 / 会话 Cookie。
-        **群会话不可分叉**（`400`）：分叉会硬编码 `session_type='chat'` 并复制源会话的
-        backend/agent，而群时间线的消息带**成员行 id**——新单聊里解析不到成员，
-        表现为一整屏无归属的 AI 发言。与回溯（rewind）的处理对称（决策 #74）。
-        显式指定 `agentId` 时，若该 agent 已被禁用，返回 `400` + `msgKey=AgentDisabled`
-        （分叉会新建会话，故与新建会话同样拦截禁用智能体）。
+
+        `targetKind` 决定目标形态：`chat`（默认）新建单聊，`group` 新建群聊
+        （需同时给 `hostAgentId` / `memberAgentIds`）。**源会话可以是单聊，也可以是群聊。**
+
+        历史处理按「源/目标」组合分派：只有 **单聊 → 单聊** 会把源消息行复制进新会话；
+        其余三种组合（单聊→群、群→单、群→群）**不复制任何消息行**，而是把源历史渲染成
+        背景文本存进目标会话的 `context_state.fork_context`，由目标会话首轮注入。
+        原因是群时间线的 `chat_history.agent_id` 存的是**成员行 id**，复制到新会话里
+        解析不到成员（会渲染成一整屏无归属的 AI 发言），而成员行本身没有任何历史行可复制。
+
+        注入范围：单聊目标注入一次（首个成功回合后清除）；群聊目标由**每位成员各自**
+        在首次发言时收到（以成员自己的 `seen_cursor` 为「已消化」标记）。
+
+        发生背景注入时，目标会话会写入一条 `role='system'` 提示行，标明来源会话名称。
+
+        `agentId`（仅 `targetKind=chat`）若已被禁用或不属于当前项目，返回 `400`
+        + `msgKey=AgentDisabled` / `AgentNotInProject`（分叉会新建会话，故与新建会话
+        同样拦截）。
       operationId: sessionFork
       requestBody:
         required: false
@@ -2003,13 +2050,28 @@ paths:
                   type: string
                 beforeMessageId:
                   type: integer
+                targetKind:
+                  type: string
+                  enum: [chat, group]
+                  default: chat
                 agentId:
                   type: string
+                  description: targetKind=chat 时的智能体覆盖
+                hostAgentId:
+                  type: string
+                  description: targetKind=group 时的主持人（空 = 自由模式，需至少 2 名成员）
+                memberAgentIds:
+                  type: array
+                  items:
+                    type: string
+                  description: targetKind=group 时的成员（可含重复，每个重复是一个独立实例）
       responses:
         "200":
-          description: 新会话
+          description: 新会话（含 `sessionId` / `sessionCount` / `targetKind`）
         "400":
-          description: 分叉点非法，或源会话是群（`msgKey=GroupNotForkable`），或目标 agent 已被禁用（`msgKey=AgentDisabled`）
+          description: 分叉点非法（`msgKey=InvalidForkPoint`）、targetKind 未知、群成员参数非法，或目标 agent 不可用（`msgKey=AgentDisabled` / `AgentNotInProject`）
+        "409":
+          description: 会话数达上限（`msgKey=SessionLimitReached`）或群成员数达上限（`msgKey=GroupMemberLimitReached`）
 
   /api/ai/session/btw:
     post:
@@ -3396,9 +3458,15 @@ paths:
       summary: 创建会话分享链接
       description: |
         请求体 `{sessionId, messageIds?}`。`messageIds` 为空表示分享全部**已完结**
-        消息（streaming=0）。选中未完结或不属于该会话的消息返回 400。
-        快照为**冻结副本**：同时包含摘要与原文、内联 tool 输入输出与思考全文；
-        执行计划不包含。重复创建会轮换 token，旧链接立即失效。
+        消息（streaming=0），服务端解析为当时的**显式 id 列表**后落库。选中未完结
+        或不属于该会话的消息返回 400。
+
+        创建时**只记录选中的消息 id**，不构建正文；正文在每次公开访问时**实时装配**
+        （内联 tool 输入输出与思考全文、同时附带摘要与原文，执行计划不包含）。
+        **内容原样输出**：不做路径净化，消息正文、工具输出与附件里的绝对路径、命令
+        输出、文件内容都会原样呈现给拿到链接的人。
+        选中的 id 固定，因此之后新产生的消息不会进入链接；分享后被回溯/删除的消息
+        不再展示。重复创建会轮换 token，旧链接立即失效。
       operationId: sessionShareCreate
       requestBody:
         required: true
@@ -3414,7 +3482,7 @@ paths:
                   type: array
                   items:
                     type: integer
-                  description: 为空表示全部分享；选中项之外的已完结消息不进快照
+                  description: 为空表示全部分享（解析为当时的显式 id 列表）；选中项之外的已完结消息不进分享
       responses:
         "200":
           description: 分享 token 与路径
@@ -3449,9 +3517,13 @@ paths:
         与 `/api/share/list`（文件）一样**按项目隔离**：会话标题属于私有内容，
         列出其他项目的分享会泄露它。
 
-        `archived: true` 表示底层会话已归档。分享本身仍然有效（快照是冻结副本），
+        `archived: true` 表示底层会话已归档。分享本身仍然有效（归档不删消息），
         也**仍然可以在此撤销**——归档后会话不再可按 id 寻址，这个列表是它唯一的
         撤销入口。前端据此隐藏「打开会话」动作。
+
+        `title` / `backend` 实时取自会话行，`messageCount` 为**选中**的消息数
+        （`len(messageIds)`）。分享后被删除的消息仍计入 `messageCount`，但公开页
+        只渲染存活的部分，因此两者可能不同。
       operationId: sessionShareList
       responses:
         "200":
@@ -3536,20 +3608,30 @@ paths:
         token 不存在一律 404，零信息暴露。
 
         会话分享走另外两个子路径：`{token}/meta`（返回 `kind` 为 `file` 或
-        `session`，供分享页判断该渲染哪种视图）与 `{token}/session`（返回冻结的
-        会话快照 JSON）。两者同样免鉴权、token 不存在一律 404。
+        `session`，供分享页判断该渲染哪种视图）与 `{token}/session`（返回**实时装配**的
+        会话 JSON）。两者同样免鉴权、token 不存在一律 404。
 
-        会话快照另附身份信息供分享页渲染真实智能体图标：`sessionAgent`（会话级智能体，
+        会话 JSON 另附身份信息供分享页渲染真实智能体图标：`sessionAgent`（会话级智能体，
         单聊用）、`speakers`（群聊成员行 id → 身份，供每条消息解析发言人）与 `groupMembers`
         （仅群会话：**在群**成员的有序预览 `{id, agentId, name, backend, avatar?, isHost?}`，
         与 `GET /api/sessions` 的 `groupMembers` 同形，供顶栏渲染与群聊 header 一致的
         头像堆叠；已离场成员不在其中）。`speakers` 是 map（JSON 键按 UUID 排序、且含
         已离场成员），只用于逐条消息解析；成员堆叠请用 `groupMembers`。
 
-        **头像在创建分享时一并冻结进快照**：匿名查看者无法访问 `/api/agents`，只能靠
-        快照里的 SVG 渲染图标，故 `sessionAgent`/`speakers` 携带会话智能体与各群成员的
-        自定义头像。成员头像取该成员自己的快照（`agent_avatar`，即入群时的头像），缺失
-        时回退到其智能体的共享头像；`groupMembers[].avatar` 同理为逐成员快照。
+        `session.sessionType`（`chat` / `group` / `group_member`）是**判断是否群会话的
+        唯一显式依据**：`groupMembers` 只含在群成员，成员全部离场时为空数组，据其推断
+        会把群分享误当单聊，读者就会看到原始的 `<clawbench-mention>` 路由标签。
+
+        **头像在每次请求时实时解析**：匿名查看者无法访问 `/api/agents`，所以
+        `sessionAgent`/`speakers` 携带会话智能体与各群成员的自定义头像，但**不冻结**——
+        智能体改名或换头像会反映到已发出的链接上。成员头像优先取成员自己的快照
+        （`agent_avatar`，即入群时的头像），缺失时回退到其智能体的共享头像。
+
+        **`{token}/session` 的缓存与失败语义**：响应带 `ETag`（装配结果的 sha256）与
+        `Cache-Control: private, no-cache, max-age=0`；带 `If-None-Match` 命中时返回
+        **304**（无 body，仍带 `ETag`）。token 不存在、会话行已删除、或分享选中的消息
+        **全部**被回溯/删除时返回 **404**，且该判定**优先于**条件请求。分享后被删除的
+        部分消息会被跳过，链接只展示存活的部分。
 
         **分享不限文件大小、不限类型**：任何文件都能创建链接并下载。
         `{token}/file` 与 `{token}/content` 需要把内容内联进 JSON，故对超过内联上限
@@ -3567,6 +3649,14 @@ paths:
           description: |
             分享内容。`content` 为空且 `tooLarge: true` 表示文件超过内联上限，
             仅返回元数据（`name`/`path`/`size`/`supported`），需改用 `download` 子路径。
+        "304":
+          description: |
+            `{token}/session` 专用：`If-None-Match` 与当前 `ETag` 匹配，内容未变。
+            无响应体，仍带 `ETag`。
+        "503":
+          description: |
+            `{token}/session` 专用：装配并发已达上限且排队超过服务端窗口。
+            带 `Retry-After`（秒）。token 无效时仍是 404，不会因为负载变成 503。
         "404":
           $ref: "#/components/responses/Error"
 
@@ -6192,7 +6282,8 @@ components:
       name: X-ClawBench-AI-Token
       description: |
         本机 AI 子进程使用的短时令牌，由内置斜杠命令（`/cb-task` 等）在注入提示词时签发，
-        有效期 30 分钟，以 `CookieToken` 做 HMAC 签名。仅接受来自回环地址的请求：
+        有效期 12 小时，用**进程内随机生成的签名密钥**做 HMAC（不落盘、不复用 `CookieToken`，
+        故服务端重启后所有在飞令牌立即失效）。仅接受来自回环地址的请求：
         地址与签名须同时成立。地址单独不再放行。
 
   parameters:

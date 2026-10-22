@@ -67,6 +67,45 @@ describe('collectTextMatches', () => {
     expect(matches[0].textNode.parentElement?.tagName).toBe('P')
   })
 
+  it('skips option and optgroup text so a dropdown is not corrupted', () => {
+    // <option>/<optgroup> hold real text nodes, and the platform expects plain
+    // label text there. Wrapping one in <mark> inserted an element where the
+    // dropdown does not allow one — the option rendered wrong or vanished.
+    const root = makeRoot(
+      '<select>' +
+        '<optgroup label="alpha group">' +
+        '<option value="1">alpha one</option>' +
+        '<option value="2">alpha two</option>' +
+        '</optgroup>' +
+        '</select><p>alpha body</p>',
+    )
+    const matches = collectTextMatches(root, buildSearchRegex('alpha'))
+
+    expect(matches).toHaveLength(1)
+    expect(matches[0].textNode.parentElement?.tagName).toBe('P')
+    // Nothing anywhere in the control may be selected.
+    expect(root.querySelectorAll('option, optgroup, select').length).toBeGreaterThan(0)
+    for (const el of Array.from(root.querySelectorAll('option, optgroup'))) {
+      expect(el.textContent).not.toBe('')
+    }
+  })
+
+  it('does not wrap a match inside an option when highlighting', () => {
+    // The end-to-end shape of the same defect: collect + wrap must leave the
+    // <select> subtree byte-identical.
+    const root = makeRoot('<select><option>needle</option></select><p>needle</p>')
+    const before = root.querySelector('select')!.outerHTML
+
+    const matches = collectTextMatches(root, buildSearchRegex('needle'))
+    for (const m of matches) wrapTextMatch(m, SEARCH_MARK_CLASS)
+
+    expect(root.querySelector('select')!.outerHTML).toBe(before)
+    expect(root.querySelector('option mark')).toBeNull()
+    // The paragraph match was still wrapped — the guard is scoped, not a
+    // blanket opt-out of the whole search.
+    expect(root.querySelectorAll('p mark')).toHaveLength(1)
+  })
+
   it('finds matches inside a DIFFERENT document (the iframe case)', () => {
     const iframe = document.createElement('iframe')
     document.body.appendChild(iframe)

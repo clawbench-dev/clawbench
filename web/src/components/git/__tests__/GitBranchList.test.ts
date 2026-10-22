@@ -79,9 +79,9 @@ describe('GitBranchList', () => {
   })
 
   describe('states', () => {
-    it('shows loading spinner when loading', () => {
+    it('shows a placeholder when loading', () => {
       const wrapper = mountList({ loading: true })
-      expect(wrapper.find('.section-loading').exists()).toBe(true)
+      expect(wrapper.find('.section-skeleton').exists()).toBe(true)
     })
 
     it('shows error with retry button when error', () => {

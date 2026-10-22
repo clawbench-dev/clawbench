@@ -1,8 +1,8 @@
 <template>
-  <ModalDialog :open="open" :title="t('sessionShare.title')" :z-index="2500" :max-width="560" @close="$emit('close')">
+  <ModalDialog :open="open" :title="t('sessionShare.title')" :z-index="2500" @close="$emit('close')">
     <div class="session-share-dialog-body">
       <template v-if="loading">
-        <div class="session-share-dialog-hint">{{ t('common.loading') }}</div>
+        <PanelSkeleton class="session-share-dialog-skeleton" variant="text" :rows="4" :label="t('common.loading')" />
       </template>
 
       <template v-else-if="loadError">
@@ -146,6 +146,7 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Bot, ExternalLink, Info, Link2, Megaphone, RefreshCw, Trash2, User } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import { makeSpeakerResolver } from '@/utils/speakerIdentity'
@@ -345,6 +346,11 @@ watch(() => props.open, (isOpen) => {
   text-align: center;
   color: var(--text-muted);
   font-size: var(--font-size-sm);
+}
+
+/* First load: preview the summary blocks instead of a one-line "loading". */
+.session-share-dialog-skeleton {
+  padding: var(--space-2) 0;
 }
 
 .session-share-dialog-error {

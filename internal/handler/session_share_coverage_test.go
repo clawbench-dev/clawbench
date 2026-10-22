@@ -6,8 +6,6 @@ import (
 	"strconv"
 	"testing"
 
-	"clawbench/internal/service"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -232,19 +230,24 @@ func TestSharePublic_StorageFailureIs500(t *testing.T) {
 	}
 }
 
-// The payload is stored verbatim; the public read must not re-encode it.
-func TestSharePublic_SessionPayloadIsByteIdentical(t *testing.T) {
+// The payload is assembled per request, so it cannot be compared against a
+// stored copy. What must hold instead is DETERMINISM (two reads produce the same
+// bytes — the premise the ETag depends on) and agreement between that ETag and
+// the body.
+func TestSharePublic_SessionPayloadIsDeterministic(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
 	sessionID, ids := seedShareSession(t, env, "sess-1")
 	token := createSessionShareViaAPI(t, env, sessionID, ids)
 
-	stored, _, _, ok, err := service.GetSessionShareByToken(token)
-	require.NoError(t, err)
-	require.True(t, ok)
+	first := callHandler(ServeSharePublic, newRequest(t, http.MethodGet, "/api/share/"+token+"/session", nil))
+	assertOK(t, first)
+	second := callHandler(ServeSharePublic, newRequest(t, http.MethodGet, "/api/share/"+token+"/session", nil))
+	assertOK(t, second)
 
-	w := callHandler(ServeSharePublic, newRequest(t, http.MethodGet, "/api/share/"+token+"/session", nil))
-	assertOK(t, w)
-	assert.Equal(t, stored, w.Body.String())
+	assert.Equal(t, first.Body.String(), second.Body.String(),
+		"an unchanged conversation must assemble byte-identically")
+	assert.Equal(t, bodyETag(first.Body.Bytes()), first.Header().Get("ETag"),
+		"the ETag must be derived from the body the client received")
 }

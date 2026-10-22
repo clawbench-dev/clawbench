@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import HtmlPreviewBody from '@/components/file/HtmlPreviewBody.vue'
@@ -20,6 +20,10 @@ const i18n = createI18n({
 
 function mountBody(overrides: Record<string, unknown> = {}) {
   return mount(HtmlPreviewBody, {
+    // Attached to the document: jsdom only materializes `contentDocument` /
+    // `contentWindow` for a frame that is actually in the tree, and the
+    // in-document hooks are attached to that window.
+    attachTo: document.body,
     global: { plugins: [i18n] },
     props: {
       status: 'ready',
@@ -78,5 +82,98 @@ describe('HtmlPreviewBody.vue', () => {
     expect(() => (wrapper.vm as any).scrollToTargetLine()).not.toThrow()
     expect(() => (wrapper.vm as any).scrollLineIntoView(3)).not.toThrow()
     expect((wrapper.vm as any).scrollContainer).toBeNull()
+  })
+})
+
+/**
+ * The quick-preview card renders the same sandboxed document as the full-screen
+ * viewer, but the in-document hooks live inside the FRAME's document — the host
+ * cannot see its keydowns. Wiring them up here is what makes Ctrl+F work in the
+ * card instead of falling through to the browser's own find bar.
+ *
+ * jsdom leaves `contentWindow` null for an unattached frame, so the listener is
+ * driven through the frame's own document (the window and the document share
+ * one event path for a bubbling keydown).
+ */
+describe('HtmlPreviewBody — in-document hooks', () => {
+  /** Dispatch `load` and let the handler (and its awaits) run. */
+  async function loadFrame(wrapper: ReturnType<typeof mountBody>) {
+    const iframe = wrapper.find('iframe.html-preview-iframe').element as HTMLIFrameElement
+    iframe.dispatchEvent(new Event('load'))
+    await Promise.resolve()
+    await Promise.resolve()
+    return iframe
+  }
+
+  /** Fire Ctrl+F inside the previewed document. */
+  function pressCtrlF(iframe: HTMLIFrameElement): KeyboardEvent {
+    const doc = iframe.contentDocument!
+    const event = new (doc.defaultView!.KeyboardEvent)('keydown', {
+      key: 'f',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    })
+    doc.dispatchEvent(event)
+    return event
+  }
+
+  it('forwards Ctrl+F from inside the frame to the caller', async () => {
+    const onOpenSearch = vi.fn()
+    const wrapper = mountBody({ onOpenSearch })
+    const iframe = await loadFrame(wrapper)
+
+    pressCtrlF(iframe)
+
+    expect(onOpenSearch).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not claim Ctrl+F when no handler was supplied', async () => {
+    // Without a find bar to open, the chord must stay with the browser rather
+    // than being swallowed into nothing.
+    const wrapper = mountBody()
+    const iframe = await loadFrame(wrapper)
+
+    const event = pressCtrlF(iframe)
+
+    expect(event.defaultPrevented).toBe(false)
+  })
+
+  it('re-attaches the shortcut after the document reloads', async () => {
+    // A reload is a NEW document: the previous listener died with the old one.
+    // `load` fires again for every navigation, so the handler must dispose the
+    // old hook and attach a fresh one — attaching twice would open the bar
+    // twice on a single press.
+    const onOpenSearch = vi.fn()
+    const wrapper = mountBody({ onOpenSearch })
+    const iframe = await loadFrame(wrapper)
+
+    // A second load event is what a re-navigation delivers.
+    await loadFrame(wrapper)
+
+    pressCtrlF(iframe)
+
+    expect(onOpenSearch).toHaveBeenCalledTimes(1)
+  })
+
+  it('removes the shortcut listener on unmount', async () => {
+    const onOpenSearch = vi.fn()
+    const wrapper = mountBody({ onOpenSearch })
+    const iframe = await loadFrame(wrapper)
+    const doc = iframe.contentDocument!
+
+    wrapper.unmount()
+
+    const event = new (doc.defaultView!.KeyboardEvent)('keydown', {
+      key: 'f',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    })
+    doc.dispatchEvent(event)
+
+    expect(onOpenSearch).not.toHaveBeenCalled()
+    // And the chord is no longer claimed.
+    expect(event.defaultPrevented).toBe(false)
   })
 })

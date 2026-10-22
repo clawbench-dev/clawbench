@@ -1,9 +1,15 @@
 package handler
 
 import (
+	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +29,11 @@ func setMeterRuleForTest(t *testing.T, rule model.UsageMeterConfig) {
 	t.Cleanup(func() { model.ConfigInstance.UsageMeter = prev })
 }
 
+// A disabled rule must answer with EXACTLY the six keys the client can use, and
+// none of the quota-derived ones. The OpenAPI description used to promise
+// "unconfigured still reports spend over a 30-day window" — the opposite of what
+// the handler returns — so the field set is pinned here rather than left to a
+// prose document nothing validates.
 func TestServeUsageMeter_DisabledRuleReturns200(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
@@ -31,11 +42,41 @@ func TestServeUsageMeter_DisabledRuleReturns200(t *testing.T) {
 	w := callHandler(ServeUsageMeter, newRequest(t, http.MethodGet, "/api/usage/meter", nil))
 	require.Equal(t, http.StatusOK, w.Code, "a disabled rule is a state, not an error")
 
-	var body struct {
-		Enabled bool `json:"enabled"`
+	// The body is read once and decoded twice (key set + values): a second
+	// decodeRespJSON on the same reader would hit EOF.
+	rawBody, err := io.ReadAll(w.Body)
+	require.NoError(t, err)
+
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(rawBody, &raw))
+
+	// Exact set, both directions: a missing key would break the client's
+	// zero-initialized readout, and an extra one (metric / periodDays /
+	// cycleStart / series) would tell it there is a window to render.
+	got := make([]string, 0, len(raw))
+	for k := range raw {
+		got = append(got, k)
 	}
-	decodeRespJSON(t, w.Body, &body)
+	sort.Strings(got)
+	assert.Equal(t, []string{
+		"actual", "dayInCycle", "enabled", "expected", "projectedExhaustDay", "remainingDays",
+	}, got, "a disabled rule must report no metric, no window and no series")
+
+	var body struct {
+		Enabled             bool    `json:"enabled"`
+		DayInCycle          int     `json:"dayInCycle"`
+		Actual              float64 `json:"actual"`
+		Expected            float64 `json:"expected"`
+		RemainingDays       int     `json:"remainingDays"`
+		ProjectedExhaustDay int     `json:"projectedExhaustDay"`
+	}
+	require.NoError(t, json.Unmarshal(rawBody, &body))
 	assert.False(t, body.Enabled)
+	assert.Zero(t, body.DayInCycle)
+	assert.Zero(t, body.Actual)
+	assert.Zero(t, body.Expected)
+	assert.Zero(t, body.RemainingDays)
+	assert.Zero(t, body.ProjectedExhaustDay)
 }
 
 func TestServeUsageMeter_EnabledRuleReportsCycleAndTotals(t *testing.T) {
@@ -178,6 +219,182 @@ func TestValidateUsageMeterRule(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The settings page lets the user pin the cycle start to a time of day. The
+// PATCH validator must accept exactly the shapes the service can compute with,
+// and reject everything else — a value it accepts but the meter cannot parse
+// would silently disable the meter after a successful-looking save.
+func TestValidateUsageMeterRule_AnchorAcceptsOptionalTime(t *testing.T) {
+	accepted := []string{
+		"2026-10-05",
+		"2026-10-05T14:30:00",
+		"2026-10-05T14:30",
+		"2026-10-05T00:00:00",
+		"2026-10-05T23:59:59",
+	}
+	for _, anchor := range accepted {
+		t.Run("accepts "+anchor, func(t *testing.T) {
+			err := validateUsageMeterRule(model.UsageMeterConfig{
+				Quota: 10, AnchorDate: anchor, PeriodDays: 30, Metric: model.UsageMeterMetricCost,
+			})
+			require.NoError(t, err, "%q must be accepted", anchor)
+		})
+	}
+
+	// A zone suffix is rejected on purpose: the anchor is a wall-clock reading in
+	// the server's timezone. Accepting an offset would make the cycle boundary
+	// depend on the host's TZ, and two visually identical rules would roll over
+	// at different instants.
+	rejected := []string{
+		"2026-13-45",
+		"10/05/2026",
+		"2026-10-05 14:30:00",
+		"2026-10-05T14:30:00Z",
+		"2026-10-05T14:30:00+08:00",
+		"2026-10-05T25:00:00",
+		"2026-10-05T14:70:00",
+		"2026-10-05T",
+	}
+	for _, anchor := range rejected {
+		t.Run("rejects "+anchor, func(t *testing.T) {
+			err := validateUsageMeterRule(model.UsageMeterConfig{
+				Quota: 10, AnchorDate: anchor, PeriodDays: 30, Metric: model.UsageMeterMetricCost,
+			})
+			require.Error(t, err, "%q must be rejected", anchor)
+
+			// Still a field-scoped, localizable rejection — not a bare error the
+			// panel cannot explain.
+			var valueErr *configValueError
+			require.True(t, errors.As(err, &valueErr))
+			assert.Equal(t, "UsageMeterAnchorInvalid", valueErr.MsgKey)
+			assert.Equal(t, "usage_meter.anchor_date", valueErr.Field)
+		})
+	}
+}
+
+// Every rejection must carry a message key AND the field path, and the keys must
+// be distinct per rule. Asserting only "err != nil" (as the table above does)
+// lets a wrong key through: swapping two MsgKeys, or pointing them all at one
+// shared "invalid" key, would still pass while the panel again tells the user
+// nothing about what to fix.
+func TestValidateUsageMeterRule_EachFailureNamesItsField(t *testing.T) {
+	cases := []struct {
+		name      string
+		rule      model.UsageMeterConfig
+		wantKey   string
+		wantField string
+	}{
+		{
+			name:      "negative quota",
+			rule:      model.UsageMeterConfig{Quota: -1},
+			wantKey:   "UsageMeterQuotaNegative",
+			wantField: "usage_meter.quota",
+		},
+		{
+			name:      "quota without anchor",
+			rule:      model.UsageMeterConfig{Quota: 10, PeriodDays: 30, Metric: model.UsageMeterMetricCost},
+			wantKey:   "UsageMeterAnchorRequired",
+			wantField: "usage_meter.anchor_date",
+		},
+		{
+			name:      "malformed anchor",
+			rule:      model.UsageMeterConfig{Quota: 10, AnchorDate: "10/05/2026", PeriodDays: 30, Metric: model.UsageMeterMetricCost},
+			wantKey:   "UsageMeterAnchorInvalid",
+			wantField: "usage_meter.anchor_date",
+		},
+		{
+			name:      "zero period",
+			rule:      model.UsageMeterConfig{Quota: 10, AnchorDate: "2026-10-05", PeriodDays: 0, Metric: model.UsageMeterMetricCost},
+			wantKey:   "UsageMeterPeriodRange",
+			wantField: "usage_meter.period_days",
+		},
+		{
+			name:      "period over the cap",
+			rule:      model.UsageMeterConfig{Quota: 10, AnchorDate: "2026-10-05", PeriodDays: model.MaxUsageMeterPeriodDays + 1, Metric: model.UsageMeterMetricCost},
+			wantKey:   "UsageMeterPeriodRange",
+			wantField: "usage_meter.period_days",
+		},
+		{
+			name:      "unknown metric",
+			rule:      model.UsageMeterConfig{Quota: 10, AnchorDate: "2026-10-05", PeriodDays: 30, Metric: "usd"},
+			wantKey:   "UsageMeterMetricInvalid",
+			wantField: "usage_meter.metric",
+		},
+	}
+
+	keyToField := map[string]string{}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateUsageMeterRule(tc.rule)
+			require.Error(t, err)
+
+			var valueErr *configValueError
+			require.True(t, errors.As(err, &valueErr),
+				"a rule rejection must be a configValueError so serveConfigPatch can localize it; got %T", err)
+			assert.Equal(t, tc.wantKey, valueErr.MsgKey)
+			assert.Equal(t, tc.wantField, valueErr.Field)
+			assert.Equal(t, tc.wantField, valueErr.templateData()["field"],
+				"the field path must reach the response's detail")
+
+			// A message key must never be reused across DIFFERENT fields: the
+			// text names one value ("the cycle length…"), so a shared key would
+			// point the user at the wrong row. Two rules on the SAME field
+			// legitimately share a key (an out-of-range period is one message
+			// whether it is 0 or 999).
+			if prevField, ok := keyToField[tc.wantKey]; ok && prevField != tc.wantField {
+				t.Errorf("key %q is used for both %q and %q", tc.wantKey, prevField, tc.wantField)
+			}
+			keyToField[tc.wantKey] = tc.wantField
+		})
+	}
+}
+
+// templateData must copy, not alias, the caller's map: the same error value can
+// be rendered twice (retry, logging), and writing `field` into a shared map
+// would leak between them.
+func TestConfigValueError_TemplateDataDoesNotMutateSource(t *testing.T) {
+	src := map[string]any{"Max": 366}
+	err := &configValueError{MsgKey: "UsageMeterPeriodRange", Field: "usage_meter.period_days", Data: src}
+
+	data := err.templateData()
+	assert.Equal(t, 366, data["Max"])
+	assert.Equal(t, "usage_meter.period_days", data["field"])
+
+	_, leaked := src["field"]
+	assert.False(t, leaked, "the source map must be left untouched")
+
+	// A nil Data map must still yield the field path rather than panicking.
+	bare := &configValueError{MsgKey: "UsageMeterQuotaNegative", Field: "usage_meter.quota"}
+	assert.Equal(t, map[string]any{"field": "usage_meter.quota"}, bare.templateData())
+}
+
+// The localization path is new for this endpoint; the rest of the config
+// validators still return plain errors and must keep answering the old
+// `invalid_value` shape. Without this the generic branch could be deleted by
+// accident and every unrelated validation failure would start rendering a
+// message key that has no locale entry (the raw key as the error text).
+func TestServeConfig_Patch_GenericValidationKeepsInvalidValueShape(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/config",
+		strings.NewReader(`{"tts":{"speed":0.1}}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Locale", "zh")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "invalid_value", resp["error"])
+	assert.Empty(t, resp["msgKey"], "an unlocalized validator must not claim a message key")
+	assert.Contains(t, resp["message"], "tts.speed must be between",
+		"the raw validation message is still the only detail available here")
 }
 
 // The internal bookkeeping fields must NOT be patchable: a client that could

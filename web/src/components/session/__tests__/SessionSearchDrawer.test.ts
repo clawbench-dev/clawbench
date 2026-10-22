@@ -233,9 +233,10 @@ describe('SessionSearchDrawer', () => {
   it('shows searching state', () => {
     mockSearchState.mockReturnValue(createState({ query: 'test', loading: true }))
     const wrapper = mountDrawer()
-    expect(wrapper.find('.loading-indicator').exists()).toBe(true)
-    expect(wrapper.find('.li-spinner').exists()).toBe(true)
-    expect(wrapper.find('.loading-indicator').text()).toContain('Searching...')
+    // First load previews the result rows instead of a lone ring; the loading
+    // text still reaches assistive tech through the skeleton's live region.
+    expect(wrapper.find('.panel-skeleton').exists()).toBe(true)
+    expect(wrapper.find('[role="status"]').text()).toContain('Searching...')
   })
 
   it('shows error state', () => {

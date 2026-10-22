@@ -933,6 +933,100 @@ describe('ContentBlocks', () => {
     })
   })
 
+  // ── Read-only host: session actions must not render ──
+  //
+  // 公开会话分享页（SessionShareView）和 /btw 抽屉都用 `readOnly` 渲染本组件，
+  // 但都不监听 `reset-session` / `send-message`。渲染出来的按钮点了没有任何反应，
+  // 读者看到的是一个死控件——所以这两类动作必须和 `readOnly` 一起门控。
+  // 每条断言都先钉住「卡片本身渲染了」，否则 fixture 没生效时按钮的 not-exist
+  // 会假绿（卡片和按钮一起消失也能通过）。
+  describe('read-only host', () => {
+    it('hides the continue button on a restart warning', () => {
+      const wrapper = mountBlocks({
+        readOnly: true,
+        blocks: [{ type: 'warning', reason: 'restart', text: 'Server restarted' }],
+      })
+      // restart 是 amber 卡片，continue 是它唯一的动作
+      expect(wrapper.find('.chat-warning-card').exists()).toBe(true)
+      expect(wrapper.find('.chat-warning-card').text()).toContain('Server restarted')
+      expect(wrapper.find('.warning-continue-btn').exists()).toBe(false)
+    })
+
+    it('hides the reset button on a timeout warning', () => {
+      const wrapper = mountBlocks({
+        readOnly: true,
+        blocks: [{ type: 'warning', reason: 'timeout', text: 'Timed out' }],
+      })
+      // 注意：本文件的 isSevereWarning 被 mock 成只认 disconnect，故 timeout 走
+      // amber 卡片 —— 但 reset 按钮在两种卡片里都是同一个 v-else-if 分支。
+      expect(wrapper.find('.chat-warning-card').exists()).toBe(true)
+      expect(wrapper.find('.chat-warning-card').text()).toContain('Timed out')
+      expect(wrapper.find('.warning-reset-btn').exists()).toBe(false)
+    })
+
+    it('hides the reset button on an error block', () => {
+      const wrapper = mountBlocks({
+        readOnly: true,
+        blocks: [{ type: 'error', reason: 'backend_exit', text: 'AI backend exited' }],
+      })
+      expect(wrapper.find('.chat-error-card').exists()).toBe(true)
+      expect(wrapper.find('.warning-reset-btn').exists()).toBe(false)
+    })
+
+    it('hides both actions in the summary view (summaryCards.warnings path)', () => {
+      // 分享页可能以摘要态打开（后端 Finalize 后 content 被剥离成 {"blocks":[]}），
+      // 此时横幅来自 summaryCards.warnings —— 这条分支必须同样受门控，否则
+      // 换个视图按钮就又冒出来了。
+      const wrapper = mountBlocks({
+        readOnly: true,
+        blocks: [],
+        summary: 'Summary text',
+        showingSummary: true,
+        summaryCards: {
+          warnings: [
+            { type: 'warning', reason: 'restart', text: 'Server restarted' },
+            { type: 'error', reason: 'backend_exit', text: 'AI backend exited' },
+          ],
+        },
+      })
+      expect(wrapper.find('.chat-warning-card').exists()).toBe(true)
+      expect(wrapper.find('.chat-error-card').exists()).toBe(true)
+      expect(wrapper.find('.warning-continue-btn').exists()).toBe(false)
+      expect(wrapper.find('.warning-reset-btn').exists()).toBe(false)
+    })
+
+    it('still renders both actions in the interactive app', () => {
+      // 反证：不能因为加了 readOnly 门控就把正常聊天里的恢复入口也藏了。
+      const restart = mountBlocks({
+        blocks: [{ type: 'warning', reason: 'restart', text: 'Server restarted' }],
+      })
+      expect(restart.find('.warning-continue-btn').exists()).toBe(true)
+
+      const timeout = mountBlocks({
+        blocks: [{ type: 'warning', reason: 'timeout', text: 'Timed out' }],
+      })
+      expect(timeout.find('.warning-reset-btn').exists()).toBe(true)
+    })
+
+    it('keeps the copy-login-command button (pure client-side action)', () => {
+      // 复制登录命令只写剪贴板，不发请求也不改会话状态 —— 分享页读者拿到命令
+      // 可以自己去登录，这是信息而不是动作，必须保留。
+      const wrapper = mountBlocks({
+        readOnly: true,
+        blocks: [{
+          type: 'error',
+          reason: 'auth_required',
+          text: 'The agent is not signed in.',
+          login_cmd: 'cmdc login',
+        }],
+      })
+      expect(wrapper.find('.chat-error-card').exists()).toBe(true)
+      const loginBtn = wrapper.find('.warning-login-btn')
+      expect(loginBtn.exists()).toBe(true)
+      expect(loginBtn.attributes('title')).toBe('cmdc login')
+    })
+  })
+
   // ── Streaming / Cancelled markers ──
 
   describe('streaming and cancelled markers', () => {
@@ -1981,6 +2075,26 @@ describe('ContentBlocks — multiple ask cards merged into one', () => {
     expect(wrapper.html()).toContain('XmlQ')
   })
 
+  it('does not list a question twice when both summary sources carry the same card', () => {
+    // A summary written from the pre-conversion blocks keeps the text-card copy
+    // in askQuestions AND the converted tool block in tools — one card described
+    // twice. The merged card must show each question once.
+    const same = { header: 'H', question: 'SameQ', options: [{ label: 'A' }, { label: 'B' }] }
+    const wrapper = mountBlocks({
+      blocks: [],
+      summary: 'sum text',
+      showingSummary: true,
+      summaryCards: {
+        tools: [{ name: 'AskUserQuestion', id: 'ask-t', input: { questions: [same] } }],
+        taskIDs: [],
+        askQuestions: [same],
+      },
+      formatToolInput: echoFormat,
+    })
+    expect(wrapper.findAll('.ask-question-item')).toHaveLength(1)
+    expect(wrapper.html()).toContain('SameQ')
+  })
+
   it('renders a single summary ask card unchanged when there is only one source', () => {
     const wrapper = mountBlocks({
       blocks: [],
@@ -2458,6 +2572,192 @@ describe('ContentBlocks — Agent Team member fallback grouping', () => {
     expect(first.find('.member-group').classes()).toContain('subagent-group-open')
     // Same member, different message → its own key, so it stays collapsed.
     expect(second.find('.member-group').classes()).not.toContain('subagent-group-open')
+  })
+})
+
+// ── Agent Team member card titles ──
+//
+// Every CodeBuddy team member is spawned with subagent_type "general-purpose",
+// so titling the Agent card with the subagent TYPE renders a column of
+// identical "General-purpose" cards that say nothing about who did the work.
+// The member name is the authoritative attribution and must win.
+describe('ContentBlocks — member presentation is identical before and after an interruption', () => {
+  // Two code paths render the SAME team member:
+  //   A. the Agent card that spawned it (parent link still resolvable) — this is
+  //      what the user sees BEFORE an interruption;
+  //   B. the member fallback group (parent card gone from the message) — what
+  //      they see AFTER one.
+  // Both must look the same: same glyph, same accent colour. They did not —
+  // A used the generic Agent/Bot icon and, on reload, no accent at all, because
+  // the persisted card has member_color null while its children carry it.
+  const memberBlocks = () => [
+    { type: 'tool_use', name: 'Agent', id: 'call_a', done: true, input: { subagent_type: 'general-purpose' }, display_name: 'general-purpose' },
+    { type: 'text', text: 'alpha report', parent_tool_call_id: 'call_a', member_name: 'android-reviewer', member_color: 'green' },
+  ]
+
+  it('gives the Agent card the team glyph, not the generic Agent icon', () => {
+    const wrapper = mountBlocks({ blocks: memberBlocks() })
+    const pill = wrapper.find('.chat-tool-call-group')
+    // A team member card must render the Users glyph, the same one the member
+    // fallback header uses — NOT whatever getToolIcon('Agent') yields.
+    expect(pill.find('svg.lucide-users').exists()).toBe(true)
+  })
+
+  it('gives the Agent card the member colour from its children', () => {
+    // The card itself has no member_color (that is how history is persisted),
+    // so the accent must be derived from a child — otherwise the card is
+    // colourless on every reload while the fallback group is coloured.
+    const wrapper = mountBlocks({ blocks: memberBlocks() })
+    const pill = wrapper.find('.chat-tool-call-group')
+    expect(pill.attributes('style')).toContain('--subagent-accent')
+  })
+
+  it('renders both paths with the SAME accent and the SAME glyph', () => {
+    // The whole point: a member must look the same whether its Agent card is
+    // still resolvable (pre-interruption) or gone (post-interruption). Compare
+    // the resolved values, not just "an accent exists".
+    const cardWrapper = mountBlocks({
+      blocks: memberBlocks(),
+      expandedTools: { 'subagent-call_a': true },
+    })
+    // The accent lives on the group element, which is where the expanded body
+    // reads it from (a pill-only property would leave the body default-pink).
+    const cardGroup = cardWrapper.find('.subagent-group')
+    // The glyph lives on the pill, which is a SIBLING of the group element.
+    const cardPill = cardWrapper.find('.chat-tool-call-group')
+
+    const groupWrapper = mountBlocks({
+      blocks: [
+        { type: 'text', text: 'alpha report', member_name: 'android-reviewer', member_color: 'green' },
+        { type: 'tool_use', name: 'Bash', id: 't1', done: true, input: {}, member_name: 'android-reviewer', member_color: 'green' },
+      ],
+      expandedTools: { 'member-group-msg-1-android-reviewer': true },
+    })
+    const groupAccentEl = groupWrapper.find('.member-group')
+    const groupPill = groupWrapper.find('.member-group .chat-tool-call')
+
+    const pick = (style: string) => /--subagent-accent:\s*([^;]+)/.exec(style)?.[1]?.trim()
+    expect(pick(cardGroup.attributes('style') || '')).toBeTruthy()
+    expect(pick(cardGroup.attributes('style') || '')).toBe(pick(groupAccentEl.attributes('style') || ''))
+    expect(cardPill.find('svg.lucide-users').exists()).toBe(true)
+    expect(groupPill.find('svg.lucide-users').exists()).toBe(true)
+  })
+
+  it('paints the EXPANDED body with the member colour, not the default pink', () => {
+    // .subagent-group declares its own `--subagent-accent: #ec4899`. A custom
+    // property set only on the pill does NOT cascade into the expanded body
+    // (it is a sibling/child of the group, not of the pill), so the body kept
+    // the default pink while the pill was green. The accent must be set on the
+    // group element itself — which is what the fallback group already does.
+    const wrapper = mountBlocks({
+      blocks: memberBlocks(),
+      expandedTools: { 'subagent-call_a': true },
+    })
+    const group = wrapper.find('.subagent-group')
+    expect(group.exists()).toBe(true)
+    expect(group.attributes('style') || '').toContain('--subagent-accent')
+  })
+
+  it('still uses the normal Agent icon for a non-team sub-agent', () => {
+    // Guard against over-reach: an ordinary sub-agent has no member evidence,
+    // so it keeps whatever getToolIcon returns and gets no accent. The mock maps
+    // Agent to a plain string component name (Vue renders those as an element
+    // rather than an <svg>), so "the real icon was used" is asserted as "no
+    // Users glyph was forced in".
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'tool_use', name: 'Agent', id: 'call_p', done: true, input: { subagent_type: 'explore' } },
+        { type: 'text', text: 'child answer', parent_tool_call_id: 'call_p' },
+      ],
+    })
+    const pill = wrapper.find('.chat-tool-call-group')
+    expect(pill.attributes('style') || '').not.toContain('--subagent-accent')
+    expect(pill.find('svg.lucide-users').exists()).toBe(false)
+  })
+})
+
+describe('ContentBlocks — Agent card member titles', () => {
+  it('titles an Agent card with the member name instead of the subagent type', () => {
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'tool_use', name: 'Agent', id: 'call_a', done: true, input: { subagent_type: 'general-purpose' }, display_name: 'general-purpose', member_name: 'android-reviewer' },
+        { type: 'text', text: 'alpha report', parent_tool_call_id: 'call_a', member_name: 'android-reviewer' },
+      ],
+    })
+    const pill = wrapper.find('.chat-tool-call-group')
+    expect(pill.find('.tool-name').text()).toBe('android-reviewer')
+    expect(wrapper.html()).not.toContain('general-purpose')
+  })
+
+  it('falls back to the plain tool label when the card has no member attribution', () => {
+    // An ordinary (non-team) sub-agent: nothing names the child, so the pill
+    // keeps whatever toolDisplayName yields. (This suite stubs toolDisplayName
+    // to the raw name, so the assertion here is "not a member name".)
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'tool_use', name: 'Agent', id: 'call_p', done: true, input: { subagent_type: 'explore' } },
+        { type: 'text', text: 'child answer', parent_tool_call_id: 'call_p' },
+      ],
+    })
+    expect(wrapper.find('.chat-tool-call-group .tool-name').text()).toBe('Agent')
+  })
+
+  it('derives the title from children when the card itself lost the attribution', () => {
+    // Messages persisted before the block kept member_name: the card is empty
+    // but its children still carry the member. No data migration needed.
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'tool_use', name: 'Agent', id: 'call_a', done: true, input: { subagent_type: 'general-purpose' }, display_name: 'general-purpose' },
+        { type: 'text', text: 'alpha report', parent_tool_call_id: 'call_a', member_name: 'android-reviewer' },
+      ],
+    })
+    expect(wrapper.find('.chat-tool-call-group .tool-name').text()).toBe('android-reviewer')
+  })
+
+  it('leaves a member\'s own tool cards titled with the tool, not the member', () => {
+    // member_name is on every one of a member's blocks. Titling its Bash card
+    // with the member name would turn the trace into a wall of identical names.
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'tool_use', name: 'Agent', id: 'call_a', done: true, input: { subagent_type: 'general-purpose' }, member_name: 'android-reviewer' },
+        { type: 'tool_use', name: 'Bash', id: 't1', done: true, input: { command: 'ls' }, parent_tool_call_id: 'call_a', member_name: 'android-reviewer' },
+      ],
+      expandedTools: { 'subagent-call_a': true },
+    })
+    const group = wrapper.find('.subagent-group')
+    expect(group.find('.tool-name').text()).toBe('Bash')
+  })
+
+  it('keeps a member\'s tool cards visible instead of hiding them behind the group header', () => {
+    // The anchor block is REPLACED by the group header pill. Anchoring on a
+    // tool call would hide that card's name/status/output, so a non-tool block
+    // anchors whenever the member has one.
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'text', text: 'alpha report', member_name: 'alpha' },
+        { type: 'tool_use', name: 'SendMessage', id: 'sm1', done: true, input: { recipient: 'team-lead' }, member_name: 'alpha' },
+        { type: 'tool_use', name: 'TeamCreate', id: 'tc1', done: true, input: {}, member_name: 'alpha' },
+      ],
+      expandedTools: { 'member-group-msg-1-alpha': true },
+    })
+    const group = wrapper.find('.member-group')
+    // The member name is the group header...
+    expect(group.find('.chat-tool-call .tool-name').text()).toBe('alpha')
+    // ...and both tool cards keep their own labels inside the body.
+    const bodyLabels = group.findAll('.subagent-group-body .tool-name').map((n) => n.text())
+    expect(bodyLabels).toContain('SendMessage')
+    expect(bodyLabels).toContain('TeamCreate')
+  })
+
+  it('anchors on a tool call only when the member has no other block', () => {
+    // Degenerate case: the group still needs a header, so the sole tool call
+    // becomes it. Documented behaviour, not an accident.
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'tool_use', name: 'SendMessage', id: 'sm1', done: true, input: {}, member_name: 'alpha' },
+      ],
+    })
+    expect(wrapper.find('.member-group .tool-name').text()).toBe('alpha')
   })
 })
 
@@ -3043,6 +3343,62 @@ describe('text-mode ask card after the side table is cleared', () => {
     return mountedWrappers.filter((w) => w.exists())
       .reduce((n, w) => n + w.findAll('.tool-detail.chat-inline-card[data-tool-name="AskUserQuestion"]').length, 0)
   }
+})
+
+// ── The same card in two shapes must not be listed twice ──
+//
+// Finalize converts a `<clawbench-ask-question>` text block into an
+// AskUserQuestion tool block, but the LIVE bubble keeps the original text (the
+// converted blocks are never re-sent over the WS stream). The post-done
+// loadHistory merges the DB row into that live bubble, so for one render the
+// message holds BOTH shapes — and the merged ask card listed every question
+// twice until the next rebuild replaced the bubble with the DB row ("有时候会
+// 重复，但会自己恢复").
+describe('ask card duplicated across the raw-text and converted-tool shapes', () => {
+  const TAG_TEXT = '<clawbench-ask-question>\n**Approach**\nWhich one?\n- A — Fast\n- B — Safe\n</clawbench-ask-question>'
+  const CONVERTED_INPUT = {
+    questions: [{
+      header: 'Approach',
+      multiSelect: false,
+      question: 'Which one?',
+      options: [{ label: 'A', description: 'Fast' }, { label: 'B', description: 'Safe' }],
+    }],
+  }
+
+  function itemCount(blocks: Array<Record<string, unknown>>) {
+    const wrapper = mountBlocks({
+      blocks,
+      blockAskQuestions: {},
+      renderTextBlock: () => '',
+      formatToolInput: (input: any) => {
+        const qs = Array.isArray(input?.questions) ? input.questions : []
+        return `<div class="ask-question-view">${qs.map((q: any) => `<div class="ask-question-item">${q.question}</div>`).join('')}</div>`
+      },
+    })
+    return wrapper.findAll('.ask-question-item').length
+  }
+
+  it('lists each question once when the text block still carries the tag', () => {
+    // The live-bubble shape right after Finalize: raw tag + converted tool block.
+    expect(itemCount([
+      { type: 'text', text: TAG_TEXT },
+      { type: 'tool_use', name: 'AskUserQuestion', id: 'ask-1', done: true, input: CONVERTED_INPUT },
+    ])).toBe(1)
+  })
+
+  it('keeps a genuinely different question carried by the text block', () => {
+    // Only an IDENTICAL question is deduped — a text block holding a second,
+    // distinct question must still contribute it to the merged card.
+    const other = TAG_TEXT.replace('Which one?', 'And also this?')
+    expect(itemCount([
+      { type: 'text', text: other },
+      { type: 'tool_use', name: 'AskUserQuestion', id: 'ask-1', done: true, input: CONVERTED_INPUT },
+    ])).toBe(2)
+  })
+
+  it('leaves a lone text-mode card untouched (no converted tool block)', () => {
+    expect(itemCount([{ type: 'text', text: TAG_TEXT }])).toBe(1)
+  })
 })
 
 // ── Path verification survives a cache hit ──

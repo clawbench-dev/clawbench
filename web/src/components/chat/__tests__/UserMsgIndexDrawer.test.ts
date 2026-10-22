@@ -135,7 +135,9 @@ describe('UserMsgIndexDrawer', () => {
 
     it('shows loading state', () => {
       const wrapper = mountSheet({ loading: true })
-      expect(wrapper.find('.li-spinner').exists()).toBe(true)
+      // First load previews the message rows; `jumping` below stays a ring
+      // because it is an action in progress over content that already exists.
+      expect(wrapper.find('.panel-skeleton').exists()).toBe(true)
     })
 
     it('shows jumping state', () => {
@@ -180,7 +182,7 @@ describe('UserMsgIndexDrawer', () => {
 
     it('shows loading state in preference to the empty state', () => {
       const wrapper = mountSheet({ open: true, messages: [], loading: true })
-      expect(wrapper.find('.li-spinner').exists()).toBe(true)
+      expect(wrapper.find('.panel-skeleton').exists()).toBe(true)
       expect(wrapper.find('.panel-empty').exists()).toBe(false)
     })
 

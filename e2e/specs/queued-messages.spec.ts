@@ -1,4 +1,5 @@
-import { test, expect, type Page } from '../fixtures'
+import { test, expect } from '../fixtures'
+import type { Page } from '@playwright/test'
 import { ChatPage } from '../pages/chat.page'
 
 /**
@@ -9,14 +10,39 @@ import { ChatPage } from '../pages/chat.page'
  * backend drain loop runs 1, 2, 3 sequentially; the frontend must render
  * 1, reply1, 2, reply2, 3, reply3 — both live and after a full reload.
  *
- * The three messages carry UNIQUE markers (not "1"/"2"/"3"): the run shares one
- * project and one session across specs, so the transcript may already contain
- * earlier messages. Assertions are therefore relative (A before B) rather than
- * absolute indices, which would depend on whatever ran before this spec.
+ * The three messages carry markers that are unique per ATTEMPT (not "1"/"2"/"3",
+ * and not module-level fixed strings): the run shares one project and one session
+ * across specs AND across Playwright retries. With fixed markers, attempt 1's
+ * messages already satisfy attempt 2's `toHaveCount(1)` (the locator resolves to
+ * 2 elements), so one failure makes every retry fail for a different reason than
+ * the original one — the retries can never pass. Assertions are relative (A
+ * before B) rather than absolute indices, which would depend on whatever ran
+ * before this spec.
  */
-const M1 = 'qmsg-alpha'
-const M2 = 'qmsg-bravo'
-const M3 = 'qmsg-charlie'
+let M1 = ''
+let M2 = ''
+let M3 = ''
+
+/**
+ * Reload, retrying once if WebKit throws its own internal navigation error.
+ *
+ * `page.reload()` on WebKit intermittently fails with "WebKit encountered an
+ * internal error" while the page still holds the live chat WebSocket and
+ * in-flight history fetches (measured in CI on this spec). That is a browser-side
+ * fault, not an assertion about the app: the navigation either never starts or
+ * dies mid-flight, so nothing about the product is being tested at that moment.
+ * Re-issuing the SAME navigation is the only sound response — the assertions
+ * that follow still run against a genuinely reloaded page.
+ */
+async function reloadPage(page: Page): Promise<void> {
+  try {
+    await page.reload()
+  } catch (err) {
+    if (!/WebKit encountered an internal error/i.test(String(err))) throw err
+    await page.reload()
+  }
+  await page.waitForLoadState('domcontentloaded')
+}
 
 test.describe('Queued messages ordering', () => {
   let chat: ChatPage
@@ -25,20 +51,24 @@ test.describe('Queued messages ordering', () => {
   // its inner `expect` timeouts alone sum to ~95s, so the 30s config default is
   // not enough: on a loaded CI runner the happy path (~18s locally) overran it
   // and the test timed out. Every other multi-turn spec sets 120000 for the same
-  // reason. (Once attempt 1 times out, the retries are structurally doomed: the
-  // markers are fixed strings in a SHARED session, so a re-send renders a second
-  // copy and `toHaveCount(1)` can never hold.)
+  // reason.
   test.setTimeout(120000)
 
   test.beforeEach(async ({ page }) => {
+    // Fresh markers per attempt: the session is shared across specs and retries,
+    // so a fixed marker would match an earlier attempt's bubble.
+    const run = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+    M1 = `qmsg-alpha-${run}`
+    M2 = `qmsg-bravo-${run}`
+    M3 = `qmsg-charlie-${run}`
+
     chat = new ChatPage(page)
     // Block the upgrade check so the "New Version Available" overlay never
     // appears and cannot intercept clicks on the send button.
     await page.route('**/api/upgrade/**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '{"hasUpdate":false,"latestVersion":""}' }))
     // Dismiss the first-run Welcome overlay so the chat panel is reachable.
     await page.evaluate(() => localStorage.setItem('clawbench_welcome_dismissed', 'true'))
-    await page.reload()
-    await page.waitForLoadState('domcontentloaded')
+    await reloadPage(page)
     await expect(page.locator('.chat-textarea')).toBeVisible({ timeout: 10000 })
   })
 
@@ -128,8 +158,7 @@ test.describe('Queued messages ordering', () => {
     expect(l3).toBeGreaterThan(lReply2)
 
     // 4. Full reload (loadHistory from backend) — order must be identical.
-    await page.reload()
-    await page.waitForLoadState('domcontentloaded')
+    await reloadPage(page)
     await expect(page.locator('.chat-textarea')).toBeVisible()
     // Wait for the history to actually render before snapshotting: reload kicks
     // off an async loadHistory, and reading immediately can see an empty list.

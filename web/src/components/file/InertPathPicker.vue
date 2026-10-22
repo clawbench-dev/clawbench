@@ -25,7 +25,7 @@
 
       <div class="ip-content">
         <div v-if="state.open && search.state.searching && search.state.results.length === 0" class="ip-loading">
-          <LoadingIndicator size="md" :label="t('file.search.searching')" />
+          <PanelSkeleton variant="list" :rows="6" :meta="false" :label="t('file.search.searching')" />
         </div>
 
         <div v-else-if="search.state.results.length === 0" class="ip-empty">
@@ -72,7 +72,7 @@ import { useI18n } from 'vue-i18n'
 import { Search, FileQuestion } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
-import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import { useFileSearch } from '@/composables/useFileSearch'
 import { useListNav } from '@/composables/useListNav'
 import { openFilePath } from '@/composables/useFilePathAnnotation'
@@ -212,7 +212,15 @@ watch(
   overflow-y: auto;
 }
 
-.ip-loading,
+/* The loading state left-aligns like the real result rows; only the empty
+   states centre. */
+.ip-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  padding: var(--space-4) 0;
+}
+
 .ip-empty {
   display: flex;
   flex-direction: column;

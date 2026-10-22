@@ -1,8 +1,7 @@
 <template>
   <div class="openapi-preview">
     <div v-if="loading" class="openapi-loading">
-      <LoadingIndicator size="md" />
-    </div>
+      <PanelSkeleton variant="text" :rows="9" :label="loadingLabel" />    </div>
     <iframe
       v-show="!loading"
       ref="iframeRef"
@@ -16,11 +15,12 @@
 
 <script setup>
 import { ref, computed, watch, inject, onBeforeUnmount } from 'vue'
-import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import { useI18n } from 'vue-i18n'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import { buildSwaggerSrcdoc } from '@/utils/swaggerHtml.ts'
 import { isDarkTheme } from '@/utils/themeMeta'
 import { attachIframeSelectionQuoteBridge, resolveIframeWindow } from '@/utils/iframeSelectionQuote.ts'
-import { useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
+import { makeIframeQuoteShowHandler, useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
 
 const props = defineProps({
   file: Object,
@@ -32,6 +32,8 @@ const props = defineProps({
 
 const iframeRef = ref(null)
 const loading = ref(true)
+const { t } = useI18n()
+const loadingLabel = computed(() => t('common.loading'))
 
 const quoteQuestion = useQuoteQuestion()
 
@@ -105,7 +107,11 @@ async function attachBridgeToIframe() {
   disposeBridge = attachIframeSelectionQuoteBridge({
     win,
     filePath: () => props.file?.path || '',
-    show: (data) => quoteQuestion.showBar(data, { delay: 0 }),
+    // Shared with the HTML previews. It was the one host still hand-rolling
+    // this callback, and it silently dropped `anchor` — so the bar fell back to
+    // its pinned top position (the reported "menu pops up at the top") — and
+    // `suppressBar`, so Android got both the system menu and the in-page bar.
+    show: makeIframeQuoteShowHandler(quoteQuestion.showBar),
     hide: () => quoteQuestion.hideBar(),
   })
   bridgeWin = win
@@ -133,9 +139,16 @@ onBeforeUnmount(() => {
 
 .openapi-loading {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   justify-content: center;
   flex: 1;
+  padding: var(--space-5);
+  min-width: 0;
+}
+
+.openapi-loading > * {
+  flex: 1;
+  min-width: 0;
 }
 
 

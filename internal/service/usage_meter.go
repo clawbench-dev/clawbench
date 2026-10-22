@@ -187,7 +187,7 @@ func ComputeUsageMeter(ctx context.Context, now time.Time) (*UsageMeterStatus, e
 			"metric", rule.Metric, "period_days", rule.PeriodDays)
 		return &UsageMeterStatus{Enabled: false}, nil
 	}
-	anchor, err := time.ParseInLocation("2006-01-02", rule.AnchorDate, time.Local)
+	anchor, err := model.ParseUsageMeterAnchor(rule.AnchorDate)
 	if err != nil {
 		slog.Warn("usage meter: invalid anchor date, treating as disabled",
 			"anchor", rule.AnchorDate, "error", err)
@@ -429,6 +429,16 @@ func usageMeterStageToSend(st *UsageMeterStatus, notifiedStage string) string {
 // must never panic on a missing DB.
 func CheckUsageMeter(ctx context.Context) string {
 	if model.ConfigInstance.UsageMeter.Quota <= 0 {
+		// No rule: no threshold to cross, so no notification. The capsule still
+		// has to LEARN that the rule went away, though — without this the client
+		// keeps rendering the last numbers it was pushed (or never learns the
+		// meter was turned off) until something else makes it refetch. The user
+		// sees a stale capsule that only corrects itself when they click it.
+		//
+		// Broadcast the disabled state once. It is cheap (no aggregate query) and
+		// idempotent: broadcastUsageMeterNumbers compares against the last
+		// broadcast, so repeated ticks after the transition send nothing.
+		broadcastDisabledUsageMeter()
 		return ""
 	}
 
@@ -614,12 +624,6 @@ func compactCount(v float64) string {
 	}
 }
 
-// usageMeterNeedsCheck reports whether a check could possibly do anything.
-// Used by the worker to skip the aggregate query when the rule is off.
-func usageMeterNeedsCheck() bool {
-	return model.ConfigInstance.UsageMeter.Quota > 0
-}
-
 // parseUsageMeterTimestamp accepts the two shapes a DATETIME column can hold:
 // SQLite's CURRENT_TIMESTAMP text (space-separated, UTC) and RFC3339.
 //
@@ -653,7 +657,11 @@ const UsageMeterTickEventType = "usage_meter_tick"
 var usageMeterLastBroadcast struct {
 	actual, expected, quota float64
 	metric                  string
-	valid                   bool
+	// enabled is part of the change key: turning the rule off must re-broadcast
+	// even though every number stays the same, because it changes what the
+	// client renders (capsule vs placeholder).
+	enabled bool
+	valid   bool
 }
 
 // broadcastUsageMeterNumbers pushes the headline numbers to every client when
@@ -663,15 +671,13 @@ var usageMeterLastBroadcast struct {
 // The series is NOT included: it is only needed by the popover, which refetches
 // on open, and shipping it every turn would be a large frame for no benefit.
 func broadcastUsageMeterNumbers(st *UsageMeterStatus) bool {
-	if !st.Enabled {
-		return false
-	}
 	last := usageMeterLastBroadcast
 	if last.valid &&
 		last.actual == st.Actual &&
 		last.expected == st.Expected &&
 		last.quota == st.Quota &&
-		last.metric == st.Metric {
+		last.metric == st.Metric &&
+		last.enabled == st.Enabled {
 		return false
 	}
 	// Record BEFORE looking up the manager: if no manager is wired (tests, or
@@ -680,18 +686,24 @@ func broadcastUsageMeterNumbers(st *UsageMeterStatus) bool {
 	usageMeterLastBroadcast = struct {
 		actual, expected, quota float64
 		metric                  string
+		enabled                 bool
 		valid                   bool
-	}{st.Actual, st.Expected, st.Quota, st.Metric, true}
+	}{st.Actual, st.Expected, st.Quota, st.Metric, st.Enabled, true}
 
 	mgr := ws.GetManager()
 	if mgr == nil {
 		return true
 	}
 
+	// `enabled` travels with the payload: it is what tells the client to drop
+	// the numbers and render the placeholder instead. Without it a disabled
+	// frame is indistinguishable from a metered one whose figures happen to be
+	// zero, and the capsule would keep showing the old quota.
 	mgr.BroadcastEvent(ws.ServerMessage{
 		Type:  ws.MessageTypeEvent,
 		Event: UsageMeterTickEventType,
 		Data: map[string]any{
+			"enabled":  st.Enabled,
 			"metric":   st.Metric,
 			"actual":   st.Actual,
 			"expected": st.Expected,
@@ -701,4 +713,20 @@ func broadcastUsageMeterNumbers(st *UsageMeterStatus) bool {
 		},
 	})
 	return true
+}
+
+// broadcastDisabledUsageMeter pushes the "no rule" state to every client.
+//
+// Called when the rule is turned off (quota <= 0). The capsule has to be told,
+// or it keeps showing the quota it was last pushed until something else makes
+// the client refetch — in practice, the user clicking the capsule.
+//
+// Deliberately carries no numbers: the client replaces the whole readout with
+// the placeholder, and sending stale figures would let a stale value survive a
+// client that only patches the fields it receives.
+func broadcastDisabledUsageMeter() {
+	st := &UsageMeterStatus{Enabled: false}
+	usageMeterCheckMu.Lock()
+	defer usageMeterCheckMu.Unlock()
+	broadcastUsageMeterNumbers(st)
 }

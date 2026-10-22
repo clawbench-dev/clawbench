@@ -280,40 +280,76 @@ export async function stampSvgFiguresAsync(root: ParentNode | null): Promise<voi
  *    own width may not change at all in that case, so the observer alone would
  *    miss it.
  *
- * Re-entrancy is handled by suppressing the observer while we write: writing a
- * width changes the figure's size, which would otherwise fire the observer
- * again and loop.
+ * Re-entrancy: writing a width changes the figure's size, which fires the
+ * observer again. That is harmless — the next pass measures the same column and
+ * writes the same width, so it converges. (The `writing` flag this used to rely
+ * on could never work: it was set during the synchronous pass, while observer
+ * callbacks are delivered asynchronously and always observed it as false.)
  */
 export function installSvgMediaAutoFit(): () => void {
     if (typeof window === 'undefined' || typeof ResizeObserver !== 'function') {
         return () => {}
     }
-    let writing = false
     let frame = 0
+    // What to re-measure on the next pass.
+    //
+    // `all` is the only correct answer for a viewport resize: the 60dvh height
+    // budget changed, so every height-limited diagram needs a new width.
+    //
+    // A MutationObserver hit, by contrast, concerns only the figures it added:
+    // the chat transcript replaces innerHTML on every streaming frame, and
+    // re-measuring every figure in the document on each of those frames is a
+    // forced synchronous layout over the whole page — measurable on sessions
+    // with a dozen diagrams. Same for a ResizeObserver hit, which names the
+    // columns that actually changed.
+    let all = false
+    const pending = new Set<Element>()
 
-    const refitAll = () => {
-        if (writing) return
-        writing = true
-        try {
-            for (const wrapper of Array.from(document.querySelectorAll('.image-block-wrapper'))) {
-                refitFigure(wrapper as HTMLElement)
-            }
-        } finally {
-            writing = false
+    const flush = () => {
+        const targets = all
+            ? Array.from(document.querySelectorAll('.image-block-wrapper'))
+            : Array.from(pending)
+        all = false
+        pending.clear()
+        for (const wrapper of targets) {
+            refitFigure(wrapper as HTMLElement)
         }
     }
 
     // Coalesce bursts (a window drag fires resize on every frame) into one pass
     // per animation frame.
-    const scheduleRefit = () => {
+    const schedule = (opts: { all?: boolean; touched?: Iterable<Element> }) => {
+        if (opts.all) {
+            all = true
+            pending.clear()
+        } else if (opts.touched) {
+            for (const el of opts.touched) pending.add(el)
+        }
         if (frame) return
         frame = requestAnimationFrame(() => {
             frame = 0
-            refitAll()
+            flush()
         })
     }
 
-    const observer = new ResizeObserver(scheduleRefit)
+    // ResizeObserver: the observed column changed size. Re-measure only the
+    // figures directly under the columns that fired.
+    //
+    // No re-entrancy flag is needed (and the one that used to live here never
+    // worked: it was set during the synchronous pass, while ResizeObserver
+    // callbacks arrive asynchronously and always read it as false). Writing a
+    // width does fire the observer again, but the next pass measures the same
+    // column, computes the same width and writes an identical value, so it
+    // converges instead of looping.
+    const observer = new ResizeObserver((entries) => {
+        const touched = new Set<Element>()
+        for (const entry of entries) {
+            for (const wrapper of Array.from(entry.target.querySelectorAll(':scope > .image-block-wrapper'))) {
+                touched.add(wrapper)
+            }
+        }
+        if (touched.size > 0) schedule({ touched })
+    })
     const observed = new WeakSet<Element>()
     const observeAll = () => {
         for (const wrapper of Array.from(document.querySelectorAll('.image-block-wrapper'))) {
@@ -327,19 +363,46 @@ export function installSvgMediaAutoFit(): () => void {
 
     // New figures are added by every render, so re-scan on mutations rather than
     // only once at install time.
-    const mutation = new MutationObserver(() => {
+    //
+    // The trigger is not "a wrapper was added": a mermaid re-render REPLACES the
+    // contents of the existing `.mermaid` container (`container.innerHTML =
+    // result.svg` in mermaid.ts, on every theme/font change), so the added nodes
+    // are a fresh `<svg>` / `.lightbox-*` wrap and no `.image-block-wrapper`
+    // appears at all. Keying on the wrapper alone missed exactly that case — the
+    // diagram kept the inline px width computed for the OLD theme/font until the
+    // next window resize. Resolve the nearest enclosing figure instead, so any
+    // change to a figure's media re-measures it.
+    const mutation = new MutationObserver((records) => {
         observeAll()
-        scheduleRefit()
+        const touched = new Set<Element>()
+        const noteFigure = (node: Element) => {
+            const figure = node.closest('.image-block-wrapper')
+            if (figure) touched.add(figure)
+        }
+        for (const record of records) {
+            for (const node of Array.from(record.addedNodes)) {
+                if (!(node instanceof Element)) continue
+                noteFigure(node)
+                for (const nested of Array.from(node.querySelectorAll(CONTENT_MEDIA_SELECTOR))) {
+                    noteFigure(nested)
+                }
+            }
+        }
+        // No figure content changed (the common case: text streaming into an
+        // existing paragraph) — nothing to re-measure.
+        if (touched.size > 0) schedule({ touched })
     })
     mutation.observe(document.body, { childList: true, subtree: true })
 
+    const onViewportResize = () => schedule({ all: true })
+
     observeAll()
-    window.addEventListener('resize', scheduleRefit)
+    window.addEventListener('resize', onViewportResize)
 
     return () => {
         observer.disconnect()
         mutation.disconnect()
-        window.removeEventListener('resize', scheduleRefit)
+        window.removeEventListener('resize', onViewportResize)
         if (frame) cancelAnimationFrame(frame)
     }
 }

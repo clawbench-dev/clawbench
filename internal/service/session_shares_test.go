@@ -16,8 +16,10 @@ import (
 // setupTestDBForSessionShares creates an in-memory SQLite with the
 // session_shares table plus the chat_sessions table it is listed against.
 //
-// chat_sessions is needed because ListSessionShares JOINs it to scope by
-// project and to report whether the session is archived.
+// chat_sessions is needed because every read JOINs it: title / backend /
+// archived are read live (nothing about the conversation is frozen), and the
+// inner JOIN is also what makes an orphan share indistinguishable from a
+// revoked link.
 func setupTestDBForSessionShares(t *testing.T) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("sqlite", ":memory:")
@@ -50,8 +52,8 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 	return db
 }
 
-// seedSession inserts a chat_sessions row so a share can be joined to it.
-func seedListedSession(t *testing.T, db *sql.DB, id, projectPath string, archived bool) {
+// seedListedSession inserts a chat_sessions row so a share can be joined to it.
+func seedListedSession(t *testing.T, db *sql.DB, id, projectPath string, archived bool) { //nolint:unparam // projectPath is kept for the project-scoping tests
 	t.Helper()
 	arch := 0
 	if archived {
@@ -64,47 +66,80 @@ func seedListedSession(t *testing.T, db *sql.DB, id, projectPath string, archive
 	require.NoError(t, err)
 }
 
+// seedListedSessionTitled is seedListedSession with an explicit title/backend,
+// so a test can prove the list reads them live from the session row.
+func seedListedSessionTitled(t *testing.T, db *sql.DB, id, projectPath, title, backend string) {
+	t.Helper()
+	_, err := db.Exec(
+		"INSERT INTO chat_sessions (id, project_id, backend, title, archived) VALUES (?, ?, ?, ?, 0)",
+		id, store.ProjectIDForTest(t, projectPath), backend, title,
+	)
+	require.NoError(t, err)
+}
+
 func TestSessionShares_UpsertCreatesNewToken(t *testing.T) {
 	db := setupTestDBForSessionShares(t)
 	defer func() { _ = db.Close() }()
 
-	token, created, err := service.UpsertSessionShare("sess-1", "My chat", "codebuddy", 4, `{"version":1}`)
+	seedListedSessionTitled(t, db, "sess-1", "/proj", "My chat", "codebuddy")
+
+	token, created, err := service.UpsertSessionShare("sess-1", []int64{7, 9, 11, 13})
 	require.NoError(t, err)
 	assert.True(t, created)
 	assert.Len(t, token, 32, "token is 32 hex chars (128 bits)")
 
-	payload, title, count, ok, err := service.GetSessionShareByToken(token)
+	share, ok, err := service.GetSessionShareByToken(token)
 	require.NoError(t, err)
 	assert.True(t, ok)
-	assert.Equal(t, `{"version":1}`, payload)
-	assert.Equal(t, "My chat", title)
-	assert.Equal(t, 4, count)
+	assert.Equal(t, []int64{7, 9, 11, 13}, share.MessageIDs)
+	assert.Equal(t, 4, share.MessageCount)
+	// Title and backend come from the session row, not from the share.
+	assert.Equal(t, "My chat", share.Title)
+	assert.Equal(t, "codebuddy", share.Backend)
+	assert.NotEmpty(t, share.CreatedAt)
 }
 
-// Re-sharing a session must invalidate the previous link: a conversation keeps
-// growing, so the old frozen snapshot is stale the moment a new one is taken.
+// An empty selection would store a link that 404s the instant it is created, so
+// the storage layer refuses it rather than letting the handler ship a dead link.
+func TestSessionShares_UpsertRejectsEmptySelection(t *testing.T) {
+	db := setupTestDBForSessionShares(t)
+	defer func() { _ = db.Close() }()
+
+	_, _, err := service.UpsertSessionShare("sess-1", nil)
+	require.Error(t, err)
+}
+
+// Re-sharing a session must invalidate the previous link and leave exactly one
+// row: session_id is UNIQUE, so a leftover row would be a token that no
+// session-scoped revoke can ever reach.
 func TestSessionShares_UpsertRotatesToken(t *testing.T) {
 	db := setupTestDBForSessionShares(t)
 	defer func() { _ = db.Close() }()
 
-	token1, created, err := service.UpsertSessionShare("sess-1", "t", "codebuddy", 1, `{"v":1}`)
+	seedListedSession(t, db, "sess-1", "/proj", false)
+
+	token1, created, err := service.UpsertSessionShare("sess-1", []int64{1})
 	require.NoError(t, err)
 	assert.True(t, created)
 
-	token2, created, err := service.UpsertSessionShare("sess-1", "t", "codebuddy", 2, `{"v":2}`)
+	token2, created, err := service.UpsertSessionShare("sess-1", []int64{1, 2})
 	require.NoError(t, err)
 	assert.False(t, created, "second upsert for the same session is a rotation")
 	assert.NotEqual(t, token1, token2)
 
-	_, _, _, ok, err := service.GetSessionShareByToken(token1)
+	_, ok, err := service.GetSessionShareByToken(token1)
 	require.NoError(t, err)
 	assert.False(t, ok, "old token must be revoked after rotation")
 
-	payload, _, count, ok, err := service.GetSessionShareByToken(token2)
+	share, ok, err := service.GetSessionShareByToken(token2)
 	require.NoError(t, err)
 	assert.True(t, ok)
-	assert.Equal(t, `{"v":2}`, payload)
-	assert.Equal(t, 2, count)
+	assert.Equal(t, []int64{1, 2}, share.MessageIDs)
+	assert.Equal(t, 2, share.MessageCount)
+
+	var rows int
+	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM session_shares WHERE session_id = 'sess-1'").Scan(&rows))
+	assert.Equal(t, 1, rows, "rotation must not leave a second unreachable token")
 }
 
 func TestSessionShares_GetBySession(t *testing.T) {
@@ -115,7 +150,8 @@ func TestSessionShares_GetBySession(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, ok)
 
-	token, _, err := service.UpsertSessionShare("sess-1", "t", "codebuddy", 1, `{}`)
+	seedListedSession(t, db, "sess-1", "/proj", false)
+	token, _, err := service.UpsertSessionShare("sess-1", []int64{1})
 	require.NoError(t, err)
 
 	got, ok, err := service.GetSessionShareBySession("sess-1")
@@ -131,53 +167,56 @@ func TestSessionShares_GetByTokenUnknownIsNotAnError(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	for _, token := range []string{"", "deadbeef"} {
-		payload, title, count, ok, err := service.GetSessionShareByToken(token)
+		share, ok, err := service.GetSessionShareByToken(token)
 		require.NoError(t, err, "token=%q", token)
 		assert.False(t, ok)
-		assert.Empty(t, payload)
-		assert.Empty(t, title)
-		assert.Zero(t, count)
+		assert.Empty(t, share.Token)
+		assert.Empty(t, share.Title)
+		assert.Zero(t, share.MessageCount)
 	}
+}
+
+// A share whose session row is gone resolves to no share at all (the inner JOIN
+// drops it) — the same shape as a revoked link, so the reader sees one 404.
+func TestSessionShares_GetByTokenOrphanIsAMiss(t *testing.T) {
+	db := setupTestDBForSessionShares(t)
+	defer func() { _ = db.Close() }()
+
+	token, _, err := service.UpsertSessionShare("orphan", []int64{1})
+	require.NoError(t, err)
+
+	_, ok, err := service.GetSessionShareByToken(token)
+	require.NoError(t, err)
+	assert.False(t, ok)
+}
+
+// A corrupt message_ids value must surface as an error, never as an empty list:
+// "empty" means "everything was deleted" and would silently 404 a live link.
+func TestSessionShares_GetByTokenBadMessageIDsSurfaces(t *testing.T) {
+	db := setupTestDBForSessionShares(t)
+	defer func() { _ = db.Close() }()
+
+	seedListedSession(t, db, "sess-1", "/proj", false)
+	_, err := db.Exec(`INSERT INTO session_shares (token, session_id, message_ids) VALUES ('t', 'sess-1', '{not json')`)
+	require.NoError(t, err)
+
+	_, _, err = service.GetSessionShareByToken("t")
+	require.Error(t, err)
 }
 
 func TestSessionShares_DeleteBySession(t *testing.T) {
 	db := setupTestDBForSessionShares(t)
 	defer func() { _ = db.Close() }()
 
-	token, _, err := service.UpsertSessionShare("sess-1", "t", "codebuddy", 1, `{}`)
+	seedListedSession(t, db, "sess-1", "/proj", false)
+	token, _, err := service.UpsertSessionShare("sess-1", []int64{1})
 	require.NoError(t, err)
 
 	require.NoError(t, service.DeleteSessionShareBySession("sess-1"))
 
-	_, _, _, ok, err := service.GetSessionShareByToken(token)
+	_, ok, err := service.GetSessionShareByToken(token)
 	require.NoError(t, err)
 	assert.False(t, ok)
-}
-
-func TestSessionShares_DeleteBySessionIDs(t *testing.T) {
-	db := setupTestDBForSessionShares(t)
-	defer func() { _ = db.Close() }()
-
-	for _, id := range []string{"s1", "s2", "s3"} {
-		_, _, err := service.UpsertSessionShare(id, "t", "codebuddy", 1, `{}`)
-		require.NoError(t, err)
-	}
-
-	require.NoError(t, service.DeleteSessionSharesBySessionIDs([]string{"s1", "s3"}))
-
-	_, ok, err := service.GetSessionShareBySession("s1")
-	require.NoError(t, err)
-	assert.False(t, ok)
-
-	_, ok, err = service.GetSessionShareBySession("s2")
-	require.NoError(t, err)
-	assert.True(t, ok, "s2 was not in the purge list and must survive")
-
-	// An empty list is a no-op, not a "delete everything".
-	require.NoError(t, service.DeleteSessionSharesBySessionIDs(nil))
-	_, ok, err = service.GetSessionShareBySession("s2")
-	require.NoError(t, err)
-	assert.True(t, ok)
 }
 
 func TestSessionShares_ListEmptyIsNonNil(t *testing.T) {
@@ -194,20 +233,23 @@ func TestSessionShares_ListNewestFirst(t *testing.T) {
 	db := setupTestDBForSessionShares(t)
 	defer func() { _ = db.Close() }()
 
-	seedListedSession(t, db, "s1", "/proj", false)
-	seedListedSession(t, db, "s2", "/proj", false)
-	_, _, err := service.UpsertSessionShare("s1", "first", "codebuddy", 1, `{}`)
+	seedListedSessionTitled(t, db, "s1", "/proj", "first", "codebuddy")
+	seedListedSessionTitled(t, db, "s2", "/proj", "second", "claude")
+	_, _, err := service.UpsertSessionShare("s1", []int64{1})
 	require.NoError(t, err)
-	_, _, err = service.UpsertSessionShare("s2", "second", "claude", 2, `{}`)
+	_, _, err = service.UpsertSessionShare("s2", []int64{1, 2})
 	require.NoError(t, err)
 
 	shares, err := service.ListSessionShares("/proj")
 	require.NoError(t, err)
 	require.Len(t, shares, 2)
 	assert.Equal(t, "s2", shares[0].SessionID, "newest first")
+	// Title / backend / count are read live from the session row and the stored
+	// selection, not from a frozen copy on the share row.
 	assert.Equal(t, "second", shares[0].Title)
 	assert.Equal(t, "claude", shares[0].Backend)
 	assert.Equal(t, 2, shares[0].MessageCount)
+	assert.Equal(t, []int64{1, 2}, shares[0].MessageIDs)
 }
 
 // A conversation title is private content: listing another project's shares
@@ -216,11 +258,11 @@ func TestSessionShares_ListIsProjectScoped(t *testing.T) {
 	db := setupTestDBForSessionShares(t)
 	defer func() { _ = db.Close() }()
 
-	seedListedSession(t, db, "mine", "/proj-a", false)
-	seedListedSession(t, db, "theirs", "/proj-b", false)
-	_, _, err := service.UpsertSessionShare("mine", "my conversation", "codebuddy", 1, `{}`)
+	seedListedSessionTitled(t, db, "mine", "/proj-a", "my conversation", "codebuddy")
+	seedListedSessionTitled(t, db, "theirs", "/proj-b", "their conversation", "codebuddy")
+	_, _, err := service.UpsertSessionShare("mine", []int64{1})
 	require.NoError(t, err)
-	_, _, err = service.UpsertSessionShare("theirs", "their conversation", "codebuddy", 1, `{}`)
+	_, _, err = service.UpsertSessionShare("theirs", []int64{1})
 	require.NoError(t, err)
 
 	shares, err := service.ListSessionShares("/proj-a")
@@ -239,9 +281,9 @@ func TestSessionShares_ListIncludesArchivedWithFlag(t *testing.T) {
 
 	seedListedSession(t, db, "live", "/proj", false)
 	seedListedSession(t, db, "gone", "/proj", true)
-	_, _, err := service.UpsertSessionShare("live", "live one", "codebuddy", 1, `{}`)
+	_, _, err := service.UpsertSessionShare("live", []int64{1})
 	require.NoError(t, err)
-	_, _, err = service.UpsertSessionShare("gone", "archived one", "codebuddy", 1, `{}`)
+	_, _, err = service.UpsertSessionShare("gone", []int64{1})
 	require.NoError(t, err)
 
 	shares, err := service.ListSessionShares("/proj")
@@ -265,7 +307,7 @@ func TestSessionShares_ListDropsSharesWithoutASessionRow(t *testing.T) {
 
 	// Insert a share with no matching chat_sessions row (simulates a share that
 	// somehow outlived its session).
-	_, _, err := service.UpsertSessionShare("orphan", "orphan", "codebuddy", 1, `{}`)
+	_, _, err := service.UpsertSessionShare("orphan", []int64{1})
 	require.NoError(t, err)
 
 	shares, err := service.ListSessionShares("/proj")
@@ -279,6 +321,6 @@ func TestSessionShares_UpsertRequiresSessionID(t *testing.T) {
 	db := setupTestDBForSessionShares(t)
 	defer func() { _ = db.Close() }()
 
-	_, _, err := service.UpsertSessionShare("", "t", "codebuddy", 1, `{}`)
+	_, _, err := service.UpsertSessionShare("", []int64{1})
 	require.Error(t, err)
 }

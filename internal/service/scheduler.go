@@ -1221,10 +1221,10 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 			_ = UpdateExecutionStatus(sessionID, "cancelled")
 			s.runningExecutions.Delete(sessionID)
 			SetSessionRunning(sessionID, false, true)
+			// Stop the client's stream FIRST: this event is what closes the
+			// frontend's streaming bubble, and it must not wait behind the DB
+			// work below (a busy write can take up to the busy_timeout).
 			ws.EmitToSession(sessionID, ai.StreamEvent{Type: "cancelled"})
-			emitTaskEvent(fmt.Sprintf("%d", task.ID), "cancelled", fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
-			// Only update stats, not status — don't overwrite user-initiated pauses (ISS-013)
-			UpdateTaskStats(task)
 			// Persist any batched tool-call/context-state writes accumulated since
 			// the last flush window, so the cancelled task's final content survives,
 			// then finalize the orphaned streaming row since executor.Finalize() was
@@ -1232,7 +1232,17 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 			// — suppress the misleading "Finalization failed, AI response may be
 			// incomplete" warning block (the stream is truncated by intent, not by
 			// a DB failure).
+			//
+			// This MUST run before emitTaskEvent. That event's response preview and
+			// message id are read back out of the assistant row, and the row only
+			// carries `cancelled:true` (and stops being a streaming row, which the
+			// preview query filters out) once this has stamped it. Emitting first
+			// made the notification describe the interrupted reply as if it had
+			// finished normally.
 			abandonTurn(executor, eventCh, sessionID, cancelReasonUser)
+			emitTaskEvent(fmt.Sprintf("%d", task.ID), "cancelled", fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
+			// Only update stats, not status — don't overwrite user-initiated pauses (ISS-013)
+			UpdateTaskStats(task)
 			return
 		}
 

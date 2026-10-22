@@ -683,9 +683,12 @@ describe('ChatMessageList — CodeLinkPreview integration', () => {
     const btnSection = source.slice(source.indexOf("closest('.chat-file-open-btn')"))
     expect(btnSection.slice(0, 300)).toContain('codeLinkPreview.close()')
 
-    // Double click handler
-    const dblSection = source.slice(source.indexOf('handleDblClick(event'))
-    expect(dblSection.slice(0, 200)).toContain('codeLinkPreview.close()')
+    // Double-click / anchor navigation: the close now lives in the shared
+    // composable's beforeOpenFile hook (it runs before every openFilePath from
+    // a link). Pin that wiring — dropping the hook silently leaves the preview
+    // floating over the file viewer.
+    const interactionSection = source.slice(source.indexOf('useChatMessageInteractions({'))
+    expect(interactionSection.slice(0, 800)).toContain('beforeOpenFile: () => codeLinkPreview.close()')
   })
 
   it('closes preview on session switch', async () => {

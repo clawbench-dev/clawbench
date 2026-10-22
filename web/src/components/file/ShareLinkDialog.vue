@@ -1,12 +1,12 @@
 <template>
-  <ModalDialog :open="open" :title="t('shareDialog.title')" :z-index="2500" :max-width="520" @close="$emit('close')">
+  <ModalDialog :open="open" :title="t('shareDialog.title')" :z-index="2500" @close="$emit('close')">
     <div class="share-dialog-body">
       <template v-if="!file">
         <div class="share-dialog-hint">{{ t('shareDialog.noFile') }}</div>
       </template>
 
       <template v-else-if="busy">
-        <div class="share-dialog-hint">{{ t('common.loading') }}</div>
+        <PanelSkeleton class="share-dialog-skeleton" variant="text" :rows="4" :label="t('common.loading')" />
       </template>
 
       <template v-else-if="errorMsg && !linkUrl">
@@ -100,6 +100,7 @@ import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ExternalLink, Info, Link2, RefreshCw, Trash2 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast.ts'
@@ -235,6 +236,11 @@ async function revokeLink() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* First load: preview the summary blocks instead of a one-line "loading". */
+.share-dialog-skeleton {
+  padding: var(--space-2) 0;
 }
 
 </style>

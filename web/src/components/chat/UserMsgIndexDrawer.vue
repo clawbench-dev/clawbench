@@ -5,7 +5,7 @@
       <span class="bs-header-title">{{ t('chat.messageList.conversationIndexTitle') }}</span>
       <span class="panel-count count-badge count-badge--md">{{ isSearching ? `${filteredMessages.length}/${messages.length}` : messages.length }}</span>
     </template>
-    <LoadingIndicator v-if="loading" size="md" :label="t('chat.messageList.loadingMore')" />
+    <PanelSkeleton v-if="loading" variant="list" :rows="8" :meta="false" :label="t('chat.messageList.loadingMore')" />
     <LoadingIndicator v-else-if="jumping" size="md" :label="t('chat.messageList.loadingMore')" />
     <div v-else-if="messages.length === 0" class="panel-empty">
       <span class="panel-empty-icon-wrap">
@@ -58,6 +58,7 @@ import { useI18n } from 'vue-i18n'
 import { MessagesSquare } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
 import MessageIndexRow from '@/components/chat/MessageIndexRow.vue'
 import { matchIndexMsg } from '@/utils/userMsgIndexUtils.ts'

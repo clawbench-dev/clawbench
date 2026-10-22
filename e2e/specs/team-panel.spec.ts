@@ -1,4 +1,5 @@
 import { test, expect } from '../fixtures'
+import { NavigationPage } from '../pages/navigation.page'
 
 /**
  * E2E tests for the Agent Team roster panel (CodeBuddy Agent Teams).
@@ -197,7 +198,7 @@ test.describe('Agent Team Panel', () => {
     await expect(page.locator('.team-expanded__auto')).toHaveText('auto team')
   })
 
-  test('keeps the member agent type out of the row and in the tooltip', async ({ page }) => {
+  test('shows the member agent type inline when the row has room', async ({ page }) => {
     await injectTeam(page, {
       type: 'member_status_change',
       teamName: 'clawbench-probe',
@@ -215,11 +216,163 @@ test.describe('Agent Team Panel', () => {
     await expect(page.locator('.team-chip')).toBeVisible({ timeout: 5000 })
     await page.locator('.team-chip').click()
     await expect(page.locator('.team-member')).toBeVisible()
-    await expect(page.locator('.team-member__agent-type')).toHaveCount(0)
+    // A wide viewport has room, so the type is visible inline.
+    await expect(page.locator('.team-member__agent-type')).toBeVisible()
+    await expect(page.locator('.team-member__agent-type')).toHaveText('general-purpose')
+    // The tooltip keeps carrying it too, which is what remains on a narrow panel.
     const title = await page.locator('.team-member').first().getAttribute('title')
     expect(title).toContain('runs the probe')
     expect(title).toContain('type: general-purpose')
     expect(title).toContain('tokens: 100 in / 20 out')
     expect(title).toContain('context: 200000')
+  })
+
+  test('hides the agent type before the member name when the panel is narrow', async ({ page }) => {
+    // The name is the only thing distinguishing two rows; the type is metadata
+    // that is identical across an auto-team. So on a narrow panel the TYPE must
+    // go and the NAME must stay.
+    await page.setViewportSize({ width: 360, height: 780 })
+    // On a narrow screen the app is a drawer layout: the chat panel is only
+    // mounted while its tab is active, so the roster cannot be asserted before
+    // switching to it. Go through the page object: a bare
+    // `.filter({ visible: true })` latches onto the WIDE dock's chat toggle,
+    // which `v-show` hides one frame later, and the click then times out on
+    // "element is not visible" (measured on WebKit in CI).
+    await new NavigationPage(page).switchToChat()
+    await injectTeam(page, {
+      type: 'member_status_change',
+      teamName: 'clawbench-probe',
+      hasLiveMembers: true,
+      members: [
+        { name: 'probe-alpha', status: 'running', agentType: 'general-purpose' },
+        { name: 'probe-beta', status: 'completed', agentType: 'specialised-reviewer' },
+      ],
+    })
+    await expect(page.locator('.team-chip')).toBeVisible({ timeout: 5000 })
+    await page.locator('.team-chip').click()
+    await expect(page.locator('.team-member').first()).toBeVisible()
+
+    // Type hidden by the container query. It stays in the DOM (CSS, not v-if),
+    // so the assertion is on VISIBILITY — that is also what the user sees.
+    await expect(page.locator('.team-member__agent-type').first()).toBeHidden()
+    const name = page.locator('.team-member__name').first()
+    await expect(name).toBeVisible()
+    await expect(name).toHaveText('probe-alpha')
+    // The name keeps real width — it must not be the thing that collapsed.
+    const box = await name.boundingBox()
+    expect(box!.width).toBeGreaterThan(20)
+  })
+
+  test('member detail sheet is wide and renders the role as Markdown', async ({ page }) => {
+    // The sheet carries the member's full instructions, which are long-form
+    // Markdown. Two things must hold in a REAL browser (jsdom has no layout and
+    // no Markdown pipeline): the card is wider than the 624px default, and the
+    // text renders as Markdown rather than a literal dump.
+    const role = [
+      '你是 ClawBench 仓库的代码审查员。',
+      '',
+      '## 任务',
+      '审查媒体缩放相关的改动：`web/src/utils/inlineZoom.ts:181`',
+      '',
+      '| 严重度 | 位置 | 问题 |',
+      '|---|---|---|',
+      '| P1 | `inlineZoom.ts:181` | refitHook 早于 is-zooming 移除 |',
+      '',
+      '```go',
+      'func main() { fmt.Println("hi") }',
+      '```',
+    ].join('\n')
+
+    await injectTeam(page, {
+      type: 'member_status_change',
+      teamName: 'clawbench-review',
+      hasLiveMembers: true,
+      members: [{
+        name: 'review-media',
+        agentType: 'general-purpose',
+        color: 'blue',
+        status: 'completed',
+        description: role,
+        toolCallCount: 17,
+        tokenUsage: { inputTokens: 136675, outputTokens: 253 },
+      }],
+    })
+    await expect(page.locator('.team-chip')).toBeVisible({ timeout: 5000 })
+    await page.locator('.team-chip').click()
+    await page.locator('[data-action="team-member-detail"]').first().click()
+    await expect(page.locator('.team-member-detail__name')).toBeVisible()
+
+    const card = await page.evaluate(() => {
+      const panel = document.querySelector('.bs-panel') as HTMLElement
+      const md = document.querySelector('.team-member-detail__markdown') as HTMLElement
+      return {
+        panelWidth: Math.round(panel.getBoundingClientRect().width),
+        h2: md.querySelectorAll('h2').length,
+        table: md.querySelectorAll('table').length,
+        pre: md.querySelectorAll('pre').length,
+        // A plain-text dump would leave the raw '## ' in the rendered text.
+        literalHeading: (md.textContent || '').includes('## 任务'),
+        pathChips: md.querySelectorAll('.chat-file-path').length,
+      }
+    })
+
+    // Wider than modal-card.css's 624px default — that is what "wider" means.
+    expect(card.panelWidth).toBeGreaterThan(624)
+    expect(card.h2).toBe(1)
+    expect(card.table).toBe(1)
+    expect(card.pre).toBe(1)
+    expect(card.literalHeading).toBe(false)
+    expect(card.pathChips).toBeGreaterThan(0)
+  })
+
+  test('the role section title lines up with the fact labels above it', async ({ page }) => {
+    // The title used to start at the sheet edge (2px) while the fact labels sit
+    // 16px in, so it read as glued to the border. Alignment is a GLYPH position,
+    // not a box position: a block element's padding does not move its box, so
+    // this must be measured with a text Range — getBoundingClientRect on the
+    // element reports the box and would say they differ when they do not.
+    await injectTeam(page, {
+      type: 'member_status_change',
+      teamName: 'clawbench-review',
+      hasLiveMembers: true,
+      members: [{
+        name: 'review-media',
+        agentType: 'general-purpose',
+        color: 'blue',
+        status: 'completed',
+        description: '## 任务\n正文内容',
+        toolCallCount: 3,
+      }],
+    })
+    await expect(page.locator('.team-chip')).toBeVisible({ timeout: 5000 })
+    await page.locator('.team-chip').click()
+    await page.locator('[data-action="team-member-detail"]').first().click()
+    await expect(page.locator('.team-member-detail__name')).toBeVisible()
+
+    const pos = await page.evaluate(() => {
+      const textLeft = (el: Element) => {
+        const range = document.createRange()
+        range.selectNodeContents(el)
+        return range.getBoundingClientRect().left
+      }
+      const label = document.querySelector('.team-member-detail__fact-label')!
+      const title = document.querySelector('.team-member-detail__section-title')!
+      const body = document.querySelector('.team-member-detail__body')!
+      const md = document.querySelector('.team-member-detail__markdown')!
+      return {
+        labelLeft: textLeft(label),
+        titleLeft: textLeft(title),
+        bodyLeft: body.getBoundingClientRect().left,
+        mdLeft: md.getBoundingClientRect().left,
+      }
+    })
+
+    // Same glyph column as the labels above.
+    expect(Math.abs(pos.titleLeft - pos.labelLeft)).toBeLessThanOrEqual(1)
+    // No longer hugging the edge: the title sits ~9px in (body padding 2px +
+    // grid padding 8px, minus the glyph's own left bearing), versus 2px before.
+    expect(pos.titleLeft - pos.bodyLeft).toBeGreaterThan(6)
+    // The Markdown body stays flush — long instructions want the width.
+    expect(pos.mdLeft - pos.bodyLeft).toBeLessThan(pos.titleLeft - pos.bodyLeft)
   })
 })

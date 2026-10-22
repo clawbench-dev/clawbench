@@ -139,6 +139,20 @@ describe('settings row labels use the shared body size', () => {
     expect(label).toMatch(/font-size:\s*var\(--font-size-md\)/)
     expect(desc).toMatch(/font-size:\s*var\(--font-size-sm\)/)
   })
+
+  // An entry selector row (a select rendered as a tappable row) now carries its
+  // own description, and it must read as the same kind of text as a field row's
+  // description — not as a second label. Sizing it at md would put it on the
+  // label's step and make the row look like two competing titles.
+  it('sizes the entry selector description like a field description', () => {
+    const panel = readWebFile(`${SETTINGS_DIR}/SettingsGroupPanel.vue`)
+    const entryDesc = baseRule(panel, 'group-panel__entry-desc')
+    const fieldDesc = baseRule(readWebFile(`${SETTINGS_DIR}/SettingsItem.vue`), 'settings-item__desc')
+    expect(entryDesc, '.group-panel__entry-desc rule must exist').not.toBeNull()
+    expect(entryDesc).toMatch(/font-size:\s*var\(--font-size-sm\)/)
+    expect(fieldDesc).toMatch(/font-size:\s*var\(--font-size-sm\)/)
+    expect(entryDesc).toMatch(/color:\s*var\(--text-muted\)/)
+  })
 })
 
 describe('inputs are never smaller than their label', () => {

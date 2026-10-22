@@ -6,7 +6,7 @@
     </template>
 
     <div class="session-picker-list">
-      <LoadingIndicator v-if="loading" size="md" :label="t('common.loading')" />
+      <PanelSkeleton v-if="loading" variant="list" :rows="8" :meta="false" :label="t('common.loading')" />
 
       <template v-else>
         <div
@@ -98,6 +98,7 @@ import { MessageSquare, Plus, ArrowRight } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
 import { useAgents } from '@/composables/useAgents'

@@ -42,6 +42,16 @@
   animation: modal-scaleIn 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
+/* ModalDialog is a fixed-width card: every dialog uses the same 900px cap
+   regardless of content, so there is no per-call-site width prop. BottomSheet
+   keeps the narrower 624px default (plus its own --modal-max-width overrides)
+   because those are drawers that read better as a narrower column.
+   On narrow viewports this is inert — `.modal-dialog` is `width: 100%` inside
+   an overlay with `--space-8` side padding, so the cap never binds. */
+.modal-dialog {
+  --modal-max-width: 900px;
+}
+
 /* Dark themes: the black shadow falls on an almost-black scrim, so deepen it
    to keep the card visually lifted. */
 [data-theme-base="dark"] .modal-dialog,

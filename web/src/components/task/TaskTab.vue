@@ -27,8 +27,8 @@
     <!-- Last resort: the settings view was requested but the list has not been
          fetched yet, so the task's existence is still unknown. Showing the
          fallback here would be a lie; show a loader instead. -->
-    <div v-else class="task-pending">
-      <LoadingIndicator size="sm" :label="t('common.loading')" />
+    <div v-else class="task-pending task-pending--skeleton">
+      <PanelSkeleton variant="list" :rows="8" :meta="true" :label="t('common.loading')" />
     </div>
     <!-- Advisory hint shown before the manual create form. Teleports to <body>,
          so its position here is for readability only. -->
@@ -49,7 +49,7 @@ import TaskDetailPage from '@/components/task/TaskDetailPage.vue'
 import TaskExecDetail from '@/components/task/TaskExecDetail.vue'
 import TaskFormPage from '@/components/task/TaskFormPage.vue'
 import TaskCreateHintDialog from '@/components/task/TaskCreateHintDialog.vue'
-import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import { useTaskTab } from '@/composables/useTaskTab'
 import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
 import { isTaskCreateHintDismissed } from '@/composables/useTaskCreateHint'
@@ -161,6 +161,13 @@ function onTaskSelect(taskId: number) {
   height: 100%;
   color: var(--text-muted, #999);
   font-size: var(--font-size-lg);
+}
+
+/* The placeholder fills the panel and aligns with the real list rows. */
+.task-pending--skeleton {
+  align-items: stretch;
+  justify-content: flex-start;
+  padding: var(--space-4) 0;
 }
 
 .missing-icon {

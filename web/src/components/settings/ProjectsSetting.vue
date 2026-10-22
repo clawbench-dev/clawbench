@@ -12,7 +12,7 @@
       />
     </div>
 
-    <div v-if="loading" class="projects-empty">{{ t('common.loading') }}</div>
+    <PanelSkeleton v-if="loading" class="projects-skeleton" variant="list" :rows="6" :meta="false" :label="t('common.loading')" />
     <div v-else-if="filtered.length === 0" class="projects-empty">
       {{ query ? t('settings.items.projectListNoMatch', { query }) : t('settings.items.projectListEmpty') }}
     </div>
@@ -48,6 +48,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronRight, Search } from 'lucide-vue-next'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import { store } from '@/stores/app'
 import { useToast } from '@/composables/useToast'
 import { appLog } from '@/utils/appLog'
@@ -158,6 +159,10 @@ onMounted(load)
   color: var(--text-muted);
   font-size: var(--font-size-md);
   text-align: center;
+}
+
+.projects-skeleton {
+  padding: var(--space-2) 0;
 }
 
 .projects-list {

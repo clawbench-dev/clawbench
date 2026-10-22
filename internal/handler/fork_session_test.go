@@ -482,19 +482,90 @@ func TestServeForkSession_BeforeMessageID_StreamingMessage(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-// Forking a group must return 400 with a localized reason, not a 500 — the
-// frontend hides the entry, but an API caller still needs a clear refusal
-// (decision #74).
-func TestServeForkSession_RefusesGroup(t *testing.T) {
+// A group CAN be forked now (into a single chat by default). The result must
+// carry no copied rows (their agent_id values are member row ids that do not
+// exist in the new session) and must record the source as background instead.
+func TestServeForkSession_GroupSourceProducesBackground(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	groupID, _, err := service.CreateGroup(env.ProjectDir, "讨论组", "codebuddy", "codebuddy", "Host")
+	groupID, hostID, err := service.CreateGroup(env.ProjectDir, "讨论组", "codebuddy", "codebuddy", "Host")
+	require.NoError(t, err)
+	_, err = service.AddChatMessageWithAgent(env.ProjectDir, "codebuddy", groupID, "assistant", "群里的发言", nil, false, "", hostID)
 	require.NoError(t, err)
 
 	req := newRequest(t, http.MethodPost, "/api/ai/session/fork", map[string]string{"sessionId": groupID})
 	req = withProjectCookie(req, env.ProjectDir)
 	w := callHandler(ServeForkSession, req)
-	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
-	assert.Contains(t, w.Body.String(), "GroupNotForkable")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var resp struct {
+		SessionID  string `json:"sessionId"`
+		TargetKind string `json:"targetKind"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, service.ForkTargetChat, resp.TargetKind)
+
+	assert.Contains(t, service.GetForkContext(resp.SessionID), "群里的发言")
+	msgs, err := service.GetMessagesBySessionIDRaw(resp.SessionID)
+	require.NoError(t, err)
+	// Exactly one row: the injection notice. No source rows were copied.
+	require.Len(t, msgs, 1)
+	assert.Equal(t, "system", msgs[0].Role)
+	assert.Contains(t, msgs[0].Content, "讨论组")
+}
+
+// A group target is created with the chosen members and receives the source
+// history as background; the notice names the source session.
+func TestServeForkSession_GroupTarget(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	srcID, err := service.CreateSession(env.ProjectDir, "codebuddy", "源会话", "codebuddy", "", "default", "chat")
+	require.NoError(t, err)
+	_, err = service.AddChatMessageWithAgent(env.ProjectDir, "codebuddy", srcID, "user", "源会话里的提问", nil, false, "", "")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPost, "/api/ai/session/fork", map[string]any{
+		"sessionId":      srcID,
+		"targetKind":     "group",
+		"hostAgentId":    "codebuddy",
+		"memberAgentIds": []string{"codebuddy"},
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeForkSession, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var resp struct {
+		SessionID  string `json:"sessionId"`
+		TargetKind string `json:"targetKind"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, service.ForkTargetGroup, resp.TargetKind)
+	assert.Equal(t, "group", service.GetSessionType(resp.SessionID))
+	assert.Contains(t, service.GetForkContext(resp.SessionID), "源会话里的提问")
+
+	msgs, err := service.GetMessagesBySessionIDRaw(resp.SessionID)
+	require.NoError(t, err)
+	require.Len(t, msgs, 1, "only the injection notice")
+	assert.Equal(t, "system", msgs[0].Role)
+	// Locale-independent assertion: the notice names the source session. The
+	// exact wording is i18n-driven (English by default in tests).
+	assert.Contains(t, msgs[0].Content, "源会话")
+}
+
+// An unknown targetKind is rejected rather than silently falling back.
+func TestServeForkSession_InvalidTargetKind(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	srcID, err := service.CreateSession(env.ProjectDir, "codebuddy", "源会话", "codebuddy", "", "default", "chat")
+	require.NoError(t, err)
+	req := newRequest(t, http.MethodPost, "/api/ai/session/fork", map[string]any{
+		"sessionId":  srcID,
+		"targetKind": "team",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeForkSession, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }

@@ -306,3 +306,22 @@ describe('handleBodyInput', () => {
     expect(updateAskSubmitState).not.toHaveBeenCalled()
   })
 })
+
+// The public share page renders this drawer (the file-changes banner is local
+// state, so it opens fine), but "open in file manager" routes through
+// openFilePath, which the share page short-circuits — the button would look
+// identical to the app's and do nothing. Assert BOTH directions so the guard
+// cannot be satisfied by accidentally never rendering the header.
+describe('FileDiffsDrawer readOnly', () => {
+  it('hides the open-in-file-manager button but keeps the path', () => {
+    const wrapper = mountDrawer({ readOnly: true })
+    expect(wrapper.find('.fd-file-info').exists()).toBe(true)
+    expect(wrapper.find('.fd-file-info-path').exists()).toBe(true)
+    expect(wrapper.find('.fd-file-info-open').exists()).toBe(false)
+  })
+
+  it('keeps the button in a normal chat', () => {
+    const wrapper = mountDrawer()
+    expect(wrapper.find('.fd-file-info-open').exists()).toBe(true)
+  })
+})

@@ -95,6 +95,21 @@ const activeTransport = ref<TunnelTransport>('')
 // These show a yellow blinking dot instead of green/grey.
 const connectingPorts = ref(new Set<number>())
 
+// Pending bind watchdogs, keyed by localPort. Android's addForwardedPort is a
+// synchronous void whose verdict arrives later through the
+// `clawbench-port-forward-result` CustomEvent — but the native side does not
+// always send one. When the service cannot be started at all (Android 12+
+// rejects startForegroundService from the background, the Activity is gone, or
+// the bind never reaches notifyPortForwardResult) nothing clears the pending
+// flag, so the port spins "connecting" forever with no error and no retry.
+// A watchdog turns that silence into a visible, actionable failure.
+const pendingBindTimers = new Map<number, ReturnType<typeof setTimeout>>()
+
+// Covers the worst honest path: 15s SSH connect + 2s post-bind reachability
+// retry + the round-trip to the WebView. Anything slower than this is stuck,
+// not slow.
+const PENDING_BIND_TIMEOUT_MS = 25_000
+
 // Whether the LOCAL listener for each localPort is actually accepting
 // connections on this device. The server-side `active` flag probes the TARGET
 // port on the server, so it stays green even when the local tunnel is dead —
@@ -267,6 +282,9 @@ export function usePortForward() {
     ) => {
       const requested = requestedLocalPort ?? localPort
       diagLog('PortForward', `native result: localPort=${localPort} requested=${requested} success=${success} reason=${reason ?? ''}`)
+      // The native verdict landed — the watchdog has nothing left to decide.
+      clearPendingBindTimer(requested)
+      clearPendingBindTimer(localPort)
       // The listener may have moved to a free port when the requested one was
       // occupied. Re-key the server so DELETE/PUT/enable and the UI URL follow
       // it, exactly like the desktop path does from the bind result.
@@ -303,6 +321,8 @@ export function usePortForward() {
   if (!onPortRebound) {
     onPortRebound = (requested: number, actual: number) => {
       diagLog('PortForward', `port rebound: ${requested} -> ${actual}`)
+      clearPendingBindTimer(requested)
+      clearPendingBindTimer(actual)
       void (async () => {
         if (await rebindServerPort(requested, actual)) {
           if (connectingPorts.value.delete(requested)) {
@@ -436,13 +456,29 @@ export function usePortForward() {
     const native = getNative()
     const isReverse = direction === 'reverse'
     const method = isReverse ? native?.addReverseForwardedPort : native?.addForwardedPort
-    if (!method) return localPort
+    if (!method) {
+      if (isReverse) {
+        // A host that predates ssh -R cannot publish reverse mappings at all.
+        // That is a capability gap, not a failure: the panel shows the manual
+        // `ssh -R` command instead, and a toast on every sync would be noise.
+        return localPort
+      }
+      // A missing FORWARD method used to be reported as SUCCESS (`return
+      // localPort`), so a host that predates the forward bridge — or one whose
+      // @JavascriptInterface methods are invisible — left a mapping that looked
+      // healthy while nothing listened. Report it like any other bind failure
+      // and name the missing method, so the cause is visible in client.log.
+      appLog.w(TAG, `native bridge has no addForwardedPort — cannot bind local port ${localPort}`)
+      reportForwardFailure(localPort, 'bridge')
+      return null
+    }
     // For a reverse mapping the roles flip: `localPort` is the server-side bind
     // port and `targetPort` the local service to relay to.
     let raw: unknown
     try {
       raw = await Promise.resolve(method.call(native, localPort, targetPort, host || ''))
-    } catch {
+    } catch (e) {
+      appLog.w(TAG, `native bind call threw for local port ${localPort}`, e)
       reportForwardFailure(localPort)
       return null
     }
@@ -454,6 +490,8 @@ export function usePortForward() {
     }
     if (outcome.kind === 'pending') {
       // Android: the CustomEvent will clear the indicator and re-key if needed.
+      // Arm a watchdog in case it never arrives (see pendingBindTimers).
+      armPendingBindTimer(localPort)
       return localPort
     }
     if (outcome.port !== localPort) {
@@ -461,6 +499,7 @@ export function usePortForward() {
       // enable and the UI URL follow it.
       const rebound = await rebindServerPort(localPort, outcome.port)
       if (rebound) {
+        clearPendingBindTimer(localPort)
         connectingPorts.value.delete(localPort)
         connectingPorts.value.add(outcome.port)
         connectingPorts.value = new Set(connectingPorts.value)
@@ -475,6 +514,7 @@ export function usePortForward() {
       return null
     }
     // Bound on the requested port: mirror onPortForwardResult.
+    clearPendingBindTimer(localPort)
     if (connectingPorts.value.delete(localPort)) {
       connectingPorts.value = new Set(connectingPorts.value)
     }
@@ -531,20 +571,83 @@ export function usePortForward() {
     Promise.resolve(method.call(native, localPort)).catch(() => {})
   }
 
+  /** Cancel a pending-bind watchdog (the verdict arrived, one way or another). */
+  function clearPendingBindTimer(localPort: number) {
+    const timer = pendingBindTimers.get(localPort)
+    if (timer !== undefined) {
+      clearTimeout(timer)
+      pendingBindTimers.delete(localPort)
+    }
+  }
+
+  /**
+   * Turn a silent pending bind into a reported failure.
+   *
+   * Only fires when nothing else settled the port: `connectingPorts` is still
+   * waiting AND the local listener is not answering. Both halves matter — the
+   * native success event may have been dropped while the listener came up
+   * anyway, in which case reporting a failure would be a lie, and a port the
+   * user removed meanwhile must not resurface as an error toast.
+   *
+   * Probes the listener directly instead of reading `localReachable`: that map
+   * is only refreshed by loadPorts(), so at this point it may still hold the
+   * pre-bind result (or nothing at all) and would report a healthy listener as
+   * dead.
+   */
+  function armPendingBindTimer(localPort: number) {
+    clearPendingBindTimer(localPort)
+    pendingBindTimers.set(
+      localPort,
+      setTimeout(async () => {
+        pendingBindTimers.delete(localPort)
+        if (!connectingPorts.value.has(localPort)) return
+        const native = getNative()
+        let reachable = localReachable.value.get(localPort) === true
+        if (typeof native?.testPortReachable === 'function') {
+          try {
+            reachable = (await native.testPortReachable(localPort)) === true
+          } catch {
+            // Probe failed — fall back to the cached answer.
+          }
+        }
+        // Re-check after the await: the native verdict may have landed, or the
+        // user may have removed the mapping, while the probe was in flight.
+        if (!connectingPorts.value.has(localPort)) return
+        if (reachable) {
+          // Listener is up; only the event was lost. Clear the indicator.
+          connectingPorts.value.delete(localPort)
+          connectingPorts.value = new Set(connectingPorts.value)
+          return
+        }
+        appLog.w(
+          TAG,
+          `bind for local port ${localPort} produced no native verdict within ${PENDING_BIND_TIMEOUT_MS}ms`,
+        )
+        reportForwardFailure(localPort)
+      }, PENDING_BIND_TIMEOUT_MS),
+    )
+  }
+
   /**
    * Clear the pending indicator and tell the user the forward could not be set
    * up. `reason === 'conflict'` means the LOCAL port was occupied (retry on
-   * another port); anything else is the tunnel/target being unreachable — which
-   * is what the original copy was written for and must not be shown for a
-   * client-side conflict.
+   * another port); `'bridge'` means the native host has no forward method at
+   * all (old or broken shell — retrying will not help); anything else is the
+   * tunnel/target being unreachable — which is what the original copy was
+   * written for and must not be shown for a client-side conflict.
    */
-  function reportForwardFailure(localPort: number, reason?: 'conflict' | 'unreachable') {
+  function reportForwardFailure(localPort: number, reason?: 'conflict' | 'bridge' | 'unreachable') {
+    clearPendingBindTimer(localPort)
     if (connectingPorts.value.delete(localPort)) {
       connectingPorts.value = new Set(connectingPorts.value)
     }
     const toast = useToast()
     if (reason === 'conflict') {
       toast.show(gt('portForward.portConflict'), { icon: 'blocked', type: 'error' })
+      return
+    }
+    if (reason === 'bridge') {
+      toast.show(gt('portForward.bridgeUnsupported'), { icon: 'blocked', type: 'error' })
       return
     }
     toast.show(gt('portForward.portUnreachable'), { icon: 'blocked', type: 'error' })
@@ -605,6 +708,10 @@ export function usePortForward() {
     // right mapping (forward and reverse have separate native maps).
     const existing = ports.value.find(p => p.localPort === localPort)
     await apiDelete(`/api/proxy/ports?port=${localPort}`)
+    // A user-removed port must not resurface as a watchdog error toast.
+    clearPendingBindTimer(localPort)
+    connectingPorts.value.delete(localPort)
+    connectingPorts.value = new Set(connectingPorts.value)
     if (isAppMode.value) {
       removeNativeForward(localPort, existing?.direction)
     }
@@ -701,16 +808,13 @@ export function usePortForward() {
     }
 
     for (const p of enabledPorts) {
+      // Host predates reverse forwarding — nothing to bind natively, and that is
+      // not a failure (the manual ssh -R command is shown instead). A missing
+      // FORWARD method is a failure and is reported by addNativeForward.
+      if (isReversePort(p) && !native.addReverseForwardedPort) continue
       // Sequential: the native layer shares one SSH tunnel, and concurrent
       // connects used to cancel each other (each add cancelled the in-flight
       // one), leaving every mapping dead. Awaiting keeps them strictly ordered.
-      const method = isReversePort(p) ? native.addReverseForwardedPort : native.addForwardedPort
-      if (!method) {
-        // Host predates reverse forwarding — nothing to bind natively.
-        if (isReversePort(p)) continue
-        reportForwardFailure(p.localPort)
-        continue
-      }
       // Route through the shared helper so a reconciliation that lands on a
       // different free port re-keys the server exactly like a fresh add does.
       await addNativeForward(p.localPort, p.port, p.host || '', p.direction)

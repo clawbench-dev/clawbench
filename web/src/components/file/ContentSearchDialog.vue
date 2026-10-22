@@ -133,7 +133,7 @@
                large tree the first hit can take a while, and waiting for one
                just to be able to abort is exactly when you want out. -->
           <div class="cs-loading">
-            <LoadingIndicator size="md" :label="t('file.search.searching')" />
+            <PanelSkeleton class="cs-loading-skeleton" variant="list" :rows="8" :meta="false" :label="t('file.search.searching')" />
             <button class="cs-stop-btn" :title="t('file.contentSearch.stop')" @click="search.stopSearch()">
               <Square :size="12" fill="currentColor" />
               <span>{{ t('file.contentSearch.stop') }}</span>
@@ -235,6 +235,7 @@ import BottomSheet from '@/components/common/BottomSheet.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import { useFileContentSearch } from '@/composables/useFileContentSearch'
 import { useListNav } from '@/composables/useListNav'
 import { useTabDrawer } from '@/composables/useTabDrawer'
@@ -693,6 +694,13 @@ defineExpose({
   align-items: center;
   gap: var(--space-5);
   padding: 40px var(--space-6);
+}
+
+/* The skeleton spans the result column and left-aligns like real hits; only the
+   stop button below stays centred. */
+.cs-loading-skeleton {
+  width: 100%;
+  align-self: stretch;
 }
 
 /* ── Grouped results ── */

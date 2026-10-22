@@ -48,6 +48,12 @@ var allowedCJKFiles = map[string]string{
 	// is not rendered to any user.
 	"internal/service/group_prompt.go": "group-chat AI system prompts (host/member/free)",
 	"internal/service/group_inject.go": "AI context-injection framing ([系统]/主持人… lines)",
+	// Fork background rendering: the group timeline is replayed to the model as
+	// prose. Its literals are AI-facing — the speaker fallback label for an
+	// unresolvable member row id ("成员"), the ask-question marker ("[提问]"),
+	// and the "[提问]" prefix — none of them reach a human: the user-facing
+	// "history injected" notice is an i18n key (ForkContextInjectedChat/Group).
+	"internal/service/fork_context.go": "AI-facing fork background (speaker fallback + ask-question marker)",
 	"internal/summarize/task.go":       "AI summarization prompt",
 	"internal/summarize/recommend.go":  "AI recommendation prompt + its quick-command header",
 	"internal/summarize/title.go":      "AI title-output prefix stripping (标题：)",

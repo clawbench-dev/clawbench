@@ -230,16 +230,13 @@ import UserMsgIndexDrawer from './UserMsgIndexDrawer.vue'
 import { GROUP_USER_TARGET_NAME } from '@/utils/groupRouting.ts'
 import TableRowModal from '@/components/common/TableRowModal.vue'
 import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'
-import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
 import { useCodeLinkPreview, handleVerifiedFilePathClick } from '@/composables/useCodeLinkPreview.ts'
-import { useTextSelectionActive } from '@/composables/useTextSelection.ts'
+import { useChatMessageInteractions } from '@/composables/useChatMessageInteractions.ts'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
-import { handleCodeBlockClick, handleTableBlockClick, closeAllTableBlockMenus } from '@/composables/useCodeBlockHeader.ts'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
 import { useDialog } from '@/composables/useDialog'
 import { useUserMsgIndex } from '@/composables/useUserMsgIndex.ts'
 import { anchorCount, anchorPending, anchorKeyPending, messageAnchorKey } from '@/utils/btwAnchors.ts'
-import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
 import { store } from '@/stores/app.ts'
 import { computeRemainingCount } from '@/utils/messageListUtils.ts'
 import { StreamFrameScheduler } from '@/utils/streamFrameScheduler'
@@ -303,7 +300,6 @@ const props = defineProps({
 const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'quote-message', 'file-open', 'load-more', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'fork-from-message', 'rewind-from-message', 'reset-session', 'open-btw', 'open-agent-config'])
 
 const messagesRef = ref(null)
-const { handleDblClick } = useDoubleClickCopy()
 const { openFilePath, readLineTargetFromEl } = useFilePathAnnotation()
 const dialog = useDialog()
 const { handleLocalhostUrlClick } = useLocalhostUrlClickHandler()
@@ -368,8 +364,6 @@ function anchorKeyFor(msg) {
 function anchorPendingFor(msg) {
   return anchorPending(props.btwAnchors, msg)
 }
-
-const { tableRowModal, closeTableRowModal, tableRowPrev, tableRowNext, handleTableRowClick, onTableMouseDown, onTableTouchStart } = useTableRowExpand()
 
 // How many older messages are not yet loaded
 const remainingCount = computed(() => {
@@ -456,12 +450,25 @@ watch(() => props.hasMore, (hasMore, prevHasMore) => {
 const chatUI = inject('chatUI', {})
 const hotSwitchProject = inject('hotSwitchProject', null)
 
-async function handleChatClick(event) {
-  // 0. Code block header buttons (copy/wrap)
-  if (handleCodeBlockClick(event)) return
+// 容器级纯客户端交互（复制/换行按钮、表格行展开、双击复制）。与分享页共用同一
+// 份实现——分享页没有文件查看器，故不传 onOpenFile；这里把文件打开链路接回去。
+const {
+  tableRowModal, closeTableRowModal, tableRowPrev, tableRowNext,
+  handleBlockHeaderClick, handleTableRowClick, handleDblClick,
+  onContainerMouseDown: recordTableDragStart, onContainerTouchStart: recordTableTouchStart, textSelecting,
+} = useChatMessageInteractions({
+  onOpenFile: async (href, lineStart, lineEnd, lineRanges) => {
+    const ok = lineRanges
+      ? await openFilePath(href, lineStart, lineEnd, 'chat', lineRanges)
+      : await openFilePath(href, lineStart, lineEnd, 'chat')
+    if (ok) chatUI.navigateToFileViewer?.()
+  },
+  beforeOpenFile: () => codeLinkPreview.close(),
+})
 
-  // 0.5. Table block header buttons (copy/wrap)
-  if (handleTableBlockClick(event)) return
+async function handleChatClick(event) {
+  // 0. Code block / table block header buttons (copy/wrap)
+  if (handleBlockHeaderClick(event)) return
 
   // 1. Handle localhost URL clicks (icon button or <a> tag) — App mode only
   if (handleLocalhostUrlClick(event)) return
@@ -546,14 +553,7 @@ async function handleChatClick(event) {
     return
   }
 
-  handleDblClick(event, async (href, lineStart, lineEnd, lineRanges) => {
-    event.stopPropagation()
-    codeLinkPreview.close()
-    const ok = lineRanges
-      ? await openFilePath(href, lineStart, lineEnd, 'chat', lineRanges)
-      : await openFilePath(href, lineStart, lineEnd, 'chat')
-    if (ok) chatUI.navigateToFileViewer?.()
-  })
+  handleDblClick(event)
 }
 
 let loadMorePending = false
@@ -597,9 +597,6 @@ let scrollStopTimer = null
 // bottom — after which every follow pin was rejected and the content kept
 // growing below the viewport.
 let userLeftBottom = false
-
-// Hide the floating scroll buttons while the user is selecting text.
-const { active: textSelecting } = useTextSelectionActive()
 
 // Whether user has scrolled up/down enough to show floating scroll buttons
 // Only one group shows at a time — whichever direction the user last scrolled toward
@@ -773,7 +770,7 @@ function handleScroll() {
 // scrolling. See the guard test that pins this contract.
 function onScrollAndTableTouchStart(e) {
   userTouching = true
-  onTableTouchStart(e)  // preserve table-row-expand handling
+  recordTableTouchStart(e)  // preserve table-row-expand handling
 }
 
 // PC: a mouse-wheel scroll is a deliberate user scroll just like a touch drag.
@@ -799,7 +796,7 @@ function onWheelScroll() {
 // later content-growth scroll was misread as a user gesture.)
 function onContainerMouseDown(e) {
   mouseDownActive = true
-  onTableMouseDown(e)  // preserve table-row-expand handling
+  recordTableDragStart(e)  // preserve table-row-expand handling
 }
 
 function onDocumentMouseUp() {
@@ -844,10 +841,9 @@ function hideScrollFab() {
 }
 
 function onDocumentClick(e) {
-  // Close any open table block copy menus when clicking elsewhere
-  if (!e.target.closest('.table-block-copy-menu') && !e.target.closest('.table-block-copy-btn')) {
-    closeAllTableBlockMenus()
-  }
+  // Table copy menus are dismissed by the shared interaction composable (it owns
+  // that document listener so every host gets it); this handler only owns the
+  // scroll FABs.
   if (!scrollFabRef.value) return
   if (!scrollFabRef.value.contains(e.target)) {
     hideScrollFab()

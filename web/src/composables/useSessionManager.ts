@@ -8,6 +8,7 @@ import type { ChatMessageAction } from '@/utils/chatStreamUtils.ts'
 import { isSubagentToolName } from '@/utils/chatStreamUtils.ts'
 import { clearAskStatesByPrefix, askSessionPrefix } from '@/utils/askQuestionState.ts'
 import { addQueued, clearQueue, getQueue, removeQueued, removeQueuedMany } from '@/composables/useMessageQueue.ts'
+import type { ForkTarget } from '@/composables/useChatSession.ts'
 
 /**
  * Unified session manager — ensures consistent cleanup around session operations.
@@ -32,7 +33,7 @@ export interface UseSessionManagerOptions {
   archiveSessionCore: (sessionId: string, backend?: string) => Promise<void>
   destroySessionCore: (sessionId: string) => Promise<void>
   continueFromExecutionCore: (taskId: number, execId: number, switchTabFn: (tab: string) => void) => Promise<boolean>
-  forkSessionCore: (sessionId: string, beforeMessageId?: number, agentId?: string) => Promise<boolean>
+  forkSessionCore: (sessionId: string, beforeMessageId?: number, target?: ForkTarget) => Promise<boolean>
   rewindSessionCore: (sessionId: string, beforeMessageId: number) => Promise<string>
   checkContinueSessionCore: (taskId: number, execId: number) => Promise<{ exists: boolean; sessionId: string }>
 
@@ -470,12 +471,12 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     return await continueFromExecutionCore(taskId, execId, switchTabFn)
   }
 
-  /** Fork the current session — create a new session with copied messages. */
-  async function forkSession(sessionId: string, beforeMessageId?: number, agentId?: string): Promise<boolean> {
+  /** Fork the current session into a single chat or a new group. */
+  async function forkSession(sessionId: string, beforeMessageId?: number, target?: ForkTarget): Promise<boolean> {
     cleanupActiveStream()
     _clearInputState()
     clearPendingMessages()
-    return await forkSessionCore(sessionId, beforeMessageId, agentId)
+    return await forkSessionCore(sessionId, beforeMessageId, target)
   }
 
   /** Rewind/回溯 the current session in place — truncate history after the

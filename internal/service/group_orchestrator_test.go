@@ -1728,3 +1728,46 @@ func TestGroupOrchestrator_UserPrivateNoteNotInjectedToUser(t *testing.T) {
 		t.Fatalf("a self-directed user note must not be stored, got %+v", left)
 	}
 }
+
+// End-to-end through the production turn entry: a user message whose only
+// payload is an image (empty text + one attachment) must reach the HOST's prompt
+// as an attachment summary. Otherwise the host has nothing to route from and the
+// whole turn looks like the user sent nothing.
+func TestGroupOrchestrator_ImageOnlyUserMessageReachesHostPrompt(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-image-only"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	if _, err := AddGroupMember(project, groupID, "claude", "agent-a", "A"); err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+
+	script := map[string][]string{
+		hostID: {`<clawbench-group-end/> 收到图片。`},
+	}
+	base, _ := newScriptedRunner(t, groupID, project, script)
+	var hostPrompt string
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		if turn.MemberRowID == hostID {
+			hostPrompt = turn.Prompt
+		}
+		return base(ctx, gid, turn)
+	}
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+
+	files := []model.FileEntry{{Path: "/tmp/gorch-image-only/shot.png"}}
+	_ = runGroupTurnForTest(t, o, project, "", files)
+
+	if hostPrompt == "" {
+		t.Fatal("precondition: the host must have taken a turn")
+	}
+	if !strings.Contains(hostPrompt, "User uploaded") || !strings.Contains(hostPrompt, "shot.png") {
+		t.Fatalf("an image-only user message must reach the host prompt: %q", hostPrompt)
+	}
+}
