@@ -142,6 +142,44 @@ describe('useUsageMeter', () => {
     expect(meter.meterState.value).toBe('over')
   })
 
+  // Turning the quota to 0 must clear the readout immediately. Without this the
+  // capsule keeps showing the old quota until the user clicks it — the reported
+  // bug. The frame carries no numbers on purpose, so the whole state is dropped
+  // rather than patched.
+  it('clears the readout when the server reports the rule was turned off', async () => {
+    const mod = await load()
+    const meter = mod.useUsageMeter()
+    mockedGet.mockResolvedValue(ENABLED)
+    await meter.refresh()
+    expect(meter.status.value.enabled).toBe(true)
+    expect(meter.status.value.quota).toBe(20)
+
+    await vi.waitFor(() => { expect(eventHandlers.length).toBeGreaterThan(0) })
+    for (const handler of eventHandlers) handler('usage_meter_tick', { enabled: false })
+
+    expect(meter.status.value.enabled).toBe(false)
+    // The quota is gone entirely, not zeroed: EMPTY has no quota field, and a
+    // lingering 0 would still render as "/ 0" if a consumer checked the number
+    // instead of `enabled`.
+    expect(meter.status.value.quota).toBeUndefined()
+    expect(meter.status.value.actual).toBe(0)
+    expect(meter.meterState.value).toBe('off')
+  })
+
+  // An older frame that omits `enabled` must not resurrect a disabled meter.
+  it('does not turn the meter back on from a frame without an enabled flag', async () => {
+    const mod = await load()
+    const meter = mod.useUsageMeter()
+    mockedGet.mockResolvedValueOnce({ enabled: false, dayInCycle: 0, actual: 0, expected: 0, remainingDays: 0, projectedExhaustDay: 0 })
+    await meter.refresh()
+    expect(meter.status.value.enabled).toBe(false)
+
+    await vi.waitFor(() => { expect(eventHandlers.length).toBeGreaterThan(0) })
+    for (const handler of eventHandlers) handler('usage_meter_tick', { actual: 7, expected: 0, quota: 0 })
+
+    expect(meter.status.value.enabled).toBe(false)
+  })
+
   it('bumps openRequest so the capsule can open on a notification tap', async () => {
     const mod = await load()
     const meter = mod.useUsageMeter()

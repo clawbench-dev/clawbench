@@ -146,12 +146,26 @@ function fetchStatus(): Promise<void> {
  */
 function applyServerUpdate(data: Record<string, unknown> | undefined): void {
   if (!data) return
+
+  // A disabled frame means the rule was turned off. It carries no numbers on
+  // purpose, so the whole readout must be dropped — patching only the fields
+  // present would leave the previous quota and actual in place, and the capsule
+  // would keep showing a budget that no longer exists.
+  if (data.enabled === false) {
+    status.value = { ...EMPTY }
+    loaded.value = true
+    return
+  }
+
   const quota = typeof data.quota === 'number' ? data.quota : status.value.quota
   const actual = typeof data.actual === 'number' ? data.actual : status.value.actual
   const expected = typeof data.expected === 'number' ? data.expected : status.value.expected
   status.value = {
     ...status.value,
-    enabled: true,
+    // Only a frame that explicitly reports `enabled` can turn the meter on; an
+    // older frame that omits the field must not silently resurrect a disabled
+    // meter, so fall back to the current value rather than hard-coding true.
+    enabled: typeof data.enabled === 'boolean' ? data.enabled : status.value.enabled,
     quota,
     actual,
     expected,

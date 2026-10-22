@@ -152,13 +152,11 @@ func (w *UsageMeterWorker) run(stopCh <-chan struct{}, doneCh chan struct{}) {
 }
 
 func (w *UsageMeterWorker) tick() {
-	// Cheap pre-check: with the feature off (the default) this avoids the
-	// aggregate query entirely on every tick.
-	if !usageMeterNeedsCheck() {
-		return
-	}
-	// A background context with a timeout: a wedged aggregate query must not
-	// block the next tick forever.
+	// Cheap pre-check. With a rule, every tick runs the cycle aggregate (the
+	// capsule must track usage as it lands). Without one there is no
+	// notification to send and no aggregate to run — but the clients still have
+	// to be TOLD the meter is off, which is what the disabled broadcast does.
+	// It is idempotent, so repeated ticks send nothing after the first.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	w.checkFn(ctx)
