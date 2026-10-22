@@ -66,7 +66,18 @@ func buildInjectionText(msgs []model.ChatMessage, cursor int64, self string, nam
 		}
 		text := strings.TrimSpace(stripAskQuestionTags(ExtractPlainText(m.Content)))
 		questions := askQuestionTexts(m.Content)
-		if text == "" && len(questions) == 0 {
+		// A message whose ONLY payload is an attachment (the user dropped an
+		// image/file and typed nothing) has no text and no question, but it is
+		// NOT empty: renderTimelineLine turns m.Files into the "[User uploaded
+		// ...]" summary the member is supposed to discuss. Skipping on
+		// "text and questions are both empty" dropped those messages entirely,
+		// so the group behaved as if the user had sent nothing — the host had
+		// nothing to route and members never learned an image existed.
+		//
+		// The gate is len(m.Files) rather than HasAttachmentEntries on purpose:
+		// the latter excludes quotes, and a quote-only message is likewise a
+		// complete message whose payload is rendered below.
+		if text == "" && len(questions) == 0 && len(m.Files) == 0 {
 			continue
 		}
 		if line := renderTimelineLine(m, text, questions, names, leftIDs); line != "" {
