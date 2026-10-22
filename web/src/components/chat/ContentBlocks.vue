@@ -917,18 +917,51 @@ function parseAskQuestionsFromText(text: unknown): Array<Record<string, unknown>
   return questions
 }
 
+/** Identity of one question, used to recognise the SAME card in two shapes. */
+function askQuestionSignature(q: Record<string, unknown>): string {
+  const options = Array.isArray(q.options)
+    ? (q.options as Array<Record<string, unknown>>).map(o => String(o?.label ?? '')).join('\u0001')
+    : ''
+  return `${q.header ?? ''}\u0000${q.question ?? ''}\u0000${options}`
+}
+
+/** Signatures of every question carried by a CONVERTED AskUserQuestion tool
+ *  block in this message (the persisted shape the backend produces at
+ *  Finalize). */
+const convertedAskSignatures = computed(() => {
+  const out = new Set<string>()
+  for (const b of props.blocks || []) {
+    if (b?.type !== 'tool_use' || !isAskQuestion(b.name || '')) continue
+    for (const q of extractAskQuestions(b.input)) out.add(askQuestionSignature(q))
+  }
+  return out
+})
+
 /**
  * Questions a TEXT block renders as a card, from either source: the shared
  * side table (when the full pipeline has run for this block) or the block's own
  * text. Template-facing — a single call site keeps the two sources in sync.
+ *
+ * Questions already present in a converted AskUserQuestion tool block of the
+ * same message are dropped. Finalize converts a `<clawbench-ask-question>` text
+ * block into that tool block, but the live bubble keeps the ORIGINAL text (the
+ * converted blocks are never re-sent over the WS stream) — and `mergeStreamBlocks`
+ * then appends the DB's tool block next to it. Both shapes describe the same
+ * card, so the merged card listed every question twice until the next
+ * loadHistory replaced the live bubble with the DB row. Filtering here keeps the
+ * card a function of the blocks alone, so no reload is needed to dedupe.
  */
 function textAskQuestions(bi: number, block: any): Array<Record<string, unknown>> {
   const parsed = props.blockAskQuestions[blockTaskKey(bi)]
+  let questions: Array<Record<string, unknown>> = []
   if (parsed && Array.isArray(parsed.questions)) {
-    const questions = extractAskQuestions(parsed)
-    if (questions.length > 0) return questions
+    questions = extractAskQuestions(parsed)
   }
-  return parseAskQuestionsFromText(block?.text)
+  if (questions.length === 0) questions = parseAskQuestionsFromText(block?.text)
+  if (questions.length === 0) return questions
+  const converted = convertedAskSignatures.value
+  if (converted.size === 0) return questions
+  return questions.filter(q => !converted.has(askQuestionSignature(q)))
 }
 
 // ── Multi ask-card merging ──
@@ -1062,6 +1095,13 @@ const summaryWarnings = computed(() => props.summaryCards?.warnings || [])
 // entries whose input carries a questions array (AskUserQuestion tool calls).
 // When a message has more than one such card, merge them into ONE card so the
 // user can answer every question with a single submit (mirrors block mode).
+//
+// A question present in BOTH sources is one card described twice: the backend
+// converts a text card into an AskUserQuestion tool block at Finalize, and a
+// summary written from the pre-conversion blocks keeps the text-card copy
+// alongside it. Both sources stay counted (that is what suppresses the separate
+// tool card in favour of the merged one), but the merged body lists each
+// question once — the tool block's copy wins, being the durable form.
 const summaryAskSources = computed<Array<Record<string, unknown>>>(() => {
   const sources: Array<Record<string, unknown>> = []
   if (summaryAskQuestions.value.length > 0) {
@@ -1077,8 +1117,14 @@ const summaryAskSources = computed<Array<Record<string, unknown>>>(() => {
 const shouldMergeSummaryAskCards = computed(() => summaryAskSources.value.length > 1)
 const mergedSummaryAskQuestions = computed(() => {
   const out: Array<Record<string, unknown>> = []
+  const seen = new Set<string>()
   for (const src of summaryAskSources.value) {
-    out.push(...(src.questions as Array<Record<string, unknown>>))
+    for (const q of src.questions as Array<Record<string, unknown>>) {
+      const sig = askQuestionSignature(q)
+      if (seen.has(sig)) continue
+      seen.add(sig)
+      out.push(q)
+    }
   }
   return out
 })

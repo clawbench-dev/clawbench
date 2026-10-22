@@ -1981,6 +1981,26 @@ describe('ContentBlocks — multiple ask cards merged into one', () => {
     expect(wrapper.html()).toContain('XmlQ')
   })
 
+  it('does not list a question twice when both summary sources carry the same card', () => {
+    // A summary written from the pre-conversion blocks keeps the text-card copy
+    // in askQuestions AND the converted tool block in tools — one card described
+    // twice. The merged card must show each question once.
+    const same = { header: 'H', question: 'SameQ', options: [{ label: 'A' }, { label: 'B' }] }
+    const wrapper = mountBlocks({
+      blocks: [],
+      summary: 'sum text',
+      showingSummary: true,
+      summaryCards: {
+        tools: [{ name: 'AskUserQuestion', id: 'ask-t', input: { questions: [same] } }],
+        taskIDs: [],
+        askQuestions: [same],
+      },
+      formatToolInput: echoFormat,
+    })
+    expect(wrapper.findAll('.ask-question-item')).toHaveLength(1)
+    expect(wrapper.html()).toContain('SameQ')
+  })
+
   it('renders a single summary ask card unchanged when there is only one source', () => {
     const wrapper = mountBlocks({
       blocks: [],
@@ -3229,6 +3249,62 @@ describe('text-mode ask card after the side table is cleared', () => {
     return mountedWrappers.filter((w) => w.exists())
       .reduce((n, w) => n + w.findAll('.tool-detail.chat-inline-card[data-tool-name="AskUserQuestion"]').length, 0)
   }
+})
+
+// ── The same card in two shapes must not be listed twice ──
+//
+// Finalize converts a `<clawbench-ask-question>` text block into an
+// AskUserQuestion tool block, but the LIVE bubble keeps the original text (the
+// converted blocks are never re-sent over the WS stream). The post-done
+// loadHistory merges the DB row into that live bubble, so for one render the
+// message holds BOTH shapes — and the merged ask card listed every question
+// twice until the next rebuild replaced the bubble with the DB row ("有时候会
+// 重复，但会自己恢复").
+describe('ask card duplicated across the raw-text and converted-tool shapes', () => {
+  const TAG_TEXT = '<clawbench-ask-question>\n**Approach**\nWhich one?\n- A — Fast\n- B — Safe\n</clawbench-ask-question>'
+  const CONVERTED_INPUT = {
+    questions: [{
+      header: 'Approach',
+      multiSelect: false,
+      question: 'Which one?',
+      options: [{ label: 'A', description: 'Fast' }, { label: 'B', description: 'Safe' }],
+    }],
+  }
+
+  function itemCount(blocks: Array<Record<string, unknown>>) {
+    const wrapper = mountBlocks({
+      blocks,
+      blockAskQuestions: {},
+      renderTextBlock: () => '',
+      formatToolInput: (input: any) => {
+        const qs = Array.isArray(input?.questions) ? input.questions : []
+        return `<div class="ask-question-view">${qs.map((q: any) => `<div class="ask-question-item">${q.question}</div>`).join('')}</div>`
+      },
+    })
+    return wrapper.findAll('.ask-question-item').length
+  }
+
+  it('lists each question once when the text block still carries the tag', () => {
+    // The live-bubble shape right after Finalize: raw tag + converted tool block.
+    expect(itemCount([
+      { type: 'text', text: TAG_TEXT },
+      { type: 'tool_use', name: 'AskUserQuestion', id: 'ask-1', done: true, input: CONVERTED_INPUT },
+    ])).toBe(1)
+  })
+
+  it('keeps a genuinely different question carried by the text block', () => {
+    // Only an IDENTICAL question is deduped — a text block holding a second,
+    // distinct question must still contribute it to the merged card.
+    const other = TAG_TEXT.replace('Which one?', 'And also this?')
+    expect(itemCount([
+      { type: 'text', text: other },
+      { type: 'tool_use', name: 'AskUserQuestion', id: 'ask-1', done: true, input: CONVERTED_INPUT },
+    ])).toBe(2)
+  })
+
+  it('leaves a lone text-mode card untouched (no converted tool block)', () => {
+    expect(itemCount([{ type: 'text', text: TAG_TEXT }])).toBe(1)
+  })
 })
 
 // ── Path verification survives a cache hit ──
