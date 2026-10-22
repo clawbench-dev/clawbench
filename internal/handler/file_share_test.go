@@ -1117,3 +1117,33 @@ func TestShareList_DeleteAll_Error(t *testing.T) {
 	w := callHandler(ServeShareList, clearReq)
 	assertStatus(t, w, http.StatusInternalServerError)
 }
+
+// The share page renders author-supplied content, which routinely references
+// third-party assets (an agent writing `![](https://cdn.example/a.png)` is
+// enough). Under the browser default, the Referer of those subresource requests
+// carries the full share URL — so merely OPENING a shared conversation would hand
+// the capability token to every third-party host it embeds. The page must opt out
+// explicitly, and `no-referrer` is the only value that also covers same-site
+// navigations (the default `strict-origin-when-cross-origin` still sends the full
+// URL there).
+func TestSharePage_SetsNoReferrerPolicy(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/share/0123456789abcdef0123456789abcdef", nil)
+	w := callHandler(ServeSharePage, req)
+
+	assert.Equal(t, "no-referrer", w.Header().Get("Referrer-Policy"))
+}
+
+// HEAD must carry the same header: a HEAD response is the first thing a client
+// (or an intermediary) sees, and it is served by the same handler.
+func TestSharePage_SetsNoReferrerPolicyOnHead(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodHead, "/share/0123456789abcdef0123456789abcdef", nil)
+	w := callHandler(ServeSharePage, req)
+
+	assert.Equal(t, "no-referrer", w.Header().Get("Referrer-Policy"))
+}
