@@ -198,8 +198,11 @@
 
    States
    ------
-   - **Resting** — media contain-fitted, `cursor: zoom-in`, no chrome. A click
-     enters the active state (`inlineZoom.ts` adds `.is-zooming`).
+   - **Resting** — media contain-fitted, default cursor, no chrome. A click
+     enters the active state (`inlineZoom.ts` adds `.is-zooming`). The cursor is
+     deliberately NOT `zoom-in`: a magnifier over an untouched figure promises an
+     affordance the user has not asked for, and for a photo the expected
+     "enlarge" target is the lightbox button, not the image body.
    - **Active** — a visible ring marks the figure as the zoom target, the reset
      button appears, the cursor becomes a grab handle, and the wheel/drag
      gestures belong to the media. Clicking outside or Escape returns to
@@ -288,7 +291,12 @@
         height: auto;
         max-height: 60dvh;
         overflow: hidden;
-        cursor: zoom-in;
+        /* No `zoom-in` cursor at rest. A magnifier over an untouched figure
+           advertises an affordance the user did not ask for, and on an image
+           it also implies "click to enlarge" while the real affordance for
+           that is the lightbox button. The cursor changes to `grab` once the
+           figure is actually active (rule below), where it means something. */
+        cursor: default;
     }
 
     /* Active: a fixed 60dvh viewport, so panning has a stable frame and a tall
@@ -394,15 +402,19 @@
         outline-offset: 2px;
     }
 
-    .image-block-wrapper.is-zooming > .lightbox-img-wrap,
-    .image-block-wrapper.is-zooming > .lightbox-svg-wrap,
-    .image-block-wrapper.is-zooming > .mermaid {
+    /* These must mirror the RESTING selectors including `:has()`: that rule is
+       0-3-1 while a plain `.is-zooming > .lightbox-img-wrap` is only 0-3-0, so
+       the resting `cursor: default` won and the active figure never showed the
+       grab handle. */
+    .image-block-wrapper.is-zooming:has(> .lightbox-img-wrap > img) > .lightbox-img-wrap,
+    .image-block-wrapper.is-zooming:has(> .lightbox-svg-wrap > svg.lightbox-svg) > .lightbox-svg-wrap,
+    .image-block-wrapper.is-zooming:has(> .mermaid > svg) > .mermaid {
         cursor: grab;
     }
 
-    .image-block-wrapper.is-zooming.is-panning > .lightbox-img-wrap,
-    .image-block-wrapper.is-zooming.is-panning > .lightbox-svg-wrap,
-    .image-block-wrapper.is-zooming.is-panning > .mermaid {
+    .image-block-wrapper.is-zooming.is-panning:has(> .lightbox-img-wrap > img) > .lightbox-img-wrap,
+    .image-block-wrapper.is-zooming.is-panning:has(> .lightbox-svg-wrap > svg.lightbox-svg) > .lightbox-svg-wrap,
+    .image-block-wrapper.is-zooming.is-panning:has(> .mermaid > svg) > .mermaid {
         cursor: grabbing;
     }
 
