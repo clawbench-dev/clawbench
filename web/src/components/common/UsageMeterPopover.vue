@@ -1,5 +1,24 @@
 <template>
-  <div class="usage-meter-wrap">
+  <!-- Placeholder: no rule configured.
+       A bare "设置用量提醒" entry instead of a gauge with no numbers. Showing
+       the capsule in its empty form would raise the question "why is it empty",
+       and the popover behind it would have nothing to say — every figure in it
+       is derived from a quota. A single tappable hint answers both: there is
+       nothing here yet, and here is where to create it. -->
+  <button
+    v-if="!status.enabled"
+    type="button"
+    class="usage-pill is-off usage-pill--placeholder"
+    :title="t('usageMeter.setupHint')"
+    :aria-label="t('usageMeter.setupHint')"
+    data-action="usage-meter-setup"
+    @click.stop="openSettings"
+  >
+    <Gauge :size="13" class="usage-icon" aria-hidden="true" />
+    <span class="usage-label">{{ t('usageMeter.setupHint') }}</span>
+  </button>
+
+  <div v-else class="usage-meter-wrap">
     <button
       ref="btnRef"
       type="button"
@@ -16,10 +35,7 @@
            ambiguous next to the file/project badges. -->
       <Gauge :size="13" class="usage-icon" aria-hidden="true" />
       <span class="usage-label">{{ t('usageMeter.label') }}</span>
-      <!-- Bar and quota denominator only exist relative to a quota. Without a
-           rule the capsule degrades to "icon + label + amount": showing an
-           empty track and "/ 0" would imply a budget of zero rather than none. -->
-      <span v-if="hasQuota" class="usage-bar" aria-hidden="true">
+      <span class="usage-bar" aria-hidden="true">
         <span class="usage-fill" :style="{ width: fillPercent + '%' }"></span>
         <!-- Baseline tick: where a linear spend would be right now. Reading the
              fill against this tick is the whole point of the capsule. -->
@@ -28,7 +44,7 @@
       </span>
       <span class="usage-text">
         <span class="usage-used">{{ fmtCompact(actual) }}</span>
-        <span v-if="hasQuota" class="usage-quota">/ {{ fmtCompact(quota) }}</span>
+        <span class="usage-quota">/ {{ fmtCompact(quota) }}</span>
       </span>
     </button>
 
@@ -45,26 +61,17 @@
       <div class="um-pop">
         <div class="um-head">
           <span class="um-title">{{ t('usageMeter.title') }}</span>
-          <!-- Badge is a verdict about a quota ("on plan" / "over" / "used up"),
-               so it only exists when a quota does. -->
-          <span v-if="hasQuota" class="um-badge" :class="`is-${state}`">{{ badgeText }}</span>
+          <span class="um-badge" :class="`is-${state}`">{{ badgeText }}</span>
         </div>
 
-        <!-- Without a rule there is no cycle, so the "day N of M" half is
-             meaningless; the date range still tells the user which window the
-             number covers. -->
         <div class="um-period">
-          <template v-if="hasQuota">
-            {{ t('usageMeter.dayOfCycle', { day: status.dayInCycle, days: status.periodDays ?? 0 }) }}
-            <span class="um-sep">·</span>
-          </template>
+          {{ t('usageMeter.dayOfCycle', { day: status.dayInCycle, days: status.periodDays ?? 0 }) }}
+          <span class="um-sep">·</span>
           <span class="um-dates">{{ dateRange }}</span>
         </div>
 
-        <!-- Three bars on one axis so their lengths are directly comparable.
-             All three measure against the quota, so without one there is nothing
-             to compare: the row collapses to the single actual figure. -->
-        <div v-if="hasQuota" class="um-compare">
+        <!-- Three bars on one axis so their lengths are directly comparable. -->
+        <div class="um-compare">
           <div class="um-row">
             <span class="um-row-name">{{ t('usageMeter.actual') }}</span>
             <span class="um-track">
@@ -87,19 +94,10 @@
             <span class="um-row-val is-muted">{{ fmt(quota) }}</span>
           </div>
         </div>
-        <!-- No rule: state the total plainly rather than as one lonely bar. -->
-        <div v-else class="um-total">
-          <span class="um-total-label">{{ t('usageMeter.totalSpent') }}</span>
-          <span class="um-total-value">{{ fmt(actual) }}</span>
-        </div>
 
         <!-- Cumulative curve. Hand-drawn SVG rather than ECharts: this sits on
              the first-paint path and the chart library is a ~300KB dependency
-             loaded lazily by the stats tab.
-
-             With no quota the baseline line, the projection and the quota line
-             are all undefined, so only the actual curve and "today" marker are
-             drawn — the shape still answers "how did I get here". -->
+             loaded lazily by the stats tab. -->
         <svg
           v-if="points.length > 1"
           class="um-spark"
@@ -109,8 +107,8 @@
           :aria-label="t('usageMeter.trendLabel')"
         >
           <line x1="8" :y1="PLOT_BOTTOM" x2="280" :y2="PLOT_BOTTOM" class="um-axis" />
-          <line v-if="hasQuota" x1="8" :y1="PLOT_TOP" x2="280" :y2="PLOT_TOP" class="um-quota-line" />
-          <polyline v-if="hasQuota" :points="expectedLine" class="um-expected-line" />
+          <line x1="8" :y1="PLOT_TOP" x2="280" :y2="PLOT_TOP" class="um-quota-line" />
+          <polyline :points="expectedLine" class="um-expected-line" />
           <polyline :points="actualLine" class="um-actual-line" :class="`is-${state}`" />
           <line
             v-if="projection"
@@ -122,14 +120,11 @@
         </svg>
         <div v-if="points.length > 1" class="um-legend">
           <span><i class="um-dot is-actual"></i>{{ t('usageMeter.legendActual') }}</span>
-          <span v-if="hasQuota"><i class="um-dot is-expected"></i>{{ t('usageMeter.legendExpected') }}</span>
+          <span><i class="um-dot is-expected"></i>{{ t('usageMeter.legendExpected') }}</span>
           <span><i class="um-dot is-today"></i>{{ t('usageMeter.legendToday') }}</span>
         </div>
 
-        <!-- Every figure here is derived from the quota (remaining, days left,
-             projected exhaustion, daily allowance), so the whole grid is absent
-             without one. -->
-        <div v-if="hasQuota" class="um-stats">
+        <div class="um-stats">
           <div>
             <div class="um-stat-label">{{ t('usageMeter.remaining') }}</div>
             <div class="um-stat-value">{{ fmt(remaining) }}</div>
@@ -151,7 +146,7 @@
         </div>
 
         <button type="button" class="um-link" @click="openSettings">
-          {{ hasQuota ? t('usageMeter.adjust') : t('usageMeter.setBudget') }}
+          {{ t('usageMeter.adjust') }}
         </button>
       </div>
     </PopupMenu>
@@ -169,6 +164,9 @@ import { useUsageMeter, type UsageMeterStatus } from '@/composables/useUsageMete
 
 const props = defineProps<{
   status: UsageMeterStatus
+  // 'off' never reaches the popover body: the placeholder branch renders
+  // instead. It stays in the union because the caller passes meterState
+  // directly, and narrowing it there would need a cast for no benefit.
   state: 'ok' | 'over' | 'full' | 'off'
   fillPercent: number
   expectedPercent: number
@@ -185,17 +183,6 @@ const menuOpen = ref(false)
 // Plot geometry. Kept in script so the template does not repeat magic numbers.
 const PLOT_TOP = 8
 const PLOT_BOTTOM = 82
-
-/**
- * Whether a rule is configured.
- *
- * Everything ratio-derived hangs off this: fill width, baseline tick, badge,
- * comparison bars, remaining/projection stats and the quota line on the chart
- * are all statements ABOUT a budget. With no budget they must be absent, not
- * zero — a 0% fill with "/ 0" reads as "your budget is nothing", which is the
- * opposite of "you have not set one".
- */
-const hasQuota = computed(() => props.status.enabled && (props.status.quota ?? 0) > 0)
 
 const metric = computed(() => props.status.metric ?? 'cost')
 const actual = computed(() => props.status.actual ?? 0)
@@ -298,7 +285,7 @@ const projection = computed(() => {
   const n = points.value.length
   // The projection predicts the day the QUOTA runs out; with no quota there is
   // no such day, so the dashed extrapolation would be a line to nowhere.
-  if (!hasQuota.value || n < 2) return null
+  if (n < 2) return null
   const last = points.value[n - 1]
   const first = points.value[0]
   const elapsed = Math.max(1, n - 1)
@@ -388,6 +375,18 @@ function openSettings() {
 /* No rule: the accent is muted rather than green. Green would claim "you are
    within budget", which is a judgement this state has no basis for. */
 .usage-pill.is-off { --meter-color: var(--text-muted); }
+
+/* Placeholder entry. Dashed rather than solid: the pill is not a readout yet,
+   it is a slot waiting to be filled, and the border says so before the label is
+   read. Muted text keeps it from competing with real header controls. */
+.usage-pill--placeholder {
+  border-style: dashed;
+  color: var(--text-muted);
+}
+
+.usage-pill--placeholder .usage-label {
+  color: var(--text-muted);
+}
 
 .usage-bar {
   position: relative;
@@ -582,30 +581,6 @@ function openSettings() {
 .um-row-val.is-over { color: var(--color-orange); }
 .um-row-val.is-full { color: var(--color-red); }
 .um-row-val.is-muted { color: var(--text-muted); }
-
-/* No-rule total. Replaces the three comparison bars, so it carries the same
-   vertical rhythm (margin-bottom) to keep the popover from reflowing. */
-.um-total {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-4);
-  margin-bottom: var(--space-6);
-  padding-bottom: var(--space-5);
-  border-bottom: 1px solid var(--border-color);
-  font-variant-numeric: tabular-nums;
-}
-
-.um-total-label {
-  color: var(--text-muted);
-  font-size: var(--font-size-2xs);
-}
-
-.um-total-value {
-  font-size: var(--font-size-lg);
-  font-weight: var(--font-weight-semibold);
-  color: var(--text-primary);
-}
 
 /* ── Sparkline ───────────────────────────────────────────────────────────── */
 .um-spark {

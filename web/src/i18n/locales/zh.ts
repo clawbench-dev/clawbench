@@ -194,9 +194,11 @@ export default {
     title: '用量',
     // Short form used inside the header capsule (next to the gauge icon).
     label: '用量',
-    // Neutral wording: without a rule there is no cycle, so "this cycle's
-    // usage" would be wrong on the same button.
-    capsuleTitle: '查看用量',
+    capsuleTitle: '查看本周期用量',
+    // Placeholder entry when no rule is configured. Names the feature AND the
+    // action, so a user who has never opened the settings page knows both that
+    // usage alerts exist and how to turn them on.
+    setupHint: '设置用量提醒',
     dayOfCycle: '第 {day} / {days} 天',
     actual: '实际',
     expected: '应花',
@@ -213,11 +215,6 @@ export default {
     badgeOver: '超出计划 {pct}%',
     badgeFull: '已用尽',
     adjust: '调整额度与周期 →',
-    // Shown instead of `adjust` when no rule exists: there is no quota to
-    // adjust, so the call to action is to create one.
-    setBudget: '设置额度与周期 →',
-    totalSpent: '这段时间的总用量',
-    windowSince: '{date} 起',
     trendLabel: '累计用量与匀速基准对比',
     legendActual: '实际累计',
     legendExpected: '匀速基准',
@@ -1288,6 +1285,8 @@ export default {
     },
     parallelLabel: '并发执行',
     parallelHint: "打开后你 {'@'} 的成员同时发言（不 {'@'} 人时全体成员并发）；智能体之间的 {'@'} 不受影响。",
+    parallelEnabled: '并发执行已开启',
+    parallelDisabled: '并发执行已关闭',
     cruiseLabel: '自动巡航',
     cruiseHintHost: '打开后，主持人认为任务完成才会结束（不再随时收工）。',
     cruiseHintFree: '打开后，至少半数成员确认任务完成才会结束。',

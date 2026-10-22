@@ -78,4 +78,25 @@ describe('usage meter settings copy', () => {
       expect(zhItems[desc], `zh ${desc} must not repeat ${label}`).not.toBe(zhItems[label])
     }
   })
+
+  // The placeholder entry is the only thing an unconfigured user sees, and its
+  // label carries the entire message ("set up usage alerts"). A missing or
+  // echo-of-the-key value would leave a bare feature name with no action.
+  it('the placeholder hint exists in both locales', () => {
+    expect(en.usageMeter.setupHint).toBeTruthy()
+    expect(zh.usageMeter.setupHint).toBeTruthy()
+  })
+
+  it('the placeholder hint names the action, not just the feature', () => {
+    const enItems = en.usageMeter as Record<string, string>
+    const zhItems = zh.usageMeter as Record<string, string>
+
+    expect(enItems.setupHint).toBeTruthy()
+    expect(zhItems.setupHint).toBeTruthy()
+    // Must differ from the plain feature label, or the placeholder would read as
+    // a disabled "Usage" row rather than an invitation.
+    expect(enItems.setupHint).not.toBe(enItems.label)
+    expect(zhItems.setupHint).not.toBe(zhItems.label)
+    expect(zhItems.setupHint).toContain('设置')
+  })
 })

@@ -43,12 +43,6 @@ type UsageMeterPoint struct {
 // UsageMeterStatus is the full state of the meter, shaped for GET /api/usage/meter
 // and for the header capsule.
 type UsageMeterStatus struct {
-	// Enabled reports whether a RULE is configured (quota > 0). It is not
-	// "is there anything to show": with no rule the meter still reports the
-	// actual spend for a default window, because a user who has not set a
-	// budget still wants to know what they have spent. Consumers must therefore
-	// branch on `Enabled` to decide whether to render the ratio-derived parts
-	// (expected, quota, projection, remaining), not whether to render at all.
 	Enabled bool   `json:"enabled"`
 	Metric  string `json:"metric,omitempty"`
 	// AnchorDate/PeriodDays echo the rule so the popover can render "day N of M"
@@ -71,19 +65,6 @@ type UsageMeterStatus struct {
 	// Series is the per-day cumulative curve, oldest first, ending today.
 	Series []UsageMeterPoint `json:"series,omitempty"`
 }
-
-// DefaultUsageMeterMetric is what the meter reports when no rule is configured.
-//
-// Cost, because "how much have I spent" is the question an unconfigured user is
-// actually asking. The three metrics are not convertible, so a default has to
-// be picked; the settings page shows the metric selector right next to the
-// numbers, so switching is one tap away.
-const DefaultUsageMeterMetric = model.UsageMeterMetricCost
-
-// DefaultUsageMeterWindowDays is the trailing window reported when no rule is
-// configured. It matches the stats panel's "last 30 days" preset, so the two
-// surfaces agree when a user compares them.
-const DefaultUsageMeterWindowDays = 30
 
 // usageMeterNow is overridable in tests.
 var usageMeterNow = time.Now
@@ -195,25 +176,22 @@ func locateUsageMeterCycle(anchor time.Time, periodDays int, now time.Time) usag
 func ComputeUsageMeter(ctx context.Context, now time.Time) (*UsageMeterStatus, error) {
 	rule := model.ConfigInstance.UsageMeter
 	if rule.Quota <= 0 {
-		return computeUnmeteredUsage(ctx, now)
+		return &UsageMeterStatus{Enabled: false}, nil
 	}
 	if !model.IsValidUsageMeterMetric(rule.Metric) || rule.PeriodDays <= 0 {
 		// A malformed rule is reported as disabled rather than as an error: the
 		// caller is a header badge, and a 500 there would be noise. The PATCH
 		// validator rejects such rules, so this only happens for a hand-edited
 		// config.yaml.
-		//
-		// It still falls back to the unmetered reading: the rule being broken is
-		// a reason to hide the RATIO, not a reason to hide the user's spend.
-		slog.Warn("usage meter: rule is incomplete, falling back to unmetered usage",
+		slog.Warn("usage meter: rule is incomplete, treating as disabled",
 			"metric", rule.Metric, "period_days", rule.PeriodDays)
-		return computeUnmeteredUsage(ctx, now)
+		return &UsageMeterStatus{Enabled: false}, nil
 	}
 	anchor, err := model.ParseUsageMeterAnchor(rule.AnchorDate)
 	if err != nil {
-		slog.Warn("usage meter: invalid anchor date, falling back to unmetered usage",
+		slog.Warn("usage meter: invalid anchor date, treating as disabled",
 			"anchor", rule.AnchorDate, "error", err)
-		return computeUnmeteredUsage(ctx, now)
+		return &UsageMeterStatus{Enabled: false}, nil
 	}
 
 	cycle := locateUsageMeterCycle(anchor, rule.PeriodDays, now)
@@ -250,7 +228,7 @@ func ComputeUsageMeter(ctx context.Context, now time.Time) (*UsageMeterStatus, e
 	}
 	st.Actual = actual
 
-	series, err := queryUsageMeterSeries(ctx, rowExpr, cycle, rule.Quota/float64(rule.PeriodDays), now)
+	series, err := queryUsageMeterSeries(ctx, rowExpr, cycle, now)
 	if err != nil {
 		return nil, err
 	}
@@ -261,82 +239,19 @@ func ComputeUsageMeter(ctx context.Context, now time.Time) (*UsageMeterStatus, e
 	return st, nil
 }
 
-// computeUnmeteredUsage reports actual spend over a trailing window when no
-// usable rule exists.
-//
-// The point is that "no budget configured" must not mean "no numbers": a user
-// who has not set a quota still wants to know what they have spent. What the
-// absence of a rule removes is the RATIO — expected, remaining and projection
-// are all derived from a quota, so they stay at their zero values and the
-// consumers hide those parts.
-//
-// The window is a fixed trailing DefaultUsageMeterWindowDays ending now, which
-// is why CycleStart/CycleEnd are still filled in: the popover uses them as the
-// "period" line, and a bare "day 0 of 0" would be worse than a date range. It
-// is deliberately NOT a rolling 24h — matching the stats panel's 30-day preset
-// means the two surfaces agree when a user compares them.
-func computeUnmeteredUsage(ctx context.Context, now time.Time) (*UsageMeterStatus, error) {
-	st := &UsageMeterStatus{
-		Enabled:    false,
-		Metric:     DefaultUsageMeterMetric,
-		PeriodDays: DefaultUsageMeterWindowDays,
-		// Day 0: there is no cycle, so nothing may claim "day 3 of 30". The
-		// consumers use this (via Enabled) to skip the cycle line entirely.
-		DayInCycle: 0,
-	}
-	start := now.AddDate(0, 0, -DefaultUsageMeterWindowDays)
-	st.CycleStart = start.Format(time.RFC3339)
-	st.CycleEnd = now.Format(time.RFC3339)
-
-	if !store.ReadDBReady() {
-		return st, nil
-	}
-
-	rowExpr, ok := usageMeterRowExpr(st.Metric)
-	if !ok {
-		// Unreachable with DefaultUsageMeterMetric, but a future default that is
-		// not a real metric must not build an empty SQL expression.
-		slog.Warn("usage meter: default metric has no row expression", "metric", st.Metric)
-		return st, nil
-	}
-
-	actual, err := sumUsageInWindow(ctx, rowExpr, start, now)
-	if err != nil {
-		return nil, err
-	}
-	st.Actual = actual
-
-	// The curve is still useful without a quota: it answers "how did I get
-	// here". The baseline is explicitly 0 — there is no quota to divide over,
-	// so the consumers skip drawing it rather than plotting a line on the axis.
-	series, err := queryUsageMeterSeries(ctx, rowExpr, usageMeterCycle{start: start, end: now}, 0, now)
-	if err != nil {
-		return nil, err
-	}
-	st.Series = series
-
-	return st, nil
-}
-
-// sumUsageInWindow totals one metric over [start, end).
-func sumUsageInWindow(ctx context.Context, rowExpr string, start, end time.Time) (float64, error) {
+// sumUsageInCycle totals one metric over the cycle window.
+func sumUsageInCycle(ctx context.Context, rowExpr string, cycle usageMeterCycle, now time.Time) (float64, error) {
 	var actual float64
-	err := store.ReadDB().QueryRowContext(
-		ctx,
+	err := store.ReadDB().QueryRowContext(ctx,
 		"SELECT COALESCE(SUM("+rowExpr+"), 0) FROM chat_metadata m "+
 			"WHERE m.created_at >= ? AND m.created_at < ?",
-		start.UTC().Format("2006-01-02 15:04:05"),
-		end.UTC().Format("2006-01-02 15:04:05"),
+		cycle.start.UTC().Format("2006-01-02 15:04:05"),
+		now.UTC().Format("2006-01-02 15:04:05"),
 	).Scan(&actual)
 	if err != nil {
 		return 0, fmt.Errorf("usage meter total: %w", err)
 	}
 	return actual, nil
-}
-
-// sumUsageInCycle totals one metric over the cycle window.
-func sumUsageInCycle(ctx context.Context, rowExpr string, cycle usageMeterCycle, now time.Time) (float64, error) {
-	return sumUsageInWindow(ctx, rowExpr, cycle.start, now)
 }
 
 // projectExhaustDay estimates which day of the cycle the quota runs out on.
@@ -382,7 +297,7 @@ func projectExhaustDay(actual float64, rule model.UsageMeterConfig, cycle usageM
 // The per-row scan is bounded by the cycle window (at most a year of rows), and
 // the query only selects two columns, so the cost is a linear pass over one
 // cycle's ledger rows.
-func queryUsageMeterSeries(ctx context.Context, rowExpr string, cycle usageMeterCycle, perDay float64, now time.Time) ([]UsageMeterPoint, error) {
+func queryUsageMeterSeries(ctx context.Context, rowExpr string, cycle usageMeterCycle, now time.Time) ([]UsageMeterPoint, error) {
 	rows, err := store.ReadDB().QueryContext(ctx,
 		"SELECT m.created_at, "+rowExpr+" AS v "+
 			"FROM chat_metadata m WHERE m.created_at >= ? AND m.created_at < ?",
@@ -417,9 +332,9 @@ func queryUsageMeterSeries(ctx context.Context, rowExpr string, cycle usageMeter
 		return nil, fmt.Errorf("usage meter series rows: %w", err)
 	}
 
-	// `perDay` is passed in rather than derived from model.ConfigInstance here:
-	// with no rule the global quota and period are both 0, and 0/0 is NaN. NaN
-	// marshals to `null`, which would make the client draw a broken curve.
+	rule := model.ConfigInstance.UsageMeter
+	perDay := rule.Quota / float64(rule.PeriodDays)
+
 	// Build the curve from the buckets that actually exist, then fill the gaps.
 	//
 	// The day list is NOT derived from `cycle.dayInCycle` by calendar
@@ -512,28 +427,8 @@ func usageMeterStageToSend(st *UsageMeterStatus, notifiedStage string) string {
 // Called from the periodic worker and from the turn-completion path, so it must
 // be cheap when there is nothing to do (disabled rule → one config read) and
 // must never panic on a missing DB.
-// CheckUsageMeterForWorker is the worker's entry point: the same threshold check
-// as CheckUsageMeter, plus a refresh of the unmetered spend when no rule exists.
-//
-// The split matters. With no rule there is no notification to send, but the
-// capsule still shows a spend total, and it would otherwise freeze at whatever
-// was fetched on page load. Refreshing it on every completed turn would run a
-// 30-day aggregate on the hot path, so it is refreshed only here, on the coarse
-// worker tick.
-func CheckUsageMeterForWorker(ctx context.Context) string {
-	if model.ConfigInstance.UsageMeter.Quota <= 0 {
-		broadcastUnmeteredNumbers(ctx)
-		return ""
-	}
-	return CheckUsageMeter(ctx)
-}
-
 func CheckUsageMeter(ctx context.Context) string {
 	if model.ConfigInstance.UsageMeter.Quota <= 0 {
-		// No rule: there is no threshold to cross, so no notification is
-		// possible, and nothing to do here. The unmetered spend is refreshed by
-		// the worker tick (see CheckUsageMeterForWorker) — not on this path,
-		// which runs once per completed turn and must stay cheap.
 		return ""
 	}
 
@@ -720,75 +615,9 @@ func compactCount(v float64) string {
 }
 
 // usageMeterNeedsCheck reports whether a check could possibly do anything.
-//
-// With no rule there is no threshold to cross, so no notification is possible.
-// The worker still runs the (cheaper, unmetered) refresh on its own coarse
-// schedule — see usageMeterNeedsUnmeteredRefresh — because the capsule shows a
-// spend total even without a budget. This function is only about the
-// notification path.
+// Used by the worker to skip the aggregate query when the rule is off.
 func usageMeterNeedsCheck() bool {
 	return model.ConfigInstance.UsageMeter.Quota > 0
-}
-
-// usageMeterUnmeteredRefreshInterval throttles the no-rule refresh.
-//
-// Much longer than the notification tick (5 min) on purpose: an unmetered
-// reading is a 30-day aggregate over chat_metadata, and the default state of a
-// fresh install is "no rule". Running it every tick would put a full-window
-// scan on the worker's hot path for the majority of installs, to keep a spend
-// total fresh that nobody is watching to the minute. An hour is enough for a
-// number that a user glances at.
-const usageMeterUnmeteredRefreshInterval = time.Hour
-
-var (
-	usageMeterLastUnmeteredRefresh   time.Time
-	usageMeterLastUnmeteredRefreshMu sync.Mutex
-)
-
-// usageMeterNeedsUnmeteredRefresh reports whether enough time has passed since
-// the last no-rule refresh, and claims the slot if so.
-func usageMeterNeedsUnmeteredRefresh(now time.Time) bool {
-	usageMeterLastUnmeteredRefreshMu.Lock()
-	defer usageMeterLastUnmeteredRefreshMu.Unlock()
-	if !usageMeterLastUnmeteredRefresh.IsZero() &&
-		now.Sub(usageMeterLastUnmeteredRefresh) < usageMeterUnmeteredRefreshInterval {
-		return false
-	}
-	usageMeterLastUnmeteredRefresh = now
-	return true
-}
-
-// ResetUsageMeterUnmeteredThrottleForTest clears the throttle. Exported because
-// the worker tests live in the external service_test package, and the throttle
-// is process-wide state: without a reset, a test that ran the worker once would
-// make every later test see "recently refreshed".
-func ResetUsageMeterUnmeteredThrottleForTest() {
-	usageMeterLastUnmeteredRefreshMu.Lock()
-	defer usageMeterLastUnmeteredRefreshMu.Unlock()
-	usageMeterLastUnmeteredRefresh = time.Time{}
-}
-
-// ResetUsageMeterBroadcastForTest clears the "last broadcast" memo so a test can
-// assert that a specific call broadcast. Process-wide state: without a reset a
-// previous test's reading makes the next call look like a no-op.
-func ResetUsageMeterBroadcastForTest() {
-	usageMeterCheckMu.Lock()
-	defer usageMeterCheckMu.Unlock()
-	usageMeterLastBroadcast = struct {
-		actual, expected, quota float64
-		metric                  string
-		enabled                 bool
-		valid                   bool
-	}{}
-}
-
-// UsageMeterHasBroadcastForTest reports whether a broadcast has been recorded
-// since the last reset. Used to tell the two check entry points apart, which is
-// otherwise impossible (Go functions are not comparable).
-func UsageMeterHasBroadcastForTest() bool {
-	usageMeterCheckMu.Lock()
-	defer usageMeterCheckMu.Unlock()
-	return usageMeterLastBroadcast.valid
 }
 
 // parseUsageMeterTimestamp accepts the two shapes a DATETIME column can hold:
@@ -824,10 +653,7 @@ const UsageMeterTickEventType = "usage_meter_tick"
 var usageMeterLastBroadcast struct {
 	actual, expected, quota float64
 	metric                  string
-	// enabled is part of the change key: turning the rule on or off changes what
-	// the client renders even when the numbers happen to match.
-	enabled bool
-	valid   bool
+	valid                   bool
 }
 
 // broadcastUsageMeterNumbers pushes the headline numbers to every client when
@@ -836,14 +662,8 @@ var usageMeterLastBroadcast struct {
 //
 // The series is NOT included: it is only needed by the popover, which refetches
 // on open, and shipping it every turn would be a large frame for no benefit.
-//
-// Not gated on `st.Enabled`: with no rule the spend is still shown (without the
-// ratio), so it must still be pushed. The `enabled` flag travels in the payload
-// so the client can tell "no rule" from "rule, on plan".
 func broadcastUsageMeterNumbers(st *UsageMeterStatus) bool {
-	if st.Metric == "" {
-		// Nothing to report (DB not ready and no rule): the client would get a
-		// frame with no unit to format in.
+	if !st.Enabled {
 		return false
 	}
 	last := usageMeterLastBroadcast
@@ -851,8 +671,7 @@ func broadcastUsageMeterNumbers(st *UsageMeterStatus) bool {
 		last.actual == st.Actual &&
 		last.expected == st.Expected &&
 		last.quota == st.Quota &&
-		last.metric == st.Metric &&
-		last.enabled == st.Enabled {
+		last.metric == st.Metric {
 		return false
 	}
 	// Record BEFORE looking up the manager: if no manager is wired (tests, or
@@ -861,9 +680,8 @@ func broadcastUsageMeterNumbers(st *UsageMeterStatus) bool {
 	usageMeterLastBroadcast = struct {
 		actual, expected, quota float64
 		metric                  string
-		enabled                 bool
 		valid                   bool
-	}{st.Actual, st.Expected, st.Quota, st.Metric, st.Enabled, true}
+	}{st.Actual, st.Expected, st.Quota, st.Metric, true}
 
 	mgr := ws.GetManager()
 	if mgr == nil {
@@ -880,36 +698,7 @@ func broadcastUsageMeterNumbers(st *UsageMeterStatus) bool {
 			"quota":    st.Quota,
 			"day":      st.DayInCycle,
 			"days":     st.PeriodDays,
-			"enabled":  st.Enabled,
 		},
 	})
 	return true
-}
-
-// broadcastUnmeteredNumbers keeps an unconfigured user's capsule current.
-//
-// Deliberately NOT called from the turn-completion path: that path fires once
-// per completed turn, and an unmetered reading is a 30-day aggregate — running
-// it on every turn would put a full-table scan on the hot path for a number
-// nobody is watching in real time. The 5-minute worker tick is enough for a
-// spend total; a configured rule keeps its per-turn precision because its
-// window is the current cycle, not a month.
-//
-// Best-effort: a failure here must not turn a notification check into an error,
-// so it is logged and swallowed. Without the DB (tests, startup) it simply does
-// nothing — there is no spend to report anyway.
-func broadcastUnmeteredNumbers(ctx context.Context) {
-	st, err := computeUnmeteredUsage(ctx, time.Now())
-	if err != nil {
-		slog.Warn("usage meter: unmetered compute failed", "error", err)
-		return
-	}
-	// No DB means no spend to report; broadcasting a 0 would overwrite a real
-	// value the client already holds.
-	if !store.ReadDBReady() {
-		return
-	}
-	usageMeterCheckMu.Lock()
-	defer usageMeterCheckMu.Unlock()
-	broadcastUsageMeterNumbers(st)
 }

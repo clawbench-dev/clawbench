@@ -189,9 +189,11 @@ export default {
     title: 'Usage',
     // Short form used inside the header capsule (next to the gauge icon).
     label: 'Usage',
-    // Neutral wording: without a rule there is no cycle, so "this cycle's
-    // usage" would be wrong on the same button.
-    capsuleTitle: 'View usage',
+    capsuleTitle: 'View this cycle’s usage',
+    // Placeholder entry when no rule is configured. Names the feature AND the
+    // action, so a user who has never opened the settings page knows both that
+    // usage alerts exist and how to turn them on.
+    setupHint: 'Set up usage alerts',
     dayOfCycle: 'Day {day} of {days}',
     actual: 'Actual',
     expected: 'Planned',
@@ -208,11 +210,6 @@ export default {
     badgeOver: '{pct}% over plan',
     badgeFull: 'Exhausted',
     adjust: 'Adjust quota and cycle →',
-    // Shown instead of `adjust` when no rule exists: there is no quota to
-    // adjust, so the call to action is to create one.
-    setBudget: 'Set a quota and cycle →',
-    totalSpent: 'Total for this period',
-    windowSince: 'since {date}',
     trendLabel: 'Cumulative usage against the linear plan',
     legendActual: 'Actual',
     legendExpected: 'Linear plan',
@@ -1283,6 +1280,8 @@ export default {
     },
     parallelLabel: 'Run concurrently',
     parallelHint: "When on, the members you {'@'} speak at the same time (the whole roster when you {'@'} nobody); agent-to-agent {'@'} is unaffected.",
+    parallelEnabled: 'Concurrent execution enabled',
+    parallelDisabled: 'Concurrent execution disabled',
     cruiseLabel: 'Auto-cruise',
     cruiseHintHost: 'When on, the discussion ends only once the host confirms the task is complete.',
     cruiseHintFree: 'When on, the discussion ends only once at least half the members confirm the task is complete.',

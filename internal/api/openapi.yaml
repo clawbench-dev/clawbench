@@ -362,19 +362,10 @@ paths:
         - `credit`：`SUM(credit)`
         - `cost`：`SUM(cost_usd)`，单位 USD。非 USD 的上报值按原值累加，不做汇率换算。
 
-        **未配置规则**（`quota <= 0`）返回 200，`enabled: false`，但**仍返回实际用量**：
-        没有额度不等于没有数字，用户仍想知道自己花了多少。此时
-        `actual` / `metric` / `cycleStart` / `cycleEnd` / `series` 照常给出，
-        而所有由额度派生的字段保持为 0 —— `quota` / `expected` /
-        `dayInCycle` / `remainingDays` / `projectedExhaustDay`，客户端据此
-        隐藏比例相关信息（进度条、基准刻度、徽章、对比条、剩余与预测）。
-        - `metric` 固定为 `cost`（三个口径不可换算，未配置时默认按费用）
-        - 统计窗口为**最近 30 天**（对齐统计面板的 30 天预设），故
-          `periodDays=30`、`cycleStart/cycleEnd` 是该窗口的边界而非周期
-        - `series[].expected` 全为 0（没有基准线可画）
-
-        规则本身不合法（如手改 config.yaml 写坏 anchor）时同样降级为上述
-        未配置形态：规则坏了只该隐藏比例，不该隐藏用量。
+        **未配置规则**（`quota <= 0`）返回 200 与 `{"enabled": false}`，不是 404：
+        「没有预算」是正常状态而非错误，且此时没有任何可报的数字——
+        周期、应花、剩余、预测全部由额度派生。客户端据此渲染**占位入口**
+        （提示用户去设置用量提醒），而不是一个数值全为零的空胶囊。
 
         注意 `chat_metadata.created_at` 记录的是元数据**最终写入**时刻
         （约等于助手回复完成），因此跨周期边界的回合归入后一个周期。
@@ -389,8 +380,8 @@ paths:
               （未配置时 `metric=cost`、`periodDays=30`，其余为空/0）
             - `cycleStart` / `cycleEnd`：当前周期边界（RFC3339）；
               未配置时是最近 30 天窗口的边界
-            - `dayInCycle`：当前是周期第几天（1 起；0 表示起始日在未来或未配置规则）
-            - `actual` / `expected`：实际用量 / 按时间比例的应花（未配置时 `expected=0`）
+            - `dayInCycle`：当前是周期第几天（1 起；0 表示起始日在未来）
+            - `actual` / `expected`：实际用量 / 按时间比例的应花
             - `remainingDays`：今天之后还剩几天（未配置时为 0）
             - `projectedExhaustDay`：按当前速度预计第几天用尽（0 = 本周期不会用尽或未配置规则）
             - `series[]`：逐日累计，每项含 `day` / `actual` / `expected`

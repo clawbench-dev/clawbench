@@ -72,6 +72,10 @@
          margin-left:auto that used to sit on the theme button — with both set,
          the two auto margins would split the slack and strand the capsule in
          the middle. -->
+    <!-- Shown whenever the first fetch has landed, WITH or WITHOUT a rule: with
+         no rule the component renders a placeholder entry that leads to the
+         settings page. Gating on `enabled` would hide the only hint that the
+         feature exists. -->
     <UsageMeterPopover
       v-if="isWideScreen && usageMeter.hasData.value"
       :status="usageMeter.status.value"
