@@ -1,8 +1,28 @@
-import { describe, expect, it, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { describe, expect, it, beforeEach, vi } from 'vitest'
+import { mount, flushPromises } from '@vue/test-utils'
+import { defineComponent } from 'vue'
 import { createI18n } from 'vue-i18n'
 import TeamPanel from '@/components/chat/TeamPanel.vue'
 import { updateTeamState, clearTeamState, type TeamState } from '@/composables/useTeamState'
+
+// BottomSheet Teleports to <body>, where the wrapper's DOM query cannot reach
+// it. Render its slots inline so the detail sheet's content is assertable.
+vi.mock('@/components/common/BottomSheet.vue', () => ({
+  default: defineComponent({
+    props: {
+      open: Boolean, title: String, auto: Boolean, instant: Boolean, maximized: Boolean,
+      noHeader: Boolean, handleOnly: Boolean, transparentOverlay: Boolean, fullscreen: Boolean,
+      closeGuard: Boolean, panelClass: [String, Array, Object],
+    },
+    emits: ['close'],
+    template: `
+      <div v-if="open" class="bottom-sheet-overlay">
+        <div class="bs-header"><slot name="header" /></div>
+        <div class="bs-body"><slot /></div>
+      </div>
+    `,
+  }),
+}))
 
 const i18n = createI18n({
   legacy: false,
@@ -25,14 +45,39 @@ const i18n = createI18n({
             failed: 'failed',
             terminated: 'ended',
           },
+          detail: {
+            open: 'View details for {name}',
+            prompt: 'Full prompt',
+            output: 'Result',
+            description: 'Role',
+            activity: 'Activity',
+            lifecycle: 'Lifecycle',
+            toolCalls: 'Tool calls',
+            taskId: 'Task ID',
+            sessionId: 'Session ID',
+            loadingPrompt: 'Loading prompt…',
+            noPrompt: 'no prompt',
+          },
         },
       },
     },
   },
 })
 
+// The detail sheet resolves the member's Agent card through an injected lookup
+// (ChatPanelContent owns the messages array). Tests supply one per case.
+let _lookup: ((name: string) => { toolId: string; msgId: string | number } | null) | null = null
+function provide(over: { teamMemberCardLookup?: typeof _lookup }) {
+  _lookup = over.teamMemberCardLookup ?? null
+}
+
 function mountPanel() {
-  return mount(TeamPanel, { global: { plugins: [i18n] } })
+  return mount(TeamPanel, {
+    global: {
+      plugins: [i18n],
+      provide: { teamMemberCardLookup: (n: string) => _lookup?.(n) ?? null },
+    },
+  })
 }
 
 function snapshot(over: Partial<TeamState> = {}): TeamState {
@@ -41,7 +86,7 @@ function snapshot(over: Partial<TeamState> = {}): TeamState {
     teamName: 'clawbench-probe',
     hasLiveMembers: true,
     members: [
-      { name: 'probe-alpha', color: 'blue', status: 'running', activity: 'working', lifecycle: 'alive', toolCallCount: 2, tokenUsage: { inputTokens: 56763, outputTokens: 229 } },
+      { name: 'probe-alpha', color: 'blue', agentType: 'general-purpose', status: 'running', activity: 'working', lifecycle: 'alive', toolCallCount: 2, tokenUsage: { inputTokens: 56763, outputTokens: 229 } },
       { name: 'probe-beta', color: 'green', status: 'completed', activity: 'idle', lifecycle: 'terminated', toolCallCount: 1 },
     ],
     ...over,
@@ -51,6 +96,8 @@ function snapshot(over: Partial<TeamState> = {}): TeamState {
 describe('TeamPanel', () => {
   beforeEach(() => {
     clearTeamState()
+    _lookup = null
+    vi.unstubAllGlobals()
   })
 
   it('renders nothing when there is no team', () => {
@@ -425,5 +472,120 @@ describe('TeamPanel', () => {
     await wrapper.vm.$nextTick()
     await wrapper.get('.team-chip').trigger('click')
     expect(wrapper.get('.team-member').attributes('title')).toBe('')
+  })
+})
+
+// ── Member detail sheet ──
+//
+// Clicking a roster row opens a sheet with the member's facts and its FULL
+// prompt. The prompt is not in the roster payload (teamUpdate carries only
+// `description`), and the chat block for the Agent card is slim (empty input),
+// so the sheet must fetch it from the tool-call endpoint using the Agent card's
+// tool id. These tests pin the lookup, the fetch, and the Markdown rendering.
+describe('TeamPanel — member detail', () => {
+  it('opens the detail sheet when a member row is clicked', async () => {
+    updateTeamState(snapshot())
+    const wrapper = mountPanel()
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('.team-member-detail__name').exists()).toBe(false)
+    await wrapper.get('[data-action="team-member-detail"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.team-member-detail__name').text()).toBe('probe-alpha')
+  })
+
+  it('renders the member prompt as Markdown, not escaped text', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        input: JSON.stringify({ name: 'probe-alpha', prompt: '# Heading\n\n- one\n- two\n\n`src/main.go`' }),
+      }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    provide({ teamMemberCardLookup: () => ({ toolId: 'call_a', msgId: 7 }) })
+
+    updateTeamState(snapshot())
+    const wrapper = mountPanel()
+    await wrapper.vm.$nextTick()
+    await wrapper.get('[data-action="team-member-detail"]').trigger('click')
+    await flushPromises()
+
+    const prompt = wrapper.get('.team-member-detail__prompt')
+    // Markdown structure survived — a <pre> dump would contain the literal '#'.
+    expect(prompt.find('h1').exists()).toBe(true)
+    expect(prompt.findAll('li').length).toBe(2)
+    expect(prompt.text()).not.toContain('# Heading')
+    // The path was annotated (chip class is applied by the annotator).
+    expect(prompt.html()).toContain('src/main.go')
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/ai/chat/tool-call?tool_id=call_a&message_id=7',
+    )
+  })
+
+  it('shows a notice instead of fetching when no Agent card is found', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    provide({ teamMemberCardLookup: () => null })
+
+    updateTeamState(snapshot())
+    const wrapper = mountPanel()
+    await wrapper.vm.$nextTick()
+    await wrapper.get('[data-action="team-member-detail"]').trigger('click')
+    await flushPromises()
+
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('no prompt')
+  })
+
+  it('lists the wire facts the roster cannot fit', async () => {
+    updateTeamState(snapshot())
+    const wrapper = mountPanel()
+    await wrapper.vm.$nextTick()
+    await wrapper.get('[data-action="team-member-detail"]').trigger('click')
+    await flushPromises()
+
+    const facts = wrapper.get('.team-member-detail__facts').text()
+    // Wire fields the row cannot fit are all present.
+    expect(facts).toContain('general-purpose')   // agentType
+    expect(facts).toContain('working')           // activity
+    expect(facts).toContain('alive')             // lifecycle
+    expect(facts).toContain('2')                 // toolCallCount
+    // Colour is a visual attribute (the header dot), not a fact row.
+    expect(facts).not.toContain('blue')
+  })
+})
+
+// The sheet teleports to <body>, so ChatMessageList's delegated click handler
+// never sees its path chips. The drawer must route them itself, through the
+// same resolver, or a path in a member's prompt is dead text.
+describe('TeamMemberDetail — path chips', () => {
+  it('opens the file when a path chip inside the prompt is clicked', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ input: JSON.stringify({ prompt: 'see `src/main.go`' }) }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    provide({ teamMemberCardLookup: () => ({ toolId: 'call_a', msgId: 9 }) })
+
+    updateTeamState(snapshot())
+    const wrapper = mountPanel()
+    await wrapper.vm.$nextTick()
+    await wrapper.get('[data-action="team-member-detail"]').trigger('click')
+    await flushPromises()
+
+    // The prompt rendered a path chip plus its open button. Clicking the
+    // BUTTON is the chat's own contract for FILE paths (directory paths open by
+    // clicking the chip text) — the drawer mirrors it exactly.
+    const btn = wrapper.get('.team-member-detail__prompt .chat-file-open-btn')
+    fetchMock.mockClear()
+    await btn.trigger('click')
+    await flushPromises()
+
+    // openFilePath's first observable step for an in-project path is the
+    // directory probe. Without the drawer's own handler the click is inert and
+    // this fetch never happens (ChatMessageList's delegated handler cannot see
+    // a teleported sheet).
+    const probed = fetchMock.mock.calls.some((c) => String(c[0]).includes('/api/dir?path=src%2Fmain.go'))
+    expect(probed).toBe(true)
   })
 })

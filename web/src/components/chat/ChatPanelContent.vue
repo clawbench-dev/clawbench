@@ -296,6 +296,7 @@ import { nextClientSeq } from '@/utils/chatStreamUtils.ts'
 import { useFileUpload } from '@/composables/useFileUpload.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import { relativizeProjectPath } from '@/utils/quoteQuestionUtils.ts'
+import { findMemberAgentCard } from '@/utils/teamMemberCard'
 import { resetQuotePin } from '@/composables/useQuoteQuestion.ts'
 import { requestTarget, mintPendingQuoteId } from '@/composables/useConversationTarget.ts'
 import { fromStagedQuote, fromFileEntry, materializeQuotes, buildMessageQuote, quotableMessageText } from '@/utils/quoteItem.ts'
@@ -1171,6 +1172,12 @@ provide('chatRender', {
   hasImagesInContent: render.hasImagesInContent,
 })
 provide('chatSession', { getAgentBackend, getAgentName, getAgentAvatar, sessionId: () => identity.currentSessionId.value })
+// Resolve a team member's Agent card (tool-call id + owning message) from the
+// live message list. The team roster only carries the member NAME, while the
+// member's full prompt lives in the Agent card's `chat_tool_calls` row, so the
+// detail sheet needs this lookup. Provided (rather than imported) because the
+// messages array is owned by this component.
+provide('teamMemberCardLookup', (name) => findMemberAgentCard(messages.value, name))
 // openFilePath (via open-file-overlay / open-file-manager events) already routes to
 // the correct tab (file → view, dir → browse), so this is a no-op to avoid overriding.
 provide('chatUI', { navigateToFileViewer: () => {} })

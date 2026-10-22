@@ -25,12 +25,17 @@
         <ChevronUp :size="12" class="team-expanded__toggle" />
       </div>
       <div class="team-expanded__roster">
-        <div
+        <button
           v-for="m in members"
           :key="m.name"
+          type="button"
           class="team-member"
           :class="memberRowClass(m)"
           :title="memberTooltip(m)"
+          :aria-label="t('chat.team.detail.open', { name: m.name })"
+          data-action="team-member-detail"
+          :data-member-name="m.name"
+          @click="openMemberDetail(m)"
         >
           <!-- Running uses the app-wide ring (.li-spinner, declared globally in
                css/components.css) instead of a rotating lucide icon: there is
@@ -62,18 +67,29 @@
             </template>
           </span>
           <span class="team-member__tokens">{{ tokenLabel(m) }}</span>
-        </div>
+        </button>
       </div>
     </div>
+
+    <TeamMemberDetail
+      :open="detailOpen"
+      :member="detailMember"
+      :tool-id="detailTarget.toolId"
+      :msg-id="detailTarget.msgId"
+      :session-id="sessionId"
+      @close="closeMemberDetail"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, inject, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronDown, ChevronUp, CircleCheck, CircleDashed, CircleSlash, CircleX, Users, Wrench } from 'lucide-vue-next'
 import { useTeamState, type TeamMember } from '@/composables/useTeamState'
 import { teamMemberColorVar } from '@/utils/teamMemberColor'
+import TeamMemberDetail from './TeamMemberDetail.vue'
+import { getSessionId } from '@/composables/useSessionIdentity'
 
 const { t } = useI18n()
 const { teamCollapsed, hasTeam, teamName, members, activeCount, completedCount, isAutoTeam, isEnded, toggleTeamCollapse } =
@@ -165,6 +181,37 @@ function memberTooltip(m: TeamMember): string {
     }
   }
   return lines.join('\n')
+}
+
+// ── Member detail ──
+//
+// Clicking a member opens a sheet with everything the wire reports about it
+// plus the member's FULL prompt. The prompt is not in the roster payload
+// (teamUpdate only carries `description`), and the chat block for the Agent
+// card is a slim one whose `input` is empty — the prompt lives in the
+// `chat_tool_calls` row. So the drawer needs the Agent card's tool id + message
+// id, which is what findMemberAgentCard resolves from the live message list.
+
+const detailOpen = ref(false)
+const detailMember = ref<TeamMember | null>(null)
+const detailTarget = ref<{ toolId: string; msgId: string | number }>({ toolId: '', msgId: '' })
+const sessionId = computed(() => getSessionId() || '')
+
+// Provided by ChatPanelContent, which owns the messages array. Absent in
+// shallow mounts (and in the share page), where the sheet still opens but has
+// no Agent card to read a prompt from — it then shows the roster facts only.
+const memberCardLookup = inject<
+  ((name: string) => { toolId: string; msgId: string | number } | null) | null
+>('teamMemberCardLookup', null)
+
+function openMemberDetail(m: TeamMember) {
+  detailMember.value = m
+  detailTarget.value = memberCardLookup?.(m.name) ?? { toolId: '', msgId: '' }
+  detailOpen.value = true
+}
+
+function closeMemberDetail() {
+  detailOpen.value = false
 }
 
 // Header count: while running show "N active"; once the team is over show the
@@ -302,6 +349,31 @@ const chipText = computed(() => {
   align-items: center;
   gap: var(--space-3);
   min-height: 24px;
+  /* The row is a <button> (it opens the member detail sheet), so reset the UA
+     chrome: a button's default padding/background/centred text would break the
+     grid alignment the roster depends on. `text-align: left` is required —
+     a button centres its content regardless of the grid. */
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  margin: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+}
+
+.team-member:hover {
+  background: var(--bg-tertiary);
+}
+
+/* Keyboard focus must stay visible: this is the only way to reach the detail
+   sheet without a pointer. */
+.team-member:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 1px;
 }
 
 .team-member--terminated {
