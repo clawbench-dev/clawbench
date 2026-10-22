@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { getServerFieldToLabelKey, categoryItems, categoryHasPanels, isPanelOnlyCategory, getCategoryPanels, isSubPageRoute, getSubPagePanel, getSubPageTitleKey, subPagePanelMap, buildFontFamilyOptions, isDependsOnMet } from '@/components/settings/settingsFieldMap'
+import { getServerFieldToLabelKey, categoryItems, categoryHasPanels, isPanelOnlyCategory, getCategoryPanels, isSubPageRoute, getSubPagePanel, getSubPageTitleKey, subPagePanelMap, buildFontFamilyOptions, isDependsOnMet, formatAnchorForDisplay } from '@/components/settings/settingsFieldMap'
 import { UI_SCALE_STEP } from '@/utils/uiScale'
 import i18n from '@/i18n'
 
@@ -967,11 +967,26 @@ describe('usage meter is a sibling of push notifications', () => {
     expect(ids).toEqual(['push'])
   })
 
-  it('the cycle start uses the date picker, not free text', () => {
+  it('the cycle start uses a picker, not free text', () => {
     const cfg = getCategoryPanels('usageMeter')[0]
     const anchor = cfg.commonFields.find(f => f.key === 'usage_meter.anchor_date')
     expect(anchor).toBeDefined()
-    expect(anchor!.type).toBe('date')
+    // `datetime` (date + time inputs), not `text`: the point of this assertion
+    // is that the value comes from native pickers rather than a free-text box
+    // the user can mistype. The anchor accepts an optional time of day, so it
+    // is no longer the date-only editor.
+    expect(anchor!.type).toBe('datetime')
+    expect(anchor!.type).not.toBe('text')
+  })
+
+  // The stored form is "YYYY-MM-DD" or "YYYY-MM-DDTHH:MM:SS"; a raw ISO "T" in
+  // a settings row reads as machine output. Midnight is stored date-only, so
+  // the transform only has to swap the separator.
+  it('formats a stored anchor without the ISO T separator', () => {
+    expect(formatAnchorForDisplay('2026-10-05')).toBe('2026-10-05')
+    expect(formatAnchorForDisplay('2026-10-05T14:30:00')).toBe('2026-10-05 14:30:00')
+    expect(formatAnchorForDisplay('')).toBe('')
+    expect(formatAnchorForDisplay(undefined)).toBe('')
   })
 
   // The entry row selects WHAT is counted, so it must be labelled "usage type"

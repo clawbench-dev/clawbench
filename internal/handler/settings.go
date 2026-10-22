@@ -1390,9 +1390,10 @@ func validateUsageMeterRule(r model.UsageMeterConfig) error {
 	if r.AnchorDate == "" {
 		return &configValueError{MsgKey: "UsageMeterAnchorRequired", Field: "usage_meter.anchor_date"}
 	}
-	// Parse in local time to match how the service interprets the anchor: a
-	// date-only string at 00:00 in the server's timezone.
-	if _, err := time.ParseInLocation("2006-01-02", r.AnchorDate, time.Local); err != nil {
+	// Parsed in local time to match how the service interprets the anchor: a
+	// date-only value means 00:00, a date-time value means that wall-clock
+	// instant, both in the server's timezone.
+	if _, err := model.ParseUsageMeterAnchor(r.AnchorDate); err != nil {
 		return &configValueError{MsgKey: "UsageMeterAnchorInvalid", Field: "usage_meter.anchor_date"}
 	}
 	if r.PeriodDays < 1 || r.PeriodDays > model.MaxUsageMeterPeriodDays {

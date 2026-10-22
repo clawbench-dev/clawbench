@@ -187,7 +187,7 @@ func ComputeUsageMeter(ctx context.Context, now time.Time) (*UsageMeterStatus, e
 			"metric", rule.Metric, "period_days", rule.PeriodDays)
 		return &UsageMeterStatus{Enabled: false}, nil
 	}
-	anchor, err := time.ParseInLocation("2006-01-02", rule.AnchorDate, time.Local)
+	anchor, err := model.ParseUsageMeterAnchor(rule.AnchorDate)
 	if err != nil {
 		slog.Warn("usage meter: invalid anchor date, treating as disabled",
 			"anchor", rule.AnchorDate, "error", err)

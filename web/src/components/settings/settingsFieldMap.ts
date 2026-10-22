@@ -79,11 +79,27 @@ export function isDependsOnMet(
   return isSingleDependsOnMet(dependsOn, getValue)
 }
 
+/**
+ * Render a stored usage-meter anchor for display.
+ *
+ * The canonical value is "YYYY-MM-DD" or "YYYY-MM-DDTHH:MM:SS". The raw form
+ * leaks the ISO "T" separator into a settings row, which reads as machine
+ * output; a space reads as a timestamp. Midnight is already stored date-only,
+ * so no special case is needed here.
+ */
+export function formatAnchorForDisplay(value: unknown): string {
+  const raw = String(value ?? '').trim()
+  if (!raw) return ''
+  const sep = raw.indexOf('T')
+  if (sep < 0) return raw
+  return `${raw.slice(0, sep)} ${raw.slice(sep + 1)}`
+}
+
 export interface ItemSpec {
   labelKey: string
   descriptionKey?: string
   key: string
-  type: 'switch' | 'select' | 'number' | 'text' | 'date' | 'slider' | 'action' | 'info' | 'header' | 'password' | 'textarea'
+  type: 'switch' | 'select' | 'number' | 'text' | 'date' | 'datetime' | 'slider' | 'action' | 'info' | 'header' | 'password' | 'textarea'
   source: 'server' | 'local'
   needsRestart?: boolean
   options?: { labelKey: string; value: unknown; modelName?: string; groupKey?: string; badgeKey?: string }[]
@@ -456,7 +472,7 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       defaultValue: 'cost',
     },
     commonFields: [
-      { labelKey: 'settings.items.usageMeterAnchor', descriptionKey: 'settings.items.usageMeterAnchorDesc', key: 'usage_meter.anchor_date', type: 'date', source: 'server' },
+      { labelKey: 'settings.items.usageMeterAnchor', descriptionKey: 'settings.items.usageMeterAnchorDesc', key: 'usage_meter.anchor_date', type: 'datetime', source: 'server', displayTransform: formatAnchorForDisplay },
       { labelKey: 'settings.items.usageMeterPeriod', descriptionKey: 'settings.items.usageMeterPeriodDesc', key: 'usage_meter.period_days', type: 'number', source: 'server' },
       { labelKey: 'settings.items.usageMeterQuota', descriptionKey: 'settings.items.usageMeterQuotaDesc', key: 'usage_meter.quota', type: 'number', source: 'server' },
     ],

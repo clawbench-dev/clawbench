@@ -184,6 +184,58 @@ func TestValidateUsageMeterRule(t *testing.T) {
 	}
 }
 
+// The settings page lets the user pin the cycle start to a time of day. The
+// PATCH validator must accept exactly the shapes the service can compute with,
+// and reject everything else — a value it accepts but the meter cannot parse
+// would silently disable the meter after a successful-looking save.
+func TestValidateUsageMeterRule_AnchorAcceptsOptionalTime(t *testing.T) {
+	accepted := []string{
+		"2026-10-05",
+		"2026-10-05T14:30:00",
+		"2026-10-05T14:30",
+		"2026-10-05T00:00:00",
+		"2026-10-05T23:59:59",
+	}
+	for _, anchor := range accepted {
+		t.Run("accepts "+anchor, func(t *testing.T) {
+			err := validateUsageMeterRule(model.UsageMeterConfig{
+				Quota: 10, AnchorDate: anchor, PeriodDays: 30, Metric: model.UsageMeterMetricCost,
+			})
+			require.NoError(t, err, "%q must be accepted", anchor)
+		})
+	}
+
+	// A zone suffix is rejected on purpose: the anchor is a wall-clock reading in
+	// the server's timezone. Accepting an offset would make the cycle boundary
+	// depend on the host's TZ, and two visually identical rules would roll over
+	// at different instants.
+	rejected := []string{
+		"2026-13-45",
+		"10/05/2026",
+		"2026-10-05 14:30:00",
+		"2026-10-05T14:30:00Z",
+		"2026-10-05T14:30:00+08:00",
+		"2026-10-05T25:00:00",
+		"2026-10-05T14:70:00",
+		"2026-10-05T",
+	}
+	for _, anchor := range rejected {
+		t.Run("rejects "+anchor, func(t *testing.T) {
+			err := validateUsageMeterRule(model.UsageMeterConfig{
+				Quota: 10, AnchorDate: anchor, PeriodDays: 30, Metric: model.UsageMeterMetricCost,
+			})
+			require.Error(t, err, "%q must be rejected", anchor)
+
+			// Still a field-scoped, localizable rejection — not a bare error the
+			// panel cannot explain.
+			var valueErr *configValueError
+			require.True(t, errors.As(err, &valueErr))
+			assert.Equal(t, "UsageMeterAnchorInvalid", valueErr.MsgKey)
+			assert.Equal(t, "usage_meter.anchor_date", valueErr.Field)
+		})
+	}
+}
+
 // Every rejection must carry a message key AND the field path, and the keys must
 // be distinct per rule. Asserting only "err != nil" (as the table above does)
 // lets a wrong key through: swapping two MsgKeys, or pointing them all at one
