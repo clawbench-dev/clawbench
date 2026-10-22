@@ -1122,3 +1122,70 @@
 .ask-question-option.selected .ask-option-indicator--checkbox::after {
     opacity: 1;
 }
+
+/* ==========================================================================
+   AskUserQuestion submit shortcut hint ("Ctrl+Enter" / "Cmd+Enter").
+
+   Emitted by renderToolDetail.ts as a SIBLING of the buttons, i.e. through
+   `v-html` — so it can never match a scoped rule (design-guide red line 1).
+   Global here, like the indicator above.
+
+   Placement: the actions row is right-aligned, so the hint takes the free space
+   on the LEFT (`margin-right: auto`) instead of sitting inside the Submit
+   button. It describes a keyboard gesture for the whole card, not a second
+   label on one button — inside the button it read as part of the label and
+   competed with it.
+
+   Form: PLAIN muted text, deliberately not a bordered keycap. The keycap box
+   made it look like a clickable control, and the chord glyphs it used to hold
+   (⌃↵) were abstract enough to be unreadable. Muted so it stays subordinate to
+   the two buttons it sits beside.
+
+   Hidden on touch-primary pointers — there is no physical keyboard to press,
+   and the hint would only add noise on a phone.
+   ========================================================================== */
+
+.ask-submit-kbd {
+    margin-right: auto;
+    align-self: center;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-normal);
+    white-space: nowrap;
+}
+
+@media (pointer: coarse) {
+    .ask-submit-kbd {
+        display: none;
+    }
+}
+
+/* Once answered, the row only reports the outcome ("Submitted") — a chord hint
+   there would point at an action that no longer exists. */
+.ask-question-view.ask-submitted .ask-submit-kbd {
+    display: none;
+}
+
+/* ==========================================================================
+   AskUserQuestion card focus ring.
+
+   The card carries `tabindex="-1"` so it can receive focus programmatically —
+   that is what makes Ctrl/Cmd+Enter work right after a mouse pick on an option
+   (the options are plain <div>s, so the click left focus on <body> and the
+   keydown never reached the card). See focusAskView in renderToolDetail.ts.
+
+   `:focus-visible` and not `:focus`: the focus here is a side effect of a mouse
+   click, and a UA ring appearing around the whole card on every option click
+   would look like a rendering glitch. Keyboard users still get the ring.
+   ========================================================================== */
+
+.ask-question-view:focus {
+    outline: none;
+}
+
+.ask-question-view:focus-visible {
+    outline: 2px solid var(--accent-color);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+}

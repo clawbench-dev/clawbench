@@ -47,6 +47,7 @@ export const SHORTCUT_TIPS: ShortcutTipDef[] = [
   { context: 'chat', contextKey: 'appHeader.shortcutTip.contextOpenSessionList', keys: ['Ctrl+K'], actionKey: 'appHeader.shortcutTip.actionOpenSessionList' },
   { context: 'chat', contextKey: 'appHeader.shortcutTip.contextArchiveSession', keys: ['Ctrl+Delete'], actionKey: 'appHeader.shortcutTip.actionArchiveSession' },
   { context: 'chat', contextKey: 'appHeader.shortcutTip.contextJumpMessage', keys: ['Ctrl+↑', 'Ctrl+↓'], actionKey: 'appHeader.shortcutTip.actionJumpMessage' },
+  { context: 'chat', contextKey: 'appHeader.shortcutTip.contextAskSubmit', keys: ['Ctrl+Enter'], actionKey: 'appHeader.shortcutTip.actionAskSubmit' },
   { context: 'chat', contextKey: 'appHeader.shortcutTip.contextVoice', keys: ['F9'], actionKey: 'appHeader.shortcutTip.actionVoice' },
   { context: 'chat', contextKey: 'appHeader.shortcutTip.contextRecommend', actionKey: 'appHeader.shortcutTip.actionRecommend' },
   { context: 'chat', contextKey: 'appHeader.shortcutTip.contextRecommendEnable', actionKey: 'appHeader.shortcutTip.actionRecommendEnable' },

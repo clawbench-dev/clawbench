@@ -58,7 +58,7 @@
         <template v-if="isAskQuestion(tool.name || '') && shouldMergeSummaryAskCards && extractAskQuestions(tool.input).length > 0"></template>
         <!-- Answerable interactive tool: unified card
              (header strip + body in one box). -->
-        <div v-else-if="shouldAutoExpandTool(tool.name || '') && isUnifiedCardTool(tool.name)" class="tool-detail chat-inline-card" :class="!tool.done ? 'is-pending' : ''" :data-tool-name="tool.name" :data-category="getToolIcon(tool.name).category" @click="handleToolDetailClick" @input="handleToolDetailInput">
+        <div v-else-if="shouldAutoExpandTool(tool.name || '') && isUnifiedCardTool(tool.name)" class="tool-detail chat-inline-card" :class="!tool.done ? 'is-pending' : ''" :data-tool-name="tool.name" :data-category="getToolIcon(tool.name).category" @click="handleToolDetailClick" @input="handleToolDetailInput" @keydown="handleToolDetailKeydown">
           <div class="chat-card-strip" @click.stop="handleSummaryToolClick(tool, ti)">
             <component :is="getToolIcon(tool.name).icon" :size="12" class="tool-icon" />
             <span class="tool-name">{{ unifiedCardTitle(tool.name, tool.input, tool.display_name) }}</span>
@@ -99,7 +99,7 @@
            whose input carries questions. When more than one source exists they are
            merged into this single card so every question is answered with one submit. -->
       <template v-if="summaryAskQuestions.length || shouldMergeSummaryAskCards">
-        <div class="tool-detail chat-inline-card done" data-category="ask" data-tool-name="AskUserQuestion" @click="handleToolDetailClick" @input="handleToolDetailInput">
+        <div class="tool-detail chat-inline-card done" data-category="ask" data-tool-name="AskUserQuestion" @click="handleToolDetailClick" @input="handleToolDetailInput" @keydown="handleToolDetailKeydown">
           <div class="chat-card-strip" @click.stop="$emit('toggle-tool', 'summary-ask')">
             <component :is="getToolIcon('AskUserQuestion').icon" :size="12" class="tool-icon" />
             <span class="tool-name">{{ t('tool.askUser.name') }}</span>
@@ -232,7 +232,7 @@
         <template v-if="isSuppressedAskCard(bi)"></template>
         <!-- AskUserQuestion / PermissionApproval: unified interactive card
              (status strip + body in one box). -->
-        <div v-else-if="shouldAutoExpand(block) && isUnifiedCardTool(block.name)" class="tool-detail chat-inline-card" :class="!block.done ? 'is-pending' : ''" :data-tool-name="block.name" :data-category="getToolIcon(block.name).category" :data-session-id="sessionId" :data-tool-call-id="block.id" @click="handleToolDetailClick" @input="handleToolDetailInput">
+        <div v-else-if="shouldAutoExpand(block) && isUnifiedCardTool(block.name)" class="tool-detail chat-inline-card" :class="!block.done ? 'is-pending' : ''" :data-tool-name="block.name" :data-category="getToolIcon(block.name).category" :data-session-id="sessionId" :data-tool-call-id="block.id" @click="handleToolDetailClick" @input="handleToolDetailInput" @keydown="handleToolDetailKeydown">
           <div class="chat-card-strip" @click.stop="handleToolClick(block, key(bi), absIdx(bi))">
             <component :is="getToolIcon(block.name).icon" :size="12" class="tool-icon" />
             <span class="tool-name">{{ unifiedCardTitle(block.name, block.input, block.display_name) }}</span>
@@ -417,7 +417,7 @@
         <!-- Surrounding text (with ask-question tag stripped) -->
         <div v-if="getBlockHtml(bi, block)" v-html="getBlockHtml(bi, block)"></div>
         <template v-if="textAskQuestions(bi, block).length > 0 && !isSuppressedAskCard(bi)">
-          <div class="tool-detail chat-inline-card done" data-category="ask" data-tool-name="AskUserQuestion" @click="handleToolDetailClick" @input="handleToolDetailInput">
+          <div class="tool-detail chat-inline-card done" data-category="ask" data-tool-name="AskUserQuestion" @click="handleToolDetailClick" @input="handleToolDetailInput" @keydown="handleToolDetailKeydown">
             <div class="chat-card-strip" @click.stop="$emit('toggle-tool', key(bi))">
               <component :is="getToolIcon('AskUserQuestion').icon" :size="12" class="tool-icon" />
               <span class="tool-name">{{ t('tool.askUser.name') }}</span>
@@ -478,7 +478,7 @@
 import { ref, shallowRef, watch, onUnmounted, computed, onMounted, onUpdated, reactive, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import i18n from '@/i18n'
-import { handleToolAction, shouldAutoExpandTool, updateAskSubmitState, classifyAskQuestionsInput, restoreAskStatesInContainer, handleAskSupplementaryInput } from '@/utils/renderToolDetail.ts'
+import { handleToolAction, shouldAutoExpandTool, updateAskSubmitState, classifyAskQuestionsInput, restoreAskStatesInContainer, handleAskSupplementaryInput, handleAskSubmitShortcut } from '@/utils/renderToolDetail.ts'
 import { askCardKey } from '@/utils/askQuestionState.ts'
 import { detectAskQuestion } from '@/utils/streamPerf.ts'
 import { askItemsToInputMap } from '@/utils/askQuestion.ts'
@@ -1814,6 +1814,21 @@ function handleToolDetailInput(event: Event) {
   if (askView) {
     updateAskSubmitState(askView)
   }
+}
+
+/**
+ * Ctrl/Cmd+Enter inside an ask card submits it, so the answer needs no reach for
+ * the button. Bound on the same container as the click handler, which is what
+ * scopes it to "the card the keystroke happened in" — several cards (chat list,
+ * tool-detail drawer) can be on screen at once.
+ *
+ * Read-only (share) mode never dispatches, for the same reason
+ * handleToolDetailClick bails: the emit would try to POST to an auth-protected
+ * endpoint from an anonymous viewer.
+ */
+function handleToolDetailKeydown(event: KeyboardEvent) {
+  if (props.readOnly) return
+  handleAskSubmitShortcut(event, emit as any)
 }
 
 // The ask-card body is rebuilt from an HTML string whenever the rendered
