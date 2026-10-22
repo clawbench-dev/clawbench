@@ -155,6 +155,12 @@ async function loadUsageTotals(url: string): Promise<void> {
 
   usageLoading.value = true
   usageError.value = null
+  // Clear the previous window's totals before the request: the panel must
+  // never pair the NEW net lines with the OLD spend. The two requests finish
+  // independently, so without this a fast git response would immediately
+  // render a ratio whose numerator is stale — a plausible-looking number that
+  // describes no window at all. The panel shows "loading" until both land.
+  usageTotals.value = null
   try {
     const resp = await apiGet<{ totals?: { total?: number; credit?: number; costUsd?: number } }>(
       url,

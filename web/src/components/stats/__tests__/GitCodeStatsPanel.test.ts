@@ -393,6 +393,74 @@ describe('GitCodeStatsPanel', () => {
     await flushPromises()
   })
 
+  it('shows loading (not a ratio) while the two halves of the window disagree', async () => {
+    // Git answers instantly with the new range while the usage query is still
+    // in flight. Rendering a ratio now would divide the NEW net lines by the
+    // PREVIOUS window's spend — a plausible number describing no window.
+    routeMock(
+      mockResponse({ totals: { added: 2000, deleted: 0, net: 2000, commitCnt: 1 }, rows: [] }),
+      { totals: { total: 200_000, credit: 20, costUsd: 2 }, rows: [] },
+    )
+    const wrapper = await mountPanel()
+    expect(wrapper.text()).toContain('Token / 1K 行')
+
+    const pending: ((v: unknown) => void)[] = []
+    mockApiGet.mockImplementation((url: string) => {
+      if (String(url).startsWith('/api/usage/stats')) {
+        return new Promise(r => { pending.push(r as (v: unknown) => void) })
+      }
+      return Promise.resolve(mockResponse({ totals: { added: 4000, deleted: 0, net: 4000, commitCnt: 2 }, rows: [] }))
+    })
+    const stats = useGitCodeStats()
+    await stats.loadGitStats()
+    await nextTick()
+
+    // New net lines are in, spend is not — no ratio, and the card says loading.
+    expect(wrapper.text()).toContain('+4.0K')
+    expect(wrapper.text()).not.toContain('Token / 1K 行')
+    expect(wrapper.text()).toContain('加载中')
+
+    for (const release of pending) release({ totals: { total: 400_000, credit: 40, costUsd: 4 }, rows: [] })
+    await flushPromises()
+    await nextTick()
+    // 4000 net lines = 4 units → 100K tokens per unit.
+    expect(wrapper.text()).toContain('100.0K')
+  })
+
+  it('shows loading (not a ratio) when the usage half lands first', async () => {
+    // Mirror of the case above: spend is in, net lines are not. Dividing the
+    // NEW spend by the PREVIOUS range's net lines is just as wrong.
+    routeMock(
+      mockResponse({ totals: { added: 2000, deleted: 0, net: 2000, commitCnt: 1 }, rows: [] }),
+      { totals: { total: 200_000, credit: 20, costUsd: 2 }, rows: [] },
+    )
+    const wrapper = await mountPanel()
+    expect(wrapper.text()).toContain('100.0K')
+
+    const pending: ((v: unknown) => void)[] = []
+    mockApiGet.mockImplementation((url: string) => {
+      if (String(url).startsWith('/api/usage/stats')) {
+        return Promise.resolve({ totals: { total: 800_000, credit: 80, costUsd: 8 }, rows: [] })
+      }
+      return new Promise(r => { pending.push(r as (v: unknown) => void) })
+    })
+    const stats = useGitCodeStats()
+    const load = stats.loadGitStats()
+    await flushPromises()
+    await nextTick()
+
+    // Fresh spend, stale net lines → no ratio at all.
+    expect(wrapper.text()).not.toContain('Token / 1K 行')
+    expect(wrapper.text()).toContain('加载中')
+
+    for (const release of pending) release(mockResponse({ totals: { added: 4000, deleted: 0, net: 4000, commitCnt: 2 }, rows: [] }))
+    await load
+    await flushPromises()
+    await nextTick()
+    // 4000 net lines = 4 units → 200K tokens per unit.
+    expect(wrapper.text()).toContain('200.0K')
+  })
+
   // --- Efficiency group (spend per 1K net added lines) ---
 
   it('renders per-1K tokens / credit / cost from the same-window usage totals', async () => {

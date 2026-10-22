@@ -300,8 +300,20 @@ const totalsPresent = computed(() => {
 // --- Efficiency group ---
 const totalsNet = computed(() => raw.value?.totals?.net ?? 0)
 
-/** Spend per 1K net added lines; null when the ratio is undefined. */
-const efficiency = computed(() => efficiencyPerK(totalsNet.value, usageTotals.value))
+/**
+ * Spend per 1K net added lines; null when the ratio is undefined.
+ *
+ * Both halves must belong to the same window, and they arrive from two
+ * independent requests. Two guards cover both arrival orders:
+ *   - usage lands first → `loading` is still true, so no ratio;
+ *   - git lands first   → `usageTotals` was cleared when its request started,
+ *                         so `efficiencyPerK` has no numerator and returns null.
+ * A ratio computed from mismatched windows is worse than no ratio: it looks
+ * real. (No separate `usageLoading` guard: the cleared totals already cover
+ * that order, and a second check would just be dead code.)
+ */
+const efficiency = computed(() =>
+  loading.value ? null : efficiencyPerK(totalsNet.value, usageTotals.value))
 
 /**
  * Why the ratio is missing. The two causes are genuinely different (one is a
@@ -310,7 +322,7 @@ const efficiency = computed(() => efficiencyPerK(totalsNet.value, usageTotals.va
  * not be told to check their usage data.
  */
 const efficiencyUnavailableText = computed(() => {
-  if (usageLoading.value) return t('common.loading')
+  if (loading.value || usageLoading.value) return t('common.loading')
   if (usageError.value) {
     return usageError.value.message || (usageError.value.status
       ? `${t('gitStats.effLoadFailed')} (${usageError.value.status})`
