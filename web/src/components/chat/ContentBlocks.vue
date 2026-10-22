@@ -257,7 +257,7 @@
         <template v-else>
           <div :ref="(el) => setSubagentPillRef(subagentGroupKey(bi, block), el)" class="chat-tool-call" :class="{ done: block.done, 'chat-tool-call-group': hasSubagentGroup(block), 'chat-tool-call-group-open': hasSubagentGroup(block) && isSubagentGroupOpen(bi, block) }" :data-category="getToolIcon(block.name).category" :style="memberAccentStyle(block)" @click.stop="handleToolClick(block, key(bi), absIdx(bi))">
             <component :is="getToolIcon(block.name).icon" :size="12" class="tool-icon" />
-            <span class="tool-name">{{ toolDisplayName(block.name, block.input, block.display_name) }}</span>
+            <span class="tool-name">{{ isAgentCardWithMembers(block) ? agentPillTitle(block) : toolDisplayName(block.name, block.input, block.display_name) }}</span>
             <span v-if="toolCallSummary(block)" class="tool-summary">{{ toolCallSummary(block) }}</span>
             <!-- Sub-agent: step count + expand/collapse toggle live IN the pill,
                  so the Agent call and its sub-agent work are one row instead of
@@ -636,6 +636,49 @@ function isUnifiedCardTool(name: string) {
 function unifiedCardTitle(name: string, input: any, displayName?: string) {
   if (isPermissionApproval(name)) return t('tool.permission.title')
   return toolDisplayName(name, input, displayName)
+}
+
+/**
+ * Label for an Agent-family tool pill.
+ *
+ * An Agent Team member's card is titled with the MEMBER's name, not the
+ * subagent TYPE. Every member of a CodeBuddy team is spawned as
+ * `subagent_type: "general-purpose"`, so the type alone renders a column of
+ * identical "General-purpose" cards that say nothing about who did the work.
+ *
+ * The member name is the more specific attribution whenever it is present, so
+ * it wins over `display_name`. It arrives on a later frame of the same tool
+ * call, which is why the block's attribution is filled in incrementally (see
+ * AccumulateBlock) — before that frame lands the card briefly shows the type,
+ * which is the best information available at that moment.
+ *
+ * `member_name` on the block is the primary source. Messages persisted before
+ * the block learned to keep it have an empty value, but their CHILDREN still
+ * carry the attribution, so the name is derived from them — that makes old
+ * history render correctly without a data migration.
+ */
+function agentPillTitle(block: any): string {
+  const own = block?.member_name
+  if (own) return String(own)
+  for (const child of childBlocksOf(block?.id)) {
+    if (child?.member_name) return String(child.member_name)
+  }
+  return toolDisplayName(block?.name, block?.input, block?.display_name)
+}
+
+/** Whether this tool pill IS an Agent card hosting a member timeline — i.e. the
+ *  member-name titling applies.
+ *
+ *  Keyed on the block hosting children rather than on the tool name or the
+ *  `agent` icon category: SendMessage/TeamCreate/ComputerUse share that
+ *  category and must keep their own labels, and a member's OWN Bash/Read cards
+ *  carry `member_name` too — titling those with the member name would turn a
+ *  tool trace into a wall of identical names. */
+function isAgentCardWithMembers(block: any): boolean {
+  if (block?.type !== 'tool_use') return false
+  const name = String(block?.name || '').toLowerCase()
+  if (name !== 'agent' && name !== 'task') return false
+  return !!block?.member_name || childBlocksOf(block?.id).some((c) => c?.member_name)
 }
 
 /**
@@ -1111,9 +1154,27 @@ function needsMemberFallback(block: any): boolean {
   if (props.nested) return false
   const name = block?.member_name
   if (!name) return false
+  // A block that HOSTS other blocks is an Agent card, not member content — even
+  // though it now carries the member name (the backend attributes the spawn
+  // frame to its member so the card can be titled and coloured). Folding it
+  // into the member's own fallback group would nest the timeline inside itself
+  // and lose the card's expand/collapse affordance.
+  if (block?.id && hostBlockIds.value.has(block.id)) return false
   const pid = block?.parent_tool_call_id
   return !pid || !currentBlockIds.value.has(pid)
 }
+
+/** Ids of blocks in this array that are the PARENT of some other block — i.e.
+ *  Agent cards hosting a timeline. Computed from `props.blocks` so it describes
+ *  exactly what this instance renders. */
+const hostBlockIds = computed(() => {
+  const ids = new Set<string>()
+  for (const b of props.blocks) {
+    const pid = b?.parent_tool_call_id
+    if (pid) ids.add(pid)
+  }
+  return ids
+})
 
 /** Member name of the fallback group a block belongs to ('' when none). */
 function memberGroupNameOf(block: any): string {
@@ -1267,12 +1328,30 @@ function isMemberGroupChild(block: any): boolean {
 /** The block that hosts each member fallback group: the member's FIRST block in
  *  this message. Rendering the group there keeps the member's output at the
  *  point in the conversation where it actually arrived. */
+/** The block that hosts each member fallback group, in this message.
+ *
+ *  Rendering the group at the member's first block keeps its output at the
+ *  point in the conversation where it actually arrived.
+ *
+ *  Preference is a NON-tool block (text/thinking) over a tool_use block: the
+ *  anchor block is replaced by the group header pill, so anchoring on a tool
+ *  call would HIDE that tool call's own card (its name, status, output) behind
+ *  a pill that only shows the member name. A member whose only output is one
+ *  tool call is common, and in that case the tool must stay visible.
+ *  When every block is a tool call the first one anchors, which is the only
+ *  choice left — the group still needs a header. */
 const memberFallbackAnchor = computed(() => {
-  const map: Record<string, any> = {}
+  const firstAny: Record<string, any> = {}
+  const firstNonTool: Record<string, any> = {}
   for (const b of props.blocks) {
     const name = memberGroupNameOf(b)
-    if (!name || map[name]) continue
-    map[name] = b
+    if (!name) continue
+    if (!firstAny[name]) firstAny[name] = b
+    if (!firstNonTool[name] && b?.type !== 'tool_use') firstNonTool[name] = b
+  }
+  const map: Record<string, any> = {}
+  for (const name of Object.keys(firstAny)) {
+    map[name] = firstNonTool[name] || firstAny[name]
   }
   return map
 })

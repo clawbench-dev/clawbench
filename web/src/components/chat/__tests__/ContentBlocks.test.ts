@@ -2461,6 +2461,97 @@ describe('ContentBlocks — Agent Team member fallback grouping', () => {
   })
 })
 
+// ── Agent Team member card titles ──
+//
+// Every CodeBuddy team member is spawned with subagent_type "general-purpose",
+// so titling the Agent card with the subagent TYPE renders a column of
+// identical "General-purpose" cards that say nothing about who did the work.
+// The member name is the authoritative attribution and must win.
+describe('ContentBlocks — Agent card member titles', () => {
+  it('titles an Agent card with the member name instead of the subagent type', () => {
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'tool_use', name: 'Agent', id: 'call_a', done: true, input: { subagent_type: 'general-purpose' }, display_name: 'general-purpose', member_name: 'android-reviewer' },
+        { type: 'text', text: 'alpha report', parent_tool_call_id: 'call_a', member_name: 'android-reviewer' },
+      ],
+    })
+    const pill = wrapper.find('.chat-tool-call-group')
+    expect(pill.find('.tool-name').text()).toBe('android-reviewer')
+    expect(wrapper.html()).not.toContain('general-purpose')
+  })
+
+  it('falls back to the plain tool label when the card has no member attribution', () => {
+    // An ordinary (non-team) sub-agent: nothing names the child, so the pill
+    // keeps whatever toolDisplayName yields. (This suite stubs toolDisplayName
+    // to the raw name, so the assertion here is "not a member name".)
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'tool_use', name: 'Agent', id: 'call_p', done: true, input: { subagent_type: 'explore' } },
+        { type: 'text', text: 'child answer', parent_tool_call_id: 'call_p' },
+      ],
+    })
+    expect(wrapper.find('.chat-tool-call-group .tool-name').text()).toBe('Agent')
+  })
+
+  it('derives the title from children when the card itself lost the attribution', () => {
+    // Messages persisted before the block kept member_name: the card is empty
+    // but its children still carry the member. No data migration needed.
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'tool_use', name: 'Agent', id: 'call_a', done: true, input: { subagent_type: 'general-purpose' }, display_name: 'general-purpose' },
+        { type: 'text', text: 'alpha report', parent_tool_call_id: 'call_a', member_name: 'android-reviewer' },
+      ],
+    })
+    expect(wrapper.find('.chat-tool-call-group .tool-name').text()).toBe('android-reviewer')
+  })
+
+  it('leaves a member\'s own tool cards titled with the tool, not the member', () => {
+    // member_name is on every one of a member's blocks. Titling its Bash card
+    // with the member name would turn the trace into a wall of identical names.
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'tool_use', name: 'Agent', id: 'call_a', done: true, input: { subagent_type: 'general-purpose' }, member_name: 'android-reviewer' },
+        { type: 'tool_use', name: 'Bash', id: 't1', done: true, input: { command: 'ls' }, parent_tool_call_id: 'call_a', member_name: 'android-reviewer' },
+      ],
+      expandedTools: { 'subagent-call_a': true },
+    })
+    const group = wrapper.find('.subagent-group')
+    expect(group.find('.tool-name').text()).toBe('Bash')
+  })
+
+  it('keeps a member\'s tool cards visible instead of hiding them behind the group header', () => {
+    // The anchor block is REPLACED by the group header pill. Anchoring on a
+    // tool call would hide that card's name/status/output, so a non-tool block
+    // anchors whenever the member has one.
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'text', text: 'alpha report', member_name: 'alpha' },
+        { type: 'tool_use', name: 'SendMessage', id: 'sm1', done: true, input: { recipient: 'team-lead' }, member_name: 'alpha' },
+        { type: 'tool_use', name: 'TeamCreate', id: 'tc1', done: true, input: {}, member_name: 'alpha' },
+      ],
+      expandedTools: { 'member-group-msg-1-alpha': true },
+    })
+    const group = wrapper.find('.member-group')
+    // The member name is the group header...
+    expect(group.find('.chat-tool-call .tool-name').text()).toBe('alpha')
+    // ...and both tool cards keep their own labels inside the body.
+    const bodyLabels = group.findAll('.subagent-group-body .tool-name').map((n) => n.text())
+    expect(bodyLabels).toContain('SendMessage')
+    expect(bodyLabels).toContain('TeamCreate')
+  })
+
+  it('anchors on a tool call only when the member has no other block', () => {
+    // Degenerate case: the group still needs a header, so the sole tool call
+    // becomes it. Documented behaviour, not an accident.
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'tool_use', name: 'SendMessage', id: 'sm1', done: true, input: {}, member_name: 'alpha' },
+      ],
+    })
+    expect(wrapper.find('.member-group .tool-name').text()).toBe('alpha')
+  })
+})
+
 // ── Ask-card identity (data-ask-key) ──
 //
 // Every ask card must carry an askKey. Without it the card body — rendered

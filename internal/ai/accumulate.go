@@ -173,6 +173,18 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) (thinkID s
 				if event.Tool.Name != "" {
 					(*blocks)[i].Name = event.Tool.Name
 				}
+				// Agent Team attribution: the member name arrives on LATER frames
+				// of the same tool call (the opening frame carries only the
+				// subagent TYPE). Without this, a spawn card keeps the empty
+				// attribution it was created with and the frontend falls back to
+				// displaying "general-purpose" instead of the member's name.
+				// Only fill an empty value — a block's member never changes.
+				if (*blocks)[i].MemberName == "" && event.MemberName != "" {
+					(*blocks)[i].MemberName = event.MemberName
+				}
+				if (*blocks)[i].MemberColor == "" && event.MemberColor != "" {
+					(*blocks)[i].MemberColor = event.MemberColor
+				}
 				(*blocks)[i].Done = event.Tool.Done
 				if event.Tool.DurationMs > 0 {
 					(*blocks)[i].DurationMs = event.Tool.DurationMs
@@ -227,6 +239,14 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) (thinkID s
 					// Update name if provided (ACP agents may send name in updates)
 					if event.Tool.Name != "" {
 						(*blocks)[i].Name = event.Tool.Name
+					}
+					// Same late-attribution rule as the tool_use branch: a member's
+					// tool call can complete before any frame repeats its name.
+					if (*blocks)[i].MemberName == "" && event.MemberName != "" {
+						(*blocks)[i].MemberName = event.MemberName
+					}
+					if (*blocks)[i].MemberColor == "" && event.MemberColor != "" {
+						(*blocks)[i].MemberColor = event.MemberColor
 					}
 					(*blocks)[i].Output = event.Tool.Output
 					(*blocks)[i].Status = event.Tool.Status
