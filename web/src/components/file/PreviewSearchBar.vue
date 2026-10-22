@@ -135,6 +135,42 @@ watch(() => props.open, async (val) => {
     }
 })
 
+/**
+ * Re-run the search when the previewed document is REPLACED.
+ *
+ * The HTML preview reloads its iframe whenever the file changes on disk (an
+ * fsnotify refresh or an AI edit bumps the cache-buster — see FileViewer's
+ * `htmlPreviewTimestamp`). A reload is a NEW document: every `<mark>` we wrapped
+ * is destroyed with the old one, but `matches`/`marks` still hold the old
+ * arrays. The counter kept showing "2/5" while every mark was detached, so
+ * "next" silently did nothing (`jumpTo` bails on `!mark.isConnected`) — no
+ * error, just a dead button. Content that shrank also left `activeIndex` past
+ * the end of the new list.
+ *
+ * `load` fires on the iframe element for both the initial navigation and every
+ * reload, which is exactly the granularity needed. Re-running with the current
+ * query keeps the user's search alive across a refresh instead of clearing it.
+ */
+function onIframeLoad() {
+    if (!props.open || !query.value) return
+    // The new document is not necessarily laid out yet; re-running synchronously
+    // in the load handler can walk a body that is still empty.
+    void nextTick(() => {
+        if (!props.open || !query.value) return
+        activeIndex.value = 0
+        applyHighlights()
+    })
+}
+
+watch(() => props.iframe, (iframe, prev) => {
+    prev?.removeEventListener('load', onIframeLoad)
+    iframe?.addEventListener('load', onIframeLoad)
+}, { immediate: true })
+
+onBeforeUnmount(() => {
+    props.iframe?.removeEventListener('load', onIframeLoad)
+})
+
 function setOption(key: 'caseSensitive' | 'regexp' | 'wholeWord', value: boolean) {
     if (key === 'caseSensitive') caseSensitive.value = value
     else if (key === 'regexp') regexp.value = value

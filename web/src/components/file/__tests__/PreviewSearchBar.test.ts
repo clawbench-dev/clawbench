@@ -297,5 +297,94 @@ describe('PreviewSearchBar', () => {
       expect(iframe.contentDocument!.body.textContent).toBe('clawbench')
       wrapper.unmount()
     })
+
+    // ── Reload: the previewed document is replaced under an open find bar ──
+    //
+    // The HTML preview reloads its iframe when the file changes on disk (an
+    // fsnotify refresh or an AI edit bumps the cache-buster). That is a NEW
+    // document: every <mark> dies with the old one, but `matches`/`marks` kept
+    // the old arrays — the counter still read "1/2" and "next" did nothing
+    // (jumpTo bails on a detached mark), with no error surfaced.
+
+    /** Replace the iframe's document content and fire the load event the
+     *  preview would fire after a reload. */
+    async function reloadIframe(iframe: HTMLIFrameElement, html: string) {
+      iframe.contentDocument!.body.innerHTML = html
+      iframe.dispatchEvent(new Event('load'))
+      await sleep(20)
+    }
+
+    it('re-runs the search when the previewed document reloads', async () => {
+      const iframe = seedIframe('<p>alpha one</p><p>alpha two</p>')
+      const wrapper = mountBar({ open: true, iframe })
+      await sleep(20)
+      const input = wrapper.find('input')
+      input.element.value = 'alpha'
+      input.trigger('input')
+      await sleep(20)
+      expect(wrapper.find('.cm-search-match-info').text()).toBe('1/2')
+
+      // The file changed on disk: the old marks are gone, one match remains.
+      await reloadIframe(iframe, '<p>alpha only</p>')
+
+      expect(wrapper.find('.cm-search-match-info').text()).toBe('1/1')
+      const marks = iframe.contentDocument!.querySelectorAll('mark.md-search-match')
+      expect(marks).toHaveLength(1)
+      // The mark must belong to the CURRENT document, not the destroyed one.
+      expect(marks[0].isConnected).toBe(true)
+      wrapper.unmount()
+    })
+
+    it('keeps navigation working after a reload (marks are not stale)', async () => {
+      const iframe = seedIframe('<p>alpha one</p><p>alpha two</p><p>alpha three</p>')
+      const wrapper = mountBar({ open: true, iframe })
+      await sleep(20)
+      const input = wrapper.find('input')
+      input.element.value = 'alpha'
+      input.trigger('input')
+      await sleep(20)
+      expect(wrapper.find('.cm-search-match-info').text()).toBe('1/3')
+
+      await reloadIframe(iframe, '<p>alpha a</p><p>alpha b</p>')
+
+      // Counter reflects the new document…
+      expect(wrapper.find('.cm-search-match-info').text()).toBe('1/2')
+      // …and "next" actually advances instead of no-oping on a detached mark.
+      input.trigger('keydown', { key: 'Enter' })
+      await sleep(20)
+      expect(wrapper.find('.cm-search-match-info').text()).toBe('2/2')
+      // The active mark is live in the iframe document.
+      const active = iframe.contentDocument!.querySelector('mark.md-search-match-active')
+      expect(active).not.toBeNull()
+      expect(active!.isConnected).toBe(true)
+      wrapper.unmount()
+    })
+
+    it('does not re-highlight on reload while the bar is closed', async () => {
+      const iframe = seedIframe('<p>alpha one</p>')
+      const wrapper = mountBar({ open: false, iframe })
+      await sleep(20)
+
+      await reloadIframe(iframe, '<p>alpha two</p>')
+
+      expect(iframe.contentDocument!.querySelectorAll('mark.md-search-match')).toHaveLength(0)
+      wrapper.unmount()
+    })
+
+    it('stops listening for reloads after unmount', async () => {
+      const iframe = seedIframe('<p>alpha one</p>')
+      const wrapper = mountBar({ open: true, iframe })
+      await sleep(20)
+      const input = wrapper.find('input')
+      input.element.value = 'alpha'
+      input.trigger('input')
+      await sleep(20)
+      wrapper.unmount()
+
+      // A reload after unmount must not touch the document (the component is
+      // gone; wrapping marks now would be an orphaned write).
+      await reloadIframe(iframe, '<p>alpha two</p>')
+      expect(iframe.contentDocument!.querySelectorAll('mark.md-search-match')).toHaveLength(0)
+    })
   })
 })

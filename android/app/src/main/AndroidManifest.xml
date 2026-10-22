@@ -23,6 +23,16 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
+    <!-- Package visibility (API 30+): without this, resolveActivity() on the
+         camera intent returns null even when a camera app is installed, and
+         the 拍照 entry silently falls back to the photo picker. Declaring the
+         intent is the only way to see the handler package. -->
+    <queries>
+        <intent>
+            <action android:name="android.media.action.IMAGE_CAPTURE" />
+        </intent>
+    </queries>
+
     <application
         android:name=".ClawBenchApp"
         android:allowBackup="true"
