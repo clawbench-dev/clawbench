@@ -67,7 +67,7 @@ func TestAsAbsolutePath_WindowsPOSIXStyleIsVolumeQualified(t *testing.T) {
 	}
 	got, ok := asAbsolutePath(`C:\proj\root`, "/proj/root/sub")
 	if !ok {
-		t.Fatal("a leading-slash path must still be recognised as absolute on Windows")
+		t.Fatal("a leading-slash path must still be recognized as absolute on Windows")
 	}
 	want := `C:\proj\root\sub`
 	if got != want {
@@ -87,7 +87,7 @@ func TestAsAbsolutePath_WindowsRelativeIsNotVolumeQualified(t *testing.T) {
 // The Windows branch must not fire on POSIX: "//server/share" is an ordinary
 // absolute path there, and treating a leading slash specially would change its
 // meaning. filepath.Abs collapses the doubled leading slash (standard library
-// behaviour, not something this change introduces) — what matters is that the
+// behavior, not something this change introduces) — what matters is that the
 // path is accepted as absolute and stays a path on the same volume.
 func TestAsAbsolutePath_LeadingSlashIsNotSpecialOnPOSIX(t *testing.T) {
 	if runtime.GOOS == "windows" {

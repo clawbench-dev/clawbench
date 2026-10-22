@@ -173,7 +173,7 @@ func TestOpenAPICountReCoversBothSpellings(t *testing.T) {
 	for _, s := range mustMatch {
 		m := openAPICountRe.FindStringSubmatch(s)
 		if m == nil {
-			t.Errorf("%q must be recognised as an OpenAPI count claim; the guard cannot see it", s)
+			t.Errorf("%q must be recognized as an OpenAPI count claim; the guard cannot see it", s)
 			continue
 		}
 		if m[1] != "178" || m[2] != "226" {

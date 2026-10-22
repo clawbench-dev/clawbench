@@ -51,7 +51,7 @@ func TestServeUsageMeter_DisabledRuleReturns200(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rawBody, &raw))
 
 	// Exact set, both directions: a missing key would break the client's
-	// zero-initialised readout, and an extra one (metric / periodDays /
+	// zero-initialized readout, and an extra one (metric / periodDays /
 	// cycleStart / series) would tell it there is a window to render.
 	got := make([]string, 0, len(raw))
 	for k := range raw {
