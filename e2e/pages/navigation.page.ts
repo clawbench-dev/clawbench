@@ -122,17 +122,28 @@ export class NavigationPage {
 
   /** Switch to Chat tab */
   async switchToChat(): Promise<void> {
-    // In wide mode chat lives in the right pane and is toggled by its own
-    // button; in narrow mode it is a regular dock tab.
-    const chatToggle = this.page.locator('.wide-dock-bottom .dock-btn[data-tab="chat"]')
-    if (await chatToggle.isVisible().catch(() => false)) {
-      // Wide mode: the toggle's aria-pressed reflects whether chat is shown.
+    // Settle FIRST: `isVisible()` on the wide toggle is a snapshot, and right
+    // after a wide→narrow resize the wide dock is still the displayed one — so
+    // this method used to take the wide branch and click a toggle that was about
+    // to be hidden, leaving chat mounted but NOT the active narrow tab (its
+    // content present yet `display:none`, which is exactly the "team-chip
+    // resolved but hidden" timeout seen on WebKit in CI).
+    await this.waitForLayoutSettled()
+    const wide = await this.page.evaluate(() => window.innerWidth >= 960)
+    if (wide) {
+      // In wide mode chat lives in the right pane and is toggled by its own
+      // button; aria-pressed reflects whether chat is shown.
+      const chatToggle = this.page.locator('.wide-dock-bottom .dock-btn[data-tab="chat"]')
       const pressed = await chatToggle.getAttribute('aria-pressed')
       if (pressed !== 'true') await chatToggle.click()
       await expect(this.page.locator('.chat-textarea')).toBeVisible({ timeout: 10000 })
       return
     }
     await this.switchToTab('chat')
+    // Narrow mode: the chat panel is a drawer page, mounted only while its tab
+    // is active. Wait for it to actually be the visible one, so callers that
+    // assert on chat content cannot race the drawer transition.
+    await expect(this.page.locator('.chat-textarea')).toBeVisible({ timeout: 10000 })
   }
 
   /** Switch to File Viewer tab */
