@@ -921,6 +921,25 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	if _, err := store.WriteExec(SessionSharesDDL); err != nil {
 		return fmt.Errorf("failed to create session_shares table: %w", err)
 	}
+	// Migrate: session shares no longer freeze a JSON snapshot. The DDL above is
+	// a no-op on an existing database, so the probe has to run AFTER it — the
+	// table is guaranteed to exist by this point, and the rebuild below is the
+	// only thing that can bring an old install to the id-only shape.
+	//
+	// Deliberately not recorded in schema_migrations: a column probe is
+	// self-healing (it re-runs if the column ever reappears) and cannot go stale,
+	// which is the repo's stated rule for shape-only migrations.
+	{
+		var hasPayload int
+		_ = store.ReadDB().QueryRow(
+			"SELECT COUNT(*) FROM pragma_table_info('session_shares') WHERE name='payload'",
+		).Scan(&hasPayload)
+		if hasPayload > 0 {
+			if err := migrateSessionSharesToIDOnly(); err != nil {
+				return fmt.Errorf("failed to migrate session_shares to id-only: %w", err)
+			}
+		}
+	}
 	// "/btw" side questions. Defined in btw.go as a constant so tests share one
 	// source of truth for the schema.
 	if _, err := store.WriteExec(BtwQuestionsDDL); err != nil {

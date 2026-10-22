@@ -22,7 +22,8 @@
           <span class="error-text">{{ getWarningText(w) }}</span>
           <span v-if="errorSourceLabel(w)" class="error-source-chip" :class="'src-' + (w.error_source || '')">{{ errorSourceLabel(w) }}</span>
           <LoginCommandButton v-if="w.login_cmd" :command="w.login_cmd" />
-          <button v-else-if="isResetableReason(w.reason) && !isGroupSession" class="warning-reset-btn" @click.stop="$emit('reset-session', { reason: w.reason })">
+          <!-- 只读宿主（公开会话分享页 / btw 抽屉）不绑定 reset-session，渲染出来就是个死按钮 -->
+          <button v-else-if="isResetableReason(w.reason) && !isGroupSession && !readOnly" class="warning-reset-btn" @click.stop="$emit('reset-session', { reason: w.reason })">
             {{ t('chat.contentBlocks.resetSession') }}
           </button>
         </div>
@@ -32,7 +33,8 @@
           <span class="error-text">{{ getWarningText(w) }}</span>
           <span v-if="errorSourceLabel(w)" class="error-source-chip" :class="'src-' + (w.error_source || '')">{{ errorSourceLabel(w) }}</span>
           <LoginCommandButton v-if="w.login_cmd" :command="w.login_cmd" />
-          <button v-else-if="isResetableReason(w.reason) && !isGroupSession" class="warning-reset-btn" @click.stop="$emit('reset-session', { reason: w.reason })">
+          <!-- 只读宿主（公开会话分享页 / btw 抽屉）不绑定 reset-session，渲染出来就是个死按钮 -->
+          <button v-else-if="isResetableReason(w.reason) && !isGroupSession && !readOnly" class="warning-reset-btn" @click.stop="$emit('reset-session', { reason: w.reason })">
             {{ t('chat.contentBlocks.resetSession') }}
           </button>
         </div>
@@ -41,11 +43,13 @@
           <AlertCircle :size="14" class="warning-icon" />
           <span class="warning-text">{{ getWarningText(w) }}</span>
           <span v-if="errorSourceLabel(w)" class="error-source-chip" :class="'src-' + (w.error_source || '')">{{ errorSourceLabel(w) }}</span>
-          <button v-if="w.reason === 'restart'" class="warning-continue-btn" @click.stop="$emit('send-message', t('chat.contentBlocks.continue'))">
+          <!-- 继续 = 往会话里发一条消息；只读宿主（分享页）没有 send-message 监听者 -->
+          <button v-if="w.reason === 'restart' && !readOnly" class="warning-continue-btn" @click.stop="$emit('send-message', t('chat.contentBlocks.continue'))">
             {{ t('chat.contentBlocks.continue') }}
           </button>
           <LoginCommandButton v-if="w.login_cmd" :command="w.login_cmd" />
-          <button v-else-if="isResetableReason(w.reason) && !isGroupSession" class="warning-reset-btn" @click.stop="$emit('reset-session', { reason: w.reason })">
+          <!-- 只读宿主（公开会话分享页 / btw 抽屉）不绑定 reset-session，渲染出来就是个死按钮 -->
+          <button v-else-if="isResetableReason(w.reason) && !isGroupSession && !readOnly" class="warning-reset-btn" @click.stop="$emit('reset-session', { reason: w.reason })">
             {{ t('chat.contentBlocks.resetSession') }}
           </button>
         </div>
@@ -367,7 +371,8 @@
         <span class="error-text">{{ getWarningText(block) }}</span>
         <span v-if="errorSourceLabel(block)" class="error-source-chip" :class="'src-' + (block.error_source || '')">{{ errorSourceLabel(block) }}</span>
         <LoginCommandButton v-if="block.login_cmd" :command="block.login_cmd" />
-        <button v-else-if="isResetableReason(block.reason) && !isGroupSession" class="warning-reset-btn" @click.stop="$emit('reset-session', { reason: block.reason })">
+        <!-- 同上：只读宿主没有 reset-session 监听者，按钮必须一起藏掉 -->
+        <button v-else-if="isResetableReason(block.reason) && !isGroupSession && !readOnly" class="warning-reset-btn" @click.stop="$emit('reset-session', { reason: block.reason })">
           {{ t('chat.contentBlocks.resetSession') }}
         </button>
       </div>
@@ -377,7 +382,8 @@
         <span class="error-text">{{ getWarningText(block) }}</span>
         <span v-if="errorSourceLabel(block)" class="error-source-chip" :class="'src-' + (block.error_source || '')">{{ errorSourceLabel(block) }}</span>
         <LoginCommandButton v-if="block.login_cmd" :command="block.login_cmd" />
-        <button v-else-if="isResetableReason(block.reason) && !isGroupSession" class="warning-reset-btn" @click.stop="$emit('reset-session', { reason: block.reason })">
+        <!-- 同上：只读宿主没有 reset-session 监听者，按钮必须一起藏掉 -->
+        <button v-else-if="isResetableReason(block.reason) && !isGroupSession && !readOnly" class="warning-reset-btn" @click.stop="$emit('reset-session', { reason: block.reason })">
           {{ t('chat.contentBlocks.resetSession') }}
         </button>
       </div>
@@ -386,11 +392,12 @@
         <AlertCircle :size="14" class="warning-icon" />
         <span class="warning-text">{{ getWarningText(block) }}</span>
         <span v-if="errorSourceLabel(block)" class="error-source-chip" :class="'src-' + (block.error_source || '')">{{ errorSourceLabel(block) }}</span>
-        <button v-if="block.reason === 'restart'" class="warning-continue-btn" @click.stop="$emit('send-message', t('chat.contentBlocks.continue'))">
+        <button v-if="block.reason === 'restart' && !readOnly" class="warning-continue-btn" @click.stop="$emit('send-message', t('chat.contentBlocks.continue'))">
           {{ t('chat.contentBlocks.continue') }}
         </button>
         <LoginCommandButton v-if="block.login_cmd" :command="block.login_cmd" />
-        <button v-else-if="isResetableReason(block.reason) && !isGroupSession" class="warning-reset-btn" @click.stop="$emit('reset-session', { reason: block.reason })">
+        <!-- 同上：只读宿主没有 reset-session 监听者，按钮必须一起藏掉 -->
+        <button v-else-if="isResetableReason(block.reason) && !isGroupSession && !readOnly" class="warning-reset-btn" @click.stop="$emit('reset-session', { reason: block.reason })">
           {{ t('chat.contentBlocks.resetSession') }}
         </button>
       </div>
@@ -770,9 +777,12 @@ const props = defineProps({
   nested: { type: Boolean, default: false },
   rootBlocks: { type: Array as () => any[], default: null },
   // Read-only rendering (public share page): interactive tool actions that POST
-  // back to the server (permission approval, ask-question submit, session reset)
-  // are suppressed. Display-only affordances (expanding a tool, copying, opening
-  // the detail drawer) keep working.
+  // back to the server (permission approval, ask-question submit, session reset,
+  // "continue" = sending a message) are suppressed — those hosts bind no
+  // `reset-session` / `send-message` listener, so rendering the button would give
+  // the reader a control that does nothing. Display-only affordances (expanding a
+  // tool, copying, opening the detail drawer, copying the login command) keep
+  // working.
   readOnly: { type: Boolean, default: false },
   // Group-chat session: the reset-session button recycles ONE agent's connection,
   // which has no meaning on a multi-agent timeline (which member would it reset?).

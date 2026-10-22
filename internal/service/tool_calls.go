@@ -103,6 +103,71 @@ func GetToolCallsBySession(sessionID string) ([]ToolCallRecord, error) {
 	return records, rows.Err()
 }
 
+// shareIDChunk bounds the ids per IN (...) statement. SQLite's default
+// bind-variable limit is 999 in older builds; 500 leaves headroom for the extra
+// parameters a caller may add.
+const shareIDChunk = 500
+
+// GetToolCallsByMessageIDs retrieves the tool calls belonging to the given
+// messages, chunked to stay under the bind-variable limit.
+//
+// message_id is a globally unique chat_history primary key, so no session
+// predicate is needed — callers only ever pass ids they just resolved from one
+// session (see GetMessagesByIDsInSession, which does enforce the session).
+func GetToolCallsByMessageIDs(messageIDs []int64) ([]ToolCallRecord, error) {
+	if len(messageIDs) == 0 {
+		return nil, nil
+	}
+	var records []ToolCallRecord
+	for start := 0; start < len(messageIDs); start += shareIDChunk {
+		end := min(start+shareIDChunk, len(messageIDs))
+		chunk := messageIDs[start:end]
+
+		args := make([]any, 0, len(chunk))
+		for _, id := range chunk {
+			args = append(args, id)
+		}
+		rows, err := store.ReadDB().QueryContext(context.Background(), `
+			SELECT id, message_id, session_id, tool_id, name, input, output, status, done, summary, duration_ms, created_at
+			FROM chat_tool_calls WHERE message_id IN (`+sqlPlaceholders(len(chunk))+`)
+		`, args...)
+		if err != nil {
+			return nil, fmt.Errorf("GetToolCallsByMessageIDs: %w", err)
+		}
+		chunkRecords, err := readToolCallRows(rows)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, chunkRecords...)
+	}
+	return records, nil
+}
+
+// readToolCallRows drains and closes rows.
+func readToolCallRows(rows *sql.Rows) ([]ToolCallRecord, error) {
+	defer func() { _ = rows.Close() }()
+
+	var records []ToolCallRecord
+	for rows.Next() {
+		var r ToolCallRecord
+		var doneInt int
+		var inputStr string
+		if err := rows.Scan(
+			&r.ID, &r.MessageID, &r.SessionID, &r.ToolID, &r.Name,
+			&inputStr, &r.Output, &r.Status, &doneInt, &r.Summary, &r.DurationMs, &r.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("GetToolCallsByMessageIDs scan: %w", err)
+		}
+		r.Input = json.RawMessage(inputStr)
+		r.Done = doneInt != 0
+		records = append(records, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("GetToolCallsByMessageIDs rows: %w", err)
+	}
+	return records, nil
+}
+
 // GetToolCallBySession retrieves a tool call record by tool_id and session_id.
 // This is a fallback for task executions where the session has multiple assistant
 // messages and the tool call may be stored

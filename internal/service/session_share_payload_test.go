@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"clawbench/internal/model"
 	"clawbench/internal/store"
@@ -117,12 +118,28 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 		require.NoError(t, err)
 	}
 
+	// The payload derives projectRoot from chat_sessions -> projects, so the row
+	// must exist. (Pre-live-assembly the root was passed in by the handler, which
+	// is why this seed is new.)
+	_, err = db.Exec(`INSERT INTO projects (id, path) VALUES (?, ?)`, testProjectID, testProjectRoot)
+	require.NoError(t, err)
+
 	cleanup := store.SetDBForTest(db, db)
 	t.Cleanup(cleanup)
 	return db
 }
 
 const testProjectRoot = "/home/u/proj"
+
+// testProjectID is the projects row every fixture session points at. The
+// assembled payload derives projectRoot from that JOIN (an anonymous request has
+// no project cookie), so the row must exist and carry testProjectRoot.
+const testProjectID = 1
+
+// testShareCreatedAt is the share row's timestamp, passed into every Build call.
+// It is a fixed instant (not time.Now) because the assembled bytes have to be
+// stable across requests — that is what the ETag the handler derives depends on.
+var testShareCreatedAt = time.Date(2026, 10, 22, 9, 30, 0, 0, time.UTC)
 
 // seedSession inserts a chat_sessions row. sessionID stays a parameter so the
 // helper mirrors the schema rather than hard-coding one id.
@@ -131,7 +148,7 @@ func seedSession(t *testing.T, db *sql.DB, sessionID string) { //nolint:unparam 
 	_, err := db.Exec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, model)
 		 VALUES (?, ?, 'codebuddy', 'Fix the login bug', 'codebuddy', 'claude-sonnet-4')`,
-		sessionID, testProjectRoot,
+		sessionID, testProjectID,
 	)
 	require.NoError(t, err)
 }
@@ -143,7 +160,7 @@ func seedGroupSession(t *testing.T, db *sql.DB, sessionID string) {
 	_, err := db.Exec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, model, session_type)
 		 VALUES (?, ?, 'codebuddy', 'Group chat', '', '', 'group')`,
-		sessionID, testProjectRoot,
+		sessionID, testProjectID,
 	)
 	require.NoError(t, err)
 }
@@ -160,7 +177,7 @@ func seedMessage(t *testing.T, db *sql.DB, sessionID, role, content string, stre
 		res, err := db.Exec(
 			`INSERT INTO queued_messages (project_id, session_id, backend, queue_id, content)
 			 VALUES (?, ?, 'codebuddy', ?, ?)`,
-			testProjectRoot, sessionID, content, content,
+			testProjectID, sessionID, content, content,
 		)
 		require.NoError(t, err)
 		id, err := res.LastInsertId()
@@ -170,12 +187,22 @@ func seedMessage(t *testing.T, db *sql.DB, sessionID, role, content string, stre
 	res, err := db.Exec(
 		`INSERT INTO chat_history (project_id, session_id, role, content, backend, streaming)
 		 VALUES (?, ?, ?, ?, 'codebuddy', ?)`,
-		testProjectRoot, sessionID, role, content, streaming,
+		testProjectID, sessionID, role, content, streaming,
 	)
 	require.NoError(t, err)
 	id, err := res.LastInsertId()
 	require.NoError(t, err)
 	return id
+}
+
+// buildAllForSession assembles the payload for a session's ENTIRE finalized
+// history. BuildSessionSharePayload takes the resolved selection (creation
+// resolves it), so tests that want "everything" must resolve first.
+func buildAllForSession(t *testing.T, sessionID string) (string, int, error) {
+	t.Helper()
+	ids, err := service.ResolveSessionShareSelection(sessionID, nil)
+	require.NoError(t, err)
+	return service.BuildSessionSharePayload(sessionID, ids, testShareCreatedAt)
 }
 
 // decodePayload parses the snapshot and returns it as a generic map so tests can
@@ -236,7 +263,7 @@ func TestSessionSharePayload_TrimsOverCapAtTheEntryPoint(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	raw, _, err := service.BuildSessionSharePayload("s1", nil, testProjectRoot, "/home/u")
+	raw, _, err := buildAllForSession(t, "s1")
 	require.NoError(t, err)
 
 	require.LessOrEqual(t, len(raw), 16<<20,
@@ -251,53 +278,34 @@ func TestSessionSharePayload_TrimsOverCapAtTheEntryPoint(t *testing.T) {
 		"the output must carry the marker so the cut is visible")
 }
 
-// TestSessionSharePayload_SanitizesSummaryText is the regression guard for an
-// absolute-path leak through the reading summary.
-//
-// buildShareMessage stored summaries[msg.ID] verbatim. A summary routinely names
-// the files the agent touched ("I edited /home/u/proj/secret.ts"), so the
-// creator's directory layout shipped to anonymous viewers — the exact thing the
-// path sanitizer exists to prevent. The pre-existing SanitizesPaths test could
-// not catch it: its fixture has no summary.
-func TestSessionSharePayload_SanitizesSummaryText(t *testing.T) {
+// Summaries, summary cards and inline tool inputs are carried VERBATIM. These
+// used to assert relativized paths ("the project root must not appear anywhere"),
+// which pinned a sanitizer that could never be complete: it only rewrote strings
+// matching the project root / home dir, so tool output, credentials and file
+// contents sailed past it. Serving the transcript as-is is the honest contract.
+func TestSessionSharePayload_ServesSummaryTextVerbatim(t *testing.T) {
 	db := setupTestDBForSessionSharePayload(t)
 	defer func() { _ = db.Close() }()
 
 	seedSession(t, db, "s1")
 	msgID := seedMessage(t, db, "s1", "assistant", `{"blocks":[{"type":"text","text":"done"}],"metadata":{}}`, 0, 0)
 
+	const summary = "I edited /home/u/proj/src/secret.ts and read /home/u/.ssh/id_rsa"
 	_, err := db.Exec(
-		`INSERT INTO summaries (target_type, target_id, summary)
-		 VALUES ('chat_message', ?, ?)`,
-		msgID, "I edited /home/u/proj/src/secret.ts and read /home/u/.ssh/id_rsa",
+		`INSERT INTO summaries (target_type, target_id, summary) VALUES ('chat_message', ?, ?)`,
+		msgID, summary,
 	)
 	require.NoError(t, err)
 
-	raw, _, err := service.BuildSessionSharePayload("s1", nil, testProjectRoot, "/home/u")
+	raw, _, err := buildAllForSession(t, "s1")
 	require.NoError(t, err)
 
-	assert.NotContains(t, raw, testProjectRoot,
-		"the project root must not appear anywhere in the snapshot")
-	assert.NotContains(t, raw, "/home/u/.ssh",
-		"a home-directory path must not survive in the summary")
-
 	msg := payloadMessages(t, raw)[0]
-	summary, _ := msg["summary"].(string)
-	require.NotEmpty(t, summary, "the summary must still be present, just sanitized")
-	assert.Contains(t, summary, "./src/secret.ts",
-		"the project path must be relativized, not dropped")
-	assert.Contains(t, summary, "~/.ssh/id_rsa",
-		"the home path must be relativized, not dropped")
+	got, _ := msg["summary"].(string)
+	assert.Equal(t, summary, got, "the summary must be exactly what the agent wrote")
 }
 
-// TestSessionSharePayload_SanitizesSummaryCardInputs is the regression guard for
-// an absolute-path leak through summary cards.
-//
-// sanitizeSummaryCards copied the card struct by value (`out := *cards`) and only
-// relativized CreatedFiles/ModifiedFiles/Warnings. Tools[].Input and the
-// AskQuestions sub-objects were left untouched, so a tool argument or an
-// ask-question option quoting an absolute path shipped verbatim.
-func TestSessionSharePayload_SanitizesSummaryCardInputs(t *testing.T) {
+func TestSessionSharePayload_ServesSummaryCardInputsVerbatim(t *testing.T) {
 	db := setupTestDBForSessionSharePayload(t)
 	defer func() { _ = db.Close() }()
 
@@ -319,30 +327,18 @@ func TestSessionSharePayload_SanitizesSummaryCardInputs(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	raw, _, err := service.BuildSessionSharePayload("s1", nil, testProjectRoot, "/home/u")
+	raw, _, err := buildAllForSession(t, "s1")
 	require.NoError(t, err)
 
-	assert.NotContains(t, raw, testProjectRoot,
-		"the project root must not appear anywhere in the snapshot")
-	assert.NotContains(t, raw, "/home/u/.ssh",
-		"a home-directory path must not survive inside a summary card")
-
-	// The sanitized values must still be there, relativized.
-	assert.Contains(t, raw, "./src/a.ts")
-	assert.Contains(t, raw, "~/.ssh/id_rsa")
-	assert.Contains(t, raw, "./src/secret.ts")
+	assert.Contains(t, raw, "/home/u/proj/src/a.ts")
+	assert.Contains(t, raw, "cat /home/u/.ssh/id_rsa")
+	assert.Contains(t, raw, "/home/u/proj/src/secret.ts")
+	assert.Contains(t, raw, "/home/u/proj/src/y.ts")
 }
 
-// TestSessionSharePayload_SanitizesInteractiveToolInlineInput is the regression
-// guard for a leak through a tool_use block's INLINE input.
-//
-// model.ContentBlock.MarshalJSON keeps `input` inline for AskUserQuestion and
-// PermissionApproval so their cards render immediately, and
-// ConvertAskQuestionBlocks creates them with no chat_tool_calls row.
-// sanitizeToolUseBlock returned early on `!found`, so those inline inputs — which
-// carry tool arguments such as a shell command — reached the public snapshot
-// unsanitized.
-func TestSessionSharePayload_SanitizesInteractiveToolInlineInput(t *testing.T) {
+// A tool_use block's INLINE input (AskUserQuestion / PermissionApproval keep it
+// inline and have no chat_tool_calls row) must survive for the card to render.
+func TestSessionSharePayload_KeepsInteractiveToolInlineInput(t *testing.T) {
 	db := setupTestDBForSessionSharePayload(t)
 	defer func() { _ = db.Close() }()
 
@@ -353,21 +349,16 @@ func TestSessionSharePayload_SanitizesInteractiveToolInlineInput(t *testing.T) {
 		 "input":{"toolInput":{"command":"cat /home/u/.ssh/id_rsa"},"file_path":"/home/u/proj/src/a.ts"}}
 	],"metadata":{}}`, 0, 0)
 
-	raw, _, err := service.BuildSessionSharePayload("s1", nil, testProjectRoot, "/home/u")
+	raw, _, err := buildAllForSession(t, "s1")
 	require.NoError(t, err)
 
-	assert.NotContains(t, raw, testProjectRoot,
-		"the project root must not appear anywhere in the snapshot")
-	assert.NotContains(t, raw, "/home/u/.ssh",
-		"an inline tool input must not leak a home-directory path")
-
-	// Still present, just relativized.
 	blocks := contentBlocks(t, payloadMessages(t, raw)[0])
 	require.NotEmpty(t, blocks)
 	input, ok := blocks[0]["input"].(map[string]any)
 	require.True(t, ok, "the inline input must survive for the card to render")
 	toolInput, _ := input["toolInput"].(map[string]any)
-	assert.Equal(t, "cat ~/.ssh/id_rsa", toolInput["command"])
+	assert.Equal(t, "cat /home/u/.ssh/id_rsa", toolInput["command"])
+	assert.Equal(t, "/home/u/proj/src/a.ts", input["file_path"])
 }
 
 func TestSessionSharePayload_InlinesToolIOAndThinkingText(t *testing.T) {
@@ -395,7 +386,7 @@ func TestSessionSharePayload_InlinesToolIOAndThinkingText(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	raw, count, err := service.BuildSessionSharePayload("s1", nil, testProjectRoot, "/home/u")
+	raw, count, err := buildAllForSession(t, "s1")
 	require.NoError(t, err)
 	assert.Equal(t, 1, count)
 
@@ -407,7 +398,7 @@ func TestSessionSharePayload_InlinesToolIOAndThinkingText(t *testing.T) {
 	assert.Equal(t, "th_1", thinking["think_id"], "think_id must survive so collapse state keys still work")
 
 	tool := blocks[1]
-	assert.Equal(t, "./src/a.ts", tool["input"].(map[string]any)["file_path"], "input must be inlined AND relativized")
+	assert.Equal(t, "/home/u/proj/src/a.ts", tool["input"].(map[string]any)["file_path"], "input must be inlined verbatim")
 	assert.Equal(t, "file contents here", tool["output"], "output must be inlined")
 	assert.Equal(t, "success", tool["status"])
 	assert.Equal(t, true, tool["done"])
@@ -433,7 +424,7 @@ func TestSessionSharePayload_IncludesSummaryAndOriginal(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	raw, _, err := service.BuildSessionSharePayload("s1", nil, testProjectRoot, "/home/u")
+	raw, _, err := buildAllForSession(t, "s1")
 	require.NoError(t, err)
 
 	msg := payloadMessages(t, raw)[0]
@@ -459,7 +450,7 @@ func TestSessionSharePayload_StripsTaskIDs(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	raw, _, err := service.BuildSessionSharePayload("s1", nil, testProjectRoot, "/home/u")
+	raw, _, err := buildAllForSession(t, "s1")
 	require.NoError(t, err)
 
 	cards := payloadMessages(t, raw)[0]["summaryCards"].(map[string]any)
@@ -479,7 +470,7 @@ func TestSessionSharePayload_ExcludesStreamingAndQueued(t *testing.T) {
 	seedMessage(t, db, "s1", "assistant", "half-written", 1, 0)
 	seedMessage(t, db, "s1", "user", "waiting in queue", 0, 1)
 
-	raw, count, err := service.BuildSessionSharePayload("s1", nil, testProjectRoot, "/home/u")
+	raw, count, err := buildAllForSession(t, "s1")
 	require.NoError(t, err)
 	assert.Equal(t, 2, count, "only the two finalized messages are shareable")
 
@@ -497,13 +488,13 @@ func TestSessionSharePayload_KeepsSpeakerAttribution(t *testing.T) {
 	res, err := db.Exec(
 		`INSERT INTO chat_history (project_id, session_id, role, content, backend, streaming, agent_id)
 		 VALUES (?, 's1', 'assistant', 'A1', 'codebuddy', 0, 'member-row-a')`,
-		testProjectRoot,
+		testProjectID,
 	)
 	require.NoError(t, err)
 	_, err = res.LastInsertId()
 	require.NoError(t, err)
 
-	raw, _, err := service.BuildSessionSharePayload("s1", nil, testProjectRoot, "/home/u")
+	raw, _, err := buildAllForSession(t, "s1")
 	require.NoError(t, err)
 
 	msgs := payloadMessages(t, raw)
@@ -521,7 +512,7 @@ func TestSessionSharePayload_MessageIDSelection(t *testing.T) {
 	id3 := seedMessage(t, db, "s1", "user", "third", 0, 0)
 
 	// Selection order is not trusted: the snapshot must come out chronological.
-	raw, count, err := service.BuildSessionSharePayload("s1", []int64{id3, id1}, testProjectRoot, "/home/u")
+	raw, count, err := service.BuildSessionSharePayload("s1", []int64{id3, id1}, testShareCreatedAt)
 	require.NoError(t, err)
 	assert.Equal(t, 2, count)
 
@@ -531,21 +522,23 @@ func TestSessionSharePayload_MessageIDSelection(t *testing.T) {
 	assert.Equal(t, "third", msgs[1]["content"])
 }
 
-func TestSessionSharePayload_RejectsUnknownMessageID(t *testing.T) {
+// The creation path is STRICT: an id that names no finalized message must be
+// rejected, so the stored selection always matches what the user checked.
+func TestResolveSessionShareSelection_RejectsUnknownMessageID(t *testing.T) {
 	db := setupTestDBForSessionSharePayload(t)
 	defer func() { _ = db.Close() }()
 
 	seedSession(t, db, "s1")
 	seedMessage(t, db, "s1", "user", "hi", 0, 0)
 
-	_, _, err := service.BuildSessionSharePayload("s1", []int64{99999}, testProjectRoot, "/home/u")
+	_, err := service.ResolveSessionShareSelection("s1", []int64{99999})
 	require.ErrorIs(t, err, service.ErrSessionShareUnknownMessage)
 }
 
 // Selecting a streaming message is a client bug (the UI disables it); the server
-// rejects rather than silently dropping, so the frozen snapshot always matches
+// rejects rather than silently dropping, so the stored selection always matches
 // what the user believed they selected.
-func TestSessionSharePayload_RejectsStreamingMessageID(t *testing.T) {
+func TestResolveSessionShareSelection_RejectsStreamingMessageID(t *testing.T) {
 	db := setupTestDBForSessionSharePayload(t)
 	defer func() { _ = db.Close() }()
 
@@ -553,16 +546,60 @@ func TestSessionSharePayload_RejectsStreamingMessageID(t *testing.T) {
 	seedMessage(t, db, "s1", "user", "hi", 0, 0)
 	streamingID := seedMessage(t, db, "s1", "assistant", "typing...", 1, 0)
 
-	_, _, err := service.BuildSessionSharePayload("s1", []int64{streamingID}, testProjectRoot, "/home/u")
+	_, err := service.ResolveSessionShareSelection("s1", []int64{streamingID})
 	require.ErrorIs(t, err, service.ErrSessionShareUnknownMessage)
 }
 
+// An empty selection means "everything finalized", resolved into the explicit
+// list here so the stored share cannot grow as the conversation continues.
+func TestResolveSessionShareSelection_EmptyMeansEveryFinalized(t *testing.T) {
+	db := setupTestDBForSessionSharePayload(t)
+	defer func() { _ = db.Close() }()
+
+	seedSession(t, db, "s1")
+	id1 := seedMessage(t, db, "s1", "user", "first", 0, 0)
+	id2 := seedMessage(t, db, "s1", "assistant", "second", 0, 0)
+	// A streaming row must never be resolved into the selection.
+	seedMessage(t, db, "s1", "assistant", "typing...", 1, 0)
+
+	ids, err := service.ResolveSessionShareSelection("s1", nil)
+	require.NoError(t, err)
+	assert.Equal(t, []int64{id1, id2}, ids)
+}
+
+// Out-of-order input is re-sorted and duplicates are dropped: sharing the same
+// message twice would render the bubble twice.
+func TestResolveSessionShareSelection_SortsAndDeduplicates(t *testing.T) {
+	db := setupTestDBForSessionSharePayload(t)
+	defer func() { _ = db.Close() }()
+
+	seedSession(t, db, "s1")
+	id1 := seedMessage(t, db, "s1", "user", "first", 0, 0)
+	seedMessage(t, db, "s1", "assistant", "second", 0, 0)
+	id3 := seedMessage(t, db, "s1", "user", "third", 0, 0)
+
+	ids, err := service.ResolveSessionShareSelection("s1", []int64{id3, id1, id3})
+	require.NoError(t, err)
+	assert.Equal(t, []int64{id1, id3}, ids)
+}
+
+func TestResolveSessionShareSelection_EmptySession(t *testing.T) {
+	db := setupTestDBForSessionSharePayload(t)
+	defer func() { _ = db.Close() }()
+
+	seedSession(t, db, "s1")
+	_, err := service.ResolveSessionShareSelection("s1", nil)
+	require.ErrorIs(t, err, service.ErrSessionShareEmptySelection)
+}
+
+// The READ path is lenient: a share survives its messages being rewound or
+// hard-deleted, it just shows less.
 func TestSessionSharePayload_UnknownSession(t *testing.T) {
 	db := setupTestDBForSessionSharePayload(t)
 	defer func() { _ = db.Close() }()
 
-	_, _, err := service.BuildSessionSharePayload("nope", nil, testProjectRoot, "/home/u")
-	require.Error(t, err)
+	_, _, err := service.BuildSessionSharePayload("nope", []int64{1}, testShareCreatedAt)
+	require.ErrorIs(t, err, service.ErrSessionShareSessionGone)
 }
 
 func TestSessionSharePayload_EmptySession(t *testing.T) {
@@ -570,14 +607,111 @@ func TestSessionSharePayload_EmptySession(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	seedSession(t, db, "s1")
-	_, _, err := service.BuildSessionSharePayload("s1", nil, testProjectRoot, "/home/u")
-	require.ErrorIs(t, err, service.ErrSessionShareEmptySelection)
+	_, _, err := service.BuildSessionSharePayload("s1", []int64{1}, testShareCreatedAt)
+	require.ErrorIs(t, err, service.ErrSessionShareNothingToShow)
 }
 
-// The snapshot is served anonymously, so the creator's absolute paths must not
-// leak: project-relative paths become relative, home paths become ~, and the
-// session's own project_path never appears at all.
-func TestSessionSharePayload_SanitizesPaths(t *testing.T) {
+// A selection whose messages were all deleted must not error out the reader with
+// a 500 — it means the link has nothing left to show, which the handler 404s.
+func TestSessionSharePayload_AllSelectedMessagesDeleted(t *testing.T) {
+	db := setupTestDBForSessionSharePayload(t)
+	defer func() { _ = db.Close() }()
+
+	seedSession(t, db, "s1")
+	goneID := seedMessage(t, db, "s1", "user", "will be rewound", 0, 0)
+	_, err := db.Exec("DELETE FROM chat_history WHERE id = ?", goneID)
+	require.NoError(t, err)
+	// A later message that was never selected must not resurrect the link.
+	seedMessage(t, db, "s1", "user", "not selected", 0, 0)
+
+	_, _, err = service.BuildSessionSharePayload("s1", []int64{goneID}, testShareCreatedAt)
+	require.ErrorIs(t, err, service.ErrSessionShareNothingToShow)
+}
+
+// Partially deleted selection: the survivors render, the missing ids are skipped.
+func TestSessionSharePayload_SkipsDeletedMessages(t *testing.T) {
+	db := setupTestDBForSessionSharePayload(t)
+	defer func() { _ = db.Close() }()
+
+	seedSession(t, db, "s1")
+	id1 := seedMessage(t, db, "s1", "user", "keep me", 0, 0)
+	goneID := seedMessage(t, db, "s1", "assistant", "rewound", 0, 0)
+	id3 := seedMessage(t, db, "s1", "user", "keep me too", 0, 0)
+	_, err := db.Exec("DELETE FROM chat_history WHERE id = ?", goneID)
+	require.NoError(t, err)
+
+	raw, count, err := service.BuildSessionSharePayload("s1", []int64{id1, goneID, id3}, testShareCreatedAt)
+	require.NoError(t, err)
+	assert.Equal(t, 2, count)
+
+	msgs := payloadMessages(t, raw)
+	require.Len(t, msgs, 2)
+	assert.Equal(t, "keep me", msgs[0]["content"])
+	assert.Equal(t, "keep me too", msgs[1]["content"])
+}
+
+// A share outlives archiving: archiving keeps every message, so the link must
+// keep rendering. This is the regression that a naive GetSessionFullInfo call
+// would introduce (it filters archived = 0 and would 500 the request).
+func TestSessionSharePayload_ArchivedSessionStillBuilds(t *testing.T) {
+	db := setupTestDBForSessionSharePayload(t)
+	defer func() { _ = db.Close() }()
+
+	seedSession(t, db, "s1")
+	id := seedMessage(t, db, "s1", "user", "still here", 0, 0)
+	_, err := db.Exec("UPDATE chat_sessions SET archived = 1 WHERE id = 's1'")
+	require.NoError(t, err)
+
+	raw, count, err := service.BuildSessionSharePayload("s1", []int64{id}, testShareCreatedAt)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
+	assert.Contains(t, raw, "still here")
+}
+
+// The assembled bytes are what the handler's ETag is derived from, so two
+// requests for an unchanged conversation MUST be byte-identical. time.Now() in
+// the payload (the pre-live-assembly behavior) would break this silently.
+func TestSessionSharePayload_IsByteStable(t *testing.T) {
+	db := setupTestDBForSessionSharePayload(t)
+	defer func() { _ = db.Close() }()
+
+	seedSession(t, db, "s1")
+	seedMessage(t, db, "s1", "user", "hello", 0, 0)
+	seedMessage(t, db, "s1", "assistant", "world", 0, 0)
+
+	first, _, err := buildAllForSession(t, "s1")
+	require.NoError(t, err)
+	second, _, err := buildAllForSession(t, "s1")
+	require.NoError(t, err)
+	assert.Equal(t, first, second)
+}
+
+// Only the selected messages' tool output is inlined. Guards the message-scoped
+// side-table queries: a session-wide scan would ship the unselected tool output.
+func TestSessionSharePayload_InlinesOnlySelectedToolCalls(t *testing.T) {
+	db := setupTestDBForSessionSharePayload(t)
+	defer func() { _ = db.Close() }()
+
+	seedSession(t, db, "s1")
+	id1 := seedMessage(t, db, "s1", "assistant", `{"blocks":[{"type":"tool_use","id":"t1","name":"Read"}]}`, 0, 0)
+	seedMessage(t, db, "s1", "assistant", `{"blocks":[{"type":"tool_use","id":"t2","name":"Read"}]}`, 0, 0)
+	_, err := db.Exec(`INSERT INTO chat_tool_calls (message_id, session_id, tool_id, name, input, output)
+		VALUES (?, 's1', 't1', 'Read', '{"path":"a"}', 'SELECTED-OUTPUT')`, id1)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO chat_tool_calls (message_id, session_id, tool_id, name, input, output)
+		VALUES (?, 's1', 't2', 'Read', '{"path":"b"}', 'UNSELECTED-OUTPUT')`, id1+1)
+	require.NoError(t, err)
+
+	raw, _, err := service.BuildSessionSharePayload("s1", []int64{id1}, testShareCreatedAt)
+	require.NoError(t, err)
+	assert.Contains(t, raw, "SELECTED-OUTPUT")
+	assert.NotContains(t, raw, "UNSELECTED-OUTPUT")
+}
+
+// The transcript is served verbatim: absolute paths, tool output and attachments
+// all reach the reader exactly as stored. The only thing that must NOT leak is
+// the session's own project path, which was never part of the payload shape.
+func TestSessionSharePayload_ServesPathsVerbatim(t *testing.T) {
 	db := setupTestDBForSessionSharePayload(t)
 	defer func() { _ = db.Close() }()
 
@@ -601,21 +735,18 @@ func TestSessionSharePayload_SanitizesPaths(t *testing.T) {
 		`[{"path":"/home/u/proj/docs/plan.md","isDir":false}]`, msgID)
 	require.NoError(t, err)
 
-	raw, _, err := service.BuildSessionSharePayload("s1", nil, testProjectRoot, "/home/u")
+	raw, _, err := buildAllForSession(t, "s1")
 	require.NoError(t, err)
-
-	assert.NotContains(t, raw, testProjectRoot, "project root must not appear anywhere in the snapshot")
-	assert.NotContains(t, raw, "/home/u/.ssh", "home paths must be relativized to ~")
 
 	msg := payloadMessages(t, raw)[0]
 	blocks := contentBlocks(t, msg)
-	assert.Equal(t, "./src/a.ts", blocks[0]["input"].(map[string]any)["file_path"])
-	assert.Contains(t, blocks[0]["output"], "./src/a.ts")
-	assert.Contains(t, blocks[1]["text"], "./src/a.ts")
-	assert.Contains(t, blocks[1]["text"], "~/.ssh/id_rsa")
+	assert.Equal(t, "/home/u/proj/src/a.ts", blocks[0]["input"].(map[string]any)["file_path"])
+	assert.Contains(t, blocks[0]["output"], "/home/u/proj/src/a.ts")
+	assert.Contains(t, blocks[1]["text"], "/home/u/proj/src/a.ts")
+	assert.Contains(t, blocks[1]["text"], "/home/u/.ssh/id_rsa")
 
 	files := msg["files"].([]any)
-	assert.Equal(t, "docs/plan.md", files[0].(map[string]any)["path"])
+	assert.Equal(t, "/home/u/proj/docs/plan.md", files[0].(map[string]any)["path"])
 
 	// The session block carries no project path field at all.
 	session := decodePayload(t, raw)["session"].(map[string]any)
@@ -623,9 +754,8 @@ func TestSessionSharePayload_SanitizesPaths(t *testing.T) {
 	assert.NotContains(t, session, "project_path")
 }
 
-// A path outside both the project and home has nothing to be relativized
-// against; it must degrade to its base name rather than pass through whole.
-func TestSessionSharePayload_OutsidePathFallsBackToBaseName(t *testing.T) {
+// A path outside both the project and home is served whole, like every other.
+func TestSessionSharePayload_OutsidePathServedWhole(t *testing.T) {
 	db := setupTestDBForSessionSharePayload(t)
 	defer func() { _ = db.Close() }()
 
@@ -635,11 +765,11 @@ func TestSessionSharePayload_OutsidePathFallsBackToBaseName(t *testing.T) {
 		`[{"path":"/etc/secret/credentials.txt","isDir":false}]`, msgID)
 	require.NoError(t, err)
 
-	raw, _, err := service.BuildSessionSharePayload("s1", nil, testProjectRoot, "/home/u")
+	raw, _, err := buildAllForSession(t, "s1")
 	require.NoError(t, err)
 
 	files := payloadMessages(t, raw)[0]["files"].([]any)
-	assert.Equal(t, "credentials.txt", files[0].(map[string]any)["path"])
+	assert.Equal(t, "/etc/secret/credentials.txt", files[0].(map[string]any)["path"])
 }
 
 // External URLs are not local paths and must survive untouched.
@@ -653,7 +783,7 @@ func TestSessionSharePayload_KeepsExternalURLAttachments(t *testing.T) {
 		`[{"path":"owner/repo#12","kind":"url","url":"https://github.com/owner/repo/pull/12"}]`, msgID)
 	require.NoError(t, err)
 
-	raw, _, err := service.BuildSessionSharePayload("s1", nil, testProjectRoot, "/home/u")
+	raw, _, err := buildAllForSession(t, "s1")
 	require.NoError(t, err)
 
 	files := payloadMessages(t, raw)[0]["files"].([]any)
@@ -669,7 +799,7 @@ func TestSessionSharePayload_SessionMetadataAndVersion(t *testing.T) {
 	seedSession(t, db, "s1")
 	seedMessage(t, db, "s1", "user", "hi", 0, 0)
 
-	raw, _, err := service.BuildSessionSharePayload("s1", nil, testProjectRoot, "/home/u")
+	raw, _, err := buildAllForSession(t, "s1")
 	require.NoError(t, err)
 
 	out := decodePayload(t, raw)
@@ -692,7 +822,7 @@ func TestSessionSharePayload_StripsInternalMessageFields(t *testing.T) {
 	seedSession(t, db, "s1")
 	seedMessage(t, db, "s1", "user", "hi", 0, 0)
 
-	raw, _, err := service.BuildSessionSharePayload("s1", nil, testProjectRoot, "/home/u")
+	raw, _, err := buildAllForSession(t, "s1")
 	require.NoError(t, err)
 
 	msg := payloadMessages(t, raw)[0]
@@ -712,7 +842,7 @@ func TestSessionSharePayload_ToolBlockWithoutSideRowSurvives(t *testing.T) {
 	seedSession(t, db, "s1")
 	seedMessage(t, db, "s1", "assistant", `{"blocks":[{"type":"tool_use","id":"orphan","name":"Bash","done":true}]}`, 0, 0)
 
-	raw, _, err := service.BuildSessionSharePayload("s1", nil, testProjectRoot, "/home/u")
+	raw, _, err := buildAllForSession(t, "s1")
 	require.NoError(t, err)
 
 	blocks := contentBlocks(t, payloadMessages(t, raw)[0])
@@ -729,25 +859,25 @@ func TestSessionSharePayload_PlainTextUserMessage(t *testing.T) {
 	seedSession(t, db, "s1")
 	seedMessage(t, db, "s1", "user", "just some text, not json", 0, 0)
 
-	raw, _, err := service.BuildSessionSharePayload("s1", nil, testProjectRoot, "/home/u")
+	raw, _, err := buildAllForSession(t, "s1")
 	require.NoError(t, err)
 
 	assert.Equal(t, "just some text, not json", payloadMessages(t, raw)[0]["content"])
 }
 
-// A user message stored in block form must also get its paths sanitized.
-func TestSessionSharePayload_UserBlockContentIsSanitized(t *testing.T) {
+// A user message stored in block form is served verbatim too.
+func TestSessionSharePayload_UserBlockContentIsVerbatim(t *testing.T) {
 	db := setupTestDBForSessionSharePayload(t)
 	defer func() { _ = db.Close() }()
 
 	seedSession(t, db, "s1")
 	seedMessage(t, db, "s1", "user", `{"blocks":[{"type":"text","text":"look at /home/u/proj/x.go"}]}`, 0, 0)
 
-	raw, _, err := service.BuildSessionSharePayload("s1", nil, testProjectRoot, "/home/u")
+	raw, _, err := buildAllForSession(t, "s1")
 	require.NoError(t, err)
 
 	blocks := contentBlocks(t, payloadMessages(t, raw)[0])
-	assert.Equal(t, "look at ./x.go", blocks[0]["text"])
+	assert.Equal(t, "look at /home/u/proj/x.go", blocks[0]["text"])
 }
 
 // ─── Selection listing ───────────────────────────────────────────────────────
@@ -858,7 +988,7 @@ func TestSessionSharePayload_FreezesSpeakerIdentitiesWithAvatars(t *testing.T) {
 	seedSession(t, db, "s1")
 	seedMessage(t, db, "s1", "assistant", `{"blocks":[{"type":"text","text":"hi"}],"metadata":{}}`, 0, 0)
 
-	raw, _, err := service.BuildSessionSharePayload("s1", nil, testProjectRoot, "/home/u")
+	raw, _, err := buildAllForSession(t, "s1")
 	require.NoError(t, err)
 
 	var payload struct {
@@ -900,20 +1030,20 @@ func TestSessionSharePayload_FreezesGroupMemberAvatar(t *testing.T) {
 	_, err := db.Exec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, model, session_type, context_state)
 		 VALUES ('g1', ?, 'codebuddy', 'Group', '', '', 'group', '{}')`,
-		testProjectRoot,
+		testProjectID,
 	)
 	require.NoError(t, err)
 	// The member carries its OWN avatar snapshot; the agent's is only a fallback.
 	_, err = db.Exec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_name, agent_avatar, agent_id, session_type, group_id, archived)
 		 VALUES ('m-1', ?, 'claude', '', 'Alice', '<member/>', 'claude', 'group_member', 'g1', 0)`,
-		testProjectRoot,
+		testProjectID,
 	)
 	require.NoError(t, err)
 
 	seedMessage(t, db, "g1", "assistant", `{"blocks":[{"type":"text","text":"hi"}],"metadata":{}}`, 0, 0)
 
-	raw, _, err := service.BuildSessionSharePayload("g1", nil, testProjectRoot, "/home/u")
+	raw, _, err := buildAllForSession(t, "g1")
 	require.NoError(t, err)
 
 	var payload struct {
@@ -953,7 +1083,7 @@ func TestSessionSharePayload_GroupCarriesHostMemberID(t *testing.T) {
 		 VALUES (1, 'assistant', '{"blocks":[{"type":"text","text":"hi"}]}', 'g1', 'codebuddy', 'row-host-1', 0, 0)`)
 	require.NoError(t, err)
 
-	raw, _, err := service.BuildSessionSharePayload("g1", nil, testProjectRoot, "/home/u")
+	raw, _, err := buildAllForSession(t, "g1")
 	require.NoError(t, err)
 
 	var payload struct {
@@ -978,7 +1108,7 @@ func TestSessionSharePayload_PlainSessionHasNoHostMemberID(t *testing.T) {
 		 VALUES (1, 'assistant', '{"blocks":[{"type":"text","text":"hi"}]}', 's1', 'claude', 0, 0)`)
 	require.NoError(t, err)
 
-	raw, _, err := service.BuildSessionSharePayload("s1", nil, testProjectRoot, "/home/u")
+	raw, _, err := buildAllForSession(t, "s1")
 	require.NoError(t, err)
 
 	var payload struct {
@@ -1022,7 +1152,7 @@ func TestSessionSharePayload_GroupCarriesOrderedActiveMembers(t *testing.T) {
 		 VALUES (1, 'assistant', '{"blocks":[{"type":"text","text":"hi"}]}', 'g1', 'codebuddy', 'm-host', 0, 0)`)
 	require.NoError(t, err)
 
-	raw, _, err := service.BuildSessionSharePayload("g1", nil, testProjectRoot, "/home/u")
+	raw, _, err := buildAllForSession(t, "g1")
 	require.NoError(t, err)
 
 	var payload struct {
@@ -1063,11 +1193,86 @@ func TestSessionSharePayload_PlainSessionHasNoGroupMembers(t *testing.T) {
 		 VALUES (1, 'assistant', '{"blocks":[{"type":"text","text":"hi"}]}', 's1', 'claude', 0, 0)`)
 	require.NoError(t, err)
 
-	raw, _, err := service.BuildSessionSharePayload("s1", nil, testProjectRoot, "/home/u")
+	raw, _, err := buildAllForSession(t, "s1")
 	require.NoError(t, err)
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal([]byte(raw), &payload))
 	_, present := payload["groupMembers"]
 	assert.False(t, present, "a single-agent session must not carry groupMembers")
+}
+
+// The viewer must be able to tell a group share from a single-agent share
+// WITHOUT looking at the roster: groupMembers is the ACTIVE roster only, so a
+// group whose members all left carries an empty (or absent) array. The explicit
+// sessionType field is what gates the @-protocol stripping, so a missing value
+// would make the reader see raw <clawbench-mention> tags.
+func TestSessionSharePayload_SessionTypeIsExplicit(t *testing.T) {
+	t.Run("plain session reports chat", func(t *testing.T) {
+		db := setupTestDBForSessionSharePayload(t)
+		defer db.Close()
+
+		seedSession(t, db, "s1")
+		seedMessage(t, db, "s1", "assistant", `{"blocks":[{"type":"text","text":"hi"}]}`, 0, 0)
+
+		raw, _, err := buildAllForSession(t, "s1")
+		require.NoError(t, err)
+
+		assert.Equal(t, "chat", sessionTypeOf(t, raw))
+	})
+
+	t.Run("group session reports group", func(t *testing.T) {
+		db := setupTestDBForSessionSharePayload(t)
+		defer db.Close()
+
+		seedGroupSession(t, db, "g1")
+		seedMessage(t, db, "g1", "assistant", `{"blocks":[{"type":"text","text":"hi"}]}`, 0, 0)
+
+		raw, _, err := buildAllForSession(t, "g1")
+		require.NoError(t, err)
+
+		assert.Equal(t, "group", sessionTypeOf(t, raw))
+	})
+
+	// Regression guard for "roster is not a group signal": every member row is
+	// archived (left), so GroupMembersForGroups returns nothing, yet the session
+	// is still a group and the viewer must strip the routing protocol.
+	t.Run("group with every member gone still reports group", func(t *testing.T) {
+		db := setupTestDBForSessionSharePayload(t)
+		defer db.Close()
+
+		seedGroupSession(t, db, "g1")
+		for _, id := range []string{"m-host", "m-second"} {
+			_, err := db.Exec(
+				`INSERT INTO chat_sessions (id, project_id, backend, title, agent_name, agent_id, session_type, group_id, archived)
+				 VALUES (?, 1, 'codebuddy', '', ?, ?, 'group_member', 'g1', 1)`,
+				id, id, id)
+			require.NoError(t, err)
+		}
+		seedMessage(t, db, "g1", "user", `<clawbench-mention targets="m-host">hi</clawbench-mention>`, 0, 0)
+
+		raw, _, err := buildAllForSession(t, "g1")
+		require.NoError(t, err)
+
+		payload := decodePayload(t, raw)
+		// The roster is genuinely empty — this is exactly why the type must be
+		// carried separately rather than inferred from the member list.
+		members, _ := payload["groupMembers"].([]any)
+		assert.Empty(t, members, "all members left, so the active roster is empty")
+
+		session, ok := payload["session"].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, "group", session["sessionType"],
+			"sessionType must survive an empty roster")
+	})
+}
+
+// sessionTypeOf reads session.sessionType off the wire shape.
+func sessionTypeOf(t *testing.T, raw string) string {
+	t.Helper()
+	payload := decodePayload(t, raw)
+	session, ok := payload["session"].(map[string]any)
+	require.True(t, ok, "payload must carry a session object")
+	value, _ := session["sessionType"].(string)
+	return value
 }

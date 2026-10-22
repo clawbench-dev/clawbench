@@ -24,12 +24,12 @@ vi.mock('@/components/chat/ChatMessageItem.vue', () => ({
     props: [
       'msg', 'index', 'expandedTools', 'blockTasks', 'blockAskQuestions', 'agents',
       'staticBlockCache', 'active', 'isLastAssistant', 'isLastMessage',
-      'hideSessionActions', 'readOnly',
+      'hideSessionActions', 'readOnly', 'allowLocalActions', 'isGroupSession',
     ],
     inject: ['chatRender', 'autoSpeech', 'chatSession'],
     emits: ['toggle-tool', 'show-tool-detail', 'show-metadata', 'toggle-summary'],
     template: `
-      <div class="chat-message-stub" :data-msg-id="msg.id" :data-msg-key="msg.id ? 'db-' + msg.id : null" :data-role="msg.role" :data-read-only="readOnly">
+      <div class="chat-message-stub" :data-msg-id="msg.id" :data-msg-key="msg.id ? 'db-' + msg.id : null" :data-role="msg.role" :data-read-only="readOnly" :data-allow-local-actions="allowLocalActions" :data-is-group-session="isGroupSession" :data-showing-summary="msg.showingSummary">
         <span class="block-count">{{ (msg.blocks || []).length }}</span>
         <span class="thinking-text">{{ (msg.blocks || []).filter(b => b.type === 'thinking').map(b => b.text).join('|') }}</span>
         <span class="tool-output">{{ (msg.blocks || []).filter(b => b.type === 'tool_use').map(b => b.output).join('|') }}</span>
@@ -162,6 +162,10 @@ function makePayload() {
       backend: 'codebuddy',
       agentId: 'codebuddy',
       model: 'claude-sonnet-4',
+      // Explicit session type. The view must NOT infer "group" from a non-empty
+      // roster: a group whose members all left has an empty roster and would
+      // then render raw <clawbench-mention> tags instead of resolved chips.
+      sessionType: 'chat',
     },
     // Speaker identities frozen at share time (the snapshot carries custom
     // avatars now). Drives the TOC rows' real agent icon.
@@ -370,6 +374,7 @@ describe('SessionShareView', () => {
       const u = String(url)
       if (u.includes('/session')) {
         const p = makePayload()
+        ;(p as Record<string, Record<string, unknown>>).session.sessionType = 'group'
         ;(p as Record<string, unknown>).groupMembers = [
           { id: 'm-host', agentId: 'a1', name: 'Host', backend: 'codebuddy', isHost: true, avatar: hostSvg },
           { id: 'm-second', agentId: 'a2', name: 'Second', backend: 'claude', avatar: secondSvg },
@@ -395,6 +400,104 @@ describe('SessionShareView', () => {
     expect(wrapper.find('.session-share-byline .session-share-agent-name').exists()).toBe(false)
   })
 
+  // A group whose members have ALL left comes back with an empty roster. The
+  // group flag must still be true — otherwise ChatMessageItem stops stripping the
+  // <clawbench-mention> routing tags and the reader sees raw protocol markup
+  // instead of resolved @-chips. This is why the payload carries an explicit
+  // sessionType instead of the viewer inferring it from the roster.
+  it('treats a group with an empty roster as a group, using session.sessionType', async () => {
+    globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
+      const u = String(url)
+      if (u.includes('/session')) {
+        const p = makePayload()
+        ;(p as Record<string, Record<string, unknown>>).session.sessionType = 'group'
+        ;(p as Record<string, unknown>).groupMembers = []
+        return { ok: true, json: async () => p } as Response
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as Response
+    }) as unknown as typeof fetch
+
+    const wrapper = await mountView()
+    const rows = wrapper.findAll('.chat-message-stub')
+    expect(rows.length).toBeGreaterThan(0)
+    for (const row of rows) {
+      expect(row.attributes('data-is-group-session')).toBe('true')
+    }
+    // No roster, so no stack — the byline falls back to the session-agent icon.
+    expect(wrapper.find('.session-share-byline .avatar-stack').exists()).toBe(false)
+  })
+
+  // The share page used to `v-for` the messages with NO container-level
+  // delegation, so the code-block / table-block header buttons the markdown
+  // pipeline injects were rendered but did nothing when clicked. The container
+  // must now forward clicks to the shared interaction composable.
+  //
+  // Asserted through a real click on the container rather than by grepping the
+  // template: a source assertion cannot tell whether the handler is wired to the
+  // element that actually contains the messages.
+  it('forwards container clicks to the interaction composable', async () => {
+    const wrapper = await mountView()
+    const container = wrapper.find('.session-share-messages')
+    expect(container.exists()).toBe(true)
+
+    // A code-block copy button is what the reader clicks; the composable is what
+    // consumes it. Assert the observable effect: the click is handled (default
+    // prevented + propagation stopped) instead of falling through.
+    const btn = document.createElement('button')
+    btn.className = 'code-block-copy-btn'
+    btn.setAttribute('data-action', 'copy')
+    const wrapperEl = document.createElement('div')
+    wrapperEl.className = 'code-block-wrapper'
+    const pre = document.createElement('pre')
+    const code = document.createElement('code')
+    code.textContent = 'const x = 1'
+    pre.appendChild(code)
+    wrapperEl.appendChild(btn)
+    wrapperEl.appendChild(pre)
+    container.element.appendChild(wrapperEl)
+
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true })
+    btn.dispatchEvent(event)
+    // handleCodeBlockClick preventDefaults + stopPropagation when it consumes
+    // the click, so a defaultPrevented event is proof the delegation ran.
+    expect(event.defaultPrevented).toBe(true)
+  })
+
+  // The mirror case: a non-group session must NOT be flagged as a group even
+  // though the fixture carries a speakers map.
+  it('does not treat a single-agent share as a group', async () => {
+    const wrapper = await mountView()
+    const rows = wrapper.findAll('.chat-message-stub')
+    expect(rows.length).toBeGreaterThan(0)
+    for (const row of rows) {
+      expect(row.attributes('data-is-group-session')).toBe('false')
+    }
+  })
+
+  // The table copy menu is a fixed-position overlay: it is only dismissed by a
+  // document-level listener. ChatMessageList installs its own, so a host that
+  // merely renders the buttons (this page) would leave the menu stuck open.
+  // The shared interaction composable now owns that listener.
+  it('dismisses an open table copy menu when clicking elsewhere', async () => {
+    const wrapper = await mountView({ attach: true })
+    const menu = document.createElement('div')
+    menu.className = 'table-block-copy-menu is-open'
+    const btn = document.createElement('button')
+    btn.className = 'table-block-copy-btn'
+    btn.setAttribute('data-action', 'open-copy-menu')
+    const dropdown = document.createElement('span')
+    dropdown.className = 'table-block-copy-dropdown'
+    dropdown.appendChild(btn)
+    dropdown.appendChild(menu)
+    wrapper.find('.session-share-messages').element.appendChild(dropdown)
+
+    const elsewhere = document.createElement('div')
+    document.body.appendChild(elsewhere)
+    elsewhere.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+
+    expect(menu.classList.contains('is-open')).toBe(false)
+  })
+
   it('renders one message per snapshot entry with blocks parsed', async () => {
     const wrapper = await mountView()
     const rows = wrapper.findAll('.chat-message-stub')
@@ -404,11 +507,20 @@ describe('SessionShareView', () => {
     expect(rows[1].find('.block-count').text()).toBe('3')
   })
 
-  // Read-only is what suppresses the interactive tool actions that POST back.
-  it('passes readOnly down to every message', async () => {
+  // Two INDEPENDENT flags travel down to every message:
+  //   readOnly         — suppresses everything that needs auth or a live session
+  //                      (quote, speak, fork, rewind) and the tool POST actions.
+  //   allowLocalActions — re-enables the local-only bar (copy, details, the
+  //                      summary/original toggle) that plain readOnly hides.
+  // Asserting both is what makes this a real guard: a missing
+  // allowLocalActions would leave the share page with no buttons at all.
+  it('passes readOnly and allowLocalActions down to every message', async () => {
     const wrapper = await mountView()
-    for (const row of wrapper.findAll('.chat-message-stub')) {
+    const rows = wrapper.findAll('.chat-message-stub')
+    expect(rows.length).toBeGreaterThan(0)
+    for (const row of rows) {
       expect(row.attributes('data-read-only')).toBe('true')
+      expect(row.attributes('data-allow-local-actions')).toBe('true')
     }
   })
 
@@ -456,16 +568,22 @@ describe('SessionShareView', () => {
     expect(assistant.find('.tool-input-path').text()).toBe('./src/a.ts')
   })
 
-  // The share page is a read-only transcript. The summary/original switch is an
-  // app-side reading preference and is suppressed via readOnly; the snapshot
-  // still carries both fields, it is the VIEW that chooses original only.
-  it('passes readOnly down so the summary toggle is suppressed', async () => {
+  // A shared transcript is an archive, so every message must OPEN on its
+  // original content regardless of the reader's global messageDisplayMode. The
+  // view pins showingSummary=false explicitly (isShowingSummary lets an explicit
+  // preference win over the global mode).
+  it('pins every summarized message to the original view on load', async () => {
     const wrapper = await mountView()
-    const rows = wrapper.findAll('.chat-message-stub')
-    expect(rows.length).toBeGreaterThan(0)
-    for (const row of rows) {
-      expect(row.attributes('data-read-only')).toBe('true')
-    }
+    const assistant = wrapper.findAll('.chat-message-stub')[1]
+    expect(assistant.attributes('data-showing-summary')).toBe('false')
+  })
+
+  // …and the toggle still works: clicking it flips the per-message preference.
+  it('toggles a message to the summary view on request', async () => {
+    const wrapper = await mountView()
+    const assistant = wrapper.findAll('.chat-message-stub')[1]
+    await assistant.find('.emit-toggle-summary').trigger('click')
+    expect(wrapper.findAll('.chat-message-stub')[1].attributes('data-showing-summary')).toBe('true')
   })
 
   it('provides the injected dependencies the render chain requires', async () => {

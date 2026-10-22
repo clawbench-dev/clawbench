@@ -183,7 +183,7 @@
              the message. Assistant-only, and hidden while streaming since there
              is no settled content to toggle yet. -->
         <template v-if="msg.role === 'assistant'">
-          <span v-if="!readOnly && !msg.streaming" ref="toggleWrapRef" class="chat-summary-anchor">
+          <span v-if="canUseLocalActions && !msg.streaming" ref="toggleWrapRef" class="chat-summary-anchor">
             <SummaryToggle v-if="!msg._summarizing" mode="button" :showing-summary="showSummary" i18n-prefix="chat.message" @toggle="handleToggleSummary" />
             <LoadingIndicator v-else size="sm" inline />
           </span>
@@ -232,7 +232,7 @@
           </button>
         </template>
         <CopyButton
-          v-if="!readOnly && !msg.streaming && (msg.role === 'assistant' || copyableUserText)"
+          v-if="canUseLocalActions && !msg.streaming && (msg.role === 'assistant' || copyableUserText)"
           :text="copyPayload"
           title-key="chat.message.copy"
           class="chat-action-btn"
@@ -257,7 +257,7 @@
             <Rewind :size="14" />
           </button>
         </template>
-        <button v-if="!readOnly && !msg.streaming" class="chat-action-btn" @click="$emit('show-metadata', msg)" :title="t('chat.message.viewDetails')">
+        <button v-if="canUseLocalActions && !msg.streaming" class="chat-action-btn" @click="$emit('show-metadata', msg)" :title="t('chat.message.viewDetails')">
           <Info :size="14" />
         </button>
       </div>
@@ -269,6 +269,7 @@
       :open="fileChangesDrawer.effectiveOpen.value"
       :created="fileChanges.created"
       :modified="fileChanges.modified"
+      :read-only="readOnly"
       @close="fileChangesDrawer.close()"
       @open-file="handleOpenFilePayload"
       @select-file="handleSelectFile"
@@ -277,6 +278,7 @@
     <!-- File diffs drill-down sheet (all Write/Edit diffs for one file) -->
     <FileDiffsDrawer
       :open="fileDiffsDrawer.effectiveOpen.value"
+      :read-only="readOnly"
       :file-path="selectedFile?.path || ''"
       :tool-name="selectedFile?.toolName || ''"
       :blocks="msg.blocks || []"
@@ -347,16 +349,24 @@ const props = defineProps({
    *  seconds (it copies the whole history), so the clicked button swaps to a
    *  spinner and disables — without it the click reads as a no-op. */
   forkingMessageId: { type: [Number, String], default: null },
-  /** Public share page: the viewer is anonymous, so every per-message action
-   *  is suppressed — speak/fork/rewind need a live session or auth, copy/
-   *  details duplicate what the snapshot already renders (details also exposes
-   *  token/cost metadata), and quote needs a chat composer the reader does not
-   *  have. The summary/original switch is suppressed too: it is an app-side
-   *  reading preference, and a read-only transcript has no business offering a
-   *  choice the reader cannot evaluate (the snapshot always carries the original
-   *  blocks; `showSummary` falls back to the summary only when there are none).
-   *  Only the timestamp line is kept — it is information, not a control. */
+  /** Public share page: the viewer is anonymous, so every action that needs a
+   *  live session or auth is suppressed — speak/fork/rewind need a live session
+   *  or the authenticated TTS endpoints, and quote needs a chat composer the
+   *  reader does not have. Copy / details / the summary-original switch are
+   *  local-only (clipboard, already-loaded metadata, a view toggle), so a host
+   *  that wants them sets `allowLocalActions`.
+   *  Only the timestamp line is kept when this is the sole flag. */
   readOnly: { type: Boolean, default: false },
+  /** Read-only host that may still offer the actions which need NEITHER auth
+   *  NOR a live session: copy, view-details and the summary/original toggle.
+   *  Set by the public share page — a reader can legitimately copy text, read a
+   *  message's model/token metadata and pick a reading mode.
+   *
+   *  Deliberately SEPARATE from `readOnly` so BtwAnswerDrawer and
+   *  TaskExecDetail (which pass readOnly for the same anonymity reasons but
+   *  have no use for the bar) keep their all-actions-hidden behaviour.
+   *  Ignored when `readOnly` is false. */
+  allowLocalActions: { type: Boolean, default: false },
   /** Resolves a group-chat speaker (msg.agentId = member row id) to
    *  { name, backend, avatar, agentName }. Returns null outside a group / when
    *  unresolved. `agentName` is the underlying real agent name, set only when it
@@ -388,6 +398,12 @@ const isHostMessage = computed(() => !!props.msg?.agentId && props.msg.agentId =
 // resolve. Suppressed on the read-only share page (there is no settings tab to
 // open) so a share viewer never sees a dead button.
 const canOpenAgentConfig = computed(() => !props.readOnly && !!speaker.value?.agentId)
+
+// Actions that work without auth and without a live session: copy, view-details
+// and the summary/original toggle. Everything else keeps its own `!readOnly`
+// gate (quote needs a composer, speak needs the TTS endpoints, fork/rewind need
+// a live session).
+const canUseLocalActions = computed(() => !props.readOnly || props.allowLocalActions)
 
 // Group-chat mention parsing. In BOTH modes an agent's speech may carry
 // <clawbench-mention> tags: host mode's routing, free mode's @-relay. A USER
@@ -583,18 +599,20 @@ const speakBtnLabel = computed(() => {
 // placeholder so the message bubble is never blank.
 const showSummary = computed(() => {
   if (!props.msg) return false
-  // readOnly (public share page) always renders the ORIGINAL content: the
-  // snapshot never strips blocks, and a read-only transcript has no business
-  // offering a summary/original switch the reader cannot evaluate.
-  //
-  // Never render blank, though: a message with a summary but no blocks (rare —
-  // the agent emitted metadata only) still shows its summary.
-  if (props.readOnly) {
-    const hasBlocks = !!props.msg.blocks?.length
-    const hasSummary = props.msg.summary != null && props.msg.summary !== ""
-    return !hasBlocks && hasSummary
-  }
-  return isShowingSummary(props.msg, displayMode.value, { isLastAssistant: props.isLastAssistant })
+  const hasBlocks = !!props.msg.blocks?.length
+  const hasSummary = props.msg.summary != null && props.msg.summary !== ""
+
+  // Plain read-only host (btw drawer, task execution detail) always renders the
+  // ORIGINAL content: there is no toggle, so nothing else could select the
+  // summary. Never render blank, though: a message with a summary but no blocks
+  // (rare — the agent emitted metadata only) still shows its summary.
+  if (props.readOnly && !props.allowLocalActions) return !hasBlocks && hasSummary
+
+  const showing = isShowingSummary(props.msg, displayMode.value, { isLastAssistant: props.isLastAssistant })
+  // A read-only host has no lazy-fetch path, so a summary-only message must never
+  // render blank when the reader is on the original view.
+  if (props.readOnly && !hasBlocks) return hasSummary
+  return showing
 })
 
 // A summarized message whose content was stripped by the backend has nothing

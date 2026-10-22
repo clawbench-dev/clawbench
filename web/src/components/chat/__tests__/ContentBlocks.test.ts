@@ -933,6 +933,100 @@ describe('ContentBlocks', () => {
     })
   })
 
+  // ── Read-only host: session actions must not render ──
+  //
+  // 公开会话分享页（SessionShareView）和 /btw 抽屉都用 `readOnly` 渲染本组件，
+  // 但都不监听 `reset-session` / `send-message`。渲染出来的按钮点了没有任何反应，
+  // 读者看到的是一个死控件——所以这两类动作必须和 `readOnly` 一起门控。
+  // 每条断言都先钉住「卡片本身渲染了」，否则 fixture 没生效时按钮的 not-exist
+  // 会假绿（卡片和按钮一起消失也能通过）。
+  describe('read-only host', () => {
+    it('hides the continue button on a restart warning', () => {
+      const wrapper = mountBlocks({
+        readOnly: true,
+        blocks: [{ type: 'warning', reason: 'restart', text: 'Server restarted' }],
+      })
+      // restart 是 amber 卡片，continue 是它唯一的动作
+      expect(wrapper.find('.chat-warning-card').exists()).toBe(true)
+      expect(wrapper.find('.chat-warning-card').text()).toContain('Server restarted')
+      expect(wrapper.find('.warning-continue-btn').exists()).toBe(false)
+    })
+
+    it('hides the reset button on a timeout warning', () => {
+      const wrapper = mountBlocks({
+        readOnly: true,
+        blocks: [{ type: 'warning', reason: 'timeout', text: 'Timed out' }],
+      })
+      // 注意：本文件的 isSevereWarning 被 mock 成只认 disconnect，故 timeout 走
+      // amber 卡片 —— 但 reset 按钮在两种卡片里都是同一个 v-else-if 分支。
+      expect(wrapper.find('.chat-warning-card').exists()).toBe(true)
+      expect(wrapper.find('.chat-warning-card').text()).toContain('Timed out')
+      expect(wrapper.find('.warning-reset-btn').exists()).toBe(false)
+    })
+
+    it('hides the reset button on an error block', () => {
+      const wrapper = mountBlocks({
+        readOnly: true,
+        blocks: [{ type: 'error', reason: 'backend_exit', text: 'AI backend exited' }],
+      })
+      expect(wrapper.find('.chat-error-card').exists()).toBe(true)
+      expect(wrapper.find('.warning-reset-btn').exists()).toBe(false)
+    })
+
+    it('hides both actions in the summary view (summaryCards.warnings path)', () => {
+      // 分享页可能以摘要态打开（后端 Finalize 后 content 被剥离成 {"blocks":[]}），
+      // 此时横幅来自 summaryCards.warnings —— 这条分支必须同样受门控，否则
+      // 换个视图按钮就又冒出来了。
+      const wrapper = mountBlocks({
+        readOnly: true,
+        blocks: [],
+        summary: 'Summary text',
+        showingSummary: true,
+        summaryCards: {
+          warnings: [
+            { type: 'warning', reason: 'restart', text: 'Server restarted' },
+            { type: 'error', reason: 'backend_exit', text: 'AI backend exited' },
+          ],
+        },
+      })
+      expect(wrapper.find('.chat-warning-card').exists()).toBe(true)
+      expect(wrapper.find('.chat-error-card').exists()).toBe(true)
+      expect(wrapper.find('.warning-continue-btn').exists()).toBe(false)
+      expect(wrapper.find('.warning-reset-btn').exists()).toBe(false)
+    })
+
+    it('still renders both actions in the interactive app', () => {
+      // 反证：不能因为加了 readOnly 门控就把正常聊天里的恢复入口也藏了。
+      const restart = mountBlocks({
+        blocks: [{ type: 'warning', reason: 'restart', text: 'Server restarted' }],
+      })
+      expect(restart.find('.warning-continue-btn').exists()).toBe(true)
+
+      const timeout = mountBlocks({
+        blocks: [{ type: 'warning', reason: 'timeout', text: 'Timed out' }],
+      })
+      expect(timeout.find('.warning-reset-btn').exists()).toBe(true)
+    })
+
+    it('keeps the copy-login-command button (pure client-side action)', () => {
+      // 复制登录命令只写剪贴板，不发请求也不改会话状态 —— 分享页读者拿到命令
+      // 可以自己去登录，这是信息而不是动作，必须保留。
+      const wrapper = mountBlocks({
+        readOnly: true,
+        blocks: [{
+          type: 'error',
+          reason: 'auth_required',
+          text: 'The agent is not signed in.',
+          login_cmd: 'cmdc login',
+        }],
+      })
+      expect(wrapper.find('.chat-error-card').exists()).toBe(true)
+      const loginBtn = wrapper.find('.warning-login-btn')
+      expect(loginBtn.exists()).toBe(true)
+      expect(loginBtn.attributes('title')).toBe('cmdc login')
+    })
+  })
+
   // ── Streaming / Cancelled markers ──
 
   describe('streaming and cancelled markers', () => {

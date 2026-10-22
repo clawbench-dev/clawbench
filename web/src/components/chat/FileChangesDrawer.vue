@@ -14,7 +14,7 @@
               <FileIcon :path="change.path" :size="16" class="fc-file-icon" />
               <span class="fc-file-name">{{ baseName(change.path) }}</span>
             </button>
-            <button class="fc-file-jump" :title="t('chat.fileChanges.openFile')" :aria-label="t('chat.fileChanges.openFile')" @click="$emit('open-file', change.path)">
+            <button v-if="!readOnly" class="fc-file-jump" :title="t('chat.fileChanges.openFile')" :aria-label="t('chat.fileChanges.openFile')" @click="$emit('open-file', change.path)">
               <ExternalLink :size="14" />
             </button>
           </div>
@@ -29,7 +29,7 @@
               <FileIcon :path="change.path" :size="16" class="fc-file-icon" />
               <span class="fc-file-name">{{ baseName(change.path) }}</span>
             </button>
-            <button class="fc-file-jump" :title="t('chat.fileChanges.openFile')" :aria-label="t('chat.fileChanges.openFile')" @click="$emit('open-file', change.path)">
+            <button v-if="!readOnly" class="fc-file-jump" :title="t('chat.fileChanges.openFile')" :aria-label="t('chat.fileChanges.openFile')" @click="$emit('open-file', change.path)">
               <ExternalLink :size="14" />
             </button>
           </div>
@@ -51,6 +51,11 @@ defineProps({
   open: Boolean,
   created: { type: Array, default: () => [] },
   modified: { type: Array, default: () => [] },
+  /** Read-only host (public share page): hide the "open in file manager" jump.
+   *  It goes through openFilePath, which the share page short-circuits — the
+   *  button would be visibly identical to the app's and do nothing. The file
+   *  name / diff buttons stay: they read the already-inlined tool input. */
+  readOnly: { type: Boolean, default: false },
 })
 
 defineEmits(['close', 'open-file', 'select-file'])

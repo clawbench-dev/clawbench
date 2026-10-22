@@ -154,6 +154,10 @@ describe('BtwAnswerDrawer', () => {
     for (const p of captured.props) {
       expect(p.readOnly).toBe(true)
       expect(p.hideSessionActions).toBe(true)
+      // The btw drawer must NOT opt into the share page's local-action bar: its
+      // bubbles are side questions, not a transcript to copy/metadata-inspect.
+      // Pinned so flipping the new prop's default cannot silently add buttons.
+      expect(p.allowLocalActions).toBeFalsy()
     }
   })
 

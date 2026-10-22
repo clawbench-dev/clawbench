@@ -3448,9 +3448,15 @@ paths:
       summary: 创建会话分享链接
       description: |
         请求体 `{sessionId, messageIds?}`。`messageIds` 为空表示分享全部**已完结**
-        消息（streaming=0）。选中未完结或不属于该会话的消息返回 400。
-        快照为**冻结副本**：同时包含摘要与原文、内联 tool 输入输出与思考全文；
-        执行计划不包含。重复创建会轮换 token，旧链接立即失效。
+        消息（streaming=0），服务端解析为当时的**显式 id 列表**后落库。选中未完结
+        或不属于该会话的消息返回 400。
+
+        创建时**只记录选中的消息 id**，不构建正文；正文在每次公开访问时**实时装配**
+        （内联 tool 输入输出与思考全文、同时附带摘要与原文，执行计划不包含）。
+        **内容原样输出**：不做路径净化，消息正文、工具输出与附件里的绝对路径、命令
+        输出、文件内容都会原样呈现给拿到链接的人。
+        选中的 id 固定，因此之后新产生的消息不会进入链接；分享后被回溯/删除的消息
+        不再展示。重复创建会轮换 token，旧链接立即失效。
       operationId: sessionShareCreate
       requestBody:
         required: true
@@ -3466,7 +3472,7 @@ paths:
                   type: array
                   items:
                     type: integer
-                  description: 为空表示全部分享；选中项之外的已完结消息不进快照
+                  description: 为空表示全部分享（解析为当时的显式 id 列表）；选中项之外的已完结消息不进分享
       responses:
         "200":
           description: 分享 token 与路径
@@ -3501,9 +3507,13 @@ paths:
         与 `/api/share/list`（文件）一样**按项目隔离**：会话标题属于私有内容，
         列出其他项目的分享会泄露它。
 
-        `archived: true` 表示底层会话已归档。分享本身仍然有效（快照是冻结副本），
+        `archived: true` 表示底层会话已归档。分享本身仍然有效（归档不删消息），
         也**仍然可以在此撤销**——归档后会话不再可按 id 寻址，这个列表是它唯一的
         撤销入口。前端据此隐藏「打开会话」动作。
+
+        `title` / `backend` 实时取自会话行，`messageCount` 为**选中**的消息数
+        （`len(messageIds)`）。分享后被删除的消息仍计入 `messageCount`，但公开页
+        只渲染存活的部分，因此两者可能不同。
       operationId: sessionShareList
       responses:
         "200":
@@ -3588,20 +3598,30 @@ paths:
         token 不存在一律 404，零信息暴露。
 
         会话分享走另外两个子路径：`{token}/meta`（返回 `kind` 为 `file` 或
-        `session`，供分享页判断该渲染哪种视图）与 `{token}/session`（返回冻结的
-        会话快照 JSON）。两者同样免鉴权、token 不存在一律 404。
+        `session`，供分享页判断该渲染哪种视图）与 `{token}/session`（返回**实时装配**的
+        会话 JSON）。两者同样免鉴权、token 不存在一律 404。
 
-        会话快照另附身份信息供分享页渲染真实智能体图标：`sessionAgent`（会话级智能体，
+        会话 JSON 另附身份信息供分享页渲染真实智能体图标：`sessionAgent`（会话级智能体，
         单聊用）、`speakers`（群聊成员行 id → 身份，供每条消息解析发言人）与 `groupMembers`
         （仅群会话：**在群**成员的有序预览 `{id, agentId, name, backend, avatar?, isHost?}`，
         与 `GET /api/sessions` 的 `groupMembers` 同形，供顶栏渲染与群聊 header 一致的
         头像堆叠；已离场成员不在其中）。`speakers` 是 map（JSON 键按 UUID 排序、且含
         已离场成员），只用于逐条消息解析；成员堆叠请用 `groupMembers`。
 
-        **头像在创建分享时一并冻结进快照**：匿名查看者无法访问 `/api/agents`，只能靠
-        快照里的 SVG 渲染图标，故 `sessionAgent`/`speakers` 携带会话智能体与各群成员的
-        自定义头像。成员头像取该成员自己的快照（`agent_avatar`，即入群时的头像），缺失
-        时回退到其智能体的共享头像；`groupMembers[].avatar` 同理为逐成员快照。
+        `session.sessionType`（`chat` / `group` / `group_member`）是**判断是否群会话的
+        唯一显式依据**：`groupMembers` 只含在群成员，成员全部离场时为空数组，据其推断
+        会把群分享误当单聊，读者就会看到原始的 `<clawbench-mention>` 路由标签。
+
+        **头像在每次请求时实时解析**：匿名查看者无法访问 `/api/agents`，所以
+        `sessionAgent`/`speakers` 携带会话智能体与各群成员的自定义头像，但**不冻结**——
+        智能体改名或换头像会反映到已发出的链接上。成员头像优先取成员自己的快照
+        （`agent_avatar`，即入群时的头像），缺失时回退到其智能体的共享头像。
+
+        **`{token}/session` 的缓存与失败语义**：响应带 `ETag`（装配结果的 sha256）与
+        `Cache-Control: private, no-cache, max-age=0`；带 `If-None-Match` 命中时返回
+        **304**（无 body，仍带 `ETag`）。token 不存在、会话行已删除、或分享选中的消息
+        **全部**被回溯/删除时返回 **404**，且该判定**优先于**条件请求。分享后被删除的
+        部分消息会被跳过，链接只展示存活的部分。
 
         **分享不限文件大小、不限类型**：任何文件都能创建链接并下载。
         `{token}/file` 与 `{token}/content` 需要把内容内联进 JSON，故对超过内联上限
@@ -3619,6 +3639,10 @@ paths:
           description: |
             分享内容。`content` 为空且 `tooLarge: true` 表示文件超过内联上限，
             仅返回元数据（`name`/`path`/`size`/`supported`），需改用 `download` 子路径。
+        "304":
+          description: |
+            `{token}/session` 专用：`If-None-Match` 与当前 `ETag` 匹配，内容未变。
+            无响应体，仍带 `ETag`。
         "404":
           $ref: "#/components/responses/Error"
 

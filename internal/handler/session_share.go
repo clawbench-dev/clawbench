@@ -1,34 +1,62 @@
 // Public conversation-share links (capability URLs).
 //
-// A session share freezes a conversation into an opaque JSON snapshot at
-// creation time and stores it under a capability token. The management endpoint
+// A session share records WHICH messages a link exposes (a resolved id list
+// under a capability token) and nothing else; the JSON is assembled from the
+// live tables on every public request. The management endpoint
 // (/api/share/session) is auth-protected; the public read endpoints
 // (/api/share/{token}/meta, /api/share/{token}/session) are deliberately NOT
 // behind middleware.Auth — the token itself is the sole credential. When no
 // share record exists the public endpoints return 404, so the feature has zero
 // exposure when unused.
 //
-// See internal/service/session_share_payload.go for why the snapshot inlines
+// See internal/service/session_share_payload.go for why the assembly inlines
 // tool input/output and thinking text rather than referencing the side tables.
 package handler
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
+	"runtime"
 	"strings"
 
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 )
 
+// sessionShareMaxConcurrent bounds simultaneous payload assemblies.
+//
+// An assembly is several queries plus up to 16 MiB of JSON, and the read pool is
+// only two connections (store/db.go). The public endpoint is unauthenticated and
+// unthrottled, so one hot link pasted into a group chat would otherwise starve
+// every other reader in the process. Past the ceiling callers get 503 rather
+// than queueing without bound.
+var sessionShareMaxConcurrent = min(4, runtime.NumCPU())
+
+var sessionShareSem = make(chan struct{}, sessionShareMaxConcurrent)
+
+// acquireSessionShareSlot blocks until a slot is free or the client goes away.
+// Returns false when the request was cancelled while waiting.
+func acquireSessionShareSlot(ctx context.Context) bool {
+	select {
+	case sessionShareSem <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func releaseSessionShareSlot() { <-sessionShareSem }
+
 // sessionShareResponse is the payload for session-share management endpoints.
 type sessionShareResponse struct {
 	Token string `json:"token,omitempty"`
 	Path  string `json:"path,omitempty"` // the share URL path (/share/{token})
-	// MessageCount is the number of messages frozen into the current snapshot.
+	// MessageCount is the number of messages in the stored SELECTION. Messages
+	// deleted after the share was created still count here; the public page
+	// renders only the survivors.
 	MessageCount int `json:"messageCount,omitempty"`
 }
 
@@ -122,27 +150,27 @@ func ServeSessionShareManage(w http.ResponseWriter, r *http.Request) {
 }
 
 // requireOwnedSession confirms a session exists and belongs to the project in
-// the request cookie, returning its metadata and the project path.
+// the request cookie.
 //
-// A share must not be creatable for another project's conversation, and the
-// snapshot's path relativization needs the creator's project root. Archived
+// A share must not be creatable for another project's conversation. Archived
 // sessions are rejected because GetSessionFullInfo excludes them, matching the
-// rest of the app (archived conversations are not addressable by id).
-func requireOwnedSession(w http.ResponseWriter, r *http.Request, sessionID string) (*service.SessionInfo, string, bool) {
+// rest of the app (archived conversations are not addressable by id) — the
+// PUBLIC read path is the exception, and it uses GetSessionFullInfoAny instead.
+func requireOwnedSession(w http.ResponseWriter, r *http.Request, sessionID string) bool {
 	projectPath, ok := requireProject(w, r)
 	if !ok {
-		return nil, "", false
+		return false
 	}
 	info := service.GetSessionFullInfo(sessionID)
 	if info == nil {
 		writeLocalizedErrorf(w, r, http.StatusNotFound, "SessionNotFound")
-		return nil, "", false
+		return false
 	}
 	if info.ProjectPath != projectPath {
 		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
-		return nil, "", false
+		return false
 	}
-	return info, projectPath, true
+	return true
 }
 
 func serveSessionShareStatus(w http.ResponseWriter, r *http.Request) {
@@ -151,7 +179,7 @@ func serveSessionShareStatus(w http.ResponseWriter, r *http.Request) {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "SessionIdRequired")
 		return
 	}
-	if _, _, ok := requireOwnedSession(w, r, sessionID); !ok {
+	if !requireOwnedSession(w, r, sessionID) {
 		return
 	}
 
@@ -175,8 +203,8 @@ func serveSessionShareStatus(w http.ResponseWriter, r *http.Request) {
 	if exists {
 		resp.Token = token
 		resp.Path = sharePathFromToken(token)
-		if _, _, count, found, err := service.GetSessionShareByToken(token); err == nil && found {
-			resp.MessageCount = count
+		if share, found, err := service.GetSessionShareByToken(token); err == nil && found {
+			resp.MessageCount = share.MessageCount
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -187,14 +215,15 @@ func serveSessionShareCreate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	info, projectPath, ok := requireOwnedSession(w, r, req.SessionID)
+	ok = requireOwnedSession(w, r, req.SessionID)
 	if !ok {
 		return
 	}
 
-	homeDir, _ := os.UserHomeDir()
-
-	payload, count, err := service.BuildSessionSharePayload(req.SessionID, req.MessageIDs, projectPath, homeDir)
+	// Only the SELECTION is resolved and stored — the payload is assembled on
+	// every public read, so creating a share never builds (or trims) 16 MiB of
+	// JSON just to record which messages the user picked.
+	ids, err := service.ResolveSessionShareSelection(req.SessionID, req.MessageIDs)
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrSessionShareEmptySelection):
@@ -202,13 +231,13 @@ func serveSessionShareCreate(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, service.ErrSessionShareUnknownMessage):
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "ShareSessionInvalidSelection")
 		default:
-			slog.Error("session share: build payload failed", "session", req.SessionID, "err", err)
+			slog.Error("session share: resolve selection failed", "session", req.SessionID, "err", err)
 			model.WriteError(w, model.Internal(err))
 		}
 		return
 	}
 
-	token, _, err := service.UpsertSessionShare(req.SessionID, info.Title, info.Backend, count, payload)
+	token, _, err := service.UpsertSessionShare(req.SessionID, ids)
 	if err != nil {
 		slog.Error("session share: upsert failed", "session", req.SessionID, "err", err)
 		model.WriteError(w, model.Internal(err))
@@ -218,7 +247,7 @@ func serveSessionShareCreate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, sessionShareResponse{
 		Token:        token,
 		Path:         sharePathFromToken(token),
-		MessageCount: count,
+		MessageCount: len(ids),
 	})
 }
 
@@ -227,7 +256,7 @@ func serveSessionShareRevoke(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if _, _, ok := requireOwnedSession(w, r, req.SessionID); !ok {
+	if !requireOwnedSession(w, r, req.SessionID) {
 		return
 	}
 	if err := service.DeleteSessionShareBySession(req.SessionID); err != nil {
@@ -365,8 +394,9 @@ func serveSessionShareRevokeOne(w http.ResponseWriter, r *http.Request, projectP
 
 // serveSessionShareRevokeAll revokes every share of THIS project.
 //
-// Deliberately not service.DeleteAllSessionShares(): that statement is global
-// and would revoke other projects' links too.
+// Deliberately a per-token loop rather than one DELETE: the statement must be
+// scoped by project, and a blanket delete would revoke other projects' links
+// too.
 func serveSessionShareRevokeAll(w http.ResponseWriter, projectPath string) {
 	shares, err := service.ListSessionShares(projectPath)
 	if err != nil {
@@ -402,14 +432,18 @@ type shareMetaResponse struct {
 // Unknown tokens get the same uniform 404 as every other public endpoint (no
 // existence disclosure).
 func serveShareMeta(w http.ResponseWriter, r *http.Request, token string) {
-	_, title, count, ok, err := service.GetSessionShareByToken(token)
+	share, ok, err := service.GetSessionShareByToken(token)
 	if err != nil {
 		slog.Error("share: meta session lookup failed", "err", err)
 		model.WriteError(w, model.Internal(err))
 		return
 	}
 	if ok {
-		writeJSON(w, http.StatusOK, shareMetaResponse{Kind: shareKindSession, Title: title, MessageCount: count})
+		writeJSON(w, http.StatusOK, shareMetaResponse{
+			Kind:         shareKindSession,
+			Title:        share.Title,
+			MessageCount: share.MessageCount,
+		})
 		return
 	}
 
@@ -426,13 +460,20 @@ func serveShareMeta(w http.ResponseWriter, r *http.Request, token string) {
 	http.NotFound(w, r)
 }
 
-// serveShareSessionPayload writes the frozen snapshot verbatim.
+// serveShareSessionPayload assembles and writes the conversation JSON.
 //
-// The stored payload is already JSON, so it is streamed as-is rather than
-// unmarshaled and re-marshaled: re-encoding would double the memory spike on
-// an anonymous request and could reorder keys for no benefit.
+// Assembly happens on every request (nothing is stored but the selection), so
+// the response carries a strong ETag derived from the body: a reader that comes
+// back with If-None-Match gets a 304 and no re-transfer. The assembly itself is
+// still paid — a cheap fingerprint that skipped it could not be made correct
+// (summaries land asynchronously, tool outputs are updated in place, and avatars
+// come from an in-process agent registry, none of which a SQL-only fingerprint
+// observes), and a stale 304 is a silent, permanent content bug.
+//
+// Revocation is checked BEFORE the conditional request: a revoked token must
+// 404 even when the caller still holds a valid ETag.
 func serveShareSessionPayload(w http.ResponseWriter, r *http.Request, token string) {
-	payload, _, _, ok, err := service.GetSessionShareByToken(token)
+	share, ok, err := service.GetSessionShareByToken(token)
 	if err != nil {
 		slog.Error("share: public session lookup failed", "err", err)
 		model.WriteError(w, model.Internal(err))
@@ -442,10 +483,45 @@ func serveShareSessionPayload(w http.ResponseWriter, r *http.Request, token stri
 		http.NotFound(w, r)
 		return
 	}
+
+	if !acquireSessionShareSlot(r.Context()) {
+		// The client went away while queued; nothing to write.
+		return
+	}
+	defer releaseSessionShareSlot()
+
+	createdAt, _ := parseShareTime(share.CreatedAt)
+	body, _, err := service.BuildSessionSharePayload(share.SessionID, share.MessageIDs, createdAt)
+	switch {
+	case errors.Is(err, service.ErrSessionShareNothingToShow),
+		errors.Is(err, service.ErrSessionShareSessionGone):
+		// No content left (every selected message was deleted, or the session row
+		// is gone). From the reader's side this is the same as revocation.
+		http.NotFound(w, r)
+		return
+	case err != nil:
+		slog.Error("share: assemble session payload failed", "session", share.SessionID, "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+
+	etag := bodyETag([]byte(body))
+	w.Header().Set("ETag", etag)
+	// Overrides the no-store middleware.NoCache already set on this route: no-store
+	// and 304 are contradictory (the browser would never send the conditional
+	// request). private keeps a revoked link out of shared caches; no-cache still
+	// makes the browser revalidate on every use.
+	w.Header().Set("Cache-Control", "private, no-cache, max-age=0")
+
+	if etagMatches(r.Header.Get("If-None-Match"), etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	// gosec flags this as tainted HTML output, but the payload is the output of
+	// gosec flags this as tainted HTML output, but the body is the output of
 	// json.Marshal (see BuildSessionSharePayload), which escapes <, > and & to
-	// \u003c/\u003e/\u0026 — the stored snapshot cannot contain a raw tag.
-	_, _ = w.Write([]byte(payload)) //nolint:gosec // stored payload is json.Marshal output, HTML-escaped by encoding/json
+	// \u003c/\u003e/\u0026 — it cannot contain a raw tag.
+	_, _ = w.Write([]byte(body))
 }

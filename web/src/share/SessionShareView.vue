@@ -81,7 +81,17 @@
               </span>
             </template>
           </div>
-          <div class="session-share-messages">
+          <!-- The container carries the same pure-client interaction delegation
+               the chat area uses (code-block copy/wrap, table copy/wrap, table
+               row detail, double-tap copy). Without it those buttons render from
+               the markdown pipeline but do nothing when clicked — the reader sees
+               a control that is visually identical to the app's and inert. -->
+          <div
+            class="session-share-messages"
+            @click="interactions.handleContainerClick"
+            @mousedown="interactions.onContainerMouseDown"
+            @touchstart.passive="interactions.onContainerTouchStart"
+          >
             <ChatMessageItem
               v-for="(msg, i) in messages"
               :key="msg.id"
@@ -101,6 +111,8 @@
               :user-nickname="userNickname"
               :hide-session-actions="true"
               :read-only="true"
+              :allow-local-actions="true"
+              :is-group-session="isGroupShare"
               @toggle-tool="onToggleTool"
               @show-tool-detail="onShowToolDetail"
               @show-metadata="onShowMetadata"
@@ -193,6 +205,16 @@
       :formatDetailTime="chatRender.formatDetailTime"
       @close="metadataDrawer.close()"
     />
+
+    <!-- Table row detail (touch hosts only). Reads the row out of the already
+         rendered DOM, so it needs no request — the same component the chat area
+         uses, fed by the shared interaction composable. -->
+    <TableRowModal
+      :data="interactions.tableRowModal.value"
+      @close="interactions.closeTableRowModal()"
+      @prev="interactions.tableRowPrev()"
+      @next="interactions.tableRowNext()"
+    />
   </div>
 </template>
 
@@ -209,8 +231,10 @@ import { makeSpeakerResolver, type SpeakerIdentity } from '@/utils/speakerIdenti
 import { resolveMentionDisplayName, GROUP_USER_TARGET_NAME, type MentionSpeaker } from '@/utils/groupRouting'
 import ToolDetailDrawer from '@/components/chat/ToolDetailDrawer.vue'
 import ChatMetadataModal from '@/components/chat/ChatMetadataModal.vue'
+import TableRowModal from '@/components/common/TableRowModal.vue'
 import { useChatRender } from '@/composables/useChatRender'
 import { useToolDetailDrawer } from '@/composables/useToolDetailDrawer'
+import { useChatMessageInteractions } from '@/composables/useChatMessageInteractions'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import { isLastAssistantMessage, isShowingSummary, normalizeDisplayMode, parseMessages } from '@/utils/chatSessionUtils'
 import { localConfig } from '@/composables/useSettingsConfig'
@@ -309,7 +333,13 @@ interface ShareGroupMember {
   avatar?: string
 }
 const groupMembers = ref<ShareGroupMember[]>([])
-const isGroupShare = computed(() => groupMembers.value.length > 0)
+// The session's OWN type, carried explicitly by the payload. This is the only
+// reliable group signal: `groupMembers` is the ACTIVE roster, so a group whose
+// members have all left comes back empty — deriving the flag from it would make
+// that thread render as a single-agent session, and the reader would then see
+// raw <clawbench-mention> routing tags instead of resolved @-chips.
+const sessionType = ref('')
+const isGroupShare = computed(() => sessionType.value === 'group')
 // AvatarStack resolves avatars from agentId via useAgents, which the anonymous
 // share SPA never loads — so we feed each disc the avatar frozen in the snapshot
 // roster. The member's own frozen avatar is the source of truth; the `speakers`
@@ -537,6 +567,17 @@ provide('autoSpeech', {
   stopAudio: () => {},
 })
 
+// ── Container-level interactions ──
+// Code-block / table-block header buttons, table-row detail and double-tap copy
+// are pure client-side: they only read the DOM the markdown pipeline produced.
+// The chat area has always had them; this page used to `v-for` the messages
+// without the delegation, so those buttons were rendered but inert.
+//
+// `onOpenFile` is deliberately NOT passed: an anonymous reader has no file
+// viewer and no auth, so the composable preventDefaults relative links instead
+// of letting the browser navigate away from the transcript.
+const interactions = useChatMessageInteractions()
+
 // ── Tool detail drawer ──
 // input/output are inlined in the snapshot, so the drawer renders without any
 // authenticated fetch (see fetchToolCallDetail's share-provider branch).
@@ -701,6 +742,7 @@ async function loadSnapshot() {
     sessionAgent.value = payload?.sessionAgent || null
     speakers.value = payload?.speakers || null
     groupMembers.value = Array.isArray(payload?.groupMembers) ? payload.groupMembers : []
+    sessionType.value = typeof payload?.session?.sessionType === 'string' ? payload.session.sessionType : ''
     hostMemberId.value = payload?.session?.hostMemberId || ''
     userNickname.value = payload?.session?.userNickname || GROUP_USER_TARGET_NAME
     const rawMessages = Array.isArray(payload?.messages) ? payload.messages : []
@@ -710,6 +752,15 @@ async function loadSnapshot() {
     // is why the payload must not be frozen.
     const parsed = parseMessages(rawMessages, (content: string) => chatRender.parseAssistantContent(content))
     indexInlinedData(parsed)
+    // A shared transcript is an archive, so every message starts on its ORIGINAL
+    // content. The reader's global messageDisplayMode is an app-side reading
+    // preference, not a property of the conversation being shared — without this
+    // a reader who prefers summaries would open someone else's thread already
+    // collapsed. The toggle still works: an explicit per-message choice wins over
+    // the global mode inside isShowingSummary.
+    for (const m of parsed) {
+      if (m.summary != null && m.summary !== '') m.showingSummary = false
+    }
     messages.value = parsed
 
     // Keep the store's roots empty so markdown path annotations cannot resolve

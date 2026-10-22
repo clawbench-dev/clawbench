@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -400,6 +401,100 @@ func GetMessagesBySessionIDRaw(sessionID string) ([]model.ChatMessage, error) {
 		return nil, err
 	}
 	return messages, nil
+}
+
+// GetFinalizedMessageIDs returns the ids of a session's finalized messages, in
+// chronological order.
+//
+// Id-only on purpose: the share-creation path needs the id SET to validate a
+// selection, not the bodies — loading every content blob just to check membership
+// read megabytes it never used.
+func GetFinalizedMessageIDs(sessionID string) ([]int64, error) {
+	rows, err := store.ReadDB().Query(
+		"SELECT id FROM chat_history WHERE session_id = ? AND streaming = 0 ORDER BY id ASC",
+		sessionID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	ids := make([]int64, 0)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// GetMessagesByIDsInSession loads the named messages, keeping only rows that
+// belong to sessionID (the session predicate is what stops a caller from reading
+// another conversation's rows by guessing an id).
+//
+// Returns only FINALIZED messages, like GetMessagesBySessionIDRaw. Ids that no
+// longer exist are simply absent from the result — the caller decides whether
+// that is an error (creation) or a skip (public read).
+//
+// Chunked to stay under SQLite's bind-variable limit.
+func GetMessagesByIDsInSession(sessionID string, messageIDs []int64) ([]model.ChatMessage, error) {
+	messages := make([]model.ChatMessage, 0, len(messageIDs))
+	for start := 0; start < len(messageIDs); start += shareIDChunk {
+		end := min(start+shareIDChunk, len(messageIDs))
+		chunk := messageIDs[start:end]
+
+		query := "SELECT id, role, content, files, backend, streaming, created_at, indexed, agent_id, injected" +
+			" FROM chat_history WHERE session_id = ? AND streaming = 0 AND id IN (" + sqlPlaceholders(len(chunk)) + ")" +
+			" ORDER BY id ASC"
+		args := make([]any, 0, len(chunk)+1)
+		args = append(args, sessionID)
+		for _, id := range chunk {
+			args = append(args, id)
+		}
+
+		rows, queryErr := store.ReadDB().Query(query, args...)
+		chunkMessages, err := scanRawMessages(rows, queryErr, sessionID)
+		if err != nil {
+			return nil, err
+		}
+		messages = append(messages, chunkMessages...)
+	}
+	// Chunks are per-id and the selection is arbitrary, so the overall order has
+	// to be restored once at the end.
+	sort.Slice(messages, func(i, j int) bool { return messages[i].ID < messages[j].ID })
+	return messages, nil
+}
+
+// scanRawMessages reads chat_history rows WITHOUT the summary-stripping
+// enrichment that scanMessages applies: the share payload needs the real blocks.
+// Closes rows before returning.
+func scanRawMessages(rows *sql.Rows, queryErr error, sessionID string) ([]model.ChatMessage, error) {
+	if queryErr != nil {
+		return nil, queryErr
+	}
+	defer func() { _ = rows.Close() }()
+
+	messages := make([]model.ChatMessage, 0)
+	for rows.Next() {
+		var msg model.ChatMessage
+		var filesJSON sql.NullString
+		var streaming, indexed, injected int
+		if err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &streaming,
+			&msg.CreatedAt, &indexed, &msg.AgentID, &injected); err != nil {
+			return nil, err
+		}
+		msg.Streaming = streaming != 0
+		msg.Indexed = indexed != 0
+		msg.Injected = injected != 0
+		if filesJSON.Valid && filesJSON.String != "" {
+			msg.Files = unmarshalFilesJSON(filesJSON.String)
+		}
+		msg.SessionID = sessionID
+		messages = append(messages, msg)
+	}
+	return messages, rows.Err()
 }
 
 // GetMessagesBySessionIDRawAfter is GetMessagesBySessionIDRaw restricted to
@@ -3010,14 +3105,30 @@ func GetSessionInfo(sessionID string) (*SessionInfo, error) {
 // GetSessionInfo (3 separate PK lookups on the same row) with a single query.
 // Returns nil if the session is not found or archived.
 func GetSessionFullInfo(sessionID string) *SessionInfo {
+	return sessionFullInfo(sessionID, false)
+}
+
+// GetSessionFullInfoAny is GetSessionFullInfo WITHOUT the archived filter.
+//
+// A conversation share outlives archiving (archiving keeps every message), and
+// the public payload builder runs without a project cookie, so it has no other
+// way to learn the project root. Ownership checks must NOT use this — they go
+// through requireOwnedSession, which keeps rejecting archived sessions.
+func GetSessionFullInfoAny(sessionID string) *SessionInfo {
+	return sessionFullInfo(sessionID, true)
+}
+
+func sessionFullInfo(sessionID string, includeArchived bool) *SessionInfo {
 	info := &SessionInfo{}
-	err := store.ReadDB().QueryRow(
-		`SELECT s.backend, COALESCE(p.path, ''), s.title, s.agent_id, s.model, COALESCE(s.transport, ''), s.auto_approve
+	query := `SELECT s.backend, COALESCE(p.path, ''), s.title, s.agent_id, s.model, COALESCE(s.transport, ''), s.auto_approve
 		   FROM chat_sessions s
 		   LEFT JOIN projects p ON p.id = s.project_id
-		  WHERE s.id = ? AND s.archived = 0`,
-		sessionID,
-	).Scan(&info.Backend, &info.ProjectPath, &info.Title, &info.AgentID, &info.Model, &info.Transport, &info.AutoApprove)
+		  WHERE s.id = ?`
+	if !includeArchived {
+		query += " AND s.archived = 0"
+	}
+	err := store.ReadDB().QueryRow(query, sessionID).
+		Scan(&info.Backend, &info.ProjectPath, &info.Title, &info.AgentID, &info.Model, &info.Transport, &info.AutoApprove)
 	if err != nil {
 		return nil
 	}

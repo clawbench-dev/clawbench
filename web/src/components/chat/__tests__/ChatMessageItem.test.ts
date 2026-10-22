@@ -1329,6 +1329,91 @@ describe('ChatMessageItem — readOnly (public share page)', () => {
     expect(wrapper.find('.chat-meta-actions .chat-action-btn').exists()).toBe(true)
   })
 })
+
+// A share page keeps the actions that need NEITHER auth NOR a live session.
+// `allowLocalActions` is deliberately separate from `readOnly` so the other
+// read-only hosts (btw drawer, task execution detail) are untouched.
+describe('ChatMessageItem — readOnly + allowLocalActions (share page)', () => {
+  const assistantMsg = {
+    id: 'l1',
+    role: 'assistant',
+    content: 'answer',
+    blocks: [{ type: 'text', text: 'answer' }],
+    summary: 'a summary',
+  }
+
+  it('keeps copy and view-details', () => {
+    const wrapper = createWrapper({ msg: assistantMsg, readOnly: true, allowLocalActions: true })
+    const actions = wrapper.findAll('.chat-meta-actions button')
+    const labels = actions.map((b) => b.attributes('title') ?? b.attributes('aria-label') ?? '')
+    expect(labels.some((l) => l.includes('Copy') || l.includes('复制'))).toBe(true)
+    expect(labels.some((l) => l.includes('Details') || l.includes('详情'))).toBe(true)
+  })
+
+  it('keeps the summary toggle', () => {
+    const wrapper = createWrapper({ msg: assistantMsg, readOnly: true, allowLocalActions: true })
+    expect(wrapper.find('.chat-summary-anchor').exists()).toBe(true)
+  })
+
+  // Quote needs a composer, speak needs the authenticated TTS endpoints, and
+  // fork/rewind need a live session — all stay hidden.
+  it('hides quote, speak, fork and rewind', () => {
+    const wrapper = createWrapper({ msg: assistantMsg, readOnly: true, allowLocalActions: true })
+    const titles = wrapper.findAll('.chat-meta-actions button').map((b) => b.attributes('title') ?? '')
+    expect(titles.some((t) => t.includes('Quote') || t.includes('引用'))).toBe(false)
+    expect(titles.some((t) => t.includes('Read aloud') || t.includes('朗读'))).toBe(false)
+    expect(titles.some((t) => t.includes('Fork') || t.includes('分叉') || t.includes('分支'))).toBe(false)
+    expect(titles.some((t) => t.includes('Rewind') || t.includes('回溯'))).toBe(false)
+  })
+
+  // The reader CAN evaluate the toggle here, so the message renders whichever
+  // view the per-message preference selects.
+  it('honours an explicit showingSummary preference', () => {
+    const wrapper = createWrapper({
+      msg: { ...assistantMsg, showingSummary: true },
+      readOnly: true,
+      allowLocalActions: true,
+    })
+    const cb = wrapper.findComponent({ name: 'ContentBlocks' })
+    expect(cb.props('showingSummary')).toBe(true)
+  })
+
+  // The share page pins `showingSummary = false` on load (a shared transcript is
+  // an archive, so it opens on the original content) — the component must honour
+  // that explicit preference rather than falling back to the reader's global mode.
+  it('renders the original content when the page pinned showingSummary=false', () => {
+    const wrapper = createWrapper({
+      msg: { ...assistantMsg, showingSummary: false },
+      readOnly: true,
+      allowLocalActions: true,
+    })
+    const cb = wrapper.findComponent({ name: 'ContentBlocks' })
+    expect(cb.props('showingSummary')).toBe(false)
+  })
+
+  // Never blank: a summary-only message has no original content to show.
+  //
+  // The reader's global mode is forced to 'original' here, because that is the
+  // ONLY combination where isShowingSummary alone returns false for a
+  // summary-only message (it has no explicit preference to fall back on). Without
+  // the component's own guard this renders an empty bubble.
+  it('falls back to the summary when there are no blocks', async () => {
+    const cfg = await import('@/composables/useSettingsConfig')
+    const original = (cfg.localConfig as any).messageDisplayMode
+    ;(cfg.localConfig as any).messageDisplayMode = 'original'
+    try {
+      const wrapper = createWrapper({
+        msg: { id: 'l3', role: 'assistant', content: '', blocks: [], summary: 'only a summary' },
+        readOnly: true,
+        allowLocalActions: true,
+      })
+      const cb = wrapper.findComponent({ name: 'ContentBlocks' })
+      expect(cb.props('showingSummary')).toBe(true)
+    } finally {
+      ;(cfg.localConfig as any).messageDisplayMode = original
+    }
+  })
+})
 describe('ChatMessageItem — sessionId reaches ContentBlocks', () => {
   async function source(): Promise<string> {
     const mod = await import('@/components/chat/ChatMessageItem.vue?raw')

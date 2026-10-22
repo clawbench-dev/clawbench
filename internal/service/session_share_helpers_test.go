@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"clawbench/internal/store"
 
@@ -14,7 +15,7 @@ import (
 )
 
 // This file is in package service (not service_test) because it drives the
-// unexported sanitizers and the block inliner directly. Going through
+// unexported helpers and the block inliner directly. Going through
 // BuildSessionSharePayload would only reach the branches a fixture happens to
 // hit; these helpers are the ones that decide what a public snapshot contains,
 // so each fallback is asserted on its own.
@@ -136,13 +137,17 @@ func seedHelperMessage(t *testing.T, db *sql.DB, sessionID, role, content string
 	return id
 }
 
-// ─── sanitizeSummaryCards / sanitizeFileChanges ──────────────────────────────
+// ─── prepareSummaryCards ─────────────────────────────────────────────────────
 
-func TestSanitizeSummaryCards_NilIsNil(t *testing.T) {
-	assert.Nil(t, sanitizeSummaryCards(nil, "/p", "/h"))
+func TestPrepareSummaryCards_NilIsNil(t *testing.T) {
+	assert.Nil(t, prepareSummaryCards(nil))
 }
 
-func TestSanitizeSummaryCards_RelativizesPathsAndDropsTaskIDs(t *testing.T) {
+// Task cards are out of scope on the share page (the viewer cannot reach
+// /api/tasks, and a task card would render as a permanent loading skeleton).
+// Everything else is kept VERBATIM — including paths, which are no longer
+// rewritten.
+func TestPrepareSummaryCards_DropsTaskIDsOnly(t *testing.T) {
 	cards := &model.SummaryCards{
 		TaskIDs:       []int64{7, 8},
 		CreatedFiles:  model.SummaryFileChanges{{Path: "/p/created.go", ToolIDs: []string{"t1"}}},
@@ -150,69 +155,26 @@ func TestSanitizeSummaryCards_RelativizesPathsAndDropsTaskIDs(t *testing.T) {
 		Warnings:      []model.SummaryWarning{{Type: "warning", Text: "see /p/warned.go"}},
 	}
 
-	out := sanitizeSummaryCards(cards, "/p", "/h")
+	out := prepareSummaryCards(cards)
 	require.NotNil(t, out)
 	assert.Nil(t, out.TaskIDs, "task cards are out of scope on the share page")
-	assert.Equal(t, "created.go", out.CreatedFiles[0].Path)
+	assert.Equal(t, "/p/created.go", out.CreatedFiles[0].Path, "paths are served verbatim")
 	assert.Equal(t, []string{"t1"}, out.CreatedFiles[0].ToolIDs, "tool ids are opaque and drive the diff drawer")
-	assert.Equal(t, "modified.go", out.ModifiedFiles[0].Path)
-	assert.Equal(t, "see ./warned.go", out.Warnings[0].Text)
+	assert.Equal(t, "/p/modified.go", out.ModifiedFiles[0].Path)
+	assert.Equal(t, "see /p/warned.go", out.Warnings[0].Text)
+
+	// The input cards belong to the live session; the copy must not alias them.
+	assert.Equal(t, []int64{7, 8}, cards.TaskIDs, "the caller's cards must not be mutated")
 }
 
 // Empty card lists must not be replaced with non-nil empty slices: the JSON
 // tags use omitempty, and a non-nil empty slice would start emitting [].
-func TestSanitizeSummaryCards_LeavesEmptyListsAlone(t *testing.T) {
-	out := sanitizeSummaryCards(&model.SummaryCards{}, "/p", "/h")
+func TestPrepareSummaryCards_LeavesEmptyListsAlone(t *testing.T) {
+	out := prepareSummaryCards(&model.SummaryCards{})
 	require.NotNil(t, out)
 	assert.Nil(t, out.CreatedFiles)
 	assert.Nil(t, out.ModifiedFiles)
 	assert.Nil(t, out.Warnings)
-}
-
-// ─── sanitizeShareValue ──────────────────────────────────────────────────────
-
-func TestSanitizeShareValue_WalksArraysAndLeavesScalars(t *testing.T) {
-	in := map[string]any{
-		"files": []any{"/p/a.ts", map[string]any{"path": "/p/b.ts"}},
-		"count": float64(3),
-		"ok":    true,
-		"none":  nil,
-	}
-
-	out := sanitizeShareValue(in, "/p", "/h").(map[string]any)
-	assert.Equal(t, []any{"./a.ts", map[string]any{"path": "./b.ts"}}, out["files"])
-	assert.Equal(t, float64(3), out["count"], "non-string leaves pass through untouched")
-	assert.Equal(t, true, out["ok"])
-	assert.Nil(t, out["none"])
-}
-
-// ─── sanitizeShareString ─────────────────────────────────────────────────────
-
-func TestSanitizeShareString_EmptyStaysEmpty(t *testing.T) {
-	assert.Empty(t, sanitizeShareString("", "/p", "/h"))
-}
-
-// A root of "/" trims to "" and must be skipped rather than turning every
-// leading separator into "./".
-func TestSanitizeShareString_EmptyRootsAreNoops(t *testing.T) {
-	assert.Equal(t, "/p/a", sanitizeShareString("/p/a", "/", "/"))
-}
-
-// ─── relativizeSharePath ─────────────────────────────────────────────────────
-
-func TestRelativizeSharePath_EmptyStaysEmpty(t *testing.T) {
-	assert.Empty(t, relativizeSharePath("", "/p", "/h"))
-}
-
-func TestRelativizeSharePath_UnderHomeBecomesTilde(t *testing.T) {
-	assert.Equal(t, "~/other/x.ts", relativizeSharePath("/home/u/other/x.ts", "/home/u/proj", "/home/u"))
-}
-
-// A sibling directory of the project is NOT under it (Rel yields ../proj2/x.ts);
-// with no usable homeDir the path must degrade to its base name rather than
-// escaping as a relative path.
-func TestRelativizeSharePath_SiblingFallsBackToBaseName(t *testing.T) {
-	assert.Equal(t, "x.ts", relativizeSharePath("/home/u/proj2/x.ts", "/home/u/proj", "/nonexistent-home"))
 }
 
 // ─── clipRunes ───────────────────────────────────────────────────────────────
@@ -225,59 +187,61 @@ func TestClipRunes_NonPositiveReturnsEmpty(t *testing.T) {
 // ─── inlineMessageContent fallbacks ──────────────────────────────────────────
 
 // A body that starts with "{" but is not valid JSON must fall back to the
-// sanitized original instead of being dropped.
+// original instead of being dropped.
 func TestInlineMessageContent_InvalidJSONFallsBack(t *testing.T) {
 	msg := model.ChatMessage{ID: 1, Content: `{not json at /p/a`}
-	assert.Equal(t, `{not json at ./a`, inlineMessageContent(msg, nil, map[thinkingKey]string(nil), "/p", "/h"))
+	assert.Equal(t, `{not json at /p/a`, inlineMessageContent(msg, nil, map[thinkingKey]string(nil)))
 }
 
 func TestInlineMessageContent_NoBlocksKeyFallsBack(t *testing.T) {
 	msg := model.ChatMessage{ID: 1, Content: `{"foo":"/p/a"}`}
-	assert.Equal(t, `{"foo":"./a"}`, inlineMessageContent(msg, nil, map[thinkingKey]string(nil), "/p", "/h"))
+	assert.Equal(t, `{"foo":"/p/a"}`, inlineMessageContent(msg, nil, map[thinkingKey]string(nil)))
 }
 
 func TestInlineMessageContent_BlocksNotAnArrayFallsBack(t *testing.T) {
 	msg := model.ChatMessage{ID: 1, Content: `{"blocks":null}`}
-	assert.Equal(t, `{"blocks":null}`, inlineMessageContent(msg, nil, map[thinkingKey]string(nil), "/p", "/h"))
+	assert.Equal(t, `{"blocks":null}`, inlineMessageContent(msg, nil, map[thinkingKey]string(nil)))
 }
 
 // A non-object entry in the blocks array is skipped, not fatal.
 func TestInlineMessageContent_NonObjectBlockIsSkipped(t *testing.T) {
 	msg := model.ChatMessage{ID: 1, Content: `{"blocks":[123,{"type":"text","text":"/p/a"}]}`}
-	got := inlineMessageContent(msg, nil, map[thinkingKey]string(nil), "/p", "/h")
-	assert.Contains(t, got, "./a")
+	got := inlineMessageContent(msg, nil, map[thinkingKey]string(nil))
+	assert.Contains(t, got, "/p/a", "text blocks are served verbatim")
 	assert.Contains(t, got, "123", "the non-object entry must survive untouched")
+}
+
+// Content is never rewritten: the reader sees exactly what was stored, paths
+// included. (The old sanitizer replaced the project root with "./"; see
+// BuildSessionSharePayload for why that was removed.)
+func TestInlineMessageContent_DoesNotRewritePaths(t *testing.T) {
+	msg := model.ChatMessage{ID: 3, Content: `{"blocks":[
+		{"type":"text","text":"t /home/u/proj/a"},
+		{"type":"warning","text":"w /home/u/proj/b"},
+		{"type":"error","text":"e /home/u/proj/c"}
+	],"metadata":{"url":"https://x/home/u/proj/d"}}`}
+
+	got := inlineMessageContent(msg, nil, map[thinkingKey]string(nil))
+	assert.Contains(t, got, "/home/u/proj/a")
+	assert.Contains(t, got, "/home/u/proj/b")
+	assert.Contains(t, got, "/home/u/proj/c")
+	assert.Contains(t, got, "https://x/home/u/proj/d", "metadata is carried verbatim too")
 }
 
 func TestInlineMessageContent_ThinkingWithoutThinkIDIsLeftAlone(t *testing.T) {
 	msg := model.ChatMessage{ID: 7, Content: `{"blocks":[{"type":"thinking","done":true}]}`}
-	got := inlineMessageContent(msg, nil, map[thinkingKey]string{{7, ""}: "secret"}, "/p", "/h")
+	got := inlineMessageContent(msg, nil, map[thinkingKey]string{{7, ""}: "secret"})
 	assert.NotContains(t, got, "secret", "a thinking block with no think_id cannot be matched")
 }
 
 func TestInlineMessageContent_ToolWithoutIDIsLeftAlone(t *testing.T) {
 	msg := model.ChatMessage{ID: 7, Content: `{"blocks":[{"type":"tool_use","name":"Read"}]}`}
-	got := inlineMessageContent(msg, map[toolCallKey]ToolCallRecord{{7, ""}: {Output: "leak"}}, map[thinkingKey]string(nil), "/p", "/h")
+	got := inlineMessageContent(msg, map[toolCallKey]ToolCallRecord{{7, ""}: {Output: "leak"}}, map[thinkingKey]string(nil))
 	assert.NotContains(t, got, "leak", "a tool_use block with no id cannot be matched to a side row")
 }
 
-// text / warning / error blocks all carry their display text in "text".
-func TestInlineMessageContent_SanitizesTextWarningErrorAndMetadata(t *testing.T) {
-	msg := model.ChatMessage{ID: 3, Content: `{"blocks":[
-		{"type":"text","text":"t /p/a"},
-		{"type":"warning","text":"w /p/b"},
-		{"type":"error","text":"e /p/c"}
-	],"metadata":{"url":"https://x/p/d"}}`}
-
-	got := inlineMessageContent(msg, nil, map[thinkingKey]string(nil), "/p", "/h")
-	assert.Contains(t, got, "./a")
-	assert.Contains(t, got, "./b")
-	assert.Contains(t, got, "./c")
-	assert.Contains(t, got, "https://x./d", "metadata strings are sanitized too")
-}
-
-// Tool input is arbitrary JSON: arrays and scalar leaves must both be walked.
-func TestInlineMessageContent_InlinesToolInputArraysAndScalars(t *testing.T) {
+// Tool input is arbitrary JSON: it must be restored whole, not walked.
+func TestInlineMessageContent_InlinesToolInputVerbatim(t *testing.T) {
 	msg := model.ChatMessage{ID: 5, Content: `{"blocks":[{"type":"tool_use","id":"t1"}]}`}
 	calls := map[toolCallKey]ToolCallRecord{
 		{5, "t1"}: {
@@ -292,12 +256,12 @@ func TestInlineMessageContent_InlinesToolInputArraysAndScalars(t *testing.T) {
 		},
 	}
 
-	got := inlineMessageContent(msg, calls, map[thinkingKey]string(nil), "/p", "/h")
-	assert.Contains(t, got, "./a.ts")
-	assert.Contains(t, got, "./b.ts", "nested maps inside arrays are sanitized")
+	got := inlineMessageContent(msg, calls, map[thinkingKey]string(nil))
+	assert.Contains(t, got, "/p/a.ts")
+	assert.Contains(t, got, "/p/b.ts", "nested maps inside arrays survive")
 	assert.Contains(t, got, `"count":2`)
-	assert.Contains(t, got, "./c.ts")
-	assert.Contains(t, got, "./d.ts")
+	assert.Contains(t, got, "output /p/c.ts")
+	assert.Contains(t, got, "summary /p/d.ts")
 	assert.Contains(t, got, `"duration_ms":9`)
 }
 
@@ -364,7 +328,7 @@ func TestGetSessionMessagesForSelection_QueryErrorSurfaces(t *testing.T) {
 // ─── BuildSessionSharePayload error propagation ──────────────────────────────
 
 // Each side table is read separately, so a failure in any one must abort the
-// snapshot rather than silently shipping a snapshot missing that data.
+// payload rather than silently shipping one missing that data.
 func TestBuildSessionSharePayload_SideTableErrorsSurface(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -381,12 +345,12 @@ func TestBuildSessionSharePayload_SideTableErrorsSurface(t *testing.T) {
 			defer func() { _ = db.Close() }()
 
 			seedHelperSession(t, db, "s1")
-			seedHelperMessage(t, db, "s1", "user", "hi")
+			id := seedHelperMessage(t, db, "s1", "user", "hi")
 			_, err := db.Exec("DROP TABLE " + tc.table)
 			require.NoError(t, err)
 
-			_, _, err = BuildSessionSharePayload("s1", nil, helperProjectRoot, "/home/u")
-			require.Error(t, err, "a missing %s table must fail the snapshot", tc.table)
+			_, _, err = BuildSessionSharePayload("s1", []int64{id}, time.Time{})
+			require.Error(t, err, "a missing %s table must fail the payload", tc.table)
 		})
 	}
 }
@@ -544,9 +508,9 @@ func TestSessionShareReads_ClosedDBSurfacesErrors(t *testing.T) {
 	_, _, err = loadSummariesForMessages([]int64{1})
 	require.Error(t, err)
 
-	_, err = loadToolCallsByMessage("s1")
+	_, err = loadToolCallsByMessage([]int64{1})
 	require.Error(t, err)
 
-	_, err = loadThinkingByMessage("s1")
+	_, err = loadThinkingByMessage([]int64{1})
 	require.Error(t, err)
 }

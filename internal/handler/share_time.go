@@ -28,3 +28,18 @@ func formatShareTime(raw string) string {
 	// The stored text is UTC; .UTC() is explicit intent, not a conversion.
 	return t.UTC().Format(time.RFC3339)
 }
+
+// parseShareTime is formatShareTime's inverse: it recovers the instant from the
+// bare-UTC text SQLite wrote, so a value that came out of the database can be fed
+// back into a payload. Unparseable input yields the zero time (the payload then
+// carries a zero createdAt rather than a guess).
+func parseShareTime(raw string) (time.Time, bool) {
+	if raw == "" {
+		return time.Time{}, false
+	}
+	t, err := time.Parse("2006-01-02 15:04:05", raw)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t.UTC(), true
+}
