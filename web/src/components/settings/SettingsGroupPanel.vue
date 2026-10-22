@@ -22,17 +22,30 @@
       </label>
     </div>
 
-    <!-- Entry selector row -->
+    <!-- Entry selector row.
+         The description sits BELOW the label/value line (same position and
+         type scale as a field row's description) rather than inside it: these
+         descriptions run to a full sentence, and squeezing one into the label
+         cell would either truncate it or push the current value off the row.
+         The row was already carrying a `descriptionKey` in its config for
+         every panel that uses it, but nothing rendered it — the usage meter's
+         "switching the metric clears the quota" warning was written into i18n
+         and then silently dropped. -->
     <div
       v-if="config.entrySelector"
       class="group-panel__entry-row"
       :class="{ 'group-panel__entry-row--disabled': fieldsDisabled }"
       @click="!fieldsDisabled && entryPicker.open()"
     >
-      <span class="group-panel__entry-label">{{ t(config.entrySelector.labelKey) }}</span>
-      <div class="group-panel__entry-right">
-        <span class="group-panel__entry-value">{{ entryDisplayLabel }}</span>
-        <ChevronRight :size="14" class="group-panel__entry-chevron" />
+      <div class="group-panel__entry-main">
+        <span class="group-panel__entry-label">{{ t(config.entrySelector.labelKey) }}</span>
+        <div class="group-panel__entry-right">
+          <span class="group-panel__entry-value">{{ entryDisplayLabel }}</span>
+          <ChevronRight :size="14" class="group-panel__entry-chevron" />
+        </div>
+      </div>
+      <div v-if="config.entrySelector.descriptionKey" class="group-panel__entry-desc">
+        {{ t(config.entrySelector.descriptionKey) }}
       </div>
     </div>
 
@@ -1142,13 +1155,21 @@ watch(localValues, () => {
 /* Entry selector row */
 .group-panel__entry-row {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding:0 var(--space-7);
-  min-height: 38px;
+  flex-direction: column;
+  padding: var(--space-4) var(--space-7);
   cursor: pointer;
   background: transparent;
   position: relative;
+}
+
+/* Label/value line. Kept as its own flex row so the description below can span
+   the full width instead of wrapping under the value column. */
+.group-panel__entry-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 30px;
 }
 
 .group-panel__entry-row::after {
@@ -1184,6 +1205,17 @@ watch(localValues, () => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Description under an entry row. Same type scale and colour as a field row's
+   `.settings-item__desc` so the two read as the same kind of text. */
+.group-panel__entry-desc {
+  width: 100%;
+  margin-top: var(--space-2);
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+  line-height: var(--line-height-normal);
+  word-break: break-word;
 }
 
 .group-panel__entry-right {

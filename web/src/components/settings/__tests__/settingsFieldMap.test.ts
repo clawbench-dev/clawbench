@@ -973,4 +973,23 @@ describe('usage meter is a sibling of push notifications', () => {
     expect(anchor).toBeDefined()
     expect(anchor!.type).toBe('date')
   })
+
+  // The entry row selects WHAT is counted, so it must be labelled "usage type"
+  // rather than reusing the category title ("Usage"). Sharing the title made the
+  // row read as a repeat of the page heading, with no hint about its value.
+  it('labels the entry row as the usage type, not the category title', () => {
+    const cfg = getCategoryPanels('usageMeter')[0]
+    const sel = cfg.entrySelector!
+    expect(sel.key).toBe('usage_meter.metric')
+    expect(sel.labelKey).toBe('settings.items.usageMeterMetric')
+    expect(sel.labelKey).not.toBe(cfg.titleKey)
+  })
+
+  // The description carries the "switching clears the quota" warning — the only
+  // notice a user gets before losing their stored quota. It must be wired up,
+  // not merely present in the locale table.
+  it('the entry row carries the quota-clearing warning as its description', () => {
+    const cfg = getCategoryPanels('usageMeter')[0]
+    expect(cfg.entrySelector!.descriptionKey).toBe('settings.items.usageMeterMetricDesc')
+  })
 })

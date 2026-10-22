@@ -437,7 +437,10 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     panelId: 'usageMeter',
     titleKey: 'settings.items.usageMeter',
     entrySelector: {
-      labelKey: 'settings.items.usageMeter',
+      // "Usage type", not "Usage": the row selects WHAT is counted (tokens /
+      // credit / cost). Reusing the category title made it read as a repeat of
+      // the page heading with no hint about what the value means.
+      labelKey: 'settings.items.usageMeterMetric',
       // The metric row is where the unit changes, so the "switching clears
       // the quota" warning belongs here — it was previously written into
       // i18n but never referenced, so users lost their quota with no notice.
