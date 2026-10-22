@@ -628,7 +628,7 @@ import { useGroupMembers } from '@/composables/useGroupMembers'
 import { setGroupCruise } from '@/composables/useGroupChat'
 import { resetUsageStats } from '@/composables/useUsageStats'
 import { resetGitStats } from '@/composables/useGitCodeStats'
-import { useSessionIdentity, registerSessionDrawerRef, registerOpenSessionTabOverride, resetIdentity, applyCruiseAutoApproveDefault } from './composables/useSessionIdentity.ts'
+import { useSessionIdentity, registerSessionDrawerRef, registerOpenSessionTabOverride, registerGroupRosterRefresh, resetIdentity, applyCruiseAutoApproveDefault } from './composables/useSessionIdentity.ts'
 import { useSessionSidebar } from './composables/useSessionSidebar.ts'
 import type { SessionSearchResult } from './composables/useSessionSearch'
 import { loadSessionsOnce, resetChatSessionState, switching } from './composables/useChatSession.ts'
@@ -2093,6 +2093,14 @@ setOpenSessionHandler((sessionId) => {
 const { pickerOpen: sessionPickerOpen } = usePendingTarget()
 const sessionDrawerRef = ref<InstanceType<typeof SessionDrawer> | null>(null)
 const sessionSidebarRef = ref<InstanceType<typeof SessionSidebar> | null>(null)
+
+// Register the group-roster refresher. App.vue owns the single
+// useGroupMembers instance (the chat header and the settings sheet both read
+// it), so consumers that need to force a reload after writing member data —
+// e.g. fork, whose members' avatars are generated asynchronously AFTER the
+// session switch — reach it through this hook rather than owning a second
+// instance. Same pattern as registerSessionDrawerRef below.
+registerGroupRosterRefresh(refreshGroupMembers)
 
 // Register SessionDrawer ref so identity.openAgentSelector() works
 watch(sessionDrawerRef, (ref) => {

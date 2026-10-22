@@ -1,7 +1,7 @@
 import { ref, computed, type Ref } from 'vue'
 import { gt } from '@/composables/useLocale'
 import { useToast } from '@/composables/useToast.ts'
-import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
+import { useSessionIdentity, refreshGroupRosterIfRegistered } from '@/composables/useSessionIdentity.ts'
 import { useAppForeground, onAppResume } from '@/composables/useAppForeground'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
 import { appLog } from '@/utils/appLog'
@@ -1759,13 +1759,23 @@ export function useChatSession(options: UseChatSessionOptions) {
       if (typeof data.sessionCount === 'number') store.state.sessionCount = data.sessionCount
       toast.show(gt('chat.session.forked', { count: data.sessionCount ?? '', max: maxCount }), { icon: 'fork', type: 'success', duration: 1500 })
       await switchSession(data.sessionId)
-      // A forked group's members are brand new rows, so duplicate instances have
-      // no generated avatar yet. Same background backfill as group creation —
-      // non-critical, so it never blocks entering the new group. The roster
-      // itself refreshes on its own (useGroupMembers watches the session id).
+      // A forked group's members are brand-new rows, so duplicate instances have
+      // no generated avatar yet. Generation is non-critical and must not block
+      // entering the group, so it runs in the background — but the roster fetched
+      // on entry completes BEFORE it, so a second refresh is required or the
+      // fallback icons stick until the user switches away and back. App.vue owns
+      // the useGroupMembers instance; the registered hook reaches it.
       if (data.targetKind === 'group') {
+        const groupId = data.sessionId
         void import('@/composables/useGroupChat')
-          .then(m => m.generateMemberAvatars(data.sessionId))
+          .then(async m => {
+            await m.generateMemberAvatars(groupId)
+            // Only refresh if the user is still looking at this group: a
+            // refresh for a session they already left would clobber the new
+            // roster (refresh() guards on generation, but skipping the request
+            // outright is cheaper and clearer).
+            if (currentSessionId.value === groupId) refreshGroupRosterIfRegistered(groupId)
+          })
           .catch((e: unknown) => appLog.w(TAG, 'fork: member avatar generation failed', e))
       }
       return true

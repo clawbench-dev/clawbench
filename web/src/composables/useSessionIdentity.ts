@@ -651,6 +651,24 @@ let _sessionDrawerRef: { openAgentSelector: () => void } | null = null
 // sidebar can route the entry (e.g. Ctrl+K) through its own state bridge.
 let _openSessionTabOverride: (() => void) | null = null
 
+// Group-roster refresher — set by App.vue, which owns the single
+// useGroupMembers instance (the chat header and the settings sheet both read
+// it). Fork needs it: a forked group's members are brand-new rows whose
+// avatars are generated ASYNCHRONOUSLY after the session switch, so the roster
+// fetched on entry does not contain them. Without a second refresh the fallback
+// icons stick until the user switches away and back.
+let _refreshGroupRoster: ((groupId: string) => Promise<void> | void) | null = null
+
+/** Register the group-roster refresher (App.vue owns the instance). */
+export function registerGroupRosterRefresh(fn: (groupId: string) => Promise<void> | void) {
+  _refreshGroupRoster = fn
+}
+
+/** Refresh the group roster through the registered owner, if any. */
+export function refreshGroupRosterIfRegistered(groupId: string): void {
+  void _refreshGroupRoster?.(groupId)
+}
+
 export interface SessionActions {
   switchSession: (sessionId: string, projectPath?: string) => Promise<void>
   createSession: (agentId?: string) => Promise<void>
