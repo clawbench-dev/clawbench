@@ -1,6 +1,23 @@
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
+
+/**
+ * Read a repo-relative source file. Both the repo root and `web/` are tried
+ * because vitest runs from the root while some scripts run from `web/`.
+ */
+function readSource(relPath: string): string {
+  for (const base of [process.cwd(), resolve(process.cwd(), 'web')]) {
+    try {
+      return readFileSync(resolve(base, relPath), 'utf8')
+    } catch {
+      // try the next candidate
+    }
+  }
+  throw new Error(`${relPath} not found from cwd: ${process.cwd()}`)
+}
 
 function mountSkeleton(props: Record<string, unknown> = {}) {
   return mount(PanelSkeleton, { props })
@@ -71,5 +88,36 @@ describe('PanelSkeleton', () => {
 
     await wrapper.setProps({ meta: false })
     expect(widths()).toEqual(first)
+  })
+
+  /**
+   * The root must claim its own width.
+   *
+   * Every caller drops this component inside a legacy loading wrapper that is
+   * `display: flex` in the DEFAULT row direction. A flex item there sizes to its
+   * content, and every child width is a percentage of that content — so with no
+   * width on the root the whole placeholder measured 0px and the panel looked
+   * BLANK while it loaded (measured in a real browser: forge pipeline detail
+   * 0px, the lists 96px, both inside a 541px pane). The `--skeleton` modifier
+   * classes that callers add set `align-items: stretch`, which is the cross
+   * axis of a row container (height) and therefore never supplied any width.
+   *
+   * jsdom performs no layout, so this cannot be asserted by measuring: the
+   * invariant is pinned at the source instead. `width: 100%` (or a flex
+   * `flex: 1`/`align-self: stretch` equivalent) must stay on the root rule.
+   */
+  it('claims a width so a flex parent cannot collapse it to zero', () => {
+    // Read from disk rather than through import.meta.url: vitest serves the
+    // module from its transform cache, not from a path this test can re-read.
+    const src = readSource('web/src/components/common/PanelSkeleton.vue')
+    const scoped = src.slice(src.indexOf('<style scoped>'), src.lastIndexOf('</style>'))
+    // Strip comments: the rule's rationale legitimately mentions `width`.
+    const bare = scoped.replace(/\/\*[\s\S]*?\*\//g, '')
+    const root = bare.match(/^\.panel-skeleton\s*\{([\s\S]*?)\}/m)
+    expect(root, '.panel-skeleton root rule must exist').not.toBeNull()
+    expect(
+      root![1],
+      'the skeleton root needs width: 100% (a row-direction flex parent collapses it to 0)',
+    ).toMatch(/(^|\n)\s*width:\s*100%\s*;/)
   })
 })

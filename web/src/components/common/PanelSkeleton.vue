@@ -101,9 +101,19 @@ const textRows = computed(() =>
 </script>
 
 <style scoped>
+/* `width: 100%` is load-bearing, not cosmetic. The root is placed inside the
+   panels' legacy loading wrappers, which are `display: flex` with the DEFAULT
+   row direction: as a flex item this element then sizes to its content, and
+   every child width is a percentage of that content — which is zero. The whole
+   placeholder collapsed to 0px wide (a blank panel) in the forge detail and
+   shrunk to the fixed-width leading/meta blocks in every list. The `--skeleton`
+   modifier classes set `align-items: stretch`, but that is the CROSS axis of a
+   row container (height), so it never gave the skeleton any width.
+   `min-width: 0` stays so a long row inside a narrow pane can still shrink. */
 .panel-skeleton {
   display: flex;
   flex-direction: column;
+  width: 100%;
   min-width: 0;
 }
 

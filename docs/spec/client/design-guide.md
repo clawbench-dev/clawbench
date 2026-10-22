@@ -387,7 +387,8 @@
   - `text`——段落行。用于文件预览、diff、分享页正文、OpenAPI 文档。
   - **行宽是固定循环**，与 `ChatSkeleton`/`StatsSkeleton` 同一理由：微光已在表达「加载中」，随机宽度会在重渲染时跳动。
   - **可见块全部 `aria-hidden`**，加载文案由唯一的 `role="status"` 承载。`label` 传现有 i18n 键（`common.loading` / `forge.loading` / …），不要新造文案。
-  - **必须铺满容器并左对齐**：`.git-history-loading` / `.forge-loading` / `.task-loading` 等旧容器是 `align-items:center`，直接把骨架塞进去会缩成中间一条窄柱。做法是加 `--skeleton` 修饰类（`align-items:stretch; justify-content:flex-start`），或给骨架一个自带宽度的类。
+  - **必须铺满容器并左对齐**：`.git-history-loading` / `.forge-loading` / `.task-loading` 等旧容器是 `display:flex` 的**默认横向**容器且 `align-items:center`，直接把骨架塞进去会缩成中间一条窄柱。做法是加 `--skeleton` 修饰类（`align-items:stretch; justify-content:flex-start`），或给骨架一个自带宽度的类。
+    - **宽度必须由骨架自己声明（`width:100%`），不能只靠修饰类**：`align-items:stretch` 作用在横向容器的**交叉轴（高度）**上，给不了宽度；而骨架内部所有行宽都是百分比，父宽为 0 时全部归零 —— 实测流水线详情整块量到 **0px**（面板一片空白、看着像没接骨架屏），列表也只剩 leading/meta 的固定宽度（96px / 541px 容器）。守卫 `PanelSkeleton.test.ts` 直接钉源码里的 `width: 100%`（jsdom 不做布局，测不了几何）。
   - **只替换首屏，不替换三种「有内容在场」的加载**：①已有数据的刷新遮罩（文件管理器切目录时的 `dirLoading && displayEntries.length > 0`，旧行必须留在原地）②「加载更多」页脚 ③按钮内联 spinner / 进行中动作（如消息索引的 `jumping`）。这三类继续用 `LoadingIndicator`。
   - 守卫：`PanelSkeleton.test.ts`（形状 / a11y / 固定宽度）与 `panelSkeletonUsage.test.ts`（51 个面板必须渲染骨架；除白名单外的面板级 `LoadingIndicator` 一律失败；`.skeleton-block` 必须留在全局表）。
   - **深色背景上的骨架**：原语的两个颜色是变量 `--skeleton-fill` / `--skeleton-sheen`。PDF 预览与灯箱的底色是写死的深色，主题派生的灰块在那里几乎不可见——覆盖这两个变量即可，**不要**在调用处重述 `background-image`（那会把微光定义复制一份，两边必然漂移）。
