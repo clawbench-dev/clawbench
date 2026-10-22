@@ -177,6 +177,9 @@ const i18n = createI18n({
           clearUploadsDone: 'Cleared {n} recent upload file(s)',
           clearUploadsFailed: 'Failed to clear recent uploads',
           clearPartial: 'Deleted {deleted}; {failed} failed',
+          deleteUploadConfirm: 'Delete recently uploaded file "{name}"?',
+          forgetUpload: 'Remove from list',
+          forgetUploadConfirm: 'Remove "{name}" from recent uploads? The file stays in your project.',
         },
       },
       common: { remove: 'Remove', delete: 'Delete' },
@@ -962,6 +965,52 @@ describe('AttachDrawer', () => {
     expect(mockDeleteRecentUpload).not.toHaveBeenCalled()
     expect(wrapper.emitted('remove-attached')).toBeFalsy()
   })
+
+  // A row whose origin is `project` is an ordinary project file that the server
+  // only recorded so it would show up here. Deleting it must not read as
+  // "delete my file": the confirm wording and the (non-dangerous) button say
+  // the file stays.
+  it('handleDeleteUpload uses the un-list wording for a project file', async () => {
+    mockDialogConfirm.mockResolvedValue(true)
+    const wrapper = mountDrawer({ attachedFiles: [] })
+    const state = getRawState(wrapper)
+    await state.handleDeleteUpload({ path: 'screenshot.png', name: 'screenshot.png', origin: 'project' })
+
+    const [message, options] = mockDialogConfirm.mock.calls[0]
+    expect(message).toBe('Remove "screenshot.png" from recent uploads? The file stays in your project.')
+    expect(options.dangerous).toBe(false)
+    expect(options.confirmText).toBe('Remove from list')
+    expect(mockDeleteRecentUpload).toHaveBeenCalledWith('screenshot.png')
+  })
+
+  it('handleDeleteUpload keeps the destructive wording for an uploads-dir file', async () => {
+    mockDialogConfirm.mockResolvedValue(true)
+    const wrapper = mountDrawer({ attachedFiles: [] })
+    const state = getRawState(wrapper)
+    await state.handleDeleteUpload({ path: '.clawbench/uploads/a.txt', name: 'a.txt', origin: 'uploads' })
+
+    const [message, options] = mockDialogConfirm.mock.calls[0]
+    expect(message).toBe('Delete recently uploaded file "a.txt"?')
+    expect(options.dangerous).toBe(true)
+    expect(options.confirmText).toBe('Delete')
+  })
+
+  it('renders project-file rows with the un-list title on the delete icon', async () => {
+    sharedRecentUploads.value = [
+      { name: 'root.png', path: 'root.png', size: 10, modTime: '', origin: 'project' },
+      { name: 'chat.png', path: '.clawbench/uploads/chat.png', size: 10, modTime: '', origin: 'uploads' },
+    ]
+    const wrapper = mountDrawer()
+    await wrapper.findAll('.ad-tab')[3].trigger('click')
+    await nextTick()
+
+    const icons = wrapper.findAll('.ad-file-delete')
+    expect(icons.map(el => el.attributes('title'))).toEqual(['Remove from list', 'Delete this file'])
+    // The non-destructive row must also drop the red hover/active colour: the
+    // colour is the strongest signal and would contradict the confirm text.
+    expect(icons[0].classes()).toContain('ad-file-delete-forget')
+    expect(icons[1].classes()).not.toContain('ad-file-delete-forget')
+  })
 })
 
 describe('AttachDrawer selected-badge CSS', () => {
@@ -1007,6 +1056,31 @@ describe('AttachDrawer selected-badge CSS', () => {
     const decls = declsOf('.ad-icon-wrap .ad-thumb')
     expect(decls).toMatch(/object-fit\s*:\s*cover/)
     expect(decls).toMatch(/border-radius\s*:\s*var\(--radius-sm\)/)
+  })
+
+  // A project-file row only un-lists the file, so its delete icon must not turn
+  // red on hover/active — the colour would contradict the "the file itself
+  // stays" confirm text, and colour is the strongest signal in that row. Two
+  // equal-specificity rules are involved, so source ORDER is what makes this
+  // work; a reorder silently brings the red back.
+  it('the un-list variant overrides the destructive hover colour', () => {
+    expect(declsOf('.ad-file-row:hover .ad-file-delete')).toMatch(/--color-red/)
+    const forgetRule = source.match(
+      /\.ad-file-row:active \.ad-file-delete-forget,\s*\.ad-file-row:hover \.ad-file-delete-forget\s*\{([^}]*)\}/,
+    )
+    expect(forgetRule, 'the un-list override rule must exist').not.toBeNull()
+    expect(forgetRule![1]).toMatch(/color\s*:\s*var\(--text-secondary\)/)
+    expect(forgetRule![1]).not.toMatch(/--color-red/)
+
+    // Locate both rules with a whitespace-tolerant matcher rather than a literal
+    // `indexOf`: a reformat that drops the space before `{` would make the
+    // literal lookup return -1, and `-1 > -1` would silently pass.
+    const redIndex = source.search(/\.ad-file-row:hover \.ad-file-delete\s*\{/)
+    const forgetIndex = source.search(/\.ad-file-row:hover \.ad-file-delete-forget\s*\{/)
+    expect(redIndex, 'the destructive rule must be found').toBeGreaterThan(-1)
+    expect(forgetIndex, 'the override rule must be found').toBeGreaterThan(-1)
+    expect(forgetIndex, 'the override must come after the red rule or the cascade keeps red')
+      .toBeGreaterThan(redIndex)
   })
 })
 

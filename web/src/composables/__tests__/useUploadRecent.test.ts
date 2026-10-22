@@ -172,6 +172,31 @@ describe('useUploadRecent clearRecentUploads', () => {
     expect(await clear()).toEqual({ deleted: 2, failed: 1 })
   })
 
+  it('re-fetches instead of blanking the list on a partial sweep', async () => {
+    // `failed > 0` means rows are still on the server (an unwritable data
+    // directory, an undeletable file). Blanking the local list would show an
+    // empty tab that repopulates on the next open, with no explanation.
+    const surviving = [{ name: 'p.png', path: 'p.png', size: 1, modTime: '', origin: 'project' }]
+    recentUploads.value = [{ name: 'p.png', path: 'p.png', size: 1, modTime: '', origin: 'project' }]
+    const spy = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ ok: true, deleted: 1, failed: 1 }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(surviving),
+      } as Response)
+
+    const result = await clearRecentUploads()
+
+    expect(result).toEqual({ deleted: 1, failed: 1 })
+    expect(spy).toHaveBeenCalledTimes(2)
+    expect(spy.mock.calls[1][0]).toBe('/api/upload/recent')
+    expect(spy.mock.calls[1][1]).toBeUndefined()
+    expect(recentUploads.value).toEqual(surviving)
+  })
+
   it('keeps the list and returns null when the server answers an old-format body', async () => {
     // An older server ignores `all`, answers 400 (or 200 + an array). Treating
     // that as success would hide files that are still on disk.

@@ -211,10 +211,12 @@
           </div>
           <div class="ad-file-info">
             <span class="ad-file-name">{{ item.name }}</span>
-            <span class="ad-file-meta">{{ dirName(item.path) }} · {{ formatRelativeTime(item.modTime) }} · {{ formatFileSize(item.size) }}</span>
+            <span class="ad-file-meta">{{ uploadDirLabel(item.path) }} · {{ formatRelativeTime(item.modTime) }} · {{ formatFileSize(item.size) }}</span>
           </div>
           <ExternalLink :size="14" class="ad-file-open" @click.stop="emit('file-open', item.path)" />
-          <Trash2 :size="14" class="ad-file-delete" @click.stop="handleDeleteUpload(item)" :title="t('chat.attach.deleteRecent')" />
+          <Trash2 :size="14" class="ad-file-delete" :class="{ 'ad-file-delete-forget': item.origin === 'project' }"
+            @click.stop="handleDeleteUpload(item)"
+            :title="t(item.origin === 'project' ? 'chat.attach.forgetUpload' : 'chat.attach.deleteRecent')" />
         </button>
       </template>
     </div>
@@ -350,6 +352,18 @@ function getFileName(path: string) {
 }
 
 /**
+ * Directory label for a "最近上传" row.
+ *
+ * Uploads-directory rows always have a parent, but a project file uploaded to
+ * the project ROOT has none — `dirName` returns "" there and the meta line
+ * would start with a stray separator. Show the project root as "/" instead,
+ * matching how the Current tab labels it.
+ */
+function uploadDirLabel(path: string) {
+  return dirName(path) || '/'
+}
+
+/**
  * Open the system picker for one of the three hidden inputs.
  *
  * Shared by all entries so they cannot drift on the two things that actually
@@ -464,11 +478,22 @@ async function handleDeleteShare(item: { path: string; name?: string }) {
   await deleteRecentShare(item.path)
 }
 
-async function handleDeleteUpload(item: { path: string; name?: string }) {
-  const confirmed = await dialog.confirm(t('chat.attach.deleteUploadConfirm', { name: item.name ?? baseName(item.path) }), {
-    dangerous: true,
-    confirmText: t('common.delete'),
-  })
+/**
+ * Remove a row from "最近上传".
+ *
+ * What this does depends on where the row came from, and the wording has to say
+ * so: a chat attachment is a file the app owns (removing it deletes the file),
+ * while a project file is only recorded here so it can be re-attached quickly
+ * (removing the row leaves the file in the tree). Telling the user "delete the
+ * file" for the latter would make them expect their source tree to change.
+ */
+async function handleDeleteUpload(item: { path: string; name?: string; origin?: 'uploads' | 'project' }) {
+  const name = item.name ?? baseName(item.path)
+  const isProjectFile = item.origin === 'project'
+  const confirmed = await dialog.confirm(
+    t(isProjectFile ? 'chat.attach.forgetUploadConfirm' : 'chat.attach.deleteUploadConfirm', { name }),
+    { dangerous: !isProjectFile, confirmText: t(isProjectFile ? 'chat.attach.forgetUpload' : 'common.delete') },
+  )
   if (!confirmed) return
   if (isAttached(item.path)) emit('remove-attached', { path: item.path })
   await deleteRecentUpload(item.path)
@@ -895,6 +920,16 @@ defineExpose({ activeTab, handleFileDrop })
     opacity: 1;
     color: var(--color-red);
   }
+}
+
+/* A project file's row only un-lists the file, so its action must not look
+   destructive. Red is the strongest signal in this row and would contradict the
+   "the file itself stays" confirm text — the colour is part of the promise, not
+   decoration. Placed after the red rules so the equal-specificity cascade
+   resolves in its favour. */
+.ad-file-row:active .ad-file-delete-forget,
+.ad-file-row:hover .ad-file-delete-forget {
+  color: var(--text-secondary);
 }
 
 /* Current item label */
