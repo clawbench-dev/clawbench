@@ -540,12 +540,18 @@ function onPointerUp(): void {
 }
 
 /**
- * Safety net for a pan that never got its `pointerup`: releasing the button
- * outside the window (or the window losing focus mid-drag) would otherwise
- * leave `panning` set forever, so the media keeps following the cursor and the
- * figure can never be dragged again.
+ * Safety net for a pointer interaction that never got its `pointerup`:
+ * releasing the button outside the window, or the window losing focus
+ * mid-drag, means the browser delivers no `pointerup` at all.
+ *
+ * Both pieces of state have to be cleared, not just `panning`. A press on an
+ * UNZOOMED figure sets `pointerPressed` but never starts a pan (only a zoomed
+ * figure can pan), so a stranded release there left the flag set forever —
+ * `onFocusIn` then ignores every keyboard focus, and Tab no longer activates
+ * any figure until the user clicks somewhere on the page again.
  */
 function endStrandedPan(): void {
+    pointerPressed = false
     if (!panning) return
     panning.state.figure.classList.remove('is-panning')
     panning = null

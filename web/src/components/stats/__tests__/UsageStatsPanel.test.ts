@@ -104,7 +104,11 @@ async function mountPanel() {
       plugins: [makeI18n()],
       stubs: {
         RefreshButton: { template: '<button class="refresh-btn" @click="$emit(\'click\')" />' },
-        LoadingIndicator: { template: '<span class="loading-stub" />' },
+        StatsSkeleton: {
+          name: 'StatsSkeleton',
+          template: '<div class="skeleton-stub" />',
+          props: ['cards', 'tableRows', 'chart', 'label'],
+        },
         UsageChart: {
           name: 'UsageChart',
           template: '<div class="usage-chart-stub" />',
@@ -125,6 +129,19 @@ async function mountPanel() {
   await flushPromises()
   await nextTick()
   return wrapper
+}
+
+/**
+ * Poll until `cond` holds. Used for the delayed-skeleton gate, which is
+ * time-based by design: a fixed `waitForTimeout` would either flake on a loaded
+ * machine or waste time on an idle one.
+ */
+async function waitFor(cond: () => boolean, timeoutMs = 3000): Promise<void> {
+  const start = Date.now()
+  while (!cond()) {
+    if (Date.now() - start > timeoutMs) throw new Error('waitFor timed out')
+    await new Promise(r => setTimeout(r, 20))
+  }
 }
 
 describe('UsageStatsPanel', () => {
@@ -435,6 +452,71 @@ describe('UsageStatsPanel', () => {
     await nextTick()
     const dateInputs = wrapper.findAll('.stats-date-input')
     expect(dateInputs.length).toBe(2)
+  })
+
+  // --- Skeleton on range/filter switch ---
+
+  it('shows a skeleton and drops the previous range\'s numbers while switching', async () => {
+    mockApiGet.mockResolvedValue(mockResponse({
+      totals: { input: 0, output: 0, total: 987_654, cacheHit: 0, cacheMiss: 0, credit: 0, costUsd: 0, messageCnt: 1 },
+      rows: [{ key: { model: 'glm' }, input: 0, output: 0, total: 987_654, cacheHit: 0, cacheMiss: 0, credit: 0, costUsd: 0, messageCnt: 1 }],
+    }))
+    const wrapper = await mountPanel()
+    expect(wrapper.text()).toContain('987.7K')
+    expect(wrapper.find('.skeleton-stub').exists()).toBe(false)
+
+    // Second query hangs: this is the "silently stuck" case the skeleton is for.
+    // Every call gets its own resolver — aborting a request does not reject the
+    // mock's promise, so a single shared resolver would leave earlier ones
+    // pending forever and leak into the next test.
+    const pending: ((v: unknown) => void)[] = []
+    mockApiGet.mockImplementation(() => new Promise(r => { pending.push(r as (v: unknown) => void) }))
+
+    const stats = useUsageStats()
+    stats.setRange({ rangeKey: '7d' })
+    await nextTick()
+
+    // Before the delay elapses the old numbers stay — a fast local query must
+    // not flash grey blocks.
+    expect(wrapper.find('.skeleton-stub').exists()).toBe(false)
+    expect(wrapper.text()).toContain('987.7K')
+
+    await waitFor(() => wrapper.find('.skeleton-stub').exists())
+    // Once the skeleton takes over, the stale numbers must be gone: showing
+    // them under the new range chip is exactly what read as "frozen".
+    expect(wrapper.text()).not.toContain('987.7K')
+
+    expect(pending.length).toBeGreaterThan(0)
+    for (const release of pending) {
+      release(mockResponse({
+        totals: { input: 0, output: 0, total: 1000, cacheHit: 0, cacheMiss: 0, credit: 0, costUsd: 0, messageCnt: 1 },
+        rows: [{ key: { model: 'glm' }, input: 0, output: 0, total: 1000, cacheHit: 0, cacheMiss: 0, credit: 0, costUsd: 0, messageCnt: 1 }],
+      }))
+    }
+    await flushPromises()
+    await nextTick()
+    expect(wrapper.find('.skeleton-stub').exists()).toBe(false)
+    expect(wrapper.text()).toContain('1.0K')
+  })
+
+  it('skips the table rows for a trend query (trend responses carry no rows)', async () => {
+    const pending: ((v: unknown) => void)[] = []
+    mockApiGet.mockImplementation(() => new Promise(r => { pending.push(r as (v: unknown) => void) }))
+    const stats = useUsageStats()
+    stats.setChartType('trend')
+    await nextTick()
+
+    const wrapper = await mountPanel()
+    await waitFor(() => wrapper.find('.skeleton-stub').exists())
+    // Two skeletons render while loading (overview cards + body); the body one
+    // is the one that must drop the table rows for a trend query.
+    const skeletons = wrapper.findAllComponents({ name: 'StatsSkeleton' })
+    const body = skeletons[skeletons.length - 1]
+    expect(body.props('tableRows')).toBe(0)
+    expect(body.props('chart')).toBe(true)
+
+    for (const release of pending) release(mockResponse({ rows: [], trend: [] }))
+    await flushPromises()
   })
 
   it('formats token values in M/K tiers on overview cards and table cells', async () => {

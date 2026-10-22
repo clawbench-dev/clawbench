@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { attachIframeSelectionQuoteBridge, installIframeSearchShortcut } from '../iframeSelectionQuote.ts'
+import {
+  attachIframeSelectionQuoteBridge,
+  iframeSelectionAnchor,
+  installIframeSearchShortcut,
+  mapIframeRectToHost,
+} from '../iframeSelectionQuote.ts'
 import type { IframeBridgeWindow } from '../iframeSelectionQuote.ts'
 import type { QuoteData } from '@/composables/useChatContext.ts'
 
@@ -40,6 +45,16 @@ class FakeSelection {
   }
   toString() {
     return this.text
+  }
+  // The bridge asks for the selection's line boxes to place the bar. This double
+  // has no layout, so it reports none — the anchor is then null (the bar's
+  // pinned fallback). Anchor mapping itself is covered by the dedicated tests
+  // at the bottom of this file.
+  get rangeCount() {
+    return this.collapsed ? 0 : 1
+  }
+  getRangeAt() {
+    return { getClientRects: () => [] } as unknown as Range
   }
 }
 
@@ -114,7 +129,7 @@ describe('attachIframeSelectionQuoteBridge', () => {
       language: '',
       startLine: 0,
       endLine: 0,
-    })
+    }, null)
     expect(filePath).toHaveBeenCalled()
     dispose()
   })
@@ -151,7 +166,7 @@ describe('attachIframeSelectionQuoteBridge', () => {
     doc.fire('selectionchange')
     vi.advanceTimersByTime(150)
 
-    expect(show).toHaveBeenCalledWith(expect.objectContaining({ text: 'GET /pets' }))
+    expect(show).toHaveBeenCalledWith(expect.objectContaining({ text: 'GET /pets' }), null)
     dispose()
   })
 
@@ -423,5 +438,113 @@ describe('installIframeSearchShortcut', () => {
 
     press({ key: 'f', ctrlKey: true })
     expect(onTrigger).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * Anchor mapping: the selection rect must reach the bar in HOST viewport
+ * coordinates.
+ *
+ * A frame's Range reports rects relative to the FRAME's viewport, while the
+ * quote bar is `position: fixed` in the HOST's. Passing the frame rect straight
+ * through put the bar at the top of the page instead of beside the selected
+ * text — the reported defect.
+ */
+describe('mapIframeRectToHost', () => {
+  const frame = { left: 300, top: 120, width: 800, height: 600 }
+
+  it('offsets the frame-relative rect by the frame position', () => {
+    const out = mapIframeRectToHost(
+      { left: 40, top: 25, width: 100, height: 18 },
+      frame,
+      { width: 800, height: 600 },
+    )
+    expect(out).toEqual({ left: 340, top: 145, width: 100, height: 18 })
+  })
+
+  it('scales by the rendered/laid-out ratio (CSS zoom on <html>)', () => {
+    // The app zooms <html>, so the iframe ELEMENT is rendered at 2x while the
+    // document inside keeps laying out in unscaled CSS px. Without the ratio the
+    // bar drifts by the zoom factor.
+    const out = mapIframeRectToHost(
+      { left: 40, top: 25, width: 100, height: 18 },
+      { left: 0, top: 0, width: 1600, height: 1200 },
+      { width: 800, height: 600 },
+    )
+    expect(out).toEqual({ left: 80, top: 50, width: 200, height: 36 })
+  })
+
+  it('does not divide by zero on an unmeasured viewport', () => {
+    const out = mapIframeRectToHost(
+      { left: 10, top: 10, width: 10, height: 10 },
+      frame,
+      { width: 0, height: 0 },
+    )
+    expect(out).toEqual({ left: 310, top: 130, width: 10, height: 10 })
+  })
+})
+
+describe('iframeSelectionAnchor', () => {
+  function selectionWithRects(rects: Array<{ top: number; left: number; width: number; height: number }>): Selection {
+    return {
+      rangeCount: 1,
+      getRangeAt: () => ({ getClientRects: () => rects }) as unknown as Range,
+    } as unknown as Selection
+  }
+
+  function fakeWin(overrides: Partial<Parameters<typeof iframeSelectionAnchor>[0]> = {}) {
+    return {
+      getSelection: () => null,
+      document: {} as Document,
+      frameElement: { getBoundingClientRect: () => ({ left: 300, top: 120, width: 800, height: 600 }) } as unknown as Element,
+      innerWidth: 800,
+      innerHeight: 600,
+      ...overrides,
+    }
+  }
+
+  it('maps the LAST line box into host coordinates', () => {
+    // The last rect is the bottom line of a multi-line selection — the point the
+    // pointer just left, which is where "just below the text" reads correctly.
+    const rect = iframeSelectionAnchor(
+      fakeWin(),
+      selectionWithRects([
+        { top: 10, left: 20, width: 200, height: 18 },
+        { top: 40, left: 20, width: 120, height: 18 },
+      ]),
+    )
+    expect(rect).not.toBeNull()
+    expect(rect!.top).toBe(160)
+    expect(rect!.left).toBe(320)
+  })
+
+  it('returns null when the frame element is unavailable (no layout to map)', () => {
+    expect(iframeSelectionAnchor(fakeWin({ frameElement: null }), selectionWithRects([
+      { top: 10, left: 20, width: 200, height: 18 },
+    ]))).toBeNull()
+  })
+
+  it('returns null for a selection with no laid-out boxes', () => {
+    expect(iframeSelectionAnchor(fakeWin(), selectionWithRects([]))).toBeNull()
+  })
+
+  it('the bridge hands the anchor to show() (null when unmeasurable)', () => {
+    // This describe block runs on real timers (the bridge's own suite uses fake
+    // ones), so wait the debounce out instead of advancing a clock.
+    const shown: Array<DOMRect | null> = []
+    const { doc, dispose } = makeBridge({
+      show: (_d: QuoteData, anchor: DOMRect | null) => { shown.push(anchor) },
+    })
+    doc.fire('selectionchange')
+    return new Promise<void>((resolve) => {
+      setTimeout(() => {
+        // The fake window in makeBridge has no frameElement, so the anchor is
+        // null — what matters is that the argument is threaded through at all.
+        expect(shown).toHaveLength(1)
+        expect(shown[0]).toBeNull()
+        dispose()
+        resolve()
+      }, 200)
+    })
   })
 })

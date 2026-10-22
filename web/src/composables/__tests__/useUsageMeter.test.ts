@@ -142,6 +142,44 @@ describe('useUsageMeter', () => {
     expect(meter.meterState.value).toBe('over')
   })
 
+  // Turning the quota to 0 must clear the readout immediately. Without this the
+  // capsule keeps showing the old quota until the user clicks it — the reported
+  // bug. The frame carries no numbers on purpose, so the whole state is dropped
+  // rather than patched.
+  it('clears the readout when the server reports the rule was turned off', async () => {
+    const mod = await load()
+    const meter = mod.useUsageMeter()
+    mockedGet.mockResolvedValue(ENABLED)
+    await meter.refresh()
+    expect(meter.status.value.enabled).toBe(true)
+    expect(meter.status.value.quota).toBe(20)
+
+    await vi.waitFor(() => { expect(eventHandlers.length).toBeGreaterThan(0) })
+    for (const handler of eventHandlers) handler('usage_meter_tick', { enabled: false })
+
+    expect(meter.status.value.enabled).toBe(false)
+    // The quota is gone entirely, not zeroed: EMPTY has no quota field, and a
+    // lingering 0 would still render as "/ 0" if a consumer checked the number
+    // instead of `enabled`.
+    expect(meter.status.value.quota).toBeUndefined()
+    expect(meter.status.value.actual).toBe(0)
+    expect(meter.meterState.value).toBe('off')
+  })
+
+  // An older frame that omits `enabled` must not resurrect a disabled meter.
+  it('does not turn the meter back on from a frame without an enabled flag', async () => {
+    const mod = await load()
+    const meter = mod.useUsageMeter()
+    mockedGet.mockResolvedValueOnce({ enabled: false, dayInCycle: 0, actual: 0, expected: 0, remainingDays: 0, projectedExhaustDay: 0 })
+    await meter.refresh()
+    expect(meter.status.value.enabled).toBe(false)
+
+    await vi.waitFor(() => { expect(eventHandlers.length).toBeGreaterThan(0) })
+    for (const handler of eventHandlers) handler('usage_meter_tick', { actual: 7, expected: 0, quota: 0 })
+
+    expect(meter.status.value.enabled).toBe(false)
+  })
+
   it('bumps openRequest so the capsule can open on a notification tap', async () => {
     const mod = await load()
     const meter = mod.useUsageMeter()
@@ -150,5 +188,61 @@ describe('useUsageMeter', () => {
     mod.requestOpen()
 
     expect(meter.openRequest.value).toBe(before + 1)
+  })
+
+  // ── No rule configured ────────────────────────────────────────────────────
+  // The backend answers {"enabled": false} with no numbers. The client renders
+  // a placeholder entry in that state, so what matters here is that the derived
+  // ratios stay inert and that `off` is distinguishable from `ok` — `ok` would
+  // claim "you are within budget", a judgement about a quota that does not exist.
+
+  it('reports the off state rather than "on plan" when there is no rule', async () => {
+    const mod = await load()
+    const meter = mod.useUsageMeter()
+    mockedGet.mockResolvedValueOnce({ enabled: false, dayInCycle: 0, actual: 0, expected: 0, remainingDays: 0, projectedExhaustDay: 0 })
+    await meter.refresh()
+
+    expect(meter.meterState.value).toBe('off')
+    expect(meter.isOverPlan.value).toBe(false)
+    expect(meter.isQuotaExhausted.value).toBe(false)
+  })
+
+  it('does not report over-plan from a zero baseline', async () => {
+    const mod = await load()
+    const meter = mod.useUsageMeter()
+    // Any spend exceeds an absent baseline; without the `enabled` guard this
+    // would be 'over' with a nonsensical percentage.
+    mockedGet.mockResolvedValueOnce({ enabled: false, dayInCycle: 0, actual: 999, expected: 0, remainingDays: 0, projectedExhaustDay: 0 })
+    await meter.refresh()
+
+    expect(meter.isOverPlan.value).toBe(false)
+    expect(meter.meterState.value).toBe('off')
+    // No fill either: a percentage of a zero quota is undefined, not 100%.
+    expect(meter.fillPercent.value).toBe(0)
+    expect(meter.expectedPercent.value).toBe(0)
+  })
+
+  it('hasData stays false until the first successful fetch', async () => {
+    const mod = await load()
+    const meter = mod.useUsageMeter()
+    // The header must not flash a placeholder before the server has answered:
+    // a configured user would see it appear and vanish.
+    expect(meter.hasData.value).toBe(false)
+
+    mockedGet.mockResolvedValueOnce({ ...ENABLED })
+    await meter.refresh()
+
+    expect(meter.hasData.value).toBe(true)
+  })
+
+  // A disabled answer still counts as "the fetch landed": the placeholder is
+  // driven by hasData, so an unconfigured user must reach it.
+  it('hasData becomes true even when no rule is configured', async () => {
+    const mod = await load()
+    const meter = mod.useUsageMeter()
+    mockedGet.mockResolvedValueOnce({ enabled: false, dayInCycle: 0, actual: 0, expected: 0, remainingDays: 0, projectedExhaustDay: 0 })
+    await meter.refresh()
+
+    expect(meter.hasData.value).toBe(true)
   })
 })

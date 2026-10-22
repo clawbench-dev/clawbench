@@ -237,6 +237,18 @@ type GroupMemberSpec struct {
 // same reason, so the group's title is still replaceable by auto-title after
 // the first message.
 func CreateGroupWithMembers(projectPath, title, hostAgentID string, specs []GroupMemberSpec) (groupID, hostMemberID string, err error) {
+	return createGroup(projectPath, title, hostAgentID, "", specs)
+}
+
+// CreateGroupWithMembersFrom is CreateGroupWithMembers plus a fork lineage:
+// sourceSessionID (when non-empty) is recorded on the group row so the session
+// list can nest the new group under the session it was forked from, exactly like
+// a forked single chat (chat_sessions.source_session_id).
+func CreateGroupWithMembersFrom(projectPath, title, hostAgentID, sourceSessionID string, specs []GroupMemberSpec) (groupID, hostMemberID string, err error) {
+	return createGroup(projectPath, title, hostAgentID, sourceSessionID, specs)
+}
+
+func createGroup(projectPath, title, hostAgentID, sourceSessionID string, specs []GroupMemberSpec) (groupID, hostMemberID string, err error) {
 	if len(specs) == 0 {
 		return "", "", fmt.Errorf("create group: no members")
 	}
@@ -292,7 +304,7 @@ func CreateGroupWithMembers(projectPath, title, hostAgentID string, specs []Grou
 	// FIRST member fills backend (NOT NULL) and agent_id (list icon), and the
 	// title is a generic placeholder.
 	groupBackend, groupAgentID := groupIdentityFields(mode, specs, hostAgentID)
-	if rowErr := insertGroupRow(tx, groupID, projectID, groupBackend, groupAgentID, title); rowErr != nil {
+	if rowErr := insertGroupRow(tx, groupID, projectID, groupBackend, groupAgentID, title, sourceSessionID); rowErr != nil {
 		return "", "", rowErr
 	}
 
@@ -359,11 +371,19 @@ func applyAutoApproveDefaults(tx *sql.Tx, specs []GroupMemberSpec, memberIDs []s
 // insertGroupRow writes the group timeline row and marks its title a
 // placeholder (inline, not markSessionTitlePlaceholder which takes the write
 // lock). Extracted from CreateGroupWithMembers.
-func insertGroupRow(tx *sql.Tx, groupID string, projectID int64, backend, agentID, title string) error {
+// insertGroupRow writes the group timeline row. sourceSessionID is the fork
+// lineage ("" for an ordinary group) and lands in source_session_id, the same
+// column a forked single chat uses — the session list's fork tree reads it for
+// both kinds.
+func insertGroupRow(tx *sql.Tx, groupID string, projectID int64, backend, agentID, title, sourceSessionID string) error {
+	var source any
+	if sourceSessionID != "" {
+		source = sourceSessionID
+	}
 	if _, err := tx.ExecContext(
 		context.Background(),
-		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, external_session_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		groupID, projectID, backend, title, agentID, "default", "", groupSessionType, "",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, external_session_id, source_session_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		groupID, projectID, backend, title, agentID, "default", "", groupSessionType, "", source,
 	); err != nil {
 		return fmt.Errorf("create group session: %w", err)
 	}
@@ -590,6 +610,13 @@ func writeMemberSystemEvent(projectPath, groupID, agentID, displayName, messageI
 	writeGroupSystemMessage(projectPath, groupID,
 		i18n.T(i18n.LocalizerForLocale(model.Language), messageID,
 			map[string]any{"Name": displayName + memberSpecialtySuffix(agentID)}))
+}
+
+// WriteGroupSystemNotice appends an arbitrary role='system' row to a group
+// timeline and broadcasts it. Exported for the fork path, which records "the
+// source history was injected as background" on a freshly created group.
+func WriteGroupSystemNotice(projectPath, groupID, text string) {
+	writeGroupSystemMessage(projectPath, groupID, text)
 }
 
 // writeGroupSystemMessage appends an arbitrary role='system' row to the group

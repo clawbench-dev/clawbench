@@ -349,6 +349,10 @@ paths:
         边界按固定 24 小时跨度计算（不是日历日期差），因此周期长度在夏令时切换日
         也保持恒定。时区为**服务端本地时区**。
 
+        `anchor_date` 接受两种形态：`YYYY-MM-DD`（等价于当天 00:00）与
+        `YYYY-MM-DDTHH:MM[:SS]`（精确到时分秒）。**不接受时区后缀**——它是
+        服务端本地时区的墙钟读数，允许偏移会让周期边界随服务端 TZ 漂移。
+
         **应花（`expected`）= 额度 × 第几天 / 周期天数**，按整天向下取整：
         周期第 1 天就有 1 天额度（不会开局误报），最后一天等于总额度。
 
@@ -359,7 +363,9 @@ paths:
         - `cost`：`SUM(cost_usd)`，单位 USD。非 USD 的上报值按原值累加，不做汇率换算。
 
         **未配置规则**（`quota <= 0`）返回 200 与 `{"enabled": false}`，不是 404：
-        功能关闭是正常状态，客户端据此隐藏胶囊。
+        「没有预算」是正常状态而非错误，且此时没有任何可报的数字——
+        周期、应花、剩余、预测全部由额度派生。客户端据此渲染**占位入口**
+        （提示用户去设置用量提醒），而不是一个数值全为零的空胶囊。
 
         注意 `chat_metadata.created_at` 记录的是元数据**最终写入**时刻
         （约等于助手回复完成），因此跨周期边界的回合归入后一个周期。
@@ -368,14 +374,18 @@ paths:
         "200":
           description: |
             用量提醒状态。字段：
-            - `enabled`：规则是否启用
+            - `enabled`：是否配置了规则（`quota > 0`）。**不是「是否有内容可显示」**——
+              未配置时仍返回用量，客户端须据此字段决定是否渲染比例相关部分
             - `metric` / `anchorDate` / `periodDays` / `quota`：规则回显
-            - `cycleStart` / `cycleEnd`：当前周期边界（RFC3339）
+              （未配置时 `metric=cost`、`periodDays=30`，其余为空/0）
+            - `cycleStart` / `cycleEnd`：当前周期边界（RFC3339）；
+              未配置时是最近 30 天窗口的边界
             - `dayInCycle`：当前是周期第几天（1 起；0 表示起始日在未来）
             - `actual` / `expected`：实际用量 / 按时间比例的应花
-            - `remainingDays`：今天之后还剩几天
-            - `projectedExhaustDay`：按当前速度预计第几天用尽（0 = 本周期不会用尽）
+            - `remainingDays`：今天之后还剩几天（未配置时为 0）
+            - `projectedExhaustDay`：按当前速度预计第几天用尽（0 = 本周期不会用尽或未配置规则）
             - `series[]`：逐日累计，每项含 `day` / `actual` / `expected`
+              （未配置时 `expected` 全为 0）
         "403":
           description: 未鉴权
 
@@ -500,6 +510,20 @@ paths:
 
         该键是**热更新**：连接在每一轮开始前比对策略哈希，变了就带着新列表重连，
         因此不会出现在 `changed_cold_fields` 里，也不需要重启。
+
+        **错误响应形态**：值被拒绝时统一返回 400。响应体有两种：
+
+        - 具体错误（推荐客户端处理）：`msgKey` 为稳定标识、`error` 为按
+          `X-Locale` / cookie / `Accept-Language` 本地化后的文案、`detail.field`
+          为出错的配置路径（如 `usage_meter.period_days`）。`usage_meter.*`
+          的校验错误全部走这一形态：
+          `UsageMeterQuotaNegative` / `UsageMeterQuotaNotNumber` /
+          `UsageMeterAnchorRequired` / `UsageMeterAnchorInvalid` /
+          `UsageMeterAnchorNotString` / `UsageMeterPeriodRange`
+          （带 `detail.Max`）/ `UsageMeterPeriodNotNumber` /
+          `UsageMeterMetricInvalid` / `UsageMeterMetricNotString`。
+        - 其余尚未逐个建键的校验错误仍是 `error: "invalid_value"` + 英文
+          `message`（无 `msgKey`）。
       operationId: patchConfig
       requestBody:
         required: true
@@ -1983,14 +2007,27 @@ paths:
   /api/ai/session/fork:
     post:
       tags: [Sessions]
-      summary: 分叉会话
+      summary: 分叉会话（可落到单聊或群聊）
       description: |
         请求体字段均可选；缺省时回退到查询参数 / 会话 Cookie。
-        **群会话不可分叉**（`400`）：分叉会硬编码 `session_type='chat'` 并复制源会话的
-        backend/agent，而群时间线的消息带**成员行 id**——新单聊里解析不到成员，
-        表现为一整屏无归属的 AI 发言。与回溯（rewind）的处理对称（决策 #74）。
-        显式指定 `agentId` 时，若该 agent 已被禁用，返回 `400` + `msgKey=AgentDisabled`
-        （分叉会新建会话，故与新建会话同样拦截禁用智能体）。
+
+        `targetKind` 决定目标形态：`chat`（默认）新建单聊，`group` 新建群聊
+        （需同时给 `hostAgentId` / `memberAgentIds`）。**源会话可以是单聊，也可以是群聊。**
+
+        历史处理按「源/目标」组合分派：只有 **单聊 → 单聊** 会把源消息行复制进新会话；
+        其余三种组合（单聊→群、群→单、群→群）**不复制任何消息行**，而是把源历史渲染成
+        背景文本存进目标会话的 `context_state.fork_context`，由目标会话首轮注入。
+        原因是群时间线的 `chat_history.agent_id` 存的是**成员行 id**，复制到新会话里
+        解析不到成员（会渲染成一整屏无归属的 AI 发言），而成员行本身没有任何历史行可复制。
+
+        注入范围：单聊目标注入一次（首个成功回合后清除）；群聊目标由**每位成员各自**
+        在首次发言时收到（以成员自己的 `seen_cursor` 为「已消化」标记）。
+
+        发生背景注入时，目标会话会写入一条 `role='system'` 提示行，标明来源会话名称。
+
+        `agentId`（仅 `targetKind=chat`）若已被禁用或不属于当前项目，返回 `400`
+        + `msgKey=AgentDisabled` / `AgentNotInProject`（分叉会新建会话，故与新建会话
+        同样拦截）。
       operationId: sessionFork
       requestBody:
         required: false
@@ -2003,13 +2040,28 @@ paths:
                   type: string
                 beforeMessageId:
                   type: integer
+                targetKind:
+                  type: string
+                  enum: [chat, group]
+                  default: chat
                 agentId:
                   type: string
+                  description: targetKind=chat 时的智能体覆盖
+                hostAgentId:
+                  type: string
+                  description: targetKind=group 时的主持人（空 = 自由模式，需至少 2 名成员）
+                memberAgentIds:
+                  type: array
+                  items:
+                    type: string
+                  description: targetKind=group 时的成员（可含重复，每个重复是一个独立实例）
       responses:
         "200":
-          description: 新会话
+          description: 新会话（含 `sessionId` / `sessionCount` / `targetKind`）
         "400":
-          description: 分叉点非法，或源会话是群（`msgKey=GroupNotForkable`），或目标 agent 已被禁用（`msgKey=AgentDisabled`）
+          description: 分叉点非法（`msgKey=InvalidForkPoint`）、targetKind 未知、群成员参数非法，或目标 agent 不可用（`msgKey=AgentDisabled` / `AgentNotInProject`）
+        "409":
+          description: 会话数达上限（`msgKey=SessionLimitReached`）或群成员数达上限（`msgKey=GroupMemberLimitReached`）
 
   /api/ai/session/btw:
     post:
@@ -6192,7 +6244,7 @@ components:
       name: X-ClawBench-AI-Token
       description: |
         本机 AI 子进程使用的短时令牌，由内置斜杠命令（`/cb-task` 等）在注入提示词时签发，
-        有效期 30 分钟，以 `CookieToken` 做 HMAC 签名。仅接受来自回环地址的请求：
+        有效期 12 小时，以 `CookieToken` 做 HMAC 签名。仅接受来自回环地址的请求：
         地址与签名须同时成立。地址单独不再放行。
 
   parameters:

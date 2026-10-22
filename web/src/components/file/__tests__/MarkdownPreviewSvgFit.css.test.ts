@@ -217,6 +217,16 @@ describe('svg media layout (media-block.css contract)', () => {
     )
   })
 
+  it('shows a default cursor on an untouched figure', () => {
+    // A magnifier over an untouched figure advertises an affordance nobody asked
+    // for — and for a photo the expected "enlarge" target is the lightbox
+    // button, not the image body. The grab handle only appears once the figure
+    // is actually active.
+    const decl = css.replace(/\/\*[\s\S]*?\*\//g, '')
+    expect(decl).not.toMatch(/cursor:\s*zoom-in/)
+    expect(decl).toMatch(/cursor:\s*default/)
+  })
+
   it('reveals the reset button only in the active state', () => {
     // Hidden by the base rule (also covers touch, where inline zoom never
     // installs) and shown only while `.is-zooming`.

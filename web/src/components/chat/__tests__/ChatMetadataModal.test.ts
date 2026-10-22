@@ -21,6 +21,12 @@ const messages = {
     chat: {
       metadata: {
         title: 'Message Details',
+        sectionOverview: 'Overview',
+        sectionTokens: 'Token Usage',
+        sectionRuntime: 'Runtime',
+        sectionCache: 'Cache & Credit',
+        sectionTrace: 'Request Trace',
+        sectionIndex: 'Search Index',
         messageId: 'Message ID:',
         inputTokens: 'Input tokens:',
         outputTokens: 'Output tokens:',
@@ -39,6 +45,18 @@ const messages = {
         usageByCategory: 'Context breakdown:',
         requestId: 'Request ID:',
         traceId: 'Trace ID:',
+        backend: 'Backend:',
+        time: 'Time:',
+        relatedFile: 'Related file:',
+        sessionId: 'Session ID:',
+        model: 'Model:',
+        wallDuration: 'Wall duration:',
+        ftsIndexed: 'FTS Index:',
+        vecIndexed: 'Vector Index:',
+        indexedYes: 'Yes',
+        indexedNo: 'No',
+        error: 'Error:',
+        unknownError: 'Unknown error',
       },
       sessionInfo: {
         catConversation: 'Conversation',
@@ -147,5 +165,74 @@ describe('ChatMetadataModal', () => {
     expect(text).toContain('msgreq-abc')
     expect(text).toContain('Tools')
     expect(text).toContain('23,293')
+  })
+
+  // ── Section grouping ──
+  //
+  // The modal groups fields so the rows every backend reports sit above the
+  // agent-specific extras. Ordering is the contract, so assert on the section
+  // titles in DOM order rather than on individual rows.
+
+  function sectionTitles(wrapper: ReturnType<typeof mountModal>): string[] {
+    return wrapper.findAll('.md-section-title').map(el => el.text())
+  }
+
+  it('orders universal sections before agent-specific ones', () => {
+    const wrapper = mountModal({
+      data: {
+        model: 'glm-5.1',
+        inputTokens: 100,
+        wallMs: 1200,
+        cacheHitTokens: 40,
+        requestId: 'req-1',
+      },
+    })
+    expect(sectionTitles(wrapper)).toEqual([
+      'Overview',
+      'Token Usage',
+      'Runtime',
+      'Cache & Credit',
+      'Request Trace',
+      'Search Index',
+    ])
+  })
+
+  it('drops agent-specific sections that carry no rows', () => {
+    // A plain CLI backend reports model + tokens and nothing else. The cache /
+    // trace sections must disappear rather than render empty headers.
+    const wrapper = mountModal({ data: { model: 'glm-5.1', inputTokens: 100, outputTokens: 20 } })
+    const titles = sectionTitles(wrapper)
+    expect(titles).toEqual(['Overview', 'Token Usage', 'Search Index'])
+  })
+
+  it('renders input/output/total as metric tiles, not label rows', () => {
+    const wrapper = mountModal({ data: { inputTokens: 31224, outputTokens: 3, totalTokens: 31227 } })
+    const tiles = wrapper.findAll('.md-tile')
+    expect(tiles).toHaveLength(3)
+    expect(tiles[0].text()).toContain('Input tokens:')
+    expect(tiles[0].text()).toContain('31,224')
+    expect(tiles[2].text()).toContain('31,227')
+  })
+
+  it('surfaces the error above every section', () => {
+    const wrapper = mountModal({ data: { isError: true, errorMessage: 'agent crashed', model: 'x' } })
+    const error = wrapper.find('.md-error')
+    expect(error.exists()).toBe(true)
+    expect(error.text()).toContain('agent crashed')
+    // The banner must precede the first section card.
+    const content = wrapper.find('.md-content').element
+    expect(content.firstElementChild?.classList.contains('md-error')).toBe(true)
+  })
+
+  it('renders a related file on its own line (stacked row)', () => {
+    const wrapper = mountModal({ relatedFile: 'web/src/a/very/long/path.ts' })
+    const stacked = wrapper.findAll('.md-row--stacked')
+    expect(stacked.some(row => row.text().includes('web/src/a/very/long/path.ts'))).toBe(true)
+  })
+
+  it('marks indexed rows by tone rather than by label text alone', () => {
+    const wrapper = mountModal({ ftsIndexed: true, vecIndexed: false })
+    expect(wrapper.find('.md-value--ok').text()).toBe('Yes')
+    expect(wrapper.find('.md-value--muted').text()).toBe('No')
   })
 })

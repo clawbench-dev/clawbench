@@ -43,6 +43,16 @@ const EMPTY: UsageMeterStatus = {
   projectedExhaustDay: 0,
 }
 
+/**
+ * Whether the meter has anything to render.
+ *
+ * Deliberately NOT `enabled`: a user without a budget still gets their spend
+ * reported, so "should this render at all" and "is there a rule" are different
+ * questions. `loaded` guards the first paint so the capsule does not flash for
+ * users whose fetch has not returned yet.
+ */
+const hasData = computed(() => loaded.value)
+
 const status = ref<UsageMeterStatus>(EMPTY)
 const loading = ref(false)
 const loaded = ref(false)
@@ -57,7 +67,12 @@ const openRequest = ref(0)
 let inflight: Promise<void> | null = null
 let subscribed = false
 
-/** True when usage has passed the linear baseline. */
+/**
+ * True when usage has passed the linear baseline.
+ *
+ * Requires `enabled`: with no rule there is no baseline, so `expected` is 0 and
+ * `actual > 0` would report every user with any spend as "over plan".
+ */
 const isOverPlan = computed(
   () => status.value.enabled && status.value.actual > status.value.expected,
 )
@@ -71,8 +86,16 @@ const isQuotaExhausted = computed(
     status.value.actual >= status.value.quota,
 )
 
-/** Capsule state: drives colour and the end-cap marker. */
-const meterState = computed<'ok' | 'over' | 'full'>(() => {
+/**
+ * Capsule state: drives colour and the end-cap marker.
+ *
+ * `off` means "no rule configured": the numbers are still shown, but nothing
+ * ratio-derived (fill, baseline tick, badge) applies. It is a distinct state
+ * rather than a reuse of `ok` because `ok` claims "you are on plan", which is a
+ * statement about a quota the user never set.
+ */
+const meterState = computed<'ok' | 'over' | 'full' | 'off'>(() => {
+  if (!status.value.enabled) return 'off'
   if (isQuotaExhausted.value) return 'full'
   if (isOverPlan.value) return 'over'
   return 'ok'
@@ -123,12 +146,26 @@ function fetchStatus(): Promise<void> {
  */
 function applyServerUpdate(data: Record<string, unknown> | undefined): void {
   if (!data) return
+
+  // A disabled frame means the rule was turned off. It carries no numbers on
+  // purpose, so the whole readout must be dropped — patching only the fields
+  // present would leave the previous quota and actual in place, and the capsule
+  // would keep showing a budget that no longer exists.
+  if (data.enabled === false) {
+    status.value = { ...EMPTY }
+    loaded.value = true
+    return
+  }
+
   const quota = typeof data.quota === 'number' ? data.quota : status.value.quota
   const actual = typeof data.actual === 'number' ? data.actual : status.value.actual
   const expected = typeof data.expected === 'number' ? data.expected : status.value.expected
   status.value = {
     ...status.value,
-    enabled: true,
+    // Only a frame that explicitly reports `enabled` can turn the meter on; an
+    // older frame that omits the field must not silently resurrect a disabled
+    // meter, so fall back to the current value rather than hard-coding true.
+    enabled: typeof data.enabled === 'boolean' ? data.enabled : status.value.enabled,
     quota,
     actual,
     expected,
@@ -176,6 +213,7 @@ export function useUsageMeter() {
     status,
     loading,
     loaded,
+    hasData,
     openRequest,
     isOverPlan,
     isQuotaExhausted,

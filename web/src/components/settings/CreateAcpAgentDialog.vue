@@ -6,7 +6,6 @@
     :open="open"
     :title="t('settings.items.agentCreateAcpTitle')"
     :z-index="2500"
-    :max-width="420"
     @close="handleClose"
   >
     <div class="create-acp-agent__body">

@@ -442,6 +442,23 @@ func (at *activeTurn) runTurnFinalize() TurnResult {
 		slog.Int("wall_ms", runResult.WallMs),
 		slog.Int("mode", int(at.spec.Mode)))
 
+	// Consume a fork's injected background on the FIRST successful turn.
+	//
+	// The read gate in BuildChatRequest ("no real assistant content yet") cannot
+	// express this on its own: a failed turn persists an assistant WARNING row,
+	// so counting assistant rows either expires the background after one failure
+	// or, if gated on the first row only, re-injects it forever. Clearing here is
+	// the marker that means "someone has digested it".
+	//
+	// Keyed on SessionID, NOT the timeline: a group member's SessionID is its own
+	// member row, which never holds fork_context (a group target stores the
+	// background on the GROUP row, shared by every member). So this is a no-op
+	// for group turns, and each member's own seen_cursor is what marks that
+	// member as having consumed it.
+	if result.CancelReason == "" && result.Err == "" && !result.Empty {
+		ClearForkContext(at.spec.SessionID)
+	}
+
 	return result
 }
 

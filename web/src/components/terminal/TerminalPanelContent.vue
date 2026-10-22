@@ -316,6 +316,7 @@ import { useTerminalStatus } from '@/composables/useTerminalStatus'
 import { fetchTerminalCwd } from '@/utils/terminalCwd'
 import { useFileUpload } from '@/composables/useFileUpload'
 import { selectionCellsToSelect, shouldPreventTerminalContextMenu, useTerminalGestures } from '@/composables/useTerminalGestures'
+import { terminalSelectionAnchor } from '@/utils/terminalSelectionAnchor'
 import { useToast } from '@/composables/useToast'
 import { useQuickCommands } from '@/composables/useQuickCommands'
 import { usePlatformDetect, isMacDesktopUA } from '@/composables/usePlatformDetect'
@@ -668,6 +669,11 @@ const autoCopy = useTerminalCopyOnSelect({
  * move), so an async `fetchTerminalCwd` here would fire a request per frame.
  * The tab's cwd is the launch directory, which is a good enough hint; the
  * precise live value is not worth a request storm.
+ *
+ * The `anchor` is computed HERE, not left to `showBar`: that fallback reads the
+ * host document's selection, which is always collapsed inside xterm
+ * (`user-select: none`), so the bar would pin to the top of the page instead of
+ * floating next to the selected output.
  */
 function updateSelectionFromTerm(term: TerminalType) {
   const text = term.getSelection() ?? ''
@@ -686,9 +692,25 @@ function updateSelectionFromTerm(term: TerminalType) {
       // the kind is what lets the card and drawer show a terminal icon/label
       // instead of a generic "selected text".
       sourceKind: 'terminal',
-    }, { delay: 0 })
+    }, { delay: 0, anchor: terminalAnchor(term) })
   }
   autoCopy.onSelectionChanged(text)
+}
+
+/** Screen rect of the terminal's selection, or null when it cannot be measured. */
+function terminalAnchor(term: TerminalType): DOMRect | null {
+  // `screenElement` exists on the runtime object but is not in xterm's public
+  // typings; the class is the documented DOM contract (it is what xterm's own
+  // mouse service measures against), so query it rather than reach into _core.
+  const screen = term.element?.querySelector<HTMLElement>('.xterm-screen')
+  if (!screen) return null
+  return terminalSelectionAnchor({
+    position: term.getSelectionPosition(),
+    screenRect: screen.getBoundingClientRect(),
+    cols: term.cols,
+    rows: term.rows,
+    viewportY: term.buffer.active.viewportY,
+  })
 }
 
 /** Read the real CSS cell height from xterm's renderer, falling back to font-size×line-height. */

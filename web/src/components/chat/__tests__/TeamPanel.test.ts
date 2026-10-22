@@ -1,8 +1,28 @@
-import { describe, expect, it, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { describe, expect, it, beforeEach, vi } from 'vitest'
+import { mount, flushPromises } from '@vue/test-utils'
+import { defineComponent } from 'vue'
 import { createI18n } from 'vue-i18n'
 import TeamPanel from '@/components/chat/TeamPanel.vue'
 import { updateTeamState, clearTeamState, type TeamState } from '@/composables/useTeamState'
+
+// BottomSheet Teleports to <body>, where the wrapper's DOM query cannot reach
+// it. Render its slots inline so the detail sheet's content is assertable.
+vi.mock('@/components/common/BottomSheet.vue', () => ({
+  default: defineComponent({
+    props: {
+      open: Boolean, title: String, auto: Boolean, instant: Boolean, maximized: Boolean,
+      noHeader: Boolean, handleOnly: Boolean, transparentOverlay: Boolean, fullscreen: Boolean,
+      closeGuard: Boolean, panelClass: [String, Array, Object],
+    },
+    emits: ['close'],
+    template: `
+      <div v-if="open" class="bottom-sheet-overlay">
+        <div class="bs-header"><slot name="header" /></div>
+        <div class="bs-body"><slot /></div>
+      </div>
+    `,
+  }),
+}))
 
 const i18n = createI18n({
   legacy: false,
@@ -25,6 +45,15 @@ const i18n = createI18n({
             failed: 'failed',
             terminated: 'ended',
           },
+          detail: {
+            open: 'View details for {name}',
+            description: 'Role',
+            activity: 'Activity',
+            lifecycle: 'Lifecycle',
+            toolCalls: 'Tool calls',
+            taskId: 'Task ID',
+            sessionId: 'Session ID',
+          },
         },
       },
     },
@@ -41,7 +70,7 @@ function snapshot(over: Partial<TeamState> = {}): TeamState {
     teamName: 'clawbench-probe',
     hasLiveMembers: true,
     members: [
-      { name: 'probe-alpha', color: 'blue', status: 'running', activity: 'working', lifecycle: 'alive', toolCallCount: 2, tokenUsage: { inputTokens: 56763, outputTokens: 229 } },
+      { name: 'probe-alpha', color: 'blue', agentType: 'general-purpose', status: 'running', activity: 'working', lifecycle: 'alive', toolCallCount: 2, tokenUsage: { inputTokens: 56763, outputTokens: 229 } },
       { name: 'probe-beta', color: 'green', status: 'completed', activity: 'idle', lifecycle: 'terminated', toolCallCount: 1 },
     ],
     ...over,
@@ -51,6 +80,7 @@ function snapshot(over: Partial<TeamState> = {}): TeamState {
 describe('TeamPanel', () => {
   beforeEach(() => {
     clearTeamState()
+    vi.unstubAllGlobals()
   })
 
   it('renders nothing when there is no team', () => {
@@ -178,6 +208,37 @@ describe('TeamPanel', () => {
       shapes.add(`${el.tagName}|${el.innerHTML}`)
     }
     expect(shapes.size).toBe(kinds.length)
+  })
+
+  it('maps each status kind to the glyph that MEANS that status', async () => {
+    // The distinctness test above only proves the five differ from each other —
+    // it passes if `completed` and `failed` are swapped, which would show a
+    // checkmark for a failure. Pin the semantic mapping itself: lucide renders
+    // a stable `lucide-<name>` class on each icon, which is the glyph's
+    // identity without depending on its internal path data.
+    const expected: Array<[string, string]> = [
+      ['completed', 'lucide-circle-check'],
+      ['failed', 'lucide-circle-x'],
+      ['killed', 'lucide-circle-slash'],
+      ['pending', 'lucide-circle-dashed'],
+    ]
+    for (const [status, iconClass] of expected) {
+      clearTeamState()
+      updateTeamState({
+        type: 'member_status_change',
+        teamName: 't',
+        members: [{ name: `m-${status}`, status }],
+      })
+      const wrapper = mountPanel()
+      await wrapper.vm.$nextTick()
+      await wrapper.get('.team-chip').trigger('click')
+
+      const icon = wrapper.get('.team-member__status-icon')
+      expect(icon.classes(), `${status} must render ${iconClass}`).toContain(iconClass)
+      // The row must also agree with the icon: a member shown as failed must
+      // not be styled as completed.
+      expect(icon.attributes('data-status')).toBe(status === 'killed' ? 'terminated' : status)
+    }
   })
 
   it('marks a killed member as terminated', async () => {
@@ -343,10 +404,10 @@ describe('TeamPanel', () => {
 
   // ── Member metadata: agentType is tooltip-only ──
 
-  it('never renders the agent type inline, only in the tooltip', async () => {
-    // Nearly every auto-team member is `general-purpose`, so the inline column
-    // carried no information while eating the width the name needs. It must
-    // stay out of the row and remain reachable via the tooltip.
+  it('renders the agent type inline when the row has room', async () => {
+    // The type is real information (a team can mix general-purpose and
+    // specialised members), so it belongs in the row. It is HIDDEN on narrow
+    // panels only — see the priority test below.
     updateTeamState(
       snapshot({
         members: [{ name: 'probe-alpha', status: 'running', agentType: 'general-purpose' }],
@@ -355,8 +416,20 @@ describe('TeamPanel', () => {
     const wrapper = mountPanel()
     await wrapper.vm.$nextTick()
     await wrapper.get('.team-chip').trigger('click')
-    expect(wrapper.find('.team-member__agent-type').exists()).toBe(false)
-    expect(wrapper.get('.team-member').text()).not.toContain('general-purpose')
+    expect(wrapper.get('.team-member__agent-type').text()).toBe('general-purpose')
+  })
+
+  it('keeps the type reachable in the tooltip as well', async () => {
+    // The inline type disappears on a narrow panel, so the tooltip must keep
+    // carrying it — that is the only remaining path to the information.
+    updateTeamState(
+      snapshot({
+        members: [{ name: 'probe-alpha', status: 'running', agentType: 'general-purpose' }],
+      }),
+    )
+    const wrapper = mountPanel()
+    await wrapper.vm.$nextTick()
+    await wrapper.get('.team-chip').trigger('click')
     expect(wrapper.get('.team-member').attributes('title')).toContain('type: general-purpose')
   })
 
@@ -394,5 +467,139 @@ describe('TeamPanel', () => {
     await wrapper.vm.$nextTick()
     await wrapper.get('.team-chip').trigger('click')
     expect(wrapper.get('.team-member').attributes('title')).toBe('')
+  })
+})
+
+// ── Member detail sheet ──
+//
+// Clicking a roster row opens a sheet with the member's facts and its FULL
+// prompt. The prompt is not in the roster payload (teamUpdate carries only
+// `description`), and the chat block for the Agent card is slim (empty input),
+// so the sheet must fetch it from the tool-call endpoint using the Agent card's
+// tool id. These tests pin the lookup, the fetch, and the Markdown rendering.
+describe('TeamPanel — member detail', () => {
+  it('opens the detail sheet when a member row is clicked', async () => {
+    updateTeamState(snapshot())
+    const wrapper = mountPanel()
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('.team-member-detail__name').exists()).toBe(false)
+    await wrapper.get('[data-action="team-member-detail"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.team-member-detail__name').text()).toBe('probe-alpha')
+  })
+
+  it('renders the roster description as Markdown, with no request at all', async () => {
+    // The roster's `description` IS the member's full instructions (verified
+    // byte-for-byte against the spawn prompt by an integration probe), so the
+    // sheet must render it directly — fetching the prompt again returned the
+    // same text, and came back EMPTY after an interruption.
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    updateTeamState(
+      snapshot({
+        members: [{
+          name: 'probe-alpha',
+          status: 'running',
+          description: '# Heading\n\n- one\n- two\n\n`src/main.go`',
+        }],
+      }),
+    )
+    const wrapper = mountPanel()
+    await wrapper.vm.$nextTick()
+    await wrapper.get('[data-action="team-member-detail"]').trigger('click')
+    await flushPromises()
+
+    const body = wrapper.get('.team-member-detail__markdown')
+    // Markdown structure survived — a plain-text dump would show the literal '#'.
+    expect(body.find('h1').exists()).toBe(true)
+    expect(body.findAll('li').length).toBe(2)
+    expect(body.text()).not.toContain('# Heading')
+    // The path was annotated.
+    expect(body.html()).toContain('src/main.go')
+    // No tool-call endpoint call: the text came from the roster snapshot.
+    // (Path verification legitimately calls /api/file/batch-exists, so the
+    // assertion is scoped to the endpoint that was removed.)
+    const calledUrls = fetchMock.mock.calls.map((c) => String(c[0]))
+    expect(calledUrls.some((u) => u.includes('/api/ai/chat/tool-call'))).toBe(false)
+  })
+
+  it('shows nothing for the role section when the member has no description', async () => {
+    updateTeamState(
+      snapshot({ members: [{ name: 'bare', status: 'running' }] }),
+    )
+    const wrapper = mountPanel()
+    await wrapper.vm.$nextTick()
+    await wrapper.get('[data-action="team-member-detail"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.team-member-detail__markdown').exists()).toBe(false)
+  })
+
+  it('does not repeat the description in the facts grid', async () => {
+    // The description is the Markdown body; a fact row would show it twice.
+    updateTeamState(
+      snapshot({
+        members: [{ name: 'probe-alpha', status: 'running', description: 'UNIQUE-ROLE-TEXT' }],
+      }),
+    )
+    const wrapper = mountPanel()
+    await wrapper.vm.$nextTick()
+    await wrapper.get('[data-action="team-member-detail"]').trigger('click')
+    await flushPromises()
+
+    const facts = wrapper.get('.team-member-detail__facts').text()
+    expect(facts).not.toContain('UNIQUE-ROLE-TEXT')
+    expect(wrapper.get('.team-member-detail__markdown').text()).toContain('UNIQUE-ROLE-TEXT')
+  })
+
+  it('lists the wire facts the roster cannot fit', async () => {
+    updateTeamState(snapshot())
+    const wrapper = mountPanel()
+    await wrapper.vm.$nextTick()
+    await wrapper.get('[data-action="team-member-detail"]').trigger('click')
+    await flushPromises()
+
+    const facts = wrapper.get('.team-member-detail__facts').text()
+    // Wire fields the row cannot fit are all present.
+    expect(facts).toContain('general-purpose')   // agentType
+    expect(facts).toContain('working')           // activity
+    expect(facts).toContain('alive')             // lifecycle
+    expect(facts).toContain('2')                 // toolCallCount
+    // Colour is a visual attribute (the header dot), not a fact row.
+    expect(facts).not.toContain('blue')
+  })
+})
+
+// The sheet teleports to <body>, so ChatMessageList's delegated click handler
+// never sees its path chips. The drawer must route them itself, through the
+// same resolver, or a path in a member's prompt is dead text.
+describe('TeamMemberDetail — path chips', () => {
+  it('opens the file when a path chip inside the role text is clicked', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    updateTeamState(
+      snapshot({
+        members: [{ name: 'probe-alpha', status: 'running', description: 'see `src/main.go`' }],
+      }),
+    )
+    const wrapper = mountPanel()
+    await wrapper.vm.$nextTick()
+    await wrapper.get('[data-action="team-member-detail"]').trigger('click')
+    await flushPromises()
+
+    // The role text rendered a path chip plus its open button. Clicking the
+    // BUTTON is the chat's own contract for FILE paths (directory paths open by
+    // clicking the chip text) — the drawer mirrors it exactly.
+    const btn = wrapper.get('.team-member-detail__markdown .chat-file-open-btn')
+    fetchMock.mockClear()
+    await btn.trigger('click')
+    await flushPromises()
+
+    // openFilePath's first observable step for an in-project path is the
+    // directory probe. Without the drawer's own handler the click is inert and
+    // this fetch never happens (ChatMessageList's delegated handler cannot see
+    // a teleported sheet).
+    const probed = fetchMock.mock.calls.some((c) => String(c[0]).includes('/api/dir?path=src%2Fmain.go'))
+    expect(probed).toBe(true)
   })
 })

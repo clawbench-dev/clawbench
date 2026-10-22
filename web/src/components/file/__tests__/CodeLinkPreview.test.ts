@@ -2507,6 +2507,54 @@ describe('CodeLinkPreview.vue — Markdown rendered document view', () => {
     wrapper.unmount()
   })
 
+  it('wires Ctrl+F and quote into the rendered HTML body', async () => {
+    // The card owns its own search bar, but the keystroke lands INSIDE the
+    // previewed document, where neither the card's window listener nor App's
+    // document listener can see it. Without the in-document hook the user gets
+    // the browser's find bar over the app and no quote bar on selection —
+    // while the full-screen viewer, on the same file, has both.
+    const preview = createMockPreviewController({
+      target: ref(makeHtmlTarget()),
+      isHtml: ref(true),
+      canRenderDocument: ref(true),
+      effectiveRenderMode: ref('rendered'),
+      fileContent: ref({
+        content: '<html><body><p>selectable text</p></body></html>',
+        name: 'index.html',
+        path: 'public/index.html',
+        supported: true,
+        size: 60,
+      }),
+    })
+
+    const wrapper = mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+      attachTo: document.body,
+    })
+    await flushPromises()
+
+    const iframe = document.querySelector('iframe.html-preview-iframe') as HTMLIFrameElement
+    expect(iframe).not.toBeNull()
+
+    iframe.dispatchEvent(new Event('load'))
+    await flushPromises()
+
+    // Ctrl+F inside the frame opens the card's own search bar.
+    const doc = iframe.contentDocument!
+    doc.dispatchEvent(new (doc.defaultView!.KeyboardEvent)('keydown', {
+      key: 'f', ctrlKey: true, bubbles: true, cancelable: true,
+    }))
+    await flushPromises()
+
+    expect(
+      document.querySelector('.code-preview-search-bar'),
+      'Ctrl+F inside the previewed document must open the card search bar',
+    ).not.toBeNull()
+
+    wrapper.unmount()
+  })
+
   it('falls back to srcdoc for an external (absolute-path) HTML file', async () => {
     const preview = createMockPreviewController({
       target: ref(makeHtmlTarget({ filePath: '/tmp/external/index.html' })),

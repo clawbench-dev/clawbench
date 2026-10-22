@@ -13,6 +13,7 @@ import {
   restoreAskStateFromStore,
   restoreAskStatesInContainer,
   handleAskSupplementaryInput,
+  handleAskSubmitShortcut,
   revertAskSubmission,
 } from '@/utils/renderToolDetail.ts'
 import {
@@ -20,6 +21,7 @@ import {
   patchAskState,
   _resetAskStatesForTesting,
 } from '@/utils/askQuestionState.ts'
+import i18n from '@/i18n'
 
 // ── Mock for useAppMode (controlled via mutable ref) ──
 // `vi.hoisted` is required: vi.mock calls are hoisted above ordinary const
@@ -907,6 +909,48 @@ describe('AskUserQuestion renderer (deep)', () => {
       questions: [{ question: 'Pick one', options: ['A'] }],
     }, 'AskUserQuestion')
     expect(html).toContain('ask-question-submit" disabled')
+  })
+
+  it('shows the localized action + keys hint beside the buttons', () => {
+    // Discoverability for Ctrl/Cmd+Enter. Three things matter:
+    //   1. It belongs to the CARD, not to the Submit button — inside the button
+    //      it read as part of the label and competed with it. It sits in the
+    //      free space to the LEFT of the row (`margin-right: auto`).
+    //   2. It names the ACTION as well as the keys ("Submit (Ctrl+Enter)").
+    //      Keys alone leave the reader to infer what they do.
+    //   3. Both halves are localized — a hardcoded English "Submit" would sit
+    //      next to a Chinese 提交 button.
+    // Assert BOTH languages against literal expected strings. Deriving the
+    // expectation from the same i18n key the renderer uses would make this
+    // tautological — a hardcoded English label would still "pass".
+    const original = i18n.global.locale.value
+    try {
+      i18n.global.locale.value = 'zh'
+      const zhHtml = formatToolInput({ questions: [{ question: 'Pick one', options: ['A'] }] }, 'AskUserQuestion')
+      expect(zhHtml).toContain('<kbd class="ask-submit-kbd">提交（Ctrl+Enter）</kbd>')
+
+      i18n.global.locale.value = 'en'
+      const enHtml = formatToolInput({ questions: [{ question: 'Pick one', options: ['A'] }] }, 'AskUserQuestion')
+      expect(enHtml).toContain('<kbd class="ask-submit-kbd">Submit (Ctrl+Enter)</kbd>')
+      // Sibling of the buttons, and BEFORE them in document order.
+      expect(enHtml).toMatch(/<kbd class="ask-submit-kbd">[^<]*<\/kbd><button class="ask-question-recommend">/)
+      // Never a child of the submit button — that is the shape being ruled out.
+      expect(enHtml).not.toMatch(/ask-question-submit[^>]*>[^<]*<kbd/)
+    } finally {
+      i18n.global.locale.value = original
+    }
+  })
+
+  it('never renders abstract chord glyphs in the hint', () => {
+    // ⌃ ⌘ ↵ were the previous content; they must not creep back.
+    const html = formatToolInput({
+      questions: [{ question: 'Pick one', options: ['A'] }],
+    }, 'AskUserQuestion')
+    const hint = html.slice(html.indexOf('ask-submit-kbd'))
+    const body = hint.slice(0, hint.indexOf('</kbd>'))
+    for (const glyph of ['⌃', '⌘', '↵', '⌥', '⇧']) {
+      expect(body, `the hint must not use the glyph ${glyph}`).not.toContain(glyph)
+    }
   })
 
   it('renders header and question text', () => {
@@ -4306,5 +4350,409 @@ describe('AskUserQuestion revert clears the DOM as well as the store', () => {
   it('is still a no-op for an unknown key', () => {
     expect(() => revertAskSubmission('tool:never-seen')).not.toThrow()
     expect(() => revertAskSubmission('')).not.toThrow()
+  })
+})
+
+// ────────────────────────────────────────────────────────────
+// Ctrl/Cmd+Enter submits the card the keystroke happened in
+//
+// The card is rendered as an HTML string through v-html, so the only focusable
+// thing inside it is the note field. A keyboard submit therefore has to be
+// scoped by DOM containment (the event's target), not by focus or by "the
+// newest card" — several cards can be on screen at once (chat list, tool-detail
+// drawer, file-diff drawer) and guessing would send the wrong answer.
+//
+// Both the click and the keystroke must run the SAME submit code, otherwise the
+// persistence step (patchAskState submitted:true) is the one that gets forgotten
+// on one of them and the card comes back answerable after a re-render.
+// ────────────────────────────────────────────────────────────
+
+describe('AskUserQuestion Ctrl/Cmd+Enter submit', () => {
+  /** Build a keyed card whose note field is the event target, exactly as a real
+   *  keystroke inside the card would be. */
+  function createCard(key: string, selected = true): {
+    container: HTMLDivElement
+    view: HTMLElement
+    input: HTMLTextAreaElement
+    emit: any
+  } {
+    const emit = vi.fn() as any
+    const container = document.createElement('div')
+    container.innerHTML = `
+      <div class="ask-question-view" data-ask-key="${key}" tabindex="-1">
+        <div class="ask-question-item" data-multi="false">
+          <div class="ask-question-options">
+            <div class="ask-question-option" data-qi="0" data-oi="0" data-label="Option A">
+              <span class="ask-option-indicator ask-option-indicator--radio"></span>
+            </div>
+            <div class="ask-question-option" data-qi="0" data-oi="1" data-label="Option B">
+              <span class="ask-option-indicator ask-option-indicator--radio"></span>
+            </div>
+          </div>
+        </div>
+        <div class="ask-question-supplementary"><textarea class="ask-supplementary-input" rows="1"></textarea></div>
+        <div class="ask-question-actions">
+          <button class="ask-question-recommend">Recommend</button>
+          <button class="ask-question-submit" disabled>Submit</button>
+        </div>
+      </div>
+    `
+    document.body.appendChild(container)
+    const view = container.querySelector('.ask-question-view') as HTMLElement
+    const input = view.querySelector('.ask-supplementary-input') as HTMLTextAreaElement
+    // The components bind the shortcut on the container that already carries the
+    // card's click/input handlers, so the event only reaches it when the
+    // keystroke happened inside THIS card. Mirror that wiring here rather than
+    // calling the handler directly — otherwise "which card did it submit?" is
+    // never actually exercised.
+    container.addEventListener('keydown', (e) => handleAskSubmitShortcut(e as KeyboardEvent, emit))
+    if (selected) {
+      const opt = view.querySelectorAll('.ask-question-option')[0]
+      const click = new MouseEvent('click', { bubbles: true, cancelable: true })
+      Object.defineProperty(click, 'target', { value: opt, writable: false })
+      handleToolAction('AskUserQuestion', click, emit)
+      emit.mockClear()
+    }
+    return { container, view, input, emit }
+  }
+
+  /** Dispatch a keydown from inside the card, as a real keystroke would. */
+  function pressChord(input: HTMLElement, init: KeyboardEventInit): KeyboardEvent {
+    const ev = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init })
+    input.dispatchEvent(ev)
+    return ev
+  }
+
+  beforeEach(() => {
+    _resetAskStatesForTesting()
+  })
+
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
+  it('moves focus onto the card when an option is clicked', () => {
+    // Regression: the options are plain <div>s, so a mouse pick left focus on
+    // <body> and the Ctrl/Cmd+Enter keydown never reached the card container.
+    // The user's report was exactly "I pick an option, press the shortcut,
+    // nothing happens".
+    const { container, view, emit } = createCard('sess-1|tool:ask-1', false)
+    const opt = view.querySelectorAll('.ask-question-option')[0]
+    const click = new MouseEvent('click', { bubbles: true, cancelable: true })
+    Object.defineProperty(click, 'target', { value: opt, writable: false })
+    handleToolAction('AskUserQuestion', click, emit)
+
+    expect(document.activeElement).toBe(view)
+    container.remove()
+  })
+
+  it('the card is programmatically focusable', () => {
+    // `tabindex="-1"` on the card is what makes the focus move possible. It is
+    // -1 rather than 0 so the card does not become a tab stop.
+    const html = formatToolInput({ questions: [{ question: 'Q', options: ['A'] }] }, 'AskUserQuestion')
+    expect(html).toMatch(/<div class="ask-question-view"[^>]*tabindex="-1"/)
+  })
+
+  it('submits right after a mouse pick, with no other interaction', () => {
+    // End-to-end of the reported flow: click an option, press Ctrl+Enter on
+    // whatever now has focus. Must send — not require a click into the note
+    // field first.
+    const { container, view, emit } = createCard('sess-1|tool:ask-1', false)
+    const opt = view.querySelectorAll('.ask-question-option')[0]
+    const click = new MouseEvent('click', { bubbles: true, cancelable: true })
+    Object.defineProperty(click, 'target', { value: opt, writable: false })
+    handleToolAction('AskUserQuestion', click, emit)
+    emit.mockClear()
+
+    const ev = new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true, cancelable: true })
+    document.activeElement!.dispatchEvent(ev)
+
+    expect(emit).toHaveBeenCalledWith('send-message', '- Option A', 'sess-1|tool:ask-1')
+    expect(ev.defaultPrevented).toBe(true)
+    container.remove()
+  })
+
+  it('works end-to-end on the REAL rendered markup', () => {
+    // Everything above uses a hand-built fixture, which can accidentally supply
+    // what the renderer forgot (it did: the fixture already carried
+    // tabindex="-1"). This one renders the card through formatToolInput, so the
+    // markup under test — including the tabindex that makes focus possible — is
+    // exactly what ships.
+    const container = document.createElement('div')
+    container.innerHTML = formatToolInput(
+      { questions: [{ question: 'Pick one', options: [{ label: 'Option A' }] }] },
+      'AskUserQuestion',
+      { askKey: 'sess-1|tool:real' },
+    )
+    document.body.appendChild(container)
+    const emit = vi.fn() as any
+    // Same wiring the components use: the container carries the handlers.
+    container.addEventListener('click', (e) => handleToolAction('AskUserQuestion', e, emit))
+    container.addEventListener('keydown', (e) => handleAskSubmitShortcut(e as KeyboardEvent, emit))
+
+    const opt = container.querySelector('.ask-question-option') as HTMLElement
+    opt.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    const view = container.querySelector('.ask-question-view') as HTMLElement
+    expect(document.activeElement, 'a real click must focus the real card').toBe(view)
+
+    const ev = new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true, cancelable: true })
+    document.activeElement!.dispatchEvent(ev)
+
+    expect(emit).toHaveBeenCalledWith('send-message', '- Option A', 'sess-1|tool:real')
+    expect(ev.defaultPrevented).toBe(true)
+    container.remove()
+  })
+
+  it('does not focus the note field on a pick (no soft keyboard popup)', () => {
+    // Focusing the textarea would raise the on-screen keyboard on mobile and
+    // move the caret somewhere the user did not ask for.
+    const { container, view, emit } = createCard('sess-1|tool:ask-1', false)
+    const opt = view.querySelectorAll('.ask-question-option')[0]
+    const click = new MouseEvent('click', { bubbles: true, cancelable: true })
+    Object.defineProperty(click, 'target', { value: opt, writable: false })
+    handleToolAction('AskUserQuestion', click, emit)
+
+    expect(document.activeElement).not.toBe(view.querySelector('.ask-supplementary-input'))
+    container.remove()
+  })
+
+  it('does not steal focus from the note field while typing in it', () => {
+    // Clicking an option is the only place focus moves. Typing a note must not
+    // yank the caret out of the field mid-sentence.
+    const { container, view, input, emit } = createCard('sess-1|tool:ask-1', false)
+    input.focus()
+    const opt = view.querySelectorAll('.ask-question-option')[0]
+    const click = new MouseEvent('click', { bubbles: true, cancelable: true })
+    Object.defineProperty(click, 'target', { value: opt, writable: false })
+    handleToolAction('AskUserQuestion', click, emit)
+
+    // Selecting an option legitimately moves focus to the card; what must NOT
+    // happen is the note text being lost or the caret ending up elsewhere on a
+    // re-render. Pinned here as: focus is deterministic (always the card).
+    expect(document.activeElement).toBe(view)
+    container.remove()
+  })
+
+  it('submits the focused card and prevents the newline', () => {
+    const { container, input, emit } = createCard('sess-1|tool:ask-1')
+    const ev = pressChord(input, { key: 'Enter', ctrlKey: true })
+
+    expect(emit).toHaveBeenCalledWith('send-message', '- Option A', 'sess-1|tool:ask-1')
+    expect(ev.defaultPrevented).toBe(true)
+    container.remove()
+  })
+
+  it('accepts Cmd+Enter as well as Ctrl+Enter', () => {
+    const { container, input, emit } = createCard('sess-1|tool:ask-1')
+    pressChord(input, { key: 'Enter', metaKey: true })
+
+    expect(emit).toHaveBeenCalledWith('send-message', '- Option A', 'sess-1|tool:ask-1')
+    container.remove()
+  })
+
+  it('persists the submitted flag exactly like the click path', () => {
+    // The whole point of sharing submitAskView: a keyboard-only submit that
+    // skipped the store would resurrect the card as answerable on the next
+    // re-render (the bug the store exists to prevent).
+    const { container, input } = createCard('sess-1|tool:ask-1')
+    pressChord(input, { key: 'Enter', ctrlKey: true })
+
+    expect(getAskState('sess-1|tool:ask-1')?.submitted).toBe(true)
+    container.remove()
+  })
+
+  it('marks the card terminal in the DOM', () => {
+    const { container, view, input } = createCard('sess-1|tool:ask-1')
+    pressChord(input, { key: 'Enter', ctrlKey: true })
+
+    expect(view.classList.contains('ask-submitted')).toBe(true)
+    container.remove()
+  })
+
+  it('does not fire for Enter without a modifier (newline in the note)', () => {
+    const { container, input, emit } = createCard('sess-1|tool:ask-1')
+    const ev = pressChord(input, { key: 'Enter' })
+
+    expect(emit).not.toHaveBeenCalled()
+    expect(ev.defaultPrevented).toBe(false)
+    container.remove()
+  })
+
+  it('does not fire for other chords that also carry Ctrl', () => {
+    const { container, input, emit } = createCard('sess-1|tool:ask-1')
+    pressChord(input, { key: 'Enter', ctrlKey: true, shiftKey: true })
+    pressChord(input, { key: 'Enter', ctrlKey: true, altKey: true })
+
+    expect(emit).not.toHaveBeenCalled()
+    container.remove()
+  })
+
+  it('does not fire for a different key', () => {
+    const { container, input, emit } = createCard('sess-1|tool:ask-1')
+    pressChord(input, { key: 'a', ctrlKey: true })
+
+    expect(emit).not.toHaveBeenCalled()
+    container.remove()
+  })
+
+  it('does not fire outside a card', () => {
+    const outside = document.createElement('textarea')
+    document.body.appendChild(outside)
+    const emit = vi.fn() as any
+    const ev = pressChord(outside, { key: 'Enter', ctrlKey: true })
+
+    expect(handleAskSubmitShortcut(ev, emit)).toBe(false)
+    expect(emit).not.toHaveBeenCalled()
+    outside.remove()
+  })
+
+  it('swallows the keystroke even when there is nothing to submit', () => {
+    // No option picked and no note: the disabled Submit button is the feedback.
+    // Letting the key through would just insert a newline into the note, which
+    // looks like the shortcut silently failed.
+    const { container, input, emit } = createCard('sess-1|tool:ask-1', false)
+    const ev = pressChord(input, { key: 'Enter', ctrlKey: true })
+
+    expect(emit).not.toHaveBeenCalled()
+    expect(ev.defaultPrevented).toBe(true)
+    container.remove()
+  })
+
+  it('submits a note-only card', () => {
+    const { container, input, emit } = createCard('sess-1|tool:ask-1', false)
+    input.value = 'just a note'
+    pressChord(input, { key: 'Enter', ctrlKey: true })
+
+    expect(emit).toHaveBeenCalledWith('send-message', 'just a note', 'sess-1|tool:ask-1')
+    container.remove()
+  })
+
+  it('is a no-op on an already-submitted card', () => {
+    const { container, input, emit } = createCard('sess-1|tool:ask-1')
+    pressChord(input, { key: 'Enter', ctrlKey: true })
+    emit.mockClear()
+    pressChord(input, { key: 'Enter', ctrlKey: true })
+
+    expect(emit).not.toHaveBeenCalled()
+    container.remove()
+  })
+
+  it('submits only the card the keystroke happened in', () => {
+    // Two cards on screen (the list and the drawer show the same card; a
+    // session can also hold several). The other one must stay untouched.
+    const a = createCard('sess-1|tool:ask-a')
+    const b = createCard('sess-1|tool:ask-b')
+    pressChord(a.input, { key: 'Enter', ctrlKey: true })
+
+    expect(a.emit).toHaveBeenCalledTimes(1)
+    expect(b.emit).not.toHaveBeenCalled()
+    expect(b.view.classList.contains('ask-submitted')).toBe(false)
+    a.container.remove()
+    b.container.remove()
+  })
+
+  it('ignores an IME composition in progress', () => {
+    const { container, input, emit } = createCard('sess-1|tool:ask-1')
+    const ev = pressChord(input, { key: 'Enter', ctrlKey: true, isComposing: true })
+
+    expect(emit).not.toHaveBeenCalled()
+    expect(ev.defaultPrevented).toBe(false)
+    container.remove()
+  })
+})
+
+// ── The chord hint lives in the actions row, outside the button ──
+//
+// Submit / restore / revert all rewrite the Submit button's text with
+// `textContent`. While the hint was a child of that button it was silently
+// destroyed on the first submit and only came back if the card was rebuilt from
+// scratch — which reads as "the shortcut stopped working" exactly when the user
+// is retrying. As a SIBLING it is structurally immune, and these tests pin that
+// shape rather than the old workaround.
+describe('AskUserQuestion submit chord hint lives outside the button', () => {
+  function createCard(key: string): { container: HTMLDivElement; view: HTMLElement; emit: any } {
+    const emit = vi.fn() as any
+    const container = document.createElement('div')
+    container.innerHTML = `
+      <div class="ask-question-view" data-ask-key="${key}">
+        <div class="ask-question-item" data-multi="false">
+          <div class="ask-question-options">
+            <div class="ask-question-option" data-qi="0" data-oi="0" data-label="Option A"><span class="ask-option-indicator ask-option-indicator--radio"></span></div>
+          </div>
+        </div>
+        <div class="ask-question-supplementary"><textarea class="ask-supplementary-input" rows="1"></textarea></div>
+        <div class="ask-question-actions">
+          <kbd class="ask-submit-kbd">Submit (Ctrl+Enter)</kbd>
+          <button class="ask-question-recommend">Recommend</button>
+          <button class="ask-question-submit" disabled>Submit</button>
+        </div>
+      </div>
+    `
+    document.body.appendChild(container)
+    return { container, view: container.querySelector('.ask-question-view') as HTMLElement, emit }
+  }
+
+  function clickOn(el: Element, emit: any) {
+    const ev = new MouseEvent('click', { bubbles: true, cancelable: true })
+    Object.defineProperty(ev, 'target', { value: el, writable: false })
+    handleToolAction('AskUserQuestion', ev, emit)
+  }
+
+  beforeEach(() => {
+    _resetAskStatesForTesting()
+  })
+
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
+  it('is a sibling of the buttons, ahead of them in the row', () => {
+    const { container, view } = createCard('tool:tu-1')
+    const row = view.querySelector('.ask-question-actions')!
+    const kids = Array.from(row.children).map(el => el.className)
+    expect(kids[0]).toBe('ask-submit-kbd')
+    expect(kids).toContain('ask-question-submit')
+    // Not nested in either button.
+    expect(view.querySelector('.ask-question-submit .ask-submit-kbd')).toBeNull()
+    expect(view.querySelector('.ask-question-recommend .ask-submit-kbd')).toBeNull()
+    container.remove()
+  })
+
+  it('survives the label rewrite on submit', () => {
+    const { container, view, emit } = createCard('tool:tu-1')
+    clickOn(view.querySelector('.ask-question-option')!, emit)
+    clickOn(view.querySelector('.ask-question-submit')!, emit)
+
+    const btn = view.querySelector('.ask-question-submit') as HTMLButtonElement
+    expect(btn.textContent).toBe('Submitted')
+    // The hint is still in the DOM; the submitted state hides it via CSS only.
+    expect(view.querySelector('.ask-submit-kbd')).not.toBeNull()
+    container.remove()
+  })
+
+  it('is still there after a failed send makes the card answerable again', () => {
+    const { container, view, emit } = createCard('tool:tu-1')
+    clickOn(view.querySelector('.ask-question-option')!, emit)
+    clickOn(view.querySelector('.ask-question-submit')!, emit)
+    revertAskSubmission('tool:tu-1')
+
+    const btn = view.querySelector('.ask-question-submit') as HTMLButtonElement
+    expect(btn.textContent).toContain('Submit')
+    expect(view.querySelector('.ask-submit-kbd')).not.toBeNull()
+    container.remove()
+  })
+
+  it('is untouched by the restore path', () => {
+    const first = createCard('tool:tu-1')
+    clickOn(first.view.querySelector('.ask-question-option')!, first.emit)
+    clickOn(first.view.querySelector('.ask-question-submit')!, first.emit)
+    revertAskSubmission('tool:tu-1')
+    first.container.remove()
+
+    const rebuilt = createCard('tool:tu-1')
+    restoreAskStateFromStore(rebuilt.view)
+
+    expect(rebuilt.view.querySelector('.ask-submit-kbd')).not.toBeNull()
+    rebuilt.container.remove()
   })
 })

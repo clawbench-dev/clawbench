@@ -181,6 +181,7 @@ const i18n = createI18n({
         items: {
           terminalEnabled: '启用终端',
           ttsEngine: 'TTS引擎',
+          ttsEngineDesc: 'TTS引擎',
           ttsEngineEdge: 'Edge',
           ttsEnginePiper: 'Piper',
           ttsVoice: '语音',
@@ -510,6 +511,50 @@ describe('SettingsGroupPanel', () => {
       localValues['tts.engine'] = 'edge'
       const wrapper = mountPanel(makeTtsConfig())
       expect(wrapper.find('.group-panel__entry-value').text()).toContain('Edge')
+    })
+
+    // The entry row has always carried a `descriptionKey`, but nothing rendered
+    // it — the usage meter's "switching clears the quota" warning was written
+    // into i18n and silently dropped. Pin that it now shows, otherwise the
+    // warning can vanish again with no failing test.
+    it('renders the entry selector description when one is configured', () => {
+      localValues['tts.engine'] = 'edge'
+      const config = makeTtsConfig()
+      config.entrySelector!.descriptionKey = 'settings.items.ttsEngineDesc'
+      const wrapper = mountPanel(config)
+
+      const desc = wrapper.find('.group-panel__entry-desc')
+      expect(desc.exists()).toBe(true)
+      expect(desc.text()).toBe('TTS引擎')
+    })
+
+    it('omits the description element entirely when none is configured', () => {
+      localValues['tts.engine'] = 'edge'
+      const config = makeTtsConfig()
+      delete config.entrySelector!.descriptionKey
+      const wrapper = mountPanel(config)
+
+      // Absent, not an empty div: an empty block would still add its margin and
+      // shift the row height.
+      expect(wrapper.find('.group-panel__entry-desc').exists()).toBe(false)
+    })
+
+    // The label/value pair must stay on ONE line inside `.group-panel__entry-main`
+    // while the description spans the full width below it. If the description
+    // were placed inside the flex row, `justify-content: space-between` would
+    // push it to the right of the value instead of under the label.
+    it('keeps label and value in the main line, description outside it', () => {
+      localValues['tts.engine'] = 'edge'
+      const config = makeTtsConfig()
+      config.entrySelector!.descriptionKey = 'settings.items.ttsEngineDesc'
+      const wrapper = mountPanel(config)
+
+      const main = wrapper.find('.group-panel__entry-main')
+      expect(main.exists()).toBe(true)
+      expect(main.find('.group-panel__entry-label').exists()).toBe(true)
+      expect(main.find('.group-panel__entry-value').exists()).toBe(true)
+      expect(main.find('.group-panel__entry-desc').exists()).toBe(false)
+      expect(wrapper.find('.group-panel__entry-row > .group-panel__entry-desc').exists()).toBe(true)
     })
 
     it('calls entryPicker.open on row click', async () => {

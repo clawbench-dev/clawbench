@@ -189,8 +189,16 @@ type Config struct {
 // entirely (no worker query, no header capsule, no notification). A separate
 // enable flag would admit a contradictory "enabled but no quota" state.
 type UsageMeterConfig struct {
-	// AnchorDate is the cycle start date as "YYYY-MM-DD", interpreted at 00:00
-	// in the SERVER's local timezone (same convention as cron expressions).
+	// AnchorDate is the cycle start, in the SERVER's local timezone (same
+	// convention as cron expressions). Two shapes are accepted:
+	//
+	//   "YYYY-MM-DD"           → 00:00:00 on that day
+	//   "YYYY-MM-DDTHH:MM[:SS]" → that exact wall-clock instant
+	//
+	// The date-only form is what every pre-existing install holds and keeps its
+	// original meaning, so no migration is needed. Use
+	// ParseUsageMeterAnchor/FormatUsageMeterAnchor rather than parsing this
+	// string directly — they are the single definition of the accepted shapes.
 	AnchorDate string `yaml:"anchor_date"`
 	// PeriodDays is the cycle length in days. Cycle boundaries are computed as
 	// fixed 24h spans from the anchor rather than calendar-date differences, so

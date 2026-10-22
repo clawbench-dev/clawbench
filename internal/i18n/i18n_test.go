@@ -136,8 +136,9 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		"InvalidForkPoint",
 		"InvalidRewindPoint",
 		"NothingToRewind",
-		"GroupNotForkable",
 		"GroupNotRewindable",
+		"ForkContextInjectedChat",
+		"ForkContextInjectedGroup",
 		"NoAgentsAvailable",
 		"MessageOrFilesRequired",
 		"TextRequired",
@@ -191,6 +192,18 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		"ForgeEventLabelEvent",
 		"ForgeEventLabelAuthor",
 		"ForgeEventViewDetail",
+		// Usage-meter rule rejections. These are the entire user-visible
+		// explanation for a rejected settings save, so a key added on only one
+		// side would ship the raw message id to that locale.
+		"UsageMeterQuotaNegative",
+		"UsageMeterQuotaNotNumber",
+		"UsageMeterAnchorRequired",
+		"UsageMeterAnchorInvalid",
+		"UsageMeterAnchorNotString",
+		"UsageMeterPeriodRange",
+		"UsageMeterPeriodNotNumber",
+		"UsageMeterMetricInvalid",
+		"UsageMeterMetricNotString",
 	}
 
 	for _, key := range keys {

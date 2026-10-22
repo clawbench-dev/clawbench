@@ -282,22 +282,91 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	return newSessionID, false, nil
 }
 
-// ForkSession creates a new chat session by copying non-streaming messages
-// and summaries from the source session. Unlike ContinueFromExecution, this
-// does NOT copy external_session_id — the forked session starts fresh.
+// Fork target kinds. A fork may land on a single chat or on a new group; the
+// distinction decides whether the source history is COPIED into the target
+// (chat→chat, the original behavior) or rendered as BACKGROUND text
+// (everything else).
+const (
+	// ForkTargetChat is a single-agent session.
+	ForkTargetChat = "chat"
+	// ForkTargetGroup is a group chat (members supplied by the caller).
+	ForkTargetGroup = "group"
+)
+
+// ForkRequest describes one fork operation.
+//
+// The combination of the SOURCE kind (read from the DB) and Target decides the
+// history handling:
+//
+//	source      target   history
+//	chat        chat     copied message rows (unchanged legacy path)
+//	chat        group    background text on the new group row
+//	group       chat     background text on the new chat row
+//	group       group    background text on the new group row
+//
+// "Background text" rather than copied rows is not an optimization: a group
+// timeline stores MEMBER ROW ids in chat_history.agent_id, and those ids do not
+// exist in a freshly created session, so copied rows would render as
+// unattributed AI speech. It is also the only option in the other direction —
+// member rows carry no chat_history at all.
+type ForkRequest struct {
+	SourceSessionID string
+	ProjectPath     string
+	Title           string
+	// BeforeMessageID (>0) forks at that message; 0 forks at the end.
+	BeforeMessageID int64
+
+	// Target is ForkTargetChat (default when empty) or ForkTargetGroup.
+	Target string
+
+	// OverrideAgentID replaces the source's agent for a chat target.
+	OverrideAgentID string
+
+	// Group target only: the host (empty ⇒ free mode) and the members.
+	HostAgentID string
+	MemberSpecs []GroupMemberSpec
+}
+
+// ForkSession creates a new single-chat session by copying non-streaming
+// messages and summaries from the source session. Unlike ContinueFromExecution,
+// this does NOT copy external_session_id — the forked session starts fresh.
 // If beforeMessageID > 0, only messages up to and including the assistant reply
 // following the specified user message are copied. The title is provided by the caller.
-func ForkSession(sourceSessionID, projectPath, title string, beforeMessageID int64, overrideAgentID string) (string, error) { //nolint:gocyclo // multi-step session fork with fork-point resolution
-	// 0. A group cannot be forked (decision #74, symmetric with rewind #52).
-	// The fork hard-codes session_type='chat' and copies the source's
-	// backend/agent, so a forked group would be a single-agent chat whose
-	// messages carry MEMBER row ids — ids that resolve to no member, rendering
-	// as unattributed AI speech.
-	if GetSessionType(sourceSessionID) == groupSessionType {
-		return "", fmt.Errorf("cannot fork session %s: group sessions are not forkable", sourceSessionID)
+//
+// Kept as a thin wrapper over ForkSessionTo for the many existing callers/tests
+// that only ever fork into a single chat.
+func ForkSession(sourceSessionID, projectPath, title string, beforeMessageID int64, overrideAgentID string) (string, error) {
+	return ForkSessionTo(ForkRequest{
+		SourceSessionID: sourceSessionID,
+		ProjectPath:     projectPath,
+		Title:           title,
+		BeforeMessageID: beforeMessageID,
+		Target:          ForkTargetChat,
+		OverrideAgentID: overrideAgentID,
+	})
+}
+
+// ForkSessionTo forks a session into either a single chat or a new group.
+func ForkSessionTo(req ForkRequest) (string, error) { //nolint:gocyclo // multi-step fork with two target kinds
+	target := req.Target
+	if target == "" {
+		target = ForkTargetChat
+	}
+	if target != ForkTargetChat && target != ForkTargetGroup {
+		return "", fmt.Errorf("fork: unknown target %q", target)
 	}
 
-	// 1. Get source session metadata
+	sourceKind := GetSessionType(req.SourceSessionID)
+	if sourceKind == groupMemberSessionType {
+		// A member row is a hidden connection carrier with no timeline of its
+		// own; forking it would copy nothing.
+		return "", fmt.Errorf("cannot fork session %s: it is a group member", req.SourceSessionID)
+	}
+	sourceIsGroup := sourceKind == groupSessionType
+
+	// 1. Get source session metadata. A group row's agent_id/backend describe the
+	//    host (or the first member in free mode), which is a sensible fallback
+	//    for a chat target when the caller did not pick an agent.
 	var backend, agentID, agentSource, modelName, sessProjectPath string
 	var sessProjectID int64
 	err := store.ReadDB().QueryRow(
@@ -305,19 +374,19 @@ func ForkSession(sourceSessionID, projectPath, title string, beforeMessageID int
 		   FROM chat_sessions s
 		   LEFT JOIN projects p ON p.id = s.project_id
 		  WHERE s.id = ? AND s.archived = 0`,
-		sourceSessionID,
+		req.SourceSessionID,
 	).Scan(&backend, &agentID, &agentSource, &modelName, &sessProjectID, &sessProjectPath)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", fmt.Errorf("source session %s not found", sourceSessionID)
+		return "", fmt.Errorf("source session %s not found", req.SourceSessionID)
 	}
 	if err != nil {
 		return "", err
 	}
 
 	// 1b. Override agent if specified (user chose a different agent in the fork dialog)
-	if overrideAgentID != "" {
-		if agent := model.GetAgent(overrideAgentID); agent != nil {
-			agentID = overrideAgentID
+	if req.OverrideAgentID != "" {
+		if agent := model.GetAgent(req.OverrideAgentID); agent != nil {
+			agentID = req.OverrideAgentID
 			agentSource = cancelReasonUser
 			if agent.Backend != "" {
 				backend = agent.Backend
@@ -331,50 +400,24 @@ func ForkSession(sourceSessionID, projectPath, title string, beforeMessageID int
 
 	// 2. Validate project ownership by id: a renamed project directory must not
 	//    make a session look like it belongs elsewhere.
-	callerProjectID, idErr := store.ProjectIDForPath(projectPath)
+	callerProjectID, idErr := store.ProjectIDForPath(req.ProjectPath)
 	if idErr != nil {
 		return "", idErr
 	}
 	if sessProjectID != callerProjectID {
-		return "", fmt.Errorf("session %s does not belong to project %q", sourceSessionID, projectPath)
+		return "", fmt.Errorf("session %s does not belong to project %q", req.SourceSessionID, req.ProjectPath)
 	}
 
-	// 2b. Validate beforeMessageID if provided, and resolve the cut point
-	cutBeforeID := beforeMessageID
-	if beforeMessageID > 0 {
-		var role string
-		var streaming int
-		err = store.ReadDB().QueryRow(
-			"SELECT role, streaming FROM chat_history WHERE id = ? AND session_id = ?",
-			beforeMessageID, sourceSessionID,
-		).Scan(&role, &streaming)
-		if errors.Is(err, sql.ErrNoRows) {
-			return "", fmt.Errorf("message %d not found in session %s", beforeMessageID, sourceSessionID)
-		}
-		if err != nil {
-			return "", err
-		}
-		if streaming == 1 {
-			return "", fmt.Errorf("cannot fork from a streaming message (message %d)", beforeMessageID)
-		}
-		switch role {
-		case roleUser:
-			// User message: find the next non-streaming assistant reply and include it
-			var asstID int64
-			err = store.ReadDB().QueryRow(
-				"SELECT id FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 0 AND id > ? ORDER BY id LIMIT 1",
-				sourceSessionID, beforeMessageID,
-			).Scan(&asstID)
-			if err == nil {
-				cutBeforeID = asstID
-			}
-			// If no assistant reply found (e.g. last message is user), cut at the user message
-		case roleAssistant:
-			// Assistant message: fork directly at this message
-			cutBeforeID = beforeMessageID
-		default:
-			return "", fmt.Errorf("fork point must be a user or assistant message, message %d is role %q", beforeMessageID, role)
-		}
+	// 2b. Validate beforeMessageID if provided, and resolve the cut point.
+	//
+	// The cut semantics differ by SOURCE kind. A single chat extends a user-message
+	// fork point to the assistant reply that answered it (that reply is the
+	// decision the user is branching from). A group has no single answering
+	// reply — one user message is answered by a multi-member discussion — so
+	// extending would arbitrarily keep only the first speaker and drop the rest.
+	cutBeforeID, err := resolveForkCutPoint(req.SourceSessionID, req.BeforeMessageID, sourceIsGroup)
+	if err != nil {
+		return "", err
 	}
 
 	// 3. Max session count check
@@ -384,13 +427,118 @@ func ForkSession(sourceSessionID, projectPath, title string, beforeMessageID int
 
 	// 4. Title is provided by handler (localized prefix + source title)
 
-	// 5. Create new session (no external_session_id inheritance)
+	// 5. Copy-based path: chat source → chat target. Every other combination
+	//    materializes the source as background text instead (see ForkRequest).
+	if !sourceIsGroup && target == ForkTargetChat {
+		return forkChatWithCopiedMessages(req, sessProjectID, backend, agentID, agentSource, modelName, cutBeforeID)
+	}
+
+	background := renderForkBackground(req.SourceSessionID, sourceIsGroup, cutBeforeID)
+
+	if target == ForkTargetGroup {
+		groupID, _, gerr := CreateGroupWithMembersFrom(req.ProjectPath, req.Title, req.HostAgentID, req.SourceSessionID, req.MemberSpecs)
+		if gerr != nil {
+			return "", gerr
+		}
+		SetForkContext(groupID, background)
+		slog.Info("session forked into group",
+			slog.String("session", groupID),
+			slog.String("source_session", req.SourceSessionID),
+			slog.Bool("source_is_group", sourceIsGroup),
+			slog.String("host", req.HostAgentID),
+			slog.Int("members", len(req.MemberSpecs)),
+			slog.Int("background_chars", len([]rune(background))))
+		return groupID, nil
+	}
+
+	// Chat target with a group source: a fresh single-agent session that carries
+	// no copied rows (their agent_id values are member row ids that cannot
+	// resolve here) and receives the rendered timeline as background instead.
+	return forkChatWithBackground(req, sessProjectID, backend, agentID, agentSource, modelName, background)
+}
+
+// resolveForkCutPoint validates the fork point and returns the highest message
+// id to keep.
+//
+// The rule differs by SOURCE kind. A single chat extends a user-message fork
+// point to the assistant reply that answered it — that reply is the decision the
+// user is branching from. A group has no single answering reply (one user
+// message is answered by a multi-member discussion), so the clicked row is the
+// cut point verbatim; extending would arbitrarily keep only the first speaker.
+func resolveForkCutPoint(sourceSessionID string, beforeMessageID int64, sourceIsGroup bool) (int64, error) {
+	if beforeMessageID <= 0 {
+		return beforeMessageID, nil
+	}
+	var role string
+	var streaming int
+	err := store.ReadDB().QueryRow(
+		"SELECT role, streaming FROM chat_history WHERE id = ? AND session_id = ?",
+		beforeMessageID, sourceSessionID,
+	).Scan(&role, &streaming)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, fmt.Errorf("message %d not found in session %s", beforeMessageID, sourceSessionID)
+	}
+	if err != nil {
+		return 0, err
+	}
+	if streaming == 1 {
+		return 0, fmt.Errorf("cannot fork from a streaming message (message %d)", beforeMessageID)
+	}
+	if sourceIsGroup {
+		return beforeMessageID, nil
+	}
+	switch role {
+	case roleUser:
+		// User message: include the next non-streaming assistant reply. When the
+		// user message is the last row there is none, so the cut stays on it.
+		var asstID int64
+		if err := store.ReadDB().QueryRow(
+			"SELECT id FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 0 AND id > ? ORDER BY id LIMIT 1",
+			sourceSessionID, beforeMessageID,
+		).Scan(&asstID); err == nil {
+			return asstID, nil
+		}
+		return beforeMessageID, nil
+	case roleAssistant:
+		return beforeMessageID, nil
+	default:
+		return 0, fmt.Errorf("fork point must be a user or assistant message, message %d is role %q", beforeMessageID, role)
+	}
+}
+
+// renderForkBackground renders the source history as injectable background text.
+// A group source uses the group renderer (speech only, speaker names, system
+// rows skipped); a single-chat source reuses the existing renderer with the
+// fork-point cutoff applied.
+func renderForkBackground(sourceSessionID string, sourceIsGroup bool, cutoff int64) string {
+	opts := ForkContextOptions{
+		Header:            forkBackgroundHeader,
+		Footer:            forkBackgroundFooter,
+		CapitalizeRoles:   true,
+		PlainTextFallback: true,
+		BudgetChars:       model.ChatForkContextBudget,
+		CutoffID:          cutoff,
+	}
+	if sourceIsGroup {
+		return RenderGroupForkContext(sourceSessionID, cutoff, opts)
+	}
+	return BuildForkContextWithOptions(sourceSessionID, opts)
+}
+
+const (
+	forkBackgroundHeader = "[Below is the conversation history from before this session. Continue based on this context.]\n\n"
+	forkBackgroundFooter = "[End of conversation history. Now answer the user's new question.]\n\n"
+)
+
+// forkChatWithCopiedMessages is the original fork path: copy the source's
+// messages, summaries and detail rows into a new single-chat session.
+func forkChatWithCopiedMessages(req ForkRequest, projectID int64, backend, agentID, agentSource, modelName string, cutBeforeID int64) (string, error) {
 	// sort_order stays at its default 0 so the fork lands at the top of the
 	// manual order (#492) via the created_at DESC tiebreak.
 	newSessionID := generateSessionID()
-	_, err = store.WriteExec(
+	_, err := store.WriteExec(
 		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, source_session_id) VALUES (?, ?, ?, ?, ?, ?, ?, 'chat', ?)",
-		newSessionID, sessProjectID, backend, title, agentID, agentSource, modelName, sourceSessionID,
+		newSessionID, projectID, backend, req.Title, agentID, agentSource, modelName, req.SourceSessionID,
 	)
 	if err != nil {
 		return "", fmt.Errorf("failed to create forked session: %w", err)
@@ -407,22 +555,44 @@ func ForkSession(sourceSessionID, projectPath, title string, beforeMessageID int
 	applyAgentAutoApproveDefault(newSessionID, agentID)
 	slog.Info("session forked",
 		slog.String("session", newSessionID),
-		slog.String("source_session", sourceSessionID),
+		slog.String("source_session", req.SourceSessionID),
 		slog.String("backend", backend),
 		slog.String("agent", agentID))
 
-	// 6. Copy messages and summaries
-	idMap, err := copySessionMessages(sourceSessionID, newSessionID, cutBeforeID)
+	idMap, err := copySessionMessages(req.SourceSessionID, newSessionID, cutBeforeID)
 	if err != nil {
 		return "", err
 	}
 	if err := copySessionSummaries(idMap); err != nil {
 		return "", err
 	}
-	if err := copySessionDetailTables(idMap, sourceSessionID, newSessionID); err != nil {
+	if err := copySessionDetailTables(idMap, req.SourceSessionID, newSessionID); err != nil {
 		return "", err
 	}
+	return newSessionID, nil
+}
 
+// forkChatWithBackground creates a single-chat fork that copies NO messages and
+// carries the source timeline as background instead (used when the source is a
+// group).
+func forkChatWithBackground(req ForkRequest, projectID int64, backend, agentID, agentSource, modelName, background string) (string, error) {
+	newSessionID := generateSessionID()
+	_, err := store.WriteExec(
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, source_session_id) VALUES (?, ?, ?, ?, ?, ?, ?, 'chat', ?)",
+		newSessionID, projectID, backend, req.Title, agentID, agentSource, modelName, req.SourceSessionID,
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to create forked session: %w", err)
+	}
+	markSessionTitlePlaceholder(newSessionID)
+	applyAgentAutoApproveDefault(newSessionID, agentID)
+	SetForkContext(newSessionID, background)
+	slog.Info("session forked with background history",
+		slog.String("session", newSessionID),
+		slog.String("source_session", req.SourceSessionID),
+		slog.String("backend", backend),
+		slog.String("agent", agentID),
+		slog.Int("background_chars", len([]rune(background))))
 	return newSessionID, nil
 }
 

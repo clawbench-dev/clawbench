@@ -1,5 +1,5 @@
 <template>
-  <ModalDialog :open="open" :title="t('shareDialog.title')" :z-index="2500" :max-width="520" @close="$emit('close')">
+  <ModalDialog :open="open" :title="t('shareDialog.title')" :z-index="2500" @close="$emit('close')">
     <div class="share-dialog-body">
       <template v-if="!file">
         <div class="share-dialog-hint">{{ t('shareDialog.noFile') }}</div>

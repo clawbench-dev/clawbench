@@ -58,7 +58,7 @@
         <template v-if="isAskQuestion(tool.name || '') && shouldMergeSummaryAskCards && extractAskQuestions(tool.input).length > 0"></template>
         <!-- Answerable interactive tool: unified card
              (header strip + body in one box). -->
-        <div v-else-if="shouldAutoExpandTool(tool.name || '') && isUnifiedCardTool(tool.name)" class="tool-detail chat-inline-card" :class="!tool.done ? 'is-pending' : ''" :data-tool-name="tool.name" :data-category="getToolIcon(tool.name).category" @click="handleToolDetailClick" @input="handleToolDetailInput">
+        <div v-else-if="shouldAutoExpandTool(tool.name || '') && isUnifiedCardTool(tool.name)" class="tool-detail chat-inline-card" :class="!tool.done ? 'is-pending' : ''" :data-tool-name="tool.name" :data-category="getToolIcon(tool.name).category" @click="handleToolDetailClick" @input="handleToolDetailInput" @keydown="handleToolDetailKeydown">
           <div class="chat-card-strip" @click.stop="handleSummaryToolClick(tool, ti)">
             <component :is="getToolIcon(tool.name).icon" :size="12" class="tool-icon" />
             <span class="tool-name">{{ unifiedCardTitle(tool.name, tool.input, tool.display_name) }}</span>
@@ -99,7 +99,7 @@
            whose input carries questions. When more than one source exists they are
            merged into this single card so every question is answered with one submit. -->
       <template v-if="summaryAskQuestions.length || shouldMergeSummaryAskCards">
-        <div class="tool-detail chat-inline-card done" data-category="ask" data-tool-name="AskUserQuestion" @click="handleToolDetailClick" @input="handleToolDetailInput">
+        <div class="tool-detail chat-inline-card done" data-category="ask" data-tool-name="AskUserQuestion" @click="handleToolDetailClick" @input="handleToolDetailInput" @keydown="handleToolDetailKeydown">
           <div class="chat-card-strip" @click.stop="$emit('toggle-tool', 'summary-ask')">
             <component :is="getToolIcon('AskUserQuestion').icon" :size="12" class="tool-icon" />
             <span class="tool-name">{{ t('tool.askUser.name') }}</span>
@@ -232,7 +232,7 @@
         <template v-if="isSuppressedAskCard(bi)"></template>
         <!-- AskUserQuestion / PermissionApproval: unified interactive card
              (status strip + body in one box). -->
-        <div v-else-if="shouldAutoExpand(block) && isUnifiedCardTool(block.name)" class="tool-detail chat-inline-card" :class="!block.done ? 'is-pending' : ''" :data-tool-name="block.name" :data-category="getToolIcon(block.name).category" :data-session-id="sessionId" :data-tool-call-id="block.id" @click="handleToolDetailClick" @input="handleToolDetailInput">
+        <div v-else-if="shouldAutoExpand(block) && isUnifiedCardTool(block.name)" class="tool-detail chat-inline-card" :class="!block.done ? 'is-pending' : ''" :data-tool-name="block.name" :data-category="getToolIcon(block.name).category" :data-session-id="sessionId" :data-tool-call-id="block.id" @click="handleToolDetailClick" @input="handleToolDetailInput" @keydown="handleToolDetailKeydown">
           <div class="chat-card-strip" @click.stop="handleToolClick(block, key(bi), absIdx(bi))">
             <component :is="getToolIcon(block.name).icon" :size="12" class="tool-icon" />
             <span class="tool-name">{{ unifiedCardTitle(block.name, block.input, block.display_name) }}</span>
@@ -256,8 +256,15 @@
         </div>
         <template v-else>
           <div :ref="(el) => setSubagentPillRef(subagentGroupKey(bi, block), el)" class="chat-tool-call" :class="{ done: block.done, 'chat-tool-call-group': hasSubagentGroup(block), 'chat-tool-call-group-open': hasSubagentGroup(block) && isSubagentGroupOpen(bi, block) }" :data-category="getToolIcon(block.name).category" :style="memberAccentStyle(block)" @click.stop="handleToolClick(block, key(bi), absIdx(bi))">
-            <component :is="getToolIcon(block.name).icon" :size="12" class="tool-icon" />
-            <span class="tool-name">{{ toolDisplayName(block.name, block.input, block.display_name) }}</span>
+            <!-- A team member's card wears the team glyph, exactly like the
+                 member fallback group header below. Two paths render the same
+                 member, so they must look identical: before this, the card
+                 showed the generic Agent/Bot icon while the post-interruption
+                 group showed Users, and the same member changed face depending
+                 on whether its parent card was still resolvable. -->
+            <Users v-if="isAgentCardWithMembers(block)" :size="12" class="tool-icon" />
+            <component v-else :is="getToolIcon(block.name).icon" :size="12" class="tool-icon" />
+            <span class="tool-name">{{ isAgentCardWithMembers(block) ? agentPillTitle(block) : toolDisplayName(block.name, block.input, block.display_name) }}</span>
             <span v-if="toolCallSummary(block)" class="tool-summary">{{ toolCallSummary(block) }}</span>
             <!-- Sub-agent: step count + expand/collapse toggle live IN the pill,
                  so the Agent call and its sub-agent work are one row instead of
@@ -297,7 +304,12 @@
              callout/pill, tool pills) as top-level content. The recursive
              subtree is mounted lazily on first open: a never-opened group (e.g.
              a collapsed 4558-block sub-agent) pays no component/index cost. -->
-        <div v-if="hasSubagentGroup(block)" class="subagent-group" :class="{ 'subagent-group-open': isSubagentGroupOpen(bi, block) }">
+        <!-- The accent is set on the GROUP, not only on the pill: the expanded
+             body is a child of this element, so a pill-only custom property
+             never reaches it and the body keeps .subagent-group's default
+             pink. The member fallback group below sets it here for exactly that
+             reason — both paths must paint the same member the same colour. -->
+        <div v-if="hasSubagentGroup(block)" class="subagent-group" :class="{ 'subagent-group-open': isSubagentGroupOpen(bi, block) }" :style="memberAccentStyle(block)">
           <div class="subagent-group-body-wrapper" :class="{ 'subagent-group-body-open': isSubagentGroupOpen(bi, block), 'subagent-group-body-nostransition': collapsingSubagentGroups[subagentGroupKey(bi, block)] }">
             <div class="subagent-group-body">
               <ContentBlocks
@@ -405,7 +417,7 @@
         <!-- Surrounding text (with ask-question tag stripped) -->
         <div v-if="getBlockHtml(bi, block)" v-html="getBlockHtml(bi, block)"></div>
         <template v-if="textAskQuestions(bi, block).length > 0 && !isSuppressedAskCard(bi)">
-          <div class="tool-detail chat-inline-card done" data-category="ask" data-tool-name="AskUserQuestion" @click="handleToolDetailClick" @input="handleToolDetailInput">
+          <div class="tool-detail chat-inline-card done" data-category="ask" data-tool-name="AskUserQuestion" @click="handleToolDetailClick" @input="handleToolDetailInput" @keydown="handleToolDetailKeydown">
             <div class="chat-card-strip" @click.stop="$emit('toggle-tool', key(bi))">
               <component :is="getToolIcon('AskUserQuestion').icon" :size="12" class="tool-icon" />
               <span class="tool-name">{{ t('tool.askUser.name') }}</span>
@@ -466,7 +478,7 @@
 import { ref, shallowRef, watch, onUnmounted, computed, onMounted, onUpdated, reactive, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import i18n from '@/i18n'
-import { handleToolAction, shouldAutoExpandTool, updateAskSubmitState, classifyAskQuestionsInput, restoreAskStatesInContainer, handleAskSupplementaryInput } from '@/utils/renderToolDetail.ts'
+import { handleToolAction, shouldAutoExpandTool, updateAskSubmitState, classifyAskQuestionsInput, restoreAskStatesInContainer, handleAskSupplementaryInput, handleAskSubmitShortcut } from '@/utils/renderToolDetail.ts'
 import { askCardKey } from '@/utils/askQuestionState.ts'
 import { detectAskQuestion } from '@/utils/streamPerf.ts'
 import { askItemsToInputMap } from '@/utils/askQuestion.ts'
@@ -636,6 +648,56 @@ function isUnifiedCardTool(name: string) {
 function unifiedCardTitle(name: string, input: any, displayName?: string) {
   if (isPermissionApproval(name)) return t('tool.permission.title')
   return toolDisplayName(name, input, displayName)
+}
+
+/**
+ * Label for an Agent-family tool pill.
+ *
+ * An Agent Team member's card is titled with the MEMBER's name, not the
+ * subagent TYPE. Every member of a CodeBuddy team is spawned as
+ * `subagent_type: "general-purpose"`, so the type alone renders a column of
+ * identical "General-purpose" cards that say nothing about who did the work.
+ *
+ * The member name is the more specific attribution whenever it is present, so
+ * it wins over `display_name`. It arrives on a later frame of the same tool
+ * call, which is why the block's attribution is filled in incrementally (see
+ * AccumulateBlock) — before that frame lands the card briefly shows the type,
+ * which is the best information available at that moment.
+ *
+ * `member_name` on the block is the primary source. Messages persisted before
+ * the block learned to keep it have an empty value, but their CHILDREN still
+ * carry the attribution, so the name is derived from them — that makes old
+ * history render correctly without a data migration.
+ */
+function agentPillTitle(block: any): string {
+  const own = block?.member_name
+  if (own) return String(own)
+  for (const child of childBlocksOf(block?.id)) {
+    if (child?.member_name) return String(child.member_name)
+  }
+  return toolDisplayName(block?.name, block?.input, block?.display_name)
+}
+
+/** Whether this tool pill IS an Agent card hosting a member timeline — i.e. the
+ *  member-name titling applies.
+ *
+ *  Keyed on the block hosting children rather than on the tool name or the
+ *  `agent` icon category: SendMessage/TeamCreate/ComputerUse share that
+ *  category and must keep their own labels, and a member's OWN Bash/Read cards
+ *  carry `member_name` too — titling those with the member name would turn a
+ *  tool trace into a wall of identical names. */
+function isAgentCardWithMembers(block: any): boolean {
+  if (block?.type !== 'tool_use') return false
+  const name = String(block?.name || '').toLowerCase()
+  if (name !== 'agent' && name !== 'task') return false
+  // Any member evidence counts: the card's own attribution, a child's, or a
+  // colour. Colour alone is enough because it is written by the same member
+  // frames — and requiring the NAME would leave a card that has only the colour
+  // with the generic Agent glyph and no accent.
+  return (
+    !!block?.member_name ||
+    childBlocksOf(block?.id).some((c) => c?.member_name || c?.member_color)
+  )
 }
 
 /**
@@ -1111,9 +1173,27 @@ function needsMemberFallback(block: any): boolean {
   if (props.nested) return false
   const name = block?.member_name
   if (!name) return false
+  // A block that HOSTS other blocks is an Agent card, not member content — even
+  // though it now carries the member name (the backend attributes the spawn
+  // frame to its member so the card can be titled and coloured). Folding it
+  // into the member's own fallback group would nest the timeline inside itself
+  // and lose the card's expand/collapse affordance.
+  if (block?.id && hostBlockIds.value.has(block.id)) return false
   const pid = block?.parent_tool_call_id
   return !pid || !currentBlockIds.value.has(pid)
 }
+
+/** Ids of blocks in this array that are the PARENT of some other block — i.e.
+ *  Agent cards hosting a timeline. Computed from `props.blocks` so it describes
+ *  exactly what this instance renders. */
+const hostBlockIds = computed(() => {
+  const ids = new Set<string>()
+  for (const b of props.blocks) {
+    const pid = b?.parent_tool_call_id
+    if (pid) ids.add(pid)
+  }
+  return ids
+})
 
 /** Member name of the fallback group a block belongs to ('' when none). */
 function memberGroupNameOf(block: any): string {
@@ -1267,12 +1347,30 @@ function isMemberGroupChild(block: any): boolean {
 /** The block that hosts each member fallback group: the member's FIRST block in
  *  this message. Rendering the group there keeps the member's output at the
  *  point in the conversation where it actually arrived. */
+/** The block that hosts each member fallback group, in this message.
+ *
+ *  Rendering the group at the member's first block keeps its output at the
+ *  point in the conversation where it actually arrived.
+ *
+ *  Preference is a NON-tool block (text/thinking) over a tool_use block: the
+ *  anchor block is replaced by the group header pill, so anchoring on a tool
+ *  call would HIDE that tool call's own card (its name, status, output) behind
+ *  a pill that only shows the member name. A member whose only output is one
+ *  tool call is common, and in that case the tool must stay visible.
+ *  When every block is a tool call the first one anchors, which is the only
+ *  choice left — the group still needs a header. */
 const memberFallbackAnchor = computed(() => {
-  const map: Record<string, any> = {}
+  const firstAny: Record<string, any> = {}
+  const firstNonTool: Record<string, any> = {}
   for (const b of props.blocks) {
     const name = memberGroupNameOf(b)
-    if (!name || map[name]) continue
-    map[name] = b
+    if (!name) continue
+    if (!firstAny[name]) firstAny[name] = b
+    if (!firstNonTool[name] && b?.type !== 'tool_use') firstNonTool[name] = b
+  }
+  const map: Record<string, any> = {}
+  for (const name of Object.keys(firstAny)) {
+    map[name] = firstNonTool[name] || firstAny[name]
   }
   return map
 })
@@ -1385,9 +1483,32 @@ function hasSubagentGroup(block: any): boolean {
  * in the roster; a block without attribution keeps the default accent.
  */
 function memberAccentStyle(block: any): Record<string, string> | undefined {
-  const color = block?.member_color
+  const color = memberColorOf(block)
   if (!color) return undefined
   return { '--subagent-accent': teamMemberColorVar(color) }
+}
+
+/**
+ * The member colour for an Agent card.
+ *
+ * The card's own `member_color` is the primary source, but persisted history
+ * routinely has it EMPTY while its CHILDREN carry it (verified on real rows:
+ * every Agent card had member_color null, while the member's own blocks had
+ * green/yellow/red/…). Without the fallback the card loses its accent on every
+ * reload, which is exactly the "pre-interruption members have no colour" bug —
+ * the live stream attributed the colour to the card, but the reload did not.
+ *
+ * Children are the same source the fallback group header uses
+ * (memberFallbackColor), so both paths agree by construction.
+ */
+function memberColorOf(block: any): string | undefined {
+  if (block?.member_color) return String(block.member_color)
+  const id = block?.id
+  if (!id) return undefined
+  for (const child of childBlocksOf(String(id))) {
+    if (child?.member_color) return String(child.member_color)
+  }
+  return undefined
 }
 
 /** Forward a child block's tool-detail event with its real root index. */
@@ -1693,6 +1814,21 @@ function handleToolDetailInput(event: Event) {
   if (askView) {
     updateAskSubmitState(askView)
   }
+}
+
+/**
+ * Ctrl/Cmd+Enter inside an ask card submits it, so the answer needs no reach for
+ * the button. Bound on the same container as the click handler, which is what
+ * scopes it to "the card the keystroke happened in" — several cards (chat list,
+ * tool-detail drawer) can be on screen at once.
+ *
+ * Read-only (share) mode never dispatches, for the same reason
+ * handleToolDetailClick bails: the emit would try to POST to an auth-protected
+ * endpoint from an anonymous viewer.
+ */
+function handleToolDetailKeydown(event: KeyboardEvent) {
+  if (props.readOnly) return
+  handleAskSubmitShortcut(event, emit as any)
 }
 
 // The ask-card body is rebuilt from an HTML string whenever the rendered

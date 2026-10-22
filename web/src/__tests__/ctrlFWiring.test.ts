@@ -53,10 +53,31 @@ describe('Ctrl+F routing in App.vue', () => {
 
   it('leaves ordinary inputs to the browser', () => {
     // The chat box, rename fields and the terminal must keep native Ctrl+F.
+    //
+    // Assert on the STATEMENTS, not on a substring of the condition: the same
+    // `tag === 'INPUT' || tag === 'TEXTAREA'` text also appears elsewhere in the
+    // file (the sibling copies in ChatMessageList/ChatPanelContent), so a bare
+    // `toContain` on the whole body would still pass with the bail-out deleted
+    // from this function. Anchoring on the `return` makes the guard depend on
+    // the branch actually existing here.
     const head = ctrlFBody()
-    expect(head).toContain("tag === 'INPUT' || tag === 'TEXTAREA'")
-    expect(head).toContain('isContentEditable')
+    expect(head).toMatch(/if\s*\(\s*tag === 'INPUT' \|\| tag === 'TEXTAREA'\s*\)\s*return\b/)
+    expect(head).toMatch(/if\s*\(\s*target\?\.isContentEditable\s*\)\s*return\b/)
     expect(head).toContain("'.terminal-panel'")
+  })
+
+  it('runs the INPUT bail-out AFTER the find-box branch', () => {
+    // Order is the whole point of the find-box branch: if the generic INPUT
+    // bail-out came first, a focused find box would fall through to the
+    // browser's native find bar and the branch would be dead code. Asserting
+    // the two statements' relative position is what catches a reorder; a
+    // `toContain` on each would pass either way round.
+    const head = ctrlFBody()
+    const findBox = head.indexOf('isAppSearchField(target)')
+    const inputBail = head.search(/if\s*\(\s*tag === 'INPUT' \|\| tag === 'TEXTAREA'\s*\)\s*return\b/)
+    expect(findBox).toBeGreaterThan(-1)
+    expect(inputBail).toBeGreaterThan(-1)
+    expect(findBox).toBeLessThan(inputBail)
   })
 
   it('closes the view search through an explicit close command, not by focusing', () => {

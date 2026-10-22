@@ -1358,6 +1358,254 @@ describe('usePortForward', () => {
 
             expect(mockApiDelete).toHaveBeenCalledWith('/api/proxy/ports?port=3000')
         })
+
+        it('drops the pending indicator so a removed port cannot resurface', async () => {
+            // A port removed while its bind is still pending used to keep the
+            // entry in connectingPorts, so the watchdog (or a late native
+            // event) would report a failure for a mapping the user deleted.
+            mockIsAppMode.value = true
+            mockApiPost.mockResolvedValue({ localPort: 3000 })
+            mockApiGet.mockResolvedValue({ ports: [{ port: 3000, localPort: 3000, host: '', name: 'App', protocol: 'http', active: false }] })
+            mockApiDelete.mockResolvedValue({})
+            ;(window as any).ClawBenchNative = {
+                addForwardedPort: vi.fn().mockResolvedValue(undefined),
+                removeForwardedPort: vi.fn(),
+            }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { registerPort, unregisterPort, connectingPorts } = usePortForward()
+
+            await registerPort(3000, 'App', 'http')
+            expect(connectingPorts.value.has(3000)).toBe(true)
+
+            await unregisterPort(3000)
+            expect(connectingPorts.value.has(3000)).toBe(false)
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+    })
+
+    describe('native bind failures', () => {
+        it('reports a failure when the host has no addForwardedPort method', async () => {
+            // A missing bridge method used to be returned as success, leaving a
+            // mapping that looked healthy while nothing listened. It must be a
+            // visible, named failure instead.
+            mockIsAppMode.value = true
+            mockApiPost.mockResolvedValue({ localPort: 3000 })
+            mockApiGet.mockResolvedValue({ ports: [] })
+            // Bridge exists (so isAppMode is real) but has no forward method.
+            ;(window as any).ClawBenchNative = { removeForwardedPort: vi.fn() }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { registerPort, connectingPorts } = usePortForward()
+
+            await registerPort(3000, 'App', 'http')
+
+            expect(connectingPorts.value.has(3000)).toBe(false)
+            expect(mockToastShow).toHaveBeenCalledWith(
+                'portForward.bridgeUnsupported',
+                expect.objectContaining({ type: 'error' }),
+            )
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('does not treat a missing reverse method as a forward failure', async () => {
+            // A host that predates ssh -R simply cannot publish reverse
+            // mappings; the manual command is shown instead. That is not an
+            // error and must not raise a toast.
+            mockIsAppMode.value = true
+            mockApiPost.mockResolvedValue({ localPort: 3000 })
+            mockApiGet.mockResolvedValue({ ports: [] })
+            ;(window as any).ClawBenchNative = { addForwardedPort: vi.fn().mockResolvedValue(undefined) }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { registerPort } = usePortForward()
+
+            await registerPort(3000, 'Rev', 'http', '', 'reverse')
+
+            expect(mockToastShow).not.toHaveBeenCalledWith(
+                'portForward.bridgeUnsupported',
+                expect.anything(),
+            )
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('reports a failure when the native bind throws', async () => {
+            mockIsAppMode.value = true
+            mockApiPost.mockResolvedValue({ localPort: 3000 })
+            mockApiGet.mockResolvedValue({ ports: [] })
+            ;(window as any).ClawBenchNative = {
+                addForwardedPort: vi.fn(() => { throw new Error('bridge exploded') }),
+            }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { registerPort, connectingPorts } = usePortForward()
+
+            await registerPort(3000, 'App', 'http')
+
+            expect(connectingPorts.value.has(3000)).toBe(false)
+            expect(mockToastShow).toHaveBeenCalledWith(
+                'portForward.portUnreachable',
+                expect.objectContaining({ type: 'error' }),
+            )
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('reports a failure when a pending bind never produces a verdict', async () => {
+            // The real outage: Android's void addForwardedPort never delivers a
+            // clawbench-port-forward-result event (the service could not be
+            // started at all), so the port sat "connecting" forever with no
+            // error. The watchdog must turn that silence into a failure.
+            mockIsAppMode.value = true
+            mockApiPost.mockResolvedValue({ localPort: 3000 })
+            mockApiGet.mockResolvedValue({ ports: [{ port: 3000, localPort: 3000, host: '', name: 'App', protocol: 'http', active: false }] })
+            ;(window as any).ClawBenchNative = {
+                addForwardedPort: vi.fn().mockResolvedValue(undefined),
+                // Listener never comes up, which is what the outage looked like.
+                testPortReachable: async () => false,
+            }
+
+            vi.useFakeTimers()
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { registerPort, connectingPorts } = usePortForward()
+
+            await registerPort(3000, 'App', 'http')
+            expect(connectingPorts.value.has(3000)).toBe(true)
+            expect(mockToastShow).not.toHaveBeenCalledWith(
+                'portForward.portUnreachable',
+                expect.anything(),
+            )
+
+            await vi.advanceTimersByTimeAsync(25_000)
+
+            expect(connectingPorts.value.has(3000)).toBe(false)
+            expect(mockToastShow).toHaveBeenCalledWith(
+                'portForward.portUnreachable',
+                expect.objectContaining({ type: 'error' }),
+            )
+
+            vi.useRealTimers()
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('clears the pending indicator without an error when only the event was lost', async () => {
+            // The listener did come up — reporting a failure would be a lie.
+            mockIsAppMode.value = true
+            mockApiPost.mockResolvedValue({ localPort: 3000 })
+            mockApiGet.mockResolvedValue({ ports: [{ port: 3000, localPort: 3000, host: '', name: 'App', protocol: 'http', active: false }] })
+            ;(window as any).ClawBenchNative = {
+                addForwardedPort: vi.fn().mockResolvedValue(undefined),
+                testPortReachable: async () => true,
+            }
+
+            vi.useFakeTimers()
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { registerPort, connectingPorts } = usePortForward()
+
+            await registerPort(3000, 'App', 'http')
+            await vi.advanceTimersByTimeAsync(25_000)
+
+            expect(connectingPorts.value.has(3000)).toBe(false)
+            expect(mockToastShow).not.toHaveBeenCalledWith(
+                'portForward.portUnreachable',
+                expect.anything(),
+            )
+
+            vi.useRealTimers()
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('does not fire the watchdog once the native verdict arrives', async () => {
+            mockIsAppMode.value = true
+            mockApiPost.mockResolvedValue({ localPort: 3000 })
+            mockApiGet.mockResolvedValue({ ports: [{ port: 3000, localPort: 3000, host: '', name: 'App', protocol: 'http', active: false }] })
+            ;(window as any).ClawBenchNative = {
+                addForwardedPort: vi.fn().mockResolvedValue(undefined),
+                testPortReachable: async () => false,
+            }
+
+            vi.useFakeTimers()
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { registerPort, connectingPorts } = usePortForward()
+
+            await registerPort(3000, 'App', 'http')
+
+            window.dispatchEvent(new CustomEvent('clawbench-port-forward-result', {
+                detail: { localPort: 3000, success: true },
+            }))
+            expect(connectingPorts.value.has(3000)).toBe(false)
+
+            await vi.advanceTimersByTimeAsync(25_000)
+            expect(mockToastShow).not.toHaveBeenCalledWith(
+                'portForward.portUnreachable',
+                expect.anything(),
+            )
+
+            vi.useRealTimers()
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('cancels the watchdog when the verdict arrives, so a later bind is not killed by it', async () => {
+            // The settled-check above cannot see a leaked timer: the watchdog
+            // bails out because connectingPorts is empty. A stale timer still
+            // matters when the SAME port is bound again — it would fire on its
+            // old deadline and report a failure for a bind that is legitimately
+            // still pending.
+            mockIsAppMode.value = true
+            mockApiPost.mockResolvedValue({ localPort: 3000 })
+            mockApiGet.mockResolvedValue({ ports: [{ port: 3000, localPort: 3000, host: '', name: 'App', protocol: 'http', active: false }] })
+            ;(window as any).ClawBenchNative = {
+                addForwardedPort: vi.fn().mockResolvedValue(undefined),
+                testPortReachable: async () => false,
+            }
+
+            vi.useFakeTimers()
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { registerPort, connectingPorts } = usePortForward()
+
+            // First bind settles at t=0 via the native event.
+            await registerPort(3000, 'App', 'http')
+            window.dispatchEvent(new CustomEvent('clawbench-port-forward-result', {
+                detail: { localPort: 3000, success: true },
+            }))
+            expect(connectingPorts.value.has(3000)).toBe(false)
+
+            // Second bind starts at t=10s and is still pending.
+            await vi.advanceTimersByTimeAsync(10_000)
+            await registerPort(3000, 'App', 'http')
+            expect(connectingPorts.value.has(3000)).toBe(true)
+
+            // t=25s: the FIRST bind's deadline. A leaked timer fires here and
+            // wrongly fails the second, legitimately pending bind.
+            await vi.advanceTimersByTimeAsync(15_000)
+            expect(connectingPorts.value.has(3000)).toBe(true)
+            expect(mockToastShow).not.toHaveBeenCalledWith(
+                'portForward.portUnreachable',
+                expect.anything(),
+            )
+
+            // The second bind's own deadline (t=35s) must still fire.
+            await vi.advanceTimersByTimeAsync(10_000)
+            expect(connectingPorts.value.has(3000)).toBe(false)
+            expect(mockToastShow).toHaveBeenCalledWith(
+                'portForward.portUnreachable',
+                expect.objectContaining({ type: 'error' }),
+            )
+
+            vi.useRealTimers()
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
     })
 
     describe('detectPorts', () => {

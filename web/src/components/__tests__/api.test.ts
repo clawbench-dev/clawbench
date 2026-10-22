@@ -443,6 +443,32 @@ describe('apiPatch', () => {
     await expect(apiPatch('/api/config', {})).rejects.toThrow('forbidden_field')
   })
 
+  // A config PATCH rejection carries the localized sentence in `error` plus a
+  // machine-readable msgKey and detail.field. The panel shows `err.message`, so
+  // the sentence must survive as the message — not be replaced by a status code
+  // or a generic code — while msgKey/detail stay reachable for callers that
+  // branch on them.
+  it('keeps the server-localized sentence as the message and attaches msgKey + detail', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 400,
+      json: () => Promise.resolve({
+        error: '周期长度必须在 1 到 366 天之间',
+        code: 400,
+        msgKey: 'UsageMeterPeriodRange',
+        detail: { Max: 366, field: 'usage_meter.period_days' },
+      }),
+    })
+
+    const err = await apiPatch('/api/config', {}).catch((e: unknown) => e) as Error & {
+      msgKey?: string
+      detail?: { field?: string }
+    }
+    expect(err.message).toBe('周期长度必须在 1 到 366 天之间')
+    expect(err.msgKey).toBe('UsageMeterPeriodRange')
+    expect(err.detail?.field).toBe('usage_meter.period_days')
+  })
+
   it('throws with statusText when no error field', async () => {
     mockFetch.mockResolvedValue({
       ok: false,

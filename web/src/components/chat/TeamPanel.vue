@@ -25,12 +25,17 @@
         <ChevronUp :size="12" class="team-expanded__toggle" />
       </div>
       <div class="team-expanded__roster">
-        <div
+        <button
           v-for="m in members"
           :key="m.name"
+          type="button"
           class="team-member"
           :class="memberRowClass(m)"
           :title="memberTooltip(m)"
+          :aria-label="t('chat.team.detail.open', { name: m.name })"
+          data-action="team-member-detail"
+          :data-member-name="m.name"
+          @click="openMemberDetail(m)"
         >
           <!-- Running uses the app-wide ring (.li-spinner, declared globally in
                css/components.css) instead of a rotating lucide icon: there is
@@ -52,7 +57,15 @@
             :aria-label="statusLabel(m)"
             role="img"
           />
-          <span class="team-member__name" :style="{ color: memberColor(m) }">{{ m.name }}</span>
+          <!-- Name + type share ONE grid track so the numeric columns keep
+               their fixed tracks (that alignment is what made the roster
+               readable). Inside the track the TYPE yields first: it is
+               metadata, while the name is the only thing distinguishing two
+               rows. See .team-member__ident. -->
+          <span class="team-member__ident">
+            <span class="team-member__name" :style="{ color: memberColor(m) }">{{ m.name }}</span>
+            <span v-if="m.agentType" class="team-member__agent-type">{{ m.agentType }}</span>
+          </span>
           <!-- Always rendered, even when the member has no tool calls: the cell
                keeps its width so the numbers in every row land on the same
                column (a v-if here is what made the roster look ragged). -->
@@ -62,18 +75,21 @@
             </template>
           </span>
           <span class="team-member__tokens">{{ tokenLabel(m) }}</span>
-        </div>
+        </button>
       </div>
     </div>
+
+    <TeamMemberDetail :open="detailOpen" :member="detailMember" @close="closeMemberDetail" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronDown, ChevronUp, CircleCheck, CircleDashed, CircleSlash, CircleX, Users, Wrench } from 'lucide-vue-next'
 import { useTeamState, type TeamMember } from '@/composables/useTeamState'
 import { teamMemberColorVar } from '@/utils/teamMemberColor'
+import TeamMemberDetail from './TeamMemberDetail.vue'
 
 const { t } = useI18n()
 const { teamCollapsed, hasTeam, teamName, members, activeCount, completedCount, isAutoTeam, isEnded, toggleTeamCollapse } =
@@ -165,6 +181,26 @@ function memberTooltip(m: TeamMember): string {
     }
   }
   return lines.join('\n')
+}
+
+// ── Member detail ──
+//
+// Clicking a member opens a sheet with everything the wire reports about it.
+// It needs NO extra lookup: the roster already carries the member's full
+// instructions in `description` (verified byte-for-byte against the spawn
+// frame's `prompt` — see TeamMemberDetail's roleHtml comment), so the sheet
+// renders straight from the snapshot it was handed.
+
+const detailOpen = ref(false)
+const detailMember = ref<TeamMember | null>(null)
+
+function openMemberDetail(m: TeamMember) {
+  detailMember.value = m
+  detailOpen.value = true
+}
+
+function closeMemberDetail() {
+  detailOpen.value = false
 }
 
 // Header count: while running show "N active"; once the team is over show the
@@ -288,6 +324,46 @@ const chipText = computed(() => {
   gap: var(--space-2);
   max-height: 240px;
   overflow-y: auto;
+  /* Container for the narrow-panel rule below. The panel width follows the
+     chat column (which is resizable down to ~320px and is the full screen on a
+     phone), so a viewport @media query would answer the wrong question — same
+     reasoning as .notif-body. */
+  container-type: inline-size;
+  container-name: team-roster;
+}
+
+/* Narrow roster: drop the agent type entirely.
+ *
+ * Threshold derived from MEASURED widths in a real browser (Chromium, the app's
+ * own build), not from font metrics on paper:
+ *
+ *   fixed tracks   status 12 + tools 3.5em + tokens 6ch   ≈  87px
+ *   gaps + padding 3 × 6 + 2 × 4 (row) + 2 × 12 (roster)  ≈  50px
+ *   → identity track = roster − 137px
+ *
+ * The longest real member name in the production data ("review-htmlpreview",
+ * 18 chars) measures 110px; the type ("general-purpose") 75px; gap 4px. So the
+ * pair needs 189px, i.e. a 326px roster.
+ *
+ * Measured confirmation (same build, same names):
+ *   roster 334px → identity 197px → pair fits, type shown   ✅
+ *   roster 314px → identity 177px → pair does NOT fit        → hide
+ * 330px sits between the two, so the type disappears exactly when it would
+ * start truncating to "general-…" — which costs width without answering
+ * anything the name does not. A first attempt used 380px and hid the type while
+ * the row still had 60px of slack; that is the mistake this number corrects.
+ *
+ * The NAME is never hidden here: it is the only thing distinguishing two rows,
+ * while the type is near-constant across an auto-team.
+ *
+ * `display: none` rather than `visibility`/`opacity`: it must release the space,
+ * and it must not be read out as an empty element (verified against the a11y
+ * tree: the hidden type does not appear in it).
+ *
+ * A long name still truncates via its own ellipsis, and a long type is capped by
+ * `max-width` — the container query is only the coarse end of the scale. */
+@container team-roster (max-width: 330px) {
+  .team-member__agent-type { display: none; }
 }
 
 /* ── Member row ── */
@@ -302,6 +378,31 @@ const chipText = computed(() => {
   align-items: center;
   gap: var(--space-3);
   min-height: 24px;
+  /* The row is a <button> (it opens the member detail sheet), so reset the UA
+     chrome: a button's default padding/background/centred text would break the
+     grid alignment the roster depends on. `text-align: left` is required —
+     a button centres its content regardless of the grid. */
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  margin: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+}
+
+.team-member:hover {
+  background: var(--bg-tertiary);
+}
+
+/* Keyboard focus must stay visible: this is the only way to reach the detail
+   sheet without a pointer. */
+.team-member:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 1px;
 }
 
 .team-member--terminated {
@@ -344,9 +445,55 @@ const chipText = computed(() => {
   color: var(--text-muted, #6c757d);
 }
 
+/* Identity track: name + agent type.
+ *
+ * A nested flex box, not two grid tracks. The grid's numeric columns must stay
+ * on fixed tracks so they line up across rows, which leaves ONE track for the
+ * identity — so the priority between name and type has to be settled inside it.
+ *
+ * The rule is "type yields first": the name is the only thing distinguishing
+ * two rows, while the type is metadata that is usually identical across the
+ * whole team. `min-width: 0` on the container is what allows the children to
+ * actually shrink below their content width instead of overflowing the row. */
+.team-member__ident {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
 .team-member__name {
+  /* Shrinks only after the type is gone: flex-shrink 0 would make a long name
+     overflow the track, but a name that never truncates would push the type
+     out even when there IS room for it. Both shrink, the type far faster. */
+  flex: 0 1 auto;
+  min-width: 0;
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Agent type — metadata, and the FIRST thing to go when space runs out.
+ *
+ * Three mechanisms, in order of how narrow the row gets:
+ *   1. `flex-shrink: 999` + `min-width: 0` — as the track narrows, this box
+ *      gives up width long before the name does, so the type truncates first.
+ *   2. `max-width: 9em` — a long type name (some agents use multi-word types)
+ *      cannot eat the name's space in the first place.
+ *   3. The container query below removes it entirely on a narrow panel, where
+ *      even a truncated type costs more than it explains.
+ *
+ * Deliberately NOT a `v-if` on a width condition: that would need JS measuring
+ * on every resize/streaming tick, and a ResizeObserver per row for a purely
+ * presentational call. */
+.team-member__agent-type {
+  flex: 0 999 auto;
+  min-width: 0;
+  max-width: 9em;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

@@ -349,6 +349,7 @@
                       @open-group-settings="openGroupSettings"
                       @open-agent-config="openAgentConfig"
                       @toggle-group-cruise="onToggleGroupCruise"
+                      @toggle-group-parallel="onToggleGroupParallel"
                     />
                   </TabPanel>
                   <!-- The hint is centered on the CHAT column, not on
@@ -625,10 +626,10 @@ import { setPendingMessageNavigation } from '@/composables/useMessageNavigation.
 import { useTabDrawer, onTabSwitch, resetTabDrawerState } from '@/composables/useTabDrawer.ts'
 import { resetAgents, useAgents } from '@/composables/useAgents'
 import { useGroupMembers } from '@/composables/useGroupMembers'
-import { setGroupCruise } from '@/composables/useGroupChat'
+import { setGroupCruise, setGroupParallelDefault } from '@/composables/useGroupChat'
 import { resetUsageStats } from '@/composables/useUsageStats'
 import { resetGitStats } from '@/composables/useGitCodeStats'
-import { useSessionIdentity, registerSessionDrawerRef, registerOpenSessionTabOverride, resetIdentity, applyCruiseAutoApproveDefault } from './composables/useSessionIdentity.ts'
+import { useSessionIdentity, registerSessionDrawerRef, registerOpenSessionTabOverride, registerGroupRosterRefresh, resetIdentity, applyCruiseAutoApproveDefault } from './composables/useSessionIdentity.ts'
 import { useSessionSidebar } from './composables/useSessionSidebar.ts'
 import type { SessionSearchResult } from './composables/useSessionSearch'
 import { loadSessionsOnce, resetChatSessionState, switching } from './composables/useChatSession.ts'
@@ -641,6 +642,7 @@ import { buildRenameGenerateOptions } from '@/utils/sessionRename'
 import { useDialog } from './composables/useDialog.ts'
 import { gt } from './composables/useLocale'
 import { useAppMode } from './composables/useAppMode.ts'
+import { onAppResume } from './composables/useAppForeground.ts'
 import { requestNotificationPermission } from './composables/useNotification'
 import { useTerminalKeyboard } from './composables/useTerminalKeyboard.ts'
 import { useChatKeyboard } from './composables/useChatKeyboard.ts'
@@ -1448,6 +1450,21 @@ async function onToggleGroupCruise(enabled: boolean) {
   await refreshGroupMembers(groupId)
 }
 
+// Toggle the current GROUP's free-mode concurrency switch from the session-info
+// bar chip. Same ownership contract as cruise: App PATCHes and refreshes the
+// roster, so the chip and the group settings sheet's switch read one server
+// value. A failed PATCH still refreshes, reverting the chip to the truth.
+async function onToggleGroupParallel(enabled: boolean) {
+  const groupId = sessionIdentity.currentSessionId.value
+  if (!groupId) return
+  try {
+    await setGroupParallelDefault(groupId, enabled)
+  } catch (e) {
+    appLog.w('Group', 'setGroupParallelDefault failed', e)
+  }
+  await refreshGroupMembers(groupId)
+}
+
 /**
  * Group-chat speaker header → that agent's config page.
  *
@@ -2093,6 +2110,14 @@ const { pickerOpen: sessionPickerOpen } = usePendingTarget()
 const sessionDrawerRef = ref<InstanceType<typeof SessionDrawer> | null>(null)
 const sessionSidebarRef = ref<InstanceType<typeof SessionSidebar> | null>(null)
 
+// Register the group-roster refresher. App.vue owns the single
+// useGroupMembers instance (the chat header and the settings sheet both read
+// it), so consumers that need to force a reload after writing member data —
+// e.g. fork, whose members' avatars are generated asynchronously AFTER the
+// session switch — reach it through this hook rather than owning a second
+// instance. Same pattern as registerSessionDrawerRef below.
+registerGroupRosterRefresh(refreshGroupMembers)
+
 // Register SessionDrawer ref so identity.openAgentSelector() works
 watch(sessionDrawerRef, (ref) => {
   if (ref) registerSessionDrawerRef(ref)
@@ -2365,6 +2390,22 @@ function registerAppEventListeners() {
   // Registered here (not in onMounted) because it is part of the global
   // listener set that both cold start and post-login initialization install.
   startSystemThemeWatcher()
+
+  // Re-establish the native port forwards on every return to the foreground.
+  //
+  // The initial syncToNative() runs once during startup, but a forward can be
+  // requested while the app is in the background (the user taps a
+  // localhost-URL link in another app, the WebView is frozen, and the request
+  // is queued to the page). Android 12+ then refuses the service start with
+  // ForegroundServiceStartNotAllowedException, so nothing binds — and nothing
+  // retries either: the service is not running, the monitor is not armed, and
+  // the page's own 5s poll only asks an absent service to reconnect
+  // ("reconnectTunnelAsync: BackgroundService not running", forever).
+  // Resuming is exactly the moment the restriction is lifted, so re-sync here.
+  onAppResume(() => {
+    if (!isAppMode.value) return
+    syncToNative().catch(() => {})
+  })
 
   // Tell the desktop shell the notification-click listeners above are live.
   // Until this fires, a clicked notification is deferred by the main process

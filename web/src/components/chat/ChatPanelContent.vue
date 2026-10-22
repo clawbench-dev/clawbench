@@ -125,6 +125,7 @@
       :isGroupSession="isGroupSession"
       :groupMembers="props.groupMembers"
       :groupCruise="props.groupCruise"
+      :groupParallelDefault="props.groupParallelDefault"
       :groupMode="props.groupMode"
       @send="sendMessage"
       @btw="handleBtw"
@@ -155,6 +156,7 @@
       @sync-acp-session="handleSyncAcpSession"
       @open-group-settings="$emit('open-group-settings')"
       @toggle-group-cruise="$emit('toggle-group-cruise', $event)"
+      @toggle-group-parallel="$emit('toggle-group-parallel', $event)"
     />
 
   </div>
@@ -206,15 +208,31 @@
     @click="handleOverlayRetryClick"
   />
 
-  <!-- Agent Selector for Fork -->
+  <!-- Fork target picker: a single agent, or a whole new group. Reuses the
+       create-page picker (segmented single/group switch + instance stepper +
+       inline host dot) so forking into a group behaves exactly like creating
+       one. -->
   <AgentSelectorDrawer
     :open="forkAgentSelectorDrawer.effectiveOpen.value"
-    :modelValue="identity.currentAgentId.value"
-    :title="t('chat.session.selectAgentForFork')"
+    :modelValue="forkModelValue"
+    :multiple="forkCreatingGroup"
+    :group-mode="forkCreatingGroup"
+    :allow-instances="forkCreatingGroup"
+    :max-instances="forkCreatingGroup ? store.state.groupMaxMembers : 0"
+    :show-mode-switch="true"
+    :host-id="forkHostAgentId"
+    :host-label="t('group.hostLabel')"
+    :host-active-label="t('group.hostActiveLabel')"
+    :host-badge="t('group.host')"
+    :confirm-label="forkCreatingGroup ? t('group.createGroup') : t('chat.session.selectAgentForFork')"
+    :title="forkCreatingGroup ? t('group.selectMembers') : t('chat.session.selectAgentForFork')"
+    :show-agent-actions="!forkCreatingGroup"
     :default-badge="t('chat.sessionSetting.defaultBadge')"
     :set-default-title="t('session.setAsDefaultAgent')"
     :config-title="t('session.configAgent')"
-    @update:open="v => { if (v) forkAgentSelectorDrawer.open(); else { forkAgentSelectorDrawer.close(); forkPending.value = null } }"
+    @update:open="onForkPickerOpenChange"
+    @switch-mode="onForkModeSwitch"
+    @update:host-id="v => forkHostAgentId = v"
     @select="handleForkAgentSelect"
   />
 
@@ -330,8 +348,12 @@ const props = defineProps({
      *  Forwarded to ChatInputBar's session-info bar chip; the toggle is emitted
      *  back up so App owns the PATCH + roster refresh. */
     groupCruise: { type: Boolean, default: false },
+    /** The group's free-mode concurrency switch value (owned by App's
+     *  useGroupMembers). Forwarded to ChatInputBar's session-info bar chip; the
+     *  toggle is emitted back up so App owns the PATCH + roster refresh. */
+    groupParallelDefault: { type: Boolean, default: false },
 })
-const emit = defineEmits(['open', 'message', 'task-card-click', 'open-session-search', 'open-group-settings', 'open-agent-config', 'toggle-group-cruise'])
+const emit = defineEmits(['open', 'message', 'task-card-click', 'open-session-search', 'open-group-settings', 'open-agent-config', 'toggle-group-cruise', 'toggle-group-parallel'])
 
 // ── Singletons ──
 const identity = useSessionIdentity()
@@ -391,7 +413,20 @@ const metadataModal = ref({
 })
 const metadataDrawer = useTabDrawer('chat')
 const forkAgentSelectorDrawer = useTabDrawer('chat', { autoRestore: false })
-const forkPending = ref(null) // { sessionId, beforeMessageId }
+/** Pending fork: the source session/message plus what the picker has to
+ *  pre-select. `sourceIsGroup` drives the prefill and the initial tab. */
+const forkPending = ref(null) // { sessionId, beforeMessageId, sourceIsGroup }
+/** The fork picker's single/group segmented state. Seeded from the SOURCE
+ *  shape so a group fork opens on the group tab with the original roster
+ *  pre-selected, and a chat fork opens on the single tab. */
+const forkCreatingGroup = ref(false)
+/** Host agent chosen inline in the fork picker (group tab only). */
+const forkHostAgentId = ref('')
+/** Pre-selected agent ids for the picker's multi-select buffer. */
+const forkMemberAgentIds = ref([])
+/** modelValue handed to the picker: an array in group mode (the multi-select
+ *  buffer) and the current agent id in single mode. */
+const forkModelValue = computed(() => (forkCreatingGroup.value ? forkMemberAgentIds.value : identity.currentAgentId.value))
 /** Message id whose fork button is mid-flight — drives its in-place spinner.
  *  Null when no fork is running. */
 const forkingMessageId = ref(null)
@@ -1447,26 +1482,86 @@ function handleOpenSessionShare() {
 async function handleForkFromMessage(msg) {
   const sid = identity.currentSessionId.value
   if (!sid) return
-  if (await dialog.confirm(t('chat.session.forkFromMessageConfirm'))) {
+  const sourceIsGroup = isGroupSession.value
+  if (await dialog.confirm(t(sourceIsGroup ? 'chat.session.forkFromGroupConfirm' : 'chat.session.forkFromMessageConfirm'))) {
     messageListRef.value?.closeUserMsgIndex()
     await agentsComposable.loadAgents()
-    // If only one agent, fork directly (inherits source session's agent)
-    if (agentsList.value.length <= 1) {
+    // A single chat with one available agent has nothing to choose: fork
+    // straight into the same agent (legacy shortcut). A GROUP source always
+    // opens the picker — it is the only place to pick the target shape, and a
+    // group fork's roster is not implied by the agent list.
+    if (!sourceIsGroup && agentsList.value.length <= 1) {
       await runFork(sid, msg.id)
       return
     }
-    // Multiple agents — show selector with source session's agent pre-selected
-    forkPending.value = { sessionId: sid, beforeMessageId: msg.id }
+    seedForkPicker(sourceIsGroup)
+    forkPending.value = { sessionId: sid, beforeMessageId: msg.id, sourceIsGroup }
     forkAgentSelectorDrawer.open()
   }
 }
 
-function handleForkAgentSelect(agentId) {
+/**
+ * Pre-fill the fork picker from the SOURCE shape.
+ *
+ * A group source opens on the group tab with the original roster (duplicate
+ * instances included, since each member is an independent instance) and the
+ * original host pre-selected; a single-chat source opens on the single tab with
+ * the current agent, which the picker already highlights via modelValue.
+ */
+function seedForkPicker(sourceIsGroup) {
+  forkHostAgentId.value = ''
+  forkMemberAgentIds.value = []
+  forkCreatingGroup.value = false
+  if (!sourceIsGroup) return
+  forkCreatingGroup.value = true
+  const members = props.groupMembers || []
+  forkMemberAgentIds.value = members.filter(m => !m.left).map(m => m.agentId)
+  const host = members.find(m => m.isHost && !m.left)
+  forkHostAgentId.value = host?.agentId || ''
+}
+
+/** The picker's segmented switch: leaving group mode drops the host (a host only
+ *  exists for a group), mirroring SessionDrawer's create flow. */
+function onForkModeSwitch(mode) {
+  forkCreatingGroup.value = mode === 'group'
+  forkHostAgentId.value = ''
+}
+
+/** Closing the picker (cancel or confirm) resets its transient state so the next
+ *  fork does not inherit the previous mode. */
+function onForkPickerOpenChange(open) {
+  if (open) {
+    forkAgentSelectorDrawer.open()
+    return
+  }
   forkAgentSelectorDrawer.close()
-  const pending = forkPending.value
-  if (!pending) return
   forkPending.value = null
-  runFork(pending.sessionId, pending.beforeMessageId, agentId)
+  forkCreatingGroup.value = false
+  forkHostAgentId.value = ''
+  forkMemberAgentIds.value = []
+}
+
+function handleForkAgentSelect(agentId) {
+  const pending = forkPending.value
+  const asGroup = forkCreatingGroup.value
+  const hostAgentId = forkHostAgentId.value
+  forkAgentSelectorDrawer.close()
+  forkPending.value = null
+  forkCreatingGroup.value = false
+  forkHostAgentId.value = ''
+  forkMemberAgentIds.value = []
+  if (!pending) return
+  if (asGroup) {
+    const memberAgentIds = Array.isArray(agentId) ? agentId : [agentId]
+    // Same validity rule as group creation: a host must be one of the members;
+    // without a host the group is free mode and needs at least two members.
+    if (memberAgentIds.length === 0) return
+    if (hostAgentId && !memberAgentIds.includes(hostAgentId)) return
+    if (!hostAgentId && memberAgentIds.length < 2) return
+    runFork(pending.sessionId, pending.beforeMessageId, { kind: 'group', hostAgentId, memberAgentIds })
+    return
+  }
+  runFork(pending.sessionId, pending.beforeMessageId, { kind: 'chat', agentId })
 }
 
 /**
@@ -1474,11 +1569,11 @@ function handleForkAgentSelect(agentId) {
  * spinner on that message's fork button; the BusyBar/toast cover the rest of
  * the wait (the POST itself has no other visible progress).
  */
-async function runFork(sessionId, beforeMessageId, agentId) {
+async function runFork(sessionId, beforeMessageId, target) {
   if (!startBusy('fork')) return
   forkingMessageId.value = beforeMessageId ?? null
   try {
-    await manager.forkSession(sessionId, beforeMessageId, agentId)
+    await manager.forkSession(sessionId, beforeMessageId, target)
   } finally {
     forkingMessageId.value = null
     stopBusy('fork')

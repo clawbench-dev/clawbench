@@ -46,15 +46,25 @@ export function buildSearchRegex(q: string, opts: SearchQueryOptions = {}): RegE
 }
 
 /**
- * Elements whose text is code, not content.
+ * Elements whose text is code or chrome, not content.
  *
  * A rendered HTML preview carries the document's own `<style>` and `<script>`
  * blocks. Matching inside them would not merely highlight the wrong text — it
  * would WRAP them in `<mark>`, i.e. inject markup into the document's CSS/JS
  * and change how the preview renders. Markdown never had these tags, so this
  * guard is what makes the shared engine safe for HTML.
+ *
+ * The form-control entries are the same class of problem for a different
+ * reason: `<option>`/`<optgroup>` hold real text nodes, and wrapping one in
+ * `<mark>` puts an element where the platform expects plain label text — the
+ * dropdown then renders wrong or empty. `<select>` is listed too so the whole
+ * subtree is skipped rather than relying on each descendant being caught.
+ * `<textarea>` was already excluded; `<input>` has no text children.
  */
-const NON_CONTENT_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'TITLE', 'TEXTAREA'])
+const NON_CONTENT_TAGS = new Set([
+  'SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'TITLE', 'TEXTAREA',
+  'SELECT', 'OPTGROUP', 'OPTION',
+])
 
 function isContentTextNode(node: Text): boolean {
   const parent = node.parentElement

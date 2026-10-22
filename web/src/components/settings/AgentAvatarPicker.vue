@@ -3,7 +3,6 @@
     :open="open"
     :title="t('settings.items.agentAvatarTitle')"
     :z-index="2500"
-    :max-width="520"
     @close="handleClose"
   >
     <div class="avatar-picker__body">

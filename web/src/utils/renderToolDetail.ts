@@ -8,6 +8,7 @@ import { detectLang, highlightLine } from './diff.ts'
 import { resolveFilePath, fileOpenButtonHtml } from '@/composables/useFilePathAnnotation.ts'
 import { localhostOpenButtonHtml, parseLocalhostUrl } from '@/composables/useLocalhostAnnotation.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
+import { isMacDesktopUA } from '@/composables/usePlatformDetect.ts'
 import { appLog } from '@/utils/appLog'
 
 const TAG = 'renderToolDetail'
@@ -341,6 +342,38 @@ export function hasRenderableAskQuestions(input: unknown): boolean {
 }
 
 /**
+ * The shortcut hint shown in the free space left of the Submit button:
+ * "Submit (Ctrl+Enter)" — the ACTION and the keys, not just the keys.
+ *
+ * The keys alone ("Ctrl+Enter") left the reader to infer what they do; the
+ * action word is what makes the hint self-explanatory.
+ *
+ * Spelled out in words rather than as chord glyphs (⌃↵ / ⌘↵): the glyphs are
+ * abstract — ⌃ and ⌘ are unlabeled shapes, and "↵" reads as "return line" as
+ * easily as "submit". The words match the labels the shortcut help dialog
+ * already uses, so the two surfaces agree.
+ *
+ * Both halves are localized (`tool.askUser.submitHint` = "提交（{key}）" /
+ * "Submit ({key})"), so the hint follows the UI language like every other
+ * string on the card — a hardcoded English "Submit" would sit next to a
+ * Chinese 提交 button.
+ *
+ * Read from the shared platform axis rather than re-deriving "is this a Mac"
+ * here: a local copy of that judgement is exactly what drifted when four
+ * `isAndroidApp` copies existed. A plain string read (not a reactive one) is
+ * enough — this renderer produces HTML strings and never re-runs on a platform
+ * change mid-session.
+ */
+function askSubmitChord(): string {
+  return isMacDesktopUA ? 'Cmd+Enter' : 'Ctrl+Enter'
+}
+
+/** The full hint text: action word + keys, localized. */
+function askSubmitHint(): string {
+  return gt('tool.askUser.submitHint', { key: askSubmitChord() })
+}
+
+/**
  * Render AskUserQuestion tool input as an interactive question card.
  * Shows question header, question text, and selectable option buttons.
  * Clicking an option is handled by the AskUserQuestion action handler
@@ -362,7 +395,12 @@ function renderAskUserQuestion(input: ToolInput, blockCtx?: ToolBlockCtx): strin
   // usable — it just cannot survive a re-render (the historical behaviour).
   const askKeyAttr = blockCtx?.askKey ? ` data-ask-key="${escapeHtml(blockCtx.askKey)}"` : ''
 
-  let html = `<div class="ask-question-view"${askKeyAttr}>`
+  // `tabindex="-1"` makes the card programmatically focusable (not tab-reachable,
+  // so it does not add a stop to keyboard navigation). This is what lets the
+  // Ctrl/Cmd+Enter shortcut work after a MOUSE selection: the options are
+  // <div>s, so clicking one leaves focus on <body>, and a keydown fired there
+  // never reaches the card container the shortcut is bound to. See focusAskView.
+  let html = `<div class="ask-question-view"${askKeyAttr} tabindex="-1">`
 
   for (let qi = 0; qi < questions.length; qi++) {
     const q = questions[qi]
@@ -421,6 +459,13 @@ function renderAskUserQuestion(input: ToolInput, blockCtx?: ToolBlockCtx): strin
   html += '</div>'
 
   html += '<div class="ask-question-actions">'
+  // The chord hint sits in the empty space to the LEFT of the buttons (the row
+  // is right-aligned, so `margin-right: auto` parks it against the far edge).
+  // It is deliberately not inside the Submit button: it describes a keyboard
+  // gesture for the whole card, not a second label on one button. Hidden on
+  // touch-primary pointers by CSS (no physical keyboard there), which keeps
+  // this a pure string renderer — no reactive platform read.
+  html += `<kbd class="ask-submit-kbd">${escapeHtml(askSubmitHint())}</kbd>`
   html += `<button class="ask-question-recommend">${gt('tool.askUser.recommend')}</button>`
   html += `<button class="ask-question-submit" disabled>${gt('tool.askUser.submit')}</button>`
   html += '</div>'
@@ -2116,6 +2161,14 @@ registerToolActionHandler('AskUserQuestion', (event, emit) => {
 
       updateAskSubmitState(view)
       persistAskState(view)
+      // Move focus onto the card itself so Ctrl/Cmd+Enter works immediately
+      // after a mouse pick. Without this the options (plain <div>s) leave focus
+      // on <body> and the keydown never reaches the card container — the
+      // shortcut silently did nothing until the user clicked into the note
+      // field. Deliberately the CARD, not the note field: focusing the textarea
+      // would open the soft keyboard on mobile and put the caret somewhere the
+      // user did not ask for.
+      focusAskView(view)
     }
     return true
   }
@@ -2167,65 +2220,135 @@ registerToolActionHandler('AskUserQuestion', (event, emit) => {
     event.stopPropagation()
     event.preventDefault()
     const view = submitBtn.closest('.ask-question-view')
-    if (view && !view.classList.contains('ask-submitted')) {
-      const answers: string[] = []
-      const items = view.querySelectorAll('.ask-question-item')
-      for (const item of items) {
-        const selected = item.querySelectorAll('.ask-question-option.selected')
-        const labels = [...selected].map(el => (el as HTMLElement).dataset.label)
-        if (labels.length > 0) {
-          answers.push(labels.map(l => `- ${l}`).join('\n'))
-        }
-      }
-      // Append supplementary text as a separate paragraph
-      const supplementaryInput = askSupplementaryField(view)
-      const supplementaryText = supplementaryInput?.value?.trim()
-      if (supplementaryText) {
-        answers.push(supplementaryText)
-      }
-      if (answers.length === 0) return true
-
-      // Mark as submitted
-      view.classList.add('ask-submitted')
-      const allOptions = view.querySelectorAll('.ask-question-option')
-      for (const opt of allOptions) {
-        ;(opt as HTMLElement).style.pointerEvents = 'none'
-        if (!opt.classList.contains('selected')) {
-          ;(opt as HTMLElement).style.opacity = 'var(--opacity-disabled)'
-        }
-      }
-      if (supplementaryInput) {
-        supplementaryInput.disabled = true
-        supplementaryInput.style.opacity = 'var(--opacity-muted)'
-      }
-      submitBtn.textContent = gt('tool.askUser.submitted')
-      ;(submitBtn as HTMLButtonElement).disabled = true
-
-      // Record the terminal state BEFORE emitting. It is deliberately NOT
-      // cleared on a successful send: the card must still render as submitted
-      // after a reload, and `restoreAskStateFromStore` bails out entirely when
-      // no state exists — so dropping it here would resurrect the very bug this
-      // fixes (the card coming back answerable). Entries are swept when the
-      // session is archived/destroyed (see useSessionManager).
-      //
-      // On a FAILED send the caller reverts `submitted` so the card becomes
-      // answerable again, keeping the selection and note for a retry — see
-      // revertAskSubmission.
-      patchAskState(askKeyOf(view), { selected: readSelectedFromDom(view), submitted: true })
-
-      // The card key rides along so the caller can revert this submission if
-      // the send fails (see revertAskSubmission). Sent only when the card has a
-      // key, so every other send-message emit keeps its single-argument shape.
-      const cardKey = askKeyOf(view)
-      if (cardKey) emit('send-message', answers.join('\n\n'), cardKey)
-      else emit('send-message', answers.join('\n\n'))
-    }
+    if (view) submitAskView(view, emit)
     return true
   }
 
   // Not an AskUserQuestion-specific click — fall through
   return false
 })
+
+/**
+ * Move keyboard focus onto an ask card.
+ *
+ * The card is a `v-html` string, so its options are plain `<div>`s: clicking one
+ * moves focus nowhere, leaving it on `<body>`. A keydown fired there bubbles
+ * only up to `<body>` and never reaches the container the shortcut is bound to,
+ * so Ctrl/Cmd+Enter after a mouse pick did nothing at all. The card carries
+ * `tabindex="-1"` so it can receive that focus programmatically.
+ *
+ * Guarded by `preventScroll`: focusing an element scrolls it into view by
+ * default, and the card is already on screen — the jump would be a visible
+ * twitch in the message list.
+ *
+ * A no-op where focus cannot move (jsdom without a layout, or a card inside a
+ * hidden panel), which is fine: the shortcut then behaves as it did before.
+ */
+function focusAskView(view: Element): void {
+  const el = view as HTMLElement
+  if (typeof el.focus !== 'function') return
+  el.focus({ preventScroll: true })
+}
+
+/**
+ * Submit an ask card: collect the answer, mark the card terminal, persist the
+ * state and emit `send-message`.
+ *
+ * Extracted from the Submit click handler because the keyboard path
+ * (Ctrl/Cmd+Enter, see `handleAskSubmitShortcut`) must run the SAME code. Two
+ * copies would drift on exactly the part that is easy to forget — persisting
+ * `submitted` — and a card that forgot it comes back answerable on the next
+ * re-render, which is the bug the store exists to prevent.
+ *
+ * Returns true when the card is now terminal (just answered, or answered
+ * earlier); false when there is nothing to send (no option, no note).
+ */
+function submitAskView(view: Element, emit: (type: string, payload?: unknown, detail?: unknown) => void): boolean {
+  if (view.classList.contains('ask-submitted')) return true
+
+  const answers: string[] = []
+  const items = view.querySelectorAll('.ask-question-item')
+  for (const item of items) {
+    const selected = item.querySelectorAll('.ask-question-option.selected')
+    const labels = [...selected].map(el => (el as HTMLElement).dataset.label)
+    if (labels.length > 0) {
+      answers.push(labels.map(l => `- ${l}`).join('\n'))
+    }
+  }
+  // Append supplementary text as a separate paragraph
+  const supplementaryInput = askSupplementaryField(view)
+  const supplementaryText = supplementaryInput?.value?.trim()
+  if (supplementaryText) {
+    answers.push(supplementaryText)
+  }
+  if (answers.length === 0) return false
+
+  // Mark as submitted
+  view.classList.add('ask-submitted')
+  const allOptions = view.querySelectorAll('.ask-question-option')
+  for (const opt of allOptions) {
+    ;(opt as HTMLElement).style.pointerEvents = 'none'
+    if (!opt.classList.contains('selected')) {
+      ;(opt as HTMLElement).style.opacity = 'var(--opacity-disabled)'
+    }
+  }
+  if (supplementaryInput) {
+    supplementaryInput.disabled = true
+    supplementaryInput.style.opacity = 'var(--opacity-muted)'
+  }
+  const submitBtn = view.querySelector('.ask-question-submit') as HTMLButtonElement | null
+  if (submitBtn) {
+    submitBtn.textContent = gt('tool.askUser.submitted')
+    submitBtn.disabled = true
+  }
+
+  // Record the terminal state BEFORE emitting. It is deliberately NOT
+  // cleared on a successful send: the card must still render as submitted
+  // after a reload, and `restoreAskStateFromStore` bails out entirely when
+  // no state exists — so dropping it here would resurrect the very bug this
+  // fixes (the card coming back answerable). Entries are swept when the
+  // session is archived/destroyed (see useSessionManager).
+  //
+  // On a FAILED send the caller reverts `submitted` so the card becomes
+  // answerable again, keeping the selection and note for a retry — see
+  // revertAskSubmission.
+  const cardKey = askKeyOf(view)
+  patchAskState(cardKey, { selected: readSelectedFromDom(view), submitted: true })
+
+  // The card key rides along so the caller can revert this submission if
+  // the send fails (see revertAskSubmission). Sent only when the card has a
+  // key, so every other send-message emit keeps its single-argument shape.
+  if (cardKey) emit('send-message', answers.join('\n\n'), cardKey)
+  else emit('send-message', answers.join('\n\n'))
+  return true
+}
+
+/**
+ * Ctrl/Cmd+Enter inside an ask card submits it (one-key submit).
+ *
+ * Scope is the card that owns the keystroke, not "the newest card on screen":
+ * the chat list, the tool-detail drawer and the file-diff drawer can each render
+ * ask cards, and several can be visible at once. Guessing would send the wrong
+ * answer to the agent. Every host binds this on the container that already
+ * carries `@click`/`@input` for the card, so the event only arrives when the
+ * keystroke actually happened inside one.
+ *
+ * Returns true when the keystroke belonged to a card — the host must treat it as
+ * consumed. A card with nothing selected is still consumed: the disabled Submit
+ * button is the feedback, and silently rewriting the note would be worse.
+ */
+export function handleAskSubmitShortcut(event: KeyboardEvent, emit: (type: string, payload?: unknown, detail?: unknown) => void): boolean {
+  if (!(event.ctrlKey || event.metaKey) || event.shiftKey || event.altKey) return false
+  if (event.key !== 'Enter') return false
+  // An IME owns the keystroke while composing (candidate selection).
+  if (event.isComposing) return false
+  const target = event.target as HTMLElement | null
+  const view = target?.closest?.('.ask-question-view') ?? null
+  if (!view) return false
+  event.preventDefault()
+  submitAskView(view, emit)
+  return true
+}
 
 /**
  * Handle typing in the supplementary-info field.

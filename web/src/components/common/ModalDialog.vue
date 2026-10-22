@@ -11,7 +11,7 @@
       @click.self="handleClose"
       @keydown.escape="handleClose"
     >
-      <div class="modal-dialog" :class="{ 'modal-leaving': leaving, 'modal-full-height': fullHeight }" :style="maxWidthStyle" @click.stop>
+      <div class="modal-dialog" :class="{ 'modal-leaving': leaving, 'modal-full-height': fullHeight }" @click.stop>
         <div class="modal-header">
           <slot name="header">
             <span class="modal-title">{{ title }}</span>
@@ -51,12 +51,10 @@ const props = defineProps({
   title: { type: String, default: '' },
   zIndex: { type: Number, default: 2100 },
   fullHeight: { type: Boolean, default: false },
-  maxWidth: { type: Number, default: 480 },
 })
 
 const emit = defineEmits(['close'])
 
-const maxWidthStyle = computed(() => props.maxWidth ? { maxWidth: `${Math.round(props.maxWidth * 1.3)}px` } : {})
 const closeLabel = computed(() => i18n.global.t('common.close'))
 
 const leaving = ref(false)

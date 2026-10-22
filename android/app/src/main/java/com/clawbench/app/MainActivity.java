@@ -172,6 +172,10 @@ public class MainActivity extends AppCompatActivity {
     // File chooser state for WebView <input type="file"> support
     private ValueCallback<Uri[]> filePathCallback;
     private Uri cameraImageUri; // URI for camera capture image
+    // The File behind cameraImageUri. Kept because the URI cannot be turned back
+    // into a path: FileProvider hands out content://, whose getPath() is a
+    // synthetic "/external_files/..." string that no File can delete.
+    private File cameraImageFile;
     private Intent pendingFileChooserIntent; // WebView-built base intent, kept as the fallback
     // What the <input> actually asked for. The page has three distinct entries
     // (拍照 / 照片 / 上传文件) and each must reach its own app: wrapping them all
@@ -216,10 +220,34 @@ public class MainActivity extends AppCompatActivity {
                 // Clean up unused camera temp file if user didn't take a photo
                 if (cameraImageUri != null
                         && (results == null || results.length == 0 || !cameraImageUri.equals(results[0]))) {
-                    new File(cameraImageUri.getPath()).delete();
+                    deleteCameraTempFile();
                 }
                 cameraImageUri = null;
+                cameraImageFile = null;
             });
+
+    /**
+     * Delete the pre-created camera temp file, if the user did not end up
+     * taking a photo.
+     *
+     * Uses the File kept alongside the URI. `new File(cameraImageUri.getPath())`
+     * looked reasonable but could never work: the URI is a FileProvider
+     * content:// URI, and `getPath()` returns a synthetic "/external_files/..."
+     * string rather than the real location. The delete silently returned false
+     * and every cancelled capture left a full-size JPEG in
+     * getExternalFilesDir(Pictures) forever.
+     *
+     * Package-private for unit testing.
+     */
+    void deleteCameraTempFile() {
+        if (cameraImageFile == null) return;
+        if (!cameraImageFile.delete() && cameraImageFile.exists()) {
+            // Best-effort: a failure here must not break the chooser result,
+            // but a permanently growing Pictures dir is worth a log line.
+            AppLog.w(TAG, "Failed to delete camera temp file: " + cameraImageFile.getAbsolutePath());
+        }
+        cameraImageFile = null;
+    }
 
     /**
      * Resolve the file chooser activity result into the list of selected URIs.
@@ -1288,6 +1316,9 @@ public class MainActivity extends AppCompatActivity {
                             getPackageName() + ".fileprovider",
                             photoFile
                     );
+                    // Remember the File: the URI cannot be converted back into a
+                    // deletable path (see deleteCameraTempFile).
+                    cameraImageFile = photoFile;
                     cameraIntent.putExtra(MediaStore.EXTRA_OUTPUT, cameraImageUri);
                     // Grant URI permissions so the camera app can write to the FileProvider URI
                     cameraIntent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
