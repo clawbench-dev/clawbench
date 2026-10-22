@@ -130,4 +130,21 @@ describe('group cruise chip wiring is bound on ChatInputBar, not ChatMessageList
     const listBlock = src.slice(listOpen, src.indexOf('/>', listOpen))
     expect(listBlock, ':groupCruise must not be bound on ChatMessageList').not.toContain('groupCruise')
   })
+
+  // Same placement hazard for the free-mode concurrency chip that sits next to
+  // the cruise chip in the same bar: bound on the wrong sibling tag it would
+  // read its default (false), so the chip never highlights and every click
+  // computes next=!false=true — it could never be turned OFF.
+  it('binds :groupParallelDefault and @toggle-group-parallel inside the ChatInputBar block', () => {
+    const src = readWebFile(PANEL)
+    const open = src.indexOf('<ChatInputBar')
+    const block = src.slice(open, src.indexOf('/>', open))
+
+    expect(block, ':groupParallelDefault must be bound on ChatInputBar').toContain(':groupParallelDefault="props.groupParallelDefault"')
+    expect(block, '@toggle-group-parallel must be wired on ChatInputBar').toContain("@toggle-group-parallel=\"$emit('toggle-group-parallel', $event)\"")
+
+    const listOpen = src.indexOf('<ChatMessageList')
+    const listBlock = src.slice(listOpen, src.indexOf('/>', listOpen))
+    expect(listBlock, ':groupParallelDefault must not be bound on ChatMessageList').not.toContain('groupParallelDefault')
+  })
 })

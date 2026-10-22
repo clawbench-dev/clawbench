@@ -125,6 +125,7 @@
       :isGroupSession="isGroupSession"
       :groupMembers="props.groupMembers"
       :groupCruise="props.groupCruise"
+      :groupParallelDefault="props.groupParallelDefault"
       :groupMode="props.groupMode"
       @send="sendMessage"
       @btw="handleBtw"
@@ -155,6 +156,7 @@
       @sync-acp-session="handleSyncAcpSession"
       @open-group-settings="$emit('open-group-settings')"
       @toggle-group-cruise="$emit('toggle-group-cruise', $event)"
+      @toggle-group-parallel="$emit('toggle-group-parallel', $event)"
     />
 
   </div>
@@ -347,8 +349,12 @@ const props = defineProps({
      *  Forwarded to ChatInputBar's session-info bar chip; the toggle is emitted
      *  back up so App owns the PATCH + roster refresh. */
     groupCruise: { type: Boolean, default: false },
+    /** The group's free-mode concurrency switch value (owned by App's
+     *  useGroupMembers). Forwarded to ChatInputBar's session-info bar chip; the
+     *  toggle is emitted back up so App owns the PATCH + roster refresh. */
+    groupParallelDefault: { type: Boolean, default: false },
 })
-const emit = defineEmits(['open', 'message', 'task-card-click', 'open-session-search', 'open-group-settings', 'open-agent-config', 'toggle-group-cruise'])
+const emit = defineEmits(['open', 'message', 'task-card-click', 'open-session-search', 'open-group-settings', 'open-agent-config', 'toggle-group-cruise', 'toggle-group-parallel'])
 
 // ── Singletons ──
 const identity = useSessionIdentity()

@@ -349,6 +349,7 @@
                       @open-group-settings="openGroupSettings"
                       @open-agent-config="openAgentConfig"
                       @toggle-group-cruise="onToggleGroupCruise"
+                      @toggle-group-parallel="onToggleGroupParallel"
                     />
                   </TabPanel>
                   <!-- The hint is centered on the CHAT column, not on
@@ -625,7 +626,7 @@ import { setPendingMessageNavigation } from '@/composables/useMessageNavigation.
 import { useTabDrawer, onTabSwitch, resetTabDrawerState } from '@/composables/useTabDrawer.ts'
 import { resetAgents, useAgents } from '@/composables/useAgents'
 import { useGroupMembers } from '@/composables/useGroupMembers'
-import { setGroupCruise } from '@/composables/useGroupChat'
+import { setGroupCruise, setGroupParallelDefault } from '@/composables/useGroupChat'
 import { resetUsageStats } from '@/composables/useUsageStats'
 import { resetGitStats } from '@/composables/useGitCodeStats'
 import { useSessionIdentity, registerSessionDrawerRef, registerOpenSessionTabOverride, registerGroupRosterRefresh, resetIdentity, applyCruiseAutoApproveDefault } from './composables/useSessionIdentity.ts'
@@ -1445,6 +1446,21 @@ async function onToggleGroupCruise(enabled: boolean) {
     applyCruiseAutoApproveDefault(enabled)
   } catch (e) {
     appLog.w('Group', 'setGroupCruise failed', e)
+  }
+  await refreshGroupMembers(groupId)
+}
+
+// Toggle the current GROUP's free-mode concurrency switch from the session-info
+// bar chip. Same ownership contract as cruise: App PATCHes and refreshes the
+// roster, so the chip and the group settings sheet's switch read one server
+// value. A failed PATCH still refreshes, reverting the chip to the truth.
+async function onToggleGroupParallel(enabled: boolean) {
+  const groupId = sessionIdentity.currentSessionId.value
+  if (!groupId) return
+  try {
+    await setGroupParallelDefault(groupId, enabled)
+  } catch (e) {
+    appLog.w('Group', 'setGroupParallelDefault failed', e)
   }
   await refreshGroupMembers(groupId)
 }
