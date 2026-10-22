@@ -74,7 +74,7 @@ vi.mock('@/composables/useInertPathPicker.ts', () => ({
 // Import the real useChatContext (not mocked) — it's a singleton
 import { useChatContext } from '../useChatContext.ts'
 import { consumePendingChatInput, _resetChatInputInjectionForTesting } from '@/utils/chatInputInjection.ts'
-import { useQuoteQuestion } from '../useQuoteQuestion.ts'
+import { useQuoteQuestion, isPointerPressed } from '../useQuoteQuestion.ts'
 import type { QuoteData } from '../useChatContext.ts'
 import { cancelTarget, usePendingTarget } from '../useConversationTarget.ts'
 import { _setPlatformForTest, _resetPlatformForTest } from '@/composables/usePlatformDetect'
@@ -1473,6 +1473,224 @@ describe('useQuoteQuestion', () => {
         expect(useQuoteQuestion().visible.value).toBe(true)
         expect(ctx.quoteData.value?.text).toBe('selected code text')
       })
+
+      /**
+       * Issue #572: the safety timer used to fire unconditionally, so a drag
+       * that lasted longer than 700ms — sweeping a long paragraph — had its
+       * guard dropped mid-drag and the toolbar surfaced over the text the user
+       * was still selecting. Live drags must keep the guard up.
+       */
+      it('keeps the guard up through a drag longer than the self-heal window', () => {
+        guardWrapper = mountWithComposable()
+        document.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, buttons: 1, bubbles: true }))
+        // The selection builds up as the sweep proceeds. Its selectionchange is
+        // the ONLY one dispatched — deliberately: re-dispatching it every tick
+        // would keep resetting the 150ms debounce and hide the defect, because
+        // the evaluation would then never run mid-drag at all.
+        createSelectionInContainer('markdown-body', { 'data-file-path': '/long.md' })
+
+        // Sweep for 2s, moving every 100ms (a slow, deliberate selection).
+        // Without pointermove refreshing the guard, the 700ms self-heal timer
+        // drops it and the pending evaluate surfaces the bar over the text.
+        for (let elapsed = 0; elapsed < 2000; elapsed += 100) {
+          document.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, buttons: 1, bubbles: true }))
+          vi.advanceTimersByTime(100)
+          // Mid-drag: the guard is still up, so no bar and no quote staged.
+          expect(isPointerPressed()).toBe(true)
+          expect(useQuoteQuestion().visible.value).toBe(false)
+          expect(ctx.quoteData.value).toBeNull()
+        }
+
+        // Releasing now surfaces the bar for the finished selection.
+        document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true }))
+        vi.advanceTimersByTime(120)
+        expect(isPointerPressed()).toBe(false)
+        expect(useQuoteQuestion().visible.value).toBe(true)
+        expect(ctx.quoteData.value?.text).toBe('selected code text')
+      })
+
+      it('keeps the guard up when the user pauses mid-drag and then resumes', () => {
+        // The timer cannot know a button is still down, so a long pause before
+        // starting to move must be repaired by the first pointermove — the bar
+        // may not surface on a drag that is demonstrably still in progress.
+        guardWrapper = mountWithComposable()
+        document.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, buttons: 1, bubbles: true }))
+        // Hold still for longer than the self-heal window (no move to observe).
+        vi.advanceTimersByTime(1000)
+        // Now the drag actually starts and a selection appears.
+        createSelectionInContainer('markdown-body', { 'data-file-path': '/pause.md' })
+        document.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, buttons: 1, bubbles: true }))
+        vi.advanceTimersByTime(150)
+
+        expect(isPointerPressed()).toBe(true)
+        expect(useQuoteQuestion().visible.value).toBe(false)
+
+        document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true }))
+        vi.advanceTimersByTime(120)
+        expect(useQuoteQuestion().visible.value).toBe(true)
+      })
+
+      it('ignores pointermove with no button pressed', () => {
+        // A hovering pointer is not a drag: it must neither arm the guard nor
+        // keep a stale one alive.
+        guardWrapper = mountWithComposable()
+        createSelectionInContainer('markdown-body', { 'data-file-path': '/hover.md' })
+
+        document.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, buttons: 0, pointerType: 'mouse', bubbles: true }))
+        document.dispatchEvent(new Event('selectionchange'))
+        vi.advanceTimersByTime(150)
+
+        expect(useQuoteQuestion().visible.value).toBe(true)
+      })
+
+      it('releases the guard on a button-less mouse move when pointerup was swallowed', () => {
+        // The precise counterpart to the self-heal timer: a mouse move with no
+        // button down proves the release happened, so the bar can surface at
+        // once instead of waiting out a quiet window.
+        guardWrapper = mountWithComposable()
+        document.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, buttons: 1, pointerType: 'mouse', bubbles: true }))
+        createSelectionInContainer('markdown-body', { 'data-file-path': '/swallowed.md' })
+        document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true }))
+        // Re-arm the guard as if the release never arrived.
+        document.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, buttons: 1, pointerType: 'mouse', bubbles: true }))
+        expect(isPointerPressed()).toBe(true)
+
+        document.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, buttons: 0, pointerType: 'mouse', bubbles: true }))
+        expect(isPointerPressed()).toBe(false)
+
+        vi.advanceTimersByTime(120)
+        expect(useQuoteQuestion().visible.value).toBe(true)
+      })
+
+      it('treats a scroll during a drag as pointer activity (auto-scroll)', () => {
+        // Dragging past the viewport edge scrolls the content under a pointer
+        // that is not moving. That scroll is proof the drag is alive; without it
+        // the self-heal timer would surface the bar, the next scroll would hide
+        // it, and the two would alternate — the reported flicker.
+        guardWrapper = mountWithComposable()
+        document.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, buttons: 1, bubbles: true }))
+        createSelectionInContainer('markdown-body', { 'data-file-path': '/autoscroll.md' })
+
+        // 2s of auto-scrolling with a stationary pointer.
+        for (let elapsed = 0; elapsed < 2000; elapsed += 100) {
+          document.dispatchEvent(new Event('scroll'))
+          vi.advanceTimersByTime(100)
+          expect(isPointerPressed()).toBe(true)
+          expect(useQuoteQuestion().visible.value).toBe(false)
+        }
+
+        document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true }))
+        vi.advanceTimersByTime(120)
+        expect(useQuoteQuestion().visible.value).toBe(true)
+      })
+
+      it('takes back a bar the self-heal timer surfaced once the drag resumes', () => {
+        // The timer cannot distinguish a swallowed release from a user who
+        // paused. If it guessed wrong and showed the bar over text that is still
+        // being selected, the next move proving the button is down must retract
+        // it — otherwise it covers the selection for the rest of the drag.
+        guardWrapper = mountWithComposable()
+        document.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, buttons: 1, bubbles: true }))
+        createSelectionInContainer('markdown-body', { 'data-file-path': '/retract.md' })
+
+        // Pause longer than the window: the timer drops the guard and the bar
+        // surfaces (this is the guess, not the desired end state).
+        vi.advanceTimersByTime(800)
+        expect(useQuoteQuestion().visible.value).toBe(true)
+
+        // The user is in fact still dragging.
+        document.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, buttons: 1, bubbles: true }))
+        expect(isPointerPressed()).toBe(true)
+        expect(useQuoteQuestion().visible.value).toBe(false)
+        expect(ctx.quoteData.value).toBeNull()
+
+        document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true }))
+        vi.advanceTimersByTime(120)
+        expect(useQuoteQuestion().visible.value).toBe(true)
+      })
+
+      it('does not retract a PINNED bar (the expanded composer) while dragging', () => {
+        // Retraction exists to protect an in-progress selection. A pinned bar is
+        // the user's own surface — it is pinned precisely so page interaction
+        // cannot take it away, and hiding it mid-drag would lose a half-typed
+        // comment. The composer flow is covered by the same rule: openComposer
+        // pins its bar, so it reaches this guard through `barPinned` rather than
+        // the `composerContext` clause (which only matters if a path ever
+        // unpins without clearing the context).
+        guardWrapper = mountWithComposable()
+        const qq = useQuoteQuestion()
+        qq.showBar({ text: 'kept', filePath: '/p.md', language: '', startLine: 1, endLine: 1 }, { delay: 0 })
+        vi.advanceTimersByTime(0)
+        qq.pinBar()
+        expect(qq.visible.value).toBe(true)
+
+        document.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, buttons: 1, bubbles: true }))
+        document.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, buttons: 1, bubbles: true }))
+
+        expect(qq.visible.value).toBe(true)
+        expect(qq.quoteData.value?.text).toBe('kept')
+
+        document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true }))
+      })
+
+      it('leaves the bar alone when the pointer moves without a button after release', () => {
+        // The common post-selection path: the bar is up and the user moves the
+        // mouse toward it. `buttons` is 0, so this must neither retract the bar
+        // nor touch the guard.
+        guardWrapper = mountWithComposable()
+        document.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, buttons: 1, bubbles: true }))
+        createSelectionInContainer('markdown-body', { 'data-file-path': '/toward.md' })
+        document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true }))
+        vi.advanceTimersByTime(120)
+        expect(useQuoteQuestion().visible.value).toBe(true)
+
+        document.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, buttons: 0, pointerType: 'mouse', bubbles: true }))
+
+        expect(useQuoteQuestion().visible.value).toBe(true)
+        expect(ctx.quoteData.value?.text).toBe('selected code text')
+      })
+
+      it('drops the guard after the absolute ceiling even if scrolling keeps it busy', () => {
+        // A release that was swallowed while something keeps scrolling
+        // programmatically (a streaming chat list) must not hold the guard
+        // forever: past the ceiling the bar is allowed to appear, which is a far
+        // smaller failure than never appearing again.
+        guardWrapper = mountWithComposable()
+        document.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, buttons: 1, bubbles: true }))
+        createSelectionInContainer('markdown-body', { 'data-file-path': '/ceiling.md' })
+
+        // 6s of continuous scroll (beyond the 5s ceiling).
+        for (let elapsed = 0; elapsed < 6000; elapsed += 100) {
+          document.dispatchEvent(new Event('scroll'))
+          vi.advanceTimersByTime(100)
+        }
+
+        // The guard is gone — scrolling can no longer extend it.
+        expect(isPointerPressed()).toBe(false)
+
+        // With the drag over, the next selection settles into a visible bar
+        // (asserted after the scrolling stops, since `onScroll` hides the bar by
+        // design while content is moving).
+        document.dispatchEvent(new Event('selectionchange'))
+        vi.advanceTimersByTime(150)
+        expect(useQuoteQuestion().visible.value).toBe(true)
+
+        document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true }))
+      })
+
+      it('cancels a pending showBar when the bar is dismissed before its delay', () => {
+        // showBar defers by 400ms by default. A dismissal in that window must
+        // cancel it, or the bar pops up afterwards with nobody asking for it.
+        guardWrapper = mountWithComposable()
+        const qq = useQuoteQuestion()
+        qq.showBar({ text: 'late', filePath: '/late.md', language: '', startLine: 1, endLine: 1 })
+        qq.hideBar()
+
+        vi.advanceTimersByTime(500)
+
+        expect(qq.visible.value).toBe(false)
+        expect(ctx.quoteData.value).toBeNull()
+      })
     })
 
     it('removes listener when component unmounts (listenerCount goes to 0)', () => {
@@ -1506,14 +1724,14 @@ describe('useQuoteQuestion', () => {
     /**
      * anchorRect drives the floating toolbar's position (issue #544). jsdom has
      * no layout, so getClientRects() returns an empty list for a real range —
-     * we stub it to prove the composable captures the LAST line box (the point
-     * the pointer left) and clears it again on every hide path.
+     * we stub it to prove the composable captures the WHOLE selection's bounding
+     * box (issue #572) and clears it again on every hide path.
      */
     describe('anchorRect (floating toolbar position)', () => {
       function stubRects(rects: DOMRect[]) {
         const proto = Range.prototype as unknown as { getClientRects: () => DOMRectList }
-        // Indexable like a real DOMRectList (the composable reads
-        // `rects[rects.length - 1]`), not just array-like via `item()`.
+        // Indexable like a real DOMRectList (the composable iterates it by
+        // index), not just array-like via `item()`.
         const list = {
           length: rects.length,
           item: (i: number) => rects[i] ?? null,
@@ -1526,14 +1744,34 @@ describe('useQuoteQuestion', () => {
         return { top, bottom: top + 20, left: 100, right: 200, width: 100, height: 20, x: 100, y: top, toJSON: () => ({}) } as DOMRect
       }
 
+      function boxRect(top: number, bottom: number, left: number, right: number): DOMRect {
+        return {
+          top, bottom, left, right,
+          width: right - left, height: bottom - top,
+          x: left, y: top, toJSON: () => ({}),
+        } as DOMRect
+      }
+
       afterEach(() => {
         vi.restoreAllMocks()
       })
 
-      it('captures the last line box of the selection', () => {
+      /**
+       * The reported defect (issue #572): the anchor used to be the LAST line
+       * box, which is the bottom line in DOCUMENT order regardless of drag
+       * direction. Since the bar prefers to sit ABOVE its anchor, any
+       * multi-line selection got a bar placed ON TOP of the lines above the
+       * bottom one — i.e. covering the text the user had just selected. The
+       * union is what makes "above" mean above the whole selection.
+       */
+      it('captures the bounding box of a multi-line selection, not the last line', () => {
         const wrapper = mountWithComposable()
-        // Two line boxes; the toolbar anchors to the LAST (bottom) one.
-        stubRects([fakeRect(100), fakeRect(140)])
+        // Three line boxes (left edges differ, as real wrapped lines do).
+        stubRects([
+          boxRect(100, 120, 100, 300),
+          boxRect(120, 140, 60, 320),
+          boxRect(140, 160, 60, 180),
+        ])
         createSelectionInContainer('markdown-body', { 'data-file-path': '/a.md' })
 
         document.dispatchEvent(new Event('selectionchange'))
@@ -1541,7 +1779,79 @@ describe('useQuoteQuestion', () => {
 
         const qq = useQuoteQuestion()
         expect(qq.visible.value).toBe(true)
-        expect(qq.anchorRect.value?.top).toBe(140)
+        // Above the FIRST line (100), and wide enough to cover every line
+        // (60..320) so the centring is on the selection, not on one line.
+        expect(qq.anchorRect.value?.top).toBe(100)
+        expect(qq.anchorRect.value?.bottom).toBe(160)
+        expect(qq.anchorRect.value?.left).toBe(60)
+        expect(qq.anchorRect.value?.right).toBe(320)
+
+        wrapper.unmount()
+      })
+
+      it('is not the last line box, so the bar cannot land inside the selection', () => {
+        // The defect's signature: the anchor's bottom edge sat at the LAST
+        // line's bottom while the bar was placed ABOVE it — inside the text.
+        // Whatever the implementation does, the anchor must span every line.
+        const wrapper = mountWithComposable()
+        stubRects([
+          boxRect(100, 120, 60, 300),
+          boxRect(120, 140, 60, 320),
+          boxRect(140, 160, 60, 180),
+        ])
+        createSelectionInContainer('markdown-body', { 'data-file-path': '/a.md' })
+        document.dispatchEvent(new Event('selectionchange'))
+        vi.advanceTimersByTime(150)
+
+        const anchor = useQuoteQuestion().anchorRect.value
+        expect(anchor).not.toBeNull()
+        // Height covers all three lines (3 × 20px), not just the last one.
+        expect(anchor!.height).toBe(60)
+        // The bar is placed above `top`, so `top` must be the FIRST line's top.
+        expect(anchor!.top).toBe(100)
+
+        wrapper.unmount()
+      })
+
+      it('ignores a zero-WIDTH caret box when computing the box', () => {
+        // A range that ends at a line boundary reports a caret box there: zero
+        // width but a FULL line height. Letting it into the union would stretch
+        // the anchor one line down and drag `left` to the caret's column, which
+        // is what the filter exists to prevent — so the fixture must be a real
+        // caret (height > 0), not an all-zero box that no filter could change.
+        const wrapper = mountWithComposable()
+        stubRects([
+          boxRect(100, 120, 60, 300),
+          boxRect(120, 140, 60, 60), // caret at the start of the next line
+        ])
+        createSelectionInContainer('markdown-body', { 'data-file-path': '/a.md' })
+
+        document.dispatchEvent(new Event('selectionchange'))
+        vi.advanceTimersByTime(150)
+
+        const qq = useQuoteQuestion()
+        expect(qq.anchorRect.value?.top).toBe(100)
+        expect(qq.anchorRect.value?.bottom).toBe(120)
+        expect(qq.anchorRect.value?.left).toBe(60)
+        expect(qq.anchorRect.value?.right).toBe(300)
+
+        wrapper.unmount()
+      })
+
+      it('falls back to the raw box when every box is a caret', () => {
+        // Degenerate but reachable: a range whose only boxes have no width. It
+        // must still produce an anchor (the bar needs something to sit on)
+        // rather than null, which would silently pin it to the page top.
+        const wrapper = mountWithComposable()
+        stubRects([boxRect(120, 140, 60, 60)])
+        createSelectionInContainer('markdown-body', { 'data-file-path': '/caret.md' })
+
+        document.dispatchEvent(new Event('selectionchange'))
+        vi.advanceTimersByTime(150)
+
+        const qq = useQuoteQuestion()
+        expect(qq.anchorRect.value).not.toBeNull()
+        expect(qq.anchorRect.value?.top).toBe(120)
 
         wrapper.unmount()
       })

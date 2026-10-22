@@ -134,6 +134,19 @@ export function attachIframeSelectionQuoteBridge(opts: IframeSelectionQuoteOptio
   let pointerStuckTimer: ReturnType<typeof setTimeout> | null = null
   let debounceTimer: ReturnType<typeof setTimeout> | null = null
   let disposed = false
+  /**
+   * Timestamp of the last event proving a button is still down (issue #572).
+   * The self-heal timer only drops the guard once this has been quiet for the
+   * whole window, so a slow sweep does not surface the bar mid-drag.
+   */
+  let lastPointerActivity = 0
+  /**
+   * Whether this bridge has a bar on screen. Tracked locally because `show` /
+   * `hide` are opaque callbacks: retracting on every pointermove would call
+   * `hide()` continuously, which the host treats as a dismissal (it clears the
+   * staged quote) and which makes "did the bar flicker?" impossible to assert.
+   */
+  let barShown = false
 
   function scheduleEvaluate(delayMs: number) {
     if (disposed) return
@@ -155,12 +168,16 @@ export function attachIframeSelectionQuoteBridge(opts: IframeSelectionQuoteOptio
     const sel = win.getSelection()
     const text = sel && !sel.isCollapsed ? sel.toString().trim() : ''
     if (!text) {
+      // Always notify: the host may be showing a bar from another surface, and
+      // an empty selection in this frame is what dismisses it.
+      barShown = false
       hide()
       return
     }
     // The pointer is still pressed — the selection is mid-drag and not final.
     if (pointerCount > 0) return
 
+    barShown = true
     show({
       text,
       filePath: filePath(),
@@ -177,17 +194,79 @@ export function attachIframeSelectionQuoteBridge(opts: IframeSelectionQuoteOptio
 
   function onPointerDown() {
     pointerCount++
+    lastPointerActivity = Date.now()
     // Mobile native selection UI can swallow the matching pointerup/touchend,
     // leaving the guard held forever. Self-heal after a short window so a
     // settling selection can still surface the bar.
+    armStuckTimer()
+  }
+
+  /**
+   * (Re)arm the self-heal timer. It only drops the guard once the pointer has
+   * been quiet for the whole window; a live drag keeps refreshing
+   * `lastPointerActivity` (see onPointerMove / onScroll), so a long sweep does
+   * not surface the bar mid-drag (issue #572).
+   */
+  function armStuckTimer() {
     if (pointerStuckTimer) clearTimeout(pointerStuckTimer)
     pointerStuckTimer = setTimeout(() => {
       pointerStuckTimer = null
+      if (disposed) return
+      if (pointerCount > 0 && Date.now() - lastPointerActivity < pointerStuckMs) {
+        armStuckTimer()
+        return
+      }
       if (pointerCount > 0) {
         pointerCount = 0
         scheduleEvaluate(0)
       }
     }, pointerStuckMs)
+  }
+
+  /**
+   * Pointer movement with a button still pressed proves the drag is alive: it
+   * refreshes the liveness stamp, re-arms a guard the timer already dropped
+   * (a long pause before the drag began) and takes back any bar that dropped
+   * guard surfaced over text that is still being selected (issue #572).
+   *
+   * A `buttons === 0` move from a MOUSE means the button came up without a
+   * pointerup reaching us, so the guard is released immediately instead of
+   * waiting out the window. Touch/pen report `buttons` inconsistently, so they
+   * are excluded — a 0 there must not surface the bar mid-selection.
+   */
+  function onPointerMove(evt: Event) {
+    if (disposed) return
+    // The bridge's window is structurally typed (its listeners receive `Event`),
+    // so read the two pointer fields off the event rather than narrowing.
+    const e = evt as PointerEvent
+    if (e.buttons === 0) {
+      if (pointerCount > 0 && e.pointerType === 'mouse') releasePointer()
+      return
+    }
+    lastPointerActivity = Date.now()
+    if (pointerCount === 0) {
+      pointerCount = 1
+      armStuckTimer()
+    }
+    // Retract a bar the self-heal timer surfaced while the user was merely
+    // pausing: the button is still down, so the bar must not stay over text that
+    // is still being selected. Guarded by `barShown` so a drag with no bar does
+    // not spam `hide()` on every move.
+    if (barShown) {
+      barShown = false
+      hide()
+    }
+  }
+
+  /**
+   * Auto-scroll at the viewport edge moves the content under a stationary
+   * pointer, so a scroll while the button is held is proof the drag is alive.
+   * Without this the timer sees a quiet pointer and surfaces the bar, which the
+   * next scroll then hides — the reported flicker (issue #572).
+   */
+  function onScroll() {
+    if (disposed) return
+    if (pointerCount > 0) lastPointerActivity = Date.now()
   }
 
   function releasePointer() {
@@ -210,20 +289,25 @@ export function attachIframeSelectionQuoteBridge(opts: IframeSelectionQuoteOptio
 
   doc.addEventListener('selectionchange', onSelectionChange)
   doc.addEventListener('pointerdown', onPointerDown)
+  doc.addEventListener('pointermove', onPointerMove)
   doc.addEventListener('pointerup', onPointerUp)
   doc.addEventListener('pointercancel', onPointerUp)
   doc.addEventListener('touchend', onPointerUp)
   doc.addEventListener('touchcancel', onPointerUp)
+  // Capture phase: the scroll happens on an inner container, not the document.
+  doc.addEventListener('scroll', onScroll, true)
 
   return function dispose() {
     if (disposed) return
     disposed = true
     doc.removeEventListener('selectionchange', onSelectionChange)
     doc.removeEventListener('pointerdown', onPointerDown)
+    doc.removeEventListener('pointermove', onPointerMove)
     doc.removeEventListener('pointerup', onPointerUp)
     doc.removeEventListener('pointercancel', onPointerUp)
     doc.removeEventListener('touchend', onPointerUp)
     doc.removeEventListener('touchcancel', onPointerUp)
+    doc.removeEventListener('scroll', onScroll, true)
     clearDebounce()
     if (pointerStuckTimer) {
       clearTimeout(pointerStuckTimer)

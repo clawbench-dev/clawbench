@@ -1057,6 +1057,13 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
 
 .quote-bar-leave-active {
   transition: opacity var(--duration-slow) ease-in, transform var(--duration-slow) ease-in;
+  /* The bar is on its way out, so it must not keep intercepting pointer events
+     (issue #572): a drag that starts over the fading bar would be swallowed by
+     an element the user can no longer see, and on a touch surface the whole
+     gesture — including the selection it was meant to make — is lost.
+     Deliberately NOT applied to the enter phase: the bar is interactive the
+     moment it appears, and that is the click the user is aiming at. */
+  pointer-events: none;
 }
 
 .quote-bar-enter-from,

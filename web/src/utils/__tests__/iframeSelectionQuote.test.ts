@@ -21,9 +21,9 @@ class FakeDoc {
     const idx = arr.indexOf(listener)
     if (idx >= 0) arr.splice(idx, 1)
   }
-  fire(type: string) {
+  fire(type: string, event?: Event) {
     for (const l of this.listeners.get(type) ?? []) {
-      ;(l as EventListener).call(this, new Event(type))
+      ;(l as EventListener).call(this, event ?? new Event(type))
     }
   }
   listenerCount(type: string) {
@@ -73,6 +73,11 @@ function makeBridge(overrides: Partial<Parameters<typeof attachIframeSelectionQu
   return { win, doc, getSelectionMock, show, hide, filePath, dispose }
 }
 
+/** A pointer event carrying only the two fields the bridge reads. */
+function pointerEvent(pointerType: string, buttons: number): PointerEvent {
+  return { pointerType, buttons } as PointerEvent
+}
+
 describe('attachIframeSelectionQuoteBridge', () => {
   beforeEach(() => {
     vi.useFakeTimers()
@@ -87,6 +92,9 @@ describe('attachIframeSelectionQuoteBridge', () => {
     const { doc, dispose } = makeBridge()
     expect(doc.listenerCount('selectionchange')).toBe(1)
     expect(doc.listenerCount('pointerdown')).toBe(1)
+    // Drag liveness (issue #572) and auto-scroll are observed too.
+    expect(doc.listenerCount('pointermove')).toBe(1)
+    expect(doc.listenerCount('scroll')).toBe(1)
     expect(doc.listenerCount('pointerup')).toBe(1)
     expect(doc.listenerCount('pointercancel')).toBe(1)
     expect(doc.listenerCount('touchend')).toBe(1)
@@ -194,6 +202,93 @@ describe('attachIframeSelectionQuoteBridge', () => {
     vi.advanceTimersByTime(700)
 
     expect(show).toHaveBeenCalledTimes(1)
+    dispose()
+  })
+
+  /**
+   * Issue #572: the self-heal timer used to fire unconditionally, so a sweep
+   * lasting longer than 700ms lost its guard mid-drag and the bar surfaced over
+   * text that was still being selected. The mirror of the host fix.
+   */
+  it('keeps the guard up through a drag longer than the self-heal window', () => {
+    const { doc, show, hide, dispose } = makeBridge()
+    doc.fire('pointerdown')
+    // ONE selectionchange, as a real drag produces at its start. Firing it every
+    // tick would keep resetting the 150ms debounce, so the evaluation would
+    // never run mid-drag and the defect could not show.
+    doc.fire('selectionchange')
+
+    for (let elapsed = 0; elapsed < 2000; elapsed += 100) {
+      doc.fire('pointermove', pointerEvent('mouse', 1))
+      vi.advanceTimersByTime(100)
+      // The bar must not surface, and nothing may hide one either: a hide here
+      // would mean the timer surfaced a bar that the drag then retracted — the
+      // flicker. Asserting only `show` would miss exactly that.
+      expect(show).not.toHaveBeenCalled()
+      expect(hide).not.toHaveBeenCalled()
+    }
+
+    doc.fire('pointerup')
+    vi.advanceTimersByTime(120)
+    expect(show).toHaveBeenCalledTimes(1)
+    dispose()
+  })
+
+  it('treats a scroll during a drag as pointer activity (auto-scroll)', () => {
+    const { doc, show, dispose } = makeBridge()
+    doc.fire('pointerdown')
+
+    // Content moves under a stationary pointer: no pointermove at all.
+    for (let elapsed = 0; elapsed < 2000; elapsed += 100) {
+      doc.fire('scroll')
+      vi.advanceTimersByTime(100)
+      expect(show).not.toHaveBeenCalled()
+    }
+
+    doc.fire('pointerup')
+    vi.advanceTimersByTime(120)
+    expect(show).toHaveBeenCalledTimes(1)
+    dispose()
+  })
+
+  it('releases the guard on a button-less mouse move when pointerup was swallowed', () => {
+    const { doc, show, dispose } = makeBridge()
+    doc.fire('pointerdown')
+    // No pointerup reaches the bridge; the next mouse move proves the release.
+    doc.fire('pointermove', pointerEvent('mouse', 0))
+    vi.advanceTimersByTime(120)
+
+    expect(show).toHaveBeenCalledTimes(1)
+    dispose()
+  })
+
+  it('ignores a button-less TOUCH move (engines report buttons inconsistently)', () => {
+    // Treating a 0 there as "released" would surface the bar in the middle of
+    // every touch selection, so only the mouse path may release the guard.
+    const { doc, show, dispose } = makeBridge()
+    doc.fire('pointerdown')
+    doc.fire('pointermove', pointerEvent('touch', 0))
+    vi.advanceTimersByTime(120)
+
+    expect(show).not.toHaveBeenCalled()
+    dispose()
+  })
+
+  it('takes back a bar the self-heal timer surfaced once the drag resumes', () => {
+    const { doc, show, hide, dispose } = makeBridge()
+    doc.fire('pointerdown')
+
+    // Pause past the window: the timer drops the guard and the bar surfaces.
+    vi.advanceTimersByTime(800)
+    expect(show).toHaveBeenCalledTimes(1)
+
+    // Still dragging after all — the bar must be taken back.
+    doc.fire('pointermove', pointerEvent('mouse', 1))
+    expect(hide).toHaveBeenCalledTimes(1)
+
+    doc.fire('pointerup')
+    vi.advanceTimersByTime(120)
+    expect(show).toHaveBeenCalledTimes(2)
     dispose()
   })
 
