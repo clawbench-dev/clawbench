@@ -48,6 +48,22 @@ let _lastBadgeSignature: string | null = null
  */
 export const switching = ref(false)
 
+/**
+ * ForkTarget describes where a fork lands. `kind` picks the target shape:
+ * 'chat' creates a single-agent session (optionally with an agent override),
+ * 'group' creates a group from `hostAgentId` + `memberAgentIds` (an empty host
+ * means free mode, which needs at least two members).
+ *
+ * Module-level export so the manager/identity type declarations can reference it
+ * without importing the composable itself.
+ */
+export interface ForkTarget {
+  kind?: 'chat' | 'group'
+  agentId?: string
+  hostAgentId?: string
+  memberAgentIds?: string[]
+}
+
 export async function loadSessionsOnce(): Promise<void> {
   // Dedup: if a load is already in-flight, reuse its promise instead of
   // firing a duplicate request (e.g. App.vue + ChatPanelContent.vue
@@ -1688,16 +1704,36 @@ export function useChatSession(options: UseChatSessionOptions) {
     }
   }
 
-  /** Fork the current session — create a new session with copied messages.
-   *  If beforeMessageId is provided, only messages up to and including that message are copied. */
-  async function forkSession(sessionId: string, beforeMessageId?: number, agentId?: string): Promise<boolean> {
+  /** Fork the current session.
+   *
+   *  target.kind decides the new session's shape:
+   *   - 'chat'  → a single-agent session; `agentId` optionally overrides the
+   *               source's agent.
+   *   - 'group' → a new group built from `hostAgentId` + `memberAgentIds`.
+   *
+   *  The source may itself be a group. Only chat→chat copies message rows; every
+   *  other combination carries the source history as injected background text,
+   *  so the new session starts empty (the backend writes one system line saying
+   *  where the history came from).
+   *
+   *  If beforeMessageId is provided, the fork point is that message. */
+  async function forkSession(
+    sessionId: string,
+    beforeMessageId?: number,
+    target?: ForkTarget,
+  ): Promise<boolean> {
     try {
       const body: Record<string, unknown> = { sessionId }
       if (beforeMessageId && beforeMessageId > 0) {
         body.beforeMessageId = beforeMessageId
       }
-      if (agentId) {
-        body.agentId = agentId
+      const kind = target?.kind ?? 'chat'
+      if (kind === 'group') {
+        body.targetKind = 'group'
+        body.hostAgentId = target?.hostAgentId ?? ''
+        body.memberAgentIds = target?.memberAgentIds ?? []
+      } else if (target?.agentId) {
+        body.agentId = target.agentId
       }
       const resp = await fetch('/api/ai/session/fork', {
         method: 'POST',
@@ -1723,6 +1759,15 @@ export function useChatSession(options: UseChatSessionOptions) {
       if (typeof data.sessionCount === 'number') store.state.sessionCount = data.sessionCount
       toast.show(gt('chat.session.forked', { count: data.sessionCount ?? '', max: maxCount }), { icon: 'fork', type: 'success', duration: 1500 })
       await switchSession(data.sessionId)
+      // A forked group's members are brand new rows, so duplicate instances have
+      // no generated avatar yet. Same background backfill as group creation —
+      // non-critical, so it never blocks entering the new group. The roster
+      // itself refreshes on its own (useGroupMembers watches the session id).
+      if (data.targetKind === 'group') {
+        void import('@/composables/useGroupChat')
+          .then(m => m.generateMemberAvatars(data.sessionId))
+          .catch((e: unknown) => appLog.w(TAG, 'fork: member avatar generation failed', e))
+      }
       return true
     } catch (err: unknown) {
       appLog.e(TAG, 'Failed to fork session:', err)

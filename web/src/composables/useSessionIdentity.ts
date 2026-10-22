@@ -8,6 +8,7 @@ import type { FileEntry } from '@/utils/fileAttachmentUtils'
 import { getRecentSession, clearRecentSession, registerSessionIdRef } from '@/composables/useRecentSession'
 import { store } from '@/stores/app.ts'
 import { apiPost } from '@/utils/api'
+import type { ForkTarget } from '@/composables/useChatSession.ts'
 
 const TAG = 'SessionIdentity'
 
@@ -665,7 +666,7 @@ export interface SessionActions {
   openChatPanel: () => void
   continueFromExecution: (taskId: number, execId: number, switchTabFn: (tab: string) => void) => Promise<boolean>
   checkContinueSession: (taskId: number, execId: number) => Promise<{ exists: boolean; sessionId: string }>
-  forkSession: (sessionId: string, beforeMessageId?: number, agentId?: string) => Promise<boolean>
+  forkSession: (sessionId: string, beforeMessageId?: number, target?: ForkTarget) => Promise<boolean>
 }
 
 /**

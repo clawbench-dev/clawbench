@@ -6820,7 +6820,7 @@ describe('forkSession', () => {
 
     const session = createSession()
     mockState.currentSessionId = 'source-s1'
-    const result = await session.forkSession('source-s1', undefined, 'codebuddy')
+    const result = await session.forkSession('source-s1', undefined, { kind: 'chat', agentId: 'codebuddy' })
 
     expect(result).toBe(true)
     expect(globalThis.fetch).toHaveBeenCalledWith(
@@ -6840,7 +6840,7 @@ describe('forkSession', () => {
 
     const session = createSession()
     mockState.currentSessionId = 'source-s1'
-    const result = await session.forkSession('source-s1', 42, 'claude')
+    const result = await session.forkSession('source-s1', 42, { kind: 'chat', agentId: 'claude' })
 
     expect(result).toBe(true)
     expect(globalThis.fetch).toHaveBeenCalledWith(
@@ -6850,6 +6850,58 @@ describe('forkSession', () => {
         body: JSON.stringify({ sessionId: 'source-s1', beforeMessageId: 42, agentId: 'claude' }),
       })
     )
+  })
+
+  it('sends group target fields for a group fork', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ ok: true, sessionId: 'forked-g1', sessionCount: 3, targetKind: 'group' }),
+    })
+
+    const session = createSession()
+    mockState.currentSessionId = 'source-g1'
+    const result = await session.forkSession('source-g1', 7, {
+      kind: 'group',
+      hostAgentId: 'claude',
+      memberAgentIds: ['claude', 'claude', 'codebuddy'],
+    })
+
+    expect(result).toBe(true)
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      '/api/ai/session/fork',
+      expect.objectContaining({
+        method: 'POST',
+        // targetKind is what switches the backend away from copying message
+        // rows; the duplicated agent id is intentional (one per instance).
+        body: JSON.stringify({
+          sessionId: 'source-g1',
+          beforeMessageId: 7,
+          targetKind: 'group',
+          hostAgentId: 'claude',
+          memberAgentIds: ['claude', 'claude', 'codebuddy'],
+        }),
+      })
+    )
+  })
+
+  it('does not send agentId for a free-mode group fork', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ ok: true, sessionId: 'forked-g2', sessionCount: 3, targetKind: 'group' }),
+    })
+
+    const session = createSession()
+    mockState.currentSessionId = 'source-g1'
+    await session.forkSession('source-g1', undefined, {
+      kind: 'group',
+      hostAgentId: '',
+      memberAgentIds: ['claude', 'codebuddy'],
+    })
+
+    const body = JSON.parse((globalThis.fetch as any).mock.calls[0][1].body)
+    expect(body.targetKind).toBe('group')
+    expect(body.hostAgentId).toBe('')
+    expect(body).not.toHaveProperty('agentId')
   })
 })
 

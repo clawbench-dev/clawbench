@@ -5,7 +5,8 @@ SessionLimitReached: 已达会话数量上限（{{.MaxCount}}），请先归档�
 SessionIdRequired: session_id 为必填项
 CannotRemoveHost: 主持人是群的唯一调度者，不能移除
 GroupMemberLimitReached: 一个群最多 {{.MaxCount}} 个成员
-GroupNotForkable: 群聊不支持分叉
+ForkContextInjectedChat: 「{{.Title}}」的历史消息已作为背景注入当前会话
+ForkContextInjectedGroup: 「{{.Title}}」的历史消息已作为背景注入本群，每位成员首次发言时都会收到
 GroupNotRewindable: 群聊不支持回溯
 GroupRunning: 群聊正在执行本轮讨论，请等结束后再试
 GroupMemberCompacting: 该成员正在压缩上下文

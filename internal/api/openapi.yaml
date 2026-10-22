@@ -1983,14 +1983,27 @@ paths:
   /api/ai/session/fork:
     post:
       tags: [Sessions]
-      summary: 分叉会话
+      summary: 分叉会话（可落到单聊或群聊）
       description: |
         请求体字段均可选；缺省时回退到查询参数 / 会话 Cookie。
-        **群会话不可分叉**（`400`）：分叉会硬编码 `session_type='chat'` 并复制源会话的
-        backend/agent，而群时间线的消息带**成员行 id**——新单聊里解析不到成员，
-        表现为一整屏无归属的 AI 发言。与回溯（rewind）的处理对称（决策 #74）。
-        显式指定 `agentId` 时，若该 agent 已被禁用，返回 `400` + `msgKey=AgentDisabled`
-        （分叉会新建会话，故与新建会话同样拦截禁用智能体）。
+
+        `targetKind` 决定目标形态：`chat`（默认）新建单聊，`group` 新建群聊
+        （需同时给 `hostAgentId` / `memberAgentIds`）。**源会话可以是单聊，也可以是群聊。**
+
+        历史处理按「源/目标」组合分派：只有 **单聊 → 单聊** 会把源消息行复制进新会话；
+        其余三种组合（单聊→群、群→单、群→群）**不复制任何消息行**，而是把源历史渲染成
+        背景文本存进目标会话的 `context_state.fork_context`，由目标会话首轮注入。
+        原因是群时间线的 `chat_history.agent_id` 存的是**成员行 id**，复制到新会话里
+        解析不到成员（会渲染成一整屏无归属的 AI 发言），而成员行本身没有任何历史行可复制。
+
+        注入范围：单聊目标注入一次（首个成功回合后清除）；群聊目标由**每位成员各自**
+        在首次发言时收到（以成员自己的 `seen_cursor` 为「已消化」标记）。
+
+        发生背景注入时，目标会话会写入一条 `role='system'` 提示行，标明来源会话名称。
+
+        `agentId`（仅 `targetKind=chat`）若已被禁用或不属于当前项目，返回 `400`
+        + `msgKey=AgentDisabled` / `AgentNotInProject`（分叉会新建会话，故与新建会话
+        同样拦截）。
       operationId: sessionFork
       requestBody:
         required: false
@@ -2003,13 +2016,28 @@ paths:
                   type: string
                 beforeMessageId:
                   type: integer
+                targetKind:
+                  type: string
+                  enum: [chat, group]
+                  default: chat
                 agentId:
                   type: string
+                  description: targetKind=chat 时的智能体覆盖
+                hostAgentId:
+                  type: string
+                  description: targetKind=group 时的主持人（空 = 自由模式，需至少 2 名成员）
+                memberAgentIds:
+                  type: array
+                  items:
+                    type: string
+                  description: targetKind=group 时的成员（可含重复，每个重复是一个独立实例）
       responses:
         "200":
-          description: 新会话
+          description: 新会话（含 `sessionId` / `sessionCount` / `targetKind`）
         "400":
-          description: 分叉点非法，或源会话是群（`msgKey=GroupNotForkable`），或目标 agent 已被禁用（`msgKey=AgentDisabled`）
+          description: 分叉点非法（`msgKey=InvalidForkPoint`）、targetKind 未知、群成员参数非法，或目标 agent 不可用（`msgKey=AgentDisabled` / `AgentNotInProject`）
+        "409":
+          description: 会话数达上限（`msgKey=SessionLimitReached`）或群成员数达上限（`msgKey=GroupMemberLimitReached`）
 
   /api/ai/session/btw:
     post:

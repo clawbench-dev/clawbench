@@ -907,6 +907,7 @@ export default {
       continued: 'Conversation continued ({count}/{max})',
       forkConfirm: 'Fork this session? A new session will be created with a copy of the conversation history, allowing you to explore a different direction independently.',
       forkFromMessageConfirm: 'Fork from this message? A new session will be created with the conversation history up to this message, allowing you to explore a different direction independently.',
+      forkFromGroupConfirm: 'Fork this group chat from this message? You can pick a single agent or another group. The original discussion is injected as background knowledge, and the new session starts empty.',
       selectAgentForFork: 'Select Agent for Fork',
       forkFailed: 'Failed to fork session',
       forked: 'Session forked ({count}/{max})',

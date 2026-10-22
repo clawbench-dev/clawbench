@@ -911,6 +911,7 @@ export default {
       continued: '已继续对话 ({count}/{max})',
       forkConfirm: '分叉此会话？将创建一个包含当前对话记录副本的新会话，你可以在新会话中独立探索不同方向。',
       forkFromMessageConfirm: '从此消息分叉？将创建一个包含该消息及之前对话记录的新会话，你可以在新会话中独立探索不同方向。',
+      forkFromGroupConfirm: '从此消息分叉群聊？可选择一个新的智能体或另一个群聊；原群聊记录会作为背景知识注入新会话，新会话本身从空白开始。',
       selectAgentForFork: '选择分叉会话的智能体',
       forkFailed: '分叉会话失败',
       forked: '已分叉会话 ({count}/{max})',

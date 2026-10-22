@@ -2738,6 +2738,80 @@ func PatchContextStateMerge(sessionID string, patches map[string]string) {
 	}
 }
 
+// forkContextKey is the context_state field carrying the background text a
+// fork injected into its target session. See SetForkContext.
+const forkContextKey = "fork_context"
+
+// SetForkContext stores the rendered background a fork injects into a session.
+//
+// It lives in chat_sessions.context_state rather than a dedicated column for the
+// same reason seen_cursor/host_member_id/group_mode do: no schema migration, and
+// a JSON field is enough for a value that is written once and read until the
+// first successful turn consumes it.
+//
+// An empty text is a no-op: a source with nothing renderable must not leave an
+// empty marker behind (the caller then also skips the "history injected" line,
+// so nothing claims an injection that did not happen).
+func SetForkContext(sessionID, text string) {
+	if sessionID == "" || strings.TrimSpace(text) == "" {
+		return
+	}
+	payload, err := json.Marshal(text)
+	if err != nil {
+		slog.Warn("setForkContext: marshal failed", "err", err, "sid", sessionID)
+		return
+	}
+	PatchContextStateMerge(sessionID, map[string]string{forkContextKey: string(payload)})
+}
+
+// GetForkContext returns the pending fork background for a session, or "".
+func GetForkContext(sessionID string) string {
+	if sessionID == "" || !store.ReadDBReady() {
+		return ""
+	}
+	var raw string
+	if err := store.ReadDB().QueryRow(
+		"SELECT COALESCE(json_extract(context_state, '$.fork_context'), '') FROM chat_sessions WHERE id = ?",
+		sessionID,
+	).Scan(&raw); err != nil {
+		return ""
+	}
+	if raw == "" {
+		return ""
+	}
+	// json_extract returns the JSON encoding of the string; decode it so callers
+	// get the text itself rather than a quoted literal.
+	var text string
+	if err := json.Unmarshal([]byte(raw), &text); err != nil {
+		return raw
+	}
+	return text
+}
+
+// ClearForkContext drops a session's pending fork background.
+//
+// Called after a SUCCESSFUL turn for single-chat targets. The read gate alone
+// cannot express "already consumed": a failed turn writes an assistant warning
+// row (persistTurnWarning), so any assistant-count-based gate either expires the
+// background after one failure (count > 0) or re-injects it forever (first row
+// stays a warning). Clearing on success is the marker that actually means
+// "someone has digested this".
+//
+// Group targets do NOT need it: each member's own seen_cursor only advances on a
+// successful turn (decision #69), which already expresses the same thing per
+// speaker.
+func ClearForkContext(sessionID string) {
+	if sessionID == "" || !store.DBReady() {
+		return
+	}
+	if _, err := store.WriteExec(
+		"UPDATE chat_sessions SET context_state = json_remove(context_state, '$.fork_context') WHERE id = ? AND json_extract(context_state, '$.fork_context') IS NOT NULL",
+		sessionID,
+	); err != nil {
+		slog.Warn("clearForkContext: write failed", "err", err, "sid", sessionID)
+	}
+}
+
 // mergeUsagePatchIntoDB merges an incoming usage patch against the usage
 // currently stored in chat_sessions.context_state so a partial (naked
 // used=0/size=0) notification never regresses a known context window. When the

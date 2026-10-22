@@ -238,7 +238,12 @@
           class="chat-action-btn"
         />
         <template v-if="msg.role === 'assistant'">
-          <button v-if="!readOnly && !msg.streaming && !hideSessionActions && !isGroupSession" class="chat-action-btn" :class="{ 'is-forking': isForking }" :disabled="isForking" @click="$emit('fork-from-message', msg)" :title="isForking ? t('chat.busy.forking') : t('chat.actions.forkSession')">
+          <!-- Fork is available in group chats too: the source history is
+               carried as injected background rather than copied rows, so the
+               member-row ids on the group timeline never reach the new session.
+               Rewind stays hidden — truncating a group timeline would leave every
+               member's seen_cursor pointing past deleted rows. -->
+          <button v-if="!readOnly && !msg.streaming && !hideSessionActions" class="chat-action-btn" :class="{ 'is-forking': isForking }" :disabled="isForking" @click="$emit('fork-from-message', msg)" :title="isForking ? t('chat.busy.forking') : t('chat.actions.forkSession')">
             <LoadingIndicator v-if="isForking" size="sm" inline />
             <Split v-else :size="14" />
           </button>
@@ -332,10 +337,11 @@ const props = defineProps({
    *  execution record does not have. The rest of the bar (summary toggle,
    *  speak, copy, details) stays useful there. */
   hideSessionActions: { type: Boolean, default: false },
-  /** Group-chat session: fork/rewind operate on ONE agent's history, but the
-   *  group timeline is an aggregation of several members' sessions, so both are
-   *  meaningless (and broken) here. Also forwarded to ContentBlocks to suppress
-   *  its reset-session button. */
+  /** Group-chat session. Fork IS offered here (the source history is injected
+   *  as background instead of copied rows); rewind is not, because truncating a
+   *  shared timeline would leave every member's seen_cursor pointing past
+   *  deleted rows. Also forwarded to ContentBlocks to suppress its
+   *  reset-session button. */
   isGroupSession: { type: Boolean, default: false },
   /** Message id whose fork button is mid-flight. The fork POST can take
    *  seconds (it copies the whole history), so the clicked button swaps to a

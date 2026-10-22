@@ -981,24 +981,121 @@ func TestRestoreDeletedSession_DBError(t *testing.T) {
 	assert.Error(t, err, "should fail with closed DB")
 }
 
-// ---------- ForkSession: group guard (decision #74) ----------
+// ---------- ForkSession: group source (was decision #74's refusal) ----------
 
-// A group timeline must not be forkable: ForkSession copies the source's
-// backend/agent and hard-codes session_type='chat', so the result would be a
-// single-agent chat whose messages carry member row ids that resolve to no
-// member — a wall of unattributed AI speech. Refuse it (symmetric with rewind).
-func TestForkSession_RefusesGroup(t *testing.T) {
+// A group timeline IS forkable now, but into a single chat it must NOT copy the
+// message rows: their agent_id values are member row ids that do not exist in
+// the new session (the exact defect that motivated the old blanket refusal).
+// The history is carried as background text on the target instead.
+func TestForkSession_GroupToChat_UsesBackgroundNotCopiedRows(t *testing.T) {
 	setupDB(t)
 	project := "/tmp/fork-group-test"
 	_, err := store.ProjectIDForPath(project)
 	require.NoError(t, err)
 
-	groupID, _, err := service.CreateGroup(project, "讨论组", "claude", "claude", "Host")
+	groupID, hostID, err := service.CreateGroup(project, "讨论组", "claude", "claude", "Host")
 	require.NoError(t, err)
 
-	_, err = service.ForkSession(groupID, project, "forked", 0, "")
-	require.Error(t, err, "forking a group session must be refused")
-	assert.Contains(t, err.Error(), "group")
+	_, err = service.AddSystemMessage(project, groupID, "轮到用户发言")
+	require.NoError(t, err)
+	_, err = service.AddChatMessageWithAgent(project, "claude", groupID, "user", "用户提问", nil, false, "", "")
+	require.NoError(t, err)
+	_, err = service.AddChatMessageWithAgent(project, "claude", groupID, "assistant", "主持人回答", nil, false, "", hostID)
+	require.NoError(t, err)
+
+	newID, err := service.ForkSession(groupID, project, "forked", 0, "")
+	require.NoError(t, err, "a group session must be forkable")
+
+	// No rows copied.
+	msgs, err := service.GetMessagesBySessionIDRaw(newID)
+	require.NoError(t, err)
+	assert.Empty(t, msgs, "group fork must not copy message rows")
+
+	// Background captured, with speaker names and without system rows.
+	bg := service.GetForkContext(newID)
+	assert.Contains(t, bg, "用户提问")
+	assert.Contains(t, bg, "主持人回答")
+	assert.NotContains(t, bg, "轮到用户发言", "system rows are orchestration, not conversation")
+
+	// Lineage recorded for the session-list fork tree.
+	var source string
+	require.NoError(t, store.ReadDB().QueryRow("SELECT COALESCE(source_session_id, '') FROM chat_sessions WHERE id = ?", newID).Scan(&source))
+	assert.Equal(t, groupID, source)
+}
+
+// The legacy chat→chat path is unchanged: messages ARE copied and no background
+// is written.
+func TestForkSession_ChatToChat_StillCopiesMessages(t *testing.T) {
+	setupDB(t)
+	project := "/tmp/fork-chat-copy-test"
+	_, err := store.ProjectIDForPath(project)
+	require.NoError(t, err)
+
+	sid, err := service.CreateSession(project, "claude", "T", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	_, err = service.AddChatMessageWithAgent(project, "claude", sid, "user", "hello", nil, false, "", "")
+	require.NoError(t, err)
+	_, err = service.AddChatMessageWithAgent(project, "claude", sid, "assistant", "hi", nil, false, "", "")
+	require.NoError(t, err)
+
+	newID, err := service.ForkSession(sid, project, "forked", 0, "")
+	require.NoError(t, err)
+
+	msgs, err := service.GetMessagesBySessionIDRaw(newID)
+	require.NoError(t, err)
+	assert.Len(t, msgs, 2, "chat fork keeps copying rows")
+	assert.Equal(t, "", service.GetForkContext(newID), "copied rows need no background")
+}
+
+// A chat source forked INTO a group: members are new, no rows are copied, and
+// the source history becomes background.
+func TestForkSessionTo_GroupTarget(t *testing.T) {
+	setupDB(t)
+	project := "/tmp/fork-to-group-test"
+	_, err := store.ProjectIDForPath(project)
+	require.NoError(t, err)
+
+	sid, err := service.CreateSession(project, "claude", "T", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	_, err = service.AddChatMessageWithAgent(project, "claude", sid, "user", "背景里的提问", nil, false, "", "")
+	require.NoError(t, err)
+
+	groupID, err := service.ForkSessionTo(service.ForkRequest{
+		SourceSessionID: sid,
+		ProjectPath:     project,
+		Title:           "🔀 T",
+		Target:          service.ForkTargetGroup,
+		HostAgentID:     "claude",
+		MemberSpecs:     []service.GroupMemberSpec{{AgentID: "claude", Backend: "claude"}},
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, "group", service.GetSessionType(groupID))
+	assert.Contains(t, service.GetForkContext(groupID), "背景里的提问")
+
+	msgs, err := service.GetMessagesBySessionIDRaw(groupID)
+	require.NoError(t, err)
+	assert.Empty(t, msgs, "the new group starts empty; history is background only")
+
+	var source string
+	require.NoError(t, store.ReadDB().QueryRow("SELECT COALESCE(source_session_id, '') FROM chat_sessions WHERE id = ?", groupID).Scan(&source))
+	assert.Equal(t, sid, source)
+}
+
+// A member row is a hidden connection carrier with no timeline; forking it
+// would produce an empty session, so it is refused.
+func TestForkSessionTo_RefusesMemberRow(t *testing.T) {
+	setupDB(t)
+	project := "/tmp/fork-member-test"
+	_, err := store.ProjectIDForPath(project)
+	require.NoError(t, err)
+
+	_, hostID, err := service.CreateGroup(project, "讨论组", "claude", "claude", "Host")
+	require.NoError(t, err)
+
+	_, err = service.ForkSession(hostID, project, "forked", 0, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "group member")
 }
 
 // The guard must not over-reach: an ordinary chat still forks.
