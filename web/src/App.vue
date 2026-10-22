@@ -402,20 +402,33 @@
         @close="detailsDrawer.close()"
       />
 
-      <!-- Quote question floating bar (shared by narrow and wide layouts) -->
-      <QuoteQuestionBar
-        :visible="quoteQuestion.visible.value"
-        :quoteData="quoteQuestion.quoteData.value"
-        :anchor="quoteQuestion.anchorRect.value"
-        :composerMode="quoteQuestion.composerMode.value"
-        :composerAttachment="quoteQuestion.composerAttachment.value"
-        :expandRequest="quoteQuestion.expandRequest.value"
-        @add="onQuoteBarAdd"
-        @send="onQuoteBarSend"
-        @close="quoteQuestion.closeSheet()"
-        @pin="quoteQuestion.pinBar()"
-        @unpin="quoteQuestion.unpinBar()"
-      />
+      <!-- Quote question floating bar (shared by narrow and wide layouts).
+
+           Teleported to <body>, like the app header itself. It MUST NOT stay a
+           descendant of .app-container: that element is `position: fixed`, and
+           a fixed box always establishes a stacking context, so every z-index
+           inside it is compared only against its siblings — the bar's
+           `--z-quote-bar` (2400) was silently clamped below the body-level
+           header (1100), and a bar anchored near the top of the viewport was
+           painted UNDER it. Raising the number cannot fix that (verified with
+           real CSS: 2400 and even 9999 both lost to the header); only leaving
+           the container does. The lifecycle stays bound to .app-container,
+           which is what tears the bar down on a project switch. -->
+      <Teleport to="body">
+        <QuoteQuestionBar
+          :visible="quoteQuestion.visible.value"
+          :quoteData="quoteQuestion.quoteData.value"
+          :anchor="quoteQuestion.anchorRect.value"
+          :composerMode="quoteQuestion.composerMode.value"
+          :composerAttachment="quoteQuestion.composerAttachment.value"
+          :expandRequest="quoteQuestion.expandRequest.value"
+          @add="onQuoteBarAdd"
+          @send="onQuoteBarSend"
+          @close="quoteQuestion.closeSheet()"
+          @pin="quoteQuestion.pinBar()"
+          @unpin="quoteQuestion.unpinBar()"
+        />
+      </Teleport>
 
       <!-- Conversation picker: the destination for every quote / attachment,
            opened from any screen (including the chat's own message list, so a
