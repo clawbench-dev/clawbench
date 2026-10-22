@@ -311,7 +311,7 @@ import { exportMarkdownToHtml, imageIssueReasonKey } from '@/utils/exportMarkdow
 import { downloadBlob, downloadFileByPath } from '@/utils/download.ts'
 import { buildHtmlPreviewSrc, installPreviewScrollbar, installPreviewSearchStyles } from '@/utils/htmlPreview.ts'
 import { attachIframeSelectionQuoteBridge, installIframeSearchShortcut, resolveIframeWindow } from '@/utils/iframeSelectionQuote.ts'
-import { useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
+import { isNativeSelectionShell, useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
 import { useToast } from '@/composables/useToast.ts'
 import { useCodeEditorSave } from '@/composables/useCodeEditorSave.ts'
 import { getNative } from '@/utils/clawbenchNative'
@@ -453,7 +453,19 @@ async function attachHtmlQuoteBridge() {
     disposeHtmlQuoteBridgeFn = attachIframeSelectionQuoteBridge({
         win,
         filePath: () => props.file?.path || '',
-        show: (data) => quoteQuestion.showBar(data, { delay: 0 }),
+        // `anchor` arrives in HOST viewport coordinates (the bridge maps the
+        // frame's own rects), so the bar floats next to the selected text
+        // instead of falling back to the pinned top position.
+        //
+        // On Android the system's own selection menu is the visible affordance
+        // for a selection in the previewed page; an in-page bar on top of it
+        // would be a duplicate, so only the quote is recorded (the native
+        // menu's action reads it back through lastSelectionQuote).
+        show: (data, anchor) => quoteQuestion.showBar(data, {
+            delay: 0,
+            anchor,
+            suppressBar: isNativeSelectionShell(),
+        }),
         hide: () => quoteQuestion.hideBar(),
     })
 }

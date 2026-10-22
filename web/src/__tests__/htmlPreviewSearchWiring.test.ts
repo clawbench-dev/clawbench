@@ -113,4 +113,21 @@ describe('HTML preview find bar wiring', () => {
     expect(attachBody.slice(0, attachBody.indexOf('\n}'))).toContain('disposeHtmlQuoteBridge()')
     expect(attachBody.slice(0, attachBody.indexOf('\n}'))).not.toContain('detachHtmlQuoteBridge()')
   })
+
+  it('places the bar at the selection (passes the mapped anchor)', () => {
+    // The frame reports its selection rects in ITS viewport; without handing the
+    // mapped anchor to showBar the bar falls back to its pinned top position —
+    // far from the text the user just selected.
+    const attachBody = viewer.slice(viewer.indexOf('async function attachHtmlQuoteBridge'))
+    const head = attachBody.slice(0, attachBody.indexOf('\n}'))
+    expect(head).toMatch(/show: \(data, anchor\)/)
+    expect(head).toContain('anchor,')
+  })
+
+  it('suppresses the in-page bar on Android (the native menu is the affordance)', () => {
+    // Android draws its own selection menu; an in-page bar on top would be a
+    // duplicate. The quote must still be recorded for that menu's action.
+    const attachBody = viewer.slice(viewer.indexOf('async function attachHtmlQuoteBridge'))
+    expect(attachBody.slice(0, attachBody.indexOf('\n}'))).toContain('suppressBar: isNativeSelectionShell()')
+  })
 })

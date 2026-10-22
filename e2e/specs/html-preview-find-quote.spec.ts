@@ -34,7 +34,12 @@ test.describe('HTML preview: find and quote', () => {
     const path = await import('node:path')
     fs.writeFileSync(
       path.join(process.cwd(), HTML_FILE),
+      // The target paragraph sits WELL below the fold. That matters for the
+      // quote-bar position assertion: with the text near the top, the bar's
+      // pinned-top fallback and its correct floating position would be
+      // indistinguishable (the defect would pass).
       `<!doctype html><html><head><title>preview</title></head><body>
+         <div style="height:900px">spacer</div>
          <h1>${HTML_BODY}</h1>
          <p id="second">another needle here</p>
        </body></html>`,
@@ -94,15 +99,38 @@ test.describe('HTML preview: find and quote', () => {
     await expect(frame.locator('h1')).toContainText(HTML_BODY)
   })
 
-  test('selecting text inside the preview surfaces the quote bar', async ({ page }) => {
+  test('selecting text inside the preview floats the bar next to the selection', async ({ page }) => {
     const frame = await openHtmlPreview(page)
 
     // A real selection inside the frame's document — this is what the bridge
     // listens for; the host never sees it.
-    await frame.locator('h1').selectText()
+    const heading = frame.locator('h1')
+    // Bring it into view first: `selectText` alone does not reliably scroll a
+    // frame's document, and the position assertion below needs the text on
+    // screen. (Playwright's toBeInViewport does not evaluate inside frames.)
+    await heading.scrollIntoViewIfNeeded()
+    await heading.selectText()
 
     const quoteBar = page.locator('.quote-question-bar')
     await expect(quoteBar).toBeVisible({ timeout: 5000 })
+
+    // The bar must float at the selection, NOT at its pinned top position.
+    // The selection rect is reported by the FRAME's viewport, so this is the
+    // assertion that catches a missing frame→host coordinate mapping (the
+    // reported defect: the menu appeared at the top of the page).
+    const headingBox = await heading.boundingBox()
+    const barBox = await quoteBar.boundingBox()
+    expect(headingBox).not.toBeNull()
+    expect(barBox).not.toBeNull()
+    const headingCenterY = headingBox!.y + headingBox!.height / 2
+    const barCenterY = barBox!.y + barBox!.height / 2
+    // Within a couple of line heights of the text it belongs to.
+    expect(Math.abs(barCenterY - headingCenterY)).toBeLessThan(80)
+    // ...and NOT at the pinned-top position. Without the frame→host mapping the
+    // bar sits near the viewport top, which this catches even though the
+    // distance check above could pass for a selection near the top.
+    expect(barBox!.y).toBeGreaterThan(headingBox!.y - 100)
+
     // The bar carries the selected text (the collapsed toolbar has no preview,
     // so assert on the staged quote through the expanded view).
     await quoteBar.locator('.quote-bar-action').filter({ hasText: /引用|Quote/ }).click()

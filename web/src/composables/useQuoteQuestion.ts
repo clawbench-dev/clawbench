@@ -426,6 +426,11 @@ export function resetQuotePin() {
   barPinned.value = false
 }
 
+/** True when the host draws its own selection menu (Android shell). */
+export function isNativeSelectionShell(): boolean {
+  return androidShell()
+}
+
 export function useQuoteQuestion() {
   const sessionIdentity = useSessionIdentity()
 
@@ -612,19 +617,41 @@ export function useQuoteQuestion() {
    * （markdown 预览双击复制依赖此延迟）。传 { delay: 0 } 可立即显示
    * （代码模式拖选无 pointerdown 干扰）。
    *
-   * The anchor is captured SYNCHRONOUSLY, before the delay: by the time the
-   * timeout runs the selection may already have been cleared (the double-click
-   * that triggered this collapses it), and a cleared selection has no rect to
-   * measure. Callers with no DOM selection (CodeMirror's internal selection,
-   * the OpenAPI preview's iframe) leave the anchor null and the bar stays on
-   * its pinned top position.
+   * `anchor` is the selection's rect in HOST viewport coordinates, supplied by
+   * callers whose selection is not in the host document — an iframe reports its
+   * rects in its OWN viewport, so it must map them first (see
+   * mapIframeRectToHost). Without it the bar can only pin to the top of the
+   * page, far from the text the user just selected.
+   *
+   * The host selection is still read as a fallback, and it must be read
+   * SYNCHRONOUSLY before the delay: by the time the timeout runs the selection
+   * may already be cleared (the double-click that triggered this collapses it),
+   * and a cleared selection has no rect to measure.
+   *
+   * `suppressBar` keeps the quote but hides the bar. Android uses it for
+   * selections made in a surface that ALSO gets the system's own selection
+   * menu (an iframe): the native menu is the visible affordance there, and an
+   * in-page bar on top of it would be a duplicate — but the quote still has to
+   * be recorded, because that menu's action reads it back
+   * (handleNativeSelectionAction).
    */
-  function showBar(data: QuoteData, opts: { delay?: number } = {}) {
+  function showBar(
+    data: QuoteData,
+    opts: { delay?: number; anchor?: DOMRect | null; suppressBar?: boolean } = {},
+  ) {
     const sel = window.getSelection()
-    const rect = sel && !sel.isCollapsed && sel.toString().trim() ? selectionAnchorRect(sel) : null
+    const rect = opts.anchor !== undefined
+      ? opts.anchor
+      : (sel && !sel.isCollapsed && sel.toString().trim() ? selectionAnchorRect(sel) : null)
+    const suppress = opts.suppressBar === true
+    if (suppress) {
+      // The native menu's action runs AFTER the action mode has dismissed and
+      // cleared the selection, so this snapshot is the only copy left.
+      lastSelectionQuote.value = data
+    }
     setTimeout(() => {
       setQuoteData(data)
-      barVisible.value = true
+      if (!suppress) barVisible.value = true
       anchorRect.value = rect
     }, opts.delay ?? 400)
   }

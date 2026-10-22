@@ -28,6 +28,17 @@ export interface IframeBridgeWindow {
     addEventListener(type: string, listener: EventListenerOrEventListenerObject, opts?: boolean | AddEventListenerOptions): void
     removeEventListener(type: string, listener: EventListenerOrEventListenerObject, opts?: boolean | EventListenerOptions): void
   }
+  /**
+   * The same-origin iframe element hosting this window.
+   *
+   * Required to express a selection rect in HOST viewport coordinates: the
+   * rects a frame's Range reports are relative to the frame's own viewport.
+   * Absent in unit-test doubles, which have no layout to map anyway.
+   */
+  frameElement?: Element | null
+  /** The frame's own viewport, used as the scale denominator (see mapIframeRectToHost). */
+  innerWidth?: number
+  innerHeight?: number
 }
 
 export interface IframeSelectionQuoteOptions {
@@ -35,8 +46,15 @@ export interface IframeSelectionQuoteOptions {
   win: IframeBridgeWindow
   /** Lazily resolve the current file path (the file may change under the iframe). */
   filePath: () => string
-  /** Surface the quote bar with a QuoteData payload. */
-  show: (data: QuoteData) => void
+  /**
+   * Surface the quote bar with a QuoteData payload.
+   *
+   * `anchor` is the selection's rect in HOST viewport coordinates (the space
+   * `position: fixed` is expressed in), or null when it could not be measured.
+   * Without it the bar can only fall back to its pinned top position, which
+   * puts it far away from the text the user just selected.
+   */
+  show: (data: QuoteData, anchor: DOMRect | null) => void
   /** Hide the quote bar (empty selection / collapsed). */
   hide: () => void
   /** Debounce for `selectionchange` (mirrors the host's 150ms). */
@@ -45,6 +63,65 @@ export interface IframeSelectionQuoteOptions {
   releaseDelayMs?: number
   /** Self-heal timeout for the pointer guard when release events are swallowed. */
   pointerStuckMs?: number
+}
+
+/** A rect in some viewport's coordinate space (structural — DOMRect or a plain object). */
+export interface ViewportRect {
+  top: number
+  left: number
+  width: number
+  height: number
+}
+
+/**
+ * Express a rect measured INSIDE an iframe in the host viewport's coordinates.
+ *
+ * Two different spaces are involved and neither is the other's identity:
+ *
+ *   - a frame's Range reports rects relative to the FRAME's viewport;
+ *   - `position: fixed` (where the quote bar lives) uses the HOST's.
+ *
+ * The frame's rendered size is also not its internal viewport size: the app
+ * scales the whole UI with CSS `zoom` on `<html>`, which scales the iframe
+ * ELEMENT while the document inside it keeps laying out in unscaled CSS px.
+ * The ratio `frameRect.width / innerWidth` is that scale, so the mapping stays
+ * correct under any UI scale instead of drifting by the zoom factor.
+ */
+export function mapIframeRectToHost(
+  rect: ViewportRect,
+  frameRect: ViewportRect,
+  viewport: { width: number; height: number },
+): ViewportRect {
+  const scaleX = viewport.width > 0 ? frameRect.width / viewport.width : 1
+  const scaleY = viewport.height > 0 ? frameRect.height / viewport.height : 1
+  return {
+    left: frameRect.left + rect.left * scaleX,
+    top: frameRect.top + rect.top * scaleY,
+    width: rect.width * scaleX,
+    height: rect.height * scaleY,
+  }
+}
+
+/**
+ * The selection's last line box, in HOST viewport coordinates, or null.
+ *
+ * The LAST rect is used for the same reason as the host path: for a multi-line
+ * selection it is the bottom line — where the pointer just left — so "just
+ * below the text" reads correctly.
+ */
+export function iframeSelectionAnchor(win: IframeBridgeWindow, sel: Selection): DOMRect | null {
+  if (sel.rangeCount === 0) return null
+  const rects = sel.getRangeAt(0).getClientRects()
+  if (!rects.length) return null
+  const last = rects[rects.length - 1]
+  const frame = win.frameElement as HTMLElement | null | undefined
+  if (!frame || typeof frame.getBoundingClientRect !== 'function') return null
+  const frameRect = frame.getBoundingClientRect()
+  const mapped = mapIframeRectToHost(last, frameRect, {
+    width: win.innerWidth ?? 0,
+    height: win.innerHeight ?? 0,
+  })
+  return new DOMRect(mapped.left, mapped.top, mapped.width, mapped.height)
 }
 
 /**
@@ -167,7 +244,7 @@ export function attachIframeSelectionQuoteBridge(opts: IframeSelectionQuoteOptio
       language: '',
       startLine: 0,
       endLine: 0,
-    })
+    }, iframeSelectionAnchor(win, sel!))
   }
 
   function onSelectionChange() {

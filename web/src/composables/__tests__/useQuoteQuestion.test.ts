@@ -1595,6 +1595,84 @@ describe('useQuoteQuestion', () => {
 
         wrapper.unmount()
       })
+
+      /**
+       * Programmatic callers whose selection is NOT in the host document (an
+       * iframe reports its rects in its own viewport) must be able to supply the
+       * anchor themselves. Without this the bar fell back to its pinned top
+       * position — far from the text the user just selected inside the HTML
+       * preview.
+       */
+      it('uses an explicitly supplied anchor instead of the host selection', () => {
+        const wrapper = mountWithComposable()
+        // The host selection is empty (an iframe selection is invisible here),
+        // so a fallback read would yield null.
+        stubRects([])
+        const qq = useQuoteQuestion()
+        const anchor = fakeRect(321)
+
+        qq.showBar({ text: 'from iframe', filePath: '/p/a.html', language: '', startLine: 0, endLine: 0 },
+          { delay: 0, anchor })
+        vi.advanceTimersByTime(0)
+
+        expect(qq.visible.value).toBe(true)
+        expect(qq.anchorRect.value?.top).toBe(321)
+
+        wrapper.unmount()
+      })
+
+      it('treats an explicit null anchor as "unmeasurable" rather than falling back', () => {
+        // `anchor: null` must NOT be confused with "not supplied": a caller that
+        // tried to measure and failed wants the pinned fallback, not a stale
+        // host selection's rect.
+        const wrapper = mountWithComposable()
+        stubRects([fakeRect(100)])
+        createSelectionInContainer('markdown-body', { 'data-file-path': '/a.md' })
+        const qq = useQuoteQuestion()
+
+        qq.showBar({ text: 'x', filePath: '/a.md', language: '', startLine: 1, endLine: 1 },
+          { delay: 0, anchor: null })
+        vi.advanceTimersByTime(0)
+
+        expect(qq.anchorRect.value).toBeNull()
+
+        wrapper.unmount()
+      })
+
+      /**
+       * Android draws its OWN selection menu for text selected in a previewed
+       * page, so the in-page bar would be a duplicate. The quote must still be
+       * recorded — that menu's action reads it back after the selection is gone.
+       */
+      it('suppressBar records the quote but keeps the bar hidden', () => {
+        const wrapper = mountWithComposable()
+        const qq = useQuoteQuestion()
+
+        qq.showBar({ text: 'android iframe', filePath: '/p/a.html', language: '', startLine: 0, endLine: 0 },
+          { delay: 0, suppressBar: true })
+        vi.advanceTimersByTime(0)
+
+        expect(qq.visible.value).toBe(false)
+        expect(qq.quoteData.value?.text).toBe('android iframe')
+
+        wrapper.unmount()
+      })
+
+      it('suppressBar still hands the quote to the native menu action', () => {
+        // The whole point of recording it: the native item runs after the action
+        // mode cleared the DOM selection, so this snapshot is the only copy.
+        const wrapper = mountWithComposable()
+        const qq = useQuoteQuestion()
+
+        qq.showBar({ text: 'android iframe', filePath: '/p/a.html', language: '', startLine: 0, endLine: 0 },
+          { delay: 0, suppressBar: true })
+        vi.advanceTimersByTime(0)
+
+        qq.handleNativeSelectionAction('quote')
+        expect(usePendingTarget().pending.value?.quotes[0].text).toBe('android iframe')
+
+        wrapper.unmount()
+      })
     })
   })
 

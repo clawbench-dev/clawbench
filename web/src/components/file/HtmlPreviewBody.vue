@@ -109,10 +109,24 @@ const iframeRef = ref<HTMLIFrameElement | null>(null)
  */
 type QuoteBar = Awaited<ReturnType<typeof loadQuoteQuestion>>
 let quoteQuestion: QuoteBar | null = null
+/** Native-shell check, loaded with the quote bar (same module graph). */
+let nativeSelectionShell: (() => boolean) | null = null
 
 async function loadQuoteQuestion() {
-  const { useQuoteQuestion } = await import('@/composables/useQuoteQuestion.ts')
-  return useQuoteQuestion()
+  const mod = await import('@/composables/useQuoteQuestion.ts')
+  nativeSelectionShell = mod.isNativeSelectionShell
+  return mod.useQuoteQuestion()
+}
+
+/**
+ * Whether the host draws its own selection menu (Android).
+ *
+ * Deferred like the quote bar itself: importing the composable eagerly is what
+ * this module avoids. Until it loads there is no bridge either, so the fallback
+ * (false) can never suppress a bar that would otherwise have shown.
+ */
+function isNativeSelectionShell(): boolean {
+  return nativeSelectionShell?.() ?? false
 }
 
 async function getQuoteQuestion(): Promise<QuoteBar> {
@@ -157,7 +171,17 @@ async function attachQuoteBridge() {
   disposeQuoteBridge = attachIframeSelectionQuoteBridge({
     win,
     filePath: () => props.filePath,
-    show: (data) => bar.showBar(data, { delay: 0 }),
+    // `anchor` is already in HOST viewport coordinates (the bridge maps the
+    // frame's own rects), so the bar floats next to the selected text.
+    //
+    // On Android the system's selection menu is the visible affordance for a
+    // selection in the previewed page, so the in-page bar is suppressed —
+    // only the quote is recorded for that menu's action to pick up.
+    show: (data, anchor) => bar.showBar(data, {
+      delay: 0,
+      anchor,
+      suppressBar: isNativeSelectionShell(),
+    }),
     hide: () => bar.hideBar(),
   })
 }
