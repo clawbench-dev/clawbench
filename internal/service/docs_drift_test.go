@@ -167,7 +167,7 @@ func TestSpecDocsOpenAPICountsMatchSpec(t *testing.T) {
 func TestOpenAPICountReCoversBothSpellings(t *testing.T) {
 	mustMatch := []string{
 		"178 个路径 / 226 个操作", // api/README.md
-		"178 路径 / 226 操作",    // docs/spec/README.md
+		"178 路径 / 226 操作",   // docs/spec/README.md
 		"178个路径/226个操作",     // no spaces
 	}
 	for _, s := range mustMatch {
