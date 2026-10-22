@@ -320,11 +320,21 @@ type TeamMember struct {
 - 左边框色用**成员 color** 而非固定 `--subagent-accent`（#ec4899），
   使时间线与状态栏的成员配色一致。
 
-> **实施状态**：方案 B 的**成员配色部分已落地**——`ContentBlock` 携带
-> `member_name`/`member_color`（两种 MarshalJSON 形态都落库，刷新不丢），
-> `ContentBlocks.vue` 的 `memberAccentStyle()` 用成员色覆盖 `--subagent-accent`，
-> 承载时间线的 Agent 卡因此按成员着色。卡标题的成员名展示仍沿用现有
-> `display_name`（未单独改写）。
+> **实施状态**：方案 B 的两部分均已落地。
+> - **成员配色**：`ContentBlock` 携带 `member_name`/`member_color`（两种
+>   MarshalJSON 形态都落库，刷新不丢），`ContentBlocks.vue` 的
+>   `memberAccentStyle()` 用成员色覆盖 `--subagent-accent`，承载时间线的 Agent 卡
+>   因此按成员着色。
+> - **卡标题**（2026-10-22）：`agentPillTitle()` 优先用 `member_name`，其次从子块
+>   推导（旧消息没有该字段但其子块有，故无需数据迁移），最后才退回 `display_name`。
+>   为什么必须这样：团队每个成员都以 `subagent_type: "general-purpose"` 生成，按类型
+>   命名会让一屏卡片全叫 "General-purpose"，看不出谁做了哪部分。
+>
+>   **前提**：`AccumulateBlock` 的「已存在块」分支原先**从不更新** `MemberName`，
+>   而成员名是同一 tool call 的**后续帧**才带上的（spawn 帧首帧只有 `subagentType`），
+>   于是 Agent 卡永远拿不到名字。`accumulate.go` 的 `tool_use`/`tool_result` 两个
+>   更新分支现补上空值填充（块一旦归属某成员就不再改写，防止交错帧互相覆盖）。
+>   真机探针见 `codebuddy_team_spawn_meta_probe_integration_test.go`。
 
 ### 4.3 权限卡成员徽标
 
