@@ -70,6 +70,32 @@ public class AppLog {
     /** Timestamp of the last successful flush (epoch millis), or 0 if never succeeded. */
     private static volatile long lastFlushSuccessTs = 0;
 
+    /**
+     * Payload of the most recent flush, for tests.
+     *
+     * The flush POSTs from a background thread, so a test cannot observe what
+     * was actually sent without a network stub. The payload string is built
+     * synchronously before the thread starts, so recording it here gives the
+     * tests a deterministic view of the flushed content.
+     *
+     * Only populated while {@link #recordPayloadForTest} is set, so a release
+     * build does not pin the last payload (up to the 256 KiB request cap) for
+     * the life of the process.
+     */
+    private static volatile String lastPayloadForTest = null;
+    private static volatile boolean recordPayloadForTest = false;
+
+    /**
+     * Flushes currently posting on a background thread.
+     *
+     * The relay is fire-and-forget, so its terminal state (`lastError`,
+     * `lastFlushSuccessTs`) is written AFTER the caller returns. Tests that
+     * reset that state need to know when the write has landed, or they race it
+     * and the assertion depends on thread scheduling.
+     */
+    private static final java.util.concurrent.atomic.AtomicInteger inFlightFlushes =
+            new java.util.concurrent.atomic.AtomicInteger();
+
     // SSL context that trusts all certs (for self-signed server certs)
     private static SSLContext trustAllSSL;
 
@@ -133,14 +159,19 @@ public class AppLog {
     /** Stop capturing and flush remaining entries. */
     public static synchronized void stopCapture() {
         if (!capturing) return;
+        // Log BEFORE clearing `capturing`: the entry is only buffered while the
+        // flag is set, so writing it afterwards dropped it and the log relay had
+        // no record that capture had ended. That is what made a capture outage
+        // indistinguishable from "the app was simply quiet" when reading
+        // client.log after the fact.
+        i(TAG, "Log capture stopped");
         capturing = false;
         if (flushHandler != null) {
             flushHandler.removeCallbacks(flushRunnable);
             flushHandler = null;
         }
+        // Flushes the "stopped" line above together with anything still queued.
         flushToServer();
-        i(TAG, "Log capture stopped");
-        // The "stopped" entry itself won't be sent, but that's fine.
     }
 
     /** Returns whether log capture is currently active. */
@@ -171,6 +202,58 @@ public class AppLog {
      */
     public static long getLastFlushSuccessTs() {
         return lastFlushSuccessTs;
+    }
+
+    /** Payload of the most recent flush, or null if nothing has been flushed. */
+    @androidx.annotation.VisibleForTesting
+    static String lastPayloadForTest() {
+        return lastPayloadForTest;
+    }
+
+    /**
+     * Test-only: start recording flushed payloads.
+     *
+     * Opt-in rather than always-on so the recording never happens in a release
+     * build; tests call this before exercising the relay.
+     */
+    @androidx.annotation.VisibleForTesting
+    static void recordPayloadForTest() {
+        recordPayloadForTest = true;
+    }
+
+    /**
+     * Test-only: reset the relay's module-level state.
+     *
+     * Everything here is process-global static, so a test that arms capture
+     * against an unreachable URL leaves `lastError` set for whichever test runs
+     * next. Without this, assertions about the "initial" state pass or fail
+     * depending on execution order.
+     */
+    @androidx.annotation.VisibleForTesting
+    static void resetStateForTest() {
+        lastPayloadForTest = null;
+        lastError = null;
+        lastFlushSuccessTs = 0;
+    }
+
+    /**
+     * Test-only: block until every in-flight flush has finished writing its
+     * terminal state, then reset. Without the wait, a reset can be undone by a
+     * flush that was still posting — the leak then shows up in an unrelated
+     * test that asserts on the "initial" state.
+     */
+    @androidx.annotation.VisibleForTesting
+    static void awaitFlushesAndResetForTest() {
+        long deadline = System.currentTimeMillis() + 5_000;
+        while (inFlightFlushes.get() > 0 && System.currentTimeMillis() < deadline) {
+            try {
+                Thread.sleep(10);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        resetStateForTest();
     }
 
     /**
@@ -247,8 +330,10 @@ public class AppLog {
             }
             JSONObject payload = new JSONObject();
             payload.put("entries", entries);
+            if (recordPayloadForTest) lastPayloadForTest = payload.toString();
 
             // POST in background thread
+            inFlightFlushes.incrementAndGet();
             new Thread(() -> {
                 try {
                     postLogPayload(payload.toString());
@@ -258,6 +343,8 @@ public class AppLog {
                     String msg = "Log relay failed: " + e.getMessage();
                     lastError = msg;
                     notifyError(msg, e);
+                } finally {
+                    inFlightFlushes.decrementAndGet();
                 }
             }).start();
         } catch (Exception e) {

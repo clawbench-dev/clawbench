@@ -641,6 +641,7 @@ import { buildRenameGenerateOptions } from '@/utils/sessionRename'
 import { useDialog } from './composables/useDialog.ts'
 import { gt } from './composables/useLocale'
 import { useAppMode } from './composables/useAppMode.ts'
+import { onAppResume } from './composables/useAppForeground.ts'
 import { requestNotificationPermission } from './composables/useNotification'
 import { useTerminalKeyboard } from './composables/useTerminalKeyboard.ts'
 import { useChatKeyboard } from './composables/useChatKeyboard.ts'
@@ -2365,6 +2366,22 @@ function registerAppEventListeners() {
   // Registered here (not in onMounted) because it is part of the global
   // listener set that both cold start and post-login initialization install.
   startSystemThemeWatcher()
+
+  // Re-establish the native port forwards on every return to the foreground.
+  //
+  // The initial syncToNative() runs once during startup, but a forward can be
+  // requested while the app is in the background (the user taps a
+  // localhost-URL link in another app, the WebView is frozen, and the request
+  // is queued to the page). Android 12+ then refuses the service start with
+  // ForegroundServiceStartNotAllowedException, so nothing binds — and nothing
+  // retries either: the service is not running, the monitor is not armed, and
+  // the page's own 5s poll only asks an absent service to reconnect
+  // ("reconnectTunnelAsync: BackgroundService not running", forever).
+  // Resuming is exactly the moment the restriction is lifted, so re-sync here.
+  onAppResume(() => {
+    if (!isAppMode.value) return
+    syncToNative().catch(() => {})
+  })
 
   // Tell the desktop shell the notification-click listeners above are live.
   // Until this fires, a clicked notification is deferred by the main process

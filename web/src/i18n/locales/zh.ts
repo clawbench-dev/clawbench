@@ -2018,6 +2018,7 @@ export default {
     portConnecting: '端口正在连接中，请稍候',
     portConflict: '本地端口已被其他程序占用，且无法自动改绑到空闲端口',
     portRebound: '本地端口 {requested} 已被占用，已改用 {port}',
+    bridgeUnsupported: '当前客户端版本不支持端口映射，请更新 App',
   },
   pwa: {
     installTitle: '安装 ClawBench',

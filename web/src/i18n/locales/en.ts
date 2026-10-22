@@ -2022,6 +2022,7 @@ export default {
     portConnecting: 'Port is still connecting, please wait',
     portConflict: 'That local port is in use and no free port could be bound',
     portRebound: 'Local port {requested} was in use; using {port} instead',
+    bridgeUnsupported: 'This client version cannot forward ports — please update the app',
   },
   pwa: {
     installTitle: 'Install ClawBench',
