@@ -335,7 +335,12 @@ function copyValue(value, event) {
 /* `.modal-body` is already the scroll container (flex:1 + overflow-y:auto);
    adding a second one here would nest scrollbars. */
 .md-content {
-    padding: var(--space-4);
+    /* Horizontal inset is wider than the vertical one: the label/value rows
+       already carry a negative inline margin (so their hover fill can bleed
+       past the text), which ate most of a symmetric 8px and left the values
+       flush against the card edge. 16px matches the other modal bodies
+       (.session-share-dialog-body / .session-tags-dialog). */
+    padding: var(--space-4) var(--space-7);
     display: flex;
     flex-direction: column;
     gap: var(--space-4);
