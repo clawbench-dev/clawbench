@@ -94,6 +94,7 @@ import {
   pointerPath,
   versionDir,
   downloadFirstAvailable,
+  downloadAndInstall,
   selectStartupVersion,
   handOffToPointedVersion,
   installPayload,
@@ -290,6 +291,129 @@ function readTree(root: string, base = root, out: Record<string, Buffer> = {}): 
     else if (entry.isFile()) out[path.relative(base, abs)] = fs.readFileSync(abs)
   }
   return out
+}
+
+/** `process.noAsar` as seen from the test: untyped under plain Node. */
+function noAsar(): boolean {
+  return (process as { noAsar?: boolean }).noAsar === true
+}
+
+function setNoAsar(value: boolean | undefined): void {
+  ;(process as { noAsar?: boolean }).noAsar = value
+}
+
+/**
+ * Whether the shim would treat `p` as an asar archive.
+ *
+ * Electron's real rule is a path PREFIX test — anything under an `.asar` is
+ * also intercepted. Last-component matching is enough here because the
+ * installer never addresses a path inside an archive: it only ever creates,
+ * copies or deletes the archive itself.
+ */
+function isAsarArchivePath(p: string): boolean {
+  const trimmed = p.replace(/[\\/]+$/, '')
+  const last = trimmed.slice(Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\')) + 1)
+  return last.endsWith('.asar')
+}
+
+interface AsarShim {
+  /** Every intercepted call, in order, with the `process.noAsar` it observed. */
+  observed: Array<{ op: string; path: string; noAsar: boolean }>
+  restore(): void
+}
+
+/**
+ * Emulate Electron's asar fs shim for the duration of one test.
+ *
+ * Under plain Node `process.noAsar` is inert — there is no shim to disable — so
+ * a test that just ran the installer would pass even with the fix reverted.
+ * These patches reproduce what Electron 44.4.3 was measured doing (see
+ * `withoutAsar`'s comment in install.ts):
+ *
+ *   - opening, writing or copying an `.asar` path throws `Invalid package`;
+ *   - `existsSync` reports false for a valid archive.
+ *
+ * Notably NOT modelled, because the real shim does not do it either: `readdir`
+ * still lists the archive as a regular FILE, and `linkSync`, `chmodSync`,
+ * `rmSync` and `renameSync` work normally on it (or on a directory containing
+ * it). Modelling those would have let a test "prove" a hazard that does not
+ * exist.
+ *
+ * Each intercepted call records the flag it saw, so tests can assert the
+ * installer disabled interception around its filesystem burst — and, just as
+ * importantly, that it did not leave it disabled afterwards.
+ */
+function installAsarShim(): AsarShim {
+  const observed: AsarShim['observed'] = []
+  const record = (op: string, p: string) => observed.push({ op, path: p, noAsar: noAsar() })
+  const blocked = (p: string) => !noAsar() && isAsarArchivePath(p)
+
+  const real = {
+    writeFileSync: fs.writeFileSync,
+    copyFileSync: fs.copyFileSync,
+    linkSync: fs.linkSync,
+    existsSync: fs.existsSync,
+  }
+
+  const spies = [
+    vi.spyOn(fs, 'writeFileSync').mockImplementation(((file: unknown, ...rest: unknown[]) => {
+      const p = String(file)
+      record('write', p)
+      if (blocked(p)) throw new Error(`Invalid package ${p}`)
+      return (real.writeFileSync as (...a: unknown[]) => void)(file, ...rest)
+    }) as typeof fs.writeFileSync),
+
+    vi.spyOn(fs, 'copyFileSync').mockImplementation(((from: unknown, to: unknown, ...rest: unknown[]) => {
+      const p = String(from)
+      record('copy', p)
+      if (blocked(p)) throw new Error(`Invalid package ${p}`)
+      return (real.copyFileSync as (...a: unknown[]) => void)(from, to, ...rest)
+    }) as typeof fs.copyFileSync),
+
+    // Recorded but never blocked: measured on 44.4.3, `linkSync` on an archive
+    // succeeds even with the shim on. Tests assert on the flag it saw.
+    vi.spyOn(fs, 'linkSync').mockImplementation(((from: unknown, to: unknown) => {
+      record('link', String(from))
+      return (real.linkSync as (...a: unknown[]) => void)(from, to)
+    }) as typeof fs.linkSync),
+
+    vi.spyOn(fs, 'existsSync').mockImplementation(((p: unknown) => {
+      const target = String(p)
+      record('exists', target)
+      // The shim answers from the archive's index, which does not contain the
+      // archive itself. No current code path reaches this: cloneTree skips the
+      // containing directory wholesale when the payload provides it, so the
+      // archive's own existence is never probed. Modelled anyway — a refactor
+      // that started probing `.asar` paths directly would otherwise look
+      // harmless here and silently overwrite the payload's archive.
+      if (blocked(target)) return false
+      return real.existsSync(p as fs.PathLike)
+    }) as typeof fs.existsSync),
+  ]
+
+  return {
+    observed,
+    restore() {
+      for (const s of spies) s.mockRestore()
+    },
+  }
+}
+
+/**
+ * Run `fn` with `process.platform` reporting `platform`.
+ *
+ * `platform` is a configurable (non-writable) data property, so it is redefined
+ * rather than spied on — same technique the appRoot test uses for
+ * `process.resourcesPath`.
+ */
+function withPlatform<T>(platform: string, fn: () => T): T {
+  const original = Object.getOwnPropertyDescriptor(process, 'platform')
+  Object.defineProperty(process, 'platform', { value: platform, configurable: true })
+  try {
+    return fn()
+  } finally {
+    if (original) Object.defineProperty(process, 'platform', original)
+  }
 }
 
 let tmpRoot: string
@@ -1161,5 +1285,260 @@ describe('downloadFirstAvailable skips non-archive responses', () => {
     await expect(
       downloadFirstAvailable(['https://mirror/a.zip', 'https://mirror/b.zip']),
     ).rejects.toThrow(/not a zip or tar\.gz archive/)
+  })
+})
+
+/**
+ * Electron's fs shim resolves any path ending in `.asar` INSIDE the archive, so
+ * the installer cannot write the one file it exists to install. Reported in
+ * #579 as `Invalid package <staging>\resources\app.asar`, on both the payload
+ * and the full-download path, which made self-upgrade impossible on every
+ * platform.
+ *
+ * These tests run under plain Node, where `process.noAsar` is inert and the
+ * shim does not exist — the installer would succeed even without the fix. The
+ * shim above is therefore what makes them meaningful: it reproduces the
+ * measured behaviours (write/copy rejected, `existsSync` false) and records the
+ * flag each call saw.
+ */
+describe('asar interception', () => {
+  let shim: AsarShim
+  let homedirSpy: ReturnType<typeof vi.spyOn>
+  let savedElectron: string | undefined
+  const versions = process.versions as { electron?: string }
+
+  beforeEach(() => {
+    homedirSpy = vi.spyOn(os, 'homedir').mockReturnValue(tmpRoot)
+    savedElectron = versions.electron
+    versions.electron = '44.4.3'
+    downloadSpy.mockReset()
+    download.impl = () => Buffer.alloc(0)
+    setNoAsar(undefined)
+    shim = installAsarShim()
+  })
+
+  afterEach(() => {
+    shim.restore()
+    setNoAsar(undefined)
+    homedirSpy.mockRestore()
+    downloadSpy.mockReset()
+    if (savedElectron === undefined) delete versions.electron
+    else versions.electron = savedElectron
+  })
+
+  it('writes app.asar on the full-download path', async () => {
+    // The exact failure from the report: extraction dies while writing
+    // resources/app.asar, so the version never lands.
+    download.impl = () =>
+      makeZip([
+        { name: 'clawbench-desktop', content: 'BIN' },
+        { name: 'resources/app.asar', content: 'ASAR' },
+      ])
+
+    const dest = await downloadAndInstall(['https://github.com/x.zip'], '2.0.0', '')
+
+    expect(fs.readFileSync(path.join(dest, 'resources/app.asar'), 'utf8')).toBe('ASAR')
+    expect(readCurrentVersion()).toBe('2.0.0')
+  })
+
+  it('writes app.asar on the payload path', async () => {
+    const shell = path.join(tmpRoot, 'shell-asar')
+    fs.mkdirSync(shell, { recursive: true })
+    fs.writeFileSync(path.join(shell, 'clawbench-desktop'), 'RUNTIME')
+    fs.writeFileSync(path.join(shell, SHELL_FINGERPRINT_FILE), SHELL_FP + '\n')
+    download.impl = () =>
+      makeZip([
+        { name: PAYLOAD_MANIFEST, content: JSON.stringify({ electron: '44.4.3', shell: SHELL_FP }) },
+        { name: 'resources/app.asar', content: 'NEW-ASAR' },
+      ])
+
+    const dest = await installPayload(['https://m/p.zip'], '2.0.0', shell)
+
+    expect(fs.readFileSync(path.join(dest, 'resources/app.asar'), 'utf8')).toBe('NEW-ASAR')
+  })
+
+  it('clones a shell that already contains app.asar instead of failing to open it', () => {
+    // cloneTree normally skips `resources/` because the payload provides it.
+    // If a payload ever omits it the clone has to duplicate the shell's own
+    // archive, and with the shim on that copy is resolved INSIDE the archive
+    // (`Invalid package`), so the install would die here.
+    const src = path.join(tmpRoot, 'shell-clone')
+    const dst = path.join(tmpRoot, 'shell-clone-dst')
+    fs.mkdirSync(path.join(src, 'resources'), { recursive: true })
+    fs.mkdirSync(dst, { recursive: true })
+    // Building the fixture writes an .asar path, so it needs the same
+    // exemption the installer asks for — otherwise the shim rejects the setup.
+    setNoAsar(true)
+    fs.writeFileSync(path.join(src, 'resources/app.asar'), 'OLD-ASAR')
+    setNoAsar(undefined)
+    fs.writeFileSync(path.join(src, 'clawbench-desktop'), 'RUNTIME')
+
+    cloneTree(src, dst)
+
+    // Read back with interception on: the shim above deliberately models only
+    // the write/copy/exists path, not every fs entry point, so this read is
+    // the test's own assertion and not something the installer performs.
+    expect(fs.readFileSync(path.join(dst, 'resources/app.asar'), 'utf8')).toBe('OLD-ASAR')
+    expect(fs.statSync(path.join(dst, 'resources/app.asar')).isFile()).toBe(true)
+    // The archive was duplicated with interception off, which is the property
+    // that matters — a link/copy that ran with the shim on would have thrown
+    // (`copyFileSync`) or silently produced a link to the live archive.
+    const dup = shim.observed.filter((o) => (o.op === 'copy' || o.op === 'link') && o.path.endsWith('app.asar'))
+    expect(dup.length).toBeGreaterThan(0)
+    expect(dup.every((o) => o.noAsar)).toBe(true)
+  })
+
+  it('replaces a previous install whose tree contains app.asar', async () => {
+    // Guards the boundary of the exemption: replacing a version `rm -rf`s the
+    // old directory and renames the staging one into place, both of which
+    // touch a tree containing `app.asar`. Measured on 44.4.3, the shim does
+    // NOT intercept either — which is why those calls are deliberately left
+    // unwrapped. If a future Electron starts intercepting them, this test is
+    // where the change should surface.
+    const shell = path.join(tmpRoot, 'shell-replace')
+    fs.mkdirSync(shell, { recursive: true })
+    fs.writeFileSync(path.join(shell, 'clawbench-desktop'), 'RUNTIME')
+    fs.writeFileSync(path.join(shell, SHELL_FINGERPRINT_FILE), SHELL_FP + '\n')
+    const manifest = JSON.stringify({ electron: '44.4.3', shell: SHELL_FP })
+
+    download.impl = () =>
+      makeZip([
+        { name: PAYLOAD_MANIFEST, content: manifest },
+        { name: 'resources/app.asar', content: 'FIRST' },
+      ])
+    const dest = await installPayload(['https://m/p.zip'], '2.0.0', shell)
+
+    download.impl = () =>
+      makeZip([
+        { name: PAYLOAD_MANIFEST, content: manifest },
+        { name: 'resources/app.asar', content: 'SECOND' },
+      ])
+    await installPayload(['https://m/p.zip'], '2.0.0', shell)
+
+    expect(fs.readFileSync(path.join(dest, 'resources/app.asar'), 'utf8')).toBe('SECOND')
+  })
+
+  it('re-enables interception afterwards, so the running app can read its archive', async () => {
+    // Scoping is the whole point: leaving noAsar set would make the RUNNING
+    // app unable to resolve anything inside its own app.asar. Asserted on the
+    // calls the installer made — a plain "flag is false afterwards" check
+    // would also pass if it had never been set at all.
+    download.impl = () =>
+      makeZip([
+        { name: 'clawbench-desktop', content: 'BIN' },
+        { name: 'resources/app.asar', content: 'ASAR' },
+      ])
+
+    await downloadAndInstall(['https://github.com/x.zip'], '2.0.0', '')
+
+    const writes = shim.observed.filter((o) => o.op === 'write' && o.path.endsWith('app.asar'))
+    expect(writes.length).toBeGreaterThan(0)
+    // Every write of the archive itself saw interception off...
+    expect(writes.every((o) => o.noAsar)).toBe(true)
+    // ...and the flag is back to its original value once the install returns.
+    expect(noAsar()).toBe(false)
+  })
+
+  it('keeps interception ON across the download, while the app is still running', async () => {
+    // The boundary the whole design turns on. Holding noAsar across the
+    // `await` would also "work" — the install completes and the flag ends up
+    // restored — but for the entire download the running app would be unable
+    // to read anything inside its own archive. Asserted from inside the
+    // download callback, which is exactly when that window is open.
+    let duringDownload: boolean | undefined
+    download.impl = () => {
+      duringDownload = noAsar()
+      return makeZip([
+        { name: 'clawbench-desktop', content: 'BIN' },
+        { name: 'resources/app.asar', content: 'ASAR' },
+      ])
+    }
+
+    await downloadAndInstall(['https://github.com/x.zip'], '2.0.0', '')
+
+    expect(duringDownload).toBe(false)
+  })
+
+  it('restores a caller that had interception off before the install', async () => {
+    // `--no-asar` starts the app with the flag already set. The helper must
+    // restore the PREVIOUS value rather than clearing it, or the installer
+    // would silently change how the rest of the app resolves its archive.
+    setNoAsar(true)
+    download.impl = () =>
+      makeZip([
+        { name: 'clawbench-desktop', content: 'BIN' },
+        { name: 'resources/app.asar', content: 'ASAR' },
+      ])
+
+    await downloadAndInstall(['https://github.com/x.zip'], '2.0.0', '')
+
+    expect(noAsar()).toBe(true)
+  })
+})
+
+describe('payload clone on Windows', () => {
+  let homedirSpy: ReturnType<typeof vi.spyOn>
+  let savedElectron: string | undefined
+  const versions = process.versions as { electron?: string }
+
+  beforeEach(() => {
+    homedirSpy = vi.spyOn(os, 'homedir').mockReturnValue(tmpRoot)
+    savedElectron = versions.electron
+    versions.electron = '44.4.3'
+    downloadSpy.mockReset()
+    download.impl = () => Buffer.alloc(0)
+  })
+
+  afterEach(() => {
+    homedirSpy.mockRestore()
+    downloadSpy.mockReset()
+    if (savedElectron === undefined) delete versions.electron
+    else versions.electron = savedElectron
+  })
+
+  it('copies the runtime instead of hardlinking it', () => {
+    // The second half of #579: hardlinking the running app's exe/.pak means the
+    // staged copy shares their file object, and Windows refuses to delete a
+    // mapped file — EPERM on the staging cleanup and on replacing a prior
+    // install. A copy is a distinct file and can be deleted while the original
+    // stays mapped.
+    const src = path.join(tmpRoot, 'win-src')
+    const dst = path.join(tmpRoot, 'win-dst')
+    fs.mkdirSync(src, { recursive: true })
+    fs.mkdirSync(dst, { recursive: true })
+    fs.writeFileSync(path.join(src, 'clawbench-desktop.exe'), 'EXE')
+    fs.writeFileSync(path.join(src, 'chrome_100_percent.pak'), 'PAK')
+
+    const linkSpy = vi.spyOn(fs, 'linkSync')
+    try {
+      withPlatform('win32', () => cloneTree(src, dst))
+
+      expect(linkSpy).not.toHaveBeenCalled()
+      expect(fs.readFileSync(path.join(dst, 'clawbench-desktop.exe'), 'utf8')).toBe('EXE')
+      expect(fs.statSync(path.join(dst, 'chrome_100_percent.pak')).ino)
+        .not.toBe(fs.statSync(path.join(src, 'chrome_100_percent.pak')).ino)
+    } finally {
+      linkSpy.mockRestore()
+    }
+  })
+
+  it('still hardlinks on Linux and macOS', () => {
+    // The copy is a Windows-only concession; elsewhere the hardlink is both
+    // free and correct, so it must not be traded away.
+    for (const platform of ['linux', 'darwin']) {
+      const src = path.join(tmpRoot, `src-${platform}`)
+      const dst = path.join(tmpRoot, `dst-${platform}`)
+      fs.mkdirSync(src, { recursive: true })
+      fs.mkdirSync(dst, { recursive: true })
+      fs.writeFileSync(path.join(src, 'runtime.bin'), 'RT')
+
+      const linkSpy = vi.spyOn(fs, 'linkSync')
+      try {
+        withPlatform(platform, () => cloneTree(src, dst))
+        expect(linkSpy).toHaveBeenCalled()
+      } finally {
+        linkSpy.mockRestore()
+      }
+    }
   })
 })

@@ -141,6 +141,44 @@ interface ArchiveFile {
 }
 
 /**
+ * Run a synchronous filesystem burst with Electron's asar interception off.
+ *
+ * Electron's fs shim treats ANY path whose last component ends in `.asar` as an
+ * ARCHIVE: it resolves the path inside the archive rather than on disk. Measured
+ * on Electron 44.4.3 (Windows and Linux alike):
+ *
+ *   - `writeFileSync` / `openSync` / `copyFileSync` throw
+ *     `Invalid package <path>` — this is what killed the upgrade (#579);
+ *   - `existsSync` returns FALSE for a perfectly valid archive;
+ *   - `statSync` / `lstatSync` throw `Invalid package` on an `.asar` path.
+ *
+ * The installer's whole job is producing and duplicating files with exactly
+ * that name — unpacking an archive that contains `resources/app.asar`, and
+ * cloning the shell around it — so without this the upgrade path cannot
+ * complete on any platform.
+ *
+ * Directory-level operations do NOT need it: `rmSync` and `renameSync` on a
+ * directory whose tree contains an `app.asar` work normally, which is why the
+ * staging cleanup and the final swap are left alone.
+ *
+ * Scoped to the synchronous calls only. Leaving it set across an `await` would
+ * make the RUNNING app unable to read its own archive while the download is in
+ * flight.
+ */
+function withoutAsar<T>(fn: () => T): T {
+  const prev = process.noAsar
+  process.noAsar = true
+  try {
+    return fn()
+  } finally {
+    // Restore rather than clear: the caller may have had it off already (e.g.
+    // started with `--no-asar`), and silently re-enabling interception would
+    // change how the running app resolves its own archive.
+    process.noAsar = prev
+  }
+}
+
+/**
  * Write decoded archive entries under `destDir`, applying the two
  * normalizations every release layout depends on.
  *
@@ -153,8 +191,15 @@ interface ArchiveFile {
  *     app root in `destDir`.
  *   - Paths are confined to `destDir`. An entry escaping it is a hard error,
  *     not a skip: a hostile archive must not be partially installed.
+ *
+ * Runs with asar interception off: the entries include `resources/app.asar`,
+ * and the shim would otherwise route those writes into the archive writer.
  */
 function writeArchive(files: ArchiveFile[], destDir: string): void {
+  withoutAsar(() => writeArchiveImpl(files, destDir))
+}
+
+function writeArchiveImpl(files: ArchiveFile[], destDir: string): void {
   const wrapper = commonTopLevelDir(files.map((f) => f.name))
 
   for (const file of files) {
@@ -622,8 +667,19 @@ export function electronMajor(version: string): string {
  * contained. It also makes the dangerous ordering impossible — cloning first
  * and extracting second would write through a hardlink into the OLD version's
  * files, mutating the install the user is currently running.
+ *
+ * Runs with asar interception off: `resources/app.asar` must be treated as an
+ * ordinary file. The shim does list it as a file, but resolves the path inside
+ * the archive for anything that opens it — measured on Electron 44.4.3,
+ * `copyFileSync` and `openSync` on the archive throw `Invalid package`, and
+ * `existsSync` returns false for a valid one. Cloning is exactly that: opening
+ * the archive to duplicate it.
  */
 export function cloneTree(src: string, dst: string): void {
+  withoutAsar(() => cloneTreeImpl(src, dst))
+}
+
+function cloneTreeImpl(src: string, dst: string): void {
   for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
     const from = path.join(src, entry.name)
     const to = path.join(dst, entry.name)
@@ -632,17 +688,9 @@ export function cloneTree(src: string, dst: string): void {
 
     if (entry.isDirectory()) {
       fs.mkdirSync(to, { recursive: true })
-      cloneTree(from, to)
+      cloneTreeImpl(from, to)
     } else if (entry.isFile()) {
-      try {
-        fs.linkSync(from, to)
-      } catch {
-        // EXDEV (different volume), EPERM (filesystem without hardlinks),
-        // EMLINK (link limit). A real copy always works, so degrade rather
-        // than fail the upgrade. copyFileSync preserves the mode, which the
-        // Linux binary's executable bit depends on.
-        fs.copyFileSync(from, to)
-      }
+      linkOrCopy(from, to)
     } else {
       // A symlink or device node here would mean the release layout changed.
       // Skipping it silently would ship an install that is quietly missing
@@ -650,6 +698,43 @@ export function cloneTree(src: string, dst: string): void {
       throw new Error(`unsupported entry in shell: ${from}`)
     }
   }
+}
+
+/**
+ * Materialize `from` at `to`, preferring a hardlink.
+ *
+ * Hardlinks are the default because they cost no disk and no copy time, and
+ * because the clone is only ever read from.
+ *
+ * Windows is the exception, and it is not an optimization. The RUNNING app has
+ * its executable and `.pak` files memory-mapped, and a hardlink shares that
+ * same file object: deleting either name then fails with "access denied"
+ * (EPERM; the reporter measured it naming `chrome_100_percent.pak`). Deleting
+ * is precisely what this installer does to its staging directory and to a
+ * previous copy of the same version, so a hardlinked clone makes the payload
+ * path impossible to complete on Windows — it fails after a successful
+ * extraction, with an error that names a runtime file the user never asked
+ * about. A real copy is a distinct file and can be deleted while the original
+ * stays mapped.
+ *
+ * The cost on Windows is a full ~279MB runtime copy per installed version,
+ * synchronously on the main process. Accepted: the alternative is a payload
+ * upgrade that cannot finish at all. Nothing prunes superseded `app-*`
+ * directories, so a Windows user accumulates one per upgrade.
+ */
+function linkOrCopy(from: string, to: string): void {
+  if (process.platform !== 'win32') {
+    try {
+      fs.linkSync(from, to)
+      return
+    } catch {
+      // EXDEV (different volume), EPERM (filesystem without hardlinks),
+      // EMLINK (link limit). A real copy always works, so degrade rather
+      // than fail the upgrade. copyFileSync preserves the mode, which the
+      // Linux binary's executable bit depends on.
+    }
+  }
+  fs.copyFileSync(from, to)
 }
 
 /**
