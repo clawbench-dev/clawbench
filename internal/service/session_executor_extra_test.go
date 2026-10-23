@@ -424,6 +424,61 @@ func TestDrainRemainingEvents_MetadataWithNilMeta(t *testing.T) {
 	executor.drainRemainingEvents(ch)
 }
 
+// A metadata event that arrives after the event loop exited is the ONLY usage
+// record a cancelled ACP turn ever produces (ACPConn.emitCancelledTurnUsage
+// emits it once ctx is done). Before this, the drain only read SessionID off
+// such an event and threw the usage away — so every cancelled turn reached
+// chat_metadata as an all-zero row.
+func TestDrainRemainingEvents_AdoptsMetadataUsage(t *testing.T) {
+	ctx := context.Background()
+	cfg := RunConfig{SessionID: "test", BackendName: "test", ProjectPath: "/test", AgentID: "test", ChatRequest: ai.ChatRequest{Prompt: "hello"}}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	ch := make(chan ai.StreamEvent, 1)
+	ch <- ai.StreamEvent{Type: "metadata", Meta: &ai.Metadata{
+		InputTokens:  38229,
+		OutputTokens: 10,
+		Credit:       3.85,
+		StopReason:   "cancelled",
+	}}
+	close(ch)
+
+	executor.drainRemainingEvents(ch)
+
+	require.NotNil(t, executor.responseMetadata, "the drained metadata must be adopted")
+	assert.Equal(t, 38229, executor.responseMetadata.InputTokens)
+	assert.Equal(t, 10, executor.responseMetadata.OutputTokens)
+	assert.InDelta(t, 3.85, executor.responseMetadata.Credit, 1e-9)
+	assert.Equal(t, "cancelled", executor.responseMetadata.StopReason)
+}
+
+// Merging, not replacing: the metadata buildResult already produced carries
+// WallMs and the session-level model/transport, which the drained event has no
+// way to know. Filling only empty fields keeps both halves.
+func TestDrainRemainingEvents_MergesIntoExistingMetadata(t *testing.T) {
+	ctx := context.Background()
+	cfg := RunConfig{SessionID: "test", BackendName: "test", ProjectPath: "/test", AgentID: "test", ChatRequest: ai.ChatRequest{Prompt: "hello"}}
+	executor := NewSessionExecutor(ctx, cfg)
+	executor.responseMetadata = &ai.Metadata{WallMs: 1234, Model: "glm-5.1", InputTokens: 500}
+
+	ch := make(chan ai.StreamEvent, 1)
+	ch <- ai.StreamEvent{Type: "metadata", Meta: &ai.Metadata{
+		InputTokens:  0, // a drained event with no counters must not erase the recorded one
+		OutputTokens: 42,
+		Credit:       1.5,
+		Model:        "stale-model",
+	}}
+	close(ch)
+
+	executor.drainRemainingEvents(ch)
+
+	assert.Equal(t, 1234, executor.responseMetadata.WallMs, "WallMs is computed by the executor and has no counterpart in the event")
+	assert.Equal(t, "glm-5.1", executor.responseMetadata.Model, "the recorded model must win over the event's")
+	assert.Equal(t, 500, executor.responseMetadata.InputTokens, "a zero in the event must never erase a recorded value")
+	assert.Equal(t, 42, executor.responseMetadata.OutputTokens)
+	assert.InDelta(t, 1.5, executor.responseMetadata.Credit, 1e-9)
+}
+
 // --- buildContentJSON additional coverage ---
 
 func TestSessionExecutor_BuildContentJSON_EmptyWithUserCancel(t *testing.T) {

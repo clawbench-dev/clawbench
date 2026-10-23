@@ -1643,6 +1643,15 @@ func (e *SessionExecutor) buildContentJSON(blocks []model.ContentBlock, result R
 // session ID, even when the stream was cancelled before the main loop processed
 // these events. This prevents resume failures on subsequent prompts.
 //
+// A drained metadata event is MERGED into the executor's own metadata rather
+// than dropped or substituted. It can be the turn's only usage record: ACP
+// emits a metadata event for a cancelled prompt after the executor's event loop
+// has already exited on ctx.Done (see ACPConn.emitCancelledTurnUsage), and the
+// drain is the only place it is ever read. Merging (not replacing) preserves
+// the WallMs and session-level model/transport that buildResult already wrote,
+// and filling only empty fields keeps the loop's own richer values — a drained
+// event must never pull a recorded figure back down to zero.
+//
 // Draining until close (rather than a one-shot non-blocking scan) guarantees
 // the producer's channel sends never block forever on a full buffer, so the
 // producer goroutine can always exit and close the channel.
@@ -1665,7 +1674,17 @@ func (e *SessionExecutor) drainRemainingEvents(eventCh <-chan ai.StreamEvent) {
 				e.captureExternalSessionID(event.Content)
 			}
 		case contentKeyMetadata:
-			if event.Meta != nil && event.Meta.SessionID != "" {
+			if event.Meta == nil {
+				continue
+			}
+			e.mu.Lock()
+			if e.responseMetadata == nil {
+				e.responseMetadata = event.Meta
+			} else {
+				ai.MergeMetadata(e.responseMetadata, event.Meta)
+			}
+			e.mu.Unlock()
+			if event.Meta.SessionID != "" {
 				e.captureExternalSessionID(event.Meta.SessionID)
 			}
 		}
