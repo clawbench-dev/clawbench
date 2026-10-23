@@ -177,6 +177,7 @@ var hotReloadFields = map[string]bool{
 	// takes effect without a restart. The handler also recreates the worker so
 	// the new rule is checked immediately instead of up to one interval later.
 	"usage_meter.anchor_date": true,
+	"usage_meter.cycle_mode":  true,
 	"usage_meter.period_days": true,
 	"usage_meter.metric":      true,
 	"usage_meter.quota":       true,
@@ -365,6 +366,7 @@ func parseMCPServers(raw []any) ([]model.MCPServer, error) {
 // not user configuration, and the UI has nothing to do with them.
 type configUsageMeter struct {
 	AnchorDate string  `json:"anchor_date"`
+	CycleMode  string  `json:"cycle_mode"`
 	PeriodDays int     `json:"period_days"`
 	Metric     string  `json:"metric"`
 	Quota      float64 `json:"quota"`
@@ -891,6 +893,7 @@ var PatchableConfigPaths = map[string]bool{
 	// service-owned bookkeeping, and letting a client write them would let it
 	// suppress or duplicate the notification.
 	"usage_meter.anchor_date": true,
+	"usage_meter.cycle_mode":  true,
 	"usage_meter.period_days": true,
 	"usage_meter.metric":      true,
 	"usage_meter.quota":       true,
@@ -1070,6 +1073,10 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 		Forge:      buildConfigForge(cfg),
 		UsageMeter: configUsageMeter{
 			AnchorDate: cfg.UsageMeter.AnchorDate,
+			// Normalized, never the raw stored value: an install from before
+			// cycle_mode existed stores "" and the settings page has to show a
+			// selected option, not a blank dropdown.
+			CycleMode:  model.NormalizeUsageMeterCycleMode(cfg.UsageMeter.CycleMode),
 			PeriodDays: cfg.UsageMeter.PeriodDays,
 			Metric:     cfg.UsageMeter.Metric,
 			Quota:      cfg.UsageMeter.Quota,
@@ -1387,6 +1394,9 @@ func validateUsageMeterRule(r model.UsageMeterConfig) error {
 	if r.Quota == 0 {
 		return nil
 	}
+	if !model.IsValidUsageMeterCycleMode(r.CycleMode) {
+		return &configValueError{MsgKey: "UsageMeterCycleModeInvalid", Field: "usage_meter.cycle_mode"}
+	}
 	if r.AnchorDate == "" {
 		return &configValueError{MsgKey: "UsageMeterAnchorRequired", Field: "usage_meter.anchor_date"}
 	}
@@ -1396,11 +1406,18 @@ func validateUsageMeterRule(r model.UsageMeterConfig) error {
 	if _, err := model.ParseUsageMeterAnchor(r.AnchorDate); err != nil {
 		return &configValueError{MsgKey: "UsageMeterAnchorInvalid", Field: "usage_meter.anchor_date"}
 	}
-	if r.PeriodDays < 1 || r.PeriodDays > model.MaxUsageMeterPeriodDays {
-		return &configValueError{
-			MsgKey: "UsageMeterPeriodRange",
-			Field:  "usage_meter.period_days",
-			Data:   map[string]any{"Max": model.MaxUsageMeterPeriodDays},
+	// PeriodDays only governs "fixed" cycles. In "monthly" mode the cycle
+	// length comes from the calendar, and the settings page HIDES this field —
+	// so rejecting a zero here would produce an error the user cannot act on
+	// (the field is not on screen to fix). ApplyDefaults pins a sane value
+	// instead, keeping the stored config tidy for a later switch back.
+	if model.NormalizeUsageMeterCycleMode(r.CycleMode) == model.UsageMeterCycleFixed {
+		if r.PeriodDays < 1 || r.PeriodDays > model.MaxUsageMeterPeriodDays {
+			return &configValueError{
+				MsgKey: "UsageMeterPeriodRange",
+				Field:  "usage_meter.period_days",
+				Data:   map[string]any{"Max": model.MaxUsageMeterPeriodDays},
+			}
 		}
 	}
 	if !model.IsValidUsageMeterMetric(r.Metric) {
@@ -1588,6 +1605,13 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 				return &configValueError{MsgKey: "UsageMeterAnchorNotString", Field: "usage_meter.anchor_date"}
 			}
 			effective.AnchorDate = v
+		}
+		if raw, present := um["cycle_mode"]; present {
+			v, ok := raw.(string)
+			if !ok {
+				return &configValueError{MsgKey: "UsageMeterCycleModeInvalid", Field: "usage_meter.cycle_mode"}
+			}
+			effective.CycleMode = v
 		}
 		if raw, present := um["period_days"]; present {
 			v, ok := raw.(float64)
@@ -2344,6 +2368,9 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		if v, ok := um["anchor_date"].(string); ok {
 			cfg.UsageMeter.AnchorDate = v
 		}
+		if v, ok := um["cycle_mode"].(string); ok {
+			cfg.UsageMeter.CycleMode = v
+		}
 		if v, ok := um["period_days"].(float64); ok {
 			cfg.UsageMeter.PeriodDays = int(v)
 		}
@@ -2361,7 +2388,22 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		if _, quotaInPatch := um["quota"]; !quotaInPatch && before.Metric != cfg.UsageMeter.Metric {
 			cfg.UsageMeter.Quota = 0
 		}
+		// Keep period_days usable whenever a quota is set. The settings page
+		// HIDES this field in monthly mode, so a fresh install that picks
+		// "calendar month" would otherwise leave it at 0 — and a later switch
+		// back to "fixed" would then fail validation on a field the user cannot
+		// see. Mirrors ApplyDefaults, applied here because the PATCH response is
+		// built from ConfigInstance before the next restart.
+		if cfg.UsageMeter.Quota > 0 {
+			if cfg.UsageMeter.PeriodDays <= 0 {
+				cfg.UsageMeter.PeriodDays = 30
+			}
+			if cfg.UsageMeter.PeriodDays > model.MaxUsageMeterPeriodDays {
+				cfg.UsageMeter.PeriodDays = model.MaxUsageMeterPeriodDays
+			}
+		}
 		changed := before.AnchorDate != cfg.UsageMeter.AnchorDate ||
+			before.CycleMode != cfg.UsageMeter.CycleMode ||
 			before.PeriodDays != cfg.UsageMeter.PeriodDays ||
 			before.Metric != cfg.UsageMeter.Metric ||
 			before.Quota != cfg.UsageMeter.Quota

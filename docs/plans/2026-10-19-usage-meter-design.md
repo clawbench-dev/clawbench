@@ -23,7 +23,7 @@ ClawBench 已经有完整的用量账本（`chat_metadata`）和统计面板（`
 |---|---|
 | 规则条数 | **只支持一条**（全局唯一） |
 | 统计范围 | **全局合计**（所有项目），与当前停在哪个项目无关 |
-| 周期 | 用户指定起始日期 + 周期天数，按天滚动 |
+| 周期 | **周期类型二选一**：固定天数（用户指定起始时间 + 天数，按天滚动）或自然月（按起始时间的日号每月滚动）；见「补充决策」 |
 | 基准线 | **线性匀速**，按整天向下取整 |
 | 触发 | 越过基准线一次 + 触顶一次，每周期最多两条 |
 | 同时成立 | 越线与触顶同时成立时**只发触顶** |
@@ -76,7 +76,9 @@ ClawBench 已经有完整的用量账本（`chat_metadata`）和统计面板（`
 
 ### 周期定位
 
-所有边界按**服务端本地时区**计算，起始日期解释为该时区的 00:00。
+所有边界按**服务端本地时区**计算，起始日期解释为该时区的 00:00（起始值带时间时则为那个时刻）。
+
+**固定天数（`cycle_mode: fixed`，缺省）**：
 
 ```
 anchor      = anchor_date 在当地时区的 00:00（绝对时刻）
@@ -89,10 +91,22 @@ dayInCycle  = elapsedDays - periodIndex * period_days + 1   // 1..period_days
 
 **注意**：用 `floor(时长/24h)` 而不是 `date()` 差值。DST 切换日只有 23 或 25 小时，用日历日期差会在切换日跳变；用固定 24h 时长则周期长度恒定，代价是 DST 切换后当天的边界相对当地零点偏移 1 小时。选择后者：**周期长度必须恒定**，否则「第 10 天应花 1/3」这句话在某些日子会不成立。
 
+**自然月（`cycle_mode: monthly`）**：
+
+```
+restartDay  = anchor 的日号（31 在小月钳到月末）
+cycleStart  = 当月 restartDay 当天的 anchor 时刻；若它晚于 now，则取上个月那个边界
+cycleEnd    = 下个月的 restartDay 当天的 anchor 时刻（日号仍按 anchor 的，不受上个月钳制影响）
+periodDays  = cycleEnd - cycleStart 的日历天数（28..31）
+dayInCycle  = cycleStart 到 now 的日历天数 + 1
+```
+
+这里刻意**不**用 24h 跨度：自然月的长度本来就该跟着日历走，而 DST 切换日只有 23/25 小时，用时长相减会把一天算成 0 或 2 天。`calendarDaySpan` 把两端归一到 UTC 午夜再相减，因此与 DST 无关。
+
 ### 基准线与实际
 
 ```
-expected = quota * dayInCycle / period_days
+expected = quota * dayInCycle / periodDays     // periodDays = 本周期长度
 actual   = SUM(metric) over [cycleStart, now)
 ```
 
@@ -116,8 +130,9 @@ actual   = SUM(metric) over [cycleStart, now)
 
 ```yaml
 usage_meter:
-  anchor_date: "2026-10-05"   # 周期起始日期（当地时区）
-  period_days: 30             # 周期天数，1..366
+  anchor_date: "2026-10-05"   # 周期起始（当地时区）；自然月下它的日号就是每月换周期的那天
+  cycle_mode: "fixed"         # fixed（固定天数）| monthly（自然月）；空 = fixed
+  period_days: 30             # 固定周期的天数，1..366（自然月下不使用，但始终保持合法）
   metric: "cost"              # tokens | credit | cost
   quota: 20.0                 # 额度；0 或缺失 = 关闭
   # 内部状态，不暴露给前端设置页
@@ -418,6 +433,7 @@ go CheckUsageMeter(context.Background())
 `internal/service/usage_meter_test.go`：
 
 - 周期定位：第 1 天 / 中间 / 最后一天 / 跨周期滚动
+- 自然月：当月天数（28/30/31）、起始日号在当月之前时回退一个月、31 号在小月钳制且不漂移、保留起始时刻、跨年
 - `expected` 的整天取整：第 3 天下午仍是 3 天额度
 - 三指标口径：token 的 `total_tokens = 0` 兜底
 - 提醒判定：越线 / 触顶 / 同时成立只发触顶 / stage 不回退
@@ -481,5 +497,12 @@ go CheckUsageMeter(context.Background())
 
 ## 补充决策（实现期）
 
+- **周期类型二选一（2026-10-23）**：`cycle_mode` 取 `fixed` / `monthly`，缺省 `fixed`（本字段出现前所有安装的语义，无需迁移）。
+  - **自然月的边界由 `anchor_date` 的日号与时刻决定**，不新增「每月几号」配置项：`2026-10-01T00:00` 就是自然月，`2026-10-05T09:00` 表示每月 5 日 09:00 换周期。这样「自然月」与「账单从某天开始」是同一套公式，而不是两个模式。
+  - **周期长度取当月实际天数**，按**日历日期**计天数（`calendarDaySpan` 归一到 UTC 午夜再相减）。固定周期仍按 24 小时跨度计，两者刻意不同：固定周期的长度必须恒定，自然月的长度本来就该跟着日历走，而夏令时不能让一天变成 0 或 2 天。
+  - **月末钳制不漂移**：日号 31 在 2 月钳到 28/29 日，但下一个边界由 `anchor.Day()` 推算（`nextMonthlyBoundary` 用的是 anchor 而非 start 的日号），所以 3 月仍回到 31 日。**这是唯一容易写错的地方**——用 start 的日号推算会让周期在一次 2 月之后永久变成 28 日。
+  - **所有派生量必须用 `cycle.periodDays` 而非 `rule.PeriodDays`**：`expected`、`remainingDays`、series 的 `perDay`、`projectExhaustDay` 四处。用配置值会让 31 天的月份在第 30 天就报满额、曲线基准线冲出额度线。
+  - **设置页在自然月下隐藏「周期天数」**（`dependsOn`），但服务端 `ApplyDefaults` 始终把 `period_days` 保持在合法范围：字段被隐藏时用户无法修复一个 0，而切回固定周期又需要它有效。相应地 `validateUsageMeterRule` 只在 `fixed` 下校验 `period_days` 范围。
+  - **`UsageMeterStatus.periodDays` 改为「当前周期长度」**（自然月下 28–31 会变）。周期类型本身**不在 status 里回显**：浮层与移动端面板只用「第 N / M 天」+ 周期起止就能表达，设置页读的是 `/api/config`，多一个没人读的字段只会出现在每帧广播里。
 - **worker 增加 `Wake()`**。设计里写「配置热更新后重建 worker」，但重建会与 PATCH 持有的 `configMutex` 死锁（进行中的 tick 需要同一把锁写状态）。改为 buffered channel 唤醒：非阻塞、可合并、不持锁。代价是新规则生效最多延迟到下一次 tick，但 PATCH 路径会立刻 wake，实测 4 秒内出通知。
 - **`AppHeader` 不持有 popover 的组件 ref**。通知点击经 `useUsageMeter.requestOpen()` 的计数器传递，避免 App.vue 依赖 header 内部结构；窄屏没有胶囊，`handleOpenUsageMeter` 直接跳设置页。

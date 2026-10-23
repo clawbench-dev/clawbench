@@ -46,7 +46,13 @@ type UsageMeterStatus struct {
 	Enabled bool   `json:"enabled"`
 	Metric  string `json:"metric,omitempty"`
 	// AnchorDate/PeriodDays echo the rule so the popover can render "day N of M"
-	// without a second request to /api/config.
+	// without a second request to /api/config. PeriodDays is the length of the
+	// CURRENT cycle (in monthly mode it follows the calendar month).
+	//
+	// The cycle MODE is deliberately not echoed: every consumer derives what it
+	// needs from "day N of M" plus the cycle bounds, and the settings page reads
+	// the mode from /api/config. A field nobody reads would be dead weight on
+	// every broadcast frame.
 	AnchorDate string  `json:"anchorDate,omitempty"`
 	PeriodDays int     `json:"periodDays,omitempty"`
 	Quota      float64 `json:"quota,omitempty"`
@@ -138,33 +144,144 @@ func usageMeterRowExpr(metric string) (string, bool) {
 // usageMeterCycle locates now within the rule's rolling cycle.
 //
 // Boundaries are fixed 24h spans from the anchor rather than calendar-date
-// differences. A DST transition day is 23 or 25 hours long, so a calendar
-// difference would make "day 10 of 30" mean different amounts of elapsed time
-// on either side of the switch. With fixed spans the cycle length is constant;
-// the price is that after a DST change the boundary sits one hour off local
-// midnight (twice a year, invisible in practice).
+// differences in "fixed" mode. A DST transition day is 23 or 25 hours long, so a
+// calendar difference would make "day 10 of 30" mean different amounts of
+// elapsed time on either side of the switch. With fixed spans the cycle length
+// is constant; the price is that after a DST change the boundary sits one hour
+// off local midnight (twice a year, invisible in practice).
+//
+// "monthly" mode is the opposite trade: cycles follow the calendar, so their
+// length varies (28-31 days) and days are counted by calendar date rather than
+// elapsed hours.
 type usageMeterCycle struct {
-	start       time.Time
-	end         time.Time
-	dayInCycle  int // 1-based; 0 when now < anchor
-	periodIndex int
+	start time.Time
+	end   time.Time
+	// dayInCycle is 1-based; 0 when now < anchor.
+	dayInCycle int
+	// periodDays is the length of THIS cycle. In "fixed" mode it is the rule's
+	// PeriodDays; in "monthly" mode it is however many days this month's cycle
+	// spans. Every caller must use this rather than rule.PeriodDays — using the
+	// rule's value in monthly mode would divide a 31-day month's budget by 30
+	// and let `expected` exceed the quota before the month is over.
+	periodDays int
 }
 
-func locateUsageMeterCycle(anchor time.Time, periodDays int, now time.Time) usageMeterCycle {
+// locateUsageMeterCycle dispatches on the rule's cycle mode.
+func locateUsageMeterCycle(anchor time.Time, rule model.UsageMeterConfig, now time.Time) usageMeterCycle {
+	if model.NormalizeUsageMeterCycleMode(rule.CycleMode) == model.UsageMeterCycleMonthly {
+		return locateMonthlyCycle(anchor, now)
+	}
+	return locateFixedCycle(anchor, rule.PeriodDays, now)
+}
+
+func locateFixedCycle(anchor time.Time, periodDays int, now time.Time) usageMeterCycle {
 	day := 24 * time.Hour
 	elapsed := now.Sub(anchor)
 	if elapsed < 0 {
-		return usageMeterCycle{start: anchor, end: anchor.Add(time.Duration(periodDays) * day)}
+		return usageMeterCycle{
+			start:      anchor,
+			end:        anchor.Add(time.Duration(periodDays) * day),
+			periodDays: periodDays,
+		}
 	}
 	elapsedDays := int(elapsed / day)
 	periodIndex := elapsedDays / periodDays
 	start := anchor.Add(time.Duration(periodIndex*periodDays) * day)
 	return usageMeterCycle{
-		start:       start,
-		end:         start.Add(time.Duration(periodDays) * day),
-		dayInCycle:  elapsedDays - periodIndex*periodDays + 1,
-		periodIndex: periodIndex,
+		start:      start,
+		end:        start.Add(time.Duration(periodDays) * day),
+		dayInCycle: elapsedDays - periodIndex*periodDays + 1,
+		periodDays: periodDays,
 	}
+}
+
+// locateMonthlyCycle puts the cycle boundary on the anchor's day-of-month,
+// keeping its time of day.
+//
+// The anchor supplies three things: which day of the month the cycle restarts,
+// the wall-clock instant it restarts, and (implicitly, via its own month) the
+// first cycle. So an anchor of "2026-10-05T09:00" means the cycle restarts at
+// 09:00 on the 5th of every month — which makes "the 1st at 00:00" a plain
+// calendar month without a second configuration knob.
+//
+// Day-of-month clamping: an anchor on the 31st restarts on the 28th in
+// February. The NEXT boundary is still computed from the anchor's 31, not from
+// the clamped 28, so a 31-anchored rule does not drift permanently to the 28th
+// after one February.
+func locateMonthlyCycle(anchor, now time.Time) usageMeterCycle {
+	if now.Before(anchor) {
+		end := nextMonthlyBoundary(anchor, anchor)
+		return usageMeterCycle{
+			start:      anchor,
+			end:        end,
+			periodDays: calendarDaySpan(anchor, end),
+		}
+	}
+
+	// The boundary in NOW's month, not the anchor's: the anchor may be years
+	// old, so its own month's boundary would sit far in the past.
+	start := monthlyBoundaryIn(anchor, now.Year(), now.Month())
+	if start.After(now) {
+		// This month's boundary is still ahead of us (the anchor is the 5th and
+		// today is the 1st), so the current cycle began in the previous month.
+		prev := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()).AddDate(0, -1, 0)
+		start = monthlyBoundaryIn(anchor, prev.Year(), prev.Month())
+	}
+	end := nextMonthlyBoundary(anchor, start)
+
+	periodDays := calendarDaySpan(start, end)
+	dayInCycle := calendarDaySpan(start, now) + 1
+	if dayInCycle < 1 {
+		dayInCycle = 1
+	}
+	if dayInCycle > periodDays {
+		dayInCycle = periodDays
+	}
+	return usageMeterCycle{
+		start:      start,
+		end:        end,
+		dayInCycle: dayInCycle,
+		periodDays: periodDays,
+	}
+}
+
+// monthlyBoundaryIn returns the cycle boundary inside the given month, using
+// the anchor's day-of-month and wall-clock time, clamped to that month's length.
+func monthlyBoundaryIn(anchor time.Time, year int, month time.Month) time.Time {
+	day := anchor.Day()
+	if last := daysInMonth(year, month); day > last {
+		day = last
+	}
+	return time.Date(year, month, day,
+		anchor.Hour(), anchor.Minute(), anchor.Second(), anchor.Nanosecond(), anchor.Location())
+}
+
+// nextMonthlyBoundary returns the boundary one month after `start`, using the
+// ANCHOR's day-of-month so a clamped month does not shift later boundaries.
+func nextMonthlyBoundary(anchor, start time.Time) time.Time {
+	next := time.Date(start.Year(), start.Month(), 1, 0, 0, 0, 0, start.Location()).AddDate(0, 1, 0)
+	return monthlyBoundaryIn(anchor, next.Year(), next.Month())
+}
+
+// daysInMonth returns the number of days in the given month.
+func daysInMonth(year int, month time.Month) int {
+	// Day 0 of the NEXT month is the last day of this one; time.Date normalizes
+	// month 13 to January of the next year.
+	return time.Date(year, month+1, 0, 0, 0, 0, 0, time.UTC).Day()
+}
+
+// calendarDaySpan counts the calendar days between two instants, comparing
+// DATES rather than elapsed time.
+//
+// Monthly cycles are calendar-shaped, so a DST transition must not turn a
+// one-day step into "0 days" (spring forward, 23h) or "2 days" (fall back,
+// 25h). Normalizing to UTC midnight makes the subtraction exact.
+func calendarDaySpan(from, to time.Time) int {
+	fy, fm, fd := from.Date()
+	ty, tm, td := to.Date()
+	a := time.Date(fy, fm, fd, 0, 0, 0, 0, time.UTC)
+	b := time.Date(ty, tm, td, 0, 0, 0, 0, time.UTC)
+	return int(b.Sub(a) / (24 * time.Hour))
 }
 
 // ComputeUsageMeter aggregates the rule against the ledger.
@@ -178,13 +295,14 @@ func ComputeUsageMeter(ctx context.Context, now time.Time) (*UsageMeterStatus, e
 	if rule.Quota <= 0 {
 		return &UsageMeterStatus{Enabled: false}, nil
 	}
-	if !model.IsValidUsageMeterMetric(rule.Metric) || rule.PeriodDays <= 0 {
+	if !model.IsValidUsageMeterMetric(rule.Metric) || !usageMeterPeriodUsable(rule) {
 		// A malformed rule is reported as disabled rather than as an error: the
 		// caller is a header badge, and a 500 there would be noise. The PATCH
 		// validator rejects such rules, so this only happens for a hand-edited
 		// config.yaml.
 		slog.Warn("usage meter: rule is incomplete, treating as disabled",
-			"metric", rule.Metric, "period_days", rule.PeriodDays)
+			"metric", rule.Metric, "cycle_mode", rule.CycleMode,
+			"period_days", rule.PeriodDays)
 		return &UsageMeterStatus{Enabled: false}, nil
 	}
 	anchor, err := model.ParseUsageMeterAnchor(rule.AnchorDate)
@@ -194,12 +312,16 @@ func ComputeUsageMeter(ctx context.Context, now time.Time) (*UsageMeterStatus, e
 		return &UsageMeterStatus{Enabled: false}, nil
 	}
 
-	cycle := locateUsageMeterCycle(anchor, rule.PeriodDays, now)
+	cycle := locateUsageMeterCycle(anchor, rule, now)
 	st := &UsageMeterStatus{
 		Enabled:    true,
 		Metric:     rule.Metric,
 		AnchorDate: rule.AnchorDate,
-		PeriodDays: rule.PeriodDays,
+		// PeriodDays is the length of the CURRENT cycle, not the configured
+		// one: in monthly mode that is 28-31 and varies month to month, and
+		// every consumer ("day N of M", the chart's x axis, the per-day budget)
+		// must agree with the arithmetic below.
+		PeriodDays: cycle.periodDays,
 		Quota:      rule.Quota,
 		CycleStart: cycle.start.Format(time.RFC3339),
 		CycleEnd:   cycle.end.Format(time.RFC3339),
@@ -211,8 +333,8 @@ func ComputeUsageMeter(ctx context.Context, now time.Time) (*UsageMeterStatus, e
 		return st, nil
 	}
 
-	st.Expected = rule.Quota * float64(cycle.dayInCycle) / float64(rule.PeriodDays)
-	st.RemainingDays = rule.PeriodDays - cycle.dayInCycle
+	st.Expected = rule.Quota * float64(cycle.dayInCycle) / float64(cycle.periodDays)
+	st.RemainingDays = cycle.periodDays - cycle.dayInCycle
 	if st.RemainingDays < 0 {
 		st.RemainingDays = 0
 	}
@@ -237,6 +359,22 @@ func ComputeUsageMeter(ctx context.Context, now time.Time) (*UsageMeterStatus, e
 	st.ProjectedExhaustDay = projectExhaustDay(st.Actual, rule, cycle, now)
 
 	return st, nil
+}
+
+// usageMeterPeriodUsable reports whether the rule carries the cycle length its
+// mode needs.
+//
+// Only "fixed" needs period_days. A "monthly" rule derives its length from the
+// calendar, so requiring the field would disable a perfectly valid monthly rule
+// that was configured from a fresh install (where period_days starts at 0
+// because the settings page hides the field). ApplyDefaults normally fills it
+// in, but a rule can reach here straight after a PATCH that ran before the
+// defaults were re-applied.
+func usageMeterPeriodUsable(rule model.UsageMeterConfig) bool {
+	if model.NormalizeUsageMeterCycleMode(rule.CycleMode) == model.UsageMeterCycleMonthly {
+		return true
+	}
+	return rule.PeriodDays > 0
 }
 
 // sumUsageInCycle totals one metric over the cycle window.
@@ -270,8 +408,12 @@ func projectExhaustDay(actual float64, rule model.UsageMeterConfig, cycle usageM
 	if ratePerDay <= 0 {
 		return 0
 	}
+	// cycle.periodDays, not rule.PeriodDays: in monthly mode the cycle length
+	// follows the calendar, and clamping to the configured 30 would report "day
+	// 30" for a 31-day month.
+	periodDays := cycle.periodDays
 	daysToExhaust := rule.Quota / ratePerDay
-	if daysToExhaust > float64(rule.PeriodDays) {
+	if daysToExhaust > float64(periodDays) {
 		return 0
 	}
 	day := int(math.Ceil(daysToExhaust))
@@ -279,8 +421,8 @@ func projectExhaustDay(actual float64, rule model.UsageMeterConfig, cycle usageM
 		// Already past the quota: the "projected" day is today.
 		day = cycle.dayInCycle
 	}
-	if day > rule.PeriodDays {
-		day = rule.PeriodDays
+	if day > periodDays {
+		day = periodDays
 	}
 	return day
 }
@@ -333,7 +475,11 @@ func queryUsageMeterSeries(ctx context.Context, rowExpr string, cycle usageMeter
 	}
 
 	rule := model.ConfigInstance.UsageMeter
-	perDay := rule.Quota / float64(rule.PeriodDays)
+	// The baseline is spread over THIS cycle's length. In monthly mode that is
+	// the calendar month's length, not the configured period_days — otherwise a
+	// 31-day month's curve would reach the quota on day 30 and then keep
+	// climbing past it for the rest of the month.
+	perDay := rule.Quota / float64(cycle.periodDays)
 
 	// Build the curve from the buckets that actually exist, then fill the gaps.
 	//

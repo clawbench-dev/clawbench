@@ -550,6 +550,14 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	//
 	// Quota <= 0 is the off switch and is left untouched.
 	if cfg.UsageMeter.Quota > 0 {
+		// Normalize the mode even when it is empty: "" means "fixed", and
+		// writing that back keeps config.yaml readable and makes the value the
+		// settings page shows identical to the one the arithmetic uses.
+		cfg.UsageMeter.CycleMode = NormalizeUsageMeterCycleMode(cfg.UsageMeter.CycleMode)
+		// PeriodDays stays valid in BOTH modes. It is what "fixed" runs on, and
+		// in "monthly" mode it is a dormant value the user can switch back to —
+		// the settings page hides the field there, so leaving it at 0 would make
+		// a later switch to "fixed" silently fail validation.
 		if cfg.UsageMeter.PeriodDays <= 0 {
 			cfg.UsageMeter.PeriodDays = 30
 		}

@@ -207,8 +207,17 @@ func TestValidateUsageMeterRule(t *testing.T) {
 		{"zero period", model.UsageMeterConfig{Quota: 10, AnchorDate: "2026-10-05", PeriodDays: 0, Metric: model.UsageMeterMetricCost}, true},
 		{"period over the cap", model.UsageMeterConfig{Quota: 10, AnchorDate: "2026-10-05", PeriodDays: model.MaxUsageMeterPeriodDays + 1, Metric: model.UsageMeterMetricCost}, true},
 		{"unknown metric", model.UsageMeterConfig{Quota: 10, AnchorDate: "2026-10-05", PeriodDays: 30, Metric: "usd"}, true},
+		{"unknown cycle mode", model.UsageMeterConfig{Quota: 10, AnchorDate: "2026-10-05", CycleMode: "weekly", PeriodDays: 30, Metric: model.UsageMeterMetricCost}, true},
 		{"valid cost rule", model.UsageMeterConfig{Quota: 20, AnchorDate: "2026-10-05", PeriodDays: 30, Metric: model.UsageMeterMetricCost}, false},
 		{"valid token rule", model.UsageMeterConfig{Quota: 5_000_000, AnchorDate: "2026-10-05", PeriodDays: 7, Metric: model.UsageMeterMetricTokens}, false},
+		{"valid fixed mode", model.UsageMeterConfig{Quota: 20, AnchorDate: "2026-10-05", CycleMode: model.UsageMeterCycleFixed, PeriodDays: 30, Metric: model.UsageMeterMetricCost}, false},
+		{"valid monthly mode", model.UsageMeterConfig{Quota: 20, AnchorDate: "2026-10-01", CycleMode: model.UsageMeterCycleMonthly, PeriodDays: 30, Metric: model.UsageMeterMetricCost}, false},
+		// The settings page HIDES the period field in monthly mode, so a zero
+		// there is unreachable by a user and must not be an error they cannot
+		// fix. ApplyDefaults keeps a sane value in storage.
+		{"monthly mode ignores a zero period", model.UsageMeterConfig{Quota: 20, AnchorDate: "2026-10-01", CycleMode: model.UsageMeterCycleMonthly, PeriodDays: 0, Metric: model.UsageMeterMetricCost}, false},
+		// ...but a fixed rule still needs one.
+		{"fixed mode still requires a period", model.UsageMeterConfig{Quota: 20, AnchorDate: "2026-10-01", CycleMode: model.UsageMeterCycleFixed, PeriodDays: 0, Metric: model.UsageMeterMetricCost}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := validateUsageMeterRule(tc.rule)
@@ -321,6 +330,12 @@ func TestValidateUsageMeterRule_EachFailureNamesItsField(t *testing.T) {
 			wantKey:   "UsageMeterMetricInvalid",
 			wantField: "usage_meter.metric",
 		},
+		{
+			name:      "unknown cycle mode",
+			rule:      model.UsageMeterConfig{Quota: 10, AnchorDate: "2026-10-05", CycleMode: "weekly", PeriodDays: 30, Metric: model.UsageMeterMetricCost},
+			wantKey:   "UsageMeterCycleModeInvalid",
+			wantField: "usage_meter.cycle_mode",
+		},
 	}
 
 	keyToField := map[string]string{}
@@ -409,11 +424,138 @@ func TestPatchableConfigPaths_UsageMeterStateIsNotWritable(t *testing.T) {
 	}
 	for _, allowed := range []string{
 		"usage_meter.anchor_date",
+		"usage_meter.cycle_mode",
 		"usage_meter.period_days",
 		"usage_meter.metric",
 		"usage_meter.quota",
 	} {
 		assert.True(t, PatchableConfigPaths[allowed], "%s must be PATCHable", allowed)
+	}
+}
+
+// A PATCH that switches the cycle mode must reach ConfigInstance, re-arm the
+// notification, and be reported as hot (the worker re-reads the rule each tick).
+func TestServeConfig_Patch_UsageMeterCycleMode(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	cfg.UsageMeter = model.UsageMeterConfig{
+		AnchorDate:         "2026-10-01",
+		CycleMode:          model.UsageMeterCycleFixed,
+		PeriodDays:         30,
+		Metric:             model.UsageMeterMetricCost,
+		Quota:              20,
+		NotifiedCycleStart: "2026-10-01T00:00:00+08:00",
+		NotifiedStage:      "over",
+	}
+	model.ConfigInstance = cfg
+
+	body := `{"usage_meter":{"cycle_mode":"monthly"}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, model.UsageMeterCycleMonthly, model.ConfigInstance.UsageMeter.CycleMode,
+		"cycle_mode must be applied to ConfigInstance")
+	assert.Empty(t, model.ConfigInstance.UsageMeter.NotifiedCycleStart,
+		"a changed rule must re-arm notification")
+	assert.Empty(t, model.ConfigInstance.UsageMeter.NotifiedStage)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.False(t, resp["needs_restart"].(bool),
+		"cycle_mode is hot: the worker re-reads the rule every tick")
+}
+
+// Saving the SAME rule again (the settings panel submits the whole panel) must
+// not clear the notification state — otherwise pressing save without editing
+// anything would re-notify the user.
+func TestServeConfig_Patch_UsageMeterSameCycleModeDoesNotRearm(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	cfg.UsageMeter = model.UsageMeterConfig{
+		AnchorDate:         "2026-10-01",
+		CycleMode:          model.UsageMeterCycleMonthly,
+		PeriodDays:         30,
+		Metric:             model.UsageMeterMetricCost,
+		Quota:              20,
+		NotifiedCycleStart: "2026-10-01T00:00:00+08:00",
+		NotifiedStage:      "over",
+	}
+	model.ConfigInstance = cfg
+
+	body := `{"usage_meter":{"cycle_mode":"monthly"}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "2026-10-01T00:00:00+08:00", model.ConfigInstance.UsageMeter.NotifiedCycleStart,
+		"an unchanged rule must keep the already-notified state")
+	assert.Equal(t, "over", model.ConfigInstance.UsageMeter.NotifiedStage)
+}
+
+// A fresh install that picks "calendar month" sends no period_days (the field is
+// hidden). The stored value must come out usable anyway, or a later switch back
+// to "fixed" fails validation on a field the user cannot see.
+func TestServeConfig_Patch_MonthlyFillsMissingPeriod(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+
+	body := `{"usage_meter":{"anchor_date":"2026-10-01","cycle_mode":"monthly","metric":"cost","quota":20}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "a monthly rule must be accepted without a period")
+	assert.Equal(t, 30, model.ConfigInstance.UsageMeter.PeriodDays,
+		"period_days must be filled in so a later switch to fixed is valid")
+	assert.Equal(t, model.UsageMeterCycleMonthly, model.ConfigInstance.UsageMeter.CycleMode)
+}
+
+// GET /api/config must report a concrete mode even for an install that predates
+// the field: the settings dropdown has to show a selection, not a blank row.
+func TestServeConfig_Get_UsageMeterCycleModeNormalized(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	for _, tc := range []struct {
+		stored string
+		want   string
+	}{
+		{"", model.UsageMeterCycleFixed},
+		{model.UsageMeterCycleFixed, model.UsageMeterCycleFixed},
+		{model.UsageMeterCycleMonthly, model.UsageMeterCycleMonthly},
+	} {
+		t.Run("stored="+tc.stored, func(t *testing.T) {
+			cfg := model.Config{}
+			cfg.UsageMeter = model.UsageMeterConfig{
+				AnchorDate: "2026-10-01", CycleMode: tc.stored,
+				PeriodDays: 30, Metric: model.UsageMeterMetricCost, Quota: 20,
+			}
+			model.ConfigInstance = cfg
+
+			req := newRequest(t, http.MethodGet, "/api/config", nil)
+			withAuthCookie(req, model.SessionToken)
+			w := callHandler(ServeConfig, req)
+			require.Equal(t, http.StatusOK, w.Code)
+
+			var resp map[string]any
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			um, ok := resp["usage_meter"].(map[string]any)
+			require.True(t, ok)
+			assert.Equal(t, tc.want, um["cycle_mode"],
+				"the wire value must be a concrete mode, never an empty string")
+		})
 	}
 }
 

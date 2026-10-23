@@ -472,8 +472,19 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       defaultValue: 'cost',
     },
     commonFields: [
+      // Cycle type first: it decides whether the "period (days)" row below is
+      // shown at all, so reading the two in the other order would present a
+      // number whose meaning is not yet known.
+      { labelKey: 'settings.items.usageMeterCycleMode', descriptionKey: 'settings.items.usageMeterCycleModeDesc', key: 'usage_meter.cycle_mode', type: 'select', source: 'server', options: [
+        { labelKey: 'settings.items.usageMeterCycleModeMonthly', value: 'monthly' },
+        { labelKey: 'settings.items.usageMeterCycleModeFixed', value: 'fixed' },
+      ], defaultValue: 'fixed' },
       { labelKey: 'settings.items.usageMeterAnchor', descriptionKey: 'settings.items.usageMeterAnchorDesc', key: 'usage_meter.anchor_date', type: 'datetime', source: 'server', displayTransform: formatAnchorForDisplay },
-      { labelKey: 'settings.items.usageMeterPeriod', descriptionKey: 'settings.items.usageMeterPeriodDesc', key: 'usage_meter.period_days', type: 'number', source: 'server' },
+      // Hidden in monthly mode: the cycle length comes from the calendar, so an
+      // editable day count would be a value the user can change that has no
+      // effect. The server keeps the stored number valid so switching back to
+      // "fixed" does not land on 0 (see ApplyDefaults).
+      { labelKey: 'settings.items.usageMeterPeriod', descriptionKey: 'settings.items.usageMeterPeriodDesc', key: 'usage_meter.period_days', type: 'number', source: 'server', dependsOn: { key: 'usage_meter.cycle_mode', value: 'fixed' } },
       { labelKey: 'settings.items.usageMeterQuota', descriptionKey: 'settings.items.usageMeterQuotaDesc', key: 'usage_meter.quota', type: 'number', source: 'server' },
     ],
     requiredFields: [],

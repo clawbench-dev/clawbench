@@ -23,6 +23,26 @@ func TestIsValidUsageMeterMetric(t *testing.T) {
 	}
 }
 
+// TestUsageMeterCycleMode pins the mode vocabulary and the empty-string rule.
+//
+// Unlike the metric, "" IS valid here and means "fixed": every install written
+// before the field existed stores it, and its behavior must not change.
+func TestUsageMeterCycleMode(t *testing.T) {
+	for _, m := range []string{"", UsageMeterCycleFixed, UsageMeterCycleMonthly} {
+		require.True(t, IsValidUsageMeterCycleMode(m), "%q must be valid", m)
+	}
+	for _, m := range []string{"weekly", "MONTHLY", " monthly", "calendar"} {
+		require.False(t, IsValidUsageMeterCycleMode(m), "%q must be rejected", m)
+	}
+
+	// Normalization collapses "" and anything unknown onto "fixed", so callers
+	// never have to branch on an empty string.
+	require.Equal(t, UsageMeterCycleFixed, NormalizeUsageMeterCycleMode(""))
+	require.Equal(t, UsageMeterCycleFixed, NormalizeUsageMeterCycleMode("weekly"))
+	require.Equal(t, UsageMeterCycleFixed, NormalizeUsageMeterCycleMode(UsageMeterCycleFixed))
+	require.Equal(t, UsageMeterCycleMonthly, NormalizeUsageMeterCycleMode(UsageMeterCycleMonthly))
+}
+
 // The anchor accepts a date with an optional time of day. The date-only form
 // must keep meaning local midnight — every pre-existing install stores that
 // shape, and a changed meaning would silently move every cycle boundary.

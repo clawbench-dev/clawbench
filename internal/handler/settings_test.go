@@ -1344,6 +1344,18 @@ func TestServeConfig_Patch_UsageMeterInvalidIsSpecificAndLocalized(t *testing.T)
 			wantKey:   "UsageMeterQuotaNotNumber",
 			wantField: "usage_meter.quota",
 		},
+		{
+			name:      "unknown cycle mode",
+			body:      `{"usage_meter":{"quota":10,"anchor_date":"2026-10-05","cycle_mode":"weekly","period_days":30,"metric":"cost"}}`,
+			wantKey:   "UsageMeterCycleModeInvalid",
+			wantField: "usage_meter.cycle_mode",
+		},
+		{
+			name:      "cycle mode sent as a number",
+			body:      `{"usage_meter":{"quota":10,"anchor_date":"2026-10-05","cycle_mode":1,"period_days":30,"metric":"cost"}}`,
+			wantKey:   "UsageMeterCycleModeInvalid",
+			wantField: "usage_meter.cycle_mode",
+		},
 	}
 
 	for _, tc := range cases {

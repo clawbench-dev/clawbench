@@ -345,16 +345,24 @@ paths:
         **口径固定为全局**（所有项目合计），没有 `scope` 参数——额度回答的是
         「我这个周期总共花了多少」，与当前停在哪个项目无关。
 
-        **周期定位**：从 `usage_meter.anchor_date` 起，每 `period_days` 天为一轮。
-        边界按固定 24 小时跨度计算（不是日历日期差），因此周期长度在夏令时切换日
-        也保持恒定。时区为**服务端本地时区**。
+        **周期定位**：由 `usage_meter.cycle_mode` 决定，时区为**服务端本地时区**。
+
+        - `fixed`（缺省值，也是本字段出现前所有安装的行为）：从 `anchor_date`
+          起每 `period_days` 天为一轮。边界按固定 24 小时跨度计算（不是日历
+          日期差），因此周期长度在夏令时切换日也保持恒定。
+        - `monthly`：按日历月滚动，边界落在 `anchor_date` 的**日号**与时刻上
+          （所以 `2026-10-01T00:00` 就是自然月，`2026-10-05T09:00` 表示每月 5 日
+          09:00 换周期）。周期长度为当月实际天数（28–31），按日历日期计天数。
+          日号 31 在小月钳到月末（2 月 28/29 日），但下一个边界仍按 31 推算，
+          不会在一次 2 月之后永久漂到 28 日。
 
         `anchor_date` 接受两种形态：`YYYY-MM-DD`（等价于当天 00:00）与
         `YYYY-MM-DDTHH:MM[:SS]`（精确到时分秒）。**不接受时区后缀**——它是
         服务端本地时区的墙钟读数，允许偏移会让周期边界随服务端 TZ 漂移。
 
-        **应花（`expected`）= 额度 × 第几天 / 周期天数**，按整天向下取整：
+        **应花（`expected`）= 额度 × 第几天 / 本周期天数**，按整天向下取整：
         周期第 1 天就有 1 天额度（不会开局误报），最后一天等于总额度。
+        「本周期天数」在 `monthly` 下是当月实际天数，不是 `period_days`。
 
         **指标口径**：
         - `tokens`：`total_tokens`，为 0 时回退到 `input_tokens + output_tokens`
@@ -379,7 +387,8 @@ paths:
             - `enabled`：是否配置了规则（`quota > 0`）。它决定**响应里有没有
               用量数字**，不只是「要不要画比例」
             - `metric` / `anchorDate` / `periodDays` / `quota`：规则回显
-              （`enabled=false` 时这四项**不返回**）
+              （`enabled=false` 时这几项**不返回**）。`periodDays` 是**当前周期**
+              的天数：`monthly` 下随月份在 28–31 之间变化
             - `cycleStart` / `cycleEnd`：当前周期边界（RFC3339）
               （`enabled=false` 时**不返回**：没有周期）
             - `dayInCycle`：当前是周期第几天（1 起；0 表示起始日在未来或未配置）
@@ -554,7 +563,8 @@ paths:
               `UsageMeterAnchorRequired` / `UsageMeterAnchorInvalid` /
               `UsageMeterAnchorNotString` / `UsageMeterPeriodRange`
               （带 `detail.Max`）/ `UsageMeterPeriodNotNumber` /
-              `UsageMeterMetricInvalid` / `UsageMeterMetricNotString`。
+              `UsageMeterMetricInvalid` / `UsageMeterMetricNotString` /
+              `UsageMeterCycleModeInvalid`。
             - 其余尚未逐个建键的校验错误仍是 `error: "invalid_value"` + 英文
               `message`（无 `msgKey`）。
           content:

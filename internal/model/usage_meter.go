@@ -11,11 +11,47 @@ const (
 	UsageMeterMetricCost   = "cost"
 )
 
+// Usage-meter cycle modes. They decide how a cycle rolls over, and therefore
+// how "how much may I have spent by now" is derived.
+const (
+	// UsageMeterCycleFixed rolls every PeriodDays days from the anchor.
+	UsageMeterCycleFixed = "fixed"
+	// UsageMeterCycleMonthly rolls on the anchor's day-of-month. The anchor's
+	// time of day still applies, so "the 5th at 09:00" means the cycle restarts
+	// at 09:00 on the 5th of every month.
+	UsageMeterCycleMonthly = "monthly"
+)
+
 // MaxUsageMeterPeriodDays caps the cycle length. It matches the usage-stats
 // query's own range cap (service.maxRangeDays = 370) — a cycle longer than that
 // could not be aggregated in a single query, so allowing it would only produce
 // a rule that always errors.
 const MaxUsageMeterPeriodDays = 366
+
+// NormalizeUsageMeterCycleMode maps the stored value onto a known mode.
+//
+// Empty means "fixed": every install written before cycle_mode existed has an
+// empty value, and its behavior must not change. An unrecognized value is also
+// treated as fixed rather than rejected here — the PATCH validator rejects it,
+// so this only covers a hand-edited config.yaml, where falling back to the
+// historical behavior is safer than refusing to compute anything.
+func NormalizeUsageMeterCycleMode(mode string) string {
+	if mode == UsageMeterCycleMonthly {
+		return UsageMeterCycleMonthly
+	}
+	return UsageMeterCycleFixed
+}
+
+// IsValidUsageMeterCycleMode reports whether mode is a supported cycle mode.
+// The empty string IS valid here (it means "fixed"), unlike Metric, because it
+// is the documented value of every pre-existing install.
+func IsValidUsageMeterCycleMode(mode string) bool {
+	switch mode {
+	case "", UsageMeterCycleFixed, UsageMeterCycleMonthly:
+		return true
+	}
+	return false
+}
 
 // UsageMeterAnchorLayouts are the accepted shapes of UsageMeterConfig.AnchorDate,
 // most specific first.
