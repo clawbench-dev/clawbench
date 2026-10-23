@@ -508,15 +508,25 @@ func TestCruiseHost_AskQuestionCardAfterRouteStillDispatches(t *testing.T) {
 	}
 	counts := map[string]int{}
 	var order []string
+	// A parallel mention runs the members concurrently (`runParallelGroup` fans
+	// them out through an errgroup), so this scripted runner is called from
+	// several goroutines at once. `counts` (a map) and `order` (a slice) are NOT
+	// safe for that: Go 1.25 turns a concurrent map write into an unrecoverable
+	// `internal/runtime/maps.fatal`, which crashes the whole test binary with no
+	// `--- FAIL` line (observed on the ubuntu CI runner). The sibling test at
+	// freeScriptedRunner below already locks for the same reason.
+	var mu sync.Mutex
 	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		mu.Lock()
 		order = append(order, turn.MemberRowID)
 		seq := texts[turn.MemberRowID]
 		i := counts[turn.MemberRowID]
+		counts[turn.MemberRowID]++
+		mu.Unlock()
 		text := "(no script)"
 		if i < len(seq) {
 			text = seq[i]
 		}
-		counts[turn.MemberRowID]++
 		content := `{"blocks":[{"type":"text","text":` + jsonQuote(text) + `}]}`
 		if strings.Contains(text, "<clawbench-ask-question>") {
 			// Persist the CONVERTED form, which is what memberAskedQuestion reads.
