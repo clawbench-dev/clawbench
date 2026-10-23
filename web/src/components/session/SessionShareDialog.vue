@@ -58,13 +58,23 @@
              since a failed FIRST creation has no link bar to attach it to. -->
         <div v-if="errorMsg" class="share-dialog-error">{{ errorMsg }}</div>
 
-        <!-- Selection toolbar -->
+        <!-- Selection toolbar. Hidden once a link exists: the selection is
+             frozen into the link, so offering checkboxes / "deselect all"
+             would promise an edit that does nothing. -->
         <div class="session-share-dialog-toolbar">
-          <button class="fbtn session-share-dialog-toggle" @click="toggleAll">
+          <button v-if="!readOnly" class="fbtn session-share-dialog-toggle" @click="toggleAll">
             {{ allSelected ? t('sessionShare.deselectAll') : t('sessionShare.selectAll') }}
           </button>
+          <span v-else class="session-share-dialog-locked">
+            {{ t('sessionShare.selectionLocked') }}
+          </span>
           <span class="session-share-dialog-count">
-            {{ t('sessionShare.selectedCount', { selected: selectedIds.size, total: selectableCount }) }}
+            <template v-if="readOnly">
+              {{ t('sessionShare.includedCount', { count: includedCount }) }}
+            </template>
+            <template v-else>
+              {{ t('sessionShare.selectedCount', { selected: selectedIds.size, total: selectableCount }) }}
+            </template>
           </span>
         </div>
 
@@ -74,9 +84,14 @@
             v-for="m in messages"
             :key="m.id"
             class="session-share-dialog-row"
-            :class="{ 'is-unselectable': !isSelectable(m), 'is-checked': selectedIds.has(m.id) }"
+            :class="{
+              'is-unselectable': !readOnly && !isSelectable(m),
+              'is-checked': rowChecked(m),
+              'is-readonly': readOnly,
+            }"
           >
             <input
+              v-if="!readOnly"
               type="checkbox"
               class="session-share-dialog-check"
               :checked="selectedIds.has(m.id)"
@@ -95,7 +110,7 @@
               <User v-else :size="16" />
             </span>
             <span class="session-share-dialog-preview" :title="m.preview">{{ m.preview || '—' }}</span>
-            <span v-if="!isSelectable(m)" class="session-share-dialog-flag">
+            <span v-if="!readOnly && !isSelectable(m)" class="session-share-dialog-flag">
               {{ t('sessionShare.generatingCannotShare') }}
             </span>
             <span v-else class="session-share-dialog-time">{{ relativeTime(m.createdAt) }}</span>
@@ -186,6 +201,10 @@ const errorMsg = ref('')
 const linkUrl = ref('')
 const messages = ref([])
 const selectedIds = ref(new Set())
+// Ids frozen into the existing share link, or null when unknown (no link, or a
+// server that does not report them yet). Only a KNOWN frozen selection turns
+// the list read-only — guessing one would misreport what the link carries.
+const sharedIds = ref(null)
 const linkInputRef = ref(null)
 
 // Speaker identities shipped with the status response, so each row shows the
@@ -220,6 +239,24 @@ const allSelected = computed(() => {
   return selectable.length > 0 && selectable.every((m) => selectedIds.value.has(m.id))
 })
 
+/** How many listed messages the existing link actually carries. */
+const includedCount = computed(() => messages.value.filter((m) => sharedIds.value?.has(m.id)).length)
+
+/**
+ * Read-only once the frozen selection of the existing link is known: the
+ * selection lives in the link, so checkboxes and "deselect all" would promise
+ * an edit that cannot take effect.
+ */
+const readOnly = computed(() => !!linkUrl.value && sharedIds.value !== null)
+
+/**
+ * Whether a row reads as included. In read-only mode the frozen selection is
+ * the truth; otherwise it is the pending one.
+ */
+function rowChecked(m) {
+  return (readOnly.value ? sharedIds.value : selectedIds.value).has(m.id)
+}
+
 function relativeTime(iso) {
   return iso ? formatRelativeTime(iso) : ''
 }
@@ -250,6 +287,7 @@ async function loadStatus() {
   loadError.value = ''
   errorMsg.value = ''
   linkUrl.value = ''
+  sharedIds.value = null
   try {
     const resp = await fetch(`/api/share/session?session_id=${encodeURIComponent(props.sessionId)}`)
     if (!resp.ok) throw new Error(resp.statusText)
@@ -261,6 +299,9 @@ async function loadStatus() {
     // selected, so they are excluded from the default rather than silently
     // dropped at submit time.
     selectedIds.value = new Set(messages.value.filter(isSelectable).map((m) => m.id))
+    // A server that predates this field sends nothing; keep the list editable
+    // rather than claiming the link carries zero messages.
+    sharedIds.value = Array.isArray(data.selectedIds) ? new Set(data.selectedIds) : null
     if (data.path) linkUrl.value = toAbsoluteUrl(data.path)
     // Reconcile this session's badge with the server, which is authoritative.
     if (data.path) markShared(props.sessionId)
@@ -276,13 +317,17 @@ async function loadStatus() {
 async function createLink() {
   creating.value = true
   errorMsg.value = ''
+  // Regenerating keeps the existing selection: the list is read-only while a
+  // link exists, so sending the (unused) pending set would silently widen the
+  // share to every message.
+  const ids = sharedIds.value ? [...sharedIds.value] : [...selectedIds.value]
   try {
     const resp = await fetch('/api/share/session', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         sessionId: props.sessionId,
-        messageIds: [...selectedIds.value],
+        messageIds: ids,
       }),
     })
     if (!resp.ok) {
@@ -291,6 +336,9 @@ async function createLink() {
     }
     const data = await resp.json()
     linkUrl.value = toAbsoluteUrl(data.path)
+    // Freeze what was just sent: the list switches to read-only and highlights
+    // exactly the ids the new link carries.
+    sharedIds.value = new Set(ids)
     markShared(props.sessionId)
     // Auto-copy the freshly created link — the common next step is pasting it
     // somewhere. Silent: the link is already visible in the field above, and
@@ -318,6 +366,10 @@ async function revokeLink() {
     const resp = await fetch(`/api/share/session?session_id=${encodeURIComponent(props.sessionId)}`, { method: 'DELETE' })
     if (!resp.ok) throw new Error(resp.statusText)
     linkUrl.value = ''
+    // Back to the editable list: start from "everything selectable is checked",
+    // the same default the dialog opens with.
+    sharedIds.value = null
+    selectedIds.value = new Set(messages.value.filter(isSelectable).map((m) => m.id))
     markUnshared(props.sessionId)
     toast.show(t('sessionShare.revoked'), { icon: 'link', type: 'success', duration: 2000 })
   } catch (err) {
@@ -377,6 +429,18 @@ watch(() => props.open, (isOpen) => {
   font-size: var(--font-size-xs, 12px);
 }
 
+/* Read-only notice in place of the select-all button: the selection is baked
+   into the link, so the toolbar states that fact instead of offering an edit
+   that cannot take effect. Matches the toggle's line box so the toolbar does
+   not change height between the two states. */
+.session-share-dialog-locked {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  font-size: var(--font-size-xs, 12px);
+  color: var(--text-muted, #656d76);
+}
+
 /* ── Message list ──
    The scroll region, so the dialog height stays bounded on a long conversation
    and the footer actions remain reachable. A bordered card on the dialog
@@ -425,9 +489,22 @@ watch(() => props.open, (isOpen) => {
   .session-share-dialog-row.is-checked:not(.is-unselectable):hover {
     background: color-mix(in srgb, var(--accent-color) 12%, transparent);
   }
+  /* Read-only rows have no action attached, so they must not offer a hover
+     affordance that implies one. */
+  .session-share-dialog-row.is-readonly:hover {
+    background: transparent;
+  }
+  .session-share-dialog-row.is-readonly.is-checked:hover {
+    background: color-mix(in srgb, var(--accent-color) 7%, transparent);
+  }
 }
 
 .session-share-dialog-row.is-unselectable {
+  cursor: default;
+}
+
+/* Read-only (a link exists): no checkbox, nothing to click. */
+.session-share-dialog-row.is-readonly {
   cursor: default;
 }
 

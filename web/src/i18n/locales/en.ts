@@ -3714,6 +3714,8 @@ export default {
     selectAll: 'Select all',
     deselectAll: 'Deselect all',
     selectedCount: '{selected} of {total} selected',
+    selectionLocked: 'Sharing is on — content is fixed',
+    includedCount: '{count} in the link',
     viewFullInLink: 'View the full conversation in the share link',
     generatingCannotShare: 'Generating — cannot share yet',
     empty: 'This conversation has no shareable messages yet',

@@ -3710,6 +3710,8 @@ export default {
     selectAll: '全选',
     deselectAll: '取消全选',
     selectedCount: '已选 {selected} / {total} 条',
+    selectionLocked: '分享已创建，内容固定',
+    includedCount: '链接内 {count} 条',
     viewFullInLink: '完整会话请在分享链接中查看',
     generatingCannotShare: '生成中，暂不可分享',
     empty: '该会话暂无可分享的消息',

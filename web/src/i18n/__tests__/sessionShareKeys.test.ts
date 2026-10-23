@@ -50,6 +50,7 @@ describe('i18n sessionShare keys completeness', () => {
     const requiredSessionShare = [
       'button', 'title', 'explain', 'securityHint',
       'selectAll', 'deselectAll', 'selectedCount',
+      'selectionLocked', 'includedCount',
       'viewFullInLink', 'generatingCannotShare', 'empty',
       'generate', 'regenerate', 'regenerateTip', 'copyTip', 'copied',
       'revoke', 'revoked', 'openPage',
@@ -125,7 +126,7 @@ describe('i18n sessionShare keys completeness', () => {
   // Keys the dialog interpolates must keep their placeholders in both locales,
   // otherwise the count renders as a bare literal.
   it('interpolated keys keep their placeholders', () => {
-    for (const key of ['selectedCount'] as const) {
+    for (const key of ['selectedCount', 'includedCount'] as const) {
       expect((en.sessionShare as Record<string, string>)[key]).toContain('{')
       expect((zh.sessionShare as Record<string, string>)[key]).toContain('{')
     }
