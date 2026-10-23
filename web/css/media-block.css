@@ -167,10 +167,10 @@
    `.svg-fit` is still stamped by `svgMediaFit.ts` (it marks "this figure's
    media has a known intrinsic size"), but it no longer drives width. A figure
    that is never stamped keeps the previous shrink-only behavior, so raster
-   images and unknown media are untouched. Chat is untouched too: the chat
-   pipeline never stamps, and its own
-   `.chat-message .image-block-wrapper { max-width: 200px }` below still
-   clamps the thumbnail. */
+   images and unknown media are untouched. In chat the same rule applies: a
+   Mermaid diagram is stamped by `mermaid.ts` and gets this sizing (it is the
+   answer, not a thumbnail), while photos and bare inline SVGs are never
+   stamped and keep the bubble's 200px cap below. */
 /* The frame's width is owned by the inline-zoom block below: it hugs the
    artwork at rest and spans the column while zoomed. A `width: 100%` here would
    outrank that rule (0-2-0 vs 0-1-1) and force every diagram into a
@@ -464,40 +464,40 @@
     position: relative;
 }
 
-/* ─── Chat message: keep media thumbnailed inside the bubble ──────────────
+/* ─── Chat message: thumbnail cap for PHOTOS, full size for DIAGRAMS ──────
+   A bubble is a conversation, not a document: a pasted screenshot or an inline
+   SVG the model drew belongs in a 200px thumbnail the reader clicks to inspect.
+   A rendered Mermaid diagram is different — it is the ANSWER, with dense labels
+   that must be legible while scrolling (#570: chat diagrams rendered as an
+   unreadable banner). Mermaid is therefore deliberately NOT in these lists: it
+   gets the same resting sizing and click-to-zoom as the file preview (hug the
+   artwork, height budget, expand to the bubble when active).
+
    These rules must mirror the inline-zoom block's `:has()` selectors INCLUDING
    the pseudo-class. `:has()` contributes its ARGUMENT's specificity, so the
-   generic `.image-block-wrapper:has(> .mermaid > svg)` is 0-2-1 while a plain
-   `.chat-message .image-block-wrapper` is only 0-2-0 — the generic rule's
-   `max-width: 100%` won, and every diagram inside a bubble grew to the whole
+   generic `.image-block-wrapper:has(> .lightbox-img-wrap > img)` is 0-2-1 while
+   a plain `.chat-message .image-block-wrapper` is only 0-2-0 — the generic
+   rule's `max-width: 100%` won, and every capped figure grew to the whole
    column (measured 540px in a 600px bubble; the cap below never applied).
    Prefixing the same `:has()` selectors restores the 0-3-1 vs 0-2-1 order. */
-/* The thumbnail cap applies ONLY while the figure is at rest. Once the reader
-   clicks it, the figure becomes the zoom viewport and must span the bubble —
-   otherwise the "zoom" happens inside a 200px box and the diagram stays tiny
-   no matter how far it is zoomed (reported: 聊天界面点击聚焦后没有全宽). */
-.chat-message .image-block-wrapper:not(.is-zooming),
+/* The cap applies ONLY while the figure is at rest. Once the reader clicks it,
+   the figure becomes the zoom viewport and must span the bubble — otherwise the
+   "zoom" happens inside a 200px box and the image stays tiny no matter how far
+   it is zoomed (reported: 聊天界面点击聚焦后没有全宽). */
 .chat-message .image-block-wrapper:not(.is-zooming):has(> .lightbox-img-wrap > img),
-.chat-message .image-block-wrapper:not(.is-zooming):has(> .lightbox-svg-wrap > svg.lightbox-svg),
-.chat-message .image-block-wrapper:not(.is-zooming):has(> .mermaid > svg) {
+.chat-message .image-block-wrapper:not(.is-zooming):has(> .lightbox-svg-wrap > svg.lightbox-svg) {
     max-width: 200px;
 }
 
-.chat-message .image-block-wrapper:not(.is-zooming) > .mermaid {
-    max-height: 200px;
-    overflow: hidden;
-}
-
 /* The media itself is clamped to a PIXEL cap, not a percentage. The generic
-   rule sizes it with `width: calc(60dvh * var(--svg-ar, 1))` and clears
+   rule sizes SVG media with `width: calc(60dvh * var(--svg-ar, 1))` and clears
    `max-width` with `!important`, so the cap has to be `!important` too (both
    declarations are important; the more specific selector wins). A percentage
    would reintroduce the svg↔cell dependency cycle the generic rule documents. */
 /* Same rest-only scoping: while zoomed the media's size belongs to
    `inlineZoom`, and an `!important` cap here would pin it to 200px. */
 .chat-message .image-block-wrapper:not(.is-zooming):has(> .lightbox-img-wrap > img) > .lightbox-img-wrap > img,
-.chat-message .image-block-wrapper:not(.is-zooming):has(> .lightbox-svg-wrap > svg.lightbox-svg) > .lightbox-svg-wrap > svg.lightbox-svg,
-.chat-message .image-block-wrapper:not(.is-zooming):has(> .mermaid > svg) > .mermaid > svg {
+.chat-message .image-block-wrapper:not(.is-zooming):has(> .lightbox-svg-wrap > svg.lightbox-svg) > .lightbox-svg-wrap > svg.lightbox-svg {
     max-width: 200px !important;
     max-height: 184px;
 }

@@ -23,12 +23,14 @@
  *   figure hit max scale. Requiring an explicit click gives the wheel an
  *   unambiguous owner — while a figure is NOT zoomed, every wheel event belongs
  *   to the page, no matter which direction it goes.
- * - **The pointer leaving the figure does NOT end the zoom.** Only an explicit
+ * - **Losing the pointer OR the focus does NOT end the zoom.** Only an explicit
  *   act does. Moving the mouse off — to read a paragraph beside the diagram, to
  *   reach a toolbar, or simply to reposition the hand — must not throw away the
- *   zoom and pan the reader just set up. `pointerout` is deliberately not
- *   listened to; the exit paths are the outside click, Escape, and clicking a
- *   different figure.
+ *   zoom and pan the reader just set up, and neither must tabbing away to a
+ *   control somewhere else on the page: the zoom is a view state of THIS
+ *   figure, not a transient focus effect. `pointerout` and `focusout` are
+ *   deliberately not listened to; the exit paths are the outside click, Escape,
+ *   and clicking a different figure.
  * - **Wheel zooms around the cursor while zoomed.** Anchoring on the pointer
  *   (not the centre) is what makes "zoom into that node" feel direct.
  * - **Drag pans while zoomed.** Panning is clamped so the media cannot be
@@ -620,13 +622,14 @@ function onFocusIn(e: FocusEvent): void {
     activate(figure)
 }
 
-/** Leaving a figure by keyboard ends the zoom, mirroring pointer-leave. */
-function onFocusOut(e: FocusEvent): void {
-    if (!active) return
-    const next = e.relatedTarget
-    if (next instanceof Node && active.figure.contains(next)) return
-    deactivate()
-}
+/*
+ * There is deliberately NO `focusout` handler. Tabbing away from a zoomed
+ * figure — to reach a toolbar button, a link, or anything else on the page — is
+ * not an instruction to reset it. Ending the zoom on focus loss made the state
+ * impossible to hold while actually using the page (the same reasoning that
+ * removed the `pointerout` exit): the only ways out are an outside click,
+ * Escape, or clicking another figure.
+ */
 
 function onKeyDown(e: KeyboardEvent): void {
     // Escape must work regardless of where focus sits: once the user is in the
@@ -713,7 +716,6 @@ export function installInlineZoom(): () => void {
     // every figure without per-element wiring.
     document.addEventListener('pointerover', onPointerOver)
     document.addEventListener('focusin', onFocusIn)
-    document.addEventListener('focusout', onFocusOut)
     // A pan whose pointerup was never delivered (released outside the window,
     // window lost focus) would otherwise stick forever.
     window.addEventListener('blur', endStrandedPan)
@@ -731,7 +733,6 @@ export function installInlineZoom(): () => void {
         document.removeEventListener('keydown', onKeyDown)
         document.removeEventListener('pointerover', onPointerOver)
         document.removeEventListener('focusin', onFocusIn)
-        document.removeEventListener('focusout', onFocusOut)
         window.removeEventListener('blur', endStrandedPan)
         deactivate()
         installed = false

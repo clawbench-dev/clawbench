@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  MEDIA_HEIGHT_FRAC,
   SVG_FIT_CLASS,
   SVG_AR_PROP,
   isSvgImageSrc,
@@ -10,6 +11,7 @@ import {
   stampSvgFiguresAsync,
   installSvgMediaAutoFit,
 } from '@/utils/svgMediaFit'
+import { readWebFile } from '@/testUtils/readWebFile'
 
 /** Build a detached figure the way the media-block factory does. */
 function figure(inner: string): HTMLElement {
@@ -385,6 +387,11 @@ describe('resting media width (svgMediaFit)', () => {
  * on each side — the "578px empty box" symptom the same issue complained about.
  * So the budget is load-bearing and these assertions pin it, to stop the next
  * reader from "fixing" it a third time.
+ *
+ * The budget was briefly raised to 75dvh for #570 and reverted: the same cap
+ * applies inside a chat bubble on a phone, where 75dvh of diagram plus the
+ * header, input bar and dock pushes the message itself off-screen. Reading a
+ * tall diagram is what click-to-zoom is for, so 60dvh it is.
  */
 describe('portrait diagram resting width (height budget is intentional)', () => {
   /** 302x1182 is the flowchart from #570 — the case the whole debate is about. */
@@ -478,6 +485,123 @@ describe('portrait diagram resting width (height budget is intentional)', () => 
     const budgetWidth = 900 * 0.6 * (PORTRAIT_W / PORTRAIT_H)
     // Within a pixel of the budget: no extra width for the frame to pad out.
     expect(Math.abs(written - budgetWidth)).toBeLessThan(1)
+  })
+
+  it('uses the same height budget the stylesheet caps the media at', () => {
+    // The width is derived from the budget, but the HEIGHT is enforced by
+    // `media-block.css`. Two independent literals drift: a stylesheet cap
+    // smaller than the JS budget makes every portrait diagram overflow its
+    // frame (the CSS clamps the height, so the width no longer matches), and a
+    // larger one re-introduces the empty band the budget exists to prevent.
+    // Changing the budget (it went 60 → 75 → 60 for #570) is exactly the edit
+    // that must touch both, so this pins the pair.
+    const css = readWebFile('css/media-block.css').replace(/\/\*[\s\S]*?\*\//g, '')
+    const capMatch = css.match(/max-height:\s*(\d+(?:\.\d+)?)dvh/)
+    expect(capMatch, 'the stylesheet must state the media height budget').toBeTruthy()
+    const capFrac = Number(capMatch![1]) / 100
+
+    expect(MEDIA_HEIGHT_FRAC).toBeCloseTo(capFrac, 5)
+    // 60dvh, not more: the cap also applies to a diagram inside a chat bubble,
+    // where a taller one leaves no room for the conversation around it.
+    expect(MEDIA_HEIGHT_FRAC).toBe(0.6)
+  })
+})
+
+/**
+ * The width the media may take must be the column's CONTENT box, in CSS
+ * pixels — not its `getBoundingClientRect().width`.
+ *
+ * #570 follow-up (reported on a phone): every diagram showed a nearly-full
+ * horizontal scrollbar. The media had been sized to the column's BORDER box,
+ * so it overflowed the content box by the column's padding plus the figure's
+ * border, and `.mermaid { overflow-x: auto }` drew the bar. Two independent
+ * errors stack in that same measurement:
+ *
+ *   1. the rect is the border box (padding included) — 32px of padding plus a
+ *      2px figure border on a 390px phone;
+ *   2. the rect is scaled by the appearance setting's `html { zoom }`, while
+ *      `style.width` is a CSS px value — at zoom 1.25 the overflow tripled.
+ *
+ * `clientWidth` answers both (content+padding box, unscaled), so the contract
+ * asserted here is: subtract the column's padding and the figure's borders.
+ */
+describe('available column width (content box, unscaled)', () => {
+  const mk = (opts: { clientWidth: number; padX?: number; borderX?: number }) => {
+    const wrapper = document.createElement('div')
+    wrapper.className = 'image-block-wrapper'
+    if (opts.borderX) wrapper.style.border = `${opts.borderX / 2}px solid #000`
+    const cell = document.createElement('div')
+    cell.className = 'mermaid'
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    // Wide enough that the column clamp is the only thing that can apply.
+    svg.setAttribute('viewBox', '0 0 4000 100')
+    cell.appendChild(svg)
+    wrapper.appendChild(cell)
+    const column = document.createElement('div')
+    if (opts.padX) column.style.padding = `0 ${opts.padX / 2}px`
+    column.appendChild(wrapper)
+    document.body.appendChild(column)
+
+    Object.defineProperty(column, 'clientWidth', { value: opts.clientWidth, configurable: true })
+    // The rect deliberately reports the BORDER box at the same nominal size —
+    // the bug was reading this number instead of the content box.
+    Object.defineProperty(column, 'getBoundingClientRect', {
+      value: () => ({
+        width: opts.clientWidth, height: 0, top: 0, left: 0,
+        right: opts.clientWidth, bottom: 0, x: 0, y: 0, toJSON() {},
+      }),
+      configurable: true,
+    })
+    return { wrapper, svg }
+  }
+
+  afterEach(() => { document.body.innerHTML = '' })
+
+  it('subtracts the column padding and the figure border', () => {
+    // 390px column, 16px padding each side, 1px figure border each side.
+    const { wrapper, svg } = mk({ clientWidth: 390, padX: 32, borderX: 2 })
+    stampSvgFigure(wrapper)
+    expect(parseFloat(svg.style.width)).toBe(356)
+  })
+
+  it('does not subtract anything when the column has no padding', () => {
+    const { wrapper, svg } = mk({ clientWidth: 800 })
+    stampSvgFigure(wrapper)
+    expect(parseFloat(svg.style.width)).toBe(800)
+  })
+
+  it('writes nothing (rather than a negative width) for a column narrower than its padding', () => {
+    // `availableColumnWidth` clamps at 0, so the width computation yields 0 and
+    // the writer bails out. The important part is that no inline `-22px` is
+    // emitted: the browser would reject it and leave the PREVIOUS value in
+    // place, which looks like a frozen diagram.
+    const { wrapper, svg } = mk({ clientWidth: 10, padX: 32, borderX: 2 })
+    stampSvgFigure(wrapper)
+    expect(svg.style.width).toBe('')
+  })
+
+  it('falls back to the rect when the column reports no client width', () => {
+    // Detached or `display: none` columns report 0 — the figure must keep the
+    // previous behaviour rather than collapsing to zero.
+    const wrapper = document.createElement('div')
+    wrapper.className = 'image-block-wrapper'
+    const cell = document.createElement('div')
+    cell.className = 'mermaid'
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    svg.setAttribute('viewBox', '0 0 4000 100')
+    cell.appendChild(svg)
+    wrapper.appendChild(cell)
+    const column = document.createElement('div')
+    column.appendChild(wrapper)
+    document.body.appendChild(column)
+    Object.defineProperty(column, 'clientWidth', { value: 0, configurable: true })
+    Object.defineProperty(column, 'getBoundingClientRect', {
+      value: () => ({ width: 640, height: 0, top: 0, left: 0, right: 640, bottom: 0, x: 0, y: 0, toJSON() {} }),
+      configurable: true,
+    })
+
+    stampSvgFigure(wrapper)
+    expect(parseFloat(svg.style.width)).toBe(640)
   })
 })
 

@@ -22,13 +22,32 @@
  * class. A figure that never gets stamped keeps the previous shrink-only
  * behavior, so unknown / non-SVG media is unaffected.
  *
- * Sizing is only ever applied to figures in the FILE-PREVIEW family (file
- * preview, code-link card, share SPA, HTML export). The chat pipeline never
- * stamps, so chat bubble thumbnails keep their own caps.
+ * Sizing reaches every surface that renders a diagram: the file-preview family
+ * (file preview, code-link card, share SPA, HTML export) stamps through its
+ * render pipelines, and `mermaid.ts` stamps in the SAME task that injects the
+ * SVG, so chat diagrams are sized too (#570: a chat diagram is the content the
+ * reader came for, not a thumbnail). Raster `<img>` and bare inline `<svg>` in
+ * chat are never stamped and keep the bubble's thumbnail cap.
  */
 
 /** Marker class consumed by media-block.css to opt a figure into fill-width. */
 import { setRefitHook } from './inlineZoom'
+
+/**
+ * Fraction of the viewport height a rendered diagram may occupy.
+ *
+ * MUST equal the `max-height` budget `media-block.css` applies to the media
+ * (`60dvh`). The stylesheet caps the HEIGHT, so the width this module writes is
+ * `budget × aspect-ratio`; a mismatch silently sizes every portrait diagram
+ * from a different number than the box it is painted into — the frame would
+ * either overflow the cap or leave a band. `svgMediaFit.test.ts` pins the pair.
+ *
+ * 60dvh (not more) is deliberate: the same budget applies inside a chat bubble
+ * on a phone, where a taller diagram plus the header, input bar and dock leaves
+ * the message itself off-screen. Reading a tall diagram is what the click-to-
+ * zoom is for.
+ */
+export const MEDIA_HEIGHT_FRAC = 0.6
 
 export const SVG_FIT_CLASS = 'svg-fit'
 
@@ -138,6 +157,45 @@ export function stampSvgFigure(wrapper: Element): boolean {
 }
 
 /**
+ * The width actually available to a figure's media, in CSS pixels.
+ *
+ * Two things make the obvious measurement (`column.getBoundingClientRect()
+ * .width`) wrong, and both produce the SAME symptom: a diagram wider than its
+ * frame, so `.mermaid`'s `overflow-x: auto` draws a horizontal scrollbar that
+ * is nearly full-width (#570 follow-up, reported on mobile).
+ *
+ *  1. **The rect is the border box.** The reading column has horizontal padding
+ *     (16px per side in the file preview), and the figure adds a 1px border of
+ *     its own. Sizing the media to the border box overflows the CONTENT box by
+ *     `padding + border` — measured 34px on a 390px phone.
+ *  2. **The rect is zoom-scaled.** The appearance setting applies
+ *     `html { zoom }`, which multiplies `getBoundingClientRect()` but NOT
+ *     `style.width` (a CSS px value). At zoom 1.25 the same page overflowed by
+ *     112px instead of 34px.
+ *
+ * `clientWidth` answers both: it is the content+padding box in unscaled CSS
+ * pixels, and it already excludes borders and any scrollbar. Subtracting the
+ * computed padding leaves the content box; the figure's own horizontal borders
+ * are subtracted on top of that, because the media sits inside them.
+ *
+ * Falls back to the rect when `clientWidth` is unavailable (a detached or
+ * `display: none` column reports 0), so a not-yet-laid-out figure keeps the
+ * old behaviour instead of collapsing to zero width.
+ */
+function availableColumnWidth(wrapper: HTMLElement, column: HTMLElement): number {
+    const inner = column.clientWidth
+    if (inner > 0) {
+        const style = getComputedStyle(column)
+        const padX = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0)
+        const wrapStyle = getComputedStyle(wrapper)
+        const borderX =
+            (parseFloat(wrapStyle.borderLeftWidth) || 0) + (parseFloat(wrapStyle.borderRightWidth) || 0)
+        return Math.max(0, inner - padX - borderX)
+    }
+    return column.getBoundingClientRect().width
+}
+
+/**
  * Write the media's pixel width from its ratio, clamped to the column.
  *
  * The width MUST be a resolved pixel value, not a percentage. The figure is
@@ -148,19 +206,20 @@ export function stampSvgFigure(wrapper: Element): boolean {
  *
  * Resolving it here removes the cycle: the script knows the ratio and can
  * measure the available column width, so it writes a number the layout can
- * use directly. `100%` of the parent's content box is the column.
+ * use directly. See `availableColumnWidth` for why that number is the CONTENT
+ * box in CSS pixels rather than the parent's rect.
  */
 function applyMediaWidth(wrapper: HTMLElement, media: HTMLElement, ar: number): void {
     const column = wrapper.parentElement
     if (!column) return
-    const avail = column.getBoundingClientRect().width
+    const avail = availableColumnWidth(wrapper, column)
     if (!(avail > 0)) return
 
     // The frame takes the artwork's ACTUAL width at rest, never the column's:
     // a small diagram sits in a small frame instead of a full-column box of
     // empty space. Only two things may shrink it:
     //  - the column width, so a wide diagram does not overflow, and
-    //  - the 60dvh height budget, so a tall one is not cut off.
+    //  - the height budget, so a tall one is not cut off.
     // Nothing may GROW it — enlarging is what the active (zoomed) state is for.
     //
     // The height budget is NOT a bug, and removing it does not widen a portrait
@@ -180,9 +239,16 @@ function applyMediaWidth(wrapper: HTMLElement, media: HTMLElement, ar: number): 
     // A portrait diagram is narrow at rest BY CONSTRUCTION; reading it is what
     // click-to-zoom is for. `svgMediaFit.test.ts` ("portrait diagram resting
     // width") pins this so it is not "fixed" a third time.
+    //
+    // The BUDGET ITSELF is the one lever that widens a portrait diagram without
+    // adding empty frame: a larger cap means a taller (and therefore wider)
+    // resting diagram. It was briefly raised to 75dvh for #570 and reverted —
+    // the cap also governs a diagram inside a phone chat bubble, where that much
+    // height leaves no room for the conversation around it. It stays a single
+    // named constant shared with the stylesheet so the two cannot drift.
     const intrinsic = intrinsicWidth(media, ar)
     if (!(intrinsic > 0)) return
-    const heightBudget = window.innerHeight * 0.6
+    const heightBudget = window.innerHeight * MEDIA_HEIGHT_FRAC
     const width = Math.min(intrinsic, avail, heightBudget * ar)
     if (!(width > 0)) return
     media.style.width = `${Math.round(width * 100) / 100}px`
@@ -211,7 +277,7 @@ function intrinsicWidth(media: HTMLElement, ar: number): number {
     const vb = (media as unknown as SVGSVGElement).viewBox?.baseVal
     if (vb && vb.width > 0) return vb.width
     // Last resort: derive from the height budget so a ratio is still honoured.
-    return window.innerHeight * 0.6 * ar
+    return window.innerHeight * MEDIA_HEIGHT_FRAC * ar
 }
 
 /**

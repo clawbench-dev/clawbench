@@ -545,6 +545,37 @@ describe('inlineZoom — keyboard', () => {
     expect(img.style.transform).toBe('')
   })
 
+  it('KEEPS the zoom when keyboard focus leaves the figure', () => {
+    // Tabbing away to another control is not an instruction to reset the
+    // diagram. The zoom used to end on `focusout`, which made it impossible to
+    // hold while actually using the page — the same reasoning that removed the
+    // `pointerout` exit. Only an outside click, Escape, or another figure ends
+    // it.
+    const figure = mountFigure()
+    const img = figure.querySelector('img')!
+    stubIntrinsic(figure, 300, 200, 300, 200)
+    stubRect(figure, 0, 0, 300, 200)
+    figure.setAttribute('tabindex', '0')
+
+    figure.focus()
+    expect(isZoomActive()).toBe(true)
+    wheel(img, -120, 150, 100)
+    const zoomed = img.style.width
+
+    // Focus moves to a control elsewhere on the page.
+    const elsewhere = document.createElement('button')
+    document.body.appendChild(elsewhere)
+    elsewhere.focus()
+
+    expect(isZoomActive()).toBe(true)
+    expect(figure.classList.contains('is-zooming')).toBe(true)
+    expect(img.style.width).toBe(zoomed)
+
+    // ...and the figure can still be left the documented way.
+    click(document.body)
+    expect(isZoomActive()).toBe(false)
+  })
+
   it('exits on Escape even when focus is on the document body', () => {
     // The user clicks the media to enter (the media is not focusable by
     // default), so the keydown target is usually <body> — not the figure.
