@@ -1258,6 +1258,9 @@ export default {
     loadingMore: 'Loading more...',
     noMore: 'No more sessions',
     loadExternalSession: 'External Session',
+    jumpToMatch: 'Jump to this message',
+    jumpFailed: 'That message is no longer in the session — showing the bottom instead',
+    jumpFailedGeneric: 'Could not find that message — showing the bottom instead',
   },
   group: {
     newGroup: 'New group chat',

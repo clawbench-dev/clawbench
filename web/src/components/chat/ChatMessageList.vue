@@ -1401,6 +1401,11 @@ defineExpose({
   scrollToNextMessage,
   scrollToBottomSmooth,
   scrollToMessage: scrollToMessageUserMsg,
+  // Paging variant: walks older history until the target message exists, and
+  // reports whether it got there. External navigation (a session-search hit
+  // whose message predates the loaded window) must use this — scrollToMessage
+  // only searches what is already loaded and silently does nothing otherwise.
+  jumpToUserMessage,
   messagesRef,
   isAtBottom: () => isAtBottom.value,
   // Whether the view should stay pinned to the bottom: the user has NOT

@@ -230,11 +230,31 @@
       <PanelSkeleton v-if="lazyLoading" variant="text" :rows="10" :label="t('sessionSearch.loadingPreview')" />
       <div v-else-if="detailChunks.length === 0" class="detail-empty">{{ t('sessionSearch.noPreview') }}</div>
       <div v-for="chunk in detailChunks" :key="chunk.chunk_id" class="detail-chunk">
-        <div class="detail-chunk-role" :class="'role-' + chunk.role">
-          <User :size="11" v-if="chunk.role === 'user'" />
-          <Bot :size="11" v-else />
-          {{ chunkRoleLabel(chunk) }}
-        </div>
+        <div class="detail-chunk-head">
+          <div class="detail-chunk-role" :class="'role-' + chunk.role">
+            <User :size="11" v-if="chunk.role === 'user'" />
+            <Bot :size="11" v-else />
+            {{ chunkRoleLabel(chunk) }}
+          </div>
+          <!-- Jump to this exact message in the conversation. Only content
+               matches carry a message_id; browse/title-only previews are the
+               session's first message fetched for display, not a search hit, so
+               offering the jump there would be misleading.
+               Archived sessions are excluded for the same reason their footer
+               shows "Resume" instead of "Open": the history endpoint filters
+               archived rows out, so opening one 404s and the chat panel's
+               recovery branch silently switches to a DIFFERENT session. -->
+          <button
+            v-if="!isBrowseMode && !selectedSession?.title_only && !selectedSession?.archived && chunk.message_id"
+            type="button"
+            class="detail-chunk-jump"
+            :title="t('sessionSearch.jumpToMatch')"
+            :aria-label="t('sessionSearch.jumpToMatch')"
+            @click.stop="emit('open', selectedSession, chunk.message_id)"
+          >
+            <CornerDownRight :size="12" />
+            <span>{{ t('sessionSearch.jumpToMatch') }}</span>
+          </button>        </div>
         <div
           :ref="el => setChunkRef(chunk.chunk_id, el)"
           class="detail-chunk-text markdown-body"
@@ -266,7 +286,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onBeforeUpdate, onBeforeUnmount, onUnmounted, type ComponentPublicInstance } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Search, ChevronLeft, ChevronDown, Check, User, Bot, RotateCcw, Import, MessageSquare, Trash2, Crown, AtSign } from 'lucide-vue-next'
+import { Search, ChevronLeft, ChevronDown, Check, User, Bot, RotateCcw, Import, MessageSquare, Trash2, Crown, AtSign, CornerDownRight } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
@@ -285,7 +305,14 @@ import { formatRelativeTime } from '@/utils/format'
 const { t } = useI18n()
 
 const props = defineProps<{ open: boolean }>()
-const emit = defineEmits<{ close: []; resume: [session: SessionSearchResult]; open: [session: SessionSearchResult]; destroy: [session: SessionSearchResult]; 'open-acp-sessions': [] }>()
+const emit = defineEmits<{
+  close: []
+  resume: [session: SessionSearchResult]
+  /** Open a session, optionally landing on a specific message (search hit). */
+  open: [session: SessionSearchResult, messageId?: number]
+  destroy: [session: SessionSearchResult]
+  'open-acp-sessions': []
+}>()
 
 const { state: searchState, setQuery, browse, clear, setFilters, loadMore } = useSessionSearch()
 const search = { state: searchState, setQuery, browse, clear, setFilters, loadMore }
@@ -1284,6 +1311,12 @@ defineExpose({ focusSearchInput })
   font-size: var(--font-size-md);
 }
 
+.detail-chunk-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 .detail-chunk-role {
   display: flex;
   align-items: center;
@@ -1300,6 +1333,32 @@ defineExpose({ focusSearchInput })
 
 .detail-chunk-role.role-assistant {
   color: var(--color-purple, #7c3aed);
+}
+
+/* Jump-to-message affordance, pushed to the right end of the role row. Quiet by
+   default (it must not compete with the chunk text) and only gains weight on
+   hover/focus. */
+.detail-chunk-jump {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding: 2px 8px;
+  border: 1px solid var(--border-color, rgba(0, 0, 0, 0.08));
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-muted, #888);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.detail-chunk-jump:hover,
+.detail-chunk-jump:focus-visible {
+  color: var(--accent-color, #0066cc);
+  border-color: var(--accent-color, #0066cc);
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 8%, transparent);
 }
 
 .detail-chunk-text {

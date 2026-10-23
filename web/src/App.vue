@@ -2278,9 +2278,27 @@ const acpSessionDrawer = useTabDrawer('chat')
 const sessionSearchDrawer = useTabDrawer('chat', { autoRestore: false })
 const searchConfirmDialog = useDialog()
 
-function handleOpenFromSearch(session: SessionSearchResult) {
+function handleOpenFromSearch(session: SessionSearchResult, messageId?: number) {
   if (!session?.session_id) return
   sessionSearchDrawer.close()
+  // A search hit carries the DB row id of the message it matched. Park it as a
+  // pending navigation BEFORE opening the session: the chat panel consumes it
+  // once that session's messages are on screen (same channel the quote jump and
+  // notification deep links use), so the target is scrolled to and flashed
+  // instead of the reader landing at the bottom with no idea where the match is.
+  if (messageId) setPendingMessageNavigation(session.session_id, messageId, 'search')
+  // The already-active guard in handleSessionSelect short-circuits a same-id
+  // selection (it exists to stop list navigation from reloading the current
+  // session). A search hit for the CURRENT session must still be honoured, so
+  // that case is routed around it — the chat panel picks the pending
+  // navigation up on its own. The session-list drawer still has to close:
+  // handleSessionSelect is otherwise the only place that does it, and on mobile
+  // it sits UNDER the search sheet, so the user would be left looking at the
+  // list while the jump happens in the chat panel behind it.
+  if (session.session_id === sessionIdentity.currentSessionId.value) {
+    sessionIdentity.sessionDrawer.close()
+    return
+  }
   handleSessionSelect(session.session_id, session.backend)
 }
 

@@ -20,14 +20,25 @@ import { ref } from 'vue'
 export interface PendingMessageNavigation {
   sessionId: string
   messageId: number
+  /**
+   * Why the jump was requested. Only `'search'` changes the failure copy: a
+   * session-search hit is a *search* result, so "that message is no longer in
+   * the session" is accurate. Quote and notification jumps share this channel
+   * and must not be told they came from a search.
+   */
+  source?: 'search' | 'quote' | 'notification'
 }
 
 const pending = ref<PendingMessageNavigation | null>(null)
 
 /** Record a request to open a specific message in a specific session. */
-export function setPendingMessageNavigation(sessionId: string, messageId: number) {
+export function setPendingMessageNavigation(
+  sessionId: string,
+  messageId: number,
+  source?: PendingMessageNavigation['source'],
+) {
   if (!sessionId || !messageId) return
-  pending.value = { sessionId, messageId }
+  pending.value = { sessionId, messageId, source }
 }
 
 /**
