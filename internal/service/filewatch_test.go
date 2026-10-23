@@ -1202,8 +1202,18 @@ func TestFileWatcher_ConcurrentRegisterUnregister(t *testing.T) {
 		}()
 	}
 
-	time.Sleep(500 * time.Millisecond)
-	assert.Equal(t, int32(20), done.Load())
+	// Wait for the counter instead of sleeping a fixed 500ms.
+	//
+	// A fixed sleep is not a test: each goroutine sleeps 50ms of its own, and
+	// on Windows fsnotify's Remove queues a request and blocks on its reader
+	// goroutine, so the 20 concurrent teardowns routinely take longer than
+	// 500ms there — measured as a flake on the windows-latest runner
+	// (expected 20, actual 0: not one goroutine had finished yet). Polling has
+	// no upper bound on a slow runner and still fails fast on a real regression
+	// (a goroutine that never closes its channel).
+	assert.Eventually(t, func() bool {
+		return done.Load() == 20
+	}, 10*time.Second, 20*time.Millisecond, "all 20 concurrent registrations must unregister and close their channel")
 }
 
 // TestStopFileWatcher_DoesNotCloseWatcherBeforeTakingLock pins the ordering
