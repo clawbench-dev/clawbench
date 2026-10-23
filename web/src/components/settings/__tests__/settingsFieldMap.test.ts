@@ -1008,3 +1008,46 @@ describe('usage meter is a sibling of push notifications', () => {
     expect(cfg.entrySelector!.descriptionKey).toBe('settings.items.usageMeterMetricDesc')
   })
 })
+
+// The cycle can be a calendar month or a fixed number of days. The mode selector
+// decides which; a hard-coded day count would make "calendar month" impossible to
+// express, and a visible-but-ignored day field would let the user set a value
+// that does nothing.
+describe('usage meter cycle type', () => {
+  const cfg = () => getCategoryPanels('usageMeter')[0]
+
+  it('offers calendar month and fixed length', () => {
+    const mode = cfg().commonFields.find(f => f.key === 'usage_meter.cycle_mode')
+    expect(mode).toBeDefined()
+    expect(mode!.type).toBe('select')
+    expect(mode!.source).toBe('server')
+    expect((mode!.options ?? []).map(o => o.value)).toEqual(['monthly', 'fixed'])
+    // Fixed is the historical behaviour, so it must be what an unconfigured or
+    // pre-existing rule shows before the server responds.
+    expect(mode!.defaultValue).toBe('fixed')
+  })
+
+  // The day count only governs fixed cycles. Leaving it visible in monthly mode
+  // would present an editable number that the server ignores — the user would
+  // change it, see it saved, and get a 28-31 day cycle anyway.
+  it('hides the day count in monthly mode and shows it for fixed', () => {
+    const period = cfg().commonFields.find(f => f.key === 'usage_meter.period_days')
+    expect(period).toBeDefined()
+    expect(period!.dependsOn).toEqual({ key: 'usage_meter.cycle_mode', value: 'fixed' })
+
+    const getValue = (mode: unknown) => (key: string) =>
+      key === 'usage_meter.cycle_mode' ? mode : undefined
+    expect(isDependsOnMet(period!.dependsOn, getValue('monthly'))).toBe(false)
+    expect(isDependsOnMet(period!.dependsOn, getValue('fixed'))).toBe(true)
+  })
+
+  // Reading the panel top-down must answer "what does the number below mean?"
+  // before showing the number.
+  it('puts the cycle type above the start time and the day count', () => {
+    const keys = cfg().commonFields.map(f => f.key)
+    const modeAt = keys.indexOf('usage_meter.cycle_mode')
+    expect(modeAt).toBe(0)
+    expect(keys.indexOf('usage_meter.anchor_date')).toBeGreaterThan(modeAt)
+    expect(keys.indexOf('usage_meter.period_days')).toBeGreaterThan(modeAt)
+  })
+})

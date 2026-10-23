@@ -23,6 +23,10 @@ const KEYS = [
   'usageMeterMetricTokens',
   'usageMeterMetricCredit',
   'usageMeterMetricCost',
+  'usageMeterCycleMode',
+  'usageMeterCycleModeDesc',
+  'usageMeterCycleModeMonthly',
+  'usageMeterCycleModeFixed',
   'usageMeterAnchor',
   'usageMeterAnchorDesc',
   'usageMeterPeriod',
@@ -67,6 +71,7 @@ describe('usage meter settings copy', () => {
   it('descriptions differ from their labels', () => {
     const pairs = [
       ['usageMeterMetric', 'usageMeterMetricDesc'],
+      ['usageMeterCycleMode', 'usageMeterCycleModeDesc'],
       ['usageMeterAnchor', 'usageMeterAnchorDesc'],
       ['usageMeterPeriod', 'usageMeterPeriodDesc'],
       ['usageMeterQuota', 'usageMeterQuotaDesc'],
@@ -77,6 +82,22 @@ describe('usage meter settings copy', () => {
       expect(enItems[desc], `en ${desc} must not repeat ${label}`).not.toBe(enItems[label])
       expect(zhItems[desc], `zh ${desc} must not repeat ${label}`).not.toBe(zhItems[label])
     }
+  })
+
+  // The two cycle types are the whole point of the field, and the option labels
+  // must be distinguishable — an identical pair would render a dropdown with two
+  // indistinguishable rows.
+  it('the two cycle types have distinct labels', () => {
+    expect(en.settings.items.usageMeterCycleModeMonthly).not.toBe(en.settings.items.usageMeterCycleModeFixed)
+    expect(zh.settings.items.usageMeterCycleModeMonthly).not.toBe(zh.settings.items.usageMeterCycleModeFixed)
+  })
+
+  // "Calendar month" is not obvious from a day count: the restart day comes
+  // from the anchor's day-of-month. The start-time description is the only place
+  // that can explain it, because the day-of-month is edited there.
+  it('the start-time description explains the day-of-month rule for calendar months', () => {
+    expect(en.settings.items.usageMeterAnchorDesc).toMatch(/day/i)
+    expect(zh.settings.items.usageMeterAnchorDesc).toMatch(/日号|号/)
   })
 
   // The placeholder entry is the only thing an unconfigured user sees, and its

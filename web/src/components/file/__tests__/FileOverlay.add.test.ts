@@ -1,8 +1,18 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { createI18n } from 'vue-i18n'
 import { defineComponent } from 'vue'
 import FileOverlay from '@/components/file/FileOverlay.vue'
 import { _resetForTest as _resetWideForTest } from '@/composables/useWideScreenLayout'
+
+// FileOverlay renders the panel skeleton for its loading mask, which reads a
+// translated label — so the component needs a real i18n instance. Without one
+// `useI18n()` throws at setup and every case in this file fails.
+const i18n = createI18n({
+  legacy: false,
+  locale: 'en',
+  messages: { en: { common: { loading: 'Loading' } } },
+})
 
 // jsdom's default innerWidth (1024) is ≥ the wide-screen threshold, which
 // forces docked mode and hides the bottom drawer. This test file asserts the
@@ -51,7 +61,9 @@ const stubs = {
   TocDock: true,
   SearchDrawer: SearchDrawerStub,
   GitHistoryDrawer: GitHistoryDrawerStub,
-  LoadingIndicator: true,
+  // The loading mask is the panel skeleton now (it was a centered spinner), so
+  // the stub name has to follow or the assertion looks for a node that is gone.
+  PanelSkeleton: { name: 'PanelSkeleton', props: ['variant', 'rows', 'label'], template: '<div class="panel-skeleton-stub" />' },
   Transition: { template: '<div><slot /></div>' },
 }
 
@@ -72,7 +84,7 @@ describe('FileOverlay', () => {
         pdfOutline: [],
         ...props,
       },
-      global: { stubs },
+      global: { stubs, plugins: [i18n] },
     })
   }
 
@@ -88,8 +100,7 @@ describe('FileOverlay', () => {
 
   it('shows loading indicator when fileLoading is true', () => {
     const wrapper = mountOverlay({ overlayOpen: true, fileLoading: true })
-    const stub = wrapper.findComponent({ name: 'LoadingIndicator' })
-    expect(stub.exists()).toBe(true)
+    expect(wrapper.findComponent({ name: 'PanelSkeleton' }).exists()).toBe(true)
   })
 
   it('renders FileViewer stub when overlay is open', () => {

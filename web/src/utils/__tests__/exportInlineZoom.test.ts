@@ -195,3 +195,91 @@ describe('exported inline zoom — table cells opt out', () => {
     expect(figure.classList.contains('is-zooming')).toBe(true)
   })
 })
+
+describe('exported inline zoom — the zoom survives clicking away', () => {
+  beforeEach(() => {
+    document.body.innerHTML = ''
+    withPointerDevice()
+    installExportedZoom()
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('keeps the zoom on an outside click, releasing only the wheel', () => {
+    // The app distinguishes "holds a zoom" (`.is-zooming`, persistent) from
+    // "owns the wheel" (`.is-zoom-active`, transient). The mirror used to treat
+    // an outside click as a full reset, which made the reader redo the gesture
+    // every time they looked away.
+    const { figure, svg } = mountFigure()
+    click(svg)
+    wheel(svg, -120)
+    const zoomed = svg.style.width
+    expect(figure.classList.contains('is-zooming')).toBe(true)
+
+    const outside = document.createElement('div')
+    document.body.appendChild(outside)
+    click(outside)
+
+    expect(figure.classList.contains('is-zooming'), 'the zoom must survive').toBe(true)
+    expect(figure.classList.contains('is-zoom-active'), 'but the wheel goes back').toBe(false)
+    expect(svg.style.width).toBe(zoomed)
+  })
+
+  it('leaves the page wheel alone once the figure stopped being interactive', () => {
+    const { figure, svg } = mountFigure()
+    click(svg)
+    wheel(svg, -120)
+    click(document.body)
+    const before = svg.style.width
+
+    const e = wheel(svg, -120)
+
+    expect(e.defaultPrevented, 'the page must get its wheel back').toBe(false)
+    expect(svg.style.width).toBe(before)
+    expect(figure.classList.contains('is-zooming')).toBe(true)
+  })
+
+  it('returns an untouched figure to resting when clicked away from', () => {
+    // Entered but never zoomed: nothing to preserve, and keeping the held state
+    // would leave a full-column frame around an unzoomed artwork.
+    const { figure } = mountFigure()
+    click(figure.querySelector('svg')!)
+    click(document.body)
+
+    expect(figure.classList.contains('is-zooming')).toBe(false)
+    expect(figure.classList.contains('is-zoom-active')).toBe(false)
+  })
+})
+
+describe('exported inline zoom — reset leaves the zoom state', () => {
+  beforeEach(() => {
+    document.body.innerHTML = ''
+    withPointerDevice()
+    installExportedZoom()
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('clears both markers and every inline size on the reset button', () => {
+    // Parking at fit scale inside the held state would leave the artwork
+    // floating in a full-column viewport that is mostly empty.
+    const { figure, svg } = mountFigure()
+    click(svg)
+    wheel(svg, -120)
+    expect(figure.classList.contains('is-zooming')).toBe(true)
+
+    const resetBtn = document.createElement('button')
+    resetBtn.className = 'image-block-reset-btn'
+    figure.appendChild(resetBtn)
+    click(resetBtn)
+
+    expect(figure.classList.contains('is-zooming')).toBe(false)
+    expect(figure.classList.contains('is-zoom-active')).toBe(false)
+    expect(svg.style.width).toBe('')
+    expect(svg.style.transform).toBe('')
+  })
+})

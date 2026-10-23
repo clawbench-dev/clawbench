@@ -1377,6 +1377,45 @@ func TestApplyDefaultsUsageMeter(t *testing.T) {
 			t.Errorf("explicit values rewritten: %+v", cfg.UsageMeter)
 		}
 	})
+
+	// Every install written before cycle_mode existed stores "". Normalizing it
+	// to "fixed" makes the value the settings page shows identical to the one
+	// the arithmetic uses, and keeps the wire response free of empty strings.
+	t.Run("empty cycle mode normalizes to fixed", func(t *testing.T) {
+		cfg := Config{}
+		cfg.UsageMeter = UsageMeterConfig{Quota: 20, PeriodDays: 30, Metric: UsageMeterMetricCost}
+		ApplyDefaults(&cfg, nil)
+		if cfg.UsageMeter.CycleMode != UsageMeterCycleFixed {
+			t.Errorf("CycleMode = %q, want %q", cfg.UsageMeter.CycleMode, UsageMeterCycleFixed)
+		}
+	})
+
+	// Monthly mode takes its cycle length from the calendar, so period_days is
+	// dormant — but it must stay valid, because the settings page HIDES the
+	// field there. Leaving it at 0 would make a later switch back to "fixed"
+	// fail validation on a value the user cannot see.
+	t.Run("monthly keeps a usable period for a later switch back", func(t *testing.T) {
+		cfg := Config{}
+		cfg.UsageMeter = UsageMeterConfig{Quota: 20, CycleMode: UsageMeterCycleMonthly}
+		ApplyDefaults(&cfg, nil)
+		if cfg.UsageMeter.PeriodDays != 30 {
+			t.Errorf("PeriodDays = %d, want a usable 30 even in monthly mode", cfg.UsageMeter.PeriodDays)
+		}
+		if cfg.UsageMeter.CycleMode != UsageMeterCycleMonthly {
+			t.Errorf("CycleMode = %q, want monthly preserved", cfg.UsageMeter.CycleMode)
+		}
+	})
+
+	// An unrecognized mode from a hand-edited config.yaml falls back to the
+	// historical behavior rather than disabling the meter.
+	t.Run("unknown cycle mode falls back to fixed", func(t *testing.T) {
+		cfg := Config{}
+		cfg.UsageMeter = UsageMeterConfig{Quota: 20, CycleMode: "weekly", PeriodDays: 30, Metric: UsageMeterMetricCost}
+		ApplyDefaults(&cfg, nil)
+		if cfg.UsageMeter.CycleMode != UsageMeterCycleFixed {
+			t.Errorf("CycleMode = %q, want fallback to fixed", cfg.UsageMeter.CycleMode)
+		}
+	})
 }
 
 // Upload retention is destructive, so its defaults must be inert: an install

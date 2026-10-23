@@ -204,6 +204,7 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		"UsageMeterPeriodNotNumber",
 		"UsageMeterMetricInvalid",
 		"UsageMeterMetricNotString",
+		"UsageMeterCycleModeInvalid",
 	}
 
 	for _, key := range keys {

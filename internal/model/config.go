@@ -200,9 +200,20 @@ type UsageMeterConfig struct {
 	// ParseUsageMeterAnchor/FormatUsageMeterAnchor rather than parsing this
 	// string directly — they are the single definition of the accepted shapes.
 	AnchorDate string `yaml:"anchor_date"`
-	// PeriodDays is the cycle length in days. Cycle boundaries are computed as
-	// fixed 24h spans from the anchor rather than calendar-date differences, so
-	// the cycle length stays constant across DST transitions.
+	// CycleMode selects how cycles roll: a fixed number of days, or the
+	// calendar month. Empty means "fixed" (every install written before this
+	// field existed), so no migration is needed.
+	//
+	// The two modes answer different questions. "Fixed" keeps every cycle the
+	// same length, which is what a rolling 30-day budget means. "Monthly" makes
+	// the cycle end at the same wall-clock instant each month, so the budget
+	// lines up with a calendar month (and with monthly billing), at the price
+	// of cycles that are 28-31 days long.
+	CycleMode string `yaml:"cycle_mode"`
+	// PeriodDays is the cycle length in days, used by CycleMode "fixed" only.
+	// Cycle boundaries are computed as fixed 24h spans from the anchor rather
+	// than calendar-date differences, so the cycle length stays constant across
+	// DST transitions.
 	PeriodDays int `yaml:"period_days"`
 	// Metric selects what is counted: "tokens" | "credit" | "cost".
 	Metric string `yaml:"metric"`

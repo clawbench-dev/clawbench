@@ -318,5 +318,6 @@ UsageMeterPeriodRange: 周期长度必须在 1 到 {{.Max}} 天之间
 UsageMeterPeriodNotNumber: 周期长度必须是数字
 UsageMeterMetricInvalid: 统计口径必须是 tokens、credit 或 cost 之一
 UsageMeterMetricNotString: 统计口径必须是 tokens、credit 或 cost 之一
+UsageMeterCycleModeInvalid: 周期类型必须是 fixed（固定天数）或 monthly（自然月）
 RestartFailed: 重启失败：{{.Error}}
 RestartUnavailable: 重启功能未初始化，无法重启服务端

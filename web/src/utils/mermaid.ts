@@ -312,6 +312,15 @@ export async function reRenderMermaid(): Promise<void> {
                 container.id = id
                 // Re-arm the bordered figure after the innerHTML wipe.
                 armMermaidFigureForContext(container)
+                // Re-stamp too: the fresh <svg> may have a different size (a
+                // theme/font change re-measures every label), and the figure
+                // still carries the px width computed for the OLD one. The
+                // mutation observer would eventually catch the replaced node,
+                // but doing it here keeps the same "size in the injection task"
+                // rule as `renderMermaidInElement` — otherwise the diagram
+                // flashes at the stale width first.
+                const wrapper = container.closest('.image-block-wrapper')
+                if (wrapper) stampSvgFigure(wrapper)
             } catch (err: unknown) {
                 // Mermaid v11 inserts an error SVG + wrapper div before throwing
                 cleanupMermaidOrphan(renderId)

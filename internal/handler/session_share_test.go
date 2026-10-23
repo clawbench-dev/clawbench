@@ -69,7 +69,7 @@ func TestSessionShareManage_CreateStatusRevoke(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	sessionID, _ := seedShareSession(t, env, "sess-1")
+	sessionID, ids := seedShareSession(t, env, "sess-1")
 	token := createSessionShareViaAPI(t, env, sessionID, nil)
 
 	// GET status → token present, and the message list is returned in the same call.
@@ -82,6 +82,9 @@ func TestSessionShareManage_CreateStatusRevoke(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &status))
 	assert.Equal(t, token, status.Token)
 	assert.Equal(t, 2, status.MessageCount)
+	// The dialog is read-only while a link exists, so it needs the frozen
+	// selection to show which messages the link carries.
+	assert.ElementsMatch(t, ids, status.SelectedIDs)
 	require.Len(t, status.Messages, 2, "the dialog needs the message list from the same request")
 	assert.Equal(t, "user", status.Messages[0].Role)
 	assert.Equal(t, "hello", status.Messages[0].Preview)
@@ -100,6 +103,7 @@ func TestSessionShareManage_CreateStatusRevoke(t *testing.T) {
 	status = sessionShareStatusResponse{}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &status))
 	assert.Empty(t, status.Token)
+	assert.Empty(t, status.SelectedIDs, "no share → nothing frozen to show")
 	assert.Len(t, status.Messages, 2)
 }
 

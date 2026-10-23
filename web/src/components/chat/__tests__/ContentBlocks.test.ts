@@ -431,6 +431,22 @@ describe('ContentBlocks', () => {
       expect(detail.name).toBe('Read')
     })
 
+    // The detail drawer renders the elapsed time from `duration_ms` on the
+    // emitted payload. Omitting it used to be invisible in the chat panel —
+    // useToolDetailDrawer's live-block watcher re-read it after opening — but the
+    // share page installs no watcher, so its drawer showed no time at all.
+    // Assert the field travels with the event, not that the drawer can recover it.
+    it('carries duration_ms on the show-tool-detail payload', async () => {
+      const wrapper = mountBlocks({
+        blocks: [{ type: 'tool_use', name: 'Bash', done: true, status: 'success', id: 'tool-dur', duration_ms: 6784 }],
+      })
+
+      await wrapper.find('.chat-tool-call').trigger('click')
+
+      const detail = wrapper.emitted('show-tool-detail')![0][0] as any
+      expect(detail.duration_ms).toBe(6784)
+    })
+
     it('emits toggle-tool on click for AskUserQuestion', async () => {
       const wrapper = mountBlocks({
         blocks: [{ type: 'tool_use', name: 'AskUserQuestion', done: true, status: 'success', id: 'tool-2', input: {} }],
@@ -1227,6 +1243,28 @@ describe('ContentBlocks', () => {
       expect(wrapper.html()).toContain('AskUserQuestion')
       // Auto-expand tool from summary cards renders as a unified inline card
       expect(wrapper.find('.tool-detail.chat-inline-card').exists()).toBe(true)
+    })
+
+    // Same contract as the original-content path: the summary card's payload must
+    // carry the elapsed time itself. The share page opens on summaries and has no
+    // live-block watcher to fill the gap, so this path is the one a reader
+    // actually clicks.
+    it('carries duration_ms on a summary tool card click', async () => {
+      const wrapper = mountBlocks({
+        blocks: [],
+        summary: 'sum text',
+        showingSummary: true,
+        summaryCards: {
+          tools: [{ name: 'Bash', id: 'tool-sum-dur', done: true, status: 'success', duration_ms: 4321 }],
+          taskIDs: [],
+          askQuestions: [],
+        },
+      })
+      const card = wrapper.findAll('.chat-tool-call').find((c) => c.text().includes('Bash'))
+      expect(card, 'a clickable Bash pill must render in the summary view').toBeTruthy()
+      await card!.trigger('click')
+      const detail = wrapper.emitted('show-tool-detail')!.at(-1)![0] as any
+      expect(detail.duration_ms).toBe(4321)
     })
 
     it('hides PermissionApproval cards in summary view (actionable-only, no dead buttons)', () => {

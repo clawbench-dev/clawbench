@@ -9,32 +9,50 @@
  * small viewport: click it (pointer devices only) and the diagram can be zoomed
  * and panned in place, without leaving the document.
  *
+ * Two orthogonal states
+ * ---------------------
+ * The zoom a reader dials in is a RESULT, not a mode. Losing interest in the
+ * figure — clicking the input box, reading the paragraph beside it — must not
+ * throw that result away and force them to redo the whole gesture. So:
+ *
+ *   - **zoomed** (`.is-zooming`, persistent): the figure holds a scale/pan and
+ *     the media keeps the size it was given. Survives clicks elsewhere, focus
+ *     loss, pointer-out and scrolling.
+ *   - **interactive** (`.is-zoom-active`, transient): the wheel belongs to this
+ *     figure, the ring marks it, and the cursor becomes a grab handle. Ends the
+ *     moment the reader clicks anywhere else or tabs away.
+ *
+ * Only an explicit reset (the toolbar button, Escape, or clicking a DIFFERENT
+ * figure) returns the artwork to its resting size.
+ *
  * Interaction model (deliberately narrow)
  * ---------------------------------------
  * - **Pointer devices only.** `(hover: hover) and (pointer: fine)` gates every
  *   listener. Touch never activates inline zoom: a pinch would fight page
  *   scrolling, and the issue that motivated this feature explicitly rejected
  *   "manual zoom" on mobile for exactly that reason. Touch keeps the lightbox.
- * - **Click enters the zoom state; click outside (or Escape) leaves it.** This
- *   is the load-bearing decision. Hover-activation was tried first and it
- *   hijacked the wheel: scrolling UP a long document with the pointer drifting
- *   over a diagram zoomed the diagram instead of scrolling the page, and with
- *   trackpad momentum every remaining negative delta kept multiplying until the
- *   figure hit max scale. Requiring an explicit click gives the wheel an
- *   unambiguous owner — while a figure is NOT zoomed, every wheel event belongs
- *   to the page, no matter which direction it goes.
- * - **The pointer leaving the figure does NOT end the zoom.** Only an explicit
- *   act does. Moving the mouse off — to read a paragraph beside the diagram, to
- *   reach a toolbar, or simply to reposition the hand — must not throw away the
- *   zoom and pan the reader just set up. `pointerout` is deliberately not
- *   listened to; the exit paths are the outside click, Escape, and clicking a
- *   different figure.
- * - **Wheel zooms around the cursor while zoomed.** Anchoring on the pointer
- *   (not the centre) is what makes "zoom into that node" feel direct.
- * - **Drag pans while zoomed.** Panning is clamped so the media cannot be
+ * - **Click enters the interactive state; click outside (or tabbing away)
+ *   leaves it — without discarding the zoom.** This is the load-bearing
+ *   decision. Hover-activation was tried first and it hijacked the wheel:
+ *   scrolling UP a long document with the pointer drifting over a diagram
+ *   zoomed the diagram instead of scrolling the page, and with trackpad
+ *   momentum every remaining negative delta kept multiplying until the figure
+ *   hit max scale. Requiring an explicit click gives the wheel an unambiguous
+ *   owner — while a figure is NOT interactive, every wheel event belongs to the
+ *   page, no matter which direction it goes.
+ * - **Losing the pointer OR the focus does NOT change either state.** Moving
+ *   the mouse off — to read a paragraph beside the diagram, to reach a toolbar,
+ *   or simply to reposition the hand — must not drop the zoom and pan the
+ *   reader just set up, and neither must tabbing away to a control somewhere
+ *   else on the page. `pointerout` and `focusout` are deliberately not listened
+ *   to; exiting is the outside click, and the zoom itself ends only on Escape,
+ *   the reset button, or a different figure.
+ * - **Wheel zooms around the cursor while interactive.** Anchoring on the
+ *   pointer (not the centre) is what makes "zoom into that node" feel direct.
+ * - **Drag pans while interactive.** Panning is clamped so the media cannot be
  *   dragged out of its frame; at fit scale there is nothing to pan.
- * - **Keyboard focus also enters the zoom state**, so the feature is reachable
- *   without a pointer; `+`/`-` zoom, arrows pan, Escape leaves.
+ * - **Keyboard focus also enters the interactive state**, so the feature is
+ *   reachable without a pointer; `+`/`-` zoom, arrows pan, Escape resets.
  *
  * Why a module and not a component
  * --------------------------------
@@ -45,8 +63,21 @@
  * `mediaFullscreenGuard.ts` already use for injected markup.
  */
 
-/** Marker class on a figure while it is the active zoom target. */
+/**
+ * Marker class on a figure that HOLDS a zoom (persistent).
+ *
+ * The media keeps the size `apply` gave it; clicking elsewhere does not clear
+ * it. CSS uses this for the "this figure is not at rest" affordances.
+ */
 export const ZOOM_ACTIVE_CLASS = 'is-zooming'
+
+/**
+ * Marker class on the figure that currently OWNS the wheel (transient).
+ *
+ * Only one figure can hold it. It ends on an outside click / focus loss, which
+ * is what keeps the page wheel unambiguous — see the module comment.
+ */
+export const ZOOM_INTERACTIVE_CLASS = 'is-zoom-active'
 
 /**
  * Scale bounds. `MIN_SCALE` is the resting state (the frame exactly filled).
@@ -146,12 +177,36 @@ function figureFrom(target: EventTarget | null): HTMLElement | null {
 }
 
 /**
- * Restore the media to its resting layout size and drop the active marker.
+ * Drop the INTERACTIVE state: the figure stops owning the wheel and loses its
+ * grab cursor, but keeps the zoom it holds.
  *
- * Every inline style the zoom wrote is cleared here, because the resting size
- * is whatever CSS says (contain-fit inside the frame) — the module must not
- * leave a single pixel of its own sizing behind, or "layout back to normal"
- * would be a lie after the first zoom.
+ * This is the "clicked somewhere else" path. It must not touch the media's size
+ * — the reader's zoom is a result they produced, and discarding it because they
+ * went to read a paragraph would force them to redo the whole gesture.
+ *
+ * The one exception is fit scale. A figure that was entered and then left
+ * WITHOUT being zoomed has nothing to preserve, and keeping `.is-zooming` there
+ * would leave it as a full-column frame with the artwork floating in it (the
+ * held state's frame IS the viewport). Nothing was gained, so it goes back to
+ * resting.
+ */
+function releaseInteraction(): void {
+    if (!active) return
+    if (active.scale <= MIN_SCALE) {
+        deactivate()
+        return
+    }
+    active.figure.classList.remove(ZOOM_INTERACTIVE_CLASS)
+}
+
+/**
+ * Return the media to its resting layout size and clear BOTH states.
+ *
+ * Only explicit reset gestures call this (Escape, the toolbar reset button, or
+ * clicking a different figure). Every inline style the zoom wrote is cleared
+ * here, because the resting size is whatever CSS says (contain-fit inside the
+ * frame) — the module must not leave a single pixel of its own sizing behind,
+ * or "layout back to normal" would be a lie after the first zoom.
  */
 function deactivate(): void {
     if (!active) return
@@ -178,7 +233,7 @@ function deactivate(): void {
     // CURRENT column and 60dvh budget; it is a no-op when the module is not
     // loaded (e.g. the standalone exporter).
     media.style.width = restingWidth ?? ''
-    // Drop the active marker BEFORE refitting. `refitFigure` bails out while
+    // Drop the markers BEFORE refitting. `refitFigure` bails out while
     // `is-zooming` is set (the zoom owns the media's size then), so calling it
     // first made this line dead: the diagram kept the stale `restingWidth`
     // above, which is exactly the size the refit exists to replace. The class
@@ -188,6 +243,7 @@ function deactivate(): void {
     //
     // The resting aspect-ratio stays: it describes the artwork, not the zoom,
     // and dropping it would make the frame collapse for one frame on exit.
+    figure.classList.remove(ZOOM_INTERACTIVE_CLASS)
     figure.classList.remove(ZOOM_ACTIVE_CLASS)
     active = null
     refitHook?.(figure)
@@ -318,11 +374,22 @@ function apply(state: ZoomState): void {
     state.media.style.transform = `translate(calc(-50% + ${tx}px), calc(-50% + ${ty}px))`
 }
 
-/** Begin zooming a figure at fit scale, centred. */
+/**
+ * Enter the INTERACTIVE state for a figure, creating its zoom state if it does
+ * not hold one yet.
+ *
+ * Re-clicking a figure that already holds a zoom must NOT restart it: the
+ * reader is coming back to keep working at the scale they set, not to have it
+ * thrown away and re-derived from the resting layout.
+ */
 function activate(figure: HTMLElement): ZoomState | null {
     const media = zoomableMedia(figure)
     if (!media) return null
-    if (active?.figure === figure) return active
+    if (active?.figure === figure) {
+        // Already zoomed — just take the wheel back.
+        figure.classList.add(ZOOM_INTERACTIVE_CLASS)
+        return active
+    }
     deactivate()
 
     active = {
@@ -338,18 +405,29 @@ function activate(figure: HTMLElement): ZoomState | null {
         restingWidth: media.style.width,
     }
     figure.classList.add(ZOOM_ACTIVE_CLASS)
+    figure.classList.add(ZOOM_INTERACTIVE_CLASS)
     media.style.transformOrigin = 'center center'
     apply(active)
     return active
 }
 
-/** Reset the active figure to fit-scale and centre it (the layout-reset button). */
+/** Whether the figure currently holds the wheel (and therefore the ring). */
+function isInteractive(figure: HTMLElement | null): boolean {
+    return !!figure && figure.classList.contains(ZOOM_INTERACTIVE_CLASS)
+}
+
+/**
+ * The toolbar's layout-reset button: put the artwork back at fit scale.
+ *
+ * At fit scale there is nothing left to hold, so this leaves the zoom state
+ * entirely rather than parking at `scale = 1` — the held state's frame is the
+ * full-column viewport, and keeping it would leave the artwork floating in a
+ * frame that is mostly empty. That is the same resting result `deactivate`
+ * produces, so it goes through it (the reader's next click re-enters cleanly).
+ */
 export function resetActiveZoom(): boolean {
     if (!active) return false
-    active.scale = MIN_SCALE
-    active.tx = 0
-    active.ty = 0
-    apply(active)
+    deactivate()
     return true
 }
 
@@ -400,14 +478,15 @@ function onViewportResize(): void {
 }
 
 function onWheel(e: WheelEvent): void {
-    // The wheel only belongs to a figure that has been explicitly entered
-    // (click / focus). At rest EVERY notch — up or down, any delta — is the
-    // page's. This is the whole point of click-to-enter: scrolling a document
-    // with the pointer drifting over a diagram must never zoom it, and the
-    // earlier hover-activation model failed exactly here.
+    // The wheel only belongs to the figure that is INTERACTIVE (entered by an
+    // explicit click / focus). Every other figure — including one that HOLDS a
+    // zoom but was left behind — leaves its notches to the page. This is the
+    // whole point of click-to-enter: scrolling a document with the pointer
+    // drifting over a diagram must never zoom it, and the earlier
+    // hover-activation model failed exactly here.
     if (!active) return
     const figure = figureFrom(e.target)
-    if (!figure || figure !== active.figure) return
+    if (!figure || figure !== active.figure || !isInteractive(figure)) return
 
     const state = active
     // Horizontal-only notches (deltaY === 0) are not a zoom gesture.
@@ -447,8 +526,10 @@ function onPointerDown(e: PointerEvent): void {
     const figure = figureFrom(e.target)
     if (!figure) return
     const state = active?.figure === figure ? active : null
-    // Panning only makes sense once zoomed in.
-    if (!state || state.scale <= MIN_SCALE) return
+    // Panning only makes sense while the figure owns the wheel and is zoomed in.
+    // A figure that merely HOLDS a zoom is not draggable — otherwise the drag
+    // would fight the page's own text selection while the reader scrolls past.
+    if (!state || !isInteractive(figure) || state.scale <= MIN_SCALE) return
 
     e.preventDefault()
     // Capture the pointer so a drag that leaves the element still delivers
@@ -506,12 +587,13 @@ function onPointerOver(e: PointerEvent): void {
 
 
 /**
- * Click to enter the zoom state; click anywhere else to leave it.
+ * Click to enter the INTERACTIVE state; click anywhere else to leave it.
  *
- * This is the explicit gesture that keeps the wheel unambiguous: until the user
- * clicks, the figure owns no wheel events at all. Once zoomed, a press on the
- * media starts a PAN (handled in `onPointerDown`), so clicking the figure again
- * does not toggle anything — leaving is done by clicking outside or Escape.
+ * Leaving does NOT reset the zoom — see `releaseInteraction`. This is the
+ * explicit gesture that keeps the wheel unambiguous: until the user clicks, the
+ * figure owns no wheel events at all. Once interactive, a press on the media
+ * starts a PAN (handled in `onPointerDown`), so clicking the figure again does
+ * not toggle anything.
  */
 function onClickEnter(e: MouseEvent): void {
     const target = e.target
@@ -522,14 +604,20 @@ function onClickEnter(e: MouseEvent): void {
 
     const figure = figureFrom(target)
     if (figure) {
-        if (active?.figure === figure) return
+        if (active?.figure === figure) {
+            // Coming back to a figure that already holds a zoom: take the wheel
+            // back without touching the scale.
+            figure.classList.add(ZOOM_INTERACTIVE_CLASS)
+            return
+        }
         activate(figure)
         ensureFocusable(figure)
         return
     }
 
-    // Click anywhere else leaves the zoom.
-    deactivate()
+    // Click anywhere else releases the wheel but KEEPS the zoom: the reader may
+    // be going off to read a paragraph and come back.
+    releaseInteraction()
 }
 
 function onPointerUp(): void {
@@ -571,8 +659,8 @@ function onClick(e: MouseEvent): void {
         return
     }
     e.preventDefault()
-    // Keep the zoom alive after the reset: the user is still working with this
-    // figure, and re-entering on the next wheel notch would be jarring.
+    // Reset leaves the zoom state entirely — at fit scale there is nothing
+    // left to hold (see `resetActiveZoom`).
     resetActiveZoom()
 }
 
@@ -616,29 +704,46 @@ function onFocusIn(e: FocusEvent): void {
     const figure = target.closest<HTMLElement>('.image-block-wrapper')
     if (!figure || !zoomableMedia(figure)) return
     ensureFocusable(figure)
-    if (active?.figure === figure) return
+    // Coming back to a figure that already holds a zoom takes the wheel back
+    // without disturbing the scale.
+    if (active?.figure === figure) {
+        figure.classList.add(ZOOM_INTERACTIVE_CLASS)
+        return
+    }
     activate(figure)
 }
 
-/** Leaving a figure by keyboard ends the zoom, mirroring pointer-leave. */
+/*
+ * `focusout` releases the INTERACTIVE state only — never the zoom.
+ *
+ * Tabbing away from a figure (to a toolbar button, a link, or anything else on
+ * the page) means the keyboard no longer addresses it, so its keys must stop
+ * working; it does NOT mean the reader wants their zoom thrown away. The same
+ * reasoning removed the `pointerout` exit.
+ */
 function onFocusOut(e: FocusEvent): void {
     if (!active) return
     const next = e.relatedTarget
     if (next instanceof Node && active.figure.contains(next)) return
-    deactivate()
+    releaseInteraction()
 }
 
 function onKeyDown(e: KeyboardEvent): void {
-    // Escape must work regardless of where focus sits: once the user is in the
-    // active state the document body usually has focus (they clicked the media,
-    // which is not focusable by default), so keying off `figureFrom(e.target)`
-    // alone would make Escape a no-op exactly when it is needed.
+    // Escape resets from wherever focus sits: once the user is interactive the
+    // document body usually has focus (they clicked the media, which is not
+    // focusable by default), so keying off `figureFrom(e.target)` alone would
+    // make Escape a no-op exactly when it is needed. It is also the only way to
+    // undo a zoom that was kept after clicking away.
     if (e.key === 'Escape' && active) {
         e.preventDefault()
         deactivate()
         return
     }
 
+    // A key event that lands INSIDE a zoomable figure is itself an explicit
+    // act — same weight as the click that enters the interactive state — so it
+    // may create the zoom. (Tabbing in already does this via `focusin`; this
+    // covers a synthetic or un-focusable dispatch.)
     const figure = figureFrom(e.target)
     if (!figure) return
 
@@ -754,8 +859,13 @@ export function activeZoomScale(): number {
     return active?.scale ?? 0
 }
 
-/** Test hook: whether a figure is the active zoom target. */
+/** Test hook: whether any figure HOLDS a zoom (persistent state). */
 export function isZoomActive(): boolean {
     return active !== null
+}
+
+/** Test hook: whether a figure currently OWNS the wheel (transient state). */
+export function isZoomInteractive(): boolean {
+    return active !== null && active.figure.classList.contains(ZOOM_INTERACTIVE_CLASS)
 }
 

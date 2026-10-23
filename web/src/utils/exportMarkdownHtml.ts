@@ -1299,6 +1299,11 @@ export function buildInlineZoomJs(): string {
         s.media.style.transform = 'translate(calc(-50% + ' + s.tx + 'px), calc(-50% + ' + s.ty + 'px))';
     }
 
+    // Two orthogonal states, mirroring the app's inlineZoom.ts:
+    //   .is-zooming     HOLDS a zoom (persistent — survives clicking away)
+    //   .is-zoom-active OWNS the wheel (transient — outside click releases it)
+    // Resetting the artwork is the explicit act (reset button / Escape /
+    // another figure); merely looking away must not undo the reader's zoom.
     function deactivate() {
         if (!active) return;
         var m = active.media;
@@ -1312,16 +1317,30 @@ export function buildInlineZoomJs(): string {
             if (active.savedW === null) m.removeAttribute('width');
             else m.setAttribute('width', active.savedW);
         }
+        active.fig.classList.remove('is-zoom-active');
         active.fig.classList.remove('is-zooming');
         active = null;
+    }
+
+    // Release the wheel but keep the zoom. A figure entered and never zoomed
+    // has nothing to preserve, so it goes back to resting.
+    function releaseInteraction() {
+        if (!active) return;
+        if (active.scale <= MIN) { deactivate(); return; }
+        active.fig.classList.remove('is-zoom-active');
     }
 
     function activate(fig) {
         var media = mediaOf(fig);
         if (!media) return null;
+        if (active && active.fig === fig) {
+            fig.classList.add('is-zoom-active');
+            return active;
+        }
         deactivate();
         active = { fig: fig, media: media, scale: MIN, tx: 0, ty: 0 };
         fig.classList.add('is-zooming');
+        fig.classList.add('is-zoom-active');
         media.style.transformOrigin = 'center center';
         apply(active);
         return active;
@@ -1341,6 +1360,9 @@ export function buildInlineZoomJs(): string {
     document.addEventListener('wheel', function(e) {
         var fig = figFrom(e.target);
         if (!fig) return;
+        // Only the INTERACTIVE figure owns the wheel. One that merely holds a
+        // zoom (the reader clicked away) leaves its notches to the page.
+        if (!fig.classList.contains('is-zoom-active')) return;
         var s = active && active.fig === fig ? active : null;
 
         // At rest EVERY notch — up or down, any delta — belongs to the page.
@@ -1366,7 +1388,8 @@ export function buildInlineZoomJs(): string {
     document.addEventListener('pointerdown', function(e) {
         if (e.pointerType === 'touch' || e.button !== 0) return;
         var fig = figFrom(e.target);
-        if (!fig || !active || active.fig !== fig || active.scale <= MIN) return;
+        if (!fig || !fig.classList.contains('is-zoom-active')) return;
+        if (!active || active.fig !== fig || active.scale <= MIN) return;
         e.preventDefault();
         panning = { s: active, x: e.clientX, y: e.clientY, bx: active.tx, by: active.ty, moved: false };
     });
@@ -1405,22 +1428,23 @@ export function buildInlineZoomJs(): string {
         var reset = e.target.closest('.image-block-reset-btn');
         if (reset) {
             e.preventDefault();
-            if (!active) return;
-            active.scale = MIN; active.tx = 0; active.ty = 0;
-            apply(active);
+            // At fit scale there is nothing left to hold, so reset is a full
+            // exit — parking at MIN would leave a full-column empty frame.
+            deactivate();
             return;
         }
 
         // The toolbar's own buttons keep their handlers.
         if (e.target.closest('.image-block-header')) return;
 
-        // Click a figure to enter the zoom state; click anywhere else to leave.
+        // Click a figure to take the wheel; click anywhere else to give it back
+        // WITHOUT discarding the zoom (see releaseInteraction).
         var fig = figFrom(e.target);
         if (fig) {
-            if (!active || active.fig !== fig) activate(fig);
+            activate(fig);
             return;
         }
-        deactivate();
+        releaseInteraction();
     });
 })();`
 }

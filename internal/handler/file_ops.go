@@ -49,10 +49,23 @@ func ServeFileRename(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("rename attempt", slog.String("old", absOld), slog.String("new", absNew))
+	// Whether a directory is being renamed decides how the upload ledger remaps
+	// its entries (a directory takes everything beneath it along). Read it before
+	// the rename, because the old path is gone afterwards.
+	isDir := false
+	if info, statErr := os.Stat(absOld); statErr == nil {
+		isDir = info.IsDir()
+	}
 	if err := os.Rename(absOld, absNew); err != nil {
 		slog.Error("rename failed", slog.String("old", absOld), slog.String("new", absNew), slog.String("err", err.Error()))
 		model.WriteError(w, model.Internal(fmt.Errorf("rename failed: %w", err)))
 		return
+	}
+
+	// Keep "最近上传" pointing at the file the user uploaded. Without this a
+	// rename silently drops the row from the list (see moveLedgerEntry).
+	if projectPath, ok := projectPathForRequest(r); ok {
+		moveLedgerEntry(projectPath, absOld, absNew, isDir)
 	}
 
 	// Renaming moves the file — a share pointing at the old path would break
@@ -154,6 +167,13 @@ func ServeFileDelete(w http.ResponseWriter, r *http.Request) {
 			model.WriteError(w, model.Internal(fmt.Errorf("delete failed: %w", err)))
 			return
 		}
+	}
+
+	// The file is gone, so a "最近上传" row for it would point at nothing. Drop
+	// the record now rather than waiting for the next write to prune it: the
+	// list is user-visible, and the user just deleted the thing it referenced.
+	if projectPath, ok := projectPathForRequest(r); ok {
+		forgetLedgerPath(projectPath, absPath)
 	}
 
 	// Revoke any public share links pointing at the deleted file/directory.
@@ -329,6 +349,13 @@ func ServeFileMove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Whether a directory is being moved decides how the upload ledger remaps
+	// its entries. Read it before the rename, because the old path is gone
+	// afterwards.
+	isDir := false
+	if info, statErr := os.Stat(srcAbsPath); statErr == nil {
+		isDir = info.IsDir()
+	}
 	if err := os.Rename(srcAbsPath, destAbsPath); err != nil {
 		model.WriteError(w, model.Internal(fmt.Errorf("move failed: %w", err)))
 		return
@@ -337,6 +364,12 @@ func ServeFileMove(w http.ResponseWriter, r *http.Request) {
 	// Moving changes the path — revoke any share pointing at the source path.
 	if err := service.DeleteFileSharesUnderPath(srcAbsPath); err != nil {
 		slog.Warn("move: cleanup of file shares failed", "path", srcAbsPath, "err", err)
+	}
+
+	// Keep "最近上传" pointing at the file the user uploaded (see
+	// moveLedgerEntry).
+	if projectPath, ok := projectPathForRequest(r); ok {
+		moveLedgerEntry(projectPath, srcAbsPath, destAbsPath, isDir)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})

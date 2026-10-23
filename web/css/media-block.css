@@ -167,10 +167,10 @@
    `.svg-fit` is still stamped by `svgMediaFit.ts` (it marks "this figure's
    media has a known intrinsic size"), but it no longer drives width. A figure
    that is never stamped keeps the previous shrink-only behavior, so raster
-   images and unknown media are untouched. Chat is untouched too: the chat
-   pipeline never stamps, and its own
-   `.chat-message .image-block-wrapper { max-width: 200px }` below still
-   clamps the thumbnail. */
+   images and unknown media are untouched. In chat the same rule applies: a
+   Mermaid diagram is stamped by `mermaid.ts` and gets this sizing (it is the
+   answer, not a thumbnail), while photos and bare inline SVGs are never
+   stamped and keep the bubble's 200px cap below. */
 /* The frame's width is owned by the inline-zoom block below: it hugs the
    artwork at rest and spans the column while zoomed. A `width: 100%` here would
    outrank that rule (0-2-0 vs 0-1-1) and force every diagram into a
@@ -198,15 +198,23 @@
 
    States
    ------
-   - **Resting** — media contain-fitted, default cursor, no chrome. A click
-     enters the active state (`inlineZoom.ts` adds `.is-zooming`). The cursor is
-     deliberately NOT `zoom-in`: a magnifier over an untouched figure promises an
-     affordance the user has not asked for, and for a photo the expected
-     "enlarge" target is the lightbox button, not the image body.
-   - **Active** — a visible ring marks the figure as the zoom target, the reset
-     button appears, the cursor becomes a grab handle, and the wheel/drag
-     gestures belong to the media. Clicking outside or Escape returns to
-     resting, which restores the layout exactly (all inline sizes are cleared).
+   Two independent markers, because "holding a zoom" and "owning the wheel"
+   are different questions (see `inlineZoom.ts`):
+
+   - **Resting** — media contain-fitted, default cursor, no chrome.
+   - **`.is-zooming` (holding a zoom)** — the media keeps the size the reader
+     dialled in and the frame is the full-column viewport. This PERSISTS:
+     clicking the input box, reading a paragraph, or tabbing away must not
+     throw the zoom away. Only the reset button, Escape, or clicking another
+     figure returns to resting (all inline sizes are cleared then).
+   - **`.is-zoom-active` (interactive)** — the transient part: a visible ring
+     marks the figure as the wheel/drag target and the cursor becomes a grab
+     handle. An outside click or focus loss drops it while the zoom stays.
+
+   The cursor is deliberately NOT `zoom-in` at rest: a magnifier over an
+   untouched figure promises an affordance the user has not asked for, and for
+   a photo the expected "enlarge" target is the lightbox button, not the image
+   body.
 
    Zoom is applied by writing WIDTH/HEIGHT on the media, never by
    `transform: scale()`: a transform rasterises the element once at its layout
@@ -394,27 +402,36 @@
         transition: width var(--duration-fast) ease-out, height var(--duration-fast) ease-out;
     }
 
-    /* ── Active state ────────────────────────────────────────────────────── */
-    .image-block-wrapper.is-zooming {
-        /* A ring is the only chrome that reads at a glance without shifting
-           layout (outline never takes part in layout). */
+    /* ── The ring belongs to the INTERACTIVE state ────────────────────────
+       A figure that merely HOLDS a zoom (the reader clicked away, or tabbed
+       elsewhere) shows no ring: the outline reads as "this is selected / being
+       worked on", and after focus moves away nothing is. The zoom itself is
+       still there — the artwork is visibly not at rest — so the ring has
+       nothing left to communicate, and leaving it on makes the whole document
+       look like it has a stray selection.
+
+       `outline` takes no part in layout, so entering/leaving cannot shift the
+       document. */
+    .image-block-wrapper.is-zoom-active {
         outline: 2px solid var(--accent-color, #4a9eff);
         outline-offset: 2px;
     }
 
-    /* These must mirror the RESTING selectors including `:has()`: that rule is
-       0-3-1 while a plain `.is-zooming > .lightbox-img-wrap` is only 0-3-0, so
-       the resting `cursor: default` won and the active figure never showed the
+    /* The grab handle belongs to the INTERACTIVE state: it promises a drag, and
+       a figure that merely holds a zoom no longer accepts one. These must
+       mirror the RESTING selectors including `:has()`: that rule is 0-3-1 while
+       a plain `.is-zoom-active > .lightbox-img-wrap` is only 0-3-0, so the
+       resting `cursor: default` won and the active figure never showed the
        grab handle. */
-    .image-block-wrapper.is-zooming:has(> .lightbox-img-wrap > img) > .lightbox-img-wrap,
-    .image-block-wrapper.is-zooming:has(> .lightbox-svg-wrap > svg.lightbox-svg) > .lightbox-svg-wrap,
-    .image-block-wrapper.is-zooming:has(> .mermaid > svg) > .mermaid {
+    .image-block-wrapper.is-zoom-active:has(> .lightbox-img-wrap > img) > .lightbox-img-wrap,
+    .image-block-wrapper.is-zoom-active:has(> .lightbox-svg-wrap > svg.lightbox-svg) > .lightbox-svg-wrap,
+    .image-block-wrapper.is-zoom-active:has(> .mermaid > svg) > .mermaid {
         cursor: grab;
     }
 
-    .image-block-wrapper.is-zooming.is-panning:has(> .lightbox-img-wrap > img) > .lightbox-img-wrap,
-    .image-block-wrapper.is-zooming.is-panning:has(> .lightbox-svg-wrap > svg.lightbox-svg) > .lightbox-svg-wrap,
-    .image-block-wrapper.is-zooming.is-panning:has(> .mermaid > svg) > .mermaid {
+    .image-block-wrapper.is-zoom-active.is-panning:has(> .lightbox-img-wrap > img) > .lightbox-img-wrap,
+    .image-block-wrapper.is-zoom-active.is-panning:has(> .lightbox-svg-wrap > svg.lightbox-svg) > .lightbox-svg-wrap,
+    .image-block-wrapper.is-zoom-active.is-panning:has(> .mermaid > svg) > .mermaid {
         cursor: grabbing;
     }
 
@@ -464,40 +481,40 @@
     position: relative;
 }
 
-/* ─── Chat message: keep media thumbnailed inside the bubble ──────────────
+/* ─── Chat message: thumbnail cap for PHOTOS, full size for DIAGRAMS ──────
+   A bubble is a conversation, not a document: a pasted screenshot or an inline
+   SVG the model drew belongs in a 200px thumbnail the reader clicks to inspect.
+   A rendered Mermaid diagram is different — it is the ANSWER, with dense labels
+   that must be legible while scrolling (#570: chat diagrams rendered as an
+   unreadable banner). Mermaid is therefore deliberately NOT in these lists: it
+   gets the same resting sizing and click-to-zoom as the file preview (hug the
+   artwork, height budget, expand to the bubble when active).
+
    These rules must mirror the inline-zoom block's `:has()` selectors INCLUDING
    the pseudo-class. `:has()` contributes its ARGUMENT's specificity, so the
-   generic `.image-block-wrapper:has(> .mermaid > svg)` is 0-2-1 while a plain
-   `.chat-message .image-block-wrapper` is only 0-2-0 — the generic rule's
-   `max-width: 100%` won, and every diagram inside a bubble grew to the whole
+   generic `.image-block-wrapper:has(> .lightbox-img-wrap > img)` is 0-2-1 while
+   a plain `.chat-message .image-block-wrapper` is only 0-2-0 — the generic
+   rule's `max-width: 100%` won, and every capped figure grew to the whole
    column (measured 540px in a 600px bubble; the cap below never applied).
    Prefixing the same `:has()` selectors restores the 0-3-1 vs 0-2-1 order. */
-/* The thumbnail cap applies ONLY while the figure is at rest. Once the reader
-   clicks it, the figure becomes the zoom viewport and must span the bubble —
-   otherwise the "zoom" happens inside a 200px box and the diagram stays tiny
-   no matter how far it is zoomed (reported: 聊天界面点击聚焦后没有全宽). */
-.chat-message .image-block-wrapper:not(.is-zooming),
+/* The cap applies ONLY while the figure is at rest. Once the reader clicks it,
+   the figure becomes the zoom viewport and must span the bubble — otherwise the
+   "zoom" happens inside a 200px box and the image stays tiny no matter how far
+   it is zoomed (reported: 聊天界面点击聚焦后没有全宽). */
 .chat-message .image-block-wrapper:not(.is-zooming):has(> .lightbox-img-wrap > img),
-.chat-message .image-block-wrapper:not(.is-zooming):has(> .lightbox-svg-wrap > svg.lightbox-svg),
-.chat-message .image-block-wrapper:not(.is-zooming):has(> .mermaid > svg) {
+.chat-message .image-block-wrapper:not(.is-zooming):has(> .lightbox-svg-wrap > svg.lightbox-svg) {
     max-width: 200px;
 }
 
-.chat-message .image-block-wrapper:not(.is-zooming) > .mermaid {
-    max-height: 200px;
-    overflow: hidden;
-}
-
 /* The media itself is clamped to a PIXEL cap, not a percentage. The generic
-   rule sizes it with `width: calc(60dvh * var(--svg-ar, 1))` and clears
+   rule sizes SVG media with `width: calc(60dvh * var(--svg-ar, 1))` and clears
    `max-width` with `!important`, so the cap has to be `!important` too (both
    declarations are important; the more specific selector wins). A percentage
    would reintroduce the svg↔cell dependency cycle the generic rule documents. */
 /* Same rest-only scoping: while zoomed the media's size belongs to
    `inlineZoom`, and an `!important` cap here would pin it to 200px. */
 .chat-message .image-block-wrapper:not(.is-zooming):has(> .lightbox-img-wrap > img) > .lightbox-img-wrap > img,
-.chat-message .image-block-wrapper:not(.is-zooming):has(> .lightbox-svg-wrap > svg.lightbox-svg) > .lightbox-svg-wrap > svg.lightbox-svg,
-.chat-message .image-block-wrapper:not(.is-zooming):has(> .mermaid > svg) > .mermaid > svg {
+.chat-message .image-block-wrapper:not(.is-zooming):has(> .lightbox-svg-wrap > svg.lightbox-svg) > .lightbox-svg-wrap > svg.lightbox-svg {
     max-width: 200px !important;
     max-height: 184px;
 }
@@ -657,6 +674,18 @@ th .image-block-wrapper.is-zooming:has(> .mermaid > svg) {
        did not change size. */
     width: fit-content;
     max-width: 100%;
+}
+
+/* The ring lives on `.is-zoom-active`, so it needs its own neutralisation —
+   a stray ring would outline the whole row's cell. */
+td .image-block-wrapper.is-zoom-active,
+th .image-block-wrapper.is-zoom-active,
+td .image-block-wrapper.is-zoom-active:has(> .lightbox-img-wrap > img),
+td .image-block-wrapper.is-zoom-active:has(> .lightbox-svg-wrap > svg.lightbox-svg),
+td .image-block-wrapper.is-zoom-active:has(> .mermaid > svg),
+th .image-block-wrapper.is-zoom-active:has(> .lightbox-img-wrap > img),
+th .image-block-wrapper.is-zoom-active:has(> .lightbox-svg-wrap > svg.lightbox-svg),
+th .image-block-wrapper.is-zoom-active:has(> .mermaid > svg) {
     outline: none;
 }
 

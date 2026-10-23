@@ -22,6 +22,7 @@ export interface UsageMeterStatus {
   enabled: boolean
   metric?: UsageMeterMetric
   anchorDate?: string
+  /** Length of the CURRENT cycle: in monthly mode this follows the calendar month. */
   periodDays?: number
   quota?: number
   cycleStart?: string

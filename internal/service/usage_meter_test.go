@@ -252,6 +252,307 @@ func TestUsageMeterCycle_FutureAnchor(t *testing.T) {
 	assert.InDelta(t, 0.0, st.Expected, 1e-9)
 }
 
+// ── Monthly cycles ───────────────────────────────────────────────────────────
+
+// A "monthly" rule anchored on the 1st is a plain calendar month: the cycle runs
+// from the 1st to the 1st, and the budget is spread over the ACTUAL number of
+// days in that month. Dividing a 31-day month by a configured period_days of 30
+// would let `expected` pass the quota on day 30 and then keep climbing.
+func TestUsageMeterCycle_MonthlyCalendarMonth(t *testing.T) {
+	// October has 31 days. Day 31, noon: the last day of the cycle.
+	now := time.Date(2026, 10, 31, 12, 0, 0, 0, time.Local)
+	setUsageMeterRule(t, model.UsageMeterConfig{
+		AnchorDate: "2026-10-01",
+		CycleMode:  model.UsageMeterCycleMonthly,
+		// Deliberately 30: monthly mode must ignore it.
+		PeriodDays: 30,
+		Metric:     model.UsageMeterMetricCost,
+		Quota:      31,
+	})
+	setupDB(t)
+
+	st, err := service.ComputeUsageMeter(context.Background(), now)
+	require.NoError(t, err)
+	require.True(t, st.Enabled)
+
+	start, err := time.Parse(time.RFC3339, st.CycleStart)
+	require.NoError(t, err)
+	end, err := time.Parse(time.RFC3339, st.CycleEnd)
+	require.NoError(t, err)
+	assert.True(t, time.Date(2026, 10, 1, 0, 0, 0, 0, time.Local).Equal(start),
+		"cycle must start on the 1st, got %v", start)
+	assert.True(t, time.Date(2026, 11, 1, 0, 0, 0, 0, time.Local).Equal(end),
+		"cycle must end on the 1st of the next month, got %v", end)
+
+	assert.Equal(t, 31, st.PeriodDays, "period must be the calendar month's length, not period_days")
+	assert.Equal(t, 31, st.DayInCycle)
+	assert.InDelta(t, 31.0, st.Expected, 1e-9,
+		"on the last day of a 31-day month the baseline must be the full quota")
+	assert.Equal(t, 0, st.RemainingDays)
+
+	// The series must use the same divisor. A 31-point curve whose last
+	// baseline reads 32.03 (quota/30 × 31) would contradict the headline number
+	// right above it and draw the plan line above the quota line.
+	require.Len(t, st.Series, 31, "one point per day of the month")
+	assert.InDelta(t, 31.0, st.Series[30].Expected, 1e-9,
+		"the last point's baseline must be the full quota, not quota/period_days×31")
+	assert.InDelta(t, 1.0, st.Series[0].Expected, 1e-9,
+		"day 1 has exactly one day of budget (quota/31)")
+}
+
+// A cycle whose anchor day is still ahead of today belongs to the PREVIOUS
+// month. Without this, an anchor on the 5th would report a negative or
+// clamped-to-1 day on the 1st.
+func TestUsageMeterCycle_MonthlyAnchorDayAheadFallsBackOneMonth(t *testing.T) {
+	now := time.Date(2026, 11, 2, 10, 0, 0, 0, time.Local)
+	setUsageMeterRule(t, model.UsageMeterConfig{
+		AnchorDate: "2026-10-05",
+		CycleMode:  model.UsageMeterCycleMonthly,
+		PeriodDays: 30,
+		Metric:     model.UsageMeterMetricCost,
+		Quota:      30,
+	})
+	setupDB(t)
+
+	st, err := service.ComputeUsageMeter(context.Background(), now)
+	require.NoError(t, err)
+
+	start, err := time.Parse(time.RFC3339, st.CycleStart)
+	require.NoError(t, err)
+	end, err := time.Parse(time.RFC3339, st.CycleEnd)
+	require.NoError(t, err)
+	assert.True(t, time.Date(2026, 10, 5, 0, 0, 0, 0, time.Local).Equal(start),
+		"on Nov 2nd the running cycle is Oct 5 → Nov 5, got start %v", start)
+	assert.True(t, time.Date(2026, 11, 5, 0, 0, 0, 0, time.Local).Equal(end),
+		"cycle end must be Nov 5, got %v", end)
+	assert.Equal(t, 31, st.PeriodDays, "Oct 5 → Nov 5 spans 31 days")
+	// Oct 5 is day 1, so Nov 2 is day 29.
+	assert.Equal(t, 29, st.DayInCycle)
+}
+
+// A 31st anchor clamps to the end of a short month, and does NOT drift: the
+// cycle after February still starts on the 31st of March.
+func TestUsageMeterCycle_MonthlyClampsToShortMonthWithoutDrifting(t *testing.T) {
+	now := time.Date(2027, 2, 20, 12, 0, 0, 0, time.Local)
+	setUsageMeterRule(t, model.UsageMeterConfig{
+		AnchorDate: "2027-01-31",
+		CycleMode:  model.UsageMeterCycleMonthly,
+		PeriodDays: 30,
+		Metric:     model.UsageMeterMetricCost,
+		Quota:      28,
+	})
+	setupDB(t)
+
+	st, err := service.ComputeUsageMeter(context.Background(), now)
+	require.NoError(t, err)
+
+	start, err := time.Parse(time.RFC3339, st.CycleStart)
+	require.NoError(t, err)
+	end, err := time.Parse(time.RFC3339, st.CycleEnd)
+	require.NoError(t, err)
+	assert.True(t, time.Date(2027, 1, 31, 0, 0, 0, 0, time.Local).Equal(start),
+		"cycle must start on Jan 31, got %v", start)
+	assert.True(t, time.Date(2027, 2, 28, 0, 0, 0, 0, time.Local).Equal(end),
+		"Feb has no 31st, so the cycle must end on the 28th, got %v", end)
+	assert.Equal(t, 28, st.PeriodDays)
+
+	// The month after: the boundary is back on the 31st, proving the clamp is
+	// per-month rather than a permanent shift to the 28th.
+	//
+	// This is the case that catches drift: the cycle running in March STARTED on
+	// Feb 28 (clamped), so deriving the next boundary from the start's day
+	// would put it on Mar 28 — a permanent shift. Only deriving it from the
+	// ANCHOR's 31 gives Mar 31. Both ends must be asserted: checking the start
+	// alone passes under the buggy derivation too.
+	after := time.Date(2027, 3, 10, 12, 0, 0, 0, time.Local)
+	stAfter, err := service.ComputeUsageMeter(context.Background(), after)
+	require.NoError(t, err)
+	startAfter, err := time.Parse(time.RFC3339, stAfter.CycleStart)
+	require.NoError(t, err)
+	endAfter, err := time.Parse(time.RFC3339, stAfter.CycleEnd)
+	require.NoError(t, err)
+	assert.True(t, time.Date(2027, 2, 28, 0, 0, 0, 0, time.Local).Equal(startAfter),
+		"the cycle running on Mar 10 started Feb 28, got %v", startAfter)
+	assert.True(t, time.Date(2027, 3, 31, 0, 0, 0, 0, time.Local).Equal(endAfter),
+		"the boundary after a clamped Feb must return to the anchor's 31st, got %v", endAfter)
+	assert.Equal(t, 31, stAfter.PeriodDays, "Feb 28 → Mar 31 spans 31 days")
+
+	// And the cycle after that one starts on Mar 31 (not Apr 28).
+	april := time.Date(2027, 4, 5, 12, 0, 0, 0, time.Local)
+	stApr, err := service.ComputeUsageMeter(context.Background(), april)
+	require.NoError(t, err)
+	startApr, err := time.Parse(time.RFC3339, stApr.CycleStart)
+	require.NoError(t, err)
+	assert.True(t, time.Date(2027, 3, 31, 0, 0, 0, 0, time.Local).Equal(startApr),
+		"after a short month the boundary must return to the 31st, got %v", startApr)
+}
+
+// The anchor's time of day still applies in monthly mode: the cycle restarts at
+// that wall-clock instant, not at midnight.
+func TestUsageMeterCycle_MonthlyKeepsAnchorTimeOfDay(t *testing.T) {
+	now := time.Date(2026, 11, 6, 10, 0, 0, 0, time.Local)
+	setUsageMeterRule(t, model.UsageMeterConfig{
+		AnchorDate: "2026-10-05T09:30:00",
+		CycleMode:  model.UsageMeterCycleMonthly,
+		PeriodDays: 30,
+		Metric:     model.UsageMeterMetricCost,
+		Quota:      30,
+	})
+	setupDB(t)
+
+	st, err := service.ComputeUsageMeter(context.Background(), now)
+	require.NoError(t, err)
+	start, err := time.Parse(time.RFC3339, st.CycleStart)
+	require.NoError(t, err)
+	assert.True(t, time.Date(2026, 11, 5, 9, 30, 0, 0, time.Local).Equal(start),
+		"monthly cycles must keep the anchor's 09:30 boundary, got %v", start)
+	assert.Equal(t, 2, st.DayInCycle, "Nov 6 is day 2 of a cycle that began Nov 5 at 09:30")
+}
+
+// A monthly cycle crosses the year boundary without special-casing December.
+func TestUsageMeterCycle_MonthlyCrossesYearBoundary(t *testing.T) {
+	now := time.Date(2027, 1, 3, 12, 0, 0, 0, time.Local)
+	setUsageMeterRule(t, model.UsageMeterConfig{
+		AnchorDate: "2026-12-15",
+		CycleMode:  model.UsageMeterCycleMonthly,
+		PeriodDays: 30,
+		Metric:     model.UsageMeterMetricCost,
+		Quota:      30,
+	})
+	setupDB(t)
+
+	st, err := service.ComputeUsageMeter(context.Background(), now)
+	require.NoError(t, err)
+	start, err := time.Parse(time.RFC3339, st.CycleStart)
+	require.NoError(t, err)
+	end, err := time.Parse(time.RFC3339, st.CycleEnd)
+	require.NoError(t, err)
+	assert.True(t, time.Date(2026, 12, 15, 0, 0, 0, 0, time.Local).Equal(start), "start = %v", start)
+	assert.True(t, time.Date(2027, 1, 15, 0, 0, 0, 0, time.Local).Equal(end), "end = %v", end)
+	assert.Equal(t, 31, st.PeriodDays)
+	assert.Equal(t, 20, st.DayInCycle, "Dec 15 → Jan 3 is 19 elapsed days → day 20")
+}
+
+// The projection must clamp to THIS cycle's length. In a 31-day month a
+// projection landing on day 30.5 is still inside the cycle (→ day 31); clamping
+// to the configured 30 would report "will not run out" instead.
+func TestUsageMeterCycle_MonthlyProjectionUsesCalendarLength(t *testing.T) {
+	now := time.Date(2026, 10, 21, 0, 0, 0, 0, time.Local)
+	db := setupDB(t)
+	ensureAgentsTable(t, db)
+
+	// 20 elapsed days at the rate that exhausts the quota on day 30.5.
+	quota := 100.0
+	actual := quota * 20 / 30.5
+	insertUsageSeed(t, db, usageSeed{
+		project: "/a", sessionID: "s-proj", agentID: "cb", agentName: "CB", backend: "codebuddy",
+		model: "m", createdAt: now.Add(-24 * time.Hour).UTC().Format("2006-01-02 15:04:05"),
+		costUSD: actual,
+	})
+
+	setUsageMeterRule(t, model.UsageMeterConfig{
+		AnchorDate: "2026-10-01",
+		CycleMode:  model.UsageMeterCycleMonthly,
+		// Deliberately shorter than the month, which is the whole point.
+		PeriodDays: 30,
+		Metric:     model.UsageMeterMetricCost,
+		Quota:      quota,
+	})
+
+	st, err := service.ComputeUsageMeter(context.Background(), now)
+	require.NoError(t, err)
+	require.Equal(t, 31, st.PeriodDays)
+	assert.Equal(t, 31, st.ProjectedExhaustDay,
+		"day 30.5 of a 31-day month is inside the cycle; clamping to period_days=30 reports 0")
+}
+
+// A monthly rule must work from a fresh install, where period_days is still 0
+// because the settings page hides that field in monthly mode. Requiring it
+// would make the meter silently report itself disabled right after the user
+// saved a valid-looking rule.
+func TestUsageMeterCycle_MonthlyWorksWithZeroPeriodDays(t *testing.T) {
+	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.Local)
+	setUsageMeterRule(t, model.UsageMeterConfig{
+		AnchorDate: "2026-10-01",
+		CycleMode:  model.UsageMeterCycleMonthly,
+		PeriodDays: 0,
+		Metric:     model.UsageMeterMetricCost,
+		Quota:      31,
+	})
+	setupDB(t)
+
+	st, err := service.ComputeUsageMeter(context.Background(), now)
+	require.NoError(t, err)
+	require.True(t, st.Enabled, "a monthly rule does not need period_days")
+	assert.Equal(t, 31, st.PeriodDays)
+	assert.Equal(t, 15, st.DayInCycle)
+}
+
+// The mirror: a FIXED rule with no period has nothing to compute and must stay
+// disabled. Without this, dropping the period check entirely would also pass.
+func TestUsageMeterCycle_FixedStillRequiresPeriodDays(t *testing.T) {
+	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.Local)
+	setUsageMeterRule(t, model.UsageMeterConfig{
+		AnchorDate: "2026-10-01",
+		CycleMode:  model.UsageMeterCycleFixed,
+		PeriodDays: 0,
+		Metric:     model.UsageMeterMetricCost,
+		Quota:      31,
+	})
+	setupDB(t)
+
+	st, err := service.ComputeUsageMeter(context.Background(), now)
+	require.NoError(t, err)
+	assert.False(t, st.Enabled, "a fixed rule without a period is incomplete")
+}
+
+// An empty cycle_mode must keep behaving exactly like "fixed". This is the
+// compatibility guarantee for every install written before the field existed.
+func TestUsageMeterCycle_EmptyModeIsFixed(t *testing.T) {
+	now := localMidnight(time.Date(2026, 10, 19, 0, 0, 0, 0, time.Local)).Add(13 * time.Hour)
+	for _, mode := range []string{"", model.UsageMeterCycleFixed} {
+		t.Run("mode="+mode, func(t *testing.T) {
+			setUsageMeterRule(t, model.UsageMeterConfig{
+				AnchorDate: anchorOn(now, 10),
+				CycleMode:  mode,
+				PeriodDays: 30,
+				Metric:     model.UsageMeterMetricCost,
+				Quota:      30,
+			})
+			setupDB(t)
+
+			st, err := service.ComputeUsageMeter(context.Background(), now)
+			require.NoError(t, err)
+			assert.Equal(t, 11, st.DayInCycle)
+			assert.Equal(t, 30, st.PeriodDays, "a fixed cycle echoes period_days")
+			// Fixed cycles are 24h spans from the anchor, so the start is the
+			// anchor's own midnight 10 days back.
+			start, err := time.Parse(time.RFC3339, st.CycleStart)
+			require.NoError(t, err)
+			assert.True(t, localMidnight(now.AddDate(0, 0, -10)).Equal(start))
+		})
+	}
+}
+
+// A monthly rule still reports day 0 (and no baseline) when the anchor is in
+// the future — the same contract as the fixed mode.
+func TestUsageMeterCycle_MonthlyFutureAnchor(t *testing.T) {
+	now := time.Date(2026, 10, 19, 12, 0, 0, 0, time.Local)
+	setUsageMeterRule(t, model.UsageMeterConfig{
+		AnchorDate: "2026-11-05",
+		CycleMode:  model.UsageMeterCycleMonthly,
+		PeriodDays: 30,
+		Metric:     model.UsageMeterMetricCost,
+		Quota:      30,
+	})
+	setupDB(t)
+
+	st, err := service.ComputeUsageMeter(context.Background(), now)
+	require.NoError(t, err)
+	assert.Equal(t, 0, st.DayInCycle)
+	assert.InDelta(t, 0.0, st.Expected, 1e-9)
+}
+
 // ── Aggregation ──────────────────────────────────────────────────────────────
 
 // Usage is summed across ALL projects — the meter is a global budget, so a

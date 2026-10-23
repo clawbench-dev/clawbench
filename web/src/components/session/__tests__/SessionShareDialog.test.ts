@@ -47,6 +47,8 @@ const i18n = createI18n({
         selectAll: 'Select all',
         deselectAll: 'Deselect all',
         selectedCount: '{selected} of {total} selected',
+        selectionLocked: 'Sharing is on — content is fixed',
+        includedCount: '{count} in the link',
         viewFullInLink: 'View the full conversation in the share link',
         generatingCannotShare: 'Generating — cannot share yet',
         empty: 'No shareable messages',
@@ -207,6 +209,104 @@ describe('SessionShareDialog', () => {
     expect(wrapper.text()).toContain('Generating — cannot share yet')
     // The count reflects only what can actually be shared.
     expect(wrapper.text()).toContain('3 of 3 selected')
+  })
+
+  // Once a link exists the selection is baked into it — the list must not offer
+  // checkboxes or "deselect all", which would promise an edit that does
+  // nothing. It shows which messages the link carries instead.
+  it('goes read-only once a link exists, showing the frozen selection', async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        ...messagesResponse(4),
+        token: 'ex',
+        path: '/share/ex',
+        // Only the first and third message are in the link.
+        selectedIds: [100, 102],
+      }),
+    } as Response)) as unknown as typeof fetch
+
+    const wrapper = await mountDialog()
+    expect(wrapper.findAll('.session-share-dialog-check')).toHaveLength(0)
+    expect(wrapper.findAll('button').some((b) => b.text().includes('Deselect all'))).toBe(false)
+    expect(wrapper.findAll('button').some((b) => b.text().includes('Select all'))).toBe(false)
+
+    expect(wrapper.text()).toContain('Sharing is on — content is fixed')
+    expect(wrapper.text()).toContain('2 in the link')
+
+    const rows = wrapper.findAll('.session-share-dialog-row')
+    expect(rows.map((r) => r.classes().includes('is-checked'))).toEqual([true, false, true, false])
+  })
+
+  it('switches to read-only right after creating a link, keeping the sent selection', async () => {
+    const wrapper = await mountDialog()
+    // Uncheck the second message, then create the link.
+    await wrapper.findAll('.session-share-dialog-check')[1].trigger('change')
+    await nextTick()
+    const generate = wrapper.findAll('button').find((b) => b.text().includes('Generate link'))
+    await generate!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findAll('.session-share-dialog-check')).toHaveLength(0)
+    expect(wrapper.text()).toContain('3 in the link')
+    const rows = wrapper.findAll('.session-share-dialog-row')
+    expect(rows.map((r) => r.classes().includes('is-checked'))).toEqual([true, false, true, true])
+  })
+
+  it('restores the editable list after revoking', async () => {
+    globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const method = init?.method || 'GET'
+      if (method === 'DELETE') return { ok: true, json: async () => ({ ok: true }) } as Response
+      return {
+        ok: true,
+        json: async () => ({ ...messagesResponse(3), token: 'ex', path: '/share/ex', selectedIds: [100] }),
+      } as Response
+    }) as unknown as typeof fetch
+
+    const wrapper = await mountDialog()
+    expect(wrapper.findAll('.session-share-dialog-check')).toHaveLength(0)
+
+    const revoke = wrapper.findAll('button').find((b) => b.text().includes('Revoke'))
+    await revoke!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findAll('.session-share-dialog-check')).toHaveLength(3)
+    expect(checks(wrapper).every((c) => c.checked)).toBe(true)
+  })
+
+  // A server that predates `selectedIds` reports a link but no frozen list.
+  // Guessing one would show "0 in the link" for a share that carries
+  // everything, so the list must stay editable instead.
+  it('stays editable when the response carries no frozen selection', async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ ...messagesResponse(3), token: 'ex', path: '/share/ex' }),
+    } as Response)) as unknown as typeof fetch
+
+    const wrapper = await mountDialog()
+    expect(wrapper.findAll('.session-share-dialog-check')).toHaveLength(3)
+    expect(wrapper.text()).not.toContain('in the link')
+  })
+
+  it('keeps the frozen selection when regenerating', async () => {
+    globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const method = init?.method || 'GET'
+      fetchCalls.push({ url: String(url), method, body: init?.body ? JSON.parse(String(init.body)) : undefined })
+      if (method === 'POST') return { ok: true, json: async () => ({ token: 't2', path: '/share/t2' }) } as Response
+      return {
+        ok: true,
+        json: async () => ({ ...messagesResponse(4), token: 't1', path: '/share/t1', selectedIds: [101, 103] }),
+      } as Response
+    }) as unknown as typeof fetch
+
+    const wrapper = await mountDialog()
+    await wrapper.find('button[title="Regenerate"]').trigger('click')
+    await flushPromises()
+
+    const post = fetchCalls.find((c) => c.method === 'POST')
+    expect(post!.body).toEqual({ sessionId: 'sess-1', messageIds: [101, 103] })
+    // Still read-only, still the same two rows.
+    expect(wrapper.text()).toContain('2 in the link')
   })
 
   it('sends only the checked ids, in list order', async () => {

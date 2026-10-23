@@ -89,10 +89,15 @@ type sessionShareResponse struct {
 // list the dialog renders. The list is returned even when no share exists yet,
 // so opening the dialog needs a single request.
 type sessionShareStatusResponse struct {
-	Token        string                          `json:"token,omitempty"`
-	Path         string                          `json:"path,omitempty"`
-	MessageCount int                             `json:"messageCount,omitempty"`
-	Messages     []service.SessionMessagePreview `json:"messages"`
+	Token        string `json:"token,omitempty"`
+	Path         string `json:"path,omitempty"`
+	MessageCount int    `json:"messageCount,omitempty"`
+	// SelectedIDs is the frozen selection of the existing share. The dialog is
+	// read-only once a link exists (the selection lives in the link), so it
+	// needs these ids to show which messages the link actually carries instead
+	// of offering a selection that would do nothing.
+	SelectedIDs []int64                         `json:"selectedIds,omitempty"`
+	Messages    []service.SessionMessagePreview `json:"messages"`
 	// SessionAgent + Speakers let the dialog render the real speaker icon per
 	// row. The dialog is self-contained (it fetches its own data for an
 	// arbitrary session), so the roster must travel with this response rather
@@ -230,6 +235,7 @@ func serveSessionShareStatus(w http.ResponseWriter, r *http.Request) {
 		resp.Path = sharePathFromToken(token)
 		if share, found, err := service.GetSessionShareByToken(token); err == nil && found {
 			resp.MessageCount = share.MessageCount
+			resp.SelectedIDs = share.MessageIDs
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)

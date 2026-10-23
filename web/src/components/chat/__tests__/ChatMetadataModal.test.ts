@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 vi.mock('@/components/common/ModalDialog.vue', () => ({
   default: {
@@ -234,5 +236,31 @@ describe('ChatMetadataModal', () => {
     const wrapper = mountModal({ ftsIndexed: true, vecIndexed: false })
     expect(wrapper.find('.md-value--ok').text()).toBe('Yes')
     expect(wrapper.find('.md-value--muted').text()).toBe('No')
+  })
+
+  it('insets the content from the card edges (rows are not flush left/right)', () => {
+    // jsdom has no CSS engine, so this is a source contract. The rows carry a
+    // negative inline margin of --space-2 to let their hover fill bleed past
+    // the text; with a symmetric --space-4 body padding that left only 4px of
+    // real inset and the values read as touching the card edge.
+    const source = readFileSync(resolve(__dirname, '../ChatMetadataModal.vue'), 'utf8')
+    const rule = source.match(/\.md-content\s*\{([^}]*)\}/)
+    expect(rule, '.md-content rule must exist').not.toBeNull()
+    const padding = rule![1].match(/padding:\s*([^;]+);/)
+    expect(padding, '.md-content must declare padding').not.toBeNull()
+
+    const tokens = padding![1].trim().split(/\s+/)
+    const horizontal = tokens[1] ?? tokens[0]
+    const scale: Record<string, number> = {
+      'var(--space-4)': 8,
+      'var(--space-5)': 10,
+      'var(--space-6)': 12,
+      'var(--space-7)': 16,
+      'var(--space-8)': 20,
+    }
+    expect(scale[horizontal], `horizontal padding ${horizontal} must be a known space token`).toBeDefined()
+    // 16px minus the row's 4px negative margin still leaves 12px of visible
+    // inset; the old 8px left 4px.
+    expect(scale[horizontal]).toBeGreaterThanOrEqual(16)
   })
 })

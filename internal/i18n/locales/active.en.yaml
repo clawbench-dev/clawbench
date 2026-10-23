@@ -324,5 +324,6 @@ UsageMeterPeriodRange: The cycle length must be between 1 and {{.Max}} days
 UsageMeterPeriodNotNumber: The cycle length must be a number
 UsageMeterMetricInvalid: "The metric must be one of: tokens, credit, cost"
 UsageMeterMetricNotString: "The metric must be one of: tokens, credit, cost"
+UsageMeterCycleModeInvalid: "The cycle type must be fixed (a set number of days) or monthly (calendar month)"
 RestartFailed: "Restart failed: {{.Error}}"
 RestartUnavailable: Restart is not wired up on this server, cannot restart

@@ -92,34 +92,46 @@
             @mousedown="interactions.onContainerMouseDown"
             @touchstart.passive="interactions.onContainerTouchStart"
           >
-            <ChatMessageItem
-              v-for="(msg, i) in messages"
-              :key="msg.id"
-              :msg="msg"
-              :index="i"
-              :expanded-tools="expandedTools"
-              :block-tasks="blockTasks"
-              :block-ask-questions="blockAskQuestions"
-              :agents="[]"
-              :static-block-cache="staticBlockCache"
-              :active="false"
-              :is-last-assistant="isLastAssistantMessage(messages, msg)"
-              :is-last-message="i === messages.length - 1"
-              :resolve-speaker="resolveSpeaker"
-              :resolve-speaker-by-name="resolveSpeakerByName"
-              :host-member-id="hostMemberId"
-              :user-nickname="userNickname"
-              :hide-session-actions="true"
-              :read-only="true"
-              :allow-local-actions="true"
-              :is-group-session="isGroupShare"
-              @toggle-tool="onToggleTool"
-              @show-tool-detail="onShowToolDetail"
-              @show-metadata="onShowMetadata"
-              @toggle-summary="onToggleSummary"
-              @render-flush="() => {}"
-              @file-tag-click="() => {}"
-            />
+            <template v-for="(msg, i) in messages" :key="msg.id">
+              <!-- Gap divider. A share can select non-adjacent messages, and the
+                   payload only carries the selection — without this the reader
+                   sees "question" immediately followed by an answer from six
+                   turns later, with no hint that anything was left out. The
+                   count comes from the server (it is the only side that can see
+                   the unselected rows); `skippedBefore` is omitted when zero, so
+                   a contiguous selection renders exactly as before. -->
+              <div v-if="skippedBefore(msg) > 0" class="share-skip-divider" role="separator">
+                <span class="share-skip-rule" aria-hidden="true" />
+                <span class="share-skip-label">{{ t('share.skippedMessages', { count: skippedBefore(msg) }) }}</span>
+                <span class="share-skip-rule" aria-hidden="true" />
+              </div>
+              <ChatMessageItem
+                :msg="msg"
+                :index="i"
+                :expanded-tools="expandedTools"
+                :block-tasks="blockTasks"
+                :block-ask-questions="blockAskQuestions"
+                :agents="[]"
+                :static-block-cache="staticBlockCache"
+                :active="false"
+                :is-last-assistant="isLastAssistantMessage(messages, msg)"
+                :is-last-message="i === messages.length - 1"
+                :resolve-speaker="resolveSpeaker"
+                :resolve-speaker-by-name="resolveSpeakerByName"
+                :host-member-id="hostMemberId"
+                :user-nickname="userNickname"
+                :hide-session-actions="true"
+                :read-only="true"
+                :allow-local-actions="true"
+                :is-group-session="isGroupShare"
+                @toggle-tool="onToggleTool"
+                @show-tool-detail="onShowToolDetail"
+                @show-metadata="onShowMetadata"
+                @toggle-summary="onToggleSummary"
+                @render-flush="() => {}"
+                @file-tag-click="() => {}"
+              />
+            </template>
           </div>
         </div>
       </div>
@@ -138,7 +150,7 @@
             :msg="item"
             :index="i + 1"
             :active="activeTocId === item.id"
-            :show-time="true"
+            :show-time="false"
             :resolve-speaker="resolveSpeaker"
             @select="scrollToMessage(item.id)"
           />
@@ -164,7 +176,7 @@
               :msg="item"
               :index="i + 1"
               :active="activeTocId === item.id"
-              :show-time="true"
+              :show-time="false"
               :resolve-speaker="resolveSpeaker"
               @select="scrollToMessage(item.id); tocOpen = false"
             />
@@ -259,6 +271,20 @@ const backendLabel = ref('')
 const agentName = computed(() => getBackendDisplayName(backendLabel.value))
 const messageCount = ref(0)
 const messages = ref<Record<string, unknown>[]>([])
+
+/**
+ * How many messages the share skipped immediately before this one.
+ *
+ * `messages` is typed as the loose `Record<string, unknown>` the parse pipeline
+ * produces, so the count has to be narrowed here. Anything that is not a
+ * positive number means "no gap" — the server omits the field entirely when it
+ * is zero, and an older payload (assembled before this field existed) has no
+ * value at all.
+ */
+function skippedBefore(msg: Record<string, unknown>): number {
+  const n = msg.skippedBefore
+  return typeof n === 'number' && n > 0 ? n : 0
+}
 
 /**
  * The snapshot payload as served, kept for the JSON export.
@@ -752,14 +778,23 @@ async function loadSnapshot() {
     // is why the payload must not be frozen.
     const parsed = parseMessages(rawMessages, (content: string) => chatRender.parseAssistantContent(content))
     indexInlinedData(parsed)
-    // A shared transcript is an archive, so every message starts on its ORIGINAL
-    // content. The reader's global messageDisplayMode is an app-side reading
-    // preference, not a property of the conversation being shared — without this
-    // a reader who prefers summaries would open someone else's thread already
-    // collapsed. The toggle still works: an explicit per-message choice wins over
-    // the global mode inside isShowingSummary.
+    // A shared transcript opens on the SUMMARY: that is what the author chose to
+    // show when they shared it, and a summary is what a reader of someone else's
+    // thread can actually digest (the original content of a long agent turn is
+    // hundreds of tool calls).
+    //
+    // Pinned per message rather than left to the global messageDisplayMode
+    // because that setting comes from localStorage — which an anonymous reader
+    // has never set — so it falls back to 'mixed', and 'mixed' renders the LAST
+    // assistant reply as full original text. On a share link that reply is the
+    // whole visible conversation, so the default landed on exactly the wrong
+    // view. The toggle still works: an explicit per-message choice wins inside
+    // isShowingSummary.
+    //
+    // Only messages that actually have a summary are pinned; an unsummarized
+    // reply keeps showing its content.
     for (const m of parsed) {
-      if (m.summary != null && m.summary !== '') m.showingSummary = false
+      if (m.summary != null && m.summary !== '') m.showingSummary = true
     }
     messages.value = parsed
 
@@ -842,6 +877,40 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: var(--space-8);
+}
+
+/* ── Gap divider ──
+   Marks where the selection left messages out. Centred rule-label-rule so it
+   reads as a break in the transcript rather than as another message; the label
+   carries the count because "something was skipped" without a number is only
+   half the information.
+
+   Deliberately restrained: muted text, hairline rules, no fill or accent. It is
+   an annotation about the ARCHIVE, not part of the conversation, and must not
+   compete with the messages on either side. Negative block margins pull it into
+   the column's `gap` so the vertical rhythm stays even — the divider is one row
+   in the same flow, not an extra band of space. */
+.share-skip-divider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-block: calc(var(--space-4) * -1);
+  padding: 0 var(--space-6);
+  color: var(--text-muted, #6c757d);
+  font-size: var(--font-size-xs);
+  line-height: 1;
+  user-select: none;
+}
+
+.share-skip-rule {
+  flex: 1;
+  height: 1px;
+  background: var(--border-color, rgba(128, 128, 128, 0.25));
+}
+
+.share-skip-label {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 /* The conversation column: a centred 900px measure. No side rules — the

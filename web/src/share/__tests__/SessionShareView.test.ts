@@ -140,6 +140,7 @@ const i18n = createI18n({
         sharedConversation: 'Shared conversation',
         messageCount: '{count} messages',
         totalDuration: 'Total {duration}',
+        skippedMessages: '{count} messages skipped',
         exportJson: 'Export snapshot as JSON',
         exportFailed: 'Could not export the snapshot',
       },
@@ -568,22 +569,110 @@ describe('SessionShareView', () => {
     expect(assistant.find('.tool-input-path').text()).toBe('./src/a.ts')
   })
 
-  // A shared transcript is an archive, so every message must OPEN on its
-  // original content regardless of the reader's global messageDisplayMode. The
-  // view pins showingSummary=false explicitly (isShowingSummary lets an explicit
-  // preference win over the global mode).
-  it('pins every summarized message to the original view on load', async () => {
+  // ── Gap divider ──
+  //
+  // A share may select non-adjacent messages. The payload only carries the
+  // selection, so a gap is invisible from the client — the server annotates each
+  // message with how many were skipped before it, and the view draws a divider.
+  describe('skipped-message divider', () => {
+    /** Mount with a custom message list. */
+    async function mountWithMessages(messages: unknown[]) {
+      globalThis.fetch = vi.fn(async () => {
+        const p = makePayload()
+        p.messages = messages as typeof p.messages
+        return { ok: true, json: async () => p } as Response
+      }) as unknown as typeof fetch
+      return mountView()
+    }
+
+    const userMsg = (id: number, text: string) => ({
+      id,
+      role: 'user',
+      content: text,
+      createdAt: '2026-09-22T09:00:00Z',
+    })
+
+    it('draws a divider above a message that follows a gap', async () => {
+      const wrapper = await mountWithMessages([
+        userMsg(11, 'first'),
+        { ...userMsg(12, 'later'), skippedBefore: 3 },
+      ])
+      const dividers = wrapper.findAll('.share-skip-divider')
+      expect(dividers).toHaveLength(1)
+      // The count is the whole point: "something was skipped" without a number
+      // is only half the information.
+      expect(dividers[0].find('.share-skip-label').text()).toContain('3')
+    })
+
+    it('places the divider BETWEEN the two messages, not at the top', async () => {
+      // The first message must never get a divider: it would imply the share
+      // starts mid-conversation rather than at the first selected message.
+      const wrapper = await mountWithMessages([
+        userMsg(11, 'first'),
+        { ...userMsg(12, 'later'), skippedBefore: 2 },
+      ])
+      const container = wrapper.find('.session-share-messages')
+      const children = Array.from(container.element.children)
+      const dividerIdx = children.findIndex((el) => el.classList.contains('share-skip-divider'))
+      expect(dividerIdx).toBe(1)
+      // Two messages + one divider, in order.
+      expect(children).toHaveLength(3)
+    })
+
+    it('draws nothing for a contiguous selection', async () => {
+      // The common case has to render exactly as it did before the field
+      // existed — the server omits `skippedBefore` when it is zero.
+      const wrapper = await mountWithMessages([userMsg(11, 'first'), userMsg(12, 'second')])
+      expect(wrapper.findAll('.share-skip-divider')).toHaveLength(0)
+    })
+
+    it('ignores a zero or malformed count', async () => {
+      // Defensive: an older payload has no field at all, and a future server bug
+      // must not render "0 messages skipped".
+      const wrapper = await mountWithMessages([
+        userMsg(11, 'first'),
+        { ...userMsg(12, 'a'), skippedBefore: 0 },
+        { ...userMsg(13, 'b'), skippedBefore: 'nonsense' },
+        { ...userMsg(14, 'c'), skippedBefore: -1 },
+      ])
+      expect(wrapper.findAll('.share-skip-divider')).toHaveLength(0)
+    })
+
+    it('rejects a numeric STRING (a raw `> 0` check would accept it)', async () => {
+      // The one case where narrowing changes the outcome: `'5' > 0` is true in
+      // JS, so an unguarded comparison renders a divider and interpolates a
+      // string into the label. The payload is JSON from the server, so a string
+      // here means the contract broke — render nothing rather than a
+      // plausible-looking lie.
+      const wrapper = await mountWithMessages([
+        userMsg(11, 'first'),
+        { ...userMsg(12, 'b'), skippedBefore: '5' },
+      ])
+      expect(wrapper.findAll('.share-skip-divider')).toHaveLength(0)
+    })
+  })
+
+  // A shared transcript OPENS ON THE SUMMARY. That is what the author chose to
+  // publish, and it is what a reader of someone else's thread can digest — the
+  // original content of a long agent turn is hundreds of tool calls.
+  //
+  // Pinned per message (showingSummary=true) rather than delegated to the
+  // global messageDisplayMode, because that setting lives in localStorage: an
+  // anonymous reader has never set it, so it falls back to 'mixed' — and 'mixed'
+  // renders the LAST assistant reply as full original text, i.e. the one message
+  // that dominates a two-message share.
+  it('pins every summarized message to the summary view on load', async () => {
     const wrapper = await mountView()
     const assistant = wrapper.findAll('.chat-message-stub')[1]
-    expect(assistant.attributes('data-showing-summary')).toBe('false')
+    expect(assistant.attributes('data-showing-summary')).toBe('true')
   })
 
   // …and the toggle still works: clicking it flips the per-message preference.
-  it('toggles a message to the summary view on request', async () => {
+  it('toggles a message to the original view on request', async () => {
     const wrapper = await mountView()
     const assistant = wrapper.findAll('.chat-message-stub')[1]
     await assistant.find('.emit-toggle-summary').trigger('click')
-    expect(wrapper.findAll('.chat-message-stub')[1].attributes('data-showing-summary')).toBe('true')
+    expect(wrapper.findAll('.chat-message-stub')[1].attributes('data-showing-summary')).toBe('false')
   })
 
   it('provides the injected dependencies the render chain requires', async () => {
@@ -724,6 +813,20 @@ describe('SessionShareView', () => {
       expect(rows[0].find('.msg-text').text()).toContain('please fix it')
       // The assistant row uses its stored summary when one exists.
       expect(rows[1].find('.msg-text').text()).toContain('A short summary.')
+    })
+
+    it('does not show a relative time in the TOC rows', async () => {
+      // The share TOC is a navigation aid, not a timeline: the reader is looking
+      // for a message to jump to, and "3 days ago" on every row is noise (it also
+      // invites reading the timestamps as the conversation's own chronology,
+      // which the share deliberately does not assert). The app's conversation
+      // index keeps them — that is a different surface with a different job.
+      const wrapper = await mountView()
+      const rows = wrapper.findAll('.share-toc .msg-item')
+      expect(rows.length).toBeGreaterThan(0)
+      for (const row of rows) {
+        expect(row.find('.msg-time').exists()).toBe(false)
+      }
     })
 
     it('gives a system row its own chip, not a user chip', async () => {

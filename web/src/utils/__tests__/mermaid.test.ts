@@ -397,6 +397,34 @@ describe('mermaid', () => {
             expect(diagram.parentElement?.classList.contains('image-block-wrapper')).toBe(true)
         })
 
+        it('re-stamps the figure when a re-render swaps the SVG', async () => {
+            // A theme/font change re-measures every label, so the new <svg> can
+            // have a different size than the one the figure's inline px width
+            // was computed from. Leaving the stale width makes the diagram sit
+            // at the OLD theme's size until some unrelated resize.
+            mockStampSvgFigure.mockClear()
+            mockRender.mockResolvedValue({ svg: '<svg viewBox="0 0 400 100"></svg>' })
+            const mdBody = document.createElement('div')
+            mdBody.className = 'markdown-body'
+            mdBody.setAttribute('data-file-path', 'docs/guide.md')
+            document.body.appendChild(mdBody)
+            addedElements.push(mdBody)
+            const pre = document.createElement('pre')
+            pre.className = 'mermaid'
+            pre.textContent = 'graph TD; A-->B'
+            mdBody.appendChild(pre)
+            await renderMermaidInElement(mdBody)
+            mockStampSvgFigure.mockClear()
+
+            mockRender.mockResolvedValue({ svg: '<svg viewBox="0 0 200 800"></svg>' })
+            await reRenderMermaid()
+
+            expect(mockStampSvgFigure).toHaveBeenCalledTimes(1)
+            const stampedFigure = mockStampSvgFigure.mock.calls[0][0] as Element
+            expect(stampedFigure.querySelector('.mermaid > svg'), 'stamp must see the NEW svg')
+                .not.toBeNull()
+        })
+
         it('should arm the attach header with the localized aria label', async () => {
             mockRender.mockResolvedValue({ svg: '<svg>ok</svg>' })
             const mdBody = document.createElement('div')

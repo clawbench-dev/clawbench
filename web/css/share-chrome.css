@@ -30,12 +30,48 @@
   color: var(--text-primary, #1f2328);
 }
 
+/* ── Host layout variables ──────────────────────────────────────────────────
+   BottomSheet positions itself with two variables that describe the APP's
+   chrome, not the sheet's own:
+
+     top:    calc(var(--header-height) + var(--header-safe-area-top))
+     bottom: var(--dock-height, 0)
+
+   The app keeps them truthful at runtime (App.vue measures the real dock and
+   writes `--dock-height`), and the defaults in variables.css are the app's
+   values. The share SPA mounts neither the app header nor the dock, so it has
+   to restate both or the sheet inherits the app's geometry:
+
+     - `--dock-height` stayed at its 47px default, so every sheet on the share
+       page stopped 47px short of the bottom with nothing underneath it.
+     - `--header-height` stayed at 36px while `.share-topbar` is 44px, so the
+       overlay started 8px INSIDE the topbar and its scrim covered the bottom
+       of the title.
+
+   Declared on :root (not `.share-view`) because BottomSheet is
+   `Teleport to="body"` — its overlay is a sibling of the app root, so a
+   variable set on a descendant would never reach it.
+
+   `--header-height` is derived from the same custom property the topbar itself
+   uses, so the two cannot drift: change the bar and the sheet follows.
+   `--header-safe-area-top` is deliberately left alone — the share SPA does not
+   pad for the notch anywhere else (see share.html), so zero is the value its
+   own chrome already assumes. */
+:root {
+  /* Single source for the bar height: `.share-topbar` renders it and
+     `--header-height` mirrors it, so the sheet's top edge always lands exactly
+     on the bar's bottom edge. */
+  --share-topbar-height: 44px;
+  --dock-height: 0px;
+  --header-height: var(--share-topbar-height);
+}
+
 /* Top bar */
 .share-topbar {
   display: flex;
   align-items: center;
   gap: var(--space-4);
-  height: 44px;
+  height: var(--share-topbar-height);
   padding:0 var(--space-6);
   flex-shrink: 0;
   border-bottom: 1px solid var(--border-color, rgba(128, 128, 128, .25));

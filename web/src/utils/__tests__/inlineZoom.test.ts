@@ -5,6 +5,7 @@ import {
   activeZoomScale,
   installInlineZoom,
   isZoomActive,
+  isZoomInteractive,
   resetActiveZoom,
   uninstallInlineZoom,
   zoomableMedia,
@@ -433,21 +434,90 @@ describe('inlineZoom — activation lifecycle', () => {
     expect(imgA.style.transform).toBe('')
   })
 
-  it('leaves the zoom when clicking outside the figure', () => {
+  it('KEEPS the zoom when clicking outside the figure', () => {
+    // The zoom a reader dials in is a RESULT, not a mode. Clicking the input
+    // box or the paragraph beside the diagram only releases the wheel (and the
+    // ring); the artwork stays at the size they set it to. Discarding it would
+    // force them to redo the whole gesture every time they look away.
     const figure = mountFigure()
     const img = figure.querySelector('img')!
-    stubSize(img, 300, 200)
+    stubIntrinsic(figure, 300, 200, 300, 200)
     stubRect(figure, 0, 0, 300, 200)
 
     click(img)
-    expect(isZoomActive()).toBe(true)
+    wheel(img, -120, 150, 100)
+    const zoomed = img.style.width
+    expect(zoomed).not.toBe('')
 
     const outside = document.createElement('div')
     document.body.appendChild(outside)
     click(outside)
 
+    expect(isZoomActive(), 'the zoom must survive an outside click').toBe(true)
+    expect(isZoomInteractive(), 'but the wheel goes back to the page').toBe(false)
+    expect(figure.classList.contains('is-zooming')).toBe(true)
+    expect(figure.classList.contains('is-zoom-active')).toBe(false)
+    expect(img.style.width).toBe(zoomed)
+    expect(img.style.transform).not.toBe('')
+  })
+
+  it('drops the wheel after an outside click, so the page scrolls again', () => {
+    // The whole point of the transient marker: a zoomed-but-not-interactive
+    // figure must not swallow notches while the reader scrolls past it.
+    const figure = mountFigure()
+    const img = figure.querySelector('img')!
+    stubIntrinsic(figure, 300, 200, 300, 200)
+    stubRect(figure, 0, 0, 300, 200)
+
+    click(img)
+    wheel(img, -120, 150, 100)
+    click(document.body)
+
+    const scaleBefore = activeZoomScale()
+    const e = new WheelEvent('wheel', { deltaY: -120, bubbles: true, cancelable: true, clientX: 150, clientY: 100 })
+    img.dispatchEvent(e)
+
+    expect(e.defaultPrevented, 'the page must get its wheel back').toBe(false)
+    expect(activeZoomScale()).toBe(scaleBefore)
+  })
+
+  it('re-entering a held zoom keeps the scale instead of restarting it', () => {
+    // Clicking back into a figure that still holds a zoom must resume, not
+    // re-derive from the resting layout — that would make the zoom impossible
+    // to keep at all.
+    const figure = mountFigure()
+    const img = figure.querySelector('img')!
+    stubIntrinsic(figure, 300, 200, 300, 200)
+    stubRect(figure, 0, 0, 300, 200)
+
+    click(img)
+    wheel(img, -120, 150, 100)
+    wheel(img, -120, 150, 100)
+    const held = activeZoomScale()
+    click(document.body)
+    expect(isZoomInteractive()).toBe(false)
+
+    click(img)
+    expect(isZoomInteractive()).toBe(true)
+    expect(activeZoomScale()).toBeCloseTo(held, 5)
+  })
+
+  it('returns to resting when an untouched figure is clicked away from', () => {
+    // A figure entered but never zoomed has nothing to preserve, and keeping
+    // the held state would leave a full-column frame around an unzoomed
+    // artwork. Nothing was gained, so it goes back.
+    const figure = mountFigure()
+    const img = figure.querySelector('img')!
+    stubIntrinsic(figure, 300, 200, 300, 200)
+    stubRect(figure, 0, 0, 300, 200)
+
+    click(img)
+    expect(activeZoomScale()).toBe(MIN_SCALE)
+    click(document.body)
+
     expect(isZoomActive()).toBe(false)
-    expect(img.style.transform).toBe('')
+    expect(figure.classList.contains('is-zooming')).toBe(false)
+    expect(img.style.width).toBe('')
   })
 
   it('does not leave the zoom when clicking the figure again', () => {
@@ -495,7 +565,11 @@ describe('inlineZoom — layout reset', () => {
   })
   afterEach(() => { uninstallInlineZoom(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
-  it('returns the active figure to fit scale and centres it', () => {
+  it('returns the figure to its resting layout and leaves the zoom state', () => {
+    // At fit scale there is nothing left to hold, and the held state's frame is
+    // the full-column viewport — parking there would leave the artwork floating
+    // in a mostly-empty box. Reset is therefore a full exit, same result as
+    // Escape.
     const figure = mountFigure()
     const img = figure.querySelector('img')!
     stubIntrinsic(figure, 300, 200, 300, 200)
@@ -509,12 +583,13 @@ describe('inlineZoom — layout reset', () => {
     const resetBtn = figure.querySelector('.image-block-reset-btn')!
     resetBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
 
-    expect(activeZoomScale()).toBe(MIN_SCALE)
-    expect(img.style.transform).toContain('calc(-50% + 0px)')
-    // At scale 1 the layout size equals the contain-fit size.
-    expect(parseFloat(img.style.width)).toBeCloseTo(300, 0)
-    // The zoom stays engaged so the user can immediately zoom again.
-    expect(figure.classList.contains('is-zooming')).toBe(true)
+    expect(isZoomActive()).toBe(false)
+    expect(figure.classList.contains('is-zooming')).toBe(false)
+    expect(figure.classList.contains('is-zoom-active')).toBe(false)
+    // Every inline size the zoom wrote is cleared, so the figure is back to the
+    // exact resting layout rather than to a fit-scale zoom.
+    expect(img.style.width).toBe('')
+    expect(img.style.transform).toBe('')
   })
 
   it('reports false when nothing is zoomed', () => {
@@ -543,6 +618,38 @@ describe('inlineZoom — keyboard', () => {
     figure.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
     expect(isZoomActive()).toBe(false)
     expect(img.style.transform).toBe('')
+  })
+
+  it('KEEPS the zoom when keyboard focus leaves the figure', () => {
+    // Tabbing away to another control is not an instruction to reset the
+    // diagram. It only drops the INTERACTIVE state (the keys stop addressing
+    // this figure); the zoom the reader dialled in survives. Resetting is the
+    // explicit act: Escape, the toolbar button, or another figure.
+    const figure = mountFigure()
+    const img = figure.querySelector('img')!
+    stubIntrinsic(figure, 300, 200, 300, 200)
+    stubRect(figure, 0, 0, 300, 200)
+    figure.setAttribute('tabindex', '0')
+
+    figure.focus()
+    expect(isZoomActive()).toBe(true)
+    wheel(img, -120, 150, 100)
+    const zoomed = img.style.width
+
+    // Focus moves to a control elsewhere on the page.
+    const elsewhere = document.createElement('button')
+    document.body.appendChild(elsewhere)
+    elsewhere.focus()
+
+    expect(isZoomActive(), 'the zoom must survive focus loss').toBe(true)
+    expect(isZoomInteractive(), 'but the keys must stop addressing it').toBe(false)
+    expect(figure.classList.contains('is-zooming')).toBe(true)
+    expect(figure.classList.contains('is-zoom-active')).toBe(false)
+    expect(img.style.width).toBe(zoomed)
+
+    // The documented way out still works from the keyboard.
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    expect(isZoomActive()).toBe(false)
   })
 
   it('exits on Escape even when focus is on the document body', () => {
@@ -641,7 +748,7 @@ describe('inlineZoom — layout contract', () => {
     expect(w1 / h1).toBeCloseTo(100 / 50, 3)
   })
 
-  it('survives repeated enter/exit without shrinking the media', () => {
+  it('survives repeated enter/reset cycles without shrinking the media', () => {
     // "退出缩放后有概率变成很小的图": the exit path used to RE-DERIVE the resting
     // width instead of restoring it. By then the inline sizes are cleared, so
     // the fallback chain read the svg's `width="100%"` attribute and
@@ -659,7 +766,8 @@ describe('inlineZoom — layout contract', () => {
       click(svg)
       expect(isZoomActive()).toBe(true)
       wheel(svg, -120, 300, 200)
-      click(document.body)
+      // Escape is the explicit reset (an outside click would KEEP the zoom).
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
       expect(isZoomActive()).toBe(false)
       // Exact pre-zoom width, every time.
       expect(svg.style.width).toBe('300px')
@@ -682,9 +790,11 @@ describe('inlineZoom — layout contract', () => {
     expect(svg.style.width).not.toBe('100px')
   })
 
-  it('restores the resting layout exactly on exit', () => {
+  it('restores the resting layout exactly on an explicit reset', () => {
     // "布局恢复原状" — every inline size the zoom wrote must be cleared, or the
-    // media would stay at a stale pixel size after leaving the active state.
+    // media would stay at a stale pixel size after leaving the zoom. Only the
+    // EXPLICIT reset does this (Escape / the toolbar button); an outside click
+    // keeps the zoom.
     const figure = mountFigure()
     const img = figure.querySelector('img')!
     stubIntrinsic(figure, 300, 200, 300, 200)
@@ -695,7 +805,7 @@ describe('inlineZoom — layout contract', () => {
     wheel(img, -120, 150, 100)
     expect(img.style.width).not.toBe('')
 
-    click(document.body)
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
 
     expect(isZoomActive()).toBe(false)
     expect(img.style.width).toBe('')
@@ -704,6 +814,7 @@ describe('inlineZoom — layout contract', () => {
     expect(img.style.maxHeight).toBe('')
     expect(img.style.transform).toBe('')
     expect(figure.classList.contains('is-zooming')).toBe(false)
+    expect(figure.classList.contains('is-zoom-active')).toBe(false)
   })
 
   it('marks the active figure with the state class so CSS can ring it', () => {
