@@ -522,6 +522,92 @@ func TestSessionSharePayload_MessageIDSelection(t *testing.T) {
 	assert.Equal(t, "third", msgs[1]["content"])
 }
 
+// A share can select non-adjacent messages. The payload must then say how many
+// messages were left out before each one, because the reader cannot tell a
+// contiguous transcript from a gappy one by looking at it — the omitted turns
+// leave no trace.
+func TestSessionSharePayload_ReportsSkippedCountsForGaps(t *testing.T) {
+	db := setupTestDBForSessionSharePayload(t)
+	defer func() { _ = db.Close() }()
+
+	seedSession(t, db, "s1")
+	// A message BEFORE the selection. Without it the first selected message sits
+	// at position 0, where "skipped before" is 0 for two different reasons
+	// (correctly nothing precedes it, and a broken `pos - (-1) - 1` also yields
+	// 0) — the test could not tell a correct implementation from a broken one.
+	seedMessage(t, db, "s1", "user", "before the share", 0, 0)
+	id1 := seedMessage(t, db, "s1", "user", "q1", 0, 0)
+	seedMessage(t, db, "s1", "assistant", "a1", 0, 0) // skipped
+	seedMessage(t, db, "s1", "user", "q2", 0, 0)      // skipped
+	id4 := seedMessage(t, db, "s1", "assistant", "a2", 0, 0)
+	id5 := seedMessage(t, db, "s1", "user", "q3", 0, 0) // adjacent to id4
+
+	raw, count, err := service.BuildSessionSharePayload("s1", []int64{id1, id4, id5}, testShareCreatedAt)
+	require.NoError(t, err)
+	require.Equal(t, 3, count)
+
+	msgs := payloadMessages(t, raw)
+	require.Len(t, msgs, 3)
+	// The first SELECTED message has nothing selected before it: a divider there
+	// would imply the share starts mid-conversation rather than at the first
+	// message the creator picked. The unselected message before it is outside the
+	// share's scope entirely, not a gap within it.
+	assert.NotContains(t, msgs[0], "skippedBefore", "the first message must not report a gap")
+	// Two messages sit between id1 and id4.
+	assert.Equal(t, float64(2), msgs[1]["skippedBefore"])
+	// id5 is adjacent to id4 — omitted when zero, so a contiguous run renders
+	// exactly as it did before this field existed.
+	assert.NotContains(t, msgs[2], "skippedBefore", "adjacent messages must not report a gap")
+}
+
+// Ids are not contiguous in chat_history (other sessions' inserts interleave,
+// deletions leave holes), so the count must come from the session's actual
+// ordering rather than id arithmetic.
+func TestSessionSharePayload_SkippedCountIgnoresIDArithmetic(t *testing.T) {
+	db := setupTestDBForSessionSharePayload(t)
+	defer func() { _ = db.Close() }()
+
+	seedSession(t, db, "s1")
+	seedSession(t, db, "other")
+	id1 := seedMessage(t, db, "s1", "user", "first", 0, 0)
+	// These belong to ANOTHER session: they inflate the id range without adding
+	// any messages to this conversation.
+	seedMessage(t, db, "other", "user", "unrelated 1", 0, 0)
+	seedMessage(t, db, "other", "user", "unrelated 2", 0, 0)
+	id2 := seedMessage(t, db, "s1", "assistant", "second", 0, 0)
+
+	raw, _, err := service.BuildSessionSharePayload("s1", []int64{id1, id2}, testShareCreatedAt)
+	require.NoError(t, err)
+
+	msgs := payloadMessages(t, raw)
+	require.Len(t, msgs, 2)
+	assert.NotContains(t, msgs[1], "skippedBefore",
+		"the two messages are adjacent in THIS session; other sessions' ids must not create a gap")
+}
+
+// Selecting everything must produce no dividers at all — the common case has to
+// stay byte-identical to what it was before the field existed.
+func TestSessionSharePayload_ContiguousSelectionHasNoGaps(t *testing.T) {
+	db := setupTestDBForSessionSharePayload(t)
+	defer func() { _ = db.Close() }()
+
+	seedSession(t, db, "s1")
+	for _, text := range []string{"one", "two", "three"} {
+		seedMessage(t, db, "s1", "user", text, 0, 0)
+	}
+	// Empty means "everything finalized"; the creation path resolves it to the
+	// explicit list before storing, so do the same here.
+	ids, err := service.ResolveSessionShareSelection("s1", nil)
+	require.NoError(t, err)
+
+	raw, _, err := service.BuildSessionSharePayload("s1", ids, testShareCreatedAt)
+	require.NoError(t, err)
+
+	for i, m := range payloadMessages(t, raw) {
+		assert.NotContains(t, m, "skippedBefore", "message %d must not report a gap", i)
+	}
+}
+
 // The creation path is STRICT: an id that names no finalized message must be
 // rejected, so the stored selection always matches what the user checked.
 func TestResolveSessionShareSelection_RejectsUnknownMessageID(t *testing.T) {

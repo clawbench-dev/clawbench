@@ -9,6 +9,7 @@
 package handler
 
 import (
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -434,7 +435,11 @@ func serveShareSessionSubpath(w http.ResponseWriter, r *http.Request, token, res
 //   - GET /api/share/{token}/local/{rel} → raw bytes resolved against the shared
 //     file's directory (or ?path= absolute)
 func ServeSharePublic(w http.ResponseWriter, r *http.Request) {
-	if !requireMethod(w, r, http.MethodGet) {
+	// HEAD is allowed alongside GET: it is how clients (and agents) probe a URL
+	// before transferring it, and every branch below writes its body through
+	// helpers that net/http already suppresses for HEAD. Rejecting it turned a
+	// harmless size probe into a 405 and made share URLs look broken.
+	if !requireMethod(w, r, http.MethodGet, http.MethodHead) {
 		return
 	}
 	token, rest, ok := parseSharePublicPath(r.URL.Path)
@@ -671,18 +676,97 @@ func ServeSharePage(w http.ResponseWriter, r *http.Request) {
 	// no-referrer (not strict-origin-when-cross-origin) because same-site
 	// navigations still send the full URL under the default policy.
 	w.Header().Set("Referrer-Policy", "no-referrer")
-	serveShareHTML(w, r)
+	serveShareHTML(w, r, shareTokenFromPagePath(r.URL.Path))
 }
 
-// serveShareHTML serves the share SPA entry (share.html), preferring the disk
-// build dir then falling back to embedded dist (mirrors ServeIndex).
-func serveShareHTML(w http.ResponseWriter, r *http.Request) {
-	fsys := frontend.GetFS()
-	if fi, err := fsys.Open("share.html"); err == nil {
-		_ = fi.Close()
-		frontend.ServeFileFromFS(w, r, fsys, "share.html")
+// shareTokenFromPagePath extracts the token from /share/{token}.
+//
+// Returns "" for the bare /share/ path and for anything with extra segments —
+// those are not share pages, and the shell is served unmodified rather than
+// pointing at a URL that cannot exist.
+func shareTokenFromPagePath(urlPath string) string {
+	const prefix = "/share/"
+	if !strings.HasPrefix(urlPath, prefix) {
+		return ""
+	}
+	rest := strings.TrimPrefix(urlPath, prefix)
+	if rest == "" || strings.ContainsRune(rest, '/') {
+		return ""
+	}
+	return rest
+}
+
+// shareDiscoveryFor looks up what to advertise for a token.
+//
+// A token that resolves to neither kind returns ok=false: the SPA will show its
+// own "not found" state, and injecting pointers to a 404 endpoint would be worse
+// than injecting nothing. A lookup ERROR also yields ok=false — the page still
+// renders for a browser, and discovery is a progressive enhancement, not part of
+// the share contract.
+func shareDiscoveryFor(token string) (shareDiscovery, bool) {
+	if !validShareToken(token) {
+		return shareDiscovery{}, false
+	}
+	// Conversation first, mirroring serveShareMeta: the two token spaces are
+	// distinct, so the order only matters for clarity.
+	if s, ok, err := service.GetSessionShareByToken(token); err == nil && ok {
+		return shareDiscovery{
+			Token:        token,
+			Title:        s.Title,
+			Kind:         shareKindSession,
+			MessageCount: s.MessageCount,
+		}, true
+	}
+	if _, name, _, ok, err := service.GetFileShareByToken(token); err == nil && ok {
+		return shareDiscovery{Token: token, Title: name, Kind: shareKindFile}, true
+	}
+	return shareDiscovery{}, false
+}
+
+// serveShareHTML serves the share SPA entry (share.html) with the discovery
+// block injected, preferring the disk build dir then falling back to embedded
+// dist (mirrors ServeIndex).
+//
+// The shell is READ and rewritten rather than streamed: the injection is what
+// makes the page legible to a non-browser client, and it needs the token, which
+// a static file server cannot know. The document is ~2.3 KB, so buffering it per
+// request costs nothing. If anything about the rewrite fails, the unmodified
+// shell is still served — a browser is unaffected either way.
+func serveShareHTML(w http.ResponseWriter, r *http.Request, token string) {
+	doc, ok := readShareShell()
+	if !ok {
+		http.NotFound(w, r)
 		return
 	}
-	// Dev fallback: serve from web/ source directory.
-	http.ServeFile(w, r, filepath.Join("web", "share.html"))
+	if d, found := shareDiscoveryFor(token); found {
+		doc = replaceShareTitle(doc, d.Title)
+		doc = injectShareDiscovery(doc, d)
+	}
+	// Same policy ServeFileFromFS applies to entry HTML: the document references
+	// content-hashed assets, so a cached copy would keep loading stale JS after a
+	// rebuild.
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	// HEAD carries the headers and no body; Write is a no-op for it, but guarding
+	// keeps the intent explicit and avoids depending on net/http's behaviour.
+	if r.Method != http.MethodHead {
+		_, _ = io.WriteString(w, doc)
+	}
+}
+
+// readShareShell loads share.html from the disk build dir, then the embedded
+// dist, then the web/ source tree (dev).
+func readShareShell() (string, bool) {
+	fsys := frontend.GetFS()
+	if f, err := fsys.Open("share.html"); err == nil {
+		defer func() { _ = f.Close() }()
+		if raw, err := io.ReadAll(f); err == nil {
+			return string(raw), true
+		}
+	}
+	if raw, err := os.ReadFile(filepath.Join("web", "share.html")); err == nil {
+		return string(raw), true
+	}
+	return "", false
 }

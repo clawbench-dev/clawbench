@@ -3641,6 +3641,7 @@ export default {
     sourceView: 'View source',
     sharedConversation: 'Shared conversation',
     messageCount: '{count} messages',
+    skippedMessages: '{count} messages skipped',
     totalDuration: 'Total {duration}',
     exportJson: 'Export snapshot as JSON',
     exportFailed: 'Could not export the snapshot',

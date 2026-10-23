@@ -140,6 +140,7 @@ const i18n = createI18n({
         sharedConversation: 'Shared conversation',
         messageCount: '{count} messages',
         totalDuration: 'Total {duration}',
+        skippedMessages: '{count} messages skipped',
         exportJson: 'Export snapshot as JSON',
         exportFailed: 'Could not export the snapshot',
       },
@@ -566,6 +567,89 @@ describe('SessionShareView', () => {
     expect(assistant.find('.thinking-text').text()).toBe('inlined reasoning')
     expect(assistant.find('.tool-output').text()).toBe('inlined output')
     expect(assistant.find('.tool-input-path').text()).toBe('./src/a.ts')
+  })
+
+  // ── Gap divider ──
+  //
+  // A share may select non-adjacent messages. The payload only carries the
+  // selection, so a gap is invisible from the client — the server annotates each
+  // message with how many were skipped before it, and the view draws a divider.
+  describe('skipped-message divider', () => {
+    /** Mount with a custom message list. */
+    async function mountWithMessages(messages: unknown[]) {
+      globalThis.fetch = vi.fn(async () => {
+        const p = makePayload()
+        p.messages = messages as typeof p.messages
+        return { ok: true, json: async () => p } as Response
+      }) as unknown as typeof fetch
+      return mountView()
+    }
+
+    const userMsg = (id: number, text: string) => ({
+      id,
+      role: 'user',
+      content: text,
+      createdAt: '2026-09-22T09:00:00Z',
+    })
+
+    it('draws a divider above a message that follows a gap', async () => {
+      const wrapper = await mountWithMessages([
+        userMsg(11, 'first'),
+        { ...userMsg(12, 'later'), skippedBefore: 3 },
+      ])
+      const dividers = wrapper.findAll('.share-skip-divider')
+      expect(dividers).toHaveLength(1)
+      // The count is the whole point: "something was skipped" without a number
+      // is only half the information.
+      expect(dividers[0].find('.share-skip-label').text()).toContain('3')
+    })
+
+    it('places the divider BETWEEN the two messages, not at the top', async () => {
+      // The first message must never get a divider: it would imply the share
+      // starts mid-conversation rather than at the first selected message.
+      const wrapper = await mountWithMessages([
+        userMsg(11, 'first'),
+        { ...userMsg(12, 'later'), skippedBefore: 2 },
+      ])
+      const container = wrapper.find('.session-share-messages')
+      const children = Array.from(container.element.children)
+      const dividerIdx = children.findIndex((el) => el.classList.contains('share-skip-divider'))
+      expect(dividerIdx).toBe(1)
+      // Two messages + one divider, in order.
+      expect(children).toHaveLength(3)
+    })
+
+    it('draws nothing for a contiguous selection', async () => {
+      // The common case has to render exactly as it did before the field
+      // existed — the server omits `skippedBefore` when it is zero.
+      const wrapper = await mountWithMessages([userMsg(11, 'first'), userMsg(12, 'second')])
+      expect(wrapper.findAll('.share-skip-divider')).toHaveLength(0)
+    })
+
+    it('ignores a zero or malformed count', async () => {
+      // Defensive: an older payload has no field at all, and a future server bug
+      // must not render "0 messages skipped".
+      const wrapper = await mountWithMessages([
+        userMsg(11, 'first'),
+        { ...userMsg(12, 'a'), skippedBefore: 0 },
+        { ...userMsg(13, 'b'), skippedBefore: 'nonsense' },
+        { ...userMsg(14, 'c'), skippedBefore: -1 },
+      ])
+      expect(wrapper.findAll('.share-skip-divider')).toHaveLength(0)
+    })
+
+    it('rejects a numeric STRING (a raw `> 0` check would accept it)', async () => {
+      // The one case where narrowing changes the outcome: `'5' > 0` is true in
+      // JS, so an unguarded comparison renders a divider and interpolates a
+      // string into the label. The payload is JSON from the server, so a string
+      // here means the contract broke — render nothing rather than a
+      // plausible-looking lie.
+      const wrapper = await mountWithMessages([
+        userMsg(11, 'first'),
+        { ...userMsg(12, 'b'), skippedBefore: '5' },
+      ])
+      expect(wrapper.findAll('.share-skip-divider')).toHaveLength(0)
+    })
   })
 
   // A shared transcript OPENS ON THE SUMMARY. That is what the author chose to

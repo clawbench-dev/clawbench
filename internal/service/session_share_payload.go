@@ -156,6 +156,21 @@ type SessionShareMessage struct {
 	CreatedAt    time.Time           `json:"createdAt"`
 	Summary      *string             `json:"summary,omitempty"`
 	SummaryCards *model.SummaryCards `json:"summaryCards,omitempty"`
+	// SkippedBefore is how many of the session's messages sit between the
+	// PREVIOUS shared message and this one, i.e. how many were left out of the
+	// selection. Zero for the first shared message and for any run of adjacent
+	// messages, so the field is omitted in the common contiguous case.
+	//
+	// Computed here rather than in the viewer because only the server can see
+	// the unselected rows: the payload carries the selection, so a gap is
+	// invisible from the client. The viewer draws a divider above a message with
+	// a non-zero value — without it a selection like "the question, then the
+	// answer from six turns later" reads as if the omitted turns never happened.
+	//
+	// Counting is by CHRONOLOGICAL GAP in the session's finalized messages, not
+	// by id arithmetic: ids are not guaranteed contiguous (other sessions'
+	// inserts and deletions interleave), so `id2 - id1 - 1` would overcount.
+	SkippedBefore int `json:"skippedBefore,omitempty"`
 }
 
 // SessionMessagePreview is one row of the share dialog's message list. It is
@@ -307,6 +322,18 @@ func BuildSessionSharePayload(sessionID string, messageIDs []int64, createdAt ti
 	}
 
 	selectedIDs := messageIDsOf(messages)
+	// The gaps between selected messages can only be measured against the
+	// session's full chronological id list — the payload itself contains just
+	// the selection, so the viewer could never reconstruct them.
+	//
+	// Failure is NOT fatal: the share is still perfectly readable without
+	// dividers, and refusing to serve a working link because a secondary
+	// annotation query failed would be a worse trade. The count is left at zero
+	// for every message in that case (no dividers drawn).
+	allIDs, allIDsErr := GetFinalizedMessageIDs(sessionID)
+	if allIDsErr != nil {
+		allIDs = nil
+	}
 	toolCalls, err := loadToolCallsByMessage(selectedIDs)
 	if err != nil {
 		return "", 0, err
@@ -360,9 +387,11 @@ func BuildSessionSharePayload(sessionID string, messageIDs []int64, createdAt ti
 		Speakers:     speakers,
 		GroupMembers: groupMembers,
 	}
+	skipped := skippedCountsFor(allIDs, messages)
 	for i := range messages {
-		out.Messages = append(out.Messages,
-			buildShareMessage(messages[i], toolCalls, thinking, summaries, cards))
+		item := buildShareMessage(messages[i], toolCalls, thinking, summaries, cards)
+		item.SkippedBefore = skipped[i]
+		out.Messages = append(out.Messages, item)
 	}
 
 	raw, err := json.Marshal(out)
@@ -406,6 +435,49 @@ func buildShareMessage(
 		item.SummaryCards = prepareSummaryCards(c)
 	}
 	return item
+}
+
+// skippedCountsFor reports, for each selected message, how many of the session's
+// other finalized messages fall strictly between it and the previously selected
+// one. The first entry is always 0 (nothing precedes the start of the share, so
+// there is nothing to divide it from).
+//
+// `messages` must be in ascending id order, which GetMessagesByIDsInSession
+// guarantees. allIDs is the session's full chronological id list; when it is
+// nil or does not contain the selected ids (the lookup failed), every count is
+// zero and no dividers are drawn — the transcript is still correct, just
+// without the annotation.
+func skippedCountsFor(allIDs []int64, messages []model.ChatMessage) []int {
+	out := make([]int, len(messages))
+	if len(messages) == 0 || len(allIDs) == 0 {
+		return out
+	}
+
+	// position[id] = index in the session's finalized order. Built from allIDs
+	// rather than assumed from id arithmetic: ids are not contiguous (other
+	// sessions' inserts interleave, deletions leave holes), so `id2 - id1 - 1`
+	// would report a gap where there is none.
+	position := make(map[int64]int, len(allIDs))
+	for i, id := range allIDs {
+		position[id] = i
+	}
+
+	prevPos := -1
+	for i, m := range messages {
+		pos, ok := position[m.ID]
+		if !ok {
+			// The message is finalized but absent from allIDs — only possible if
+			// the two queries raced a delete. Treat it as contiguous with the
+			// previous one rather than inventing a gap, and keep prevPos so the
+			// next message still measures from the last known position.
+			continue
+		}
+		if prevPos >= 0 && pos > prevPos {
+			out[i] = pos - prevPos - 1
+		}
+		prevPos = pos
+	}
+	return out
 }
 
 // messageIDsOf extracts the ids from a message slice.
