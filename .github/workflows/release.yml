@@ -14,6 +14,26 @@ on:
 env:
   RELEASE_TAG: ${{ github.ref_name }}
 
+# One release per tag, and a newer run supersedes an older one for the SAME tag.
+#
+# Without this, pushing a tag more than once — a retry after a transient
+# failure, a delete-and-recreate, or (observed on v0.121.0) four runs spawned
+# within five minutes by repeated ref writes — starts several pipelines for one
+# version. They then race on resources that are not safe to touch twice:
+#
+#   * npm, where a version is immutable. Two runs publish the same version and
+#     the loser dies with `E409 Cannot publish over previously staged version`
+#     even though the release itself is fine. On v0.121.0 that made the whole
+#     `Publish to npm` job report failure while npm already carried 0.121.0.
+#   * GitHub Releases, where the asset upload would collide.
+#
+# `github.ref` (not `github.run_id`) is the group key on purpose: the whole
+# point is to collapse runs of the *same* tag, while a new tag must never
+# cancel an in-flight release of the previous one.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   golangci-lint:
     name: Lint (Go)
@@ -1196,67 +1216,29 @@ jobs:
           printf 'registry=https://registry.npmjs.org/\n' > .npmrc
 
       - name: Publish @xulongzhe/clawbench-linux-x64
-        run: |
-          VERSION="${{ steps.version.outputs.VERSION }}"
-          if npm view "@xulongzhe/clawbench-linux-x64@$VERSION" version >/dev/null 2>&1; then
-            echo "Version $VERSION already published, skipping"
-            exit 0
-          fi
-          npm publish ./npm/platforms/linux-x64 --access public
+        run: ./scripts/npm-publish-idempotent.sh ./npm/platforms/linux-x64 --access public
 
       - name: Publish @xulongzhe/clawbench-linux-arm64
-        run: |
-          VERSION="${{ steps.version.outputs.VERSION }}"
-          if npm view "@xulongzhe/clawbench-linux-arm64@$VERSION" version >/dev/null 2>&1; then
-            echo "Version $VERSION already published, skipping"
-            exit 0
-          fi
-          npm publish ./npm/platforms/linux-arm64 --access public
+        run: ./scripts/npm-publish-idempotent.sh ./npm/platforms/linux-arm64 --access public
 
       - name: Publish @xulongzhe/clawbench-android-arm64
-        run: |
-          VERSION="${{ steps.version.outputs.VERSION }}"
-          if npm view "@xulongzhe/clawbench-android-arm64@$VERSION" version >/dev/null 2>&1; then
-            echo "Version $VERSION already published, skipping"
-            exit 0
-          fi
-          npm publish ./npm/platforms/android-arm64 --access public
+        run: ./scripts/npm-publish-idempotent.sh ./npm/platforms/android-arm64 --access public
 
       - name: Publish @xulongzhe/clawbench-darwin-x64
-        run: |
-          VERSION="${{ steps.version.outputs.VERSION }}"
-          if npm view "@xulongzhe/clawbench-darwin-x64@$VERSION" version >/dev/null 2>&1; then
-            echo "Version $VERSION already published, skipping"
-            exit 0
-          fi
-          npm publish ./npm/platforms/darwin-x64 --access public
+        run: ./scripts/npm-publish-idempotent.sh ./npm/platforms/darwin-x64 --access public
 
       - name: Publish @xulongzhe/clawbench-darwin-arm64
-        run: |
-          VERSION="${{ steps.version.outputs.VERSION }}"
-          if npm view "@xulongzhe/clawbench-darwin-arm64@$VERSION" version >/dev/null 2>&1; then
-            echo "Version $VERSION already published, skipping"
-            exit 0
-          fi
-          npm publish ./npm/platforms/darwin-arm64 --access public
+        run: ./scripts/npm-publish-idempotent.sh ./npm/platforms/darwin-arm64 --access public
 
       - name: Publish @xulongzhe/clawbench-win32-x64
-        run: |
-          VERSION="${{ steps.version.outputs.VERSION }}"
-          if npm view "@xulongzhe/clawbench-win32-x64@$VERSION" version >/dev/null 2>&1; then
-            echo "Version $VERSION already published, skipping"
-            exit 0
-          fi
-          npm publish ./npm/platforms/win32-x64 --access public
+        run: ./scripts/npm-publish-idempotent.sh ./npm/platforms/win32-x64 --access public
 
       - name: Publish main package (@xulongzhe/clawbench)
-        run: |
-          VERSION="${{ steps.version.outputs.VERSION }}"
-          if npm view "@xulongzhe/clawbench@$VERSION" version >/dev/null 2>&1; then
-            echo "Version $VERSION already published, skipping"
-            exit 0
-          fi
-          npm publish ./npm/main --access public
+        # Idempotent: skips a version already on the registry, and treats a
+        # concurrent run's win as success. On v0.121.0 this step reported
+        # failure with `E409 ... previously staged version` while npm ended up
+        # carrying 0.121.0 anyway — a red job for a release that shipped.
+        run: ./scripts/npm-publish-idempotent.sh ./npm/main --access public
 
   # Publishes the desktop incremental-upgrade payloads to npm. This is the ONLY
   # channel the payload ships through: the ~150MB full package is what a GitHub
@@ -1389,16 +1371,11 @@ jobs:
 
       - name: Publish payload packages
         run: |
-          VERSION="${{ steps.version.outputs.VERSION }}"
           for KEY in linux-x64 linux-arm64 win32-x64; do
-            PKG=$(node -p "require('./npm/desktop-payloads/$KEY/package.json').name")
-            # A re-run of a partially-failed release must not try to republish
-            # an immutable version (E403).
-            if npm view "$PKG@$VERSION" version >/dev/null 2>&1; then
-              echo "$PKG@$VERSION already published, skipping"
-              continue
-            fi
-            npm publish "./npm/desktop-payloads/$KEY" --access public
+            # Idempotent: a re-run of a partially-failed release must not try
+            # to republish an immutable version, and a concurrent run of the
+            # same tag must not turn into a red job. See the script header.
+            ./scripts/npm-publish-idempotent.sh "./npm/desktop-payloads/$KEY" --access public
           done
 
   release-notes:

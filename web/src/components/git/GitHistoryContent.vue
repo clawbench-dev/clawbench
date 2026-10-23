@@ -1,8 +1,8 @@
 <template>
   <div class="git-history-content">
     <!-- Loading (initial) -->
-    <div v-if="loading" class="git-history-loading">
-      <LoadingIndicator size="md" />
+    <div v-if="loading" class="git-history-loading git-history-loading--skeleton">
+      <PanelSkeleton variant="list" :rows="10" :meta="true" :label="t('common.loading')" />
     </div>
 
     <!-- Error -->
@@ -54,8 +54,8 @@
       </div>
       <GitCommitMeta :commit="selectedCommit" :is-working-tree="isWorkingTree" @open-file="onOpenFile" @reveal-file="onRevealFile" />
       <div class="drilldown-body">
-        <div v-if="filesLoading" class="git-history-loading">
-          <LoadingIndicator size="md" />
+        <div v-if="filesLoading" class="git-history-loading git-history-loading--skeleton">
+          <PanelSkeleton variant="list" :rows="8" :meta="true" :label="t('common.loading')" />
         </div>
         <div v-else-if="totalFileCount === 0" class="git-history-empty">{{ t('git.history.noFileChanges') }}</div>
         <!-- Merge commit: grouped by parent branch -->
@@ -184,7 +184,7 @@
 <script setup>
 import { Plus, Minus, ChevronUp, ChevronDown } from 'lucide-vue-next'
 import FileIcon from '@/components/common/FileIcon.vue'
-import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import { ref, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import GitCommitList from './GitCommitList.vue'
@@ -449,6 +449,14 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* A skeleton must fill the body and align with the real rows; centring it
+   would shrink it to its content and float a narrow column in the middle. */
+.git-history-loading--skeleton {
+  align-items: stretch;
+  justify-content: flex-start;
+  min-width: 0;
 }
 
 .git-history-error {

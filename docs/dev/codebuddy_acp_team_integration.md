@@ -292,10 +292,18 @@ type TeamMember struct {
   两个数字列必须**在所有行落在同一个 x 上**。用 flex 时它们按内容定宽，没有工具调用的
   成员会把左边的单元格一起拉走，整列看起来参差不齐。因此**工具单元格恒渲染**（计数为 0
   时留空），数字列右对齐（数值列对齐的是个位）。
-- **`agentType`** 不进成员行——自动队里几乎全是 `general-purpose`，行内重复无信息量却挤掉
-  名字宽度；只保留在 tooltip（行内若有则隐藏）。
+- **`agentType`** 进成员行，但**空间不足时最先让位**。名字与类型同处一个
+  `team-member__ident` 弹性轨道（网格只剩一条给身份，两个数字列必须固定在各自轨道上）：
+  类型 `flex-shrink: 999`、名字 `flex: 0 1 auto`，所以轨道变窄时类型先截断；宽度低于
+  容器查询阈值（`@container team-roster (max-width: 380px)`）时类型直接 `display:none`。
+  **永远不隐藏名字**——名字是唯一能区分两行的信息，类型在自动队里几乎恒为
+  `general-purpose`。380px 的依据：固定轨道（12px + 3.5em + 6ch）加间距/内边距约
+  167px，典型「18 字符名字 + 15 字符类型」需要约 196px，即容器 ≥363px。
+  `TeamPanel.test.ts`（DOM 契约）+ `teamRosterPriority.css.test.ts`（CSS 契约，含变异
+  验证）+ `e2e/specs/team-panel.spec.ts`（真实浏览器宽/窄两档）三层钉住。
 - **tooltip**（原生 `title`，空则完全不设）：`description` + `agentType` +
-  token 明细（`in/out`）+ `lastContextWindow`。
+  token 明细（`in/out`）+ `lastContextWindow`。类型被容器查询隐藏后，tooltip 是它
+  唯一的可达路径，因此这一条不能删。
 - **`isAutoTeam:true`** 在展开标题行显示「自动团队」标签（自动队回合结束即拆，提示用户）。
 - **已结束态**由 `hasLiveMembers:false` + 无 `lifecycle==='alive'` 成员共同判定
   （`useTeamState.isEnded`）；**缺省 `hasLiveMembers` 不算已结束**（只信显式 false）。
@@ -320,11 +328,49 @@ type TeamMember struct {
 - 左边框色用**成员 color** 而非固定 `--subagent-accent`（#ec4899），
   使时间线与状态栏的成员配色一致。
 
-> **实施状态**：方案 B 的**成员配色部分已落地**——`ContentBlock` 携带
-> `member_name`/`member_color`（两种 MarshalJSON 形态都落库，刷新不丢），
-> `ContentBlocks.vue` 的 `memberAccentStyle()` 用成员色覆盖 `--subagent-accent`，
-> 承载时间线的 Agent 卡因此按成员着色。卡标题的成员名展示仍沿用现有
-> `display_name`（未单独改写）。
+> **实施状态**：方案 B 的两部分均已落地。
+> - **成员配色**：`ContentBlock` 携带 `member_name`/`member_color`（两种
+>   MarshalJSON 形态都落库，刷新不丢），`ContentBlocks.vue` 的
+>   `memberAccentStyle()` 用成员色覆盖 `--subagent-accent`，承载时间线的 Agent 卡
+>   因此按成员着色。
+> - **卡标题**（2026-10-22）：`agentPillTitle()` 优先用 `member_name`，其次从子块
+>   推导（旧消息没有该字段但其子块有，故无需数据迁移），最后才退回 `display_name`。
+>   为什么必须这样：团队每个成员都以 `subagent_type: "general-purpose"` 生成，按类型
+>   命名会让一屏卡片全叫 "General-purpose"，看不出谁做了哪部分。
+>
+>   **前提**：`AccumulateBlock` 的「已存在块」分支原先**从不更新** `MemberName`，
+>   而成员名是同一 tool call 的**后续帧**才带上的（spawn 帧首帧只有 `subagentType`），
+>   于是 Agent 卡永远拿不到名字。`accumulate.go` 的 `tool_use`/`tool_result` 两个
+>   更新分支现补上空值填充（块一旦归属某成员就不再改写，防止交错帧互相覆盖）。
+>   真机探针见 `codebuddy_team_spawn_meta_probe_integration_test.go`。
+
+### 4.2b 成员详情弹窗（`TeamMemberDetail.vue`）
+
+点击成员行打开，展示 roster 能提供的全部字段 + 该成员的**完整指令**。
+
+**指令取 `description`，不要去拉 `prompt`。** 这一点反直觉，实测钉住：
+
+| 事实 | 实测值 | 探针 |
+|------|--------|------|
+| roster `description` 长度 | 196 字节 | `codebuddy_team_description_probe_integration_test.go` |
+| spawn 帧 `prompt` 长度 | 196 字节 | 同上 |
+| `description == prompt` | **true**（逐字节相同） | 同上 |
+
+即 roster 的 `description` **就是**完整提示词，不是摘要。所以原先"从
+`chat_tool_calls` 拉 prompt"是纯冗余，而且**更脆**：中断/重连后 Agent 卡的
+slim 块没有 `input`，`sessionId` 也可能不再可解析 ⇒ prompt 静默变空，弹窗在用户
+最需要它的时候（刚从断线中恢复）变成空白。`description` 始终在 roster 里，所以
+弹窗现在直接渲染它：无请求、无 loading 态、重连不会丢。
+
+**不要把它再塞回事实网格**——它就是下方那段 Markdown 正文，两边都放会重复显示。
+
+**宽度**：`--modal-max-width: 900px`，写在**非 scoped** 样式块里（`BottomSheet`
+渲染在 `<Teleport to="body">` 内，组件的 scope 属性到不了那里，scoped 规则永远
+匹配不到 → 静默失效）。默认 624px 卡放长 Markdown 会挤成一团。
+
+守卫：`teamMemberDetailSheet.css.test.ts`（宽屏非 scoped + 不再拉 prompt，含变异
+验证）、`TeamPanel.test.ts`（description 直渲 Markdown + 不重复进事实网格）、
+`e2e/specs/team-panel.spec.ts`（真实浏览器：面板 >624px、H2/表格/代码块、路径 chip）。
 
 ### 4.3 权限卡成员徽标
 

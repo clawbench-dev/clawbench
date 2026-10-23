@@ -57,7 +57,9 @@ vi.mock('@/composables/useCodeLinkPreview.ts', () => ({
   useCodeLinkPreview: () => ({ enabled: { value: false }, containerRef: null }),
   handleVerifiedFilePathClick: () => {},
 }))
-vi.mock('@/composables/useTextSelection.ts', () => ({ useTextSelectionActive: () => ({ value: false }) }))
+// The composable destructures `active` (a ref) — a bare { value: false } would
+// leave textSelecting undefined and silently disable the guard it feeds.
+vi.mock('@/composables/useTextSelection.ts', () => ({ useTextSelectionActive: () => ({ active: { value: false } }) }))
 vi.mock('@/composables/useFilePathAnnotation.ts', () => ({
   useFilePathAnnotation: () => ({ openFilePath: vi.fn(), readLineTargetFromEl: vi.fn() }),
 }))

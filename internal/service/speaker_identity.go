@@ -9,10 +9,10 @@ import "clawbench/internal/model"
 //
 // Avatar is an SVG string (a member's own snapshot when present, otherwise the
 // agent's model.Agent.Avatar), NOT a data URI.
-// It is carried on every path: the public share snapshot freezes it at creation
-// time so the anonymous viewer can render the same icons the app shows. The
-// snapshot is the only copy the viewer ever sees — it cannot reach the
-// authenticated agent endpoints.
+// It is carried on every path: the public share payload embeds it because the
+// anonymous viewer has no other way to resolve a speaker's icon (it cannot call
+// the authenticated /api/agents). It is resolved on every request from the live
+// agent registry and member rows — nothing is frozen.
 type SpeakerIdentity struct {
 	Name    string `json:"name,omitempty"`
 	Backend string `json:"backend"`
@@ -34,15 +34,24 @@ type SpeakerIdentity struct {
 //     message's chat_history.agent_id is the SPEAKER's member row id (NOT a real
 //     agent id), so it is resolved through this map.
 //
-// Every identity always carries the speaker's custom avatar: the share snapshot
-// is built by the authenticated owner and freezes the avatars for the viewer,
-// which has no other way to resolve them.
+// Every identity always carries the speaker's custom avatar: the public viewer
+// cannot reach the authenticated agent endpoints, so the payload is the only
+// place it can come from.
 //
 // Either return value may be nil: sessionAgent when the session is unknown,
 // speakers when the session is not a group (or has no members). Callers treat a
 // nil/missing entry as "no identity" and fall back to a generic icon.
+//
+// Archived sessions resolve to nil here (GetSessionFullInfo excludes them). The
+// public share builder must use resolveSessionSpeakersWithInfo instead, because
+// a share outlives archiving.
 func ResolveSessionSpeakers(sessionID string) (*SpeakerIdentity, map[string]SpeakerIdentity) {
-	info := GetSessionFullInfo(sessionID)
+	return resolveSessionSpeakersWithInfo(GetSessionFullInfo(sessionID), sessionID)
+}
+
+// resolveSessionSpeakersWithInfo is the shared body. Callers that must accept an
+// archived session pass the result of GetSessionFullInfoAny.
+func resolveSessionSpeakersWithInfo(info *SessionInfo, sessionID string) (*SpeakerIdentity, map[string]SpeakerIdentity) {
 	if info == nil {
 		return nil, nil
 	}

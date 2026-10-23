@@ -35,7 +35,7 @@
       </div>
     </template>
     <div class="agent-list">
-      <LoadingIndicator v-if="agentsLoading" size="md" />
+      <PanelSkeleton v-if="agentsLoading" variant="list" :rows="8" :meta="false" :label="t('common.loading')" />
       <div v-else-if="selectableAgents.length === 0" class="agent-list-empty">{{ t('chat.messageList.noAgentsTitle') }}</div>
       <div
         v-for="(agent, idx) in selectableAgents"
@@ -155,7 +155,7 @@ import { Bot, Star, Settings, Check, Crown, Users, Plus, Minus, AlertTriangle } 
 import { useI18n } from 'vue-i18n'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
-import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import GroupModeHint from '@/components/common/GroupModeHint.vue'
 import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'

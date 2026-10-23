@@ -161,6 +161,14 @@ func UploadFile(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // mu
 		relativePath = ".clawbench/uploads/" + filename
 	}
 
+	// Remember uploads that land OUTSIDE .clawbench/uploads/ (file-manager
+	// uploads into the project tree). "最近上传" lists the uploads directory by
+	// scanning it, which cannot see arbitrary project paths — without this
+	// record a screenshot uploaded to the project root never shows up there
+	// (issue #573). Files inside the uploads directory are skipped by the
+	// recorder itself, so they are not listed twice.
+	recordUploadedFile(projectPath, relativePath)
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"ok":   true,
@@ -216,7 +224,19 @@ type recentFile struct {
 	Path    string `json:"path"`
 	Size    int64  `json:"size"`
 	ModTime string `json:"modTime"`
+	// Origin tells the client what a delete on this row means. "uploads" is a
+	// file the app owns inside .clawbench/uploads/ (delete removes it from
+	// disk); "project" is an ordinary project file recorded by the upload
+	// ledger, where delete only stops listing it. Empty for the share-in list,
+	// which has a single origin.
+	Origin string `json:"origin,omitempty"`
 }
+
+// Upload origins reported in recentFile.Origin.
+const (
+	uploadOriginUploads = "uploads"
+	uploadOriginProject = "project"
+)
 
 // listRecentFiles lists up to limit files in dirPath (under projectPath),
 // sorted by modification time descending. Returns empty slice if dir doesn't exist.
@@ -287,7 +307,7 @@ func deleteRecentFile(w http.ResponseWriter, r *http.Request, subDir string) {
 		return
 	}
 	if req.All {
-		clearRecentDir(w, projectPath, subDir)
+		clearAllRecent(w, projectPath, subDir)
 		return
 	}
 	if req.Path == "" {
@@ -295,43 +315,13 @@ func deleteRecentFile(w http.ResponseWriter, r *http.Request, subDir string) {
 		return
 	}
 
-	// Resolve the path against the project root. Unlike resolveAbsPath, we
-	// don't fail on non-existent paths here so we can return a proper 404.
-	var absPath string
-	if filepath.IsAbs(req.Path) {
-		ap, err := filepath.Abs(req.Path)
-		if err != nil || !isPathUnderAnyRoot(ap) {
-			writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
-			return
-		}
-		absPath = ap
-	} else {
-		baseAbs, err := filepath.Abs(projectPath)
-		if err != nil {
-			model.WriteError(w, model.Internal(fmt.Errorf("failed to resolve project path: %w", err)))
-			return
-		}
-		absPath, ok = validateAndResolvePath(w, r, baseAbs, req.Path)
-		if !ok {
-			return
-		}
-	}
-
-	// Check existence first so a missing file returns 404 regardless of scope.
-	info, err := os.Stat(absPath)
-	if err != nil {
-		writeLocalizedError(w, r, model.NotFound(nil, "FileNotFoundShort"))
-		return
-	}
-	if info.IsDir() {
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "NotAFile")
+	// A ledger row is an ordinary project file; deleting it only un-lists it.
+	if subDir == "uploads" && deleteLedgerEntry(w, r, projectPath, req.Path) {
 		return
 	}
 
-	// Scope check: the file must live inside .clawbench/<subDir>.
-	baseDir := filepath.Join(projectPath, ".clawbench", subDir)
-	if !isPathUnderBase(absPath, baseDir) {
-		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
+	absPath, done := resolveRecentDeleteTarget(w, r, projectPath, subDir, req.Path)
+	if done {
 		return
 	}
 
@@ -343,13 +333,114 @@ func deleteRecentFile(w http.ResponseWriter, r *http.Request, subDir string) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+// resolveRecentDeleteTarget resolves a DELETE path to the file to remove and
+// verifies it lives inside .clawbench/<subDir>. done=true means a response was
+// already written and the caller must return.
+//
+// Unlike resolveAbsPath, a non-existent path is not rejected here so the caller
+// can answer a proper 404 (which is what a stale row means).
+func resolveRecentDeleteTarget(w http.ResponseWriter, r *http.Request, projectPath, subDir, reqPath string) (absPath string, done bool) {
+	var resolved string
+	if filepath.IsAbs(reqPath) {
+		ap, err := filepath.Abs(reqPath)
+		if err != nil || !isPathUnderAnyRoot(ap) {
+			writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
+			return "", true
+		}
+		resolved = ap
+	} else {
+		baseAbs, err := filepath.Abs(projectPath)
+		if err != nil {
+			model.WriteError(w, model.Internal(fmt.Errorf("failed to resolve project path: %w", err)))
+			return "", true
+		}
+		validated, ok := validateAndResolvePath(w, r, baseAbs, reqPath)
+		if !ok {
+			return "", true
+		}
+		resolved = validated
+	}
+
+	// Check existence first so a missing file returns 404 regardless of scope.
+	info, err := os.Stat(resolved)
+	if err != nil {
+		writeLocalizedError(w, r, model.NotFound(nil, "FileNotFoundShort"))
+		return "", true
+	}
+	if info.IsDir() {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "NotAFile")
+		return "", true
+	}
+
+	// Scope check: the file must live inside .clawbench/<subDir>.
+	baseDir := filepath.Join(projectPath, ".clawbench", subDir)
+	if !isPathUnderBase(resolved, baseDir) {
+		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
+		return "", true
+	}
+	return resolved, false
+}
+
 // JSON field names for the clear-all response, shared by both endpoints.
 const (
 	fieldDeleted = "deleted"
 	fieldFailed  = "failed"
 )
 
-// clearRecentDir empties .clawbench/<subDir> entirely.
+// clearAllRecent handles the `{all:true}` branch of a recent-list DELETE.
+//
+// The "最近上传" list is a merge of the uploads directory and the upload ledger
+// (which records file-manager uploads into the project tree), so clearing it
+// must empty both. The ledger only holds references to ordinary project files,
+// so those are forgotten without deleting anything from the user's tree —
+// while the uploads directory, which the app owns, is emptied for real.
+//
+// The directory is cleared FIRST: it is the half that can fail for reasons
+// outside our control (a permission change, an unmounted volume), and doing it
+// after the ledger would leave the user staring at a "failed" toast with the
+// project rows already gone — a retry could not bring them back.
+//
+// The reported count is what the user watched disappear from the tab, so the
+// ledger rows count too: counting only the directory would answer "cleared 0
+// files" for a list that visibly emptied.
+func clearAllRecent(w http.ResponseWriter, projectPath, subDir string) {
+	deleted, failed, err := clearRecentDir(projectPath, subDir)
+	if err != nil {
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	if subDir != "uploads" {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":         true,
+			fieldDeleted: deleted,
+			fieldFailed:  failed,
+		})
+		return
+	}
+
+	ledgerCleared, ledgerRemaining, ledgerErr := clearUploadLedger(projectPath)
+	if ledgerErr != nil {
+		// The directory half already succeeded and cannot be undone. Report the
+		// truth: those files are gone, and every ledger row the user can still
+		// see is still listed — so `failed` counts the surviving rows, not the
+		// single write attempt. A bare "1 failed" would read as one stray file
+		// when the whole project half is untouched.
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":         true,
+			fieldDeleted: deleted,
+			fieldFailed:  failed + ledgerRemaining,
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":         true,
+		fieldDeleted: deleted + ledgerCleared,
+		fieldFailed:  failed,
+	})
+}
+
+// clearRecentDir empties .clawbench/<subDir> entirely, returning the number of
+// files removed and the number that could not be.
 //
 // Scope is the directory itself, so the traversal concerns that apply to a
 // caller-supplied path do not arise: the target is computed here from the
@@ -361,22 +452,21 @@ const (
 // rather than aborting the sweep: the user asked to clear the list, and
 // stopping at the first failure would leave it looking half-cleared with no
 // indication why.
-func clearRecentDir(w http.ResponseWriter, projectPath, subDir string) {
+//
+// Returns err only when the directory could not even be read; the caller
+// writes the error. A missing directory is success with zero counts, not an
+// error: the UI may hold a stale list from before it was removed.
+func clearRecentDir(projectPath, subDir string) (deleted, failed int, err error) {
 	dir := filepath.Join(projectPath, ".clawbench", subDir)
 
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// Nothing to clear is success, not an error: the UI may hold a stale
-			// list from before the directory was removed.
-			writeJSON(w, http.StatusOK, map[string]any{"ok": true, fieldDeleted: 0, fieldFailed: 0})
-			return
+			return 0, 0, nil
 		}
-		model.WriteError(w, model.Internal(fmt.Errorf("read %s: %w", subDir, err)))
-		return
+		return 0, 0, fmt.Errorf("read %s: %w", subDir, err)
 	}
 
-	deleted, failed := 0, 0
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -401,7 +491,7 @@ func clearRecentDir(w http.ResponseWriter, projectPath, subDir string) {
 		deleted++
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, fieldDeleted: deleted, fieldFailed: failed})
+	return deleted, failed, nil
 }
 
 // ShareInRecent handles GET /api/share-in/recent (list) and
@@ -426,7 +516,13 @@ func ShareInRecent(w http.ResponseWriter, r *http.Request) {
 
 // UploadRecent handles GET /api/upload/recent (list) and
 // DELETE /api/upload/recent (delete a file in .clawbench/uploads/).
-// GET returns the 20 most recently modified files in .clawbench/uploads/.
+//
+// GET returns the 20 most recently modified uploads, merging two sources: the
+// chat uploads directory (.clawbench/uploads/, scanned) and the upload ledger
+// (.clawbench/upload-log.json, which records uploads that went into the
+// project tree through the file manager). Both are "uploads the user just
+// made", and the tab exists to get a just-uploaded file into the chat quickly —
+// which path it was saved to is not something the user chose to care about.
 func UploadRecent(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodDelete {
 		deleteRecentFile(w, r, "uploads")
@@ -438,7 +534,7 @@ func UploadRecent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	files := listRecentFiles(projectPath, filepath.Join(".clawbench", "uploads"), 20)
+	files := listRecentUploads(projectPath, 20)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(files)

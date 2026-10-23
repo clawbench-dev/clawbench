@@ -252,53 +252,118 @@ func GetThinkingBySession(thinkID, sessionID string) (*ThinkingRecord, error) {
 	return scanThinkingChunks(thinkID, messageID)
 }
 
-// GetThinkingBySessionAll retrieves all thinking records for a session.
-// Each distinct (think_id, message_id) pair is returned once with its chunks
-// concatenated in seq order. Used by BuildForkContext to batch-fetch thinking
-// text without N+1 queries.
-func GetThinkingBySessionAll(sessionID string) ([]ThinkingRecord, error) {
-	rows, err := store.ReadDB().QueryContext(context.Background(), `
-		SELECT message_id, think_id, seq, text
-		FROM chat_thinking WHERE session_id = ?
-		ORDER BY message_id ASC, think_id ASC, seq ASC
-	`, sessionID)
-	if err != nil {
-		return nil, fmt.Errorf("GetThinkingBySessionAll: %w", err)
+// GetThinkingByMessageIDs is the message-scoped equivalent of
+// GetThinkingBySessionAll: every distinct (think_id, message_id) pair is
+// returned once with its chunks concatenated in seq order.
+//
+// Chunking is by message id, so a single think_id's chunks never straddle a
+// chunk boundary — concatenation per chunk preserves seq order.
+func GetThinkingByMessageIDs(messageIDs []int64) ([]ThinkingRecord, error) {
+	if len(messageIDs) == 0 {
+		return nil, nil
 	}
+	var records []ThinkingRecord
+	for start := 0; start < len(messageIDs); start += shareIDChunk {
+		end := min(start+shareIDChunk, len(messageIDs))
+		chunk := messageIDs[start:end]
+
+		args := make([]any, 0, len(chunk))
+		for _, id := range chunk {
+			args = append(args, id)
+		}
+		rows, err := store.ReadDB().QueryContext(context.Background(), `
+			SELECT message_id, think_id, seq, text, session_id
+			FROM chat_thinking WHERE message_id IN (`+sqlPlaceholders(len(chunk))+`)
+			ORDER BY message_id ASC, think_id ASC, seq ASC
+		`, args...)
+		if err != nil {
+			return nil, fmt.Errorf("GetThinkingByMessageIDs: %w", err)
+		}
+		grouped, err := readThinkingRows(rows)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, grouped...)
+	}
+	return records, nil
+}
+
+// thinkingChunk is one raw chat_thinking row before grouping.
+type thinkingChunk struct {
+	messageID int64
+	thinkID   string
+	seq       int
+	text      string
+	sessionID string
+}
+
+// readThinkingRows drains and closes rows, returning the raw chunks. Keeping the
+// close + rows.Err() check here (rather than in the grouper) means every caller
+// gets both for free and the linter can see them in one function.
+func readThinkingRows(rows *sql.Rows) ([]ThinkingRecord, error) {
 	defer func() { _ = rows.Close() }()
 
-	// Group chunks by (message_id, think_id) preserving first-seen order.
+	var chunks []thinkingChunk
+	for rows.Next() {
+		var c thinkingChunk
+		if err := rows.Scan(&c.messageID, &c.thinkID, &c.seq, &c.text, &c.sessionID); err != nil {
+			return nil, fmt.Errorf("read thinking rows scan: %w", err)
+		}
+		chunks = append(chunks, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read thinking rows iterate: %w", err)
+	}
+	return groupThinkingRows(chunks), nil
+}
+
+// groupThinkingRows collapses seq chunks into one record per (message_id,
+// think_id), preserving first-seen order.
+func groupThinkingRows(chunks []thinkingChunk) []ThinkingRecord {
 	type groupKey struct {
 		messageID int64
 		thinkID   string
 	}
 	var order []groupKey
 	grouped := make(map[groupKey]*ThinkingRecord)
-	for rows.Next() {
-		var msgID int64
-		var thinkID, text string
-		var seq int
-		if err := rows.Scan(&msgID, &thinkID, &seq, &text); err != nil {
-			return nil, fmt.Errorf("GetThinkingBySessionAll scan: %w", err)
-		}
-		key := groupKey{msgID, thinkID}
+	for _, c := range chunks {
+		key := groupKey{c.messageID, c.thinkID}
 		rec, ok := grouped[key]
 		if !ok {
-			rec = &ThinkingRecord{MessageID: msgID, ThinkID: thinkID, SessionID: sessionID, Seq: seq}
+			rec = &ThinkingRecord{MessageID: c.messageID, ThinkID: c.thinkID, SessionID: c.sessionID, Seq: c.seq}
 			grouped[key] = rec
 			order = append(order, key)
 		}
-		rec.Text += text
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("GetThinkingBySessionAll iterate: %w", err)
+		rec.Text += c.text
 	}
 
 	records := make([]ThinkingRecord, 0, len(order))
 	for _, k := range order {
 		records = append(records, *grouped[k])
 	}
-	return records, nil
+	return records
+}
+
+// GetThinkingBySessionAll retrieves all thinking records for a session.
+// Each distinct (think_id, message_id) pair is returned once with its chunks
+// concatenated in seq order.
+//
+// Kept as the session-scoped counterpart to GetThinkingByMessageIDs (which the
+// share assembly uses). Production callers are gone — fork deliberately excludes
+// thinking (fork_context.go, decision #9) — but the flush/cancel tests assert on
+// it, and a session-wide read is the natural shape for "show me everything this
+// conversation reasoned about". Delete it together with those tests if it is
+// still unused later.
+func GetThinkingBySessionAll(sessionID string) ([]ThinkingRecord, error) {
+	rows, err := store.ReadDB().QueryContext(context.Background(), `
+		SELECT message_id, think_id, seq, text, session_id
+		FROM chat_thinking WHERE session_id = ?
+		ORDER BY message_id ASC, think_id ASC, seq ASC
+	`, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("GetThinkingBySessionAll: %w", err)
+	}
+	return readThinkingRows(rows)
 }
 
 // slimThinkingInContent parses content JSON, extracts thinking block text into

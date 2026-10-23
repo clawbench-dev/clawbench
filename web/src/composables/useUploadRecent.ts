@@ -6,6 +6,17 @@ interface UploadFile {
   path: string
   size: number
   modTime: string
+  /**
+   * Where the row came from, which decides what deleting it does.
+   *
+   * `uploads` is a chat attachment inside `.clawbench/uploads/` — the app owns
+   * that file, so delete removes it from disk. `project` is an ordinary project
+   * file the user uploaded through the file manager; it is only recorded so it
+   * shows up here, so delete just stops listing it. The file itself is never
+   * removed, because the user asked to clear an attachment-history row, not to
+   * delete a file from their source tree.
+   */
+  origin?: 'uploads' | 'project'
 }
 
 const recentUploads = ref<UploadFile[]>([])
@@ -51,12 +62,19 @@ async function deleteRecentUpload(path: string) {
 }
 
 /**
- * Empty the whole uploads directory.
+ * Empty the whole recent-uploads list.
  *
  * Distinct from calling deleteRecentUpload per row: the list is capped at 20,
  * so per-row deletion would leave anything older behind and the tab would look
  * cleared only until the next fetch. Returns the server's counts so the caller
  * can report a partial sweep instead of claiming success.
+ *
+ * A partial sweep must NOT clear the local list: the server reports `failed > 0`
+ * when some rows could not be removed (an unwritable data directory, an
+ * undeletable file), and those rows are still there. Blanking the list would
+ * show an empty tab that repopulates the next time the drawer opens — the user
+ * reads that as "it did not really work" with no explanation. Re-fetch instead,
+ * so the tab reflects what the server actually has.
  */
 async function clearRecentUploads(): Promise<{ deleted: number; failed: number } | null> {
   try {
@@ -71,8 +89,14 @@ async function clearRecentUploads(): Promise<{ deleted: number; failed: number }
       // understood `all`. An older server ignores the unknown field and answers
       // 400 MissingPath, which must not be reported as a successful clear.
       if (data && data.ok === true) {
-        recentUploads.value = []
-        return { deleted: Number(data.deleted) || 0, failed: Number(data.failed) || 0 }
+        const deleted = Number(data.deleted) || 0
+        const failed = Number(data.failed) || 0
+        if (failed > 0) {
+          await fetchRecentUploads()
+        } else {
+          recentUploads.value = []
+        }
+        return { deleted, failed }
       }
     }
     appLog.w('UploadRecent', 'Failed to clear recent uploads', res.status)

@@ -199,7 +199,7 @@ func TestVerifyAIToken_OtherProcessKeyRejected(t *testing.T) {
 // --- exp ceiling: a leaked key must not yield a long-lived credential ---
 
 // The TTL is a property of SignAIToken, so a key holder can hand-craft an
-// arbitrary expiry. Verification must clamp it, otherwise "30 minutes" is
+// arbitrary expiry. Verification must clamp it, otherwise the TTL is
 // decorative: anyone with the key mints a token valid for years.
 func TestVerifyAIToken_RejectsExpiryBeyondTTL(t *testing.T) {
 	withAITokenKey(t, "leaked-key")

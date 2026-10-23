@@ -8,6 +8,7 @@ import { requestTarget, mintPendingQuoteId } from '@/composables/useConversation
 import type { PendingQuote } from '@/composables/useConversationTarget.ts'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { openInertPathPicker } from '@/composables/useInertPathPicker.ts'
+import { unionRectOfRects } from '@/utils/selectionAnchor.ts'
 import { appLog } from '@/utils/appLog'
 
 const TAG = 'QuoteQuestion'
@@ -126,13 +127,24 @@ const composerAttachment = computed<ComposerAttachment | null>(() => {
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 let pointerReleaseTimer: ReturnType<typeof setTimeout> | null = null
+/**
+ * Pending `showBar` delay (issue #572). Held so a dismissal can CANCEL it: a
+ * show queued before the user started dragging would otherwise fire with the
+ * button still down, surfacing the bar mid-drag — the very defect being fixed.
+ */
+let showTimer: ReturnType<typeof setTimeout> | null = null
 
 /**
- * Rect the floating toolbar should attach to: the LAST line box of the
- * selection (the point the user's pointer just left). For a multi-line
- * selection that is the bottom line, which is where "just below the text" reads
- * correctly. Returns null when the selection has no laid-out boxes (e.g. a
- * collapsed range), letting the caller fall back to the pinned top position.
+ * Rect the floating toolbar should attach to: the BOUNDING BOX of the whole
+ * selection (issue #572).
+ *
+ * The rule itself lives in `utils/selectionAnchor.ts` because a preview iframe
+ * needs the SAME rule over its own (differently-origined) rects; two copies is
+ * exactly how the host path got the union while the iframe path kept the last
+ * box. See that module for why the union is required.
+ *
+ * Returns null when the selection has no laid-out boxes (e.g. a collapsed
+ * range), letting the caller fall back to the pinned top position.
  *
  * The rect is stored RAW (zoom-scaled): conversion to pre-zoom `position:fixed`
  * space happens in computeSelectionToolbarStyle, so both sides of that
@@ -142,7 +154,9 @@ function selectionAnchorRect(sel: Selection): DOMRect | null {
   if (sel.rangeCount === 0) return null
   const rects = sel.getRangeAt(0).getClientRects()
   if (!rects.length) return null
-  return rects[rects.length - 1]
+  const u = unionRectOfRects(rects)
+  if (!u) return null
+  return new DOMRect(u.left, u.top, u.right - u.left, u.bottom - u.top)
 }
 
 // Active pointer (mouse/touch) tracking. Browsers fire selectionchange while the
@@ -151,6 +165,48 @@ function selectionAnchorRect(sel: Selection): DOMRect | null {
 // and focuses its input, stealing focus and cutting the selection short. While
 // any pointer button is held the bar is held back; pointerup re-runs the check.
 let pointerCount = 0
+
+/**
+ * Window without any pointer activity after which the drag guard self-heals.
+ *
+ * Needed because a mobile native selection UI can swallow the matching
+ * pointerup/touchend, which would leave the guard held forever and block the
+ * bar from ever appearing.
+ */
+const POINTER_STUCK_MS = 700
+
+/**
+ * Absolute ceiling on how long a single press may hold the guard, however busy
+ * the pointer looks.
+ *
+ * The liveness signal is only evidence, not proof: a programmatic scroll (the
+ * chat list following a streaming reply, a smooth-scroll animation) keeps
+ * refreshing it, so if a release really was swallowed the guard could be
+ * extended indefinitely and the bar would never appear at all. Past this
+ * ceiling the guard is dropped regardless — a swallowed release then costs one
+ * spurious bar, instead of a permanently dead one.
+ */
+const POINTER_GUARD_MAX_MS = 5000
+
+/**
+ * When the current press began. Anchors `POINTER_GUARD_MAX_MS`; 0 while idle.
+ */
+let guardStartedAt = 0
+
+/**
+ * Timestamp of the last event that PROVED a button is still pressed — a
+ * `pointerdown`, a `pointermove` carrying a pressed button, or a scroll (which
+ * is what auto-scroll at the viewport edge looks like while the pointer holds
+ * still).
+ *
+ * The self-heal timer consults it before dropping the guard (issue #572):
+ * dragging across a long paragraph takes far longer than the window, and the
+ * old unconditional reset released the guard mid-drag, surfacing the toolbar
+ * over the text being selected at a fixed time after the drag started. A live
+ * drag keeps refreshing this, so the timer only fires once the pointer has
+ * genuinely gone quiet.
+ */
+let lastPointerActivity = 0
 
 function evaluateSelection() {
   const sel = window.getSelection()
@@ -345,15 +401,44 @@ function onSelectionChange() {
 }
 
 function onPointerDown() {
+  // A press supersedes any show still waiting out its delay. `showBar` can be
+  // called with the default 400ms delay (double-click-to-quote paths); if the
+  // user starts a new drag inside that window the timer would fire with the
+  // button down, surfacing the PREVIOUS selection's bar mid-drag — the very
+  // defect issue #572 is about. The dismissal paths already cancel it; a press
+  // is the one non-dismissal that must too.
+  cancelPendingShow()
   pointerCount++
+  lastPointerActivity = Date.now()
+  if (guardStartedAt === 0) guardStartedAt = lastPointerActivity
   // Safety net: mobile native selection UI can swallow the matching pointerup/
   // touchend, which would leave the guard held forever and block the quote bar
   // from appearing. Release it after a short window so a settling selection can
   // still surface the bar (the collapsed bar no longer steals focus mid-drag).
+  armStuckTimer()
+}
+
+/**
+ * (Re)arm the self-heal timer that drops a guard whose release event was
+ * swallowed.
+ *
+ * It only drops the guard once the pointer has been quiet for the whole window.
+ * A drag in progress keeps refreshing `lastPointerActivity`, so a busy pointer
+ * just re-arms the timer — that is what keeps a long sweep from surfacing the
+ * bar mid-drag (issue #572).
+ */
+function armStuckTimer() {
   if (pointerReleaseTimer) clearTimeout(pointerReleaseTimer)
   pointerReleaseTimer = setTimeout(() => {
-    pointerCount = 0
     pointerReleaseTimer = null
+    const busy = Date.now() - lastPointerActivity < POINTER_STUCK_MS
+    const overCeiling = guardStartedAt > 0 && Date.now() - guardStartedAt >= POINTER_GUARD_MAX_MS
+    if (pointerCount > 0 && busy && !overCeiling) {
+      armStuckTimer()
+      return
+    }
+    pointerCount = 0
+    guardStartedAt = 0
     // Re-evaluate: a selection that settled while the guard was stuck can now
     // surface the bar.
     if (debounceTimer) {
@@ -361,8 +446,81 @@ function onPointerDown() {
       debounceTimer = null
     }
     debounceTimer = setTimeout(evaluateSelection, 0)
-  }, 700)
+  }, POINTER_STUCK_MS)
 }
+
+/**
+ * Cancel a `showBar` that is still waiting out its delay.
+ *
+ * Every dismissal path needs this: a show queued before the user started
+ * dragging (or before another surface took over) would otherwise fire later and
+ * surface a bar nobody asked for — with the button possibly still down, which is
+ * exactly the mid-drag bar issue #572 is about.
+ */
+function cancelPendingShow() {
+  if (showTimer) {
+    clearTimeout(showTimer)
+    showTimer = null
+  }
+}
+
+/**
+ * Take back a bar the self-heal timer surfaced, when it turns out the pointer is
+ * still down (issue #572).
+ *
+ * The timer cannot tell a swallowed release from a user who simply paused
+ * mid-drag, so it may show the bar over text that is still being selected. The
+ * next event that PROVES the button is down has to undo that — otherwise the bar
+ * stays on top of the selection for the rest of the drag, which is exactly the
+ * reported flicker. Pinned bars (the expanded composer) are left alone.
+ */
+function retractBarForDrag() {
+  if (!barVisible.value || barPinned.value || composerContext.value) return
+  cancelPendingShow()
+  barVisible.value = false
+  setQuoteData(null)
+  anchorRect.value = null
+  // Same reason as every other dismissal path: the snapshot belongs to the
+  // selection this drag has just superseded, and the Android menu would quote it.
+  lastSelectionQuote.value = null
+}
+
+/**
+ * A pointer is moving (issue #572).
+ *
+ * Two facts live in this handler, and both are needed:
+ *
+ *  - `buttons !== 0` proves a drag is in progress. It refreshes
+ *    `lastPointerActivity` so the self-heal timer keeps re-arming instead of
+ *    releasing the guard part-way through a long sweep, and it re-arms the guard
+ *    if the timer already dropped it (a long pause before the drag began). The
+ *    bar the timer may have surfaced is retracted at the same time.
+ *  - `buttons === 0` while the guard is up means the MOUSE button came up without
+ *    a `pointerup` reaching us. Releasing here is immediate and precise, instead
+ *    of waiting for a quiet window that a slow selection would never satisfy.
+ *    Restricted to mouse: touch/pen drags report `buttons` inconsistently across
+ *    engines, and treating a 0 there as "released" would surface the bar in the
+ *    middle of every touch selection.
+ *
+ * Only ever raises the count to 1 (never increments), so the release paths stay
+ * balanced.
+ */
+function onPointerMove(e: PointerEvent) {
+  if (e.buttons === 0) {
+    if (pointerCount > 0 && e.pointerType === 'mouse') releasePointer()
+    return
+  }
+  lastPointerActivity = Date.now()
+  if (pointerCount === 0) pointerCount = 1
+  if (guardStartedAt === 0) guardStartedAt = lastPointerActivity
+  // Unconditional: re-arming is idempotent (it clears the old timer first) and
+  // it is what keeps a SECOND finger's drag alive — `releasePointer` cancels the
+  // timer on every release, so a press that is still held would otherwise be
+  // left without one and could never self-heal.
+  armStuckTimer()
+  retractBarForDrag()
+}
+
 
 function releasePointer() {
   if (pointerReleaseTimer) {
@@ -371,6 +529,7 @@ function releasePointer() {
   }
   if (pointerCount > 0) pointerCount--
   if (pointerCount === 0) {
+    guardStartedAt = 0
     // Re-run the check, but deferred: on touch the final selection often settles
     // only after the pointer is released, so an immediate evaluate can see an
     // empty/collapsed selection and hide the bar (and, by clearing the debounce
@@ -403,6 +562,14 @@ function onPointerUp() {
  * ancestor (the markdown body, the chat list, …), which do not bubble.
  */
 function onScroll(e: Event) {
+  // Scrolling while a pointer is still held is PROOF the drag is alive: this is
+  // what auto-scroll at the edge of the viewport looks like — the pointer sits
+  // still while the content moves under it. Without this the self-heal timer
+  // sees a quiet pointer, drops the guard, surfaces the bar, and the very next
+  // scroll event hides it again — the reported flicker (issue #572). Must come
+  // BEFORE the `barVisible` early return, which is false for most of a drag.
+  if (pointerCount > 0) lastPointerActivity = Date.now()
+
   if (!barVisible.value) return
   if (barPinned.value || composerContext.value) return
   const target = e.target
@@ -426,6 +593,45 @@ export function resetQuotePin() {
   barPinned.value = false
 }
 
+/** True when the host draws its own selection menu (Android shell). */
+export function isNativeSelectionShell(): boolean {
+  return androidShell()
+}
+
+/** The `showBar` shape the iframe bridge helper needs (structural — no import cycle). */
+type ShowBarFn = (
+  data: QuoteData,
+  opts?: { delay?: number; anchor?: DOMRect | null; suppressBar?: boolean },
+) => void
+
+/**
+ * Build the `show` callback a preview iframe's quote bridge needs.
+ *
+ * Every iframe host (the full-screen HTML preview, the inline quick preview, the
+ * OpenAPI/Swagger docs) needs the SAME three decisions, and each is easy to
+ * forget in a copy:
+ *
+ *   - pass the mapped `anchor` through, or the bar falls back to its pinned top
+ *     position, far from the text the user just selected;
+ *   - `delay: 0`, because the bridge's own debounce has already coalesced the
+ *     selection;
+ *   - `suppressBar` on Android, where the system's selection menu is the visible
+ *     affordance and an in-page bar on top of it would be a duplicate (the quote
+ *     is still recorded for that menu's action to read back).
+ *
+ * They were three hand-written copies and one of them (OpenApiPreview) silently
+ * missed `anchor` and `suppressBar` — the reported "menu pops up at the top"
+ * defect survived there. Callers now share this factory, so a fourth host
+ * cannot drift.
+ */
+export function makeIframeQuoteShowHandler(showBar: ShowBarFn): (data: QuoteData, anchor: DOMRect | null) => void {
+  return (data, anchor) => showBar(data, {
+    delay: 0,
+    anchor,
+    suppressBar: isNativeSelectionShell(),
+  })
+}
+
 export function useQuoteQuestion() {
   const sessionIdentity = useSessionIdentity()
 
@@ -434,6 +640,9 @@ export function useQuoteQuestion() {
     if (listenerCount === 1) {
       document.addEventListener('selectionchange', onSelectionChange)
       document.addEventListener('pointerdown', onPointerDown)
+      // Drag liveness (issue #572): a long sweep must keep the guard up, so the
+      // self-heal timer is refreshed by every move with a button still pressed.
+      document.addEventListener('pointermove', onPointerMove)
       document.addEventListener('pointerup', onPointerUp)
       document.addEventListener('pointercancel', onPointerUp)
       document.addEventListener('touchend', onPointerUp)
@@ -448,6 +657,7 @@ export function useQuoteQuestion() {
     if (listenerCount === 0) {
       document.removeEventListener('selectionchange', onSelectionChange)
       document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('pointermove', onPointerMove)
       document.removeEventListener('pointerup', onPointerUp)
       document.removeEventListener('pointercancel', onPointerUp)
       document.removeEventListener('touchend', onPointerUp)
@@ -478,6 +688,7 @@ export function useQuoteQuestion() {
   function closeSheet() {
     const sel = window.getSelection()
     if (sel) sel.removeAllRanges()
+    cancelPendingShow()
     barVisible.value = false
     barPinned.value = false
     composerContext.value = null
@@ -560,6 +771,7 @@ export function useQuoteQuestion() {
   function clearComposerState() {
     composerContext.value = null
     setQuoteData(null)
+    cancelPendingShow()
     barVisible.value = false
     barPinned.value = false
     anchorRect.value = null
@@ -570,6 +782,7 @@ export function useQuoteQuestion() {
   function hideComposer() {
     if (!composerContext.value) return
     composerContext.value = null
+    cancelPendingShow()
     barVisible.value = false
     barPinned.value = false
     setQuoteData(null)
@@ -599,6 +812,7 @@ export function useQuoteQuestion() {
    */
   function hideBar() {
     if (composerContext.value) return
+    cancelPendingShow()
     barVisible.value = false
     barPinned.value = false
     setQuoteData(null)
@@ -612,17 +826,54 @@ export function useQuoteQuestion() {
    * （markdown 预览双击复制依赖此延迟）。传 { delay: 0 } 可立即显示
    * （代码模式拖选无 pointerdown 干扰）。
    *
-   * The anchor is captured SYNCHRONOUSLY, before the delay: by the time the
-   * timeout runs the selection may already have been cleared (the double-click
-   * that triggered this collapses it), and a cleared selection has no rect to
-   * measure. Callers with no DOM selection (CodeMirror's internal selection,
-   * the OpenAPI preview's iframe) leave the anchor null and the bar stays on
-   * its pinned top position.
+   * `anchor` is the selection's rect in HOST viewport coordinates, supplied by
+   * callers whose selection is not in the host document — an iframe reports its
+   * rects in its OWN viewport, so it must map them first (see
+   * mapIframeRectToHost). Without it the bar can only pin to the top of the
+   * page, far from the text the user just selected.
+   *
+   * The host selection is still read as a fallback, and it must be read
+   * SYNCHRONOUSLY before the delay: by the time the timeout runs the selection
+   * may already be cleared (the double-click that triggered this collapses it),
+   * and a cleared selection has no rect to measure.
+   *
+   * `suppressBar` keeps the quote but hides the bar. Android uses it for
+   * selections made in a surface that ALSO gets the system's own selection
+   * menu (an iframe): the native menu is the visible affordance there, and an
+   * in-page bar on top of it would be a duplicate — but the quote still has to
+   * be recorded, because that menu's action reads it back
+   * (handleNativeSelectionAction).
    */
-  function showBar(data: QuoteData, opts: { delay?: number } = {}) {
+  function showBar(
+    data: QuoteData,
+    opts: { delay?: number; anchor?: DOMRect | null; suppressBar?: boolean } = {},
+  ) {
     const sel = window.getSelection()
-    const rect = sel && !sel.isCollapsed && sel.toString().trim() ? selectionAnchorRect(sel) : null
-    setTimeout(() => {
+    const rect = opts.anchor !== undefined
+      ? opts.anchor
+      : (sel && !sel.isCollapsed && sel.toString().trim() ? selectionAnchorRect(sel) : null)
+    const suppress = opts.suppressBar === true
+    if (suppress) {
+      // The native menu's action runs AFTER the action mode has dismissed and
+      // cleared the selection, so this snapshot is the only copy left.
+      lastSelectionQuote.value = data
+    }
+    // Held so a dismissal can cancel it (issue #572): a show queued before the
+    // user started dragging would otherwise fire with the button still down.
+    if (showTimer) clearTimeout(showTimer)
+    showTimer = setTimeout(() => {
+      showTimer = null
+      if (suppress) {
+        // The bar is hidden because the OS draws its own menu, so NOTHING on
+        // screen would explain a quote card appearing in the composer. Writing
+        // `quoteData` here did exactly that: on Android, merely selecting text
+        // inside a preview (then dismissing the system menu) left a stray quote
+        // card above the input. The snapshot in `lastSelectionQuote` is enough —
+        // `handleNativeSelectionAction` writes `quoteData` itself when the user
+        // actually picks an action from that menu.
+        anchorRect.value = rect
+        return
+      }
       setQuoteData(data)
       barVisible.value = true
       anchorRect.value = rect

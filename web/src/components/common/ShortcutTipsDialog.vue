@@ -1,5 +1,5 @@
 <template>
-  <ModalDialog :open="open" :max-width="720" @close="$emit('close')">
+  <ModalDialog :open="open" @close="$emit('close')">
     <template #header>
       <Keyboard :size="16" class="modal-header-icon" />
       <span class="modal-title">{{ title }}</span>

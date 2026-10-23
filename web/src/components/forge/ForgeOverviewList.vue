@@ -23,8 +23,8 @@
     <button class="fbtn" @click="reload">{{ t('forge.retry') }}</button>
   </div>
 
-  <div v-else-if="unread.loading.value && !unread.loaded.value" class="forge-loading">
-    <LoadingIndicator size="md" :label="t('forge.loading')" />
+  <div v-else-if="unread.loading.value && !unread.loaded.value" class="forge-loading forge-loading--skeleton">
+    <PanelSkeleton variant="list" :rows="8" :meta="true" :label="t('forge.loading')" />
   </div>
 
   <div v-else-if="unread.items.value.length === 0" class="forge-state">
@@ -76,7 +76,7 @@
 import { watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { AlertCircle, ChevronRight, Rss } from 'lucide-vue-next'
-import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import { useForgeUnreadItems, FORGE_ACTIVITY_FILTERS } from '@/composables/useForge'
 import { forgeOverviewLabel } from '@/utils/forgeEventLabels'
 import type { ForgeUnreadItem } from '@/utils/forgeApi'

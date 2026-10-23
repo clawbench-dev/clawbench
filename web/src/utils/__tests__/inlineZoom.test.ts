@@ -890,4 +890,52 @@ describe('inlineZoom — toolbar focus', () => {
 
     expect(isZoomActive()).toBe(true)
   })
+
+  it('re-arms focus activation when the window loses focus mid-press', () => {
+    // Releasing the button outside the window delivers no `pointerup`, so the
+    // window `blur` handler is the only signal. It used to clear `panning`
+    // only — but a press on an UNZOOMED figure never starts a pan, so the
+    // pressed flag stayed set and keyboard activation was dead from then on.
+    withPointerDevice(true)
+    installInlineZoom()
+    const figure = mountFigure()
+    const img = figure.querySelector('img')!
+    stubIntrinsic(figure, 300, 200, 300, 200)
+    stubRect(figure, 0, 0, 300, 200)
+    figure.setAttribute('tabindex', '0')
+
+    // Press, then drag out of the window and release there: no pointerup.
+    pointer('pointerdown', img, 100, 100)
+    window.dispatchEvent(new Event('blur'))
+
+    figure.focus()
+
+    expect(isZoomActive()).toBe(true)
+  })
+
+  it('re-arms focus activation after a stranded pan', () => {
+    // The same failure with a zoom already active: panning is in progress when
+    // the window loses focus, and BOTH panning and the pressed flag must clear.
+    withPointerDevice(true)
+    installInlineZoom()
+    const figure = mountFigure()
+    const img = figure.querySelector('img')!
+    stubIntrinsic(figure, 300, 200, 300, 200)
+    stubRect(figure, 0, 0, 300, 200)
+    figure.setAttribute('tabindex', '0')
+
+    figure.focus()
+    expect(isZoomActive()).toBe(true)
+
+    pointer('pointerdown', img, 100, 100)
+    pointer('pointermove', img, 140, 140)
+    window.dispatchEvent(new Event('blur'))
+
+    expect(figure.classList.contains('is-panning'), 'the stranded pan must be released').toBe(false)
+
+    // Leaving and re-entering by keyboard must still activate.
+    figure.blur()
+    figure.focus()
+    expect(isZoomActive()).toBe(true)
+  })
 })

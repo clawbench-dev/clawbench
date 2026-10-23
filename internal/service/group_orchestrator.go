@@ -502,6 +502,10 @@ type groupTurnSetup struct {
 	// the same value hostMemberID() reads, captured once per turn so the
 	// per-member prompt can name the host without a DB read per speaker.
 	hostMemberID string
+	// forkContext is the background text a fork injected into this group (see
+	// SetForkContext). Empty for an ordinary group. Shared by every member:
+	// each speaker that has not yet produced a successful turn receives it.
+	forkContext string
 }
 
 // prepareTurn loads the roster and wires the per-turn scaffolding shared by
@@ -538,6 +542,10 @@ func (o *GroupOrchestrator) prepareTurn(groupID string) (groupTurnSetup, error) 
 		runner:       runner,
 		activeIDs:    activeIDs,
 		hostMemberID: o.hostMemberID(),
+		// Read ONCE per turn: the background is shared by every member (it lives
+		// on the group row), and re-reading it per speaker would add a query to
+		// each turn for a value that cannot change mid-turn.
+		forkContext: GetForkContext(groupID),
 	}, nil
 }
 
@@ -621,6 +629,17 @@ func (o *GroupOrchestrator) snapshotTurn(s groupTurnSetup, t speakerTurn, highWa
 	bcc := joinPendingBcc(pending)
 	cursor := GetMemberCursor(t.member.ID)
 	prompt := groupInjectionTextOrEmpty(o.groupID, t.member.ID, cursor, s.names, s.members, t.instruction, bcc) + t.sysPrompt
+	// Fork background: EVERY speaker that has not yet produced a successful turn
+	// receives it, prepended so it reads as context rather than as the newest
+	// timeline entry. cursor == 0 is exactly that condition — the cursor only
+	// advances on a clean turn (decision #69), so a failed or cancelled first
+	// speech retries with the background still attached.
+	//
+	// The human user is skipped: it is not a speaker and never consumes prompt
+	// text.
+	if s.forkContext != "" && cursor == 0 && t.member.ID != groupUserTargetID {
+		prompt = s.forkContext + prompt
+	}
 	if !o.firstTurnDone {
 		o.firstTurnDone = true
 		if o.commandInjection != "" {

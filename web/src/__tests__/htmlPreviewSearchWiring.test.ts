@@ -91,8 +91,18 @@ describe('HTML preview find bar wiring', () => {
     // The listener lives on the frame's window: leaving it attached keeps a
     // handler alive on a document nothing can see. There are three teardown
     // paths (unmount, file switch, rendered→source) and all must drop it.
-    const teardowns = viewer.split('disposeHtmlSearchShortcut?.()').length - 1
-    expect(teardowns).toBeGreaterThanOrEqual(3)
+    //
+    // Counting occurrences of the identifier is not enough: the name also
+    // appears in a declaration, in the attach path (which disposes before
+    // re-attaching) and in comments, so the count reaches the threshold even
+    // with a teardown site deleted. Anchor on the PAIR — every teardown also
+    // calls `detachHtmlQuoteBridge()` for the same document — and strip
+    // comments first so prose cannot satisfy the guard.
+    const code = viewer.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+    const paired = code.match(
+      /detachHtmlQuoteBridge\(\)\s*\n\s*disposeHtmlSearchShortcut\?\.\(\)\s*\n\s*disposeHtmlSearchShortcut = null/g,
+    ) ?? []
+    expect(paired.length, 'every teardown must drop both the quote bridge and the shortcut').toBeGreaterThanOrEqual(3)
   })
 
   it('keeps the quote bar when the SAME document merely reloads', () => {
@@ -102,5 +112,73 @@ describe('HTML preview find bar wiring', () => {
     const attachBody = viewer.slice(viewer.indexOf('async function attachHtmlQuoteBridge'))
     expect(attachBody.slice(0, attachBody.indexOf('\n}'))).toContain('disposeHtmlQuoteBridge()')
     expect(attachBody.slice(0, attachBody.indexOf('\n}'))).not.toContain('detachHtmlQuoteBridge()')
+  })
+
+  it('places the bar at the selection (passes the mapped anchor)', () => {
+    // The frame reports its selection rects in ITS viewport; without handing the
+    // mapped anchor to showBar the bar falls back to its pinned top position —
+    // far from the text the user just selected.
+    const attachBody = viewer.slice(viewer.indexOf('async function attachHtmlQuoteBridge'))
+    const head = attachBody.slice(0, attachBody.indexOf('\n}'))
+    expect(head).toContain('makeIframeQuoteShowHandler')
+  })
+
+  it('suppresses the in-page bar on Android (the native menu is the affordance)', () => {
+    // Android draws its own selection menu; an in-page bar on top would be a
+    // duplicate. The quote must still be recorded for that menu's action.
+    const attachBody = viewer.slice(viewer.indexOf('async function attachHtmlQuoteBridge'))
+    expect(attachBody.slice(0, attachBody.indexOf('\n}'))).toContain('makeIframeQuoteShowHandler')
+  })
+})
+
+/**
+ * Every iframe host must wire the SAME show handler.
+ *
+ * There are three, and they were three hand-written copies of the same three
+ * decisions (pass the mapped anchor, delay 0, suppress on Android). One of them
+ * — OpenApiPreview — silently missed `anchor` and `suppressBar`, so the reported
+ * "menu pops up at the top of the page" defect survived on the OpenAPI docs, and
+ * Android got both the system menu and the in-page bar. A per-host guard cannot
+ * catch a host nobody remembered to add to the list, so this asserts the SHARED
+ * factory is used and that every bridge call site goes through it.
+ */
+describe('iframe quote hosts share one show handler', () => {
+  const HOSTS = [
+    'src/components/file/FileViewer.vue',
+    'src/components/file/HtmlPreviewBody.vue',
+    'src/components/file/OpenApiPreview.vue',
+  ] as const
+
+  it('every host uses the shared factory instead of a hand-written callback', () => {
+    for (const rel of HOSTS) {
+      const src = readWebFile(rel)
+      expect(src, `${rel} must import makeIframeQuoteShowHandler`).toContain('makeIframeQuoteShowHandler')
+      // A hand-written arrow here is how the copies drifted.
+      expect(src, `${rel} must not hand-roll the show callback`).not.toMatch(/show:\s*\(data,\s*anchor\)\s*=>/)
+      // The callback may be the factory itself or a local alias it was assigned
+      // to (the quick preview loads the composable lazily, so it holds
+      // `mod.makeIframeQuoteShowHandler` in a variable). Either way the callee
+      // must trace back to the factory.
+      const m = src.match(/show:\s*([\w.]+)\(/)
+      expect(m, `${rel} must set a show callback`).not.toBeNull()
+      const callee = m![1].split('.').pop()!
+      const traces = callee === 'makeIframeQuoteShowHandler'
+        || new RegExp(`(?:const|let)\\s+${callee}\\b[^\\n]*makeIframeQuoteShowHandler`).test(src)
+      expect(traces, `${rel}: show uses ${callee}, which must come from the factory`).toBe(true)
+    }
+  })
+
+  it('no bridge call site is left without the factory', () => {
+    // Guards the "fourth host" case: a new attachIframeSelectionQuoteBridge call
+    // must also go through the factory.
+    for (const rel of HOSTS) {
+      const src = readWebFile(rel)
+      const calls = src.match(/attachIframeSelectionQuoteBridge\(/g) ?? []
+      const factories = src.match(/makeIframeQuoteShowHandler\b/g) ?? []
+      // Two mentions per use (import + call) is the normal shape; what must not
+      // happen is a bridge with NO factory mention at all.
+      expect(factories.length, `${rel}: the factory must reach every bridge`).toBeGreaterThan(0)
+      expect(calls.length, `${rel}: exactly one bridge`).toBe(1)
+    }
   })
 })

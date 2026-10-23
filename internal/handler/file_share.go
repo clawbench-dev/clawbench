@@ -326,7 +326,7 @@ func serveShareRevokeByToken(w http.ResponseWriter, r *http.Request) {
 func serveShareRevokeOneByToken(w http.ResponseWriter, r *http.Request, projectPath, token string) {
 	owner, found, err := service.GetFileShareProjectByToken(token)
 	if err != nil {
-		slog.Error("share: ownership lookup failed", "token", token, "err", err)
+		slog.Error("share: ownership lookup failed", "err", err)
 		model.WriteError(w, model.Internal(err))
 		return
 	}
@@ -335,7 +335,7 @@ func serveShareRevokeOneByToken(w http.ResponseWriter, r *http.Request, projectP
 		return
 	}
 	if err := service.DeleteFileShareByToken(token); err != nil {
-		slog.Error("share: revoke-by-token failed", "token", token, "err", err)
+		slog.Error("share: revoke-by-token failed", "err", err)
 		model.WriteError(w, model.Internal(err))
 		return
 	}
@@ -661,6 +661,16 @@ func ServeSharePage(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet, http.MethodHead) {
 		return
 	}
+	// The token in this URL IS the credential, and the page renders
+	// author-supplied content that routinely references third-party assets (an
+	// agent writing `![](https://cdn.example/a.png)` is enough). Under the
+	// browser default the Referer of those subresource requests carries the full
+	// share URL, so merely OPENING a shared conversation would hand the token to
+	// every third-party host it embeds — no reader action required.
+	//
+	// no-referrer (not strict-origin-when-cross-origin) because same-site
+	// navigations still send the full URL under the default policy.
+	w.Header().Set("Referrer-Policy", "no-referrer")
 	serveShareHTML(w, r)
 }
 

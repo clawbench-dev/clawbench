@@ -4616,6 +4616,101 @@ describe('FileManagerContent — dragstart attach payload', () => {
     const ghost = document.querySelector('[data-attach-ghost]')
     expect(ghost?.textContent).toContain('test.ts')
   })
+
+  // ── Search results ──
+  // Search hits are ordinary rows in the same listing, so they must be
+  // draggable to chat too. Only the internal MOVE affordance is withheld (the
+  // listing no longer represents the browsed directory).
+
+  /** Put the manager into search mode with two hits, one of them a directory. */
+  async function mountSearchResults() {
+    searchState.query = 'main'
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
+      { name: 'lib', path: 'pkg/lib', type: 'dir', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    await nextTick()
+    return wrapper
+  }
+
+  it('keeps search-result rows draggable', async () => {
+    const wrapper = await mountSearchResults()
+    const rows = wrapper.findAll('.file-item')
+    expect(rows.length).toBe(2)
+    for (const row of rows) expect(row.attributes('draggable')).toBe('true')
+  })
+
+  it('writes the attach payload for a search-result file', async () => {
+    const wrapper = await mountSearchResults()
+    const dt = makeDT()
+
+    await wrapper.find('.file-item[data-path="cmd/main.go"]').trigger('dragstart', { dataTransfer: dt })
+
+    const payload = JSON.parse(dt.getData('application/x-clawbench-attach'))
+    expect(payload).toEqual({ path: 'cmd/main.go', isDir: false })
+    // Attaching is a copy — no internal move is armed while searching.
+    expect(dt.effectAllowed).toBe('copy')
+    expect(wrapper.vm.dragSourcePaths).toBeNull()
+  })
+
+  it('tags a search-result directory from the hit, not the browsed listing', async () => {
+    // The browsed directory also holds a "lib" FILE; the hit's own type must
+    // win, otherwise the chat gets a file reference for a folder. Only the
+    // multi-selection path resolves types through metaForPath, so this needs
+    // two selected hits.
+    mockIsTouchPrimary.value = false
+    const wrapper = mountContent({ entries: [{ name: 'lib', type: 'file', size: 1 }] })
+    searchState.query = 'lib'
+    searchState.results = [
+      { name: 'lib', path: 'pkg/lib', type: 'dir', matchedIndices: [] },
+      { name: 'lib.go', path: 'pkg/lib.go', type: 'file', matchedIndices: [] },
+    ]
+    await nextTick()
+    await wrapper.find('.file-item[data-path="pkg/lib"]').trigger('click', { ctrlKey: true })
+    await wrapper.find('.file-item[data-path="pkg/lib.go"]').trigger('click', { ctrlKey: true })
+    await nextTick()
+    const dt = makeDT()
+
+    await wrapper.find('.file-item[data-path="pkg/lib"]').trigger('dragstart', { dataTransfer: dt })
+
+    const payload = JSON.parse(dt.getData('application/x-clawbench-attach'))
+    expect(payload.entries).toEqual(expect.arrayContaining([
+      { path: 'pkg/lib', isDir: true },
+      { path: 'pkg/lib.go', isDir: false },
+    ]))
+  })
+
+  it('carries the whole multi-selection when dragging a selected search hit', async () => {
+    // Ctrl+click is the desktop multi-select gesture; touch taps would open the
+    // hit (a directory tap clears the query) instead of accumulating.
+    mockIsTouchPrimary.value = false
+    const wrapper = await mountSearchResults()
+    await wrapper.find('.file-item[data-path="cmd/main.go"]').trigger('click', { ctrlKey: true })
+    await wrapper.find('.file-item[data-path="pkg/lib"]').trigger('click', { ctrlKey: true })
+    await nextTick()
+    const dt = makeDT()
+
+    await wrapper.find('.file-item[data-path="cmd/main.go"]').trigger('dragstart', { dataTransfer: dt })
+
+    const payload = JSON.parse(dt.getData('application/x-clawbench-attach'))
+    expect(payload.entries).toEqual(expect.arrayContaining([
+      { path: 'cmd/main.go', isDir: false },
+      { path: 'pkg/lib', isDir: true },
+    ]))
+    expect(wrapper.vm.dragSourcePaths).toBeNull()
+  })
+
+  it('still arms an internal move drag for browsed rows', async () => {
+    const wrapper = mountContent()
+    await nextTick()
+    const dt = makeDT()
+
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('dragstart', { dataTransfer: dt })
+
+    expect(wrapper.vm.dragSourcePaths).toEqual(['test.ts'])
+    expect(dt.effectAllowed).toBe('move')
+  })
 })
 
 // ── Dropdown positioning & close ──
@@ -5818,5 +5913,91 @@ describe('FileManagerContent — content search dialog', () => {
     const wrapper = mountContent()
     ;(wrapper.vm as any).$.setupState.onContentSearchOpenFile('', 1)
     expect(mockOpenFilePath).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * Dragging a search hit must not attach paths that the results listing no longer
+ * shows.
+ *
+ * The multi-selection survives a query change on purpose (only exiting
+ * multi-select clears it), so a set built in browse mode is still populated when
+ * the results layer takes over. Dragging then handed the whole set to the chat
+ * payload — including rows the user can no longer see, and could not have meant
+ * to attach from this listing.
+ */
+describe('FileManagerContent — dragging search hits', () => {
+  /** The attach payload a dragstart wrote, or null. */
+  function attachPayload(dt: { store: Map<string, string> }): { path: string; entries?: Array<{ path: string }> } | null {
+    const raw = dt.store.get('application/x-clawbench-attach')
+    return raw ? JSON.parse(raw) : null
+  }
+
+  function fakeDataTransfer() {
+    const store = new Map<string, string>()
+    return {
+      store,
+      setData: (k: string, v: string) => { store.set(k, v) },
+      getData: (k: string) => store.get(k) ?? '',
+      effectAllowed: '',
+      setDragImage: () => {},
+    }
+  }
+
+  it('attaches only the hits the results listing shows', async () => {
+    const wrapper = mountContent()
+    // Browse-mode selection: `src` is a directory in the normal listing.
+    wrapper.vm.multiSelectState.active = true
+    wrapper.vm.multiSelectState.selected.add('src')
+    wrapper.vm.multiSelectState.selected.add('readme.md')
+
+    // A query replaces the listing with two hits; `src` is NOT among them.
+    searchState.query = 'test'
+    searchState.results = [
+      { name: 'test.ts', path: 'test.ts', type: 'file', matchedIndices: [] },
+      { name: 'test2.ts', path: 'test2.ts', type: 'file', matchedIndices: [] },
+    ]
+    await nextTick()
+
+    // The user ctrl+clicks a hit, then drags it.
+    wrapper.vm.multiSelectState.selected.add('test.ts')
+    wrapper.vm.multiSelectState.selected.add('test2.ts')
+
+    const dt = fakeDataTransfer()
+    const row = wrapper.findAll('.file-item').find(el => el.attributes('data-path') === 'test.ts')
+    expect(row, 'the hit must be rendered').toBeTruthy()
+    await row!.trigger('dragstart', { dataTransfer: dt })
+
+    const payload = attachPayload(dt)
+    expect(payload).not.toBeNull()
+    const paths = (payload!.entries ?? [{ path: payload!.path }]).map(e => e.path).sort()
+    // `src` / `readme.md` are stale browse-mode leftovers: they are not in the
+    // results, so attaching them would be invisible to the user.
+    expect(paths).toEqual(['test.ts', 'test2.ts'])
+    wrapper.unmount()
+  })
+
+  it('still attaches the whole selection in browse mode', async () => {
+    // The filter is search-specific. Browse mode keeps the raw set — a selected
+    // row may legitimately outlive the current listing (a directory switch).
+    const wrapper = mountContent()
+    wrapper.vm.multiSelectState.active = true
+    wrapper.vm.multiSelectState.selected.add('src')
+    wrapper.vm.multiSelectState.selected.add('readme.md')
+
+    const dt = fakeDataTransfer()
+    const row = wrapper.findAll('.file-item').find(el => el.attributes('data-path') === 'readme.md')
+    expect(row).toBeTruthy()
+    await row!.trigger('dragstart', { dataTransfer: dt })
+
+    const payload = attachPayload(dt)
+    const paths = (payload!.entries ?? [{ path: payload!.path }]).map(e => e.path).sort()
+    expect(paths).toEqual(['readme.md', 'src'])
+    wrapper.unmount()
+  })
+
+  afterEach(() => {
+    searchState.query = ''
+    searchState.results = []
   })
 })

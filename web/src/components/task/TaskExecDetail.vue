@@ -64,6 +64,7 @@
         :blockTasks="{}"
         :blockAskQuestions="{}"
         hideSessionActions
+        :read-only="true"
         @toggle-tool="toggleTool"
         @show-tool-detail="handleShowToolDetail"
         @show-metadata="showMetadata"
@@ -217,6 +218,14 @@ const eventSourceText = computed(() => eventSourceLabel(props.execDetail?.eventU
 // ── Terminate (cancel) running execution ──
 const cancelling = ref(false)
 
+// A cancel only reaches the message row when the executor's abandon path runs,
+// and that happens AFTER the cancel request returns (CancelFunc is async). The
+// refresh fired by the request therefore usually reads the row before it
+// carries `cancelled:true`, and nothing refreshes it again. Stamp the badge
+// locally so it appears immediately; the DB flag takes over once it lands.
+const locallyCancelled = ref(false)
+watch(() => props.execDetail?.id, () => { locallyCancelled.value = false })
+
 // ── Live preview stream ──
 const execStatusRef = computed(() => props.execDetail?.status || '')
 const execSessionIdRef = computed(() => props.execDetail?.sessionId || null)
@@ -250,12 +259,16 @@ async function onTerminate() {
     const executionId = props.execDetail?.sessionId || String(props.execDetail.id)
     // terminateExecution refreshes exactly once on the success path — do NOT
     // also refresh off its return value (that would double-refresh).
-    await terminateExecution({
+    const ok = await terminateExecution({
       taskId: props.taskId,
       executionId,
       onStopPreview: () => execStream.stopPreview(),
       onRefresh: () => refreshExecDetail(),
     })
+    // The refresh above races the executor's abandon path, which is what writes
+    // `cancelled:true` onto the message row. Stamp it locally on success so the
+    // badge is visible without waiting for a reload that never comes.
+    if (ok) locallyCancelled.value = true
   } finally {
     cancelling.value = false
   }
@@ -318,9 +331,20 @@ function setTab(tab) {
 }
 
 // ── Build a synthetic message object for ChatMessageItem (original content) ──
+//
+// `cancelled` comes from the assistant row itself (the backend stamps it in
+// finalizeOrphanedStreamingMessages when a run is abandoned). It must NOT be
+// derived from `execDetail.status`: a task can be cancelled while its last
+// reply is already complete (cancel during the post-turn window), and that
+// message was not interrupted. Only the message-level flag knows the difference.
+// `locallyCancelled` covers the window before the backend stamp lands — see
+// onTerminate.
+const parsedContent = computed(() => chatRender.parseAssistantContent(props.execDetail?.content || '{}'))
+const messageCancelled = computed(() => parsedContent.value.cancelled === true || locallyCancelled.value)
+
 const msgData = computed(() => {
   if (!props.execDetail?.content && props.execDetail?.status !== 'cancelled') return null
-  const { blocks } = chatRender.parseAssistantContent(props.execDetail.content || '{}')
+  const { blocks } = parsedContent.value
   // Use messageId (DB chat_history ID) for tool detail fetch; fallback only if unavailable
   const msgId = props.execDetail.messageId || props.execDetail.id || 'exec'
   if (!blocks || blocks.length === 0) {
@@ -351,7 +375,7 @@ const msgData = computed(() => {
     // streaming so the "streaming status" indicator is shown. Otherwise a
     // running task's partial DB content renders like a completed answer.
     streaming: isRunning.value,
-    cancelled: false,
+    cancelled: messageCancelled.value,
   }
 })
 
@@ -369,7 +393,9 @@ const summaryMsgData = computed(() => {
     metadata: props.execDetail.metadata || null,
     createdAt: props.execDetail.createdAt || '',
     streaming: false,
-    cancelled: false,
+    // The summary is another view of the SAME reply, so an interrupted reply
+    // must stay marked as interrupted in both tabs.
+    cancelled: messageCancelled.value,
   }
 })
 
@@ -392,12 +418,17 @@ const activeMsgData = computed(() => {
   // Merge with DB history so prior content is preserved while waiting for refreshExecDetail.
   if (!execStream.isStreaming.value && execStream.streamingMsg.value) {
     const sm = execStream.streamingMsg.value
+    // A cancelled turn ends the preview, so this is the branch that renders the
+    // interrupted reply while the DB row is still being finalized. The stream's
+    // own `cancelled` event is routinely dropped for task sessions (no
+    // subscribers), so the badge must also honour the local/DB flags.
+    const cancelled = sm.cancelled === true || messageCancelled.value
     if (sm.blocks && sm.blocks.length > 0) {
       const dbBlocks = msgData.value?.blocks
-      if (!dbBlocks || dbBlocks.length === 0) return { ...sm, streaming: false }
-      return { ...sm, blocks: mergeDbBlocksWithLive(dbBlocks, sm.blocks), streaming: false }
+      if (!dbBlocks || dbBlocks.length === 0) return { ...sm, streaming: false, cancelled }
+      return { ...sm, blocks: mergeDbBlocksWithLive(dbBlocks, sm.blocks), streaming: false, cancelled }
     }
-    return { ...sm, streaming: false }
+    return { ...sm, streaming: false, cancelled }
   }
   // When not streaming, use the DB content (refreshed by refreshExecDetail)
   // we always show whatever partial content is available rather than "connecting..."

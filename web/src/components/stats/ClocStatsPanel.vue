@@ -11,10 +11,15 @@
         </div>
 
         <div v-if="clocError" class="stats-error">{{ clocErrorText }}</div>
-        <div v-else-if="!clocLoaded" class="stats-loading">
-          <LoadingIndicator size="sm" inline />
-          <span>{{ t('common.loading') }}</span>
-        </div>
+        <!-- Skeleton while the first scan runs (a full directory walk, so this
+             is the one stats load that is reliably slow). -->
+        <StatsSkeleton
+          v-else-if="showSkeleton || !clocLoaded"
+          :cards="4"
+          :table-rows="6"
+          :chart="true"
+          :label="t('common.loading')"
+        />
         <div v-else-if="clocLanguages.length === 0" class="stats-empty">
           <FileCode2 :size="30" class="stats-empty-icon" />
           <span>{{ t('gitStats.clocNoData') }}</span>
@@ -117,7 +122,8 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Files, FileCode2, Code2, MessageSquare, Space, FileStack } from 'lucide-vue-next'
-import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import StatsSkeleton from '@/components/stats/StatsSkeleton.vue'
+import { useDelayedFlag } from '@/composables/useDelayedFlag'
 import UsageChart from '@/components/stats/UsageChart.vue'
 import { useGitCodeStats } from '@/composables/useGitCodeStats'
 import type { ClocLanguageRow } from '@/composables/useGitCodeStats'
@@ -136,6 +142,7 @@ const clocRaw = stats.clocRaw
 const clocError = stats.clocError
 
 const clocLoaded = computed(() => clocRaw.value !== null)
+const showSkeleton = useDelayedFlag(stats.clocLoading)
 const clocLanguages = computed<ClocLanguageRow[]>(() => clocRaw.value?.languages ?? [])
 const clocTotal = computed<ClocLanguageRow>(() => clocRaw.value?.total ?? { name: '', files: 0, code: 0, comment: 0, blank: 0 })
 
@@ -262,7 +269,6 @@ onMounted(() => {
   color: var(--color-red, #ef4444);
   font-size: var(--font-size-md);
 }
-.stats-loading,
 .stats-empty {
   display: flex;
   flex-direction: column;

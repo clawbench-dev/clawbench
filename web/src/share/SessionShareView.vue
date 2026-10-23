@@ -37,8 +37,8 @@
 
     <div class="share-body">
       <div class="share-content session-share-content" ref="contentRef">
-        <div v-if="loading" class="share-center-hint">
-          <LoadingIndicator size="md" />
+        <div v-if="loading" class="share-center-hint share-center-hint--skeleton">
+          <PanelSkeleton variant="text" :rows="10" :label="t('common.loading')" />
         </div>
 
         <div v-else-if="error" class="share-error-state">
@@ -81,7 +81,17 @@
               </span>
             </template>
           </div>
-          <div class="session-share-messages">
+          <!-- The container carries the same pure-client interaction delegation
+               the chat area uses (code-block copy/wrap, table copy/wrap, table
+               row detail, double-tap copy). Without it those buttons render from
+               the markdown pipeline but do nothing when clicked — the reader sees
+               a control that is visually identical to the app's and inert. -->
+          <div
+            class="session-share-messages"
+            @click="interactions.handleContainerClick"
+            @mousedown="interactions.onContainerMouseDown"
+            @touchstart.passive="interactions.onContainerTouchStart"
+          >
             <ChatMessageItem
               v-for="(msg, i) in messages"
               :key="msg.id"
@@ -101,6 +111,8 @@
               :user-nickname="userNickname"
               :hide-session-actions="true"
               :read-only="true"
+              :allow-local-actions="true"
+              :is-group-session="isGroupShare"
               @toggle-tool="onToggleTool"
               @show-tool-detail="onShowToolDetail"
               @show-metadata="onShowMetadata"
@@ -126,7 +138,7 @@
             :msg="item"
             :index="i + 1"
             :active="activeTocId === item.id"
-            :show-time="true"
+            :show-time="false"
             :resolve-speaker="resolveSpeaker"
             @select="scrollToMessage(item.id)"
           />
@@ -152,7 +164,7 @@
               :msg="item"
               :index="i + 1"
               :active="activeTocId === item.id"
-              :show-time="true"
+              :show-time="false"
               :resolve-speaker="resolveSpeaker"
               @select="scrollToMessage(item.id); tocOpen = false"
             />
@@ -193,6 +205,16 @@
       :formatDetailTime="chatRender.formatDetailTime"
       @close="metadataDrawer.close()"
     />
+
+    <!-- Table row detail (touch hosts only). Reads the row out of the already
+         rendered DOM, so it needs no request — the same component the chat area
+         uses, fed by the shared interaction composable. -->
+    <TableRowModal
+      :data="interactions.tableRowModal.value"
+      @close="interactions.closeTableRowModal()"
+      @prev="interactions.tableRowPrev()"
+      @next="interactions.tableRowNext()"
+    />
   </div>
 </template>
 
@@ -201,7 +223,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, watch } f
 import { useI18n } from 'vue-i18n'
 import { Download, FileX2, List, X } from 'lucide-vue-next'
 import AgentIcon from '@/components/common/AgentIcon.vue'
-import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import ChatMessageItem from '@/components/chat/ChatMessageItem.vue'
 import MessageIndexRow from '@/components/chat/MessageIndexRow.vue'
 import AvatarStack, { type StackMember } from '@/components/common/AvatarStack.vue'
@@ -209,8 +231,10 @@ import { makeSpeakerResolver, type SpeakerIdentity } from '@/utils/speakerIdenti
 import { resolveMentionDisplayName, GROUP_USER_TARGET_NAME, type MentionSpeaker } from '@/utils/groupRouting'
 import ToolDetailDrawer from '@/components/chat/ToolDetailDrawer.vue'
 import ChatMetadataModal from '@/components/chat/ChatMetadataModal.vue'
+import TableRowModal from '@/components/common/TableRowModal.vue'
 import { useChatRender } from '@/composables/useChatRender'
 import { useToolDetailDrawer } from '@/composables/useToolDetailDrawer'
+import { useChatMessageInteractions } from '@/composables/useChatMessageInteractions'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import { isLastAssistantMessage, isShowingSummary, normalizeDisplayMode, parseMessages } from '@/utils/chatSessionUtils'
 import { localConfig } from '@/composables/useSettingsConfig'
@@ -309,7 +333,13 @@ interface ShareGroupMember {
   avatar?: string
 }
 const groupMembers = ref<ShareGroupMember[]>([])
-const isGroupShare = computed(() => groupMembers.value.length > 0)
+// The session's OWN type, carried explicitly by the payload. This is the only
+// reliable group signal: `groupMembers` is the ACTIVE roster, so a group whose
+// members have all left comes back empty — deriving the flag from it would make
+// that thread render as a single-agent session, and the reader would then see
+// raw <clawbench-mention> routing tags instead of resolved @-chips.
+const sessionType = ref('')
+const isGroupShare = computed(() => sessionType.value === 'group')
 // AvatarStack resolves avatars from agentId via useAgents, which the anonymous
 // share SPA never loads — so we feed each disc the avatar frozen in the snapshot
 // roster. The member's own frozen avatar is the source of truth; the `speakers`
@@ -537,6 +567,17 @@ provide('autoSpeech', {
   stopAudio: () => {},
 })
 
+// ── Container-level interactions ──
+// Code-block / table-block header buttons, table-row detail and double-tap copy
+// are pure client-side: they only read the DOM the markdown pipeline produced.
+// The chat area has always had them; this page used to `v-for` the messages
+// without the delegation, so those buttons were rendered but inert.
+//
+// `onOpenFile` is deliberately NOT passed: an anonymous reader has no file
+// viewer and no auth, so the composable preventDefaults relative links instead
+// of letting the browser navigate away from the transcript.
+const interactions = useChatMessageInteractions()
+
 // ── Tool detail drawer ──
 // input/output are inlined in the snapshot, so the drawer renders without any
 // authenticated fetch (see fetchToolCallDetail's share-provider branch).
@@ -701,6 +742,7 @@ async function loadSnapshot() {
     sessionAgent.value = payload?.sessionAgent || null
     speakers.value = payload?.speakers || null
     groupMembers.value = Array.isArray(payload?.groupMembers) ? payload.groupMembers : []
+    sessionType.value = typeof payload?.session?.sessionType === 'string' ? payload.session.sessionType : ''
     hostMemberId.value = payload?.session?.hostMemberId || ''
     userNickname.value = payload?.session?.userNickname || GROUP_USER_TARGET_NAME
     const rawMessages = Array.isArray(payload?.messages) ? payload.messages : []
@@ -710,6 +752,24 @@ async function loadSnapshot() {
     // is why the payload must not be frozen.
     const parsed = parseMessages(rawMessages, (content: string) => chatRender.parseAssistantContent(content))
     indexInlinedData(parsed)
+    // A shared transcript opens on the SUMMARY: that is what the author chose to
+    // show when they shared it, and a summary is what a reader of someone else's
+    // thread can actually digest (the original content of a long agent turn is
+    // hundreds of tool calls).
+    //
+    // Pinned per message rather than left to the global messageDisplayMode
+    // because that setting comes from localStorage — which an anonymous reader
+    // has never set — so it falls back to 'mixed', and 'mixed' renders the LAST
+    // assistant reply as full original text. On a share link that reply is the
+    // whole visible conversation, so the default landed on exactly the wrong
+    // view. The toggle still works: an explicit per-message choice wins inside
+    // isShowingSummary.
+    //
+    // Only messages that actually have a summary are pinned; an unsummarized
+    // reply keeps showing its content.
+    for (const m of parsed) {
+      if (m.summary != null && m.summary !== '') m.showingSummary = true
+    }
     messages.value = parsed
 
     // Keep the store's roots empty so markdown path annotations cannot resolve
@@ -856,6 +916,13 @@ onBeforeUnmount(() => {
   padding: 32px;
   color: var(--text-muted, #656d76);
   text-align: center;
+}
+
+/* Placeholder fills the reading column and left-aligns like the real body. */
+.share-center-hint--skeleton {
+  align-items: stretch;
+  justify-content: flex-start;
+  text-align: left;
 }
 
 .share-error-title {

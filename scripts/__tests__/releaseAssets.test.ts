@@ -427,9 +427,12 @@ describe('npm payload packages match the Go URL derivation', () => {
     expect(job).toContain('registry=https://registry.npmjs.org/')
     expect(job).toContain('> .npmrc')
     expect(job).toContain('NPM_CONFIG_USERCONFIG')
-    expect(job).toContain('npm publish')
-    // A re-run must not republish an immutable version.
-    expect(job).toContain('npm view')
+    // Publishing goes through the shared helper, which is what makes a re-run
+    // (or a concurrent run of the same tag) skip an immutable version instead
+    // of dying with E409. Asserting the helper — rather than the literal
+    // `npm publish` / `npm view` it used to inline — keeps the guard honest
+    // without pinning the implementation detail of where those calls live.
+    expect(job).toContain('npm-publish-idempotent.sh')
     for (const dep of PAYLOAD_JOBS) {
       expect(job, `publish-npm-desktop must depend on ${dep}`).toContain(dep)
     }

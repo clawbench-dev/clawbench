@@ -1,4 +1,5 @@
-import type { GitStatsRow } from '@/composables/useGitCodeStats'
+import type { GitStatsRow, GitUsageTotals, GitEfficiencyPerK } from '@/composables/useGitCodeStats'
+import { formatCompactCount } from '@/utils/usageFormat'
 
 /** Metric id for git code-change columns / chart series. */
 export type GitStatsMetricId = 'added' | 'deleted' | 'net' | 'commitCnt'
@@ -33,4 +34,41 @@ export function rowLineValueOf(row: GitStatsRow, metric: GitStatsMetricId): numb
     case 'net': return row.net
     case 'commitCnt': return row.commitCnt
   }
+}
+
+/**
+ * Spend per 1K net added lines for the same window, or null when the ratio is
+ * undefined.
+ *
+ * `net <= 0` (deletions met or exceeded additions) makes "per 1K net lines"
+ * meaningless — a negative or zero denominator would render as a huge negative
+ * number or Infinity, which reads as real data. The panel shows a hint instead.
+ */
+export function efficiencyPerK(net: number, usage: GitUsageTotals | null): GitEfficiencyPerK | null {
+  if (!usage || net <= 0) return null
+  const units = net / 1000
+  return {
+    tokens: usage.total / units,
+    credit: usage.credit / units,
+    costUsd: usage.costUsd / units,
+  }
+}
+
+/** Tokens per 1K lines — same K/M/B tiers as the other token surfaces. */
+export function formatPerKTokens(v: number): string {
+  return formatCompactCount(v)
+}
+
+/** Credit per 1K lines: up to two decimals, no trailing zeros beyond that. */
+export function formatPerKCredit(v: number): string {
+  return v.toLocaleString('en-US', { maximumFractionDigits: 2 })
+}
+
+/**
+ * USD per 1K lines. Sub-cent values would round to "$0.00", which reads as
+ * "free" — report the bound instead so a cheap model never looks costless.
+ */
+export function formatPerKCost(v: number): string {
+  if (v > 0 && v < 0.01) return '<$0.01'
+  return `$${v.toFixed(2)}`
 }

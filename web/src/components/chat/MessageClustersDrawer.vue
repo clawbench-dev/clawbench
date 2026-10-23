@@ -27,7 +27,7 @@
       </div>
 
       <!-- Loading state -->
-      <LoadingIndicator v-else-if="loading" size="md" :label="t('chat.messageClusters.loading')" />
+      <PanelSkeleton v-else-if="loading" variant="list" :rows="8" :meta="true" :label="t('chat.messageClusters.loading')" />
 
       <!-- No cache (idle) -->
       <div v-else-if="!loaded || clusters.length === 0 && progress.status === 'idle'" class="mc-empty">
@@ -85,7 +85,7 @@ import RefreshButton from '@/components/common/RefreshButton.vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import QuickSendEditModal from '@/components/chat/QuickSendEditModal.vue'
-import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import { useMessageClusters, type MessageCluster } from '@/composables/useMessageClusters'
 import { useToast } from '@/composables/useToast'
 import { useTabDrawer } from '@/composables/useTabDrawer'

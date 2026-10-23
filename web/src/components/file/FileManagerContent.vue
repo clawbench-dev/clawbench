@@ -263,12 +263,17 @@
       @dragend="onDragEnd"
     >
       <template v-if="searchHasQuery">
-        <LoadingIndicator v-if="search.state.searching && search.state.results.length === 0" size="md" :label="t('file.search.searching')" />
+        <PanelSkeleton v-if="search.state.searching && search.state.results.length === 0" variant="list" :rows="8" :meta="false" :label="t('file.search.searching')" />
         <div v-else-if="search.state.results.length === 0 && !search.state.searching" class="empty-state fs-search-empty">
           <FileX :size="56" class="fs-search-empty-icon" />
           <p class="fs-search-empty-text">{{ t('file.search.noResults') }}</p>
         </div>
       </template>
+      <!-- First load of a directory: preview the row shape instead of covering
+           an empty panel with a spinner. A refresh that already has rows on
+           screen keeps the overlay below (the old rows must stay put, and
+           swapping them for grey blocks would read as a navigation). -->
+      <PanelSkeleton v-else-if="dirLoading && displayEntries.length === 0" variant="list" :rows="8" :meta="true" :label="t('common.loading')" />
       <div v-else-if="filteredEntries.length === 0 && !dirLoading" class="empty-state">
         <FileIcon path="" :is-dir="true" :size="48" />
         <p>{{ currentDir ? t('file.emptyDir') : t('file.noFiles') }}</p>
@@ -278,7 +283,7 @@
         <div
           v-long-press="(e) => onLongPress(entry, e)"
           class="file-item"
-          :draggable="isWideScreen && !searchHasQuery"
+          :draggable="isWideScreen"
           @dragstart="onItemDragStart(entry, $event)"
           :class="{
             'dir-item': entry.type === 'dir',
@@ -335,12 +340,13 @@
       @dragend="onDragEnd"
     >
       <template v-if="searchHasQuery">
-        <LoadingIndicator v-if="search.state.searching && search.state.results.length === 0" size="md" :label="t('file.search.searching')" />
+        <PanelSkeleton v-if="search.state.searching && search.state.results.length === 0" variant="grid" :rows="12" :label="t('file.search.searching')" />
         <div v-else-if="search.state.results.length === 0 && !search.state.searching" class="empty-state fs-search-empty">
           <FileX :size="56" class="fs-search-empty-icon" />
           <p class="fs-search-empty-text">{{ t('file.search.noResults') }}</p>
         </div>
       </template>
+      <PanelSkeleton v-else-if="dirLoading && displayEntries.length === 0" variant="grid" :rows="12" :label="t('common.loading')" />
       <div v-else-if="filteredEntries.length === 0 && !dirLoading" class="empty-state">
         <FileIcon path="" :is-dir="true" :size="48" />
         <p>{{ currentDir ? t('file.emptyDir') : t('file.noFiles') }}</p>
@@ -349,7 +355,7 @@
       <div v-for="entry in displayEntries" :key="keyOf(entry)"
         v-long-press="(e) => onLongPress(entry, e)"
         class="grid-item"
-        :draggable="isWideScreen && !searchHasQuery"
+        :draggable="isWideScreen"
         @dragstart="onItemDragStart(entry, $event)"
         :class="{
           'grid-dir': entry.type === 'dir',
@@ -388,7 +394,9 @@
       </div>
     </Transition>
     <Transition name="loading-fade">
-      <LoadingIndicator v-if="dirLoading" overlay size="md" />
+      <!-- Only for refreshes of an already-populated listing; the first load of
+           a directory is previewed in place by the skeleton above. -->
+      <LoadingIndicator v-if="dirLoading && displayEntries.length > 0" overlay size="md" />
     </Transition>
     <div v-if="searchHasQuery && search.state.truncated" class="fs-truncated">
       {{ t('file.search.truncated') }}
@@ -552,6 +560,7 @@
 
 <script setup>
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import { ref, computed, reactive, inject, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { isRefreshing } from '@/composables/useFileRefresh'
@@ -704,10 +713,29 @@ function onDragEnd() {
     cleanupDragGhost()
 }
 
-/** Resolve the set of paths being dragged: a full multi-selection if the dragged item is selected. */
+/**
+ * Resolve the set of paths being dragged: a full multi-selection if the dragged
+ * item is selected.
+ *
+ * In SEARCH mode the multi-selection is NOT usable as-is. It is only cleared by
+ * exiting multi-select, and the query watcher deliberately keeps it (see
+ * `watch(() => search.state.query)`) — so a set built in browse mode survives
+ * into the results listing, where those paths are no longer shown. Dragging a
+ * hit then attached the invisible leftovers too.
+ *
+ * Browse mode keeps the raw set on purpose: a path can outlive the current
+ * listing (the row is still the user's selection) and the payload builder
+ * resolves its type through `metaForPath`, not the listing.
+ */
 function collectDraggedPaths(entry, path) {
     if (multiSelect.active && multiSelect.selected.has(path)) {
-        return [...multiSelect.selected]
+        const all = [...multiSelect.selected]
+        if (!searchHasQuery.value) return all
+        // Only paths the results listing actually shows. If the dragged row is
+        // not among them (a stale selection), fall back to it alone.
+        const visible = new Set(displayEntries.value.map(en => pathOf(en)))
+        const picked = all.filter(p => visible.has(p))
+        if (picked.includes(path)) return picked
     }
     return [path]
 }
@@ -738,10 +766,13 @@ async function handleInternalMoveDrop(e) {
  * or moved onto another directory in the file manager. */
 function onItemDragStart(entry, e) {
     if (!isWideScreen.value) return
-    if (searchHasQuery.value) return // moving search results around the dir tree is ambiguous
     const path = pathOf(entry)
     const paths = collectDraggedPaths(entry, path)
-    dragSourcePaths.value = paths
+    // Moving search results around the directory tree is ambiguous (the listing
+    // no longer represents the current directory), so an internal MOVE drag is
+    // only armed in browse mode. Attaching to chat stays available either way —
+    // a search hit carries its own project-relative path.
+    dragSourcePaths.value = searchHasQuery.value ? null : paths
     const isDir = entry.type === 'dir'
     if (paths.length > 1) {
         // Multi-selection: carry the whole set so dropping on the chat column
@@ -757,7 +788,9 @@ function onItemDragStart(entry, e) {
     } else {
         setAttachDragData(e.dataTransfer, path, isDir)
     }
-    e.dataTransfer.effectAllowed = 'move'
+    // A search hit can only be attached to chat (copy); browse rows can also be
+    // moved into another directory, which is what the move cursor advertises.
+    e.dataTransfer.effectAllowed = searchHasQuery.value ? 'copy' : 'move'
     // Build a DOM ghost element off-screen for reliable snapshot in Chrome.
     // The ghost must stay in the DOM until dragend — cleanupDragGhost() handles that.
     const ghost = buildAttachDragImage(
@@ -1649,10 +1682,13 @@ function entryByPath(path) {
  */
 function metaForPath(path) {
     const name = path.split('/').pop() || ''
-    const browse = props.entries?.find(e => e.name === name)
-    if (browse) return { type: browse.type, name }
+    // Exact path match wins: a search hit carries the authoritative type for
+    // that path, while the browse lookup below only matches by NAME and would
+    // pick the same-named entry of the browsed directory instead.
     const hit = search.state.results.find(r => r.path === path)
     if (hit) return { type: hit.type === 'dir' ? 'dir' : 'file', name }
+    const browse = props.entries?.find(e => e.name === name)
+    if (browse) return { type: browse.type, name }
     return { type: 'file', name }
 }
 
@@ -3422,6 +3458,15 @@ function scrollSelectedIntoView(path) {
     grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
     gap: var(--space-4);
     align-content: start;
+}
+
+/* The skeleton is a grid ITEM here, so `width: 100%` on its root (PanelSkeleton)
+   resolves against a single 90px track, and its own inner grid then lays the
+   tiles out one per row — a 99px-wide grey column 1388px tall, i.e. a fake
+   scrollbar instead of a loading state. Span every track so the inner grid gets
+   the real content width. */
+.file-grid > .panel-skeleton {
+    grid-column: 1 / -1;
 }
 
 .grid-item {

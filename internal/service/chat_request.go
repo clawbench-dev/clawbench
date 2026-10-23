@@ -104,25 +104,9 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 	// After the first AI response, session_capture persists external_session_id,
 	// so resolvedExtID != "" and the above resume branch uses it directly,
 	// bypassing this fork detection.
-	var forkContext string
-	if resume && resolvedExtID == "" {
-		forkContext = BuildForkContext(sessionID)
-		if forkContext != "" {
-			slog.Info("fork session: injecting context history",
-				slog.String("session", sessionID),
-				slog.String("backend", backendName),
-				slog.String("agent", agentID),
-				slog.Bool("is_acp", isACP))
-
-			// For ACP sessions: external_session_id is empty, so the ACP pool
-			// has no existing connection for this session. Setting Resume=false
-			// ensures the ACP backend calls NewSession (not ResumeSession with
-			// an invalid ID). The fork context in the prompt provides the
-			// necessary history, so a new session is the correct approach.
-			if isACP {
-				resume = false
-			}
-		}
+	forkContext, forkResume := resolveForkInjection(sessionID, backendName, agentID, resume, isACP, resolvedExtID)
+	if forkContext != "" {
+		resume = forkResume
 	}
 
 	// Inject media handling rules only when the user message carries attachments.
@@ -449,6 +433,63 @@ func resolveResumeSessionID(sessionID, backendName, agentID string, resume, isAC
 		slog.String("backend", backendName),
 		slog.String("agent", agentID))
 	return "", true
+}
+
+// resolveForkInjection decides whether this turn must carry injected history, and
+// what the resume flag becomes.
+//
+// Two independent sources:
+//
+//  1. The LEGACY copied-rows fork: resume is still true (the copied assistant
+//     messages are in the DB) but there is no external_session_id, so the CLI has
+//     no AI-side context. Its history is rendered on the fly from the copied rows.
+//  2. A stored BACKGROUND: a fork that copied no rows (any fork touching a group)
+//     left its source timeline in context_state.fork_context. That text is read
+//     until the session produces its first successful turn.
+//
+// The returned resume replaces the caller's value when history was injected. For
+// ACP it becomes false: external_session_id is empty, so the pool has no existing
+// connection — NewSession (not ResumeSession with an invalid id) is correct, and
+// the injected text supplies the context.
+func resolveForkInjection(sessionID, backendName, agentID string, resume, isACP bool, resolvedExtID string) (text string, newResume bool) {
+	if resume && resolvedExtID == "" {
+		if ctx := BuildForkContext(sessionID); ctx != "" {
+			slog.Info("fork session: injecting context history",
+				slog.String("session", sessionID),
+				slog.String("backend", backendName),
+				slog.String("agent", agentID),
+				slog.Bool("is_acp", isACP))
+			if isACP {
+				resume = false
+			}
+			return ctx, resume
+		}
+	}
+	if pending, ok := storedForkBackground(sessionID); ok {
+		if isACP {
+			resume = false
+		}
+		return pending, resume
+	}
+	return "", resume
+}
+
+// storedForkBackground returns the pending fork background for a session.
+//
+// The gate is "this session has not yet produced a successful turn". It must NOT
+// be an assistant-count check: a failed turn writes an assistant WARNING row
+// (persistTurnWarning), so counting would expire the background after a single
+// failure. The counterpart is ClearForkContext, called after a clean turn — that
+// write is what actually marks the background as consumed.
+//
+// The (usually absent) json_extract runs FIRST so an ordinary session pays one
+// cheap lookup instead of a chat_history scan on every turn.
+func storedForkBackground(sessionID string) (string, bool) {
+	pending := GetForkContext(sessionID)
+	if pending == "" || SessionHasRealAssistantContent(sessionID) {
+		return "", false
+	}
+	return pending, true
 }
 
 // BuildForkContext reads a session's history and formats it as a text block that

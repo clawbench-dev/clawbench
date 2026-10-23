@@ -328,6 +328,36 @@ describe('QuoteQuestionBar component', () => {
     expect(panelBlock).not.toMatch(/(?<!max-)width:\s*\d+px/)
   })
 
+  it('stops intercepting pointers while the bar is fading out (issue #572)', async () => {
+    // A drag that begins over a bar which is already leaving must reach the text
+    // underneath: the element is still in the DOM for the fade duration, and an
+    // invisible surface eating the pointerdown would swallow the whole gesture.
+    // The ENTER phase must stay interactive — that is the click the user aims
+    // at — so the two rules are asserted separately rather than by a broad
+    // "the component sets pointer-events somewhere" check.
+    const wrapper = mountBar()
+    await wrapper.findAll('.quote-bar-action')[1].trigger('click')
+    const cssText = Array.from(document.styleSheets)
+      .map((s) => {
+        try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
+        catch { return '' }
+      })
+      .join('\n')
+
+    const blockOfClass = (cls: string) => {
+      const re = new RegExp(`\\${cls}(?:\\[[^\\]]*\\])?\\s*\\{([^{}]*)\\}`)
+      const m = cssText.match(re)
+      if (!m) throw new Error(`no rule found for ${cls}`)
+      return m[1]
+    }
+
+    expect(blockOfClass('.quote-bar-leave-active')).toContain('pointer-events: none')
+    expect(blockOfClass('.quote-bar-enter-active')).not.toContain('pointer-events: none')
+    // The root rule must NOT disable pointers wholesale — that would make the
+    // toolbar itself unclickable.
+    expect(blockOfClass('.quote-question-bar')).not.toContain('pointer-events: none')
+  })
+
   it('renders only two states: collapsed needs a quote, otherwise expanded', async () => {
     // 有引用 + 未展开 → 浮动工具条
     const collapsed = mountBar({ quoteData: { text: 'quoted', filePath: 'a.ts' } })

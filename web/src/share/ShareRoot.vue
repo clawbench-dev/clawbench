@@ -9,8 +9,8 @@
     exactly as it was and the session view is free to own the chat render chain.
   -->
   <div class="share-root">
-    <div v-if="loading" class="share-root-hint">
-      <LoadingIndicator size="md" />
+    <div v-if="loading" class="share-root-hint share-root-hint--skeleton">
+      <PanelSkeleton variant="text" :rows="8" :label="t('common.loading')" />
     </div>
 
     <div v-else-if="error" class="share-root-error">
@@ -51,7 +51,7 @@
 import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { FileX2 } from 'lucide-vue-next'
-import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import DownloadProgressBar from '@/components/common/DownloadProgressBar.vue'
 import DialogOverlay from '@/components/common/DialogOverlay.vue'
 import ShareView from './ShareView.vue'
@@ -121,5 +121,13 @@ onMounted(async () => {
   font-size: var(--font-size-lg, 16px);
   font-weight: 600;
   color: var(--text-primary, #1f2328);
+}
+
+/* The placeholder fills the width and left-aligns; the error state stays
+   centred. */
+.share-root-hint--skeleton {
+  align-items: stretch;
+  justify-content: flex-start;
+  text-align: left;
 }
 </style>

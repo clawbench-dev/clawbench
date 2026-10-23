@@ -2,7 +2,6 @@
   <ModalDialog
     :open="open"
     :z-index="2500"
-    :max-width="420"
     @close="close"
   >
     <template #header>

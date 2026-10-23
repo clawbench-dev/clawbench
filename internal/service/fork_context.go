@@ -6,6 +6,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"clawbench/internal/grouprouting"
 	"clawbench/internal/model"
 )
 
@@ -71,12 +72,25 @@ type ForkContextOptions struct {
 	// BudgetChars bounds the total rendered string in runes. <= 0 falls back to
 	// defaultForkContextBudgetChars.
 	BudgetChars int
+	// CutoffID (>0) keeps only messages with id <= CutoffID. The copy-based fork
+	// path does not need it (the copied rows are already truncated), but every
+	// path that renders the SOURCE directly does: a fork point in the middle of
+	// a conversation must not carry later messages into the background.
+	CutoffID int64
 }
 
 // ForkContextMessage is one rendered history entry: a role label and its body.
 type ForkContextMessage struct {
 	Role string
 	Body string
+	// IsUser marks this entry as authored by the human user. The budget
+	// selection treats user entries as high priority, and it must NOT infer that
+	// from Role: a group timeline labels entries with MEMBER DISPLAY NAMES, and
+	// the human's label is the configurable nickname (chat.user_nickname), which
+	// no case-insensitive comparison against "user" can recognize. Leaving this
+	// false falls back to the role comparison, so single-chat entries (labeled
+	// "user"/"User") keep working without setting it.
+	IsUser bool
 }
 
 // BuildForkContextWithOptions reads a session's history from the DB, renders it,
@@ -85,6 +99,15 @@ func BuildForkContextWithOptions(sessionID string, o ForkContextOptions) string 
 	messages, err := GetMessagesBySessionIDRaw(sessionID)
 	if err != nil || len(messages) == 0 {
 		return ""
+	}
+	if o.CutoffID > 0 {
+		kept := make([]model.ChatMessage, 0, len(messages))
+		for _, m := range messages {
+			if m.ID <= o.CutoffID {
+				kept = append(kept, m)
+			}
+		}
+		messages = kept
 	}
 
 	// Batch-fetch tool call details for the session (input/output are stored
@@ -101,7 +124,115 @@ func BuildForkContextWithOptions(sessionID string, o ForkContextOptions) string 
 	return BoundForkContext(RenderForkContextMessages(messages, toolCallMap, o), o)
 }
 
+// RenderGroupForkContext renders a GROUP session's aggregate timeline as the
+// background text injected into a forked session (any target kind).
+//
+// It deliberately reads ONLY the group's own chat_history — never a member's
+// session. Member rows carry no chat_history rows at all (their memory lives in
+// their own CLI/ACP external session), so "each member's own history" is not
+// even retrievable; and the group contract is that members exchange SPEECH TEXT
+// only (tool calls and thinking stay private — group_inject.go, decision #9).
+// Including tool payloads would also blow the budget: assistant entries average
+// ~12 KB versus ~51 characters for user entries.
+//
+// cutoff (>0) keeps only messages with id <= cutoff, matching the fork point
+// the user clicked. Unlike the single-chat path the cut point is NOT extended to
+// the next assistant reply: a group "answer" to one user message is a multi-
+// member discussion with no single reply to include, so extending would
+// arbitrarily keep only the first speaker and drop the rest.
+func RenderGroupForkContext(groupID string, cutoff int64, o ForkContextOptions) string {
+	msgs, err := GetMessagesBySessionIDRaw(groupID)
+	if err != nil || len(msgs) == 0 {
+		return ""
+	}
+	if cutoff > 0 {
+		kept := msgs[:0]
+		for _, m := range msgs {
+			if m.ID <= cutoff {
+				kept = append(kept, m)
+			}
+		}
+		msgs = kept
+	}
+	names := groupSpeakerNames(groupID)
+	return BoundForkContext(renderGroupForkEntries(msgs, names), o)
+}
+
+// groupSpeakerNames maps a member ROW id to its display name for background
+// rendering. Left members are included on purpose: their speech stays on the
+// timeline and must stay attributed.
+func groupSpeakerNames(groupID string) map[string]string {
+	members, err := ListGroupMembers(groupID)
+	if err != nil {
+		return nil
+	}
+	names := make(map[string]string, len(members))
+	for _, m := range members {
+		names[m.ID] = m.Name
+	}
+	return names
+}
+
+// renderGroupForkEntries converts group timeline rows into history entries.
+//
+// System rows ("轮到用户发言" and membership changes) are skipped: they are
+// orchestration events, not conversation. An entry whose body ends up empty is
+// skipped too, so a tool-only or thinking-only reply adds no blank line.
+func renderGroupForkEntries(msgs []model.ChatMessage, names map[string]string) []ForkContextMessage {
+	entries := make([]ForkContextMessage, 0, len(msgs))
+	for _, m := range msgs {
+		if m.Role != roleUser && m.Role != roleAssistant {
+			continue
+		}
+		body := groupForkBody(m, names)
+		if body == "" {
+			continue
+		}
+		entries = append(entries, ForkContextMessage{Role: groupForkRole(m, names), Body: body, IsUser: m.Role == roleUser})
+	}
+	return entries
+}
+
+// groupForkRole is the display label for one timeline row: the human user's
+// reserved participant name, or the speaking member's display name.
+func groupForkRole(m model.ChatMessage, names map[string]string) string {
+	if m.Role == roleUser {
+		return groupUserTarget()
+	}
+	if n := names[m.AgentID]; n != "" {
+		return n
+	}
+	return "成员"
+}
+
+// groupForkBody renders one row's readable text: protocol tags stripped, ask-
+// question cards kept as prose (they are part of what was discussed), and user
+// attachments summarized the same way the live injection does.
+func groupForkBody(m model.ChatMessage, names map[string]string) string {
+	text := strings.TrimSpace(stripAskQuestionTags(ExtractPlainText(m.Content)))
+	if m.Role == roleUser {
+		text = renderMentionsReadable(userTextWithAttachments(text, m.Files), names)
+	} else {
+		text = renderMentionsReadable(text, names)
+	}
+	text = strings.TrimSpace(grouprouting.StripGoalSatisfied(text))
+
+	questions := askQuestionTexts(m.Content)
+	if len(questions) == 0 {
+		return text
+	}
+	rendered := make([]string, 0, len(questions)+1)
+	if text != "" {
+		rendered = append(rendered, text)
+	}
+	for _, q := range questions {
+		rendered = append(rendered, "[提问] "+q)
+	}
+	return strings.Join(rendered, "\n")
+}
+
 // RenderForkContextMessages converts stored messages into ordered history
+
 // entries (chronological). Text blocks are kept as-is, tool_use blocks are
 // rendered as structured JSON with their input trimmed, and thinking/warning/
 // error blocks are skipped.
@@ -304,6 +435,9 @@ func selectForkEntries(entries []ForkContextMessage, avail int) map[int]string {
 // lowercase role constant directly would classify every entry on that path as an
 // assistant and silently invert the priority this file exists to enforce.
 func isUserEntry(e ForkContextMessage) bool {
+	if e.IsUser {
+		return true
+	}
 	return strings.EqualFold(e.Role, roleUser)
 }
 

@@ -126,7 +126,11 @@ describe('OfficePreview', () => {
 
   it('shows loading overlay initially', () => {
     const wrapper = mountOffice()
-    expect(wrapper.find('.loading-indicator.overlay').exists()).toBe(true)
+    // A document preview has no rows to preserve, so it previews the page shape
+    // inside an opaque overlay rather than centring a ring.
+    const overlay = wrapper.find('.office-loading-overlay')
+    expect(overlay.exists()).toBe(true)
+    expect(overlay.find('.panel-skeleton').exists()).toBe(true)
   })
 
   it('renders docx component for .docx files', () => {

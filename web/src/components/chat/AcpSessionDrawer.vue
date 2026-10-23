@@ -8,8 +8,8 @@
       <SearchInput v-model="searchQuery" :placeholder="t('chat.acpSession.searchPlaceholder')" />
     </div>
     <div class="acp-session-list">
-      <div v-if="acpSessionsLoading && acpSessions.length === 0" class="acp-session-empty">
-        <LoadingIndicator size="md" :label="t('chat.acpSession.loading')" />
+      <div v-if="acpSessionsLoading && acpSessions.length === 0" class="acp-session-skeleton">
+        <PanelSkeleton variant="list" :rows="8" :meta="true" :label="t('chat.acpSession.loading')" />
       </div>
       <div v-else-if="acpSessionsNotSupported" class="acp-session-empty">
         {{ t('chat.acpSession.notSupported') }}
@@ -70,6 +70,7 @@ import { Import as ImportIcon } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
 import { useAcpSession, type AcpSessionInfo } from '@/composables/useAcpSession'
 import { useAgents } from '@/composables/useAgents'
@@ -238,6 +239,11 @@ onBeforeUnmount(teardownObserver)
   gap: var(--space-4);
   color: var(--text-muted, #999);
   font-size: var(--font-size-md);
+}
+
+/* First load: preview the session rows; the empty states stay centred. */
+.acp-session-skeleton {
+  padding: var(--space-2) 0;
 }
 
 .acp-session-item {

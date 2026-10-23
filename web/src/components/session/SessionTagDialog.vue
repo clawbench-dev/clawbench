@@ -6,7 +6,7 @@
       <div v-if="errorMsg" class="st-error">{{ errorMsg }}</div>
       <!-- Existing candidates: global tags + this project's tags -->
       <div class="st-section-label">{{ t('sessionTags.existingLabel') }}</div>
-      <div v-if="loading" class="st-empty">{{ t('common.loading') }}</div>
+      <PanelSkeleton v-if="loading" class="st-skeleton" variant="text" :rows="3" :label="t('common.loading')" />
       <div v-else-if="candidates.length === 0" class="st-empty">{{ t('sessionTags.emptyCandidates') }}</div>
       <div v-else class="st-candidate-list">
         <div
@@ -96,6 +96,7 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Globe, Plus, Trash2 } from 'lucide-vue-next'
 import ModalDialog from '@/components/common/ModalDialog.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import { useDialog } from '@/composables/useDialog.ts'
 import { apiGet, apiDelete, apiPatch } from '@/utils/api.ts'
 import { tagAccent, readableTextOn } from '@/utils/tagColor.ts'
@@ -326,6 +327,12 @@ watch(() => props.open, (open) => {
 .st-empty {
   font-size: var(--font-size-sm);
   color: var(--text-muted);
+  padding: var(--space-3) 0;
+}
+
+/* Placeholder for the candidate chips: a couple of short text runs, since the
+   list is a wrapping chip row rather than full-width lines. */
+.st-skeleton {
   padding: var(--space-3) 0;
 }
 

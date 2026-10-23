@@ -65,7 +65,7 @@ const { mockState, resetMockState } = vi.hoisted(() => {
   return { mockState, resetMockState }
 })
 
-const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, mockForceCleanupStreamingState, mockOnAppResume, resetAdditionalMocks } = vi.hoisted(() => {
+const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, mockGroupChatFns, mockForceCleanupStreamingState, mockOnAppResume, resetAdditionalMocks } = vi.hoisted(() => {
   const mockIdentity: Record<string, string | boolean> = {
     currentSessionTitle: '',
     currentBackend: '',
@@ -90,6 +90,10 @@ const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, 
     updateUsageState: vi.fn(),
     clearUsageState: vi.fn(),
     clearUsageStateById: vi.fn(),
+    refreshGroupRoster: vi.fn(),
+  }
+  const mockGroupChatFns = {
+    generateMemberAvatars: vi.fn().mockResolvedValue(undefined),
   }
   const mockAgentFns = {
     loadAgents: vi.fn().mockResolvedValue(undefined),
@@ -130,6 +134,8 @@ const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, 
     mockIdentityFns.saveThinkingPref.mockReset()
     mockIdentityFns.updateUsageState.mockReset()
     mockIdentityFns.clearUsageState.mockReset()
+    mockIdentityFns.refreshGroupRoster.mockReset()
+    mockGroupChatFns.generateMemberAvatars.mockReset().mockResolvedValue(undefined)
     mockUpdateUsageState.mockReset()
     mockClearUsageState.mockReset()
     mockAgentFns.loadAgents.mockReset().mockResolvedValue(undefined)
@@ -148,7 +154,7 @@ const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, 
     mockIsReplayingEvents.value = false
     resumeHandlers.length = 0
   }
-  return { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockForceCleanupStreamingState, mockIdentityFns, mockOnAppResume, resetAdditionalMocks }
+  return { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockForceCleanupStreamingState, mockIdentityFns, mockGroupChatFns, mockOnAppResume, resetAdditionalMocks }
 })
 
 // ── Mocks ──
@@ -343,6 +349,18 @@ vi.mock('@/composables/useSessionIdentity.ts', () => ({
   updateUsageState: mockUpdateUsageState,
   clearUsageState: mockClearUsageState,
   clearUsageStateById: mockIdentityFns.clearUsageStateById,
+  // The group-roster refresh hook App.vue registers. Fork calls it after
+  // generating member avatars; a mock (rather than the real registry) keeps the
+  // assertion about "was the roster refreshed?" local to this file.
+  refreshGroupRosterIfRegistered: (groupId: string) => mockIdentityFns.refreshGroupRoster(groupId),
+}))
+
+// Fork's avatar backfill imports useGroupChat lazily. A file-level mock (rather
+// than vi.doMock inside each test) is required: the module is already cached by
+// the time the test body runs, so doMock has no effect and the real generator
+// would run against a fetch stub.
+vi.mock('@/composables/useGroupChat', () => ({
+  generateMemberAvatars: (groupId: string) => mockGroupChatFns.generateMemberAvatars(groupId),
 }))
 
 vi.mock('@/composables/useToast', () => ({
@@ -6820,7 +6838,7 @@ describe('forkSession', () => {
 
     const session = createSession()
     mockState.currentSessionId = 'source-s1'
-    const result = await session.forkSession('source-s1', undefined, 'codebuddy')
+    const result = await session.forkSession('source-s1', undefined, { kind: 'chat', agentId: 'codebuddy' })
 
     expect(result).toBe(true)
     expect(globalThis.fetch).toHaveBeenCalledWith(
@@ -6840,7 +6858,7 @@ describe('forkSession', () => {
 
     const session = createSession()
     mockState.currentSessionId = 'source-s1'
-    const result = await session.forkSession('source-s1', 42, 'claude')
+    const result = await session.forkSession('source-s1', 42, { kind: 'chat', agentId: 'claude' })
 
     expect(result).toBe(true)
     expect(globalThis.fetch).toHaveBeenCalledWith(
@@ -6850,6 +6868,132 @@ describe('forkSession', () => {
         body: JSON.stringify({ sessionId: 'source-s1', beforeMessageId: 42, agentId: 'claude' }),
       })
     )
+  })
+
+  it('sends group target fields for a group fork', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ ok: true, sessionId: 'forked-g1', sessionCount: 3, targetKind: 'group' }),
+    })
+
+    const session = createSession()
+    mockState.currentSessionId = 'source-g1'
+    const result = await session.forkSession('source-g1', 7, {
+      kind: 'group',
+      hostAgentId: 'claude',
+      memberAgentIds: ['claude', 'claude', 'codebuddy'],
+    })
+
+    expect(result).toBe(true)
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      '/api/ai/session/fork',
+      expect.objectContaining({
+        method: 'POST',
+        // targetKind is what switches the backend away from copying message
+        // rows; the duplicated agent id is intentional (one per instance).
+        body: JSON.stringify({
+          sessionId: 'source-g1',
+          beforeMessageId: 7,
+          targetKind: 'group',
+          hostAgentId: 'claude',
+          memberAgentIds: ['claude', 'claude', 'codebuddy'],
+        }),
+      })
+    )
+  })
+
+  // A forked group's members are new rows whose avatars are generated AFTER the
+  // session switch. The roster fetched on entry therefore predates them, and
+  // without a second refresh the fallback icons stick until the user switches
+  // away and back (the reported symptom). This pins the refresh call AND its
+  // ORDERING: generation must be awaited, not merely started.
+  it('refreshes the group roster after generating fork avatars', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ ok: true, sessionId: 'forked-g9', sessionCount: 3, targetKind: 'group' }),
+    })
+    // Hold generation open so "refresh happened too early" is observable. The
+    // default mock resolves immediately, which made the ordering untestable:
+    // `void generateMemberAvatars(...)` also passed, because by the time the
+    // assertion ran the promise had already settled.
+    let resolveGen!: () => void
+    mockGroupChatFns.generateMemberAvatars.mockReturnValueOnce(
+      new Promise<void>((r) => { resolveGen = r }),
+    )
+
+    const session = createSession()
+    mockState.currentSessionId = 'source-g9'
+    await session.forkSession('source-g9', 3, {
+      kind: 'group',
+      hostAgentId: 'claude',
+      memberAgentIds: ['claude', 'claude'],
+    })
+
+    // Generation STARTED but has not finished: the roster must not be reloaded
+    // yet — it would read the same avatar-less rows and the fix would be a
+    // no-op. A non-awaited call refreshes right here, so this assertion is what
+    // distinguishes the two implementations.
+    await vi.waitFor(() => expect(mockGroupChatFns.generateMemberAvatars).toHaveBeenCalledWith('forked-g9'))
+    expect(mockIdentityFns.refreshGroupRoster).not.toHaveBeenCalled()
+
+    // Let generation complete; only now may the roster be reloaded.
+    resolveGen()
+    await vi.waitFor(() => expect(mockIdentityFns.refreshGroupRoster).toHaveBeenCalledWith('forked-g9'))
+  })
+
+  // The refresh must not fire for a session the user already left: it would
+  // overwrite the roster of whatever group they are looking at now.
+  it('does not refresh the roster when the user left the forked group', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ ok: true, sessionId: 'forked-g10', sessionCount: 3, targetKind: 'group' }),
+    })
+
+    const { session, options } = createSessionInternal()
+    mockState.currentSessionId = 'source-g10'
+    await session.forkSession('source-g10', 3, { kind: 'group', hostAgentId: 'claude', memberAgentIds: ['claude'] })
+    // Simulate switching away before the avatar pass finishes. The composable
+    // tracks identity through the REF it was handed, not mockState — writing to
+    // the wrong one would leave the "still on this group" check passing.
+    options.currentSessionId.value = 'other-session'
+
+    await vi.waitFor(() => expect(mockGroupChatFns.generateMemberAvatars).toHaveBeenCalled())
+    expect(mockIdentityFns.refreshGroupRoster).not.toHaveBeenCalled()
+  })
+
+  // A chat target has no roster to refresh.
+  it('does not touch the group roster for a chat fork', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ ok: true, sessionId: 'forked-c1', sessionCount: 2, targetKind: 'chat' }),
+    })
+
+    const session = createSession()
+    mockState.currentSessionId = 'source-c1'
+    await session.forkSession('source-c1', 1, { kind: 'chat', agentId: 'claude' })
+
+    expect(mockGroupChatFns.generateMemberAvatars).not.toHaveBeenCalled()
+    expect(mockIdentityFns.refreshGroupRoster).not.toHaveBeenCalled()
+  })
+
+  it('does not send agentId for a free-mode group fork', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ ok: true, sessionId: 'forked-g2', sessionCount: 3, targetKind: 'group' }),
+    })
+
+    const session = createSession()
+    mockState.currentSessionId = 'source-g1'
+    await session.forkSession('source-g1', undefined, {
+      kind: 'group',
+      hostAgentId: '',
+      memberAgentIds: ['claude', 'codebuddy'],
+    })
+
+    const body = JSON.parse((globalThis.fetch as any).mock.calls[0][1].body)
+    expect(body.targetKind).toBe('group')
+    expect(body.hostAgentId).toBe('')
+    expect(body).not.toHaveProperty('agentId')
   })
 })
 

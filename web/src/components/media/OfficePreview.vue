@@ -15,8 +15,11 @@
       <VueOfficePptx v-else-if="isPpt" :src="fileUrl" @rendered="onRendered" @error="onError" />
     </div>
 
-    <!-- Loading overlay (absolute, does not block component mount) -->
-    <LoadingIndicator v-if="loading" overlay size="md" :label="t('common.loading')" />
+    <!-- Loading overlay (absolute, does not block component mount). A document
+         preview has no rows to preserve, so it previews the page shape. -->
+    <div v-if="loading" class="office-loading-overlay">
+      <PanelSkeleton class="office-loading-skeleton" variant="text" :rows="12" :label="t('common.loading')" />
+    </div>
 
     <!-- Error overlay -->
     <div v-if="error" class="office-error-overlay">
@@ -41,7 +44,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { FileX, Download, RefreshCw } from 'lucide-vue-next'
-import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import { buildLocalFileUrl, downloadFileByPath } from '@/utils/download.ts'
 import { appLog } from '@/utils/appLog.ts'
 
@@ -392,6 +395,22 @@ defineExpose({
 .office-preview-body :deep(.slide-layout-wrapper) {
   margin: 0 !important;
   padding: 0 !important;
+}
+
+/* Loading overlay — opaque so the half-rendered document underneath does not
+   show through the placeholder. */
+.office-loading-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  background: var(--bg-primary);
+  padding: 48px 24px;
+  overflow: hidden;
+}
+
+.office-loading-skeleton {
+  max-width: 720px;
+  margin: 0 auto;
 }
 
 /* Error overlay */

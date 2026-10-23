@@ -39,11 +39,26 @@ vi.mock('@/utils/themeMeta', () => ({
   isDarkTheme: () => false,
 }))
 
+// The loading placeholder announces itself through a translated label, so the
+// component needs an i18n instance.
+vi.mock('vue-i18n', () => ({
+  useI18n: () => ({ t: (k: string) => k }),
+}))
+
 vi.mock('@/composables/useQuoteQuestion.ts', () => ({
   useQuoteQuestion: () => ({
     showBar: quoteState.showBar,
     hideBar: quoteState.hideBar,
   }),
+  // The component now routes its bridge callback through this shared factory
+  // (three iframe hosts used to hand-roll the same three decisions, and this one
+  // silently dropped `anchor`). The mock must provide it, or the attach path
+  // throws and the bridge never registers. It is reproduced rather than
+  // imported so this suite still isolates the component from the real
+  // composable — the factory's own behaviour is covered where it lives.
+  makeIframeQuoteShowHandler: (showBar: (d: unknown, o?: unknown) => void) =>
+    (data: unknown, anchor: unknown) =>
+      showBar(data, { delay: 0, anchor: anchor ?? undefined, suppressBar: false }),
 }))
 
 import OpenApiPreview from '../OpenApiPreview.vue'
@@ -120,16 +135,26 @@ describe('OpenApiPreview quote bridge', () => {
     wrapper.unmount()
   })
 
-  it('surfaces selections through showBar({ delay: 0 }) and clears via hideBar', async () => {
+  it('surfaces selections through the shared handler (delay 0) and clears via hideBar', async () => {
     const wrapper = mountPreview({ chatQuote: true })
     await loadIframeAndAttach(wrapper)
     const opts = bridgeState.attach.mock.calls[0][0]
 
     opts.show({ text: 'GET /pets', filePath: '/specs/api.yaml', language: '', startLine: 0, endLine: 0 })
-    expect(quoteState.showBar).toHaveBeenCalledWith(
-      { text: 'GET /pets', filePath: '/specs/api.yaml', language: '', startLine: 0, endLine: 0 },
-      { delay: 0 },
-    )
+    // The bridge now hands over the selection's HOST-viewport anchor as a second
+    // argument. Losing it was this host's bug: without an anchor `showBar` falls
+    // back to its pinned top position, which is the reported "menu pops up at the
+    // top of the page". Passing it through is the contract, so assert it is
+    // forwarded rather than ignored.
+    const [payload, optsArg] = quoteState.showBar.mock.calls[0] as [unknown, Record<string, unknown>]
+    expect(payload).toEqual({
+      text: 'GET /pets', filePath: '/specs/api.yaml', language: '', startLine: 0, endLine: 0,
+    })
+    expect(optsArg.delay).toBe(0)
+    expect(optsArg).toHaveProperty('anchor')
+    // Android draws its own menu; the in-page bar must be suppressed there. This
+    // host never passed the flag, so it double-popped.
+    expect(optsArg).toHaveProperty('suppressBar')
 
     opts.hide()
     expect(quoteState.hideBar).toHaveBeenCalledTimes(1)

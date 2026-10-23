@@ -1,10 +1,11 @@
 package service
 
 import (
+	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 
 	"clawbench/internal/store"
 )
@@ -13,39 +14,101 @@ import (
 // Exported so handler tests and other external packages can create this table
 // in their test databases.
 //
-// A row freezes one conversation into an opaque JSON snapshot (payload) at
-// share time. Unlike file_shares, which stores a live path and reads the file
-// on every request, a session share is a point-in-time copy: the conversation
-// may keep growing, be rewound, or be archived afterwards without changing what
-// the link shows. That is deliberate — the alternative (re-reading chat_history
-// on each anonymous request) would make the link's contents drift silently and
-// would expose the session to a later-project-membership change.
+// A row records only WHICH messages a link exposes — never their content. The
+// JSON is assembled on every public request (see session_share_payload.go), so
+// a shared conversation keeps reflecting edits, summaries that landed later,
+// avatar changes and deletions. Only the SELECTION is frozen: message_ids is
+// always the resolved, explicit, chronological id list, never an empty array
+// meaning "all" — storing "all" would make the link silently grow as the
+// conversation continues, which is exactly what a share must not do.
 //
-// token is the sole credential (capability URL). session_id is indexed so the
-// session-deletion paths can revoke shares in one statement; there is no
-// foreign key to chat_sessions because a share must survive the session being
-// archived (only a hard delete revokes it).
+// token is the sole credential (capability URL). session_id is UNIQUE and
+// indexed so the session-deletion paths can revoke shares in one statement, and
+// so two concurrent creations cannot leave a session with two live tokens (the
+// second one would be unreachable by session id). There is no foreign key to
+// chat_sessions because a share must survive the session being archived (only a
+// hard delete revokes it).
 const SessionSharesDDL = `
 CREATE TABLE IF NOT EXISTS session_shares (
 	token TEXT PRIMARY KEY,
 	session_id TEXT NOT NULL,
-	title TEXT NOT NULL DEFAULT '',
-	backend TEXT NOT NULL DEFAULT '',
-	message_count INTEGER NOT NULL DEFAULT 0,
-	payload TEXT NOT NULL,
+	message_ids TEXT NOT NULL DEFAULT '[]',
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
-CREATE INDEX IF NOT EXISTS idx_session_shares_session ON session_shares(session_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_session_shares_session ON session_shares(session_id);
 `
+
+// migrateSessionSharesToIDOnly rebuilds session_shares without the snapshot
+// columns and DISCARDS every existing row.
+//
+// Dropping the rows is not optional: a legacy row's selection lived inside the
+// payload being thrown away, so keeping the row would leave message_ids at its
+// '[]' default — which the reader interprets as "nothing left to show" (404) at
+// best, and as "share everything" at worst if the sentinel ever changed.
+//
+// Rebuild rather than a chain of ALTER TABLE DROP COLUMN: the table is empty
+// afterwards, so the copy is free, and a rebuild makes the result byte-identical
+// to what a fresh install gets from SessionSharesDDL (column order, NOT NULL,
+// defaults). DROP TABLE takes the index with it, so the index is recreated
+// inside the same transaction.
+func migrateSessionSharesToIDOnly() error {
+	ctx := context.Background()
+	tx, err := store.WriteBegin()
+	if err != nil {
+		return err
+	}
+	defer store.WriteUnlock()
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM session_shares`); err != nil {
+		return fmt.Errorf("clear legacy session shares: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `CREATE TABLE session_shares_new (
+		token TEXT PRIMARY KEY,
+		session_id TEXT NOT NULL,
+		message_ids TEXT NOT NULL DEFAULT '[]',
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	)`); err != nil {
+		return fmt.Errorf("create session_shares_new: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DROP TABLE session_shares`); err != nil {
+		return fmt.Errorf("drop legacy session_shares: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `ALTER TABLE session_shares_new RENAME TO session_shares`); err != nil {
+		return fmt.Errorf("rename session_shares_new: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_session_shares_session ON session_shares(session_id)`); err != nil {
+		return fmt.Errorf("recreate idx_session_shares_session: %w", err)
+	}
+	return tx.Commit()
+}
 
 // UpsertSessionShare creates a share for sessionID (created=true) or, when a
 // share already exists for that session, rotates it to a fresh token
 // (created=false). Rotating invalidates the previous link immediately — only
 // the returned token is valid afterwards. Mirrors UpsertFileShare.
-func UpsertSessionShare(sessionID, title, backend string, messageCount int, payload string) (token string, created bool, err error) {
+//
+// messageIDs must be the RESOLVED selection (see ResolveSessionShareSelection):
+// non-empty, chronological, de-duplicated. An empty list is rejected rather
+// than stored, because the reader treats an empty selection as "nothing left to
+// show" and would 404 the link the moment it was created.
+//
+// The delete+insert runs in one transaction: session_id is UNIQUE, so two
+// concurrent creations that both saw "no existing share" would otherwise race
+// into a constraint violation — or, before the index existed, leave two live
+// tokens where only one is reachable by session id.
+func UpsertSessionShare(sessionID string, messageIDs []int64) (token string, created bool, err error) {
 	if sessionID == "" {
 		return "", false, fmt.Errorf("session id is required")
 	}
+	if len(messageIDs) == 0 {
+		return "", false, fmt.Errorf("session share requires at least one message id")
+	}
+	encoded, err := json.Marshal(messageIDs)
+	if err != nil {
+		return "", false, fmt.Errorf("marshal session share message ids: %w", err)
+	}
+
 	_, existing, getErr := GetSessionShareBySession(sessionID)
 	if getErr != nil {
 		return "", false, getErr
@@ -56,35 +119,84 @@ func UpsertSessionShare(sessionID, title, backend string, messageCount int, payl
 		return "", false, err
 	}
 
-	if existing {
-		// Rotate: delete the old row first so the previous token stops working.
-		if _, err := store.WriteExec("DELETE FROM session_shares WHERE session_id = ?", sessionID); err != nil {
-			return "", false, fmt.Errorf("delete stale session share: %w", err)
-		}
+	ctx := context.Background()
+	tx, txErr := store.WriteBegin()
+	if txErr != nil {
+		return "", false, txErr
 	}
-	if _, err := store.WriteExec(
-		"INSERT INTO session_shares (token, session_id, title, backend, message_count, payload) VALUES (?, ?, ?, ?, ?, ?)",
-		token, sessionID, title, backend, messageCount, payload,
+	defer store.WriteUnlock()
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx, "DELETE FROM session_shares WHERE session_id = ?", sessionID); err != nil {
+		return "", false, fmt.Errorf("delete stale session share: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		"INSERT INTO session_shares (token, session_id, message_ids) VALUES (?, ?, ?)",
+		token, sessionID, string(encoded),
 	); err != nil {
 		return "", false, fmt.Errorf("insert session share: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return "", false, fmt.Errorf("commit session share: %w", err)
 	}
 	return token, !existing, nil
 }
 
-// GetSessionShareByToken resolves a capability token to its frozen snapshot.
-// Returns ok=false when no share matches (link unknown or revoked).
-func GetSessionShareByToken(token string) (payload, title string, messageCount int, ok bool, err error) {
+// GetSessionShareByToken resolves a capability token to its share row joined
+// with the session's LIVE metadata. Returns ok=false when no share matches
+// (link unknown or revoked) or its session row is gone.
+//
+// The JOIN is INNER, mirroring ListSessionShares: every delete path revokes the
+// share in the same transaction that removes the session, so a share without a
+// session is indistinguishable from a revoked link.
+func GetSessionShareByToken(token string) (SessionShare, bool, error) {
+	var s SessionShare
 	if token == "" {
-		return "", "", 0, false, nil
+		return s, false, nil
 	}
-	row := store.ReadDB().QueryRow("SELECT payload, title, message_count FROM session_shares WHERE token = ?", token)
-	if err := row.Scan(&payload, &title, &messageCount); err != nil {
+	var rawIDs string
+	var archived int
+	err := store.ReadDB().QueryRow(
+		`SELECT sh.token, sh.session_id, sh.message_ids, sh.created_at,
+		        cs.title, cs.backend, cs.archived
+		   FROM session_shares sh
+		   JOIN chat_sessions cs ON cs.id = sh.session_id
+		  WHERE sh.token = ?`,
+		token,
+	).Scan(&s.Token, &s.SessionID, &rawIDs, &s.CreatedAt, &s.Title, &s.Backend, &archived)
+	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return "", "", 0, false, nil
+			return SessionShare{}, false, nil
 		}
-		return "", "", 0, false, fmt.Errorf("query session share by token: %w", err)
+		return SessionShare{}, false, fmt.Errorf("query session share by token: %w", err)
 	}
-	return payload, title, messageCount, true, nil
+	ids, err := decodeSessionShareMessageIDs(rawIDs)
+	if err != nil {
+		return SessionShare{}, false, fmt.Errorf("session share %s: %w", token, err)
+	}
+	s.MessageIDs = ids
+	s.MessageCount = len(ids)
+	s.Archived = archived != 0
+	return s, true, nil
+}
+
+// decodeSessionShareMessageIDs parses the stored id array.
+//
+// A malformed value is an ERROR, never an empty list: "empty" means "the shared
+// messages are all gone" (the reader 404s), while silently treating a corrupt
+// row as empty would turn a data bug into a dead link with no explanation.
+func decodeSessionShareMessageIDs(raw string) ([]int64, error) {
+	if raw == "" {
+		return nil, fmt.Errorf("empty message_ids")
+	}
+	var ids []int64
+	if err := json.Unmarshal([]byte(raw), &ids); err != nil {
+		return nil, fmt.Errorf("decode message_ids: %w", err)
+	}
+	if ids == nil {
+		return nil, fmt.Errorf("empty message_ids")
+	}
+	return ids, nil
 }
 
 // GetSessionShareBySession returns the active token for a session.
@@ -152,47 +264,22 @@ func DeleteSessionShareBySession(sessionID string) error {
 	return nil
 }
 
-// DeleteSessionSharesBySessionIDs revokes shares for multiple sessions in one
-// statement (used by the archived-session retention purge).
-func DeleteSessionSharesBySessionIDs(sessionIDs []string) error {
-	clean := make([]string, 0, len(sessionIDs))
-	for _, id := range sessionIDs {
-		if id != "" {
-			clean = append(clean, id)
-		}
-	}
-	if len(clean) == 0 {
-		return nil
-	}
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(clean)), ",")
-	args := make([]any, 0, len(clean))
-	for _, id := range clean {
-		args = append(args, id)
-	}
-	if _, err := store.WriteExec("DELETE FROM session_shares WHERE session_id IN ("+placeholders+")", args...); err != nil {
-		return fmt.Errorf("delete session shares by session ids: %w", err)
-	}
-	return nil
-}
-
-// DeleteAllSessionShares revokes every session share link.
-func DeleteAllSessionShares() error {
-	if _, err := store.WriteExec("DELETE FROM session_shares"); err != nil {
-		return fmt.Errorf("delete all session shares: %w", err)
-	}
-	return nil
-}
-
-// SessionShare describes one active session share (list view item).
+// SessionShare describes one active session share. Title / Backend / Archived
+// are read from chat_sessions on every call: nothing about the conversation is
+// frozen, so a rename shows up in both the drawer and the public page.
 type SessionShare struct {
-	Token        string `json:"token"`
-	SessionID    string `json:"sessionId"`
-	Title        string `json:"title"`
-	Backend      string `json:"backend"`
+	Token      string  `json:"token"`
+	SessionID  string  `json:"sessionId"`
+	Title      string  `json:"title"`
+	Backend    string  `json:"backend"`
+	MessageIDs []int64 `json:"messageIds"`
+	// MessageCount is the SELECTED count (len(MessageIDs)). Messages deleted
+	// after the share was created still count here; the public page renders
+	// only the survivors, so the two can differ until the next rotation.
 	MessageCount int    `json:"messageCount"`
 	CreatedAt    string `json:"createdAt"`
 	// Archived reports whether the underlying session is archived. The share
-	// still works (the snapshot is a frozen copy) and must stay revocable, but
+	// still works (its messages are still there) and must stay revocable, but
 	// the session itself is no longer addressable, so the UI cannot offer
 	// "open conversation" for it.
 	Archived bool `json:"archived"`
@@ -215,7 +302,8 @@ func ListSessionShares(projectPath string) ([]SessionShare, error) {
 		return nil, idErr
 	}
 	rows, err := store.ReadDB().Query(
-		`SELECT sh.token, sh.session_id, sh.title, sh.backend, sh.message_count, sh.created_at, cs.archived
+		`SELECT sh.token, sh.session_id, sh.message_ids, sh.created_at,
+		        cs.title, cs.backend, cs.archived
 		   FROM session_shares sh
 		   JOIN chat_sessions cs ON cs.id = sh.session_id
 		  WHERE cs.project_id = ?
@@ -230,10 +318,17 @@ func ListSessionShares(projectPath string) ([]SessionShare, error) {
 	shares := make([]SessionShare, 0)
 	for rows.Next() {
 		var s SessionShare
+		var rawIDs string
 		var archived int
-		if err := rows.Scan(&s.Token, &s.SessionID, &s.Title, &s.Backend, &s.MessageCount, &s.CreatedAt, &archived); err != nil {
+		if err := rows.Scan(&s.Token, &s.SessionID, &rawIDs, &s.CreatedAt, &s.Title, &s.Backend, &archived); err != nil {
 			return nil, fmt.Errorf("scan session share: %w", err)
 		}
+		ids, err := decodeSessionShareMessageIDs(rawIDs)
+		if err != nil {
+			return nil, fmt.Errorf("session share %s: %w", s.Token, err)
+		}
+		s.MessageIDs = ids
+		s.MessageCount = len(ids)
 		s.Archived = archived != 0
 		shares = append(shares, s)
 	}

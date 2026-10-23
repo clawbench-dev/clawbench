@@ -257,12 +257,13 @@
     <!-- Session info bar. Always rendered to reserve vertical space, preventing
          layout shift when async data loads after messages.
          Single chat shows model / mode+auto-approve / cruise / context-usage.
-         A GROUP session shows ONLY the group-level switches (auto-cruise and
-         auto-approve) — model/mode/usage are per-agent settings with no owner on
-         a multi-agent timeline, so they stay hidden. These two chips are a
-         second entry point for the same switches as the group settings sheet
-         (which is unchanged); cruise is driven by the group roster prop, and
-         auto-approve by the shared session identity (both server-authoritative). -->
+         A GROUP session shows ONLY the group-level switches (auto-cruise,
+         free-mode concurrency, auto-approve) — model/mode/usage are per-agent
+         settings with no owner on a multi-agent timeline, so they stay hidden.
+         These chips are a second entry point for the same switches as the group
+         settings sheet (which is unchanged); cruise and concurrency are driven
+         by the group roster props, and auto-approve by the shared session
+         identity (all server-authoritative). -->
     <div class="chat-session-info">
       <template v-if="!isGroupSession">
         <!-- Empty currentModelName is a real state, not a loading gap: an ACP
@@ -290,11 +291,20 @@
           </span>
         </template>
       </template>
-      <!-- Group session: the two group-level switches. Same chips/styling as the
-           single-chat bar; toggling emits up (App owns the group PATCH + roster
-           refresh) so the group settings sheet stays in sync. -->
+      <!-- Group session: the group-level switches (auto-cruise, free-mode
+           concurrency, auto-approve) + the settings entry. Same chips/styling as
+           the single-chat bar; toggling emits up (App owns the group PATCH +
+           roster refresh) so the group settings sheet stays in sync. -->
       <template v-else>
         <span class="session-info-cruise" :class="{ 'session-info-cruise-on': groupCruise }" :title="groupCruiseHint" @click.stop="onGroupCruiseClick"><Navigation :size="11" />{{ groupCruise ? t('chat.cruise.active') : t('chat.cruise.label') }}</span>
+        <!-- Free-mode concurrency switch. Host mode has no owner for it (the
+             host routes; the user never @-names speakers), so the chip is
+             hidden there — same gate as the group settings sheet's row, which
+             remains the second entry point for the same server value. -->
+        <template v-if="groupMode === 'free'">
+          <span class="session-info-divider"></span>
+          <span class="session-info-parallel" :class="{ 'session-info-parallel-on': groupParallelDefault }" :title="t('group.parallelHint')" @click.stop="onGroupParallelClick"><Zap :size="11" />{{ t('group.parallelLabel') }}</span>
+        </template>
         <span class="session-info-divider"></span>
         <span class="session-info-approve" :class="{ 'session-info-approve-on': autoApprove }" :title="t('chat.autoApprove.title')" @click.stop="doToggleAutoApprove"><ShieldAlert :size="11" />{{ t('chat.autoApprove.title') }}</span>
         <!-- Group settings lives here rather than in the action bar: it is a
@@ -469,6 +479,23 @@ function onGroupCruiseClick() {
 // describe a rule the group does not follow.
 const groupCruiseHint = computed(() =>
   props.groupMode === 'free' ? t('group.cruiseHintFree') : t('group.cruiseHintHost'))
+
+// Toggle the group's free-mode concurrency switch from the session-info bar.
+// Like the cruise chip, the value is owned by the roster (useGroupMembers) and
+// written by App, so this only emits the desired next value; App PATCHes and
+// refreshes the roster, which is what keeps this chip and the group settings
+// sheet's switch in sync (both read the same server value).
+function onGroupParallelClick() {
+  const next = !props.groupParallelDefault
+  emit('toggle-group-parallel', next)
+  // Same feedback contract as the cruise chip next to it: the click is
+  // optimistic (App PATCHes and the roster refresh is authoritative), so the
+  // toast confirms what was requested, not what the server has stored yet.
+  toast.show(next ? t('group.parallelEnabled') : t('group.parallelDisabled'), {
+    icon: next ? 'success' : 'stop',
+    type: next ? 'success' : 'info',
+  })
+}
 const showUsageInfo = computed(() => isACPTransport.value || contextSize.value > 0)
 // The panel body lives in ContextUsageDetail (shared with the group member
 // panel). This snapshot is the only place the component's individual usage refs
@@ -590,8 +617,8 @@ const props = defineProps({
    *  button) is hidden here — those settings have no owner on a multi-agent
    *  timeline, and the model chip / sync button are also the only doors to
    *  SessionDrawer (all per-agent), so hiding them closes that drawer. The
-   *  session-info bar still renders for a group, but shows ONLY the two
-   *  group-level switches (auto-cruise + auto-approve). */
+   *  session-info bar still renders for a group, but shows ONLY the group-level
+   *  switches (auto-cruise, free-mode concurrency, auto-approve). */
   isGroupSession: { type: Boolean, default: false },
   /** Group member roster ({ id, name, left }). Feeds the @ completion menu so a
    *  user can name a speaker in a group chat (design §13.4). */
@@ -601,6 +628,12 @@ const props = defineProps({
    *  for a group session; toggling emits `toggle-group-cruise` up to App, which
    *  PATCHes and refreshes the roster so the settings sheet stays in sync. */
   groupCruise: { type: Boolean, default: false },
+  /** The group's free-mode concurrency switch (server-authoritative, owned by
+   *  the group roster). Rendered as a chip only in free mode — in host mode the
+   *  host routes, so the switch has no meaning. Toggling emits
+   *  `toggle-group-parallel` up to App, which PATCHes and refreshes the roster
+   *  so the group settings sheet's switch stays in sync. */
+  groupParallelDefault: { type: Boolean, default: false },
   /** The group's mode ('host' | 'free'). Drives the group cruise chip's
    *  tooltip: host mode ends on the host's alone confirmation, free mode needs
    *  at least half the members (>= ceil(n/2)). Only meaningful when
@@ -641,6 +674,7 @@ const emit = defineEmits([
   'switch-transport',
   'sync-acp-session',
   'toggle-group-cruise',
+  'toggle-group-parallel',
   'open-group-settings',
 ])
 
@@ -2288,6 +2322,7 @@ defineExpose({
 .session-info-mode,
 .session-info-cruise,
 .session-info-approve,
+.session-info-parallel,
 .session-info-settings {
   display: inline-flex;
   align-items: center;
@@ -2346,6 +2381,16 @@ defineExpose({
   opacity: 0.7;
 }
 
+/* Free-mode concurrency chip: accent when ON, same contract as the cruise and
+   auto-approve chips next to it (a fixed hue would ignore all 36 themes). */
+.session-info-parallel-on {
+  color: var(--accent-color, #0066cc);
+}
+
+.session-info-parallel-on:active {
+  opacity: 0.7;
+}
+
 /* Group settings entry: a plain chip like its neighbours (it opens a sheet, it
    does not toggle anything, so no "on" state). */
 .session-info-settings:active {
@@ -2356,6 +2401,7 @@ defineExpose({
 .session-info-mode svg,
 .session-info-cruise svg,
 .session-info-approve svg,
+.session-info-parallel svg,
 .session-info-settings svg,
 .session-info-usage svg {
   flex-shrink: 0;

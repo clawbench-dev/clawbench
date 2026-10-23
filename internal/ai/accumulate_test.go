@@ -1033,3 +1033,75 @@ func TestMergeConsecutiveThinkingBlocks_DoesNotMergeAcrossParent(t *testing.T) {
 	}
 	assert.True(t, found, "sub-agent thinking block should survive")
 }
+
+// ---------------------------------------------------------------------------
+// Agent Team member attribution on an EXISTING tool block
+// ---------------------------------------------------------------------------
+//
+// The member name arrives on a LATER frame of the same tool call: the opening
+// spawn frame carries only the subagent TYPE. The update branch must therefore
+// fill in the attribution, or the Agent card keeps the empty value it was
+// created with and the frontend falls back to showing "general-purpose".
+
+func TestAccumulateBlock_ToolUseLateMemberAttribution(t *testing.T) {
+	blocks := []model.ContentBlock{}
+	// Opening frame: no member attribution yet.
+	AccumulateBlock(&blocks, StreamEvent{
+		Type: "tool_use",
+		Tool: &ToolCall{Name: "Agent", ID: "call_a", Input: `{"subagent_type":"general-purpose"}`},
+	})
+	require.Len(t, blocks, 1)
+	require.Empty(t, blocks[0].MemberName)
+
+	// Later frame for the SAME tool call carries the member.
+	AccumulateBlock(&blocks, StreamEvent{
+		Type:        "tool_use",
+		MemberName:  "android-reviewer",
+		MemberColor: "blue",
+		Tool:        &ToolCall{Name: "@android-reviewer", ID: "call_a", Input: `{"subagent_type":"general-purpose"}`},
+	})
+
+	require.Len(t, blocks, 1, "must update in place, not append a second block")
+	assert.Equal(t, "android-reviewer", blocks[0].MemberName)
+	assert.Equal(t, "blue", blocks[0].MemberColor)
+}
+
+// A block's member never changes, so a later frame must not overwrite an
+// attribution that is already known — that would mis-attribute content when
+// frames for different members are interleaved.
+func TestAccumulateBlock_ToolUseMemberAttributionIsNotOverwritten(t *testing.T) {
+	blocks := []model.ContentBlock{}
+	AccumulateBlock(&blocks, StreamEvent{
+		Type:        "tool_use",
+		MemberName:  "alpha",
+		MemberColor: "blue",
+		Tool:        &ToolCall{Name: "Agent", ID: "call_a", Input: `{}`},
+	})
+	AccumulateBlock(&blocks, StreamEvent{
+		Type:        "tool_use",
+		MemberName:  "beta",
+		MemberColor: "green",
+		Tool:        &ToolCall{Name: "Agent", ID: "call_a", Input: `{}`},
+	})
+	require.Len(t, blocks, 1)
+	assert.Equal(t, "alpha", blocks[0].MemberName)
+	assert.Equal(t, "blue", blocks[0].MemberColor)
+}
+
+// tool_result also updates an existing block, so it must carry the attribution
+// through as well — a member's tool call can complete before any tool_use frame
+// repeated the name.
+func TestAccumulateBlock_ToolResultCarriesMemberAttribution(t *testing.T) {
+	blocks := []model.ContentBlock{}
+	AccumulateBlock(&blocks, StreamEvent{
+		Type: "tool_use",
+		Tool: &ToolCall{Name: "Bash", ID: "t1", Input: `{"command":"ls"}`},
+	})
+	AccumulateBlock(&blocks, StreamEvent{
+		Type:       "tool_result",
+		MemberName: "alpha",
+		Tool:       &ToolCall{Name: "Bash", ID: "t1", Output: "ok", Status: "success", Done: true},
+	})
+	require.Len(t, blocks, 1)
+	assert.Equal(t, "alpha", blocks[0].MemberName)
+}

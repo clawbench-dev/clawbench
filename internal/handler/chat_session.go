@@ -1285,8 +1285,8 @@ func setSessionID(w http.ResponseWriter, r *http.Request, sessionID string) {
 	})
 }
 
-// ServeForkSession handles POST /api/ai/session/fork — creates a new chat session
-// by copying all messages from the current session (without external_session_id).
+// ServeForkSession handles POST /api/ai/session/fork — creates a new session
+// (single chat or group) from an existing one.
 //
 // The body's sessionId is authoritative; the query param / chat_session_id cookie
 // is only a fallback. This matters because the cookie is cleared whenever the
@@ -1296,6 +1296,17 @@ func setSessionID(w http.ResponseWriter, r *http.Request, sessionID string) {
 // also mirrors resolveUpdateTargetSession, which made the same choice for the
 // same reason: the cookie may point at a different session than the one the user
 // acted on.
+//
+// targetKind selects the target shape:
+//
+//	"chat"  (default) → a single-agent session; agentId optionally overrides the
+//	                    source's agent.
+//	"group"           → a new group; hostAgentId + memberAgentIds describe it.
+//
+// The SOURCE may be a single chat or a group in either case. A group source (or
+// a group target) does NOT copy message rows — a group timeline stores member
+// ROW ids in agent_id, which resolve to nothing in a new session. Those
+// combinations carry the source timeline as injected background text instead.
 func ServeForkSession(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodPost) {
 		return
@@ -1305,9 +1316,12 @@ func ServeForkSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		SessionID       string `json:"sessionId"`
-		BeforeMessageID int64  `json:"beforeMessageId"`
-		AgentID         string `json:"agentId"`
+		SessionID       string   `json:"sessionId"`
+		BeforeMessageID int64    `json:"beforeMessageId"`
+		AgentID         string   `json:"agentId"`
+		TargetKind      string   `json:"targetKind"`
+		HostAgentID     string   `json:"hostAgentId"`
+		MemberAgentIDs  []string `json:"memberAgentIds"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxChatBodySize)
 	if !decodeJSON(w, r, &req) {
@@ -1323,39 +1337,138 @@ func ServeForkSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve agent override: if the user selected a different agent, validate it exists
-	overrideAgentID := req.AgentID
-	if overrideAgentID != "" {
-		if _, _, _, _, ok := resolveAgentConfig(overrideAgentID); !ok {
-			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidAgentID")
-			return
-		}
-		// A fork creates a NEW session, so the disabled-agent fallback applies
-		// here too (the picker hides disabled agents, but the server is the
-		// authoritative gate).
-		if a := model.GetAgent(overrideAgentID); a != nil && a.Disabled {
-			writeLocalizedErrorf(w, r, http.StatusBadRequest, "AgentDisabled")
-			return
-		}
-		// Same for project scope: the fork is a NEW session in the caller's
-		// project, so a project-only agent from another project is refused.
-		if a := model.GetAgent(overrideAgentID); a != nil && !agentVisibleInProject(a, projectPath) {
-			writeLocalizedErrorf(w, r, http.StatusBadRequest, "AgentNotInProject")
-			return
-		}
+	target := req.TargetKind
+	if target == "" {
+		target = service.ForkTargetChat
 	}
 
-	title := buildForkTitle(r, sourceID)
+	forkReq := service.ForkRequest{
+		SourceSessionID: sourceID,
+		ProjectPath:     projectPath,
+		Title:           buildForkTitle(r, sourceID),
+		BeforeMessageID: req.BeforeMessageID,
+		Target:          target,
+	}
 
-	newSessionID, err := service.ForkSession(sourceID, projectPath, title, req.BeforeMessageID, overrideAgentID)
+	switch target {
+	case service.ForkTargetChat:
+		if req.AgentID != "" && !forkAgentAllowed(w, r, req.AgentID, projectPath) {
+			return
+		}
+		forkReq.OverrideAgentID = req.AgentID
+	case service.ForkTargetGroup:
+		// A group target creates a new user-visible session, so the same limit as
+		// POST /api/group/create applies.
+		if !groupSessionLimitOK(w, r, projectPath) {
+			return
+		}
+		hostAgentID, specs, ok := forkGroupTarget(w, r, req.HostAgentID, req.MemberAgentIDs, projectPath)
+		if !ok {
+			return
+		}
+		forkReq.HostAgentID = hostAgentID
+		forkReq.MemberSpecs = specs
+	default:
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
+		return
+	}
+
+	newSessionID, err := service.ForkSessionTo(forkReq)
 	if err != nil {
 		writeForkError(w, r, err)
 		return
 	}
 
+	// Tell the user what happened to the source history. Only written when a
+	// background was actually materialized: an empty source renders nothing, and
+	// claiming an injection that did not happen would be a lie on the timeline.
+	writeForkInjectionNotice(r, newSessionID, projectPath, sourceID, target)
+
 	setSessionID(w, r, newSessionID)
 	sessionCount, _ := service.GetSessionCount(projectPath)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "sessionId": newSessionID, "sessionCount": sessionCount})
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"ok":           true,
+		"sessionId":    newSessionID,
+		"sessionCount": sessionCount,
+		"targetKind":   target,
+	})
+}
+
+// forkGroupTarget validates and resolves a group fork's roster.
+//
+// It mirrors ServeGroupCreate's rules: a named host must be one of the members
+// (an omitted member list falls back to a host-only group), and every member
+// must resolve to an enabled agent visible in this project.
+func forkGroupTarget(w http.ResponseWriter, r *http.Request, hostAgentID string, memberAgentIDs []string, projectPath string) (string, []service.GroupMemberSpec, bool) {
+	agentIDs := memberAgentIDs
+	if hostAgentID != "" {
+		if len(agentIDs) == 0 {
+			agentIDs = []string{hostAgentID}
+		} else if !containsString(agentIDs, hostAgentID) {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
+			return "", nil, false
+		}
+	}
+	if len(agentIDs) == 0 {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
+		return "", nil, false
+	}
+	specs, ok := groupMemberSpecs(agentIDs, projectPath)
+	if !ok {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
+		return "", nil, false
+	}
+	return hostAgentID, specs, true
+}
+
+// forkAgentAllowed applies the new-session agent gates to an explicit fork
+// override: the agent must exist, be enabled, and be visible in this project.
+// A fork creates a NEW session, so the same rules as session creation apply
+// (the picker hides disabled agents, but the server is the authoritative gate).
+func forkAgentAllowed(w http.ResponseWriter, r *http.Request, agentID, projectPath string) bool {
+	if _, _, _, _, ok := resolveAgentConfig(agentID); !ok {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidAgentID")
+		return false
+	}
+	a := model.GetAgent(agentID)
+	if a != nil && a.Disabled {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "AgentDisabled")
+		return false
+	}
+	if a != nil && !agentVisibleInProject(a, projectPath) {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "AgentNotInProject")
+		return false
+	}
+	return true
+}
+
+// writeForkInjectionNotice records the first timeline row of a forked session
+// when its history was carried as background rather than copied rows.
+//
+// The two variants differ in WHO will receive the background: a group injects it
+// into every member's first speech (each speaker has its own seen_cursor), while
+// a single chat has one consumer.
+func writeForkInjectionNotice(r *http.Request, targetSessionID, projectPath, sourceID, targetKind string) {
+	if service.GetForkContext(targetSessionID) == "" {
+		return
+	}
+	sourceTitle, _ := service.GetSessionTitle(sourceID)
+	if sourceTitle == "" {
+		sourceTitle = T(r, "Session")
+	}
+	key := "ForkContextInjectedChat"
+	if targetKind == service.ForkTargetGroup {
+		key = "ForkContextInjectedGroup"
+	}
+	text := T(r, key, map[string]any{"Title": sourceTitle})
+	if targetKind == service.ForkTargetGroup {
+		service.WriteGroupSystemNotice(projectPath, targetSessionID, text)
+		return
+	}
+	if _, err := service.AddSystemMessage(projectPath, targetSessionID, text); err != nil {
+		slog.Warn("handler: failed to write fork injection notice",
+			"session", targetSessionID, "error", err)
+	}
 }
 
 // buildForkTitle builds the title for a forked session.
@@ -1372,15 +1485,22 @@ func buildForkTitle(r *http.Request, sourceID string) string {
 func writeForkError(w http.ResponseWriter, r *http.Request, err error) {
 	slog.Error("handler: failed to fork session", "error", err)
 	errMsg := err.Error()
-	if strings.Contains(errMsg, "group sessions are not forkable") {
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "GroupNotForkable")
-	} else if strings.Contains(errMsg, "session limit") {
+	switch {
+	case strings.Contains(errMsg, "session limit"):
 		writeLocalizedErrorf(w, r, http.StatusConflict, "SessionLimitReached", map[string]any{jsonMaxCount: model.SessionMaxCount})
-	} else if strings.Contains(errMsg, "not found in session") || strings.Contains(errMsg, "must be a user or assistant message") || strings.Contains(errMsg, "streaming message") {
+	case errors.Is(err, service.ErrGroupMemberLimit):
+		writeLocalizedErrorf(w, r, http.StatusConflict, "GroupMemberLimitReached", map[string]any{jsonMaxCount: service.MaxGroupMembers})
+	case errors.Is(err, service.ErrFreeGroupNeedsTwoMembers):
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
+	case strings.Contains(errMsg, "group member"):
+		// A member row is a hidden connection carrier with no timeline of its
+		// own; it is not a forkable conversation.
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidForkPoint")
-	} else if strings.Contains(errMsg, "not found") {
+	case strings.Contains(errMsg, "not found in session") || strings.Contains(errMsg, "must be a user or assistant message") || strings.Contains(errMsg, "streaming message"):
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidForkPoint")
+	case strings.Contains(errMsg, "not found"):
 		writeLocalizedErrorf(w, r, http.StatusNotFound, "SessionNotFound")
-	} else {
+	default:
 		model.WriteError(w, model.Internal(err))
 	}
 }

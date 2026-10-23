@@ -11,7 +11,7 @@
       <!-- Full path + jump + badge + change count at the top of the content area -->
       <div class="fd-file-info">
         <span class="fd-file-info-path" :title="displayPath">{{ displayPath }}</span>
-        <button class="fd-file-info-open" :title="t('chat.fileChanges.openFile')" :aria-label="t('chat.fileChanges.openFile')" @click="handleOpenFile">
+        <button v-if="!readOnly" class="fd-file-info-open" :title="t('chat.fileChanges.openFile')" :aria-label="t('chat.fileChanges.openFile')" @click="handleOpenFile">
           <ExternalLink :size="14" />
         </button>
         <span class="fd-header-badge">{{ badgeLabel }}</span>
@@ -67,6 +67,11 @@ const props = defineProps({
   toolIds: { type: Array, default: () => [] },
   /** Session ID — optional fallback for tool-call API when tool_id + message_id lookup fails. */
   sessionId: { type: String, default: '' },
+  /** Read-only host (public share page): hide "open in file manager". That action
+   *  goes through openFilePath, which the share page short-circuits, so the button
+   *  would look live and do nothing. The diff body itself stays: it renders from
+   *  the inlined tool input (see fetchDiff's share branch). */
+  readOnly: { type: Boolean, default: false },
   formatToolInput: { type: Function, required: true },
 })
 

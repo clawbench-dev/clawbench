@@ -80,6 +80,29 @@ func readSpecDocs(t *testing.T) map[string]string {
 	return out
 }
 
+// openAPICountRe matches the "N paths / M operations" claim the spec docs make.
+//
+// The unit word 个 is OPTIONAL because both spellings occur in the docs:
+// api/README.md writes "178 个路径 / 226 个操作" while docs/spec/README.md
+// writes "178 路径 / 226 操作". Requiring it left spec/README.md matching zero
+// claims, so its count could drift freely — the exact failure this guard exists
+// to prevent.
+//
+// A bare "N / M" is still NOT matched: the docs are full of unrelated ratios
+// that look identical ("实测 116/116 全无该键", "3/112 vs 6/112", "119/119
+// 逐字节保真"), and a looser pattern reported every one of them as an OpenAPI
+// count drift. The 路径/操作 unit words are what disambiguate.
+var openAPICountRe = regexp.MustCompile(`(\d+)\s*个?路径\s*/\s*(\d+)\s*个?操作`)
+
+// openAPICountDocs are the spec docs that are REQUIRED to carry an
+// "N paths / M operations" claim. Each is checked individually: a global
+// "claims > 0" check cannot see one file losing its claim entirely, which is
+// how spec/README.md went uncovered.
+var openAPICountDocs = []string{
+	filepath.Join("docs", "spec", "README.md"),
+	filepath.Join("docs", "spec", "api", "README.md"),
+}
+
 // TestSpecDocsOpenAPICountsMatchSpec pins every "N paths / M operations" claim
 // in the spec docs against the embedded OpenAPI document.
 //
@@ -102,15 +125,20 @@ func TestSpecDocsOpenAPICountsMatchSpec(t *testing.T) {
 	}
 	wantPaths, wantOps := len(paths), len(routes)
 
-	// "176 个路径 / 224 个操作" — both units are required. A bare "N / M" is
-	// NOT matched: the docs are full of unrelated ratios that look identical
-	// ("实测 116/116 全无该键", "3/112 vs 6/112", "119/119 逐字节保真"), and a
-	// looser pattern reported every one of them as an OpenAPI count drift.
-	pairRe := regexp.MustCompile(`(\d+)\s*个路径\s*/\s*(\d+)\s*个操作`)
+	docs := readSpecDocs(t)
+	for _, required := range openAPICountDocs {
+		body, ok := docs[required]
+		if !ok {
+			t.Fatalf("%s is missing — the guard cannot check it", required)
+		}
+		if !openAPICountRe.MatchString(body) {
+			t.Errorf("%s contains no \"N (个)路径 / M (个)操作\" claim. Either the wording changed (update openAPICountRe) or the count was dropped — this file must state it", required)
+		}
+	}
 
 	claims := 0
-	for file, body := range readSpecDocs(t) {
-		for _, m := range pairRe.FindAllStringSubmatchIndex(body, -1) {
+	for file, body := range docs {
+		for _, m := range openAPICountRe.FindAllStringSubmatchIndex(body, -1) {
 			claims++
 			gotPaths, _ := strconv.Atoi(body[m[2]:m[3]])
 			gotOps, _ := strconv.Atoi(body[m[4]:m[5]])
@@ -124,7 +152,61 @@ func TestSpecDocsOpenAPICountsMatchSpec(t *testing.T) {
 	// Without this, rewording the docs (or breaking the regex) would turn the
 	// guard into a no-op that always passes.
 	if claims == 0 {
-		t.Fatal("no \"N 个路径 / M 个操作\" claim found in the spec docs — the guard would be vacuous; if the wording changed, update the regex")
+		t.Fatal("no \"N (个)路径 / M (个)操作\" claim found in the spec docs — the guard would be vacuous; if the wording changed, update the regex")
+	}
+}
+
+// TestOpenAPICountReCoversBothSpellings is the regression test for the guard
+// itself, independent of the live docs.
+//
+// The guard originally required the unit word 个, which silently excluded
+// docs/spec/README.md ("178 路径 / 226 操作" — no 个) from every check. These
+// cases pin both directions: the spellings that MUST match, and the bare ratios
+// that must not (a regex loose enough to catch everything would drown the guard
+// in false positives and get weakened again).
+func TestOpenAPICountReCoversBothSpellings(t *testing.T) {
+	mustMatch := []string{
+		"178 个路径 / 226 个操作", // api/README.md
+		"178 路径 / 226 操作",   // docs/spec/README.md
+		"178个路径/226个操作",     // no spaces
+	}
+	for _, s := range mustMatch {
+		m := openAPICountRe.FindStringSubmatch(s)
+		if m == nil {
+			t.Errorf("%q must be recognized as an OpenAPI count claim; the guard cannot see it", s)
+			continue
+		}
+		if m[1] != "178" || m[2] != "226" {
+			t.Errorf("%q parsed as %s/%s, want 178/226", s, m[1], m[2])
+		}
+	}
+
+	mustNotMatch := []string{
+		"实测 116/116 全无该键",
+		"3/112 vs 6/112",
+		"119/119 逐字节保真",
+	}
+	for _, s := range mustNotMatch {
+		if openAPICountRe.MatchString(s) {
+			t.Errorf("%q is an unrelated ratio, not an OpenAPI count; matching it makes the guard noisy", s)
+		}
+	}
+}
+
+// TestOpenAPICountDocsAllCarryAClaim pins the per-file requirement against the
+// real docs. Without it, adding a file to openAPICountDocs that never states a
+// count would be a silent no-op.
+func TestOpenAPICountDocsAllCarryAClaim(t *testing.T) {
+	docs := readSpecDocs(t)
+	for _, required := range openAPICountDocs {
+		body, ok := docs[required]
+		if !ok {
+			t.Errorf("%s listed as required but not found under docs/spec", required)
+			continue
+		}
+		if !openAPICountRe.MatchString(body) {
+			t.Errorf("%s is listed in openAPICountDocs but contains no count claim", required)
+		}
 	}
 }
 

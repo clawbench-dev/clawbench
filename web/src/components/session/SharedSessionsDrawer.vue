@@ -18,8 +18,8 @@
 
     <div class="shared-sessions-body">
       <!-- Loading -->
-      <div v-if="busy" class="shared-sessions-hint">
-        <LoadingIndicator size="md" />
+      <div v-if="busy" class="shared-sessions-skeleton">
+        <PanelSkeleton variant="list" :rows="6" :meta="true" :label="t('common.loading')" />
       </div>
 
       <!-- Error -->
@@ -109,6 +109,7 @@ import BottomSheet from '@/components/common/BottomSheet.vue'
 import CopyButton from '@/components/common/CopyButton.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast.ts'
@@ -234,7 +235,7 @@ defineExpose({ open: openDrawer })
 }
 
 .shared-sessions-hint {
-  /* Own breathing room so the empty/loading text never hugs the drawer edge,
+  /* Own breathing room so the empty text never hugs the drawer edge,
      independent of the (now removed) container padding. */
   padding: 32px var(--space-7);
   margin: var(--space-4) 0;
@@ -245,6 +246,11 @@ defineExpose({ open: openDrawer })
   flex-direction: column;
   align-items: center;
   gap: var(--space-5);
+}
+
+/* First load: rows in place of a centred spinner. */
+.shared-sessions-skeleton {
+  padding: var(--space-2) 0;
 }
 
 .shared-sessions-empty-icon {

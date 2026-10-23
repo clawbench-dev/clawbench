@@ -284,6 +284,47 @@ func TestBuildMemberInjection_RendersUserAttachments(t *testing.T) {
 	}
 }
 
+// A user message whose ONLY payload is an attachment (they dropped an image and
+// typed nothing) must still reach the members' injected context. The empty-text
+// guard used to drop it outright, so the group behaved as if the user had sent
+// nothing at all — the host had nothing to route and no member ever learned an
+// image existed. Two persisted shapes are covered: a blocks array with no text
+// block, and a completely empty content string.
+func TestBuildMemberInjection_ImageOnlyMessageIsNotDropped(t *testing.T) {
+	for name, content := range map[string]string{
+		"empty blocks": `{"blocks":[]}`,
+		"empty string": "",
+	} {
+		msgs := []model.ChatMessage{
+			{
+				ID:      2,
+				Role:    "user",
+				Content: content,
+				Files:   []model.FileEntry{{Path: "/tmp/screenshot.png"}},
+			},
+		}
+		got := buildInjectionText(msgs, 0, "row-a", nil, nil, nil, "", "")
+		if !strings.Contains(got, "User uploaded") {
+			t.Fatalf("%s: an image-only message must still be injected: %q", name, got)
+		}
+		if !strings.Contains(got, "screenshot.png") {
+			t.Fatalf("%s: the attachment label must be present: %q", name, got)
+		}
+	}
+}
+
+// The counter-case: a message with NO text, NO question and NO attachment is
+// still skipped, so an empty row adds no bare "User:" line to the injection.
+func TestBuildMemberInjection_TrulyEmptyMessageIsSkipped(t *testing.T) {
+	msgs := []model.ChatMessage{
+		{ID: 2, Role: "user", Content: `{"blocks":[]}`},
+	}
+	got := buildInjectionText(msgs, 0, "row-a", nil, nil, nil, "", "")
+	if strings.Contains(got, "User:") {
+		t.Fatalf("a message with no payload at all must be skipped: %q", got)
+	}
+}
+
 // A user message WITHOUT attachments must render exactly as before — no empty
 // "[User uploaded 0 file(s)]" noise.
 func TestBuildMemberInjection_NoAttachmentNoPrefix(t *testing.T) {

@@ -1,4 +1,5 @@
 import type { QuoteData } from '@/composables/useChatContext.ts'
+import { unionRectOfRects } from '@/utils/selectionAnchor.ts'
 
 /**
  * Selection → quote bridge for a sandboxed preview iframe.
@@ -28,6 +29,17 @@ export interface IframeBridgeWindow {
     addEventListener(type: string, listener: EventListenerOrEventListenerObject, opts?: boolean | AddEventListenerOptions): void
     removeEventListener(type: string, listener: EventListenerOrEventListenerObject, opts?: boolean | EventListenerOptions): void
   }
+  /**
+   * The same-origin iframe element hosting this window.
+   *
+   * Required to express a selection rect in HOST viewport coordinates: the
+   * rects a frame's Range reports are relative to the frame's own viewport.
+   * Absent in unit-test doubles, which have no layout to map anyway.
+   */
+  frameElement?: Element | null
+  /** The frame's own viewport, used as the scale denominator (see mapIframeRectToHost). */
+  innerWidth?: number
+  innerHeight?: number
 }
 
 export interface IframeSelectionQuoteOptions {
@@ -35,8 +47,15 @@ export interface IframeSelectionQuoteOptions {
   win: IframeBridgeWindow
   /** Lazily resolve the current file path (the file may change under the iframe). */
   filePath: () => string
-  /** Surface the quote bar with a QuoteData payload. */
-  show: (data: QuoteData) => void
+  /**
+   * Surface the quote bar with a QuoteData payload.
+   *
+   * `anchor` is the selection's rect in HOST viewport coordinates (the space
+   * `position: fixed` is expressed in), or null when it could not be measured.
+   * Without it the bar can only fall back to its pinned top position, which
+   * puts it far away from the text the user just selected.
+   */
+  show: (data: QuoteData, anchor: DOMRect | null) => void
   /** Hide the quote bar (empty selection / collapsed). */
   hide: () => void
   /** Debounce for `selectionchange` (mirrors the host's 150ms). */
@@ -45,6 +64,70 @@ export interface IframeSelectionQuoteOptions {
   releaseDelayMs?: number
   /** Self-heal timeout for the pointer guard when release events are swallowed. */
   pointerStuckMs?: number
+}
+
+/** A rect in some viewport's coordinate space (structural — DOMRect or a plain object). */
+export interface ViewportRect {
+  top: number
+  left: number
+  width: number
+  height: number
+}
+
+/**
+ * Express a rect measured INSIDE an iframe in the host viewport's coordinates.
+ *
+ * Two different spaces are involved and neither is the other's identity:
+ *
+ *   - a frame's Range reports rects relative to the FRAME's viewport;
+ *   - `position: fixed` (where the quote bar lives) uses the HOST's.
+ *
+ * The frame's rendered size is also not its internal viewport size: the app
+ * scales the whole UI with CSS `zoom` on `<html>`, which scales the iframe
+ * ELEMENT while the document inside it keeps laying out in unscaled CSS px.
+ * The ratio `frameRect.width / innerWidth` is that scale, so the mapping stays
+ * correct under any UI scale instead of drifting by the zoom factor.
+ */
+export function mapIframeRectToHost(
+  rect: ViewportRect,
+  frameRect: ViewportRect,
+  viewport: { width: number; height: number },
+): ViewportRect {
+  const scaleX = viewport.width > 0 ? frameRect.width / viewport.width : 1
+  const scaleY = viewport.height > 0 ? frameRect.height / viewport.height : 1
+  return {
+    left: frameRect.left + rect.left * scaleX,
+    top: frameRect.top + rect.top * scaleY,
+    width: rect.width * scaleX,
+    height: rect.height * scaleY,
+  }
+}
+
+/**
+ * The selection's bounding box, in HOST viewport coordinates, or null.
+ *
+ * The geometry comes from `unionRectOfRects` — the SAME rule the host document
+ * path uses — and only the coordinate mapping is iframe-specific. That matters
+ * for a multi-line selection: anchoring on the last line box puts the bar (which
+ * prefers to sit ABOVE its anchor) over the lines the user just selected, which
+ * is the defect issue #572 fixed on the host path. Keeping a second copy of the
+ * rule here is what let the two drift apart; see utils/selectionAnchor.ts.
+ */
+export function iframeSelectionAnchor(win: IframeBridgeWindow, sel: Selection): DOMRect | null {
+  if (sel.rangeCount === 0) return null
+  const rects = sel.getRangeAt(0).getClientRects()
+  if (!rects.length) return null
+  const union = unionRectOfRects(rects)
+  if (!union) return null
+  const frame = win.frameElement as HTMLElement | null | undefined
+  if (!frame || typeof frame.getBoundingClientRect !== 'function') return null
+  const frameRect = frame.getBoundingClientRect()
+  const mapped = mapIframeRectToHost(
+    { top: union.top, left: union.left, width: union.right - union.left, height: union.bottom - union.top },
+    frameRect,
+    { width: win.innerWidth ?? 0, height: win.innerHeight ?? 0 },
+  )
+  return new DOMRect(mapped.left, mapped.top, mapped.width, mapped.height)
 }
 
 /**
@@ -134,6 +217,19 @@ export function attachIframeSelectionQuoteBridge(opts: IframeSelectionQuoteOptio
   let pointerStuckTimer: ReturnType<typeof setTimeout> | null = null
   let debounceTimer: ReturnType<typeof setTimeout> | null = null
   let disposed = false
+  /**
+   * Timestamp of the last event proving a button is still down (issue #572).
+   * The self-heal timer only drops the guard once this has been quiet for the
+   * whole window, so a slow sweep does not surface the bar mid-drag.
+   */
+  let lastPointerActivity = 0
+  /**
+   * Whether this bridge has a bar on screen. Tracked locally because `show` /
+   * `hide` are opaque callbacks: retracting on every pointermove would call
+   * `hide()` continuously, which the host treats as a dismissal (it clears the
+   * staged quote) and which makes "did the bar flicker?" impossible to assert.
+   */
+  let barShown = false
 
   function scheduleEvaluate(delayMs: number) {
     if (disposed) return
@@ -155,19 +251,23 @@ export function attachIframeSelectionQuoteBridge(opts: IframeSelectionQuoteOptio
     const sel = win.getSelection()
     const text = sel && !sel.isCollapsed ? sel.toString().trim() : ''
     if (!text) {
+      // Always notify: the host may be showing a bar from another surface, and
+      // an empty selection in this frame is what dismisses it.
+      barShown = false
       hide()
       return
     }
     // The pointer is still pressed — the selection is mid-drag and not final.
     if (pointerCount > 0) return
 
+    barShown = true
     show({
       text,
       filePath: filePath(),
       language: '',
       startLine: 0,
       endLine: 0,
-    })
+    }, iframeSelectionAnchor(win, sel!))
   }
 
   function onSelectionChange() {
@@ -177,17 +277,79 @@ export function attachIframeSelectionQuoteBridge(opts: IframeSelectionQuoteOptio
 
   function onPointerDown() {
     pointerCount++
+    lastPointerActivity = Date.now()
     // Mobile native selection UI can swallow the matching pointerup/touchend,
     // leaving the guard held forever. Self-heal after a short window so a
     // settling selection can still surface the bar.
+    armStuckTimer()
+  }
+
+  /**
+   * (Re)arm the self-heal timer. It only drops the guard once the pointer has
+   * been quiet for the whole window; a live drag keeps refreshing
+   * `lastPointerActivity` (see onPointerMove / onScroll), so a long sweep does
+   * not surface the bar mid-drag (issue #572).
+   */
+  function armStuckTimer() {
     if (pointerStuckTimer) clearTimeout(pointerStuckTimer)
     pointerStuckTimer = setTimeout(() => {
       pointerStuckTimer = null
+      if (disposed) return
+      if (pointerCount > 0 && Date.now() - lastPointerActivity < pointerStuckMs) {
+        armStuckTimer()
+        return
+      }
       if (pointerCount > 0) {
         pointerCount = 0
         scheduleEvaluate(0)
       }
     }, pointerStuckMs)
+  }
+
+  /**
+   * Pointer movement with a button still pressed proves the drag is alive: it
+   * refreshes the liveness stamp, re-arms a guard the timer already dropped
+   * (a long pause before the drag began) and takes back any bar that dropped
+   * guard surfaced over text that is still being selected (issue #572).
+   *
+   * A `buttons === 0` move from a MOUSE means the button came up without a
+   * pointerup reaching us, so the guard is released immediately instead of
+   * waiting out the window. Touch/pen report `buttons` inconsistently, so they
+   * are excluded — a 0 there must not surface the bar mid-selection.
+   */
+  function onPointerMove(evt: Event) {
+    if (disposed) return
+    // The bridge's window is structurally typed (its listeners receive `Event`),
+    // so read the two pointer fields off the event rather than narrowing.
+    const e = evt as PointerEvent
+    if (e.buttons === 0) {
+      if (pointerCount > 0 && e.pointerType === 'mouse') releasePointer()
+      return
+    }
+    lastPointerActivity = Date.now()
+    if (pointerCount === 0) {
+      pointerCount = 1
+      armStuckTimer()
+    }
+    // Retract a bar the self-heal timer surfaced while the user was merely
+    // pausing: the button is still down, so the bar must not stay over text that
+    // is still being selected. Guarded by `barShown` so a drag with no bar does
+    // not spam `hide()` on every move.
+    if (barShown) {
+      barShown = false
+      hide()
+    }
+  }
+
+  /**
+   * Auto-scroll at the viewport edge moves the content under a stationary
+   * pointer, so a scroll while the button is held is proof the drag is alive.
+   * Without this the timer sees a quiet pointer and surfaces the bar, which the
+   * next scroll then hides — the reported flicker (issue #572).
+   */
+  function onScroll() {
+    if (disposed) return
+    if (pointerCount > 0) lastPointerActivity = Date.now()
   }
 
   function releasePointer() {
@@ -210,20 +372,25 @@ export function attachIframeSelectionQuoteBridge(opts: IframeSelectionQuoteOptio
 
   doc.addEventListener('selectionchange', onSelectionChange)
   doc.addEventListener('pointerdown', onPointerDown)
+  doc.addEventListener('pointermove', onPointerMove)
   doc.addEventListener('pointerup', onPointerUp)
   doc.addEventListener('pointercancel', onPointerUp)
   doc.addEventListener('touchend', onPointerUp)
   doc.addEventListener('touchcancel', onPointerUp)
+  // Capture phase: the scroll happens on an inner container, not the document.
+  doc.addEventListener('scroll', onScroll, true)
 
   return function dispose() {
     if (disposed) return
     disposed = true
     doc.removeEventListener('selectionchange', onSelectionChange)
     doc.removeEventListener('pointerdown', onPointerDown)
+    doc.removeEventListener('pointermove', onPointerMove)
     doc.removeEventListener('pointerup', onPointerUp)
     doc.removeEventListener('pointercancel', onPointerUp)
     doc.removeEventListener('touchend', onPointerUp)
     doc.removeEventListener('touchcancel', onPointerUp)
+    doc.removeEventListener('scroll', onScroll, true)
     clearDebounce()
     if (pointerStuckTimer) {
       clearTimeout(pointerStuckTimer)

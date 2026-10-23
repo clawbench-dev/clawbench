@@ -40,7 +40,7 @@ func TestGetSessionShareProjectByToken_ResolvesArchivedSession(t *testing.T) {
 		`INSERT INTO chat_sessions (id, project_id, backend, title, archived) VALUES ('s1', 1, 'codebuddy', 't', 1)`,
 	)
 	require.NoError(t, err)
-	token, _, err := UpsertSessionShare("s1", "t", "codebuddy", 1, `{}`)
+	token, _, err := UpsertSessionShare("s1", []int64{1})
 	require.NoError(t, err)
 
 	path, ok, err := GetSessionShareProjectByToken(token)
@@ -63,7 +63,7 @@ func TestGetSessionShareProjectByToken_OrphanShareIsAMiss(t *testing.T) {
 	db := setupShareHelperDB(t)
 	defer func() { _ = db.Close() }()
 
-	token, _, err := UpsertSessionShare("orphan", "t", "codebuddy", 1, `{}`)
+	token, _, err := UpsertSessionShare("orphan", []int64{1})
 	require.NoError(t, err)
 
 	_, ok, err := GetSessionShareProjectByToken(token)
@@ -87,27 +87,6 @@ func TestDeleteSessionShareBySession_EmptyIDIsANoop(t *testing.T) {
 	require.NoError(t, DeleteSessionShareBySession(""))
 }
 
-// DeleteAllSessionShares is global by design; the handler deliberately does NOT
-// use it for clear-all (it would revoke other projects' links), so this test
-// pins the documented global behavior.
-func TestDeleteAllSessionShares_RemovesEveryProject(t *testing.T) {
-	db := setupShareHelperDB(t)
-	defer func() { _ = db.Close() }()
-
-	for _, id := range []string{"a", "b"} {
-		_, _, err := UpsertSessionShare(id, "t", "codebuddy", 1, `{}`)
-		require.NoError(t, err)
-	}
-
-	require.NoError(t, DeleteAllSessionShares())
-
-	for _, id := range []string{"a", "b"} {
-		_, ok, err := GetSessionShareBySession(id)
-		require.NoError(t, err)
-		assert.False(t, ok)
-	}
-}
-
 // ─── Error propagation on a broken DB ────────────────────────────────────────
 
 // Every storage helper must surface a driver error rather than reporting a
@@ -119,7 +98,7 @@ func TestSessionShares_ClosedDBSurfacesErrors(t *testing.T) {
 	cleanup := store.SetDBForTest(db, db)
 	t.Cleanup(cleanup)
 
-	_, _, _, _, err = GetSessionShareByToken("t")
+	_, _, err = GetSessionShareByToken("t")
 	require.Error(t, err)
 
 	_, _, err = GetSessionShareBySession("s1")
@@ -128,7 +107,7 @@ func TestSessionShares_ClosedDBSurfacesErrors(t *testing.T) {
 	_, _, err = GetSessionShareProjectByToken("t")
 	require.Error(t, err)
 
-	_, _, err = UpsertSessionShare("s1", "t", "codebuddy", 1, `{}`)
+	_, _, err = UpsertSessionShare("s1", []int64{1})
 	require.Error(t, err)
 
 	err = DeleteSessionShareByToken("t")
@@ -137,21 +116,15 @@ func TestSessionShares_ClosedDBSurfacesErrors(t *testing.T) {
 	err = DeleteSessionShareBySession("s1")
 	require.Error(t, err)
 
-	err = DeleteSessionSharesBySessionIDs([]string{"s1"})
-	require.Error(t, err)
-
-	err = DeleteAllSessionShares()
-	require.Error(t, err)
-
 	_, err = ListSessionShares("/proj")
 	require.Error(t, err)
 }
 
 // ─── ListSessionShares ───────────────────────────────────────────────────────
 
-// A row whose created_at is unreadable by the driver must fail the scan rather
-// than being silently skipped.
-func TestListSessionShares_ScanErrorSurfaces(t *testing.T) {
+// A row whose message_ids cannot be decoded must fail the list rather than being
+// silently skipped or, worse, treated as an empty selection.
+func TestListSessionShares_BadMessageIDsSurfaces(t *testing.T) {
 	db := setupShareHelperDB(t)
 	defer func() { _ = db.Close() }()
 
@@ -159,26 +132,12 @@ func TestListSessionShares_ScanErrorSurfaces(t *testing.T) {
 		`INSERT INTO chat_sessions (id, project_id, backend, title, archived) VALUES ('s1', 1, 'codebuddy', 't', 0)`,
 	)
 	require.NoError(t, err)
-	_, _, err = UpsertSessionShare("s1", "t", "codebuddy", 1, `{}`)
-	require.NoError(t, err)
 
-	// Recreate the table with created_at typed so SQLite cannot coerce it.
-	_, err = db.Exec("DROP TABLE session_shares")
-	require.NoError(t, err)
-	_, err = db.Exec(`CREATE TABLE session_shares (
-		token TEXT PRIMARY KEY,
-		session_id TEXT NOT NULL,
-		title TEXT NOT NULL DEFAULT '',
-		backend TEXT NOT NULL DEFAULT '',
-		message_count TEXT NOT NULL DEFAULT 'x',
-		payload TEXT NOT NULL,
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-	)`)
-	require.NoError(t, err)
-	_, err = db.Exec(`INSERT INTO session_shares (token, session_id, title, backend, message_count, payload)
-		VALUES ('t', 's1', 'a', 'b', 'not-a-number', '{}')`)
+	_, err = db.Exec(
+		`INSERT INTO session_shares (token, session_id, message_ids) VALUES ('t', 's1', '{not json')`,
+	)
 	require.NoError(t, err)
 
 	_, err = ListSessionShares("/proj")
-	require.Error(t, err, "an unscannable row must surface, not vanish from the list")
+	require.Error(t, err, "an undecodable row must surface, not vanish from the list")
 }

@@ -67,7 +67,7 @@
       <template v-else-if="type === 'password'">
         <span class="settings-item__value">{{ displayValue }}</span>
       </template>
-      <template v-else-if="type === 'select' || type === 'number' || type === 'text' || type === 'date'">
+      <template v-else-if="type === 'select' || type === 'number' || type === 'text' || type === 'date' || type === 'datetime'">
         <ProviderIcon v-if="selectedOptionModelName" :model-name="selectedOptionModelName" :size="14" />
         <span class="settings-item__value">{{ displayValue }}</span>
       </template>
@@ -132,6 +132,32 @@
           class="settings-item__text-input"
           :value="(editValue as string | null | undefined) ?? ''"
           @input="editValue = ($event.target as HTMLInputElement).value"
+          @keydown.enter="confirmEdit"
+        />
+        <button class="fbtn fbtn-primary settings-item__editor-confirm" @click="confirmEdit">{{ t('common.ok') }}</button>
+      </div>
+    </template>
+    <!-- Date + time editor. Two native inputs side by side rather than one
+         `datetime-local`: that control's value format is "YYYY-MM-DDTHH:MM"
+         with browser-specific quirks around seconds and empty states, and it
+         renders poorly in the narrow settings row. Splitting it also lets the
+         row show a date-only value (which is what most existing anchors are)
+         without forcing the user to invent a time. -->
+    <template v-else-if="type === 'datetime'">
+      <div class="settings-item__input-row settings-item__input-row--datetime">
+        <input
+          type="date"
+          class="settings-item__text-input"
+          :value="datetimeDraft.date"
+          @input="datetimeDraft.date = ($event.target as HTMLInputElement).value"
+          @keydown.enter="confirmEdit"
+        />
+        <input
+          type="time"
+          step="1"
+          class="settings-item__text-input"
+          :value="datetimeDraft.time"
+          @input="datetimeDraft.time = ($event.target as HTMLInputElement).value"
           @keydown.enter="confirmEdit"
         />
         <button class="fbtn fbtn-primary settings-item__editor-confirm" @click="confirmEdit">{{ t('common.ok') }}</button>
@@ -318,7 +344,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onUnmounted, nextTick } from 'vue'
+import { ref, reactive, computed, watch, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 // Shared pill button language (.fbtn) used by the row's confirm/retry buttons.
 import '@/assets/modal-footer-btn.css'
@@ -346,7 +372,7 @@ interface Props {
    *  Always visible in the row, unlike `warning` which only shows inside the
    *  open editor. Absent means no note. */
   note?: string
-  type: 'switch' | 'select' | 'number' | 'text' | 'date' | 'slider' | 'action' | 'info' | 'header' | 'password' | 'textarea'
+  type: 'switch' | 'select' | 'number' | 'text' | 'date' | 'datetime' | 'slider' | 'action' | 'info' | 'header' | 'password' | 'textarea'
   modelValue?: unknown
   options?: SelectOption[]
   /** Async filter applied to options each time the select picker opens
@@ -424,6 +450,10 @@ const emit = defineEmits<{
 const editing = ref(false)
 const editValue = ref<unknown>(null)
 const showPassword = ref(false)
+// Draft for the split date + time editor. Kept apart from `editValue` because
+// the two inputs are edited independently: the user may change the time and
+// leave the date alone, and the emitted value is only assembled on confirm.
+const datetimeDraft = reactive({ date: '', time: '' })
 const selectPicker = useTabDrawer('settings', { autoRestore: false })
 // Same tab id as selectPicker so effectiveOpen resolves on the settings page.
 // Only one of the two drawers is used per select (themed grid vs plain list).
@@ -669,11 +699,16 @@ function handleClick() {
     emit('editToggle', true)
     return
   }
-  // number / text / password / textarea: toggle inline editor
+  // number / text / password / textarea / date / datetime: toggle inline editor
   editing.value = !editing.value
   if (editing.value) {
     editValue.value = props.modelValue
     showPassword.value = false
+    if (props.type === 'datetime') {
+      const parts = splitDatetimeValue(props.modelValue)
+      datetimeDraft.date = parts.date
+      datetimeDraft.time = parts.time
+    }
   }
   emit('editToggle', editing.value)
 }
@@ -696,6 +731,40 @@ function selectOption(value: unknown) {
   emit('update:modelValue', value)
 }
 
+/**
+ * Split a stored anchor into the two editor inputs.
+ *
+ * Accepts both shapes the server stores: "YYYY-MM-DD" (a pre-existing rule, or
+ * a rule whose time is midnight) and "YYYY-MM-DDTHH:MM[:SS]". An empty time
+ * means "date only" and is shown as 00:00 — the two are the same instant, and
+ * the canonical form the server writes back drops a midnight time anyway.
+ */
+function splitDatetimeValue(value: unknown): { date: string; time: string } {
+  const raw = String(value ?? '').trim()
+  if (!raw) return { date: '', time: '' }
+  const sep = raw.indexOf('T')
+  if (sep < 0) return { date: raw, time: '' }
+  return { date: raw.slice(0, sep), time: raw.slice(sep + 1) }
+}
+
+/**
+ * Assemble the two editor inputs into the value the server accepts.
+ *
+ * A time of 00:00 (or an untouched time field) collapses to the date-only form:
+ * sending "2026-10-05T00:00:00" and "2026-10-05" mean the same thing to the
+ * meter, and the short form keeps config.yaml readable. Seconds are kept only
+ * when non-zero, matching the canonical format in model.FormatUsageMeterAnchor.
+ */
+function joinDatetimeValue(date: string, time: string): string {
+  const d = date.trim()
+  if (!d) return ''
+  const t = time.trim()
+  if (!t || t === '00:00' || t === '00:00:00') return d
+  // `time` inputs yield "HH:MM" or "HH:MM:SS" depending on the step; normalise
+  // to seconds so the server has one shape to parse.
+  return `${d}T${t.length === 5 ? `${t}:00` : t}`
+}
+
 function confirmEdit() {
   if (props.type === 'number') {
     const num = Number(editValue.value)
@@ -707,6 +776,12 @@ function confirmEdit() {
     // anchor_date, which the server rejects — the row would then look edited
     // but stay unchanged with no explanation. Keep the old value instead.
     const v = String(editValue.value ?? '').trim()
+    if (v) emit('update:modelValue', v)
+  } else if (props.type === 'datetime') {
+    // Same empty-guard as the date editor: a cleared date half must not emit an
+    // empty anchor. A cleared TIME half is fine — it means "date only", which
+    // the server reads as local midnight.
+    const v = joinDatetimeValue(datetimeDraft.date, datetimeDraft.time)
     if (v) emit('update:modelValue', v)
   } else {
     emit('update:modelValue', editValue.value)
@@ -965,6 +1040,21 @@ function confirmEdit() {
   padding: var(--space-4) var(--space-7);
 }
 
+/* Date + time editor: the two inputs share the row's free space so the
+   confirm button keeps its natural width. Without `min-width: 0` a native
+   date input refuses to shrink below its intrinsic width and pushes the
+   button off the row on narrow screens. */
+.settings-item__input-row--datetime .settings-item__text-input {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+/* The time half needs less room than the date half, but must not collapse to
+   the spinner-only width. */
+.settings-item__input-row--datetime .settings-item__text-input[type='time'] {
+  flex: 0 1 9em;
+}
+
 /* 30px tall to match the .fbtn buttons in the same rows, but kept
    RECTANGULAR (--radius-sm) so a field never reads as a pill button. Font
    size is not reduced — a value must not render smaller than its label. */
@@ -991,7 +1081,8 @@ function confirmEdit() {
    palette. Without color-scheme the glyph is near-black on the dark theme's
    input background and effectively invisible. `inherit` follows the document's
    scheme, which the theme already sets. */
-.settings-item__text-input[type='date'] {
+.settings-item__text-input[type='date'],
+.settings-item__text-input[type='time'] {
   color-scheme: inherit;
 }
 

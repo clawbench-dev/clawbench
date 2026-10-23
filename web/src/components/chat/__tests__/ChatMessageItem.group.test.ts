@@ -371,10 +371,13 @@ describe('ChatMessageItem group gating', () => {
     expect(titles.some(t => t.includes('rewindSession'))).toBe(true)
   })
 
-  it('hides fork + rewind in a group session', () => {
+  // Fork IS offered in a group: the source history is carried as injected
+  // background text instead of copied rows, so the member-row ids on the group
+  // timeline never reach the new session. Rewind stays hidden.
+  it('offers fork but hides rewind in a group session', () => {
     const w = mountItem(finishedAssistant, { isGroupSession: true })
     const titles = actionTitles(w)
-    expect(titles.some(t => t.includes('forkSession'))).toBe(false)
+    expect(titles.some(t => t.includes('forkSession'))).toBe(true)
     expect(titles.some(t => t.includes('rewindSession'))).toBe(false)
     // Generic per-message actions stay.
     expect(w.findAll('.chat-action-btn').length).toBeGreaterThan(0)

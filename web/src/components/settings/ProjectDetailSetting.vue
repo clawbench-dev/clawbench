@@ -1,6 +1,6 @@
 <template>
   <div class="project-detail">
-    <div v-if="loading" class="project-detail__empty">{{ t('common.loading') }}</div>
+    <PanelSkeleton v-if="loading" class="project-detail__skeleton" variant="text" :rows="8" :label="t('common.loading')" />
     <div v-else-if="!detail" class="project-detail__empty">{{ t('settings.items.projectLoadFailed') }}</div>
     <template v-else>
       <div class="project-detail__head">
@@ -54,6 +54,7 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import { store } from '@/stores/app'
 import { useToast } from '@/composables/useToast'
 import { useDialog } from '@/composables/useDialog'
@@ -209,6 +210,10 @@ watch(() => props.projectId, load)
   color: var(--text-muted);
   font-size: var(--font-size-md);
   text-align: center;
+}
+
+.project-detail__skeleton {
+  padding: var(--space-2) 0;
 }
 
 .project-detail__head {

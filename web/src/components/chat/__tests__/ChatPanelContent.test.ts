@@ -982,27 +982,37 @@ describe('ChatPanelContent — group forces interrupt mode', () => {
   })
 })
 
-// ── Concurrency switch is NOT in the chat panel ──
-// The free-mode concurrency switch lives in the group configuration sheet
-// (GroupSettingsSheet, reached from the header avatar stack), NOT in the chat
-// input's action bar. It was briefly wired through this component; guard that
-// it does not creep back, and that no dead props/handlers remain.
+// ── Concurrency switch IS plumbed through the chat panel ──
+// The free-mode concurrency switch has two entry points that read one
+// server-authoritative value: the group settings sheet (GroupSettingsSheet) and
+// the chip in the chat input's session-info bar. The chip lives in
+// ChatInputBar, so this component must forward the value down and the toggle
+// back up. It must NOT call setGroupParallelDefault itself — App owns the PATCH
+// and the roster refresh, exactly like the cruise switch next to it.
 //
 // The markers are the SWITCH's plumbing (groupParallelDefault / toggle-parallel),
 // NOT `groupMode`: the mode string ("host" | "free") has an independent consumer
-// here — ChatMessageList's group empty-state copy selects on it — so banning
-// `groupMode` would reject a legitimate pass-through. This guard was written
-// when the two travelled together and must not over-reach.
-describe('ChatPanelContent — no concurrency switch plumbing', () => {
+// here — ChatMessageList's group empty-state copy selects on it — so the two
+// are asserted separately.
+describe('ChatPanelContent — concurrency switch plumbing', () => {
   async function source(): Promise<string> {
     const mod = await import('@/components/chat/ChatPanelContent.vue?raw')
     return typeof mod.default === 'string' ? mod.default : ''
   }
 
-  it('does not declare or forward the concurrency-switch plumbing', async () => {
+  it('forwards the value down and the toggle back up', async () => {
     const src = await source()
-    expect(src).not.toContain('groupParallelDefault')
-    expect(src).not.toContain('toggle-parallel')
-    expect(src).not.toContain('setGroupParallelDefault')
+    // Value: a prop declaration AND a binding onto ChatInputBar. Asserting only
+    // the prop would pass with the binding deleted (the chip would then be
+    // permanently off).
+    expect(src).toMatch(/groupParallelDefault:\s*\{\s*type:\s*Boolean/)
+    expect(src).toContain(':groupParallelDefault="props.groupParallelDefault"')
+    // Toggle: declared in defineEmits AND re-emitted upward.
+    expect(src).toContain("'toggle-group-parallel'")
+    expect(src).toContain('@toggle-group-parallel="$emit(\'toggle-group-parallel\', $event)"')
+  })
+
+  it('does not call the PATCH itself (App owns it)', async () => {
+    expect(await source()).not.toContain('setGroupParallelDefault')
   })
 })

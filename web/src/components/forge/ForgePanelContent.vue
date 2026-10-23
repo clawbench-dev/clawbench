@@ -176,8 +176,8 @@
             <button class="fbtn" @click="onRefreshClick">{{ t('forge.retry') }}</button>
           </div>
 
-          <div v-else-if="pipelines.loading.value" class="forge-loading">
-            <LoadingIndicator size="md" :label="t('forge.loading')" />
+          <div v-else-if="pipelines.loading.value" class="forge-loading forge-loading--skeleton">
+            <PanelSkeleton variant="list" :rows="8" :meta="true" :label="t('forge.loading')" />
           </div>
 
           <div v-else-if="pipelines.pipelines.value.length === 0" class="forge-state">
@@ -272,8 +272,8 @@
           <button class="fbtn" @click="onRefreshClick">{{ t('forge.retry') }}</button>
         </div>
 
-        <div v-else-if="items.loading.value" class="forge-loading">
-          <LoadingIndicator size="md" :label="t('forge.loading')" />
+        <div v-else-if="items.loading.value" class="forge-loading forge-loading--skeleton">
+          <PanelSkeleton variant="list" :rows="8" :meta="true" :label="t('forge.loading')" />
         </div>
 
         <div v-else-if="items.items.value.length === 0" class="forge-state">
@@ -411,6 +411,7 @@ import {
   ExternalLink,
 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import PopupMenu from '@/components/common/PopupMenu.vue'

@@ -14,9 +14,10 @@
       </div>
     </div>
 
-    <!-- Global loading overlay -->
+    <!-- Global loading overlay. The PDF is a page, so the placeholder mimics a
+         page of text on the viewer's own dark backdrop. -->
     <div v-if="loading" class="pdf-loading-overlay">
-      <LoadingIndicator size="lg" inline :label="t('file.viewer.pdfLoading')" />
+      <PanelSkeleton class="pdf-loading-skeleton" variant="text" :rows="12" :label="t('file.viewer.pdfLoading')" />
     </div>
 
     <!-- Error -->
@@ -36,7 +37,7 @@
 import {
   Download, FileX,
 } from 'lucide-vue-next'
-import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { buildLocalFileUrl, downloadFileByPath } from '@/utils/download.ts'
@@ -515,10 +516,13 @@ defineExpose({
   z-index: 10;
 }
 
-/* Unified loader sits on the dark PDF chrome → white arc + light ring */
-.pdf-loading-overlay .loading-indicator {
-  --li-color: #fff;
-  --li-track-color: rgba(255, 255, 255, 0.25);
+/* The placeholder sits on the dark PDF chrome, so its blocks must be light —
+   override the primitive's two colour variables rather than restating the
+   gradient (see the note on .skeleton-block in css/components.css). */
+.pdf-loading-skeleton {
+  width: min(560px, 80%);
+  --skeleton-fill: rgba(255, 255, 255, 0.18);
+  --skeleton-sheen: rgba(255, 255, 255, 0.32);
 }
 
 /* Error */

@@ -12,9 +12,8 @@
       </button>
     </div>
     <div class="task-list-body">
-      <div v-if="loading && tasks.length === 0" class="task-loading">
-        <LoadingIndicator size="sm" inline />
-        <span>{{ t('common.loading') }}</span>
+      <div v-if="loading && tasks.length === 0" class="task-loading task-loading--skeleton">
+        <PanelSkeleton variant="list" :rows="8" :meta="true" :label="t('common.loading')" />
       </div>
       <div v-else-if="tasks.length === 0" class="task-empty">
         <CalendarX class="empty-icon" :size="32" />
@@ -111,7 +110,7 @@ import { store } from '@/stores/app'
 import TaskBreadcrumb from '@/components/task/TaskBreadcrumb.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
-import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import { startQuoteDrag, taskDragPayload } from '@/utils/quoteDrag'
 import { cleanupDragGhost } from '@/utils/attachDrag'
 
@@ -293,6 +292,14 @@ onMounted(refresh)
   height: 100%;
   color: var(--text-muted, #999);
   font-size: var(--font-size-lg);
+}
+
+/* The skeleton fills the list and aligns with the real cards; centring it would
+   shrink the placeholder to its content. */
+.task-loading--skeleton {
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 0;
 }
 
 .empty-icon {

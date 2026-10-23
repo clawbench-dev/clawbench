@@ -32,8 +32,19 @@
       </section>
 
       <!-- Totals overview: reflects the time-range totals only — independent of
-           the dimension filter below, so it sits above the filter card. -->
-      <section v-if="totalsPresent" class="stats-card-panel">
+           the dimension filter below, so it sits above the filter card.
+           While a query is in flight the cards are replaced by their skeleton:
+           keeping the previous range's numbers on screen is what made a range
+           switch look frozen — the controls had already changed, the numbers
+           had not, and nothing said "still loading". -->
+      <StatsSkeleton
+        v-if="showSkeleton"
+        :cards="visibleTotals.length || 4"
+        :table-rows="0"
+        :chart="false"
+        :label="t('common.loading')"
+      />
+      <section v-else-if="totalsPresent" class="stats-card-panel">
         <div class="stats-card-title">
           <Gauge :size="13" class="stats-card-title-icon" />
           <span>{{ t('stats.summaryTitle') }}</span>
@@ -139,11 +150,17 @@
       <!-- Error banner -->
       <div v-if="error" class="stats-error">{{ errorText }}</div>
 
-      <!-- Loading -->
-      <div v-if="loading && !tableRows.length" class="stats-loading">
-        <LoadingIndicator size="sm" inline />
-        <span>{{ t('common.loading') }}</span>
-      </div>
+      <!-- Loading: the range/filter cards above stay interactive (that is what
+           the user just changed), everything below them becomes a skeleton of
+           the table + chart so the panel never shows stale numbers under new
+           controls. -->
+      <StatsSkeleton
+        v-if="showSkeleton"
+        :cards="0"
+        :table-rows="filter.chartType === 'trend' ? 0 : 5"
+        :chart="true"
+        :label="t('common.loading')"
+      />
 
       <template v-else>
         <!-- Empty state -->
@@ -216,7 +233,8 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { BarChart3, Clock, SlidersHorizontal, Gauge, Table, ChartPie, Sigma, ArrowDownToLine, ArrowUpFromLine, Database, Coins, CircleDollarSign, Percent } from 'lucide-vue-next'
-import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import StatsSkeleton from '@/components/stats/StatsSkeleton.vue'
+import { useDelayedFlag } from '@/composables/useDelayedFlag'
 import UsageChart from '@/components/stats/UsageChart.vue'
 import {
   useUsageStats,
@@ -248,6 +266,13 @@ const { t } = useI18n()
 const stats = useUsageStats()
 const filter = stats.filter
 const { visibleTotals, tableRows, loading, error } = stats
+
+// Skeleton gate. A range/filter query is a local SQLite aggregate that often
+// answers in tens of milliseconds; swapping the whole panel for grey blocks on
+// every chip click would flash. Waiting one beat means only a genuinely slow
+// load shows the skeleton — which is exactly the case the user was staring at
+// before (controls changed, numbers stale, nothing saying "loading").
+const showSkeleton = useDelayedFlag(loading)
 
 const rangePresets: { key: UsageRangeKey; labelKey: string }[] = [
   { key: '24h', labelKey: 'stats.range24h' },
@@ -795,7 +820,6 @@ onMounted(() => {
   color: var(--color-red, #ef4444);
   font-size: var(--font-size-md);
 }
-.stats-loading,
 .stats-empty {
   display: flex;
   flex-direction: column;

@@ -83,9 +83,8 @@
 
     <!-- Body -->
     <div class="notif-body" @scroll="onScroll">
-      <div v-if="loading && items.length === 0" class="notif-state">
-        <LoadingIndicator size="sm" inline />
-        <span>{{ t('notifications.loading') }}</span>
+      <div v-if="loading && items.length === 0" class="notif-skeleton">
+        <PanelSkeleton variant="list" :rows="8" :meta="true" :label="t('notifications.loading')" />
       </div>
 
       <div v-else-if="error" class="notif-state notif-error">
@@ -190,7 +189,7 @@ import {
 } from 'lucide-vue-next'
 import MenuSelect, { type MenuSelectOption } from '@/components/common/MenuSelect.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
-import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import { useNotifications, ALL_PROJECTS } from '@/composables/useNotifications'
 import { useToast } from '@/composables/useToast'
 import { useDialog } from '@/composables/useDialog'
@@ -682,6 +681,11 @@ function forgeTargetFromItemKey(key: string) {
 }
 .notif-state-hint { font-size: var(--font-size-sm); }
 .notif-error { color: var(--color-red); }
+
+/* First load: preview the row shape in place of a lone spinner. */
+.notif-skeleton {
+  padding: var(--space-2) 0;
+}
 
 /* ── Day bucket ──────────────────────────────────────────────────────────
  * The date is spelled out ONCE per bucket, in a sticky header, and rows carry

@@ -62,7 +62,7 @@ async function mountPanel() {
     global: {
       plugins: [makeI18n()],
       stubs: {
-        LoadingIndicator: { template: '<span class="loading-stub" />' },
+        StatsSkeleton: { name: 'StatsSkeleton', template: '<div class="skeleton-stub" />' },
         UsageChart: {
           template: '<div class="usage-chart-stub" />',
           props: ['option'],
@@ -80,6 +80,15 @@ async function mountPanel() {
   await flushPromises()
   await nextTick()
   return wrapper
+}
+
+/** Poll until `cond` holds — the skeleton gate is time-based by design. */
+async function waitFor(cond: () => boolean, timeoutMs = 3000): Promise<void> {
+  const start = Date.now()
+  while (!cond()) {
+    if (Date.now() - start > timeoutMs) throw new Error('waitFor timed out')
+    await new Promise(r => setTimeout(r, 20))
+  }
 }
 
 describe('ClocStatsPanel', () => {
@@ -182,5 +191,24 @@ describe('ClocStatsPanel', () => {
     mockApiGet.mockRejectedValue({ message: '存量失败', status: 500 })
     const wrapper = await mountPanel()
     expect(wrapper.text()).toContain('存量失败')
+  })
+
+  it('shows a skeleton while the first scan is in flight', async () => {
+    // The cloc scan walks the whole tree, so it is the stats load most likely
+    // to be visibly slow — and it previously showed only a bare spinner.
+    const pending: ((v: unknown) => void)[] = []
+    mockApiGet.mockImplementation(() => new Promise(r => { pending.push(r as (v: unknown) => void) }))
+
+    const wrapper = await mountPanel()
+    expect(wrapper.find('.skeleton-stub').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('当前工作区暂无源码文件')
+
+    for (const release of pending) {
+      release({ languages: [{ name: 'Go', files: 1, code: 10, comment: 0, blank: 0 }], total: { name: 'Total', files: 1, code: 10, comment: 0, blank: 0 }, scannedAt: '2026-09-09T00:00:00Z' })
+    }
+    await flushPromises()
+    await nextTick()
+    expect(wrapper.find('.skeleton-stub').exists()).toBe(false)
+    expect(wrapper.text()).toContain('Go')
   })
 })

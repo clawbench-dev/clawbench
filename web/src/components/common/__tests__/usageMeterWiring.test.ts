@@ -41,7 +41,11 @@ describe('usage meter — capsule wiring', () => {
   it('the capsule is gated on isWideScreen (no mobile header UI)', () => {
     // Mobile has no capsule by design: the meter is header-only and the phone
     // channel is the notification.
-    expect(header).toMatch(/v-if="isWideScreen && usageMeter\.status\.value\.enabled"/)
+    expect(header).toMatch(/v-if="isWideScreen && usageMeter\.hasData\.value"/)
+    // And NOT on `enabled`: an unconfigured user still gets a spend total, so
+    // gating on the rule would hide the capsule for exactly the people who
+    // never opened the settings page.
+    expect(header).not.toMatch(/v-if="isWideScreen && usageMeter\.status\.value\.enabled"/)
   })
 
   it('the capsule sits between the tips ticker and the theme button', () => {

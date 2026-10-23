@@ -18,8 +18,9 @@ vi.mock('@/composables/useUsageMeter', () => ({
   useUsageMeter: () => ({ refresh: vi.fn(), openRequest: { value: 0 } }),
 }))
 
+const mockSetPendingSettingsCategory = vi.fn()
 vi.mock('@/composables/useSettingsNavigation', () => ({
-  setPendingSettingsCategory: vi.fn(),
+  setPendingSettingsCategory: (id: string) => mockSetPendingSettingsCategory(id),
 }))
 
 const i18n = createI18n({
@@ -57,10 +58,16 @@ function status(overrides: Partial<UsageMeterStatus> = {}): UsageMeterStatus {
   }
 }
 
-function mountPopover(s: UsageMeterStatus) {
+const mockSwitchTab = vi.fn()
+
+function mountPopover(s: UsageMeterStatus, state: 'ok' | 'over' | 'full' | 'off' = 'over') {
   return mount(UsageMeterPopover, {
-    props: { status: s, state: 'over', fillPercent: 50, expectedPercent: 33 },
-    global: { plugins: [i18n] },
+    props: { status: s, state, fillPercent: 50, expectedPercent: 33 },
+    global: {
+      plugins: [i18n],
+      // App.vue provides this; the settings CTA needs it to navigate.
+      provide: { switchTab: mockSwitchTab },
+    },
   })
 }
 
@@ -113,5 +120,92 @@ describe('UsageMeterPopover — baseline spans the whole cycle', () => {
     for (let i = 0; i < s.series!.length; i++) {
       expect(expected[i][1]).toBeCloseTo(yOf(s.series![i].expected), 1)
     }
+  })
+})
+
+// ── No rule configured: placeholder, not an empty readout ────────────────────
+// Every figure in the popover is derived from a quota, so with no rule there is
+// nothing to show behind it. The component renders a single placeholder entry
+// that names the feature and leads to the settings page, instead of a gauge
+// whose numbers are all zero.
+describe('UsageMeterPopover — no rule configured', () => {
+  function unmetered(overrides: Partial<UsageMeterStatus> = {}): UsageMeterStatus {
+    return status({
+      enabled: false,
+      quota: 0,
+      anchorDate: undefined,
+      dayInCycle: 0,
+      actual: 0,
+      expected: 0,
+      remainingDays: 0,
+      projectedExhaustDay: 0,
+      series: undefined,
+      ...overrides,
+    })
+  }
+
+  it('renders a placeholder entry instead of the capsule', () => {
+    const wrapper = mountPopover(unmetered(), 'off')
+
+    expect(wrapper.find('.usage-pill--placeholder').exists()).toBe(true)
+    // The real capsule is gone, not merely emptied: it would offer a popover
+    // whose every figure is zero.
+    expect(wrapper.find('[data-action="usage-meter"]').exists()).toBe(false)
+  })
+
+  it('names the feature and the action in the placeholder label', () => {
+    const wrapper = mountPopover(unmetered(), 'off')
+    const pill = wrapper.get('.usage-pill--placeholder')
+
+    expect(pill.text()).toBe('usageMeter.setupHint')
+    // The label IS the message here, so it must not fall back to the bare
+    // feature name ("usageMeter.label").
+    expect(pill.text()).not.toBe('usageMeter.label')
+    // Accessible name matches, since the visible text is the only affordance.
+    expect(pill.attributes('aria-label')).toBe('usageMeter.setupHint')
+  })
+
+  it('does not render any numbers, bar, badge or chart', () => {
+    const wrapper = mountPopover(unmetered(), 'off')
+
+    expect(wrapper.find('.usage-bar').exists()).toBe(false)
+    expect(wrapper.find('.usage-quota').exists()).toBe(false)
+    expect(wrapper.find('.usage-used').exists()).toBe(false)
+    expect(wrapper.find('.um-pop').exists()).toBe(false)
+    expect(wrapper.find('.um-spark').exists()).toBe(false)
+  })
+
+  it('uses a distinct action hook so the placeholder is not the capsule', () => {
+    const wrapper = mountPopover(unmetered(), 'off')
+    expect(wrapper.get('.usage-pill--placeholder').attributes('data-action'))
+      .toBe('usage-meter-setup')
+  })
+
+  // The placeholder's whole purpose is to lead somewhere. Without this the
+  // button could be inert and every other assertion would still pass.
+  it('opens the usage settings when the placeholder is clicked', async () => {
+    mockSetPendingSettingsCategory.mockClear()
+    mockSwitchTab.mockClear()
+
+    const wrapper = mountPopover(unmetered(), 'off')
+    await wrapper.find('.usage-pill--placeholder').trigger('click')
+
+    expect(mockSetPendingSettingsCategory).toHaveBeenCalledWith('usageMeter')
+    expect(mockSwitchTab).toHaveBeenCalledWith('settings')
+  })
+
+  // The mirror: with a rule the capsule and its popover must be back. Without
+  // this, deleting the whole body would also satisfy every assertion above.
+  it('renders the full capsule and popover once a rule exists', () => {
+    const wrapper = mountPopover(status(), 'over')
+
+    expect(wrapper.find('.usage-pill--placeholder').exists()).toBe(false)
+    expect(wrapper.find('[data-action="usage-meter"]').exists()).toBe(true)
+    expect(wrapper.find('.usage-bar').exists()).toBe(true)
+    expect(wrapper.find('.usage-quota').exists()).toBe(true)
+    expect(wrapper.find('.um-pop').exists()).toBe(true)
+    expect(wrapper.find('.um-compare').exists()).toBe(true)
+    expect(wrapper.find('.um-stats').exists()).toBe(true)
+    expect(wrapper.get('.um-link').text()).toBe('usageMeter.adjust')
   })
 })

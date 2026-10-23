@@ -150,6 +150,9 @@ vi.mock('@/components/common/AgentIcon.vue', () => ({
 vi.mock('@/components/common/LoadingIndicator.vue', () => ({
   default: { name: 'LoadingIndicator', template: '<div class="loading-stub" />' },
 }))
+vi.mock('@/components/common/PanelSkeleton.vue', () => ({
+  default: { name: 'PanelSkeleton', props: ['variant', 'rows', 'leading', 'meta', 'label'], template: '<div class="skeleton-stub" />' },
+}))
 vi.mock('@/components/common/ModalDialog.vue', () => ({
   default: { name: 'ModalDialog', template: '<div class="modal-stub" />' },
 }))
@@ -1555,7 +1558,7 @@ describe('SessionList', () => {
       mockCrossState.loading.value = true
       const wrapper = await mountList({ activeTab: 'cross' })
       await flushPromises()
-      expect(wrapper.find('.session-list-pane--cross').find('.loading-stub').exists()).toBe(true)
+      expect(wrapper.find('.session-list-pane--cross').find('.skeleton-stub').exists()).toBe(true)
     })
   })
 

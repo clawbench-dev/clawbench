@@ -44,8 +44,8 @@
 
     <!-- Scroll pane: the toolbar above stays put, like the file card's header. -->
     <div class="dir-preview-scroll">
-      <div v-if="loading && !entries.length" class="dir-preview-state">
-        <LoadingIndicator size="sm" />
+      <div v-if="loading && !entries.length" class="dir-preview-skeleton">
+        <PanelSkeleton variant="list" :rows="8" :meta="false" :label="t('common.loading')" />
       </div>
       <div v-else-if="error" class="dir-preview-state dir-preview-error">
         <AlertTriangle :size="20" />
@@ -105,7 +105,7 @@ import { AlertTriangle, ExternalLink, FolderOpen, Link2, X } from 'lucide-vue-ne
 import FileIcon from '@/components/common/FileIcon.vue'
 import ExternalBadge from '@/components/file/ExternalBadge.vue'
 import { isAbsolutePath } from '@/utils/path.ts'
-import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import { buildThumbUrl, isThumbable } from '@/utils/fileManager'
 import { mediaVersionFor } from '@/composables/useMediaWatch.ts'
 import type { DirPreviewEntry } from '@/composables/useDirPreview'
@@ -279,6 +279,10 @@ function onEntryClick(entry: DirPreviewEntry) {
 .dir-preview-btn:focus-visible {
   outline: 2px solid var(--accent-color);
   outline-offset: -1px;
+}
+
+.dir-preview-skeleton {
+  padding: var(--space-2) 0;
 }
 
 .dir-preview-state {

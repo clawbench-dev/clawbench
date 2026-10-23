@@ -87,10 +87,7 @@ CREATE TABLE IF NOT EXISTS session_tag_links (
 CREATE TABLE IF NOT EXISTS session_shares (
 	token TEXT PRIMARY KEY,
 	session_id TEXT NOT NULL,
-	title TEXT NOT NULL DEFAULT '',
-	backend TEXT NOT NULL DEFAULT '',
-	message_count INTEGER NOT NULL DEFAULT 0,
-	payload TEXT NOT NULL,
+	message_ids TEXT NOT NULL DEFAULT '[]',
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS chat_tool_calls (

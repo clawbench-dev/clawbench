@@ -54,7 +54,7 @@ ClawBench 是移动端交互适配优先、桌面端完整支持的多端 AI 工
 
 | 模块 | 说明 |
 |------|------|
-| [认证与中间件](infra/auth-and-middleware.md) | SHA-256 密码认证、本机 AI 短时令牌（30 分钟 HMAC，地址+签名双条件）、隧道场景信任边界限制、按路由认证、API 密钥加密（`agent_api_keys` 已移除）、请求链（含 NoCache）、panic 恢复 |
+| [认证与中间件](infra/auth-and-middleware.md) | SHA-256 密码认证、本机 AI 短时令牌（12 小时 HMAC，地址+签名双条件）、隧道场景信任边界限制、按路由认证、API 密钥加密（`agent_api_keys` 已移除）、请求链（含 NoCache）、panic 恢复 |
 | [国际化](infra/i18n.md) | go-i18n bundle、嵌入式 YAML 翻译、X-Locale/Cookie/Accept-Language 优先级链、推送通知独立 Localizer |
 | [SSH 隧道](infra/ssh-tunnel.md) | 双传输：SSH 通道（direct-tcpip 正向 + tcpip-forward/forwarded-tcpip 反向）与 HTTP/2 流隧道（`/api/tunnel/stream` 数据面 + `/api/tunnel/control` 反向控制面，单端口 20000 多路复用，`-R` 靠控制流通知 + 单次 token 认领）、传输方式 `port_forward.transport` **已钉死为 `both`**（服务端在 `ApplyDefaults` 与 PATCH 路径均无条件归一，`ssh`/`h2` 不可达——该字段只剩 web 端健康检查门控一个消费者，两个原生客户端都不消费：Electron 写死 SSH、Android 用本地 SharedPreferences 开关 `tunnel_transport_h2_enabled`；故「服务端只准 ssh」不可执行，已移除可配置性；字段保留以免 web 读到 `undefined` 而误判 ssh-only）、半关闭与 SSH **有界近似**而非逐条等价、方向语义、反向映射仅绑 127.0.0.1 且禁绑保留端口、密码认证、自动 host key、暴力破解防护、端口白名单默认 1024-65535（ISS-186 修复）、端点按受众拆分（公开 `/api/ssh/info` 仅端口发现，`/api/ssh/info/full` 需鉴权） |
 | [Proxy 注册表](infra/proxy.md) | 方向感知（forward/reverse）、反向代理与 Host 头重写（仅正向）、服务器端口分配与保留端口、特权端口映射、健康检查（反向跳过拨号）、并行端口探测（有界并发 + 扫描错误可见）、前端端口展示、CORS 代理（Swagger UI "Try it out"） |

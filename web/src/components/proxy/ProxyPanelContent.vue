@@ -149,7 +149,9 @@
       <div class="proxy-zones">
         <div class="proxy-zone-registered">
           <!-- Loading -->
-          <div v-if="loading" class="proxy-loading">{{ t('common.loading') }}</div>
+          <div v-if="loading" class="proxy-skeleton">
+            <PanelSkeleton variant="list" :rows="5" :meta="true" :label="t('common.loading')" />
+          </div>
 
           <!-- Port list -->
           <div v-else-if="ports.length > 0" class="proxy-list">
@@ -196,9 +198,10 @@
           <RefreshButton :size="16" class="port-scan-rescan-icon" :loading="scanning" :disabled="scanning" :title="t('proxy.rescan')" @click.stop="rescanPorts" />
         </template>
         <div class="port-scan-content">
-          <div v-if="scanning" class="port-scan-loading">
-            <LoadingIndicator size="md" />
-            <span>{{ t('proxy.scanInProgress') }}</span>
+          <!-- First scan of the drawer: preview the result rows rather than a
+               lone ring. The in-progress label stays as the live region. -->
+          <div v-if="scanning" class="port-scan-loading port-scan-loading--skeleton">
+            <PanelSkeleton variant="list" :rows="6" :meta="true" :label="t('proxy.scanInProgress')" />
           </div>
 
           <template v-else>
@@ -315,7 +318,7 @@ import { useI18n } from 'vue-i18n'
 import ProxyPortItem from './ProxyPortItem.vue'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
-import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import CopyButton from '@/components/common/CopyButton.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import { usePortForward } from '@/composables/usePortForward.ts'
@@ -793,7 +796,10 @@ async function handleRetryTunnel() {
   opacity: var(--opacity-muted);
 }
 
-.proxy-loading,
+.proxy-skeleton {
+  padding: var(--space-2) 0;
+}
+
 .proxy-empty {
   padding:24px var(--space-6);
   text-align: center;
@@ -1027,6 +1033,12 @@ async function handleRetryTunnel() {
   padding:40px var(--space-6);
   color: var(--text-muted, #999);
   font-size: var(--font-size-md);
+}
+
+.port-scan-loading--skeleton {
+  align-items: stretch;
+  justify-content: flex-start;
+  padding: var(--space-2) 0;
 }
 
 

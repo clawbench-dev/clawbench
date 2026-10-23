@@ -11,9 +11,11 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// The worker's tick must short-circuit when no quota is configured, so the
-// default (feature off) install costs nothing but a config read per interval.
-func TestUsageMeterWorker_SkipsCheckWhenDisabled(t *testing.T) {
+// With no quota the tick still calls the check, but the check must not run the
+// aggregate query. It has to be CALLED so it can broadcast the "turned off"
+// state — without that a client keeps showing the old quota until something
+// else makes it refetch, which in practice is the user clicking the capsule.
+func TestUsageMeterWorker_TicksButSkipsAggregateWhenDisabled(t *testing.T) {
 	prev := model.ConfigInstance.UsageMeter
 	model.ConfigInstance.UsageMeter = model.UsageMeterConfig{Quota: 0}
 	t.Cleanup(func() { model.ConfigInstance.UsageMeter = prev })
@@ -27,7 +29,16 @@ func TestUsageMeterWorker_SkipsCheckWhenDisabled(t *testing.T) {
 	time.Sleep(60 * time.Millisecond)
 	w.Stop()
 
-	assert.Zero(t, calls.Load(), "a disabled rule must not run the aggregate query")
+	assert.Greater(t, calls.Load(), int32(0),
+		"the check must still run so it can broadcast the disabled state")
+
+	// And the real check must not touch the ledger. No DB is configured here, so
+	// a stray aggregate would surface as a warning rather than a panic; assert on
+	// the documented behavior instead: ComputeUsageMeter returns immediately.
+	st, err := service.ComputeUsageMeter(context.Background(), time.Now())
+	assert.NoError(t, err)
+	assert.False(t, st.Enabled)
+	assert.Zero(t, st.Actual)
 }
 
 // With a quota configured the tick must actually call the check.

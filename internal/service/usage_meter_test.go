@@ -68,6 +68,68 @@ func localMidnight(t time.Time) time.Time {
 
 // ── Cycle location ───────────────────────────────────────────────────────────
 
+// An anchor carrying a time of day must place the cycle boundary at that
+// instant, not at local midnight. Without this the settings page could accept
+// "2026-10-05T14:30" and the meter would still roll over at 00:00 — the value
+// would look saved and silently mean something else.
+func TestUsageMeterCycle_AnchorWithTimePlacesBoundaryAtThatInstant(t *testing.T) {
+	anchor := time.Date(2026, 10, 5, 14, 30, 0, 0, time.Local)
+	// 3 hours after the anchor: still day 1, and the cycle start is the anchor
+	// itself rather than that day's midnight.
+	now := anchor.Add(3 * time.Hour)
+
+	setUsageMeterRule(t, model.UsageMeterConfig{
+		AnchorDate: "2026-10-05T14:30:00",
+		PeriodDays: 30,
+		Metric:     model.UsageMeterMetricCost,
+		Quota:      30,
+	})
+	setupDB(t)
+
+	st, err := service.ComputeUsageMeter(context.Background(), now)
+	require.NoError(t, err)
+	require.True(t, st.Enabled)
+
+	assert.Equal(t, 1, st.DayInCycle, "3h after the anchor is still day 1")
+
+	start, err := time.Parse(time.RFC3339, st.CycleStart)
+	require.NoError(t, err)
+	require.True(t, anchor.Equal(start),
+		"cycle start must be the anchor instant %v, got %v", anchor, start)
+
+	// And one second BEFORE the anchor the cycle has not started at all: with a
+	// midnight anchor this instant would already be inside day 1.
+	before := anchor.Add(-1 * time.Second)
+	stBefore, err := service.ComputeUsageMeter(context.Background(), before)
+	require.NoError(t, err)
+	assert.Equal(t, 0, stBefore.DayInCycle,
+		"an instant before a 14:30 anchor must not be counted as day 1")
+}
+
+// A date-only anchor keeps its original meaning: local midnight. This is the
+// compatibility guarantee for every pre-existing install.
+func TestUsageMeterCycle_DateOnlyAnchorStillMeansLocalMidnight(t *testing.T) {
+	now := time.Date(2026, 10, 19, 12, 0, 0, 0, time.Local)
+
+	setUsageMeterRule(t, model.UsageMeterConfig{
+		AnchorDate: "2026-10-05",
+		PeriodDays: 30,
+		Metric:     model.UsageMeterMetricCost,
+		Quota:      30,
+	})
+	setupDB(t)
+
+	st, err := service.ComputeUsageMeter(context.Background(), now)
+	require.NoError(t, err)
+	require.True(t, st.Enabled)
+
+	start, err := time.Parse(time.RFC3339, st.CycleStart)
+	require.NoError(t, err)
+	want := time.Date(2026, 10, 5, 0, 0, 0, 0, time.Local)
+	require.True(t, want.Equal(start), "date-only anchor must start at local midnight, got %v", start)
+	assert.Equal(t, 15, st.DayInCycle)
+}
+
 func TestUsageMeterCycle_DayCounting(t *testing.T) {
 	// A 30-day cycle anchored 10 days ago: we are on day 11.
 	now := localMidnight(time.Date(2026, 10, 19, 0, 0, 0, 0, time.Local)).Add(13 * time.Hour)

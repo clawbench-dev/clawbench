@@ -94,7 +94,7 @@ func TestDeleteProjectData_RemovesAllProjectScopedRows(t *testing.T) {
 	exec("INSERT INTO chat_thinking (message_id, session_id, think_id, seq, text) VALUES (101, 'sess-1', 'th', 0, 'thinking')")
 	exec("INSERT INTO chat_tool_calls (message_id, session_id, tool_id, name) VALUES (101, 'sess-1', 'tool', 'n')")
 	exec("INSERT INTO task_executions (task_id, session_id) VALUES ((SELECT id FROM scheduled_tasks WHERE project_id = ?), 'sess-1')", id)
-	exec("INSERT INTO session_shares (token, session_id, payload) VALUES ('stok', 'sess-1', '{}')")
+	exec("INSERT INTO session_shares (token, session_id, message_ids) VALUES ('stok', 'sess-1', '[101]')")
 	exec("INSERT INTO session_tag_links (session_id, tag_id) VALUES ('sess-1', (SELECT id FROM session_tags WHERE project_id = ?))", id)
 	// A group's undelivered private notes are keyed by the GROUP session id and
 	// carry no project_id, so nothing else in this delete reaches them.

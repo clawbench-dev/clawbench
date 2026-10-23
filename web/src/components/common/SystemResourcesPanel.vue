@@ -99,32 +99,45 @@
            phone this panel is the only place the same numbers appear, so it
            sits at the tail rather than competing with machine health.
            The whole row is the entry point to the rule's settings: there is
-           nothing to interact with here beyond "why is it this number". -->
+           nothing to interact with here beyond "why is it this number".
+
+           With no rule the row still renders, as a placeholder that says so.
+           Hiding it would leave a phone user with no discoverable path to the
+           feature at all. -->
       <button
         v-if="showUsageMeter"
         type="button"
         class="resource-row usage-row"
-        :aria-label="t('usageMeter.adjust')"
-        :title="t('usageMeter.adjust')"
+        :class="{ 'usage-row--placeholder': !meterStatus.enabled }"
+        :aria-label="meterStatus.enabled ? t('usageMeter.adjust') : t('usageMeter.setupHint')"
+        :title="meterStatus.enabled ? t('usageMeter.adjust') : t('usageMeter.setupHint')"
         data-action="usage-settings"
         @click="$emit('open-usage-settings')"
       >
         <span class="resource-header">
           <Gauge :size="13" class="resource-icon" :class="`usage-icon is-${meterState}`" />
-          <span class="resource-label">{{ t('usageMeter.label') }}</span>
-          <span class="resource-value" :class="`usage-value is-${meterState}`">
-            {{ meterUsed }}<span class="usage-quota"> / {{ meterQuota }}</span>
-          </span>
+          <!-- Placeholder: name the feature and what to do, not a label plus a
+               blank value. An empty value slot reads as "no data", which is a
+               different (and wrong) message from "not configured". -->
+          <template v-if="meterStatus.enabled">
+            <span class="resource-label">{{ t('usageMeter.label') }}</span>
+            <span class="resource-value" :class="`usage-value is-${meterState}`">
+              {{ meterUsed }}<span class="usage-quota"> / {{ meterQuota }}</span>
+            </span>
+          </template>
+          <span v-else class="resource-label">{{ t('usageMeter.setupHint') }}</span>
           <ChevronRight :size="12" class="usage-chevron" />
         </span>
-        <span class="progress-bar usage-bar">
-          <span class="usage-fill" :class="`is-${meterState}`" :style="{ width: fillPercent + '%' }"></span>
-          <span class="usage-mark" :style="{ left: expectedPercent + '%' }"></span>
-        </span>
-        <span class="usage-meta">
-          <span>{{ t('usageMeter.dayOfCycle', { day: meterStatus.dayInCycle, days: meterStatus.periodDays ?? 0 }) }}</span>
-          <span class="usage-badge" :class="`is-${meterState}`">{{ meterBadge }}</span>
-        </span>
+        <template v-if="meterStatus.enabled">
+          <span class="progress-bar usage-bar">
+            <span class="usage-fill" :class="`is-${meterState}`" :style="{ width: fillPercent + '%' }"></span>
+            <span class="usage-mark" :style="{ left: expectedPercent + '%' }"></span>
+          </span>
+          <span class="usage-meta">
+            <span>{{ t('usageMeter.dayOfCycle', { day: meterStatus.dayInCycle, days: meterStatus.periodDays ?? 0 }) }}</span>
+            <span class="usage-badge" :class="`is-${meterState}`">{{ meterBadge }}</span>
+          </span>
+        </template>
       </button>
     </template>
   </div>
@@ -142,7 +155,7 @@ import { formatUsageMeterValue } from '@/utils/usageFormat'
 
 const { t } = useI18n()
 const { resources, startPolling, stopPolling } = useSystemResources()
-const { status: meterStatus, meterState, fillPercent, expectedPercent } = useUsageMeter()
+const { status: meterStatus, meterState, fillPercent, expectedPercent, hasData } = useUsageMeter()
 const { isWideScreen } = useWideScreenLayout()
 
 const props = defineProps({
@@ -153,8 +166,12 @@ const props = defineProps({
 // Wide screens have the header capsule, so repeating the meter here would show
 // the same numbers twice on one screen. Phones have no capsule (deliberately:
 // the header is a desktop surface), which is exactly why this row exists.
+//
+// Gated on `hasData` (the first fetch landed), not on `enabled`: with no rule
+// the row renders as a placeholder pointing at the settings page, and hiding it
+// would leave a phone user with no way to discover the feature.
 const showUsageMeter = computed(
-    () => !isWideScreen.value && meterStatus.value.enabled,
+    () => !isWideScreen.value && hasData.value,
 )
 
 const meterUsed = computed(() =>
@@ -398,6 +415,13 @@ defineExpose({ startPolling, stopPolling })
 .usage-icon.is-ok { color: var(--color-green); }
 .usage-icon.is-over { color: var(--color-orange); }
 .usage-icon.is-full { color: var(--color-red); }
+
+/* Placeholder: no rule configured. The label carries the whole message
+   ("设置用量提醒"), so it uses the secondary text colour rather than the muted
+   label colour — it is an invitation, not a disabled control. */
+.usage-row--placeholder .resource-label {
+  color: var(--text-secondary);
+}
 
 .usage-value.is-over { color: var(--color-orange); }
 .usage-value.is-full { color: var(--color-red); }

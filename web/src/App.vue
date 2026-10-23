@@ -349,6 +349,7 @@
                       @open-group-settings="openGroupSettings"
                       @open-agent-config="openAgentConfig"
                       @toggle-group-cruise="onToggleGroupCruise"
+                      @toggle-group-parallel="onToggleGroupParallel"
                     />
                   </TabPanel>
                   <!-- The hint is centered on the CHAT column, not on
@@ -401,20 +402,33 @@
         @close="detailsDrawer.close()"
       />
 
-      <!-- Quote question floating bar (shared by narrow and wide layouts) -->
-      <QuoteQuestionBar
-        :visible="quoteQuestion.visible.value"
-        :quoteData="quoteQuestion.quoteData.value"
-        :anchor="quoteQuestion.anchorRect.value"
-        :composerMode="quoteQuestion.composerMode.value"
-        :composerAttachment="quoteQuestion.composerAttachment.value"
-        :expandRequest="quoteQuestion.expandRequest.value"
-        @add="onQuoteBarAdd"
-        @send="onQuoteBarSend"
-        @close="quoteQuestion.closeSheet()"
-        @pin="quoteQuestion.pinBar()"
-        @unpin="quoteQuestion.unpinBar()"
-      />
+      <!-- Quote question floating bar (shared by narrow and wide layouts).
+
+           Teleported to <body>, like the app header itself. It MUST NOT stay a
+           descendant of .app-container: that element is `position: fixed`, and
+           a fixed box always establishes a stacking context, so every z-index
+           inside it is compared only against its siblings — the bar's
+           `--z-quote-bar` (2400) was silently clamped below the body-level
+           header (1100), and a bar anchored near the top of the viewport was
+           painted UNDER it. Raising the number cannot fix that (verified with
+           real CSS: 2400 and even 9999 both lost to the header); only leaving
+           the container does. The lifecycle stays bound to .app-container,
+           which is what tears the bar down on a project switch. -->
+      <Teleport to="body">
+        <QuoteQuestionBar
+          :visible="quoteQuestion.visible.value"
+          :quoteData="quoteQuestion.quoteData.value"
+          :anchor="quoteQuestion.anchorRect.value"
+          :composerMode="quoteQuestion.composerMode.value"
+          :composerAttachment="quoteQuestion.composerAttachment.value"
+          :expandRequest="quoteQuestion.expandRequest.value"
+          @add="onQuoteBarAdd"
+          @send="onQuoteBarSend"
+          @close="quoteQuestion.closeSheet()"
+          @pin="quoteQuestion.pinBar()"
+          @unpin="quoteQuestion.unpinBar()"
+        />
+      </Teleport>
 
       <!-- Conversation picker: the destination for every quote / attachment,
            opened from any screen (including the chat's own message list, so a
@@ -625,10 +639,10 @@ import { setPendingMessageNavigation } from '@/composables/useMessageNavigation.
 import { useTabDrawer, onTabSwitch, resetTabDrawerState } from '@/composables/useTabDrawer.ts'
 import { resetAgents, useAgents } from '@/composables/useAgents'
 import { useGroupMembers } from '@/composables/useGroupMembers'
-import { setGroupCruise } from '@/composables/useGroupChat'
+import { setGroupCruise, setGroupParallelDefault } from '@/composables/useGroupChat'
 import { resetUsageStats } from '@/composables/useUsageStats'
 import { resetGitStats } from '@/composables/useGitCodeStats'
-import { useSessionIdentity, registerSessionDrawerRef, registerOpenSessionTabOverride, resetIdentity, applyCruiseAutoApproveDefault } from './composables/useSessionIdentity.ts'
+import { useSessionIdentity, registerSessionDrawerRef, registerOpenSessionTabOverride, registerGroupRosterRefresh, resetIdentity, applyCruiseAutoApproveDefault } from './composables/useSessionIdentity.ts'
 import { useSessionSidebar } from './composables/useSessionSidebar.ts'
 import type { SessionSearchResult } from './composables/useSessionSearch'
 import { loadSessionsOnce, resetChatSessionState, switching } from './composables/useChatSession.ts'
@@ -641,6 +655,7 @@ import { buildRenameGenerateOptions } from '@/utils/sessionRename'
 import { useDialog } from './composables/useDialog.ts'
 import { gt } from './composables/useLocale'
 import { useAppMode } from './composables/useAppMode.ts'
+import { onAppResume } from './composables/useAppForeground.ts'
 import { requestNotificationPermission } from './composables/useNotification'
 import { useTerminalKeyboard } from './composables/useTerminalKeyboard.ts'
 import { useChatKeyboard } from './composables/useChatKeyboard.ts'
@@ -1448,6 +1463,21 @@ async function onToggleGroupCruise(enabled: boolean) {
   await refreshGroupMembers(groupId)
 }
 
+// Toggle the current GROUP's free-mode concurrency switch from the session-info
+// bar chip. Same ownership contract as cruise: App PATCHes and refreshes the
+// roster, so the chip and the group settings sheet's switch read one server
+// value. A failed PATCH still refreshes, reverting the chip to the truth.
+async function onToggleGroupParallel(enabled: boolean) {
+  const groupId = sessionIdentity.currentSessionId.value
+  if (!groupId) return
+  try {
+    await setGroupParallelDefault(groupId, enabled)
+  } catch (e) {
+    appLog.w('Group', 'setGroupParallelDefault failed', e)
+  }
+  await refreshGroupMembers(groupId)
+}
+
 /**
  * Group-chat speaker header → that agent's config page.
  *
@@ -1698,7 +1728,7 @@ async function restoreProjectWorkspace() {
   return restoreProjectWorkspaceImpl()
 }
 
-const { isAppMode } = useAppMode()
+const { isAppMode, isDesktopApp } = useAppMode()
 const { syncToNative, sshInfo, loadSSHInfo, transportAllowsH2 } = usePortForward()
 const { terminalRuntimeEnabled, platformSupported, loadTerminalStatus } = useTerminalStatus()
 // Port forwarding is unusable only when NEITHER wire can carry it: the SSH
@@ -2093,6 +2123,14 @@ const { pickerOpen: sessionPickerOpen } = usePendingTarget()
 const sessionDrawerRef = ref<InstanceType<typeof SessionDrawer> | null>(null)
 const sessionSidebarRef = ref<InstanceType<typeof SessionSidebar> | null>(null)
 
+// Register the group-roster refresher. App.vue owns the single
+// useGroupMembers instance (the chat header and the settings sheet both read
+// it), so consumers that need to force a reload after writing member data —
+// e.g. fork, whose members' avatars are generated asynchronously AFTER the
+// session switch — reach it through this hook rather than owning a second
+// instance. Same pattern as registerSessionDrawerRef below.
+registerGroupRosterRefresh(refreshGroupMembers)
+
 // Register SessionDrawer ref so identity.openAgentSelector() works
 watch(sessionDrawerRef, (ref) => {
   if (ref) registerSessionDrawerRef(ref)
@@ -2365,6 +2403,28 @@ function registerAppEventListeners() {
   // Registered here (not in onMounted) because it is part of the global
   // listener set that both cold start and post-login initialization install.
   startSystemThemeWatcher()
+
+  // Re-establish the native port forwards on every return to the foreground.
+  //
+  // The initial syncToNative() runs once during startup, but a forward can be
+  // requested while the app is in the background (the user taps a
+  // localhost-URL link in another app, the WebView is frozen, and the request
+  // is queued to the page). Android 12+ then refuses the service start with
+  // ForegroundServiceStartNotAllowedException, so nothing binds — and nothing
+  // retries either: the service is not running, the monitor is not armed, and
+  // the page's own 5s poll only asks an absent service to reconnect
+  // ("reconnectTunnelAsync: BackgroundService not running", forever).
+  // Resuming is exactly the moment the restriction is lifted, so re-sync here.
+  //
+  // Android ONLY. `isAppMode` is `isNativeApp()`, which the Electron preload
+  // also reports as true — but the desktop shell's window is merely minimized,
+  // the process never stopped, and its tunnel is still up. Running the full
+  // sync there re-probes every forwarded port (serial `testPortReachable`, up to
+  // 500ms each) on every window focus, which is the opposite of the intent.
+  onAppResume(() => {
+    if (!isAppMode.value || isDesktopApp.value) return
+    syncToNative().catch(() => {})
+  })
 
   // Tell the desktop shell the notification-click listeners above are live.
   // Until this fires, a clicked notification is deferred by the main process
