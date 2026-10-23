@@ -152,6 +152,8 @@ const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, 
     mockForceCleanupStreamingState.mockReset().mockReturnValue(undefined)
     mockAppInForeground.value = true
     mockIsReplayingEvents.value = false
+    mockAppMode.isAppMode = false
+    mockAppMode.isDesktopApp = false
     resumeHandlers.length = 0
   }
   return { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockForceCleanupStreamingState, mockIdentityFns, mockGroupChatFns, mockOnAppResume, resetAdditionalMocks }
@@ -370,6 +372,12 @@ vi.mock('@/composables/useAppForeground', () => ({
   useAppForeground: () => ({ appInForeground: mockAppInForeground }),
   onAppResume: mockOnAppResume,
 }))
+vi.mock('@/composables/useAppMode', () => ({
+  useAppMode: () => ({
+    isAppMode: { get value() { return mockAppMode.isAppMode } },
+    isDesktopApp: { get value() { return mockAppMode.isDesktopApp } },
+  }),
+}))
 vi.mock('@/composables/useGlobalEvents', () => ({
   useGlobalEvents: () => ({ isReplayingEvents: mockIsReplayingEvents }),
 }))
@@ -440,6 +448,10 @@ const mockAppInForeground = vi.hoisted(() => ({ value: true }))
 // WS replay signal for useGlobalEvents mock — tests flip this to simulate
 // fetchPendingEvents replaying events missed while the WS was down.
 const mockIsReplayingEvents = vi.hoisted(() => ({ value: false }))
+// HOST axis for the useAppMode mock. The resume handler rebuilds the session
+// only on Android (frozen WebView); a browser tab / Electron window keeps its
+// DOM and must not be force-scrolled. Defaults to a plain browser.
+const mockAppMode = vi.hoisted(() => ({ isAppMode: false, isDesktopApp: false }))
 
 // ── Helpers ──
 
@@ -1639,6 +1651,7 @@ describe('foreground return marks current session read', () => {
     // listened on the state transition, so this exact case silently skipped the
     // re-sync and the session stayed stale until the user switched away and
     // back. The state here is deliberately left at its default (true).
+    mockAppMode.isAppMode = true
     mockAppInForeground.value = true
     const session = createForegroundTestSession()
     const handlers = captureForegroundHandlers()
@@ -1677,6 +1690,7 @@ describe('foreground return marks current session read', () => {
     // no clawbench-reconnect event fires on return, and background messages
     // never appear. The native resume hook drives this callback regardless, so
     // the current session must be re-synced (loadHistory) here.
+    mockAppMode.isAppMode = true
     const session = createForegroundTestSession()
     const handlers = captureForegroundHandlers()
 
@@ -1694,13 +1708,18 @@ describe('foreground return marks current session read', () => {
   })
 
   it('foreground return forces a history reload even when the snapshot is unchanged', async () => {
-    // A foreground return must behave like the refresh button (forceReload=true,
-    // skipIfUnchanged=false) — NOT like the lightweight WS-reconnect path
-    // (skipIfUnchanged=true) which would skip the reload when the message
-    // snapshot is unchanged. Regression: with the old handleWsReconnect the
-    // resume left DB-flushed streaming content missing from the UI whenever the
-    // snapshot fingerprint did not change; only a manual refresh or a cold
-    // restart recovered it.
+    // A foreground return on ANDROID must behave like the refresh button
+    // (forceReload=true, skipIfUnchanged=false) — NOT like the lightweight
+    // WS-reconnect path (skipIfUnchanged=true) which would skip the reload when
+    // the message snapshot is unchanged. Regression: with the old
+    // handleWsReconnect the resume left DB-flushed streaming content missing
+    // from the UI whenever the snapshot fingerprint did not change; only a
+    // manual refresh or a cold restart recovered it.
+    //
+    // Desktop is deliberately excluded: its tab/window is never frozen, so
+    // there is nothing to recover and a forced reload would only discard the
+    // reader's scroll position (see the tests below).
+    mockAppMode.isAppMode = true
     mockUtilsFns.buildMessageSnapshot.mockReturnValue('snap-a')
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
@@ -1733,17 +1752,23 @@ describe('foreground return marks current session read', () => {
     })
   })
 
-  // ── Foreground return reopens the session ──
+  // ── Foreground return: Android rebuilds, browser/Electron does not ──
   //
-  // One physical return to the foreground runs the SAME reopen as the refresh
-  // button: clear the session, then rebuild it authoritatively. This is what
-  // makes a resume behave like switching away and back — the only path that
-  // discards frontend-only state (a stale thinking block) the DB does not know
-  // about. It is deliberately NOT deduped against the WS reconnect that follows:
-  // a reopen that failed (Android resumes before the radio is back) leaves an
-  // empty list, and the reconnect is the only thing that can heal it.
+  // On Android the OS freezes the WebView while paused, so background events are
+  // lost and the WS is dropped. One physical return therefore runs the SAME
+  // reopen as the refresh button: clear the session, then rebuild it
+  // authoritatively — the only path that discards frontend-only state (a stale
+  // thinking block) the DB does not know about. It is deliberately NOT deduped
+  // against the WS reconnect that follows: a reopen that failed (Android resumes
+  // before the radio is back) leaves an empty list, and the reconnect is the
+  // only thing that can heal it.
+  //
+  // A browser tab / the Electron window is a different host: it is not frozen,
+  // its WS stays connected and its DOM already holds every message, so the
+  // rebuild repairs nothing and only destroys the reader's scroll position.
 
   it('reopens the session on resume, discarding frontend-only state the DB does not know about', async () => {
+    mockAppMode.isAppMode = true
     // The session is RUNNING and the DB snapshot carries no streaming row — the
     // exact shape where the old in-place merge (rebuildFromDb) preserved the
     // live placeholder. The reopen must instead clear it: only a real clear
@@ -1781,6 +1806,7 @@ describe('foreground return marks current session read', () => {
   })
 
   it('re-establishes the stream subscription on resume (a same-id reopen does not retrigger the watcher)', async () => {
+    mockAppMode.isAppMode = true
     const session = createForegroundTestSession()
     const onResubscribeStream = lastSessionOptions!.onResubscribeStream as ReturnType<typeof vi.fn>
     const handlers = captureForegroundHandlers()
@@ -1794,6 +1820,7 @@ describe('foreground return marks current session read', () => {
   })
 
   it('a failed reopen leaves an empty list, and the next WS reconnect heals it (not deduped)', async () => {
+    mockAppMode.isAppMode = true
     // Android resumes the app before the network/radio is back, so the reopen's
     // history GET commonly rejects with a transport error. Because the session
     // was cleared first, that leaves the message list EMPTY — and the only
@@ -1842,6 +1869,117 @@ describe('foreground return marks current session read', () => {
     await session.handleWsReconnect()
 
     expect(options.messages.value).toHaveLength(1)
+  })
+
+  // ── Browser / Electron: resume must NOT rebuild the session ──
+
+  it('does not rebuild the message list on resume in a browser tab (keeps the reading position)', async () => {
+    // Regression (issue #580): a desktop tab is never frozen. The WS stays
+    // connected and the DOM already holds every message, so clearing and
+    // refetching repaired nothing — it only forced the list back to the bottom,
+    // losing the reader's position on every tab switch. `v-show` preserves
+    // scrollTop natively; the rebuild was the one thing defeating it.
+    mockAppMode.isAppMode = false
+    mockAppMode.isDesktopApp = false
+    const session = createForegroundTestSession()
+    const options = lastSessionOptions!
+    const existing = [{ role: 'user', id: 7, content: 'kept', blocks: [] }]
+    options.messages.value = existing as never
+    const fetchBefore = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length
+
+    const handlers = captureForegroundHandlers()
+    handlers[handlers.length - 1]()
+
+    // The array must be the SAME object — not merely equal content, which would
+    // also pass if the reopen refetched and rebuilt an identical list.
+    await vi.waitFor(() => {
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/ai/chat/read?session_id=current-s1'),
+        expect.objectContaining({ method: 'POST' })
+      )
+    })
+    // The array must survive untouched. Content equality alone would also pass
+    // if the reopen refetched and rebuilt an identical list, so the decisive
+    // assertion is the history-fetch count below.
+    expect(options.messages.value).toHaveLength(1)
+    expect(options.messages.value[0].content).toBe('kept')
+    const historyFetches = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls
+      .slice(fetchBefore)
+      .filter((c: unknown[]) => String(c[0]).includes('/api/ai/chat?session_id=current-s1'))
+    expect(historyFetches).toHaveLength(0)
+  })
+
+  it('does not rebuild on resume in the Electron shell either', async () => {
+    // Electron reports isAppMode=true too, but its window merely minimizes and
+    // keeps running — same reasoning as the browser, and the same predicate as
+    // App.vue's syncToNative gate.
+    mockAppMode.isAppMode = true
+    mockAppMode.isDesktopApp = true
+    const session = createForegroundTestSession()
+    const options = lastSessionOptions!
+    const existing = [{ role: 'user', id: 9, content: 'kept', blocks: [] }]
+    options.messages.value = existing as never
+    const fetchBefore = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length
+
+    const handlers = captureForegroundHandlers()
+    handlers[handlers.length - 1]()
+
+    await vi.waitFor(() => {
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/ai/chat/read?session_id=current-s1'),
+        expect.objectContaining({ method: 'POST' })
+      )
+    })
+    expect(options.messages.value).toHaveLength(1)
+    expect(options.messages.value[0].content).toBe('kept')
+    const historyFetches = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls
+      .slice(fetchBefore)
+      .filter((c: unknown[]) => String(c[0]).includes('/api/ai/chat?session_id=current-s1'))
+    expect(historyFetches).toHaveLength(0)
+    expect(session.currentSessionId.value).toBe('current-s1')
+  })
+
+  it('still refreshes the session list on a desktop resume (unread badge must clear)', async () => {
+    // Mark-read alone would leave the badge counters stale until something else
+    // refetched the list. The desktop path must keep BOTH jobs.
+    mockAppMode.isAppMode = false
+    const session = createForegroundTestSession()
+    const fetchBefore = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length
+
+    const handlers = captureForegroundHandlers()
+    handlers[handlers.length - 1]()
+
+    await vi.waitFor(() => {
+      const listFetches = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls
+        .slice(fetchBefore)
+        .filter((c: unknown[]) => String(c[0]).includes('/api/ai/sessions'))
+      expect(listFetches.length).toBeGreaterThan(0)
+    })
+    expect(session.currentSessionId.value).toBe('current-s1')
+  })
+
+  it('repairs a dropped stream subscription on a desktop resume without rebuilding', async () => {
+    // Desktop keeps its WS alive, so no `clawbench-reconnect` fires to repair a
+    // subscription the server dropped (no_subscribers) — a running turn's events
+    // would then go nowhere until the user switched away and back. Re-subscribing
+    // is the non-destructive half of the old reopen, so it must survive the split.
+    mockAppMode.isAppMode = false
+    mockState.runningSessions.add('current-s1')
+    const session = createForegroundTestSession()
+    const onResubscribeStream = lastSessionOptions!.onResubscribeStream as ReturnType<typeof vi.fn>
+    const options = lastSessionOptions!
+    const existing = [{ role: 'user', id: 11, content: 'kept', blocks: [] }]
+    options.messages.value = existing as never
+
+    const handlers = captureForegroundHandlers()
+    handlers[handlers.length - 1]()
+
+    await vi.waitFor(() => {
+      expect(onResubscribeStream).toHaveBeenCalledWith('current-s1')
+    })
+    // Still no rebuild — the repair is subscription-only.
+    expect(options.messages.value).toHaveLength(1)
+    expect(session.currentSessionId.value).toBe('current-s1')
   })
 })
 

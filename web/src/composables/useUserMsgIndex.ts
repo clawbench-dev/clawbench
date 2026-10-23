@@ -120,10 +120,20 @@ export function useUserMsgIndex(options: {
     // scroll events be misread as user scrolls.
   }
 
-  async function jumpToUserMessage(msg: { id: number | string }) {
+  /**
+   * Scroll to a message and flash it, paging older history in as needed.
+   *
+   * Returns true when the target was found and scrolled to, false when it could
+   * not be reached (not in the loaded window and history is exhausted, or the
+   * paging loop gave up). Callers that navigate from outside the list — e.g. a
+   * session-search hit whose message id may predate the loaded window — need the
+   * failure signal to fall back to a sensible view instead of leaving the reader
+   * wherever they happened to be.
+   */
+  async function jumpToUserMessage(msg: { id: number | string }): Promise<boolean> {
     const targetId = msg.id
     const el = options.getMessagesRef()
-    if (!el) return
+    if (!el) return false
 
     const messages = options.getMessages()
     const msgIndex = messages.findIndex(m => m.id === targetId)
@@ -132,11 +142,11 @@ export function useUserMsgIndex(options: {
       const items = el.querySelectorAll('.chat-messages-list > .chat-message')
       if (items[msgIndex]) {
         _scrollAndHighlight(items[msgIndex])
-        return
+        return true
       }
     }
 
-    if (!options.getHasMore()) return
+    if (!options.getHasMore()) return false
     loadingTarget.value = true
     try {
       const maxRounds = 50
@@ -148,10 +158,15 @@ export function useUserMsgIndex(options: {
           const items = el.querySelectorAll('.chat-messages-list > .chat-message')
           if (items[idx]) {
             _scrollAndHighlight(items[idx])
-            return
+            return true
           }
           break
         }
+        // History is exhausted (or the last load returned nothing) — the target
+        // simply is not in this session. Without this, every remaining round
+        // would burn its 500ms timeout: a stale search hit (message deleted, or
+        // the index is behind) would spin for ~25s with loadingTarget held.
+        if (!options.getHasMore()) return false
         options.emitLoadMore()
         await new Promise<void>(resolve => {
           let timer: ReturnType<typeof setTimeout> | null = null
@@ -171,6 +186,7 @@ export function useUserMsgIndex(options: {
         await nextTick()
         await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
       }
+      return false
     } finally {
       loadingTarget.value = false
     }

@@ -2043,29 +2043,68 @@ function scrollBottom(force = false) {
 /**
  * Consume a pending "open this message" request once its session is loaded.
  *
- * A quote's jump may target a session that is not on screen yet (and may be in
- * another project), so the request is parked in module state by
- * jumpToQuoteSource and picked up here. It waits for the CURRENT session to be
- * the requested one before scrolling: acting earlier would search the wrong
- * session's message list and silently do nothing.
+ * A quote's jump (or a session-search hit) may target a session that is not on
+ * screen yet (and may be in another project), so the request is parked in
+ * module state by the dispatcher and picked up here. It waits for the CURRENT
+ * session to be the requested one before scrolling: acting earlier would search
+ * the wrong session's message list and silently do nothing.
  *
- * `immediate` + watching the message count covers both arrival paths — the
- * session may already be open (messages present) or still loading (the watcher
- * fires when they land).
+ * The target is reached via `jumpToUserMessage`, NOT `scrollToMessage`: only the
+ * former pages older history in until the message exists. A search hit routinely
+ * points at a message far older than the loaded window (20 messages), where
+ * `scrollToMessage` finds nothing and silently returns.
+ *
+ * `pendingMessageNavigation` is itself a watch source. The session may already
+ * be open with the SAME message count when the request arrives (searching the
+ * current session), so neither `currentSessionId` nor `messages.length` would
+ * change and the request would sit parked until some unrelated arrival happened
+ * to satisfy it — the reader's tap appearing to do nothing, then the view
+ * jumping on its own later.
  */
 watch(
-    [() => identity.currentSessionId.value, () => messages.value.length],
+    [
+        () => identity.currentSessionId.value,
+        () => messages.value.length,
+        () => session.switching.value,
+        pendingMessageNavigation,
+    ],
     ([sid]) => {
         const req = pendingMessageNavigation.value
         if (!req || req.sessionId !== sid) return
-        // Consume only once the target message actually exists in this session.
-        // An optimistic or not-yet-paged message leaves the request pending, so
-        // a later arrival can still satisfy it.
-        const present = messages.value.some(m => m.id === req.messageId)
-        if (!present) return
+        // A session switch clears the array synchronously and refetches: acting
+        // now would search an empty list, conclude the message is gone and show
+        // a spurious failure. `switching` covers exactly that window, and it is
+        // a watch source so the request is retried when the load finishes.
+        if (session.switching.value) return
+        // Only the session identity gates consumption — the target message may
+        // not be loaded yet, and jumpToUserMessage pages it in. A request that
+        // still cannot be satisfied is reported so the reader is not left
+        // staring at an unchanged view.
         consumePendingMessageNavigation()
         // The list renders on the next tick; scroll after it exists.
-        nextTick(() => messageListRef.value?.scrollToMessage(req.messageId))
+        nextTick(async () => {
+            let found
+            try {
+                found = await messageListRef.value?.jumpToUserMessage?.({ id: req.messageId })
+            } catch (err) {
+                // A throw inside the paging loop must not become an unhandled
+                // rejection; treat it as "could not reach the target".
+                appLog.w('ChatPanel', 'jump to message failed', err)
+                found = false
+            }
+            if (found === false) {
+                // The message is gone from the session (deleted, or the search
+                // index is stale). Land at the bottom — the most recent content
+                // — and say why, instead of leaving the viewport wherever it was.
+                messageListRef.value?.scrollToBottom(true)
+                // Quote and notification jumps share this channel, so the copy
+                // must not claim a search happened for those sources.
+                toast.show(
+                    gt(req.source === 'search' ? 'sessionSearch.jumpFailed' : 'sessionSearch.jumpFailedGeneric'),
+                    { icon: 'warning', type: 'error' },
+                )
+            }
+        })
     },
     { immediate: true },
 )

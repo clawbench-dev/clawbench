@@ -1263,6 +1263,9 @@ export default {
     loadingMore: '加载更多中...',
     noMore: '没有更多会话',
     loadExternalSession: '外部会话',
+    jumpToMatch: '定位到该条消息',
+    jumpFailed: '该消息已不在会话中，已停留在会话底部',
+    jumpFailedGeneric: '未找到该消息，已停留在会话底部',
   },
   group: {
     newGroup: '新建群聊',
