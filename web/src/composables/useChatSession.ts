@@ -21,6 +21,7 @@ import { isTransportError } from '@/utils/networkError'
 import { forceCleanupStreamingState, type ChatMessage, type ChatMessageAction } from '@/utils/chatStreamUtils.ts'
 import { warmWorktreeCache } from '@/composables/useWorktreeAnnotation.ts'
 import { syncFromHistory, clearQueue, beginQueueSnapshot } from '@/composables/useMessageQueue.ts'
+import { hasChatScrollPosition, shouldRestoreChatScroll } from '@/utils/chatScrollMemory'
 
 // Module-level one-time session list load (replaces continuous polling)
 // Accessible from App.vue without instantiating useChatSession
@@ -1078,8 +1079,15 @@ export function useChatSession(options: UseChatSessionOptions) {
     // - Placeholder restoration for running sessions (rebuildFromDb)
     // immediate=true skips the loadHistoryInProgress queue and
     // handles switching/inputDisabled in its finally block.
-    // Session switches always land at the bottom: forceScrollBottom=true.
-    await loadHistory(true, true, false, true)
+    // A still session resumes the reader's position; a running one still lands
+    // at the bottom (its output is the point). runningSessions is the same
+    // source the chat panel uses for the stop button, so the two never
+    // disagree.
+    const stillHasMemory = shouldRestoreChatScroll(
+      hasChatScrollPosition(sessionId),
+      runningSessions.value.has(sessionId),
+    )
+    await loadHistory(!stillHasMemory, true, false, true)
 
     // Mark the session as read. Loading history (loadHistory → GET /api/ai/chat)
     // no longer marks a session read on the backend — only an explicit user
