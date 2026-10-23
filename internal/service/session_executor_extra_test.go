@@ -1484,13 +1484,18 @@ func TestDrainAndPersistCancelledMetadata_NilChannelIsSafe(t *testing.T) {
 func TestAbandonTurn_DrainsMetadataInsteadOfDiscarding(t *testing.T) {
 	src, err := os.ReadFile("scheduler.go")
 	require.NoError(t, err)
-	body := string(src)
+	// Normalize CRLF: the repo is checked out with `core.autocrlf` on Windows,
+	// so a source-scanning guard that matches "\n" literals passes on Linux and
+	// macOS and fails on the Windows runner with a -1 index (the line endings
+	// are "\r\n"). Every newline-sensitive guard in this package must do this.
+	body := strings.ReplaceAll(string(src), "\r\n", "\n")
 
 	start := strings.Index(body, "func abandonTurn(")
 	require.GreaterOrEqual(t, start, 0, "abandonTurn is gone; this guard needs updating")
-	end := strings.Index(body[start:], "\n}\n")
+	rest := body[start:]
+	end := strings.Index(rest, "\n}\n")
 	require.Greater(t, end, 0)
-	fn := body[start : start+end]
+	fn := rest[:end]
 
 	assert.Contains(t, fn, "executor.drainAndPersistCancelledMetadata(eventCh)",
 		"abandonTurn must drain and persist the turn's metadata; discarding the "+
