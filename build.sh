@@ -132,6 +132,13 @@ elif [ -f "package.json" ] && command -v npm >/dev/null 2>&1; then
     # so leftover chunks (diagram JS, CSS, fonts, etc.) accumulate indefinitely.
     # Preserve only index.html and assets/ (static user assets); Vite regenerates the rest.
     find .clawbench-web/ -maxdepth 1 -type f ! -name 'index.html' -delete 2>/dev/null || true
+    # Guard BEFORE building: TS-only syntax in a `<script setup>` block without
+    # `lang="ts"` compiles cleanly and only throws at runtime (the block is
+    # plain JS, so `f<T>(x)` is `(f < T) > x` and `T` is an undefined variable).
+    # `npm run typecheck` cannot see these blocks and the build succeeds, so
+    # without this check the failure ships. See the script's header for the
+    # incident that prompted it.
+    node scripts/check-js-script-blocks.mjs || { echo "ERROR: TS syntax in a plain-JS <script setup> block" >&2; exit 1; }
     npm run build || { echo "ERROR: npm run build failed" >&2; exit 1; }
     echo "  Frontend: .clawbench-web/"
 

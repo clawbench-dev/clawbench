@@ -91,6 +91,9 @@ if command -v npx >/dev/null 2>&1 && [ -f "$ROOT_DIR/package.json" ]; then
         echo ""
     fi
     run_check "Typecheck (Frontend)" npm run typecheck
+    # Plain-JS `<script setup>` blocks are invisible to vue-tsc, and TS syntax
+    # in them is valid JS that only throws at runtime — see the script's header.
+    run_check "Guard (plain-JS script blocks)" node scripts/check-js-script-blocks.mjs
     run_check "Lint (CSS)" npm run lint:css
 else
     echo -e "${YELLOW}⚠️  跳过 Frontend typecheck（未找到 npm/node_modules）${NC}"

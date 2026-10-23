@@ -985,14 +985,14 @@ const previewSplitRatio = ref(clampPreviewRatio(readPanelState('fmPreviewRatio')
  * directory changed) clear the in-memory value without recording it, because
  * those are not the user saying "I want this pane collapsed from now on".
  */
-const previewPaneOpen = ref(readPanelState<boolean>('fmPreviewOpen'))
+const previewPaneOpen = ref(readPanelState('fmPreviewOpen'))
 
 // Re-read when the layout-memory scope or project root changes (this component
 // outlives a project switch only via the keyed subtree, but the scope switch
 // happens in place, with the component mounted).
 watch(layoutEpoch, () => {
-    previewPaneOpen.value = readPanelState<boolean>('fmPreviewOpen')
-    previewSplitRatio.value = clampPreviewRatio(readPanelState<number>('fmPreviewRatio'))
+    previewPaneOpen.value = readPanelState('fmPreviewOpen')
+    previewSplitRatio.value = clampPreviewRatio(readPanelState('fmPreviewRatio'))
 })
 
 /** Keep the pane a genuine split — reject a degenerate 0 or 1 ratio. */
