@@ -705,6 +705,7 @@ import {
   saveProjectPanel,
 } from './composables/useProjectPanel.ts'
 import { openPendingSessionWhenReady } from './composables/usePendingSessionOpen.ts'
+import { setLayoutProjectRoot } from './utils/panelState'
 import { guardStartupWithSplash } from './composables/useStartupGuard.ts'
 import { setPendingCommitNavigation } from './composables/useCommitNavigation.ts'
 import { getFileType } from './utils/fileType.ts'
@@ -1021,6 +1022,18 @@ watch(currentPanelTab, (tab) => {
   if (isPanelSwitchInFlight()) return
   saveProjectPanel(store.state.projectRoot, tab)
 })
+
+/**
+ * Tell the panel-state registry which project is current, so per-project
+ * layout keys (and the "布局记忆 = 按项目" seed) resolve against the right root.
+ *
+ * `immediate` because the layout composables may have initialised before this
+ * watcher registered — and because a cold start needs the root set before
+ * anything reads a project-scoped entry. The registry bumps its epoch, which
+ * makes the layout composables re-read; the watch on `projectRoot` is the only
+ * writer, so the two can never disagree about which project is in scope.
+ */
+watch(() => store.state.projectRoot, (root) => setLayoutProjectRoot(root), { immediate: true })
 
 // Focus-aware keyboard gating: a panel's global shortcuts only fire when the
 // user is actually working in that pane (wide-screen) or that tab (narrow).

@@ -31,11 +31,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronDown, ChevronRight } from 'lucide-vue-next'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import GitWorktreeCard from './GitWorktreeCard.vue'
+import { layoutEpoch, readPanelState, writePanelState } from '@/utils/panelState'
 
 const { t } = useI18n()
 
@@ -55,21 +56,22 @@ const props = withDefaults(defineProps<{
 
 defineEmits(['switch-worktree', 'delete-worktree', 'retry'])
 
-const STORAGE_KEY = 'git-worktree-collapsed'
 const collapsed = ref(false)
 
-onMounted(() => {
-  const stored = localStorage.getItem(STORAGE_KEY)
-  if (stored !== null) {
-    collapsed.value = stored === 'true'
-  } else {
-    collapsed.value = props.initialCollapsed
-  }
-})
+/** `null` = the user has never chosen, so the component's own default applies. */
+function loadCollapsed() {
+  const stored = readPanelState<boolean | null>('gitWorktreeCollapsed')
+  collapsed.value = stored === null ? props.initialCollapsed : stored
+}
+
+onMounted(loadCollapsed)
+// Layout-memory scope / project root changed → the stored value now comes from
+// a different key.
+watch(layoutEpoch, loadCollapsed)
 
 function toggleCollapse() {
   collapsed.value = !collapsed.value
-  localStorage.setItem(STORAGE_KEY, String(collapsed.value))
+  writePanelState('gitWorktreeCollapsed', collapsed.value)
 }
 </script>
 

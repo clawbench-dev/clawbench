@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, vi } from 'vitest'
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import {
   DEFAULT_FM_PREVIEW_RATIO,
   DEFAULT_LEFT_COLLAPSED,
@@ -7,9 +7,17 @@ import {
   DEFAULT_TOC_DOCK_WIDTH,
   PANEL_ENTRIES,
   PANEL_KEY_PREFIX,
+  _resetLayoutScopeForTest,
+  effectiveScope,
+  getLayoutProjectRoot,
+  getLayoutScopeMode,
+  layoutEpoch,
   migrateLegacyKeys,
   physicalKey,
   readPanelState,
+  seedProjectFromGlobal,
+  setLayoutProjectRoot,
+  setLayoutScopeMode,
   writePanelState,
 } from '@/utils/panelState'
 import type { PanelId } from '@/utils/panelState'
@@ -32,15 +40,23 @@ describe('panelState registry shape', () => {
     // PANEL_ENTRIES (the compile-time typo guard depends on them matching).
     const declared: PanelId[] = [
       'leftCollapsed', 'chatCollapsed', 'splitRatio', 'sessionSidebar',
-      'tocDockOpen', 'tocDockWidth', 'tocDockSide', 'fmPreviewRatio', 'leftTab',
+      'tocDockOpen', 'tocDockWidth', 'tocDockSide', 'fmPreviewRatio',
+      'fmPreviewOpen', 'gitBranchCollapsed', 'gitWorktreeCollapsed',
+      'gitManageTab', 'leftTab',
     ]
     expect(new Set(declared)).toEqual(new Set(Object.keys(PANEL_ENTRIES)))
   })
 
-  it('marks only the left tab as per-project', () => {
-    // The whole point of the scope field: exactly one entry follows the project.
-    const project = Object.values(PANEL_ENTRIES).filter((e) => e.scope === 'project').map((e) => e.id)
-    expect(project).toEqual(['leftTab'])
+  it('marks only the left tab as pinned to the project', () => {
+    // Every other entry follows the layout-memory switch. leftTab must not:
+    // "remember layout globally" cannot make every project share one tab
+    // (issue #474). Pinned by identity, not by count, so adding a new entry
+    // cannot silently weaken the rule.
+    const pinned = Object.values(PANEL_ENTRIES)
+      .filter((e) => e.followsLayoutMemory === false)
+      .map((e) => e.id)
+    expect(pinned).toEqual(['leftTab'])
+    expect(PANEL_ENTRIES.leftTab.scope).toBe('project')
   })
 })
 
@@ -175,9 +191,176 @@ describe('per-project isolation', () => {
   })
 })
 
-describe('legacy key migration', () => {
-  beforeEach(() => localStorage.clear())
+describe('runtime scope (layout memory switch)', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    _resetLayoutScopeForTest()
+  })
+  afterEach(() => _resetLayoutScopeForTest())
 
+  it('defaults to global scope', () => {
+    expect(getLayoutScopeMode()).toBe('global')
+    expect(getLayoutProjectRoot()).toBe('')
+  })
+
+  it('keeps every following entry global under the default mode', () => {
+    setLayoutProjectRoot(ROOT_A)
+    for (const entry of Object.values(PANEL_ENTRIES)) {
+      if (entry.id === 'leftTab') continue
+      expect(effectiveScope(entry), entry.id).toBe('global')
+    }
+    // leftTab is pinned and needs a root — which we now have.
+    expect(physicalKey('leftTab')).toBe(PANEL_KEY_PREFIX + 'left-tab:' + ROOT_A)
+  })
+
+  it('switches every following entry to the project key', () => {
+    setLayoutScopeMode('project')
+    setLayoutProjectRoot(ROOT_A)
+    expect(physicalKey('splitRatio')).toBe(PANEL_KEY_PREFIX + 'split-ratio:' + ROOT_A)
+    expect(physicalKey('sessionSidebar')).toBe(PANEL_KEY_PREFIX + 'session-sidebar:' + ROOT_A)
+  })
+
+  it('leaves leftTab per-project in BOTH modes', () => {
+    setLayoutProjectRoot(ROOT_A)
+    expect(physicalKey('leftTab')).toBe(PANEL_KEY_PREFIX + 'left-tab:' + ROOT_A)
+    setLayoutScopeMode('project')
+    expect(physicalKey('leftTab')).toBe(PANEL_KEY_PREFIX + 'left-tab:' + ROOT_A)
+  })
+
+  it('returns no key for project-scoped entries while the root is unknown', () => {
+    // Before the workspace loads there is no root. Reads must fall back to
+    // defaults rather than writing to a key like '...split-ratio:'.
+    setLayoutScopeMode('project')
+    expect(physicalKey('splitRatio')).toBeNull()
+    expect(readPanelState<number>('splitRatio')).toBe(DEFAULT_RATIO)
+    expect(writePanelState('splitRatio', 0.7)).toBe(false)
+    expect(Object.keys(localStorage).filter((k) => k.startsWith(PANEL_KEY_PREFIX))).toHaveLength(0)
+  })
+
+  it('bumps the epoch on a scope switch and on a root change', () => {
+    const start = layoutEpoch.value
+    setLayoutScopeMode('project')
+    expect(layoutEpoch.value).toBe(start + 1)
+    setLayoutProjectRoot(ROOT_A)
+    expect(layoutEpoch.value).toBe(start + 2)
+  })
+
+  it('does not bump the epoch for a no-op call', () => {
+    // Redundant bumps would re-read every layout composable on every project
+    // switch notification; the root watcher fires more often than it changes.
+    const start = layoutEpoch.value
+    setLayoutScopeMode('global')
+    setLayoutProjectRoot('')
+    expect(layoutEpoch.value).toBe(start)
+  })
+
+  it('seeds the project key from the global value when switching to project', () => {
+    // The user's choice: flipping to per-project must not reset every project
+    // to factory defaults — the layout on screen is the one to start from.
+    writePanelState('splitRatio', 0.62)
+    writePanelState('chatCollapsed', true)
+    setLayoutProjectRoot(ROOT_A)
+    setLayoutScopeMode('project')
+
+    expect(readPanelState<number>('splitRatio')).toBe(0.62)
+    expect(readPanelState<boolean>('chatCollapsed')).toBe(true)
+    // The global record survives as the seed for projects visited later.
+    expect(localStorage.getItem(PANEL_KEY_PREFIX + 'split-ratio')).toBe('0.62')
+  })
+
+  it('does not overwrite a project value that already exists', () => {
+    writePanelState('splitRatio', 0.62)
+    setLayoutProjectRoot(ROOT_A)
+    setLayoutScopeMode('project')
+    // The user then drags the split to 0.3 in project A.
+    writePanelState('splitRatio', 0.3)
+    // Back to global, change it, and return to project mode.
+    setLayoutScopeMode('global')
+    writePanelState('splitRatio', 0.8)
+    setLayoutScopeMode('project')
+    // Project A keeps its own choice; it must not be re-seeded from global.
+    expect(readPanelState<number>('splitRatio')).toBe(0.3)
+  })
+
+  it('seeds each project independently as it is opened', () => {
+    writePanelState('splitRatio', 0.62)
+    setLayoutScopeMode('project')
+    setLayoutProjectRoot(ROOT_A)
+    expect(readPanelState<number>('splitRatio')).toBe(0.62)
+    writePanelState('splitRatio', 0.2)
+    setLayoutProjectRoot(ROOT_B)
+    expect(readPanelState<number>('splitRatio')).toBe(0.62)
+    setLayoutProjectRoot(ROOT_A)
+    expect(readPanelState<number>('splitRatio')).toBe(0.2)
+  })
+
+  it('does not seed entries that are pinned to the project', () => {
+    // leftTab's global key is not a meaningful seed: the per-project default
+    // (null → layout default) must not be replaced by some other project's tab.
+    localStorage.setItem(PANEL_KEY_PREFIX + 'left-tab', 'tasks')
+    setLayoutProjectRoot(ROOT_A)
+    setLayoutScopeMode('project')
+    expect(readPanelState<string | null>('leftTab')).toBeNull()
+  })
+
+  it('does not seed when there is no root yet', () => {
+    writePanelState('splitRatio', 0.62)
+    setLayoutScopeMode('project')
+    expect(Object.keys(localStorage).filter((k) => k.includes(':') && k.startsWith(PANEL_KEY_PREFIX))).toHaveLength(0)
+  })
+
+  it('seeds when the root arrives after the switch', () => {
+    // Startup order: the mode is restored from settings before the workspace
+    // loads, so the root always arrives second. Seeding must still happen.
+    writePanelState('splitRatio', 0.62)
+    setLayoutScopeMode('project')
+    setLayoutProjectRoot(ROOT_A)
+    expect(readPanelState<number>('splitRatio')).toBe(0.62)
+  })
+
+  it('survives a storage write failure while seeding', () => {
+    writePanelState('splitRatio', 0.62)
+    const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('quota exceeded')
+    })
+    try {
+      expect(() => {
+        setLayoutScopeMode('project')
+        setLayoutProjectRoot(ROOT_A)
+      }).not.toThrow()
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('keeps seedProjectFromGlobal a no-op under global scope', () => {
+    writePanelState('splitRatio', 0.62)
+    setLayoutProjectRoot(ROOT_A)
+    seedProjectFromGlobal()
+    expect(localStorage.getItem(PANEL_KEY_PREFIX + 'split-ratio:' + ROOT_A)).toBeNull()
+  })
+
+  it('reads a different value per project in project mode', () => {
+    // The end-to-end property: one shared setting, two independent layouts.
+    writePanelState('sessionSidebar', { open: true, width: 280 })
+    setLayoutProjectRoot(ROOT_A)
+    setLayoutScopeMode('project')
+    writePanelState('sessionSidebar', { open: false, width: 400 })
+    setLayoutProjectRoot(ROOT_B)
+    expect(readPanelState('sessionSidebar')).toEqual({ open: true, width: 280 })
+    setLayoutProjectRoot(ROOT_A)
+    expect(readPanelState('sessionSidebar')).toEqual({ open: false, width: 400 })
+    // ...and switching back to global ignores both.
+    setLayoutScopeMode('global')
+    expect(readPanelState('sessionSidebar')).toEqual({ open: true, width: 280 })
+  })
+})
+
+describe('legacy key migration', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    _resetLayoutScopeForTest()
+  })
   it('copies every legacy global key to its new key and drops the old one', () => {
     const cases: Array<[string, string, string]> = [
       ['clawbench-widescreen-chat-collapsed', '1', PANEL_KEY_PREFIX + 'chat-collapsed'],
@@ -204,8 +387,35 @@ describe('legacy key migration', () => {
     expect(readPanelState('fmPreviewRatio')).toBe(0.42)
   })
 
-  it('does not overwrite a new key that already exists', () => {
-    localStorage.setItem('clawbench-widescreen-chat-collapsed', '1')
+  it('migrates the bare git keys into the registry', () => {
+    // These three lived outside the registry (and the git collapse keys used
+    // 'true'/'false' rather than the registry's '1'/'0'), so they are the one
+    // migration where the encoding actually differs and a naive copy would
+    // store "collapsed: false" for a collapsed panel.
+    localStorage.setItem('git-branch-collapsed', 'true')
+    localStorage.setItem('git-worktree-collapsed', 'false')
+    localStorage.setItem('git-manage-active-tab', 'tags')
+
+    migrateLegacyKeys()
+
+    expect(readPanelState('gitBranchCollapsed')).toBe(true)
+    expect(readPanelState('gitWorktreeCollapsed')).toBe(false)
+    expect(readPanelState('gitManageTab')).toBe('tags')
+    expect(localStorage.getItem('git-branch-collapsed')).toBeNull()
+    expect(localStorage.getItem('git-worktree-collapsed')).toBeNull()
+    expect(localStorage.getItem('git-manage-active-tab')).toBeNull()
+  })
+
+  it('leaves the git collapse unrecorded when the legacy key was absent', () => {
+    // null is "the user never chose", which is what lets the component's own
+    // `initialCollapsed` prop decide. A migration that defaulted to false would
+    // permanently override it.
+    migrateLegacyKeys()
+    expect(readPanelState('gitBranchCollapsed')).toBeNull()
+    expect(readPanelState('gitWorktreeCollapsed')).toBeNull()
+  })
+
+  it('does not overwrite a new key that already exists', () => {    localStorage.setItem('clawbench-widescreen-chat-collapsed', '1')
     localStorage.setItem(PANEL_KEY_PREFIX + 'chat-collapsed', '0')
 
     migrateLegacyKeys()

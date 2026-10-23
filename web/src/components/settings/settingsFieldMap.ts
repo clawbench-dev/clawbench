@@ -243,6 +243,14 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.uiScaleAutoFit', descriptionKey: 'settings.items.uiScaleAutoFitDesc', key: 'uiScaleAutoFit', type: 'action', source: 'local', hideInAndroidApp: true, sectionHeader: 'settings.items.appearanceDisplaySection' } },
     { type: 'item', spec: { labelKey: 'settings.items.uiScale', descriptionKey: 'settings.items.uiScaleDesc', key: 'uiScale', type: 'slider', source: 'local', min: 0.8, max: 1.5, step: UI_SCALE_STEP, defaultValue: 1, displayFormat: 'percent', sectionHeader: 'settings.items.appearanceDisplaySection' } },
     { type: 'item', spec: { labelKey: 'settings.items.headerShortcutTips', descriptionKey: 'settings.items.headerShortcutTipsDesc', key: 'headerShortcutTips', type: 'switch', source: 'local', sectionHeader: 'settings.items.appearanceDisplaySection' } },
+    // How panel geometry is remembered: one record for every project, or one
+    // per project. Placed in Display rather than a new card because it is the
+    // same kind of per-device preference as UI scale — and it must live next to
+    // the things it governs, or nobody finds it.
+    { type: 'item', spec: { labelKey: 'settings.items.layoutMemory', descriptionKey: 'settings.items.layoutMemoryDesc', key: 'layoutMemory', type: 'select', source: 'local', defaultValue: 'global', sectionHeader: 'settings.items.appearanceDisplaySection', options: [
+      { labelKey: 'settings.items.layoutMemoryGlobal', value: 'global' },
+      { labelKey: 'settings.items.layoutMemoryProject', value: 'project' },
+    ]}},
     { type: 'item', spec: { labelKey: 'settings.items.fontMono', descriptionKey: 'settings.items.fontMonoDesc', key: 'fontMono', type: 'select', source: 'local', defaultValue: 'default', sectionHeader: 'settings.items.fontSection', options: buildFontFamilyOptions(true) }},
     { type: 'item', spec: { labelKey: 'settings.items.fontMonoFallback', descriptionKey: 'settings.items.fontMonoFallbackDesc', key: 'fontMonoFallback', type: 'select', source: 'local', defaultValue: 'default', sectionHeader: 'settings.items.fontSection', options: buildMonoFallbackOptions() }},
     { type: 'item', spec: { labelKey: 'settings.items.fontUi', descriptionKey: 'settings.items.fontUiDesc', key: 'fontUi', type: 'select', source: 'local', defaultValue: 'default', sectionHeader: 'settings.items.fontSection', options: buildFontFamilyOptions(false) }},

@@ -16,22 +16,47 @@
  * useTocDockPreference and the width clamping in useSessionSidebar are all
  * untouched. Callers keep their Vue refs and simply read/write through here.
  *
+ * SCOPE IS RUNTIME, NOT COMPILE-TIME. The user picks "remember layout globally"
+ * or "remember it per project" in appearance settings; `setLayoutScopeMode`
+ * switches every entry that follows that switch (all of them except the
+ * left-column tab, which is pinned to the project — issue #474). Because the
+ * decision now lives in a mutable module variable, `layoutEpoch` exists: every
+ * scope/root change bumps it, and the layout composables watch it to re-read
+ * their stored values. Without that they would keep the values they read on
+ * first use and the switch would appear to do nothing.
+ *
  * LEAFLET: this file must not import any composable (useWideScreenLayout,
  * useProjectPanel, useTocDockPreference, useSessionSidebar). Those import THIS
- * module, so the reverse edge would create a cycle. Only `utils/splitRatio` is
- * imported, and that is itself import-free.
+ * module, so the reverse edge would create a cycle. Only `utils/splitRatio`
+ * and `vue` (for the epoch ref) are imported; both are leaves.
  */
+import { ref } from 'vue'
 import { DEFAULT_RATIO } from '@/utils/splitRatio'
 
 /** Where a state lives: one shared key, or one key per project root. */
 export type Scope = 'global' | 'project'
+
+/** How the user chose to remember the layout (设置 → 外观 → 布局记忆). */
+export type ScopeMode = 'global' | 'project'
 
 export interface PanelEntry<T> {
   /** Registry id, used as the argument to readPanelState/writePanelState. */
   id: PanelId
   /** Logical key fragment; the physical key is derived from it (see physicalKey). */
   key: string
+  /**
+   * The entry's own scope. Only consulted for entries that do NOT follow the
+   * layout-memory switch (`followsLayoutMemory: false`); for the rest the
+   * runtime mode decides and this field just documents the default.
+   */
   scope: Scope
+  /**
+   * Whether this entry's scope is decided by the layout-memory setting.
+   * Defaults to true. `leftTab` opts out: which panel a project was last on is
+   * a property of the project itself (issue #474), so "remember layout
+   * globally" must not make every project share one tab.
+   */
+  followsLayoutMemory?: boolean
   /** Value returned when nothing is stored, or storage is unreadable. */
   default: T
   /** Decode a stored raw string. Receives `null` when the key is absent. */
@@ -56,6 +81,10 @@ export type PanelId =
   | 'tocDockWidth'
   | 'tocDockSide'
   | 'fmPreviewRatio'
+  | 'fmPreviewOpen'
+  | 'gitBranchCollapsed'
+  | 'gitWorktreeCollapsed'
+  | 'gitManageTab'
   | 'leftTab'
 
 /** Physical key prefix. Every panel-state key starts with this. */
@@ -75,10 +104,110 @@ export const DEFAULT_SESSION_SIDEBAR_WIDTH = 280
 export const DEFAULT_TOC_DOCK_WIDTH = 260
 export const DEFAULT_TOC_DOCK_SIDE = 'right'
 export const DEFAULT_FM_PREVIEW_RATIO = 0.6
+export const DEFAULT_GIT_MANAGE_TAB = 'branches'
 
 export interface SessionSidebarState {
   open: boolean
   width: number
+}
+
+// ── Runtime scope ───────────────────────────────────────────────────────────
+// The user's "布局记忆" choice, plus the project root currently in scope. Both
+// are plain module state (not persisted here) — the setting itself is a local
+// setting (`clawbench-settings-layoutMemory`) and the root is pushed by App.vue
+// from the store. panelState stays a leaf: it never imports the store.
+
+let scopeMode: ScopeMode = 'global'
+let scopeRoot = ''
+
+/**
+ * Bumped whenever the effective storage location of any entry can have
+ * changed — a scope-mode switch, or the project root moving. Layout
+ * composables watch it and re-read; without it they would keep the values
+ * loaded on first use (each of them guards its load behind `initialized`).
+ *
+ * A no-op call (same mode, same root) does NOT bump: the project-root watcher
+ * fires more often than the root actually changes, and every bump re-reads
+ * every layout composable.
+ */
+export const layoutEpoch = ref(0)
+
+/** The scope mode currently in force. */
+export function getLayoutScopeMode(): ScopeMode {
+  return scopeMode
+}
+
+/** The project root currently used to resolve per-project keys ('' = unknown). */
+export function getLayoutProjectRoot(): string {
+  return scopeRoot
+}
+
+/**
+ * The scope an entry is actually stored under right now.
+ *
+ * Entries with `followsLayoutMemory: false` keep their declared scope; the rest
+ * follow the user's switch. A project-scoped entry with no known root has no
+ * physical key at all (see physicalKey), so callers fall back to defaults —
+ * that is the pre-project-load state, not an error.
+ */
+export function effectiveScope(entry: PanelEntry<unknown>): Scope {
+  if (entry.followsLayoutMemory === false) return entry.scope
+  return scopeMode
+}
+
+/**
+ * Switch how the layout is remembered, seeding each project with the value the
+ * global key holds today.
+ *
+ * The seed is what the user asked for: flipping to "per project" must not make
+ * every project snap back to factory defaults — the layout they are looking at
+ * right now is the one each project should start from. Seeding only fills
+ * entries that have no project value yet, so projects that were already
+ * customised (while the mode was 'project' before) keep their own values.
+ */
+export function setLayoutScopeMode(mode: ScopeMode): void {
+  if (mode === scopeMode) return
+  scopeMode = mode
+  if (mode === 'project') seedProjectFromGlobal()
+  layoutEpoch.value++
+}
+
+/**
+ * Point the registry at a project root. Bumps the epoch so composables reload;
+ * a repeat call with the same root is a no-op (project switches already call
+ * this on every navigation).
+ */
+export function setLayoutProjectRoot(root: string): void {
+  const next = root || ''
+  if (next === scopeRoot) return
+  scopeRoot = next
+  if (scopeMode === 'project') seedProjectFromGlobal()
+  layoutEpoch.value++
+}
+
+/**
+ * Copy every "global value, no project value" pair into the project key.
+ *
+ * Read-only with respect to the global key: the global record stays as the
+ * seed for projects visited later, and switching back to 'global' restores it.
+ * Silent on storage failure (a quota error must not break layout).
+ */
+export function seedProjectFromGlobal(): void {
+  if (!scopeRoot) return
+  for (const entry of Object.values(PANEL_ENTRIES)) {
+    if (entry.followsLayoutMemory === false) continue
+    if (effectiveScope(entry) !== 'project') continue
+    const globalKey = PANEL_KEY_PREFIX + entry.key
+    const projectKey = PANEL_KEY_PREFIX + entry.key + ':' + scopeRoot
+    try {
+      if (localStorage.getItem(projectKey) !== null) continue
+      const raw = localStorage.getItem(globalKey)
+      if (raw === null) continue
+      localStorage.setItem(projectKey, raw)
+    } catch {
+      // ignore — layout memory is a convenience
+    }
+  }
 }
 
 // ── Encoding helpers ────────────────────────────────────────────────────────
@@ -115,6 +244,18 @@ function stringCodec(def: string | null): Pick<PanelEntry<string | null>, 'parse
     // look like a remembered-but-unknown tab).
     parse: (raw) => (raw === null || raw === '' ? def : raw),
     serialize: (v) => v ?? '',
+  }
+}
+
+/**
+ * Tri-state boolean: '1' / '0' / absent. Needed where "the user never chose"
+ * must stay distinguishable from "the user chose false", because the component
+ * has its own default that a stored false would wrongly override.
+ */
+function nullableBoolCodec(def: boolean | null): Pick<PanelEntry<boolean | null>, 'parse' | 'serialize'> {
+  return {
+    parse: (raw) => (raw === null ? def : raw === '1'),
+    serialize: (v) => (v === null ? '' : v ? '1' : '0'),
   }
 }
 
@@ -186,13 +327,46 @@ const entries: PanelEntry<unknown>[] = [
     id: 'fmPreviewRatio', key: 'fm-preview-ratio', scope: 'global', default: DEFAULT_FM_PREVIEW_RATIO,
     ...numberCodec(DEFAULT_FM_PREVIEW_RATIO),
   },
-  // The left-column tab is the ONE per-project entry: which panel you were on
-  // is a property of the project, not of the device (issue #474). Its default
-  // is null — "this project has no record yet" — which is distinct from
+  // Whether the docked preview pane is expanded. Distinct from
+  // `fmPreviewRatio` (how the split is divided) and from the `filePreviewMode`
+  // setting (whether single-click previews at all): the pane's own close button
+  // collapses it without turning the mode off, and that collapse used to be
+  // in-memory only, so every reload re-opened it.
+  {
+    id: 'fmPreviewOpen', key: 'fm-preview-open', scope: 'global', default: false,
+    ...boolCodec(false),
+  },
+  // Git panel: two collapsible section headers plus the active sub-tab. These
+  // used to be three hand-rolled bare keys ('git-branch-collapsed',
+  // 'git-worktree-collapsed', 'git-manage-active-tab') outside the registry,
+  // which is why they were the one part of the layout the layout-memory switch
+  // could not reach. Default null means "no record" so the component's own
+  // `initialCollapsed` prop still decides on a first visit.
+  {
+    id: 'gitBranchCollapsed', key: 'git-branch-collapsed', scope: 'global', default: null,
+    ...nullableBoolCodec(null),
+  },
+  {
+    id: 'gitWorktreeCollapsed', key: 'git-worktree-collapsed', scope: 'global', default: null,
+    ...nullableBoolCodec(null),
+  },
+  {
+    id: 'gitManageTab', key: 'git-manage-tab', scope: 'global', default: DEFAULT_GIT_MANAGE_TAB,
+    ...stringCodec(DEFAULT_GIT_MANAGE_TAB),
+  },
+  // The left-column tab is the ONE entry pinned to the project: which panel you
+  // were on is a property of the project, not of the device (issue #474). Its
+  // default is null — "this project has no record yet" — which is distinct from
   // 'browse' ("recorded as the file manager"). resolvePanelTab relies on that
   // distinction to pick the layout default on a first visit.
+  //
+  // This entry ALSO covers the narrow layout's active tab: App.vue persists
+  // `currentPanelTab` (which is `leftTab` on a wide screen and `activeTab` on a
+  // narrow one) here, and restores it through resolvePanelTab on cold start and
+  // on every project switch. A separate narrow-tab entry would be a second
+  // writer for the same fact and would fight resolvePanelTab's rules.
   {
-    id: 'leftTab', key: 'left-tab', scope: 'project', default: null,
+    id: 'leftTab', key: 'left-tab', scope: 'project', followsLayoutMemory: false, default: null,
     ...stringCodec(null),
   },
 ]
@@ -209,6 +383,11 @@ export const PANEL_ENTRIES: Readonly<Record<string, PanelEntry<unknown>>> = Obje
  *   empty/unknown, so callers fall back to the default instead of writing to a
  *   key like `...left-tab:` that no reader would ever look up.
  *
+ * The effective scope comes from `effectiveScope`, so callers never pass a
+ * scope decision in: the registry owns it. `projectRoot` is only the root to
+ * use when the entry IS project-scoped; callers normally omit it and let the
+ * registry use the root App.vue pushed.
+ *
  * The root is appended verbatim. localStorage keys are opaque strings, so `/`
  * (POSIX paths) and `:` (Windows drive letters) need no escaping — and no code
  * ever parses a key back into (id, root); reads always know both already.
@@ -216,9 +395,10 @@ export const PANEL_ENTRIES: Readonly<Record<string, PanelEntry<unknown>>> = Obje
 export function physicalKey(id: PanelId, projectRoot?: string): string | null {
   const entry = PANEL_ENTRIES[id]
   if (!entry) return null
-  if (entry.scope === 'global') return PANEL_KEY_PREFIX + entry.key
-  if (!projectRoot) return null
-  return PANEL_KEY_PREFIX + entry.key + ':' + projectRoot
+  if (effectiveScope(entry) === 'global') return PANEL_KEY_PREFIX + entry.key
+  const root = projectRoot ?? scopeRoot
+  if (!root) return null
+  return PANEL_KEY_PREFIX + entry.key + ':' + root
 }
 
 /**
@@ -265,14 +445,39 @@ export function writePanelState<T>(id: PanelId, value: T, projectRoot?: string):
 // by "new key absent AND old key present", so it is idempotent and safe to run
 // on every load — no sentinel flag needed.
 
-const LEGACY_GLOBAL_KEYS: Readonly<Record<string, string>> = {
-  chatCollapsed: 'clawbench-widescreen-chat-collapsed',
-  splitRatio: 'clawbench-widescreen-split-ratio',
-  sessionSidebar: 'clawbench-session-sidebar',
-  tocDockOpen: 'clawbench.tocDock.open',
-  tocDockWidth: 'clawbench.tocDock.width',
-  tocDockSide: 'clawbench.tocDock.side',
-  fmPreviewRatio: 'clawbench-fm-preview-split-ratio',
+interface LegacyKeySource {
+  /** The old physical key. */
+  key: string
+  /**
+   * Optional raw-value normalizer, for legacy keys whose encoding differs from
+   * the registry's. The git collapse keys stored 'true'/'false' (they were
+   * written with `String(boolean)`), while the registry's tri-state boolean
+   * reads only '1'/'0' — without this the migration would silently store
+   * "collapsed: false" for a user whose panel was collapsed.
+   */
+  normalize?: (raw: string) => string
+}
+
+const LEGACY_GLOBAL_KEYS: Readonly<Record<string, LegacyKeySource>> = {
+  chatCollapsed: { key: 'clawbench-widescreen-chat-collapsed' },
+  splitRatio: { key: 'clawbench-widescreen-split-ratio' },
+  sessionSidebar: { key: 'clawbench-session-sidebar' },
+  tocDockOpen: { key: 'clawbench.tocDock.open' },
+  tocDockWidth: { key: 'clawbench.tocDock.width' },
+  tocDockSide: { key: 'clawbench.tocDock.side' },
+  fmPreviewRatio: { key: 'clawbench-fm-preview-split-ratio' },
+  // These three were never prefixed and were written by the git components
+  // themselves. Same one-time copy, same "delete only after the write landed".
+  gitBranchCollapsed: { key: 'git-branch-collapsed', normalize: boolStringToFlag },
+  gitWorktreeCollapsed: { key: 'git-worktree-collapsed', normalize: boolStringToFlag },
+  gitManageTab: { key: 'git-manage-active-tab' },
+}
+
+/** 'true'/'false' (the git components' old encoding) → the registry's '1'/'0'. */
+function boolStringToFlag(raw: string): string {
+  if (raw === 'true') return '1'
+  if (raw === 'false') return '0'
+  return raw
 }
 
 /** Legacy per-project prefix that held the left-column tab. */
@@ -297,20 +502,26 @@ export function migrateLegacyKeys(): void {
   // iterating Object.keys(localStorage) is not reliable across engines.
   const allKeys = Object.keys(localStorage)
 
-  for (const [id, legacyKey] of Object.entries(LEGACY_GLOBAL_KEYS)) {
+  for (const [id, legacy] of Object.entries(LEGACY_GLOBAL_KEYS)) {
     const panelId = id as PanelId
+    // Migration runs at module load, before any project root is known and while
+    // the scope mode is still the default 'global' — so `physicalKey` returns
+    // the global key for every entry here, including the ones that a user may
+    // later switch to per-project. That is correct: the legacy value becomes
+    // the global seed, which is exactly what the per-project mode copies from.
     const newKey = physicalKey(panelId)
     if (newKey === null) continue
-    const legacyValue = localStorage.getItem(legacyKey)
+    const legacyValue = localStorage.getItem(legacy.key)
     if (legacyValue === null) continue
+    const raw = legacy.normalize ? legacy.normalize(legacyValue) : legacyValue
     // Write only when the new key is absent; then drop the legacy key only if
     // the write actually landed. Checking `getItem(newKey) !== null` instead
     // would treat a pre-existing empty string as "migrated" and delete the
     // legacy value that was never copied.
     const wrote = localStorage.getItem(newKey) === null
-      ? writePanelState(panelId, PANEL_ENTRIES[panelId].parse(legacyValue))
+      ? writePanelState(panelId, PANEL_ENTRIES[panelId].parse(raw))
       : true // new key already present — nothing to copy, safe to drop legacy
-    if (wrote) localStorage.removeItem(legacyKey)
+    if (wrote) localStorage.removeItem(legacy.key)
   }
 
   // Adopt the legacy per-project collapse only when every record agrees, so a
@@ -323,7 +534,11 @@ export function migrateLegacyKeys(): void {
     const v = localStorage.getItem(key)
     if (v !== null) collapsedValues.add(v)
   }
-  if (collapsedValues.size === 1 && localStorage.getItem(physicalKey('leftCollapsed')!) === null) {
+  // This block only ever writes the GLOBAL key (it runs at module load, while
+  // the scope mode is the default). Use the key prefix directly rather than
+  // physicalKey, which would return null if the mode were ever project-scoped.
+  const globalCollapsedKey = PANEL_KEY_PREFIX + 'left-collapsed'
+  if (collapsedValues.size === 1 && localStorage.getItem(globalCollapsedKey) === null) {
     writePanelState('leftCollapsed', [...collapsedValues][0] === '1')
   }
 
@@ -355,4 +570,18 @@ try {
   if (typeof localStorage !== 'undefined') migrateLegacyKeys()
 } catch {
   // ignore
+}
+
+/**
+ * @internal Reset the runtime scope back to its defaults — for tests only.
+ *
+ * The module-level `scopeMode` / `scopeRoot` persist across test cases in a
+ * file (they are module state, not refs a test can re-create), so a test that
+ * switches to 'project' would otherwise leak that choice into every later
+ * test. Does not touch storage.
+ */
+export function _resetLayoutScopeForTest(): void {
+  scopeMode = 'global'
+  scopeRoot = ''
+  layoutEpoch.value = 0
 }

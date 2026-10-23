@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { nextTick } from 'vue'
 
 import { useTocDockPreference, _resetForTest, TOC_DOCK_MIN_WIDTH, TOC_DOCK_MAX_WIDTH, TOC_DOCK_DEFAULT_WIDTH, TOC_DOCK_DEFAULT_SIDE } from '@/composables/useTocDockPreference'
-import { PANEL_KEY_PREFIX } from '@/utils/panelState'
+import { PANEL_KEY_PREFIX, _resetLayoutScopeForTest, setLayoutProjectRoot, setLayoutScopeMode } from '@/utils/panelState'
 
 // Key names are owned by the panel-state registry now, so the tests read them
 // from there rather than from the composable.
@@ -17,6 +17,7 @@ describe('useTocDockPreference', () => {
         _resetForTest()
         _resetWideForTest()
         _resetEditorForTesting()
+        _resetLayoutScopeForTest()
         _setWideScreenForTest(true)
         localStorage.clear()
     })
@@ -184,5 +185,56 @@ describe('useTocDockPreference', () => {
         pref.setWidth(280)
         expect(pref.tocDockWidth.value).toBe(280)
         expect(localStorage.getItem(TOC_DOCK_WIDTH_KEY)).toBe('280')
+    })
+})
+
+describe('useTocDockPreference — layout memory scope', () => {
+    const ROOT_A = '/project/a'
+    beforeEach(() => {
+        _resetForTest()
+        _resetWideForTest()
+        _resetEditorForTesting()
+        _resetLayoutScopeForTest()
+        _setWideScreenForTest(true)
+        localStorage.clear()
+    })
+    afterEach(() => _resetLayoutScopeForTest())
+
+    it('re-reads dock width and side when the scope switches, without a reload', async () => {
+        // Loads once per session; without the epoch watcher the setting would
+        // only take effect after a reload.
+        localStorage.setItem(TOC_DOCK_WIDTH_KEY, '300')
+        localStorage.setItem(TOC_DOCK_SIDE_KEY, 'right')
+        const pref = useTocDockPreference()
+        expect(pref.tocDockWidth.value).toBe(300)
+
+        localStorage.setItem(TOC_DOCK_WIDTH_KEY + ':' + ROOT_A, '380')
+        localStorage.setItem(TOC_DOCK_SIDE_KEY + ':' + ROOT_A, 'left')
+        setLayoutProjectRoot(ROOT_A)
+        setLayoutScopeMode('project')
+        await nextTick()
+
+        expect(pref.tocDockWidth.value).toBe(380)
+        expect(pref.tocDockSide.value).toBe('left')
+    })
+
+    it('persists to the project key in project mode', async () => {
+        const pref = useTocDockPreference()
+        setLayoutProjectRoot(ROOT_A)
+        setLayoutScopeMode('project')
+        await nextTick()
+
+        pref.setWidth(340)
+        expect(localStorage.getItem(TOC_DOCK_WIDTH_KEY + ':' + ROOT_A)).toBe('340')
+        expect(localStorage.getItem(TOC_DOCK_WIDTH_KEY)).toBeNull()
+    })
+
+    it('clamps a project value that is out of range', async () => {
+        localStorage.setItem(TOC_DOCK_WIDTH_KEY + ':' + ROOT_A, '9999')
+        setLayoutProjectRoot(ROOT_A)
+        setLayoutScopeMode('project')
+        const pref = useTocDockPreference()
+        await nextTick()
+        expect(pref.tocDockWidth.value).toBe(TOC_DOCK_MAX_WIDTH)
     })
 })

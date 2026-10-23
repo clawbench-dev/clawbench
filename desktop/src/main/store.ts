@@ -1,6 +1,7 @@
 import Store from 'electron-store'
 import type { ServerEntry } from './types'
 import type { TransportPreference } from './transport'
+import type { WindowBounds } from './windowGeometry'
 import { DEFAULT_THEME_ID } from '../shared/theme'
 
 export interface ServerListSchema {
@@ -41,6 +42,18 @@ export interface ServerListSchema {
    * to this default rather than reaching the transport dispatch.
    */
   tunnelTransport: TransportPreference
+  /**
+   * Last main-window geometry, so the app reopens where the user left it.
+   *
+   * `null` on a fresh install. Deliberately NOT validated here — the store is
+   * a dumb persistence layer, and the reachability check needs the live display
+   * list (see windowGeometry.ts). A rect saved on a monitor that has since been
+   * unplugged is therefore kept on disk but ignored at startup, so replugging
+   * the monitor brings the old position back.
+   */
+  windowBounds: WindowBounds | null
+  /** Whether the window was maximized at close (restored on next launch). */
+  windowMaximized: boolean
 }
 
 const defaults: ServerListSchema = {
@@ -51,6 +64,8 @@ const defaults: ServerListSchema = {
   theme: DEFAULT_THEME_ID,
   language: '',
   tunnelTransport: 'ssh',
+  windowBounds: null,
+  windowMaximized: false,
 }
 
 let store: Store<ServerListSchema> | null = null

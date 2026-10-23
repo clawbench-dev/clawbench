@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount, shallowMount, flushPromises } from '@vue/test-utils'
 import { ref, nextTick } from 'vue'
 import GitManageContent from '@/components/git/GitManageContent.vue'
+import { PANEL_KEY_PREFIX } from '@/utils/panelState'
 
 // ── Mocks ────────────────────────────────────────────────────
 vi.mock('vue-i18n', () => ({
@@ -113,7 +114,7 @@ describe('GitManageContent', () => {
       await flushPromises()
       wrapper.vm._setActiveTab('branches')
       await nextTick()
-      expect(setItemSpy).toHaveBeenCalledWith('git-manage-active-tab', 'branches')
+      expect(setItemSpy).toHaveBeenCalledWith(PANEL_KEY_PREFIX + 'git-manage-tab', 'branches')
       setItemSpy.mockRestore()
     })
 

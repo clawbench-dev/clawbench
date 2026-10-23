@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 import {
   useWideScreenLayout,
   getWideScreenState,
@@ -20,7 +21,7 @@ import {
   wideDockTabOrder,
 } from '@/composables/useWideScreenLayout'
 import { DOCK_TABS, DOCK_TAB_IDS, isDockTabId, secondaryDockTabs } from '@/composables/dockTabs'
-import { PANEL_KEY_PREFIX } from '@/utils/panelState'
+import { PANEL_KEY_PREFIX, _resetLayoutScopeForTest, setLayoutProjectRoot, setLayoutScopeMode } from '@/utils/panelState'
 import { portForwardUnavailable } from '@/utils/portForwardUtils'
 import { DEFAULT_RATIO } from '@/utils/splitRatio'
 import enMessages from '@/i18n/locales/en'
@@ -593,5 +594,56 @@ describe('useWideScreenLayout viewport wiring', () => {
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 })
     window.dispatchEvent(new Event('resize'))
     expect(mod.getWideScreenState().isWideScreen.value).toBe(true)
+  })
+})
+
+describe('useWideScreenLayout — layout memory scope', () => {
+  const ROOT_A = '/project/a'
+  beforeEach(() => {
+    _resetForTest()
+    _resetLayoutScopeForTest()
+    localStorage.clear()
+  })
+  afterEach(() => _resetLayoutScopeForTest())
+
+  it('re-reads split ratio and collapses when the scope switches, without a reload', async () => {
+    // The module guards its load behind `initialized`, so a missing epoch
+    // watcher would leave the on-screen split untouched and make the setting
+    // look broken until the next reload.
+    localStorage.setItem(PANEL_KEY_PREFIX + 'split-ratio', '0.5')
+    localStorage.setItem(PANEL_KEY_PREFIX + 'chat-collapsed', '0')
+    const { splitRatio, chatCollapsed } = useWideScreenLayout()
+    expect(splitRatio.value).toBe(0.5)
+
+    localStorage.setItem(PANEL_KEY_PREFIX + 'split-ratio:' + ROOT_A, '0.7')
+    localStorage.setItem(PANEL_KEY_PREFIX + 'chat-collapsed:' + ROOT_A, '1')
+    setLayoutProjectRoot(ROOT_A)
+    setLayoutScopeMode('project')
+    await nextTick()
+
+    expect(splitRatio.value).toBe(0.7)
+    expect(chatCollapsed.value).toBe(true)
+  })
+
+  it('persists the split ratio to the project key in project mode', async () => {
+    const { splitRatio } = useWideScreenLayout()
+    setLayoutProjectRoot(ROOT_A)
+    setLayoutScopeMode('project')
+    await nextTick()
+
+    setSplitRatio(0.35)
+    expect(splitRatio.value).toBe(0.35)
+    expect(localStorage.getItem(PANEL_KEY_PREFIX + 'split-ratio:' + ROOT_A)).toBe('0.35')
+    expect(localStorage.getItem(PANEL_KEY_PREFIX + 'split-ratio')).toBeNull()
+  })
+
+  it('keeps leftTab per-project regardless of the scope mode', async () => {
+    // leftTab is pinned: "remember layout globally" must not make every project
+    // share one tab (issue #474).
+    localStorage.setItem(PANEL_KEY_PREFIX + 'left-tab:' + ROOT_A, 'tasks')
+    setLayoutProjectRoot(ROOT_A)
+    setLayoutScopeMode('global')
+    await nextTick()
+    expect(localStorage.getItem(PANEL_KEY_PREFIX + 'left-tab')).toBeNull()
   })
 })

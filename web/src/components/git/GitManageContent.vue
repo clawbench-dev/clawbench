@@ -92,6 +92,7 @@ import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHand
 import GitWorktreeList from './GitWorktreeList.vue'
 import GitBranchList from './GitBranchList.vue'
 import GitTagList from './GitTagList.vue'
+import { layoutEpoch, readPanelState, writePanelState } from '@/utils/panelState'
 import '@/assets/modal-footer-btn.css'
 
 const { t } = useI18n()
@@ -153,20 +154,45 @@ onBeforeUnmount(() => {
   if (unregisterDirtyBack) { unregisterDirtyBack(); unregisterDirtyBack = null }
 })
 
-const TAB_STORAGE_KEY = 'git-manage-active-tab'
 const activeTab = ref<'worktrees' | 'branches' | 'tags'>('branches')
 
-// Restore persisted tab
-onMounted(() => {
-  const stored = localStorage.getItem(TAB_STORAGE_KEY)
-  if (stored === 'branches' || stored === 'tags' || stored === 'worktrees') {
-    activeTab.value = stored
-  }
-})
+const MANAGED_TABS = ['branches', 'tags', 'worktrees'] as const
+type ManagedTab = (typeof MANAGED_TABS)[number]
+
+function isManagedTab(value: unknown): value is ManagedTab {
+  return typeof value === 'string' && (MANAGED_TABS as readonly string[]).includes(value)
+}
+
+/**
+ * The value `loadActiveTab` last applied. The persist watcher below skips a
+ * change that equals it: a load is not a user choice. Without this, switching
+ * the layout-memory scope would immediately write the freshly-loaded (or
+ * defaulted) tab back into the new key, turning "this project has no record"
+ * into "this project recorded branches" before the user clicked anything.
+ *
+ * Compared by value rather than a boolean flag because Vue watchers are async —
+ * a flag set around the assignment would already be cleared by the time the
+ * callback runs.
+ */
+let loadedTab: ManagedTab = 'branches'
+
+/** Restore the persisted sub-tab (unknown values fall back to the default). */
+function loadActiveTab() {
+  const stored = readPanelState<string>('gitManageTab')
+  const next: ManagedTab = isManagedTab(stored) ? stored : 'branches'
+  loadedTab = next
+  activeTab.value = next
+}
+
+onMounted(loadActiveTab)
+// Layout-memory scope / project root changed → the stored value now comes from
+// a different key.
+watch(layoutEpoch, loadActiveTab)
 
 // Watch tab changes to persist
 watch(activeTab, (val) => {
-  localStorage.setItem(TAB_STORAGE_KEY, val)
+  if (val === loadedTab) return
+  writePanelState('gitManageTab', val)
 })
 
 const tabs = computed(() => [

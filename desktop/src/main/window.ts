@@ -1,4 +1,4 @@
-import { BrowserWindow, Menu, MenuItem, clipboard, shell } from 'electron'
+import { BrowserWindow, Menu, MenuItem, clipboard, screen, shell } from 'electron'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { getStore } from './store'
@@ -19,6 +19,7 @@ import {
 } from './versionGate'
 import { nextZoomFactor, type ZoomAction } from './zoom'
 import { shouldUseFramelessWindow } from './windowChrome'
+import { boundsToPersist, resolveStartupBounds, type WindowBounds } from './windowGeometry'
 import { WINDOW_STATE_CHANNEL, type WindowState } from '../shared/types'
 
 let mainWindow: BrowserWindow | null = null
@@ -271,9 +272,89 @@ export function isMainWindowMaximized(): boolean {
   return !!mainWindow && !mainWindow.isDestroyed() && mainWindow.isMaximized()
 }
 
+/**
+ * The bounds to open the main window with: the saved geometry when it is still
+ * reachable, otherwise a centred default on the primary display.
+ *
+ * `screen` is only usable after the app is ready, and createMainWindow is only
+ * called after that — but the try/catch keeps a display-query failure from
+ * preventing the window from existing at all (the app would be unusable).
+ */
+function startupWindowBounds(): { bounds: WindowBounds; maximized: boolean } {
+  const stored = getStore()
+  const saved = stored.get('windowBounds')
+  const maximized = stored.get('windowMaximized') === true
+  try {
+    const displays = screen.getAllDisplays()
+    const primary = screen.getPrimaryDisplay()
+    return { bounds: resolveStartupBounds(saved, displays, primary), maximized }
+  } catch {
+    return { bounds: resolveStartupBounds(saved, [], null), maximized }
+  }
+}
+
+/** Debounce handle for geometry writes (resize/move fire continuously). */
+let geometryTimer: ReturnType<typeof setTimeout> | null = null
+
+/**
+ * Persist the window's restored geometry, debounced.
+ *
+ * Writes go through `boundsToPersist`, which ignores fullscreen and stores the
+ * RESTORED rect while maximized — see its doc for why saving the current rect
+ * would strand the user with an oversized window after un-maximizing.
+ */
+function scheduleGeometrySave(win: BrowserWindow): void {
+  if (geometryTimer) clearTimeout(geometryTimer)
+  geometryTimer = setTimeout(() => {
+    geometryTimer = null
+    if (win.isDestroyed()) return
+    const bounds = boundsToPersist({
+      isMaximized: win.isMaximized(),
+      isFullScreen: win.isFullScreen(),
+      normalBounds: win.getNormalBounds(),
+    })
+    if (!bounds) return
+    const stored = getStore()
+    stored.set('windowBounds', bounds)
+    stored.set('windowMaximized', win.isMaximized())
+  }, 400)
+}
+
+/**
+ * Remember the window geometry across restarts.
+ *
+ * `close` rather than `closed`: by the time `closed` fires the window is gone
+ * and neither `getNormalBounds()` nor `isMaximized()` is meaningful. The flush
+ * is synchronous (no debounce) so the last position is not lost when the timer
+ * has not fired yet.
+ */
+function registerWindowGeometryPersistence(win: BrowserWindow): void {
+  win.on('resize', () => scheduleGeometrySave(win))
+  win.on('move', () => scheduleGeometrySave(win))
+  win.on('maximize', () => scheduleGeometrySave(win))
+  win.on('unmaximize', () => scheduleGeometrySave(win))
+  win.on('close', () => {
+    if (geometryTimer) {
+      clearTimeout(geometryTimer)
+      geometryTimer = null
+    }
+    const bounds = boundsToPersist({
+      isMaximized: win.isMaximized(),
+      isFullScreen: win.isFullScreen(),
+      normalBounds: win.getNormalBounds(),
+    })
+    if (!bounds) return
+    const stored = getStore()
+    stored.set('windowBounds', bounds)
+    stored.set('windowMaximized', win.isMaximized())
+  })
+}
+
 export function createMainWindow(): BrowserWindow {
+  const { bounds: startupBounds, maximized: startMaximized } = startupWindowBounds()
   mainWindow = new BrowserWindow({
-    width: 1280, height: 800, show: false,
+    ...startupBounds,
+    show: false,
     // Windows/Linux get a frameless window and draw their own controls in the
     // header (see windowChrome.ts). macOS keeps the native frame so its
     // top-left traffic lights stay where users expect them. A frameless window
@@ -283,6 +364,10 @@ export function createMainWindow(): BrowserWindow {
     frame: !shouldUseFramelessWindow(process.platform),
     webPreferences: { preload: path.join(__dirname, '../preload/index.js'), contextIsolation: true, nodeIntegration: false },
   })
+  // Maximize before the window is shown, so a maximized restore does not flash
+  // the restored rect first.
+  if (startMaximized) mainWindow.maximize()
+  registerWindowGeometryPersistence(mainWindow)
   registerContextMenu(mainWindow.webContents)
   registerKeyboardShortcuts(mainWindow.webContents)
   registerWindowStateReporting(mainWindow)

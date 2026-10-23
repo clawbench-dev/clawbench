@@ -4,6 +4,7 @@ import { nextTick } from 'vue'
 import { createI18n } from 'vue-i18n'
 import GitWorktreeList from '@/components/git/GitWorktreeList.vue'
 import GitWorktreeCard from '@/components/git/GitWorktreeCard.vue'
+import { PANEL_KEY_PREFIX } from '@/utils/panelState'
 
 // ── i18n setup ──
 const i18n = createI18n({
@@ -146,12 +147,12 @@ describe('GitWorktreeList', () => {
     // Click header to collapse
     await wrapper.find('.section-header').trigger('click')
     expect(getCollapsed()).toBe(true)
-    expect(localStorage.getItem('git-worktree-collapsed')).toBe('true')
+    expect(localStorage.getItem(PANEL_KEY_PREFIX + 'git-worktree-collapsed')).toBe('1')
 
     // Click again to expand
     await wrapper.find('.section-header').trigger('click')
     expect(getCollapsed()).toBe(false)
-    expect(localStorage.getItem('git-worktree-collapsed')).toBe('false')
+    expect(localStorage.getItem(PANEL_KEY_PREFIX + 'git-worktree-collapsed')).toBe('0')
   })
 
   it('persists collapsed state to localStorage', async () => {
@@ -159,14 +160,14 @@ describe('GitWorktreeList', () => {
     await nextTick()
 
     await wrapper.find('.section-header').trigger('click')
-    expect(localStorage.getItem('git-worktree-collapsed')).toBe('true')
+    expect(localStorage.getItem(PANEL_KEY_PREFIX + 'git-worktree-collapsed')).toBe('1')
 
     await wrapper.find('.section-header').trigger('click')
-    expect(localStorage.getItem('git-worktree-collapsed')).toBe('false')
+    expect(localStorage.getItem(PANEL_KEY_PREFIX + 'git-worktree-collapsed')).toBe('0')
   })
 
   it('restores collapsed state from localStorage on mount', async () => {
-    localStorage.setItem('git-worktree-collapsed', 'true')
+    localStorage.setItem(PANEL_KEY_PREFIX + 'git-worktree-collapsed', '1')
     const wrapper = mountList({ worktrees: [makeWorktree()] })
     await nextTick()
     await nextTick()

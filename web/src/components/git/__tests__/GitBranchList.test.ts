@@ -1,6 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import GitBranchList from '@/components/git/GitBranchList.vue'
+import { PANEL_KEY_PREFIX } from '@/utils/panelState'
 
 // ── Mocks ────────────────────────────────────────────────────
 vi.mock('vue-i18n', () => ({
@@ -152,5 +154,40 @@ describe('GitBranchList', () => {
       const row = wrapper.findComponent({ name: 'GitBranchRow' })
       expect(row.props('disabled')).toBe(false)
     })
+  })
+})
+
+describe('GitBranchList — collapsed persistence', () => {
+  const KEY = PANEL_KEY_PREFIX + 'git-branch-collapsed'
+
+  beforeEach(() => localStorage.clear())
+
+  function collapsedOf(wrapper: ReturnType<typeof mountList>): boolean {
+    const state = (wrapper.vm as unknown as { $: { setupState: Record<string, unknown> } }).$.setupState
+    const raw = state.collapsed as { value?: boolean } | boolean
+    return typeof raw === 'object' ? raw.value === true : raw === true
+  }
+
+  it('uses the initialCollapsed prop when nothing is stored', async () => {
+    // `null` (never chosen) must stay distinguishable from an explicit false,
+    // or the component's own default could never apply again.
+    const wrapper = mountList({ initialCollapsed: true })
+    await nextTick()
+    expect(collapsedOf(wrapper)).toBe(true)
+  })
+
+  it('overrides the prop once the user has chosen', async () => {
+    localStorage.setItem(KEY, '0')
+    const wrapper = mountList({ initialCollapsed: true })
+    await nextTick()
+    expect(collapsedOf(wrapper)).toBe(false)
+  })
+
+  it('writes the registry key, not a bare legacy key', async () => {
+    const wrapper = mountList({ initialCollapsed: false })
+    await nextTick()
+    await wrapper.find('.section-header').trigger('click')
+    expect(localStorage.getItem(KEY)).toBe('1')
+    expect(localStorage.getItem('git-branch-collapsed')).toBeNull()
   })
 })
