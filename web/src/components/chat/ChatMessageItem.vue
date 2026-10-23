@@ -1419,42 +1419,24 @@ const copyPayload = quotableText
     background: rgba(0, 0, 0, 0.15);
 }
 
-.chat-message.user .chat-file-path {
-    background: rgba(0, 0, 0, 0.15);
-    color: rgba(255, 255, 255, 0.9);
-}
+/* File-path / commit / worktree annotations inside the user bubble.
+   The chip plate, glyph colours and hover plate all come from `currentColor`
+   (annotation-buttons.css + markdown-common.css), which is white here — so no
+   role-specific colour override is needed, and any fixed one would fight the
+   theme: the bubble is a saturated fill whose contrast against white ranges
+   from 3.3:1 (ayu-light) to 12:1 (high-contrast-light), so a hard-coded
+   white-alpha or `--text-muted` is only ever correct on a few themes.
 
-.chat-message.user .chat-file-open-btn {
-    color: rgba(255, 255, 255, 0.7);
-}
-
-@media (hover: hover) {
-  .chat-message.user .chat-file-open-btn:hover {
-    color: white;
-    background: rgba(255, 255, 255, 0.15);
-  }
-}
-.chat-message.user .chat-file-open-btn.external {
-    color: #f0a04b;
+   The commit hash drops the accent hue here on purpose: tinting it toward the
+   bubble's white costs up to 1.5:1 (light-modern), and legibility has to win
+   over the "this is a link" hue on a saturated backdrop. The dashed/pointing
+   affordance still marks it as actionable. */
+.chat-message.user .chat-commit-hash {
+    color: inherit;
 }
 
 .chat-message.user .chat-commit-hash-pending {
     color: inherit;
-}
-
-.chat-message.user .chat-commit-hash {
-    color: rgba(255, 255, 255, 0.9);
-}
-
-.chat-message.user .chat-commit-open-btn {
-    color: rgba(255, 255, 255, 0.7);
-}
-
-@media (hover: hover) {
-  .chat-message.user .chat-commit-open-btn:hover {
-    color: white;
-    background: rgba(255, 255, 255, 0.15);
-  }
 }
 
 .chat-message.assistant pre {

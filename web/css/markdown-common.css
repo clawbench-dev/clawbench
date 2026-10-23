@@ -549,7 +549,17 @@
     color: color-mix(in srgb, var(--text-secondary) 70%, transparent);
 }
 
-/* File path annotation & open button */
+/* File path annotation & open button
+
+   The chip FILL stays `--bg-secondary` on the reading surfaces: it is a real
+   step off `--bg-primary`/`--bg-tertiary` in most themes and — unlike a
+   `currentColor` plate — it does not eat into the text contrast. (Measured: a
+   `currentColor 14%` plate dropped the worst case from 3.64 to 2.81 on the
+   assistant bubble, because on a pale bubble the text colour IS the dark thing,
+   so tinting the backdrop toward it closes the gap the text needs.)
+
+   The user bubble is the exception and gets its own dark plate below: its text
+   is white on a saturated fill, so the plate must move AWAY from the text. */
 .markdown-body .chat-file-path,
 .chat-message.assistant .chat-file-path,
 .table-row-value .chat-file-path {
@@ -561,6 +571,7 @@
 
 .markdown-body .chat-file-open-btn,
 .chat-message.assistant .chat-file-open-btn,
+.chat-message.user .chat-file-open-btn,
 .table-row-value .chat-file-open-btn {
     display: inline-flex;
     align-items: center;
@@ -570,72 +581,74 @@
     border-radius: var(--radius-xs);
     border: none;
     background: transparent;
-    color: var(--text-secondary);
+    /* Inherits the surrounding text colour — see annotation-buttons.css for why
+       a `--text-muted` glyph is invisible on the user bubble. */
+    color: inherit;
     cursor: pointer;
     vertical-align: middle;
     margin-left: 1px;
     padding: var(--space-1);
     line-height: 1;
-    opacity: var(--opacity-muted);
-    transition: opacity var(--duration-base), color var(--duration-base);
-    outline: none;
-    box-shadow: none;
-}
-
-/* User message file path annotation & open button */
-.chat-message.user .chat-file-path {
-    font-family: var(--font-mono);
-    background: rgba(0, 0, 0, 0.15);
-    border-radius: var(--radius-xs);
-    padding: 0 3px;
-}
-
-.chat-message.user .chat-file-open-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 16px;
-    height: 16px;
-    border-radius: 50%;
-    border: none;
-    background: transparent;
-    color: rgba(255, 255, 255, 0.7);
-    cursor: pointer;
-    vertical-align: middle;
-    margin-left: 1px;
-    padding: 0;
-    line-height: 1;
-    opacity: var(--opacity-muted);
-    transition: opacity var(--duration-base), color var(--duration-base);
+    transition: color var(--duration-base), background var(--duration-base);
     outline: none;
     box-shadow: none;
 }
 
 .markdown-body .chat-file-open-btn:hover,
 .chat-message.assistant .chat-file-open-btn:hover,
+.chat-message.user .chat-file-open-btn:hover,
 .table-row-value .chat-file-open-btn:hover {
-    opacity: 1;
-    color: var(--accent-color, #3b82f6);
+    color: inherit;
+    /* 10%, not 18%: the plate is painted from the text colour, so a deeper tint
+       pulls the backdrop toward the glyph and costs it contrast (18% took the
+       assistant bubble from 3.23 to 2.71). 10% still separates clearly from the
+       surface and leaves the glyph at 2.93. */
+    background: color-mix(in srgb, currentColor 10%, transparent);
 }
 
-/* Project-external file open button — orange icon */
+/* User bubble keeps its own (smaller, circular) button geometry — only the
+   colours are shared with the other roles now. */
+.chat-message.user .chat-file-open-btn {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    padding: 0;
+}
+
+/* The user bubble is the one surface where the plate must go DARKER, not
+   lighter. Its text is always white on a saturated mid-tone, so a light plate
+   lifts the backdrop toward the text and costs contrast. A dark plate pushes
+   the backdrop away from white text instead — 22% black measures 5.11:1 for
+   the path text (was 3.32:1 on the bare bubble) and 1.19 for the plate edge,
+   across all 36 themes. It also reads as the same family as the inline-code
+   plate on this bubble (`rgba(0,0,0,.15)`). */
+.chat-message.user .chat-file-path {
+    font-family: var(--font-mono);
+    background: color-mix(in srgb, #000 22%, transparent);
+    border-radius: var(--radius-xs);
+    padding: 0 3px;
+}
+
+.chat-message.user .chat-file-path[data-file-path]:hover {
+    background: color-mix(in srgb, #000 34%, transparent);
+}
+
+/* Project-external file open button — orange, tinted toward the surrounding
+   text so its luminance tracks the backdrop (a fixed orange measured 1.05:1
+   on the lightest user bubbles). */
 .markdown-body .chat-file-open-btn.external,
 .chat-message.assistant .chat-file-open-btn.external,
+.chat-message.user .chat-file-open-btn.external,
 .table-row-value .chat-file-open-btn.external {
-    opacity: var(--opacity-soft);
-    color: #e67e22;
+    color: color-mix(in srgb, var(--color-orange) 30%, currentColor);
 }
 
 .markdown-body .chat-file-open-btn.external:hover,
 .chat-message.assistant .chat-file-open-btn.external:hover,
+.chat-message.user .chat-file-open-btn.external:hover,
 .table-row-value .chat-file-open-btn.external:hover {
-    opacity: 1;
-    color: #d35400;
-}
-
-.chat-message.user .chat-file-open-btn:hover {
-    opacity: 1;
-    color: white;
+    color: color-mix(in srgb, var(--color-orange) 45%, currentColor);
+    background: color-mix(in srgb, var(--color-orange) 18%, transparent);
 }
 
 .markdown-body .chat-file-open-btn svg,
