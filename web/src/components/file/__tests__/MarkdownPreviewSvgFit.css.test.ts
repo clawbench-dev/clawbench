@@ -123,13 +123,21 @@ describe('svg media layout (media-block.css contract)', () => {
     expect(css).not.toContain('will-change: transform')
   })
 
-  it('marks the active state with a ring that does not affect layout', () => {
+  it('marks the INTERACTIVE state with a ring that does not affect layout', () => {
     // `outline` takes no part in layout, so entering/leaving the active state
     // cannot shift the document. A border would.
-    const activeRule = css.match(/\.image-block-wrapper\.is-zooming\s*\{([\s\S]*?)\}/)
+    //
+    // The ring is on `.is-zoom-active`, NOT on `.is-zooming`: a figure that
+    // merely HOLDS a zoom (the reader clicked away or tabbed elsewhere) must
+    // show no ring — it reads as a selection, and nothing is selected any more.
+    const activeRule = css.match(/\.image-block-wrapper\.is-zoom-active\s*\{([\s\S]*?)\}/)
     expect(activeRule).toBeTruthy()
     expect(activeRule![1]).toContain('outline')
     expect(activeRule![1]).not.toMatch(/(^|[\s;])border\s*:/)
+
+    // And the held state must NOT draw one.
+    const heldRule = css.match(/\.image-block-wrapper\.is-zooming\s*\{([\s\S]*?)\}/)
+    expect(heldRule, 'the held state must not style the figure itself').toBeNull()
   })
 
   it('caps a tall diagram at 60dvh at rest and fixes the frame when active', () => {
@@ -205,7 +213,10 @@ describe('svg media layout (media-block.css contract)', () => {
     const table = css.replace(/\/\*[\s\S]*?\*\//g, '')
     expect(table).toMatch(/td \.image-block-wrapper\.is-zooming[^{]*\{[^}]*width:\s*fit-content/)
     expect(table).toMatch(/th \.image-block-wrapper\.is-zooming[^{]*\{[^}]*width:\s*fit-content/)
-    expect(table).toMatch(/td \.image-block-wrapper\.is-zooming[^{]*\{[^}]*outline:\s*none/)
+    // The ring is on `.is-zoom-active`, so the cell neutralisation must target
+    // THAT marker — otherwise a stray ring outlines the whole row's cell.
+    expect(table).toMatch(/td \.image-block-wrapper\.is-zoom-active[^{]*\{[^}]*outline:\s*none/)
+    expect(table).toMatch(/th \.image-block-wrapper\.is-zoom-active[^{]*\{[^}]*outline:\s*none/)
     // The media must stay in flow with no transform (i.e. not a pan viewport).
     expect(table).toMatch(
       /td \.image-block-wrapper\.is-zooming > \.mermaid > svg[^{]*\{[^}]*position:\s*static/,

@@ -198,15 +198,23 @@
 
    States
    ------
-   - **Resting** — media contain-fitted, default cursor, no chrome. A click
-     enters the active state (`inlineZoom.ts` adds `.is-zooming`). The cursor is
-     deliberately NOT `zoom-in`: a magnifier over an untouched figure promises an
-     affordance the user has not asked for, and for a photo the expected
-     "enlarge" target is the lightbox button, not the image body.
-   - **Active** — a visible ring marks the figure as the zoom target, the reset
-     button appears, the cursor becomes a grab handle, and the wheel/drag
-     gestures belong to the media. Clicking outside or Escape returns to
-     resting, which restores the layout exactly (all inline sizes are cleared).
+   Two independent markers, because "holding a zoom" and "owning the wheel"
+   are different questions (see `inlineZoom.ts`):
+
+   - **Resting** — media contain-fitted, default cursor, no chrome.
+   - **`.is-zooming` (holding a zoom)** — the media keeps the size the reader
+     dialled in and the frame is the full-column viewport. This PERSISTS:
+     clicking the input box, reading a paragraph, or tabbing away must not
+     throw the zoom away. Only the reset button, Escape, or clicking another
+     figure returns to resting (all inline sizes are cleared then).
+   - **`.is-zoom-active` (interactive)** — the transient part: a visible ring
+     marks the figure as the wheel/drag target and the cursor becomes a grab
+     handle. An outside click or focus loss drops it while the zoom stays.
+
+   The cursor is deliberately NOT `zoom-in` at rest: a magnifier over an
+   untouched figure promises an affordance the user has not asked for, and for
+   a photo the expected "enlarge" target is the lightbox button, not the image
+   body.
 
    Zoom is applied by writing WIDTH/HEIGHT on the media, never by
    `transform: scale()`: a transform rasterises the element once at its layout
@@ -394,27 +402,36 @@
         transition: width var(--duration-fast) ease-out, height var(--duration-fast) ease-out;
     }
 
-    /* ── Active state ────────────────────────────────────────────────────── */
-    .image-block-wrapper.is-zooming {
-        /* A ring is the only chrome that reads at a glance without shifting
-           layout (outline never takes part in layout). */
+    /* ── The ring belongs to the INTERACTIVE state ────────────────────────
+       A figure that merely HOLDS a zoom (the reader clicked away, or tabbed
+       elsewhere) shows no ring: the outline reads as "this is selected / being
+       worked on", and after focus moves away nothing is. The zoom itself is
+       still there — the artwork is visibly not at rest — so the ring has
+       nothing left to communicate, and leaving it on makes the whole document
+       look like it has a stray selection.
+
+       `outline` takes no part in layout, so entering/leaving cannot shift the
+       document. */
+    .image-block-wrapper.is-zoom-active {
         outline: 2px solid var(--accent-color, #4a9eff);
         outline-offset: 2px;
     }
 
-    /* These must mirror the RESTING selectors including `:has()`: that rule is
-       0-3-1 while a plain `.is-zooming > .lightbox-img-wrap` is only 0-3-0, so
-       the resting `cursor: default` won and the active figure never showed the
+    /* The grab handle belongs to the INTERACTIVE state: it promises a drag, and
+       a figure that merely holds a zoom no longer accepts one. These must
+       mirror the RESTING selectors including `:has()`: that rule is 0-3-1 while
+       a plain `.is-zoom-active > .lightbox-img-wrap` is only 0-3-0, so the
+       resting `cursor: default` won and the active figure never showed the
        grab handle. */
-    .image-block-wrapper.is-zooming:has(> .lightbox-img-wrap > img) > .lightbox-img-wrap,
-    .image-block-wrapper.is-zooming:has(> .lightbox-svg-wrap > svg.lightbox-svg) > .lightbox-svg-wrap,
-    .image-block-wrapper.is-zooming:has(> .mermaid > svg) > .mermaid {
+    .image-block-wrapper.is-zoom-active:has(> .lightbox-img-wrap > img) > .lightbox-img-wrap,
+    .image-block-wrapper.is-zoom-active:has(> .lightbox-svg-wrap > svg.lightbox-svg) > .lightbox-svg-wrap,
+    .image-block-wrapper.is-zoom-active:has(> .mermaid > svg) > .mermaid {
         cursor: grab;
     }
 
-    .image-block-wrapper.is-zooming.is-panning:has(> .lightbox-img-wrap > img) > .lightbox-img-wrap,
-    .image-block-wrapper.is-zooming.is-panning:has(> .lightbox-svg-wrap > svg.lightbox-svg) > .lightbox-svg-wrap,
-    .image-block-wrapper.is-zooming.is-panning:has(> .mermaid > svg) > .mermaid {
+    .image-block-wrapper.is-zoom-active.is-panning:has(> .lightbox-img-wrap > img) > .lightbox-img-wrap,
+    .image-block-wrapper.is-zoom-active.is-panning:has(> .lightbox-svg-wrap > svg.lightbox-svg) > .lightbox-svg-wrap,
+    .image-block-wrapper.is-zoom-active.is-panning:has(> .mermaid > svg) > .mermaid {
         cursor: grabbing;
     }
 
@@ -657,6 +674,18 @@ th .image-block-wrapper.is-zooming:has(> .mermaid > svg) {
        did not change size. */
     width: fit-content;
     max-width: 100%;
+}
+
+/* The ring lives on `.is-zoom-active`, so it needs its own neutralisation —
+   a stray ring would outline the whole row's cell. */
+td .image-block-wrapper.is-zoom-active,
+th .image-block-wrapper.is-zoom-active,
+td .image-block-wrapper.is-zoom-active:has(> .lightbox-img-wrap > img),
+td .image-block-wrapper.is-zoom-active:has(> .lightbox-svg-wrap > svg.lightbox-svg),
+td .image-block-wrapper.is-zoom-active:has(> .mermaid > svg),
+th .image-block-wrapper.is-zoom-active:has(> .lightbox-img-wrap > img),
+th .image-block-wrapper.is-zoom-active:has(> .lightbox-svg-wrap > svg.lightbox-svg),
+th .image-block-wrapper.is-zoom-active:has(> .mermaid > svg) {
     outline: none;
 }
 

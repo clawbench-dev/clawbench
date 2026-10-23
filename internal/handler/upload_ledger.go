@@ -150,13 +150,26 @@ func writeUploadLedger(projectPath string, entries []uploadLedgerEntry) error {
 // arbitrary string in it. Validating only on write would let such an entry
 // resolve outside the project when the list is rendered.
 func sanitizeLedgerPath(relPath string) (string, bool) {
-	if relPath == "" || filepath.IsAbs(relPath) {
+	if relPath == "" {
+		return "", false
+	}
+	// Absolute paths are rejected on their SYNTAX, not via filepath.IsAbs: on
+	// Windows that returns false for a rooted-but-drive-less path like
+	// `/etc/passwd` (it means "root of the current drive" there), so an entry
+	// written on Linux would pass and then resolve outside the project. A
+	// leading separator — in either slash direction — is never a project-relative
+	// path on any platform we run on.
+	if filepath.IsAbs(relPath) || strings.HasPrefix(relPath, "/") || strings.HasPrefix(relPath, `\`) {
 		return "", false
 	}
 	rel := filepath.ToSlash(filepath.Clean(filepath.FromSlash(relPath)))
 	// Clean collapses "a/../../b" to "../b", so this single check also covers
-	// every intermediate traversal attempt.
-	if rel == "." || rel == ".." || strings.HasPrefix(rel, "../") {
+	// every intermediate traversal attempt. A Windows drive-qualified path
+	// (`C:a.png`) is also not project-relative, and VolumeName only recognizes
+	// it when running ON Windows — the ledger travels with the project, so the
+	// drive-letter shape is rejected syntactically as well.
+	if rel == "." || rel == ".." || strings.HasPrefix(rel, "../") ||
+		filepath.VolumeName(rel) != "" || hasDriveLetter(rel) {
 		return "", false
 	}
 	// Everything under .clawbench/ is app-managed scratch space with its own
@@ -630,4 +643,17 @@ func remapLedgerPath(entryPath, oldRel, newRel string, isDir bool) (string, bool
 		return entryPath, false
 	}
 	return newRel + "/" + strings.TrimPrefix(entryPath, prefix), true
+}
+
+// hasDriveLetter reports whether p starts with a Windows drive designator
+// (`C:`, `z:`), which is a volume-qualified path rather than a project-relative
+// one. Checked syntactically because filepath.VolumeName only recognizes the
+// form on Windows, and the ledger is a file inside the project that can be
+// carried between machines.
+func hasDriveLetter(p string) bool {
+	if len(p) < 2 || p[1] != ':' {
+		return false
+	}
+	c := p[0]
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 }

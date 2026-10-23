@@ -54,6 +54,12 @@ func TestSanitizeLedgerPath(t *testing.T) {
 		{name: "nested", input: "docs/images/a.png", want: "docs/images/a.png", ok: true},
 		{name: "empty", input: "", ok: false},
 		{name: "absolute", input: "/etc/passwd", ok: false},
+		// Windows-style separators: on Windows `/etc/passwd` is NOT absolute
+		// (filepath.IsAbs is false — it means "root of the current drive"), so
+		// the leading-separator check has to be syntactic. These two cases pin
+		// that on every platform.
+		{name: "absolute with backslashes", input: `\etc\passwd`, ok: false},
+		{name: "absolute with a drive", input: `C:\etc\passwd`, ok: false},
 		{name: "traversal", input: "../a.png", ok: false},
 		{name: "traversal through a segment", input: "docs/../../a.png", ok: false},
 		{name: "the project root itself", input: ".", ok: false},
