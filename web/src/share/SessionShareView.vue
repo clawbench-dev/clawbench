@@ -138,7 +138,7 @@
             :msg="item"
             :index="i + 1"
             :active="activeTocId === item.id"
-            :show-time="true"
+            :show-time="false"
             :resolve-speaker="resolveSpeaker"
             @select="scrollToMessage(item.id)"
           />
@@ -164,7 +164,7 @@
               :msg="item"
               :index="i + 1"
               :active="activeTocId === item.id"
-              :show-time="true"
+              :show-time="false"
               :resolve-speaker="resolveSpeaker"
               @select="scrollToMessage(item.id); tocOpen = false"
             />
@@ -752,14 +752,23 @@ async function loadSnapshot() {
     // is why the payload must not be frozen.
     const parsed = parseMessages(rawMessages, (content: string) => chatRender.parseAssistantContent(content))
     indexInlinedData(parsed)
-    // A shared transcript is an archive, so every message starts on its ORIGINAL
-    // content. The reader's global messageDisplayMode is an app-side reading
-    // preference, not a property of the conversation being shared — without this
-    // a reader who prefers summaries would open someone else's thread already
-    // collapsed. The toggle still works: an explicit per-message choice wins over
-    // the global mode inside isShowingSummary.
+    // A shared transcript opens on the SUMMARY: that is what the author chose to
+    // show when they shared it, and a summary is what a reader of someone else's
+    // thread can actually digest (the original content of a long agent turn is
+    // hundreds of tool calls).
+    //
+    // Pinned per message rather than left to the global messageDisplayMode
+    // because that setting comes from localStorage — which an anonymous reader
+    // has never set — so it falls back to 'mixed', and 'mixed' renders the LAST
+    // assistant reply as full original text. On a share link that reply is the
+    // whole visible conversation, so the default landed on exactly the wrong
+    // view. The toggle still works: an explicit per-message choice wins inside
+    // isShowingSummary.
+    //
+    // Only messages that actually have a summary are pinned; an unsummarized
+    // reply keeps showing its content.
     for (const m of parsed) {
-      if (m.summary != null && m.summary !== '') m.showingSummary = false
+      if (m.summary != null && m.summary !== '') m.showingSummary = true
     }
     messages.value = parsed
 

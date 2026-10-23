@@ -740,6 +740,11 @@ function handleToolClick(block: any, blockKeyStr: string, blockIdx: number) {
     display_name: block.display_name,
     summary: block.summary,
     tool_id: block.id,
+    // The drawer renders the elapsed time from this field. Omitting it made the
+    // time vanish on every host that has no live-block watcher (the share page):
+    // the chat panel masked the gap by re-reading duration from the live block
+    // once the overlay opened, so only the share page showed nothing.
+    duration_ms: block.duration_ms,
     msgId: props.msgId,
     blockIdx,
   })
@@ -1643,6 +1648,9 @@ function handleSummaryToolClick(tool: any, ti: number) {
     done: true,
     display_name: tool.display_name,
     tool_id: tool.id,
+    // Same reason as handleToolClick: the summary card's payload must carry the
+    // elapsed time itself, not rely on a watcher that only some hosts install.
+    duration_ms: tool.duration_ms,
     msgId: props.msgId,
     blockIdx: ti,
   })

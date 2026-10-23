@@ -568,22 +568,27 @@ describe('SessionShareView', () => {
     expect(assistant.find('.tool-input-path').text()).toBe('./src/a.ts')
   })
 
-  // A shared transcript is an archive, so every message must OPEN on its
-  // original content regardless of the reader's global messageDisplayMode. The
-  // view pins showingSummary=false explicitly (isShowingSummary lets an explicit
-  // preference win over the global mode).
-  it('pins every summarized message to the original view on load', async () => {
+  // A shared transcript OPENS ON THE SUMMARY. That is what the author chose to
+  // publish, and it is what a reader of someone else's thread can digest — the
+  // original content of a long agent turn is hundreds of tool calls.
+  //
+  // Pinned per message (showingSummary=true) rather than delegated to the
+  // global messageDisplayMode, because that setting lives in localStorage: an
+  // anonymous reader has never set it, so it falls back to 'mixed' — and 'mixed'
+  // renders the LAST assistant reply as full original text, i.e. the one message
+  // that dominates a two-message share.
+  it('pins every summarized message to the summary view on load', async () => {
     const wrapper = await mountView()
     const assistant = wrapper.findAll('.chat-message-stub')[1]
-    expect(assistant.attributes('data-showing-summary')).toBe('false')
+    expect(assistant.attributes('data-showing-summary')).toBe('true')
   })
 
   // …and the toggle still works: clicking it flips the per-message preference.
-  it('toggles a message to the summary view on request', async () => {
+  it('toggles a message to the original view on request', async () => {
     const wrapper = await mountView()
     const assistant = wrapper.findAll('.chat-message-stub')[1]
     await assistant.find('.emit-toggle-summary').trigger('click')
-    expect(wrapper.findAll('.chat-message-stub')[1].attributes('data-showing-summary')).toBe('true')
+    expect(wrapper.findAll('.chat-message-stub')[1].attributes('data-showing-summary')).toBe('false')
   })
 
   it('provides the injected dependencies the render chain requires', async () => {
@@ -724,6 +729,20 @@ describe('SessionShareView', () => {
       expect(rows[0].find('.msg-text').text()).toContain('please fix it')
       // The assistant row uses its stored summary when one exists.
       expect(rows[1].find('.msg-text').text()).toContain('A short summary.')
+    })
+
+    it('does not show a relative time in the TOC rows', async () => {
+      // The share TOC is a navigation aid, not a timeline: the reader is looking
+      // for a message to jump to, and "3 days ago" on every row is noise (it also
+      // invites reading the timestamps as the conversation's own chronology,
+      // which the share deliberately does not assert). The app's conversation
+      // index keeps them — that is a different surface with a different job.
+      const wrapper = await mountView()
+      const rows = wrapper.findAll('.share-toc .msg-item')
+      expect(rows.length).toBeGreaterThan(0)
+      for (const row of rows) {
+        expect(row.find('.msg-time').exists()).toBe(false)
+      }
     })
 
     it('gives a system row its own chip, not a user chip', async () => {
