@@ -1643,6 +1643,15 @@ func (e *SessionExecutor) buildContentJSON(blocks []model.ContentBlock, result R
 // session ID, even when the stream was cancelled before the main loop processed
 // these events. This prevents resume failures on subsequent prompts.
 //
+// A drained metadata event is MERGED into the executor's own metadata rather
+// than dropped or substituted. It can be the turn's only usage record: ACP
+// emits a metadata event for a cancelled prompt after the executor's event loop
+// has already exited on ctx.Done (see ACPConn.emitCancelledTurnUsage), and the
+// drain is the only place it is ever read. Merging (not replacing) preserves
+// the WallMs and session-level model/transport that buildResult already wrote,
+// and filling only empty fields keeps the loop's own richer values — a drained
+// event must never pull a recorded figure back down to zero.
+//
 // Draining until close (rather than a one-shot non-blocking scan) guarantees
 // the producer's channel sends never block forever on a full buffer, so the
 // producer goroutine can always exit and close the channel.
@@ -1665,10 +1674,51 @@ func (e *SessionExecutor) drainRemainingEvents(eventCh <-chan ai.StreamEvent) {
 				e.captureExternalSessionID(event.Content)
 			}
 		case contentKeyMetadata:
-			if event.Meta != nil && event.Meta.SessionID != "" {
+			if event.Meta == nil {
+				continue
+			}
+			e.mu.Lock()
+			if e.responseMetadata == nil {
+				e.responseMetadata = event.Meta
+			} else {
+				ai.MergeMetadata(e.responseMetadata, event.Meta)
+			}
+			e.mu.Unlock()
+			if event.Meta.SessionID != "" {
 				e.captureExternalSessionID(event.Meta.SessionID)
 			}
 		}
+	}
+}
+
+// drainAndPersistCancelledMetadata drains the channel to close and saves the
+// turn's metadata, for the cancel path that never reaches Finalize.
+//
+// The abandoned-turn path (scheduler cancel / crash) has no RunResult to
+// finalize, so it used to just discard whatever was still in the channel. That
+// dropped the usage record a cancelled ACP prompt emits after the event loop
+// exits — every cancelled scheduled task ended up with an all-zero metadata
+// row even though the agent had billed for the calls it completed.
+//
+// The drain itself is not optional and must run to CLOSE (not a one-shot scan):
+// parser sends are not context-aware, so a producer filling the channel with no
+// consumer would block forever and leak the goroutine along with the agent
+// process.
+func (e *SessionExecutor) drainAndPersistCancelledMetadata(eventCh <-chan ai.StreamEvent) {
+	if eventCh == nil {
+		return
+	}
+	e.drainRemainingEvents(eventCh)
+	e.mu.Lock()
+	meta := e.responseMetadata
+	msgID := e.cfg.StreamingMessageID
+	e.mu.Unlock()
+	if meta == nil || msgID <= 0 {
+		return
+	}
+	if err := SaveMetadata(msgID, meta); err != nil {
+		slog.Warn("failed to save cancelled turn metadata",
+			slog.Int64("msg_id", msgID), slog.String("err", err.Error()))
 	}
 }
 

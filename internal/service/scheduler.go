@@ -820,12 +820,19 @@ func emitTaskEvent(taskID, status, executionID, sessionID, projectPath, taskName
 // leak the goroutine along with the agent process.
 func abandonTurn(executor *SessionExecutor, eventCh <-chan ai.StreamEvent, sessionID, cancelReason string) {
 	executor.flushStreamingMessage()
+	// Drain BEFORE finalizing so the turn's last metadata (usage/credit) is
+	// captured, then persist it. The producer emits a metadata event for a
+	// cancelled ACP prompt AFTER the executor's event loop has already exited
+	// on ctx.Done (see ACPConn.emitCancelledTurnUsage), so this drain is the
+	// only reader it ever has on this path.
+	//
+	// Discarding the events (the previous `for range eventCh {}`) dropped the
+	// cancelled turn's tokens and cost, leaving every cancelled scheduled task
+	// with an all-zero metadata row — the same defect the interactive cancel
+	// path had, and the reason /api/tasks showed no usage for cancelled runs.
+	executor.drainAndPersistCancelledMetadata(eventCh)
 	FinalizeOrphanedMessages(sessionID, cancelReason)
 	executor.unregisterActiveStream()
-	go func() {
-		for range eventCh {
-		}
-	}()
 }
 
 // executeTask runs a task by invoking the AI backend and inserting

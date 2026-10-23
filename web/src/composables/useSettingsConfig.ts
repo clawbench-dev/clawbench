@@ -8,6 +8,7 @@ import { resolveThemeId, applyThemeAttributes, onSystemColorSchemeChange } from 
 import { applyFontConfig } from '@/utils/fontConfig'
 import { normalizeDisplayMode } from '@/utils/chatSessionUtils'
 import { resolveUIScale, computeAutoUIScale, currentScreenHeight } from '@/utils/uiScale'
+import { setLayoutScopeMode } from '@/utils/panelState'
 import { applyServerLimits } from '@/stores/app.ts'
 
 const LOCAL_PREFIX = 'clawbench-settings-'
@@ -131,6 +132,17 @@ const legacyKeys: Record<string, {
   filePreviewMode: {
     key: 'clawbench-file-preview-mode',
     format: 'raw',
+  },
+  layoutMemory: {
+    // No legacy key: this setting is new. The side effect is the whole point —
+    // it switches every layout entry's storage location and bumps the epoch the
+    // layout composables watch, so the change is live rather than
+    // next-reload-only.
+    key: '',
+    format: 'raw',
+    sideEffect(value) {
+      setLayoutScopeMode(value === 'project' ? 'project' : 'global')
+    },
   },
   terminalFontSize: {
     key: 'clawbench-terminal-font-size',
@@ -397,6 +409,10 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   stickyScroll: true,
   fileView: 'list',
   filePreviewMode: false,
+  // How the layout (split ratios, collapses, dock/tab choices) is remembered:
+  // one shared record for every project, or one per project. Default 'global'
+  // keeps the pre-existing behaviour.
+  layoutMemory: 'global',
   messageDisplayMode: 'mixed',
   terminalFontSize: 12,
   // Copy-on-select is ON by default, matching mainstream terminals (GNOME
@@ -479,6 +495,12 @@ const localConfig = reactive<Record<string, string | boolean | number | null>>({
 for (const key of Object.keys(localDefaults)) {
   localConfig[key] = readLocalValue(key, localDefaults[key])
 }
+// Apply the layout-memory choice before anything reads a panel state. The
+// project root is not known yet (App.vue pushes it once the workspace loads),
+// so a 'project' mode cannot seed here — `setLayoutProjectRoot` does that when
+// it arrives. Until then, project-scoped reads fall back to defaults, which is
+// exactly the pre-load behaviour.
+setLayoutScopeMode(localConfig.layoutMemory === 'project' ? 'project' : 'global')
 // Sanitize: an invalid persisted value for messageDisplayMode falls back to
 // the default ('mixed'). Valid legacy values ('summary'/'original') are kept —
 // users may have picked them explicitly before 'mixed' existed.

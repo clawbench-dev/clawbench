@@ -1,14 +1,23 @@
-import { describe, expect, it, beforeEach, vi } from 'vitest'
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
+import { nextTick } from 'vue'
 import { useSessionSidebar, _resetForTest, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH } from '@/composables/useSessionSidebar'
-import { PANEL_KEY_PREFIX } from '@/utils/panelState'
+import {
+  PANEL_KEY_PREFIX,
+  _resetLayoutScopeForTest,
+  setLayoutProjectRoot,
+  setLayoutScopeMode,
+} from '@/utils/panelState'
 
 const KEY = PANEL_KEY_PREFIX + 'session-sidebar'
+const ROOT_A = '/project/a'
 
 describe('useSessionSidebar', () => {
   beforeEach(() => {
     _resetForTest()
+    _resetLayoutScopeForTest()
     localStorage.clear()
   })
+  afterEach(() => _resetLayoutScopeForTest())
 
   it('defaults to open on wide screen with default width when no stored state', () => {
     const s = useSessionSidebar()
@@ -93,5 +102,57 @@ describe('useSessionSidebar', () => {
     s.registerAddSessionLocally(fn)
     s.addSessionLocally({ id: 'x' })
     expect(fn).toHaveBeenCalledWith({ id: 'x' })
+  })
+})
+
+describe('useSessionSidebar — layout memory scope', () => {
+  beforeEach(() => {
+    _resetForTest()
+    _resetLayoutScopeForTest()
+    localStorage.clear()
+  })
+  afterEach(() => _resetLayoutScopeForTest())
+
+  it('re-reads the stored state when the scope switches, without a reload', async () => {
+    // The whole point of the layout-memory switch: it must take effect in place.
+    // This module loads once and guards with `initialized`, so a missing epoch
+    // watcher leaves the old value on screen and the setting looks broken.
+    localStorage.setItem(KEY, JSON.stringify({ open: false, width: 320 }))
+    const s = useSessionSidebar()
+    expect(s.width.value).toBe(320)
+
+    // Project A has its own, wider sidebar.
+    localStorage.setItem(KEY + ':' + ROOT_A, JSON.stringify({ open: true, width: 460 }))
+    setLayoutProjectRoot(ROOT_A)
+    setLayoutScopeMode('project')
+    await nextTick()
+
+    expect(s.width.value).toBe(460)
+    expect(s.open.value).toBe(true)
+  })
+
+  it('writes to the project key once the scope is per-project', async () => {
+    const s = useSessionSidebar()
+    setLayoutProjectRoot(ROOT_A)
+    setLayoutScopeMode('project')
+    await nextTick()
+
+    s.setWidth(400)
+    expect(localStorage.getItem(KEY + ':' + ROOT_A)).toBe(JSON.stringify({ open: true, width: 400 }))
+    // The global record is left alone — it is the seed for other projects.
+    expect(localStorage.getItem(KEY)).toBeNull()
+  })
+
+  it('falls back to defaults when the scope is per-project and no root is known', async () => {
+    localStorage.setItem(KEY, JSON.stringify({ open: false, width: 320 }))
+    const s = useSessionSidebar()
+    expect(s.width.value).toBe(320)
+
+    setLayoutScopeMode('project')
+    await nextTick()
+
+    // No root yet → no physical key → registry default, not the global value.
+    expect(s.width.value).toBe(280)
+    expect(s.open.value).toBe(true)
   })
 })

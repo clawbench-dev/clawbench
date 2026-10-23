@@ -569,7 +569,7 @@ import { appLog } from '@/utils/appLog'
 import { copyText } from '@/utils/clipboard'
 import { getNative } from '@/utils/clawbenchNative'
 import { joinPath, normalizeSlashes, baseName, dirName, isAbsolutePath } from '@/utils/path'
-import { readPanelState, writePanelState, DEFAULT_FM_PREVIEW_RATIO } from '@/utils/panelState'
+import { readPanelState, writePanelState, layoutEpoch, DEFAULT_FM_PREVIEW_RATIO } from '@/utils/panelState'
 import { useDirPreview } from '@/composables/useDirPreview'
 import { mediaVersionFor } from '@/composables/useMediaWatch.ts'
 import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, ScreenShare, FileX, LocateFixed, FolderDown, FolderSearch, FolderTree, Globe, WholeWord, Link2, ScanEye, ArrowLeft, SearchCode } from 'lucide-vue-next'
@@ -975,8 +975,25 @@ const codeLinkPreview = useCodeLinkPreview({
 // button collapses it without turning preview mode off, so the list fills the
 // panel until the next single-click re-opens it.
 const previewSplitRatio = ref(clampPreviewRatio(readPanelState('fmPreviewRatio')))
-/** Set false by the pane's close button; reset true on every new preview. */
-const previewPaneOpen = ref(false)
+/**
+ * Set false by the pane's close button; reset true on every new preview.
+ *
+ * Persisted (registry id `fmPreviewOpen`) so a collapsed pane stays collapsed
+ * across reloads — it is part of the layout the user arranged. Only the two
+ * EXPLICIT paths below persist: the close button and opening a preview. The
+ * side effects that merely react to something else (preview mode switched off,
+ * directory changed) clear the in-memory value without recording it, because
+ * those are not the user saying "I want this pane collapsed from now on".
+ */
+const previewPaneOpen = ref(readPanelState('fmPreviewOpen'))
+
+// Re-read when the layout-memory scope or project root changes (this component
+// outlives a project switch only via the keyed subtree, but the scope switch
+// happens in place, with the component mounted).
+watch(layoutEpoch, () => {
+    previewPaneOpen.value = readPanelState('fmPreviewOpen')
+    previewSplitRatio.value = clampPreviewRatio(readPanelState('fmPreviewRatio'))
+})
 
 /** Keep the pane a genuine split — reject a degenerate 0 or 1 ratio. */
 function clampPreviewRatio(ratio) {
@@ -1032,6 +1049,7 @@ const previewPaneMinBottom = computed(() => (isTouchPrimary.value ? 140 : 200))
 
 function collapsePreviewPane() {
     previewPaneOpen.value = false
+    writePanelState('fmPreviewOpen', false)
 }
 
 /** Whether a single click should open the quick preview instead of only
@@ -1051,6 +1069,7 @@ function showDirPreview(dirPath) {
     codeLinkPreview.close()
     dirPreviewPath.value = enterTargetFor(dirPath)
     previewPaneOpen.value = true
+    writePanelState('fmPreviewOpen', true)
     // Opening the pane shrinks the list to the top half of the split, which can
     // push the just-clicked entry out of view — re-assert it once the split has
     // relaid out (`nearest` leaves an entry that is still visible untouched).
@@ -1061,6 +1080,7 @@ function showDirPreview(dirPath) {
 function showFilePreview(filePath, anchorEl) {
     dirPreviewPath.value = ''
     previewPaneOpen.value = true
+    writePanelState('fmPreviewOpen', true)
     codeLinkPreview.showPreview({ filePath, anchorEl }, 'docked')
     scrollSelectedIntoView(selectedPath.value)
 }

@@ -324,6 +324,66 @@ describe('SessionSearchDrawer', () => {
     expect(wrapper.find('.session-search-body').exists()).toBe(false)
   })
 
+  it('emits open WITH the matched message id from a chunk jump button', async () => {
+    // Regression (issue #580): opening a session from a search hit used to drop
+    // the message id, so the reader landed at the bottom of a long conversation
+    // with no way to find the match. The chunk jump must carry message_id.
+    mockSearchState.mockReturnValue(createState({ query: 'test', results: [sampleResult] }))
+    const wrapper = mountDrawer()
+    const instance = (wrapper.vm as any).$
+    instance.setupState.selectedSession = sampleResult
+    instance.update()
+    await flushPromises()
+
+    const jump = wrapper.find('.detail-chunk-jump')
+    expect(jump.exists()).toBe(true)
+    await jump.trigger('click')
+
+    const emitted = wrapper.emitted('open')
+    expect(emitted).toBeTruthy()
+    expect(emitted![0][0]).toMatchObject({ session_id: 's1' })
+    expect(emitted![0][1]).toBe(1) // sampleResult.chunks[0].message_id
+  })
+
+  it('hides the chunk jump on an archived session', async () => {
+    // Opening an archived session 404s (the history endpoint filters them out),
+    // and the chat panel's recovery branch then silently opens a DIFFERENT
+    // session. The footer already swaps "Open" for "Resume"; the jump follows.
+    const archivedResult = { ...sampleResult, archived: true }
+    mockSearchState.mockReturnValue(createState({ query: 'test', results: [archivedResult] }))
+    const wrapper = mountDrawer()
+    const instance = (wrapper.vm as any).$
+    instance.setupState.selectedSession = archivedResult
+    instance.update()
+    await flushPromises()
+
+    expect(wrapper.find('.detail-chunk').exists()).toBe(true)
+    expect(wrapper.find('.detail-chunk-jump').exists()).toBe(false)
+  })
+
+  it('hides the chunk jump for browse previews (not a search hit)', async () => {
+    // Browse mode shows the session's first message as a preview, not a match —
+    // offering "jump to this message" there would be meaningless.
+    mockSearchState.mockReturnValue(createState({ query: '', results: [sampleResult], searchMode: 'recent' }))
+    mockFetchFirstMessage.mockResolvedValue({
+      chunk_id: 42,
+      chunk_text: 'first message body',
+      match_positions: [],
+      score: 0,
+      role: 'user',
+      message_id: 42,
+      created_at: '2025-01-01',
+    })
+    const wrapper = mountDrawer()
+    const instance = (wrapper.vm as any).$
+    instance.setupState.selectSession(sampleResult)
+    await flushPromises()
+    instance.update()
+
+    expect(wrapper.find('.detail-chunk').exists()).toBe(true)
+    expect(wrapper.find('.detail-chunk-jump').exists()).toBe(false)
+  })
+
   it('lazily fetches the first message when drilling into a browse result', async () => {
     mockSearchState.mockReturnValue(createState({ query: '', results: [sampleResult], searchMode: 'recent' }))
     mockFetchFirstMessage.mockResolvedValue({

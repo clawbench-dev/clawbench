@@ -1,6 +1,7 @@
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import {
   DEFAULT_SESSION_SIDEBAR_WIDTH,
+  layoutEpoch,
   readPanelState,
   writePanelState,
   type SessionSidebarState,
@@ -27,6 +28,7 @@ const width = ref(SIDEBAR_DEFAULT_WIDTH)
 let openDrawerFn: (() => void) | null = null
 let addLocallyFn: ((session: SidebarSession) => void) | null = null
 let initialized = false
+let stopEpochWatch: (() => void) | null = null
 
 function clampWidth(w: number): number {
   if (!Number.isFinite(w)) return SIDEBAR_DEFAULT_WIDTH
@@ -50,6 +52,12 @@ export function useSessionSidebar() {
   if (!initialized) {
     initialized = true
     load()
+    // Re-read when the layout-memory scope or the project root changes — this
+    // module loads once per session, so without the epoch the setting would only
+    // take effect after a reload. Stopped first so a test reset (which clears
+    // `initialized`) cannot accumulate one watcher per init.
+    stopEpochWatch?.()
+    stopEpochWatch = watch(layoutEpoch, load)
   }
 
   function openSidebar() {
@@ -111,6 +119,8 @@ export function useSessionSidebar() {
 /** Test hook — reset module state. */
 export function _resetForTest() {
   initialized = false
+  stopEpochWatch?.()
+  stopEpochWatch = null
   open.value = true
   width.value = SIDEBAR_DEFAULT_WIDTH
   openDrawerFn = null

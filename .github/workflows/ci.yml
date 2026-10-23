@@ -217,6 +217,12 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # vue-tsc skips `<script setup>` blocks WITHOUT lang="ts", and TS syntax in
+      # them is valid JavaScript that only throws at runtime, so neither
+      # typecheck nor the build would notice. This runs the dedicated guard.
+      - name: Guard plain-JS script blocks
+        run: node scripts/check-js-script-blocks.mjs
+
   typecheck-desktop:
     name: Typecheck (Desktop)
     # The desktop app is otherwise compiled ONLY by release.yml, at tag time —

@@ -1,8 +1,8 @@
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { DEFAULT_RATIO, normalizeRatio } from '@/utils/splitRatio'
 import { appLog } from '@/utils/appLog'
 import { DOCK_TAB_IDS, WIDE_SCREEN_PRIMARY_TABS, isDockTabId, type DockTabId } from '@/composables/dockTabs'
-import { DEFAULT_LEFT_COLLAPSED, readPanelState, writePanelState } from '@/utils/panelState'
+import { DEFAULT_LEFT_COLLAPSED, layoutEpoch, readPanelState, writePanelState } from '@/utils/panelState'
 
 const TAG = 'WideScreenLayout'
 
@@ -103,17 +103,24 @@ let setActiveTab: ((tab: DockTabId) => void) | null = null
 let resizeListener: (() => void) | null = null
 let mql: MediaQueryList | null = null
 let mqlChangeListener: (() => void) | null = null
+// Same for the layout-epoch watcher: `_resetForTest` clears `initialized`, so a
+// second init would otherwise register a second watcher that reads the same
+// refs — harmless for correctness but a leak that grows with every test.
+let stopEpochWatch: (() => void) | null = null
 
 function initWideScreen() {
   if (initialized) return
   initialized = true
-  // All three are global panel states read through the registry, which owns the
-  // key names, encodings and defaults. `splitRatio` is normalized because the
-  // registry stores a plain number and an out-of-range value (e.g. hand-edited
-  // storage) must not produce a degenerate split.
-  splitRatio.value = normalizeRatio(readPanelState<number>('splitRatio'))
-  chatCollapsed.value = readPanelState<boolean>('chatCollapsed')
-  leftCollapsed.value = readPanelState<boolean>('leftCollapsed')
+  readLayoutState()
+  // Re-read whenever the storage location can have moved: the user switched
+  // "布局记忆" between global and per-project, or the project root changed. This
+  // module loads once and keeps its refs, so without the epoch the switch would
+  // change which key is WRITTEN but leave the on-screen layout untouched until
+  // the next reload — the exact "I changed the setting and nothing happened"
+  // failure. Module-level watch (not in a component) so it lives as long as the
+  // singleton does.
+  stopEpochWatch?.()
+  stopEpochWatch = watch(layoutEpoch, readLayoutState)
   if (typeof window !== 'undefined') {
     const recompute = () => {
       isWideScreen.value = computeIsWideScreen(window.innerWidth)
@@ -139,6 +146,22 @@ function initWideScreen() {
       }
     }
   }
+}
+
+/**
+ * Load the three persisted layout values. Kept separate from initWideScreen so
+ * the epoch watcher can re-run just this part — the resize listener and the
+ * wide-screen measurement must not be torn down and rebuilt for a storage
+ * re-read.
+ *
+ * `splitRatio` is normalized because the registry stores a plain number and an
+ * out-of-range value (e.g. hand-edited storage) must not produce a degenerate
+ * split.
+ */
+function readLayoutState() {
+  splitRatio.value = normalizeRatio(readPanelState<number>('splitRatio'))
+  chatCollapsed.value = readPanelState<boolean>('chatCollapsed')
+  leftCollapsed.value = readPanelState<boolean>('leftCollapsed')
 }
 
 /** Returns the shared wide-screen state refs (initializes once). */
@@ -284,5 +307,7 @@ export function _setWideScreenForTest(val: boolean) {
 }
 export function _resetForTest() {
   initialized = false
+  stopEpochWatch?.()
+  stopEpochWatch = null
   resetWideScreenState()
 }

@@ -20,14 +20,25 @@ import { ref } from 'vue'
 export interface PendingMessageNavigation {
   sessionId: string
   messageId: number
+  /**
+   * Why the jump was requested. Only `'search'` changes the failure copy: a
+   * session-search hit is a *search* result, so "that message is no longer in
+   * the session" is accurate. Quote and notification jumps share this channel
+   * and must not be told they came from a search.
+   */
+  source?: 'search' | 'quote' | 'notification'
 }
 
 const pending = ref<PendingMessageNavigation | null>(null)
 
 /** Record a request to open a specific message in a specific session. */
-export function setPendingMessageNavigation(sessionId: string, messageId: number) {
+export function setPendingMessageNavigation(
+  sessionId: string,
+  messageId: number,
+  source?: PendingMessageNavigation['source'],
+) {
   if (!sessionId || !messageId) return
-  pending.value = { sessionId, messageId }
+  pending.value = { sessionId, messageId, source }
 }
 
 /**
@@ -45,6 +56,24 @@ export function consumePendingMessageNavigation(): PendingMessageNavigation | nu
 
 /** The reactive ref, for callers that need to watch it. */
 export { pending as pendingMessageNavigation }
+
+/**
+ * Drop a request that can never be satisfied because its target session no
+ * longer exists.
+ *
+ * The request is only consumed when the CURRENT session id matches it, so a
+ * session that fails to open (deleted, archived, 404) leaves the request parked
+ * forever — and the user later opening an unrelated session that happens to
+ * reuse the id would be scrolled to a stale message and told it "is no longer in
+ * the session". Called from the 404 recovery branch, which is the one place that
+ * knows the session is gone rather than merely not loaded yet.
+ *
+ * Deliberately keyed on the session id: a request for a DIFFERENT session must
+ * survive one session's failure.
+ */
+export function discardPendingMessageNavigation(sessionId: string): void {
+  if (pending.value?.sessionId === sessionId) pending.value = null
+}
 
 /** Reset module-level state for testing. @internal */
 export function _resetPendingMessageForTesting() {

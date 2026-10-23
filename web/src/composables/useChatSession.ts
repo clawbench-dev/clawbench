@@ -3,6 +3,7 @@ import { gt } from '@/composables/useLocale'
 import { useToast } from '@/composables/useToast.ts'
 import { useSessionIdentity, refreshGroupRosterIfRegistered } from '@/composables/useSessionIdentity.ts'
 import { useAppForeground, onAppResume } from '@/composables/useAppForeground'
+import { useAppMode } from '@/composables/useAppMode'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
 import { appLog } from '@/utils/appLog'
 import { reportCancelRoundTrip } from '@/utils/cancelRoundTrip'
@@ -11,6 +12,7 @@ const TAG = 'ChatSession'
 import { updateAvailableModes, updateCommandState, updateAvailableThinkingEfforts, clearUsageStateById, updateUsageState, currentAgentId as _currentAgentId, clearSessionIdentity, reconcileRunningSessions, reconcileThinkingEffort } from '@/composables/useSessionIdentity.ts'
 import { getRecentSession, clearRecentSession } from '@/composables/useRecentSession'
 import { clearPlanState, updatePlanEntries } from '@/composables/usePlanProgress'
+import { discardPendingMessageNavigation } from '@/composables/useMessageNavigation'
 import { clearTeamState } from '@/composables/useTeamState'
 import { useAgents, resetModelViewForTransport, getAgentThinkingEffortLevels, populateACPStateFromCache, updateACPModelList, applyResolvedModelList } from '@/composables/useAgents'
 import { store } from '@/stores/app.ts'
@@ -192,6 +194,11 @@ export function useChatSession(options: UseChatSessionOptions) {
   // floating window active) would clear its unread badge before the floating
   // window ever showed it.
   const { appInForeground } = useAppForeground()
+  // HOST axis. The resume handler rebuilds the session ONLY on Android, where
+  // the OS freezes the WebView while paused (see the resume listener below).
+  // Same predicate as App.vue's syncToNative gate: isAppMode alone is also true
+  // in the Electron shell, whose window merely minimizes and keeps running.
+  const { isAppMode, isDesktopApp } = useAppMode()
   // True while the global WS is replaying events missed while disconnected.
   // Replayed completions (session finished while the app was backgrounded and
   // the WS was down) must NOT be auto-marked read — the user never saw them.
@@ -776,6 +783,12 @@ export function useChatSession(options: UseChatSessionOptions) {
         // session or create a new one).
         if (resp.status === 404 && errData.msgKey === 'SessionNotFound' && currentSessionId.value) {
           appLog.w(TAG, 'loadHistory: session not found, clearing stale sessionId and recovering')
+          // A parked "open this message" request targets this session by id and
+          // is only consumed when the current session matches. The session is
+          // provably gone, so the request can never be satisfied — leaving it
+          // would make a LATER open of the same id jump to a stale message and
+          // report it as missing.
+          discardPendingMessageNavigation(currentSessionId.value)
           currentSessionId.value = ''
           // Resolve deferred and clean up in-flight state before re-invoking
           // so the finally block doesn't double-resolve or flicker switching.
@@ -943,27 +956,7 @@ export function useChatSession(options: UseChatSessionOptions) {
     }
   }
 
-  // Returning to the foreground: reopen the current session.
-  //
-  // This is the belt-and-suspenders path for Android: document.visibilityState
-  // is unreliable in the WebView (onPause doesn't reliably flip it to
-  // 'hidden'), so the WS may NOT have been disconnected while backgrounded and
-  // no clawbench-reconnect event fires on return. Messages produced in the
-  // background would then never appear.
-  //
-  // It runs the SAME reopen as the refresh button (reopenCurrentSession):
-  // clear the session, then rebuild it authoritatively. That is deliberately
-  // stronger than the lightweight handleWsReconnect (skipIfUnchanged=true),
-  // which can skip the reload when the message snapshot is unchanged or race
-  // the reconnect, leaving DB-flushed streaming content missing. It is also
-  // what makes the foreground return behave exactly like switching away and
-  // back — the only path that cleared frontend-only state (e.g. a stale
-  // thinking block) the DB does not know about.
-  //
-  // The read-marking and session-list refresh are NOT done here: switchSession
-  // (inside reopenCurrentSession) already awaits markSessionRead before calling
-  // loadSessionsOnce, so the badge clears in the correct order. Doing it here
-  // as well would only add a duplicate POST.
+  // Returning to the foreground: re-sync the current session.
   //
   // This listens on onAppResume, NOT on a foreground STATE transition (the
   // composable deliberately has no transition listener). A transition signal is
@@ -973,8 +966,70 @@ export function useChatSession(options: UseChatSessionOptions) {
   // — the reported "resume doesn't really refresh, only switching away and back
   // works" symptom. onAppResume fires unconditionally from the native onResume
   // hook.
+  //
+  // Two different jobs, split by HOST (not by which resume signal fired):
+  //
+  // 1. Mark-read + session-list refresh — needed EVERYWHERE. A reply that landed
+  //    while the app was hidden must not leave its unread badge lit forever.
+  //
+  // 2. The destructive reopen (reopenCurrentSession: clear the message array,
+  //    refetch the whole window, force-scroll to the bottom) — needed ONLY on
+  //    Android. There the OS freezes the WebView while paused: events raised in
+  //    the background are lost and the WS is dropped, so nothing else repairs
+  //    the list, and only a full rebuild also clears frontend-only state the DB
+  //    does not know about (e.g. a stale thinking block).
+  //
+  //    A browser tab / the Electron window is NOT frozen — its WS stays
+  //    connected (useGlobalEvents deliberately keeps it alive so background
+  //    notifications still arrive) and its DOM already holds every message. The
+  //    rebuild therefore repairs nothing there; its only visible effect is to
+  //    wipe the message array and force-scroll to the bottom, throwing away the
+  //    reader's position on every tab switch. v-show already preserves
+  //    scrollTop natively — the rebuild was the one thing defeating it. Real
+  //    connection losses on desktop are covered by `clawbench-reconnect` →
+  //    handleWsReconnect (lightweight, scrollBottom=false).
+  //
+  // The host test must live HERE rather than being a source flag on the resume
+  // signal: Android emits BOTH the native resume hook and a visibilitychange
+  // for one physical resume, and the 1s dedupe in useAppForeground collapses
+  // them — whichever arrives first wins, so a "native" flag would be dropped
+  // at random and the Android rebuild would silently stop running.
   const removeForegroundReadListener = onAppResume(() => {
-    reopenCurrentSession().catch(() => {})
+    const sid = currentSessionId.value
+    if (!sid) return
+    if (isAppMode.value && !isDesktopApp.value) {
+      // switchSession (inside reopenCurrentSession) already awaits
+      // markSessionRead before loadSessionsOnce, so the badge clears in the
+      // right order — doing it here as well would only duplicate the POST.
+      reopenCurrentSession().catch(() => {})
+      return
+    }
+    // Await the read BEFORE refreshing the list, for the same reason
+    // switchSession does: UpdateLastRead must land server-side first, or the
+    // list comes back still carrying the unread badge this call exists to
+    // clear. Firing both concurrently made the badge's disappearance a race
+    // the resume lost whenever the list response arrived first.
+    void (async () => {
+      // Snapshot BEFORE the refresh: `reconcileRunningSessions` replaces the
+      // whole set from the API response, so a failed/empty response would erase
+      // a turn that is genuinely still running and the subscription would never
+      // be repaired (there is no `clawbench-reconnect` on desktop to do it
+      // later). A turn known to be running on either side of the refresh is
+      // still running.
+      const wasRunning = runningSessions.value.has(sid)
+      await markSessionRead(sid).catch(() => {})
+      await loadSessionsOnce().catch(() => {})
+      // Repair a subscription the server may have dropped while the tab was
+      // hidden. Without the rebuild there is no other repair path on desktop:
+      // the WS itself usually stays connected (useGlobalEvents keeps it alive
+      // so background notifications arrive), so no `clawbench-reconnect` fires,
+      // and a server-side no_subscribers drop would leave a live turn's events
+      // going nowhere until the user switched away and back. Re-subscribing is
+      // destructive to nothing — it does not clear the array or move the viewport.
+      if (currentSessionId.value === sid && (wasRunning || runningSessions.value.has(sid))) {
+        onResubscribeStream?.(sid)
+      }
+    })()
   })
 
   async function switchSession(sessionId: string, projectPath?: string) {

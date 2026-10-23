@@ -2,7 +2,7 @@ import { ref, computed, watch } from 'vue'
 import { appLog } from '@/utils/appLog'
 import { getWideScreenState } from './useWideScreenLayout'
 import { useFileEditor } from './useFileEditor'
-import { readPanelState, writePanelState } from '@/utils/panelState'
+import { readPanelState, writePanelState, layoutEpoch } from '@/utils/panelState'
 
 export const TOC_DOCK_MIN_WIDTH = 200
 export const TOC_DOCK_MAX_WIDTH = 400
@@ -36,6 +36,7 @@ const tocDockSide = ref<TocDockSide>(TOC_DOCK_DEFAULT_SIDE)
 /** Pre-edit open state, restored on exit. In-memory only (not persisted). */
 let wasOpenBeforeEdit = false
 let initialized = false
+let stopEpochWatch: (() => void) | null = null
 
 // Editing hides the dock; restore the pre-edit state on exit.
 // Registered exactly once at module load — re-registering per init() would
@@ -62,6 +63,17 @@ function clampSide(value: string): TocDockSide {
 function init() {
     if (initialized) return
     initialized = true
+    load()
+    // Re-read when the layout-memory scope or the project root changes; this
+    // module loads once per session and would otherwise keep the values it read
+    // on first use. Stopped first so a test reset (which clears `initialized`)
+    // cannot accumulate one watcher per init.
+    stopEpochWatch?.()
+    stopEpochWatch = watch(layoutEpoch, load)
+}
+
+/** Load the three persisted dock preferences (clamped to this dock's range). */
+function load() {
     // Key names, scope and encoding live in the panel-state registry; the
     // clamping below is this dock's own business rule and stays here.
     tocDockOpen.value = readPanelState<boolean>('tocDockOpen')
@@ -115,6 +127,8 @@ export function useTocDockPreference() {
 /** @internal Reset all state — for tests only */
 export function _resetForTest() {
     initialized = false
+    stopEpochWatch?.()
+    stopEpochWatch = null
     tocDockOpen.value = false
     tocDockWidth.value = TOC_DOCK_DEFAULT_WIDTH
     tocDockSide.value = TOC_DOCK_DEFAULT_SIDE

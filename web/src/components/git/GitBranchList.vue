@@ -33,11 +33,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronDown, ChevronRight } from 'lucide-vue-next'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import GitBranchRow from './GitBranchRow.vue'
+import { layoutEpoch, readPanelState, writePanelState } from '@/utils/panelState'
 
 const { t } = useI18n()
 
@@ -63,21 +64,22 @@ const props = withDefaults(defineProps<{
 
 defineEmits(['switch-branch', 'delete-branch', 'retry'])
 
-const STORAGE_KEY = 'git-branch-collapsed'
 const collapsed = ref(false)
 
-onMounted(() => {
-  const stored = localStorage.getItem(STORAGE_KEY)
-  if (stored !== null) {
-    collapsed.value = stored === 'true'
-  } else {
-    collapsed.value = props.initialCollapsed
-  }
-})
+/** `null` = the user has never chosen, so the component's own default applies. */
+function loadCollapsed() {
+  const stored = readPanelState<boolean | null>('gitBranchCollapsed')
+  collapsed.value = stored === null ? props.initialCollapsed : stored
+}
+
+onMounted(loadCollapsed)
+// Layout-memory scope / project root changed → the stored value now comes from
+// a different key.
+watch(layoutEpoch, loadCollapsed)
 
 function toggleCollapse() {
   collapsed.value = !collapsed.value
-  localStorage.setItem(STORAGE_KEY, String(collapsed.value))
+  writePanelState('gitBranchCollapsed', collapsed.value)
 }
 
 const sortedBranches = computed(() => {

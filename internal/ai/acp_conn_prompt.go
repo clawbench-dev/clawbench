@@ -150,6 +150,14 @@ func (c *ACPConn) Prompt(ctx context.Context, prompt []acp.ContentBlock, streamC
 	if err != nil {
 		if ctx.Err() != nil {
 			slog.Info("acp conn: prompt cancelled", "clawbench_sid", c.clawbenchSID, "acp_sid", acpSID)
+			// A cancelled turn still consumed tokens and credit. The agent has
+			// already billed for every model call it made before the cancel
+			// landed, and the per-turn accumulator holds those figures — but
+			// the PromptResponse that normally carries them never arrives, so
+			// without this the whole turn is dropped from the ledger (measured
+			// on a production DB: 1672 cancelled assistant messages, 1287 with
+			// an all-zero metadata row and only 11 with real usage).
+			c.emitCancelledTurnUsage(streamCh)
 			c.handlePromptCancel(conn)
 			return ctx.Err()
 		}
@@ -191,6 +199,77 @@ func (c *ACPConn) Prompt(ctx context.Context, prompt []acp.ContentBlock, streamC
 	c.emitPromptTailMetadata(resp, streamCh)
 
 	return nil
+}
+
+// emitCancelledTurnUsage emits the turn-final metadata event for a prompt that
+// was cancelled before its PromptResponse arrived.
+//
+// Everything else on this path already survived the cancel: partial content was
+// streamed, tool calls were persisted, and the accumulated _meta (token
+// counters, cache splits, credit) is still sitting in the per-turn accumulator.
+// Only the PromptResponse — the sole carrier of the metadata event — is
+// missing, so a cancelled turn used to reach chat_metadata as an all-zero row
+// while the agent had already billed for it.
+//
+// Nothing is emitted when there is nothing to record: a turn cancelled before
+// its first model call consumed nothing, and an all-zero metadata row would
+// only inflate the message count in the stats panel.
+//
+// The event is forwarded like every other ACP event (non-blocking). The
+// executor has usually already left its event loop by the time this runs, so
+// the event waits in the channel buffer for Finalize's drain — which is why
+// that drain must adopt metadata events, not just session_capture.
+func (c *ACPConn) emitCancelledTurnUsage(streamCh chan<- StreamEvent) {
+	meta := &Metadata{}
+
+	// Cost: agents that report money (Claude, OpenCode) carry it on the final
+	// usage_update of the turn, which reached cachedUsageState. Same guard as
+	// the PromptResponse path — CodeBuddy's cost field holds credit, not money,
+	// and is persisted through the accumulator below instead.
+	backendID := c.BackendID()
+	if cached := c.GetCachedUsageState(); cached != nil && cached.Cost > 0 && !costFieldCarriesCredit(backendID) {
+		meta.CostUSD = cached.Cost
+		meta.CostCumulative = true
+		meta.CostSessionTotal = cached.Cost
+	}
+
+	acc := c.getAndClearMetaAccum()
+	hasAccum := acc.HasData()
+	if hasAccum {
+		applyMetaExtractionToMetadata(meta, acc)
+		// The cancel ends the turn's identity too: without promoting this
+		// turn's requestId the replay filter keeps the PREVIOUS turn's
+		// baseline, and the next turn's chunks can be mistaken for a replay.
+		c.setLastCompletedRequestID(meta.RequestID)
+	}
+	if !hasAccum && meta.CostUSD <= 0 {
+		return
+	}
+
+	// Report the cancel itself, so the record says why the turn ended instead
+	// of looking like a truncated normal completion.
+	meta.StopReason = string(acp.StopReasonCancelled)
+
+	slog.Info("acp conn: cancelled turn usage",
+		"clawbench_sid", c.clawbenchSID,
+		"input_tokens", meta.InputTokens,
+		"output_tokens", meta.OutputTokens,
+		"total_tokens", meta.TotalTokens,
+		"credit", meta.Credit,
+		"cost_usd", meta.CostUSD)
+
+	// This is the ONLY carrier of a cancelled turn's usage — the PromptResponse
+	// that normally carries it never arrives — so it must not be dropped just
+	// because the consumer is momentarily behind. `metadata` is not in
+	// criticalStreamEvents (a dropped metadata event is normally cosmetic), and
+	// the plain forwardACPEvent path would discard it on a full channel, which
+	// is most likely exactly when a long turn was cancelled (largest backlog).
+	//
+	// Blocking is safe HERE because this runs on the caller's goroutine after
+	// conn.Prompt returned, NOT on the SDK's shared notification goroutine
+	// (that is what criticalEventBlockingSafe protects). emitCriticalStreamEvent
+	// still tries a non-blocking send first, so the common case adds no latency.
+	emitCriticalStreamEvent(streamCh, acpNotificationSource, StreamEvent{Type: "metadata", Meta: meta})
 }
 
 // promptText returns the concatenated text of the prompt's text blocks. Used to

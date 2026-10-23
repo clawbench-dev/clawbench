@@ -92,6 +92,7 @@ import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHand
 import GitWorktreeList from './GitWorktreeList.vue'
 import GitBranchList from './GitBranchList.vue'
 import GitTagList from './GitTagList.vue'
+import { layoutEpoch, readPanelState, writePanelState } from '@/utils/panelState'
 import '@/assets/modal-footer-btn.css'
 
 const { t } = useI18n()
@@ -153,20 +154,58 @@ onBeforeUnmount(() => {
   if (unregisterDirtyBack) { unregisterDirtyBack(); unregisterDirtyBack = null }
 })
 
-const TAB_STORAGE_KEY = 'git-manage-active-tab'
 const activeTab = ref<'worktrees' | 'branches' | 'tags'>('branches')
 
-// Restore persisted tab
-onMounted(() => {
-  const stored = localStorage.getItem(TAB_STORAGE_KEY)
-  if (stored === 'branches' || stored === 'tags' || stored === 'worktrees') {
-    activeTab.value = stored
+const MANAGED_TABS = ['branches', 'tags', 'worktrees'] as const
+type ManagedTab = (typeof MANAGED_TABS)[number]
+
+function isManagedTab(value: unknown): value is ManagedTab {
+  return typeof value === 'string' && (MANAGED_TABS as readonly string[]).includes(value)
+}
+
+/**
+ * Set while `loadActiveTab` applies a stored value, consumed by the persist
+ * watcher below. A load is not a user choice: without this, switching the
+ * layout-memory scope would immediately write the freshly-loaded (or
+ * defaulted) tab back into the new key, turning "this project has no record"
+ * into "this project recorded branches" before the user clicked anything.
+ *
+ * A one-shot flag rather than comparing against the loaded value: comparing
+ * values also swallows a REAL user choice that happens to land on the loaded
+ * tab (open the panel on `tags`, click `branches`, click back to `tags` — the
+ * second click equals the loaded value and was silently not persisted, so a
+ * reload jumped back to `tags`).
+ *
+ * It is cleared in the watcher, not around the assignment, because Vue watchers
+ * are async — a flag reset synchronously after `activeTab.value = next` would
+ * already be false by the time the callback runs.
+ */
+let suppressPersist = false
+
+/** Restore the persisted sub-tab (unknown values fall back to the default). */
+function loadActiveTab() {
+  const stored = readPanelState<string>('gitManageTab')
+  const next: ManagedTab = isManagedTab(stored) ? stored : 'branches'
+  if (next === activeTab.value) {
+    // No change → the watcher never fires, so nothing to suppress.
+    return
   }
-})
+  suppressPersist = true
+  activeTab.value = next
+}
+
+onMounted(loadActiveTab)
+// Layout-memory scope / project root changed → the stored value now comes from
+// a different key.
+watch(layoutEpoch, loadActiveTab)
 
 // Watch tab changes to persist
 watch(activeTab, (val) => {
-  localStorage.setItem(TAB_STORAGE_KEY, val)
+  if (suppressPersist) {
+    suppressPersist = false
+    return
+  }
+  writePanelState('gitManageTab', val)
 })
 
 const tabs = computed(() => [

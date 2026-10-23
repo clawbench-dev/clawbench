@@ -339,8 +339,58 @@ describe('useUserMsgIndex — jumpToUserMessage', () => {
 
   it('does nothing when messagesRef is null', async () => {
     const { vm, setProgrammaticScrolling } = createComposable()
-    await vm.jumpToUserMessage({ id: 1 })
+    // Returns false so callers can tell the jump did not happen.
+    expect(await vm.jumpToUserMessage({ id: 1 })).toBe(false)
     expect(setProgrammaticScrolling).not.toHaveBeenCalled()
+  })
+
+  it('reports success when the target is already loaded', async () => {
+    const { vm, messagesRef } = createComposable()
+    const el = document.createElement('div')
+    const msg = document.createElement('div')
+    el.querySelectorAll = vi.fn().mockReturnValue([msg])
+    msg.scrollIntoView = vi.fn()
+    messagesRef.value = el
+
+    expect(await vm.jumpToUserMessage({ id: 1 })).toBe(true)
+  })
+
+  it('reports failure when the target is missing and history is exhausted', async () => {
+    // The caller (session-search jump) falls back to the bottom + a toast on
+    // false — silently returning would leave the reader on an unchanged view
+    // with no explanation.
+    const { vm, messagesRef, hasMore } = createComposable()
+    const el = document.createElement('div')
+    el.querySelectorAll = vi.fn().mockReturnValue([])
+    messagesRef.value = el
+    hasMore.value = false
+
+    expect(await vm.jumpToUserMessage({ id: 999 })).toBe(false)
+  })
+
+  it('stops paging as soon as history runs out mid-loop', async () => {
+    // Regression: the loop only checked hasMore BEFORE starting, so a target
+    // that does not exist (stale search hit, deleted message) burned the full
+    // 50 rounds at 500ms each — ~25s of loadingTarget with a load-more fired
+    // every round. History running out during the walk must end it immediately.
+    const { vm, messagesRef, hasMore, emitLoadMore } = createComposable()
+    const el = document.createElement('div')
+    el.querySelectorAll = vi.fn().mockReturnValue([])
+    messagesRef.value = el
+    hasMore.value = true
+    // The first load-more is the one that discovers the beginning of history.
+    emitLoadMore.mockImplementation(() => { hasMore.value = false })
+
+    // Fake timers are active, so drive the 500ms round timeout explicitly
+    // instead of awaiting the promise directly (it would never settle).
+    const jump = vm.jumpToUserMessage({ id: 999 })
+    await vi.advanceTimersByTimeAsync(600)
+    const result = await jump
+
+    expect(result).toBe(false)
+    // Exactly one attempt: without the in-loop guard this would be 50.
+    expect(emitLoadMore).toHaveBeenCalledTimes(1)
+    expect(vm.loadingTarget).toBe(false)
   })
 
   it('scrolls to loaded message', async () => {

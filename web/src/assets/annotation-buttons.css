@@ -5,13 +5,30 @@
 /* NOTE: These are global (non-scoped) styles. Context-specific overrides MUST use */
 /* higher-specificity selectors (e.g., .chat-message.user .chat-file-open-btn).   */
 
-/* ── File path annotation ── */
+/* ── File path annotation ──
+
+   The chip renders on three backdrops (markdown `--bg-primary`, the assistant
+   bubble `--bg-tertiary`, the user bubble `--user-msg-color`) and no single
+   colour works on all of them, so the fill is decided PER SURFACE:
+
+   - reading surfaces keep `--bg-secondary`, which is what they always had. A
+     `currentColor`-derived plate is tempting but measurably worse there: on a
+     pale bubble the text colour is the dark thing, so tinting the backdrop
+     toward it closes the very gap the text needs (worst case 3.64 → 2.81 on
+     the assistant bubble, solarized-light).
+   - the user bubble gets a dark plate instead (markdown-common.css), because
+     its text is white on a saturated fill and the plate must move away from it.
+
+   What must NOT be per-surface is the FOREGROUND of the small marks: a fixed
+   `--text-muted` is tuned against a page background and measured 1.02:1 on the
+   user bubble (light-plus) — the path was literally the same colour as the
+   bubble. Those derive from `currentColor` (below, and in the inert block). */
 
 .chat-file-path {
   font-family: var(--font-mono);
   font-size: 0.95em;
-  background: color-mix(in srgb, var(--text-muted, #999) 8%, transparent);
-  padding:1px var(--space-2);
+  background: var(--bg-secondary);
+  padding: 1px var(--space-2);
   border-radius: var(--radius-xs);
   word-break: break-all;
 }
@@ -22,8 +39,14 @@
 }
 
 .chat-file-path[data-file-path]:hover {
-  background: color-mix(in srgb, var(--text-muted, #999) 18%, transparent);
-  color: var(--text-primary, #333);
+  /* Deepen the RESTING fill rather than compositing a new tint over the page
+     surface. The two are not equivalent: `--bg-secondary` is not reliably close
+     to `--bg-primary`, so a translucent hover can land within 1.01 of the
+     resting chip on light themes and the hover becomes invisible (solarized-
+     light). Mixing into the resting fill keeps a 1.13 step on every theme.
+     12% is the budget: the fill is the text colour's own hue, so every extra
+     percent moves the backdrop toward the glyph (24% cost 3.64 → 2.80). */
+  background: color-mix(in srgb, currentColor 12%, var(--bg-secondary));
 }
 
 /* ── Inert path (verified missing / glob pattern) ──
@@ -70,12 +93,21 @@
    The selectors are also listed with their compound forms (`a.` prefix,
    `.code-file-path.` prefix) so the rule outranks the code-viewer's
    `.code-file-path` and the generic anchor rules on specificity, not merely on
-   source order. */
+   source order.
+
+   The colour is derived from `currentColor`, NOT from `--text-muted`. On the
+   user bubble the ancestor text is white and the bubble is a saturated fill;
+   `--text-muted` measured 1.02:1 there (light-plus) — the inert path was
+   invisible, so "muted but still readable" failed in the opposite direction
+   from the bug this block was written for. `currentColor` in the `color`
+   property resolves to the INHERITED colour, so this stays a deliberate step
+   down from the live chip's full-strength text on every surface while never
+   collapsing into the backdrop. */
 a.chat-file-path-inert,
 .chat-file-path-inert,
 .code-file-path.chat-file-path-inert {
-  color: var(--text-muted, #999) !important;
-  text-decoration: underline dashed color-mix(in srgb, var(--text-muted, #999) 60%, transparent) !important;
+  color: color-mix(in srgb, currentColor 85%, transparent) !important;
+  text-decoration: underline dashed color-mix(in srgb, currentColor 65%, transparent) !important;
   /* `text-decoration-thickness` IS reset by the `text-decoration` shorthand, so
      the `!important` shorthand above would otherwise force it back to `auto`.
      Both longhands must therefore be `!important` too. (`text-underline-offset`
@@ -101,24 +133,40 @@ a.chat-file-path-inert,
 
 a.chat-file-path-inert:hover,
 .chat-file-path-inert:hover {
-  color: var(--text-muted, #999) !important;
+  color: color-mix(in srgb, currentColor 85%, transparent) !important;
   /* No `text-decoration` here on purpose: the base rule pins the dashed
      underline with `!important`, so the generic link hover rule's solid
      underline (`.chat-message.assistant a:hover`, not important) cannot take
      over. Restating it would only re-open a specificity fight. */
   /* Faint tint only, so the explanatory tooltip stays discoverable without
-     resurrecting the live chip's stronger (18%) hover fill. */
-  background: color-mix(in srgb, var(--text-muted, #999) 10%, transparent) !important;
+     resurrecting the live chip's stronger hover fill. */
+  background: color-mix(in srgb, currentColor 10%, transparent) !important;
 }
 
-/* ── File open button ── */
+/* ── Action buttons (file / commit / url / worktree) ──
+
+   The glyph inherits the surrounding TEXT colour and only the hover plate is
+   tinted, for two reasons:
+
+   1. `--text-muted` is tuned against a page background, not against the user
+      bubble. There it measured 1.02:1 (light-plus) — the icon was the same
+      colour as the bubble it sat on.
+   2. The old `opacity: var(--opacity-muted)` faded the WHOLE box, so the
+      hover background was dimmed along with the glyph and the affordance
+      never fully appeared. The colour now carries the de-emphasis and
+      `opacity` is gone, so hover can brighten the glyph without touching a
+      compound alpha.
+
+   `currentColor` inside `color` resolves to the INHERITED colour, so
+   `color: inherit` and `color: currentColor` are equivalent here; `inherit`
+   is used because it says what is meant and never reads as a self-reference. */
 
 .chat-file-open-btn {
   background: none;
   border: none;
   padding: var(--space-1);
   cursor: pointer;
-  color: var(--text-muted, #999);
+  color: inherit;
   border-radius: var(--radius-xs);
   display: inline-flex;
   align-items: center;
@@ -130,33 +178,41 @@ a.chat-file-path-inert:hover,
 }
 
 .chat-file-open-btn:hover {
-  color: var(--accent-color, #4a90d9);
-  background: var(--bg-tertiary, #f0f0f0);
+  color: inherit;
+  background: color-mix(in srgb, currentColor 10%, transparent);
 }
 
-/* Project-external file open button — orange icon */
+/* Project-external file open button — keeps the orange identity, but only as
+   a 30% tint over the surrounding text, so its luminance tracks the backdrop
+   instead of being a fixed hue. The previous fixed `#e67e22` measured 1.05:1
+   on the lightest user bubbles (github-light) — the icon vanished there. 30%
+   is the strongest tint that still clears 2.2:1 on every theme's bubble while
+   remaining recognisably orange. */
 .chat-file-open-btn.external {
-  color: #e67e22;
+  color: color-mix(in srgb, var(--color-orange) 30%, currentColor);
 }
 
 .chat-file-open-btn.external:hover {
-  color: #d35400;
+  color: color-mix(in srgb, var(--color-orange) 45%, currentColor);
+  background: color-mix(in srgb, var(--color-orange) 18%, transparent);
 }
 
-/* ── Commit hash annotation ── */
+/* ── Commit hash annotation ──
 
-/* Pending state — neutral styling, no interactive affordance until verified */
+   Pending state — neutral styling, no interactive affordance until verified */
 .chat-commit-hash-pending {
   font-family: var(--font-mono);
   font-size: 0.95em;
   color: inherit;
 }
 
-/* Verified state — accent color + clickable */
+/* Verified state — accent tinted toward the surrounding text, so the hue still
+   reads as "link" without inheriting the accent's own luminance. A bare
+   `--accent-color` measured 1.73:1 on `--bg-tertiary` (ayu-light). */
 .chat-commit-hash {
   font-family: var(--font-mono);
   font-size: 0.95em;
-  color: var(--accent-color, #4a90d9);
+  color: color-mix(in srgb, var(--accent-color) 30%, currentColor);
   cursor: pointer;
 }
 
@@ -167,7 +223,7 @@ a.chat-file-path-inert:hover,
   border: none;
   padding: var(--space-1);
   cursor: pointer;
-  color: var(--text-muted, #999);
+  color: inherit;
   border-radius: var(--radius-xs);
   display: inline-flex;
   align-items: center;
@@ -179,8 +235,8 @@ a.chat-file-path-inert:hover,
 }
 
 .chat-commit-open-btn:hover {
-  color: var(--accent-color, #4a90d9);
-  background: var(--bg-tertiary, #f0f0f0);
+  color: inherit;
+  background: color-mix(in srgb, currentColor 10%, transparent);
 }
 
 /* ── Localhost URL open button ── */
@@ -190,7 +246,7 @@ a.chat-file-path-inert:hover,
   border: none;
   padding: var(--space-1);
   cursor: pointer;
-  color: var(--text-muted, #999);
+  color: inherit;
   border-radius: var(--radius-xs);
   display: inline-flex;
   align-items: center;
@@ -202,8 +258,8 @@ a.chat-file-path-inert:hover,
 }
 
 .chat-url-open-btn:hover {
-  color: var(--accent-color, #4a90d9);
-  background: var(--bg-tertiary, #f0f0f0);
+  color: inherit;
+  background: color-mix(in srgb, currentColor 10%, transparent);
 }
 
 .chat-url-open-btn.loading {
@@ -237,7 +293,7 @@ a.chat-file-path-inert:hover,
   border: none;
   padding: var(--space-1);
   cursor: pointer;
-  color: var(--text-muted, #999);
+  color: inherit;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -251,6 +307,6 @@ a.chat-file-path-inert:hover,
 }
 
 .chat-worktree-btn:hover {
-  color: var(--accent-color, #4a90d9);
-  background: var(--bg-tertiary, #f0f0f0);
+  color: inherit;
+  background: color-mix(in srgb, currentColor 10%, transparent);
 }

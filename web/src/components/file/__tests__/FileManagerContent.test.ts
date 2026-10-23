@@ -482,6 +482,13 @@ function mountContent(props = {}) {
 }
 
 beforeEach(() => {
+  // Panel state lives in localStorage now (`fm-preview-open`, `fm-preview-ratio`),
+  // so a test that opens the preview pane persists that choice and the NEXT
+  // test's mount reads it back — the pane would already be open, `previewPaneEnabled`
+  // would be true, and a test asserting "no split" would fail for a reason that
+  // has nothing to do with what it is checking. Clearing here makes every case
+  // start from the registry defaults instead of the previous case's leftovers.
+  localStorage.clear()
   mockAddAttachedFile.mockReset()
   mockHasAttachedFile.mockReset()
   mockHasAttachedFile.mockReturnValue(false)
@@ -5145,13 +5152,30 @@ describe('FileManagerContent — docked preview pane', () => {
     expect(wrapper.find('.split-view__divider--vertical').exists()).toBe(false)
   })
 
-  it('never splits on touch even with preview mode on', async () => {
+  it('does not split on touch until the pane has been opened', async () => {
+    // What this actually pins: `previewPaneEnabled` requires the pane to be
+    // OPEN (`fmPreviewOpen`), not merely that preview mode is on and something
+    // is previewable. A touch device therefore starts on the full-width list
+    // and only splits after the user taps a file — there is deliberately no
+    // `!isTouchPrimary` gate in the component (a tap DOES open the pane on
+    // touch; see handleItemClick), so this is not "touch never splits".
+    //
+    // The assertion used to pass vacuously: `previewPaneOpen` was an in-memory
+    // ref defaulting to false and never written, so it could not distinguish
+    // "the gate works" from "the gate does not exist". It now asserts the
+    // opened case in the same test, which fails if the gate is removed.
     mockIsTouchPrimary.value = true
     mockLocalConfig.filePreviewMode = true
     mockPreviewRefs.visible!.value = true
     const wrapper = mountContent()
 
     expect(wrapper.find('.split-view__divider--vertical').exists()).toBe(false)
+
+    // Tapping a file opens the pane → the split appears, on touch too.
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
+    mockPreviewRefs.visible!.value = true
+    await nextTick()
+    expect(wrapper.find('.split-view__divider--vertical').exists()).toBe(true)
   })
 
   it('persists the dragged ratio to localStorage', async () => {
