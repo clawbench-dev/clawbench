@@ -386,13 +386,12 @@ UNIQUE：`(session_id, tag_id)`
 |---|---|---|---|---|
 | token | TEXT | PRIMARY KEY | — | 分享 token（即凭证） |
 | session_id | TEXT | NOT NULL | — | 被分享的会话 |
-| title | TEXT | NOT NULL | `''` | 快照标题 |
-| backend | TEXT | NOT NULL | `''` | 快照后端 |
-| message_count | INTEGER | NOT NULL | `0` | 快照消息数 |
-| payload | TEXT | NOT NULL | — | 快照对话 JSON（只读 SPA 直接渲染） |
-| created_at | DATETIME | | CURRENT_TIMESTAMP | 创建时间 |
+| message_ids | TEXT | NOT NULL | `'[]'` | **选中消息 id 的 JSON 数组**（已解析、去重、按时间排序；空数组非法——绝不存 `[]` 表示"全部"）。正文不落库，每次公开访问时实时装配 |
+| created_at | DATETIME | | CURRENT_TIMESTAMP | 创建时间（也是装配结果的 `createdAt`，供 ETag 字节稳定） |
 
-索引：`idx_session_shares_session(session_id)`
+索引：`idx_session_shares_session(session_id)`，**UNIQUE**——一个会话至多一条分享（再次分享是旋转），并防止并发创建留下两个 token 其中一个永远撤不掉。
+
+标题、后端、消息数**不在表里**：管理列表从 `chat_sessions` JOIN 实时取，消息数由 `len(message_ids)` 算出，因此改名会同步反映。
 
 ### project_forges（项目↔代码托管绑定）
 
@@ -1006,10 +1005,7 @@ erDiagram
     session_shares {
         TEXT token PK
         TEXT session_id
-        TEXT title
-        TEXT backend
-        INTEGER message_count
-        TEXT payload
+        TEXT message_ids
         DATETIME created_at
     }
 
