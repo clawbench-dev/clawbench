@@ -23,6 +23,22 @@ describe('session-search jump wiring', () => {
   const list = readWebFile('src/components/chat/ChatMessageList.vue')
   const drawer = readWebFile('src/components/session/SessionSearchDrawer.vue')
 
+  /**
+   * Strip comments before asserting on source text.
+   *
+   * Without this, every `indexOf` below can be satisfied by the EXPLANATORY
+   * COMMENT rather than the code: the consume block documents itself with
+   * "The target is reached via `jumpToUserMessage`", which is the first
+   * occurrence in the file — so deleting the real call still left the guard
+   * green (verified by mutating the call to `found = true`). Same convention
+   * as platformAxes.test.ts.
+   */
+  function stripComments(text: string): string {
+    return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '')
+  }
+
+  const panelCode = stripComments(panel)
+
   // Slice to the END of the handler rather than a fixed character count: the
   // explanatory comments grow over time, and a too-small window silently
   // truncates the very statements being asserted (indexOf then returns -1).
@@ -68,42 +84,59 @@ describe('session-search jump wiring', () => {
   it('the panel reaches the target by PAGING, not by the loaded-only scroll', () => {
     // scrollToMessage only searches the already-loaded window (20 messages) and
     // silently does nothing when the hit is older. A search hit routinely is.
-    const start = panel.indexOf('function scrollBottom')
-    const body = panel.slice(start)
-    const consume = body.indexOf('jumpToUserMessage')
+    //
+    // Assert the CALL ITSELF, not the identifier: the identifier also appears in
+    // the block's own documentation, so `indexOf('jumpToUserMessage')` was
+    // satisfied by a comment and survived deleting the call.
+    expect(panelCode).toContain('await messageListRef.value?.jumpToUserMessage?.(')
+    const consume = panelCode.indexOf('consumePendingMessageNavigation()')
     expect(consume).toBeGreaterThan(-1)
+    expect(panelCode.indexOf('jumpToUserMessage?.(')).toBeGreaterThan(consume)
     // The old loaded-only call must be gone from the consume path.
-    const consumeBlock = body.slice(0, body.indexOf('// Async render flush'))
-    expect(consumeBlock).not.toContain('scrollToMessage(')
+    expect(panelCode.slice(consume)).not.toContain('scrollToMessage(')
   })
 
   it('the panel re-runs when the request itself arrives (watch source)', () => {
     // Searching the CURRENT session leaves both the session id and the message
     // count unchanged, so a watch on those alone never fires: the request would
     // sit parked until an unrelated arrival happened to satisfy it.
-    const start = panel.indexOf('Consume a pending')
-    expect(start).toBeGreaterThan(-1)
-    const body = panel.slice(start, start + 2600)
-    const watchStart = body.indexOf('watch(')
+    //
+    // Anchor on the CONSUME call and search backwards for its watcher: the
+    // identifier also appears in the import at the top of the file, so a forward
+    // search from the top finds the import instead of the watcher.
+    const consume = panelCode.indexOf('consumePendingMessageNavigation()')
+    expect(consume).toBeGreaterThan(-1)
+    const watchStart = panelCode.lastIndexOf('watch(', consume)
+    expect(watchStart).toBeGreaterThan(-1)
     // The dependency array closes with `],` before the callback; slicing to the
     // first ')' or '=>' would stop inside the array's own entries.
-    const deps = body.slice(watchStart, body.indexOf('],', watchStart))
+    const deps = panelCode.slice(watchStart, panelCode.indexOf('],', watchStart))
     expect(deps).toContain('pendingMessageNavigation')
+    // …and the watcher must be the one that consumes, not an unrelated watch.
+    expect(consume - watchStart).toBeLessThan(1200)
   })
 
   it('the panel waits for the session switch to finish before judging the target', () => {
     // switchSession clears the array synchronously and refetches. Consuming
     // during that window searches an empty list, concludes the message is gone
-    // and shows a spurious failure toast. The ORDER is what matters: merely
-    // having the guard somewhere in the block would still pass with it moved
-    // below the consume call, which is exactly the bug.
-    const start = panel.indexOf('Consume a pending')
-    const body = panel.slice(start, start + 2600)
-    const guard = body.indexOf('if (session.switching.value) return')
-    const consume = body.indexOf('consumePendingMessageNavigation()')
-    expect(guard).toBeGreaterThan(-1)
+    // and shows a spurious failure toast.
+    //
+    // The decision now lives in decidePendingNavigation (see
+    // pendingNavigation.test.ts for its behaviour); this pins that the panel
+    // passes the switching flag in and only consumes on a `jump` verdict, so
+    // the guard cannot be dropped by editing the call site.
+    const callStart = panelCode.indexOf('decidePendingNavigation(')
+    expect(callStart).toBeGreaterThan(-1)
+    const call = panelCode.slice(callStart, panelCode.indexOf(')', callStart) + 1)
+    expect(call).toContain('session.switching.value')
+
+    const consume = panelCode.indexOf('consumePendingMessageNavigation()')
     expect(consume).toBeGreaterThan(-1)
-    expect(guard).toBeLessThan(consume)
+    const gate = panelCode.indexOf("if (decision.kind !== 'jump') return")
+    expect(gate).toBeGreaterThan(-1)
+    // The gate must precede the consume call: a request consumed before the
+    // verdict is checked is gone for good, and the jump never happens.
+    expect(gate).toBeLessThan(consume)
   })
 
   it('the list exposes the paging jump so the panel can reach it', () => {

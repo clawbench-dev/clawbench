@@ -4,6 +4,7 @@ import {
   consumePendingMessageNavigation,
   pendingMessageNavigation,
   _resetPendingMessageForTesting,
+  discardPendingMessageNavigation,
 } from '@/composables/useMessageNavigation.ts'
 
 beforeEach(() => {
@@ -45,5 +46,24 @@ describe('useMessageNavigation', () => {
     // through jumps they already moved on from.
     expect(consumePendingMessageNavigation()).toEqual({ sessionId: 'sess-b', messageId: 2 })
     expect(consumePendingMessageNavigation()).toBeNull()
+  })
+})
+
+describe('discardPendingMessageNavigation', () => {
+  it('drops a request whose target session is gone', () => {
+    // The chat panel only consumes a request when the CURRENT session id
+    // matches, so a session that never opens (deleted → 404) leaves the request
+    // parked forever. The user later opening an unrelated session that reuses
+    // the id would be scrolled to a stale message and told it is missing.
+    setPendingMessageNavigation('sess-dead', 7)
+    discardPendingMessageNavigation('sess-dead')
+    expect(pendingMessageNavigation.value).toBeNull()
+  })
+
+  it('keeps a request for a different session', () => {
+    // One session failing must not cancel a jump the user asked for elsewhere.
+    setPendingMessageNavigation('sess-other', 9)
+    discardPendingMessageNavigation('sess-dead')
+    expect(pendingMessageNavigation.value).toEqual({ sessionId: 'sess-other', messageId: 9 })
   })
 })

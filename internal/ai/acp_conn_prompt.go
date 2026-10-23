@@ -258,7 +258,18 @@ func (c *ACPConn) emitCancelledTurnUsage(streamCh chan<- StreamEvent) {
 		"credit", meta.Credit,
 		"cost_usd", meta.CostUSD)
 
-	forwardACPEvent(streamCh, StreamEvent{Type: "metadata", Meta: meta})
+	// This is the ONLY carrier of a cancelled turn's usage — the PromptResponse
+	// that normally carries it never arrives — so it must not be dropped just
+	// because the consumer is momentarily behind. `metadata` is not in
+	// criticalStreamEvents (a dropped metadata event is normally cosmetic), and
+	// the plain forwardACPEvent path would discard it on a full channel, which
+	// is most likely exactly when a long turn was cancelled (largest backlog).
+	//
+	// Blocking is safe HERE because this runs on the caller's goroutine after
+	// conn.Prompt returned, NOT on the SDK's shared notification goroutine
+	// (that is what criticalEventBlockingSafe protects). emitCriticalStreamEvent
+	// still tries a non-blocking send first, so the common case adds no latency.
+	emitCriticalStreamEvent(streamCh, acpNotificationSource, StreamEvent{Type: "metadata", Meta: meta})
 }
 
 // promptText returns the concatenated text of the prompt's text blocks. Used to

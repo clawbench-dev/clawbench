@@ -66,6 +66,20 @@ function mountContent(props = {}) {
 describe('GitManageContent', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // Panel state is persisted in localStorage, so a test that switches tabs
+    // leaves `git-manage-tab` behind for the next mount to restore. Without
+    // this, a test asserting "clicking X persists X" passes only when an
+    // earlier test happened to leave a DIFFERENT tab stored (the click then
+    // differs from the restored value); run in isolation it fails.
+    localStorage.clear()
+    // `vi.clearAllMocks()` clears the RESOLVED VALUE too (it is
+    // mockClear + mockReset for the return-value queue), so the module-level
+    // `.mockResolvedValue(true)` below only applies to the first test that
+    // runs. Without re-arming it here, every later test's confirm() resolves
+    // `undefined` → falsy → the switch is cancelled and the assertions fail
+    // depending on execution order.
+    mockDialogConfirm.mockResolvedValue(true)
+    mockDialogAlert.mockResolvedValue(undefined)
     mockApiGet.mockReset()
     mockApiPost.mockReset()
     mockApiDelete.mockReset()
@@ -108,13 +122,25 @@ describe('GitManageContent', () => {
       expect(wrapper.vm._getActiveTab()).toBe('tags')
     })
 
-    it('persists active tab to localStorage', async () => {
-      const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+    it('persists a user tab choice even when it equals the mounted default', async () => {
+      // The panel mounts on `branches` with nothing stored. The user clicks
+      // `tags`, then clicks back to `branches`. That last click matches the
+      // value the mount had applied, and a value-comparison guard swallowed it
+      // ("this equals what the load set, so it is not a user choice") — leaving
+      // `git-manage-tab` on `tags`, so a reload jumped back to the wrong tab.
       const wrapper = mountContent()
       await flushPromises()
+      expect(wrapper.vm._getActiveTab()).toBe('branches')
+
+      wrapper.vm._setActiveTab('tags')
+      await nextTick()
+      expect(localStorage.getItem(PANEL_KEY_PREFIX + 'git-manage-tab')).toBe('tags')
+
+      const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
       wrapper.vm._setActiveTab('branches')
       await nextTick()
       expect(setItemSpy).toHaveBeenCalledWith(PANEL_KEY_PREFIX + 'git-manage-tab', 'branches')
+      expect(localStorage.getItem(PANEL_KEY_PREFIX + 'git-manage-tab')).toBe('branches')
       setItemSpy.mockRestore()
     })
 

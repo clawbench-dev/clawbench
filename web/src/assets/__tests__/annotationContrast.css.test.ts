@@ -275,6 +275,16 @@ function recipeFor(surfaceName: string, base: string, userOverride: string): str
 const chipHoverRecipe = decl(ruleBody(annotation, '.chat-file-path[data-file-path]:hover'), 'background')
 const userChipHoverRecipe = decl(ruleBody(markdownCommon, '.chat-message.user .chat-file-path[data-file-path]:hover'), 'background')
 
+/** Open-button hover plate — shared, plus the user-bubble override. */
+const openButtonHoverRecipe = decl(
+  ruleBody(
+    markdownCommon,
+    '.markdown-body .chat-file-open-btn:hover,\n.chat-message.assistant .chat-file-open-btn:hover,\n.chat-message.user .chat-file-open-btn:hover,\n.table-row-value .chat-file-open-btn:hover',
+  ),
+  'background',
+)
+const userOpenButtonHoverRecipe = decl(ruleBody(markdownCommon, '.chat-message.user .chat-file-open-btn:hover'), 'background')
+
 describe('annotation colours are derived from the surrounding text, not a fixed token', () => {
   it('finds the themes and surfaces it is meant to guard', () => {
     // Guard against the walk silently matching nothing (a renamed attribute,
@@ -358,6 +368,11 @@ describe('annotation contrast across all themes', () => {
     // `--bg-primary`, design-guide red line 4's known trap — so this only pins
     // that the change did not make it worse. Fixing that would need a
     // different channel (a ring, not a fill) and is out of scope here.
+    //
+    // The floor is the MEASURED pre-change value, not 1.0: `contrast()` bottoms
+    // out at exactly 1.0 for identical colours, so `>= 1.0` could never fail
+    // and pinned nothing. 1.016 is ayu-dark's `--bg-secondary` against
+    // `--bg-primary` (the worst pair in the pre-fix stylesheet).
     const result = worst((theme, surface) => {
       if (surface.name === 'user bubble') return Infinity
       return contrast(plate(theme, surface, chipPlateRecipe), theme.token(surface.bg))
@@ -365,7 +380,7 @@ describe('annotation contrast across all themes', () => {
     expect(
       result.value,
       `reading-surface plate separation regressed to ${result.value.toFixed(3)} in "${result.theme}"`,
-    ).toBeGreaterThanOrEqual(1.0)
+    ).toBeGreaterThanOrEqual(1.016)
   })
 
   it('keeps the open-button glyph visible on every surface', () => {
@@ -378,6 +393,38 @@ describe('annotation contrast across all themes', () => {
       result.value,
       `worst button contrast ${result.value.toFixed(2)} on "${result.surface}" in "${result.theme}"`,
     ).toBeGreaterThanOrEqual(3.0)
+  })
+
+  it('never makes a hovered glyph less legible than the surface it sits on', () => {
+    // Hover was previously unasserted, and the shared recipe was wrong on one
+    // surface: the plate is mixed from `currentColor`, so on the reading
+    // surfaces (dark glyph on light) it deepens the backdrop and separates the
+    // glyph, while on the user bubble (white glyph on a saturated fill) it
+    // LIGHTENS the backdrop toward the glyph — measured 36/36 themes worse,
+    // ayu-light 3.32 → 2.91.
+    //
+    // The invariant that holds on EVERY surface is that a hover plate must not
+    // push the glyph below the resting surface it replaces. On the reading
+    // surfaces a perceptible hover necessarily costs some contrast (the plate
+    // moves toward the glyph, and the glyph is the text colour), so the floor
+    // is the resting value there; on the user bubble the plate must go DARKER
+    // and therefore must not lose contrast at all.
+    const result = worst((theme, surface) => {
+      const bg = theme.token(surface.bg)
+      const text = textColor(theme, surface.text)
+      const recipe = surface.name === 'user bubble' ? userOpenButtonHoverRecipe : openButtonHoverRecipe
+      const resolved = evaluate(recipe, text, theme.token)
+      expect(resolved, `cannot evaluate hover recipe: ${recipe}`).not.toBeNull()
+      const hovered = contrast(text, over(resolved!.rgb, resolved!.alpha, bg))
+      // The floor is the WCAG 1.4.11 non-text minimum, but never ABOVE the
+      // resting value (a theme whose resting glyph is already under 3:1 cannot
+      // be asked to improve by hovering — that is a separate defect).
+      return hovered / Math.min(contrast(text, bg), 3.0)
+    })
+    expect(
+      result.value,
+      `hovered glyph fell to ${(result.value * 100).toFixed(0)}% of its floor on "${result.surface}" in "${result.theme}"`,
+    ).toBeGreaterThanOrEqual(1.0)
   })
 
   it('keeps the project-external glyph legible instead of a fixed orange', () => {
@@ -474,5 +521,36 @@ describe('annotation contrast across all themes', () => {
       ratio.value,
       `inert/live ratio ${ratio.value.toFixed(2)} on "${ratio.surface}" in "${ratio.theme}"`,
     ).toBeGreaterThanOrEqual(1.05)
+  })
+
+  it('keeps the anchor form of a path as readable as the code form', () => {
+    // A path is annotated in place when it is already a link, so the chip is an
+    // `<a class="chat-file-path">` rather than `<code>`. On the user bubble that
+    // element would otherwise take `.chat-message.user a`'s #b8daff instead of
+    // the surrounding white, and the same plate then measures worse for it.
+    // The SURFACES table models the code/span form (currentColor = white), so
+    // this case needs its own assertion or the regression is invisible.
+    const ANCHOR_BLUE: RGB = [0xb8, 0xda, 0xff]
+    const anchorRule = ruleBody(markdownCommon, '.chat-message.user a.chat-file-path')
+    expect(decl(anchorRule, 'color')).toBe('inherit')
+
+    const result = worst((theme, surface) => {
+      if (surface.name !== 'user bubble') return Infinity
+      const bg = theme.token(surface.bg)
+      const plate = over(
+        evaluate(userChipPlateRecipe, ANCHOR_BLUE, theme.token)!.rgb,
+        evaluate(userChipPlateRecipe, ANCHOR_BLUE, theme.token)!.alpha,
+        bg,
+      )
+      // `color: inherit` on the chip means the effective foreground is the
+      // bubble's own text colour (white), NOT the anchor blue.
+      return contrast(WHITE, plate)
+    })
+    // Same floor as the code form — they are the same chip, so a divergence is
+    // a defect by definition.
+    expect(
+      result.value,
+      `worst anchor-form contrast ${result.value.toFixed(2)} on "${result.surface}" in "${result.theme}"`,
+    ).toBeGreaterThanOrEqual(3.0)
   })
 })

@@ -19,7 +19,7 @@ import {
 } from './versionGate'
 import { nextZoomFactor, type ZoomAction } from './zoom'
 import { shouldUseFramelessWindow } from './windowChrome'
-import { boundsToPersist, resolveStartupBounds, type WindowBounds } from './windowGeometry'
+import { boundsToPersist, resolveStartupBounds, MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH, type WindowBounds } from './windowGeometry'
 import { WINDOW_STATE_CHANNEL, type WindowState } from '../shared/types'
 
 let mainWindow: BrowserWindow | null = null
@@ -362,6 +362,13 @@ export function createMainWindow(): BrowserWindow {
     // is still resizable on Windows/Linux; on Wayland Electron gives frameless
     // windows GTK shadow plus an extended resize border.
     frame: !shouldUseFramelessWindow(process.platform),
+    // Enforce the same floor `isValidBounds` applies when restoring. Without
+    // it the window can be dragged smaller than the minimum, and then
+    // `boundsToPersist` rejects the rect on close (returning null), so the
+    // geometry is silently never saved — the next launch falls back to the
+    // centred default and the user's size/position is lost with no error.
+    minWidth: MIN_WINDOW_WIDTH,
+    minHeight: MIN_WINDOW_HEIGHT,
     webPreferences: { preload: path.join(__dirname, '../preload/index.js'), contextIsolation: true, nodeIntegration: false },
   })
   // Maximize before the window is shown, so a maximized restore does not flash

@@ -254,7 +254,10 @@ function stringCodec(def: string | null): Pick<PanelEntry<string | null>, 'parse
  */
 function nullableBoolCodec(def: boolean | null): Pick<PanelEntry<boolean | null>, 'parse' | 'serialize'> {
   return {
-    parse: (raw) => (raw === null ? def : raw === '1'),
+    // '' is "absent", matching stringCodec: serialize(null) writes '', so
+    // reading that back must yield the default rather than a recorded `false`
+    // (which would look like "the user explicitly chose not-collapsed").
+    parse: (raw) => (raw === null || raw === '' ? def : raw === '1'),
     serialize: (v) => (v === null ? '' : v ? '1' : '0'),
   }
 }

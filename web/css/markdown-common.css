@@ -599,11 +599,13 @@
 .chat-message.user .chat-file-open-btn:hover,
 .table-row-value .chat-file-open-btn:hover {
     color: inherit;
-    /* 10%, not 18%: the plate is painted from the text colour, so a deeper tint
-       pulls the backdrop toward the glyph and costs it contrast (18% took the
-       assistant bubble from 3.23 to 2.71). 10% still separates clearly from the
-       surface and leaves the glyph at 2.93. */
-    background: color-mix(in srgb, currentColor 10%, transparent);
+    /* 6%, not 10%: the plate is painted from the text colour, so every extra
+       percent moves the backdrop toward the glyph and costs it contrast. At 10%
+       the worst theme (solarized-light) landed at 2.92:1 — under the 3:1
+       non-text floor — because its resting glyph is already only 3.23:1. 6%
+       keeps the worst case at 3.05:1 while staying perceptible (1.061 from the
+       resting fill, above the 1.05 threshold the chip hover is held to). */
+    background: color-mix(in srgb, currentColor 6%, transparent);
 }
 
 /* User bubble keeps its own (smaller, circular) button geometry — only the
@@ -613,6 +615,16 @@
     height: 16px;
     border-radius: 50%;
     padding: 0;
+}
+
+/* …but NOT its hover fill. On the reading surfaces the glyph is dark text on a
+   light surface, so a `currentColor` (dark) tint DEEPENS the backdrop and
+   separates the glyph. On the user bubble the glyph is white, so the same
+   recipe LIGHTENS the backdrop toward the glyph: measured 36/36 themes worse
+   than the resting state (ayu-light 3.32 → 2.91, i.e. below the 3:1 icon
+   floor). Deepen instead, exactly like the chip plate on this surface. */
+.chat-message.user .chat-file-open-btn:hover {
+    background: color-mix(in srgb, #000 12%, transparent);
 }
 
 /* The user bubble is the one surface where the plate must go DARKER, not
@@ -627,6 +639,17 @@
     background: color-mix(in srgb, #000 22%, transparent);
     border-radius: var(--radius-xs);
     padding: 0 3px;
+}
+
+/* A path that is ALSO a link (the annotation adds the class to an existing
+   `<a>` rather than wrapping it in `<code>`) would otherwise inherit
+   `.chat-message.user a`'s `#b8daff` instead of the bubble's white text.
+   Specificity (0,3,1) beats that rule's (0,2,1), so the chip keeps the same
+   foreground as the surrounding message — which is what the contrast recipe
+   above is measured against. Without this the `<a>` form dropped below the
+   `<code>` form on every theme (worst 3.54 vs 5.12 on ayu-light). */
+.chat-message.user a.chat-file-path {
+    color: inherit;
 }
 
 .chat-message.user .chat-file-path[data-file-path]:hover {

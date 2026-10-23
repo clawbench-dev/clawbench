@@ -1691,6 +1691,37 @@ func (e *SessionExecutor) drainRemainingEvents(eventCh <-chan ai.StreamEvent) {
 	}
 }
 
+// drainAndPersistCancelledMetadata drains the channel to close and saves the
+// turn's metadata, for the cancel path that never reaches Finalize.
+//
+// The abandoned-turn path (scheduler cancel / crash) has no RunResult to
+// finalize, so it used to just discard whatever was still in the channel. That
+// dropped the usage record a cancelled ACP prompt emits after the event loop
+// exits — every cancelled scheduled task ended up with an all-zero metadata
+// row even though the agent had billed for the calls it completed.
+//
+// The drain itself is not optional and must run to CLOSE (not a one-shot scan):
+// parser sends are not context-aware, so a producer filling the channel with no
+// consumer would block forever and leak the goroutine along with the agent
+// process.
+func (e *SessionExecutor) drainAndPersistCancelledMetadata(eventCh <-chan ai.StreamEvent) {
+	if eventCh == nil {
+		return
+	}
+	e.drainRemainingEvents(eventCh)
+	e.mu.Lock()
+	meta := e.responseMetadata
+	msgID := e.cfg.StreamingMessageID
+	e.mu.Unlock()
+	if meta == nil || msgID <= 0 {
+		return
+	}
+	if err := SaveMetadata(msgID, meta); err != nil {
+		slog.Warn("failed to save cancelled turn metadata",
+			slog.Int64("msg_id", msgID), slog.String("err", err.Error()))
+	}
+}
+
 // Finalize persists the RunResult to the database: builds the content JSON,
 // finalizes the streaming message, saves metadata, and drains remaining events.
 // Returns the finalized RunResult with DB message ID.

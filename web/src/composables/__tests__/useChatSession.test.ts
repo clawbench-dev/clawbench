@@ -1958,6 +1958,54 @@ describe('foreground return marks current session read', () => {
     expect(session.currentSessionId.value).toBe('current-s1')
   })
 
+  it('waits for the read to SETTLE before requesting the list', async () => {
+    // The list response carries the unread badge, so a refresh that overtakes
+    // UpdateLastRead reads the pre-read state and re-lights the badge the resume
+    // was clearing. switchSession awaits these in this order for the same
+    // reason; firing both concurrently made the outcome a race.
+    //
+    // Asserting on call ORDER alone cannot see this: markSessionRead issues its
+    // fetch synchronously, so the list call is second even when nobody awaits
+    // the promise. What matters is whether the list request WAITED for the read
+    // to finish, so the read response is held open here and the list must not
+    // have been requested while it is pending.
+    mockAppMode.isAppMode = false
+    let releaseRead: (() => void) | null = null
+    const readGate = new Promise<void>((resolve) => { releaseRead = resolve })
+    globalThis.fetch = vi.fn().mockImplementation((url: unknown) => {
+      const u = String(url)
+      if (u.includes('/api/ai/chat/read')) {
+        return readGate.then(() => ({ ok: true, json: () => Promise.resolve({}) }))
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ sessionId: 'current-s1', messages: [], total: 0, sessions: [] }),
+      })
+    })
+    const session = createSession()
+    mockState.currentSessionId = 'current-s1'
+    void session
+
+    const handlers = captureForegroundHandlers()
+    handlers[handlers.length - 1]()
+
+    // Give the microtask queue room: a concurrent implementation would have
+    // requested the list by now.
+    await new Promise((r) => setTimeout(r, 20))
+    const whilePending = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls
+      .map((c: unknown[]) => String(c[0]))
+      .filter((u: string) => u.includes('/api/ai/sessions'))
+    expect(whilePending, 'the list must not be requested while the read is in flight').toHaveLength(0)
+
+    releaseRead!()
+    await vi.waitFor(() => {
+      const after = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls
+        .map((c: unknown[]) => String(c[0]))
+        .filter((u: string) => u.includes('/api/ai/sessions'))
+      expect(after.length).toBeGreaterThan(0)
+    })
+  })
+
   it('repairs a dropped stream subscription on a desktop resume without rebuilding', async () => {
     // Desktop keeps its WS alive, so no `clawbench-reconnect` fires to repair a
     // subscription the server dropped (no_subscribers) — a running turn's events

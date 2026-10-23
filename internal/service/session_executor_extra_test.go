@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"os"
+	"strings"
 	"encoding/json"
 	"testing"
 	"time"
@@ -1377,4 +1379,128 @@ func TestSessionHasRealAssistantContent_NoAssistantMessages(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.False(t, SessionHasRealAssistantContent(sid), "session without assistant messages should not have real content")
+}
+
+// --- drainAndPersistCancelledMetadata (abandoned-turn usage) ---
+
+// The abandoned-turn path (scheduler cancel / CLI crash) never reaches Finalize,
+// so this drain is the ONLY place a cancelled turn's usage can be read. It used
+// to discard the events (`for range eventCh {}`), which left every cancelled
+// scheduled task with an all-zero metadata row even though the agent had billed
+// for the model calls it completed.
+func TestDrainAndPersistCancelledMetadata_SavesUsage(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	msgID, err := AddChatMessage("/test", "test", sid, "assistant", `{"blocks":[]}`, nil, true, "")
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	executor := NewSessionExecutor(ctx, RunConfig{
+		Mode:               ModeInteractive,
+		ProjectPath:        "/test",
+		BackendName:        "test",
+		SessionID:          sid,
+		AgentID:            "test-agent",
+		ChatRequest:        ai.ChatRequest{Prompt: "hello"},
+		StreamingMessageID: msgID,
+	})
+
+	ch := make(chan ai.StreamEvent, 2)
+	ch <- ai.StreamEvent{Type: "metadata", Meta: &ai.Metadata{
+		InputTokens:  1200,
+		OutputTokens: 340,
+		TotalTokens:  1540,
+		StopReason:   "cancelled",
+	}}
+	close(ch)
+
+	executor.drainAndPersistCancelledMetadata(ch)
+
+	var input, output, total int
+	err = store.ReadDB().QueryRow(
+		`SELECT input_tokens, output_tokens, total_tokens FROM chat_metadata WHERE message_id = ?`, msgID,
+	).Scan(&input, &output, &total)
+	require.NoError(t, err, "metadata row must exist after an abandoned turn")
+	assert.Equal(t, 1200, input)
+	assert.Equal(t, 340, output)
+	assert.Equal(t, 1540, total)
+}
+
+func TestDrainAndPersistCancelledMetadata_NoUsageWritesNothing(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	msgID, err := AddChatMessage("/test", "test", sid, "assistant", `{"blocks":[]}`, nil, true, "")
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	executor := NewSessionExecutor(ctx, RunConfig{
+		Mode:               ModeInteractive,
+		ProjectPath:        "/test",
+		BackendName:        "test",
+		SessionID:          sid,
+		AgentID:            "test-agent",
+		ChatRequest:        ai.ChatRequest{Prompt: "hello"},
+		StreamingMessageID: msgID,
+	})
+
+	// No metadata event at all (cancelled before the first model call).
+	ch := make(chan ai.StreamEvent)
+	close(ch)
+	executor.drainAndPersistCancelledMetadata(ch)
+
+	var count int
+	err = store.ReadDB().QueryRow(
+		`SELECT COUNT(*) FROM chat_metadata WHERE message_id = ?`, msgID,
+	).Scan(&count)
+	require.NoError(t, err)
+	// An all-zero row would only inflate the message count in the stats panel.
+	assert.Zero(t, count, "a turn with no usage must not write a metadata row")
+}
+
+func TestDrainAndPersistCancelledMetadata_NilChannelIsSafe(t *testing.T) {
+	ctx := context.Background()
+	executor := NewSessionExecutor(ctx, RunConfig{
+		SessionID: "test", BackendName: "test", ProjectPath: "/test", AgentID: "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	})
+	assert.NotPanics(t, func() { executor.drainAndPersistCancelledMetadata(nil) })
+}
+
+// The abandoned-turn drain is only useful if the cancel path actually calls it.
+// A unit test of drainAndPersistCancelledMetadata itself stays green when the
+// call site is reverted to discarding the channel (the original bug), so the
+// wiring is pinned in source — same rationale as
+// TestPrompt_CancelPathEmitsUsage in the ai package.
+func TestAbandonTurn_DrainsMetadataInsteadOfDiscarding(t *testing.T) {
+	src, err := os.ReadFile("scheduler.go")
+	require.NoError(t, err)
+	body := string(src)
+
+	start := strings.Index(body, "func abandonTurn(")
+	require.GreaterOrEqual(t, start, 0, "abandonTurn is gone; this guard needs updating")
+	end := strings.Index(body[start:], "\n}\n")
+	require.Greater(t, end, 0)
+	fn := body[start : start+end]
+
+	assert.Contains(t, fn, "executor.drainAndPersistCancelledMetadata(eventCh)",
+		"abandonTurn must drain and persist the turn's metadata; discarding the "+
+			"channel drops a cancelled turn's tokens and cost, leaving an all-zero "+
+			"metadata row")
+	// The drain must run to channel close (it is the producer's only guarantee
+	// that its sends cannot block forever). Assert on the executable shape, not
+	// on the text `for range eventCh {}`: the comment above deliberately quotes
+	// the old loop to explain what was wrong, so a plain substring check would
+	// match the documentation.
+	assert.NotContains(t, fn, "go func() {\n\t\tfor range eventCh",
+		"a bare discarding goroutine would drop the usage event this function exists to keep")
 }

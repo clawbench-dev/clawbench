@@ -138,6 +138,20 @@ describe('readPanelState / writePanelState round-trip', () => {
     expect(readPanelState('leftCollapsed')).toBe(false)
   })
 
+  it('round-trips the tri-state boolean, including the "never chosen" value', () => {
+    // The nullable codec exists so "the user never chose" stays distinguishable
+    // from "the user chose false" — the component's own `initialCollapsed` prop
+    // only applies in the former case. serialize(null) writes '', so parse('')
+    // must come back as the default, not as a recorded `false`.
+    for (const value of [true, false, null] as const) {
+      writePanelState('gitBranchCollapsed', value)
+      expect(readPanelState<boolean | null>('gitBranchCollapsed')).toBe(value)
+    }
+    // An explicitly empty value means "no record".
+    localStorage.setItem(PANEL_KEY_PREFIX + 'git-branch-collapsed', '')
+    expect(readPanelState('gitBranchCollapsed')).toBeNull()
+  })
+
   it('returns an independent default object for the JSON entry', () => {
     // parse must not hand out the registry's own constant, or a caller mutating
     // the result would corrupt every later default read.

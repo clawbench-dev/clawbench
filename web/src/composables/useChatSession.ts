@@ -12,6 +12,7 @@ const TAG = 'ChatSession'
 import { updateAvailableModes, updateCommandState, updateAvailableThinkingEfforts, clearUsageStateById, updateUsageState, currentAgentId as _currentAgentId, clearSessionIdentity, reconcileRunningSessions, reconcileThinkingEffort } from '@/composables/useSessionIdentity.ts'
 import { getRecentSession, clearRecentSession } from '@/composables/useRecentSession'
 import { clearPlanState, updatePlanEntries } from '@/composables/usePlanProgress'
+import { discardPendingMessageNavigation } from '@/composables/useMessageNavigation'
 import { clearTeamState } from '@/composables/useTeamState'
 import { useAgents, resetModelViewForTransport, getAgentThinkingEffortLevels, populateACPStateFromCache, updateACPModelList, applyResolvedModelList } from '@/composables/useAgents'
 import { store } from '@/stores/app.ts'
@@ -782,6 +783,12 @@ export function useChatSession(options: UseChatSessionOptions) {
         // session or create a new one).
         if (resp.status === 404 && errData.msgKey === 'SessionNotFound' && currentSessionId.value) {
           appLog.w(TAG, 'loadHistory: session not found, clearing stale sessionId and recovering')
+          // A parked "open this message" request targets this session by id and
+          // is only consumed when the current session matches. The session is
+          // provably gone, so the request can never be satisfied — leaving it
+          // would make a LATER open of the same id jump to a stale message and
+          // report it as missing.
+          discardPendingMessageNavigation(currentSessionId.value)
           currentSessionId.value = ''
           // Resolve deferred and clean up in-flight state before re-invoking
           // so the finally block doesn't double-resolve or flicker switching.
@@ -997,18 +1004,32 @@ export function useChatSession(options: UseChatSessionOptions) {
       reopenCurrentSession().catch(() => {})
       return
     }
-    markSessionRead(sid).catch(() => {})
-    loadSessionsOnce().catch(() => {})
-    // Repair a subscription the server may have dropped while the tab was
-    // hidden. Without the rebuild there is no other repair path on desktop: the
-    // WS itself usually stays connected (useGlobalEvents keeps it alive so
-    // background notifications arrive), so no `clawbench-reconnect` fires, and a
-    // server-side no_subscribers drop would leave a live turn's events going
-    // nowhere until the user switched away and back. Re-subscribing is
-    // destructive to nothing — it does not clear the array or move the viewport.
-    if (runningSessions.value.has(sid)) {
-      onResubscribeStream?.(sid)
-    }
+    // Await the read BEFORE refreshing the list, for the same reason
+    // switchSession does: UpdateLastRead must land server-side first, or the
+    // list comes back still carrying the unread badge this call exists to
+    // clear. Firing both concurrently made the badge's disappearance a race
+    // the resume lost whenever the list response arrived first.
+    void (async () => {
+      // Snapshot BEFORE the refresh: `reconcileRunningSessions` replaces the
+      // whole set from the API response, so a failed/empty response would erase
+      // a turn that is genuinely still running and the subscription would never
+      // be repaired (there is no `clawbench-reconnect` on desktop to do it
+      // later). A turn known to be running on either side of the refresh is
+      // still running.
+      const wasRunning = runningSessions.value.has(sid)
+      await markSessionRead(sid).catch(() => {})
+      await loadSessionsOnce().catch(() => {})
+      // Repair a subscription the server may have dropped while the tab was
+      // hidden. Without the rebuild there is no other repair path on desktop:
+      // the WS itself usually stays connected (useGlobalEvents keeps it alive
+      // so background notifications arrive), so no `clawbench-reconnect` fires,
+      // and a server-side no_subscribers drop would leave a live turn's events
+      // going nowhere until the user switched away and back. Re-subscribing is
+      // destructive to nothing — it does not clear the array or move the viewport.
+      if (currentSessionId.value === sid && (wasRunning || runningSessions.value.has(sid))) {
+        onResubscribeStream?.(sid)
+      }
+    })()
   })
 
   async function switchSession(sessionId: string, projectPath?: string) {

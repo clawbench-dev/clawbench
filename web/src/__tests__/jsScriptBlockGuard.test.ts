@@ -110,6 +110,49 @@ describe('check-js-script-blocks', () => {
     }
   })
 
+  it('rejects TS-only constructs the node visitor does not enumerate', () => {
+    // These are all invalid JavaScript but none of them is one of the eight
+    // node kinds the visitor recognises. Reporting only "the visitor matched a
+    // type node" therefore let every one of these through, which is the same
+    // class of bug as the original incident (compiles/passes, fails at runtime
+    // or in the bundler). The judgement must also accept "acorn says this is
+    // not JavaScript".
+    const cases: Array<[string, string]> = [
+      ['namespace', 'namespace NS { export const a = 1 }'],
+      ['type-only import', "import type { Foo } from './foo'"],
+      ['decorator', '@decorator class Foo {}'],
+      ['tagged template generic', 'const a = tag<boolean>`x`'],
+      ['angle-bracket cast', 'const x = <string>foo'],
+    ]
+    for (const [label, body] of cases) {
+      const r = runChecker({
+        'A.vue': `<template><div/></template>\n<script setup>\n${body}\n</script>\n`,
+      })
+      expect(r.code, `${label} should be rejected`).toBe(1)
+    }
+  })
+
+  it('checks a plain <script> block, not just <script setup>', () => {
+    // PopupMenu.vue keeps a module-scope counter in a plain <script> block next
+    // to its <script setup>. Module-scope code throws identically when it
+    // references a free variable, so scanning only the setup block left that
+    // whole block unchecked.
+    const r = runChecker({
+      'A.vue': [
+        '<template><div/></template>',
+        '<script>',
+        'const bad = nextMenuSeq<number>()',
+        '</script>',
+        '<script setup>',
+        'const ok = 1',
+        '</script>',
+      ].join('\n'),
+    })
+    expect(r.code).toBe(1)
+    expect(r.stderr).toContain('generic call')
+    expect(r.stderr).toContain('A.vue:3')
+  })
+
   it('does not fire on ordinary comparisons or generic-looking text', () => {
     // The false-positive set that a regex-based check got wrong: a comparison
     // chain, a generic inside a string, and the literal text `<script setup>`
@@ -123,6 +166,28 @@ describe('check-js-script-blocks', () => {
         'const a = 1, b = 2, c = 3',
         'const cmp = a < b > c',
         'const s = "f<T>(x)"',
+        '</script>',
+      ].join('\n'),
+    })
+    expect(r.code).toBe(0)
+  })
+
+  it('does not fire on a comparison chain whose operands are parenthesised', () => {
+    // `a < b > c` and `min < val > (limit)` are the SAME JS parse (two
+    // comparisons), but only the second one is ALSO a valid TS generic call —
+    // TS reads `val` as a type argument. A check that reports on shape alone
+    // flags it, breaking ordinary code. The distinction that works is whether
+    // the would-be type argument is a declared binding: `val` is, `string` is
+    // not (and a free reference is exactly what throws at runtime).
+    const r = runChecker({
+      'A.vue': [
+        '<template><div/></template>',
+        '<script setup>',
+        'const val = 3, limit = 9, min = 1',
+        'const ok = min < val > (limit)',
+        'if (val < limit > (min)) { console.log(ok) }',
+        'const arr = []',
+        'const n = arr.length < val > (0)',
         '</script>',
       ].join('\n'),
     })

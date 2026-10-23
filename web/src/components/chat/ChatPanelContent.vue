@@ -310,6 +310,7 @@ import { enqueueAndMaybeStart } from '@/utils/chatQueueSend.ts'
 import { trackInFlightSend, untrackInFlightSend } from '@/utils/chatStreamUtils.ts'
 import { refreshCurrentFile } from '@/composables/useFileRefresh.ts'
 import { sameFilePath } from '@/utils/path.ts'
+import { decidePendingNavigation, jumpFailureMessageKey } from '@/utils/pendingNavigation.ts'
 import { playNotificationSound } from '@/composables/useNotificationSound.ts'
 import { useAutoSpeech, extractSpeakableText } from '@/composables/useAutoSpeech.ts'
 import { useSwipeSession } from '@/composables/useSwipeSession.ts'
@@ -2069,17 +2070,17 @@ watch(
         pendingMessageNavigation,
     ],
     ([sid]) => {
-        const req = pendingMessageNavigation.value
-        if (!req || req.sessionId !== sid) return
-        // A session switch clears the array synchronously and refetches: acting
-        // now would search an empty list, conclude the message is gone and show
-        // a spurious failure. `switching` covers exactly that window, and it is
-        // a watch source so the request is retried when the load finishes.
-        if (session.switching.value) return
+        const decision = decidePendingNavigation(
+            pendingMessageNavigation.value,
+            sid,
+            session.switching.value,
+        )
         // Only the session identity gates consumption — the target message may
         // not be loaded yet, and jumpToUserMessage pages it in. A request that
         // still cannot be satisfied is reported so the reader is not left
         // staring at an unchanged view.
+        if (decision.kind !== 'jump') return
+        const req = { messageId: decision.messageId, source: decision.source }
         consumePendingMessageNavigation()
         // The list renders on the next tick; scroll after it exists.
         nextTick(async () => {
@@ -2100,7 +2101,7 @@ watch(
                 // Quote and notification jumps share this channel, so the copy
                 // must not claim a search happened for those sources.
                 toast.show(
-                    gt(req.source === 'search' ? 'sessionSearch.jumpFailed' : 'sessionSearch.jumpFailedGeneric'),
+                    gt(jumpFailureMessageKey(req.source)),
                     { icon: 'warning', type: 'error' },
                 )
             }
