@@ -143,7 +143,7 @@ var testShareCreatedAt = time.Date(2026, 10, 22, 9, 30, 0, 0, time.UTC)
 
 // seedSession inserts a chat_sessions row. sessionID stays a parameter so the
 // helper mirrors the schema rather than hard-coding one id.
-func seedSession(t *testing.T, db *sql.DB, sessionID string) { //nolint:unparam // general-purpose seed helper; all current callers use "s1"
+func seedSession(t *testing.T, db *sql.DB, sessionID string) {
 	t.Helper()
 	_, err := db.Exec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, model)

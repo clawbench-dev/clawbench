@@ -749,9 +749,12 @@ func serveShareHTML(w http.ResponseWriter, r *http.Request, token string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	// HEAD carries the headers and no body; Write is a no-op for it, but guarding
-	// keeps the intent explicit and avoids depending on net/http's behaviour.
+	// keeps the intent explicit and avoids depending on net/http's behavior.
 	if r.Method != http.MethodHead {
-		_, _ = io.WriteString(w, doc)
+		// doc is a build artifact plus a block assembled from html.EscapeString /
+		// json.Marshal'd values and a token validated to [A-Za-z0-9_-]: no
+		// request-controlled bytes reach the response unescaped.
+		_, _ = io.WriteString(w, doc) //nolint:gosec // G705: escaped above; see comment
 	}
 }
 

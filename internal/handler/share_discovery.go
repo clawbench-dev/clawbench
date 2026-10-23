@@ -58,10 +58,10 @@ type shareDiscovery struct {
 // (crypto/rand), so anything else is not a token we issued — most importantly,
 // it cannot contain `"`, `<`, `>` or a quote-breaking payload. Rejecting rather
 // than escaping is deliberate: an unexpected shape means the request is not one
-// we understand, and silently "sanitising" it into a working URL would hide the
+// we understand, and silently "sanitizing" it into a working URL would hide the
 // mismatch.
 func validShareToken(token string) bool {
-	if len(token) == 0 || len(token) > 64 {
+	if token == "" || len(token) > 64 {
 		return false
 	}
 	for _, r := range token {

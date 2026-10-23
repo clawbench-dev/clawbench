@@ -247,3 +247,101 @@ func TestInjectShareDiscovery_JSONLDIsParseable(t *testing.T) {
 	assert.Equal(t, `He said "hi" & left <b>`, parsed["name"], "escaping must round-trip")
 	assert.Equal(t, float64(7), parsed["numberOfItems"])
 }
+
+// A token that is not one of ours must be rejected outright rather than escaped:
+// the injector builds URLs from it, and "sanitizing" an unexpected shape into a
+// working URL would advertise an endpoint that cannot exist.
+func TestValidShareToken(t *testing.T) {
+	valid := []string{
+		"0123456789abcdef0123456789abcdef",
+		"A-b_9",
+		strings.Repeat("a", 64),
+	}
+	for _, tok := range valid {
+		assert.True(t, validShareToken(tok), "%q must be accepted", tok)
+	}
+
+	invalid := []string{
+		"",
+		strings.Repeat("a", 65),
+		`a"b`,
+		"a b",
+		"a/b",
+		"<script>",
+		"中文token",
+	}
+	for _, tok := range invalid {
+		assert.False(t, validShareToken(tok), "%q must be rejected", tok)
+	}
+}
+
+// shareDiscoveryFor is the only place that decides whether a page gets a block.
+// Both token kinds must resolve with their own title, and an unknown token must
+// resolve to nothing (the SPA renders its own not-found state).
+func TestShareDiscoveryFor(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	absPath := createShareTestFile(t, env, "docs/notes.md", "# notes\n")
+	fileToken := createShareViaAPI(t, env, absPath)
+
+	sessionID, _ := seedShareSession(t, env, "sess-discovery")
+	sessionToken := createSessionShareViaAPI(t, env, sessionID, nil)
+
+	t.Run("file token", func(t *testing.T) {
+		d, ok := shareDiscoveryFor(fileToken)
+		require.True(t, ok)
+		assert.Equal(t, shareKindFile, d.Kind)
+		assert.Equal(t, "notes.md", d.Title)
+	})
+
+	t.Run("session token", func(t *testing.T) {
+		d, ok := shareDiscoveryFor(sessionToken)
+		require.True(t, ok)
+		assert.Equal(t, shareKindSession, d.Kind)
+		assert.Equal(t, "Shared chat", d.Title)
+		assert.Equal(t, 2, d.MessageCount)
+	})
+
+	t.Run("unknown token", func(t *testing.T) {
+		_, ok := shareDiscoveryFor("ffffffffffffffffffffffffffffffff")
+		assert.False(t, ok)
+	})
+
+	// A malformed token never reaches the database lookup.
+	t.Run("malformed token", func(t *testing.T) {
+		_, ok := shareDiscoveryFor("not a token")
+		assert.False(t, ok)
+	})
+}
+
+// A conversation share must produce a page that points at the conversation data
+// endpoint (with the /session sub-path), not the file one.
+func TestServeSharePage_InjectsConversationDiscovery(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, _ := seedShareSession(t, env, "sess-page")
+	token := createSessionShareViaAPI(t, env, sessionID, nil)
+
+	req := newRequest(t, http.MethodGet, "/share/"+token, nil)
+	w := callHandler(ServeSharePage, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	body := w.Body.String()
+	assert.Contains(t, body, `href="/api/share/`+token+`/session"`)
+	assert.Contains(t, body, `"@type":"Conversation"`)
+	assert.Contains(t, body, "<title>Shared chat</title>")
+}
+
+// A share page whose token is well-formed but unknown still serves the shell —
+// the SPA decides what to show — and must not claim a title it cannot know.
+func TestServeSharePage_UnknownTokenKeepsPlaceholderTitle(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/share/ffffffffffffffffffffffffffffffff", nil)
+	w := callHandler(ServeSharePage, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), "<title>ClawBench Share</title>")
+}
