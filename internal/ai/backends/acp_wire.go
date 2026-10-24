@@ -13,6 +13,16 @@ func init() {
 	ai.LookupACPToolCallIDPrefixesFn = LookupACPToolCallIDPrefixes
 	ai.LookupACPTitlePrefixesFn = LookupACPTitlePrefixes
 
+	// Wire up the wrapper-frame filter so the ACP event loop can drop a
+	// backend's "tool_call: id: X, args: {...}" envelope frames without
+	// importing the backends package (openclaw emits one before every real
+	// plugin/MCP tool frame).
+	ai.LookupACPToolCallWrapperPrefixesFn = LookupACPToolCallWrapperPrefixes
+
+	// Wire up the "modes duplicate thought_level" flag so capability
+	// extraction can suppress the redundant mode surface (openclaw).
+	ai.LookupACPModesMirrorThoughtLevelFn = LookupACPModesMirrorThoughtLevel
+
 	// Wire up the model-switch method lookup so the ACP prompt path can send
 	// session/set_model for agents that ignore a "model" config option (Hermes)
 	// without importing the backends package.

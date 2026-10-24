@@ -407,6 +407,24 @@ func newSessionTimeout(mcpServers int) time.Duration {
 // error is surfaced so the user knows the context was lost. killAndMarkDeadLocked
 // (not killProcessLocked) preserves acpSID so a later prompt can retry.
 func (c *ACPConn) recoverExistingSession(ctx context.Context, cwd, acpSID string, prevConfig cachedConfigSnapshot) error {
+	// An agent whose session/resume is process-local answers a cross-process
+	// resume with a BUSINESS error, not -32601, so the fallback below would
+	// never fire and every restart would strand the conversation. Go straight to
+	// session/load for those (BackendSpec.ACPResumeIsProcessLocal; measured on
+	// openclaw's bridge).
+	if spec := c.backendSpec(); spec != nil && spec.ACPResumeIsProcessLocal {
+		slog.Info("acp conn: backend's session/resume is process-local, recovering via LoadSession",
+			"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID, "backend", c.agent.Backend)
+		if _, loadErr := c.recoverViaLoadSession(ctx, cwd, acpSID, true); loadErr != nil {
+			slog.Error("acp conn: LoadSession recovery failed, session is unrecoverable",
+				"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID, "error", loadErr)
+			c.killAndMarkDeadLocked()
+			return fmt.Errorf("acp: session %s LoadSession failed: %w", acpSID, loadErr)
+		}
+		c.reapplyConfigAfterResume(ctx, acpSID, prevConfig)
+		return nil
+	}
+
 	slog.Info("acp conn: recovering previous session via ResumeSession",
 		"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID)
 	err := c.recoverViaResumeSession(ctx, cwd, acpSID, prevConfig)

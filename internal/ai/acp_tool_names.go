@@ -37,6 +37,45 @@ var LookupACPRemapsFn func(backendID string) map[string]string
 // selection must be sent as session/set_model instead.
 var LookupACPModelSwitchMethodFn func(backendID string) string
 
+// LookupACPToolCallWrapperPrefixesFn returns the tool-call TITLE prefixes that
+// mark a frame as a wrapper around the real call (dropped, not rendered). Set
+// by the backends package during init().
+var LookupACPToolCallWrapperPrefixesFn func(backendID string) []string
+
+// LookupACPModesMirrorThoughtLevelFn reports whether a backend's `modes` block
+// duplicates its `thought_level` config option, in which case the mode surface
+// is suppressed. Set by the backends package during init().
+var LookupACPModesMirrorThoughtLevelFn func(backendID string) bool
+
+// isACPToolCallWrapper reports whether a tool_call frame is an envelope around
+// the real call rather than a tool of its own.
+//
+// openclaw's bridge emits, for every plugin/MCP tool, a first frame
+// `tool_call: id: web_fetch, args: {"url": ...}` (kind=other) and then the real
+// `web_fetch: url: ...` (kind=fetch) under a DIFFERENT toolCallId. Rendering both
+// produces a second card literally named "tool_call"; the ids differ, so only
+// the title can identify the wrapper.
+func isACPToolCallWrapper(title, backendID string) bool {
+	if title == "" || backendID == "" || LookupACPToolCallWrapperPrefixesFn == nil {
+		return false
+	}
+	for _, p := range LookupACPToolCallWrapperPrefixesFn(backendID) {
+		if p != "" && strings.HasPrefix(title, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// acpModesMirrorThoughtLevel reports whether the backend's `modes` surface must
+// be suppressed because it duplicates the thought_level config option.
+func acpModesMirrorThoughtLevel(backendID string) bool {
+	if backendID == "" || LookupACPModesMirrorThoughtLevelFn == nil {
+		return false
+	}
+	return LookupACPModesMirrorThoughtLevelFn(backendID)
+}
+
 // acpToolCallIDPrefix maps Kimi-style toolCallID prefixes to canonical tool names.
 // Kimi ACP uses toolCallID formats like "read_file-<ts>-<n>", "list_directory-<ts>-<n>",
 // "glob-<ts>-<n>", "run_shell_command-<ts>-<n>", "ask-<uuid>".

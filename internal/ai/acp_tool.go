@@ -33,6 +33,10 @@ func parseACPToolCall(backend string, tc acp.SessionUpdateToolCall) *ToolCall {
 		// edits[] array, so it needs the tool-aware Pi normalizer rather than
 		// the flat generic remap.
 		return parsePiACPToolCall(tc)
+	case "openclaw":
+		// openclaw's per-tool path field ("path" for read/write/edit but also
+		// for ls) and nested edits[] make the flat remap table unusable.
+		return parseOpenClawACPToolCall(tc)
 	default:
 		return parseGenericACPToolCall(tc, backend)
 	}
@@ -55,6 +59,8 @@ func parseACPToolCallUpdate(backend string, tcu acp.SessionToolCallUpdate) *Tool
 		return parseCodexACPToolCallUpdate(tcu)
 	case "pi":
 		return parsePiACPToolCallUpdate(tcu)
+	case "openclaw":
+		return parseOpenClawACPToolCallUpdate(tcu)
 	default:
 		return parseGenericACPToolCallUpdate(tcu, backend)
 	}

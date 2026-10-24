@@ -27,6 +27,7 @@ import piIcon from '@lobehub/icons-static-svg/icons/pi.svg?raw'
 import grokIcon from '@lobehub/icons-static-svg/icons/grok.svg?raw'
 import hermesIcon from '@lobehub/icons-static-svg/icons/hermesagent.svg?raw'
 import cursorIcon from '@lobehub/icons-static-svg/icons/cursor.svg?raw'
+import openclawIcon from '@lobehub/icons-static-svg/icons/openclaw.svg?raw'
 
 
 // Command Code (Langbase) is not in lobe-icons. Its official mark ships inside
@@ -71,6 +72,8 @@ const agentSvgMap: Record<string, AgentSvgData> = {
     // Cursor's mark is monochrome (fill="currentColor"), so it needs the same
     // theme-aware color treatment as the other mono backends.
     cursor: { svg: extractSvgInner(cursorIcon), viewBox: extractViewBox(cursorIcon), needsBg: true, monoCssClass: 'mono-cursor' },
+    // OpenClaw's mark is monochrome (fill="currentColor") as well.
+    openclaw: { svg: extractSvgInner(openclawIcon), viewBox: extractViewBox(openclawIcon), needsBg: true, monoCssClass: 'mono-openclaw' },
 
     // Command Code's mark is monochrome, so it gets the theme-aware mono class.
     commandcode: { svg: commandcodeIcon, viewBox: '0 0 144 144', needsBg: true, monoCssClass: 'mono-commandcode' },

@@ -16,6 +16,7 @@ import (
 	_ "clawbench/internal/ai/backends/hermes"
 	_ "clawbench/internal/ai/backends/kimi"
 	_ "clawbench/internal/ai/backends/mimo"
+	_ "clawbench/internal/ai/backends/openclaw"
 	_ "clawbench/internal/ai/backends/opencode"
 	_ "clawbench/internal/ai/backends/pi"
 	_ "clawbench/internal/ai/backends/qoder"
@@ -30,7 +31,7 @@ import (
 // --- Test 1: BackendRegistry ---
 
 func TestBackendRegistry_ContainsAllBackends(t *testing.T) {
-	expectedIDs := []string{"claude", "codebuddy", "opencode", "codex", "qoder", "vecli", "deepseek", "pi", "kimi", "copilot", "mimo", "grok", "antigravity", "zcode", "dsh", "hermes", "cursor", "commandcode"}
+	expectedIDs := []string{"claude", "codebuddy", "opencode", "codex", "qoder", "vecli", "deepseek", "pi", "kimi", "copilot", "mimo", "grok", "antigravity", "zcode", "dsh", "hermes", "cursor", "commandcode", "openclaw"}
 	assert.Len(t, model.GetBackendRegistry(), len(expectedIDs))
 
 	seen := make(map[string]bool)
@@ -96,6 +97,21 @@ func TestBackendRegistry_SpecificValues(t *testing.T) {
 	assert.Equal(t, "cursor-agent acp", specs["cursor"].AcpCommand)
 	assert.True(t, specs["cursor"].ACPLoadSession, "cursor advertises loadSession:true")
 	assert.False(t, model.BackendSupportsCLI("cursor"), "cursor is ACP-only: no CLI factory")
+
+	// OpenClaw is ACP-only via its built-in `acp` subcommand, which is a BRIDGE
+	// to a separate Gateway process — not an agent. Two facts follow from that
+	// and are load-bearing:
+	//   - session/resume is scoped to the bridge process, so recovery must go
+	//     through session/load (ACPResumeIsProcessLocal).
+	//   - per-session mcpServers are refused, so it must stay MCP-excluded.
+	assert.Equal(t, "openclaw", specs["openclaw"].DefaultCmd)
+	assert.Equal(t, "openclaw acp", specs["openclaw"].AcpCommand)
+	assert.True(t, specs["openclaw"].ACPLoadSession, "the bridge implements session/load")
+	assert.True(t, specs["openclaw"].ACPResumeIsProcessLocal,
+		"session/resume only resolves ids created by the current bridge process")
+	assert.False(t, model.BackendSupportsCLI("openclaw"), "openclaw is ACP-only: no CLI factory")
+	assert.False(t, model.BackendSupportsMCP("openclaw"),
+		"the bridge refuses per-session mcpServers — session/new would fail")
 }
 
 func TestBackendSupportsCLI_ComputedFromFactoryRegistry(t *testing.T) {

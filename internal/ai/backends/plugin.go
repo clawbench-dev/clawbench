@@ -112,6 +112,31 @@ type ACPPlugin struct {
 	// (see ACPModelSwitchSetModel), which the Go SDK does not expose, so it is
 	// sent over the raw JSON-RPC side channel.
 	ModelSwitchMethod string
+
+	// ToolCallWrapperTitlePrefixes lists title prefixes that mark a tool_call
+	// frame as a WRAPPER around the real call rather than a tool of its own.
+	// A wrapper frame is dropped (no tool card) and only remembered, so the
+	// frame that follows can be rendered on its own.
+	//
+	// openclaw's bridge emits two frames for every plugin/MCP tool: first
+	// `tool_call: id: web_fetch, args: {"url": ...}` (kind=other, toolCallId
+	// call_xxx), then `web_fetch: url: ...` (kind=fetch, a DIFFERENT toolCallId
+	// of the form tool_call:<parent>:web_fetch:1). Forwarding both draws a
+	// second card literally named "tool_call"; and because the ids differ, no
+	// id-based dedup can collapse them — the title is the only signal.
+	ToolCallWrapperTitlePrefixes []string
+
+	// ModesMirrorThoughtLevel tells the host that the agent's `modes` block
+	// carries the SAME value set as its `thought_level` config option, so the
+	// two must not both become UI controls.
+	//
+	// openclaw's bridge advertises modes=[off,minimal,low,medium,high,adaptive]
+	// and a thought_level config option with the identical values. Only the
+	// config option is writable: session/set_config_option(configId="mode")
+	// answers -32603 "ACP bridge mode does not support session config option
+	// \"mode\"", so a mode picker would be dead AND duplicate the effort picker.
+	// With this set, the host suppresses the mode surface for the backend.
+	ModesMirrorThoughtLevel bool
 }
 
 // ACPModelSwitchSetModel is the ACP-standard model-switch method. Declare it as

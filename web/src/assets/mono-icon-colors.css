@@ -47,3 +47,7 @@
 /* ---- Command Code: dark mark — invisible on dark bg ---- */
 .mono-commandcode { color: #1A1A1A; }
 [data-theme-base="dark"] .mono-commandcode { color: #e6edf3; }
+
+/* ---- OpenClaw: dark mark — invisible on dark bg ---- */
+.mono-openclaw { color: #1A1A1A; }
+[data-theme-base="dark"] .mono-openclaw { color: #e6edf3; }
